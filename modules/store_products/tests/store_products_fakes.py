@@ -110,6 +110,19 @@ class FakeApi:
         self.families_by_id: dict[int, dict[str, Any]] = {}
         #: {aile kimliği: ürün sayısı} — `products` süzgeci bunu okur.
         self.family_totals: dict[int, int] = {}
+        #: Kategori ağacı. Canlıdaki gibi KÖK kategori tepede durur ve
+        #: gerçek raflar onun çocuklarıdır.
+        self.tree_payload: dict[str, Any] = {"items": [{"id": 1, "name": "Kitap"}]}
+        #: Mağazada DOLU olan url_key'ler. `products` süzgeci bunlara bakar.
+        self.taken_url_keys: set[str] = set()
+        #: Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar. Bu bayrak
+        #: kapatıldığında sahte de öyle davranır: süzgeç gönderilir ama yanıt
+        #: süzülmemiş listedir — servis bunu "bilinmiyor" saymalıdır.
+        self.url_key_filter_honored = True
+        #: Envanter kaynakları (depolar). Boşaltmak "depo okunamadı" hâlini kurar.
+        self.sources_payload: list[dict[str, Any]] = [{"id": 1, "name": "Merkez"}]
+        #: Açılan ürüne verilecek sıradaki kimlik.
+        self.next_product_id = 1500
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail:
@@ -130,6 +143,16 @@ class FakeApi:
         if family is not None and int(family) in self.family_totals:
             # Aile sayımı YALNIZ meta.total okur; satır döndürmenin anlamı yok.
             return {"items": [], "meta": {"total": self.family_totals[int(family)]}}
+        wanted = (filters or {}).get("url_key")
+        if wanted is not None and self.taken_url_keys:
+            if not self.url_key_filter_honored:
+                # Süzgeç yok sayıldı: kataloğun ilk sayfası döner.
+                return {"items": [{"id": index, "sku": f"SKU-{index}", "url_key": key}
+                                  for index, key in enumerate(sorted(self.taken_url_keys), 1)],
+                        "meta": {}}
+            hit = str(wanted).lower()
+            return {"items": [{"id": 900, "sku": "DOLU-1", "url_key": hit}]
+                    if hit in self.taken_url_keys else [], "meta": {}}
         return self.list_payload
 
     async def product(self, product_id: int) -> dict[str, Any]:
@@ -148,7 +171,7 @@ class FakeApi:
 
     async def inventory_sources(self) -> dict[str, Any]:
         self._record("inventory_sources")
-        return {"items": [{"id": 1, "name": "Merkez"}]}
+        return {"items": list(self.sources_payload)}
 
     async def update_product(self, product_id: int, *, payload: dict[str, Any], reason: str,
                              actor: str = "", dry_run: bool | None = None) -> dict[str, Any]:
@@ -184,7 +207,7 @@ class FakeApi:
 
     async def category_tree(self) -> dict[str, Any]:
         self._record("category_tree")
-        return {"items": [{"id": 1, "name": "Kitap"}]}
+        return self.tree_payload
 
     async def snapshot(self, *, refresh: bool = False) -> dict[str, Any]:
         self._record("snapshot", refresh=refresh)
@@ -237,8 +260,23 @@ class FakeApi:
         # görülmüyordu.
         self._record("create_product", payload=payload, reason=reason, actor=actor,
                      dry_run=dry_run)
-        return {"ok": True, "dryRun": bool(dry_run),
-                "data": {"id": 1500, "sku": payload.get("sku")}}
+        if dry_run:
+            # KURU PROVADA ÜRÜN DOĞMAZ, dolayısıyla kimlik de yoktur. Geçit
+            # sentetik yanıt döner (`{"ok": True, "dryRun": True, "sent": False}`)
+            # ve kimliği olmayan bir ürüne ayrıntı yazılamaz. Sahtenin kimlik
+            # uydurması, servisin hayalî bir kimliğe yazdığını gizlerdi.
+            return {"ok": True, "dryRun": True, "sent": False}
+        new_id = self.next_product_id
+        self.next_product_id += 1
+        # Açılan ürün ARTIK OKUNABİLİR: servis ayrıntıları yazmadan önce kaydı
+        # taze okuyor (OKU-DEĞİŞTİR-YAZ) ve o okuma gerçek akışın parçası.
+        self.products_by_id[new_id] = {
+            "id": new_id, "sku": payload.get("sku"), "type": payload.get("type") or "simple",
+            "attribute_family_id": payload.get("attribute_family_id"), "status": 0,
+            "url_key": "", "name": "",
+        }
+        return {"ok": True, "dryRun": False, "sent": True,
+                "data": {"id": new_id, "sku": payload.get("sku")}}
 
     async def create_attribute(self, *, payload: dict[str, Any], reason: str, actor: str = "",
                                dry_run: bool | None = None) -> dict[str, Any]:

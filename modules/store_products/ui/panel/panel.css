@@ -103,6 +103,38 @@
 
 .sp-verdict:empty { display: none; }
 
+/* ------------------------------------------------------------- yeni ürün */
+/* Otomatik doldurulan alanlar ARKADA KALMAZ: hangi alanın ekran tarafından
+   doldurulduğu ve NEDEN doldurulduğu formun altında satır satır yazar. */
+
+.sp-auto-title { font-size: 12px; font-weight: 600; color: var(--soft); margin-top: 4px; }
+
+.sp-auto:empty,
+.sp-auto-warn:empty { display: none; }
+
+.sp-auto {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+.sp-auto-head { font-size: 12px; font-weight: 600; }
+.sp-auto-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; }
+.sp-auto-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  list-style: none;
+}
+.sp-auto-key { font-size: 12px; font-weight: 600; }
+.sp-auto-note { flex: 1 1 240px; font-size: 12px; color: var(--soft); line-height: 1.45; }
+
+.sp-auto-warn { display: flex; flex-direction: column; gap: 8px; }
+
 .sp-margin,
 .sp-total {
   padding: 8px 12px;

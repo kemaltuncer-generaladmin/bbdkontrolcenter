@@ -114,9 +114,55 @@ async def save(
                                 actor=user.full_name, dry_run=body.dryRun)
 
 
-class CreateBody(BaseModel):
-    sku: str = Field(min_length=1, max_length=64)
+class DraftBody(BaseModel):
+    """Ürün açma taslağı. YAZMAZ — gerekçe istemez.
+
+    Alanların hepsi İSTEĞE BAĞLI: kullanıcı ne yazdıysa o gelir, boş kalanı
+    servis türetir ve neyi türettiğini `auto`/`notes` ile geri söyler.
+    """
+
+    sku: str = Field(default="", max_length=64)
     type: str = Field(default="simple", max_length=24)
+    name: str = Field(default="", max_length=255)
+    urlKey: str = Field(default="", max_length=180)
+    metaTitle: str = Field(default="", max_length=255)
+    metaDescription: str = Field(default="", max_length=500)
+    shortDescription: str = Field(default="", max_length=2000)
+    description: str = Field(default="", max_length=8000)
+    categoryIds: list[int] = Field(default_factory=list)
+    #: Seçilen kategorinin ÜST kategorileri ağaca göre eklensin mi?
+    #: Panel `false` yollar: liste taslakta genişletildi ve kullanıcı gördü;
+    #: ikinci kez genişletmek, listeden çıkardığı üstü geri koyardı.
+    expandParents: bool = True
+    #: Kuruş. `None` = "girilmedi" — 0 ile aynı şey DEĞİL: 0 gerçek bir fiyattır.
+    price: int | None = Field(default=None, ge=0)
+    #: `None` = "girilmedi" → depoya 0 yazılır, ürün "stokta yok" doğar.
+    stock: int | None = Field(default=None, ge=0, le=9_999_999)
+    sourceId: int = Field(default=0, ge=0)
+    #: `None` = "seçilmedi" → yeni ürün PASİF doğar.
+    status: bool | None = None
+    attributeFamilyId: int = Field(default=0, ge=0)
+
+    def draft(self) -> dict[str, Any]:
+        return self.model_dump(exclude={"reason", "dryRun"}, exclude_none=False)
+
+
+@router.post("/products/plan")
+async def plan(
+    body: DraftBody,
+    user: CurrentUser = requires("store_products.manage"),
+) -> dict[str, Any]:
+    """Ne yazılacağını ÖNCEDEN gösterir: url_key, üst kategoriler, SEO, stok.
+
+    Yazma yapmadığı için gerekçe istemez; yine de `manage` ister — taslak
+    mağaza verisini (ağaç, aileler, çakışan url_key'ler) okur.
+    """
+    return await service().plan(payload=body.draft())
+
+
+class CreateBody(DraftBody):
+    #: SKU ürün açmanın TEK zorunlu alanıdır; gerisi türetilebiliyor.
+    sku: str = Field(min_length=1, max_length=64)
     #: Öznitelik ailesi İSTEĞE BAĞLI. Tek satıcılı, tek ürün tipli bir mağazada
     #: her ürün aynı aileye gider; kullanıcıya sormak anlamsız bir seçim üretir.
     #: 0 gelirse servis varsayılan aileyi kendisi çözer (`_default_family`).
@@ -132,10 +178,14 @@ async def create(
     body: CreateBody,
     user: CurrentUser = requires("store_products.manage"),
 ) -> dict[str, Any]:
-    return await service().create(
-        payload={"sku": body.sku, "type": body.type,
-                 "attributeFamilyId": body.attributeFamilyId},
-        reason=body.reason, actor=user.full_name, dry_run=body.dryRun)
+    """Ürünü açar VE doldurur. Taslak burada yeniden hesaplanır (K9).
+
+    Panel `plan` ucundan gelen değerleri kullanıcıya gösterip onaylatır ama
+    kapı burasıdır: istek elle de kurulabilir ve onayla yazma arasında geçen
+    sürede url_key kapılmış olabilir.
+    """
+    return await service().create(payload=body.draft(), reason=body.reason,
+                                  actor=user.full_name, dry_run=body.dryRun)
 
 
 class ReasonBody(BaseModel):

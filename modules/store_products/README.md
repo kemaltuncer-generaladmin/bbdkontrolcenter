@@ -47,6 +47,39 @@ somut yazılır — "Önerilen en az 800×800; yüklenen 320×240 — listede ve
 sayfasında bulanık görünür." Aşırı en-boy oranı da aynı biçimde uyarılır
 (vitrin ızgarası kareye yakın görsel bekler ve kenarlardan kırpar).
 
+## Ürün açma — ekran ne dolduruyor
+
+"Yeni ürün" çekmecesinde **SKU ve ürün adı** yeter; geri kalanı ekran doldurur
+ve **doldurduğu her alanı “otomatik dolduruldu” rozetiyle gösterir.** Rozetli
+alanın üstüne yazılabilir; yazılan değer bir daha ezilmez, boşaltılırsa alan
+yeniden otomatiğe döner.
+
+| Alan | Nasıl doluyor |
+|---|---|
+| `url_key` | Ürün adından; Türkçe harfler katlanır (ı→i, ş→s, ğ→g, ü→u, ö→o, ç→c). |
+| `url_key` çakışması | **Yazmadan önce** mağazaya sorulur; doluysa `-2`, `-3` diye artar (TUZAK 6). |
+| Kategoriler | Seçilen yaprağın **üst kategorileri ağaçtan okunup** eklenir (roman → kitap). Ağaç geçitten gelir, varsayılmaz. |
+| Öznitelik ailesi | Ekranda sorulmaz; `_default_family()` çözer (tek satıcı, tek ürün tipi). |
+| `meta_title` / `meta_description` | Boşsa ürün adından ve kısa açıklamadan türetilir; açıklama **düz metne indirilir** (zengin metin etiketi meta alanına sızmaz), 60/160 karakterde sözcük sınırında kırpılır. |
+| Stok | Girilmediyse depoya **0 yazılır** — ürün açıkça “stokta yok” doğar, stok takibinin dışında kalmaz. |
+| Durum | Yeni ürün **pasif** doğar; çekmecedeki kutu ile aktif açılabilir. |
+
+Fiyat **uydurulmaz**: boş bırakılırsa yazılmaz ve ekran bunu söyler — 0 yazmak
+0 TL'lik gerçek bir fiyat olurdu.
+
+Akış dört istektir: `create_product` (tip · aile · SKU) → ürünü taze oku →
+`update_product` (ad · url_key · SEO · fiyat · durum · kategoriler, **tek
+gövdede**) → `update_inventory` (stok). Kuru provada **tek istek** gider: ürün
+doğmadığı için kimlik yoktur, sonraki adımlar hayalî bir kimliğe yazmak olurdu.
+Bir adım düşerse ürün yine açılmıştır; yanıt kimliği ve düşen adımı söyler (K7).
+
+Panelin gösterdiği taslak `POST /products/plan` ile hesaplanır (yazmaz).
+Aynı kurallar `POST /products` içinde **yeniden** uygulanır: istek elle de
+kurulabilir ve onayla yazma arasında geçen sürede `url_key` kapılmış olabilir
+(K9). Kategori listesi panelden `expandParents: false` ile gelir — liste
+taslakta genişletilip kullanıcıya gösterildi; ikinci kez genişletmek onun
+listeden çıkardığı üst kategoriyi geri koyardı.
+
 ## Nitelik ve aile
 
 Nitelik **kataloğun şemasıdır, verisi değildir**. Ürün pasifleştirmek tek satırı
@@ -124,7 +157,8 @@ Okuma: `GET /products` · `GET /products/{id}` · `GET /products/{id}/images` ·
 `GET /settings` · `GET /printer` · `GET /attributes` ·
 `GET /attributes/{id}` · `GET /families` · `GET /families/{id}`
 
-Yazma: `PUT /products/{id}` · `POST /products` · `POST /products/{id}/copy` ·
+Yazma: `PUT /products/{id}` · `POST /products/plan` (yazmaz, taslak) ·
+`POST /products` · `POST /products/{id}/copy` ·
 `POST /products/{id}/stock` · `POST /products/{id}/categories` ·
 `POST /products/{id}/group-price` · `POST /products/{id}/images` ·
 `POST /products/{id}/images/reorder` ·
@@ -165,3 +199,8 @@ Yalnız Bagisto'da **karşılığı olmayan** veri: `mod_store_products_audit`
 .venv/bin/python -m pytest modules/store_products/tests -q
 .venv/bin/ruff check modules/store_products
 ```
+
+Testler **ağa çıkmaz ve canlıya ürün açmaz**: geçit `tests/store_products_fakes.py`
+içinde taklit edilir. Ürün açma otomasyonunun saf mantığı (slug üretimi, çakışma
+artırımı, üst kategori toplama, meta türetme) DB'siz ve ağsız
+`tests/test_store_products_create.py` içinde durur.

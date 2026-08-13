@@ -623,6 +623,247 @@ async function changeSku(product) {
   });
 }
 
+// ------------------------------------------------------------- yeni ürün
+//
+// EKRAN NE DOLDURDUYSA GÖSTERİR. Otomatik alanlar (url_key, üst kategoriler,
+// SEO metinleri, stok, aile, durum) sunucuda `POST /products/plan` ile
+// hesaplanır ve buraya işaretli olarak gelir; hepsinin üstüne yazılabilir.
+// Arkada sessizce doldurup kullanıcıyı kaydetme anında şaşırtmak yasak.
+
+const AUTO_LABELS = {
+  urlKey: 'URL anahtarı',
+  metaTitle: 'Meta başlık',
+  metaDescription: 'Meta açıklama',
+  categoryIds: 'Üst kategoriler',
+  attributeFamilyId: 'Öznitelik ailesi',
+  sourceId: 'Stok deposu',
+  stock: 'Stok',
+  status: 'Durum',
+};
+
+/** Sunucunun türettiği alanları panelde yazan alanlara çevirir. */
+const AUTO_FIELDS = ['urlKey', 'metaTitle', 'metaDescription'];
+
+async function newProduct(done) {
+  const forms = [];
+  const dropForms = () => { forms.forEach((form) => form.destroy()); forms.length = 0; };
+  const box = drawer(nodes.root, {
+    title: 'Yeni ürün',
+    subtitle: 'Boş bıraktığınız alanları ekran doldurur',
+    onClose: dropForms,
+  });
+  closers.push(dropForms);
+
+  let plan = null;
+  // Ekranın en son OTOMATİK yazdığı değerler. Kullanıcının kendi yazdığını
+  // ayırt etmek için gerekiyor: form "kirli mi" bilgisi programla yazılan
+  // değeri de kirli sayıyor ve otomatik değer bir daha tazelenmezdi.
+  const applied = {};
+  const typed = new Set();
+  let applying = false;
+
+  const sources = state.reference.sources || [];
+  const autoBox = h('div', 'sp-auto');
+  const warnBox = h('div', 'sp-auto-warn');
+  let lastPicked = [];
+
+  const picker = createPicker({
+    items: (state.reference.categories || []).map((item) => ({
+      id: item.id,
+      name: item.label,
+      group: item.depth === 0 ? 'Ana kategoriler' : 'Alt kategoriler',
+    })),
+    groupLabel: 'Düzey',
+    placeholder: 'Kategori ara',
+    onChange: (ids) => {
+      // Seçim BÜYÜDÜYSE taslak yenilenir (yeni yaprağın üstleri eklensin).
+      // KÜÇÜLDÜYSE yenilenmez: kullanıcının çıkardığı üst kategoriyi sunucu
+      // yeniden ekler ve seçim geri alınamaz hâle gelirdi.
+      const before = new Set(lastPicked);
+      lastPicked = ids.map(String);
+      if (ids.some((id) => !before.has(String(id)))) schedulePlan();
+      else paintAuto();
+    },
+  });
+
+  const form = formGrid({
+    fields: [
+      { key: 'sku', label: 'SKU', type: 'text', required: true, maxLength: 64,
+        hint: 'Ürünün mağazadaki tekil kodu. Sonradan değiştirmek vitrin bağlantılarını kırar.' },
+      { key: 'name', label: 'Ürün adı', type: 'text', required: true, maxLength: 180, wide: true,
+        hint: 'URL anahtarı ve SEO başlığı bundan türetilir.' },
+      { key: 'price', label: 'Liste fiyatı', type: 'money',
+        hint: 'Boş bırakılırsa fiyat YAZILMAZ. Sıfır yazmak 0 TL demektir, uydurulmaz.' },
+      { key: 'stock', label: 'Stok', type: 'number', min: 0,
+        hint: 'Boşsa depoya 0 yazılır ve ürün “stokta yok” doğar.' },
+      ...(sources.length > 1 ? [{
+        key: 'sourceId', label: 'Depo', type: 'select',
+        options: sources.map((item) => ({ value: item.id, label: item.name })),
+      }] : []),
+      { key: 'urlKey', label: 'URL anahtarı', type: 'text', maxLength: 180, wide: true,
+        hint: 'Vitrin adresi. Boş bırakırsanız ürün adından türetilir; çakışırsa '
+          + 'numaralandırılır.' },
+      { key: 'shortDescription', label: 'Kısa açıklama', type: 'richtext', wide: true,
+        maxLength: 500, placeholder: 'Listede ve ürün kartının üstünde görünen özet.',
+        hint: 'Meta açıklama boşsa buradan (düz metne indirilerek) türetilir.' },
+      { key: 'metaTitle', label: 'Meta başlık', type: 'text', maxLength: 120, wide: true },
+      { key: 'metaDescription', label: 'Meta açıklama', type: 'textarea', maxLength: 320,
+        wide: true },
+      { key: 'active', label: 'Ürün hemen aktif olsun', type: 'checkbox',
+        hint: 'Kapalıyken ürün PASİF doğar: stoğu, fiyatı ve görseli denetlendikten sonra '
+          + 'listeden aktifleştirin.' },
+    ],
+    value: { sku: '', name: '', price: null, stock: null, sourceId: sources[0]?.id ?? '',
+      urlKey: '', shortDescription: '', metaTitle: '', metaDescription: '', active: false },
+    onChange: (draft) => {
+      if (applying) return;
+      for (const key of AUTO_FIELDS) {
+        // Otomatik alanın üstüne yazıldıysa bir daha ezilmez; boşaltılırsa
+        // yeniden otomatiğe döner (kullanıcı "sen doldur" demiş olur).
+        const value = String(draft[key] ?? '');
+        if (value && value !== String(applied[key] ?? '')) typed.add(key);
+        if (!value) typed.delete(key);
+      }
+      schedulePlan();
+    },
+  });
+  forms.push(form);
+
+  function bodyOf() {
+    const draft = form.draft();
+    const body = {
+      sku: String(draft.sku || '').trim(),
+      type: 'simple',
+      name: String(draft.name || '').trim(),
+      shortDescription: draft.shortDescription || '',
+      categoryIds: picker.selection().map(Number),
+      price: draft.price ?? null,
+      stock: draft.stock === '' || draft.stock === null || draft.stock === undefined
+        ? null : Number(draft.stock),
+      sourceId: Number(draft.sourceId) || 0,
+      // İşaretli değilse `null` gider: "seçilmedi" ile "pasif olsun" aynı şey
+      // değil — sunucu `null` görünce varsayılanı uygular VE bunu söyler.
+      status: draft.active ? true : null,
+    };
+    for (const key of AUTO_FIELDS) body[key] = typed.has(key) ? String(draft[key] || '') : '';
+    return body;
+  }
+
+  function paintAuto() {
+    autoBox.replaceChildren();
+    warnBox.replaceChildren();
+    if (!plan) return;
+    const list = h('ul', 'sp-auto-list');
+    for (const key of plan.auto || []) {
+      const row = h('li', 'sp-auto-row');
+      row.append(badge('otomatik dolduruldu', 'warn'),
+        h('span', 'sp-auto-key', AUTO_LABELS[key] || key),
+        h('span', 'sp-auto-note', plan.notes?.[key] || ''));
+      list.append(row);
+    }
+    if ((plan.auto || []).length) {
+      autoBox.append(h('div', 'sp-auto-head', 'Ekranın doldurduğu alanlar — hepsi değiştirilebilir'),
+        list);
+    }
+    for (const warning of plan.warnings || []) warnBox.append(alertBox(warning, 'warn'));
+    if (plan.connected === false) {
+      warnBox.append(alertBox('Mağazaya ulaşılamadı; taslak doğrulanamadı.', 'bad'));
+    }
+  }
+
+  /** Taslağı sunucudan alır ve DOKUNULMAMIŞ alanları tazeler. */
+  const schedulePlan = debounce(async () => {
+    const body = bodyOf();
+    if (!body.name && !body.sku) return;
+    let result;
+    try {
+      result = await call(`${BASE}/products/plan`, { method: 'POST', body });
+    } catch (error) {
+      warnBox.replaceChildren(alertBox(error.message, 'warn'));
+      return;
+    }
+    plan = result;
+    applying = true;
+    for (const key of AUTO_FIELDS) {
+      // Elle yazılan alan korunur — TEK istisna: mağazada dolu olduğu için
+      // numaralandırılan url_key. Kutuda `roman` yazarken `roman-2` yazmak,
+      // gösterilenden başkasını kaydetmek olurdu.
+      const forced = key === 'urlKey' && result.urlKeyCheck?.changed;
+      if (typed.has(key) && !forced) continue;
+      applied[key] = result.draft?.[key] ?? '';
+      form.set(key, applied[key]);
+    }
+    applying = false;
+    lastPicked = (result.draft?.categoryIds || []).map(String);
+    picker.select(result.draft?.categoryIds || []);
+    paintAuto();
+  }, 450);
+  closers.push(() => schedulePlan.cancel());
+
+  const actions = h('div', 'sp-actions');
+  actions.append(button('Ürünü aç', {
+    variant: 'primary',
+    onClick: async () => {
+      if (!form.valid()) { form.showErrors(); toast('Alanları düzeltin.', 'bad'); return; }
+      const body = bodyOf();
+      const auto = (plan?.auto || []).map((key) => AUTO_LABELS[key] || key).join(', ');
+      const reason = await askReason({
+        title: 'Ürünü aç',
+        description: `${body.sku} · ${body.name} açılacak. Ekranın doldurduğu alanlar: `
+          + `${auto || 'yok'}. Ürün açıldıktan sonra ad, URL anahtarı, SEO, kategori ve `
+          + 'stok tek işlemde yazılır; ürün ' + (body.status ? 'AKTİF' : 'PASİF') + ' doğar.',
+        confirmLabel: 'Aç',
+      });
+      if (!reason) return;
+      // `call` YERİNE ham `api`: ürün açıldıktan sonra bir adım düşerse yanıt
+      // `ok:false` gelir AMA kimlik taşır. `call` bunu istisnaya çevirip
+      // kimliği yutar ve kullanıcı mağazada duran ürünü göremezdi.
+      const result = await withBusy('Ürün açılıyor…', async () => api(`${BASE}/products`, {
+        method: 'POST',
+        // Kategori listesi taslakta ZATEN genişletildi ve kullanıcı gördü;
+        // yazarken yeniden genişletmek, çıkardığı üst kategoriyi geri koyardı.
+        body: { ...body, expandParents: false, reason, dryRun: false },
+      }));
+      if (!result) return;
+      if (result.ok === false && !result.id) {
+        toast(result.error || 'Ürün açılamadı.', 'bad');
+        return;
+      }
+      if (result.ok === false) {
+        // Ürün mağazada DURUYOR; yarım kaldığı söylenir ve düzenleyici açılır.
+        toast(result.error, 'bad');
+        toast('Ürün açıldı ama tamamlanamadı; eksikleri düzenleyicide yazın.', 'warn');
+      } else {
+        toast(`Ürün açıldı (#${result.id}).`, 'good');
+      }
+      // Yazma anında url_key kapılmış olabilir; ekranda gördüğünüzden başka
+      // bir adresle doğduysa SÖYLENİR.
+      const written = result.draft?.urlKey || '';
+      if (written && plan?.draft?.urlKey && written !== plan.draft.urlKey) {
+        toast(`URL anahtarı yazma anında değişti: ${written}`, 'warn');
+      }
+      for (const warning of result.warnings || []) toast(warning, 'warn');
+      if (result.notice) toast(result.notice, 'warn');
+      box.close();
+      done?.();
+      if (result.id) openProduct(result.id);
+    },
+  }));
+
+  box.body.append(
+    form.node,
+    h('div', 'sp-auto-title', 'Kategoriler'),
+    picker.node,
+    autoBox, warnBox, actions,
+    hintBox('Ürün İKİ AŞAMADA doğar: mağaza önce yalnız tip/aile/SKU kabul eder, geri kalanı '
+      + 'ürün kimliği belli olunca yazılır. Ekran bu turları sizin yerinize atar; bir adım '
+      + 'düşerse hangisinin düştüğünü söyler ve ürün yarım kalmaz. Seçtiğiniz kategorinin '
+      + 'ÜST kategorileri ağaca göre eklenir — vitrinde üst rafta da görünmesi için gerekir; '
+      + 'istemediğinizi listeden çıkarabilirsiniz.'),
+  );
+  schedulePlan();
+}
+
 async function copyProduct(product) {
   const reason = await askReason({
     title: 'Ürünü kopyala',
@@ -2566,6 +2807,11 @@ export function mount(root, ctx) {
     ],
     onChange: () => refresh({ page: 1 }),
     actions: [
+      button('Yeni ürün', {
+        variant: 'primary',
+        title: 'URL anahtarı, üst kategoriler, SEO ve stok kendiliğinden doldurulur',
+        onClick: () => newProduct(() => { refresh(); loadHealth(); }),
+      }),
       button('Yenile', { onClick: () => { refresh(); loadHealth(); } }),
       button('⤓ Görünen', { title: 'Ekrandaki sayfayı CSV indir', onClick: exportVisible }),
       button('⤓ Tümü', { title: 'Tüm kayıtları rapor klasörüne yaz', onClick: exportAll }),

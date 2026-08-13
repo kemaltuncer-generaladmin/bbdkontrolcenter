@@ -51,6 +51,25 @@ STORE_IMAGE_LIMIT_BYTES = 4 * 1024 * 1024
 #: gerektiriyor ve o hesap burada).
 ATTRIBUTE_SCOPES = ("system", "custom", "required", "filterable", "options", "unused")
 
+#: url_key çakışmasında mağazaya gidilecek EN ÇOK tur sayısı (TUZAK 6).
+#: Her tur bir istek eder ve mağaza dakikada 60 kabul ediyor; çakışma nadir
+#: olduğu için ilk tur çoğu zaman yetiyor. Tur başına dönen satırlardan
+#: "dolu" anahtarlar toplandığı için `roman-2`, `roman-3` sırası tek turda
+#: atlanabiliyor; dördü aşan çakışmada ekran "elle yazın" der.
+URL_KEY_ROUNDS = 4
+
+#: Ürün açarken taslağa konabilen alanlar → Bagisto öznitelik adları.
+#: `catalog.FIELD_ALIASES` ile aynı işi görür ama ürün AÇMA yüzeyi daha dar:
+#: burada olmayan alan (örneğin indirim penceresi) düzenleyicide doldurulur.
+CREATE_FIELDS = {
+    "name": "name",
+    "urlKey": "url_key",
+    "metaTitle": "meta_title",
+    "metaDescription": "meta_description",
+    "shortDescription": "short_description",
+    "description": "description",
+}
+
 
 def _now() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
@@ -597,10 +616,234 @@ class ProductsService:
             return {"ok": True, "state": "unknown", "suggestion": wanted,
                     "message": f"Benzersizlik doğrulanamadı: {self._fail(failure)}"}
 
-        verdict = catalog.url_key_verdict(wanted, payload.get("items") or [],
-                                          product_id=product_id)
-        return {"ok": True, "state": verdict["state"], "suggestion": wanted,
+        items = payload.get("items") or []
+        verdict = catalog.url_key_verdict(wanted, items, product_id=product_id)
+        # Çakışma varsa BOŞTA OLAN bir anahtar da önerilir: kullanıcıyı
+        # "kalem-2 boş mudur" diye elle denemeye bırakmak, aynı 422'yi ikinci
+        # kez yemesi demekti. Öneri aynı yanıttan hesaplanır, EK İSTEK YOK.
+        free = catalog.next_url_key(wanted, catalog.url_keys(items)) \
+            if verdict["state"] == "taken" else wanted
+        return {"ok": True, "state": verdict["state"], "suggestion": wanted, "free": free,
                 "takenBy": verdict["takenBy"], "message": verdict["message"]}
+
+    # ------------------------------------------------- ürün açma yardımcıları
+
+    async def _unique_url_key(self, base: str, *, product_id: int = 0) -> dict[str, Any]:
+        """Çakışmayan url_key'i YAZMADAN ÖNCE bulur (TUZAK 6).
+
+        Mağazadan dönen her satırın anahtarı toplanır: url_key süzgeci `LIKE`
+        gibi davranıp `roman`, `roman-2`, `roman-3`ün üçünü birden döndürürse
+        sıradaki boş numara TEK TURDA bulunur. Süzgeç tam eşleşme yapıyorsa
+        tur başına bir aday denenir.
+
+        ÜÇ CEVAP vardır, ikisi değil: `free` · `taken` (aday değiştirildi) ·
+        `unknown`. Laravel tanımadığı sorgu parametresini sessizce yok sayıyor;
+        süzülmemiş listeyi "çakışma yok" saymak 422'yi kaydet düğmesine
+        bırakmak, "çakışma var" saymak doğru yazan kullanıcıyı durdurmak olurdu.
+        """
+        wanted = catalog.slugify(base)
+        if not wanted:
+            return {"value": "", "state": "empty", "takenBy": 0, "changed": False,
+                    "message": "URL anahtarı boş olamaz."}
+
+        taken: set[str] = set()
+        candidate = wanted
+        for _ in range(URL_KEY_ROUNDS):
+            try:
+                payload = await self._api.products(
+                    {"url_key": candidate, "channel": self._channel, "locale": self._locale},
+                    page=1, per_page=self._page_size)
+            except Exception as failure:  # noqa: BLE001 — K7: ürün açma akışı düşmesin
+                self._log.warning("url anahtarı doğrulanamadı", error=str(failure))
+                return {"value": candidate, "state": "unknown", "takenBy": 0,
+                        "changed": candidate != wanted,
+                        "message": f"Benzersizlik doğrulanamadı: {self._fail(failure)} "
+                                   "Mağaza kaydetme sırasında reddedebilir."}
+
+            items = payload.get("items") or []
+            verdict = catalog.url_key_verdict(candidate, items, product_id=product_id)
+            if verdict["state"] != "taken":
+                return {"value": candidate, "state": verdict["state"],
+                        "takenBy": verdict["takenBy"], "changed": candidate != wanted,
+                        "message": verdict["message"]}
+
+            taken.add(candidate)
+            taken.update(catalog.url_keys(items))
+            nxt = catalog.next_url_key(wanted, taken)
+            if not nxt or nxt == candidate:
+                break
+            candidate = nxt
+
+        return {"value": candidate, "state": "unknown", "takenBy": 0, "changed": True,
+                "message": f"`{wanted}` ve sıradaki numaralı biçimleri dolu; "
+                           "URL anahtarını elle yazın."}
+
+    async def _category_index(self) -> tuple[dict[int, dict[str, Any]], str]:
+        """Kategori ağacını geçitten okur. VARSAYILMAZ — okunamazsa söylenir."""
+        try:
+            tree = await self._api.category_tree()
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("kategori ağacı okunamadı", error=str(failure))
+            return {}, ("Kategori ağacı okunamadı; üst kategoriler kendiliğinden "
+                        f"eklenemedi: {self._fail(failure)}")
+        return catalog.category_index(tree), ""
+
+    async def _sources(self) -> tuple[list[dict[str, Any]], str]:
+        """Envanter kaynakları (depolar). Stok BURAYA yazılır (TUZAK 5)."""
+        try:
+            payload = await self._api.inventory_sources()
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("envanter kaynakları okunamadı", error=str(failure))
+            return [], f"Depolar okunamadı; stok yazılamaz: {self._fail(failure)}"
+        rows = [{"id": catalog.as_int(item.get("id")),
+                 "name": catalog.text(item.get("name") or item.get("code"))}
+                for item in (payload.get("items") or []) if isinstance(item, dict)]
+        return [row for row in rows if row["id"]], ""
+
+    async def _draft(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Ürün açma taslağını KURAR — hiçbir şey yazmaz.
+
+        `plan` ve `create` aynı kuralları kullansın diye tek yerdedir: panelde
+        gösterilen değerle mağazaya giden değerin ayrışması, kullanıcının
+        onayladığı şeyden başkasını yazmak olurdu.
+
+        Otomatik doldurulan her alan `auto` listesine, gerekçesi `notes`
+        sözlüğüne girer; panel bu ikisiyle "otomatik dolduruldu" işaretini çizer.
+        """
+        data = payload or {}
+        auto: list[str] = []
+        notes: dict[str, str] = {}
+        warnings: list[str] = []
+
+        name = catalog.text(data.get("name"))
+        draft: dict[str, Any] = {
+            "sku": catalog.text(data.get("sku")),
+            "type": catalog.text(data.get("type")) or "simple",
+            "name": name,
+            "shortDescription": catalog.text(data.get("shortDescription")),
+            "description": catalog.text(data.get("description")),
+        }
+
+        # --- url_key: ürün adından türetilir, çakışma yazmadan önce çözülür
+        typed_key = catalog.text(data.get("urlKey"))
+        url_key = await self._unique_url_key(typed_key or name)
+        draft["urlKey"] = url_key["value"]
+        if url_key["value"] and not typed_key:
+            auto.append("urlKey")
+            notes["urlKey"] = ("Ürün adından türetildi (Türkçe harfler katlandı: "
+                               "ı→i, ş→s, ğ→g, ü→u, ö→o, ç→c).")
+        if url_key["changed"] and url_key["value"]:
+            auto.append("urlKey")          # yinelenen ad sona `sorted(set(...))` ile düşer
+            notes["urlKey"] = (f"`{catalog.slugify(typed_key or name)}` mağazada kullanılıyor; "
+                               f"numaralandırıldı → `{url_key['value']}`.")
+        if url_key["state"] == "unknown" and url_key["message"]:
+            warnings.append(url_key["message"])
+
+        # --- SEO: boş alanlar addan ve kısa açıklamadan (düz metne indirilerek)
+        seo = catalog.seo_defaults(name=name, short_description=draft["shortDescription"],
+                                   description=draft["description"],
+                                   meta_title=data.get("metaTitle"),
+                                   meta_description=data.get("metaDescription"))
+        draft["metaTitle"] = seo["metaTitle"]
+        draft["metaDescription"] = seo["metaDescription"]
+        auto.extend(seo["auto"])
+        if "metaTitle" in seo["auto"]:
+            notes["metaTitle"] = (f"Ürün adından türetildi; en çok "
+                                  f"{catalog.META_TITLE_LIMIT} karakter.")
+        if "metaDescription" in seo["auto"]:
+            source = "kısa açıklamadan" if catalog.plain_text(draft["shortDescription"]) \
+                else ("açıklamadan" if catalog.plain_text(draft["description"]) else "ürün adından")
+            notes["metaDescription"] = (f"HTML düz metne indirilip {source} türetildi; en çok "
+                                        f"{catalog.META_DESCRIPTION_LIMIT} karakter.")
+
+        # --- kategori: seçilenin ÜSTLERİ de bağlanır (ağaç geçitten okunur)
+        index, tree_error = await self._category_index()
+        if tree_error:
+            warnings.append(tree_error)
+        # Panel taslakta genişletilmiş listeyi kullanıcıya gösterip onaylatıyor;
+        # `expandParents: false` ile geliyor. Yazarken ikinci kez genişletmek,
+        # kullanıcının listeden ÇIKARDIĞI üst kategoriyi geri koyardı.
+        expand = data.get("expandParents")
+        expanded = catalog.expand_categories(index, data.get("categoryIds") or [],
+                                             expand=True if expand is None else bool(expand))
+        draft["categoryIds"] = expanded["ids"]
+        if expanded["added"]:
+            auto.append("categoryIds")
+            names = ", ".join(row["name"] for row in expanded["trail"] if row["auto"])
+            notes["categoryIds"] = (f"Üst kategoriler ağaca göre eklendi: {names}. "
+                                    "Vitrinde üst rafta da görünmesi için gerekir; "
+                                    "istemediğinizi listeden çıkarabilirsiniz.")
+        if expanded["unknown"] and index:
+            warnings.append("Şu kategoriler ağaçta bulunamadı, olduğu gibi yazılacak: "
+                            + ", ".join(f"#{item}" for item in expanded["unknown"]))
+
+        # --- aile: ekranda alan yok, kendiliğinden çözülür (mevcut davranış)
+        asked_family = catalog.as_int(data.get("attributeFamilyId"))
+        family = asked_family or await self._default_family()
+        draft["attributeFamilyId"] = family
+        if family and not asked_family:
+            auto.append("attributeFamilyId")
+            notes["attributeFamilyId"] = ("Mağazadaki varsayılan öznitelik ailesi seçildi; "
+                                          "ürün açıldıktan sonra değiştirilemez.")
+        if not family:
+            warnings.append("Mağazada öznitelik ailesi bulunamadı; ürün açılamaz.")
+
+        # --- stok: girilmediyse 0 yazılır, ürün "stokta yok" doğar
+        sources, source_error = await self._sources()
+        if source_error:
+            warnings.append(source_error)
+        asked_source = catalog.as_int(data.get("sourceId"))
+        known = [row["id"] for row in sources]
+        source_id = asked_source if asked_source in known else (known[0] if known else 0)
+        draft["sourceId"] = source_id
+        if source_id and source_id != asked_source:
+            auto.append("sourceId")
+            name_of = next((row["name"] for row in sources if row["id"] == source_id), "")
+            notes["sourceId"] = f"Stok `{name_of or source_id}` deposuna yazılır."
+
+        raw_stock = data.get("stock")
+        if raw_stock in (None, ""):
+            draft["stock"] = 0
+            auto.append("stock")
+            notes["stock"] = ("Stok girilmedi; deposuna 0 yazılır ve ürün “stokta yok” "
+                              "olarak doğar. Stok satırı hiç yazılmasaydı ürün stok "
+                              "takibinin dışında kalır, vitrinde belirsiz görünürdü.")
+        else:
+            draft["stock"] = max(0, catalog.as_int(raw_stock))
+
+        # --- fiyat: uydurulmaz. Boşsa yazılmaz ve ne olacağı söylenir.
+        price = data.get("price")
+        draft["price"] = None if price in (None, "") else max(0, catalog.as_int(price))
+        if draft["price"] is None and draft["type"] not in catalog.PRICELESS_TYPES:
+            warnings.append("Fiyat girilmedi; ürün fiyatsız açılır. Sıfır yazmak 0 TL'lik "
+                            "gerçek bir fiyattır, uydurulmaz — fiyatı düzenleyicide girin.")
+
+        # --- durum: yeni ürün PASİF doğar
+        status = data.get("status")
+        draft["status"] = bool(status) if status is not None else False
+        if status is None:
+            auto.append("status")
+            notes["status"] = ("Yeni ürün PASİF açılır: stoğu 0, görseli yok ve fiyatı henüz "
+                               "denetlenmedi. Hazır olunca “Aktif” yapın.")
+
+        return {
+            "draft": draft, "auto": sorted(set(auto)), "notes": notes, "warnings": warnings,
+            "urlKeyCheck": url_key, "categoryTrail": expanded["trail"], "sources": sources,
+            # İki referans okuması da düştüyse mağaza ayakta değildir; taslak
+            # yine döner (K7) ama ekran "bağlantı yok" der, uydurmaz.
+            "connected": not (bool(tree_error) and bool(source_error)),
+        }
+
+    async def plan(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        """Ürün açma ÖNİZLEMESİ — mağazaya hiçbir şey yazmaz.
+
+        Panel bunu ad/kategori değiştikçe çağırır ve dönen taslağı ekrana
+        basar: otomatik doldurulan alan ARKADA kalmaz, işaretiyle görünür ve
+        kullanıcı üzerine yazabilir. `create` aynı kuralları yeniden uygular —
+        onay ile yazma arasında geçen sürede url_key kapılmış olabilir.
+        """
+        plan = await self._draft(payload or {})
+        return {"ok": True, "error": "", **plan}
 
     async def _default_family(self) -> int:
         """Yeni ürünün yazılacağı öznitelik ailesi. Bulunamazsa 0.
@@ -648,33 +891,52 @@ class ProductsService:
 
     async def create(self, *, payload: dict[str, Any], reason: str, actor: str,
                      dry_run: bool = True) -> dict[str, Any]:
-        """Ürün açar (1. adım: tip ve SKU).
+        """Ürünü AÇAR VE DOLDURUR — url_key, üst kategoriler, SEO ve stok dahil.
 
-        Öznitelik ailesi SORULMAZ — tek satıcılı, tek ürün tipli bir mağazada
-        her ürün aynı aileye gider. Ayrıntı düzenleyicide doldurulur.
+        Bagisto ürünü İKİ AŞAMADA doğar: `POST` yalnız tip/aile/SKU kabul eder,
+        geri kalan her şey ürün kimliği belli olduktan sonra `PUT` ile yazılır.
+        Bu yüzden akış dört istektir:
+
+          1. `create_product`  — tip · aile · SKU
+          2. `product`         — taze kayıt (OKU-DEĞİŞTİR-YAZ, TUZAK 1)
+          3. `update_product`  — ad · url_key · SEO · açıklama · fiyat · durum
+                                 · kategoriler (tek gövdede, ayrı istek değil)
+          4. `update_inventory`— stok (ürünün üstünde değil, depoda — TUZAK 5)
+
+        Otomatik alanlar `_draft` ile HESAPLANIR: panel bunları `plan` ucundan
+        alıp kullanıcıya göstermiştir, burada YENİDEN hesaplanır çünkü onayla
+        yazma arasında url_key kapılmış olabilir. Kullanıcının yazdığı değer
+        ezilmez; yalnız BOŞ alanlar doldurulur.
+
+        KURU PROVA tek istektir: gerçek ürün doğmadığı için kimlik yoktur,
+        2-4. adımlar hayalî bir kimliğe yazmak olurdu. Ne yazılacağı `steps`
+        içinde "planlandı" olarak döner.
+
+        Bir adım patlarsa ürün YİNE DE açılmış olur (K7): kimlik ve hangi
+        adımın düştüğü döner, sessizce yarım kalmaz.
         """
         problem = self._guard(reason)
         if problem:
             return {"ok": False, "error": problem}
-        sku = catalog.text((payload or {}).get("sku"))
-        kind = catalog.text((payload or {}).get("type")) or "simple"
-        family = catalog.as_int((payload or {}).get("attributeFamilyId"))
+
+        plan = await self._draft(payload or {})
+        draft = plan["draft"]
+        sku = draft["sku"]
+        family = catalog.as_int(draft["attributeFamilyId"])
+        if not sku:
+            return {"ok": False, "error": "SKU zorunlu."}
         if not family:
             # Öznitelik ailesi Bagisto'da ÇOK ürün tipli / çok satıcılı mağazalar
             # için var: farklı ürün grupları farklı alan setleri taşısın diye.
             # Burada tek satıcı ve tek ürün tipi (kitap) olduğu için aile bir
             # kez kurulur ve bir daha dokunulmaz. Kullanıcıya her ürün açılışında
             # sorulması anlamsız bir seçim üretirdi; sessizce çözülür.
-            family = await self._default_family()
-        if not sku:
-            return {"ok": False, "error": "SKU zorunlu."}
-        if not family:
             return {"ok": False, "error": (
                 "Mağazada öznitelik ailesi bulunamadı; ürün açılamaz. "
                 "Bagisto'da en az bir aile tanımlı olmalı."
             )}
 
-        body = {"sku": sku, "type": kind, "attribute_family_id": family,
+        body = {"sku": sku, "type": draft["type"], "attribute_family_id": family,
                 "channel": self._channel, "locale": self._locale}
         await self._record(product_id=0, action="create_product", reason=reason, actor=actor,
                            result="denendi", detail=body)
@@ -684,14 +946,115 @@ class ProductsService:
         except Exception as failure:  # noqa: BLE001 — K7
             await self._record(product_id=0, action="create_product", reason=reason, actor=actor,
                                result="hata", detail={"error": str(failure)})
-            return {"ok": False, "error": self._fail(failure)}
+            return {"ok": False, "error": self._fail(failure), "auto": plan["auto"],
+                    "notes": plan["notes"], "draft": draft}
 
         new_id = catalog.as_int((result.get("data") or {}).get("id")
                                 if isinstance(result.get("data"), dict) else result.get("id"))
         await self._record(product_id=new_id, action="create_product", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail=body)
-        return {"ok": True, "error": "", "id": new_id,
-                "dryRun": bool(result.get("dryRun", dry_run))}
+
+        dry = bool(result.get("dryRun", dry_run))
+        steps = [{"step": "create", "ok": True, "state": "dry_run" if dry else "ok", "error": ""}]
+        if dry or not new_id:
+            for step in ("details", "inventory"):
+                steps.append({"step": step, "ok": True, "state": "planlandı", "error": ""})
+            return {"ok": True, "error": "", "id": new_id, "dryRun": True, "steps": steps,
+                    "draft": draft, "auto": plan["auto"], "notes": plan["notes"],
+                    "warnings": plan["warnings"], "categoryTrail": plan["categoryTrail"],
+                    "notice": catalog.INDEX_NOTICE}
+
+        detail_step = await self._write_details(new_id, draft=draft, sku=sku, reason=reason,
+                                                actor=actor)
+        steps.append(detail_step)
+        stock_step = await self._write_stock(new_id, draft=draft, reason=reason, actor=actor)
+        steps.append(stock_step)
+
+        failed = [step for step in steps if not step["ok"]]
+        return {
+            "ok": not failed,
+            "error": "" if not failed else (
+                f"Ürün #{new_id} açıldı ama tamamlanamadı: "
+                + " · ".join(step["error"] for step in failed)
+            ),
+            "id": new_id, "dryRun": False, "steps": steps, "draft": draft,
+            "auto": plan["auto"], "notes": plan["notes"], "warnings": plan["warnings"],
+            "categoryTrail": plan["categoryTrail"], "notice": catalog.INDEX_NOTICE,
+        }
+
+    async def _write_details(self, product_id: int, *, draft: dict[str, Any], sku: str,
+                             reason: str, actor: str) -> dict[str, Any]:
+        """Yeni ürünün ad/url_key/SEO/fiyat/durum/kategori gövdesini yazar.
+
+        OKU-DEĞİŞTİR-YAZ (TUZAK 1): kayıt taze okunur, gövde onun üstüne kurulur.
+        Kategoriler AYNI gövdede gider — ayrı istek ikinci bir tur, ikinci bir
+        hız kovası payı ve yarıda kalma ihtimali demekti.
+        """
+        patch: dict[str, Any] = {}
+        for key, target in CREATE_FIELDS.items():
+            value = catalog.text(draft.get(key))
+            if value:
+                patch[target] = value
+        if draft.get("price") is not None:
+            patch["price"] = draft["price"]
+        patch["status"] = 1 if draft.get("status") else 0
+
+        try:
+            current = await self._api.product(int(product_id))
+        except Exception as failure:  # noqa: BLE001 — K7: ürün açıldı, ayrıntı yazılamadı
+            await self._record(product_id=product_id, action="create_details", reason=reason,
+                               actor=actor, result="hata", detail={"error": str(failure)})
+            return {"step": "details", "ok": False, "state": "hata",
+                    "error": f"Ürün okunamadı, ayrıntılar yazılamadı: {self._fail(failure)}"}
+
+        body = catalog.write_body(current, patch, channel=self._channel, locale=self._locale,
+                                  sku=sku)
+        categories = [int(item) for item in (draft.get("categoryIds") or [])]
+        if categories:
+            body["categories"] = categories
+
+        try:
+            await self._api.update_product(int(product_id), payload=body, reason=reason,
+                                           actor=actor, dry_run=False)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(product_id=product_id, action="create_details", reason=reason,
+                               actor=actor, result="hata", detail={"error": str(failure)})
+            return {"step": "details", "ok": False, "state": "hata",
+                    "error": f"Ayrıntılar yazılamadı: {self._fail(failure)}"}
+
+        await self._record(product_id=product_id, action="create_details", reason=reason,
+                           actor=actor, result="ok",
+                           detail={"fields": sorted(patch), "categories": categories})
+        return {"step": "details", "ok": True, "state": "ok", "error": "",
+                "fields": sorted(patch), "categories": categories}
+
+    async def _write_stock(self, product_id: int, *, draft: dict[str, Any], reason: str,
+                           actor: str) -> dict[str, Any]:
+        """Stoğu depoya yazar — GİRİLMEDİYSE 0 (TUZAK 5).
+
+        Satır hiç yazılmasaydı ürün stok takibinin dışında kalır ve vitrinde
+        "stokta var mı" sorusunun cevabı belirsiz olurdu; 0 yazmak ürünü
+        açıkça "stokta yok" doğurur.
+        """
+        source_id = catalog.as_int(draft.get("sourceId"))
+        quantity = max(0, catalog.as_int(draft.get("stock")))
+        if not source_id:
+            return {"step": "inventory", "ok": False, "state": "hata",
+                    "error": "Depo bulunamadı; stok yazılmadı. Ürün stok takibinin dışında."}
+        try:
+            await self._api.update_inventory(int(product_id), quantities={str(source_id): quantity},
+                                             reason=reason, actor=actor, dry_run=False)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(product_id=product_id, action="create_stock", reason=reason,
+                               actor=actor, result="hata", detail={"error": str(failure)})
+            return {"step": "inventory", "ok": False, "state": "hata",
+                    "error": f"Stok yazılamadı: {self._fail(failure)}"}
+
+        await self._record(product_id=product_id, action="create_stock", reason=reason,
+                           actor=actor, result="ok",
+                           detail={"sourceId": source_id, "quantity": quantity})
+        return {"step": "inventory", "ok": True, "state": "ok", "error": "",
+                "sourceId": source_id, "quantity": quantity}
 
     async def copy(self, product_id: int, *, reason: str, actor: str,
                    dry_run: bool = True) -> dict[str, Any]:

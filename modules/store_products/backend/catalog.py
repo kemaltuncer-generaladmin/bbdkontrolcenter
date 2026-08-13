@@ -12,7 +12,8 @@ ON TUZAK — hepsinin karşılığı bu dosyada bir fonksiyondur:
  3. attribute_family_id salt okunur → `write_body` onu ASLA göndermez.
  4. Fiyat tek alan değil            → `price_view` üçünü birden çıkarır.
  5. Stok product.quantity'de değil  → `stock_of` envanter kaynaklarını toplar.
- 6. url_key benzersiz               → `url_key_verdict` yazmadan önce bakar.
+ 6. url_key benzersiz               → `url_key_verdict` yazmadan önce bakar,
+                                      `next_url_key` çakışmayı `-2`/`-3` ile aşar.
  7. sku değişikliği URL kırar       → ayrı yol, `write_body` sku'yu değiştirmez.
  8. status indeksleme ister         → `INDEX_NOTICE` metni ekranda gösterilir.
  9. Siparişli ürün silinmez         → silme yok; yalnız `status` 0/1.
@@ -25,11 +26,23 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from html import unescape
 from typing import Any
 
 #: Gerekçenin en az uzunluğu. Geçit de (store_api) 10 istiyor; burada tekrar
 #: doğrulanır çünkü arayüzde gizlemek yetkilendirme değildir (K9).
 MIN_REASON = 10
+
+#: SEO metinlerinin sınırı. Vitrin `<title>` ve `<meta description>` olarak
+#: basıyor; arama sonucunda 60/160 karakterden sonrası kesiliyor. Türetilen
+#: metin bu sınırda SÖZCÜK SINIRINDA kırpılır — cümlenin ortasında kesilen
+#: açıklama arama sonucunda yarım görünür.
+META_TITLE_LIMIT = 60
+META_DESCRIPTION_LIMIT = 160
+
+#: url_key'in en uzun hâli. Rota şeması da 180 kabul ediyor; çakışma eki
+#: (`-2`, `-3`) eklenirken taban bu sınıra göre kısaltılır.
+URL_KEY_LIMIT = 180
 
 #: `status` yazıldıktan sonra vitrinin güncellenmesi indeksleme ister.
 #: Ekran bunu SÖYLER; sessiz kalıp "neden değişmedi" sorusunu doğurmaz.
@@ -198,6 +211,112 @@ def slugify(value: str) -> str:
     folded = unicodedata.normalize("NFKD", folded).encode("ascii", "ignore").decode()
     folded = re.sub(r"[^a-zA-Z0-9]+", "-", folded).strip("-").lower()
     return re.sub(r"-{2,}", "-", folded)
+
+
+#: Zengin metin çözücüsünün üç adımı. `<script>`/`<style>` GÖVDESİYLE birlikte
+#: atılır (içindeki metin okunacak metin değildir); satır kıran etiketler
+#: boşluğa çevrilir ki `<p>a</p><p>b</p>` → `a b` olsun, `ab` değil.
+_HTML_DROP = re.compile(r"(?is)<(script|style)\b.*?</\1\s*>")
+_HTML_BREAK = re.compile(r"(?i)<\s*/?\s*(br|p|div|li|ul|ol|tr|td|h[1-6]|blockquote)\b[^>]*>")
+_HTML_TAG = re.compile(r"<[^>]*>")
+
+
+def plain_text(value: Any) -> str:
+    """HTML → düz metin. Panel açıklamaları ZENGİN METİN tutuyor.
+
+    SEO açıklaması etiketle yazılamaz: `<meta description>` içine `<p>` koymak
+    arama sonucunda ham etiket gösterir. Kısa açıklamadan meta türetirken metin
+    bu yüzden önce düzleştirilir.
+    """
+    raw = text(value)
+    if not raw:
+        return ""
+    raw = _HTML_DROP.sub(" ", raw)
+    raw = _HTML_BREAK.sub(" ", raw)
+    # Satır İÇİ etiket (`<strong>`, `<em>`) boşluk BIRAKMADAN atılır: yerine
+    # boşluk koymak `<strong>hikâye</strong>.` metnini "hikâye ." yapardı.
+    raw = _HTML_TAG.sub("", raw)
+    # Varlık çözümü ETİKETLER ATILDIKTAN SONRA yapılır: önce çözülseydi
+    # `&lt;script&gt;` gerçek etikete dönüşür ve bir sonraki adımda silinirdi.
+    return " ".join(unescape(raw).split())
+
+
+def clip_text(value: Any, limit: int) -> str:
+    """Sözcük sınırında kırpar; kırptıysa sonuna `…` koyar.
+
+    Sonuç HER ZAMAN `limit` karakteri geçmez — üç nokta da sayılır.
+    """
+    body = " ".join(text(value).split())
+    if limit <= 0 or len(body) <= limit:
+        return body
+    cut = body[:limit - 1]
+    space = cut.rfind(" ")
+    if space > 0:
+        cut = cut[:space]
+    return f"{cut.rstrip(' ,;:.-')}…"
+
+
+def seo_defaults(*, name: str = "", short_description: str = "", description: str = "",
+                 meta_title: Any = "", meta_description: Any = "") -> dict[str, Any]:
+    """Boş SEO alanlarını ürün adı ve kısa açıklamadan türetir.
+
+    DOLU ALANA DOKUNULMAZ: kullanıcının yazdığı meta metni türetilenle
+    değiştirmek, yazdığını sessizce silmek olurdu. `auto` listesi hangi alanın
+    türetildiğini söyler; panel o alanları "otomatik dolduruldu" diye işaretler.
+    """
+    out: dict[str, Any] = {"metaTitle": text(meta_title),
+                           "metaDescription": text(meta_description), "auto": []}
+    if not out["metaTitle"]:
+        derived = clip_text(name, META_TITLE_LIMIT)
+        if derived:
+            out["metaTitle"] = derived
+            out["auto"].append("metaTitle")
+    if not out["metaDescription"]:
+        # Sıra: kısa açıklama → uzun açıklama → ürün adı. Üçü de boşsa alan
+        # boş kalır; ürün adını tekrarlayan bir açıklama uydurmak yerine
+        # ekranda "SEO eksik" bulgusu çıkması doğrudur.
+        source = plain_text(short_description) or plain_text(description) or text(name)
+        derived = clip_text(source, META_DESCRIPTION_LIMIT)
+        if derived:
+            out["metaDescription"] = derived
+            out["auto"].append("metaDescription")
+    return out
+
+
+def url_keys(items: Any) -> list[str]:
+    """Ürün satırlarındaki url_key değerleri (küçük harfe indirilmiş)."""
+    out: list[str] = []
+    for row in items or []:
+        if not isinstance(row, dict):
+            continue
+        found = text(attribute(row, "url_key")).lower()
+        if found:
+            out.append(found)
+    return out
+
+
+def next_url_key(base: str, taken: Any = (), *, limit: int = 200) -> str:
+    """Çakışmayan ilk anahtar: `roman` → `roman-2` → `roman-3` … (TUZAK 6).
+
+    Bagisto'da url_key benzersizdir ve çakışma 422 üretir. Ek `-1` ile değil
+    `-2` ile başlar: `-1` ilk kaydın kendisiymiş gibi durur ve iki ürünü
+    `roman-1`/`roman-2` diye ikizleştirirdi.
+
+    `limit` tükenirse boş döner — çağıran "elle yazın" der. Sessizce rastgele
+    bir ek üretmek, kullanıcının bir daha bulamayacağı bir URL yaratırdı.
+    """
+    root = slugify(base)[:URL_KEY_LIMIT].strip("-")
+    if not root:
+        return ""
+    used = {text(item).lower() for item in (taken or ())}
+    if root not in used:
+        return root
+    for index in range(2, max(2, limit) + 1):
+        tail = f"-{index}"
+        candidate = f"{root[:URL_KEY_LIMIT - len(tail)].rstrip('-')}{tail}"
+        if candidate not in used:
+            return candidate
+    return ""
 
 
 def reason_error(value: str) -> str:
@@ -693,6 +812,121 @@ def diff_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 # =================================================================== ağaç
+
+def tree_nodes(tree: Any) -> list[dict[str, Any]]:
+    """Ağaç yanıtının çocuk listesini bulur — sarmalayıcı adı sürüme göre değişir."""
+    if isinstance(tree, list):
+        return [node for node in tree if isinstance(node, dict)]
+    if isinstance(tree, dict):
+        for key in ("items", "children", "child_categories", "data"):
+            found = tree.get(key)
+            if isinstance(found, list):
+                return [node for node in found if isinstance(node, dict)]
+    return []
+
+
+def is_root_node(node: dict[str, Any], depth: int) -> bool:
+    """Bagisto'nun KÖK kategorisi mi?
+
+    Kök gerçek bir raf değil, ağacın tutamağıdır: yönetim ekranı da ürüne
+    atamaz. Üst kategori toplarken zincirin dışında bırakılır. Karar ADA
+    değil, ağacın tepesinde olma + `root` işaretine bakılarak verilir; mağaza
+    kökünü başka bir adla kurmuşsa zincire girer ve kullanıcı listeden çıkarır
+    (otomatik eklenen her kategori ekranda işaretli görünür).
+    """
+    if depth:
+        return False
+    for key in ("slug", "code", "name"):
+        if text(node.get(key)).strip().lower() == "root":
+            return True
+    return False
+
+
+def category_index(tree: Any) -> dict[int, dict[str, Any]]:
+    """Ağacı `{id: {id, name, parentId, depth, root}}` dizinine indirir.
+
+    Üst kategori zinciri BU DİZİNDEN çıkarılır; ürün kaydındaki kategori
+    listesi üst bilgisini taşımıyor, dolayısıyla ağaç okunmadan "kitap →
+    roman" ilişkisi VARSAYILAMAZ.
+    """
+    out: dict[int, dict[str, Any]] = {}
+
+    def walk(nodes: Any, parent: int, depth: int) -> None:
+        for node in tree_nodes(nodes):
+            found = as_int(node.get("id"))
+            if not found or found in out:
+                # Aynı kimliğin ikinci kez görünmesi bozuk ağaç demektir;
+                # ikinciyi almak sonsuz döngü riskini geri getirirdi.
+                continue
+            out[found] = {
+                "id": found,
+                "name": text(node.get("name")) or f"#{found}",
+                "parentId": parent,
+                "depth": depth,
+                "root": is_root_node(node, depth),
+            }
+            walk(node.get("children") or node.get("child_categories") or [], found, depth + 1)
+
+    walk(tree, 0, 0)
+    return out
+
+
+def category_trail(index: dict[int, dict[str, Any]], category_id: Any) -> list[int]:
+    """Kökten yaprağa zincir: `[kitap, roman]`. Kök kategori dışarıda kalır."""
+    chain: list[int] = []
+    seen: set[int] = set()
+    current = as_int(category_id)
+    while current and current in index and current not in seen:
+        seen.add(current)
+        node = index[current]
+        if not node["root"]:
+            chain.append(current)
+        current = as_int(node["parentId"])
+    chain.reverse()
+    return chain
+
+
+def expand_categories(index: dict[int, dict[str, Any]], ids: Any, *,
+                      expand: bool = True) -> dict[str, Any]:
+    """Seçilen kategorilerin ÜST kategorilerini de listeye katar.
+
+    "Roman" seçildiğinde "Kitap" da bağlanır: Bagisto kategori bağını kendisi
+    yukarı taşımıyor, vitrinin `kitap` rafında ürün görünmüyordu.
+
+    Ağaçta bulunamayan kimlik OLDUĞU GİBİ KALIR ve `unknown` içinde bildirilir
+    — ağaç okunamadıysa kullanıcının seçimini düşürmek veri kaybı olurdu.
+
+    `expand=False` liste ZATEN gözden geçirilmiş demektir (panel taslakta
+    genişletip kullanıcıya göstermiştir): yazarken ikinci kez genişletmek,
+    kullanıcının listeden çıkardığı üst kategoriyi geri koyardı.
+    """
+    chosen: list[int] = []
+    for item in ids or []:
+        found = as_int(item)
+        if found and found not in chosen:
+            chosen.append(found)
+
+    order: list[int] = []
+    for category_id in chosen:
+        steps = (category_trail(index, category_id) or [category_id]) if expand else [category_id]
+        for step in steps:
+            if step not in order:
+                order.append(step)
+
+    added = [item for item in order if item not in chosen]
+    order.sort(key=lambda item: ((index.get(item) or {}).get("depth", 99), item))
+    return {
+        "ids": order,
+        "added": added,
+        "unknown": [item for item in chosen if item not in index],
+        "trail": [{
+            "id": item,
+            "name": (index.get(item) or {}).get("name") or f"#{item}",
+            "depth": (index.get(item) or {}).get("depth", 0),
+            "auto": item in added,
+        } for item in order],
+    }
+
 
 def category_options(tree: Any, *, depth: int = 0) -> list[dict[str, Any]]:
     """41 kategorilik ağacı düz seçenek listesine indirir (girintili ad ile)."""
