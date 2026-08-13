@@ -2135,12 +2135,12 @@ class StoreApi:
 
     async def bbd_carriers(self) -> dict[str, Any]:
         """Taşıyıcı tanımları (kimlikler MASKELİ döner) — GET /api/admin/bbd/carriers."""
-        return await self._collection(f"{BBD}/carriers")
+        return await self._collection(f"{BBD}/shipments/desi-rates")
 
     async def bbd_test_carrier(self, carrier: str, *, reason: str, actor: str = "",
                                dry_run: bool | None = None) -> dict[str, Any]:
         """Taşıyıcı bağlantısını sınar — POST /api/admin/bbd/carriers/{carrier}/test."""
-        return await self._request("POST", f"{BBD}/carriers/{carrier}/test", body={},
+        return await self._request("POST", f"{BBD}/shipments/desi-rates/{carrier}/test", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_test_carrier")
 
@@ -2182,7 +2182,7 @@ class StoreApi:
 
     async def bbd_payment_links(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Ödeme linkleri — GET /api/admin/bbd/payments/links."""
-        return await self._collection(f"{BBD}/payments/links", filters)
+        return await self._collection(f"{BBD}/payment-links", filters)
 
     async def bbd_create_payment_link(self, *, order_id: int, amount: int, reason: str,
                                       actor: str = "",
@@ -2191,7 +2191,7 @@ class StoreApi:
 
         `amount` KURUŞTUR (tam sayı). Mağaza tarafı ondalığa kendisi çevirir.
         """
-        return await self._request("POST", f"{BBD}/payments/links",
+        return await self._request("POST", f"{BBD}/payment-links",
                                    body={"orderId": int(order_id), "amount": int(amount)},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_create_payment_link")
@@ -2202,7 +2202,7 @@ class StoreApi:
 
         Kayıt SİLİNMEZ; link ölür (BBD veri silme yasağı).
         """
-        return await self._request("POST", f"{BBD}/payments/links/{token}/cancel", body={},
+        return await self._request("POST", f"{BBD}/payment-links/{token}/cancel", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_cancel_payment_link")
 
@@ -2269,13 +2269,13 @@ class StoreApi:
 
     async def bbd_trial_exams(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Denemeler — GET /api/admin/bbd/trial-club/exams."""
-        return await self._collection(f"{BBD}/trial-club/exams", filters)
+        return await self._collection(f"{BBD}/deneme-kulubu/overview", filters)
 
     async def bbd_trial_members(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                                 per_page: int | None = None,
                                 all_pages: bool = False) -> dict[str, Any]:
         """Katılımcılar — GET /api/admin/bbd/trial-club/members."""
-        return await self._collection(f"{BBD}/trial-club/members", filters, page=page,
+        return await self._collection(f"{BBD}/deneme-kulubu/registrations", filters, page=page,
                                       per_page=per_page, all_pages=all_pages)
 
     async def bbd_trial_results(self, exam_id: int, *, page: int = 1,
@@ -2288,7 +2288,7 @@ class StoreApi:
                                   reason: str, actor: str = "",
                                   dry_run: bool | None = None) -> dict[str, Any]:
         """Deneme ekler/günceller — POST|PUT /api/admin/bbd/trial-club/exams[/{id}]."""
-        base = f"{BBD}/trial-club/exams"
+        base = f"{BBD}/deneme-kulubu/overview"
         if exam_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
                                        dry_run=dry_run, action="bbd_create_trial_exam")
@@ -2320,17 +2320,17 @@ class StoreApi:
 
     async def bbd_bundles(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Setler — GET /api/admin/bbd/bundles (bileşen ve kâr hesabıyla)."""
-        return await self._collection(f"{BBD}/bundles", filters)
+        return await self._collection(f"{BBD}/storefront/sets", filters)
 
     async def bbd_bundle(self, bundle_id: int) -> dict[str, Any]:
         """Set detayı — GET /api/admin/bbd/bundles/{id}."""
-        return await self._item(f"{BBD}/bundles/{int(bundle_id)}")
+        return await self._item(f"{BBD}/storefront/sets/{int(bundle_id)}")
 
     async def bbd_save_bundle(self, *, payload: dict[str, Any], bundle_id: int | None = None,
                               reason: str, actor: str = "",
                               dry_run: bool | None = None) -> dict[str, Any]:
         """Set ekler/günceller — POST|PUT /api/admin/bbd/bundles[/{id}]."""
-        base = f"{BBD}/bundles"
+        base = f"{BBD}/storefront/sets"
         if bundle_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
                                        dry_run=dry_run, action="bbd_create_bundle")
@@ -2339,7 +2339,7 @@ class StoreApi:
 
     async def bbd_carousel(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Ana ekran şeritleri/slider — GET /api/admin/bbd/carousel."""
-        return await self._collection(f"{BBD}/carousel", filters)
+        return await self._collection(f"{BBD}/storefront/carousels", filters)
 
     async def bbd_save_carousel_slot(self, *, payload: dict[str, Any], slot_id: int | None = None,
                                      reason: str, actor: str = "",
@@ -2348,7 +2348,7 @@ class StoreApi:
 
         Görsel base64 olarak `image` alanında gider (Tauri'de dosya seçici yok).
         """
-        base = f"{BBD}/carousel"
+        base = f"{BBD}/storefront/carousels"
         if slot_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
                                        dry_run=dry_run, action="bbd_create_carousel_slot")
@@ -2358,7 +2358,7 @@ class StoreApi:
     async def bbd_reorder_carousel(self, *, order: list[int], reason: str, actor: str = "",
                                    dry_run: bool | None = None) -> dict[str, Any]:
         """Slot sırasını yazar — PUT /api/admin/bbd/carousel/reorder."""
-        return await self._request("PUT", f"{BBD}/carousel/reorder",
+        return await self._request("PUT", f"{BBD}/storefront/carousels/reorder",
                                    body={"order": [int(i) for i in order]}, reason=reason,
                                    actor=actor, dry_run=dry_run, action="bbd_reorder_carousel")
 
@@ -2419,7 +2419,7 @@ class StoreApi:
     async def bbd_catalog_issues(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                                  per_page: int | None = None) -> dict[str, Any]:
         """Sağlık bulguları listesi — GET /api/admin/bbd/catalog/issues."""
-        return await self._collection(f"{BBD}/catalog/issues", filters, page=page,
+        return await self._collection(f"{BBD}/catalog/health", filters, page=page,
                                       per_page=per_page)
 
     async def bbd_reindex_catalog(self, *, reason: str, actor: str = "",
@@ -2497,13 +2497,13 @@ class StoreApi:
 
     async def bbd_mobile_settings(self) -> dict[str, Any]:
         """Mobil uygulama ayarları — GET /api/admin/bbd/mobile/settings."""
-        return await self._item(f"{BBD}/mobile/settings")
+        return await self._item(f"{BBD}/settings/mobile-app")
 
     async def bbd_update_mobile_settings(self, *, payload: dict[str, Any], reason: str,
                                          actor: str = "",
                                          dry_run: bool | None = None) -> dict[str, Any]:
         """Mobil ayarları yazar — PUT /api/admin/bbd/mobile/settings."""
-        return await self._request("PUT", f"{BBD}/mobile/settings", body=payload, reason=reason,
+        return await self._request("PUT", f"{BBD}/settings/mobile-app", body=payload, reason=reason,
                                    actor=actor, dry_run=dry_run,
                                    action="bbd_update_mobile_settings")
 
@@ -2547,9 +2547,9 @@ class StoreApi:
         Bagisto `admin_api_audits` tablosunu okur (UDİT ekranı). Salt okunur:
         kayıt silinemez, düzenlenemez — yazma metodu BİLEREK yoktur.
         """
-        return await self._collection(f"{BBD}/audit", filters, page=page, per_page=per_page)
+        return await self._collection(f"{BBD}/audits", filters, page=page, per_page=per_page)
 
     async def bbd_audit_entry(self, entry_id: int) -> dict[str, Any]:
         """Denetim kaydı detayı (öncesi/sonrası farkı) —
         GET /api/admin/bbd/audit/{id}."""
-        return await self._item(f"{BBD}/audit/{int(entry_id)}")
+        return await self._item(f"{BBD}/audits/{int(entry_id)}")
