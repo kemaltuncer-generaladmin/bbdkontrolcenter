@@ -16,9 +16,68 @@ def test_script_etiketi_icerigiyle_birlikte_atilir() -> None:
     assert content.sanitize_html(kirli) == "<p>Merhaba</p>"
 
 
-def test_on_ozniteligi_ve_style_hicbir_etikette_kalmaz() -> None:
+def test_on_ozniteligi_duser_style_uc_ozellige_indirgenir() -> None:
+    # ESKİ AD YALAN SÖYLÜYORDU: "style hiçbir etikette kalmaz" deniyordu ve test
+    # geçiyordu — ama geçme sebebi `position` özelliğinin listede olmaması, style
+    # özniteliğinin yasak olması değil. Sözleşme şu: `on*` HER ZAMAN düşer,
+    # `style` KALIR ama yalnız `color` · `background-color` · `text-align` ile.
     kirli = '<p onclick="alert(1)" style="position:fixed">Metin</p>'
     assert content.sanitize_html(kirli) == "<p>Metin</p>"
+
+
+def test_renk_ve_hizalama_ozellikleri_gecer() -> None:
+    # Bu üçü kaplama saldırısı kuramaz; yasaklanmaları "yazıyı kırmızı yap"
+    # isteğini kod bilgisi gerektiren bir işe çeviriyordu.
+    temiz = content.sanitize_html('<p style="color:#b91c1c;text-align:center">Uyarı</p>')
+    assert temiz == '<p style="color:#b91c1c;text-align:center">Uyarı</p>'
+    vurgu = content.sanitize_html('<span style="background-color:#fef08a">Vurgu</span>')
+    assert vurgu == '<span style="background-color:#fef08a">Vurgu</span>'
+
+
+def test_kaplama_kurabilecek_ozellikler_duser() -> None:
+    # Görünmez katman saldırısının istediği dört özellik: konum, boyut,
+    # saydamlık, katman sırası. Dördü de listede yok; biri eklenirse gerekçe
+    # çöker ve `style` yeniden yasaklanması gereken bir öznitelik olur.
+    kirli = '<p style="position:fixed;width:100%;opacity:0.01;z-index:9999">Kapak</p>'
+    assert content.sanitize_html(kirli) == "<p>Kapak</p>"
+
+    # Güvenli özellikle birlikte gelirse yalnız tehlikeli olan atılır; kullanıcı
+    # yazdığı rengi kaybetmez.
+    karisik = content.sanitize_html('<p style="position:fixed;color:#b91c1c">Metin</p>')
+    assert karisik == '<p style="color:#b91c1c">Metin</p>'
+
+    # `img` ölçüsü ÖZNİTELİK olarak meşrudur; `style` içindeki `width` değildir.
+    gorsel = content.sanitize_html('<img src="/a.png" width="120" style="width:9999px">')
+    assert gorsel == '<img src="/a.png" width="120">'
+
+
+def test_rgb_degeri_hex_e_normalize_edilir() -> None:
+    # Tarayıcı `execCommand` sonrası rengi `rgb(...)` yazar, düzenleyici hex
+    # verir. İkisi aynı rengi anlatır; kayıt tek biçime indirilmezse aynı içerik
+    # her açılışta "değişmiş" görünür ve gereksiz yazma isteği doğurur.
+    temiz = content.sanitize_html('<span style="color:rgb(17, 24, 39)">Siyah</span>')
+    assert temiz == '<span style="color:#111827">Siyah</span>'
+    assert content.normalize_color("rgba(255, 0, 0, 0.5)") == "#ff0000"
+    assert content.normalize_color("mavi") == ""
+
+
+def test_kisa_hex_alti_haneye_acilir() -> None:
+    assert content.normalize_color("#FFF") == "#ffffff"
+    assert content.sanitize_html('<p style="COLOR: #FFF">Beyaz</p>') == \
+        '<p style="color:#ffffff">Beyaz</p>'
+
+
+def test_on_oznitelikleri_hangi_etikette_ve_nasil_yazilirsa_yazilsin_duser() -> None:
+    # Beyaz liste "izin verilmeyen düşer" mantığıyla çalışır; `on*` için ayrı
+    # bir kural YOKTUR — bu test o mantığın büyük/küçük harf ve etiket
+    # değişince de tuttuğunu sabitler.
+    assert content.sanitize_html('<a href="/iade" ONCLICK="x()">İade</a>') == \
+        '<a href="/iade">İade</a>'
+    assert content.sanitize_html('<img src="/a.png" onerror="alert(1)">') == \
+        '<img src="/a.png">'
+    assert content.sanitize_html('<p onmouseover="x()">M</p>') == "<p>M</p>"
+    assert content.sanitize_html('<td onfocus="x()">H</td>') == "<td>H</td>"
+    assert content.sanitize_html('<span OnLoad="x()">S</span>') == "<span>S</span>"
 
 
 def test_javascript_semali_baglanti_dusurulur_metin_kalir() -> None:
