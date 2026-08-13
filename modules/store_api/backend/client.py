@@ -57,17 +57,26 @@ DOSYA YÜKLEME
     denetim izi. Boyut sınırı `max_upload_mb` (varsayılan 24) ile uç sınırının
     küçüğüdür ve aşılırsa istek HİÇ GÖNDERİLMEZ (bkz. `upload.py`).
 
-SAYFALAMA
-    Sunucu `per_page` değerini 50'ye kırpar (`MAX_PER_PAGE`). Tam katalog
-    taraması (1.419 ürün ≈ 29 sayfa) SIRAYLA yapılır — paralel istek kantin
-    deneyiminde kilit yüzünden 5xx üretmişti. `all_pages=True` verildiğinde
-    `paging.collect_all` devreye girer.
+SAYFALAMA — İKİ AYRI SÖZLEŞME, KARIŞTIRILMAZ
+    Çekirdek (`/api/admin/*`) sayfa boyunu `per_page` ile alır, 50'de kırpar
+    ve `meta`yı camelCase döndürür. BBD paketi (`/api/admin/bbd/*`) KENDİ
+    zarfını sabitlemiştir (`Bbd\\ControlApi\\Support\\Page`): sayfa boyunu
+    `limit` ile alır ve `meta`yı snake_case verir (`page · limit · total ·
+    last_page`). Ayrıntı ve canlı ölçüm: `BBD_PAGE_PARAM`.
+    Tam katalog taraması (1.419 ürün ≈ 29 sayfa) SIRAYLA yapılır — paralel
+    istek kantin deneyiminde kilit yüzünden 5xx üretmişti. `all_pages=True`
+    verildiğinde `paging.collect_all` devreye girer.
 
-BBD UÇLARI
-    `/api/admin/bbd/*` paralel olarak yazılıyor. Uç henüz yoksa 404 döner ve
-    bu sınıf onu `bbd_endpoint_missing` koduyla, "uç henüz yayında değil"
-    diyen anlaşılır bir hataya çevirir — ekran çöker değil, durumu anlatır
-    (K7).
+BBD UÇLARI — ÜÇ AYRI DURUM, ÜÇÜ DE FARKLI KODLA ANLATILIR
+    1. Uç YAZILDI ve yayında → normal yanıt.
+    2. Uç yazıldı ama DAĞITILMADI, ya da hiç yazılmadı → 404/405 gelir ve
+       geçit onu `bbd_endpoint_missing` koduyla "uç henüz yayında değil"
+       diyen anlaşılır bir hataya çevirir; ekran çökmez, bekler (K7).
+    3. Uç BİLEREK YAZILMADI → istek hiç gönderilmez, `bbd_endpoint_by_design`
+       koduyla nedenini söyleyen bir hata döner (`BY_DESIGN`). Bu ayrım
+       kozmetik değildir: (2) "bekle, gelecek" der, (3) "bekleme, gelmeyecek"
+       der. İkisini tek koda toplamak paneli süresiz bir dağıtım beklerken
+       bırakırdı.
 """
 
 from __future__ import annotations
@@ -110,6 +119,52 @@ MIN_REASON = 10
 
 GET_ATTEMPTS = 3
 RETRY_AFTER_CAP = 30.0
+
+#: BBD paketinin sayfa boyu parametresi. ÇEKİRDEKTEKİ `per_page` DEĞİL.
+#:
+#: `Bbd\ControlApi\Http\Controllers\Admin\Controller::page()` isteği
+#: `Page::from($request->query('page'), $request->query('limit'))` ile okur;
+#: `per_page` diye bir parametre hiç aranmaz ve Laravel tanımadığı sorgu
+#: parametresini sessizce yok sayar. CANLIDA ÖLÇÜLDÜ (2026-08-14):
+#:     catalog/health/no_image?limit=2    →  2 satır
+#:     catalog/health/no_image?per_page=2 → 25 satır (sunucu varsayılanı)
+#: Yani geçit 50 satır istediğini sanarken 25 alıyordu ve fark hiçbir yerde
+#: görünmüyordu. `all_pages` taramasında sonuç daha ağırdı: `collect_all`
+#: camelCase `meta.lastPage` bulamayınca "eksik dolu sayfa = son sayfa"
+#: kuralına düşüyor, 25 < 50 olduğu için TARAMAYI İLK SAYFADA BİTİRİYORDU —
+#: yani "hepsini aldım" diyen sessiz bir veri kaybı.
+BBD_PAGE_PARAM = "limit"
+
+#: BBD `meta` adlarının çekirdek karşılıkları. Zarf açıcı (`paging.envelope`)
+#: ve `collect_all` camelCase okur. Çeviri EKLEMEDİR: sunucunun kendi adları
+#: yanıtta kalır, üzerine camelCase eşleri konur — ekranların hangi adı
+#: okuduğunu tek tek kovalamak gerekmesin.
+BBD_META_ALIASES = {"page": "currentPage", "limit": "perPage", "last_page": "lastPage"}
+
+#: Mağazada BİLEREK YAZILMAYAN uçların hata kodu (bkz. modül başlığı).
+BY_DESIGN = "bbd_endpoint_by_design"
+
+
+def _bbd_meta(payload: Any) -> Any:
+    """BBD zarfının snake_case `meta` adlarına camelCase eşlerini ekler."""
+    if not isinstance(payload, dict):
+        return payload
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        return payload
+    extra = {alias: meta[name] for name, alias in BBD_META_ALIASES.items()
+             if name in meta and alias not in meta}
+    if not extra:
+        return payload
+    return {**payload, "meta": {**meta, **extra}}
+
+
+def _by_design(what: str, why: str) -> StoreApiError:
+    """"Bu uç bilerek yok" hatası — nedeni SÖYLER, 404 gibi davranmaz."""
+    return StoreApiError(
+        f"{what} Mağaza bu ucu BİLEREK yazmadı (eksik değil, beklenmiyor): {why}",
+        code=BY_DESIGN,
+    )
 
 
 class _RateBucket:
@@ -503,7 +558,16 @@ class StoreApi:
             data = response.json()
         except ValueError:
             data = None
-        if isinstance(data, dict):
+        # BBD paketi hatalarını `{"error": {"code", "message", "details"}}`
+        # zarfıyla döndürür (`ControlApi Controller::error`). Laravel'in KENDİ
+        # 404'ü ise `error` alanında düz METİN taşır ("404 Sayfa Bulunamadı").
+        # Aradaki fark, "istek denetleyiciye ULAŞTI mı" sorusunun cevabıdır ve
+        # aşağıda 404'ü ikiye ayırmak için kullanılır.
+        inner = data.get("error") if isinstance(data, dict) else None
+        reached_controller = isinstance(inner, dict)
+        if reached_controller and inner.get("message"):
+            message = mask_text(str(inner["message"]))
+        elif isinstance(data, dict):
             for key in ("message", "detail", "hydra:description", "error", "title"):
                 if data.get(key):
                     message = mask_text(str(data[key]))
@@ -525,10 +589,30 @@ class StoreApi:
                 "olduğu yönetici rolünde bu yetki yok.",
                 status=status, code="forbidden",
             )
+        if status == 404 and path.startswith(BBD) and reached_controller:
+            # UÇ VAR, KAYIT YOK. İkisini ayırmak şart: "uç yayında değil"
+            # demek, aslında var olan bir ekranı süresiz kapalı gösterirdi ve
+            # personel olmayan bir dağıtımı beklerdi. Ayrımı yanıtın zarfı
+            # kanıtlıyor — tahmin değil, ölçüm.
+            raise StoreApiError(f"Kayıt bulunamadı ({verb} {path}): {message}",
+                                status=status, code="not_found")
         if status == 404 and path.startswith(BBD):
             raise StoreApiError(
                 f"BBD'ye özel uç henüz yayında değil: {path}. Mağaza tarafındaki "
                 "paket yayınlanınca bu ekran kendiliğinden çalışacak.",
+                status=status, code="bbd_endpoint_missing",
+            )
+        if status == 405 and path.startswith(BBD):
+            # 405, "uç yok"un SESSİZ HÂLİDİR. Laravel yolu tanıyıp yalnız
+            # metodu tanımadığında 404 değil 405 döndürür; bu dal olmasaydı
+            # istek aşağıdaki genel `http` koduna düşer ve personel
+            # "POST /storefront/sets → 405" gibi hiçbir şey anlatmayan bir
+            # satır görürdü. Kod BİLEREK `bbd_endpoint_missing`: panellerin
+            # hepsi o kodu zaten "uç bekliyor, ekranı kapat" diye gösteriyor
+            # ve durum gerçekten odur — yol var, eylem yok.
+            raise StoreApiError(
+                f"Bu yol mağazada var ama {verb} ile değil ({path}). Uç bu eylemi "
+                "henüz karşılamıyor; mağaza paketi yayınlanınca çalışacak.",
                 status=status, code="bbd_endpoint_missing",
             )
         if status == 404:
@@ -560,16 +644,16 @@ class StoreApi:
     ) -> dict[str, Any]:
         size = clamp_page_size(per_page or self._page_size)
         if not all_pages:
-            payload = await self._request(
-                "GET", path, params=self._merge(filters, page_params(page, size))
-            )
+            payload = self._paged_payload(path, await self._request(
+                "GET", path, params=self._merge(filters, self._page_params(path, page, size))
+            ))
             items, meta = envelope(payload)
             return {"items": items, "meta": meta, "truncated": False}
 
         async def fetch(number: int, count: int) -> Any:
-            return await self._request(
-                "GET", path, params=self._merge(filters, page_params(number, count))
-            )
+            return self._paged_payload(path, await self._request(
+                "GET", path, params=self._merge(filters, self._page_params(path, number, count))
+            ))
 
         result = await collect_all(fetch, page_size=size, max_items=self._max_items)
         return {
@@ -578,6 +662,24 @@ class StoreApi:
                      "lastPage": result["pages"]},
             "truncated": result["truncated"],
         }
+
+    @staticmethod
+    def _page_params(path: str, page: int, size: int) -> dict[str, int]:
+        """Sayfalama parametreleri — BBD ile çekirdek AYRI sözleşmedir.
+
+        Tek satırlık ayrım gibi görünür ama yanlış adı göndermek hata değil
+        SESSİZLİK üretir: Laravel tanımadığı parametreyi yok sayar, sunucu
+        kendi varsayılanıyla yanıt verir ve istemci istediğini aldığını sanır
+        (bkz. `BBD_PAGE_PARAM`).
+        """
+        if path.startswith(BBD):
+            return {"page": max(1, int(page)), BBD_PAGE_PARAM: clamp_page_size(size)}
+        return page_params(page, size)
+
+    @staticmethod
+    def _paged_payload(path: str, payload: Any) -> Any:
+        """BBD zarfının `meta` adlarını çekirdek adlarıyla eşler; çekirdeğe dokunmaz."""
+        return _bbd_meta(payload) if path.startswith(BBD) else payload
 
     async def _item(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = await self._request("GET", path, params=self._merge(params))
@@ -1023,7 +1125,10 @@ class StoreApi:
                            actor: str = "", dry_run: bool | None = None) -> dict[str, Any]:
         """Ana ekran görseli yükler — POST /api/admin/bbd/home/slides.
 
-        DOĞRULANMADI — UÇ HENÜZ YOK: canlıda 404 döndü (2026-08-13). Geçit bunu
+        DOĞRULANMADI — UÇ HENÜZ YOK: canlıda 404 döndü (2026-08-13, 2026-08-14
+        yeniden ölçüldü). Mağaza rota dosyasında da `home` diye bir önek yok;
+        vitrin görselleri bugün yalnız `storefront/carousels` üzerinden
+        güncelleniyor ve o uç base64 alıyor, multipart almıyor. Geçit 404'ü
         `bbd_endpoint_missing` koduyla "uç henüz yayında değil" diyen anlaşılır
         bir hataya çevirir; ekran çökmez, durumu anlatır (K7).
 
@@ -2178,24 +2283,74 @@ class StoreApi:
         return await self._request("GET", f"{BBD}/shipments/{int(shipment_id)}/label", raw=True)
 
     async def bbd_carriers(self) -> dict[str, Any]:
-        """Taşıyıcı tanımları (kimlikler MASKELİ döner) — GET /api/admin/bbd/carriers."""
-        return await self._collection(f"{BBD}/shipments/desi-rates")
+        """Taşıyıcı tanımları — GET /api/admin/bbd/shipping/rates → `carriers`.
+
+        TAŞIYICI TANIMI İLE DESİ SATIRI AYNI ŞEY DEĞİLDİR. Bu metot daha önce
+        `shipments/desi-rates` ucuna gidiyordu; o uç KADEME satırları döndürür
+        (`{id, carrierCode, minDesi, maxDesi, price}`) ve canlıda 15 satırdır
+        (ölçüm 2026-08-14). Panolar listenin UZUNLUĞUNU "kaç taşıyıcı var"
+        diye okuyordu: üç taşıyıcılı mağazada kart "15 taşıyıcı" yazıyor,
+        sipariş ekranının taşıyıcı süzgeci de kademe satırlarıyla doluyordu.
+        Hiçbiri hata vermiyordu — yanlış sayı doğru sayı gibi görünüyordu.
+        Taşıyıcının kendisi (kod, ad, etkinlik, ücretsiz kargo eşiği)
+        `ShippingRateController::rates` yanıtındaki `carriers` dizisidir.
+
+        UÇ HENÜZ DAĞITILMADI: rota mağaza deposunda yazılı ama canlıda 404
+        (ölçüm 2026-08-14). Geçit bunu `bbd_endpoint_missing` koduna çevirir;
+        çağıranların dördü de o kodu "uç bekliyor" diye gösteriyor. Yanlış
+        sayı göstermektense beklemek doğrudur.
+        """
+        payload = await self._request("GET", f"{BBD}/shipping/rates")
+        source = payload if isinstance(payload, dict) else {}
+        rows = source.get("carriers")
+        items = [dict(row) for row in (rows or []) if isinstance(row, dict)]
+        meta = dict(source.get("meta") or {}) if isinstance(source.get("meta"), dict) else {}
+        meta.setdefault("total", len(items))
+        return {"items": items, "meta": meta, "truncated": False}
 
     async def bbd_test_carrier(self, carrier: str, *, reason: str, actor: str = "",
                                dry_run: bool | None = None) -> dict[str, Any]:
-        """Taşıyıcı bağlantısını sınar — POST /api/admin/bbd/carriers/{carrier}/test."""
-        return await self._request("POST", f"{BBD}/shipments/desi-rates/{carrier}/test", body={},
+        """Taşıyıcı bağlantısını sınar —
+        POST /api/admin/bbd/shipments/desi-rates/{carrier}/test.
+
+        `carrier` SAYI DEĞİL KODdur (`suratkargo` gibi); rota kısıtı
+        `[A-Za-z0-9_-]{1,64}`. Yol parçası kaçırılır: kod ne olursa olsun
+        istek başka bir uca kayamaz.
+        """
+        code = quote(str(carrier or "").strip(), safe="")
+        return await self._request("POST", f"{BBD}/shipments/desi-rates/{code}/test", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_test_carrier")
 
     async def bbd_shipping_rates(self) -> dict[str, Any]:
-        """Desi→ücret matrisi ve ücretsiz kargo eşiği — GET /api/admin/bbd/shipping/rates."""
+        """Desi→ücret matrisi ve ücretsiz kargo eşiği — GET /api/admin/bbd/shipping/rates.
+
+        TEL BİÇİMİ BU ÜÇ UÇTA snake_case'tir (`free_shipping_threshold`,
+        kademelerde `min`/`max`/`price`) ve bu, mağaza tarafında bilinçli bir
+        istisna olarak yazılmıştır: Kontrol Merkezi'nin kargo ekranı gövdeyi
+        tam olarak bu adlarla okuyor. camelCase'e çevirmek sessiz boş ekran
+        demekti.
+
+        `cod_fee` ve `delivery_promise` HER ZAMAN null döner: mağazada
+        karşılıkları yok. Yazarken dolu gönderilirse uç 422 verir — alan
+        sessizce yutulmaz (bkz. `bbd_update_shipping_rates`).
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._item(f"{BBD}/shipping/rates")
 
     async def bbd_update_shipping_rates(self, *, payload: dict[str, Any], reason: str,
                                         actor: str = "",
                                         dry_run: bool | None = None) -> dict[str, Any]:
-        """Kargo ücretlendirmesini yazar — PUT /api/admin/bbd/shipping/rates."""
+        """Kargo ücretlendirmesini yazar — PUT /api/admin/bbd/shipping/rates.
+
+        VİTRİNİN KARGO ÜCRETİNİ DEĞİŞTİRİR: taşıyıcının tüm kademelerini
+        silip yeniden yazar. Sunucuda `dryRun` VARSAYILANI true'dur; geçidin
+        kendi varsayılanı da açıktır, yani bayrağı unutan çağrı vitrine
+        dokunmaz. Tanınmayan taşıyıcı kodu sessizce atlanmaz, 422 döner.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._request("PUT", f"{BBD}/shipping/rates", body=payload, reason=reason,
                                    actor=actor, dry_run=dry_run,
                                    action="bbd_update_shipping_rates")
@@ -2203,7 +2358,13 @@ class StoreApi:
     async def bbd_refresh_price_list(self, *, reason: str, actor: str = "",
                                      dry_run: bool | None = None) -> dict[str, Any]:
         """Taşıyıcı fiyat listesini tazeler —
-        POST /api/admin/bbd/shipping/price-list/refresh."""
+        POST /api/admin/bbd/shipping/price-list/refresh.
+
+        Sıcak bir önbelleği düşürür: Geliver'a ulaşılamadığı bir anda
+        checkout eski tarifeye iner. Sunucuda `dryRun` varsayılanı true.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._request("POST", f"{BBD}/shipping/price-list/refresh", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_refresh_price_list")
@@ -2228,57 +2389,178 @@ class StoreApi:
         """Ödeme linkleri — GET /api/admin/bbd/payments/links."""
         return await self._collection(f"{BBD}/payment-links", filters)
 
-    async def bbd_create_payment_link(self, *, order_id: int, amount: int, reason: str,
-                                      actor: str = "",
+    async def bbd_create_payment_link(self, *, amount: str = "", kind: str = "custom",
+                                      items: list[dict[str, Any]] | None = None,
+                                      billing: dict[str, Any] | None = None,
+                                      description: str = "", order_id: int | None = None,
+                                      reason: str, actor: str = "",
                                       dry_run: bool | None = None) -> dict[str, Any]:
-        """Ödeme linki üretir — POST /api/admin/bbd/payments/links.
+        """Ödeme linki üretir — POST /api/admin/bbd/payment-links.
 
-        `amount` KURUŞTUR (tam sayı). Mağaza tarafı ondalığa kendisi çevirir.
+        YOL DOĞRUYDU, GÖVDE YANLIŞTI. `PaymentLinkController::store` gövdeden
+        yalnız `['kind','amount','items','billing','description']` alanlarını
+        okur. Eskiden gönderilen `orderId` alanı SESSİZCE DÜŞÜYORDU ve
+        `amount` kuruş tam sayısı olarak gidiyordu; sunucu ise onu ONDALIK TL
+        sayıp sepetin hesapladığı toplamla bire bir karşılaştırıyor
+        (`AmountGate::matches`). 125,00 TL'lik bir tahsilat `12500` olarak
+        gidince sonuç garantili 422 AMOUNT_DRIFT'ti — yani metot hiçbir zaman
+        çalışmamıştı.
+
+        SESSİZ DÖNÜŞÜM YAPILMAZ (modül başlığındaki kural): kuruş→TL çevirisi
+        burada yapılsaydı "12500" hem 125,00 TL hem 12.500,00 TL okunabilirdi
+        ve yanlış olanı müşteriye giden bir tahsilat linki üretirdi. Bu yüzden
+        `amount` ONDALIK METİN istenir ("125.00"); sayı verilirse istek hiç
+        gönderilmez.
+
+        `kind`:
+          · custom  → serbest tutar. `amount` zorunlu, `items` gönderilemez.
+          · product → ürün satışı. `items` zorunlu, `amount` gönderilmez;
+                      geçerli olan ürünün kendi fiyatıdır.
+        `billing` zorunludur (en az ad + soyad); sunucu sepeti onunla kurar.
+
+        Sunucuda `dryRun` VARSAYILANI true — para ile ilgili uçtur.
         """
-        return await self._request("POST", f"{BBD}/payment-links",
-                                   body={"orderId": int(order_id), "amount": int(amount)},
-                                   reason=reason, actor=actor, dry_run=dry_run,
+        if kind not in ("custom", "product"):
+            raise StoreApiError(
+                f'Ödeme linki türü yalnız "custom" ya da "product" olabilir (verilen: {kind}).',
+                code="payload",
+            )
+        if order_id is not None:
+            raise StoreApiError(
+                "Mağazanın ödeme linki ucu SİPARİŞE BAĞLANMAZ: gövdedeki `orderId` alanı "
+                "okunmaz ve sessizce düşer. Link, fatura bilgisi (`billing`) ve tutar ya da "
+                "ürün listesiyle üretilir; siparişle ilişkilendirme mağaza tarafında "
+                "ödeme tamamlandığında kurulur.",
+                code="payload",
+            )
+        if not isinstance(billing, dict) or not billing:
+            raise StoreApiError(
+                "Ödeme linki için fatura bilgisi (`billing`) zorunludur: sunucu sepeti bu "
+                "adresle kuruyor ve ad/soyad boşsa isteği reddediyor.",
+                code="payload",
+            )
+        body: dict[str, Any] = {"kind": kind, "billing": dict(billing)}
+        if description:
+            body["description"] = str(description)
+        if kind == "custom":
+            if not isinstance(amount, str) or not amount.strip():
+                raise StoreApiError(
+                    "Serbest tutarlı ödeme linkinde `amount` ONDALIK METİN olmalıdır "
+                    '("125.00"). Kuruş tam sayısı gönderilirse mağaza onu TL sanar ve '
+                    "istek 422 AMOUNT_DRIFT ile reddedilir; kuruş→TL çevirisi burada "
+                    "sessizce yapılmaz.",
+                    code="payload",
+                )
+            body["amount"] = amount.strip()
+            if items:
+                raise StoreApiError(
+                    'Serbest tutarlı bağlantıya ürün eklenemez (karma sepet yok). Ürün '
+                    'satmak için kind="product" kullanın.',
+                    code="payload",
+                )
+        else:
+            if not items:
+                raise StoreApiError(
+                    'kind="product" için en az bir ürün (`items`) gönderilmelidir.',
+                    code="payload",
+                )
+            body["items"] = [dict(row) for row in items]
+        return await self._request("POST", f"{BBD}/payment-links", body=body, reason=reason,
+                                   actor=actor, dry_run=dry_run,
                                    action="bbd_create_payment_link")
 
-    async def bbd_cancel_payment_link(self, token: str, *, reason: str, actor: str = "",
+    async def bbd_cancel_payment_link(self, link_id: int | str, *, reason: str, actor: str = "",
                                       dry_run: bool | None = None) -> dict[str, Any]:
-        """Linki iptal eder — POST /api/admin/bbd/payments/links/{token}/cancel.
+        """Linki iptal eder — POST /api/admin/bbd/payment-links/{id}/cancel.
+
+        KİMLİK SAYISAL BİRİNCİL ANAHTARDIR, `code` DEĞİL. Rota
+        `->whereNumber('id')` ile daraltılmıştır: 12 haneli `code` dizesi
+        gönderilirse rota HİÇ eşleşmez ve yanıt 404 olur — yani "link
+        bulunamadı" değil, "böyle bir uç yok" gibi görünen bir hata. Liste
+        yanıtı `id` ve `code` alanlarının İKİSİNİ de döndürür
+        (`PaymentLinkService::present`), taşınması gereken alan `id`'dir.
 
         Kayıt SİLİNMEZ; link ölür (BBD veri silme yasağı).
+
+        Sunucuda `dryRun` varsayılanı false ve bu kasıtlıdır: iptal bir
+        tahsilat yolunu kapatır, açmaz.
         """
-        return await self._request("POST", f"{BBD}/payment-links/{token}/cancel", body={},
+        key = str(link_id).strip()
+        if not key.isdigit():
+            raise StoreApiError(
+                f"Ödeme linki kimliği sayısal olmalıdır (verilen: {key!r}). Mağaza bu uçta "
+                "`id` alanını bekliyor; `code`/`token` dizesi gönderilirse rota eşleşmez ve "
+                "istek 404 döner.",
+                code="payload",
+            )
+        return await self._request("POST", f"{BBD}/payment-links/{key}/cancel", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_cancel_payment_link")
 
     async def bbd_refund_payment(self, attempt_id: int, *, amount: int, reason: str,
                                  actor: str = "",
                                  dry_run: bool | None = None) -> dict[str, Any]:
-        """POS iadesi — POST /api/admin/bbd/payments/attempts/{id}/refund.
+        """POS iadesi — MAĞAZADA BİLEREK YOK, istek gönderilmez.
 
-        `amount` kuruş; kısmi iade için sipariş tutarından küçük verilir.
-        PARA HAREKETİDİR: ayrı izin + gerekçe + kuru prova zinciri geçerlidir.
+        `payments/attempts` grubu SALT OKUNURDUR: iade, iptal (void) ve
+        mutabakat tetikleyen hiçbir uç yazılmamıştır ve yokluğu mağaza
+        tarafında bir testle (`NoPaymentInitiationTest`) sabitlenmiştir.
         """
-        return await self._request("POST", f"{BBD}/payments/attempts/{int(attempt_id)}/refund",
-                                   body={"amount": int(amount)}, reason=reason, actor=actor,
-                                   dry_run=dry_run, action="bbd_refund_payment")
+        raise _by_design(
+            "Sanal POS iadesi bu geçitten yapılmaz.",
+            "iade PARA HAREKETİ BAŞLATIR; para başlatan hiçbir uç Kontrol Merkezi'ne "
+            "açılmıyor. İade, bankanın kendi ekranından ya da mağaza panelinden yapılır.",
+        )
 
     async def bbd_pos_terminals(self) -> dict[str, Any]:
-        """POS tanımları (anahtarlar MASKELİ) — GET /api/admin/bbd/payments/terminals."""
+        """POS tanımları (anahtarlar MASKELİ) — GET /api/admin/bbd/payments/terminals.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._collection(f"{BBD}/payments/terminals")
 
-    async def bbd_update_pos_terminal(self, terminal_id: int, *, payload: dict[str, Any],
+    async def bbd_update_pos_terminal(self, code: str, *, payload: dict[str, Any],
                                       reason: str, actor: str = "",
                                       dry_run: bool | None = None) -> dict[str, Any]:
-        """POS tanımını günceller — PUT /api/admin/bbd/payments/terminals/{id}.
+        """POS tanımını günceller — PUT /api/admin/bbd/payments/terminals/{code}.
 
-        Canlı modda kritik ayar değişikliği ekranda `confirmWithReason` ister.
+        KİMLİK SAYI DEĞİL KODdur (`kuveytturk`). Mağazada `bbd_pos_terminals`
+        diye bir tablo yoktur: terminal, `config('bbd_pos.drivers')` içindeki
+        ödeme yöntemi kodudur. Uydurma bir sıra numarası, ikinci banka
+        eklendiği gün kayar ve "3 numaralı terminali kapat" isteği BAŞKA bir
+        bankayı kapatırdı. Rota kısıtı `[a-z0-9_-]+`.
+
+        MAĞAZANIN TAHSİLATINI DURDURABİLİR (`go_live` anahtarı); sunucuda
+        `dryRun` varsayılanı true ve gerekçe zorunludur.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
         """
-        return await self._request("PUT", f"{BBD}/payments/terminals/{int(terminal_id)}",
+        key = str(code or "").strip().lower()
+        if not key or not all(char.isascii() and (char.isalnum() or char in "_-") for char in key):
+            raise StoreApiError(
+                f"POS terminal kimliği ödeme yöntemi KODUdur (verilen: {code!r}). Küçük "
+                "harf, rakam, `_` ve `-` dışında bir şey taşıyamaz; sayısal sıra numarası "
+                "gönderilirse rota eşleşmez.",
+                code="payload",
+            )
+        return await self._request("PUT", f"{BBD}/payments/terminals/{quote(key, safe='')}",
                                    body=payload, reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_update_pos_terminal")
 
     async def bbd_reconciliation(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Banka mutabakatı — GET /api/admin/bbd/payments/reconciliation."""
+        """Banka mutabakatı — GET /api/admin/bbd/payments/reconciliation.
+
+        MUTABAKAT ÇALIŞTIRMAZ, yalnız bugünkü durumu okur: gerçek mutabakat
+        turu bankaya sorar ve çift tahsilatı iptal ederek para hareketi
+        başlatır; o iş zamanlayıcıya bağlıdır (`bbd:pos:reconcile`).
+
+        `_item` KULLANILIR, `_collection` DEĞİL: yanıt sayfalı zarfın yanında
+        KÖKÜNDE de `rows` ve kova sayaçları taşır (mağaza tarafında rapor
+        üreticisi için bilerek eklenmiş takma adlar). Zarfı açıp yalnız
+        `data`yı almak o sayaçları düşürürdü.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._item(f"{BBD}/payments/reconciliation", filters)
 
     # ========================================== 14 · BBD ÖZEL — BLD FİŞİ
@@ -2305,14 +2587,30 @@ class StoreApi:
 
     async def bbd_bld_test(self, *, reason: str, actor: str = "",
                            dry_run: bool | None = None) -> dict[str, Any]:
-        """BLD köprüsünü sınar — POST /api/admin/bbd/bld/test."""
+        """BLD köprüsünü sınar — POST /api/admin/bbd/bld/test.
+
+        FİZİKSEL KÂĞIT BASAR: `bbd:bld:preflight --print` komutunun HTTP
+        karşılığıdır. Sunucuda `dryRun` VARSAYILANI true; kuru provada yalnız
+        ne gönderileceği ve uç noktanın SUNUCU ADI döner (adresin yolu/sorgu
+        dizesi jeton taşıyabilir, o yüzden verilmez).
+        """
         return await self._request("POST", f"{BBD}/bld/test", body={}, reason=reason,
                                    actor=actor, dry_run=dry_run, action="bbd_bld_test")
 
     # ==================================== 15 · BBD ÖZEL — DENEME KULÜBÜ
 
     async def bbd_trial_exams(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Denemeler — GET /api/admin/bbd/trial-club/exams."""
+        """Denemeler — GET /api/admin/bbd/deneme-kulubu/overview.
+
+        DİKKAT — UÇ LİSTE DEĞİL ÖZET DÖNDÜRÜYOR. Canlı yanıt
+        `{analytics, product, stats, isReady, ...}` biçimindedir (ölçüm
+        2026-08-14); `data` dizisi yoktur, dolayısıyla bu metot BOŞ liste
+        döndürür ve ekran "hiç deneme yok" der. Mağazada deneme kulübü tek
+        bir ürün etrafında kurulu olduğu için "denemeler listesi" diye bir
+        kavram yok gibi görünüyor; hangi tarafın düzeltileceği (uç mu liste
+        verecek, ekran mı özet okuyacak) ürün kararıdır ve burada tahminle
+        kapatılmadı.
+        """
         return await self._collection(f"{BBD}/deneme-kulubu/overview", filters)
 
     async def bbd_trial_members(self, filters: dict[str, Any] | None = None, *, page: int = 1,
@@ -2324,14 +2622,27 @@ class StoreApi:
 
     async def bbd_trial_results(self, exam_id: int, *, page: int = 1,
                                 per_page: int | None = None) -> dict[str, Any]:
-        """Sonuçlar — GET /api/admin/bbd/trial-club/exams/{id}/results."""
+        """Sonuçlar — GET /api/admin/bbd/trial-club/exams/{examId}/results.
+
+        `trial-club` öneki `deneme-kulubu`nun yazım hatası DEĞİLDİR: sonuç
+        uçları mağazada bilerek ayrı bir önek altına yazıldı, üyelik uçları
+        `deneme-kulubu` altında kaldı.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._collection(f"{BBD}/trial-club/exams/{int(exam_id)}/results",
                                       page=page, per_page=per_page)
 
     async def bbd_save_trial_exam(self, *, payload: dict[str, Any], exam_id: int | None = None,
                                   reason: str, actor: str = "",
                                   dry_run: bool | None = None) -> dict[str, Any]:
-        """Deneme ekler/günceller — POST|PUT /api/admin/bbd/trial-club/exams[/{id}]."""
+        """Deneme ekler/günceller — POST|PUT /api/admin/bbd/deneme-kulubu/overview[/{id}].
+
+        MAĞAZADA YAZMA UCU YOK: `deneme-kulubu` öneki altında yalnız GET
+        `overview`, GET `registrations` ve üyelik uçları var. POST `overview`
+        çağrısı 404 değil 405 döndürür (yol var, metot yok); geçit bunu da
+        `bbd_endpoint_missing` koduna çevirir, bkz. `_fail`.
+        """
         base = f"{BBD}/deneme-kulubu/overview"
         if exam_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
@@ -2342,10 +2653,14 @@ class StoreApi:
     async def bbd_upload_trial_results(self, exam_id: int, *, rows: list[dict[str, Any]],
                                        reason: str, actor: str = "",
                                        dry_run: bool | None = None) -> dict[str, Any]:
-        """Sonuç yükler — POST /api/admin/bbd/trial-club/exams/{id}/results.
+        """Sonuç yükler — POST /api/admin/bbd/trial-club/exams/{examId}/results.
 
         Kuru provada sunucu EŞLEŞTİRME ÖNİZLEMESİ döner (kaç satır eşleşti,
-        kaçı eşleşmedi); onaydan sonra `dry_run=False` ile yazılır.
+        kaçı eşleşmedi); onaydan sonra `dry_run=False` ile yazılır. Yükleme
+        önceki sonuç kümesinin TAMAMINI değiştirir — sunucuda `dryRun`
+        varsayılanı bu yüzden true.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
         """
         return await self._request("POST", f"{BBD}/trial-club/exams/{int(exam_id)}/results",
                                    body={"rows": rows}, reason=reason, actor=actor,
@@ -2354,7 +2669,13 @@ class StoreApi:
     async def bbd_publish_trial_results(self, exam_id: int, *, reason: str, actor: str = "",
                                         dry_run: bool | None = None) -> dict[str, Any]:
         """Sonuçları yayınlar —
-        POST /api/admin/bbd/trial-club/exams/{id}/results/publish."""
+        POST /api/admin/bbd/trial-club/exams/{examId}/results/publish.
+
+        ÖĞRENCİYE GÖRÜNÜR KILAR ve geri alınamaz; sunucuda `dryRun`
+        varsayılanı true.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._request("POST",
                                    f"{BBD}/trial-club/exams/{int(exam_id)}/results/publish",
                                    body={}, reason=reason, actor=actor, dry_run=dry_run,
@@ -2363,17 +2684,31 @@ class StoreApi:
     # ================================ 16 · BBD ÖZEL — SET · ANA EKRAN
 
     async def bbd_bundles(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Setler — GET /api/admin/bbd/bundles (bileşen ve kâr hesabıyla)."""
+        """Setler — GET /api/admin/bbd/storefront/sets.
+
+        Set mağazada bir KATEGORİDİR; bu uç o kategorinin ürünlerini döndürür
+        (alan adları snake_case: `url_key`, `special_price`, ...).
+        """
         return await self._collection(f"{BBD}/storefront/sets", filters)
 
     async def bbd_bundle(self, bundle_id: int) -> dict[str, Any]:
-        """Set detayı — GET /api/admin/bbd/bundles/{id}."""
+        """Set detayı — GET /api/admin/bbd/storefront/sets/{id}.
+
+        MAĞAZADA TEKİL SET UCU YOK: `storefront/sets` öneki altında yalnız
+        liste (GET '') ve üyelik yazma (POST `sets/membership`) var.
+        """
         return await self._item(f"{BBD}/storefront/sets/{int(bundle_id)}")
 
     async def bbd_save_bundle(self, *, payload: dict[str, Any], bundle_id: int | None = None,
                               reason: str, actor: str = "",
                               dry_run: bool | None = None) -> dict[str, Any]:
-        """Set ekler/günceller — POST|PUT /api/admin/bbd/bundles[/{id}]."""
+        """Set ekler/günceller — POST|PUT /api/admin/bbd/storefront/sets[/{id}].
+
+        MAĞAZADA SET OLUŞTURMA KAVRAMI YOK: set bir kategoridir ve yalnız
+        ÜYELİĞİ değiştirilebilir (`POST storefront/sets/membership`). POST
+        `sets` çağrısı 404 değil 405 döndürür (yol GET olarak var); geçit bunu
+        `bbd_endpoint_missing` koduna çevirir, bkz. `_fail`.
+        """
         base = f"{BBD}/storefront/sets"
         if bundle_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
@@ -2382,13 +2717,24 @@ class StoreApi:
                                    actor=actor, dry_run=dry_run, action="bbd_update_bundle")
 
     async def bbd_carousel(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Ana ekran şeritleri/slider — GET /api/admin/bbd/carousel."""
+        """Ana ekran şeritleri/slider — GET /api/admin/bbd/storefront/carousels."""
         return await self._collection(f"{BBD}/storefront/carousels", filters)
 
     async def bbd_save_carousel_slot(self, *, payload: dict[str, Any], slot_id: int | None = None,
                                      reason: str, actor: str = "",
                                      dry_run: bool | None = None) -> dict[str, Any]:
-        """Slot ekler/günceller — POST|PUT /api/admin/bbd/carousel[/{id}].
+        """Slot ekler/günceller —
+        POST | PATCH /api/admin/bbd/storefront/carousels[/{id}].
+
+        GÜNCELLEME PUT DEĞİL **PATCH**'tir. Rota
+        `Route::patch('carousels/{id}')->whereNumber('id')` olarak yazılmış;
+        PUT gönderilirse yol eşleşir ama metot eşleşmez ve yanıt 404 değil
+        405 olur. 405 "kayıt yok" gibi de "uç yok" gibi de okunmaz — bu
+        yüzden `_fail` içinde ayrı bir dalı vardır.
+
+        SLOT EKLEME UCU MAĞAZADA YOK: yalnız mevcut slot güncellenebiliyor.
+        `slot_id=None` dalı bu yüzden 405 alır ve `bbd_endpoint_missing`
+        koduna çevrilir.
 
         Görsel base64 olarak `image` alanında gider (Tauri'de dosya seçici yok).
         """
@@ -2396,12 +2742,17 @@ class StoreApi:
         if slot_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
                                        dry_run=dry_run, action="bbd_create_carousel_slot")
-        return await self._request("PUT", f"{base}/{int(slot_id)}", body=payload, reason=reason,
+        return await self._request("PATCH", f"{base}/{int(slot_id)}", body=payload, reason=reason,
                                    actor=actor, dry_run=dry_run, action="bbd_update_carousel_slot")
 
     async def bbd_reorder_carousel(self, *, order: list[int], reason: str, actor: str = "",
                                    dry_run: bool | None = None) -> dict[str, Any]:
-        """Slot sırasını yazar — PUT /api/admin/bbd/carousel/reorder."""
+        """Slot sırasını yazar — PUT /api/admin/bbd/storefront/carousels/reorder.
+
+        MAĞAZADA SIRALAMA UCU YOK. `reorder` sayısal olmadığı için PATCH
+        `{id}` kısıtına da düşmez; istek 404 alır ve `bbd_endpoint_missing`
+        koduna çevrilir.
+        """
         return await self._request("PUT", f"{BBD}/storefront/carousels/reorder",
                                    body={"order": [int(i) for i in order]}, reason=reason,
                                    actor=actor, dry_run=dry_run, action="bbd_reorder_carousel")
@@ -2425,7 +2776,13 @@ class StoreApi:
 
     async def bbd_verify_backup(self, name: str, *, reason: str, actor: str = "",
                                 dry_run: bool | None = None) -> dict[str, Any]:
-        """Sağlama toplamını doğrular — POST /api/admin/bbd/backups/{name}/verify."""
+        """Sağlama toplamını doğrular — POST /api/admin/bbd/backups/{name}/verify.
+
+        HİÇBİR ŞEY YAZMAZ ama POST'tur: GET olsaydı vekil sunucular ve
+        önbellek katmanları çağrıyı güvenle tekrarlanabilir sayıp kendiliğinden
+        yeniden çalıştırabilirdi; oysa arşiv sonuna kadar açılır ve dosya
+        boyutuyla orantılı CPU harcanır. Sunucuda `dryRun` varsayılanı false.
+        """
         return await self._request("POST", f"{BBD}/backups/{quote(name)}/verify", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_verify_backup")
@@ -2444,38 +2801,87 @@ class StoreApi:
 
     async def bbd_restore_backup(self, name: str, *, reason: str, actor: str = "",
                                  dry_run: bool | None = None) -> dict[str, Any]:
-        """Yedeği geri yükler — POST /api/admin/bbd/backups/{name}/restore.
+        """Yedekten geri yükleme — MAĞAZADA BİLEREK YOK, istek gönderilmez.
 
-        EN YIKICI İŞLEM. Mağaza tarafı geri yüklemeden önce otomatik güvenlik
-        yedeği alır; yine de ekran ayrı izin, gerekçe ve açık uyarı ister.
+        `backups` öneki altında index/store/prune/download/verify vardır;
+        `restore` YAZILMADI. Geri yükleme sunucuda, elle ve arşiv
+        doğrulandıktan sonra yapılır (`bbd_verify_backup` + `bbd_download_backup`).
         """
-        return await self._request("POST", f"{BBD}/backups/{quote(name)}/restore", body={},
-                                   reason=reason, actor=actor, dry_run=dry_run,
-                                   action="bbd_restore_backup")
+        raise _by_design(
+            "Yedekten geri yükleme bu geçitten yapılmaz.",
+            "tek istekle CANLI VERİYİ EZER ve arada hiçbir insan kararı kalmaz. Geri "
+            "yükleme sunucuda elle, arşiv doğrulandıktan sonra yapılır.",
+        )
 
     async def bbd_catalog_health(self) -> dict[str, Any]:
-        """Katalog sağlığı — GET /api/admin/bbd/catalog/health.
+        """Katalog sağlığı ÖZETİ — GET /api/admin/bbd/catalog/health.
 
-        Görselsiz ürün, kırık bağlantı, SEO eksiği, fiyatsız varyant sayıları.
+        Yanıt `{summary, issues, ignoredSkus}` biçimindedir: sorun tipi başına
+        SAYI verir, satır vermez. Satırlar için `bbd_catalog_issues`.
         """
         return await self._item(f"{BBD}/catalog/health")
 
+    #: `CatalogHealthService::issueTypes()` — sunucunun tanıdığı sorun tipleri.
+    #: Rota kısıtı `[a-z_]+`; listede olmayan bir tip 422 "Bilinmeyen sorun
+    #: tipi" döndürür ve yanıtta izin verilen tipleri sayar.
+    CATALOG_ISSUES = ("no_image", "no_description", "no_meta", "zero_price",
+                      "no_category", "not_indexed")
+
     async def bbd_catalog_issues(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                                  per_page: int | None = None) -> dict[str, Any]:
-        """Sağlık bulguları listesi — GET /api/admin/bbd/catalog/issues."""
-        return await self._collection(f"{BBD}/catalog/health", filters, page=page,
+        """Sağlık bulguları listesi — GET /api/admin/bbd/catalog/health/{issue}.
+
+        LİSTEDEKİ EN SESSİZ HATA BURADAYDI ve 404 üretmiyordu. Sorun tipi
+        `{"kind": ...}` sorgu süzgeci olarak gönderiliyordu; Laravel tanımadığı
+        parametreyi yok sayar, `catalog/health` ise `healthSummary` çalıştırıp
+        `{summary, issues, ignoredSkus}` ÖZETİNİ döndürür. Zarf açıcı orada
+        `data` bulamadığı için ekran hatasız bir BOŞ LİSTE görüyordu: "katalog
+        temiz" diye okunan, aslında hiç sorulmamış bir soru.
+
+        Sorun tipi artık YOLA konur ve gönderilmeden önce doğrulanır
+        (`CATALOG_ISSUES`) — sunucunun 422'sini beklemek yerine, hangi tipin
+        geçerli olduğunu söyleyen bir hata burada üretilir.
+
+        `filters` içindeki `issue` ya da `kind` anahtarı tipi taşır; kalan
+        anahtarlar sorgu süzgeci olarak gider.
+        """
+        rest = dict(filters or {})
+        # İKİSİ DE DÜŞÜRÜLÜR: `issue` doluyken `kind` bırakılsaydı sunucuya
+        # tanınmayan bir süzgeç giderdi ve Laravel onu sessizce yok sayardı —
+        # yani "süzdüm" sanan ikinci bir yanılgı.
+        adaylar = [str(rest.pop(ad, "") or "").strip() for ad in ("issue", "kind")]
+        issue = next((deger for deger in adaylar if deger), "")
+        if issue not in self.CATALOG_ISSUES:
+            raise StoreApiError(
+                f"Bilinmeyen katalog sorunu tipi: {issue or '(boş)'}. Mağazanın tanıdığı "
+                f"tipler: {', '.join(self.CATALOG_ISSUES)}. Tip sorgu süzgeci değil YOL "
+                "parçasıdır; tanınmayan bir değer sessizce özet yanıtına düşmez.",
+                code="payload",
+            )
+        return await self._collection(f"{BBD}/catalog/health/{issue}", rest, page=page,
                                       per_page=per_page)
 
     async def bbd_reindex_catalog(self, *, reason: str, actor: str = "",
                                   dry_run: bool | None = None) -> dict[str, Any]:
-        """Arama dizinini yeniler — POST /api/admin/bbd/catalog/reindex. AĞIR İŞTİR."""
+        """Arama dizinini yeniler — POST /api/admin/bbd/catalog/reindex. AĞIR İŞTİR.
+
+        Vitrinin okuduğu tabloları (`product_flat`, fiyat/stok dizinleri)
+        yeniden yazar; yarıda kesilen bir kurulum fiyatsız kart ve kaybolan
+        ürün bırakır. Sunucuda `dryRun` varsayılanı true.
+        """
         return await self._request("POST", f"{BBD}/catalog/reindex", body={}, reason=reason,
                                    actor=actor, dry_run=dry_run, action="bbd_reindex_catalog")
 
     # ========================== 18 · BBD ÖZEL — AI · BİLDİRİM · DENETİM
 
     async def bbd_ai_tools(self) -> dict[str, Any]:
-        """Açık AI araçları ve bütçe durumu — GET /api/admin/bbd/ai/tools."""
+        """Açık AI araçları ve bütçe durumu — GET /api/admin/bbd/ai/tools.
+
+        MAĞAZADA "araç"/"bütçe" KAVRAMI YOK: `ai` öneki altında yalnız taslak
+        uçları var (`drafts`, `drafts/{draftId}/apply|discard`). Canlıda 404
+        (ölçüm 2026-08-14); geçit `bbd_endpoint_missing` döndürür ve AI ekranı
+        bu kodu zaten "uç bekliyor" diye gösteriyor.
+        """
         return await self._collection(f"{BBD}/ai/tools")
 
     async def bbd_ai_run(self, tool: str, *, payload: dict[str, Any], reason: str,
@@ -2484,53 +2890,144 @@ class StoreApi:
 
         ÖNERİ ÜRETİR, HİÇBİR ŞEYİ YAZMAZ. Uygulama `bbd_ai_apply` ile ve
         kullanıcı onayından sonra olur — AI ekranının kimliği budur.
+
+        MODEL SUNUCUDA ÇALIŞMIYOR: mağaza tarafı yalnız Kontrol Merkezi'nin
+        ÜRETTİĞİ taslakları saklıyor (`POST ai/drafts`). Bu yüzden burada yol
+        düzeltmesi yetmez — metin üretimi KM'de kalmalı, mağazaya yalnız sonuç
+        yazılmalı. Uç canlıda 404 (ölçüm 2026-08-14).
         """
         return await self._request("POST", f"{BBD}/ai/tools/{tool}/run", body=payload,
                                    reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_ai_run")
 
-    async def bbd_ai_apply(self, run_id: int, *, selections: list[Any], reason: str,
+    async def bbd_ai_apply(self, draft_id: str, *, selections: list[Any], reason: str,
                            actor: str = "", dry_run: bool | None = None) -> dict[str, Any]:
-        """Onaylanan önerileri uygular — POST /api/admin/bbd/ai/runs/{id}/apply."""
-        return await self._request("POST", f"{BBD}/ai/runs/{int(run_id)}/apply",
+        """Onaylanan taslağı uygular — POST /api/admin/bbd/ai/drafts/{draftId}/apply.
+
+        SUNUCUDA "run" DİYE BİR KAVRAM YOK, "draft" var — ve taslak kimliği
+        SAYI DEĞİL UUID'dir (rota kısıtı `[0-9a-fA-F-]{36}`). Tam sayı
+        gönderen bir çağrı hiçbir zaman eşleşmez; kimlik dize olarak
+        taşınmalıdır.
+
+        Uçta İKİ yetki birden aranır (`settings.bbd_control.ai` +
+        `catalog.products`) ve sunucuda `dryRun` varsayılanı true'dur:
+        uygulamak MÜŞTERİYE GÖRÜNEN metni değiştirir.
+        """
+        key = str(draft_id or "").strip()
+        if len(key) != 36 or any(char not in "0123456789abcdefABCDEF-" for char in key):
+            raise StoreApiError(
+                f"AI taslak kimliği 36 karakterlik UUID olmalıdır (verilen: {key!r}). "
+                "Mağazada taslaklar sayısal `run_id` ile değil UUID ile tutuluyor; sayı "
+                "gönderilirse rota eşleşmez ve istek 404 döner.",
+                code="payload",
+            )
+        return await self._request("POST", f"{BBD}/ai/drafts/{key}/apply",
                                    body={"selections": selections}, reason=reason, actor=actor,
                                    dry_run=dry_run, action="bbd_ai_apply")
 
     async def bbd_ai_runs(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                           per_page: int | None = None) -> dict[str, Any]:
-        """AI çalışma geçmişi — GET /api/admin/bbd/ai/runs."""
-        return await self._collection(f"{BBD}/ai/runs", filters, page=page, per_page=per_page)
+        """AI taslak geçmişi — GET /api/admin/bbd/ai/drafts.
+
+        Sunucunun tanıdığı süzgeçler `productId` (tam sayı) ve `status`;
+        başka bir ad Laravel tarafından sessizce yok sayılır. Sayfalama BBD
+        sözleşmesindedir (`limit`, snake_case `meta`) — bkz. `BBD_PAGE_PARAM`.
+        """
+        return await self._collection(f"{BBD}/ai/drafts", filters, page=page, per_page=per_page)
 
     async def bbd_ai_usage(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Jeton/maliyet kullanımı — GET /api/admin/bbd/ai/usage."""
+        """Jeton/maliyet kullanımı — GET /api/admin/bbd/ai/usage.
+
+        MAĞAZA JETON/MALİYET TUTMUYOR: uç yok, canlıda 404 (ölçüm
+        2026-08-14). Maliyet görünürlüğü KM tarafında kalmalı.
+        """
         return await self._item(f"{BBD}/ai/usage", filters)
 
     async def bbd_notifications(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                                 per_page: int | None = None) -> dict[str, Any]:
-        """Bildirim gönderim geçmişi — GET /api/admin/bbd/notifications."""
+        """Bildirim DURUMU — GET /api/admin/bbd/notifications.
+
+        DİKKAT — UÇ GEÇMİŞ DEĞİL DURUM DÖNDÜRÜYOR. Canlı yanıt
+        `{fcmEnabled, campaignNotificationsEnabled, broadcastTopic,
+        deviceCount}` biçimindedir (ölçüm 2026-08-14); `data` dizisi yoktur,
+        bu yüzden metot BOŞ liste döndürür ve "gönderim geçmişi" ekranı
+        hatasız biçimde boş kalır. Mağazada gönderim geçmişi tutan bir uç
+        yazılmadı; hangi tarafın düzeltileceği ürün kararıdır ve burada
+        tahminle kapatılmadı.
+        """
         return await self._collection(f"{BBD}/notifications", filters, page=page,
                                       per_page=per_page)
 
     async def bbd_send_notification(self, *, payload: dict[str, Any], reason: str,
                                     actor: str = "",
                                     dry_run: bool | None = None) -> dict[str, Any]:
-        """Bildirim gönderir — POST /api/admin/bbd/notifications.
+        """Bildirim gönderir — POST /api/admin/bbd/notifications/send.
 
-        Kanal: email · sms · push. SMS'in kendi maliyeti vardır; kuru prova
-        alıcı sayısını ve tahmini maliyeti döndürür.
+        YOL `notifications` DEĞİL `notifications/send`. Önek altında GET ''
+        VAR ama POST '' YOK; yani eski çağrı 404 değil 405 alıyordu ve
+        "uç yayında değil" dalına bile girmiyordu — personel ne olduğunu
+        anlatmayan genel bir hata görüyordu. En çok çağrılan uçtur (altı
+        çağrı yeri).
+
+        UÇ YALNIZ TOPLU PUSH GÖNDERİR. Gövde `title` (boş değil, ≤100) ve
+        `body` (boş değil, ≤500) bekler; kanal/alıcı/şablon alanları okunmaz
+        ve Laravel onları sessizce yok sayar. Bu yüzden eksik `title`/`body`
+        İSTEK ÇIKMADAN burada durdurulur: uzaktan gelen 422'yi beklemek bir
+        hız payı harcar ve hatayı kuralı söylemeden bildirir.
+
+        İKİ ÖZEL DURUM "UÇ YOK" DEĞİLDİR ve öyle gösterilmemelidir:
+          · 503 PUSH_NOT_CONFIGURED → FCM yapılandırılmamış.
+          · 409 CAMPAIGN_NOTIFICATIONS_DISABLED → kampanya bildirimleri
+            kapalı (Ayarlar → Mobil Uygulama).
+        Geçit ikisini de kendi kodlarıyla (`server` / `conflict`) ve mağazanın
+        mesajıyla döndürür; `bbd_endpoint_missing` ÜRETİLMEZ.
+
+        Sunucuda `dryRun` varsayılanı true; kuru prova cihaz sayısını döndürür.
         """
-        return await self._request("POST", f"{BBD}/notifications", body=payload, reason=reason,
+        body = dict(payload or {})
+        title = str(body.get("title") or "").strip()
+        text = str(body.get("body") or "").strip()
+        if not title or len(title) > 100:
+            raise StoreApiError(
+                "Bildirim başlığı (`title`) zorunludur ve en fazla 100 karakter olabilir. "
+                "Mağazanın bildirim ucu yalnız toplu push gönderir: `channel`/`to`/"
+                "`template_id` gibi alanları okumaz.",
+                code="payload",
+            )
+        if not text or len(text) > 500:
+            raise StoreApiError(
+                "Bildirim metni (`body`) zorunludur ve en fazla 500 karakter olabilir.",
+                code="payload",
+            )
+        return await self._request("POST", f"{BBD}/notifications/send", body=body, reason=reason,
                                    actor=actor, dry_run=dry_run, action="bbd_send_notification")
 
     async def bbd_notification_rules(self) -> dict[str, Any]:
-        """Olay→şablon kuralları — GET /api/admin/bbd/notifications/rules."""
+        """Olay→şablon kuralları — GET /api/admin/bbd/notifications/rules.
+
+        SALT OKUNUR. Kural "kapalı" demez, NEYİN kapattığını sayar
+        (`blockedBy`). UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._collection(f"{BBD}/notifications/rules")
 
     async def bbd_save_notification_rule(self, *, payload: dict[str, Any],
                                          rule_id: int | None = None, reason: str,
                                          actor: str = "",
                                          dry_run: bool | None = None) -> dict[str, Any]:
-        """Kural ekler/günceller — POST|PUT /api/admin/bbd/notifications/rules[/{id}]."""
+        """Kural ekler/günceller — POST|PUT /api/admin/bbd/notifications/rules[/{id}].
+
+        MAĞAZADA KURAL YAZMA UCU YOK ve mağaza rota dosyası bunu gerekçesiyle
+        yazıyor: kurallar veritabanında değil KODDA yaşıyor (her biri bir
+        `Event::listen` satırı ya da bir zamanlayıcı kaydı). Düzenlenebilir
+        bir kural tablosu aynı gerçeğin ikinci kopyasını üretirdi ve iki kopya
+        ayrıştığında hiçbir belirti olmazdı.
+
+        Bu yüzden yazma çağrısı `bbd_endpoint_missing` alır. Bu uç, göreve
+        adı verilen üç "bilerek yok" ucundan biri DEĞİLDİR; kodu bilerek
+        değiştirilmedi — kararı veren yer mağaza tarafıdır ve bu dosyada tek
+        taraflı `bbd_endpoint_by_design` ilan etmek, panele mağazanın
+        söylemediği bir söz söyletmek olurdu.
+        """
         base = f"{BBD}/notifications/rules"
         if rule_id is None:
             return await self._request("POST", base, body=payload, reason=reason, actor=actor,
@@ -2552,12 +3049,23 @@ class StoreApi:
                                    action="bbd_update_mobile_settings")
 
     async def bbd_review_requests(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Yorum davetleri — GET /api/admin/bbd/review-requests."""
+        """Yorum davetleri — GET /api/admin/bbd/review-requests.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._collection(f"{BBD}/review-requests", filters)
 
     async def bbd_send_review_request(self, order_id: int, *, reason: str, actor: str = "",
                                       dry_run: bool | None = None) -> dict[str, Any]:
-        """Yorum daveti gönderir — POST /api/admin/bbd/review-requests."""
+        """Yorum daveti gönderir — POST /api/admin/bbd/review-requests.
+
+        MÜŞTERİYE E-POSTA GÖNDERİR; sunucuda `dryRun` varsayılanı true.
+        Şablon ve defter gece koşan `bbd:review-requests` komutuyla ORTAKTIR:
+        elle gönderilen davet, zamanlayıcının aynı siparişe ikinci kez
+        yazmasını engeller.
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._request("POST", f"{BBD}/review-requests",
                                    body={"orderId": int(order_id)}, reason=reason, actor=actor,
                                    dry_run=dry_run, action="bbd_send_review_request")
@@ -2578,15 +3086,21 @@ class StoreApi:
     async def bbd_update_return_request(self, request_id: int, *, payload: dict[str, Any],
                                         reason: str, actor: str = "",
                                         dry_run: bool | None = None) -> dict[str, Any]:
-        """Talebi günceller (durum, atama, yanıt) —
-        PUT /api/admin/bbd/return-requests/{id}."""
-        return await self._request("PUT", f"{BBD}/return-requests/{int(request_id)}",
-                                   body=payload, reason=reason, actor=actor, dry_run=dry_run,
-                                   action="bbd_update_return_request")
+        """Talep güncelleme — MAĞAZADA BİLEREK YOK, istek gönderilmez.
+
+        RMA grubu SALT OKUNURDUR (yalnız GET '' ve GET '{id}'); gerekçe
+        mağazanın rota dosyasında yazılıdır.
+        """
+        raise _by_design(
+            "İade/değişim talebi bu geçitten güncellenmez.",
+            "talebi onaylamak zincirin sonunda BANKAYA PARA İADESİ gönderir; para "
+            "hareketi başlatan hiçbir uç Kontrol Merkezi'ne açılmıyor. Onay Bagisto "
+            "yönetim panelinden verilir.",
+        )
 
     async def bbd_audit(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                         per_page: int | None = None) -> dict[str, Any]:
-        """Mağaza denetim kayıtları — GET /api/admin/bbd/audit.
+        """Mağaza denetim kayıtları — GET /api/admin/bbd/audits.
 
         Bagisto `admin_api_audits` tablosunu okur (UDİT ekranı). Salt okunur:
         kayıt silinemez, düzenlenemez — yazma metodu BİLEREK yoktur.
@@ -2595,5 +3109,11 @@ class StoreApi:
 
     async def bbd_audit_entry(self, entry_id: int) -> dict[str, Any]:
         """Denetim kaydı detayı (öncesi/sonrası farkı) —
-        GET /api/admin/bbd/audit/{id}."""
+        GET /api/admin/bbd/audits/{id}.
+
+        Fark MASKELENMİŞ değerler üzerinden üretilir ve 200 satırda görünür
+        biçimde kırpılır (`changesTruncated`).
+
+        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        """
         return await self._item(f"{BBD}/audits/{int(entry_id)}")

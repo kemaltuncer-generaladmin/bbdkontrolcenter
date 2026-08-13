@@ -70,8 +70,13 @@ class StoreApiError(RuntimeError):
       `code`    — makine tarafından ayrıştırılabilir neden. Ekran buna göre
                   farklı metin gösterebilir:
                   config_missing · read_only · reason_required · unauthorized ·
-                  forbidden · not_found · bbd_endpoint_missing · validation ·
-                  rate_limited · transport · server · http · payload
+                  forbidden · not_found · bbd_endpoint_missing ·
+                  bbd_endpoint_by_design · validation · rate_limited ·
+                  transport · server · http · payload
+
+                  `bbd_endpoint_missing` ile `bbd_endpoint_by_design` AYRI
+                  şeylerdir: ilki "uç henüz yayında değil, bekle", ikincisi
+                  "bu iş bilerek panelden yapılmıyor, bekleme" demektir.
       `message` — kullanıcıya gösterilebilir Türkçe metin (maskelenmiş).
     """
 

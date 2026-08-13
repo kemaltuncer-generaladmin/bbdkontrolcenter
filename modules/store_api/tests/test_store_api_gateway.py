@@ -159,11 +159,14 @@ async def test_bbd_ucunda_kuru_prova_bayrakla_gonderilir() -> None:
         return json_response({"ok": True})
 
     api, _, _, _ = gateway(handler, dry_run_default=True)
-    await api.bbd_create_payment_link(order_id=7, amount=12_500,
-                                      reason="Telefonla sipariş, link istendi")
+    await api.bbd_create_payment_link(
+        amount="125.00", billing={"firstName": "Ayşe", "lastName": "Yılmaz"},
+        reason="Telefonla sipariş, link istendi")
 
     assert govdeler[0]["dryRun"] is True
-    assert govdeler[0]["amount"] == 12_500
+    # Tutar ONDALIK METİN gider: sunucu kuruş tam sayısını TL sanıp 422
+    # AMOUNT_DRIFT döndürüyordu (bkz. `bbd_create_payment_link`).
+    assert govdeler[0]["amount"] == "125.00"
     # Gerekçe BBD uçlarında gövdeye de konur; çekirdek uçlarında konmaz.
     assert govdeler[0]["reason"].startswith("Telefonla")
 
