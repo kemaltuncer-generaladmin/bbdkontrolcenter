@@ -1,0 +1,55 @@
+# Durum Monitörü modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: bld_status_monitor
+name: "Durum Monitörü"
+description: "Servis, yoğunluk ve tükenen ürün anahtarlarının izlenmesi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bld_status_monitor
+  router: backend.api.routes:router
+  tags: ["bld_status_monitor"]
+  requires: [bld_status_monitor.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Durum Monitörü"
+    icon: pulse
+    group: "BLD"
+    order: 40
+    requires: [bld_status_monitor.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: bld_status_monitor.view
+    description: "Durum Monitörü ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bld_status_monitor.manage
+    description: "Durum Monitörü kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

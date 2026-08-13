@@ -1,0 +1,64 @@
+# Ders Takvimi modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Haftalık ders/teneffüs saatleri. Veri artık KALICI (modülün kendi tablosunda);
+# tarayıcı belleğindeki eski takvim ilk açılışta bir kez içeri alınır.
+
+id: bbd_class_schedule
+name: "Ders Takvimi"
+description: "Ders ve teneffüs saatlerinin takvimi; zil sisteminin beslendiği kaynak."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+depends: []
+
+# Haftalık plan başka modüllerin işine yarar (zil sistemi ders başı/sonu
+# zillerini buradan kurar). Modül modülü import etmez; yetenek ilan edilir (K3).
+provides:
+  - capability: bbd_class_schedule.week
+    contract: km_sdk.contracts:WeeklyScheduleProvider
+    description: "Grupların haftalık ders saatleri — salt okunur."
+
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_class_schedule
+  router: backend.api.routes:router
+  tags: ["bbd_class_schedule"]
+  requires: [bbd_class_schedule.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Ders Takvimi"
+    icon: calendar
+    group: "BBD"
+    order: 10
+    requires: [bbd_class_schedule.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: bbd_class_schedule.view
+    description: "Ders Takvimi ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_class_schedule.manage
+    description: "Ders Takvimi kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

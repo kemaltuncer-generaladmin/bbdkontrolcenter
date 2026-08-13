@@ -1,0 +1,66 @@
+# SMS Sistemi modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# SERBEST SMS. Bu ekran ödeme linki göndermez — kurumun Netgsm başlığından
+# velilere serbest metin gönderir (duyuru, toplantı, hatırlatma). Ödeme linki
+# Ödeme Talebi modülünün işidir.
+#
+# ALICI DAİMA VELİDİR. Kantinde öğrenci telefonu diye bir alan yoktur; SMS ucu
+# öğrenci verildiğinde serbest telefonu yok sayıp `parent_phone` kullanır.
+
+id: bbd_sms
+name: "SMS Sistemi"
+description: "Velilere serbest metin SMS gönderimi, segment/kredi hesabı ve gönderim geçmişi."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "SMS kantinin Netgsm ucundan gider; alıcı ve borç bilgisi oradan okunur (K4)."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_sms
+  router: backend.api.routes:router
+  tags: ["bbd_sms"]
+  requires: [bbd_sms.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "SMS Sistemi"
+    icon: message
+    group: "BBD"
+    order: 100
+    requires: [bbd_sms.view]
+
+permissions:
+  - key: bbd_sms.view
+    description: "SMS ekranını, gönderim geçmişini ve kuyruğu görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_sms.send
+    description: "Velilere SMS gönderme. Gerçek para harcar ve geri alınamaz."
+    default_roles: [admin, bbd_staff]
+    destructive: true
+  - key: bbd_sms.manage_settings
+    description: "Netgsm kimlik bilgilerini ve hazır mesajları düzenleme."
+    default_roles: [admin]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

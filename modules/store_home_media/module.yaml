@@ -1,0 +1,55 @@
+# Ana Ekran Görselleri modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: store_home_media
+name: "Ana Ekran Görselleri"
+description: "Vitrin banner ve görsellerinin düzenlenmesi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/store_home_media
+  router: backend.api.routes:router
+  tags: ["store_home_media"]
+  requires: [store_home_media.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Ana Ekran Görselleri"
+    icon: image
+    group: "BBD Store"
+    order: 50
+    requires: [store_home_media.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: store_home_media.view
+    description: "Ana Ekran Görselleri ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: store_home_media.manage
+    description: "Ana Ekran Görselleri kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

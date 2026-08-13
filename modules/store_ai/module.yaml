@@ -1,0 +1,55 @@
+# Dahili AI Ekranları modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: store_ai
+name: "Dahili AI Ekranları"
+description: "Mağaza içi yapay zekâ araçlarının yönetimi ve kullanım kayıtları."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/store_ai
+  router: backend.api.routes:router
+  tags: ["store_ai"]
+  requires: [store_ai.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Dahili AI Ekranları"
+    icon: cpu
+    group: "BBD Store"
+    order: 180
+    requires: [store_ai.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: store_ai.view
+    description: "Dahili AI Ekranları ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: store_ai.manage
+    description: "Dahili AI Ekranları kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

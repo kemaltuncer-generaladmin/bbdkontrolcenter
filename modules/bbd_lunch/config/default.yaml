@@ -1,0 +1,15 @@
+# Öğle Yemeği — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_lunch.*` bloğu bunları ezer.
+
+# Kantindeki yemek ürününü sabitlemek için id yazılabilir. Boşsa ad ile aranır.
+product_id: null
+
+# Ürün adı ipucu — büyük/küçük harfe duyarsız, önce tam eşleşme aranır.
+product_name_hint: "Öğle Yemeği"
+
+# Öğrenci başına varsayılan porsiyon.
+default_portion: 1
+
+# Kaydın gün içinde hangi saate düşeceği. Gece yarısına yapışıp raporlarda
+# komşu güne taşmasın diye öğle saati seçildi.
+service_hour: 12

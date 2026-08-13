@@ -1,0 +1,6 @@
+# Toplu Satış — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_bulk_sale.*` bloğu bunları ezer.
+
+# Kaydın gün içinde düşeceği saat. Gece yarısına yapışıp raporlarda komşu güne
+# taşmasın diye öğle saati seçildi.
+sale_hour: 12

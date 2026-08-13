@@ -1,0 +1,69 @@
+# Ödeme Talebi modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Veliye borç bildirimi ve ödeme bağlantısı. Nakit tahsilat da buradadır:
+# ödeme akışının parçasıdır ve borç kapanınca açık talepleri süresi dolmuş yapar.
+#
+# TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu kullanır; açık
+# bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır.
+
+id: bbd_payment_request
+name: "Ödeme Talebi"
+description: "Veliye borç bildirimi, ödeme bağlantısı, nakit tahsilat ve ödeme SMS şablonları."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "Talep, tahsilat ve şablonlar kantinin kendi uçlarından geçer (K4)."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_payment_request
+  router: backend.api.routes:router
+  tags: ["bbd_payment_request"]
+  requires: [bbd_payment_request.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Ödeme Talebi"
+    icon: credit_card
+    group: "BBD"
+    order: 70
+    requires: [bbd_payment_request.view]
+
+permissions:
+  - key: bbd_payment_request.view
+    description: "Ödeme taleplerini ve tahsilat geçmişini görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_payment_request.send
+    description: "Veliye ödeme talebi gönderme. Gerçek SMS gider, geri alınamaz."
+    default_roles: [admin, bbd_staff]
+    destructive: true
+  - key: bbd_payment_request.collect
+    description: "Elden alınan nakit tahsilatı cari deftere işleme."
+    default_roles: [admin, bbd_staff, accountant]
+    destructive: true
+  - key: bbd_payment_request.manage_templates
+    description: "Ödeme SMS şablonlarını düzenleme."
+    default_roles: [admin]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

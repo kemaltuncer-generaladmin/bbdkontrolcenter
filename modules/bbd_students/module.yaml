@@ -1,0 +1,81 @@
+# Öğrenci Yönetimi modülü.
+#
+# KANTİN OTORİTEDİR. Öğrencinin adı, veli telefonu, harcama limiti, engel
+# durumu ve bakiyesi kantindedir; bu modül onları canlı okur ve yalnızca
+# kullanıcının dokunduğu alanı geri yazar (kasa tabletiyle çakışmaz).
+#
+# Kantinde KARŞILIĞI OLMAYAN alanlar (ad/soyad ayrımı, sınıf, okul no,
+# öğrenci telefonu, ikinci veli, not) bu modülün kendi tablosundadır ve
+# kantin `opaque_id` ile eşleşir. Kantin şemasına kolon EKLENMEZ.
+#
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: bbd_students
+name: "Öğrenci Yönetimi"
+description: "Kantin öğrencilerinin canlı yönetimi; sınıf ve iletişim bilgileri, kart QR üretimi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+depends: []
+
+provides:
+  - capability: bbd_students.list
+    contract: km_sdk.contracts:StudentDirectory
+    description: "Öğrenci özet listesi — grup kuran modüller için (ders takvimi)."
+
+consumes:
+  - capability: canteen.api
+    reason: "Öğrenciler kantinde durur; okuma ve yazma tek kapıdan geçer (K4)."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_students
+  router: backend.api.routes:router
+  tags: ["bbd_students"]
+  requires: [bbd_students.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Öğrenci Yönetimi"
+    icon: graduation
+    group: "BBD"
+    order: 40
+    requires: [bbd_students.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık.
+permissions:
+  - key: bbd_students.view
+    description: "Öğrenci listesini ve bilgilerini görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_students.manage
+    description: "Öğrenci ekleme ve bilgilerini düzenleme (kantine yazar)."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_students.qr
+    description: "Öğrencinin kantin kart QR'ını ve toplu kart PDF'ini üretme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+# Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
+dependencies:
+  python:
+    - "segno>=1.6"        # kart QR matrisi (saf Python, ikili bağımlılık yok)
+    - "reportlab>=4.2"    # A4 kart sayfası
+  system:
+    # PDF'te Türkçe karakterler için gömülü TTF gerekir; dağıtımdan gelir.
+    - "fonts-dejavu-core"
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

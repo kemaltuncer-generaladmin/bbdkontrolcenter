@@ -1,0 +1,63 @@
+# Toplu Satış modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Kasada sorun yaşandığında ya da toplu ikram/etkinlik girildiğinde, idarecinin
+# öğrenci öğrenci profile girmeden ürünleri toplu işleyebilmesi için. Yazma
+# kantinin kendi satış ucundan geçer; kayıt kasada girilmiş gibi oluşur.
+
+id: bbd_bulk_sale
+name: "Toplu Satış Ekranı"
+description: "Birden çok öğrenciye tek işlemde ürün satışı girme ve geri alma."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "Satış, ürün ve öğrenci verisi kantinin kendi uçlarından geçer (K4)."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_bulk_sale
+  router: backend.api.routes:router
+  tags: ["bbd_bulk_sale"]
+  requires: [bbd_bulk_sale.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Toplu Satış"
+    icon: cart
+    group: "BBD"
+    order: 60
+    requires: [bbd_bulk_sale.view]
+
+permissions:
+  - key: bbd_bulk_sale.view
+    description: "Toplu satış ekranını ve geçmiş partileri görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_bulk_sale.manage
+    description: "Toplu satış işleme ve sepet şablonlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_bulk_sale.reverse
+    description: "İşlenmiş satışı geri alma (kantinde ters kayıt oluşturur)."
+    default_roles: [admin, bbd_staff]
+    destructive: true
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

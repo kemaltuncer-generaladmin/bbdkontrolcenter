@@ -1,0 +1,111 @@
+# Antivirüs modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Gerekçe: ADR 0009
+#
+# ClamAV motoruna erişim bu modüle aittir. Şu an tek tüketicisi olduğu için
+# platform yeteneği yapılmadı; ikinci bir tüketici çıkarsa (yükleme taraması,
+# yedek taraması) motor istemcisi km_platform/antivirus altına yükseltilir ve
+# modülde yalnızca arayüz + geçmiş kalır (ADR 0009).
+
+id: antivirus
+name: "Antivirüs"
+description: "ClamAV ile sistem taraması, karantina yönetimi, imza güncelliği takibi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+
+provides:
+  - capability: antivirus.scan
+    contract: km_sdk.contracts:ScanProvider
+    description: "Yol veya dosya taraması başlatma ve sonuç sorgulama."
+
+consumes:
+  - capability: scheduler
+    reason: "Zamanlanmış tam sistem taraması ve imza güncelliği kontrolü."
+  - capability: notify
+    optional: true
+    reason: "Bulaşma tespitinde SMS/e-posta uyarısı (netgsm)."
+  - capability: ssh
+    optional: true
+    reason: "Uzak sunucularda tarama çalıştırmak için."
+  - capability: secrets
+    optional: true
+    reason: "Uzak tarama için sunucu kimlik bilgisi."
+
+events:
+  publishes:
+    - name: antivirus.scan_started
+    - name: antivirus.scan_completed
+    - name: antivirus.threat_found
+      description: "Bulaşma tespit edildiğinde. Bildirim bu olaya bağlanır."
+    - name: antivirus.signatures_stale
+      description: "İmzalar eşik süreden eskiyse."
+  subscribes: []
+
+http:
+  prefix: /api/antivirus
+  router: backend.api.routes:router
+  tags: ["antivirus"]
+  requires: [antivirus.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Antivirüs"
+    icon: shield
+    group: "Kurumsal"
+    order: 50
+    requires: [antivirus.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+permissions:
+  - key: antivirus.view
+    description: "Tarama geçmişini, karantinayı ve imza durumunu görüntüleme."
+    default_roles: [admin, bld_staff, bbd_staff]
+  - key: antivirus.scan
+    description: "Tarama başlatma ve durdurma."
+    default_roles: [admin, bld_staff, bbd_staff]
+  - key: antivirus.manage
+    description: "Tarama takvimi, hariç tutulan yollar, imza güncelleme."
+    default_roles: [admin]
+  - key: antivirus.quarantine
+    description: "Bulaşmış dosyayı karantinaya alma ve geri yükleme."
+    default_roles: [admin]
+    destructive: true
+  - key: antivirus.delete_threat
+    description: "Karantinadaki dosyayı kalıcı silme."
+    default_roles: [admin]
+    destructive: true
+
+# Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
+# Modül kendi bağımlılığını getirir; çekirdeğin listesine dokunulmaz (K6).
+dependencies:
+  system:
+    - clamav              # clamscan — daemon'suz tarama (yedek yol)
+    - clamav-daemon       # clamd + clamdscan — birincil yol
+    - clamav-freshclam    # imza güncelleme servisi
+  python: []
+  capabilities_note: >
+    Tarama birincil olarak clamdscan (daemon) ile yapılır; daemon yoksa
+    clamscan yedeğe geçer. PyPI'daki clamd ve pyclamd paketleri bakımsızdır
+    (2014 / 2017) ve kullanılmaz. Bellek içi tampon taraması gerekirse
+    clamav-client (GPL-2.0, güncel) değerlendirilir — bkz. ADR 0009.
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks:
+  - name: scheduled_scan
+    handler: backend.tasks.scan:run_scheduled
+    schedule: "0 3 * * *"        # her gece 03:00 — ayardan değiştirilebilir
+  - name: signature_freshness
+    handler: backend.tasks.signatures:check
+    schedule: "0 * * * *"        # saatlik imza yaşı kontrolü

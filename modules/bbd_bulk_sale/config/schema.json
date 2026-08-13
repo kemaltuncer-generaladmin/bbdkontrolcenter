@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_bulk_sale ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "sale_hour": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23,
+      "description": "Kaydın gün içinde düşeceği saat."
+    }
+  }
+}

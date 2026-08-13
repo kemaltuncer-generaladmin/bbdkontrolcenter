@@ -1,0 +1,5 @@
+# Kantin geçidi varsayılanları.
+# base_url ve device_name makineye özeldir → config/local.yaml (K8).
+base_url: ""
+device_name: "Kontrol Merkezi"
+timeout_seconds: 20

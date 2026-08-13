@@ -1,0 +1,5 @@
+# Ders Takvimi — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_class_schedule.*` bloğu bunları ezer.
+
+# Yeni blok eklenirken varsayılan ders süresi (dakika).
+default_duration_minutes: 40

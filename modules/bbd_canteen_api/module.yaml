@@ -1,0 +1,51 @@
+# Kantin geçidi — kasa API'sine açılan TEK kapı.
+#
+# NEDEN AYRI MODÜL: kantin verisine birden fazla modül bakacak (öğrenci
+# yönetimi, kantin ürünleri, kantin raporları, ödeme talebi, toplu satış).
+# Her biri kendi HTTP istemcisini yazsaydı cihaz token'ı, yeniden deneme ve
+# hata biçimi beş yerde tekrarlanırdı. Geçit bunları tek yerde tutar ve
+# `canteen.api` yeteneği olarak sunar (K3).
+#
+# NEDEN PLATFORM DEĞİL: kantin bir iş sistemidir, altyapı değil. Silinebilir
+# olmalı; `km_platform` silinemez olanların yeridir (ADR 0006).
+#
+# EKRANI YOKTUR: `ui` bloğu yok, menüde görünmez. Diğer modüllere hizmet eder.
+
+id: bbd_canteen_api
+name: "Kantin Geçidi"
+description: "BBD kantin kasa API'sine tek kapı: cihaz kaydı, öğrenci okuma/yazma, QR anahtarı."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+depends: []
+
+provides:
+  - capability: canteen.api
+    contract: km_sdk.contracts:CanteenApi
+    description: "Kantin kasa API'si: öğrenciler, ayarlar, QR anahtarı."
+
+consumes:
+  - capability: secrets
+    reason: "Cihaz kayıt sırrı ve alınan cihaz token'ı kasada durur (K8)."
+
+events:
+  publishes:
+    - name: canteen.device_enrolled
+      description: "Kontrol Merkezi kantine ikinci cihaz olarak kaydolduğunda."
+  subscribes: []
+
+# HTTP yüzeyi YOK: bu modül dışarıya uç nokta açmaz, yalnızca yetenek verir.
+
+permissions: []
+
+config:
+  defaults: config/default.yaml
+
+dependencies:
+  python:
+    - "httpx>=0.28"
+
+tasks: []

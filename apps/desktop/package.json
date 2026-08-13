@@ -1,0 +1,14 @@
+{
+  "name": "kontrol-merkezi-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kontrol Merkezi — Tauri 2 masaüstü kabuğu (ADR 0002)",
+  "scripts": {
+    "registry": "python3 ../../tools/build-ui-registry.py",
+    "dev": "npm run registry && tauri dev",
+    "build": "npm run registry && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

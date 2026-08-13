@@ -1,0 +1,94 @@
+# Kontrol Merkezi — varsayılan ayarlar
+#
+# Öncelik: default.yaml → environments/<env>.yaml → local.yaml → ortam değişkeni
+# SIR YAZILMAZ (K8). Parola, anahtar ve token local.yaml veya kasadan gelir.
+
+app:
+  name: "Kontrol Merkezi"
+  locale: tr
+  timezone: Europe/Istanbul
+
+server:
+  host: 127.0.0.1        # masaüstü kabuğunun sidecar'ı — dışarı açılmaz
+  port: 8787
+
+auth:
+  # ADR 0007 — PIN ile giriş
+  pin_min_length: 6
+  max_failed_attempts: 5
+  lockout_minutes: 15
+  session_idle_minutes: 30
+  require_pin_for_destructive: true
+
+platform:
+
+  printer:
+    backend: cups
+    # HEDEF KUYRUK OTOMATİK BULUNUR — ad sabitlemek kırılgandır.
+    #
+    # Bu makinede aynı fiziksel yazıcının iki kuyruğu var:
+    #   HP_LaserJet_MFP_M139-M142         hp:/usb/…            (HPLIP, klasik)
+    #   HP_LaserJet_MFP_M141w_BE4507_USB  implicitclass://…    (sürücüsüz)
+    # `ipp-usb` servisi USB aygıtını tekeline aldığı için KLASİK kuyruk cihaza
+    # ulaşamıyor; iş "tamamlandı" görünüp kâğıt çıkmıyordu. Seçim bu yüzden
+    # ada değil, ipp-usb'nin ayakta olup olmadığına bakar.
+    #
+    # Buraya bir kuyruk adı yazılırsa BAĞLAYICI olur ve otomatik seçim
+    # devreden çıkar; tuzak kuyruk yazılırsa yine reddedilir.
+    default_printer: ""
+    # Adında bu geçen kuyruklar yeğlenir; termal fiş yazıcısını eler.
+    usb_match: "laserjet"
+    # Raporlar A4 üretiliyor ve boyut baskı isteğinde `media` + `PageSize`
+    # olarak AÇIKÇA bildiriliyor. Kullanıcının ~/.cups/lpoptions dosyasındaki
+    # varsayılana güvenilmez: bu makinede orada A6 yazıyordu.
+    media: "A4"
+    job_timeout_seconds: 120
+    keep_job_history_days: 30
+
+  audio:
+    # pipewire + wireplumber sistemde çalışıyor. Birincil yol paplay;
+    # ses sunucusu düşerse aplay (ALSA) yedeğe geçer.
+    backend: pipewire
+    player: paplay
+    fallback_player: aplay
+    device: default
+    volume: 90
+    sounds_path: data/sounds
+
+  notify:
+    sms:
+      provider: netgsm       # resmi SDK: netgsm-sms · ADR 0010
+      enabled: false         # kimlik bilgisi girilmeden açılmaz
+      dry_run: true          # GERÇEK SMS GÖNDERMEZ. Üretimde false yapılır.
+      header: ""             # Netgsm'de tanımlı gönderici başlığı (msgheader)
+      appname: "KontrolMerkezi"
+      # username / password KASADAN gelir — buraya yazılmaz (K8)
+      iys_filter: "0"        # 0 = bilgilendirme. Ticari içerik için 11/12 gerekir
+      timeout_seconds: 30
+      # Sağlayıcı sınırları: aynı numaraya dakikada 20 görev (kod 85),
+      # rapor sorgusu dakikada 10 (kod 80).
+      rate_limit_per_minute: 20
+      report_rate_limit_per_minute: 10
+    email:
+      enabled: false
+    webhook:
+      enabled: false
+
+  ssh:
+    connect_timeout_seconds: 15
+    command_timeout_seconds: 120
+    known_hosts_strict: true    # bilinmeyen sunucu anahtarı reddedilir
+    max_pool_per_server: 4
+
+  database:
+    query_timeout_seconds: 60
+    read_only_by_default: true  # yazma yalnızca database.write izniyle
+    backup_path: data/backups
+    connections: []             # sunucu ve kimlik eşlemesi local.yaml / kasada
+
+modules:
+  # Modül ayarları modülün kendi config/default.yaml dosyasındadır.
+  # Buradaki bloklar onları ezer.
+  bell: {}
+  print: {}
+  antivirus: {}

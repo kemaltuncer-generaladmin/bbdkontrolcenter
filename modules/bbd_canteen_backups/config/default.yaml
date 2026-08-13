@@ -1,0 +1,12 @@
+# Kantin Yedekleri — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_canteen_backups.*` bloğu bunları ezer.
+
+# İndirilen yedeklerin saklanacağı klasör. Boşsa depo kökündeki data/backups
+# kullanılır (git dışı).
+local_path: ""
+
+# Yerelde tutulacak en çok kopya. Aşılınca en eskisi silinir.
+keep_local: 10
+
+# Son yedek bu süreden eskiyse ekran uyarır (dakika).
+stale_after_minutes: 60

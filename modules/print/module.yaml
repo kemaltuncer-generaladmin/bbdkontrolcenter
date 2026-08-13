@@ -1,0 +1,76 @@
+# Baskı yönetimi modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json
+#
+# NOT: Yazıcı donanımına erişim bu modüle ait DEĞİLDİR — km_platform/printer
+# yeteneğidir (ADR 0006, tek kapı kuralı). Bu modül kuyruk, iş geçmişi,
+# yetkilendirme ve arayüzü yönetir.
+
+id: print
+name: "Baskı Yönetimi"
+description: "Yazıcı keşfi, kuyruk yönetimi, baskı işleri ve iş geçmişi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+
+provides:
+  - capability: print.jobs
+    contract: km_sdk.contracts:PrintJobProvider
+    description: "Baskı işi gönderme ve durum sorgulama yüzeyi."
+
+consumes:
+  - capability: printer
+    reason: "CUPS üzerinden yazıcı keşfi, kuyruk ve iş gönderimi."
+  - capability: ssh
+    optional: true
+    reason: "Uzak makinedeki yazıcı kuyruğunu yönetmek için."
+  - capability: notify
+    optional: true
+    reason: "Baskı hatası bildirimi."
+
+events:
+  publishes:
+    - name: print.job_submitted
+    - name: print.job_completed
+    - name: print.job_failed
+  subscribes: []
+
+http:
+  prefix: /api/print
+  router: backend.api.routes:router
+  tags: ["print"]
+  requires: [print.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Çıktı Merkezi"
+    icon: printer
+    group: "Kurumsal"
+    order: 40
+    requires: [print.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+permissions:
+  - key: print.view
+    description: "Yazıcıları ve kuyruğu görüntüleme."
+    default_roles: [admin, org_staff, bld_staff, bbd_staff]
+  - key: print.submit
+    description: "Baskı işi gönderme."
+    default_roles: [admin, org_staff, bld_staff, bbd_staff]
+  - key: print.manage
+    description: "Kuyruk yönetimi, iş iptali, yazıcı ayarları."
+    default_roles: [admin, org_staff]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

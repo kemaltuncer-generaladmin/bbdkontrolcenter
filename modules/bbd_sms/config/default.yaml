@@ -1,0 +1,8 @@
+# SMS Sistemi — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_sms.*` bloğu bunları ezer.
+
+# Tek gönderimde izin verilen en çok alıcı. Kazayla tüm okula SMS atmayı zorlaştırır.
+max_recipients: 500
+
+# Bir gönderimin toplam segment (kredi) sınırı; aşılırsa ekran uyarır.
+credit_warning_threshold: 300

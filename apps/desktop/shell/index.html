@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kontrol Merkezi</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Giriş. Kullanıcı adı sorulmaz: PIN kimliği belirler
+       (docs/identity-model.md — Giriş akışı). Klavyeyle kullanılır. -->
+  <section class="login" id="login" hidden>
+    <div class="aurora" aria-hidden="true"></div>
+
+    <div class="login-card">
+      <svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+        <circle class="mark-ring" cx="24" cy="24" r="19" />
+        <circle class="mark-arc" cx="24" cy="24" r="19" />
+        <circle class="mark-core" cx="24" cy="24" r="5.5" />
+      </svg>
+      <h1>Kontrol Merkezi</h1>
+      <p class="org">Benim Dünyam Şirketler Grubu</p>
+
+      <div class="slots" id="slots" role="img" aria-label="Girilen hane sayısı: 0"></div>
+      <p class="error" id="error" role="alert" aria-live="assertive"></p>
+      <p class="login-hint" id="login-hint">PIN'inizi yazın, <kbd>Enter</kbd> ile girin</p>
+    </div>
+  </section>
+
+  <!-- Çalışma alanı: solda menü, sağda modül paneli. -->
+  <div class="workspace" id="workspace" hidden>
+
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <svg class="mark mark-sm" viewBox="0 0 48 48" aria-hidden="true">
+          <circle class="mark-ring" cx="24" cy="24" r="19" />
+          <circle class="mark-arc" cx="24" cy="24" r="19" />
+          <circle class="mark-core" cx="24" cy="24" r="5.5" />
+        </svg>
+        <span>Kontrol Merkezi</span>
+      </div>
+
+      <div class="sidebar-search">
+        <label class="visually-hidden" for="filter">Ekran ara</label>
+        <input id="filter" type="search" placeholder="Ara" autocomplete="off" spellcheck="false">
+      </div>
+
+      <nav class="nav" id="nav" aria-label="Ekranlar"></nav>
+
+      <div class="sidebar-foot">
+        <kbd>↑</kbd><kbd>↓</kbd> gez · <kbd>/</kbd> ara
+      </div>
+    </aside>
+
+    <main class="panel">
+      <header class="panel-head">
+        <span class="crumb" id="crumb"></span>
+        <h2 class="panel-title" id="panel-title"></h2>
+      </header>
+      <!-- Panel gövdesi bilinçli olarak boş: modüller aşama aşama gelecek. -->
+      <div class="panel-body" id="panel-body"></div>
+    </main>
+
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Ruff yapılandırması depo kökünde durur: linter tüm ağaç üzerinde kökten
+# çalıştırılır (backend, modules, tests). backend/pyproject.toml içinde
+# yalnızca paketin kendi mypy ayarı kalır — tek kaynak ilkesi.
+
+line-length = 100
+src = ["backend/src"]
+
+[lint.per-file-ignores]
+# Netgsm tarih alanları saat dilimi taşımaz ve yerel saat bekler; testlerde
+# saat dilimsiz datetime bilinçlidir. Çevrim davranışı ayrıca test edilir
+# (test_saat_dilimli_tarih_turkiye_saatine_cevrilir).
+"tests/**" = ["DTZ001"]
+
+[lint.flake8-bugbear]
+# FastAPI'de bağımlılık, argüman varsayılanında çağrılarak bildirilir; B008'in
+# uyardığı "her çağrıda yeniden değerlendirilen varsayılan" sorunu burada yok.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Header",
+    "km_sdk.requires",
+    "km_core.http.deps.requires",
+]

@@ -1,0 +1,90 @@
+# Siparişler modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# NEDEN YENİ BİR EKRAN. Diğer 19 ekran yan menüde zaten kodlanmıştı; sipariş
+# yoktu. Kargo, Fatura, İade ve Sanal POS siparişin ÇEVRESİNİ yönetiyor ama
+# siparişin kendisini yöneten bir yer yoktu — "bugün hangi siparişler geldi"
+# sorusunun tek bir cevabı olmuyordu. Menüde Kontrol Paneli'nin hemen ardına
+# girer (order 15); mevcut ekranların sırası değişmez.
+
+id: store_orders
+name: "Siparişler"
+description: "Sipariş listesi, durum akışı, fatura ve kargo eylemleri."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `store_api` mağazanın admin API'sine tek kapıdır (K4).
+depends: [store_api]
+
+provides:
+  - capability: store.order.card
+    contract: km_sdk.contracts:StoreOrderCard
+    description: "Bir siparişin özet künyesi — Müşteriler ve Talepler ekranları okur."
+
+consumes:
+  - capability: store.api
+    reason: "Sipariş verisi mağazanın admin API'sinden gelir (K4)."
+  - capability: store.shipment.byOrder
+    optional: true
+    reason: "Sipariş detayındaki kargo sekmesi; Kargo ekranı kapalıysa sekme gizlenir."
+  - capability: store.invoice.byOrder
+    optional: true
+    reason: "Sipariş detayındaki fatura sekmesi."
+  - capability: store.audit.for
+    optional: true
+    reason: "Sipariş detayındaki işlem geçmişi sekmesi."
+  - capability: printer
+    optional: true
+    reason: "Sipariş fişi ve irsaliye baskısı (K4). Yazıcı yoksa ekran çalışır."
+
+events:
+  publishes:
+    - name: store.order.status_changed
+      payload: "{orderId, from, to, reason}"
+      description: "Sipariş durumu bu ekrandan değiştirildi."
+  subscribes: []
+
+http:
+  prefix: /api/store_orders
+  router: backend.api.routes:router
+  tags: ["store_orders"]
+  requires: [store_orders.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Siparişler"
+    icon: cart
+    group: "BBD Store"
+    # 10 = Kontrol Paneli, 20 = Ürünler. Araya girer; mevcut ekranların
+    # numaraları DEĞİŞMEZ — yan menü düzeni korunur.
+    order: 15
+    requires: [store_orders.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# Yıkıcı işlemler PIN değil GEREKÇE ister (ADR 0012); bu yüzden hiçbir izin
+# `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak.
+permissions:
+  - key: store_orders.view
+    description: "Sipariş listesini ve detayını görüntüleme."
+    default_roles: [admin, bbd_staff, accountant]
+  - key: store_orders.manage
+    description: "Sipariş durumu değiştirme, not ekleme, fatura ve gönderi tetikleme."
+    default_roles: [admin, bbd_staff]
+  - key: store_orders.cancel
+    description: "Sipariş iptali. Geri alınamaz; gerekçe zorunludur."
+    default_roles: [admin, bbd_staff]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

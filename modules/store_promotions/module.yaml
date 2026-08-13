@@ -1,0 +1,55 @@
+# Promosyonlar modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: store_promotions
+name: "Promosyonlar"
+description: "İndirim kuralları, kupon ve kampanya yönetimi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/store_promotions
+  router: backend.api.routes:router
+  tags: ["store_promotions"]
+  requires: [store_promotions.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Promosyonlar"
+    icon: tag
+    group: "BBD Store"
+    order: 40
+    requires: [store_promotions.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: store_promotions.view
+    description: "Promosyonlar ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: store_promotions.manage
+    description: "Promosyonlar kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

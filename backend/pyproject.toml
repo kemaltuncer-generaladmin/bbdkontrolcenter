@@ -1,0 +1,121 @@
+[project]
+name = "kontrol-merkezi"
+version = "0.1.0"
+description = "Kurum kontrol merkezi — çekirdek ve platform yetenekleri"
+requires-python = ">=3.12"
+
+# Çekirdek (km_core) bağımlılıkları. Yetenek bağımlılıkları extras altındadır;
+# her yetenek yalnızca kendi paketlerini getirir (bkz. ADR 0008).
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",              # manifest ve ayar okuma
+    "jsonschema>=4.23",         # module.yaml doğrulaması
+    "argon2-cffi>=23.1",        # PIN hash'leme (ADR 0007)
+    "structlog>=24.4",          # yapısal log
+]
+
+[project.optional-dependencies]
+
+# --- km_platform/ssh ---
+ssh = [
+    "asyncssh>=2.18",
+]
+
+# --- km_core/store + km_platform/database ---
+# store: çekirdek metadata (SQLite). database: yönetilen BBD/BLD (MySQL/MariaDB).
+database = [
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.14",
+    "aiosqlite>=0.20",          # çekirdek store
+    "aiomysql>=0.2",            # BBD (Bagisto) ve BLD (Laravel) — MySQL/MariaDB
+]
+database-postgres = [
+    "asyncpg>=0.30",            # yalnızca PostgreSQL gerekirse
+]
+
+# --- km_platform/printer ---
+# pycups derleme ister: libcups2-dev + build-essential (system-packages.yaml).
+printer = [
+    "pycups>=2.0",
+]
+
+# --- km_core/files/reports ---
+# PDF/CSV üreteci çekirdektedir: modül modülü import edemez (K3) ve rapor üreten
+# her modüle 250 satır kopyalamak bakımı imkânsız kılardı. Türkçe karakterler
+# için DejaVu fontu apt'tan gelir (fonts-dejavu-core, system-packages.yaml);
+# PDF önizlemesi poppler-utils'in `pdftoppm` komutunu kullanır.
+# reportlab kurulu değilse çekirdek yine ayağa kalkar, yalnız PDF üreten uç
+# anlaşılır hata döner (K7) — bu yüzden zorunlu değil, extra.
+reporting = [
+    "reportlab>=4.2",
+]
+
+# --- km_platform/audio ---
+# Çalma pipewire üzerinden paplay ile yapılır (system-packages.yaml).
+# Python tarafı yalnızca ses dosyası çözümleme/süre okuma için.
+audio = [
+    "soundfile>=0.12",
+]
+
+# --- km_platform/notify ---
+# netgsm-sms = Netgsm'in RESMİ SDK'sı (MIT). Üçüncü taraf "netgsm" paketi
+# 2023'ten beri bakımsız, kullanılmaz. Senkron çalışır (requests tabanlı);
+# notify yeteneği içinde iş parçacığı havuzunda sarmalanır.
+#
+# DİKKAT: paket adı netgsm-sms, ama import adı `netgsm`. Bakımsız olan
+# üçüncü taraf paketle aynı import adını kullanıyor; ikisi aynı ortamda
+# bulunamaz. `import netgsm` doğru olandır (sürüm 1.1.2, doğrulandı).
+notify = [
+    "netgsm-sms>=1.1.2",
+    "httpx>=0.28",              # webhook bildirimleri
+]
+
+# --- geliştirme ---
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "import-linter>=2.1",       # K1–K3 bağımlılık yönü denetimi
+]
+
+# Tüm çalışma zamanı yetenekleri
+all = [
+    "kontrol-merkezi[ssh,database,printer,audio,notify]",
+]
+
+# Ruff yapılandırması depo kökündeki ruff.toml dosyasındadır.
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+# reportlab tip bilgisi (py.typed) taşımıyor ve resmi stub'ı yok. Zaten
+# isteğe bağlı bir bağımlılık: `km_core/files/reports.py` onu fonksiyon
+# içinde import eder ve yokluğunda anlaşılır hata döner (K7). Katı kip
+# yalnız bu dış paket için gevşetilir; kendi kodumuz `Any` sınırında durur.
+[[tool.mypy.overrides]]
+module = ["reportlab.*"]
+ignore_missing_imports = true
+
+# pytest yapılandırması depo kökündeki pytest.ini dosyasındadır — testler
+# kökten çalıştırılır ve modules/*/tests da kapsama girer.
+
+# K1–K3: bağımlılık yönü kapıyla korunur, yorumla değil (ADR 0004).
+# Sözleşmeler yazıldığında bu kontratlar etkinleşir.
+[tool.importlinter]
+root_packages = ["km_core", "km_platform", "km_sdk"]
+
+[[tool.importlinter.contracts]]
+name = "K1 — çekirdek modülleri bilmez"
+type = "forbidden"
+source_modules = ["km_core", "km_platform"]
+forbidden_modules = ["modules"]
+
+[[tool.importlinter.contracts]]
+name = "K2 — modüller yalnızca km_sdk görür"
+type = "layers"
+layers = ["modules", "km_sdk", "km_platform", "km_core"]

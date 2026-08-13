@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_sms ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "max_recipients": {
+      "type": "integer", "minimum": 1, "maximum": 5000,
+      "description": "Tek gönderimde izin verilen en çok alıcı."
+    },
+    "credit_warning_threshold": {
+      "type": "integer", "minimum": 1, "maximum": 100000,
+      "description": "Toplam segment bu değeri aşarsa ekran uyarır."
+    }
+  }
+}

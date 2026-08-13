@@ -1,0 +1,83 @@
+# Zil sistemi modülü
+# Şema: docs/schemas/module.schema.json
+#
+# ZİL GERÇEKTEN ÇALAR: ses `audio`, tetikleme `scheduler` platform
+# yeteneğinden gelir; ders saatleri Ders Takvimi modülünden okunur (K3).
+
+id: bell
+name: "Zil Sistemi"
+description: "Kurum zilinin zamanlanması, çalınması ve takvim/istisna yönetimi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Ders saatlerinin sahibi bizden önce yüklenmeli.
+depends: [bbd_class_schedule]
+
+provides:
+  - capability: bell.schedule
+    contract: km_sdk.contracts:BellScheduleProvider
+    description: "Zil takvimini okuma ve düzenleme yüzeyi."
+
+consumes:
+  # Ders saatleri Ders Takvimi modülünündür; zil onları kopyalamaz, okur (K3/K5).
+  # optional: modül silinse bile zil ayakta kalır, ekran boş durumla açılır (K7).
+  - capability: bbd_class_schedule.week
+    optional: true
+    reason: "Ders başı ve ders sonu zilleri haftalık ders saatlerinden kurulur."
+  - capability: audio
+    reason: "Zil sesini yerel ses aygıtından çalmak için."
+  - capability: scheduler
+    reason: "Ders/mesai saatlerine göre tetikleme."
+  - capability: ssh
+    optional: true
+    reason: "Zil uzak bir makinede çalınacaksa komut göndermek için."
+  - capability: notify
+    optional: true
+    reason: "Çalma başarısız olduğunda uyarı."
+
+events:
+  publishes:
+    - name: bell.rang
+      description: "Bir zil başarıyla çalındığında yayınlanır."
+    - name: bell.failed
+      description: "Zil çalınamadığında yayınlanır."
+  subscribes: []
+
+http:
+  prefix: /api/bell
+  router: backend.api.routes:router
+  tags: ["bell"]
+  requires: [bell.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Zil Sistemi"
+    icon: bell
+    group: "BBD"
+    order: 20
+    requires: [bell.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+permissions:
+  - key: bell.view
+    description: "Zil takvimini görüntüleme."
+    default_roles: [admin, org_staff]
+  - key: bell.manage
+    description: "Zil takvimini ve seslerini düzenleme."
+    default_roles: [admin, org_staff]
+  - key: bell.ring_now
+    description: "Elle zil çalma."
+    default_roles: [admin, org_staff]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

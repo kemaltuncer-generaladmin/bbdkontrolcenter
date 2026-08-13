@@ -1,0 +1,55 @@
+# Kontrol Paneli modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: bld_dashboard
+name: "Kontrol Paneli"
+description: "BLD işletmesinin canlı özeti: sipariş, ciro ve servis durumu."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bld_dashboard
+  router: backend.api.routes:router
+  tags: ["bld_dashboard"]
+  requires: [bld_dashboard.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Kontrol Paneli"
+    icon: gauge
+    group: "BLD"
+    order: 10
+    requires: [bld_dashboard.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: bld_dashboard.view
+    description: "Kontrol Paneli ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bld_dashboard.manage
+    description: "Kontrol Paneli kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

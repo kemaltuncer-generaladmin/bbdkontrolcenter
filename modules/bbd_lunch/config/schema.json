@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_lunch ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "product_id": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Kantindeki yemek ürününün id'si. Boşsa ad ile aranır."
+    },
+    "product_name_hint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "Ürün adı ipucu; büyük/küçük harfe duyarsız aranır."
+    },
+    "default_portion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Öğrenci başına varsayılan porsiyon."
+    },
+    "service_hour": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 23,
+      "description": "Kaydın gün içinde düşeceği saat."
+    }
+  }
+}

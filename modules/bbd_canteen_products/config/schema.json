@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_canteen_products ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "audit_page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 1000,
+      "description": "Değişiklik günlüğünde tek seferde gösterilecek satır sayısı."
+    }
+  }
+}

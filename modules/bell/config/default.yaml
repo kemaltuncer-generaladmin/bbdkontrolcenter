@@ -1,0 +1,6 @@
+# Zil Sistemi — varsayılan ayarlar.
+# Kök ayardaki `modules.bell.*` bloğu bunları ezer.
+
+# Ses dosyaları `platform.audio.sounds_path` altında durur (varsayılan data/sounds).
+default_sound: "classic_electric"
+default_volume: 85

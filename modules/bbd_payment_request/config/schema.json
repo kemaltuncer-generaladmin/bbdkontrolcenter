@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_payment_request ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "resend_cooldown_minutes": {
+      "type": "integer", "minimum": 0, "maximum": 10080,
+      "description": "Aynı öğrenciye tekrar talep için beklenmesi önerilen süre (dakika)."
+    },
+    "max_recipients": {
+      "type": "integer", "minimum": 1, "maximum": 5000,
+      "description": "Tek gönderimde izin verilen en çok alıcı."
+    }
+  }
+}

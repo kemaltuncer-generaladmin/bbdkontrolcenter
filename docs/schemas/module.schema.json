@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kontrol-merkezi/schemas/module.schema.json",
+  "title": "Kontrol Merkezi modül manifesti",
+  "description": "modules/<id>/module.yaml dosyasının sözleşmesi. Çekirdek her modülü yüklemeden önce bu şemaya göre doğrular; geçersiz manifest yalnızca o modülü devre dışı bırakır, uygulamayı düşürmez.",
+  "type": "object",
+  "required": ["id", "name", "version", "sdk", "entrypoint"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Benzersiz modül kimliği. Klasör adıyla birebir aynı olmak zorundadır."
+    },
+    "name": {
+      "type": "string",
+      "description": "Arayüzde görünen ad."
+    },
+    "description": {
+      "type": "string",
+      "description": "Modülün ne yaptığını bir cümlede anlatır."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$",
+      "description": "Modülün semantik sürümü."
+    },
+    "sdk": {
+      "type": "string",
+      "description": "Uyumlu km_sdk sürüm aralığı, ör. '>=0.1,<1.0'. Aralık dışıysa modül yüklenmez."
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "false ise modül hiç yüklenmez."
+    },
+    "entrypoint": {
+      "type": "string",
+      "description": "register(ctx) fonksiyonunun yolu, modül köküne göre. Ör: 'backend.module:register'."
+    },
+    "depends": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+      "default": [],
+      "description": "Bu modülden ÖNCE yüklenmesi gereken modül kimlikleri. Yükleme sırasını belirler. Döngü tespit edilirse yükleme reddedilir."
+    },
+    "provides": {
+      "type": "array",
+      "default": [],
+      "description": "Bu modülün registry'ye yazdığı ve başka modüllerin tüketebileceği yetenekler.",
+      "items": {
+        "type": "object",
+        "required": ["capability", "contract"],
+        "additionalProperties": false,
+        "properties": {
+          "capability": { "type": "string", "description": "Registry anahtarı, ör. 'bell.schedule'." },
+          "contract": { "type": "string", "description": "Uygulanan sözleşme (Protocol) yolu, ör. 'km_sdk.contracts:ScheduleProvider'." },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "consumes": {
+      "type": "array",
+      "default": [],
+      "description": "İhtiyaç duyulan yetenekler. Platform yetenekleri (ssh, database, printer, audio, scheduler, secrets, notify) ve başka modüllerin sağladıkları burada ilan edilir. Zorunlu bir yetenek bulunamazsa modül devre dışı bırakılır ve nedeni raporlanır.",
+      "items": {
+        "type": "object",
+        "required": ["capability"],
+        "additionalProperties": false,
+        "properties": {
+          "capability": { "type": "string" },
+          "optional": { "type": "boolean", "default": false, "description": "true ise yetenek yoksa modül yine yüklenir, özellik kısıtlı çalışır." },
+          "reason": { "type": "string", "description": "Neden gerekli olduğu — denetim için." }
+        }
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Olay veri yolu sözleşmesi. Modüller arası gevşek bağın ilan edildiği yer.",
+      "properties": {
+        "publishes": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "description": "Olay adı, ör. 'bell.rang'." },
+              "payload": { "type": "string", "description": "Yük şemasının yolu." },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "subscribes": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": ["name", "handler"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "handler": { "type": "string", "description": "Dinleyici yolu, ör. 'backend.events:on_bell_rang'." }
+            }
+          }
+        }
+      }
+    },
+    "http": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Modülün HTTP yüzeyi. Çekirdek router'ı bu önekle monte eder.",
+      "properties": {
+        "prefix": { "type": "string", "pattern": "^/api/[a-z0-9_/-]+$" },
+        "router": { "type": "string", "description": "APIRouter nesnesinin yolu, ör. 'backend.api.routes:router'." },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "requires": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Router'ın tamamı için taban izin. Uç noktalar bunu daraltabilir, genişletemez. Varsayılan kapalıdır: izin ilan etmeyen uç nokta reddedilir (K9)."
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Masaüstü kabuğunun dinamik yükleyeceği panel. Kabuk modül adını bilmez; bu bloğu okur.",
+      "properties": {
+        "entry": { "type": "string", "description": "Panel giriş dosyası, ör. 'ui/panel/index.js'." },
+        "nav": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string" },
+            "icon": { "type": "string" },
+            "group": { "type": "string", "description": "Menü grubu." },
+            "order": { "type": "integer", "description": "Grup içi sıra." },
+            "requires": {
+              "type": "array",
+              "default": [],
+              "items": { "type": "string" },
+              "description": "Bu ekranın görünmesi için gereken izinler. Kullanıcı bunlardan EN AZ BİRİNE sahipse menüde görünür; boş liste herkese açık demektir. Menüde gizlemek yetkilendirme değildir — backend ayrıca denetler (K9)."
+            }
+          }
+        },
+        "locales": { "type": "string", "description": "Çeviri dosyalarının dizini, ör. 'ui/locales'." }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "default": [],
+      "description": "Modülün tanımladığı yetkiler. Yetkilendirme çekirdekte, tanım modülde durur. Katalog: docs/permissions.md",
+      "items": {
+        "type": "object",
+        "required": ["key"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$", "description": "'<modül_id>.<eylem>' biçiminde, ör. 'bell.manage'. Modül kendi kimliği dışında bir önek kullanamaz." },
+          "description": { "type": "string" },
+          "scoped": {
+            "type": "boolean",
+            "default": false,
+            "description": "true ise bu izin kapsam gerektirir (bbd/bld/org/*) ve kapsamsız sorulamaz. Bkz. ADR 0007."
+          },
+          "destructive": {
+            "type": "boolean",
+            "default": false,
+            "description": "true ise izin yeterli olsa bile işlem PIN teyidi ister ve denetim izine yazılır."
+          },
+          "default_roles": {
+            "type": "array",
+            "default": [],
+            "items": { "type": "string" },
+            "description": "Bu iznin kurulumda hangi ön tanımlı rollere düşeceği önerisi, ör. ['admin','org_staff']. Yeni modülün çekirdeğe dokunmadan yetkilenmesini sağlar (K6). Yönetici sonradan değiştirebilir."
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Modül ayarı. Kök ayardaki modules.<id>.* bloğu bu varsayılanları ezer.",
+      "properties": {
+        "defaults": { "type": "string", "description": "Ör. 'config/default.yaml'." },
+        "schema": { "type": "string", "description": "Ör. 'config/schema.json'. Şemaya uymayan ayar açılışta hata verir." }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Modülün kendi bağımlılıkları. Kurulum betiği tüm modülleri tarayıp bunları toplar; çekirdeğin bağımlılık listesine dokunulmaz (K6). Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).",
+      "properties": {
+        "python": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "PyPI gereksinimleri, sürüm aralığıyla. Ör. 'icalendar>=6.0'."
+        },
+        "system": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "apt paketleri. Ör. 'pulseaudio-utils'. Sürücü/ikili dosya depoya konmaz, burada ilan edilir."
+        },
+        "capabilities_note": {
+          "type": "string",
+          "description": "Platform yeteneği üzerinden karşılanan bağımlılıklar burada TEKRAR EDİLMEZ; consumes bloğunda ilan edilir. Bu alan yalnızca açıklama içindir."
+        }
+      }
+    },
+    "migrations": {
+      "type": "string",
+      "description": "Modülün kendi göç dizini, ör. 'backend/migrations'. Modül yalnızca burada oluşturduğu tablolara yazabilir."
+    },
+    "tasks": {
+      "type": "array",
+      "default": [],
+      "description": "Zamanlanmış işler. Çalıştırma çekirdeğin scheduler'ına aittir.",
+      "items": {
+        "type": "object",
+        "required": ["name", "handler"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "handler": { "type": "string", "description": "Ör. 'backend.tasks.sync:run'." },
+          "schedule": { "type": "string", "description": "Cron ifadesi veya aralık." },
+          "enabled": { "type": "boolean", "default": true }
+        }
+      }
+    }
+  }
+}

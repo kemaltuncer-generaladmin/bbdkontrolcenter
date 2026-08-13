@@ -1,0 +1,64 @@
+# Öğle Yemeği modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Kantinde tek tek QR okutularak girilen öğle yemeğini, takvimden gün seçip
+# toplu işler. Yazma kantinin kendi satış ucundan geçer — kayıt kasada elle
+# girilmiş gibi oluşur (aynı tablolar, aynı cari defter, aynı stok düşümü).
+
+id: bbd_lunch
+name: "Öğle Yemeği"
+description: "Takvimden gün seçip öğrencilere toplu öğle yemeği işleme ve geri alma."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "Yemek kaydı kantinin satış ucundan yazılır; ürün, stok ve bakiye oradan okunur."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_lunch
+  router: backend.api.routes:router
+  tags: ["bbd_lunch"]
+  requires: [bbd_lunch.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Öğle Yemeği"
+    icon: utensils
+    group: "BBD"
+    order: 30
+    requires: [bbd_lunch.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+permissions:
+  - key: bbd_lunch.view
+    description: "Öğle Yemeği ekranını ve geçmiş girdileri görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_lunch.manage
+    description: "Toplu yemek kaydı işleme, sabit liste ve tatil günlerini düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_lunch.reverse
+    description: "İşlenmiş yemek kaydını geri alma (kantinde ters kayıt oluşturur)."
+    default_roles: [admin, bbd_staff]
+    destructive: true
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

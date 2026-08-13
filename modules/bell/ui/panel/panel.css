@@ -1,0 +1,373 @@
+/* Zil Sistemi paneli. Kabuğun --paper-* değişkenlerini kullanır;
+   ikincil ton, beyaz üzerinde okunur olsun diye koyulaştırılmıştır. */
+
+.bl {
+  --line: var(--paper-line, #e9ecf2);
+  --soft: #667487;
+  --ink: var(--paper-ink, #111722);
+  --tint: #f7f8fb;
+  --chip: #5b8cff;
+
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px 24px 28px;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+/* --------------------------------------------------------------- üst şerit */
+
+.bl-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bl-status {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--soft);
+  max-width: 60ch;
+}
+
+/* şalter */
+
+.bl-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bl-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.bl-switch-track {
+  position: relative;
+  width: 38px; height: 22px;
+  border-radius: 999px;
+  background: #d3d9e4;
+  transition: background-color 150ms;
+}
+
+.bl-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 150ms;
+}
+
+.bl-switch input:checked + .bl-switch-track { background: #2f9e5e; }
+.bl-switch input:checked + .bl-switch-track::after { transform: translateX(16px); }
+.bl-switch input:focus-visible + .bl-switch-track { outline: 2px solid var(--chip); outline-offset: 2px; }
+
+.bl-switch-sm { font-weight: 500; font-size: 12.5px; color: var(--soft); }
+.bl-switch-sm .bl-switch-track { width: 32px; height: 19px; }
+.bl-switch-sm .bl-switch-track::after { width: 13px; height: 13px; }
+.bl-switch-sm input:checked + .bl-switch-track::after { transform: translateX(13px); }
+
+/* ----------------------------------------------------------------- gruplar */
+
+.bl-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 14px 0 4px;
+}
+
+.bl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--soft);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 130ms, color 130ms, background-color 130ms;
+}
+
+.bl-chip:hover { color: var(--ink); border-color: #cfd6e2; }
+
+.bl-chip.active {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--chip) 55%, #fff);
+  background: color-mix(in srgb, var(--chip) 8%, #fff);
+}
+
+.bl-chip.muted .bl-chip-dot { background: #c8cfdb; }
+.bl-chip.muted { text-decoration: line-through; text-decoration-color: #c8cfdb; }
+
+.bl-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chip); }
+.bl-chip-count { font-style: normal; font-size: 11px; color: var(--soft); }
+
+/* ------------------------------------------------------------------ gövde */
+
+.bl-body { padding-top: 10px; transition: opacity 150ms; }
+.bl-body.off { opacity: 0.55; }
+
+.bl-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0 14px;
+}
+
+.bl-headline h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
+.bl-note { font-size: 12.5px; color: var(--soft); }
+.bl-spacer { flex: 1; }
+
+.bl-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .bl-columns { grid-template-columns: minmax(0, 1fr); }
+}
+
+.bl-card {
+  padding: 15px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.bl-card h4 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--soft);
+  margin-bottom: 11px;
+}
+
+.bl-h4-gap { margin-top: 20px; }
+.bl-card-wide { margin-top: 14px; }
+
+/* -------------------------------------------------------------- zil sesleri */
+
+.bl-sounds { display: flex; flex-direction: column; gap: 6px; }
+
+.bl-sound {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 130ms, background-color 130ms;
+}
+
+.bl-sound:hover { background: var(--tint); }
+
+.bl-sound.active {
+  border-color: color-mix(in srgb, var(--chip) 55%, #fff);
+  background: color-mix(in srgb, var(--chip) 6%, #fff);
+}
+
+.bl-sound input { accent-color: var(--chip); width: 15px; height: 15px; flex: none; }
+
+.bl-sound-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.bl-sound-text b { font-size: 13px; font-weight: 600; }
+.bl-sound-text span { font-size: 11.5px; color: var(--soft); }
+
+.bl-play, .bl-row-play {
+  flex: none;
+  width: 28px; height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--soft);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 130ms, color 130ms, border-color 130ms;
+}
+
+.bl-play:hover, .bl-row-play:hover {
+  background: color-mix(in srgb, var(--chip) 10%, #fff);
+  border-color: color-mix(in srgb, var(--chip) 45%, #fff);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ düzey */
+
+.bl-volume { display: flex; align-items: center; gap: 12px; }
+
+.bl-range {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  accent-color: var(--chip);
+}
+
+.bl-volume-value {
+  min-width: 42px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bl-presets { display: flex; gap: 6px; margin-top: 11px; flex-wrap: wrap; }
+
+.bl-preset {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--soft);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.bl-preset:hover { background: var(--tint); color: var(--ink); }
+
+.bl-preset.active {
+  border-color: color-mix(in srgb, var(--chip) 55%, #fff);
+  background: color-mix(in srgb, var(--chip) 9%, #fff);
+  color: var(--ink);
+}
+
+.bl-test { margin-left: auto; }
+
+.bl-hint {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--soft);
+}
+
+.bl-checks { display: flex; flex-direction: column; gap: 8px; }
+
+.bl-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bl-check input { accent-color: var(--chip); width: 15px; height: 15px; }
+
+/* ------------------------------------------------------------ ders listesi */
+
+.bl-table { width: 100%; border-collapse: collapse; }
+
+.bl-table th {
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--soft);
+  border-bottom: 1px solid var(--line);
+}
+
+.bl-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #f2f4f8;
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+
+.bl-table tr.bl-day-first td { border-top: 1px solid var(--line); }
+.bl-table tbody tr:hover td { background: #fafbfd; }
+
+.bl-day { width: 90px; font-weight: 600; color: var(--ink); }
+.bl-lesson { color: var(--ink); }
+.bl-time { width: 110px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.bl-tick { width: 52px; }
+.bl-tick input { accent-color: var(--chip); width: 15px; height: 15px; }
+
+.bl-select {
+  max-width: 220px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.bl-select:focus { outline: none; border-color: var(--chip); }
+
+/* ------------------------------------------------------------------ boşluk */
+
+.bl-empty { padding: 14px 2px; font-size: 12.5px; color: var(--soft); }
+
+.bl-empty-state {
+  margin-top: 18px;
+  padding: 26px 24px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: #fcfcfe;
+  max-width: 62ch;
+}
+
+.bl-empty-state h3 { font-size: 14px; font-weight: 600; margin-bottom: 7px; color: #111722; }
+.bl-empty-state p { font-size: 13px; line-height: 1.6; color: #4d5768; }
+
+/* Veri beklenirken — "boş ekran" ile "yükleniyor" ayrımı görünür olmalı. */
+.bl-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 28px;
+  color: #4d5768;
+  font-size: 13px;
+}
+
+.bl-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line);
+  border-top-color: #5b8cff;
+  border-radius: 50%;
+  animation: bl-spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes bl-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bl * { transition-duration: 0.001ms !important; }
+  .bl-spinner { animation-duration: 2s; }
+}
+
+/* Canlı durum satırı — zil çalmıyorsa kırmızı. */
+.bl-status.bad { color: #b91c1c; font-weight: 600; }
+
+.bl-ring-now {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--accent, #5b8cff);
+  border-radius: 999px;
+  background: var(--accent, #5b8cff);
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.bl-ring-now:hover { background: #6f9bff; }

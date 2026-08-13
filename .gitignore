@@ -1,0 +1,40 @@
+# --- sırlar (K8) ---
+config/local.yaml
+config/local.*.yaml
+*.pem
+*.key
+.env
+.env.*
+
+# --- çalışma anı verisi ---
+data/*
+!data/README.md
+!data/.gitkeep
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# --- node / tauri ---
+node_modules/
+apps/desktop/src-tauri/target/
+apps/desktop/**/dist/
+
+# --- editör / sistem ---
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/settings.json
+
+# --- üretilen dosyalar ---
+apps/desktop/shell/registry.json
+apps/desktop/shell/panels/

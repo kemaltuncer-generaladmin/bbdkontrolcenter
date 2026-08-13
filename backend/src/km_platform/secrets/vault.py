@@ -1,0 +1,108 @@
+"""Sır kasası — `secrets` platform yeteneği.
+
+K8: depoda sır bulunmaz. Kasa iki kaynaktan okur:
+
+  1. `config/local.yaml` → `secrets.<anahtar>`   (git dışı, elle girilen sırlar)
+  2. çekirdek deposundaki `secrets` tablosu       (çalışırken üretilenler)
+
+Tabloya yazılan değerler anahtar dosyasıyla şifrelenir. Anahtar dosyası
+`data/secret.key` altında, 0600 izinle durur ve depoya girmez.
+
+Şifreleme Fernet (AES-128-CBC + HMAC) — `cryptography` zaten bağımlılıkta
+(argon2/asyncssh üzerinden gelir).
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+from pathlib import Path
+
+from cryptography.fernet import Fernet, InvalidToken
+
+from km_core.config.loader import Config
+from km_core.store.db import Store
+
+
+class Vault:
+    def __init__(self, store: Store, config: Config) -> None:
+        self._store = store
+        self._config = config
+        self._key_path: Path = config.path("core.secret_key_path", "data/secret.key")
+        self._fernet: Fernet | None = None
+
+    async def open(self) -> None:
+        self._fernet = Fernet(self._load_or_create_key())
+
+    # ------------------------------------------------------------- anahtar
+
+    def _load_or_create_key(self) -> bytes:
+        if self._key_path.is_file():
+            return self._key_path.read_bytes().strip()
+
+        key = Fernet.generate_key()
+        self._key_path.parent.mkdir(parents=True, exist_ok=True)
+        # Önce dar izinle oluştur, sonra yaz: dosya bir an bile herkese açık kalmasın.
+        descriptor = os.open(self._key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(key)
+        return key
+
+    # ---------------------------------------------------------------- okuma
+
+    async def get(self, key: str) -> str | None:
+        """Sırrı getirir. Önce local.yaml, sonra kasa tablosu.
+
+        Ayar dosyasında iki yazım da geçerlidir — noktalı anahtar tek parça
+        olarak da, iç içe blok olarak da yazılabilir:
+
+            secrets:
+              canteen.enrollment_secret: "…"     # düz
+            secrets:
+              canteen:
+                enrollment_secret: "…"           # iç içe
+        """
+        from_config = self._config.section("secrets").get(key)
+        if from_config in (None, ""):
+            from_config = self._config.get(f"secrets.{key}")
+        if from_config not in (None, ""):
+            return str(from_config)
+
+        row = await self._store.fetch_one("SELECT value FROM secrets WHERE key = ?", (key,))
+        if row is None:
+            return None
+        try:
+            return self._cipher.decrypt(row["value"].encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            # Anahtar değişmiş: değer okunamaz. Sessizce None dönmek yanlış olur.
+            raise RuntimeError(f"'{key}' sırrı çözülemedi — kasa anahtarı değişmiş olabilir.") from None
+
+    async def set(self, key: str, value: str) -> None:
+        encrypted = self._cipher.encrypt(value.encode("utf-8")).decode("utf-8")
+        await self._store.execute(
+            "INSERT INTO secrets (key, value, updated_at) VALUES (?, ?, datetime('now')) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, encrypted),
+        )
+
+    async def delete(self, key: str) -> None:
+        await self._store.execute("DELETE FROM secrets WHERE key = ?", (key,))
+
+    async def keys(self) -> list[str]:
+        """Kasadaki anahtar ADLARI — değerler değil (`secrets.view` bunu görür)."""
+        rows = await self._store.fetch_all("SELECT key FROM secrets ORDER BY key")
+        return [row["key"] for row in rows]
+
+    async def pepper(self) -> str:
+        """PIN arama hash'inin sabit anahtarı. Veritabanında değil, kasada durur."""
+        value = await self.get("core.pin_pepper")
+        if value is None:
+            value = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
+            await self.set("core.pin_pepper", value)
+        return value
+
+    @property
+    def _cipher(self) -> Fernet:
+        if self._fernet is None:
+            raise RuntimeError("Kasa açılmadı.")
+        return self._fernet

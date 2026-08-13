@@ -1,0 +1,61 @@
+# Kantin Yedekleri modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Sunucudaki yedekleri görür, elle yedek aldırır ve yedeği BU MAKİNEYE indirir.
+# Sunucu tümden kaybolsa bile elde doğrulanmış bir kopya kalsın diye.
+#
+# GERİ YÜKLEME YOKTUR. Tek tıkla canlı veritabanının üzerine yazmak kabul
+# edilemez risk; geri yükleme sunucuda elle yapılır.
+
+id: bbd_canteen_backups
+name: "Kantin Yedekleri"
+description: "Kantin veritabanı yedeklerini görme, aldırma ve doğrulanmış yerel kopya alma."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "Yedek listesi, tetikleme ve indirme kantinin kendi uçlarından geçer (K4)."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_canteen_backups
+  router: backend.api.routes:router
+  tags: ["bbd_canteen_backups"]
+  requires: [bbd_canteen_backups.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Kantin Yedekleri"
+    icon: archive
+    group: "BBD"
+    order: 90
+    requires: [bbd_canteen_backups.view]
+
+permissions:
+  - key: bbd_canteen_backups.view
+    description: "Yedek listesini ve tazelik durumunu görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_canteen_backups.manage
+    description: "Elle yedek aldırma ve yedeği bu makineye indirme."
+    default_roles: [admin, bbd_staff]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

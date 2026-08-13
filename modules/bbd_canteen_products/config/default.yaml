@@ -1,0 +1,5 @@
+# Kantin Ürünleri — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_canteen_products.*` bloğu bunları ezer.
+
+# Değişiklik günlüğünde tek seferde gösterilecek en çok satır.
+audit_page_size: 200

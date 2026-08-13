@@ -1,0 +1,55 @@
+# Satış Ayarları modülü — İSKELET
+# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: bld_sales_settings
+name: "Satış Ayarları"
+description: "Sipariş anahtarı, kesim saati, minimum tutar ve teslimat ücreti."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes: []
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bld_sales_settings
+  router: backend.api.routes:router
+  tags: ["bld_sales_settings"]
+  requires: [bld_sales_settings.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Satış Ayarları"
+    icon: sliders
+    group: "BLD"
+    order: 70
+    requires: [bld_sales_settings.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
+# kodlaması başlarken yapılacak.
+permissions:
+  - key: bld_sales_settings.view
+    description: "Satış Ayarları ekranını görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bld_sales_settings.manage
+    description: "Satış Ayarları kayıtlarını düzenleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

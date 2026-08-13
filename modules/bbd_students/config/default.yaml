@@ -1,0 +1,9 @@
+# Öğrenci Yönetimi — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_students.*` bloğu bunları ezer.
+
+# Toplu kart PDF'inde A4 sayfa başına düzen (tablet uygulamasıyla aynı: 3×4 = 12).
+cards_columns: 3
+cards_rows: 4
+
+# Üretilen kart PDF'inin yazılacağı klasör. Boşsa İndirilenler kullanılır.
+export_path: ""

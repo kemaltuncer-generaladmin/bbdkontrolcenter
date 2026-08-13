@@ -1,0 +1,415 @@
+/* Kontrol Merkezi — kabuk.
+   Yazı tipi sistemden gelir: masaüstü uygulaması çevrimdışı da açılır,
+   dışarıdan font çekilmez (CSP zaten engeller). */
+
+:root {
+  --bg: #0a0d14;
+  --ink: #e9eefa;
+  --ink-soft: #8b95ad;
+  --ink-faint: #737f96;
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.16);
+  --danger: #ff6b6b;
+
+  /* kenar çubuğu */
+  --sb-bg: #0b0f18;
+  --sb-line: rgba(255, 255, 255, 0.07);
+
+  /* panel (kâğıt) */
+  --paper: #ffffff;
+  --paper-ink: #111722;
+  --paper-soft: #8792a5;
+  --paper-line: #e9ecf2;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Masaüstü kabuğu: metin seçimi ve sağ tık menüsü yok — tarayıcı değil. */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+kbd {
+  font: inherit;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--sb-line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-soft);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* ================================================================= GİRİŞ */
+
+.login {
+  position: relative;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  transition: opacity 380ms ease;
+}
+
+.login[hidden] { display: none; }
+.login.leaving { opacity: 0; pointer-events: none; }
+
+.aurora {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(760px 520px at 22% 18%, rgba(91, 140, 255, 0.20), transparent 62%),
+    radial-gradient(680px 480px at 82% 82%, rgba(126, 87, 255, 0.16), transparent 60%);
+  pointer-events: none;
+}
+
+.login-card {
+  position: relative;
+  width: min(360px, 100%);
+  padding: 44px 38px 34px;
+  text-align: center;
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(26px) saturate(140%);
+  box-shadow: 0 40px 80px -32px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(16px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+.login-card h1 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; }
+.login-card .org { margin-top: 6px; font-size: 12.5px; color: var(--ink-faint); }
+
+/* Haneler. Sabit kutu sayısı YOK: PIN en az 6 hane, üst sınırı yok
+   (docs/identity-model.md). Altı yuva hep durur, fazlası eklenir. */
+.slots {
+  display: flex;
+  justify-content: center;
+  gap: 11px;
+  margin: 30px 0 0;
+  min-height: 14px;
+}
+
+.slot {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.18);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), background-color 160ms, border-color 160ms, box-shadow 160ms;
+}
+
+.slot.filled {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 14px var(--accent-soft);
+  transform: scale(1.16);
+}
+
+.slot.extra { border-style: dashed; }
+
+.slots.shake { animation: shake 400ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+
+@keyframes shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(4px); }
+  30%, 50%, 70% { transform: translateX(-6px); }
+  40%, 60% { transform: translateX(6px); }
+}
+
+.error {
+  min-height: 17px;
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: var(--danger);
+  opacity: 0;
+  transition: opacity 160ms;
+}
+
+.error.show { opacity: 1; }
+
+.login-hint {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.login-hint.busy { color: var(--ink-soft); }
+
+/* ================================================================== KABUK */
+
+.workspace {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 262px 1fr;
+  /* Satır İÇERİKLE BÜYÜMEMELİ. `auto` kalırsa kenar çubuğu da panel de
+     uzayıp gider, hiçbir yerde taşma oluşmaz ve alttaki `overflow: auto`
+     kuralları hiç devreye girmez — liste kaydırılamaz. */
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.workspace[hidden] { display: none; }
+
+/* ------------------------------------------------------------ kenar çubuğu */
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sb-bg);
+  border-right: 1px solid var(--sb-line);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 18px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.mark { width: 46px; height: 46px; fill: none; stroke-linecap: round; }
+.mark-sm { width: 22px; height: 22px; }
+.mark-ring { stroke: rgba(255, 255, 255, 0.10); stroke-width: 2; }
+
+.mark-arc {
+  stroke: var(--accent);
+  stroke-width: 2.6;
+  stroke-dasharray: 66 53;
+  stroke-dashoffset: 30;
+  transform-origin: 50% 50%;
+  animation: sweep 9s linear infinite;
+}
+
+@keyframes sweep { to { transform: rotate(360deg); } }
+
+.mark-core { fill: var(--ink); stroke: none; }
+
+.login-card .mark { margin-bottom: 18px; }
+
+/* arama */
+
+.sidebar-search { position: relative; padding: 0 14px 12px; }
+
+.sidebar-search::before {
+  content: "";
+  position: absolute;
+  left: 25px; top: 10px;
+  width: 14px; height: 14px;
+  background: currentColor;
+  color: var(--ink-faint);
+  mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+#filter {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 32px;
+  border-radius: 10px;
+  border: 1px solid var(--sb-line);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#filter::placeholder { color: var(--ink-faint); }
+#filter:focus { outline: none; border-color: rgba(91, 140, 255, 0.55); background: rgba(91, 140, 255, 0.07); }
+#filter::-webkit-search-cancel-button { display: none; }
+
+/* menü */
+
+.nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 10px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.13) transparent;
+}
+
+.nav::-webkit-scrollbar { width: 8px; }
+.nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+
+.nav-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 15px 8px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  background: linear-gradient(var(--sb-bg) 72%, transparent);
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 130ms, color 130ms;
+}
+
+.nav-item svg {
+  flex: none;
+  width: 16px; height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+
+.nav-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
+
+.nav-item.active {
+  background: rgba(91, 140, 255, 0.13);
+  color: #fff;
+}
+
+.nav-item.active svg { opacity: 1; stroke: var(--accent); }
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -10px; top: 50%;
+  width: 3px; height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  transform: translateY(-50%);
+}
+
+.nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.nav-empty {
+  padding: 18px 10px;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+
+.sidebar-foot {
+  padding: 11px 18px 14px;
+  border-top: 1px solid var(--sb-line);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.sidebar-foot kbd { margin-right: 2px; }
+
+/* ------------------------------------------------------------------ panel */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;   /* çocukların küçülebilmesi için şart */
+  background: var(--paper);
+  color: var(--paper-ink);
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--paper-line);
+}
+
+.crumb { font-size: 12px; color: var(--paper-soft); }
+.crumb::after { content: " ›"; }
+
+.panel-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+
+/* Gövde bilinçli olarak boş. */
+.panel-body { flex: 1; min-height: 0; overflow: auto; }
+
+/* ---------------------------------------------------------------- hareket */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ------------------------------------------------------- kaydırma çubukları
+
+   WebKitGTK'da varsayılan çubuk çok ince ve zeminle aynı tonda; içerik kayar
+   ama kullanıcı kayacağını GÖRMEZ. Kabuk hem koyu hem açık yüzey için
+   görünür bir çubuk tanımlar; modül panelleri de bunu miras alır. */
+
+.panel ::-webkit-scrollbar,
+.panel-body::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+.panel ::-webkit-scrollbar-track,
+.panel-body::-webkit-scrollbar-track { background: transparent; }
+
+.panel ::-webkit-scrollbar-thumb,
+.panel-body::-webkit-scrollbar-thumb {
+  background: #c8cfdb;
+  border: 3px solid var(--paper);
+  border-radius: 999px;
+}
+
+.panel ::-webkit-scrollbar-thumb:hover,
+.panel-body::-webkit-scrollbar-thumb:hover { background: #aab4c4; }
+
+.panel *, .panel-body { scrollbar-width: thin; scrollbar-color: #c8cfdb transparent; }
+
+.sidebar ::-webkit-scrollbar { width: 10px; }
+.sidebar ::-webkit-scrollbar-track { background: transparent; }
+.sidebar ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border: 3px solid var(--sb-bg);
+  border-radius: 999px;
+}
+.sidebar ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); }

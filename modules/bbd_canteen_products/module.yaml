@@ -1,0 +1,63 @@
+# Kantin Ürünleri modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Kantin kiosk'unun yönetim ekranından yapılabilen her ürün işlemi burada da
+# yapılabilir: ekleme, düzenleme, görsel, stok, pasifleştirme. Ürünler kantinde
+# durur; burada kopyası tutulmaz. Yalnız değişiklik günlüğü kendi tablomuzdadır.
+
+id: bbd_canteen_products
+name: "Kantin Ürünleri"
+description: "Kantin ürün kataloğu, görsel, fiyat ve stok yönetimi."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "Ürün, stok ve görsel işlemleri kantinin kendi uçlarından geçer (K4)."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_canteen_products
+  router: backend.api.routes:router
+  tags: ["bbd_canteen_products"]
+  requires: [bbd_canteen_products.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Kantin Ürünleri"
+    icon: box
+    group: "BBD"
+    order: 50
+    requires: [bbd_canteen_products.view]
+
+permissions:
+  - key: bbd_canteen_products.view
+    description: "Ürün listesini ve değişiklik günlüğünü görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_canteen_products.manage
+    description: "Ürün ekleme, düzenleme, görsel yükleme ve stok işlemleri."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_canteen_products.deactivate
+    description: "Ürünü pasifleştirme — kasada satışa çıkmaz. Veri silinmez."
+    default_roles: [admin, bbd_staff]
+    destructive: true
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

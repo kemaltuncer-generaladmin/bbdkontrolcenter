@@ -1,0 +1,81 @@
+# Kantin Raporları modülü
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Öğrenci ve ürün bazlı derin raporlar. Kaynak kantinin işlem geçmişidir;
+# kırılımlar burada hesaplanır. Çekilen pencere kendi tablomuza gün gün
+# yazılır — ikinci açılışta anında gelir, kantin erişilemese de rapor okunur.
+
+id: bbd_canteen_reports
+name: "Kantin Raporları"
+description: "Öğrenci ve ürün bazlı satış raporları, grafik ve PDF/CSV çıktısı."
+version: 1.0.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
+depends: [bbd_canteen_api]
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: "İşlem geçmişi, tahsilat, ürün ve öğrenci verisi kantinden okunur (K4)."
+  # optional: yazıcı bulunamasa da rapor üretilir ve kaydedilir; yalnız
+  # yazdırma düğmesi bağlantı hatası anlatır (K7).
+  - capability: printer
+    optional: true
+    reason: "Raporu USB'ye bağlı yazıcıya doğrudan göndermek için."
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_canteen_reports
+  router: backend.api.routes:router
+  tags: ["bbd_canteen_reports"]
+  requires: [bbd_canteen_reports.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Kantin Raporları"
+    icon: chart
+    group: "BBD"
+    order: 80
+    requires: [bbd_canteen_reports.view]
+
+permissions:
+  - key: bbd_canteen_reports.view
+    description: "Raporları görüntüleme."
+    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+  - key: bbd_canteen_reports.print
+    description: "Raporu yazıcıya gönderme."
+    default_roles: [admin, bbd_staff]
+
+  - key: bbd_canteen_reports.export
+    description: "Raporu PDF/CSV olarak dışa aktarma."
+    default_roles: [admin, bbd_staff, accountant]
+
+# Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
+dependencies:
+  python:
+    - "reportlab>=4.2"
+  system:
+    # PDF'te Türkçe karakterler için gömülü TTF gerekir; dağıtımdan gelir.
+    - "fonts-dejavu-core"
+    # Önizleme, basılacak PDF'in BİREBİR kendisidir: sayfalar pdftoppm ile
+    # görüntüye çevrilip ekranda gösterilir. HTML taklidi değildir.
+    - "poppler-utils"
+    # Baskı CUPS üzerinden gider (lp).
+    - "cups-client"
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []

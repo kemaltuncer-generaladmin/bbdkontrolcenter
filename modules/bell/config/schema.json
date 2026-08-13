@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bell ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "default_sound": { "type": "string", "description": "Varsayılan zil sesi adı." },
+    "default_volume": { "type": "integer", "minimum": 0, "maximum": 100 }
+  }
+}

@@ -1,0 +1,10 @@
+# Ödeme Talebi — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_payment_request.*` bloğu bunları ezer.
+
+# Aynı öğrenciye bu süre içinde ikinci talep gönderilmek istenirse ekran uyarır
+# ve o satırı varsayılan olarak atlar. Kantinde böyle bir koruma YOKTUR:
+# her istek yeni bir SMS kuyruğa atar.
+resend_cooldown_minutes: 120
+
+# Tek gönderimde izin verilen en çok alıcı.
+max_recipients: 300

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_canteen_reports ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "PDF/CSV çıktılarının klasörü. Boşsa data/exports kullanılır."
+    },
+    "default_range_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 400,
+      "description": "Açılışta gösterilecek varsayılan aralık (gün)."
+    }
+  }
+}

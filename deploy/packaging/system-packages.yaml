@@ -1,0 +1,76 @@
+# Sistem (apt) bağımlılıkları — yetenek bazında
+#
+# Kural K11: bağımlılıklar İLAN EDİLİR, depoya kopyalanmaz. Sürücüler
+# (hplip, printer-driver-*) apt üzerinden gelir; deponun içine konmaz.
+# Gerekçe: ADR 0008.
+#
+# Kurulum: scripts/install-deps.sh
+# Durum notları 2026-08-12 tarihli sistem taramasından alınmıştır.
+
+core:
+  description: "Çekirdeğin çalışması ve Python paketlerinin derlenmesi"
+  packages:
+    - python3-venv          # sanal ortam (ensurepip) — venv bunsuz pip kuramaz
+    - python3-yaml          # install-deps.sh'in manifest okuması için
+    - python3-dev           # C uzantılı paketler için başlıklar
+    - build-essential       # derleyici zinciri
+
+ssh:
+  description: "km_platform/ssh — uzak sunucu erişimi"
+  packages:
+    - openssh-client        # KURULU
+  optional:
+    - sshpass               # yalnızca anahtar kullanılamayan eski sunucular için
+                            # varsayılan yol anahtar tabanlıdır, bu paket gerekmez
+
+database:
+  description: "km_platform/database — BBD (Bagisto) ve BLD (Laravel) veritabanları"
+  packages:
+    - mariadb-client        # mysqldump/mysql — yedekleme ve geri yükleme
+  optional:
+    - postgresql-client     # yalnızca PostgreSQL kullanılırsa
+
+printer:
+  description: "km_platform/printer — CUPS ve yazıcı sürücüleri"
+  packages:
+    - cups                  # KURULU
+    - cups-client           # KURULU — lp, lpstat, lpadmin
+    - cups-bsd              # KURULU
+    - hplip                 # KURULU — HP sürücü paketi (HP LaserJet MFP M139-M142)
+    - printer-driver-hpcups # KURULU — HP CUPS rasterleştirici
+    - libcups2-dev          # pycups derlemesi için
+  notes: >
+    HP sürücüleri dağıtımdan gelir ve güncellemelerini apt üzerinden alır.
+    Depoya kopyalanmaz. Yalnızca dağıtımda bulunmayan model PPD'leri
+    backend/src/km_platform/printer/ppd/ altına konabilir.
+
+audio:
+  description: "km_platform/audio — zil sesi çalma"
+  packages:
+    - pipewire              # KURULU — sistemdeki ses sunucusu
+    - pipewire-pulse        # KURULU — PulseAudio uyumluluğu
+    - pulseaudio-utils      # paplay — birincil çalma yolu
+    - alsa-utils            # KURULU — aplay, ALSA yedek yolu
+  notes: >
+    Sistemde pipewire + wireplumber çalışıyor. Çalma paplay ile pipewire
+    üzerinden yapılır; aplay yalnızca ses sunucusu düşerse devreye girer.
+    ALSA'ya doğrudan yazmak aygıtı tekelci kilitleyebileceği için birincil
+    yol değildir.
+
+desktop:
+  description: "apps/desktop — Tauri 2 kabuğu derleme bağımlılıkları"
+  packages:
+    - libwebkit2gtk-4.1-dev
+    - libayatana-appindicator3-dev
+    - librsvg2-dev
+    - libxdo-dev
+    - libssl-dev
+    - build-essential
+    - curl
+    - wget
+    - file
+  notes: >
+    Rust araç zinciri (cargo) sistemde YOK ve apt ile değil rustup ile
+    kurulur: https://rustup.rs — install-deps.sh ayrı adım olarak sorar.
+    Bu grup yalnızca masaüstü kabuğu derlenecekse gerekir; çekirdek
+    geliştirmesi için gerekmez.

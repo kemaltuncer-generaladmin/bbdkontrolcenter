@@ -1,0 +1,10 @@
+# Kantin Raporları — varsayılan ayarlar.
+# Kök ayardaki `modules.bbd_canteen_reports.*` bloğu bunları ezer.
+
+# Üretilen PDF/CSV dosyalarının yazılacağı klasör.
+# Boşsa kullanıcının İNDİRİLENLER klasörü kullanılır (xdg-user-dir DOWNLOAD);
+# o da bulunamazsa depo kökündeki data/exports.
+export_path: ""
+
+# Açılışta gösterilecek varsayılan aralık (gün).
+default_range_days: 7

@@ -1,0 +1,65 @@
+# YENİ MODÜL ŞABLONU
+# Bu klasörü modules/<id>/ olarak kopyala, <id> alanlarını doldur.
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+#
+# Kopyalamadan önce sor: bu silinebilir bir iş özelliği mi (modül),
+# yoksa silinemez altyapı mı (km_platform yeteneği)? Bkz. ADR 0006.
+
+id: <id>                      # küçük harf + alt çizgi, klasör adıyla AYNI
+name: "<Görünen Ad>"
+description: "<Tek cümlede ne yaptığı>"
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: false                # kod hazır olunca true
+
+entrypoint: backend.module:register
+
+depends: []                   # önce yüklenmesi gereken modül id'leri
+
+provides: []                  # başkalarına açtığın yetenekler
+# - capability: <id>.<yetenek>
+#   contract: km_sdk.contracts:<Protocol>
+
+consumes: []                  # ihtiyaç duyduğun yetenekler — her birine reason yaz
+# - capability: ssh
+#   reason: "<neden gerekli>"
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/<id>
+  router: backend.api.routes:router
+  tags: ["<id>"]
+  requires: [<id>.view]       # router'ın taban izni; uç noktalar daraltabilir
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "<Görünen Ad>"
+    icon: <icon>
+    group: "<Menü Grubu>"
+    order: 100
+    requires: [<id>.view]     # ekranın görünmesi için gereken izin(ler)
+
+# İzin anahtarı '<id>.<eylem>' olmak zorunda.
+# Katalog ve rol matrisi: docs/permissions.md · Kurallar: ADR 0007
+permissions:
+  - key: <id>.view
+    description: "Görüntüleme."
+    default_roles: [admin]
+  - key: <id>.manage
+    description: "Düzenleme."
+    default_roles: [admin]
+  # scoped: true      → izin kapsam gerektirir (bbd/bld/org/*)
+  # destructive: true → izin yeterli olsa bile PIN teyidi ister
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+tasks: []
