@@ -51,6 +51,25 @@ import { reportChain } from '../../ui-kit/report.js';
 
 const BASE = '/api/store_ai';
 
+// YAYINDA DEĞİL — bilinçli kapalı, bozuk değil.
+//
+// Ekranın iki yarısı var ve ikisi de bugün kullanılamaz durumda:
+//  · ARAÇLAR: mağaza tarafındaki uçlar farklı bir modele oturdu. Bu panel
+//    "aracı çalıştır → sonucu al" varsayıyor; yayındaki ControlApi ise
+//    "taslak üret → onayla" akışı sunuyor. İsim eşlemesiyle kapanmaz;
+//    ekranın onay/fark tablosu mantığı taslak modeline göre yeniden
+//    kurulmalı.
+//  · KATALOG SAĞLIĞI: kural motoru burada çalışıyor ve doğru sonuç üretiyor
+//    (canlıda 81 görselsiz ürün), ama sonucun tek çıkışı Araçlar sekmesinin
+//    onay akışı. Yarım ekran açık bırakmak, "düzelt" düğmesi hiçbir şey
+//    yapmayan bir liste demek olurdu.
+//
+// Bu yüzden ekran "geliştiriliyor" der ve durur. Aşağıdaki kodun tamamı
+// yerinde; model uzlaştırıldığında bu bayrak `true` olur, başka hiçbir yer
+// değişmez. Menü girdisi kalır — kaybolan menü, kullanıcıya "bir şey bozuldu"
+// dedirtir; kapalı olduğunu SÖYLEYEN ekran demez.
+const YAYINDA = false;
+
 const SEVERITY = {
   high: { label: 'Ağır', tone: 'bad' },
   medium: { label: 'Orta', tone: 'warn' },
@@ -1071,6 +1090,20 @@ export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
   api = ctx.api;
   open = ctx.open;
+
+  // Kapalıysa hiçbir istek atılmaz: kapalı ekranın veri çekmesi hem boşuna
+  // yük, hem de denetim kaydını gerçekte kimsenin bakmadığı çağrılarla şişirir.
+  if (!YAYINDA) {
+    const view = h('div', 'kit-panel ai');
+    view.append(emptyState({
+      title: 'Bu ekran geliştiriliyor',
+      text: 'Dahili AI araçları henüz yayında değil. Hazır olduğunda burada '
+          + 'katalog sağlığı denetimi ve onaya bağlı metin önerileri olacak. '
+          + 'Diğer mağaza ekranları bundan etkilenmez.',
+    }));
+    root.append(view);
+    return () => { view.remove(); };   // kabuk sökerken çağırır (K7)
+  }
 
   const view = h('div', 'kit-panel ai');   // 'kit-panel' ZORUNLU + kendi önekimiz
   nodes.root = view;
