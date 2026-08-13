@@ -1,19 +1,23 @@
-# Siparişler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
-# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+# Siparişler — mağazanın günlük çalışma ekranı.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham httpx
+# ya da DB sürücüsü kullanmaz. Bagisto verisinin kopyasını tutmaz: yerel tablolar
+# sadece gerekçe (denetim izi), toplu işlem önizlemesi ve ekran tercihi içindir.
 #
 # NEDEN YENİ BİR EKRAN. Diğer 19 ekran yan menüde zaten kodlanmıştı; sipariş
 # yoktu. Kargo, Fatura, İade ve Sanal POS siparişin ÇEVRESİNİ yönetiyor ama
 # siparişin kendisini yöneten bir yer yoktu — "bugün hangi siparişler geldi"
 # sorusunun tek bir cevabı olmuyordu. Menüde Kontrol Paneli'nin hemen ardına
 # girer (order 15); mevcut ekranların sırası değişmez.
+#
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_orders
 name: "Siparişler"
 description: "Sipariş listesi, durum akışı, fatura ve kargo eylemleri."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
@@ -24,29 +28,29 @@ depends: [store_api]
 provides:
   - capability: store.order.card
     contract: km_sdk.contracts:StoreOrderCard
-    description: "Bir siparişin özet künyesi — Müşteriler ve Talepler ekranları okur."
+    description: "Bir siparişin özet künyesi — Müşteriler ve Talepler ekranları okur. SALT OKUR."
 
 consumes:
   - capability: store.api
     reason: "Sipariş verisi mağazanın admin API'sinden gelir (K4)."
   - capability: store.shipment.byOrder
     optional: true
-    reason: "Sipariş detayındaki kargo sekmesi; Kargo ekranı kapalıysa sekme gizlenir."
+    reason: "Sipariş detayındaki kargo sekmesi; Kargo ekranı yoksa sekme hiç açılmaz (K7)."
   - capability: store.invoice.byOrder
     optional: true
-    reason: "Sipariş detayındaki fatura sekmesi."
+    reason: "Sipariş detayındaki fatura sekmesi; Fatura ekranı yoksa sekme hiç açılmaz."
   - capability: store.audit.for
     optional: true
-    reason: "Sipariş detayındaki işlem geçmişi sekmesi."
+    reason: "Mağazanın kendi denetim kaydı; yoksa yalnız yerel gerekçe izi gösterilir."
   - capability: printer
     optional: true
-    reason: "Sipariş fişi ve irsaliye baskısı (K4). Yazıcı yoksa ekran çalışır."
+    reason: "Sipariş fişi, kargo manifestosu ve liste raporu baskısı. Yazıcı yoksa ekran çalışır."
 
 events:
   publishes:
     - name: store.order.status_changed
       payload: "{orderId, from, to, reason}"
-      description: "Sipariş durumu bu ekrandan değiştirildi."
+      description: "Sipariş durumu bu ekrandan değiştirildi. Kuru provada YAYINLANMAZ."
   subscribes: []
 
 http:
@@ -69,16 +73,21 @@ ui:
 
 # Katalog ve rol matrisi: docs/permissions.md
 # Yıkıcı işlemler PIN değil GEREKÇE ister (ADR 0012); bu yüzden hiçbir izin
-# `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak.
+# `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak ve
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_orders.view
-    description: "Sipariş listesini ve detayını görüntüleme."
-    default_roles: [admin, bbd_staff, accountant]
+    description: "Sipariş listesini, detayını, raporlarını ve CSV'sini görüntüleme."
+    # `accountant` BİLEREK YOK: mali ekranlar store_invoices/store_tax/store_refunds/
+    # store_reports/store_udit_logs'tur; sipariş işletme ekranıdır ve müşteri
+    # iletişim bilgisi taşır.
+    default_roles: [admin, bbd_staff]
   - key: store_orders.manage
-    description: "Sipariş durumu değiştirme, not ekleme, fatura ve gönderi tetikleme."
+    description: "Fatura kesme, gönderi kaydı açma, not ekleme, toplu işlem ve ekran ayarları."
     default_roles: [admin, bbd_staff]
   - key: store_orders.cancel
-    description: "Sipariş iptali. Geri alınamaz; gerekçe zorunludur."
+    description: "Sipariş iptali. Geri alınamaz; gerekçe ve süre penceresi denetlenir."
     default_roles: [admin, bbd_staff]
 
 config:
@@ -86,5 +95,15 @@ config:
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor:
+# HTTP `store.api` geçidinin, PDF üretimi çekirdeğin işi.
+dependencies:
+  python: []
+  system:
+    - poppler-utils        # `pdftoppm` — rapor önizlemesi. Yoksa rapor yine yazılır ve basılır.
+  capabilities_note: >
+    Yazdırma `printer` platform yeteneğinden, mağaza erişimi `store.api`
+    yeteneğinden gelir; ikisi de burada TEKRAR EDİLMEZ (consumes bloğunda).
 
 tasks: []

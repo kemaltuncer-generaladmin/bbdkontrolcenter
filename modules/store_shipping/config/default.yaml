@@ -1,0 +1,35 @@
+# Kargo Yönetimi ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Kargo/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+# Bagisto satış kanalının KODU. TUZAK (canlıda doğrulandı): sipariş ucu
+# `channel` süzgecini kanal KİMLİĞİYLE uyguluyor, kodla değil — kod
+# gönderilirse hiçbir sipariş dönmüyor ve hata da vermiyor. Modül bu kodu
+# kimliğe kendisi çevirir; çeviremezse süzgeci hiç göndermez.
+channel: "default"
+locale: "tr"               # her istekte gider
+
+# Desi bölen. Yurt içi kara kargoda 3000 standarttır (en×boy×yükseklik cm / 3000).
+# Havayolu 5000 kullanır; sözleşme değişirse buradan değiştirilir, kod değil.
+desi_divisor: 3000
+
+# Kaç gün hareketsiz kalan gönderi "Geciken" sayılır. Taşıyıcıdan gelen son
+# hareket zamanına bakılır; teslim edilmiş ve iptal edilmiş gönderiler sayılmaz.
+idle_days: 3
+
+# Toplu etiket varsayılan biçimi. "thermal-100x150" = termal etiket yazıcısı,
+# "a4-4up" = normal yazıcıda A4 kâğıda dört etiket.
+label_format: "thermal-100x150"
+
+# Tek seferde birleştirilecek en çok etiket. 60'ın üstü hem hız kovasını
+# (dakikada 55 istek) tüketiyor hem de tek PDF'i kullanılamaz derecede
+# büyütüyor; iş ikiye bölünsün.
+label_batch_limit: 60
+
+# Performans sekmesinin varsayılan penceresi (gün).
+performance_days: 30
+
+# "Kargoya hazır" sekmesinin mağazadan istediği sipariş durumu. Bagisto'da
+# ödemesi alınmış sipariş `processing` olur; kurulum farklıysa buradan
+# düzeltilir.
+ready_status: "processing"

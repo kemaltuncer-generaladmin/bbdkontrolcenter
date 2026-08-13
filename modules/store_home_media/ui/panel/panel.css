@@ -1,0 +1,306 @@
+/* Ana Ekran Görselleri paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `hm-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `hm-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.hm {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.hm > * { flex: none; }
+
+.hm-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hm-body > * { flex: none; }
+
+.hm-sub { font-size: 11px; color: var(--soft); }
+
+/* Ekran okuyucu duyurusu: görünmez ama okunur. `display:none` verilseydi
+   ekran okuyucu da okumazdı. */
+.hm-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- önizleme */
+
+.hm-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--tint);
+}
+.hm-preview-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hm-device { display: flex; gap: 4px; }
+
+/* Sahne ana sayfanın ORANLI temsilidir: şeritler gerçek en/boy oranlarında
+   çizilir, böylece "bu görsel burada nasıl durur" sorusu ekranda cevaplanır. */
+.hm-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.hm-stage.mobile { max-width: 360px; }
+
+.hm-band { display: flex; gap: 6px; }
+.hm-band-slider .hm-tile { aspect-ratio: 3 / 1; }
+.hm-band-banner .hm-tile { aspect-ratio: 3 / 1; }
+.hm-band-collection .hm-tile { aspect-ratio: 1 / 1; }
+
+.hm-band-empty {
+  flex: 1;
+  padding: 10px;
+  font-size: 11px;
+  color: var(--soft);
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+.hm-strip {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 6px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-tile {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  cursor: pointer;
+}
+.hm-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.hm-tile.broken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+}
+.hm-tile-text { font-size: 10.5px; color: var(--soft); }
+.hm-tile-more {
+  flex: 0 0 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--soft);
+  cursor: default;
+}
+/* Uyarı bayrağı YAZIDIR; renk yalnız destekler (kit kuralı 7). */
+.hm-tile-flag {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  color: #fff;
+  background: var(--bad);
+  border-radius: 4px;
+}
+
+/* -------------------------------------------------------------------- KPI */
+
+.hm-kpi:empty { display: none; }
+
+/* -------------------------------------------------------------- sıra çubuğu */
+
+/* Sıra değişmediyse YER KAPLAMAZ: boş bir çubuk listeyi aşağı itiyor ve
+   "bir şey mi değiştirdim" sorusunu doğuruyordu. */
+.hm-orderbar { display: none; }
+.hm-orderbar.on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 10%, #fff);
+}
+
+/* ------------------------------------------------------------------ liste */
+
+.hm-listwrap { display: flex; flex-direction: column; gap: 10px; min-height: 120px; }
+.hm-list { display: flex; flex-direction: column; gap: 6px; }
+
+.hm-slot {
+  display: grid;
+  grid-template-columns: 22px 56px minmax(0, 1fr) 130px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.hm-slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hm-slot.passive { background: var(--tint); }
+.hm-slot.dragging { opacity: 0.5; }
+.hm-slot.over { border-color: var(--accent); box-shadow: 0 -2px 0 0 var(--accent) inset; }
+
+.hm-handle { color: var(--soft); cursor: grab; text-align: center; user-select: none; }
+
+.hm-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--tint);
+}
+.hm-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.hm-thumb.none { color: var(--soft); font-size: 11px; }
+
+.hm-slot-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hm-slot-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-issues { font-size: 11px; color: var(--bad); }
+
+.hm-slot-right { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.hm-slot-tools { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* --------------------------------------------------------------- görsel */
+
+.hm-image { display: flex; flex-direction: column; gap: 8px; }
+
+.hm-drop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.hm-drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, #fff); }
+.hm-drop-preview {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.hm-drop-preview img { max-width: 100%; max-height: 220px; border-radius: 8px; }
+.hm-drop-text { font-size: 12px; color: var(--soft); }
+
+/* İKİ KARE — solda vitrindeki (kırpılmış) hâli, sağda dosyanın gerçek oranı.
+   Tek kare göstermek, tam da uyarmaya çalıştığımız kırpmayı gizlerdi. */
+.hm-ratio-cell {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+.hm-ratio-cell figcaption { text-align: center; }
+
+/* Önerilen oranda pencere: fazlalık `cover` ile kenardan atılır — vitrinde de
+   böyle olur. `aspect-ratio` panel tarafından ayarlanır (1920 / 640 gibi). */
+.hm-ratio-frame {
+  width: 240px;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--tint);
+}
+.hm-ratio-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 0;
+}
+
+/* Gerçek oran: ölçü SUNUCUDAN gelen en/boy ile verilir, `object-fit` yok —
+   görsel ne kırpılır ne ezilir. */
+.hm-ratio-true {
+  max-width: 240px;
+  max-height: 180px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  background: var(--tint);
+}
+
+.hm-image-tools { display: flex; gap: 8px; align-items: center; }
+.hm-file-label { cursor: pointer; }
+
+/* Dosya girişi GÖRÜNMEZ ama odaklanabilir: `display:none` verilseydi sekme
+   tuşuyla erişilemez ve dosya seçmenin klavye yolu kalmazdı. */
+.hm-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.hm-file:focus-visible + .hm-file-label,
+.hm-file-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Ölçü kararı ZORUNLU alt metindir: "Önerilen 1920x640; yüklenen 1200x400 —
+   mobilde bulanık." Renk tek başına anlam taşımaz, cümle her zaman burada. */
+.hm-size-note { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 22px; }
+.hm-size-text { font-size: 12px; color: var(--ink); }
+
+/* Kırpma cümlesi ayrı satırda: "oran farklı" bir tespit, "soldan ve sağdan
+   %25 kırpılacak" ise afişi yeniden kestirecek bilgidir. */
+.hm-crop-text { flex-basis: 100%; font-size: 12px; color: var(--soft); }
+
+/* Yükleme sonucu — uç henüz yayında değilse buraya BİLGİ kutusu düşer,
+   kırmızı hata değil (K7). */
+.hm-upload-note:empty { display: none; }
+.hm-upload-note { display: block; }
+
+/* --------------------------------------------------------------- hedef */
+
+.hm-target { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+.hm-target-results { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow: auto; }
+
+.hm-actions { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -1,22 +1,50 @@
-# Müşteriler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Müşteriler — BBD Store müşteri yönetimi ve YORUM MODERASYONU.
+#
+# AYRI BİR "Yorumlar" MODÜLÜ YOKTUR: yorum müşterinin sesidir ve müşteri
+# ekranında yönetilir (sekme). Ayrı bir "Mağaza Ayarları" ekranı da yoktur;
+# müşteri kaydı, e-posta doğrulama, varsayılan grup ve KVKK metinleri buranın
+# Ayarlar sekmesinde durur.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham
+# httpx ya da DB sürücüsü kullanmaz. Bagisto verisinin kopyasını tutmaz: yerel
+# tablolar sadece gerekçe (denetim izi), yorumun spam etiketi ve izin geçmişi
+# içindir — üçünün de mağazada karşılığı yoktur.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_customers
 name: "Müşteriler"
-description: "Mağaza müşteri kayıtları, adresler ve sipariş geçmişi."
+description: "Müşteri kayıtları, RFM segmenti, yorum moderasyonu ve KVKK işlemleri."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
-provides: []
-consumes: []
+depends: [store_api]
+
+provides:
+  - capability: store.customer.card
+    contract: km_sdk.contracts:CustomerCard
+    description: "Müşteri künyesi ve RFM segmenti. Sipariş, iade, talep ve fatura ekranları
+      'bu müşteri kim' sorusunu buraya sorar; kendi müşteri isteğini atmaz (K3). Salt okunur."
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Müşteri karnesi ve segment raporu kâğıda basılır; yazıcı yoksa ekran çalışmaya
+      devam eder."
 
 events:
-  publishes: []
+  publishes:
+    - name: store.customer.anonymized
+      description: "KVKK anonimleştirme uygulandı. GERİ ALINAMAZ; müşteri künyesi önbelleğe
+        alan ekranlar kopyalarını düşürmelidir."
+    - name: store.review.moderated
+      description: "Yorumun durumu değişti (onay/ret/spam). Ürün puan ortalaması gösteren
+        ekranlar tazelenmelidir."
   subscribes: []
 
 http:
@@ -35,21 +63,39 @@ ui:
     order: 80
     requires: [store_customers.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_customers.view
-    description: "Müşteriler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Müşteri listesi, künye, yorumlar, rapor ve CSV."
+    default_roles: [admin, bbd_staff]
   - key: store_customers.manage
-    description: "Müşteriler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Müşteri künyesi, grup ve not düzenleme; müşteri ayarlarını kaydetme."
+    default_roles: [admin, bbd_staff]
+  - key: store_customers.deactivate
+    description: "Müşteriyi pasifleştirme. Silme yoktur: siparişi olan müşteri silinmez."
+    default_roles: [admin]
+  - key: store_customers.reviews
+    description: "Yorum moderasyonu (onayla/reddet/spam) ve mağaza yanıtı yazma."
+    default_roles: [admin, bbd_staff]
+  - key: store_customers.gdpr
+    description: "KVKK veri paketi isteme. Paket kişisel veri taşır."
+    default_roles: [admin]
+  - key: store_customers.anonymize
+    description: "KVKK anonimleştirme. GERİ ALINAMAZ; ad, e-posta ve telefon kalıcı silinir."
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+dependencies:
+  capabilities_note: "Mağaza erişimi `store.api`, yazdırma `printer` yeteneğinden gelir;
+    ek PyPI ya da apt paketi yoktur. Rapor önizlemesi `pdftoppm` bulursa çalışır,
+    bulamazsa rapor yine üretilir ve ekran nedeni söyler."
 
 tasks: []

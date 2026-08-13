@@ -1,0 +1,164 @@
+/* Dahili AI paneli. Ortak sınıflar (kit-*, df-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `ai-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `ai-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.ai {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.ai > * { flex: none; }               /* kartlar ezilmesin */
+
+.ai-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.ai-pane > * { flex: none; }
+
+.ai-sub { font-size: 11px; color: var(--soft); }
+
+.ai-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.ai-notes:empty,
+.ai-kpi:empty { display: none; }
+
+.ai-notes { display: flex; flex-direction: column; gap: 8px; }
+
+/* ------------------------------------------------------------ bütçe şeridi */
+
+/* Bütçe HER SEKMEDE görünür: para harcayan tek ekran burası ve kullanıcı
+   kalanı görmeden düğmeye basmamalı. Boşken yer kaplamaz. */
+.ai-budget-host:empty { display: none; }
+.ai-budget-host {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 20px 0;
+}
+.ai-budget {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ai-meter { flex: 1; min-width: 240px; }
+
+/* ------------------------------------------------------------- araç kartları */
+
+.ai-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 12px;
+}
+.ai-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+/* Kapalı kart soluk DEĞİL sadece renksizdir; nedeni her zaman YAZIYLA da
+   kartın içinde durur (blockReason). */
+.ai-card.off { background: var(--tint); }
+.ai-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-card-head b { flex: 1; min-width: 0; }
+.ai-card-text { margin: 0; line-height: 1.5; }
+.ai-card-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
+
+/* ------------------------------------------------------------------ tablo */
+
+.ai-table { min-height: 120px; }
+
+.ai-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ai-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Fark tablosunun metin hücreleri: tek satırda kesilir, tamamı `title`'a
+   girer. Sarmalamak satır yüksekliğini kayda göre değiştiriyor ve önce/sonra
+   sütunları hizasını kaybediyordu. */
+.ai-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ai-after { color: var(--good); }
+
+.ai-summary { margin: 0; padding: 10px 12px; line-height: 1.55; white-space: pre-wrap; }
+
+/* ------------------------------------------------------------ seçim çubuğu */
+
+/* Seçim yokken YER KAPLAMAZ: boş bir çubuk bırakmak tabloyu aşağı itiyor ve
+   kullanıcı "bir şey mi seçtim" diye bakıyordu. */
+.ai-selbar { display: none; }
+.ai-selbar.on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+
+/* -------------------------------------------------------- çalışma sonucu */
+
+.ai-run-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ai-run-result:empty { display: none; }
+
+/* Uygulama çubuğu fark tablosunun ALTINDA sabit durur: kullanıcı tabloyu
+   okuyup aşağı indiğinde düğme elinin altında olsun. */
+.ai-apply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+
+/* ---------------------------------------------------------------- ayarlar */
+
+.ai-toggles { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.ai-toggle { display: flex; align-items: center; gap: 8px; }
+.ai-toggle span:nth-of-type(1) { min-width: 200px; }
+
+.ai-muted { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.ai-muted-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--tint);
+}

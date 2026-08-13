@@ -1,0 +1,27 @@
+# Manuel Yedekleme ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""              # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Denetim/<yıl>/<ay>
+download_path: ""            # indirilen yedek dosyası; boşsa rapor rafı kullanılır
+
+# Yeni yedek kartında önceden işaretli gelen kapsam. Geçerli anahtarlar:
+# database · uploads · config (mağaza başka anahtar tanımıyor).
+default_scope: [database, uploads, config]
+
+# Durum bandı bu saatten eski yedeği "eski" sayar ve rengi/metni değişir.
+stale_after_hours: 48
+
+# Bundan yeni yedek SİLİNEMEZ. Elde kalan tek sağlam kopya çoğu zaman en
+# yenisidir; "yer açayım" refleksi tam onu siler.
+delete_min_age_days: 30
+
+# Yedek indirme belleğe alınır. Bu tavanın üstünde dosya çekmek sidecar'ı
+# şişirir; kullanıcı sunucudaki yola yönlendirilir.
+download_limit_mb: 200
+
+# Geri yüklemeden ÖNCE otomatik güvenlik yedeği alınsın mı. Kapatmak, geri
+# yükleme yanlış yedekle yapıldığında dönüş yolunu kapatır — kapatmayın.
+safety_backup_before_restore: true
+
+# "Kalan alanla kaç yedek daha alınır" tahmini son kaç yedeğin ortalamasından
+# hesaplansın. 1 vermek, kapsamı dar tek bir yedeği ölçü almak demektir.
+disk_sample: 5

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_tax ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Finans/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Ürün eşlemesi sayfasındaki kayıt sayısı. Mağaza 50'de kırpar."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Her istekte gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "summary_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 400,
+      "description": "KDV icmalinin varsayılan gün aralığı."
+    },
+    "document_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "İcmale girecek en çok belge. Aşılırsa rapor üretilmez; aralık daraltılır."
+    },
+    "catalog_scan_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "Vergi kategorisi kullanım taramasında okunacak en çok ürün."
+    },
+    "assign_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 200,
+      "description": "Toplu eşlemede sırayla yazılacak en çok ürün. 0 = kapalı."
+    },
+    "capability_ttl": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3600,
+      "description": "store.tax.rates yeteneğinin önbellek ömrü (saniye)."
+    }
+  }
+}

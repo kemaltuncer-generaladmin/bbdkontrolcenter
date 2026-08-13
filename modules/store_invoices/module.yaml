@@ -1,22 +1,43 @@
-# Fatura modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Fatura — BBD Store belge ve mali eşleme ekranı.
+#
+# BU MODÜL YASAL FATURA KESMEZ. Depoda hiçbir e-Fatura/e-Arşiv (GİB)
+# entegrasyonu yoktur ve Bagisto'nun ürettiği PDF mali belge değildir. Ekran
+# bunu KALICI bir bantla söyler; yasal belge dış sistemde kesilir ve numarası
+# buradan eşlenir (`mod_store_invoices_legal`).
+#
+# Mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4). Yerel tablolar
+# Bagisto'da karşılığı olmayan üç şeyi tutar: yasal numara eşlemesi, seri
+# tanımı ve yazma gerekçesi.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_invoices
 name: "Fatura"
-description: "Sipariş faturalarının üretilmesi ve arşivlenmesi."
+description: "Fatura ve irsaliye listesi, seri/numara denetimi, dönem icmali ve yasal fatura eşlemesi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
-provides: []
-consumes: []
+depends: [store_api]
+
+provides:
+  - capability: store.invoice.byOrder
+    contract: km_sdk.contracts:InvoiceByOrderProvider
+    description: "Sipariş kimliğinden fatura künyesi, tutarları ve eşlenmiş yasal fatura numarası. Salt okunur."
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Dönem icmali ve birleşik fatura kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
-  publishes: []
+  publishes:
+    - name: store.invoice.issued
+      description: "Bir siparişe fatura kesildi (kuru provada yayınlanmaz). Sipariş ve iade ekranları kendi listesini tazeler."
   subscribes: []
 
 http:
@@ -35,21 +56,39 @@ ui:
     order: 120
     requires: [store_invoices.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
+#
+# `legal_no` bilerek `manage`den ayrıldı: yasal fatura numarasını bilen kişi
+# mali müşavirdir, ama onun mağazaya belge kestirmesi ya da müşteriye e-posta
+# göndermesi istenmez.
 permissions:
   - key: store_invoices.view
-    description: "Fatura ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Fatura ve irsaliye listesini görüntüleme, icmal ve CSV alma."
+    default_roles: [admin, bbd_staff, accountant]
   - key: store_invoices.manage
-    description: "Fatura kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Seri tanımlama, fatura durumu değiştirme, müşteriye kopya e-postalama."
+    default_roles: [admin, bbd_staff]
+  - key: store_invoices.issue
+    description: "Siparişe fatura kesme. Kesilen fatura silinemez; iptali iade faturasıdır."
+    default_roles: [admin, bbd_staff]
+  - key: store_invoices.legal_no
+    description: "Dış sistemde kesilen yasal faturanın numarasını mağaza faturasıyla eşleme."
+    default_roles: [admin, bbd_staff, accountant]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+dependencies:
+  system:
+    # Birleşik PDF `pdfunite`, önizleme `pdftoppm` ile üretilir. İkisi de aynı
+    # pakettedir; yeni bir Python bağımlılığı EKLENMEZ (K11).
+    - poppler-utils
+  capabilities_note: "PDF üreteci ve yazdırma çekirdekten/platformdan gelir; burada tekrar edilmez."
 
 tasks: []

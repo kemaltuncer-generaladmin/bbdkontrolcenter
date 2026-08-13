@@ -1,0 +1,32 @@
+# Raporlar ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Satış/<yıl>/<ay>
+
+# KANAL — İKİ AYRI DEĞER, ÇÜNKÜ UÇLAR AYRI ŞEY İSTİYOR (canlıda doğrulandı):
+#   /api/admin/catalog/products?channel=default → 1421 ürün · channel=1 → 0
+#   /api/admin/orders?channel=default           → 0 kayıt  · channel=1 → 18
+# Kodu sipariş ucuna göndermek bütün sipariş raporlarını SESSİZCE boşaltır;
+# hata da vermez. Bu yüzden kimlik ayrıdır ve varsayılanı 0'dır: bilinmeyen
+# kimlikle süzmektense hiç süzmemek doğrudur.
+channel: "default"         # KOD — ürün/ayar uçlarına gider
+channel_id: 0              # KİMLİK — sipariş ucuna gider; 0 = süzgeç gönderilmez
+locale: "tr"               # her istekte gider
+
+default_range_days: 30     # aralık verilmezse son N gün
+
+# Tarama tavanları. Bozuk `meta` yüzünden sonsuz sayfalama olmasın ve tek bir
+# rapor dakikada 60 istek sınırını tek başına tüketmesin diye vardır.
+row_cap: 3000
+
+# Sipariş KALEMİ liste ucundan gelmiyorsa sipariş tek tek okunur. 0 = kapalı;
+# o zaman ürün bazlı raporlar "kalem okunamadı" notuyla eksik çıkar (sessizce
+# sıfır göstermez). 300 canlıdaki 11 siparişin çok üstünde, büyümeye yer var.
+detail_scan_limit: 300
+
+# Rapor paketinde tek PDF'e girecek en çok yaprak.
+package_leaf_limit: 12
+
+# Eşikler — hepsi raporun notunda da yazar, kullanıcı nereden geldiğini görür.
+churn_days: 180            # son siparişinin üzerinden bu kadar geçen müşteri "kayıp"
+stockout_horizon_days: 30  # bu kadar günde tükenecek ürün uyarı verir
+dead_stock_days: 90        # bilgilendirme amaçlı; ölü stok dönemi aralıktan gelir

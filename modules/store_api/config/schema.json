@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_api ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "base_url": {
+      "type": "string",
+      "pattern": "^https://",
+      "description": "Mağaza kökü. HTTPS zorunlu: belirteç düz metin gider."
+    },
+    "timeout_seconds": { "type": "number", "minimum": 5, "maximum": 120 },
+    "read_only": {
+      "type": "boolean",
+      "description": "Acil fren. true iken GET dışı her istek geçitte reddedilir."
+    },
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "Yazma metotlarının dry_run varsayılanı."
+    },
+    "require_reason": {
+      "type": "boolean",
+      "description": "Yazma isteği en az 10 karakterlik gerekçe olmadan reddedilir."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "Sunucu 50'nin üstünü kırpar."
+    },
+    "requests_per_minute": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "description": "Sunucu sınırı 60; pay bırakmak için 55 önerilir."
+    },
+    "reference_ttl_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
+    "snapshot_ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "max_items": { "type": "integer", "minimum": 100, "maximum": 50000 },
+    "max_upload_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 128,
+      "description": "Yükleme üst sınırı (MB). Uç sınırı daha küçükse o uygulanır."
+    }
+  }
+}

@@ -1,6 +1,12 @@
 # --- sırlar (K8) ---
 config/local.yaml
 config/local.*.yaml
+# Elle bırakılan belirteç/sır notları. Değer config/local.yaml kasasına
+# taşınır; bu dosyalar depoya ASLA girmez.
+*token*.md
+*token*.txt
+*secret*.md
+*secret*.txt
 *.pem
 *.key
 .env

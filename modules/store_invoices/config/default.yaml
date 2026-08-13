@@ -1,0 +1,9 @@
+# Fatura ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Finans/<yıl>/<ay>
+page_size: 50              # mağaza 50'de kırpıyor; büyütmek sayfa kaybettirir
+
+# Hiç seri tanımlanmamışken numara alanına önerilecek seri kodu. Seri
+# tablosunda "varsayılan" işaretli bir seri varsa O kazanır; bu değer yalnız
+# tablo boşken kullanılır (ilk kurulumda ekran boş açılmasın diye).
+default_series: ""

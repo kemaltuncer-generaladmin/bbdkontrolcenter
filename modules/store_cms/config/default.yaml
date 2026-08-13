@@ -1,0 +1,22 @@
+# CMS ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Müşteri/<yıl>/<ay>
+page_size: 25              # CMS sayfası onlarla ölçülür; 25 ekrana sığar
+channel: "default"         # blok listesi ve referanslar bu kanaldan okunur
+locale: "tr"               # her istekte gider; çeviri satırı bununla seçilir
+
+# Arama sonucu önizleme kartında adresin başına yazılır. Boşsa yalnız yol
+# gösterilir — uydurma alan adı yazmaktansa eksik göstermek doğrudur.
+site_url: "https://bbdstore.com.tr"
+
+# SSS sayfasının adresi. Bagisto'da "SSS" diye bir kayıt türü yok; SSS normal
+# bir CMS sayfasıdır ve ekran onu <h3> soru + cevap kuralıyla yapılandırır.
+faq_slug: "sikca-sorulan-sorular"
+
+# Yasal metinlerin adresleri. KOD İÇİNE GÖMÜLMEZ: mağaza bunları farklı
+# adlandırmış olabilir ve gömülü liste yanlış "eksik metin" uyarısı üretir.
+legal_slugs:
+  distance_sales: "mesafeli-satis-sozlesmesi"
+  refund: "iade-ve-cayma-hakki"
+  privacy: "gizlilik-politikasi"
+  cookies: "cerez-politikasi"

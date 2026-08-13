@@ -1,0 +1,45 @@
+# Siparişler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Satış/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+
+# Kanal KODU. YALNIZ mağaza ayarlarını okurken (`/configuration?channel=`)
+# kullanılır; sipariş listesi süzgecinde KULLANILMAZ.
+channel: "default"
+
+# Sipariş listesi süzgecine giden kanal KİMLİĞİ. 0 = kanal süzgeci gönderilmez.
+# TUZAK — CANLIDA DOĞRULANDI: `/api/admin/orders?channel=` kanal KODUNU değil
+# KİMLİĞİNİ bekliyor. `channel=default` sıfır kayıt döndürüyor ve hata da
+# vermiyor; kod göndermek listeyi sessizce boşaltır. Mağazada tek kanal var
+# (id 1, kod "default"), bu yüzden varsayılan 0: süzgeç hiç gönderilmez.
+channel_id: 0
+
+# Mağazanın uygulayamadığı süzgeçler (ödeme yöntemi, kargo firması, şehir,
+# kupon, anahtarlar) için küme taranır. Tavan yakalanırsa ekran "liste eksik
+# olabilir" der; sessiz kırpma yapılmaz.
+scan_cap: 2000
+
+# Liste ucu SIĞ satır veriyor: fatura, gönderi, not, ara toplam ve faturalanan
+# tutar yalnız `/orders/{id}` detayında var. Bunlara dayanan bir süzgeç
+# seçilince taranan küme sipariş sipariş detaylandırılır; her detay bir istek
+# eder ve geçit dakikada 55 istekte tutar. Tavan aşılırsa ekran "bazı süzgeçler
+# eksik uygulandı" der.
+detail_cap: 300
+
+# --- ekran tercihlerinin BAŞLANGIÇ değerleri -------------------------------
+# Kullanıcı Ayarlar sekmesinden değiştirdiğinde değer yerel tabloya yazılır ve
+# buradaki değeri ezer. Hiçbiri mağazayı etkilemez.
+
+order_no_format: "#{no}"   # {no} sipariş numarası · {id} iç kimlik · {year} yıl
+cancel_window_hours: 0     # 0 = sınırsız. >0 ise bu süreden eski sipariş iptal edilmez
+late_days: 3               # kaç gündür kargolanmayan sipariş "Geciken" sayılır
+status_names: {}           # {"processing": "Hazırlanıyor"} — boşsa varsayılan Türkçe adlar
+
+# Gönderi kaydı hangi envanter kaynağından düşülsün. Toplu "kargoya ver"
+# bunu kullanır; tek siparişte ekran sorabilir.
+inventory_source_id: 1
+
+# Mağazanın sipariş akışı ayarlarının core_config bölümü. SALT OKUNUR
+# gösterilir: anahtar adları Bagisto sürümüne göre değişiyor ve bulunmayan
+# anahtara yazmak `core_config` içinde etkisiz bir satır açardı.
+order_config_slug: "sales.order_settings"

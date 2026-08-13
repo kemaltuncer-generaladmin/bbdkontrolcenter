@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_payment_gateway ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Finans/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Talep listesinde sayfa başına kayıt."
+    },
+    "default_email": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "Müşterinin e-postası yoksa faturanın gideceği varsayılan adres."
+    },
+    "org_name": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "SMS metninde ve raporda görünen kurum adı."
+    },
+    "link_base_url": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Mağaza yalnız jeton döndürüyorsa ödeme bağlantısının öneki."
+    },
+    "settle_payment_methods": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "maxLength": 40 },
+      "description": "Elden kapatma yönteminin mağazadaki ödeme yöntemi kodu (havale/nakit → Bagisto kodu)."
+    },
+    "sms_dry_run": {
+      "type": "boolean",
+      "description": "Üç katmanlı SMS freninin modül katmanı. Varsayılan true: gerçek SMS gitmez."
+    },
+    "sms_header": {
+      "type": "string",
+      "maxLength": 32,
+      "description": "Gönderici başlığı. Boşsa platformun yapılandırdığı başlık kullanılır."
+    },
+    "sms_allowlist": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 20 },
+      "description": "Doluyken yalnız bu numaralara gerçek SMS gider; diğerleri kuru provaya düşer."
+    },
+    "sms_template": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "Başlangıç SMS şablonu. Ekrandan kaydedilen şablon bunu ezer."
+    },
+    "product_prices_include_tax": {
+      "type": "boolean",
+      "description": "Mağazada ürün fiyatı KDV dâhil girildiyse true. Serbest tutarı ETKİLEMEZ; serbest tutar her zaman KDV'sizdir."
+    }
+  }
+}

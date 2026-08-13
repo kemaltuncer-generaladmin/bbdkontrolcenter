@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_products ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Ürün/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına ürün. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Her istekte gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "low_stock_threshold": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9999,
+      "description": "Kritik stok eşiği. Yalnız bu ekranda boyamayı etkiler, vitrini değil."
+    },
+    "inventory_config_slug": {
+      "type": "string",
+      "description": "Stok ayarlarının core_config bölümü."
+    },
+    "back_order_key": {
+      "type": "string",
+      "description": "Arka sipariş ayarının core_config anahtarı."
+    },
+    "out_of_stock_key": {
+      "type": "string",
+      "description": "Tükenen ürün davranışının core_config anahtarı."
+    },
+    "image_max_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64,
+      "description": "Görsel yükleme sınırı (MB). Sunucunun 4 MB tavanı ile küçüğü uygulanır."
+    },
+    "image_min_width": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8000,
+      "description": "Önerilen en küçük genişlik. Altı ENGELLENMEZ, uyarılır."
+    },
+    "image_min_height": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8000,
+      "description": "Önerilen en küçük yükseklik. Altı ENGELLENMEZ, uyarılır."
+    },
+    "image_max_ratio": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Uyarı verilen en-boy oranı tavanı. Vitrin ızgarası kareye yakın bekler."
+    },
+    "bulk_direct_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Toplu uç yokken sırayla yazılabilecek en çok ürün. 0 = kapalı."
+    }
+  }
+}

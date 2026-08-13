@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_shipping ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Kargo/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına gönderi. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Her istekte gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "desi_divisor": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 6000,
+      "description": "Desi böleni. Yurt içi kara kargo 3000, havayolu 5000 kullanır."
+    },
+    "idle_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30,
+      "description": "Kaç gün hareketsiz kalan gönderi 'Geciken' sayılır."
+    },
+    "label_format": {
+      "type": "string",
+      "enum": ["thermal-100x150", "a4-4up"],
+      "description": "Toplu etiket varsayılan biçimi."
+    },
+    "label_batch_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "description": "Tek seferde birleştirilecek en çok etiket."
+    },
+    "performance_days": {
+      "type": "integer",
+      "minimum": 7,
+      "maximum": 365,
+      "description": "Performans sekmesinin varsayılan penceresi (gün)."
+    },
+    "ready_status": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "'Kargoya hazır' sekmesinin mağazadan istediği sipariş durumu."
+    }
+  }
+}

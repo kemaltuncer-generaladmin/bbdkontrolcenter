@@ -1,19 +1,35 @@
-# Vergilendirme modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Vergilendirme — BBD Store KDV oranları, vergi kategorileri ve dönem icmali.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham
+# httpx ya da DB sürücüsü kullanmaz. Bagisto verisinin kopyasını tutmaz: yerel
+# tablolar yalnız gerekçe (denetim izi), oranın geçerlilik tarihi (Bagisto'da
+# böyle bir alan YOK), vergi kategorisi başına ürün sayısı (tarama sonucu) ve
+# toplu eşleme önizlemesi içindir.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_tax
 name: "Vergilendirme"
-description: "KDV oranları ve vergi kurallarının yönetimi."
+description: "KDV oranları, vergi kategorileri, ürün eşlemesi ve dönem KDV icmali."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
-provides: []
-consumes: []
+depends: [store_api]
+
+provides:
+  - capability: store.tax.rates
+    contract: km_sdk.contracts:TaxRateProvider
+    description: "Oranlar ve vergi kategorisi → yüzde eşlemesi. Ürünler, Fatura ve Siparişler ekranları buradan okur. SALT OKUR."
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "KDV icmali kâğıda basılır (mali müşavire imzalı gider); yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
   publishes: []
@@ -35,16 +51,24 @@ ui:
     order: 130
     requires: [store_tax.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
+#
+# `accountant` bu ekranı GÖRÜR (KDV icmali onun ana ekranıdır) ama hiçbir şey
+# YAZAMAZ: oran değiştirmek satışın vergisini değiştirir, muhasebenin değil
+# mağaza yönetiminin kararıdır.
 permissions:
   - key: store_tax.view
-    description: "Vergilendirme ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Vergilendirme ekranını görüntüleme, KDV icmali alma, rapor ve CSV üretme."
+    default_roles: [admin, bbd_staff, accountant]
   - key: store_tax.manage
-    description: "Vergilendirme kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Vergi oranı ve vergi kategorisi ekleme/düzenleme."
+    default_roles: [admin, bbd_staff]
+  - key: store_tax.assign
+    description: "Ürünlerin vergi kategorisini toplu değiştirme. Kataloğa yazar: yanlış eşleme yanlış KDV'yle satış demektir."
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml

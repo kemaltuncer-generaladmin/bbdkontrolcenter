@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_reports ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Satış/yıl/ay)."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı KODU. Ürün ve ayar uçlarına gider (orada kod istenir)."
+    },
+    "channel_id": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000,
+      "description": "Bagisto satış kanalı KİMLİĞİ. Sipariş ucu kodu değil kimliği ister; 0 = süzgeç hiç gönderilmez."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "default_range_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Tarih aralığı verilmediğinde kullanılacak gün sayısı."
+    },
+    "row_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "Bir raporun tarayacağı en çok kayıt. Sonsuz sayfalamayı engeller."
+    },
+    "detail_scan_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2000,
+      "description": "Kalemi liste ucunda olmayan siparişlerden tek tek okunacak en çok kayıt. 0 = kapalı."
+    },
+    "package_leaf_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30,
+      "description": "Rapor paketinde tek PDF'e girecek en çok rapor."
+    },
+    "churn_days": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 3650,
+      "description": "Kayıp müşteri eşiği (gün)."
+    },
+    "stockout_horizon_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 365,
+      "description": "Tükenme tahmininde uyarı ufku (gün)."
+    },
+    "dead_stock_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3650,
+      "description": "Ölü stok değerlendirmesi için bilgilendirme amaçlı gün sayısı."
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_backups ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Envanter CSV'sinin klasörü. Boşsa masaüstü hiyerarşisi (Raporlar/Mağaza/Denetim/yıl/ay)."
+    },
+    "download_path": {
+      "type": "string",
+      "description": "İndirilen yedek dosyasının klasörü. Boşsa rapor rafı kullanılır."
+    },
+    "default_scope": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["database", "uploads", "config"] },
+      "description": "Yeni yedek kartında önceden işaretli gelen kapsam."
+    },
+    "stale_after_hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 720,
+      "description": "Durum bandının 'eski yedek' eşiği (saat)."
+    },
+    "delete_min_age_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3650,
+      "description": "Bu yaştan yeni yedek silinemez."
+    },
+    "download_limit_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4096,
+      "description": "Panelden indirilebilecek en büyük yedek. Üstünde sunucudaki yol gösterilir."
+    },
+    "safety_backup_before_restore": {
+      "type": "boolean",
+      "description": "Geri yüklemeden önce otomatik güvenlik yedeği alınsın mı. Kapatmak dönüş yolunu kapatır."
+    },
+    "disk_sample": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "'Kaç yedek daha sığar' tahmininde ortalaması alınacak son yedek sayısı."
+    }
+  }
+}

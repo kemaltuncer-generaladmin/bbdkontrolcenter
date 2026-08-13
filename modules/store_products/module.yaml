@@ -1,5 +1,10 @@
-# Ürünler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Ürünler — BBD Store kataloğu.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham
+# httpx ya da DB sürücüsü kullanmaz. Bagisto verisinin kopyasını tutmaz: yerel
+# tablolar sadece gerekçe (denetim izi), toplu işlem önizlemesi ve ekran
+# tercihi içindir.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_products
@@ -7,13 +12,20 @@ name: "Ürünler"
 description: "Mağaza ürün kataloğu, varyant, fiyat ve stok yönetimi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Stok raporu ve fiyat listesi kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
   publishes: []
@@ -35,16 +47,34 @@ ui:
     order: 20
     requires: [store_products.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_products.view
-    description: "Ürünler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Ürünler ekranını görüntüleme, rapor ve CSV alma."
+    default_roles: [admin, bbd_staff]
   - key: store_products.manage
-    description: "Ürünler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Ürün künyesi, fiyat, stok, görsel ve kategori düzenleme."
+    default_roles: [admin, bbd_staff]
+  - key: store_products.bulk
+    description: "Toplu fiyat/stok/kategori/durum uygulaması (önizleme zorunlu)."
+    default_roles: [admin, bbd_staff]
+  - key: store_products.deactivate
+    description: "Ürünü pasifleştirme. Silme yoktur: siparişi olan ürün silinmez."
+    default_roles: [admin]
+  - key: store_products.rename_sku
+    description: "SKU değiştirme. product_flat yeniden yazılır, eski vitrin bağlantıları kırılır."
+    default_roles: [admin]
+  # Nitelik kataloğun ŞEMASIDIR: bir niteliği bozmak tek ürünü değil o niteliği
+  # taşıyan bütün ürünleri etkiler. Ürün düzenlemekten (manage) ayrı tutulur.
+  - key: store_products.attributes
+    description: "Nitelik ve aile düzenleme, seçenek yönetimi, nitelik pasifleştirme."
+    default_roles: [admin]
+  - key: store_products.attributes_delete
+    description: "Nitelik/seçenek silme. Değeri bütün ürünlerden düşer; geri alınamaz."
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml

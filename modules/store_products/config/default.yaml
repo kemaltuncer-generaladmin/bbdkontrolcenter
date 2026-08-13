@@ -1,0 +1,36 @@
+# Ürünler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Ürün/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+channel: "default"         # her istekte gider (Bagisto EAV tuzağı 2)
+locale: "tr"               # her istekte gider
+low_stock_threshold: 5     # yerel tercih ezmediyse kullanılır; yalnız boyamayı etkiler
+
+# Mağaza ayarının core_config anahtarları. Bagisto sürümüne göre değişebildiği
+# için sabit yazılmaz: bulunamayan anahtara YAZILMAZ, ekran "bulunamadı" der.
+inventory_config_slug: "catalog.inventory"
+back_order_key: "catalog.inventory.stock_options.back_orders"
+out_of_stock_key: "catalog.products.settings.show_out_of_stock_items"
+
+# --- Görsel yükleme ---------------------------------------------------------
+# Sunucunun ürün görseli sınırı 4 MB'dır (AdminCatalogProductImageProcessor).
+# Bu ayar sınırı AŞAĞI çekebilir, yukarı çekemez: 8 yazmak 4 MB'lık gerçeği
+# değiştirmez, yalnız kullanıcıya yanlış söz verirdi.
+image_max_mb: 4
+
+# Önerilen en küçük kenar. ALTINDA YÜKLEME ENGELLENMEZ — uyarı verilir ve
+# kullanıcı ne olacağını (“listede bulanık görünür”) okuyup karar verir.
+# Vitrin ürün sayfasında görseli 800 piksel genişlikte çiziyor.
+image_min_width: 800
+image_min_height: 800
+
+# En-boy oranı bunun üstündeyse uyarılır: vitrin ızgarası kareye yakın görsel
+# bekliyor ve fazlasını kenarlardan kırpıyor. 1.6 ≈ 3:2 fotoğraf oranı sınırda
+# kalsın diye seçildi.
+image_max_ratio: 1.6
+
+# Toplu fiyat/stok/kategori için mağazada toplu uç YOK. 0 = kapalı (varsayılan):
+# 1.419 üründe tek tek PUT atmak dakikada 60 istek sınırına takılır ve yarıda
+# kalırsa kataloğun yarısı yeni yarısı eski değerde kalır. Küçük düzeltmeler
+# için yönetici bunu bilerek açabilir; açınca ekranda ne olacağı yazar.
+bulk_direct_limit: 0

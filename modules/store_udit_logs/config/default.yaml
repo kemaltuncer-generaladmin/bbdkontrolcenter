@@ -1,0 +1,16 @@
+# UDİT İşlem Kayıtları ayarları. Düz anahtarlar — iç içe `modules:` bloğu yok.
+
+export_path: ""          # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Denetim/<yıl>/<ay>
+
+# Sayfa başına kayıt. 20 ekran içinde imleçli sayfalama kullanan TEK ekran
+# budur; 100 satır iki uzak istekle dolar (mağaza sayfa boyunu 50'de kırpıyor).
+page_size: 100
+
+# Tarih aralığı tavanı. Açık uçlu denetim sorgusu mağazayı dakikalarca meşgul
+# eder ve ekranı da doldurmaz; aralık ZORUNLU, genişliği sınırlı.
+max_range_days: 92
+
+# Geçit izinden (mod_store_api_audit) bir seferde okunan satır sayısı. O tablo
+# tarih süzgeci kabul etmiyor: son N satır okunup burada süzülür. Tavan
+# dolduğunda ekran "geçit izi eksik olabilir" der.
+local_scan_limit: 800

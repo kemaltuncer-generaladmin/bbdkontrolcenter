@@ -1,5 +1,9 @@
-# Promosyonlar modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Promosyonlar — sepet kuralı, katalog kuralı, kupon ve kampanya performansı.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4). Kural ve
+# kupon MAĞAZADA yaşar; yerel tablolar yalnız Bagisto'da karşılığı olmayan iki
+# şeyi tutar: yazma gerekçesi (denetim izi) ve üretilen kupon partisi.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_promotions
@@ -7,16 +11,27 @@ name: "Promosyonlar"
 description: "İndirim kuralları, kupon ve kampanya yönetimi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Kampanya performans raporu kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
-  publishes: []
+  publishes:
+    - name: store.promotion.changed
+      description: "Bir sepet/katalog kuralı yazıldı ya da durumu değişti. Pano ve
+        raporlar kendi verisini tazelemek için dinleyebilir; kural İÇERİĞİ taşınmaz,
+        yalnız kimlik ve eylem."
   subscribes: []
 
 http:
@@ -35,20 +50,37 @@ ui:
     order: 40
     requires: [store_promotions.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
+#
+# `accountant` bu ekranı GÖRMEZ: promosyon mali bir rapor değil, satış
+# politikasıdır (docs/permissions.md'deki mali ekran listesinde yoktur).
 permissions:
   - key: store_promotions.view
-    description: "Promosyonlar ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Promosyon ekranını, kuponları ve kampanya performansını görüntüleme."
+    default_roles: [admin, bbd_staff]
   - key: store_promotions.manage
-    description: "Promosyonlar kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Kural künyesi, koşul, eylem, kısıt ve takvim düzenleme (taslak olarak)."
+    default_roles: [admin, bbd_staff]
+  - key: store_promotions.activate
+    description: "Kuralı yayına alma / durdurma. Yayındaki kural her siparişte para
+      indirir; bu yüzden düzenleme izninden ayrı tutulur."
+    default_roles: [admin]
+  - key: store_promotions.coupons
+    description: "Kupon üretme ve kullanılmamış kupon kodunu kaldırma."
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
+
+dependencies:
+  python: []
+  system: []
+  capabilities_note: "Yeni bağımlılık yok. PDF üreteci ve CSV çekirdekte
+    (km_sdk.build_pdf / csv_bytes), yazdırma `printer` platform yeteneğinde."
 
 migrations: backend/migrations
 

@@ -1,19 +1,32 @@
-# İadeler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# İadeler — para geri hareketinin tek ekranı.
+#
+# Mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4). İki kaynak
+# birleşir: Bagisto'nun kredi notları (`/admin/refunds` — parayı temsil eder)
+# ve BBD'nin RMA talepleri (`/admin/bbd/return-requests` — süreci temsil
+# eder). Bagisto verisinin kopyası tutulmaz; yerel tablolar yalnız gerekçe
+# (denetim izi) ve ONAYLANAN HESABIN kendisi içindir.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_refunds
 name: "İadeler"
-description: "İade taleplerinin işlenmesi ve para iadesi takibi."
+description: "İade taleplerinin işlenmesi, iade tutarı hesabı ve para iadesi takibi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4); iade, sipariş ve POS çağrıları oradan."
+  - capability: printer
+    optional: true
+    reason: "İade icmali ve iade formu kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
   publishes: []
@@ -35,20 +48,39 @@ ui:
     order: 140
     requires: [store_refunds.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
+#
+# `accountant` bu ekranı GÖRÜR (mali ekran) ama hiçbir şey yazamaz: para
+# hareketini muhasebeci başlatmaz, yalnız okur ve raporlar.
 permissions:
   - key: store_refunds.view
-    description: "İadeler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "İadeler ekranını görüntüleme, iade icmali ve CSV alma."
+    default_roles: [admin, bbd_staff, accountant]
   - key: store_refunds.manage
-    description: "İadeler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Talep durumu, iade kargosu, sipariş notu ve müşteri bildirimi."
+    default_roles: [admin, bbd_staff]
+  - key: store_refunds.approve
+    description: "İadeyi onaylayıp parayı geri verme (kredi notu + POS iadesi). Para hareketidir."
+    default_roles: [admin, bbd_staff]
+
+  # Geri gönderim etiketi kargo firmasından SATIN ALINIR ve ücreti mağazaya
+  # yansır; ADR 0012 gereği para harcayan iş `manage` içine gizlenmez, kendi
+  # anahtarını taşır (`store_shipping.purchase` ile aynı tabiatta).
+  - key: store_refunds.ship_return
+    description: "Müşteriden geri alım için iade kargosu açma. Kargo ücreti mağazaya yansır."
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
+
+dependencies:
+  python: []
+  system: []
+  capabilities_note: "Yazıcı ve mağaza erişimi `consumes` bloğundadır; burada tekrar edilmez."
 
 migrations: backend/migrations
 

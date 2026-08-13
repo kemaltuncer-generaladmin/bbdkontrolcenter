@@ -1,0 +1,38 @@
+# Mağaza geçidi varsayılanları.
+# Belirteç BURAYA YAZILMAZ: kasadan gelir (config/local.yaml → secrets.store.admin_token).
+
+base_url: "https://bbdstore.com.tr"
+timeout_seconds: 30
+
+# ACİL FREN. Açıkken GET dışı hiçbir istek mağazaya gitmez. Varsayılan AÇIK:
+# canlı mağazada çalışıyoruz, yazma yetkisi bilinçli olarak verilir.
+read_only: true
+
+# Yazma metotlarının `dry_run` varsayılanı. Bagisto çekirdek uçlarında kuru
+# prova isteği HİÇ GÖNDERMEZ (çekirdek `dryRun` bilmez); BBD uçlarında bayrak
+# gövdeyle gider.
+dry_run_default: true
+
+# Gerekçesiz yazma reddedilir (en az 10 karakter). Denetim izinin değeri
+# gerekçedendir; kapatmak izi işe yaramaz kılar.
+require_reason: true
+
+# Sunucu `per_page` değerini 50'ye kırpıyor; daha büyüğü istemek işe yaramaz.
+page_size: 50
+
+# Sunucu sınırı belirteç başına dakikada 60. 55'te durulur: kalan pay aynı
+# belirteci kullanan diğer araçlar (cron, mobil) içindir.
+requests_per_minute: 55
+
+reference_ttl_seconds: 900     # L1 — kanal/para/dil/vergi listeleri
+snapshot_ttl_seconds: 1800     # L2 — referans anlık görüntüsü (SQLite)
+
+# Tam tarama üst sınırı (1.419 ürün rahatça sığar). Bozuk sayfalama meta'sında
+# sonsuz döngüyü engeller.
+max_items: 5000
+
+# Yükleme boyutu üst sınırı (MB). Panel görseli base64 olarak geldiği için
+# çözülmeden önce kaba, çözüldükten sonra kesin olarak burada denetlenir;
+# sınırı aşan dosya için istek HİÇ GÖNDERİLMEZ. Uçların kendi sınırı bundan
+# küçükse (ürün görselinde 4 MB) küçük olan uygulanır.
+max_upload_mb: 24

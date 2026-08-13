@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_invoices ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Finans/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına fatura. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "default_series": {
+      "type": "string",
+      "maxLength": 16,
+      "description": "Seri tablosu boşken önerilecek seri kodu, ör. 'A2026'."
+    }
+  }
+}

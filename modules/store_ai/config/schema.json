@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_ai ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Ürün/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Çalışma geçmişinde sayfa başına kayıt."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Katalog taramasında gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Katalog taramasında gönderilir."
+    },
+    "monthly_budget": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000,
+      "description": "Aylık AI bütçesi, KURUŞ. 0 = sınır yok."
+    },
+    "budget_behavior": {
+      "type": "string",
+      "enum": ["block", "warn"],
+      "description": "Bütçe dolunca: block = çalıştırma reddedilir, warn = uyarır ve sürer."
+    },
+    "budget_estimate_when_offline": {
+      "type": "boolean",
+      "description": "Mağaza sayacı okunamazsa yerel defterden tahmin edilsin mi."
+    },
+    "scan_ttl_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400,
+      "description": "Katalog taramasının taze sayıldığı süre. 0 = her açılışta yeniden tara."
+    },
+    "scan_row_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "Denetime giren en çok ürün. Bozuk sayfalama yüzünden sonsuz taramayı keser."
+    },
+    "min_description_chars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5000,
+      "description": "Bundan kısa ürün açıklaması 'yetersiz' bulgusu üretir."
+    },
+    "meta_title_max": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Meta başlık üst sınırı; aşarsa arama sonucunda kesilir."
+    },
+    "meta_description_min": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 500,
+      "description": "Meta açıklama alt sınırı."
+    },
+    "meta_description_max": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 500,
+      "description": "Meta açıklama üst sınırı."
+    },
+    "price_outlier_factor": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 100,
+      "description": "Kategori medyanının bu katı üstü/altı fiyat anormal sayılır."
+    }
+  }
+}

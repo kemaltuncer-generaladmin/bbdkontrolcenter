@@ -1,0 +1,44 @@
+# Müşteriler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Müşteri/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+channel: "default"         # her istekte gider
+locale: "tr"               # her istekte gider
+
+# Nüfus taraması. Segment/harcama/tarih süzgeçleri Bagisto'nun müşteri ucunda
+# YOK; bu süzgeçler seçilince nüfusun tamamı bir kez taranır ve BELLEKTE
+# (diskte değil) `segment_scan_ttl` saniye tutulur.
+segment_scan_cap: 2000
+segment_scan_ttl: 300
+
+# RFM eşikleri — MUTLAK, nüfusa göre değil. Nüfus dilimleri her ekran
+# açılışında tam tarama isterdi; ayrıca eşik nüfusla kayınca dönemler
+# birbiriyle karşılaştırılamaz hâle gelir. Bunlar işletmenin kararıdır.
+recent_days: 90            # son siparişi bu kadar gün içindeyse "taze"
+sleeping_days: 180         # bunun ötesi uykuda
+lost_days: 365             # bunun ötesi kayıp
+loyal_orders: 3            # sadık sayılmak için en az sipariş
+champion_orders: 6         # şampiyon için en az sipariş
+champion_spend: 250000     # şampiyon için en az harcama (KURUŞ)
+new_days: 30               # kaydı bu kadar günden yeniyse "yeni"
+
+# Mağaza ayarının core_config anahtarları. Bagisto sürümüne göre değişebildiği
+# için sabit yazılmaz: bulunamayan anahtara YAZILMAZ, ekran "bulunamadı" der.
+# Aşağıdakiler CANLIDAN okundu (GET /api/admin/configuration?slug=…).
+# Üyeliksiz alışveriş anahtarı BİLEREK YOK: canlıda `customer.settings` altında
+# böyle bir anahtar bulunmuyor, Bagisto onu `sales.checkout` bölümünde tutuyor
+# ve orası ödeme/sipariş ekranlarının işidir.
+customer_config_slug: "customer.settings"
+gdpr_config_slug: "general.gdpr"
+email_verification_key: "customer.settings.email.verification"
+newsletter_default_key: "customer.settings.create_new_account_options.news_letter"
+default_group_key: "customer.settings.create_new_account_options.default_group"
+gdpr_enabled_key: "general.gdpr.settings.enabled"
+gdpr_text_key: "general.gdpr.agreement.agreement_content"
+
+# Mağaza yanıtının yorum kaydındaki alan adı. Yanlışsa mağaza 422 döner ve
+# ekran hangi ayardan düzeltileceğini yazar — sessiz başarısızlık olmaz.
+review_reply_field: "reply"
+
+# KVKK talebi işlenirken gönderilecek eylem adı.
+gdpr_anonymize_action: "anonymize"

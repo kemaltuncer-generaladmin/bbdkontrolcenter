@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_udit_logs ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Denetim/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 25,
+      "maximum": 250,
+      "description": "İmleç sayfası başına kayıt. Mağaza sayfa boyunu 50'de kırpar; 100 iki istek eder."
+    },
+    "max_range_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 400,
+      "description": "Sorgulanabilecek en geniş tarih aralığı. Açık uçlu denetim sorgusu yasaktır."
+    },
+    "local_scan_limit": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 5000,
+      "description": "Geçit izinden bir seferde okunan satır. O tablo tarih süzgeci kabul etmiyor."
+    }
+  }
+}

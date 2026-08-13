@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_promotions ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Satış/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına kural/kupon. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Yeni kuralın varsayılan kanalı."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu."
+    },
+    "performance_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 365,
+      "description": "Performans sekmesinin varsayılan geriye dönük gün sayısı."
+    },
+    "performance_order_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "Performans hesabı için taranacak en çok sipariş. Aşılırsa rapor eksik olduğunu söyler."
+    },
+    "expiring_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90,
+      "description": "'Süresi bu hafta doluyor' çipinin penceresi (gün)."
+    },
+    "coupon_max_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50000,
+      "description": "Tek partide üretilebilecek en çok kupon kodu. Servis bunu 3.000'e kırpar: üretilen kodları ancak kupon listesini tarayarak öğrenebiliyoruz ve tarama orada duruyor."
+    },
+    "coupon_min_length": {
+      "type": "integer",
+      "minimum": 4,
+      "maximum": 32,
+      "description": "Kupon gövdesinin en az uzunluğu."
+    },
+    "coupon_max_length": {
+      "type": "integer",
+      "minimum": 4,
+      "maximum": 64,
+      "description": "Kupon gövdesinin en çok uzunluğu."
+    }
+  }
+}

@@ -1,0 +1,265 @@
+/* Müşteriler paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `cu-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `cu-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.cu {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.cu > * { flex: none; }               /* kartlar ezilmesin */
+
+.cu-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cu-body > * { flex: none; }
+
+.cu-kpi:empty { display: none; }
+
+/* ------------------------------------------------------------ seçim çubuğu */
+
+/* Seçim yokken YER KAPLAMAZ: boş bir çubuk bırakmak tabloyu aşağı itiyor ve
+   kullanıcı "bir şey mi seçtim" diye bakıyordu. */
+.cu-selbar { display: none; }
+.cu-selbar.on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+
+/* ------------------------------------------------------------------ tablo */
+
+.cu-table { min-height: 120px; }
+
+.cu-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.cu-when {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.cu-flags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cu-sub {
+  color: var(--soft);
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------- çekmece */
+
+.cu-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+
+.cu-mail {
+  font-size: 11.5px;
+  color: var(--soft);
+  background: var(--tint);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.cu-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.cu-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Kapalı düğmenin nedeni: satırın tamamını kaplar ki düğmelerin arasında
+   sıkışıp okunmaz hâle gelmesin. `title` ipucu kapalı düğmede görünmüyor,
+   neden EKRANDA yazılı olmak zorunda. */
+.cu-actions > .cu-sub {
+  flex: 1 0 100%;
+  margin-top: -2px;
+}
+
+/* ------------------------------------------------------------- harcama */
+
+.cu-spark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Sparkline tek başına okunmaz; ay ay sayılar altında durur. */
+.cu-months {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cu-month {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- adresler */
+
+.cu-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.cu-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.cu-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ----------------------------------------------------------------- izin */
+
+.cu-consents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cu-consent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* ---------------------------------------------------------------- yorum */
+
+.cu-stars-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 20px 6px;
+  flex-wrap: wrap;
+}
+
+/* Yıldız her zaman sayıyla birlikte yazılır: renk ve simge tek başına anlam
+   taşımaz (erişilebilirlik). */
+.cu-stars {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.cu-review-body-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cu-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cu-review {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.cu-review-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cu-review-title {
+  font-weight: 600;
+}
+
+.cu-review-body {
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+.cu-reply {
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--tint);
+  border-radius: 0 8px 8px 0;
+  line-height: 1.5;
+}
+
+.cu-review-tools {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cu-reply-box { width: min(560px, 92vw); }
+.cu-reply-box .kit-textarea { width: 100%; min-height: 120px; }
+
+.cu-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-x: auto;                   /* dar pencerede grafik kesilmesin */
+}

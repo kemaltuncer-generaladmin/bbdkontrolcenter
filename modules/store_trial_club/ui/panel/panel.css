@@ -1,0 +1,110 @@
+/* Deneme Kulübü paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `tc-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `tc-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.tc` altına kapsanmış `kit-progress` renk düzeltmesidir; o da
+   `.tc` kökünün İÇİNDE kaldığı için dışarı sızmaz. */
+
+.tc {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.tc > * { flex: none; }
+
+.tc-kpi { padding: 8px 20px 0; }
+.tc-kpi:empty { display: none; }
+
+.tc-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tc-body > * { flex: none; }
+
+.tc-table { min-height: 120px; }
+
+.tc-sub { font-size: 11px; color: var(--soft); }
+
+.tc-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tc-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tc-stack { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; }
+.tc-stack.right { align-items: flex-end; }
+
+/* ------------------------------------------------------------- kontenjan */
+
+/* Çubuk TEK BAŞINA anlam taşımaz: yanında her zaman `dolu/toplam` yazısı ve
+   bir rozet durur. Renk körlüğünde de okunur kalsın diye. */
+.tc-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tc-cap > div:first-child { flex: 1; min-width: 90px; }
+.tc-cap .kit-progress-label { font-size: 11px; }
+
+.tc .tone-near .kit-progress-fill { background: var(--warn); }
+.tc .tone-full .kit-progress-fill,
+.tc .tone-over .kit-progress-fill { background: var(--bad); }
+
+/* ---------------------------------------------------------------- çekmece */
+
+.tc-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+
+.tc-pane { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
+
+.tc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.tc-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.tc-detail-row { display: flex; align-items: center; gap: 10px; }
+.tc-detail-row > span:first-child { min-width: 200px; }
+
+/* -------------------------------------------------------------- sonuçlar */
+
+.tc-stats:empty { display: none; }
+
+/* Eşleştirme önizlemesi geniş olmalı: dar bir kutuda "dosyadaki / katılımcı /
+   durum / açıklama" sütunları kesiliyor ve önizleme amacını kaybediyor. */
+.tc-match { width: min(1040px, 94vw); }
+.tc-match-body {
+  max-height: 52vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 6px 0 10px;
+}
+
+.tc-notify-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tc-notify-result:empty { display: none; }

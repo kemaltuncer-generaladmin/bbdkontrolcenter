@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_cms ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa listesinde bir ekrana yazılan kayıt sayısı."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Blok listesi bu kanaldan okunur."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Çeviri satırı bununla seçilir, her istekte gider."
+    },
+    "site_url": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "SEO önizleme kartında adresin başına yazılır. Boşsa yalnız yol gösterilir."
+    },
+    "faq_slug": {
+      "type": "string",
+      "maxLength": 180,
+      "description": "SSS içeriğini taşıyan CMS sayfasının adresi (url_key)."
+    },
+    "legal_slugs": {
+      "type": "object",
+      "description": "Yasal metin sayfalarının adresleri. Anahtarlar: distance_sales, refund, privacy, cookies.",
+      "additionalProperties": { "type": "string", "maxLength": 180 }
+    }
+  }
+}

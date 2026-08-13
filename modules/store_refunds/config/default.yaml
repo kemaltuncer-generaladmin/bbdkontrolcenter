@@ -1,0 +1,33 @@
+# İadeler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Finans/<yıl>/<ay>
+page_size: 50              # ekranda bir sayfada gösterilen iade sayısı (süzme istemcide)
+channel: "default"         # mağaza kanalı; liste ve sipariş isteklerinde gider
+locale: "tr"
+
+# Liste kaç günlük pencereden açılır. İade ekranı geçmişin tamamını çekmez:
+# "yüzler" ölçeğinde bile açık uçlu sorgu her açılışta onlarca sayfa demek.
+default_range_days: 90
+
+# Tam tarama tavanı. Bozuk `meta` yüzünden sonsuz sayfa dönmesini engeller;
+# aynı zamanda ekranın istemcide süzülebilir büyüklükte kalmasını garanti eder.
+scan_cap: 1500
+
+# Cayma hakkı süresi (gün). Bu süre içindeki iade talebi ekranda işaretlenir;
+# hesabı DEĞİŞTİRMEZ, yalnız personele "yasal süre içinde" der.
+free_return_days: 14
+
+# İade kargosu bu kadar gündür gelmediyse satır "Ürün N gündür gelmedi" olarak
+# işaretlenir.
+return_wait_days: 7
+
+# Kargo bedeli varsayılan olarak iade edilsin mi. Ayıplı üründe evet, "beğenmedim"
+# iadesinde genelde hayır olduğu için karar HER İADEDE ekranda tek tek verilir;
+# bu yalnızca kutunun açılış hâlidir.
+refund_shipping_default: false
+
+# Sipariş kaleminde faturalanmış adet yoksa iade edilebilir adet nereden alınsın.
+# `invoiced` (varsayılan): faturalanmamış kalem iade edilemez — parası hiç
+# alınmamış kalemi "iade etmek" parayı ikinci kez çıkarır. `ordered` yalnız
+# faturasız çalışan bir akışa geçilirse açılır ve ekran bunu söyler.
+refundable_basis: "invoiced"

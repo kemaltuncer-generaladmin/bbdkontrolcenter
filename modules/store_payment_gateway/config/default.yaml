@@ -1,0 +1,55 @@
+# Link ile Ödeme ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Finans/<yıl>/<ay>
+page_size: 50
+
+# Faturanın gideceği VARSAYILAN adres. Müşterinin gerçek e-postası yoksa
+# personel tek tuşla bunu yazar; boş bırakıp faturayı öksüz bırakmaktan iyidir.
+default_email: "fatura@bbdstore.com.tr"
+
+# SMS metninde ve raporda görünen kurum adı.
+org_name: "BBD Store"
+
+# Mağazanın ödeme bağlantısı öneki. Mağaza tam URL döndürüyorsa kullanılmaz;
+# yalnız jeton döndürüyorsa bağlantı buradan kurulur.
+link_base_url: ""
+
+# ------------------------------------------------------------ elden kapatma
+#
+# `havale`/`nakit` beyanı mağazaya `POST /api/admin/transactions` ile yazılır
+# ve gövde `paymentMethod` olarak Bagisto'nun KOD adını ister; "havale" kabul
+# edilmez. Varsayılanlar canlı mağazanın kendi ayarından okundu
+# (`sales.payment_methods`): moneytransfer = "Havale/EFT-FAST ile Ödeme",
+# cashondelivery = "Kapıda Ödeme". Kurulumda başka kod kullanılıyorsa burada
+# ezilir; yanlış kod mağazadan 422 döndürür ve beyan yalnız yerelde kalır.
+settle_payment_methods:
+  havale: "moneytransfer"
+  nakit: "cashondelivery"
+
+# ---------------------------------------------------------------- SMS freni
+#
+# ÜÇ KATMAN. Gerçek SMS yalnız üçü birden izin verirse çıkar:
+#   1. bu ayar (`sms_dry_run`)
+#   2. platform ayarı (`platform.notify.sms.dry_run`)
+#   3. isteğin kendi `dryRun` bayrağı
+# Varsayılan AÇIK. Kapatmak bilinçli bir karardır ve ekranda kırmızı yazar.
+sms_dry_run: true
+
+# Gönderici başlığı. Boşsa platformun yapılandırdığı başlık kullanılır.
+sms_header: ""
+
+# Beyaz liste. DOLUYKEN yalnız buradaki numaralara gerçek SMS gider; diğerleri
+# kuru provaya düşer. Canlıya geçerken önce kendi numaranızı yazıp deneyin.
+sms_allowlist: []
+
+# Boşsa `collect.DEFAULT_TEMPLATE` kullanılır. Ekrandan kaydedilen şablon
+# (yerel tercih) bunu ezer.
+sms_template: ""
+
+# ------------------------------------------------------------------- vergi
+#
+# SERBEST TUTAR HER ZAMAN KDV'SİZDİR — bu ayar onu etkilemez.
+# Bu bayrak yalnız ÜRÜN kalemleri içindir: mağazada ürün fiyatı KDV dâhil
+# girildiyse `true` yapılır ve tutar brütten ayrıştırılır. Yanlış değer,
+# faturayı KDV kadar kaydırır.
+product_prices_include_tax: false

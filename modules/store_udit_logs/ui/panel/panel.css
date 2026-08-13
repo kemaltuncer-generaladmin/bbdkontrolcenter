@@ -1,0 +1,112 @@
+/* UDİT İşlem Kayıtları paneli. Ortak sınıflar (kit-*, df-*) KABUĞUN
+   kitindedir (docs/adr/0011). Burada YALNIZCA `ud-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `ud-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.ud {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.ud > * { flex: none; }               /* kartlar ezilmesin */
+
+.ud-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ud-body > * { flex: none; }
+
+.ud-kpi:empty,
+.ud-notices:empty { display: none; }
+
+/* --------------------------------------------------------------- saat şeridi */
+
+/* Kit'in tarih alanı GÜN verir; denetimde saat gerekir. `<input type="time">`
+   WebKitGTK'da tarih alanıyla aynı derdi taşıdığı için düz metin kullanılır. */
+.ud-clocks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 6px;
+}
+.ud-clock { width: 74px; text-align: center; font-variant-numeric: tabular-nums; }
+.ud-clock.bad { border-color: var(--bad); }
+
+/* --------------------------------------------------------------------- tablo */
+
+.ud-table { min-height: 160px; }
+
+.ud-sub { font-size: 11px; color: var(--soft); }
+
+.ud-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ud-action { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ud-action b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ud-entity { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+
+/* ------------------------------------------------------------------- imleç */
+
+/* Sayfa NUMARASI yok: kayıt sayısı sınırsız büyür ve "sayfa 412/9.318"
+   kimseye bir şey anlatmaz. İleri/geri + imleç konumu yeter. */
+.ud-cursor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 2px 0;
+}
+
+/* ----------------------------------------------------------------- çekmece */
+
+.ud-meta {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  word-break: break-word;
+}
+
+.ud-reason {
+  padding: 10px 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* Fark tablosu KİTİN `dataTable`'ıdır (yoğun kip). Burada yalnızca değişen
+   alan adının vurgusu tanımlanır; vurgu YALNIZ renk değildir — son sütunda
+   ayrıca "değişti"/"aynı" rozeti durur (kit kuralı 7). */
+.ud-clip.on { color: var(--accent); }
+
+.ud-raw { margin-top: 4px; }
+.ud-raw summary { cursor: pointer; font-size: 12px; color: var(--soft); padding: 4px 0; }
+.ud-json {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

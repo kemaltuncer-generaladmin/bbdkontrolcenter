@@ -1,22 +1,39 @@
-# Ana Ekran Görselleri modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Ana Ekran Görselleri — vitrinin ilk ekranı (slider, banner, koleksiyon, duyuru).
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham
+# httpx ya da DB sürücüsü kullanmaz. Slot verisinin kopyasını tutmaz: yerel
+# tablolar yalnız gerekçeyi (denetim izi) ve yüklenen görselin ölçü kararını
+# saklar — ikisinin de Bagisto'da karşılığı yok.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_home_media
 name: "Ana Ekran Görselleri"
-description: "Vitrin banner ve görsellerinin düzenlenmesi."
+description: "Ana sayfa slider, banner, koleksiyon ve duyuru şeridinin yönetimi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Yerleşim raporu kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
-  publishes: []
+  publishes:
+    - name: store_home_media.layout_changed
+      description: >-
+        Ana sayfa yerleşimi gerçekten değiştiğinde (kuru provada DEĞİL) yayılır.
+        Panoya "vitrin bugün değişti" bilgisini taşır; kimse dinlemese de olay
+        ilan edilir, çünkü modül modülü çağıramaz (K3).
   subscribes: []
 
 http:
@@ -35,21 +52,37 @@ ui:
     order: 50
     requires: [store_home_media.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_home_media.view
-    description: "Ana Ekran Görselleri ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Ana Ekran Görselleri ekranını görüntüleme, rapor ve CSV alma."
+    default_roles: [admin, bbd_staff]
   - key: store_home_media.manage
-    description: "Ana Ekran Görselleri kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Slot künyesi, görsel, hedef bağlantı, yayın aralığı ve sıra düzenleme."
+    default_roles: [admin, bbd_staff]
+  - key: store_home_media.publish
+    description: >-
+      Slotu yayına alma / yayından kaldırma. Vitrinin ilk ekranını anında
+      değiştirdiği için ayrı anahtardır; silme yoktur, yalnız yayından kaldırma.
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+dependencies:
+  capabilities_note: >-
+    Görsel yükleme tarayıcıda FileReader ile base64'e çevrilip gövdede taşınır;
+    ek Python bağımlılığı yoktur. Görselin en/boy ölçüsü başlıktan okunur
+    (backend/slots.py), Pillow KURULMAZ — tek iş için 40 MB'lık bağımlılık
+    ilan etmek K11'in ruhuna aykırıdır. Ayrı yükleme yolu geçidin
+    `store.api.upload_media` metodunu (POST /api/admin/bbd/home/slides)
+    kullanır; o uç mağaza tarafında henüz yayında olmadığı için çağrı bugün
+    `pending` döner ve ekran durumu anlatır (K7).
 
 tasks: []

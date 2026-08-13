@@ -1,0 +1,100 @@
+/* Vergilendirme paneli. Ortak sınıflar (kit-*, pk-*, df-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `tx-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `tx-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.tx {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.tx > * { flex: none; }               /* kartlar ezilmesin */
+
+.tx-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tx-body > * { flex: none; }
+
+.tx-stack { display: flex; flex-direction: column; gap: 12px; }
+
+.tx-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.tx-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.tx-sub { font-size: 11px; color: var(--soft); }
+.tx-good { color: var(--good); font-weight: 600; }
+.tx-bad { color: var(--bad); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tx-warn { color: var(--warn, #a4690b); font-weight: 600; }
+
+/* Oran her yerde aynı görünsün: tablo, bölge kartı ve icmal kırılımı aynı
+   sınıfı kullanır — göz "%20"yi tek bir biçimde arar. */
+.tx-rate { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.tx-flags { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+
+/* Yerel not (geçerlilik tarihi) mağaza verisinden AYRI görünür: kesikli alt
+   çizgi "bu bizim notumuz" demenin sessiz yoludur, ipucu metni açık söyler. */
+.tx-local {
+  border-bottom: 1px dashed var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ seçim çubuğu */
+
+/* Seçim yokken YER KAPLAMAZ: boş bir çubuk bırakmak tabloyu aşağı itiyor ve
+   kullanıcı "bir şey mi seçtim" diye bakıyordu. */
+.tx-selbar { display: none; }
+.tx-selbar.on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+
+.tx-table { min-height: 120px; }
+
+/* Çekmecedeki denetim izi: uzun listede çekmeceyi taşırmasın, kendi içinde
+   kaysın. */
+.tx-history { max-height: 220px; overflow: auto; }
+
+/* ---------------------------------------------------------------- bölgeler */
+
+.tx-region { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px; }
+.tx-region-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+/* ------------------------------------------------------------ toplu eşleme */
+
+/* Fark tablosu diyaloğu geniş olmalı: dar bir kutuda "önce/sonra" sütunları
+   kesiliyor ve önizleme amacını kaybediyor. */
+.tx-assign { width: min(860px, 92vw); }
+.tx-assign-result {
+  max-height: 48vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tx-assign-result:empty { display: none; }

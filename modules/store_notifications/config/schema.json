@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_notifications ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Gönderim geçmişi sayfa boyu. Geçmiş sunucu tarafında sayfalanır."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. YALNIZ mağaza ayarı okunurken (/configuration?channel=) gönderilir; liste süzgeci olarak gönderilmez — uç kanal kimliği beklediği için kod göndermek listeyi sessizce boşaltır."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Mağaza ayarı okunurken gönderilir."
+    },
+    "quiet_hours_enabled": {
+      "type": "boolean",
+      "description": "Sessiz saat penceresi uygulansın mı."
+    },
+    "quiet_hours_start": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "description": "Sessiz saat başlangıcı (SS:DD). Bitişle aynı olursa pencere uygulanmaz."
+    },
+    "quiet_hours_end": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "description": "Sessiz saat bitişi (SS:DD). Gece yarısını aşan pencere desteklenir."
+    },
+    "daily_send_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "Günlük alıcı sayısı tavanı. 0 = sınır yok. Sayaç yerel tutulur."
+    },
+    "bulk_recipient_cap": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000,
+      "description": "Tek toplu işte kabul edilen en çok alıcı."
+    },
+    "sms_price_kurus": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000,
+      "description": "SMS parça birim fiyatı (kuruş). 0 = bilinmiyor; maliyet uydurulmaz."
+    },
+    "email_config_slug": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "SMTP ayarlarının core_config bölümü."
+    }
+  }
+}

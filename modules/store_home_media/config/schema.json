@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_home_media ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Her istekte gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "recommended_slider": {
+      "type": "string",
+      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
+      "description": "Slider için önerilen görsel ölçüsü, ör. 1920x640."
+    },
+    "recommended_banner": {
+      "type": "string",
+      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
+      "description": "Banner alanları için önerilen görsel ölçüsü."
+    },
+    "recommended_collection": {
+      "type": "string",
+      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
+      "description": "Öne çıkan koleksiyon kartı için önerilen görsel ölçüsü."
+    },
+    "recommended_announcement": {
+      "type": "string",
+      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
+      "description": "Duyuru şeridi için önerilen ölçü. 0x0 = görsel istemez."
+    },
+    "sharp_ratio": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 1,
+      "description": "Yüklenen görsel önerilenin bu oranından küçükse bulanık sayılır."
+    },
+    "aspect_tolerance": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50,
+      "description": "En/boy oranında hoş görülen sapma yüzdesi. Üstü kırpılma uyarısı verir."
+    },
+    "max_image_bytes": {
+      "type": "integer",
+      "minimum": 50000,
+      "maximum": 20000000,
+      "description": "Gövdede taşınabilecek en büyük görsel (bayt)."
+    },
+    "allowed_image_types": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Kabul edilen MIME türleri. Liste dışı tür yüklenmez."
+    },
+    "link_search_limit": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "description": "Hedef bağlantı seçicisinde gösterilecek en çok kayıt."
+    }
+  }
+}

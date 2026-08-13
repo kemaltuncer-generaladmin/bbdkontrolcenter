@@ -1,0 +1,41 @@
+# Dahili AI Ekranları ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+#
+# Buradaki değerler VARSAYILANDIR. Ekranın Ayarlar sekmesinden değiştirilenler
+# `mod_store_ai_prefs` tablosuna yazılır ve bunları ezer; ayarı config'e geri
+# yazmak, ayar dosyasını çalışma zamanı durumuna çevirirdi.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Ürün/<yıl>/<ay>
+page_size: 50
+channel: "default"         # katalog taramasında her istekte gider
+locale: "tr"
+
+# ------------------------------------------------------------------- bütçe
+#
+# Aylık bütçe KURUŞTUR (proje kuralı: para her yerde kuruş). 0 = sınır yok.
+# Varsayılan 0 değil 50.000 kuruş (500 ₺): sınırsız açmak, ilk yanlış toplu
+# çalıştırmada faturayı sessizce büyütürdü.
+monthly_budget: 50000
+
+# Sınıra gelince ne olacak:
+#   block — yeni çalıştırma reddedilir (VARSAYILAN; para harcayan işte güvenli taraf)
+#   warn  — uyarı gösterilir, çalıştırma sürer
+budget_behavior: "block"
+
+# Bütçe sayacı mağazadan okunamazsa yerel defterden hesaplanır ve ekranda
+# "tahmini" denir. `false` yapılırsa sayaç okunamadığında çalıştırma durur.
+budget_estimate_when_offline: true
+
+# ------------------------------------------------------- katalog denetimi
+#
+# Tam katalog taraması 1.419 üründe ~29 sayfa eder ve dakikada 60 istek
+# sınırına yaklaşır. Sonuç bellekte bu kadar saniye taze sayılır; ekran
+# tarama zamanını yazar ve elle yenileme düğmesi verir.
+scan_ttl_seconds: 900
+scan_row_cap: 3000
+
+# Denetim eşikleri — hepsi "bulgu mu değil mi" kararını belirler.
+min_description_chars: 120     # bundan kısa açıklama "yetersiz" sayılır
+meta_title_max: 60             # arama sonucunda kesilmeye başladığı sınır
+meta_description_min: 70
+meta_description_max: 160
+price_outlier_factor: 5        # kategori medyanının bu katı üstü/altı anormal

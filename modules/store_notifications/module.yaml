@@ -1,22 +1,47 @@
-# Bildirimler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Bildirimler — BBD Store müşteri iletişimi.
+#
+# GÖNDERİM MAĞAZADAN GEÇER (K4): bu modül kendi SMTP'sini ya da SMS istemcisini
+# kurmaz, ham httpx kullanmaz. Şablonu hazırlar, alıcıyı seçtirir ve `store.api`
+# geçidine verir; mağazanın gönderim kaydı tektir.
+#
+# TOPLU GÖNDERİM GERİ ALINAMAZ. Canlıda alıcı sayısı 1.800 civarındadır ve
+# gönderilen SMS'in parası harcanmıştır. Bu yüzden ayrı bir izin anahtarı
+# (`store_notifications.broadcast`), gerekçe (>=10 karakter, backend'de de
+# doğrulanır) ve `dryRun` varsayılanı vardır — kuru prova alıcı sayısını ve
+# tahmini maliyeti verir, gerçek gönderim o provanın jetonuyla gelir.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_notifications
 name: "Bildirimler"
-description: "Mağaza bildirimlerinin kuralları ve gönderim geçmişi."
+description: "Mağaza bildirimleri: şablon, olay kuralı, kanal ayarı, gönderim geçmişi ve abonelikler."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
-provides: []
-consumes: []
+depends: [store_api]
+
+provides:
+  - capability: store.notify.send
+    contract: km_sdk.contracts:NotifySender
+    description: "Şablon + alıcı → gönderim. Sessiz saat, günlük limit ve gerekçe kapıları içeridedir."
+
+consumes:
+  - capability: store.api
+    reason: "Bildirim gönderimi, şablonlar, kurallar ve abone listesi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Gönderim raporu ve SMS maliyet icmali kâğıda basılır; yazıcı yoksa ekran çalışır."
+  - capability: notify
+    optional: true
+    reason: "SMS katmanının durumu ve [Bağlantıyı sına] için. Yoksa SMS kutusu 'kurulmamış' der."
 
 events:
-  publishes: []
+  publishes:
+    - name: store.notification.sent
+      description: "Toplu bildirim gerçekten gönderildi (kuru provada yayınlanmaz)."
   subscribes: []
 
 http:
@@ -35,16 +60,23 @@ ui:
     order: 170
     requires: [store_notifications.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_notifications.view
-    description: "Bildirimler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Gönderim geçmişi, şablon, kural, kanal ve abonelikleri görüntüleme; rapor alma."
+    default_roles: [admin, bbd_staff]
   - key: store_notifications.manage
-    description: "Bildirimler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Şablon, olay kuralı, sessiz saat, günlük limit ve mobil uygulama ayarları."
+    default_roles: [admin, bbd_staff]
+  - key: store_notifications.send
+    description: "Tek gönderim: kendine test ve başarısız gönderimi yineleme. Para harcar."
+    default_roles: [admin, bbd_staff]
+  - key: store_notifications.broadcast
+    description: "Toplu bildirim. Canlıda 1.800+ kişiye gider ve geri alınamaz."
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml

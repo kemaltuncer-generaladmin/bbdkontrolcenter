@@ -1,0 +1,131 @@
+/* Manuel Yedekleme paneli. Ortak sınıflar (kit-*, pk-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bu-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bu-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.bu {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bu > * { flex: none; }
+
+.bu-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bu-body > * { flex: none; }
+
+/* --------------------------------------------------------- kalıcı uyarı */
+
+/* Kapatma düğmesi YOK ve kaydırmayla kaybolmaz: bu ekranın tek cümlelik
+   özeti odur. Kırmızı değil kehribar: kırmızı "şu an bir şey bozuk" demek
+   olurdu; buradaki uyarı sürekli geçerli bir durumu anlatıyor. */
+.bu-warning {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 9px 20px;
+  border-bottom: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 12.5px;
+}
+
+/* ----------------------------------------------------------- durum bandı */
+
+.bu-band {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+}
+/* Renk TEK BAŞINA anlam taşımıyor: bandın içindeki rozet ve cümle aynı şeyi
+   yazıyla söylüyor (kit kuralı 7). Şerit yalnız hızlı taramaya yardım eder. */
+.bu-band.good { border-left-color: var(--good); }
+.bu-band.warn { border-left-color: var(--warn); background: #fffbf5; }
+.bu-band.bad { border-left-color: var(--bad); background: #fff6f6; }
+
+.bu-band-head { display: flex; align-items: center; gap: 8px; }
+.bu-band-text { font-size: 12.5px; line-height: 1.5; }
+.bu-band.bad .bu-band-text { color: #7f1d1d; font-weight: 600; }
+
+.bu-band-host:empty, .bu-card-host:empty, .bu-live:empty { display: none; }
+
+/* ------------------------------------------------------------ yeni yedek */
+
+.bu-new { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+
+.bu-scopes { display: flex; flex-wrap: wrap; gap: 14px; }
+.bu-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.bu-new-row { display: flex; gap: 8px; align-items: center; }
+.bu-new-row .kit-input { flex: 1; min-width: 0; }
+
+/* ------------------------------------------------------------------ disk */
+
+.bu-disk { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+
+.bu-meter {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--tint);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.bu-meter-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+.bu-meter-fill.warn { background: var(--warn); }
+.bu-meter-fill.bad { background: var(--bad); }
+
+.bu-sub { font-size: 11.5px; color: var(--soft); }
+.bu-estimate { font-size: 12.5px; }
+
+/* ----------------------------------------------------------------- tablo */
+
+/* Satır on sütun taşıyor (tarih, tür, kapsam, boyut, süre, kişi, not,
+   doğrulama, yol, eylemler). Dar pencerede sıkıştırmak yerine yatay
+   kaydırılır: sıkıştırınca not ve kapsam okunmaz hâle geliyordu. */
+.bu-table { overflow-x: auto; }
+.bu-table .kit-table { min-width: 1180px; }
+
+.bu-when { display: flex; flex-direction: column; line-height: 1.25; }
+.bu-when .bu-sub { font-size: 11px; }
+
+.bu-verify { display: inline-flex; align-items: center; }
+.bu-path { display: inline-flex; }
+.bu-path .kit-btn { height: 26px; padding: 0 8px; font-size: 11.5px; }
+
+.bu-actions { display: flex; gap: 4px; flex-wrap: nowrap; }
+.bu-actions .kit-btn { height: 26px; padding: 0 8px; font-size: 11.5px; }
+
+/* --------------------------------------------------------------- ilerleme */
+
+.bu-live { padding: 8px 0 0; }

@@ -1,22 +1,48 @@
-# Dahili AI Ekranları modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Dahili AI Ekranları — İKİ İŞ BİR EKRANDA.
+#
+#  1. KATALOG SAĞLIĞI: kural tabanlı denetim. AI YOKTUR, para harcamaz, uzak
+#     bir servise hiç çıkmaz. Ürün listesi ve kategori ağacı okunur, bulgular
+#     `backend/rules.py` içindeki saf fonksiyonlarla BURADA hesaplanır. Bu
+#     yüzden mağaza tarafındaki BBD/AI uçları hiç yayınlanmasa bile ekranın
+#     yarısı bugün çalışır.
+#
+#  2. ARAÇLAR: MagicAI üstünden öneri üretimi. EKRANIN KİMLİĞİ OLAN KURAL —
+#     AI hiçbir şeyi doğrudan yazmaz. Her sonuç ÖNERİdir; fark tablosu
+#     gösterilir, kullanıcı tek tek ya da toplu onaylar. Onaysız uygulama
+#     yoktur ve uygulama, onaylananın DIŞINDA bir şey uygulayamaz (öneriler
+#     jetonla birlikte yerel tabloda durur, uygulama onları yeniden
+#     hesaplamaz).
+#
+# Mağaza verisi tek kapıdan geçer (K4): `store.api`. Ham httpx yok, AI
+# sağlayıcısına doğrudan çağrı yok — anahtar mağaza tarafındadır ve bu modül
+# onu hiç görmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_ai
 name: "Dahili AI Ekranları"
-description: "Mağaza içi yapay zekâ araçlarının yönetimi ve kullanım kayıtları."
+description: "Kural tabanlı katalog sağlığı denetimi ve onaya bağlı AI öneri araçları."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Katalog, yorum, talep ve AI uçları tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Katalog sağlığı raporu ve maliyet icmali kâğıda basılır; yazıcı yoksa ekran çalışır."
 
 events:
-  publishes: []
+  publishes:
+    - name: store_ai.suggestions_applied
+      description: "Onaylanan AI önerileri mağazaya uygulandı. Yük: {tool, runId, applied, actor}."
   subscribes: []
 
 http:
@@ -32,24 +58,46 @@ ui:
     title: "Dahili AI Ekranları"
     icon: cpu
     group: "BBD Store"
-    order: 180
+    order: 200
     requires: [store_ai.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+#
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına
+# bağlanacak, mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin
+# anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun
+# varsayılanı.
+#
+# İKİ AYRI YIKICI ANAHTAR, çünkü iki ayrı zarar var:
+#  · `run`   PARA harcar (jeton), mağazaya hiçbir şey yazmaz.
+#  · `apply` MAĞAZAYA YAZAR, para harcamaz.
+# Tek anahtarda birleştirmek, "önerileri görmek isteyen" ile "kataloğu
+# değiştiren" kişiyi aynı saymak olurdu.
 permissions:
   - key: store_ai.view
-    description: "Dahili AI Ekranları ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Ekranı, katalog sağlığı bulgularını, çalışma geçmişini ve raporları görüntüleme."
+    default_roles: [admin, bbd_staff]
   - key: store_ai.manage
-    description: "Dahili AI Ekranları kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Aylık bütçe, sınır davranışı, açık araçlar ve denetim eşikleri; bulgu susturma."
+    default_roles: [admin]
+  - key: store_ai.run
+    description: "AI aracı çalıştırma. PARA HARCAR: her çalışma jeton tüketir ve bütçeye işlenir."
+    default_roles: [admin, bbd_staff]
+  - key: store_ai.apply
+    description: "Onaylanan AI önerilerini mağazaya uygulama. Katalog metinlerini değiştirir."
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+dependencies:
+  python: []
+  system:
+    # Rapor önizlemesi PDF sayfalarını görüntüye çevirir (`pdftoppm`). Yoksa
+    # rapor yine yazılır ve basılır; yalnız önizleme kapalı kalır (K7).
+    - "poppler-utils"
 
 tasks: []

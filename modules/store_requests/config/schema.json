@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_requests ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına talep. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "board_column_size": {
+      "type": "integer",
+      "minimum": 3,
+      "maximum": 50,
+      "description": "Pano görünümünde sütun başına gösterilen kart. Sütun başlığındaki sayı gerçek toplamdır."
+    },
+    "sla_hours": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Önceliğe göre yanıt süresi (saat). Uzak kayıt due_at gönderirse o kazanır.",
+      "properties": {
+        "urgent": { "type": "integer", "minimum": 1, "maximum": 720 },
+        "high": { "type": "integer", "minimum": 1, "maximum": 720 },
+        "normal": { "type": "integer", "minimum": 1, "maximum": 720 },
+        "low": { "type": "integer", "minimum": 1, "maximum": 720 }
+      }
+    },
+    "reply_templates": {
+      "type": "array",
+      "description": "Hazır yanıt metinleri. Şablon yönetimi ekranı yoktur; metinler buradan düzenlenir.",
+      "items": {
+        "type": "object",
+        "required": ["title", "body"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "body": { "type": "string", "minLength": 1, "maxLength": 4000 }
+        }
+      }
+    }
+  }
+}

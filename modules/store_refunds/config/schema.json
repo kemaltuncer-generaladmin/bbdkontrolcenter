@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_refunds ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Finans/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Ekranda bir sayfada gösterilen iade sayısı. Süzme istemci tarafındadır."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu."
+    },
+    "default_range_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 730,
+      "description": "Ekran açılırken kaç günlük pencere çekilir."
+    },
+    "scan_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 5000,
+      "description": "Tam tarama tavanı. Aşılırsa liste kesilir ve ekran bunu söyler."
+    },
+    "free_return_days": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 90,
+      "description": "Cayma hakkı süresi (gün). Yalnız işaretleme; tutarı etkilemez."
+    },
+    "return_wait_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60,
+      "description": "İade kargosu bu kadar gündür gelmediyse satır işaretlenir."
+    },
+    "refund_shipping_default": {
+      "type": "boolean",
+      "description": "Kargo bedeli kutusunun açılış hâli. Karar her iadede ekranda verilir."
+    },
+    "refundable_basis": {
+      "type": "string",
+      "enum": ["invoiced", "ordered"],
+      "description": "İade edilebilir adedin temeli. 'invoiced' varsayılandır; 'ordered' faturasız akış içindir."
+    }
+  }
+}

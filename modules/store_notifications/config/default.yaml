@@ -1,0 +1,35 @@
+# Bildirimler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Müşteri/<yıl>/<ay>
+page_size: 100             # gönderim geçmişi sunucu tarafında sayfalanır
+# KANAL SÜZGECİ LİSTELERE GÖNDERİLMEZ. Bu değer YALNIZ mağaza ayarı okunurken
+# (`/configuration?channel=`) kullanılır. Liste uçlarına eklemek listeyi
+# SESSİZCE BOŞALTIR: uç kanal KODUNU değil KİMLİĞİNİ bekliyor ve Siparişler
+# ekranında `channel=default` hata vermeden 0 kayıt döndürmüştü. Canlıda tek
+# kanal var (id 1 · code "default"), yani süzgecin bir faydası da yok.
+channel: "default"
+locale: "tr"               # mağaza ayarı okunurken gönderilir
+
+# SESSİZ SAATLER. Toplu gönderim ve `store.notify.send` bu pencerede durur.
+# Başlangıç ile bitiş AYNI olursa 24 saatlik pencere olurdu ve hiçbir bildirim
+# gitmezdi; o durumda pencere uygulanmaz ve ekran nedenini söyler.
+quiet_hours_enabled: true
+quiet_hours_start: "22:00"
+quiet_hours_end: "08:00"
+
+# Günlük gönderim limiti (alıcı sayısı). 0 = sınır yok. Sayaç YEREL tutulur:
+# mağaza geçmişini saymak, uç düştüğünde korumayı sessizce kaldırırdı.
+daily_send_limit: 2000
+
+# Tek toplu işte kabul edilen en çok alıcı. Canlıda müşteri sayısı 1.800
+# civarında; tavan büyümeye yer bırakır ve bozuk bir süzgecin "herkese gönder"
+# hâline gelmesini engeller.
+bulk_recipient_cap: 5000
+
+# SMS parça birim fiyatı (kuruş). 0 = bilinmiyor → maliyet UYDURULMAZ, ekran
+# ve rapor "—" gösterir. Sıfır tutar yazmak "bedava" demek olurdu.
+sms_price_kurus: 0
+
+# SMTP ayarlarının core_config bölümü. Anahtar adları Bagisto sürümüne göre
+# değişebildiği için sabit yazılmaz: bulunamayan anahtar "yok" gösterilir.
+email_config_slug: "emails"

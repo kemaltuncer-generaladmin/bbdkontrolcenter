@@ -1,0 +1,36 @@
+# Talepler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Müşteri/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+board_column_size: 12      # panoda sütun başına kart; başlıktaki sayı GERÇEK toplamdır
+
+# SLA politikası: önceliğe göre yanıt süresi (saat). Uzak kayıt `due_at`
+# gönderirse O KAZANIR; buradaki değerler yalnız tarih gelmediğinde kullanılır.
+# "Müşteri bekleniyor" durumunda sayaç durur (yanıt bizde değil).
+sla_hours:
+  urgent: 4
+  high: 12
+  normal: 24
+  low: 48
+
+# Yanıt şablonları. Ayrı bir şablon yönetimi ekranı YOKTUR: şablon sayısı bir
+# elin parmakları kadar ve metni değiştirmek yılda birkaç kez oluyor; bunun
+# için CRUD ekranı açmak, bakılacak bir ekran daha demekti.
+reply_templates:
+  - title: "Kargo bilgisi istendi"
+    body: |
+      Merhaba,
+      Talebinizi aldık. İşleme başlayabilmemiz için ürünü hangi kargo şubesine
+      teslim ettiğinizi ve varsa takip numarasını iletebilir misiniz?
+      İyi günler dileriz.
+  - title: "İade onaylandı"
+    body: |
+      Merhaba,
+      İade talebiniz onaylandı. Ürünü, kutusuna koyacağınız iade formuyla
+      birlikte anlaşmalı kargoya teslim edebilirsiniz. Ürün tarafımıza
+      ulaştıktan sonra ödemeniz aynı yöntemle iade edilecektir.
+  - title: "Ürün incelemede"
+    body: |
+      Merhaba,
+      Gönderdiğiniz ürün tarafımıza ulaştı ve teknik incelemeye alındı.
+      Sonucu en geç iki iş günü içinde size bildireceğiz.

@@ -1,0 +1,177 @@
+/* Talepler paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir (docs/adr/0011).
+   Burada YALNIZCA `rq-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `rq-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.rq {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.rq > * { flex: none; }
+
+.rq-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rq-body > * { flex: none; }
+
+.rq-sub { font-size: 11px; color: var(--soft); }
+.rq-bad { color: var(--bad); font-weight: 600; }
+.rq-dim { color: var(--soft); }
+
+/* ------------------------------------------------------------ seçim çubuğu */
+
+/* Seçim yokken YER KAPLAMAZ: boş bir çubuk bırakmak tabloyu aşağı itiyor. */
+.rq-selbar { display: none; }
+.rq-selbar.on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+
+/* ------------------------------------------------------------------ tablo */
+
+.rq-table { min-height: 120px; }
+
+.rq-subject { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rq-subject b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rq-subject .rq-sub { display: flex; align-items: center; gap: 6px; }
+
+/* SLA hücresi: SAYI önce, rozet sonra. Renk tek başına anlam taşımaz. */
+.rq-sla { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.rq-sla b { font-variant-numeric: tabular-nums; }
+
+.rq-qty { width: 74px; text-align: right; }
+
+/* ------------------------------------------------------------------- pano */
+
+.rq-board-wrap { min-height: 200px; overflow-x: auto; }
+
+.rq-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.rq-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.rq-col-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rq-col-empty,
+.rq-col-more { font-size: 11px; color: var(--soft); }
+
+.rq-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.rq-card:hover { border-color: var(--accent); }
+.rq-card-top { display: flex; align-items: center; gap: 6px; }
+.rq-card-subject { font-weight: 600; line-height: 1.35; }
+.rq-card-foot { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+
+.rq-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------- çekmece */
+
+.rq-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+
+.rq-pane { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
+
+.rq-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.rq-facts { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.rq-fact { display: flex; align-items: baseline; gap: 10px; }
+.rq-fact > .rq-sub { min-width: 190px; }
+
+.rq-total {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+/* --------------------------------------------------------------- yazışma */
+
+.rq-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.rq-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: #fff;
+}
+/* Taraf ayrımı yalnız renkle DEĞİL: her mesajın başlığında ne olduğu yazıyor
+   ("Müşteri mesajı" / "İÇ NOT — müşteri görmez" / "Bizim yanıtımız"). */
+.rq-msg.customer { border-left-color: var(--accent); }
+.rq-msg.staff { border-left-color: var(--good); }
+.rq-msg.internal { border-left-color: var(--warn); background: #fffbf5; }
+
+.rq-msg-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rq-msg-body { white-space: pre-wrap; line-height: 1.5; }
+
+.rq-attach { font-size: 11.5px; color: var(--accent); }
+
+.rq-editor-box { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+.rq-editor { min-height: 96px; }
+
+.rq-inline { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
+/* ------------------------------------------------------------ toplu işlem */
+
+.rq-bulk { width: min(560px, 92vw); }

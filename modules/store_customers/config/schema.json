@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_customers ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına müşteri. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Her istekte gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "segment_scan_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 5000,
+      "description": "Segment süzgeci için taranacak en çok müşteri. Sonuç diske yazılmaz."
+    },
+    "segment_scan_ttl": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 3600,
+      "description": "Tarama sonucunun bellekte kalma süresi (saniye)."
+    },
+    "recent_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3650,
+      "description": "Son siparişi bu kadar gün içindeyse müşteri taze sayılır."
+    },
+    "sleeping_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3650,
+      "description": "Bu günden eski son sipariş uykuda/riskli sayılır."
+    },
+    "lost_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3650,
+      "description": "Bu günden eski son sipariş kayıp sayılır."
+    },
+    "loyal_orders": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Sadık segmenti için en az sipariş sayısı."
+    },
+    "champion_orders": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Şampiyon segmenti için en az sipariş sayısı."
+    },
+    "champion_spend": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Şampiyon segmenti için en az yaşam boyu harcama (kuruş)."
+    },
+    "new_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 365,
+      "description": "Kaydı bu kadar günden yeni olan müşteri yeni sayılır."
+    },
+    "customer_config_slug": {
+      "type": "string",
+      "description": "Müşteri ayarlarının core_config bölümü."
+    },
+    "gdpr_config_slug": {
+      "type": "string",
+      "description": "KVKK ayarlarının core_config bölümü."
+    },
+    "email_verification_key": {
+      "type": "string",
+      "description": "E-posta doğrulama ayarının core_config anahtarı."
+    },
+    "newsletter_default_key": {
+      "type": "string",
+      "description": "Yeni kayıtta bülten aboneliği ayarının core_config anahtarı."
+    },
+    "default_group_key": {
+      "type": "string",
+      "description": "Varsayılan müşteri grubu ayarının core_config anahtarı."
+    },
+    "gdpr_enabled_key": {
+      "type": "string",
+      "description": "KVKK modülünün açık/kapalı ayarının core_config anahtarı."
+    },
+    "gdpr_text_key": {
+      "type": "string",
+      "description": "KVKK aydınlatma metninin core_config anahtarı."
+    },
+    "review_reply_field": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "Mağaza yanıtının yorum kaydındaki alan adı."
+    },
+    "gdpr_anonymize_action": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "KVKK talebi işlenirken gönderilecek eylem adı."
+    }
+  }
+}

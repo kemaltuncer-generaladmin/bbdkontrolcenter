@@ -1,0 +1,188 @@
+/* Kontrol Paneli. Ortak sınıflar (kit-*, df-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `sd-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `sd-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.sd {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.sd > * { flex: none; }               /* kartlar ezilmesin */
+
+.sd-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sd-body > * { flex: none; }
+
+.sd-kpi:empty,
+.sd-notes:empty { display: none; }
+
+.sd-notes { display: flex; flex-direction: column; gap: 6px; }
+
+/* ------------------------------------------------------------------ ızgara */
+
+/* İki sütun 1100px'in altında tek sütuna düşer: pano dar pencerede de
+   okunabilir kalmalı, grafikler yan yana sıkışınca eksen etiketleri üst üste
+   biniyor. */
+.sd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.sd-slot { min-height: 90px; }
+
+/* --------------------------------------------------------------- satırlar */
+
+/* Kit kartı içeriğe kendiliğinden iç boşluk vermiyor (tablo ve grafik kendi
+   boşluğunu taşıyor). Kart gövdesi olarak kullandığımız listeler ve yığınlar
+   boşluğu burada alır — yoksa metin kart kenarına yapışıyor. */
+.sd-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 14px 10px;
+}
+
+.sd-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+.sd-line-label { flex: 1; min-width: 0; }
+.sd-line-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Açıklama satırı, üstündeki değerin altında ve soluk durur; boşsa yer
+   kaplamaz (aksi hâlde liste seyrek ve dağınık görünüyordu). */
+.sd-line-detail {
+  padding: 0 0 8px;
+  font-size: 11px;
+  color: var(--soft);
+  border-bottom: 1px solid var(--line);
+}
+.sd-line-detail:empty { display: none; }
+.sd-list > .sd-line-detail:last-child { border-bottom: 0; }
+
+.sd-note {
+  padding-top: 8px;
+  font-size: 11.5px;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+.sd-stack { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+/* Gövdesi liste olan kartta iki kez boşluk verilmesin. */
+.sd-stack > .sd-list { padding: 0; }
+
+.sd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.sd-stock { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+
+/* --------------------------------------------------------- yapılandırma */
+
+.sd-cfg { display: flex; flex-direction: column; gap: 12px; }
+
+.sd-cfg-search { position: sticky; top: 0; z-index: 2; padding: 6px 0; background: var(--paper); }
+.sd-cfg-search .kit-input { width: 100%; }
+
+.sd-cfg-body { display: flex; flex-direction: column; padding: 6px 14px 12px; }
+
+/* Etiket · denetim · rozet. 760px altında tek sütuna düşer: dar pencerede
+   etiket ile giriş kutusu yan yana sıkışınca ikisi de okunmaz oluyordu. */
+.sd-cfg-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+.sd-cfg-row:first-of-type { border-top: 0; }
+.sd-cfg-row[hidden] { display: none; }
+
+/* Değişen satır solda çizgiyle işaretlenir; sayısı kaydet çubuğunda YAZIYLA
+   da durur — renk tek başına anlam taşımaz. */
+.sd-cfg-row.dirty { box-shadow: inset 3px 0 0 var(--warn); padding-left: 8px; }
+
+.sd-cfg-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sd-cfg-name { font-weight: 600; }
+.sd-cfg-hint { font-size: 11.5px; color: var(--soft); line-height: 1.45; }
+.sd-cfg-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.sd-cfg-control { display: flex; min-width: 0; }
+.sd-cfg-control .kit-input,
+.sd-cfg-control .kit-textarea { width: 100%; }
+.sd-cfg-control .kit-check { margin-top: 4px; }
+
+.sd-cfg-static {
+  font-size: 12px;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+  padding-top: 4px;
+}
+
+.sd-cfg-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Salt okunur alanın gerekçesi satırın altına, tüm sütunları kaplayarak
+   yazılır: "neden yazamıyorum" cevabı alanın yanında durmalı. */
+.sd-cfg-why {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--warn);
+}
+
+.sd-cfg-none { font-size: 12px; color: var(--soft); padding: 8px 2px; }
+
+.sd-cfg-foot { position: sticky; bottom: 0; z-index: 3; background: var(--paper); }
+.sd-cfg-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.sd-cfg-bar.on { border-color: var(--warn); }
+.sd-cfg-count { font-size: 12px; color: var(--soft); }
+
+@media (max-width: 760px) {
+  .sd-cfg-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+.sd-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--tint);
+  overflow-wrap: anywhere;
+}

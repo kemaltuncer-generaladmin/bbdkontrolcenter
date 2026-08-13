@@ -1,0 +1,26 @@
+# Promosyonlar ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Satış/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+channel: "default"         # kural yazarken ve süzerken gider
+locale: "tr"
+
+# Performans sekmesi siparişleri TARAYARAK hesaplar: Bagisto'da "kampanya
+# cirosu" diye bir uç yok, kupon kodu sipariş satırında durur. Tavan, mağaza
+# büyüdüğünde ekranın dakikalarca kilitlenmesini engeller; aşılırsa rapor
+# "eksik olabilir" der, sessizce yanlış rakam göstermez.
+performance_days: 30
+performance_order_cap: 2000
+
+# "Süresi bu hafta doluyor" çipinin penceresi.
+expiring_days: 7
+
+# Kupon üretecinin sınırları. Tavan MAĞAZANIN değil BİZİM sınırımız: mağazanın
+# toplu üretim ucu ürettiği kodları döndürmüyor, kodları ancak kupon listesini
+# önce/sonra okuyup farkını alarak öğreniyoruz. Sunucu sayfa boyunu 50'de
+# kırpıyor ve tarama 60 sayfada duruyor → 3.000 kod. Bunun üstünü yazmak
+# "istediğim kadar üretilmedi" diyen ama aslında üretmiş bir ekran demekti;
+# servis değeri 3.000'e kırpar ve gerçek sınırı ekrana bildirir.
+coupon_max_count: 3000
+coupon_min_length: 6
+coupon_max_length: 24

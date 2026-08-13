@@ -1,0 +1,35 @@
+# Setler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Ürün/<yıl>/<ay>
+channel: "default"         # her istekte gider (Bagisto EAV tuzağı)
+locale: "tr"               # her istekte gider
+
+# Canlıdaki "Setler" kategorisi. Set diye bir ürün tipi YOK; setler bu
+# kategorideki normal ürünlerdir. Kategori yeniden numaralanırsa burası
+# değişir — kod içine gömülmez.
+set_category_id: 42
+
+# Ana sayfa carousel'i (theme_customizations, type=image_carousel). Ekran
+# yalnız OKUR: "bu set ana sayfada mı" rozetini çizmek için. Düzenleme
+# store_home_media ekranının işidir.
+carousel_id: 12
+
+# KDV oranı (%). Set künyesinde ayrıca yazılmadıysa bu kullanılır. Vitrindeki
+# fiyat KDV DAHİLDİR; maliyet (Bagisto `cost`) KDV hariçtir.
+tax_rate: 20
+prices_include_tax: true
+
+# Bir yenilemede mağazadan okunacak en çok BİLEŞEN ürünü. Geçit dakikada 55
+# istek veriyor; sınırsız bırakmak ekranı dakikalarca kilitler ve hız payını
+# başka araçlara kapatır. Tavana dayanılırsa ekran söyler, sessiz kalmaz.
+component_fetch_cap: 80
+
+# Bileşen fiyat/stok okumasının bellekteki tazelik süresi (saniye). Süzme ve
+# sıralama bu süre içinde yeniden mağazaya gitmez. DİSKE YAZILMAZ: kalıcı kopya
+# tutmak, mağazadaki değişiklikten sonra yanlış kâr göstermek demektir.
+cache_seconds: 120
+
+# Listeye alınacak en çok set. Canlıda 42 numaralı kategori onlarca kalem
+# taşıyor; tavan büyümeye yer bırakır ve bozuk `meta` yüzünden sonsuz taramayı
+# engeller.
+max_sets: 60

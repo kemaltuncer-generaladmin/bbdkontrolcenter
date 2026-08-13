@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_trial_club ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına katılımcı. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "near_full_percent": {
+      "type": "integer",
+      "minimum": 50,
+      "maximum": 100,
+      "description": "Kontenjan çubuğunun 'dolmak üzere' sayıldığı yüzde."
+    },
+    "max_upload_rows": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 5000,
+      "description": "Sonuç CSV'sinden okunacak en çok satır."
+    },
+    "max_recipients": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2000,
+      "description": "Tek toplu bildirimde ulaşılabilecek en çok alıcı. SMS para harcar."
+    },
+    "notify_channel": {
+      "type": "string",
+      "enum": ["sms", "email", "push"],
+      "description": "Toplu bildirimin varsayılan kanalı."
+    },
+    "notify_template": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "TOPLU bildirimde mağaza tarafındaki varsayılan şablon anahtarı."
+    },
+    "notify_direct_template": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Tek kişilik hatırlatmanın şablon KİMLİĞİ (store:12). Bildirimler modülünün yeteneği kimlik ister; mağaza şablon anahtarı burada çalışmaz."
+    },
+    "attendance_spare_rows": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50,
+      "description": "Yoklama çizelgesinin sonuna eklenen boş satır sayısı."
+    }
+  }
+}

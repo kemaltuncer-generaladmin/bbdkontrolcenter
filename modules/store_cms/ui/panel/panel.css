@@ -1,0 +1,309 @@
+/* CMS paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir (docs/adr/0011).
+   Burada YALNIZCA `cm-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `cm-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.cm {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.cm > * { flex: none; }
+
+.cm-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;                   /* kaydırma iç sütunlarda olur */
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cm-view > * { flex: none; }
+
+/* Sayfalar görünümünde bölünmüş alan kalan yüksekliğin tamamını alır. */
+.cm-view > .kit-split {
+  flex: 1;
+  min-height: 320px;
+  align-items: stretch;
+}
+
+/* --------------------------------------------------------- yasal metinler */
+
+.cm-legal-wrap:empty { display: none; }
+
+.cm-legal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cm-legal-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.cm-legal-chip:disabled { cursor: default; opacity: 0.75; }
+.cm-legal-chip:hover:not(:disabled) { border-color: var(--accent); }
+.cm-legal-label { font-weight: 600; }
+
+/* ------------------------------------------------------------------- ağaç */
+
+.cm-tree {
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cm-branch { display: flex; flex-direction: column; gap: 3px; }
+
+.cm-branch-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 4px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #667487);
+  border-bottom: 1px solid var(--line);
+}
+
+.cm-node {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cm-node:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.cm-node.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.cm-node-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.cm-node-main > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-node-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* Arama alıntısı — hangi cümlede eşleştiğini gösterir. */
+.cm-hit {
+  font-size: 12px;
+  color: var(--muted, #667487);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cm-slug {
+  font-size: 12px;
+  color: var(--muted, #667487);
+  word-break: break-all;
+}
+
+.cm-dim { color: var(--muted, #667487); font-size: 12px; }
+
+/* ------------------------------------------------------------ düzenleyici */
+
+.cm-editor-host {
+  min-width: 0;
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.cm-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cm-title { font-size: 15px; }
+
+.cm-pane { display: flex; flex-direction: column; gap: 10px; }
+
+.cm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.cm-notice:empty { display: none; }
+
+/* --------------------------------------------------------- içerik kaynağı */
+
+.cm-editor { display: flex; flex-direction: column; gap: 8px; }
+
+.cm-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.cm-source {
+  min-height: 260px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper, #fff);
+  color: inherit;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.cm-preview {
+  max-height: 420px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper, #fff);
+}
+
+/* Çizilen içerik. Vitrinin kopyası DEĞİLDİR: yapıyı gösterir, temayı değil. */
+.cm-doc { line-height: 1.55; }
+.cm-doc h1, .cm-doc h2, .cm-doc h3, .cm-doc h4 { margin: 12px 0 6px; line-height: 1.3; }
+.cm-doc h1 { font-size: 19px; }
+.cm-doc h2 { font-size: 17px; }
+.cm-doc h3 { font-size: 15px; }
+.cm-doc h4 { font-size: 14px; }
+.cm-doc p { margin: 0 0 8px; }
+.cm-doc ul, .cm-doc ol { margin: 0 0 8px 18px; }
+.cm-doc li { margin: 2px 0; }
+.cm-doc a { color: var(--accent); text-decoration: underline; }
+.cm-doc img { max-width: 100%; height: auto; border-radius: 6px; }
+.cm-doc table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+.cm-doc td, .cm-doc th { border: 1px solid var(--line); padding: 5px 7px; text-align: left; }
+.cm-doc th { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+.cm-noimg {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted, #667487);
+}
+
+/* ------------------------------------------------------------------- SEO */
+
+.cm-serp {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper, #fff);
+  max-width: 640px;
+}
+.cm-serp-url { font-size: 12px; color: #3a7a3a; word-break: break-all; }
+.cm-serp-title { font-size: 16px; color: #1a4bbf; line-height: 1.3; }
+.cm-serp-desc { font-size: 12.5px; color: var(--muted, #667487); }
+
+.cm-gauges { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.cm-gauge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.cm-gauge-label { font-size: 12px; color: var(--muted, #667487); }
+
+/* ------------------------------------------------------------------- SSS */
+
+.cm-faq { display: flex; flex-direction: column; gap: 10px; }
+
+.cm-faq-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-areas: "no question tools" "no answer tools";
+  gap: 6px 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.cm-faq-no { grid-area: no; color: var(--muted, #667487); font-size: 12px; padding-top: 8px; }
+.cm-faq-row > input { grid-area: question; }
+.cm-faq-row > textarea { grid-area: answer; min-height: 72px; resize: vertical; }
+.cm-faq-tools { grid-area: tools; display: flex; flex-direction: column; gap: 5px; }
+
+/* ------------------------------------------------------------ arama & SEO */
+
+/* Alt bölümler sekme şeridinin altında; şerit sabit, gövde akar. */
+.cm-seo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  margin-top: 10px;
+}
+.cm-seo > * { flex: none; }
+
+/* Tablo hücresinde metin + rozet yan yana: rozet satırı ikiye bölmemeli. */
+.cm-cell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- diğerleri */
+
+.cm-row-actions { display: flex; gap: 6px; }
+
+.cm-block-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.cm-version { display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 1100px) {
+  /* Dar pencerede iki sütun okunmuyor; ağaç üste alınır. */
+  .cm-view > .kit-split { grid-template-columns: minmax(0, 1fr) !important; }
+  .cm-tree { max-height: 260px; }
+}

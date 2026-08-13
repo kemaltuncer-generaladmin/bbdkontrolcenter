@@ -1,19 +1,30 @@
-# Raporlar modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Raporlar — 7 dal, 35 yaprak, tek PDF'te birleştirilebilen rapor paketi.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham
+# httpx ya da DB sürücüsü kullanmaz. Rapor rakamlarının kopyasını TUTMAZ:
+# yerel tablolar sadece kaydedilmiş rapor tanımı, zamanlama ve üretim izidir.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_reports
 name: "Raporlar"
-description: "Satış, ürün ve müşteri raporları."
+description: "Satış, ürün, müşteri, kargo, mali, pazarlama ve sistem raporları; çoklu rapor tek PDF."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "Rapor ve rapor paketi kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
 
 events:
   publishes: []
@@ -32,19 +43,27 @@ ui:
     title: "Raporlar"
     icon: chart
     group: "BBD Store"
-    order: 150
+    order: 180
     requires: [store_reports.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor.
+#
+# Bu ekranda mağazaya YAZAN hiçbir uç yoktur: tamamı okuma + yerel dosya
+# üretimi. Bu yüzden ayrı bir yıkıcı izin anahtarı da yoktur. `manage`
+# kaydedilmiş/zamanlanmış rapor tanımlarını yönetir; arşivleme yine de
+# gerekçe ister (satır silinmez, `active = 0` olur).
+#
+# `accountant` mali ekranları ve raporları görebilir (docs/permissions.md);
+# rapor tanımı yönetimi ona verilmez.
 permissions:
   - key: store_reports.view
-    description: "Raporlar ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Raporları görüntüleme, PDF/CSV üretme ve yazdırma."
+    default_roles: [admin, bbd_staff, accountant]
   - key: store_reports.manage
-    description: "Raporlar kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Kaydedilmiş ve zamanlanmış rapor tanımlarını yönetme."
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml
@@ -52,4 +71,9 @@ config:
 
 migrations: backend/migrations
 
-tasks: []
+# Zamanlanmış raporlar. Koşucu vakti gelen tanımları arar; saat kaçarsa bir
+# sonraki turda üretir ve aynı gün ikinci kez basmaz.
+tasks:
+  - name: scheduled_reports
+    handler: backend.tasks:run_scheduled
+    schedule: "*/15 * * * *"

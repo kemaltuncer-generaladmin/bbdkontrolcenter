@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_orders ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Satış/yıl/ay)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 200,
+      "description": "Sayfa başına sipariş. Mağaza 50'de kırpar; büyütmek sayfa kaybettirir."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı KODU. Yalnız mağaza ayarları okunurken kullanılır."
+    },
+    "channel_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Sipariş listesi süzgecine giden kanal KİMLİĞİ. 0 = süzgeç gönderilmez. Uç kod değil kimlik bekliyor; kod göndermek listeyi sessizce boşaltır."
+    },
+    "scan_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 2000,
+      "description": "Mağazanın süzemediği filtreler için taranacak en çok sipariş."
+    },
+    "detail_cap": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2000,
+      "description": "Taramada en çok kaç sipariş detaylandırılsın. Her detay bir istek eder; tavan aşılırsa ekran 'bazı süzgeçler eksik uygulandı' der."
+    },
+    "order_no_format": {
+      "type": "string",
+      "maxLength": 40,
+      "description": "Sipariş no biçimi. {no} · {id} · {year} yer tutucularını tanır."
+    },
+    "cancel_window_hours": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8760,
+      "description": "Bu süreden eski sipariş bu ekrandan iptal edilemez. 0 = sınırsız."
+    },
+    "late_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90,
+      "description": "Kaç gündür kargolanmayan sipariş 'Geciken' sayılır."
+    },
+    "status_names": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "maxLength": 40 },
+      "description": "Durum kodu → ekranda görünecek ad. Yalnız bu ekranı etkiler."
+    },
+    "inventory_source_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Toplu 'kargoya ver' hangi envanter kaynağından düşsün."
+    },
+    "order_config_slug": {
+      "type": "string",
+      "description": "Mağazanın sipariş ayarlarının core_config bölümü (salt okunur gösterilir)."
+    }
+  }
+}

@@ -1,0 +1,30 @@
+# Deneme Kulübü ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+# Hepsi YEREL tercihtir; hiçbiri mağaza vitrinini etkilemez.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Müşteri/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+
+# Kontenjan çubuğu bu yüzdeden sonra "dolmak üzere" boyanır. Renk tek başına
+# anlam taşımaz: çubuğun yanında her zaman `dolu/toplam` yazar.
+near_full_percent: 90
+
+# Sonuç CSV'sinden okunacak en çok satır. Kurumdan gelen dosya bazen tüm yılın
+# denemelerini içeriyor; tavan olmadan eşleştirme dakikalarca sürerdi.
+max_upload_rows: 2000
+
+# Tek toplu bildirimde ulaşılabilecek en çok alıcı. SMS PARA HARCAR: sınırı
+# aşan gönderim reddedilir ve kullanıcıdan kitleyi daraltması istenir.
+max_recipients: 500
+
+notify_channel: "sms"              # sms | email | push
+notify_template: "trial_reminder"  # TOPLU gönderimde mağaza şablon anahtarı
+
+# TEK KİŞİLİK hatırlatmanın şablonu. Bu yol Bildirimler modülünün
+# `store.notify.send` yeteneğinden geçer ve o yetenek şablonu KİMLİK olarak
+# ister (`store:12` / `local:7`); yukarıdaki mağaza anahtarı burada çalışmaz.
+# Boşsa düğme çalışmaz ve ekran nedenini söyler — sessizce başarısız olmaz.
+notify_direct_template: ""
+
+# Yoklama çizelgesinin sonuna eklenen boş satır. Sınav günü gelen son dakika
+# kayıtları elle yazılabilsin diye; 0 = hiç boş satır bırakma.
+attendance_spare_rows: 5

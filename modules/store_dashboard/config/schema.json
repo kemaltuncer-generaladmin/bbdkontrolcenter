@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_dashboard ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Satış/yıl/ay)."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Panonun çalıştığı Bagisto kanal kodu. Ekrandan seçilen yerel tercih bunu ezer."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "compare": {
+      "type": "string",
+      "enum": ["previous", "lastYear", "none"],
+      "description": "Varsayılan karşılaştırma dönemi."
+    },
+    "scan_cap": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "Bir dönemde taranacak en çok satır. Tavana dayanılırsa ekran rakamların eksik olduğunu söyler."
+    },
+    "recent_orders": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "Son siparişler kartındaki satır sayısı."
+    },
+    "critical_stock": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "Kritik stok kartındaki satır sayısı."
+    },
+    "top_products": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "En çok satan ürün grafiğindeki çubuk sayısı."
+    },
+    "backup_warn_days": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 60,
+      "description": "Son yedek bu günden eskiyse sistem sağlığı kartı uyarı verir."
+    },
+    "timezone": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Kontrol Merkezi gösterim saat dilimi. Vitrini etkilemez."
+    },
+    "date_format": {
+      "type": "string",
+      "maxLength": 32,
+      "description": "Kontrol Merkezi tarih biçimi. Vitrini etkilemez."
+    },
+    "week_start": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "description": "Haftanın ilk günü (1 = Pazartesi)."
+    },
+    "identity_slug": {
+      "type": "string",
+      "description": "Mağaza kimliği ayarlarının core_config bölümü."
+    },
+    "identity_name_key": { "type": "string", "description": "Mağaza adı anahtarı." },
+    "identity_email_key": { "type": "string", "description": "Mağaza e-postası anahtarı." },
+    "identity_phone_key": { "type": "string", "description": "Mağaza telefonu anahtarı." },
+    "identity_address_key": { "type": "string", "description": "Mağaza adresi anahtarı." },
+    "identity_tax_key": { "type": "string", "description": "VKN / vergi dairesi anahtarı." },
+    "seo_slug": { "type": "string", "description": "SEO ayarlarının core_config bölümü." },
+    "seo_title_key": { "type": "string", "description": "Varsayılan meta başlık anahtarı." },
+    "seo_description_key": { "type": "string", "description": "Varsayılan meta açıklama anahtarı." },
+    "seo_keywords_key": { "type": "string", "description": "Varsayılan anahtar kelimeler anahtarı." },
+    "maintenance_slug": { "type": "string", "description": "Bakım modunun core_config bölümü." },
+    "maintenance_status_key": {
+      "type": "string",
+      "description": "Bakım modu aç/kapa anahtarı. Bulunamazsa bakım modu yazılmaz."
+    },
+    "maintenance_ips_key": { "type": "string", "description": "İzinli IP listesi anahtarı." },
+    "maintenance_text_key": { "type": "string", "description": "Bakım modu metni anahtarı." }
+  }
+}

@@ -1,22 +1,48 @@
-# Talepler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Talepler (RMA) — iade, değişim, arıza ve bilgi talepleri.
+#
+# Bu ekran mağaza verisine YALNIZ `store.api` yeteneğinden bakar (K4); ham
+# httpx ya da DB sürücüsü kullanmaz. Uzak kaydın kopyasını tutmaz: yerel
+# tablolar yalnız gerekçe (denetim izi), iç not ve İadeler'e devir kaydı
+# içindir.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: store_requests
 name: "Talepler"
-description: "Müşteriden gelen destek, iade ve bilgi talepleri."
+description: "İade/değişim talepleri (RMA): yazışma, kalem seçimi, SLA takibi ve RMA formu."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [store_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: store.api
+    reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: printer
+    optional: true
+    reason: "RMA formu ve SLA raporu kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
+  - capability: store.order.card
+    optional: true
+    reason: "Çekmecede sipariş özeti. Siparişler modülü kapalıysa özet gizlenir, talep açılır."
+  - capability: store.customer.card
+    optional: true
+    reason: "Çekmecede müşteri künyesi. Müşteriler modülü kapalıysa bölüm gizlenir."
+  - capability: store.audit.for
+    optional: true
+    reason: "Çekmecedeki 'İşlem geçmişi' sekmesi. UDİT modülü kapalıysa yalnız yerel iz gösterilir."
 
 events:
-  publishes: []
+  publishes:
+    - name: store_requests.approved
+      description: >-
+        Talep onaylandı ve iade edilecek kalemler İadeler ekranına devredildi.
+        Yük: {requestId, orderId, amount (kuruş), items, actor, reason}.
+        Onay PARA İADE ETMEZ; parayı iade etmek dinleyen modülün ayrı izinli işidir.
   subscribes: []
 
 http:
@@ -35,21 +61,35 @@ ui:
     order: 90
     requires: [store_requests.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+# `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
+# mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
+# gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_requests.view
-    description: "Talepler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Talepler ekranını görüntüleme, RMA formu ve SLA raporu alma."
+    default_roles: [admin, bbd_staff]
   - key: store_requests.manage
-    description: "Talepler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Yanıt yazma, iç not, durum/öncelik/atama, iade kalemi seçimi, toplu işlem."
+    default_roles: [admin, bbd_staff]
+  - key: store_requests.decide
+    description: >-
+      Talebi onaylama/reddetme. Onay, seçili kalemleri İadeler ekranına devreder;
+      para iadesi orada ayrı izinle yapılır.
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >-
+    Yazdırma `printer` platform yeteneğinden, mağaza erişimi `store.api`
+    yeteneğinden gelir; burada tekrar edilmez. PDF önizlemesi `pdftoppm`
+    (poppler-utils) varsa üretilir, yoksa rapor yine yazılır ve basılabilir.
 
 tasks: []

@@ -1,0 +1,44 @@
+# Kontrol Paneli ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Satış/<yıl>/<ay>
+channel: "default"         # çalışma kanalı; ekrandan değiştirilirse yerel tercih ezer
+locale: "tr"               # her istekte gider
+compare: "previous"        # previous | lastYear | none
+
+# Bir dönemde taranacak en çok sipariş/iade/müşteri satırı. Pano iki dönemi
+# birden tarar; tavan olmadan bozuk bir `meta` sonsuz sayfalama üretir ve
+# dakikada 55 isteklik kovayı tüketir. Tavana dayanılırsa ekran "rakamlar
+# eksik" der — sessizce yanlış rakam göstermez.
+scan_cap: 2000
+
+recent_orders: 10          # son siparişler kartı
+critical_stock: 10         # kritik stok kartı
+top_products: 10           # en çok satan kaç ürün
+backup_warn_days: 2        # son yedek bundan eskiyse sağlık kartı uyarır
+
+# Yerelleştirme YEREL tercihtir: Kontrol Merkezi'nin gösterimini etkiler,
+# vitrini değil. Vitrinin saat dilimi mağaza yönetimindedir.
+timezone: "Europe/Istanbul"
+date_format: "gg.aa.yyyy"
+week_start: 1              # 1 = Pazartesi
+
+# Mağaza ayarlarının core_config anahtarları. Bagisto sürümüne göre
+# değişebildiği için sabit yazılmaz: BULUNAMAYAN anahtara YAZILMAZ, ekran
+# "bulunamadı" der. Bulunmayan anahtara yazmak etkisiz bir satır açar ve
+# kullanıcı ayarı değiştirdiğini sanır.
+identity_slug: "general.content"
+identity_name_key: "general.content.shop_information.shop_name"
+identity_email_key: "general.content.shop_information.shop_email"
+identity_phone_key: "general.content.shop_information.shop_phone"
+identity_address_key: "general.content.shop_information.shop_address"
+identity_tax_key: "general.content.shop_information.tax_number"
+
+seo_slug: "general.content"
+seo_title_key: "general.content.seo.meta_title"
+seo_description_key: "general.content.seo.meta_description"
+seo_keywords_key: "general.content.seo.meta_keywords"
+
+maintenance_slug: "general.content"
+maintenance_status_key: "general.content.maintenance_mode.status"
+maintenance_ips_key: "general.content.maintenance_mode.allowed_ips"
+maintenance_text_key: "general.content.maintenance_mode.maintenance_mode_text"

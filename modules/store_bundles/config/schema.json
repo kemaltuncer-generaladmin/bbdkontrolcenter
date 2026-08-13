@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "store_bundles ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "export_path": {
+      "type": "string",
+      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Ürün/yıl/ay)."
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "description": "Bagisto satış kanalı kodu. Her istekte gönderilir."
+    },
+    "locale": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "description": "Bagisto dil kodu. Her istekte gönderilir."
+    },
+    "set_category_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Setlerin durduğu kategori (canlıda 42, slug 'setler')."
+    },
+    "carousel_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Ana sayfa image_carousel kaydı (canlıda 12). 0 = rozet çizilmez."
+    },
+    "tax_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Varsayılan KDV oranı (%). Set künyesindeki oran bunu ezer."
+    },
+    "prices_include_tax": {
+      "type": "boolean",
+      "description": "Vitrin fiyatı KDV dahil mi. Kapalıysa KDV fiyatın üstüne eklenir."
+    },
+    "component_fetch_cap": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 400,
+      "description": "Bir yenilemede okunacak en çok bileşen ürünü."
+    },
+    "cache_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3600,
+      "description": "Bileşen okumasının bellekteki tazelik süresi. 0 = her istekte taze."
+    },
+    "max_sets": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 500,
+      "description": "Listeye alınacak en çok set."
+    }
+  }
+}

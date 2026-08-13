@@ -1,0 +1,230 @@
+/* Link ile Ödeme paneli. Ortak sınıflar (kit-*, pk-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `pg-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `pg-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.pg {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.pg > * { flex: none; }               /* kartlar ezilmesin */
+
+.pg-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pg-body > * { flex: none; }
+
+.pg-notices:empty,
+.pg-kpi:empty { display: none; }
+
+.pg-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 20px;
+}
+
+.pg-sub { font-size: 11px; color: var(--soft); }
+.pg-num { font-variant-numeric: tabular-nums; }
+.pg-good { color: var(--good); font-weight: 600; }
+.pg-bad { color: var(--bad); font-weight: 600; }
+
+/* --------------------------------------------------------- iki sütunlu form */
+
+/* Form solda, ön izleme sağda. Ön izleme YAPIŞKANDIR: uzun formda aşağı
+   inerken tutar ve SMS gözden kaybolursa "ne göndereceğimi görmeden
+   onaylıyorum" durumu doğar. */
+.pg-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1080px) {
+  .pg-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+.pg-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pg-col > * { flex: none; }
+.pg-col-right { position: sticky; top: 0; }
+
+.pg-list { display: flex; flex-direction: column; gap: 12px; }
+.pg-list > * { flex: none; }
+
+/* ----------------------------------------------------------------- tablo */
+
+.pg-table { min-height: 120px; }
+
+.pg-person { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pg-person b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pg-status { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* Uyarı işareti YAZIYLA gelir; renk tek başına anlam taşımaz. */
+.pg-warnmark { font-size: 11px; color: var(--bad); font-weight: 600; }
+
+/* ------------------------------------------------------------ ürün seçimi */
+
+.pg-picker { display: flex; flex-direction: column; gap: 8px; }
+
+.pg-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.pg-result {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pg-result:hover { border-color: var(--line); background: var(--tint); }
+
+.pg-chosen { display: flex; flex-direction: column; gap: 6px; }
+
+.pg-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px 110px auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pg-line-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pg-line-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-qty { text-align: right; }
+
+/* ------------------------------------------------------------- ön izleme */
+
+.pg-quote { display: flex; flex-direction: column; gap: 12px; }
+
+.pg-amounts { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
+
+.pg-amount-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 110px;
+  align-items: center;
+  gap: 8px;
+}
+
+.pg-tag {
+  font-size: 11px;
+  color: var(--soft);
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.pg-total {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pg-total-row { display: flex; justify-content: space-between; align-items: baseline; }
+.pg-total-row.strong { font-size: 15px; font-weight: 700; }
+
+/* --------------------------------------------------------------- SMS */
+
+.pg-sms { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+
+/* Gidecek metin BİREBİR görünmeli: satır sonları ve boşluklar korunur,
+   yoksa ekranda tek satır görünen mesaj telefonda iki parça çıkar. */
+.pg-sms-text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pg-meter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+
+.pg-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.pg-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--tint);
+  color: inherit;
+  cursor: pointer;
+}
+.pg-chip:hover { border-color: var(--accent); }
+
+.pg-template { min-height: 120px; width: 100%; }
+
+.pg-problems { margin: 0; padding-left: 20px; color: var(--bad); font-size: 12px; }
+.pg-problems li { margin: 2px 0; }
+
+.pg-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* ---------------------------------------------------------------- çekmece */
+
+.pg-drawer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.pg-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+}
+.pg-info-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pg-info-cell b { word-break: break-word; }
+
+.pg-linkbox { display: flex; align-items: center; gap: 8px; padding: 10px 12px; flex-wrap: wrap; }
+.pg-link {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--tint);
+  word-break: break-all;
+}
+
+.pg-timeline { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.pg-event {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}

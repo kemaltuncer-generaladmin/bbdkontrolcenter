@@ -1,0 +1,184 @@
+/* Promosyonlar paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `pm-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `pm-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.pm {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.pm > * { flex: none; }
+
+.pm-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pm-body > * { flex: none; }
+
+.pm-kpi:empty { display: none; }
+.pm-table { min-height: 120px; }
+
+.pm-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pm-sub { font-size: 11px; color: var(--soft); }
+.pm-good { color: var(--good); font-weight: 600; }
+.pm-bad { color: var(--bad); font-weight: 600; }
+
+.pm-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pm-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pm-code,
+.pm-codes {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--tint);
+}
+
+.pm-dates { display: flex; flex-direction: column; gap: 2px; }
+
+/* ------------------------------------------------------------ kullanım çubuğu */
+
+/* Çubuk TEK BAŞINA anlam taşımaz: yanında her zaman "12/100" yazar ve limit
+   dolduğunda ayrıca rozet çıkar. Renk körü bir kullanıcı da aynı bilgiyi alır. */
+.pm-usage { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pm-bar {
+  position: relative;
+  flex: 1;
+  min-width: 46px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--tint);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.pm-bar.open { background: repeating-linear-gradient(90deg,
+    var(--tint) 0 4px, transparent 4px 8px); }
+.pm-bar-fill { display: block; height: 100%; background: var(--accent); }
+.pm-bar-fill.near { background: var(--warn); }
+.pm-bar-fill.full { background: var(--bad); }
+.pm-usage-text { font-size: 11px; color: var(--soft); white-space: nowrap; }
+
+.pm-usage-list { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.pm-usage-row { display: flex; align-items: center; gap: 10px; }
+.pm-usage-row .pm-usage { flex: 0 0 220px; }
+
+/* ------------------------------------------------------------------ çekmece */
+
+.pm-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+.pm-drawer-head .pm-usage { flex: 0 0 200px; }
+
+.pm-block { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+.pm-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.pm-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 0 10px; }
+
+/* ---------------------------------------------------------------- koşullar */
+
+.pm-conds { display: flex; flex-direction: column; gap: 8px; }
+.pm-cond {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+.pm-cond-op { flex: 0 0 auto; }
+.pm-cond-value { flex: 1 1 260px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* Kategori seçicisi kart içinde durur; sınırsız uzayınca kaydet düğmesi
+   ekranın altına kaçıyordu. */
+.pm-cond-picker { max-height: 230px; overflow: auto; }
+
+.pm-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.pm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+}
+.pm-results { display: flex; gap: 6px; flex-wrap: wrap; max-height: 120px; overflow: auto; }
+
+.pm-money { width: 116px; }
+.pm-num { width: 92px; }
+
+/* -------------------------------------------------------------- simülasyon */
+
+.pm-sim { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+.pm-sim-head { display: flex; gap: 8px; align-items: center; }
+.pm-sim-lines { display: flex; flex-direction: column; gap: 6px; }
+.pm-sim-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pm-sim-line .kit-input:first-child { flex: 1 1 160px; }
+
+.pm-sim-out { display: flex; flex-direction: column; gap: 10px; }
+.pm-sim-out:empty { display: none; }
+.pm-sim-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.pm-sim-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------ kupon */
+
+/* Seçim yokken YER KAPLAMAZ: boş bir çubuk tabloyu aşağı itiyor ve kullanıcı
+   "bir şey mi seçtim" diye bakıyordu.
+   SIRA ÖNEMLİ: `:empty` kuralı temel kuraldan SONRA gelmeli — ikisi de aynı
+   özgüllükte ve sonraki kazanıyor. */
+.pm-selbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+.pm-selbar:empty { display: none; }
+
+.pm-sample { font-size: 12px; }
+.pm-batch { display: flex; flex-direction: column; gap: 8px; }
+.pm-batch:empty { display: none; }
+.pm-codes {
+  display: block;
+  max-height: 140px;
+  overflow: auto;
+  line-height: 1.8;
+  word-break: break-all;
+}

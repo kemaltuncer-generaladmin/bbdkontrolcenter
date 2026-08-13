@@ -1,0 +1,28 @@
+# Vergilendirme ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Finans/<yıl>/<ay>
+page_size: 50              # sunucu 50'de kırpıyor; büyütmek sayfa kaybettirir
+channel: "default"         # her istekte gider (Bagisto EAV tuzağı)
+locale: "tr"               # her istekte gider
+
+# KDV icmalinin varsayılan aralığı (gün). Ekran açılınca son bu kadar gün gelir.
+summary_days: 30
+
+# İcmale girecek en çok belge. Aşılırsa rapor ÜRETİLMEZ ve neden söylenir:
+# eksik belgeyle hesaplanan matrah beyanı eksiltir ve bunu fark etmenin yolu
+# yoktur. Sayıyı büyütmek yerine aralığı daraltmak doğrudur.
+document_cap: 4000
+
+# Vergi kategorisi kullanım taraması için ürün tavanı. 1.419 ürün 29 sayfa
+# eder; 3.000 büyümeye yer bırakır ve bozuk `meta` yüzünden sonsuz taramayı
+# engeller.
+catalog_scan_cap: 3000
+
+# Toplu ürün→vergi kategorisi eşlemesinde SIRAYLA yazılacak en çok ürün.
+# Bagisto'da bu iş için toplu uç YOK: her ürün ayrı PUT ile yazılır ve mağaza
+# dakikada 60 istek kabul eder. 50 ürün ≈ iki dakika. 0 = tamamen kapalı.
+assign_limit: 50
+
+# `store.tax.rates` yeteneğinin önbellek ömrü (saniye). Dört ekran aynı anda
+# açılınca dört kez oran listesi çekmek hız payını boşa harcıyor.
+capability_ttl: 60

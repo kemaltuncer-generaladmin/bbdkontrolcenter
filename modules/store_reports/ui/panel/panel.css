@@ -1,0 +1,181 @@
+/* Raporlar paneli. Ortak sınıflar (kit-*, df-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `rp-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `rp-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar. */
+
+.rp {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.rp > * { flex: none; }               /* kartlar ezilmesin */
+
+.rp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rp-body > * { flex: none; }
+
+/* Rapor sekmesinde iki sütun EKRANI DOLDURUR: ağaç ile çalışma alanı ayrı
+   ayrı kaydırılır, sayfa tek parça kaymaz. */
+.rp-split {
+  flex: 1;
+  min-height: 0;
+  gap: 14px;
+}
+
+/* --------------------------------------------------------------- sol ağaç */
+
+.rp-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+  padding-right: 4px;
+  border-right: 1px solid var(--line);
+}
+
+.rp-search { width: 100%; }
+
+.rp-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rp-branch,
+.rp-leaf {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  outline-offset: -2px;
+}
+.rp-branch:hover,
+.rp-leaf:hover { background: var(--tint); }
+.rp-branch:focus-visible,
+.rp-leaf:focus-visible { outline: 2px solid var(--accent); }
+
+.rp-branch { font-weight: 600; margin-top: 4px; }
+.rp-caret { width: 12px; color: var(--soft); font-size: 11px; }
+.rp-branch-label { flex: 1; min-width: 0; }
+
+/* Dal başındaki sayı, dalın kaç rapor taşıdığını RENKSİZ söyler. */
+.rp-count {
+  font-size: 11px;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.rp-leaf { padding-left: 22px; }
+.rp-leaf-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Seçili yaprak yalnız renkle değil, sol şeritle de işaretlenir. */
+.rp-leaf.on {
+  background: color-mix(in srgb, var(--accent) 12%, #fff);
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 600;
+}
+.rp-leaf.pending .rp-leaf-label { color: var(--soft); }
+
+/* Seçim yokken YER KAPLAMAZ: boş bir çubuk kullanıcıya "bir şey mi seçtim"
+   sorusunu sordurtuyordu. */
+.rp-package { display: none; }
+.rp-package.on {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+.rp-package-count { flex: 1; font-size: 12px; }
+
+/* ---------------------------------------------------------- sağ çalışma */
+
+.rp-work {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 10px;
+}
+
+.rp-params { flex: none; }
+
+.rp-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: none;
+}
+
+.rp-output {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+.rp-output > * { flex: none; }
+
+.rp-head { display: flex; flex-direction: column; gap: 2px; }
+.rp-title { margin: 0; font-size: 15px; }
+.rp-hint { font-size: 12px; color: var(--soft); }
+.rp-sub { font-size: 11.5px; color: var(--soft); }
+
+.rp-error { color: var(--bad); line-height: 1.5; padding: 4px 0; }
+
+/* Yöntem notları: rakamın nereden geldiği. Küçük ama okunur olmalı —
+   raporun güvenilirliği bu satırlarda. */
+.rp-notes {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------- kayıt / zamanlama */
+
+.rp-saved { display: flex; flex-direction: column; gap: 6px; }
+.rp-saved-leaves { font-size: 12.5px; line-height: 1.5; }
+.rp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.rp-dialog { width: min(520px, 92vw); }
+.rp-dialog-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 8px 0;
+}
