@@ -11,6 +11,7 @@
 
 import { h, money, moneyInput, parseMoney } from './kit.js';
 import { dateField } from './datefield.js';
+import { richText, htmlToText } from './richtext.js';
 
 const TR_PHONE = /^5\d{9}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -36,7 +37,10 @@ export function formatPhone(value) {
  *   {key, label, type, required?, hint?, placeholder?, maxLength?, options?,
  *    wide?, readOnly?, validate?(value, draft) -> string|null}
  *   type: 'text' | 'textarea' | 'number' | 'money' | 'select' | 'checkbox'
- *       | 'phone' | 'email' | 'date' | 'static'
+ *       | 'phone' | 'email' | 'date' | 'richtext' | 'static'
+ *
+ *   'richtext' HTML tutar; `maxLength` etiketleri değil DÜZ METNİ sayar —
+ *   sınır mağazanın alan sınırıdır ve `<strong>` onu doldurmamalıdır.
  * @param {object} [spec.value] — başlangıç kaydı
  * @param {(draft:object, dirty:string[])=>void} [spec.onChange]
  */
@@ -106,6 +110,27 @@ export function formGrid({ fields = [], value = {}, onChange } = {}) {
         input = h('input', 'kit-check');
         input.type = 'checkbox';
         input.addEventListener('change', () => write(input.checked));
+        break;
+      }
+      case 'richtext': {
+        const editor = richText({
+          value: draft[field.key] || '',
+          maxLength: field.maxLength || 0,
+          placeholder: field.placeholder || 'Yazmaya başlayın…',
+          allowSource: field.allowSource !== false,
+          onChange: (value) => write(value),
+        });
+        disposers.push(() => editor.destroy());
+        const error = h('span', 'kit-field-error');
+        controls.set(field.key, {
+          node: editor.node,
+          input: editor,
+          set: (raw) => editor.set(raw || ''),
+          error,
+        });
+        wrap.append(editor.node);
+        if (field.hint) wrap.append(h('span', 'kit-field-hint', field.hint));
+        wrap.append(error);
         break;
       }
       case 'date': {
@@ -228,6 +253,17 @@ export function formGrid({ fields = [], value = {}, onChange } = {}) {
 }
 
 function validateField(field, value, draft) {
+  if (field.type === 'richtext') {
+    // Etiketler dolu, metin boş olabilir (`<p><br></p>`); sayan metindir.
+    const plain = htmlToText(value);
+    if (field.required && !plain) return `${field.label} zorunlu.`;
+    if (field.maxLength && plain.length > field.maxLength) {
+      return `${field.label} en çok ${field.maxLength} karakter olabilir `
+        + `(şu an ${plain.length}).`;
+    }
+    return field.validate ? field.validate(value, draft) : null;
+  }
+
   const empty = value === null || value === undefined || String(value).trim() === '';
   if (field.required && field.type !== 'checkbox' && empty) {
     return `${field.label} zorunlu.`;

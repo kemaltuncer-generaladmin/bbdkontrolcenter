@@ -40,6 +40,7 @@ import {
   statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
+import { renderHtml, richText } from '../../ui-kit/richtext.js';
 import { reportChain } from '../../ui-kit/report.js';
 
 const BASE = '/api/store_cms';
@@ -68,80 +69,30 @@ let state = { ...EMPTY_STATE };
 const nodes = {};
 
 // =================================================== beyaz listeli çizim
+//
+// BEYAZ LİSTE ARTIK BURADA DEĞİL. Bu dosyada `SAFE_TAGS`/`cloneSafe` adıyla
+// ikinci bir kopya duruyordu ve sunucudakinden çoktan ayrışmıştı: `img`
+// genişlik/yükseklik burada yoktu, `frameset` eksikti, `u`/`span` hiç yoktu.
+// İki listeyi elle eşit tutmak işlemedi. Tek kopya kitte (`ui-kit/richtext.js`)
+// ve zengin metin düzenleyicisi de aynı listeyi kullanıyor — böylece "yazarken
+// gördüğüm biçim kaydedince kayboldu" durumu yapısal olarak imkânsız.
 
-const SAFE_TAGS = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'a', 'img',
-  'strong', 'em', 'br', 'table', 'thead', 'tbody', 'tr', 'td', 'th']);
-
-// İçeriğiyle birlikte ATILANLAR. Diğer tanınmayan etiketler AÇILIR (içeriği
-// korunur): `<div>` içindeki metni silmek, kullanıcının yazısını yok etmek olurdu.
-const DROP_TAGS = new Set(['script', 'style', 'iframe', 'frame', 'object', 'embed',
-  'form', 'input', 'button', 'select', 'textarea', 'svg', 'math', 'noscript',
-  'template', 'link', 'meta', 'base', 'applet']);
-
-const SAFE_ATTRS = {
-  a: ['href', 'title'],
-  img: ['src', 'alt', 'title'],
-  td: ['colspan', 'rowspan'],
-  th: ['colspan', 'rowspan', 'scope'],
-};
-
-/** `javascript:` ve `data:` reddedilir; ikisi de beyaz listeyi anlamsız kılar. */
-function safeUrl(raw) {
-  // Boşluk ve denetim karakterleri ATILIR: satır sonu serpiştirilmiş
-  // `java\nscript:` yazımı bazı tarayıcılarda hâlâ çalışıyor ve şema
-  // denetimini atlatıyor.
-  const value = String(raw || '').replace(/[^\x20-\x7e\u00a0-\uffff]|\s/g, '');
-  if (!value) return '';
-  if (value.startsWith('#') || value.startsWith('/')) return value;
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value);
-  if (!scheme) return value;                       // görece yol
-  return ['http', 'https', 'mailto', 'tel'].includes(scheme[1].toLowerCase()) ? value : '';
-}
-
-function cloneSafe(source, target) {
-  for (const child of source.childNodes) {
-    if (child.nodeType === 3) {
-      target.append(document.createTextNode(child.nodeValue));
-      continue;
-    }
-    if (child.nodeType !== 1) continue;            // yorum, CDATA…
-    const tag = child.tagName.toLowerCase();
-    if (DROP_TAGS.has(tag)) continue;
-    if (!SAFE_TAGS.has(tag)) { cloneSafe(child, target); continue; }
-
-    const node = document.createElement(tag);
-    for (const name of SAFE_ATTRS[tag] || []) {
-      const value = child.getAttribute(name);
-      if (value === null) continue;
-      if (name === 'href' || name === 'src') {
-        const url = safeUrl(value);
-        if (url) node.setAttribute(name, url);
-      } else {
-        node.setAttribute(name, value);
-      }
-    }
-    if (tag === 'a') {
-      node.setAttribute('rel', 'noopener noreferrer');
-      node.setAttribute('target', '_blank');
-    }
-    if (tag === 'img') {
-      node.loading = 'lazy';
-      // Kırık ya da CSP'nin engellediği görsel sessiz kalmaz.
-      node.addEventListener('error', () => {
-        const box = h('span', 'cm-noimg', `görsel açılmadı: ${node.getAttribute('src') || '—'}`);
-        node.replaceWith(box);
-      });
-    }
-    cloneSafe(child, node);
-    target.append(node);
-  }
-}
-
-/** İçeriği çizer. `innerHTML` YOK — düğümler tek tek klonlanır. */
+/**
+ * İçeriği çizer. `innerHTML` YOK — kit düğümleri tek tek klonlar.
+ *
+ * Kitin çıktısına iki panel dokunuşu eklenir: görsel tembel yüklenir ve
+ * açılmayan görsel sessiz kalmaz. Boş kutu "sayfa bozuk mu" sorusunu
+ * doğuruyordu; CSP engellediğinde neden görünmediği yazılı olmalı.
+ */
 function renderSafe(html) {
-  const box = h('div', 'cm-doc');
-  const parsed = new DOMParser().parseFromString(String(html || ''), 'text/html');
-  cloneSafe(parsed.body, box);
+  const box = renderHtml(html, 'cm-doc');
+  for (const image of box.querySelectorAll('img')) {
+    image.loading = 'lazy';
+    image.addEventListener('error', () => {
+      image.replaceWith(h('span', 'cm-noimg',
+        `görsel açılmadı: ${image.getAttribute('src') || '—'}`));
+    });
+  }
   if (!box.childNodes.length) box.append(h('p', 'cm-dim', 'İçerik boş.'));
   return box;
 }
@@ -343,6 +294,10 @@ function dropEditor() {
   nodes.editorForms = [];
   nodes.previewSoon?.cancel();
   nodes.previewSoon = null;
+  // Zengin metin düzenleyicisi de bekleyen bir debounce tutuyor; sayfa
+  // değişince tetiklenirse artık DOM'da olmayan önizlemeyi boyar.
+  nodes.contentEditor?.destroy();
+  nodes.contentEditor = null;
 }
 
 async function openPage(pageId) {
@@ -490,57 +445,31 @@ function paintGeneral(pane, payload) {
   ));
 }
 
-/** İçerik: araç çubuğu + kaynak + beyaz listeli canlı önizleme. */
+/**
+ * İçerik: zengin metin düzenleyici + beyaz listeli canlı önizleme.
+ *
+ * ESKİDEN NE VARDI: bir HTML kaynak kutusu ve seçimin etrafına etiket saran
+ * düğmeler. "Kalın" düğmesi metnin başına `<strong>` yazıyordu — yani
+ * kullanıcı yazdığı şeyi değil, işaretlemesini görüyordu. Renk hiç yoktu.
+ * Şimdi biçim doğrudan metnin üzerinde uygulanıyor; HTML'i görmek isteyen
+ * düzenleyicideki "Kaynak" düğmesine basıyor.
+ */
 function paintContent(pane, payload) {
   let value = payload.content || '';
 
-  const area = h('textarea', 'cm-source');
-  area.value = value;
-  area.spellcheck = false;
-  area.setAttribute('aria-label', 'Sayfa içeriği (HTML kaynağı)');
-
   const preview = h('div', 'cm-preview');
   const repaint = () => preview.replaceChildren(renderSafe(value));
-  repaint();
 
   const previewSoon = debounce(repaint, 250);
   nodes.previewSoon = previewSoon;
 
-  area.addEventListener('input', () => { value = area.value; previewSoon(); });
-
-  const wrap = (before, after) => {
-    const start = area.selectionStart;
-    const end = area.selectionEnd;
-    const chosen = area.value.slice(start, end) || 'metin';
-    area.value = area.value.slice(0, start) + before + chosen + after + area.value.slice(end);
-    area.selectionStart = start + before.length;
-    area.selectionEnd = area.selectionStart + chosen.length;
-    value = area.value;
-    area.focus();
-    repaint();
-  };
-
-  const tools = h('div', 'cm-tools');
-  tools.append(
-    button('Başlık', { title: 'H2 başlık', onClick: () => wrap('<h2>', '</h2>') }),
-    button('Alt başlık', { title: 'H3 başlık', onClick: () => wrap('<h3>', '</h3>') }),
-    button('Paragraf', { onClick: () => wrap('<p>', '</p>') }),
-    button('Kalın', { onClick: () => wrap('<strong>', '</strong>') }),
-    button('İtalik', { onClick: () => wrap('<em>', '</em>') }),
-    button('Liste', { onClick: () => wrap('<ul><li>', '</li></ul>') }),
-    button('Bağlantı', {
-      onClick: () => {
-        const href = window.prompt('Bağlantı adresi (ör. /iade-ve-cayma-hakki)', '/');
-        if (href) wrap(`<a href="${href.replace(/"/g, '')}">`, '</a>');
-      },
-    }),
-    button('Görsel', {
-      onClick: () => {
-        const src = window.prompt('Görsel adresi (mağazadaki tam adres)', 'https://');
-        if (src) wrap(`<img src="${src.replace(/"/g, '')}" alt="`, '">');
-      },
-    }),
-  );
+  const editor = richText({
+    value,
+    placeholder: 'Sayfa metnini yazın. Biçim yukarıdaki araç çubuğundan verilir.',
+    onChange: (html) => { value = html; previewSoon(); },
+  });
+  nodes.contentEditor = editor;
+  repaint();
 
   const actions = h('div', 'cm-actions');
   actions.append(
@@ -554,13 +483,18 @@ function paintContent(pane, payload) {
     button('Değişikliği geri al', {
       variant: 'ghost',
       title: 'Ekrandaki düzenlemeyi bırakır; mağazadaki metne döner',
-      onClick: () => { value = payload.content || ''; area.value = value; repaint(); },
+      onClick: () => {
+        value = payload.content || '';
+        editor.set(value);
+        repaint();
+      },
     }),
   );
 
   pane.append(
-    card('Kaynak', h('div', 'cm-editor', tools, area),
-      'İzin verilen etiketler: p h1-h4 ul ol li a img strong em br table td th'),
+    card('İçerik', editor.node,
+      'Biçim araç çubuğundan uygulanır; HTML yazmak gerekmez. İzin verilen '
+      + 'etiketler: p h1-h4 ul ol li a img strong em u span br table td th'),
     card('Önizleme', preview, 'iframe kullanılmaz — etiketler beyaz listeden geçirilerek çizilir'),
     actions,
   );

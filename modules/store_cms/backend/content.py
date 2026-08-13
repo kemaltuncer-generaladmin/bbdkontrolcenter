@@ -45,9 +45,11 @@ SEO_DESC_MIN, SEO_DESC_MAX = 70, 160
 #: panelde (çizmeden önce) uygulanır — iki kapı, tek liste.
 #: `tr/thead/tbody` listede: onlarsız tablo geçerli HTML olmuyor ve tarayıcı
 #: hücreleri tablonun dışına atıyor.
+#: `u` ve `span` zengin metin düzenleyicisiyle birlikte açıldı: altı çizili
+#: yazı ve renkli parça bu ikisi olmadan yazılamıyor.
 ALLOWED_TAGS = frozenset({
     "p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "a", "img", "strong", "em",
-    "br", "table", "thead", "tbody", "tr", "td", "th",
+    "u", "span", "br", "table", "thead", "tbody", "tr", "td", "th",
 })
 
 #: İçeriğiyle birlikte ATILAN etiketler. Diğer tanınmayan etiketler açılır
@@ -60,14 +62,34 @@ DROP_TAGS = frozenset({
 
 VOID_TAGS = frozenset({"br", "img"})
 
-#: Etiket başına izin verilen öznitelikler. `on*` ve `style` HİÇBİR yerde yok:
-#: ilki kod çalıştırır, ikincisi sayfayı kaplayan görünmez katman kurabilir.
+#: Etiket başına izin verilen öznitelikler. `on*` HİÇBİR yerde yok — kod çalıştırır.
 ALLOWED_ATTRS = {
     "a": ("href", "title"),
     "img": ("src", "alt", "title", "width", "height"),
     "td": ("colspan", "rowspan"),
     "th": ("colspan", "rowspan", "scope"),
 }
+
+#: `style` HER etikette kabul edilir ama HAM GEÇMEZ: `filter_style` onu üç
+#: özelliğe indirger ve değerlerini de biçim denetiminden geçirir.
+#:
+#: NEDEN ESKİDEN TÜMDEN YASAKTI VE NEDEN ARTIK DEĞİL. Eski gerekçe "sayfayı
+#: kaplayan görünmez katman kurulabilir" idi ve doğruydu — ama o saldırı
+#: `position`, `width`/`height`, `opacity`, `z-index` ister. Listede o
+#: özelliklerin hiçbiri yok; kalan üçüyle kaplama kurulamaz. Yasağın bedeli
+#: ise gerçekti: "yazıyı kırmızı yap" istemek kod bilgisi gerektiriyordu.
+#:
+#: Arayüz kopyası: `apps/desktop/shell/ui-kit/richtext.js` → `STYLE_PROPS`.
+#: İkisi birlikte değişir; biri genişletilirse kullanıcı ekranda gördüğü
+#: biçimi kaydettiğinde sessizce kaybeder.
+STYLE_PROPS = frozenset({"color", "background-color", "text-align"})
+
+ALIGN_VALUES = frozenset({"left", "center", "right", "justify"})
+
+_HEX_COLOR = re.compile(r"^#(?:[0-9a-f]{3}|[0-9a-f]{6})$")
+_RGB_COLOR = re.compile(
+    r"^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*[\d.]+\s*)?\)$"
+)
 
 #: Kabul edilen bağlantı şemaları. `data:` de reddedilir: `data:text/html`
 #: tarayıcıda sayfa açar ve beyaz listeyi anlamsız kılar.
@@ -147,6 +169,44 @@ def _safe_url(value: str, *, allow_relative: bool = True) -> str:
     return raw if allow_relative else ""
 
 
+def normalize_color(value: Any) -> str:
+    """`rgb(17, 24, 39)` ve `#FFF` → `#111827` / `#ffffff`. Çözülemezse boş."""
+    raw = text(value).lower()
+    if not raw:
+        return ""
+    if _HEX_COLOR.match(raw):
+        return f"#{raw[1] * 2}{raw[2] * 2}{raw[3] * 2}" if len(raw) == 4 else raw
+    match = _RGB_COLOR.match(raw)
+    if not match:
+        return ""
+    parts = (min(255, max(0, int(part))) for part in match.groups())
+    return "#" + "".join(f"{part:02x}" for part in parts)
+
+
+def filter_style(value: Any) -> str:
+    """`style` değerini üç güvenli özelliğe indirger.
+
+    Hiçbiri kalmazsa boş dizge döner ve öznitelik hiç yazılmaz. Tanınmayan
+    özellik SESSİZCE atılır — hata vermek, tarayıcının eklediği `line-height`
+    gibi zararsız artıklar yüzünden kaydetmeyi engellerdi.
+    """
+    out: list[str] = []
+    for chunk in text(value).split(";"):
+        prop, _, raw = chunk.partition(":")
+        prop = prop.strip().lower()
+        raw = raw.strip()
+        if prop not in STYLE_PROPS:
+            continue
+        if prop == "text-align":
+            if raw.lower() in ALIGN_VALUES:
+                out.append(f"text-align:{raw.lower()}")
+            continue
+        color = normalize_color(raw)
+        if color:
+            out.append(f"{prop}:{color}")
+    return ";".join(out)
+
+
 class _Cleaner(HTMLParser):
     """Beyaz listeli HTML üretir. Tanınmayan etiket AÇILIR, içeriği korunur."""
 
@@ -210,6 +270,13 @@ class _Cleaner(HTMLParser):
         out: list[str] = []
         for key, value in attrs:
             name = (key or "").lower()
+            # `style` her etikette kabul edilir ama süzülür; kalan hiçbir
+            # özellik konum/boyut taşımadığı için kaplama kurulamaz.
+            if name == "style":
+                style = filter_style(value)
+                if style:
+                    out.append(f' style="{escape(style, quote=True)}"')
+                continue
             if name not in allowed:
                 continue
             raw = text(value)

@@ -40,7 +40,8 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
 | `kit.css` | Tüm paylaşılan görsel dil. Panelin kendi kuralları `panel.css`'te, kendi önekiyle |
 | `table.js` | `dataTable` (sıralama, seçim, yoğun kip) · `pager` (sunucu tarafı sayfalama) |
 | `filters.js` | `filterBar` (arama, açılır, tarih aralığı, sayı aralığı, anahtar) · `applyFilters` |
-| `form.js` | `formGrid` — 9 alan tipi, doğrulama, **kirli alan takibi** ve `patch()` |
+| `form.js` | `formGrid` — 10 alan tipi, doğrulama, **kirli alan takibi** ve `patch()` |
+| `richtext.js` | `richText` — zengin metin düzenleyici · `sanitizeHtml` · `renderHtml` · `htmlToText` · `filterStyle` · `safeUrl` |
 | `layout.js` | `card` · `tabBar` · `kpiRow` · `badge` · `chipRow` · `drawer` · `splitView` · `emptyState` · `alertBox` · `hintBox` · `progress` · `skeletonRows` · `statusLine` |
 | `charts.js` | `lineChart` · `barChart` · `hourStrip` · `paretoChart` · `sparkline` · `stackedBar` · `groupedBar` |
 | `datefield.js` | `dateField` · `dateRange` · ISO/TR dönüşümleri |
@@ -67,6 +68,12 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
    gerekçe backend'e gider ve denetim kaydına yazılır (ADR 0012).
 9. **CSS öneki benzersiz seç.** Panel CSS'i `document.head`'e eklenir ve hiç
    kaldırılmaz; çakışan önek başka panelin görünümünü bozar.
+10. **HTML'i kendi elinle temizleme.** Mağaza içeriği (ürün açıklaması, CMS
+    sayfası) `richtext.js` içindeki beyaz listeden geçer. Panelde ikinci bir
+    liste tutma: `store_cms` bunu denedi ve iki liste sessizce ayrıştı.
+    Yazma için `richText()`, çizme için `renderHtml()`.
+11. **`innerHTML` ile içerik yazma.** `renderHtml()` düğümleri tek tek
+    klonlar; `innerHTML` beyaz listeyi tümden atlar.
 
 ## Değişiklik günlüğü
 
@@ -90,6 +97,25 @@ personel tutarı elle yazıyor ve Türkçe klavyede doğal yazım tam olarak
 biçimlerini kabul eder. Belirsiz `1,234` **reddedilir** — parayı sessizce
 yanlış okumaktansa kullanıcıya sormak doğrudur. Mevcut paneller kendi
 kopyalarını kullandığı için etkilenmez.
+
+### 1.1.0 — 2026-08-14
+`richtext.js` eklendi ve `form.js` `type: 'richtext'` alanını tanır.
+
+**Neden.** Ürün açıklaması ve CMS sayfası HTML tutuyor; personel `<strong>` ve
+`<em>` etiketlerini elle yazıyordu. Renk hiç yoktu — tek yolu `style`
+özniteliğiydi ve beyaz listede kapalıydı. "Yazıyı kırmızı yap" gibi en sıradan
+istek kod bilgisi gerektiriyordu.
+
+**`style` artık geçiyor, ama ham değil.** `filterStyle` üç özelliğe indirger —
+`color`, `background-color`, `text-align` — ve değerleri de biçim denetiminden
+geçirir. Eski yasağın gerekçesi "sayfayı kaplayan görünmez katman"dı; o saldırı
+`position`, `width/height`, `opacity`, `z-index` ister ve hiçbiri listede yok.
+
+**Sunucu kopyası birlikte değişti.** `modules/store_cms/backend/content.py`
+içindeki `ALLOWED_TAGS` ve `STYLE_PROPS` aynı değerleri taşır; eşitlik
+`modules/store_cms/tests/test_store_cms_content.py` içinde teste bağlıdır.
+Biri genişletilip öteki unutulursa kullanıcı ekranda gördüğü biçimi
+kaydettiğinde sessizce kaybeder.
 
 ## Mevcut BBD panelleri
 

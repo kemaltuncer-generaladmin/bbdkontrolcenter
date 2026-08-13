@@ -538,9 +538,15 @@ function paintGeneral(pane, payload, forms) {
         hint: 'Değişirse eski vitrin bağlantıları kırılır. Kaydetmeden önce benzersizlik yoklanır.' },
       { key: 'status', label: 'Vitrinde görünsün', type: 'checkbox',
         hint: 'Kapatmak silmek değildir; ürün siparişlerde ve raporlarda kalır.' },
-      { key: 'shortDescription', label: 'Kısa açıklama', type: 'textarea', wide: true,
-        maxLength: 500 },
-      { key: 'description', label: 'Açıklama', type: 'textarea', wide: true, maxLength: 8000 },
+      { key: 'shortDescription', label: 'Kısa açıklama', type: 'richtext', wide: true,
+        maxLength: 500, placeholder: 'Listede ve ürün kartının üstünde görünen özet.',
+        hint: 'Vitrinde ürün adının hemen altında çıkar. Kısa tutun; uzun anlatım '
+          + 'aşağıdaki açıklamaya yazılır.' },
+      { key: 'description', label: 'Açıklama', type: 'richtext', wide: true, maxLength: 8000,
+        placeholder: 'Ürünün ayrıntılı anlatımı. Başlık, liste, renk ve kalın yazı '
+          + 'araç çubuğundan uygulanır.',
+        hint: 'Biçim araç çubuğundan verilir — HTML yazmanız gerekmez. "Kaynak" '
+          + 'düğmesi üretilen HTML\'i gösterir.' },
     ],
     value: {
       name: product.name,
