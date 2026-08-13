@@ -155,6 +155,50 @@ def _first_object(payload: Any) -> dict[str, Any]:
     return {}
 
 
+#: `channel` süzgeci gönderilen GET'lerde KORUNUR — yalnız bu yol öneki için.
+#: Ayar değerleri (`core_config`) gerçekten kanal başına saklanır; oradan
+#: kanalı düşürmek "hangi kanalın ayarı" sorusunu belirsizleştirir.
+_CHANNEL_KEEP = ("/settings/configuration",)
+
+
+def _drop_channel(path: str, params: dict[str, Any] | None) -> dict[str, Any] | None:
+    """`channel` süzgecini GET sorgularından düşürür.
+
+    BULUNAN HATA (2026-08-14). Bagisto'nun admin API'si `channel` parametresini
+    UÇTAN UCA TUTARSIZ yorumluyor ve yanlış biçimde HATA VERMİYOR — sessizce
+    sıfır döndürüyor. Canlıda ölçüldü (1 kanal: id=1, code="default"):
+    ==========================================================================
+      uç                    kanal yok    channel=default    channel=1
+      orders                       18            **0**             18
+      dashboard/stats          35.062 ₺      35.062 ₺          **0**
+      reporting/stats          35.062 ₺      35.062 ₺          **0**
+      products                   1422          1422          **bozuk**
+    ==========================================================================
+    Yani sipariş KİMLİK, pano ve rapor KOD bekliyor. Modüllerin ayarında
+    `channel: "default"` yazdığı için sipariş listesi ve ona dayanan her rakam
+    (pano karşılaştırma dönemi dâhil) BOŞ dönüyordu: HTTP 200, hata yok, sadece
+    sıfır. Ekranda "bugün hiç sipariş yok" ile "sorguyu yanlış sordum" aynı
+    görünüyordu — sessiz yanlış cevabın ders kitabı örneği.
+
+    ÇÖZÜM: kanalı hiç göndermemek. Ölçüm tablosunun ilk sütunu, üç sütunun
+    tamamında DOĞRU olan tek seçenek. Mağazada tek kanal var; kanal
+    belirtilmediğinde Bagisto zaten onu kullanır.
+
+    YAZMA İSTEKLERİ ETKİLENMEZ — bu süzgeç yalnız GET'e uygulanır. Ürün
+    yazarken `channel`+`locale` gövdede gitmeye devam eder; EAV değerleri
+    gerçekten kanal+dil başına saklanır (EAV tuzağı 2) ve orada düşürmek
+    değeri yanlış kapsama yazardı.
+
+    İkinci kanal açılırsa bu fonksiyon uç başına eşleme yapacak şekilde
+    genişletilmeli; bugünkü sadeleştirme "tek kanal" gerçeğine dayanıyor.
+    """
+    if not params or "channel" not in params:
+        return params
+    if any(parca in path for parca in _CHANNEL_KEEP):
+        return params
+    return {anahtar: deger for anahtar, deger in params.items() if anahtar != "channel"}
+
+
 class StoreApi:
     """`store.api` yeteneğinin uygulaması.
 
@@ -285,7 +329,7 @@ class StoreApi:
     ) -> Any:
         verb = method.upper()
         if verb == "GET":
-            return await self._send(verb, path, params=params, raw=raw)
+            return await self._send(verb, path, params=_drop_channel(path, params), raw=raw)
 
         return await self._write(
             verb, path, params=params, body=body, reason=reason, actor=actor,
