@@ -407,6 +407,20 @@ function fulfilCell(row, key) {
   // işlem diyaloğunda vermek, seçimi yapan kişiye geç kalmış bir açıklamadır.
   if (key === 'ship' && row.shipBlock) box.append(h('span', 'so-why', row.shipBlock));
   else if (key === 'ship' && row.shipNote) box.append(h('span', 'so-sub', row.shipNote));
+
+  // KARGO FİRMASI SATIRDA GÖRÜNÜR. Kargo ekranı bunu gösterip sipariş ekranı
+  // göstermiyordu: aynı soruya iki cevap. `carrier` gönderi varsa gerçek
+  // taşıyıcı, yoksa müşterinin checkout'ta seçtiği firmadır.
+  if (key === 'ship' && row.carrier) {
+    const firma = clip(h('span', 'so-sub'), row.carrier, 22);
+    // Seçilen ile gönderilen ayrıştıysa bu SESSİZ KALMAZ: müşteriye bir firma
+    // denip başkasıyla göndermek hem söz ihlali hem fiyat farkıdır.
+    if (row.carrierChosen && row.carrierChosen !== row.carrier) {
+      firma.title = `Müşteri ${row.carrierChosen} seçmişti, ${row.carrier} ile gönderildi.`;
+      firma.classList.add('so-why');
+    }
+    box.append(firma);
+  }
   return box;
 }
 

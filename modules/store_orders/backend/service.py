@@ -265,6 +265,22 @@ class OrdersService:
                                late_days=prefs["lateDays"])
                 for item in raw if isinstance(item, dict)]
 
+    async def _chosen_carriers(self) -> dict[str, str]:
+        """Sipariş no → müşterinin checkout'ta seçtiği kargo firması. TEK İSTEK.
+
+        Sipariş listesi ucu bu alanı VERMİYOR; `bbd/orders` veriyor. Sipariş
+        başına detay okumak 50 satırlık sayfada 50 istek ederdi.
+
+        Patlarsa liste AYAKTA kalır ve taşıyıcı sütunu bugünkü gibi (yalnız
+        gönderiden) doldurulur — eksik sütun, açılmayan listeden iyidir (K7).
+        """
+        try:
+            payload = await self._api.bbd_orders(page=1, per_page=self._page_size)
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("seçilen kargo firmaları okunamadı", error=str(failure))
+            return {}
+        return ord_.chosen_carriers(payload.get("items") or [])
+
     async def _announce(self, payload: dict[str, Any]) -> None:
         """Durum değişikliğini olay yoluna bırakır (K3).
 
@@ -428,6 +444,7 @@ class OrdersService:
             # çekmek kantin deneyiminde 5xx üretmişti.
             raw = [await self._detail(item) for item in raw[:cap]] + raw[cap:]
         rows, index = await self._paid_rows(self._rows(raw, prefs))
+        ord_.apply_chosen_carrier(rows, await self._chosen_carriers())
         return rows, truncated, partial, index
 
     # ================================================================ liste
@@ -461,6 +478,7 @@ class OrdersService:
             payload = await self._api.orders(self._base_filters(wanted), page=page,
                                              per_page=per_page)
             rows, index = await self._paid_rows(self._rows(payload.get("items") or [], prefs))
+            ord_.apply_chosen_carrier(rows, await self._chosen_carriers())
         except Exception as failure:  # noqa: BLE001 — ekran ayakta kalmalı (K7)
             self._log.warning("sipariş listesi okunamadı", error=str(failure))
             return {**empty, "connected": False, "error": self._fail(failure),

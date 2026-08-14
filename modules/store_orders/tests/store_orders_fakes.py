@@ -86,6 +86,8 @@ class FakeApi:
         self.shallow = shallow
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.fail: set[str] = set()
+        #: `bbd/orders` satırları — checkout'ta seçilen kargo firması.
+        self.bbd_order_rows: list[dict[str, Any]] = []
         #: `fail` içindeki ad kaç BAŞARILI çağrıdan sonra patlasın. 0 = hemen.
         #: Kısmi başarı ancak böyle sınanır: toplu işte kimi geçer, kimi patlar.
         self.fail_after = 0
@@ -112,6 +114,16 @@ class FakeApi:
         return [args for called, args, _ in self.calls if called == name]
 
     # ------------------------------------------------------------- okuma
+
+    async def bbd_orders(self, filters: Any = None, *, page: int = 1,
+                         per_page: int | None = None,
+                         all_pages: bool = False) -> dict[str, Any]:
+        """`bbd/orders` — müşterinin seçtiği kargo firmasını taşır.
+
+        Alanlar CANLIDAKİ gibi snake_case: `shipping_title`.
+        """
+        self._record("bbd_orders", filters, page=page, per_page=per_page)
+        return {"items": self.bbd_order_rows, "meta": {"total": len(self.bbd_order_rows)}}
 
     async def orders(self, filters: Any = None, *, page: int = 1, per_page: int | None = None,
                      all_pages: bool = False) -> dict[str, Any]:

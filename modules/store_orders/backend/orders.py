@@ -965,7 +965,10 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
         "shipmentState": ship_state,
         "shipmentLabel": FULFIL_LABELS[ship_state],
         "shipmentCount": len(shipments),
+        # AŞAĞIDA `carrier_fallback` ile tamamlanır. 
         "carrier": shipments[0]["carrier"] if shipments else "",
+        # Gönderi henüz yokken bile müşterinin seçtiği firma bilinir. 
+        "carrierChosen": "",
         "track": shipments[0]["track"] if shipments else "",
         "shippedDay": day_of(shipments[0]["createdAt"]) if shipments else "",
         "paidDay": day_of(invoices[0]["createdAt"]) if invoices else "",
@@ -1332,3 +1335,58 @@ def batch_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "amount": sum(row.get("total", 0) for row in ready),
         "quantity": sum(row.get("quantity", 0) for row in ready),
     }
+
+
+# ============================== MÜŞTERİNİN SEÇTİĞİ KARGO FİRMASI
+#
+# BULUNAN TUTARSIZLIK (2026-08-15). Sipariş ekranı taşıyıcıyı GÖNDERİDEN
+# okuyor, Kargo ekranı SİPARİŞTEN. Henüz kargolanmamış siparişte sipariş
+# ekranı boş, kargo ekranı dolu görünüyordu — aynı soruya iki cevap.
+#
+# İkisi de doğruydu ama farklı soruları yanıtlıyorlardı: "hangi firmayla
+# gönderildi" ile "müşteri hangisini seçti". Kullanıcı tek bir şey görmek
+# istiyor: bu paket hangi firmayla gidecek/gitti.
+#
+# Sipariş listesi ucu bu alanı VERMİYOR; `bbd/orders` veriyor
+# (`shipping_title`, canlıda "Hepsijet - Hepsijet"). Tek istekle alınır;
+# sipariş başına detay okumak 50 satırda 50 istek ederdi.
+#
+# store_shipping'de aynı işi yapan bir kopya var. K3 gereği modül modülü
+# import edemez; iki kopya da aynı canlı sözleşmeye bakıyor ve ikisinin de
+# testi var.
+
+
+def chosen_carriers(rows: Any) -> dict[str, str]:
+    """`bbd/orders` satırlarını sipariş numarasına göre indeksler."""
+    out: dict[str, str] = {}
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        title = text(pick(row, "shipping_title", "shippingTitle"))
+        if not title:
+            continue
+        for key in (pick(row, "increment_id", "incrementId"), row.get("id")):
+            anahtar = text(key)
+            if anahtar:
+                out.setdefault(anahtar, title)
+    return out
+
+
+def apply_chosen_carrier(rows: Any, index: dict[str, str]) -> None:
+    """Satırlara müşterinin seçtiği firmayı YERİNDE yazar.
+
+    Gönderi varsa `carrier` ona ait kalır — gerçekte hangi firmayla gittiği,
+    müşterinin seçtiğinden daha doğru bir cevaptır. `carrierChosen` her hâlde
+    doldurulur ki ekran ikisini ayırt edebilsin.
+    """
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        secilen = index.get(text(row.get("orderNo"))) or index.get(text(row.get("id"))) or ""
+        row["carrierChosen"] = secilen
+        if not row.get("carrier"):
+            row["carrier"] = secilen
