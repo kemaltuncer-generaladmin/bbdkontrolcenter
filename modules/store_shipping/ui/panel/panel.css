@@ -255,3 +255,8 @@
 }
 
 .sh-gl-refused { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+
+/* Sunucunun reddi kaydet düğmesinin altında KALIR; kaybolan bir bildirimin
+   içine yazılırsa operatör okumaya yetişemez ve aynı düğmeye yeniden basar. */
+.sh-gl-problems:empty { display: none; }
+.sh-gl-problems { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }

@@ -140,6 +140,32 @@ class FakeApi:
         #: Canlı mağazadaki tek kanal: kod `default`, kimlik 1.
         self.channels_payload: dict[str, Any] = {
             "items": [{"id": 1, "code": "default", "name": "Benim Başarı Dünyam"}]}
+        #: Geliver kurulum ayarları. CANLIDAKİ BAŞLANGIÇ HÂLİ: token yok,
+        #: `go_live` kapalı, gönderi sayısı sıfır. Yanıtta TOKENIN DEĞERİ
+        #: YOKTUR ve olamaz — mağaza onu hiçbir gövdede döndürmüyor.
+        self.geliver_payload: dict[str, Any] = {
+            "active": "1", "go_live": "0", "test_mode": "0",
+            "sender_address_id": "", "source_identifier": "https://bbdstore.com.tr",
+            "title": "Kargo",
+            "hasToken": False, "tokenMask": None,
+            "visibleToCustomer": False,
+            "statusLabel": "API tokenı girilmemiş — entegrasyon hiç çalışmaz",
+            "checks": {"apiReachable": None, "apiError": None,
+                       "senderResolved": None, "senderAddress": None},
+            "goLiveBlockers": [
+                {"code": "TOKEN_MISSING",
+                 "message": "Geliver API tokenı girilmemiş; token olmadan canlıya geçilemez."},
+            ],
+            "webhook": {"checked": False, "registered": None, "defaultUrl": None,
+                        "error": None},
+            "writableFields": ["api_token", "active", "go_live", "test_mode",
+                               "sender_address_id"],
+            "refusedFields": {"title": "Checkout başlığı dile bağlıdır."},
+        }
+        #: Yazma ucunun döndüreceği gövde; `None` ise `geliver_payload` döner.
+        self.geliver_write_result: dict[str, Any] | None = None
+        #: Yazma ucunun FIRLATACAĞI istisna (ön denetim reddi denemesi için).
+        self.geliver_write_error: Exception | None = None
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail:
@@ -278,6 +304,36 @@ class FakeApi:
     async def bbd_carriers(self) -> dict[str, Any]:
         self._record("bbd_carriers")
         return self.carriers_payload
+
+    # -------------------------------------------------- Geliver kurulumu
+
+    async def bbd_geliver_settings(self, *, probe: bool = True) -> dict[str, Any]:
+        self._record("bbd_geliver_settings", probe=probe)
+        return dict(self.geliver_payload)
+
+    async def bbd_update_geliver_settings(self, *, settings: dict[str, Any], reason: str,
+                                          actor: str = "",
+                                          dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_update_geliver_settings", settings=settings, reason=reason,
+                     actor=actor, dry_run=dry_run)
+        if self.geliver_write_error is not None:
+            raise self.geliver_write_error
+        if dry_run:
+            return {"dryRun": True, "wouldChange": {"fields": sorted(settings)}}
+        return {"settings": self.geliver_write_result or dict(self.geliver_payload),
+                "changed": {"fields": sorted(settings)}}
+
+    async def bbd_test_geliver(self) -> dict[str, Any]:
+        self._record("bbd_test_geliver")
+        return {"checks": dict(self.geliver_payload["checks"]),
+                "blockers": list(self.geliver_payload["goLiveBlockers"])}
+
+    async def bbd_register_shipment_webhook(self, *, url: str = "", reason: str,
+                                            actor: str = "",
+                                            dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_register_shipment_webhook", url=url, reason=reason, actor=actor,
+                     dry_run=dry_run)
+        return {"ok": True, "dryRun": bool(dry_run)}
 
     async def bbd_test_carrier(self, carrier: str, *, reason: str, actor: str = "",
                                dry_run: bool | None = None) -> dict[str, Any]:

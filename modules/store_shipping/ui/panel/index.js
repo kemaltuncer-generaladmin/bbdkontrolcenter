@@ -1886,6 +1886,14 @@ async function renderPerformance(host) {
 
 let geliverForm = null;
 
+/** Sunucunun son reddi — kaydet düğmesinin ALTINDA kalıcı olarak durur.
+ *
+ * Toast yetmez: ön denetim reddi üç ayrı neden içerebilir ve her birinin
+ * kendi "sıradaki adım"ı var. Kaybolan bir bildirimin içine yazılırsa
+ * operatör okumaya yetişemez ve aynı düğmeye yeniden basar.
+ */
+let geliverProblems = null;
+
 async function renderGeliver(host) {
   host.replaceChildren(skeletonRows(5, 3));
   geliverForm?.destroy();
@@ -1909,9 +1917,12 @@ async function renderGeliver(host) {
     return;
   }
 
+  geliverProblems = h('div', 'sh-gl-problems');
+
   host.append(statusCard(payload));
   host.append(checksCard(host, payload));
   host.append(settingsFormCard(host, payload));
+  host.append(geliverProblems);
   host.append(webhookCard(host, payload));
   host.append(refusedCard(payload));
 }
@@ -2061,15 +2072,23 @@ async function saveGeliver(host, payload, dryRun) {
   if (!result) return;
 
   if (result.ok === false) {
-    // SUNUCUNUN REDDİ OLDUĞU GİBİ GÖSTERİLİR. Ön denetim engelleri hata
-    // metnine sığmıyor; ayrı satırlar hâlinde gelirler ve her biri ne
-    // yapılacağını söyler.
+    // SUNUCUNUN REDDİ OLDUĞU GİBİ GÖSTERİLİR ve EKRANDA KALIR. Ön denetim
+    // engelleri hata metnine sığmıyor; ayrı satırlar hâlinde gelirler ve her
+    // biri ne yapılacağını söyler.
     toast(result.error, 'bad');
+    geliverProblems?.replaceChildren(alertBox(result.error, 'bad'));
     for (const item of result.blockers || []) {
-      toast(`${item.message}${item.action ? ` → ${item.action}` : ''}`, 'warn');
+      const row = h('div', 'sh-gl-blocker');
+      row.append(h('b', undefined, item.message));
+      if (item.action) row.append(h('span', 'sh-sub', item.action));
+      geliverProblems?.append(row);
+    }
+    for (const problem of result.problems || []) {
+      geliverProblems?.append(alertBox(problem, 'warn'));
     }
     return;
   }
+  geliverProblems?.replaceChildren();
 
   if (result.dryRun) {
     toast(`Prova: ${(result.labels || []).join(' · ') || 'değişen alan yok'}. Hiçbir şey yazılmadı.`,
@@ -2242,6 +2261,7 @@ export function mount(root, ctx) {
     settingsForm = null;
     geliverForm?.destroy();
     geliverForm = null;
+    geliverProblems = null;
     rateForms.forEach((form) => form.destroy());
     rateForms = [];
     closers.forEach((fn) => { try { fn(); } catch { /* kapanışta hata yutulur */ } });

@@ -2063,7 +2063,7 @@ class ShippingService:
         GEREKÇE PARA UZUNLUĞUNDA İSTENİR
 
         Bu ekranın diğer yazmaları 10 karakterle yetinir; burada 20 istenir
-        (`shipping.PURCHASE_REASON` ile aynı ölçü). Sebep somut: `go_live`
+        (`shipping.MIN_PURCHASE_REASON` ile aynı ölçü). Sebep somut: `go_live`
         açmak mağazayı gerçek kargo ücretlendirmesine sokar ve ilk siparişte
         para hareketi başlar; token değiştirmek ise mağazanın kargo kimliğini
         değiştirir. İkisi de iki ay sonra "bu neden değişti" sorusunu doğurur
@@ -2077,7 +2077,7 @@ class ShippingService:
         kendi tahminimizi sunucunun cevabının yerine koymayız — mağaza
         Geliver'a gerçekten sordu, biz sormadık.
         """
-        problem = self._guard(reason, shipping.PURCHASE_REASON)
+        problem = self._guard(reason, shipping.MIN_PURCHASE_REASON)
         if problem:
             return {"ok": False, "error": problem}
 

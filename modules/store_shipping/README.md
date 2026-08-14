@@ -182,6 +182,47 @@ gelen bir hareketten sonra sessizce yanlış durum gösterir.
 
 ---
 
+## Geliver kurulumu — «bir daha Bagisto paneline girme»
+
+Yedinci sekme. Mağazanın kargo entegrasyonunun kurulum ayarları buradan
+yönetilir: **API tokenı · entegrasyon kurulu · canlı mod · test modu ·
+gönderici adres · webhook durumu · bağlantı sınaması.**
+
+Bu sekme, hemen üstündeki `Ekran tercihleri` ile **aynı şey değildir**: orası
+bu panelin tercihleri (etiket biçimi, gecikme eşiği) ve yerel tabloda yaşar,
+burası mağazanın `core_config` satırları ve checkout'ta müşterinin gördüğü
+kargo ücretini belirler.
+
+**Token geri okunamaz.** Mağaza onu hiçbir gövdede döndürmüyor; ekran yalnız
+`hasToken` bayrağını ve son dört karakterlik maskeyi görür. Maske token
+değildir ve geri gönderilemez — yazma ucu maske biçimli ve `enc:` önekli
+değeri açıkça reddeder.
+
+**Boş token mevcudu silmez.** Form kaydedilirken kutu çoğu zaman boş gelir;
+boşu yazmak mağazanın kargo kimliğini silmek olurdu ve belirtisi ancak ilk
+gerçek siparişte görünürdü (gönderi açılamaz). Tokenı gerçekten kaldırmanın
+yolu `active: false` ya da **yenisiyle değiştirmek**tir.
+
+**Canlıya geçiş uyarı değil engeldir.** `Müşteriye açık` anahtarı açılırken
+kararı sunucu verir: token var mı, entegrasyon kurulu mu, Geliver'a okuma
+çağrısı gidiyor mu, gönderici adres çözülüyor mu. Geçemezse istek 422
+(`GELIVER_PRECHECK_FAILED`) ile reddedilir ve **nedenler kod+metin olarak
+ekrana aynen basılır**, her birinin yanında sıradaki adımla. Ekran kendi
+tahminini sunucunun cevabının yerine koymaz — Geliver'a mağaza sordu, panel
+sormadı.
+
+`Bağlantıyı sına` yalnız **okuma** çağrısı yapar (il listesi + gönderici
+adres), önbelleği atlar ve gerekçe istemez. Webhook kaydı **ayrı düğmedir**:
+Geliver hesabında bir kayıt açar, bu yüzden her "kaydet"e iliştirilmez.
+Webhook kayıtlı değilse gönderi durumu kendiliğinden güncellenmez ve ekran
+bunu açıkça söyler.
+
+Bu uçtan **değiştirilemeyen** alanlar (checkout başlığı, fiyat ayarlaması,
+ücretsiz kargo eşiği, gösterilecek firmalar, sıralama) sessizce yok sayılmaz:
+mağazanın kendi ret gerekçeleriyle birlikte listelenir.
+
+---
+
 ## İzinler
 
 | Anahtar | Ne açar |
@@ -191,6 +232,11 @@ gelen bir hareketten sonra sessizce yanlış durum gösterir.
 | `store_shipping.purchase` | **Etiket satın alma ve iade etiketi — para harcar** |
 | `store_shipping.cancel` | Satın alınmış gönderiyi iptal etme |
 | `store_shipping.rates` | Desi matrisi, ücretsiz kargo eşiği, bölge tanımları |
+| `store_shipping.integration` | **Geliver kurulumu**: API tokenı, kurulu/canlı/test, gönderici adres, webhook kaydı |
+
+`integration` `manage`'den ayrıdır: gönderi açıp etiket alan personelin
+mağazanın kargo kimliğini değiştirmeye ya da canlı modu çevirmeye ihtiyacı
+yoktur. Gerekçesi para harcayan uçlarla aynı uzunluktadır (20 karakter).
 
 `accountant` bu ekranı görmez: kargo mali değil operasyon ekranıdır. Kargo
 maliyeti mali tarafa performans raporuyla gider.
