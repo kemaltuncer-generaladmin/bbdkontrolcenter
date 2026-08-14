@@ -9,10 +9,15 @@
 //  · Tam listeyi çekip istemcide süzmez. 1.419 ürün 29 sayfadır ve mağaza
 //    dakikada 60 istek kabul eder; "hepsini indir sonra filtrele" ekranı
 //    dakikalarca kilitler ve hız sınırını başka araçlara kapatır.
-//  · Ürün SİLMEZ. Siparişi olan ürün silinirse geçmiş siparişlerin kalemleri
-//    öksüz kalır; her yerde pasifleştirme vardır (ADR 0012).
 //  · Barkod etiketi basmaz — gerçek barkod çizimi rapor üretecinde yok, sahte
 //    barkod basmaktansa hiç basmamak doğrudur.
+//
+// SİLME VAR VE GERÇEKTİR (pasifleştirme değil). Güvenli olduğu ÖLÇÜLDÜ:
+// `order_items` ürünün adını, SKU'sunu, fiyatını ve toplamını kendi satırında
+// saklıyor ve `products` tablosuna yabancı anahtar kısıtı yok — silme geçmişi
+// bozmaz, kalem raporlarda kırmızı “silinmiş” ibaresiyle görünür. Silme
+// önizlemesiz açılmaz: kaç siparişte geçtiği ve kaç adet satıldığı gösterilir,
+// gerekçe (>=10 karakter) alınır, kısmi başarı tek tek raporlanır.
 //
 // TUZAKLAR (ekranda karşılığı olanlar):
 //  · Stok `product.quantity` alanında DEĞİL envanter kaynaklarındadır. Liste
@@ -59,7 +64,7 @@ const CHIPS = [
 const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', threshold: 5, categoryFilter: null, source: 'products',
-  reference: { categories: [], families: [], types: [], sources: [] },
+  reference: { categories: [], families: [], types: [], sources: [], fields: {} },
   selection: [], chip: null, loaded: false,
 };
 
@@ -192,6 +197,10 @@ async function loadReference() {
     families: payload.families || [],
     types: payload.types || [],
     sources: payload.sources || [],
+    // Tek seçenekli alan tarifi: hangi alan çizilecek, hangisi kendiliğinden
+    // uygulanacak. Sayıyı sunucu mağazadan okuyup gönderiyor; panel "kanal
+    // birdir" diye VARSAYMAZ.
+    fields: payload.fields || {},
   };
   nodes.filters.options('category', [
     { value: '', label: 'Tümü — kategori' },
@@ -320,6 +329,23 @@ const COLUMNS = [
     width: '132px',
     cell: (row) => (row.updatedAt ? row.updatedAt.replace('T', ' ').slice(0, 16) : '—'),
   },
+  {
+    // Satır tıklaması çekmeceyi açıyor; silme düğmesi o tıklamayı YEMELİ,
+    // yoksa "sil"e basan kullanıcının önce düzenleyicisi açılırdı.
+    key: 'delete',
+    label: '',
+    width: '52px',
+    cell: (row) => {
+      const node = button('Sil', {
+        variant: 'danger',
+        title: `${row.sku} — katalogdan siler, geri alınamaz`,
+        onClick: () => deleteDialog([row.id]),
+      });
+      node.classList.add('sp-rowbtn');
+      node.addEventListener('click', (event) => event.stopPropagation());
+      return node;
+    },
+  },
 ];
 
 function emptyNode() {
@@ -396,6 +422,14 @@ function renderSelectionBar() {
     button('Kategori ata', { onClick: () => bulkDialog('category') }),
     button('Aktif yap', { onClick: () => bulkDialog('status', { active: true }) }),
     button('Pasifleştir', { variant: 'danger', onClick: () => bulkDialog('status', { active: false }) }),
+    // Pasifleştirmenin YANINDA durur, yerine değil: biri geri alınabilir,
+    // öteki alınamaz ve ikisi ayrı izne bağlı. Aynı düğmeye toplamak
+    // "vitrinden kaldır" diye basan personele kataloğu sildirirdi.
+    button('Sil', {
+      variant: 'danger',
+      title: 'Seçili ürünleri katalogdan siler — geri alınamaz',
+      onClick: () => deleteDialog(state.selection.map(Number)),
+    }),
     button('Seçimi bırak', { variant: 'ghost', onClick: () => { nodes.table.clearSelection(); state.selection = []; renderSelectionBar(); } }),
   );
 }
@@ -529,7 +563,7 @@ async function saveProduct(productId, patch, { title, description }) {
   });
 }
 
-function paintGeneral(pane, payload, forms) {
+function paintGeneral(pane, payload, forms, box) {
   const product = payload.product;
   const form = formGrid({
     fields: [
@@ -594,6 +628,17 @@ function paintGeneral(pane, payload, forms) {
       onClick: () => changeSku(product),
     }),
     button('Kopyala', { onClick: () => copyProduct(product) }),
+    button('Ürünü sil', {
+      variant: 'danger',
+      title: 'Katalogdan siler — geri alınamaz. Önce ne silineceği gösterilir.',
+      onClick: () => deleteDialog([product.id], {
+        // Ürün silindiyse açık duran düzenleyici artık olmayan bir ürünü
+        // gösteriyor demektir; kapatılır.
+        onDone: (outcome) => {
+          if ((outcome.deleted || []).includes(product.id)) box?.close();
+        },
+      }),
+    }),
   );
 
   pane.append(form.node, verdict, actions,
@@ -637,9 +682,66 @@ const AUTO_LABELS = {
   categoryIds: 'Üst kategoriler',
   attributeFamilyId: 'Öznitelik ailesi',
   sourceId: 'Stok deposu',
+  taxCategoryId: 'Vergi kategorisi',
   stock: 'Stok',
   status: 'Durum',
 };
+
+// ------------------------------------------------- tek seçenekli alanlar
+//
+// Kanal · dil · para birimi · stok deposu · vergi kategorisi. Mağazada
+// hepsinin TEK seçeneği var; tek seçenekli açılır kutu seçim değil, okunup
+// geçilen bir satırdır. Alan gizlenir, değer kendiliğinden uygulanır.
+//
+// SERT KODLAMA YOK: karar sunucudan gelen SAYIDAN çıkar (`fields[key].state`).
+// İkinci kanal açıldığı gün alan kendiliğinden geri gelir ve burada tek satır
+// değişmez.
+//
+// İKİ TÜR ALAN VAR ve ayrımı sunucu söylüyor (`writable`):
+//  · Yazılabilen (depo, vergi kategorisi) — ürünün kendi alanı. >1 seçenekte
+//    GERÇEK bir form alanı olarak geri gelir.
+//  · Yazılamayan (kanal, dil, para birimi) — ürünün alanı değil; kanal ve dil
+//    her isteğe ayardan konuyor, para birimi kanalın özelliği. >1 seçenekte
+//    UYARI olarak geri gelir: "mağazada iki kanal var, bu ekran hepsine
+//    `default` yazıyor". Olmayan bir seçim kutusu çizip kullanıcının seçtiğini
+//    yok saymak, sessiz yanlış veri demekti.
+
+function fieldSpec(key) {
+  return (state.reference.fields || {})[key] || { state: 'none', options: [], visible: false };
+}
+
+/** Alanı ancak SUNUCU "görünsün" dediyse form alanı olarak üretir. */
+function choiceField(key, hint) {
+  const spec = fieldSpec(key);
+  if (!spec.visible) return [];
+  return [{
+    key,
+    label: spec.label,
+    type: 'select',
+    options: spec.options.map((item) => ({ value: item.value, label: item.label })),
+    hint,
+  }];
+}
+
+/** Gizlenen alanları ve neden gizlendiklerini YAZAR — sessizce yok olmazlar. */
+function choiceNotes() {
+  const box = h('div', 'sp-choices');
+  const single = [];
+  for (const key of ['channel', 'locale', 'currency', 'sourceId', 'taxCategoryId']) {
+    const spec = fieldSpec(key);
+    if (spec.state === 'single' && spec.auto) single.push(`${spec.label}: ${spec.auto.label}`);
+    if (spec.state === 'many' && !spec.writable) {
+      box.append(alertBox(`Mağazada ${num(spec.count)} ${String(spec.label).toLowerCase()} var. `
+        + 'Bu ekran hepsine ayardaki değerle yazıyor; seçim ekrandan yapılamaz — '
+        + `ayarı (modules.store_products) güncelleyin.`, 'warn'));
+    }
+  }
+  if (single.length) {
+    box.append(h('div', 'sp-sub',
+      `Tek seçenekli oldukları için sorulmayan alanlar — ${single.join(' · ')}`));
+  }
+  return box;
+}
 
 /** Sunucunun türettiği alanları panelde yazan alanlara çevirir. */
 const AUTO_FIELDS = ['urlKey', 'metaTitle', 'metaDescription'];
@@ -696,10 +798,10 @@ async function newProduct(done) {
         hint: 'Boş bırakılırsa fiyat YAZILMAZ. Sıfır yazmak 0 TL demektir, uydurulmaz.' },
       { key: 'stock', label: 'Stok', type: 'number', min: 0,
         hint: 'Boşsa depoya 0 yazılır ve ürün “stokta yok” doğar.' },
-      ...(sources.length > 1 ? [{
-        key: 'sourceId', label: 'Depo', type: 'select',
-        options: sources.map((item) => ({ value: item.id, label: item.name })),
-      }] : []),
+      // Depo ve vergi kategorisi YALNIZ birden çok seçenek varken çizilir.
+      // Karar sunucudan gelir; "mağazada tek depo var" burada varsayılmaz.
+      ...choiceField('sourceId', 'Stok yazılacak depo'),
+      ...choiceField('taxCategoryId', 'Vergi kategorisi'),
       { key: 'urlKey', label: 'URL anahtarı', type: 'text', maxLength: 180, wide: true,
         hint: 'Vitrin adresi. Boş bırakırsanız ürün adından türetilir; çakışırsa '
           + 'numaralandırılır.' },
@@ -713,7 +815,12 @@ async function newProduct(done) {
         hint: 'Kapalıyken ürün PASİF doğar: stoğu, fiyatı ve görseli denetlendikten sonra '
           + 'listeden aktifleştirin.' },
     ],
-    value: { sku: '', name: '', price: null, stock: null, sourceId: sources[0]?.id ?? '',
+    // Gizlenen alanın değeri BOŞ gider ve sunucu kendi çözer: panelin
+    // gizlediği bir alana değer uydurmak, sunucunun kararını istemciden
+    // dayatmak olurdu. Alan görünürse ilk seçenek ön dolu gelir.
+    value: { sku: '', name: '', price: null, stock: null,
+      sourceId: fieldSpec('sourceId').visible ? (sources[0]?.id ?? '') : '',
+      taxCategoryId: '',
       urlKey: '', shortDescription: '', metaTitle: '', metaDescription: '', active: false },
     onChange: (draft) => {
       if (applying) return;
@@ -741,6 +848,7 @@ async function newProduct(done) {
       stock: draft.stock === '' || draft.stock === null || draft.stock === undefined
         ? null : Number(draft.stock),
       sourceId: Number(draft.sourceId) || 0,
+      taxCategoryId: Number(draft.taxCategoryId) || 0,
       // İşaretli değilse `null` gider: "seçilmedi" ile "pasif olsun" aynı şey
       // değil — sunucu `null` görünce varsayılanı uygular VE bunu söyler.
       status: draft.active ? true : null,
@@ -852,6 +960,9 @@ async function newProduct(done) {
 
   box.body.append(
     form.node,
+    // Gizlenen tek seçenekli alanlar SESSİZ KALMAZ: hangi değerin
+    // kendiliğinden uygulandığı yazar, ikinci seçenek açıldıysa uyarı çıkar.
+    choiceNotes(),
     h('div', 'sp-auto-title', 'Kategoriler'),
     picker.node,
     autoBox, warnBox, actions,
@@ -879,6 +990,203 @@ async function copyProduct(product) {
     toast('Kopya oluşturuldu.', 'good');
     refresh();
   });
+}
+
+// ================================================================== silme
+//
+// SİLME GERÇEK SİLMEDİR — pasifleştirme değil, geri alınamaz. Kullanıcının
+// kararı: "siparişi gönderildiyse de ürün silinebilir; geçmiş raporda kırmızı
+// 'silinmiş' ibaresi koyarız." Karar güvenli çünkü sipariş kalemi ürünün
+// adını, SKU'sunu ve fiyatını KENDİ satırında saklıyor ve `order_items`
+// tablosunun `products`'a yabancı anahtar kısıtı yok.
+//
+// EKRANIN GÖREVİ KULLANICIYI BİLGİLENDİRMEK: ne silinecek, kaç siparişte
+// geçti, kaç adet satıldı. Bu üçü GÖRÜLMEDEN silme düğmesi açılmaz — sayı
+// bilinmiyorsa "bilinmiyor" yazar, sıfır uydurulmaz.
+
+/** Silinen satırları listeden ANINDA düşürür; yeniden yükleme beklenmez. */
+function dropRows(ids) {
+  const gone = new Set((ids || []).map(String));
+  if (!gone.size) return;
+  const before = state.items.length;
+  state.items = state.items.filter((row) => !gone.has(String(row.id)));
+  const removed = before - state.items.length;
+  if (!removed) return;
+  // Toplam da düşer: "1.419 ürün" yazarken 1.418 satır göstermek, kullanıcıya
+  // silmenin gerçekleşmediğini düşündürüyordu.
+  state.total = Math.max(0, state.total - removed);
+  state.selection = state.selection.filter((id) => !gone.has(String(id)));
+  nodes.table?.update({ rows: state.items, empty: emptyNode() });
+  nodes.pager.update({ total: state.total, page: state.page, size: state.size });
+  renderSelectionBar();
+  nodes.status?.set(statusText(), !state.connected);
+}
+
+/** Satış geçmişi hücresi. ÜÇ HÂL: sayı · bilinmiyor · uç yok. */
+function salesCell(row) {
+  const sales = row.sales || {};
+  const box = h('span', 'sp-sales');
+  if (sales.state !== 'known') {
+    box.append(badge(sales.state === 'unavailable' ? 'uç yok' : 'bilinmiyor', 'warn'));
+    box.title = sales.note || 'Satış geçmişi okunamadı.';
+    return box;
+  }
+  box.append(h('b', undefined, `${num(sales.orderCount)} sipariş`));
+  box.append(h('span', 'sp-sub', `${num(sales.soldQty)} adet satıldı`));
+  if (sales.lastOrderedAt) box.title = `Son sipariş: ${sales.lastOrderedAt.replace('T', ' ')}`;
+  return box;
+}
+
+function deleteDialog(productIds, { onDone } = {}) {
+  const ids = [...new Set((productIds || []).map(Number))].filter(Boolean);
+  if (!ids.length) { toast('Ürün seçilmedi.', 'warn'); return; }
+
+  const overlay = h('div', 'kit-overlay');
+  const box = h('div', 'kit-dialog sp-bulk sp-delete');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.append(h('h3', 'kit-dialog-title',
+    ids.length === 1 ? 'Ürünü sil' : `${num(ids.length)} ürünü sil`));
+  box.append(h('p', 'kit-dialog-text',
+    'Ne silineceği aşağıda listelenir. Silme GERİ ALINAMAZ; geçmiş siparişler '
+    + 'bozulmaz, kalemler kırmızı “silinmiş” ibaresiyle görünmeye devam eder.'));
+
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+  };
+  const onKey = (event) => { if (event.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  closers.push(() => document.removeEventListener('keydown', onKey));
+
+  const result = h('div', 'sp-bulk-result');
+  const actions = h('div', 'kit-dialog-actions');
+  actions.append(button('Vazgeç', { onClick: close }));
+  box.append(result, actions);
+  overlay.append(box);
+  overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
+  nodes.root.append(overlay);
+
+  loadPreview();
+
+  async function loadPreview() {
+    result.replaceChildren(skeletonRows(Math.min(6, ids.length), 5));
+    let preview;
+    try {
+      preview = await call(`${BASE}/products/delete/preview`, {
+        method: 'POST', body: { productIds: ids },
+      });
+    } catch (error) {
+      result.replaceChildren(alertBox(error.message, 'bad'));
+      return;
+    }
+    paintPreview(preview);
+  }
+
+  function paintPreview(preview) {
+    result.replaceChildren();
+    const summary = preview.summary || {};
+    result.append(kpiRow([
+      { label: 'Silinecek', value: num(summary.total) },
+      { label: 'Aktif', value: num(summary.active), tone: summary.active ? 'bad' : 'muted' },
+      { label: 'Stoklu', value: num(summary.withStock), tone: summary.withStock ? 'warn' : 'muted' },
+      { label: 'Satılmış', value: num(summary.sold), tone: summary.sold ? 'warn' : 'muted' },
+      { label: 'Satışı bilinmeyen', value: num(summary.salesUnknown), tone: 'muted' },
+    ]));
+
+    const table = dataTable({
+      columns: [
+        { key: 'sku', label: 'SKU', width: 'minmax(0, 1fr)', className: 'mono' },
+        { key: 'name', label: 'Ürün', width: 'minmax(0, 2fr)' },
+        { key: 'status', label: 'Durum', width: '80px',
+          cell: (row) => badge(row.status ? 'Aktif' : 'Pasif', row.status ? 'good' : 'dim') },
+        { key: 'stock', label: 'Stok', width: '80px', align: 'num',
+          cell: (row) => `${row.stockExact ? '' : '~'}${num(row.stock)}` },
+        { key: 'variantCount', label: 'Varyant', width: '80px', align: 'num',
+          cell: (row) => (row.variantCount ? num(row.variantCount) : '—') },
+        { key: 'sales', label: 'Satış geçmişi', width: 'minmax(0, 1.4fr)', cell: salesCell },
+      ],
+      rows: preview.rows,
+      dense: true,
+      rowKey: (row) => String(row.id),
+    });
+    result.append(table.node);
+
+    if (preview.missing && preview.missing.length) {
+      result.append(alertBox(`${num(preview.missing.length)} ürün mağazadan okunamadı ve `
+        + 'listeye girmedi; okunamayan ürün SİLİNMEZ.', 'warn'));
+    }
+    for (const warning of preview.warnings || []) result.append(alertBox(warning, 'warn'));
+    if (!preview.capable) {
+      result.append(alertBox(preview.capabilityError, 'bad'));
+    }
+
+    actions.replaceChildren(
+      button('Vazgeç', { onClick: close }),
+      button(preview.rows.length === 1 ? 'Ürünü sil' : `${num(preview.rows.length)} ürünü sil`, {
+        variant: 'danger',
+        disabled: !preview.capable,
+        title: preview.capable ? 'Geri alınamaz' : preview.capabilityError,
+        onClick: () => run(preview),
+      }),
+    );
+  }
+
+  async function run(preview) {
+    const sold = (preview.summary || {}).sold || 0;
+    // Elli SKU'yu onay kutusuna sığdırmak metni okunmaz yapıyor; ilk beşi
+    // yazılır, gerisi sayıyla söylenir. Tam liste zaten yukarıdaki tabloda.
+    const skus = preview.rows.map((row) => row.sku);
+    const named = skus.length > 5
+      ? `${skus.slice(0, 5).join(', ')} ve ${num(skus.length - 5)} ürün daha`
+      : skus.join(', ');
+    const reason = await askReason({
+      title: preview.rows.length === 1 ? 'Ürünü sil' : `${num(preview.rows.length)} ürünü sil`,
+      description: `${named} silinecek. `
+        + (sold ? `${num(sold)} tanesi daha önce sipariş edildi; o siparişlerin kalemleri `
+          + 'yerinde kalır ve “silinmiş” ibaresiyle görünür. ' : '')
+        + 'Bu işlem GERİ ALINAMAZ.',
+      confirmLabel: 'Sil',
+    });
+    if (!reason) return;
+    // `call` YERİNE ham `api`: kısmi başarıda yanıt `ok:false` gelir AMA
+    // silinenlerin listesini taşır. `call` bunu istisnaya çevirseydi silinen
+    // ürünler ekranda durmaya devam eder ve kullanıcı ikinci kez silmeye
+    // çalışırdı.
+    const outcome = await withBusy('Siliniyor…', async () => api(`${BASE}/products/delete`, {
+      method: 'POST', body: { productIds: ids, reason, dryRun: false },
+    }));
+    if (!outcome) return;
+
+    // KURU PROVADA SATIR DÜŞMEZ: ürün mağazada duruyor, listeden kaldırmak
+    // silinmiş gibi göstermek olurdu. Panel `dryRun: false` yolluyor ama
+    // geçidin acil freni de kuru provaya düşürebiliyor.
+    const removed = outcome.dryRun ? [] : [...(outcome.deleted || []),
+      ...((outcome.missing || []).map((row) => row.id))];
+    dropRows(removed);
+    close();
+    if (outcome.dryRun && (outcome.deleted || []).length) {
+      toast('Kuru prova: istek gönderilmedi, ürün mağazada duruyor.', 'warn');
+    }
+
+    if (!outcome.dryRun && outcome.deleted && outcome.deleted.length) {
+      toast(`${num(outcome.deleted.length)} ürün silindi.`, 'good');
+      // KPI şeridi katalog sayılarını gösteriyor; silme sonrası tazelenmezse
+      // "1.419 ürün" yazmaya devam eder. Liste ZATEN anında düştü, bu yalnız
+      // şeridi düzeltir ve arka planda olur.
+      loadHealth();
+    }
+    for (const row of outcome.missing || []) {
+      toast(`#${row.id} zaten yoktu; listeden düşürüldü.`, 'warn');
+    }
+    // KISMİ BAŞARI TEK TEK SÖYLENİR: "3 üründen 1'i silinemedi" demek,
+    // hangisinin ve neden kaldığını gizlerdi.
+    for (const row of outcome.failed || []) {
+      toast(`${row.sku || `#${row.id}`} silinemedi — ${row.error}`, 'bad');
+    }
+    if (outcome.notice && (outcome.deleted || []).length) toast(outcome.notice, 'warn');
+    onDone?.(outcome);
+  }
 }
 
 function paintPrice(pane, payload, forms) {
@@ -1555,10 +1863,27 @@ async function paintHistory(pane, payload) {
     }));
     return;
   }
+  // SİLİNMİŞ ÜRÜN GEÇMİŞTE KALIR ve kırmızı ibaresiyle görünür: "bu ürüne ne
+  // oldu" sorusunun cevabı, ürün katalogdan gittikten sonra da durmalı.
+  // İbarenin metni sunucudan gelir (`deleted.py`) — üç ekran aynı kelimeyi
+  // kullansın diye panelde sabit yazılmaz.
+  const goneLabel = result.deletedLabel || 'silinmiş';
+  if ((result.deletedIds || []).includes(payload.product.id)) {
+    pane.append(alertBox(`Bu ürün bu ekrandan SİLİNDİ. Aşağıdaki iz ve geçmiş siparişlerin `
+      + `kalemleri yerinde duruyor; kalemler raporlarda kırmızı “${goneLabel}” ibaresiyle `
+      + 'görünür.', 'bad'));
+  }
+
   const table = dataTable({
     columns: [
       { key: 'createdAt', label: 'Zaman', width: '150px' },
-      { key: 'action', label: 'İşlem', width: '150px' },
+      { key: 'action', label: 'İşlem', width: 'minmax(0, 1.2fr)',
+        cell: (row) => {
+          const cell = h('span', 'sp-audit-action');
+          cell.append(h('b', undefined, row.action));
+          if (row.productDeleted) cell.append(badge(goneLabel, 'bad'));
+          return cell;
+        } },
       { key: 'actor', label: 'Kim', width: '130px' },
       { key: 'result', label: 'Sonuç', width: '90px' },
       { key: 'reason', label: 'Gerekçe', width: 'minmax(0, 2fr)', className: 'wrap' },

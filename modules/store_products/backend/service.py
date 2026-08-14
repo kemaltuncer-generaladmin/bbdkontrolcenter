@@ -29,12 +29,34 @@ from typing import Any
 
 from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir, write_private
 
-from . import catalog, images, schema
+from . import catalog, deleted, images, schema
 
 #: Rapor için tam katalog taranırken kabul edilen üst sınır. 1.419 ürün
 #: 29 sayfa eder; 3.000 tavanı büyümeye yer bırakır ve bozuk `meta` yüzünden
 #: sonsuz taramayı engeller.
 REPORT_ROW_CAP = 3_000
+
+#: Tek seferde silinebilecek en çok ürün. HESAP: ürün başına DÖRT istek gider —
+#: önizlemede taze okuma + satış özeti, silmede taze okuma + DELETE. Geçit
+#: dakikada 55 istekte tutuyor, yani 25 ürün ≈ iki dakika. Tavanı büyütmek
+#: kullanıcıyı ekran başında daha uzun bekletir ve yarıda kalma ihtimalini
+#: büyütür; silme yarıda kalınca geri alınamaz. Daha büyük temizlik işi
+#: birkaç turda yapılır — her tur kendi önizlemesini gösterir.
+DELETE_LIMIT = 25
+
+#: Sipariş kalemi işaretlerken kataloğa sorulan en çok BENZERSİZ ürün.
+#: Bir siparişte onlarca kalem olabilir ama ürün sayısı azdır; tavan, bir
+#: rapor sayfasının yüzlerce kalemiyle gelen çağrının hız kovasını
+#: tüketmesini engeller.
+MARK_LOOKUP_CAP = 50
+
+#: Geçitte bulunmayan uç için TEK metin. Ekran "uç yok" ile "mağaza reddetti"
+#: arasındaki farkı görebilsin diye ayrı tutulur.
+GATEWAY_GAP = (
+    "Geçitte (store_api) `{method}` metodu yok; K4 gereği bu modül mağazaya ham "
+    "istek atmaz. Mağaza ucu var ({endpoint}) ama geçide eklenmeden buradan "
+    "çağrılamaz."
+)
 
 BULK_KINDS = ("price", "stock", "category", "status")
 
@@ -354,10 +376,19 @@ class ProductsService:
         }
 
     async def reference(self) -> dict[str, Any]:
-        """Süzgeçlerin beslendiği referans listeler. Geçit 15/30 dk önbellekli."""
+        """Süzgeçlerin beslendiği referans listeler. Geçit 15/30 dk önbellekli.
+
+        `fields` alanı TEK SEÇENEKLİ ALANLARIN tarifidir (bkz.
+        `catalog.choice_fields`): mağazada kaç kanal/dil/para birimi/depo/vergi
+        kategorisi olduğu sayılır ve panel hangi alanı çizeceğine buna göre
+        karar verir. Sayı ekranda sabitlenmez — ikinci kanal açıldığı gün alan
+        kendiliğinden geri gelir.
+        """
         out: dict[str, Any] = {"ok": True, "connected": True, "error": "",
                                "categories": [], "families": [], "channels": [],
-                               "locales": [], "sources": [], "types": []}
+                               "locales": [], "sources": [], "types": [],
+                               "currencies": [], "taxCategories": [],
+                               "fields": catalog.choice_fields({})}
         out["types"] = [{"value": key, "label": label}
                         for key, label in catalog.TYPE_LABELS.items()]
         try:
@@ -374,6 +405,7 @@ class ProductsService:
             return out
 
         parts = snapshot.get("parts") or {}
+        out["fields"] = catalog.choice_fields(parts)
         out["families"] = [{"id": catalog.as_int(item.get("id")),
                             "name": catalog.text(item.get("name"))}
                            for item in parts.get("attribute_families") or []]
@@ -386,6 +418,12 @@ class ProductsService:
         out["sources"] = [{"id": catalog.as_int(item.get("id")),
                            "name": catalog.text(item.get("name"))}
                           for item in parts.get("inventory_sources") or []]
+        out["currencies"] = [{"code": catalog.text(item.get("code")),
+                              "name": catalog.text(item.get("name"))}
+                             for item in parts.get("currencies") or []]
+        out["taxCategories"] = [{"id": catalog.as_int(item.get("id")),
+                                 "name": catalog.text(item.get("name"))}
+                                for item in parts.get("tax_categories") or []]
         out["stale"] = bool(snapshot.get("stale"))
         out["storedAt"] = catalog.text(snapshot.get("storedAt"))
         return out
@@ -400,7 +438,14 @@ class ProductsService:
         return {"ok": True, "connected": True, "error": "", "tiles": payload}
 
     async def audit(self, *, product_id: int = 0, limit: int = 50) -> dict[str, Any]:
-        """Bu ekrandan yapılan yazmaların YEREL izi (gerekçeleriyle)."""
+        """Bu ekrandan yapılan yazmaların YEREL izi (gerekçeleriyle).
+
+        Silinen ürünün satırları burada KALIR ve kırmızı “silinmiş” ile
+        işaretlenir: "bu ürüne ne oldu" sorusunun cevabı, ürün katalogdan
+        gittikten sonra da durmalıdır. İşaret AĞA ÇIKMADAN verilir — kaynağı
+        kendi denetim izimizdir (`delete_product` + `ok`), dolayısıyla mağaza
+        kapalıyken de doğrudur.
+        """
         sql = (f"SELECT product_id, action, reason, actor, result, created_at "
                f"FROM {self._audit} ")
         params: tuple[Any, ...] = ()
@@ -412,10 +457,14 @@ class ProductsService:
         try:
             rows = await self._store.fetch_all(sql, params)
         except Exception as failure:  # noqa: BLE001 — iz okunamadı, ekran dursun
-            return {"ok": True, "items": [], "error": self._fail(failure)}
-        return {"ok": True, "error": "", "items": [
+            return {"ok": True, "items": [], "error": self._fail(failure), "deletedIds": []}
+
+        gone = deleted.ids_from_audit(rows)
+        return {"ok": True, "error": "", "deletedIds": sorted(gone),
+                "deletedLabel": deleted.LABEL, "items": [
             {"productId": row["product_id"], "action": row["action"], "reason": row["reason"],
-             "actor": row["actor"], "result": row["result"], "createdAt": row["created_at"]}
+             "actor": row["actor"], "result": row["result"], "createdAt": row["created_at"],
+             "productDeleted": row["product_id"] in gone}
             for row in rows
         ]}
 
@@ -467,11 +516,15 @@ class ProductsService:
 
     async def set_status(self, product_ids: list[int], *, active: bool, reason: str,
                          actor: str, dry_run: bool = True) -> dict[str, Any]:
-        """Aktif/Pasif — SİLME YOK, PASİFLEŞTİRME VAR (TUZAK 9, ADR 0012).
+        """Aktif/Pasif — vitrinden kaldırır, kaydı SİLMEZ.
 
-        Siparişi olan ürün silinemez; silinseydi geçmiş siparişlerin kalemleri
-        ve raporlar öksüz kalırdı. Toplu uç kullanılır: 1.419 üründe tek tek
-        PUT atmak hız sınırını aşar ve yarıda kalırsa katalog tutarsız kalır.
+        Silmenin yerine geçmez, YANINDA durur: pasifleştirme geri alınabilir
+        (`status` 1 yazmak yeter), silme alınamaz. "Ürün bir daha satılmayacak
+        ama kaydı dursun" ile "ürün yanlış açıldı, katalogdan gitsin" ayrı iki
+        istektir ve ayrı iki düğmesi vardır (silme: `delete_products`).
+
+        Toplu uç kullanılır: 1.419 üründe tek tek PUT atmak hız sınırını aşar
+        ve yarıda kalırsa katalog tutarsız kalır.
         """
         problem = self._guard(reason)
         if problem:
@@ -603,6 +656,330 @@ class ProductsService:
                 "notice": "Eski SKU ile kayıtlı vitrin bağlantıları kırılır. "
                           + catalog.INDEX_NOTICE}
 
+    # ================================================================ silme
+    #
+    # ÜRÜN SİLME GERÇEK SİLMEDİR — pasifleştirme değil. Karar kullanıcınındır
+    # ve gerekçesi ölçülmüş bir gerçeğe dayanır:
+    #
+    #   `order_items` ürünün ADINI, SKU'sunu, FİYATINI ve TOPLAMINI kendi
+    #   satırında saklıyor; `order_items.product_id` NULL kabul ediyor ve
+    #   `products` tablosuna YABANCI ANAHTAR KISITI YOK
+    #   (2018_09_27_113207_create_order_items_table.php:51,58-59). Yani silme
+    #   ne engellenir ne de geçmişi bozar: kalem yerinde kalır, yalnız ürün
+    #   bağlantısı boşa düşer ve raporda `deleted.py` kuralıyla kırmızı
+    #   "silinmiş" görünür.
+    #
+    # MAĞAZA TARAFINDA ENGEL YOK: `AdminCatalogProductDeleteProcessor` yalnız
+    # `catalog.products.delete` iznine bakıp `ProductRepository::delete` çağırıyor
+    # ("No in-order guard (matches monolith ProductController::destroy)").
+    # Varyantlı üründe varyantlar mağaza tarafında zincirle düşüyor.
+    #
+    # TEK GERÇEK ENGEL VERİTABANINDA: `rma_items.variant_id` → `products`
+    # bağı ON DELETE RESTRICT (2025_11_14_173959). Ürün bir iade talebinde
+    # geçiyorsa MySQL silmeyi reddeder ve uç 500 döner. Bu yüzden hata o ürün
+    # için AYRI raporlanır; toplu iş yüzünden durmaz.
+    #
+    # TOPLU SİLME NEDEN TEK TEK YAPILIR: mağazada toplu uç var
+    # (`POST /catalog/products/mass-delete`) ama tek bir ürün patlarsa
+    # TAMAMINA 500 dönüyor ve hangisinin gittiği yanıttan okunamıyor. "Kısmi
+    # başarı gerçekçi raporlanır" isteği o uçla karşılanamaz; sırayla silmek
+    # her ürün için ayrı sonuç üretir.
+
+    async def _sales_impact(self, product_id: int) -> dict[str, Any]:
+        """Bu ürün kaç siparişte geçti, kaç adet satıldı.
+
+        Kaynak mağazanın satış özeti tablosudur (`bbd_product_bestsellers`:
+        `product_id · sold_qty · order_count · last_ordered_at`). Siparişleri
+        tek tek tarayıp kalemlerine bakmak 1.419 ürünlük katalogda yüzlerce
+        istek eder ve hız kovasını bitirir; özet tablo aynı soruyu tek istekte
+        cevaplıyor.
+
+        ÜÇ CEVAP: `known` (sayı var) · `unknown` (okunamadı ya da süzgeç
+        uygulanmadı) · `unavailable` (geçitte uç yok). Bilinmeyeni sıfır
+        saymak, "hiç satılmamış" diye gösterip kullanıcıyı yanlış bir güvenle
+        sildirmek olurdu — silme geri alınamaz.
+        """
+        empty = {"state": "unknown", "orderCount": None, "soldQty": None, "lastOrderedAt": ""}
+        fetch = getattr(self._api, "bbd_bestsellers", None)
+        if fetch is None:
+            return {**empty, "state": "unavailable",
+                    "note": GATEWAY_GAP.format(method="bbd_bestsellers",
+                                               endpoint="GET /api/admin/bbd/catalog/bestsellers")
+                    + " Bu ürünün kaç siparişte geçtiği ÖĞRENİLEMEDİ."}
+
+        try:
+            payload = await fetch({"product_id": int(product_id)}, page=1, per_page=1)
+        except Exception as failure:  # noqa: BLE001 — K7: silme akışı düşmesin
+            self._log.info("satış özeti okunamadı", productId=product_id, error=str(failure))
+            return {**empty, "note": f"Satış özeti okunamadı: {self._fail(failure)}"}
+
+        rows = [row for row in (payload.get("items") or []) if isinstance(row, dict)]
+        match = next((row for row in rows
+                      if catalog.as_int(row.get("productId") or row.get("product_id"))
+                      == int(product_id)), None)
+        if match is None and rows:
+            # Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar: dönen
+            # satır başka bir ürünün. Onu bu ürünün satışı saymak, silinen
+            # üründen bambaşka bir rakam göstermek olurdu.
+            return {**empty,
+                    "note": "Mağaza satış özetini ürün bazında süzmedi (Laravel tanımadığı "
+                            "parametreyi yok sayar); bu ürünün rakamı doğrulanamadı."}
+        if match is None:
+            return {"state": "known", "orderCount": 0, "soldQty": 0, "lastOrderedAt": "",
+                    "note": "Bu ürün hiçbir siparişte geçmiyor."}
+        return {
+            "state": "known",
+            "orderCount": catalog.as_int(match.get("orderCount") or match.get("order_count")),
+            "soldQty": catalog.as_int(match.get("soldQty") or match.get("sold_qty")),
+            "lastOrderedAt": catalog.text(match.get("lastOrderedAt")
+                                          or match.get("last_ordered_at"))[:19],
+            "note": "",
+        }
+
+    def _delete_warnings(self, rows: list[dict[str, Any]]) -> list[str]:
+        """Silmeden önce ekranda okunacak uyarılar. Hepsi ölçülmüş gerçek."""
+        notes = [
+            ("Silme GERİ ALINAMAZ: ürün kaydı, öznitelik değerleri, görselleri, stok "
+             "satırları ve kategori bağları mağazadan gider."),
+            ("Geçmiş siparişler BOZULMAZ. Sipariş kalemi ürünün adını, SKU'sunu ve "
+             "fiyatını kendi satırında saklıyor; kalem raporlarda kırmızı "
+             f"“{deleted.LABEL}” ibaresiyle görünmeye devam eder."),
+            ("Ürün bir iade talebinde (RMA) geçiyorsa mağaza veritabanı silmeyi "
+             "reddeder ve o ürün “silinemedi” olarak raporlanır; diğerleri silinir."),
+        ]
+        if any(row.get("variantCount") for row in rows):
+            notes.append("Varyantlı ürün silinince VARYANTLARI DA silinir; mağaza zinciri "
+                         "kendisi düşürür.")
+        if any(row.get("status") for row in rows):
+            notes.append("Seçimde AKTİF ürün var: vitrinde duran bir ürünü siliyorsunuz. "
+                         "Yalnız vitrinden kaldırmak istiyorsanız “Pasifleştir” geri "
+                         "alınabilir bir işlemdir.")
+        return notes
+
+    async def delete_preview(self, product_ids: list[int]) -> dict[str, Any]:
+        """NE SİLİNECEĞİNİ gösterir — hiçbir şey silmez, gerekçe istemez.
+
+        Satırlar mağazadan TAZE okunur: ekranda açık duran liste beş dakika
+        önce çekilmiş olabilir ve o aradan sonra ürünün stoğu, durumu ya da
+        adı değişmiş olabilir. Kullanıcı bilerek silsin diye her satırın
+        yanında kaç siparişte geçtiği ve kaç adet satıldığı durur.
+        """
+        ids = self._clean_ids(product_ids)
+        if not ids:
+            return {"ok": False, "error": "Ürün seçilmedi."}
+        if len(ids) > DELETE_LIMIT:
+            return {"ok": False,
+                    "error": f"Tek seferde en çok {DELETE_LIMIT} ürün silinebilir; "
+                             f"{len(ids)} seçildi. Seçimi daraltın."}
+
+        threshold = await self._threshold()
+        rows: list[dict[str, Any]] = []
+        missing: list[int] = []
+        for product_id in ids:
+            try:
+                raw = await self._api.product(product_id)
+            except Exception as failure:  # noqa: BLE001 — K7: biri okunamazsa gerisi sürsün
+                missing.append(product_id)
+                self._log.warning("silme önizlemesi için ürün okunamadı",
+                                  productId=product_id, error=str(failure))
+                continue
+            row = catalog.product_row(raw, threshold=threshold, today=_today())
+            variants = raw.get("variants")
+            rows.append({
+                **row,
+                "imageCount": len(catalog.image_list(raw)),
+                "variantCount": len(variants) if isinstance(variants, list) else 0,
+                "sales": await self._sales_impact(product_id),
+            })
+
+        if not rows:
+            return {"ok": False, "error": "Seçilen ürünlerin hiçbiri okunamadı; "
+                                          "okunamayan ürün silinmez."}
+
+        capable = getattr(self._api, "delete_product", None) is not None
+        return {
+            "ok": True, "error": "", "rows": rows, "missing": missing,
+            "summary": {
+                "total": len(rows),
+                "active": len([row for row in rows if row["status"]]),
+                "withStock": len([row for row in rows if row["stock"] > 0]),
+                "sold": len([row for row in rows
+                             if (row["sales"].get("orderCount") or 0) > 0]),
+                "salesUnknown": len([row for row in rows
+                                     if row["sales"].get("state") != "known"]),
+            },
+            "warnings": self._delete_warnings(rows),
+            "capable": capable,
+            "capabilityError": "" if capable else GATEWAY_GAP.format(
+                method="delete_product", endpoint="DELETE /api/admin/catalog/products/{id}"),
+            "notice": catalog.INDEX_NOTICE,
+        }
+
+    @staticmethod
+    def _clean_ids(product_ids: Any) -> list[int]:
+        """Yinelenen kimlik TEK kez silinir; sıra kullanıcının seçtiği sıradır."""
+        out: list[int] = []
+        for item in product_ids or []:
+            found = catalog.as_int(item)
+            if found and found not in out:
+                out.append(found)
+        return out
+
+    async def delete_products(self, product_ids: list[int], *, reason: str, actor: str,
+                              dry_run: bool = True) -> dict[str, Any]:
+        """Ürünleri GERÇEKTEN siler. Kısmi başarı olduğu gibi raporlanır.
+
+        Her ürün için önce TAZE okuma yapılır: silinen şeyin adı ve SKU'su
+        denetim izine yazılsın diye. Kayıt zaten yoksa o ürün “silinemedi”
+        değil “zaten yok” sayılır — aynı düğmeye iki kez basmak hata
+        göstermemeli.
+
+        Sırayla gidilir ve biri patlayınca DURULMAZ: iade talebinde geçen tek
+        bir ürün (RMA kısıtı) yüzünden seçimdeki diğerlerinin silinmemesi,
+        kullanıcıyı listeyi tek tek elemeye zorlardı.
+        """
+        problem = self._guard(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        ids = self._clean_ids(product_ids)
+        if not ids:
+            return {"ok": False, "error": "Ürün seçilmedi."}
+        if len(ids) > DELETE_LIMIT:
+            return {"ok": False,
+                    "error": f"Tek seferde en çok {DELETE_LIMIT} ürün silinebilir; "
+                             f"{len(ids)} seçildi. Seçimi daraltın."}
+
+        remove = getattr(self._api, "delete_product", None)
+        if remove is None:
+            gap = GATEWAY_GAP.format(method="delete_product",
+                                     endpoint="DELETE /api/admin/catalog/products/{id}")
+            await self._record(product_id=ids[0] if len(ids) == 1 else 0,
+                               action="delete_product", reason=reason, actor=actor,
+                               result="reddedildi", detail={"ids": ids, "why": "gateway_gap"})
+            return {"ok": False, "error": gap, "deleted": [], "missing": [],
+                    "failed": [{"id": item, "sku": "", "name": "", "error": gap}
+                               for item in ids],
+                    "dryRun": bool(dry_run)}
+
+        done: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        missing: list[dict[str, Any]] = []
+
+        for product_id in ids:
+            sku, name = "", ""
+            try:
+                raw = await self._api.product(product_id)
+                sku = catalog.text(catalog.attribute(raw, "sku"))
+                name = catalog.text(catalog.attribute(raw, "name"))
+            except Exception as failure:  # noqa: BLE001 — K7
+                if str(getattr(failure, "code", "") or "") == "not_found":
+                    missing.append({"id": product_id, "sku": "", "name": "",
+                                    "error": "Ürün mağazada bulunamadı; zaten silinmiş."})
+                    await self._record(product_id=product_id, action="delete_product",
+                                       reason=reason, actor=actor, result="zaten yok")
+                    continue
+                failed.append({"id": product_id, "sku": "", "name": "",
+                               "error": f"Ürün okunamadı, silinmedi: {self._fail(failure)}"})
+                continue
+
+            await self._record(product_id=product_id, action="delete_product", reason=reason,
+                               actor=actor, result="denendi", detail={"sku": sku, "name": name})
+            try:
+                result = await remove(product_id, reason=reason, actor=actor, dry_run=dry_run)
+            except Exception as failure:  # noqa: BLE001 — biri patlarsa gerisi sürsün
+                await self._record(product_id=product_id, action="delete_product", reason=reason,
+                                   actor=actor, result="hata",
+                                   detail={"sku": sku, "error": str(failure)})
+                failed.append({"id": product_id, "sku": sku, "name": name,
+                               "error": self._delete_failure(failure, sku)})
+                continue
+
+            dry = bool(result.get("dryRun", dry_run)) if isinstance(result, dict) else bool(dry_run)
+            await self._record(product_id=product_id, action="delete_product", reason=reason,
+                               actor=actor, result="dry_run" if dry else "ok",
+                               detail={"sku": sku, "name": name})
+            done.append({"id": product_id, "sku": sku, "name": name, "dryRun": dry})
+
+        dry_all = all(row["dryRun"] for row in done) if done else bool(dry_run)
+        error = ""
+        if failed:
+            error = f"{len(failed)} ürün silinemedi: " + " · ".join(
+                f"#{row['id']} {row['sku'] or ''} — {row['error']}".strip() for row in failed)
+        return {
+            "ok": not failed,
+            "error": error,
+            "deleted": [row["id"] for row in done],
+            "rows": done,
+            "failed": failed,
+            "missing": missing,
+            "dryRun": dry_all,
+            "notice": catalog.INDEX_NOTICE,
+        }
+
+    def _delete_failure(self, failure: Exception, sku: str) -> str:
+        """500'ü ANLAŞILIR hâle getirir: en sık nedeni iade talebi kısıtıdır.
+
+        Mağaza ucu tek tek silmede alttaki istisnayı 500 olarak geçiriyor
+        (`AdminCatalogProductDeleteProcessor` → `InvalidInputException(..., 500)`).
+        Ham metin ("Mağaza hata verdi (500)") kullanıcıya ne yapacağını
+        söylemiyor; en olası nedeni söyleyen metinle değiştirilir. Kod 500
+        değilse davranış değişmez.
+        """
+        if str(getattr(failure, "code", "") or "") != "server":
+            return self._fail(failure)
+        return (f"Mağaza `{sku or 'ürünü'}` silmedi (500). En olası neden: ürün bir iade "
+                "talebinde (RMA) geçiyor — veritabanı o bağı silmeye kapalı tutuyor "
+                "(`rma_items.variant_id` ON DELETE RESTRICT). İade talebi kapanana kadar "
+                "ürün silinemez; vitrinden kaldırmak için “Pasifleştir” kullanılabilir. "
+                f"Mağazanın döndürdüğü metin: {self._fail(failure)}")
+
+    # -------------------------------------------- silinmiş ürün işaretleme
+
+    async def _known_products(self, ids: list[int]) -> tuple[set[int], bool]:
+        """Hangi kimlik hâlâ katalogda + liste TAM MI okundu.
+
+        İkinci dönüş değeri şart: "okundu, yok" ile "okunamadı" ikisi de boş
+        küme üretir ama ilkinde ürün gerçekten silinmiştir, ikincisinde hiçbir
+        şey bilinmiyordur (bkz. `deleted.py`). Ayrım geçidin hata koduna
+        dayanır — 404 `not_found` demek "kayıt yok", diğer her şey "okunamadı".
+        """
+        known: set[int] = set()
+        complete = True
+        for product_id in ids:
+            try:
+                await self._api.product(int(product_id))
+            except Exception as failure:  # noqa: BLE001 — K7
+                if str(getattr(failure, "code", "") or "") == "not_found":
+                    continue
+                complete = False
+                continue
+            known.add(int(product_id))
+        return known, complete
+
+    async def mark_order_items(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Sipariş kalemlerini “silinmiş” ibaresiyle işaretler.
+
+        Kural `deleted.py` içindedir ve `store_products.deleted_marker`
+        yeteneğiyle ilan edilir; rapor ve sipariş ekranları AYNI kuralı
+        kullanır, kopyalamaz (K3). Bu uç, kural için gereken katalog çözümünü
+        (hangi kimlik hâlâ var) geçitten yapan tarafıdır.
+        """
+        rows_in = [item for item in (items or []) if isinstance(item, dict)]
+        ids = deleted.product_ids(rows_in)
+        capped = ids[:MARK_LOOKUP_CAP]
+        known, complete = await self._known_products(capped)
+        if len(ids) > MARK_LOOKUP_CAP:
+            # Tavana takılan kimlikler ÇÖZÜLMEDİ; çözülmüş gibi davranmak
+            # onları toptan "silinmiş" gösterirdi.
+            complete = False
+        rows = deleted.mark_items(rows_in, known_ids=known, lookup_complete=complete)
+        return {"ok": True, "error": "", "items": rows, "summary": deleted.summary(rows),
+                "lookupComplete": complete, "label": deleted.LABEL,
+                "note": "" if complete else
+                        f"Katalog tam okunamadı; kalemler “{deleted.UNKNOWN_LABEL}” "
+                        "gösterildi — hiçbiri silinmiş sayılmadı."}
+
     async def check_url_key(self, *, url_key: str, product_id: int = 0) -> dict[str, Any]:
         """url_key benzersizliğini YAZMADAN ÖNCE yoklar (TUZAK 6)."""
         wanted = catalog.slugify(url_key)
@@ -687,6 +1064,21 @@ class ProductsService:
             return {}, ("Kategori ağacı okunamadı; üst kategoriler kendiliğinden "
                         f"eklenemedi: {self._fail(failure)}")
         return catalog.category_index(tree), ""
+
+    async def _choices(self) -> dict[str, dict[str, Any]]:
+        """Tek seçenekli alan tarifi. Anlık görüntü geçitte 30 dk önbellekli.
+
+        Okunamazsa BOŞ tarif döner: her alan `state: "none"` olur, hiçbiri
+        "tek seçenek" sayılmaz ve hiçbir değer kendiliğinden uygulanmaz.
+        Okunamayan listeden "demek ki tek tanesi var" sonucu çıkarmak, ürüne
+        yanlış vergi kategorisi yazdırırdı.
+        """
+        try:
+            snapshot = await self._api.snapshot()
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("seçenek sayıları okunamadı", error=str(failure))
+            return catalog.choice_fields({})
+        return catalog.choice_fields(snapshot.get("parts") or {})
 
     async def _sources(self) -> tuple[list[dict[str, Any]], str]:
         """Envanter kaynakları (depolar). Stok BURAYA yazılır (TUZAK 5)."""
@@ -788,6 +1180,27 @@ class ProductsService:
         if not family:
             warnings.append("Mağazada öznitelik ailesi bulunamadı; ürün açılamaz.")
 
+        # --- tek seçenekli alanlar: kanal · dil · para birimi · depo · vergi
+        # Ekranda alan YOK; değer buradan gider. Karar mağazadan gelen seçenek
+        # SAYISINDAN çıkar, koda gömülü bir varsayımdan değil.
+        choices = await self._choices()
+        tax = choices.get("taxCategoryId") or {}
+        asked_tax = catalog.as_int(data.get("taxCategoryId"))
+        single_tax = catalog.as_int((tax.get("auto") or {}).get("value"))
+        tax_id = asked_tax or (single_tax if tax.get("state") == "single" else 0)
+        draft["taxCategoryId"] = tax_id
+        if tax_id and not asked_tax:
+            label = catalog.text((tax.get("auto") or {}).get("label")) or f"#{tax_id}"
+            auto.append("taxCategoryId")
+            notes["taxCategoryId"] = (f"Mağazadaki tek vergi kategorisi (`{label}`) uygulandı; "
+                                      "seçenek olmadığı için ekranda sorulmadı.")
+        elif not asked_tax and tax.get("state") == "many":
+            # İkinci vergi kategorisi açılmış: artık "tek seçenek" yalanı
+            # söylenemez. Sessizce birini seçmek yanlış KDV oranı demektir.
+            warnings.append(f"Mağazada {tax.get('count')} vergi kategorisi var; hangisinin "
+                            "uygulanacağı belirsiz olduğu için ürün vergi kategorisiz "
+                            "açılır. Düzenleyiciden seçin.")
+
         # --- stok: girilmediyse 0 yazılır, ürün "stokta yok" doğar
         sources, source_error = await self._sources()
         if source_error:
@@ -829,6 +1242,9 @@ class ProductsService:
         return {
             "draft": draft, "auto": sorted(set(auto)), "notes": notes, "warnings": warnings,
             "urlKeyCheck": url_key, "categoryTrail": expanded["trail"], "sources": sources,
+            # Panel form alanlarını buna göre çizer: tek seçenekli alan hiç
+            # görünmez, çok seçenekli alan geri gelir.
+            "fields": choices,
             # İki referans okuması da düştüyse mağaza ayakta değildir; taslak
             # yine döner (K7) ama ekran "bağlantı yok" der, uydurmaz.
             "connected": not (bool(tree_error) and bool(source_error)),
@@ -997,6 +1413,11 @@ class ProductsService:
                 patch[target] = value
         if draft.get("price") is not None:
             patch["price"] = draft["price"]
+        if catalog.as_int(draft.get("taxCategoryId")):
+            # Ekranda alan yok (tek kategori var), değeri yine de AÇIKÇA
+            # yazılır: yazılmazsa ürün vergi kategorisiz doğar ve vitrinde
+            # KDV'siz fiyat gösterir.
+            patch["tax_category_id"] = catalog.as_int(draft["taxCategoryId"])
         patch["status"] = 1 if draft.get("status") else 0
 
         try:

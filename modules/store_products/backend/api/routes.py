@@ -139,6 +139,10 @@ class DraftBody(BaseModel):
     #: `None` = "girilmedi" → depoya 0 yazılır, ürün "stokta yok" doğar.
     stock: int | None = Field(default=None, ge=0, le=9_999_999)
     sourceId: int = Field(default=0, ge=0)
+    #: 0 = "seçilmedi". Mağazada tek vergi kategorisi varsa ekranda alan YOKTUR
+    #: ve servis onu kendisi uygular; ikinci kategori açılırsa alan geri gelir
+    #: ve seçilen değer buradan taşınır.
+    taxCategoryId: int = Field(default=0, ge=0)
     #: `None` = "seçilmedi" → yeni ürün PASİF doğar.
     status: bool | None = None
     attributeFamilyId: int = Field(default=0, ge=0)
@@ -338,9 +342,77 @@ async def set_status(
     body: StatusBody,
     user: CurrentUser = requires("store_products.deactivate"),
 ) -> dict[str, Any]:
-    """Aktif/Pasif. SİLME UCU YOKTUR — siparişi olan ürün silinmez (ADR 0012)."""
+    """Aktif/Pasif — geri alınabilir. Silmek AYRI uç ve AYRI izindir."""
     return await service().set_status(body.productIds, active=body.active, reason=body.reason,
                                       actor=user.full_name, dry_run=body.dryRun)
+
+
+class DeletePreviewBody(BaseModel):
+    """Önizleme YAZMAZ; gerekçe istemez.
+
+    Yine de `store_products.delete` ister: "bu ürün kaç siparişte geçti"
+    sorusunun cevabı silme kararının parçasıdır ve o kararı vermeyecek
+    kullanıcıya gösterilmesi gerekmiyor.
+    """
+
+    productIds: list[int] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/products/delete/preview")
+async def delete_preview(
+    body: DeletePreviewBody,
+    user: CurrentUser = requires("store_products.delete"),
+) -> dict[str, Any]:
+    """Ne silineceğini gösterir: künye, stok, satış geçmişi ve uyarılar."""
+    return await service().delete_preview(body.productIds)
+
+
+class DeleteBody(BaseModel):
+    productIds: list[int] = Field(default_factory=list, max_length=200)
+    reason: str = Field(min_length=10, max_length=255)
+    dryRun: bool = True
+
+
+@router.post("/products/delete")
+async def delete_products(
+    body: DeleteBody,
+    user: CurrentUser = requires("store_products.delete"),
+) -> dict[str, Any]:
+    """ÜRÜNÜ GERÇEKTEN SİLER — pasifleştirme değil, geri alınamaz.
+
+    `store_products.deactivate` YETMEZ: pasifleştirme geri alınabilir bir
+    işlem, silme değil. İkisini tek anahtarla korumak, vitrinden ürün
+    kaldırma yetkisi verilen personele kataloğu silme yetkisi de vermek
+    olurdu. Gerekçe hem şemada hem serviste doğrulanır (K9).
+    """
+    return await service().delete_products(body.productIds, reason=body.reason,
+                                           actor=user.full_name, dry_run=body.dryRun)
+
+
+class OrderItemsBody(BaseModel):
+    """Sipariş kalemleri — YALNIZ okunur, hiçbir şey yazılmaz.
+
+    Alanlar serbest sözlüktür: çağıran ekran kalemi mağazadan nasıl aldıysa
+    öyle yollar (`product_id`/`productId`, `name`, `sku`). Kural hangi adın
+    geldiğini kendisi çözer (`deleted.py`).
+    """
+
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
+
+
+@router.post("/order-items/mark")
+async def mark_order_items(
+    body: OrderItemsBody,
+    user: CurrentUser = requires("store_products.view"),
+) -> dict[str, Any]:
+    """Silinmiş üründen gelen kalemleri kırmızı “silinmiş” ile işaretler.
+
+    Kuralın kendisi `backend/deleted.py` içinde SAF fonksiyondur ve
+    `store_products.deleted_marker` yeteneğiyle ilan edilir; rapor ve sipariş
+    ekranları kuralı registry'den alır, kopyalamaz (K3). Bu uç yalnız kuralın
+    ihtiyaç duyduğu katalog çözümünü geçitten yapar.
+    """
+    return await service().mark_order_items(body.items)
 
 
 class SkuBody(BaseModel):

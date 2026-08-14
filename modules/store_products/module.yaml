@@ -18,7 +18,16 @@ entrypoint: backend.module:register
 
 depends: [store_api]
 
-provides: []
+# Silinmiş ürün tespiti — SAF KURAL, tek yerde (backend/deleted.py).
+#
+# Aynı soruyu üç ekran soruyor: ürün geçmişi (burası), sipariş kalemleri
+# (store_orders), satış raporu (store_reports). Kural kopyalansaydı bir gün
+# ayrışır ve aynı sipariş bir ekranda "silinmiş", ötekinde normal görünürdü.
+# Modül modülü import etmez (K3): kural registry'den paylaşılır.
+provides:
+  - capability: store_products.deleted_marker
+    contract: km_sdk.contracts:DeletedProductMarker
+    description: "Sipariş kalemi silinmiş üründen mi — kırmızı “silinmiş” ibaresinin tek kuralı."
 
 consumes:
   - capability: store.api
@@ -51,6 +60,8 @@ ui:
 # `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına bağlanacak,
 # mağaza ekranları PIN istemiyor. Koruma üç katmanlı: ayrı izin anahtarı +
 # gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
+# Silmede DÖRDÜNCÜ katman var: ne silineceğini gösteren önizleme (kaç siparişte
+# geçtiği ve kaç adet satıldığı dahil) görülmeden düğme açılmaz.
 permissions:
   - key: store_products.view
     description: "Ürünler ekranını görüntüleme, rapor ve CSV alma."
@@ -62,7 +73,18 @@ permissions:
     description: "Toplu fiyat/stok/kategori/durum uygulaması (önizleme zorunlu)."
     default_roles: [admin, bbd_staff]
   - key: store_products.deactivate
-    description: "Ürünü pasifleştirme. Silme yoktur: siparişi olan ürün silinmez."
+    description: "Ürünü pasifleştirme (vitrinden kaldırma). Geri alınabilir; kayıt silinmez."
+    default_roles: [admin]
+  # SİLME PASİFLEŞTİRMEDEN AYRI ANAHTARDIR. Pasifleştirme geri alınabilir,
+  # silme alınamaz: ürün kaydı, öznitelik değerleri, görselleri ve stok
+  # satırları mağazadan gider. İkisini tek anahtarla korumak, "vitrinden
+  # kaldır" yetkisi verilen personele kataloğu silme yetkisi de vermek olurdu.
+  #
+  # Geçmiş GÜVENDE: order_items ürünün adını/SKU'sunu/fiyatını kendi satırında
+  # saklıyor ve products'a yabancı anahtar kısıtı yok — silme raporları
+  # bozmaz, kalem kırmızı "silinmiş" ile görünür.
+  - key: store_products.delete
+    description: "Ürünü katalogdan silme. GERİ ALINAMAZ; gerekçe ve önizleme zorunlu."
     default_roles: [admin]
   - key: store_products.rename_sku
     description: "SKU değiştirme. product_flat yeniden yazılır, eski vitrin bağlantıları kırılır."

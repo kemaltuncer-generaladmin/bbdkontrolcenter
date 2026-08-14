@@ -10,6 +10,7 @@ from __future__ import annotations
 from km_sdk import ModuleContext
 
 from .api.routes import bind
+from .deleted import Marker
 from .service import ProductsService
 
 #: Masaüstündeki rapor hiyerarşisinde bu modülün rafı:
@@ -32,5 +33,11 @@ def register(ctx: ModuleContext) -> None:
         subcategory=SUBCATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
     )
+    # Silinmiş ürün kuralı registry'ye konur: rapor ve sipariş ekranları aynı
+    # kararı bu nesneden alır, kopyalamaz (K3). Nesne SAF fonksiyonların
+    # yüzüdür — ağa çıkmaz, mağazaya bağlı değildir; mağaza kapalıyken bile
+    # yetenek yerinde durur ve "doğrulanamadı" cevabını verebilir (K7).
+    ctx.provide("store_products.deleted_marker", Marker())
+
     ctx.add_router(bind(service))
     ctx.log.info("ürünler hazır", printer=printer is not None)

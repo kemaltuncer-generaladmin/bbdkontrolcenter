@@ -16,7 +16,11 @@ ON TUZAK — hepsinin karşılığı bu dosyada bir fonksiyondur:
                                       `next_url_key` çakışmayı `-2`/`-3` ile aşar.
  7. sku değişikliği URL kırar       → ayrı yol, `write_body` sku'yu değiştirmez.
  8. status indeksleme ister         → `INDEX_NOTICE` metni ekranda gösterilir.
- 9. Siparişli ürün silinmez         → silme yok; yalnız `status` 0/1.
+ 9. Siparişli ürün SİLİNEBİLİR      → `order_items` adı/SKU'yu/fiyatı kendi
+                                      satırında saklıyor ve `product_id`
+                                      alanının kısıtı yok; silme geçmişi
+                                      bozmaz. Kalem `deleted.py` kuralıyla
+                                      kırmızı "silinmiş" gösterilir.
 10. Configurable fiyatı varyantta   → `write_body` o tipte fiyat göndermez.
 """
 
@@ -926,6 +930,85 @@ def expand_categories(index: dict[int, dict[str, Any]], ids: Any, *,
             "auto": item in added,
         } for item in order],
     }
+
+
+# ====================================================== tek seçenekli alanlar
+#
+# Mağazada tek kanal, tek dil, tek para birimi, tek depo ve tek vergi
+# kategorisi var. Tek seçenekli bir açılır kutu SEÇİM DEĞİLDİR: kullanıcıya
+# okuyup geçeceği bir satır, ekrana da kalabalık ekler. Alan gizlenir ve tek
+# seçenek kendiliğinden uygulanır.
+#
+# SERT KODLAMA YOK. Karar "kanal birdir" varsayımından değil, mağazadan gelen
+# SEÇENEK SAYISINDAN çıkar. İkinci kanal açıldığı gün alan kendiliğinden geri
+# gelir ve kodda tek satır değişmez.
+
+#: (alan anahtarı, ekran adı, anlık görüntüdeki parça, ürün başına yazılır mı)
+#:
+#: `writable=False` olanlar ÜRÜNÜN ALANI DEĞİLDİR: kanal ve dil her isteğe
+#: ayarın değeriyle konur (TUZAK 2), para birimi ise kanalın özelliğidir —
+#: ürün kaydında karşılığı yoktur. Bu ayrım panelde de karşılığını buluyor:
+#: yazılabilen alan >1 seçenekte gerçek bir form alanı olarak geri gelir,
+#: yazılamayan alan >1 seçenekte UYARI olarak görünür ("mağazada iki kanal
+#: var, bu ekran hepsine `default` yazıyor"). İkisini aynı saymak, olmayan bir
+#: seçim kutusu çizip kullanıcının seçtiği kanalın yok sayılması olurdu.
+CHOICE_FIELDS = (
+    ("channel", "Kanal", "channels", False),
+    ("locale", "Dil", "locales", False),
+    ("currency", "Para birimi", "currencies", False),
+    ("sourceId", "Stok deposu", "inventory_sources", True),
+    ("taxCategoryId", "Vergi kategorisi", "tax_categories", True),
+)
+
+#: Kimlikle taşınan parçalar. Kanal/dil/para birimi KODLA (`code`) gider,
+#: depo ve vergi kategorisi KİMLİKLE (`id`). Yanlış alanı göndermek Bagisto
+#: tarafında sessiz bir yok sayılmaya dönüşürdü.
+CHOICE_BY_ID = ("inventory_sources", "tax_categories")
+
+
+def choice_options(items: Any, *, by_id: bool) -> list[dict[str, Any]]:
+    """Referans satırlarını `{value, label}` seçeneklerine indirir."""
+    out: list[dict[str, Any]] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        value: Any = as_int(item.get("id")) if by_id else text(item.get("code"))
+        if not value:
+            continue
+        label = text(item.get("name")) or text(item.get("code")) or f"#{value}"
+        out.append({"value": value, "label": label})
+    return out
+
+
+def choice_fields(parts: Any) -> dict[str, dict[str, Any]]:
+    """Anlık görüntüdeki seçenek sayılarından alan tarifi üretir.
+
+    Her alan üç hâlden birindedir ve ÜÇÜ DE ayrı anlatılır:
+      · `none`   — seçenek okunamadı. Alan gizlenir ama "tek seçenek var"
+                   DENMEZ; ayardaki değer kullanılmaya devam eder.
+      · `single` — tek seçenek. Alan gizlenir, değer `auto` ile döner ve
+                   panel "kendiliğinden uygulandı" satırında gösterir.
+      · `many`   — birden çok seçenek. Alan görünür (yazılabiliyorsa) ya da
+                   uyarı çıkar (yazılamıyorsa).
+    """
+    source = parts if isinstance(parts, dict) else {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, label, part, writable in CHOICE_FIELDS:
+        options = choice_options(source.get(part), by_id=part in CHOICE_BY_ID)
+        state = "none" if not options else ("single" if len(options) == 1 else "many")
+        out[key] = {
+            "key": key,
+            "label": label,
+            "part": part,
+            "writable": writable,
+            "count": len(options),
+            "state": state,
+            # Alan YALNIZ birden çok seçenek varken ve yazılabiliyorken görünür.
+            "visible": state == "many" and writable,
+            "auto": options[0] if state == "single" else None,
+            "options": options,
+        }
+    return out
 
 
 def category_options(tree: Any, *, depth: int = 0) -> list[dict[str, Any]]:

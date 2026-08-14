@@ -123,6 +123,25 @@ class FakeApi:
         self.sources_payload: list[dict[str, Any]] = [{"id": 1, "name": "Merkez"}]
         #: Açılan ürüne verilecek sıradaki kimlik.
         self.next_product_id = 1500
+        #: Anlık görüntü parçaları. CANLIDAKİ GERÇEK: tek kanal, tek dil, tek
+        #: para birimi, tek depo, tek vergi kategorisi. Test ikinci bir kanal
+        #: eklediğinde alanın GERİ GELDİĞİ görülür — kural sayıdan çıkıyor.
+        self.snapshot_parts: dict[str, Any] = {
+            "channels": [{"id": 1, "code": "default", "name": "Varsayılan"}],
+            "locales": [{"id": 1, "code": "tr", "name": "Türkçe"}],
+            "currencies": [{"id": 1, "code": "TRY", "name": "Türk Lirası"}],
+            "inventory_sources": [{"id": 1, "code": "default", "name": "Merkez"}],
+            "tax_categories": [{"id": 1, "code": "kdv", "name": "KDV"}],
+            "attribute_families": [{"id": 2, "code": "kitap", "name": "Kitap"}],
+            "customer_groups": [{"id": 1, "code": "general", "name": "Genel"}],
+        }
+        #: Silinen ürünlerin kimlikleri — silme gerçekten oldu mu, test bakar.
+        self.deleted_ids: list[int] = []
+        #: {ürün: (siparişSayısı, satılanAdet)} — satış özeti tablosu.
+        self.bestsellers: dict[int, tuple[int, int]] = {}
+        #: Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar. Kapatınca
+        #: sahte de öyle davranır: süzgeç gönderilir, BAŞKA ürünün satırı döner.
+        self.bestseller_filter_honored = True
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail:
@@ -158,7 +177,10 @@ class FakeApi:
     async def product(self, product_id: int) -> dict[str, Any]:
         self._record("product", product_id)
         if product_id not in self.products_by_id:
-            raise RuntimeError("Kayıt bulunamadı")
+            # Geçit 404'ü `not_found` koduyla veriyor ve servis "kayıt yok" ile
+            # "okunamadı" ayrımını O KODA dayandırıyor (silinmiş ürün tespiti).
+            # Kodsuz düz bir istisna, ikisini ayırt edemeyen bir sahte üretir.
+            raise FakeStoreError("Kayıt bulunamadı", status=404, code="not_found")
         return self.products_by_id[product_id]
 
     async def product_inventories(self, product_id: int) -> dict[str, Any]:
@@ -211,8 +233,36 @@ class FakeApi:
 
     async def snapshot(self, *, refresh: bool = False) -> dict[str, Any]:
         self._record("snapshot", refresh=refresh)
-        return {"parts": {"channels": [{"code": "default", "name": "Varsayılan"}]},
-                "errors": [], "stale": False, "storedAt": ""}
+        return {"parts": dict(self.snapshot_parts), "errors": [], "stale": False,
+                "storedAt": ""}
+
+    # --------------------------------------------------------------- silme
+
+    async def delete_product(self, product_id: int, *, reason: str, actor: str = "",
+                             dry_run: bool | None = None) -> dict[str, Any]:
+        """Geçitteki `delete_product` ucunun testlik ikizi.
+
+        DİKKAT — bu metot CANLI GEÇİTTE HENÜZ YOK. Sahtede bulunması, silme
+        akışının geçit ucu eklendiği gün çalışacağını kanıtlar; ucun eksikliği
+        ayrıca `hasattr` ile test ediliyor (bkz. test_store_products_delete).
+        """
+        self._record("delete_product", product_id, reason=reason, actor=actor, dry_run=dry_run)
+        if not dry_run:
+            self.deleted_ids.append(int(product_id))
+            self.products_by_id.pop(int(product_id), None)
+        return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
+
+    async def bbd_bestsellers(self, filters: Any = None, *, page: int = 1,
+                              per_page: int | None = None) -> dict[str, Any]:
+        self._record("bbd_bestsellers", filters, page=page, per_page=per_page)
+        wanted = (filters or {}).get("product_id")
+        rows = [{"productId": key, "orderCount": counts[0], "soldQty": counts[1],
+                 "lastOrderedAt": "2026-08-01T10:00:00"}
+                for key, counts in sorted(self.bestsellers.items())]
+        if wanted is None or not self.bestseller_filter_honored:
+            return {"items": rows[:1], "meta": {"total": len(rows)}}
+        hit = [row for row in rows if row["productId"] == int(wanted)]
+        return {"items": hit, "meta": {"total": len(hit)}}
 
     async def configuration(self, slug: str, *, channel: str = "",
                             locale: str = "") -> dict[str, Any]:
