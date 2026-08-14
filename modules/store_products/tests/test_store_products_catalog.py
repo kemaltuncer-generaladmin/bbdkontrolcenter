@@ -336,3 +336,42 @@ def test_kategori_agaci_girintili_duz_listeye_iner() -> None:
     assert [item["id"] for item in options] == [1, 2, 3]
     assert options[2]["label"] == "— — TYT"
     assert options[2]["depth"] == 2
+
+
+# ============================ `attributes` DİZİSİ — canlının gerçek biçimi
+
+def test_oznitelik_attributes_dizisinden_okunur() -> None:
+    """BULUNAN HATA (2026-08-15). `attribute()` düz sözlüğe, `values.*`
+    yuvalarına ve `additional`'a bakıyordu ama canlının ürün DETAYINDA
+    kullandığı `attributes` dizisine bakmıyordu.
+
+    Sonuç: `page_count` hiç okunamıyor, ekran "sayfa sayısı yok" deyip desiyi
+    varsayılana (1) düşürüyordu — oysa katalogda 40 ürünün 37'sinde doluydu.
+    Kargo ücreti desiden çıktığı için sessizce yanlış fiyat demekti.
+    """
+    raw = {
+        "id": 183,
+        "attributes": [
+            {"code": "sku", "value": "BBD2026SKU0176"},
+            {"code": "page_count", "value": "400"},
+            {"code": "isbn", "value": "9786057269713"},
+        ],
+    }
+    assert catalog.attribute(raw, "page_count") == "400"
+    assert catalog.attribute(raw, "isbn") == "9786057269713"
+
+
+def test_duz_alan_attributes_dizisine_gore_ONCELIKLI() -> None:
+    # Düz alan daha spesifiktir; dizi bir yedek kaynaktır.
+    raw = {"page_count": "128", "attributes": [{"code": "page_count", "value": "400"}]}
+    assert catalog.attribute(raw, "page_count") == "128"
+
+
+def test_attributes_dizisi_bozuksa_patlatmaz() -> None:
+    for bozuk in ([None, "metin", 5], [{"deger": 1}], "dizi degil", None):
+        assert catalog.attribute({"attributes": bozuk}, "page_count") is None
+
+
+def test_attributeCode_yazimi_da_taninir() -> None:
+    raw = {"attributes": [{"attributeCode": "page_count", "value": "256"}]}
+    assert catalog.attribute(raw, "page_count") == "256"

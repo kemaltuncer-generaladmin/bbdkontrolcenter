@@ -353,6 +353,28 @@ def attribute(raw: Any, *names: str) -> Any:
     if isinstance(raw.get("additional"), dict):
         sources.append(raw["additional"])
 
+    # ÜÇÜNCÜ BİÇİM: `attributes` DİZİSİ. Canlıda ürün DETAYI öznitelikleri
+    # burada veriyor — `[{"code": "page_count", "value": "400"}, …]`. Bu biçim
+    # eklenene kadar `page_count` HİÇ okunamıyordu: ekran "sayfa sayısı yok"
+    # deyip desiyi varsayılana (1) düşürüyordu, oysa katalogda 40 ürünün
+    # 37'sinde sayfa sayısı doluydu. Kargo ücreti desiden çıktığı için bu
+    # sessizce yanlış fiyat demekti.
+    #
+    # Liste ucu bu diziyi HİÇ göndermez; yalnız detayda gelir. Aynı tuzağa
+    # bu oturumda iki kez düşüldü — "liste boş dönüyor" ile "veri yok" ayrı
+    # şeyler.
+    rows = raw.get("attributes")
+    if isinstance(rows, list):
+        flat: dict[str, Any] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            code = row.get("code") or row.get("attributeCode")
+            if code:
+                flat[str(code)] = row.get("value")
+        if flat:
+            sources.append(flat)
+
     for name in names:
         for source in sources:
             if name in source and source[name] not in (None, ""):
