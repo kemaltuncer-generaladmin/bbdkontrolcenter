@@ -517,3 +517,20 @@ async def test_denetim_izi_siparise_gore_suzulur() -> None:
     assert {row["action"] for row in result["items"]} == {"create_refund", "notify_customer"}
     assert all(row["reason"] == GEREKCE for row in result["items"])
     assert len(store.audit) == len(result["items"])
+
+
+# ================================= POS iadesi: düğme TIKLANMADAN ÖNCE kapanır
+
+async def test_pos_iadesinin_kapali_oldugu_kart_yanitinda_ilan_edilir() -> None:
+    """Düğme her tıklamada aynı cümleyi tekrar etmesin diye önden kapanır.
+
+    Geçit bu ucu BİLEREK yazmadı (para hareketi) ve istek hiç çıkmıyor. Ekran
+    bunu ancak tıklandıktan sonra öğreniyordu; artık kart yanıtında yazıyor.
+    POS LİSTESİ KALDI: hangi karta ne çekildiği gerçek bir bilgi ve iadeyi
+    panelden yapacak kişinin ihtiyacı tam olarak budur.
+    """
+    service, _, _ = _service()
+    card = await service.order_card(12)
+    assert card["payments"]["refundBlocked"] is True
+    assert "geri alınamaz" in card["payments"]["refundReason"]
+    assert service.features()["posRefund"]["available"] is False

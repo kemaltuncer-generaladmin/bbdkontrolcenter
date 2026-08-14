@@ -34,8 +34,8 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, clip, confirmWithReason, csvBlob, h, loadStyles, money, moneyInput, num,
-  parseMoney, percent, toaster, todayIso,
+  blockedButton, button, clip, confirmWithReason, csvBlob, h, loadStyles, money, moneyInput,
+  num, parseMoney, percent, toaster, todayIso,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { applyFilters, filterBar } from '../../ui-kit/filters.js';
@@ -814,40 +814,26 @@ function posSection(row, payload) {
     },
   });
 
-  const actions = h('div', 'rf-actions');
-  actions.append(labelled('İade tutarı', amount), button('POS iadesi yap', {
-    variant: 'danger',
-    onClick: async () => {
-      const value = parseMoney(amount.value);
-      if (value === null || value <= 0) { toast('Tutarı 250,00 gibi yazın.', 'bad'); return; }
-      if (value > chosen.refundable) {
-        toast(`Bu işlemden en çok ${money(chosen.refundable)} iade edilebilir.`, 'bad');
-        return;
-      }
-      const reason = await askReason({
-        title: 'POS iadesi',
-        description: `${money(value)} müşterinin kartına geri gönderilecek `
-          + `(${chosen.bank || 'POS'} · ${chosen.card || 'kart'}). Banka işlemi geri alınamaz.`,
-        confirmLabel: 'Parayı karta iade et',
-      });
-      if (!reason) return;
-      await withBusy('POS iadesi yapılıyor…', async () => {
-        const done = await call(`${BASE}/pos-refund`, {
-          method: 'POST',
-          body: { attemptId: chosen.id, amount: value, orderId: row.orderId, reason,
-            dryRun: false },
-        });
-        const parts = [`${money(done.amount)} gönderildi`];
-        if (done.bankStatus) parts.push(`banka: ${done.bankStatus}`);
-        if (done.reference) parts.push(`ref ${done.reference}`);
-        toast(parts.join(' · '), 'good');
-        if (done.bankMessage) toast(done.bankMessage, 'warn');
-        refresh();
-      });
-    },
-  }));
+  // PARAYI KARTA GERİ GÖNDERME ADIMI BU EKRANDAN YAPILMIYOR.
+  //
+  // Düğme daha önce tıklanınca geçitten gelen "bu uç bilerek yok" metnini
+  // gösteriyordu — yani her tıklama aynı cümleyi tekrar ediyordu. Şimdi
+  // kapalı çiziliyor ve nedeni yanında duruyor. Tutar kutusu da kapalı: dolu
+  // bir kutu, işin buradan yapılabileceğini söyler.
+  //
+  // LİSTE KALDI. Hangi karta ne çekildiği gerçek bir bilgidir ve iadeyi
+  // panelden yapacak kişinin ihtiyacı olan tam da budur.
+  const blockedReason = pos.refundReason
+    || 'Sanal POS iadesi Kontrol Merkezi\'den yapılmıyor: bu adım parayı müşterinin '
+      + 'kartına geri gönderir ve geri alınamaz.';
+  amount.disabled = true;
+  amount.title = blockedReason;
 
-  body.append(table.node, actions, hintBox(
+  const actions = h('div', 'rf-actions');
+  actions.append(labelled('İade tutarı', amount),
+    blockedButton('POS iadesi yap', blockedReason, { variant: 'danger' }));
+
+  body.append(table.node, actions, alertBox(blockedReason, 'warn'), hintBox(
     'POS iadesi kredi notundan AYRIDIR: biri muhasebe kaydı, diğeri banka hareketi. '
     + 'Tek düğmede birleştirmek, banka reddettiğinde "iade edildi" yazan bir kayıt bırakırdı.'));
   return card('POS iadesi', body);

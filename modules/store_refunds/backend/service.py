@@ -359,6 +359,11 @@ class RefundsService:
                 "items": [self._payment_row(item)
                           for item in ((payments or {}).get("items") or [])
                           if isinstance(item, dict)],
+                # POS İADESİ DÜĞMESİ TIKLANMADAN ÖNCE KAPANIR. Liste okunuyor
+                # (hangi karta ne çekildiği gerçek bir bilgi), yalnız parayı
+                # geri gönderme adımı buradan yapılmıyor.
+                "refundBlocked": True,
+                "refundReason": self.POS_REFUND_REASON,
             },
             "shipments": {
                 "available": shipments is not None,
@@ -558,6 +563,38 @@ class RefundsService:
                 "notice": "Kredi notu oluştu. Parayı karta geri vermek AYRI bir adımdır: "
                           "POS iadesini aşağıdaki bölümden başlatın."}
 
+    #: SANAL POS İADESİ BU EKRANDAN YAPILMAZ — geçit ucu bilerek yazmadı.
+    #:
+    #: Gerekçe tek cümle: para hareketi. Kredi notu bir muhasebe kaydıdır ve
+    #: geri alınabilir; kartın parasını geri göndermek geri alınamaz ve
+    #: bankanın kendi mutabakatına girer.
+    POS_REFUND_REASON = (
+        "Sanal POS iadesi Kontrol Merkezi'nden yapılmıyor: bu adım parayı MÜŞTERİNİN "
+        "KARTINA geri gönderir ve geri alınamaz. Kredi notu (muhasebe kaydı) buradan "
+        "kesilir; paranın kartа dönüşü Bagisto panelinden ya da sanal POS ekranından "
+        "başlatılır. Ekranda kesilen kredi notu bu adımı BEKLER, kendiliğinden "
+        "tamamlamaz."
+    )
+
+    @staticmethod
+    def _by_design(failure: Exception) -> bool:
+        """Geçit "bu uç bilerek yok" mu dedi — yoksa gerçek bir arıza mı?
+
+        İkisi ayrı cevaplardır: birincisinde düğme kapanır, ikincisinde
+        "tekrar dene" anlamlıdır.
+        """
+        return getattr(failure, "code", "") == "bbd_endpoint_by_design"
+
+    def features(self) -> dict[str, Any]:
+        """Hangi düğme açılabilir — kapalı olanın NEDENİ yazılıdır."""
+        return {
+            "posRefund": {"available": False, "reason": self.POS_REFUND_REASON},
+            "printer": {"available": self._printer is not None,
+                        "reason": "" if self._printer is not None else
+                                  "Yazıcı yeteneği bu kurulumda yok; PDF üretilir, "
+                                  "basılmaz."},
+        }
+
     async def pos_refund(self, *, attempt_id: int, amount: int, order_id: int = 0,
                          reason: str, actor: str, dry_run: bool = True) -> dict[str, Any]:
         """Sanal POS iadesi — parayı karta geri verir.
@@ -585,7 +622,12 @@ class RefundsService:
         except Exception as failure:  # noqa: BLE001 — K7
             await self._record(order_id=order_id, action="pos_refund", reason=reason, actor=actor,
                                result="hata", detail={"error": str(failure)})
+            # Geçit bu ucu BİLEREK yazmadı ve istek hiç çıkmaz; hata metni onu
+            # zaten söylüyor. `blocked` bayrağı ekranın düğmeyi bir daha
+            # açmamasını sağlar — nedeni okunup kapatılmış bir düğme, her
+            # tıklamada aynı cümleyi gösteren bir düğmeden iyidir.
             return {"ok": False, "error": self._fail(failure),
+                    "blocked": self._by_design(failure),
                     "missing": self._missing(failure)}
 
         await self._record(order_id=order_id, action="pos_refund", reason=reason, actor=actor,

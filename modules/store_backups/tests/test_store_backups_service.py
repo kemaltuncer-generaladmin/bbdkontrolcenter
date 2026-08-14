@@ -206,8 +206,9 @@ async def test_durum_bandi_ve_disk_listeyle_birlikte_doner() -> None:
 async def test_kisa_gerekce_backendde_de_reddedilir() -> None:
     # K9: arayüzde gizlemek yetkilendirme değildir; istemci şemayı atlatabilir.
     service, api, _, _ = _service()
+    # `restore` LİSTEDE YOK: o iş bu geçitten hiç yapılmıyor ve gerekçenin
+    # uzunluğuna bakılmadan reddediliyor (aşağıdaki geri yükleme testleri).
     for result in (await service.create(scope=["database"], reason="ok", actor="Ali"),
-                   await service.restore(YEDEK, reason="ok", actor="Ali"),
                    await service.delete(YEDEK, reason="ok", actor="Ali")):
         assert result["ok"] is False
         assert "Gerekçe" in result["error"]
@@ -304,66 +305,48 @@ async def test_bozuk_ad_dogrulamaya_bile_gitmez() -> None:
 
 # ============================================================ GERİ YÜKLEME
 
-async def test_geri_yuklemeden_once_guvenlik_yedegi_alinir() -> None:
-    # SIRA ÖNEMLİ: güvenlik yedeği ÖNCE. Sonra alınsaydı geri yüklenmiş veriyi
-    # yedeklemiş olurduk ve dönüş yolu kapanırdı.
-    service, api, _, bus = _service()
-    result = await service.restore(YEDEK, reason="Hatalı toplu güncelleme geri alınıyor",
-                                   actor="Ali", dry_run=False)
-    assert result["ok"] is True
-    assert result["safetyBackup"]["taken"] is True
-    order = [name for name, _, _ in api.calls]
-    assert order.index("bbd_create_backup") < order.index("bbd_restore_backup")
-    assert [name for name, _ in bus.events] == ["store.backup.created", "store.backup.restored"]
+async def test_geri_yukleme_istek_cikmadan_reddedilir_ve_nedenini_soyler() -> None:
+    """Geçit bu ucu BİLEREK yazmadı: geri yükleme canlı veriyi ezer.
 
-
-async def test_guvenlik_yedegi_alinamazsa_geri_yukleme_hic_baslamaz() -> None:
-    # Bu ekranın üretmemesi gereken tek sonuç: "geri yükledik ama eski hâle
-    # dönemiyoruz".
-    service, api, store, _ = _service()
-    api.fail.add("bbd_create_backup")
+    Yedek almak, doğrulamak ve indirmek geri alınabilir işlerdir ve bu ekrandan
+    yapılır; yedeği geri yüklemek 1.422 ürünü, siparişleri ve müşteri
+    kayıtlarını yedek anındaki hâline döndürür.
+    """
+    service, api, store, bus = _service()
     result = await service.restore(YEDEK, reason="Hatalı toplu güncelleme geri alınıyor",
                                    actor="Ali", dry_run=False)
     assert result["ok"] is False
-    assert "BAŞLATILMADI" in result["error"]
-    assert api.used("bbd_restore_backup") == []
-    assert any(row["result"] == "iptal" for row in store.audit)
+    assert result["blocked"] is True
+    assert result["feature"] == "restore"
+    assert "CANLI VERİYİ EZER" in result["error"]
+    assert api.calls == []
+    assert bus.events == []
+    # Ne yapılmak istendiği yerel izde KALIR.
+    assert [row["result"] for row in store.audit if row["action"] == "restore"] == ["uc_yok"]
 
 
-async def test_guvenlik_yedegi_kapatilabilir_ama_varsayilan_aciktir() -> None:
-    service, api, _, _ = _service(safety_backup_before_restore=False)
-    await service.restore(YEDEK, reason="Deneme ortamında geri yükleme", actor="Ali",
-                          dry_run=False)
-    assert api.used("bbd_create_backup") == []
-    assert api.used("bbd_restore_backup")[0]["dry_run"] is False
+async def test_geri_yukleme_denemesi_bosuna_guvenlik_yedegi_ALMAZ() -> None:
+    """Eskiden her deneme gerçek bir tam yedek üretiyordu.
 
-
-async def test_kuru_provada_guvenlik_yedegi_alinmaz() -> None:
+    Sıra doğruydu (önce güvenlik yedeği, sonra geri yükleme) ama zincirin
+    sonundaki uç zaten yoktu: yapılmayacak bir iş için disk doluyor, mağaza
+    meşgul ediliyor ve kullanıcı sonunda ham bir hata metni görüyordu.
+    """
     service, api, _, _ = _service()
-    result = await service.restore(YEDEK, reason="Önce kuru prova yapılıyor bak",
-                                   actor="Ali", dry_run=True)
-    assert result["ok"] is True
+    await service.restore(YEDEK, reason="Hatalı toplu güncelleme geri alınıyor",
+                          actor="Ali", dry_run=False)
     assert api.used("bbd_create_backup") == []
-    assert result["safetyBackup"]["skipped"]
-
-
-async def test_bozuk_yedek_geri_yuklenmez() -> None:
-    service, api, _, _ = _service(FakeApi([_item(verify_state="corrupt")]))
-    result = await service.restore(YEDEK, reason="Bozuk yedek denenmek isteniyor",
-                                   actor="Ali", dry_run=False)
-    assert result["ok"] is False
-    assert "sağlama toplamı tutmuyor" in result["error"]
     assert api.used("bbd_restore_backup") == []
 
 
-async def test_envanterde_olmayan_yedek_geri_yuklenmez() -> None:
-    service, api, _, _ = _service()
-    result = await service.restore("bbd-2020-01-01.tar.gz",
-                                   reason="Olmayan yedek denenmek isteniyor", actor="Ali",
-                                   dry_run=False)
-    assert result["ok"] is False
-    assert "bulunamadı" in result["error"]
-    assert api.used("bbd_restore_backup") == []
+async def test_kapali_isin_nedeni_ilan_edilir() -> None:
+    """Ekran düğmeyi TIKLANMADAN ÖNCE kapatabilmeli; nedeni yazılı olmalı."""
+    service, _, _, _ = _service()
+    features = service.features()
+    assert features["restore"]["available"] is False
+    assert len(features["restore"]["reason"]) > 40
+    for key in ("create", "verify", "download"):
+        assert features[key]["available"] is True
 
 
 # ================================================================== silme

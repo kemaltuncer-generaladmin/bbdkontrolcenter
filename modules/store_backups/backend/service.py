@@ -248,6 +248,7 @@ class BackupsService:
                 "summary": inventory.unreadable_summary(inventory.endpoint_text(state)),
                 "disk": disk, "diskNote": inventory.disk_sentence(disk),
                 "policy": self._policy(state=state),
+                "features": self.features(),
             }
 
         rows = inventory.sort_rows(
@@ -262,6 +263,7 @@ class BackupsService:
             "disk": disk,
             "diskNote": inventory.disk_sentence(disk),
             "policy": self._policy(),
+            "features": self.features(),
         }
 
     async def _rows(self) -> tuple[list[dict[str, Any]], str]:
@@ -418,75 +420,46 @@ class BackupsService:
 
     # =========================================================== GERİ YÜKLE
 
+    #: GERİ YÜKLEME BU EKRANDAN BAŞLATILMIYOR — geçit ucu bilerek yazmadı.
+    #:
+    #: Gerekçe tek cümle: canlı veriyi ezer. Yedek almak, doğrulamak ve
+    #: indirmek geri alınabilir işlerdir ve buradan yapılır; yedeği geri
+    #: yüklemek 1.422 ürünü, siparişleri ve müşteri kayıtlarını yedek anındaki
+    #: hâline döndürür ve aradaki her değişikliği siler.
+    RESTORE_REASON = (
+        "Geri yükleme Kontrol Merkezi'nden başlatılmıyor: CANLI VERİYİ EZER — yedek "
+        "anından bu yana yapılan sipariş, ürün ve müşteri değişiklikleri kaybolur. "
+        "İşlem sunucuda, hazırlanmış geri yükleme yordamıyla yapılır. Yedek almak, "
+        "doğrulamak ve indirmek bu ekrandan yapılır ve hepsi geri alınabilir."
+    )
+
+    def features(self) -> dict[str, Any]:
+        """Hangi düğme açılabilir — kapalı olanın NEDENİ yazılıdır."""
+        return {
+            "restore": {"available": False, "reason": self.RESTORE_REASON},
+            "create": {"available": True, "reason": ""},
+            "verify": {"available": True, "reason": ""},
+            "download": {"available": True, "reason": ""},
+        }
+
     async def restore(self, name: str, *, reason: str, actor: str,
                       dry_run: bool = True) -> dict[str, Any]:
-        """EN YIKICI İŞLEM. Mevcut veri yedekteki hâliyle değişir.
+        """EN YIKICI İŞLEM — ve bu geçitten YAPILMIYOR.
 
-        SIRA ÖNEMLİ: önce güvenlik yedeği, sonra geri yükleme. Güvenlik yedeği
-        alınamazsa geri yükleme HİÇ BAŞLAMAZ — "geri yükledik ama eski hâle
-        dönemiyoruz" durumu bu ekranın üretmemesi gereken tek sonuçtur.
-        Mağaza kendi tarafında da otomatik güvenlik yedeği alıyor; ikisi
-        birbirinin yerine geçmez, çünkü onun alındığını buradan göremiyoruz.
+        UÇ KALDIRILMADI (K9): arayüzde düğmeyi kapatmak yetkilendirme değildir
+        ve şemayı atlatan bir istemci de aynı cevabı almalı.
+
+        GÜVENLİK YEDEĞİ ARTIK ALINMIYOR — ve bu bilinçli. Eskiden bu metot
+        önce tam bir güvenlik yedeği alıyor, sonra geri yükleme isteğini
+        gönderiyor ve geçitten "bu uç bilerek yok" cevabını alıyordu. Yani
+        yapılmayacak bir iş için her seferinde gerçek bir yedek üretiliyordu:
+        disk doluyor, mağaza meşgul ediliyor, kullanıcı ham bir hata metni
+        görüyordu.
         """
-        problem = self._guard(reason)
-        if problem:
-            return {"ok": False, "error": problem}
-        clean = inventory.safe_name(name)
-        if not clean:
-            return {"ok": False, "error": "Yedek adı kabul edilmedi (beklenmeyen karakter)."}
-
-        rows, error = await self._rows()
-        if error:
-            return {"ok": False, "error": error}
-        row = inventory.find_row(rows, clean)
-        if row is None:
-            return {"ok": False, "error": "Yedek envanterde bulunamadı."}
-        if row["verifyState"] == inventory.VERIFY_BAD:
-            return {"ok": False, "error": ("Bu yedeğin sağlama toplamı tutmuyor; bozuk yedek "
-                                           "geri yüklenmez. Önce başka bir yedek doğrulayın.")}
-
-        safety: dict[str, Any] = {"requested": self._safety_backup, "taken": False, "name": "",
-                                  "error": "", "skipped": ""}
-        if self._safety_backup and not dry_run:
-            taken = await self.create(
-                scope=list(inventory.SCOPES),
-                note=f"Geri yükleme öncesi otomatik güvenlik yedeği ({clean})",
-                reason=f"Geri yükleme öncesi güvenlik yedeği: {clean} yüklenecek.",
-                actor=actor, dry_run=False)
-            safety["taken"] = bool(taken.get("ok"))
-            safety["name"] = taken.get("name", "")
-            safety["error"] = taken.get("error", "")
-            if not taken.get("ok"):
-                await self._record(name=clean, action="restore", reason=reason, actor=actor,
-                                   result="iptal", detail={"safety": safety})
-                return {"ok": False, "safetyBackup": safety, "error": (
-                    "Geri yükleme BAŞLATILMADI: güvenlik yedeği alınamadı — "
-                    f"{taken.get('error') or 'bilinmeyen hata'}. Mevcut veriyi geri "
-                    "dönülemez biçimde değiştirmemek için işlem durduruldu.")}
-        elif dry_run:
-            safety["skipped"] = "Kuru provada güvenlik yedeği alınmaz."
-
-        await self._record(name=clean, action="restore", reason=reason, actor=actor,
-                           result="denendi", detail={"safety": safety, "dryRun": dry_run})
-        try:
-            result = await self._api.bbd_restore_backup(clean, reason=reason, actor=actor,
-                                                        dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(name=clean, action="restore", reason=reason, actor=actor,
-                               result="hata", detail={"error": str(failure), "safety": safety})
-            return {"ok": False, "safetyBackup": safety, "error": self._fail(failure)}
-
-        result = result if isinstance(result, dict) else {}
-        await self._record(name=clean, action="restore", reason=reason, actor=actor,
-                           result="dry_run" if dry_run else "ok", detail={"safety": safety})
-        if not dry_run:
-            await self._announce("store.backup.restored",
-                                 {"name": clean, "actor": actor, "safetyBackup": safety})
-        return {"ok": True, "error": "", "name": clean, "safetyBackup": safety,
-                "dryRun": bool(result.get("dryRun", dry_run)),
-                "sent": bool(result.get("sent", not dry_run)),
-                "notice": ("Geri yükleme mağaza tarafında sürüyor olabilir; vitrin ve arama "
-                           "dizini birkaç dakika tutarsız görünebilir.")}
+        await self._record(name=inventory.safe_name(name), action="restore", reason=reason,
+                           actor=actor, result="uc_yok", detail={"dryRun": dry_run})
+        return {"ok": False, "blocked": True, "feature": "restore",
+                "error": self.RESTORE_REASON}
 
     # ================================================================ silme
 

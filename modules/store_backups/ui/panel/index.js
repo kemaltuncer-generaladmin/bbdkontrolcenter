@@ -30,8 +30,8 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  ago, bytes as sizeText, button, clip, confirmSimple, confirmWithReason, copyText, csvBlob,
-  h, loadStyles, num, percent, stampIso, toaster,
+  ago, blockedButton, bytes as sizeText, button, clip, confirmSimple, confirmWithReason,
+  copyText, csvBlob, h, loadStyles, num, percent, stampIso, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { applyFilters, filterBar } from '../../ui-kit/filters.js';
@@ -64,6 +64,7 @@ const EMPTY_STATE = {
   policy: { scopes: [], defaultScope: [], deleteAvailable: false, deleteNote: '',
     createAvailable: true, endpointPending: false, endpointState: 'live',
     endpointNote: '', warning: '' },
+  features: {},
 };
 
 let api = null;
@@ -167,6 +168,9 @@ async function refresh() {
     disk: payload.disk || EMPTY_STATE.disk,
     diskNote: payload.diskNote || '',
     policy: payload.policy || state.policy,
+    // Kapalı işlerin nedeni SUNUCUDAN gelir; iki tarafta iki ayrı cümle
+    // tutmak, biri değiştiğinde ötekinin sessizce eskimesi demektir.
+    features: payload.features || state.features,
     loaded: true,
   };
   renderAll();
@@ -313,12 +317,14 @@ function actionCell(row) {
     title: unsafe ? UNSAFE_NOTE : 'Yedeği bu makineye, rapor klasörüne indirir',
     onClick: (event) => { event.stopPropagation(); downloadBackup(row); },
   }));
-  box.append(button('Geri yükle', {
-    variant: 'danger',
-    disabled: unsafe,
-    title: unsafe ? UNSAFE_NOTE : 'MEVCUT VERİYİ DEĞİŞTİRİR',
-    onClick: (event) => { event.stopPropagation(); restoreBackup(row); },
-  }));
+  // GERİ YÜKLEME BU EKRANDAN BAŞLATILMIYOR — canlı veriyi ezer.
+  //
+  // Düğme daha önce iki onay kapısından geçiriyor, gerçek bir güvenlik yedeği
+  // aldırıyor ve SONRA geçitten "bu uç bilerek yok" cevabını alıyordu: yani
+  // yapılmayacak bir iş için disk doluyor, mağaza meşgul ediliyor ve kullanıcı
+  // sonunda ham bir hata metni görüyordu. Şimdi kapalı çiziliyor ve nedeni
+  // hem düğmede hem uyarı bandında yazıyor.
+  box.append(blockedButton('Geri yükle', restoreReason(), { variant: 'danger' }));
   // Silme ucu yayında değilse düğme KAPALI ve nedeni ipucunda: basınca
   // sessizce patlayan bir düğme, olmayan düğmeden kötüdür.
   box.append(button('Sil', {
@@ -586,71 +592,16 @@ async function downloadBackup(row) {
   });
 }
 
-async function restoreBackup(row) {
-  if (row.verifyState === 'bad') {
-    toast('Bu yedeğin sağlama toplamı tutmuyor; geri yüklenmez.', 'bad');
-    return;
-  }
-  // BİRİNCİ KAPI: ne olacağını anlatır. Gerekçe kutusunun içine sığmayan
-  // uyarıyı oraya sıkıştırmak, okunmadan onaylanmasını sağlardı.
-  const understood = await confirmSimple(nodes.root, {
-    title: 'Geri yükleme — mevcut veri değişecek',
-    description: `${row.name} (${stampIso(row.createdAt)} · ${sizeText(row.bytes)} · `
-      + `${row.scopeLabel}) mağazaya geri yüklenecek. Bu yedekten SONRA girilen siparişler, `
-      + 'ürün değişiklikleri ve müşteri kayıtları bu kapsamda kaybolur. Geri yüklemeden önce '
-      + 'otomatik güvenlik yedeği alınır; alınamazsa işlem hiç başlamaz.',
-    confirmLabel: 'Anladım, devam et',
-    danger: true,
-  });
-  if (!understood) return;
-
-  if (row.verifyState !== 'ok') {
-    const anyway = await confirmSimple(nodes.root, {
-      title: 'Bu yedek hiç doğrulanmadı',
-      description: 'Sağlama toplamı denetlenmemiş bir yedeği geri yüklemek, bozuk bir '
-        + 'dosyayla canlı veriyi değiştirme riskidir. Önce "Doğrula" düğmesini kullanmanız '
-        + 'önerilir.',
-      confirmLabel: 'Yine de devam et',
-      danger: true,
-    });
-    if (!anyway) return;
-  }
-
-  // İKİNCİ KAPI: gerekçe. Backend'de de doğrulanır (K9).
-  const reason = await askReason({
-    title: 'Geri yüklemeyi onayla',
-    description: `${row.name} geri yüklenecek. Gerekçe denetim kaydına yazılır ve mağazaya `
-      + 'başlıkla gider.',
-    confirmLabel: 'GERİ YÜKLE',
-  });
-  if (!reason) return;
-
-  const bar = nodes.progress;
-  await withBusy('Geri yükleniyor…', async () => {
-    // Aynı kural: çubuk `withBusy` içinde açılır, yoksa reddedilen bir istek
-    // ekranda "Güvenlik yedeği alınıyor…" diye asılı kalırdı — bu ekranda
-    // söylenebilecek en yanlış cümlelerden biri.
-    bar.node.hidden = false;
-    bar.percent(10, 'Güvenlik yedeği alınıyor…');
-    const result = await call(`${BASE}/backups/restore`, {
-      method: 'POST', body: { name: row.name, reason, dryRun: false },
-    });
-    const safety = result.safetyBackup || {};
-    if (safety.taken) toast(`Güvenlik yedeği alındı: ${safety.name || 'adsız'}`, 'good');
-    // `dryRun: false` gönderdik ama geçit acil frende ya da kuru prova
-    // varsayılanındaysa yanıt `dryRun: true` döner. "Uygulandı" demek, hiçbir
-    // şey olmamışken veriyi geri yüklediğimizi söylemek olurdu — bu ekranda
-    // yapılabilecek en pahalı yalan.
-    if (result.dryRun) {
-      bar.done('Kuru prova — istek gönderilmedi');
-      toast('KURU PROVA: geri yükleme UYGULANMADI, mağaza verisi değişmedi.', 'warn');
-    } else {
-      bar.done('Geri yükleme isteği tamamlandı');
-      toast('Geri yükleme uygulandı.', 'good');
-      if (result.notice) toast(result.notice, 'warn');
-    }
-    await refresh();
-  });
+/**
+ * Geri yüklemenin neden kapalı olduğunu söyleyen cümle.
+ *
+ * Sunucu söylüyorsa ONUN cümlesi kullanılır; iki tarafta iki ayrı gerekçe
+ * yazmak, biri değiştiğinde ötekinin sessizce eskimesi demektir.
+ */
+function restoreReason() {
+  return state.features?.restore?.reason
+    || 'Geri yükleme Kontrol Merkezi\'nden başlatılmıyor: CANLI VERİYİ EZER. İşlem '
+      + 'sunucuda, hazırlanmış geri yükleme yordamıyla yapılır.';
 }
 
 async function deleteBackup(row) {
@@ -742,7 +693,8 @@ export function mount(root, ctx) {
   // cümlelik özeti odur ve her açılışta yeniden okunmalıdır.
   const warning = h('div', 'bu-warning');
   warning.append(h('b', undefined, 'Canlı mağaza verisi.'),
-    h('span', undefined, ' Geri yükleme mevcut veriyi değiştirir.'));
+    h('span', undefined, ' Yedek almak, doğrulamak ve indirmek buradan yapılır; '
+      + 'GERİ YÜKLEME yapılmaz — o adım canlı veriyi ezer ve sunucuda yürütülür.'));
 
   const tabs = tabBar([
     { key: 'list', label: 'Yedekler' },
