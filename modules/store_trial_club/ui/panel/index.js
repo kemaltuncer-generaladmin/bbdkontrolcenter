@@ -27,7 +27,8 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, clip, confirmWithReason, csvBlob, h, loadStyles, money, num, toaster,
+  blockedButton, button, clip, confirmWithReason, csvBlob, h, loadStyles, money, num,
+  toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { applyFilters, filterBar } from '../../ui-kit/filters.js';
@@ -358,7 +359,9 @@ function paintExams(host) {
     onChange: () => refreshExams(),
     actions: [
       button('Yenile', { onClick: () => { refreshExams(); loadOverview(); } }),
-      button('Yeni deneme', { variant: 'primary', onClick: () => openExamForm(null) }),
+      // YENİ DENEME AÇILAMAZ: mağazada kulüp TEK bir üyelik ürünü ve yazma
+      // ucu hangi fiille çağrılırsa çağrılsın aynı ürünü günceller.
+      blockedButton('Yeni deneme', feature('newExam').reason, { variant: 'primary' }),
     ],
   });
 
@@ -398,7 +401,7 @@ function renderExamTable() {
         text: `${num(state.exams.length)} deneme yüklendi. Süzgeçleri gevşetin ya da yeni bir `
           + 'deneme açın.',
         actions: [button('Filtreyi temizle', { onClick: () => nodes.filters.reset() }),
-          button('Yeni deneme', { variant: 'primary', onClick: () => openExamForm(null) })],
+          blockedButton('Yeni deneme', feature('newExam').reason, { variant: 'primary' })],
       })
       : emptyState({
         title: 'Mağazaya ulaşılamadı',
@@ -457,19 +460,36 @@ function openExam(row) {
   paint('general');
 }
 
-function examFields() {
+/**
+ * Künyenin YAZILABİLİR alanları.
+ *
+ * Deneme Kulübü bu mağazada bir TABLO SATIRI DEĞİL, sabit SKU'lu TEK BİR sanal
+ * üründür; künyesi o ürünün fiyatı ile durumudur. "Deneme adı", "sınav
+ * tarihi", "yer", "kontenjan" alanlarının mağazada karşılığı yok ve
+ * gönderilirlerse mağaza isteğin TAMAMINI reddediyor — yani ücret de
+ * yazılmıyor.
+ *
+ * Bu yüzden o alanlar SALT OKUNUR (`static`) çizilir: değer görünmeye devam
+ * eder (listeden geliyor), ama kullanıcıdan değiştirmesi istenmez.
+ */
+function examFields({ readOnlyExtras = true } = {}) {
+  const closed = (key, label, feature) => ({
+    key, label, type: 'static',
+    hint: readOnlyExtras ? feature : '',
+  });
   return [
-    { key: 'name', label: 'Deneme adı', type: 'text', required: true, maxLength: 180, wide: true },
-    { key: 'examDate', label: 'Sınav tarihi', type: 'date', required: true },
-    { key: 'examTime', label: 'Saat', type: 'text', maxLength: 5, placeholder: '10:00' },
-    { key: 'grade', label: 'Sınıf / seviye', type: 'text', maxLength: 64 },
-    { key: 'venue', label: 'Yer', type: 'text', maxLength: 180 },
-    { key: 'capacity', label: 'Kontenjan', type: 'number', min: 0, max: 100000,
-      hint: '0 = sınırsız. Kayıtlı sayısının altına çekilemez.' },
-    { key: 'feeKurus', label: 'Ücret', type: 'money',
-      hint: 'Boş bırakılırsa ücret değiştirilmez; 0 yazmak ücretsiz demektir.' },
-    { key: 'registrationStart', label: 'Kayıt başlangıcı', type: 'date' },
-    { key: 'registrationEnd', label: 'Kayıt bitişi', type: 'date' },
+    { key: 'feeKurus', label: 'Üyelik bedeli', type: 'money', required: true,
+      hint: 'Vitrindeki üyelik fiyatı. Mağazanın gerçekten sakladığı iki alandan biri.' },
+    { key: 'isOpen', label: 'Üyelik satışa açık', type: 'checkbox',
+      hint: 'Kapalıyken vitrinde üye olunamaz. İkinci yazılabilir alan budur.' },
+    closed('name', 'Deneme adı', feature('name').reason),
+    closed('examDate', 'Sınav tarihi', feature('schedule').reason),
+    closed('examTime', 'Saat', ''),
+    closed('grade', 'Sınıf / seviye', ''),
+    closed('venue', 'Yer', ''),
+    closed('capacity', 'Kontenjan', feature('capacity').reason),
+    closed('registrationStart', 'Kayıt başlangıcı', ''),
+    closed('registrationEnd', 'Kayıt bitişi', ''),
   ];
 }
 
@@ -479,6 +499,7 @@ function paintExamGeneral(pane, row, forms, box) {
     value: {
       name: row.name, examDate: row.examDate, examTime: row.examTime, grade: row.grade,
       venue: row.venue, capacity: row.capacity.capacity, feeKurus: row.feeKurus,
+      isOpen: row.status !== 'closed' && row.registrationState !== 'closed',
       registrationStart: row.registrationStart, registrationEnd: row.registrationEnd,
     },
   });
@@ -500,25 +521,27 @@ function paintExamGeneral(pane, row, forms, box) {
   );
 
   pane.append(form.node, actions,
-    hintBox('Kontenjan buradan da değiştirilebilir ama kural aynıdır: kayıtlı sayısının '
-      + 'altına çekilemez. Kaydı olan katılımcının sınava girip girmeyeceğini belirsiz '
-      + 'bırakmamak için.'));
+    alertBox(feature('capacity').reason, 'info'),
+    hintBox('Bu ekrandan üyelik bedeli ve üyeliğin satışa açık olup olmadığı kaydedilir. '
+      + 'Geri kalan alanlar mağazada bir kayda karşılık gelmediği için salt okunur: '
+      + 'gönderilseler mağaza isteğin tamamını reddeder ve üyelik bedeli de yazılmazdı.'));
 }
 
+/** Yalnız VAR OLAN künyeyi düzenler; yeni kayıt açılamaz (bkz. `newExam`). */
 function openExamForm(existing) {
   const forms = [];
   const drop = () => { forms.forEach((form) => form.destroy()); forms.length = 0; };
   const box = drawer(nodes.root, {
-    title: existing ? 'Denemeyi düzenle' : 'Yeni deneme',
-    subtitle: 'Kayıt penceresi ve kontenjan sonradan da değiştirilebilir',
+    title: 'Deneme künyesi',
+    subtitle: 'Üyelik bedeli ve satış durumu — mağazanın sakladığı iki alan',
     onClose: drop,
   });
   closers.push(drop);
 
-  const form = formGrid({ fields: examFields(), value: existing || { capacity: 0 } });
+  const form = formGrid({ fields: examFields(), value: existing || {} });
   forms.push(form);
   const actions = h('div', 'tc-actions');
-  actions.append(button(existing ? 'Kaydet' : 'Denemeyi aç', {
+  actions.append(button('Kaydet', {
     variant: 'primary',
     onClick: async () => {
       if (!form.valid()) { form.showErrors(); toast('Alanları düzeltin.', 'bad'); return; }
@@ -531,24 +554,21 @@ function openExamForm(existing) {
 
 async function saveExam(examId, draft) {
   const reason = await askReason({
-    title: examId ? 'Denemeyi güncelle' : 'Yeni deneme aç',
-    description: `${draft.name || 'Adsız'} · ${draft.examDate || 'tarihsiz'}. Gerekçe denetim `
-      + 'kaydına yazılır ve mağazaya başlıkla gider.',
+    title: 'Deneme künyesini kaydet',
+    description: `Üyelik bedeli ${money(draft.feeKurus || 0)} · satış `
+      + `${draft.isOpen ? 'AÇIK' : 'KAPALI'} olacak. Vitrindeki fiyat ve üyelik durumu `
+      + 'değişir; gerekçe denetim kaydına yazılır ve mağazaya başlıkla gider.',
     confirmLabel: 'Kaydet',
   });
   if (!reason) return null;
   return withBusy('Kaydediliyor…', async () => {
+    // GÖVDEYE YALNIZ MAĞAZANIN SAKLADIĞI İKİ ALAN KONUR. Salt okunur alanları
+    // göndermek, mağazanın isteği tümüyle reddetmesi demekti — ücret de
+    // yazılmazdı. Sunucu da aynı denetimi yapıyor (K9).
     const body = {
-      name: draft.name || '',
-      examDate: draft.examDate || '',
-      examTime: draft.examTime || '',
-      grade: draft.grade || '',
-      venue: draft.venue || '',
-      capacity: Number(draft.capacity || 0),
-      registrationStart: draft.registrationStart || '',
-      registrationEnd: draft.registrationEnd || '',
       feeKurus: draft.feeKurus === null || draft.feeKurus === undefined
         ? null : Number(draft.feeKurus),
+      isOpen: Boolean(draft.isOpen),
       reason,
       dryRun: false,
     };
@@ -568,44 +588,22 @@ function paintCapacity(pane, row, forms) {
     view.state === 'unlimited' ? `${num(view.enrolled)} kayıt · sınırsız` : view.label);
   bar.node.classList.add(`tone-${view.state}`);
 
-  const form = formGrid({
-    fields: [{
-      key: 'capacity', label: 'Yeni kontenjan', type: 'number', min: 0, max: 100000,
-      hint: `Şu an ${num(view.enrolled)} kayıtlı. Bu sayının altına çekilemez; 0 = sınırsız.`,
-    }],
-    value: { capacity: view.capacity },
-  });
-  forms.push(form);
-
+  // KONTENJAN YAZILAMAZ — ve bu bir arıza değil, mağazanın hâli.
+  //
+  // Bu depoda kontenjan diye bir KAYIT yok: üyelik ürünü stok takibi kapalı
+  // kaydediliyor ("Kontenjan Sınırlı" yalnızca vitrin rozeti). Giriş kutusu
+  // açık bırakılsaydı, yazılan sayı 503 ile geri dönerdi — ya da daha kötüsü,
+  // hiçbir şeyin okumadığı bir yere yazılıp kontenjan dolduktan sonra da satış
+  // sürerdi. Doluluk çubuğu KALIYOR: kayıt sayısı gerçek bir bilgidir.
   const actions = h('div', 'tc-actions');
-  actions.append(button('Kontenjanı değiştir', {
-    variant: 'primary',
-    onClick: async () => {
-      const wanted = Number(form.draft().capacity ?? view.capacity);
-      if (wanted === view.capacity) { toast('Kontenjan değişmedi.', 'warn'); return; }
-      const reason = await askReason({
-        title: 'Kontenjanı değiştir',
-        description: `${view.capacity || 'sınırsız'} → ${wanted || 'sınırsız'}. Şu an `
-          + `${num(view.enrolled)} kayıtlı katılımcı var.`,
-        confirmLabel: 'Değiştir',
-      });
-      if (!reason) return;
-      await withBusy('Kontenjan yazılıyor…', async () => {
-        await call(`${BASE}/exams/${row.id}/capacity`, {
-          method: 'POST', body: { capacity: wanted, reason, dryRun: false },
-        });
-        toast('Kontenjan güncellendi.', 'good');
-        refreshExams();
-        loadOverview();
-      });
-    },
-  }));
+  actions.append(blockedButton('Kontenjanı değiştir', feature('capacity').reason,
+    { variant: 'primary' }));
 
   pane.append(
     card('Doluluk', bar.node, view.remaining === null ? 'sınırsız'
       : `${num(view.remaining)} yer kaldı`),
-    form.node,
     actions,
+    alertBox(feature('capacity').reason, 'warn'),
     card('Katılımcı işlemleri', (() => {
       const box = h('div', 'tc-actions');
       box.append(pendingButton('Katılımcı ekle', 'addMember'));

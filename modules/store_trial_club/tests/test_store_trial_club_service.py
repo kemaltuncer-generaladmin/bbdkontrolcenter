@@ -144,60 +144,112 @@ async def test_olmayan_deneme_uydurulmaz() -> None:
 
 # ================================================================== kontenjan
 
-async def test_kontenjan_kayitlinin_altina_cekilemez() -> None:
-    service, api, _ = _service()          # 30 kayıtlı, 40 kontenjan
-    result = await service.set_capacity(1, capacity=20, reason="Salon küçüldü, azaltılıyor",
-                                        actor="Ali", dry_run=False)
-    assert result["ok"] is False
-    assert "30 kayıtlı" in result["error"]
-    assert api.used("bbd_save_trial_exam") == []
+async def test_kontenjan_istek_cikmadan_reddedilir_ve_nedenini_soyler() -> None:
+    """Mağazada kontenjan diye bir KAYIT yok — 503 alınmadan burada durur.
 
-
-async def test_kontenjan_yukseltilebilir_ve_taze_okunur() -> None:
-    service, api, _ = _service()
+    Üyelik ürünü `manage_stock = 0` ile kaydediliyor ve bu değer her
+    kaydetmede yeniden yazılıyor; stok üzerinden kurulan bir kontenjan bir
+    sonraki kaydetmede sessizce silinirdi. `core_config`'e yazmak daha kötüsü:
+    hiçbir şey o sayıya bakmadığı için satış kontenjan dolduktan sonra da
+    sürer ve fark ancak fazla üye kaydolunca anlaşılırdı.
+    """
+    service, api, store = _service()
     result = await service.set_capacity(1, capacity=60, reason="Ek salon açıldı bugün",
                                         actor="Ali", dry_run=False)
-    assert result["ok"] is True
-    assert result["from"] == 40
-    assert api.used("bbd_save_trial_exam")[0]["payload"] == {"capacity": 60}
-    # Yazmadan ÖNCE deneme taze okunur: aradan geçen sürede yeni kayıt gelmiş
-    # olabilir ve eski sayıya göre yapılan doğrulama yanlış karar verirdi.
-    assert api.used("bbd_trial_exams")
-
-
-async def test_ayni_kontenjan_bosuna_yazilmaz() -> None:
-    service, api, _ = _service()
-    result = await service.set_capacity(1, capacity=40, reason="Değişiklik denemesi yapıldı",
-                                        actor="Ali")
     assert result["ok"] is False
+    assert result["blocked"] is True
+    assert result["feature"] == "capacity"
+    assert "vitrin metni" in result["error"]
+    assert api.used("bbd_save_trial_exam") == []
+    # Ne yapmaya çalışıldığı yerel izde KALIR.
+    assert [row["result"] for row in store.audit if row["action"] == "set_capacity"] == ["uc_yok"]
+
+
+async def test_kunye_kaydinda_kontenjan_gelirse_fiyat_da_yazilmaz() -> None:
+    """Mağaza aynı isteği tümüyle reddediyor; sessizce düşürmek yanlış olurdu.
+
+    Düşürseydik "kaydedildi" diyen ama kontenjanı değişmemiş bir ekran çıkardı.
+    """
+    service, api, _ = _service()
+    result = await service.save_exam(1, payload={"capacity": 30, "feeKurus": 15035},
+                                     reason="Kontenjan ve ücret güncellemesi", actor="Ali",
+                                     dry_run=False)
+    assert result["ok"] is False
+    assert result["feature"] == "capacity"
     assert api.used("bbd_save_trial_exam") == []
 
 
 async def test_kisa_gerekce_backendde_de_reddedilir() -> None:
     # K9: arayüzde gizlemek yetkilendirme değildir; istemci şemayı atlatabilir.
     service, api, _ = _service()
-    result = await service.set_capacity(1, capacity=60, reason="ok", actor="Ali")
+    result = await service.save_exam(1, payload={"feeKurus": 15035}, reason="ok", actor="Ali")
     assert result["ok"] is False
     assert "Gerekçe" in result["error"]
     assert api.used("bbd_save_trial_exam") == []
 
 
-# ================================================================ deneme kaydı
+async def test_yeni_deneme_acilamaz_ve_nedeni_soylenir() -> None:
+    """Kimliksiz çağrı da AYNI üyelik ürününü günceller — "yeni" diye bir şey yok.
 
-async def test_deneme_acilirken_ad_ve_tarih_zorunludur() -> None:
+    Sessizce göndermek, "yeni deneme açtım" sanan kullanıcının var olan
+    denemenin fiyatını değiştirmesi demekti.
+    """
     service, api, _ = _service()
-    result = await service.save_exam(None, payload={"name": "", "examDate": "2026-10-01"},
-                                     reason="Yeni deneme tanımlanıyor", actor="Ali")
+    result = await service.save_exam(None, payload={"feeKurus": 15035},
+                                     reason="Yeni deneme açılmaya çalışılıyor", actor="Ali")
     assert result["ok"] is False
+    assert result["feature"] == "newExam"
     assert api.used("bbd_save_trial_exam") == []
 
 
-async def test_deneme_ucreti_kurustan_ondaliga_cevrilir() -> None:
+async def test_kapali_alanlarin_nedeni_ilan_edilir() -> None:
+    """Kapalı alanın NEDENİ ekranda olmalı; boş bir `disabled` yeterli değil."""
+    service, _, _ = _service()
+    features = service.features()
+    for key in ("capacity", "name", "schedule", "newExam"):
+        assert features[key]["available"] is False
+        assert len(features[key]["reason"]) > 40
+    assert features["saveProfile"]["available"] is True
+
+
+# ================================================================ deneme kaydı
+
+async def test_vitrin_metni_ve_takvim_istek_cikmadan_reddedilir() -> None:
+    """Mağazada bu alanların karşılığı yok; gönderilirse istek tümüyle reddedilir.
+
+    Kulüp bu depoda TEK BİR sanal üründür ve takvimi yoktur; ad/açıklama ise
+    dile bağlı ve panelden düzenleniyor.
+    """
     service, api, _ = _service()
-    await service.save_exam(None, payload={"name": "TYT 2", "examDate": "2026-10-01",
-                                           "capacity": 30, "feeKurus": 15035},
-                            reason="Yeni deneme tanımlanıyor", actor="Ali", dry_run=False)
-    assert api.used("bbd_save_trial_exam")[0]["payload"]["fee"] == "150.35"
+    for payload, beklenen in (
+        ({"name": "TYT 2", "feeKurus": 15035}, "name"),
+        ({"examDate": "2026-10-01", "feeKurus": 15035}, "schedule"),
+        ({"venue": "A Salonu", "feeKurus": 15035}, "schedule"),
+    ):
+        result = await service.save_exam(1, payload=payload,
+                                         reason="Künye güncellemesi yapılıyor", actor="Ali")
+        assert result["ok"] is False
+        assert result["feature"] == beklenen
+    assert api.used("bbd_save_trial_exam") == []
+
+
+async def test_uyelik_bedeli_kurustan_ondaliga_cevrilir() -> None:
+    service, api, _ = _service()
+    result = await service.save_exam(1, payload={"feeKurus": 15035, "isOpen": True},
+                                     reason="Üyelik bedeli güncelleniyor", actor="Ali",
+                                     dry_run=False)
+    assert result["ok"] is True
+    # Gövde MAĞAZANIN iki alanı: `price` ve `isOpen`. Başka hiçbir şey gitmez.
+    assert api.used("bbd_save_trial_exam")[0]["payload"] == {"price": "150.35", "isOpen": True}
+
+
+async def test_degisen_alan_yoksa_istek_gonderilmez() -> None:
+    service, api, _ = _service()
+    result = await service.save_exam(1, payload={}, reason="Boş gövde denemesi yapıldı",
+                                     actor="Ali")
+    assert result["ok"] is False
+    assert "üyelik bedeli" in result["error"]
+    assert api.used("bbd_save_trial_exam") == []
 
 
 # ============================================================= sonuç yükleme

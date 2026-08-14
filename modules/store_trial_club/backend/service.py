@@ -61,6 +61,49 @@ REPORT_KINDS = ("attendance", "cards", "results")
 
 #: Mağazada henüz UCU OLMAYAN işler. Ekran bunları kapalı gösterir ve NEDENİNİ
 #: yazar; sessizce 404 ile patlamaz.
+#: KÜNYEDEN YAZILABİLEN İKİ ALAN. Mağazanın sözleşmesinin aynası
+#: (`Bbd\ControlApi\Support\DenemeKulubuProfile::WRITABLE`).
+#:
+#: Deneme Kulübü'nün kendi tablosu YOKTUR: kulüp sabit SKU'lu TEK BİR sanal
+#: üründür ve künyesi o ürünün FİYATI ile DURUMUDUR. "Deneme adı", "sınav
+#: tarihi", "yer" gibi alanların mağazada karşılığı yok; gönderilirlerse
+#: mağaza isteğin TAMAMINI reddediyor — yani fiyat da yazılmıyor.
+PROFILE_WRITABLE = ("price", "isOpen")
+
+#: MAĞAZADA KARŞILIĞI OLMAYAN künye alanları — ekran alanı → (etiket, neden).
+#:
+#: Ekran bunları `features()` üzerinden okuyup alanı kapatır. Kapalı alanın
+#: nedeni yazılı olmak zorunda: "çalışmıyor" ile "burada tutulmuyor" kullanıcı
+#: için bambaşka iki durum.
+CLOSED_PROFILE_FIELDS = {
+    "capacity": (
+        "Kontenjan",
+        ("Bu mağazada kontenjan diye bir KAYIT yok: üyelik ürünü stok takibi kapalı "
+         "kaydediliyor ve “Kontenjan Sınırlı” yalnızca vitrin metni. Bir sayıyı hiçbir "
+         "şeyin okumadığı yere yazmak, kontenjan dolduktan sonra da satışın sürmesi ve "
+         "farkın ancak fazla üye kaydolunca anlaşılması demekti."),
+    ),
+    "name": (
+        "Deneme adı ve açıklaması",
+        ("Vitrin metinleri dile bağlıdır ve bu uçtan değiştirilemez; hangi dile "
+         "yazılacağı sorulmadan yazmak, varsayılan dile yazıp diğerlerinde eski metni "
+         "sessizce bırakmak olurdu. Bagisto panelinden düzenlenir."),
+    ),
+    "newExam": (
+        "Yeni deneme açma",
+        ("Bu mağazada Deneme Kulübü TEK BİR üyelik ürünüdür; “ikinci bir deneme” diye "
+         "bir kayıt açılamaz. Yazma ucu hangi fiille çağrılırsa çağrılsın AYNI ürünü "
+         "günceller — yani “yeni deneme aç” demek, var olan denemenin fiyatını sessizce "
+         "değiştirmek olurdu."),
+    ),
+    "schedule": (
+        "Sınav tarihi · saat · yer · kayıt penceresi",
+        ("Mağazada bu alanların karşılığı olan bir kayıt yok — kulüp tek bir üyelik "
+         "ürünüdür, takvimi yoktur. Gönderilirlerse mağaza isteğin tamamını reddeder ve "
+         "üyelik bedeli de yazılmaz."),
+    ),
+}
+
 PENDING_ENDPOINTS = {
     "addMember": (
         "Katılımcı ekleme",
@@ -198,8 +241,14 @@ class TrialClubService:
                          "reason": f"{label} için mağaza ucu henüz yayında değil "
                                    f"({method}). Uç yayınlanınca bu düğme açılacak."}
                    for key, (label, method) in PENDING_ENDPOINTS.items()}
+        closed = {key: {"available": False, "reason": f"{label} — {why}"}
+                  for key, (label, why) in CLOSED_PROFILE_FIELDS.items()}
         return {
             **pending,
+            **closed,
+            # ÜYELİK BEDELİ VE SATIŞ DURUMU YAZILABİLİR (2026-08-15). Uç bu
+            # turda yayına girdi; daha önce "Kaydet" ham 405 gösteriyordu.
+            "saveProfile": {"available": True, "reason": ""},
             "notifyBulk": {"available": True, "reason": ""},
             "notifyOne": {
                 "available": self._notifier is not None,
@@ -485,50 +534,56 @@ class TrialClubService:
 
     # =============================================================== yazma
 
+    def _closed_field(self, key: str) -> dict[str, Any]:
+        label, why = CLOSED_PROFILE_FIELDS[key]
+        return {"ok": False, "blocked": True, "feature": key,
+                "error": f"{label} bu ekrandan kaydedilemiyor. {why}"}
+
     async def save_exam(self, exam_id: int | None, *, payload: dict[str, Any], reason: str,
                         actor: str, dry_run: bool = True) -> dict[str, Any]:
-        """Deneme açar ya da günceller.
+        """Deneme künyesini kaydeder — ÜYELİK BEDELİ ve SATIŞ DURUMU.
 
-        Kontenjan bu uçtan da yazılabilir ama KAYITLININ ALTINA çekilemez:
-        kural `capacity_change_error` içinde ve iki yolda da uygulanır (K9).
+        Uç bu turda yayına girdi (`POST|PUT bbd/deneme-kulubu/overview`).
+        Eskiden burası ad, tarih, yer ve kontenjan içeren bir gövde
+        gönderiyordu ve düğme ham 405 gösteriyordu; şimdi mağazanın gerçekten
+        sakladığı iki alan yazılıyor.
+
+        KARŞILIĞI OLMAYAN ALAN SESSİZCE DÜŞÜRÜLMEZ, İSTEK DURUR. Düşürmek
+        "kaydedildi" diyen ama sınav tarihi değişmemiş bir ekran üretirdi —
+        ve mağaza zaten aynı gövdeyi tümüyle reddediyor, yani fiyat da
+        yazılmazdı.
         """
         problem = self._guard(reason)
         if problem:
             return {"ok": False, "error": problem}
 
-        name = trial.text(payload.get("name"))
-        if not name:
-            return {"ok": False, "error": "Deneme adı zorunlu."}
-        exam_date = trial.text(payload.get("examDate"))[:10]
-        if not exam_date:
-            return {"ok": False, "error": "Sınav tarihi zorunlu."}
+        if not exam_id:
+            # POST ile PUT mağazada AYNI eyleme bağlı: kimliksiz çağrı da tek
+            # üyelik ürününü günceller. "Yeni deneme açtım" sanan kullanıcı,
+            # aslında var olanın fiyatını değiştirmiş olurdu.
+            return self._closed_field("newExam")
+        if trial.as_int(payload.get("capacity")) > 0:
+            return self._closed_field("capacity")
+        for key in ("name", "description"):
+            if trial.text(payload.get(key)):
+                return self._closed_field("name")
+        for key in ("examDate", "examTime", "venue", "grade",
+                    "registrationStart", "registrationEnd"):
+            if trial.text(payload.get(key)):
+                return self._closed_field("schedule")
 
-        capacity = trial.as_int(payload.get("capacity"))
-        enrolled = 0
-        if exam_id:
-            current = await self.exam(int(exam_id))
-            if not current.get("ok"):
-                return {"ok": False, "error": current.get("error", "Deneme okunamadı.")}
-            enrolled = current["exam"]["capacity"]["enrolled"]
-        problem = trial.capacity_change_error(capacity, enrolled)
-        if problem:
-            return {"ok": False, "error": problem}
-
-        body: dict[str, Any] = {
-            "name": name,
-            "exam_date": exam_date,
-            "exam_time": trial.text(payload.get("examTime"))[:5],
-            "capacity": capacity,
-            "venue": trial.text(payload.get("venue")),
-            "grade": trial.text(payload.get("grade")),
-            "registration_start": trial.text(payload.get("registrationStart"))[:10],
-            "registration_end": trial.text(payload.get("registrationEnd"))[:10],
-        }
+        body: dict[str, Any] = {}
         fee = payload.get("feeKurus")
         if fee is not None:
-            body["fee"] = trial.from_kurus(fee)
+            body["price"] = trial.from_kurus(fee)
+        if payload.get("isOpen") is not None:
+            body["isOpen"] = bool(payload["isOpen"])
+        if not body:
+            return {"ok": False,
+                    "error": "Değişen alan yok. Bu ekrandan üyelik bedeli ve üyeliğin "
+                             "satışa açık olup olmadığı kaydedilir."}
 
-        action = "update_exam" if exam_id else "create_exam"
+        action = "update_profile"
         await self._record(exam_id=int(exam_id or 0), action=action, reason=reason, actor=actor,
                            result="denendi", detail=body)
         try:
@@ -545,48 +600,26 @@ class TrialClubService:
         await self._record(exam_id=int(exam_id or new_id), action=action, reason=reason,
                            actor=actor, result="dry_run" if dry_run else "ok", detail=body)
         return {"ok": True, "error": "", "id": int(exam_id or new_id),
-                "dryRun": bool(result.get("dryRun", dry_run))}
+                "fields": sorted(body), "dryRun": bool(result.get("dryRun", dry_run))}
 
     async def set_capacity(self, exam_id: int, *, capacity: int, reason: str, actor: str,
                            dry_run: bool = True) -> dict[str, Any]:
-        """Kontenjan değiştirme — OKU-DOĞRULA-YAZ.
+        """KONTENJAN YAZILMAZ — mağazada böyle bir kayıt yok, istek gönderilmez.
 
-        Deneme taze okunur: aradan geçen sürede yeni kayıt gelmiş olabilir ve
-        ekrandaki eski "kayıtlı" sayısına göre yapılan doğrulama yanlış karar
-        verirdi.
+        Eskiden burası oku-doğrula-yaz yapıyor ve sonunda mağazaya `capacity`
+        gönderiyordu. Mağaza bunu 503 ile reddediyor ve REDDEDERKEN aynı
+        isteğin fiyat/durum kısmını da yazmıyor.
+
+        NEDEN BİR YERE YAZILMIYOR: üyelik ürünü `manage_stock = 0` ile
+        kaydediliyor ve bu değer HER kaydetmede yeniden yazılıyor; stok
+        üzerinden kurulan bir kontenjan bir sonraki kaydetmede sessizce
+        silinirdi. `core_config`'e yazmak daha kötüsü olurdu: hiçbir şey o
+        sayıya bakmadığı için satış kontenjan dolduktan sonra da sürer ve fark
+        ancak fazla üye kaydolunca anlaşılırdı.
         """
-        problem = self._guard(reason)
-        if problem:
-            return {"ok": False, "error": problem}
-
-        current = await self.exam(int(exam_id))
-        if not current.get("ok"):
-            return {"ok": False, "error": current.get("error", "Deneme okunamadı.")}
-        row = current["exam"]
-        enrolled = row["capacity"]["enrolled"]
-        problem = trial.capacity_change_error(capacity, enrolled)
-        if problem:
-            return {"ok": False, "error": problem}
-        before = row["capacity"]["capacity"]
-        if int(capacity) == before:
-            return {"ok": False, "error": "Kontenjan zaten bu."}
-
         await self._record(exam_id=exam_id, action="set_capacity", reason=reason, actor=actor,
-                           result="denendi", detail={"from": before, "to": int(capacity)})
-        try:
-            result = await self._api.bbd_save_trial_exam(
-                payload={"capacity": int(capacity)}, exam_id=int(exam_id), reason=reason,
-                actor=actor, dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(exam_id=exam_id, action="set_capacity", reason=reason,
-                               actor=actor, result="hata", detail={"error": str(failure)})
-            return {"ok": False, "error": self._fail(failure)}
-
-        await self._record(exam_id=exam_id, action="set_capacity", reason=reason, actor=actor,
-                           result="dry_run" if dry_run else "ok",
-                           detail={"from": before, "to": int(capacity)})
-        return {"ok": True, "error": "", "from": before, "to": int(capacity),
-                "enrolled": enrolled, "dryRun": bool(result.get("dryRun", dry_run))}
+                           result="uc_yok", detail={"wanted": int(capacity)})
+        return self._closed_field("capacity")
 
     async def add_member(self, exam_id: int, *, reason: str, actor: str) -> dict[str, Any]:
         """UÇ YOK. Sessizce patlamak yerine ne eksik olduğunu söyler."""

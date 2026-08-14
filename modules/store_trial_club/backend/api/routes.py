@@ -98,8 +98,21 @@ async def audit(
 # ================================================================== deneme
 
 class ExamBody(BaseModel):
-    name: str = Field(min_length=2, max_length=180)
-    examDate: str = Field(min_length=10, max_length=10)
+    """Deneme künyesi.
+
+    MAĞAZANIN SAKLADIĞI İKİ ALAN `feeKurus` ve `isOpen`tır; kulüp bu depoda
+    sabit SKU'lu tek bir sanal üründür ve künyesi o ürünün fiyatı ile
+    durumudur.
+
+    Geri kalan alanlar ŞEMADAN ATILMADI ve zorunluluğu KALDIRILDI. İkisi de
+    bilinçli: atılsalardı eski bir istemci 422 alır ve nedenini okuyamazdı;
+    zorunlu kalsalardı üyelik bedelini değiştirmek için var olmayan bir sınav
+    tarihi uydurmak gerekirdi. Doldurulurlarsa servis isteği durdurur ve neden
+    kaydedilemediğini söyler (`CLOSED_PROFILE_FIELDS`).
+    """
+
+    name: str = Field(default="", max_length=180)
+    examDate: str = Field(default="", max_length=10)
     examTime: str = Field(default="", max_length=5)
     capacity: int = Field(default=0, ge=0, le=100_000)
     venue: str = Field(default="", max_length=180)
@@ -107,6 +120,8 @@ class ExamBody(BaseModel):
     registrationStart: str = Field(default="", max_length=10)
     registrationEnd: str = Field(default="", max_length=10)
     feeKurus: int | None = Field(default=None, ge=0)
+    #: Üyelik satışa açık mı — mağazadaki ürünün `status` alanı.
+    isOpen: bool | None = None
     reason: str = Field(min_length=10, max_length=255)
     dryRun: bool = True
 
@@ -142,7 +157,11 @@ async def set_capacity(
     body: CapacityBody,
     user: CurrentUser = requires("store_trial_club.manage"),
 ) -> dict[str, Any]:
-    """Kontenjan kayıtlı sayısının ALTINA çekilemez — kural serviste de var."""
+    """KONTENJAN YAZILMAZ: mağazada böyle bir kayıt yok, istek gönderilmez.
+
+    Uç KALDIRILMADI (K9): arayüzde düğmeyi kapatmak yetkilendirme değildir ve
+    şemayı atlatan bir istemci de aynı cevabı almalı. Servis nedenini söyler.
+    """
     return await service().set_capacity(exam_id, capacity=body.capacity, reason=body.reason,
                                         actor=user.full_name, dry_run=body.dryRun)
 
