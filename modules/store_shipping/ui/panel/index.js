@@ -492,18 +492,118 @@ function dispatchReason() {
   return (nodes.readyReason?.value || '').trim();
 }
 
+/**
+ * "Geliver mi, test mi?" — düğmeye basınca sorulan tek soru.
+ *
+ * SORU ONAYIN KENDİSİDİR. Geliver'a basmak para harcamaya rızadır; ondan
+ * sonra ikinci bir "emin misiniz" adımı YOKTUR. İki seçenek görsel olarak
+ * ayrışır ve hangisinin para harcadığı kutunun üstünde yazar — yanlış tıklama
+ * gerçek paradır.
+ *
+ * @returns {Promise<'geliver'|'bagisto'|null>} iptal edilirse `null`
+ */
+function askProvider(row) {
+  return new Promise((resolve) => {
+    const overlay = h('div', 'kit-overlay');
+    const card = h('div', 'kit-dialog sh-provider-ask');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+
+    card.append(
+      h('h3', 'kit-dialog-title', `Sipariş ${row.orderNumber} nasıl gönderilsin?`),
+      h('p', 'kit-dialog-text',
+        `${row.displayName || row.customer || 'Alıcı'} · ${row.carrierTitle || 'firma seçilmemiş'}`),
+    );
+
+    const close = (value) => { overlay.remove(); resolve(value); };
+
+    const gerçek = button('🚚 Geliver — GERÇEK', {
+      variant: 'danger',
+      title: 'Müşterinin seçtiği firmadan etiket SATIN ALINIR. Para harcar.',
+      onClick: () => close('geliver'),
+    });
+    const test = button('🧪 Test — Geliver’e uğramaz', {
+      title: 'Bagisto’nun kendi gönderi kaydı açılır, sipariş tamamlanır. '
+        + 'Taşıyıcıya çıkılmaz, para harcanmaz.',
+      onClick: () => close('bagisto'),
+    });
+    const vazgeç = button('Vazgeç', { onClick: () => close(null) });
+
+    const rows = h('div', 'sh-provider-rows');
+    rows.append(
+      h('div', 'sh-provider-row', gerçek),
+      h('div', 'sh-provider-note',
+        'Etiket satın alınır · takip numarası siparişe yazılır · etiket ve fatura basılır'),
+      h('div', 'sh-provider-row', test),
+      h('div', 'sh-provider-note',
+        'Sipariş “tamamlandı”ya taşınır · takip numarası TEST- önekli · para harcanmaz'),
+    );
+    card.append(rows, h('div', 'kit-dialog-actions', vazgeç));
+
+    overlay.append(card);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close(null);
+    });
+    document.body.append(overlay);
+    gerçek.focus();
+  });
+}
+
 /** Satırdaki tek tık düğmesi. Tıklanınca kendini kilitler (çift istek olmasın). */
 function dispatchCell(row) {
   const box = h('span', 'sh-dispatch');
   const go = button('🚚 Kargoya ver', {
-    variant: 'danger',
-    title: 'Gönderi açılır → teklif alınır → müşterinin firmasından ETİKET SATIN '
-      + 'ALINIR → takip numarası siparişe yazılır → etiket ve fatura yazdırılır. '
-      + 'PARA HARCAR ve onay sormaz.',
-    onClick: () => dispatchOrder(row, go),
+    // DANGER DEĞİL: düğme artık doğrudan para harcamıyor, önce hangi yolun
+    // seçileceğini soruyor. Kırmızı bırakmak "bastım, para gitti" korkusu
+    // yaratır ve personeli gereksiz tereddüde sokar; asıl kırmızı, sorunun
+    // içindeki Geliver seçeneğidir.
+    title: 'Geliver mi test mi diye sorar. Geliver seçilirse müşterinin '
+      + 'firmasından ETİKET SATIN ALINIR (para harcar), takip numarası '
+      + 'siparişe yazılır, etiket ve fatura basılır. Test seçilirse Geliver’e '
+      + 'hiç uğranmaz ve sipariş tamamlanır.',
+    onClick: async () => {
+      const yol = await askProvider(row);
+      if (!yol) return;
+      if (yol === 'bagisto') return testShipOrder(row, go);
+      return dispatchOrder(row, go);
+    },
   });
   box.append(go);
   return box;
+}
+
+/**
+ * TEST YOLU — Geliver'a HİÇ uğramaz.
+ *
+ * Bagisto'nun kendi gönderi kaydını açar; kalan bütün kalemler kargolanmış
+ * sayıldığı için sipariş "tamamlandı"ya taşınır. Takip numarasını biz üretiriz
+ * ve `TEST-` ile başlar — gören herkes (müşteri dâhil) bunun deneme olduğunu
+ * anlar. Para harcanmaz, taşıyıcıya çıkılmaz.
+ */
+async function testShipOrder(row, trigger) {
+  const label = trigger?.textContent;
+  if (trigger) { trigger.disabled = true; trigger.textContent = 'Gönderiliyor…'; }
+  const result = await withBusy(`${row.orderNumber} test gönderisi açılıyor…`, () => call(
+    `${BASE}/orders/${row.orderId}/shipments`, {
+      method: 'POST',
+      body: {
+        provider: 'bagisto',
+        reason: dispatchReason(),
+        // Kuru prova DEĞİL: test yolu zaten para harcamıyor, provada bırakmak
+        // "sipariş tamamlandı" beklentisini karşılamazdı.
+        dryRun: false,
+      },
+    }));
+  if (trigger) { trigger.disabled = false; trigger.textContent = label; }
+  if (!result) return null;
+
+  toast(result.ok === false
+    ? `Test gönderisi açılamadı: ${result.error}`
+    : `Test gönderisi açıldı · takip no ${result.trackNumber || '—'}`,
+  result.ok === false ? 'bad' : 'good');
+  for (const line of result.warnings || []) toast(line, 'warn');
+  loadReady();
+  return result;
 }
 
 /**
