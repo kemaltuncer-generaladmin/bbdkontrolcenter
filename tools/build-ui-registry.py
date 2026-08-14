@@ -156,9 +156,21 @@ def group_key(name: str) -> tuple[int, str]:
     return (GROUP_ORDER.index(name), "") if name in GROUP_ORDER else (len(GROUP_ORDER), name)
 
 
-def build() -> dict:
-    # Silinen/yeniden adlandırılan panel artığı kalmasın.
-    shutil.rmtree(PANELS_OUT, ignore_errors=True)
+def build(*, copy_panels: bool = True) -> dict:
+    """Kayıt defterini üretir. `copy_panels=False` iken DİSKE DOKUNMAZ.
+
+    BULUNAN HATA (2026-08-15). `--check` "dosyayı yazmaz" diye belgelenmişti
+    ama `build()` koşulsuz `rmtree(PANELS_OUT)` yapıp panelleri yeniden
+    kopyalıyordu. Sentinel dosyayla kanıtlandı: `--check` çalıştırınca
+    `shell/panels/` altına konan dosya siliniyordu.
+
+    CI'da salt-okunur sanılan bir komutun üretilmiş panelleri silmesi, hem
+    sözleşme ihlali hem de yarış kaynağı: doğrulama koşarken uygulama açıksa
+    panel klasörü bir an için boşalır.
+    """
+    if copy_panels:
+        # Silinen/yeniden adlandırılan panel artığı kalmasın.
+        shutil.rmtree(PANELS_OUT, ignore_errors=True)
 
     validator = load_schema_validator()
     panels, problems = collect_panels(validator)
@@ -178,7 +190,8 @@ def build() -> dict:
 
 def main() -> int:
     check_only = "--check" in sys.argv[1:]
-    registry = build()
+    # `--check` DİSKE DOKUNMAZ: panelleri kopyalamaz, klasörü silmez.
+    registry = build(copy_panels=not check_only)
     payload = json.dumps(registry, ensure_ascii=False, indent=2) + "\n"
 
     if check_only:
