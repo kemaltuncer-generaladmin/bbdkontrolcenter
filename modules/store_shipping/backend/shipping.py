@@ -1164,3 +1164,87 @@ def handover_sections(order: Any, row: Any = None, *, track: str = "",
                 "Tarih/Saat: ____________________",
     })
     return sections
+
+
+# ==================================== SAYFA SAYISINDAN DESİ (sunucunun aynası)
+#
+# BU BLOK SUNUCUDAKİ `Bbd\Shipping\Support\BookDimensions` SINIFININ AYNASIDIR.
+# İki taraf AYNI girdide AYNI sonucu vermek zorunda: sunucu müşteriden alınacak
+# kargo ücretini, burası personele gösterilen tahmini hesaplıyor. Ayrışırlarsa
+# fark ancak kargo faturası geldiğinde görülür — yani en pahalı anda.
+#
+# Kopyalamak K3'ün gereği: modül modülü import edemez, iki depo arasında da
+# ortak kod yoktur. Kopyanın sapmaması `test_desi_sunucuyla_ayni.py` ile
+# korunuyor; katsayı orada da yazılı ve biri değişirse test kırılır.
+#
+# KATSAYILARIN KAYNAĞI (sunucudaki dosyada uzun uzun yazılı):
+#   0,04375 mm/sayfa  16 sayfa = 1 forma, 70 g/m² 1. hamur kâğıt
+#   1,0 mm kapak      ön/arka bristol + amerikan cilt sırtı
+#   19,5 × 27,5 cm    MEB standart kitap ebadı
+#   1,0 cm ambalaj    KAYNAK DEĞİL, İŞLETME VARSAYIMI — koli payı
+#   3000              Türkiye hacimsel ağırlık böleni
+
+PAGE_THICKNESS_MM = 0.04375
+COVER_THICKNESS_MM = 1.0
+TRIM_WIDTH_CM = 19.5
+TRIM_HEIGHT_CM = 27.5
+PACKAGING_MARGIN_CM = 1.0
+DESI_DIVISOR = 3000
+#: Veri kalitesi savunması, fiziksel katsayı değil. `page_count` elle doldurulan
+#: bir alan ve doğrudan paraya dönüşüyor; "50000 sayfa" yazımı ücreti uçurur.
+MAX_PAGE_COUNT = 5000
+
+
+def footprint_cm2() -> float:
+    """Paketin taban alanı — kitap ebadı + her kenara ambalaj payı."""
+    return ((TRIM_WIDTH_CM + 2 * PACKAGING_MARGIN_CM)
+            * (TRIM_HEIGHT_CM + 2 * PACKAGING_MARGIN_CM))
+
+
+def thickness_cm_for_pages(page_count: Any) -> float:
+    """Bir kitabın kalınlığı (cm): iç sayfalar + kapak."""
+    pages = max(0, min(as_int(page_count), MAX_PAGE_COUNT))
+    return (pages * PAGE_THICKNESS_MM + COVER_THICKNESS_MM) / 10
+
+
+def desi_for_thickness_cm(thickness_cm: Any) -> float:
+    """Verilen yığın kalınlığının desisi. YUVARLANMAZ."""
+    return max(0.0, as_float(thickness_cm)) * footprint_cm2() / DESI_DIVISOR
+
+
+def desi_for_pages(page_count: Any) -> float:
+    """Tek kitabın desisi. YUVARLANMAZ — yuvarlama sepet toplamında yapılır."""
+    return desi_for_thickness_cm(thickness_cm_for_pages(page_count))
+
+
+def desi_for_items(items: Any) -> int:
+    """Sepetin/siparişin ücretlendirilecek desisi.
+
+    KİTAPLAR ÜST ÜSTE KONUR: kalınlıklar toplanır, taban alanı SABİT kalır.
+    Adet çarpanı KALINLIĞA uygulanır, hacme değil — tek kitabın hacmini adetle
+    çarpmak, kitapları yan yana dizmek demektir ve kolinin tabanını gereksiz
+    büyütür.
+
+    Kalem sözlüğü `pageCount`/`page_count` ve `qty`/`quantity`/`qtyOrdered`
+    anahtarlarının herhangi birini taşıyabilir; sipariş ve sepet ayrı adlar
+    kullanıyor.
+
+    Sayfa sayısı OKUNAMAYAN kalem varsayılan desiyle sayılır (bugünkü davranış):
+    veri eksikse müşteriye az fatura kesip zarar etmektense fazla hesaplamak
+    yeğlenir.
+    """
+    if not isinstance(items, list):
+        return 1
+    yigin = 0.0
+    varsayilan = 0.0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        adet = max(1, as_int(_first(item, "qty", "quantity", "qty_ordered", "qtyOrdered"), 1))
+        sayfa = as_int(_first(item, "page_count", "pageCount"))
+        if sayfa > 0:
+            yigin += thickness_cm_for_pages(sayfa) * adet
+        else:
+            varsayilan += 1.0 * adet
+    toplam = desi_for_thickness_cm(yigin) + varsayilan
+    return max(1, math.ceil(toplam))
