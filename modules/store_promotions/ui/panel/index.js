@@ -39,6 +39,7 @@ import {
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { applyChoiceFilter, resolveChoice } from '../../ui-kit/choice.js';
 import {
   alertBox, badge, card, chipRow, drawer, emptyState, hintBox, kpiRow,
   skeletonRows, statusLine, tabBar,
@@ -245,6 +246,8 @@ async function refreshRules({ page = state.page, size = state.size } = {}) {
   // değişmeyen bir düğme vermek olurdu; seçenekler kaldırılır ve nedeni yazar.
   if (state.connected && !state.scopeFilterable && !state.scopeNoted) {
     state.scopeNoted = true;
+    // Kanal kutusu zaten çizilmiyorsa (tek kanal) burada da açılmaz; yalnız
+    // çok kanallı bir mağazada "liste bu bilgiyi vermiyor" demek gerekir.
     nodes.filters.options('channel', [{ value: '', label: 'Kanal — liste bu bilgiyi vermiyor' }]);
     nodes.filters.options('group', [{ value: '', label: 'Grup — liste bu bilgiyi vermiyor' }]);
   }
@@ -253,6 +256,18 @@ async function refreshRules({ page = state.page, size = state.size } = {}) {
   nodes.pager.update({ total: state.total, page: state.page, size: state.size });
   nodes.chips.counts?.(state.counts);
   nodes.status?.set(statusText(), !state.connected);
+}
+
+/**
+ * Yeni kuralın kanalı — mağazada TEK kanal varsa onun kimliği, yoksa boş.
+ *
+ * Tek seçenekli alanı ekrandan kaldırmanın yazma tarafındaki karşılığı budur:
+ * kutu sorulmaz ama değer gönderilir (`choice.js` başlığı). Çok kanallı bir
+ * mağazada boş döner — orada seçim gerçek bir sorudur ve uydurulmaz.
+ */
+function autoChannelIds() {
+  const choice = resolveChoice(state.reference.channels);
+  return choice.mode === 'single' ? [Number(choice.value)] : [];
 }
 
 async function loadReference() {
@@ -264,10 +279,11 @@ async function loadReference() {
     return;
   }
   state.reference = { ...state.reference, ...payload };
-  nodes.filters.options('channel', [
-    { value: '', label: 'Tümü — kanal' },
-    ...(payload.channels || []).map((item) => ({ value: item.id, label: item.name })),
-  ]);
+  // TEK KANALLI MAĞAZADA KUTU ÇİZİLMEZ (`choice.js`); ikinci kanal açılırsa
+  // süzgeç kendiliğinden geri gelir. MÜŞTERİ GRUBU AYNI KURALA GİRMEZ: orada
+  // üç gerçek seçenek var (Toptan/Genel/Misafir) ve seçim listeyi değiştirir.
+  applyChoiceFilter(nodes.filters, 'channel', payload.channels,
+                    { allLabel: 'Tümü — kanal' });
   nodes.filters.options('group', [
     { value: '', label: 'Tümü — müşteri grubu' },
     ...(payload.customerGroups || []).map((item) => ({ value: item.id, label: item.name })),
@@ -739,7 +755,18 @@ async function openRule(ruleId) {
       conditionType: joiner.value,
       conditions: rows.filter((row) => row.alive()).map((row) => row.read()),
       customerGroups: groupPicker.selection().map(Number),
-      channels: rule?.channels || [],
+      // KANAL SORULMAZ, KENDİLİĞİNDEN DOLAR — ama YALNIZ tek kanallıyken.
+      //
+      // Kural bir kanala bağlı olmak zorunda: boş `channels` ile kaydedilen
+      // kural vitrinde HİÇ görünmez. Mevcut kuralın kanalı varsa o korunur.
+      //
+      // ÇOK KANALLI HÂL BURADA KARARA BAĞLANMAZ: "hepsini seç" de bir karardır
+      // ve kampanyanın hangi vitrinlerde çalışacağını sessizce belirler. O gün
+      // buraya gerçek bir kanal seçici gelir; bugün olmayan bir seçim
+      // uydurulmaz.
+      channels: (rule?.channels || []).length
+        ? rule.channels
+        : autoChannelIds(),
       action: {
         kind,
         value: kind === 'by_percent' ? Number(percentBox.value)
@@ -1657,8 +1684,8 @@ export function mount(root, ctx) {
       ] },
       { kind: 'select', key: 'kind', label: 'Tip',
         options: [{ value: '', label: 'Tümü — indirim tipi' }] },
-      { kind: 'select', key: 'channel', label: 'Kanal',
-        options: [{ value: '', label: 'Tümü — kanal' }] },
+      // Başlangıçta GİZLİ: kanal listesi `reference` isteğiyle geliyor.
+      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true, options: [] },
       { kind: 'select', key: 'group', label: 'Grup',
         options: [{ value: '', label: 'Tümü — müşteri grubu' }] },
     ],

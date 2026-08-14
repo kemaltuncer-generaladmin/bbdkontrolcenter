@@ -39,6 +39,7 @@ import {
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { applyChoiceFilter, resolveChoice } from '../../ui-kit/choice.js';
 import {
   alertBox, badge, card, chipRow, drawer, emptyState, hintBox, kpiRow,
   skeletonRows, statusLine, tabBar,
@@ -784,10 +785,12 @@ async function loadMapping({ page = state.mapping.page, size = state.mapping.siz
   }
   state.mapping = payload;
   state.selection = [];
-  nodes.mapBar.options('taxCategory', [
-    { value: '', label: 'Tümü — vergi kategorisi' },
-    ...(payload.categories || []).map((item) => ({ value: item.id, label: item.name })),
-  ]);
+  // TEK VERGİ KATEGORİLİ MAĞAZADA SÜZGEÇ KUTUSU ÇİZİLMEZ (`choice.js`):
+  // "KDV" seçmek 1.422 ürünün tamamını gösterir, yani hiçbir şey elemez.
+  // İkinci kategori açılırsa kutu kendiliğinden geri gelir. Kategori LİSTESİ
+  // (bu ekranın 2. sekmesi) elbette durur — kaldırılan şey seçim kutusu.
+  applyChoiceFilter(nodes.mapBar, 'taxCategory', payload.categories,
+                    { allLabel: 'Tümü — vergi kategorisi' });
   renderMapping();
   nodes.mapPager.update({ total: payload.total, page: payload.page, size: payload.size });
 }
@@ -852,16 +855,31 @@ function renderMapSelection() {
   // Kategori listesi okunamadıysa hedef seçilemez. Düğme SESSİZ ÖLÜ BIRAKILMAZ:
   // açıkça kapatılır ve nedeni hem başlıkta hem çubukta yazar.
   const options = state.mapping.categories || [];
-  const blocked = !options.length;
-  const target = h('select', 'kit-select');
-  for (const option of [{ id: '', name: 'Hedef vergi kategorisi seçin' }, ...options]) {
-    const item = h('option', undefined, option.name);
-    item.value = String(option.id);
-    target.append(item);
-  }
-  target.disabled = blocked;
+  const choice = resolveChoice(options);
+  const blocked = choice.mode === 'none';
 
-  bar.append(h('b', undefined, `${num(count)} ürün seçildi`), target);
+  // HEDEF TEK İSE SORULMAZ. Kutu "seçin" diyordu ama seçilecek tek bir şey
+  // vardı; kullanıcı olmayan bir karar veriyordu. Tek kategoride hedef yazıyla
+  // gösterilir ve kendiliğinden seçilir — işin kendisi (fark tablosu + toplu
+  // eşleme) aynen çalışır. İkinci kategori açılırsa kutu geri gelir.
+  let target = null;
+  let chosenId = () => Number(choice.value) || 0;
+  if (choice.mode === 'many') {
+    target = h('select', 'kit-select');
+    for (const option of [{ value: '', label: 'Hedef vergi kategorisi seçin' },
+      ...choice.options]) {
+      const item = h('option', undefined, option.label);
+      item.value = String(option.value);
+      target.append(item);
+    }
+    chosenId = () => Number(target.value) || 0;
+  }
+
+  bar.append(h('b', undefined, `${num(count)} ürün seçildi`));
+  if (target) bar.append(target);
+  else if (choice.mode === 'single') {
+    bar.append(h('span', 'tx-sub', `Hedef: ${choice.options[0].label}`));
+  }
   if (limit && count > limit) {
     bar.append(badge(`sınır ${num(limit)}`, 'bad'));
   }
@@ -877,7 +895,7 @@ function renderMapSelection() {
       disabled: blocked,
       title: blocked ? 'Hedef vergi kategorisi listesi okunamadı' : '',
       onClick: () => {
-        const wanted = Number(target.value) || 0;
+        const wanted = chosenId();
         if (!wanted) { toast('Hedef vergi kategorisi seçin.', 'bad'); return; }
         assignDialog(wanted);
       },
@@ -1034,11 +1052,12 @@ async function loadVat() {
     if (!state.channelNames.includes(row.channel)) state.channelNames.push(row.channel);
   }
   if (current && !state.channelNames.includes(current)) state.channelNames.push(current);
-  nodes.vatBar.options('channel', [
-    { value: '', label: 'Tüm kanallar' },
-    ...state.channelNames.map((name) => ({ value: name, label: name })),
-  ]);
-  nodes.vatBar.set('channel', current);
+  // TEK KANALLI MAĞAZADA KUTU ÇİZİLMEZ. İcmalde kanal ayrımı ancak birden çok
+  // kanal varken bir soru; tek kanalda "Tüm kanallar" ile "default" aynı
+  // icmali verir ve kullanıcı olmayan bir ayrımı arar.
+  const shown = applyChoiceFilter(nodes.vatBar, 'channel', state.channelNames,
+                                  { allLabel: 'Tüm kanallar' });
+  if (shown.mode === 'many') nodes.vatBar.set('channel', current);
   renderVat();
 }
 
@@ -1224,8 +1243,9 @@ function mountMapping() {
   nodes.mapBar = tabTrack(filterBar({
     fields: [
       { kind: 'search', key: 'q', placeholder: 'Ürün adı ara', width: '260px' },
+      // Başlangıçta GİZLİ: kategori listesi ilk `mapping` yanıtıyla geliyor.
       { kind: 'select', key: 'taxCategory', label: 'Vergi kategorisi',
-        options: [{ value: '', label: 'Tümü — vergi kategorisi' }] },
+        hidden: true, options: [] },
     ],
     onChange: () => loadMapping({ page: 1 }),
     actions: [button('Yenile', { onClick: () => loadMapping() })],
@@ -1248,8 +1268,8 @@ function mountVat() {
     fields: [
       { kind: 'dateRange', key: 'range', label: 'Dönem',
         start: todayIso(-29), end: todayIso() },
-      { kind: 'select', key: 'channel', label: 'Kanal',
-        options: [{ value: '', label: 'Tüm kanallar' }] },
+      // Başlangıçta GİZLİ: kanal adları icmal yanıtından toplanıyor.
+      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true, options: [] },
     ],
     onChange: () => loadVat(),
     actions: [

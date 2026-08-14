@@ -35,6 +35,7 @@ import {
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { applyChoiceFilter } from '../../ui-kit/choice.js';
 import {
   alertBox, badge, card, chipRow, emptyState, hintBox, kpiRow, skeletonRows, splitView,
   statusLine, tabBar,
@@ -225,12 +226,12 @@ async function loadReference() {
   try {
     const payload = await api(`${BASE}/reference`);
     state.reference = { channels: payload.channels || [], siteUrl: payload.siteUrl || '' };
-    nodes.filters.options('channel', [
-      { value: '', label: 'Tümü — kanal' },
-      ...state.reference.channels.map((item) => ({ value: item.code, label: item.name || item.code })),
-    ]);
+    // TEK KANALLI MAĞAZADA KUTU ÇİZİLMEZ. Karar veriden çıkar: ikinci kanal
+    // açılırsa süzgeç kendiliğinden geri gelir (`choice.js`). Sert kodlama yok.
+    applyChoiceFilter(nodes.filters, 'channel', state.reference.channels,
+                      { allLabel: 'Tümü — kanal' });
   } catch {
-    // Kanal listesi gelmezse süzgeç boş kalır, ekran çalışır (K7).
+    // Kanal listesi gelmezse kutu gizli kalır, ekran çalışır (K7).
   }
 }
 
@@ -1475,7 +1476,11 @@ export function mount(root, ctx) {
   nodes.filters = filterBar({
     fields: [
       { kind: 'search', key: 'q', placeholder: 'Başlık, adres veya İÇERİK METNİ ara', width: '300px' },
-      { kind: 'select', key: 'channel', label: 'Kanal', options: [{ value: '', label: 'Tümü — kanal' }] },
+      // `hidden: true` BAŞLANGIÇ HÂLİ: kanal listesi `reference` isteğinden
+      // sonra geliyor ve kutunun çizilip çizilmeyeceğine ancak o zaman karar
+      // verilebiliyor. Önce gizli çizip sonra açmak, bir an görünüp kaybolan
+      // kutudan iyidir.
+      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true, options: [] },
     ],
     // 500 ms: her tuşta iki istek (sayfalar + yönlendirmeler) gidiyor ve
     // geçidin hız kovası dakikada 55 istekte tutuluyor; 260 ms'lik varsayılan

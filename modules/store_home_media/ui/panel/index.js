@@ -43,6 +43,7 @@ import {
   loadStyles, num, toaster,
 } from '../../ui-kit/kit.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { applyChoiceFilter, choiceField, choiceValues } from '../../ui-kit/choice.js';
 import {
   alertBox, badge, card, drawer, emptyState, hintBox, kpiRow, skeletonRows, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
@@ -217,10 +218,10 @@ async function loadReference() {
     categories: payload.categories || [],
     pages: payload.pages || [],
   };
-  nodes.filters.options('channel', [
-    { value: '', label: 'Tümü — kanal' },
-    ...state.reference.channels.map((item) => ({ value: item.code, label: item.name })),
-  ]);
+  // TEK KANALLI MAĞAZADA KUTU ÇİZİLMEZ (`choice.js`). Karar VERİDEN çıkar;
+  // ikinci kanal açılırsa süzgeç kendiliğinden geri gelir.
+  applyChoiceFilter(nodes.filters, 'channel', state.reference.channels,
+                    { allLabel: 'Tümü — kanal' });
   if (payload.warnings?.length) {
     toast(`Bazı referans listeler gelmedi: ${payload.warnings.join(' · ')}`, 'warn');
   }
@@ -694,10 +695,12 @@ function openEditor(row) {
         { value: 'all', label: 'Tümü' }, { value: 'desktop', label: 'Masaüstü' },
         { value: 'mobile', label: 'Mobil' },
       ] },
-      { key: 'channel', label: 'Kanal', type: 'select', options: [
-        { value: '', label: 'Varsayılan kanal' },
-        ...state.reference.channels.map((item) => ({ value: item.code, label: item.name })),
-      ] },
+      // KANAL ALANI TEK SEÇENEKTE SORULMAZ ama DEĞER KAYBOLMAZ: `choiceField`
+      // `null` döndürdüğünde `formGrid` alanı atlar, `choiceValues` da tek
+      // seçeneği taslağa koyar ve slot o kanalla kaydedilir. Süzgeçten farkı
+      // bilinçli: yazarken kanal boş bırakılırsa mağaza kendi varsayılanına
+      // düşer ve hangi varsayılan olduğu uçtan uca aynı değil.
+      choiceField({ key: 'channel', label: 'Kanal', options: state.reference.channels }),
       { key: 'startsAt', label: 'Yayın başlangıcı', type: 'date',
         hint: 'Boşsa hemen başlar.' },
       { key: 'endsAt', label: 'Yayın bitişi', type: 'date', hint: 'Boşsa süresiz.' },
@@ -709,7 +712,9 @@ function openEditor(row) {
       link: row?.link || '',
       placement: row?.placement || (area === 'slider' ? 'slider' : 'top'),
       device: row?.device || 'all',
-      channel: row?.channel || '',
+      // Kayıtta kanal varsa O kalır; yoksa tek seçenek kendiliğinden dolar.
+      // Alan çizilmese de taslakta durduğu için `{...draft}` ile gövdeye gider.
+      channel: row?.channel || choiceValues({ channel: state.reference.channels }).channel || '',
       startsAt: row?.startsAt || '',
       endsAt: row?.endsAt || '',
     },
@@ -1182,8 +1187,9 @@ export function mount(root, ctx) {
         { value: '', label: 'Tümü' }, { value: 'desktop', label: 'Masaüstü' },
         { value: 'mobile', label: 'Mobil' },
       ] },
-      { kind: 'select', key: 'channel', label: 'Kanal',
-        options: [{ value: '', label: 'Tümü — kanal' }] },
+      // Başlangıçta GİZLİ: kanal listesi `reference` isteğiyle geliyor ve
+      // kutunun çizilip çizilmeyeceğine ancak o zaman karar verilebiliyor.
+      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true, options: [] },
       { kind: 'dateRange', key: 'range', label: 'Yayın aralığı' },
     ],
     onChange: () => refresh(),

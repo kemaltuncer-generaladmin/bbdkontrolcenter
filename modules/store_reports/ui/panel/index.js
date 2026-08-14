@@ -27,6 +27,7 @@ import {
 } from '../../ui-kit/kit.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { choiceFilter } from '../../ui-kit/choice.js';
 import {
   alertBox, badge, card, emptyState, hintBox, kpiRow, skeletonRows, splitView,
   statusLine, tabBar,
@@ -404,11 +405,16 @@ function buildParamBar(leaf) {
     });
   }
   if (wanted.has('channel')) {
-    fields.push({
-      kind: 'select', key: 'channel', label: 'Kanal', value: previous.channel || '',
-      options: [{ value: '', label: 'Tümü — kanal' },
-        ...state.reference.channels.map((item) => ({ value: item, label: item }))],
+    // TEK KANALLI MAĞAZADA KUTU ÇİZİLMEZ. `choiceFilter` seçenek sayısına
+    // bakar (`choice.js`): birden çoksa kutu geri gelir, tek/sıfırsa `null`
+    // döner ve şeride hiç eklenmez. Rapor parametresi olarak da GÖNDERİLMEZ —
+    // tek kanallı mağazada hiçbir satır elemeyen bir süzgeç, mağazanın kanal
+    // parametresini yanlış yorumlaması hâlinde raporu sessizce boşaltabilir.
+    const field = choiceFilter({
+      key: 'channel', label: 'Kanal', allLabel: 'Tümü — kanal',
+      value: previous.channel || '', options: state.reference.channels,
     });
+    if (field) fields.push(field);
   }
   if (wanted.has('customerGroup')) {
     fields.push({
