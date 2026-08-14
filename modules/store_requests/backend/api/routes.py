@@ -133,7 +133,7 @@ class ReplyBody(BaseModel):
 
 
 @router.post("/requests/{request_id}/reply")
-async def reply(
+async def reply(  # MAĞAZADA UCU YOK: servis nedenini söyler, istek gönderilmez.
     request_id: int,
     body: ReplyBody,
     user: CurrentUser = requires("store_requests.manage"),
@@ -143,7 +143,13 @@ async def reply(
 
 
 class UpdateBody(BaseModel):
-    status: str = Field(default="", max_length=24)
+    #: MAĞAZANIN durum kimliği. Metin de kabul edilir ve sayıya çevrilir;
+    #: ekranın altı anahtarı (`closed` gibi) buraya YAZILMAZ — dokuzu altıya
+    #: indiren eşleme tek yönlüdür ve tersi belirsizdir (bkz. `rma.py`).
+    status: int | str = ""
+    #: ÖNCELİK VE ATAMA MAĞAZADA YOK. Şemadan atılmadılar ki eski bir istemci
+    #: 422 yerine NEDENİNİ okusun; servis ikisini de reddediyor ve istek
+    #: mağazaya hiç gitmiyor.
     priority: str = Field(default="", max_length=16)
     assignee: str = Field(default="", max_length=64)
     reason: str = Field(min_length=10, max_length=255)
@@ -156,7 +162,7 @@ async def update(
     body: UpdateBody,
     user: CurrentUser = requires("store_requests.manage"),
 ) -> dict[str, Any]:
-    return await service().update(request_id, status=body.status, priority=body.priority,
+    return await service().update(request_id, status=str(body.status), priority=body.priority,
                                   assignee=body.assignee, reason=body.reason,
                                   actor=user.full_name, dry_run=body.dryRun)
 
@@ -181,7 +187,10 @@ async def set_items(
 
 class BulkBody(BaseModel):
     requestIds: list[int] = Field(default_factory=list)
+    #: `status` ya da `close`. `assign` KALDIRILDI: mağazada atama alanı yok ve
+    #: alan gönderilen istek tümüyle reddediliyordu.
     action: str = Field(max_length=16)
+    #: `action="status"` için MAĞAZANIN durum kimliği.
     value: str = Field(default="", max_length=64)
     reason: str = Field(min_length=10, max_length=255)
     dryRun: bool = True

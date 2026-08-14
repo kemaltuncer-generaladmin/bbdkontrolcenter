@@ -12,10 +12,33 @@ KARŞILIĞI OLMAYAN üç şeyi saklar:
   3. İADE AKTARIMI. Onaylanan talebin İadeler ekranına devri; olay yolunu
      dinleyen olmasa bile "devredildi mi" sorusunun cevabı burada durur.
 
-UZAK UÇ HENÜZ YAYINDA OLMAYABİLİR. `/api/admin/bbd/return-requests` yazım
-aşamasında; geçit onu `bbd_endpoint_missing` hatasına çeviriyor. Ekran bu
-durumda ÇÖKMEZ (K7): `connected: False` + anlaşılır bir metin döner ve yerel
-iz/notlar okunmaya devam eder.
+UZAK UÇ HENÜZ YAYINDA OLMAYABİLİR. Geçit onu `bbd_endpoint_missing` hatasına
+çeviriyor. Ekran bu durumda ÇÖKMEZ (K7): `connected: False` + anlaşılır bir
+metin döner ve yerel iz/notlar okunmaya devam eder.
+
+MAĞAZANIN YAZMA SÖZLEŞMESİ (2026-08-15, `PUT bbd/return-requests/{id}` yayında)
+Uç ÜÇ ALAN yazar ve tanımadığı alanı sessizce yok saymaz, isteği reddeder:
+
+    status  → durum kimliği (ekranın altı anahtarı DEĞİL, mağazanın dokuz
+              kimliğinden biri). Kimlik 5 ve 8 para hareketi doğurduğu için
+              409 alır.
+    note    → İÇ not; siparişin yöneticiye açık yorum defterine yazılır ve
+              müşteriye e-posta GÖNDERİLMEZ.
+    items   → talebin MEVCUT kalemlerinin adedi/sebebi. Kalem EKLENMEZ,
+              SİLİNMEZ; adresleme `rma_items.id` iledir.
+
+BU EKRANIN ÜÇ İŞİ MAĞAZADA KARŞILIĞI OLMADIĞI İÇİN KAPALI — ve kapalı olduğunu
+`features()` ile SÖYLER, tıklanınca hata vermez:
+
+  · ÖNCELİK. `rma` tablosunda öncelik sütunu yok. SLA saatini önceliğe göre
+    hesaplıyoruz ama öncelik hiçbir yerde SAKLANMIYOR; yazılabilirmiş gibi
+    göstermek, ayarlandığını sanılan ama her tazelemede geri dönen bir alan
+    üretirdi.
+  · ATAMA. Aynı sebep; mağaza bu alanı 503 ile reddediyor ve REDDEDERKEN aynı
+    isteğin durum/not kısmını da yazmıyor.
+  · MÜŞTERİYE YANIT. `rma_messages` zinciri müşteriye görünür ama bu uçtan
+    YAZILMIYOR; yazan tek yer panelin kendi ekranı. Buradan gönderiyormuş gibi
+    davranmak, cevap beklediğini sanan bir müşteri bırakırdı.
 """
 
 from __future__ import annotations
@@ -39,7 +62,35 @@ from . import rma
 #: tavanı bozuk `meta` yüzünden sonsuz taramayı da engeller.
 REPORT_ROW_CAP = 2_000
 
-BULK_ACTIONS = ("status", "assign", "close")
+BULK_ACTIONS = ("status", "close")
+
+#: MAĞAZADA KARŞILIĞI OLMADIĞI İÇİN KAPALI işler — anahtar → (etiket, neden).
+#:
+#: Ekran bunları `features()` üzerinden okur ve düğmeyi TIKLANMADAN ÖNCE kapatır.
+#: Kapalı düğmenin nedeni yazılı olmak zorunda: "çalışmıyor" ile "burada
+#: yapılmıyor" kullanıcı için bambaşka iki durumdur.
+CLOSED_FEATURES = {
+    "priority": (
+        "Öncelik değiştirme",
+        ("Mağazada iade talebinin önceliği diye bir kayıt YOK (`rma` tablosunda sütun "
+        "bulunmuyor). Öncelik yalnız SLA saatini hesaplamak için kullanılıyor ve "
+        "kaydedilemez; kaydedilebilirmiş gibi göstermek, her tazelemede geri dönen "
+         "bir alan olurdu."),
+    ),
+    "assign": (
+        "Talep atama",
+        ("Mağazada iade talebine ATAMA alanı yok. Mağaza bu alanı gönderen isteği "
+        "tümüyle reddediyor — aynı istekteki durum ve iç not da yazılmıyor. Atamayı "
+         "müşteriye görünen bir alana yazmak ise geri alınamaz bir sızıntı olurdu."),
+    ),
+    "reply": (
+        "Müşteriye yanıt",
+        ("Mağazanın iade ucu müşteriye mesaj YAZMIYOR (yalnız durum satırını zincire "
+        "ekliyor) ve bu uç müşteriye e-posta göndermiyor. Yanıt Bagisto panelinden "
+        "yazılır; buradan gönderiyormuş gibi davranmak, cevap bekleyen bir müşteri "
+         "bırakırdı."),
+    ),
+}
 
 #: Toplu işlemde tek seferde dokunulacak en çok talep. Uzak uçta TOPLU YAZMA
 #: YOK: her talep ayrı PUT ile gider ve mağaza dakikada 60 istek kabul eder.
@@ -108,6 +159,29 @@ class RequestsService:
         return report_dir(self._category, subcategory=self._subcategory,
                           fallback=self._fallback,
                           configured=str(self._config.get("export_path") or ""))
+
+    # --------------------------------------------------------- yetenek beyanı
+
+    def features(self) -> dict[str, Any]:
+        """Hangi düğme açılabilir — kapalı olanın NEDENİ yazılıdır.
+
+        Panel bunu okuyup düğmeyi tıklanmadan önce kapatır. K9: burada
+        "kapalı" demek yetkilendirme DEĞİLDİR — aynı işler serviste de
+        reddedilir ve mağaza da kendi kapısını tutar.
+        """
+        closed = {key: {"available": False, "reason": f"{label} — {why}"}
+                  for key, (label, why) in CLOSED_FEATURES.items()}
+        return {
+            **closed,
+            "status": {"available": True, "reason": ""},
+            "note": {"available": True, "reason": ""},
+            "items": {"available": True, "reason": ""},
+            "decide": {"available": True, "reason": ""},
+            "printer": {"available": self._printer is not None,
+                        "reason": "" if self._printer is not None else
+                                  "Yazıcı yeteneği bu kurulumda yok; PDF üretilir, "
+                                  "basılmaz."},
+        }
 
     # ------------------------------------------------------- yerel tablolar
 
@@ -307,7 +381,22 @@ class RequestsService:
         }
 
     async def reference(self) -> dict[str, Any]:
-        """Süzgeçlerin beslendiği listeler. Atanan kişi listesi mağazadan gelir."""
+        """Süzgeçlerin ve durum açılırının beslendiği listeler.
+
+        İKİ AYRI DURUM LİSTESİ ve karıştırılmazlar:
+
+          `statuses`      — EKRANIN altı anahtarı. Pano sütunları ve süzgeç.
+          `storeStatuses` — MAĞAZANIN dokuz kaydı (kimlik + başlık). Yazma
+                            açılırı yalnız bunu kullanır; para hareketi doğuran
+                            iki satır listeden ÇIKARILMAZ, `blocked` işaretiyle
+                            durur ve nedeni yanında yazar. Çıkarmak "böyle bir
+                            durum yok" demek olurdu; oysa var ve panelden
+                            seçilebiliyor — buradan seçilemediğini SÖYLEMEK
+                            gerekir.
+
+        Mağaza sözlüğü LİSTE YANITININ `meta`sından gelir; ikinci bir istek
+        atılmaz. Okunamazsa açılır boş kalır ve ekran nedenini yazar (K7).
+        """
         out: dict[str, Any] = {
             "ok": True, "connected": True, "error": "",
             "types": [{"value": key, "label": label} for key, label in rma.TYPE_LABELS.items()],
@@ -320,16 +409,26 @@ class RequestsService:
             "slaHours": self._hours,
             "templates": self._templates,
             "assignees": [],
+            "storeStatuses": [],
+            "storeStatusError": "",
+            "features": self.features(),
         }
         try:
-            payload = await self._api.admin_users()
-        except Exception as failure:  # noqa: BLE001 — K7: atama açılırı boş kalır
-            out["connected"] = False
-            out["error"] = self._fail(failure)
-            return out
-        out["assignees"] = [{"id": rma.as_int(item.get("id")),
-                             "name": rma.text(item.get("name") or item.get("email"))}
-                            for item in (payload.get("items") or []) if isinstance(item, dict)]
+            payload = await self._api.bbd_return_requests({}, page=1, per_page=1)
+        except Exception as failure:  # noqa: BLE001 — K7: durum açılırı boş kalır
+            out["storeStatusError"] = (
+                "Mağazanın iade durumları okunamadı; durum açılırı boş kaldı ve durum "
+                f"değiştirilemiyor — {self._fail(failure)}")
+        else:
+            out["storeStatuses"] = rma.status_options(payload.get("meta"))
+            if not out["storeStatuses"]:
+                out["storeStatusError"] = (
+                    "Mağaza durum sözlüğünü göndermedi; durum açılırı boş kaldı. Durumu "
+                    "yanlış bir kimlikle yazmaktansa hiç yazmamak doğrudur.")
+
+        # ATANAN LİSTESİ ARTIK ÇEKİLMİYOR: mağazada iade talebine atama alanı
+        # yok ve alan gönderilen istek tümüyle reddediliyor. Boş liste olarak
+        # KALIR ki ekran "atama kapalı" derken alanı da doldurmasın.
         return out
 
     async def audit(self, *, request_id: int = 0, limit: int = 50) -> dict[str, Any]:
@@ -379,58 +478,65 @@ class RequestsService:
 
     async def reply(self, request_id: int, *, body: str, reason: str, actor: str,
                     status: str = "", dry_run: bool = True) -> dict[str, Any]:
-        """MÜŞTERİYE yanıt — uzağa gider. İç nottan ayrı uçta durur.
+        """MÜŞTERİYE yanıt — MAĞAZADA UCU YOK, istek gönderilmez.
 
-        Aynı uçtan geçselerdi tek bir bayrak hatası personel yazışmasını
-        müşteriye gösterirdi; iki ayrı uç bu hatayı imkânsız kılar.
+        Eskiden burası `{"message": …, "internal": False}` gövdesiyle uzağa
+        gidiyordu; mağazanın iade ucu böyle bir alan tanımıyor ve isteği 422 ile
+        reddediyor. Kullanıcı "gönderildi" görmüyordu ama ham bir hata metni
+        görüyordu — ikisi de yanlış.
+
+        NEDEN "YAZAMIYORUM" DEMEK, BİR YERE YAZMAKTAN İYİ: tek yazılabilir
+        zincir `rma_messages` ve o zincir MÜŞTERİYE görünür; oraya yazmak
+        gönderdiğimizi sandığımız yanıtı müşteri hesabında bir nota
+        dönüştürürdü. Yanıt Bagisto panelinden yazılır.
+
+        Yazılmak istenen metin KAYBOLMAZ: iç not olarak yereldeki nota
+        yazılabilir ve ekran bunu önerir.
         """
-        problem = self._guard(reason)
-        if problem:
-            return {"ok": False, "error": problem}
-        content = rma.text(body)
-        if len(content) < 2:
-            return {"ok": False, "error": "Yanıt boş olamaz."}
-
-        payload: dict[str, Any] = {"message": content, "internal": False}
-        if status and status in rma.STATUS_ORDER:
-            payload["status"] = status
+        label, why = CLOSED_FEATURES["reply"]
         await self._record(request_id=request_id, action="reply", reason=reason, actor=actor,
-                           result="denendi", detail={"length": len(content), "status": status})
-        try:
-            result = await self._api.bbd_update_return_request(
-                int(request_id), payload=payload, reason=reason, actor=actor, dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(request_id=request_id, action="reply", reason=reason, actor=actor,
-                               result="hata", detail={"error": str(failure)})
-            return {"ok": False, "error": self._fail(failure)}
-        await self._record(request_id=request_id, action="reply", reason=reason, actor=actor,
-                           result="dry_run" if dry_run else "ok",
-                           detail={"length": len(content), "status": status})
-        return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
-                "sent": bool(result.get("sent", not dry_run))}
+                           result="uc_yok", detail={"length": len(rma.text(body))})
+        return {"ok": False, "blocked": True, "feature": "reply",
+                "error": f"{label} bu ekrandan yapılamıyor. {why}"}
 
     async def update(self, request_id: int, *, status: str = "", priority: str = "",
                      assignee: str = "", reason: str, actor: str,
                      dry_run: bool = True) -> dict[str, Any]:
-        """Durum · öncelik · atama. Yalnız VERİLEN alan gönderilir."""
+        """Durum yazma. ÖNCELİK ve ATAMA MAĞAZADA YOK — istek hiç gönderilmez.
+
+        Eskiden üçü tek gövdede gidiyordu ve mağaza gövdenin TAMAMINI
+        reddediyordu: atama alanı 503, öncelik 422. Yani "durumu da değiştirdim"
+        sanan kullanıcının durumu da yazılmıyordu. Şimdi kapalı alan istekten
+        önce ayrılıyor ve neden kapalı olduğu söyleniyor.
+
+        `status` MAĞAZANIN DURUM KİMLİĞİDİR (metin de kabul edilir, sayıya
+        çevrilir). Ekranın altı anahtarı yazma tarafında kullanılmaz: dokuz
+        durumu altıya indiren eşleme tek yönlüdür ve tersi belirsizdir.
+        """
         problem = self._guard(reason)
         if problem:
             return {"ok": False, "error": problem}
 
-        payload: dict[str, Any] = {}
-        if status:
-            if status not in rma.STATUS_ORDER:
-                return {"ok": False, "error": f"Bilinmeyen durum: {status}"}
-            payload["status"] = status
-        if priority:
-            if priority not in rma.PRIORITY_ORDER:
-                return {"ok": False, "error": f"Bilinmeyen öncelik: {priority}"}
-            payload["priority"] = priority
-        if assignee:
-            payload["assignee"] = rma.text(assignee)
-        if not payload:
-            return {"ok": False, "error": "Değişen alan yok."}
+        for key, value in (("priority", priority), ("assign", assignee)):
+            if not rma.text(value):
+                continue
+            label, why = CLOSED_FEATURES[key]
+            await self._record(request_id=request_id, action="update", reason=reason,
+                               actor=actor, result="uc_yok", detail={"field": key})
+            return {"ok": False, "blocked": True, "feature": key,
+                    "error": f"{label} bu ekrandan yapılamıyor. {why}"}
 
+        status_id = rma.as_int(status)
+        if not status_id:
+            return {"ok": False, "error": "Değişen alan yok."}
+        blocked = rma.status_error(status_id)
+        if blocked:
+            # Mağaza da 409 döndürür (K9). Burada durdurmanın sebebi kullanıcıyı
+            # gerekçe yazıp gönderdikten SONRA reddetmemek.
+            return {"ok": False, "blocked": True, "feature": "money",
+                    "error": blocked}
+
+        payload = {"status": status_id}
         await self._record(request_id=request_id, action="update", reason=reason, actor=actor,
                            result="denendi", detail=payload)
         try:
@@ -442,15 +548,29 @@ class RequestsService:
             return {"ok": False, "error": self._fail(failure)}
         await self._record(request_id=request_id, action="update", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail=payload)
-        return {"ok": True, "error": "", "fields": sorted(payload),
+        return {"ok": True, "error": "", "fields": ["status"],
+                # "Onayladım" ile "para gitti" AYRI: mağaza onay geçişinin
+                # panel düğmesini açtığını söylüyor, biz de söylüyoruz.
+                "unlocksPanelRefund": bool(result.get("unlocksPanelRefundButton")),
+                "customerNotified": bool(result.get("customerNotified", False)),
                 "dryRun": bool(result.get("dryRun", dry_run))}
 
     async def set_items(self, request_id: int, *, selection: dict[str, int], reason: str,
                         actor: str, dry_run: bool = True) -> dict[str, Any]:
-        """İade edilecek kalem seçimi.
+        """İade edilecek kalem adetleri.
 
-        Seçim YAZILMADAN ÖNCE siparişe karşı doğrulanır: sipariş adedinden
-        fazla iade, mağazaya iki kez para iade ettirir ve stoğu şişirir.
+        İKİ DOĞRULAMA, İKİ AYRI SEBEP:
+
+         1. Adet sipariş adedini AŞAMAZ — daha önce iade edilmiş ve iptal
+            edilmiş adet düşülür. Aşarsa mağaza iki kez para iade eder.
+         2. Kalem TALEPTE ZATEN OLMALI. Mağaza kalem EKLEMİYOR (vendor'ın
+            modelinde ilişki `HasOne`; panelin iade akışı talebin yalnızca ilk
+            kalemini görüyor). Talepte olmayan bir satıra adet yazmak, ekranda
+            "2 kalem" yazan ama bankaya tek kalem giden bir talep üretirdi.
+
+        MAĞAZA `rma_items.id` İLE ADRESLİYOR, sipariş kalemi kimliğiyle değil.
+        Ekran sipariş kalemi üzerinden çalıştığı için çeviri burada yapılır ve
+        karşılığı olmayan satır AÇIKÇA reddedilir.
         """
         problem = self._guard(reason)
         if problem:
@@ -471,9 +591,19 @@ class RequestsService:
         if invalid:
             return {"ok": False, "error": invalid}
 
+        known = {row["itemId"]: row for row in card["items"]}
+        missing = [known[item_id]["name"] for item_id in wanted
+                   if not known.get(item_id, {}).get("rmaItemId")]
+        if missing:
+            return {"ok": False, "blocked": True, "feature": "items",
+                    "error": "Bu talepte olmayan kaleme adet yazılamaz — mağaza iade "
+                             "talebine kalem EKLEMİYOR, yalnız var olanı güncelliyor. "
+                             f"Talepte bulunmayan: {', '.join(missing)}. Yeni kalem için "
+                             "Bagisto panelinden ayrı bir talep açılır."}
+
         estimate = rma.refund_estimate(card["items"], wanted)
-        payload = {"items": [{"orderItemId": key, "qty": value}
-                             for key, value in sorted(wanted.items())]}
+        payload = {"items": [{"id": known[item_id]["rmaItemId"], "quantity": qty}
+                             for item_id, qty in sorted(wanted.items())]}
         await self._record(request_id=request_id, action="set_items", reason=reason, actor=actor,
                            result="denendi", detail=payload)
         try:
@@ -487,6 +617,7 @@ class RequestsService:
                            result="dry_run" if dry_run else "ok",
                            detail={**payload, "amount": estimate["amount"]})
         return {"ok": True, "error": "", "estimate": estimate,
+                "itemsUpdated": rma.as_int(result.get("itemsUpdated"), len(payload["items"])),
                 "dryRun": bool(result.get("dryRun", dry_run))}
 
     async def decide(self, request_id: int, *, approve: bool, reason: str, actor: str,
@@ -520,9 +651,16 @@ class RequestsService:
                     "error": "İade/değişim talebi kalem seçilmeden onaylanmaz; hangi ürünün "
                              "geri geleceği yazılı olmalı."}
 
-        status = "approved" if approve else "rejected"
-        payload = {"status": status, "resolution": rma.text(reason)[:255]}
+        # KARAR MAĞAZANIN DURUM KİMLİĞİYLE YAZILIR: onay → "Accept" (2),
+        # ret → "Declined" (7). İkisi de PARA HAREKETİ DOĞURMAZ.
+        #
+        # `resolution` diye bir alan GÖNDERİLMİYOR: mağaza tanımadığı alanla
+        # gelen isteğin tamamını reddediyordu, yani gerekçe uğruna kararın
+        # kendisi yazılmıyordu. Gerekçe zaten `X-Bbd-Reason` başlığıyla gidiyor
+        # ve mağazanın denetim satırına yazılıyor.
         action = "approve" if approve else "reject"
+        status = "approved" if approve else "rejected"
+        payload = {"status": rma.DECISION_STATUS_IDS[action]}
         await self._record(request_id=request_id, action=action, reason=reason, actor=actor,
                            result="denendi", detail={"amount": estimate["amount"]})
         try:
@@ -541,7 +679,14 @@ class RequestsService:
                            result="dry_run" if dry_run else "ok",
                            detail={"amount": estimate["amount"], "handedOff": handed})
         return {"ok": True, "error": "", "status": status, "estimate": estimate,
-                "handedOff": handed, "dryRun": bool(result.get("dryRun", dry_run))}
+                "handedOff": handed,
+                # "ONAYLADIM" İLE "PARA GİTTİ" AYRI. Onay hiçbir para hareketi
+                # yapmaz ama Bagisto panelindeki "bankaya iade gönder" düğmesinin
+                # görünürlük koşuludur; ekran bunu yazmazsa operatör paranın
+                # gittiğini sanır.
+                "unlocksPanelRefund": bool(result.get("unlocksPanelRefundButton")),
+                "customerNotified": bool(result.get("customerNotified", False)),
+                "dryRun": bool(result.get("dryRun", dry_run))}
 
     async def _hand_off(self, request_id: int, *, card: dict[str, Any],
                         chosen: list[dict[str, Any]], estimate: dict[str, Any],
@@ -598,15 +743,16 @@ class RequestsService:
                              "her talep ayrı istekle yazılır."}
 
         if action == "close":
-            payload = {"status": "closed"}
-        elif action == "status":
-            if value not in rma.STATUS_ORDER:
-                return {"ok": False, "error": f"Bilinmeyen durum: {value}"}
-            payload = {"status": value}
+            # KAPATMAK AYRI BİR İŞ DEĞİL, BİR DURUM YAZMAKTIR ("Solved").
+            # Vitrin tarafı da tam olarak öyle yapıyor; ayrı bir "close" ucu
+            # aynı gerçeği yazan ikinci bir yol olurdu.
+            payload = {"status": rma.DECISION_STATUS_IDS["close"]}
         else:
-            if not rma.text(value):
-                return {"ok": False, "error": "Atanacak kişi seçilmedi."}
-            payload = {"assignee": rma.text(value)}
+            status_id = rma.as_int(value)
+            blocked = rma.status_error(status_id)
+            if blocked:
+                return {"ok": False, "blocked": True, "feature": "money", "error": blocked}
+            payload = {"status": status_id}
 
         applied = 0
         failed: list[int] = []

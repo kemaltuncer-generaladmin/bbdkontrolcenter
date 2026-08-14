@@ -14,6 +14,12 @@
 //    alınamaz bir sızıntı olurdu. Yanıt ve not AYRI düğmelerdir, aynı
 //    kutunun iki kipi değil.
 //  · Talep SİLMEZ. Kapatma vardır; kapanan talep zincirle birlikte kalır.
+//  · ÖNCELİK, ATAMA ve MÜŞTERİYE YANIT yazmaz — mağazada karşılıkları yok.
+//    Üçü de kapalı düğme olarak DURUR ve nedeni yanında yazar; tıklanınca ham
+//    hata göstermezler (ayrıntı: backend `CLOSED_FEATURES`).
+//  · PARA GEÇİREN DURUM GEÇİŞİ yapmaz. "İade Edildi" (kimlik 5) ve "Kalem
+//    İptal" (8) açılırda DURUR ama seçilemez: ikisi de zincirin sonunda
+//    bankaya para gönderiyor ve mağaza onları 409 ile reddediyor.
 //
 // TUZAKLAR (ekranda karşılığı olanlar):
 //  · Uzak RMA ucu (`/api/admin/bbd/return-requests`) henüz yayında olmayabilir;
@@ -28,8 +34,8 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, clip, confirmSimple, confirmWithReason, csvBlob, h, loadStyles, money, num,
-  toaster,
+  blockedButton, button, clip, confirmSimple, confirmWithReason, csvBlob, h, loadStyles,
+  money, num, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
@@ -64,11 +70,55 @@ const CHIPS = [
   { key: 'awaiting', label: 'Yanıt bizde bekliyor' },
 ];
 
+/** Kapalı işin künyesi; sunucu söylemediyse de ekran bir cümle bulur. */
+function feature(key) {
+  return state.features?.[key]
+    || { available: false, reason: 'Bu işin mağazada karşılığı olup olmadığı okunamadı.' };
+}
+
+/**
+ * Durum açılırı — MAĞAZANIN sözlüğünden.
+ *
+ * Para geçiren satırlar listeden ÇIKARILMAZ: "böyle bir durum yok" demek
+ * olurdu, oysa var ve Bagisto panelinden seçilebiliyor. `disabled` seçenek
+ * olarak durur ve nedeni `title`da yazar — operatör neden seçemediğini
+ * ekrandan öğrenir.
+ */
+function statusSelect(current) {
+  const select = h('select', 'kit-select');
+  select.setAttribute('aria-label', 'Talep durumu');
+  const rows = state.reference.storeStatuses || [];
+  if (!rows.length) {
+    const only = h('option', undefined, 'Durum listesi okunamadı');
+    only.value = '';
+    select.append(only);
+    select.disabled = true;
+    return select;
+  }
+  for (const row of rows) {
+    const option = h('option', undefined,
+      row.blocked ? `${row.title} — buradan yapılamaz` : row.title);
+    option.value = String(row.id);
+    if (row.blocked) {
+      option.disabled = true;
+      option.title = row.reason;
+    }
+    select.append(option);
+  }
+  select.value = String(current || '');
+  return select;
+}
+
 const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', narrowed: false, summary: {},
   columns: [], view: 'list', chip: null, selection: [], loaded: false,
-  reference: { types: [], statuses: [], priorities: [], channels: [], assignees: [], templates: [] },
+  reference: {
+    types: [], statuses: [], priorities: [], channels: [], assignees: [], templates: [],
+    // MAĞAZANIN dokuz durumu — yazma açılırının TEK kaynağı.
+    storeStatuses: [], storeStatusError: '',
+  },
+  features: {},
 };
 
 let api = null;
@@ -256,7 +306,12 @@ async function loadReference() {
     channels: payload.channels || [],
     assignees: payload.assignees || [],
     templates: payload.templates || [],
+    // MAĞAZANIN durum sözlüğü — yazma açılırının tek kaynağı. Boş gelirse
+    // `storeStatusError` nedenini taşır ve [Kaydet] kapalı çizilir.
+    storeStatuses: payload.storeStatuses || [],
+    storeStatusError: payload.storeStatusError || '',
   };
+  state.features = payload.features || {};
   const options = (label, items, map) => [{ value: '', label }, ...items.map(map)];
   nodes.filters.options('type', options('Tümü — tür', state.reference.types,
     (item) => ({ value: item.value, label: item.label })));
@@ -466,7 +521,9 @@ function renderSelectionBar() {
   bar.append(h('span', 'kit-spacer'));
   bar.append(
     button('Durum değiştir', { onClick: () => bulkDialog('status') }),
-    button('Ata', { onClick: () => bulkDialog('assign') }),
+    // TOPLU ATAMA KALDIRILMADI, KAPATILDI: mağazada atama alanı yok ve alan
+    // gönderilen istek tümüyle reddediliyor (durum/not dâhil).
+    blockedButton('Ata', feature('assign').reason),
     button('Kapat', { variant: 'danger', onClick: () => bulkDialog('close') }),
     button('Seçimi bırak', {
       variant: 'ghost',
@@ -660,61 +717,64 @@ function paintSummary(pane, payload, forms, reload) {
   customerCard(pane, request);
 
   // ------------------------------------------------------------ düzenleme
-  const form = formGrid({
-    fields: [
-      {
-        key: 'status',
-        label: 'Durum',
-        type: 'select',
-        options: state.reference.statuses.map((item) => ({ value: item.value, label: item.label })),
-      },
-      {
-        key: 'priority',
-        label: 'Öncelik',
-        type: 'select',
-        options: state.reference.priorities.map((item) => ({ value: item.value, label: item.label })),
-        hint: 'SLA süresi önceliğe göre hesaplanır.',
-      },
-      {
-        key: 'assignee',
-        label: 'Atanan',
-        type: 'select',
-        // Talebin ATANDIĞI kişi listede yoksa (mağazada silinmiş yönetici,
-        // ya da atanan listesi hiç gelmemiş) seçenek elle eklenir. Aksi hâlde
-        // açılır "(atanmamış)" gösterir; talep aslında atanmışken ekran
-        // atanmamış diye YALAN söyler ve kayıt farkında olmadan sıfırlanır.
-        options: assigneeOptions(request.assignee),
-      },
-    ],
-    value: {
-      status: request.status, priority: request.priority, assignee: request.assignee || '',
-    },
-  });
-  forms.push(form);
+  //
+  // TEK YAZILABİLİR ALAN DURUMDUR. Öncelik ve atama mağazada TUTULMUYOR:
+  // eskiden üçü tek gövdede gidiyordu ve mağaza gövdenin tamamını
+  // reddediyordu — yani "durumu da değiştirdim" sanan kullanıcının durumu da
+  // yazılmıyordu. Şimdi ikisi kapalı satır olarak duruyor ve nedeni yazıyor.
+  const statusBox = statusSelect(request.statusId);
+  const statusRow = h('div', 'rq-field');
+  statusRow.append(h('span', 'rq-sub', 'Durum'), statusBox);
 
   const actions = h('div', 'rq-actions');
-  actions.append(button('Kaydet', {
-    variant: 'primary',
-    onClick: async () => {
-      const patch = form.patch();
-      if (!Object.keys(patch).length) { toast('Değişen alan yok.', 'warn'); return; }
-      const reason = await askReason({
-        title: 'Talebi güncelle',
-        description: `${request.code} · ${Object.keys(patch).join(', ')} değişecek. Gerekçe `
-          + 'denetim kaydına yazılır.',
-        confirmLabel: 'Kaydet',
-      });
-      if (!reason) return;
-      await withBusy('Kaydediliyor…', async () => {
-        await call(`${BASE}/requests/${request.id}/update`, {
-          method: 'POST', body: { ...patch, reason, dryRun: false },
+  const statusError = state.reference.storeStatusError;
+  if (statusError) {
+    actions.append(blockedButton('Kaydet', statusError, { variant: 'primary' }));
+  } else {
+    actions.append(button('Kaydet', {
+      variant: 'primary',
+      onClick: async () => {
+        const wanted = Number(statusBox.value) || 0;
+        if (!wanted) { toast('Durum seçin.', 'warn'); return; }
+        if (wanted === Number(request.statusId)) { toast('Durum zaten bu.', 'warn'); return; }
+        const chosen = (state.reference.storeStatuses || [])
+          .find((row) => row.id === wanted);
+        const reason = await askReason({
+          title: 'Talebin durumunu değiştir',
+          description: `${request.code} · durum “${chosen?.title || wanted}” olacak. `
+            + 'Mağaza müşteriye e-posta GÖNDERMEZ; gerekçe denetim kaydına yazılır.',
+          confirmLabel: 'Kaydet',
         });
-        toast('Talep güncellendi.', 'good');
-        reload();
-      });
-    },
-  }));
-  pane.append(card('Durum · öncelik · atama', form.node), actions);
+        if (!reason) return;
+        await withBusy('Kaydediliyor…', async () => {
+          const result = await call(`${BASE}/requests/${request.id}/update`, {
+            method: 'POST', body: { status: wanted, reason, dryRun: false },
+          });
+          // "ONAYLADIM" İLE "PARA GİTTİ" AYRI ŞEYLER. Onay hiçbir para
+          // hareketi yapmaz ama Bagisto panelindeki "bankaya iade gönder"
+          // düğmesinin görünürlük koşuludur; söylenmezse operatör paranın
+          // gittiğini sanar.
+          toast(result.unlocksPanelRefund
+            ? 'Durum yazıldı. Para GÖNDERİLMEDİ: bu geçiş yalnız Bagisto panelindeki '
+              + '“bankaya iade gönder” düğmesini açar.'
+            : 'Talep güncellendi. Müşteriye e-posta gönderilmedi.', 'good');
+          reload();
+        });
+      },
+    }));
+  }
+  pane.append(card('Durum', statusRow, 'Mağazanın durum sözlüğünden'), actions);
+  if (statusError) pane.append(alertBox(statusError, 'warn'));
+
+  // ---------------------------------------------- mağazada karşılığı olmayanlar
+  const closed = h('div', 'rq-actions');
+  closed.append(
+    blockedButton('Öncelik değiştir', feature('priority').reason),
+    blockedButton('Ata', feature('assign').reason),
+  );
+  pane.append(card('Öncelik · atama', closed,
+    `Şu an: ${request.priorityLabel} · ${request.assignee || 'atanmamış'}`));
+  pane.append(alertBox(`${feature('priority').reason} ${feature('assign').reason}`, 'info'));
 
   // ---------------------------------------------------------------- karar
   const decision = h('div', 'rq-actions');
@@ -739,15 +799,6 @@ function paintSummary(pane, payload, forms, reload) {
 }
 
 /** Atanan açılırının seçenekleri; `current` listede yoksa başa eklenir. */
-function assigneeOptions(current) {
-  const known = state.reference.assignees.map((item) => ({ value: item.name, label: item.name }));
-  const options = [{ value: '', label: '(atanmamış)' }, ...known];
-  if (current && !known.some((item) => item.value === current)) {
-    options.splice(1, 0, { value: current, label: `${current} (listede yok)` });
-  }
-  return options;
-}
-
 function orderCard(payload) {
   const order = payload.order || {};
   const request = payload.request;
@@ -885,6 +936,17 @@ function paintItems(pane, payload, forms, reload) {
         align: 'num',
         cell: (row) => {
           if (!row.maxQty) return badge('iade edilemez', 'dim');
+          // TALEPTE OLMAYAN KALEME ADET YAZILAMAZ. Mağaza iade talebine kalem
+          // EKLEMİYOR (vendor'ın modelinde ilişki HasOne; panelin iade akışı
+          // talebin yalnızca ilk kalemini görüyor). Kutuyu açık bırakmak,
+          // yazılan adedin sunucuda reddedildiğini ancak [Kaydet]'ten sonra
+          // gösterirdi.
+          if (!row.rmaItemId) {
+            const mark = badge('talepte yok', 'warn');
+            mark.title = 'Bu kalem talebe dâhil değil. Mağaza iade talebine kalem eklemiyor; '
+              + 'yeni kalem için Bagisto panelinden ayrı bir talep açılır.';
+            return mark;
+          }
           const input = h('input', 'kit-input rq-qty');
           input.type = 'number';
           input.min = '0';
@@ -975,35 +1037,22 @@ function paintThread(pane, payload, forms, reload) {
   const closeLabel = h('label', 'rq-inline');
   closeLabel.append(closeAfter, h('span', undefined, 'Yanıttan sonra “Müşteri bekleniyor” yap'));
 
+  // MÜŞTERİYE YANIT KAPALI — mağazanın iade ucu müşteriye mesaj YAZMIYOR.
+  //
+  // Eskiden bu düğme uzağa `{"message": …, "internal": false}` gönderiyor ve
+  // ham 422 alıyordu. Kutu ve şablonlar KALDIRILMADI: personel metni yazıp
+  // panele taşıyabilsin ve şablonu oradan kopyalayabilsin diye duruyor —
+  // ama gönderim kapalı ve nedeni yanında yazıyor.
+  reply.placeholder = 'Panele kopyalamak için taslak…';
   const replyActions = h('div', 'rq-actions');
-  replyActions.append(templates, closeLabel, h('span', 'kit-spacer'), button('Müşteriye gönder', {
-    variant: 'primary',
-    onClick: async () => {
-      const body = reply.value.trim();
-      if (body.length < 2) { toast('Yanıt boş olamaz.', 'bad'); return; }
-      const reason = await askReason({
-        title: 'Müşteriye yanıt gönder',
-        description: `${request.code} · bu metin MÜŞTERİYE gider ve geri alınamaz. Gerekçe `
-          + 'denetim kaydına yazılır.',
-        confirmLabel: 'Gönder',
-      });
-      if (!reason) return;
-      await withBusy('Yanıt gönderiliyor…', async () => {
-        await call(`${BASE}/requests/${request.id}/reply`, {
-          method: 'POST',
-          body: {
-            body, reason, dryRun: false,
-            status: closeAfter.checked ? 'waiting_customer' : '',
-          },
-        });
-        toast('Yanıt gönderildi.', 'good');
-        reload();
-      });
-    },
-  }));
+  replyActions.append(templates, closeLabel, h('span', 'kit-spacer'),
+    blockedButton('Müşteriye gönder', feature('reply').reason, { variant: 'primary' }));
+  closeAfter.disabled = true;
+  closeAfter.title = feature('reply').reason;
   const replyBox = h('div', 'rq-editor-box');
   replyBox.append(reply, replyActions);
-  pane.append(card('Müşteriye yanıt', replyBox, 'Mağazaya gider · geri alınamaz'));
+  pane.append(card('Müşteriye yanıt', replyBox, 'Bagisto panelinden gönderilir'));
+  pane.append(alertBox(feature('reply').reason, 'info'));
 
   // ------------------------------------------------------------- iç not
   const note = h('textarea', 'kit-textarea rq-editor');
@@ -1096,9 +1145,9 @@ function bulkDialog(action) {
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-modal', 'true');
 
+  // `assign` YOK: mağazada atama alanı bulunmuyor ve düğmesi kapalı çiziliyor.
   const titles = {
     status: 'Toplu durum değiştirme',
-    assign: 'Toplu atama',
     close: 'Toplu kapatma',
   };
   box.append(h('h3', 'kit-dialog-title', titles[action]));
@@ -1116,21 +1165,19 @@ function bulkDialog(action) {
   };
   document.addEventListener('keydown', onKey);
 
+  // Açılır MAĞAZANIN durum sözlüğünden gelir; para geçiren iki satır listede
+  // durur ama seçilemez (`statusSelect`). Toplu işlemde bu daha da önemli:
+  // elli talebi birden bankaya iade ettirecek bir seçim, tek talepte
+  // yapılandan elli kat pahalıdır.
   let picker = null;
   if (action !== 'close') {
-    picker = h('select', 'kit-select');
-    const items = action === 'status'
-      ? state.reference.statuses.map((item) => ({ value: item.value, label: item.label }))
-      : state.reference.assignees.map((item) => ({ value: item.name, label: item.name }));
-    for (const item of items) {
-      const option = h('option', undefined, item.label);
-      option.value = String(item.value);
-      picker.append(option);
-    }
+    picker = statusSelect('');
     const wrap = h('label', 'kit-field');
-    wrap.append(h('span', 'kit-field-label', action === 'status' ? 'Yeni durum' : 'Atanan kişi'),
-      picker);
+    wrap.append(h('span', 'kit-field-label', 'Yeni durum'), picker);
     box.append(wrap);
+    if (state.reference.storeStatusError) {
+      box.append(alertBox(state.reference.storeStatusError, 'warn'));
+    }
   }
 
   const actions = h('div', 'kit-dialog-actions');

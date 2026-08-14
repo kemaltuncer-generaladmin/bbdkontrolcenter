@@ -56,6 +56,122 @@ STATUS_LABELS = {
     "closed": "Kapandı",
 }
 
+# =============================================== MAĞAZANIN DURUM SÖZLEŞMESİ
+#
+# Yukarıdaki altı anahtar EKRANIN dilidir (pano sütunları, çipler, renkler).
+# Mağazanın dili başkadır: `rma_statuses` tablosunda dokuz satır var, adları bu
+# mağazada Türkçeleştirildi ve panelden değiştirilebiliyor. Bu yüzden YAZARKEN
+# ad değil KİMLİK kullanılır — vendor'ın kendi `match`i de kimliğe bakıyor.
+#
+# Kimlikler `Webkul\RMA\Enums\DefaultRMAStatusEnum` değerleridir.
+
+STORE_PENDING = 1
+STORE_ACCEPT = 2
+STORE_AWAITING = 3
+STORE_DISPATCHED = 4
+STORE_REFUNDED = 5             # vendor adı RECEIVED_PACKAGE — bu depoda "Refunded"
+STORE_SOLVED = 6
+STORE_DECLINED = 7
+STORE_ITEM_CANCELED = 8
+STORE_CANCELED = 9
+
+#: PARA HAREKETİ DOĞURAN GEÇİŞLER — mağaza 409 döndürür.
+#:
+#: Liste burada da durur ama mağazanın YERİNE GEÇMEZ (K9): amacı düğmeyi
+#: TIKLANMADAN ÖNCE kapatabilmek. Kullanıcının seçip gerekçe yazıp gönderdikten
+#: sonra "bu yapılamaz" duyması, en baştan kapalı bir seçenek görmesinden
+#: kötüdür. Karar yine mağazanındır; buradaki kopya eskirse mağaza reddeder.
+MONEY_BLOCKED_STATUS_IDS = {
+    STORE_REFUNDED: (
+        "Bu geçiş zincirin sonunda BANKAYA PARA İADESİ gönderir. Kontrol Merkezi para "
+        "hareketi başlatmaz; iade Bagisto panelinden verilir "
+        "(Satış → İade Talepleri → talebi aç)."
+    ),
+    STORE_ITEM_CANCELED: (
+        "Bu geçiş sipariş kalemini iptal eder ve zincirin sonunda BANKAYA İPTAL/İADE "
+        "gönderir. Kontrol Merkezi para hareketi başlatmaz; işlem Bagisto panelinden "
+        "yapılır."
+    ),
+}
+
+#: "Onay" para göndermez ama panelde "bankaya iade gönder" düğmesini AÇAR.
+#: Ayrım gerçek ve önemli: operatör "onayladım" ile "para gitti"yi ayırabilmeli.
+UNLOCKS_PANEL_REFUND = STORE_ACCEPT
+
+#: Ekranın kararlarının mağaza karşılığı. Üçü de para hareketi doğurmaz.
+DECISION_STATUS_IDS = {
+    "approve": STORE_ACCEPT,
+    "reject": STORE_DECLINED,
+    "close": STORE_SOLVED,
+}
+
+#: Mağaza kimliği → EKRAN anahtarı.
+#:
+#: EŞLEME BİRE BİR DEĞİL ve olamaz: mağazada dokuz durum var, panoda altı sütun.
+#: Kayıp bilinçli ve TEK YÖNLÜ — okurken sütuna yerleştirmek için kullanılır,
+#: yazarken ASLA. Yazma her zaman kimlikle gider, yoksa "Kapandı" sütunundaki
+#: bir talebi kaydetmek onu üç ayrı durumdan hangisine götüreceğini bilemezdi.
+STORE_STATUS_KEYS = {
+    STORE_PENDING: "new",
+    STORE_ACCEPT: "approved",
+    STORE_AWAITING: "reviewing",
+    STORE_DISPATCHED: "reviewing",
+    STORE_REFUNDED: "approved",
+    STORE_SOLVED: "closed",
+    STORE_DECLINED: "rejected",
+    STORE_ITEM_CANCELED: "closed",
+    STORE_CANCELED: "closed",
+}
+
+
+def store_status(raw: Any) -> tuple[int, str]:
+    """Mağazanın `status` alanını (kimlik, başlık) ikilisine indirger.
+
+    CANLI YANITTA `status` BİR SÖZLÜKTÜR: `{"id": 2, "title": "Onaylandı",
+    "color": "#..."}`. Metin sanıp `str()` almak, ekranda sözlüğün Python
+    gösterimini yazdırıyordu — ve `STATUS_LABELS` araması hiçbir zaman
+    tutmadığı için her talep "bilinmeyen durum" gibi görünüyordu.
+    """
+    if isinstance(raw, dict):
+        return as_int(raw.get("id")), text(raw.get("title"))
+    if isinstance(raw, int):
+        return raw, ""
+    return 0, text(raw)
+
+
+def status_options(meta: Any) -> list[dict[str, Any]]:
+    """Mağazanın durum sözlüğü → ekranın açılır listesi.
+
+    Kaynak liste yanıtındaki `meta.statuses`; ikinci bir istek atılmaz. Para
+    hareketi doğuran satırlar LİSTEDEN ÇIKARILMAZ, `blocked` işaretiyle kalır:
+    çıkarmak "böyle bir durum yok" demek olurdu, oysa var ve panelden
+    seçilebiliyor — buradan seçilemediğini SÖYLEMEK gerekir.
+    """
+    rows = (meta or {}).get("statuses") if isinstance(meta, dict) else None
+    out: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        identity = as_int(row.get("id"))
+        if not identity:
+            continue
+        out.append({
+            "id": identity,
+            "title": text(row.get("title")) or f"#{identity}",
+            "blocked": identity in MONEY_BLOCKED_STATUS_IDS,
+            "reason": MONEY_BLOCKED_STATUS_IDS.get(identity, ""),
+            "unlocksPanelRefund": identity == UNLOCKS_PANEL_REFUND,
+        })
+    return out
+
+
+def status_error(status_id: int) -> str:
+    """Bu durum buradan yazılabilir mi — YAZMADAN ÖNCE sorulur."""
+    if not status_id:
+        return "Durum seçilmedi."
+    return MONEY_BLOCKED_STATUS_IDS.get(int(status_id), "")
+
+
 #: SLA sayacının DURDUĞU durumlar. Yanıt müşteride: geçen süre bizim
 #: gecikmemiz değildir (karar 3).
 SLA_PAUSED = ("waiting_customer",)
@@ -297,7 +413,17 @@ def request_row(raw: dict[str, Any], *, hours: dict[str, int] | None = None,
                 now: datetime | None = None) -> dict[str, Any]:
     """Ham talep kaydı → tablonun/panonun beklediği satır."""
     kind = text(pick(raw, "type", "kind", "request_type", "requestType")).lower() or "return"
-    status = text(pick(raw, "status", "state")).lower() or "new"
+
+    # DURUM MAĞAZANIN SÖZLÜĞÜNDEN GELİR. Canlı yanıtta `status` bir sözlüktür
+    # (`{id, title, color}`); metin sanmak ekranda Python gösterimini
+    # yazdırıyordu. Kimlik yazma tarafının, başlık gösterimin, ekran anahtarı
+    # ise yalnız pano sütununun işidir (bkz. STORE_STATUS_KEYS).
+    status_id, status_title = store_status(pick(raw, "status", "state"))
+    if not status_id:
+        status_id = as_int(pick(raw, "rma_status_id", "rmaStatusId"))
+    status = STORE_STATUS_KEYS.get(status_id, "") or text(status_title).lower() or "new"
+    if status not in STATUS_ORDER:
+        status = STORE_STATUS_KEYS.get(status_id, "new")
     priority = text(pick(raw, "priority")).lower() or "normal"
     channel = text(pick(raw, "channel", "source")).lower()
 
@@ -333,7 +459,15 @@ def request_row(raw: dict[str, Any], *, hours: dict[str, int] | None = None,
         "type": kind,
         "typeLabel": TYPE_LABELS.get(kind, kind or "—"),
         "status": status,
-        "statusLabel": STATUS_LABELS.get(status, status or "—"),
+        # Etiket MAĞAZANIN BAŞLIĞIDIR, bizim çevirimiz değil: `rma_statuses`
+        # bu depoda Türkçeleştirildi ve panelden değiştirilebiliyor. İkinci bir
+        # sözlük tutmak, iki tarafın sessizce ayrışması demekti.
+        "statusId": status_id,
+        # Başlık YALNIZ mağazadan geldiyse kullanılır: eski/kısaltılmış bir
+        # yanıtta `status` düz metin olabiliyor ve o metni etiket diye basmak
+        # ekranda "reviewing" yazdırırdı.
+        "statusLabel": (status_title if status_id else "")
+                       or STATUS_LABELS.get(status, status or "—"),
         "priority": priority,
         "priorityLabel": PRIORITY_LABELS.get(priority, priority),
         "channel": channel,
@@ -492,13 +626,21 @@ def return_item_rows(order: dict[str, Any], request: dict[str, Any],
     Canlı sipariş kalemi bu üç sayacı `qtyRefunded · qtyCanceled` (+ ileride
     `qtyReturned`) adlarıyla taşıyor.
     """
+    # TALEBİN KENDİ KALEM SATIRLARI. `rmaItemId` ile `orderItemId` AYRI
+    # şeylerdir ve karıştırmak sessiz bir hataydı: mağaza kalem güncellemesini
+    # `rma_items.id` ile adresliyor, sipariş kalemi kimliğiyle DEĞİL. Yanlış
+    # kimlikle giden istek 422 alır ("bu talebin kalemi değil") — ya da daha
+    # kötüsü, sayılar çakışırsa BAŞKA BİR KALEMİ günceller.
     selected: dict[int, int] = {}
+    rma_item_ids: dict[int, int] = {}
     for item in (pick(request, "items", "return_items", "returnItems") or []):
         if not isinstance(item, dict):
             continue
-        key = as_int(pick(item, "order_item_id", "orderItemId", "item_id", "id"))
-        if key:
-            selected[key] = as_int(pick(item, "qty", "quantity"), 0)
+        key = as_int(pick(item, "order_item_id", "orderItemId", "item_id"))
+        if not key:
+            continue
+        selected[key] = as_int(pick(item, "qty", "quantity"), 0)
+        rma_item_ids[key] = as_int(pick(item, "id"))
 
     rows: list[dict[str, Any]] = []
     for item in (pick(order, "items", "order_items", "orderItems") or []):
@@ -514,6 +656,10 @@ def return_item_rows(order: dict[str, Any], request: dict[str, Any],
         gone = refunded + returned + canceled
         rows.append({
             "itemId": item_id,
+            # Talepte KARŞILIĞI YOKSA 0 kalır: mağaza kalem EKLEMİYOR, yalnız
+            # var olanı güncelliyor. Sıfır satır ekranda "bu talebe eklenemez"
+            # olarak görünür; sessizce eklenebilirmiş gibi davranılmaz.
+            "rmaItemId": rma_item_ids.get(item_id, 0),
             "productId": as_int(pick(item, "product_id", "productId")),
             "sku": text(pick(item, "sku")),
             "name": text(pick(item, "name", "product_name", "productName")) or "(adsız)",

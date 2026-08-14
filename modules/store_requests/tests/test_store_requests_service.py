@@ -19,15 +19,36 @@ def _acilis(hours_ago: float = 2) -> str:
     return (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat()
 
 
+# CANLI MAĞAZANIN İADE TALEBİ ŞEKLİ. İki alan bir kez sessizce yanlış okundu:
+#
+#  · `status` BİR SÖZLÜKTÜR (`{id, title, color}`), düz metin değil. Metin
+#    sanmak ekranda Python sözlük gösterimini yazdırıyordu.
+#  · `items[].id` TALEBİN KALEM SATIRIDIR (`rma_items.id`), sipariş kaleminin
+#    kimliği değil. Mağaza kalem güncellemesini bu kimlikle adresliyor;
+#    `order_item_id` göndermek yanlış satırı güncellemeye açık kapı bırakırdı.
 TALEP = {
-    "id": 5, "code": "RMA-5", "type": "return", "status": "reviewing", "priority": "high",
+    "id": 5, "code": "RMA-5", "type": "return",
+    "status": {"id": 3, "title": "İnceleniyor", "color": "#f59e0b"},
+    "priority": "high",
     "channel": "web", "subject": "Kalem bozuk geldi", "order_id": 42,
     "order_number": "SIP-42", "customer": {"id": 9, "name": "Veli Yılmaz"},
     "created_at": _acilis(2),
     "messages": [{"id": 1, "author_type": "customer", "body": "Ürün bozuk",
                   "created_at": "2026-08-10T09:00:00Z"}],
-    "items": [{"order_item_id": 11, "qty": 2}],
+    "items": [{"id": 71, "rma_id": 5, "order_item_id": 11, "quantity": 2,
+               "resolution": "return"},
+              {"id": 72, "rma_id": 5, "order_item_id": 12, "quantity": 0,
+               "resolution": "return"}],
 }
+
+#: Mağazanın durum sözlüğü — liste yanıtının `meta`sında geliyor.
+DURUM_SOZLUGU = [
+    {"id": 1, "title": "Beklemede"}, {"id": 2, "title": "Onaylandı"},
+    {"id": 3, "title": "İnceleniyor"}, {"id": 4, "title": "Kargoya verildi"},
+    {"id": 5, "title": "İade Edildi"}, {"id": 6, "title": "Çözüldü"},
+    {"id": 7, "title": "Reddedildi"}, {"id": 8, "title": "Kalem İptal"},
+    {"id": 9, "title": "İptal"},
+]
 
 # CANLI MAĞAZANIN ŞEKLİ. `GET /api/admin/orders/{id}` yanıtı
 # `AdminCollectionEnvelopeNormalizer`den geçiyor ve alan adları camelCase:
@@ -135,10 +156,10 @@ async def test_kisa_gerekce_backendde_de_reddedilir() -> None:
     # K9: arayüzde gizlemek yetkilendirme değildir; istemci şemayı atlatabilir.
     service, api, _, _ = _service()
     for call in (
-        service.reply(5, body="merhaba", reason="ok", actor="Ayşe"),
-        service.update(5, status="closed", reason="ok", actor="Ayşe"),
+        service.update(5, status=6, reason="ok", actor="Ayşe"),
         service.decide(5, approve=True, reason="ok", actor="Ayşe"),
         service.bulk([5], action="close", reason="ok", actor="Ayşe"),
+        service.set_items(5, selection={"11": 1}, reason="ok", actor="Ayşe"),
     ):
         result = await call
         assert result["ok"] is False
@@ -157,14 +178,54 @@ async def test_ic_not_uzaga_hic_gonderilmez() -> None:
     assert store.notes[0]["body"].startswith("Bu müşteri")
 
 
-async def test_musteri_yaniti_uzaga_ic_not_bayragiyla_gider() -> None:
-    service, api, _, _ = _service()
+async def test_musteri_yaniti_kapali_ve_nedenini_soyluyor() -> None:
+    """Mağazanın iade ucu müşteriye mesaj YAZMIYOR — istek hiç gitmez.
+
+    Eskiden `{"message": …, "internal": False}` gövdesiyle gidiyordu; mağaza
+    böyle bir alan tanımadığı için isteği 422 ile reddediyordu ve kullanıcı ham
+    hata metni görüyordu. Şimdi neden yapılamadığı yazıyor ve düğme zaten
+    kapalı geliyor (`features().reply`).
+    """
+    service, api, store, _ = _service()
     result = await service.reply(5, body="Kargo kodunuz hazır", reason=GECERLI_GEREKCE,
                                  actor="Ayşe", dry_run=False)
-    assert result["ok"] is True
-    payload = api.used("bbd_update_return_request")[0]["payload"]
-    assert payload["message"] == "Kargo kodunuz hazır"
-    assert payload["internal"] is False
+    assert result["ok"] is False
+    assert result["blocked"] is True
+    assert result["feature"] == "reply"
+    assert "Bagisto panelinden" in result["error"]
+    assert api.used("bbd_update_return_request") == []
+    # Denemenin kendisi yerel ize geçer: ne yapmaya çalıştığımız kaybolmaz.
+    assert [row["result"] for row in store.audit if row["action"] == "reply"] == ["uc_yok"]
+
+
+async def test_oncelik_ve_atama_istek_cikmadan_reddedilir() -> None:
+    """Mağazada iki alanın da karşılığı yok; gövdeye konsaydı DURUM DA yazılmazdı.
+
+    Bu, sessiz hatanın en pahalı biçimiydi: kullanıcı "durumu da değiştirdim"
+    sanıyor, mağaza gövdenin tamamını reddediyordu.
+    """
+    service, api, _, _ = _service()
+    for kwargs in ({"priority": "urgent"}, {"assignee": "Ayşe"}):
+        result = await service.update(5, status=6, reason=GECERLI_GEREKCE, actor="Ayşe",
+                                      **kwargs)
+        assert result["ok"] is False
+        assert result["blocked"] is True
+    assert api.used("bbd_update_return_request") == []
+
+
+async def test_para_geciren_durum_gerekce_yazildiktan_sonra_degil_once_durur() -> None:
+    """Kimlik 5 ve 8 bankaya para gönderir; mağaza 409 döner, biz önce söyleriz.
+
+    K9: buradaki denetim mağazanınkinin YERİNE GEÇMEZ. Amacı kullanıcıyı
+    gerekçe yazıp gönderdikten SONRA reddetmemek.
+    """
+    service, api, _, _ = _service()
+    for durum in (5, 8):
+        result = await service.update(5, status=durum, reason=GECERLI_GEREKCE, actor="Ayşe",
+                                      dry_run=False)
+        assert result["ok"] is False
+        assert "BANKA" in result["error"].upper()
+    assert api.used("bbd_update_return_request") == []
 
 
 async def test_ic_not_zincirde_yerel_olarak_gorunur() -> None:
@@ -184,9 +245,22 @@ async def test_bilinmeyen_durum_yazilmadan_reddedilir() -> None:
     assert api.used("bbd_update_return_request") == []
 
 
+async def test_durum_magazanin_kimligiyle_gider_ekranin_anahtariyla_degil() -> None:
+    """Dokuz durumu altıya indiren eşleme TEK YÖNLÜ: yazarken kullanılmaz.
+
+    "Kapandı" sütunundaki bir talebi ekran anahtarıyla kaydetmek, onu üç ayrı
+    mağaza durumundan (Çözüldü · Kalem İptal · İptal) hangisine götüreceğini
+    bilemezdi — ve ikincisi bankaya para gönderiyor.
+    """
+    service, api, _, _ = _service()
+    await service.update(5, status=6, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=False)
+    payload = api.used("bbd_update_return_request")[0]["payload"]
+    assert payload == {"status": 6}
+
+
 async def test_kuru_prova_varsayilan_olarak_aciktir() -> None:
     service, api, _, _ = _service()
-    await service.update(5, priority="urgent", reason=GECERLI_GEREKCE, actor="Ayşe")
+    await service.update(5, status=6, reason=GECERLI_GEREKCE, actor="Ayşe")
     assert api.used("bbd_update_return_request")[0]["dry_run"] is True
 
 
@@ -208,7 +282,8 @@ async def test_gecerli_secim_tutar_tahminiyle_birlikte_yazilir() -> None:
     assert result["ok"] is True
     assert result["estimate"]["amount"] == 2 * 1000 + 3000
     payload = api.used("bbd_update_return_request")[0]["payload"]
-    assert payload["items"] == [{"orderItemId": 11, "qty": 2}, {"orderItemId": 12, "qty": 1}]
+    # KİMLİK TALEBİN KALEM SATIRIDIR (71/72), sipariş kaleminin (11/12) değil.
+    assert payload["items"] == [{"id": 71, "quantity": 2}, {"id": 72, "quantity": 1}]
 
 
 async def test_siparis_okunamadiysa_secim_dogrulanamaz_ve_yazilmaz() -> None:
@@ -230,7 +305,8 @@ async def test_onay_para_iade_etmez_iadeler_ekranina_devreder() -> None:
                                   dry_run=False)
     assert result["ok"] is True
     assert result["handedOff"] is True
-    assert api.used("bbd_update_return_request")[0]["payload"]["status"] == "approved"
+    # Onay "Accept" (2) yazar — para hareketi doğurmaz.
+    assert api.used("bbd_update_return_request")[0]["payload"] == {"status": 2}
     assert store.handoff[0]["amount"] == 2000          # 2 adet × 10,00 ₺
     assert bus.events[0][0] == "store_requests.approved"
     assert bus.events[0][1]["orderId"] == 42
@@ -284,7 +360,7 @@ async def test_ret_devir_yapmaz() -> None:
     result = await service.decide(5, approve=False, reason=GECERLI_GEREKCE, actor="Ayşe",
                                   dry_run=False)
     assert result["status"] == "rejected"
-    assert api.used("bbd_update_return_request")[0]["payload"]["status"] == "rejected"
+    assert api.used("bbd_update_return_request")[0]["payload"] == {"status": 7}
     assert store.handoff == []
     assert bus.events == []
 
@@ -320,7 +396,7 @@ async def test_toplu_islem_tavani_asilamaz() -> None:
 
 async def test_her_yazma_gerekcesiyle_yerel_ize_gecer() -> None:
     service, _, store, _ = _service()
-    await service.update(5, status="closed", reason=GECERLI_GEREKCE, actor="Ayşe",
+    await service.update(5, status=6, reason=GECERLI_GEREKCE, actor="Ayşe",
                          dry_run=False)
     kayitlar = [row for row in store.audit if row["action"] == "update"]
     assert kayitlar[-1]["reason"] == GECERLI_GEREKCE
@@ -331,7 +407,7 @@ async def test_her_yazma_gerekcesiyle_yerel_ize_gecer() -> None:
 async def test_uzak_uc_patlarsa_ne_yapmaya_calistigimiz_yerelde_kalir() -> None:
     service, api, store, _ = _service()
     api.fail.add("bbd_update_return_request")
-    result = await service.update(5, status="closed", reason=GECERLI_GEREKCE, actor="Ayşe")
+    result = await service.update(5, status=6, reason=GECERLI_GEREKCE, actor="Ayşe")
     assert result["ok"] is False
     assert [row["result"] for row in store.audit] == ["denendi", "hata"]
 
@@ -381,14 +457,42 @@ async def test_rma_formu_talep_secilmeden_uretilmez() -> None:
 
 # =================================================================== referans
 
-async def test_referans_atanan_listesi_gelmezse_ekran_calisir() -> None:
+async def test_referans_durum_sozlugu_gelmezse_ekran_calisir() -> None:
+    """Durum açılırı boş kalır ama ekran ÇÖKMEZ ve nedenini yazar (K7)."""
     service, api, _, _ = _service()
-    api.fail.add("admin_users")
+    api.fail.add("bbd_return_requests")
     result = await service.reference()
     assert result["ok"] is True
-    assert result["connected"] is False
-    assert result["assignees"] == []
+    assert result["storeStatuses"] == []
+    assert "durum açılırı boş kaldı" in result["storeStatusError"]
     assert len(result["statuses"]) == 6       # sabit listeler yine dolu
+
+
+async def test_para_geciren_durumlar_listeden_cikarilmaz_isaretlenir() -> None:
+    """Çıkarmak "böyle bir durum yok" demek olurdu; oysa var, panelden verilir."""
+    api = FakeApi({5: json.loads(json.dumps(TALEP))}, {42: SIPARIS})
+    api.list_payload = {"items": [], "meta": {"statuses": DURUM_SOZLUGU}}
+    service, _, _, _ = _service(api)
+
+    result = await service.reference()
+    engelli = {row["id"]: row for row in result["storeStatuses"] if row["blocked"]}
+    assert sorted(engelli) == [5, 8]
+    assert all("BANKA" in row["reason"].upper() for row in engelli.values())
+    # Onay geçişi engelli DEĞİL ama panel düğmesini açtığını söylüyor.
+    onay = next(row for row in result["storeStatuses"] if row["id"] == 2)
+    assert onay["blocked"] is False
+    assert onay["unlocksPanelRefund"] is True
+
+
+async def test_kapali_isler_nedeniyle_birlikte_ilan_edilir() -> None:
+    """Düğme kapalıysa NEDENİ ekranda olmalı; boş bir `disabled` yeterli değil."""
+    service, _, _, _ = _service()
+    features = service.features()
+    for key in ("priority", "assign", "reply"):
+        assert features[key]["available"] is False
+        assert len(features[key]["reason"]) > 40
+    for key in ("status", "note", "items", "decide"):
+        assert features[key]["available"] is True
 
 
 # ============================================ canlı mağaza alan adları (regresyon)
