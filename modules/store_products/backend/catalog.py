@@ -609,7 +609,7 @@ def issue_row(raw: dict[str, Any], *, threshold: int = 0) -> dict[str, Any]:
 # ======================================================== yazma gövdesi
 
 def write_body(current: dict[str, Any], patch: dict[str, Any], *, channel: str,
-               locale: str, sku: str = "") -> dict[str, Any]:
+               locale: str, sku: str = "", extra: Any = ()) -> dict[str, Any]:
     """OKU-DEĞİŞTİR-YAZ gövdesi (TUZAK 1, 2, 3, 7, 10).
 
     Bagisto'nun ürün güncelleme işlemcisi gövdedeki alanları modele doğrudan
@@ -624,18 +624,39 @@ def write_body(current: dict[str, Any], patch: dict[str, Any], *, channel: str,
     `attribute_family_id` hiçbir koşulda gönderilmez (TUZAK 3): aile
     değişikliği ürünün öznitelik kümesini değiştirir, düzenleme ekranının işi
     değildir.
+
+    ─────────────────────────────────────────────────────────────────────────
+    `extra` — KATALOĞA ÖZEL NİTELİKLER (kitap künyesi)
+
+    `EDITABLE` bu ekranın BİLDİĞİ alanların listesidir; kitap künyesi
+    (`page_count`, `isbn`, yayınevi…) ise KURULUMA GÖRE DEĞİŞEN kodlarla
+    yaşıyor ve sabit bir listeye yazılamaz — kodu ancak mağazanın nitelik
+    listesinden çözülür (`book.resolve_codes`).
+
+    Çözülen kodlar `extra` ile buraya verilir ve İKİ İŞ görürler:
+
+     1. YAZILABİLİR olurlar (yamadaki değer gövdeye girer).
+     2. Yamada OLMASALAR BİLE mevcut değerleriyle gövdeye KONURLAR — TUZAK 1
+        bu alanlar için de geçerli. `extra` verilmeden yapılan bir kaydetme,
+        sayfa sayısını sessizce boşaltabilir ve bunun bedeli doğrudan paradır:
+        sayfa sayısı düşen ürün kargo hesabında varsayılan 1,0 desiye çıkar.
     """
     kind = text(attribute(current, "type")) or "simple"
     body: dict[str, Any] = {}
 
-    for key in EDITABLE:
+    #: Sıra ÖNEMLİ: `extra` sonra gelir ki kurulum bir kitap niteliğini
+    #: `weight` gibi çekirdek bir adla açmış olsa bile para alanlarının
+    #: (kuruş → ondalık) çevrimi bozulmasın.
+    writable = (*EDITABLE, *[text(code) for code in (extra or ()) if text(code)])
+
+    for key in writable:
         value = attribute(current, key)
         if value is None:
             continue
         body[key] = from_kurus(to_kurus(value) or 0) if key in MONEY_FIELDS else value
 
     for key, value in (patch or {}).items():
-        if key not in EDITABLE:
+        if key not in writable:
             continue
         if key in MONEY_FIELDS:
             body[key] = "" if value in (None, "") else from_kurus(value)

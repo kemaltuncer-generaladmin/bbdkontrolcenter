@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import json
 import os
 import re
@@ -29,7 +30,7 @@ from typing import Any
 
 from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir, write_private
 
-from . import catalog, deleted, images, schema
+from . import book, catalog, deleted, images, schema
 
 #: Rapor için tam katalog taranırken kabul edilen üst sınır. 1.419 ürün
 #: 29 sayfa eder; 3.000 tavanı büyümeye yer bırakır ve bozuk `meta` yüzünden
@@ -58,7 +59,13 @@ GATEWAY_GAP = (
     "çağrılamaz."
 )
 
-BULK_KINDS = ("price", "stock", "category", "status")
+BULK_KINDS = ("price", "stock", "category", "status", "book")
+
+#: Toplu kitap yazmasında dokunulabilen alanlar. LİSTE BİLEREK KISA: sayfa
+#: sayısı ve desi kargo ücretinin girdisidir ve bir rafın tamamına aynı değeri
+#: yazmak gerçek bir iş (aynı serinin 40 fasikülü). ISBN/yazar/yayınevi ise
+#: ürüne ÖZGÜdür; toplu yazmak onları hatalı hâle getirmenin en hızlı yoludur.
+BULK_BOOK_FIELDS = ("pageCount", "desi")
 
 #: Mağazanın ürün görseli ucundaki SUNUCU sınırı — 4 MB
 #: (`AdminCatalogProductImageProcessor::MAX_BYTES`). Geçit de aynı sınırı
@@ -126,6 +133,11 @@ class ProductsService:
 
         #: Öznitelik ailesi bir kez çözülüp saklanır (`_default_family`).
         self._family_cache = 0
+
+        #: Kitap alanlarının GERÇEK nitelik kodları — bir kez çözülür.
+        #: `None` = henüz sorulmadı; boş sözlük "soruldu, hiçbiri yok" demektir
+        #: ve o ikisi karıştırılamaz (ikincisinde tekrar sorulmaz).
+        self._book_codes: dict[str, str] | None = None
 
     # ------------------------------------------------------------- ayarlar
 
@@ -213,6 +225,74 @@ class ProductsService:
     def _guard(self, reason: str) -> str:
         """Gerekçe backend'de DE doğrulanır (K9): arayüzde gizlemek yetmez."""
         return catalog.reason_error(reason)
+
+    # --------------------------------------------------------- kitap alanları
+
+    async def book_codes(self) -> dict[str, str]:
+        """Kitap alanlarının mağazadaki GERÇEK nitelik kodları.
+
+        ═══════════════════════════════════════════════════════════════════
+        NEDEN SORULUYOR, NEDEN VARSAYILMIYOR
+
+        Ekranın istediği altı alandan üçünün kodu ölçülmüş (`page_count`,
+        `isbn`, `desi` — mağazanın kargo hesabı bu adlarla okuyor); kalan üçü
+        (yayınevi, yazar, baskı yılı) için kataloğun hangi kodu kullandığı
+        BİLİNMİYOR. Tahmin etmenin bedeli sessizdir: Bagisto tanımadığı
+        özniteliği yok sayar, istek 200 döner, personel "kaydettim" der ve
+        değer hiçbir yere yazılmamıştır.
+
+        BİR KEZ SORULUR: nitelik listesi 36 satır ve kataloğun şemasıdır —
+        ürün ekranı açık kaldığı sürece değişmez. Sorulamazsa BOŞ döner ve
+        SAKLANMAZ; bağlantı düzelince yeniden denenir. Boş sonucu kalıcı
+        saymak, geçici bir ağ hatasını "bu mağazada kitap alanı yok"a
+        çevirirdi.
+        """
+        if self._book_codes is not None:
+            return self._book_codes
+        try:
+            payload = await self._api.attributes()
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("kitap nitelikleri çözülemedi", error=str(failure))
+            return {}
+        codes = book.resolve_codes(payload.get("items") or [])
+        self._book_codes = codes
+        return codes
+
+    def _book_view(self, raw: dict[str, Any], codes: dict[str, str]) -> dict[str, Any]:
+        """Ürün kaydından kitap künyesi + desi dökümü.
+
+        DESİ DÖKÜMÜ HER ZAMAN ÜRETİLİR, alanlar çözülemese bile: ürünün kargo
+        hesabında kaç desi saydığı, ekranın onu düzenleyip düzenleyemediğinden
+        bağımsız bir gerçektir ve personelin görmesi gereken ilk şeydir.
+        """
+        values = book.view(functools.partial(catalog.attribute, raw), codes)
+        return {
+            "values": values,
+            "fields": book.field_specs(codes),
+            "desi": self._desi_of(raw),
+            "rules": book.rules(),
+        }
+
+    def _desi_of(self, raw: dict[str, Any], overrides: dict[str, Any] | None = None,
+                 ) -> dict[str, Any]:
+        """Ürünün kargo hesabındaki desisi.
+
+        KODLAR ÇÖZÜLMÜŞ ADLARDAN DEĞİL, KANONİK ADLARDAN OKUNUR
+        (`book.PAGE_CODE` / `book.DESI_CODE`). Mağazanın `DesiCalculator`'ı bu
+        iki özniteliği harfi harfine okuyor; başka bir addan okumak, ekranın
+        mağazadan farklı bir desi göstermesi demek olurdu.
+
+        DÖKÜM HER ZAMAN ÜRETİLİR — nitelik listesi okunamamış olsa da. Ürünün
+        kaç desi saydığı, ekranın o alanları düzenleyip düzenleyememesinden
+        bağımsız bir gerçektir ve personelin görmesi gereken ilk şeydir.
+        """
+        picked = overrides or {}
+        return book.explain(
+            desi_value=picked.get("desi", catalog.attribute(raw, book.DESI_CODE)),
+            pages=picked.get("pageCount", catalog.attribute(raw, book.PAGE_CODE)),
+            kind=catalog.text(catalog.attribute(raw, "type")),
+            sku=catalog.text(catalog.attribute(raw, "sku")),
+        )
 
     # ================================================================ liste
 
@@ -353,9 +433,17 @@ class ProductsService:
         variants = [catalog.product_row(item, threshold=threshold, today=_today())
                     for item in (raw.get("variants") or []) if isinstance(item, dict)]
 
+        # Kitap künyesi künyenin PARÇASIDIR, ayrı bir çağrı değil: sayfa
+        # sayısı ile desi aynı ekranda yan yana durmalı — biri ötekinin
+        # girdisi ve personel ikisini bir arada görmeden karar veremez.
+        codes = await self.book_codes()
+        if not codes:
+            warnings.append("kitap alanları: nitelik listesi okunamadı, alanlar açılmadı")
+
         return {
             "ok": True, "connected": True, "error": "", "warnings": warnings,
             "product": row,
+            "book": self._book_view(raw, codes),
             "price": catalog.price_view(raw, group_prices, today=_today()),
             "inventories": catalog.inventory_rows(inventories, sources),
             "images": catalog.image_list(raw),
@@ -391,6 +479,16 @@ class ProductsService:
                                "fields": catalog.choice_fields({})}
         out["types"] = [{"value": key, "label": label}
                         for key, label in catalog.TYPE_LABELS.items()]
+
+        # KİTAP ALANLARI VE DESİ KATSAYILARI REFERANSTAN GELİR.
+        # Panel sayfa sayısı yazılırken desiyi ANINDA hesaplıyor; katsayıları
+        # kendi içine yazsaydı aynı sayı üç yerde (mağazadaki PHP, buradaki
+        # Python, oradaki JS) yaşar ve biri değiştiğinde diğerleri sessizce
+        # eski kalırdı. Ekranın gösterdiği desi ile müşteriden alınan ücretin
+        # ayrışması, tam olarak kaçınılmak istenen şey.
+        book_codes = await self.book_codes()
+        out["bookFields"] = book.field_specs(book_codes)
+        out["desiRules"] = book.rules()
         try:
             tree = await self._api.category_tree()
             out["categories"] = catalog.category_options(tree.get("items") or [])
@@ -471,12 +569,27 @@ class ProductsService:
     # =============================================================== yazma
 
     async def save(self, product_id: int, *, patch: dict[str, Any], reason: str,
-                   actor: str, dry_run: bool = True) -> dict[str, Any]:
+                   actor: str, dry_run: bool = True,
+                   book_patch: dict[str, Any] | None = None) -> dict[str, Any]:
         """Tek ürünü günceller — OKU-DEĞİŞTİR-YAZ (TUZAK 1).
 
         Yazmadan önce ürün TAZE okunur: aradan geçen sürede başka bir ekran
         (ya da mağaza yöneticisi) aynı ürüne yazmış olabilir; kullanıcının
         dokunmadığı alan onun değeriyle geri gönderilir.
+
+        ─────────────────────────────────────────────────────────────────────
+        KİTAP ALANLARI AYRI PARAMETREDİR, `patch` İÇİNDE DEĞİL
+
+        `patch` bu ekranın SABİT alanlarını taşır ve adları koda gömülü
+        (`catalog.FIELD_ALIASES`). Kitap künyesinin nitelik kodları ise
+        kuruluma göre değişiyor ve çalışma anında çözülüyor; ikisini aynı
+        sözlüğe koymak, "tanınmayan anahtar sessizce düşürülür" kuralını
+        kitap alanları için delmek olurdu — ya da tam tersi, yanlış yazılmış
+        bir kitap alanı sessizce yok sayılırdı.
+
+        KİTAP ALANLARI GÖNDERİLMESE DE GÖVDEYE KONUR (`extra`): kısmi PUT
+        onları boşaltabilir ve boşalan bir `page_count` ürünü kargo hesabında
+        varsayılan 1,0 desiye çıkarır — yani sessizce paraya dokunur.
         """
         problem = self._guard(reason)
         if problem:
@@ -490,14 +603,27 @@ class ProductsService:
         if "sku" in (patch or {}):
             return {"ok": False,
                     "error": "SKU bu uçtan değiştirilmez; ayrı onay isteyen uç kullanılır."}
+
+        codes = await self.book_codes()
+        book_draft = book_patch or {}
+        if book_draft:
+            errors = book.draft_errors(book_draft, codes)
+            if errors:
+                field, message = next(iter(errors.items()))
+                return {"ok": False, "error": message, "fieldErrors": errors, "field": field}
+
         clean = catalog.normalize_patch(patch)
-        if not clean:
+        book_clean = book.patch_for(book_draft, codes)
+        if not clean and not book_clean:
             return {"ok": False, "error": "Değişen alan yok."}
 
-        body = catalog.write_body(current, clean, channel=self._channel, locale=self._locale,
-                                  sku=catalog.text(catalog.attribute(current, "sku")))
+        body = catalog.write_body(current, {**clean, **book_clean}, channel=self._channel,
+                                  locale=self._locale,
+                                  sku=catalog.text(catalog.attribute(current, "sku")),
+                                  extra=[code for code in codes.values() if code])
         await self._record(product_id=product_id, action="update_product", reason=reason,
-                           actor=actor, result="denendi", detail={"fields": sorted(clean)})
+                           actor=actor, result="denendi",
+                           detail={"fields": sorted({*clean, *book_clean})})
         try:
             result = await self._api.update_product(int(product_id), payload=body, reason=reason,
                                                     actor=actor, dry_run=dry_run)
@@ -508,11 +634,14 @@ class ProductsService:
 
         await self._record(product_id=product_id, action="update_product", reason=reason,
                            actor=actor, result="dry_run" if dry_run else "ok",
-                           detail={"fields": sorted(clean)})
+                           detail={"fields": sorted({*clean, *book_clean})})
         notice = catalog.INDEX_NOTICE if "status" in clean or "url_key" in clean else ""
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
                 "sent": bool(result.get("sent", not dry_run)), "notice": notice,
-                "fields": sorted(clean)}
+                "fields": sorted({*clean, *book_clean}),
+                # Yazıldıktan sonraki desi: sayfa sayısı değiştiyse rakam da
+                # değişti ve ekran onu yeniden okumak zorunda kalmasın.
+                "desi": self._desi_of(current, book_draft)}
 
     async def set_status(self, product_ids: list[int], *, active: bool, reason: str,
                          actor: str, dry_run: bool = True) -> dict[str, Any]:
@@ -1662,7 +1791,8 @@ class ProductsService:
 
     async def bulk_preview(self, *, kind: str, product_ids: list[int], mode: str = "",
                            amount: int = 0, rounding: str = "none", category_id: int = 0,
-                           active: bool = True) -> dict[str, Any]:
+                           active: bool = True, field: str = "",
+                           value: str = "") -> dict[str, Any]:
         """FARK TABLOSU. Toplu işlem bu tablo gösterilmeden UYGULANMAZ.
 
         Önizleme yerel tabloya yazılır ve bir jeton döner; uygulama o jetonla
@@ -1678,6 +1808,23 @@ class ProductsService:
             return {"ok": False,
                     "error": "Tek seferde en çok 500 ürün. Daha büyük iş için süzgeci daraltın."}
 
+        codes: dict[str, str] = {}
+        if kind == "book":
+            if field not in BULK_BOOK_FIELDS:
+                return {"ok": False,
+                        "error": "Toplu kitap yazması yalnız sayfa sayısı ve desi için "
+                                 "açıktır; ISBN, yazar ve yayınevi ürüne özgüdür."}
+            codes = await self.book_codes()
+            if not codes.get(field):
+                return {"ok": False,
+                        "error": f"Katalogda `{field}` alanına karşılık gelen nitelik yok; "
+                                 "yazılsaydı mağaza isteği kabul eder ama değeri hiçbir yere "
+                                 "koymazdı."}
+            if mode == "set":
+                problem = book.field_error(field, value)
+                if problem:
+                    return {"ok": False, "error": problem}
+
         threshold = await self._threshold()
         rows: list[dict[str, Any]] = []
         missing: list[int] = []
@@ -1689,12 +1836,17 @@ class ProductsService:
                 self._log.warning("önizleme için ürün okunamadı", productId=product_id,
                                   error=str(failure))
                 continue
-            rows.append(catalog.product_row(raw, threshold=threshold, today=_today()))
+            row = catalog.product_row(raw, threshold=threshold, today=_today())
+            if kind == "book":
+                row["book"] = book.view(functools.partial(catalog.attribute, raw), codes)
+            rows.append(row)
 
         if not rows:
             return {"ok": False, "error": "Seçilen ürünlerin hiçbiri okunamadı."}
 
-        if kind == "price":
+        if kind == "book":
+            diff = book.bulk_rows(rows, field=field, mode=mode or "set", amount=value)
+        elif kind == "price":
             diff = catalog.bulk_price_rows(rows, mode=mode or "percent", amount=amount,
                                            rounding=rounding)
         elif kind == "stock":
@@ -1711,7 +1863,10 @@ class ProductsService:
 
         token = uuid.uuid4().hex
         params = {"kind": kind, "mode": mode, "amount": amount, "rounding": rounding,
-                  "categoryId": category_id, "active": active}
+                  "categoryId": category_id, "active": active,
+                  # Kitap yazmasında UYGULANACAK DEĞER jetonun içinde durur:
+                  # uygulanan şeyin önizlenen şey olduğunun kanıtı budur.
+                  "field": field, "value": value, "code": codes.get(field, "")}
         try:
             await self._store.execute(
                 f"INSERT INTO {self._bulk} (token, kind, params, rows, status, created_at) "
@@ -1729,7 +1884,13 @@ class ProductsService:
                 "note": self._bulk_note(kind)}
 
     def _bulk_supported(self, kind: str) -> bool:
-        """Uygulamanın TOPLU bir uçla yapılabildiği işler."""
+        """Uygulamanın TOPLU bir uçla yapılabildiği işler.
+
+        KİTAP ALANLARI DA SIRAYLA YAZILIR: mağazada öznitelik yazan bir toplu
+        uç yok ve olsaydı bile her ürün TAZE okunmak zorunda (OKU-DEĞİŞTİR-YAZ,
+        TUZAK 1). Sınırı `bulk_direct_limit` belirler ve varsayılanı 0'dır —
+        yani ekran açıkça açılmadan tek satır yazmaz.
+        """
         if kind == "status":
             return True
         return self._direct_limit > 0
@@ -1855,6 +2016,23 @@ class ProductsService:
                     await self._api.update_inventory(int(item["id"]), quantities=quantities,
                                                      reason=reason, actor=actor,
                                                      dry_run=dry_run)
+                elif kind == "book":
+                    current = await self._api.product(int(item["id"]))
+                    codes = await self.book_codes()
+                    code = catalog.text(params.get("code")) or codes.get(
+                        catalog.text(params.get("field")), "")
+                    if not code:
+                        raise RuntimeError("Kitap niteliğinin kodu çözülemedi.")
+                    body = catalog.write_body(
+                        current, {code: item.get("value", "")}, channel=self._channel,
+                        locale=self._locale,
+                        sku=catalog.text(catalog.attribute(current, "sku")),
+                        # DİĞER KİTAP ALANLARI DA GÖVDEYE KONUR: yalnız
+                        # yazdığımızı göndermek, aynı üründeki ISBN'i ve
+                        # yayınevini kısmi PUT ile boşaltırdı.
+                        extra=[value for value in codes.values() if value])
+                    await self._api.update_product(int(item["id"]), payload=body, reason=reason,
+                                                   actor=actor, dry_run=dry_run)
                 else:  # category
                     current = await self._api.product(int(item["id"]))
                     body = catalog.write_body(current, {}, channel=self._channel,

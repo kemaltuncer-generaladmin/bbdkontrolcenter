@@ -229,6 +229,55 @@ Nitelik ailesi zaten gizliydi, öyle kaldı. Müşteri grubu bu ekranda yok.
   Yönetici `bulk_direct_limit` ayarını açarak küçük seçimlere (varsayılan
   tavan 100) sıralı yazmaya izin verebilir; ekran ne olacağını söyler.
 
+## Kitap künyesi ve desi
+
+Katalog kitap satıyor ama künye alanları (**sayfa sayısı · ISBN · yayınevi ·
+yazar · baskı yılı · desi**) hiçbir ekrandan düzenlenemiyordu. Ürün
+çekmecesinde artık **Kitap künyesi** sekmesi var.
+
+**Sayfa sayısı yazıldıkça desi anında yeniden hesaplanır** ve rakam mağazanın
+hesapladığıyla aynıdır. Zincir:
+
+```
+kalınlık_cm = (sayfa × 0,04375 mm + 1,0 mm kapak) / 10
+taban_cm²   = (19,5 + 2×1,0) × (27,5 + 2×1,0) = 634,25
+desi        = taban_cm² × kalınlık_cm / 3000        (küsurat YUKARI)
+```
+
+Öncelik sırası — mağazadaki `DesiCalculator::explainProduct` ile birebir:
+
+1. Ürünün `desi` niteliği doluysa **o kazanır**. Elle girilen değer bir
+   ÖLÇÜMDÜR, buradaki hesap bir MODELDİR.
+2. `page_count` okunabiliyorsa yukarıdaki hesap.
+3. İkisi de yoksa `1,0` desi — bilerek cömert (gerçek bir kitap ≈ 0,2 desi).
+
+Katsayılar **panelde sabit değildir**: `GET /reference` → `desiRules` ile
+gelirler. Aynı sayı mağazada (PHP), geçitte (Python) ve ekranda (JS) yaşıyor;
+üçünün ayrışması, müşteriden alınan kargo ücretiyle Geliver'a beyan edilen
+desinin tutmaması demek olurdu. Python kopyası
+`tests/test_store_products_book.py` ile kilitli.
+
+**Nitelik kodları varsayılmaz, çözülür.** Yayınevi/yazar/baskı yılı için
+kataloğun hangi kodu kullandığı bilinmiyor; aday adlar mağazanın nitelik
+listesinde aranır. Bulunamayan alan **ekranda açılmaz** ve nedeni yazılır —
+var olmayan bir koda yazmak sessiz veri kaybıdır (Bagisto tanımadığı
+özniteliği yok sayar, istek 200 döner, personel "kaydettim" sanır).
+
+**Sayfa sayısı ve desi bu esnekliğin dışındadır** ve yalnız `page_count` /
+`desi` kodlarını kabul eder: mağazanın kargo hesabı bu ikisini adıyla okuyor,
+eş anlamlı bir koda yazmak ekranda "güncellendi" gösterip kargo ücretini hiç
+değiştirmezdi.
+
+**Toplu yazma** yalnız bu iki alan için açıktır (`Sayfa/desi yaz` düğmesi):
+önizleme → gerekçe → uygula. ISBN/yazar/yayınevi ürüne özgüdür ve toplu
+yazılamaz. "Alanı boşalt" ayrı bir kiptir — yanlışlıkla girilmiş bir `desi`
+ölçümü sayfa hesabını ezmeye devam eder ve onu kaldırmanın tek yolu budur.
+
+**Kitap alanları her kaydetmede gövdeye konur** (`write_body(extra=…)`), kitap
+sekmesine hiç girilmese bile: kısmi PUT `page_count`'u boşaltabilir ve boşalan
+sayfa sayısı ürünü varsayılan 1,0 desiye çıkarır — yani sessizce paraya
+dokunur.
+
 ## Bagisto EAV tuzakları
 
 Hepsinin karşılığı `backend/catalog.py` içinde bir fonksiyon ve
@@ -254,6 +303,11 @@ Hepsinin karşılığı `backend/catalog.py` içinde bir fonksiyon ve
 ## Uçlar
 
 `/api/store_products` öneki altında. Hepsi `requires(...)` taşır (K9).
+
+`PUT /products/{id}` gövdesinde kitap künyesi **ayrı alandır**: `patch` bu
+ekranın sabit alanlarını, `book` ise çalışma anında çözülen nitelik kodlarını
+taşır. `POST /bulk/preview` kitap için `kind: "book"` + `field`
+(`pageCount` | `desi`) + `mode` (`set` | `clear`) + `value` alır.
 
 Okuma: `GET /products` · `GET /products/{id}` · `GET /products/{id}/images` ·
 `GET /reference` · `GET /health` · `GET /audit` · `GET /url-key` ·

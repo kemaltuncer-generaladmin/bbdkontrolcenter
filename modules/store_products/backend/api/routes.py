@@ -100,6 +100,13 @@ async def url_key(
 
 class SaveBody(BaseModel):
     patch: dict[str, Any] = Field(default_factory=dict)
+    #: KİTAP KÜNYESİ AYRI ALANDIR (`pageCount` · `isbn` · `publisher` ·
+    #: `author` · `publishYear` · `desi`). `patch` bu ekranın SABİT alanlarını
+    #: taşıyor ve adları koda gömülü; kitap alanlarının nitelik kodu ise
+    #: kuruluma göre değişiyor ve çalışma anında çözülüyor. İkisini aynı
+    #: sözlüğe koymak, "tanınmayan anahtar sessizce düşürülür" kuralını kitap
+    #: alanları için delmek olurdu.
+    book: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=10, max_length=255)
     dryRun: bool = True
 
@@ -111,7 +118,8 @@ async def save(
     user: CurrentUser = requires("store_products.manage"),
 ) -> dict[str, Any]:
     return await service().save(product_id, patch=body.patch, reason=body.reason,
-                                actor=user.full_name, dry_run=body.dryRun)
+                                actor=user.full_name, dry_run=body.dryRun,
+                                book_patch=body.book)
 
 
 class DraftBody(BaseModel):
@@ -442,6 +450,12 @@ class BulkPreviewBody(BaseModel):
     rounding: str = Field(default="none", max_length=12)
     categoryId: int = 0
     active: bool = True
+    #: `kind="book"` için: hangi alan (`pageCount` | `desi`) ve ne yazılacağı.
+    #: `value` METİNDİR — boş metin "alanı boşalt" demektir ve 0 ile aynı şey
+    #: DEĞİLDİR: boş desi hesabı sayfa sayısına düşürür, 0 desi ise geçersiz
+    #: bir ölçümdür.
+    field: str = Field(default="", max_length=24)
+    value: str = Field(default="", max_length=32)
 
 
 @router.post("/bulk/preview")
@@ -453,7 +467,8 @@ async def bulk_preview(
     return await service().bulk_preview(kind=body.kind, product_ids=body.productIds,
                                         mode=body.mode, amount=body.amount,
                                         rounding=body.rounding, category_id=body.categoryId,
-                                        active=body.active)
+                                        active=body.active, field=body.field,
+                                        value=body.value)
 
 
 class BulkApplyBody(BaseModel):

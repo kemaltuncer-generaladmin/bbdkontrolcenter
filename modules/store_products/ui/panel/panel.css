@@ -309,3 +309,19 @@
    mağazada tek seçenek bile yoksa yazacak bir şey yok. */
 .sp-choices { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 10px; }
 .sp-choices:empty { display: none; }
+
+/* ---------------------------------------------------------- kitap künyesi */
+
+/* Desi okuması FORMUN ALTINDA ve büyük durur: sayfa sayısını değiştiren kişi
+   sonucu görmeden karar veremez. Sayı tabular — yazarken rakamlar zıplamasın. */
+.sp-desi {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-top: 1px dashed var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-book-missing { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }

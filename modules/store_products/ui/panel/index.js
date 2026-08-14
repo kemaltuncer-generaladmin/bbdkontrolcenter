@@ -64,7 +64,8 @@ const CHIPS = [
 const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', threshold: 5, categoryFilter: null, source: 'products',
-  reference: { categories: [], families: [], types: [], sources: [], fields: {} },
+  reference: { categories: [], families: [], types: [], sources: [], fields: {},
+    bookFields: [], desiRules: null },
   selection: [], chip: null, loaded: false,
 };
 
@@ -201,6 +202,12 @@ async function loadReference() {
     // uygulanacak. Sayıyı sunucu mağazadan okuyup gönderiyor; panel "kanal
     // birdir" diye VARSAYMAZ.
     fields: payload.fields || {},
+    // Kitap alanlarının GERÇEK nitelik kodları ve desi katsayıları. Katsayı
+    // panelde SABİT DEĞİLDİR: aynı sayı mağazada da, geçitte de yaşıyor ve
+    // üçünün ayrışması müşteriden alınan kargo ücretiyle beyan edilen desinin
+    // tutmaması demek olurdu.
+    bookFields: payload.bookFields || [],
+    desiRules: payload.desiRules || null,
   };
   nodes.filters.options('category', [
     { value: '', label: 'Tümü — kategori' },
@@ -420,6 +427,14 @@ function renderSelectionBar() {
     button('Fiyat güncelle', { onClick: () => bulkDialog('price') }),
     button('Stok ayarla', { onClick: () => bulkDialog('stock') }),
     button('Kategori ata', { onClick: () => bulkDialog('category') }),
+    // KİTAP ALANLARI TOPLU YAZILABİLEN İKİ ALANLA SINIRLI (sayfa sayısı ·
+    // desi): ikisi de kargo ücretinin girdisi ve bir serinin 40 fasikülüne
+    // aynı değeri yazmak gerçek bir iş. ISBN/yazar/yayınevi ürüne özgüdür;
+    // toplu yazmak onları hatalı hâle getirmenin en hızlı yolu olurdu.
+    button('Sayfa/desi yaz', {
+      title: 'Seçili ürünlere sayfa sayısı ya da desi yazar; önce fark tablosu gösterilir',
+      onClick: () => bulkDialog('book'),
+    }),
     button('Aktif yap', { onClick: () => bulkDialog('status', { active: true }) }),
     button('Pasifleştir', { variant: 'danger', onClick: () => bulkDialog('status', { active: false }) }),
     // Pasifleştirmenin YANINDA durur, yerine değil: biri geri alınabilir,
@@ -504,6 +519,7 @@ async function openProduct(productId) {
 
   const tabs = tabBar([
     { key: 'general', label: 'Genel' },
+    { key: 'book', label: 'Kitap künyesi' },
     { key: 'price', label: 'Fiyat' },
     { key: 'stock', label: 'Stok' },
     { key: 'images', label: 'Görseller' },
@@ -534,9 +550,9 @@ async function openProduct(productId) {
     dropForms();
     pane.replaceChildren();
     const painter = {
-      general: paintGeneral, price: paintPrice, stock: paintStock, images: paintImages,
-      variants: paintVariants, categories: paintCategories, seo: paintSeo,
-      history: paintHistory,
+      general: paintGeneral, book: paintBook, price: paintPrice, stock: paintStock,
+      images: paintImages, variants: paintVariants, categories: paintCategories,
+      seo: paintSeo, history: paintHistory,
     }[key];
     painter?.(pane, payload, forms, box);
   }
@@ -645,6 +661,196 @@ function paintGeneral(pane, payload, forms, box) {
     hintBox('Kaydetme OKU-DEĞİŞTİR-YAZ yapar: ürün taze okunur, dokunmadığınız alanlar '
       + 'mağazadaki güncel değeriyle geri gönderilir. Kısmi gönderim bazı alanları '
       + 'boşaltıyordu.'));
+}
+
+// --------------------------------------------------------- kitap künyesi
+//
+// ANINDA DESİ. Sayfa sayısı yazılırken desi yeniden hesaplanır ve rakam
+// SUNUCUDAKİYLE AYNI çıkar — katsayılar bu dosyaya yazılmaz, `reference`
+// ucundan (`desiRules`) gelir. Aksi hâlde aynı sayı üç yerde yaşardı
+// (mağazadaki PHP, geçitteki Python, buradaki JS) ve biri değiştiğinde
+// diğerleri sessizce eski kalırdı. Ekranın gösterdiği desi ile müşteriden
+// alınan kargo ücretinin ayrışması tam olarak kaçınılmak istenen şey.
+//
+// ÖNCELİK SIRASI EKRANDA DA GÖRÜNÜR: elle girilmiş `desi` bir ÖLÇÜMDÜR ve
+// sayfadan yapılan hesabı EZER. Kutuya değer yazan personel, sayfa sayısını
+// değiştirmesinin artık bir etkisi kalmadığını görmeli.
+
+/** `rules` katsayılarıyla tek kitabın desisi — YUVARLANMAMIŞ. */
+function desiFromPages(pages, rules) {
+  const count = Math.max(0, Math.min(Number(pages) || 0, rules.maxPageCount));
+  const thicknessCm = (count * rules.pageThicknessMm + rules.coverThicknessMm) / 10;
+  return (thicknessCm * rules.footprintCm2) / rules.desiDivisor;
+}
+
+/** Sayı okuma — virgül ondalık ayracı kabul edilir, boş/geçersiz `null`. */
+function readNumber(value) {
+  const text = String(value ?? '').trim().replace(',', '.');
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Ekrandaki değerlerden desi dökümü — sunucudaki üç basamağın aynısı. */
+function desiPreview(draft, rules, product) {
+  if (['virtual', 'downloadable'].includes(product.type)) {
+    return { source: 'Kargoya girmiyor', unit: 0, billed: 0, thickness: 0 };
+  }
+  const measured = readNumber(draft.desi);
+  if (measured !== null && measured > 0) {
+    return {
+      source: 'Elle girilen desi (ÖLÇÜM — aşağıdaki hesabı ezer)',
+      unit: measured,
+      billed: Math.max(1, Math.ceil(measured)),
+      thickness: (measured * rules.desiDivisor) / rules.footprintCm2,
+    };
+  }
+  const pages = readNumber(draft.pageCount);
+  if (pages !== null && pages > 0) {
+    const unit = desiFromPages(pages, rules);
+    return {
+      source: `${num(pages)} sayfadan hesaplandı`,
+      unit,
+      billed: Math.max(1, Math.ceil(unit)),
+      thickness: (Math.min(pages, rules.maxPageCount) * rules.pageThicknessMm
+        + rules.coverThicknessMm) / 10,
+    };
+  }
+  return {
+    source: 'Varsayılan — ne desi ne sayfa sayısı var',
+    unit: rules.defaultDesi,
+    billed: Math.max(1, Math.ceil(rules.defaultDesi)),
+    thickness: (rules.defaultDesi * rules.desiDivisor) / rules.footprintCm2,
+  };
+}
+
+function paintBook(pane, payload, forms) {
+  const product = payload.product;
+  const info = payload.book || {};
+  const rules = info.rules || state.reference.desiRules;
+  const specs = info.fields || [];
+  const available = specs.filter((item) => item.available);
+
+  if (!rules) {
+    pane.append(alertBox('Desi katsayıları okunamadı; anlık hesap kapalı. Ekranı yenileyin.',
+      'warn'));
+  }
+
+  if (!available.length) {
+    pane.append(emptyState({
+      title: 'Katalogda kitap niteliği yok',
+      text: 'Sayfa sayısı, ISBN, yayınevi, yazar, baskı yılı ve desi için tanımlı bir '
+        + 'nitelik bulunamadı. Nitelikler sekmesinden açıldıktan sonra bu alanlar '
+        + 'kendiliğinden görünür.',
+    }));
+  }
+
+  const missing = specs.filter((item) => !item.available);
+  if (missing.length) {
+    // ÇÖZÜLEMEYEN ALAN SESSİZCE YOK OLMAZ. "Yayınevi neden yok" sorusunun
+    // cevabı ekranda durmalı; olmayan bir koda yazmak, mağazanın isteği 200
+    // ile kabul edip değeri hiçbir yere koymaması demektir.
+    const box = h('div', 'sp-book-missing');
+    for (const item of missing) {
+      box.append(h('div', 'sp-sub', `${item.label}: ${item.reason}`));
+    }
+    pane.append(card('Katalogda bulunmayan alanlar', box,
+      'Nitelik açılmadan yazılamaz — açılırsa alan kendiliğinden gelir'));
+  }
+
+  const readout = h('div', 'sp-desi');
+
+  const paintDesi = (draft) => {
+    readout.replaceChildren();
+    if (!rules) return;
+    const view = desiPreview(draft, rules, product);
+    readout.append(
+      badge(`${num(view.billed)} desi ücretlendirilir`, view.billed > 1 ? 'warn' : 'good'),
+      h('span', 'sp-sub', `Birim desi ${num(view.unit, 3)} · yığın kalınlığı `
+        + `${num(view.thickness, 2)} cm · ${view.source}`),
+    );
+  };
+
+  let form = null;
+  if (available.length) {
+    form = formGrid({
+      fields: available.map((item) => ({
+        key: item.key,
+        label: item.label,
+        type: 'text',
+        maxLength: item.numeric ? 12 : 180,
+        hint: bookHint(item.key, rules),
+      })),
+      value: Object.fromEntries(available.map((item) => [item.key,
+        (info.values || {})[item.key] || ''])),
+      // ANINDA: her tuş vuruşunda yeniden hesaplanır. Gecikmeli (debounce)
+      // yapmak yanlış olurdu — hesap yereldir, ağa çıkmaz ve beklemenin
+      // hiçbir karşılığı yok.
+      onChange: (draft) => paintDesi(draft),
+    });
+    forms.push(form);
+    paintDesi(form.draft());
+  } else {
+    paintDesi(info.values || {});
+  }
+
+  const box = h('div');
+  if (form) box.append(form.node);
+  box.append(readout);
+  pane.append(card('Kitap künyesi', box,
+    'Sayfa sayısı yazıldıkça desi anında yeniden hesaplanır'));
+
+  if (rules) {
+    pane.append(hintBox(`Hesap: ${rules.formula}. ${rules.note}`));
+  }
+
+  if (form) {
+    const actions = h('div', 'sp-actions');
+    actions.append(button('Kitap künyesini kaydet', {
+      variant: 'primary',
+      onClick: async () => {
+        if (!form.valid()) { form.showErrors(); toast('Alanları düzeltin.', 'bad'); return; }
+        const changed = form.dirty();
+        if (!changed.length) { toast('Değişen alan yok.', 'warn'); return; }
+        const draft = form.draft();
+        const bookPatch = Object.fromEntries(changed.map((key) => [key, draft[key] ?? '']));
+        const reason = await askReason({
+          title: 'Kitap künyesini güncelle',
+          description: `${product.sku} · ${changed.length} alan değişti. Sayfa sayısı ve `
+            + 'desi KARGO ÜCRETİNİN girdisidir: değişiklik müşterinin checkout’ta ödeyeceği '
+            + 'tutarı doğrudan etkiler.',
+          confirmLabel: 'Kaydet',
+        });
+        if (!reason) return;
+        const result = await withBusy('Kaydediliyor…', () => call(
+          `${BASE}/products/${product.id}`, {
+            method: 'PUT', body: { patch: {}, book: bookPatch, reason, dryRun: false },
+          }));
+        if (!result) return;
+        toast(result.dryRun ? 'Kuru prova: istek gönderilmedi.' : 'Kaydedildi.',
+          result.dryRun ? 'warn' : 'good');
+        if (result.desi) {
+          toast(`Yeni desi: ${num(result.desi.billed)} (${result.desi.sourceLabel})`, 'info');
+        }
+        form.reset(form.draft());
+      },
+    }));
+    pane.append(actions);
+  }
+}
+
+function bookHint(key, rules) {
+  if (key === 'pageCount') {
+    return 'Kargo desisinin ana girdisi. Sayı olmayan değer (örn. “Fasikül”) hesapta YOK '
+      + `sayılır ve ürün varsayılan ${rules ? num(rules.defaultDesi, 1) : '1,0'} desiye çıkar.`;
+  }
+  if (key === 'desi') {
+    return 'Elle ÖLÇÜM. Doldurulursa sayfa sayısından yapılan hesabı EZER — paketi eline '
+      + 'alıp ölçen kişinin kararı modelden üstündür. Boş bırakmak doğru olanıdır.';
+  }
+  if (key === 'isbn') return '10 ya da 13 hane; tire ve boşluk sayılmaz.';
+  if (key === 'publishYear') return 'Dört haneli yıl (örnek: 2024).';
+  return '';
 }
 
 async function changeSku(product) {
@@ -1909,6 +2115,7 @@ function bulkDialog(kind, options = {}) {
     price: 'Toplu fiyat güncelleme',
     stock: 'Toplu stok ayarlama',
     category: 'Toplu kategori işlemi',
+    book: 'Toplu sayfa sayısı / desi yazma',
     status: options.active ? 'Toplu aktifleştirme' : 'Toplu pasifleştirme',
   };
   box.append(h('h3', 'kit-dialog-title', titles[kind]));
@@ -1925,7 +2132,8 @@ function bulkDialog(kind, options = {}) {
   closers.push(() => document.removeEventListener('keydown', onKey));
 
   const controls = h('div', 'sp-bulk-controls');
-  const params = { kind, mode: '', amount: 0, rounding: 'none', categoryId: 0, active: options.active };
+  const params = { kind, mode: '', amount: 0, rounding: 'none', categoryId: 0,
+    active: options.active, field: '', value: '' };
 
   if (kind === 'price') {
     const mode = select([
@@ -1965,6 +2173,34 @@ function bulkDialog(kind, options = {}) {
       params.mode = mode.value;
       params.amount = Number(amount.value);
       return !Number.isNaN(params.amount);
+    };
+  } else if (kind === 'book') {
+    const bookFields = (state.reference.bookFields || []).filter((item) => item.available
+      && (item.key === 'pageCount' || item.key === 'desi'));
+    const field = select(bookFields.map((item) => ({ value: item.key, label: item.label })));
+    const mode = select([
+      { value: 'set', label: 'Şu değeri yaz' },
+      // BOŞALTMA AYRI BİR KİPTİR ve asıl kullanışlı olan budur: yanlışlıkla
+      // girilmiş bir `desi` ölçümü sayfa hesabını EZMEYE devam eder ve onu
+      // kaldırmanın tek yolu alanı boş yazmaktır.
+      { value: 'clear', label: 'Alanı boşalt' },
+    ]);
+    const amount = h('input', 'kit-input');
+    amount.type = 'text';
+    amount.placeholder = '176 · 0,45';
+    controls.append(labelled('Alan', field), labelled('Kip', mode), labelled('Değer', amount));
+    if (!bookFields.length) {
+      controls.append(alertBox('Katalogda sayfa sayısı ve desi nitelikleri bulunamadı; '
+        + 'toplu yazma açılamaz. Nitelikler sekmesinden açılabilir.', 'warn'));
+    }
+    const sync = () => { amount.disabled = mode.value === 'clear'; };
+    mode.addEventListener('change', sync);
+    sync();
+    params.read = () => {
+      params.field = field.value;
+      params.mode = mode.value;
+      params.value = mode.value === 'clear' ? '' : String(amount.value).trim();
+      return Boolean(params.field) && (mode.value === 'clear' || params.value !== '');
     };
   } else if (kind === 'category') {
     const mode = select([
@@ -2008,7 +2244,7 @@ function bulkDialog(kind, options = {}) {
         body: {
           kind, productIds: state.selection.map(Number), mode: params.mode,
           amount: params.amount, rounding: params.rounding, categoryId: params.categoryId,
-          active: Boolean(params.active),
+          active: Boolean(params.active), field: params.field, value: params.value,
         },
       });
     } catch (error) {
@@ -2030,19 +2266,30 @@ function bulkDialog(kind, options = {}) {
     ]));
 
     const asMoney = kind === 'price';
+    // KİTAP ALANI METİNDİR. `num()` ile basmak "0,45 desi"yi 0'a, boş değeri
+    // de 0'a çevirirdi — ikisi de yanlış ve ikincisi tehlikeli: boş desi
+    // "hesabı sayfadan yap" demektir, 0 desi ise geçersiz bir ölçüm.
+    const asText = kind === 'book';
+    const cellValue = (value) => {
+      if (asText) return String(value ?? '—');
+      return asMoney ? money(value) : num(value);
+    };
     const table = dataTable({
       columns: [
         { key: 'sku', label: 'SKU', width: 'minmax(0, 1fr)', className: 'mono' },
         { key: 'name', label: 'Ürün', width: 'minmax(0, 2fr)' },
         { key: 'before', label: 'Önce', width: '110px', align: 'num',
-          cell: (row) => (asMoney ? money(row.before) : num(row.before)) },
+          cell: (row) => cellValue(row.before) },
         { key: 'after', label: 'Sonra', width: '110px', align: 'num',
-          cell: (row) => (asMoney ? money(row.after) : num(row.after)) },
+          cell: (row) => cellValue(row.after) },
         { key: 'delta', label: 'Fark', width: '110px', align: 'num',
           cell: (row) => {
             const cell = h('span', row.delta < 0 ? 'sp-bad' : 'sp-good');
-            cell.textContent = row.skipped ? '—'
-              : `${row.delta > 0 ? '+' : ''}${asMoney ? money(row.delta) : num(row.delta)}`;
+            if (asText) cell.textContent = row.skipped ? '—' : 'değişecek';
+            else {
+              cell.textContent = row.skipped ? '—'
+                : `${row.delta > 0 ? '+' : ''}${asMoney ? money(row.delta) : num(row.delta)}`;
+            }
             if (row.note) cell.title = row.note;
             return cell;
           } },
