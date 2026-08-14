@@ -23,6 +23,8 @@ import json
 import os
 import shutil
 import tempfile
+import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,10 +33,42 @@ from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir,
 
 from . import config_map, metrics
 
-#: Panonun rapor/CSV üretirken taradığı en çok satır. Sipariş taraması iki
-#: dönem için iki kez yapılıyor; tavan olmadan bozuk bir `meta` sonsuz
-#: sayfalama üretir ve hız kovasını (dk 55) tüketir.
+#: Panonun rapor/CSV üretirken taradığı en çok satır. Tavan olmadan bozuk bir
+#: `meta` sonsuz sayfalama üretir ve hız kovasını (dk 55) tüketir.
 DEFAULT_SCAN_CAP = 2000
+
+#: Pano rafının ömrü (saniye). Bkz. `_Shelf`.
+DEFAULT_CACHE_SECONDS = 60
+
+#: `reporting/overview` penceresi. Panonun oradan okuduğu İKİ alan da
+#: (`orders.pendingCount`, `bld`) pencereden BAĞIMSIZDIR — pencere yalnız
+#: sunucunun hesaplamadığı bölümleri küçük tutmak için dar verilir.
+OVERVIEW_DAYS = 1
+
+#: `outOfStock` KPI'sının neden boş olduğunun ÖLÇÜLMÜŞ nedeni.
+#:
+#: BULUNAN İSRAF (2026-08-14). Bu KPI için her pano açılışında
+#: `bbd_catalog_health` çağrılıyordu ve yanıtta aranan alan HİÇ YOKTU. Uç
+#: canlıda şunu döndürüyor:
+#:     {"summary": {"no_image", "no_description", "no_meta", "zero_price",
+#:                  "no_category", "not_indexed"},
+#:      "issues": [...], "ignoredSkus": [...]}
+#: Stokla ilgili tek bir alan bile yok; servis `out_of_stock`/`outOfStock`
+#: arıyor, bulamıyor ve HER SEFERİNDE `None` dönüyordu. Yani ölçülen ~450 ms,
+#: sonucu baştan belli bir soruya harcanıyordu.
+#:
+#: Çağrı kaldırıldı; KPI **aynı değeri** (`None`) veriyor, artık bedava.
+#: Sessiz sıfır YAZILMADI: sıfır "hiçbir ürün tükenmedi" demektir ve bunu
+#: bilmiyoruz. Kritik stok kartındaki eşik altı listesinden saymak da
+#: yapılmadı — o BAŞKA bir soruya (eşiğin altı) verilen cevaptır ve iki ayrı
+#: tanımdan tek rakam üretmek, hangisinin doğru olduğu bilinemeyen bir sayı
+#: doğurur.
+OUT_OF_STOCK_NOTE = (
+    "Mağazada tükenen ürün sayısını veren bir uç yok: katalog sağlığı ucu yalnız "
+    "görsel/açıklama/kategori/dizin sorunlarını sayıyor, stok alanı taşımıyor. "
+    "Sayı uydurmamak için boş bırakıldı; eşiğin altındaki ürünler 'Kritik stok' "
+    "kartında listeleniyor."
+)
 
 #: Yerel tercih anahtarları. Hepsi bu EKRANIN tercihidir; vitrini etkilemez.
 PREF_KEYS = ("channel", "locale", "timezone", "date_format", "week_start", "compare")
@@ -61,6 +95,117 @@ class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
 
 
+class _Shelf:
+    """Panonun KISA ÖMÜRLÜ okuma rafı — ölçülmüş bir boşluğu kapatır.
+
+    BULUNAN SORUN (2026-08-14, canlıya karşı ölçüldü). Panonun ikinci açılışı
+    birincisi kadar sürüyordu; 18 isteğin 18'i yeniden gidiyordu. Sebep
+    önbelleğin TTL'i ya da anahtarı DEĞİL: geçidin önbelleği (`store_api`
+    `ReferenceCache`/`SnapshotCache`) yalnız `_cached()` üzerinden okunan
+    REFERANS listelere (kategori ağacı, öznitelik, aile ve `snapshot()`
+    parçaları) bağlı. Panonun çağırdığı uçların HİÇBİRİ oradan geçmiyor —
+    yani önbellek bozuk değildi, bu yola HİÇ UYGULANMAMIŞTI.
+
+    NEDEN GEÇİDE EKLENMEDİ. Geçidin kuralı yerinde duruyor: sipariş, ürün ve
+    müşteri LİSTELERİ önbelleğe alınmaz, yoksa personel "kaydettim ama listede
+    yok" yaşar. O kural yazma yapan ekranlar (Ürünler, Siparişler) içindir.
+    Pano yazmaz; salt okunur bir özettir, kendiliğinden yenilenmez ve elinde
+    "Yenile" düğmesi vardır. Raf bu yüzden PANONUN İÇİNDE durur ve yalnız
+    panonun kendi yanıtlarını tutar; başka ekranın gördüğü veriye dokunmaz.
+
+    TEK UÇUŞ (single-flight). Panel beş ucu aynı anda çağırıyor; ikisi
+    (`pending`, `system`) aynı `reporting/overview` özetini istiyor. Aynı
+    anahtar için ikinci çağrı yeni istek açmaz, süren isteği bekler. Bu
+    `asyncio.gather` ile çoklu çağrı DEĞİLDİR — tam tersi: aynı çağrının iki
+    kez gitmesini engeller.
+
+    HATA ÖNBELLEĞE ALINMAZ — iki biçimiyle birden. Patlayan çağrı (istisna)
+    bekleyenlerin hepsine aynen yansır ve saklanmaz. Servis HTTP hatası
+    fırlatmadığı için ikinci biçim daha sinsi: kart "okunamadı" diyen bir
+    SÖZLÜK döner. O da saklanmaz (`keep`); saklansaydı kartın üstündeki
+    "Tekrar dene" düğmesi bir dakika boyunca aynı hatayı geri verir, yani
+    hiçbir şey yapmayan bir düğme olurdu.
+
+    Saat MONOTONİKtir: makine saati NTP ile geri alınırsa duvar saatli raf
+    "gelecekte" kalır ve hiç tazelenmez.
+    """
+
+    def __init__(self, ttl: int) -> None:
+        # ttl <= 0 "raf kapalı" demektir; ayarla kapatılabilsin diye aşağı
+        # sınır 1'e çekilmez.
+        self._ttl = max(0, int(ttl))
+        self._values: dict[str, tuple[float, Any]] = {}
+        self._flights: dict[str, asyncio.Task[Any]] = {}
+        #: Geçersizleştirme sayacı: biri rafın tamamı, biri anahtar başına.
+        #: Süren bir uçuş geçersizleştirmeden SONRA bitip rafa yazsaydı,
+        #: "Yenile" düğmesi kendi eskisini geri koyardı.
+        #:
+        #: SAYAÇ NEDEN ANAHTAR BAŞINA. Tazeleme rafın TAMAMINI düşürseydi
+        #: şöyle olurdu: panel beş ucu aynı anda çağırır, her biri sırayla
+        #: rafı düşürür, en son düşüren dışındaki DÖRDÜNÜN sonucu "eski
+        #: sayaçla üretildi" diye atılırdı. Dört kart bir sonraki açılışta
+        #: yeniden mağazaya giderdi — kimse yanlış veri görmezdi ama
+        #: tazeleme rafı boşaltmış olurdu.
+        self._era = 0
+        self._keys: dict[str, int] = {}
+
+    def _stamp(self, key: str) -> int:
+        return self._era + self._keys.get(key, 0)
+
+    @staticmethod
+    def worth_keeping(value: Any) -> bool:
+        """Rafa konmaya değer mi — okunamamış kart SAKLANMAZ."""
+        if not isinstance(value, dict):
+            return True
+        return value.get("connected") is not False and value.get("available") is not False
+
+    async def read(self, key: str, produce: Callable[[], Awaitable[Any]], *,
+                   fresh: bool = False) -> tuple[Any, int]:
+        """`(değer, saniye_yaşı)`. Yaş 0 ise değer bu çağrıda üretildi."""
+        if self._ttl <= 0:
+            return await produce(), 0
+        if fresh:
+            # YALNIZ BU ANAHTAR düşer; süren uçuşu da bırakır ki tazeleme
+            # gerçekten mağazaya gitsin.
+            self._keys[key] = self._keys.get(key, 0) + 1
+            self._values.pop(key, None)
+            self._flights.pop(key, None)
+
+        entry = self._values.get(key)
+        if entry is not None:
+            stamp, value = entry
+            age = int(time.monotonic() - stamp)
+            if age <= self._ttl:
+                return value, age
+            del self._values[key]
+
+        mark = self._stamp(key)
+        flight = self._flights.get(key)
+        if flight is None:
+            flight = asyncio.ensure_future(produce())
+            # Sonucu kimse almadan uçuş biterse (bekleyen iptal edildi)
+            # Python "alınmamış istisna" uyarısı basar; burada okunur.
+            flight.add_done_callback(
+                lambda done: None if done.cancelled() else done.exception())
+            self._flights[key] = flight
+        try:
+            # `shield`: bekleyenin iptali süren isteği öldürmesin — diğer
+            # bekleyen o sonucu kullanacak.
+            value = await asyncio.shield(flight)
+        finally:
+            if self._flights.get(key) is flight and flight.done():
+                del self._flights[key]
+        if mark == self._stamp(key) and self.worth_keeping(value):
+            self._values[key] = (time.monotonic(), value)
+        return value, 0
+
+    def drop(self) -> None:
+        """Rafın TAMAMINI boşaltır (ayar yazıldıktan sonra). Süren uçuşlar
+        iptal EDİLMEZ, yalnız artık rafa yazamaz."""
+        self._values.clear()
+        self._era += 1
+
+
 class DashboardService:
     """Kontrol Paneli'nin tüm iş kuralları. HTTP hatası FIRLATMAZ."""
 
@@ -78,6 +223,8 @@ class DashboardService:
 
         self._audit = store.table("audit")
         self._prefs = store.table("prefs")
+        self._shelf = _Shelf(metrics.as_int(self._config.get("cache_seconds"),
+                                            DEFAULT_CACHE_SECONDS))
 
     # ------------------------------------------------------------- ayarlar
 
@@ -151,61 +298,71 @@ class DashboardService:
     # ================================================================ özet
 
     async def summary(self, *, start: str = "", end: str = "", channel: str = "",
-                      compare: str = "") -> dict[str, Any]:
-        """Panonun ana yükü: KPI + günlük ciro + durum + saat + en çok satan.
-
-        TEK TARAMA, ÇOK ÇIKTI. Aynı sipariş kümesinden hem sekiz KPI hem üç
-        grafik çıkar; her kart için ayrı istek atmak hız kovasını boşa harcar
-        ve kartlar arasında tutarsız rakam üretirdi (arada sipariş gelebilir).
-        """
+                      compare: str = "", fresh: bool = False) -> dict[str, Any]:
+        """Panonun ana yükü: KPI + günlük ciro + durum + saat + en çok satan."""
         span = metrics.normalize_range(start, end)
         mode = compare if compare in metrics.COMPARE_MODES else \
             str(self._config.get("compare") or "previous")
         if mode not in metrics.COMPARE_MODES:
             mode = "previous"
         working = metrics.text(channel) or await self._channel()
-        previous_span = metrics.previous_range(span["start"], span["end"], mode)
+        key = f"summary|{span['start']}|{span['end']}|{working}|{mode}"
+        payload, age = await self._shelf.read(
+            key, lambda: self._build_summary(span, mode, working), fresh=fresh)
+        return {**payload, "ageSeconds": age}
 
+    async def _build_summary(self, span: dict[str, Any], mode: str,
+                             working: str) -> dict[str, Any]:
+        """Özetin gerçek hesabı — raf boşken çalışır.
+
+        TEK TARAMA, ÇOK ÇIKTI. Aynı sipariş kümesinden hem sekiz KPI hem üç
+        grafik çıkar; her kart için ayrı istek atmak hız kovasını boşa harcar
+        ve kartlar arasında tutarsız rakam üretirdi (arada sipariş gelebilir).
+
+        DÖNEM + KARŞILAŞTIRMA DÖNEMİ TEK SORGUDA. Aralıklar bitişikse
+        (varsayılan `previous` kipi hep öyledir) üç uç ikişer kez değil BİRER
+        kez çağrılır; dönemlere ayırma zaten yerelde yapılıyordu. `lastYear`
+        kipinde aralıklar bir yıl uzak olduğu için ayrı ayrı çağrılır
+        (`metrics.merge_ranges`). Ölçüm: 7 istek → 3 istek, rakamlar aynı.
+        """
+        previous_span = metrics.previous_range(span["start"], span["end"], mode)
         notes: list[str] = [span["note"]] if span["note"] else []
 
-        current, scan = await self._scan_orders(span["start"], span["end"], working)
+        compared = mode != "none"
+        window = metrics.merge_ranges(span, previous_span) if compared else None
+        #: Siparişler/iadeler/müşteriler için mağazaya sorulacak aralık.
+        #: Birleşik aralık dönemleri KAPSAR; ayrım aşağıda yerelde yapılır.
+        asked = window or span
+
+        scanned_rows, scan = await self._scan_orders(asked["start"], asked["end"], working)
         if not scan["ok"]:
             return {"ok": True, "connected": False, "error": scan["error"],
                     "range": span, "previousRange": previous_span, "compare": mode,
                     "channel": working, "kpis": [], "daily": [], "statuses": [],
                     "hours": [], "topProducts": [], "topSource": "", "notes": notes}
         notes.extend(scan["notes"])
+        current = self._within(scanned_rows, span)
 
-        refunds, refund_note = await self._refund_total(span["start"], span["end"])
-        customers, customer_note = await self._new_customers(span["start"], span["end"])
-        out_of_stock, stock_note = await self._out_of_stock()
+        refund_rows, refund_note = await self._refund_rows(asked["start"], asked["end"])
+        customer_rows, customer_note = await self._customer_rows(asked["start"], asked["end"])
 
-        numbers = metrics.snapshot_numbers(current, refunds=refunds, new_customers=customers,
-                                           out_of_stock=out_of_stock)
+        numbers = metrics.snapshot_numbers(
+            current,
+            refunds=self._refund_sum(refund_rows, span),
+            new_customers=self._customer_count(customer_rows, span),
+            # Kaynağı olmayan rakam UYDURULMAZ (bkz. OUT_OF_STOCK_NOTE).
+            out_of_stock=None)
         numbers["refundsNote"] = refund_note
         numbers["customersNote"] = customer_note
-        numbers["outOfStockNote"] = stock_note
+        numbers["outOfStockNote"] = OUT_OF_STOCK_NOTE
 
         previous_numbers: dict[str, Any] | None = None
-        if mode != "none":
-            rows, previous_scan = await self._scan_orders(previous_span["start"],
-                                                          previous_span["end"], working)
-            if previous_scan["ok"]:
-                previous_refunds, _ = await self._refund_total(previous_span["start"],
-                                                               previous_span["end"])
-                previous_customers, _ = await self._new_customers(previous_span["start"],
-                                                                  previous_span["end"])
-                previous_numbers = metrics.snapshot_numbers(
-                    rows, refunds=previous_refunds, new_customers=previous_customers,
-                    out_of_stock=None)
-            else:
-                notes.append("Karşılaştırma dönemi okunamadı; yüzdeler gösterilmiyor.")
+        if compared:
+            previous_numbers = await self._previous_numbers(
+                previous_span, working, notes,
+                merged=(scanned_rows, refund_rows, customer_rows) if window else None)
 
-        top = metrics.top_products(current, metrics.as_int(self._config.get("top_products"), 10))
-        source = "orders"
-        if not top:
-            top, source = await self._report_products(span["start"], span["end"], working)
-
+        top = self._top_products(current)
         return {
             "ok": True, "connected": True, "error": "",
             "range": span, "previousRange": previous_span, "compare": mode, "channel": working,
@@ -214,21 +371,109 @@ class DashboardService:
             "statuses": metrics.status_counts(current),
             "hours": metrics.hour_counts(current),
             "topProducts": top,
-            "topSource": source,
+            "topSource": "orders" if top else "",
             "cancelled": numbers["cancelled"],
-            "scanned": scan["scanned"],
+            # Ekranda yazan "N sipariş tarandı" DÖNEMİN sayısıdır. Birleşik
+            # sorgu karşılaştırma dönemini de getirdiği için ham satır sayısı
+            # yazılsaydı kullanıcı iki katını görürdü.
+            "scanned": len(current),
             "truncated": scan["truncated"],
             "notes": [note for note in notes if note],
         }
 
+    async def _previous_numbers(self, previous_span: dict[str, str], working: str,
+                                notes: list[str],
+                                merged: tuple[list[Any], list[Any], list[Any]] | None,
+                                ) -> dict[str, Any] | None:
+        """Karşılaştırma döneminin rakamları.
+
+        `merged` doluysa üç küme de birleşik sorgudan geldi ve YENİ İSTEK
+        ATILMAZ — yalnız yerelde süzülür. Boşsa (uzak `lastYear` dönemi)
+        dönemin kendi sorguları atılır.
+        """
+        if merged is not None:
+            orders, refunds, customers = merged
+            return metrics.snapshot_numbers(
+                self._within(orders, previous_span),
+                refunds=self._refund_sum(refunds, previous_span),
+                new_customers=self._customer_count(customers, previous_span),
+                out_of_stock=None)
+
+        rows, scan = await self._scan_orders(previous_span["start"], previous_span["end"],
+                                             working)
+        if not scan["ok"]:
+            notes.append("Karşılaştırma dönemi okunamadı; yüzdeler gösterilmiyor.")
+            return None
+        refunds, _ = await self._refund_rows(previous_span["start"], previous_span["end"])
+        customers, _ = await self._customer_rows(previous_span["start"], previous_span["end"])
+        return metrics.snapshot_numbers(
+            self._within(rows, previous_span),
+            refunds=self._refund_sum(refunds, previous_span),
+            new_customers=self._customer_count(customers, previous_span),
+            out_of_stock=None)
+
+    def _top_products(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """En çok satan — sipariş KALEMLERİNDEN.
+
+        KALDIRILAN YEDEK KAYNAK (ölçüm 2026-08-14). Liste boş kalınca
+        `reporting/products` ucuna düşülüyordu. O uç ÜRÜN SATIRI DÖNDÜRMÜYOR;
+        canlıda gelen yanıt tek elemanlı bir liste ve içeriği adet zaman
+        serisi:
+            [{"entity": "products", "type": "total-sold-quantities",
+              "dateRange": {...}, "statistics": {"quantities": {...},
+              "over_time": {...}}}]
+        Üstelik geçidin tekil okuyucusu liste yanıtı sözlüğe çeviremediği için
+        yedek kaynak `{}` alıyordu; yani çağrı sonucu HER ZAMAN boştu. Dönem
+        siparişsizken bu, açılış başına bir istek israfıydı.
+
+        `bbd/catalog/bestsellers` de yerine KONMADI: o tablo TÜM ZAMANLARIN
+        net satış adedini tutuyor (`bbd_product_bestsellers`, günlük yeniden
+        kuruluyor), dönemin değil. "Bugün en çok satan" başlığının altına tüm
+        zamanların listesini koymak, boş listeden daha yanıltıcı olurdu.
+        """
+        return metrics.top_products(rows,
+                                    metrics.as_int(self._config.get("top_products"), 10))
+
+    @staticmethod
+    def _within(rows: list[dict[str, Any]], span: dict[str, str]) -> list[dict[str, Any]]:
+        """Taranan sipariş satırlarını bir döneme indirger."""
+        return [row for row in rows
+                if metrics.in_range(row["date"], span["start"], span["end"])]
+
+    @staticmethod
+    def _refund_sum(rows: list[dict[str, Any]] | None,
+                    span: dict[str, str]) -> int | None:
+        """İade toplamı. Liste OKUNAMADIYSA (`None`) sıfır değil `None` döner:
+        sıfır "iade yok" demektir, oysa bilmiyoruz."""
+        if rows is None:
+            return None
+        return sum(metrics.refund_total(item) for item in rows
+                   if metrics.in_range(metrics.created_day(item),
+                                       span["start"], span["end"]))
+
+    @staticmethod
+    def _customer_count(rows: list[dict[str, Any]] | None,
+                        span: dict[str, str]) -> int | None:
+        if rows is None:
+            return None
+        return len([item for item in rows
+                    if metrics.in_range(metrics.created_day(item),
+                                        span["start"], span["end"])])
+
     async def _scan_orders(self, start: str, end: str,
                            channel: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Aralığın siparişlerini tarar ve YERELDE de süzer.
+        """Aralığın siparişlerini tarar. SÜZME İŞİ ÇAĞIRANA AİT.
 
         TUZAK: Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar.
-        Tarih süzgecinin uygulandığı VARSAYILMAZ; dönen satırlar gün alanına
-        göre yerelde ayrıca süzülür. Böylece süzgeç yok sayılsa bile rakam
-        doğru çıkar — yalnız tarama pahalılaşır ve ekran bunu söyler.
+        Tarih süzgecinin uygulandığı VARSAYILMAZ; dönen satırlar çağıran
+        tarafından gün alanına göre ayrıca süzülür (`_within`). Böylece
+        süzgeç yok sayılsa bile rakam doğru çıkar — yalnız tarama pahalılaşır
+        ve ekran bunu söyler.
+
+        ÖLÇÜM (2026-08-14): bu mağaza süzgeci UYGULUYOR — `date_from`/
+        `date_to` verilen sorgu 18 yerine 0 satır döndürdü. Yerel süzme yine
+        de kaldırılmadı: sürüm yükseltmesi süzgeci sessizce düşürebilir ve o
+        gün rakam değil yalnız hız değişsin.
         """
         filters = {"channel": channel, "date_from": start, "date_to": end}
         try:
@@ -236,37 +481,38 @@ class DashboardService:
         except Exception as failure:  # noqa: BLE001 — ekran ayakta kalmalı (K7)
             self._log.warning("sipariş taraması başarısız", error=str(failure))
             return [], {"ok": False, "error": self._fail(failure), "notes": [],
-                        "scanned": 0, "truncated": False}
+                        "truncated": False}
 
         raw = payload.get("items") or []
         capped = raw[:self._scan_cap]
         rows = [metrics.order_row(item) for item in capped if isinstance(item, dict)]
-        inside = [row for row in rows if metrics.in_range(row["date"], start, end)]
+        # Süzgecin uygulandığı, SORULAN aralığa göre sınanır: dışarıda satır
+        # varsa mağaza süzgeci yok saymıştır.
+        outside = [row for row in rows if not metrics.in_range(row["date"], start, end)]
 
         notes: list[str] = []
-        if rows and len(inside) != len(rows):
+        if outside:
             notes.append("Mağaza tarih süzgecini uygulamadı; sonuç yerelde süzüldü.")
         truncated = bool(payload.get("truncated")) or len(raw) > len(capped)
         if truncated:
             notes.append(f"Sipariş taraması {len(capped)} satırda kesildi; rakamlar EKSİK.")
-        return inside, {"ok": True, "error": "", "notes": notes,
-                        "scanned": len(rows), "truncated": truncated}
+        return rows, {"ok": True, "error": "", "notes": notes, "truncated": truncated}
 
-    async def _refund_total(self, start: str, end: str) -> tuple[int | None, str]:
+    async def _refund_rows(self, start: str,
+                           end: str) -> tuple[list[dict[str, Any]] | None, str]:
+        """Aralığın iade satırları. Okunamazsa `None` — boş liste DEĞİL."""
         try:
             payload = await self._api.refunds({"date_from": start, "date_to": end},
                                               all_pages=True)
         except Exception as failure:  # noqa: BLE001 — K7
             self._log.info("iade toplamı okunamadı", error=str(failure))
             return None, self._fail(failure)
-        rows = [item for item in (payload.get("items") or [])[:self._scan_cap]
-                if isinstance(item, dict)]
-        inside = [item for item in rows
-                  if metrics.in_range(metrics.created_day(item), start, end)]
-        return sum(metrics.refund_total(item) for item in inside), ""
+        return [item for item in (payload.get("items") or [])[:self._scan_cap]
+                if isinstance(item, dict)], ""
 
-    async def _new_customers(self, start: str, end: str) -> tuple[int | None, str]:
-        """Dönemde açılan müşteri kaydı sayısı.
+    async def _customer_rows(self, start: str,
+                             end: str) -> tuple[list[dict[str, Any]] | None, str]:
+        """Dönemde açılan müşteri kayıtları.
 
         Sayım YERELDE yapılır: müşteri listesi ucunun tarih süzgecini
         uyguladığı belgelenmemiş. Liste tavana dayanırsa sayı alt sınırdır ve
@@ -278,42 +524,47 @@ class DashboardService:
         except Exception as failure:  # noqa: BLE001 — K7
             self._log.info("yeni müşteri sayısı okunamadı", error=str(failure))
             return None, self._fail(failure)
-        rows = [item for item in (payload.get("items") or [])[:self._scan_cap]
-                if isinstance(item, dict)]
-        inside = [item for item in rows
-                  if metrics.in_range(metrics.created_day(item), start, end)]
         note = "Müşteri listesi tavana dayandı; sayı alt sınırdır." \
             if payload.get("truncated") else ""
-        return len(inside), note
-
-    async def _out_of_stock(self) -> tuple[int | None, str]:
-        try:
-            payload = await self._api.bbd_catalog_health()
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
-            return None, self._pending(failure)
-        for key in ("out_of_stock", "outOfStock", "outofstock"):
-            if isinstance(payload, dict) and payload.get(key) is not None:
-                return metrics.as_int(payload[key]), ""
-        return None, "Katalog sağlığı tükenen ürün sayısı döndürmedi."
-
-    async def _report_products(self, start: str, end: str,
-                               channel: str) -> tuple[list[dict[str, Any]], str]:
-        """Sipariş listesi kalem taşımıyorsa mağazanın ürün raporuna düşülür."""
-        try:
-            payload = await self._api.reporting("products", {"start": start, "end": end,
-                                                             "channel": channel})
-        except Exception as failure:  # noqa: BLE001 — K7
-            self._log.info("ürün raporu okunamadı", error=str(failure))
-            return [], ""
-        rows = metrics.report_products(payload,
-                                       metrics.as_int(self._config.get("top_products"), 10))
-        return rows, "report" if rows else ""
+        return [item for item in (payload.get("items") or [])[:self._scan_cap]
+                if isinstance(item, dict)], note
 
     # ================================================================ kartlar
 
-    async def recent_orders(self, *, limit: int = 0) -> dict[str, Any]:
+    async def _overview(self, *, fresh: bool = False) -> dict[str, Any]:
+        """`reporting/overview` — İKİ kartın ortak, PENCEREDEN BAĞIMSIZ kaynağı.
+
+        NE ALINIR, NEDEN. Uç tek çağrıda sipariş/kargo/BLD/ödeme linki özeti
+        veriyor ama alanların bir kısmı ZAMAN PENCERESİNE bağlı. Panodan
+        yalnız pencereden BAĞIMSIZ iki alan okunur (kaynak koddan doğrulandı,
+        canlıda ölçüldü — bkz. `store.api.bbd_reporting_overview`):
+
+            orders.pendingCount → "Ödeme/onay bekleyen sipariş" satırı
+            bld                 → "BLD fiş kuyruğu" kartı
+
+        `orders.byStatus` PENCEREYE BAĞLI olduğu için "Hazırlanıyor durumunda
+        sipariş" satırı BURADAN ALINMADI; o hâlâ kendi tüm-zamanlar sorgusunu
+        atıyor. Pencereli sayıyı tüm zamanların sayısı diye göstermek, hata
+        vermeyen ama yanlış bir rakam üretirdi.
+
+        Raf sayesinde iki kart aynı yanıtı paylaşır: panel ikisini aynı anda
+        çağırsa bile mağazaya TEK istek gider. `fresh` ("Yenile") bu ortak
+        kaydı da düşürür — düşürmeseydi tazelenmiş bir panonun iki satırı
+        bir dakikaya kadar eski kalırdı.
+        """
+        payload, _ = await self._shelf.read(
+            "overview", lambda: self._api.bbd_reporting_overview(days=OVERVIEW_DAYS),
+            fresh=fresh)
+        return payload if isinstance(payload, dict) else {}
+
+    async def recent_orders(self, *, limit: int = 0, fresh: bool = False) -> dict[str, Any]:
         """Son siparişler — satır Siparişler ekranına gider."""
         count = limit or metrics.as_int(self._config.get("recent_orders"), 10)
+        payload, age = await self._shelf.read(
+            f"recent|{count}", lambda: self._recent_orders(count), fresh=fresh)
+        return {**payload, "ageSeconds": age}
+
+    async def _recent_orders(self, count: int) -> dict[str, Any]:
         try:
             payload = await self._api.orders(
                 {"channel": await self._channel(), "sort": "created_at", "order": "desc"},
@@ -324,7 +575,7 @@ class DashboardService:
                 if isinstance(item, dict)]
         return {"ok": True, "connected": True, "error": "", "items": rows[:count]}
 
-    async def critical_stock(self, *, limit: int = 0) -> dict[str, Any]:
+    async def critical_stock(self, *, limit: int = 0, fresh: bool = False) -> dict[str, Any]:
         """Kritik stok — Bagisto'nun kendi stok eşiği raporundan.
 
         BULUNAN HATA (2026-08-14). Burası katalog sağlığı ucuna `low_stock`
@@ -348,6 +599,11 @@ class DashboardService:
         kartın istediği kadarını gösteririz.
         """
         count = limit or metrics.as_int(self._config.get("critical_stock"), 10)
+        payload, age = await self._shelf.read(
+            f"stock|{count}", lambda: self._critical_stock(count), fresh=fresh)
+        return {**payload, "ageSeconds": age}
+
+    async def _critical_stock(self, count: int) -> dict[str, Any]:
         try:
             payload = await self._api.dashboard_stats(kind="stock-threshold-products")
         except Exception as failure:  # noqa: BLE001 — K7: kart düşer, pano ayakta
@@ -374,11 +630,20 @@ class DashboardService:
         return {"ok": True, "available": True, "error": "", "items": items[:count],
                 "total": len(items)}
 
-    async def pending_work(self) -> dict[str, Any]:
-        """Bekleyen işler — her satır ilgili panele gider.
+    async def pending_work(self, *, fresh: bool = False) -> dict[str, Any]:
+        """Bekleyen işler — her satır ilgili panele gider."""
+        payload, age = await self._shelf.read(
+            "pending", lambda: self._pending_work(fresh), fresh=fresh)
+        return {**payload, "ageSeconds": age}
 
-        Satırlar TEK TEK hata verir: yorum ucu patlarsa iade talepleri yine
+    async def _pending_work(self, fresh: bool) -> dict[str, Any]:
+        """Satırlar TEK TEK hata verir: yorum ucu patlarsa iade talepleri yine
         listelenir. Sayı okunamayan satır "okunamadı" der, sıfır göstermez.
+
+        "Ödeme/onay bekleyen sipariş" TOPLU ÖZETTEN gelir (`_overview`), geri
+        kalanı kendi ucundan. Özet patlarsa yalnız O SATIR "okunamadı" der;
+        diğer üç satır dolmaya devam eder (K7) — toplu uca geçmek "hepsi ya
+        da hiçbiri" değildir.
         """
         rows: list[dict[str, Any]] = []
 
@@ -404,14 +669,46 @@ class DashboardService:
                     lambda: self._api.bbd_return_requests({"status": "pending"}, page=1,
                                                           per_page=1),
                     pending=True)
-        await count("Ödeme/onay bekleyen sipariş", "store_orders", "pendingOrders",
-                    lambda: self._api.orders({"status": "pending"}, page=1, per_page=1))
+
+        # KAYNAK: toplu özet (`orders.pendingCount`). Denetleyicide bu sayı
+        # zaman penceresi UYGULANMADAN hesaplanıyor, yani eski `orders?
+        # status=pending` sorgusunun tam karşılığı. Canlıda ikisi de 0 ölçüldü.
+        try:
+            overview = await self._overview(fresh=fresh)
+        except Exception as failure:  # noqa: BLE001 — satır satır hata (K7)
+            rows.append({"key": "pendingOrders", "label": "Ödeme/onay bekleyen sipariş",
+                         "target": "store_orders", "count": None,
+                         "error": self._pending(failure)})
+        else:
+            orders = overview.get("orders")
+            if isinstance(orders, dict) and orders.get("pendingCount") is not None:
+                rows.append({"key": "pendingOrders",
+                             "label": "Ödeme/onay bekleyen sipariş",
+                             "target": "store_orders",
+                             "count": metrics.as_int(orders["pendingCount"]), "error": ""})
+            else:
+                # `orders: null` = "bu belirtecin sipariş yetkisi yok".
+                # Sıfır göstermek yetkisizliği "iş yok" diye okuturdu.
+                rows.append({"key": "pendingOrders",
+                             "label": "Ödeme/onay bekleyen sipariş",
+                             "target": "store_orders", "count": None,
+                             "error": "Toplu özet sipariş bölümünü döndürmedi; "
+                                      "belirtecin sipariş yetkisi olmayabilir."})
+
+        # KAYNAK: kendi ucu. Toplu özetteki `byStatus` PENCEREYE bağlı olduğu
+        # için oradan okunamaz — pencereli sayıyı tüm zamanların sayısı diye
+        # göstermek sessiz bir yanlış rakam olurdu.
         await count("Hazırlanıyor durumunda sipariş", "store_orders", "processingOrders",
                     lambda: self._api.orders({"status": "processing"}, page=1, per_page=1))
         return {"ok": True, "items": rows}
 
-    async def system_health(self) -> dict[str, Any]:
+    async def system_health(self, *, fresh: bool = False) -> dict[str, Any]:
         """Sistem sağlığı: geçit, mağaza, yedek, POS, kargo, BLD fişi, GİB."""
+        payload, age = await self._shelf.read(
+            "system", lambda: self._system_health(fresh), fresh=fresh)
+        return {**payload, "ageSeconds": age}
+
+    async def _system_health(self, fresh: bool) -> dict[str, Any]:
         cards: list[dict[str, Any]] = []
 
         gate: dict[str, Any] = {}
@@ -448,7 +745,7 @@ class DashboardService:
         cards.append(await self._count_card(
             "carriers", "Kargo entegrasyonu", lambda: self._api.bbd_carriers(),
             singular="taşıyıcı"))
-        cards.append(await self._failed_jobs_card())
+        cards.append(await self._failed_jobs_card(fresh=fresh))
         cards.append({
             "key": "gib", "label": "GİB / e-fatura",
             "state": "unknown", "value": "—",
@@ -491,14 +788,43 @@ class DashboardService:
                 "value": f"{len(active)} etkin {singular}",
                 "detail": f"Tanımlı {len(items)} {singular}."}
 
-    async def _failed_jobs_card(self) -> dict[str, Any]:
+    async def _failed_jobs_card(self, *, fresh: bool = False) -> dict[str, Any]:
+        """BLD fiş kuyruğu — KAYNAK: toplu özetin `bld` bölümü.
+
+        Özet, fiş kuyruğunu durum başına sayıyor ve bu sayıda ZAMAN PENCERESİ
+        YOK (denetleyicide `since` süzgeci uygulanmıyor) — yani tüm zamanların
+        kuyruğu. Canlıda ölçüldü: `{"sent": 8}`.
+
+        BULUNAN HATA (2026-08-14) — `critical_stock`takinin aynısı, başka
+        kılıkta. Kart `bld/jobs?status=failed` diye soruyordu. `failed` DİYE
+        BİR DURUM YOK: `BldPrintJob` yalnız dört durum tanıyor —
+
+            pending · sent · duplicate · dead
+
+        Laravel tanınmayan değeri hata saymaz, yalnız hiçbir satır eşleşmez;
+        uç `total: 0` döndürüyordu ve kart HER AÇILIŞTA "sorun yok" diyordu.
+        Kuyrukta ölü iş olsaydı da aynısını derdi — yani kart bir sağlık
+        göstergesi değil, sabit bir yeşil ışıktı.
+
+        Başarısızlığın gerçek adı `dead` (`BldPrintJob::isDead()`).
+        `duplicate` başarısızlık DEĞİLDİR (`isDelivered()` onu teslim sayar),
+        `pending` ise henüz yolda. Bu yüzden sayım `dead` üzerinden yapılır;
+        `failed` adı, sunucu ileride o adı kullanırsa diye toplamda tutulur.
+        Bugünkü rakam DEĞİŞMEZ (dead = 0 → "sorun yok"), ama artık ölü iş
+        çıktığında kart bunu söyleyecek.
+        """
         try:
-            payload = await self._api.bbd_bld_jobs({"status": "failed"}, page=1, per_page=1)
+            overview = await self._overview(fresh=fresh)
         except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
             return {"key": "bld", "label": "BLD fiş kuyruğu", "state": "unknown", "value": "—",
                     "detail": self._pending(failure)}
-        meta = payload.get("meta") or {}
-        failed = metrics.as_int(meta.get("total"), len(payload.get("items") or []))
+        queue = overview.get("bld")
+        if not isinstance(queue, dict):
+            # `null` = yetki yok ya da tablo yok. "Sorun yok" DEMEZ.
+            return {"key": "bld", "label": "BLD fiş kuyruğu", "state": "unknown", "value": "—",
+                    "detail": "Toplu özet BLD bölümünü döndürmedi; belirtecin BLD yetkisi "
+                              "olmayabilir ya da fiş kuyruğu bu kurulumda yok."}
+        failed = sum(metrics.as_int(queue.get(state), 0) for state in ("failed", "dead"))
         return {"key": "bld", "label": "BLD fiş kuyruğu",
                 "state": "good" if failed == 0 else "bad",
                 "value": "sorun yok" if failed == 0 else f"{failed} başarısız iş",
@@ -668,6 +994,9 @@ class DashboardService:
                 continue
             await self._set_pref(slot, str(value), actor)
             changed.append(slot)
+        # Çalışma kanalı/karşılaştırma değişmiş olabilir; raftaki yanıtlar o
+        # tercihe göre kurulmuştu.
+        self._shelf.drop()
 
         current = await self.settings()
         skipped: list[str] = []

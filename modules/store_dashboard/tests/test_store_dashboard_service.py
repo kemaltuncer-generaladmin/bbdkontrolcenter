@@ -21,7 +21,11 @@ def _service(api: FakeApi | None = None, store: FakeStore | None = None,
     store = store or FakeStore()
     service = DashboardService(
         api=api, store=store, log=FakeLog(), printer=printer,
-        config={"channel": "default", "locale": "tr", "compare": "none", **config},
+        # RAF VARSAYILAN OLARAK KAPALI. Açık olsaydı istek sayısı sınayan
+        # testler raf sayesinde geçer, asıl davranış sınanmamış olurdu.
+        # Rafın kendi testleri `cache_seconds` vererek açar.
+        config={"channel": "default", "locale": "tr", "compare": "none",
+                "cache_seconds": 0, **config},
         fallback_dir=Path("/tmp/km-test-raporlar"),
     )
     return service, api, store
@@ -61,6 +65,173 @@ async def test_bekleyen_isler_satir_satir_hata_verir() -> None:
     assert rows["reviews"]["count"] is None and rows["reviews"]["error"]
     assert rows["returns"]["count"] == 2
     assert rows["returns"]["target"] == "store_requests"
+
+
+# ======================================================== toplu özet (tek uç)
+
+async def test_bekleyen_siparis_toplu_ozetten_gelir() -> None:
+    # `orders?status=pending` yerine toplu özetin `pendingCount` alanı. İkisi
+    # de TÜM ZAMANLARIN sayısı (denetleyicide `since` süzgeci yok), canlıda
+    # ikisi de 0 ölçüldü — rakam aynı, istek bir eksik.
+    service, api, _ = _service()
+    api.counts["pending_orders"] = 4
+    result = await service.pending_work()
+    rows = {row["key"]: row for row in result["items"]}
+    assert rows["pendingOrders"]["count"] == 4
+    assert api.used("bbd_reporting_overview")
+    # "Hazırlanıyor" HÂLÂ kendi ucundan: özetteki `byStatus` pencereye bağlı.
+    assert [args[0] for args in api.args("orders")] == [{"status": "processing"}]
+
+
+async def test_toplu_ozet_patlarsa_yalniz_o_satir_duser() -> None:
+    # Toplu uca geçmek "hepsi ya da hiçbiri" YAPMAZ (K7).
+    service, api, _ = _service()
+    api.fail.add("bbd_reporting_overview")
+    api.counts["returns"] = 2
+    result = await service.pending_work()
+    rows = {row["key"]: row for row in result["items"]}
+    assert rows["pendingOrders"]["count"] is None and rows["pendingOrders"]["error"]
+    assert rows["returns"]["count"] == 2            # diğer satırlar dolu
+    assert rows["processingOrders"]["count"] is not None
+    assert not rows["processingOrders"]["error"]
+
+
+async def test_ozet_yetkisiz_bolumu_null_dondurunce_sifir_gosterilmez() -> None:
+    # `null` = "görme yetkin yok". Sıfır göstermek yetkisizliği "iş yok" diye
+    # okutur; ikisi ayrı cevaptır.
+    service, api, _ = _service()
+    api.overview_payload = {"window": {"days": 1}, "orders": None, "bld": None}
+    pending = await service.pending_work()
+    rows = {row["key"]: row for row in pending["items"]}
+    assert rows["pendingOrders"]["count"] is None and rows["pendingOrders"]["error"]
+
+    health = await service.system_health()
+    cards = {card["key"]: card for card in health["items"]}
+    assert cards["bld"]["state"] == "unknown"
+    assert cards["bld"]["value"] == "—"
+
+
+async def test_bld_kuyrugu_olu_isi_sayar_failed_diye_bir_durum_yok() -> None:
+    # BULUNAN HATA: kart `status=failed` soruyordu; `BldPrintJob` böyle bir
+    # durum tanımıyor (pending · sent · duplicate · dead) ve uç her zaman 0
+    # döndürüyordu — kart sabit yeşil ışıktı. Başarısızlığın adı `dead`.
+    service, api, _ = _service()
+    api.counts["bld_failed"] = 3
+    result = await service.system_health()
+    cards = {card["key"]: card for card in result["items"]}
+    assert cards["bld"]["state"] == "bad"
+    assert cards["bld"]["value"] == "3 başarısız iş"
+    assert not api.used("bbd_bld_jobs")          # eski, yanlış soru sorulmuyor
+
+
+async def test_kuyruk_temizken_kart_sorun_yok_der() -> None:
+    service, _, _ = _service()
+    result = await service.system_health()
+    cards = {card["key"]: card for card in result["items"]}
+    assert cards["bld"]["state"] == "good"
+    assert cards["bld"]["value"] == "sorun yok"
+
+
+# =============================================================== pano rafı
+
+async def test_raf_ikinci_acilista_magazaya_gitmez() -> None:
+    # ÖLÇÜLEN SORUN: panonun ikinci açılışı birincisi kadar sürüyordu; 18
+    # isteğin 18'i yeniden gidiyordu çünkü geçidin önbelleği yalnız referans
+    # listelere bağlıydı, panonun uçlarına HİÇ uygulanmamıştı.
+    service, api, _ = _service(cache_seconds=60)
+    first = await service.summary(**RANGE)
+    calls = len(api.calls)
+    second = await service.summary(**RANGE)
+
+    assert len(api.calls) == calls               # mağazaya tek istek bile gitmedi
+    assert second["kpis"] == first["kpis"]       # RAKAM AYNI
+    assert second["ageSeconds"] >= 0 and first["ageSeconds"] == 0
+
+
+async def test_yenile_dugmesi_rafi_atlar() -> None:
+    # Raftan cevaplanan bir "Yenile", hiçbir şey yapmayan bir düğme olurdu.
+    service, api, _ = _service(cache_seconds=60)
+    await service.summary(**RANGE)
+    calls = len(api.calls)
+    result = await service.summary(**RANGE, fresh=True)
+
+    assert len(api.calls) > calls
+    assert result["ageSeconds"] == 0
+
+
+async def test_yenileme_yalniz_kendi_anahtarini_dusurur() -> None:
+    # Tazeleme rafın TAMAMINI düşürseydi, panel beş ucu aynı anda çağırdığı
+    # için dördünün sonucu "eski sayaçla üretildi" diye atılır ve tazeleme
+    # rafı boşaltmış olurdu.
+    service, api, _ = _service(cache_seconds=60)
+    await service.summary(**RANGE)
+    await service.recent_orders()
+    await service.summary(**RANGE, fresh=True)          # yalnız özet tazelendi
+
+    # Son siparişler kaydı düşmemeli: yeniden okumak mağazaya gitmemeli.
+    calls = len(api.calls)
+    await service.recent_orders()
+    assert len(api.calls) == calls
+
+
+async def test_yenileme_ortak_toplu_ozeti_de_tazeler() -> None:
+    # Düşürmeseydi tazelenmiş bir panonun iki satırı bir dakikaya kadar eski
+    # kalırdı — "Yenile" düğmesinin yarısı çalışmazdı.
+    service, api, _ = _service(cache_seconds=60)
+    await service.pending_work()
+    assert len(api.used("bbd_reporting_overview")) == 1
+    await service.pending_work(fresh=True)
+    assert len(api.used("bbd_reporting_overview")) == 2
+
+
+async def test_raf_toplu_ozeti_iki_kart_arasinda_paylastirir() -> None:
+    # Panel `pending` ve `system` uçlarını AYNI ANDA çağırıyor; ikisi de aynı
+    # özeti istiyor. Raf olmasaydı mağazaya iki istek giderdi.
+    service, api, _ = _service(cache_seconds=60)
+    await service.pending_work()
+    await service.system_health()
+    assert len(api.used("bbd_reporting_overview")) == 1
+
+
+async def test_es_zamanli_iki_cagri_tek_istek_atar() -> None:
+    # Tek uçuş (single-flight): aynı anahtar için ikinci çağrı yeni istek
+    # açmaz, sürmekte olanı bekler.
+    import asyncio
+    service, api, _ = _service(cache_seconds=60)
+    first, second = await asyncio.gather(service.pending_work(), service.system_health())
+    assert len(api.used("bbd_reporting_overview")) == 1
+    assert first["ok"] is True and second["ok"] is True
+
+
+async def test_okunamayan_kart_rafa_konmaz() -> None:
+    # Servis HTTP hatası FIRLATMAZ; "okunamadı" bir SÖZLÜK olarak döner.
+    # O sözlük saklansaydı kartın "Tekrar dene" düğmesi bir dakika boyunca
+    # aynı hatayı geri verir, yani hiçbir şey yapmayan bir düğme olurdu.
+    service, api, _ = _service(cache_seconds=60)
+    api.fail.add("orders")
+    first = await service.summary(**RANGE)
+    assert first["connected"] is False
+
+    api.fail.discard("orders")               # mağaza düzeldi
+    second = await service.summary(**RANGE)
+    assert second["connected"] is True       # raf eski hatayı geri vermedi
+
+
+async def test_okunamayan_stok_karti_da_rafa_konmaz() -> None:
+    service, api, _ = _service(cache_seconds=60)
+    api.fail.add("dashboard_stats")
+    assert (await service.critical_stock())["available"] is False
+
+    api.fail.discard("dashboard_stats")
+    assert (await service.critical_stock())["available"] is True
+
+
+async def test_raf_kapaliyken_her_cagri_magazaya_gider() -> None:
+    service, api, _ = _service(cache_seconds=0)
+    await service.summary(**RANGE)
+    calls = len(api.calls)
+    await service.summary(**RANGE)
+    assert len(api.calls) > calls
 
 
 async def test_kritik_stok_ucu_patlarsa_kart_gizlenmez_durumu_anlatir() -> None:
@@ -138,13 +309,31 @@ async def test_kpilar_siparis_listesinden_hesaplanir_dashboard_stats_cagrilmaz()
     assert not any(call == "dashboard_stats" for call, _, _ in api.calls)
 
 
-async def test_karsilastirma_ikinci_donemi_tarar_ve_yuzde_uretir() -> None:
+async def test_bitisik_karsilastirma_donemi_tek_sorguda_gelir() -> None:
+    # HIZ + DOĞRULUK BİRLİKTE. Dönem ile karşılaştırma dönemi bitişik olduğu
+    # için mağazaya TEK sorgu gider; dönemlere ayırma yerelde yapılır. Yüzde
+    # iki ayrı sorgu atıldığı zamanki değerin AYNISI olmalı.
     service, api, _ = _service()
     result = await service.summary(start="2026-08-11", end="2026-08-12", compare="previous")
     assert result["previousRange"] == {"start": "2026-08-09", "end": "2026-08-10"}
     tiles = {tile["key"]: tile for tile in result["kpis"]}
     # Dönem: 50 TL · önceki dönem: 100 TL → %50 düşüş.
     assert tiles["revenue"]["delta"]["percent"] == -50.0
+    assert len(api.used("orders")) == 1
+    assert len(api.used("refunds")) == 1
+    assert len(api.used("customers")) == 1
+    # Sorulan aralık İKİ DÖNEMİ BİRDEN kapsar.
+    assert api.args("orders")[0][0]["date_from"] == "2026-08-09"
+    assert api.args("orders")[0][0]["date_to"] == "2026-08-12"
+
+
+async def test_uzak_karsilastirma_donemi_ayri_sorgulanir() -> None:
+    # `lastYear` kipinde iki aralık bir yıl uzak. Birleştirmek aradaki 11 ayı
+    # da çeker, tarama tavanını boşa yer ve "rakamlar eksik" uyarısını
+    # gereksiz açardı — bu kipte iki ayrı sorgu DOĞRU olandır.
+    service, api, _ = _service()
+    result = await service.summary(start="2026-08-11", end="2026-08-12", compare="lastYear")
+    assert result["previousRange"] == {"start": "2025-08-11", "end": "2025-08-12"}
     assert len(api.used("orders")) == 2
 
 
@@ -184,13 +373,32 @@ async def test_tarama_tavana_dayanirsa_rakamlarin_eksik_oldugu_soylenir() -> Non
     assert any("EKSİK" in note for note in result["notes"])
 
 
-async def test_kalem_yoksa_en_cok_satan_urun_raporuna_duser() -> None:
+async def test_kalem_yoksa_urun_raporu_cagrilmaz() -> None:
+    # ÖLÇÜM (2026-08-14, canlı): `reporting/products` ÜRÜN SATIRI DÖNDÜRMÜYOR,
+    # adet zaman serisi döndürüyor; üstelik yanıt liste olduğu için geçidin
+    # tekil okuyucusundan `{}` olarak çıkıyordu. Yani yedek kaynak HER ZAMAN
+    # boştu ve her açılışta bir istek harcıyordu. Kaldırıldı: kart yine boş,
+    # ama bedava. Sahte hazır bir yanıt verse bile uca GİDİLMEMELİ.
     api = FakeApi([order(1, created="2026-08-10 09:00:00", total="100.00", items=[])])
     api.reporting_payload = {"products": [{"name": "Kalem", "total_qty_ordered": 12}]}
     service, _, _ = _service(api)
     result = await service.summary(**RANGE)
-    assert result["topSource"] == "report"
-    assert result["topProducts"][0]["name"] == "Kalem"
+    assert result["topProducts"] == []
+    assert result["topSource"] == ""
+    assert not api.used("reporting")
+
+
+async def test_tukenen_urun_icin_katalog_sagligi_cagrilmaz() -> None:
+    # ÖLÇÜM (2026-08-14, canlı): `catalog/health` yanıtında stok alanı YOK
+    # (`summary` yalnız görsel/açıklama/meta/fiyat/kategori/dizin sayıyor).
+    # KPI zaten hep `None` dönüyordu; artık bunun için istek de atılmıyor.
+    # Rakam DEĞİŞMEDİ, yalnız ~450 ms gitti.
+    service, api, _ = _service()
+    result = await service.summary(**RANGE)
+    tiles = {tile["key"]: tile for tile in result["kpis"]}
+    assert tiles["outOfStock"]["value"] is None
+    assert tiles["outOfStock"]["note"]              # neden boş olduğu yazıyor
+    assert not api.used("bbd_catalog_health")
 
 
 # =============================================================== bakım modu

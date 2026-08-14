@@ -81,7 +81,7 @@ const SOURCE_BADGES = {
     title: 'Ne mağazada bir değer var ne de ilan edilmiş bir varsayılan.' },
 };
 
-const EMPTY_STATE = { summary: null, loadedAt: '' };
+const EMPTY_STATE = { summary: null, loadedAt: '', fresh: false };
 
 /**
  * Yapılandırma sekmesinin boş durumu — HER ÇAĞRIDA YENİ nesne.
@@ -204,9 +204,17 @@ function query(extra = {}) {
 
 // -------------------------------------------------------------------- veri
 
-/** Kartlar BİRBİRİNİ BEKLEMEZ: biri patlarsa diğerleri dolar (K7). */
-function refreshAll() {
-  nodes.status?.set('Pano yenileniyor…');
+/**
+ * Kartlar BİRBİRİNİ BEKLEMEZ: biri patlarsa diğerleri dolar (K7).
+ *
+ * `fresh` YALNIZ "Yenile" düğmesinden gelir. Backend panonun yanıtlarını kısa
+ * süre rafta tutuyor; yenileme de raftan cevaplansaydı düğme hiçbir şey
+ * yapmayan bir düğme olurdu. Açılış ve süzgeç değişimi rafı kullanır — asıl
+ * hızlanma oradan gelir.
+ */
+function refreshAll({ fresh = false } = {}) {
+  state.fresh = fresh;
+  nodes.status?.set(fresh ? 'Pano yenileniyor…' : 'Pano yükleniyor…');
   return Promise.allSettled([
     loadSummary(), loadRecent(), loadStock(), loadPending(), loadSystem(),
   ]).then(() => {
@@ -214,6 +222,21 @@ function refreshAll() {
       { hour: '2-digit', minute: '2-digit' });
     paintStatus();
   });
+}
+
+/**
+ * Raf atlanacaksa uçlara `fresh=1` eklenir.
+ *
+ * `force`, patlamış bir kartın "Tekrar dene" düğmesinden gelir: raftan
+ * cevaplanan bir yeniden deneme aynı hatayı geri verirdi.
+ */
+function freshParam(force = false) {
+  return (force || state.fresh) ? { fresh: 1 } : {};
+}
+
+/** `?a=b` ya da boş — sorgu parçası olmayan uçlara güvenle eklenir. */
+function freshQuery(force = false) {
+  return (force || state.fresh) ? '?fresh=1' : '';
 }
 
 function paintStatus() {
@@ -224,16 +247,22 @@ function paintStatus() {
   }
   const span = summary.range;
   const compare = COMPARE_LABELS[summary.compare];
+  // `ageSeconds` verinin kaç saniyelik olduğunu söyler. Yazılmasaydı ekran
+  // raftan gelen bir sayının yanına "şimdi" saatini basar ve tazeliği
+  // hakkında yanlış bilgi verirdi.
+  const age = Number(summary.ageSeconds) || 0;
   nodes.status?.set(
     `${span.start} – ${span.end} · kanal ${summary.channel} · `
     + `${num(summary.scanned)} sipariş tarandı`
     + (compare ? ` · karşılaştırma: ${compare}` : '')
-    + ` · ${state.loadedAt} itibarıyla`,
+    + (age > 0
+      ? ` · ${age} sn önce okundu (Yenile ile tazelenir)`
+      : ` · ${state.loadedAt} itibarıyla`),
     false,
   );
 }
 
-async function loadSummary() {
+async function loadSummary({ fresh = false } = {}) {
   nodes.kpi.replaceChildren(skeletonRows(2, 4));
   nodes.notes.replaceChildren();
   for (const key of ['daily', 'statuses', 'top', 'hours']) {
@@ -242,10 +271,10 @@ async function loadSummary() {
 
   let payload;
   try {
-    payload = await api(`${BASE}/summary?${query()}`);
+    payload = await api(`${BASE}/summary?${query(freshParam(fresh))}`);
   } catch (error) {
     state.summary = null;
-    failCard(nodes.kpi, error.message, loadSummary);
+    failCard(nodes.kpi, error.message, () => loadSummary({ fresh: true }));
     for (const key of ['daily', 'statuses', 'top', 'hours']) nodes[key].replaceChildren();
     return;
   }
@@ -253,7 +282,8 @@ async function loadSummary() {
   state.summary = payload;
   if (!payload.connected) {
     state.summary = null;
-    failCard(nodes.kpi, payload.error || 'Mağazaya ulaşılamadı.', loadSummary);
+    failCard(nodes.kpi, payload.error || 'Mağazaya ulaşılamadı.',
+      () => loadSummary({ fresh: true }));
     for (const key of ['daily', 'statuses', 'top', 'hours']) nodes[key].replaceChildren();
     return;
   }
@@ -266,8 +296,8 @@ async function loadSummary() {
   paintHours(payload);
 }
 
-async function loadRecent() {
-  await fill(nodes.recent, `${BASE}/orders/recent`, (payload) => {
+async function loadRecent({ fresh = false } = {}) {
+  await fill(nodes.recent, `${BASE}/orders/recent${freshQuery(fresh)}`, (payload) => {
     if (!payload.connected) throw new Error(payload.error || 'Siparişler okunamadı.');
     if (!payload.items.length) {
       return emptyState({
@@ -292,11 +322,11 @@ async function loadRecent() {
       // üzerinde sipariş düzenlenmez.
       onRow: (row) => open('store_orders', { orderId: row.id }),
     }).node;
-  }, loadRecent);
+  }, () => loadRecent({ fresh: true }));
 }
 
-async function loadStock() {
-  await fill(nodes.stock, `${BASE}/stock/critical`, (payload) => {
+async function loadStock({ fresh = false } = {}) {
+  await fill(nodes.stock, `${BASE}/stock/critical${freshQuery(fresh)}`, (payload) => {
     if (!payload.available) throw new Error(payload.error);
     if (!payload.items.length) {
       return emptyState({
@@ -326,11 +356,11 @@ async function loadStock() {
       dense: true,
       onRow,
     }).node;
-  }, loadStock);
+  }, () => loadStock({ fresh: true }));
 }
 
-async function loadPending() {
-  await fill(nodes.pending, `${BASE}/pending`, (payload) => {
+async function loadPending({ fresh = false } = {}) {
+  await fill(nodes.pending, `${BASE}/pending${freshQuery(fresh)}`, (payload) => {
     const list = h('div', 'sd-list');
     for (const row of payload.items) {
       const line = h('div', 'sd-line');
@@ -350,11 +380,11 @@ async function loadPending() {
       list.append(line);
     }
     return list;
-  }, loadPending);
+  }, () => loadPending({ fresh: true }));
 }
 
-async function loadSystem() {
-  await fill(nodes.system, `${BASE}/system`, (payload) => {
+async function loadSystem({ fresh = false } = {}) {
+  await fill(nodes.system, `${BASE}/system${freshQuery(fresh)}`, (payload) => {
     const list = h('div', 'sd-list');
     for (const row of payload.items) {
       const line = h('div', 'sd-line');
@@ -368,7 +398,7 @@ async function loadSystem() {
       list.append(line, detail);
     }
     return list;
-  }, loadSystem);
+  }, () => loadSystem({ fresh: true }));
 }
 
 /** Kart doldurma kalıbı: iskelet → veri ya da "tekrar dene" kartı. */
@@ -1126,7 +1156,8 @@ export function mount(root, ctx) {
     ],
     onChange: () => refreshAll(),
     actions: [
-      button('Yenile', { title: 'Pano kendiliğinden yenilenmez', onClick: () => refreshAll() }),
+      button('Yenile', { title: 'Pano kendiliğinden yenilenmez',
+        onClick: () => refreshAll({ fresh: true }) }),
       button('⤓ KPI CSV', { title: 'KPI ve günlük ciro rapor klasörüne yazılır',
         onClick: exportCsv }),
       button('Günlük özet raporu', { onClick: () => report.run('daily', filters()) }),

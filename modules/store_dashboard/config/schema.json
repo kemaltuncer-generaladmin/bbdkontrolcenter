@@ -31,6 +31,12 @@
       "maximum": 20000,
       "description": "Bir dönemde taranacak en çok satır. Tavana dayanılırsa ekran rakamların eksik olduğunu söyler."
     },
+    "cache_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 600,
+      "description": "Pano yanıtlarının rafta durma süresi. 0 = raf kapalı; 'Yenile' düğmesi rafı her hâlde atlar."
+    },
     "recent_orders": {
       "type": "integer",
       "minimum": 1,

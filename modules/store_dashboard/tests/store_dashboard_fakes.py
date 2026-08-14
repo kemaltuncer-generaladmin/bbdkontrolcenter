@@ -122,6 +122,9 @@ class FakeApi:
         ]
         self.snapshot_payload: dict[str, Any] = {"parts": {}, "errors": [], "stale": False}
         self.reporting_payload: Any = {}
+        #: `None` ise varsayılan toplu özet üretilir (bkz.
+        #: `bbd_reporting_overview`); doldurulursa aynen döner.
+        self.overview_payload: dict[str, Any] | None = None
         self.truncate_orders = False
         #: Tarih süzgecini uygulayıp uygulamadığı — Laravel'in sessizce yok
         #: sayması testlerde açıkça kurulabilsin diye.
@@ -222,6 +225,26 @@ class FakeApi:
                            per_page: int | None = None) -> dict[str, Any]:
         self._record("bbd_bld_jobs", filters, page=page, per_page=per_page)
         return {"items": [], "meta": {"total": self.counts.get("bld_failed", 0)}}
+
+    async def bbd_reporting_overview(self, *, days: int = 7) -> dict[str, Any]:
+        """Toplu özet — `pendingCount` ve `bld` panonun İKİ kartını besler.
+
+        Canlıdaki biçim birebir taklit edilir: `bld` DURUM→ADET sözlüğüdür
+        (`pending · sent · duplicate · dead`), "failed" diye bir durum YOKTUR.
+        Yetkisiz bölüm `null` gelir — `overview_payload` doğrudan kurularak
+        o dal da sınanabilir.
+        """
+        self._record("bbd_reporting_overview", days=days)
+        if self.overview_payload is not None:
+            return self.overview_payload
+        return {
+            "window": {"days": days, "since": "2026-08-13T00:00:00+03:00"},
+            "orders": {"total": 3, "revenue": 1050.0, "byStatus": {"processing": 3},
+                       "pendingCount": self.counts.get("pending_orders", 0)},
+            "shipping": {"created": 0, "purchased": 0, "awaitingPurchase": 0, "withError": 0},
+            "bld": {"sent": 8, "dead": self.counts.get("bld_failed", 0)},
+            "paymentLinks": {"byStatus": [], "expiringSoon": 0},
+        }
 
     async def bbd_return_requests(self, filters: Any = None, *, page: int = 1,
                                   per_page: int | None = None) -> dict[str, Any]:

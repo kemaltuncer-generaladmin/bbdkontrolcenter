@@ -11,6 +11,13 @@ compare: "previous"        # previous | lastYear | none
 # eksik" der — sessizce yanlış rakam göstermez.
 scan_cap: 2000
 
+# Pano yanıtlarının rafta durma süresi (saniye). Panoyu kapatıp hemen yeniden
+# açmak mağazaya 18 istek attırıyordu; raf bunu sıfıra indirir. Yalnız BU
+# ekranın okumalarını tutar, başka ekranın gördüğü veriye dokunmaz; "Yenile"
+# düğmesi rafı atlar ve ekran verinin kaç saniyelik olduğunu yazar.
+# 0 = raf kapalı (her açılış mağazaya gider).
+cache_seconds: 60
+
 recent_orders: 10          # son siparişler kartı
 critical_stock: 10         # kritik stok kartı
 top_products: 10           # en çok satan kaç ürün

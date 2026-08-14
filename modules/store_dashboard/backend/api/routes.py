@@ -38,45 +38,58 @@ def service() -> DashboardService:
 
 # ================================================================== okuma
 
+#: `fresh=1` panonun kısa ömürlü rafını atlar ve mağazadan yeniden okur.
+#: "Yenile" düğmesi bunu gönderir: yenilemenin raftan cevap vermesi, düğmeyi
+#: hiçbir şey yapmayan bir düğme yapardı. Yanıttaki `ageSeconds` verinin kaç
+#: saniyelik olduğunu söyler — 0 ise bu çağrıda mağazadan geldi.
+FRESH = Query(False, description="Önbelleği atla, mağazadan yeniden oku.")
+
+
 @router.get("/summary")
 async def summary(
     start: str = Query("", max_length=10),
     end: str = Query("", max_length=10),
     channel: str = Query("", max_length=32),
     compare: str = Query("", max_length=12),
+    fresh: bool = FRESH,
     user: CurrentUser = requires("store_dashboard.view"),
 ) -> dict[str, Any]:
-    return await service().summary(start=start, end=end, channel=channel, compare=compare)
+    return await service().summary(start=start, end=end, channel=channel, compare=compare,
+                                   fresh=fresh)
 
 
 @router.get("/orders/recent")
 async def recent_orders(
     limit: int = Query(0, ge=0, le=50),
+    fresh: bool = FRESH,
     user: CurrentUser = requires("store_dashboard.view"),
 ) -> dict[str, Any]:
-    return await service().recent_orders(limit=limit)
+    return await service().recent_orders(limit=limit, fresh=fresh)
 
 
 @router.get("/stock/critical")
 async def critical_stock(
     limit: int = Query(0, ge=0, le=50),
+    fresh: bool = FRESH,
     user: CurrentUser = requires("store_dashboard.view"),
 ) -> dict[str, Any]:
-    return await service().critical_stock(limit=limit)
+    return await service().critical_stock(limit=limit, fresh=fresh)
 
 
 @router.get("/pending")
 async def pending(
+    fresh: bool = FRESH,
     user: CurrentUser = requires("store_dashboard.view"),
 ) -> dict[str, Any]:
-    return await service().pending_work()
+    return await service().pending_work(fresh=fresh)
 
 
 @router.get("/system")
 async def system(
+    fresh: bool = FRESH,
     user: CurrentUser = requires("store_dashboard.view"),
 ) -> dict[str, Any]:
-    return await service().system_health()
+    return await service().system_health(fresh=fresh)
 
 
 @router.get("/settings")

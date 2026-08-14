@@ -82,6 +82,41 @@ def test_karsilastirma_kapaliysa_onceki_donem_bos_doner() -> None:
     assert metrics.previous_range("2026-08-01", "2026-08-07", "none") == {"start": "", "end": ""}
 
 
+# =========================================== iki dönemi tek sorguya indirme
+
+def test_bitisik_donemler_tek_araliga_birlesir() -> None:
+    span = {"start": "2026-08-08", "end": "2026-08-14"}
+    previous = metrics.previous_range(span["start"], span["end"], "previous")
+    assert metrics.merge_ranges(span, previous) == {
+        "start": "2026-08-01", "end": "2026-08-14", "days": 14}
+
+
+def test_uzak_donemler_birlestirilmez() -> None:
+    # Birleştirmek aradaki 11 ayı da çekerdi; tarama tavanı boşa giderdi.
+    span = {"start": "2026-08-08", "end": "2026-08-14"}
+    previous = metrics.previous_range(span["start"], span["end"], "lastYear")
+    assert metrics.merge_ranges(span, previous) is None
+
+
+def test_cok_uzun_birlesik_aralik_birlestirilmez() -> None:
+    # Tavan SATIR sayısına göre işler: iki uzun dönemi tek sorguya koymak,
+    # ayrı ayrı sığan satırları tek tavanın altına toplar ve eskiden
+    # kesilmeyen bir taramayı keserdi.
+    span = {"start": "2026-01-01", "end": "2026-12-31"}
+    previous = metrics.previous_range(span["start"], span["end"], "previous")
+    assert metrics.merge_ranges(span, previous) is None
+
+
+def test_bos_karsilastirma_donemi_birlestirilmez() -> None:
+    assert metrics.merge_ranges({"start": "2026-08-01", "end": "2026-08-07"},
+                                {"start": "", "end": ""}) is None
+
+
+def test_bozuk_tarih_birlestirmeyi_patlatmaz() -> None:
+    assert metrics.merge_ranges({"start": "2026-08-01", "end": "2026-08-07"},
+                                {"start": "dün", "end": "bugün"}) is None
+
+
 # ============================================================ toplulaştırma
 
 def _rows() -> list[dict[str, Any]]:

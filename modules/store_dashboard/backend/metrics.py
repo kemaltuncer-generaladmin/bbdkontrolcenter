@@ -206,6 +206,51 @@ def in_range(day: str, start: str, end: str) -> bool:
     return (not start or day >= start) and (not end or day <= end)
 
 
+def merge_ranges(current: dict[str, str],
+                 previous: dict[str, str]) -> dict[str, Any] | None:
+    """İki dönemi TEK sorguya indirebiliyorsak birleşik aralığı verir.
+
+    NEDEN VAR. Pano dönem ve karşılaştırma dönemi için AYNI ucu iki kez
+    çağırıyordu (sipariş, iade, müşteri → altı istek). Mağaza tarih süzgecini
+    gerçekten uyguluyor (canlıda ölçüldü 2026-08-14: `date_from`/`date_to`
+    verilen sorgu 18 yerine 0 satır döndürdü), yani iki sorgu ayrık iki küme
+    getiriyor. Bitişik iki aralık tek sorguyla da alınabilir ve dönemlere
+    AYIRMA işi zaten YERELDE yapılıyor (`in_range`) — böylece rakam değişmez,
+    yalnız istek sayısı yarıya iner.
+
+    NE ZAMAN BİRLEŞTİRİLMEZ — iki ayrı sebep, ikisi de tavanla ilgili:
+
+    1. ARALIKLAR UZAKSA. `lastYear` kipinde iki aralık bir yıl uzaktır;
+       birleşik sorgu aradaki 11 ayı da çeker, tarama tavanını (`scan_cap`)
+       boşa yer ve "rakamlar eksik" uyarısını gereksiz yere açardı. Kural
+       ölçülebilir: birleşik aralık, iki aralığın toplam gün sayısını
+       AŞIYORSA birleştirilmez. Bitişik dönemlerde eşitlik sağlanır.
+
+    2. BİRLEŞİK ARALIK ÇOK UZUNSA. Tavan satır sayısına göre işler; iki
+       dönemi tek sorguya koymak, önce ayrı ayrı sığan satırları TEK tavanın
+       altına toplar. Bitişik ama çok uzun aralıklarda bu, eskiden kesilmeyen
+       bir taramayı keserdi. Sınır ekranın kendi aralık tavanıdır
+       (`MAX_RANGE_DAYS`): panonun hazır çipleri (1–31 gün) her zaman
+       birleşir, elle verilmiş çok uzun aralıklar eski davranışta kalır.
+
+    Dönüş: `{"start", "end", "days"}` ya da birleştirilemiyorsa `None`.
+    """
+    first, last = text(current.get("start")), text(current.get("end"))
+    other_first, other_last = text(previous.get("start")), text(previous.get("end"))
+    if not (first and last and other_first and other_last):
+        return None
+    if not all(_is_day(value) for value in (first, last, other_first, other_last)):
+        return None
+
+    start = min(first, other_first)
+    end = max(last, other_last)
+    total = span_days(first, last) + span_days(other_first, other_last)
+    merged = span_days(start, end)
+    if merged > total or merged > MAX_RANGE_DAYS:
+        return None
+    return {"start": start, "end": end, "days": merged}
+
+
 # =============================================================== sipariş satırı
 
 def order_row(raw: dict[str, Any]) -> dict[str, Any]:

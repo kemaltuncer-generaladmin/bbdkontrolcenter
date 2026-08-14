@@ -2230,6 +2230,44 @@ class StoreApi:
         await self._snapshot.put("reference", payload)
         return {**payload, "stale": False, "storedAt": "", "ageSeconds": 0}
 
+    # ================================== 11b · BBD ÖZEL — TOPLU OKUMA
+
+    #: `overview` penceresi sunucuda 1..90 güne kırpılır
+    #: (`ReportingController::overview`). Kırpma BURADA da yapılır: sunucu
+    #: geçersiz değeri sessizce 7'ye çeker ve çağıran 365 gün sorduğunu sanır.
+    OVERVIEW_MAX_DAYS = 90
+
+    async def bbd_reporting_overview(self, *, days: int = 7) -> dict[str, Any]:
+        """Pano özeti — GET /api/admin/bbd/reporting/overview. TEK ÇAĞRI.
+
+        Dönüş (CANLIDA ÖLÇÜLDÜ 2026-08-14):
+            {"window": {"days", "since"},
+             "orders": {"total", "revenue", "byStatus", "pendingCount"},
+             "shipping": {"created", "purchased", "awaitingPurchase", "withError"},
+             "bld": {<durum>: adet},
+             "paymentLinks": {"byStatus", "expiringSoon"}}
+
+        HANGİ ALAN PENCEREYE BAĞLI, HANGİSİ DEĞİL — karıştırmak sessiz yanlış
+        rakam üretir. Denetleyici kaynağından okundu ve canlıda doğrulandı:
+
+          · `orders.total` · `orders.revenue` · `orders.byStatus`
+            → PENCEREYE BAĞLI (`created_at >= since`). days=1 iken
+              `byStatus.processing` 4, days=90 iken 7 döndü.
+          · `orders.pendingCount` → TÜM ZAMANLAR (sorguda `since` YOK).
+          · `bld` → TÜM ZAMANLAR (sorguda `since` YOK).
+
+        Yani "hazırlanıyor" sayısını buradan okumak, pencereye giren
+        siparişleri tüm zamanların sayısı sanmak olurdu; `pendingCount` ve
+        `bld` ise gerçekten tüm zamanların sayısıdır ve tek tek uçlarla
+        birebir aynıdır (ölçüm: pending 0 = 0, bld failed 0 = 0).
+
+        Yetkisi olmayan bölüm `null` döner — BOŞ SÖZLÜK DEĞİL. "Veri yok" ile
+        "görme yetkin yok" ayrı cevaplardır; çağıran ikisini ayırabilsin diye
+        `null` olduğu gibi bırakılır.
+        """
+        window = max(1, min(self.OVERVIEW_MAX_DAYS, int(days or 7)))
+        return await self._item(f"{BBD}/reporting/overview", {"days": window})
+
     # ============================================ 12 · BBD ÖZEL — KARGO
 
     async def bbd_shipments(self, filters: dict[str, Any] | None = None, *, page: int = 1,
