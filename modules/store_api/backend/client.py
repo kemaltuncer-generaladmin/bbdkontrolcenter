@@ -2270,6 +2270,26 @@ class StoreApi:
 
     # ============================================ 12 · BBD ÖZEL — KARGO
 
+    async def bbd_orders(self, filters: dict[str, Any] | None = None, *, page: int = 1,
+                         per_page: int | None = None,
+                         all_pages: bool = False) -> dict[str, Any]:
+        """Zengin sipariş listesi — GET /api/admin/bbd/orders.
+
+        Vendor'ın `/orders` ucundan FARKLI ve tamamlayıcıdır; onun yerine
+        geçmez. Canlıda ölçüldü (2026-08-15): vendor listesi kargo firmasını
+        HİÇ vermiyor ve `customerName` 18 siparişin 4'ünde boş; bu uç
+        `shipping_title` ("Hepsijet - Hepsijet", 18'in 16'sında dolu),
+        `shipping_method` ve `customer_email` taşıyor.
+
+        Kargo ekranı "hazır" listesini bununla ZENGİNLEŞTİRİR — sipariş başına
+        detay okumak 50 satırlık sayfada 50 istek ederdi (istek başına ~0,6 sn).
+
+        Alanlar snake_case gelir (vendor uçları camelCase); okuyan taraf ikisini
+        de tanımalı.
+        """
+        return await self._collection(f"{BBD}/orders", filters, page=page,
+                                      per_page=per_page, all_pages=all_pages)
+
     async def bbd_shipments(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                             per_page: int | None = None,
                             all_pages: bool = False) -> dict[str, Any]:

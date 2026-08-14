@@ -257,3 +257,69 @@ async def test_gonderi_belirtilmezse_fis_basilmaz() -> None:
 async def test_bilinmeyen_belge_turu_reddedilir() -> None:
     service, _, _ = _service()
     assert (await service.build_report("etiketcik", {}))["ok"] is False
+
+
+# =============================================== kargo firması ve alıcı adı
+
+def test_kargo_firmasi_bbd_orders_satirindan_okunur() -> None:
+    # BULUNAN EKSİK: vendor'ın /orders ucu kargo firmasını HİÇ vermiyor
+    # (canlı, 2026-08-15). `bbd/orders` veriyor: "Hepsijet - Hepsijet".
+    index = shipping.extras_index([
+        {"increment_id": "20", "id": 20, "shipping_title": "Hepsijet - Hepsijet",
+         "shipping_method": "hepsijet_hepsijet", "customer_email": "a@b.com"},
+    ])
+    rows = [{"orderId": 20, "orderNumber": "20", "customer": "Ayşe Yılmaz"}]
+    shipping.enrich_rows(rows, index)
+
+    assert rows[0]["carrierTitle"] == "Hepsijet - Hepsijet"
+    assert rows[0]["carrierCode"] == "hepsijet_hepsijet"
+
+
+def test_adi_bos_olan_siparis_BOS_HUCRE_gostermez() -> None:
+    # Canlıda 18 siparişin 4'ünde müşteri adı boş. Boş hücre kullanıcıya
+    # "bu sipariş bozuk" dedirtir; e-posta hiç değilse kimin olduğunu söyler.
+    index = shipping.extras_index([
+        {"increment_id": "20", "customer_email": "tuncerdjdhjd@gmail.com"}])
+    rows = [{"orderId": 20, "orderNumber": "20", "customer": ""}]
+    shipping.enrich_rows(rows, index)
+
+    assert rows[0]["displayName"] == "tuncerdjdhjd@gmail.com"
+
+
+def test_ne_ad_ne_eposta_varsa_siparis_numarasi_yazilir() -> None:
+    rows = [{"orderId": 20, "orderNumber": "20", "customer": ""}]
+    shipping.enrich_rows(rows, {})
+    assert rows[0]["displayName"] == "Sipariş 20"
+
+
+def test_ad_varsa_e_postaya_DUSULMEZ() -> None:
+    index = shipping.extras_index([{"increment_id": "20", "customer_email": "a@b.com"}])
+    rows = [{"orderId": 20, "orderNumber": "20", "customer": "Ayşe Yılmaz"}]
+    shipping.enrich_rows(rows, index)
+    assert rows[0]["displayName"] == "Ayşe Yılmaz"
+
+
+async def test_hazir_listesi_kargo_firmasini_TEK_istekle_getirir() -> None:
+    # Sipariş başına detay okumak 50 satırlık sayfada 50 istek ederdi.
+    service, api, _ = _service()
+    api.orders_payload = {"items": [dict(SIPARIS)], "meta": {"total": 1}}
+    api.bbd_order_rows = [
+        {"increment_id": "S-91", "id": 91, "shipping_title": "Hepsijet - Hepsijet",
+         "shipping_method": "hepsijet_hepsijet", "customer_email": "ayse@example.com"},
+    ]
+    result = await service.ready()
+
+    assert len(api.used("bbd_orders")) == 1
+    satir = (result["items"] + result["blocked"])[0]
+    assert satir["carrierTitle"] == "Hepsijet - Hepsijet"
+
+
+async def test_ek_bilgi_ucu_patlarsa_liste_AYAKTA_kalir() -> None:
+    # Eksik taşıyıcı sütunu, hiç açılmayan bir listeden iyidir (K7).
+    service, api, _ = _service()
+    api.orders_payload = {"items": [dict(SIPARIS)], "meta": {"total": 1}}
+    api.fail.add("bbd_orders")
+    result = await service.ready()
+
+    assert result["ok"] is True and result["connected"] is True
+    assert len(result["items"] + result["blocked"]) == 1

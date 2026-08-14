@@ -267,6 +267,7 @@ class ShippingService:
         today = shipping.today_iso()
         rows = [shipping.ready_row(item, today=today, divisor=self._divisor, zones=zones)
                 for item in (payload.get("items") or []) if isinstance(item, dict)]
+        shipping.enrich_rows(rows, await self._order_extras())
         ready_rows = [row for row in rows if row["ready"]]
         meta = payload.get("meta") or {}
         return {
@@ -283,6 +284,30 @@ class ShippingService:
             "verified": all(row["paymentKnown"] and row["shipmentKnown"] for row in rows),
             "divisor": self._divisor,
         }
+
+    async def _order_extras(self) -> dict[str, dict[str, Any]]:
+        """Sipariş no → kargo firması ve e-posta. TEK İSTEK.
+
+        BULUNAN EKSİK (2026-08-15). "Kargoya hazır" listesi sipariş LİSTESİ
+        ucundan besleniyor ve o uç KARGO FİRMASINI HİÇ VERMİYOR; müşteri adı da
+        18 siparişin 4'ünde boş geliyor. Ekran bu yüzden taşıyıcı sütununu boş
+        gösteriyordu — kullanıcı hangi firmayla göndereceğini panelden
+        göremiyordu.
+
+        `bbd/orders` aynı bilgiyi TEK sayfada veriyor (`shipping_title`
+        "Hepsijet - Hepsijet"; canlıda 18 siparişin 16'sında dolu). Sipariş
+        başına ayrı detay okumak N+1 olurdu: 50 satırlık sayfada 50 istek,
+        istek başına ~0,6 sn.
+
+        Patlarsa liste AYAKTA kalır ve satırlar zenginleşmeden gösterilir (K7)
+        — kargo firması eksik bir liste, hiç açılmayan bir listeden iyidir.
+        """
+        try:
+            payload = await self._api.bbd_orders(page=1, per_page=self._page_size)
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("sipariş ek bilgileri okunamadı", error=str(failure))
+            return {}
+        return shipping.extras_index(payload.get("items") or [])
 
     # =============================================================== liste
 

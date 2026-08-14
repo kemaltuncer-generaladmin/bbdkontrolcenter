@@ -319,11 +319,22 @@ function renderReady() {
         width: 'minmax(0, 1.6fr)',
         cell: (row) => {
           const box = h('span', 'sh-name');
-          box.append(clip(h('b'), row.customer || '(isimsiz)', 34),
-            h('span', 'sh-sub', `${row.city} / ${row.district}`.replace(/^ \/ | \/ $/, '')));
+          // AD BOŞ OLABİLİR: canlıda 18 siparişin 4'ünde müşteri adı yok.
+          // `displayName` bu boşluğu e-postayla doldurur; "(isimsiz)" yazmak
+          // kullanıcıya "bu sipariş bozuk" dedirtirdi.
+          const yer = `${row.city} / ${row.district}`.replace(/^ \/ | \/ $/, '');
+          box.append(clip(h('b'), row.displayName || row.customer || `Sipariş ${row.orderNumber}`, 34),
+            h('span', 'sh-sub', yer || 'adres sipariş açılınca görünür'));
           return box;
         },
       },
+      // KARGO FİRMASI: sipariş listesi ucu bunu HİÇ vermiyor, `bbd/orders`
+      // veriyor ve servis tek istekle eşliyor. Sütun olmadan kullanıcı hangi
+      // firmayla göndereceğini panelden göremiyordu.
+      { key: 'carrierTitle', label: 'Kargo firması', width: '160px',
+        cell: (row) => (row.carrierTitle
+          ? clip(h('span'), row.carrierTitle, 22)
+          : h('span', 'sh-sub', 'seçilmemiş')) },
       { key: 'total', label: 'Tutar', width: '110px', align: 'num',
         cell: (row) => money(row.total) },
       {

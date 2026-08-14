@@ -1024,3 +1024,74 @@ def bagisto_problems(body: dict[str, Any]) -> list[str]:
             out.append("Sipariş kalemi kimliği okunamadı; gönderi kalem eşleşmeden açılamaz.")
             break
     return out
+
+
+# ============================================ SİPARİŞ EK BİLGİSİ (kargo firması)
+#
+# BULUNAN EKSİK (2026-08-15, canlıdan ölçüldü):
+#   /api/admin/orders           → kargo firması YOK · customerName 18'in 4'ünde BOŞ
+#   /api/admin/bbd/orders       → shipping_title "Hepsijet - Hepsijet" (18'in 16'sında dolu)
+#
+# "Kargoya hazır" listesi ucuz liste ucundan besleniyor, dolayısıyla taşıyıcı
+# sütunu boş kalıyordu. Ek bilgi TEK istekle alınıp sipariş numarası üzerinden
+# eşlenir; sipariş başına detay okumak 50 satırda 50 istek ederdi.
+
+
+def extras_index(rows: Any) -> dict[str, dict[str, Any]]:
+    """`bbd/orders` satırlarını sipariş numarasına göre indeksler.
+
+    Anahtar hem `increment_id` hem `id` için yazılır: liste ucu satırın
+    numarasını `incrementId` diye verirken bazı kayıtlarda ikisi aynı değer
+    oluyor ve tek anahtara güvenmek eşleşmeyi sessizce kaçırırdı.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        extra = {
+            "carrierTitle": text(_first(row, "shipping_title", "shippingTitle")),
+            "carrierCode": text(_first(row, "shipping_method", "shippingMethod")),
+            "email": text(_first(row, "customer_email", "customerEmail")),
+        }
+        for key in (_first(row, "increment_id", "incrementId"), row.get("id")):
+            anahtar = text(key)
+            if anahtar:
+                out.setdefault(anahtar, extra)
+    return out
+
+
+def display_name(row: dict[str, Any], extra: dict[str, Any] | None = None) -> str:
+    """Satırda gösterilecek alıcı adı. BOŞ DÖNMEZ.
+
+    Müşteri adı canlıda 18 siparişin 4'ünde boş; boş bir hücre kullanıcıya
+    "bu sipariş bozuk" dedirtir. Ad yoksa e-posta yazılır (kimin siparişi
+    olduğu yine anlaşılır), o da yoksa sipariş numarası.
+    """
+    ad = text(row.get("customer"))
+    if ad:
+        return ad
+    posta = text((extra or {}).get("email"))
+    if posta:
+        return posta
+    return f"Sipariş {text(row.get('orderNumber'))}".strip()
+
+
+def enrich_rows(rows: Any, extras: dict[str, dict[str, Any]]) -> None:
+    """Satırlara kargo firmasını ve eksik adı YERİNDE ekler.
+
+    Ek bilgi okunamadıysa (uç patladı) satırlar dokunulmadan kalır: eksik
+    taşıyıcı sütunu, hiç açılmayan bir listeden iyidir (K7).
+    """
+    if not isinstance(rows, list):
+        return
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        extra = extras.get(text(row.get("orderNumber"))) \
+            or extras.get(text(row.get("orderId"))) or {}
+        row["carrierTitle"] = text(extra.get("carrierTitle"))
+        row["carrierCode"] = fold(extra.get("carrierCode"))
+        row["email"] = text(extra.get("email"))
+        row["displayName"] = display_name(row, extra)
