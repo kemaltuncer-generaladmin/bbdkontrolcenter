@@ -1095,3 +1095,72 @@ def enrich_rows(rows: Any, extras: dict[str, dict[str, Any]]) -> None:
         row["carrierCode"] = fold(extra.get("carrierCode"))
         row["email"] = text(extra.get("email"))
         row["displayName"] = display_name(row, extra)
+
+
+# ================================================== KARGOYA TESLİM FİŞİ (A4)
+#
+# KULLANICININ KARARI: "Geliver seçildiğinde sunucuda üretilen fatura ve
+# kargoya teslim fişi çıksın. Yazıcı sadece A4 çıkartıyor, ona göre
+# katlayacağız, çıktıyı kargo cebine koyacağız."
+#
+# TASARIM: tek A4, ÜST YARISI pencereden görünen kısım (alıcı, adres, takip
+# no). Kâğıt ikiye katlandığında kargo cebinin penceresinde bu yarı durur;
+# alt yarı ve arkasındaki fatura içeride kalır. Bu yüzden alıcı bilgisi
+# sayfanın EN ÜSTÜNDE ve büyük; katlama çizgisi açıkça işaretli.
+
+
+def handover_sections(order: Any, row: Any = None, *, track: str = "",
+                      carrier: str = "", items: Any = None) -> list[dict[str, Any]]:
+    """Teslim fişinin bölümleri (`build_pdf` sözlükleri).
+
+    Alıcı bilgisi ÖNCE gelir: katlanan kâğıdın üst yarısı kargo cebinin
+    penceresinden görünen kısımdır ve kuryenin okuması gereken tek şey odur.
+    """
+    address = shipping_address(order)
+    alici = customer_name(order, address) or text((row or {}).get("displayName"))
+    sehir = " / ".join(part for part in (text(address.get("city")),
+                                         text(address.get("district")
+                                              or address.get("state"))) if part)
+    adres = text(_first(address, "address", "address1", "line1"))
+    telefon = text(address.get("phone")) or text(_first(order, "customer_phone",
+                                                        "customerPhone"))
+    siparis = text(_first(order, "increment_id", "incrementId")) \
+        or text((row or {}).get("orderNumber"))
+
+    kalemler = []
+    for item in (items if isinstance(items, list) else (order.get("items") or [])):
+        if not isinstance(item, dict):
+            continue
+        kalemler.append([
+            text(item.get("name")) or "—",
+            text(item.get("sku")),
+            str(as_int(_first(item, "qty_ordered", "qtyOrdered", "quantity", "qty"))),
+        ])
+
+    sections: list[dict[str, Any]] = [
+        {"kind": "tiles", "title": "ALICI",
+         "tiles": [("Ad soyad", alici or "—"), ("Telefon", telefon or "—"),
+                   ("Şehir / İlçe", sehir or "—"), ("Takip no", text(track) or "—")]},
+        {"kind": "table", "title": "Teslimat adresi",
+         "headers": ["Alan", "Değer"], "align": "LL", "widths": [1.1, 4.4],
+         "rows": [["Adres", adres or "—"], ["Şehir / İlçe", sehir or "—"],
+                  ["Telefon", telefon or "—"],
+                  ["Taşıyıcı", text(carrier) or "—"], ["Sipariş", siparis or "—"]]},
+        # KATLAMA ÇİZGİSİ. Kuryenin gördüğü yarı burada biter; altı içeride
+        # kalır. İşaret olmadan herkes farklı yerden katlar ve pencerede
+        # yanlış yarı görünür.
+        {"kind": "note",
+         "text": "— — — — — — — — — —  BURADAN KATLAYIN  — — — — — — — — — —"},
+    ]
+    if kalemler:
+        sections.append({"kind": "table", "title": "Paket içeriği",
+                         "headers": ["Ürün", "SKU", "Adet"],
+                         "align": "LLR", "widths": [3.4, 1.6, 0.8],
+                         "rows": kalemler})
+    sections.append({
+        "kind": "note",
+        "text": "Teslim eden: ____________________     "
+                "Kurye/İmza: ____________________     "
+                "Tarih/Saat: ____________________",
+    })
+    return sections

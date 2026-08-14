@@ -382,10 +382,14 @@ class StoreApi:
         action: str = "",
         raw: bool = False,
         reason_in_body: bool = True,
+        #: Uca özel başlık. Yalnız GET'te geçerlidir; yazma yolunda gerekçe ve
+        #: idempotensi başlıkları tek yerden kurulur ve dışarıdan ezilmemeli.
+        headers: dict[str, str] | None = None,
     ) -> Any:
         verb = method.upper()
         if verb == "GET":
-            return await self._send(verb, path, params=_drop_channel(path, params), raw=raw)
+            return await self._send(verb, path, params=_drop_channel(path, params), raw=raw,
+                                    headers=headers)
 
         return await self._write(
             verb, path, params=params, body=body, reason=reason, actor=actor,
@@ -905,8 +909,21 @@ class StoreApi:
         return await self._item(f"{ADMIN}/invoices/{int(invoice_id)}")
 
     async def invoice_pdf(self, invoice_id: int) -> bytes:
-        """Fatura PDF'i — GET /api/admin/invoices/{id}/print (ham bayt)."""
-        return await self._request("GET", f"{ADMIN}/invoices/{int(invoice_id)}/print", raw=True)
+        """Fatura PDF'i — GET /api/admin/invoices/{id}/print (ham bayt).
+
+        `Accept: application/pdf` AÇIKÇA GÖNDERİLİR. Geçidin ham istekler için
+        varsayılanı `application/octet-stream` ve bu uç onu KABUL ETMİYOR —
+        canlıda ölçüldü (2026-08-15):
+
+            Accept: application/octet-stream → 406 "Supported MIME types are
+                                                    application/pdf"
+            Accept: application/pdf          → PDF
+
+        406 gövdesi JSON olduğu için çağıran taraf "PDF geldi" sanıp bozuk
+        bayt yazardı; hatanın sessiz kalma yolu buydu.
+        """
+        return await self._request("GET", f"{ADMIN}/invoices/{int(invoice_id)}/print",
+                                   raw=True, headers={"Accept": "application/pdf"})
 
     async def invoices_export(self, filters: dict[str, Any] | None = None) -> bytes:
         """Fatura listesi CSV — GET /api/admin/invoices/export."""

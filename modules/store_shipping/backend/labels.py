@@ -155,3 +155,38 @@ def compose(labels: list[bytes], fmt: str) -> bytes:
     buffer = io.BytesIO()
     writer.write(buffer)
     return buffer.getvalue()
+
+
+def concat(parts: list[bytes]) -> bytes:
+    """PDF'leri SAYFA SAYFA arka arkaya ekler. Yerleşim yapmaz.
+
+    `compose` etiketleri sayfaya YERLEŞTİRİR (4'lü A4, termal ölçek). Burada
+    öyle bir şey yok: teslim fişi zaten A4 ve fatura da A4; ikisini ölçekleyip
+    bir sayfaya sıkıştırmak ikisini de okunmaz yapardı. Kullanıcı çıktıyı
+    katlayıp kargo cebine koyacak, küçültüp değil.
+
+    Boş parça ATLANIR ama sessizce değil: fatura alınamadıysa fiş yine basılır
+    ve çağıran bunu ekranda söyler — fişsiz paket, faturasız pakete yeğdir.
+    """
+    dolu = [item for item in parts if item]
+    if not dolu:
+        raise LabelError("Birleştirilecek belge yok.")
+
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError as failure:  # pragma: no cover - paket yoksa
+        raise LabelError(MISSING_LIBRARY) from failure
+
+    import io
+
+    writer = PdfWriter()
+    for sira, content in enumerate(dolu, start=1):
+        try:
+            for page in PdfReader(io.BytesIO(content)).pages:
+                writer.add_page(page)
+        except Exception as failure:
+            raise LabelError(f"{sira}. belge PDF olarak okunamadı: {failure}") from failure
+
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()

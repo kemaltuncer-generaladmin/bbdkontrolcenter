@@ -506,6 +506,10 @@ function openWizard(rows, index = 0) {
 
   const quoteBox = h('div', 'sh-quote');
   const offerBox = h('div', 'sh-offers');
+  // BELGE KUTUSU AYRI: `showOffers` teklif kutusunu her çağrıda
+  // `replaceChildren` ile siliyor; yazdırma düğmesi orada dursaydı
+  // teklifler gelir gelmez kaybolurdu.
+  const docBox = h('div', 'sh-docs');
   const actions = h('div', 'sh-actions');
 
   if (!row.measures.complete) {
@@ -580,7 +584,7 @@ function openWizard(rows, index = 0) {
         // etiket de yok. Teklif kutusunu açmak, olmayan bir adımı varmış gibi
         // gösterirdi. Onun yerine fiş basılır.
         if (result.test) {
-          offerBox.replaceChildren(
+          docBox.replaceChildren(
             alertBox(`TEST gönderisi açıldı — takip no ${result.trackNumber}. `
               + 'Taşıyıcıya çıkılmadı, etiket satın alınmadı, para harcanmadı.', 'good'),
             button('Kargo fişini yazdır', {
@@ -592,6 +596,17 @@ function openWizard(rows, index = 0) {
           );
           return;
         }
+        // GERÇEK YOL: kullanıcı "fatura + kargoya teslim fişi tek A4 çıksın,
+        // katlayıp kargo cebine koyacağız" dedi. Düğme teklif kutusunun
+        // ÜSTÜNDE durur; etiket satın alınmadan da basılabilmeli, çünkü paket
+        // hazırlanırken fişe ihtiyaç var.
+        docBox.replaceChildren(button('Teslim fişi + fatura yazdır (A4)', {
+          onClick: () => report.run('handover', {
+            orderId: row.orderId,
+            trackNumber: result.trackNumber || '',
+            carrier: draft.carrier || '',
+          }),
+        }));
         if (result.shipmentId) await showOffers(result.shipmentId);
       },
     }),
@@ -669,7 +684,9 @@ function openWizard(rows, index = 0) {
       'Otomatik değerler ürün kaydından gelir, elle düzeltilebilir'),
     card('2 · Ücret dökümü (tahmin)', quoteBox, 'Kesin tutar taşıyıcı teklifinden gelir'),
     actions,
-    card('3 · Taşıyıcı teklifleri', offerBox, 'Etiket burada satın alınır'),
+    card('3 · Belgeler', docBox,
+      'Teslim fişi + fatura tek A4; katlanıp kargo cebine konur'),
+    card('4 · Taşıyıcı teklifleri', offerBox, 'Etiket burada satın alınır'),
   );
   refreshQuote();
 }

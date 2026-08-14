@@ -389,12 +389,17 @@ async def save_settings(
 # ================================================================= belge
 
 class PreviewBody(BaseModel):
-    kind: str = Field(max_length=24)                  # labels | manifest | performance
+    # labels | manifest | performance | receipt | handover
+    kind: str = Field(max_length=24)
     shipmentIds: list[int] = Field(default_factory=list)
     format: str = Field(default="", max_length=32)
     carrier: str = Field(default="", max_length=32)
     driver: str = Field(default="", max_length=120)
     days: int = Field(default=0, ge=0, le=365)
+    #: `receipt` ve `handover` gönderi değil SİPARİŞ üzerinden çalışır: teslim
+    #: fişi kargo kaydı açılmadan da basılabilmeli (paket hazırlanırken).
+    orderId: int = Field(default=0, ge=0)
+    trackNumber: str = Field(default="", max_length=64)
 
 
 @router.post("/preview")
@@ -402,10 +407,11 @@ async def preview(
     body: PreviewBody,
     user: CurrentUser = requires("store_shipping.view"),
 ) -> dict[str, Any]:
-    """Etiket sayfası · teslimat manifestosu · performans raporu üretir."""
+    """Etiket sayfası · manifesto · performans · kargo fişi · teslim fişi üretir."""
     return await service().preview(body.kind, {
         "shipmentIds": body.shipmentIds, "format": body.format, "carrier": body.carrier,
         "driver": body.driver, "days": body.days,
+        "orderId": body.orderId, "trackNumber": body.trackNumber,
     })
 
 

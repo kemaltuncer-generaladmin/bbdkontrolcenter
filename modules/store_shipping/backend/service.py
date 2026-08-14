@@ -35,7 +35,7 @@ from . import analytics, labels, shipping
 #: bozuk `meta` yüzünden sonsuz sayfalamayı engellemek içindir.
 SCAN_CAP = 4_000
 
-REPORT_KINDS = ("labels", "manifest", "performance", "receipt")
+REPORT_KINDS = ("labels", "manifest", "performance", "receipt", "handover")
 
 
 def _now() -> str:
@@ -1143,7 +1143,104 @@ class ShippingService:
             return await self._build_manifest(params)
         if kind == "receipt":
             return await self._build_receipt(params)
+        if kind == "handover":
+            return await self._build_handover(params)
         return await self._build_performance(params)
+
+    # ------------------------------------------------- kargoya teslim fişi
+
+    async def _build_handover(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Kargoya teslim fişi + sunucunun ürettiği fatura — TEK A4 çıktı.
+
+        KULLANICININ KARARI: "Geliver seçildiğinde sunucuda üretilen fatura ve
+        kargoya teslim fişi çıksın. Yazıcı sadece A4 çıkartıyor, ona göre
+        katlayacağız, çıktıyı kargo cebine koyacağız."
+
+        Belgeler ÖLÇEKLENMEZ, arka arkaya eklenir: fiş de fatura da A4'tür ve
+        ikisini bir sayfaya sıkıştırmak ikisini de okunmaz yapardı.
+
+        FATURA ALINAMAZSA FİŞ YİNE BASILIR. Fişsiz paket kargoya verilemez;
+        faturasız paket verilebilir ve fatura sonra eklenir. Bu yüzden fatura
+        hatası işi durdurmaz, `invoiceError` ile ekrana yazılır.
+        """
+        order_id = shipping.as_int(params.get("orderId"))
+        if not order_id:
+            return {"ok": False, "error": "Fişi basılacak sipariş belirtilmedi."}
+
+        try:
+            order = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": self._fail(failure)}
+
+        track = shipping.text(params.get("trackNumber"))
+        carrier = shipping.text(params.get("carrier"))
+        sections = shipping.handover_sections(order, params.get("row"), track=track,
+                                              carrier=carrier)
+        siparis_no = shipping.text(order.get("increment_id")
+                                   or order.get("incrementId")) or str(order_id)
+        try:
+            slip = build_pdf(
+                title="Kargoya teslim fişi",
+                subtitle=f"Sipariş {siparis_no}" + (f" · {track}" if track else ""),
+                sections=sections, footer="Kontrol Merkezi · Mağaza · Kargo")
+        except ExportError as failure:
+            return {"ok": False, "error": f"Teslim fişi üretilemedi: {failure}"}
+
+        fatura, invoice_error = await self._invoice_pdf(order_id)
+        try:
+            content = labels.concat([slip, fatura]) if fatura else slip
+        except labels.LabelError as failure:
+            content, invoice_error = slip, f"Fatura eklenemedi: {failure}"
+
+        stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
+        name = f"magaza-kargo-teslim-{siparis_no}-{stamp}.pdf"
+        try:
+            path = write_private(self._export_dir / name, content)
+        except OSError as failure:
+            return {"ok": False, "error": f"Belge yazılamadı: {failure}"}
+        return {"ok": True, "error": "", "path": str(path), "name": name,
+                "trackNumber": track, "invoiceIncluded": bool(fatura) and not invoice_error,
+                "invoiceError": invoice_error}
+
+    async def _invoice_pdf(self, order_id: int) -> tuple[bytes, str]:
+        """Siparişin faturasını PDF olarak getirir. `(içerik, hata)` döner.
+
+        FATURA KİMLİĞİ SİPARİŞ KİMLİĞİ DEĞİLDİR — canlıda sipariş 20'nin
+        faturası 19 numaralı kayıt. Bağ `orderIncrementId` üzerinden kurulur;
+        fatura kaydında `orderId` NULL geliyor (canlı doğrulandı) ve onunla
+        eşleştiren kod hiçbir faturayı bulamaz.
+        """
+        siparis_no = str(order_id)
+        try:
+            order = await self._api.order(int(order_id))
+            siparis_no = shipping.text(order.get("increment_id")
+                                       or order.get("incrementId")) or siparis_no
+            payload = await self._api.invoices({"order_id": int(order_id)}, page=1,
+                                               per_page=self._page_size)
+        except Exception as failure:  # noqa: BLE001 — K7
+            return b"", f"Fatura listesi okunamadı: {self._fail(failure)}"
+
+        fatura_id = 0
+        for row in (payload.get("items") or []):
+            if not isinstance(row, dict):
+                continue
+            bagli = shipping.text(row.get("orderIncrementId")
+                                  or row.get("order_increment_id"))
+            if bagli and bagli != siparis_no:
+                continue
+            fatura_id = shipping.as_int(row.get("id"))
+            if fatura_id:
+                break
+        if not fatura_id:
+            return b"", "Bu siparişin faturası bulunamadı."
+
+        try:
+            raw = await self._api.invoice_pdf(fatura_id)
+        except Exception as failure:  # noqa: BLE001 — K7
+            return b"", f"Fatura PDF'i alınamadı: {self._fail(failure)}"
+        if not raw or bytes(raw)[:4] != b"%PDF":
+            return b"", "Fatura PDF olarak gelmedi."
+        return bytes(raw), ""
 
     # -------------------------------------------------------------- fiş
 

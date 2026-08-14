@@ -11,6 +11,23 @@ from __future__ import annotations
 from typing import Any
 
 
+def _bos_pdf() -> bytes:
+    """Tek sayfalık, geçerli, boş bir A4 PDF.
+
+    Elle yazılmış bir "%PDF..." dizisi ayrıştırıcıdan geçmez ("EOF marker not
+    found") ve testi gerçek hatadan ayırt edilemez hâle getirir.
+    """
+    import io
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=595, height=842)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
 class FakeLog:
     def __init__(self) -> None:
         self.records: list[tuple[str, str, dict[str, Any]]] = []
@@ -96,6 +113,13 @@ class FakeApi:
         self.rates_payload: dict[str, Any] = {}
         #: `bbd/orders` satırları — kargo firması ve e-posta buradan gelir.
         self.bbd_order_rows: list[dict[str, Any]] = []
+        #: Fatura listesi satırları — `orderIncrementId` ile siparişe bağlanır.
+        self.invoice_rows: list[dict[str, Any]] = []
+        #: `invoice_pdf` çıktısı. GERÇEKTEN AYRIŞTIRILABİLİR bir PDF olmalı:
+        #: servis belgeleri `pypdf` ile birleştiriyor ve "%PDF" ile başlayan
+        #: ama bozuk bir bayt dizisi birleştirmede patlardı — testin kanıtladığı
+        #: şey de tam olarak birleştirmenin çalıştığı.
+        self.invoice_pdf_bytes: bytes = _bos_pdf()
         self.label_bytes: dict[int, bytes] = {}
         #: Canlı mağazadaki tek kanal: kod `default`, kimlik 1.
         self.channels_payload: dict[str, Any] = {
@@ -150,6 +174,18 @@ class FakeApi:
         self._record("bbd_create_shipment", order_id, payload=payload, reason=reason,
                      actor=actor, dry_run=dry_run)
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run, "data": {"id": 77}}
+
+    async def invoices(self, filters: Any = None, *, page: int = 1,
+                       per_page: int | None = None,
+                       all_pages: bool = False) -> dict[str, Any]:
+        """Fatura listesi. CANLIDAKİ TUZAK: kayıtta `orderId` NULL gelir,
+        bağ `orderIncrementId` üzerinden kurulur."""
+        self._record("invoices", filters, page=page, per_page=per_page)
+        return {"items": self.invoice_rows, "meta": {"total": len(self.invoice_rows)}}
+
+    async def invoice_pdf(self, invoice_id: int) -> bytes:
+        self._record("invoice_pdf", invoice_id)
+        return self.invoice_pdf_bytes
 
     async def bbd_orders(self, filters: Any = None, *, page: int = 1,
                          per_page: int | None = None,

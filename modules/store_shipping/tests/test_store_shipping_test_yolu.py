@@ -323,3 +323,88 @@ async def test_ek_bilgi_ucu_patlarsa_liste_AYAKTA_kalir() -> None:
 
     assert result["ok"] is True and result["connected"] is True
     assert len(result["items"] + result["blocked"]) == 1
+
+
+# ================================================== kargoya teslim fişi (A4)
+
+FATURA = [{"id": 19, "orderIncrementId": "S-91", "state": "paid"}]
+
+
+async def test_teslim_fisi_fatura_ile_BIRLESIR() -> None:
+    # Kullanıcının kararı: "Geliver seçildiğinde sunucuda üretilen fatura ve
+    # kargoya teslim fişi çıksın; A4, katlayıp kargo cebine koyacağız."
+    service, api, _ = _service()
+    api.invoice_rows = list(FATURA)
+    result = await service.build_report("handover", {
+        "orderId": 91, "trackNumber": "1234567890", "carrier": "Hepsijet"})
+
+    assert result["ok"] is True, result.get("error")
+    assert result["invoiceIncluded"] is True
+    assert result["invoiceError"] == ""
+    assert api.used("invoice_pdf") == [{}] or api.args_of("invoice_pdf") == [(19,)]
+
+
+async def test_fatura_alinamazsa_FIS_YINE_BASILIR() -> None:
+    # Fişsiz paket kargoya verilemez; faturasız paket verilebilir ve fatura
+    # sonra eklenir. Bu yüzden fatura hatası işi durdurmaz.
+    service, api, _ = _service()
+    api.invoice_rows = list(FATURA)
+    api.fail.add("invoice_pdf")
+    result = await service.build_report("handover", {"orderId": 91, "trackNumber": "T-1"})
+
+    assert result["ok"] is True
+    assert result["invoiceIncluded"] is False
+    assert result["invoiceError"]
+    assert Path(result["path"]).exists()
+
+
+async def test_faturasi_olmayan_siparis_fisi_engellemez() -> None:
+    service, api, _ = _service()
+    api.invoice_rows = []
+    result = await service.build_report("handover", {"orderId": 91})
+
+    assert result["ok"] is True
+    assert "bulunamadı" in result["invoiceError"]
+
+
+async def test_fatura_PDF_degilse_belgeye_KATILMAZ() -> None:
+    # 406 gövdesi JSON'dur; "PDF geldi" sanıp eklemek çıktıyı bozardı.
+    service, api, _ = _service()
+    api.invoice_rows = list(FATURA)
+    api.invoice_pdf_bytes = b'{"type":"/errors/406"}'
+    result = await service.build_report("handover", {"orderId": 91})
+
+    assert result["ok"] is True
+    assert result["invoiceIncluded"] is False
+    assert "PDF olarak gelmedi" in result["invoiceError"]
+
+
+async def test_fatura_siparis_NUMARASI_ile_eslenir() -> None:
+    # CANLI TUZAK: fatura kaydında `orderId` NULL geliyor; bağ
+    # `orderIncrementId` üzerinden kurulur. Sipariş 20'nin faturası 19 numara.
+    service, api, _ = _service()
+    api.invoice_rows = [
+        {"id": 5, "orderIncrementId": "BASKA-SIPARIS", "state": "paid"},
+        {"id": 19, "orderIncrementId": "S-91", "state": "paid"},
+    ]
+    await service.build_report("handover", {"orderId": 91})
+    assert api.args_of("invoice_pdf") == [(19,)]
+
+
+def test_fis_bolumleri_ALICIYI_EN_USTE_koyar() -> None:
+    # Katlanan kâğıdın üst yarısı kargo cebinin penceresinden görünür; kuryenin
+    # okuması gereken tek şey alıcıdır.
+    order = {
+        "increment_id": "S-91",
+        "addresses": [{"addressType": "order_shipping", "firstName": "Hüseyin",
+                       "lastName": "hoca", "city": "Selçuklu", "state": "42",
+                       "address": "Test mah.", "phone": "5337698656"}],
+        "items": [{"name": "Kitap", "sku": "A-1", "qtyOrdered": 2}],
+    }
+    sections = shipping.handover_sections(order, track="1234567890", carrier="Hepsijet")
+
+    assert sections[0]["title"] == "ALICI"
+    tiles = dict(sections[0]["tiles"])
+    assert tiles["Ad soyad"] == "Hüseyin hoca"
+    assert tiles["Takip no"] == "1234567890"
+    assert any("KATLAYIN" in b.get("text", "") for b in sections if b["kind"] == "note")
