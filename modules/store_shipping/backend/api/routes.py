@@ -172,7 +172,13 @@ async def quote(
 
 
 class CreateBody(BaseModel):
-    carrier: str = Field(min_length=1, max_length=32)
+    # TEST YOLUNDA TAŞIYICI SEÇİLMEZ (taşıyıcı yoktur), bu yüzden şema onu
+    # zorunlu tutmaz. Gerçek yolun koruması ŞEMADA DEĞİL SERVİSTE: taşıyıcısız
+    # bir Geliver gönderisi `wizard_problems` tarafından engellenir. Şema
+    # gevşedi, kural gevşemedi (K9 — istemci şemayı atlatabilir).
+    carrier: str = Field(default="", max_length=32)
+    #: "geliver" (gerçek, para harcar) · "bagisto" (test) · "" (ayardaki yol).
+    provider: str = Field(default="", max_length=16)
     packages: int = Field(default=1, ge=1, le=99)
     desi: float = Field(default=0, ge=0, le=100_000)
     weight: float = Field(default=0, ge=0, le=100_000)
@@ -194,7 +200,8 @@ async def create_shipment(
                                            packages=body.packages, desi_value=body.desi,
                                            weight=body.weight, payer=body.payer, cod=body.cod,
                                            note=body.note, reason=body.reason,
-                                           actor=user.full_name, dry_run=body.dryRun)
+                                           actor=user.full_name, dry_run=body.dryRun,
+                                           provider=body.provider)
 
 
 # ================================================== PARA HARCAYAN UÇLAR

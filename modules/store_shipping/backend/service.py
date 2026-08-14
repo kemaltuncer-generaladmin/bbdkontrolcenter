@@ -35,7 +35,7 @@ from . import analytics, labels, shipping
 #: bozuk `meta` yüzünden sonsuz sayfalamayı engellemek içindir.
 SCAN_CAP = 4_000
 
-REPORT_KINDS = ("labels", "manifest", "performance")
+REPORT_KINDS = ("labels", "manifest", "performance", "receipt")
 
 
 def _now() -> str:
@@ -650,17 +650,38 @@ class ShippingService:
     async def create_shipment(self, order_id: int, *, carrier: str, packages: int,
                               desi_value: float, weight: float, payer: str, cod: int,
                               note: str, reason: str, actor: str,
-                              dry_run: bool = True) -> dict[str, Any]:
+                              dry_run: bool = True,
+                              provider: str = "") -> dict[str, Any]:
         """Gönderi TASLAĞI açar. ETİKET SATIN ALINMAZ.
 
         Taslak açmak ile etiket almak bilerek ayrı iki adımdır: ilki
         ücretsizdir ve düzeltilebilir, ikincisi para harcar ve geri alınamaz.
         Tek düğmede birleştirmek, ölçüsü yanlış girilmiş bir gönderinin
         parasını ödetirdi.
+
+        `provider` İKİ YOLU AYIRIR:
+
+          "geliver"  GERÇEK. Taşıyıcıya gider, sonraki adımda etiket satın
+                     alınır, PARA HARCAR.
+          "bagisto"  TEST. Bagisto'nun kendi gönderi kaydını açar; taşıyıcıya
+                     hiç çıkmaz, para harcamaz, takip numarasını biz üretiriz.
+                     Sipariş gerçekten "kargolandı" durumuna geçtiği için
+                     akışın tamamı (bilgilendirme, fiş) para harcamadan
+                     denenebilir.
+
+        Boş bırakılırsa ayardaki `provider` kullanılır.
         """
         problem = self._guard(reason)
         if problem:
             return {"ok": False, "error": problem}
+
+        yol = (shipping.fold(provider) or shipping.fold(self._config.get("provider"))
+               or "geliver")
+        if yol not in ("geliver", "bagisto"):
+            return {"ok": False, "error": f"Bilinmeyen kargo yolu: {provider}"}
+        if yol == "bagisto":
+            return await self._test_shipment(int(order_id), carrier=carrier, note=note,
+                                             reason=reason, actor=actor, dry_run=dry_run)
 
         zones = await self._zone_rows()
         order: dict[str, Any] = {}
@@ -708,6 +729,98 @@ class ShippingService:
         return {"ok": True, "error": "", "shipmentId": shipment_id, "warnings": warnings,
                 "dryRun": bool(result.get("dryRun", dry_run)),
                 "sent": bool(result.get("sent", not dry_run)), "body": body}
+
+    async def _test_shipment(self, order_id: int, *, carrier: str, note: str,
+                             reason: str, actor: str, dry_run: bool) -> dict[str, Any]:
+        """Bagisto'nun kendi gönderi kaydı — TEST YOLU. Taşıyıcıya çıkılmaz.
+
+        Geliver yolundan üç farkı var ve üçü de bilerek:
+
+        1. ÖLÇÜ SORULMAZ. Desi/ağırlık/kapıda ödeme taşıyıcı için anlamlıdır;
+           burada taşıyıcı yok. Sormak, kullanıcıya işe yaramayan bir form
+           doldurtmak olurdu.
+        2. TAKİP NUMARASINI BİZ ÜRETİRİZ ve `TEST-` ile başlar. Gören herkes
+           (müşteri dâhil) bunun deneme olduğunu anlar.
+        3. SİPARİŞİN DETAYI OKUNUR, listesi değil. Kargolanacak adet kalem
+           başına `qtyOrdered - qtyShipped`; bu alanlar sipariş LİSTESİ ucunda
+           YOK (canlı doğrulandı). Listeden gelen kayıtla çalışmak, kısmi
+           kargolanmış siparişin kalemlerini ikinci kez gönderirdi.
+        """
+        try:
+            order = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": self._fail(failure)}
+
+        state = shipping.ready_state(order)
+        if not state["ready"]:
+            return {"ok": False, "error": f"Bu sipariş kargoya hazır değil: {state['blocked']}"}
+
+        title = (shipping.text(carrier)
+                 or shipping.text(self._config.get("test_carrier_title"))
+                 or "BBD Test Kargo")
+        track = shipping.test_track_number(order_id, when=shipping.today_iso(),
+                                           suffix=await self._test_sequence(order_id))
+        body = shipping.bagisto_body(order, carrier_title=title, track_number=track,
+                                     source_id=self._source_id())
+
+        blocking = shipping.bagisto_problems(body)
+        if blocking:
+            return {"ok": False, "error": " ".join(blocking)}
+
+        await self._record(order_id=order_id, action="create_test_shipment", reason=reason,
+                           actor=actor, result="denendi", detail=body)
+        try:
+            result = await self._api.create_shipment(int(order_id), payload=body,
+                                                     reason=reason, actor=actor,
+                                                     dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(order_id=order_id, action="create_test_shipment", reason=reason,
+                               actor=actor, result="hata", detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+
+        shipment_id = self._extract_id(result)
+        await self._record(shipment_id=shipment_id, order_id=order_id,
+                           action="create_test_shipment", reason=reason, actor=actor,
+                           result="dry_run" if dry_run else "ok", detail=body)
+        await self._emit("store.shipment.created", {
+            "orderId": int(order_id), "shipmentId": shipment_id,
+            "carrier": title, "provider": "bagisto", "test": True,
+            "dryRun": bool(dry_run)})
+        return {
+            "ok": True, "error": "", "provider": "bagisto", "test": True,
+            "shipmentId": shipment_id, "trackNumber": track, "carrier": title,
+            "items": body["items"],
+            "note": shipping.text(note)[:255],
+            "dryRun": bool(result.get("dryRun", dry_run)),
+            "sent": bool(result.get("sent", not dry_run)),
+            "warnings": [("Bu bir TEST gönderisidir: taşıyıcıya çıkılmadı, "
+                          "etiket satın alınmadı, para harcanmadı.")],
+            "body": body,
+        }
+
+    def _source_id(self) -> int:
+        """Stok kaynağı. Mağazada tek depo var (id=1, 'Varsayılan')."""
+        return max(1, shipping.as_int(self._config.get("inventory_source_id"), 1))
+
+    async def _test_sequence(self, order_id: int) -> int:
+        """Aynı siparişe bugün kaçıncı test gönderisi.
+
+        Takip numarası sabit üretildiği için sıra olmadan ikinci gönderi
+        birincisiyle AYNI numarayı alırdı. Sıra denetim defterinden sayılır;
+        sayılamazsa 1 döner — numara çakışırsa Bagisto reddeder, sessizce
+        yanlış kayıt oluşmaz.
+        """
+        try:
+            rows = await self._store.fetch_all(
+                f"SELECT COUNT(*) AS n FROM {self._store.table('audit')} "
+                "WHERE action = ? AND order_id = ? AND substr(created_at, 1, 10) = ? "
+                "AND result = 'ok'",
+                ("create_test_shipment", int(order_id), shipping.today_iso()),
+            )
+        except Exception:  # noqa: BLE001 — sayaç okunamazsa akış durmaz
+            return 1
+        first = (rows or [{}])[0]
+        return max(1, shipping.as_int(first.get("n"), 0) + 1)
 
     @staticmethod
     def _extract_id(result: Any) -> int:
@@ -1003,7 +1116,80 @@ class ShippingService:
             return await self._build_labels(params)
         if kind == "manifest":
             return await self._build_manifest(params)
+        if kind == "receipt":
+            return await self._build_receipt(params)
         return await self._build_performance(params)
+
+    # -------------------------------------------------------------- fiş
+
+    async def _build_receipt(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Kargo fişi — TEST gönderisinin kâğıt karşılığı.
+
+        NEDEN AYRI BİR BELGE: gerçek gönderinin etiketi TAŞIYICIDAN gelir
+        (`_build_labels`). Test yolunda taşıyıcı yoktur, dolayısıyla etiket de
+        yoktur; fiş bu boşluğu doldurur — akışın tamamı (paketle, yapıştır,
+        çıkışa koy) para harcamadan denenebilsin diye.
+
+        FİŞ ETİKET DEĞİLDİR ve öyle görünmemelidir: üstünde büyük "TEST
+        GÖNDERİSİ" bandı ve "bu fişle kargo verilemez" satırı taşır. Gerçek
+        etiketin taklidi basılsaydı, bir gün biri onu koliye yapıştırıp
+        kargoya verirdi.
+        """
+        order_id = shipping.as_int(params.get("orderId"))
+        track = shipping.text(params.get("trackNumber"))
+        if not order_id and not track:
+            return {"ok": False, "error": "Fişi basılacak gönderi belirtilmedi."}
+
+        try:
+            order = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": self._fail(failure)}
+
+        address = shipping.shipping_address(order)
+        alici = shipping.customer_name(order, address)
+        kalemler = [
+            [shipping.text(item.get("sku")),
+             shipping.text(item.get("name")) or "—",
+             number(shipping.as_int(item.get("qty_ordered") or item.get("qtyOrdered")))]
+            for item in (order.get("items") or []) if isinstance(item, dict)
+        ]
+        siparis_no = shipping.text(order.get("increment_id") or order.get("incrementId"))
+
+        sections: list[dict[str, Any]] = [
+            {"kind": "note",
+             "text": "TEST GÖNDERİSİ — taşıyıcıya çıkmadı, etiket satın alınmadı, "
+                     "para harcanmadı. BU FİŞLE KARGO VERİLEMEZ."},
+            {"kind": "tiles", "title": "Gönderi",
+             "tiles": [("Takip no", track or "—"),
+                       ("Sipariş", siparis_no or str(order_id)),
+                       ("Taşıyıcı", shipping.text(params.get("carrier")) or "BBD Test Kargo"),
+                       ("Tarih", shipping.today_iso())]},
+            {"kind": "table", "title": "Alıcı",
+             "headers": ["Alan", "Değer"], "align": "LL", "widths": [1.2, 4.0],
+             "rows": [["Ad soyad", alici or "—"],
+                      ["Şehir / İlçe",
+                       f"{address.get('city', '')} / {address.get('district', '')}".strip(" /")
+                       or "—"],
+                      ["Telefon", shipping.mask(address.get("phone"))]]},
+        ]
+        if kalemler:
+            sections.append({"kind": "table", "title": "Kalemler",
+                             "headers": ["SKU", "Ürün", "Adet"],
+                             "align": "LLR", "widths": [1.4, 3.6, 0.8],
+                             "rows": kalemler})
+
+        stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
+        name = f"magaza-kargo-fis-{track or order_id}-{stamp}.pdf"
+        try:
+            content = build_pdf(
+                title="Kargo fişi (TEST)",
+                subtitle=f"{track or '—'} · Sipariş {siparis_no or order_id}",
+                sections=sections, footer="Kontrol Merkezi · Mağaza · Kargo")
+            path = write_private(self._export_dir / name, content)
+        except (OSError, ExportError) as failure:
+            return {"ok": False, "error": f"Fiş üretilemedi: {failure}"}
+        return {"ok": True, "error": "", "path": str(path), "name": name,
+                "test": True, "trackNumber": track}
 
     # ------------------------------------------------------------- etiket
 

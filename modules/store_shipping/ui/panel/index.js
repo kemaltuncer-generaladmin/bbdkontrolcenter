@@ -456,6 +456,15 @@ function openWizard(rows, index = 0) {
 
   const form = formGrid({
     fields: [
+      // YOL SEÇİMİ EN ÜSTTE: aşağıdaki alanların hangisinin anlamlı olduğunu
+      // bu belirliyor. Altta olsaydı kullanıcı desi/kapıda ödeme doldurup
+      // sonra "test" seçer ve girdiği hiçbir şeyin kullanılmadığını görürdü.
+      { key: 'provider', label: 'Kargo yolu', type: 'select', required: true,
+        options: [
+          { value: 'geliver', label: 'Geliver — GERÇEK (etiket satın alınır, para harcar)' },
+          { value: 'bagisto', label: 'Bagisto — TEST (taşıyıcıya çıkmaz, ücretsiz)' },
+        ],
+        hint: 'Test yolunda takip numarasını biz üretiriz (TEST- öneki) ve fiş basılır.' },
       { key: 'carrier', label: 'Taşıyıcı', type: 'select', required: true,
         options: carrierOptions },
       { key: 'packages', label: 'Paket sayısı', type: 'number', min: 1, max: 99,
@@ -469,6 +478,9 @@ function openWizard(rows, index = 0) {
       { key: 'note', label: 'Not', type: 'text', maxLength: 255, wide: true },
     ],
     value: {
+      // GERÇEK yol varsayılan. Test yolunu varsayılan yapmak, bir gün birinin
+      // gerçek sandığı gönderinin hiç yola çıkmamasına yol açardı.
+      provider: state.settings?.provider || 'geliver',
       carrier: state.settings?.defaultCarrier || carrierOptions[0]?.value || '',
       packages: 1,
       desi: row.measures.desi || 0,
@@ -542,6 +554,7 @@ function openWizard(rows, index = 0) {
           `${BASE}/orders/${row.orderId}/shipments`, {
             method: 'POST',
             body: {
+              provider: draft.provider || 'geliver',
               carrier: draft.carrier, packages: Number(draft.packages) || 1,
               desi: Number(draft.desi) || 0, weight: Number(draft.weight) || 0,
               payer: draft.payer, cod: Number(draft.cod) || 0, note: draft.note || '',
@@ -552,6 +565,22 @@ function openWizard(rows, index = 0) {
         toast(result.dryRun ? 'Kuru prova: istek gönderilmedi.' : 'Taslak açıldı.',
           result.dryRun ? 'warn' : 'good');
         for (const line of result.warnings || []) toast(line, 'warn');
+        // TEST YOLUNDA TEKLİF YOKTUR — taşıyıcıya çıkılmadı, satın alınacak
+        // etiket de yok. Teklif kutusunu açmak, olmayan bir adımı varmış gibi
+        // gösterirdi. Onun yerine fiş basılır.
+        if (result.test) {
+          offerBox.replaceChildren(
+            alertBox(`TEST gönderisi açıldı — takip no ${result.trackNumber}. `
+              + 'Taşıyıcıya çıkılmadı, etiket satın alınmadı, para harcanmadı.', 'good'),
+            button('Kargo fişini yazdır', {
+              onClick: () => report.run('receipt', {
+                orderId: row.orderId, trackNumber: result.trackNumber,
+                carrier: result.carrier,
+              }),
+            }),
+          );
+          return;
+        }
         if (result.shipmentId) await showOffers(result.shipmentId);
       },
     }),

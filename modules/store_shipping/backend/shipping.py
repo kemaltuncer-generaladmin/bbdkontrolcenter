@@ -914,3 +914,113 @@ def wizard_problems(*, carrier: str, desi_value: float, weight: float, packages:
     if not delivers:
         out.append("Bu bölgeye teslimat yapılmıyor olarak işaretli.")
     return out
+
+
+# ===================================================== BAGISTO TEST GÖNDERİSİ
+#
+# İKİ AYRI KARGO YOLU VAR ve bilerek ayrıdır:
+#
+#   geliver  GERÇEK. Taşıyıcıya gider, etiket satın alınır, PARA HARCAR,
+#            gerçek takip numarası taşıyıcıdan gelir.
+#   bagisto  TEST. Bagisto'nun KENDİ gönderi kaydını açar. Taşıyıcıya hiç
+#            çıkmaz, para harcamaz, takip numarasını BİZ üretiriz.
+#
+# Test yolu bir taklit değil: sipariş gerçekten "kargolandı" durumuna geçer,
+# müşteri bilgilendirmesi çalışır, fiş basılır. Eksik olan tek şey taşıyıcıya
+# çıkılması. Böylece akışın tamamı para harcamadan denenebilir.
+
+#: Test takip numarası öneki. GERÇEK BİR TAŞIYICI KODUYLA ÇAKIŞMAMALI —
+#: "TEST" öneki, numarayı gören herkesin (müşteri dâhil) bunun deneme
+#: olduğunu anlamasını sağlar. Sessiz bir sahte numara, günün birinde gerçek
+#: sanılıp kargo aranmasına yol açar.
+TEST_TAKIP_ONEKI = "TEST"
+
+
+def test_track_number(order_id: Any, *, when: str = "", suffix: Any = 1) -> str:
+    """Test gönderisi için takip numarası üretir.
+
+    BİÇİM: `TEST-<siparişNo>-<YYYYAAGG>-<sıra>` → "TEST-20-20260815-1"
+
+    Rastgelelik YOK: aynı sipariş, aynı gün, aynı sıra için aynı numara çıkar.
+    Rastgele numara üretmek, bir isteğin iki kez gönderilip iki kez
+    kaydedildiğini gizlerdi — aynı numara ikinci kez göründüğünde çift kayıt
+    gözle görülür.
+    """
+    day = (text(when) or today_iso())[:10].replace("-", "")
+    return f"{TEST_TAKIP_ONEKI}-{as_int(order_id)}-{day}-{max(1, as_int(suffix, 1))}"
+
+
+def is_test_track(value: Any) -> bool:
+    """Bu takip numarası bizim ürettiğimiz test numarası mı."""
+    return text(value).upper().startswith(f"{TEST_TAKIP_ONEKI}-")
+
+
+def shippable_items(order: Any, *, source_id: int = 1) -> list[dict[str, Any]]:
+    """Siparişin KALAN kargolanabilir kalemleri.
+
+    Adet = sipariş edilen − zaten kargolanan. Kısmi kargolanmış siparişin
+    kalanı gönderilebilir olmalı; sipariş edilen adedi olduğu gibi göndermek
+    aynı kalemi ikinci kez kargolardı.
+
+    Kalemde `qtyShipped` alanı YOKSA sıfır sayılır — bu güvenli yön DEĞİL ama
+    tek seçenek: alan yoksa "hepsi kargolanmış" varsaymak siparişi hiç
+    göndermez. Servis, gönderiden önce siparişin DETAYINI okuyarak bu alanı
+    garantiler ({@see ShippingService.create_shipment}).
+    """
+    rows = order.get("items") if isinstance(order, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        ordered = as_int(_first(item, "qty_ordered", "qtyOrdered"))
+        shipped = as_int(_first(item, "qty_shipped", "qtyShipped"))
+        kalan = ordered - shipped
+        if kalan <= 0:
+            continue
+        out.append({
+            "orderItemId": as_int(_first(item, "id", "order_item_id", "orderItemId")),
+            "inventorySourceId": max(1, int(source_id or 1)),
+            "quantity": kalan,
+        })
+    return out
+
+
+def bagisto_body(order: Any, *, carrier_title: str, track_number: str,
+                 source_id: int = 1) -> dict[str, Any]:
+    """Bagisto'nun kendi gönderi ucunun gövdesi.
+
+    SÖZLEŞME canlı OpenAPI şemasından alındı (2026-08-15):
+
+        POST /api/admin/orders/{orderId}/shipments
+        {"source": 1,
+         "items": [{"orderItemId": 42, "inventorySourceId": 1, "quantity": 3}],
+         "carrierTitle": "UPS", "trackNumber": "1Z999AA1"}
+
+    `source` ile kalemlerdeki `inventorySourceId` AYNI olmalı; ikisi
+    ayrışırsa Bagisto stoğu bir depodan düşüp gönderiyi başka depoya yazar.
+    Bu mağazada tek depo var (id=1, "Varsayılan") ama alan yine de tek
+    yerden beslenir ki ikinci depo açıldığında ayrışma olmasın.
+    """
+    kaynak = max(1, int(source_id or 1))
+    return {
+        "source": kaynak,
+        "items": shippable_items(order, source_id=kaynak),
+        "carrierTitle": text(carrier_title) or "BBD Test Kargo",
+        "trackNumber": text(track_number),
+    }
+
+
+def bagisto_problems(body: dict[str, Any]) -> list[str]:
+    """Test gönderisi gönderilmeden önce yakalanacaklar."""
+    out: list[str] = []
+    if not body.get("items"):
+        out.append("Kargolanacak kalem kalmamış: siparişin tamamı zaten gönderilmiş.")
+    if not text(body.get("trackNumber")):
+        out.append("Takip numarası boş.")
+    for item in body.get("items") or []:
+        if as_int(item.get("orderItemId")) <= 0:
+            out.append("Sipariş kalemi kimliği okunamadı; gönderi kalem eşleşmeden açılamaz.")
+            break
+    return out

@@ -33,3 +33,15 @@ performance_days: 30
 # ödemesi alınmış sipariş `processing` olur; kurulum farklıysa buradan
 # düzeltilir.
 ready_status: "processing"
+
+# --- KARGO YOLU -------------------------------------------------------------
+# "geliver"  GERÇEK. Taşıyıcıya gider, etiket satın alınır, PARA HARCAR.
+# "bagisto"  TEST. Bagisto'nun kendi gönderi kaydını açar; taşıyıcıya çıkmaz,
+#            para harcamaz, takip numarasını biz üretiriz (TEST- öneki).
+#
+# VARSAYILAN "geliver" — gerçek yol. Test yolunu varsayılan yapmak, bir gün
+# birinin gerçek sandığı gönderinin hiç yola çıkmamasına yol açardı; sessiz
+# yanlış her zaman gürültülü yanlıştan kötüdür.
+provider: "geliver"
+test_carrier_title: "BBD Test Kargo"
+inventory_source_id: 1     # mağazada tek depo (id=1, "Varsayılan")

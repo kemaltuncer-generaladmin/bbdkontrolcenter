@@ -149,6 +149,19 @@ class FakeApi:
                      actor=actor, dry_run=dry_run)
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run, "data": {"id": 77}}
 
+    async def create_shipment(self, order_id: int, *, payload: dict[str, Any], reason: str,
+                              actor: str = "",
+                              dry_run: bool | None = None) -> dict[str, Any]:
+        """Bagisto'nun KENDİ gönderi ucu — test yolu.
+
+        `bbd_create_shipment` (Geliver) ile karıştırılmamalı: ikisi ayrı uç,
+        ayrı gövde, ayrı sonuç. Sahtenin ikisini de taşıması, servisin hangi
+        yola gittiğini testin görebilmesi içindir.
+        """
+        self._record("create_shipment", order_id, payload=payload, reason=reason,
+                     actor=actor, dry_run=dry_run)
+        return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run, "data": {"id": 501}}
+
     async def bbd_shipment_offers(self, shipment_id: int) -> dict[str, Any]:
         self._record("bbd_shipment_offers", shipment_id)
         return self.offers_payload
