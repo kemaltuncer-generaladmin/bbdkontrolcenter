@@ -121,6 +121,22 @@ class FakeApi:
         #: şey de tam olarak birleştirmenin çalıştığı.
         self.invoice_pdf_bytes: bytes = _bos_pdf()
         self.label_bytes: dict[int, bytes] = {}
+        #: "Kargoya ver" ucunun zarfı. VARSAYILAN BAŞARI: gövdede PDF, künye
+        #: `X-Bbd-*` başlıklarında — canlıdaki sözleşmenin aynısı.
+        self.dispatch_envelope: dict[str, Any] = {
+            "contentType": "application/pdf",
+            "status": 200,
+            "headers": {
+                "x-bbd-shipment-id": "77",
+                "x-bbd-order-id": "91",
+                "x-bbd-tracking-number": "1234567890",
+                "x-bbd-provider": "HEPSIJET",
+                "x-bbd-purchased": "1",
+            },
+            "content": _bos_pdf(),
+            "json": None,
+            "dryRun": False,
+        }
         #: Canlı mağazadaki tek kanal: kod `default`, kimlik 1.
         self.channels_payload: dict[str, Any] = {
             "items": [{"id": 1, "code": "default", "name": "Benim Başarı Dünyam"}]}
@@ -209,6 +225,19 @@ class FakeApi:
         self._record("create_shipment", order_id, payload=payload, reason=reason,
                      actor=actor, dry_run=dry_run)
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run, "data": {"id": 501}}
+
+    async def bbd_dispatch_order(self, order_id: int, *, payload: dict[str, Any], reason: str,
+                                 actor: str = "",
+                                 dry_run: bool | None = None) -> dict[str, Any]:
+        """"Kargoya ver" — gönderi + teklif + etiket satın alma TEK ÇAĞRIDA.
+
+        `bbd_create_shipment` (yalnız taslak) ile karıştırılmamalı: bu uç PARA
+        HARCAR. Testin hangi ucun çağrıldığını görebilmesi için ikisi ayrı
+        kaydedilir.
+        """
+        self._record("bbd_dispatch_order", order_id, payload=payload, reason=reason,
+                     actor=actor, dry_run=dry_run)
+        return {**self.dispatch_envelope, "dryRun": bool(dry_run)}
 
     async def bbd_shipment_offers(self, shipment_id: int) -> dict[str, Any]:
         self._record("bbd_shipment_offers", shipment_id)

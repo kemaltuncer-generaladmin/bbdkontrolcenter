@@ -90,6 +90,15 @@ permissions:
   - key: store_shipping.rates
     description: "Desi→ücret matrisi, ücretsiz kargo eşiği ve bölge tanımlarını yazma. Vitrindeki kargo ücretini değiştirir."
     default_roles: [admin]
+  # KURULUM AYARI GÜNLÜK İŞ DEĞİLDİR — bu yüzden `manage`'den ayrı anahtar.
+  # Burada yazılan üç şey mağazanın kargo davranışını tümden değiştirir:
+  # API tokenı (kargo hesabının TAM YETKİLİ kimliği), "kurulu" bayrağı ve
+  # canlı mod. Canlı modu açmak checkout'ta gerçek fiyat göstermeye ve gerçek
+  # gönderi açmaya başlar; kapatmak ise mağazayı desi tablosuna geri düşürür.
+  # Gönderi açıp etiket alan personelin bu anahtara ihtiyacı yoktur.
+  - key: store_shipping.integration
+    description: "Geliver kurulum ayarları: API tokenı, kurulu/canlı/test bayrakları, gönderici adres, webhook kaydı."
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml

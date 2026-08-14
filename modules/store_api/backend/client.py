@@ -159,6 +159,42 @@ def _bbd_meta(payload: Any) -> Any:
     return {**payload, "meta": {**meta, **extra}}
 
 
+def binary_envelope(response: httpx.Response) -> dict[str, Any]:
+    """İKİ BİÇİMDE BİRDEN yanıt veren uçların zarfı: ham bayt VE künye.
+
+    NEDEN GEREKLİ. "Kargoya ver" ucu (`/orders/{id}/dispatch`) başarılıysa
+    gövdesinde PDF döndürür; takip numarası, gönderi kimliği ve etiketin satın
+    alınıp alınmadığı gövdeye SIĞMAZ, `X-Bbd-*` BAŞLIKLARINDA gelir. Etiket
+    indirilemediyse aynı uç 200 + JSON döner. `raw=True` yalnız `response.content`
+    verir ve başlıkları atar — takip numarası kaybolurdu; `raw=False` ise PDF'i
+    JSON sanıp çözmeye çalışırdı.
+
+    Bu zarf ikisini de taşır ve HANGİSİ OLDUĞUNU söyler:
+        {"contentType", "status", "headers": {"x-bbd-*"}, "content": bayt,
+         "json": çözülmüş gövde ya da None}
+
+    Yalnız `X-Bbd-*` başlıkları taşınır: `Set-Cookie`, `Authorization` gibi
+    başlıkların ekranlara sızması için hiçbir sebep yok.
+    """
+    kind = str(response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    data: Any = None
+    if kind == "application/json" and response.content:
+        try:
+            data = response.json()
+        except ValueError:
+            # Sunucu "JSON" dedi ama çözülemedi. Baytı ATMIYORUZ: çağıran
+            # `contentType` ile ne aldığını görür ve karar verir.
+            data = None
+    return {
+        "contentType": kind,
+        "status": response.status_code,
+        "headers": {name.lower(): value for name, value in response.headers.items()
+                    if name.lower().startswith("x-bbd-")},
+        "content": b"" if data is not None else bytes(response.content or b""),
+        "json": data,
+    }
+
+
 def _by_design(what: str, why: str) -> StoreApiError:
     """"Bu uç bilerek yok" hatası — nedeni SÖYLER, 404 gibi davranmaz."""
     return StoreApiError(
@@ -381,6 +417,9 @@ class StoreApi:
         dry_run: bool | None = None,
         action: str = "",
         raw: bool = False,
+        #: Yanıt PDF de olabilir JSON da; ikisi de künyesiyle birlikte gelir
+        #: (bkz. `binary_envelope`). `raw` ile birlikte KULLANILMAZ.
+        raw_envelope: bool = False,
         reason_in_body: bool = True,
         #: Uca özel başlık. Yalnız GET'te geçerlidir; yazma yolunda gerekçe ve
         #: idempotensi başlıkları tek yerden kurulur ve dışarıdan ezilmemeli.
@@ -389,18 +428,30 @@ class StoreApi:
         verb = method.upper()
         if verb == "GET":
             return await self._send(verb, path, params=_drop_channel(path, params), raw=raw,
-                                    headers=headers)
+                                    raw_envelope=raw_envelope, headers=headers)
 
         return await self._write(
             verb, path, params=params, body=body, reason=reason, actor=actor,
-            dry_run=dry_run, action=action, raw=raw, reason_in_body=reason_in_body,
+            dry_run=dry_run, action=action, raw=raw, raw_envelope=raw_envelope,
+            reason_in_body=reason_in_body,
         )
+
+    def effective_dry_run(self, dry_run: bool | None) -> bool:
+        """Bu çağrıda kuru prova AÇIK MI — `_write` ile AYNI kural.
+
+        Gövdesine `dryRun` alanını KENDİSİ koyması gereken uçlar var: mağaza
+        tarafında o alanın varsayılanı `true` ve alan hiç gitmezse gerçek
+        istek sessizce kuru provaya düşer (bkz. `bbd_dispatch_order`). O uçlar
+        bayrağı buradan öğrenir; iki ayrı yerde iki ayrı kural yazılmaz.
+        """
+        return self._dry_run_default if dry_run is None else bool(dry_run)
 
     async def _write(
         self, verb: str, path: str, *, params: dict[str, Any] | None, body: Any,
         reason: str, actor: str, dry_run: bool | None, action: str, raw: bool,
         files: dict[str, Any] | None = None, form: dict[str, Any] | None = None,
         summary: dict[str, Any] | None = None, reason_in_body: bool = True,
+        raw_envelope: bool = False,
     ) -> Any:
         """Yazma zinciri: gerekçe → denetim izi → acil fren → kuru prova → istek.
 
@@ -417,7 +468,7 @@ class StoreApi:
                 code="reason_required",
             )
 
-        dry = self._dry_run_default if dry_run is None else bool(dry_run)
+        dry = self.effective_dry_run(dry_run)
         request_id = AuditTrail.new_request_id()
         payload = dict(body) if isinstance(body, dict) else body
         fields = dict(form or {})
@@ -475,7 +526,7 @@ class StoreApi:
 
         try:
             result = await self._send(
-                verb, path, params=params, body=payload, raw=raw,
+                verb, path, params=params, body=payload, raw=raw, raw_envelope=raw_envelope,
                 files=files, form=fields or None,
                 headers={
                     "X-Bbd-Request-Id": request_id,
@@ -497,11 +548,18 @@ class StoreApi:
         self, verb: str, path: str, *, params: dict[str, Any] | None = None,
         body: Any = None, raw: bool = False, headers: dict[str, str] | None = None,
         files: dict[str, Any] | None = None, form: dict[str, Any] | None = None,
+        raw_envelope: bool = False,
     ) -> Any:
         token = await self._bearer()
+        if raw_envelope:
+            # İki biçimi de kabul ettiğimizi SÖYLERİZ: uç etiketi bulduysa PDF,
+            # bulamadıysa nedenini anlatan JSON döndürecek.
+            accept = "application/pdf, application/json"
+        else:
+            accept = "application/octet-stream" if raw else "application/json"
         request_headers = {
             "Authorization": f"Bearer {token}",
-            "Accept": "application/octet-stream" if raw else "application/json",
+            "Accept": accept,
         }
         request_headers.update(headers or {})
 
@@ -553,6 +611,8 @@ class StoreApi:
 
         if response.status_code >= 400:
             self._fail(verb, path, response)
+        if raw_envelope:
+            return binary_envelope(response)
         if raw:
             return response.content
         return response.json() if response.content else None
@@ -579,6 +639,12 @@ class StoreApi:
         # aşağıda 404'ü ikiye ayırmak için kullanılır.
         inner = data.get("error") if isinstance(data, dict) else None
         reached_controller = isinstance(inner, dict)
+        # `details` bloğu ZARFTAN ALINIR ve istisnaya iliştirilir. Bazı retler
+        # mesaja sığmayan yapılı bir açıklama taşıyor (Geliver canlıya geçiş
+        # engelleri, taşıyıcı ayrışması); onu burada düşürmek, ekranı "neden
+        # olmadı" sorusunu tahminle yanıtlamaya zorlardı.
+        details = inner.get("details") if reached_controller else None
+        details = details if isinstance(details, dict) else None
         if reached_controller and inner.get("message"):
             message = mask_text(str(inner["message"]))
         elif isinstance(data, dict):
@@ -609,7 +675,7 @@ class StoreApi:
             # personel olmayan bir dağıtımı beklerdi. Ayrımı yanıtın zarfı
             # kanıtlıyor — tahmin değil, ölçüm.
             raise StoreApiError(f"Kayıt bulunamadı ({verb} {path}): {message}",
-                                status=status, code="not_found")
+                                status=status, code="not_found", details=details)
         if status == 404 and path.startswith(BBD):
             raise StoreApiError(
                 f"BBD'ye özel uç henüz yayında değil: {path}. Mağaza tarafındaki "
@@ -636,10 +702,10 @@ class StoreApi:
             # Öznitelik silmede "bu öznitelik ailelerde kullanılıyor" yanıtı
             # buradan gelir; genel HTTP metni yerine nedeni söylemek gerekir.
             raise StoreApiError(f"Mağaza bu işlemi çakışma yüzünden reddetti: {message}",
-                                status=status, code="conflict")
+                                status=status, code="conflict", details=details)
         if status == 422:
             raise StoreApiError(f"Mağaza isteği doğrulayamadı: {message}",
-                                status=status, code="validation")
+                                status=status, code="validation", details=details)
         if status == 429:
             raise StoreApiError(
                 "Mağaza hız sınırı doldu (dakikada 60 istek). Biraz sonra yeniden deneyin.",
@@ -647,8 +713,9 @@ class StoreApi:
             )
         if status >= 500:
             raise StoreApiError(f"Mağaza hata verdi ({status}): {message}",
-                                status=status, code="server")
-        raise StoreApiError(f"{verb} {path} → {status}: {message}", status=status, code="http")
+                                status=status, code="server", details=details)
+        raise StoreApiError(f"{verb} {path} → {status}: {message}", status=status, code="http",
+                            details=details)
 
     # ------------------------------------------------------------ yardımcı
 
@@ -2330,9 +2397,135 @@ class StoreApi:
                                    body=payload, reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_create_shipment")
 
+    async def bbd_dispatch_order(self, order_id: int, *, payload: dict[str, Any], reason: str,
+                                 actor: str = "",
+                                 dry_run: bool | None = None) -> dict[str, Any]:
+        """"KARGOYA VER" — POST /api/admin/bbd/orders/{orderId}/dispatch.
+
+        TEK TIK, ZİNCİRİN TAMAMI: gönderi açılır → teklif alınır → MÜŞTERİNİN
+        ÖDEDİĞİ firma yeğlenir → etiket SATIN ALINIR → takip numarası siparişe
+        yazılır. PARA HARCAR ve geri alınamaz.
+
+        YANIT İKİ BİÇİMDE GELİR, ikisi de `binary_envelope` zarfıyla döner:
+          · başarı  → `application/pdf` gövde + künye `X-Bbd-*` BAŞLIKLARINDA
+            (`Shipment-Id · Order-Id · Tracking-Number · Provider · Purchased`)
+          · etiket indirilemedi → 200 + JSON (`labelReady: false`)
+        Takip numarası PDF gövdeye sığmadığı için başlıkta gelir; `raw=True`
+        başlıkları atardı, `raw=False` PDF'i JSON sanardı.
+
+        `dryRun` GÖVDEYE AÇIKÇA KONUR. Mağaza tarafındaki varsayılan `true`
+        ("yazım hatası sigortası"); alan hiç gitmezse gerçek bir "kargoya ver"
+        isteği SESSİZCE kuru provaya düşer ve ekran "gönderildi" derken paket
+        yerinde durur. `_write` kuru provada aynı alanı `true` yapar, yani
+        güvenli yön her iki uçta da korunur.
+
+        Gerekçe gövdeye KONULMAZ (`reason_in_body=False`): uç gövdeyi sıkı
+        doğruluyor ve tanımadığı alanı 422 ile reddediyor. Gerekçe zaten
+        `X-Bbd-Reason` başlığıyla gidiyor ve mağaza onu oradan okuyor.
+        """
+        body = {**payload, "dryRun": self.effective_dry_run(dry_run)}
+        return await self._request("POST", f"{BBD}/orders/{int(order_id)}/dispatch",
+                                   body=body, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_dispatch_order", raw_envelope=True,
+                                   reason_in_body=False)
+
     async def bbd_shipment_offers(self, shipment_id: int) -> dict[str, Any]:
         """Taşıyıcı teklifleri — GET /api/admin/bbd/shipments/{id}/offers."""
         return await self._collection(f"{BBD}/shipments/{int(shipment_id)}/offers")
+
+    # ------------------------------------------------- Geliver kurulum ayarı
+
+    async def bbd_geliver_settings(self, *, probe: bool = True) -> dict[str, Any]:
+        """Geliver kurulum durumu — GET /api/admin/bbd/settings/geliver.
+
+        TOKENIN DEĞERİ GELMEZ, GELEMEZ. Yanıt `hasToken` bayrağı ve son dört
+        karakterlik `tokenMask` taşır; mağaza tarafındaki beyaz liste tokenı
+        gövdeye hiç koymuyor. Bir ekranın maskeyi "token" sanıp geri
+        göndermesi de engelli: yazma ucu `enc:` ya da maske biçimli değeri
+        reddediyor.
+
+        `probe=True` (varsayılan) mağazanın Geliver'a OKUMA çağrısı yapmasını
+        ister: token çalışıyor mu, gönderici adres çözülüyor mu, webhook
+        kayıtlı mı. Üçü de `checks`/`webhook` bloklarında döner ve ağ hatası
+        yanıtı düşürmez — `null` "denetlenmedi" demektir.
+
+        `probe=False` ağı hiç yormadan yalnız ayar satırlarını okur; ekran
+        yeniden çizilirken (ör. sekme değişimi) bu yeter.
+        """
+        return await self._item(f"{BBD}/settings/geliver",
+                                {"probe": "true" if probe else "false"})
+
+    async def bbd_update_geliver_settings(self, *, settings: dict[str, Any], reason: str,
+                                          actor: str = "",
+                                          dry_run: bool | None = None) -> dict[str, Any]:
+        """Geliver ayarlarını yazar — PUT /api/admin/bbd/settings/geliver.
+
+        GÖVDE `settings` NESNESİDİR (POS terminal ucuyla aynı biçim): alanları
+        gövdenin köküne serpiştirmek, `dryRun` gibi zarf alanlarıyla ayar
+        alanlarının aynı düzlemde yaşaması demekti.
+
+        YAZILABİLİR BEŞ ALAN: `api_token` · `active` · `go_live` · `test_mode`
+        · `sender_address_id`. Başka bir ad SESSİZCE YOK SAYILMAZ, 422 alır —
+        `golive` yazan bir istemcinin "canlıya aldım" sanması engellenir.
+
+        BOŞ `api_token` MEVCUDU SİLMEZ. Ekran formun tamamını gönderdiğinde
+        token kutusu boş gelir; boşu yazmak mağazanın kargo kimliğini silmek
+        olurdu ve belirtisi ancak ilk gerçek siparişte görünürdü. Tokenı
+        gerçekten kaldırmanın yolu `active: false` ya da YENİSİYLE
+        değiştirmektir.
+
+        `go_live: true` ÖN DENETİMDEN GEÇER. Token yoksa, entegrasyon kurulu
+        değilse, Geliver'a ulaşılamıyorsa ya da gönderici adres çözülemiyorsa
+        istek 422 `GELIVER_PRECHECK_FAILED` ile REDDEDİLİR ve nedenler
+        `details.blockers` içinde kod+metin olarak gelir. Uyarı verip yine de
+        açmak, ilk gerçek siparişte "müşteri kargo ücretini ödedi ama gönderi
+        açılamıyor" durumunu üretirdi.
+
+        Gerekçe gövdeye KONULMAZ (`reason_in_body=False`): uç `settings`
+        dışındaki alanları okumuyor ve bilinmeyen ayar adını reddediyor.
+        Gerekçe `X-Bbd-Reason` başlığıyla gidiyor.
+        """
+        return await self._request("PUT", f"{BBD}/settings/geliver",
+                                   body={"settings": dict(settings or {}),
+                                         "dryRun": self.effective_dry_run(dry_run)},
+                                   reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_update_geliver_settings",
+                                   reason_in_body=False)
+
+    async def bbd_test_geliver(self) -> dict[str, Any]:
+        """"Bağlantıyı sına" — GET /api/admin/bbd/settings/geliver/test.
+
+        GET'TİR VE YAZMAZ: yalnız Geliver'a okuma çağrısı yapar (il listesi +
+        gönderici adres). `bbd_geliver_settings(probe=True)` ile farkı,
+        mağazanın ÖNBELLEĞİ ATLAMASIDIR — gönderici adres orada 24 saat
+        önbellekli ve "şimdi dene" o anki gerçeği sorar.
+        """
+        return await self._item(f"{BBD}/settings/geliver/test")
+
+    async def bbd_shipment_webhook(self) -> dict[str, Any]:
+        """Kayıtlı webhook adresleri — GET /api/admin/bbd/shipments/webhook.
+
+        Webhook KAYITLI DEĞİLSE gönderi durumu kendiliğinden güncellenmez;
+        ekran bunu söyleyebilsin diye okunur. Kaydın kendisi ayrı bir eylemdir
+        (`bbd_register_shipment_webhook`) ve para harcama izni ister.
+        """
+        return await self._item(f"{BBD}/shipments/webhook")
+
+    async def bbd_register_shipment_webhook(self, *, url: str = "", reason: str,
+                                            actor: str = "",
+                                            dry_run: bool | None = None) -> dict[str, Any]:
+        """Webhook'u Geliver hesabına kaydeder — POST .../shipments/webhook.
+
+        `url` boşsa mağazanın kendi varsayılan adresi kullanılır; elle adres
+        yazmak yalnız çoklu kurulum içindir. Mağaza tarafında `dryRun`
+        varsayılanı `true` ve uç `sales.geliver.purchase` istiyor.
+        """
+        body: dict[str, Any] = {}
+        if str(url or "").strip():
+            body["url"] = str(url).strip()
+        return await self._request("POST", f"{BBD}/shipments/webhook", body=body,
+                                   reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_register_shipment_webhook")
 
     async def bbd_purchase_shipment(self, shipment_id: int, *, offer_id: str, reason: str,
                                     actor: str = "",
@@ -2364,8 +2557,20 @@ class StoreApi:
                                    action="bbd_sync_shipment")
 
     async def bbd_shipment_label(self, shipment_id: int) -> bytes:
-        """Kargo etiketi PDF — GET /api/admin/bbd/shipments/{id}/label (ham bayt)."""
-        return await self._request("GET", f"{BBD}/shipments/{int(shipment_id)}/label", raw=True)
+        """Kargo etiketi — GET /api/admin/bbd/shipments/{id}/label. HAM PDF.
+
+        UÇ DEĞİŞTİ (mağaza tarafı): eskiden `{labelUrl: …}` diye JSON künye
+        dönüyordu, artık PDF'in KENDİSİ geliyor. Bu metot zaten ham bayt
+        istiyordu; `Accept` başlığı da PDF diyor ki sunucu künye gövdesine
+        düşmesin. Künye gerekiyorsa uç `?format=json` ile alınır — ETİKETİ
+        BASACAK olan taraf için künye değil PDF anlamlıdır.
+
+        Etiket henüz satın alınmadıysa uç 409 (`LABEL_NOT_READY`) döner ve
+        geçit onu `conflict` koduna çevirir: "etiket yok" ile "gönderi yok"
+        birbirine karışmaz.
+        """
+        return await self._request("GET", f"{BBD}/shipments/{int(shipment_id)}/label", raw=True,
+                                   headers={"Accept": "application/pdf"})
 
     async def bbd_carriers(self) -> dict[str, Any]:
         """Taşıyıcı tanımları — GET /api/admin/bbd/shipping/rates → `carriers`.

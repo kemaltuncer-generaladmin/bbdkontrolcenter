@@ -45,3 +45,14 @@ ready_status: "processing"
 provider: "geliver"
 test_carrier_title: "BBD Test Kargo"
 inventory_source_id: 1     # mağazada tek depo (id=1, "Varsayılan")
+
+# --- KARGOYA VER · OTOMATİK BASIM -------------------------------------------
+# "Kargoya ver" tek tıkla gönderiyi yola çıkarır ve İKİ belgeyi varsayılan
+# yazıcıya gönderir: KARGO ETİKETİ ve FATURA. Kargoya teslim fişi (`handover`)
+# bu akışa GİRMEZ — kullanıcının kararı: "fiş yok". Fiş kodu duruyor ve
+# sihirbazdaki düğmesinden elle basılabiliyor.
+#
+# VARSAYILAN AÇIK. Kapatılırsa belgeler yine üretilip rapor klasörüne yazılır,
+# yalnız yazıcıya gitmez; ekran dosya yolunu gösterir.
+# Ekrandaki "Ekran tercihleri" kartı bu ayarı EZEBİLİR.
+auto_print: true

@@ -50,6 +50,42 @@
   background: color-mix(in srgb, var(--accent) 8%, #fff);
 }
 
+/* --------------------------------------------------------- KARGOYA VER */
+
+/* Gerekçe alanı listenin ÜSTÜNDE durur ve akışı durdurmaz: onay penceresi
+   yoktur, alan boş bırakılabilir. Bu yüzden görsel olarak da bir kapı gibi
+   değil, bir not alanı gibi görünür. */
+.sh-reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.sh-reason .kit-input { flex: 1 1 260px; min-width: 200px; }
+
+.sh-dispatch { display: inline-flex; }
+.sh-dispatch .kit-btn { white-space: nowrap; }
+
+.sh-dispatch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+/* Takip numarası ekranın en görünür şeyidir: kimse onu elle girmiyor, zincirin
+   çıktısı ve müşteriye verilecek olan bu. */
+.sh-track-big {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 6px 10px;
+}
+
 /* ------------------------------------------------------------------ hücre */
 
 .sh-sub { font-size: 11px; color: var(--soft); }
@@ -187,3 +223,35 @@
 
 .sh-problems:empty { display: none; }
 .sh-problems { display: flex; flex-direction: column; gap: 6px; }
+
+/* ------------------------------------------------------- Geliver kurulumu */
+
+.sh-gl-status { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+.sh-gl-line { display: flex; gap: 16px; flex-wrap: wrap; }
+
+/* Engel satırı İKİ KATLIDIR: üstte mağazanın kendi cevabı, altta "sıradaki
+   adım". İkisini tek satıra sıkıştırmak, sebebi eylemin içinde kaybederdi. */
+.sh-gl-blockers { display: flex; flex-direction: column; gap: 8px; }
+.sh-gl-blocker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn, #c98a00);
+  background: var(--surface-2, transparent);
+}
+
+.sh-gl-checks { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+.sh-gl-check { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Webhook adresi uzun ve KIRPILMAZ: yanlış adresi ancak tamamını görerek
+   fark edersiniz. */
+.sh-gl-url {
+  display: block;
+  padding: 6px 8px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.sh-gl-refused { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }

@@ -14,7 +14,7 @@ Grup: **BBD Store** · CSS öneki: `sh` · Rapor rafı:
 
 | Sekme | İş |
 |---|---|
-| **Kargoya hazır** | Ödemesi alınmış ama kargolanmamış siparişler; toplu seçim → gönderi sihirbazı |
+| **Kargoya hazır** | Ödemesi alınmış ama kargolanmamış siparişler; satırda **«Kargoya ver»** (tek tık, ara onay yok) · toplu seçim → gönderi sihirbazı |
 | **Gönderiler** | Takip, hareket geçmişi, toplu etiket, manifesto, senkron, iptal/iade |
 | **Taşıyıcılar** | Maskeli API kimlikleri, sözleşme matrisi, `Bağlantıyı sına`, ekran tercihleri |
 | **Ücretlendirme** | Desi kademeleri, ücretsiz kargo eşiği, kapıda ödeme bedeli, teslim vaadi |
@@ -24,6 +24,55 @@ Grup: **BBD Store** · CSS öneki: `sh` · Rapor rafı:
 **Sağladığı yetenek:** `store.shipment.byOrder` — bir siparişin gönderileri ve
 son hareketleri. Siparişler, Talepler ve İadeler ekranları okur. Yüzey tek
 metottur (`by_order`); yazma işlemleri paylaşılmaz.
+
+---
+
+## «Kargoya ver» — tek tık
+
+Kargoya hazır listesindeki her satırda bir düğme durur. Tıklanınca mağazadaki
+`POST /api/admin/bbd/orders/{id}/dispatch` ucu zincirin tamamını çalıştırır:
+
+```
+gönderi aç → teklif al → MÜŞTERİNİN ödediği firmayı yeğle → ETİKET SATIN AL
+          → takip numarasını siparişe yaz → PDF'i döndür
+```
+
+Kontrol Merkezi tarafındaki iş, dönen etiketi ve siparişin faturasını kâğıda
+dökmektir.
+
+**Ara onay adımı yoktur.** Kullanıcının kararı: *"sipariş seçince 'kargoya ver'
+dedik mi o sipariş yola çıkacak zaten. PARA HARCASIN."* Onay penceresi
+açılmaz, `dryRun` varsayılanı `false`'tur. Gerekçe alanı listenin üstünde
+durur ve **boş bırakılabilir**: boşsa denetim defterine otomatik bir metin
+yazılır (`dispatch_reason`), akış durmaz. Koruma izin anahtarındadır —
+`store_shipping.purchase`, etiket satın almayla aynı anahtar.
+
+**Takip numarası elle girilmez.** Gövde PDF olduğu için künye `X-Bbd-*`
+başlıklarında gelir; geçit ikisini birden taşıyan bir zarf döndürür
+(`store_api.binary_envelope`). Numara ekranda büyük ve kopyalanabilir durur,
+çünkü siparişe yazılmış olan odur. Yanıtta gelmezse **uydurulmaz**; ekran
+"gelmedi" der.
+
+**Otomatik basılan iki belge: kargo etiketi ve fatura.** Kargoya teslim fişi
+(`handover`) bu akışa **girmez** — kullanıcının kararı "fiş yok". Fişin kodu
+duruyor ve sihirbazdaki düğmesinden elle basılıyor.
+
+**Etiket ancak satın alındıktan sonra vardır**, basım o adımdan sonra
+tetiklenir. Uç etiketi indiremediyse (200 + `labelReady:false`) kâğıt çıkmaz;
+gönderi açılmıştır ve ekran "etiketi yeniden al" düğmesini gösterir.
+
+**Yazıcı yoksa iş durmaz (K7).** Belgeler her hâlükârda rapor klasörüne 0600
+ile yazılır; basılamayan satır "yazdırılamadı" der ve dosya yolunu gösterir.
+`auto_print: false` yapılırsa (ya da ekran tercihinden kapatılırsa) belgeler
+yine üretilir, yalnız yazıcıya gönderilmez.
+
+**Çift basım koruması.** Aynı gönderi ikinci kez kendiliğinden basılmaz;
+denetim defterindeki `auto_print` satırı buna bakar. Elle **"Tekrar yazdır"**
+bu kapıyı hiç görmez: kasıtlı tekrar ile kazara ikinci basım ayrı şeylerdir.
+
+**Test yolu Geliver'a hiç uğramaz.** `provider: "bagisto"` seçiliyse istek
+Bagisto'nun kendi gönderi ucuna gider; `bbd_dispatch_order` çağrılmaz, para
+harcanmaz, takip numarası `TEST-` önekiyle bizim ürettiğimizdir.
 
 ---
 

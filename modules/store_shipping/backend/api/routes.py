@@ -204,6 +204,57 @@ async def create_shipment(
                                            provider=body.provider)
 
 
+# ==================================================== KARGOYA VER (tek tık)
+
+class DispatchBody(BaseModel):
+    """"Kargoya ver" gövdesi. GEREKÇE ZORUNLU DEĞİL — bilerek.
+
+    Diğer para harcayan uçlarda gerekçe `min_length=20` ile şemada dayatılır.
+    Burada dayatılmaz çünkü kullanıcının kararı açık: "sipariş seçince
+    'kargoya ver' dedik mi o sipariş yola çıkacak zaten." Gerekçe alanı ekranda
+    durur, isteyen doldurur; boş gelirse servis otomatik bir metin yazar
+    (`dispatch_reason`) ve denetim defteri yine dolu kalır.
+
+    `dryRun` VARSAYILANI `False`: bu uçta amaç gerçekten göndermektir. Kuru
+    prova yeteneği duruyor ama açıkça istenmeli.
+    """
+
+    carrier: str = Field(default="", max_length=32)
+    #: "geliver" (gerçek) · "bagisto" (test, Geliver'a HİÇ uğramaz) · "" (ayar).
+    provider: str = Field(default="", max_length=16)
+    offerId: str = Field(default="", max_length=120)
+    desi: float = Field(default=0, ge=0, le=100_000)
+    weight: float = Field(default=0, ge=0, le=100_000)
+    packages: int = Field(default=1, ge=1, le=99)
+    payer: str = Field(default="sender", max_length=16)
+    cod: int = Field(default=0, ge=0)      # kuruş
+    note: str = Field(default="", max_length=255)
+    reason: str = Field(default="", max_length=255)
+    dryRun: bool = False
+    #: Ayarı bu istek için ezer. `None` = ayardaki/tercihteki değer.
+    autoPrint: bool | None = None
+
+
+@router.post("/orders/{order_id}/dispatch")
+async def dispatch(
+    order_id: int,
+    body: DispatchBody,
+    user: CurrentUser = requires("store_shipping.purchase"),
+) -> dict[str, Any]:
+    """TEK TIK: gönderi → teklif → etiket SATIN AL → takip no → etiket+fatura bas.
+
+    PARA HARCAR, bu yüzden etiket satın almayla AYNI izni ister
+    (`store_shipping.purchase`). Ara onay adımı YOKTUR; koruma izin
+    anahtarında ve denetim defterindedir (K9 — arayüzde gizlemek yetmez).
+    """
+    return await service().dispatch(order_id, carrier=body.carrier, provider=body.provider,
+                                    offer_id=body.offerId, desi_value=body.desi,
+                                    weight=body.weight, packages=body.packages,
+                                    payer=body.payer, cod=body.cod, note=body.note,
+                                    reason=body.reason, actor=user.full_name,
+                                    dry_run=body.dryRun, auto_print=body.autoPrint)
+
+
 # ================================================== PARA HARCAYAN UÇLAR
 
 class PurchaseBody(BaseModel):
@@ -372,6 +423,9 @@ class SettingsBody(BaseModel):
     labelFormat: str = Field(default="", max_length=32)
     defaultCarrier: str = Field(default="", max_length=32)
     idleDays: int | None = Field(default=None, ge=1, le=30)
+    #: "Kargoya ver" sonrası etiket ve fatura kendiliğinden bassın mı.
+    #: `None` = dokunma; tercihi silmek için değil, değiştirmemek için.
+    autoPrint: bool | None = None
     reason: str = Field(min_length=10, max_length=255)
 
 
@@ -382,8 +436,99 @@ async def save_settings(
 ) -> dict[str, Any]:
     return await service().save_settings(label_format=body.labelFormat,
                                          default_carrier=body.defaultCarrier,
-                                         idle_days=body.idleDays, reason=body.reason,
-                                         actor=user.full_name)
+                                         idle_days=body.idleDays, auto_print=body.autoPrint,
+                                         reason=body.reason, actor=user.full_name)
+
+
+# ======================================================= GELİVER KURULUMU
+#
+# BU UÇLAR YUKARIDAKİ `/settings` İLE AYNI ŞEY DEĞİLDİR. Orası bu EKRANIN
+# tercihleri (etiket biçimi, gecikme eşiği), burası MAĞAZANIN kargo
+# entegrasyonu: checkout'ta müşterinin gördüğü kargo ücretini ve gönderi
+# açılıp açılamayacağını belirler.
+#
+# YAZMA AYRI ANAHTAR İSTER (`store_shipping.integration`) ve gerekçesi para
+# harcayan uçlarla aynı uzunluktadır: canlı modu açmak mağazayı gerçek
+# ücretlendirmeye sokar, token değiştirmek kargo kimliğini değiştirir.
+
+@router.get("/geliver")
+async def geliver(
+    probe: bool = Query(True),
+    user: CurrentUser = requires("store_shipping.manage"),
+) -> dict[str, Any]:
+    """Geliver kurulum durumu. TOKENIN DEĞERİ GELMEZ — maske ve bayrak gelir.
+
+    `probe=false` mağazanın Geliver'a okuma çağrısı yapmasını ENGELLER; ekran
+    yeniden çizilirken (sekme değişimi) ağ boşuna yorulmasın diye vardır.
+    """
+    return await service().geliver_settings(probe=probe)
+
+
+@router.get("/geliver/test")
+async def geliver_test(
+    user: CurrentUser = requires("store_shipping.manage"),
+) -> dict[str, Any]:
+    """"Bağlantıyı sına" — Geliver'a YALNIZ OKUMA çağrısı, önbelleksiz.
+
+    GET'tir ve gerekçe İSTEMEZ: hiçbir şey değişmez. Değiştirmeyen bir sınama
+    için gerekçe istemek, personeli her denemede anlamsız bir metin yazmaya
+    zorlardı.
+    """
+    return await service().test_geliver()
+
+
+class GeliverBody(BaseModel):
+    #: BOŞ = "dokunma". Mevcut tokenı SİLMEZ; silmenin yolu `active: false`
+    #: ya da tokenı YENİSİYLE değiştirmektir. Şema bu yüzden boşa izin verir.
+    apiToken: str = Field(default="", max_length=512)
+    active: bool | None = None
+    goLive: bool | None = None
+    testMode: bool | None = None
+    #: `None` = "dokunma", `""` = "hesabın varsayılan adresini kullan". İkisi
+    #: AYRI şeydir ve tip bu yüzden `str | None`.
+    senderAddressId: str | None = Field(default=None, max_length=64)
+    reason: str = Field(min_length=PURCHASE_REASON, max_length=255)
+    dryRun: bool = True
+
+
+@router.post("/geliver")
+async def save_geliver(
+    body: GeliverBody,
+    user: CurrentUser = requires("store_shipping.integration"),
+) -> dict[str, Any]:
+    """Geliver ayarlarını yazar. TOKEN DAHİL — ayrı izin + 20 karakter gerekçe.
+
+    `goLive` açılırken mağaza ön denetim yapar (token · kurulu · API erişimi ·
+    gönderici adres) ve geçemezse REDDEDER. Nedenler yanıtın `blockers`
+    alanında kod+metin olarak döner; ekran onları olduğu gibi gösterir.
+    """
+    draft = body.model_dump(exclude_none=True, exclude={"reason", "dryRun"})
+    return await service().save_geliver_settings(draft=draft, reason=body.reason,
+                                                 actor=user.full_name, dry_run=body.dryRun)
+
+
+class WebhookBody(BaseModel):
+    #: Boş = mağazanın kendi varsayılan adresi. Elle adres yalnız çoklu
+    #: kurulum içindir.
+    url: str = Field(default="", max_length=255)
+    reason: str = Field(min_length=10, max_length=255)
+    dryRun: bool = True
+
+
+@router.post("/geliver/webhook")
+async def register_webhook(
+    body: WebhookBody,
+    user: CurrentUser = requires("store_shipping.integration"),
+) -> dict[str, Any]:
+    """Webhook'u Geliver hesabına kaydeder — GÖNDERİ DURUMUNUN tek otomatik yolu.
+
+    Kayıtsız webhook sessiz bir arızadır: kargo yola çıkar ama durum hiç
+    güncellenmez. Ayarları kaydetmekten AYRI düğmedir çünkü Geliver hesabında
+    kayıt açar; her "kaydet"te sessizce hesapta bir şey değiştirmek doğru
+    değildi.
+    """
+    return await service().register_webhook(url=body.url, reason=body.reason,
+                                            actor=user.full_name, dry_run=body.dryRun)
 
 
 # ================================================================= belge

@@ -29,7 +29,7 @@ from typing import Any
 
 from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir, write_private
 
-from . import analytics, labels, shipping
+from . import analytics, geliver, labels, shipping
 
 #: Rapor/CSV için tam tarama tavanı. 30 günde binlerce gönderi olmaz; tavan
 #: bozuk `meta` yüzünden sonsuz sayfalamayı engellemek içindir.
@@ -37,9 +37,106 @@ SCAN_CAP = 4_000
 
 REPORT_KINDS = ("labels", "manifest", "performance", "receipt", "handover")
 
+#: "Kargoya ver" otomatik basımının denetim eylemi. ÇİFT BASIM KORUMASI buna
+#: dayanır: aynı gönderi için `ok` sonuçlu bir satır varsa ikinci kez
+#: kendiliğinden basılmaz. Elle "tekrar yazdır" bu kaydı hiç okumaz — kasıtlı
+#: bir tekrar ile kazara ikinci basım ayrı şeylerdir.
+AUTO_PRINT_ACTION = "auto_print"
+
+#: Otomatik basılan İKİ belge. Kullanıcının kararı: "fiş yok".
+#: `handover` (kargoya teslim fişi) koddan SİLİNMEDİ, yalnız otomatik akıştan
+#: çıkarıldı; sihirbazdaki düğmesinden elle basılmaya devam ediyor.
+DISPATCH_DOCUMENTS = ("label", "invoice")
+
 
 def _now() -> str:
     return shipping.now_iso()
+
+
+#: Künye başlıklarında "evet" sayılan yazımlar. Sunucular bu bayrağı `1`,
+#: `true`, `yes` diye üç ayrı biçimde yazabiliyor; birini tanıyıp diğerini
+#: tanımamak "etiket satın alınmadı" diyen sessiz bir yanlış üretirdi.
+_TRUE_WORDS = ("1", "true", "yes", "evet", "on")
+
+
+def _flag(value: Any) -> bool:
+    return shipping.fold(value) in _TRUE_WORDS
+
+
+def dispatch_info(envelope: Any) -> dict[str, Any]:
+    """"Kargoya ver" yanıtını tek bir künyeye indirger. AĞA ÇIKMAZ, saf.
+
+    Uç İKİ BİÇİMDE yanıt verir ve ikisi de burada karşılanır:
+
+      · `application/pdf` → gövde ETİKETİN KENDİSİ, künye `X-Bbd-*`
+        başlıklarında (takip numarası PDF gövdesine sığmaz).
+      · `application/json` → etiket indirilemedi; `labelReady: false` ve
+        nedeni gövdede.
+
+    TAKİP NUMARASI UYDURULMAZ. Başlık da gövde de vermiyorsa boş döner ve
+    ekran "takip numarası gelmedi" der; sipariş numarasını takip numarası
+    diye göstermek, müşteriye çalışmayan bir sorgu kodu verirdi.
+    """
+    data = envelope if isinstance(envelope, dict) else {}
+    headers = data.get("headers") if isinstance(data.get("headers"), dict) else {}
+    body = data.get("json") if isinstance(data.get("json"), dict) else {}
+    raw = bytes(data.get("content") or b"")
+    # "%PDF" ile başlamayan gövde etiket DEĞİLDİR. 406/500 gövdesi de
+    # `application/pdf` başlığıyla gelebiliyor; kâğıda dökülmeden önce
+    # dosyanın kendisine bakılır.
+    label = raw if raw[:4] == b"%PDF" else b""
+
+    tracking = shipping.text(headers.get("x-bbd-tracking-number")) or shipping.text(
+        _first_of(body, "trackingNumber", "tracking_number", "trackingNo"))
+    shipment_id = shipping.as_int(headers.get("x-bbd-shipment-id")) or shipping.as_int(
+        _first_of(body, "shipmentId", "shipment_id", "id"))
+    provider = shipping.text(headers.get("x-bbd-provider")) or shipping.text(
+        _first_of(body, "provider", "carrier"))
+    purchased = _flag(headers.get("x-bbd-purchased")) or bool(body.get("purchased")) \
+        or bool(label)
+    label_ready = bool(label) or bool(body.get("labelReady"))
+
+    warnings: list[str] = []
+    if not label_ready:
+        warnings.append(
+            shipping.text(_first_of(body, "message", "error"))
+            or "Etiket PDF'i indirilemedi. Gönderi açıldı; etiketi 'Etiketi yeniden bas' "
+               "ile alabilirsiniz.")
+    if not tracking:
+        warnings.append("Takip numarası yanıtta gelmedi; gönderiyi açıp doğrulayın.")
+
+    return {
+        "shipmentId": shipment_id,
+        "trackingNo": tracking,
+        "provider": provider,
+        "purchased": purchased,
+        "labelReady": label_ready,
+        "label": label,
+        "dryRun": bool(data.get("dryRun")),
+        "warnings": warnings,
+    }
+
+
+def _first_of(source: Any, *keys: str) -> Any:
+    if not isinstance(source, dict):
+        return None
+    for key in keys:
+        value = source.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def dispatch_reason(order_number: str) -> str:
+    """Gerekçe boş bırakıldığında denetim defterine yazılacak metin.
+
+    KULLANICININ KARARI: "kargoya ver" tek tıktır, ara onay adımı YOKTUR.
+    Gerekçe alanı ekranda durur ve isteyen doldurur, ama BOŞ BIRAKMAK AKIŞI
+    DURDURMAZ. Denetim defterinin boş kalmaması için otomatik bir cümle
+    yazılır; elle yazılmış gerekçeden bu cümleyle ayırt edilir.
+    """
+    return (f"Kargoya ver: {shipping.text(order_number) or '?'} siparişi tek tıkla "
+            "gönderildi, etiket satın alındı.")
 
 
 class PreviewError(RuntimeError):
@@ -105,6 +202,18 @@ class ShippingService:
         return max(1, min(200, shipping.as_int(self._config.get("label_batch_limit"), 60)))
 
     @property
+    def _auto_print_default(self) -> bool:
+        """Ayardaki otomatik basım tercihi. VARSAYILAN AÇIK.
+
+        Kapalı olsaydı "kargoya ver" düğmesi paketi hazırlar ama kâğıt
+        çıkmazdı; kullanıcı etiketi ayrıca aramak zorunda kalırdı.
+        """
+        value = self._config.get("auto_print", True)
+        if isinstance(value, str):
+            return shipping.fold(value) not in ("0", "false", "hayir", "kapali", "off")
+        return bool(value)
+
+    @property
     def _export_dir(self) -> Path:
         # HER ÇAĞRIDA yeniden çözülür: ay değişince klasör kendiliğinden değişir.
         return report_dir(self._category, subcategory=self._subcategory,
@@ -135,6 +244,17 @@ class ShippingService:
             self._log.warning("tercih yazılamadı", key=key, error=str(failure))
             return False
         return True
+
+    async def auto_print_on(self) -> bool:
+        """Otomatik basım açık mı — ekran tercihi ayarı EZER.
+
+        Ayar dosyası kurulumun kararı, tercih kullanıcının kararıdır; ikisi
+        çakışırsa başında duran kişi kazanır.
+        """
+        pref = await self._pref("auto_print")
+        if pref in ("0", "1"):
+            return pref == "1"
+        return self._auto_print_default
 
     async def _record(self, *, shipment_id: int = 0, order_id: int = 0, action: str,
                       reason: str = "", actor: str = "", result: str = "",
@@ -881,6 +1001,252 @@ class ShippingService:
         rows.sort(key=lambda row: row["price"])
         return {"ok": True, "connected": True, "error": "", "items": rows}
 
+    # ==================================================== KARGOYA VER (tek tık)
+
+    async def dispatch(self, order_id: int, *, carrier: str = "", offer_id: str = "",
+                       desi_value: float = 0.0, weight: float = 0.0, packages: int = 1,
+                       payer: str = "sender", cod: int = 0, note: str = "",
+                       reason: str = "", actor: str = "", dry_run: bool = False,
+                       provider: str = "",
+                       auto_print: bool | None = None) -> dict[str, Any]:
+        """"KARGOYA VER" — TEK TIK. PARA HARCAR, ARA ONAY SORMAZ.
+
+        KULLANICININ KARARI, AYNEN: "sipariş seçince 'kargoya ver' dedik mi o
+        sipariş yola çıkacak zaten. PARA HARCASIN. Testi seçersek Geliver'a
+        uğramasın."
+
+        Zincirin tamamı MAĞAZADA döner (tek istek): gönderi açılır → teklif
+        alınır → müşterinin ödediği firma yeğlenir → etiket SATIN ALINIR →
+        takip numarası siparişe yazılır. Burada yapılan iş, dönen etiketi ve
+        siparişin faturasını KÂĞIDA dökmek.
+
+        DÖRT KURAL:
+
+        1. ARA ONAY YOK. `dry_run` varsayılanı `False` ve gerekçe boş
+           gelebilir; boşsa `dispatch_reason` yazılır. Kuru prova yeteneği
+           kodda DURUR (`dry_run=True`) ama varsayılan akışta kullanılmaz.
+        2. TEST YOLU GELİVER'A UĞRAMAZ. `provider="bagisto"` seçilirse istek
+           `_test_shipment`e gider ve `bbd_dispatch_order` HİÇ çağrılmaz.
+        3. ETİKET ÖNCE VAR OLUR, SONRA BASILIR. Kâğıt yalnız satın alma
+           gerçekten olduysa ve PDF elimize geçtiyse çıkar.
+        4. YAZICI YOKSA İŞ DURMAZ (K7). Belgeler diske yazılır, ekran
+           "yazdırılamadı, dosya şurada" der — paket yine kargoya verilir.
+        """
+        yol = (shipping.fold(provider) or shipping.fold(self._config.get("provider"))
+               or "geliver")
+        if yol not in ("geliver", "bagisto"):
+            # Yazım hatası olan bir yol adı gerçek yola DÜŞMEZ: para harcardı.
+            return {"ok": False, "error": f"Bilinmeyen kargo yolu: {provider}"}
+
+        gerekce = shipping.text(reason) or dispatch_reason(str(order_id))
+
+        if yol == "bagisto":
+            # TEST YOLU: taşıyıcıya çıkılmaz, etiket satın alınmaz, para
+            # harcanmaz. Otomatik basım da yoktur — basılacak etiket yok;
+            # karşılığı olan kâğıt "kargo fişi"dir ve ekrandan elle basılır.
+            result = await self._test_shipment(int(order_id), carrier=carrier, note=note,
+                                               reason=gerekce, actor=actor, dry_run=dry_run)
+            return {**result, "dispatched": bool(result.get("ok")), "documents": [],
+                    "printed": [], "labelReady": False, "purchased": False,
+                    "orderId": int(order_id)}
+
+        body: dict[str, Any] = {
+            "packages": max(1, int(packages or 1)),
+            "payer": "receiver" if shipping.fold(payer) in ("receiver", "alici") else "sender",
+        }
+        # BOŞ ALAN GÖNDERİLMEZ. Taşıyıcı ve teklif seçilmediğinde uç
+        # MÜŞTERİNİN ödediği firmayı kendisi bulur; boş dize göndermek o
+        # tercihi "hiçbir firma" diye okutabilirdi.
+        if shipping.fold(carrier):
+            body["carrier"] = shipping.fold(carrier)
+        if shipping.text(offer_id):
+            body["offerId"] = shipping.text(offer_id)
+        if desi_value:
+            body["desi"] = round(max(0.0, float(desi_value)), 2)
+        if weight:
+            body["weight"] = round(max(0.0, float(weight)), 2)
+        if cod:
+            body["codAmount"] = shipping.from_kurus(max(0, int(cod)))
+        if shipping.text(note):
+            body["note"] = shipping.text(note)[:255]
+
+        # YAZMA ÖNCESİ İZ: istek zaman aşımına uğrarsa uzakta uygulanmış
+        # olabilir ve "ne yapmaya çalıştık" kaydı yerelde kalmalı.
+        await self._record(order_id=order_id, action="dispatch", reason=gerekce, actor=actor,
+                           result="denendi", detail=body)
+        try:
+            envelope = await self._api.bbd_dispatch_order(int(order_id), payload=body,
+                                                          reason=gerekce, actor=actor,
+                                                          dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(order_id=order_id, action="dispatch", reason=gerekce,
+                               actor=actor, result="hata", detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure), "orderId": int(order_id),
+                    "documents": [], "printed": []}
+
+        info = dispatch_info(envelope)
+        await self._record(shipment_id=info["shipmentId"], order_id=order_id,
+                           action="dispatch", reason=gerekce, actor=actor,
+                           result="dry_run" if info["dryRun"] else "ok",
+                           detail={"trackingNo": info["trackingNo"],
+                                   "provider": info["provider"],
+                                   "purchased": info["purchased"],
+                                   "labelReady": info["labelReady"]})
+        await self._emit("store.shipment.created", {
+            "orderId": int(order_id), "shipmentId": info["shipmentId"],
+            "carrier": info["provider"], "dryRun": info["dryRun"]})
+        if info["purchased"]:
+            await self._emit("store.shipment.purchased", {
+                "shipmentId": info["shipmentId"], "orderId": int(order_id),
+                "carrier": info["provider"], "trackingNo": info["trackingNo"],
+                "feeKurus": 0, "dryRun": info["dryRun"]})
+
+        wanted = await self.auto_print_on() if auto_print is None else bool(auto_print)
+        documents = await self._dispatch_documents(int(order_id), info)
+        printed = await self._print_documents(documents, info=info, order_id=int(order_id),
+                                              wanted=wanted, actor=actor, reason=gerekce)
+
+        warnings = list(info["warnings"])
+        if info["dryRun"]:
+            warnings.append("KURU PROVA: mağazaya gerçek istek gitmedi, etiket satın "
+                            "alınmadı, para harcanmadı.")
+        return {
+            "ok": True, "error": "", "dispatched": not info["dryRun"],
+            "orderId": int(order_id),
+            "shipmentId": info["shipmentId"],
+            "trackingNo": info["trackingNo"],
+            "provider": info["provider"],
+            "purchased": info["purchased"],
+            "labelReady": info["labelReady"],
+            "dryRun": info["dryRun"],
+            "documents": documents,
+            "printed": printed["done"],
+            "autoPrint": wanted,
+            "printSkipped": printed["skipped"],
+            "warnings": warnings,
+        }
+
+    async def _dispatch_documents(self, order_id: int, info: dict[str, Any]) -> list[dict[str, Any]]:
+        """Basılacak İKİ belge: KARGO ETİKETİ ve FATURA. Fiş YOK.
+
+        Etiket ancak SATIN ALINDIKTAN sonra vardır; uç PDF döndürmediyse bu
+        listede etiket satırı hiç olmaz ve ekran bunu söyler. Fatura etiketten
+        bağımsızdır: alınamazsa etiket yine basılır (ve tersi) — eksik belge
+        işi durdurmaz, sessiz de kalmaz (K7).
+        """
+        documents: list[dict[str, Any]] = []
+        stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M%S")
+        etiket = info["label"]
+
+        if etiket:
+            fmt = self._default_format
+            try:
+                # Taşıyıcının PDF'i kendi ölçüsünde gelir; yazıcının kâğıdına
+                # YERLEŞTİRİLİR. `pypdf` yoksa ham PDF olduğu gibi yazılır —
+                # eğri basılmış bir etiket, hiç basılmamış etiketten iyidir.
+                content = labels.compose([etiket], fmt)
+            except labels.LabelError as failure:
+                content = etiket
+                self._log.warning("etiket sayfaya yerleştirilemedi, ham PDF yazılıyor",
+                                  error=str(failure))
+            name = f"magaza-kargo-etiket-{info['trackingNo'] or order_id}-{stamp}.pdf"
+            documents.append(self._write_document("label", "Kargo etiketi", name, content))
+
+        fatura, invoice_error = await self._invoice_pdf(order_id)
+        if fatura:
+            name = f"magaza-kargo-fatura-{order_id}-{stamp}.pdf"
+            documents.append(self._write_document("invoice", "Fatura", name, fatura))
+        else:
+            documents.append({"kind": "invoice", "label": "Fatura", "name": "", "path": "",
+                              "bytes": 0, "error": invoice_error or "Fatura alınamadı.",
+                              "printed": False, "printError": ""})
+        return documents
+
+    def _write_document(self, kind: str, label: str, name: str, content: bytes) -> dict[str, Any]:
+        """Belgeyi rapor klasörüne 0600 ile yazar. Yazılamazsa satır HATA taşır.
+
+        İstisna dışarı sızmaz: bir belgenin diske yazılamaması, "kargoya ver"
+        zincirinin tamamını (etiket zaten satın alınmış) başarısız göstermez.
+        """
+        try:
+            path = write_private(self._export_dir / name, content)
+        except OSError as failure:
+            return {"kind": kind, "label": label, "name": name, "path": "", "bytes": 0,
+                    "error": f"Dosya yazılamadı: {failure}", "printed": False,
+                    "printError": ""}
+        return {"kind": kind, "label": label, "name": name, "path": str(path),
+                "bytes": len(content), "error": "", "printed": False, "printError": ""}
+
+    async def _print_documents(self, documents: list[dict[str, Any]], *, info: dict[str, Any],
+                               order_id: int, wanted: bool, actor: str,
+                               reason: str) -> dict[str, Any]:
+        """Belgeleri VARSAYILAN yazıcıya gönderir. Sonucu satır satır işaretler.
+
+        ÇİFT BASIM KORUMASI: aynı gönderi için daha önce otomatik basım
+        yapıldıysa ikinci kez basılmaz. "Kargoya ver" iki kez tıklanırsa ya da
+        istek yinelenirse aynı etiket iki kez çıkar ve iki koli hazırlanırdı.
+        Elle "tekrar yazdır" bu kapıyı hiç görmez: kasıtlı tekrar başka şeydir.
+        """
+        done: list[str] = []
+        if not wanted:
+            return {"done": done, "skipped": "Otomatik basım ayardan kapalı."}
+        if info["dryRun"]:
+            return {"done": done, "skipped": "Kuru prova: belge basılmadı."}
+
+        basilabilir = [item for item in documents if item["path"]]
+        if not basilabilir:
+            return {"done": done, "skipped": "Basılacak belge üretilemedi."}
+
+        if await self._auto_printed_before(shipment_id=info["shipmentId"], order_id=order_id):
+            return {"done": done,
+                    "skipped": "Bu gönderi daha önce otomatik basıldı; ikinci kez "
+                               "basılmadı. Gerekiyorsa 'Tekrar yazdır' kullanın."}
+
+        for item in basilabilir:
+            result = await self.print_report(item["path"])
+            if result.get("ok"):
+                item["printed"] = True
+                done.append(item["kind"])
+            else:
+                item["printError"] = shipping.text(result.get("error")) or "Yazdırılamadı."
+
+        await self._record(shipment_id=info["shipmentId"], order_id=order_id,
+                           action=AUTO_PRINT_ACTION, reason=reason, actor=actor,
+                           result="ok" if done else "hata",
+                           detail={"printed": done,
+                                   "failed": [item["kind"] for item in basilabilir
+                                              if not item["printed"]]})
+        return {"done": done, "skipped": ""}
+
+    async def _auto_printed_before(self, *, shipment_id: int, order_id: int) -> bool:
+        """Bu gönderi daha önce KENDİLİĞİNDEN basıldı mı.
+
+        Defter okunamazsa `False` döner — basmamak da bir risk (etiketsiz
+        paket), ama okunamayan bir defter yüzünden işi durdurmak daha kötü.
+        Kullanıcı çift çıktıyı görür ve birini atar; hiç çıktı görmeyen
+        kullanıcı paketi eksik gönderir.
+        """
+        try:
+            rows = await self._store.fetch_all(
+                f"SELECT shipment_id, order_id, action, result FROM {self._audit} "
+                "WHERE shipment_id = ? ORDER BY id DESC LIMIT 200",
+                (int(shipment_id),))
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("çift basım denetimi okunamadı", error=str(failure))
+            return False
+        for row in rows or []:
+            if shipping.text(row.get("action")) != AUTO_PRINT_ACTION:
+                continue
+            if shipping.text(row.get("result")) != "ok":
+                continue
+            if shipment_id and shipping.as_int(row.get("shipment_id")) == int(shipment_id):
+                return True
+            # Gönderi kimliği okunamadıysa sipariş üzerinden korunur; iki
+            # anahtarın da boş olduğu bir kayıt zaten basılmamıştır.
+            if not shipment_id and shipping.as_int(row.get("order_id")) == int(order_id):
+                return True
+        return False
+
     # ================================================== PARA HARCAYAN UÇLAR
 
     async def purchase(self, shipment_id: int, *, offer_id: str, reason: str, actor: str,
@@ -1593,11 +1959,14 @@ class ShippingService:
                         for key in labels.FORMATS],
             "labelLibrary": _pypdf_state(),
             "batchLimit": self._batch_limit,
+            # "Kargoya ver" bastığında etiket ve fatura kendiliğinden çıksın mı.
+            "autoPrint": await self.auto_print_on(),
+            "provider": shipping.fold(self._config.get("provider")) or "geliver",
         }
 
     async def save_settings(self, *, label_format: str = "", default_carrier: str = "",
-                            idle_days: int | None = None, reason: str,
-                            actor: str) -> dict[str, Any]:
+                            idle_days: int | None = None, auto_print: bool | None = None,
+                            reason: str, actor: str) -> dict[str, Any]:
         problem = self._guard(reason)
         if problem:
             return {"ok": False, "error": problem}
@@ -1617,6 +1986,9 @@ class ShippingService:
         if idle_days is not None:
             note("gecikme eşiği",
                  await self._set_pref("idle_days", str(max(1, min(30, int(idle_days)))), actor))
+        if auto_print is not None:
+            note("otomatik basım",
+                 await self._set_pref("auto_print", "1" if auto_print else "0", actor))
 
         await self._record(action="save_settings", reason=reason, actor=actor,
                            result="hata" if refused else "ok",
@@ -1627,6 +1999,191 @@ class ShippingService:
             return {"ok": False, "changed": changed,
                     "error": f"Şu tercihler yazılamadı: {', '.join(refused)}."}
         return {"ok": True, "error": "", "changed": changed}
+
+    # ==================================================== GELİVER KURULUMU
+    #
+    # BU BÖLÜM YUKARIDAKİ `settings`/`save_settings` İLE AYNI ŞEY DEĞİLDİR.
+    # Oradakiler bu EKRANIN tercihleridir (etiket biçimi, gecikme eşiği) ve
+    # yerel tabloda yaşar. Buradakiler MAĞAZANIN kargo entegrasyonudur:
+    # `core_config` satırlarına yazılır, checkout'ta müşterinin gördüğü kargo
+    # ücretini ve gönderi açılıp açılamayacağını belirler.
+    #
+    # AYRI TUTULMALARININ SEBEBİ bir düzen kaygısı değil: "gecikme eşiğini 5
+    # yap" ile "mağazayı canlıya al" aynı düğmeye bağlanamaz.
+
+    async def geliver_settings(self, *, probe: bool = True) -> dict[str, Any]:
+        """Geliver kurulum durumu — ayarlar, engeller, sınama sonuçları.
+
+        MAĞAZA DÜŞERSE EKRAN AYAKTA KALIR (K7): `connected: False` döner ve
+        panel "okunamadı" der. Kurulum ekranının en çok gerektiği an, bir şeyin
+        bozuk olduğu andır; o anda boş bir sayfa göstermek en kötü davranıştır.
+        """
+        try:
+            payload = await self._api.bbd_geliver_settings(probe=bool(probe))
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("Geliver ayarları okunamadı", error=str(failure))
+            return {"ok": True, "connected": False, "error": self._fail(failure),
+                    "settings": {}, "token": geliver.token_state({}), "checks": [],
+                    "blockers": [], "webhook": geliver.webhook_line({}),
+                    "status": geliver.visibility_line({})}
+        return self._geliver_view(payload)
+
+    def _geliver_view(self, payload: Any) -> dict[str, Any]:
+        """Mağaza gövdesi → ekranın beklediği biçim.
+
+        TEK YER: hem okuma hem yazma yanıtı buradan geçer. Mağaza tarafı da
+        aynı gövdeyi iki uçta üretiyor; ikisinin ayrışması, kaydettikten sonra
+        ekranın yeniden yüklenene kadar farklı görünmesi demekti.
+        """
+        row = payload if isinstance(payload, dict) else {}
+        return {
+            "ok": True, "connected": True, "error": "",
+            "settings": {
+                "active": geliver.flag(row.get("active")),
+                "goLive": geliver.flag(row.get("go_live")),
+                "testMode": geliver.flag(row.get("test_mode")),
+                "senderAddressId": geliver.text(row.get("sender_address_id")),
+                # Salt gösterilir: bu uçtan değiştirilemez, panelden düzenlenir.
+                "sourceIdentifier": geliver.text(row.get("source_identifier")),
+                "title": geliver.text(row.get("title")),
+            },
+            "token": geliver.token_state(row),
+            "status": geliver.visibility_line({**row, "testMode": row.get("test_mode")}),
+            "checks": geliver.check_lines(row),
+            "blockers": geliver.blocker_lines(row),
+            "webhook": geliver.webhook_line(row),
+            "refused": row.get("refusedFields") if isinstance(row.get("refusedFields"), dict) else {},
+        }
+
+    async def save_geliver_settings(self, *, draft: dict[str, Any], reason: str, actor: str,
+                                    dry_run: bool = True) -> dict[str, Any]:
+        """Geliver ayarlarını yazar — TOKEN DAHİL.
+
+        ─────────────────────────────────────────────────────────────────────
+        GEREKÇE PARA UZUNLUĞUNDA İSTENİR
+
+        Bu ekranın diğer yazmaları 10 karakterle yetinir; burada 20 istenir
+        (`shipping.PURCHASE_REASON` ile aynı ölçü). Sebep somut: `go_live`
+        açmak mağazayı gerçek kargo ücretlendirmesine sokar ve ilk siparişte
+        para hareketi başlar; token değiştirmek ise mağazanın kargo kimliğini
+        değiştirir. İkisi de iki ay sonra "bu neden değişti" sorusunu doğurur
+        ve "test" yazan bir gerekçe o soruyu yanıtlamaz.
+
+        ─────────────────────────────────────────────────────────────────────
+        SUNUCUNUN REDDİ OLDUĞU GİBİ TAŞINIR
+
+        `go_live` açılırken mağaza ön denetimi geçemezse 422 döner ve nedenleri
+        gövdede taşır. O nedenler ekrana AYNEN çıkar (`blockers`); burada
+        kendi tahminimizi sunucunun cevabının yerine koymayız — mağaza
+        Geliver'a gerçekten sordu, biz sormadık.
+        """
+        problem = self._guard(reason, shipping.PURCHASE_REASON)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        problems = geliver.draft_problems(draft)
+        if problems:
+            return {"ok": False, "error": problems[0], "problems": problems}
+
+        current = await self.geliver_settings(probe=False)
+        if not current.get("connected"):
+            # OKU-DEĞİŞTİR-YAZ: mevcut değer okunamadıysa neyin değiştiğini
+            # bilemeyiz ve "değişen alan yok" diye her şeyi yazmak, dokunulmayan
+            # bayrakları da ezerdi.
+            return {"ok": False, "error": "Mevcut ayarlar okunamadı; yazma açılmadı. "
+                                          f"({current.get('error')})"}
+
+        raw = {
+            "active": current["settings"]["active"],
+            "go_live": current["settings"]["goLive"],
+            "test_mode": current["settings"]["testMode"],
+            "sender_address_id": current["settings"]["senderAddressId"],
+        }
+        patch = geliver.settings_patch(raw, draft)
+        if not patch:
+            return {"ok": False, "error": "Değişen alan yok."}
+
+        await self._record(action="geliver_settings", reason=reason, actor=actor,
+                           result="denendi", detail={"fields": sorted(patch)})
+        try:
+            result = await self._api.bbd_update_geliver_settings(
+                settings=patch, reason=reason, actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(action="geliver_settings", reason=reason, actor=actor,
+                               result="hata", detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure),
+                    "blockers": self._blockers_of(failure),
+                    "labels": geliver.patch_labels(patch)}
+
+        await self._record(action="geliver_settings", reason=reason, actor=actor,
+                           result="dry_run" if dry_run else "ok",
+                           detail={"fields": sorted(patch)})
+
+        if dry_run:
+            return {"ok": True, "error": "", "dryRun": True,
+                    "labels": geliver.patch_labels(patch),
+                    "wouldChange": result.get("wouldChange") if isinstance(result, dict) else None}
+
+        after = result.get("settings") if isinstance(result, dict) else None
+        return {"ok": True, "error": "", "dryRun": False,
+                "labels": geliver.patch_labels(patch),
+                **(self._geliver_view(after) if isinstance(after, dict) else {})}
+
+    @staticmethod
+    def _blockers_of(failure: Exception) -> list[dict[str, Any]]:
+        """Mağazanın 422 gövdesindeki ön denetim engellerini çıkarır.
+
+        Geçit hata gövdesini istisnaya iliştiriyor (`details`); alan `getattr`
+        ile okunur, sınıf İMPORT EDİLMEZ (K3/K4 — geçidin iç dosyasına
+        bağlanmak tek kapıyı delerdi). Alan yoksa boş liste döner ve ekran
+        yalnız hata metnini gösterir.
+        """
+        details = getattr(failure, "details", None)
+        if not isinstance(details, dict):
+            return []
+        return geliver.blocker_lines({"goLiveBlockers": details.get("blockers")})
+
+    async def test_geliver(self) -> dict[str, Any]:
+        """"Bağlantıyı sına" — Geliver'a YALNIZ OKUMA çağrısı, önbelleksiz.
+
+        Gerekçe İSTENMEZ ve hiçbir şey yazılmaz. Denetim izine de girmez:
+        okuma çağrısını deftere yazmak, defteri gerçek işlemlerin görünmez
+        olacağı kadar gürültüyle doldurur.
+        """
+        try:
+            payload = await self._api.bbd_test_geliver()
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "connected": False, "error": self._fail(failure),
+                    "checks": [], "blockers": []}
+        return {"ok": True, "connected": True, "error": "",
+                "checks": geliver.check_lines(payload),
+                "blockers": geliver.blocker_lines(payload)}
+
+    async def register_webhook(self, *, url: str = "", reason: str, actor: str,
+                               dry_run: bool = True) -> dict[str, Any]:
+        """Webhook'u Geliver hesabına kaydeder.
+
+        NEDEN AYRI DÜĞME: kayıt Geliver hesabında bir kayıt AÇAR; ayar yazmak
+        değildir ve mağaza tarafında para harcayan uçlarla aynı izni istiyor.
+        Kaydı "ayarları kaydet" düğmesine iliştirmek, her kaydetmede sessizce
+        hesapta bir şey değiştirmek olurdu.
+        """
+        problem = self._guard(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+        await self._record(action="geliver_webhook", reason=reason, actor=actor,
+                           result="denendi", detail={"url": geliver.text(url)})
+        try:
+            result = await self._api.bbd_register_shipment_webhook(
+                url=geliver.text(url), reason=reason, actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(action="geliver_webhook", reason=reason, actor=actor,
+                               result="hata", detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+        await self._record(action="geliver_webhook", reason=reason, actor=actor,
+                           result="dry_run" if dry_run else "ok", detail={"url": geliver.text(url)})
+        return {"ok": True, "error": "", "dryRun": bool(dry_run),
+                "result": result if isinstance(result, dict) else {}}
 
 
 def _days_ago(days: int) -> str:

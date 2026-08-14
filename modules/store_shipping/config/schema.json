@@ -60,6 +60,26 @@
       "minLength": 1,
       "maxLength": 32,
       "description": "'Kargoya hazır' sekmesinin mağazadan istediği sipariş durumu."
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["geliver", "bagisto"],
+      "description": "Kargo yolu: 'geliver' GERÇEK (para harcar), 'bagisto' TEST (taşıyıcıya çıkmaz)."
+    },
+    "test_carrier_title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Test yolunda Bagisto gönderisine yazılacak taşıyıcı adı."
+    },
+    "inventory_source_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Stok kaynağı kimliği. Mağazada tek depo var (id=1, 'Varsayılan')."
+    },
+    "auto_print": {
+      "type": "boolean",
+      "description": "'Kargoya ver' sonrası kargo etiketi ve fatura varsayılan yazıcıya kendiliğinden gitsin mi. Teslim fişi bu akışa girmez."
     }
   }
 }

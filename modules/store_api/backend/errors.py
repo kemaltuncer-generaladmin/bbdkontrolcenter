@@ -78,14 +78,30 @@ class StoreApiError(RuntimeError):
                   şeylerdir: ilki "uç henüz yayında değil, bekle", ikincisi
                   "bu iş bilerek panelden yapılmıyor, bekleme" demektir.
       `message` — kullanıcıya gösterilebilir Türkçe metin (maskelenmiş).
+      `details` — BBD hata zarfının (`{"error": {"code","message","details"}}`)
+                  `details` bloğu; başka kaynaklarda BOŞ sözlüktür.
+
+                  NEDEN GEREKLİ: bazı retler mesajın kendisinden fazlasını
+                  taşır. Geliver canlıya geçiş reddi (`GELIVER_PRECHECK_FAILED`)
+                  engelleri kod+metin listesi olarak `details.blockers` içinde
+                  verir; taşıyıcı ayrışması (`CARRIER_MISMATCH`) beklenen ve
+                  bulunan firmayı orada söyler. Bunlar mesaja gömülmediği için
+                  `details` düşerse ekran "neden olmadı" sorusunu ancak
+                  tahminle yanıtlayabilirdi.
+
+                  MASKEDEN GEÇER (`mask_mapping`): gövde uzak sistemden gelir
+                  ve ne taşıyacağını biz belirlemiyoruz.
     """
 
-    def __init__(self, message: str, *, status: int | None = None, code: str = "http") -> None:
+    def __init__(self, message: str, *, status: int | None = None, code: str = "http",
+                 details: Any = None) -> None:
         safe = mask_text(message)
         super().__init__(safe)
         self.message = safe
         self.status = status
         self.code = code
+        masked = mask_mapping(details) if isinstance(details, dict) else None
+        self.details: dict[str, Any] = masked if isinstance(masked, dict) else {}
 
     def __str__(self) -> str:
         return self.message

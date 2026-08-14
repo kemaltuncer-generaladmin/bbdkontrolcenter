@@ -128,6 +128,9 @@ YAZMA_YOLLARI = [
      "PUT", "/api/admin/bbd/return-requests/8"),
     ("bbd_save_trial_exam", (), {"payload": {"price": "250.00"}},
      "POST", "/api/admin/bbd/deneme-kulubu/overview"),
+    # "Kargoya ver" — tek tıkla gönderi + teklif + etiket satın alma.
+    ("bbd_dispatch_order", (91,), {"payload": {"packages": 1}},
+     "POST", "/api/admin/bbd/orders/91/dispatch"),
 ]
 
 
@@ -701,3 +704,115 @@ async def test_diger_bbd_uclarinda_gerekce_govdede_kalmaya_devam_eder() -> None:
     await api.bbd_create_backup(scope=["db"], reason=NEDEN)
 
     assert json.loads(istekler[0].content)["reason"] == NEDEN
+
+
+# ================================== "KARGOYA VER": iki biçimli yanıt + dryRun
+
+def _pdf_veren(istekler: list[httpx.Request], status: int = 200) -> Any:
+    """Etiketi gövdede, künyeyi BAŞLIKTA döndüren uç — canlıdaki sözleşme."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        istekler.append(request)
+        return httpx.Response(
+            status, content=b"%PDF-1.4 etiket",
+            headers={
+                "Content-Type": "application/pdf",
+                "X-Bbd-Shipment-Id": "77",
+                "X-Bbd-Order-Id": "91",
+                "X-Bbd-Tracking-Number": "1234567890",
+                "X-Bbd-Provider": "HEPSIJET",
+                "X-Bbd-Purchased": "1",
+                "Set-Cookie": "oturum=gizli",
+            })
+    return handler
+
+
+async def test_kargoya_ver_PDF_govdesini_ve_kunye_basliklarini_birlikte_dondurur() -> None:
+    """`raw=True` başlıkları atardı, `raw=False` PDF'i JSON sanardı.
+
+    Takip numarası PDF gövdesine sığmaz; başlıkta gelir. İkisinden birini
+    kaybetmek "etiket var ama takip numarası yok" ya da tam tersi demekti.
+    """
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(_pdf_veren(istekler))
+    zarf = await api.bbd_dispatch_order(91, payload={"packages": 1}, reason=NEDEN)
+
+    assert zarf["contentType"] == "application/pdf"
+    assert zarf["content"].startswith(b"%PDF")
+    assert zarf["json"] is None
+    assert zarf["headers"]["x-bbd-tracking-number"] == "1234567890"
+    assert zarf["headers"]["x-bbd-purchased"] == "1"
+
+
+async def test_kargoya_ver_yalnizca_X_Bbd_basliklarini_tasir() -> None:
+    # `Set-Cookie` gibi başlıkların ekranlara sızması için hiçbir sebep yok.
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(_pdf_veren(istekler))
+    zarf = await api.bbd_dispatch_order(91, payload={}, reason=NEDEN)
+
+    assert all(ad.startswith("x-bbd-") for ad in zarf["headers"])
+    assert "set-cookie" not in zarf["headers"]
+
+
+async def test_etiket_indirilemediginde_JSON_govde_cozulur() -> None:
+    api, _ = izle({"labelReady": False, "shipmentId": 77,
+                   "message": "Etiket indirilemedi."})
+    zarf = await api.bbd_dispatch_order(91, payload={}, reason=NEDEN)
+
+    assert zarf["contentType"] == "application/json"
+    assert zarf["json"]["labelReady"] is False
+    assert zarf["content"] == b""
+
+
+async def test_kargoya_ver_dryRun_govdeye_ACIKCA_yazilir() -> None:
+    """Mağazadaki varsayılan `true`; alan gitmezse gerçek istek sessizce
+    kuru provaya düşer ve ekran "gönderildi" derken paket yerinde kalır."""
+    import json
+
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(_pdf_veren(istekler))
+    await api.bbd_dispatch_order(91, payload={"packages": 1}, reason=NEDEN, dry_run=False)
+
+    govde = json.loads(istekler[0].content)
+    assert govde["dryRun"] is False
+    assert govde["packages"] == 1
+
+
+async def test_kargoya_ver_kuru_provada_dryRun_true_gider() -> None:
+    import json
+
+    api, istekler = izle()
+    await api.bbd_dispatch_order(91, payload={}, reason=NEDEN, dry_run=True)
+
+    assert json.loads(istekler[0].content)["dryRun"] is True
+
+
+async def test_kargoya_ver_gerekcesi_govdeye_konmaz_baslikta_gider() -> None:
+    # Uç gövdeyi sıkı doğruluyor; tanımadığı alan 422 ile geri döner.
+    import json
+
+    api, istekler = izle()
+    await api.bbd_dispatch_order(91, payload={"packages": 2}, reason=NEDEN)
+
+    assert "reason" not in json.loads(istekler[0].content)
+    assert istekler[0].headers["X-Bbd-Reason"]
+
+
+async def test_etiket_ucu_HAM_PDF_ister() -> None:
+    """Uç künye JSON'u değil PDF'in kendisini döndürüyor (mağaza değişikliği).
+
+    `Accept` başlığı bunu söyler; söylemeseydi sunucu künye gövdesine
+    düşebilir ve toplu etiket sayfası JSON birleştirmeye çalışırdı.
+    """
+    api, istekler = izle()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        istekler.append(request)
+        return httpx.Response(200, content=b"%PDF-1.4",
+                              headers={"Content-Type": "application/pdf"})
+
+    api._transport = httpx.MockTransport(handler)
+    icerik = await api.bbd_shipment_label(5)
+
+    assert icerik.startswith(b"%PDF")
+    assert istekler[-1].url.path == "/api/admin/bbd/shipments/5/label"
+    assert istekler[-1].headers["Accept"] == "application/pdf"

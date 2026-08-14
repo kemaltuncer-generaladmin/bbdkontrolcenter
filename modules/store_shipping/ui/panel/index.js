@@ -9,12 +9,25 @@
 // desi→ücret matrisi ve ücretsiz kargo eşiği. `Bölgeler` il/ilçe eşlemesi.
 // `Performans` teslim süresi, teslim edilemeyen oranı ve kargo kâr/zararı.
 //
+// «KARGOYA VER» — TEK TIK, ARA ONAY YOK. Kullanıcının kararı: "sipariş seçince
+// 'kargoya ver' dedik mi o sipariş yola çıkacak zaten. PARA HARCASIN."
+// Düğme satırda durur; bir tıkla gönderi açılır, teklif alınır, MÜŞTERİNİN
+// ödediği firmadan etiket SATIN ALINIR, takip numarası siparişe yazılır ve iki
+// belge (KARGO ETİKETİ + FATURA) varsayılan yazıcıya gider. Onay penceresi
+// AÇILMAZ; gerekçe alanı listenin üstünde durur, boş bırakılabilir ve akışı
+// durdurmaz. Sihirbaz (adım adım, ölçü düzeltmeli) DURUYOR: ölçüsü şüpheli
+// gönderi oradan geçirilir.
+//
 // NE YAPMAZ:
 //  · ETİKET ÇİZMEZ. Barkod taşıyıcının kendi numaralandırmasıdır; kendi
 //    çizdiğimiz barkod şubede okunmazsa gönderi elde kalır. Etiketin kendisi
 //    her zaman taşıyıcıdan gelir, biz yalnız kâğıda yerleştiririz.
-//  · TASLAK AÇARKEN PARA HARCAMAZ. "Gönderi oluştur" ile "Etiket satın al"
-//    bilerek iki ayrı adımdır: ilki ücretsiz ve düzeltilebilir.
+//  · TAKİP NUMARASI SORMAZ. Elle girilen numara zincirin çıktısı değil,
+//    kullanıcının tahminidir; ekranda görünen numara siparişe YAZILMIŞ olandır.
+//  · SİHİRBAZDA TASLAK AÇARKEN PARA HARCAMAZ. "Gönderi oluştur" ile "Etiket
+//    satın al" orada bilerek iki ayrı adımdır: ilki ücretsiz ve düzeltilebilir.
+//  · TESLİM FİŞİNİ OTOMATİK BASMAZ. Kullanıcı "fiş yok" dedi; düğmesi
+//    sihirbazda duruyor ve elle basılıyor.
 //  · GÖNDERİ SİLMEZ. İptal ve iade vardır; ikisi de gerekçe ister.
 //
 // TUZAKLAR (ekranda karşılığı olanlar):
@@ -89,7 +102,15 @@ const TABS = [
   { key: 'rates', label: 'Ücretlendirme' },
   { key: 'zones', label: 'Bölgeler' },
   { key: 'performance', label: 'Performans' },
+  // KURULUM EN SONDA. Sekme sırası kullanım sıklığına göredir: burası günde
+  // bir kez değil, ayda bir kez açılır. Öne almak, her gün kargo çıkaran
+  // personeli canlı mod anahtarının yanından geçirirdi.
+  { key: 'geliver', label: 'Geliver kurulumu' },
 ];
+
+/** Sınama satırlarının tonu. `unknown` yeşile DÖNMEZ (bkz. `check_lines`). */
+const CHECK_TONES = { ok: 'good', fail: 'bad', unknown: 'dim' };
+const CHECK_MARKS = { ok: '✓', fail: '✕', unknown: '—' };
 
 /**
  * Başlangıç durumu FONKSİYONDUR, sabit değil.
@@ -109,6 +130,7 @@ function freshState() {
     rates: null,
     zones: [],
     settings: null,
+    geliver: null,
     selection: [],
     readySelection: [],
   };
@@ -357,6 +379,9 @@ function renderReady() {
         cell: (row) => (row.waitingDays === null ? '—' : num(row.waitingDays)) },
       { key: 'zone', label: 'Bölge', width: '120px',
         cell: (row) => (row.delivers ? (row.zone || '—') : badge('teslimat yok', 'bad')) },
+      // TEK TIK. Sihirbazın üç adımı burada tek düğmeye iner: kullanıcı
+      // "sipariş seçince 'kargoya ver' dedik mi o sipariş yola çıksın" dedi.
+      { key: 'dispatch', label: 'Kargoya ver', width: '150px', cell: dispatchCell },
     ],
     rows: data.items,
     selectable: true,
@@ -378,7 +403,7 @@ function renderReady() {
     + `kalan adet kontrolü SAYFA İÇİNDE yapılıyor. Sunucu ${num(data.total)} sipariş döndürdü, `
     + `bunların ${num(data.shown)} tanesi gerçekten kargoya hazır.`);
 
-  host.append(notice);
+  host.append(notice, reasonBar());
   // Sipariş LİSTESİ ucu faturalanan/kargolanan adedi vermiyor; o bilgi
   // olmadan hazırlık DOĞRULANMIŞ sayılmaz. Sessiz kalmak, kısmen kargolanmış
   // bir siparişi ikinci kez kargoya vermeye yol açardı.
@@ -429,6 +454,181 @@ function renderReadyBar(table) {
       onClick: () => { table.clearSelection(); state.readySelection = []; renderReadyBar(table); },
     }),
   );
+}
+
+// ------------------------------------------------ KARGOYA VER (tek tık)
+
+/**
+ * Gerekçe alanı — listenin üstünde DURUR, akışı DURDURMAZ.
+ *
+ * Diğer para harcayan işlemlerde gerekçe bir onay penceresinde istenir ve
+ * yazılmadan iş ilerlemez. Burada öyle değil: kullanıcı "kargoya ver dedik mi
+ * o sipariş yola çıkacak" dedi ve araya bir pencere koymak tam olarak
+ * istemediği şey. Alan boş bırakılırsa sunucu denetim defterine otomatik bir
+ * metin yazar; defter boş kalmaz, kullanıcı da durdurulmaz.
+ *
+ * Alan HER ÇİZİMDE yeniden kurulur ama DEĞERİ korunur: liste yenilenince
+ * kullanıcının yazdığı gerekçe silinseydi, ikinci siparişte kimse yeniden
+ * yazmazdı.
+ */
+function reasonBar() {
+  const bar = h('div', 'sh-reason');
+  const input = h('input', 'kit-input');
+  input.type = 'text';
+  input.maxLength = 255;
+  input.placeholder = 'Gerekçe — denetim kaydına yazılır, boş bırakılabilir';
+  input.value = nodes.readyReason?.value || '';
+  nodes.readyReason = input;
+  bar.append(
+    h('span', 'sh-sub', 'Gerekçe'),
+    input,
+    h('span', 'sh-sub', 'Boş bırakırsanız otomatik bir metin yazılır; '
+      + '"Kargoya ver" onay sormadan yürür ve PARA HARCAR.'),
+  );
+  return bar;
+}
+
+function dispatchReason() {
+  return (nodes.readyReason?.value || '').trim();
+}
+
+/** Satırdaki tek tık düğmesi. Tıklanınca kendini kilitler (çift istek olmasın). */
+function dispatchCell(row) {
+  const box = h('span', 'sh-dispatch');
+  const go = button('🚚 Kargoya ver', {
+    variant: 'danger',
+    title: 'Gönderi açılır → teklif alınır → müşterinin firmasından ETİKET SATIN '
+      + 'ALINIR → takip numarası siparişe yazılır → etiket ve fatura yazdırılır. '
+      + 'PARA HARCAR ve onay sormaz.',
+    onClick: () => dispatchOrder(row, go),
+  });
+  box.append(go);
+  return box;
+}
+
+/**
+ * "Kargoya ver" — tek istek, ara onay YOK.
+ *
+ * `extra` sihirbazdan gelen ölçü/taşıyıcı düzeltmelerini taşır; satırdan
+ * tıklandığında boştur ve sunucu müşterinin ödediği firmayı kendisi bulur.
+ */
+async function dispatchOrder(row, trigger, extra = {}) {
+  const label = trigger?.textContent;
+  if (trigger) { trigger.disabled = true; trigger.textContent = 'Gönderiliyor…'; }
+  const result = await withBusy(`${row.orderNumber} kargoya veriliyor…`, () => call(
+    `${BASE}/orders/${row.orderId}/dispatch`, {
+      method: 'POST',
+      // dryRun AÇIKÇA false: sunucu tarafındaki varsayılan true ve
+      // gönderilmezse gerçek istek sessizce kuru provaya düşerdi.
+      body: { reason: dispatchReason(), dryRun: false, ...extra },
+    }));
+  if (trigger) { trigger.disabled = false; trigger.textContent = label; }
+  if (!result) return null;
+
+  const parts = [];
+  if (result.trackingNo) parts.push(`takip no ${result.trackingNo}`);
+  if (result.printed?.length) parts.push(`${num(result.printed.length)} belge yazdırıldı`);
+  toast(result.dryRun
+    ? 'Kuru prova: mağazaya gerçek istek gitmedi.'
+    : `Kargoya verildi${parts.length ? ` · ${parts.join(' · ')}` : ''}`,
+  result.dryRun ? 'warn' : 'good');
+  for (const line of result.warnings || []) toast(line, 'warn');
+
+  showDispatchResult(row, result);
+  loadReady();
+  return result;
+}
+
+/**
+ * Sonuç çekmecesi. TAKİP NUMARASI EKRANDA GÖRÜNÜR ve tıklanınca kopyalanır —
+ * kimse onu elle girmez, zincirin çıktısıdır ve siparişe yazılmıştır.
+ */
+function showDispatchResult(row, result) {
+  const box = drawer(nodes.root, {
+    title: result.dryRun ? 'Kuru prova sonucu' : 'Kargoya verildi',
+    subtitle: `Sipariş ${row.orderNumber} · ${row.displayName || row.customer || ''}`.trim(),
+  });
+
+  const head = h('div', 'sh-dispatch-head');
+  if (result.trackingNo) {
+    const code = h('code', 'sh-code sh-track-big', result.trackingNo);
+    code.title = 'Takip numarasını kopyalamak için tıklayın';
+    code.addEventListener('click', async () => {
+      await copyText(result.trackingNo);
+      toast('Takip numarası kopyalandı.', 'good');
+    });
+    head.append(h('span', 'sh-sub', 'Takip numarası'), code);
+  } else {
+    head.append(alertBox(
+      'Takip numarası yanıtta gelmedi. Gönderi açılmış olabilir; "Gönderiler" '
+      + 'sekmesinden doğrulayın. Numara UYDURULMADI.', 'warn'));
+  }
+  head.append(
+    badge(result.provider || 'taşıyıcı bildirilmedi', 'info'),
+    badge(result.purchased ? 'Etiket satın alındı' : 'Etiket satın alınmadı',
+      result.purchased ? 'good' : 'warn'),
+  );
+  if (result.dryRun) head.append(badge('KURU PROVA — para harcanmadı', 'warn'));
+  box.body.append(head);
+
+  if (result.labelReady === false) {
+    box.body.append(alertBox(
+      'Etiket PDF’i indirilemedi; kâğıda dökülemedi. Gönderi açıldıysa etiketi '
+      + 'aşağıdaki düğmeyle yeniden alabilirsiniz.', 'warn'));
+    if (result.shipmentId) {
+      box.body.append(button('Etiketi yeniden al ve yazdır', {
+        variant: 'primary',
+        onClick: () => report.run('labels', {
+          shipmentIds: [result.shipmentId],
+          format: state.settings?.labelFormat || 'thermal-100x150',
+        }),
+      }));
+    }
+  }
+
+  box.body.append(card('Basılan belgeler', documentList(result),
+    result.autoPrint === false
+      ? 'Otomatik basım kapalı — belgeler yalnız diske yazıldı'
+      : 'Kargo etiketi ve fatura. Teslim fişi bu akışa girmez.'));
+  if (result.printSkipped) box.body.append(alertBox(result.printSkipped, 'info'));
+}
+
+/** Belge satırları: basıldı mı, basılamadıysa dosya nerede, tekrar yazdır. */
+function documentList(result) {
+  const list = h('div', 'sh-list');
+  const rows = result.documents || [];
+  if (!rows.length) {
+    list.append(h('div', 'sh-sub', 'Bu akışta belge üretilmedi.'));
+    return list;
+  }
+  for (const doc of rows) {
+    const line = h('div', 'sh-list-row');
+    line.append(h('b', undefined, doc.label));
+    if (doc.printed) line.append(badge('Yazdırıldı', 'good'));
+    else if (doc.error) line.append(badge('Üretilemedi', 'bad'));
+    else line.append(badge('Yazdırılmadı', 'warn'));
+    line.append(h('span', 'kit-spacer'));
+
+    if (doc.error) {
+      line.append(h('span', 'sh-sub', doc.error));
+    } else {
+      // YAZICI YOKSA İŞ DURMAZ (K7): dosya nerede, açıkça yazılır.
+      if (doc.printError) line.append(h('span', 'sh-sub', `Yazdırılamadı: ${doc.printError}`));
+      line.append(h('code', 'sh-code', doc.path));
+      line.append(button('Tekrar yazdır', {
+        // ÇİFT BASIM KORUMASI otomatik basımı kapsar, bunu değil: kasıtlı
+        // tekrar ile kazara ikinci basım ayrı şeylerdir.
+        onClick: async () => {
+          const sent = await withBusy('Yazıcıya gönderiliyor…', () => call(`${BASE}/print`, {
+            method: 'POST', body: { path: doc.path, copies: 1 },
+          }));
+          if (sent) toast(`${sent.printer || 'Yazıcı'} yazıcısına gönderildi.`, 'good');
+        },
+      }));
+    }
+    list.append(line);
+  }
+  return list;
 }
 
 // ------------------------------------------------------------- sihirbaz
@@ -679,7 +879,32 @@ function openWizard(rows, index = 0) {
     loadReady();
   }
 
+  // TEK TIK ÇEKMECEDE DE DURUR. Ölçüyü düzeltip yine tek düğmeyle
+  // gönderebilmek gerekiyor; aşağıdaki üç adım "önce bakayım" diyen için.
+  const oneClick = h('div', 'sh-actions');
+  oneClick.append(button('🚚 Kargoya ver (tek tık)', {
+    variant: 'danger',
+    title: 'Yukarıdaki ölçülerle gönderi açılır, ETİKET SATIN ALINIR, takip '
+      + 'numarası siparişe yazılır ve etiket + fatura yazdırılır. Onay sorulmaz.',
+    onClick: async () => {
+      const draft = form.draft();
+      const sent = await dispatchOrder(row, null, {
+        provider: draft.provider || '',
+        carrier: draft.carrier || '',
+        packages: Number(draft.packages) || 1,
+        desi: Number(draft.desi) || 0,
+        weight: Number(draft.weight) || 0,
+        payer: draft.payer || 'sender',
+        cod: Number(draft.cod) || 0,
+        note: draft.note || '',
+      });
+      if (sent) box.close();
+    },
+  }));
+
   box.body.append(
+    card('Kargoya ver', oneClick,
+      'Ara onay yok: gönderi açılır, etiket satın alınır, belgeler basılır'),
     card('1 · Ölçü ve taşıyıcı', form.node,
       'Otomatik değerler ürün kaydından gelir, elle düzeltilebilir'),
     card('2 · Ücret dökümü (tahmin)', quoteBox, 'Kesin tutar taşıyıcı teklifinden gelir'),
@@ -1096,11 +1321,18 @@ function settingsCard(host) {
           label: item.label })) },
       { key: 'idleDays', label: 'Gecikme eşiği (gün)', type: 'number', min: 1, max: 30,
         hint: 'Kaç gün hareketsiz kalan gönderi "Geciken" sayılır.' },
+      // Kapatılırsa belgeler YİNE üretilir ve rapor klasörüne yazılır; yalnız
+      // yazıcıya gitmez. "Üretme" ile "basma" ayrı şeyler.
+      { key: 'autoPrint', label: '"Kargoya ver" sonrası etiket ve faturayı yazdır',
+        type: 'checkbox',
+        hint: 'Kapalıyken belgeler yine üretilir, yalnız yazıcıya gönderilmez. '
+          + 'Kargoya teslim fişi bu akışa hiç girmez.' },
     ],
     value: {
       defaultCarrier: data.defaultCarrier || '',
       labelFormat: data.labelFormat || 'thermal-100x150',
       idleDays: data.idleDays || 3,
+      autoPrint: data.autoPrint !== false,
     },
   });
 
@@ -1122,6 +1354,7 @@ function settingsCard(host) {
           body: { defaultCarrier: draft.defaultCarrier || '',
             labelFormat: draft.labelFormat || '',
             idleDays: Number(draft.idleDays) || null,
+            autoPrint: Boolean(draft.autoPrint),
             reason },
         }));
       if (!result) return;
@@ -1631,6 +1864,266 @@ async function renderPerformance(host) {
   }
 }
 
+// ================================================================ sekme 7
+//
+// GELİVER KURULUMU — "Bagisto admin paneline bir daha girmemek" sekmesi.
+//
+// NE YAPAR: API tokenını yazar (geri OKUMAZ), "kurulu"/"canlı"/"test"
+// anahtarlarını çevirir, gönderici adres kimliğini ayarlar, bağlantıyı sınar
+// ve webhook'u Geliver hesabına kaydeder.
+//
+// NE YAPMAZ:
+//  · TOKENI GÖSTERMEZ. Mağaza tokenı hiçbir gövdede döndürmüyor; ekran yalnız
+//    son dört karakterlik maskeyi görür. Kutu BOŞ bırakılırsa mevcut token
+//    KORUNUR — boşu yazmak mağazanın kargo kimliğini silmek olurdu.
+//  · CANLIYA GEÇİŞİ KENDİ KENDİNE ONAYLAMAZ. "Canlı" anahtarı açıkken kaydet
+//    denince kararı SUNUCU verir: Geliver'a sorar, geçemezse reddeder ve
+//    nedenleri söyler. Ekran o nedenleri olduğu gibi basar; kendi tahminini
+//    sunucunun cevabının yerine koymaz.
+//  · CHECKOUT BAŞLIĞINI, FİYAT AYARLAMASINI VE FİRMA SEÇİMİNİ değiştirmez —
+//    mağaza bu üçünü bu uçtan reddediyor ve gerekçesini söylüyor; ekran o
+//    gerekçeleri listeler ki "neden burada yok" sorusu cevapsız kalmasın.
+
+let geliverForm = null;
+
+async function renderGeliver(host) {
+  host.replaceChildren(skeletonRows(5, 3));
+  geliverForm?.destroy();
+  geliverForm = null;
+
+  let payload;
+  try {
+    payload = await api(`${BASE}/geliver`);
+  } catch (error) {
+    host.replaceChildren(alertBox(error.message, 'bad'));
+    return;
+  }
+  state.geliver = payload;
+  host.replaceChildren();
+
+  if (!payload.connected) {
+    host.append(alertBox(
+      `Geliver ayarları okunamadı — ${payload.error}. Ayar yazma açılmadı: mevcut değerleri `
+      + 'bilmeden yazmak, dokunmadığınız anahtarları da ezerdi.', 'bad'));
+    host.append(button('Yeniden dene', { onClick: () => renderGeliver(host) }));
+    return;
+  }
+
+  host.append(statusCard(payload));
+  host.append(checksCard(host, payload));
+  host.append(settingsFormCard(host, payload));
+  host.append(webhookCard(host, payload));
+  host.append(refusedCard(payload));
+}
+
+/** "Müşteri şu an ne görüyor" — ekranın ilk bakışta okunan tek cümlesi. */
+function statusCard(payload) {
+  const status = payload.status || {};
+  const token = payload.token || {};
+  const box = h('div', 'sh-gl-status');
+  box.append(
+    badge(status.visible ? 'Müşteriye AÇIK' : 'Müşteriye kapalı',
+      status.tone || 'dim'),
+    h('span', 'sh-sub', status.label || ''),
+  );
+  const line = h('div', 'sh-gl-line');
+  line.append(
+    h('span', 'sh-sub', `API tokenı: ${token.hasToken ? token.mask || 'girilmiş' : 'GİRİLMEMİŞ'}`),
+    h('span', 'sh-sub', `Test modu: ${payload.settings?.testMode ? 'AÇIK — gönderiler sahtedir'
+      : 'kapalı'}`),
+  );
+  box.append(line);
+
+  const blockers = payload.blockers || [];
+  if (blockers.length) {
+    // ENGELLER KAYDETMEDEN ÖNCE GÖRÜNÜR. Kullanıcıyı önce reddedilecek bir
+    // isteğe göndermek kötü bir öğretmendir.
+    const list = h('div', 'sh-gl-blockers');
+    for (const item of blockers) {
+      const row = h('div', 'sh-gl-blocker');
+      row.append(h('b', undefined, item.message));
+      if (item.action) row.append(h('span', 'sh-sub', item.action));
+      list.append(row);
+    }
+    box.append(alertBox('Canlıya geçiş şu an mümkün değil:', 'warn'), list);
+  }
+  return card('Durum', box, 'Üçü birden açık olmadan müşteri Geliver fiyatını görmez');
+}
+
+/** Geliver'a sorulan iki sorunun cevabı + "şimdi dene" düğmesi. */
+function checksCard(host, payload) {
+  const box = h('div', 'sh-gl-checks');
+  for (const check of payload.checks || []) {
+    const row = h('div', 'sh-gl-check');
+    row.append(
+      badge(`${CHECK_MARKS[check.state] || '—'} ${check.label}`,
+        CHECK_TONES[check.state] || 'dim'),
+      h('span', 'sh-sub', check.detail || ''),
+    );
+    box.append(row);
+  }
+  box.append(button('Bağlantıyı sına', {
+    title: 'Geliver’a yalnız OKUMA çağrısı gider; gönderi, etiket ya da iade oluşmaz.',
+    onClick: async () => {
+      const result = await withBusy('Sınanıyor…', () => call(`${BASE}/geliver/test`));
+      if (!result) return;
+      const failed = (result.checks || []).filter((item) => item.state !== 'ok');
+      toast(failed.length ? `${failed.length} denetim geçmedi.` : 'Bağlantı kuruldu.',
+        failed.length ? 'warn' : 'good');
+      renderGeliver(host);
+    },
+  }));
+  return card('Bağlantı denetimi', box,
+    'Önbellek atlanır — o anki gerçeği sorar');
+}
+
+function settingsFormCard(host, payload) {
+  const data = payload.settings || {};
+  const token = payload.token || {};
+  geliverForm = formGrid({
+    fields: [
+      { key: 'apiToken', label: 'API tokenı', type: 'text', wide: true, maxLength: 512,
+        placeholder: token.hasToken
+          ? `Kayıtlı: ${token.mask || '****'} — değiştirmeyecekseniz BOŞ bırakın`
+          : 'Geliver panelindeki tokenı yapıştırın',
+        hint: 'Kaydedilen token bir daha OKUNAMAZ; ekran yalnız son dört karakterini '
+          + 'gösterir. Boş bırakmak mevcut tokenı SİLMEZ — silmenin yolu yenisiyle '
+          + 'değiştirmek ya da entegrasyonu kapatmaktır.' },
+      { key: 'active', label: 'Entegrasyon kurulu', type: 'checkbox',
+        hint: 'Kapatmak kargoyu kaldırmaz: checkout mağazanın kendi desi tablosundaki '
+          + 'ücretlere döner.' },
+      { key: 'goLive', label: 'Müşteriye açık (canlı)', type: 'checkbox',
+        hint: 'Açmak checkout’ta Geliver’ın CANLI fiyatını gösterir ve sipariş ekranından '
+          + 'gerçek gönderi açılmasını başlatır. Sunucu önce denetler; geçemezse reddeder.' },
+      { key: 'testMode', label: 'Test modu', type: 'checkbox',
+        hint: 'Açıkken oluşturulan gönderiler SAHTEDİR; gerçek kargo çağrılmaz ve etiket '
+          + 'taşınmaz.' },
+      { key: 'senderAddressId', label: 'Gönderici adres kimliği', type: 'text', maxLength: 64,
+        hint: 'Boş = hesabın varsayılan çıkış adresi. Buraya adresin kendisi değil, '
+          + 'Geliver’daki kimliği yazılır.' },
+      { key: 'sourceIdentifier', label: 'Mağaza adresi (salt gösterilir)', type: 'static' },
+      { key: 'title', label: 'Checkout başlığı (salt gösterilir)', type: 'static' },
+    ],
+    value: {
+      apiToken: '',
+      active: Boolean(data.active),
+      goLive: Boolean(data.goLive),
+      testMode: Boolean(data.testMode),
+      senderAddressId: data.senderAddressId || '',
+      sourceIdentifier: data.sourceIdentifier || '—',
+      title: data.title || '—',
+    },
+  });
+
+  const save = button('Ayarları kaydet', {
+    variant: 'primary',
+    onClick: () => saveGeliver(host, payload, false),
+  });
+  const preview = button('Önce prova et', {
+    title: 'Hiçbir şey yazılmaz; yalnız ne gideceği gösterilir.',
+    onClick: () => saveGeliver(host, payload, true),
+  });
+
+  const box = h('div');
+  const actions = h('div', 'sh-actions');
+  actions.append(preview, save);
+  box.append(geliverForm.node, actions);
+  return card('Ayarlar', box, 'Gerekçe en az 20 karakter — canlıya geçiş para hareketi başlatır');
+}
+
+async function saveGeliver(host, payload, dryRun) {
+  if (!geliverForm.valid()) { geliverForm.showErrors(); return; }
+  const draft = geliverForm.draft();
+  const body = {
+    apiToken: String(draft.apiToken || '').trim(),
+    active: Boolean(draft.active),
+    goLive: Boolean(draft.goLive),
+    testMode: Boolean(draft.testMode),
+    senderAddressId: String(draft.senderAddressId || '').trim(),
+  };
+  const opening = body.goLive && !payload.settings?.goLive;
+  const reason = await askPurchaseReason({
+    title: dryRun ? 'Geliver ayarlarını prova et' : 'Geliver ayarlarını kaydet',
+    description: opening
+      ? 'CANLIYA ALIYORSUNUZ: checkout Geliver’ın gerçek fiyatını göstermeye, sipariş '
+        + 'ekranı gerçek gönderi açmaya başlar. Sunucu önce token, erişim ve gönderici '
+        + 'adresi denetler; geçemezse istek reddedilir ve neden söylenir.'
+      : 'Kargo entegrasyonunun kurulum ayarları değişecek. Gerekçe denetim kaydına yazılır.',
+    confirmLabel: dryRun ? 'Prova et' : 'Kaydet',
+  });
+  if (!reason) return;
+
+  // `call` DEĞİL, ham `api`: `call` `ok:false` yanıtını istisnaya çevirir ve
+  // ön denetim engelleri (gövdedeki `blockers`) yolda kaybolurdu. Bu ekranın
+  // asıl işi tam olarak o engelleri göstermek.
+  const result = await withBusy(dryRun ? 'Prova ediliyor…' : 'Kaydediliyor…', () => api(
+    `${BASE}/geliver`, { method: 'POST', body: { ...body, reason, dryRun } }));
+  if (!result) return;
+
+  if (result.ok === false) {
+    // SUNUCUNUN REDDİ OLDUĞU GİBİ GÖSTERİLİR. Ön denetim engelleri hata
+    // metnine sığmıyor; ayrı satırlar hâlinde gelirler ve her biri ne
+    // yapılacağını söyler.
+    toast(result.error, 'bad');
+    for (const item of result.blockers || []) {
+      toast(`${item.message}${item.action ? ` → ${item.action}` : ''}`, 'warn');
+    }
+    return;
+  }
+
+  if (result.dryRun) {
+    toast(`Prova: ${(result.labels || []).join(' · ') || 'değişen alan yok'}. Hiçbir şey yazılmadı.`,
+      'warn');
+    return;
+  }
+  toast(`Kaydedildi: ${(result.labels || []).join(' · ')}.`, 'good');
+  renderGeliver(host);
+}
+
+function webhookCard(host, payload) {
+  const hook = payload.webhook || {};
+  const box = h('div');
+  box.append(alertBox(hook.message || 'Webhook durumu bilinmiyor.',
+    { ok: 'good', missing: 'bad', unknown: 'warn' }[hook.state] || 'info'));
+  if (hook.url) box.append(h('code', 'sh-gl-url', hook.url));
+
+  box.append(button('Webhook’u kaydet', {
+    variant: hook.state === 'missing' ? 'primary' : '',
+    title: 'Geliver hesabında bir webhook kaydı açar; gönderi durumu bundan sonra '
+      + 'kendiliğinden güncellenir.',
+    onClick: async () => {
+      const reason = await askReason({
+        title: 'Webhook’u Geliver hesabına kaydet',
+        description: 'Geliver hesabınızda bir kayıt açılır. Gönderi durumu bundan sonra '
+          + 'taşıyıcıdan kendiliğinden gelir; bugün her gönderi elle senkron bekliyor.',
+        confirmLabel: 'Kaydet',
+      });
+      if (!reason) return;
+      const result = await withBusy('Webhook kaydediliyor…', () => call(
+        `${BASE}/geliver/webhook`, { method: 'POST', body: { reason, dryRun: false } }));
+      if (!result) return;
+      toast('Webhook kaydedildi.', 'good');
+      renderGeliver(host);
+    },
+  }));
+  return card('Webhook', box, 'Gönderi durumunun kendiliğinden güncellenmesini sağlar');
+}
+
+/** Bu uçtan DEĞİŞTİRİLEMEYEN alanlar — sessizce yok olmazlar. */
+function refusedCard(payload) {
+  const refused = payload.refused || {};
+  const keys = Object.keys(refused);
+  if (!keys.length) return h('span');
+  const box = h('div', 'sh-gl-refused');
+  for (const key of keys) {
+    const row = h('div');
+    row.append(h('code', undefined, key), h('span', 'sh-sub', ` — ${refused[key]}`));
+    box.append(row);
+  }
+  return card('Buradan değiştirilemeyenler', box,
+    'Mağaza panelinden düzenlenir; gerekçeleri mağazanın kendi cevabıdır');
+}
+
 // ================================================================== mount
 
 export function mount(root, ctx) {
@@ -1716,6 +2209,7 @@ export function mount(root, ctx) {
     if (key === 'carriers') renderCarriers(host);
     else if (key === 'rates') renderRates(host);
     else if (key === 'zones') renderZones(host);
+    else if (key === 'geliver') renderGeliver(host);
     else renderPerformance(host);
   }
 
@@ -1737,12 +2231,17 @@ export function mount(root, ctx) {
     .then(() => showTab('ready'));
 
   return () => {
+    // Gerekçe alanı panelin ömrü boyunca korunur ama ötesine TAŞINMAZ: bir
+    // sonraki oturum başka bir işin gerekçesiyle açılmamalı.
+    nodes.readyReason = null;
     nodes.readyFilters?.destroy();      // arama alanı bekleyen debounce tutar
     nodes.shipFilters?.destroy();       // tarih aralığı global dinleyici tutar
     zoneForm?.destroy();
     zoneForm = null;
     settingsForm?.destroy();
     settingsForm = null;
+    geliverForm?.destroy();
+    geliverForm = null;
     rateForms.forEach((form) => form.destroy());
     rateForms = [];
     closers.forEach((fn) => { try { fn(); } catch { /* kapanışta hata yutulur */ } });
