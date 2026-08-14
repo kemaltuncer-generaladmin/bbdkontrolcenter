@@ -325,29 +325,54 @@ class DashboardService:
         return {"ok": True, "connected": True, "error": "", "items": rows[:count]}
 
     async def critical_stock(self, *, limit: int = 0) -> dict[str, Any]:
-        """Kritik stok — katalog sağlığı bulgularından (sayfalı uç)."""
+        """Kritik stok — Bagisto'nun kendi stok eşiği raporundan.
+
+        BULUNAN HATA (2026-08-14). Burası katalog sağlığı ucuna `low_stock`
+        diye bir sorun tipi soruyordu. ÖYLE BİR TİP YOK — canlıda ölçüldü,
+        servisin tanıdığı tipler yalnızca:
+
+            no_image · no_description · no_meta · zero_price · no_category
+            · not_indexed
+
+        Hiçbiri stokla ilgili değil. Kart bu yüzden her açılışta boş geliyor
+        ve "uç henüz yayında değil" diyordu; oysa uç yayındaydı, SORU yanlıştı.
+        Kartın adı "Kritik stok" olduğu için kullanıcı bunu "kritik stokta ürün
+        yok" diye okuyordu — canlıda eşiğin altında 5 ürün varken.
+
+        Doğru kaynak Bagisto'nun kendi panosu: `dashboard/stats` ucunun
+        `stock-threshold-products` türü. Eşik değerini mağaza belirler
+        (`catalog.inventory.stock_options.low_stock_threshold`), biz yeniden
+        hesaplamayız — iki ayrı eşik iki ayrı cevap üretirdi.
+
+        Uç sayfalanmaz; tek seferde eşik altındaki ürünleri döndürür, biz
+        kartın istediği kadarını gösteririz.
+        """
         count = limit or metrics.as_int(self._config.get("critical_stock"), 10)
         try:
-            payload = await self._api.bbd_catalog_issues({"kind": "low_stock"}, page=1,
-                                                         per_page=max(1, min(50, count)))
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
-            return {"ok": True, "available": False, "error": self._pending(failure), "items": []}
+            payload = await self._api.dashboard_stats(kind="stock-threshold-products")
+        except Exception as failure:  # noqa: BLE001 — K7: kart düşer, pano ayakta
+            return {"ok": True, "available": False, "error": self._fail(failure), "items": []}
+
+        satirlar = payload.get("statistics")
+        if not isinstance(satirlar, list):
+            satirlar = []
 
         items: list[dict[str, Any]] = []
-        for raw in (payload.get("items") or []):
+        for raw in satirlar:
             if not isinstance(raw, dict):
                 continue
-            product = raw.get("product") if isinstance(raw.get("product"), dict) else raw
             items.append({
-                "id": metrics.as_int(product.get("id") or raw.get("product_id")),
-                "name": metrics.text(metrics.pick(product, "name")) or "(adsız)",
-                "sku": metrics.text(metrics.pick(product, "sku")),
-                "stock": metrics.as_int(metrics.pick(raw, "quantity", "qty", "stock"), 0),
-                "detail": metrics.text(metrics.pick(raw, "detail", "message")),
+                "id": metrics.as_int(raw.get("id")),
+                "name": metrics.text(metrics.pick(raw, "name")) or "(adsız)",
+                "sku": metrics.text(metrics.pick(raw, "sku")),
+                # `total_qty` metin geliyor ("18") — sayıya çevrilmeden
+                # sıralama alfabetik olur ve "9" > "18" çıkar.
+                "stock": metrics.as_int(metrics.pick(raw, "total_qty", "quantity", "qty"), 0),
+                "detail": metrics.text(metrics.pick(raw, "formatted_price")),
             })
-        meta = payload.get("meta") or {}
-        return {"ok": True, "available": True, "error": "", "items": items,
-                "total": metrics.as_int(meta.get("total"), len(items))}
+        items.sort(key=lambda satir: satir["stock"])
+        return {"ok": True, "available": True, "error": "", "items": items[:count],
+                "total": len(items)}
 
     async def pending_work(self) -> dict[str, Any]:
         """Bekleyen işler — her satır ilgili panele gider.

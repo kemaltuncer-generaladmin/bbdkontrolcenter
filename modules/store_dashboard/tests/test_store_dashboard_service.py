@@ -63,13 +63,65 @@ async def test_bekleyen_isler_satir_satir_hata_verir() -> None:
     assert rows["returns"]["target"] == "store_requests"
 
 
-async def test_yayinda_olmayan_bbd_ucu_kart_gizlemez_durumu_anlatir() -> None:
+async def test_kritik_stok_ucu_patlarsa_kart_gizlenmez_durumu_anlatir() -> None:
+    # Kural: okunamayan kart YOK OLMAZ, neden okunamadığını söyler. Boş kart
+    # ile "kritik stokta ürün yok" ekranda aynı görünür — biri sorun, diğeri
+    # iyi haber.
     service, api, _ = _service()
-    api.fail.add("bbd_catalog_issues")
+    api.fail.add("dashboard_stats")
     result = await service.critical_stock()
     assert result["ok"] is True
     assert result["available"] is False
-    assert "uç hazır olunca" in result["error"]
+    assert result["error"]
+
+
+async def test_kritik_stok_katalog_saglik_ucuna_SORULMAZ() -> None:
+    """BULUNAN HATA (2026-08-14). Kart `bbd_catalog_issues`'a `low_stock` diye
+    bir sorun tipi soruyordu. ÖYLE BİR TİP YOK — canlıdaki servis yalnız
+    no_image · no_description · no_meta · zero_price · no_category ·
+    not_indexed tanıyor, hiçbiri stokla ilgili değil.
+
+    Kart her açılışta boş geliyordu ve kullanıcı bunu "kritik stokta ürün yok"
+    diye okuyordu; oysa canlıda eşiğin altında 5 ürün vardı. Uç yayındaydı,
+    SORU yanlıştı — sessiz yanlış cevabın ta kendisi.
+    """
+    service, api, _ = _service()
+    api.stock_threshold_rows = [
+        {"id": 9, "sku": "SKU-9", "name": "Matematik Soru Bankası", "total_qty": "20"},
+    ]
+    await service.critical_stock()
+    assert api.used("bbd_catalog_issues") == []
+    assert api.used("dashboard_stats") == [
+        {"kind": "stock-threshold-products", "start": "", "end": ""}
+    ]
+
+
+async def test_kritik_stok_metin_adedi_sayiya_cevirir_ve_azdan_coga_sirlar() -> None:
+    # `total_qty` canlıda METİN geliyor ("18"). Çevrilmezse sıralama alfabetik
+    # olur ve "9" > "18" çıkar — en kritik ürün listenin dibine düşer, yani
+    # kartın tek işi ters çalışır.
+    service, api, _ = _service()
+    api.stock_threshold_rows = [
+        {"id": 1, "sku": "SKU-1", "name": "On sekiz", "total_qty": "18"},
+        {"id": 2, "sku": "SKU-2", "name": "Dokuz", "total_qty": "9"},
+        {"id": 3, "sku": "SKU-3", "name": "Yirmi", "total_qty": "20"},
+    ]
+    result = await service.critical_stock()
+    assert [row["stock"] for row in result["items"]] == [9, 18, 20]
+    assert result["total"] == 3
+
+
+async def test_kritik_stok_kart_sayisi_kadar_gosterir_toplami_saklar() -> None:
+    # Uç sayfalanmıyor; tamamı gelir, kart yalnız ilk N'i çizer. "5 üründen
+    # 2'sini görüyorsun" diyebilmek için toplam korunmalı.
+    service, api, _ = _service()
+    api.stock_threshold_rows = [
+        {"id": i, "sku": f"SKU-{i}", "name": f"Ürün {i}", "total_qty": str(i)}
+        for i in range(1, 6)
+    ]
+    result = await service.critical_stock(limit=2)
+    assert len(result["items"]) == 2
+    assert result["total"] == 5
 
 
 # ================================================================ KPI hesabı

@@ -108,6 +108,9 @@ class FakeApi:
         self.customer_rows: list[dict[str, Any]] = []
         self.catalog_health: dict[str, Any] = {"out_of_stock": 3}
         self.issue_rows: list[dict[str, Any]] = []
+        #: `dashboard/stats?type=stock-threshold-products` satırları. Canlıdaki
+        #: biçim: `total_qty` METİN, sıralama YOK (biz sıralıyoruz).
+        self.stock_threshold_rows: list[dict[str, Any]] = []
         self.counts: dict[str, int] = {}
         self.config_payload: dict[str, Any] = {}
         #: `configuration/menu` ağacı — düğüm anahtarı slug, `fields` alan
@@ -181,6 +184,16 @@ class FakeApi:
                                  per_page: int | None = None) -> dict[str, Any]:
         self._record("bbd_catalog_issues", filters, page=page, per_page=per_page)
         return {"items": self.issue_rows, "meta": {"total": len(self.issue_rows)}}
+
+    async def dashboard_stats(self, *, kind: str = "over-all", start: str = "",
+                              end: str = "", channel: str = "") -> dict[str, Any]:
+        """Bagisto panosu. Kritik stok kartının kaynağı.
+
+        `total_qty` CANLIDA METİN geliyor ("18") — sahte de öyle vermeli,
+        yoksa test sayıya çevirmeyi kanıtlayamaz.
+        """
+        self._record("dashboard_stats", kind=kind, start=start, end=end)
+        return {"type": kind, "statistics": self.stock_threshold_rows}
 
     # -------------------------------------------------------------- sağlık
 
