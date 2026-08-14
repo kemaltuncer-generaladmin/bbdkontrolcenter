@@ -26,7 +26,9 @@ olurdu.
 DOKUZ TUZAK — hepsinin karşılığı bu dosyada bir fonksiyondur:
 
  1. Ödeme durumu alanı YOK          → `payment_state` faturalanan/iade edilen
-                                       tutardan çıkarır.
+                                       tutardan çıkarır; liste ucunda o tutar
+                                       hiç gelmediği için ÖDEME KANITI iki ayrı
+                                       listeden toplanır (`payment_index`).
  2. Para ondalık gelir              → `to_kurus` Decimal ile çevirir, float yok.
  3. Sipariş no ≠ sipariş id         → `order_no` `increment_id` kullanır;
                                        eylem uçlarına giden HER ZAMAN `id`dir.
@@ -82,13 +84,20 @@ PAYMENT_LABELS = {
     "partial": "Kısmi",
     "paid": "Ödendi",
     "refunded": "İade edildi",
-    # Liste ucu faturalanan tutarı taşımıyor. "Bilinmiyor" demek zorunda
-    # kalmak, tahsil edilmiş siparişi "Ödenmedi" diye göstermekten iyidir.
+    # BANKA YANITI YOK. `unknown` / `provisioning` durumundaki bir POS denemesi
+    # "başarısız" DEĞİLDİR: para çekilmiş olabilir. Bu satıra "Ödenmedi" yazmak,
+    # operatöre "tekrar tahsil edin" dedirtir ve müşterinin kartından ikinci kez
+    # para çıkar; fark ancak ekstre gelince, günler sonra anlaşılır.
+    "uncertain": "Belirsiz — bankayla mutabakat sürüyor",
+    # Kanıt penceresi bu siparişi kapsamıyor ya da kanıt okunamadı. "Ödenmedi"
+    # demek, tahsil edilmiş siparişi ödenmemiş göstermek olurdu.
     "unknown": "Bilinmiyor",
 }
 
+#: Rozet tonu. `uncertain` AYRI bir ton ister: ne "iyi" ne "kötü", "bakılmalı".
+#: Panel bu tonu kendi `so-pay-uncertain` sınıfıyla ayrıca boyar.
 PAYMENT_TONES = {"unpaid": "bad", "partial": "warn", "paid": "good", "refunded": "dim",
-                 "unknown": "dim"}
+                 "uncertain": "warn", "unknown": "dim"}
 
 FULFIL_LABELS = {"none": "Yok", "partial": "Kısmi", "full": "Tam"}
 
@@ -166,6 +175,29 @@ def pick(raw: Any, *names: str, default: Any = None) -> Any:
         if value is not None:
             return value
     return default
+
+
+def field(raw: Any, *names: str) -> tuple[bool, Any]:
+    """Alanı VARLIĞIYLA okur: `(bulundu, değer)`. `None` değer YOKLUK DEĞİLDİR.
+
+    TUZAK: `pick()` burada kullanılamaz — `None` gelen alanı yok sayar ve
+    sıradaki ada geçer. Ödeme denemesinin `moneyTaken` alanı ÜÇ DURUMLUDUR ve
+    `null` "bilinmiyor" demektir; `pick` ile okunsa `null` "alan yok" sayılır,
+    bilinmeyen sessizce başka bir yoldan yeniden türetilirdi. Üç durumlu her
+    alan bu yardımcıdan okunur.
+    """
+    if not isinstance(raw, dict):
+        return False, None
+    folded: dict[str, Any] | None = None
+    for name in names:
+        if name in raw:
+            return True, raw[name]
+        if folded is None:
+            folded = {_folded_key(str(key)): value for key, value in raw.items()}
+        key = _folded_key(name)
+        if key in folded:
+            return True, folded[key]
+    return False, None
 
 
 def has_detail(raw: Any) -> bool:
@@ -315,6 +347,328 @@ def payment_state(raw: dict[str, Any]) -> str:
     if total and invoiced < total:
         return "partial"
     return "paid"
+
+
+# ============================================================== ödeme kanıtı
+#
+# NEDEN AYRI BİR KATMAN. `payment_state` yalnız siparişin KENDİ gövdesine bakar
+# ve liste ucu faturalanan tutarı hiç göndermez: bütün liste "Bilinmiyor"
+# görünür. Bilgi başka yerde DURUYOR — iki ayrı listede:
+#
+#   (a) `GET /api/admin/invoices`               → `state` ("paid") + siparişin
+#                                                 ARTAN NUMARASI
+#   (b) `GET /api/admin/bbd/payments/attempts`  → `state` + `order_id`
+#
+# CANLIDA DOĞRULANDI (18 sipariş · 17 fatura · 17 POS denemesi): iki kaynak
+# birbirini doğruluyor. İkisi de LİSTEDİR; sipariş başına istek atılmaz (N+1
+# yasak), tek sayfa çekilip bellekte eşlenir.
+
+#: Fatura kaydının "tahsil edildi" durumu. Diğerleri (`pending`,
+#: `pending_payment`, `overdue`) TAHSİLAT DEĞİLDİR.
+INVOICE_PAID = "paid"
+
+#: POS denemesi durumu → para çekildi mi. Kaynak: mağaza paketindeki
+#: `Bbd\ControlApi\Support\PaymentState`. Eşleme ÜÇ DURUMLUDUR ve `None` bir
+#: "henüz false" DEĞİLDİR: banka yanıtı gelmemiştir, para çekilmiş olabilir.
+POS_MONEY_TAKEN = ("captured", "order_created", "void_required", "reversed")
+POS_MONEY_UNKNOWN = ("provisioning", "unknown")
+POS_MONEY_NOT_TAKEN = ("initiated", "enrolling", "enrolled", "authenticated",
+                       "enroll_failed", "auth_failed", "provision_failed",
+                       "abandoned", "superseded")
+
+#: Paranın müşteriye GERİ DÖNDÜĞÜ durum. `taken` ile birlikte okunur: çekilmiş
+#: ve iade edilmiş bir tahsilatı "para bizde" ya da "hiç çekilmedi" diye
+#: göstermemek için ikisi ayrı tutulur.
+POS_REVERSED = "reversed"
+
+#: Ödeme kaynağının ekranda görünen adı.
+PAYMENT_SOURCES = {
+    "invoice": "fatura kaydı",
+    "pos": "sanal POS denemesi",
+    "both": "fatura + sanal POS",
+    "detail": "sipariş detayı (faturalanan tutar)",
+    "none": "kanıt bulunamadı",
+    "missing": "kanıt okunamadı",
+}
+
+
+def state_money_taken(state: Any) -> bool | None:
+    """POS durum adı → para çekildi mi (True / False / **None = bilinmiyor**).
+
+    TANIMADIĞI DURUM İÇİN `None` DÖNER, `False` DEĞİL. Mağaza paketine yarın
+    yeni bir durum eklenirse bu ekran onu "para yok" diye sunmaz; "bilmiyorum"
+    der. Fail-safe yön burada `False` değil `None`'dır.
+    """
+    value = text(state)
+    if value in POS_MONEY_TAKEN:
+        return True
+    if value in POS_MONEY_NOT_TAKEN:
+        return False
+    return None
+
+
+def attempt_view(item: Any) -> dict[str, Any]:
+    """Bir POS denemesinin bu ekranı ilgilendiren üçlüsü.
+
+    `moneyTaken` alanı yanıtta VARSA o kullanılır — eşlemenin sahibi mağaza
+    paketidir, biz kopyasını tutarız. Alan gelmezse durum adından çıkarılır;
+    iki yol da aynı üç kovaya düşer.
+    """
+    state = text(pick(item, "state"))
+    found, raw = field(item, "money_taken")
+    taken = (None if raw is None else bool(raw)) if found else state_money_taken(state)
+    found_back, raw_back = field(item, "money_returned")
+    returned = bool(raw_back) if found_back else state == POS_REVERSED
+    return {"orderId": as_int(pick(item, "order_id")), "state": state,
+            "taken": taken, "returned": returned}
+
+
+def window_floor(items: Any, *names: str) -> str:
+    """Okunan kayıtların EN ESKİ günü — kanıt penceresinin dibi.
+
+    Tek sayfa çekiliyor (uç 50'de kırpıyor). Sayfa dolduysa daha eski kayıtlar
+    OKUNMAMIŞTIR ve o kayıtların yokluğu "ödeme yok" anlamına gelmez. Pencerenin
+    dibinden ESKİ ya da AYNI GÜNDEKİ siparişler için "kanıt yok" sonucuna
+    varılmaz — o satırlar "Bilinmiyor" kalır.
+
+    PENCERE ANCAK LİSTE YENİDEN ESKİYE SIRALIYSA GEÇERLİDİR ve bu VERİDEN
+    doğrulanır, istekten varsayılmaz: `sort=id&order=desc` gönderiyoruz ama
+    Laravel tanımadığı parametreyi sessizce yok sayar. Liste eskiden yeniye
+    gelseydi elimizdeki 50 kayıt EN ESKİ 50 olurdu; o durumda "pencerenin
+    dibinden yeni sipariş" ölçütü tam ters çalışır ve okunmamış faturaları
+    "yok" saymamıza yol açardı. Sıra doğrulanamazsa pencere YOKTUR ("").
+    """
+    days = [day_of(pick(item, *names)) for item in items or [] if isinstance(item, dict)]
+    days = [day for day in days if day]
+    if not days:
+        return ""
+    if any(days[index] > days[index - 1] for index in range(1, len(days))):
+        return ""
+    return days[-1]
+
+
+def payment_index(invoices: Any, attempts: Any) -> dict[str, Any]:
+    """İki listeden sipariş başına kanıt haritası. SİPARİŞ BAŞINA İSTEK YOK."""
+    by_no: dict[str, dict[str, Any]] = {}
+    by_id: dict[int, dict[str, Any]] = {}
+    unbound_invoices = 0
+
+    for item in invoices or []:
+        if not isinstance(item, dict):
+            continue
+        slot = {"count": 0, "paid": False, "states": []}
+        # TUZAK — CANLIDA DOĞRULANDI: fatura kaydında `orderId` NULL geliyor.
+        # Bağ `orderIncrementId` üzerinden kurulur. `orderId` ile eşleştirmeye
+        # kalkan kod HİÇBİR faturayı bağlayamaz, hata da vermez ve ekranda
+        # HERKES "Ödenmedi" görünür.
+        number = text(pick(item, "order_increment_id"))
+        order_id = as_int(pick(item, "order_id"))
+        if number:
+            slot = by_no.setdefault(number, slot)
+        elif order_id:
+            slot = by_id.setdefault(order_id, slot)
+        else:
+            unbound_invoices += 1
+            continue
+        slot["count"] += 1
+        state = text(pick(item, "state"))
+        slot["states"].append(state)
+        slot["paid"] = slot["paid"] or state == INVOICE_PAID
+
+    by_order: dict[int, dict[str, Any]] = {}
+    unbound_attempts = 0
+    for item in attempts or []:
+        if not isinstance(item, dict):
+            continue
+        view = attempt_view(item)
+        if not view["orderId"]:
+            # Siparişi olmayan deneme (ör. `void_required`) bu ekranın işi
+            # değildir — Sanal POS ekranı onunla ilgilenir. Sessizce yutulmaz,
+            # sayılır.
+            unbound_attempts += 1
+            continue
+        slot = by_order.setdefault(view["orderId"],
+                                   {"count": 0, "taken": False, "unknown": False,
+                                    "returned": False, "states": []})
+        slot["count"] += 1
+        slot["states"].append(view["state"])
+        if view["taken"] is None:
+            slot["unknown"] = True
+        elif view["taken"] and view["returned"]:
+            slot["returned"] = True
+        elif view["taken"]:
+            slot["taken"] = True
+
+    return {
+        "invoiceByNo": by_no, "invoiceById": by_id, "attemptByOrder": by_order,
+        "invoiceFloorDay": window_floor(invoices, "created_at"),
+        "attemptFloorDay": window_floor(attempts, "created_at"),
+        "unboundInvoices": unbound_invoices, "unboundAttempts": unbound_attempts,
+        # Kaynak durumu servisin işidir; burada iyimser başlar.
+        "invoiceOk": True, "attemptOk": True,
+        "invoiceComplete": True, "attemptComplete": True,
+        "warnings": [],
+    }
+
+
+def empty_index() -> dict[str, Any]:
+    """Kanıtsız harita: hiçbir satırı ne yükseltir ne düşürür."""
+    index = payment_index([], [])
+    index["invoiceOk"] = False
+    index["attemptOk"] = False
+    return index
+
+
+def evidence_of(row: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
+    """Bir siparişin ham kanıtı: kaç fatura, kaç deneme, hangi durumda."""
+    number = text(row.get("incrementId"))
+    order_id = as_int(row.get("id"))
+    invoice = (index.get("invoiceByNo", {}).get(number)
+               or index.get("invoiceById", {}).get(order_id)
+               or {"count": 0, "paid": False, "states": []})
+    attempt = index.get("attemptByOrder", {}).get(order_id) or {
+        "count": 0, "taken": False, "unknown": False, "returned": False, "states": []}
+    return {
+        "invoiceCount": invoice["count"], "invoicePaid": bool(invoice["paid"]),
+        "invoiceStates": list(invoice["states"]),
+        "attemptCount": attempt["count"], "taken": bool(attempt["taken"]),
+        "unknown": bool(attempt["unknown"]), "returned": bool(attempt["returned"]),
+        "attemptStates": list(attempt["states"]),
+    }
+
+
+def evidence_covers(row: dict[str, Any], index: dict[str, Any]) -> bool:
+    """Bu satır için "kanıt yok, demek ki ödenmedi" sonucuna VARILABİLİR Mİ?
+
+    İKİ KAYNAĞIN İKİSİ İÇİN de aynı iki koşul aranır: kaynak okunabilmiş olmalı
+    ve ya sayfa kırpılmamış olmalı ya da sipariş kanıt penceresinin dibinden
+    YENİ olmalı. Biri bile tutmuyorsa satır "Bilinmiyor" kalır — kaydın
+    yokluğunu kanıt saymak, kanıtı hiç okumamakla aynı sonucu verirdi.
+    """
+    for ok_key, complete_key, floor_key in (
+            ("invoiceOk", "invoiceComplete", "invoiceFloorDay"),
+            ("attemptOk", "attemptComplete", "attemptFloorDay")):
+        if not index.get(ok_key):
+            return False
+        if index.get(complete_key):
+            continue
+        floor = text(index.get(floor_key))
+        # Fatura sipariş TARİHİNDEN SONRA, POS denemesi ise ÖNCE oluşur; iki
+        # yönü de kapsamak için pencerenin dibindeki GÜN tamamen dışarıda
+        # bırakılır.
+        if not floor or text(row.get("createdDay")) <= floor:
+            return False
+    return True
+
+
+def payment_view(row: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
+    """Satırın ödeme durumunu iki DIŞ kaynakla yeniden çözer.
+
+    SIRA (görev tanımı): fatura `paid` VEYA POS `moneyTaken=true` → Ödendi ·
+    POS `moneyTaken=null` → Belirsiz · ikisi de yok → Ödenmedi.
+
+    EN SERT KURAL: `unknown` ve `provisioning` ASLA "Ödenmedi" yazılmaz.
+
+    SİPARİŞİN KENDİ TUTAR DÖKÜMÜ KANITTAN KESKİNDİR ve korunur: `paid`,
+    `partial`, `refunded` durumları kaç kuruşun faturalandığını/iade edildiğini
+    bilir, kanıt yalnız "bir kayıt var" der. Tamamı faturalanmış bir siparişi
+    havada kalmış tek bir POS denemesi yüzünden "Belirsiz" göstermek, tahsil
+    edilmiş malı sevkiyattan alıkoyardı; o deneme yine de `paymentAttention`
+    ile işaretlenir ve satırda yazılır.
+    """
+    evidence = evidence_of(row, index)
+    current = text(row.get("paymentState")) or "unknown"
+    sharper = current in ("paid", "partial", "refunded")
+    covered = evidence_covers(row, index)
+    source = "detail" if row.get("detailed") else "none"
+    note = ""
+
+    if sharper:
+        state = current
+        source = "detail"
+        note = "Tutar dökümünden hesaplandı: faturalanan ve iade edilen tutar karşılaştırıldı."
+        if evidence["unknown"]:
+            note += (" AYRICA bankadan kesin yanıt gelmemiş bir POS denemesi var "
+                     f"({', '.join(evidence['attemptStates'])}): bu sipariş için ikinci bir "
+                     "çekim olmuş OLABİLİR, Sanal POS ekranından bakılmalı.")
+    elif evidence["invoicePaid"] or evidence["taken"]:
+        state = "paid"
+        source = ("both" if evidence["invoicePaid"] and evidence["taken"]
+                  else "invoice" if evidence["invoicePaid"] else "pos")
+        note = _paid_note(evidence)
+    elif evidence["unknown"]:
+        state = "uncertain"
+        source = "pos"
+        note = ("Bankadan kesin yanıt gelmemiş bir POS denemesi var "
+                f"({', '.join(evidence['attemptStates']) or 'durum yok'}). Para çekilmiş "
+                "OLABİLİR; bu satıra “Ödenmedi” yazmak müşteriden ikinci kez tahsilat "
+                "istemeye yol açardı. Mutabakat Sanal POS ekranından yapılır.")
+    elif evidence["returned"]:
+        state = "refunded"
+        source = "pos"
+        note = "Sanal POS denemesi iade/iptal edilmiş; para müşteriye geri dönmüş görünüyor."
+    elif current == "unknown":
+        state = "unpaid" if covered else "unknown"
+        note = (_unpaid_note(index) if covered else _blind_note(index))
+        source = "none" if covered else "missing"
+    else:
+        state = current
+        if current == "unpaid" and not index.get("attemptOk"):
+            # Fatura yok diyoruz ama POS'a bakamadık: havada kalmış bir deneme
+            # olabileceğini SÖYLEMEK zorundayız.
+            note = ("Faturası yok; sanal POS denemeleri OKUNAMADI, bu yüzden bankada "
+                    "havada kalmış bir tahsilat olup olmadığı bilinmiyor.")
+            source = "missing"
+
+    return {
+        "paymentState": state,
+        "paymentLabel": PAYMENT_LABELS[state],
+        "paymentTone": PAYMENT_TONES[state],
+        "paymentSource": PAYMENT_SOURCES[source],
+        "paymentNote": note,
+        # Bankaya sorulması gereken satır: rengi ayrı, açıklaması satırda.
+        "paymentAttention": bool(evidence["unknown"]),
+        "paymentEvidence": evidence,
+    }
+
+
+def _paid_note(evidence: dict[str, Any]) -> str:
+    parts = []
+    if evidence["invoicePaid"]:
+        parts.append(f"{evidence['invoiceCount']} fatura kaydı “paid”")
+    if evidence["taken"]:
+        parts.append("POS denemesi parayı çekmiş "
+                     f"({', '.join(evidence['attemptStates']) or 'durum yok'})")
+    return "Tahsilat kanıtı: " + " · ".join(parts) + "."
+
+
+def _unpaid_note(index: dict[str, Any]) -> str:
+    return ("Ne tahsil edilmiş fatura ne de para çeken bir POS denemesi bulundu. "
+            f"{len(index.get('invoiceByNo', {})) + len(index.get('invoiceById', {}))} "
+            "siparişin faturası ve "
+            f"{len(index.get('attemptByOrder', {}))} siparişin POS denemesi tarandı.")
+
+
+def _blind_note(index: dict[str, Any]) -> str:
+    problems = list(index.get("warnings") or [])
+    if not problems and not (index.get("invoiceOk") and index.get("attemptOk")):
+        problems.append("fatura ve POS listeleri okunamadı")
+    if not index.get("invoiceComplete") or not index.get("attemptComplete"):
+        problems.append(
+            "kanıt listesi tek sayfada bitmedi; bu siparişten daha eski kayıtlar "
+            "okunmadı (fatura penceresi "
+            f"{index.get('invoiceFloorDay') or '—'}, POS penceresi "
+            f"{index.get('attemptFloorDay') or '—'} gününde bitiyor)")
+    return ("Ödeme kanıtı bu sipariş için toplanamadı: " + " · ".join(problems)
+            + ". “Ödenmedi” demek tahsil edilmiş siparişi ödenmemiş göstermek olurdu.")
+
+
+def with_payment(row: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
+    """Satırı kanıtla yeniden çözülmüş ödeme durumuyla döndürür (yeni sözlük)."""
+    out = {**row, **payment_view(row, index)}
+    out["shipBlock"] = ship_block(out)
+    out["shipNote"] = ship_note(out)
+    return out
 
 
 def fulfilment(done: int, ordered: int) -> str:
@@ -574,7 +928,7 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
     ship_state = fulfilment(shipped_qty, ordered_qty)
     invoice_state = fulfilment(invoiced_qty, ordered_qty)
 
-    return {
+    row = {
         "id": as_int(pick(raw, "id")),
         "orderNo": order_no(raw, no_format),
         "incrementId": text(pick(raw, "increment_id")),
@@ -597,6 +951,11 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
         "paymentState": state,
         "paymentLabel": PAYMENT_LABELS[state],
         "paymentTone": PAYMENT_TONES[state],
+        # Kanıt katmanı (`with_payment`) bu üçünü doldurur; satır kanıtsız
+        # çizilirse alanlar VAR ama boştur — ekranın `undefined` okumaması için.
+        "paymentSource": PAYMENT_SOURCES["detail" if detailed else "none"],
+        "paymentNote": "",
+        "paymentAttention": False,
         "itemCount": as_int(pick(raw, "total_item_count")) or len(items),
         "quantity": ordered_qty,
         **money,
@@ -620,6 +979,11 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
         # süzgeçler bunu bilmeli: "kargolanmamış" ile "bilinmiyor" ayrı şeyler.
         "detailed": detailed,
     }
+    # Toplu kargo uygunluğu satırın KENDİSİNDE durur: ekran onay kutusunu buna
+    # göre kapatır ve NEDENİ aynı satırda yazar.
+    row["shipBlock"] = ship_block(row)
+    row["shipNote"] = ship_note(row)
+    return row
 
 
 def _open_for_shipping(status: str, ship_state: str) -> bool:
@@ -873,30 +1237,79 @@ def cancel_block(row: dict[str, Any], *, window_hours: int = 0, now: str = "") -
     return ""
 
 
+def ship_block(row: dict[str, Any]) -> str:
+    """Bu sipariş TOPLU kargoya verilebilir mi? Engel varsa GÖSTERİLECEK metin.
+
+    Ekran onay kutusunu buna göre kapatır: seçilemeyen satırın nedeni aynı
+    satırda yazılıdır. "Neden seçemiyorum" sorusunu diyaloğa saklamak, işi yapan
+    kişiye geç kalmış bir açıklamadır.
+
+    ÖDEME BELİRSİZKEN KARGO ÇIKMAZ. `uncertain` satır "ödenmedi" değildir ama
+    "ödendi" de değildir; mal çıkarmadan önce bankayla mutabakat gerekir. Tek
+    sipariş çekmeceden yine kargolanabilir — orada karar veren kişi siparişin
+    tamamını görüyor.
+    """
+    if row.get("status") in ("canceled", "closed"):
+        return "Sipariş iptal/kapalı."
+    if row.get("shipmentState") == "full":
+        return "Zaten tamamı kargolanmış."
+    state = text(row.get("paymentState"))
+    if state == "uncertain":
+        return ("Ödeme belirsiz: bankadan yanıt gelmemiş bir POS denemesi var, "
+                "para çekilmiş olabilir de olmayabilir de. Mutabakat bitmeden mal çıkmaz.")
+    if state == "refunded":
+        return "Parası iade edilmiş; kargoya verilmez."
+    if state == "unpaid":
+        return "Ödenmedi: tahsilat kaydı yok, önce fatura kesilmeli."
+    if row.get("detailed") and row.get("invoiceState") == "none":
+        return "Faturası kesilmemiş; önce fatura kesilmeli."
+    return ""
+
+
+def ship_note(row: dict[str, Any]) -> str:
+    """Engel YOK ama bilgi de eksikse söylenecek şey.
+
+    Sığ liste satırında fatura ve gönderi kaydı hiç yoktur. Böyle bir satırı
+    seçtirmemek toplu kargoyu varsayılan görünümde tamamen kullanılamaz
+    kılardı; seçtirip sessiz kalmak ise "uygun sanıp" tıklatırdı. Üçüncü yol:
+    seçtir, ama neyin doğrulanmadığını YAZ — önizleme siparişi tek tek okur.
+    """
+    if row.get("shipBlock"):
+        return ""
+    if not row.get("detailed"):
+        return "Fatura ve kargo durumu bu satırda yok; önizleme siparişi tek tek doğrular."
+    return ""
+
+
 def batch_rows(rows: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
     """Toplu kargo/fatura ÖNİZLEMESİ — fark tablosu.
 
     Uygulanmadan önce hangi siparişin atlanacağı ve NEDEN atlandığı yazılır.
     "12 siparişin 5'i zaten faturalı" bilgisini uygulamadan sonra vermek, işi
     yapan kişiye geç kalmış bir açıklamadır.
+
+    Kargo engelleri `ship_block` ile TEK YERDEN gelir: listedeki onay kutusunu
+    kapatan kural ile önizlemede satırı atlayan kural ayrışırsa, kullanıcı
+    seçebildiği bir siparişin neden atlandığını anlayamaz.
     """
     out: list[dict[str, Any]] = []
     for row in rows:
-        note = ""
-        if row.get("status") in ("canceled", "closed"):
+        if kind == "ship":
+            note = ship_block(row)
+        elif row.get("status") in ("canceled", "closed"):
             note = "Sipariş iptal/kapalı."
-        elif kind == "invoice" and row.get("invoiceState") == "full":
+        elif row.get("invoiceState") == "full":
             note = "Zaten tamamı faturalanmış."
-        elif kind == "ship" and row.get("shipmentState") == "full":
-            note = "Zaten tamamı kargolanmış."
-        elif kind == "ship" and row.get("invoiceState") == "none":
-            note = "Faturası kesilmemiş; önce fatura kesilmeli."
+        else:
+            note = ""
         out.append({
             "id": row["id"],
             "orderNo": row["orderNo"],
             "customer": row["customer"],
             "total": row["grandTotal"],
+            "quantity": row.get("quantity", 0),
             "statusLabel": row["statusLabel"],
+            "paymentLabel": row.get("paymentLabel", ""),
             "skipped": bool(note),
             "note": note,
         })
@@ -904,10 +1317,18 @@ def batch_rows(rows: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
 
 
 def batch_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Onay ekranının rakamları: kaç sipariş, kaç adet, ne kadar tutar.
+
+    DESİ BURADA YOKTUR ve uydurulmaz: desi ürünün en/boy/yükseklik ölçüsünden
+    hesaplanır, sipariş gövdesi o ölçüyü taşımaz ve hesabın sahibi Kargo
+    Yönetimi ekranıdır (`store_shipping`). Buradan sahte bir desi vermek,
+    taşıyıcı faturası geldiğinde tutmayan bir rakam olurdu.
+    """
     ready = [row for row in rows if not row.get("skipped")]
     return {
         "total": len(rows),
         "ready": len(ready),
         "skipped": len(rows) - len(ready),
         "amount": sum(row.get("total", 0) for row in ready),
+        "quantity": sum(row.get("quantity", 0) for row in ready),
     }

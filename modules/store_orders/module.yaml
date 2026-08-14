@@ -32,7 +32,10 @@ provides:
 
 consumes:
   - capability: store.api
-    reason: "Sipariş verisi mağazanın admin API'sinden gelir (K4)."
+    reason: >
+      Sipariş verisi mağazanın admin API'sinden gelir (K4). Ödeme DURUMU
+      siparişte yok: fatura listesi (`/invoices`) ve sanal POS denemeleri
+      (`/bbd/payments/attempts`) aynı geçitten, tek sayfa isteğiyle okunur.
   - capability: store.shipment.byOrder
     optional: true
     reason: "Sipariş detayındaki kargo sekmesi; Kargo ekranı yoksa sekme hiç açılmaz (K7)."

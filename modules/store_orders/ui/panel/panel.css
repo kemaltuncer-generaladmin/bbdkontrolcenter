@@ -62,12 +62,24 @@
   background: color-mix(in srgb, var(--accent) 8%, #fff);
 }
 
+/* Seçilemeyen siparişlerin gerekçesi çubuğun ALT SATIRINA geçer: rozetler
+   düğmelerin arasına karışırsa hangi sayının neye ait olduğu kayboluyor. */
+.so-selwhy {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
 /* ------------------------------------------------------------------ tablo */
 
 /* On dört sütun dar pencereye sığmaz. Tablo KENDİ kabında yatay kayar; gövde
    yatay kaymaz — sayfanın tamamını sağa sola sürüklemek okumayı bozuyordu. */
 .so-table { min-height: 120px; overflow-x: auto; }
-.so-table > .kit-table { min-width: 1320px; }
+.so-table > .kit-table { min-width: 1460px; }
 
 .so-cellstack { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .so-cellstack b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -81,6 +93,29 @@
 .so-track .kit-btn { padding: 1px 6px; font-size: 11px; }
 
 .so-fulfil { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------ ödeme sütunu */
+
+.so-pay { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+
+/* BELİRSİZ ÖDEME AYRI RENKTEDİR. `warn` (turuncu) bu ekranda "kısmi" demek;
+   belirsiz ödeme ondan farklı bir iştir — bankaya sorulacak. Menekşe hiçbir
+   durum rozetinde kullanılmıyor, bu yüzden karışmaz. Renk TEK BAŞINA anlam
+   taşımaz: rozetin altında "bankayla mutabakat gerekiyor" yazar. */
+.kit-badge.so-pay-uncertain {
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+  color: #6d28d9;
+  font-weight: 600;
+}
+
+/* Satırda yazan gerekçe: seçilemeyen kargo ve belirsiz ödeme. */
+.so-why {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #6d28d9;
+  font-weight: 600;
+}
 
 /* ---------------------------------------------------------------- çekmece */
 
@@ -156,6 +191,18 @@
   gap: 10px;
 }
 .so-batch-result:empty { display: none; }
+
+/* Taşıyıcı seçici: liste + serbest metin yan yana. Liste gelmezse metin alanı
+   tek başına çalışır — boş bir açılır kutu işi durdururdu. */
+.so-carrier {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+.so-carrier select { min-width: 180px; }
+.so-carrier input { min-width: 180px; }
 
 .so-qty { width: min(620px, 92vw); }
 .so-qty-list {

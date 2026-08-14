@@ -257,6 +257,12 @@ async def batch_preview(
 class BatchApplyBody(BaseModel):
     token: str = Field(min_length=8, max_length=64)
     reason: str = Field(min_length=10, max_length=255)
+    #: Toplu gönderinin taşıyıcısı. Kuru provada seçilir ve gerçek uygulamada
+    #: AYNISI beklenir; takip numarası toplu işte GİRİLMEZ (her gönderininki
+    #: ayrıdır, tek numara hepsini aynı pakete yazmak olurdu).
+    carrier: str = Field(default="", max_length=64)
+    #: Varsayılan AÇIK. Gerçek uygulama servis tarafında da kuru prova
+    #: görülmüş bir jeton ister (K9): istemci bu bayrağı atlatabilir.
     dryRun: bool = True
 
 
@@ -265,8 +271,11 @@ async def batch_apply(
     body: BatchApplyBody,
     user: CurrentUser = requires("store_orders.manage"),
 ) -> dict[str, Any]:
+    """Önce kuru prova, sonra gerçek uygulama. Kısmi başarı başarısızlık
+    değildir: `applied`/`failed` ve satır satır `results` döner."""
     return await service().batch_apply(token=body.token, reason=body.reason,
-                                       actor=user.full_name, dry_run=body.dryRun)
+                                       actor=user.full_name, dry_run=body.dryRun,
+                                       carrier=body.carrier)
 
 
 class LabelsBody(BaseModel):

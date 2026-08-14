@@ -50,10 +50,11 @@ class FakeStore:
             self.batch[token] = {"token": token, "kind": kind, "params": job_params,
                                  "rows": rows, "status": "preview", "created_at": created}
         elif "_batch" in text and text.startswith("UPDATE"):
-            status, actor, reason, applied, token = params
+            status, actor, reason, applied, job_params, token = params
             row = self.batch.get(token)
             if row:
-                row.update(status=status, actor=actor, reason=reason, applied_at=applied)
+                row.update(status=status, actor=actor, reason=reason, applied_at=applied,
+                           params=job_params)
         elif "_prefs" in text:
             self.prefs[params[0]] = params[1]
 
@@ -85,13 +86,22 @@ class FakeApi:
         self.shallow = shallow
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.fail: set[str] = set()
+        #: `fail` içindeki ad kaç BAŞARILI çağrıdan sonra patlasın. 0 = hemen.
+        #: Kısmi başarı ancak böyle sınanır: toplu işte kimi geçer, kimi patlar.
+        self.fail_after = 0
         self.list_payload: dict[str, Any] = {"items": [], "meta": {}}
         self.config_payload: dict[str, Any] = {}
         self.shipment_payload: dict[str, Any] = {"items": [], "meta": {}}
         self.label_bytes = b"%PDF-1.4 sahte etiket"
+        #: ÖDEME KANITI. Canlıda fatura listesi `state` + `orderIncrementId`,
+        #: POS listesi `state` + `order_id` taşıyor; ikisi de AYRI uçtur ve
+        #: sipariş gövdesinde yoktur. Varsayılan BOŞ: kanıtsız ekran bugünkü
+        #: gibi "Bilinmiyor" demeli, testler kanıtı açıkça vermeli.
+        self.invoice_payload: dict[str, Any] = {"items": [], "meta": {"total": 0}}
+        self.attempt_payload: dict[str, Any] = {"items": [], "meta": {"total": 0}}
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
-        if name in self.fail:
+        if name in self.fail and len(self.args_of(name)) >= self.fail_after:
             raise RuntimeError(f"{name} patladı")
         self.calls.append((name, args, kwargs))
 
@@ -129,6 +139,17 @@ class FakeApi:
         self._record("transactions", filters, page=page, per_page=per_page)
         return {"items": [{"id": 7, "type": "sale", "status": "approved", "amount": "120.00",
                            "created_at": "2026-08-10T10:05:00"}], "meta": {}}
+
+    async def invoices(self, filters: Any = None, *, page: int = 1,
+                       per_page: int | None = None,
+                       all_pages: bool = False) -> dict[str, Any]:
+        self._record("invoices", filters, page=page, per_page=per_page, all_pages=all_pages)
+        return self.invoice_payload
+
+    async def bbd_payment_attempts(self, filters: Any = None, *, page: int = 1,
+                                   per_page: int | None = None) -> dict[str, Any]:
+        self._record("bbd_payment_attempts", filters, page=page, per_page=per_page)
+        return self.attempt_payload
 
     async def snapshot(self, *, refresh: bool = False) -> dict[str, Any]:
         self._record("snapshot", refresh=refresh)

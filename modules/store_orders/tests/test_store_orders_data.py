@@ -45,6 +45,129 @@ def test_parasi_geri_verilen_siparis_odendi_gorunmez() -> None:
     assert ord_.payment_state(row) == "refunded"
 
 
+# ==================================== TUZAK 1b — ödeme KANITI (iki kaynak)
+#
+# Liste ucu ödeme DURUMU taşımıyor, yalnız ödeme YÖNTEMİ. Bilgi başka yerde
+# duruyor: faturanın `state` alanı ve POS denemesinin `state` alanı.
+
+def _sig(**extra: Any) -> dict[str, Any]:
+    """Liste ucundan gelen SIĞ satır: fatura/gönderi koleksiyonu YOK."""
+    base = {"id": 19, "increment_id": "19", "status": "processing",
+            "created_at": "2026-08-13 18:27:17", "grand_total": "2.00",
+            "customer_name": "Mehmet Berkay Şaman"}
+    base.update(extra)
+    return ord_.order_row(base, today="2026-08-14")
+
+
+def test_pos_durumu_ucuncu_kovaya_dusebilir() -> None:
+    # Mağaza paketindeki eşlemenin aynısı: `null` bir "henüz false" DEĞİLDİR.
+    assert ord_.state_money_taken("order_created") is True
+    assert ord_.state_money_taken("captured") is True
+    assert ord_.state_money_taken("void_required") is True
+    assert ord_.state_money_taken("provision_failed") is False
+    assert ord_.state_money_taken("abandoned") is False
+    assert ord_.state_money_taken("unknown") is None
+    assert ord_.state_money_taken("provisioning") is None
+    # Tanınmayan durum "para yok" değil "bilmiyorum" demektir.
+    assert ord_.state_money_taken("mutabakat_bekliyor") is None
+
+
+def test_moneyTaken_null_alani_yokluk_sayilmaz() -> None:
+    # `pick()` `None` değeri yokluk sayar ve durum adından yeniden türetirdi;
+    # üç durumlu alan `field()` ile okunur.
+    assert ord_.attempt_view({"state": "order_created", "moneyTaken": None})["taken"] is None
+    assert ord_.attempt_view({"state": "unknown", "moneyTaken": True})["taken"] is True
+    assert ord_.attempt_view({"state": "unknown"})["taken"] is None
+
+
+def test_fatura_siparise_artan_numarayla_baglanir() -> None:
+    # CANLIDA DOĞRULANDI: fatura kaydında `orderId` NULL geliyor. `orderId` ile
+    # eşleştiren kod hiçbir faturayı bağlayamaz ve HERKES "Ödenmedi" görünür.
+    index = ord_.payment_index(
+        [{"id": 18, "state": "paid", "orderId": None, "orderIncrementId": "19",
+          "createdAt": "2026-08-13 18:27:20"}], [])
+    row = ord_.with_payment(_sig(), index)
+    assert row["paymentState"] == "paid"
+    assert row["paymentLabel"] == "Ödendi"
+
+
+def test_pos_parayi_cekmisse_faturasiz_da_odendi_yazar() -> None:
+    index = ord_.payment_index([], [{"id": 7, "order_id": 19, "state": "order_created",
+                                     "created_at": "2026-08-13 18:27:19"}])
+    row = ord_.with_payment(_sig(), index)
+    assert row["paymentState"] == "paid"
+    assert "POS" in row["paymentSource"] or "pos" in row["paymentSource"]
+
+
+def test_banka_yaniti_yoksa_asla_odenmedi_yazilmaz() -> None:
+    """EN SERT KURAL. `unknown` ve `provisioning` para çekilmemiş demek DEĞİLDİR.
+
+    "Ödenmedi" yazmak operatöre "tekrar tahsil edin" dedirtir; müşterinin
+    kartından ikinci kez para çıkar ve fark ekstre gelince anlaşılır.
+    """
+    for state in ("unknown", "provisioning"):
+        index = ord_.payment_index([], [{"id": 7, "order_id": 19, "state": state,
+                                         "created_at": "2026-08-13 18:00:00"}])
+        row = ord_.with_payment(_sig(), index)
+        assert row["paymentState"] == "uncertain"
+        assert row["paymentLabel"].startswith("Belirsiz")
+        assert row["paymentAttention"] is True
+        assert "Ödenmedi" not in row["paymentLabel"]
+        # Böyle bir sipariş toplu kargoya DA verilmez: mal çıkmadan önce banka.
+        assert "belirsiz" in row["shipBlock"].lower()
+
+
+def test_iki_kaynak_da_sessizse_odenmedi_yazilir() -> None:
+    index = ord_.payment_index([{"id": 18, "state": "paid", "orderIncrementId": "77",
+                                 "createdAt": "2026-08-01 10:00:00"}],
+                               [{"id": 7, "order_id": 77, "state": "order_created",
+                                 "created_at": "2026-08-01 09:59:00"}])
+    row = ord_.with_payment(_sig(), index)
+    assert row["paymentState"] == "unpaid"
+    assert row["paymentLabel"] == "Ödenmedi"
+
+
+def test_kanit_penceresi_disindaki_siparis_odenmedi_sayilmaz() -> None:
+    # Tek sayfa çekiliyor. Sayfa dolduysa daha eski kayıtlar OKUNMAMIŞTIR;
+    # yokluklarını kanıt saymak, tahsil edilmiş siparişi ödenmemiş göstermek.
+    index = ord_.payment_index([{"id": 90, "state": "paid", "orderIncrementId": "90",
+                                 "createdAt": "2026-08-20 10:00:00"}], [])
+    index["invoiceComplete"] = False
+    index["attemptComplete"] = False
+    row = ord_.with_payment(_sig(), index)          # sipariş 2026-08-13, pencere 08-20
+    assert row["paymentState"] == "unknown"
+    assert row["paymentLabel"] == "Bilinmiyor"
+
+
+def test_kanit_listesi_eskiden_yeniye_gelirse_pencere_kullanilmaz() -> None:
+    # `sort=id&order=desc` gönderiyoruz ama Laravel tanımadığı parametreyi
+    # SESSİZCE yok sayar. Sıra veriden doğrulanmazsa pencere yoktur; yoksa
+    # okunmamış faturaları "yok" sayardık.
+    artan = [{"id": 1, "state": "paid", "orderIncrementId": "1",
+              "createdAt": "2026-08-01 10:00:00"},
+             {"id": 2, "state": "paid", "orderIncrementId": "2",
+              "createdAt": "2026-08-09 10:00:00"}]
+    assert ord_.window_floor(artan, "created_at") == ""
+    azalan = list(reversed(artan))
+    assert ord_.window_floor(azalan, "created_at") == "2026-08-01"
+
+
+def test_kanit_okunamazsa_satir_bilinmiyor_kalir() -> None:
+    row = ord_.with_payment(_sig(), ord_.empty_index())
+    assert row["paymentState"] == "unknown"
+    assert "okunamadı" in row["paymentNote"] or "toplanamadı" in row["paymentNote"]
+
+
+def test_tutar_dokumu_kanittan_keskindir() -> None:
+    # Kısmi fatura kanıtla "Ödendi"ye yuvarlanmaz: kaç kuruşu faturalanmış
+    # bilgisi, "bir fatura kaydı paid" bilgisinden daha keskindir.
+    kismi = ord_.order_row(_order(grand_total_invoiced="600.00"))
+    index = ord_.payment_index([{"id": 5, "state": "paid", "orderIncrementId": "1000012",
+                                 "createdAt": "2026-08-10 10:00:00"}], [])
+    row = ord_.with_payment(kismi, index)
+    assert row["paymentState"] == "partial"
+
+
 # ================================================= TUZAK 2 — para çevrimi
 
 def test_para_kurusa_float_olmadan_cevrilir() -> None:
@@ -236,10 +359,43 @@ def test_faturasi_kesilmemis_siparis_kargoya_verilemez() -> None:
 
 
 def test_toplu_ozet_yalnizca_uygulanacaklari_toplar() -> None:
-    rows = [ord_.order_row(_order(total_qty_invoiced=3)),
-            ord_.order_row(_order(id=13, status="canceled"))]
+    # Faturalanan ADET ile faturalanan TUTAR birlikte hareket eder; ikisini
+    # ayrı kurgulamak (adet 3, tutar 0) canlıda karşılığı olmayan bir satır
+    # üretir ve ödeme kapısını yanlış yerden tetiklerdi.
+    hazir = _order(total_qty_invoiced=3, grand_total_invoiced="1250.00")
+    rows = [ord_.order_row(hazir), ord_.order_row(_order(id=13, status="canceled"))]
     summary = ord_.batch_summary(ord_.batch_rows(rows, "ship"))
-    assert summary == {"total": 2, "ready": 1, "skipped": 1, "amount": 125000}
+    assert summary == {"total": 2, "ready": 1, "skipped": 1, "amount": 125000, "quantity": 3}
+
+
+# ============================================ toplu kargo — kim seçilebilir
+
+def test_kargoya_verilemeyen_siparisin_nedeni_satirda_durur() -> None:
+    # Onay kutusunu kapatan kural ile önizlemede satırı atlayan kural AYNI
+    # yerden gelir; ayrışsalar kullanıcı seçebildiği bir siparişin neden
+    # atlandığını anlayamazdı.
+    iptal = ord_.order_row(_order(status="canceled"))
+    assert "iptal" in iptal["shipBlock"]
+
+    kargolu = ord_.order_row(_order(grand_total_invoiced="1250.00", total_qty_shipped=3))
+    assert "kargolanmış" in kargolu["shipBlock"]
+
+    odenmemis = ord_.order_row(_order())
+    assert "Ödenmedi" in odenmemis["shipBlock"]
+
+    hazir = ord_.order_row(_order(grand_total_invoiced="1250.00", total_qty_invoiced=3))
+    assert hazir["shipBlock"] == ""
+
+
+def test_sig_satir_kargoya_engel_sayilmaz_ama_dogrulanacagi_yazilir() -> None:
+    # Varsayılan görünüm SIĞ satır verir: fatura/kargo kaydı yoktur. Hepsini
+    # seçtirmemek toplu kargoyu kullanılamaz kılardı; seçtirip susmak ise
+    # "uygun" sanmasına yol açardı.
+    sig = ord_.order_row({"id": 9, "increment_id": "9", "status": "processing",
+                          "grand_total": "100.00", "created_at": "2026-08-10 09:00:00"})
+    assert sig["detailed"] is False
+    assert sig["shipBlock"] == ""
+    assert "doğrular" in sig["shipNote"]
 
 
 # ================================================================ gerekçe

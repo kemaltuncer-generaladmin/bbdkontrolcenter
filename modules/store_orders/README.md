@@ -23,7 +23,7 @@ cevabı olmuyordu. Menüde Kontrol Paneli'nin hemen ardına girer (`order: 15`);
 | Çipler (sayaçlı) | Bekleyen · Hazırlanıyor · Kargoda · Bugün gelen · **Geciken** · İptal |
 | Mini toplam | Sipariş · Ciro · Ortalama sepet · İptal — süzgecin **tamamı** üzerinden |
 | Tablo | Sipariş no+tarih · Müşteri+grup+şehir · Kalem · Ara toplam · Kargo · İndirim · KDV · **Toplam** · Ödeme · Durum · Takip no (kopyala) · Fatura · Kargo durumu |
-| Toplu | Kargoya ver · Fatura kes · Etiket indir · Kargo manifestosu · CSV |
+| Toplu | **Seçilenleri kargoya ver** · Fatura kes · Etiket indir · Kargo manifestosu · CSV |
 | Çekmece | Özet · Kalemler · Ödeme · *Kargo* · *Fatura* · İade · Notlar · İşlem geçmişi |
 | Ayarlar sekmesi | Durum adları · sipariş no biçimi · iptal süresi · gecikme eşiği · (salt okunur) mağaza sipariş ayarları |
 
@@ -78,10 +78,83 @@ gönderip uygulandığını varsaymak, süzülmemiş listeyi süzülmüş gibi g
 olurdu. Durum satırı hangi kipte olunduğunu ve kaç kaydın tarandığını yazar;
 tavan yakalanırsa ekran uyarır.
 
-**Ödeme durumu listede "Bilinmiyor" görünür.** Bagisto'da "ödendi mi" diye bir
-alan yok; faturalanan tutardan çıkarılıyor ve o tutar liste ucunda hiç gelmiyor.
-"Ödenmedi" yazmak tahsil edilmiş her siparişi ödenmemiş göstermek olurdu.
-Detay istendiğinde (çekmece ya da ödeme süzgeci) gerçek durum gelir.
+## Ödeme durumu — üç kaynaktan çözülür
+
+Bagisto'da "ödendi mi" diye bir alan **yok** ve sipariş listesi ucu ödeme
+**yöntemini** taşıyor (`paymentTitle`), **durumunu** değil. Bilgi başka yerde
+duruyor; ekran onu üç kaynaktan birleştirir:
+
+| Kaynak | Uç | Ne söyler |
+|---|---|---|
+| Siparişin tutar dökümü | `GET /orders/{id}` | `grandTotalInvoiced` / `grandTotalRefunded` → kaç kuruşu tahsil edilmiş. **En keskin olan budur.** |
+| Fatura kaydı | `GET /invoices` | `state` = `paid` |
+| Sanal POS denemesi | `GET /bbd/payments/attempts` | `state` → `moneyTaken` (true / false / **null**) |
+
+Canlıda doğrulandı: 18 sipariş · 17 fatura (hepsi `paid`) · 17 POS denemesi
+(hepsi `order_created`). İki kaynak birbirini doğruluyor.
+
+**Fatura kaydında `orderId` NULL geliyor**; bağ `orderIncrementId` üzerinden
+kurulur. `orderId` ile eşleştiren kod hiçbir faturayı bağlayamaz, hata da
+vermez ve ekranda **herkes "Ödenmedi" görünür**.
+
+Sıra: fatura `paid` **veya** POS `moneyTaken=true` → **Ödendi** · POS
+`moneyTaken=null` → **Belirsiz — bankayla mutabakat sürüyor** · ikisi de yok →
+**Ödenmedi**.
+
+### `unknown` ve `provisioning` asla "Ödenmedi" yazılmaz
+
+`moneyTaken` üç durumludur ve `null` bir "henüz false" değildir: banka isteği
+aldı, cevabı bize ulaşmadı — **para çekilmiş olabilir.** "Ödenmedi" yazmak
+operatöre "tekrar tahsil edin" dedirtir, müşterinin kartından ikinci kez para
+çıkar ve fark ancak ekstre gelince anlaşılır. Bu satırlar ayrı renkte (menekşe)
+görünür, altında *"bankayla mutabakat gerekiyor"* yazar ve **toplu kargoya
+girmez**. Eşlemenin sahibi mağaza paketidir (`Bbd\ControlApi\Support\
+PaymentState`); yanıt `moneyTaken` taşıyorsa o kullanılır, taşımıyorsa aynı
+eşleme durum adından uygulanır ve **tanınmayan durum `null`'a düşer.**
+
+### Kanıt penceresi
+
+İki liste **tek sayfa** çekilir (uç 50'de kırpıyor) — sipariş başına istek
+atmak yasak (N+1): 50 siparişlik bir sayfa 100 istek eder, geçit dakikada 55
+istekte tutar. Sayfa dolduysa daha eski kayıtlar okunmamıştır ve
+**yokluklarından "ödeme yok" sonucu çıkarılmaz**: pencerenin dibindeki günden
+eski siparişler "Bilinmiyor" kalır ve ekran nedenini yazar. Pencere ancak liste
+yeniden eskiye sıralıysa kullanılır ve bu **veriden doğrulanır**
+(`sort=id&order=desc` gönderiyoruz ama Laravel tanımadığı parametreyi sessizce
+yok sayar).
+
+Kanıt 15 saniye önbelleklenir (liste + sayaç ucu aynı çizimde iki kez çekmesin)
+ve **her yazmadan sonra düşürülür**: fatura kesen kişi ekranı yenilediğinde
+"Ödenmedi" görmemeli.
+
+## Toplu kargoya verme
+
+Onay kutusuyla çoklu seçim → **Seçilenleri kargoya ver** → önizleme → **kuru
+prova** → gerekçeli tek onay.
+
+- **Kim seçilebilir.** Kargoya verilemeyen siparişin nedeni *satırda* yazar
+  (Kargo durumu sütunu): *iptal/kapalı · zaten tamamı kargolanmış · ödenmedi ·
+  ödeme belirsiz · faturası kesilmemiş.* Düğme yalnız uygun olanları götürür ve
+  seçim çubuğu *"3 seçili sipariş kargoya verilemez — 2 × … · 1 × …"* diye
+  gerekçeyi gruplayarak yazar. Aynı kural (`ship_block`) hem satırı hem
+  önizlemeyi besler: ayrışsalar kullanıcı seçebildiği bir siparişin neden
+  atlandığını anlayamazdı.
+- **Sığ satır engel sayılmaz.** Varsayılan görünümde fatura/kargo kaydı satırda
+  yoktur; o satırlar seçilebilir ve *"önizleme siparişi tek tek doğrular"* der.
+- **Onay ekranı** kaç sipariş, hangi taşıyıcı, toplam adet ve toplam tutarı
+  gösterir. Taşıyıcı kuru provada seçilir ve **onayda değiştirilemez** —
+  farklı taşıyıcıyla gelen gerçek uygulama sunucuda reddedilir.
+- **Kuru prova önce çalışır ve kural sunucudadır.** Jeton `preview` →
+  `dry_run` → `applied` sırasını izler; `dry_run`'dan geçmemiş bir jetonla
+  gelen gerçek uygulama reddedilir (K9: arayüzde gizlemek yetkilendirme
+  değildir). Kuru provada mağazaya tek satır yazılmaz — geçit çekirdek uçlarda
+  isteği hiç göndermez.
+- **Kısmi başarı başarısızlık değildir.** 10 siparişin 3'ü patlarsa 7'si
+  başarılıdır: sonuç tablosu satır satır *Tamam/Hata* ve hatanın **nedenini**
+  gösterir, ekran "başarılı olanları yeniden denemeyin — ikinci gönderi ikinci
+  kargo demektir" diye uyarır.
+- **Takip numarası toplu işte girilmez** (her gönderininki ayrıdır) ve **etiket
+  satın alınmaz**; yalnız mağazada gönderi kaydı açılır.
 
 ## Sağladığı yetenek
 
@@ -135,6 +208,18 @@ yalnız *tetiklenir*, burada *uygulanmaz*:
 - **Toplu etiketi tek PDF'te birleştirme.** Elimizde PDF birleştirici yok;
   sahte bir "birleşik etiket" yazıcıdan bozuk kâğıt çıkarırdı. Her etiket ayrı
   dosyadır.
+- **Toplu kargo onayında desi göstermek.** Desi ürünün en/boy/yükseklik
+  ölçüsünden hesaplanır; sipariş gövdesi (liste de detay da) o ölçüyü taşımaz
+  ve hesabın sahibi Kargo Yönetimi'dir (`store_shipping`, kendi `desi_divisor`
+  ayarıyla). Buradan bir desi uydurmak, taşıyıcı faturası geldiğinde tutmayan
+  bir rakam olurdu; onay ekranı **adet ve tutar** gösterir ve desiyi neden
+  göstermediğini yazar.
+- **Uygun olmayan satırın onay kutusunu kilitlemek.** Ortak tablo bileşeni
+  (`ui-kit/table.js`) satır başına seçim kilidi sunmuyor ve kit bu turda
+  değiştirilmiyor. Bugünkü karşılık: satır seçilebilir ama **nedeni satırda
+  yazılı**, düğme yalnız uygunları götürür ve çubuk kaç siparişin neden
+  dışarıda kaldığını söyler. Kite `dataTable({selectableRow})` eklenirse kutu
+  da kapanır.
 - **Mağazanın sipariş ayarlarını yazma.** `core_config` anahtar adları Bagisto
   sürümüne göre değişiyor; bulunmayan anahtara yazmak etkisiz bir satır açar ve
   kullanıcı ayarı değiştirdiğini sanır. Ayarlar sekmesi mağaza tarafını **salt
@@ -167,11 +252,14 @@ Sipariş verisinin kopyası tutulmaz.
 .venv/bin/ruff check modules/store_orders
 ```
 
-- `test_store_orders_data.py` — saf dönüşümler (dokuz tuzağın her biri).
-- `test_store_orders_service.py` — iş kuralları, K7, yıkıcı işlem kapıları.
+- `test_store_orders_data.py` — saf dönüşümler (dokuz tuzağın her biri), ödeme
+  kanıtı eşlemesi ve kargo uygunluğu.
+- `test_store_orders_service.py` — iş kuralları, K7, yıkıcı işlem kapıları,
+  N+1 yokluğu, kuru prova kapısı ve kısmi başarı.
 - `test_store_orders_live_shape.py` — **canlı gövde biçimi.** İçindeki sözlükler
-  `GET /api/admin/orders`, `/orders/19` ve `/orders/12` yanıtlarından kısaltılarak
-  alınmıştır; alan adları ve değer tipleri olduğu gibidir. Modülün kendi
-  uydurduğu snake_case veriye karşı geçen test hiçbir şey kanıtlamıyordu.
+  `GET /api/admin/orders`, `/orders/19`, `/orders/12`, `/invoices` ve
+  `/bbd/payments/attempts` yanıtlarından kısaltılarak alınmıştır; alan adları ve
+  değer tipleri olduğu gibidir (fatura kaydında `orderId: null` dahil). Modülün
+  kendi uydurduğu snake_case veriye karşı geçen test hiçbir şey kanıtlamıyordu.
 
 Ağa çıkılmaz; `store.api` taklit edilir.

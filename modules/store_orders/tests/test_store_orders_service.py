@@ -151,6 +151,85 @@ async def test_ozet_ciroya_iptalleri_katmaz() -> None:
     assert result["summary"]["revenue"] == 125000
 
 
+# ===================================================== ödeme kanıtı (iki uç)
+
+async def test_odeme_durumu_iki_listeden_cozulur_siparis_basina_istek_atilmaz() -> None:
+    """N+1 YASAK. On sipariş için iki istek; on iki değil.
+
+    Ödeme durumu sipariş gövdesinde yok. Sipariş başına `/invoices?order_id=…`
+    atmak on siparişte yirmi istek eder ve geçit dakikada 55 istekte tutar:
+    ekran ikinci sayfada kilitlenirdi.
+    """
+    kayitlar = {index: {**SIPARIS, "id": index, "increment_id": f"10000{index}"}
+                for index in range(1, 11)}
+    api = FakeApi(kayitlar, shallow=[{"id": index, "incrementId": f"10000{index}",
+                                      "status": "processing", "grandTotal": 100,
+                                      "createdAt": "2026-08-10 09:30:00"}
+                                     for index in range(1, 11)])
+    api.invoice_payload = {"items": [{"id": 5, "state": "paid", "orderId": None,
+                                      "orderIncrementId": "100001",
+                                      "createdAt": "2026-08-10 09:31:00"}],
+                           "meta": {"total": 1}}
+    api.attempt_payload = {"items": [{"id": 9, "order_id": 2, "state": "order_created",
+                                      "created_at": "2026-08-10 09:29:00"}],
+                           "meta": {"total": 1}}
+    service, _, _ = _service(api)
+
+    result = await service.orders(filters={"chip": "processing"})
+    assert len(api.args_of("invoices")) == 1
+    assert len(api.args_of("bbd_payment_attempts")) == 1
+
+    durumlar = {row["incrementId"]: row["paymentLabel"] for row in result["items"]}
+    assert durumlar["100001"] == "Ödendi"        # fatura kaydından
+    assert durumlar["100002"] == "Ödendi"        # POS denemesinden
+    assert durumlar["100003"] == "Ödenmedi"      # iki kaynak da sessiz
+
+
+async def test_pos_ucu_yayinda_degilse_liste_ayakta_kalir_ve_odenmedi_denmez() -> None:
+    # BBD ucu henüz yayında olmayabilir (K7). Kanıtın yarısı okunamadığında
+    # "Ödenmedi" yazmak, bankada asılı kalmış bir tahsilatı gizlemek olurdu.
+    api = FakeApi({19: dict(SIPARIS)},
+                  shallow=[{"id": 19, "incrementId": "19", "status": "processing",
+                            "grandTotal": 100, "createdAt": "2026-08-10 09:30:00"}])
+    api.fail.add("bbd_payment_attempts")
+    service, _, _ = _service(api)
+
+    result = await service.orders(filters={"chip": "processing"})
+    assert result["ok"] is True
+    assert result["connected"] is True
+    assert result["items"][0]["paymentLabel"] == "Bilinmiyor"
+    assert result["evidence"]["posOk"] is False
+    assert result["evidence"]["invoiceOk"] is True
+
+
+async def test_kanit_ayni_ekran_yenilemesinde_iki_kez_cekilmez() -> None:
+    # Liste ve sayaç uçları arka arkaya çağrılıyor; ikisinin de aynı iki
+    # listeyi çekmesi geçidin dakikalık payını boşuna harcardı.
+    api = FakeApi({12: dict(SIPARIS)})
+    service, _, _ = _service(api)
+    await service.orders()
+    await service.overview()
+    assert len(api.args_of("invoices")) == 1
+
+    # Fatura kesildikten sonra kanıt bayattır: yeniden çekilir.
+    await service.invoice(12, items=None, reason="Tahsilat tamamlandı", actor="Ali",
+                          dry_run=False)
+    await service.orders()
+    assert len(api.args_of("invoices")) == 2
+
+
+async def test_odeme_durumu_suzgeci_kanitla_calisir() -> None:
+    api = FakeApi({}, shallow=[{"id": index, "incrementId": str(index),
+                                "status": "processing", "grandTotal": 100,
+                                "createdAt": "2026-08-10 09:30:00"} for index in (1, 2)])
+    api.attempt_payload = {"items": [{"id": 9, "order_id": 1, "state": "unknown",
+                                      "created_at": "2026-08-10 09:29:00"}],
+                           "meta": {"total": 1}}
+    service, _, _ = _service(api)
+    result = await service.orders(filters={"paymentState": "uncertain"})
+    assert [row["id"] for row in result["items"]] == [1]
+
+
 # ================================================== gerekçe ve yazma kapısı
 
 async def test_kisa_gerekce_backendde_de_reddedilir() -> None:
@@ -263,7 +342,8 @@ async def test_onizleme_jeton_uretir_ve_atlananlari_gosterir() -> None:
     service, _, store = _service(FakeApi(kayitlar))
     preview = await service.batch_preview(kind="invoice", order_ids=[12, 13])
     assert preview["ok"] is True
-    assert preview["summary"] == {"total": 2, "ready": 1, "skipped": 1, "amount": 125000}
+    assert preview["summary"] == {"total": 2, "ready": 1, "skipped": 1, "amount": 125000,
+                                  "quantity": 3}
     assert store.batch[preview["token"]]["status"] == "preview"
 
 
@@ -274,9 +354,30 @@ async def test_onizleme_okunamayan_siparisi_gizlemez() -> None:
     assert preview["summary"]["total"] == 1
 
 
+async def test_kuru_prova_gorulmeden_toplu_islem_uygulanmaz() -> None:
+    # "dryRun önce" kuralı ARAYÜZDE DEĞİL burada: istemci bayrağı atlatabilir
+    # (K9). Jeton `preview` → `dry_run` → `applied` sırasını izler.
+    service, api, store = _service()
+    preview = await service.batch_preview(kind="ship", order_ids=[12])
+    erken = await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                                      actor="Ali", dry_run=False)
+    assert erken["ok"] is False
+    assert "kuru prova" in erken["error"]
+    assert api.used("create_shipment") == []       # mağazaya tek satır gitmedi
+
+    prova = await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                                      actor="Ali", dry_run=True)
+    assert prova["ok"] is True
+    assert prova["dryRun"] is True
+    assert store.batch[preview["token"]]["status"] == "dry_run"
+    assert api.used("create_shipment")[0]["dry_run"] is True
+
+
 async def test_ayni_onizleme_iki_kez_uygulanmaz() -> None:
     service, _, _ = _service()
     preview = await service.batch_preview(kind="ship", order_ids=[12])
+    await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                              actor="Ali", dry_run=True)
     first = await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
                                       actor="Ali", dry_run=False)
     assert first["ok"] is True
@@ -286,6 +387,26 @@ async def test_ayni_onizleme_iki_kez_uygulanmaz() -> None:
     assert "zaten uygulandı" in second["error"]
 
 
+async def test_provadaki_tasiyici_degistirilemez() -> None:
+    # Onaylanan şey neyse o uygulanır: provada "Aras" gösterilip gerçek işlemde
+    # başka bir taşıyıcıya gönderi açmak, kullanıcının görmediği bir işlemdir.
+    service, api, _ = _service()
+    preview = await service.batch_preview(kind="ship", order_ids=[12])
+    await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                              actor="Ali", dry_run=True, carrier="Aras Kargo")
+    baska = await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                                      actor="Ali", dry_run=False, carrier="Yurtiçi")
+    assert baska["ok"] is False
+    assert "taşıyıcı" in baska["error"]
+    assert [kwargs for kwargs in api.used("create_shipment") if kwargs["dry_run"] is False] == []
+
+    ayni = await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                                     actor="Ali", dry_run=False, carrier="Aras Kargo")
+    assert ayni["ok"] is True
+    gercek = [kwargs for kwargs in api.used("create_shipment") if kwargs["dry_run"] is False]
+    assert gercek[0]["payload"]["shipment"]["carrier_title"] == "Aras Kargo"
+
+
 async def test_uygulama_onizlenen_listeyi_kullanir_yeniden_hesaplamaz() -> None:
     kayitlar = {12: dict(ODENMEMIS), 13: {**ODENMEMIS, "id": 13, "status": "canceled"}}
     service, api, store = _service(FakeApi(kayitlar))
@@ -293,18 +414,65 @@ async def test_uygulama_onizlenen_listeyi_kullanir_yeniden_hesaplamaz() -> None:
     satirlar = json.loads(store.batch[preview["token"]]["rows"])
     assert [row["skipped"] for row in satirlar] == [False, True]
     await service.batch_apply(token=preview["token"], reason="Toplu fatura kesiliyor",
+                              actor="Ali", dry_run=True)
+    await service.batch_apply(token=preview["token"], reason="Toplu fatura kesiliyor",
                               actor="Ali", dry_run=False)
-    # İptal edilmiş sipariş uca HİÇ gitmez.
-    assert [args[0] for args in api.args_of("create_invoice")] == [12]
+    # İptal edilmiş sipariş uca HİÇ gitmez — kuru provada da, gerçeğinde de.
+    assert {args[0] for args in api.args_of("create_invoice")} == {12}
+
+
+async def test_toplu_islem_kismi_basariyi_gizlemez() -> None:
+    """10 siparişin 3'ü patlarsa 7'si BAŞARILIDIR.
+
+    "Toplu işlem başarısız" deyip başarılıları gizlemek, kullanıcıyı hepsini
+    yeniden denemeye iter; kargoda bu, ikinci gönderi demektir.
+    """
+    kayitlar = {index: {**ODENMEMIS, "id": index, "increment_id": f"10000{index}"}
+                for index in (12, 13)}
+    api = FakeApi(kayitlar)
+    service, _, _ = _service(api)
+    preview = await service.batch_preview(kind="invoice", order_ids=[12, 13])
+    await service.batch_apply(token=preview["token"], reason="Toplu fatura kesiliyor",
+                              actor="Ali", dry_run=True)
+    api.calls.clear()                             # provanın çağrıları sayılmasın
+    api.fail.add("create_invoice")                # ilki geçer, ikincisi patlar
+    api.fail_after = 1
+
+    result = await service.batch_apply(token=preview["token"], reason="Toplu fatura kesiliyor",
+                                       actor="Ali", dry_run=False)
+    assert result["ok"] is True                   # kısmi başarı başarısızlık değil
+    assert result["applied"] == 1
+    assert result["failed"] == 1
+    assert result["partial"] is True
+    assert [row["ok"] for row in result["results"]] == [True, False]
+    assert result["results"][1]["error"] != ""    # NEDEN yazılı
 
 
 async def test_toplu_kargo_yalnizca_faturalanmis_kalemi_gonderir() -> None:
     service, api, _ = _service()
     preview = await service.batch_preview(kind="ship", order_ids=[12])
     await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
+                              actor="Ali", dry_run=True)
+    await service.batch_apply(token=preview["token"], reason="Toplu kargoya veriliyor",
                               actor="Ali", dry_run=False)
-    payload = api.used("create_shipment")[0]["payload"]
-    assert payload["shipment"]["items"] == {"5": 3}
+    gercek = [kwargs for kwargs in api.used("create_shipment") if kwargs["dry_run"] is False]
+    assert gercek[0]["payload"]["shipment"]["items"] == {"5": 3}
+    # Takip numarası toplu işte GİRİLMEZ: her gönderininki ayrıdır.
+    assert gercek[0]["payload"]["shipment"]["track_number"] == ""
+
+
+async def test_odemesi_belirsiz_siparis_toplu_kargoya_girmez() -> None:
+    # Banka yanıtı gelmemiş bir POS denemesi varken mal çıkmaz; önizleme
+    # satırı NEDENİYLE atlar. Faturası olmayan bu sipariş "Ödenmedi" DEĞİL
+    # "Belirsiz" sayılır — para çekilmiş olabilir.
+    api = FakeApi({12: dict(ODENMEMIS)})
+    api.attempt_payload = {"items": [{"id": 3, "order_id": 12, "state": "unknown",
+                                      "created_at": "2026-08-10T09:29:00"}],
+                           "meta": {"total": 1}}
+    service, _, _ = _service(api)
+    preview = await service.batch_preview(kind="ship", order_ids=[12])
+    assert preview["summary"]["ready"] == 0
+    assert "belirsiz" in preview["rows"][0]["note"].lower()
 
 
 async def test_cok_buyuk_secim_onizlemeye_bile_girmez() -> None:

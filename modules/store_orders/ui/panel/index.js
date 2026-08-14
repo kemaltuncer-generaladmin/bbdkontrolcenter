@@ -20,10 +20,14 @@
 //  · Mağaza yalnız birkaç süzgeci uyguluyor. Ödeme yöntemi, kargo firması,
 //    şehir, kupon ve anahtar süzgeçler seçilince liste TARANIR; durum satırı
 //    kaç kaydın tarandığını yazar ve tavan yakalanırsa uyarır.
-//  · Ödeme durumu Bagisto'da bir alan değildir; faturalanan tutardan çıkarılır.
-//    Liste ucu faturalanan tutarı hiç göndermiyor: o satırlar "Bilinmiyor"
-//    görünür. Detay istendiğinde (süzgeç ya da çekmece) gerçek durum gelir —
-//    tahsil edilmiş siparişi "Ödenmedi" diye göstermektense söylemek doğrudur.
+//  · Ödeme durumu Bagisto'da bir alan değildir. Liste ucu ödeme YÖNTEMİNİ
+//    veriyor, DURUMUNU değil; durum iki ayrı listeden çözülür: fatura kaydının
+//    `state` alanı ve sanal POS denemesinin `state` alanı (ikisi de TEK sayfa
+//    isteğiyle çekilir, sipariş başına istek atılmaz). Banka yanıtı gelmemiş
+//    deneme "Belirsiz" görünür ve AYRI RENKTEDİR: "Ödenmedi" yazmak, parası
+//    çekilmiş müşteriden ikinci kez tahsilat istemeye yol açardı.
+//  · Toplu kargoya verme yalnız UYGUN siparişleri alır; uygun olmayanın nedeni
+//    satırda yazılıdır ve önce KURU PROVA çalışır.
 //  · Liste ucu SIĞ satır veriyor: fatura, gönderi, not ve ara toplam yalnız
 //    detayda var. Bunlara dayanan bir süzgeç seçilince sunucu kümeyi
 //    detaylandırır; tavan aşılırsa durum satırı "eksik uygulandı" der.
@@ -78,7 +82,15 @@ const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', scanned: false, truncated: false, partial: false, scannedCount: 0,
   summary: { count: 0, liveCount: 0, revenue: 0, average: 0, canceled: 0 },
-  reference: { statuses: [], paymentStates: [], dateFields: [], channels: [], customerGroups: [] },
+  reference: {
+    statuses: [], paymentStates: [], dateFields: [], channels: [], customerGroups: [],
+    carriers: [],
+  },
+  // Ödeme kanıtının durumu: hangi kaynak okundu, kaç satır bankaya sorulmalı.
+  evidence: {
+    invoiceOk: false, posOk: false, complete: false, warnings: [], uncertain: 0,
+    invoiceRead: 0, posRead: 0, invoiceFloorDay: '', posFloorDay: '',
+  },
   selection: [], chip: null, loaded: false,
 };
 
@@ -211,6 +223,7 @@ async function refresh({ page = state.page, size = state.size } = {}) {
     partial: Boolean(payload.partial),
     scannedCount: payload.scannedCount || 0,
     summary: payload.summary || EMPTY_STATE.summary,
+    evidence: payload.evidence || EMPTY_STATE.evidence,
     selection: [],
     loaded: true,
   };
@@ -234,6 +247,9 @@ async function loadOverview() {
   state.summary = payload.summary || state.summary;
   state.truncated = Boolean(payload.truncated);
   state.partial = state.partial || Boolean(payload.partial);
+  // Sayaç ucu SÜZGECİN TAMAMINI tarar: "kaç sipariş bankaya sorulmalı"
+  // sorusunun doğru cevabı sayfanın değil, süzgecin tamamınınkidir.
+  state.evidence = payload.evidence || state.evidence;
   renderTotals();
   nodes.status?.set(statusText(), !state.connected);
 }
@@ -252,6 +268,9 @@ async function loadReference() {
     dateFields: payload.dateFields || [],
     channels: payload.channels || [],
     customerGroups: payload.customerGroups || [],
+    // Toplu kargonun taşıyıcı listesi. Gelmezse seçici SERBEST METİN olarak
+    // çalışır; boş bir açılır kutu göstermek işi durdururdu.
+    carriers: payload.carriers || [],
   };
   const withAll = (label, items) => [{ value: '', label }, ...items];
   nodes.filters.options('status', withAll('Tümü — durum',
@@ -292,6 +311,44 @@ function renderTotals() {
       + 'süzgeçler için siparişler tek tek okunur ve detay tavanı aşıldı. Listede '
       + 'eksik satır olabilir — süzgeci daraltın ya da modül ayarındaki '
       + '`detail_cap` değerini yükseltin.', 'warn'));
+  }
+  renderEvidence();
+}
+
+/**
+ * Ödeme kanıtının durumu.
+ *
+ * Üç ayrı şey söylenir ve karıştırılmaz:
+ *  1. Bankaya sorulması gereken satır SAYISI — para havada, iş var.
+ *  2. Kanıt kaynaklarından biri okunamadı — "Ödenmedi" yazan satırlar eksik
+ *     bilgiyle yazılmış olabilir.
+ *  3. Kanıt tek sayfada bitmedi — eski siparişler "Bilinmiyor" kalır.
+ */
+function renderEvidence() {
+  const info = { ...EMPTY_STATE.evidence, ...(state.evidence || {}) };
+  info.warnings = info.warnings || [];
+  if (!state.connected) return;
+  if (info.uncertain) {
+    nodes.totals.append(alertBox(
+      `${num(info.uncertain)} siparişte ÖDEME BELİRSİZ: bankadan kesin yanıt gelmemiş bir `
+      + 'sanal POS denemesi var (unknown / provisioning). Para çekilmiş OLABİLİR — bu '
+      + 'satırlara “Ödenmedi” yazmak müşteriden ikinci kez tahsilat istemeye yol açardı. '
+      + 'Satırlar ayrı renkte işaretli; mutabakat Sanal POS ekranından yapılır ve bitene '
+      + 'kadar toplu kargo bu siparişleri almaz.', 'warn'));
+  }
+  if (!info.invoiceOk || !info.posOk) {
+    const missing = [!info.invoiceOk ? 'fatura listesi' : '',
+      !info.posOk ? 'sanal POS denemeleri' : ''].filter(Boolean).join(' ve ');
+    nodes.totals.append(alertBox(
+      `Ödeme kanıtının bir kaynağı okunamadı (${missing})${info.warnings.length
+        ? ` — ${info.warnings.join(' · ')}` : ''}. Ödeme sütunu eksik bilgiyle çizildi: `
+      + 'okunamayan kaynakta tahsilat kaydı olabilir.', 'warn'));
+  } else if (!info.complete) {
+    nodes.totals.append(alertBox(
+      `Ödeme kanıtı tek sayfada bitmedi (${num(info.invoiceRead)} fatura, `
+      + `${num(info.posRead)} POS denemesi okundu). Kanıt penceresinden eski siparişler `
+      + '“Bilinmiyor” kalır — “Ödenmedi” yazmak tahsil edilmiş siparişi ödenmemiş '
+      + 'göstermek olurdu. Tarih aralığını daraltın.', 'info'));
   }
 }
 
@@ -338,14 +395,42 @@ function fulfilCell(row, key) {
     const cell = badge('Bilinmiyor', '');
     cell.title = 'Fatura ve gönderi kaydı yalnız sipariş detayında var; satıra tıklayın.';
     box.append(cell);
-    return box;
+  } else {
+    const label = key === 'invoice' ? row.invoiceLabel : row.shipmentLabel;
+    const value = key === 'invoice' ? row.invoiceState : row.shipmentState;
+    const count = key === 'invoice' ? row.invoiceCount : row.shipmentCount;
+    // Renk tek başına anlam taşımaz: rozetin yanında adet yazar.
+    box.append(badge(label, FULFIL_TONES[value] || ''));
+    if (count) box.append(h('span', 'so-sub', `${num(count)} kayıt`));
   }
-  const label = key === 'invoice' ? row.invoiceLabel : row.shipmentLabel;
-  const value = key === 'invoice' ? row.invoiceState : row.shipmentState;
-  const count = key === 'invoice' ? row.invoiceCount : row.shipmentCount;
-  // Renk tek başına anlam taşımaz: rozetin yanında adet yazar.
-  box.append(badge(label, FULFIL_TONES[value] || ''));
-  if (count) box.append(h('span', 'so-sub', `${num(count)} kayıt`));
+  // TOPLU KARGO NEDEN ALMIYOR — satırın kendisinde. Bu bilgiyi yalnız toplu
+  // işlem diyaloğunda vermek, seçimi yapan kişiye geç kalmış bir açıklamadır.
+  if (key === 'ship' && row.shipBlock) box.append(h('span', 'so-why', row.shipBlock));
+  else if (key === 'ship' && row.shipNote) box.append(h('span', 'so-sub', row.shipNote));
+  return box;
+}
+
+/**
+ * Ödeme durumu — İKİ KAYNAKTAN çözülür (fatura kaydı + sanal POS denemesi) ve
+ * hangi kaynaktan geldiği satırın ipucunda yazar.
+ *
+ * BELİRSİZ SATIR AYRI RENKTEDİR ve yazıyla da söylenir: renk tek başına anlam
+ * taşımaz. "Belirsiz" ne "Ödendi" ne "Ödenmedi" demektir — banka yanıtı
+ * gelmemiştir ve para çekilmiş olabilir.
+ */
+function paymentCell(row) {
+  const box = h('span', 'so-pay');
+  const chip = badge(row.paymentLabel, row.paymentTone);
+  if (row.paymentAttention) chip.classList.add('so-pay-uncertain');
+  const why = [row.paymentNote, row.paymentSource ? `Kaynak: ${row.paymentSource}.` : '']
+    .filter(Boolean).join(' ');
+  if (why) chip.title = why;
+  box.append(chip);
+  if (row.paymentAttention) {
+    const call = h('span', 'so-why', 'bankayla mutabakat gerekiyor');
+    call.title = why;
+    box.append(call);
+  }
   return box;
 }
 
@@ -388,8 +473,9 @@ const COLUMNS = [
     cell: (row) => detailMoney(row, row.tax) },
   { key: 'grandTotal', label: 'Toplam', width: '110px', align: 'num', sortable: true,
     cell: (row) => h('b', 'so-total', money(row.grandTotal)) },
-  { key: 'paymentLabel', label: 'Ödeme', width: '104px',
-    cell: (row) => badge(row.paymentLabel, row.paymentTone) },
+  { key: 'paymentLabel', label: 'Ödeme', width: '150px', className: 'wrap',
+    title: 'Fatura kaydı ve sanal POS denemesinden çözülür; kaynağı satırın ipucunda.',
+    cell: paymentCell },
   {
     key: 'statusLabel',
     label: 'Durum',
@@ -404,7 +490,8 @@ const COLUMNS = [
   { key: 'track', label: 'Takip no', width: '150px', cell: trackCell },
   { key: 'invoiceState', label: 'Fatura', width: '108px',
     cell: (row) => fulfilCell(row, 'invoice') },
-  { key: 'shipmentState', label: 'Kargo durumu', width: '116px',
+  { key: 'shipmentState', label: 'Kargo durumu', width: 'minmax(180px, 1fr)', className: 'wrap',
+    title: 'Kargo kaydı ve toplu kargoya uygunluk. Uygun değilse NEDENİ burada yazar.',
     cell: (row) => fulfilCell(row, 'ship') },
 ];
 
@@ -453,6 +540,12 @@ function renderTable() {
   renderSelectionBar();
 }
 
+/** Seçili kimliklerin SATIRLARI. Toplu iş kararları satırın kendisinden çıkar. */
+function selectedRows() {
+  const chosen = new Set(state.selection.map(String));
+  return state.items.filter((row) => chosen.has(String(row.id)));
+}
+
 function renderSelectionBar() {
   const bar = nodes.selbar;
   if (!bar) return;
@@ -462,12 +555,25 @@ function renderSelectionBar() {
     bar.classList.remove('on');
     return;
   }
+  const rows = selectedRows();
+  // Kargoya verilebilenler ve verilemeyenler AYRI: düğme yalnız uygun olanları
+  // götürür, ötekiler sessizce listeye karışmaz.
+  const ready = rows.filter((row) => !row.shipBlock);
+  const blocked = rows.filter((row) => row.shipBlock);
+
   bar.classList.add('on');
   bar.append(h('b', undefined, `${num(count)} sipariş seçildi`));
   bar.append(h('span', 'kit-spacer'));
   bar.append(
-    button('Kargoya ver', { onClick: () => batchDialog('ship') }),
-    button('Fatura kes', { onClick: () => batchDialog('invoice') }),
+    button(`Seçilenleri kargoya ver${ready.length === count ? '' : ` (${num(ready.length)})`}`, {
+      variant: 'primary',
+      disabled: ready.length === 0,
+      title: ready.length
+        ? `${num(ready.length)} sipariş kargoya verilebilir; önce kuru prova çalışır.`
+        : 'Seçilenlerin hiçbiri kargoya verilebilir durumda değil — nedenler satırlarda yazılı.',
+      onClick: () => batchDialog('ship', ready.map((row) => row.id)),
+    }),
+    button('Fatura kes', { onClick: () => batchDialog('invoice', rows.map((row) => row.id)) }),
     button('Etiket indir', { onClick: () => downloadLabels() }),
     button('Kargo manifestosu', {
       onClick: () => report.run('manifest', { orderIds: state.selection.map(Number) }),
@@ -481,6 +587,18 @@ function renderSelectionBar() {
       },
     }),
   );
+
+  if (blocked.length) {
+    // NEDEN gruplanarak yazılır: "3 sipariş kargoya verilemez" tek başına
+    // kullanıcıyı satır satır aramaya bırakırdı.
+    const groups = new Map();
+    for (const row of blocked) groups.set(row.shipBlock, (groups.get(row.shipBlock) || 0) + 1);
+    const line = h('div', 'so-selwhy');
+    line.append(h('b', undefined,
+      `${num(blocked.length)} seçili sipariş kargoya verilemez —`));
+    for (const [why, howMany] of groups) line.append(badge(`${num(howMany)} × ${why}`, 'warn'));
+    bar.append(line);
+  }
 }
 
 function applyChip(key) {
@@ -501,9 +619,10 @@ function exportVisible() {
     'good');
   if (state.items.some((row) => !row.detailed)) {
     // Sessiz eksik dosya yok: bu CSV mağazanın liste ucundan geliyor ve o uç
-    // kargo firması, takip no ve ödeme durumu taşımıyor.
-    toast('Bu dosya ekrandaki sayfadan üretildi: kargo firması, takip no ve ödeme '
-      + 'durumu boş. Tam döküm için “⤓ Tümü”.', 'warn');
+    // kargo firması ile takip numarası taşımıyor. Ödeme durumu ayrı kaynaktan
+    // çözüldüğü için dolu gelir.
+    toast('Bu dosya ekrandaki sayfadan üretildi: kargo firması ve takip no boş '
+      + '(o alanlar yalnız sipariş detayında var). Tam döküm için “⤓ Tümü”.', 'warn');
   }
 }
 
@@ -595,9 +714,12 @@ async function openOrder(orderId) {
   bar.badge('returns', payload.returns.length || undefined);
 
   const head = h('div', 'so-drawer-head');
+  const payChip = badge(order.paymentLabel, order.paymentTone);
+  if (order.paymentAttention) payChip.classList.add('so-pay-uncertain');
+  if (order.paymentNote) payChip.title = order.paymentNote;
   head.append(
     badge(order.statusLabel, order.statusTone),
-    badge(order.paymentLabel, order.paymentTone),
+    payChip,
     h('code', 'so-code', order.orderNo),
     h('span', 'so-sub', `${short(order.createdAt)} · ${order.channel || 'kanal yok'}`),
   );
@@ -732,6 +854,15 @@ function actionBar(payload) {
   const box = h('div', 'so-actionbox');
   box.append(row);
   if (payload.cancelBlock) box.append(alertBox(payload.cancelBlock, 'info'));
+  if (order.shipBlock) {
+    // TOPLU kargo bu siparişi almaz; tek sipariş yine kargolanabilir. Kararı
+    // veren kişi burada siparişin tamamını görüyor — düğmeyi kilitlemek yerine
+    // nedeni söylemek doğru olan: "belirsiz ödeme" bazen gerçekten tahsilattır.
+    box.append(alertBox(
+      `Toplu kargoya verme bu siparişi ALMAZ — ${order.shipBlock} Yine de kargoya vermek `
+      + 'buradan mümkündür; kararı siz verirsiniz ve gerekçe denetim kaydına yazılır.',
+      order.paymentAttention ? 'warn' : 'info'));
+  }
   box.append(alertBox(
     '“Durum değiştir” HAZIR DEĞİL: mağazanın admin API\'sinde sipariş durumunu '
     + 'doğrudan yazan bir uç yok. Durum, fatura kesme / kargoya verme / iptal '
@@ -931,10 +1062,18 @@ async function cancelOrder(order) {
 
 function paintPayment(pane, { payload }) {
   const order = payload.order;
+  const evidence = order.paymentEvidence || {};
   const facts = h('div', 'so-facts');
   for (const [label, value] of [
     ['Yöntem', order.paymentMethod || '—'],
     ['Durum', order.paymentLabel],
+    ['Kanıt kaynağı', order.paymentSource || '—'],
+    ['Fatura kaydı', evidence.invoiceCount
+      ? `${num(evidence.invoiceCount)} kayıt · ${(evidence.invoiceStates || []).join(', ')}`
+      : 'yok'],
+    ['POS denemesi', evidence.attemptCount
+      ? `${num(evidence.attemptCount)} kayıt · ${(evidence.attemptStates || []).join(', ')}`
+      : 'yok'],
     ['Faturalanan', money(payload.money.invoiced)],
     ['İade edilen', money(payload.money.refunded)],
     ['Kupon', order.coupon || '—'],
@@ -944,6 +1083,9 @@ function paintPayment(pane, { payload }) {
     facts.append(line);
   }
   pane.append(card('Ödeme', facts));
+  if (order.paymentNote) {
+    pane.append(alertBox(order.paymentNote, order.paymentAttention ? 'warn' : 'info'));
+  }
 
   if (!payload.transactions.length) {
     pane.append(emptyState({
@@ -965,8 +1107,10 @@ function paintPayment(pane, { payload }) {
     }).node);
   }
   pane.append(hintBox(
-    'Ödeme durumu Bagisto\'da bir alan DEĞİLDİR: faturalanan tutardan çıkarılır. '
-    + '3D sonucu ve taksit ayrıntısı Sanal POS ekranındadır.'));
+    'Ödeme durumu Bagisto\'da bir alan DEĞİLDİR. Üç kaynaktan çözülür: siparişin '
+    + 'faturalanan tutarı, fatura kaydının durumu ve sanal POS denemesinin durumu. '
+    + '“Belirsiz” bir başarısızlık değildir: bankadan yanıt gelmemiştir ve para çekilmiş '
+    + 'olabilir. 3D sonucu, taksit ve mutabakat Sanal POS ekranındadır.'));
 }
 
 // ------------------------------------------- yetenekten beslenen sekmeler
@@ -1205,7 +1349,41 @@ async function paintHistory(pane, { payload, auditCap }) {
 
 // ============================================================= toplu işlem
 
-function batchDialog(kind) {
+/**
+ * Toplu gönderinin TAŞIYICISI.
+ *
+ * Liste `store.api` üzerinden Kargo yeteneğinden gelir; gelmezse serbest metin
+ * kalır. Boş bırakılabilir: Bagisto gönderi kaydı taşıyıcısız da açılır ve
+ * taşıyıcı sonradan Kargo Yönetimi'nden atanır. TAKİP NUMARASI burada YOKTUR —
+ * her gönderinin numarası ayrıdır, tek numara hepsini aynı pakete yazmak olurdu.
+ */
+function carrierPicker() {
+  const box = h('div', 'so-carrier');
+  const list = state.reference.carriers || [];
+  const select = h('select', 'kit-input');
+  const choices = [{ value: '', label: 'Taşıyıcı seçilmedi' },
+    ...list.map((entry) => ({ value: entry.name || entry.code,
+      label: entry.name || entry.code }))];
+  for (const choice of choices) {
+    const option = h('option', undefined, choice.label);
+    option.value = choice.value;
+    select.append(option);
+  }
+  const free = h('input', 'kit-input');
+  free.type = 'text';
+  free.maxLength = 64;
+  free.placeholder = list.length ? 'ya da elle yazın' : 'taşıyıcı adı (liste gelmedi)';
+
+  box.append(h('span', 'so-sub', 'Taşıyıcı'), select, free);
+  if (!list.length) {
+    box.append(h('span', 'so-sub',
+      'Taşıyıcı listesi mağazadan gelmedi; ad elle yazılabilir.'));
+  }
+  return { node: box, value: () => (free.value.trim() || select.value || '') };
+}
+
+function batchDialog(kind, orderIds) {
+  const ids = (orderIds || state.selection).map(Number).filter(Boolean);
   const overlay = h('div', 'kit-overlay');
   const dialog = h('div', 'kit-dialog so-batch');
   dialog.setAttribute('role', 'dialog');
@@ -1214,8 +1392,9 @@ function batchDialog(kind) {
   const title = kind === 'ship' ? 'Toplu kargoya verme' : 'Toplu fatura kesme';
   dialog.append(h('h3', 'kit-dialog-title', title));
   dialog.append(h('p', 'kit-dialog-text',
-    `${num(state.selection.length)} sipariş seçili. Hangi siparişin atlanacağı ve NEDEN `
-    + 'atlandığı gösterilmeden hiçbir şey uygulanmaz.'));
+    `${num(ids.length)} sipariş seçili. Sıra: önizleme (kim atlanacak, neden) → KURU PROVA `
+    + '(mağazaya hiçbir şey yazılmaz, ne olacağı satır satır görünür) → gerekçeli tek onay. '
+    + 'Kuru prova görülmeden gerçek işlem yapılmaz; kural sunucuda da uygulanır.'));
 
   const close = () => {
     document.removeEventListener('keydown', onKey);
@@ -1225,6 +1404,7 @@ function batchDialog(kind) {
   document.addEventListener('keydown', onKey);
   closers.push(() => document.removeEventListener('keydown', onKey));
 
+  const carrier = kind === 'ship' ? carrierPicker() : null;
   const result = h('div', 'so-batch-result');
   const actions = h('div', 'kit-dialog-actions');
   actions.append(button('Vazgeç', { onClick: close }),
@@ -1240,7 +1420,7 @@ function batchDialog(kind) {
     let preview;
     try {
       preview = await call(`${BASE}/batch/preview`, {
-        method: 'POST', body: { kind, orderIds: state.selection.map(Number) },
+        method: 'POST', body: { kind, orderIds: ids },
       });
     } catch (error) {
       result.replaceChildren(alertBox(error.message, 'bad'));
@@ -1255,13 +1435,46 @@ function batchDialog(kind) {
       { label: 'Sipariş', value: num(summary.total) },
       { label: 'Uygulanacak', value: num(summary.ready), tone: 'good' },
       { label: 'Atlanacak', value: num(summary.skipped), tone: 'muted' },
+      { label: 'Adet', value: num(summary.quantity) },
       { label: 'Tutar', value: money(summary.amount) },
     ]));
-    result.append(dataTable({
+    result.append(previewTable(preview.rows));
+
+    if (preview.missing && preview.missing.length) {
+      result.append(alertBox(
+        `${preview.missing.length} sipariş okunamadı ve önizlemeye girmedi.`, 'warn'));
+    }
+    if (kind === 'ship') {
+      result.append(card('Gönderi bilgisi', carrier.node,
+        'Taşıyıcı kuru provada seçilir ve onayda DEĞİŞTİRİLEMEZ'));
+      // Desi uydurulmaz: hesabı ürün ölçülerine dayanır ve sahibi Kargo
+      // Yönetimi ekranıdır; sipariş gövdesi o ölçüyü taşımaz.
+      result.append(hintBox(
+        'Toplam desi burada GÖSTERİLMEZ: desi ürünün en/boy/yükseklik ölçüsünden hesaplanır, '
+        + 'sipariş kaydı bu ölçüyü taşımaz ve hesabın sahibi Kargo Yönetimi ekranıdır. '
+        + 'Buradaki toplamlar adet ve tutardır. Etiket SATIN ALINMAZ; yalnız mağazada '
+        + 'gönderi kaydı açılır.'));
+    }
+
+    actions.replaceChildren(
+      button('Vazgeç', { onClick: close }),
+      button(`Kuru prova (${num(summary.ready)} sipariş)`, {
+        variant: 'primary',
+        disabled: summary.ready === 0,
+        title: 'Mağazaya hiçbir şey yazılmaz; ne olacağı satır satır gösterilir.',
+        onClick: () => run(preview, summary, { dryRun: true }),
+      }),
+    );
+  }
+
+  function previewTable(rows) {
+    return dataTable({
       columns: [
         { key: 'orderNo', label: 'Sipariş', width: '130px', className: 'mono' },
-        { key: 'customer', label: 'Müşteri', width: 'minmax(0, 1.6fr)' },
-        { key: 'statusLabel', label: 'Durum', width: '120px' },
+        { key: 'customer', label: 'Müşteri', width: 'minmax(0, 1.4fr)' },
+        { key: 'statusLabel', label: 'Durum', width: '110px' },
+        { key: 'paymentLabel', label: 'Ödeme', width: '150px', className: 'wrap' },
+        { key: 'quantity', label: 'Adet', width: '70px', align: 'num' },
         { key: 'total', label: 'Toplam', width: '110px', align: 'num',
           cell: (row) => money(row.total) },
         {
@@ -1272,62 +1485,102 @@ function batchDialog(kind) {
           cell: (row) => (row.skipped ? badge(row.note, 'warn') : badge('Uygulanacak', 'good')),
         },
       ],
-      rows: preview.rows,
+      rows,
       dense: true,
       rowKey: (row) => String(row.id),
-    }).node);
-
-    if (preview.missing && preview.missing.length) {
-      result.append(alertBox(
-        `${preview.missing.length} sipariş okunamadı ve önizlemeye girmedi.`, 'warn'));
-    }
-
-    actions.replaceChildren(
-      button('Vazgeç', { onClick: close }),
-      button(`${num(summary.ready)} siparişe uygula`, {
-        variant: 'danger',
-        disabled: summary.ready === 0,
-        onClick: () => apply(preview, summary),
-      }),
-    );
+    }).node;
   }
 
-  async function apply(preview, summary) {
-    const reason = await askReason({
-      title,
-      description: `${num(summary.ready)} siparişe uygulanacak. Önizlediğiniz liste neyse `
-        + 'o uygulanır; yeniden hesaplanmaz. Sıra sıra yazılır ve YİNELENMEZ.',
-      confirmLabel: 'Uygula',
-    });
-    if (!reason) return;
-    await withBusy('Uygulanıyor…', async () => {
-      const applied = await api(`${BASE}/batch/apply`, {
-        method: 'POST', body: { token: preview.token, reason, dryRun: false },
+  function resultTable(rows) {
+    return dataTable({
+      columns: [
+        { key: 'orderNo', label: 'Sipariş', width: '130px', className: 'mono' },
+        { key: 'customer', label: 'Müşteri', width: 'minmax(0, 1.2fr)' },
+        { key: 'ok', label: 'Sonuç', width: '110px',
+          cell: (row) => badge(row.ok ? 'Tamam' : 'Hata', row.ok ? 'good' : 'bad') },
+        { key: 'error', label: 'Açıklama', width: 'minmax(0, 2fr)', className: 'wrap' },
+      ],
+      rows,
+      dense: true,
+      rowKey: (row) => String(row.id),
+    }).node;
+  }
+
+  /** Kuru prova ve gerçek uygulama AYNI uçtan geçer; fark tek bayrakta. */
+  async function run(preview, summary, { dryRun }) {
+    const chosen = carrier ? carrier.value() : '';
+    let reason = 'Toplu islem kuru provasi (yazma yok)';
+    if (!dryRun) {
+      reason = await askReason({
+        title,
+        description: `${num(summary.ready)} siparişe uygulanacak · toplam `
+          + `${num(summary.quantity)} adet · ${money(summary.amount)}`
+          + (kind === 'ship'
+            ? ` · taşıyıcı: ${chosen || 'seçilmedi (gönderi kaydı taşıyıcısız açılır)'}`
+            : '')
+          + '. Kuru provada gördüğünüz liste neyse O uygulanır; yeniden hesaplanmaz. '
+          + 'Sıra sıra yazılır ve YİNELENMEZ.',
+        confirmLabel: kind === 'ship' ? 'Kargoya ver' : 'Fatura kes',
       });
-      const failed = applied.failed || 0;
-      toast(`${num(applied.applied)} sipariş işlendi`
-        + (failed ? ` · ${num(failed)} başarısız` : ''), failed ? 'warn' : 'good');
-      if (failed) {
-        // Hangi siparişin NEDEN başarısız olduğu kaybolmaz.
-        result.replaceChildren(dataTable({
-          columns: [
-            { key: 'orderNo', label: 'Sipariş', width: '130px', className: 'mono' },
-            { key: 'ok', label: 'Sonuç', width: '110px',
-              cell: (row) => badge(row.ok ? 'Tamam' : 'Hata', row.ok ? 'good' : 'bad') },
-            { key: 'error', label: 'Açıklama', width: 'minmax(0, 2fr)', className: 'wrap' },
-          ],
-          rows: applied.results || [],
-          dense: true,
-          rowKey: (row) => String(row.id),
-        }).node);
-        actions.replaceChildren(button('Kapat', { onClick: close }));
-      } else {
-        close();
+      if (!reason) return;
+    }
+
+    await withBusy(dryRun ? 'Kuru prova çalışıyor…' : 'Uygulanıyor…', async () => {
+      const outcome = await api(`${BASE}/batch/apply`, {
+        method: 'POST',
+        body: { token: preview.token, reason, dryRun, carrier: chosen },
+      });
+      if (outcome.ok === false && outcome.error) {
+        result.append(alertBox(outcome.error, 'bad'));
+        toast(outcome.error, 'bad');
+        return;
       }
-      nodes.table?.clearSelection();
-      state.selection = [];
-      refresh();
+      paintOutcome(preview, summary, outcome, { dryRun, chosen });
     });
+  }
+
+  function paintOutcome(preview, summary, outcome, { dryRun, chosen }) {
+    const failed = outcome.failed || 0;
+    const applied = outcome.applied || 0;
+    // KISMİ BAŞARI GİZLENMEZ: başaranlar da başaramayanlar da tek tabloda.
+    result.replaceChildren(kpiRow([
+      { label: dryRun ? 'Provada başarılı' : 'İşlendi', value: num(applied), tone: 'good' },
+      { label: 'Başarısız', value: num(failed), tone: failed ? 'bad' : 'muted' },
+      { label: 'Taşıyıcı', value: chosen || '—' },
+      { label: 'Tutar', value: money(summary.amount) },
+    ]));
+    result.append(resultTable(outcome.results || []));
+
+    if (dryRun) {
+      result.append(alertBox(
+        'KURU PROVA: mağazaya hiçbir şey yazılmadı. Yukarıdaki satırlar gerçek işlemde ne '
+        + `olacağını gösterir${failed ? '; başarısız satırlar gerçek işlemde de atlanır' : ''}. `
+        + 'Onaylarsanız aynı liste, aynı taşıyıcıyla uygulanır.', 'info'));
+      actions.replaceChildren(
+        button('Vazgeç', { onClick: close }),
+        button(`${num(applied)} siparişe gerçekten uygula`, {
+          variant: 'danger',
+          disabled: applied === 0,
+          onClick: () => run(preview, summary, { dryRun: false }),
+        }),
+      );
+      return;
+    }
+
+    toast(`${num(applied)} sipariş işlendi`
+      + (failed ? ` · ${num(failed)} başarısız (nedenleri listede)` : ''),
+    failed ? 'warn' : 'good');
+    if (failed) {
+      result.append(alertBox(
+        `${num(applied)} sipariş BAŞARIYLA işlendi, ${num(failed)} sipariş işlenemedi. `
+        + 'Başarılı olanlar yeniden denenmemeli: ikinci gönderi ikinci kargo demektir. '
+        + 'Başarısızları düzelttikten sonra yalnız onları seçip yeni bir toplu iş açın.',
+        'warn'));
+    }
+    actions.replaceChildren(button('Kapat', { onClick: close }));
+    nodes.table?.clearSelection();
+    state.selection = [];
+    refresh();
   }
 }
 

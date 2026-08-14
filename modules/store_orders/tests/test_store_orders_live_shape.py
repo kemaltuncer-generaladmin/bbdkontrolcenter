@@ -72,6 +72,29 @@ DETAY: dict[str, Any] = {
     "shipments": [], "refunds": [], "comments": [],
 }
 
+#: `GET /api/admin/invoices` satırı — CANLIDA `orderId` NULL GELİYOR ve bağ
+#: `orderIncrementId` üzerinden kuruluyor. `orderId` ile eşleştirmeye kalkan kod
+#: hiçbir faturayı bağlayamaz, hata da vermez ve ekranda HERKES "Ödenmedi"
+#: görünür — bu dosyanın var olma nedeni tam olarak budur.
+FATURA: dict[str, Any] = {
+    "id": 18, "incrementId": "18", "orderId": None, "orderIncrementId": "19",
+    "state": "paid", "totalQty": 1, "subTotal": 2, "grandTotal": 2, "taxAmount": 0,
+    "orderCurrencyCode": "TRY", "createdAt": "2026-08-13 18:27:20",
+}
+
+#: `GET /api/admin/bbd/payments/attempts` satırı — BBD paketinin ucu SNAKE_CASE
+#: veriyor (`order_id`, `amount_minor`) ve durum yorumunu camelCase alanlarla
+#: ekliyor. `moneyTaken` ÜÇ DURUMLUDUR: `null` "para çekilmedi" DEĞİL,
+#: "bilinmiyor" demektir.
+POS_DENEMESI: dict[str, Any] = {
+    "id": 31, "uuid": "9f2c…", "gateway": "kuveytturk", "order_id": 19,
+    "cart_id": 44, "state": "order_created", "amount_minor": 200, "currency": "TRY",
+    "installment": 1, "masked_number": "4355 08** **** 4358", "hash_verified": True,
+    "created_at": "2026-08-13 18:27:15", "updated_at": "2026-08-13 18:27:18",
+    "stateLabel": "Tahsil edildi, sipariş oluştu", "moneyTaken": True,
+    "moneyReturned": False, "needsAttention": False,
+}
+
 #: `GET /api/admin/orders/12` gönderi bölümü — kargolanmış sipariş.
 KARGOLU: dict[str, Any] = {
     **DETAY, "id": 12, "incrementId": "12", "status": "completed",
@@ -182,6 +205,52 @@ def test_faturalanan_tutar_bilinmiyorsa_odenmedi_denmez() -> None:
     assert ord_.payment_state(LISTE_SATIRI) == "unknown"
     assert ord_.payment_state(DETAY) == "paid"
     assert ord_.order_row(LISTE_SATIRI)["paymentLabel"] == "Bilinmiyor"
+
+
+# =============================================== ödeme kanıtı — canlı gövde
+
+def test_canli_fatura_govdesi_artan_numarayla_baglanir() -> None:
+    # `orderId` NULL geldiği için bağ `orderIncrementId` üzerindendir.
+    index = ord_.payment_index([dict(FATURA)], [])
+    row = ord_.with_payment(ord_.order_row(LISTE_SATIRI, today="2026-08-14"), index)
+    assert row["paymentState"] == "paid"
+    assert row["paymentLabel"] == "Ödendi"
+    assert index["unboundInvoices"] == 0
+
+
+def test_canli_pos_govdesi_snake_case_okunur() -> None:
+    view = ord_.attempt_view(dict(POS_DENEMESI))
+    assert view["orderId"] == 19          # `order_id` — camelCase DEĞİL
+    assert view["taken"] is True
+    assert view["returned"] is False
+
+    index = ord_.payment_index([], [dict(POS_DENEMESI)])
+    row = ord_.with_payment(ord_.order_row(LISTE_SATIRI, today="2026-08-14"), index)
+    assert row["paymentState"] == "paid"
+
+
+def test_canli_banka_yaniti_yoksa_belirsiz_yazilir() -> None:
+    havada = {**POS_DENEMESI, "state": "unknown", "moneyTaken": None,
+              "stateLabel": "Banka yanıtı alınamadı — para çekilmiş olabilir",
+              "needsAttention": True}
+    index = ord_.payment_index([], [havada])
+    row = ord_.with_payment(ord_.order_row(LISTE_SATIRI, today="2026-08-14"), index)
+    assert row["paymentState"] == "uncertain"
+    assert row["paymentAttention"] is True
+    assert row["shipBlock"] != ""         # mal çıkmaz
+
+
+async def test_canli_kanit_iki_liste_isteginde_toplanir() -> None:
+    api = FakeApi({19: dict(DETAY)}, shallow=[dict(LISTE_SATIRI)])
+    api.invoice_payload = {"items": [dict(FATURA)], "meta": {"total": 1}}
+    api.attempt_payload = {"items": [dict(POS_DENEMESI)], "meta": {"total": 1}}
+    result = await _service(api).orders(filters={"chip": "today", "today": "2026-08-13"})
+    assert result["items"][0]["paymentLabel"] == "Ödendi"
+    assert len(api.args_of("invoices")) == 1
+    assert len(api.args_of("bbd_payment_attempts")) == 1
+    # Sıralama İSTENİR ama uygulandığı VERİDEN doğrulanır (Laravel bilinmeyen
+    # parametreyi sessizce yok sayar).
+    assert api.args_of("invoices")[0][0] == {"sort": "id", "order": "desc"}
 
 
 def test_sig_satir_kargolanmamis_sayilmaz() -> None:
