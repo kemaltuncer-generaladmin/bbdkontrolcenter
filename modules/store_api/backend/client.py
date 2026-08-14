@@ -381,6 +381,7 @@ class StoreApi:
         dry_run: bool | None = None,
         action: str = "",
         raw: bool = False,
+        reason_in_body: bool = True,
     ) -> Any:
         verb = method.upper()
         if verb == "GET":
@@ -388,14 +389,14 @@ class StoreApi:
 
         return await self._write(
             verb, path, params=params, body=body, reason=reason, actor=actor,
-            dry_run=dry_run, action=action, raw=raw,
+            dry_run=dry_run, action=action, raw=raw, reason_in_body=reason_in_body,
         )
 
     async def _write(
         self, verb: str, path: str, *, params: dict[str, Any] | None, body: Any,
         reason: str, actor: str, dry_run: bool | None, action: str, raw: bool,
         files: dict[str, Any] | None = None, form: dict[str, Any] | None = None,
-        summary: dict[str, Any] | None = None,
+        summary: dict[str, Any] | None = None, reason_in_body: bool = True,
     ) -> Any:
         """Yazma zinciri: gerekçe → denetim izi → acil fren → kuru prova → istek.
 
@@ -416,12 +417,21 @@ class StoreApi:
         request_id = AuditTrail.new_request_id()
         payload = dict(body) if isinstance(body, dict) else body
         fields = dict(form or {})
-        if path.startswith(BBD):
+        if path.startswith(BBD) and reason_in_body:
             # Gerekçe gövdeye YALNIZCA BBD uçlarında konur; o uçlar gerekçeyi
             # kendi tablolarına yazacak şekilde yazılıyor. Bagisto çekirdek
             # uçlarının işlemcileri `request()->all()` okuyup doğrudan modele
             # veriyor — tanımadıkları alanı göndermek gereksiz risktir.
             # Çekirdek uçlarda gerekçe başlıkla ve yerel denetim iziyle taşınır.
+            #
+            # `reason_in_body=False` İSTİSNASI (2026-08-15). Bazı BBD uçları
+            # gövdeyi SIKI doğruluyor ve tanımadığı alanı sessizce yok saymak
+            # yerine 422 döndürüyor (`RmaTransition`, `DenemeKulubuProfile`).
+            # Oralarda gerekçeyi gövdeye koymak, gerekçesi olan her isteği
+            # "Bilinmeyen alan: `reason`" ile reddettirirdi. Gerekçe zaten
+            # `X-Bbd-Reason` başlığıyla gidiyor ve mağaza onu ORADAN okuyor
+            # (`CaptureActionReason`); gövdedeki kopya bir kolaylıktı, kural
+            # değil.
             if files is not None:
                 fields.setdefault("reason", reason)
             elif isinstance(payload, dict):
@@ -2633,22 +2643,67 @@ class StoreApi:
         return await self._collection(f"{BBD}/trial-club/exams/{int(exam_id)}/results",
                                       page=page, per_page=per_page)
 
+    #: Deneme Kulübü künyesinde YAZILABİLEN alanlar — mağazanın sözleşmesinin
+    #: aynası (`Bbd\\ControlApi\\Support\\DenemeKulubuProfile::WRITABLE`).
+    #:
+    #: Kulübün kendi tablosu YOKTUR: künye, sabit SKU'lu tek bir sanal ürünün
+    #: fiyatı ile durumudur. "Deneme adı", "sınav tarihi", "yer" gibi alanlar
+    #: bu mağazada bir kayda karşılık gelmiyor.
+    TRIAL_WRITABLE = ("price", "isOpen")
+
+    #: KONTENJAN — mağazada karşılığı yok, mağaza 503 döner.
+    #:
+    #: Bu liste geçitte de durur ki ekran isteği göndermeden önce düğmeyi
+    #: kapatabilsin; K9 gereği asıl kapı yine mağazadadır.
+    TRIAL_QUOTA_FIELDS = ("quota", "kontenjan", "capacity", "seats", "maxMembers", "stock")
+
     async def bbd_save_trial_exam(self, *, payload: dict[str, Any], exam_id: int | None = None,
                                   reason: str, actor: str = "",
                                   dry_run: bool | None = None) -> dict[str, Any]:
-        """Deneme ekler/günceller — POST|PUT /api/admin/bbd/deneme-kulubu/overview[/{id}].
+        """Deneme künyesini kaydeder —
+        POST|PUT /api/admin/bbd/deneme-kulubu/overview[/{id}].
 
-        MAĞAZADA YAZMA UCU YOK: `deneme-kulubu` öneki altında yalnız GET
-        `overview`, GET `registrations` ve üyelik uçları var. POST `overview`
-        çağrısı 404 değil 405 döndürür (yol var, metot yok); geçit bunu da
-        `bbd_endpoint_missing` koduna çevirir, bkz. `_fail`.
+        UÇ ARTIK VAR (2026-08-15). Daha önce dört fiil/yol bileşiminden
+        hiçbiri tanımlı değildi ve "Kaydet" düğmesi ham 405 gösteriyordu.
+        Mağaza tarafında dördü de aynı eyleme bağlandı; davranış tek.
+
+        `exam_id` verilirse ÜYELİK ÜRÜNÜNÜN kimliği olmak zorundadır — başka
+        bir kimlikle gelen istek 404 alır. Sessizce yok sayılsaydı, istemci
+        başka bir kaydı güncellediğini sanırken üyelik ürününün fiyatını
+        değiştirirdi.
+
+        KONTENJAN GÖNDERİLEMEZ: mağazada kontenjan diye bir kayıt yok (üyelik
+        ürünü `manage_stock = 0` ile kaydedilir ve bu değer her kaydetmede
+        yeniden yazılır; "kontenjan" yalnız vitrin metnidir). Alan gelirse
+        istek BURADA durur — mağazaya gidip 503 almasını beklemek, ekranda
+        gereksiz bir tur ve anlaşılmaz bir hata kodu demekti.
         """
+        quota = [key for key in (payload or {}) if key in self.TRIAL_QUOTA_FIELDS]
+        if quota:
+            raise StoreApiError(
+                "Deneme Kulübü kontenjanı bu mağazada BİR KAYIT DEĞİL: üyelik ürünü stok "
+                "takibi kapalı kaydediliyor ve “kontenjan” yalnızca vitrin metni. Sayıyı "
+                "hiçbir şeyin okumadığı bir yere yazmak yerine istek gönderilmedi — "
+                f"fiyat ve durum da yazılmadı (alan: {', '.join(sorted(quota))}).",
+                status=503, code=BY_DESIGN,
+            )
+        clean = {key: value for key, value in (payload or {}).items()
+                 if key in self.TRIAL_WRITABLE}
+        if not clean:
+            raise StoreApiError(
+                "Deneme künyesinde bu uçtan yazılabilen alan yok. Yazılabilenler: "
+                f"{', '.join(self.TRIAL_WRITABLE)} — üyelik bedeli ve satışa açık olup "
+                "olmadığı. Vitrin metinleri dile bağlıdır ve panelden düzenlenir.",
+                code="validation",
+            )
         base = f"{BBD}/deneme-kulubu/overview"
         if exam_id is None:
-            return await self._request("POST", base, body=payload, reason=reason, actor=actor,
-                                       dry_run=dry_run, action="bbd_create_trial_exam")
-        return await self._request("PUT", f"{base}/{int(exam_id)}", body=payload, reason=reason,
-                                   actor=actor, dry_run=dry_run, action="bbd_update_trial_exam")
+            return await self._request("POST", base, body=clean, reason=reason, actor=actor,
+                                       dry_run=dry_run, action="bbd_create_trial_exam",
+                                       reason_in_body=False)
+        return await self._request("PUT", f"{base}/{int(exam_id)}", body=clean, reason=reason,
+                                   actor=actor, dry_run=dry_run, action="bbd_update_trial_exam",
+                                   reason_in_body=False)
 
     async def bbd_upload_trial_results(self, exam_id: int, *, rows: list[dict[str, Any]],
                                        reason: str, actor: str = "",
@@ -3083,20 +3138,67 @@ class StoreApi:
         """Talep detayı + yazışma zinciri — GET /api/admin/bbd/return-requests/{id}."""
         return await self._item(f"{BBD}/return-requests/{int(request_id)}")
 
+    #: Talep güncellemede BU UÇTAN YAZILABİLEN üst düzey alanlar.
+    #:
+    #: Liste mağazanın kendi sözleşmesinin AYNASIDIR
+    #: (`Bbd\\ControlApi\\Support\\RmaTransition::WRITABLE`). Burada tekrar
+    #: durmasının sebebi K9: bilinmeyen alanı mağazaya kadar taşıyıp 422
+    #: aldırmak yerine, gövde daha geçitte durdurulur ve ekran neyi
+    #: gönderemeyeceğini önceden bilir. Mağaza kapısı yine de açıktır —
+    #: buradaki denetim onun yerine geçmez.
+    RMA_WRITABLE = ("status", "note", "items")
+
+    #: Kalem nesnesinde yazılabilenler. `id` RMA KALEM SATIRININ kimliğidir,
+    #: sipariş kaleminin değil: mağaza kalem EKLEMEZ/SİLMEZ, yalnız var olanı
+    #: günceller.
+    RMA_ITEM_WRITABLE = ("id", "quantity", "reasonId")
+
     async def bbd_update_return_request(self, request_id: int, *, payload: dict[str, Any],
                                         reason: str, actor: str = "",
                                         dry_run: bool | None = None) -> dict[str, Any]:
-        """Talep güncelleme — MAĞAZADA BİLEREK YOK, istek gönderilmez.
+        """Talep güncelleme — PUT /api/admin/bbd/return-requests/{id}.
 
-        RMA grubu SALT OKUNURDUR (yalnız GET '' ve GET '{id}'); gerekçe
-        mağazanın rota dosyasında yazılıdır.
+        UÇ ARTIK VAR (2026-08-15). Daha önce burası isteği hiç göndermiyordu:
+        yol vardı ama fiil tanımlı değildi ve kullanıcı ham 405 metni
+        görüyordu. Mağaza tarafında `PUT` ve `PATCH` birlikte tanımlandı;
+        burada `PUT` seçilir çünkü gövde gerçekten kısmidir ve iki fiil aynı
+        eyleme bağlıdır.
+
+        NE YAZILIR: `status` (durum kimliği ya da başlığı) · `note` (İÇ not) ·
+        `items` (talebin MEVCUT kalemlerinin adedi/sebebi). Üçü tek istekte
+        gelebilir ve mağaza hepsini TEK işlemde uygular.
+
+        NE YAZILMAZ — ve neden burada durdurulur:
+
+         · PARA HAREKETİ DOĞURAN DURUMLAR. `Refunded` (kimlik 5) ve
+           `Item Canceled` (kimlik 8) zincirin sonunda bankaya para gönderir;
+           mağaza bu ikisini 409 ile reddeder. Geçit onları ENGELLEMEZ, çünkü
+           kimlik listesini burada ikinci kez tutmak iki tarafın sessizce
+           ayrışmasına açık kapı bırakırdı — karar mağazadadır ve 409 gövdesi
+           gerekçeyi taşır (`RMA_MONEY_TRANSITION_BLOCKED`).
+         · ATAMA (`assignee` ve eşanlamlıları) — mağazada `rma` tablosunda
+           böyle bir sütun YOK; istek 503 alır ve HİÇBİR alan yazılmaz.
+         · MÜŞTERİNİN yazdığı alanlar (`information`, `packageCondition`) ve
+           talebin siparişi (`orderId`) — 422.
+
+        MÜŞTERİYE E-POSTA GÖNDERMEZ: yanıt bunu `customerNotified: false` ile
+        açıkça söyler. Panelin kendi durum ekranı gönderir, bu uç göndermez.
         """
-        raise _by_design(
-            "İade/değişim talebi bu geçitten güncellenmez.",
-            "talebi onaylamak zincirin sonunda BANKAYA PARA İADESİ gönderir; para "
-            "hareketi başlatan hiçbir uç Kontrol Merkezi'ne açılmıyor. Onay Bagisto "
-            "yönetim panelinden verilir.",
-        )
+        clean = {key: value for key, value in (payload or {}).items()
+                 if key in self.RMA_WRITABLE}
+        if not clean:
+            # Bilinmeyen alandan oluşan bir gövdeyi göndermek, mağazadan 422
+            # alıp ekranda "bilinmeyen alan" yazdırmak demekti. Sorun alanın
+            # adı değil, o alanın BU UÇTA OLMAMASI — cümle onu söylemeli.
+            raise StoreApiError(
+                "İade talebinde bu uçtan yazılabilen alan yok. Yazılabilenler: "
+                f"{', '.join(self.RMA_WRITABLE)}. Öncelik ve atama mağazada "
+                "TUTULMUYOR; not ve durum buradan, para iadesi panelden yapılır.",
+                code="validation",
+            )
+        return await self._request("PUT", f"{BBD}/return-requests/{int(request_id)}",
+                                   body=clean, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_update_return_request", reason_in_body=False)
 
     async def bbd_audit(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                         per_page: int | None = None) -> dict[str, Any]:

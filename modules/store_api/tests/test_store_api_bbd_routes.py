@@ -122,6 +122,12 @@ YAZMA_YOLLARI = [
     ("bbd_send_review_request", (77,), {}, "POST", "/api/admin/bbd/review-requests"),
     ("bbd_retry_bld_job", (5,), {}, "POST", "/api/admin/bbd/bld/jobs/5/retry"),
     ("bbd_reprint_order", (2392,), {}, "POST", "/api/admin/bbd/bld/orders/2392/reprint"),
+    # 2026-08-15'te yayına giren iki uç. İkisi de daha önce ham 405
+    # gösteriyordu: yol vardı, fiil tanımlı değildi.
+    ("bbd_update_return_request", (8,), {"payload": {"status": 2}},
+     "PUT", "/api/admin/bbd/return-requests/8"),
+    ("bbd_save_trial_exam", (), {"payload": {"price": "250.00"}},
+     "POST", "/api/admin/bbd/deneme-kulubu/overview"),
 ]
 
 
@@ -183,9 +189,12 @@ async def test_taninmayan_katalog_sorunu_istek_cikmadan_reddedilir(tip: str) -> 
 
 # ================================ bilerek yazılmayan üç uç: sessiz 404 YOK
 
+#: Mağazanın BİLEREK yazmadığı uçlar. Liste 2026-08-15'te ÜÇTEN İKİYE indi:
+#: iade talebi güncellemesi (`PUT bbd/return-requests/{id}`) yayına girdi ve
+#: artık gerçek bir istek gönderiyor. Para hareketi doğuran iki DURUM GEÇİŞİ
+#: hâlâ kapalı ama kapı artık mağazada (409) — geçit taraflı ilan etmiyor.
 BILEREK_YOK = [
     ("bbd_refund_payment", (3,), {"amount": 1000}, "PARA HAREKETİ"),
-    ("bbd_update_return_request", (8,), {"payload": {"status": "approved"}}, "PARA İADESİ"),
     ("bbd_restore_backup", ("2026-08-14.sql.gz",), {}, "CANLI VERİYİ EZER"),
 ]
 
@@ -571,3 +580,124 @@ async def test_kampanya_bildirimi_kapali_hatasi_cakisma_olarak_doner() -> None:
 
     assert hata.value.code == "conflict"
     assert "Kampanya" in hata.value.message
+
+
+# =========================== iade talebi güncellemesi: gövde ELENİR, uydurulmaz
+
+async def test_iade_talebinde_yalniz_yazilabilen_alanlar_gonderilir() -> None:
+    """Öncelik ve atama mağazada TUTULMUYOR; gövdeye konmaz.
+
+    Konsaydı mağaza 422 (bilinmeyen alan) ya da 503 (atama sütunu yok)
+    döndürür ve AYNI İSTEKTEKİ durum/not da yazılmazdı — kullanıcı "kaydettim"
+    der, hiçbir şey değişmezdi.
+    """
+    import json
+
+    api, istekler = izle()
+    await api.bbd_update_return_request(
+        8, payload={"status": 2, "note": "Kargo geldi", "priority": "high",
+                    "assignee": "Ayşe"},
+        reason=NEDEN)
+
+    govde = json.loads(istekler[0].content)
+    assert govde["status"] == 2
+    assert govde["note"] == "Kargo geldi"
+    assert "priority" not in govde
+    assert "assignee" not in govde
+
+
+async def test_iade_talebinde_yazilabilen_alan_yoksa_istek_cikmaz() -> None:
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(yasak())
+
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_update_return_request(8, payload={"priority": "high"}, reason=NEDEN)
+
+    assert istekler == []
+    assert hata.value.code == "validation"
+    assert "status" in hata.value.message and "note" in hata.value.message
+
+
+async def test_iade_talebinde_para_geciren_durum_magazaya_BIRAKILIR() -> None:
+    """Kimlik 5/8 listesi geçitte TUTULMAZ: iki tarafın ayrışmasına kapı açardı.
+
+    Karar mağazadadır ve 409 ile gelir; geçit isteği gönderir, engellemez.
+    """
+    api, istekler = izle(
+        {"code": "RMA_MONEY_TRANSITION_BLOCKED",
+         "message": "Bu geçiş BANKAYA PARA İADESİ gönderir."},
+        status=409)
+
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_update_return_request(8, payload={"status": 5}, reason=NEDEN)
+
+    assert len(istekler) == 1                       # istek GİTTİ, geçit susturmadı
+    assert "PARA" in hata.value.message.upper()
+
+
+# ============================ deneme künyesi: kontenjan istek çıkmadan durur
+
+async def test_deneme_kunyesinde_kontenjan_istek_cikmadan_reddedilir() -> None:
+    """Mağaza da 503 döner; geçit onu BEKLETMEDEN söyler.
+
+    Kontenjan bu mağazada bir kayıt değil — üyelik ürünü stok takibi kapalı
+    kaydediliyor ve "kontenjan" yalnız vitrin metni. Sayı gönderilseydi
+    fiyat ve durum da yazılmazdı.
+    """
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(yasak())
+
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_save_trial_exam(payload={"price": "250.00", "capacity": 120},
+                                      reason=NEDEN)
+
+    assert istekler == []
+    assert hata.value.status == 503
+    assert "kontenjan" in hata.value.message.lower()
+
+
+async def test_deneme_kunyesinde_vitrin_metni_gonderilmez() -> None:
+    """Ad/açıklama dile bağlıdır ve panelden düzenlenir; gövdeye konmaz."""
+    import json
+
+    api, istekler = izle()
+    await api.bbd_save_trial_exam(
+        payload={"price": "250.00", "isOpen": True, "name": "Mart Denemesi"},
+        exam_id=41, reason=NEDEN)
+
+    assert istekler[0].url.path == "/api/admin/bbd/deneme-kulubu/overview/41"
+    assert istekler[0].method == "PUT"
+    govde = json.loads(istekler[0].content)
+    assert govde == {"price": "250.00", "isOpen": True}
+
+
+async def test_siki_dogrulayan_uclarda_gerekce_govdeye_konmaz() -> None:
+    """`reason` gövdeye konsaydı, gerekçesi olan HER istek 422 alırdı.
+
+    `RmaTransition` ve `DenemeKulubuProfile` tanımadıkları alanı sessizce yok
+    saymıyor, isteği reddediyor — ve bu doğru bir karar (`statu: 7` yazan bir
+    istemci 200 alıp talebi olduğu yerde bırakırdı). Gerekçe zaten
+    `X-Bbd-Reason` başlığıyla gidiyor; gövdedeki kopya bir kolaylıktı.
+    """
+    import json
+
+    api, istekler = izle()
+    await api.bbd_update_return_request(8, payload={"note": "iç not"}, reason=NEDEN)
+    await api.bbd_save_trial_exam(payload={"isOpen": False}, reason=NEDEN)
+
+    for istek in istekler:
+        govde = json.loads(istek.content)
+        assert "reason" not in govde, f"{istek.url.path} gövdesinde gerekçe var"
+        # Başlıkta DURUYOR — ASCII dışı karakterler yüzde kodlanmış hâlde
+        # (HTTP başlığı latin-1 taşır; `_header_safe` bunu güvene alıyor).
+        assert istek.headers["X-Bbd-Reason"]
+
+
+async def test_diger_bbd_uclarinda_gerekce_govdede_kalmaya_devam_eder() -> None:
+    """İstisna DAR olmalı: bu uçlar gerekçeyi kendi tablolarına yazıyor."""
+    import json
+
+    api, istekler = izle()
+    await api.bbd_create_backup(scope=["db"], reason=NEDEN)
+
+    assert json.loads(istekler[0].content)["reason"] == NEDEN
