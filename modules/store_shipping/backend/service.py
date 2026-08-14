@@ -168,6 +168,20 @@ class ShippingService:
         message = str(failure).strip()
         return message or "Mağazaya ulaşılamadı."
 
+    @staticmethod
+    def _pending(failure: Exception) -> bool:
+        """Uç henüz yayında değil mi — yoksa gerçek bir arıza mı?
+
+        İkisi ayrı cevaplardır ve ekranda ayrı davranış gerektirir: yayında
+        olmayan uçta "Kaydet" düğmesi TIKLANMADAN kapanmalı, gerçek arızada
+        "tekrar dene" anlamlıdır.
+
+        Kod alanı `StoreApiError` üstünde durur; çevrilebilir METNE bakarak
+        tahmin etmek çeviri değişince kırılır. Sınıf import EDİLMEZ (K3):
+        modül modülü import etmez, yalnız kod dizesi taşınır.
+        """
+        return getattr(failure, "code", "") == "bbd_endpoint_missing"
+
     def _guard(self, reason: str, minimum: int = shipping.MIN_REASON) -> str:
         """Gerekçe backend'de DE doğrulanır (K9): arayüzde gizlemek yetmez."""
         return shipping.reason_error(reason, minimum)
@@ -430,7 +444,12 @@ class ShippingService:
         try:
             payload = await self._api.bbd_shipping_rates()
         except Exception as failure:  # noqa: BLE001 — K7
+            # UÇ YAYINDA DEĞİLSE YAZMA DÜĞMESİ DE KAPANIR. Açık bırakmak,
+            # kullanıcıya matrisi doldurtup gerekçe yazdırdıktan SONRA "uç
+            # yayında değil" demek olurdu — emek boşa gider ve ekran arızalı
+            # görünür.
             return {"ok": True, "connected": False, "error": self._fail(failure),
+                    "endpointPending": self._pending(failure),
                     "carriers": [], "freeThreshold": 0, "codFee": 0, "promise": "",
                     "problems": []}
 
@@ -446,7 +465,7 @@ class ShippingService:
                 "problems": shipping.tier_problems(tiers),
             })
         return {
-            "ok": True, "connected": True, "error": "",
+            "ok": True, "connected": True, "error": "", "endpointPending": False,
             "carriers": carriers,
             "freeThreshold": shipping.to_kurus(payload.get("free_shipping_threshold")) or 0,
             "codFee": shipping.to_kurus(payload.get("cod_fee")) or 0,

@@ -1202,9 +1202,18 @@ async function renderRates(host) {
   host.replaceChildren();
 
   if (!payload.connected) {
-    host.append(alertBox(
-      `Ücretlendirme okunamadı — ${payload.error}. Yazma da kapalıdır; okunamayan bir `
-      + 'matrisin üstüne yazmak mevcut tarifeyi silerdi.', 'bad'));
+    // İKİ AYRI DURUM, İKİ AYRI CÜMLE. "Uç yayında değil" beklenecek bir şeydir;
+    // "okunamadı" ise tekrar denenecek bir arıza. Aynı metne sığdırmak,
+    // personeli olmayan bir arızayı kovalarken bırakırdı. Her iki hâlde de
+    // matris ve iki yazma düğmesi HİÇ ÇİZİLMEZ: okunamayan bir tarifenin
+    // üstüne yazmak mevcut ücretleri silerdi.
+    host.append(alertBox(payload.endpointPending
+      ? `Kargo ücretlendirme ucu mağazada henüz yayında değil — ${payload.error} `
+        + 'Matris ve kaydetme düğmeleri çizilmedi; paket yayınlanınca bu sekme '
+        + 'kendiliğinden açılacak.'
+      : `Ücretlendirme okunamadı — ${payload.error} Yazma da kapalıdır; okunamayan bir `
+        + 'matrisin üstüne yazmak mevcut tarifeyi silerdi.',
+    payload.endpointPending ? 'info' : 'bad'));
     return;
   }
 

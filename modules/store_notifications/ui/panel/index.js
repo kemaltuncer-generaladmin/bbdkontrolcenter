@@ -34,8 +34,8 @@
 // altındadır; orada '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, clip, confirmSimple, confirmWithReason, csvBlob, debounce, h, loadStyles,
-  money, num, stampIso, toaster,
+  blockedButton, button, clip, confirmSimple, confirmWithReason, csvBlob, debounce, h,
+  loadStyles, money, num, stampIso, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
@@ -829,15 +829,44 @@ function openBroadcast(draft, body) {
 
 // ====================================================== SEKME 3 — kurallar
 
+/**
+ * Kural YAZMA neden kapalı — kapalı değilse boş dize.
+ *
+ * Kural yazma ucu okuma ucuyla AYNI pakette geliyor: liste 404 dönüyorsa
+ * yazma da dönecektir. Düğmeyi açık bırakmak, kullanıcıya kuralı kurdurup
+ * gerekçe yazdırdıktan SONRA reddetmek olurdu.
+ */
+function ruleWriteReason() {
+  if (state.rules?.connected) return '';
+  return state.rules?.endpointPending
+    ? 'Kural ucu mağazada henüz yayında değil; paket yayınlanınca bu düğme açılacak.'
+    : `Kural listesi okunamadı (${state.rules?.error || 'neden bilinmiyor'}); okunamayan `
+      + 'listenin üstüne kural yazmak var olan bir kuralı sessizce ezebilirdi.';
+}
+
+function newRuleButton() {
+  const reason = ruleWriteReason();
+  return reason
+    ? blockedButton('Yeni kural', reason, { variant: 'primary' })
+    : button('Yeni kural', { variant: 'primary', onClick: () => openRule(null) });
+}
+
 function renderRules() {
   const wrap = nodes.ruleWrap;
   if (!wrap) return;
   wrap.replaceChildren();
 
+  // İKİ AYRI DURUM, İKİ AYRI CÜMLE. "Uç yayında değil" beklenecek bir şeydir;
+  // "okunamadı" tekrar denenecek bir arıza. Aynı metne sığdırmak, personeli
+  // olmayan bir arızayı kovalarken bırakırdı.
   if (!state.rules.connected) {
-    wrap.append(alertBox(
-      `Kurallar okunamadı — ${state.rules.error}. Kurallar MAĞAZADA çalışır (olay orada olur); `
-      + 'mağaza tarafındaki uç yayına girince bu liste dolacak ve düzenleme açılacak.', 'warn'));
+    wrap.append(alertBox(state.rules.endpointPending
+      ? `Kural ucu mağazada henüz yayında değil — ${state.rules.error} Kurallar MAĞAZADA `
+        + 'çalışır (olay orada olur); paket yayına girince bu liste dolacak ve düzenleme '
+        + 'kendiliğinden açılacak.'
+      : `Kurallar okunamadı — ${state.rules.error} Yazma da kapalıdır: okunamayan bir `
+        + 'listenin üstüne kural yazmak, var olan bir kuralı sessizce ezebilirdi.',
+    state.rules.endpointPending ? 'info' : 'warn'));
   }
 
   const table = dataTable({
@@ -861,8 +890,9 @@ function renderRules() {
       { key: 'active', label: 'Durum', width: '84px',
         cell: (row) => badge(row.active ? 'Açık' : 'Kapalı', row.active ? 'good' : 'dim') },
       { key: 'id', label: '', width: '96px',
-        cell: (row) => button(row.active ? 'Kapat' : 'Aç',
-          { onClick: () => toggleRule(row) }) },
+        cell: (row) => (ruleWriteReason()
+          ? blockedButton(row.active ? 'Kapat' : 'Aç', ruleWriteReason())
+          : button(row.active ? 'Kapat' : 'Aç', { onClick: () => toggleRule(row) })) },
     ],
     rows: state.rules.items,
     dense: true,
@@ -871,7 +901,7 @@ function renderRules() {
       title: 'Kural yok',
       text: 'Bir olay gerçekleştiğinde hangi şablonun hangi kanaldan gideceğini burada '
         + 'tanımlarsınız.',
-      actions: [button('Yeni kural', { variant: 'primary', onClick: () => openRule(null) })],
+      actions: [newRuleButton()],
     }),
   });
   wrap.append(table.node);
@@ -1287,7 +1317,7 @@ export function mount(root, ctx) {
   const ruleView = h('div');
   const ruleActions = h('div', 'nt-actions');
   ruleActions.append(
-    button('Yeni kural', { variant: 'primary', onClick: () => openRule(null) }),
+    newRuleButton(),
     button('Yenile', { onClick: () => refreshRules() }),
   );
   ruleView.append(ruleActions, nodes.ruleWrap, hintBox(

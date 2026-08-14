@@ -574,15 +574,31 @@ class NotificationsService:
 
     # =============================================================== kurallar
 
+    @staticmethod
+    def _pending(failure: Exception) -> bool:
+        """Uç henüz yayında değil mi — yoksa gerçek bir arıza mı?
+
+        İkisi ekranda ayrı davranış gerektirir: yayında olmayan uçta kural
+        yazma düğmesi TIKLANMADAN kapanmalı, gerçek arızada "tekrar dene"
+        anlamlıdır. Kod alanı `StoreApiError` üstünde durur; sınıf import
+        EDİLMEZ (K3), yalnız kod dizesi taşınır.
+        """
+        return getattr(failure, "code", "") == "bbd_endpoint_missing"
+
     async def rules(self) -> dict[str, Any]:
         try:
             payload = await self._api.bbd_notification_rules()
         except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
             self._log.warning("kurallar okunamadı", error=str(failure))
-            return {"ok": True, "connected": False, "error": self._fail(failure), "items": []}
+            # Kural YAZMA ucu okuma ucuyla aynı pakette geliyor: liste 404
+            # dönüyorsa yazma da dönecektir. Düğmeyi açık bırakmak, kuralı
+            # kurdurup gerekçe yazdırdıktan sonra reddetmek olurdu.
+            return {"ok": True, "connected": False, "error": self._fail(failure),
+                    "endpointPending": self._pending(failure), "items": []}
         rows = [messaging.rule_row(item) for item in (payload.get("items") or [])
                 if isinstance(item, dict)]
-        return {"ok": True, "connected": True, "error": "", "items": rows}
+        return {"ok": True, "connected": True, "error": "", "endpointPending": False,
+                "items": rows}
 
     async def save_rule(self, *, rule_id: int | None, event: str, channel: str,
                         template: str, condition: str = "", delay_minutes: int = 0,

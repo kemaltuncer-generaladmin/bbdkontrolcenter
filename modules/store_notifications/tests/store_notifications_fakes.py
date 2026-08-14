@@ -118,12 +118,26 @@ class FakeNotify:
         return dict(self.state)
 
 
+class FakeStoreApiError(RuntimeError):
+    """Geçit hatasının testlik eşi — `code` alanı taşır.
+
+    `StoreApiError` sınıfı IMPORT EDİLMEZ: modül modülü import etmez (K3).
+    Servis de sınıfa değil, `code` alanına bakıyor.
+    """
+
+    def __init__(self, message: str, *, code: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class FakeApi:
     """`store.api` yeteneğinin testlik yüzü. Yalnız kullanılan metotlar var."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.fail: set[str] = set()
+        #: Uç adı → geçidin döndüreceği hata kodu (`bbd_endpoint_missing` gibi).
+        self.codes: dict[str, str] = {}
         self.history_payload: dict[str, Any] = {"items": [], "meta": {}}
         self.history_pages: list[dict[str, Any]] = []
         self.templates_payload: dict[str, Any] = {"items": [], "meta": {}}
@@ -136,7 +150,11 @@ class FakeApi:
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail:
-            raise RuntimeError(f"{name} patladı")
+            # HATANIN TÜRÜ TAŞINABİLMELİ. Geçit hatası `code` alanı taşıyor ve
+            # servis "uç yayında değil" ile "gerçek arıza"yı ona bakarak
+            # ayırıyor; sahte geçit hep kodsuz bir istisna atsaydı o ayrım
+            # testte hiç görünmezdi.
+            raise FakeStoreApiError(f"{name} patladı", code=self.codes.get(name, ""))
         self.calls.append((name, args, kwargs))
 
     def used(self, name: str) -> list[dict[str, Any]]:

@@ -679,3 +679,28 @@ async def test_rapor_taramasi_sirayla_sayfalanir_ve_tavanlanir() -> None:
     assert [row["id"] for row in rows] == [1, 2]
     assert truncated is False
     assert [call["page"] for call in api.used("bbd_notifications")] == [1, 2]
+
+
+async def test_kural_ucu_yayinda_degilse_ekran_bunu_ayirt_edebilir() -> None:
+    """"Uç yayında değil" ile "okunamadı" AYRI cevaplardır.
+
+    Birincisi beklenecek bir şeydir ve yazma düğmesi tıklanmadan kapanır;
+    ikincisi tekrar denenecek bir arızadır. Aynı metne sığdırmak, personeli
+    olmayan bir arızayı kovalarken bırakırdı.
+    """
+    service, api, _ = _service()
+    api.fail.add("bbd_notification_rules")
+    api.codes["bbd_notification_rules"] = "bbd_endpoint_missing"
+    result = await service.rules()
+    assert result["ok"] is True
+    assert result["connected"] is False
+    assert result["endpointPending"] is True
+
+
+async def test_gercek_ariza_uc_yok_diye_gosterilmez() -> None:
+    service, api, _ = _service()
+    api.fail.add("bbd_notification_rules")
+    api.codes["bbd_notification_rules"] = "server"
+    result = await service.rules()
+    assert result["connected"] is False
+    assert result["endpointPending"] is False
