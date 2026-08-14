@@ -44,7 +44,13 @@ export function formatPhone(value) {
  * @param {object} [spec.value] — başlangıç kaydı
  * @param {(draft:object, dirty:string[])=>void} [spec.onChange]
  */
-export function formGrid({ fields = [], value = {}, onChange } = {}) {
+export function formGrid({ fields: given = [], value = {}, onChange } = {}) {
+  // YANLIŞ (null/undefined) ALAN ATLANIR. Tek seçenekli alanlar ekrandan
+  // kalkarken `choice.js` onların yerine `null` döndürüyor; çağıran her
+  // panelde `.filter(Boolean)` yazmak yerine kural burada tek yerde durur.
+  // Alan atlanır ama DEĞERİ silinmez: `value` içinde gelen anahtar taslakta
+  // kalır ve `patch()` ile birlikte gönderilir.
+  const fields = (given || []).filter(Boolean);
   const node = h('div', 'kit-form-grid');
   const controls = new Map();
   const disposers = [];

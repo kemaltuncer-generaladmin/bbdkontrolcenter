@@ -38,6 +38,13 @@ export function filterBar({ fields = [], onChange, debounceMs = 260, actions = [
   const snapshot = () => JSON.parse(JSON.stringify(values));
 
   for (const field of fields) {
+    // YANLIŞ (null/undefined) ALAN ATLANIR — ve atlanan alan `values` içine de
+    // GİRMEZ. Tek seçenekli süzgeç kutusu çizilmez (`choice.js`); değeri boş
+    // bırakmak yerine hiç anahtar üretmemek bilinçlidir: tek kanallı mağazada
+    // `channel=default` göndermek listeyi sessizce boşaltabiliyor (ölçüldü,
+    // bkz. store_api `_drop_channel`). Yani süzgeç yalnız görünmez olmaz,
+    // ISTEKTEN DE ÇIKAR.
+    if (!field) continue;
     switch (field.kind) {
       case 'search': {
         values[field.key] = field.value || '';
@@ -58,7 +65,8 @@ export function filterBar({ fields = [], onChange, debounceMs = 260, actions = [
 
       case 'select': {
         values[field.key] = field.value ?? '';
-        if (field.label) node.append(h('span', 'kit-filter-label', field.label));
+        const caption = field.label ? h('span', 'kit-filter-label', field.label) : null;
+        if (caption) node.append(caption);
         const select = h('select', 'kit-select');
         select.setAttribute('aria-label', field.label || field.key);
         const fill = (options) => {
@@ -75,10 +83,29 @@ export function filterBar({ fields = [], onChange, debounceMs = 260, actions = [
           values[field.key] = select.value;
           fire();
         });
+        /**
+         * Kutuyu ekrandan kaldırır/geri getirir.
+         *
+         * NEDEN GİZLENEN KUTUNUN DEĞERİ DE SIFIRLANIR: seçenekler VERİDEN
+         * SONRA geliyor ve tek seçenekli olduğu ancak o zaman anlaşılıyor.
+         * Kutu gizlenip değer kalsaydı, kullanıcının göremediği bir süzgeç
+         * listeyi süzmeye devam ederdi — "neden 3 kayıt görüyorum" sorusunun
+         * ekranda hiçbir cevabı olmazdı.
+         */
+        const visible = (on) => {
+          select.hidden = !on;
+          if (caption) caption.hidden = !on;
+          if (!on && values[field.key] !== '') {
+            values[field.key] = '';
+            select.value = '';
+          }
+        };
+        if (field.hidden) visible(false);
         controls.set(field.key, {
           set: (value) => { select.value = String(value ?? ''); },
           // Seçenekler veriden sonra gelir (kanallar, müşteri grupları…).
           options: (options) => fill(options),
+          visible,
         });
         node.append(select);
         break;
@@ -188,6 +215,16 @@ export function filterBar({ fields = [], onChange, debounceMs = 260, actions = [
     /** Açılır listenin seçeneklerini veriden sonra doldurur. */
     options(key, options) {
       controls.get(key)?.options?.(options);
+    },
+    /**
+     * Açılır kutuyu gösterir/gizler — tek seçenekli süzgeç çizilmez.
+     *
+     * Karar `choice.js` içindedir (`applyChoiceFilter`); burası yalnız onu
+     * uygular. Süzgeç şeridi veriden sonra kurulamıyor (panel açılır açılmaz
+     * çizilmeli), o yüzden kutu önce çizilip sonra kaldırılır.
+     */
+    visible(key, on) {
+      controls.get(key)?.visible?.(Boolean(on));
     },
     reset,
     /** Panel cleanup'ında ÇAĞRILMALI: tarih alanları global dinleyici tutuyor. */

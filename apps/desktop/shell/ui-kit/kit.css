@@ -290,6 +290,14 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-filters .kit-input { min-width: 220px; }
 .kit-filter-label { font-size: 11px; color: var(--soft); margin-right: -2px; }
 
+/* Tek seçenekli alanın sessiz özeti (`choice.js`). Kutu çizilmez ama değerin
+   ne olduğu ekranda KALIR — sorulmayan sorunun cevabı görünmez olmamalı. */
+.kit-choice-summary {
+  font-size: 11px;
+  color: var(--soft);
+  padding: 0 20px 8px;
+}
+
 .kit-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 10px; }
 .kit-chip {
   height: 26px;

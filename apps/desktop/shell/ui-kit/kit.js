@@ -11,7 +11,7 @@
 // SÜRÜM SÖZLEŞMESİ: yayınlanmış imza geriye dönük uyumsuz değiştirilmez.
 // Yeni davranış yeni parametreyle gelir. Değişiklikler README.md'de.
 
-export const KIT_VERSION = '1.0.0';
+export const KIT_VERSION = '1.2.0';
 
 /** Tek satırda element: h('div', 'sinif', 'metin'). */
 export const h = (tag, className, text) => {
@@ -235,6 +235,34 @@ export function button(label, { variant = '', title = '', onClick, disabled = fa
   if (title) node.title = title;
   if (disabled) node.disabled = true;
   if (onClick) node.addEventListener('click', onClick);
+  return node;
+}
+
+/**
+ * KAPALI DÜĞME — tıklanmaz ve NEDENİ söyler.
+ *
+ * Bu depoda üç tür "çalışmayan düğme" vardı ve üçü de aynı şeyi yapıyordu:
+ * tıklanınca ham bir 404/405/409/503 metni gösteriyordu. Ham hata metni
+ * kullanıcıya hiçbir şey anlatmaz — "bu iş buradan yapılmıyor" ile "sunucu
+ * bozuldu" aynı görünür.
+ *
+ * Kural: bir düğme YA ÇALIŞIR, YA BURADAN GEÇER, ya da hiç çizilmez.
+ *
+ * Neden `title` yetmez ve `aria-label` da yazılır: kapalı düğme çoğu tarayıcıda
+ * fare imlecini almaz, ipucu balonu hiç açılmayabilir. Ekran okuyucu ise
+ * etiketi okur — neden orada da durmalıdır. Panellerin ayrıca gerekçeyi
+ * `alertBox` ile GÖRÜNÜR yazması beklenir; bu işlev son kapıdır, tek kapı
+ * değil.
+ *
+ * @param {string} label
+ * @param {string} reason — Türkçe, tam cümle, "neden" sorusunu cevaplar.
+ */
+export function blockedButton(label, reason, { variant = '' } = {}) {
+  const node = button(label, { variant, disabled: true });
+  const text = String(reason || 'Bu işlem şu an yapılamıyor.').trim();
+  node.title = text;
+  node.setAttribute('aria-label', `${label} — kapalı: ${text}`);
+  node.dataset.blocked = '1';
   return node;
 }
 

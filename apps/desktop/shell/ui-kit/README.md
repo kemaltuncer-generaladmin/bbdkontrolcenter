@@ -36,7 +36,8 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
 
 | Dosya | İçerik |
 |---|---|
-| `kit.js` | `h` · para/tarih/sayı biçimi · `foldText` · `debounce` · `clip` · `copyText` · `csvBlob` · `button` · `toaster` · `confirmWithReason` · `confirmSimple` · `loadStyles` |
+| `kit.js` | `h` · para/tarih/sayı biçimi · `foldText` · `debounce` · `clip` · `copyText` · `csvBlob` · `button` · `blockedButton` · `toaster` · `confirmWithReason` · `confirmSimple` · `loadStyles` |
+| `choice.js` | `resolveChoice` · `choiceFilter` · `choiceField` · `choiceValues` · `choiceNotice` · `choiceSummary` — tek seçenekli alanı ekrandan kaldırır |
 | `kit.css` | Tüm paylaşılan görsel dil. Panelin kendi kuralları `panel.css`'te, kendi önekiyle |
 | `table.js` | `dataTable` (sıralama, seçim, yoğun kip) · `pager` (sunucu tarafı sayfalama) |
 | `filters.js` | `filterBar` (arama, açılır, tarih aralığı, sayı aralığı, anahtar) · `applyFilters` |
@@ -116,6 +117,27 @@ içindeki `ALLOWED_TAGS` ve `STYLE_PROPS` aynı değerleri taşır; eşitlik
 `modules/store_cms/tests/test_store_cms_content.py` içinde teste bağlıdır.
 Biri genişletilip öteki unutulursa kullanıcı ekranda gördüğü biçimi
 kaydettiğinde sessizce kaybeder.
+
+### 1.2.0 — 2026-08-15
+`choice.js` eklendi; `kit.js` `blockedButton` kazandı. `filterBar` ve
+`formGrid` artık **yanlış (null) alanı atlar**.
+
+**Neden `choice.js`.** Bu mağazada kanal bir tane, dil bir tane, para birimi
+bir tane, stok kaynağı bir tane, vergi kategorisi bir tane. Yirmi ekranda
+bunların açılır kutusu çiziliyor ve kullanıcıdan seçim isteniyordu — seçilecek
+bir şey olmadan. Karar ekrana SERT KODLANMADI: `resolveChoice()` seçenek
+sayısına bakar, `> 1` ise kutu geri gelir.
+
+**Süzgeç ile form alanı ayrıştı.** Tek seçenekte form alanı değeri
+kendiliğinden gönderir (`choiceValues`), süzgeç ise değeri GÖNDERMEZ. İkincisi
+ölçülmüş bir hatadan geliyor: `channel=default` gönderilen sipariş listesi
+HTTP 200 ile sıfır kayıt döndürüyordu. Tek kanallı mağazada hiçbir satır
+elemeyen bir süzgeci göndermenin kazancı yok, riski var.
+
+**`blockedButton` neden `button(..., {disabled})` değil.** Kapalı düğmenin
+NEDENİ olmak zorunda: `title` + `aria-label` ile neden düğmenin üstünde durur,
+`data-blocked` ile de testten görülebilir. Ham 404/405/409 metni gösteren
+düğme bırakılmaz.
 
 ## Mevcut BBD panelleri
 
