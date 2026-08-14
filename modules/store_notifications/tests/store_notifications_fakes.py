@@ -37,13 +37,35 @@ class FakeStore:
         self.templates: list[dict[str, Any]] = []
         self.prefs: dict[str, str] = {}
         self.sends: dict[str, dict[str, Any]] = {}
+        #: Aşama şablonları: stage → satır.
+        self.lifecycle: dict[str, dict[str, Any]] = {}
+        #: Aşama gönderim izi: (stage, order_id) → satır. Anahtarın DEMET
+        #: olması tesadüf değil: gerçek tabloda da `(stage, order_id)`
+        #: BENZERSİZDİR ve tekrarı engelleyen tek şey odur.
+        self.lifecycle_log: dict[tuple[str, int], dict[str, Any]] = {}
 
     def table(self, name: str) -> str:
         return f"mod_{self.module_id}_{name}"
 
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         text = " ".join(sql.split())
-        if "_audit" in text and text.startswith("INSERT"):
+        if "_lifecycle_log" in text:
+            keys = ("stage", "order_id", "order_no", "customer", "phone", "result", "note",
+                    "parts", "job_id", "created_at", "updated_at")
+            row = dict(zip(keys, params, strict=False))
+            key = (row["stage"], int(row["order_id"]))
+            current = self.lifecycle_log.get(key)
+            # GERÇEK ŞARTIN AYNISI: `... DO UPDATE SET … WHERE result <> 'sent'`.
+            # Gitmiş bir mesajın kaydını ezmek, tekrarı önleyen tek kanıtı
+            # silmek olurdu; sahte depo bu şartı taklit etmezse test o
+            # korumayı hiç görmez.
+            if current is None or current.get("result") != "sent":
+                self.lifecycle_log[key] = row
+        elif "_lifecycle" in text:
+            keys = ("stage", "body", "enabled", "actor", "updated_at")
+            row = dict(zip(keys, params, strict=False))
+            self.lifecycle[row["stage"]] = row
+        elif "_audit" in text and text.startswith("INSERT"):
             keys = ("action", "reason", "actor", "result", "detail", "created_at")
             self.audit.append(dict(zip(keys, params, strict=False)))
         elif "_prefs" in text:
@@ -84,6 +106,8 @@ class FakeStore:
 
     async def fetch_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         text = " ".join(sql.split())
+        if "_lifecycle_log" in text:
+            return self.lifecycle_log.get((params[0], int(params[1])))
         if "_prefs" in text:
             value = self.prefs.get(params[0])
             return {"value": value} if value is not None else None
@@ -93,6 +117,20 @@ class FakeStore:
 
     async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         text = " ".join(sql.split())
+        if "_lifecycle_log" in text:
+            rows = list(reversed(list(self.lifecycle_log.values())))
+            if "result = ?" in text and "order_id IN" in text:      # `already_sent`
+                stage, result, *ids = params
+                wanted = {int(item) for item in ids}
+                return [row for row in rows if row["stage"] == stage
+                        and row["result"] == result and int(row["order_id"]) in wanted]
+            if "stage = ?" in text:
+                rows = [row for row in rows if row["stage"] == params[0]]
+            if "result = ?" in text:
+                rows = [row for row in rows if row["result"] == params[-2]]
+            return rows
+        if "_lifecycle" in text:
+            return list(self.lifecycle.values())
         if "_audit" in text:
             return list(reversed(self.audit))
         if "_templates" in text:
@@ -104,18 +142,61 @@ class FakeStore:
         return []
 
 
+class FakeSmsResult:
+    """`SmsResult` yüzeyinin testlik eşi — servis alan adlarına bakıyor."""
+
+    def __init__(self, *, accepted: bool = True, dry_run: bool = False, parts: int = 1,
+                 job_id: str = "JOB-1") -> None:
+        self.accepted = accepted
+        self.dry_run = dry_run
+        self.parts = parts
+        self.job_id = job_id
+
+
+class FakeSmsProvider:
+    """SMS sağlayıcısının testlik yüzü. GERÇEK MESAJ GÖNDERMEZ.
+
+    Gönderilen her mesaj `sent` listesinde durur; testler "hiç gönderilmedi"
+    iddiasını bu listenin BOŞ olmasıyla KANITLAR — "hata almadık" demek
+    gönderilmediğini göstermez.
+    """
+
+    def __init__(self, *, accepted: bool = True, dry_run: bool = False,
+                 parts: int = 1) -> None:
+        self.sent: list[dict[str, Any]] = []
+        self.accepted = accepted
+        self.dry_run = dry_run
+        self.parts = parts
+        self.fail = False
+
+    async def send(self, messages: Any, *, header: str | None = None,
+                   **_: Any) -> FakeSmsResult:
+        if self.fail:
+            raise RuntimeError("sağlayıcı patladı")
+        for message in messages:
+            self.sent.append({"to": message.to, "text": message.text, "header": header})
+        return FakeSmsResult(accepted=self.accepted, dry_run=self.dry_run, parts=self.parts,
+                             job_id=f"JOB-{len(self.sent)}")
+
+
 class FakeNotify:
     """`notify` platform yeteneğinin testlik yüzü."""
 
-    def __init__(self, **state: Any) -> None:
+    def __init__(self, *, provider: FakeSmsProvider | None = None, **state: Any) -> None:
         self.state = {"provider": "netgsm", "enabled": True, "dryRun": True,
                       "configured": True, "header": "BBDUNYAM", "error": "", **state}
         self.fail = False
+        self.provider = provider or FakeSmsProvider()
 
     async def ready(self) -> dict[str, Any]:
         if self.fail:
             raise RuntimeError("sms katmanı patladı")
         return dict(self.state)
+
+    async def sms(self) -> FakeSmsProvider:
+        if self.fail:
+            raise RuntimeError("sms katmanı patladı")
+        return self.provider
 
 
 class FakeStoreApiError(RuntimeError):

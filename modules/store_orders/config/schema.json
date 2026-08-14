@@ -67,6 +67,16 @@
     "order_config_slug": {
       "type": "string",
       "description": "Mağazanın sipariş ayarlarının core_config bölümü (salt okunur gösterilir)."
+    },
+    "stage_sms_dry_run": {
+      "type": "boolean",
+      "description": "Müşteri aşama SMS'i freninin ÜÇÜNCÜ katmanı (tetikleyicinin bayrağı). Varsayılan true; gerçek SMS için Bildirimler'in lifecycle_sms_dry_run ve platform.notify.sms.dry_run ayarları da kapalı olmalı."
+    },
+    "stage_sms_lookback_days": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 90,
+      "description": "'Siparişiniz alındı' taramasının gün penceresi. 0 = pencere yok; pencere olmadan ilk tarama tüm geçmişi 'yeni' sayar."
     }
   }
 }

@@ -36,21 +36,44 @@ class OrderCard:
         return await self._service.card(int(order_id))
 
 
-def register(ctx: ModuleContext) -> None:
-    store_api = ctx.capability("store.api")
-    printer = ctx.try_capability("printer")
+#: Zamanlanmış aşama taramasının ulaşabilmesi için canlı servis burada tutulur.
+#: `module.yaml → tasks` handler'ı çekirdek tarafından bağlamsız da
+#: çağrılabiliyor; o durumda tek tutamak budur.
+_LIVE: OrdersService | None = None
 
-    service = OrdersService(
-        api=store_api,
+
+def build_service(ctx: ModuleContext) -> OrdersService:
+    return OrdersService(
+        api=ctx.capability("store.api"),
         store=ctx.store,
         log=ctx.log,
         config=ctx.config,
-        printer=printer,
+        printer=ctx.try_capability("printer"),
         publish=ctx.publish,
+        # MÜŞTERİ AŞAMA SMS'İ — sipariş alındı · kargoya verildi · teslim
+        # edildi. İSTEĞE BAĞLI: Bildirimler ekranı kapalıysa sipariş akışı
+        # aynen çalışır, yalnız müşteri bilgilendirilmez ve ekran nedenini
+        # söyler (K7). Metin, fren ve tekrar engeli o modülün içindedir;
+        # burada modül IMPORT EDİLMEZ (K3), yalnız yetenek çözülür.
+        stage_notify=ctx.try_capability("store.notify.stage"),
         category=CATEGORY,
         subcategory=SUBCATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
     )
+
+
+def live() -> OrdersService | None:
+    return _LIVE
+
+
+def register(ctx: ModuleContext) -> None:
+    global _LIVE
+    printer = ctx.try_capability("printer")
+    stage_notify = ctx.try_capability("store.notify.stage")
+
+    service = build_service(ctx)
+    _LIVE = service
     ctx.provide("store.order.card", OrderCard(service))
     ctx.add_router(bind(service))
-    ctx.log.info("siparişler hazır", printer=printer is not None)
+    ctx.log.info("siparişler hazır", printer=printer is not None,
+                 stageSms=stage_notify is not None)

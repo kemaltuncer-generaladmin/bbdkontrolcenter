@@ -27,6 +27,12 @@ provides:
   - capability: store.notify.send
     contract: km_sdk.contracts:NotifySender
     description: "Şablon + alıcı → gönderim. Sessiz saat, günlük limit ve gerekçe kapıları içeridedir."
+  - capability: store.notify.stage
+    contract: km_sdk.contracts:StageNotifier
+    description: >
+      Müşteri aşama SMS'i: sipariş alındı · kargoya verildi · teslim edildi.
+      Siparişler ekranı tetikler; üç katmanlı fren, tek segment zorlaması ve
+      "aynı siparişe aynı aşama ikinci kez gitmez" kaydı İÇERİDEDİR.
 
 consumes:
   - capability: store.api
@@ -36,7 +42,12 @@ consumes:
     reason: "Gönderim raporu ve SMS maliyet icmali kâğıda basılır; yazıcı yoksa ekran çalışır."
   - capability: notify
     optional: true
-    reason: "SMS katmanının durumu ve [Bağlantıyı sına] için. Yoksa SMS kutusu 'kurulmamış' der."
+    reason: >
+      İki iş: SMS katmanının durumu / [Bağlantıyı sına], ve MÜŞTERİ AŞAMA
+      SMS'inin gerçek gönderimi. Aşama SMS'i bilerek mağazadan değil buradan
+      çıkar — üç katmanlı fren, beyaz liste ve kuru prova bu katmanda var,
+      mağaza tarafında yok. Yetenek kapalıysa ekran çalışır, aşamalar
+      "gönderilemedi: SMS katmanı yok" der (sessiz geçmez).
 
 events:
   publishes:

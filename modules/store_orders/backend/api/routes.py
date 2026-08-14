@@ -292,6 +292,45 @@ async def labels(
     return await service().labels(body.orderIds)
 
 
+# ====================================================== müşteri aşama SMS'i
+#
+# ŞABLON BURADA DÜZENLENMEZ. Metin, tek segment kuralı, üç katmanlı fren ve
+# "aynı siparişe ikinci SMS gitmez" kaydı Bildirimler ekranındadır. Buradaki
+# iki uç yalnız TETİKLEYİCİDİR: durum sorgusu ve elle tarama.
+
+@router.get("/stage-sms")
+async def stage_sms(
+    user: CurrentUser = requires("store_orders.view"),
+) -> dict[str, Any]:
+    """Aşama SMS'i kurulu mu, hangi aşamalar açık, tarama penceresi kaç gün."""
+    return await service().stage_state()
+
+
+class StageSweepBody(BaseModel):
+    #: `order_placed` | `delivered`. "Kargoya verildi" TARAMAYLA tetiklenmez:
+    #: onun kaynağı kargoya verme eyleminin kendisidir ve iki yerden tetiklemek
+    #: aynı işi iki kez yapmak olurdu.
+    stage: str = Field(max_length=32)
+    #: VARSAYILAN AÇIK. Kapatmak yalnız ÜÇÜNCÜ freni açar; gerçek SMS için
+    #: modül ayarı (`stage_sms_dry_run`) ve platform ayarı da kapalı olmalı.
+    dryRun: bool = True
+
+
+@router.post("/stage-sms/sweep")
+async def stage_sweep(
+    body: StageSweepBody,
+    user: CurrentUser = requires("store_orders.manage"),
+) -> dict[str, Any]:
+    """Elle tarama: yeni siparişler ve teslim edilen gönderiler için SMS.
+
+    Aynı işi zamanlanmış görev de yapar (`backend.tasks:run_stage_sms`);
+    tekrar engeli sipariş başına çalıştığı için ikisi çakışsa da müşteri iki
+    kez rahatsız olmaz.
+    """
+    return await service().stage_sweep(stage=body.stage, actor=user.full_name,
+                                       dry_run=body.dryRun)
+
+
 # =============================================================== ayarlar
 
 @router.get("/settings")

@@ -100,6 +100,14 @@
   border-style: dashed;
 }
 
+/* Aşama SMS'inde ZORUNLU değişken. Renk tek başına anlam taşımaz: rozetin
+   `title` metni "BU AŞAMADA ZORUNLU" der ve metinden çıkarılırsa kayıt zaten
+   reddedilir — vurgu yalnızca hatırlatmadır. */
+.nt-token-must {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .nt-body-field,
 textarea.nt-body {
   width: 100%;

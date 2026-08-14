@@ -10,6 +10,7 @@ from __future__ import annotations
 from km_sdk import ModuleContext
 
 from .api.routes import bind
+from .lifecycle_service import LifecycleService, StageNotifier
 from .service import NotificationsService, NotifySender
 
 #: Masaüstündeki rapor hiyerarşisinde bu modülün rafı:
@@ -45,5 +46,18 @@ def register(ctx: ModuleContext) -> None:
     # (ve dört farklı biçimde yanlış) kurmak olurdu (K3).
     ctx.provide("store.notify.send", NotifySender(service))
 
-    ctx.add_router(bind(service))
+    # MÜŞTERİ AŞAMA SMS'İ AYRI BİR SERVİSTİR ve `store.api` ALMAZ: sipariş
+    # alındı / kargoya verildi / teslim edildi mesajları Kontrol Merkezi'nin
+    # `notify` katmanından çıkar. Gerekçe `lifecycle_service.py` başındadır —
+    # üç katmanlı fren, beyaz liste, tek segment zorlaması ve "aynı aşama
+    # ikinci kez gitmez" kaydı burada var, mağaza tarafında yok.
+    #
+    # `notify` yokken de kurulur (K7): ekran aşamaları ve metinleri gösterir,
+    # SMS kutusu "kurulmamış" der ve tetikleyiciler sessizce değil, GEREKÇEYLE
+    # gönderemez.
+    lifecycle = LifecycleService(store=ctx.store, log=ctx.log, config=ctx.config,
+                                 notify=notify)
+    ctx.provide("store.notify.stage", StageNotifier(lifecycle))
+
+    ctx.add_router(bind(service, lifecycle))
     ctx.log.info("bildirimler hazır", printer=printer is not None, sms=notify is not None)

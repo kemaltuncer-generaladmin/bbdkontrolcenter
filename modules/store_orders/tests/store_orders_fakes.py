@@ -207,3 +207,43 @@ class FakeApi:
         self._record("add_order_comment", order_id, comment=comment, notify=notify,
                      reason=reason, actor=actor, dry_run=dry_run)
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
+
+
+class FakeStageNotify:
+    """`store.notify.stage` yeteneğinin testlik yüzü. GERÇEK SMS GÖNDERMEZ.
+
+    Bildirimler modülü BURADAN IMPORT EDİLMEZ (K3): iki modülün arasındaki tek
+    sözleşme aşama adı ile `stages.stage_order()` künyesidir ve bu sahte yüz de
+    yalnız onu bilir.
+
+    `calls` her isteği tutar; testler "SMS istendi mi, hangi künyeyle" sorusunu
+    buradan cevaplar. Tekrar engeli bu tarafta DEĞİLDİR (o Bildirimler
+    modülünün ve veritabanının işi); burada yalnız `done` ile önden eleme
+    taklit edilir.
+    """
+
+    def __init__(self, *, enabled: tuple[str, ...] = (), available: bool = True) -> None:
+        self.enabled = list(enabled)
+        self.available = available
+        self.calls: list[dict[str, Any]] = []
+        self.done_ids: dict[str, list[int]] = {}
+        self.fail = False
+        self.result: dict[str, Any] = {"ok": True, "sent": True, "result": "sent",
+                                       "note": "Gönderildi (1 parça)."}
+
+    async def state(self) -> dict[str, Any]:
+        if self.fail:
+            raise RuntimeError("bildirimler patladı")
+        return {"ok": True, "available": self.available, "enabled": list(self.enabled)}
+
+    async def notify(self, *, stage: str, order: dict[str, Any], actor: str = "",
+                     dry_run: bool = True) -> dict[str, Any]:
+        if self.fail:
+            raise RuntimeError("bildirimler patladı")
+        self.calls.append({"stage": stage, "order": order, "actor": actor,
+                           "dryRun": dry_run})
+        return {"stage": stage, **self.result, "sent": self.result["sent"] and not dry_run}
+
+    async def done(self, *, stage: str, order_ids: list[int]) -> dict[str, Any]:
+        return {"ok": True, "ids": [item for item in self.done_ids.get(stage, [])
+                                    if item in order_ids]}

@@ -156,6 +156,49 @@ prova** → gerekçeli tek onay.
 - **Takip numarası toplu işte girilmez** (her gönderininki ayrıdır) ve **etiket
   satın alınmaz**; yalnız mağazada gönderi kaydı açılır.
 
+## Müşteriye aşama SMS'i — tetikleyici burada, metin Bildirimler'de
+
+Üç aşama müşteriye SMS ile bildirilir: **sipariş alındı · kargoya verildi ·
+teslim edildi.** Bu ekran yalnız *"hangi sipariş hangi aşamaya geçti"*
+sorusunu cevaplar; metin, tek segment kuralı, üç katmanlı fren ve "aynı
+siparişe ikinci SMS gitmez" kaydı **Bildirimler** modülündedir ve o modül
+buradan **import edilmez** (K3) — aradaki tek bağ `store.notify.stage`
+yeteneği ile künye sözleşmesidir:
+
+```
+orderId · orderNo · customer · phone · total · date · carrier · track · trackUrl
+```
+
+| Aşama | Tetikleyici | Nerede |
+|---|---|---|
+| Sipariş alındı | Yeni sipariş taraması (gün penceresiyle) | `stage_sweep` + zamanlanmış iş |
+| Kargoya verildi | "Kargoya ver" **tamamlanınca** (tek ya da toplu) | `ship()` — gerçek gönderiden sonra |
+| Teslim edildi | Geliver takip durumu teslime dönünce | `stage_sweep` + zamanlanmış iş |
+
+- **Kuru provada SMS istenmez.** Mağazada hiçbir şey değişmedi; "kargoya
+  verildi" yazmak yalan olur ve tekrar engelinin kaydını boşa harcardı.
+- **Gün penceresi** (`stage_sms_lookback_days`, varsayılan 3) yalnız "sipariş
+  alındı" taramasına uygulanır. Pencere olmasaydı aşama SMS'i ilk açıldığında
+  tarama geçmişteki **bütün** siparişleri "yeni" görürdü — canlıda 1.800
+  müşteriye "siparişiniz alındı" gitmesi geri alınamaz.
+- **Teslim taramasında durum süzgeci mağazaya gönderilmez.** Laravel tanımadığı
+  parametreyi sessizce yok sayar; tanıyıp da başka bir yazım beklerse listeyi
+  sessizce **boşaltır** ve hiçbir müşteri teslim SMS'i almaz — hata da vermez.
+  En yeni sayfa çekilir, teslim ayıklaması burada yapılır ve **tanınmayan durum
+  teslim sayılmaz.**
+- **Takip numarası** önce elle verilen değerden, sonra siparişin üzerindeki
+  gönderiden, sonra taşıyıcının kendi kaydından okunur. Toplu "kargoya ver"
+  numara üretmez (her paketinki ayrıdır); hiçbiri yoksa mesaj **gönderilmez**
+  ve nedeni yazılır.
+- **SMS'in patlaması kargoyu düşürmez** (K7): gönderi kaydı açılmıştır. Sonuç
+  `sms` altında ve toplu iş tablosunda **satır satır, nedeniyle** görünür.
+- **Tetikleyicinin kendi freni** `stage_sms_dry_run` (varsayılan AÇIK) üç
+  katmanın üçüncüsüdür; diğer ikisi Bildirimler ve platform ayarındadır.
+
+Zamanlanmış iş: `backend.tasks:run_stage_sms`, on dakikada bir. Tekrar engeli
+sipariş başına çalıştığı için elle tarama ile çakışsa da müşteri iki kez
+rahatsız olmaz.
+
 ## Sağladığı yetenek
 
 `store.order.card` — bir siparişin künyesi (özet, kalemler, para dökümü,
@@ -179,6 +222,7 @@ async (orderId) => ({ ok, error?, title?, node?, columns?, rows? })
 | `store.shipment.byOrder` | `store_shipping` | **Kargo sekmesi hiç açılmaz.** Özet sekmesi "Kargo: N kayıt" kısa dökümünü ve nedenini gösterir. |
 | `store.invoice.byOrder` | `store_invoices` | **Fatura sekmesi hiç açılmaz.** Aynı şekilde özet dökümü kalır. |
 | `store.audit.for` | `store_udit_logs` | İşlem geçmişi sekmesi **açık kalır** ve yalnız yerel gerekçe izini gösterir; mağaza kaydının neden görünmediğini yazar. |
+| `store.notify.stage` | `store_notifications` | Sipariş akışı **aynen çalışır**, müşteriye aşama SMS'i gitmez. Ekran ve toplu iş tablosu "müşteriye haber verilemedi" der — sessiz geçmez. |
 
 İşlem geçmişi sekmesinin kapanmaması bilinçlidir: o sekmenin *kendi* verisi
 (gerekçeli yerel denetim izi) başka hiçbir modülde yok; kapatmak bizim
@@ -242,6 +286,7 @@ Sipariş verisinin kopyası tutulmaz.
 `POST /orders/{id}/comments` · `POST /orders/{id}/invoice` ·
 `POST /orders/{id}/ship` · `POST /orders/{id}/cancel` ·
 `POST /batch/preview` · `POST /batch/apply` · `POST /labels` ·
+`GET /stage-sms` · `POST /stage-sms/sweep` ·
 `GET|POST /settings` · `POST /preview` · `POST /print` · `GET /printer` ·
 `POST /export`
 
@@ -261,5 +306,10 @@ Sipariş verisinin kopyası tutulmaz.
   `/bbd/payments/attempts` yanıtlarından kısaltılarak alınmıştır; alan adları ve
   değer tipleri olduğu gibidir (fatura kaydında `orderId: null` dahil). Modülün
   kendi uydurduğu snake_case veriye karşı geçen test hiçbir şey kanıtlamıyordu.
+- `test_store_orders_stages.py` — müşteri aşama SMS'inin tetikleyici tarafı:
+  künye sözleşmesi, teslim durumu yazımları, gün penceresi, "kuru provada SMS
+  istenmez", toplu işte ikinci okuma yapılmaması ve Bildirimler kapalıyken
+  kargonun ayakta kalması. **Gerçek SMS gönderilmez:** yetenek taklit edilir ve
+  istekler `calls` listesinde `dryRun` bayrağıyla sayılır.
 
 Ağa çıkılmaz; `store.api` taklit edilir.

@@ -33,3 +33,34 @@ sms_price_kurus: 0
 # SMTP ayarlarının core_config bölümü. Anahtar adları Bagisto sürümüne göre
 # değişebildiği için sabit yazılmaz: bulunamayan anahtar "yok" gösterilir.
 email_config_slug: "emails"
+
+# ==================================================== müşteri aşama SMS'i
+#
+# Üç aşama: sipariş alındı · kargoya verildi · teslim edildi. Metinler ve
+# Açık/Kapalı anahtarı EKRANDAN yönetilir (yerel tablo); buradaki ayarlar
+# gönderimin çerçevesidir.
+
+# SMS FRENİNİN İKİNCİ KATMANI. Gerçek SMS yalnız üçü birden izin verirse çıkar:
+#   1. platform.notify.sms.dry_run
+#   2. bu ayar (lifecycle_sms_dry_run)
+#   3. tetikleyicinin kendi dry_run bayrağı
+# Varsayılan AÇIK. Kapatmak bilinçli bir karardır ve ekranda kırmızı yazar.
+lifecycle_sms_dry_run: true
+
+# Gönderici başlığı. Boşsa platformun yapılandırdığı başlık kullanılır.
+lifecycle_sms_header: ""
+
+# Beyaz liste. DOLUYKEN yalnız buradaki numaralara gerçek SMS gider; diğerleri
+# kuru provaya düşer ve nedeni ize yazılır. Canlıya geçerken önce kendi
+# numaranızı yazıp bir siparişle deneyin.
+lifecycle_sms_allowlist: []
+
+# Mesaj metnindeki {{magaza_adi}} değişkeninin karşılığı.
+lifecycle_store_name: "BBD Store"
+
+# Takip bağlantısının öneki. BOŞ BIRAKILIR: bağlantı normalde taşıyıcının
+# kendi kaydından (`trackingUrl`) gelir. Burada bir önek varsa ve taşıyıcı
+# bağlantı vermediyse `<önek>/<takip no>` kurulur. İkisi de yoksa bağlantı
+# UYDURULMAZ; "kargoya verildi" mesajı gönderilmez ve nedeni ize yazılır —
+# çalışmayan bir bağlantı göndermek hiç göndermemekten kötüdür.
+lifecycle_tracking_url_base: ""

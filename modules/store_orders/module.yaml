@@ -48,6 +48,14 @@ consumes:
   - capability: printer
     optional: true
     reason: "Sipariş fişi, kargo manifestosu ve liste raporu baskısı. Yazıcı yoksa ekran çalışır."
+  - capability: store.notify.stage
+    optional: true
+    reason: >
+      MÜŞTERİYE ÜÇ AŞAMA SMS'İ: sipariş alındı · kargoya verildi · teslim
+      edildi. Metin, tek segment kuralı, üç katmanlı fren ve "aynı siparişe
+      ikinci SMS gitmez" kaydı Bildirimler modülündedir; bu ekran yalnız
+      TETİKLER. Bildirimler kapalıysa sipariş akışı aynen çalışır, ekran
+      "müşteriye haber verilemedi" der — sessiz geçmez (K7).
 
 events:
   publishes:
@@ -109,4 +117,16 @@ dependencies:
     Yazdırma `printer` platform yeteneğinden, mağaza erişimi `store.api`
     yeteneğinden gelir; ikisi de burada TEKRAR EDİLMEZ (consumes bloğunda).
 
-tasks: []
+# AŞAMA SMS'İ TARAMASI. İki aşamanın kaynağı bir tıklama değil: sipariş
+# müşterinin kendi eylemi, teslim ise Geliver'ın webhook/senkron ile mağazaya
+# yazdığı durumdur. İkisini de görmenin tek yolu düzenli olarak mağazaya
+# bakmaktır. On dakika, "müşteri kargo kodunu makul sürede alsın" ile "geçidin
+# dakikalık payını yeme" arasındaki denge.
+#
+# TARAMA KENDİ BAŞINA PARA HARCAYAMAZ: gerçek SMS için modül ayarı
+# (`stage_sms_dry_run`, `lifecycle_sms_dry_run`) ve platform ayarı
+# (`platform.notify.sms.dry_run`) da bilerek kapatılmış olmalı.
+tasks:
+  - name: stage_sms_sweep
+    handler: backend.tasks:run_stage_sms
+    schedule: "*/10 * * * *"

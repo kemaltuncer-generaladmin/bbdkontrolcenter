@@ -1498,7 +1498,15 @@ function batchDialog(kind, orderIds) {
         { key: 'customer', label: 'Müşteri', width: 'minmax(0, 1.2fr)' },
         { key: 'ok', label: 'Sonuç', width: '110px',
           cell: (row) => badge(row.ok ? 'Tamam' : 'Hata', row.ok ? 'good' : 'bad') },
-        { key: 'error', label: 'Açıklama', width: 'minmax(0, 2fr)', className: 'wrap' },
+        // MÜŞTERİ SMS'İ SATIR SATIR. "Yedi sipariş kargolandı" demek yetmez:
+        // hangisinin müşterisine haber verilemediği ve NEDEN verilemediği
+        // (numara yok, takip kodu yok) aynı tabloda görünmeli.
+        { key: 'smsSent', label: 'Müşteri SMS’i', width: '130px',
+          cell: (row) => (row.smsNote
+            ? badge(row.smsSent ? 'Gitti' : 'Gitmedi', row.smsSent ? 'good' : 'warn')
+            : '—') },
+        { key: 'error', label: 'Açıklama', width: 'minmax(0, 2fr)', className: 'wrap',
+          cell: (row) => [row.error, row.smsNote].filter(Boolean).join(' · ') || '—' },
       ],
       rows,
       dense: true,
@@ -1698,6 +1706,7 @@ async function renderSettings(host) {
     card('Sipariş akışı', generalForm.node, 'Yalnız Kontrol Merkezi\'ni etkiler'),
     card('Durum adları', nameForm.node, 'Boş bırakılan durum varsayılan adıyla görünür'),
     actions,
+    card('Müşteri aşama SMS\'i', await stageSmsBox(), 'Tetikleyici burada, metin Bildirimler\'de'),
     card('Mağazanın sipariş ayarları', storeBox, 'Salt okunur'),
     hintBox(
       'Mağaza ayarları buradan YAZILMAZ: anahtar adları Bagisto sürümüne göre '
@@ -1705,6 +1714,91 @@ async function renderSettings(host) {
       + 'satır açar — kullanıcı ayarı değiştirdiğini sanır. Ayrı bir “Mağaza Ayarları” '
       + 'ekranı da yoktur: her ayar onu kullanan ekranda durur.'),
   );
+}
+
+// ======================================================= müşteri aşama SMS'i
+//
+// METİN BURADA DÜZENLENMEZ. Şablon, tek segment kuralı, üç katmanlı fren ve
+// "aynı siparişe ikinci SMS gitmez" kaydı Bildirimler ekranındadır. Bu kutu
+// yalnız TETİKLEYİCİYİ gösterir: hangi aşamalar açık, tarama penceresi kaç gün
+// ve elle tarama.
+
+const SWEEP_LABELS = { order_placed: 'Yeni siparişler', delivered: 'Teslim edilenler' };
+
+async function stageSmsBox() {
+  const box = h('div');
+  let state_;
+  try {
+    state_ = await call(`${BASE}/stage-sms`);
+  } catch (error) {
+    box.append(alertBox(error.message, 'warn'));
+    return box;
+  }
+
+  if (!state_.available) {
+    // SESSİZ GEÇİLMEZ: müşteriye neden haber gitmediği ekranda yazar.
+    box.append(alertBox(state_.error || 'Aşama SMS\'i bu kurulumda kapalı.', 'warn'));
+    return box;
+  }
+
+  const open = state_.enabled || [];
+  box.append(h('div', 'so-sub', open.length
+    ? `Açık aşamalar: ${open.map((key) => SWEEP_LABELS[key] || key).join(', ')}`
+    : 'Hiçbir aşama açık değil. Aşamalar Bildirimler → Müşteri SMS’i sekmesinden açılır.'));
+  box.append(h('div', 'so-sub',
+    `Yeni sipariş taraması penceresi: ${state_.lookbackDays || 0} gün `
+    + '(0 = pencere yok). Pencere olmadan ilk tarama tüm geçmişi “yeni” sayar.'));
+  if (state_.dryRun) {
+    box.append(alertBox(
+      'KURU PROVA AÇIK (modules.store_orders.stage_sms_dry_run): bu ekrandan gerçek SMS '
+      + 'çıkmaz. Diğer iki fren Bildirimler ve platform ayarındadır.', 'warn'));
+  }
+
+  const note = h('div', 'so-sub', '');
+  const actions = h('div', 'so-actions');
+  for (const stage of ['order_placed', 'delivered']) {
+    actions.append(button(`${SWEEP_LABELS[stage]} — şimdi tara`, {
+      title: 'Aynı işi zamanlanmış görev de yapar; tekrar engeli sipariş başına '
+        + 'çalıştığı için ikisi çakışsa da müşteri iki kez rahatsız olmaz.',
+      onClick: () => runSweep(stage, note),
+    }));
+  }
+  box.append(actions, note);
+  return box;
+}
+
+async function runSweep(stage, note) {
+  note.textContent = 'Taranıyor…';
+  note.classList.remove('bad');
+  const reason = await askReason({
+    title: `${SWEEP_LABELS[stage]} için SMS taraması`,
+    description: 'Tarama, açık aşamalar için müşteriye SMS gönderilmesini ister. '
+      + 'Gerçek gönderim yalnız üç frenin üçü de kapalıysa çıkar.',
+    confirmLabel: 'Tara',
+  });
+  if (!reason) {
+    note.textContent = '';
+    return;
+  }
+  await withBusy('Aşama SMS\'i taranıyor…', async () => {
+    // `dryRun: false` = YALNIZ bu ekranın freni açılır. Modül ayarı ve platform
+    // ayarı kapanmadan tek bir gerçek SMS çıkmaz; sonuç satırı ne olduğunu yazar.
+    const result = await call(`${BASE}/stage-sms/sweep`, {
+      method: 'POST', body: { stage, dryRun: false },
+    });
+    const failed = (result.results || []).filter((row) => !row.sent);
+    note.textContent = result.skipped
+      ? result.note
+      : `${result.note} · denenen ${result.tried ?? 0}, gönderilen ${result.sent ?? 0}`
+        + (failed.length ? ` · gönderilemeyen ${failed.length}` : '');
+    note.classList.toggle('bad', Boolean(result.skipped) || failed.length > 0);
+    if (failed.length) {
+      // GÖNDERİLEMEYENLER SAYI OLARAK GEÇİŞTİRİLMEZ: hangi sipariş, neden.
+      toast(failed.map((row) => `${row.orderNo || row.orderId}: ${row.note}`).join(' · '),
+        'warn');
+    }
+    if (result.truncated) toast('Tavan yakalandı; kalanlar sonraki taramada.', 'info');
+  });
 }
 
 // ================================================================== mount

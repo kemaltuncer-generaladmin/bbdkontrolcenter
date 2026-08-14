@@ -12,6 +12,7 @@ Grup: **BBD Store** · CSS öneki: `nt` · Rapor rafı:
 |---|---|
 | Gönderim geçmişi | **Sunucu tarafı sayfalama** (100/sayfa). Süzgeç: arama · kanal · durum · olay · tarih aralığı · maliyet aralığı · anahtar `Başarısızlar`. Başarısız satırda `[Yeniden gönder]`. |
 | Şablonlar | Değişken paleti (tıklayınca **imlece ekler**), örnek veriyle önizleme, SMS karakter/parça/kredi sayacı, `[Kendime test gönder]`, `[Toplu gönderim]`. |
+| Müşteri SMS'i | **Üç aşama** (sipariş alındı · kargoya verildi · teslim edildi): aşama başına Açık/Kapalı, düzenlenebilir metin, örnek veriyle önizleme, **tek segment zorlayan** sayaç ve gönderim izi. Elle gönderim **yoktur**. |
 | Kurallar | Olay → koşul → şablon + kanal + gecikme. Aktif/pasif, son tetiklenme. |
 | Kanallar | SMTP + SMS sağlayıcı (**sırlar maskeli**), sessiz saatler, günlük limit, `[Bağlantıyı sına]`, mobil uygulama ayarları, **yerel denetim izi** (son 50 yazma, gerekçeleriyle). |
 | Abonelikler | Bülten aboneleri, sayfalı. |
@@ -23,12 +24,76 @@ günlük limit ve gerekçe kapıları yeteneğin İÇİNDEDİR: dört ekranın k
 gönderim yolunu kurması, aynı disiplini dört kez (ve dört farklı biçimde
 yanlış) kurmak olurdu.
 
+**Sağlar:** `store.notify.stage` — müşteri aşama SMS'i. Siparişler ekranı
+tetikler; metin, tek segment kuralı, üç katmanlı fren ve tekrar engeli burada.
+
+## Müşteri aşama SMS'i (sipariş alındı · kargoya verildi · teslim edildi)
+
+**Gönderim mağazadan değil, Kontrol Merkezi'nden çıkar — modülün geri kalanının
+tersine.** Gerekçe tek cümle: **fren burada.** Mağaza tarafında kuru prova,
+beyaz liste, tek segment zorlaması ve "aynı siparişe ikinci kez gönderme"
+kaydı yok; Kontrol Merkezi'nde dördü de var ve ödeme linki SMS'i için zaten
+kurulmuş durumda. Toplu bildirim ve e-posta **yine mağazadan** geçer.
+
+| Aşama | Tetikleyici | Mesaj ne taşır |
+|---|---|---|
+| Sipariş alındı | Siparişler ekranının tarama işi (yeni sipariş) | ad, sipariş no |
+| Kargoya verildi | "Kargoya ver" tamamlanınca (tek ya da toplu) | **firma + takip no + takip bağlantısı** |
+| Teslim edildi | Geliver takip durumu teslime dönünce (webhook/senkron → tarama) | ad, sipariş no |
+
+Kurallar:
+
+- **TEK SEGMENT ZORUNLU.** Ölçüm `plan_text()` ile ve **bilerek uzun** örnek
+  veriyle (`GUARD_SAMPLE`) yapılır: "Ayse Yilmaz" ile sığan metin "Mehmet Emin
+  Karaosmanoglu" ile taşar. Tek parçayı aşan şablon **kaydedilmez**; ekran
+  nedeni söyler ve sadeleştirmeyi önerir — metni kendiliğinden değiştirmez.
+- **Varsayılan metinler ASCII'dir.** `ğ ı ş` iki septet yiyor; küçük `ç` ise
+  GSM-7 **temel kümesinde yok** ve tek başına mesajı UCS-2'ye düşürüp 160
+  sınırını 70'e indiriyor. Türkçe yazılabilir — sayaç maliyeti anında söyler.
+- **Üç aşama da varsayılan KAPALI.** Göç çalışır çalışmaz müşterilere SMS
+  gitmesi, kimsenin istemediği ve geri alınamayan bir davranıştır.
+- **Aynı müşteriye aynı aşama için ikinci SMS gitmez.** `(stage, order_id)`
+  yerel tabloda **benzersizdir**; webhook iki kez düşse, tarama iki kez koşsa
+  ya da personel iki kez tıklasa da müşteri bir kez rahatsız olur, bir kez
+  ödenir. Engel yalnız **gerçekten gitmiş** mesaj için çalışır: numarası
+  olmadığı için gidememiş bir mesaj, numara düzeltilince gitmelidir.
+- **Numarası olmayan/geçersiz müşteride sessiz geçilmez.** Satır
+  "gönderilemedi: numara yok" diye ize yazılır ve ekranda listelenir. Numara
+  ize **maskeli** girer (son dört hane).
+- **Yarım kargo mesajı gönderilmez.** Takip numarası ya da bağlantısı yoksa
+  mesaj durur ve nedeni yazılır; çalışmayan bir bağlantı göndermek hiç
+  göndermemekten kötüdür. Bağlantı **uydurulmaz**: taşıyıcının kendi
+  `trackingUrl` alanından, o yoksa yapılandırılmış önekten gelir.
+- **Sessiz saat uygulanmaz** — ve bu bir unutma değildir. Aşama SMS'i
+  işlemseldir ve **ertelenemez** (kuyruk yok); sessiz saatte "gönderme" demek,
+  o siparişin takip kodunun müşteriye hiç ulaşmaması demekti. Üçü de zaten
+  uyanık saatlerde tetikleniyor.
+
+### Üç katmanlı fren
+
+Gerçek SMS yalnız **üçü de** kapalıysa çıkar; ekran hangisinin tuttuğunu yazar:
+
+| # | Anahtar | Varsayılan |
+|---|---|---|
+| 1 | `platform.notify.sms.dry_run` | AÇIK |
+| 2 | `modules.store_notifications.lifecycle_sms_dry_run` | AÇIK |
+| 3 | `modules.store_orders.stage_sms_dry_run` (tetikleyici) | AÇIK |
+
+Dördüncü daraltma: `lifecycle_sms_allowlist` doluyken yalnız listedeki
+numaralara gerçek mesaj gider — canlıya geçerken önce kendi numaranız.
+
 ## Ne yapmaz — ve neden
 
-- **Kendi SMTP'sini ya da SMS istemcisini kurmaz.** Gönderim `store.api`
-  geçidinden geçer (K4); mağazanın gönderim kaydı tektir ve ekran ikinci bir
-  gerçeklik üretmez. `notify` platform yeteneği yalnızca SMS katmanının
-  durumunu göstermek ve `[Bağlantıyı sına]` için kullanılır.
+- **Kendi SMTP'sini ya da SMS istemcisini kurmaz.** E-posta ve toplu bildirim
+  `store.api` geçidinden geçer (K4); mağazanın gönderim kaydı tektir ve ekran
+  ikinci bir gerçeklik üretmez. **Tek istisna müşteri aşama SMS'idir** ve
+  gerekçesi yukarıda: o üç mesaj için gereken frenler (kuru prova, beyaz liste,
+  tek segment, tekrar engeli) mağaza tarafında yok, Kontrol Merkezi'nde var.
+  Orada da kendi istemcisi kurulmaz — platformun `notify` yeteneği kullanılır.
+- **Aşama SMS'ini elle göndermez.** Ekran metni yazdırır ve aşamayı açar;
+  gönderim yalnız `store.notify.stage` yeteneğinden, yani siparişin kendi
+  akışından çıkar. Aksi hâlde "ekrandan 1.800 kişiye aşama SMS'i" diye bir
+  düğme olurdu.
 - **Sır yazmaz.** Parola ve API anahtarı kasada durur (K8); ekran son dört
   haneyi gösterir ve nereden değiştirileceğini söyler. Ham değer yanıtta,
   log'da ve raporda bulunmaz.
@@ -111,13 +176,17 @@ testtir.
 
 Okuma: `GET /catalog` · `GET /history` · `GET /templates` · `GET /rules` ·
 `GET /channels` · `GET /channels/test` · `GET /subscribers` · `GET /audit` ·
-`GET /printer`
+`GET /printer` · `GET /stages` · `GET /stages/log`
 
 Yazma: `POST /templates/preview` · `POST /templates` ·
 `POST /templates/deactivate` · `POST /templates/test` · `POST /rules` ·
 `POST /rules/{id}/toggle` · `POST /channels` · `POST /broadcast/preview` ·
-`POST /broadcast/send` · `POST /history/{id}/resend` · `POST /preview` ·
-`POST /print` · `POST /export`
+`POST /broadcast/send` · `POST /history/{id}/resend` · `POST /stages/preview` ·
+`POST /stages` · `POST /preview` · `POST /print` · `POST /export`
+
+Aşama uçlarından **SMS gönderilmez**: yalnız metin ve Açık/Kapalı yazılır.
+Gönderim tek yoldan, `store.notify.stage` yeteneğinden geçer — böylece
+"ekrandan elle 1.800 kişiye aşama SMS'i" diye bir kapı açılmaz.
 
 ## İzinler
 
@@ -135,7 +204,10 @@ Yalnız Bagisto'da **karşılığı olmayan** veri:
 `mod_store_notifications_templates` (SMS/Push şablonu),
 `mod_store_notifications_prefs` (sessiz saatler, günlük limit),
 `mod_store_notifications_sends` (toplu gönderim önizleme jetonu ve günlük
-sayaç). Gönderim geçmişi, e-posta şablonu, kural ve abone listesi kopyalanmaz.
+sayaç), `mod_store_notifications_lifecycle` (aşama metni + Açık/Kapalı),
+`mod_store_notifications_lifecycle_log` (aşama gönderim izi —
+`(stage, order_id)` **benzersizdir**, tekrarı önleyen tek kanıt budur).
+Gönderim geçmişi, e-posta şablonu, kural ve abone listesi kopyalanmaz.
 
 ## Testler
 
@@ -143,3 +215,10 @@ sayaç). Gönderim geçmişi, e-posta şablonu, kural ve abone listesi kopyalanm
 .venv/bin/python -m pytest modules/store_notifications/tests -q
 .venv/bin/ruff check modules/store_notifications
 ```
+
+- `test_store_notifications_messaging.py` — yedi tuzağın saf mantığı.
+- `test_store_notifications_service.py` — iş kuralları, geçit taklit edilir.
+- `test_store_notifications_lifecycle.py` — üç aşama SMS'i. **Gerçek SMS
+  gönderilmez ve bu kanıtlanır:** sahte sağlayıcının `sent` listesi gönderilen
+  her mesajı tutar, "hiç gönderilmedi" iddiası o listenin BOŞ olmasıyla kurulur
+  — "hata almadık" demek gönderilmediğini göstermez.

@@ -20,15 +20,19 @@ from typing import Any
 
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
+from ..lifecycle_service import LifecycleService
 from ..service import NotificationsService
 
 router = APIRouter()
 _service: NotificationsService | None = None
+_lifecycle: LifecycleService | None = None
 
 
-def bind(service: NotificationsService) -> APIRouter:
-    global _service
+def bind(service: NotificationsService,
+         lifecycle: LifecycleService | None = None) -> APIRouter:
+    global _service, _lifecycle
     _service = service
+    _lifecycle = lifecycle
     return router
 
 
@@ -36,6 +40,12 @@ def service() -> NotificationsService:
     if _service is None:
         raise HTTPException(status_code=503, detail="Modül hazır değil.")
     return _service
+
+
+def lifecycle() -> LifecycleService:
+    if _lifecycle is None:
+        raise HTTPException(status_code=503, detail="Aşama SMS'i hazır değil.")
+    return _lifecycle
 
 
 # ================================================================== okuma
@@ -188,6 +198,76 @@ async def test_send(
     """Kendime test gönder — TEK alıcı. Gerçek gönderimdir, para harcar."""
     return await service().test_send(channel=body.channel, to=body.to, subject=body.subject,
                                      body=body.body, actor=user.full_name)
+
+
+# ======================================================= müşteri aşama SMS'i
+#
+# ÜÇ AŞAMA: sipariş alındı · kargoya verildi · teslim edildi. Metinler burada
+# düzenlenir; TETİKLEYİCİLER Siparişler ekranındadır (`store.notify.stage`
+# yeteneği). Bu uçlardan SMS GÖNDERİLMEZ — gönderim yalnız tetikleyiciden
+# çıkar, böylece "ekrandan elle 1.800 kişiye aşama SMS'i" diye bir yol açılmaz.
+
+@router.get("/stages")
+async def stages(
+    user: CurrentUser = requires("store_notifications.view"),
+) -> dict[str, Any]:
+    """Üç aşamanın metni, segment ölçümü, sorunları ve SMS freninin durumu."""
+    return await lifecycle().stages()
+
+
+class StagePreviewBody(BaseModel):
+    stage: str = Field(max_length=32)
+    body: str = Field(default="", max_length=1_000)
+
+
+@router.post("/stages/preview")
+async def stage_preview(
+    body: StagePreviewBody,
+    user: CurrentUser = requires("store_notifications.view"),
+) -> dict[str, Any]:
+    """Örnek veriyle önizleme + segment sayacı. Hiçbir şey yazmaz, gitmez."""
+    return lifecycle().preview_stage(stage=body.stage, body=body.body)
+
+
+class StageBody(BaseModel):
+    stage: str = Field(max_length=32)
+    #: 1.000 karakter ŞEMA tavanıdır, hedef değil: tek segment kuralı serviste
+    #: uygulanır ve 160 septeti aşan metin KAYDEDİLMEZ. Şemaya 160 yazmak,
+    #: değişkenlerle kısalan bir metni yazdırmamak olurdu.
+    body: str = Field(default="", max_length=1_000)
+    enabled: bool = False
+    reason: str = Field(min_length=10, max_length=255)
+
+
+@router.post("/stages")
+async def save_stage(
+    body: StageBody,
+    user: CurrentUser = requires("store_notifications.manage"),
+) -> dict[str, Any]:
+    """Aşama metnini ve Açık/Kapalı durumunu yazar.
+
+    `dryRun` YOKTUR: bu uç mağazaya yazmaz ve kimseye mesaj göndermez, yalnız
+    yerel şablonu değiştirir. Sahte bir kuru prova bayrağı, gerçek gönderim
+    freniyle karıştırılabilirdi.
+    """
+    return await lifecycle().save_stage(stage=body.stage, body=body.body,
+                                        enabled=body.enabled, reason=body.reason,
+                                        actor=user.full_name)
+
+
+@router.get("/stages/log")
+async def stage_log(
+    stage: str = Query("", max_length=32),
+    result: str = Query("", max_length=16),
+    limit: int = Query(100, ge=1, le=500),
+    user: CurrentUser = requires("store_notifications.view"),
+) -> dict[str, Any]:
+    """Gönderim izi — GÖNDERİLMEYENLER DE burada ve nedeniyle.
+
+    "Numara yok" diye atlanan müşteri ekranda görünmezse hiç yaşanmamış sayılır;
+    oysa o siparişin sahibi kargo kodunu bekliyordur.
+    """
+    return await lifecycle().stage_log(stage=stage, result=result, limit=limit)
 
 
 # ================================================================ kurallar

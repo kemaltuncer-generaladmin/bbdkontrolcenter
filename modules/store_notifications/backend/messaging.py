@@ -90,6 +90,11 @@ VARIABLES = (
     ("adet", "Adet", "2"),
     ("kargo_firma", "Kargo firması", "Aras Kargo"),
     ("kargo_takip", "Kargo takip numarası", "7350041982"),
+    # TAKİP NUMARASI İLE TAKİP BAĞLANTISI AYRI ALANLARDIR. Müşteriye yalnız
+    # numarayı göndermek, onu taşıyıcının sitesinde numara aratmaya zorlar;
+    # bağlantı taşıyıcıdan gelir ve uydurulmaz (bkz. `lifecycle.order_values`).
+    ("kargo_takip_linki", "Kargo takip bağlantısı",
+     "https://bbdstore.com.tr/kargo/7350041982"),
     ("teslim_tarihi", "Tahmini teslim", "15.08.2026"),
     ("iade_no", "İade numarası", "ID-2026-000318"),
     ("talep_no", "Talep numarası", "TL-2026-000091"),
@@ -110,7 +115,7 @@ EVENTS = (
      ("magaza_adi", "musteri_adi", "siparis_no", "tutar", "siparis_linki")),
     ("order.shipped", "Kargoya verildi",
      ("magaza_adi", "musteri_adi", "siparis_no", "kargo_firma", "kargo_takip",
-      "teslim_tarihi")),
+      "kargo_takip_linki", "teslim_tarihi")),
     ("order.delivered", "Teslim edildi",
      ("magaza_adi", "musteri_adi", "siparis_no", "kargo_firma", "siparis_linki")),
     ("refund.approved", "İade onaylandı",

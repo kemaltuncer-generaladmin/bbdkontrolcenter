@@ -43,6 +43,7 @@ from typing import Any
 from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir, write_private
 
 from . import orders as ord_
+from . import stages
 
 #: Tarama tavanı. Canlıda birkaç düzine sipariş var; tavan büyümeye yer bırakır
 #: ve bozuk `meta` yüzünden sonsuz sayfalamayı engeller. Tavan yakalanırsa
@@ -74,6 +75,12 @@ EVIDENCE_PAGE = 50
 #: Sipariş durumu bu ekrandan değiştirildiğinde yayınlanan olay (manifest).
 STATUS_EVENT = "store.order.status_changed"
 
+#: Tek taramada en çok kaç siparişe aşama SMS'i denenir. Tarama zamanlanmış
+#: iştir ve kimse başında durmaz; tavan olmadan bozuk bir pencere ayarı bütün
+#: geçmişi tek koşuda müşterilere duyururdu. Tavan yakalanırsa sonuç
+#: `truncated: True` döner ve ekran bunu YAZAR.
+SWEEP_CAP = 200
+
 
 def _now() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
@@ -87,14 +94,19 @@ class OrdersService:
     """Siparişler ekranının tüm iş kuralları. HTTP hatası FIRLATMAZ."""
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
-                 printer: Any = None, publish: Any = None, category: str = "Mağaza",
-                 subcategory: str = "Satış", fallback_dir: Path | None = None) -> None:
+                 printer: Any = None, publish: Any = None, stage_notify: Any = None,
+                 category: str = "Mağaza", subcategory: str = "Satış",
+                 fallback_dir: Path | None = None) -> None:
         self._api = api
         self._store = store
         self._log = log
         self._config = config or {}
         self._printer = printer
         self._publish = publish
+        # `store.notify.stage` — müşteriye giden aşama SMS'i. İSTEĞE BAĞLI:
+        # Bildirimler ekranı kapalıysa sipariş akışı aynen çalışır, yalnız
+        # müşteri bilgilendirilmez ve bu ekran nedenini söyler (K7).
+        self._stage_notify = stage_notify
         self._category = category
         self._subcategory = subcategory
         self._fallback = fallback_dir or Path.home() / "km-raporlar"
@@ -133,6 +145,27 @@ class OrdersService:
     @property
     def _detail_cap(self) -> int:
         return max(0, min(2_000, ord_.as_int(self._config.get("detail_cap"), DETAIL_CAP)))
+
+    @property
+    def _stage_dry_run(self) -> bool:
+        """Aşama SMS'i freninin ÜÇÜNCÜ katmanı — tetikleyicinin kendi bayrağı.
+
+        Diğer ikisi Bildirimler tarafındadır (`platform.notify.sms.dry_run` ve
+        `lifecycle_sms_dry_run`). Üçü de kapanmadan tek bir gerçek SMS çıkmaz.
+        Varsayılan AÇIK: bir siparişi kargoya vermek, müşteriye mesaj göndermeyi
+        de kapsamamalı — o karar ayrıca verilir.
+        """
+        return bool(self._config.get("stage_sms_dry_run", True))
+
+    @property
+    def _stage_lookback(self) -> int:
+        """"Siparişiniz alındı" taramasının gün penceresi. 0 = pencere yok.
+
+        Pencere olmasaydı aşama SMS'i ilk açıldığında tarama geçmişteki bütün
+        siparişleri "yeni" görürdü; canlıda 1.800 müşteriye "siparişiniz alındı"
+        gitmesi geri alınamaz.
+        """
+        return max(0, ord_.as_int(self._config.get("stage_sms_lookback_days"), 3))
 
     def _base_filters(self, filters: dict[str, Any]) -> dict[str, Any]:
         """Mağazaya GERÇEKTEN gönderilecek süzgeçler."""
@@ -732,12 +765,16 @@ class OrdersService:
 
     async def ship(self, order_id: int, *, items: dict[str, int] | None, carrier: str,
                    track: str, source_id: int, reason: str, actor: str,
-                   dry_run: bool = True) -> dict[str, Any]:
+                   dry_run: bool = True, raw: dict[str, Any] | None = None) -> dict[str, Any]:
         """Gönderi kaydı açar (Bagisto'nun KENDİ kaydı).
 
         ETİKET SATIN ALINMAZ. Gerçek kargo etiketi Geliver üzerinden Kargo
         Yönetimi ekranının işidir ve para harcar; burada yalnız "kargoya verildi"
         kaydı düşülür.
+
+        `raw` — çağıran siparişi ZATEN OKUDUYSA künyesini verir. Toplu iş her
+        siparişi kalem adetleri için okuyor; müşteri SMS'i için ikinci kez
+        okumak, 200'lük bir toplu işte 200 gereksiz istek demekti.
         """
         problem = self._guard(reason)
         if problem:
@@ -767,7 +804,20 @@ class OrdersService:
 
         await self._record(order_id=order_id, action="ship", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail={"items": clean})
-        return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run))}
+
+        # MÜŞTERİYE "KARGOYA VERİLDİ" SMS'İ — yalnız GERÇEK gönderiden sonra.
+        # Kuru provada mağazada hiçbir şey değişmedi; müşteriye kargo kodu
+        # yazmak yalan olur ve tekrar engelinin kaydını boşa harcardı.
+        #
+        # SMS'İN PATLAMASI KARGOYU DÜŞÜRMEZ (K7): gönderi kaydı açılmıştır ve
+        # mesajın gitmemesi onu geri almaz. Sonuç yanıtta `sms` altında,
+        # nedeniyle döner — sessizce yutulmaz.
+        notice: dict[str, Any] = {"attempted": False, "sent": False, "note": ""}
+        if not dry_run:
+            notice = await self._after_ship(int(order_id), carrier=carrier, track=track,
+                                            actor=actor, raw=raw)
+        return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
+                "sms": notice}
 
     # ========================================================= toplu işlem
 
@@ -890,9 +940,15 @@ class OrdersService:
                 outcome = await self._ship_all(order_id, reason=reason, actor=actor,
                                                dry_run=dry_run, carrier=wanted_carrier)
             applied += 1 if outcome.get("ok") else 0
+            # SMS SONUCU SATIR SATIR TAŞINIR. "Yedi sipariş kargolandı" demek
+            # yetmez: hangisinin müşterisine haber verilemediği ve NEDEN
+            # verilemediği (numara yok, takip kodu yok) aynı tabloda görünmeli.
+            sms = outcome.get("sms") or {}
             results.append({"id": order_id, "orderNo": item.get("orderNo"),
                             "customer": item.get("customer", ""),
-                            "ok": bool(outcome.get("ok")), "error": outcome.get("error", "")})
+                            "ok": bool(outcome.get("ok")), "error": outcome.get("error", ""),
+                            "smsSent": bool(sms.get("sent")),
+                            "smsNote": ord_.text(sms.get("note"))})
 
         await self._store.execute(
             f"UPDATE {self._batch} SET status = ?, actor = ?, reason = ?, applied_at = ?, "
@@ -941,9 +997,275 @@ class OrdersService:
         if not quantities:
             return {"ok": False, "error": "Kargolanacak faturalı kalem yok."}
         source = ord_.as_int(self._config.get("inventory_source_id"), 1)
+        # `raw` GEÇİRİLİR: sipariş yukarıda kalem adetleri için zaten okundu.
+        # Müşteri SMS'i künyeyi ondan çıkarır; ikinci bir `GET /orders/{id}`
+        # 200'lük bir toplu işte 200 gereksiz istek olurdu.
         return await self.ship(int(order_id), items=quantities, carrier=ord_.text(carrier),
                                track="", source_id=source, reason=reason, actor=actor,
-                               dry_run=dry_run)
+                               dry_run=dry_run, raw=raw)
+
+    # ====================================================== müşteri aşama SMS'i
+    #
+    # METİN, FREN VE TEKRAR ENGELİ BURADA DEĞİL. Onlar Bildirimler modülünün
+    # işidir ve o modül buradan IMPORT EDİLMEZ (K3); aradaki tek bağ
+    # `store.notify.stage` yeteneği ile `stages.stage_order()` künyesidir.
+    # Bu ekranın sorumluluğu tek cümledir: "hangi sipariş hangi aşamaya geçti".
+
+    async def stage_state(self) -> dict[str, Any]:
+        """Aşama SMS'i kurulu mu, hangi aşamalar açık.
+
+        Ekran ve tarama bunu ÖNDEN sorar: kapalı bir aşama için sipariş detayı
+        çekmek, on dakikada bir boşuna istek üretmek olurdu.
+        """
+        if self._stage_notify is None:
+            return {"available": False, "enabled": [], "dryRun": self._stage_dry_run,
+                    "lookbackDays": self._stage_lookback,
+                    "error": "Bildirimler ekranı kapalı; müşteriye aşama SMS'i gönderilemez."}
+        try:
+            state = await self._stage_notify.state()
+        except Exception as failure:  # noqa: BLE001 — bildirim tarafı bizi düşürmez (K7)
+            self._log.warning("aşama SMS durumu okunamadı", error=str(failure))
+            return {"available": False, "enabled": [], "dryRun": self._stage_dry_run,
+                    "lookbackDays": self._stage_lookback, "error": self._fail(failure)}
+        return {
+            "available": bool(state.get("available")),
+            "enabled": [item for item in (state.get("enabled") or [])
+                        if item in stages.STAGES],
+            "dryRun": self._stage_dry_run,
+            "lookbackDays": self._stage_lookback,
+            "error": "",
+        }
+
+    async def _stage_open(self, stage: str) -> tuple[bool, str]:
+        """Bu aşama gönderime açık mı — ve DEĞİLSE nedeni.
+
+        Neden döndürmek şart: "SMS gitmedi" diye sessiz kalmak, personelin
+        müşteri aradığında ne diyeceğini bilememesi demektir.
+        """
+        state = await self.stage_state()
+        if not state["available"]:
+            return False, state["error"] or "Aşama SMS'i bu kurulumda kapalı."
+        if stage not in state["enabled"]:
+            return False, (f"{stages.STAGE_LABELS.get(stage, stage)} aşaması kapalı "
+                           "(Bildirimler → Müşteri SMS'i).")
+        return True, ""
+
+    async def _notify_stage(self, stage: str, row: dict[str, Any], *,
+                            shipment: dict[str, Any] | None = None, carrier: str = "",
+                            track: str = "", actor: str = "",
+                            dry_run: bool = True) -> dict[str, Any]:
+        """Tek siparişin tek aşaması için SMS isteği. İSTİSNA FIRLATMAZ.
+
+        Bildirim tarafının patlaması sipariş işini düşürmez (K7): kargo kaydı
+        açılmıştır, mesajın gitmemesi onu geri almaz. Sonuç satır olarak döner
+        ve çağıran ekranda gösterir.
+        """
+        if self._stage_notify is None:
+            return {"ok": False, "sent": False, "stage": stage,
+                    "note": "Bildirimler ekranı kapalı; müşteriye SMS gönderilemedi."}
+        payload = stages.stage_order(row, shipment=shipment, carrier=carrier, track=track)
+        try:
+            result = await self._stage_notify.notify(stage=stage, order=payload, actor=actor,
+                                                     dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("aşama SMS'i gönderilemedi", stage=stage,
+                              orderId=payload["orderId"], error=str(failure))
+            return {"ok": False, "sent": False, "stage": stage,
+                    "orderId": payload["orderId"], "orderNo": payload["orderNo"],
+                    "note": f"SMS katmanı hata verdi: {self._fail(failure)}"}
+        return {"ok": bool(result.get("ok", True)), "sent": bool(result.get("sent")),
+                "stage": stage, "orderId": payload["orderId"], "orderNo": payload["orderNo"],
+                "customer": payload["customer"], "result": ord_.text(result.get("result")),
+                "duplicate": bool(result.get("duplicate")),
+                "note": ord_.text(result.get("note")) or ord_.text(result.get("error"))}
+
+    async def _shipment_of(self, order_id: int) -> dict[str, Any]:
+        """Siparişin taşıyıcı kaydı — takip numarası ve bağlantı için.
+
+        TOPLU "KARGOYA VER" TAKİP NUMARASI ÜRETMEZ (her paketin numarası
+        ayrıdır); numara ve takip bağlantısı taşıyıcının kendi kaydındadır.
+        Uç yayında değilse boş künye döner ve mesaj "bilgi eksik" diye durur —
+        uydurma bir takip kodu göndermekten iyidir.
+        """
+        try:
+            payload = await self._api.bbd_shipments({"order_id": int(order_id)})
+        except Exception as failure:  # noqa: BLE001 — BBD ucu yayında olmayabilir (K7)
+            self._log.info("gönderi kaydı okunamadı", orderId=order_id, error=str(failure))
+            return {}
+        for item in (payload.get("items") or []):
+            view = stages.shipment_view(item)
+            if view["track"] or view["trackUrl"]:
+                return view
+        return {}
+
+    async def _after_ship(self, order_id: int, *, carrier: str, track: str, actor: str,
+                          raw: dict[str, Any] | None = None) -> dict[str, Any]:
+        """"Kargoya ver" tamamlandı — müşteriye takip kodunu yolla.
+
+        YALNIZ GERÇEK GÖNDERİDEN SONRA çağrılır. Kuru provada mağazada hiçbir
+        şey değişmedi; müşteriye "kargoya verildi" yazmak yalan olurdu ve
+        tekrar engelinin kaydını da boşa harcardı.
+        """
+        open_, why = await self._stage_open(stages.STAGE_SHIPPED)
+        if not open_:
+            return {"attempted": False, "sent": False, "note": why}
+        try:
+            source = raw if raw is not None else await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"attempted": False, "sent": False,
+                    "note": f"Sipariş künyesi okunamadı, SMS gönderilmedi: {self._fail(failure)}"}
+        rows = self._rows([source], await self._prefs_view())
+        if not rows:
+            return {"attempted": False, "sent": False,
+                    "note": "Sipariş künyesi çözülemedi; SMS gönderilmedi."}
+        shipment = {} if ord_.text(track) else await self._shipment_of(order_id)
+        outcome = await self._notify_stage(stages.STAGE_SHIPPED, rows[0], shipment=shipment,
+                                           carrier=carrier, track=track, actor=actor,
+                                           dry_run=self._stage_dry_run)
+        return {"attempted": True, **outcome}
+
+    async def stage_sweep(self, *, stage: str, actor: str = "",
+                          dry_run: bool = True) -> dict[str, Any]:
+        """Tarama tetikleyicisi: "sipariş alındı" ve "teslim edildi".
+
+        NEDEN TARAMA. Bu iki aşamanın kaynağı Kontrol Merkezi'nde bir tıklama
+        değil: sipariş müşterinin kendi eylemi, teslim ise Geliver'ın webhook /
+        senkron ile mağazaya yazdığı durumdur. İkisini de görmenin tek yolu
+        mağazaya bakmaktır.
+
+        TEKRAR ENGELİ BİZDE DEĞİL, BİLDİRİMLER TARAFINDADIR: tarama on dakikada
+        bir koşsa da aynı siparişe ikinci SMS gitmez. Burada yapılan yalnız
+        boşuna istek atmamaktır — zaten gönderilmiş siparişler künye
+        çıkarılmadan elenir.
+        """
+        problem = stages.sweep_stage_error(stage)
+        if problem:
+            return {"ok": False, "error": problem}
+        open_, why = await self._stage_open(stage)
+        if not open_:
+            return {"ok": True, "error": "", "stage": stage, "skipped": True, "note": why,
+                    "considered": 0, "results": []}
+
+        if stage == stages.STAGE_PLACED:
+            candidates, note, truncated = await self._placed_candidates()
+        else:
+            candidates, note, truncated = await self._delivered_candidates()
+        if not candidates:
+            return {"ok": True, "error": "", "stage": stage, "skipped": False, "note": note,
+                    "considered": 0, "truncated": truncated, "results": []}
+
+        results = [await self._notify_stage(stage, item["row"], shipment=item.get("shipment"),
+                                           actor=actor,
+                                           dry_run=dry_run or self._stage_dry_run)
+                   for item in candidates]
+        sent = len([item for item in results if item["sent"]])
+        await self._record(order_id=0, action=f"stage_sweep_{stage}",
+                           reason=f"Aşama taraması: {stages.STAGE_LABELS[stage]}",
+                           actor=actor, result="dry_run" if dry_run else "ok",
+                           detail={"considered": len(candidates), "tried": len(results),
+                                   "sent": sent})
+        return {"ok": True, "error": "", "stage": stage, "skipped": False, "note": note,
+                "considered": len(candidates), "tried": len(results), "sent": sent,
+                "truncated": truncated, "results": results}
+
+    # `_placed_candidates` / `_delivered_candidates` ADAYLARI ZATEN ELENMİŞ
+    # döndürür (`_pending`). Eleme sonrası yapılmasaydı teslim taraması her
+    # koşuda, zaten haber verilmiş her sipariş için bir detay isteği daha
+    # atardı; on dakikada bir koşan bir iş için bu, geçidin payını boşuna
+    # yemek olurdu.
+
+    async def _pending(self, stage: str, order_ids: list[int]) -> set[int]:
+        """Bu aşama için HENÜZ gönderilmemiş sipariş kimlikleri.
+
+        Bildirimler tarafı zaten ikinci gönderimi engelliyor; bu sorgu yalnız
+        boşuna sipariş detayı çekmemek içindir. Sorgu patlarsa HEPSİ denenir:
+        eleme bir hız iyileştirmesidir, engel değil — engeli sessizce
+        devralmak, gerçek korumanın yerini alan sahte bir koruma olurdu.
+        """
+        wanted = {int(item) for item in order_ids if ord_.as_int(item)}
+        done = getattr(self._stage_notify, "done", None)
+        if not wanted or done is None:
+            return wanted
+        try:
+            payload = await done(stage=stage, order_ids=sorted(wanted))
+        except Exception as failure:  # noqa: BLE001 — eleme yapılamadı, hepsi denensin (K7)
+            self._log.info("gönderilmiş aşama listesi okunamadı", stage=stage,
+                           error=str(failure))
+            return wanted
+        return wanted - {ord_.as_int(item) for item in (payload.get("ids") or [])}
+
+    async def _placed_candidates(self) -> tuple[list[dict[str, Any]], str, bool]:
+        """"Siparişiniz alındı" adayları — YENİDEN ESKİYE, gün penceresiyle."""
+        prefs = await self._prefs_view()
+        filters = {**self._base_filters({}), **EVIDENCE_SORT}
+        try:
+            payload = await self._api.orders(filters, page=1, per_page=self._page_size)
+        except Exception as failure:  # noqa: BLE001 — K7
+            return [], f"Sipariş listesi okunamadı: {self._fail(failure)}", False
+        rows = self._rows(payload.get("items") or [], prefs)
+        window = self._stage_lookback
+        out: list[dict[str, Any]] = []
+        skipped = 0
+        for row in rows:
+            if not stages.within_window(row["createdDay"], days=window):
+                continue
+            if stages.placed_block(row):
+                skipped += 1
+                continue
+            out.append({"row": row})
+        pending = await self._pending(stages.STAGE_PLACED, [item["row"]["id"] for item in out])
+        out = [item for item in out if item["row"]["id"] in pending]
+        note = f"Son {window} günün siparişleri tarandı." if window else "Tüm sayfa tarandı."
+        if skipped:
+            note += f" {skipped} sipariş iptal/kapalı olduğu için atlandı."
+        return out[:SWEEP_CAP], note, len(out) > SWEEP_CAP
+
+    async def _delivered_candidates(self) -> tuple[list[dict[str, Any]], str, bool]:
+        """"Teslim edildi" adayları — taşıyıcı kayıtlarından.
+
+        DURUM SÜZGECİ MAĞAZAYA GÖNDERİLMEZ. Laravel tanımadığı parametreyi
+        sessizce yok sayar; tanıyıp da başka bir yazım beklerse listeyi sessizce
+        BOŞALTIR ve hiçbir müşteri teslim SMS'i almaz — hata da vermez. En yeni
+        sayfa çekilir, teslim ayıklaması `stages.is_delivered` ile BURADA
+        yapılır ve tanınmayan durum teslim SAYILMAZ.
+
+        GÜN PENCERESİ BURADA UYGULANMAZ — "sipariş alındı"dan farklı olarak.
+        Gerekçe: teslim tarihini her uç aynı adla vermiyor ve tarihi
+        okunamayan kaydı pencere dışı saymak, teslim SMS'inin HİÇ gitmemesi
+        demek olurdu. Aşırı gönderime karşı iki gerçek koruma zaten var: liste
+        en yeni sayfayla sınırlı ve tekrar engeli sipariş başına çalışıyor.
+        """
+        try:
+            payload = await self._api.bbd_shipments({}, page=1, per_page=self._page_size)
+        except Exception as failure:  # noqa: BLE001 — BBD ucu yayında olmayabilir (K7)
+            return [], f"Gönderi listesi okunamadı: {self._fail(failure)}", False
+        views = [stages.shipment_view(item) for item in (payload.get("items") or [])]
+        delivered = [view for view in views if view["delivered"] and view["orderId"]]
+        if not delivered:
+            return [], f"{len(views)} gönderi okundu; teslim edilmiş kayıt yok.", False
+
+        prefs = await self._prefs_view()
+        pending = await self._pending(stages.STAGE_DELIVERED,
+                                      [view["orderId"] for view in delivered])
+        out: list[dict[str, Any]] = []
+        unread = 0
+        for view in delivered[:SWEEP_CAP]:
+            if view["orderId"] not in pending:
+                continue
+            try:
+                raw = await self._api.order(view["orderId"])
+            except Exception as failure:  # noqa: BLE001 — biri patlarsa gerisi sürsün (K7)
+                unread += 1
+                self._log.warning("teslim edilen siparişin künyesi okunamadı",
+                                  orderId=view["orderId"], error=str(failure))
+                continue
+            rows = self._rows([raw], prefs)
+            if rows:
+                out.append({"row": rows[0], "shipment": view})
+        note = f"{len(delivered)} teslim edilmiş gönderi bulundu."
+        if unread:
+            note += f" {unread} siparişin künyesi okunamadı; bir sonraki taramada yeniden denenir."
+        return out, note, len(delivered) > SWEEP_CAP
 
     # ============================================================== etiket
 

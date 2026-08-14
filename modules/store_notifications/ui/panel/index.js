@@ -6,9 +6,17 @@
 // kuralları; kanal ayarları (SMTP ve SMS sırları MASKELİ, sessiz saatler,
 // günlük limit, mobil uygulama); bülten abonelikleri; toplu bildirim.
 //
+// MÜŞTERİ SMS'İ SEKMESİ: üç aşama (sipariş alındı · kargoya verildi · teslim
+// edildi), aşama başına Açık/Kapalı, örnek veriyle önizleme ve TEK SEGMENT
+// zorlayan segment sayacı, gönderilmeyenleri de nedeniyle gösteren gönderim
+// izi. Bu sekmeden ELLE SMS GÖNDERİLMEZ — tetikleyiciler Siparişler ekranında.
+//
 // NE YAPMAZ:
-//  · Kendi SMTP'sini ya da SMS istemcisini KURMAZ. Gönderim mağazadan geçer
-//    (K4); mağazanın gönderim kaydı tektir, ekran ikinci bir gerçeklik üretmez.
+//  · Kendi SMTP'sini KURMAZ ve toplu bildirimi kendi göndermez. Onlar mağazadan
+//    geçer (K4); mağazanın gönderim kaydı tektir, ekran ikinci bir gerçeklik
+//    üretmez. TEK İSTİSNA aşama SMS'idir: o Kontrol Merkezi'nin `notify`
+//    katmanından çıkar, çünkü üç katmanlı fren, beyaz liste, tek segment
+//    zorlaması ve tekrar engeli BURADA var, mağaza tarafında yok.
 //  · SIR YAZMAZ. Parola ve API anahtarı kasada durur (K8); ekran yalnız
 //    maskeli değeri gösterir ve nereden değiştirileceğini söyler.
 //  · Toplu bildirimi TEK TIKLA GÖNDERMEZ. Önce kuru prova: kaç kişiye
@@ -68,6 +76,8 @@ const EMPTY = {
   channels: null,
   audit: { items: [], error: '' },
   subscribers: { items: [], total: 0, page: 1, size: 100, pages: 0, connected: false, error: '' },
+  stages: { items: [], sms: {}, error: '' },
+  stageLog: { items: [], summary: {}, error: '' },
   editing: null,
   tab: 'history',
   loaded: {},
@@ -1245,6 +1255,254 @@ function renderSubscribers() {
     + 'hesaplar ve kuru prova onu gösterir.'));
 }
 
+// ============================================ SEKME 6 — müşteri aşama SMS'i
+//
+// ÜÇ AŞAMA: sipariş alındı · kargoya verildi · teslim edildi. Metin buradan
+// düzenlenir, aşama tek tek açılıp kapatılır; TETİKLEYİCİLER Siparişler
+// ekranındadır. Bu sekmeden ELLE SMS GÖNDERİLMEZ — "1.800 kişiye aşama SMS'i"
+// diye bir düğme olmasın diye.
+//
+// SEGMENT SAYACI ÖNİZLEMENİN YANINDA DURUR ve ölçüm BİLEREK UZUN örnek veriyle
+// yapılır: "Ayse Yilmaz" ile tek parçaya sığan metin "Mehmet Emin
+// Karaosmanoglu" ile taşar ve her siparişte iki kredi yakar.
+
+const STAGE_TONES = {
+  sent: 'good', dry_run: 'info', no_phone: 'warn', bad_phone: 'warn',
+  missing: 'warn', error: 'bad',
+};
+
+async function refreshStages() {
+  state.loaded.stages = true;
+  try {
+    state.stages = await api(`${BASE}/stages`);
+  } catch (error) {
+    state.stages = { items: [], sms: {}, error: error.message };
+  }
+  try {
+    state.stageLog = await api(`${BASE}/stages/log?limit=100`);
+  } catch (error) {
+    state.stageLog = { items: [], summary: {}, error: error.message };
+  }
+  renderStages();
+}
+
+function renderStages() {
+  const wrap = nodes.stageWrap;
+  if (!wrap) return;
+  dropStagePreviews();
+  drop(nodes.stageForms);
+  wrap.replaceChildren();
+
+  const payload = state.stages || {};
+  if (payload.error) wrap.append(alertBox(payload.error, 'bad'));
+
+  wrap.append(card('SMS freni', stageBrakeBox(payload.sms || {}),
+    'Gerçek SMS yalnız üç katmanın üçü de kapalıysa çıkar'));
+
+  for (const item of payload.items || []) wrap.append(stageCard(item));
+
+  wrap.append(card('Gönderim izi', stageLogBox(),
+    'Gönderilmeyenler de burada — nedeniyle'));
+  wrap.append(hintBox(
+    'Bu ekrandan elle SMS gönderilmez. Tetikleyiciler Siparişler ekranındadır: yeni '
+    + 'sipariş ve teslim edilen gönderi taramayla, “kargoya verildi” ise kargoya verme '
+    + 'eyleminin kendisiyle. Aynı siparişe aynı aşama için ikinci SMS gitmez.'));
+}
+
+/** Üç katmanın HER BİRİ ayrı yazılır: "gönderilmiyor" demek hangi anahtarın
+ *  açılacağını söylemez. */
+function stageBrakeBox(sms) {
+  const box = h('div');
+  if (!sms.available) {
+    box.append(alertBox(sms.error || 'SMS katmanı (notify) bu kurulumda yok; aşama SMS\'i '
+      + 'gönderilemez. Metinler yine yazılabilir.', 'warn'));
+    return box;
+  }
+  box.append(
+    secretRow('Sağlayıcı', { found: true, value: sms.provider || '—' }),
+    secretRow('Gönderici başlığı', { found: true, value: sms.header || '—' }),
+    secretRow('Kimlik bilgisi', { found: true,
+      value: sms.configured ? 'girilmiş' : 'kurulmamış' }),
+  );
+  const brakes = [
+    ['Platform freni', sms.platformDryRun, 'platform.notify.sms.dry_run'],
+    ['Modül freni', sms.moduleDryRun, 'modules.store_notifications.lifecycle_sms_dry_run'],
+  ];
+  for (const [label, on, key] of brakes) {
+    box.append(h('div', 'nt-sub',
+      `${label}: ${on ? 'AÇIK — gerçek SMS gitmez' : 'kapalı'} (${key})`));
+  }
+  box.append(h('div', 'nt-sub',
+    'Üçüncü katman tetikleyicidedir: modules.store_orders.stage_sms_dry_run'));
+  if ((sms.allowlist || []).length) {
+    box.append(alertBox(
+      `Beyaz liste dolu (${sms.allowlist.length} numara): yalnız bu numaralara gerçek SMS `
+      + 'gider, diğerleri kuru provaya düşer ve nedeni ize yazılır.', 'info'));
+  }
+  if (sms.error) box.append(alertBox(sms.error, 'warn'));
+  return box;
+}
+
+function stageCard(item) {
+  const box = h('div');
+
+  const form = formGrid({
+    fields: [
+      { key: 'enabled', label: 'Bu aşama açık', type: 'checkbox',
+        hint: 'Kapalıyken bu aşama için hiçbir SMS gönderilmez ve iz de yazılmaz.' },
+    ],
+    value: { enabled: item.enabled },
+  });
+  nodes.stageForms.push(form);
+
+  const area = h('textarea', 'kit-textarea nt-body');
+  area.rows = 4;
+  area.value = item.body || '';
+  area.maxLength = 1000;
+
+  const palette = h('div', 'nt-palette');
+  for (const variable of item.variables || []) {
+    const chip = h('button', `nt-token${variable.required ? ' nt-token-must' : ''}`,
+      variable.token);
+    chip.type = 'button';
+    chip.title = variable.required
+      ? `${variable.label} — BU AŞAMADA ZORUNLU. Örnek: ${variable.sample}`
+      : `${variable.label} — örnek: ${variable.sample}`;
+    chip.addEventListener('click', () => insertToken(area, variable.token));
+    palette.append(chip);
+  }
+
+  const preview = h('div', 'nt-preview');
+  const counter = h('div', 'nt-counter');
+  const problems = h('div', 'nt-problems');
+  const saveBtn = button('Kaydet', { variant: 'primary',
+    onClick: () => saveStage(item.stage, form, area) });
+
+  const paint = (view) => {
+    problems.replaceChildren();
+    preview.replaceChildren();
+    counter.replaceChildren();
+    if (!view || view.ok === false) {
+      problems.append(alertBox(view?.error || 'Önizleme alınamadı.', 'bad'));
+      return;
+    }
+    // TEK SEGMENTİ AŞAN ŞABLON KAYDEDİLMEZ: düğme tıklanmadan kapanır ve
+    // NEDENİ yazılır. Kapı ayrıca backend'dedir (K9) — burada gizlemek
+    // yetkilendirme değil, nezakettir.
+    if (view.problem) problems.append(alertBox(view.problem, 'bad'));
+    preview.append(h('pre', 'nt-preview-body', view.preview || ''));
+    const plan = view.plan || {};
+    counter.append(kpiRow([
+      { label: 'Karakter', value: `${num(plan.units)} / ${num(plan.capacity)}` },
+      { label: 'SMS parçası', value: num(plan.parts), tone: plan.parts > 1 ? 'bad' : 'good' },
+      { label: 'Kalan yer', value: `${num(plan.remaining)} karakter` },
+      { label: 'Kodlama', value: plan.unicode ? 'UCS-2 (70)' : (plan.encoding || 'GSM-7') },
+    ]));
+    if ((plan.offending || []).length) {
+      counter.append(alertBox(
+        `Şu karakterler mesajı pahalılaştırıyor: ${plan.offending.join(' ')}`, 'warn'));
+    }
+    if (plan.simplified && plan.simplifiedParts < plan.parts) {
+      const row = h('div', 'nt-suggest');
+      row.append(h('span', undefined,
+        `Türkçe harfler sadeleştirilirse ${plan.parts} yerine ${plan.simplifiedParts} parça:`));
+      row.append(button('Sadeleştirilmişi kullan', {
+        onClick: () => { area.value = plan.simplified; run(); },
+      }));
+      counter.append(row);
+    }
+    saveBtn.disabled = Boolean(view.problem);
+  };
+
+  const run = debounce(async () => {
+    try {
+      paint(await api(`${BASE}/stages/preview`, {
+        method: 'POST', body: { stage: item.stage, body: area.value },
+      }));
+    } catch (error) {
+      paint({ ok: false, error: error.message });
+    }
+  }, 250);
+  nodes.stagePreviews.push(run);
+  area.addEventListener('input', () => run());
+
+  const actions = h('div', 'nt-actions');
+  actions.append(saveBtn, button('Varsayılana dön', {
+    variant: 'ghost',
+    title: 'Fabrika metnini geri getirir. Kaydetmeden önce yine ölçülür.',
+    onClick: () => { area.value = item.defaultBody || ''; run(); },
+  }));
+
+  box.append(
+    h('div', 'nt-sub', `Tetikleyici: ${item.trigger}`),
+    form.node, palette, area, problems, preview, counter, actions,
+  );
+  if (item.default) {
+    box.append(h('div', 'nt-sub', 'Metin fabrika ayarında.'));
+  } else if (item.updatedAt) {
+    box.append(h('div', 'nt-sub',
+      `Son değişiklik: ${stampIso(item.updatedAt)} · ${item.actor || '—'}`));
+  }
+
+  paint(item);          // ilk çizim sunucunun verdiği ölçümle
+  return card(item.label, box, item.enabled ? 'Açık' : 'KAPALI');
+}
+
+async function saveStage(stage, form, area) {
+  const reason = await askReason({
+    title: 'Aşama SMS\'ini kaydet',
+    description: 'Metin ve Açık/Kapalı durumu müşteriye giden mesajı doğrudan belirler. '
+      + 'Tek segmenti aşan metin kaydedilmez.',
+    confirmLabel: 'Kaydet',
+  });
+  if (!reason) return;
+  await withBusy('Aşama kaydediliyor…', async () => {
+    await call(`${BASE}/stages`, {
+      method: 'POST',
+      body: { stage, body: area.value, enabled: Boolean(form.draft().enabled), reason },
+    });
+    toast('Aşama kaydedildi.', 'good');
+    await refreshStages();
+  });
+}
+
+function stageLogBox() {
+  const box = h('div');
+  const payload = state.stageLog || { items: [] };
+  if (payload.error) box.append(alertBox(payload.error, 'warn'));
+  const table = dataTable({
+    columns: [
+      { key: 'createdAt', label: 'Zaman', width: '148px',
+        cell: (row) => (row.createdAt ? stampIso(row.createdAt) : '—') },
+      { key: 'stageLabel', label: 'Aşama', width: '140px' },
+      { key: 'orderNo', label: 'Sipariş', width: '130px', className: 'mono' },
+      { key: 'customer', label: 'Müşteri', width: 'minmax(0, 1.2fr)' },
+      { key: 'phone', label: 'Numara', width: '120px', className: 'mono' },
+      { key: 'resultLabel', label: 'Sonuç', width: '190px',
+        cell: (row) => badge(row.resultLabel, STAGE_TONES[row.result] || '') },
+      { key: 'note', label: 'Açıklama', width: 'minmax(0, 1.6fr)' },
+    ],
+    rows: payload.items || [],
+    dense: true,
+    empty: emptyState({
+      title: 'Henüz aşama SMS\'i denenmedi',
+      text: 'Aşamalar açıldığında ve tetikleyici çalıştığında gönderilenler de '
+        + 'gönderilemeyenler de burada listelenir.',
+    }),
+  });
+  box.append(table.node);
+  box.append(hintBox(
+    'Numarası olmayan müşteri SESSİZCE GEÇİLMEZ: satır “gönderilemedi: numara yok” '
+    + 'diye burada durur. Numara düzeltilince aynı aşama yeniden denenir; gerçekten '
+    + 'gitmiş bir mesaj ise ikinci kez gönderilmez.'));
+  return box;
+}
+
+function dropStagePreviews() {
+  for (const item of nodes.stagePreviews || []) item.cancel?.();
+  nodes.stagePreviews = [];
+}
+
 // ================================================================== mount
 
 export function mount(root, ctx) {
@@ -1256,12 +1514,15 @@ export function mount(root, ctx) {
   nodes.templateForms = [];
   nodes.ruleForms = [];
   nodes.channelForms = [];
+  nodes.stageForms = [];
+  nodes.stagePreviews = [];
   toast = toaster(view);
   report = reportChain({ api, root: view, toast, base: BASE });
 
   const tabs = tabBar([
     { key: 'history', label: 'Gönderim geçmişi' },
     { key: 'templates', label: 'Şablonlar' },
+    { key: 'stages', label: 'Müşteri SMS’i' },
     { key: 'rules', label: 'Kurallar' },
     { key: 'channels', label: 'Kanallar' },
     { key: 'subscribers', label: 'Abonelikler' },
@@ -1347,11 +1608,19 @@ export function mount(root, ctx) {
   const subsView = h('div');
   subsView.append(nodes.subsFilters.node, nodes.subsTable, nodes.subsPager.node);
 
+  // ------------------------------------------ müşteri aşama SMS'i sekmesi
+  nodes.stageWrap = h('div', 'nt-channels');
+  const stageView = h('div');
+  const stageActions = h('div', 'nt-actions');
+  stageActions.append(button('Yenile', { onClick: () => refreshStages() }));
+  stageView.append(stageActions, nodes.stageWrap);
+
   nodes.body = h('div', 'nt-body');
-  const views = { history: historyView, templates: templateView, rules: ruleView,
-    channels: nodes.channelWrap, subscribers: subsView };
-  const loaders = { history: refreshHistory, templates: refreshTemplates, rules: refreshRules,
-    channels: refreshChannels, subscribers: refreshSubscribers };
+  const views = { history: historyView, templates: templateView, stages: stageView,
+    rules: ruleView, channels: nodes.channelWrap, subscribers: subsView };
+  const loaders = { history: refreshHistory, templates: refreshTemplates,
+    stages: refreshStages, rules: refreshRules, channels: refreshChannels,
+    subscribers: refreshSubscribers };
 
   function showTab(key) {
     state.tab = key;
@@ -1383,9 +1652,11 @@ export function mount(root, ctx) {
     nodes.subsFilters?.destroy();
     nodes.templatePreview?.cancel();     // açık düzenleyicinin bekleyen önizlemesi
     nodes.templatePreview = null;
+    dropStagePreviews();                 // üç aşamanın bekleyen önizlemeleri
     drop(nodes.templateForms);
     drop(nodes.ruleForms);
     drop(nodes.channelForms);
+    drop(nodes.stageForms);
     root.replaceChildren();
     state = fresh();
     busy = false;

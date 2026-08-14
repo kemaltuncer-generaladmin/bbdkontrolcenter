@@ -39,6 +39,24 @@ status_names: {}           # {"processing": "Hazırlanıyor"} — boşsa varsay�
 # bunu kullanır; tek siparişte ekran sorabilir.
 inventory_source_id: 1
 
+# -------------------------------------------------- müşteri aşama SMS'i
+#
+# Metin ve Açık/Kapalı anahtarı BURADA DEĞİL, Bildirimler ekranındadır. Bu iki
+# ayar yalnız tetikleyicinin davranışını belirler.
+
+# SMS FRENİNİN ÜÇÜNCÜ KATMANI — tetikleyicinin kendi bayrağı. Diğer ikisi
+# Bildirimler tarafında: `lifecycle_sms_dry_run` ve
+# `platform.notify.sms.dry_run`. Üçü de kapanmadan tek bir gerçek SMS çıkmaz.
+# Varsayılan AÇIK: bir siparişi kargoya vermek, müşteriye mesaj göndermeyi de
+# kapsamamalı — o karar ayrıca verilir.
+stage_sms_dry_run: true
+
+# "Siparişiniz alındı" taramasının gün penceresi. 0 = pencere yok.
+# Pencere olmasaydı aşama SMS'i ilk açıldığında tarama geçmişteki BÜTÜN
+# siparişleri "yeni" görürdü; canlıda 1.800 müşteriye "siparişiniz alındı"
+# gitmesi geri alınamaz ve parası harcanmıştır.
+stage_sms_lookback_days: 3
+
 # Mağazanın sipariş akışı ayarlarının core_config bölümü. SALT OKUNUR
 # gösterilir: anahtar adları Bagisto sürümüne göre değişiyor ve bulunmayan
 # anahtara yazmak `core_config` içinde etkisiz bir satır açardı.
