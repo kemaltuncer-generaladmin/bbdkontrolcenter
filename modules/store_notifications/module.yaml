@@ -67,8 +67,8 @@ ui:
   nav:
     title: "Bildirimler"
     icon: megaphone
-    group: "BBD Store"
-    order: 170
+    group: "BBD Store / Müşteri ve İletişim"
+    order: 330
     requires: [store_notifications.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

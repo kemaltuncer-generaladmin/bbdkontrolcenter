@@ -32,7 +32,7 @@ ui:
     title: "Teklif Talepleri"
     icon: file_plus
     group: "BLD"
-    order: 120
+    order: 610
     requires: [bld_quotes.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

@@ -73,9 +73,22 @@ hiçbiri istisna atmıyordu.
 - `per_page` **50'ye kırpılır**, `meta` camelCase, `links` **boş**.
 - `date_from`/`date_to` sipariş, fatura, iade ve işlem uçlarında **gerçekten
   uygulanır** (sınandı); yine de aralık yerelde bir kez daha uygulanır.
-- **`/api/admin/bbd/*` uçlarının tamamı bugün 404.** Kargo ve Sistem dalları
-  bu yüzden "veri alınamadı" der; geçit hatayı `bbd_endpoint_missing` koduyla
-  anlaşılır bir mesaja çeviriyor ve ağacın gerisi çalışmaya devam ediyor.
+- **BBD uçları (`/api/admin/bbd/*`) BUGÜN ÇALIŞIYOR.** Bir dönem *tamamı 404
+  dönüyordu* ve burada öyle yazıyordu; **artık öyle değil** — 2026-08-16'da
+  salt okunarak sınandı: `shipments`, `audits`, `backups`, `notifications`,
+  `deneme-kulubu/registrations`, `payments/reconciliation`, `shipping/rates`
+  hepsi **200** ve gerçek veri döndürüyor. Kargo ve Sistem dalları artık
+  "veri alınamadı" demiyor, gerçek veriyle çalışıyor.
+  Savunma dalı YERİNDE DURUYOR ve zayıflatılmadı: uç bir gün geri çekilirse
+  geçit hatayı `bbd_endpoint_missing` koduyla anlaşılır bir mesaja çevirir,
+  yalnız o kümeye dayanan yapraklar düşer, ağacın gerisi çalışmaya devam eder
+  (K7). Ölçüm tarihine bakın — bu satır yine eskiyebilir.
+- **`bbd/notifications` GEÇMİŞ DEĞİL DURUM döndürüyor** (2026-08-16'da
+  ölçüldü: `{fcmEnabled, campaignNotificationsEnabled, broadcastTopic,
+  deviceCount}`; `data` dizisi yok). Uç 200 döndüğü için "hata" görünmez ama
+  gönderim geçmişi hiç gelmez. **Sistem · Bildirim gönderim özeti** bu yüzden
+  sıfır gösterir; rapor bunu sıfır gibi sunmaz, *"gönderim geçmişi tutan bir
+  uç yok"* notunu yazar. Sessiz sıfır, yanlış rakamdır.
 
 ## Kararlar
 

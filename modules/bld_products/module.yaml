@@ -32,7 +32,7 @@ ui:
     title: "Ürün Yönetimi"
     icon: box
     group: "BLD"
-    order: 60
+    order: 550
     requires: [bld_products.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

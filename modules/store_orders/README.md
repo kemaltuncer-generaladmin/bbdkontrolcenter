@@ -50,11 +50,30 @@ Bunlar `bbdstore.com.tr` üzerinde salt okunarak sınandı; varsayım değildir.
 ### Kanal süzgeci — sessiz boşaltıcı
 
 `/api/admin/orders?channel=` kanal **kodunu değil kimliğini** bekliyor:
-`channel=default` → **0 kayıt**, `channel=1` → 17 kayıt, hata yok. Kanal kodunu
+`channel=default` → **0 kayıt**, `channel=1` → 18 kayıt (2026-08-16 ölçümü; bir
+dönem 17 yazıyordu — sayı siparişle artar, **asıl olgu olan "kod sıfır kayıt
+döndürür" değişmedi**), hata yok. Kanal kodunu
 her isteğe eklemek listeyi tamamen boşaltırdı. Bu yüzden kanal süzgeci
 `channel_id` ayarından gelir ve **varsayılan 0'dır: hiç gönderilmez.**
 `config/default.yaml` içindeki `channel` yalnız *mağaza ayarlarını* okurken
 (`/configuration?channel=`) kullanılır.
+
+### İade talepleri (RMA) ucu — artık yayında, ama `order_id` süzmüyor
+
+`GET /api/admin/bbd/return-requests` **2026-08-16 itibarıyla 200 dönüyor** ve
+gerçek talepleri veriyor. Bir dönem yayında değildi; çekmecenin İade sekmesi o
+yüzden "uç yayınlanmadı" diye kapanıyordu — **artık öyle değil.** Uç geri
+çekilirse ekranın ayakta kalmasını sağlayan dal yine duruyor (K7), sadece
+kullanıcıya yanlış gerekçe göstermiyor.
+
+İki tuzak:
+
+- **`order_id` süzgeci uygulanmıyor.** Denetleyici yalnız `status`, `from`,
+  `to` okur; `order_id` sessizce yok sayılır ve uç **bütün** talepleri döndürür.
+  Süzme `service.card()` içinde yerelde yapılır — yoksa bir siparişin künyesinde
+  başka siparişlerin talepleri görünürdü.
+- **`status` düz metin değil**, `{id, title, color}` nesnesidir. Doğrudan metne
+  çevirmek ekrana sözlüğün Python yazımını basardı.
 
 ## Üç okuma kipi (kritik tasarım kararı)
 
@@ -90,8 +109,15 @@ duruyor; ekran onu üç kaynaktan birleştirir:
 | Fatura kaydı | `GET /invoices` | `state` = `paid` |
 | Sanal POS denemesi | `GET /bbd/payments/attempts` | `state` → `moneyTaken` (true / false / **null**) |
 
-Canlıda doğrulandı: 18 sipariş · 17 fatura (hepsi `paid`) · 17 POS denemesi
-(hepsi `order_created`). İki kaynak birbirini doğruluyor.
+Canlıda doğrulandı (2026-08-16): 18 sipariş · 17 fatura (hepsi `paid`) · 17 POS
+denemesi. İki kaynak birbirini doğruluyor.
+
+POS denemelerinin **hepsi siparişe bağlı değildir.** Bir dönem on yedisinin
+tamamı `order_created` idi ve burada öyle yazıyordu; bugün **11'i siparişe
+bağlı** (`order_created`, `moneyTaken=true`), **6'sı bağsız**
+(`enroll_failed` · `auth_failed` · `abandoned`, `order_id` NULL). Bağsız deneme
+bir arıza değil, tamamlanmamış bir ödeme girişimidir — sayılır ama hiçbir
+siparişe "Ödenmedi" damgası vurdurmaz.
 
 **Fatura kaydında `orderId` NULL geliyor**; bağ `orderIncrementId` üzerinden
 kurulur. `orderId` ile eşleştiren kod hiçbir faturayı bağlayamaz, hata da

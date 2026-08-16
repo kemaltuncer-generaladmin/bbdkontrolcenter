@@ -9,7 +9,7 @@
 
 id: store_home_media
 name: "Ana Ekran Görselleri"
-description: "Ana sayfa slider, banner, koleksiyon ve duyuru şeridinin yönetimi."
+description: "Sitenin ana sayfasında müşterinin gördüğü kayan görseller, tanıtım\n  görselleri, öne çıkan ürün grupları ve üst duyuru yazısı."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: true
@@ -48,8 +48,8 @@ ui:
   nav:
     title: "Ana Ekran Görselleri"
     icon: image
-    group: "BBD Store"
-    order: 50
+    group: "BBD Store / Vitrin ve İçerik"
+    order: 290
     requires: [store_home_media.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
@@ -61,12 +61,15 @@ permissions:
     description: "Ana Ekran Görselleri ekranını görüntüleme, rapor ve CSV alma."
     default_roles: [admin, bbd_staff]
   - key: store_home_media.manage
-    description: "Slot künyesi, görsel, hedef bağlantı, yayın aralığı ve sıra düzenleme."
+    description: >-
+      Ana ekrandaki görsellerin/duyuruların bilgilerini, görselini, tıklanınca
+      gideceği yeri, yayın tarihlerini ve sırasını değiştirme.
     default_roles: [admin, bbd_staff]
   - key: store_home_media.publish
     description: >-
-      Slotu yayına alma / yayından kaldırma. Vitrinin ilk ekranını anında
-      değiştirdiği için ayrı anahtardır; silme yoktur, yalnız yayından kaldırma.
+      Bir görseli/duyuruyu müşteriye gösterme ya da müşteriden kaldırma.
+      Ana sayfayı anında değiştirdiği için ayrı bir yetkidir; silme yoktur,
+      yalnız yayından kaldırma.
     default_roles: [admin, bbd_staff]
 
 config:

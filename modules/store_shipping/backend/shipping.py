@@ -132,6 +132,41 @@ def as_int(value: Any, default: int = 0) -> int:
             return default
 
 
+def flag(value: Any, default: bool = False) -> bool:
+    """Mağazanın bayrak alanını okur. Değer YOKSA `default`.
+
+    NEDEN AYRI YARDIMCI — İKİ AYRI SESSİZ YANLIŞIN KARŞILIĞI:
+
+      1. `bool(as_int(...))` JSON `true`/`false` ÜZERİNDE ÇALIŞMAZ.
+         `as_int(True)` → `int("True")` → ValueError → varsayılana düşer.
+         Mağaza `active` alanını JSON boolean gönderiyor (canlıda doğrulandı,
+         2026-08-16: hepsijet/surat `true`, yurtici `false`), yani ÜÇ
+         TAŞIYICI DA "Pasif" okunuyordu ve sihirbaz "Taşıyıcı listesi
+         okunamadı" tek seçeneğine düşüyordu — kargo ekranı gönderi
+         yapamıyordu. Daha kötüsü `delivers` alanında varsayılan 1'di:
+         `bool(as_int(False, 1))` → `True`, yani "teslimat YAPILMIYOR"
+         işaretli bölge "teslimat var" diye okunuyordu.
+
+      2. `bool(raw.get(...))` METİN ÜZERİNDE ÇALIŞMAZ. `bool("0")` ve
+         `bool("false")` ikisi de `True`'dur; Bagisto `core_config` satırlarını
+         metin tuttuğu için bu biçim her an gelebilir.
+
+    Bir bayrak üç biçimde gelebiliyor (bool, sayı, metin) ve her okuma yerinin
+    kendi çevirisini yazması, birinin bir biçimi atlamasıyla bitiyordu. Çeviri
+    artık tek yerde.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    word = text(value).lower()
+    if not word:
+        return default
+    return word in ("1", "true", "yes", "on", "evet", "acik", "açık")
+
+
 def as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(str(value).strip().replace(",", "."))
@@ -412,12 +447,12 @@ def zone_for(city: Any, district: Any, zones: Any) -> dict[str, Any]:
         if row_district and row_district == district_key:
             return {"found": True, "zone": text(row.get("zone")),
                     "surcharge": as_int(row.get("surcharge")),
-                    "delivers": bool(as_int(row.get("delivers"), 1)),
+                    "delivers": flag(row.get("delivers"), True),
                     "note": text(row.get("note")), "scope": "district"}
         if not row_district:
             fallback = {"found": True, "zone": text(row.get("zone")),
                         "surcharge": as_int(row.get("surcharge")),
-                        "delivers": bool(as_int(row.get("delivers"), 1)),
+                        "delivers": flag(row.get("delivers"), True),
                         "note": text(row.get("note")), "scope": "city"}
     if fallback:
         return fallback
@@ -499,7 +534,7 @@ def shipment_row(raw: dict[str, Any], *, today: str = "", idle_limit: int = 3,
     payer = fold(raw.get("payer") or raw.get("payment_type")) or "sender"
     payer = "receiver" if payer in ("receiver", "alici", "consignee") else "sender"
     cod = as_int(to_kurus(raw.get("cod_amount", raw.get("codAmount"))) or 0)
-    collected = bool(raw.get("cod_collected", raw.get("codCollected")))
+    collected = flag(raw.get("cod_collected", raw.get("codCollected")))
 
     zone = zone_for(city, district, zones) if zones else None
     idle = idle_days(moved, status=status, today=day)
@@ -545,10 +580,15 @@ def shipment_row(raw: dict[str, Any], *, today: str = "", idle_limit: int = 3,
         "statusLabel": status_label(status),
         "known": status in STATUS_LABELS,
         "final": is_final(status),
-        "labelReady": bool(raw.get("label_url") or raw.get("labelUrl")
-                           or raw.get("has_label") or text(raw.get("tracking_number"))),
+        # ÜÇ AYRI KANIT, İKİ AYRI OKUMA BİÇİMİ: adres alanları VARLIK denetimi
+        # ister (dolu metin = etiket var), `has_label` ise BAYRAKTIR — `"0"`
+        # gelirse `bool("0")` onu `True` sayardı ve olmayan etiket "hazır"
+        # görünürdü.
+        "labelReady": bool(text(raw.get("label_url")) or text(raw.get("labelUrl"))
+                           or text(raw.get("tracking_number"))
+                           or flag(raw.get("has_label"))),
         "zone": zone["zone"] if zone else "",
-        "addressIssue": bool(raw.get("address_issue", raw.get("addressIssue"))),
+        "addressIssue": flag(raw.get("address_issue", raw.get("addressIssue"))),
         "error": text(raw.get("error") or raw.get("last_error")),
     }
     row["flags"] = flags(row, idle_limit=idle_limit)
@@ -798,13 +838,13 @@ def carrier_row(raw: dict[str, Any], *, today: str = "") -> dict[str, Any]:
     return {
         "code": code,
         "label": carrier_label(code),
-        "active": bool(as_int(raw.get("active", raw.get("status")), 0)),
-        "default": bool(raw.get("is_default", raw.get("isDefault"))),
+        "active": flag(raw.get("active", raw.get("status"))),
+        "default": flag(raw.get("is_default", raw.get("isDefault"))),
         "customerNo": mask(raw.get("customer_no") or raw.get("customerNo")),
         "apiKey": mask(raw.get("api_key") or raw.get("apiKey")),
         "apiUser": mask(raw.get("api_user") or raw.get("apiUser")),
         "testedAt": tested,
-        "testedOk": bool(raw.get("tested_ok", raw.get("testedOk"))),
+        "testedOk": flag(raw.get("tested_ok", raw.get("testedOk"))),
         "testMessage": text(raw.get("test_message") or raw.get("testMessage")),
         "testAgeDays": days_between(tested, today or today_iso()) if tested else None,
         "tiers": tiers,

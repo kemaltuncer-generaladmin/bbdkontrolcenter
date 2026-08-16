@@ -839,10 +839,15 @@ async function paintReturns(pane, payload) {
     return;
   }
   pane.replaceChildren();
+  // UÇ CANLIDA YAYINDA (2026-08-16 doğrulandı): GET /api/admin/bbd/return-requests
+  // 200 + gerçek talepler dönüyor. Bir dönem bu uç dağıtılmamıştı ve burada
+  // "henüz yayında değil" yazıyordu; artık öyle değil, o metin okuyanı
+  // mağazada olmayan bir eksiklik aramaya gönderiyordu. DAL DURUYOR (K7): uç
+  // geri çekilir ya da düşerse sekme boş kalmaz, nedenini söyler.
   if (!result.available) {
     pane.append(alertBox(
-      `İade/talep ucu mağazada henüz yayında değil — ${result.error}. Uç açıldığında bu `
-      + 'sekme kendiliğinden dolacak.', 'info'));
+      `İade/talep listesi okunamadı — ${result.error}. Mağazanın talep ucu şu an `
+      + 'yanıt vermiyor; bağlantı düzelince bu sekme kendiliğinden dolacak.', 'warn'));
     return;
   }
   if (!result.items.length) {
@@ -936,9 +941,14 @@ async function paintConsents(pane, payload) {
     });
 
   const requests = h('div');
+  // KVKK UCU CANLIDA YAYINDA (2026-08-16 doğrulandı): GET
+  // /api/admin/customers/gdpr-requests 200 dönüyor (bugün liste boş, ama uç
+  // var). Bir dönem yedek metin "uç yayında değil" diyordu; bu artık yanlış
+  // teşhis — hata metni gelmediğinde sebebi uydurmak yerine sebebin
+  // bilinmediği söylenir. DAL DURUYOR (K7).
   if (!result.requestsAvailable) {
     requests.append(alertBox(
-      `KVKK talep listesi okunamadı — ${result.requestsError || 'uç yayında değil'}. `
+      `KVKK talep listesi okunamadı — ${result.requestsError || 'sebep bildirilmedi'}. `
       + 'Anonimleştirme talebe bağlı olduğu için o düğme de kapalı kalır.', 'warn'));
   } else if (!(result.requests || []).length) {
     requests.append(hintBox('Açık KVKK talebi yok.'));

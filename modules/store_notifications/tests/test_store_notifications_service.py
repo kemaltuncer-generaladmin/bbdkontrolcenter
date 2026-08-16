@@ -704,3 +704,34 @@ async def test_gercek_ariza_uc_yok_diye_gosterilmez() -> None:
     result = await service.rules()
     assert result["connected"] is False
     assert result["endpointPending"] is False
+
+
+async def test_liste_gelse_de_kural_yazma_acilmaz() -> None:
+    """Okuma ucu YAYINDA, yazma ucu mağazada YOK — ikisi ayrı gerçek.
+
+    Bir dönem "yazma okuma ile aynı pakette gelir" varsayılıyordu; okuma ucu
+    2026-08-16'da yayına girince o varsayım ekranı yanıltmaya başladı: liste
+    dolduğu için "Yeni kural" düğmesi açılır, kullanıcı formu doldurup gerekçe
+    yazar ve ancak ondan SONRA reddedilirdi. Kapı artık listeye bakmıyor.
+    """
+    service, api, _ = _service()
+    api.rules_payload = {"items": [{"id": "order.created.push", "title": "Siparişiniz alındı",
+                                    "event": "checkout.order.save.after", "channel": "push",
+                                    "enabled": True}], "meta": {}}
+    result = await service.rules()
+    assert result["connected"] is True
+    assert result["items"][0]["active"] is True       # çalışan kural "Kapalı" görünmez
+    assert result["writable"] is False
+    assert "KOD içinde" in result["writeReason"]
+
+
+async def test_uc_geri_cekilse_de_yazma_gerekcesi_ekranda_kalir() -> None:
+    # K7: liste ucu bir gün geri çekilirse ekran hem "okunamadı" hem "zaten
+    # yazılamıyor" bilgisini birlikte taşımalı; biri diğerini yutmamalı.
+    service, api, _ = _service()
+    api.fail.add("bbd_notification_rules")
+    api.codes["bbd_notification_rules"] = "bbd_endpoint_missing"
+    result = await service.rules()
+    assert result["endpointPending"] is True
+    assert result["writable"] is False
+    assert result["writeReason"]

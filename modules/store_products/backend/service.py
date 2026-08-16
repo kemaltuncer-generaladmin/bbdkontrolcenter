@@ -75,6 +75,25 @@ BULK_BOOK_FIELDS = ("pageCount", "desi")
 #: çıkar. Ayar bu tavanı aşağı çekebilir, YUKARI ÇEKEMEZ.
 STORE_IMAGE_LIMIT_BYTES = 4 * 1024 * 1024
 
+#: Ürün AÇARKEN tek gövdede gönderilebilecek en çok görsel.
+#:
+#: HESAP: dosya başına sunucu sınırı 4 MB; base64 karşılığı 4/3 kat, yani
+#: ~5,6 MB metin (`CREATE_IMAGE_B64_LIMIT`). Altı dosya 33,6 MB eder ve bu,
+#: TEK görsel yükleyen ucun zaten kabul ettiği 34 MB'lık gövdenin altında
+#: kalır — yani ürün açma ucu belleğe yeni bir tavan getirmez.
+#:
+#: Sayı neden altı: kapak + birkaç iç sayfa gerçek bir ihtiyaç, ama her dosya
+#: mağazaya AYRI bir istek demek (dakikada ~55 istek) ve ürün açma zinciri
+#: zaten dört istek harcıyor. Daha fazlasını tek işleme sığdırmak, yarıda
+#: kalma ihtimalini büyütür; kalan görseller düzenleyicinin Görseller
+#: sekmesinden eklenir — orada tavan yok.
+CREATE_IMAGE_LIMIT = 6
+
+#: Ürün açarken TEK dosyanın base64 uzunluk tavanı (4 MB × 4/3, yukarı
+#: yuvarlanmış). Sunucu 4 MB üstünü 422 ile reddediyor; daha büyük bir metni
+#: kabul etmek belleği boşuna doldurup aynı redde varırdı.
+CREATE_IMAGE_B64_LIMIT = 5_600_000
+
 #: Nitelik listesinin çip süzgeçleri (istemci değil BURADA süzülür: 36 satırlık
 #: liste küçük ama kural — "kullanılmayan" gibi bir çip kullanım hesabını
 #: gerektiriyor ve o hesap burada).
@@ -134,10 +153,20 @@ class ProductsService:
         #: Öznitelik ailesi bir kez çözülüp saklanır (`_default_family`).
         self._family_cache = 0
 
+        #: {aile kimliği: taşıdığı nitelik kodları}. YALNIZ BAŞARILI okumalar
+        #: girer; okunamayan aile hiç yazılmaz ve bir dahaki sefere yeniden
+        #: denenir (bkz. `_family_codes`).
+        self._family_code_cache: dict[int, set[str]] = {}
+
         #: Kitap alanlarının GERÇEK nitelik kodları — bir kez çözülür.
         #: `None` = henüz sorulmadı; boş sözlük "soruldu, hiçbiri yok" demektir
         #: ve o ikisi karıştırılamaz (ikincisinde tekrar sorulmaz).
         self._book_codes: dict[str, str] | None = None
+
+        #: Kitap niteliklerinin TİPİ ve SEÇENEKLERİ — `{kod: {type, options}}`.
+        #: Kodlarla birlikte bir kez çözülür; ayrı bir önbellek değil, aynı
+        #: çözümün ikinci yarısıdır (bkz. `_book_catalog_of`).
+        self._book_catalog: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------- ayarlar
 
@@ -246,6 +275,12 @@ class ProductsService:
         SAKLANMAZ; bağlantı düzelince yeniden denenir. Boş sonucu kalıcı
         saymak, geçici bir ağ hatasını "bu mağazada kitap alanı yok"a
         çevirirdi.
+
+        AYNI DİSİPLİN SEÇENEKLER İÇİN DE GEÇERLİ: seçimli bir niteliğin
+        seçenek listesi okunamadıysa çözüm EKSİKTİR ve saklanmaz. Saklansaydı
+        tek bir ağ hatası, yayınevi/kitap dili/sınav türü/yayın tipi alanlarını
+        sidecar yeniden başlayana kadar KAPALI tutardı — üstelik alanın kendi
+        gerekçesi "bağlantı düzelince kendiliğinden gelir" diyorken.
         """
         if self._book_codes is not None:
             return self._book_codes
@@ -254,9 +289,104 @@ class ProductsService:
         except Exception as failure:  # noqa: BLE001 — K7
             self._log.warning("kitap nitelikleri çözülemedi", error=str(failure))
             return {}
-        codes = book.resolve_codes(payload.get("items") or [])
-        self._book_codes = codes
+        rows = payload.get("items") or []
+        codes = book.resolve_codes(rows)
+        # Tip ve seçenekler AYNI çözümün parçası: kodu bilip tipini bilmemek,
+        # `publisher` alanına serbest metin yazdıran hâlin ta kendisi olurdu.
+        self._book_catalog, complete = await self._book_catalog_of(rows, codes)
+        # BU ÇAĞRI ÇÖZÜMÜ KULLANIR ama eksikse SAKLAMAZ: ekran şimdi ayakta
+        # kalır (K7), bir sonraki çağrı ise seçenekleri yeniden dener.
+        if complete:
+            self._book_codes = codes
         return codes
+
+    async def _book_catalog_of(self, rows: Any, codes: dict[str, str],
+                               ) -> tuple[dict[str, dict[str, Any]], bool]:
+        """Kitap niteliklerinin tipi + seçenek listesi ve çözüm TAM MI.
+
+        TİP LİSTEDEN, SEÇENEKLER DETAYDAN GELİR. ÖLÇÜLDÜ (16.08.2026):
+        `GET /catalog/attributes` her satırın `options` alanını `null`
+        döndürüyor; seçenekler yalnız `GET /catalog/attributes/{id}` ile
+        geliyor. Bu yüzden SEÇİMLİ alan başına BİR ek istek gider.
+
+        MALİYET KABUL EDİLEBİLİR ÇÜNKÜ BİR KEZDİR: canlıda dört seçimli kitap
+        niteliği var (yayınevi, kitap dili, sınav türü, yayın tipi) ve sonuç
+        kodlarla birlikte saklanıyor — ekran açık kaldığı sürece bir daha
+        sorulmaz. Alternatifi her ürün açılışında listeyi yeniden çözmekti.
+
+        SEÇENEĞİ OKUNAMAYAN ALAN AÇILMAZ (K7): istisna dışarı sızmaz, alan
+        `available: False` ile ve nedeniyle döner. Boş listeyi "seçenek yok"
+        saymak, geçici bir ağ hatasını kalıcı bir eksikliğe çevirirdi.
+
+        İKİNCİ DEĞER — "TAM MI" — TAM DA BUNUN İÇİN VAR: `False` dönerse
+        çağıran sonucu SAKLAMAZ ve bir dahaki sefere yeniden dener. Üç hâl
+        vardır ve karıştırılamaz: seçenekleri okunan alan · seçeneği OLMAYAN
+        alan (bu tamdır, `option_error` "seçenek tanımlı değil" der) ·
+        seçenekleri OKUNAMAYAN alan (eksik).
+        """
+        wanted = {code for code in (codes or {}).values() if code}
+        catalog_map: dict[str, dict[str, Any]] = {}
+        complete = True
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            code = catalog.text(row.get("code"))
+            if code not in wanted:
+                continue
+            kind = book.attribute_kind(row)
+            entry: dict[str, Any] = {"type": kind, "options": []}
+            if kind in book.OPTION_TYPES:
+                entry["options"], read = await self._attribute_options(row)
+                complete = complete and read
+            catalog_map[code] = entry
+        return catalog_map, complete
+
+    async def _attribute_options(self, row: dict[str, Any],
+                                 ) -> tuple[list[dict[str, str]], bool]:
+        """Tek seçimli niteliğin seçenekleri + OKUNABİLDİ Mİ. Uydurulmaz.
+
+        İkinci değer "liste boş mu" sorusunun cevabı DEĞİLDİR: seçeneği hiç
+        olmayan bir nitelik de boş liste döndürür ve o hâl tamdır. Buradaki
+        bayrak yalnız isteğin başarısını söyler — çağıran ikisini ayırt
+        edemezse geçici bir ağ hatasını kalıcı bir eksiklik olarak saklar.
+        """
+        attribute_id = catalog.as_int(row.get("id"))
+        if not attribute_id:
+            # Kimliksiz satırın detayı HİÇ sorulamaz; bu eksiklik kalıcıdır ve
+            # yeniden denemek düzeltmez, o yüzden "okundu" sayılır.
+            return [], True
+        try:
+            detail = await self._api.attribute(attribute_id)
+        except Exception as failure:  # noqa: BLE001 — K7: ekran ayakta kalmalı
+            self._log.warning("nitelik seçenekleri okunamadı",
+                              code=catalog.text(row.get("code")), error=str(failure))
+            return [], False
+        return book.option_rows(detail), True
+
+    @staticmethod
+    def _product_family_codes(raw: Any) -> set[str] | None:
+        """Ürünün AİLESİNİN taşıdığı nitelik kodları — ek istek YOK.
+
+        ═══════════════════════════════════════════════════════════════════
+        NEDEN ÜRÜN DETAYINDAN OKUNABİLİYOR
+
+        Mağaza ürün detayının `attributes` dizisini ailenin gruplarından
+        üretiyor (`AdminCatalogProductDetailProvider::buildAttributes`), yani
+        dizi zaten AİLE KAPSAMLI. Canlıda ölçüldü (16.08.2026): aile 1'deki
+        ürün 22 satır (kitap alanlarından yalnız `desi`), aile 2'deki ürün 36
+        satır (dokuzu da var). Aile şemasını ayrıca sormaya gerek yok.
+
+        DİZİ YOKSA `None` DÖNER — "aile boş" değil, "BİLİNMİYOR". Liste ucu bu
+        diziyi hiç göndermiyor ve bilinmeyeni boş küme saymak bütün künye
+        alanlarını sebepsiz kapatırdı.
+        """
+        rows = raw.get("attributes") if isinstance(raw, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return None
+        found = {catalog.text(row.get("code") or row.get("attributeCode"))
+                 for row in rows if isinstance(row, dict)}
+        found.discard("")
+        return found or None
 
     def _book_view(self, raw: dict[str, Any], codes: dict[str, str]) -> dict[str, Any]:
         """Ürün kaydından kitap künyesi + desi dökümü.
@@ -264,11 +394,16 @@ class ProductsService:
         DESİ DÖKÜMÜ HER ZAMAN ÜRETİLİR, alanlar çözülemese bile: ürünün kargo
         hesabında kaç desi saydığı, ekranın onu düzenleyip düzenleyemediğinden
         bağımsız bir gerçektir ve personelin görmesi gereken ilk şeydir.
+
+        ALANLAR ÜRÜNÜN AİLESİNE GÖRE AÇILIR: katalogda tanımlı olmak yetmez,
+        mağaza değeri ailenin nitelik listesine göre yazıyor (bkz.
+        `book.field_specs`).
         """
         values = book.view(functools.partial(catalog.attribute, raw), codes)
         return {
             "values": values,
-            "fields": book.field_specs(codes),
+            "fields": book.field_specs(codes, self._book_catalog,
+                                       self._product_family_codes(raw)),
             "desi": self._desi_of(raw),
             "rules": book.rules(),
         }
@@ -487,8 +622,25 @@ class ProductsService:
         # eski kalırdı. Ekranın gösterdiği desi ile müşteriden alınan ücretin
         # ayrışması, tam olarak kaçınılmak istenen şey.
         book_codes = await self.book_codes()
-        out["bookFields"] = book.field_specs(book_codes)
+        out["bookFields"] = book.field_specs(book_codes, self._book_catalog)
+        # İKİ LİSTE, İKİ AYRI SORU. `bookFields` "katalogda hangi künye
+        # nitelikleri var" (toplu sayfa/desi yazma ekranı bunu sorar);
+        # `bookFieldsOnCreate` ise "YENİ ürünün doğacağı ailede hangileri
+        # gerçekten yazılabilir". Mağaza değeri ailenin nitelik listesine göre
+        # yazdığı için ikisi ayrışabilir ve tek listeye indirmek, ürün açma
+        # formunda yazılacak yeri olmayan alanlar çizdirirdi.
+        out["bookFieldsOnCreate"] = book.field_specs(
+            book_codes, self._book_catalog, await self._family_codes(await self._default_family()))
         out["desiRules"] = book.rules()
+        # GÖRSEL KURALLARI DA REFERANSTAN GELİR. Ürün AÇMA formunda henüz ürün
+        # yok, dolayısıyla `card`/`images` uçları çağrılamıyor; kuralları
+        # panelde sabitlemek ise sınırın iki yerde yaşaması demekti.
+        #
+        # `maxFilesOnCreate` YALNIZ ÜRÜN AÇMAYA ÖZGÜDÜR ve bu yüzden
+        # `image_rules()` içinde değil burada duruyor: düzenleyicinin Görseller
+        # sekmesinde dosya SAYISI sınırı yok, oraya sınır sızdırmak yanlış
+        # olurdu.
+        out["imageRules"] = {**self.image_rules(), "maxFilesOnCreate": CREATE_IMAGE_LIMIT}
         try:
             tree = await self._api.category_tree()
             out["categories"] = catalog.category_options(tree.get("items") or [])
@@ -605,15 +757,20 @@ class ProductsService:
                     "error": "SKU bu uçtan değiştirilmez; ayrı onay isteyen uç kullanılır."}
 
         codes = await self.book_codes()
+        # AİLE KAPSAMI TAZE KAYITTAN OKUNUR (ek istek yok). Katalogda tanımlı
+        # olmak yetmiyor: mağaza gövdeyi ailenin nitelik listesiyle kesiştirip
+        # dışarıda kalanı SESSİZCE düşürüyor — 200 döner, ekran "Kaydedildi"
+        # der, değer hiçbir yere yazılmaz.
+        family_codes = self._product_family_codes(current)
         book_draft = book_patch or {}
         if book_draft:
-            errors = book.draft_errors(book_draft, codes)
+            errors = book.draft_errors(book_draft, codes, self._book_catalog, family_codes)
             if errors:
                 field, message = next(iter(errors.items()))
                 return {"ok": False, "error": message, "fieldErrors": errors, "field": field}
 
         clean = catalog.normalize_patch(patch)
-        book_clean = book.patch_for(book_draft, codes)
+        book_clean = book.patch_for(book_draft, codes, self._book_catalog, family_codes)
         if not clean and not book_clean:
             return {"ok": False, "error": "Değişen alan yok."}
 
@@ -814,46 +971,92 @@ class ProductsService:
     # başarı gerçekçi raporlanır" isteği o uçla karşılanamaz; sırayla silmek
     # her ürün için ayrı sonuç üretir.
 
-    async def _sales_impact(self, product_id: int) -> dict[str, Any]:
-        """Bu ürün kaç siparişte geçti, kaç adet satıldı.
+    async def _sales_summary(self) -> dict[str, Any]:
+        """Satış özeti tablosunun TAMAMI, ürün kimliğine göre dizinli.
 
         Kaynak mağazanın satış özeti tablosudur (`bbd_product_bestsellers`:
         `product_id · sold_qty · order_count · last_ordered_at`). Siparişleri
         tek tek tarayıp kalemlerine bakmak 1.419 ürünlük katalogda yüzlerce
-        istek eder ve hız kovasını bitirir; özet tablo aynı soruyu tek istekte
-        cevaplıyor.
+        istek eder ve hız kovasını bitirir; özet tablo aynı soruyu birkaç
+        sayfada cevaplıyor.
 
-        ÜÇ CEVAP: `known` (sayı var) · `unknown` (okunamadı ya da süzgeç
-        uygulanmadı) · `unavailable` (geçitte uç yok). Bilinmeyeni sıfır
-        saymak, "hiç satılmamış" diye gösterip kullanıcıyı yanlış bir güvenle
-        sildirmek olurdu — silme geri alınamaz.
+        ═══════════════════════════════════════════════════════════════════════
+        NEDEN ÜRÜN BAŞINA DEĞİL, TEK TARAMA
+
+        Bu kod eskiden ürün başına `{"product_id": …}` süzgeciyle tek satır
+        istiyordu. UÇ SÜZGEÇ ALMIYOR: `CatalogController::bestsellers` isteği
+        yalnız `page`/`limit` ile okur, Laravel tanımadığı parametreyi sessizce
+        yok sayar ve yanıt HER ZAMAN sıralamanın başındaki ürünlerdir (canlıda
+        ölçüldü 2026-08-16; ayrıntı `StoreApi.bbd_bestsellers` docstring'inde).
+        Yani "süzdüm" sanılan istek, silinen üründen bambaşka bir ürünün
+        rakamını getiriyordu — kod bunu fark edip rakamı ATIYOR ve "doğrulanamadı"
+        diyordu. Sonuç: uç 200 dönüyor, veri geliyor, ekran hiçbir şey
+        öğrenemiyordu.
+
+        Doğru soru "bu ürünün satırını ver" değil, "tabloyu ver, satırı ben
+        bulayım"dır. Tablo YALNIZ SATILMIŞ ürünler için satır tutar; katalogdan
+        küçüktür ve önizleme başına bir kez taranır (25 ürünlük seçimde 25 ayrı
+        tarama değil).
+        ═══════════════════════════════════════════════════════════════════════
+
+        ÜÇ DURUM: `known` (tablo tarandı) · `unknown` (okunamadı ya da tarama
+        yarım kaldı) · `unavailable` (geçitte metot yok).
         """
-        empty = {"state": "unknown", "orderCount": None, "soldQty": None, "lastOrderedAt": ""}
         fetch = getattr(self._api, "bbd_bestsellers", None)
         if fetch is None:
-            return {**empty, "state": "unavailable",
-                    "note": GATEWAY_GAP.format(method="bbd_bestsellers",
-                                               endpoint="GET /api/admin/bbd/catalog/bestsellers")
-                    + " Bu ürünün kaç siparişte geçtiği ÖĞRENİLEMEDİ."}
+            # K7 DALI DURUYOR: geçit metodu bugün var, ama ekran onun varlığına
+            # BAĞIMLI değil. Metot bir gün kaldırılırsa ya da sahte bir geçitle
+            # çalışılırsa silme akışı yine açılır, yalnız rakamı bilmediğini
+            # söyler.
+            return {"state": "unavailable", "rows": {},
+                    "note": GATEWAY_GAP.format(
+                        method="bbd_bestsellers",
+                        endpoint="GET /api/admin/bbd/catalog/bestsellers")}
 
         try:
-            payload = await fetch({"product_id": int(product_id)}, page=1, per_page=1)
+            payload = await fetch(None, all_pages=True)
         except Exception as failure:  # noqa: BLE001 — K7: silme akışı düşmesin
-            self._log.info("satış özeti okunamadı", productId=product_id, error=str(failure))
-            return {**empty, "note": f"Satış özeti okunamadı: {self._fail(failure)}"}
+            self._log.info("satış özeti okunamadı", error=str(failure))
+            return {"state": "unknown", "rows": {},
+                    "note": f"Satış özeti okunamadı: {self._fail(failure)}"}
 
-        rows = [row for row in (payload.get("items") or []) if isinstance(row, dict)]
-        match = next((row for row in rows
-                      if catalog.as_int(row.get("productId") or row.get("product_id"))
-                      == int(product_id)), None)
-        if match is None and rows:
-            # Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar: dönen
-            # satır başka bir ürünün. Onu bu ürünün satışı saymak, silinen
-            # üründen bambaşka bir rakam göstermek olurdu.
-            return {**empty,
-                    "note": "Mağaza satış özetini ürün bazında süzmedi (Laravel tanımadığı "
-                            "parametreyi yok sayar); bu ürünün rakamı doğrulanamadı."}
+        rows: dict[int, dict[str, Any]] = {}
+        for row in (payload.get("items") or []):
+            if not isinstance(row, dict):
+                continue
+            key = catalog.as_int(row.get("productId") or row.get("product_id"))
+            if key:
+                rows[key] = row
+
+        if payload.get("truncated"):
+            # TARAMA YARIM KALDI: satırı bulamamak artık "hiç satılmamış"
+            # demek DEĞİLDİR, "listenin geri kalanına bakamadım" demektir.
+            # Bunu 0 diye göstermek, kullanıcıyı yanlış bir güvenle sildirirdi.
+            return {"state": "unknown", "rows": rows,
+                    "note": "Satış özeti tablosu sonuna kadar okunamadı (kayıt sınırına "
+                            "dayanıldı); listede görünmeyen ürünün satışı doğrulanamadı."}
+        return {"state": "known", "rows": rows, "note": ""}
+
+    def _sales_impact(self, product_id: int, summary: dict[str, Any]) -> dict[str, Any]:
+        """Bu ürün kaç siparişte geçti, kaç adet satıldı — `_sales_summary` dizininden.
+
+        AĞA ÇIKMAZ: dizin çağıran tarafından bir kez kurulur. Eşleşme TAM
+        KİMLİK üzerindendir; başka bir ürünün satırı bu ürünün rakamı olarak
+        okunamaz.
+
+        Bilinmeyeni sıfır saymak, "hiç satılmamış" diye gösterip kullanıcıyı
+        yanlış bir güvenle sildirmek olurdu — silme geri alınamaz. Bu yüzden
+        sıfır YALNIZ tablonun tamamı okunduğunda söylenir.
+        """
+        empty = {"state": "unknown", "orderCount": None, "soldQty": None, "lastOrderedAt": ""}
+        match = summary["rows"].get(int(product_id))
         if match is None:
+            if summary["state"] != "known":
+                return {**empty, "state": summary["state"],
+                        "note": summary["note"] + " Bu ürünün kaç siparişte geçtiği "
+                                                  "ÖĞRENİLEMEDİ."}
+            # Tablo satılmış ürünleri tutar; tam tarama sonunda satırı yoksa
+            # bu ürün gerçekten hiç satılmamıştır.
             return {"state": "known", "orderCount": 0, "soldQty": 0, "lastOrderedAt": "",
                     "note": "Bu ürün hiçbir siparişte geçmiyor."}
         return {
@@ -902,6 +1105,9 @@ class ProductsService:
                              f"{len(ids)} seçildi. Seçimi daraltın."}
 
         threshold = await self._threshold()
+        # Satış özeti SEÇİM BAŞINA BİR KEZ taranır. Ürün başına tarasaydık 25
+        # ürünlük bir seçim hız kovasını (dakikada 55 istek) tek başına bitirirdi.
+        sales = await self._sales_summary()
         rows: list[dict[str, Any]] = []
         missing: list[int] = []
         for product_id in ids:
@@ -918,7 +1124,7 @@ class ProductsService:
                 **row,
                 "imageCount": len(catalog.image_list(raw)),
                 "variantCount": len(variants) if isinstance(variants, list) else 0,
-                "sales": await self._sales_impact(product_id),
+                "sales": self._sales_impact(product_id, sales),
             })
 
         if not rows:
@@ -1368,8 +1574,44 @@ class ProductsService:
             notes["status"] = ("Yeni ürün PASİF açılır: stoğu 0, görseli yok ve fiyatı henüz "
                                "denetlenmedi. Hazır olunca “Aktif” yapın.")
 
+        # --- kitap künyesi: BOŞ ALAN GÖNDERİLMEZ
+        #
+        # Düzenlemede boş yazmak "bu bilgiyi temizle" demek ve meşru
+        # (`book.patch_for` başındaki gerekçe). Ürün AÇARKEN temizlenecek bir
+        # şey yok: boş alanı yamaya koymak, mağazaya "bu niteliği boş yaz"
+        # diyen gereksiz bir yazma üretirdi. Bu yüzden yalnız DOLU alanlar
+        # taşınır.
+        codes = await self.book_codes()
+        # ALANLAR HEDEF AİLEYE GÖRE AÇILIR. Ürün henüz yok ama AİLESİ belli:
+        # yukarıda çözüldü. Ailenin taşımadığı bir künye alanını forma çizmek,
+        # kullanıcıya yazacağı yer yokken yazdırmak olurdu — mağaza değeri
+        # ailenin nitelik listesiyle kesiştirip fazlasını sessizce düşürüyor.
+        family_codes = await self._family_codes(family)
+        typed_book = {key: catalog.text(value)
+                      for key, value in (data.get("book") or {}).items()
+                      if catalog.text(value)}
+        draft["book"] = typed_book
+        # Hata BURADA hesaplanır ama karar `create`'e bırakılır: `plan` hiçbir
+        # şey yazmıyor ve yazmayan bir uç doğrulama yüzünden patlamamalı —
+        # panel hatayı kaydet düğmesine basılmadan gösterebilsin diye taşınır.
+        book_errors = book.draft_errors(typed_book, codes, self._book_catalog, family_codes) \
+            if typed_book else {}
+        if typed_book and family and family_codes is None:
+            # ÜÇÜNCÜ HÂL SÖYLENİR: aile şeması okunamadıysa künyenin yazılıp
+            # yazılamayacağı BİLİNMİYOR. Bunu sessizce "yazılır" saymak,
+            # düzeltilen sessiz kaybın kapıyı aralık bırakan hâli olurdu.
+            warnings.append(f"#{family} ailesinin nitelik listesi okunamadı; kitap künyesinin "
+                            "bu ailede yazılabildiği doğrulanamadı. Ürün açıldıktan sonra "
+                            "künye sekmesinden kontrol edin.")
+
         return {
             "draft": draft, "auto": sorted(set(auto)), "notes": notes, "warnings": warnings,
+            # KATALOG KAPSAMLI liste — toplu sayfa/desi yazma ekranı bunu
+            # kullanıyor ve orada hedef aile ürün ürün değişir.
+            "bookFields": book.field_specs(codes, self._book_catalog),
+            # AİLE KAPSAMLI liste — ürün AÇMA formu bunu çizer.
+            "bookFieldsOnCreate": book.field_specs(codes, self._book_catalog, family_codes),
+            "bookErrors": book_errors,
             "urlKeyCheck": url_key, "categoryTrail": expanded["trail"], "sources": sources,
             # Panel form alanlarını buna göre çizer: tek seçenekli alan hiç
             # görünmez, çok seçenekli alan geri gelir.
@@ -1390,11 +1632,66 @@ class ProductsService:
         plan = await self._draft(payload or {})
         return {"ok": True, "error": "", **plan}
 
+    async def _family_codes(self, family_id: int) -> set[str] | None:
+        """Bir ailenin taşıdığı nitelik kodları; okunamazsa `None` (BİLİNMİYOR).
+
+        Aile listesi `attributeGroups` alanını NULL veriyor (canlıda ölçüldü),
+        kodlar yalnız aile DETAYINDA geliyor. Sonuç aile başına saklanır: aile
+        şeması yılda bir değişir.
+
+        BAŞARISIZ OKUMA SAKLANMAZ. Saklansaydı tek bir ağ hatası, ailenin
+        şemasını oturum boyunca "bilinmiyor" olarak dondururdu — `book_codes`
+        yolunda düzeltilen tuzağın aynısı.
+        """
+        family_id = int(family_id or 0)
+        if not family_id:
+            return None
+        cached = self._family_code_cache.get(family_id)
+        if cached is not None:
+            return cached
+        try:
+            raw = await self._api.family(family_id)
+        except Exception as failure:  # noqa: BLE001 — K7: akış düşmesin
+            self._log.warning("aile şeması okunamadı", familyId=family_id, error=str(failure))
+            return None
+        detail = schema.family_detail(raw)
+        codes = {item["code"] for group in detail["groups"]
+                 for item in group["attributes"] if item["code"]}
+        if not codes:
+            # Detay geldi ama tek nitelik yok: ya gövde beklenmedik biçimde
+            # geldi ya da aile gerçekten boş. İkisi de "bu aileye künye
+            # yazılamaz" demeye yetmez; kısıt uygulanmaz.
+            return None
+        self._family_code_cache[family_id] = codes
+        return codes
+
     async def _default_family(self) -> int:
         """Yeni ürünün yazılacağı öznitelik ailesi. Bulunamazsa 0.
 
-        Sıra: ayardaki `default_family_id` → mağazadaki tek aile → kodu/adı
-        `default` olan aile → ilk aile.
+        Sıra: ayardaki `default_family_id` → mağazadaki tek aile →
+        **KİTAP KÜNYESİNİ TAŞIYAN aile** → kodu/adı `default` olan aile →
+        ilk aile.
+
+        ═══════════════════════════════════════════════════════════════════
+        NEDEN ADA DEĞİL ŞEMAYA BAKILIYOR — ÖLÇÜLDÜ (canlı, 16.08.2026)
+
+        Mağazada iki aile var: `kitap` (id 2) ve `default`/"Varsayılan"
+        (id 1). Ada bakan eski kural `default` olanı seçiyordu; oysa o aile
+        kitap alanlarından yalnız `desi`yi taşıyor. Katalogdaki 1.420 gerçek
+        kitap aile 2'de; aile 1'de yalnız kargoya girmeyen iki kalem var
+        (`BBD-OZEL-TAHSILAT`, `deneme-kulubu-uyelik`).
+
+        Sonuç sessizdi ve paraya dokunuyordu: yeni ürün aile 1'e doğuyor,
+        ISBN/yazar/yayınevi/sayfa sayısı mağaza tarafında kesişimden düşüyor
+        (`resolveAttributeCodes`), istek 200 dönüyor, ekran "Ürün açıldı"
+        diyordu. Sayfa sayısı yazılamadığı için kargo hesabı da varsayılan
+        1,0 desiye çıkıyordu — 176 sayfalık bir kitabın gerçeği 0,18.
+        Üstelik geri dönüşü yok: `attribute_family_id` ürün açıldıktan sonra
+        gönderilmiyor (TUZAK 3).
+
+        "Adı `default` olan aile" kuralı SİLİNMEDİ, arkaya alındı: künye
+        niteliği hiç çözülemeyen bir kurulumda (kitap satmayan bir mağaza)
+        eski davranış aynen sürer.
 
         Bir kez çözülüp saklanır: aile listesi yılda bir değişir, her ürün
         açılışında sorgulamanın anlamı yok.
@@ -1422,6 +1719,11 @@ class ProductsService:
             self._family_cache = ids[0]
             return ids[0]
 
+        bookish = await self._book_family(ids)
+        if bookish:
+            self._family_cache = bookish
+            return bookish
+
         for row in rows:
             label = f"{schema.text(schema.pick(row, 'code'))} " \
                     f"{schema.text(schema.pick(row, 'name'))}".lower()
@@ -1434,19 +1736,59 @@ class ProductsService:
         self._family_cache = ids[0]
         return ids[0]
 
+    async def _book_family(self, ids: list[int]) -> int:
+        """Kitap künyesini EN ÇOK taşıyan aile; ayırt edilemiyorsa 0.
+
+        Ölçüt ad değil ŞEMA: her ailenin nitelik kodları okunur ve çözülmüş
+        künye kodlarıyla kesiştirilir. En yüksek kesişim TEK ise o aile
+        seçilir.
+
+        BERABERLİK VE SIFIR "0" DÖNER, bir aile UYDURULMAZ: iki aile de aynı
+        alanları taşıyorsa hangisinin doğru olduğu şemadan çıkarılamaz ve
+        karar eski sıraya (adı `default` olan → ilk aile) bırakılır. Kurulum
+        bunu `default_family_id` ayarıyla kesin olarak söyleyebilir.
+        """
+        wanted = {code for code in (await self.book_codes()).values() if code}
+        # `desi` ölçütten ÇIKARILIR: kargo alanı olarak `shipping` grubunda
+        # duruyor ve canlıda HER iki ailede de var, yani aileleri ayırt
+        # etmiyor. Ölçüt yalnız künye alanları olmalı.
+        wanted.discard(book.DESI_CODE)
+        if not wanted:
+            return 0
+
+        scores: dict[int, int] = {}
+        for family_id in ids:
+            codes = await self._family_codes(family_id)
+            if codes is None:
+                continue
+            scores[family_id] = len(wanted & codes)
+        if not scores:
+            return 0
+
+        best = max(scores.values())
+        winners = [family_id for family_id, score in scores.items() if score == best]
+        return winners[0] if best and len(winners) == 1 else 0
+
     async def create(self, *, payload: dict[str, Any], reason: str, actor: str,
-                     dry_run: bool = True) -> dict[str, Any]:
-        """Ürünü AÇAR VE DOLDURUR — url_key, üst kategoriler, SEO ve stok dahil.
+                     dry_run: bool = True,
+                     images: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Ürünü AÇAR VE DOLDURUR — künye, stok ve görselleri dahil.
 
         Bagisto ürünü İKİ AŞAMADA doğar: `POST` yalnız tip/aile/SKU kabul eder,
-        geri kalan her şey ürün kimliği belli olduktan sonra `PUT` ile yazılır.
-        Bu yüzden akış dört istektir:
+        geri kalan her şey ürün kimliği belli olduktan sonra yazılır. Akış BEŞ
+        adımdır ve `steps` içinde her biri kendi satırıyla döner:
 
-          1. `create_product`  — tip · aile · SKU
-          2. `product`         — taze kayıt (OKU-DEĞİŞTİR-YAZ, TUZAK 1)
-          3. `update_product`  — ad · url_key · SEO · açıklama · fiyat · durum
-                                 · kategoriler (tek gövdede, ayrı istek değil)
-          4. `update_inventory`— stok (ürünün üstünde değil, depoda — TUZAK 5)
+          1. `create`     — tip · aile · SKU (`create_product`)
+          2. `details`    — ad · url_key · SEO · açıklama · fiyat · durum
+                            · kategoriler (taze okuma + tek `update_product`)
+          3. `book`       — kitap künyesi (`save`, düzenleme ekranıyla AYNI yol)
+          4. `inventory`  — stok (ürünün üstünde değil, depoda — TUZAK 5)
+          5. `images`     — görseller, SIRAYLA (`upload_product_image`)
+
+        GÖRSEL NEDEN EN SONDA: yükleme ucu ÜRÜN KİMLİĞİ istiyor
+        (`POST /catalog/products/{id}/images`) ve kimlik ancak ürün doğunca
+        oluşuyor. Görseli "önce" almanın bir yolu yok; formda dosyayı seçmek
+        ile mağazaya gitmesi arasında ürünün açılması zorunlu.
 
         Otomatik alanlar `_draft` ile HESAPLANIR: panel bunları `plan` ucundan
         alıp kullanıcıya göstermiştir, burada YENİDEN hesaplanır çünkü onayla
@@ -1454,11 +1796,12 @@ class ProductsService:
         ezilmez; yalnız BOŞ alanlar doldurulur.
 
         KURU PROVA tek istektir: gerçek ürün doğmadığı için kimlik yoktur,
-        2-4. adımlar hayalî bir kimliğe yazmak olurdu. Ne yazılacağı `steps`
-        içinde "planlandı" olarak döner.
+        2-5. adımlar hayalî bir kimliğe yazmak olurdu. GÖRSEL DE YÜKLENMEZ —
+        ne yazılacağı `steps` içinde "planlandı" olarak döner.
 
         Bir adım patlarsa ürün YİNE DE açılmış olur (K7): kimlik ve hangi
-        adımın düştüğü döner, sessizce yarım kalmaz.
+        adımın düştüğü döner, sessizce yarım kalmaz. Görsellerde bu kural
+        DOSYA BAŞINADIR: biri patlarsa diğerleri denenir ve düşenin adı yazar.
         """
         problem = self._guard(reason)
         if problem:
@@ -1470,6 +1813,20 @@ class ProductsService:
         family = catalog.as_int(draft["attributeFamilyId"])
         if not sku:
             return {"ok": False, "error": "SKU zorunlu."}
+        if plan["bookErrors"]:
+            # KÜNYE HATASI ÜRÜN AÇILMADAN ÖNCE DURDURUR. Sonra denetlemek,
+            # geri alınamayan bir kayıt açıp ardından "ISBN hatalı" demek
+            # olurdu; kullanıcı da yarım bir ürünle kalırdı. Ekran bu alanları
+            # zaten çizmiyor olabilir ama istek elle kurulabilir (K9).
+            #
+            # BU KAPI HEDEF AİLEYİ DE DENETLER (`_draft` künye hatalarını
+            # ailenin nitelik listesine göre hesaplıyor): ailenin taşımadığı
+            # bir künye alanı doluysa ürün AÇILMAZ. Açılsaydı geri dönüşü
+            # olmazdı — aile ürün doğduktan sonra değiştirilemiyor (TUZAK 3)
+            # ve mağaza o alanları 200 dönerek sessizce düşürürdü.
+            field, message = next(iter(plan["bookErrors"].items()))
+            return {"ok": False, "error": message, "fieldErrors": plan["bookErrors"],
+                    "field": field, "draft": draft}
         if not family:
             # Öznitelik ailesi Bagisto'da ÇOK ürün tipli / çok satıcılı mağazalar
             # için var: farklı ürün grupları farklı alan setleri taşısın diye.
@@ -1499,21 +1856,25 @@ class ProductsService:
         await self._record(product_id=new_id, action="create_product", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail=body)
 
+        files = [item for item in (images or []) if isinstance(item, dict)]
         dry = bool(result.get("dryRun", dry_run))
         steps = [{"step": "create", "ok": True, "state": "dry_run" if dry else "ok", "error": ""}]
         if dry or not new_id:
-            for step in ("details", "inventory"):
+            for step in ("details", "book", "inventory", "images"):
                 steps.append({"step": step, "ok": True, "state": "planlandı", "error": ""})
+            # KURU PROVADA GÖRSEL SAYISI YİNE SÖYLENİR: "planlandı" satırının
+            # kaç dosyayı kapsadığını görmeden kullanıcı provayı okuyamaz.
+            steps[-1]["planned"] = len(files)
             return {"ok": True, "error": "", "id": new_id, "dryRun": True, "steps": steps,
                     "draft": draft, "auto": plan["auto"], "notes": plan["notes"],
                     "warnings": plan["warnings"], "categoryTrail": plan["categoryTrail"],
                     "notice": catalog.INDEX_NOTICE}
 
-        detail_step = await self._write_details(new_id, draft=draft, sku=sku, reason=reason,
-                                                actor=actor)
-        steps.append(detail_step)
-        stock_step = await self._write_stock(new_id, draft=draft, reason=reason, actor=actor)
-        steps.append(stock_step)
+        steps.append(await self._write_details(new_id, draft=draft, sku=sku, reason=reason,
+                                               actor=actor))
+        steps.append(await self._write_book(new_id, draft=draft, reason=reason, actor=actor))
+        steps.append(await self._write_stock(new_id, draft=draft, reason=reason, actor=actor))
+        steps.append(await self._write_images(new_id, files=files, reason=reason, actor=actor))
 
         failed = [step for step in steps if not step["ok"]]
         return {
@@ -1577,6 +1938,87 @@ class ProductsService:
                            detail={"fields": sorted(patch), "categories": categories})
         return {"step": "details", "ok": True, "state": "ok", "error": "",
                 "fields": sorted(patch), "categories": categories}
+
+    async def _write_book(self, product_id: int, *, draft: dict[str, Any], reason: str,
+                          actor: str) -> dict[str, Any]:
+        """Kitap künyesini yazar — DÜZENLEME EKRANIYLA AYNI YOLDAN (`save`).
+
+        AYRI BİR YAZMA YOLU AÇILMADI ve bu bilinçli. Künyenin doğrulaması
+        (`draft_errors`), çözülemeyen niteliğin reddi, seçenek kimliği
+        denetimi, denetim satırı ve TUZAK 1 koruması (`extra` ile dokunulmayan
+        kitap niteliklerinin gövdede kalması) hepsi `save` içinde duruyor.
+        İkinci bir yol, o kuralların birini eksik uygulayan bir kopya
+        üretirdi — ve eksik kalan hangisi olursa olsun bedeli sessiz: mağaza
+        isteği kabul eder, değer hiçbir yere yazılmaz.
+
+        BEDELİ BİR EK OKUMA: `save` kaydı taze okuyor. Ürün az önce açıldı ama
+        aradaki adım (ayrıntı yazması) kaydı zaten değiştirdi; taze okumadan
+        yazmak az önce yazılan adı ve kategorileri geri alabilirdi.
+
+        KÜNYE BOŞSA İSTEK ATILMAZ: "atlandı" döner. Boş bir künyeyi yazmak,
+        mağazaya hiçbir şeyi değiştirmeyen bir tur attırmak olurdu.
+        """
+        fields = draft.get("book") or {}
+        if not fields:
+            return {"step": "book", "ok": True, "state": "atlandı", "error": "",
+                    "note": "Kitap künyesi boş bırakıldı; yazılacak alan yok."}
+
+        result = await self.save(int(product_id), patch={}, book_patch=dict(fields),
+                                 reason=reason, actor=actor, dry_run=False)
+        if not result.get("ok"):
+            return {"step": "book", "ok": False, "state": "hata",
+                    "error": f"Kitap künyesi yazılamadı: {result.get('error') or ''}".strip(),
+                    "fields": sorted(fields)}
+        return {"step": "book", "ok": True, "state": "ok", "error": "",
+                "fields": result.get("fields") or sorted(fields),
+                "desi": result.get("desi")}
+
+    async def _write_images(self, product_id: int, *, files: list[dict[str, Any]], reason: str,
+                            actor: str) -> dict[str, Any]:
+        """Görselleri SIRAYLA yükler — kimlik belli olduktan sonra.
+
+        BİRİ PATLARSA DİĞERLERİ DENENİR (K7). Üçüncü dosya bozuksa dördüncü ve
+        beşinci yine gider; ürün de yerinde kalır. Durmak, kullanıcıyı ürünü
+        silip baştan açmaya iterdi — oysa eksik olan tek bir dosya.
+
+        HANGİ DOSYANIN DÜŞTÜĞÜ ADIYLA DÖNER. "2 görsel yüklenemedi" demek,
+        kullanıcıya hangisini küçülteceğini söylemiyordu.
+
+        `upload_image` yeniden kullanılır: dosya incelemesi (tür/boyut/ölçü),
+        denetim satırı ve reddedilen dosyanın gerekçesi orada duruyor.
+        `position` 1'den başlar — listenin ilk dosyası KAPAK olur.
+        """
+        if not files:
+            return {"step": "images", "ok": True, "state": "atlandı", "error": "",
+                    "uploaded": [], "failed": [], "total": 0,
+                    "note": "Görsel seçilmedi; ürün görselsiz açıldı."}
+
+        uploaded: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for position, item in enumerate(files, start=1):
+            name = catalog.text(item.get("filename")) or f"gorsel-{position}"
+            outcome = await self.upload_image(
+                int(product_id), filename=name, mime=catalog.text(item.get("mime")),
+                content=item.get("content"), position=position, reason=reason, actor=actor,
+                dry_run=False)
+            if outcome.get("ok"):
+                uploaded.append({"file": outcome.get("file") or name,
+                                 "imageId": catalog.as_int(outcome.get("imageId")),
+                                 "warnings": outcome.get("warnings") or []})
+            else:
+                failed.append({"file": outcome.get("file") or name,
+                               "error": outcome.get("error") or "Yüklenemedi."})
+
+        if not failed:
+            return {"step": "images", "ok": True, "state": "ok", "error": "",
+                    "uploaded": uploaded, "failed": [], "total": len(files)}
+        detail = " · ".join(f"{row['file']} — {row['error']}" for row in failed)
+        return {
+            "step": "images", "ok": False,
+            "state": "hata" if not uploaded else "kısmi",
+            "error": f"{len(failed)}/{len(files)} görsel yüklenemedi: {detail}",
+            "uploaded": uploaded, "failed": failed, "total": len(files),
+        }
 
     async def _write_stock(self, product_id: int, *, draft: dict[str, Any], reason: str,
                            actor: str) -> dict[str, Any]:

@@ -32,7 +32,7 @@ ui:
     title: "Menü Yönetimi"
     icon: book
     group: "BLD"
-    order: 50
+    order: 540
     requires: [bld_menu.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

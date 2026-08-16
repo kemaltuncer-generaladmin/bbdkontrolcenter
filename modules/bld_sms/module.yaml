@@ -32,7 +32,7 @@ ui:
     title: "SMS Paneli"
     icon: message
     group: "BLD"
-    order: 140
+    order: 630
     requires: [bld_sms.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

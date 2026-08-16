@@ -151,8 +151,10 @@ def resolve_percent(base: int, tax: int, known: list[float], *,
                     tax_known: bool) -> float | None:
     """Belgenin/kalemin oranı. Sıfır KDV ile okunamayan KDV'yi AYIRIR.
 
-    Mağaza KDV alanını dolu ve sıfır gönderiyorsa (canlıda 16 faturanın hepsi
-    böyle) bu bir ölçüm değil BEYANDIR: satış vergisizdir ve %0 satırına yazılır.
+    Mağaza KDV alanını dolu ve sıfır gönderiyorsa (2026-08-16 ölçümü: 17
+    faturanın hepsi böyle; bir dönem "16 fatura" yazıyordu, sayı büyüyor ama
+    durum değişmedi) bu bir ölçüm değil BEYANDIR: satış vergisizdir ve %0
+    satırına yazılır.
     Alan hiç yoksa oran türetilemez ve belge `unresolved` kovasına düşer.
     """
     if tax_known and tax == 0:
@@ -263,10 +265,19 @@ def summarize(*, invoices: list[dict[str, Any]], refunds: list[dict[str, Any]],
     ayrıca düşmek aynı tutarı iki kez indirmek olurdu. Faturası kesilmemiş
     iptalin ise beyanla ilgisi yoktur.
 
-    KANAL SÜZGECİ BURADA UYGULANIR, mağazada değil: canlıda `?channel=zzzz`
-    bile 16 faturanın hepsini döndürüyor — Laravel tanımadığı parametreyi
-    sessizce yok sayıyor. Süzgeci sunucuya gönderip "süzüldü" sanmak, bir
-    kanalın matrahını hepsinin matrahı diye beyan etmek demekti.
+    KANAL SÜZGECİ BURADA UYGULANIR, mağazada değil: 2026-08-16 ölçümünde
+    `invoices?channel=zzzz` de `invoices?channel=1` de 17 faturanın hepsini,
+    `refunds?channel=zzzz` 3 iadenin hepsini döndürüyor — Laravel tanımadığı
+    parametreyi sessizce yok sayıyor. Süzgeci sunucuya gönderip "süzüldü"
+    sanmak, bir kanalın matrahını hepsinin matrahı diye beyan etmek demekti.
+
+    SİPARİŞ UCU AYRIKTIR ve bu not bir dönem onu da "yok sayıyor" diye
+    yazıyordu — artık böyle değil: 2026-08-16'da `orders?channel=1` → 18,
+    `orders?channel=default` → 0, `orders?channel=zzzz` → 0. Yani sipariş ucu
+    kanalı gerçekten uyguluyor ve KİMLİK bekliyor. İcmalin davranışı yine de
+    doğrudur: iptal listesine kanal parametresi HİÇ gönderilmez, ayıklama
+    aşağıda kanal ADIYLA yapılır. Gönderilseydi `channel=default` iptal
+    listesini sessizce boşaltır ve "bu dönemde iptal yok" derdik.
     """
     known = sorted({item for item in (known_percents or []) if item is not None})
     store: dict[str, dict[str, Any]] = {}

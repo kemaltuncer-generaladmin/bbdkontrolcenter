@@ -298,10 +298,40 @@ def test_mobil_ayarda_acik_anahtar_kapali_gorunmez() -> None:
 
 
 def test_kapali_kural_acik_gorunmez() -> None:
-    # `active: false` VARDIR ama yanlıştır; `status`a düşülürse kural açık
+    # `active: false` VARDIR ama yanlıştır; sıradaki alana düşülürse kural açık
     # görünür ve kapatıldığı sanılan bildirim gitmeye devam ederdi.
     assert messaging.rule_row({"id": 1, "active": False, "status": "active"})["active"] is False
+    assert messaging.rule_row({"id": 1, "enabled": False, "status": "active"})["active"] is False
     assert messaging.rule_row({"id": 1, "status": "active"})["active"] is True
+
+
+def test_canli_kural_satiri_acik_kurali_kapali_gostermez() -> None:
+    """Canlı yanıt (2026-08-16) `enabled` diyor, `active`/`status` demiyor.
+
+    Bu satır bir dönem uç 404 dönerken varsayılan bir şema üzerine yazılmıştı;
+    uç yayına girince ekran ÇALIŞAN beş kuralı da "Kapalı" ve "tanınmayan
+    olay" diye çiziyordu — yani kullanıcıya sistemi bozuk gösteriyordu.
+    """
+    row = messaging.rule_row({
+        "id": "order.created.telegram",
+        "title": "Yeni sipariş bildirimi (Telegram)",
+        "description": "Sipariş oluştuğunda mağaza sahibine Telegram mesajı gider.",
+        "event": "checkout.order.save.after",
+        "channel": "telegram",
+        "enabled": True,
+        "blockedBy": [],
+    })
+    assert row["active"] is True                       # `enabled` okunur
+    assert row["id"] == "order.created.telegram"       # kimlik 0'a düşmez
+    assert row["eventLabel"] == "Yeni sipariş bildirimi (Telegram)"
+    assert row["known"] is True                        # "tanınmayan olay" rozeti çıkmaz
+
+
+def test_hicbir_tarafin_adlandirmadigi_olay_hala_isaretlenir() -> None:
+    # Mağaza başlık da göndermediyse rozet YERİNDE KALIR: adı olmayan bir
+    # kuralı sessizce normal göstermek, olayın ne olduğunu kimsenin
+    # bilmediğini gizlerdi.
+    assert messaging.rule_row({"id": 7, "event": "uydurma.olay"})["known"] is False
 
 
 def test_pick_yanlis_degeri_yok_saymaz() -> None:

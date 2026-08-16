@@ -627,14 +627,18 @@ async def test_kunye_guncellemesi_gomulu_gruptan_okunur() -> None:
 
 
 async def test_ayar_bolumu_okunamazsa_yanlis_teshis_konmaz() -> None:
-    # CANLIDA: /api/admin/configuration TEK ELEMANLI LİSTE döndürüyor, geçit
-    # tekil kayıt bekliyor ve boş sözlük veriyor. Bunu "anahtar bulunamadı"
-    # saymak kullanıcıyı anahtar adlarını düzeltmeye uğraştırırdı.
+    # Bölüm BOŞ ZARF ile dönerse bunu "anahtar bulunamadı" saymak kullanıcıyı
+    # anahtar adlarını düzeltmeye uğraştırır; sorun orada değildir.
+    #
+    # Bu dal bir dönem geçidin tekil-kayıt yolunun tek elemanlı listeyi
+    # açamamasından tetikleniyordu; o kusur store_api'de giderildi
+    # (2026-08-16'da canlıda ayarlar geliyor). DAL YİNE DE SINANIR: bölüm
+    # başka bir sebeple okunamazsa ekran ayar YAZMAMALI.
     service, api, _ = _service()
     api.config_payload = {}
     okunan = await service.settings()
     assert okunan["storeAvailable"] is False
-    assert "LİSTE" in okunan["error"]
+    assert "BOŞ ZARF" in okunan["error"]
     result = await service.save_settings(values={"emailVerification": True},
                                          reason="Doğrulama açılıyor", actor="Ali",
                                          dry_run=False)

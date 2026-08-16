@@ -43,31 +43,61 @@ MIN_REASON = 10
 #: yukarıdan aşağı dizilim de budur (duyuru en üstte çizilir).
 AREAS = ("slider", "banner", "collection", "announcement")
 
+#: ŞERİT ADLARI İŞ DİLİNDEDİR — "Slider" / "Banner" DEĞİL.
+#:
+#: NEDEN. Bu ekranı kullanan kişi yazılımcı değil; "slider" ve "banner" onun
+#: sözlüğünde yok ve ekranda gördüğü kelimeyi vitrinde göreceği şeye
+#: bağlayamıyor. Ad, kutunun MÜŞTERİDE NEREYE DÜŞTÜĞÜNÜ söyler; teknik
+#: karşılıkları (`slider`, `banner`) anahtar olarak kodda kalır ve mağazaya
+#: giden gövde değişmez.
 AREA_LABELS = {
-    "slider": "Slider",
-    "banner": "Banner alanları",
-    "collection": "Öne çıkan koleksiyonlar",
-    "announcement": "Duyuru şeridi",
+    "slider": "Ana ekran kayan görseller",
+    "banner": "Tanıtım görselleri",
+    "collection": "Öne çıkan ürün grupları",
+    "announcement": "Üst duyuru yazısı",
+}
+
+#: Her şeridin TEKİL adı. Ekran "3 slot" değil "3 kayan görsel" der; sayının
+#: yanındaki kelime neyin sayıldığını söylemezse sayı da bir şey söylemez.
+AREA_ONE = {
+    "slider": "kayan görsel",
+    "banner": "tanıtım görseli",
+    "collection": "ürün grubu",
+    "announcement": "duyuru",
+}
+
+#: "Bu sekme ne işe yarar" — ekranda sekmenin altında tek cümle olarak durur.
+AREA_WHAT = {
+    "slider": "Ana sayfanın en üstünde sırayla dönen büyük görseller. "
+              "Müşterinin siteye girer girmez gördüğü yer burasıdır.",
+    "banner": "Sayfanın ortasında ve altında duran sabit kampanya görselleri.",
+    "collection": "“Yeni gelenler”, “Çok satanlar” gibi ana sayfadaki ürün şeritleri.",
+    "announcement": "Sayfanın en üstündeki ince şeritte duran yazı — kargo, kampanya "
+                    "ya da tatil duyurusu. Görsel değil, metindir.",
 }
 
 PLACEMENTS = ("slider", "top", "middle", "bottom", "side")
 PLACEMENT_LABELS = {
-    "slider": "Slider",
-    "top": "Üst",
-    "middle": "Orta",
-    "bottom": "Alt",
-    "side": "Yan",
+    "slider": "En üstteki kayan bölüm",
+    "top": "Sayfanın üstü",
+    "middle": "Sayfanın ortası",
+    "bottom": "Sayfanın altı",
+    "side": "Yan sütun",
 }
 
 DEVICES = ("all", "desktop", "mobile")
-DEVICE_LABELS = {"all": "Tümü", "desktop": "Masaüstü", "mobile": "Mobil"}
+DEVICE_LABELS = {"all": "Her ekranda", "desktop": "Yalnız bilgisayarda",
+                 "mobile": "Yalnız telefonda"}
 
 LINK_KINDS = ("url", "product", "category", "cms")
+#: "Tıklayınca nereye gitsin" sorusunun şıkları. "Serbest bağlantı" ve
+#: "CMS sayfası" kullanıcının bilmediği iki kelimeydi; ikisi de ne olduğunu
+#: söyleyen karşılıklarıyla değişti.
 LINK_KIND_LABELS = {
-    "url": "Serbest bağlantı",
-    "product": "Ürün",
-    "category": "Kategori",
-    "cms": "CMS sayfası",
+    "url": "Adresi ben yazacağım",
+    "product": "Bir ürün sayfası",
+    "category": "Bir kategori sayfası",
+    "cms": "Site içi bilgi sayfası (Hakkımızda, İletişim…)",
 }
 
 STATE_PUBLISHED = "published"
@@ -77,9 +107,19 @@ STATE_DRAFT = "draft"
 
 STATE_LABELS = {
     STATE_PUBLISHED: "Yayında",
-    STATE_SCHEDULED: "Zamanlanmış",
+    STATE_SCHEDULED: "Tarihi gelmedi",
     STATE_EXPIRED: "Süresi doldu",
-    STATE_DRAFT: "Taslak",
+    STATE_DRAFT: "Hazırlıkta",
+}
+
+#: Rozetin YANINDA duran tek cümle: "Yayında" ne demek, "Hazırlıkta" ne demek.
+#: Rozet tek başına durum adını söyler ama MÜŞTERİNİN GÖRÜP GÖRMEDİĞİNİ
+#: söylemez; ekranda asıl merak edilen sorudur ve yazıyla cevaplanır.
+STATE_WHAT = {
+    STATE_PUBLISHED: "Müşteri şu anda görüyor.",
+    STATE_SCHEDULED: "Başlangıç tarihi gelmedi; o gün kendiliğinden yayına girer.",
+    STATE_EXPIRED: "Bitiş tarihi geçti; müşteri artık görmüyor.",
+    STATE_DRAFT: "Müşteri görmüyor. Göstermek için “Yayına al” demeniz gerekir.",
 }
 
 #: Görsel ölçüsü kararları.
@@ -288,17 +328,18 @@ def size_verdict(width: Any, height: Any, wanted: tuple[int, int], *,
     got_w, got_h = as_int(width), as_int(height)
 
     if want_w <= 0 or want_h <= 0:
-        return {"state": SIZE_NONE, "note": "Bu alan görsel istemez; metin yeterli.",
+        return {"state": SIZE_NONE, "note": "Bu bölüm görsel istemez; yazı yeterli.",
                 "recommended": "", "uploaded": f"{got_w}x{got_h}" if got_w else ""}
 
     recommended = f"{want_w}x{want_h}"
     if got_w <= 0 or got_h <= 0:
         return {"state": SIZE_UNKNOWN,
-                "note": f"Görselin ölçüsü okunamadı; önerilen {recommended}.",
+                "note": f"Görselin en-boy ölçüsü okunamadı; bu bölüm için uygun ölçü "
+                        f"{recommended} piksel.",
                 "recommended": recommended, "uploaded": ""}
 
     uploaded = f"{got_w}x{got_h}"
-    head = f"Önerilen {recommended}; yüklenen {uploaded}"
+    head = f"Bu bölüm {recommended} piksel ister; seçtiğiniz görsel {uploaded}"
 
     limit = max(0.1, float(sharp_ratio or 1.0))
     small = got_w < want_w * limit or got_h < want_h * limit
@@ -310,16 +351,18 @@ def size_verdict(width: Any, height: Any, wanted: tuple[int, int], *,
 
     if small and off:
         return {"state": SIZE_BLURRY,
-                "note": f"{head} — mobilde bulanık; ayrıca oran farklı, kenarlardan kırpılır.",
+                "note": f"{head} — küçük kaldığı için telefonda bulanık çıkar; ayrıca "
+                        "en-boy ölçüsü tutmadığından kenarlarından kesilir.",
                 "recommended": recommended, "uploaded": uploaded}
     if small:
-        return {"state": SIZE_BLURRY, "note": f"{head} — mobilde bulanık.",
+        return {"state": SIZE_BLURRY,
+                "note": f"{head} — küçük kaldığı için telefonda bulanık çıkar.",
                 "recommended": recommended, "uploaded": uploaded}
     if off:
         return {"state": SIZE_RATIO,
-                "note": f"{head} — oran farklı, görsel kenarlardan kırpılacak.",
+                "note": f"{head} — en-boy ölçüsü tutmuyor, görselin kenarları kesilir.",
                 "recommended": recommended, "uploaded": uploaded}
-    return {"state": SIZE_OK, "note": f"{head} — uygun.",
+    return {"state": SIZE_OK, "note": f"{head} — ölçü uygun, olduğu gibi görünür.",
             "recommended": recommended, "uploaded": uploaded}
 
 
@@ -358,17 +401,17 @@ def crop_plan(width: Any, height: Any, wanted: tuple[int, int], *,
 
     if want_w <= 0 or want_h <= 0:
         return {"known": True, "ok": True, "axis": "", "percent": 0,
-                "note": "Bu alan görsel istemez; kırpma da olmaz."}
+                "note": "Bu bölüm görsel istemez; kesilme de olmaz."}
     if got_w <= 0 or got_h <= 0:
         return {"known": False, "ok": False, "axis": "", "percent": 0,
-                "note": "Görselin ölçüsü okunamadı; kırpma hesaplanamıyor."}
+                "note": "Görselin ölçüsü okunamadı; nereden kesileceği hesaplanamıyor."}
 
     want = want_w / want_h
     got = got_w / got_h
     got_label, want_label = ratio_label(got_w, got_h), ratio_label(want_w, want_h)
     if got == want:
         return {"known": True, "ok": True, "axis": "", "percent": 0,
-                "note": f"Oran birebir {got_label}; kırpma olmaz."}
+                "note": f"En-boy ölçüsü tam tutuyor ({got_label}); hiçbir yeri kesilmez."}
 
     if got > want:
         # Görsel önerilenden GENİŞ: yüksekliği doldurmak için yanlar gider.
@@ -382,10 +425,11 @@ def crop_plan(width: Any, height: Any, wanted: tuple[int, int], *,
 
     skew = abs(got - want) / want * 100
     ok = skew <= max(0, int(tolerance))
-    head = f"Oran {got_label}, önerilen {want_label}"
-    note = (f"{head} — {edges} toplam %{percent} kırpılır; tolerans içinde, göze çarpmaz."
+    head = f"Görselin en-boy ölçüsü {got_label}, buraya {want_label} yakışır"
+    note = (f"{head} — {edges} toplam %{percent} kesilir; bu kadarı göze çarpmaz."
             if ok else
-            f"{head} — {edges} toplam %{percent} kırpılacak; mobilde de aynı kırpma olur.")
+            f"{head} — {edges} toplam %{percent} KESİLECEK. Görselin kenarında yazı ya da "
+            "logo varsa gider; telefonda da aynı kesme olur.")
     return {"known": True, "ok": ok, "axis": axis, "percent": percent, "note": note}
 
 
@@ -580,8 +624,8 @@ def slot_row(raw: Any, *, today: str, wanted: tuple[int, int] = (0, 0),
     verdict = (size_verdict(width, height, wanted, sharp_ratio=sharp_ratio, tolerance=tolerance)
                if image_url or width else
                {"state": SIZE_NONE if wanted == (0, 0) else SIZE_UNKNOWN,
-                "note": "Görsel yüklenmemiş." if wanted != (0, 0)
-                        else "Bu alan görsel istemez; metin yeterli.",
+                "note": "Henüz görsel seçilmemiş." if wanted != (0, 0)
+                        else "Bu bölüm görsel istemez; yazı yeterli.",
                 "recommended": f"{wanted[0]}x{wanted[1]}" if wanted != (0, 0) else "",
                 "uploaded": ""})
 
@@ -599,6 +643,9 @@ def slot_row(raw: Any, *, today: str, wanted: tuple[int, int] = (0, 0),
         "id": as_int(pick(record, "id", "slot_id")),
         "area": area,
         "areaLabel": AREA_LABELS[area],
+        # Tekil ad ekranda sayının yanında durur ("2. kayan görsel"); listedeki
+        # satırın NE olduğunu şerit adını okumadan da söyler.
+        "areaOne": AREA_ONE[area],
         "title": text(pick(record, "title", "heading", "name", "label")),
         "altText": text(pick(record, "alt", "alt_text", "image_alt")),
         "imageUrl": image_url,
@@ -619,6 +666,7 @@ def slot_row(raw: Any, *, today: str, wanted: tuple[int, int] = (0, 0),
         "status": as_bool(pick(record, "status", "active", "is_active"), default=True),
         "state": state,
         "stateLabel": STATE_LABELS[state],
+        "stateWhat": STATE_WHAT[state],
         "clicks": as_int(pick(record, "clicks", "click_count", "hits")),
         # "0 tıklama" ile "tıklama ölçülmüyor" AYNI ŞEY DEĞİL. Uç bu alanı
         # taşımıyorsa ekran sıfır yazıp ölçüm yapılıyormuş gibi davranmaz.
@@ -634,18 +682,24 @@ def slot_row(raw: Any, *, today: str, wanted: tuple[int, int] = (0, 0),
 
 
 def issues_of(row: dict[str, Any]) -> list[str]:
-    """Satırın gözle görülür eksikleri — listede ve raporda aynı metinle çıkar."""
+    """Satırın gözle görülür eksikleri — listede ve raporda aynı metinle çıkar.
+
+    METİNLER İŞ DİLİNDE. Eskiden "alt metni yok", "düşük çözünürlük", "oran
+    farklı" yazıyordu: üçü de doğru ama üçü de kullanıcıya NE YAPACAĞINI
+    söylemiyordu. Eksik, artık sonucuyla anlatılır — "bulanık çıkar",
+    "kenarları kesilir" — çünkü kullanıcının kararı sonuca göre değişir.
+    """
     found: list[str] = []
     if not row["altText"]:
-        found.append("alt metni yok")
+        found.append("görsel açıklaması yok")
     if row["area"] != "announcement" and not row["imageUrl"]:
         found.append("görsel yok")
     if not row["link"]:
-        found.append("hedef bağlantı yok")
+        found.append("tıklayınca gideceği yer yok")
     if row["sizeState"] == SIZE_BLURRY:
-        found.append("düşük çözünürlük")
+        found.append("görsel küçük, bulanık çıkar")
     elif row["sizeState"] == SIZE_RATIO:
-        found.append("oran farklı")
+        found.append("ölçü tutmuyor, kenarları kesilir")
     if row["state"] == STATE_EXPIRED:
         found.append("süresi dolmuş")
     return found
@@ -753,23 +807,28 @@ def slot_error(body: dict[str, Any], *, area: str, has_image: bool) -> str:
     geçilen alt metni hiçbir zaman yazılmıyor; kural yazma anında uygulanır.
     """
     if area not in AREAS:
-        return f"Bilinmeyen alan: {area}"
+        return f"Tanınmayan bölüm: {area}"
     title = text(body.get("title"))
     if not title:
-        return "Başlık zorunlu; slot listesinde ve raporda bu isimle görünür."
+        return ("Başlık boş kalamaz. Müşteri bu adı görmez; siz listede bunu görürsünüz — "
+                "“Eylül kırtasiye kampanyası” gibi kendinizin tanıyacağı bir ad yazın.")
     if area != "announcement" and not text(body.get("alt")):
-        return ("Görselin alt metni zorunlu. Ekran okuyucu ve arama motoru banner'ı "
-                "yalnız bu metinden okur.")
+        return ("Görsel açıklaması boş kalamaz. Görsel açılmadığında müşterinin okuduğu, "
+                "Google’ın da gördüğü tek yazı budur. Dosya adı değil, görselde ne "
+                "olduğunu yazın: “Sırt çantası kampanyası, %30 indirim” gibi.")
     if area == "announcement" and has_image:
-        return "Duyuru şeridi metindir; buraya görsel yüklenmez."
+        return ("Üstteki duyuru yazısı yalnız metin gösterir; oraya görsel konmaz. Görsel "
+                "asmak için “Tanıtım görselleri” sekmesini kullanın.")
     kind = text(body.get("link_kind")) or "url"
     link = text(body.get("link"))
     if kind == "url" and link and not re.match(r"^(https?://|/)", link):
-        return "Serbest bağlantı `https://` ile ya da `/` ile başlamalı."
+        return ("Adres ya `https://` ile (başka bir siteye gider) ya da `/` ile "
+                "(kendi sitemizde kalır) başlamalı. Örnek: `/kampanya` ya da "
+                "`https://bbdstore.com.tr/kampanya`.")
     start = day_of(body.get("starts_at"))
     end = day_of(body.get("ends_at"))
     if start and end and start > end:
-        return "Yayın başlangıcı bitişten sonra olamaz."
+        return "Başlangıç tarihi bitiş tarihinden sonra olamaz; iki tarihi kontrol edin."
     return ""
 
 
@@ -784,17 +843,19 @@ def merged_order(rows: list[dict[str, Any]], area: str, wanted: list[int]) -> di
     eksik/fazla kimlikle gelen bir istek, sessizce yarım bir sıra yazardı.
     """
     if area not in AREAS:
-        return {"ok": False, "error": f"Bilinmeyen alan: {area}", "order": []}
+        return {"ok": False, "error": f"Tanınmayan bölüm: {area}", "order": []}
 
     current = [as_int(row["id"]) for row in sort_rows(rows) if row["area"] == area]
     asked = [as_int(item) for item in (wanted or [])]
     if sorted(asked) != sorted(current):
         return {"ok": False,
-                "error": "Sıra listesi bu alandaki slotlarla eşleşmiyor; ekran bayat olabilir. "
-                         "Yenileyip yeniden deneyin.",
+                "error": "Ekrandaki liste ile mağazadaki liste tutmuyor — bu arada başka biri "
+                         "ekleme ya da çıkarma yapmış olabilir. “Yenile” deyip sırayı "
+                         "yeniden düzenleyin.",
                 "order": []}
     if asked == current:
-        return {"ok": False, "error": "Sıra değişmedi.", "order": []}
+        return {"ok": False, "error": "Sıra zaten aynı; kaydedilecek bir değişiklik yok.",
+                "order": []}
 
     queue = list(asked)
     order: list[int] = []
@@ -831,7 +892,7 @@ def theme_slot(raw: Any) -> dict[str, Any]:
     return {
         "id": as_int(pick(record, "id")),
         "area": THEME_AREAS.get(kind, "banner"),
-        "title": text(pick(record, "name", "title")) or f"Tema bloğu #{as_int(record.get('id'))}",
+        "title": text(pick(record, "name", "title")) or f"Adsız bölüm #{as_int(record.get('id'))}",
         "sort_order": as_int(pick(record, "sort_order", "position")),
         "status": pick(record, "status", "active"),
         "channel": text(pick(record, "channel", "channel_code")),

@@ -52,8 +52,8 @@ ui:
   nav:
     title: "Deneme Kulübü"
     icon: sparkles
-    group: "BBD Store"
-    order: 70
+    group: "BBD Store / Vitrin ve İçerik"
+    order: 310
     requires: [store_trial_club.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

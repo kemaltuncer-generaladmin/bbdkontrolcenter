@@ -1114,6 +1114,20 @@ def _system_backups(data: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+#: Bildirim ucu 200 döner ama GEÇMİŞ TAŞIMAZ — sıfırı "hiç gönderilmedi" diye
+#: okutmamak için rapor nedeni YAZAR (2026-08-16'da salt okunarak ölçüldü:
+#: `GET /api/admin/bbd/notifications` → `{fcmEnabled,
+#: campaignNotificationsEnabled, broadcastTopic, deviceCount}`; `data` yok).
+#: Uç hata vermediği için ekranda hiçbir uyarı çıkmıyordu ve rapor "bu dönem
+#: hiç bildirim gitmedi" gibi okunuyordu; sessiz sıfır yanlış rakamdır.
+_NOTIFICATION_NOTE = (
+    "Mağazada bildirim GÖNDERİM GEÇMİŞİ tutan bir uç yok: "
+    "`/api/admin/bbd/notifications` geçmiş değil DURUM döndürüyor "
+    "(FCM açık mı, kaç cihaz kayıtlı). Gösterilen sıfır “hiç gönderilmedi” "
+    "değil “bilinmiyor” demektir."
+)
+
+
 def _system_notifications(data: dict[str, Any], p: dict[str, Any]) -> dict[str, Any]:
     rows = an.within(data.get("notifications") or [], p["start"], p["end"])
     by_channel = an.breakdown(rows, lambda row: row["channel"])
@@ -1133,6 +1147,9 @@ def _system_notifications(data: dict[str, Any], p: dict[str, Any]) -> dict[str, 
                        percent(round(item["count"] * 100 / (len(rows) or 1), 1))]
                       for item in by_channel],
                      align="LRRR", widths=[1.6, 1, 1.3, 0.9]),
+        # Not YALNIZ satır yokken yazılır: uç bir gün geçmiş vermeye başlarsa
+        # rapor kendiliğinden susar, notu elle kaldırmak gerekmez.
+        notes=[] if rows else [_NOTIFICATION_NOTE],
     )
 
 

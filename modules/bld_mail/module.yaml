@@ -32,7 +32,7 @@ ui:
     title: "Mail Yönetimi"
     icon: mail
     group: "BLD"
-    order: 150
+    order: 640
     requires: [bld_mail.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

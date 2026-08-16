@@ -50,27 +50,53 @@ from km_sdk import (
 
 from . import collect
 
-#: Serbest (siparişe bağlı olmayan) tahsilat bağlantısı üreten geçit metodu.
-#: Bugün `store_api` içinde YOK; varlığı çalışma anında yoklanır ve yoksa
-#: ekran özelliği KAPALI ama AÇIKLAMALI gösterir (sessizce patlatmaz).
-STANDALONE_METHOD = "bbd_create_payment_request"
+#: Ödeme bağlantısı üreten geçit metodu — TEK YOL, HER TALEP İÇİN.
+#: Varlığı çalışma anında yoklanır; yoksa ekran özelliği KAPALI ama AÇIKLAMALI
+#: gösterir (sessizce patlatmaz).
+#:
+#: ADI BİR DÖNEM `bbd_create_payment_request`TI VE O METOT HİÇ VAR OLMADI.
+#: Yoklama hep başarısız oluyordu, yani ekrandaki düğme hiç açılmadı. Geçit
+#: aynı ucu (`POST /api/admin/bbd/payment-links`) baştan beri
+#: `bbd_create_payment_link` adıyla sunuyor; bağlanan ad artık odur.
+#:
+#: SİPARİŞE BAĞLI/BAĞSIZ AYRIMI ARTIK YOK. Mağaza ucu gövdedeki `orderId`
+#: alanını HİÇ OKUMAZ (`PaymentLinkController::store` yalnız
+#: kind·amount·items·billing·description okur) ve geçit `order_id` verilen
+#: çağrıyı açıkça reddeder. Siparişle ilişki mağazada, ödeme tamamlanınca
+#: kurulur — bu yüzden iki dal tek çağrıya indi.
+STANDALONE_METHOD = "bbd_create_payment_link"
 
-STANDALONE_MISSING = (
-    "Siparişe bağlı olmayan tahsilat bağlantısı için mağaza ucu henüz yayında "
-    f"değil (store.api → {STANDALONE_METHOD}). Talep kaydedildi ve burada "
-    "bekliyor; uç yayınlanınca “Bağlantı üret” kendiliğinden açılacak. "
-    "Bugün açık yol: Elden Kapatma sekmesinden havale/nakit beyanı."
+#: Geçitte metot bulunamadığında ekrana yazılan metin.
+#:
+#: METİN BİLEREK GENELDİR: metodun adı bir gün değişirse ya da geçit sürümü
+#: geride kalırsa ekran yine anlaşılır konuşsun. Eski metin "şu metot yazılmadı"
+#: diyordu; bu, adı değişen bir metotta personeli var olmayan bir işi beklemeye
+#: iterdi. Aranan ad metne KOD OLARAK girer, cümleye gömülmez.
+LINK_METHOD_MISSING = (
+    "Ödeme bağlantısı bu ekrandan üretilemiyor: geçitte bağlantı üreten metot "
+    f"bulunamadı (store.api → {STANDALONE_METHOD}). Mağaza ucu yayında "
+    "(POST /api/admin/bbd/payment-links); eksik olan geçit tarafıdır — metot "
+    "yeniden adlandırılmış ya da geçit sürümü eski olabilir. Talep kaydedildi "
+    "ve burada bekliyor; metot bağlanınca “Bağlantı üret” kendiliğinden "
+    "açılacak. Bugün açık yol: Elden Kapatma sekmesinden havale/nakit beyanı."
 )
 
-#: Ödeme uçlarının tamamı `/api/admin/bbd/*` altındadır ve mağazada HENÜZ
-#: YAYINDA DEĞİL: 13.08.2026'da `bbd/payments/links`, `.../attempts` ve
-#: `.../terminals` uçlarının üçü de 404 döndü (çekirdek uçları 200).
-#: Bu yüzden panel açılışta bir kez YOKLAR ve durumu ekrana yazar; aksi
-#: hâlde personel formu doldurup onayladıktan SONRA 404 görürdü.
+#: Ödeme uçları canlıda yayında mı — açılışta bir kez yoklanır.
+#:
+#: BİR DÖNEM ÜÇÜ DE 404'TÜ, ARTIK DEĞİL. 13.08.2026'da `payment-links`,
+#: `payments/attempts` ve `payments/terminals` uçlarının üçü de 404 dönüyordu;
+#: yoklama bu yüzden eklenmişti. 16.08.2026'da ÜÇÜ DE 200 döndü (liste boş ama
+#: uç ayakta). Yoklama KALIYOR: uç bir gün geri çekilirse ya da mağaza kapalıysa
+#: personel formu doldurup gerekçe yazıp onayladıktan SONRA hata görmesin (K7).
+#:
+#: YOL ADI TUZAĞI: link ucunun öneki `payment-links`tir, `payments/links` DEĞİL.
+#: Geçit doğru yolu çağırıyor; eski belgelerdeki `payments/links` yazımı canlıda
+#: 404 döner ve "uç yok" yanılgısını bu üretmişti.
 PAYMENTS_MISSING = (
-    "Mağazanın ödeme uçları (/api/admin/bbd/payments/*) yayında değil: bugün "
-    "bu ekrandan ödeme bağlantısı ÜRETİLEMEZ ve durum yoklanamaz. Talepler "
-    "kaydedilir ve bekler; Elden Kapatma (havale/nakit) çalışmaya devam eder."
+    "Mağazanın ödeme uçlarına şu an ulaşılamadı (yoklama: "
+    "GET /api/admin/bbd/payment-links): bu ekrandan ödeme bağlantısı "
+    "ÜRETİLEMEZ ve durum yoklanamaz. Talepler kaydedilir ve bekler; "
+    "Elden Kapatma (havale/nakit) çalışmaya devam eder."
 )
 
 #: Rapora ve CSV'ye giren en çok satır. Tahsilat talebi yılda birkaç bin
@@ -282,7 +308,7 @@ class PaymentGatewayService:
             "payments": {"available": payments_ok, "error": payments_error,
                          "notice": "" if payments_ok else PAYMENTS_MISSING},
             "standalone": self._standalone,
-            "standaloneNotice": "" if self._standalone else STANDALONE_MISSING,
+            "standaloneNotice": "" if self._standalone else LINK_METHOD_MISSING,
             "defaultEmail": self._default_email,
             "orgName": self._org_name,
             "pricesIncludeTax": self._prices_include_tax,
@@ -292,10 +318,15 @@ class PaymentGatewayService:
     async def _payments_probe(self, store_connected: bool) -> tuple[bool, str]:
         """Ödeme uçları yayında mı — TEK ve OKUMA amaçlı bir yoklama.
 
-        NEDEN AÇILIŞTA: `bbd_create_payment_link` geçitte bir METOT olarak
-        var ama mağazadaki UÇ 404. Yalnız metodun varlığına bakan ekran
-        "her şey hazır" der, personel formu doldurur, gerekçe yazar, onaylar
-        ve ancak o zaman 404 görür. Yoklamanın maliyeti bir GET'tir.
+        NEDEN AÇILIŞTA: geçitte bir METODUN var olması, mağazadaki UCUN ayakta
+        olduğunu göstermez. 13.08.2026'da tam bu olmuştu —
+        `bbd_create_payment_link` geçitte duruyordu ama uç 404'tü; yalnız metoda
+        bakan ekran "her şey hazır" diyor, personel formu dolduruyor, gerekçe
+        yazıp onaylıyor ve hatayı ancak o zaman görüyordu.
+
+        16.08.2026'da uç 200 dönüyor; yoklama yine de kalıyor, çünkü sorduğu
+        soru tarihe değil ANA aittir: mağaza kapalıysa, belirteç düşmüşse ya da
+        uç geri çekilirse cevap yine "hayır" olmalı (K7). Maliyeti bir GET'tir.
         """
         if not store_connected:
             return False, "Mağazaya ulaşılamadı."
@@ -537,8 +568,10 @@ class PaymentGatewayService:
             "ready": not problems,
             "smsState": await self._sms_state(),
             "standalone": self._standalone,
-            "standaloneNotice": "" if self._standalone or collect.as_int(body.get("orderId"))
-                                else STANDALONE_MISSING,
+            # SİPARİŞ KİMLİĞİ ARTIK MUAFİYET DEĞİL: siparişe bağlı talep de aynı
+            # geçit metodunu kullanıyor (mağaza ucu `orderId` okumaz). Metot
+            # yoksa iki yol da kapalıdır ve ekran ikisi için de aynı şeyi söyler.
+            "standaloneNotice": "" if self._standalone else LINK_METHOD_MISSING,
         }
 
     def _sample_link(self) -> str:
@@ -596,9 +629,8 @@ class PaymentGatewayService:
                            detail={"gross": amounts["gross"], "code": code})
         return {"ok": True, "error": "", "id": request_id, "code": code,
                 "amounts": amounts,
-                "standalone": self._standalone or bool(collect.as_int(body.get("orderId"))),
-                "standaloneNotice": "" if self._standalone or collect.as_int(body.get("orderId"))
-                                    else STANDALONE_MISSING}
+                "standalone": self._standalone,
+                "standaloneNotice": "" if self._standalone else LINK_METHOD_MISSING}
 
     async def _by_code(self, code: str) -> dict[str, Any] | None:
         try:
@@ -680,20 +712,37 @@ class PaymentGatewayService:
 
         attempts: list[dict[str, Any]] = []
         warning = ""
-        if view["orderId"] or view["token"]:
-            filters: dict[str, Any] = {}
-            if view["orderId"]:
-                filters["order_id"] = view["orderId"]
-            elif view["token"]:
-                filters["token"] = view["token"]
+        # `warning` GERÇEK ARIZA içindir (mağazaya ulaşılamadı); `attemptsNote`
+        # ise NORMAL durumu anlatır. İkisini tek alana koymak, ödemesi henüz
+        # yapılmamış HER talepte uyarı kutusu çıkarırdı — oysa o hâl beklenen
+        # hâldir ve uyarı gürültüsü gerçek arızayı görünmez yapar.
+        attempts_note = ""
+        if view["orderId"]:
+            # SÜZGEÇ ADI `orderId` — CAMEL CASE. `PaymentAttemptController::applyFilters`
+            # yalnız `state · orderId · from · to` okur. `order_id` göndermek hata
+            # DEĞİL, SESSİZLİK üretir: Laravel parametreyi yok sayar ve uç
+            # SÜZÜLMEMİŞ listeyi döndürür. Canlıda ölçüldü (16.08.2026, salt GET):
+            #   ?order_id=999999 → 17 satır (yok sayıldı)
+            #   ?orderId=999999  →  0 satır (süzdü)
+            # Ekran o 17 satırı "bu talebin POS denemeleri" diye çiziyordu; yani
+            # yanlış veri OLMAKLA kalmıyor, BAŞKA müşterilerin maskeli kart
+            # numaralarını bu talebin çekmecesinde gösteriyordu.
             try:
-                payload = await self._api.bbd_payment_attempts(filters, page=1, per_page=25)
+                payload = await self._api.bbd_payment_attempts({"orderId": view["orderId"]},
+                                                               page=1, per_page=25)
                 attempts = [collect.attempt_row(item) for item in (payload.get("items") or [])]
             except Exception as failure:  # noqa: BLE001 — K7
                 warning = f"POS denemeleri okunamadı: {self._fail(failure)}"
+        elif view["token"]:
+            # BELİRTEÇLE DENEME ARANAMAZ: uçta böyle bir süzgeç yok. Süzgeçsiz
+            # çağırıp "bunlar bu talebin denemeleri" demek uydurmadır; boş liste
+            # ve NEDENİNİ söyleyen bir not doğrusudur.
+            attempts_note = ("POS denemeleri sipariş numarasıyla listelenir; bu talepte "
+                             "sipariş henüz yok. Müşteri ödemeyi tamamlayıp mağazada "
+                             "sipariş oluşunca denemeler burada görünür.")
 
         return {"ok": True, "error": "", "request": view, "events": events,
-                "attempts": attempts, "warning": warning,
+                "attempts": attempts, "warning": warning, "attemptsNote": attempts_note,
                 "items": json.loads(collect.text(row.get("items")) or "[]"),
                 "canRelink": collect.can_relink(view)[0],
                 "relinkBlock": collect.can_relink(view)[1]}
@@ -732,20 +781,34 @@ class PaymentGatewayService:
         await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
                            result="denendi", detail={"gross": gross, "orderId": order_id})
 
-        if not order_id and not self._standalone:
+        if not self._standalone:
             await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
                                result="hata", detail={"missing": STANDALONE_METHOD})
-            return {"ok": False, "error": STANDALONE_MISSING, "standalone": False}
+            return {"ok": False, "error": LINK_METHOD_MISSING, "standalone": False}
+
+        body, problem = self._link_payload(row)
+        if problem:
+            # Mağazanın reddedeceğini BİLDİĞİMİZ istek gönderilmez: hata
+            # personele alan alan söylenir, 422'nin ardından değil (K9).
+            await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
+                               result="hata", detail={"payload": problem})
+            return {"ok": False, "error": problem}
+
+        problem = await self._retire_previous(request_id, view, reason=reason, actor=actor,
+                                              dry_run=dry_run)
+        if problem:
+            return {"ok": False, "error": problem}
 
         try:
-            if order_id:
-                result = await self._api.bbd_create_payment_link(
-                    order_id=order_id, amount=gross, reason=reason, actor=actor,
-                    dry_run=dry_run)
-            else:
-                result = await getattr(self._api, STANDALONE_METHOD)(
-                    payload=self._standalone_payload(row), reason=reason, actor=actor,
-                    dry_run=dry_run)
+            # SİPARİŞ KİMLİĞİ GÖVDEYE KONMAZ. İki bağımsız sebep var: mağaza ucu
+            # `orderId` alanını hiç okumaz (`PaymentLinkController::store`
+            # gövdeden yalnız kind·amount·items·billing·description alır) ve
+            # geçit `order_id` verilen çağrıyı doğrudan reddeder. Talebin
+            # siparişi YEREL satırda durmaya devam eder; mağaza tarafındaki bağ
+            # müşteri ödemeyi tamamlayınca kurulur ve bize `poll()` ile
+            # `link_row["orderId"]` üzerinden geri gelir.
+            result = await self._api.bbd_create_payment_link(
+                **body, reason=reason, actor=actor, dry_run=dry_run)
         except Exception as failure:  # noqa: BLE001 — K7
             await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
                                result="hata", detail={"error": str(failure)})
@@ -755,24 +818,37 @@ class PaymentGatewayService:
                                else result)
         dry = bool(result.get("dryRun", dry_run))
         fields: dict[str, Any] = {"reason": reason, "actor": actor}
-        if link["token"]:
-            fields["token"] = link["token"]
-        if link["url"]:
-            fields["link"] = link["url"]
-        if link["orderId"]:
-            fields["order_id"] = link["orderId"]
-        if not dry and (link["token"] or link["url"]):
-            fields["status"] = collect.LINKED
+        # KURU PROVADA BELİRTEÇ/ADRES YAZILMAZ. Mağaza provada zaten link
+        # üretmiyor (işlemi geri sarıyor), ama yanıtta bir şey gelirse onu yerel
+        # satıra yazmak asıl tehlikeyi doğururdu: `send_sms` yalnız `link`
+        # alanının dolu olmasına bakıyor ve müşteriye HİÇ VAR OLMAYAN bir ödeme
+        # adresi giderdi.
+        if not dry:
+            if link["token"]:
+                fields["token"] = link["token"]
+            if link["url"]:
+                fields["link"] = link["url"]
+            if link["orderId"]:
+                fields["order_id"] = link["orderId"]
+            # Sayısal kimlik yerel satıra YAZILIR: yoklama ve iptal uçlarının
+            # istediği anahtar budur (gerekçesi `collect.link_row` içinde).
+            fields["link_id"] = link["id"]
+            if link["token"] or link["url"]:
+                fields["status"] = collect.LINKED
         await self._update(request_id, **fields)
         await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
                            result="dry_run" if dry else "ok",
                            detail={"token": link["token"], "url": link["url"]})
 
         out: dict[str, Any] = {"ok": True, "error": "", "dryRun": dry, "link": link,
-                               "standalone": self._standalone or bool(order_id)}
+                               "standalone": self._standalone}
         if dry:
-            out["notice"] = ("Kuru prova: mağazaya istek gönderilmedi, bağlantı üretilmedi. "
-                             "Gerçekten üretmek için kuru provayı kapatın.")
+            # "İstek gönderilmedi" değil, "HİÇBİR ŞEY YAZILMADI": mağaza kuru
+            # provada sepeti gerçekten kurup toplamı hesaplar ve işlemi geri
+            # sarar (`PaymentLinkService::create` → `DB::rollBack`). Ekrana
+            # yazılan cümle bu yüzden linke odaklanır: link üretilmedi.
+            out["notice"] = ("Kuru prova: bağlantı ÜRETİLMEDİ, mağazada hiçbir kayıt "
+                             "oluşmadı. Gerçekten üretmek için kuru provayı kapatın.")
             return out
         if not link["token"] and not link["url"]:
             out["notice"] = ("Mağaza bağlantı bilgisi döndürmedi; talep bekliyor olarak "
@@ -783,28 +859,200 @@ class PaymentGatewayService:
                                              dry_run=dry_run)
         return out
 
-    def _standalone_payload(self, row: Any) -> dict[str, Any]:
-        """Serbest tahsilat için mağazaya gidecek gövde.
+    async def _retire_previous(self, request_id: int, view: dict[str, Any], *, reason: str,
+                               actor: str, dry_run: bool) -> str:
+        """Yenisini üretmeden ÖNCE eldeki bağlantıyı mağazada kapatır.
 
-        Uç henüz yayında olmadığı için bu şeklin sözleşmesi BİZİM ÖNERİMİZDİR;
-        uç yayınlandığında alan adları doğrulanmalıdır. Şekli burada tek yerde
-        tutmak, uç geldiğinde değiştirilecek yeri belirginleştiriyor.
+        Döner: engel metni; boşsa yola devam edilir.
+
+        İKİ ÖDENEBİLİR LİNK AYNI BORÇ İÇİN DURAMAZ. Eski davranışta "Yeni
+        bağlantı üret" yerel satırdaki `token`/`link` alanlarını üzerine yazıyor,
+        mağazadaki eski kaydı ise ELLEMİYORDU. `PaymentLinkService::persistLink`
+        yalnız INSERT yapar; eski link `expires_at` dolana kadar (varsayılan 48
+        saat) ödenebilir kalır. Sonuç zinciri ölçüldü:
+
+          · Müşteri elindeki İLK SMS'i öderse, o belirteç artık yerel satırda
+            yok — yoklama onu hiç aramaz. Talep sonsuza kadar "SMS gönderildi"
+            görünür ve personel parayı İKİNCİ KEZ ister.
+          · İkinci linki de öderse aynı borç iki kez tahsil edilmiş olur.
+
+        İPTAL BAŞARISIZSA YENİ LİNK ÜRETİLMEZ. "Kapatamadım ama yenisini
+        ürettim" tam olarak yukarıdaki iki-link durumudur; doğru cevap
+        personele NEDEN kapatılamadığını söyleyip durmaktır (K7).
+
+        BU AYNI ZAMANDA İKİNCİ BİR ÇİFT ÇEKİM AĞIDIR. Yerel durum eskimişse
+        (bizde `linked`, mağazada ÖDENMİŞ) `can_relink` kapısı geçilir ama
+        mağaza iptali 409 `LINK_ALREADY_PAID` ile reddeder — ve o ret burada
+        yeni link üretimini durdurur. Yani "yereli yoklamadan ikinci link"
+        yolu da kapanmış olur; personel ret metninden ödemenin alındığını
+        öğrenir.
+
+        KURU PROVADA da aynı yol yürünür (iptal de provaya girer): prova
+        gerçeğin provası olmalı, daha kısa bir yolun provası değil.
+        """
+        if not view["linkId"]:
+            # Kapatılacak bir bağlantı yok (ilk üretim) ya da kayıt sayısal
+            # kimlik sütunundan önce üretilmiş. İkinci hâlde iptal çağrısı
+            # zaten yapılamaz; `cancel()` bunu ayrıca söylüyor.
+            return ""
+        try:
+            await self._api.bbd_cancel_payment_link(view["linkId"], reason=reason, actor=actor,
+                                                    dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
+                               result="hata",
+                               detail={"retire": view["linkId"], "error": str(failure)})
+            return ("Önceki bağlantı mağazada kapatılamadı, bu yüzden yenisi ÜRETİLMEDİ: "
+                    f"{self._fail(failure)} — iki ödenebilir bağlantı aynı anda durursa "
+                    "müşteriden iki kez tahsilat yapılabilir. Önceki bağlantının durumunu "
+                    "“Durumu yokla” ile kontrol edin.")
+        # Eski belirteç ÜZERİNE YAZILMADAN ÖNCE olay zincirine düşer: talep
+        # satırı değişse de "hangi bağlantı vardı" sorusu cevapsız kalmaz
+        # (olaylar silinmez).
+        await self._record(request_id=request_id, action="link", reason=reason, actor=actor,
+                           result="dry_run" if dry_run else "ok",
+                           detail={"retired": {"linkId": view["linkId"],
+                                               "token": view["token"], "url": view["link"]}})
+        return ""
+
+    def _link_payload(self, row: Any) -> tuple[dict[str, Any], str]:
+        """Yerel talepten MAĞAZANIN sözleşmesine göre çağrı gövdesi.
+
+        Döner: `(gövde, engel)`. `engel` doluysa mağazaya istek GÖNDERİLMEZ ve
+        metin doğrudan ekrana yazılır.
+
+        SÖZLEŞME BİZİM İCADIMIZ DEĞİL. `PaymentLinkController::store` gövdeden
+        yalnız `kind` · `amount` · `items` · `billing` · `description`
+        alanlarını okur; başka her alan sessizce düşer (eski gövdedeki `code`,
+        `customer`, `note` alanlarının başına gelen buydu).
+
+        DÖRT KARAR VE GEREKÇELERİ:
+
+        1. TUTAR ONDALIK METİNDİR ("1250.00"), kuruş tam sayısı DEĞİL. Mağaza
+           `amount`ı TL sanıp sepetin hesapladığı toplamla kuruş kuruş
+           karşılaştırıyor (`AmountGate::matches`); 125.000 kuruşu olduğu gibi
+           göndermek 1.250,00 TL'lik bir tahsilat için 125.000,00 TL isteyen bir
+           istek demekti — ki mağaza onu 422 AMOUNT_DRIFT ile reddeder. Çevrim
+           `collect.from_kurus` içinde, TEK YERDE ve `Decimal` ile yapılır.
+
+        2. TÜR, KALEMLERİN KENDİSİNDEN GELİR. Ürün seçilmişse `product`, yalnız
+           serbest tutar varsa `custom`. Mağaza `custom`ta `items`i, `product`ta
+           `amount`ı REDDEDER; ikisini birden göndermek karma sepet demektir ve
+           mağaza karma sepeti bilerek yasaklamıştır ("hangi tutar geçerli"
+           sorusunun cevabı yoktur).
+
+           ÜRÜNDE GEÇERLİ FİYAT MAĞAZANINKİDİR. `product` türünde tutar kapısı
+           YOKTUR: müşteriden ürünün o anki fiyatı (+ mağazanın kendi vergisi)
+           tahsil edilir, bizim ekranımızda görünen kırılım değil. Fark
+           çıkarsa mağaza yanıtındaki `snapshot`/`amount` alanında görünür ve
+           `poll()` ile ekrana döner.
+
+        3. KARMA TALEP MAĞAZAYA HİÇ GİTMEZ. Serbest tutar ile ürün aynı talepte
+           varsa burada durdurulur. Ürünleri gönderip serbest tutarı düşürmek
+           EKSİK TAHSİLAT olurdu; serbest tutarı gönderip ürünleri düşürmek de
+           müşteriye neyin satıldığını kaybettirirdi.
+
+        4. FATURA ADRESİ ZORUNLUDUR ve alan adları ÇAPRAZDIR:
+              yerel `city` (İL)   → mağaza `state`
+              yerel `district`    → mağaza `city`
+           Bu tahmin değil, koddan okundu: `PaymentLinkService::validateBilling`
+           `state` alanını `TurkishProvinces::codeFor` ile 81 ilin listesine
+           karşı doğruluyor (bulamazsa "il tanınmadı" diye reddediyor), `city`
+           alanına ise dokunmuyor ve onu bankanın `BillAddrCity` alanına
+           geçiriyor. Yani mağazanın "city"si bizim ilçemizdir.
         """
         data = dict(row or {})
+        try:
+            lines = json.loads(collect.text(data.get("items")) or "[]")
+        except ValueError:
+            lines = None
+        if not isinstance(lines, list):
+            # Kalem listesi okunamadı: BOŞ SAYILMAZ. Boş saymak ürünlü bir talebi
+            # sessizce serbest tutara çevirirdi — müşteriye ürünsüz, mağazaya
+            # kalemsiz bir tahsilat gitmesi demek. Ekran bozukluğu söyler (K7:
+            # hata ekranı düşürmez, anlaşılır metne çevrilir).
+            return {}, ("Talebin kalem listesi okunamadı (kayıt bozuk görünüyor); bağlantı "
+                        "üretilmedi. Talebi yeniden açın.")
+        products = [line for line in lines
+                    if isinstance(line, dict) and collect.as_int(line.get("productId"))]
+        free = [line for line in lines
+                if isinstance(line, dict) and not collect.as_int(line.get("productId"))]
+
+        billing, missing = self._billing(data)
+        if missing:
+            return {}, (
+                f"Fatura bilgisi eksik: {', '.join(missing)}. Mağaza bu alanları ZORUNLU "
+                "tutuyor (banka 3D doğrulamasında kart sahibi bloğunu istiyor) ve eksikken "
+                "bağlantıyı üretmez. Talebi eksiksiz bilgiyle yeniden açın."
+            )
+        if products and free:
+            return {}, (
+                "Bu talepte hem ürün hem serbest tutar var; mağaza karma sepetle bağlantı "
+                "üretmiyor. Ürünleri ve serbest tutarı AYRI taleplere bölün — birini sessizce "
+                "düşürmek eksik tahsilat olurdu."
+            )
+
+        # Açıklama mağazada 250 karakterde kesiliyor; kesmeyi burada yapıyoruz ki
+        # denetim izine yazdığımız metin ile mağazada duran metin aynı olsun.
+        # Talep numarası BAŞA yazılır: gövdede `orderId` gitmediği için mağazadaki
+        # satırı yerel talebe bağlayan tek iz budur.
+        code = collect.text(data.get("code"))
+        note = collect.text(data.get("note"))
+        description = f"{code} · {note}" if code and note else (code or note)
+
+        body: dict[str, Any] = {"billing": billing, "description": description[:250]}
+        if products:
+            body["kind"] = "product"
+            # Mağaza fiyatı ÜRÜNÜN KENDİSİNDEN okur; birim fiyat gönderilmez.
+            body["items"] = [{"productId": collect.as_int(line.get("productId")),
+                              "quantity": max(1, collect.as_int(line.get("quantity"), 1))}
+                             for line in products]
+        else:
+            body["kind"] = "custom"
+            body["amount"] = collect.from_kurus(collect.as_int(data.get("gross")))
+        return body, ""
+
+    def _billing(self, data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        """Fatura adresi bloğu ve DOLDURULMAMIŞ alanların adları.
+
+        YALNIZ BOŞLUK DENETLENİR, il listesi burada TUTULMAZ. Mağaza ili kendi
+        `TurkishProvinces` listesiyle doğruluyor; aynı listenin bir kopyasını
+        burada tutmak, iki listenin zamanla ayrışması demekti (mağaza kodu da
+        tam bu gerekçeyle tek kaynak kullanıyor). Boşluk denetimi ise ayrışmaz:
+        boş alan her sürümde reddedilir ve personele 422 beklemeden söylenir.
+
+        Ad/soyad ayrımı `collect.split_name` içindedir (gerekçesi orada).
+        """
+        first, last = collect.split_name(data.get("full_name"))
+        address = collect.text(data.get("address"))
+        province = collect.text(data.get("city"))          # yerel "İl"
+        district = collect.text(data.get("district"))      # yerel "İlçe"
+        phone = collect.normal_phone(data.get("phone"))
+        email = collect.text(data.get("email")) or self._default_email
+
+        missing = [label for label, value in (
+            ("ad", first), ("soyad", last), ("adres", address),
+            ("il", province), ("ilçe", district), ("cep telefonu", phone),
+        ) if not value]
+
         return {
-            "code": collect.text(data.get("code")),
-            "amount": collect.as_int(data.get("gross")),
-            "customer": {
-                "name": collect.text(data.get("full_name")),
-                "phone": collect.text(data.get("phone")),
-                "email": collect.text(data.get("email")),
-                "city": collect.text(data.get("city")),
-                "district": collect.text(data.get("district")),
-                "address": collect.text(data.get("address")),
-            },
-            "note": collect.text(data.get("note")),
-            "items": json.loads(collect.text(data.get("items")) or "[]"),
-        }
+            "firstName": first,
+            "lastName": last,
+            "email": email,
+            # Numara yerel kayıttaki normalleştirilmiş biçimiyle (5XXXXXXXXX)
+            # gider; ülke kodunu mağaza `PhoneNumber::parse` ile kendisi ekler
+            # ve bankaya `Cc`/`Subscriber` diye AYRI alanlarda yazar. Burada
+            # önek eklemek, tek parça beklenen bir alanı ikinci kez biçimlemek
+            # olurdu.
+            "phone": phone,
+            # Adres satırı DİZİ gönderilir: mağaza çok satırlı adresi dizi
+            # bekliyor ve metni de kabul ediyor; dizi vermek satır sonlarının
+            # tek satıra ezilmesini önler.
+            "address": [address] if address else [],
+            "city": district,        # mağazanın `city`si İLÇEDİR (bkz. `_link_payload`)
+            "state": province,       # il — mağaza bunu 81 ilin listesiyle doğrular
+            "country": "TR",         # mağaza yalnız TRY tahsil ediyor
+        }, missing
 
     async def cancel(self, request_id: int, *, reason: str, actor: str,
                      dry_run: bool = True) -> dict[str, Any]:
@@ -821,19 +1069,34 @@ class PaymentGatewayService:
                     "error": "Ödenmiş tahsilat iptal edilmez; iade için İadeler ekranı "
                              "kullanılır."}
 
-        token = view["token"]
+        # İPTAL SAYISAL KİMLİKLE ÇAĞRILIR, `token` İLE DEĞİL. Rota
+        # `->whereNumber('id')` ile daraltılmış; `token` (= mağazanın `code`u)
+        # 12 haneli harf-rakam karışımı bir dizedir ve geçit onu `key.isdigit()`
+        # denetiminde reddeder. Eskiden çağrıya `token` gidiyordu: ekran
+        # düşmüyordu (K7) ama "İptal" HER SEFERİNDE ret alıyordu — yanlış giden
+        # bir bağlantıyı kapatmanın yolu yoktu.
+        link_id = view["linkId"]
         await self._record(request_id=request_id, action="cancel", reason=reason, actor=actor,
-                           result="denendi", detail={"token": token})
+                           result="denendi", detail={"linkId": link_id, "token": view["token"]})
         dry = dry_run
-        if token:
+        if link_id:
             try:
-                result = await self._api.bbd_cancel_payment_link(token, reason=reason,
+                result = await self._api.bbd_cancel_payment_link(link_id, reason=reason,
                                                                  actor=actor, dry_run=dry_run)
                 dry = bool(result.get("dryRun", dry_run))
             except Exception as failure:  # noqa: BLE001 — K7
                 await self._record(request_id=request_id, action="cancel", reason=reason,
                                    actor=actor, result="hata", detail={"error": str(failure)})
                 return {"ok": False, "error": self._fail(failure)}
+        elif view["token"]:
+            # Belirteç var ama sayısal kimlik yok: bu satır kimlik sütunundan
+            # ÖNCE üretilmiş. Yerel satırı "iptal edildi" yapmak, mağazada
+            # ödenebilir duran bir bağlantıyı kapatıldı sanmaktır — söylenmez.
+            return {"ok": False,
+                    "error": ("Bu bağlantının mağazadaki sayısal kimliği yerel kayıtta yok "
+                              "(kayıt bu alan eklenmeden önce üretilmiş), bu yüzden mağaza "
+                              "tarafında iptal edilemiyor. Önce “Durumu yokla” deyin: kimlik "
+                              "bulunursa satıra yazılır ve iptal açılır.")}
 
         if not dry:
             await self._update(request_id, status=collect.CANCELLED, reason=reason, actor=actor)
@@ -942,27 +1205,21 @@ class PaymentGatewayService:
         if not row:
             return {"ok": False, "error": "Talep bulunamadı."}
         view = collect.request_view(row, link_base=self._link_base)
-        if not view["token"] and not view["orderId"]:
+        # YOKLAMA BAĞLANTIYA BAKAR, SİPARİŞE DEĞİL. Sipariş kimliği link
+        # listesinde ARANABİLİR BİR ŞEY DEĞİL (uç `order_id` süzgeci tanımıyor);
+        # elde yalnız sipariş no varken mağazaya gitmek, "bulamadım" yerine
+        # "başkasının linkini buldum" ile dönme riskidir.
+        if not view["linkId"] and not view["token"]:
             return {"ok": True, "connected": True, "error": "", "changed": False,
                     "request": view,
                     "notice": "Bu talebin mağazada karşılığı yok; yoklanacak bir şey yok."}
 
-        filters: dict[str, Any] = {}
-        if view["token"]:
-            filters["token"] = view["token"]
-        if view["orderId"]:
-            filters["order_id"] = view["orderId"]
         try:
-            payload = await self._api.bbd_payment_links(filters)
+            match = await self._find_link(view)
         except Exception as failure:  # noqa: BLE001 — K7
             return {"ok": True, "connected": False, "error": self._fail(failure),
                     "changed": False, "request": view}
 
-        rows = [collect.link_row(item) for item in (payload.get("items") or [])]
-        match = next((item for item in rows
-                      if item["token"] and item["token"] == view["token"]), None)
-        if match is None and rows:
-            match = rows[0]
         if match is None:
             # Kayıt bulunamadı: SESSİZ "başarısız" değil, açık "bilinmiyor".
             await self._apply_status(request_id, "", collect.UNKNOWN)
@@ -978,6 +1235,10 @@ class PaymentGatewayService:
             fields["order_id"] = match["orderId"]
         if match["invoiceId"]:
             fields["invoice_id"] = match["invoiceId"]
+        if match["id"] and not view["linkId"]:
+            # Arama yoluyla bulunduysa sayısal kimlik YEREL SATIRA YAZILIR:
+            # sonraki yoklama listeye hiç uğramaz, tekil ucu çağırır.
+            fields["link_id"] = match["id"]
         await self._update(request_id, **fields)
 
         invoice_note = ""
@@ -992,6 +1253,70 @@ class PaymentGatewayService:
         return {"ok": True, "connected": True, "error": "",
                 "changed": verdict["code"] != view["status"]["code"],
                 "request": refreshed, "notice": invoice_note or verdict["note"]}
+
+    async def _find_link(self, view: dict[str, Any]) -> dict[str, Any] | None:
+        """Bu talebin MAĞAZADAKİ bağlantısı — bulunamazsa `None`.
+
+        "BULAMADIM" İLE "BAŞKASINI BULDUM" AYNI ŞEY DEĞİLDİR. Bu metodun tek
+        işi bu ayrımı korumak; eskiden korumuyordu ve bedeli ölçüldü: ödenmemiş
+        bir talep, mağazadaki BAŞKA bir müşterinin ödenmiş linkine bakıp
+        "Ödendi" oluyor, üstüne o linkin `orderId`/`invoiceId` alanları yerel
+        satıra yazılıyordu. Personel hem takibi bırakıyor hem — `paid` yeniden
+        link üretimini kilitlediği için — yeni bağlantı üretemiyordu.
+
+        HATANIN İKİ AYRI KAYNAĞI VARDI, İKİSİ DE KAPATILDI:
+
+        1. GÖNDERİLEN SÜZGEÇ OKUNMUYORDU. `PaymentLinkController::index`
+           yalnız `status` ve `q` okur; `token`/`order_id` diye bir süzgeç
+           YOKTUR. Laravel tanımadığı sorgu parametresini sessizce yok sayar —
+           yani istek hata vermez, "en yeni 50 link"i döndürür
+           (`orderByDesc('id')`). Canlıda ölçüldü (16.08.2026, salt GET):
+           `payments/attempts?order_id=999999` → 17 satır (süzgeç yok sayıldı),
+           `?orderId=999999` → 0 satır. Aynı sessizlik link listesinde de var.
+
+        2. EŞLEŞME YOKKEN İLK SATIR ALINIYORDU (`match = rows[0]`). Süzgeç
+           çalışsa bile 50'lik sayfa taşınca aynı yere çıkardı.
+
+        SIRA — kesinden belirsize:
+          · `linkId` varsa TEKİL UÇ (`GET /payment-links/{id}`). Ya istenen
+            kaydı verir ya 404; üçüncü ihtimal yoktur.
+          · yoksa `q` ile ARAMA: uç `q`yu `code` üzerinde de LIKE ile arıyor.
+            Dönen satırlar yine DOĞRULANIR — LIKE başka kodlara da uyabilir ve
+            arama yalnız ADAY üretir, karar üretmez.
+
+        TEKİL UÇ GEÇİTTE YOKSA arama yoluna düşülür (geçit sürümü geride
+        kalabilir; `_standalone` yoklamasıyla aynı gerekçe). Bu GÜVENLİ bir
+        geri çekilmedir: arama yolu daha zayıftır ama yanlış satırı asla kabul
+        etmez — belirteç birebir doğrulanıyor.
+        """
+        if view["linkId"] and callable(getattr(self._api, "bbd_payment_link", None)):
+            try:
+                payload = await self._api.bbd_payment_link(view["linkId"])
+            except Exception as failure:   # 404 ile kopukluk AYRI şeyler (aşağıda)
+                # "KAYIT YOK" İLE "ULAŞAMADIM" AYNI CEVAP DEĞİLDİR ve fark
+                # paranın doğruluğunu belirler: ilkinde bağlantı mağazada
+                # gerçekten yoktur (durum bilinmiyor, çift çekim uyarısı
+                # verilir), ikincisinde YEREL DURUM KORUNUR — ağ koptu diye
+                # "Ödendi"yi silmek ya da "bilinmiyor" yazmak veriyi bozardı.
+                # Geçit ayrımı zaten yapıyor (`code="not_found"`); sınıfı
+                # import etmeden alan adına bakılır (K3).
+                if getattr(failure, "code", "") == "not_found":
+                    return None
+                raise
+            found = collect.link_row(payload)
+            # Tekil uç istenen kaydı döndürür; yine de kimliği doğrulanır:
+            # yanlış kaydı sessizce kabul etmektense "bilmiyorum" demek doğrudur.
+            return found if found["id"] == view["linkId"] else None
+
+        if not view["token"]:
+            # Arayacak bir kod yok. Boş `q` ile istek atmak uca "hepsini ver"
+            # demektir ve sonuç yine eşleşmezdi; istek hiç gönderilmez.
+            return None
+        payload = await self._api.bbd_payment_links({"q": view["token"]})
+        rows = [collect.link_row(item) for item in (payload.get("items") or [])]
+        # LIKE ARAMASI ADAY ÜRETİR, KARAR ÜRETMEZ: belirteç birebir doğrulanır.
+        return next((item for item in rows
+                     if item["token"] and item["token"] == view["token"]), None)
 
     async def _apply_status(self, request_id: int, store_status: str, code: str) -> None:
         await self._update(request_id, store_status=store_status, status=code)

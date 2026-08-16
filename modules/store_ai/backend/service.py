@@ -5,9 +5,18 @@
   · KATALOG SAĞLIĞI yalnız ÇEKİRDEK Bagisto uçlarına (ürün listesi, kategori
     ağacı) dayanır ve bulguyu burada hesaplar. Mağazadaki BBD/AI uçları hiç
     yayınlanmasa bile bu yarı bugün çalışır.
-  · ARAÇLAR `/api/admin/bbd/ai/*` uçlarına dayanır. Uç yoksa geçit
+  · ARAÇLAR mağazadaki AI uçlarına dayanır. Uç yoksa geçit
     `bbd_endpoint_missing` koduyla anlaşılır bir hata verir; ekran araç
     kartlarını "uç hazır olunca açılacak" notuyla kapatır ve ÇÖKMEZ (K7).
+    Bu savunma dalı, uç bir gün geri çekilse de kalır.
+
+    HANGİ UÇ VAR, HANGİSİ YOK (canlıda ölçüldü 2026-08-16, salt okuma):
+    `ai/tools` 404, `ai/tools/{tool}/run` yok, `ai/usage` 404 — ama
+    `ai/drafts` ailesi (liste/oluştur/apply/discard) YAYINDA. Bir dönem
+    "ai/* uçlarının tamamı yok" deniyordu; artık böyle değil. Yani araç
+    sekmesini kapalı tutan şey "uç yok" değil, AKIŞ MODELİ UYUŞMAZLIĞI:
+    mağaza "aracı çalıştır" bilmiyor, "taslağı KM üretir, mağaza saklar ve
+    onaylanınca uygular" diyor. Metin üretimi burada kalmalı.
 
 ÜÇ SERT KURAL:
 

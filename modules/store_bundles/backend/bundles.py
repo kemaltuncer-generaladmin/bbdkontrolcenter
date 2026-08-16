@@ -49,8 +49,20 @@ MAX_COMPONENTS = 24
 STATE_LABELS = {
     "profit": "Kârlı",
     "even": "Başabaş",
-    "loss": "ZARARINA",
-    "unknown": "Maliyet girilmemiş",
+    "loss": "ZARARINA SATILIYOR",
+    "unknown": "Hesaplanamıyor",
+}
+
+#: Rozetin YANINDA duran açıklama. "Hesaplanamıyor" bir durum adıdır;
+#: kullanıcının sorduğu soru "niye hesaplanmıyor, ne yapmam gerek".
+#: Cevap ekranda durur, kullanıcı destek aramak zorunda kalmaz.
+STATE_WHAT = {
+    "profit": "Bu seti sattıkça kazanıyorsunuz.",
+    "even": "Ne kazanıyor ne kaybediyorsunuz; masraflar buna dâhil değil.",
+    "loss": "Bu seti her sattığınızda PARA KAYBEDİYORSUNUZ. Ya set fiyatını yükseltin "
+            "ya indirimi azaltın.",
+    "unknown": "Kâr hesabı için içindeki ürünlerin ALIŞ fiyatı ve setin SATIŞ fiyatı "
+               "gerekli; biri eksik.",
 }
 
 
@@ -100,7 +112,8 @@ def from_kurus(kurus: Any) -> str:
 
 def reason_error(value: str) -> str:
     if len(text(value)) < MIN_REASON:
-        return f"Gerekçe en az {MIN_REASON} karakter olmalı; denetim kaydına bu metin yazılır."
+        return (f"Neden değiştirdiğinizi en az {MIN_REASON} karakterle yazın. Bu not kayda "
+                "geçer; ileride “bu fiyatı kim, niye değiştirdi” sorusunun cevabı o olacak.")
     return ""
 
 
@@ -455,16 +468,21 @@ def flags(calc: dict[str, Any], components: list[dict[str, Any]]) -> dict[str, b
 
 
 def warning_text(marks: dict[str, bool]) -> str:
-    """Rozetin yanında duracak yazı. Renk tek başına anlam taşımaz (kural 7)."""
+    """Rozetin yanında duracak yazı. Renk tek başına anlam taşımaz (kural 7).
+
+    METİNLER İŞ DİLİNDE. "Bileşeni pasif" doğru bir tespitti ama kullanıcıya
+    SONUCU söylemiyordu: bir set, içindeki ürün vitrinde olmadığı için
+    satılamaz hâle geliyor ve bunu ancak müşteri şikâyet edince öğreniyordunuz.
+    """
     parts = []
     if marks.get("loss"):
-        parts.append("zararına")
+        parts.append("zararına satılıyor")
     if marks.get("outOfStock"):
-        parts.append("bileşeni tükenmiş")
+        parts.append("içindeki ürün tükendi")
     if marks.get("passive"):
-        parts.append("bileşeni pasif")
+        parts.append("içindeki ürün vitrinde yok")
     if marks.get("missing"):
-        parts.append("bileşeni okunamadı")
+        parts.append("içindeki ürün okunamadı")
     return " · ".join(parts)
 
 
@@ -524,8 +542,8 @@ def sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
 
 def csv_table(rows: list[dict[str, Any]]) -> tuple[list[str], list[list[Any]]]:
     """Set listesinin CSV/PDF gövdesi. Para KURUŞ olarak döner; biçim çağıranın."""
-    headers = ["Set", "SKU", "Bileşen", "Set fiyatı", "Bileşen toplamı", "Kazanç/kayıp",
-               "Kâr", "Durum", "Uyarı"]
+    headers = ["Set", "Stok kodu", "Kaç ürün", "Set fiyatı", "İçindekilerin toplamı",
+               "Müşterinin kazancı", "Kâr", "Durum", "Dikkat"]
     table: list[list[Any]] = []
     for row in rows:
         calc = row.get("calc") or {}

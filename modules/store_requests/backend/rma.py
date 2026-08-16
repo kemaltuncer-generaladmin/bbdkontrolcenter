@@ -34,6 +34,11 @@ from typing import Any
 #: doğrulanır çünkü arayüzde gizlemek yetkilendirme değildir (K9).
 MIN_REASON = 10
 
+#: PARA HARCAYAN işlemde (iade kargo etiketi) istenen en az gerekçe uzunluğu.
+#: Kargo ekranındaki etiket satın alma da 20 istiyor; iade etiketi de aynı
+#: faturalanan iştir ve aynı çubuğu aşmalıdır.
+MIN_PURCHASE_REASON = 20
+
 #: Talep türleri. Anahtar İngilizce (tel), etiket Türkçe (ekran).
 TYPE_LABELS = {
     "return": "İade",
@@ -251,6 +256,102 @@ def reason_error(value: str) -> str:
     if len(text(value)) < MIN_REASON:
         return f"Gerekçe en az {MIN_REASON} karakter olmalı; denetim kaydına bu metin yazılır."
     return ""
+
+
+def purchase_reason_error(value: str) -> str:
+    """Para harcayan işlemde gerekçe DAHA UZUN istenir.
+
+    Kargo ekranındaki etiket satın alma da 20 karakter istiyor
+    (`store_shipping`); iade etiketi de faturalanan aynı iştir ve aynı çubuğu
+    aşmalıdır. "ok", "iade" gibi metinler denetim defterini işe yaramaz kılar
+    ve geri alınamayan bir harcamanın tek açıklaması odur.
+    """
+    if len(text(value)) < MIN_PURCHASE_REASON:
+        return (f"Etiket satın alma gerekçesi en az {MIN_PURCHASE_REASON} karakter olmalı: "
+                "bu işlem PARA HARCAR ve geri alınamaz; defterdeki tek açıklaması bu metindir.")
+    return ""
+
+
+#: İade kargosunun aşama anahtarları → ekran etiketi. Mağaza `stage` alanını
+#: KENDİ Türkçe anahtarıyla döndürüyor (`ReturnStage`); burada yalnız bilinen
+#: anahtarların karşılığı tutulur ve tanınmayan bir anahtar OLDUĞU GİBİ
+#: gösterilir — uydurma bir etiket, mağazanın söylediğini gizlerdi.
+RETURN_STAGE_LABELS = {
+    "yok": "İade gönderisi yok",
+}
+
+
+def dry_run_body(raw: Any) -> dict[str, Any]:
+    """Prova zarfını açar — `{dryRun, wouldChange: {...}}`.
+
+    MAĞAZA PROVA YANITINI SARAR (`Bbd\\ControlApi\\Support\\DryRun::response`):
+    gerçek yazmada alanlar KÖKTE gelir, provada `wouldChange` sözlüğünün
+    İÇİNDE. İki biçimi tek dalda okumak, provada her alanı boş görmek demektir
+    — ekran "teklif yok" der, oysa teklifler yanıtın içinde durur.
+
+    Zarf DÜZLEŞTİRİLİR, silinmez: dıştaki `dryRun` bayrağı yerinde kalır ve
+    içerideki alanlar üste yazar. Zarf yoksa gövde olduğu gibi döner.
+    """
+    row = dict(raw) if isinstance(raw, dict) else {}
+    inner = row.get("wouldChange")
+    return {**row, **inner} if isinstance(inner, dict) else row
+
+
+def return_shipment_row(raw: Any) -> dict[str, Any]:
+    """İade kargosu yanıtından ekranın okuduğu alanlar.
+
+    MAĞAZANIN BÜTÜN YAZMA UÇLARI AYNI GÖVDEYİ DÖNER (`ReturnShipmentController::present`),
+    bu yüzden tek çevirici hepsine yeter: "aç", "senkronla", "etiket al" ve
+    salt okuma aynı sözlükten okunur. Eylemden sonra durumu ikinci bir istekle
+    sormak gerekmez — iki istek, iki ekran arasında ayrışabilen iki gerçek
+    demektir.
+
+    PROVA YANITI İSTİSNADIR ve `dry_run_body` ile düzleştirilir: orada `present()`
+    gövdesi değil, "ne olurdu" özeti gelir (`wouldCreate`, `existingShipmentId`).
+    Gönderinin VAR OLUP OLMADIĞI o özetten de okunur — "yeni açılacak" sanıp
+    bekleyen operatör ile "zaten var" bilgisini gören operatör farklı kararlar
+    verir.
+
+    `received` "ÜRÜN GELDİ Mİ" sorusunun cevabıdır ve damga bir kez atıldıktan
+    sonra geri alınmaz.
+
+    `refundAllowedHere` HER ZAMAN `false`tur: kargo teslim alınsa bile para
+    iadesi bu zincirden yapılmaz. Alanı taşımak kozmetik değil — operatörün
+    "artık iade edebilirim, buradan mı?" sorusu her yanıtta aynı yerde
+    cevaplanmalı.
+    """
+    row = dry_run_body(raw)
+    shipment = row.get("shipment") if isinstance(row.get("shipment"), dict) else None
+    status = row.get("rmaStatus") if isinstance(row.get("rmaStatus"), dict) else {}
+    stage = text(row.get("stage"))
+    refund = row.get("refund") if isinstance(row.get("refund"), dict) else {}
+    # Provada `shipment` bloğu yoktur; var olan gönderi `existingShipmentId`
+    # ile bildirilir ve "yok" diye gösterilmemelidir.
+    existing = as_int(row.get("existingShipmentId"))
+    return {
+        "rmaId": as_int(row.get("rmaId")),
+        "orderId": as_int(row.get("orderId")),
+        "statusId": as_int(status.get("id")),
+        "statusTitle": text(status.get("title")),
+        "stage": stage,
+        "stageLabel": text(row.get("stageLabel")) or RETURN_STAGE_LABELS.get(stage, stage),
+        "exists": shipment is not None or bool(existing),
+        "received": bool(row.get("received")),
+        "receivedAt": local_stamp(row.get("receivedAt")),
+        "labelPurchased": bool(row.get("labelPurchased")),
+        "labelStored": bool(row.get("labelStored")),
+        "shipmentId": as_int((shipment or {}).get("id")) or existing,
+        "carrier": text((shipment or {}).get("providerName")),
+        "trackingNumber": text((shipment or {}).get("tracking_number")
+                               or (shipment or {}).get("trackingNumber")),
+        "canPurchase": bool((shipment or {}).get("canPurchase")),
+        "canCancel": bool((shipment or {}).get("canCancel")),
+        # Panelin "Bankaya iade gönder" düğmesi yalnız talep "Onaylandı" iken
+        # açıktır; bu zincir talebi BAŞKA bir duruma taşımaz.
+        "refundAllowedHere": bool(refund.get("allowedHere")),
+        "refundPanelUnlocked": bool(refund.get("panelButtonUnlocked")),
+        "refundMessage": text(refund.get("message")),
+    }
 
 
 def pick(raw: Any, *names: str) -> Any:

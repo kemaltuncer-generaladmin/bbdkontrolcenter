@@ -11,6 +11,7 @@ from store_refunds_backend.service import RefundsService
 from store_refunds_fakes import (
     LIVE_ORDER,
     LIVE_REFUND,
+    LIVE_RETURN_REQUEST,
     LIVE_SALES_STATS,
     ORDER,
     FakeApi,
@@ -56,7 +57,10 @@ async def test_magaza_dusunce_ekran_ayakta_kalir() -> None:
 
 
 async def test_bbd_ucu_yoksa_talepler_kapali_kredi_notlari_gorunur() -> None:
-    # `/api/admin/bbd/*` hâlâ yazılıyor; yokluğu ekranı düşürmez, KAPALI gösterir.
+    # `/api/admin/bbd/*` bugün YAYINDA (ölçüm 2026-08-16) — bu satır bir dönem
+    # "hâlâ yazılıyor" diyordu. Test yine de DURUYOR ve durmalı: uç geri
+    # çekilirse ekran düşmemeli, o bölümü KAPALI gösterip gerisini çizmeli (K7).
+    # Sınanmayan bir savunma dalı, olmayan savunmadır.
     service, api, _ = _service()
     api.refunds_payload = _refund_payload()
     api.absent.add("bbd_return_requests")
@@ -424,6 +428,31 @@ async def test_canli_pano_bicimi_iade_oranini_hesaplatir() -> None:
     assert result["summary"]["salesTotal"] == 1_600
     assert result["summary"]["refundRate"] is not None
     assert result["summary"]["rateNote"] == ""
+
+
+async def test_talep_taramasi_ucun_tanidigi_tarih_adlarini_gonderir() -> None:
+    # `bbd/return-requests` süzgeci `from`/`to` der. Bir dönem `date_from`/
+    # `date_to` gönderiliyordu: Laravel tanımadığı parametreyi atar, hata
+    # ÇIKMAZ ve ekran seçilen aralığın dışındaki talepleri de listelerdi.
+    service, api, _ = _service()
+    await service.refunds(date_from="2026-08-01", date_to="2026-08-16")
+    filters = api.args("bbd_return_requests")[0][0]
+    assert filters["from"] == "2026-08-01"
+    assert filters["to"] == "2026-08-16"
+    assert "date_from" not in filters
+
+
+async def test_canli_bicimli_talep_durumu_ve_siparis_numarasi_ekrana_dogru_gecer() -> None:
+    # Uç YAYINDA; canlı yanıtta durum sözlük, başlıklar Türkçe. Eski okuma
+    # rozete ham sözlük yazıyor ve "Sipariş" sütununu boş bırakıyordu.
+    service, api, _ = _service()
+    api.requests_payload = {"items": [LIVE_RETURN_REQUEST], "meta": {"lastPage": 1}}
+    result = await service.refunds(date_from="2026-07-01", date_to="2026-07-31")
+    assert result["sources"]["requests"]["available"] is True
+    row = next(item for item in result["items"] if item["requestId"] == 2)
+    assert row["statusLabel"] == "İade edildi"
+    assert row["orderNumber"] == "11"
+    assert row["reasonLabel"] == "Ayıplı"
 
 
 async def test_bozuk_tarih_ekrani_dusurmez_ve_yok_sayildigi_soylenir() -> None:

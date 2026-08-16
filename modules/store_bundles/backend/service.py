@@ -5,11 +5,13 @@ geçidinden gelir (K4); bu modül onların kopyasını DİSKE yazmaz. Yerel tabl
 yalnız mağazada karşılığı olmayan iki şeyi tutar: set künyesi/bileşen tanımı
 (adet, bileşen indirimi, zorunluluk) ve yazma gerekçesi.
 
-İKİ KAYNAK, TEK EKRAN. Set tanımı iki yerden gelebilir:
-  · `/api/admin/bbd/bundles` — BBD'ye özel uç. YAYINDA DEĞİL; hazır olduğunda
-    kendiliğinden birincil kaynak olur.
-  · "Setler" kategorisi (canlıda 42) + yerel künye — bugün çalışan yol.
-Ekran hangisinin kullanıldığını söyler; sessizce yer değiştirmez.
+MAĞAZADA SET = KATEGORİ. "Set" diye ayrı bir kayıt türü yoktur: set, "Setler"
+kategorisinin (canlıda 42, slug `setler`) ÜYESİ olan bir üründür.
+`GET /api/admin/bbd/storefront/sets` o kategorinin ürünlerini döndürür (yayında,
+ölçüm 2026-08-16) ve mağazaya yazılabilen TEK şey üyeliktir
+(`POST storefront/sets/membership`). Bileşen listesi, bileşen indirimi ve
+geçerlilik penceresi mağazada saklanmaz — künyenin yeri gerçekten yerel tablodur.
+Ekran hangi kaynağın kullanıldığını söyler; sessizce yer değiştirmez.
 
 UZAK SİSTEM DÜŞERSE EKRAN AYAKTA KALIR (K7): `connected: False` + `error`
 döner, yerel künyeler yine listelenir ve "fiyat okunamadı" yazar.
@@ -126,7 +128,7 @@ class BundlesService:
     @staticmethod
     def _fail(failure: Exception) -> str:
         message = str(failure).strip()
-        return message or "Mağazaya ulaşılamadı."
+        return message or "Mağazaya ulaşılamadı — internet bağlantısını kontrol edin."
 
     # ------------------------------------------------------ yerel tablolar
 
@@ -419,20 +421,24 @@ class BundlesService:
 
     def _source_notice(self, source: str, skipped: int, missed: int = 0) -> str:
         base = {
-            "bbd": "Set tanımları mağazadaki BBD ucundan geliyor.",
-            "category": f"Mağazada set ürün tipi yok: liste, {self._set_category} numaralı "
-                        "“Setler” kategorisindeki ürünlerden kuruluyor. Bileşen adedi, "
-                        "bileşen indirimi ve zorunluluk bilgisi Kontrol Merkezi'nde tutulur.",
-            "offline": "Mağazaya ulaşılamadı; yalnız yerel künyeler listeleniyor ve fiyatlar "
-                       "okunamadı.",
+            "bbd": "Set listesi doğrudan mağazadan geliyor.",
+            "category": "Mağazada “set” diye ayrı bir ürün türü yok. Bu liste, mağazadaki "
+                        f"{self._set_category} numaralı “Setler” kategorisindeki ürünlerden "
+                        "kuruluyor. Setin içinde hangi üründen kaç adet olduğu ve hangisinin "
+                        "zorunlu olduğu bilgisi burada, Kontrol Merkezi'nde tutulur.",
+            "offline": "Mağazaya ulaşılamadı. Aşağıda yalnız burada kayıtlı set bilgileri "
+                       "görünüyor; fiyatlar ve stoklar okunamadı, dolayısıyla kâr hesabı "
+                       "güncel değil.",
         }.get(source, "")
         if missed:
-            base += (f" Kategoride {missed} set daha var ama tek istekte en çok 50 satır "
-                     "geliyor; liste EKSİK. Kalanı görmek için kategoriyi bölmek ya da BBD "
-                     "set ucunu yayına almak gerekir.")
+            base += (f" DİKKAT — LİSTE EKSİK: kategoride {missed} set daha var ama tek seferde "
+                     "en çok 50 satır getirilebiliyor. Sıradaki adım: setleri alt kategorilere "
+                     "bölün ya da mağaza yazılımını güncelleyecek kişiden set listesi bölümünü "
+                     "açmasını isteyin.")
         if skipped:
-            base += (f" Bileşen okuma tavanı aşıldı: {skipped} ürün okunmadı, o satırların "
-                     "hesabı eksik. Ayardan `component_fetch_cap` büyütülebilir.")
+            base += (f" DİKKAT — {skipped} ürünün bilgisi okunamadı; o setlerin kâr hesabı "
+                     "eksik. Sıradaki adım: “Yenile” deyip yeniden deneyin, sürerse ayardan "
+                     "okuma sınırını yükseltecek kişiye haber verin.")
         return base
 
     async def bundle(self, bundle_id: int) -> dict[str, Any]:
@@ -444,7 +450,9 @@ class BundlesService:
                         "bundle": row, "crossSells": await self._cross_sells(bundle_id)}
         product = await self._product(int(bundle_id))
         if product is None:
-            return {"ok": False, "error": "Set okunamadı; mağazaya ulaşılamıyor olabilir."}
+            return {"ok": False,
+                    "error": "Bu set okunamadı. Mağazaya ulaşılamıyor olabilir; “Yenile” "
+                             "deyip yeniden deneyin."}
         empty = bundles.definition_row({"productId": int(bundle_id), "name": product["name"],
                                         "sku": product["sku"]})
         return {"ok": True, "connected": True, "error": "",
@@ -534,11 +542,24 @@ class BundlesService:
         """Set künyesini kaydeder.
 
         İKİ AŞAMA, İKİ AYRI SONUÇ:
-          1. Künye (bileşen adedi/indirimi/zorunluluğu) YEREL tabloya yazılır —
-             mağazada karşılığı olmadığı için tek yer burasıdır.
-          2. BBD ucu yayındaysa aynı künye mağazaya da gönderilir. Uç yoksa
-             yanıt `stored: False` döner ve ekran "mağazaya yazılmadı" der;
-             sessizce başarılı görünmez.
+          1. Künye (bileşen adedi/indirimi/zorunluluğu, geçerlilik tarihleri)
+             YEREL tabloya yazılır — mağazada karşılığı olmadığı için tek yer
+             burasıdır.
+          2. Mağaza tarafında set ürününün "Setler" KATEGORİSİNE ÜYELİĞİ
+             yazılır. Yazılamazsa yanıt `stored: False` döner ve ekran nedenini
+             söyler; sessizce başarılı görünmez (K7).
+
+        ═══════════════════════════════════════════════════════════════════════
+        MAĞAZAYA GİDEN TEK ŞEY ÜYELİKTİR — KÜNYE DEĞİL.
+
+        Bu metot eskiden künyenin tamamını (`components`, `pricing_mode`,
+        `set_price`, tarihler) `POST/PUT storefront/sets` adresine gönderiyordu.
+        O adres mağazada YOK: set bir kategoridir, `storefront/sets` öneki
+        altında yalnız liste okuma ve `POST sets/membership` vardır. İstek her
+        seferinde 405 alıyor, geçit onu "uç henüz yayında değil" diye
+        çeviriyordu ve ekran olmayan bir dağıtımı bekliyordu. Künyeyi mağazada
+        saklayacak bir tablo da yok — künyenin yeri gerçekten burasıdır.
+        ═══════════════════════════════════════════════════════════════════════
 
         SET FİYATINI MAĞAZAYA YAZMAZ. Set bir üründür ve ürün fiyatı yazmak
         Bagisto'da oku-değiştir-yaz gerektirir (kısmi PUT alanları boşaltır);
@@ -551,15 +572,21 @@ class BundlesService:
 
         definition = bundles.definition_row({**(payload or {}), "productId": int(bundle_id)})
         if not definition["productId"]:
-            return {"ok": False, "error": "Set ürünü seçilmedi."}
+            return {"ok": False,
+                    "error": "Hangi ürünün set olacağı seçilmedi. Sıradaki adım: “Yeni set” "
+                             "deyip listeden bir ürün seçin."}
         if not definition["components"]:
             return {"ok": False,
-                    "error": "Set en az bir bileşen ister; bileşensiz set normal üründür."}
+                    "error": "Bu sette hiç ürün yok. Bir set, en az bir üründen oluşur — "
+                             "içi boş bir kayıt zaten sıradan bir üründür. Sıradaki adım: "
+                             "“Ürün ekle” deyip setin içine gireceklerini seçin."}
         if definition["pricingMode"] == "fixed" and definition["setPrice"] is None:
             # Boş bırakılabilir: o zaman mağazadaki ürün fiyatı geçerlidir.
             definition["setPrice"] = None
         if any(item["productId"] == definition["productId"] for item in definition["components"]):
-            return {"ok": False, "error": "Set kendi bileşeni olamaz."}
+            return {"ok": False,
+                    "error": "Bir set kendi kendisinin içinde olamaz. Listeden o satırı "
+                             "çıkarın."}
 
         await self._record(bundle_id=definition["productId"], action="save_bundle", reason=reason,
                            actor=actor, result="denendi",
@@ -570,19 +597,24 @@ class BundlesService:
             await self._record(bundle_id=definition["productId"], action="save_bundle",
                                reason=reason, actor=actor, result="hata",
                                detail={"error": str(failure)})
-            return {"ok": False, "error": f"Set künyesi kaydedilemedi: {failure}"}
+            return {"ok": False,
+                    "error": f"Set bilgileri kaydedilemedi: {failure}. Sıradaki adım: yeniden "
+                             "deneyin; sürerse bilgisayarı yeniden başlatıp bir kez daha "
+                             "deneyin."}
 
         stored, notice = False, ""
         try:
-            result = await self._api.bbd_save_bundle(
-                payload=self._store_payload(definition), bundle_id=definition["productId"],
+            result = await self._api.bbd_set_membership(
+                [definition["productId"]], action="add",
                 reason=reason, actor=actor, dry_run=dry_run)
             stored = not bool(result.get("dryRun", dry_run))
-            notice = "" if stored else "Kuru prova: mağazaya istek gönderilmedi."
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir (K7)
-            notice = ("Set künyesi Kontrol Merkezi'nde saklandı ama mağazaya YAZILMADI: "
-                      f"{self._fail(failure)}")
-            self._log.info("set mağazaya yazılamadı", bundleId=definition["productId"],
+            notice = "" if stored else ("DENEME yapıldı: mağazaya hiçbir şey yazılmadı, "
+                                        "yalnız ne olacağı hesaplandı.")
+        except Exception as failure:  # noqa: BLE001 — K7: künye yazıldı, ekran düşmesin
+            notice = ("Set bilgileri buraya kaydedildi AMA ürün mağazadaki “Setler” "
+                      f"kategorisine eklenemedi: {self._fail(failure)} Sıradaki adım: "
+                      "ürünü Ürünler ekranından “Setler” kategorisine ekleyin.")
+            self._log.info("set üyeliği yazılamadı", bundleId=definition["productId"],
                            error=str(failure))
 
         await self._record(bundle_id=definition["productId"], action="save_bundle", reason=reason,
@@ -590,22 +622,6 @@ class BundlesService:
                            detail={"stored": stored, "dryRun": dry_run})
         return {"ok": True, "error": "", "stored": stored, "dryRun": dry_run,
                 "notice": notice, "id": definition["productId"]}
-
-    def _store_payload(self, definition: dict[str, Any]) -> dict[str, Any]:
-        """BBD ucuna gidecek gövde. Alan adları uç sözleşmesine göre snake_case."""
-        return {
-            "product_id": definition["productId"],
-            "name": definition["name"],
-            "pricing_mode": definition["pricingMode"],
-            "discount_percent": definition["discountPercent"],
-            "set_price": None if definition["setPrice"] is None
-            else bundles.from_kurus(definition["setPrice"]),
-            "valid_from": definition["validFrom"] or None,
-            "valid_to": definition["validTo"] or None,
-            "components": [{"product_id": item["productId"], "qty": item["qty"],
-                            "discount": item["discount"], "required": item["required"]}
-                           for item in definition["components"]],
-        }
 
     async def set_status(self, bundle_id: int, *, active: bool, reason: str, actor: str,
                          dry_run: bool = True) -> dict[str, Any]:
@@ -619,7 +635,7 @@ class BundlesService:
         if problem:
             return {"ok": False, "error": problem}
         if not int(bundle_id or 0):
-            return {"ok": False, "error": "Set seçilmedi."}
+            return {"ok": False, "error": "Önce soldaki listeden bir set seçin."}
 
         action = "activate" if active else "deactivate"
         await self._record(bundle_id=bundle_id, action=action, reason=reason, actor=actor,
@@ -637,7 +653,8 @@ class BundlesService:
         await self._record(bundle_id=bundle_id, action=action, reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok")
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
-                "notice": "Vitrine yansıması birkaç dakika sürebilir (arama dizini yenilenir)."}
+                "notice": "Yapıldı. Sitede görünmesi birkaç dakika sürebilir; mağaza arama "
+                          "listesini yeniliyor."}
 
     async def audit(self, *, bundle_id: int = 0, limit: int = 50) -> dict[str, Any]:
         sql = (f"SELECT bundle_id, action, reason, actor, result, created_at "
@@ -730,12 +747,14 @@ class BundlesService:
         passive = [row for row in rows if row["flags"]["passive"]]
         sections: list[dict[str, Any]] = [{
             "kind": "tiles", "title": "Özet",
-            "tiles": [("Set", number(len(rows))), ("Zararına", number(len(loss))),
-                      ("Bileşeni tükenmiş", number(len(empty_stock))),
-                      ("Bileşeni pasif", number(len(passive)))],
+            "tiles": [("Set sayısı", number(len(rows))),
+                      ("Zararına satılıyor", number(len(loss))),
+                      ("İçindeki ürün tükendi", number(len(empty_stock))),
+                      ("İçindeki ürün vitrinde yok", number(len(passive)))],
         }, {
             "kind": "table", "title": "Riskli setler" if only_risk else "Set listesi",
-            "headers": ["Set", "Bileşen", "Set fiyatı", "Bileşen toplamı", "Kâr", "Uyarı"],
+            "headers": ["Set", "Kaç ürün", "Set fiyatı", "İçindekilerin toplamı", "Kâr",
+                        "Dikkat"],
             "align": "LRRRRL", "widths": [3, 0.8, 1.1, 1.2, 1.1, 2],
             "rows": [[row["name"], number(len(row["components"])),
                       money(row["calc"]["setPrice"] or 0),
@@ -746,9 +765,10 @@ class BundlesService:
         if notice:
             sections.append({"kind": "note", "text": notice})
         sections.append({"kind": "note",
-                         "text": "Kâr, KDV hariç set fiyatından bileşen maliyetleri düşülerek "
-                                 "hesaplanır. Maliyeti girilmemiş bileşen varsa kâr “—” görünür; "
-                                 "sıfır maliyet varsayılmaz."})
+                         "text": "Kâr şöyle bulunur: setin KDV’siz satış fiyatından, içindeki "
+                                 "ürünlerin alış fiyatları düşülür. İçindeki ürünlerden birinin "
+                                 "alış fiyatı girilmemişse kâr “—” görünür — eksik bilgiyi "
+                                 "sıfır sayıp seti olduğundan kârlı göstermeyiz."})
         return build_pdf(title="Setler", subtitle=f"{len(rows)} set",
                          sections=sections, footer="Kontrol Merkezi · Mağaza")
 
@@ -757,8 +777,9 @@ class BundlesService:
         binary = shutil.which("pdftoppm")
         if not binary:
             raise PreviewError(
-                "Önizleme üretilemedi: `pdftoppm` yok (poppler-utils kurulmalı). "
-                "Rapor yine de kaydedildi ve yazdırılabilir.")
+                "Raporun ekrandaki önizlemesi çizilemedi çünkü bu bilgisayarda önizleme "
+                "aracı (poppler-utils) kurulu değil. RAPOR YİNE DE HAZIR: rapor klasörüne "
+                "kaydedildi ve yazdırılabilir.")
         with tempfile.TemporaryDirectory(prefix="km-set-onizleme-") as folder:
             target = Path(folder) / "sayfa"
             try:

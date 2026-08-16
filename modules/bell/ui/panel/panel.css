@@ -1,373 +1,450 @@
-/* Zil Sistemi paneli. Kabuğun --paper-* değişkenlerini kullanır;
-   ikincil ton, beyaz üzerinde okunur olsun diye koyulaştırılmıştır. */
+/* Zil Sistemi paneli.
+ *
+ * Önek `bl-`. Ortak bileşenler (düğme, giriş, tablo, bildirim, diyalog)
+ * `ui-kit/kit.css` içindedir ve BURADA TEKRARLANMAZ (ADR 0011) — bir kopya
+ * sapması, panel bir kez açıldıktan sonra tüm uygulamanın düğmelerini bozar.
+ *
+ * Renk jetonları panel kökündeki `.kit-panel` üzerinden gelir:
+ * --ink --soft --line --tint --accent --good --warn --bad
+ */
 
 .bl {
-  --line: var(--paper-line, #e9ecf2);
-  --soft: #667487;
-  --ink: var(--paper-ink, #111722);
-  --tint: #f7f8fb;
-  --chip: #5b8cff;
-
-  height: 100%;
-  overflow-y: auto;
-  padding: 18px 24px 28px;
   font-size: 13.5px;
-  color: var(--ink);
 }
 
-/* --------------------------------------------------------------- üst şerit */
+/* ============================================================ üst şerit */
+
+/* Şerit kaydırılmaz: "zil çalmaz" uyarısı ve "şimdi çal" düğmesi ekranın
+   neresine bakılırsa bakılsın görünür kalmalı. */
+.bl-head {
+  flex: none;
+  padding: 12px 20px 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper, #fff);
+}
 
 .bl-top {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
-
-.bl-status {
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--soft);
-  max-width: 60ch;
-}
-
-/* şalter */
 
 .bl-switch {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  flex: none;
-  font-size: 13.5px;
-  font-weight: 600;
   cursor: pointer;
+  font-weight: 600;
+  user-select: none;
 }
-
 .bl-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 
 .bl-switch-track {
+  width: 38px;
+  height: 21px;
+  border-radius: 11px;
+  background: #d6dbe6;
   position: relative;
-  width: 38px; height: 22px;
-  border-radius: 999px;
-  background: #d3d9e4;
-  transition: background-color 150ms;
+  transition: background 0.15s;
+  flex: none;
 }
-
 .bl-switch-track::after {
-  content: "";
+  content: '';
   position: absolute;
-  top: 3px; left: 3px;
-  width: 16px; height: 16px;
+  top: 2px;
+  left: 2px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform 150ms;
+  transition: transform 0.15s;
+}
+.bl-switch input:checked + .bl-switch-track { background: var(--accent); }
+.bl-switch input:checked + .bl-switch-track::after { transform: translateX(17px); }
+.bl-switch input:focus-visible + .bl-switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.bl-switch input:checked + .bl-switch-track { background: #2f9e5e; }
-.bl-switch input:checked + .bl-switch-track::after { transform: translateX(16px); }
-.bl-switch input:focus-visible + .bl-switch-track { outline: 2px solid var(--chip); outline-offset: 2px; }
-
-.bl-switch-sm { font-weight: 500; font-size: 12.5px; color: var(--soft); }
-.bl-switch-sm .bl-switch-track { width: 32px; height: 19px; }
-.bl-switch-sm .bl-switch-track::after { width: 13px; height: 13px; }
-.bl-switch-sm input:checked + .bl-switch-track::after { transform: translateX(13px); }
-
-/* ----------------------------------------------------------------- gruplar */
-
-.bl-groups {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  padding: 14px 0 4px;
-}
-
-.bl-chip {
+.bl-agent {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 30px;
-  padding: 0 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: #fff;
   color: var(--soft);
-  font: inherit;
   font-size: 12.5px;
-  cursor: pointer;
-  transition: border-color 130ms, color 130ms, background-color 130ms;
 }
-
-.bl-chip:hover { color: var(--ink); border-color: #cfd6e2; }
-
-.bl-chip.active {
-  color: var(--ink);
-  border-color: color-mix(in srgb, var(--chip) 55%, #fff);
-  background: color-mix(in srgb, var(--chip) 8%, #fff);
+.bl-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--good);
+  flex: none;
 }
+.bl-agent.off { color: var(--bad); }
+.bl-agent.off .bl-dot { background: var(--bad); }
 
-.bl-chip.muted .bl-chip-dot { background: #c8cfdb; }
-.bl-chip.muted { text-decoration: line-through; text-decoration-color: #c8cfdb; }
+.bl-library { font-size: 12.5px; color: var(--warn); }
+.bl-library.ok { color: var(--soft); }
 
-.bl-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chip); }
-.bl-chip-count { font-style: normal; font-size: 11px; color: var(--soft); }
-
-/* ------------------------------------------------------------------ gövde */
-
-.bl-body { padding-top: 10px; transition: opacity 150ms; }
-.bl-body.off { opacity: 0.55; }
-
-.bl-headline {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 6px 0 14px;
+/* Durum satırı. Arıza varsa GÖRMEZDEN GELİNEMEYECEK kadar belirgin:
+   çalmayan bir zil haftalarca fark edilmeyebilir. */
+.bl-status {
+  margin: 9px 0 12px;
+  font-size: 12.5px;
+  color: var(--soft);
 }
+.bl-status.bad {
+  color: var(--bad);
+  background: #fff5f5;
+  border: 1px solid #f2c9c9;
+  border-radius: 7px;
+  padding: 8px 11px;
+  margin-bottom: 12px;
+}
+.bl-status.bad b { letter-spacing: 0.02em; }
 
-.bl-headline h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
-.bl-note { font-size: 12.5px; color: var(--soft); }
-.bl-spacer { flex: 1; }
+/* ================================================================ düzen */
 
 .bl-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: 14px;
+  align-items: start;
 }
-
-@media (max-width: 900px) {
+@media (max-width: 1080px) {
   .bl-columns { grid-template-columns: minmax(0, 1fr); }
 }
 
 .bl-card {
-  padding: 15px 16px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 10px;
+  background: var(--paper, #fff);
+  padding: 14px 16px 16px;
 }
-
 .bl-card h4 {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--soft);
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.bl-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 11px;
 }
 
-.bl-h4-gap { margin-top: 20px; }
-.bl-card-wide { margin-top: 14px; }
+.bl-hint { color: var(--soft); font-size: 12px; margin: 0; }
+.bl-empty {
+  color: var(--soft);
+  font-size: 12.5px;
+  margin: 10px 0 0;
+  line-height: 1.55;
+}
+.bl-rule { border: 0; border-top: 1px solid var(--line); margin: 16px 0 14px; }
 
-/* -------------------------------------------------------------- zil sesleri */
+/* ============================================================== gruplar */
 
-.bl-sounds { display: flex; flex-direction: column; gap: 6px; }
+.bl-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 10px;
+}
 
-.bl-sound {
+.bl-group {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 11px 12px 12px;
+  background: var(--tint);
   display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: border-color 130ms, background-color 130ms;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 118px;
 }
+/* Sesi hazır olmayan grup soluk durur: düğmesinin neden kapalı olduğu
+   tıklamadan önce anlaşılmalı. */
+.bl-group.bl-voice-pending,
+.bl-group.bl-voice-missing { opacity: 0.75; }
+.bl-group.bl-voice-error { border-color: #f2c9c9; background: #fff7f7; }
 
-.bl-sound:hover { background: var(--tint); }
-
-.bl-sound.active {
-  border-color: color-mix(in srgb, var(--chip) 55%, #fff);
-  background: color-mix(in srgb, var(--chip) 6%, #fff);
+.bl-group-name {
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+  padding-right: 44px;   /* köşedeki düğmelerin altına girmesin */
 }
+.bl-group-actions { margin-top: auto; }
+.bl-group-actions .kit-btn { width: 100%; }
 
-.bl-sound input { accent-color: var(--chip); width: 15px; height: 15px; flex: none; }
+.bl-group-menu {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.bl-group:hover .bl-group-menu,
+.bl-group:focus-within .bl-group-menu { opacity: 1; }
 
-.bl-sound-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.bl-sound-text b { font-size: 13px; font-weight: 600; }
-.bl-sound-text span { font-size: 11.5px; color: var(--soft); }
-
-.bl-play, .bl-row-play {
-  flex: none;
-  width: 28px; height: 28px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+.bl-icon-btn {
+  border: 0;
+  background: transparent;
   color: var(--soft);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1;
   cursor: pointer;
-  transition: background-color 130ms, color 130ms, border-color 130ms;
-}
-
-.bl-play:hover, .bl-row-play:hover {
-  background: color-mix(in srgb, var(--chip) 10%, #fff);
-  border-color: color-mix(in srgb, var(--chip) 45%, #fff);
-  color: var(--ink);
-}
-
-/* ------------------------------------------------------------------ düzey */
-
-.bl-volume { display: flex; align-items: center; gap: 12px; }
-
-.bl-range {
-  flex: 1;
-  min-width: 0;
-  height: 4px;
-  accent-color: var(--chip);
-}
-
-.bl-volume-value {
-  min-width: 42px;
-  text-align: right;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.bl-presets { display: flex; gap: 6px; margin-top: 11px; flex-wrap: wrap; }
-
-.bl-preset {
-  height: 28px;
-  padding: 0 11px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--soft);
-  font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  line-height: 1;
+  padding: 4px 5px;
+  border-radius: 5px;
 }
+.bl-icon-btn:hover { background: #e7eaf1; color: var(--ink); }
+.bl-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.bl-preset:hover { background: var(--tint); color: var(--ink); }
+.bl-group-new { background: transparent; border-style: dashed; }
+.bl-group-new .bl-group-name { color: var(--soft); font-weight: 500; padding-right: 0; }
 
-.bl-preset.active {
-  border-color: color-mix(in srgb, var(--chip) 55%, #fff);
-  background: color-mix(in srgb, var(--chip) 9%, #fff);
-  color: var(--ink);
-}
-
-.bl-test { margin-left: auto; }
-
-.bl-hint {
-  margin-top: 10px;
+.bl-badge {
   font-size: 11.5px;
-  line-height: 1.5;
   color: var(--soft);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
+.bl-badge.ok { color: var(--good); }
+.bl-badge.wait { color: var(--warn); }
+.bl-badge.bad { color: var(--bad); cursor: help; }
 
-.bl-checks { display: flex; flex-direction: column; gap: 8px; }
+/* ========================================================= zil saatleri */
 
-.bl-check {
+.bl-tabs {
+  display: flex;
+  gap: 3px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 11px;
+  flex-wrap: wrap;
+}
+.bl-tab {
+  border: 0;
+  background: transparent;
+  padding: 7px 10px 8px;
+  cursor: pointer;
+  color: var(--soft);
+  font: inherit;
+  font-size: 12.5px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.bl-tab:hover { color: var(--ink); }
+.bl-tab.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.bl-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.bl-tab-count {
+  font-style: normal;
+  font-size: 10.5px;
+  background: #e7eaf1;
+  color: var(--soft);
+  border-radius: 8px;
+  padding: 1px 5px;
+  min-width: 15px;
+  text-align: center;
+}
+.bl-tab.active .bl-tab-count { background: var(--accent); color: #fff; }
+
+.bl-times { display: flex; flex-direction: column; gap: 5px; }
+
+.bl-time {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.bl-check input { accent-color: var(--chip); width: 15px; height: 15px; }
-
-/* ------------------------------------------------------------ ders listesi */
-
-.bl-table { width: 100%; border-collapse: collapse; }
-
-.bl-table th {
-  padding: 6px 8px;
-  text-align: left;
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--soft);
-  border-bottom: 1px solid var(--line);
-}
-
-.bl-table td {
-  padding: 6px 8px;
-  border-bottom: 1px solid #f2f4f8;
-  font-size: 12.5px;
-  vertical-align: middle;
-}
-
-.bl-table tr.bl-day-first td { border-top: 1px solid var(--line); }
-.bl-table tbody tr:hover td { background: #fafbfd; }
-
-.bl-day { width: 90px; font-weight: 600; color: var(--ink); }
-.bl-lesson { color: var(--ink); }
-.bl-time { width: 110px; color: var(--soft); font-variant-numeric: tabular-nums; }
-.bl-tick { width: 52px; }
-.bl-tick input { accent-color: var(--chip); width: 15px; height: 15px; }
-
-.bl-select {
-  max-width: 220px;
-  height: 28px;
-  padding: 0 6px;
-  border: 1px solid var(--line);
+  padding: 4px 4px 4px 9px;
   border-radius: 7px;
-  background: #fff;
-  color: var(--ink);
+}
+.bl-time:hover { background: var(--tint); }
+
+.bl-time-clock {
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  min-width: 46px;
+}
+.bl-time-label { flex: 1; min-width: 0; }
+
+.bl-time-form {
+  display: flex;
+  gap: 7px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.bl-time-form .kit-input { flex: 1; min-width: 120px; }
+
+.bl-copy {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 11px;
+}
+.bl-link {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
   font: inherit;
   font-size: 12px;
+  padding: 2px 5px;
+  border-radius: 5px;
+}
+.bl-link:hover { background: var(--tint); text-decoration: underline; }
+.bl-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ======================================================= ses ve metinler */
+
+.bl-card-wide { grid-column: 1 / -1; }
+
+.bl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 11px;
+}
+.bl-label {
+  min-width: 108px;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.bl-row .kit-select { min-width: 200px; }
+
+.bl-range {
+  flex: 1;
+  min-width: 160px;
+  max-width: 320px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.bl-volume-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
 }
 
-.bl-select:focus { outline: none; border-color: var(--chip); }
-
-/* ------------------------------------------------------------------ boşluk */
-
-.bl-empty { padding: 14px 2px; font-size: 12.5px; color: var(--soft); }
-
-.bl-empty-state {
-  margin-top: 18px;
-  padding: 26px 24px;
-  border: 1px dashed var(--line);
-  border-radius: 12px;
-  background: #fcfcfe;
-  max-width: 62ch;
+.bl-text { margin-bottom: 16px; }
+.bl-text-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
 }
+.bl-textarea { width: 100%; max-width: 620px; }
+.bl-text .bl-hint { margin: 5px 0 8px; max-width: 620px; line-height: 1.5; }
 
-.bl-empty-state h3 { font-size: 14px; font-weight: 600; margin-bottom: 7px; color: #111722; }
-.bl-empty-state p { font-size: 13px; line-height: 1.6; color: #4d5768; }
+.bl-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+.bl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--soft);
+}
+.bl-check input { accent-color: var(--accent); cursor: pointer; }
 
-/* Veri beklenirken — "boş ekran" ile "yükleniyor" ayrımı görünür olmalı. */
+/* ================================================================ günlük */
+
+.bl-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.bl-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--soft);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 10px 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.bl-table td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.bl-table tr.bad td { color: var(--bad); }
+.bl-time-cell { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bl-detail { color: var(--soft); word-break: break-word; }
+.bl-table tr.bad .bl-detail { color: var(--bad); }
+
+/* ================================================================ açılış */
+
 .bl-loading {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 28px;
-  color: #4d5768;
-  font-size: 13px;
+  gap: 11px;
+  padding: 34px 22px;
+  color: var(--paper-soft, #8792a5);
 }
-
 .bl-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--line);
+  width: 15px;
+  height: 15px;
+  border: 2px solid #d6dbe6;
   border-top-color: #5b8cff;
   border-radius: 50%;
-  animation: bl-spin 0.7s linear infinite;
+  animation: bl-spin 0.8s linear infinite;
   flex: none;
 }
-
 @keyframes bl-spin { to { transform: rotate(360deg); } }
 
-@media (prefers-reduced-motion: reduce) {
-  .bl * { transition-duration: 0.001ms !important; }
-  .bl-spinner { animation-duration: 2s; }
+.bl-empty-state {
+  margin: 24px;
+  padding: 20px 22px;
+  border: 1px solid var(--paper-line, #e9ecf2);
+  border-radius: 10px;
+  max-width: 680px;
+}
+.bl-empty-state h3 { margin: 0 0 8px; font-size: 15px; }
+.bl-empty-state p { margin: 0; color: var(--paper-soft, #8792a5); line-height: 1.6; }
+
+/* ---------------------------------------------------------- grup türü */
+
+.bl-group-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-/* Canlı durum satırı — zil çalmıyorsa kırmızı. */
-.bl-status.bad { color: #b91c1c; font-weight: 600; }
-
-.bl-ring-now {
-  height: 30px;
-  padding: 0 14px;
-  border: 1px solid var(--accent, #5b8cff);
-  border-radius: 999px;
-  background: var(--accent, #5b8cff);
-  color: #fff;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+/* Tür rozetleri farklı RENKTE değil farklı ÇERÇEVEDE: renk zaten ses
+   durumunu anlatıyor (yeşil hazır, kırmızı hata). İkinci bir renk boyutu
+   eklemek, kartta hangi rengin neyi söylediğini belirsizleştirirdi. */
+.bl-kind {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  color: var(--soft);
+  white-space: nowrap;
+}
+.bl-kind-ozel {
+  border-style: dashed;
+  font-style: italic;
 }
 
-.bl-ring-now:hover { background: #6f9bff; }
+.bl-group-new .kit-select { width: 100%; }

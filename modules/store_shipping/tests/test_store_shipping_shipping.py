@@ -312,3 +312,55 @@ def test_para_harcayan_islemde_gerekce_daha_uzun_istenir() -> None:
     assert shipping.reason_error("On karakter", shipping.MIN_PURCHASE_REASON) != ""
     assert shipping.reason_error("Müşteri adresi düzeltildi, etiket yenilendi",
                                  shipping.MIN_PURCHASE_REASON) == ""
+
+
+# ============================================ bayrak okuması: üç biçim, tek kural
+
+def test_JSON_BOOLEAN_bayragi_taniyor_tasiyicilar_pasif_gorunmuyor() -> None:
+    # CANLIDA ÇIKAN ARIZA (2026-08-16): mağaza `active` alanını JSON boolean
+    # gönderiyor. Eski okuma `bool(as_int(...))` idi; `as_int(True)` →
+    # `int("True")` → ValueError → varsayılan 0 → ÜÇ TAŞIYICI DA "Pasif".
+    # Sihirbaz önerecek firma bulamıyor, "Taşıyıcı listesi okunamadı" diyor ve
+    # KARGO EKRANI GÖNDERİ YAPAMIYORDU.
+    canli = [
+        {"code": "hepsijet", "title": "Hepsijet", "active": True},
+        {"code": "surat", "title": "Sürat Kargo", "active": True},
+        {"code": "yurtici", "title": "Yurtiçi Kargo", "active": False},
+    ]
+    satirlar = [shipping.carrier_row(row) for row in canli]
+    assert [row["active"] for row in satirlar] == [True, True, False]
+    assert len([row for row in satirlar if row["active"]]) == 2
+
+
+def test_bayrak_uc_bicimde_de_ayni_okunur() -> None:
+    # Bagisto `core_config` satırlarını METİN tutuyor; aynı alan bool, sayı ya
+    # da metin olarak gelebiliyor. Üçü de aynı sonucu vermeli.
+    for dogru in (True, 1, "1", "true", "TRUE", "yes", "on", "evet"):
+        assert shipping.flag(dogru) is True, dogru
+    for yanlis in (False, 0, "0", "false", "FALSE", "no", "off", "hayir"):
+        assert shipping.flag(yanlis) is False, yanlis
+
+
+def test_bayrak_yoksa_VARSAYILAN_donuyor_deger_varsa_varsayilan_ezilmiyor() -> None:
+    # `delivers` alanının varsayılanı True'dur (bilgi yoksa teslimat var
+    # sayılır). Ama açıkça False geldiyse varsayılan EZİLMELİ.
+    assert shipping.flag(None, True) is True         # alan yok → varsayılan
+    assert shipping.flag("", True) is True           # boş → varsayılan
+    assert shipping.flag(False, True) is False       # açık ret → varsayılan EZİLİR
+    assert shipping.flag("0", True) is False
+
+
+def test_teslimat_yapilmayan_bolge_teslimat_var_diye_okunmuyor() -> None:
+    # ESKİ ARIZA: `bool(as_int(False, 1))` → `True`. "Teslimat yapılmıyor"
+    # işaretli bir bölge "teslimat var" diye okunuyordu; paket yola çıkıyor,
+    # taşıyıcı teslim edemiyordu.
+    zones = [{"city": "Hakkari", "district": "", "zone": "Uzak",
+              "surcharge": 0, "delivers": False, "note": ""}]
+    assert shipping.zone_for("Hakkari", "", zones)["delivers"] is False
+
+
+def test_etiket_hazir_bayragi_sifir_metniyle_kandirilmaz() -> None:
+    # `bool("0")` → True. Olmayan etiket "hazır" görünürse kullanıcı basmayı
+    # bekler ve kâğıt hiç çıkmaz.
+    satir = shipping.shipment_row({"status": "created", "has_label": "0"})
+    assert satir["labelReady"] is False

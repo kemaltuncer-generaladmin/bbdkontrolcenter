@@ -36,6 +36,13 @@ consumes:
   - capability: store.notify.send
     optional: true
     reason: "Satır eylemi 'Müşteriye bildirim'. Bildirim ekranı kapalıysa düğme gizlenir."
+  - capability: store.notify.stage
+    optional: true
+    reason: >
+      "Kargoya verildi" müşteri SMS'i. Tetikleyicisi bu ekrandır çünkü GERÇEK
+      takip numarası yalnız burada üretilir; mesajın zorunlu değişkenleri
+      (kargo firması, takip kodu, takip bağlantısı) başka yerde dolu değildir.
+      Bildirimler ekranı kapalıysa gönderi yine açılır, yalnız mesaj gitmez.
 
 events:
   publishes:
@@ -62,8 +69,8 @@ ui:
   nav:
     title: "Kargo Yönetimi"
     icon: truck
-    group: "BBD Store"
-    order: 30
+    group: "BBD Store / Satış ve Kargo"
+    order: 220
     requires: [store_shipping.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

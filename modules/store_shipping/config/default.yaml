@@ -17,9 +17,19 @@ desi_divisor: 3000
 # hareket zamanına bakılır; teslim edilmiş ve iptal edilmiş gönderiler sayılmaz.
 idle_days: 3
 
-# Toplu etiket varsayılan biçimi. "thermal-100x150" = termal etiket yazıcısı,
-# "a4-4up" = normal yazıcıda A4 kâğıda dört etiket.
-label_format: "thermal-100x150"
+# Etiket biçimi. "thermal-100x150" = termal etiket yazıcısı, "a4-4up" =
+# normal yazıcıda A4 kâğıda dört etiket. Ekran tercihi bu ayarı EZER
+# (`label_format_on`).
+#
+# VARSAYILAN A4. Bu kurulumda kargo etiketi A4 lazerden çıkıyor, katlanıp
+# kargo poşetinin cebine konuyor — tek termal yazıcı (`80mm`) BLD KDS'nin
+# mutfak bildirim yazıcısıdır ve kargoyla ilgisi yoktur.
+#
+# NEDEN A4'İ KAPLAYAN TEK ETİKET DEĞİL. Etiket A4'ün bir A6 çeyreğine oturur;
+# kâğıt ikiye ikiye katlandığında etiket tek çeyrekte KATSIZ kalır. Sayfayı
+# kaplayan tek etiket katlandığında barkodun üstünden kat geçer ve şubede
+# okutulamayan barkod paketi elde bırakır.
+label_format: "a4-4up"
 
 # Tek seferde birleştirilecek en çok etiket. 60'ın üstü hem hız kovasını
 # (dakikada 55 istek) tüketiyor hem de tek PDF'i kullanılamaz derecede

@@ -644,6 +644,7 @@ async function openRequest(requestId) {
   const tabs = tabBar([
     { key: 'summary', label: 'Özet' },
     { key: 'items', label: 'İade kalemleri' },
+    { key: 'shipment', label: 'İade kargosu' },
     { key: 'thread', label: 'Yazışma' },
     { key: 'history', label: 'İşlem geçmişi' },
   ], 'summary', (key) => paint(key));
@@ -667,7 +668,8 @@ async function openRequest(requestId) {
     dropForms();
     pane.replaceChildren();
     ({
-      summary: paintSummary, items: paintItems, thread: paintThread, history: paintHistory,
+      summary: paintSummary, items: paintItems, shipment: paintShipment,
+      thread: paintThread, history: paintHistory,
     })[key]?.(pane, payload, forms, reload);
   }
   paint('summary');
@@ -1135,6 +1137,193 @@ async function paintHistory(pane, payload) {
 
   pane.append(hintBox('Bu iz YERELDİR ve gerekçeyi tutar. Mağazanın kendi denetim kaydı '
     + 'gerekçe alanı taşımıyor; ağ koparsa “ne yapmaya çalıştık” bilgisi yalnız burada kalır.'));
+}
+
+// ------------------------------------------------------------ iade kargosu
+//
+// "MÜŞTERİ ÜRÜNÜ NASIL GERİ GÖNDERECEK" — bu ekranın cevapsız kalan sorusu.
+// Üç düğme, üç ayrı karar ve YALNIZCA BİRİ PARA HARCAR. Ayrı durmalarının
+// sebebi ekran düzeni değil: onaylanan her talep etiketle sonuçlanmaz
+// (müşteri ürünü kendi getirebilir, vazgeçebilir, talep reddedilebilir) ve
+// her otomatik etiket bize kesilmiş bir fatura demektir.
+
+const STAGE_TONES = { yok: 'dim', teslim: 'good', iptal: 'bad' };
+
+async function paintShipment(pane, payload, forms, reload) {
+  const request = payload.request;
+  pane.append(skeletonRows(3, 2));
+
+  let result;
+  try {
+    result = await call(`${BASE}/requests/${request.id}/shipment`);
+  } catch (error) {
+    pane.replaceChildren(alertBox(error.message, 'bad'));
+    return;
+  }
+  pane.replaceChildren();
+
+  if (result.connected === false) {
+    // K7: kargo tarafı okunamadı — talebin geri kalanı çalışmaya devam eder.
+    pane.append(alertBox(`İade kargosu okunamadı — ${result.error}`, 'warn'));
+  }
+
+  const ship = result.shipment || {};
+  const label = result.label || {};
+
+  const head = h('div', 'rq-drawer-head');
+  head.append(badge(ship.stageLabel || 'Durum okunamadı', STAGE_TONES[ship.stage] ?? 'info'));
+  if (ship.received) head.append(badge('Ürün elimize ulaştı', 'good'));
+  if (ship.labelPurchased) head.append(badge('Etiket satın alındı', 'good'));
+  pane.append(head);
+
+  // Künye satırları özet sekmesiyle AYNI biçimde çizilir: iki sekmede iki
+  // ayrı görsel dil, aynı ekranda iki ayrı ürün gibi durur.
+  const grid = h('div', 'rq-facts');
+  const line = (name, value) => {
+    const row = h('div', 'rq-fact');
+    row.append(h('span', 'rq-sub', name), h('b', undefined, value || '—'));
+    grid.append(row);
+  };
+  line('Kargo firması', ship.carrier);
+  line('Takip numarası', ship.trackingNumber);
+  line('Ürün elimize ulaştı', ship.received ? (ship.receivedAt || 'Evet') : 'Hayır');
+  line('Etiket', ship.labelPurchased
+    ? (ship.labelStored ? 'Satın alındı, dosya hazır' : 'Satın alındı, dosya bekliyor')
+    : 'Satın alınmadı');
+  if (label.trackingNumber || label.barcode) line('Barkod', label.barcode);
+  pane.append(card('Kargo künyesi', grid));
+
+  const actions = h('div', 'rq-actions');
+
+  if (!ship.exists) {
+    actions.append(button('İade kargosunu aç', {
+      variant: 'primary',
+      title: 'Gönderi açar — PARA HARCAMAZ, etiket satın alınmaz',
+      onClick: () => openShipment(request, reload),
+    }));
+  } else {
+    actions.append(button('Durumu tazele', {
+      title: 'Taşıyıcıdan güncel durumu okur; hiçbir şey yazmaz',
+      onClick: () => syncShipment(request, reload),
+    }));
+    if (!ship.labelPurchased) {
+      actions.append(button('Etiketi satın al…', {
+        variant: 'danger',
+        title: 'PARA HARCAR — önce teklifleri kuru provada gösterir',
+        onClick: () => purchaseLabel(request, reload),
+      }));
+    }
+    if (ship.labelPurchased) {
+      actions.append(button('Etiketi indir', {
+        title: 'Satın alınmış etiketin PDF’i — basılır ya da müşteriye iletilir',
+        onClick: () => downloadLabel(request),
+      }));
+    }
+  }
+  pane.append(actions);
+
+  // PARA KAPISI HER ZAMAN AYNI YERDE VE AYNI SÖZCÜKLERLE. "Ürün geldi, artık
+  // iade edebilirim" diyen operatörün bir sonraki sorusu "buradan mı?"dır.
+  pane.append(hintBox(ship.refundMessage
+    || 'Para iadesi bu ekrandan yapılmaz; kargo hareketi talebin durumunu DEĞİŞTİRMEZ.'));
+}
+
+async function openShipment(request, reload) {
+  const reason = await askReason({
+    title: 'İade kargosunu aç',
+    description: `${request.code} için iade gönderisi açılacak. PARA HARCANMAZ ve etiket `
+      + 'SATIN ALINMAZ — etiket ayrı bir düğmeyle, ayrı yetkiyle alınır. Aynı talep için '
+      + 'ikinci gönderi açılmaz; düğmeye iki kez basmak zararsızdır.',
+    confirmLabel: 'Gönderiyi aç',
+  });
+  if (!reason) return;
+  await withBusy('İade gönderisi açılıyor…', async () => {
+    const result = await call(`${BASE}/requests/${request.id}/shipment`, {
+      method: 'POST', body: { reason, dryRun: false },
+    });
+    toast(result.notice || 'İade gönderisi açıldı.', 'good');
+    reload();
+  });
+}
+
+async function syncShipment(request, reload) {
+  const reason = await askReason({
+    title: 'Kargo durumunu tazele',
+    description: `${request.code} için taşıyıcıdaki güncel durum okunacak. Yalnız OKUR: `
+      + 'talebin durumu değişmez, para hareketi olmaz.',
+    confirmLabel: 'Tazele',
+  });
+  if (!reason) return;
+  await withBusy('Kargo durumu okunuyor…', async () => {
+    const result = await call(`${BASE}/requests/${request.id}/shipment/sync`, {
+      method: 'POST', body: { reason, dryRun: false },
+    });
+    toast(result.shipment?.received
+      ? 'Ürün elimize ulaşmış görünüyor.' : 'Kargo durumu tazelendi.', 'good');
+    reload();
+  });
+}
+
+/**
+ * ETİKET SATIN ALMA — İKİ ADIM, BİRİNCİSİ PARA HARCAMAZ.
+ *
+ * Önce kuru prova çalışır ve hangi taşıyıcının ne kadara alınacağını gösterir;
+ * gerçek satın alma ancak ikinci onaydan sonra gider. Tek adımda almak,
+ * fiyatı görmeden fatura kestirmek olurdu.
+ */
+async function purchaseLabel(request, reload) {
+  const reason = await confirmWithReason(nodes.root, {
+    title: 'İade etiketi satın al',
+    description: `${request.code} için kargo etiketi SATIN ALINACAK — bu işlem PARA HARCAR `
+      + 've geri alınamaz. Önce kuru prova çalışır ve teklifleri gösterir; hiçbir şey '
+      + 'harcanmaz. Gerekçe en az 20 karakter olmalı: defterdeki tek açıklaması bu metindir.',
+    confirmLabel: 'Teklifleri göster',
+    minLength: 20,
+    placeholder: 'Gerekçe (en az 20 karakter) — PARA HARCAYAN işlem, denetim kaydına yazılır',
+  });
+  if (!reason) return;
+
+  const preview = await withBusy('Teklifler alınıyor…', () =>
+    call(`${BASE}/requests/${request.id}/shipment/label`, {
+      method: 'POST', body: { reason, dryRun: true },
+    }));
+  if (!preview) return;
+
+  const offers = preview.offers || [];
+  if (!preview.offersReady && !offers.length) {
+    toast('Taşıyıcı henüz teklif üretmedi; birkaç dakika sonra tekrar deneyin.', 'warn');
+    return;
+  }
+
+  const summary = offers.length
+    ? offers.map((offer) => `${offer.providerName || offer.carrier || 'Taşıyıcı'}: `
+        + `${offer.price ?? '—'} ${offer.currency || ''}`.trim()).join(' · ')
+    : 'Taşıyıcı seçimini mağaza yapacak.';
+  const go = await confirmSimple(nodes.root, {
+    title: 'Etiketi şimdi satın al?',
+    description: `${summary} — onaylarsanız etiket SATIN ALINIR ve tutar kargo hesabınızdan `
+      + 'çıkar. Bu adım geri alınamaz.',
+    confirmLabel: 'Satın al',
+    danger: true,
+  });
+  if (!go) return;
+
+  await withBusy('Etiket satın alınıyor…', async () => {
+    const result = await call(`${BASE}/requests/${request.id}/shipment/label`, {
+      method: 'POST', body: { reason, offerId: offers[0]?.id || '', dryRun: false },
+    });
+    toast(result.notice || 'Etiket satın alındı.', 'good');
+    reload();
+  });
+}
+
+async function downloadLabel(request) {
+  await withBusy('Etiket indiriliyor…', async () => {
+    const result = await call(`${BASE}/requests/${request.id}/shipment/label`);
+    // Yol TAM haliyle bildirilir: dosyayı bulup basacak olan kişi klasörü
+    // arayacak, kısaltılmış bir yol onu bulamaz.
+    toast(`Etiket kaydedildi: ${result.path}`, 'good');
+  });
 }
 
 // ============================================================= toplu işlem

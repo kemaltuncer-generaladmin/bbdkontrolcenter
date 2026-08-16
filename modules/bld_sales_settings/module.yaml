@@ -32,7 +32,7 @@ ui:
     title: "Satış Ayarları"
     icon: sliders
     group: "BLD"
-    order: 70
+    order: 560
     requires: [bld_sales_settings.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

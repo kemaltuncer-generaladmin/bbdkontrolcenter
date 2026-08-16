@@ -32,7 +32,7 @@ ui:
     title: "Site İçeriği"
     icon: file_text
     group: "BLD"
-    order: 130
+    order: 620
     requires: [bld_cms.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

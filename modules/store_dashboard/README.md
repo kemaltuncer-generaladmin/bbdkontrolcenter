@@ -57,15 +57,26 @@ Sayma kuralları — ekranda da yazar:
   durumunu ve yazılabilirliği gösterir.
 - **Ziyaretçi/dönüşüm göstermez.** Geçitte doğrulanmış bir kaynağı yok.
 
-## Yayında olmayan uçlar
+## Okunamayan uçlar
 
-`/api/admin/bbd/*` uçları mağaza tarafında yazılıyor. Onlara bağlı kartlar
-(kritik stok, son yedek, POS, kargo, BLD fiş kuyruğu) **sıfır göstermez**:
-"uç hazır olunca açılacak" der ve pano çalışmaya devam eder. Sıfır göstermek,
-olmayan bir sağlığı var göstermek olurdu.
+> Bu bölümün başlığı bir dönem "Yayında olmayan uçlar"dı ve `/api/admin/bbd/*`
+> uçlarının "mağaza tarafında yazıldığını" söylüyordu. **Artık öyle değil**
+> (canlıda ölçüldü 2026-08-16): panonun kullandığı beş BBD ucu da 200 ve
+> gerçek veri dönüyor — `reporting/overview`, `backups`, `payments/terminals`,
+> `shipping/rates`, `return-requests`. O listede geçen **kritik stok** kartı
+> ise 2026-08-14'te BBD'den çıkarıldı; artık Bagisto'nun kendi
+> `dashboard/stats` ucundan besleniyor.
 
-GİB / e-fatura sağlık kartı da böyledir: geçitte karşılığı olan bir metot
-**yok** ve kart bunu açıkça söyler.
+Uç yayında diye okunamama dalı kaldırılmadı (K7). Son yedek, POS, kargo ve BLD
+fiş kuyruğu kartları okunamadığında **sıfır göstermez**; ne olduğunu söyler ve
+pano çalışmaya devam eder. Metin artık iki durumu ayırıyor: geçici hata
+(yetki/ağ/sunucu — "Tekrar dene" işe yarar) ile ucun geri çekilmiş olması
+(kart dönene kadar boş kalır). Sıfır göstermek, olmayan bir sağlığı var
+göstermek olurdu.
+
+GİB / e-fatura sağlık kartı BAŞKA bir durumdur ve hâlâ geçerlidir: geçitte
+karşılığı olan bir metot **yok** — mağazanın `api-routes.php` dosyasında da
+e-fatura sağlık rotası bulunmuyor (2026-08-16) — ve kart bunu açıkça söyler.
 
 ## Ayarlar — `store_settings` ekranı neden yok
 
@@ -83,11 +94,13 @@ demektir.
 ## Yapılandırma sekmesi
 
 Aşağıdakiler `bbdstore.com.tr` üzerinde **salt okunarak** ölçüldü
-(2026-08-13); varsayım değildir.
+(2026-08-13, **2026-08-16'da yeniden ölçüldü**); varsayım değildir.
 
-**Neden beyaz liste.** `GET /api/admin/configuration/menu` bu kurulumda
-**344 alan** ve 160.668 bayt döndürüyor. Tamamını dökmek işletmeye yardım
-etmez: aradığı beş ayarı üç yüz kırk dört satırın içinde kaybeder ve
+**Neden beyaz liste.** `GET /api/admin/configuration/menu?include_values=1`
+bu kurulumda **345 alan** ve 161.474 bayt döndürüyor. (Bir dönem burada 344
+alan / 160.668 bayt yazıyordu; mağazaya alan girdikçe sayı kayar, gerekçe
+sayıya değil büyüklük mertebesine dayanır.) Tamamını dökmek işletmeye yardım
+etmez: aradığı beş ayarı üç yüz küsur satırın içinde kaybeder ve
 yanlışlıkla sanal POS'un test kipini açar. Ekrana çıkan ~30 alan
 `backend/config_map.py` içinde adıyla sayılıdır ve **hepsinin canlıda var
 olduğu tek tek doğrulandı**. `password` · `image` · `file` tipli alanlar

@@ -59,7 +59,7 @@ ui:
     title: "Antivirüs"
     icon: shield
     group: "Kurumsal"
-    order: 50
+    order: 840
     requires: [antivirus.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

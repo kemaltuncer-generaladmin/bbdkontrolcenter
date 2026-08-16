@@ -372,3 +372,129 @@ async def test_referans_listeleri_onbellekten_gelir() -> None:
     await api.currencies()
 
     assert len(istekler) == 1     # ikinci çağrı mağazaya gitmez
+
+
+# ================================================ 2xx/3xx GELDİ, VERİ GELMEDİ
+#
+# Üç arıza da eskiden SESSİZDİ ve üçü de aynı yere düşüyordu: ya boş liste ya
+# ham `JSONDecodeError`. Ekranların hepsi `StoreApiError` yakalıyor; bu ailenin
+# dışarı çıplak istisna sızdırması K7'yi deler (bir modülün patlaması).
+
+
+async def test_json_olmayan_ikiyuz_anlasilir_hataya_cevrilir() -> None:
+    """Vekil sunucunun HTML hata sayfası 200 ile gelirse: `not_json`.
+
+    Eskiden son satır koşulsuz `response.json()` idi ve buradan `ValueError`
+    (`JSONDecodeError`) çıkıyordu — `StoreApiError` değil.
+    """
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html><body>502 Bad Gateway</body></html>",
+                              headers={"Content-Type": "text/html"})
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.orders()
+
+    assert hata.value.code == "not_json"
+    assert hata.value.status == 200
+    # Teşhis için gövdenin başı ve içerik türü metinde durur.
+    assert "text/html" in hata.value.message
+    assert "502 Bad Gateway" in hata.value.message
+
+
+async def test_json_olmayan_yanitta_belirtec_maskelenir() -> None:
+    """Gövde isteği aynen geri yazsa bile belirteç metne SIZMAZ."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=f"login required: {request.headers['Authorization']}",
+                              headers={"Content-Type": "text/plain"})
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.orders()
+
+    assert hata.value.code == "not_json"
+    assert TOKEN not in hata.value.message
+    assert "Bearer ***" in hata.value.message
+
+
+async def test_bos_govdeli_ikiyuz_bos_liste_degil_hata_olur() -> None:
+    """Gövdesiz 200: "kayıt yok" DEĞİL, arıza. Eskiden `None` → boş listeydi."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"")
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.orders()
+
+    assert hata.value.code == "empty_response"
+    assert hata.value.status == 200
+
+
+async def test_ikiyuzdort_de_bos_govde_sayilir() -> None:
+    """204 bu uçlarda sözleşme dışıdır; sessizce "veri yok" diye okunmaz."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(204)
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.orders()
+
+    assert hata.value.code == "empty_response"
+    assert hata.value.status == 204
+
+
+async def test_gercek_bos_sonuc_hata_degildir() -> None:
+    """AYRIMIN KENDİSİ: "kayıt yok" cevabı `data: []` ile gelir ve geçerlidir.
+
+    Bu test yukarıdaki ikisinin karşı kutbudur — boş gövdeyi hataya çevirirken
+    boş sonucu da hataya çevirmek, çalışan her boş listeyi kırardı.
+    """
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"data": [], "meta": {"total": 0}})
+
+    api, _, _, _ = gateway(handler)
+    sonuc = await api.orders()
+
+    assert sonuc["items"] == []
+    assert sonuc["meta"]["total"] == 0
+
+
+async def test_yonlendirme_izlenmez_anlasilir_hata_olur() -> None:
+    """3xx `_fail`e girmiyordu (`>= 400`) ve gövdesiz 302 boş listeye düşüyordu."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "https://bbdstore.com.tr/admin/login"})
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.orders()
+
+    assert hata.value.code == "redirect"
+    assert hata.value.status == 302
+    # Teşhisin tamamı hedefte: `/admin/login` "oturum" der, konak farkı "vekil".
+    assert "admin/login" in hata.value.message
+
+
+async def test_yonlendirme_ham_bayt_yolunda_da_kesilir() -> None:
+    """Etiket indirirken 302 gelirse giriş sayfasının HTML'i "PDF" diye dönmez."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(301, headers={"Location": "/admin/login"},
+                              content=b"<html>giris</html>")
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_shipment_label(9)
+
+    assert hata.value.code == "redirect"
+
+
+async def test_yazma_yolunda_bos_govde_denetim_izine_yazilir() -> None:
+    """Yazma patlarsa iz "ne oldu"yu taşımalı: `error:empty_response`."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"")
+
+    api, depo, _, _ = gateway(handler)
+    with pytest.raises(StoreApiError) as hata:
+        await api.cancel_order(7, reason="Müşteri iptal istedi, stok geri alındı")
+
+    assert hata.value.code == "empty_response"
+    assert depo.audit[0]["result"] == "error:empty_response"

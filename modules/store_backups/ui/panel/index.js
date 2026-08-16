@@ -10,8 +10,12 @@
 //    yüz megabaytlık gövdeyi belleğe alıp base64'e çevirmek hem sidecar'ı hem
 //    kabuğu düşürürdü. Dosya sunucudan alınıp yerel diske 0600 ile yazılır ve
 //    ekran YOLU söyler. Tavanın üstündeki dosyada indirme hiç başlamaz.
-//  · Yedek SİLMEZ — mağazada silme ucu henüz yayında değil. Düğme kapalı
+//  · Yedek SİLMEZ — mağazada ADA GÖRE silme ucu hâlâ yayında değil
+//    (2026-08-16'da sunucudaki rota listesiyle doğrulandı; `POST
+//    backups/prune` toplu budamadır, "şunu sil" değildir). Düğme kapalı
 //    durur ve nedenini yazar; basılınca sessizce patlamaz.
+//    Listeleme, indirme, alma ve doğrulama uçları AYNI TARİHTE CANLIDA
+//    ÇALIŞIYOR — bu kapalılık onları kapsamaz.
 //  · Zamanlanmış yedek rotasyonuna karışmaz; buradan alınan yedek manueldir.
 //
 // TUZAKLAR (ekranda karşılığı olanlar):

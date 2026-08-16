@@ -62,6 +62,26 @@ async def test_ucu_olmayan_ozellik_kapali_ve_nedeni_yazili_gelir() -> None:
     assert "henüz yok" in result["error"]
 
 
+async def test_kayit_iptali_kapali_ama_gerekcesi_magaza_ucu_degil_gecit() -> None:
+    """Kayıt iptali düğmesi kapalı — NEDENİ "mağaza ucu yok" DEĞİL.
+
+    Mağaza ucu 2026-08-16'da yayına girdi; bekleyen halka `store.api` metodu.
+    Kullanıcıya "mağaza ucu yayında değil" demek, yayına girmiş bir ucu bir
+    daha kimsenin aramamasına yol açıyordu. Düğmenin KAPALI kalması (K4) ve
+    kaydın SİLİNMEMESİ (ADR 0012) burada birlikte sınanır.
+    """
+    service, _, _ = _service()
+    reason = service.features()["removeMember"]["reason"]
+    assert service.features()["removeMember"]["available"] is False
+    assert "YAYINDA" in reason
+    assert "store.api" in reason
+
+    result = await service.remove_member(7, reason="Veli kaydı iptal istedi", actor="Ali")
+    assert result["ok"] is False
+    assert result["pending"] is True
+    assert "silinmez" in result["error"]
+
+
 async def test_bildirim_yetenegi_yoksa_tek_kisilik_hatirlatma_kapalidir() -> None:
     service, _, _ = _service()
     assert service.features()["notifyOne"]["available"] is False

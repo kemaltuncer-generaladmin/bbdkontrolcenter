@@ -1,5 +1,9 @@
 # Ders Takvimi — varsayılan ayarlar.
-# Kök ayardaki `modules.bbd_class_schedule.*` bloğu bunları ezer.
-
-# Yeni blok eklenirken varsayılan ders süresi (dakika).
-default_duration_minutes: 40
+#
+# Ayarı YOKTUR ve olmamalıdır: bu ekran salt okunur bir aynadır, gösterdiği
+# her şeyin kaynağı Zil Sistemi'dir. Buraya bir ayar konsaydı, ayna kaynaktan
+# farklı davranabilirdi.
+#
+# 0.1'deki `default_duration_minutes` kaldırıldı — ders süresi diye bir kavram
+# artık yok; zil saatleri tek tek girilen anlardır, aralık değil.
+{}

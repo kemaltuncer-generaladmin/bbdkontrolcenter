@@ -32,7 +32,7 @@ ui:
     title: "Faturalar"
     icon: receipt
     group: "BLD"
-    order: 110
+    order: 600
     requires: [bld_invoices.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

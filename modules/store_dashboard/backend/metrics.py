@@ -470,8 +470,12 @@ KPI_SPECS = (
 def kpi_tiles(current: dict[str, Any], previous: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Sekiz KPI kutusu. Değeri `None` olan kutu "—" gösterir; 0 GÖSTERMEZ.
 
-    "Bilinmiyor" ile "sıfır" farklı şeylerdir: mağaza tarafındaki uç henüz
-    yayında değilse tükenen ürün sayısı sıfır değil bilinmezdir.
+    "Bilinmiyor" ile "sıfır" farklı şeylerdir. Gerekçe burada bir dönem "uç
+    henüz yayında değilse" diye yazılıydı; o cümle ARTIK GEÇERSİZ — BBD uçları
+    2026-08-16 itibarıyla yayında. Kural yine de aynı ve `outOfStock` hâlâ
+    boş: tükenen ürün sayısını veren bir uç YOK (katalog sağlığı ucu stok
+    alanı taşımıyor — bkz. `service.OUT_OF_STOCK_NOTE`). Ayrıca uç okunamadığı
+    ya da geri çekildiği her durumda değer bilinmezdir, sıfır değil.
     """
     tiles: list[dict[str, Any]] = []
     for key, label, kind, comparable in KPI_SPECS:

@@ -70,13 +70,25 @@ class StoreApiError(RuntimeError):
       `code`    — makine tarafından ayrıştırılabilir neden. Ekran buna göre
                   farklı metin gösterebilir:
                   config_missing · read_only · reason_required · unauthorized ·
-                  forbidden · not_found · bbd_endpoint_missing ·
+                  forbidden · not_found · conflict · bbd_endpoint_missing ·
                   bbd_endpoint_by_design · validation · rate_limited ·
-                  transport · server · http · payload
+                  transport · server · http · payload · redirect ·
+                  empty_response · not_json
 
                   `bbd_endpoint_missing` ile `bbd_endpoint_by_design` AYRI
                   şeylerdir: ilki "uç henüz yayında değil, bekle", ikincisi
                   "bu iş bilerek panelden yapılmıyor, bekleme" demektir.
+
+                  SON ÜÇÜ "2xx/3xx GELDİ AMA VERİ GELMEDİ" AİLESİDİR ve
+                  birbirinden ayrı tutulur; üçü de eskiden sessizce boş
+                  listeye ya da ham `JSONDecodeError`a düşüyordu (K7):
+                    `redirect`       — yanıt 3xx: istek admin API'sine değil
+                                       başka bir adrese (çoğunlukla oturum
+                                       açma sayfasına) düştü.
+                    `empty_response` — 2xx ama gövde BOŞ. "Kayıt yok" DEĞİLDİR;
+                                       kayıt yoksa `data` boş dizi gelir.
+                    `not_json`       — 2xx ama gövde JSON değil (HTML hata
+                                       sayfası, düz metin, bozuk gövde).
       `message` — kullanıcıya gösterilebilir Türkçe metin (maskelenmiş).
       `details` — BBD hata zarfının (`{"error": {"code","message","details"}}`)
                   `details` bloğu; başka kaynaklarda BOŞ sözlüktür.

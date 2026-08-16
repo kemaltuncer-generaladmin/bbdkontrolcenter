@@ -47,7 +47,7 @@ ui:
     title: "Kontrol Paneli"
     icon: gauge
     group: "BBD Store"
-    order: 10
+    order: 200
     requires: [store_dashboard.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

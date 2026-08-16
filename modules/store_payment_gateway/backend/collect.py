@@ -208,8 +208,26 @@ def to_kurus(value: Any) -> int:
 
 
 def from_kurus(kurus: Any) -> str:
-    """Kuruşu ondalık METNE çevirir: 125000 → '1250.00'. (Rapor/CSV içindir.)"""
-    return f"{Decimal(as_int(kurus)) / 100:.2f}"
+    """Kuruşu ondalık METNE çevirir: 125000 → '1250.00'.
+
+    KURUŞ→TL ÇEVRİMİNİN TEK YERİ BURASIDIR. Ödeme bağlantısının tutarı da
+    (mağaza `amount` alanını ondalık METİN ister) rapor/CSV satırı da buradan
+    geçer. İkinci bir çevrim yazılsaydı biri düzeltilip diğeri unutulurdu ve
+    fark ancak müşteriden yanlış tutar çekildiğinde görünürdü.
+
+    FLOAT KULLANILMAZ — ve bu bir üslup tercihi değil. Aynı iş kayan noktayla
+    yapılsaydı `int(1999 / 100 * 100)` bu makinede **1998** verir: 19,99 TL'lik
+    bir tahsilat müşteriye 19,98 TL olarak giderdi. İlk 200.000 kuruş değerinin
+    9.174'ü bu tuzağa düşüyor, yani hata nadir de değil. `Decimal` ile bölüp iki
+    basamağa `quantize` ettiğimizde sonuç tam olarak yazdığımız sayıdır.
+
+    BASAMAK SAYISI SABİT İKİDİR. Mağazanın para kapısı (`AmountGate`) istenen
+    tutarı sepetin hesapladığıyla kuruş kuruş karşılaştırıyor; "125" ya da
+    "125.0" yazımı o karşılaştırmaya girmeden önce bizim tarafımızda
+    belirsizlik üretir.
+    """
+    return str((Decimal(as_int(kurus)) / 100).quantize(Decimal("0.01"),
+                                                       rounding=ROUND_HALF_UP))
 
 
 def to_amount(kurus: Any) -> float:
@@ -264,6 +282,31 @@ def normal_phone(raw: str) -> str:
         return normalize_msisdn(text(raw))
     except ValueError:
         return text(raw)
+
+
+def split_name(value: Any) -> tuple[str, str]:
+    """"Ayşe Nur Yılmaz" → ("Ayşe Nur", "Yılmaz").
+
+    NEDEN GEREKLİ: bizim formumuzda tek bir "Ad soyad" kutusu var; mağaza ise
+    fatura adresinde `firstName` ve `lastName` alanlarını AYRI ve dolu istiyor
+    (`PaymentLinkService::validateBilling` ikisi de boşsa isteği reddediyor).
+
+    NEDEN SON BOŞLUKTAN BÖLÜNÜR: Türkçede ikinci AD yaygındır ("Ayşe Nur",
+    "Mehmet Ali"), ikinci SOYAD değildir. İlk boşluktan bölmek "Nur Yılmaz"ı
+    soyad yapardı; son boşluktan bölmek yaygın durumda doğru, istisnada
+    (birleşik soyadı) yalnızca soyadın ilk parçasını ada kaydırır — faturaya
+    yazılan tam ad yine aynı kalır.
+
+    TEK SÖZCÜKTE SOYAD UYDURULMAZ: ikinci değer BOŞ döner. Adı soyad diye
+    tekrarlamak, bankaya ve faturaya var olmayan bir soyad yazmaktır; çağıran
+    taraf boş soyadı görür ve kullanıcıdan ister.
+    """
+    parts = text(value).split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return " ".join(parts[:-1]), parts[-1]
 
 
 def request_code(seed: str = "") -> str:
@@ -587,13 +630,41 @@ def link_row(payload: Any) -> dict[str, Any]:
     """Mağazadan gelen ödeme linki kaydından ekranın okuduğu alanlar.
 
     HER ALAN İKİ BİÇİMDE ARANIR. Bagisto'nun admin yüzeyi camelCase döner;
-    `/api/admin/bbd/*` uçları HENÜZ YAYINDA DEĞİL (bugün 404) ve alan adları
-    yayınlandığında doğrulanmalıdır. İki biçimi de okumak, uç geldiğinde
-    ekranın boş "—" ile dolmasını önler.
+    bir dönem "`/api/admin/bbd/*` uçları yayında değil (404)" yazıyordu, artık
+    böyle değil: `GET /api/admin/bbd/payment-links` 16.08.2026'da 200 dönüyor.
+    Ama liste BUGÜN BOŞ (`total: 0`), yani alan adları CANLI VERİYLE hâlâ
+    doğrulanmış değil; sözleşme sunucudaki `PaymentLinkService::present()`
+    metodundan okundu ve şu alanları veriyor:
+
+        id · code · url · status · kind · amount · currency · description
+        customer{name,email,phone} · orderId · expiresAt · openedAt · paidAt
+        sentAt · createdAt · snapshot
+
+    DİKKAT — LİNKİN KİMLİĞİ `code`, `token` DEĞİL. Mağaza "token" adında bir
+    alan hiç döndürmüyor; eski sıralama `token`ı bulamayınca `id`ye düşüyordu
+    ve ekranda linkin insan okuyabildiği kodu yerine sayısal kimliği çıkardı.
+    Bu yüzden `code` sıraya eklendi. Diğer biçimleri de okumaya devam etmek,
+    ilk gerçek satır geldiğinde ekranın boş "—" ile dolmasını önler.
+
+    İKİ KİMLİK AYRI TAŞINIR — `id` ve `token` KARIŞTIRILMAZ:
+
+      · `token` (= mağazanın `code`u) İNSANIN OKUDUĞU koddur. Ekranda görünür,
+        telefonda okunur, SMS metnine girer.
+      · `id` MAĞAZANIN BİRİNCİL ANAHTARIDIR ve UÇLARIN İSTEDİĞİ kimliktir:
+        `GET /payment-links/{id}` ve `POST /payment-links/{id}/cancel`
+        rotalarının ikisi de `whereNumber('id')` ile daraltılmış.
+
+    Bu ayrım olmadığında "İptal" düğmesi HİÇ çalışmıyordu: çağrıya `code`
+    gidiyordu, geçit `key.isdigit()` denetiminde reddediyordu. `LinkCode`
+    alfabesi `0123456789ABCDEFGHJKMNPQRSTVWXYZ`; 12 hanenin tamamının rakam
+    çıkma olasılığı (10/32)^12 ≈ 1,2e-6, yani ret pratikte HER SEFERİNDE
+    geliyordu.
     """
     row = payload if isinstance(payload, dict) else {}
     return {
-        "token": text(row.get("token") or row.get("id")),
+        # Mağazadaki satırın SAYISAL kimliği — okuma ve iptal uçlarının anahtarı.
+        "id": as_int(row.get("id")),
+        "token": text(row.get("token") or row.get("code") or row.get("id")),
         "url": text(row.get("url") or row.get("link") or row.get("paymentUrl")
                     or row.get("payment_url")),
         "status": text(row.get("status") or row.get("state")),
@@ -609,19 +680,30 @@ def attempt_row(payload: Any) -> dict[str, Any]:
     """POS denemesi. Kart verisi sunucuda maskelidir; burada maskeleme yapılmaz
     — yapılsaydı "maskeledik" yanılgısı üretir ve ham veri yine ekrana gelirdi."""
     row = payload if isinstance(payload, dict) else {}
-    verdict = map_status(row.get("status") or row.get("result"))
-    # Canlı `order_transactions.data` sözlüğünde kart `masked_number`,
-    # sağlayıcı `gateway` adıyla duruyor; BBD ucu yayınlanınca hangi adı
-    # kullandığı doğrulanmalı. İki biçim de okunur.
+    # ALAN ADLARI ARTIK TAHMİN DEĞİL. Bir dönem "BBD ucu yayınlanınca hangi adı
+    # kullandığı doğrulanmalı" yazıyordu; 16.08.2026'da
+    # `GET /api/admin/bbd/payments/attempts` 200 dönüyor ve GERÇEK satır geldi.
+    # Uç DÜZ ve SNAKE_CASE veriyor: durum `state`, kart `masked_number`,
+    # sağlayıcı `gateway`, tutar `amount_minor` — hepsi kökte, `data` sözlüğü
+    # YOK. Eski sıralama bunları arayamadığı için ekranda kart ve banka sütunu
+    # BOŞ çıkıyordu, oysa veri geliyordu. Eski (gömülü `data`) biçim de okunmaya
+    # devam ediyor: uç değişirse ekran boşalmasın.
     inner = row.get("data") if isinstance(row.get("data"), dict) else {}
+    verdict = map_status(row.get("state") or row.get("status") or row.get("result"))
+    # `amount_minor` ZATEN KURUŞTUR — `to_kurus` ile 100'e çarpılmaz; çarpılsaydı
+    # 4,00 TL'lik bir deneme ekranda 400,00 TL görünürdü.
+    amount = (as_int(row.get("amount_minor")) if row.get("amount_minor") is not None
+              else to_kurus(row.get("amount")))
     return {
         "id": as_int(row.get("id")),
         "createdAt": text(row.get("createdAt") or row.get("created_at")),
-        "amount": to_kurus(row.get("amount")),
+        "amount": amount,
         "card": text(row.get("maskedCard") or row.get("masked_card") or row.get("card")
+                     or row.get("masked_number")
                      or row.get("cardLastFour") or row.get("card_last_four")
                      or inner.get("masked_number")),
         "bank": text(row.get("bank") or row.get("provider") or row.get("pos")
+                     or row.get("gateway")
                      or row.get("paymentMethod") or inner.get("gateway")),
         "installment": as_int(row.get("installment") or inner.get("installment"), 1),
         "errorCode": text(row.get("errorCode") or row.get("error_code")),
@@ -761,6 +843,9 @@ def request_view(row: Any, *, link_base: str = "") -> dict[str, Any]:
         "gross": as_int(data.get("gross")),
         "orderId": as_int(data.get("order_id")),
         "invoiceId": as_int(data.get("invoice_id")),
+        # `linkId` mağazanın SAYISAL anahtarı, `token` insanın okuduğu kod.
+        # İkisi ayrı taşınır; gerekçesi `link_row` içinde yazılı.
+        "linkId": as_int(data.get("link_id")),
         "token": token,
         "link": url,
         "status": verdict,

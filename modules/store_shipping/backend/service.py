@@ -139,6 +139,39 @@ def dispatch_reason(order_number: str) -> str:
             "gönderildi, etiket satın alındı.")
 
 
+def _dispatch_warnings(info: dict[str, Any]) -> list[str]:
+    """Gönderi sonucunun ekranda gösterilecek uyarıları.
+
+    Kuru prova uyarısı EN SONA eklenir: taşıyıcıdan gelen uyarılar okunduktan
+    sonra "zaten hiçbiri olmadı" demek, sıranın tersinden daha anlaşılırdır.
+    """
+    warnings = list(info.get("warnings") or [])
+    if info.get("dryRun"):
+        warnings.append("KURU PROVA: mağazaya gerçek istek gitmedi, etiket satın "
+                        "alınmadı, para harcanmadı.")
+    return warnings
+
+
+def draft_reason(order_number: str, provider: str) -> str:
+    """Taslak açılırken gerekçe boş bırakıldığında yazılacak metin.
+
+    NEDEN GEREKÇE ZORUNLU DEĞİL. Ekranın kendi metni "boş bırakılabilir"
+    diyor (`reasonBar`), test düğmesi alanı olduğu gibi gönderiyor ve şema
+    `min_length=10` ile reddediyordu: istek mağazaya HİÇ ÇIKMADAN 422
+    alıyordu ve kullanıcı ekranda `[object Object]` görüyordu. Ekranın
+    davet ettiği kullanım, uçta yasaktı.
+
+    Taslak açmak PARA HARCAMAZ (etiket satın alma ayrı uç, ayrı izin ve
+    `MIN_PURCHASE_REASON` = 20 karakter ister); bu yüzden buradaki gerekçe
+    denetim defterinin boş kalmaması içindir, bir kapı değildir. Otomatik
+    metin hangi yoldan açıldığını da yazar — elle yazılmış gerekçeden
+    ayırt edilsin diye.
+    """
+    yol = "test" if shipping.fold(provider) == "bagisto" else "Geliver"
+    return (f"Gönderi taslağı: {shipping.text(order_number) or '?'} siparişi için "
+            f"{yol} yolundan açıldı.")
+
+
 class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
 
@@ -148,6 +181,7 @@ class ShippingService:
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
                  printer: Any = None, notifier: Any = None, publish: Any = None,
+                 stage_notify: Any = None,
                  category: str = "Mağaza", subcategory: str = "Kargo",
                  fallback_dir: Path | None = None) -> None:
         self._api = api
@@ -156,6 +190,11 @@ class ShippingService:
         self._config = config or {}
         self._printer = printer
         self._notifier = notifier
+        # AŞAMA SMS'İ AYRI YETENEKTİR (`store.notify.stage`), `notifier`
+        # (`store.notify.send`) ile karıştırılmaz: birincisi üç aşamanın
+        # frenini ve "aynı siparişe ikinci kez gitmez" kaydını içeride tutar,
+        # ikincisi ham şablon gönderir. "Kargoya verildi" birincisidir.
+        self._stage_notify = stage_notify
         self._publish = publish
         self._category = category
         self._subcategory = subcategory
@@ -255,6 +294,29 @@ class ShippingService:
         if pref in ("0", "1"):
             return pref == "1"
         return self._auto_print_default
+
+    async def label_format_on(self) -> str:
+        """Kullanılacak etiket biçimi — ekran tercihi ayarı EZER.
+
+        `auto_print_on` ile AYNI kural: ayar dosyası kurulumun kararı, tercih
+        başında duran kişinin kararıdır.
+
+        NEDEN AYRI METOT. Biçimi çözen üç çağıran var: ayar ekranı, toplu
+        etiket sayfası ve "kargoya ver"in otomatik basımı. Üçü ayrı ayrı
+        çözerken sonuncusu tercihi HİÇ okumuyordu: kullanıcı tercihten
+        "A4 · sayfada 4 etiket" seçiyor, ekran A4 gösteriyor, toplu etiket A4
+        çıkıyor, ama kargoya verme termal ölçüde üretip A4 yazıcıya
+        gönderiyordu. Ekranın söylediği ile kâğıda çıkan farklıydı ve hiçbir
+        hata vermiyordu. Çözüm tek yerde durur ki dördüncü çağıran eklendiğinde
+        yine ayrışmasın.
+
+        Tanınmayan tercih YOK SAYILIR: tercih tablosuna elle yazılmış geçersiz
+        bir değer yüzünden etiket üretimi durmaz, ayardaki biçime düşülür.
+        """
+        pref = await self._pref("label_format")
+        if pref in labels.FORMATS:
+            return pref
+        return self._default_format
 
     async def _record(self, *, shipment_id: int = 0, order_id: int = 0, action: str,
                       reason: str = "", actor: str = "", result: str = "",
@@ -816,14 +878,21 @@ class ShippingService:
 
         Boş bırakılırsa ayardaki `provider` kullanılır.
         """
-        problem = self._guard(reason)
-        if problem:
-            return {"ok": False, "error": problem}
-
         yol = (shipping.fold(provider) or shipping.fold(self._config.get("provider"))
                or "geliver")
         if yol not in ("geliver", "bagisto"):
             return {"ok": False, "error": f"Bilinmeyen kargo yolu: {provider}"}
+
+        # GEREKÇE BOŞSA OTOMATİK YAZILIR, AKIŞ DURMAZ. Ekranın kendi metni
+        # "boş bırakılabilir" diyor; taslak açmak para harcamaz (etiket satın
+        # alma ayrı uç, ayrı izin, 20 karakter gerekçe). Yol çözüldükten SONRA
+        # yazılır ki metin hangi yoldan açıldığını söyleyebilsin.
+        reason = shipping.text(reason) or draft_reason(str(order_id), yol)
+
+        problem = self._guard(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+
         if yol == "bagisto":
             return await self._test_shipment(int(order_id), carrier=carrier, note=note,
                                              reason=reason, actor=actor, dry_run=dry_run)
@@ -1106,10 +1175,17 @@ class ShippingService:
         printed = await self._print_documents(documents, info=info, order_id=int(order_id),
                                               wanted=wanted, actor=actor, reason=gerekce)
 
-        warnings = list(info["warnings"])
-        if info["dryRun"]:
-            warnings.append("KURU PROVA: mağazaya gerçek istek gitmedi, etiket satın "
-                            "alınmadı, para harcanmadı.")
+        # MÜŞTERİYE "KARGOYA VERİLDİ" — burada, çünkü GERÇEK takip numarası
+        # yalnız burada var.
+        #
+        # BU MESAJ HİÇ GİTMİYORDU. Tetikleyicisi Siparişler ekranındaki ikinci
+        # "kargoya ver" yolundaydı ve o yol iki ayrı nedenle düşüyordu: gövdeyi
+        # `{"shipment": {...}}` sarmalıyla gönderdiği için mağaza reddediyordu,
+        # takip numarasını da kullanıcıya `window.prompt` ile sorduğu için alan
+        # çoğu zaman boş kalıyordu — boş takip numarası bildirim tarafındaki
+        # zorunlu değişken kapısına (`REQUIRED_VARIABLES["shipped"]`) takılıp
+        # mesajı düşürüyordu. Kimse fark etmiyordu çünkü hata üretmiyordu.
+        sms = await self._notify_shipped(int(order_id), info=info, actor=actor)
         return {
             "ok": True, "error": "", "dispatched": not info["dryRun"],
             "orderId": int(order_id),
@@ -1123,8 +1199,74 @@ class ShippingService:
             "printed": printed["done"],
             "autoPrint": wanted,
             "printSkipped": printed["skipped"],
-            "warnings": warnings,
+            "sms": sms,
+            "warnings": _dispatch_warnings(info),
         }
+
+    async def _notify_shipped(self, order_id: int, *, info: dict[str, Any],
+                              actor: str) -> dict[str, Any]:
+        """"Kargoya verildi" aşama SMS'i. İSTİSNA FIRLATMAZ (K7).
+
+        KURU PROVADA GÖNDERİLMEZ: mağazada hiçbir şey değişmedi, müşteriye
+        "kargoya verildi" yazmak yalan olur ve tekrar engelinin kaydını da
+        boşa harcardı.
+
+        FREN BİZDE DEĞİL, BİLDİRİMLER TARAFINDA: sessiz saat, günlük limit,
+        tek segment zorlaması ve "aynı siparişe aynı aşama ikinci kez gitmez"
+        kaydı `store.notify.stage` yeteneğinin içindedir. Burada yalnız künye
+        kurulur — iki yerde iki ayrı fren tutmak, birinin gevşemesiyle biterdi.
+
+        SMS'in gitmemesi gönderiyi geri almaz: kargo yola çıkmıştır. Sonuç
+        satır olarak döner ve ekran gösterir; sessizce yutulmaz.
+        """
+        if info["dryRun"]:
+            return {"attempted": False, "sent": False,
+                    "note": "Kuru prova: müşteriye mesaj gönderilmedi."}
+        if self._stage_notify is None:
+            return {"attempted": False, "sent": False,
+                    "note": "Bildirimler ekranı kapalı; müşteriye SMS gönderilemedi."}
+
+        try:
+            order = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"attempted": False, "sent": False,
+                    "note": f"Sipariş künyesi okunamadı, SMS gönderilmedi: {self._fail(failure)}"}
+
+        # TAKİP BAĞLANTISI GÖNDERİ KAYDINDADIR, dispatch yanıtında değil:
+        # mağaza künyeyi `X-Bbd-*` başlıklarında taşıyor ve orada takip
+        # ADRESİ yok (yalnız numara, firma, satın alındı bayrağı). Mesajın
+        # şablonu `kargo_takip_linki` değişkenini taşıyor; boş göndermek
+        # müşteriye tıklanmayan bir bağlantı yollamak olurdu.
+        track_url = ""
+        if info["shipmentId"]:
+            detail = await self.shipment(int(info["shipmentId"]))
+            if detail.get("ok"):
+                track_url = shipping.text(detail["shipment"].get("trackingUrl"))
+
+        address = shipping.shipping_address(order)
+        payload = {
+            "orderId": int(order_id),
+            "orderNo": shipping.text(order.get("incrementId") or order.get("increment_id")),
+            "customer": shipping.text(order.get("customerName")
+                                      or order.get("customer_full_name")),
+            "phone": shipping.text(address.get("phone")),
+            "total": shipping.text(order.get("grandTotal") or order.get("grand_total")),
+            "date": shipping.text(order.get("createdAt") or order.get("created_at"))[:10],
+            "carrier": shipping.carrier_label(info["provider"]) or shipping.text(info["provider"]),
+            "track": shipping.text(info["trackingNo"]),
+            "trackUrl": track_url,
+        }
+        try:
+            result = await self._stage_notify.notify(stage="shipped", order=payload,
+                                                     actor=actor, dry_run=False)
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.warning("kargoya verildi SMS'i gönderilemedi", orderId=order_id,
+                              error=str(failure))
+            return {"attempted": True, "sent": False,
+                    "note": f"SMS katmanı hata verdi: {self._fail(failure)}"}
+        return {"attempted": True, "sent": bool(result.get("sent")),
+                "duplicate": bool(result.get("duplicate")),
+                "note": shipping.text(result.get("note")) or shipping.text(result.get("error"))}
 
     async def _dispatch_documents(self, order_id: int, info: dict[str, Any]) -> list[dict[str, Any]]:
         """Basılacak İKİ belge: KARGO ETİKETİ ve FATURA. Fiş YOK.
@@ -1139,7 +1281,7 @@ class ShippingService:
         etiket = info["label"]
 
         if etiket:
-            fmt = self._default_format
+            fmt = await self.label_format_on()
             try:
                 # Taşıyıcının PDF'i kendi ölçüsünde gelir; yazıcının kâğıdına
                 # YERLEŞTİRİLİR. `pypdf` yoksa ham PDF olduğu gibi yazılır —
@@ -1698,7 +1840,7 @@ class ShippingService:
                     "error": f"Tek seferde en çok {self._batch_limit} etiket birleştirilir; "
                              "seçimi bölün."}
 
-        fmt = shipping.text(params.get("format")) or self._default_format
+        fmt = shipping.text(params.get("format")) or await self.label_format_on()
         if fmt not in labels.FORMATS:
             return {"ok": False, "error": f"Bilinmeyen etiket biçimi: {fmt}"}
 
@@ -1951,7 +2093,7 @@ class ShippingService:
         ve desi burada, vergi `store_tax`'ta, stok `store_products`'ta durur."""
         return {
             "ok": True, "error": "",
-            "labelFormat": (await self._pref("label_format")) or self._default_format,
+            "labelFormat": await self.label_format_on(),
             "defaultCarrier": await self._pref("default_carrier"),
             "idleDays": shipping.as_int(await self._pref("idle_days"), self._idle_limit),
             "divisor": self._divisor,

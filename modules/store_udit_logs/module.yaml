@@ -46,8 +46,8 @@ ui:
   nav:
     title: "UDİT — İşlem Kayıtları"
     icon: list
-    group: "BBD Store"
-    order: 160
+    group: "BBD Store / Sistem ve Kayıt"
+    order: 370
     requires: [store_udit_logs.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

@@ -499,8 +499,10 @@ class TaxService:
         `taxCategoryId` liste ucundan DOLU GELMİYOR (canlıda hep `null`, tekil
         uçta dolu); o zaman satır "Bilinmiyor" der. Kesin değer önizlemede gelir.
 
-        KATALOG KATEGORİSİ SÜZGECİ YOK: canlıda `category_id=999999` bile 1.421
-        ürünün hepsini döndürüyor, yani Laravel parametreyi yok sayıyor.
+        KATALOG KATEGORİSİ SÜZGECİ YOK: 2026-08-16 ölçümünde `category_id=999999`
+        bile 1.422 ürünün hepsini döndürüyor, yani Laravel parametreyi yok
+        sayıyor. (Sayı bir dönem 1.421'di; katalog büyüdü, süzgecin yok sayılması
+        değişmedi — iddianın özü sayıda değil, "hepsi" kelimesindedir.)
         Uygulanmayan bir süzgeci arayüze koymak, kullanıcıya süzülmüş sanılan
         bir liste göstermektir.
         """
@@ -802,11 +804,17 @@ class TaxService:
         loaded = await self._load(with_usage=False)
         known = [row["percent"] for row in loaded["rates"] if row["percent"] is not None]
 
-        # KANAL SÜZGECİ MAĞAZAYA GÖNDERİLMEZ: canlıda `?channel=zzzz` bile
-        # bütün faturaları döndürüyor, yani parametre sessizce yok sayılıyor.
-        # Gönderip "süzüldü" saymak, tek kanalın matrahı diye hepsinin
-        # matrahını beyan etmek olurdu. Ayıklama `summary.summarize` içinde
-        # kanal ADIYLA yapılır ve rapor bunu yazar.
+        # KANAL SÜZGECİ MAĞAZAYA GÖNDERİLMEZ: 2026-08-16 ölçümünde fatura ve
+        # iade uçlarında `?channel=zzzz` bile bütün kayıtları döndürüyor, yani
+        # parametre sessizce yok sayılıyor. Gönderip "süzüldü" saymak, tek
+        # kanalın matrahı diye hepsinin matrahını beyan etmek olurdu.
+        #
+        # SİPARİŞ UCU İSE kanalı GERÇEKTEN uyguluyor ve KİMLİK bekliyor
+        # (`channel=1` → 18, `channel=default` → 0). Bir dönem burada da yok
+        # sayıldığı yazıyordu; artık değil. Bu yüzden `window` iptal listesine
+        # de kanalsız gider: `channel="default"` göndermek iptal listesini
+        # boşaltır ve rapor "bu dönemde iptal yok" derdi. Ayıklama üç belge
+        # türü için de `summary.summarize` içinde kanal ADIYLA yapılır.
         window = {"date_from": start, "date_to": end}
 
         try:

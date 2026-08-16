@@ -7,9 +7,12 @@ ONAYA SUNULAN HESABIN KENDİSİ (jeton) — uygulanan şeyin önizlenen şey old
 kanıtlar.
 
 İKİ KAYNAK. Bagisto'nun kredi notu (`refunds`) parayı, BBD'nin RMA talebi
-(`bbd_return_requests`) süreci temsil eder. `/api/admin/bbd/*` uçları HÂLÂ
-YAZILIYOR; yoksa geçit `bbd_endpoint_missing` döner ve o bölüm ekranda
-"uç hazır olunca açılacak" diye KAPALI görünür — sessizce patlamaz (K7).
+(`bbd_return_requests`) süreci temsil eder. Bu ekranın kullandığı BBD uçları
+CANLIDA YAYINDA (ölçüm 2026-08-16: `return-requests` ve `shipments` 200
+dönüyor); bir dönem hepsi 404'tü ve kod bunu varsayıyordu. Buna rağmen eksik-uç
+dalı DURUYOR ve durmalı: uç geri çekilirse ya da mağaza sürümü değişirse geçit
+`bbd_endpoint_missing` döner, o bölüm ekranda "uç hazır olunca açılacak" diye
+KAPALI görünür ve ekranın geri kalanı ayakta kalır — sessizce patlamaz (K7).
 
 ÖLÇEK. "Yüzler" mertebesinde kayıt; süzme istemcidedir. Sunucu bir tarih
 penceresini tavanla tarar ve tamamını döner.
@@ -34,7 +37,9 @@ from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir,
 
 from . import calc
 
-#: BBD uçları henüz yayında değilken geçidin döndüğü hata kodu.
+#: BBD ucu yayında DEĞİLKEN geçidin döndüğü hata kodu. Uçlar bugün ayakta
+#: (bkz. modül açıklaması) ama bu dal SİLİNMEZ: ekranın uçsuz da ayakta kalması
+#: K7'nin kendisidir ve kod yolu ancak sınandığı sürece güvenilir.
 MISSING_CODE = "bbd_endpoint_missing"
 
 MISSING_TEXT = ("Bu bölüm mağaza tarafındaki BBD ucu yayına girince açılacak. "
@@ -250,11 +255,21 @@ class RefundsService:
         """RMA taleplerini sayfa sayfa toplar.
 
         `bbd_return_requests` toplu tarama parametresi almıyor; sayfalar SIRAYLA
-        çekilir. Uç henüz yayında değilse boş liste + açıklama döner, ekran
-        kredi notlarıyla çalışmaya devam eder.
+        çekilir. Uç yayında değilse boş liste + açıklama döner, ekran kredi
+        notlarıyla çalışmaya devam eder (K7 — uç bugün ayakta, dal yine durur).
         """
         rows: list[dict[str, Any]] = []
-        filters = {"date_from": start, "date_to": end, "type": "refund"}
+        # TARİH SÜZGECİNİN ADI `from`/`to`. CANLIDA DOĞRULANDI (2026-08-16):
+        # `from=2026-08-01&to=2026-08-16` → 0 kayıt, `from=2026-07-01` → 2 kayıt;
+        # `date_from`/`date_to` ise HİÇ UYGULANMIYOR (aynı pencerede 2 kayıt
+        # döndü). Bir dönem `date_from`/`date_to` gönderiliyordu: Laravel
+        # tanımadığı parametreyi atar, hata çıkmaz — ekran seçilen tarih
+        # aralığının DIŞINDAKİ talepleri de listeliyordu. Yanlış veri, veri
+        # yokluğundan tehlikelidir çünkü kendini belli etmez.
+        #
+        # `type` de tanınmıyor (uç yalnız `status`/`from`/`to` süzer); zararsız
+        # olduğu için bırakıldı ama "türe göre süzüyoruz" SANILMASIN.
+        filters = {"from": start, "to": end, "type": "refund"}
         page = 1
         while page <= REQUEST_PAGE_LIMIT and len(rows) < self._scan_cap:
             try:

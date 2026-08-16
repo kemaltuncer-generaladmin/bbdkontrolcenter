@@ -32,7 +32,7 @@ ui:
     title: "Kontrol Paneli"
     icon: gauge
     group: "BLD"
-    order: 10
+    order: 500
     requires: [bld_dashboard.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

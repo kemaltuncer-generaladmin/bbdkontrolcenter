@@ -59,8 +59,8 @@ ui:
   nav:
     title: "Müşteriler"
     icon: users
-    group: "BBD Store"
-    order: 80
+    group: "BBD Store / Müşteri ve İletişim"
+    order: 320
     requires: [store_customers.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

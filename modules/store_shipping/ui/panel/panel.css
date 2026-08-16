@@ -178,25 +178,11 @@
 }
 .sh-fact { display: flex; flex-direction: column; gap: 2px; }
 
-.sh-timeline { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; }
-.sh-move {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 0 6px 4px;
-  border-left: 2px solid var(--line);
-  padding-left: 12px;
-}
-/* Zaman çizelgesi noktası SÜS değil hizalayıcıdır; renk tek başına anlam
-   taşımadığı için satırın metni her zaman durumu yazar. */
-.sh-move-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: -16px;
-}
+/* Hareket geçmişinin kendi çizelgesi (`.sh-timeline` / `.sh-move`) KALDIRILDI:
+   çekmece artık kitin `timeline()`'ını çiziyor (ADR 0011). Kuralları burada
+   bırakmak zararsız görünür ama değildir — panel CSS'i `document.head`'e
+   eklenip hiç kaldırılmıyor ve ölü seçici, bir gün aynı adı kullanan başka bir
+   düğümü sessizce boyar. Çizelgenin görünümü artık kit.css'tedir. */
 
 /* -------------------------------------------------------------- taşıyıcı */
 
@@ -260,3 +246,35 @@
    içine yazılırsa operatör okumaya yetişemez ve aynı düğmeye yeniden basar. */
 .sh-gl-problems:empty { display: none; }
 .sh-gl-problems { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; }
+
+/* ── paylaşılan yetenek kartı (`store.shipment.byOrder`) ───────────────────
+   BU BLOK BAŞKA PANELİN İÇİNDE ÇİZİLİR — Siparişler ekranının Kargo sekmesi.
+   Stil `capabilities()` içinde tembel yüklenir; kart hiç çizilmezse bu dosya
+   hiç istenmez. Kendi panelimizin yerleşimine (`sh-body`, `sh-pane`) HİÇ
+   dayanmaz: orada o kapsayıcılar yok. */
+
+.sh-cap { display: flex; flex-direction: column; gap: 10px; }
+.sh-cap-body { display: flex; flex-direction: column; gap: 10px; }
+
+.sh-cap-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Takip numarası ARANAN ŞEYDİR: tek boşluklu yazı tipiyle, seçilebilir ve
+   büyükçe durur. Kullanıcı çoğu zaman bu ekranı yalnız bunu okumak için açar. */
+.sh-cap-track {
+  font: 600 14px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  user-select: all;
+}
+
+.sh-cap-facts {
+  font-size: 12px;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.sh-cap-flags { display: flex; gap: 6px; flex-wrap: wrap; }
+.sh-cap-flags:empty { display: none; }
+
+/* Tek eylem satırı: "Kargo Yönetimi'nde aç". Sağa yaslanır ki kartın kendi
+   bilgisiyle karışmasın — burada KARGOYA VEREN düğme yoktur, bilerek. */
+.sh-cap-go { display: flex; justify-content: flex-end; }

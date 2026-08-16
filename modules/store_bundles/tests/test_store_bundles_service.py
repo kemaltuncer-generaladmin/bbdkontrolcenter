@@ -20,7 +20,11 @@ GEREKCE = "Yaz kampanyası için set fiyatı düzeltildi"
 def _service(api: FakeApi | None = None, store: FakeStore | None = None,
              printer: Any = None, **config: Any) -> tuple[BundlesService, FakeApi, FakeStore]:
     api = api or FakeApi({100: dict(SET), 11: dict(KITAP), 12: dict(DEFTER)})
-    api.fail.add("bbd_bundles")           # BBD ucu canlıda YAYINDA DEĞİL (404)
+    # Varsayılan kurulum KATEGORİ YOLUNU sınar. `bbd_bundles` ucu canlıda
+    # yayında (GET /storefront/sets → 200, ölçüm 2026-08-16); burada bilerek
+    # düşürülüyor ki yedek yolun çalıştığı ölçülebilsin. Uç açıkken davranış
+    # `test_bbd_ucu_yayina_girince_birincil_kaynak_olur` içinde ölçülür.
+    api.fail.add("bbd_bundles")
     api.lookup_items = [
         light(100, name="9. Sınıf Tam Set", sku="SET-9", price=500.0),
         light(11, name="Matematik", sku="MAT-9", price=200.0),
@@ -153,7 +157,7 @@ async def test_bileseni_tukenmis_set_isaretlenir() -> None:
                                      cost="60.00", stock=1)   # 2 adet isteniyor
     row = (await service.bundles())["items"][0]
     assert row["flags"]["outOfStock"] is True
-    assert "bileşeni tükenmiş" in row["warning"]
+    assert "içindeki ürün tükendi" in row["warning"]
 
 
 async def test_bilesen_okuma_tavani_asilirsa_sessiz_kalinmaz() -> None:
@@ -162,7 +166,8 @@ async def test_bilesen_okuma_tavani_asilirsa_sessiz_kalinmaz() -> None:
     _plan(store, components=f"[{parts}]")
     result = await service.bundles()
     assert result["skipped"] > 0
-    assert "tavan" in result["notice"]
+    assert "okunamadı" in result["notice"]
+    assert "Sıradaki adım" in result["notice"]   # engel + ne yapılacağı
 
 
 async def test_bilesen_arama_gercekten_suzer() -> None:
@@ -215,9 +220,9 @@ async def test_kisa_gerekce_backendde_de_reddedilir() -> None:
     result = await service.save(100, payload={"components": [{"productId": 11}]},
                                 reason="ok", actor="Ali")
     assert result["ok"] is False
-    assert "Gerekçe" in result["error"]
+    assert "Neden değiştirdiğinizi" in result["error"]
     assert store.plans == {}
-    assert api.used("bbd_save_bundle") == []
+    assert api.used("bbd_set_membership") == []
 
 
 async def test_pasiflestirme_gerekcesiz_yapilmaz() -> None:
@@ -231,28 +236,51 @@ async def test_pasiflestirme_gerekcesiz_yapilmaz() -> None:
 
 async def test_kunye_yerel_yazilir_ve_magazaya_yazilmadigi_soylenir() -> None:
     service, api, store = _service()
-    api.fail.add("bbd_save_bundle")              # uç henüz yayında değil
+    api.fail.add("bbd_set_membership")           # mağaza üyeliği yazamadı
     result = await service.save(100, payload={
         "name": "9. Sınıf Tam Set", "components": [{"productId": 11, "qty": 1}],
         "setPrice": "300.00"}, reason=GEREKCE, actor="Ali", dry_run=False)
 
     assert result["ok"] is True
     assert result["stored"] is False
-    assert "YAZILMADI" in result["notice"]
+    assert "eklenemedi" in result["notice"]
+    assert "Sıradaki adım" in result["notice"]
+    # Künye YEREL kalır: mağaza üyeliği yazılamadı diye kullanıcının girdiği
+    # bileşen listesi çöpe gitmez.
     assert store.plans[100]["set_price"] == 30_000
     assert store.audit[-1]["result"] == "yerel"
 
 
-async def test_uc_yayindayken_kunye_magazaya_da_gider() -> None:
+async def test_magazaya_giden_tek_sey_kategori_uyeligidir() -> None:
+    """Set mağazada bir KATEGORİDİR; künyeyi saklayacak tablo yoktur.
+
+    Eskiden künyenin tamamı `POST/PUT storefront/sets` adresine gidiyordu; o
+    adres mağazada yok (yalnız `POST sets/membership` var) ve istek her
+    seferinde 405 alıyordu.
+    """
     service, api, store = _service()
     result = await service.save(100, payload={"components": [{"productId": 11, "qty": 2,
                                                               "discount": 10}]},
                                 reason=GEREKCE, actor="Ali", dry_run=False)
     assert result["stored"] is True
-    gonderilen = api.used("bbd_save_bundle")[0]["payload"]
-    assert gonderilen["components"] == [{"product_id": 11, "qty": 2, "discount": 10,
-                                         "required": True}]
+
+    cagrilar = [args for name, args, _ in api.calls if name == "bbd_set_membership"]
+    assert cagrilar == [(([100]),)]                     # yalnız set ürününün kendisi
+    assert api.used("bbd_set_membership")[0]["action"] == "add"
+    assert api.set_members == [100]
+
+    # Bileşenler ve fiyatlandırma MAĞAZAYA GİTMEZ — yerelde durur.
     assert store.plans[100]["components"]
+
+
+async def test_kuru_prova_uyeligi_magazada_degistirmez() -> None:
+    service, api, store = _service()
+    await service.save(100, payload={"components": [{"productId": 11}]},
+                       reason=GEREKCE, actor="Ali", dry_run=True)
+
+    assert api.used("bbd_set_membership")[0]["dry_run"] is True
+    assert api.set_members == []                        # mağazada hiçbir şey değişmedi
+    assert store.plans[100]["components"]               # künye yine de saklanır
 
 
 async def test_kuru_prova_magazaya_yazmadigini_soyler() -> None:
@@ -260,7 +288,7 @@ async def test_kuru_prova_magazaya_yazmadigini_soyler() -> None:
     result = await service.save(100, payload={"components": [{"productId": 11}]},
                                 reason=GEREKCE, actor="Ali", dry_run=True)
     assert result["stored"] is False
-    assert "Kuru prova" in result["notice"]
+    assert "DENEME yapıldı" in result["notice"]
     assert store.plans[100]["components"]        # künye yine de saklanır
 
 
@@ -268,7 +296,8 @@ async def test_bilesensiz_set_kaydedilmez() -> None:
     service, _, store = _service()
     result = await service.save(100, payload={"components": []}, reason=GEREKCE, actor="Ali")
     assert result["ok"] is False
-    assert "bileşen" in result["error"]
+    assert "hiç ürün yok" in result["error"]
+    assert "Sıradaki adım" in result["error"]
     assert store.plans == {}
 
 
@@ -277,7 +306,7 @@ async def test_set_kendi_bileseni_olamaz() -> None:
     result = await service.save(100, payload={"components": [{"productId": 100}]},
                                 reason=GEREKCE, actor="Ali")
     assert result["ok"] is False
-    assert "kendi bileşeni" in result["error"]
+    assert "kendi kendisinin içinde olamaz" in result["error"]
 
 
 async def test_kunye_yazilamazsa_basarili_gorunmez() -> None:

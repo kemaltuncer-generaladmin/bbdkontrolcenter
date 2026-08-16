@@ -77,6 +77,22 @@ STATUS_ALIASES = {
     "paid": ST_REFUNDED,
     "rejected": ST_REJECTED, "declined": ST_REJECTED, "denied": ST_REJECTED,
     "canceled": ST_REJECTED, "cancelled": ST_REJECTED,
+    # CANLIDA DOĞRULANDI (2026-08-16, `GET /api/admin/bbd/return-requests`
+    # yanıtının `meta.statuses` sözlüğü): mağazadaki `rma_statuses` satırları
+    # TÜRKÇELEŞTİRİLMİŞ durumda (2026_07_21_110000 göçü) ve uç durumu ADIYLA
+    # veriyor. Bir dönem yalnız İngilizce adlar aranıyordu; o yüzden CANLI
+    # talebin HEPSİ "Bilinmiyor" çipine düşüyordu. Aşağıdaki adlar tahmin
+    # değil, mağazanın kendi sözlüğünden okunmuştur.
+    "inceleniyor": ST_REQUESTED,
+    "onaylandı": ST_APPROVED,
+    "iade_bekleniyor": ST_AWAITING,
+    "kargoda": ST_AWAITING,
+    "iade_edildi": ST_REFUNDED,
+    "reddedildi": ST_REJECTED,
+    "iptal_edildi": ST_REJECTED,
+    "ürün_iptal_edildi": ST_REJECTED,
+    # "Çözüldü" (`Solved`) BİLEREK YOK — `closed` ile aynı gerekçe: çözülmüş
+    # talebin parası geri verildi mi, değişimle mi kapandı belli değil.
 }
 
 # ============================================================= sebep · yöntem
@@ -98,6 +114,14 @@ REASON_ALIASES = {
     "late": "late", "late_delivery": "late", "delayed": "late",
     "withdrawal": "withdrawal", "cooling_off": "withdrawal", "cayma": "withdrawal",
     "other": "other",
+    # CANLIDA DOĞRULANDI (2026-08-16): `rma_reasons` da Türkçeleştirilmiş ve uç
+    # sebebi SERBEST METİN olarak veriyor. Bu beş başlık mağazanın kendi
+    # sözlüğüdür; eşlenmeyeni `reason_label` ham metniyle gösterir, uydurmaz.
+    "üretim_hatası": "defective",
+    "kargoda_hasar_görmüş": "defective",
+    "bozuk/kullanılamaz_geldi": "defective",
+    "ürün_açıklaması_yanlış": "wrong_item",
+    "ürün_elime_ulaşmadı": "late",
 }
 
 METHOD_LABELS = {
@@ -224,9 +248,12 @@ def reason_error(value: str) -> str:
 def pick(raw: Any, *names: str) -> Any:
     """Sözlükten ilk DOLU alanı seçer.
 
-    BBD uçları hâlâ yazılıyor ve alan adları (`tracking_no` mu `trackingNumber`
-    mi) kesinleşmedi. Tek ada bağlanmak, uç yayına girdiğinde ekranın sessizce
-    boş görünmesi demekti.
+    Mağaza tek bir yazım kullanmıyor: Bagisto çekirdeği camelCase (`grandTotal`),
+    BBD uçları ise ikisini karışık veriyor — aynı yanıtta `order_id` ile
+    `orderIncrementId` yan yana durur (CANLIDA DOĞRULANDI 2026-08-16,
+    `GET /api/admin/bbd/return-requests`). Tek ada bağlanmak, alanın adı
+    farklıysa hata değil SESSİZLİK üretir: sütun boş görünür ve kimse fark
+    etmez. Bu yüzden her okuma iki yazımı da dener.
     """
     if not isinstance(raw, dict):
         return None
@@ -256,10 +283,34 @@ def share(total: int, part: int, whole: int) -> int:
 
 # ================================================================== eşleme
 
+#: Türkçe "İ" küçültülünce "i" + BİRLEŞEN NOKTA (U+0307) olur: `"İade".lower()`
+#: → `"i̇ade"`. Sözlüğe düz `"iade_edildi"` yazan eşleşmeyi sessizce kaçırırdı;
+#: normalleştirme bu noktayı atar.
+_COMBINING_DOT = "\u0307"
+
+
+def slug(value: Any) -> str:
+    """Sözlük araması için anahtar: küçük harf, boşluk/tire yerine alt çizgi."""
+    return (text(value).lower().replace(_COMBINING_DOT, "")
+            .replace(" ", "_").replace("-", "_"))
+
+
+def status_text(value: Any) -> str:
+    """Durumun ADI. Sözlük de düz metin de kabul edilir.
+
+    CANLIDA DOĞRULANDI (2026-08-16, `GET /api/admin/bbd/return-requests`):
+    durum SÖZLÜK gelir — `{"id": 5, "title": "İade Edildi", "color": "#0d9488"}`.
+    Bir dönem düz metin bekleniyordu; sözlüğü `str()`'e vermek ekrandaki rozete
+    ham Python sözlüğünü yazıyordu ("Bilinmiyor ({'id': 5, ...})").
+    """
+    if isinstance(value, dict):
+        return text(pick(value, "title", "name", "label", "code", "status"))
+    return text(value)
+
+
 def status_of(value: Any) -> str:
     """Mağaza durumu → bizim altı durumumuz. Tanınmayan `other` olur (TUZAK 6)."""
-    key = text(value).lower().replace(" ", "_").replace("-", "_")
-    return STATUS_ALIASES.get(key, ST_OTHER)
+    return STATUS_ALIASES.get(slug(status_text(value)), ST_OTHER)
 
 
 def status_label(key: str, raw: str = "") -> str:
@@ -269,12 +320,24 @@ def status_label(key: str, raw: str = "") -> str:
 
 
 def reason_of(value: Any) -> str:
-    key = text(value).lower().replace(" ", "_").replace("-", "_")
+    key = slug(value)
     return REASON_ALIASES.get(key, "other" if key else "")
 
 
+def reason_label(key: str, raw: str = "") -> str:
+    """Sebep etiketi. Eşlenemeyen sebepte MAĞAZANIN KENDİ METNİ gösterilir.
+
+    Sebep listesi mağaza yöneticisinden değişebilir; eşlenmeyeni yalnız "Diğer"
+    diye göstermek, operatörden müşterinin gerçekte yazdığı gerekçeyi saklardı.
+    """
+    label = REASON_LABELS.get(key, "")
+    if key == "other" and text(raw):
+        return f"Diğer ({text(raw)})"
+    return label
+
+
 def method_of(value: Any) -> str:
-    key = text(value).lower().replace(" ", "_").replace("-", "_")
+    key = slug(value)
     if not key:
         return "unknown"
     if key in METHOD_ALIASES:
@@ -315,13 +378,14 @@ def customer_of(raw: dict[str, Any]) -> str:
 def refund_row(raw: dict[str, Any]) -> dict[str, Any]:
     """Bagisto kredi notu → tablo satırı. Bu satır PARAYI temsil eder.
 
-    CANLIDA DOĞRULANDI (2026-08-13, `/api/admin/refunds`): yanıt camelCase'tir,
-    gömülü `order` nesnesi YOKTUR ve liste ucunda `items` HER ZAMAN BOŞTUR
-    (kalemler yalnız `/refunds/{id}` detayında gelir). Sipariş numarası
-    `orderIncrementId`, müşteri `customerName`/`billedTo`, sipariş tarihi
-    `orderDate`, adet `totalQty` alanlarındadır. Yalnız snake_case + gömülü
-    `order` okumak tabloyu "—" ile dolduruyordu; iki yazım da kabul edilir
-    çünkü BBD uçları henüz kesinleşmedi.
+    CANLIDA DOĞRULANDI (2026-08-13, son ölçüm 2026-08-16, `/api/admin/refunds`):
+    yanıt camelCase'tir, gömülü `order` nesnesi YOKTUR ve liste ucunda `items`
+    HER ZAMAN BOŞTUR (kalemler yalnız `/refunds/{id}` detayında gelir). Sipariş
+    numarası `orderIncrementId`, müşteri `customerName`/`billedTo`, sipariş
+    tarihi `orderDate`, adet `totalQty` alanlarındadır. Yalnız snake_case +
+    gömülü `order` okumak tabloyu "—" ile dolduruyordu; iki yazım da kabul
+    edilir çünkü Bagisto sürüm yükseltmelerinde alan adını değiştirebiliyor ve
+    yanlış ad hata değil BOŞ SÜTUN üretir.
     """
     order = pick(raw, "order")
     order = order if isinstance(order, dict) else {}
@@ -385,13 +449,21 @@ def refund_row(raw: dict[str, Any]) -> dict[str, Any]:
 def request_row(raw: dict[str, Any]) -> dict[str, Any]:
     """BBD iade talebi (RMA) → tablo satırı. Bu satır SÜRECİ temsil eder.
 
-    Alan adları BBD ucu yayına girene kadar kesin değil; `pick` birden çok
-    yazımı kabul eder ve bulunmayanı boş bırakır — uydurma değer üretilmez.
+    CANLIDA DOĞRULANDI (2026-08-16, `GET /api/admin/bbd/return-requests`): uç
+    YAYINDA ve alan adları KARIŞIK yazımdadır — `order_id`/`created_at` snake,
+    `orderIncrementId`/`customerName`/`itemCount` camel. Durum düz metin değil
+    SÖZLÜKTÜR (`{"id", "title", "color"}`) ve başlıklar Türkçedir.
+
+    Bir dönem "bu uç henüz yayında değil, alan adları kesinleşmedi" deniyordu;
+    artık böyle değil. O varsayımla yazılan okuma canlı veride sipariş
+    numarasını boş bırakıyor, durum rozetine de ham sözlüğü basıyordu. `pick`
+    yine iki yazımı da dener (bkz. `pick`), bulunmayanı boş bırakır — uydurma
+    değer üretilmez.
     """
     request_id = as_int(pick(raw, "id", "request_id"))
     order = pick(raw, "order")
     order = order if isinstance(order, dict) else {}
-    status_raw = text(pick(raw, "status", "state"))
+    status_raw = status_text(pick(raw, "status", "state"))
     key = status_of(status_raw)
     reason = reason_of(pick(raw, "reason", "reason_code", "reasonCode"))
     method = method_of(pick(raw, "refund_method", "refundMethod", "method", "resolution"))
@@ -406,11 +478,13 @@ def request_row(raw: dict[str, Any]) -> dict[str, Any]:
         "requestId": request_id,
         "number": text(pick(raw, "increment_id", "number", "code")) or f"T{request_id}",
         "orderId": as_int(pick(raw, "order_id", "orderId") or order.get("id")),
-        "orderNumber": text(pick(raw, "order_increment_id") or pick(order, "increment_id")),
+        "orderNumber": text(pick(raw, "order_increment_id", "orderIncrementId")
+                            or pick(order, "increment_id", "incrementId")),
         "createdAt": created[:19],
         "date": created[:10],
         "customer": customer_of(raw) or customer_of(order),
-        "email": text(pick(raw, "customer_email") or pick(order, "customer_email")),
+        "email": text(pick(raw, "customer_email", "customerEmail")
+                      or pick(order, "customer_email", "customerEmail")),
         "itemCount": len(items) or as_int(pick(raw, "item_count", "itemCount")),
         "itemNames": ", ".join(text(pick(item, "name", "product_name")) for item in items
                                if isinstance(item, dict))[:160],
@@ -424,14 +498,17 @@ def request_row(raw: dict[str, Any]) -> dict[str, Any]:
         "statusLabel": status_label(key, status_raw),
         "statusRaw": status_raw,
         "reason": reason,
-        "reasonLabel": REASON_LABELS.get(reason, ""),
+        "reasonLabel": reason_label(reason, text(pick(raw, "reason", "reason_code",
+                                                      "reasonCode"))),
         "method": method,
         "methodLabel": METHOD_LABELS[method],
         "carrier": text(pick(raw, "carrier", "shipping_carrier", "carrier_name")),
         "tracking": text(pick(raw, "tracking_number", "trackingNumber", "tracking_no")),
         "posState": pos_state,
         "posMessage": text(pick(raw, "pos_message", "posMessage", "refund_error")),
-        "orderDate": text(pick(raw, "order_created_at") or pick(order, "created_at"))[:10],
+        "orderDate": text(pick(raw, "order_created_at", "orderCreatedAt", "order_date",
+                               "orderDate")
+                          or pick(order, "created_at", "createdAt"))[:10],
         "hasRefund": key == ST_REFUNDED,
     }
 

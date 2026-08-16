@@ -238,6 +238,90 @@ async def reject(
                                   actor=user.full_name, dry_run=body.dryRun)
 
 
+# ==================================================== iade kargosu (RMA)
+#
+# ÜÇ DÜĞME, ÜÇ AYRI KAPI — ve yalnızca biri para harcar:
+#   · "Kargoyu aç" / "Durumu tazele" → `store_requests.manage`, 10 karakter
+#     gerekçe. Para harcamaz; mükerrer korumalıdır.
+#   · "Etiketi satın al"             → `store_requests.purchase` (AYRI ANAHTAR),
+#     20 karakter gerekçe, `dryRun` varsayılanı `true`.
+# Kargo gönderisi açabilen herkesin fatura kestirebilmesi gerekmez; anahtarın
+# ayrı olması, izni sonradan daraltabilmek içindir.
+
+PURCHASE_REASON = 20
+
+
+@router.get("/requests/{request_id}/shipment")
+async def shipment(
+    request_id: int,
+    user: CurrentUser = requires("store_requests.view"),
+) -> dict[str, Any]:
+    """Talebin iade kargosu — SALT OKUMA. Gönderi yoksa hata değil, boş durum."""
+    return await service().shipment(request_id)
+
+
+class ShipmentBody(BaseModel):
+    reason: str = Field(min_length=10, max_length=255)
+    dryRun: bool = True
+
+
+@router.post("/requests/{request_id}/shipment")
+async def open_shipment(
+    request_id: int,
+    body: ShipmentBody,
+    user: CurrentUser = requires("store_requests.manage"),
+) -> dict[str, Any]:
+    """İade gönderisini açar — ETİKET SATIN ALMAZ (o ayrı izin ister)."""
+    return await service().open_shipment(request_id, reason=body.reason,
+                                         actor=user.full_name, dry_run=body.dryRun)
+
+
+@router.post("/requests/{request_id}/shipment/sync")
+async def sync_shipment(
+    request_id: int,
+    body: ShipmentBody,
+    user: CurrentUser = requires("store_requests.manage"),
+) -> dict[str, Any]:
+    """Kargo durumunu taşıyıcıdan tazeler. Yalnız okur; para hareketi yoktur."""
+    return await service().sync_shipment(request_id, reason=body.reason,
+                                         actor=user.full_name, dry_run=body.dryRun)
+
+
+class PurchaseLabelBody(BaseModel):
+    offerId: str = Field(default="", max_length=120)
+    reason: str = Field(min_length=PURCHASE_REASON, max_length=255)
+    dryRun: bool = True
+
+
+@router.post("/requests/{request_id}/shipment/label")
+async def purchase_label(
+    request_id: int,
+    body: PurchaseLabelBody,
+    user: CurrentUser = requires("store_requests.purchase"),
+) -> dict[str, Any]:
+    """İADE ETİKETİNİ SATIN ALIR — PARA HARCAR.
+
+    Kargo ekranındaki etiket satın almayla aynı koruma: ayrı izin anahtarı,
+    20 karakter gerekçe ve `dryRun` varsayılanı açık. Onay kutusunda "uygula"
+    işaretlenmeden mağazaya gerçek istek gitmez.
+    """
+    return await service().purchase_label(request_id, offer_id=body.offerId, reason=body.reason,
+                                          actor=user.full_name, dry_run=body.dryRun)
+
+
+@router.get("/requests/{request_id}/shipment/label")
+async def label(
+    request_id: int,
+    user: CurrentUser = requires("store_requests.view"),
+) -> dict[str, Any]:
+    """Satın alınmış etiketin PDF'ini indirir ve dosya yolunu döner.
+
+    OKUMA İZNİ YETER: etiketi BASMAK satın almakla aynı şey değildir; parayı
+    harcayan adım zaten olmuş ve faturalanmıştır.
+    """
+    return await service().label(request_id)
+
+
 # ================================================================== rapor
 
 class PreviewBody(BaseModel):

@@ -10,8 +10,20 @@ gelir ve süzme burada yapılır; sunucu tarafı sayfalama bu boyutta kazanç de
 gecikme olurdu.
 
 UZAK SİSTEM DÜŞERSE EKRAN AYAKTA KALIR (K7): `connected: False` + `error`
-döner. BBD ucu henüz yayında değilse ekran tema özelleştirmelerinden SALT
-OKUNUR bir görünüm çizer ve bunu söyler — sessizce boş kalmaz.
+döner. Slot listesi okunamazsa ekran tema özelleştirmelerinden SALT OKUNUR
+bir görünüm çizer ve NEDENİNİ söyler — sessizce boş kalmaz.
+
+CANLIDA DOĞRULANDI (2026-08-16): okuma ucu `GET /api/admin/bbd/storefront/
+carousels` 200 dönüyor ve gerçek slotlar geliyor; güncelleme ucu
+`PATCH .../carousels/{id}` de rota listesinde var. Bir dönem bu ikisi için de
+"uç henüz yayında değil" deniyordu, ARTIK ÖYLE DEĞİL. Salt okunur dal yine de
+duruyor (K7 — uç bir gün geri çekilirse ekran ayakta kalmalı), ama artık
+kullanıcıya "uç yayınlanmadı" diye değil "şu an okunamadı" diye anlatılır:
+yanlış teşhis, geçici bir arızayı kalıcı bir eksiklik gibi gösteriyordu.
+
+Hâlâ eksik olan uçlar (2026-08-16'da yeniden ölçüldü): yükleme
+`POST /api/admin/bbd/home/slides` 404, slot EKLEME (POST .../carousels) ve
+sıralama (PUT .../carousels/reorder) rota listesinde yok.
 """
 
 from __future__ import annotations
@@ -41,7 +53,9 @@ DEFAULT_RECOMMENDED = {
 
 #: Vitrine yansımanın gecikebileceğini SÖYLERİZ; sessiz kalıp "neden değişmedi"
 #: sorusunu doğurmayız. Ana sayfa çoğu kurulumda önbelleklidir.
-CACHE_NOTICE = "Vitrine yansıması birkaç dakika sürebilir (ana sayfa önbelleği yenilenir)."
+CACHE_NOTICE = ("Kaydedildi. Ana sayfada görünmesi birkaç dakika sürebilir — site son "
+                "hâlini bir süre hafızasında tutuyor. Hemen görmezseniz birkaç dakika "
+                "sonra sayfayı yenileyin.")
 
 #: Yükleme ucu (`POST /api/admin/bbd/home/slides`) mağaza tarafında henüz
 #: yayında değil — 2026-08-13 itibarıyla 404. Bunu "hata" diye göstermek
@@ -49,10 +63,11 @@ CACHE_NOTICE = "Vitrine yansıması birkaç dakika sürebilir (ana sayfa önbell
 #: Ekran ne olduğunu, ne zaman açılacağını ve o zamana kadar hangi yolun
 #: çalıştığını söyler (K7).
 UPLOAD_PENDING = (
-    "Görsel yükleme ucu mağaza tarafında henüz yayında değil "
-    "(POST /api/admin/bbd/home/slides). Ekran hazır: uç yayınlandığı gün bu düğme "
-    "kendiliğinden çalışacak. O zamana kadar görsel, slot kaydedilirken gövdeyle "
-    "birlikte gidiyor — “Kaydet” yolu açık ve ölçü denetimi orada da işliyor."
+    "Ayrı görsel yükleme yolu mağaza tarafında henüz açılmadı — bu sizin hatanız "
+    "değil, mağaza yazılımında o parça yayınlanmadı. YAPACAĞINIZ İŞLEM DEĞİŞMİYOR: "
+    "görseli seçip “Kaydet” deyin, görsel kayıtla birlikte gidiyor ve ölçü denetimi "
+    "orada da çalışıyor. Bu düğme, mağaza tarafı açıldığı gün kendiliğinden çalışmaya "
+    "başlayacak."
 )
 
 
@@ -182,7 +197,7 @@ class HomeMediaService:
     @staticmethod
     def _fail(failure: Exception) -> str:
         message = str(failure).strip()
-        return message or "Mağazaya ulaşılamadı."
+        return message or "Mağazaya ulaşılamadı — internet bağlantısını kontrol edin."
 
     def _row(self, raw: Any, *, today: str, read_only: bool = False) -> dict[str, Any]:
         area = slots.area_of(raw)
@@ -210,7 +225,13 @@ class HomeMediaService:
                 "source": "carousel", "readOnly": False, "fallbackError": ""}
 
     async def _fallback_rows(self, today: str) -> dict[str, Any]:
-        """BBD ucu yokken tema özelleştirmelerinden SALT OKUNUR görünüm."""
+        """Slot listesi okunamazken tema özelleştirmelerinden SALT OKUNUR görünüm.
+
+        Bu dal bir dönem "BBD ucu henüz yayında değil" diye anlatılıyordu;
+        uç 2026-08-16'da canlıda 200 dönüyor, dolayısıyla buraya düşmek artık
+        "eksik paket" değil "şu an okunamadı" demektir. Dal duruyor (K7) ama
+        gerekçesi `_fetch` içinde `error` olarak taşınır ve ekranda gösterilir.
+        """
         try:
             payload = await self._api.themes({"channel": self._channel})
         except Exception as failure:  # noqa: BLE001 — ikisi birden yoksa boş liste
@@ -265,7 +286,13 @@ class HomeMediaService:
         """
         out: dict[str, Any] = {"ok": True, "connected": True, "error": "", "warnings": [],
                                "channels": [], "locales": [], "categories": [], "pages": [],
-                               "areas": [{"value": key, "label": label}
+                               # `what` = "bu bölüm ne işe yarar" tek cümlesi.
+                               # Ekran adı tek başına yetmiyor: "Tanıtım
+                               # görselleri" doğru bir ad ama müşterinin bunu
+                               # NEREDE göreceğini söylemez.
+                               "areas": [{"value": key, "label": label,
+                                          "one": slots.AREA_ONE[key],
+                                          "what": slots.AREA_WHAT[key]}
                                          for key, label in slots.AREA_LABELS.items()],
                                "placements": [{"value": key, "label": slots.PLACEMENT_LABELS[key]}
                                               for key in slots.PLACEMENTS],
@@ -405,9 +432,11 @@ class HomeMediaService:
             return {"ok": False, "error": problem}
 
         if area not in slots.AREAS:
-            return {"ok": False, "error": f"Bilinmeyen alan: {area}"}
+            return {"ok": False, "error": f"Tanınmayan bölüm: {area}"}
         if self._wanted(area) == (0, 0):
-            return {"ok": False, "error": "Duyuru şeridi metindir; buraya görsel yüklenmez."}
+            return {"ok": False,
+                    "error": "Üstteki duyuru yazısı yalnız metin gösterir; oraya görsel konmaz. "
+                             "Görsel asmak için “Tanıtım görselleri” sekmesini kullanın."}
 
         image = slots.decode_image(data, max_bytes=self._max_bytes, allowed=self._allowed)
         if not image["ok"]:
@@ -469,7 +498,8 @@ class HomeMediaService:
         for row in data["rows"]:
             if row["id"] == int(slot_id):
                 return row, ""
-        return None, "Slot bulunamadı; başka biri kaldırmış olabilir. Listeyi yenileyin."
+        return None, ("Bu kayıt artık listede yok — bu arada başka biri kaldırmış olabilir. "
+                      "“Yenile” deyip listeye yeniden bakın.")
 
     async def save(self, slot_id: int | None, *, patch: dict[str, Any], image: str = "",
                    reason: str, actor: str, dry_run: bool = True) -> dict[str, Any]:
@@ -489,9 +519,17 @@ class HomeMediaService:
             if missing:
                 return {"ok": False, "error": missing}
             if current and current["readOnly"]:
+                # Gerekçe DÜZELTİLDİ (2026-08-16): eskiden burada "BBD ucu
+                # yayınlanınca açılacak" yazıyordu. Slot ucu artık canlıda;
+                # bu dala düşmek uç eksikliği değil, listenin O AN okunamamış
+                # olması demek. Yanlış teşhis kullanıcıya geçici arızayı
+                # kalıcı eksiklik gibi gösteriyordu.
                 return {"ok": False,
-                        "error": "Bu kayıt tema özelleştirmelerinden SALT OKUNUR geldi; "
-                                 "düzenleme mağaza tarafındaki BBD ucu yayınlanınca açılacak."}
+                        "error": "Şu an yalnız BAKABİLİRSİNİZ, değiştiremezsiniz. Neden: ana "
+                                 "sayfa listesi mağazadan okunamadı; ekrandaki görüntü sitenin "
+                                 "temasından çıkarılmış bir özet, düzenlenecek gerçek kayıt "
+                                 "elimizde değil. Sıradaki adım: “Yenile” deyin — bağlantı "
+                                 "düzelir düzelmez düzenleme kendiliğinden açılır."}
 
         clean = slots.normalize_patch(patch)
         body = slots.write_body(current, clean, channel=self._channel, locale=self._locale)
@@ -575,9 +613,11 @@ class HomeMediaService:
             return {"ok": False, "error": missing}
         if current and current["readOnly"]:
             return {"ok": False,
-                    "error": "Salt okunur kayıt; yayın durumu buradan değiştirilemez."}
+                    "error": "Şu an yalnız bakabilirsiniz: ana sayfa listesi mağazadan "
+                             "okunamadığı için yayın durumu değiştirilemiyor. Sıradaki adım: "
+                             "“Yenile” deyin, bağlantı düzelince düğme çalışır."}
         if current and current["status"] == bool(published):
-            return {"ok": False, "error": "Slot zaten bu durumda."}
+            return {"ok": False, "error": "Bu zaten istediğiniz durumda; değişecek bir şey yok."}
 
         body = slots.write_body(current, {"status": 1 if published else 0},
                                 channel=self._channel, locale=self._locale)
@@ -612,9 +652,18 @@ class HomeMediaService:
         if not data["connected"]:
             return {"ok": False, "error": data["error"] or "Mağazaya ulaşılamadı."}
         if data["readOnly"]:
+            # BURADAKİ İDDİA HÂLÂ DOĞRU (2026-08-16'da rota listesinden yeniden
+            # bakıldı): sıralama ucu mağazada gerçekten yok. Yalnız iki neden
+            # birbirine karışmasın diye ayrıldı — liste okunamamış OLABİLİR,
+            # ama uç yayınlansa bile bu görünümden sıra yazılamaz.
             return {"ok": False,
-                    "error": "Salt okunur görünüm; sıra mağaza tarafındaki BBD ucu "
-                             "yayınlanınca yazılabilecek."}
+                    "error": "Sıra şu an kaydedilemiyor. İki neden var ve ikisi de sizden "
+                             "kaynaklanmıyor: (1) ana sayfa listesi mağazadan okunamadı, "
+                             "(2) sıralamayı kaydeden bölüm mağaza yazılımında henüz "
+                             "yayınlanmadı. Sıradaki adım: “Yenile” deyip yeniden deneyin; "
+                             "sürerse mağaza yazılımını güncelleyecek kişiye haber verin. "
+                             "Bu arada diğer düzenlemeler (görsel, yazı, tarih, yayına alma) "
+                             "çalışmaya devam ediyor."}
 
         merged = slots.merged_order(data["rows"], area, order)
         if not merged["ok"]:
@@ -647,8 +696,9 @@ class HomeMediaService:
         if not data["connected"] and not data["rows"]:
             return {"ok": False, "error": data["error"] or "Mağazaya ulaşılamadı."}
 
-        headers = ["Alan", "Başlık", "Alt metni", "Hedef", "Yerleşim", "Cihaz", "Başlangıç",
-                   "Bitiş", "Durum", "Sıra", "Tıklama", "Görsel ölçüsü", "Uyarı"]
+        headers = ["Bölüm", "Başlık", "Görsel açıklaması", "Tıklayınca gideceği yer",
+                   "Sayfadaki yeri", "Hangi ekranda", "Başlangıç", "Bitiş", "Durum",
+                   "Sıra", "Tıklama", "Görsel ölçüsü", "Eksikler"]
         table = [[row["areaLabel"], row["title"], row["altText"], row["link"],
                   row["placementLabel"], row["deviceLabel"], row["startsAt"] or "—",
                   row["endsAt"] or "—", row["stateLabel"], row["sortOrder"],
@@ -661,7 +711,8 @@ class HomeMediaService:
         try:
             path = write_private(self._export_dir / name, csv_bytes(headers, table))
         except OSError as failure:
-            return {"ok": False, "error": f"Dosya yazılamadı: {failure}"}
+            return {"ok": False,
+                    "error": f"Dosya kaydedilemedi: {failure}. Disk dolu olabilir."}
         return {"ok": True, "error": "", "path": str(path), "name": name, "rows": len(table)}
 
     async def preview(self, kind: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -677,12 +728,14 @@ class HomeMediaService:
 
     async def build_report(self, kind: str, params: dict[str, Any]) -> dict[str, Any]:
         if kind != "layout":
-            return {"ok": False, "error": f"Bilinmeyen rapor: {kind}"}
+            return {"ok": False, "error": f"Böyle bir rapor yok: {kind}"}
 
         data = await self._fetch()
         rows = data["rows"]
         if not rows:
-            return {"ok": False, "error": "Ana sayfada rapora girecek slot yok."}
+            return {"ok": False,
+                    "error": "Ana sayfada hiç görsel ya da duyuru yok; raporlanacak bir şey "
+                             "bulunamadı. Önce bir görsel ekleyin."}
 
         area = slots.text(params.get("area"))
         if area:
@@ -691,12 +744,12 @@ class HomeMediaService:
 
         sections: list[dict[str, Any]] = [{
             "kind": "tiles", "title": "Özet",
-            "tiles": [("Slot", number(stats["total"])),
+            "tiles": [("Toplam", number(stats["total"])),
                       ("Yayında", number(stats[slots.STATE_PUBLISHED])),
-                      ("Zamanlanmış", number(stats[slots.STATE_SCHEDULED])),
+                      ("Tarihi gelmedi", number(stats[slots.STATE_SCHEDULED])),
                       ("Süresi dolmuş", number(stats[slots.STATE_EXPIRED])),
-                      ("Alt metni yok", number(stats["missingAlt"])),
-                      ("Ölçüsü uygunsuz", number(stats["lowRes"]))],
+                      ("Görsel açıklaması yok", number(stats["missingAlt"])),
+                      ("Ölçüsü tutmuyor", number(stats["lowRes"]))],
         }]
         for name in slots.AREAS:
             subset = [row for row in rows if row["area"] == name]
@@ -704,7 +757,8 @@ class HomeMediaService:
                 continue
             sections.append({
                 "kind": "table", "title": slots.AREA_LABELS[name],
-                "headers": ["#", "Başlık", "Hedef", "Yayın", "Cihaz", "Durum", "Uyarı"],
+                "headers": ["#", "Başlık", "Tıklayınca gideceği yer", "Yayın tarihleri",
+                            "Hangi ekranda", "Durum", "Eksikler"],
                 "align": "LLLLLLL", "widths": [0.4, 2.2, 2, 1.4, 0.8, 0.9, 1.6],
                 "rows": [[str(index + 1), row["title"], row["link"] or "—",
                           f"{row['startsAt'] or '—'} → {row['endsAt'] or '—'}",
@@ -713,13 +767,19 @@ class HomeMediaService:
                          for index, row in enumerate(subset)],
             })
         if data["readOnly"]:
+            # Rapor kâğıda basılıp saklanır: yanlış gerekçe orada yıllarca durur.
+            # 2026-08-16'da düzeltildi, bkz. modül başlığı.
             sections.append({"kind": "note",
-                             "text": "Bu rapor tema özelleştirmelerinden SALT OKUNUR üretildi; "
-                                     "BBD ucu yayınlanınca slot ayrıntıları da girecek."})
+                             "text": "DİKKAT — bu rapor eksik olabilir. Rapor alınırken ana "
+                                     "sayfa listesi mağazadan okunamadı; buradaki bilgiler "
+                                     "sitenin temasından çıkarılmış özettir. Tıklanınca "
+                                     "gidilen yer, yayın tarihleri ve hangi ekranda görüneceği "
+                                     "eksik olabilir. Bağlantı düzeldiğinde rapor yeniden "
+                                     "alınmalıdır."})
 
         stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
-        content = build_pdf(title="Ana sayfa yerleşimi",
-                            subtitle=f"{stats['total']} slot · {slots.today_iso()}",
+        content = build_pdf(title="Ana sayfada ne var",
+                            subtitle=f"{stats['total']} görsel/duyuru · {slots.today_iso()}",
                             sections=sections, footer="Kontrol Merkezi · Mağaza")
         name = f"magaza-ana-sayfa-yerlesimi-{stamp}.pdf"
         try:
@@ -735,8 +795,9 @@ class HomeMediaService:
         binary = shutil.which("pdftoppm")
         if not binary:
             raise PreviewError(
-                "Önizleme üretilemedi: `pdftoppm` yok (poppler-utils kurulmalı). "
-                "Rapor yine de kaydedildi ve yazdırılabilir.")
+                "Raporun ekrandaki önizlemesi çizilemedi çünkü bu bilgisayarda önizleme "
+                "aracı (poppler-utils) kurulu değil. RAPOR YİNE DE HAZIR: rapor klasörüne "
+                "kaydedildi ve yazdırılabilir.")
         with tempfile.TemporaryDirectory(prefix="km-yerlesim-onizleme-") as folder:
             target = Path(folder) / "sayfa"
             try:
@@ -763,15 +824,19 @@ class HomeMediaService:
         döktürmeye açık kapı bırakırdı.
         """
         if self._printer is None:
-            return {"ok": False, "error": "Yazıcı yeteneği bu kurulumda yok."}
+            return {"ok": False,
+                    "error": "Bu bilgisayarda yazdırma kurulu değil. Raporu rapor klasöründen "
+                             "açıp elle yazdırabilirsiniz."}
         try:
             resolved = Path(path).expanduser().resolve(strict=True)
         except OSError:
-            return {"ok": False, "error": "Basılacak rapor bulunamadı."}
+            return {"ok": False,
+                    "error": "Yazdırılacak rapor bulunamadı; önce raporu üretin."}
         allowed = self._export_dir.resolve()
         if not str(resolved).startswith(str(allowed) + os.sep):
             return {"ok": False,
-                    "error": "Bu dosya rapor klasöründe değil; güvenlik gereği basılmaz."}
+                    "error": "Bu dosya rapor klasöründe değil; güvenlik gereği yazdırılmaz. "
+                             "Raporu bu ekrandan yeniden üretin."}
         try:
             result = await self._printer.print_file(resolved, title=resolved.name,
                                                     copies=max(1, min(20, int(copies))))
@@ -781,7 +846,8 @@ class HomeMediaService:
 
     async def printer_status(self) -> dict[str, Any]:
         if self._printer is None:
-            return {"ready": False, "error": "Yazıcı yeteneği bu kurulumda yok."}
+            return {"ready": False,
+                    "error": "Bu bilgisayarda yazdırma kurulu değil."}
         try:
             return await self._printer.status()
         except Exception as failure:  # noqa: BLE001 — K7

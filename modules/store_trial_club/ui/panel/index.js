@@ -7,11 +7,16 @@
 // seçili kitleye toplu bildirim gönderir (önce kaç kişi/kaç SMS önizlemesi).
 //
 // NE YAPMAZ:
-//  · Katılımcı EKLEMEZ/ÇIKARMAZ — mağazada o uçlar henüz yok. Düğmeler kapalı
-//    ve nedeni yazılı; sessizce 404 alıp patlamıyoruz.
+//  · Katılımcı EKLEMEZ/ÇIKARMAZ. Düğmeler kapalı ve nedeni yazılı; sessizce
+//    404 alıp patlamıyoruz. İKİ DÜĞMENİN NEDENİ AYNI DEĞİL: "Katılımcı ekle"
+//    için mağazada uç hiç yok; "Kaydı iptal et" için uç 2026-08-16 itibarıyla
+//    YAYINDA ama geçitte (store.api) karşılığı yok. Metinler `features()`ten
+//    gelir, burada sabitlenmez — eskiyip yalan söylemesin.
 //  · Sonucu "yükle" ile "yayınla" AYNI ŞEY DEĞİLDİR. Yükleme katılımcıya
 //    görünmez; yayınlama ayrı izin ve ayrı onay ister.
-//  · Kimseyi silmez. Kayıt iptali de mağaza ucu gelince pasifleştirme olacak.
+//  · Kimseyi silmez. Kayıt iptali de geçit metodu gelince pasifleştirme
+//    olacak (mağaza tarafı zaten böyle davranıyor: sipariş "iptal" durumuna
+//    çekiliyor, satır silinmiyor).
 //
 // TUZAKLAR (ekranda karşılığı olanlar):
 //  · Aynı ada sahip iki katılımcı varsa satır "belirsiz" işaretlenir ve
@@ -780,8 +785,13 @@ function openMember(row) {
   if (!feature('notifyOne').available) {
     info.append(alertBox(feature('notifyOne').reason, 'info'));
   }
-  info.append(hintBox('Katılımcı kaydı bu ekrandan SİLİNMEZ. Mağaza ucu yayınlandığında '
-    + 'iptal (pasifleştirme) gelecek; geçmiş sınav ve ödeme kayıtları öksüz kalmasın diye.'));
+  // Bu ipucu bir dönem "mağaza ucu yayınlandığında" diyordu; uç yayınlandı,
+  // bekleyen halka geçit metodu. Gerekçenin AYRINTISI düğmenin `title`ında
+  // (features().removeMember.reason) durur — burada tek yerde iki metin
+  // tutmayalım diye özet geçiyoruz.
+  info.append(hintBox('Katılımcı kaydı bu ekrandan SİLİNMEZ; iptal (pasifleştirme) '
+    + 'olarak gelecek, geçmiş sınav ve ödeme kayıtları öksüz kalmasın diye. '
+    + 'Düğmenin neden kapalı olduğu üstüne gelince yazar.'));
   box.body.append(info);
 }
 

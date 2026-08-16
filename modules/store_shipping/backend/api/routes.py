@@ -185,7 +185,17 @@ class CreateBody(BaseModel):
     payer: str = Field(default="sender", max_length=16)
     cod: int = Field(default=0, ge=0)      # kuruş
     note: str = Field(default="", max_length=255)
-    reason: str = Field(min_length=10, max_length=255)
+    #: GEREKÇE ZORUNLU DEĞİL — ekranın kendi metniyle uyumlu olsun diye.
+    #: `reasonBar` "boş bırakılabilir" yazıyor ve test düğmesi alanı olduğu
+    #: gibi gönderiyordu; şema `min_length=10` isteyince istek mağazaya HİÇ
+    #: ÇIKMADAN 422 oluyordu ve kullanıcı `[object Object]` görüyordu. Ekranın
+    #: davet ettiği kullanım uçta yasaktı.
+    #:
+    #: Kural gevşemedi: taslak açmak PARA HARCAMAZ. Etiket satın alma ayrı
+    #: uçtur, ayrı izin (`store_shipping.purchase`) ve 20 karakter gerekçe
+    #: ister. Boş gelirse servis `draft_reason` ile otomatik metin yazar,
+    #: denetim defteri boş kalmaz.
+    reason: str = Field(default="", max_length=255)
     dryRun: bool = True
 
 

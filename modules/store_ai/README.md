@@ -121,8 +121,26 @@ yazar. Susmak, yanlış söylemekten iyidir:
 
 ## Mağaza uçları hazır değilse
 
-`/api/admin/bbd/ai/*` uçları henüz yayında değil. Geçit bunu
-`bbd_endpoint_missing` koduyla bildirir ve ekran:
+**Uçların durumu (canlıda ölçüldü, 2026-08-16 — salt okuma):**
+
+| Uç | Durum |
+|---|---|
+| `GET ai/tools` | **404** — mağazada "araç" kavramı yok |
+| `POST ai/tools/{tool}/run` | **yok** (`route:list` içinde geçmiyor) |
+| `GET ai/usage` | **404** — mağaza jeton/maliyet tutmuyor |
+| `GET ai/drafts` | **200** (boş liste, `meta.total=0`) |
+| `POST ai/drafts` · `.../{draftId}/apply` · `.../{draftId}/discard` | **var** (`route:list`) |
+
+Bir dönem burada "`/api/admin/bbd/ai/*` uçlarının tamamı yayında değil"
+yazıyordu; **artık böyle değil.** Taslak ailesi (`ai/drafts`) yayında —
+eksik olan yalnız araç/kullanım uçları. Fark önemli: engel artık "uç yok"
+değil, **akış modeli uyuşmazlığı**. Bu ekran "aracı çalıştır → sonucu al"
+varsayıyor, mağaza ise "taslağı KM üretir → mağaza saklar → onaylanınca
+uygular" diyor. İsim eşlemesiyle kapanmaz; metin üretimi Kontrol
+Merkezi'nde kalmalı ve mağazaya yalnız sonuç yazılmalı.
+
+Araç uçları çağrıldığında geçit bunu `bbd_endpoint_missing` koduyla bildirir
+ve ekran:
 
 - Araç kartlarını **"uç hazır olunca açılacak"** notuyla kapatır (sessizce
   patlamaz),

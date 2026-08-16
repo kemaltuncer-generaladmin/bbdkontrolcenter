@@ -5,7 +5,9 @@ yüzeyi yoktur; yalnızca `store.api` yeteneğini sağlar. 20 mağaza ekranı
 mağaza verisine buradan ulaşır.
 
 Hedef: `https://bbdstore.com.tr` · Bagisto 2.4.8 + `bagisto/bagisto-api`
-v2.3.1 · `/api/admin/*` (286 uç) + yazılmakta olan `/api/admin/bbd/*`.
+v2.3.1 · `/api/admin/*` (286 uç) + `/api/admin/bbd/*` (canlıda 87 rota,
+ölçüm 2026-08-16). Burada bir dönem "yazılmakta olan `/api/admin/bbd/*`"
+yazıyordu; paket 2026-08-14'ten sonra dağıtıldı.
 
 ## Kullanımı
 
@@ -107,9 +109,32 @@ docstring'lerindedir** — imzayı oradan oku, uydurma.
 | BBD yedek/sağlık | `bbd_backups` · `bbd_create_backup` · `bbd_verify_backup` · `bbd_download_backup` · `bbd_restore_backup` · `bbd_catalog_health` · `bbd_catalog_issues` · `bbd_reindex_catalog` |
 | BBD AI/bildirim/talep/denetim | `bbd_ai_tools` · `bbd_ai_run` · `bbd_ai_apply` · `bbd_ai_runs` · `bbd_ai_usage` · `bbd_notifications` · `bbd_send_notification` · `bbd_notification_rules` · `bbd_save_notification_rule` · `bbd_mobile_settings` · `bbd_update_mobile_settings` · `bbd_review_requests` · `bbd_send_review_request` · `bbd_return_requests` · `bbd_return_request` · `bbd_update_return_request` · `bbd_audit` · `bbd_audit_entry` |
 
-`bbd_*` metotlarının uçları **henüz yayında değil**. Çağırınca
-`StoreApiError(code="bbd_endpoint_missing")` gelir; ekran o bölümü "mağaza
-paketi yayınlanınca çalışacak" diyerek göstermeli, çökmemeli (K7).
+`bbd_*` metotlarının uçları **yayında** (ölçüm 2026-08-16): mağazada
+`route:list --path=api/admin/bbd` 87 rota sayıyor. Bu satır bir dönem
+"`bbd_*` metotlarının uçları henüz yayında değil" diyordu ve o cümle
+2026-08-14 dağıtımına kadar doğruydu — **artık değil.** Toptan "yayında
+değil" varsayarak ekran kapatmak, bugün çalışan bir bölümü kullanıcıya
+"kullanılamıyor" diye göstermek olur.
+
+Bugün yayında **olmayan** dört uç kalmıştır ve hepsi tek tek bilinir:
+
+| Metot | Uç | Durum |
+|---|---|---|
+| `bbd_ai_tools` | `GET bbd/ai/tools` | 404 — mağazada "araç/bütçe" kavramı yok |
+| `bbd_ai_run` | `POST bbd/ai/tools/{tool}/run` | 404 — model sunucuda çalışmıyor |
+| `bbd_ai_usage` | `GET bbd/ai/usage` | 404 — mağaza jeton/maliyet tutmuyor |
+| `upload_media` | `POST bbd/home/slides` | 404 — vitrin görselleri `storefront/carousels` üzerinden |
+
+Ayrıca birkaç uç **bilerek** yazılmamıştır (`bbd_refund_payment`,
+`bbd_restore_backup`) ya da mağaza tarafında karşılığı yoktur
+(`bbd_bundle`, `bbd_save_bundle`, `bbd_reorder_carousel`,
+`bbd_save_notification_rule`); ayrıntı ilgili docstring'de.
+
+Bu dallar yine de **durur ve kaldırılmaz**: bir uç geri çekilirse çağrı
+`StoreApiError(code="bbd_endpoint_missing")` ile döner ve ekran o bölümü
+"mağaza paketi yayınlanınca çalışacak" diyerek göstermeli, çökmemelidir
+(K7). Bir metodun bugünkü durumu tek yerden okunur: `backend/client.py`
+içindeki kendi docstring'i.
 
 ## Yapılandırma (`core_config`) okumanın kuralı
 

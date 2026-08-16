@@ -35,9 +35,17 @@ OUT = SHELL / "registry.json"
 # burası üretilen çıktıdır, git dışıdır.
 PANELS_OUT = SHELL / "panels"
 
-# Menü gruplarının sırası. Grup = kurumsal yapı, modül adı değil.
-# Listede olmayan grup sona alfabetik eklenir.
-GROUP_ORDER = ["BBD", "BBD Store", "BLD", "Kurumsal"]
+# Menü gruplarının sırası SABİT DEĞİL, VERİDEN TÜRETİLİR: bir grubun sırası,
+# içindeki panellerin en küçük `ui.nav.order` değeridir.
+#
+# BURADA `GROUP_ORDER = ["BBD", "BBD Store", …]` diye sabit bir liste duruyordu
+# ve AYNISI `apps/desktop/shell/ui-kernel.js` içinde ikinci kez yazılıydı. İki
+# kopya birbirinden habersizdi; yalnız biri güncellenirse build çıktısı ile
+# çalışma zamanı sessizce ayrışırdı. Ayrıca grup adlarını burada tutmak, yeni
+# bir grup açmayı çekirdek dosyasına dokunmaya bağlıyordu (K6'ya ters).
+#
+# Artık grup açmak saf `module.yaml` işidir: `ui.nav.group` adı, `ui.nav.order`
+# nereye düşeceğini söyler.
 
 # Çekirdeğin kendi ekranları. Bunlar modül DEĞİLDİR ve silinemez: kimlik,
 # ayar ve sistem sağlığı çekirdeğe aittir (CLAUDE.md — kavram ayrımı,
@@ -48,7 +56,7 @@ CORE_PANELS = [
         "title": "Kullanıcı Yönetimi",
         "icon": "users",
         "group": "Kurumsal",
-        "order": 10,
+        "order": 800,
         "requires": ["users.view"],
     },
     {
@@ -56,7 +64,7 @@ CORE_PANELS = [
         "title": "Sistem Ayarları",
         "icon": "sliders",
         "group": "Kurumsal",
-        "order": 20,
+        "order": 810,
         "requires": ["settings.view"],
     },
     {
@@ -64,7 +72,7 @@ CORE_PANELS = [
         "title": "Sistem Sağlığı",
         "icon": "pulse",
         "group": "Kurumsal",
-        "order": 30,
+        "order": 820,
         "requires": ["settings.view"],
     },
 ]
@@ -152,8 +160,14 @@ def collect_panels(validator) -> tuple[list[dict], list[str]]:
     return panels, problems
 
 
-def group_key(name: str) -> tuple[int, str]:
-    return (GROUP_ORDER.index(name), "") if name in GROUP_ORDER else (len(GROUP_ORDER), name)
+def group_ranks(panels: list[dict]) -> dict[str, int]:
+    """Grup adı → sırası. Sıra, gruptaki en küçük `order` değeridir."""
+    ranks: dict[str, int] = {}
+    for panel in panels:
+        group = panel["group"]
+        if group not in ranks or panel["order"] < ranks[group]:
+            ranks[group] = panel["order"]
+    return ranks
 
 
 def build(*, copy_panels: bool = True) -> dict:
@@ -178,8 +192,12 @@ def build(*, copy_panels: bool = True) -> dict:
     for problem in problems:
         print(f"  atlandı — {problem}", file=sys.stderr)
 
-    panels.sort(key=lambda p: (group_key(p["group"]), p["order"], p["title"]))
-    groups = sorted({p["group"] for p in panels}, key=group_key)
+    ranks = group_ranks(panels)
+    # AYNI SIRA DEĞERİNDE AD KAZANIR: iki grup aynı `order`ı taşırsa sıra
+    # rastgele kalmasın (eskiden `store_bundles` ve `store_shipping` ikisi de
+    # 30'du ve menü sırası dosya sistemi sırasına kalıyordu).
+    panels.sort(key=lambda p: (ranks[p["group"]], p["group"], p["order"], p["title"]))
+    groups = sorted({p["group"] for p in panels}, key=lambda g: (ranks[g], g))
 
     return {
         "generated_by": "tools/build-ui-registry.py",

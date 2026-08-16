@@ -52,6 +52,7 @@ import {
   skeletonRows, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
+import { stepper } from '../../ui-kit/flow.js';
 import { reportChain } from '../../ui-kit/report.js';
 
 const BASE = '/api/store_orders';
@@ -96,6 +97,9 @@ const EMPTY_STATE = {
 
 let api = null;
 let capability = null;
+// Panelden panele gezinme. Kabuk taşır, panel hedefi bilir (K3): kargoya
+// verme bu ekranın işi değil, kullanıcıyı asıl evine göndermek onun işi.
+let openPanel = null;
 let toast = null;
 let report = null;
 let busy = false;
@@ -378,13 +382,31 @@ function trackCell(row) {
  * sunucudan 0 gelir. `₺0,00` yazmak "bu siparişte KDV yok" demek olurdu —
  * bilgi yoksa `—` yazılır ve neden yazıldığı ipucunda durur.
  */
+/**
+ * Para hücresi — DEĞER VARSA GÖSTERİLİR, yoksa nedeni söylenir.
+ *
+ * ESKİDEN SATIRIN SIĞ OLMASI TEK ÖLÇÜTTÜ ve tüm para sütunları `—` oluyordu.
+ * Oysa liste ucu `sub_total` ve `grand_total` alanlarını DOLU gönderiyor
+ * (canlıda doğrulandı); yalnız kargo/indirim/KDV `null` geliyor. Sonuç:
+ * elimizde olan tutar da gizleniyordu ve tablo bir "—" duvarına dönüyordu.
+ *
+ * Ölçüt artık DEĞERİN KENDİSİ. `null` bilinmiyordur; `0` ise gerçekten sıfır
+ * liradır ve öyle yazılır — ikisini aynı göstermek, indirimi olmayan siparişi
+ * "indirimi bilinmiyor" diye okutur.
+ */
 function detailMoney(row, value) {
-  if (!row.detailed) {
+  if (value === null || value === undefined) {
     const cell = h('span', 'so-sub', '—');
-    cell.title = 'Bu tutar yalnız sipariş detayında var; satıra tıklayın.';
+    cell.title = 'Bu tutar sipariş listesinde gelmiyor; satıra tıklayın, künyede var.';
     return cell;
   }
   return money(value);
+}
+
+/** Sayfadaki HİÇBİR satırda değeri olmayan sütun — çizilmesi yer israfıdır. */
+function columnEmpty(rows, key) {
+  return rows.length > 0
+    && rows.every((row) => row[key] === null || row[key] === undefined);
 }
 
 function fulfilCell(row, key) {
@@ -405,8 +427,16 @@ function fulfilCell(row, key) {
   }
   // TOPLU KARGO NEDEN ALMIYOR — satırın kendisinde. Bu bilgiyi yalnız toplu
   // işlem diyaloğunda vermek, seçimi yapan kişiye geç kalmış bir açıklamadır.
+  //
+  // `shipNote` BURADA YAZILMAZ, TABLONUN ÜSTÜNDE BİR KEZ YAZILIR. O metin
+  // satıra özel değil, TÜM sığ satırlar için aynı cümledir ("fatura ve kargo
+  // durumu bu satırda yok; önizleme siparişi tek tek doğrular") ve on sekiz
+  // satırda on sekiz kez tekrarlanınca tablonun en geniş sütununu kaplayıp
+  // asıl bilgiyi — kargo firmasını — ekrandan aşağı itiyordu.
+  //
+  // `shipBlock` satırda KALIR: o satıra özeldir ve "bu siparişi neden
+  // seçemiyorum" sorusunun cevabıdır.
   if (key === 'ship' && row.shipBlock) box.append(h('span', 'so-why', row.shipBlock));
-  else if (key === 'ship' && row.shipNote) box.append(h('span', 'so-sub', row.shipNote));
 
   // KARGO FİRMASI SATIRDA GÖRÜNÜR. Kargo ekranı bunu gösterip sipariş ekranı
   // göstermiyordu: aynı soruya iki cevap. `carrier` gönderi varsa gerçek
@@ -464,11 +494,16 @@ const COLUMNS = [
   {
     key: 'customer',
     label: 'Müşteri',
-    width: 'minmax(0, 2fr)',
+    // MÜŞTERİ EN GENİŞ SÜTUNDUR. Canlıda `customer_first_name` ve
+    // `customer_last_name` alanları NULL geliyor; satır e-postaya düşüyor ve
+    // e-posta 30 karakterde kırpılınca geriye "kemal.tu…" kalıyordu — kimin
+    // siparişi olduğu okunamıyordu. Ölçü büyütüldü ve kırpma sınırı e-posta
+    // boyuna göre ayarlandı.
+    width: 'minmax(240px, 3fr)',
     sortable: true,
     cell: (row) => {
       const box = h('span', 'so-cellstack');
-      box.append(clip(h('b'), row.customer, 30));
+      box.append(clip(h('b'), row.customer, 46));
       const line = h('span', 'so-sub');
       line.textContent = row.customerGroup ? `${row.customerGroup} · ` : '';
       line.append(document.createTextNode(row.city || row.email || ''));
@@ -539,8 +574,27 @@ function renderTable() {
   if (!wrap) return;
   wrap.replaceChildren();
 
+  // SAYFADA HİÇ DEĞERİ OLMAYAN PARA SÜTUNU ÇİZİLMEZ. Liste ucu kargo,
+  // indirim ve KDV alanlarını göndermiyor; üç sütun boyunca on sekiz satır
+  // `—` yazmak, ekranın üçte birini hiçbir şey söylemeyen bir duvara
+  // çeviriyordu. Sütun KALICI OLARAK silinmiyor: uç bir gün bu alanları
+  // göndermeye başlarsa kendiliğinden geri gelir.
+  const bosOlanlar = ['shipping', 'discount', 'tax']
+    .filter((key) => columnEmpty(state.items, key));
+  const columns = COLUMNS.filter((column) => !bosOlanlar.includes(column.key));
+
+  // Gizlenen sütunun nedeni SÖYLENİR: sessizce kaybolan bir sütun,
+  // "KDV nerede" sorusunu doğurur ve kimse cevabını bulamaz.
+  if (bosOlanlar.length) {
+    const adlar = COLUMNS.filter((column) => bosOlanlar.includes(column.key))
+      .map((column) => column.label).join(' · ');
+    wrap.append(hintBox(
+      `${adlar} sütunları gizlendi: sipariş listesi bu tutarları göndermiyor. `
+      + 'Satıra tıklayınca künyede tam döküm var.'));
+  }
+
   nodes.table = dataTable({
-    columns: COLUMNS,
+    columns,
     rows: state.items,
     selectable: true,
     empty: emptyNode(),
@@ -579,13 +633,24 @@ function renderSelectionBar() {
   bar.append(h('b', undefined, `${num(count)} sipariş seçildi`));
   bar.append(h('span', 'kit-spacer'));
   bar.append(
-    button(`Seçilenleri kargoya ver${ready.length === count ? '' : ` (${num(ready.length)})`}`, {
+    // TOPLU KARGO BURADA YAPILMAZ, TEK EVE DEVREDİLİR.
+    //
+    // Eskiden bu düğme mağazaya doğrudan yazıyordu ve tek onayda N siparişi
+    // birden "gönderilmiş" işaretliyordu — ama paket yola çıkmıyordu (Bagisto
+    // kendi kaydını açıyor, etiket satın alınmıyordu). Şimdi seçim Kargo
+    // Yönetimi sihirbazına aktarılır ve orada sipariş sipariş yürür.
+    //
+    // SIRAYLA YÜRÜMESİ BİLİNÇLİ: her gönderinin desisi ayrı ölçülür ve
+    // taşıyıcısı ayrı onaylanır. Yanlış desi doğrudan yanlış faturadır ve
+    // toplu iş onu gizler. Hız kaybı gerçektir; karşılığı, ödemediğiniz bir
+    // kargo bedelinin sonradan faturayla gelmemesidir.
+    button(`Seçilenleri Kargo Yönetimi’nde aç${ready.length === count ? '' : ` (${num(ready.length)})`}`, {
       variant: 'primary',
       disabled: ready.length === 0,
       title: ready.length
-        ? `${num(ready.length)} sipariş kargoya verilebilir; önce kuru prova çalışır.`
+        ? `${num(ready.length)} sipariş kargo sihirbazına aktarılır; her biri ayrı onaylanır.`
         : 'Seçilenlerin hiçbiri kargoya verilebilir durumda değil — nedenler satırlarda yazılı.',
-      onClick: () => batchDialog('ship', ready.map((row) => row.id)),
+      onClick: () => openPanel?.('store_shipping', { orderIds: ready.map((row) => row.id) }),
     }),
     button('Fatura kes', { onClick: () => batchDialog('invoice', rows.map((row) => row.id)) }),
     button('Etiket indir', { onClick: () => downloadLabels() }),
@@ -823,6 +888,7 @@ function paintSummary(pane, { payload, shipmentCap, invoiceCap }) {
   }
 
   pane.append(
+    journeyCard(payload, shipmentCap),
     card('Sipariş', facts),
     addressCard('Fatura adresi', payload.billing),
     addressCard('Teslimat adresi', payload.shipping),
@@ -830,6 +896,74 @@ function paintSummary(pane, { payload, shipmentCap, invoiceCap }) {
   );
   if (closed.length) pane.append(card('Kargo ve fatura özeti', digest));
   pane.append(actionBar(payload));
+}
+
+/** İki kayıt kümesinin EN ESKİ zaman damgası. ISO metni takvim sırasında dizilir. */
+function firstStamp(rows) {
+  return (rows || []).map((item) => item.createdAt).filter(Boolean).sort()[0] || '';
+}
+
+/**
+ * Siparişin aşama şeridi — kitin `stepper`'ı (ADR 0011).
+ *
+ * NEDEN ÜÇ ADIM VE "TESLİM EDİLDİ" YOK. Bu çekmecenin künye ucu Bagisto'nun
+ * KENDİ kayıtlarını taşıyor: fatura ve gönderi satırları var, taşıyıcının
+ * teslim bildirimi YOK (`shipment_rows` yalnız firma, takip no, adet ve tarih
+ * veriyor). Dördüncü bir "Teslim edildi" adımı çizmek, ekranın bilmediği bir
+ * şeyi "bekliyor" diye göstermesi olurdu: teslim edilmiş bir sipariş de teslim
+ * edilmemiş gibi görünürdü. Teslim durumu Kargo sekmesindedir ve oradaki şeridi
+ * `store.shipment.byOrder` yeteneği çizer — bu panel taşıyıcıya kendi sormaz.
+ *
+ * NEDEN "FATURALANDI" İKİNCİ SIRADA. Bu kurulumda kargoya verme ödeme kanıtı
+ * ister (`shipBlock`); olağan sıra alındı → faturalandı → kargoya verildi.
+ * Sıra bozulursa şerit BUNU DA GÖSTERİR: `activeIndex` yalnız kesintisiz
+ * tamamlanan başlangıcı işaretler, atlanmış bir adım "tamamlandı" görünmez ama
+ * gerçekleşmiş adım da kendi yazısını kaybetmez.
+ *
+ * KISMİ HÂL YALAN SÖYLETMEZ. `invoiceState`/`shipmentState` üç durumludur
+ * (TUZAK: kısmi fatura ve kısmi kargo olağandır); "tamamlandı" ile "bekliyor"
+ * arasında üçüncü bir cümle gerekiyordu ve kit `state` alanıyla onu veriyor.
+ */
+function journeyCard(payload, shipmentCap) {
+  const order = payload.order;
+  const durdu = ['canceled', 'closed'].includes(order.status);
+  // Her adım kendi hâlini YAZIYLA söyler; ton yalnız o yazının yanında durur.
+  // Zincir sınıfı (`activeIndex`) ile karıştırılmaz: sırası gelmeden
+  // gerçekleşmiş adım işaretlenir ama zinciri tamamlanmış göstermez.
+  const asama = (kind, count, partialText) => {
+    if (kind === 'full') return { state: 'tamamlandı', tone: 'good' };
+    if (kind === 'partial') {
+      return { state: `${partialText} (${num(count)} kayıt)`, tone: 'warn' };
+    }
+    return { state: durdu ? 'gerçekleşmedi' : 'bekliyor', tone: durdu ? 'dim' : '' };
+  };
+
+  const steps = [
+    { label: 'Sipariş alındı', at: short(order.createdAt), state: 'tamamlandı', tone: 'good' },
+    { label: 'Faturalandı', at: short(firstStamp(payload.invoices)),
+      ...asama(order.invoiceState, order.invoiceCount, 'kısmen faturalandı') },
+    { label: 'Kargoya verildi', at: short(firstStamp(payload.shipments)),
+      ...asama(order.shipmentState, order.shipmentCount, 'kısmen kargolandı') },
+  ];
+
+  // KESİNTİSİZ ÖNEK. `stepper` `index <= activeIndex` olan her adımı tamamlanmış
+  // boyar; faturasız kargolanmış bir siparişte 2 vermek, kesilmemiş faturayı
+  // kesilmiş göstermek olurdu.
+  let done = 0;
+  if (order.invoiceState === 'full') done = 1;
+  if (done === 1 && order.shipmentState === 'full') done = 2;
+
+  const box = h('div', 'so-journey');
+  box.append(stepper(steps, done));
+  if (durdu) {
+    box.append(alertBox(
+      `Sipariş “${order.statusLabel}” durumunda; kalan adımlar gerçekleşmeyecek.`, 'warn'));
+  }
+  // İpucu VAR OLAN bir yeri göstermeli: kargo yeteneği yoksa "Kargo sekmesi"
+  // diye olmayan bir sekmeye yollamak, arayan kişiyi boşuna dolaştırır.
+  return card('Siparişin yolculuğu', box, shipmentCap
+    ? 'teslim bilgisi taşıyıcıdadır — Kargo sekmesi'
+    : 'teslim bilgisi taşıyıcıdadır; bu kurulumda okunamıyor');
 }
 
 function actionBar(payload) {
@@ -843,11 +977,22 @@ function actionBar(payload) {
       title: order.invoiceState === 'full' ? 'Siparişin tamamı zaten faturalanmış' : '',
       onClick: () => invoiceOrder(order, payload.items),
     }),
-    button('Kargoya ver', {
-      disabled: order.invoiceState === 'none' || order.shipmentState === 'full',
-      title: order.invoiceState === 'none'
-        ? 'Önce fatura kesilmeli' : 'Bagisto gönderi kaydı açar; etiket satın almaz',
-      onClick: () => shipOrder(order, payload.items),
+    // KARGOYA VERME DÜĞMESİ BURADA YOKTUR — bilerek.
+    //
+    // KULLANICININ KURALI: "her şey — mesela sipariş kargoya mı verilecek —
+    // farklı yerde 'kargoya ver' olmasın." Bu ekranda üç ayrı kargo düğmesi
+    // vardı ve üçü de Bagisto'nun kendi gönderi kaydını açıyordu: paket yola
+    // ÇIKMIYORDU, etiket alınmıyordu, müşteriye mesaj gitmiyordu. Üstelik
+    // gövde `{"shipment": {…}}` sarmalıyla gidiyordu ve mağaza onu
+    // reddediyordu (işlemci `source` ile `items`ı gövdenin KÖKÜNDEN okuyor).
+    //
+    // Kargoya vermenin tek evi Kargo Yönetimi'dir: gerçek zincir (gönderi aç
+    // → teklif al → müşterinin ödediği firmayı yeğle → etiket SATIN AL →
+    // takip numarasını yaz → etiket ve faturayı bas → müşteriye SMS) yalnız
+    // orada koşar. Buradaki Kargo sekmesi o gönderinin DURUMUNU gösterir.
+    button('Kargo Yönetimi’nde aç', {
+      title: 'Kargoya verme, etiket ve iptal işlemleri Kargo Yönetimi ekranında yapılır',
+      onClick: () => openPanel?.('store_shipping', { orderId: order.id }),
     }),
     // Ölü düğme bırakılmıyor: kapalı olduğu ve NEDEN kapalı olduğu hem
     // etikette hem de altındaki uyarıda yazılı. İpucu (title) tek başına
@@ -927,9 +1072,13 @@ function paintItems(pane, { payload }) {
     button('Seçili kalemleri faturala', {
       onClick: () => invoiceOrder(order, rows, { partial: true }),
     }),
-    button('Seçili kalemleri kargoya ver', {
-      onClick: () => shipOrder(order, rows, { partial: true }),
-    }),
+    // "Seçili kalemleri kargoya ver" KALDIRILDI ve yerine bir şey konmadı.
+    // İki ayrı nedenle sahte bir olanaktı: (1) `shipOrder`'ın aynısını
+    // çağırıyordu ve `partial` bayrağı kargoda YALNIZ pencere başlığını
+    // değiştiriyordu — davranış farkı sıfırdı; (2) bu tablo `selectable`
+    // almıyor, yani "Seçili" diye bir şey hiç yoktu. Kısmi kargo artık
+    // Kargo Yönetimi sihirbazının işidir: orada kalan adet hesaplanır,
+    // desi ölçülür ve etiket gerçekten satın alınır.
   );
   pane.append(table.node, partial, hintBox(
     'Kalem iptali ve kısmi iade İadeler ekranının işidir: para hareketi orada, ayrı '
@@ -1022,36 +1171,22 @@ async function invoiceOrder(order, items, { partial = false } = {}) {
   });
 }
 
-async function shipOrder(order, items, { partial = false } = {}) {
-  const quantities = await askQuantities(items, {
-    title: partial ? 'Kısmi kargo' : 'Kargoya ver',
-    hint: 'Kargoya verilecek adetleri yazın. Yalnız FATURALANMIŞ kalem kargolanabilir.',
-    cap: (item) => item.invoiced - item.shipped,
-  });
-  if (!quantities) return;
-
-  const track = window.prompt('Takip numarası (boş bırakılabilir)', '');
-  if (track === null) return;
-  const carrier = window.prompt('Kargo firması (boş bırakılabilir)', order.carrier || '');
-  if (carrier === null) return;
-
-  const reason = await askReason({
-    title: 'Kargoya ver',
-    description: `${order.orderNo} için mağazada GÖNDERİ KAYDI açılır. Etiket SATIN `
-      + 'ALINMAZ — o iş Kargo Yönetimi ekranınındır ve para harcar.',
-    confirmLabel: 'Gönderiyi kaydet',
-  });
-  if (!reason) return;
-  await withBusy('Gönderi kaydediliyor…', async () => {
-    const result = await call(`${BASE}/orders/${order.id}/ship`, {
-      method: 'POST',
-      body: { items: quantities, carrier, track, sourceId: 1, reason, dryRun: false },
-    });
-    toast(result.dryRun ? 'Kuru prova: istek gönderilmedi.' : 'Gönderi kaydedildi.',
-      result.dryRun ? 'warn' : 'good');
-    refresh();
-  });
-}
+// `shipOrder()` KALDIRILDI. Yaptığı iş şuydu: kullanıcıya adet sorup,
+// `window.prompt` ile takip numarası ve kargo firması isteyip, gerekçe alıp
+// `POST /orders/{id}/ship` çağırmak.
+//
+// ÜÇ AYRI NEDENLE YANLIŞTI:
+//  1. TAKİP NUMARASI ZİNCİRİN ÇIKTISIDIR, GİRDİSİ DEĞİL. Kullanıcıya sormak,
+//     taşıyıcının üreteceği numarayı elle uydurmasını istemekti; alan çoğu
+//     zaman boş bırakılıyordu.
+//  2. GÖVDE MAĞAZANIN SÖZLEŞMESİNE UYMUYORDU (`{"shipment": {…}}` sarmalı);
+//     canlı işlemci `source` ve `items`ı gövdenin KÖKÜNDEN okuduğu için ikisi
+//     de boş kalıyor ve istek reddediliyordu.
+//  3. PAKET YOLA ÇIKMIYORDU. Açılan şey Bagisto'nun kendi gönderi kaydıydı;
+//     etiket satın alınmıyor, taşıyıcıya hiç gidilmiyordu — ama ekran
+//     "gönderi kaydedildi" diyordu.
+//
+// Kargoya vermenin tek evi Kargo Yönetimi'dir.
 
 async function cancelOrder(order) {
   const reason = await askReason({
@@ -1202,10 +1337,16 @@ function paintReturns(pane, { payload }) {
     }).node));
   }
 
+  // Bu kutu bir dönem "o uç henüz yayında değil" diyordu; uç 2026-08-16
+  // itibarıyla CANLIDA ÇALIŞIYOR ve gerçek talepleri döndürüyor. Metin artık
+  // yayın durumu hakkında hüküm vermiyor: dal ayakta (K7 — uç geri çekilirse
+  // künye çökmemeli) ama kullanıcıya "yayınlanmadı" diye yanlış bir gerekçe
+  // göstermiyor. Gerçek sebep künyenin uyarı listesinde zaten yazılı.
   if (!payload.returnsAvailable) {
     pane.append(alertBox(
-      'İade/değişim talepleri (RMA) mağazadaki BBD paketinden gelir; o uç henüz '
-      + 'yayında değil. Uç yayınlanınca talepler burada listelenecek.', 'info'));
+      'İade/değişim talepleri (RMA) mağazadaki BBD paketinden gelir; bu talepler '
+      + 'şu anda okunamadı. Siparişin geri kalanı doğrudur — sebep yukarıdaki '
+      + 'uyarılarda yazılıdır.', 'warn'));
   } else if (!payload.returns.length) {
     pane.append(emptyState({
       title: 'İade talebi yok',
@@ -1837,6 +1978,7 @@ export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
   api = ctx.api;
   capability = ctx.capability;
+  openPanel = ctx.open;
 
   const view = h('div', 'kit-panel so');   // 'kit-panel' ZORUNLU + kendi önekimiz
   nodes.root = view;

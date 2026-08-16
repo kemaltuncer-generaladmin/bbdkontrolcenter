@@ -74,8 +74,8 @@ class FakeStoreApiError(RuntimeError):
         self.status = status
 
 
-#: CANLIDAN ALINMIŞ GÖVDE (2026-08-13). `GET /api/admin/bbd/backups` bugün 404
-#: değil **503** dönüyor:
+#: CANLIDAN ALINMIŞ GÖVDE (2026-08-13). O gün `GET /api/admin/bbd/backups`
+#: 404 değil **503** dönüyordu:
 #:     {"error": {"code": "CONTROL_API_DISABLED",
 #:                "message": "Kontrol Merkezi API'si kapalı. Açmak için
 #:                            BBD_CONTROL_API_ENABLED=true yapıp yapılandırma
@@ -84,6 +84,10 @@ class FakeStoreApiError(RuntimeError):
 #: gövdedeki `error` alanını olduğu gibi metne koyar; jeton metinde kalır
 #: (`mask_text` yalnız sır ADLARINI maskeler, `code` sırlı sayılmaz).
 #: Aşağıdaki metin o zincirin gerçek çıktısıdır — uydurulmuş değildir.
+#:
+#: 2026-08-16'DA UÇ 200 DÖNÜYOR: bu gövde artık canlıda görülmüyor. Gövde ve
+#: onu kullanan testler yine de KALIYOR — anahtar bir dağıtımda geri kapanırsa
+#: ekranın "mağaza çöktü" dememesi K7'nin gereği ve bunu sınayan tek şey bu.
 DISABLED_MESSAGE = (
     "Mağaza hata verdi (503): {'code': 'CONTROL_API_DISABLED', 'message': "
     '"Kontrol Merkezi API\'si kapalı. Açmak için BBD_CONTROL_API_ENABLED=true '
@@ -105,7 +109,9 @@ class FakeApi:
         self.missing: set[str] = set()
         #: Bu metotlar "uç yayında ama Kontrol Merkezi API'si KAPALI" (503) ile
         #: patlar. `missing`'den de ayrıdır: 404'te yapılacak bir şey yok,
-        #: 503'te açılacak bir anahtar var. CANLIDA BUGÜN GEÇERLİ OLAN HÂL BU.
+        #: 503'te açılacak bir anahtar var. Bir dönem burada "canlıda bugün
+        #: geçerli olan hâl bu" yazıyordu; 2026-08-16'da uç 200 dönüyor, yani
+        #: artık öyle değil. Dal sınanmaya devam eder (anahtar geri kapanabilir).
         self.disabled: set[str] = set()
         self.verify_payload: dict[str, Any] = {"verify_state": "ok", "sha256": "abc123"}
         self.download_bytes = b"yedek-icerigi"

@@ -6,6 +6,29 @@ satarsak kâr mı ediyoruz?**
 Grup: **BBD Store** · CSS öneki: `sb` · Rapor rafı:
 `Raporlar/Mağaza/Ürün/<yıl>/<ay>`
 
+## Ekran dili — belgedekiyle aynı değil, bilerek
+
+Bu belge geliştirici belgesidir ve alan sözlüğünü (bileşen, künye, kip)
+kullanır. **EKRAN KULLANMAZ.** Ekranı kullanan kişi yazılım bilmiyor; terimler
+onun sözlüğüne çevrildi:
+
+| Belgede / kodda | Ekranda görünen |
+|---|---|
+| bileşen | içindeki ürün |
+| bileşen toplamı | içindekilerin toplamı |
+| bileşen toplamı − %x | içindekilerin toplamından yüzde indir |
+| künye · düzenleyici | set bilgileri |
+| opsiyonel | isteğe bağlı |
+| marj | her 100 TL satışın … kadarı kâr |
+| kuru prova | DENEME yapıldı — mağazaya yazılmadı |
+| aktif / pasif | satışta / vitrinde yok |
+
+Çevirinin geri alınmasını `tests/test_store_bundles_panel.py` yakalar: eski
+terim ekrana sızarsa test kırılır. Ayrıca **her engel iki cümledir** — neden
++ sıradaki adım (`BLOCKERS`; deseni `store_shipping/backend/geliver.py` →
+`BLOCKER_ACTIONS`) — ve düzenleyicideki her alanın altında tek cümlelik ipucu
+durur.
+
 ## Canlıdaki set düzeni
 
 Mağazada **set diye bir ürün tipi yok** — Bagisto'nun `bundle` tipi

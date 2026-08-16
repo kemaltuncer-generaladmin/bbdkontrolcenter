@@ -42,8 +42,8 @@ ui:
   nav:
     title: "Raporlar"
     icon: chart
-    group: "BBD Store"
-    order: 180
+    group: "BBD Store / Mali"
+    order: 360
     requires: [store_reports.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

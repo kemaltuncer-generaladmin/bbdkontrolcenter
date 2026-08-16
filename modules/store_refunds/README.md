@@ -79,7 +79,7 @@ Hepsinin karşılığı `backend/calc.py` içinde bir fonksiyon ve
    belirsiz durum **rastgele eşlenmez**, "Bilinmiyor" kalır.
 7. Para telde ondalık, içeride kuruş → `to_kurus` / `from_kurus`.
 
-## Canlı alan adları (2026-08-13'te doğrulandı)
+## Canlı alan adları (2026-08-16'da doğrulandı)
 
 Bagisto yönetici API'si **camelCase** döndürür ve bazı alanları hiç
 yayınlamaz. Buradaki listeye güvenerek yazın; tahmin edilen ad ekranı
@@ -90,11 +90,16 @@ sessizce "—" ile doldurur.
 | `GET /refunds` | `orderIncrementId` · `customerName` · `billedTo` · `customerEmail` · `orderDate` · `totalQty` | Gömülü `order` nesnesi **yok**; `items` liste ucunda **hep boş** (kalemler yalnız `/refunds/{id}` detayında). Kredi notunun seri numarası yok → ekranda `#8`. |
 | `GET /orders/{id}` | `incrementId` · `createdAt` · `customerEmail` · `customerFirstName/LastName` · kalemlerde `qtyOrdered/qtyInvoiced/qtyRefunded` | Zarfsız (düz sözlük). Gömülü `customer` **NULL olabilir**. `shipping_amount_refunded` ve `shippingTaxAmount` **yayınlanmıyor**. |
 | `GET /dashboard/stats?type=total-sales` | Zarfsız **liste**; tutar `statistics.total_sales.current` | Alanın adı `total_sales`; `total`/`sales` diye aramak iade oranını hep boş bırakır. |
-| Süzgeç | `date_from` · `date_to` · `order_id` **uygulanıyor** | `channel` ve `locale` sessizce yok sayılıyor (Laravel bilmediği parametreyi atar) — süzgeç sanılmamalı. |
-| Sayfalama | `meta.currentPage/perPage/lastPage/total` | `links` boş; `per_page` sunucuda 50'ye kırpılır. |
+| `GET /bbd/return-requests` | `order_id` · `created_at` (snake) **ile** `orderIncrementId` · `customerName` · `itemCount` · `totalQuantity` (camel) yan yana | Durum **sözlüktür**: `{"id", "title", "color"}` ve başlığı **Türkçedir** ("İade Edildi"). Sebep de Türkçe **serbest metin** ("Üretim Hatası"). Kullanılabilir durum sözlüğü `meta.statuses` içinde gelir. |
+| Süzgeç (çekirdek) | `date_from` · `date_to` · `order_id` **uygulanıyor** | `channel` ve `locale` sessizce yok sayılıyor (Laravel bilmediği parametreyi atar) — süzgeç sanılmamalı. |
+| Süzgeç (`bbd/return-requests`) | `from` · `to` · `status` **uygulanıyor** | Adlar çekirdekten **farklı**: `date_from`/`date_to` gönderilirse sessizce yok sayılır ve aralık dışı talepler listeye karışır. |
+| Sayfalama | `meta.currentPage/perPage/lastPage/total` | BBD ucu `page`/`last_page` der; **geçit** bunu çekirdek adlarına çevirir (`store_api`, K4). `per_page` sunucuda 50'ye kırpılır. |
 
-`/api/admin/bbd/*` uçlarının hepsi bugün **404**; geçit bunu
-`bbd_endpoint_missing` koduna çeviriyor ve ekran o bölümleri kapalı gösteriyor.
+Bu ekranın kullandığı `/api/admin/bbd/*` uçları bugün **yayında** (ölçüm
+2026-08-16: `return-requests`, `shipments` → 200). **Bir dönem hepsi 404'tü** ve
+kod bunu varsayıyordu; artık öyle değil. Eksik-uç dalı yine de duruyor: geçit
+`bbd_endpoint_missing` döndürürse ekran o bölümü kapalı gösterir ve gerisi
+çalışmaya devam eder (K7).
 
 ## Uçlar
 
@@ -140,11 +145,20 @@ Yalnız Bagisto'da **karşılığı olmayan** veri:
 
 ## BBD uçlarına bağımlılık
 
-`/api/admin/bbd/*` uçları mağaza tarafında hâlâ yazılıyor. Yoksa geçit
-`bbd_endpoint_missing` döner ve ilgili bölüm ekranda **kapalı** görünür,
-"uç yayına girince açılacak" der. Etkilenen bölümler: iade talepleri listesi,
-POS iadesi, iade gönderisi, talep süreci. Kredi notları, kalem seçimi, iade
-tutarı hesabı ve raporlar bu uçlar olmadan da çalışır.
+Bu ekranın okuduğu/yazdığı BBD uçları (`return-requests`, `shipments`) mağaza
+tarafında **yayında** — 2026-08-16'da ölçüldü. Bir dönem hepsi 404 dönüyordu ve
+belge de kod da bunu yazıyordu; o cümle artık geçerli değil.
+
+Bağımlılık dalı buna rağmen **kaldırılmadı**: uç bir gün geri çekilirse ya da
+mağaza sürümü değişirse geçit `bbd_endpoint_missing` döner, ilgili bölüm
+ekranda **kapalı** görünür ve "uç yayına girince açılacak" der. Etkilenen
+bölümler: iade talepleri listesi, iade gönderisi, talep süreci. Kredi notları,
+kalem seçimi, iade tutarı hesabı ve raporlar bu uçlar olmadan da çalışır (K7).
+
+**POS iadesi ayrı bir durumdur ve bu listeye girmez:** mağazada BİLEREK yoktur.
+`payments/attempts` grubu salt okunurdur; para hareketi başlatan hiçbir uç
+Kontrol Merkezi'ne açılmamıştır ve geçit isteği hiç göndermeden reddeder. Bu bir
+"henüz yayına girmedi" değil, kalıcı karardır.
 
 ## Testler
 

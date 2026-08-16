@@ -1151,3 +1151,78 @@ export function mount(root, ctx) {
     busy = false;
   };
 }
+
+// ═══════════════════════════════════════════════ paylaşılan yetenek: yüzey
+
+/**
+ * Bir siparişin faturasını BAŞKA ekranlara gösterir — `store.invoice.byOrder`.
+ *
+ * NEDEN BU DIŞA VURUM ŞARTTI. Manifest yeteneği ilan ediyor, backend
+ * sağlıyordu, ama panel `capabilities()` dışa vurmadığı için kabuk onu hiç
+ * çözemiyordu (`ui-kernel.js`: `typeof module.capabilities !== 'function'
+ * → {}`). Sipariş künyesindeki Fatura sekmesi hiç açılmıyor, kullanıcıya
+ * "veriyi veren ekran bu kurulumda yok" deniyordu.
+ *
+ * SALT OKUMA — BİLEREK. Buradan fatura KESİLMEZ. Fatura kesmenin tek evi bu
+ * panelin kendisidir; çift fatura koruması (`_already_invoiced`) ve ayrı izin
+ * (`store_invoices.issue`) orada yaşar. Başka ekrana kesme düğmesi koymak, o
+ * korumanın yanından dolaşmak olurdu.
+ */
+export function capabilities(ctx) {
+  return {
+    'store.invoice.byOrder': async (orderId) => {
+      let payload;
+      try {
+        payload = await ctx.api(`${BASE}/by-order/${Number(orderId)}`);
+      } catch (error) {
+        return { ok: false, error: error.message || 'Fatura bilgisi okunamadı.' };
+      }
+      // "Fatura yok" ile "bakamadık" ayrı cümlelerdir: ikincisini birincisi
+      // gibi göstermek, kesilmiş bir faturayı kesilmemiş sanmaya ve İKİNCİ
+      // KEZ kesmeye yol açar. Kesilen fatura silinemez.
+      if (payload?.ok === false || payload?.connected === false) {
+        return { ok: false, error: payload?.error || 'Fatura bilgisine şu an ulaşılamıyor.' };
+      }
+      const items = payload?.items || [];
+      if (!items.length) return { rows: [] };
+      loadStyles(import.meta.url);
+      return { node: invoiceCards(items, ctx) };
+    },
+  };
+}
+
+function invoiceCards(items, ctx) {
+  const box = h('div', 'si-cap');
+  for (const row of items) {
+    const body = h('div', 'si-cap-body');
+
+    const head = h('div', 'si-cap-head');
+    head.append(h('span', 'si-cap-no', row.number || '—'));
+    if (row.stateLabel) head.append(badge(row.stateLabel, row.stateTone || ''));
+    body.append(head);
+
+    // YASAL NUMARA AYRI SÖYLENİR. Bagisto'nun kendi fatura numarası ile
+    // e-fatura/e-arşiv numarası aynı şey değildir; ikisini tek satırda
+    // birleştirmek, muhasebenin aradığı numarayı bulamamasına yol açar.
+    body.append(h('div', 'si-cap-legal',
+      row.legalMatched
+        ? `Yasal numara: ${row.legalNo}${row.legalDate ? ` · ${row.legalDate}` : ''}`
+        : 'Yasal numara henüz eşlenmedi.'));
+
+    const facts = [];
+    if (row.createdAt) facts.push(row.createdAt);
+    if (row.itemCount) facts.push(`${row.itemCount} kalem`);
+    facts.push(money(row.total));
+    body.append(h('div', 'si-cap-facts', facts.join('  ·  ')));
+
+    const go = h('div', 'si-cap-go');
+    go.append(button('Fatura ekranında aç', {
+      title: 'Faturayı kendi ekranında açar — kesme, iptal ve belge işlemleri orada',
+      onClick: () => ctx.open?.('store_invoices', { invoiceId: row.id, orderId: row.orderId }),
+    }));
+    body.append(go);
+
+    box.append(card('', body));
+  }
+  return box;
+}

@@ -304,3 +304,19 @@
 .hm-target-results { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow: auto; }
 
 .hm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------- açıklama */
+
+/* Sekmenin hemen altındaki tek cümle: "burası ne işe yarar". Sekme adı iyi
+   olsa bile müşterinin bunu NEREDE göreceğini söylemiyor; o cümle burada
+   durur ve sekme değişince yenilenir. */
+.hm-areawhat { padding: 2px 4px 8px; font-size: 12px; color: var(--soft); }
+.hm-areawhat:empty { display: none; }
+
+/* ENGEL KUTUSU — neden + sıradaki adım.
+   İki satır BİLEREK ayrı: ilk satır "niye olmadı", ikincisi "şimdi ne
+   yapacağım". Tek paragrafa sıkıştırıldığında ikinci cümle okunmuyordu. */
+.hm-blocker { display: block; }
+.hm-blocker-why { font-weight: 600; }
+.hm-blocker-next { margin-top: 4px; }
+.hm-blocker-detail { margin-top: 4px; font-size: 12px; color: var(--soft); }

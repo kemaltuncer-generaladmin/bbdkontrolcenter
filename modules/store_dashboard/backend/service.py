@@ -9,10 +9,21 @@ KART KART HATA (K7). Pano dokuz ayrı kaynaktan besleniyor. Biri patlarsa
 ekranın tamamı düşmez: her uç kendi `{ok, connected, error}` üçlüsünü döner,
 kart "okunamadı" der ve diğerleri dolar. Servis HTTP hatası FIRLATMAZ.
 
-YAYINDA OLMAYAN UÇLAR. `/api/admin/bbd/*` uçları mağaza tarafında
-YAZILMAKTADIR. Onlara bağlı kartlar (kritik stok, yedek, POS, kargo, BLD)
-patlamaz: `available: False` + açıklama döner ve ekran "uç hazır olunca
-açılacak" yazar. Sessiz sıfır göstermek, olmayan bir sağlığı var göstermektir.
+BBD UÇLARI ARTIK YAYINDA (canlıda ölçüldü 2026-08-16). Buraya bir dönem
+"`/api/admin/bbd/*` uçları mağaza tarafında YAZILMAKTADIR" yazıyordu; ARTIK
+ÖYLE DEĞİL. Panonun kullandığı beşi de 200 ve gerçek veri dönüyor:
+
+    bbd/reporting/overview · bbd/backups · bbd/payments/terminals
+    bbd/shipping/rates · bbd/return-requests
+
+O listede "kritik stok" da geçiyordu; o kart 2026-08-14'te BBD'den ÇIKARILDI,
+artık Bagisto'nun kendi `dashboard/stats` ucundan besleniyor (bkz.
+`critical_stock`). Yani bugün BBD ucuna bağlı kart yok değil — hepsi doluyor.
+
+DAL YİNE DE DURUYOR (K7). Uç yayında diye `except` dalları kaldırılmadı: uç
+bir gün geri çekilir ya da belirteç yetkisini kaybederse kart `available:
+False` + açıklama dönmeli, pano ayakta kalmalı. Sessiz sıfır göstermek,
+olmayan bir sağlığı var göstermektir — bu kural uç yayında olsa da geçerli.
 """
 
 from __future__ import annotations
@@ -291,9 +302,24 @@ class DashboardService:
 
     @staticmethod
     def _pending(failure: Exception) -> str:
-        """BBD uçları için hata metni. Uç yayında değilse ekran bunu söyler."""
+        """BBD ucuna bağlı kart OKUNAMADIĞINDA ekranın gösterdiği metin.
+
+        METİN DEĞİŞTİ (2026-08-16), DAL DEĞİŞMEDİ. Buraya bir dönem "uç hazır
+        olunca kendiliğinden açılacak" yazıyordu; o cümle uçlar mağaza
+        tarafında yazılırken doğruydu, ARTIK DEĞİL — beş BBD ucunun beşi de
+        canlıda 200 dönüyor. Eski metin kullanıcıya yanlış bir şey söylüyordu:
+        çalışan bir uçtaki yetki/ağ hatasında "daha yayına alınmamış, bekle"
+        diye okunuyor ve kimse "Tekrar dene"ye basmıyordu.
+
+        Yeni metin ölçülen gerçeği söyler ama uç geri çekilme ihtimalini de
+        kapatmaz (K7): ikisini birbirinden AYIRIR, çünkü kullanıcının yapacağı
+        şey farklıdır — geçici hatada tekrar denenir, geri çekilmiş uçta
+        beklenir.
+        """
         return (f"{DashboardService._fail(failure)} — bu bölüm mağaza tarafındaki BBD ucuna "
-                "bağlı; uç hazır olunca kendiliğinden açılacak.")
+                "bağlı. Uç 2026-08-16'da yayında ölçüldü, yani bu hata büyük olasılıkla "
+                "geçicidir (yetki, ağ ya da sunucu); 'Tekrar dene' işe yarayabilir. "
+                "Uç mağazadan geri çekilmişse kart dönene kadar boş kalır — sıfır göstermez.")
 
     # ================================================================ özet
 
@@ -757,7 +783,7 @@ class DashboardService:
     async def _backup_card(self) -> dict[str, Any]:
         try:
             payload = await self._api.bbd_backups()
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
+        except Exception as failure:  # noqa: BLE001 — K7: uç yayında ama okunamayabilir
             return {"key": "backup", "label": "Son yedek", "state": "unknown", "value": "—",
                     "detail": self._pending(failure)}
         newest = metrics.newest_backup(payload.get("items") or [])
@@ -776,7 +802,7 @@ class DashboardService:
                           singular: str) -> dict[str, Any]:
         try:
             payload = await call()
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
+        except Exception as failure:  # noqa: BLE001 — K7: uç yayında ama okunamayabilir
             return {"key": key, "label": label, "state": "unknown", "value": "—",
                     "detail": self._pending(failure)}
         items = payload.get("items") or []
@@ -815,7 +841,7 @@ class DashboardService:
         """
         try:
             overview = await self._overview(fresh=fresh)
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
+        except Exception as failure:  # noqa: BLE001 — K7: uç yayında ama okunamayabilir
             return {"key": "bld", "label": "BLD fiş kuyruğu", "state": "unknown", "value": "—",
                     "detail": self._pending(failure)}
         queue = overview.get("bld")

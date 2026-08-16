@@ -32,7 +32,7 @@ ui:
     title: "Sipariş Yönetimi"
     icon: clipboard
     group: "BLD"
-    order: 20
+    order: 510
     requires: [bld_orders.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

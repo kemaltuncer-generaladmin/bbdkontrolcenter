@@ -101,6 +101,10 @@ class FakeApi:
         #: gibi "Bilinmiyor" demeli, testler kanıtı açıkça vermeli.
         self.invoice_payload: dict[str, Any] = {"items": [], "meta": {"total": 0}}
         self.attempt_payload: dict[str, Any] = {"items": [], "meta": {"total": 0}}
+        #: İADE TALEPLERİ (RMA). Canlıda uç `order_id` süzgecini UYGULAMIYOR —
+        #: ne verilirse verilsin bütün talepleri döndürüyor. Sahte de öyle
+        #: davranır: süzgeci yerelde yapan kod yoksa test kırmızı olsun.
+        self.return_payload: dict[str, Any] = {"items": [], "meta": {}}
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail and len(self.args_of(name)) >= self.fail_after:
@@ -181,7 +185,7 @@ class FakeApi:
     async def bbd_return_requests(self, filters: Any = None, *, page: int = 1,
                                   per_page: int | None = None) -> dict[str, Any]:
         self._record("bbd_return_requests", filters, page=page, per_page=per_page)
-        return {"items": [], "meta": {}}
+        return self.return_payload
 
     async def bbd_shipments(self, filters: Any = None, *, page: int = 1,
                             per_page: int | None = None,

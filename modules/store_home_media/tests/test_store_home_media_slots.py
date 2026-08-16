@@ -22,31 +22,33 @@ def _slot(**over: object) -> dict[str, object]:
 
 # ============================================================== ölçü kararı
 
-def test_kucuk_gorsel_icin_mobilde_bulanik_uyarisi_metni_uretilir() -> None:
+def test_kucuk_gorsel_icin_bulanik_uyarisi_metni_uretilir() -> None:
     # Ekranın ZORUNLU alt metni. Kullanıcı "neden bulanık" diye sormasın diye
-    # önerilen ve yüklenen ölçü aynı cümlede durur.
+    # istenen ve seçilen ölçü aynı cümlede durur.
     verdict = slots.size_verdict(1200, 400, (1920, 640))
     assert verdict["state"] == slots.SIZE_BLURRY
-    assert verdict["note"] == "Önerilen 1920x640; yüklenen 1200x400 — mobilde bulanık."
+    assert verdict["note"] == ("Bu bölüm 1920x640 piksel ister; seçtiğiniz görsel 1200x400 "
+                               "— küçük kaldığı için telefonda bulanık çıkar.")
 
 
-def test_oran_farkliysa_kirpilacagi_soylenir() -> None:
+def test_oran_farkliysa_kenarlarinin_kesilecegi_soylenir() -> None:
     verdict = slots.size_verdict(1920, 1080, (1920, 640))
     assert verdict["state"] == slots.SIZE_RATIO
-    assert "kırpılacak" in verdict["note"]
+    assert "kenarları kesilir" in verdict["note"]
 
 
 def test_hem_kucuk_hem_orani_farkli_gorsel_iki_sorunu_da_soyler() -> None:
     verdict = slots.size_verdict(600, 600, (1920, 640))
     assert verdict["state"] == slots.SIZE_BLURRY
-    assert "mobilde bulanık" in verdict["note"]
-    assert "oran farklı" in verdict["note"]
+    assert "bulanık çıkar" in verdict["note"]
+    assert "kesilir" in verdict["note"]
 
 
 def test_yeterli_gorsel_uygun_der_ve_olculeri_yine_gosterir() -> None:
     verdict = slots.size_verdict(2400, 800, (1920, 640))
     assert verdict["state"] == slots.SIZE_OK
-    assert verdict["note"] == "Önerilen 1920x640; yüklenen 2400x800 — uygun."
+    assert verdict["note"] == ("Bu bölüm 1920x640 piksel ister; seçtiğiniz görsel 2400x800 "
+                               "— ölçü uygun, olduğu gibi görünür.")
 
 
 def test_gorsel_istemeyen_alanda_olcu_uyarisi_cikmaz() -> None:
@@ -102,10 +104,10 @@ def test_tolerans_icindeki_kirpma_soylenir_ama_sorun_sayilmaz() -> None:
     assert "göze çarpmaz" in plan["note"]
 
 
-def test_birebir_oranda_kirpma_yok_denir() -> None:
+def test_birebir_oranda_hicbir_yeri_kesilmez_denir() -> None:
     plan = slots.crop_plan(1200, 400, (1920, 640))
     assert plan["percent"] == 0
-    assert "kırpma olmaz" in plan["note"]
+    assert "hiçbir yeri kesilmez" in plan["note"]
 
 
 def test_gorsel_istemeyen_alanda_kirpma_hesaplanmaz() -> None:
@@ -254,16 +256,19 @@ def test_alan_adi_kesinlesmediginden_ayni_bilgi_birkac_adda_aranir() -> None:
 
 def test_satir_eksikleri_metinle_listelenir_renkle_degil() -> None:
     row = slots.slot_row(_slot(alt="", link=""), today=BUGUN, wanted=(1920, 640))
-    assert "alt metni yok" in row["issues"]
-    assert "hedef bağlantı yok" in row["issues"]
+    assert "görsel açıklaması yok" in row["issues"]
+    assert "tıklayınca gideceği yer yok" in row["issues"]
     assert row["stateLabel"] == "Yayında"
+    # Rozetin YANINDAKİ cümle: "Yayında" bir durum adıdır, kullanıcının sorduğu
+    # soru ise "müşteri şu an görüyor mu".
+    assert row["stateWhat"] == "Müşteri şu anda görüyor."
 
 
 def test_dusuk_cozunurluk_satirda_uyari_olarak_gorunur() -> None:
     row = slots.slot_row(_slot(image_width=1200, image_height=400), today=BUGUN,
                          wanted=(1920, 640))
     assert row["sizeState"] == slots.SIZE_BLURRY
-    assert "düşük çözünürlük" in row["issues"]
+    assert "görsel küçük, bulanık çıkar" in row["issues"]
 
 
 def test_tiklama_olculmuyorsa_sifir_yazilmaz() -> None:
@@ -279,7 +284,7 @@ def test_gorselsiz_slot_gorsel_yok_der() -> None:
     row = slots.slot_row(_slot(image_url="", image_width=0, image_height=0), today=BUGUN,
                          wanted=(1920, 640))
     assert "görsel yok" in row["issues"]
-    assert row["sizeNote"] == "Görsel yüklenmemiş."
+    assert row["sizeNote"] == "Henüz görsel seçilmemiş."
 
 
 # ================================================================= süzgeç
@@ -350,14 +355,15 @@ def test_eksik_kimlikli_sira_reddedilir() -> None:
     rows = _rows()
     merged = slots.merged_order(rows, "slider", [1])
     assert merged["ok"] is False
-    assert "eşleşmiyor" in merged["error"]
+    assert "tutmuyor" in merged["error"]
+    assert "Yenile" in merged["error"]       # SIRADAKİ ADIM da söylenir
 
 
 def test_degismeyen_sira_yazilmaz() -> None:
     rows = _rows()
     merged = slots.merged_order(rows, "slider", [2, 1])
     assert merged["ok"] is False
-    assert merged["error"] == "Sıra değişmedi."
+    assert merged["error"] == "Sıra zaten aynı; kaydedilecek bir değişiklik yok."
 
 
 def test_tasima_kurali_klavye_ve_surukleme_icin_tektir() -> None:
@@ -368,14 +374,20 @@ def test_tasima_kurali_klavye_ve_surukleme_icin_tektir() -> None:
 
 # ================================================================== yazma
 
-def test_alt_metni_olmadan_yazma_reddedilir() -> None:
+def test_gorsel_aciklamasi_olmadan_yazma_reddedilir() -> None:
     body = {"title": "Okula dönüş", "alt": "", "link": "/x"}
-    assert "alt metni" in slots.slot_error(body, area="slider", has_image=True)
+    hata = slots.slot_error(body, area="slider", has_image=True)
+    assert "Görsel açıklaması" in hata
+    # NE YAZILACAĞI da söylenir: "zorunlu" demek kullanıcıya ne yazacağını
+    # öğretmiyordu.
+    assert "Dosya adı değil" in hata
 
 
 def test_duyuru_seridi_gorsel_kabul_etmez() -> None:
     body = {"title": "Kargo bedava", "link": "/kargo"}
-    assert "görsel yüklenmez" in slots.slot_error(body, area="announcement", has_image=True)
+    hata = slots.slot_error(body, area="announcement", has_image=True)
+    assert "yalnız metin gösterir" in hata
+    assert "Tanıtım görselleri" in hata       # SIRADAKİ ADIM: hangi sekmeye gidilecek
 
 
 def test_serbest_baglanti_protokolsuz_yazilamaz() -> None:
@@ -388,7 +400,7 @@ def test_serbest_baglanti_protokolsuz_yazilamaz() -> None:
 def test_bitis_baslangictan_once_olamaz() -> None:
     body = {"title": "X", "alt": "X afişi", "starts_at": "2026-09-10",
             "ends_at": "2026-09-01"}
-    assert "bitişten sonra" in slots.slot_error(body, area="banner", has_image=False)
+    assert "bitiş tarihinden sonra" in slots.slot_error(body, area="banner", has_image=False)
 
 
 def test_gerekce_on_karakterden_kisa_olamaz() -> None:

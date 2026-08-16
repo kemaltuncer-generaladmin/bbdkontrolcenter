@@ -43,8 +43,8 @@ ui:
   nav:
     title: "CMS"
     icon: file_text
-    group: "BBD Store"
-    order: 60
+    group: "BBD Store / Vitrin ve İçerik"
+    order: 300
     requires: [store_cms.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

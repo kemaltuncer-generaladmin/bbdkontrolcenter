@@ -325,3 +325,56 @@
 }
 
 .sp-book-missing { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+
+/* ------------------------------------------------------- katlanır bölüm */
+
+/* Ürün AÇMA formundaki "Gelişmiş alanlar". `<details>` kullanılır: açık/kapalı
+   durumu tarayıcının işidir, klavyeyle açılır, ekran okuyucu
+   "genişletilebilir" diye okur. Elle yazılmış bir aç/kapa düğmesi bunların
+   üçünü de yeniden üretmek zorunda kalırdı. */
+.sp-fold {
+  margin: 10px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.sp-fold-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-radius: 10px;
+  list-style: none;
+}
+.sp-fold-head::-webkit-details-marker { display: none; }
+/* Ok işareti YAZIYLA DEĞİL şekille verilir ama tek başına konuşmaz: yanında
+   her zaman başlık durur. Açıkken döner. */
+.sp-fold-head::before {
+  content: '▸';
+  color: var(--soft);
+  transition: transform 120ms ease;
+}
+.sp-fold[open] > .sp-fold-head::before { transform: rotate(90deg); }
+.sp-fold-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sp-fold-body { padding: 0 12px 12px; border-top: 1px solid var(--line); }
+
+/* Kapalı bölümün içi boş sanılmasın: "3 alan dolu" damgası başlıkta durur ve
+   sağa yaslanır. Boşken hiç yer kaplamaz. */
+.sp-fold-tag { margin-left: auto; }
+.sp-fold-tag:empty { display: none; }
+
+/* Ürün açarken seçilen görseller. Düzenleyicideki ızgaranın aynısı ama daha
+   küçük hücrelerle: form zaten uzun, önizleme tanımaya yetecek kadar büyük
+   olmalı, sayfayı ikiye katlayacak kadar değil. */
+.sp-newimages { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+.sp-newimages .sp-image img { height: 76px; }
+.sp-newimages > .sp-sub { grid-column: 1 / -1; }
+
+/* ENGEL KUTUSU — neden + sıradaki adım.
+   İki satır BİLEREK ayrı: ilk satır "niye olmadı", ikincisi "şimdi ne
+   yapacağım". Tek paragrafa sıkıştırıldığında ikinci cümle okunmuyordu. */
+.sp-blocker { display: block; }
+.sp-blocker-why { font-weight: 600; }
+.sp-blocker-next { margin-top: 4px; }

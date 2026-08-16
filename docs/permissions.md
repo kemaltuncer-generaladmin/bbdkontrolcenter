@@ -93,9 +93,10 @@ iskeletlerin ilan ettikleridir.
 
 | Modül | İzin | Ne yapar |
 |---|---|---|
-| `bell` | `bell.view` | Zil takvimini görür |
-| `bell` | `bell.manage` | Takvimi ve sesleri düzenler |
-| `bell` | `bell.ring_now` | Elle zil çalar |
+| `bell` | `bell.view` | Haftalık zil saatlerini, grupları ve çalma günlüğünü görür |
+| `bell` | `bell.manage` | Saatleri, grupları, sesleri ve anons metinlerini düzenler |
+| `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır |
+| `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Yazıcıları ve kuyruğu görür |
 | `print` | `print.submit` | Baskı işi gönderir |
 | `print` | `print.manage` | Kuyruğu yönetir, iş iptal eder, yazıcı ayarlar |
@@ -135,9 +136,10 @@ iskeletlerin ilan ettikleridir.
 | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `directory.view_external` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `directory.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `bell.view` | ✓ | ✗ | ✗ | ✓ | ✗ |
+| `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bell.manage` | ✓ | ✗ | ✗ | ✓ | ✗ |
-| `bell.ring_now` | ✓ | ✗ | ✗ | ✓ | ✗ |
+| `bell.ring_now` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `print.submit` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `print.manage` | ✓ | ✗ | ✗ | ✓ | ✗ |
@@ -177,7 +179,8 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Sunucular | `servers.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Uzak Terminal | `ssh.execute` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Veritabanı | `database.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
-| Zil Sistemi | `bell.view` | ✓ | ✗ | ✗ | ✓ | ✗ |
+| Zil Sistemi | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Baskı Yönetimi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Antivirüs | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Rehber | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |

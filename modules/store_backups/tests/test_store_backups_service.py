@@ -81,9 +81,11 @@ async def test_envanter_okunamayinca_yedek_yok_denmez() -> None:
 
 
 async def test_uc_yayinda_degilse_magaza_coktu_denmez() -> None:
-    # CANLIDA DOĞRULANDI: GET /api/admin/bbd/backups → 404. Mağaza AYAKTA;
-    # eksik olan bu ekranın konuştuğu paket. İkisini aynı cümleyle anlatmak,
-    # personeli boşuna sunucu odasına gönderir.
+    # SAVUNMA DALI — canlıdaki güncel hâli değil. Uç 2026-08-16'da 200 dönüyor;
+    # 404 hâli bir dönem gerçekti (paket henüz yayınlanmamıştı). Paket geri
+    # çekilirse mağaza AYAKTA olduğu hâlde bu dal çalışır: eksik olan yalnız bu
+    # ekranın konuştuğu paket olur. İkisini aynı cümleyle anlatmak, personeli
+    # boşuna sunucu odasına gönderir — dal bu yüzden sınanmaya devam eder (K7).
     service, api, _, _ = _service()
     api.missing.add("bbd_backups")
     result = await service.backups()
@@ -108,13 +110,14 @@ async def test_uc_yayinda_degilse_yedek_alma_dugmesi_kapanir() -> None:
 
 
 async def test_kontrol_api_kapaliysa_magazaya_ulasilamadi_denmez() -> None:
-    # CANLIDA DOĞRULANDI (2026-08-13): GET /api/admin/bbd/backups artık 404
-    # DEĞİL, 503 {"error":{"code":"CONTROL_API_DISABLED",...}} dönüyor. Aynı
-    # anda /settings/channels ve /orders 200 — MAĞAZA AYAKTA. Geçit 503'e
-    # `code="server"` verdiği için yalnız `bbd_endpoint_missing` koduna bakan
-    # eski kod bunu "gerçek arıza" sayıyor ve ekrana "Mağazaya ulaşılamadı"
-    # yazdırıyordu: ayakta olan bir mağaza için personeli sunucu odasına
-    # gönderen tam da o cümle.
+    # SAVUNMA DALI — canlıdaki güncel hâli değil. 2026-08-13'te GET
+    # /api/admin/bbd/backups 503 {"error":{"code":"CONTROL_API_DISABLED",...}}
+    # dönüyordu (aynı anda /settings/channels ve /orders 200 — MAĞAZA AYAKTA);
+    # 2026-08-16'da uç 200 dönüyor, yani anahtar açılmış. Test KALIYOR: anahtar
+    # bir dağıtımda geri kapanabilir. Geçit 503'e `code="server"` verdiği için
+    # yalnız `bbd_endpoint_missing` koduna bakan eski kod bunu "gerçek arıza"
+    # sayıyor ve ekrana "Mağazaya ulaşılamadı" yazdırıyordu: ayakta olan bir
+    # mağaza için personeli sunucu odasına gönderen tam da o cümle.
     service, api, _, _ = _service()
     api.disabled.add("bbd_backups")
     result = await service.backups()

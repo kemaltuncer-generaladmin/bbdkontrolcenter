@@ -2,8 +2,16 @@
 
 CANLI SİSTEME BAĞLANIR: https://bbdstore.com.tr · Bagisto 2.4.8 +
 `bagisto/bagisto-api` v2.3.1. Yönetici REST yüzeyi `/api/admin/*` altında
-286 uç sunar; BBD'ye özel uçlar `/api/admin/bbd/*` altındadır ve şu an
-YAZILMAKTADIR — henüz yayında değil (bkz. "BBD uçları" bölümü).
+286 uç sunar; BBD'ye özel uçlar `/api/admin/bbd/*` altındadır.
+
+BBD PAKETİ ARTIK YAYINDA (ölçüm 2026-08-16): `route:list --path=api/admin/bbd`
+canlıda 87 rota sayıyor. Bu dosya bir dönem "BBD uçları yazılmaktadır, henüz
+yayında değil" diyordu — o cümle 2026-08-14 dağıtımına kadar doğruydu, artık
+DEĞİL. Tek tek hangi ucun yayında olduğu ilgili metodun docstring'inde
+yazılıdır; toptan "yayında değil" varsayımıyla ekran kapatılmaz.
+Yayında OLMAYAN uçlar bugün dört tanedir: `ai/tools`, `ai/tools/{tool}/run`,
+`ai/usage` ve `home/slides` (bkz. `bbd_ai_tools`, `bbd_ai_run`,
+`bbd_ai_usage`, `upload_media`).
 
 KİMLİK
     Authorization: Bearer <id>|<düz metin>   (admin_personal_access_tokens)
@@ -611,11 +619,86 @@ class StoreApi:
 
         if response.status_code >= 400:
             self._fail(verb, path, response)
+        # YÖNLENDİRME HATADIR — ham bayta da JSON'a da düşmeden burada kesilir.
+        # `follow_redirects=False` olduğu için 3xx `_fail`e HİÇ girmiyordu:
+        # `raw` yolunda giriş sayfasının HTML'i "PDF" diye ekrana veriliyor,
+        # JSON yolunda ise gövdesiz 302 `None`a düşüp BOŞ LİSTE oluyordu.
+        if response.status_code >= 300:
+            self._redirected(verb, path, response)
         if raw_envelope:
             return binary_envelope(response)
         if raw:
             return response.content
-        return response.json() if response.content else None
+        return self._decode(verb, path, response)
+
+    def _redirected(self, verb: str, path: str, response: httpx.Response) -> None:
+        """3xx → anlaşılır hata. Yönlendirme İZLENMEZ, açıklanır.
+
+        NEDEN İZLEMİYORUZ: yönlendirmeyi izlemek `Authorization` başlığını
+        başka bir konağa taşıyabilir ve bu geçidin taşıdığı tek sır o
+        başlıktır. Ayrıca bu API'de 3xx'in gerçek anlamı neredeyse her zaman
+        "istek admin API'sine değil, oturum açma sayfasına düştü"dür: yol
+        yanlış (`/api/admin` öneki düşmüş), `APP_URL` başka bir konağı
+        gösteriyor ya da önde bir vekil sunucu araya girmiş.
+
+        Nereye gitmek istediğini SÖYLERİZ (`Location`), çünkü teşhisin
+        tamamı orada: konak değiştiyse vekil, yol `/admin/login` ise oturum.
+        """
+        target = mask_text(response.headers.get("Location") or "").strip()
+        nereye = f" Yönlendirdiği adres: {target}." if target else ""
+        raise StoreApiError(
+            f"{verb} {path} → mağaza isteği {response.status_code} ile başka bir adrese "
+            f"yönlendirdi; yanıt alınamadı.{nereye} Yönlendirme bilerek izlenmiyor: "
+            "yönetici belirteci başka bir konağa taşınmamalı. Bu yanıt genellikle isteğin "
+            "admin API'sine değil oturum açma sayfasına düştüğünü gösterir — mağaza adresini "
+            "(modules.store_api.base_url) ve belirteci denetleyin.",
+            status=response.status_code, code="redirect",
+        )
+
+    @staticmethod
+    def _decode(verb: str, path: str, response: httpx.Response) -> Any:
+        """2xx gövdesini JSON'a çevirir. ÜÇ SONUÇ AYRI AYRI ANLATILIR.
+
+        Eskiden son satır koşulsuz `response.json()` idi ve iki ayrı arıza tek
+        bir sessizliğe düşüyordu:
+
+          1. GÖVDE JSON DEĞİL (HTML hata sayfası, düz metin, bozuk gövde):
+             `json()` ham `JSONDecodeError` fırlatıyordu. O istisna
+             `StoreApiError` DEĞİLDİR; ekranların hepsi `except StoreApiError`
+             ya da kod alanına bakan dallar yazdığı için hata "mağaza şöyle
+             dedi" diye değil çıplak ayrıştırma hatası olarak çıkıyordu (K7).
+
+          2. GÖVDE BOŞ: `None` dönüyordu. `envelope(None)` bunu boş listeye,
+             `_item` boş sözlüğe çeviriyordu. Yani "mağaza hiç yanıt
+             göndermedi" ile "mağazada kayıt yok" ekranda AYNI görünüyordu.
+             İkisi ayrı şeydir: ilki arızadır, ikincisi geçerli bir cevaptır.
+
+        AYRIM BURADA KURULUR: gerçek "veri yok" cevabı `{"data": []}` olarak
+        gelir ve boş liste döner; GÖVDESİZ yanıt ise hata olur. Bu uçlarda
+        gövdesiz başarı yanıtı YOKTUR — ne BBD paketi (`Controller::run` her
+        yolda JSON döndürür) ne de Bagisto çekirdeği 204 üretir; 204/205
+        görmek de sözleşmenin dışına çıkıldığı anlamına gelir ve söylenir.
+        """
+        if not response.content:
+            raise StoreApiError(
+                f"{verb} {path} → mağaza {response.status_code} döndürdü ama GÖVDE BOŞ. "
+                "Bu uçlar her durumda JSON gövde döndürür; boş gövde “kayıt yok” demek "
+                "DEĞİLDİR (kayıt yoksa `data` boş dizi gelir). İstek muhtemelen bir vekil "
+                "sunucuda kesildi ya da uç beklenenden başka bir şey döndürdü.",
+                status=response.status_code, code="empty_response",
+            )
+        try:
+            return response.json()
+        except ValueError as failure:
+            # Metnin BAŞI teşhis için yeterli ve maskeden geçer: gövde uzak
+            # sistemden geliyor, ne taşıdığını biz belirlemiyoruz.
+            head = mask_text(response.text[:200]).strip()
+            kind = str(response.headers.get("Content-Type") or "bilinmiyor").split(";")[0].strip()
+            raise StoreApiError(
+                f"{verb} {path} → mağaza {response.status_code} döndürdü ama yanıt JSON "
+                f"değil (Content-Type: {kind or 'yok'}). Gövdenin başı: {head}",
+                status=response.status_code, code="not_json",
+            ) from failure
 
     @staticmethod
     def _retry_after(response: httpx.Response) -> float:
@@ -2324,7 +2407,7 @@ class StoreApi:
     async def bbd_reporting_overview(self, *, days: int = 7) -> dict[str, Any]:
         """Pano özeti — GET /api/admin/bbd/reporting/overview. TEK ÇAĞRI.
 
-        Dönüş (CANLIDA ÖLÇÜLDÜ 2026-08-14):
+        Dönüş (CANLIDA ÖLÇÜLDÜ 2026-08-16):
             {"window": {"days", "since"},
              "orders": {"total", "revenue", "byStatus", "pendingCount"},
              "shipping": {"created", "purchased", "awaitingPurchase", "withError"},
@@ -2335,15 +2418,25 @@ class StoreApi:
         rakam üretir. Denetleyici kaynağından okundu ve canlıda doğrulandı:
 
           · `orders.total` · `orders.revenue` · `orders.byStatus`
-            → PENCEREYE BAĞLI (`created_at >= since`). days=1 iken
-              `byStatus.processing` 4, days=90 iken 7 döndü.
+            → PENCEREYE BAĞLI (`created_at >= since`). 2026-08-16 ölçümü:
+              days=1 iken `orders.total` 0 ve `byStatus` boş, days=90 iken
+              `total` 18 ve `byStatus.processing` 6.
           · `orders.pendingCount` → TÜM ZAMANLAR (sorguda `since` YOK).
-          · `bld` → TÜM ZAMANLAR (sorguda `since` YOK).
+          · `bld` → TÜM ZAMANLAR (sorguda `since` YOK): iki pencerede de
+            `{"sent": 8}` döndü — pencereyi değiştirip aynı sayıyı almak bu
+            alanın `since` görmediğinin doğrudan kanıtıdır.
 
         Yani "hazırlanıyor" sayısını buradan okumak, pencereye giren
         siparişleri tüm zamanların sayısı sanmak olurdu; `pendingCount` ve
-        `bld` ise gerçekten tüm zamanların sayısıdır ve tek tek uçlarla
-        birebir aynıdır (ölçüm: pending 0 = 0, bld failed 0 = 0).
+        `bld` ise gerçekten tüm zamanların sayısıdır.
+
+        TUZAK — `byStatus` BOŞKEN SÖZLÜK DEĞİL LİSTE gelir (`[]`). PHP boş
+        diziyi JSON nesnesi olarak değil dizi olarak yazar; `byStatus["x"]`
+        diyen okuyucu sessizce patlar. Sayıya `.get`/varsayılan ile bakılır.
+
+        Not: yukarıdaki rakamlar bir dönem 2026-08-14 ölçümüydü (days=1 →
+        processing 4, days=90 → 7). Sayılar günlük değişir; DEĞİŞMEYEN,
+        hangi alanın pencereye bağlı olduğudur — okurken buna bakılır.
 
         Yetkisi olmayan bölüm `null` döner — BOŞ SÖZLÜK DEĞİL. "Veri yok" ile
         "görme yetkin yok" ayrı cevaplardır; çağıran ikisini ayırabilsin diye
@@ -2585,10 +2678,13 @@ class StoreApi:
         Taşıyıcının kendisi (kod, ad, etkinlik, ücretsiz kargo eşiği)
         `ShippingRateController::rates` yanıtındaki `carriers` dizisidir.
 
-        UÇ HENÜZ DAĞITILMADI: rota mağaza deposunda yazılı ama canlıda 404
-        (ölçüm 2026-08-14). Geçit bunu `bbd_endpoint_missing` koduna çevirir;
-        çağıranların dördü de o kodu "uç bekliyor" diye gösteriyor. Yanlış
-        sayı göstermektense beklemek doğrudur.
+        UÇ YAYINDA (ölçüm 2026-08-16): GET `shipping/rates` 200 döndü ve üç
+        taşıyıcı geldi (hepsijet · surat · yurtici). Burada bir dönem "uç
+        henüz dağıtılmadı, canlıda 404" yazıyordu — 2026-08-14'te doğruydu,
+        artık değil; rota o tarihten sonra dağıtıldı. Uç bir gün geri
+        çekilirse geçit 404'ü yine `bbd_endpoint_missing` koduna çevirir ve
+        çağıranların dördü de o kodu "uç bekliyor" diye gösterir; yanlış sayı
+        göstermektense beklemek doğrudur (K7).
         """
         payload = await self._request("GET", f"{BBD}/shipping/rates")
         source = payload if isinstance(payload, dict) else {}
@@ -2625,7 +2721,9 @@ class StoreApi:
         karşılıkları yok. Yazarken dolu gönderilirse uç 422 verir — alan
         sessizce yutulmaz (bkz. `bbd_update_shipping_rates`).
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (GET 200, ölçüm 2026-08-16). Bir dönem burada "uç henüz
+        dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14 ölçümünde öyleydi,
+        rota sonradan dağıtıldı.
         """
         return await self._item(f"{BBD}/shipping/rates")
 
@@ -2639,7 +2737,11 @@ class StoreApi:
         kendi varsayılanı da açıktır, yani bayrağı unutan çağrı vitrine
         dokunmaz. Tanınmayan taşıyıcı kodu sessizce atlanmaz, 422 döner.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (ölçüm 2026-08-16): `route:list` canlıda
+        `PUT api/admin/bbd/shipping/rates` satırını gösteriyor. Bir dönem "uç
+        henüz dağıtılmadı" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı. Yazma ucu olduğu için varlığı istek atılarak değil rota
+        listesinden doğrulandı — sınamak vitrinin kargo ücretini değiştirirdi.
         """
         return await self._request("PUT", f"{BBD}/shipping/rates", body=payload, reason=reason,
                                    actor=actor, dry_run=dry_run,
@@ -2653,7 +2755,9 @@ class StoreApi:
         Sıcak bir önbelleği düşürür: Geliver'a ulaşılamadığı bir anda
         checkout eski tarifeye iner. Sunucuda `dryRun` varsayılanı true.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (ölçüm 2026-08-16, rota listesinden:
+        `POST api/admin/bbd/shipping/price-list/refresh`). Bir dönem "uç henüz
+        dağıtılmadı" yazıyordu; 2026-08-14'te öyleydi, sonradan dağıtıldı.
         """
         return await self._request("POST", f"{BBD}/shipping/price-list/refresh", body={},
                                    reason=reason, actor=actor, dry_run=dry_run,
@@ -2676,8 +2780,32 @@ class StoreApi:
         return await self._item(f"{BBD}/payments/attempts/{int(attempt_id)}")
 
     async def bbd_payment_links(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Ödeme linkleri — GET /api/admin/bbd/payments/links."""
+        """Ödeme linkleri — GET /api/admin/bbd/payment-links.
+
+        YOL `payment-links`TİR, `payments/links` DEĞİL — bu satırın eski hâli
+        yanlış yazıyordu ve "uç yayında değil (404)" yanılgısını üreten şey oydu.
+
+        UÇ YALNIZ İKİ SÜZGEÇ OKUR: `status` ve `q` (`PaymentLinkController::index`).
+        `q`, `code · customer_name · customer_email · customer_phone` alanlarında
+        LIKE arar. BAŞKA HİÇBİR AD SÜZMEZ: `token`/`order_id` göndermek hata
+        DEĞİL, SESSİZLİK üretir — Laravel tanımadığı sorgu parametresini yok
+        sayar ve uç "en yeni 50 link"i döndürür (`orderByDesc('id')`). Belirli
+        bir linki okumanın kesin yolu `bbd_payment_link(id)`dir.
+        """
         return await self._collection(f"{BBD}/payment-links", filters)
+
+    async def bbd_payment_link(self, link_id: int) -> dict[str, Any]:
+        """Tek ödeme linki — GET /api/admin/bbd/payment-links/{id}.
+
+        LİSTEYİ SÜZMEK YERİNE BUNU KULLANIN. Liste ucu `token`/`order_id`
+        süzgeci tanımıyor ve sayfa başına en çok 50 satır veriyor; aranan link
+        sayfada yoksa liste "yok" demez, BAŞKA linkleri döndürür. Tekil uç ise
+        ya istenen kaydı ya da 404 döndürür — "bulamadım" ile "başkasını
+        buldum" arasındaki farkı yalnız bu uç garanti eder.
+
+        KİMLİK SAYISALDIR (`whereNumber('id')`), 12 haneli `code` DEĞİL.
+        """
+        return await self._item(f"{BBD}/payment-links/{int(link_id)}")
 
     async def bbd_create_payment_link(self, *, amount: str = "", kind: str = "custom",
                                       items: list[dict[str, Any]] | None = None,
@@ -2708,7 +2836,15 @@ class StoreApi:
                       geçerli olan ürünün kendi fiyatıdır.
         `billing` zorunludur (en az ad + soyad); sunucu sepeti onunla kurar.
 
-        Sunucuda `dryRun` VARSAYILANI true — para ile ilgili uçtur.
+        `dryRun` GÖVDEYE AÇIKÇA KONUR — `bbd_dispatch_order` ile aynı gerekçe.
+        Sunucuda bu uçun varsayılanı `true` (`PaymentLinkController::store` →
+        `$this->dryRun($request, true)`, "para ile ilgili uç" sigortası) ve
+        `DryRun::parse` alan HİÇ GELMEDİĞİNDE varsayılana düşer. `_write` ise
+        `dryRun`u yalnız kuru provada gövdeye ekler; `dry_run=False` iken alan
+        hiç gitmezdi. Sonuç sessiz ve tam terstiydi: personel kuru provayı
+        kapatıp "Bağlantı üret" dediğinde mağaza isteği yine PROVA sayıp
+        `DB::rollBack()` yapıyordu, ekran "kuru prova: bağlantı üretilmedi"
+        diyordu ve GERÇEK bir tahsilat bağlantısı üretmenin yolu yoktu.
         """
         if kind not in ("custom", "product"):
             raise StoreApiError(
@@ -2755,6 +2891,7 @@ class StoreApi:
                     code="payload",
                 )
             body["items"] = [dict(row) for row in items]
+        body["dryRun"] = self.effective_dry_run(dry_run)
         return await self._request("POST", f"{BBD}/payment-links", body=body, reason=reason,
                                    actor=actor, dry_run=dry_run,
                                    action="bbd_create_payment_link")
@@ -2805,7 +2942,9 @@ class StoreApi:
     async def bbd_pos_terminals(self) -> dict[str, Any]:
         """POS tanımları (anahtarlar MASKELİ) — GET /api/admin/bbd/payments/terminals.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (GET 200, ölçüm 2026-08-16). Bir dönem "uç henüz
+        dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı.
         """
         return await self._collection(f"{BBD}/payments/terminals")
 
@@ -2823,7 +2962,11 @@ class StoreApi:
         MAĞAZANIN TAHSİLATINI DURDURABİLİR (`go_live` anahtarı); sunucuda
         `dryRun` varsayılanı true ve gerekçe zorunludur.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (ölçüm 2026-08-16, rota listesinden:
+        `PUT api/admin/bbd/payments/terminals/{code}`). Bir dönem "uç henüz
+        dağıtılmadı" yazıyordu; 2026-08-14'te öyleydi, sonradan dağıtıldı.
+        Varlığı istek atılarak değil rota listesinden doğrulandı — sınamak
+        mağazanın tahsilatına dokunurdu.
         """
         key = str(code or "").strip().lower()
         if not key or not all(char.isascii() and (char.isalnum() or char in "_-") for char in key):
@@ -2849,7 +2992,9 @@ class StoreApi:
         üreticisi için bilerek eklenmiş takma adlar). Zarfı açıp yalnız
         `data`yı almak o sayaçları düşürürdü.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (GET 200, ölçüm 2026-08-16). Bir dönem "uç henüz
+        dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı.
         """
         return await self._item(f"{BBD}/payments/reconciliation", filters)
 
@@ -2918,7 +3063,9 @@ class StoreApi:
         uçları mağazada bilerek ayrı bir önek altına yazıldı, üyelik uçları
         `deneme-kulubu` altında kaldı.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (GET 200, ölçüm 2026-08-16). Bir dönem "uç henüz
+        dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı.
         """
         return await self._collection(f"{BBD}/trial-club/exams/{int(exam_id)}/results",
                                       page=page, per_page=per_page)
@@ -2995,7 +3142,10 @@ class StoreApi:
         önceki sonuç kümesinin TAMAMINI değiştirir — sunucuda `dryRun`
         varsayılanı bu yüzden true.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (ölçüm 2026-08-16, rota listesinden:
+        `POST api/admin/bbd/trial-club/exams/{examId}/results`). Bir dönem "uç
+        henüz dağıtılmadı" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı. Yazma ucu olduğu için rota listesinden doğrulandı.
         """
         return await self._request("POST", f"{BBD}/trial-club/exams/{int(exam_id)}/results",
                                    body={"rows": rows}, reason=reason, actor=actor,
@@ -3009,7 +3159,10 @@ class StoreApi:
         ÖĞRENCİYE GÖRÜNÜR KILAR ve geri alınamaz; sunucuda `dryRun`
         varsayılanı true.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (ölçüm 2026-08-16, rota listesinden:
+        `POST api/admin/bbd/trial-club/exams/{examId}/results/publish`). Bir
+        dönem "uç henüz dağıtılmadı" yazıyordu; 2026-08-14'te öyleydi,
+        sonradan dağıtıldı.
         """
         return await self._request("POST",
                                    f"{BBD}/trial-club/exams/{int(exam_id)}/results/publish",
@@ -3034,22 +3187,62 @@ class StoreApi:
         """
         return await self._item(f"{BBD}/storefront/sets/{int(bundle_id)}")
 
-    async def bbd_save_bundle(self, *, payload: dict[str, Any], bundle_id: int | None = None,
-                              reason: str, actor: str = "",
-                              dry_run: bool | None = None) -> dict[str, Any]:
-        """Set ekler/günceller — POST|PUT /api/admin/bbd/storefront/sets[/{id}].
+    #: `StorefrontController::updateSetMembership` yalnız bu iki değeri kabul
+    #: eder; başkası 422 "`action` yalnızca add/remove olabilir" alır.
+    SET_ACTIONS = ("add", "remove")
 
-        MAĞAZADA SET OLUŞTURMA KAVRAMI YOK: set bir kategoridir ve yalnız
-        ÜYELİĞİ değiştirilebilir (`POST storefront/sets/membership`). POST
-        `sets` çağrısı 404 değil 405 döndürür (yol GET olarak var); geçit bunu
-        `bbd_endpoint_missing` koduna çevirir, bkz. `_fail`.
+    async def bbd_set_membership(self, product_ids: list[int], *, action: str, reason: str,
+                                 actor: str = "",
+                                 dry_run: bool | None = None) -> dict[str, Any]:
+        """Setin ÜYELİĞİNİ yazar — POST /api/admin/bbd/storefront/sets/membership.
+
+        ═══════════════════════════════════════════════════════════════════════
+        MAĞAZADA "SET OLUŞTURMA" DİYE BİR ŞEY YOK
+
+        Set bir KATEGORİDİR (`slug: setler`, canlıda `categoryId: 42`) ve
+        üyeleri ürünlerdir. `storefront/sets` öneki altında tanımlı iki şey
+        vardır: liste (`GET ''`) ve ÜYELİK YAZMA (`POST 'sets/membership'`).
+        Tekil okuma, oluşturma ya da güncelleme rotası HİÇ YOKTUR.
+
+        Bu metot eskiden `POST storefront/sets` / `PUT storefront/sets/{id}`
+        çağırıyordu ve ikisi de mağazaya boşuna gidiyordu: yol GET olarak
+        tanımlı olduğu için Laravel 404 değil 405 döndürür, geçit onu
+        `bbd_endpoint_missing`e çevirir ve ekran "uç henüz yayında değil,
+        bekleyin" der. Beklenecek bir şey yoktu — uç zaten oradaydı, adresi
+        başkaydı.
+        ═══════════════════════════════════════════════════════════════════════
+
+        GÖVDE: `{productIds: [int], action: "add"|"remove"}`. Yanıt
+        `{action, categoryId, affected}` döner; `affected` GERÇEKTEN DEĞİŞEN
+        ürünlerdir — zaten üye olanı ikinci kez eklemez, üye olmayanı
+        çıkarmaya çalışmaz. Kuru provada aynı bilgi `wouldAffect` ve
+        `alreadyInDesiredState` olarak gelir.
+
+        `dryRun` VARSAYILANI SUNUCUDA `false`: üyelik değiştirmek veri
+        SİLMEZ, kategori bağını ekler ya da kaldırır ve her ikisi de tek
+        çağrıyla geri alınabilir.
+
+        `remove` ÜRÜNÜ SİLMEZ, kategori bağını kaldırır: ürün katalogda,
+        siparişlerde ve kendi sayfasında kalır; yalnız "Setler" vitrininden
+        çıkar (BBD veri silme yasağı).
         """
-        base = f"{BBD}/storefront/sets"
-        if bundle_id is None:
-            return await self._request("POST", base, body=payload, reason=reason, actor=actor,
-                                       dry_run=dry_run, action="bbd_create_bundle")
-        return await self._request("PUT", f"{base}/{int(bundle_id)}", body=payload, reason=reason,
-                                   actor=actor, dry_run=dry_run, action="bbd_update_bundle")
+        secim = str(action or "").strip().lower()
+        if secim not in self.SET_ACTIONS:
+            raise StoreApiError(
+                f"Set üyeliği eylemi 'add' ya da 'remove' olmalıdır (verilen: {action!r}). "
+                "Mağaza başka bir değeri 422 ile reddeder.",
+                code="payload",
+            )
+        ids = [int(item) for item in (product_ids or []) if int(item or 0) > 0]
+        if not ids:
+            raise StoreApiError(
+                "Set üyeliği için ürün seçilmedi; boş liste mağazaya gönderilmez "
+                "(hiçbir şeyi değiştirmeyen bir yazma, denetim izini kirletir).",
+                code="payload",
+            )
+        return await self._request("POST", f"{BBD}/storefront/sets/membership",
+                                   body={"productIds": ids, "action": secim}, reason=reason,
+                                   actor=actor, dry_run=dry_run, action="bbd_set_membership")
 
     async def bbd_carousel(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Ana ekran şeritleri/slider — GET /api/admin/bbd/storefront/carousels."""
@@ -3196,6 +3389,55 @@ class StoreApi:
         return await self._collection(f"{BBD}/catalog/health/{issue}", rest, page=page,
                                       per_page=per_page)
 
+    async def bbd_bestsellers(self, filters: dict[str, Any] | None = None, *, page: int = 1,
+                              per_page: int | None = None,
+                              all_pages: bool = False) -> dict[str, Any]:
+        """Çok satanlar — GET /api/admin/bbd/catalog/bestsellers.
+
+        UÇ YAYINDA (GET 200 + gerçek satır, ölçüm 2026-08-16). Geçitte KARŞILIĞI
+        YOKTU: Ürünler ekranının silme önizlemesi `getattr(api, "bbd_bestsellers")`
+        ile arıyor, `None` bulunca "bu ürünün kaç siparişte geçtiği ÖĞRENİLEMEDİ"
+        diyordu. Yani veri mağazada duruyor, ekran ise ürünü satış geçmişini
+        bilmeden sildiriyordu.
+
+        Satır: `{productId, sku, rank, soldQty, orderCount, lastOrderedAt,
+        computedAt}`. Kaynak `bbd_product_bestsellers` ÖNBELLEK TABLOSUDUR;
+        gecelik zamanlayıcı doldurur (`computedAt` ne zaman hesaplandığını
+        söyler) ve YALNIZ SATILMIŞ ürünler orada satır tutar. Hiç satılmamış
+        ürünün satırı yoktur — bu "0 sipariş" demektir, "bilinmiyor" değil.
+
+        ═══════════════════════════════════════════════════════════════════════
+        BU UÇ SÜZGEÇ ALMAZ — YALNIZ SAYFALAMA.
+
+        Denetleyici (`CatalogController::bestsellers`) isteği yalnız
+        `Page::from(page, limit)` ile okur; `product_id`, `productId`, `sku`
+        diye bir parametre HİÇ ARANMAZ. CANLIDA ÖLÇÜLDÜ (2026-08-16, tabloda
+        4 satır var):
+        ═══════════════════════════════════════════════════════════════════════
+            ?limit=50                    → 4 satır (1428, 183, 1426, 186)
+            ?limit=50&product_id=183     → 4 satır — AYNI liste
+            ?limit=50&productId=183      → 4 satır — AYNI liste
+            ?limit=50&sku=BBD2026SKU0176 → 4 satır — AYNI liste
+        ═══════════════════════════════════════════════════════════════════════
+        Laravel tanımadığı sorgu parametresini sessizce yok sayar; süzgeç
+        gönderen çağıran "tek ürünü sordum" sanıp SIRALAMANIN BAŞINDAKİ ürünün
+        rakamını okur. Bu yüzden burada süzgeç TEMİZLENMEZ ve GİZLENMEZ:
+        `filters` olduğu gibi geçer, ama tek ürünün rakamını isteyen çağıran
+        listeyi kendisi taramak zorundadır (`all_pages=True` + `productId`
+        eşleşmesi). Doğru kullanım örneği: Ürünler ekranı `_sales_impact`.
+
+        Sıra OKUMA ANINDA üretilir (tabloda `rank` sütunu yoktur): `soldQty`,
+        eşitlikte `orderCount` azalan. `rank` alanı sayfa ofsetine göre
+        hesaplandığı için SAYFA BOYU DEĞİŞİNCE DEĞİŞİR — kimlik değildir,
+        kalıcı bir şeye bağlanmaz.
+
+        Tablo kurulu değilse uç 503 `BESTSELLERS_NOT_INSTALLED` döner ve geçit
+        onu `server` koduna çevirir; ekran bunu "uç yok" sanmamalı, "sıralama
+        henüz kurulmadı" diye okumalı.
+        """
+        return await self._collection(f"{BBD}/catalog/bestsellers", filters, page=page,
+                                      per_page=per_page, all_pages=all_pages)
+
     async def bbd_reindex_catalog(self, *, reason: str, actor: str = "",
                                   dry_run: bool | None = None) -> dict[str, Any]:
         """Arama dizinini yeniler — POST /api/admin/bbd/catalog/reindex. AĞIR İŞTİR.
@@ -3341,7 +3583,12 @@ class StoreApi:
         """Olay→şablon kuralları — GET /api/admin/bbd/notifications/rules.
 
         SALT OKUNUR. Kural "kapalı" demez, NEYİN kapattığını sayar
-        (`blockedBy`). UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        (`blockedBy`).
+
+        UÇ YAYINDA (GET 200, ölçüm 2026-08-16). Bir dönem "uç henüz
+        dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı. OKUMA ucunun yayında olması YAZMA ucunun da geleceği
+        anlamına GELMEZ — bkz. `bbd_save_notification_rule`.
         """
         return await self._collection(f"{BBD}/notifications/rules")
 
@@ -3386,7 +3633,9 @@ class StoreApi:
     async def bbd_review_requests(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
         """Yorum davetleri — GET /api/admin/bbd/review-requests.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (GET 200, ölçüm 2026-08-16). Bir dönem "uç henüz
+        dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14'te öyleydi, sonradan
+        dağıtıldı.
         """
         return await self._collection(f"{BBD}/review-requests", filters)
 
@@ -3399,7 +3648,11 @@ class StoreApi:
         elle gönderilen davet, zamanlayıcının aynı siparişe ikinci kez
         yazmasını engeller.
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (ölçüm 2026-08-16, rota listesinden:
+        `POST api/admin/bbd/review-requests`). Bir dönem "uç henüz
+        dağıtılmadı" yazıyordu; 2026-08-14'te öyleydi, sonradan dağıtıldı.
+        Müşteriye e-posta gönderdiği için sınama isteği ATILMADI; varlık rota
+        listesinden okundu.
         """
         return await self._request("POST", f"{BBD}/review-requests",
                                    body={"orderId": int(order_id)}, reason=reason, actor=actor,
@@ -3480,6 +3733,158 @@ class StoreApi:
                                    body=clean, reason=reason, actor=actor, dry_run=dry_run,
                                    action="bbd_update_return_request", reason_in_body=False)
 
+    # ------------------------------------------- İADE KARGO ZİNCİRİ (RMA)
+    #
+    # GİRDİ GÖNDERİ KİMLİĞİ DEĞİL TALEP KİMLİĞİDİR. `bbd_shipments`
+    # ailesindeki metotlar (`bbd_purchase_shipment`, `bbd_sync_shipment`,
+    # `bbd_return_shipment`) girdisini Geliver gönderi kimliğinden alır;
+    # buradakiler talep (`rma.id`) kimliğinden alır. Operatörün elinde talep
+    # vardır, gönderi kimliği yoktur ve olması da gerekmez — mağaza tarafında
+    # ayrı bir denetleyici (`ReturnShipmentController`) tam bu yüzden var.
+    #
+    # ADLARI KARIŞTIRMAYIN: `bbd_return_shipment(shipment_id)` BAŞKA bir
+    # şeydir (giden bir gönderiyi iade gönderisine çevirir). Buradakilerin
+    # hepsi `..._return_request_...` diye adlandırıldı.
+    #
+    # ZİNCİRDE ÜÇ ADIM VAR VE YALNIZCA BİRİ PARA HARCAR:
+    #   1. `bbd_open_return_request_shipment`     — gönderiyi açar, para YOK
+    #   2. `bbd_purchase_return_request_label`    — etiketi alır, PARA HARCAR
+    #   3. `bbd_sync_return_request_shipment`     — taşıyıcıdan tazeler, para YOK
+    # Ayrılmalarının sebebi mağaza tarafında yazılı: onaylanan her talep
+    # etiketle sonuçlanmaz (müşteri ürünü kendi getirebilir, vazgeçebilir,
+    # talep sonradan reddedilebilir) ve her biri bize kesilmiş bir fatura
+    # demektir.
+    #
+    # PARA İADESİ BU ZİNCİRDEN YAPILMAZ. Kargo "teslim edildi"ye dönse bile
+    # uçlar talebin durumunu DEĞİŞTİRMEZ; `Refunded` (5) ve `Item Canceled`
+    # (8) geçişleri hem burada hem `bbd_update_return_request`te 409'dur.
+
+    async def bbd_return_request_shipment(self, request_id: int) -> dict[str, Any]:
+        """Talebin iade kargosu — GET /api/admin/bbd/return-requests/{id}/shipment.
+
+        GÖNDERİ YOKSA 404 DEĞİL 200 GELİR ve `shipment: null` döner. "Bu
+        talebin kargosu yok" geçerli bir cevaptır, hata değil: 404'e çeviren
+        bir ekran operatörü olmayan bir arıza aramaya yollardı. Canlıda
+        ölçüldü (2026-08-16, talep 1 ve 2): ikisi de 200 + `stage: "yok"`.
+
+        Yanıt: `{rmaId, orderId, rmaStatus{id,title}, stage, stageLabel,
+        received, receivedAt, labelPurchased, labelStored, shipment|null,
+        refund{allowedHere,code,panelButtonUnlocked,message}}`.
+
+        `refund.allowedHere` HER YANITTA `false`tur ve bilerek öyledir: "ürün
+        geldi, artık iade edebilirim" diyen operatörün bir sonraki sorusu
+        "buradan mı?" olur ve cevap her seferinde aynı yerde durur.
+        """
+        return await self._item(f"{BBD}/return-requests/{int(request_id)}/shipment")
+
+    async def bbd_open_return_request_shipment(self, request_id: int, *, reason: str,
+                                               actor: str = "",
+                                               dry_run: bool | None = None) -> dict[str, Any]:
+        """İade gönderisini AÇAR — POST /api/admin/bbd/return-requests/{id}/shipment.
+
+        PARA HARCAMAZ ve MÜKERRER KORUMALIDIR: aynı talep için ikinci gönderi
+        açılmaz, var olan döner. Sunucuda `dryRun` varsayılanı `false` —
+        bayrağı unutmanın bedeli yok, üstelik adım Geliver'da iptal edilebilir.
+
+        `purchaseNow`/`buyLabel`/`autoPurchase` gibi alanlar bu uçta SESSİZCE
+        YOK SAYILMAZ, REDDEDİLİR (422). Bu yüzden gövdeye hiçbir ek alan
+        konmaz: etiket ayrı ve açık bir eylemle alınır
+        (`bbd_purchase_return_request_label`).
+
+        Yanıt gövdesi `bbd_return_request_shipment` ile AYNIDIR: eylemden
+        sonra durumu ikinci bir istekle sormak gerekmez (iki istek, iki ekran
+        arasında ayrışabilen iki gerçek demektir). Başarıda 201 döner.
+        """
+        return await self._request("POST", f"{BBD}/return-requests/{int(request_id)}/shipment",
+                                   body={}, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_open_return_request_shipment")
+
+    async def bbd_sync_return_request_shipment(self, request_id: int, *, reason: str,
+                                               actor: str = "",
+                                               dry_run: bool | None = None) -> dict[str, Any]:
+        """İade kargosunu taşıyıcıdan tazeler —
+        POST /api/admin/bbd/return-requests/{id}/shipment/sync.
+
+        YALNIZCA OKUR (sunucuda `dryRun` varsayılanı `false`). "Ürün elimize
+        ulaştı mı" sorusunun cevabı bu senkronun doğal sonucudur; teslim
+        damgası bir kez atıldıktan sonra geri alınmaz.
+
+        Gönderi yoksa 409 `RETURN_SHIPMENT_MISSING` gelir — "talep yok"
+        DEĞİL, "önce gönderiyi açın" demektir.
+        """
+        return await self._request("POST",
+                                   f"{BBD}/return-requests/{int(request_id)}/shipment/sync",
+                                   body={}, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_sync_return_request_shipment")
+
+    async def bbd_return_request_label(self, request_id: int) -> bytes:
+        """İade etiketi — GET /api/admin/bbd/return-requests/{id}/shipment/label. HAM PDF.
+
+        NEDEN BAYT, NEDEN ADRES DEĞİL: etiket müşteriye iletilecek belgedir
+        (basılır ya da e-postaya eklenir) ve Geliver'ın verdiği adres SÜRELİ
+        İMZALIDIR — imza ölünce elde çalışmayan bir bağlantı kalırdı. Dosya
+        satın alma anında mağazada saklanıyor, burada o kopya servis ediliyor.
+
+        Etiket hazır değilse uç 409 `RETURN_LABEL_NOT_READY` döner ve geçit
+        onu `conflict` koduna çevirir. Gönderi hiç yoksa yine 409 gelir ama
+        kodu `RETURN_SHIPMENT_MISSING`tir; ikisi ayrı cümledir ve `details`
+        bloğu hangisi olduğunu taşır.
+
+        "Etiket hazır mı" sorusunu PDF indirmeden sormak için
+        `bbd_return_request_label_info` kullanılır.
+        """
+        return await self._request("GET",
+                                   f"{BBD}/return-requests/{int(request_id)}/shipment/label",
+                                   raw=True, headers={"Accept": "application/pdf"})
+
+    async def bbd_return_request_label_info(self, request_id: int) -> dict[str, Any]:
+        """Etiket künyesi — GET .../shipment/label?format=json. PDF İNDİRMEZ.
+
+        `{rmaId, shipmentId, labelStored, isPurchased, barcode, trackingNumber}`
+        döner. Ekranın "Etiketi indir" düğmesini açıp açmayacağı buradan
+        okunur: megabaytlık bir PDF'i yalnız hazır mı diye indirmek, listedeki
+        her satır için bir kez yapıldığında hız kovasını da bandı da yer.
+        """
+        return await self._item(f"{BBD}/return-requests/{int(request_id)}/shipment/label",
+                                {"format": "json"})
+
+    async def bbd_purchase_return_request_label(self, request_id: int, *, offer_id: str = "",
+                                                reason: str, actor: str = "",
+                                                dry_run: bool | None = None) -> dict[str, Any]:
+        """İade etiketini SATIN ALIR —
+        POST /api/admin/bbd/return-requests/{id}/shipment/label. **PARA HARCAR.**
+
+        ÜÇ KORUMA MAĞAZADA, HİÇBİRİ DİĞERİNİN YERİNE GEÇMEZ:
+          1. AYRI YETKİ (`sales.geliver.purchase`) — iade gönderisi açabilen
+             herkesin etiket satın alabilmesi gerekmez.
+          2. `dryRun` VARSAYILANI `true` — bayrağı unutan istemci para
+             harcamaz, yalnız hangi teklifin ne kadara alınacağını öğrenir.
+             Geçit bunu EZMEZ: `dry_run=None` geldiğinde modülün kendi
+             varsayılanı da açıktır ve gövdeye `dryRun: true` konur.
+          3. İŞ KURALI — satın alınmış ya da iptal edilmiş gönderi için ikinci
+             kez ödeme yapılmaz; ölçüt işlem numarasıdır, durum metni değil.
+
+        `offer_id` boş bırakılabilir: mağaza o zaman kendi seçtiği teklifi
+        kullanır. Kuru prova yanıtı `offers` listesini ve `wouldSpendMoney`
+        bayrağını döndürür — teklif seçimi ekranda bu listeden yapılır.
+
+        `dryRun` GÖVDEYE AÇIKÇA KONUR — `bbd_dispatch_order` ile aynı gerekçe,
+        ama buradaki yön TERS ve o yüzden daha kritik: mağazadaki varsayılan
+        `true` olduğu için alan hiç gitmezse GERÇEK satın alma isteği sessizce
+        kuru provaya düşer. Ekran "etiket alındı" der, müşteriye verilecek
+        kargo etiketi yoktur ve kimse bir şey harcanmadığını fark etmez.
+        `_write` bunu kendiliğinden yapmaz: kuru provada alanı `true` yapar,
+        gerçek yazmada HİÇ göndermez.
+        """
+        body: dict[str, Any] = {"dryRun": self.effective_dry_run(dry_run)}
+        teklif = str(offer_id or "").strip()
+        if teklif:
+            body["offerId"] = teklif
+        return await self._request("POST",
+                                   f"{BBD}/return-requests/{int(request_id)}/shipment/label",
+                                   body=body, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_purchase_return_request_label")
+
     async def bbd_audit(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                         per_page: int | None = None) -> dict[str, Any]:
         """Mağaza denetim kayıtları — GET /api/admin/bbd/audits.
@@ -3496,6 +3901,8 @@ class StoreApi:
         Fark MASKELENMİŞ değerler üzerinden üretilir ve 200 satırda görünür
         biçimde kırpılır (`changesTruncated`).
 
-        UÇ HENÜZ DAĞITILMADI (canlıda 404, ölçüm 2026-08-14).
+        UÇ YAYINDA (GET `audits/1` → 200, ölçüm 2026-08-16). Bir dönem "uç
+        henüz dağıtılmadı, canlıda 404" yazıyordu; 2026-08-14'te öyleydi,
+        sonradan dağıtıldı.
         """
         return await self._item(f"{BBD}/audits/{int(entry_id)}")

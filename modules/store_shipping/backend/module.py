@@ -41,6 +41,10 @@ def register(ctx: ModuleContext) -> None:
     store_api = ctx.capability("store.api")
     printer = ctx.try_capability("printer")
     notifier = ctx.try_capability("store.notify.send")
+    # "Kargoya verildi" aşama SMS'i. Bildirimler ekranı kapalıysa gönderi
+    # yine açılır ve etiket yine basılır; yalnız müşteriye mesaj gitmez ve
+    # sonuç bunu satır olarak söyler (K7).
+    stage_notify = ctx.try_capability("store.notify.stage")
 
     service = ShippingService(
         api=store_api,
@@ -49,6 +53,7 @@ def register(ctx: ModuleContext) -> None:
         config=ctx.config,
         printer=printer,
         notifier=notifier,
+        stage_notify=stage_notify,
         publish=ctx.publish,
         category=CATEGORY,
         subcategory=SUBCATEGORY,
@@ -57,4 +62,4 @@ def register(ctx: ModuleContext) -> None:
     ctx.provide("store.shipment.byOrder", ShipmentLookup(service))
     ctx.add_router(bind(service))
     ctx.log.info("kargo yönetimi hazır", printer=printer is not None,
-                 notify=notifier is not None)
+                 notify=notifier is not None, stageNotify=stage_notify is not None)

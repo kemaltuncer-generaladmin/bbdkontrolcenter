@@ -16,6 +16,9 @@ Yedinci kural testlerin çoğunda tekrar eder: OTOMATİK DOLDURULAN HER ALAN
 
 from __future__ import annotations
 
+import base64
+import struct
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +37,42 @@ AGAC = {"items": [{"id": 1, "name": "Root", "children": [
 
 GEREKCE = "Yeni kitap kaydı açılıyor"
 
+#: CANLIDA ÖLÇÜLEN kitap nitelikleri (16.08.2026). `publisher` seçimli ve
+#: değerini SEÇENEK KİMLİĞİYLE saklıyor; gerisi metin. Baskı yılının kodu
+#: `print_year` — ekranın aday listesinin ilk sırası bu ölçüme dayanıyor.
+KITAP_NITELIKLERI = [
+    {"id": 31, "code": "isbn", "type": "text", "adminName": "ISBN"},
+    {"id": 32, "code": "author", "type": "text", "adminName": "Yazar"},
+    {"id": 33, "code": "publisher", "type": "select", "adminName": "Yayınevi"},
+    {"id": 37, "code": "page_count", "type": "text", "adminName": "Sayfa Sayısı"},
+    {"id": 38, "code": "print_year", "type": "text", "adminName": "Baskı Yılı"},
+    {"id": 39, "code": "desi", "type": "text", "adminName": "Desi"},
+]
 
-def _service(api: FakeApi | None = None,
+#: Yayınevi seçenekleri yalnız nitelik DETAYINDA geliyor (liste `options: null`
+#: döndürüyor — canlıda ölçüldü); sahte de öyle davranır.
+YAYINEVI_DETAY = {"id": 33, "code": "publisher", "type": "select", "options": [
+    {"id": 76, "adminName": "YILDIZLAR YARIŞIYOR YAYINLARI"},
+    {"id": 10, "adminName": "Benim Başarı Dünyam"},
+]}
+
+
+def _png(width: int = 900, height: int = 900) -> str:
+    """En küçük geçerli PNG — base64. Gerçek dosya OKUNMAZ."""
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    chunk = struct.pack(">I", len(header)) + b"IHDR" + header
+    chunk += struct.pack(">I", zlib.crc32(b"IHDR" + header))
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + chunk).decode("ascii")
+
+
+def _service(api: FakeApi | None = None, *, with_book: bool = False,
              **config: Any) -> tuple[ProductsService, FakeApi, FakeStore]:
     api = api or FakeApi()
     api.tree_payload = AGAC
     api.families_payload = {"items": [{"id": 7, "code": "kitap", "name": "Kitap"}], "meta": {}}
+    if with_book:
+        api.attributes_payload = {"items": list(KITAP_NITELIKLERI), "meta": {}}
+        api.attributes_by_id = {33: dict(YAYINEVI_DETAY)}
     store = FakeStore()
     service = ProductsService(
         api=api, store=store, log=FakeLog(),
@@ -332,7 +365,10 @@ async def test_kuru_provada_tek_istek_gider_hayali_kimlige_yazilmaz() -> None:
     assert sonuc["dryRun"] is True
     assert api.used("update_product") == []
     assert api.used("update_inventory") == []
-    assert [step["state"] for step in sonuc["steps"]] == ["dry_run", "planlandı", "planlandı"]
+    assert [step["state"] for step in sonuc["steps"]] == [
+        "dry_run", "planlandı", "planlandı", "planlandı", "planlandı"]
+    assert [step["step"] for step in sonuc["steps"]] == [
+        "create", "details", "book", "inventory", "images"]
 
 
 async def test_urun_acildi_ama_ayrinti_yazilamadiysa_gizlenmez() -> None:
@@ -344,7 +380,9 @@ async def test_urun_acildi_ama_ayrinti_yazilamadiysa_gizlenmez() -> None:
     assert sonuc["ok"] is False
     assert sonuc["id"] == 1500
     assert "açıldı" in sonuc["error"]
-    assert [step["ok"] for step in sonuc["steps"]] == [True, False, True]
+    # create · details(düştü) · book(atlandı) · inventory · images(atlandı)
+    assert [step["ok"] for step in sonuc["steps"]] == [True, False, True, True, True]
+    assert [step["step"] for step in sonuc["steps"]][1] == "details"
 
 
 async def test_yazmadan_hemen_once_kapilan_anahtar_yeniden_numaralandirilir() -> None:
@@ -397,3 +435,380 @@ async def test_acilan_urun_ve_adimlari_yerel_ize_yazilir() -> None:
     assert "create_details" in eylemler
     assert "create_stock" in eylemler
     assert all(row["reason"] == GEREKCE for row in store.audit)
+
+
+# ═══════════════════════════════ kitap künyesi — ürün AÇARKEN
+#
+# Kullanıcının şikâyeti buydu: "ürün eklerken bir ürünün sahip olduğu tüm
+# alanları ekleyemiyoruz — resim, ISBN, yazar, yayın, şu bu çoğu şey yok."
+# Aşağıdaki testler künyenin ürün açılırken GERÇEKTEN yazıldığını ve
+# yazılamayan alanın sessizce yutulmadığını kilitler.
+
+async def test_kitap_kunyesi_urun_acilirken_yazilir() -> None:
+    service, api, _ = _service(with_book=True)
+    sonuc = await service.create(
+        payload={"sku": "BBD-KUNYE", "name": "Roman",
+                 "book": {"isbn": "9786051234567", "author": "Komisyon",
+                          "pageCount": "176", "publishYear": "2025", "publisher": "76"}},
+        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    kunye = next(step for step in sonuc["steps"] if step["step"] == "book")
+    assert kunye["ok"] is True and kunye["state"] == "ok"
+
+    # İKİNCİ `update_product` künyenin kendisidir: birincisi ayrıntılar.
+    govde = api.used("update_product")[1]["payload"]
+    assert govde["isbn"] == "9786051234567"
+    assert govde["author"] == "Komisyon"
+    assert govde["page_count"] == "176"
+    assert govde["print_year"] == "2025"
+    # SEÇİMLİ ALAN SAYIYA ÇEVRİLİR: mağaza seçenek kimliğini tamsayı bekliyor.
+    assert govde["publisher"] == 76
+
+
+async def test_kunye_yazma_yolu_duzenlemeyle_ayni_kalir() -> None:
+    """Ayrı bir yazma yolu İCAT EDİLMEDİ: `save` çağrılıyor.
+
+    Kanıt, denetim izindeki eylem adı: künye adımı `create_book` gibi yeni bir
+    ad değil, düzenleme ekranının kullandığı `update_product` satırını yazıyor.
+    İkinci bir yol açılsaydı doğrulama, TUZAK 1 koruması ve denetim satırı
+    orada yeniden yazılmak zorunda kalırdı.
+    """
+    service, _, store = _service(with_book=True)
+    await service.create(payload={"sku": "BBD-IZ2", "name": "Roman",
+                                  "book": {"isbn": "9786051234567"}},
+                         reason=GEREKCE, actor="Ayşe", dry_run=False)
+    assert "update_product" in [row["action"] for row in store.audit]
+
+
+async def test_kunye_adimi_kaydi_taze_okuyup_yazar() -> None:
+    """TUZAK 1 künye adımında da geçerli.
+
+    Künye, ayrıntı yazmasından SONRA gidiyor ve o adım kaydı zaten değiştirdi.
+    Taze okumadan yazmak, az önce yazılan adı ve kategorileri geri alabilirdi;
+    bu yüzden sıra oku-yaz-oku-yaz olmalı.
+    """
+    service, api, _ = _service(with_book=True)
+    await service.create(payload={"sku": "BBD-TUZAK", "name": "Roman",
+                                  "book": {"pageCount": "176", "isbn": "9786051234567"}},
+                         reason=GEREKCE, actor="Ayşe", dry_run=False)
+    sira = [name for name, _, _ in api.calls
+            if name in ("create_product", "product", "update_product")]
+    assert sira == ["create_product", "product", "update_product",
+                    "product", "update_product"]
+
+
+async def test_bos_kunye_alani_magazaya_gonderilmez() -> None:
+    """Ürün AÇARKEN temizlenecek bir şey yok: boş alanı yamaya koymak, mağazaya
+    hiçbir şeyi değiştirmeyen bir yazma yaptırırdı. (Düzenlemede boş yazmak
+    "bu bilgiyi sil" demektir ve orada meşrudur — ayrımı `_draft` koyuyor.)"""
+    service, api, _ = _service(with_book=True)
+    await service.create(payload={"sku": "BBD-BOSALAN", "name": "Roman",
+                                  "book": {"isbn": "9786051234567", "author": "",
+                                           "publishYear": "   "}},
+                         reason=GEREKCE, actor="Ayşe", dry_run=False)
+    govde = api.used("update_product")[1]["payload"]
+    assert govde["isbn"] == "9786051234567"
+    # Boş gelen alanlar yamaya HİÇ girmedi: gövdede yalnız mağazadaki mevcut
+    # değerleriyle (yani hiç) durabilirler.
+    assert govde.get("author", "") == ""
+    assert govde.get("print_year", "") == ""
+
+
+async def test_cozulemeyen_nitelige_yazilmaz_ve_nedeni_doner() -> None:
+    """Olmayan bir koda yazmak sessiz kayıptır: Bagisto isteği 200 ile kabul
+    eder, personel "kaydettim" der, değer hiçbir yere yazılmamıştır.
+
+    ÜRÜN DE AÇILMAZ: geri alınamayan bir kayıt açıp ardından "bu alan yok"
+    demek, kullanıcıyı yarım bir ürünle bırakırdı.
+    """
+    service, api, _ = _service()          # nitelik listesi boş: hiçbir kod çözülmez
+    sonuc = await service.create(payload={"sku": "BBD-YOK", "name": "Roman",
+                                          "book": {"isbn": "9786051234567"}},
+                                 reason=GEREKCE, actor="Ayşe", dry_run=False)
+    assert sonuc["ok"] is False
+    assert sonuc["field"] == "isbn"
+    assert "nitelik yok" in sonuc["error"]
+    assert api.used("create_product") == []          # ürün HİÇ açılmadı
+
+
+async def test_secenegi_okunamayan_secimli_alan_yazilmaya_calisilmaz() -> None:
+    """Seçenek kimliği bilinmeden yazılan değer mağazada hiçbir yere oturmaz.
+
+    Nitelik VAR ve kodu çözüldü; okunamayan şey seçenek listesi. Alanı yine de
+    açıp serbest metin yazdırmak, "yayınevi" yazıp kaydeden personelin ürününü
+    yayınevsiz bırakırdı.
+    """
+    service, api, _ = _service(with_book=True)
+    api.attributes_by_id = {}             # detay okunamıyor → seçenek yok
+    sonuc = await service.create(payload={"sku": "BBD-SECENEK", "name": "Roman",
+                                          "book": {"publisher": "76"}},
+                                 reason=GEREKCE, actor="Ayşe", dry_run=False)
+    assert sonuc["ok"] is False
+    assert sonuc["field"] == "publisher"
+    assert "seçenek" in sonuc["error"]
+    assert api.used("create_product") == []
+
+
+# ═══════════════════════════════════════ görseller — zincirin SON adımı
+
+async def test_gorsel_urun_kimligi_olustuktan_sonra_yuklenir() -> None:
+    """TASARIM KISITI: yükleme ucu ürün kimliği istiyor
+    (`POST /catalog/products/{id}/images`) ve kimlik ancak ürün doğunca
+    oluşuyor. Görsel bu yüzden zincirin beşinci adımıdır, birincisi değil.
+    """
+    service, api, _ = _service()
+    sonuc = await service.create(
+        payload={"sku": "BBD-GORSEL", "name": "Roman"},
+        images=[{"filename": "kapak.png", "mime": "image/png", "content": _png()},
+                {"filename": "arka.png", "mime": "image/png", "content": _png()}],
+        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    sira = [name for name, _, _ in api.calls]
+    assert sira.index("create_product") < sira.index("upload_product_image")
+    # Görseller AÇILAN ürünün kimliğine gitti, hayalî bir kimliğe değil.
+    assert {row["productId"] for row in api.uploaded_images} == {sonuc["id"]}
+    # SIRA KORUNUR: listenin ilk dosyası kapaktır (`position` 1'den başlar).
+    assert [row["file"] for row in api.uploaded_images] == ["kapak.png", "arka.png"]
+    assert [row["position"] for row in api.uploaded_images] == [1, 2]
+
+    adim = next(step for step in sonuc["steps"] if step["step"] == "images")
+    assert adim["state"] == "ok" and len(adim["uploaded"]) == 2
+
+
+async def test_kuru_provada_gorsel_yuklenmez_urun_yaratilmaz() -> None:
+    service, api, _ = _service()
+    sonuc = await service.create(
+        payload={"sku": "BBD-PROVA2", "name": "Roman"},
+        images=[{"filename": "kapak.png", "mime": "image/png", "content": _png()}],
+        reason=GEREKCE, actor="Ayşe", dry_run=True)
+
+    assert sonuc["dryRun"] is True
+    assert api.used("upload_product_image") == []
+    assert api.uploaded_images == []
+    adim = next(step for step in sonuc["steps"] if step["step"] == "images")
+    assert adim["state"] == "planlandı"
+    assert adim["planned"] == 1            # kaç dosyayı kapsadığı söylenir
+
+
+async def test_bir_gorsel_patlarsa_digerleri_yuklenir_urun_ayakta_kalir() -> None:
+    """K7 DOSYA BAŞINADIR. Üçüncü dosya bozuksa dördüncüsü yine gider ve ürün
+    yerinde kalır; durmak kullanıcıyı ürünü silip baştan açmaya iterdi."""
+    service, api, _ = _service()
+    api.failing_images = {"bozuk.png"}
+    sonuc = await service.create(
+        payload={"sku": "BBD-KISMI", "name": "Roman"},
+        images=[{"filename": "kapak.png", "mime": "image/png", "content": _png()},
+                {"filename": "bozuk.png", "mime": "image/png", "content": _png()},
+                {"filename": "arka.png", "mime": "image/png", "content": _png()}],
+        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    # ÜRÜN AÇILDI ve kimliği döndü — yarım kalmadı.
+    assert sonuc["id"] == 1500
+    assert sonuc["ok"] is False                       # eksik sessizce yutulmaz
+    assert [row["file"] for row in api.uploaded_images] == ["kapak.png", "arka.png"]
+
+    adim = next(step for step in sonuc["steps"] if step["step"] == "images")
+    assert adim["state"] == "kısmi"
+    # DÜŞEN DOSYA ADIYLA DÖNER: "2 görsel yüklenemedi" hangisini küçülteceğini
+    # söylemiyordu.
+    assert [row["file"] for row in adim["failed"]] == ["bozuk.png"]
+    assert "bozuk.png" in sonuc["error"]
+
+
+async def test_reddedilen_dosya_magazaya_hic_gonderilmez() -> None:
+    """Tür/boyut reddi istek kurulmadan verilir: hız kovasından pay bile
+    harcanmaz ve hata anlaşılır çıkar."""
+    service, api, _ = _service()
+    sonuc = await service.create(
+        payload={"sku": "BBD-PDF", "name": "Roman"},
+        images=[{"filename": "katalog.jpg", "mime": "image/jpeg",
+                 "content": base64.b64encode(b"%PDF-1.7 " + b"0" * 80).decode("ascii")}],
+        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["id"] == 1500                        # ürün yine açıldı
+    assert api.used("upload_product_image") == []     # istek HİÇ kurulmadı
+    adim = next(step for step in sonuc["steps"] if step["step"] == "images")
+    assert "PDF" in adim["failed"][0]["error"]
+
+
+# ═══════════════════════════════════════════════════════════ gerileme
+
+async def test_gorselsiz_kunyesiz_ekleme_eskisi_gibi_calisir() -> None:
+    """Yeni alanlar ESKİ AKIŞA dokunmamalı: künye ve görsel boşken ürün açma
+    tam olarak eskisi gibi çalışır ve fazladan tek istek bile atmaz."""
+    service, api, _ = _service()
+    sonuc = await service.create(payload={"sku": "BBD-SADE", "name": "Şeker Portakalı",
+                                          "categoryIds": [3], "price": 12550},
+                                 reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True and sonuc["id"] == 1500
+    assert api.used("upload_product_image") == []
+    # TEK `update_product` gider: künye boşken ikinci tur atılmaz.
+    assert len(api.used("update_product")) == 1
+    assert api.used("update_product")[0]["payload"]["categories"] == [2, 3]
+    assert api.used("update_inventory")[0]["quantities"] == {"1": 0}
+
+    durumlar = {step["step"]: step["state"] for step in sonuc["steps"]}
+    assert durumlar == {"create": "ok", "details": "ok", "book": "atlandı",
+                        "inventory": "ok", "images": "atlandı"}
+
+
+# ══════════════════════════════════════════ öznitelik AİLESİ — künyeyi taşıyan
+#
+# CANLIDA ÖLÇÜLDÜ (16.08.2026). Mağazada iki aile var:
+#
+#   id 1  `default` / "Varsayılan"  → 28 nitelik; kitap alanlarından yalnız
+#                                     `desi`. İçinde 2 kalem var, ikisi de
+#                                     kargoya girmeyen (`NON_SHIPPING_SKUS`).
+#   id 2  `kitap`   / "Kitap"       → 36 nitelik; dokuz künye alanının hepsi.
+#                                     Katalogdaki 1.420 gerçek kitap burada.
+#
+# ADA BAKAN eski kural `default` olanı seçiyordu ve sonucu SESSİZDİ: mağaza
+# gövdeyi ailenin nitelik listesiyle kesiştirip fazlasını hata üretmeden
+# düşürüyor (`AdminCatalogProductUpdateProcessor::resolveAttributeCodes`).
+# Ürün "açıldı" diye görünüyor, ISBN/yazar/yayınevi/sayfa sayısı hiçbir yere
+# yazılmıyordu. Sayfa sayısı gidince kargo hesabı da varsayılan 1,0 desiye
+# çıkıyordu — 176 sayfalık bir kitabın gerçeği 0,18 — ve her siparişte
+# müşteriden fazla kargo alınıyordu. Geri dönüşü de yok: aile ürün açıldıktan
+# sonra gönderilmiyor (TUZAK 3).
+
+#: Canlı aile listesi — `kitap` ÖNDE, `default` arkada (mağazanın verdiği sıra).
+AILELER = {"items": [{"id": 2, "code": "kitap", "name": "Kitap"},
+                     {"id": 1, "code": "default", "name": "Varsayılan"}], "meta": {}}
+
+#: Aile detayları. Kodlar canlıdaki gruplardan alındı.
+AILE_DETAY = {
+    1: {"id": 1, "code": "default", "name": "Varsayılan", "attributeGroups": [
+        {"id": 1, "code": "general", "name": "Genel", "attributes": [
+            {"id": 1, "code": "sku", "type": "text"},
+            {"id": 2, "code": "name", "type": "text"},
+            {"id": 3, "code": "url_key", "type": "text"},
+            {"id": 8, "code": "status", "type": "boolean"}]},
+        {"id": 5, "code": "shipping", "name": "Nakliye", "attributes": [
+            {"id": 39, "code": "desi", "type": "text"}]}]},
+    2: {"id": 2, "code": "kitap", "name": "Kitap", "attributeGroups": [
+        {"id": 9, "code": "general", "name": "Genel", "attributes": [
+            {"id": 1, "code": "sku", "type": "text"},
+            {"id": 2, "code": "name", "type": "text"},
+            {"id": 3, "code": "url_key", "type": "text"},
+            {"id": 8, "code": "status", "type": "boolean"}]},
+        {"id": 11, "code": "book_details", "name": "Kitap Bilgileri", "attributes": [
+            {"id": 31, "code": "isbn", "type": "text"},
+            {"id": 32, "code": "author", "type": "text"},
+            {"id": 33, "code": "publisher", "type": "select"},
+            {"id": 37, "code": "page_count", "type": "text"},
+            {"id": 38, "code": "print_year", "type": "text"}]},
+        {"id": 14, "code": "shipping", "name": "Kargo", "attributes": [
+            {"id": 39, "code": "desi", "type": "text"}]}]},
+}
+
+
+def _iki_aile() -> tuple[Any, FakeApi, Any]:
+    """Canlıdaki iki aileli dünya, kitap nitelikleri açık."""
+    service, api, store = _service(with_book=True)
+    api.families_payload = dict(AILELER)
+    api.families_by_id = {key: dict(value) for key, value in AILE_DETAY.items()}
+    return service, api, store
+
+
+async def test_yeni_urun_kunyeyi_tasiyan_aileye_acilir_adi_default_olana_degil() -> None:
+    service, api, _ = _iki_aile()
+
+    await service.create(payload={"sku": "BBD-YENI-KITAP", "name": "Roman"},
+                         reason=GEREKCE, actor="Ayşe", dry_run=True)
+
+    # Adı "Varsayılan" olan aile 1 DEĞİL, künyeyi taşıyan aile 2 seçilir.
+    assert api.used("create_product")[0]["payload"]["attribute_family_id"] == 2
+
+
+async def test_aile_bir_kez_cozulur_her_urunde_yeniden_sorulmaz() -> None:
+    service, api, _ = _iki_aile()
+    await service.create(payload={"sku": "BBD-1", "name": "Roman"}, reason=GEREKCE,
+                         actor="Ayşe", dry_run=True)
+    await service.create(payload={"sku": "BBD-2", "name": "Şiir"}, reason=GEREKCE,
+                         actor="Ayşe", dry_run=True)
+
+    assert len(api.used("families")) == 1
+    assert len(api.used("family")) == 2      # iki aile, birer kez
+
+
+async def test_ayardaki_aile_kimligi_olcumu_ezer() -> None:
+    """`default_family_id` kurulumun kesin sözüdür; şema tahminine sorulmaz."""
+    service, api, _ = _service(with_book=True, default_family_id=1)
+    api.families_payload = dict(AILELER)
+    api.families_by_id = {key: dict(value) for key, value in AILE_DETAY.items()}
+
+    await service.create(payload={"sku": "BBD-AYAR", "name": "Roman"}, reason=GEREKCE,
+                         actor="Ayşe", dry_run=True)
+
+    assert api.used("create_product")[0]["payload"]["attribute_family_id"] == 1
+    assert api.used("families") == []        # ayar varsa liste hiç sorulmaz
+
+
+async def test_aile_semasi_okunamazsa_eski_ada_bakan_kural_surer() -> None:
+    """K7 + gerileme: şema okunamadığında akış durmaz, eski davranışa döner."""
+    service, api, _ = _iki_aile()
+    api.fail.add("family")
+
+    await service.create(payload={"sku": "BBD-KOPUK", "name": "Roman"}, reason=GEREKCE,
+                         actor="Ayşe", dry_run=True)
+
+    assert api.used("create_product")[0]["payload"]["attribute_family_id"] == 1
+
+
+async def test_kunye_hedef_ailede_yoksa_urun_HIC_ACILMAZ() -> None:
+    """Sessiz kaybın kapısı: ürün açılıp künye düşerse geri dönüşü yok.
+
+    İstek elle kurulabilir (K9) ve `attributeFamilyId` açıkça verilebilir;
+    kapı bu yüzden backend'de durur.
+    """
+    service, api, _ = _iki_aile()
+
+    sonuc = await service.create(
+        payload={"sku": "BBD-YANLIS-AILE", "name": "Roman", "attributeFamilyId": 1,
+                 "book": {"isbn": "9786051234567", "pageCount": "176"}},
+        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is False
+    assert "AİLESİNDE yok" in sonuc["error"]
+    assert "isbn" in sonuc["fieldErrors"]
+    # ÜRÜN AÇILMADI: geri alınamayan bir kayıt yaratılmadı.
+    assert api.used("create_product") == []
+
+
+async def test_kunyeli_urun_dogru_ailede_sorunsuz_acilir() -> None:
+    """Kapı kapatmıyor, YANLIŞI kapatıyor: doğru ailede künye yazılır."""
+    service, api, _ = _iki_aile()
+
+    sonuc = await service.create(
+        payload={"sku": "BBD-DOGRU-AILE", "name": "Roman",
+                 "book": {"isbn": "9786051234567", "pageCount": "176"}},
+        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    kunye = next(step for step in sonuc["steps"] if step["step"] == "book")
+    assert kunye["state"] == "ok"
+    govde = api.used("update_product")[-1]["payload"]
+    assert govde["isbn"] == "9786051234567"
+    assert govde["page_count"] == "176"
+
+
+async def test_acma_formu_alanlari_hedef_aileye_gore_gelir() -> None:
+    """Panel `bookFieldsOnCreate` çizer: yazılacak yeri olmayan alan gösterilmez.
+
+    `bookFields` (katalog kapsamlı) toplu yazma ekranı için OLDUĞU GİBİ kalır;
+    iki liste iki ayrı soruya cevap verir.
+    """
+    service, api, _ = _iki_aile()
+    api.families_payload = {"items": [{"id": 1, "code": "default", "name": "Varsayılan"}],
+                            "meta": {}}
+
+    referans = await service.reference()
+    acma = {item["key"]: item for item in referans["bookFieldsOnCreate"]}
+    katalog = {item["key"]: item for item in referans["bookFields"]}
+
+    assert acma["isbn"]["available"] is False and "AİLESİNDE yok" in acma["isbn"]["reason"]
+    assert acma["desi"]["available"] is True
+    assert katalog["isbn"]["available"] is True

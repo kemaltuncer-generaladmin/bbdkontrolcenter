@@ -16,6 +16,7 @@ from typing import Any
 
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -46,19 +47,19 @@ CORE_PANELS_UI: list[dict[str, Any]] = [
         "id": "core_users", "name": "Kullanıcı Yönetimi", "version": "0.1.0", "provides": [],
         "permissions": [],
         "ui": {"nav": {"title": "Kullanıcı Yönetimi", "icon": "users", "group": "Kurumsal",
-                       "order": 10, "requires": ["users.view"]}},
+                       "order": 800, "requires": ["users.view"]}},
     },
     {
         "id": "core_settings", "name": "Sistem Ayarları", "version": "0.1.0", "provides": [],
         "permissions": [],
         "ui": {"nav": {"title": "Sistem Ayarları", "icon": "sliders", "group": "Kurumsal",
-                       "order": 20, "requires": ["settings.view"]}},
+                       "order": 810, "requires": ["settings.view"]}},
     },
     {
         "id": "core_health", "name": "Sistem Sağlığı", "version": "0.1.0", "provides": [],
         "permissions": [],
         "ui": {"nav": {"title": "Sistem Sağlığı", "icon": "pulse", "group": "Kurumsal",
-                       "order": 30, "requires": ["settings.view"]}},
+                       "order": 820, "requires": ["settings.view"]}},
     },
 ]
 
@@ -169,6 +170,50 @@ def create_app(config: Config | None = None) -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"status": exc.status_code, "message": detail}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """Gövde doğrulaması (422) da AYNI zarfa girer ve TÜRKÇE konuşur.
+
+        BURASI EKSİKTİ VE BELİRTİSİ ŞUYDU: kabuk hata metnini
+        `payload?.error?.message || payload?.detail` sırasıyla okuyor
+        (ui-kernel.js). `HTTPException` zarfa giriyordu ama doğrulama hatası
+        FastAPI'nin varsayılan `{"detail": [{...}, {...}]}` DİZİSİ olarak
+        çıkıyordu; dizi `error.message`e düşünce ekranda `[object Object]`
+        yazıyordu. Tek bir eksik işleyici yüzünden HER modülde, doldurulmamış
+        bir alanın karşılığı okunamayan bir hataydı.
+
+        Metin iş dilinde yazılır: kullanıcı "field required" ya da
+        "string_too_short" okumak zorunda değil. Alan adı olduğu gibi
+        gösterilir — uydurma bir çeviri, kullanıcının ekranda gördüğü kutuyu
+        bulmasını zorlaştırırdı.
+        """
+        parcalar: list[str] = []
+        for hata in exc.errors():
+            yer = [str(adim) for adim in hata.get("loc", ())
+                   if str(adim) not in ("body", "query", "path")]
+            alan = ".".join(yer) or "gövde"
+            tur = str(hata.get("type", ""))
+            sinir = hata.get("ctx") or {}
+            if tur == "missing":
+                parcalar.append(f"“{alan}” alanı zorunlu.")
+            elif tur.endswith("_too_short"):
+                parcalar.append(f"“{alan}” en az {sinir.get('min_length', '?')} karakter olmalı.")
+            elif tur.endswith("_too_long"):
+                parcalar.append(f"“{alan}” en fazla {sinir.get('max_length', '?')} karakter olabilir.")
+            elif tur.startswith("greater_than"):
+                parcalar.append(f"“{alan}” {sinir.get('ge', sinir.get('gt', '?'))} değerinden küçük olamaz.")
+            elif tur.startswith("less_than"):
+                parcalar.append(f"“{alan}” {sinir.get('le', sinir.get('lt', '?'))} değerinden büyük olamaz.")
+            else:
+                # TANIMADIĞIMIZ TÜR YUTULMAZ: kendi mesajıyla gösterilir.
+                # Listeden düşürmek, ekranı "sorun yok" der hâle getirirdi.
+                parcalar.append(f"“{alan}”: {hata.get('msg', 'geçersiz değer')}")
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"status": 422,
+                               "message": " ".join(parcalar) or "Gönderilen veri geçersiz."}},
         )
 
     # ------------------------------------------------------------ kimlik

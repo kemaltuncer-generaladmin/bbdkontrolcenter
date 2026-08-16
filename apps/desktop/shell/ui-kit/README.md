@@ -45,6 +45,7 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
 | `richtext.js` | `richText` — zengin metin düzenleyici · `sanitizeHtml` · `renderHtml` · `htmlToText` · `filterStyle` · `safeUrl` |
 | `layout.js` | `card` · `tabBar` · `kpiRow` · `badge` · `chipRow` · `drawer` · `splitView` · `emptyState` · `alertBox` · `hintBox` · `progress` · `skeletonRows` · `statusLine` |
 | `charts.js` | `lineChart` · `barChart` · `hourStrip` · `paretoChart` · `sparkline` · `stackedBar` · `groupedBar` |
+| `flow.js` | `timeline` (dikey olay akışı) · `stepper` (aşama şeridi) · `measureBar` (iki ölçü, hangisi faturalanıyor) |
 | `datefield.js` | `dateField` · `dateRange` · ISO/TR dönüşümleri |
 | `picker.js` | `createPicker` — gruplanmış, aranabilir çoklu/tekli seçici |
 | `report.js` | `reportChain` — üret → önizle → yazdır (CUPS) |
@@ -138,6 +139,41 @@ elemeyen bir süzgeci göndermenin kazancı yok, riski var.
 NEDENİ olmak zorunda: `title` + `aria-label` ile neden düğmenin üstünde durur,
 `data-blocked` ile de testten görülebilir. Ham 404/405/409 metni gösteren
 düğme bırakılmaz.
+
+### 1.3.0 — 2026-08-16
+`stepper` adım başına `state` yazısı, `kpiRow` kutu başına `spark` şeridi alır.
+İkisi de İSTEĞE BAĞLI; eski çağrılar birebir aynı çıktıyı verir.
+
+**Neden `stepper(steps).state`.** Şerit adımı "tamamlandı" ya da "bekliyor"
+diye yazıyordu. Mağaza siparişi bu ikisine sığmıyor: kısmi fatura ve kısmi
+kargo olağandır (`invoiceState`/`shipmentState` üç durumlu). Yarım kalmış bir
+adıma "tamamlandı" yazmak olmamış bir işi olmuş, "bekliyor" yazmak başlamış bir
+işi hiç başlamamış gösterir — ikisi de yanlış, ikisi de sessiz. `activeIndex`
+artık yalnız KESİNTİSİZ tamamlanan başlangıcı işaretler; yarım adım kendi
+cümlesini kurar ("3/5 kalem faturalandı").
+
+**Neden `kpiRow(tiles).spark`.** `delta` iki noktayı karşılaştırır; aynı yüzde
+düzgün bir tırmanıştan da, dibe vurup son iki günde toparlanmadan da çıkar.
+Şerit sayının yerine geçmez, altında durur ve `aria-hidden`'dır: `sparkline`
+eksensizdir, tek başına okunmaz. `layout.js` bunun için `charts.js` import eder
+— kit içi bağımlılık, panele sızan bir grafik değil.
+
+**`stepper` adım tonu artık görünüyor.** `kit-step-mark` sınıfına `tone`
+yazılıyordu ama `kit.css`'te karşılığı yoktu — sessiz ölü kod. `done`/`now`
+ZİNCİR hakkındadır (kesintisiz tamamlanan başlangıç), ton TEK ADIM hakkında;
+sırası gelmeden gerçekleşmiş bir adım artık zinciri tamamlanmış göstermeden
+işaretlenebiliyor. Zincir sınıfları tonu yener, böylece tamamlanan başlangıç
+tek bir dolu şerit gibi okunur.
+
+**Bileşenler iç boşluğunu kendi taşıyor.** `.kit-timeline`, `.kit-stepper` ve
+`.kit-measures` artık `.kit-chart` ile aynı `padding`'i alıyor: üçü de doğrudan
+`card()` içine konuluyor ve `card()` çocuklarına boşluk vermiyordu. Boşluğu
+panele bırakmak her panelin kendi ölçüsünü uydurması demekti.
+
+**Panelde grafik çizilmiyor.** Aynı sürümde `store_shipping` gönderi
+çekmecesindeki elle yazılmış zaman çizelgesi (`sh-timeline` / `sh-move`) kaldı
+ve yerine `timeline()` geçti. Tek kopya kuralı (ADR 0011) yalnız yeni kod için
+değil: ikinci kopya kitteki düzeltmeleri almıyordu.
 
 ## Mevcut BBD panelleri
 

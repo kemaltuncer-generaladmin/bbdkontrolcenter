@@ -199,26 +199,22 @@ async def invoice(
                                    actor=user.full_name, dry_run=body.dryRun)
 
 
-class ShipBody(BaseModel):
-    items: dict[str, int] = Field(default_factory=dict)
-    carrier: str = Field(default="", max_length=64)
-    track: str = Field(default="", max_length=64)
-    sourceId: int = Field(default=1, ge=1)
-    reason: str = Field(min_length=10, max_length=255)
-    dryRun: bool = True
-
-
-@router.post("/orders/{order_id}/ship")
-async def ship(
-    order_id: int,
-    body: ShipBody,
-    user: CurrentUser = requires("store_orders.manage"),
-) -> dict[str, Any]:
-    """Bagisto'nun KENDİ gönderi kaydını açar. Etiket SATIN ALINMAZ — o iş
-    Kargo Yönetimi ekranınındır ve para harcar."""
-    return await service().ship(order_id, items=body.items, carrier=body.carrier,
-                                track=body.track, source_id=body.sourceId, reason=body.reason,
-                                actor=user.full_name, dry_run=body.dryRun)
+# `POST /orders/{order_id}/ship` KALDIRILDI — burada bir uç YOKTUR, bilerek.
+#
+# KULLANICININ KURALI: "her şey — mesela sipariş kargoya mı verilecek —
+# farklı yerde 'kargoya ver' olmasın."
+#
+# Uç yalnız arayüzden gizlenseydi kapı açık kalırdı (K9'un tersi: backend'de
+# duran bir uç, arayüzde görünmese de çağrılabilir). Üstelik bu uç çalışmıyordu
+# da: gövdeyi `{"shipment": {…}}` sarmalıyla gönderiyordu ve canlı işlemci
+# `source` ile `items`ı gövdenin KÖKÜNDEN okuduğu için ikisi de boş kalıyor,
+# istek reddediliyordu. Açtığı şey Bagisto'nun kendi gönderi kaydıydı; paket
+# yola çıkmıyor, etiket satın alınmıyor, müşteriye mesaj gitmiyordu — ama
+# ekran "gönderi kaydedildi" diyordu.
+#
+# Kargoya vermenin tek evi Kargo Yönetimi'dir:
+# `POST /api/store_shipping/orders/{order_id}/dispatch`. Bu ekran gönderinin
+# DURUMUNU `store.shipment.byOrder` yeteneğinden okur, yazmaz.
 
 
 class ReasonBody(BaseModel):

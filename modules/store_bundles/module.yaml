@@ -9,7 +9,7 @@
 
 id: store_bundles
 name: "Setler"
-description: "Set/paket bileşenleri ve set fiyatının kâr-zarar hesabı."
+description: "Birkaç ürünü tek pakette, tek fiyata satmak: paketin içinde ne\n  olduğu ve o paketten kazanıp kazanmadığınız."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: true
@@ -43,8 +43,8 @@ ui:
   nav:
     title: "Setler"
     icon: layers
-    group: "BBD Store"
-    order: 30
+    group: "BBD Store / Katalog"
+    order: 270
     requires: [store_bundles.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
@@ -53,13 +53,15 @@ ui:
 # gerekçe (>=10 karakter, backend'de de doğrulanır) + dryRun varsayılanı.
 permissions:
   - key: store_bundles.view
-    description: "Setler ekranını görüntüleme, kâr hesabı, rapor ve CSV alma."
+    description: "Setleri ve kâr hesabını görüntüleme, rapor ve Excel dosyası alma."
     default_roles: [admin, bbd_staff]
   - key: store_bundles.manage
-    description: "Set künyesi ve bileşen tablosu düzenleme."
+    description: "Setin adını, fiyatını ve içindeki ürünleri değiştirme."
     default_roles: [admin, bbd_staff]
   - key: store_bundles.deactivate
-    description: "Seti vitrinden kaldırma. Silme yoktur: satılmış setin künyesi saklanır."
+    description: >-
+      Seti satıştan kaldırma. Silme yoktur: satılmış bir setin içeriği,
+      geçmişi okumak için saklanır.
     default_roles: [admin]
 
 config:

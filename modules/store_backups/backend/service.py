@@ -11,9 +11,13 @@ değildir — K9):
   4. GERİ YÜKLEMEDEN ÖNCE GÜVENLİK → `restore` önce yeni bir yedek aldırır;
      YEDEĞİ                           alınamazsa geri yükleme HİÇ BAŞLAMAZ.
 
-SİLME. Mağaza tarafında yedek silme ucu HENÜZ YOK. Uydurulmuş bir çağrı
-yazmak yerine yaş kapısı burada uygulanır ve ekran "uç hazır olunca
-açılacak" der; sessizce patlamaz (bkz. `delete`).
+SİLME. Mağaza tarafında ADA GÖRE silme ucu HÂLÂ YOK — 2026-08-16'da sunucuda
+`route:list --path=api/admin/bbd/backups` beş rota gösteriyor: `GET ''`,
+`POST ''`, `POST prune`, `GET {name}/download`, `POST {name}/verify`. `prune`
+saklama süresine göre TOPLU budama yapar, "şu yedeği sil" değildir ve geçitte
+(`store_api`) karşılığı da yoktur. Uydurulmuş bir çağrı yazmak yerine yaş
+kapısı burada uygulanır ve ekran "uç hazır olunca açılacak" der; sessizce
+patlamaz (bkz. `delete`).
 
 UZAK SİSTEM DÜŞERSE EKRAN AYAKTA KALIR (K7): `connected: False` + `error`
 döner, panel durumu anlatır. İstisna dışarı sızmaz.
@@ -26,13 +30,22 @@ UCUN ÜÇ HÂLİ (`endpointState`). "Mağaza çökmüş" ile "bu ekranın uçlar
     disabled  503 CONTROL_API_DISABLED — paket yayında, anahtar kapalı.
               Mağaza sunucusunda BBD_CONTROL_API_ENABLED=true yeter.
 
-CANLIDA DOĞRULANDI (2026-08-13): `GET /api/admin/bbd/backups` bugün 404 değil
-**503 CONTROL_API_DISABLED** dönüyor; `/api/admin/settings/channels` ve
-`/api/admin/orders` aynı anda 200. Yalnız 404'e bakan eski kod bu hâli "gerçek
-arıza" sayıyordu: ekran "Mağazaya ulaşılamadı" diyor (mağaza ayaktayken) ve
-"Yedeği başlat" düğmesi AÇIK kalıyordu — kullanıcı kapsam seçip gerekçe yazıp
-onaylıyor, sonunda 503 görüyordu. Sessiz ölü düğmenin en pahalı biçimi tam
-olarak buydu.
+CANLIDA ÖLÇÜLDÜ (2026-08-16): `GET /api/admin/bbd/backups` **200** dönüyor ve
+gerçek envanter geliyor (o an 2 yedek). Yani ekranın bugün gördüğü hâl `live`;
+`missing` ve `disabled` dalları bugün HİÇ çalışmıyor.
+
+BİR DÖNEM ÖYLE DEĞİLDİ. 2026-08-13'te burada "bugün 404 değil 503
+CONTROL_API_DISABLED dönüyor, ekranın gördüğü normal durum budur" yazıyordu;
+ARTIK ÖYLE DEĞİL — anahtar açılmış. Bunu yazıyoruz çünkü o cümleye bakıp
+"bu ekran zaten çalışmıyor" diye geçen bir okuyucu, çalışan bir ekranı boşuna
+kapalı sanır.
+
+ÜÇ HÂLİN DALLARI YİNE DE DURUYOR VE ZAYIFLATILMIYOR (K7). O gün 503'ün
+maliyeti ölçüldü: yalnız 404'e bakan sürüm bu hâli "gerçek arıza" sayıyor,
+ekran ayakta olan bir mağaza için "Mağazaya ulaşılamadı" diyor ve "Yedeği
+başlat" düğmesi AÇIK kalıyordu — kullanıcı kapsam seçip gerekçe yazıp
+onaylıyor, sonunda 503 görüyordu. Anahtar bir dağıtımda geri kapanırsa aynı
+gün aynı zarar geri gelir; dal bu yüzden kalıcıdır.
 """
 
 from __future__ import annotations
@@ -177,9 +190,12 @@ class BackupsService:
         sunucuya bakar. "Uç kapalı" ise ÜÇÜNCÜ bir şeydir: yapılacak şey var
         ama sunucu odasında değil, bir ayar anahtarında.
 
-        CANLIDA (2026-08-13) `/api/admin/bbd/backups` **503
-        CONTROL_API_DISABLED** dönüyor — yani bugün ekranın gördüğü normal
-        durum bu üçüncüsüdür.
+        CANLIDA (2026-08-16) `/api/admin/bbd/backups` **200** dönüyor: bugün
+        buradan hiç geçilmiyor, ekran normal listeyi çiziyor. Bir dönem burada
+        "canlıda 503 CONTROL_API_DISABLED dönüyor, ekranın gördüğü normal durum
+        budur" yazıyordu — artık öyle değil. Üç hâlin ayrımı yine de duruyor:
+        bu metot yalnız GERÇEK bir arıza anında konuşur ve o an hangi çarenin
+        söyleneceği hâlâ üçe ayrılır.
         """
         note = inventory.endpoint_text(cls._endpoint(failure))
         if note:
@@ -464,7 +480,9 @@ class BackupsService:
     # ================================================================ silme
 
     async def delete(self, name: str, *, reason: str, actor: str) -> dict[str, Any]:
-        """Eski yedeği siler — MAĞAZA UCU HENÜZ YAYINDA DEĞİL.
+        """Eski yedeği siler — MAĞAZA UCU HÂLÂ YAYINDA DEĞİL (2026-08-16'da
+        sunucudaki rota listesinden doğrulandı: ada göre silme rotası yok;
+        `POST backups/prune` toplu budamadır, "şunu sil" değildir).
 
         Yaş kapısı yine de burada uygulanır: uç yayınlandığı gün kural zaten
         yazılmış ve test edilmiş olur, "sonra ekleriz" borcuna kalmaz.

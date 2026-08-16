@@ -21,8 +21,12 @@ def _row(**fields: object) -> dict[str, object]:
 # ================================================================ alan okuma
 
 def test_alan_adi_snake_de_camel_de_olsa_okunur() -> None:
-    # BBD ucu henüz yayında değil; adların hangi biçimde geleceği bilinmiyor.
-    # Tek ada bağlanmak, uç yayınlandığı gün ekranı boş gösterirdi.
+    # Bir dönem burada "BBD ucu henüz yayında değil, adların hangi biçimde
+    # geleceği bilinmiyor" yazıyordu. ARTIK ÖYLE DEĞİL: uç 2026-08-16'da 200
+    # dönüyor ve adlar camelCase geliyor (name · size · createdAt · actor ·
+    # durationSeconds). İki yazımın da sınanması KALIYOR — mağaza tarafı hâlâ
+    # gelişiyor ve tek ada bağlanan okuma, ad değiştiği gün istisna bile
+    # atmadan ekranı "—" dolu gösterir.
     snake = inventory.backup_row({"name": "a", "created_at": "2026-08-13T03:00:00Z",
                                   "size_bytes": 10})
     camel = inventory.backup_row({"fileName": "a", "createdAt": "2026-08-13T03:00:00Z",
@@ -242,10 +246,11 @@ class _Hata(RuntimeError):
 
 
 def test_uc_yok_ile_uc_kapali_ayri_hallerdir() -> None:
-    # CANLIDA (2026-08-13) GET /api/admin/bbd/backups → 503
-    # {"error":{"code":"CONTROL_API_DISABLED",...}}; geçit buna `code="server"`
-    # verir. Yalnız `bbd_endpoint_missing` koduna bakmak bu hâli kaçırır ve
-    # ayakta olan bir mağazayı "ulaşılamadı" diye gösterir.
+    # SAVUNMA DALI — canlıdaki güncel hâl değil. 2026-08-13'te GET
+    # /api/admin/bbd/backups → 503 {"error":{"code":"CONTROL_API_DISABLED",...}}
+    # dönüyordu; 2026-08-16'da 200 dönüyor (anahtar açılmış). Sınama KALIYOR:
+    # geçit 503'e `code="server"` verir ve yalnız `bbd_endpoint_missing` koduna
+    # bakmak bu hâli kaçırıp ayakta olan bir mağazayı "ulaşılamadı" gösterir.
     yok = _Hata("BBD'ye özel uç henüz yayında değil", code="bbd_endpoint_missing", status=404)
     kapali = _Hata("Mağaza hata verdi (503): {'code': 'CONTROL_API_DISABLED'}",
                    code="server", status=503)

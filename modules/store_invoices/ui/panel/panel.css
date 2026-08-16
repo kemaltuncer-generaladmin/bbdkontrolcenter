@@ -153,3 +153,17 @@
   border-radius: 8px;
   background: var(--kit-soft, rgba(127, 127, 127, 0.08));
 }
+
+/* ── paylaşılan yetenek kartı (`store.invoice.byOrder`) ────────────────────
+   BAŞKA panelin içinde çizilir (Siparişler → Fatura sekmesi). Bu panelin
+   kendi yerleşim kapsayıcılarına dayanmaz: orada yoklar. */
+.si-cap { display: flex; flex-direction: column; gap: 10px; }
+.si-cap-body { display: flex; flex-direction: column; gap: 6px; }
+.si-cap-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.si-cap-no {
+  font: 600 14px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: all;
+}
+.si-cap-legal { font-size: 12px; color: var(--soft); }
+.si-cap-facts { font-size: 12px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.si-cap-go { display: flex; justify-content: flex-end; }

@@ -104,14 +104,43 @@ CLOSED_PROFILE_FIELDS = {
     ),
 }
 
+#: KAPALI KATILIMCI EYLEMLERİ — (etiket, gereken geçit metodu + mağaza ucu,
+#: NEDEN kapalı).
+#:
+#: İKİ FARKLI "KAPALI" VARDIR VE AYNI CÜMLEYLE ANLATILMAZ:
+#:  · mağazada uç HİÇ YOK → yapılacak iş mağaza tarafında,
+#:  · uç YAYINDA ama geçitte (`store.api`) metodu yok → yapılacak iş geçitte.
+#: Kullanıcı için sonuç aynı (düğme kapalı) ama bekleyen iş bambaşka. Tek
+#: metinle anlatmak, yayına girmiş bir ucu bir daha kimsenin aramamasına yol
+#: açıyordu — nitekim "Kayıt iptali" bir dönem "mağaza ucu yok" diye
+#: gösteriliyordu, oysa 2026-08-16 ölçümünde uç canlıda duruyor.
 PENDING_ENDPOINTS = {
     "addMember": (
         "Katılımcı ekleme",
         "bbd_add_trial_member (POST /api/admin/bbd/trial-club/exams/{id}/members)",
+        # DOĞRULANDI (2026-08-16, sunucuda `route:list --path=api/admin/bbd`):
+        # `deneme-kulubu` ve `trial-club` önekleri altında katılımcı EKLEYEN
+        # hiçbir yol yok. Bu satır hâlâ geçerli.
+        "mağaza ucu henüz yok",
     ),
     "removeMember": (
-        "Katılımcı çıkarma",
-        "bbd_update_trial_member (PUT /api/admin/bbd/trial-club/members/{id})",
+        "Kayıt iptali",
+        ("bbd_cancel_trial_member "
+         "(POST /api/admin/bbd/deneme-kulubu/members/{orderId}/cancel)"),
+        # ESKİYEN İDDİA — DÜZELTİLDİ (2026-08-16). Burada bir dönem
+        # "mağaza ucu henüz yayında değil (PUT /trial-club/members/{id})"
+        # yazıyordu. Uç O YOLDA hiç olmadı; mağaza iptali `deneme-kulubu`
+        # önekine, sipariş kimliği üzerinden yazdı ve 2026-08-16 ölçümünde
+        # canlıda duruyor (gerekçe zorunlu, `dryRun` varsayılan açık, kayıt
+        # SİLİNMİYOR — sipariş `canceled` durumuna çekiliyor, ADR 0012 ile
+        # birebir uyumlu).
+        #
+        # DÜĞME YİNE DE KAPALI: eksik olan halka geçit. K4 gereği bu modül
+        # mağazaya doğrudan istek atmaz; `store.api` içinde bu ucu saran bir
+        # metot açılana kadar kapalı kalır. Kapalılığın NEDENİ değişti, kapının
+        # kendisi değil.
+        ("mağaza ucu YAYINDA (ölçüm 2026-08-16) ama geçitte (store.api) bu ucu "
+         "saran metot henüz yok; K4 gereği bu modül mağazaya doğrudan istek atmaz"),
     ),
 }
 
@@ -238,9 +267,9 @@ class TrialClubService:
     def features(self) -> dict[str, Any]:
         """Ekranın hangi düğmeyi açabileceği. Kapalı olanın NEDENİ yazılıdır."""
         pending = {key: {"available": False,
-                         "reason": f"{label} için mağaza ucu henüz yayında değil "
-                                   f"({method}). Uç yayınlanınca bu düğme açılacak."}
-                   for key, (label, method) in PENDING_ENDPOINTS.items()}
+                         "reason": f"{label} bu ekrandan yapılamıyor: {why}. "
+                                   f"Gereken metot: {method}."}
+                   for key, (label, method, why) in PENDING_ENDPOINTS.items()}
         closed = {key: {"available": False, "reason": f"{label} — {why}"}
                   for key, (label, why) in CLOSED_PROFILE_FIELDS.items()}
         return {
@@ -622,22 +651,29 @@ class TrialClubService:
         return self._closed_field("capacity")
 
     async def add_member(self, exam_id: int, *, reason: str, actor: str) -> dict[str, Any]:
-        """UÇ YOK. Sessizce patlamak yerine ne eksik olduğunu söyler."""
+        """MAĞAZA UCU YOK. Sessizce patlamak yerine ne eksik olduğunu söyler."""
         await self._record(exam_id=exam_id, action="add_member", reason=reason, actor=actor,
                            result="uc_yok")
-        label, method = PENDING_ENDPOINTS["addMember"]
+        label, method, _ = PENDING_ENDPOINTS["addMember"]
         return {"ok": False, "pending": True,
                 "error": f"{label} mağaza tarafında henüz yok. Gereken uç: {method}. "
                          "Uç yayınlanınca bu ekran kendiliğinden çalışacak."}
 
     async def remove_member(self, member_id: int, *, reason: str, actor: str) -> dict[str, Any]:
-        """UÇ YOK. Katılımcı SİLİNMEZ, kaydı iptal edilir (ADR 0012) — o uç da yok."""
+        """GEÇİT METODU YOK. Katılımcı SİLİNMEZ, kaydı iptal edilir (ADR 0012).
+
+        Mağaza ucu ARTIK VAR (2026-08-16 ölçümü): sipariş kimliği üzerinden
+        iptal, gerekçe zorunlu, kayıt silinmiyor. Bir dönem burası "mağaza
+        ucu da yok" diyordu; artık öyle değil. Eksik olan tek halka `store.api`
+        içindeki saran metot — K4 gereği istek buradan doğrudan atılamaz.
+        """
         await self._record(member_id=member_id, action="remove_member", reason=reason,
-                           actor=actor, result="uc_yok")
-        label, method = PENDING_ENDPOINTS["removeMember"]
+                           actor=actor, result="gecit_metodu_yok")
+        label, method, why = PENDING_ENDPOINTS["removeMember"]
         return {"ok": False, "pending": True,
-                "error": f"{label} mağaza tarafında henüz yok. Gereken uç: {method}. "
-                         "Kayıt silinmez, iptal edilir; uç yayınlanınca açılacak."}
+                "error": f"{label} bu ekrandan yapılamıyor: {why}. Gereken metot: {method}. "
+                         "Kayıt silinmez, iptal edilir; geçit metodu açılınca bu düğme "
+                         "kendiliğinden çalışacak."}
 
     # ======================================================= sonuç yükleme
 

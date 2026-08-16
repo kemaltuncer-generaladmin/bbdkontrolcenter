@@ -52,8 +52,8 @@ ui:
   nav:
     title: "Fatura"
     icon: receipt
-    group: "BBD Store"
-    order: 120
+    group: "BBD Store / Mali"
+    order: 340
     requires: [store_invoices.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

@@ -3,7 +3,7 @@
 KULLANICININ KARARI, AYNEN: "sipariş seçince 'kargoya ver' dedik mi o sipariş
 yola çıkacak zaten. PARA HARCASIN. Testi seçersek Geliver'a uğramasın."
 
-Bu dosyanın koruduğu SEKİZ şey — her biri sessiz bir yanlışın karşılığı:
+Bu dosyanın koruduğu ON şey — her biri sessiz bir yanlışın karşılığı:
 
  1. Tek tık gerçekten para harcar (`dryRun` varsayılanı FALSE). Varsayılan
     kuru prova olsaydı ekran "gönderildi" derken paket yerinde dururdu.
@@ -15,6 +15,15 @@ Bu dosyanın koruduğu SEKİZ şey — her biri sessiz bir yanlışın karşıl�
  6. Yazıcı yoksa iş DURMAZ: dosyalar diske yazılır, hata satırda yazılıdır.
  7. Aynı gönderi ikinci kez KENDİLİĞİNDEN basılmaz.
  8. Gerekçe boş bırakılabilir ve akış durmaz; defter yine dolu kalır.
+ 9. Etiket biçimi EKRAN TERCİHİNDEN çözülür. Bir dönem bu yol tercihi hiç
+    okumuyordu: kullanıcı "A4 · sayfada 4 etiket" seçiyor, ekran A4
+    gösteriyor, toplu etiket A4 çıkıyor, ama kargoya verme termal ölçüde
+    üretip A4 yazıcıya gönderiyordu — ve hata vermiyordu.
+10. "Kargoya verildi" müşteri SMS'i BU EKRANDAN gider. Tetikleyicisi bir
+    dönem Siparişler ekranındaki ikinci "kargoya ver" yoluydu; o yol gövdeyi
+    `{"shipment": {…}}` sarmalıyla gönderdiği için mağaza isteği reddediyor,
+    kargo ekranı ise bildirimi hiç çağırmıyordu — mesaj hiç gitmiyordu ve
+    hiçbir hata üretmiyordu. Gerçek takip numarası yalnız burada var.
 
 Ağa çıkmaz, gerçek DB kullanmaz, canlıya yazmaz.
 """
@@ -432,3 +441,196 @@ async def test_etiket_satin_alinmadiysa_satin_alma_olayi_YAYINLANMAZ(tmp_path: P
 
     assert "store.shipment.purchased" not in olaylar.names()
     _cleanup(result)
+
+
+# ====================================== 9 · etiket biçimi TERCİHTEN çözülür
+
+def _bicim_yakala(monkeypatch: Any) -> list[str]:
+    """`labels.compose` hangi biçimle çağrıldı — sırayla kaydeder.
+
+    Yerleşimin kendisi başka testlerde doğrulanıyor; burada sorulan tek şey
+    HANGİ BİÇİMİN seçildiği. Gerçek `compose` çağrılmaya devam eder ki sahte
+    bir dönüş, bozuk bir biçim adını gizlemesin.
+    """
+    seen: list[str] = []
+    gercek = service_module.labels.compose
+
+    def sahte(parcalar: list[bytes], fmt: str) -> bytes:
+        seen.append(fmt)
+        return gercek(parcalar, fmt)
+
+    monkeypatch.setattr(service_module.labels, "compose", sahte)
+    return seen
+
+
+async def test_etiket_bicimi_EKRAN_TERCIHINDEN_okunur(tmp_path: Path,
+                                                      monkeypatch: Any) -> None:
+    # SESSİZ YANLIŞIN TA KENDİSİ: ayar termal derken tercih A4 diyor. Basılan
+    # kâğıt tercihe uymalı; uymazsa ekran "A4" gösterirken termal ölçüde
+    # etiket çıkar ve hiçbir hata görünmez.
+    bicimler = _bicim_yakala(monkeypatch)
+    service, _, store = _service(tmp_path, label_format="thermal-100x150")
+    store.prefs["label_format"] = "a4-4up"
+
+    result = await service.dispatch(91, actor="Ali")
+
+    assert bicimler == ["a4-4up"]
+    _cleanup(result)
+
+
+async def test_tercih_yoksa_AYARDAKI_bicim_kullanilir(tmp_path: Path,
+                                                      monkeypatch: Any) -> None:
+    bicimler = _bicim_yakala(monkeypatch)
+    service, _, _ = _service(tmp_path, label_format="thermal-100x150")
+
+    result = await service.dispatch(91, actor="Ali")
+
+    assert bicimler == ["thermal-100x150"]
+    _cleanup(result)
+
+
+async def test_TANINMAYAN_tercih_yok_sayilir_is_durmaz(tmp_path: Path,
+                                                       monkeypatch: Any) -> None:
+    # Tercih tablosuna elle yazılmış geçersiz bir değer yüzünden etiket
+    # üretimi durmamalı: ayardaki biçime düşülür ve kâğıt yine çıkar.
+    bicimler = _bicim_yakala(monkeypatch)
+    service, _, store = _service(tmp_path, label_format="a4-4up")
+    store.prefs["label_format"] = "a3-9up"
+
+    result = await service.dispatch(91, actor="Ali")
+
+    assert bicimler == ["a4-4up"]
+    assert _doc(result, "label")["path"]
+    _cleanup(result)
+
+
+async def test_ayar_ekrani_ve_basim_AYNI_bicimi_soyler(tmp_path: Path,
+                                                       monkeypatch: Any) -> None:
+    # Üç çağıranın tek yerden çözülmesinin karşılığı: ayar ekranının
+    # gösterdiği biçim ile kâğıda çıkanın biçimi ayrışamaz.
+    bicimler = _bicim_yakala(monkeypatch)
+    service, _, store = _service(tmp_path, label_format="thermal-100x150")
+    store.prefs["label_format"] = "a4-4up"
+
+    ayarlar = await service.settings()
+    result = await service.dispatch(91, actor="Ali")
+
+    assert ayarlar["labelFormat"] == "a4-4up"
+    assert bicimler == [ayarlar["labelFormat"]]
+    _cleanup(result)
+
+
+# ============================== 10 · "kargoya verildi" SMS'i BU EKRANDAN gider
+
+class FakeStageNotify:
+    """`store.notify.stage` yeteneğinin testlik yüzü."""
+
+    def __init__(self, *, sent: bool = True, patlat: bool = False) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.sent = sent
+        self.patlat = patlat
+
+    async def notify(self, *, stage: str, order: dict[str, Any], actor: str,
+                     dry_run: bool) -> dict[str, Any]:
+        if self.patlat:
+            raise RuntimeError("SMS sağlayıcısı yanıt vermedi.")
+        self.calls.append({"stage": stage, "order": order, "actor": actor,
+                           "dryRun": dry_run})
+        return {"ok": True, "sent": self.sent, "duplicate": False, "note": ""}
+
+
+def _sms_service(tmp_path: Path, notify: Any, **config: Any):
+    api, store = FakeApi(), FakeStore()
+    service = ShippingService(
+        api=api, store=store, log=FakeLog(), notifier=None, publish=None, printer=None,
+        stage_notify=notify,
+        config={"channel": "default", "locale": "tr", "idle_days": 3, **config},
+        fallback_dir=tmp_path,
+    )
+    api.order_by_id = {91: dict(SIPARIS)}
+    api.invoice_rows = list(FATURA)
+    api.shipment_by_id = {77: {"id": 77, "order_id": 91, "status": "created",
+                               "tracking_number": "1234567890",
+                               "tracking_url": "https://takip.example/1234567890"}}
+    return service, api, store
+
+
+async def test_kargoya_verilince_musteriye_SMS_gider(tmp_path: Path) -> None:
+    # BU MESAJ HİÇ GİTMİYORDU. Tetikleyicisi Siparişler ekranındaki ikinci
+    # "kargoya ver" yoluydu; o yol gövdeyi sarmalayıp gönderdiği için mağaza
+    # isteği reddediyordu ve kargo ekranı bildirimi HİÇ çağırmıyordu.
+    notify = FakeStageNotify()
+    service, _, _ = _sms_service(tmp_path, notify)
+    result = await service.dispatch(91, actor="Ali")
+
+    assert len(notify.calls) == 1
+    assert notify.calls[0]["stage"] == "shipped"
+    assert result["sms"]["attempted"] is True
+    assert result["sms"]["sent"] is True
+    _cleanup(result)
+
+
+async def test_SMS_kunyesinde_GERCEK_takip_numarasi_ve_baglanti_var(tmp_path: Path) -> None:
+    # Eski yolda takip numarası kullanıcıya `window.prompt` ile soruluyordu ve
+    # çoğu zaman boş kalıyordu. Zincirin ÇIKTISI olan numara buradadır.
+    notify = FakeStageNotify()
+    service, _, _ = _sms_service(tmp_path, notify)
+    result = await service.dispatch(91, actor="Ali")
+
+    kunye = notify.calls[0]["order"]
+    assert kunye["track"] == "1234567890"
+    assert kunye["trackUrl"] == "https://takip.example/1234567890"
+    assert kunye["orderId"] == 91
+    assert kunye["phone"] == "5321234567"
+    _cleanup(result)
+
+
+async def test_KURU_PROVADA_musteriye_mesaj_gitmez(tmp_path: Path) -> None:
+    # Mağazada hiçbir şey değişmedi; "kargoya verildi" yazmak yalan olurdu ve
+    # tekrar engelinin kaydını da boşa harcardı.
+    notify = FakeStageNotify()
+    service, api, _ = _sms_service(tmp_path, notify)
+    api.dispatch_envelope = {
+        "contentType": "application/json", "status": 200, "headers": {},
+        "content": b"", "json": {"labelReady": False, "message": "Kuru prova."},
+    }
+    result = await service.dispatch(91, actor="Ali", dry_run=True)
+
+    assert notify.calls == []
+    assert result["sms"]["attempted"] is False
+    _cleanup(result)
+
+
+async def test_bildirimler_kapaliyken_GONDERI_YINE_ACILIR(tmp_path: Path) -> None:
+    # K7: bildirim katmanının yokluğu kargo işini düşürmez. Kargo yola
+    # çıkmıştır; mesajın gitmemesi onu geri almaz.
+    service, _, _ = _sms_service(tmp_path, None)
+    result = await service.dispatch(91, actor="Ali")
+
+    assert result["ok"] is True
+    assert result["dispatched"] is True
+    assert result["sms"]["sent"] is False
+    assert "Bildirimler" in result["sms"]["note"]
+    _cleanup(result)
+
+
+async def test_SMS_katmani_patlarsa_gonderi_BASARILI_kalir(tmp_path: Path) -> None:
+    notify = FakeStageNotify(patlat=True)
+    service, _, _ = _sms_service(tmp_path, notify)
+    result = await service.dispatch(91, actor="Ali")
+
+    assert result["ok"] is True
+    assert result["trackingNo"] == "1234567890"      # kargo işi tamamlandı
+    assert result["sms"]["attempted"] is True
+    assert result["sms"]["sent"] is False
+    _cleanup(result)
+
+
+async def test_TEST_yolunda_da_musteriye_SMS_gitmez(tmp_path: Path) -> None:
+    # Test gönderisi gerçek bir kargo değildir; müşteriye "kargoya verildi"
+    # demek onu bekletir.
+    notify = FakeStageNotify()
+    service, _, _ = _sms_service(tmp_path, notify)
+    await service.dispatch(91, actor="Ali", provider="bagisto")
+
+    assert notify.calls == []

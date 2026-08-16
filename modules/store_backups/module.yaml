@@ -48,8 +48,8 @@ ui:
   nav:
     title: "Manuel Yedekleme"
     icon: archive
-    group: "BBD Store"
-    order: 190
+    group: "BBD Store / Sistem ve Kayıt"
+    order: 380
     requires: [store_backups.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

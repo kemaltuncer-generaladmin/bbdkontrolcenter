@@ -32,7 +32,7 @@ ui:
     title: "Durum Monitörü"
     icon: pulse
     group: "BLD"
-    order: 40
+    order: 530
     requires: [bld_status_monitor.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

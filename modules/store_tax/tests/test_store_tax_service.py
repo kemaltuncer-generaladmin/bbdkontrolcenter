@@ -474,13 +474,22 @@ async def test_tanimli_oranlar_okunamazsa_icmal_uyarir_ama_uretilir() -> None:
 
 
 async def test_kanal_suzgeci_MAGAZAYA_GONDERILMEZ_yerelde_uygulanir() -> None:
-    # Canlıda `?channel=zzzz` bile bütün faturaları döndürüyor: Laravel
-    # tanımadığı parametreyi yok sayıyor. Göndermek "süzdüm" yanılgısı üretirdi.
+    # FATURA/İADE: canlıda `?channel=zzzz` bile bütün kayıtları döndürüyor;
+    # Laravel tanımadığı parametreyi yok sayıyor ve göndermek "süzdüm"
+    # yanılgısı üretirdi.
+    #
+    # SİPARİŞ: burası tam tersi ve tehlikeli olan da bu. Sipariş ucu kanalı
+    # GERÇEKTEN uyguluyor, üstelik kimlik bekliyor (2026-08-16: `channel=1`
+    # → 18, `channel=default` → 0). Kanal adını iptal listesine göndermek
+    # listeyi sessizce boşaltır ve rapor "bu dönemde iptal yok" derdi.
+    # Üç ucun da kanalsız çağrıldığı bu yüzden sınanıyor.
     service, api, _ = _service()
     api.invoice_payload = {"items": [_invoice(id=1, channelName="Web"),
                                      _invoice(id=2, channelName="Mobil")], "meta": {}}
     result = await service.summary(start="2026-08-01", end="2026-08-31", channel="Mobil")
     assert "channel" not in api.args_of("invoices")[0][0]
+    assert "channel" not in api.args_of("refunds")[0][0]
+    assert "channel" not in api.args_of("orders")[0][0]
     assert result["documents"]["invoices"] == 1
     assert [row["channel"] for row in result["channels"]] == ["Mobil"]
     assert any("Kanal süzgeci" in item for item in result["warnings"])

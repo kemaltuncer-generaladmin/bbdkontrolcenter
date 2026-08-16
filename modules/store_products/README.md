@@ -14,8 +14,8 @@ Ekranda üç üst sekme var: **Ürünler · Nitelikler · Ayarlar.**
 |---|---|
 | Liste | **Sunucu tarafı sayfalama.** Tam katalog hiçbir zaman çekilip istemcide süzülmez. |
 | Çipler | Tükendi · Kritik stok · Görselsiz · SEO eksik → `bbd/catalog/issues` (sayfalı). Pasif → `status=0`. |
-| Düzenleyici | Çekmecede 8 sekme: Genel · Fiyat · Stok · Görseller · Varyantlar · Kategoriler · SEO · Geçmiş. |
-| Görsel | **Yükleme buradan yapılır**: çoklu seçim + sürükle-bırak, sırayla yükleme, ilerleme çubuğu, sıralama (ilk = kapak), kaldırma. |
+| Düzenleyici | Çekmecede 9 sekme: Genel · **Kitap künyesi** · Fiyat · Stok · Görseller · Varyantlar · Kategoriler · SEO · Geçmiş. |
+| Görsel | Çoklu seçim + sürükle-bırak, sırayla yükleme, ilerleme çubuğu, sıralama (ilk = kapak), kaldırma. **İki yerden yapılır:** Görseller sekmesi (sayı sınırı yok) ve **ürün açma formu** (tavan 6 dosya, zincirin 5. adımı). |
 | Nitelikler | Nitelik listesi (kullanım sayısıyla), künye, seçenek yönetimi, pasifleştirme, silme. |
 | Aileler | Aile listesi (ürün sayısıyla), grup düzeni, atanabilir nitelik havuzu. |
 | Toplu işlem | Fiyat · stok · kategori · durum. **Önce fark tablosu, sonra gerekçeli onay.** |
@@ -55,12 +55,38 @@ ve **doldurduğu her alanı “otomatik dolduruldu” rozetiyle gösterir.** Roz
 alanın üstüne yazılabilir; yazılan değer bir daha ezilmez, boşaltılırsa alan
 yeniden otomatiğe döner.
 
+### Form artık neyi kapsıyor
+
+Şikâyet buydu: *"bir ürünün sahip olduğu tüm alanları ekleyemiyoruz — resim,
+ISBN, yazar, yayın, çoğu şey yok."* Form bugün **üç bölüm**:
+
+| Bölüm | İçindekiler | Katlanır mı |
+|---|---|---|
+| Temel | SKU · ad · kategori · fiyat · stok · depo · kısa açıklama · vergi kategorisi · durum | Hayır |
+| **Gelişmiş alanlar** | Kitap künyesi: sayfa sayısı · ISBN · yayınevi · yazar · baskı yılı · kitap dili · sınav türü · yayın tipi · desi (dokuzu da canlıda açık) | **Evet — kapalı başlar** |
+| **Ürün görselleri** | Çoklu seçim, önizleme, ◀/▶ ile sıra (ilk = kapak), "Çıkar" | Hayır — **her zaman görünür** |
+
+**Künye neden katlanır, görsel neden değil.** Yeni ürün formu boş açılıyor;
+künyenin dokuz alanını her seferinde göstermek asıl işi (SKU + ad + fiyat)
+gürültüye boğuyordu. Görselsiz ürün ise vitrinde tıklanmıyor ve katalog
+sağlığında "Görselsiz" bulgusunda çıkıyor — en sık unutulan işi en görünmez
+yere koymak yanlış olurdu.
+
+Katlamak bilgiyi **gizlemez**, üç kural birlikte çalışır: başlıkta canlı
+**"N alan dolu"** damgası (bölüm kapalıyken de görünür) · sunucu taslakta bir
+künye hatası bulursa bölüm **kendiliğinden açılır** · "Ürünü aç"ta alanlar
+geçersizse yine açılır.
+
+Alanlar **panelde sabit değil**, `GET /reference` → `bookFieldsOnCreate` ile
+gelir ve düzenleme sekmesiyle **aynı tarifi, aynı üreteci, aynı ipuçlarını**
+kullanır. Çözülemeyen nitelik bölümün altında **nedeniyle** listelenir.
+
 | Alan | Nasıl doluyor |
 |---|---|
 | `url_key` | Ürün adından; Türkçe harfler katlanır (ı→i, ş→s, ğ→g, ü→u, ö→o, ç→c). |
 | `url_key` çakışması | **Yazmadan önce** mağazaya sorulur; doluysa `-2`, `-3` diye artar (TUZAK 6). |
 | Kategoriler | Seçilen yaprağın **üst kategorileri ağaçtan okunup** eklenir (roman → kitap). Ağaç geçitten gelir, varsayılmaz. |
-| Öznitelik ailesi | Ekranda sorulmaz; `_default_family()` çözer (tek satıcı, tek ürün tipi). |
+| Öznitelik ailesi | Ekranda sorulmaz; `_default_family()` çözer — **künye niteliklerini taşıyan aileyi** seçer (aşağıya bakın). |
 | `meta_title` / `meta_description` | Boşsa ürün adından ve kısa açıklamadan türetilir; açıklama **düz metne indirilir** (zengin metin etiketi meta alanına sızmaz), 60/160 karakterde sözcük sınırında kırpılır. |
 | Stok | Girilmediyse depoya **0 yazılır** — ürün açıkça “stokta yok” doğar, stok takibinin dışında kalmaz. |
 | Durum | Yeni ürün **pasif** doğar; çekmecedeki kutu ile aktif açılabilir. |
@@ -70,11 +96,70 @@ yeniden otomatiğe döner.
 Fiyat **uydurulmaz**: boş bırakılırsa yazılmaz ve ekran bunu söyler — 0 yazmak
 0 TL'lik gerçek bir fiyat olurdu.
 
-Akış dört istektir: `create_product` (tip · aile · SKU) → ürünü taze oku →
-`update_product` (ad · url_key · SEO · fiyat · durum · kategoriler, **tek
-gövdede**) → `update_inventory` (stok). Kuru provada **tek istek** gider: ürün
-doğmadığı için kimlik yoktur, sonraki adımlar hayalî bir kimliğe yazmak olurdu.
+### Zincir beş adımdır
+
+| # | Adım | Ne yazar |
+|---|---|---|
+| 1 | `create` | `create_product` — tip · aile · SKU |
+| 2 | `details` | ürünü taze oku → `update_product` (ad · url_key · SEO · fiyat · durum · kategoriler, **tek gövdede**) |
+| 3 | `book` | kitap künyesi — **düzenleme ekranıyla aynı yoldan** (`save`) |
+| 4 | `inventory` | `update_inventory` (stok, depoda — TUZAK 5) |
+| 5 | `images` | görseller, **sırayla** (`upload_product_image`) |
+
+**Görsel neden en sonda:** yükleme ucu ürün kimliği istiyor
+(`POST /catalog/products/{id}/images`) ve kimlik ancak ürün doğunca oluşuyor.
+Formda dosya seçilir, tür/boyut **seçilir seçilmez** denetlenir ve önizlenir;
+mağazaya ürün açıldıktan sonra giderler. Tavan **6 dosya × 4 MB**: altı dosyanın
+base64'ü 33,6 MB eder ve tek görsel yükleyen ucun zaten kabul ettiği 34 MB'lık
+gövdenin altında kalır — yani ürün açma ucu belleğe yeni bir tavan getirmez.
+Kalanlar ürün açıldıktan sonra Görseller sekmesinden eklenir (orada sayı sınırı
+yok).
+
+**Künye neden ayrı bir yol değil:** `_write_book` doğrudan `save`'i çağırır.
+Doğrulama, çözülemeyen niteliğin reddi, seçenek kimliği denetimi, denetim satırı
+ve TUZAK 1 koruması hepsi orada duruyor; ikinci bir yol, o kuralların birini
+eksik uygulayan bir kopya üretirdi. Bedeli bir ek taze okumadır.
+
+Kuru provada **tek istek** gider: ürün doğmadığı için kimlik yoktur, sonraki
+adımlar hayalî bir kimliğe yazmak olurdu — **görsel de yüklenmez**, `steps`
+içinde “planlandı” olarak (kaç dosya olduğuyla birlikte) döner.
+
 Bir adım düşerse ürün yine açılmıştır; yanıt kimliği ve düşen adımı söyler (K7).
+Görsellerde bu kural **dosya başınadır**: biri patlarsa diğerleri denenir ve
+düşenin **adı** yazar — “2 görsel yüklenemedi” hangisini küçülteceğini
+söylemiyordu. Künye hatası ise ürün **açılmadan önce** durdurur: geri alınamayan
+bir kayıt açıp ardından “ISBN hatalı” demek, kullanıcıyı yarım bir ürünle
+bırakırdı.
+
+### Öznitelik ailesi — ada değil ŞEMAYA bakılır
+
+Aile ekranda sorulmaz ama **hangi ailenin seçildiği künyenin yazılıp
+yazılmadığını belirler.** Canlıda iki aile var (ölçüldü, 16.08.2026):
+
+| id | kod | Kitap alanları | İçindeki ürün |
+|---|---|---|---|
+| 1 | `default` / "Varsayılan" | yalnız `desi` | 2 kalem — ikisi de kargoya girmeyen |
+| 2 | `kitap` | **dokuzu da** | 1.420 gerçek kitap |
+
+Sıra: ayardaki `default_family_id` → mağazadaki tek aile → **künye
+niteliklerini en çok taşıyan aile** → kodu/adı `default` olan aile → ilk aile.
+
+**Neden şema:** eski kural adına bakıp `default` olanı seçiyordu ve sonucu
+sessizdi. Mağaza gövdenin anahtarlarını ailenin nitelik listesiyle kesiştirip
+fazlasını **hata da uyarı da üretmeden** düşürüyor
+(`AdminCatalogProductUpdateProcessor::resolveAttributeCodes`). Ürün "açıldı"
+görünüyor, ISBN/yazar/yayınevi/sayfa sayısı hiçbir yere yazılmıyordu. Sayfa
+sayısı gidince kargo hesabı da varsayılan **1,0 desiye** çıkıyordu — 176
+sayfalık bir kitabın gerçeği 0,18 — yani her yeni üründe müşteriden fazla kargo
+alınıyordu. Geri dönüşü de yok: aile ürün açıldıktan sonra gönderilmiyor
+(TUZAK 3).
+
+Beraberlikte ve şema okunamadığında **aile uydurulmaz**: karar eski sıraya
+düşer ve `default_family_id` ayarı kurulumun kesin sözü olarak her şeyi ezer.
+
+**İkinci kapı:** künye dolu gelmişken hedef aile o nitelikleri taşımıyorsa
+ürün **hiç açılmaz** ve hangi alanın nerede olmadığı yazılır. Ekran o alanları
+zaten çizmiyor olabilir; istek elle de kurulabilir (K9).
 
 Panelin gösterdiği taslak `POST /products/plan` ile hesaplanır (yazmaz).
 Aynı kurallar `POST /products` içinde **yeniden** uygulanır: istek elle de
@@ -232,8 +317,14 @@ Nitelik ailesi zaten gizliydi, öyle kaldı. Müşteri grubu bu ekranda yok.
 ## Kitap künyesi ve desi
 
 Katalog kitap satıyor ama künye alanları (**sayfa sayısı · ISBN · yayınevi ·
-yazar · baskı yılı · desi**) hiçbir ekrandan düzenlenemiyordu. Ürün
-çekmecesinde artık **Kitap künyesi** sekmesi var.
+yazar · baskı yılı · kitap dili · sınav türü · yayın tipi · desi**) hiçbir
+ekrandan düzenlenemiyordu. Ürün çekmecesinde artık **Kitap künyesi** sekmesi,
+ürün AÇMA formunda da katlanır bir **Gelişmiş alanlar** bölümü var — ikisi de
+aynı üreteci ve aynı ipuçlarını kullanır. Tarif **iki uçtan** gelir ve ikisi
+ayrı bir soruya cevap verir: `GET /reference` → `bookFields` "katalogda hangi
+künye nitelikleri var" (toplu yazma ekranı bunu sorar) · `bookFieldsOnCreate`
+"yeni ürünün doğacağı **ailede** hangileri gerçekten yazılabilir". Düzenleme
+sekmesi ise açtığı ürünün kendi ailesine bakar (`GET /products/{id}` → `book`).
 
 **Sayfa sayısı yazıldıkça desi anında yeniden hesaplanır** ve rakam mağazanın
 hesapladığıyla aynıdır. Zincir:
@@ -257,16 +348,53 @@ gelirler. Aynı sayı mağazada (PHP), geçitte (Python) ve ekranda (JS) yaşıy
 desinin tutmaması demek olurdu. Python kopyası
 `tests/test_store_products_book.py` ile kilitli.
 
-**Nitelik kodları varsayılmaz, çözülür.** Yayınevi/yazar/baskı yılı için
-kataloğun hangi kodu kullandığı bilinmiyor; aday adlar mağazanın nitelik
-listesinde aranır. Bulunamayan alan **ekranda açılmaz** ve nedeni yazılır —
-var olmayan bir koda yazmak sessiz veri kaybıdır (Bagisto tanımadığı
-özniteliği yok sayar, istek 200 döner, personel "kaydettim" sanır).
+**Nitelik kodları varsayılmaz, çözülür.** Kataloğun hangi kodu kullandığı
+kuruluma göre değişir; aday adlar mağazanın nitelik listesinde aranır.
+Bulunamayan alan **ekranda açılmaz** ve nedeni yazılır — var olmayan bir koda
+yazmak sessiz veri kaybıdır (Bagisto tanımadığı özniteliği yok sayar, istek 200
+döner, personel "kaydettim" sanır). Canlıda baskı yılının kodu `print_year`
+(ölçüldü, 16.08.2026).
+
+**Tip de varsayılmaz.** Canlıda yayınevi, kitap dili, sınav türü ve yayın tipi
+`select` tipinde ve değerlerini **seçenek kimliğiyle** saklıyor (yayınevi =
+`76`, "Panama Yayıncılık" değil). Bu alana serbest metin yazmak, olmayan bir
+koda yazmakla aynı sessiz kayıptır; bu yüzden:
+
+- `bookFields` alanın **tipini ve seçeneklerini** de taşır, panel açılır kutu
+  çizer,
+- listede olmayan bir seçenek kimliği **reddedilir** (mağaza tanımadığı kimliği
+  sessizce yok sayar ve ürün yayınevsiz kalırdı),
+- seçenekleri **okunamayan** seçimli alan hiç açılmaz ve nedeni yazılır.
+
+Seçenekler nitelik **detayından** gelir: liste ucu (`GET /catalog/attributes`)
+her satırın `options` alanını `null` döndürüyor (ölçüldü). Bu yüzden seçimli
+alan başına bir ek istek gider ve sonuç kodlarla birlikte **bir kez** çözülür.
+**Eksik kalan çözüm saklanmaz:** seçenek ucu bir kez patladıysa sonuç
+saklansaydı dört seçimli alan, alanın kendi gerekçesi "bağlantı düzelince
+kendiliğinden gelir" derken sidecar yeniden başlayana kadar kapalı kalırdı.
+
+**Öznitelik ailesi de varsayılmaz.** "Nitelik katalogda var" ile "nitelik BU
+ürüne yazılabilir" ayrı iki sorudur; mağaza gövdeyi ailenin nitelik listesiyle
+kesiştirip fazlasını sessizce düşürüyor. Bu yüzden alanın **dört** hâli var:
+yazılabilir · katalogda yok · **ürünün ailesinde yok** · seçenekleri okunamadı.
+Ürünün ailesi ek istek gerektirmez — ürün detayının `attributes` dizisi zaten
+aile kapsamlı geliyor (aile 1 → 22 satır, aile 2 → 36 satır). Aile **okunamazsa
+kısıt uygulanmaz**: geçici bir ağ hatasını kalıcı bir eksikliğe çevirmek, bu
+modülün her yerde reddettiği davranış.
 
 **Sayfa sayısı ve desi bu esnekliğin dışındadır** ve yalnız `page_count` /
 `desi` kodlarını kabul eder: mağazanın kargo hesabı bu ikisini adıyla okuyor,
 eş anlamlı bir koda yazmak ekranda "güncellendi" gösterip kargo ücretini hiç
 değiştirmezdi.
+
+**Türkçe virgül okunurken kabul, yazılırken çevrilir.** Personel `0,45` yazar
+ve ekran bunu doğru gösterir; mağaza tarafı ise aynı değeri PHP `is_numeric()`
+ile okuyor ve PHP ondalık ayracı olarak yalnız noktayı tanır — `is_numeric("0,45")`
+FALSE'tur. Ham yazılan virgül mağazada **hiç okunmaz** ve ürün varsayılan 1,0
+desiye düşer: ekran "1 desi" derken müşteriden başka bir rakam tahsil edilir.
+Bu yüzden yazma yolu sayısal alanları kanonikleştirir (`canonical_number`) —
+doğrulayıcıyı katılaştırmak, kullanıcıyı kendi dilinde yazmaktan caydırırdı.
+Kilidi bir test tutuyor: `patch_for` çıktısında virgül bulunmaz.
 
 **Toplu yazma** yalnız bu iki alan için açıktır (`Sayfa/desi yaz` düğmesi):
 önizleme → gerekçe → uygula. ISBN/yazar/yayınevi ürüne özgüdür ve toplu
@@ -308,6 +436,11 @@ Hepsinin karşılığı `backend/catalog.py` içinde bir fonksiyon ve
 ekranın sabit alanlarını, `book` ise çalışma anında çözülen nitelik kodlarını
 taşır. `POST /bulk/preview` kitap için `kind: "book"` + `field`
 (`pageCount` | `desi`) + `mode` (`set` | `clear`) + `value` alır.
+
+`POST /products` ve `POST /products/plan` gövdesi de `book` (künye) ve
+`images` (base64 dosyalar) alır. `GET /reference` iki künye listesi döndürür:
+`bookFields` (katalog kapsamlı) ve `bookFieldsOnCreate` (yeni ürünün ailesi
+kapsamlı) — farkın gerekçesi "Kitap künyesi ve desi" bölümünde.
 
 Okuma: `GET /products` · `GET /products/{id}` · `GET /products/{id}/images` ·
 `GET /reference` · `GET /health` · `GET /audit` · `GET /url-key` ·

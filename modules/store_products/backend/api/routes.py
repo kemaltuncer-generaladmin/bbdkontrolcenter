@@ -14,7 +14,7 @@ from typing import Any
 
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
-from ..service import ProductsService
+from ..service import CREATE_IMAGE_B64_LIMIT, CREATE_IMAGE_LIMIT, ProductsService
 
 router = APIRouter()
 _service: ProductsService | None = None
@@ -154,9 +154,17 @@ class DraftBody(BaseModel):
     #: `None` = "seçilmedi" → yeni ürün PASİF doğar.
     status: bool | None = None
     attributeFamilyId: int = Field(default=0, ge=0)
+    #: KİTAP KÜNYESİ AYRI ALANDIR — `SaveBody.book` ile aynı gerekçe: bu
+    #: gövdenin sabit alanlarının adları koda gömülü, kitap alanlarının nitelik
+    #: kodu ise kuruluma göre değişiyor ve çalışma anında çözülüyor. Anahtarlar
+    #: ekranın alan adları (`isbn` · `author` · `publisher` …); tanınmayan
+    #: anahtar SESSİZCE DÜŞÜRÜLMEZ, hata olarak döner.
+    book: dict[str, Any] = Field(default_factory=dict)
 
     def draft(self) -> dict[str, Any]:
-        return self.model_dump(exclude={"reason", "dryRun"}, exclude_none=False)
+        # `images` DIŞARIDA BIRAKILIR: taslak panele geri dönüyor ve base64
+        # içerikleri yanıtta taşımak, aynı 30 MB'ı bir de geri göndermek olurdu.
+        return self.model_dump(exclude={"reason", "dryRun", "images"}, exclude_none=False)
 
 
 @router.post("/products/plan")
@@ -172,9 +180,31 @@ async def plan(
     return await service().plan(payload=body.draft())
 
 
+class NewImage(BaseModel):
+    """Ürün açarken gönderilen TEK görsel (base64).
+
+    Ürün görseli yükleme ucu ÜRÜN KİMLİĞİ istiyor
+    (`POST /catalog/products/{id}/images`) ve kimlik ancak ürün doğunca
+    oluşuyor; bu yüzden dosyalar ürün gövdesiyle birlikte gelir ve servis
+    onları zincirin SON adımında, kimlik belli olduktan sonra yükler.
+
+    `content` base64'tür (`data:` öneki kabul edilir) — Tauri kabuğunda fs
+    eklentisi yok, panel dosyayı `FileReader.readAsDataURL` ile okuyor.
+    Uzunluk sınırının hesabı `service.CREATE_IMAGE_B64_LIMIT` başında.
+    """
+
+    filename: str = Field(min_length=1, max_length=200)
+    mime: str = Field(default="", max_length=100)
+    content: str = Field(min_length=8, max_length=CREATE_IMAGE_B64_LIMIT)
+
+
 class CreateBody(DraftBody):
     #: SKU ürün açmanın TEK zorunlu alanıdır; gerisi türetilebiliyor.
     sku: str = Field(min_length=1, max_length=64)
+    #: SIRA KORUNUR: ilk dosya KAPAK olur (`position` 1'den başlar). Tavanın
+    #: gerekçesi `service.CREATE_IMAGE_LIMIT` başında; aşan dosya düzenleyicinin
+    #: Görseller sekmesinden eklenir — orada sayı sınırı yok.
+    images: list[NewImage] = Field(default_factory=list, max_length=CREATE_IMAGE_LIMIT)
     #: Öznitelik ailesi İSTEĞE BAĞLI. Tek satıcılı, tek ürün tipli bir mağazada
     #: her ürün aynı aileye gider; kullanıcıya sormak anlamsız bir seçim üretir.
     #: 0 gelirse servis varsayılan aileyi kendisi çözer (`_default_family`).
@@ -194,10 +224,13 @@ async def create(
 
     Panel `plan` ucundan gelen değerleri kullanıcıya gösterip onaylatır ama
     kapı burasıdır: istek elle de kurulabilir ve onayla yazma arasında geçen
-    sürede url_key kapılmış olabilir.
+    sürede url_key kapılmış olabilir. Kitap künyesi ve görsel dosyaları da
+    burada yeniden denetlenir — arayüzde alanı hiç çizmemek yetkilendirme
+    değildir.
     """
     return await service().create(payload=body.draft(), reason=body.reason,
-                                  actor=user.full_name, dry_run=body.dryRun)
+                                  actor=user.full_name, dry_run=body.dryRun,
+                                  images=[item.model_dump() for item in body.images])
 
 
 class ReasonBody(BaseModel):

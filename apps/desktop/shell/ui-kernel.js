@@ -127,20 +127,89 @@ export async function loadRegistry() {
     });
   }
 
-  const order = ['BBD', 'BBD Store', 'BLD', 'Kurumsal'];
-  const groupRank = (name) => (order.includes(name) ? order.indexOf(name) : order.length);
+  // GRUP SIRASI VERİDEN TÜRETİLİR: grubun sırası, içindeki en küçük `order`
+  // değeridir.
+  //
+  // BURADA SABİT BİR GRUP LİSTESİ DURUYORDU (`['BBD','BBD Store',…]`) ve
+  // AYNISI `tools/build-ui-registry.py` içinde ikinci kez yazılıydı. İki kopya
+  // birbirinden habersizdi: yalnız biri güncellenirse çalışma zamanı ile build
+  // çıktısı sessizce ayrışırdı. Dahası, kabukta grup adı tutmak K1'e ters —
+  // çekirdek hangi grupların var olduğunu bilmemeli.
+  //
+  // Artık yeni bir grup açmak saf `module.yaml` işidir (K6): `ui.nav.group`
+  // adını, `ui.nav.order` da nereye düşeceğini söyler. Kabukta tek satır
+  // değişmez.
+  const groupRank = new Map();
+  for (const panel of panels) {
+    const current = groupRank.get(panel.group);
+    if (current === undefined || panel.order < current) groupRank.set(panel.group, panel.order);
+  }
+  const rank = (name) => groupRank.get(name) ?? Number.MAX_SAFE_INTEGER;
+
   panels.sort((a, b) =>
-    groupRank(a.group) - groupRank(b.group)
+    rank(a.group) - rank(b.group)
+    // AYNI SIRA DEĞERİNDE AD KAZANIR: iki grup aynı `order`ı taşırsa sıra
+    // rastgele kalmasın (eskiden `store_bundles` ile `store_shipping` ikisi de
+    // 30'du ve menü sırası dosya sistemi sırasına kalmıştı).
+    || a.group.localeCompare(b.group, 'tr')
     || a.order - b.order
     || a.title.localeCompare(b.title, 'tr'));
 
-  const groups = [...new Set(panels.map((panel) => panel.group))]
-    .sort((a, b) => groupRank(a) - groupRank(b));
+  const groups = [...new Set(panels.map((panel) => panel.group))];
 
   return { groups, panels };
 }
 
-/** Ekranları menü gruplarına ayırır. */
+/** Grup adındaki seviye ayracı: `"BBD Store / Satış ve Kargo"`. */
+const LEVEL = ' / ';
+
+/**
+ * Menüyü İKİ SEVİYELİ ağaca çevirir.
+ *
+ * HİYERARŞİ GRUP ADININ KENDİSİNDEN GELİR. `ui.nav.group` şemada serbest
+ * metindir; ayraç eklemek şema değişikliği istemez ve kabukta bir üst-alt
+ * tablosu tutmayı da gerektirmez — çekirdek hangi başlıkların var olduğunu
+ * bilmemeye devam eder (K1). Yeni bölüm açmak saf `module.yaml` işidir (K6).
+ *
+ * AYRACI OLMAYAN GRUP TEK SEVİYE KALIR: `"BBD"` düz bir başlıktır,
+ * `"BBD Store / Katalog"` ise `BBD Store` başlığının altındaki `Katalog`
+ * bölümüdür. Üst başlığın DOĞRUDAN çocukları da olabilir (`"BBD Store"`
+ * grubundaki Kontrol Paneli) ve bunlar bölümlerin ÜSTÜNDE durur: günde
+ * onlarca kez açılan bir ekranı bir bölümü açmaya zorlamak, her seferinde
+ * fazladan bir tık demektir.
+ *
+ * Sıra `registry.groups` sırasını izler; boş bölüm hiç çizilmez, yani bir
+ * modül silinince başlığı da kendiliğinden kaybolur (K6/K7).
+ */
+export function navTree(registry, panels) {
+  const order = registry.groups.length
+    ? registry.groups
+    : [...new Set(panels.map((panel) => panel.group))];
+
+  const tops = [];
+  const index = new Map();
+
+  for (const group of order) {
+    const cut = group.indexOf(LEVEL);
+    const topName = cut === -1 ? group : group.slice(0, cut);
+    const sectionName = cut === -1 ? '' : group.slice(cut + LEVEL.length);
+    const rows = panels.filter((panel) => panel.group === group);
+    if (rows.length === 0) continue;
+
+    let top = index.get(topName);
+    if (!top) {
+      top = { title: topName, panels: [], sections: [] };
+      index.set(topName, top);
+      tops.push(top);
+    }
+    if (sectionName) top.sections.push({ title: sectionName, panels: rows });
+    else top.panels.push(...rows);
+  }
+
+  return tops;
+}
+
+/** Ekranları menü gruplarına ayırır (tek seviye — rapor ve testler kullanır). */
 export function groupPanels(registry, panels) {
   const order = registry.groups.length
     ? registry.groups
@@ -171,8 +240,23 @@ async function ensureProviders(registry) {
       if (!panel.entry || !(panel.provides || []).length) continue;
       try {
         const module = await import(`./${panel.entry}`);
+        // GEZİNME DE VERİLİR. Bir yetenek başka ekranın içine çiziliyor ve
+        // oradan "asıl evinde aç" demesi gerekiyor; `open` verilmezse o düğme
+        // sessizce hiçbir şey yapmayan bir düğme olurdu — kitin kendi kuralı
+        // bunu yasaklıyor ("bir düğme YA ÇALIŞIR, YA BURADAN GEÇER, ya da hiç
+        // çizilmez"). Yüzey `mount` ile aynı: aynı sözleşmeyi iki ayrı biçimde
+        // öğrenmek gerekmesin.
         const declared = typeof module.capabilities === 'function'
-          ? module.capabilities({ api })
+          ? module.capabilities({
+            api,
+            open: (id, data = null) => {
+              if (!navigate) {
+                console.warn('[ui-kernel] gezinme bağlanmadı; open() yok sayıldı');
+                return;
+              }
+              navigate(id, data);
+            },
+          })
           : {};
         for (const [name, factory] of Object.entries(declared || {})) {
           if (!panel.provides.includes(name)) {
@@ -220,7 +304,14 @@ export function setNavigator(fn) {
  * Paneli olmayan ya da patlayan ekran boş açılır; kabuk düşmez (K7).
  */
 export async function mountPanel(panel, root, registry = { panels: [] }, payload = null) {
-  if (!panel.entry) return null;
+  // ARAYÜZÜ OLMAYAN EKRAN DA AÇIKLANIR. Burası eskiden sessizce `null`
+  // dönüyordu; `select()` gövdeyi zaten temizlediği için kullanıcı başlığı
+  // değişmiş BOMBOŞ bir ekrana bakıyordu. `panelError` aynı dersi çökme dalı
+  // için öğrenmişti (aşağıdaki yorum), giriş-yok dalı atlanmıştı.
+  if (!panel.entry) {
+    root.replaceChildren(panelUnavailable(panel));
+    return null;
+  }
 
   try {
     await ensureProviders(registry);
@@ -248,6 +339,55 @@ export async function mountPanel(panel, root, registry = { panels: [] }, payload
     root.replaceChildren(panelError(panel, error));
     return null;
   }
+}
+
+/**
+ * Arayüzü olmayan / yüklenmemiş panelin yerine geçen kart.
+ *
+ * İKİ AYRI DURUM, İKİ AYRI CÜMLE — çünkü kullanıcının yapacağı iş farklı:
+ *  · Modül KAPALI ya da yüklenememiş (`state !== 'loaded'`): nedeni çekirdek
+ *    söyler (`reason`) ve olduğu gibi gösterilir; tahmin yürütülmez.
+ *  · Modül ayakta ama ARAYÜZÜ YOK (`entry` boş): özellik henüz ekrana
+ *    bağlanmamıştır. "Hata" demek yanlış olurdu — kırılan bir şey yok.
+ *
+ * Kırmızı kullanılmaz: bu bir arıza değil, bir eksik. Kırmızı kart kullanıcıyı
+ * olmayan bir hatayı aramaya gönderirdi.
+ */
+function panelUnavailable(panel) {
+  const yuklenmedi = Boolean(panel.state && panel.state !== 'loaded');
+
+  const box = document.createElement('div');
+  box.style.cssText = 'margin:24px;padding:20px 22px;border:1px solid #2a3346;'
+    + 'border-radius:10px;background:#141a26;color:#c7d0e2;max-width:760px;'
+    + 'font:13px/1.6 system-ui,sans-serif';
+
+  const title = document.createElement('h3');
+  title.textContent = yuklenmedi
+    ? `“${panel.title || panel.id}” şu an kullanılamıyor`
+    : `“${panel.title || panel.id}” ekranı henüz yok`;
+  title.style.cssText = 'margin:0 0 8px;font-size:15px;color:#e9eefa';
+
+  const hint = document.createElement('p');
+  hint.textContent = yuklenmedi
+    ? 'Bu bölüm kapalı olduğu için açılamıyor. Uygulamanın geri kalanı '
+      + 'normal çalışıyor.'
+    : 'Bu bölümün arayüzü henüz hazırlanmadı. Bir arıza değil; özellik '
+      + 'listede duruyor ama ekranı yazılmamış. Uygulamanın geri kalanı '
+      + 'normal çalışıyor.';
+  hint.style.margin = '0 0 10px';
+  box.append(title, hint);
+
+  // NEDEN VARSA OLDUĞU GİBİ GÖSTERİLİR: çekirdeğin yazdığı gerekçeyi kendi
+  // cümlemizle değiştirmek gerçek sebebi gizler.
+  if (yuklenmedi && panel.reason) {
+    const detail = document.createElement('p');
+    detail.textContent = panel.reason;
+    detail.style.cssText = 'margin:0;padding:10px 12px;border-radius:6px;'
+      + 'background:#0d1220;color:#8b95ad;font-size:12.5px';
+    box.append(detail);
+  }
+
+  return box;
 }
 
 /**

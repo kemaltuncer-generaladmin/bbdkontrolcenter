@@ -65,7 +65,13 @@ yazan uç yok; her ürün ayrı PUT ile ve **oku-değiştir-yaz** ile gider. Ma�
 dakikada 60 istek kabul ettiği için varsayılan sınır 50 üründür ve ekran işin
 kaç dakika süreceğini söyler.
 
-## Canlı mağazanın dayattığı gerçekler (2026-08-13'te doğrulandı)
+## Canlı mağazanın dayattığı gerçekler (2026-08-13'te doğrulandı, 2026-08-16'da yeniden ölçüldü)
+
+Aşağıdakilerin tamamı 2026-08-16'da canlıya karşı **salt okunur** GET ile
+yeniden sınandı. Bir tanesi (kanal süzgeci — sipariş ucu) eskimişti ve
+düzeltildi; gerisi hâlâ geçerli. Sayılar ölçüm tarihiyle birlikte okunmalıdır:
+katalog ve belge sayıları büyüyor, iddianın özü (süzgeç uygulanıyor mu, alan
+geliyor mu) büyümüyor.
 
 **Yanıtlar camelCase, istekler snake_case.** `GET /settings/tax-rates`
 `{"identifier":…, "taxRate":20, "isZip":false}` döndürüyor; aynı kaydın
@@ -88,12 +94,22 @@ listede `null`, tekil uçta `1` dönüyor. Bu yüzden eşleme sütunu "Bilinmiyo
 der, katalog taraması sayı üretmeyi reddeder ve vergi kategorisi süzgeci
 uygulanamadığında ekran bunu **yazıyla** söyler.
 
-**Uygulanmayan süzgeçler kaldırıldı.** `?channel=…` fatura/iade/sipariş
-listelerinde yok sayılıyor (`channel=zzzz` bile 16 faturanın hepsini
-döndürüyor); kanal ayıklaması artık Kontrol Merkezi'nde yapılır ve rapor bunu
-yazar. `?category_id=…` ürün listesinde yok sayılıyor; uç parametresi tamamen
-kaldırıldı. Uygulanan süzgeçler (`date_from`/`date_to`, `status`, `name`)
-canlıda tek tek denendi.
+**Uygulanmayan süzgeçler kaldırıldı.** `?channel=…` **fatura ve iade**
+listelerinde yok sayılıyor (2026-08-16: `invoices?channel=zzzz` de
+`invoices?channel=1` de 17 faturanın hepsini, `refunds?channel=zzzz` 3 iadenin
+hepsini döndürüyor); kanal ayıklaması bu yüzden Kontrol Merkezi'nde yapılır ve
+rapor bunu yazar. `?category_id=…` ürün listesinde yok sayılıyor; uç parametresi
+tamamen kaldırıldı. Uygulanan süzgeçler (`date_from`/`date_to`, `status`,
+`name`) canlıda tek tek denendi.
+
+> Bu satır bir dönem "fatura/iade/**sipariş**" diyordu; sipariş için artık
+> doğru değil. 2026-08-16 ölçümü: `orders?channel=1` → 18, `orders?channel=default`
+> → 0, `orders?channel=zzzz` → 0. Yani sipariş ucu kanalı GERÇEKTEN uyguluyor ve
+> **kimlik** bekliyor (aşağıdaki ürün tablosunun tam tersi). İcmal bunu zaten
+> güvenle karşılıyor: iptal listesine kanal parametresi hiç gönderilmiyor,
+> ayıklama `summary.summarize` içinde kanal ADIYLA yapılıyor. Not düzeltildi ki
+> sonraki okuyan "sipariş ucu da yok sayıyor" sanıp `channel=default` göndermesin
+> — o parametre iptal listesini sessizce boşaltırdı.
 
 **Mağaza şu an KDV'siz satıyor.** 17 faturanın hepsi `baseTaxAmount: 0`. Alanın
 dolu ve sıfır olması mağazanın BEYANIDIR: bu belgeler `%0` satırına yazılır,

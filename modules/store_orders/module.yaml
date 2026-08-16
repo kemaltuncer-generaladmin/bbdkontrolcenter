@@ -76,10 +76,10 @@ ui:
   nav:
     title: "Siparişler"
     icon: cart
-    group: "BBD Store"
+    group: "BBD Store / Satış ve Kargo"
     # 10 = Kontrol Paneli, 20 = Ürünler. Araya girer; mevcut ekranların
     # numaraları DEĞİŞMEZ — yan menü düzeni korunur.
-    order: 15
+    order: 210
     requires: [store_orders.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

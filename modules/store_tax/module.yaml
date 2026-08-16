@@ -47,8 +47,8 @@ ui:
   nav:
     title: "Vergilendirme"
     icon: percent
-    group: "BBD Store"
-    order: 130
+    group: "BBD Store / Mali"
+    order: 350
     requires: [store_tax.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

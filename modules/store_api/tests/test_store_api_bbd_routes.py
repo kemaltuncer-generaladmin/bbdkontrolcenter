@@ -66,6 +66,7 @@ OKUMA_YOLLARI = [
     ("bbd_review_requests", (), {}, "/api/admin/bbd/review-requests"),
     ("bbd_notifications", (), {}, "/api/admin/bbd/notifications"),
     ("bbd_catalog_health", (), {}, "/api/admin/bbd/catalog/health"),
+    ("bbd_bestsellers", (), {}, "/api/admin/bbd/catalog/bestsellers"),
     ("bbd_ai_runs", (), {}, "/api/admin/bbd/ai/drafts"),
     ("bbd_trial_results", (4,), {}, "/api/admin/bbd/trial-club/exams/4/results"),
     ("bbd_audit_entry", (9,), {}, "/api/admin/bbd/audits/9"),
@@ -79,6 +80,9 @@ OKUMA_YOLLARI = [
     ("bbd_payment_attempts", (), {}, "/api/admin/bbd/payments/attempts"),
     ("bbd_bld_jobs", (), {}, "/api/admin/bbd/bld/jobs"),
     ("bbd_return_requests", (), {}, "/api/admin/bbd/return-requests"),
+    ("bbd_return_request_shipment", (8,), {}, "/api/admin/bbd/return-requests/8/shipment"),
+    ("bbd_return_request_label_info", (8,), {},
+     "/api/admin/bbd/return-requests/8/shipment/label"),
     ("bbd_mobile_settings", (), {}, "/api/admin/bbd/settings/mobile-app"),
 ]
 
@@ -131,6 +135,13 @@ YAZMA_YOLLARI = [
     # "Kargoya ver" — tek tıkla gönderi + teklif + etiket satın alma.
     ("bbd_dispatch_order", (91,), {"payload": {"packages": 1}},
      "POST", "/api/admin/bbd/orders/91/dispatch"),
+    # İADE KARGO ZİNCİRİ — girdi GÖNDERİ değil TALEP kimliği.
+    ("bbd_open_return_request_shipment", (8,), {},
+     "POST", "/api/admin/bbd/return-requests/8/shipment"),
+    ("bbd_sync_return_request_shipment", (8,), {},
+     "POST", "/api/admin/bbd/return-requests/8/shipment/sync"),
+    ("bbd_purchase_return_request_label", (8,), {"offer_id": "of_1"},
+     "POST", "/api/admin/bbd/return-requests/8/shipment/label"),
 ]
 
 
@@ -190,6 +201,210 @@ async def test_taninmayan_katalog_sorunu_istek_cikmadan_reddedilir(tip: str) -> 
     assert "no_image" in hata.value.message          # geçerli tipleri sayar
 
 
+# ==================================== iade kargo zinciri: PARA KAPISI
+
+
+async def test_iade_etiketi_satin_alirken_dryrun_govdeye_konur() -> None:
+    """SESSİZ KURU PROVA TUZAĞI: mağazada bu ucun `dryRun` varsayılanı `true`.
+
+    Alan hiç gitmezse GERÇEK satın alma isteği sessizce provaya düşer; ekran
+    "etiket alındı" der ama müşteriye verilecek etiket yoktur.
+    """
+    import json as _json
+
+    api, istekler = izle()
+    await api.bbd_purchase_return_request_label(8, offer_id="of_9", reason=NEDEN, dry_run=False)
+
+    govde = _json.loads(istekler[0].content)
+    assert govde["dryRun"] is False           # açıkça yazıldı, varsayılana bırakılmadı
+    assert govde["offerId"] == "of_9"
+
+
+async def test_iade_etiketi_kuru_provada_para_harcamaz() -> None:
+    import json as _json
+
+    api, istekler = izle()
+    await api.bbd_purchase_return_request_label(8, reason=NEDEN, dry_run=True)
+
+    govde = _json.loads(istekler[0].content)
+    assert govde["dryRun"] is True
+    # Teklif seçilmediyse alan HİÇ gitmez: boş dize mağazada geçerli bir
+    # teklif kimliği değildir ve gönderilmesi 422 üretirdi.
+    assert "offerId" not in govde
+
+
+async def test_iade_gonderisi_acan_uc_satin_alma_alani_gondermez() -> None:
+    """`purchaseNow` ve akrabaları bu uçta SESSİZCE YOK SAYILMAZ, 422 alır."""
+    import json as _json
+
+    api, istekler = izle()
+    await api.bbd_open_return_request_shipment(8, reason=NEDEN, dry_run=False)
+
+    govde = _json.loads(istekler[0].content)
+    for yasak_alan in ("purchaseNow", "willAccept", "buyLabel", "autoPurchase"):
+        assert yasak_alan not in govde
+
+
+async def test_iade_etiketi_kunyesi_pdf_indirmeden_sorulur() -> None:
+    api, istekler = izle({"rmaId": 8, "isPurchased": False, "labelStored": False})
+    sonuc = await api.bbd_return_request_label_info(8)
+
+    assert istekler[0].url.params["format"] == "json"
+    assert sonuc["isPurchased"] is False
+
+
+async def test_iade_etiketi_ham_pdf_olarak_istenir() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Accept"] == "application/pdf"
+        return httpx.Response(200, content=b"%PDF-1.4 sahte",
+                              headers={"Content-Type": "application/pdf"})
+
+    api, _ = izle()
+    api._transport = httpx.MockTransport(handler)
+    icerik = await api.bbd_return_request_label(8)
+
+    assert icerik.startswith(b"%PDF")
+
+
+async def test_iade_kargosu_yoksa_ekran_talep_yok_sanmaz() -> None:
+    """Gönderi yokken uç 409 `RETURN_SHIPMENT_MISSING` verir — 404 DEĞİL.
+
+    Canlıda ölçüldü (2026-08-16, talep 1 ve 2). `not_found` koduna düşseydi
+    ekran "talep bulunamadı" derdi ve operatör olmayan bir arıza arardı.
+    """
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"error": {
+            "code": "RETURN_SHIPMENT_MISSING",
+            "message": "Bu talebin iade gönderisi yok. Önce iade gönderisini açın.",
+            "details": {"rmaId": 8}}})
+
+    api, _ = izle()
+    api._transport = httpx.MockTransport(handler)
+
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_return_request_label_info(8)
+
+    assert hata.value.code == "conflict"
+    assert hata.value.code != "not_found"
+    assert hata.value.details["rmaId"] == 8
+
+
+async def test_iade_kargosu_sorgusu_gonderi_kimligi_degil_talep_kimligi_kullanir() -> None:
+    """`bbd_return_shipment(shipment_id)` BAŞKA bir uçtur; ikisi karışmamalı."""
+    api, istekler = izle()
+    await api.bbd_return_request_shipment(8)
+    await api.bbd_return_shipment(8, reason=NEDEN)
+
+    assert istekler[0].url.path == "/api/admin/bbd/return-requests/8/shipment"
+    assert istekler[1].url.path == "/api/admin/bbd/shipments/8/return"
+
+
+# ======================================= set üyeliği: TEK yazma ucu vardır
+
+
+async def test_set_uyeligi_membership_ucuna_gider() -> None:
+    """Set bir KATEGORİDİR: `POST/PUT storefront/sets` mağazada YOK.
+
+    Eski yol 404 değil 405 alıyordu (yol GET olarak tanımlı) ve geçit onu
+    "uç henüz yayında değil" diye çeviriyordu — ekran olmayan bir dağıtımı
+    bekliyordu.
+    """
+    import json as _json
+
+    api, istekler = izle({"action": "add", "categoryId": 42, "affected": [1427]})
+    sonuc = await api.bbd_set_membership([1427], action="add", reason=NEDEN)
+
+    assert istekler[0].method == "POST"
+    assert istekler[0].url.path == "/api/admin/bbd/storefront/sets/membership"
+    govde = _json.loads(istekler[0].content)
+    assert govde["productIds"] == [1427]
+    assert govde["action"] == "add"
+    assert sonuc["affected"] == [1427]
+
+
+async def test_set_uyeliginde_cikarma_da_ayni_uctan_gider() -> None:
+    import json as _json
+
+    api, istekler = izle({"action": "remove", "categoryId": 42, "affected": [1427]})
+    await api.bbd_set_membership([1427, 1428], action="remove", reason=NEDEN)
+
+    assert istekler[0].url.path == "/api/admin/bbd/storefront/sets/membership"
+    assert _json.loads(istekler[0].content)["action"] == "remove"
+
+
+@pytest.mark.parametrize("eylem", ["create", "", "delete", "update"])
+async def test_taninmayan_set_eylemi_istek_cikmadan_reddedilir(eylem: str) -> None:
+    """Mağaza 422 döner; onu beklemek yerine burada söylenir."""
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(yasak())
+
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_set_membership([1427], action=eylem, reason=NEDEN)
+
+    assert istekler == []
+    assert hata.value.code == "payload"
+    assert "add" in hata.value.message and "remove" in hata.value.message
+
+
+async def test_set_eylemi_bosluk_ve_buyuk_harften_etkilenmez() -> None:
+    """`ADD ` mağazaya `add` olarak gider: ekran metnini uç sözleşmesi sanmayız."""
+    import json as _json
+
+    api, istekler = izle()
+    await api.bbd_set_membership([1427], action=" ADD ", reason=NEDEN)
+
+    assert _json.loads(istekler[0].content)["action"] == "add"
+
+
+async def test_bos_urun_listesi_magazaya_gonderilmez() -> None:
+    """Hiçbir şeyi değiştirmeyen bir yazma denetim izini kirletir."""
+    api, istekler = izle()
+    api._transport = httpx.MockTransport(yasak())
+
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_set_membership([], action="add", reason=NEDEN)
+
+    assert istekler == []
+    assert hata.value.code == "payload"
+
+
+# ================================================= çok satanlar (bestsellers)
+
+
+async def test_cok_satanlar_bbd_sayfalama_sozlesmesini_kullanir() -> None:
+    """BBD zarfı sayfa boyunu `limit` ile alır; `per_page` sessizce yok sayılır."""
+    api, istekler = izle({"data": [{"productId": 183, "soldQty": 2, "orderCount": 1}],
+                          "meta": {"page": 1, "limit": 25, "total": 1, "last_page": 1}})
+    sonuc = await api.bbd_bestsellers(page=1, per_page=25)
+
+    assert istekler[0].url.path == "/api/admin/bbd/catalog/bestsellers"
+    assert istekler[0].url.params["limit"] == "25"
+    assert "per_page" not in istekler[0].url.params
+    assert sonuc["items"][0]["productId"] == 183
+    # BBD'nin snake_case `meta`sı çekirdek adlarıyla da okunabilir olmalı.
+    assert sonuc["meta"]["lastPage"] == 1
+
+
+async def test_cok_satanlar_tam_tarama_sayfalari_sirayla_ister() -> None:
+    """Uç süzgeç almadığı için tek ürünün rakamı ancak TAM TARAMAYLA bulunur."""
+    sayfalar: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sayfa = int(request.url.params["page"])
+        sayfalar.append(request.url.params["page"])
+        return httpx.Response(200, json={
+            "data": [{"productId": 100 + sayfa, "soldQty": 1, "orderCount": 1}],
+            "meta": {"page": sayfa, "limit": 1, "total": 3, "last_page": 3}})
+
+    api, _ = izle()
+    api._transport = httpx.MockTransport(handler)
+    sonuc = await api.bbd_bestsellers(per_page=1, all_pages=True)
+
+    assert sayfalar == ["1", "2", "3"]
+    assert [row["productId"] for row in sonuc["items"]] == [101, 102, 103]
+    assert sonuc["truncated"] is False
+
+
 # ================================ bilerek yazılmayan üç uç: sessiz 404 YOK
 
 #: Mağazanın BİLEREK yazmadığı uçlar. Liste 2026-08-15'te ÜÇTEN İKİYE indi:
@@ -244,11 +459,11 @@ async def test_yol_var_metot_yoksa_anlasilir_hata_doner() -> None:
     api._transport = httpx.MockTransport(handler)
 
     with pytest.raises(StoreApiError) as hata:
-        await api.bbd_save_bundle(payload={"name": "Set"}, reason=NEDEN)
+        await api.bbd_reorder_carousel(order=[1, 2], reason=NEDEN)
 
     assert hata.value.status == 405
     assert hata.value.code == "bbd_endpoint_missing"
-    assert "POST" in hata.value.message
+    assert "PUT" in hata.value.message
 
 
 # ==================================== sayfalama: BBD `limit`, çekirdek `per_page`
@@ -339,6 +554,71 @@ async def test_odeme_linki_govdesi_magazanin_okudugu_alanlari_tasir() -> None:
     assert govde["amount"] == "125.50"           # ONDALIK TL, kuruş değil
     assert govde["billing"]["firstName"] == "Ayşe"
     assert "orderId" not in govde                # sunucu okumuyor
+
+
+async def test_odeme_linkinde_dryRun_govdeye_ACIKCA_yazilir() -> None:
+    """GEÇEN SEFER SESSİZ VE TAM TERSİYDİ: gerçek bağlantı üretimi mağazada
+    kuru provaya düşüyordu, yani ekrandan HİÇBİR ZAMAN gerçek bir tahsilat
+    bağlantısı üretilemiyordu.
+
+    Zinciri: `PaymentLinkController::store` bayrağı
+    `$this->dryRun($request, true)` ile okuyor (VARSAYILAN true, "para ile
+    ilgili uç" sigortası) ve `DryRun::parse` alan HİÇ GELMEDİĞİNDE varsayılana
+    düşüyor. Geçit tarafında `_write` ise `dryRun`u yalnız kuru provada gövdeye
+    ekliyordu; `dry_run=False` iken alan hiç gitmiyordu. Sonuç: mağaza
+    `DB::rollBack()` yapıyor, `{"dryRun": true}` döndürüyor, ekran "kuru prova:
+    bağlantı üretilmedi" diyor — oysa personel kuru provayı KAPATMIŞTI.
+
+    Bu testin katmanı ÖNEMLİ: modül taklidi `_write`e hiç uğramadığı için bu
+    hatayı göremez. Ölçüm telden geçen gövdenin üzerinde yapılır.
+    """
+    import json
+
+    api, istekler = izle()
+    await api.bbd_create_payment_link(
+        amount="125.00", billing={"firstName": "Ayşe", "lastName": "Yılmaz"},
+        reason=NEDEN, dry_run=False)
+
+    govde = json.loads(istekler[0].content)
+    assert "dryRun" in govde                     # alan HİÇ gitmiyordu
+    assert govde["dryRun"] is False
+
+
+async def test_odeme_linki_kuru_provada_dryRun_true_gider() -> None:
+    import json
+
+    api, istekler = izle()
+    await api.bbd_create_payment_link(
+        amount="125.00", billing={"firstName": "A", "lastName": "B"},
+        reason=NEDEN, dry_run=True)
+
+    assert json.loads(istekler[0].content)["dryRun"] is True
+
+
+async def test_odeme_linkinde_dryRun_varsayilani_gecidin_ayarindan_gelir() -> None:
+    """`dry_run=None` verilmediğinde karar geçidin `dry_run_default`ıdır —
+    `_write` ile AYNI kural (`effective_dry_run`). İki ayrı yerde iki ayrı
+    kural yazılsaydı, ayarın açık olduğu bir kurulumda gövde `false` derken
+    denetim izi `true` yazardı."""
+    import json
+
+    api, istekler = izle(dry_run_default=True)
+    await api.bbd_create_payment_link(
+        amount="125.00", billing={"firstName": "A", "lastName": "B"}, reason=NEDEN)
+
+    assert json.loads(istekler[0].content)["dryRun"] is True
+
+
+async def test_tek_odeme_linki_sayisal_kimlikle_okunur() -> None:
+    """Liste ucu `token`/`order_id` süzgeci tanımıyor ve sayfa başına 50 satır
+    veriyor; aranan link sayfada yoksa liste boş DÖNMÜYOR, en yeni linkleri
+    döndürüyor. Belirli bir linki okumanın tek kesin yolu tekil uçtur."""
+    api, istekler = izle(payload={"data": {"id": 41, "code": "TKN-1"}})
+    sonuc = await api.bbd_payment_link(41)
+
+    assert istekler[0].method == "GET"
+    assert istekler[0].url.path == "/api/admin/bbd/payment-links/41"
+    assert sonuc["code"] == "TKN-1"
 
 
 async def test_odeme_linkinde_siparis_kimligi_reddedilir() -> None:

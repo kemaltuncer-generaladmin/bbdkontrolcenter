@@ -3,6 +3,7 @@
 // Tek kopya (ADR 0011). Hepsi düğüm döndürür; hiçbiri kendi verisini çekmez
 // ve hiçbiri panelin durumunu bilmez.
 
+import { sparkline } from './charts.js';
 import { button, h } from './kit.js';
 
 /** Başlıklı içerik kutusu. */
@@ -87,10 +88,18 @@ export function tabBar(items, active, onChange) {
 }
 
 /**
- * KPI şeridi. Her kutu: {label, value, tone?, delta?, title?}
+ * KPI şeridi. Her kutu: {label, value, tone?, delta?, title?, spark?, sparkTitle?}
  * `delta`: {percent, title} — yüzde farkı, yönü oktan okunur.
+ * `spark`: number[] — kutunun altında eğilim şeridi (en az iki nokta).
  *
  * Renk tek başına anlam taşımaz: değer her zaman yazıyla da orada.
+ *
+ * NEDEN `spark` AYRICA GEREKTİ. `delta` İKİ noktayı karşılaştırır ("geçen
+ * döneme göre %12"); aynı yüzde düzgün bir tırmanıştan da, ortada dibe vurup
+ * son iki günde toparlanmadan da çıkar. Aradaki yolu yalnız seri gösterir.
+ * Şerit sayının YERİNE GEÇMEZ, altında durur: `sparkline` eksensizdir ve tek
+ * başına okunmaz — zaten bu yüzden `aria-hidden`'dır, ekran okuyucu değeri ve
+ * `delta`yı okur.
  */
 export function kpiRow(tiles) {
   const node = h('div', 'kit-kpi');
@@ -98,6 +107,15 @@ export function kpiRow(tiles) {
     const box = h('div', 'kit-kpi-tile');
     box.append(h('span', 'kit-kpi-label', tile.label));
     box.append(h('b', `kit-kpi-value${tile.tone ? ` ${tile.tone}` : ''}`, String(tile.value)));
+    // Tek noktalı seri çizilmez: `sparkline` iki noktadan azında boş SVG
+    // döndürür ve kutuda sebepsiz bir boşluk bırakırdı.
+    if (Array.isArray(tile.spark) && tile.spark.length > 1) {
+      const trend = h('span', 'kit-kpi-spark');
+      trend.append(sparkline(tile.spark));
+      if (tile.sparkTitle) trend.title = tile.sparkTitle;
+      trend.setAttribute('aria-hidden', 'true');
+      box.append(trend);
+    }
     if (tile.delta && tile.delta.percent !== null && tile.delta.percent !== undefined) {
       const up = Number(tile.delta.percent) >= 0;
       const chip = h('span', `kit-delta ${up ? 'up' : 'down'}`,

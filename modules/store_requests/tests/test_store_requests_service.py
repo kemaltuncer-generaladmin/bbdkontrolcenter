@@ -565,3 +565,248 @@ async def test_tam_tavan_kadar_kayit_eksik_diye_damgalanmaz() -> None:
     rows, truncated = await service._scan({})
     assert len(rows) == REPORT_ROW_CAP
     assert truncated is False
+
+
+# ================================================== iade kargo zinciri
+#
+# ÜÇ ADIM AYRI DÜĞMEDİR VE YALNIZCA BİRİ PARA HARCAR. Bu bölümün tamamı o
+# ayrımı sabitler: "gönderi açmak" bedavadır ve geri alınabilir, "etiket
+# satın almak" faturalanır ve geri alınamaz.
+
+
+async def test_kargosu_olmayan_talep_hata_degil_bos_durum_dondurur() -> None:
+    """Mağaza gönderi yokken 404 DEĞİL 200 + `shipment: null` veriyor.
+
+    404'e çeviren bir ekran "talep bulunamadı" der ve operatör olmayan bir
+    arıza arar (canlıda ölçüldü 2026-08-16: talep 1 ve 2 → 200, stage "yok").
+    """
+    service, api, _, _ = _service()
+
+    sonuc = await service.shipment(5)
+
+    assert sonuc["ok"] is True
+    assert sonuc["connected"] is True
+    assert sonuc["shipment"]["exists"] is False
+    assert sonuc["shipment"]["stage"] == "yok"
+    # Etiket satın alınmamışken künye SORULMAZ: her satır için bir 409 üretir
+    # ve hız kovasından boşuna pay yerdi.
+    assert api.used("bbd_return_request_label_info") == []
+
+
+async def test_kargo_okunamazsa_talep_ekrani_dusmez() -> None:
+    """K7: Geliver kapalıysa kargo sekmesi nedenini söyler, talep açılır."""
+    service, api, _, _ = _service()
+    api.fail.add("bbd_return_request_shipment")
+
+    sonuc = await service.shipment(5)
+
+    assert sonuc["ok"] is False
+    assert sonuc["connected"] is False
+    assert sonuc["error"]
+    assert sonuc["shipment"]["exists"] is False      # ekran yine çizilebilir
+
+
+async def test_gonderi_acmak_etiket_satin_almaz() -> None:
+    """ZİNCİRİN BÜTÜN VARLIK SEBEBİ. Onaylanan her talep etiketle sonuçlanmaz;
+    otomatik etiket, vazgeçilen her iadede bize kesilmiş bir fatura demektir."""
+    service, api, store, _ = _service()
+
+    sonuc = await service.open_shipment(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    assert sonuc["dryRun"] is False
+    assert sonuc["shipment"]["exists"] is True
+    assert "SATIN ALINMADI" in sonuc["notice"]
+    # PARA HARCAYAN uç HİÇ çağrılmadı.
+    assert api.used("bbd_purchase_return_request_label") == []
+    assert api.purchases == []
+    assert store.audit[-1]["action"] == "open_return_shipment"
+    assert store.audit[-1]["result"] == "ok"
+
+
+async def test_gonderi_acmak_mukerrer_korumalidir() -> None:
+    """Düğmeye iki kez basmak ikinci gönderi açmaz — mağaza var olanı döner."""
+    service, api, _, _ = _service()
+    await service.open_shipment(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=False)
+    ilk = api.return_shipment["id"]
+
+    sonuc = await service.open_shipment(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    assert api.return_shipment["id"] == ilk
+
+
+async def test_kisa_gerekceyle_gonderi_acilmaz() -> None:
+    """K9: arayüzde gizlemek yetkilendirme değildir; istemci şemayı atlatabilir."""
+    service, api, _, _ = _service()
+
+    sonuc = await service.open_shipment(5, reason="kısa", actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is False
+    assert "Gerekçe" in sonuc["error"]
+    assert api.used("bbd_open_return_request_shipment") == []
+
+
+async def test_etiket_satin_alma_uzun_gerekce_ister() -> None:
+    """20 karakter — kargo ekranındaki etiket satın almayla AYNI çubuk.
+
+    Geri alınamayan bir harcamanın defterdeki tek açıklaması bu metindir;
+    "iade" gibi bir sözcük denetim izini işe yaramaz kılar.
+    """
+    service, api, _, _ = _service()
+
+    sonuc = await service.purchase_label(5, reason=GECERLI_GEREKCE[:15], actor="Ayşe",
+                                         dry_run=False)
+
+    assert sonuc["ok"] is False
+    assert "PARA HARCAR" in sonuc["error"]
+    assert api.used("bbd_purchase_return_request_label") == []
+    assert api.purchases == []
+
+
+async def test_etiket_kuru_provasi_para_harcamaz_teklifleri_gosterir() -> None:
+    service, api, store, _ = _service()
+
+    sonuc = await service.purchase_label(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=True)
+
+    assert sonuc["ok"] is True
+    assert sonuc["dryRun"] is True
+    assert sonuc["offers"][0]["price"] == "84.50"
+    assert "PARA HARCANMADI" in sonuc["notice"]
+    assert api.purchases == []                       # gerçekten hiçbir şey alınmadı
+    assert store.audit[-1]["result"] == "dry_run"
+
+
+async def test_etiket_gercekten_satin_alinabilir_ve_ize_yazilir() -> None:
+    service, api, store, _ = _service()
+
+    sonuc = await service.purchase_label(5, offer_id="of_1", reason=GECERLI_GEREKCE,
+                                         actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    assert sonuc["dryRun"] is False
+    assert api.purchases == [5]
+    assert api.used("bbd_purchase_return_request_label")[0]["offer_id"] == "of_1"
+    # YAZMA ÖNCESİ de iz atılır: istek zaman aşımına uğrarsa uzakta uygulanmış
+    # olabilir ve "ne yapmaya çalıştık" kaydı yerelde kalmalı.
+    denemeler = [row for row in store.audit if row["action"] == "purchase_return_label"]
+    assert [row["result"] for row in denemeler] == ["denendi", "ok"]
+
+
+async def test_etiket_alindiysa_kunye_de_okunur() -> None:
+    service, api, _, _ = _service()
+    api.return_shipment = {"id": 77, "providerName": "Sürat Kargo"}
+    api.label_purchased = True
+
+    sonuc = await service.shipment(5)
+
+    assert sonuc["shipment"]["labelPurchased"] is True
+    assert sonuc["label"]["barcode"] == "BC-1"
+
+
+async def test_kunye_okunamazsa_kargo_yine_gorunur() -> None:
+    """K7: etiket künyesi ikincil bilgidir, kargo satırını düşürmez."""
+    service, api, _, _ = _service()
+    api.return_shipment = {"id": 77}
+    api.label_purchased = True
+    api.fail.add("bbd_return_request_label_info")
+
+    sonuc = await service.shipment(5)
+
+    assert sonuc["ok"] is True
+    assert sonuc["shipment"]["shipmentId"] == 77
+    assert sonuc["label"] == {}
+
+
+async def test_senkron_urun_geldi_bilgisini_tasir_ama_durumu_degistirmez() -> None:
+    """Kargo hareketi talebin DURUMUNU DEĞİŞTİRMEZ.
+
+    Panelin "Bankaya iade gönder" düğmesi yalnız talep "Onaylandı" iken
+    açıktır; talebi otomatik ilerletmek o düğmeyi tam da ürün elimize ulaştığı
+    anda KAPATIRDI.
+    """
+    service, api, _, _ = _service()
+    api.return_shipment = {"id": 77}
+    api.return_received = True
+
+    sonuc = await service.sync_shipment(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=False)
+
+    assert sonuc["ok"] is True
+    assert sonuc["shipment"]["received"] is True
+    assert sonuc["shipment"]["receivedAt"]
+    # Talebin durumunu yazan uç HİÇ çağrılmadı.
+    assert api.used("bbd_update_return_request") == []
+
+
+async def test_para_iadesi_bu_zincirden_yapilamaz_ve_bu_her_yanitta_yazar() -> None:
+    service, api, _, _ = _service()
+    api.return_shipment = {"id": 77}
+    api.return_received = True
+
+    sonuc = await service.shipment(5)
+
+    assert sonuc["shipment"]["refundAllowedHere"] is False
+    assert "panelden yapılır" in sonuc["shipment"]["refundMessage"]
+
+
+async def test_etiket_pdf_olarak_diske_yazilir() -> None:
+    service, _, store, _ = _service()
+
+    sonuc = await service.label(5)
+
+    assert sonuc["ok"] is True
+    assert sonuc["name"] == "iade-etiketi-talep-5.pdf"
+    assert Path(sonuc["path"]).read_bytes().startswith(b"%PDF")
+    assert store.audit[-1]["action"] == "download_return_label"
+
+
+async def test_bos_etiket_dosyasi_basarili_sayilmaz() -> None:
+    """Boş PDF'i "indi" saymak, kargoya etiketsiz paket çıkarırdı."""
+    service, api, _, _ = _service()
+    api.label_bytes = b""
+
+    sonuc = await service.label(5)
+
+    assert sonuc["ok"] is False
+    assert "boş" in sonuc["error"]
+
+
+async def test_etiket_hazir_degilse_magazanin_cumlesi_gosterilir() -> None:
+    """Uç 409 döner ve mesajı doğrudan gösterilebilir; ham kod yazdırılmaz."""
+    service, api, _, _ = _service()
+    api.fail.add("bbd_return_request_label")
+
+    sonuc = await service.label(5)
+
+    assert sonuc["ok"] is False
+    assert sonuc["error"]
+
+
+async def test_prova_zarfi_acilir_teklifler_kokte_aranmaz() -> None:
+    """MAĞAZA PROVA YANITINI SARAR: `{dryRun, wouldChange:{...}}`.
+
+    Gerçek yazmada alanlar kökte, provada `wouldChange` içinde gelir
+    (`Bbd\\ControlApi\\Support\\DryRun::response`). Kökten okuyan bir ekran
+    HER provada "teklif yok" derdi — oysa teklifler yanıtın içinde durur.
+    """
+    service, api, _, _ = _service()
+    api.return_shipment = {"id": 77}
+
+    sonuc = await service.purchase_label(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=True)
+
+    assert sonuc["offersReady"] is True
+    assert [teklif["id"] for teklif in sonuc["offers"]] == ["of_1"]
+
+
+async def test_provada_var_olan_gonderi_yok_gibi_gosterilmez() -> None:
+    """"Yeni açılacak" sanıp bekleyen operatör ile "zaten var" bilgisini gören
+    operatör farklı kararlar verir; prova gövdesi `existingShipmentId` taşır."""
+    service, api, _, _ = _service()
+    api.return_shipment = {"id": 77, "providerName": "Sürat Kargo"}
+
+    sonuc = await service.open_shipment(5, reason=GECERLI_GEREKCE, actor="Ayşe", dry_run=True)
+
+    assert sonuc["dryRun"] is True
+    assert sonuc["shipment"]["exists"] is True
+    assert sonuc["shipment"]["shipmentId"] == 77
+    assert "Kuru prova" in sonuc["notice"]

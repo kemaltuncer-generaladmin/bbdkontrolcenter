@@ -236,3 +236,4 @@ Modül kendi bağımlılığını kendisi getirir; çekirdeğin listesine dokunu
 | Bağımlılıklar | İlan edilir, kopyalanmaz; sürücüler apt'tan | 0008 |
 | Panel bileşenleri | Ortak kit kabukta, tek kopya (`shell/ui-kit/`) | 0011 |
 | Mağaza yıkıcı işlemi | PIN değil, gerekçeli onay + kuru prova | 0012 |
+| Anons sesi | Vertex AI (Gemini TTS), çalma anında değil ÖNDEN üretim | 0013 |

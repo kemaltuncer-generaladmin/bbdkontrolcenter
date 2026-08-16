@@ -110,113 +110,28 @@ def test_kargoya_verildi_taramayla_tetiklenmez() -> None:
 
 # ============================================ "Kargoya ver" → shipped SMS'i
 
-async def test_gercek_gonderiden_sonra_musteriye_sms_istenir() -> None:
-    notify = FakeStageNotify(enabled=("shipped",))
-    service, _, _ = _service(notify=notify)
-    result = await service.ship(12, items={"5": 3}, carrier="Aras Kargo", track="735004",
-                                source_id=1, reason=GEREKCE, actor="Test", dry_run=False)
-    assert result["ok"] is True
-    assert len(notify.calls) == 1
-    call = notify.calls[0]
-    assert call["stage"] == "shipped"
-    assert call["order"]["orderNo"] == "#1000012"
-    assert call["order"]["track"] == "735004"
-    assert call["order"]["phone"] == "5321234567"
-    assert result["sms"]["sent"] is True
+# ── "KARGOYA VERİLDİ" TETİKLEYİCİSİNİN TESTLERİ BURADAN KALKTI ──────────────
+#
+# Sekiz test buradaydı ve hepsi `OrdersService.ship()` üzerinden koşuyordu.
+# O metot kaldırıldı: kargoya verme bu modülün işi değil (kullanıcının kuralı
+# — "farklı yerde 'kargoya ver' olmasın"), üstelik açtığı şey Bagisto'nun
+# kendi kaydıydı ve gövde sarmalı yüzünden mağaza isteği reddediyordu.
+#
+# AYNI DAVRANIŞ ARTIK KARGO YÖNETİMİ'NDE SINANIYOR — orada gerçek takip
+# numarası var:
+#   modules/store_shipping/tests/test_store_shipping_kargoya_ver.py
+#     · test_kargoya_verilince_musteriye_SMS_gider
+#     · test_SMS_kunyesinde_GERCEK_takip_numarasi_ve_baglanti_var
+#     · test_KURU_PROVADA_musteriye_mesaj_gitmez
+#     · test_bildirimler_kapaliyken_GONDERI_YINE_ACILIR
+#     · test_SMS_katmani_patlarsa_gonderi_BASARILI_kalir
+#     · test_TEST_yolunda_da_musteriye_SMS_gitmez
+#
+# BU DOSYADA KALAN ŞEY DEĞİŞMEDİ: "sipariş alındı" ve "teslim edildi"
+# taramaları hâlâ bu modülün işidir — onların kaynağı bir tıklama değil,
+# mağazanın durumudur. `test_kargoya_verildi_taramayla_tetiklenmez` (yukarıda)
+# bu ayrımı koruyor.
 
-
-async def test_kuru_provada_musteriye_sms_istenmez() -> None:
-    # Mağazada hiçbir şey değişmedi; "kargoya verildi" yazmak yalan olurdu ve
-    # tekrar engelinin kaydını da boşa harcardı.
-    notify = FakeStageNotify(enabled=("shipped",))
-    service, _, _ = _service(notify=notify)
-    await service.ship(12, items={"5": 3}, carrier="Aras Kargo", track="735004",
-                       source_id=1, reason=GEREKCE, actor="Test", dry_run=True)
-    assert notify.calls == []
-
-
-async def test_asama_kapaliysa_sms_istenmez_ama_kargo_kaydi_acilir() -> None:
-    notify = FakeStageNotify(enabled=())
-    service, api, _ = _service(notify=notify)
-    result = await service.ship(12, items={"5": 3}, carrier="Aras Kargo", track="735004",
-                                source_id=1, reason=GEREKCE, actor="Test", dry_run=False)
-    assert result["ok"] is True
-    assert api.used("create_shipment")               # kargo kaydı yine açıldı
-    assert notify.calls == []
-    assert "kapalı" in result["sms"]["note"]
-
-
-async def test_bildirimler_kapaliysa_kargo_calisir_ve_neden_yazilir() -> None:
-    service, api, _ = _service(notify=None)
-    result = await service.ship(12, items={"5": 3}, carrier="Aras Kargo", track="735004",
-                                source_id=1, reason=GEREKCE, actor="Test", dry_run=False)
-    assert result["ok"] is True
-    assert api.used("create_shipment")
-    assert result["sms"]["sent"] is False
-    assert result["sms"]["note"]                     # SESSİZ GEÇMEZ
-
-
-async def test_bildirimler_patlarsa_kargo_kaydi_ayakta_kalir() -> None:
-    # K7: gönderi kaydı açılmıştır; mesajın gitmemesi onu geri almaz.
-    notify = FakeStageNotify(enabled=("shipped",))
-    service, _, _ = _service(notify=notify)
-    notify.fail = True
-    result = await service.ship(12, items={"5": 3}, carrier="Aras Kargo", track="735004",
-                                source_id=1, reason=GEREKCE, actor="Test", dry_run=False)
-    assert result["ok"] is True
-    assert result["sms"]["sent"] is False
-
-
-async def test_takip_numarasi_girilmediyse_tasiyici_kaydina_bakilir() -> None:
-    notify = FakeStageNotify(enabled=("shipped",))
-    api = FakeApi({12: dict(SIPARIS)})
-    api.shipment_payload = {"items": [{"id": 9, "order_id": 12, "carrier": "Sürat Kargo",
-                                       "tracking_number": "999888",
-                                       "tracking_url": "https://s/999888",
-                                       "status": "in_transit"}], "meta": {}}
-    service, _, _ = _service(notify=notify, api=api)
-    await service.ship(12, items={"5": 3}, carrier="", track="", source_id=1,
-                       reason=GEREKCE, actor="Test", dry_run=False)
-    assert notify.calls[0]["order"]["track"] == "999888"
-    assert notify.calls[0]["order"]["trackUrl"] == "https://s/999888"
-
-
-async def test_toplu_kargoda_siparis_ikinci_kez_okunmaz() -> None:
-    # Toplu iş siparişi kalem adetleri için zaten okuyor; SMS künyesi için
-    # ikinci bir `GET /orders/{id}` 200'lük bir işte 200 gereksiz istek olurdu.
-    notify = FakeStageNotify(enabled=("shipped",))
-    service, api, _ = _service(notify=notify)
-    preview = await service.batch_preview(kind="ship", order_ids=[12])
-    await service.batch_apply(token=preview["token"], reason=GEREKCE, actor="Test",
-                              dry_run=True, carrier="Aras Kargo")
-    before = len(api.args_of("order"))
-    result = await service.batch_apply(token=preview["token"], reason=GEREKCE, actor="Test",
-                                       dry_run=False, carrier="Aras Kargo")
-    assert result["applied"] == 1
-    # Gerçek uygulamada sipariş BİR kez okundu (kalemler için); SMS künyesi
-    # aynı okumadan çıktı.
-    assert len(api.args_of("order")) - before == 1
-    assert len(notify.calls) == 1
-    assert result["results"][0]["smsSent"] is True
-
-
-async def test_toplu_iste_sms_sonucu_satir_satir_gorunur() -> None:
-    notify = FakeStageNotify(enabled=("shipped",))
-    notify.result = {"ok": True, "sent": False, "result": "no_phone",
-                     "note": "Gönderilemedi: Müşterinin cep numarası yok."}
-    service, _, _ = _service(notify=notify)
-    preview = await service.batch_preview(kind="ship", order_ids=[12])
-    await service.batch_apply(token=preview["token"], reason=GEREKCE, actor="Test",
-                              dry_run=True, carrier="Aras Kargo")
-    result = await service.batch_apply(token=preview["token"], reason=GEREKCE, actor="Test",
-                                       dry_run=False, carrier="Aras Kargo")
-    row = result["results"][0]
-    assert row["ok"] is True                 # kargo kaydı açıldı
-    assert row["smsSent"] is False
-    assert "numara" in row["smsNote"]        # NEDEN gitmediği aynı tabloda
-
-
-# ==================================================== tarama tetikleyicileri
 
 async def test_yeni_siparis_taramasi_alindi_mesaji_ister() -> None:
     notify = FakeStageNotify(enabled=("order_placed",))

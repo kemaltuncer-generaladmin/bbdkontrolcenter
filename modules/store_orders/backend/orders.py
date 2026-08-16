@@ -14,14 +14,21 @@ nun VERİTABANI sütunları snake_case'tir ve belgeler o adları anlatır; uca
 görünür. Bu yüzden her okuma `pick()` üzerinden geçer: `pick` adı ayraçsız ve
 küçük harfe indirger, iki yazım da çözülür.
 
-LİSTE UCU SIĞDIR. `GET /orders` satırı yalnız şunları taşır: id · incrementId ·
-status · channelName · customerName · customerEmail · paymentTitle ·
-couponCode · totalItemCount · totalQtyOrdered · grandTotal · location ·
-createdAt · (sığ) items. Fatura, gönderi, not, ara toplam, KDV, faturalanan
-tutar YOKTUR — onlar yalnız `GET /orders/{id}` detayında bulunur. Bu yüzden
-`has_detail()` vardır ve ödeme durumu bilgi yoksa "unknown" döner: faturalanan
-tutarı görmeden "Ödenmedi" yazmak, tahsil edilmiş siparişi ödenmemiş göstermek
-olurdu.
+LİSTE UCU SIĞDIR (CANLIDA ÖLÇÜLDÜ 2026-08-16). `GET /orders` satırı şunları
+taşır: id · incrementId · status · statusLabel · channelId · channelName ·
+customerId · customerName · customerEmail · isGuest · paymentTitle ·
+couponCode · totalItemCount · totalQtyOrdered · grandTotal · baseGrandTotal ·
+formattedGrandTotal · orderCurrencyCode · location · createdAt · updatedAt ·
+(sığ) items (id · sku · name · productImage · qtyOrdered).
+
+Bu liste bir dönem daha kısa yazılıydı ve "yalnız şunlar" diyordu; artık öyle
+değil — `channelId`, `statusLabel`, `customerId` gibi alanlar da satırda
+geliyor. YİNE DE ASIL NOKTA DEĞİŞMEDİ: fatura, gönderi, not, ara toplam, KDV,
+faturalanan tutar YOKTUR — onlar yalnız `GET /orders/{id}` detayında bulunur
+(orada `customerFirstName`, `invoices`, `shipments`, `refunds`, `comments`,
+`grandTotalInvoiced` da vardır). Bu yüzden `has_detail()` vardır ve ödeme
+durumu bilgi yoksa "unknown" döner: faturalanan tutarı görmeden "Ödenmedi"
+yazmak, tahsil edilmiş siparişi ödenmemiş göstermek olurdu.
 
 DOKUZ TUZAK — hepsinin karşılığı bu dosyada bir fonksiyondur:
 
@@ -273,6 +280,23 @@ def kurus(value: Any) -> int:
     return to_kurus(value) or 0
 
 
+def kurus_or_none(value: Any) -> int | None:
+    """`to_kurus` ama YOKLUĞU KORUR — "0 lira" ile "bilinmiyor" ayrı şeylerdir.
+
+    NEDEN AYRI FONKSİYON. Sipariş LİSTESİ ucu `shipping_amount`,
+    `discount_amount` ve `tax_amount` alanlarını `null` gönderiyor (canlıda
+    doğrulandı, 16.08.2026); `sub_total` ve `grand_total` ise DOLU geliyor.
+    `kurus()` hepsini 0'a düşürdüğü için ekran ikisini ayırt edemiyor ve
+    "bilinmiyor" demek zorunda kalıyordu — dolu olan `sub_total` da bu yüzden
+    tabloda `—` görünüyordu.
+
+    Toplam hesaplarında hâlâ `kurus()` kullanılır: orada eksik alanı 0 saymak
+    doğrudur. Burada değil — bilinmeyen bir indirimi "indirim yok" diye
+    göstermek, siparişin tutarını yanlış anlatır.
+    """
+    return to_kurus(value)
+
+
 def from_kurus(amount: Any) -> str:
     """Kuruş → telde gidecek ondalık metin: 123435 → `1234.35`."""
     return f"{Decimal(int(amount or 0)) / 100:.2f}"
@@ -359,9 +383,16 @@ def payment_state(raw: dict[str, Any]) -> str:
 #                                                 ARTAN NUMARASI
 #   (b) `GET /api/admin/bbd/payments/attempts`  → `state` + `order_id`
 #
-# CANLIDA DOĞRULANDI (18 sipariş · 17 fatura · 17 POS denemesi): iki kaynak
-# birbirini doğruluyor. İkisi de LİSTEDİR; sipariş başına istek atılmaz (N+1
-# yasak), tek sayfa çekilip bellekte eşlenir.
+# CANLIDA DOĞRULANDI (2026-08-16 · 18 sipariş · 17 fatura · 17 POS denemesi):
+# iki kaynak birbirini doğruluyor. İkisi de LİSTEDİR; sipariş başına istek
+# atılmaz (N+1 yasak), tek sayfa çekilip bellekte eşlenir.
+#
+# POS DENEMELERİNİN HEPSİ SİPARİŞE BAĞLI DEĞİLDİR. Bir dönem on yedi denemenin
+# tamamı `order_created` idi ve bu, "her deneme bir siparişe düşer" yanılgısını
+# besliyordu; bugün on biri siparişe bağlı (`order_created`), altısı bağsız
+# (`enroll_failed` · `auth_failed` · `abandoned`) ve `order_id` alanları NULL.
+# Bağsız deneme bir HATA DEĞİL, tamamlanmamış bir ödeme girişimidir: sayılır
+# (`unboundAttempts`) ama hiçbir siparişe "ödenmedi" damgası vurdurmaz.
 
 #: Fatura kaydının "tahsil edildi" durumu. Diğerleri (`pending`,
 #: `pending_payment`, `overdue`) TAHSİLAT DEĞİLDİR.
@@ -887,10 +918,13 @@ def money_view(raw: dict[str, Any]) -> dict[str, Any]:
     """Toplam dökümü. Her kalem AYRI gösterilir: tek "toplam" rakamı,
     "kargo neden bu kadar" sorusunu ekrandan dışarı taşırdı."""
     return {
-        "subTotal": kurus(pick(raw, "sub_total")),
-        "shipping": kurus(pick(raw, "shipping_amount")),
-        "discount": kurus(pick(raw, "discount_amount")),
-        "tax": kurus(pick(raw, "tax_amount")),
+        # YOKLUK KORUNUR (`kurus_or_none`): liste ucu kargo/indirim/KDV
+        # alanlarını `null` gönderiyor, ara toplam ve genel toplamı DOLU.
+        # Hepsini 0'a düşürmek, dolu olanı da "bilinmiyor" göstertiyordu.
+        "subTotal": kurus_or_none(pick(raw, "sub_total")),
+        "shipping": kurus_or_none(pick(raw, "shipping_amount")),
+        "discount": kurus_or_none(pick(raw, "discount_amount")),
+        "tax": kurus_or_none(pick(raw, "tax_amount")),
         "grandTotal": kurus(pick(raw, "grand_total")),
         "invoiced": kurus(pick(raw, "grand_total_invoiced")),
         "refunded": kurus(pick(raw, "grand_total_refunded")),
@@ -1154,10 +1188,13 @@ def store_filters(filters: dict[str, Any]) -> dict[str, Any]:
     status = text(filters.get("status"))
     if status:
         out["status"] = status
-    # Kanal BİLEREK yok. CANLIDA DOĞRULANDI: `/orders?channel=` parametresi
-    # kanal KODUNU değil KİMLİĞİNİ (tamsayı) bekliyor — `channel=default` sıfır
-    # kayıt, `channel=1` on yedi kayıt döndürüyor. Kod göndermek listeyi tamamen
-    # boşaltır ve hata da vermez. Kimlik servisin işidir (`channel_id` ayarı);
+    # Kanal BİLEREK yok. CANLIDA DOĞRULANDI (2026-08-16): `/orders?channel=`
+    # parametresi kanal KODUNU değil KİMLİĞİNİ (tamsayı) bekliyor —
+    # `channel=default` sıfır kayıt, `channel=1` on sekiz kayıt döndürüyor
+    # (ölçüm bir dönem "on yedi" diyordu; sayı siparişle birlikte artıyor,
+    # ASIL OLGU olan "kod sıfır kayıt döndürür" değişmedi). Kod göndermek
+    # listeyi tamamen boşaltır ve hata da vermez.
+    # Kimlik servisin işidir (`channel_id` ayarı);
     # kullanıcının şeritten seçtiği kanal ADI taranmış küme üzerinde süzülür.
     if text(filters.get("dateField")) in ("", "created"):
         start = text(filters.get("dateFrom"))

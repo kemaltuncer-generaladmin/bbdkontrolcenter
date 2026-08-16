@@ -16,7 +16,8 @@ Mimari kararlar sabitlendi, ortam kuruldu, ilk katman yazıldı.
 | Geliştirme ortamı (`.venv`, sistem paketleri) | Kurulu ve doğrulandı |
 | `km_platform/notify` — SMS/bildirim katmanı | **Çalışıyor**, 36 test |
 | `km_core`, `km_sdk`, diğer platform yetenekleri | İskelet — sözleşmesi sabit, kod yok |
-| Modüller (`bell`, `print`, `antivirus`) | İskelet, `enabled: false` |
+| `bell` — Zil Sistemi | **Çalışıyor**, 77 test · Vertex anonsu + Windows zil ajanı |
+| Modüller (`print`, `antivirus`) | İskelet, `enabled: false` |
 | Masaüstü kabuk (Tauri) | İskelet |
 
 ## Başlarken

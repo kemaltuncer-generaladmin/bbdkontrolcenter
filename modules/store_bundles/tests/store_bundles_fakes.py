@@ -130,6 +130,9 @@ class FakeApi:
         self.fail: set[str] = set()
         self.bbd_bundle_items: list[dict[str, Any]] = []
         self.carousel_items: list[dict[str, Any]] = []
+        #: "Setler" kategorisinin (canlıda 42) ÜYE ürünleri. Mağazada set
+        #: kavramının tamamı budur; künye mağazada saklanmaz.
+        self.set_members: list[int] = []
         #: `/api/admin/products` (seçici) uçundaki bütün satırlar.
         self.lookup_items: list[dict[str, Any]] = []
         #: Ürün → kategori. Sahte süzgeç bunu kullanır; canlı yanıtta bu alan
@@ -151,12 +154,27 @@ class FakeApi:
         self._record("bbd_bundles", filters)
         return {"items": self.bbd_bundle_items, "meta": {}}
 
-    async def bbd_save_bundle(self, *, payload: dict[str, Any], bundle_id: int | None = None,
-                              reason: str, actor: str = "",
-                              dry_run: bool | None = None) -> dict[str, Any]:
-        self._record("bbd_save_bundle", payload=payload, bundle_id=bundle_id, reason=reason,
+    async def bbd_set_membership(self, product_ids: list[int], *, action: str, reason: str,
+                                 actor: str = "",
+                                 dry_run: bool | None = None) -> dict[str, Any]:
+        """`POST storefront/sets/membership` — mağazadaki TEK set yazma ucu.
+
+        Yanıt gerçek uçtaki gibi DEĞİŞEN ürünleri sayar (`affected`); zaten
+        üye olan ürün ikinci kez eklenmez.
+        """
+        self._record("bbd_set_membership", product_ids, action=action, reason=reason,
                      actor=actor, dry_run=dry_run)
-        return {"ok": True, "dryRun": bool(dry_run)}
+        ids = [int(item) for item in product_ids]
+        if action == "add":
+            etkilenen = [item for item in ids if item not in self.set_members]
+            if not dry_run:
+                self.set_members.extend(etkilenen)
+        else:
+            etkilenen = [item for item in ids if item in self.set_members]
+            if not dry_run:
+                self.set_members = [item for item in self.set_members if item not in etkilenen]
+        return {"ok": True, "dryRun": bool(dry_run), "action": action,
+                "categoryId": 42, "affected": etkilenen}
 
     async def bbd_carousel(self, filters: Any = None) -> dict[str, Any]:
         self._record("bbd_carousel", filters)

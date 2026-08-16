@@ -13,9 +13,9 @@ summary_days: 30
 # yoktur. Sayıyı büyütmek yerine aralığı daraltmak doğrudur.
 document_cap: 4000
 
-# Vergi kategorisi kullanım taraması için ürün tavanı. 1.419 ürün 29 sayfa
-# eder; 3.000 büyümeye yer bırakır ve bozuk `meta` yüzünden sonsuz taramayı
-# engeller.
+# Vergi kategorisi kullanım taraması için ürün tavanı. 2026-08-16'da katalog
+# 1.422 ürün (yazıldığında 1.419'du) — 50'lik sayfayla 29 sayfa eder; 3.000
+# büyümeye yer bırakır ve bozuk `meta` yüzünden sonsuz taramayı engeller.
 catalog_scan_cap: 3000
 
 # Toplu ürün→vergi kategorisi eşlemesinde SIRAYLA yazılacak en çok ürün.

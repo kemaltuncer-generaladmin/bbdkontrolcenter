@@ -60,10 +60,15 @@ Yıkıcı işlemler izin yeterli olsa bile PIN teyidi ister.
 
 ## Projenin şu anki durumu
 
-Kod içeren tek alan: `backend/src/km_platform/notify/` — SMS/bildirim katmanı,
-çalışır durumda, 36 test. Geri kalan her şey sözleşmesi sabitlenmiş iskelettir:
-`km_core`, `km_sdk` ve diğer platform yetenekleri yazılmadı, modüller
-`enabled: false`.
+Çekirdek (`km_core`), SDK ve platform yeteneklerinin çoğu (`audio`,
+`scheduler`, `secrets`, `notify`, `printer`) yazıldı ve çalışıyor; sidecar
+ayağa kalkıyor, kabuk modülleri dinamik yüklüyor. `modules/` altındaki
+modüllerin büyük bölümü kodlu ve `enabled: true`.
+
+`print` ve `antivirus` hâlâ iskelettir (`enabled: false`).
+
+> Bu bölüm eskimeye açıktır. Bir modülün gerçek durumu tek yerden okunur:
+> kendi `module.yaml` dosyasındaki `enabled` alanı ve klasöründeki kod.
 
 Proje henüz kurulabilir paket değil; `tests/conftest.py` kaynak dizinini
 `sys.path`'e ekler.

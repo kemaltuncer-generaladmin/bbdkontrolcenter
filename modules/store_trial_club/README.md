@@ -50,15 +50,29 @@ yeteneğinden geçer; yetenek yoksa o düğme gizlenir.
 dolaşır; iletişim bilgisi orada işe yaramaz ama kişisel veriyi kâğıda çıkarır.
 Ekranda görünür, kâğıtta görünmez.
 
-## Mağaza ucu bekleyenler
+## Kapalı katılımcı eylemleri
 
-Şu iki iş `store.api` içinde **henüz yok**; ekran düğmeyi kapalı gösterir ve
-nedenini yazar (sessiz 404 yok):
+İki düğme kapalı; ekran nedenini yazar (sessiz 404 yok). **Nedenleri aynı
+değil** — biri mağazayı, diğeri geçidi bekliyor:
 
-- **Katılımcı ekleme** — `bbd_add_trial_member`
-  (`POST /api/admin/bbd/trial-club/exams/{id}/members`)
-- **Kayıt iptali** — `bbd_update_trial_member`
-  (`PUT /api/admin/bbd/trial-club/members/{id}`). Silme değil, pasifleştirme.
+| İş | Mağaza ucu | Geçit (`store.api`) | Bekleyen |
+|---|---|---|---|
+| **Katılımcı ekleme** | yok | yok | mağaza tarafı |
+| **Kayıt iptali** | **var** (2026-08-16) | yok | geçit metodu |
+
+- **Katılımcı ekleme** — gereken uç `bbd_add_trial_member`
+  (`POST /api/admin/bbd/trial-club/exams/{id}/members`). 2026-08-16'da
+  sunucuda `route:list --path=api/admin/bbd` ile bakıldı: katılımcı ekleyen
+  bir yol yok.
+- **Kayıt iptali** — mağaza ucu **yayında**:
+  `POST /api/admin/bbd/deneme-kulubu/members/{orderId}/cancel` (gerekçe
+  zorunlu, `dryRun` varsayılan açık, sipariş *iptal* durumuna çekilir — satır
+  **silinmez**, ADR 0012 ile birebir uyumlu). Bu belge bir dönem ucun
+  `PUT /api/admin/bbd/trial-club/members/{id}` olarak *henüz yayınlanmadığını*
+  söylüyordu; uç o yolda hiç olmadı, mağaza iptali sipariş kimliği üzerinden
+  `deneme-kulubu` önekine yazdı. Eksik olan tek halka `store.api` içindeki
+  saran metot (`bbd_cancel_trial_member`); K4 gereği bu modül mağazaya
+  doğrudan istek atmadığı için düğme o metot açılana kadar kapalı kalır.
 
 ## Yerel tablolar
 

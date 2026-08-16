@@ -6,7 +6,7 @@
 
 import { iconSvg } from './icons.js';
 import {
-  groupPanels, loadRegistry, login, mountPanel, setNavigator, waitForCore,
+  loadRegistry, login, mountPanel, navTree, setNavigator, waitForCore,
 } from './ui-kernel.js';
 
 const PIN_MIN = 6;
@@ -42,10 +42,67 @@ const shell = {
 
 // ================================================================== KABUK
 
+/** Açık bölümler kullanıcıya özeldir ve uygulama kapanınca kaybolmaz. */
+const OPEN_KEY = 'km.nav.open';
+
+function openSet() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OPEN_KEY) || '[]');
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveOpen(set) {
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify([...set]));
+  } catch {
+    /* depolama kapalıysa menü yine çalışır, yalnız hatırlamaz */
+  }
+}
+
+function navButton(panel) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'nav-item';
+  item.dataset.id = panel.id;
+  item.setAttribute('aria-current', panel.id === shell.activeId ? 'page' : 'false');
+  item.classList.toggle('active', panel.id === shell.activeId);
+
+  const label = document.createElement('span');
+  label.textContent = panel.title;
+  item.append(iconSvg(panel.icon), label);
+
+  // Yüklenmemiş modül menüde durur ama durumu belli olur.
+  if (panel.state && panel.state !== 'loaded') {
+    item.classList.add('idle');
+    item.title = panel.reason || 'Modül yüklenmedi.';
+  }
+
+  item.addEventListener('click', () => select(panel.id));
+  return item;
+}
+
+/**
+ * Kenar çubuğu — iki seviyeli ve katlanabilir.
+ *
+ * NEDEN KATLANIYOR. Elli bir ekran düz çizildiğinde şerit ~1800px oluyor ve
+ * kenar çubuğu ~800px görüyor; kullanıcı her gidişte kaydırıyordu. Katlanınca
+ * aynı anda on satır görünür.
+ *
+ * ARAMA KATLAMAYI EZER: bir bölümde eşleşme varsa o bölüm geçici olarak
+ * açılır. Aksi hâlde aranan ekran kapalı bir başlığın içinde kalır ve arama
+ * "sonuç yok" der gibi görünürdü.
+ *
+ * ETKİN EKRANIN BÖLÜMÜ HER ZAMAN AÇIKTIR: kullanıcının nerede olduğunu
+ * gizlemek, menüyü bir bilmeceye çevirir.
+ */
 function renderNav(query = '') {
   const needle = fold(query.trim());
   const matches = needle
-    ? shell.panels.filter((panel) => fold(panel.title).includes(needle) || fold(panel.group).includes(needle))
+    ? shell.panels.filter((panel) => fold(panel.title).includes(needle)
+      || fold(panel.group).includes(needle))
     : shell.panels;
 
   el.nav.replaceChildren();
@@ -55,32 +112,65 @@ function renderNav(query = '') {
     return;
   }
 
-  for (const { group, panels } of groupPanels(shell.registry, matches)) {
+  const open = openSet();
+  const aramaVar = Boolean(needle);
+
+  for (const top of navTree(shell.registry, matches)) {
+    const bolumler = top.sections;
+    // Alt bölümü olmayan üst başlık ESKİSİ GİBİ düz çizilir: tek ekranlık bir
+    // grubu katlanabilir yapmak, tıklanacak bir şey olmadan tık istemektir.
+    if (bolumler.length === 0) {
+      const heading = document.createElement('p');
+      heading.className = 'nav-group';
+      heading.textContent = top.title;
+      el.nav.append(heading);
+      for (const panel of top.panels) el.nav.append(navButton(panel));
+      continue;
+    }
+
     const heading = document.createElement('p');
     heading.className = 'nav-group';
-    heading.textContent = group;
+    heading.textContent = top.title;
     el.nav.append(heading);
 
-    for (const panel of panels) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'nav-item';
-      item.dataset.id = panel.id;
-      item.setAttribute('aria-current', panel.id === shell.activeId ? 'page' : 'false');
-      item.classList.toggle('active', panel.id === shell.activeId);
+    // Üst başlığın doğrudan ekranları bölümlerin ÜSTÜNDE durur.
+    for (const panel of top.panels) el.nav.append(navButton(panel));
 
+    for (const section of bolumler) {
+      const key = `${top.title}${' / '}${section.title}`;
+      const etkin = section.panels.some((panel) => panel.id === shell.activeId);
+      const acik = aramaVar || etkin || open.has(key);
+
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = `nav-section${acik ? ' open' : ''}`;
+      toggle.setAttribute('aria-expanded', acik ? 'true' : 'false');
+
+      const caret = document.createElement('span');
+      caret.className = 'nav-caret';
+      caret.setAttribute('aria-hidden', 'true');
       const label = document.createElement('span');
-      label.textContent = panel.title;
-      item.append(iconSvg(panel.icon), label);
+      label.textContent = section.title;
+      const count = document.createElement('span');
+      count.className = 'nav-count';
+      count.textContent = String(section.panels.length);
+      toggle.append(caret, label, count);
 
-      // Yüklenmemiş modül menüde durur ama durumu belli olur.
-      if (panel.state && panel.state !== 'loaded') {
-        item.classList.add('idle');
-        item.title = panel.reason || 'Modül yüklenmedi.';
+      toggle.addEventListener('click', () => {
+        const now = openSet();
+        if (now.has(key)) now.delete(key);
+        else now.add(key);
+        saveOpen(now);
+        renderNav(el.filter?.value || '');
+      });
+      el.nav.append(toggle);
+
+      if (!acik) continue;
+      for (const panel of section.panels) {
+        const item = navButton(panel);
+        item.classList.add('nav-nested');
+        el.nav.append(item);
       }
-
-      item.addEventListener('click', () => select(panel.id));
-      el.nav.append(item);
     }
   }
 }

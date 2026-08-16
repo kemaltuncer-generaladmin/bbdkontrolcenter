@@ -25,8 +25,12 @@
 //  · Kargo bedeli kendiliğinden iade edilmez — kutu her iadede tek tek işaretlenir.
 //  · Mağazanın hesabı bizimkinden farklı çıkabilir; uygulanan MAĞAZANINKİDİR ve
 //    fark ekranda kırmızı yazar.
-//  · `/api/admin/bbd/*` uçları hâlâ yazılıyor. Yoksa o bölüm KAPALI görünür ve
-//    "uç hazır olunca açılacak" der; ekranın geri kalanı çalışır.
+//  · `/api/admin/bbd/*` uçları YAYINDA (ölçüm 2026-08-16); bir dönem 404
+//    dönüyorlardı ve bu satır "hâlâ yazılıyor" diyordu. Uç yine de yoksa
+//    (geri çekilirse) o bölüm KAPALI görünür ve "uç hazır olunca açılacak"
+//    der; ekranın geri kalanı çalışır. Bölümün açık/kapalı olduğunu bu dosya
+//    KARAR VERMEZ — sunucudan gelen `sources.*.available` çizer; buraya
+//    gömülü bir "yayında değil" varsayımı ekranda yanlış durum çizerdi.
 //
 // ORTAK BİLEŞENLER kabuğun kitinden gelir (docs/adr/0011). Import yolu
 // KOPYALANMIŞ konuma göredir: shell/panels/store_refunds/ → shell/ui-kit/.

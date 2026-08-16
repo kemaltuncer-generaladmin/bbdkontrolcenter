@@ -52,8 +52,8 @@ ui:
   nav:
     title: "Ürünler"
     icon: box
-    group: "BBD Store"
-    order: 20
+    group: "BBD Store / Katalog"
+    order: 260
     requires: [store_products.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

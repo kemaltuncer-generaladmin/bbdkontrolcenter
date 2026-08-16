@@ -44,8 +44,8 @@ ui:
   nav:
     title: "İadeler"
     icon: rotate
-    group: "BBD Store"
-    order: 140
+    group: "BBD Store / Satış ve Kargo"
+    order: 240
     requires: [store_refunds.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

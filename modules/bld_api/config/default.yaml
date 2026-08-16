@@ -1,0 +1,33 @@
+# BLD geçidi varsayılanları.
+# İmza sırrı BURAYA YAZILMAZ: kasadan gelir
+# (config/local.yaml → secrets."server.bld.control_secret").
+
+# Taban adres BOŞ bırakılır ve config/local.yaml içindeki
+# modules.bld_api.base_url ile verilir. Canlı adres depoya yazılmaz; boşken
+# geçit ilk istekte anlaşılır bir config_missing hatası döner.
+base_url: ""
+
+timeout_seconds: 30
+
+# ACİL FREN. Açıkken GET dışı hiçbir istek sunucuya gitmez. Varsayılan AÇIK:
+# canlı mutfakta çalışıyoruz, yazma yetkisi bilinçli olarak verilir.
+read_only: true
+
+# Yazma metotlarının `dry_run` varsayılanı (sözleşme §4). KAPALI (K-22 §4):
+# kuru prova arayüzden kaldırıldı, panelde şalteri yok ve bayrak gönderilmiyor.
+# Açık bırakılsaydı her yazma sessizce bir provaya döner ve ekran "yazıldı"
+# derken sunucuda hiçbir şey değişmezdi.
+#
+# BAYRAĞIN KENDİSİ DURUYOR: `dry_run=True` veren bir çağrı hâlâ prova yapar
+# (sözleşme §4 additive'dir; kaldırmak eski çağrıları kırardı). Yazmanın asıl
+# emniyeti artık tek başına `read_only` acil frenidir.
+dry_run_default: false
+
+# Gerekçesiz (en az 10 karakter) ve aktörsüz yazma reddedilir — sözleşme §3
+# ikisini de zorunlu sayıyor. Kapatmak denetim izini işe yaramaz kılar.
+require_reason: true
+
+# HIZ KOVASI. Sunucu sınırı saatlik: `throttle:bld-control` = 1200/saat/IP.
+# Kova dakikalıktır ve 18'de durur — 18 × 60 = 1080 < 1200, yani dakikalık
+# bir patlama saatlik bütçeyi tüketemez ve pay elle atılan istekler için kalır.
+requests_per_minute: 18

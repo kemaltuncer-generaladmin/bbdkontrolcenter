@@ -296,9 +296,14 @@ class NotificationsService:
                          cost_min: int | None, cost_max: int | None,
                          failed_only: bool) -> dict[str, Any]:
         # KANIT OLMAYAN SÜZGEÇ GÖNDERİLMEZ. Buraya eskiden her istekte
-        # `channel_code` konuyordu; ne uygulandığı kanıtlanabiliyor (uç henüz
-        # yayında değil) ne de bir işe yarıyor: canlıda TEK kanal var
-        # (`id: 1`, `code: "default"`). Laravel tanımadığı parametreyi sessizce
+        # `channel_code` konuyordu; ne uygulandığı kanıtlanabiliyor ne de bir
+        # işe yarıyor: canlıda TEK kanal var (`id: 1`, `code: "default"`).
+        # Bir dönem gerekçe "geçmiş ucu henüz yayında değil" diye yazılıydı;
+        # artık öyle değil — `GET /api/admin/bbd/notifications` 200 dönüyor
+        # (2026-08-16) ama GEÇMİŞ DEĞİL DURUM veriyor (`{fcmEnabled,
+        # campaignNotificationsEnabled, broadcastTopic, deviceCount}`), yani
+        # süzülecek bir liste hiç yok. Süzgecin uygulandığını gösterecek kanıt
+        # bu yüzden hâlâ üretilemiyor. Laravel tanımadığı parametreyi sessizce
         # yok sayar, tanıyıp da kimlik beklerse listeyi sessizce BOŞALTIR —
         # Siparişler ekranında `channel=default` tam olarak bunu yapmıştı.
         # `channel` ayarı yalnız mağaza ayarı okurken kullanılır
@@ -585,20 +590,52 @@ class NotificationsService:
         """
         return getattr(failure, "code", "") == "bbd_endpoint_missing"
 
+    #: Kural YAZMA neden hiç açılmıyor — kullanıcıya AYNEN bu cümle gider.
+    #:
+    #: CANLIDA DOĞRULANDI (2026-08-16, `php artisan route:list --path=
+    #: api/admin/bbd/notifications`): önek altında yalnız üç rota var —
+    #: `GET notifications` (durum), `GET notifications/rules` (liste) ve
+    #: `POST notifications/send`. Kural için POST/PUT YOK.
+    #:
+    #: BİR DÖNEM BAŞKA TÜRLÜ DENİYORDU: "kural ucu henüz dağıtılmadı, liste
+    #: 404 dönüyor; yazma da okuma ile aynı pakette gelecek". İkisi de artık
+    #: doğru değil. Okuma ucu YAYINDA (2026-08-16, 200 ve gerçek kural
+    #: listesi); yazma ucu ise gecikmedi, mağaza onu BİLEREK yazmadı —
+    #: kurallar veritabanında değil KODDA yaşıyor (her biri bir `Event::listen`
+    #: satırı ya da bir zamanlayıcı kaydı) ve düzenlenebilir bir kural tablosu
+    #: aynı gerçeğin ikinci kopyasını üretirdi: tablo "kapalı" derken dinleyici
+    #: bildirim göndermeye devam ederdi. Gerekçenin kaynağı mağazanın kendi
+    #: rota dosyasıdır ("Bildirim kuralları — YALNIZ OKUMA").
+    #:
+    #: Eski varsayım bırakılsaydı ekran daha kötü bir yalan söylerdi: liste
+    #: artık geldiği için "Yeni kural" düğmesi AÇIK görünür, kullanıcı formu
+    #: doldurup gerekçe yazar ve ancak ondan sonra reddedilirdi.
+    RULE_WRITE_REASON = (
+        "Kurallar mağazada KOD içinde yaşar (her biri bir olay dinleyicisi); mağazada "
+        "düzenlenebilir bir kural ucu bilerek yazılmadı, çünkü ikinci bir kopya "
+        "ayrıştığında hiçbir belirti kalmazdı. Liste buradan OKUNUR; değişiklik mağaza "
+        "kodundan yapılır."
+    )
+
     async def rules(self) -> dict[str, Any]:
+        """Kural listesi — SALT OKUNUR.
+
+        Uç bir gün geri çekilirse ekran ayakta kalmalı (K7): okuma hatası
+        yutulur, liste boş döner ve neden yazılır.
+        """
         try:
             payload = await self._api.bbd_notification_rules()
-        except Exception as failure:  # noqa: BLE001 — uç henüz yayında olmayabilir
+        except Exception as failure:  # noqa: BLE001 — uç geri çekilmiş olabilir (K7)
             self._log.warning("kurallar okunamadı", error=str(failure))
-            # Kural YAZMA ucu okuma ucuyla aynı pakette geliyor: liste 404
-            # dönüyorsa yazma da dönecektir. Düğmeyi açık bırakmak, kuralı
-            # kurdurup gerekçe yazdırdıktan sonra reddetmek olurdu.
             return {"ok": True, "connected": False, "error": self._fail(failure),
-                    "endpointPending": self._pending(failure), "items": []}
+                    "endpointPending": self._pending(failure), "items": [],
+                    "writable": False, "writeReason": self.RULE_WRITE_REASON}
         rows = [messaging.rule_row(item) for item in (payload.get("items") or [])
                 if isinstance(item, dict)]
+        # Liste okunsa da YAZMA açılmaz; nedeni "okuyamadık" değil, "mağazada
+        # öyle bir uç yok". İki neden ekranda ayrı cümlelerle anlatılır.
         return {"ok": True, "connected": True, "error": "", "endpointPending": False,
-                "items": rows}
+                "items": rows, "writable": False, "writeReason": self.RULE_WRITE_REASON}
 
     async def save_rule(self, *, rule_id: int | None, event: str, channel: str,
                         template: str, condition: str = "", delay_minutes: int = 0,

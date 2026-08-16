@@ -1,49 +1,48 @@
 # Zil sistemi modülü
 # Şema: docs/schemas/module.schema.json
 #
-# ZİL GERÇEKTEN ÇALAR: ses `audio`, tetikleme `scheduler` platform
-# yeteneğinden gelir; ders saatleri Ders Takvimi modülünden okunur (K3).
+# ZİL GERÇEKTEN ÇALAR. İki hedefi vardır:
+#   1. Okulun zil sistemine bağlı Windows bilgisayarı (asıl hoparlör) —
+#      `store.api` üzerinden bbdstore köprüsüne komut yazılır.
+#   2. Yerel ses aygıtı — `audio` yeteneği; yedek ve geliştirme içindir.
+#
+# BAĞIMLILIK YÖNÜ TERSİNE ÇEVRİLDİ. Eskiden ders saatleri Ders Takvimi'nindi ve
+# zil onları okuyordu. Artık haftalık zil saatlerinin ve grupların sahibi burasıdır;
+# Ders Takvimi ekranı `bell.week` yeteneğinden okuyup SALT OKUNUR gösterir (K3).
 
 id: bell
 name: "Zil Sistemi"
-description: "Kurum zilinin zamanlanması, çalınması ve takvim/istisna yönetimi."
-version: 0.1.0
+description: "Haftalık zil saatleri, sesli anons ve grup çağrısı."
+version: 0.2.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
 entrypoint: backend.module:register
 
-# Ders saatlerinin sahibi bizden önce yüklenmeli.
-depends: [bbd_class_schedule]
+depends: []
 
 provides:
-  - capability: bell.schedule
-    contract: km_sdk.contracts:BellScheduleProvider
-    description: "Zil takvimini okuma ve düzenleme yüzeyi."
+  - capability: bell.week
+    contract: backend.service:BellService.week
+    description: "Haftalık zil saatleri ve gruplar — salt okunur."
 
 consumes:
-  # Ders saatleri Ders Takvimi modülünündür; zil onları kopyalamaz, okur (K3/K5).
-  # optional: modül silinse bile zil ayakta kalır, ekran boş durumla açılır (K7).
-  - capability: bbd_class_schedule.week
-    optional: true
-    reason: "Ders başı ve ders sonu zilleri haftalık ders saatlerinden kurulur."
   - capability: audio
-    reason: "Zil sesini yerel ses aygıtından çalmak için."
+    reason: "Sesi yerel aygıttan çalmak (yedek yol) ve ses dosyalarını çözmek için."
   - capability: scheduler
-    reason: "Ders/mesai saatlerine göre tetikleme."
-  - capability: ssh
-    optional: true
-    reason: "Zil uzak bir makinede çalınacaksa komut göndermek için."
+    reason: "Haftalık zil saatlerine göre tetikleme."
+  - capability: secrets
+    reason: "Vertex servis hesabı ve köprü belirteci kasadan okunur (K8)."
   - capability: notify
     optional: true
-    reason: "Çalma başarısız olduğunda uyarı."
+    reason: "Zil çalınamadığında uyarı."
 
 events:
   publishes:
     - name: bell.rang
-      description: "Bir zil başarıyla çalındığında yayınlanır."
+      description: "Bir zil ya da anons başarıyla çalındığında yayınlanır."
     - name: bell.failed
-      description: "Zil çalınamadığında yayınlanır."
+      description: "Çalınamadığında yayınlanır."
   subscribes: []
 
 http:
@@ -65,18 +64,30 @@ ui:
 # Katalog ve rol matrisi: docs/permissions.md
 permissions:
   - key: bell.view
-    description: "Zil takvimini görüntüleme."
-    default_roles: [admin, org_staff]
+    description: "Zil saatlerini, grupları ve çalma günlüğünü görüntüleme."
+    default_roles: [admin, org_staff, bbd_staff]
   - key: bell.manage
-    description: "Zil takvimini ve seslerini düzenleme."
+    description: "Zil saatlerini, grupları, sesleri ve anons metinlerini düzenleme."
     default_roles: [admin, org_staff]
   - key: bell.ring_now
-    description: "Elle zil çalma."
-    default_roles: [admin, org_staff]
+    description: "Elle zil çalma ve grup çağırma."
+    default_roles: [admin, org_staff, bbd_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11 — ADR 0008).
+dependencies:
+  python:
+    - "httpx>=0.28"           # Vertex ve köprü istekleri
+    # Servis hesabı JWT'si RS256 ile imzalanır. `google-auth` KULLANILMIYOR:
+    # erişim belirteci için senkron `requests` taşıyıcısı istiyor. Akış küçük,
+    # kasa zaten cryptography'e dayanıyor (bkz. backend/speech.py başlığı).
+    - "cryptography>=43"
+  capabilities_note: >
+    Ses çalma `audio`, tetikleme `scheduler`, sır erişimi `secrets` platform
+    yeteneğinden gelir; burada tekrar edilmez.
 
 migrations: backend/migrations
 

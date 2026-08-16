@@ -1,12 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "bbd_class_schedule ayarları",
+  "description": "Salt okunur ekranın ayarı yoktur; fazladan anahtar reddedilir.",
   "type": "object",
   "additionalProperties": false,
-  "properties": {
-    "default_duration_minutes": {
-      "type": "integer", "minimum": 1, "maximum": 600,
-      "description": "Yeni ders bloğunun varsayılan süresi (dakika)."
-    }
-  }
+  "properties": {}
 }

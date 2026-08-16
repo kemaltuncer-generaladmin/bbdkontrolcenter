@@ -110,7 +110,8 @@ async def test_dusuk_cozunurluklu_slot_listede_uyarisiyla_gelir() -> None:
     result = await service.overview(area="slider")
     yaz = next(row for row in result["items"] if row["id"] == 2)
     assert yaz["sizeState"] == slots.SIZE_BLURRY
-    assert yaz["sizeNote"] == "Önerilen 1920x640; yüklenen 1200x400 — mobilde bulanık."
+    assert yaz["sizeNote"] == ("Bu bölüm 1920x640 piksel ister; seçtiğiniz görsel 1200x400 "
+                               "— küçük kaldığı için telefonda bulanık çıkar.")
 
 
 async def test_ozet_ve_onerilen_olculer_yanitla_birlikte_gelir() -> None:
@@ -128,7 +129,7 @@ async def test_gorsel_denetimi_yazmadan_once_karari_verir_aga_cikmaz() -> None:
     verdict = service.check_image(area="slider", data=png_data_url(1200, 400))
     assert verdict["ok"] is True
     assert verdict["sizeState"] == slots.SIZE_BLURRY
-    assert verdict["sizeNote"].endswith("mobilde bulanık.")
+    assert verdict["sizeNote"].endswith("telefonda bulanık çıkar.")
     assert api.calls == []          # denetim tamamen yerel
 
 
@@ -152,7 +153,8 @@ async def test_alt_metni_bos_birakilan_slot_kaydedilmez() -> None:
     result = await service.save(1, patch={"altText": ""}, reason=GEREKCE, actor="Ayşe",
                                 dry_run=False)
     assert result["ok"] is False
-    assert "alt metni" in result["error"]
+    assert "Görsel açıklaması" in result["error"]
+    assert "Dosya adı değil" in result["error"]          # NE yazılacağı da söylenir
     assert api.used("bbd_save_carousel_slot") == []      # mağazaya HİÇ gidilmedi
 
 
@@ -221,7 +223,8 @@ async def test_duyuru_seridine_gorsel_yuklenmez() -> None:
                                              "link": "/kargo"},
                                 image=png_data_url(100, 40), reason=GEREKCE, actor="Ayşe")
     assert result["ok"] is False
-    assert "görsel yüklenmez" in result["error"]
+    assert "yalnız metin gösterir" in result["error"]
+    assert "Tanıtım görselleri" in result["error"]       # sıradaki adım
     assert api.used("bbd_save_carousel_slot") == []
 
 
@@ -233,7 +236,9 @@ async def test_salt_okunur_kayit_duzenlenemez_ve_nedeni_soylenir() -> None:
 
     result = await service.save(7, patch={"title": "Yeni"}, reason=GEREKCE, actor="Ayşe")
     assert result["ok"] is False
-    assert "SALT OKUNUR" in result["error"]
+    # ENGEL İKİ CÜMLEDİR: neden + sıradaki adım (bkz. geliver.py BLOCKER_ACTIONS).
+    assert "yalnız BAKABİLİRSİNİZ" in result["error"]
+    assert "Sıradaki adım" in result["error"]
 
 
 # =========================================================== yayın durumu
@@ -252,7 +257,7 @@ async def test_ayni_duruma_ikinci_kez_yazilmaz() -> None:
     service, api, _ = _service()
     result = await service.set_status(3, published=False, reason=GEREKCE, actor="Ayşe")
     assert result["ok"] is False
-    assert result["error"] == "Slot zaten bu durumda."
+    assert result["error"] == "Bu zaten istediğiniz durumda; değişecek bir şey yok."
     assert api.used("bbd_save_carousel_slot") == []
 
 
@@ -260,7 +265,8 @@ async def test_olmayan_slot_anlasilir_hata_verir() -> None:
     service, _, _ = _service()
     result = await service.set_status(404, published=True, reason=GEREKCE, actor="Ayşe")
     assert result["ok"] is False
-    assert "bulunamadı" in result["error"]
+    assert "artık listede yok" in result["error"]
+    assert "Yenile" in result["error"]                   # sıradaki adım
 
 
 # ================================================================== sıra
@@ -290,7 +296,9 @@ async def test_salt_okunur_gorunumde_sira_yazilmaz() -> None:
 
     result = await service.reorder(area="slider", order=[7], reason=GEREKCE, actor="Ayşe")
     assert result["ok"] is False
-    assert "yayınlanınca" in result["error"]
+    # İKİ NEDEN AYRI AYRI sayılır ve kullanıcının suçlu olmadığı söylenir.
+    assert "sizden kaynaklanmıyor" in result["error"]
+    assert "Sıradaki adım" in result["error"]
 
 
 # ========================================================= görsel yükleme
@@ -303,7 +311,7 @@ async def test_yuklemede_oran_uyarisi_onaylanmadan_aga_cikilmaz() -> None:
                                         reason=GEREKCE, actor="Ayşe", dry_run=False)
     assert result["ok"] is False
     assert result["needsConfirm"] is True
-    assert "kırpılacak" in result["cropNote"]
+    assert "KESİLECEK" in result["cropNote"]
     assert api.used("upload_media") == []
 
 
@@ -341,7 +349,10 @@ async def test_uc_yayinda_degilse_ekran_hata_degil_bekleniyor_der() -> None:
                                         reason=GEREKCE, actor="Ayşe", dry_run=False)
     assert result["ok"] is False
     assert result["pending"] is True
-    assert "yayınlandığı gün" in result["error"]
+    # "Bu sizin hatanız değil" + "yapacağınız iş değişmiyor": bekleyen bir uç,
+    # kullanıcıya hata gibi gösterilmez (K7).
+    assert "sizin hatanız değil" in result["error"]
+    assert "Kaydet" in result["error"]
     assert [row["result"] for row in store.audit] == ["denendi", "beklemede"]
 
 
@@ -372,7 +383,8 @@ async def test_duyuru_seridine_dosya_yuklenmez() -> None:
     result = await service.upload_image(data=png_data_url(600, 200), area="announcement",
                                         reason=GEREKCE, actor="Ayşe")
     assert result["ok"] is False
-    assert "görsel yüklenmez" in result["error"]
+    assert "yalnız metin gösterir" in result["error"]
+    assert "Tanıtım görselleri" in result["error"]       # sıradaki adım
     assert api.used("upload_media") == []
 
 

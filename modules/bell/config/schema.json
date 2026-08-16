@@ -4,7 +4,37 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "default_sound": { "type": "string", "description": "Varsayılan zil sesi adı." },
-    "default_volume": { "type": "integer", "minimum": 0, "maximum": 100 }
+    "default_sound": { "type": "string", "description": "Varsayılan teneffüs zili dosyası." },
+    "default_volume": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "play_locally": {
+      "type": "boolean",
+      "description": "Windows ajanına ek olarak yerel ses aygıtından da çalınsın mı."
+    },
+    "vertex": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Anons sesi üretimi. Kimlik bilgisi buraya YAZILMAZ, kasadan gelir (K8).",
+      "properties": {
+        "project_id": { "type": "string" },
+        "location": { "type": "string" },
+        "model": { "type": "string" },
+        "voice": { "type": "string" },
+        "timeout_seconds": { "type": "number", "minimum": 1 },
+        "min_interval_seconds": { "type": "number", "minimum": 0 },
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "backoff_seconds": { "type": "number", "minimum": 0 },
+        "backoff_cap_seconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "bridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Windows zil ajanının haberleştiği bbdstore köprüsü.",
+      "properties": {
+        "base_url": { "type": "string" },
+        "timeout_seconds": { "type": "number", "minimum": 1 },
+        "lead_seconds": { "type": "integer", "minimum": 0, "maximum": 300 }
+      }
+    }
   }
 }

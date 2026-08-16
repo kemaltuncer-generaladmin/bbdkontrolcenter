@@ -774,6 +774,191 @@ class RequestsService:
         return {"ok": not failed, "error": error, "applied": applied, "failed": failed,
                 "dryRun": dry_run}
 
+    # ========================================================= iade kargosu
+    #
+    # MÜŞTERİ ÜRÜNÜ NASIL GERİ GÖNDERECEK — bu ekranın cevapsız kalan sorusu.
+    # Talep onaylandıktan sonra operatörün elinde talep vardır, gönderi kimliği
+    # yoktur; mağaza tarafında bu yüzden ayrı bir denetleyici var ve girdisini
+    # TALEP kimliğinden alır (`ReturnShipmentController`).
+    #
+    # ÜÇ ADIM AYRI DÜĞMEDİR VE YALNIZCA BİRİ PARA HARCAR:
+    #   1. "İade kargosu aç"  → para YOK, mükerrer korumalı, geri alınabilir.
+    #   2. "Etiketi satın al" → PARA HARCAR. Ayrı izin (`store_requests.purchase`),
+    #      20 karakter gerekçe, `dryRun` varsayılanı açık.
+    #   3. "Durumu tazele"    → yalnız okur; "ürün elimize ulaştı mı" bundan çıkar.
+    #
+    # Onaylanan her talep etiketle sonuçlanmaz: müşteri ürünü kendi getirebilir,
+    # kargoya vermeden vazgeçebilir, talep sonradan reddedilebilir. Etiketi
+    # onayla birlikte otomatik almak, bu üç durumun her birinde bize kesilmiş
+    # bir fatura demektir.
+    #
+    # PARA İADESİ BURADAN YAPILMAZ ve kargo hareketi talebin DURUMUNU
+    # DEĞİŞTİRMEZ. Panelin "Bankaya iade gönder" düğmesi yalnız talep
+    # "Onaylandı" iken açıktır; talebi otomatik ilerletmek o düğmeyi tam da
+    # ürün elimize ulaştığı anda KAPATIRDI.
+
+    async def shipment(self, request_id: int) -> dict[str, Any]:
+        """Talebin iade kargosu — SALT OKUMA, hiçbir şey açmaz.
+
+        GÖNDERİ YOKSA HATA DEĞİLDİR: uç 200 + `shipment: null` döner ve ekran
+        "kargo yok, açabilirsiniz" der. Uç ya da Geliver kapalıysa ekran
+        DÜŞMEZ (K7): `connected: False` döner, talebin geri kalanı çalışır.
+
+        Etiket künyesi AYRI ve İSTEĞE BAĞLI bir istektir: yalnız etiket satın
+        alınmışsa sorulur. Alınmamışken sormak her satır için bir 409 üretir
+        ve hız kovasından boşuna pay yer.
+        """
+        try:
+            raw = await self._api.bbd_return_request_shipment(int(request_id))
+        except Exception as failure:  # noqa: BLE001 — K7: talep ekranı düşmesin
+            self._log.info("iade kargosu okunamadı", requestId=request_id, error=str(failure))
+            return {"ok": False, "connected": False, "error": self._fail(failure),
+                    "shipment": rma.return_shipment_row({}), "label": {}}
+
+        row = rma.return_shipment_row(raw)
+        label: dict[str, Any] = {}
+        if row["labelPurchased"]:
+            try:
+                label = await self._api.bbd_return_request_label_info(int(request_id))
+            except Exception as failure:  # noqa: BLE001 — künye yoksa kargo yine görünür
+                self._log.info("iade etiketi künyesi okunamadı", requestId=request_id,
+                               error=str(failure))
+        return {"ok": True, "connected": True, "error": "", "shipment": row,
+                "label": label if isinstance(label, dict) else {}}
+
+    async def open_shipment(self, request_id: int, *, reason: str, actor: str,
+                            dry_run: bool = True) -> dict[str, Any]:
+        """İade gönderisini açar. PARA HARCAMAZ, ETİKET ALMAZ.
+
+        Mükerrer korumalıdır: aynı talep için ikinci gönderi açılmaz, var olan
+        döner. Bu yüzden düğmeye iki kez basmak hata göstermez.
+        """
+        problem = self._guard(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        await self._record(request_id=request_id, action="open_return_shipment", reason=reason,
+                           actor=actor, result="denendi")
+        try:
+            result = await self._api.bbd_open_return_request_shipment(
+                int(request_id), reason=reason, actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(request_id=request_id, action="open_return_shipment",
+                               reason=reason, actor=actor, result="hata",
+                               detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+
+        dry = bool(result.get("dryRun", dry_run))
+        await self._record(request_id=request_id, action="open_return_shipment", reason=reason,
+                           actor=actor, result="dry_run" if dry else "ok")
+        return {"ok": True, "error": "", "dryRun": dry,
+                "shipment": rma.return_shipment_row(result),
+                "notice": "Gönderi açıldı; ETİKET SATIN ALINMADI. Etiket ayrı bir düğmeyle "
+                          "ve ayrı yetkiyle alınır — onaylanan her talep etiketle "
+                          "sonuçlanmaz." if not dry else
+                          "Kuru prova: mağazaya gerçek istek gönderilmedi."}
+
+    async def sync_shipment(self, request_id: int, *, reason: str, actor: str,
+                            dry_run: bool = True) -> dict[str, Any]:
+        """Kargo durumunu taşıyıcıdan tazeler. YALNIZ OKUR.
+
+        "Ürün elimize ulaştı mı" sorusunun cevabı buradan gelir. Teslim
+        damgası bir kez atıldıktan sonra geri alınmaz; talebin DURUMU ise
+        değişmez (para iadesi panelden yapılır).
+        """
+        problem = self._guard(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        try:
+            result = await self._api.bbd_sync_return_request_shipment(
+                int(request_id), reason=reason, actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(request_id=request_id, action="sync_return_shipment",
+                               reason=reason, actor=actor, result="hata",
+                               detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+
+        dry = bool(result.get("dryRun", dry_run))
+        row = rma.return_shipment_row(result)
+        await self._record(request_id=request_id, action="sync_return_shipment", reason=reason,
+                           actor=actor, result="dry_run" if dry else "ok",
+                           detail={"stage": row["stage"], "received": row["received"]})
+        return {"ok": True, "error": "", "dryRun": dry, "shipment": row}
+
+    async def purchase_label(self, request_id: int, *, offer_id: str = "", reason: str,
+                             actor: str, dry_run: bool = True) -> dict[str, Any]:
+        """İADE ETİKETİNİ SATIN ALIR — PARA HARCAR, GERİ ALINAMAZ.
+
+        Gerekçe burada 20 karakter ister; uçtaki şema da öyle. İki yerde
+        doğrulanır çünkü istemci şemayı atlatabilir (K9). Yazma ÖNCESİ de
+        denetim izine satır atılır: istek zaman aşımına uğrarsa uzakta
+        uygulanmış olabilir ve "ne yapmaya çalıştık" kaydı yerelde kalmalı.
+
+        Mağaza ayrıca kendi kapısını tutar: ayrı yetki (`sales.geliver.purchase`),
+        `dryRun` varsayılanı açık ve satın alınmış gönderiye ikinci ödeme yok.
+        """
+        problem = rma.purchase_reason_error(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        await self._record(request_id=request_id, action="purchase_return_label", reason=reason,
+                           actor=actor, result="denendi", detail={"offerId": rma.text(offer_id)})
+        try:
+            result = await self._api.bbd_purchase_return_request_label(
+                int(request_id), offer_id=rma.text(offer_id), reason=reason, actor=actor,
+                dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(request_id=request_id, action="purchase_return_label",
+                               reason=reason, actor=actor, result="hata",
+                               detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+
+        dry = bool(result.get("dryRun", dry_run))
+        # KURU PROVADA TEKLİF LİSTESİ GELİR: ekran hangi taşıyıcının ne kadara
+        # alınacağını satın almadan önce gösterir. ZARF AÇILIR — mağaza prova
+        # yanıtını `wouldChange` içine sarıyor; kökten okumak listeyi her
+        # provada BOŞ gösterir ve ekran "teklif yok" derdi.
+        body = rma.dry_run_body(result)
+        offers = [item for item in (body.get("offers") or []) if isinstance(item, dict)]
+        await self._record(request_id=request_id, action="purchase_return_label", reason=reason,
+                           actor=actor, result="dry_run" if dry else "ok",
+                           detail={"offerId": rma.text(offer_id), "offers": len(offers)})
+        return {"ok": True, "error": "", "dryRun": dry, "offers": offers,
+                "offersReady": bool(body.get("offersReady")),
+                "shipment": rma.return_shipment_row(result),
+                "notice": ("Kuru prova: PARA HARCANMADI. Listeden teklif seçip “uygula” "
+                           "işaretlediğinizde etiket satın alınır."
+                           if dry else "Etiket satın alındı; tutar kargo hesabınızdan çıktı.")}
+
+    async def label(self, request_id: int) -> dict[str, Any]:
+        """Satın alınmış iade etiketini PDF olarak diske yazar ve yolunu döner.
+
+        BAYT İSTENİR, ADRES DEĞİL: Geliver'ın verdiği adres süreli imzalıdır
+        ve imza ölünce elde çalışmayan bir bağlantı kalır. Mağaza dosyayı
+        satın alma anında saklıyor; burada o kopya indirilir.
+
+        Etiket hazır değilse uç 409 döner ve mesajı doğrudan gösterilebilir
+        ("etiket henüz satın alınmadı" / "dosya okunamadı, senkronlayın").
+        """
+        try:
+            raw = await self._api.bbd_return_request_label(int(request_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": self._fail(failure)}
+        if not raw:
+            return {"ok": False,
+                    "error": "Mağaza boş bir etiket dosyası döndürdü; gönderiyi senkronlayıp "
+                             "tekrar deneyin."}
+
+        name = f"iade-etiketi-talep-{int(request_id)}.pdf"
+        try:
+            path = write_private(self._export_dir / name, bytes(raw))
+        except OSError as failure:
+            return {"ok": False, "error": f"Dosya yazılamadı: {failure}"}
+        await self._record(request_id=request_id, action="download_return_label", reason="",
+                           actor="", result="ok", detail={"bytes": len(raw)})
+        return {"ok": True, "error": "", "path": str(path), "name": name, "bytes": len(raw)}
+
     # ================================================================= rapor
 
     async def _scan(self, filters: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:

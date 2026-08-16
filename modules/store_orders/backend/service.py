@@ -55,7 +55,10 @@ SCAN_CAP = 2_000
 #: sürerdi. Canlıda 17 sipariş var, önbellekle ikinci tarama bedavaya gelir.
 DETAIL_CAP = 300
 
-BATCH_KINDS = ("ship", "invoice")
+# Toplu işlem türleri. "ship" KALDIRILDI: toplu kargoya verme Kargo
+# Yönetimi sihirbazına devredildi ve orada sipariş sipariş yürür. Yanlış desi
+# doğrudan yanlış faturadır ve tek onaylı toplu iş onu gizler.
+BATCH_KINDS = ("invoice",)
 
 #: Ödeme kanıtı önbelleğinin ömrü (saniye). Liste ve sayaç uçları arka arkaya
 #: çağrılıyor; ikisinin de aynı iki listeyi çekmesi geçidin dakikalık payını
@@ -84,6 +87,20 @@ SWEEP_CAP = 200
 
 def _now() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
+
+
+def _rma_status(item: dict[str, Any]) -> str:
+    """İade talebinin durum ADI — nesne de metin de gelebilir.
+
+    Mağazanın RMA ucu durumu ilişkili kayıt olarak açıyor
+    (`{id, title, color}`); `str()` ile metne çevirmek ekrana sözlüğün Python
+    yazımını basardı. `title` yoksa `name` denenir, o da yoksa boş dönülür:
+    uydurma bir durum adı, "Durum okunamadı" boşluğundan daha yanıltıcıdır.
+    """
+    status = ord_.pick(item, "status")
+    if isinstance(status, dict):
+        return ord_.text(ord_.pick(status, "title", "name", "label"))
+    return ord_.text(status)
 
 
 class PreviewError(RuntimeError):
@@ -559,12 +576,27 @@ class OrdersService:
         except Exception as failure:  # noqa: BLE001 — parça parça hata (K7)
             warnings.append(f"ödeme işlemleri: {self._fail(failure)}")
 
+        # CANLIDA DOĞRULANDI (2026-08-16): `GET /api/admin/bbd/return-requests`
+        # 200 dönüyor ve gerçek RMA kayıtları geliyor. Bir dönem bu uç yayında
+        # değildi ve ekran bölümü "uç yayınlanmadı" diye kapatıyordu; artık öyle
+        # değil. Aşağıdaki `except` dalı YİNE DE DURUYOR (K7): uç bir gün geri
+        # çekilirse künye ayakta kalmalı, sipariş kartı iade yüzünden çökmemeli.
+        #
+        # TUZAK — UÇ `order_id` SÜZGECİNİ UYGULAMIYOR. Denetleyici
+        # (`ReturnRequestController::applyFilters`) yalnız `status`, `from`, `to`
+        # okur; `order_id` sessizce yok sayılır ve uç BÜTÜN talepleri döndürür.
+        # Süzmeyi yerelde yapmayan kod, 20 numaralı siparişin künyesinde 9 ve 11
+        # numaralı siparişlerin taleplerini gösterirdi — hata da vermeden.
+        # Parametre yine gönderiliyor: uç bir gün süzgeci öğrenirse istek
+        # kendiliğinden ucuzlar, yerel süzgeç de zararsız kalır.
         returns: list[dict[str, Any]] = []
         returns_available = True
         try:
             payload = await self._api.bbd_return_requests({"order_id": int(order_id)})
-            returns = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
-        except Exception as failure:  # noqa: BLE001 — BBD ucu henüz yayında olmayabilir
+            returns = [item for item in (payload.get("items") or [])
+                       if isinstance(item, dict)
+                       and ord_.as_int(ord_.pick(item, "order_id")) == int(order_id)]
+        except Exception as failure:  # noqa: BLE001 — uç geri çekilebilir (K7)
             returns_available = False
             warnings.append(f"iade talepleri: {self._fail(failure)}")
 
@@ -589,7 +621,12 @@ class OrdersService:
             } for item in transactions],
             "returns": [{
                 "id": ord_.as_int(ord_.pick(item, "id")),
-                "status": ord_.text(ord_.pick(item, "status")),
+                # TUZAK — CANLIDA DOĞRULANDI (2026-08-16): `status` DÜZ METİN
+                # DEĞİL, `{id, title, color}` nesnesi geliyor. Doğrudan metne
+                # çeviren kod ekrana `{'id': 5, 'title': 'İade Edildi', ...}`
+                # yazardı: hata yok, sadece okunamayan bir hücre. Metin de
+                # gelebilir (uç sözleşmesi değişirse) — iki biçim de çözülür.
+                "status": _rma_status(item),
                 "reason": ord_.text(ord_.pick(item, "reason")),
                 "createdAt": ord_.text(ord_.pick(item, "created_at"))[:19],
             } for item in returns],
@@ -781,61 +818,26 @@ class OrdersService:
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
                 "partial": bool(clean)}
 
-    async def ship(self, order_id: int, *, items: dict[str, int] | None, carrier: str,
-                   track: str, source_id: int, reason: str, actor: str,
-                   dry_run: bool = True, raw: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Gönderi kaydı açar (Bagisto'nun KENDİ kaydı).
-
-        ETİKET SATIN ALINMAZ. Gerçek kargo etiketi Geliver üzerinden Kargo
-        Yönetimi ekranının işidir ve para harcar; burada yalnız "kargoya verildi"
-        kaydı düşülür.
-
-        `raw` — çağıran siparişi ZATEN OKUDUYSA künyesini verir. Toplu iş her
-        siparişi kalem adetleri için okuyor; müşteri SMS'i için ikinci kez
-        okumak, 200'lük bir toplu işte 200 gereksiz istek demekti.
-        """
-        problem = self._guard(reason)
-        if problem:
-            return {"ok": False, "error": problem}
-        clean = {str(key): max(0, ord_.as_int(value))
-                 for key, value in (items or {}).items() if ord_.as_int(key)}
-        if not clean:
-            return {"ok": False, "error": "Kargolanacak kalem seçilmedi."}
-
-        payload: dict[str, Any] = {
-            "shipment": {
-                "source": int(source_id) or 1,
-                "carrier_title": ord_.text(carrier),
-                "track_number": ord_.text(track),
-                "items": clean,
-            },
-        }
-        await self._record(order_id=order_id, action="ship", reason=reason, actor=actor,
-                           result="denendi", detail={"items": clean, "track": ord_.text(track)})
-        try:
-            result = await self._api.create_shipment(int(order_id), payload=payload,
-                                                     reason=reason, actor=actor, dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(order_id=order_id, action="ship", reason=reason, actor=actor,
-                               result="hata", detail={"error": str(failure)})
-            return {"ok": False, "error": self._fail(failure)}
-
-        await self._record(order_id=order_id, action="ship", reason=reason, actor=actor,
-                           result="dry_run" if dry_run else "ok", detail={"items": clean})
-
-        # MÜŞTERİYE "KARGOYA VERİLDİ" SMS'İ — yalnız GERÇEK gönderiden sonra.
-        # Kuru provada mağazada hiçbir şey değişmedi; müşteriye kargo kodu
-        # yazmak yalan olur ve tekrar engelinin kaydını boşa harcardı.
-        #
-        # SMS'İN PATLAMASI KARGOYU DÜŞÜRMEZ (K7): gönderi kaydı açılmıştır ve
-        # mesajın gitmemesi onu geri almaz. Sonuç yanıtta `sms` altında,
-        # nedeniyle döner — sessizce yutulmaz.
-        notice: dict[str, Any] = {"attempted": False, "sent": False, "note": ""}
-        if not dry_run:
-            notice = await self._after_ship(int(order_id), carrier=carrier, track=track,
-                                            actor=actor, raw=raw)
-        return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
-                "sms": notice}
+    # `ship()` KALDIRILDI — kargoya verme bu modülün işi DEĞİLDİR.
+    #
+    # KULLANICININ KURALI: "her şey — mesela sipariş kargoya mı verilecek —
+    # farklı yerde 'kargoya ver' olmasın."
+    #
+    # Metot Bagisto'nun KENDİ gönderi kaydını açıyordu: etiket satın
+    # alınmıyor, taşıyıcıya hiç gidilmiyor, paket yola çıkmıyordu. Üstelik
+    # gövdeyi `{"shipment": {…}}` sarmalıyla gönderdiği için canlı işlemci
+    # `source` ve `items`ı KÖKTEN okuyup boş buluyor ve isteği reddediyordu —
+    # yani muhtemelen tek satır bile yazmıyordu. Buna karşılık müşteriye
+    # "kargoya verildi" SMS'ini tetikliyordu.
+    #
+    # Gerçek zincir (gönderi aç → teklif al → müşterinin ödediği firmayı
+    # yeğle → etiket SATIN AL → takip numarasını yaz → etiket ve faturayı bas
+    # → müşteriye SMS) Kargo Yönetimi'nde koşar. Aşama SMS'inin sahibi de
+    # oraya geçti: gerçek takip numarası yalnız orada üretiliyor.
+    #
+    # `_after_ship` de bu yüzden kaldırıldı; "sipariş alındı" ve "teslim
+    # edildi" taramaları (`stage_sweep`) BU MODÜLDE KALIR — onların kaynağı
+    # bir tıklama değil, mağazanın durumudur.
 
     # ========================================================= toplu işlem
 
@@ -951,12 +953,10 @@ class OrdersService:
         applied = 0
         for item in targets:
             order_id = int(item["id"])
-            if kind == "invoice":
-                outcome = await self.invoice(order_id, items=None, reason=reason, actor=actor,
-                                             dry_run=dry_run)
-            else:
-                outcome = await self._ship_all(order_id, reason=reason, actor=actor,
-                                               dry_run=dry_run, carrier=wanted_carrier)
+            # TEK TÜR KALDI (`BATCH_KINDS`), dallanma yok. Kargo dalı
+            # buradan çıktı: toplu kargoya verme Kargo Yönetimi'nin işi.
+            outcome = await self.invoice(order_id, items=None, reason=reason, actor=actor,
+                                         dry_run=dry_run)
             applied += 1 if outcome.get("ok") else 0
             # SMS SONUCU SATIR SATIR TAŞINIR. "Yedi sipariş kargolandı" demek
             # yetmez: hangisinin müşterisine haber verilemediği ve NEDEN
@@ -996,31 +996,6 @@ class OrdersService:
         except (KeyError, TypeError, ValueError):
             return {}
         return params if isinstance(params, dict) else {}
-
-    async def _ship_all(self, order_id: int, *, reason: str, actor: str,
-                        dry_run: bool, carrier: str = "") -> dict[str, Any]:
-        """Siparişin kargolanmamış TÜM kalemlerini tek gönderiye koyar.
-
-        TAKİP NUMARASI BOŞ GİDER: her gönderinin numarası ayrıdır ve toplu işte
-        tek bir numara girmek, hepsini aynı pakete yazmak olurdu. Numara ya
-        taşıyıcıdan (Kargo Yönetimi) ya da tek tek çekmeceden girilir.
-        """
-        try:
-            raw = await self._api.order(int(order_id))
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"ok": False, "error": self._fail(failure)}
-        quantities = {str(item["id"]): item["invoiced"] - item["shipped"]
-                      for item in ord_.item_rows(raw)
-                      if item["invoiced"] - item["shipped"] > 0}
-        if not quantities:
-            return {"ok": False, "error": "Kargolanacak faturalı kalem yok."}
-        source = ord_.as_int(self._config.get("inventory_source_id"), 1)
-        # `raw` GEÇİRİLİR: sipariş yukarıda kalem adetleri için zaten okundu.
-        # Müşteri SMS'i künyeyi ondan çıkarır; ikinci bir `GET /orders/{id}`
-        # 200'lük bir toplu işte 200 gereksiz istek olurdu.
-        return await self.ship(int(order_id), items=quantities, carrier=ord_.text(carrier),
-                               track="", source_id=source, reason=reason, actor=actor,
-                               dry_run=dry_run, raw=raw)
 
     # ====================================================== müşteri aşama SMS'i
     #
@@ -1115,32 +1090,6 @@ class OrdersService:
             if view["track"] or view["trackUrl"]:
                 return view
         return {}
-
-    async def _after_ship(self, order_id: int, *, carrier: str, track: str, actor: str,
-                          raw: dict[str, Any] | None = None) -> dict[str, Any]:
-        """"Kargoya ver" tamamlandı — müşteriye takip kodunu yolla.
-
-        YALNIZ GERÇEK GÖNDERİDEN SONRA çağrılır. Kuru provada mağazada hiçbir
-        şey değişmedi; müşteriye "kargoya verildi" yazmak yalan olurdu ve
-        tekrar engelinin kaydını da boşa harcardı.
-        """
-        open_, why = await self._stage_open(stages.STAGE_SHIPPED)
-        if not open_:
-            return {"attempted": False, "sent": False, "note": why}
-        try:
-            source = raw if raw is not None else await self._api.order(int(order_id))
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"attempted": False, "sent": False,
-                    "note": f"Sipariş künyesi okunamadı, SMS gönderilmedi: {self._fail(failure)}"}
-        rows = self._rows([source], await self._prefs_view())
-        if not rows:
-            return {"attempted": False, "sent": False,
-                    "note": "Sipariş künyesi çözülemedi; SMS gönderilmedi."}
-        shipment = {} if ord_.text(track) else await self._shipment_of(order_id)
-        outcome = await self._notify_stage(stages.STAGE_SHIPPED, rows[0], shipment=shipment,
-                                           carrier=carrier, track=track, actor=actor,
-                                           dry_run=self._stage_dry_run)
-        return {"attempted": True, **outcome}
 
     async def stage_sweep(self, *, stage: str, actor: str = "",
                           dry_run: bool = True) -> dict[str, Any]:

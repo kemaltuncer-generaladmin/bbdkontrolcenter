@@ -46,11 +46,63 @@ import { reportChain } from '../../ui-kit/report.js';
 const BASE = '/api/store_bundles';
 
 const VALIDITY = {
-  always: 'Süresiz',
-  active: 'Yürürlükte',
-  scheduled: 'Başlamadı',
+  always: 'Her zaman geçerli',
+  active: 'Şu an geçerli',
+  scheduled: 'Tarihi gelmedi',
   expired: 'Süresi doldu',
 };
+
+// KELİMELER İŞ DİLİNDE — "bileşen" DEĞİL "içindeki ürün".
+//
+// Bu ekranı kullanan kişi yazılım bilmiyor. "Bileşen", "düzenleyici",
+// "künye", "bileşen toplamı − %x" hepsi doğruydu ve hiçbiri kullanıcının
+// sözlüğünde yoktu; en kötüsü "Bileşen toplamı − %x" idi: bir formül gibi
+// duruyor ama ne yaptığını söylemiyordu.
+//
+// ENGELLER — NEDEN + SIRADAKİ ADIM, tek yerde.
+// Desen `store_shipping/backend/geliver.py` içindeki `BLOCKER_ACTIONS`'tan
+// gelir: bir iş yapılamıyorsa ekran hem neden yapılamadığını hem de
+// kullanıcının ŞİMDİ ne yapacağını söyler.
+const BLOCKERS = {
+  NO_COMPONENTS: {
+    why: 'Bu sette hiç ürün yok. Bir set, en az bir üründen oluşur; içi boş bir kayıt '
+      + 'zaten sıradan bir üründür.',
+    next: 'Sıradaki adım: “Ürün ekle” deyip setin içine gireceklerini seçin.',
+  },
+  NO_SET_PRICE: {
+    why: 'Set fiyatı yazılmadığı için kâr hesaplanamıyor; şu an mağazadaki ürün fiyatı '
+      + 'geçerli.',
+    next: 'Sıradaki adım: “Set fiyatı” kutusuna müşterinin ödeyeceği tutarı yazın.',
+  },
+  NO_COST: {
+    why: 'İçindeki ürünlerden birinin ALIŞ fiyatı girilmemiş; eksik bilgiyle kâr hesabı '
+      + 'yanıltıcı olurdu, bu yüzden çizgi gösteriyoruz.',
+    next: 'Sıradaki adım: o ürünü Ürünler ekranında açıp “Maliyet” alanını doldurun.',
+  },
+  OUT_OF_STOCK: {
+    why: 'Bu set şu an satılamıyor: içindeki ürünlerden birinin stoğu yetmiyor.',
+    next: 'Sıradaki adım: Ürünler ekranından o ürünün stoğunu girin ya da ürünü setten '
+      + 'çıkarın.',
+  },
+  OFFLINE: {
+    why: 'Mağazaya ulaşılamadı; fiyat ve stok bilgisi okunamıyor.',
+    next: 'Sıradaki adım: internet bağlantısını kontrol edip “Tekrar dene” deyin.',
+  },
+  UNREADABLE: {
+    why: 'Bu setin ürün kaydı mağazadan okunamadı; fiyat ve stok bilgisi eksik.',
+    next: 'Sıradaki adım: “Yenile” deyin. Aşağıdaki set bilgileri burada kayıtlı ve '
+      + 'kaybolmadı.',
+  },
+};
+
+/** Engelin iki cümlesini tek kutuda gösterir (neden + sıradaki adım). */
+function blockerBox(key, tone = 'warn') {
+  const item = BLOCKERS[key];
+  const box = h('div', `kit-alert ${tone} sb-blocker`);
+  box.append(h('div', 'sb-blocker-why', item.why));
+  box.append(h('div', 'sb-blocker-next', item.next));
+  return box;
+}
 
 const EMPTY_STATE = {
   items: [], connected: false, error: '', notice: '', source: '', skipped: 0,
@@ -88,8 +140,13 @@ async function withBusy(label, work) {
   try {
     return await work();
   } catch (error) {
-    toast(error.message || 'İşlem başarısız.', 'bad');
-    nodes.status?.set(error.message || 'İşlem başarısız.', true);
+    // "İşlem başarısız" hiçbir şey anlatmıyordu. Sunucunun cevabı VARSA
+    // olduğu gibi gösterilir; yoksa en azından sıradaki adım yazılır.
+    const message = error.message
+      || 'Bu işlem tamamlanamadı. “Yenile” deyip yeniden deneyin; sürerse mağazaya '
+        + 'bakan kişiye haber verin.';
+    toast(message, 'bad');
+    nodes.status?.set(message, true);
     return null;
   } finally {
     busy = false;
@@ -103,7 +160,8 @@ function askReason({ title, description, confirmLabel }) {
     description,
     confirmLabel,
     minLength: 10,
-    placeholder: 'Gerekçe (en az 10 karakter) — denetim kaydına yazılır',
+    placeholder: 'Neden değiştiriyorsunuz? (en az 10 karakter) — "Okul listesi güncellendi" '
+      + 'gibi. Bu not kayda geçer.',
   });
 }
 
@@ -111,7 +169,8 @@ function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
   const loss = state.items.filter((row) => row.flags.loss).length;
   const risk = state.items.filter((row) => row.warning).length;
-  return `Bağlı · ${num(state.items.length)} set · ${num(loss)} zararına · ${num(risk)} uyarılı`;
+  return `Mağazaya bağlı · ${num(state.items.length)} set · ${num(loss)} tanesi zararına `
+    + `satılıyor · ${num(risk)} tanesinde dikkat edilecek bir durum var`;
 }
 
 function selectedRow() {
@@ -199,10 +258,11 @@ function profitCell(row) {
     // kullanıcı sayının neden yokluğunu öğrenemiyordu. Renk/boşluk tek başına
     // anlam taşımaz (kit kuralı 7).
     box.append(h('span', 'sb-sub',
-      calc.unknownCosts.length ? 'maliyet girilmemiş' : 'set fiyatı yok'));
+      calc.unknownCosts.length ? 'alış fiyatı girilmemiş' : 'set fiyatı yazılmamış'));
     box.title = calc.unknownCosts.length
-      ? `Maliyeti girilmemiş bileşen: ${calc.unknownCosts.join(', ')}`
-      : 'Set fiyatı belirlenmedi.';
+      ? `${BLOCKERS.NO_COST.why} Eksik olan: ${calc.unknownCosts.join(', ')}. `
+        + BLOCKERS.NO_COST.next
+      : `${BLOCKERS.NO_SET_PRICE.why} ${BLOCKERS.NO_SET_PRICE.next}`;
     return box;
   }
   // Renk tek başına anlam taşımaz: rakamın yanında her zaman yüzde/yazı durur.
@@ -223,12 +283,12 @@ const LIST_COLUMNS = [
       const box = h('span', 'sb-name');
       const head = h('span', 'sb-name-line');
       head.append(clip(h('b'), row.name, 34));
-      if (row.onCarousel) head.append(badge('ana sayfa', 'info'));
+      if (row.onCarousel) head.append(badge('ana sayfada gösteriliyor', 'info'));
       box.append(head);
       const sub = h('span', 'sb-sub');
       sub.textContent = row.warning
         ? row.warning
-        : `${row.components.length} bileşen · ${row.sku || 'SKU yok'}`;
+        : `içinde ${row.components.length} ürün · ${row.sku || 'stok kodu yok'}`;
       if (row.warning) sub.classList.add('sb-bad');
       box.append(sub);
       return box;
@@ -255,8 +315,15 @@ const LIST_COLUMNS = [
   {
     key: 'status',
     label: 'Durum',
-    width: '78px',
-    cell: (row) => badge(row.status ? 'Aktif' : 'Pasif', row.status ? 'good' : 'dim'),
+    width: '104px',
+    cell: (row) => {
+      const chip = badge(row.status ? 'Satışta' : 'Vitrinde yok',
+        row.status ? 'good' : 'dim');
+      chip.title = row.status
+        ? 'Müşteri bu seti görüyor ve satın alabiliyor.'
+        : 'Müşteri bu seti göremiyor. Silinmedi; istediğiniz gün geri alırsınız.';
+      return chip;
+    },
   },
 ];
 
@@ -264,22 +331,26 @@ function listEmpty() {
   if (!state.connected && !state.items.length) {
     return emptyState({
       title: 'Mağazaya ulaşılamadı',
-      text: state.error || 'Bağlantı kurulamadı.',
+      text: `${BLOCKERS.OFFLINE.why} ${BLOCKERS.OFFLINE.next}`
+        + (state.error ? ` (Mağazanın verdiği cevap: ${state.error})` : ''),
       actions: [button('Tekrar dene', { variant: 'primary', onClick: () => refresh() })],
     });
   }
   if (state.items.length) {
     return emptyState({
-      title: 'Süzgece uyan set yok',
-      text: `${num(state.items.length)} setin hiçbiri bu süzgece uymuyor.`,
+      title: 'Aramanıza uyan set yok',
+      text: `${num(state.items.length)} setin hiçbiri seçtiğiniz süzgeçlere uymuyor. `
+        + 'Süzgeçleri temizleyip yeniden bakın.',
       actions: [button('Filtreyi temizle', { onClick: () => nodes.filters.reset() })],
     });
   }
   return emptyState({
-    title: 'Henüz set tanımlanmadı',
-    text: 'Set = birden çok ürünün tek fiyatla satılması. Mağazada set ürün tipi yoktur; '
-      + 'set, “Setler” kategorisindeki bir üründür ve bileşenleri buradan tanımlanır.',
-    actions: [button('Yeni set', { variant: 'primary', onClick: newBundle })],
+    title: 'Henüz hiç set yok',
+    text: 'SET NEDİR: birkaç ürünü tek paket hâlinde, tek fiyata satmak. Örnek: '
+      + '“1. sınıf kırtasiye seti” — içinde defter, kalem ve silgi var, müşteri tek '
+      + 'fiyat ödüyor. Buradan setin içine hangi üründen kaç adet gireceğini ve '
+      + 'müşterinin ne kadar kazandığını belirlersiniz.',
+    actions: [button('Yeni set oluştur', { variant: 'primary', onClick: newBundle })],
   });
 }
 
@@ -302,7 +373,9 @@ function renderList() {
     nodes.table.update({ rows, empty: listEmpty() });
   }
   nodes.listBody.replaceChildren(nodes.table.node);
-  nodes.listCount.textContent = `${num(rows.length)} / ${num(state.items.length)} set`;
+  nodes.listCount.textContent = rows.length === state.items.length
+    ? `${num(state.items.length)} set`
+    : `${num(state.items.length)} setin ${num(rows.length)} tanesi gösteriliyor`;
 }
 
 // --------------------------------------------------------------- düzenleyici
@@ -326,9 +399,10 @@ function renderEditor() {
   const row = selectedRow();
   if (!row) {
     host.append(emptyState({
-      title: 'Soldan bir set seçin',
-      text: 'Seçilen setin bileşenleri, fiyatı ve kâr hesabı burada açılır.',
-      actions: [button('Yeni set', { variant: 'primary', onClick: newBundle })],
+      title: 'Soldaki listeden bir set seçin',
+      text: 'Seçtiğiniz setin içinde hangi ürünler olduğu, kaça satıldığı ve o setten '
+        + 'kazanıp kazanmadığınız burada açılır.',
+      actions: [button('Yeni set oluştur', { variant: 'primary', onClick: newBundle })],
     }));
     return;
   }
@@ -356,22 +430,22 @@ function renderEditor() {
   };
 
   const tabs = tabBar([
-    { key: 'edit', label: 'Düzenleyici' },
-    { key: 'history', label: 'İşlem geçmişi' },
+    { key: 'edit', label: 'Set bilgileri' },
+    { key: 'history', label: 'Kim ne değiştirmiş' },
   ], 'edit', (key) => paint(key));
   const pane = h('div', 'sb-pane');
 
   const head = h('div', 'sb-head');
   head.append(
     h('b', 'sb-title', row.name),
-    badge(row.status ? 'Aktif' : 'Pasif', row.status ? 'good' : 'dim'),
+    badge(row.status ? 'Satışta' : 'Vitrinde yok', row.status ? 'good' : 'dim'),
     badge(VALIDITY[row.validity] || row.validity, row.validity === 'expired' ? 'warn' : 'dim'),
   );
   if (row.sku) head.append(h('code', 'sb-sku', row.sku));
   head.append(h('span', 'kit-spacer'));
-  head.append(button('Ürünler ekranında aç', {
+  head.append(button('Bu ürünü Ürünler ekranında aç', {
     variant: 'ghost',
-    title: 'Set fiyatı, görsel ve kategori Ürünler ekranından düzenlenir',
+    title: 'Setin fotoğrafı, kategorisi ve mağazadaki fiyatı Ürünler ekranından değişir',
     onClick: () => open?.('store_products', { productId: row.id }),
   }));
 
@@ -388,30 +462,43 @@ function renderEditor() {
 
 function paintEditor(pane, row) {
   if (!row.readable) {
-    pane.append(alertBox(
-      'Bu setin ürün kaydı mağazadan okunamadı; fiyat ve stok bilgisi eksik. '
-      + 'Aşağıdaki künye yereldir ve kaybolmadı.', 'warn'));
+    pane.append(blockerBox('UNREADABLE'));
   }
   if (!row.hasPlan) {
     pane.append(hintBox(
-      'Bu setin bileşen künyesi henüz tanımlanmadı. Mağazadaki çapraz satış bağları '
-      + 'yalnız “ilişkili ürün” der; adet, bileşen indirimi ve zorunluluk bilgisini '
-      + 'taşımaz — o yüzden aşağıda tanımlanır.'));
+      'Bu setin içinde ne olduğu henüz yazılmadı. Mağaza yalnız “bu ürünle şunlar da '
+      + 'alınıyor” bilgisini tutuyor; hangi üründen KAÇ ADET gireceğini, hangisine '
+      + 'indirim yapılacağını ve hangisinin zorunlu olduğunu buradan siz belirlersiniz.'));
   }
 
   editorForm = formGrid({
     fields: [
-      { key: 'name', label: 'Set adı', type: 'text', maxLength: 180, wide: true },
-      { key: 'pricingMode', label: 'Fiyatlandırma', type: 'select', options: [
-        { value: 'fixed', label: 'Sabit set fiyatı' },
-        { value: 'percent', label: 'Bileşen toplamı − %x' },
-      ], hint: 'Sabit kipte fiyat boş bırakılırsa mağazadaki ürün fiyatı geçerlidir.' },
-      { key: 'discountPercent', label: 'Set indirimi (%)', type: 'number', min: 0, max: 100 },
-      { key: 'setPrice', label: 'Set fiyatı (KDV dahil)', type: 'money' },
-      { key: 'taxRate', label: 'KDV oranı (%)', type: 'number', min: 0, max: 100 },
-      { key: 'validFrom', label: 'Geçerlilik başlangıcı', type: 'date' },
-      { key: 'validTo', label: 'Geçerlilik bitişi', type: 'date' },
-      { key: 'note', label: 'Not', type: 'text', maxLength: 500, wide: true },
+      { key: 'name', label: 'Setin adı', type: 'text', maxLength: 180, wide: true,
+        hint: 'Müşterinin vitrinde göreceği ad. Örnek: “1. sınıf kırtasiye seti”.' },
+      // VARSAYILAN “Fiyatı ben yazacağım”: iki seçenek de meşru ama biri
+      // kullanıcının kafasında zaten var (“şu kadara satacağım”), öteki
+      // hesap gerektiriyor. Karar gereken yerde kolay olan seçili gelir.
+      { key: 'pricingMode', label: 'Set fiyatı nasıl belirlensin?', type: 'select', options: [
+        { value: 'fixed', label: 'Fiyatı ben yazacağım' },
+        { value: 'percent', label: 'İçindekilerin toplamından yüzde indir' },
+      ], hint: '“Fiyatı ben yazacağım” derseniz aşağıdaki kutuya tutarı yazarsınız. '
+        + 'Diğerinde fiyat, içindekilerin toplamından indirim düşülerek kendiliğinden '
+        + 'hesaplanır.' },
+      { key: 'discountPercent', label: 'İçindekilerin toplamından % kaç inelim?',
+        type: 'number', min: 0, max: 100,
+        hint: 'Yalnız “yüzde indir” seçtiyseniz kullanılır. 10 yazarsanız müşteri, '
+          + 'ürünleri tek tek almaya göre %10 kazanır.' },
+      { key: 'setPrice', label: 'Set fiyatı (müşterinin ödeyeceği, KDV dâhil)',
+        type: 'money',
+        hint: 'Boş bırakırsanız mağazadaki ürün fiyatı geçerli olur.' },
+      { key: 'taxRate', label: 'KDV oranı (%)', type: 'number', min: 0, max: 100,
+        hint: 'Kitapta genelde %0 ya da %1. Emin değilseniz olduğu gibi bırakın.' },
+      { key: 'validFrom', label: 'Bu fiyat ne zaman başlasın?', type: 'date',
+        hint: 'Boş bırakırsanız hemen geçerli olur.' },
+      { key: 'validTo', label: 'Ne zaman bitsin?', type: 'date',
+        hint: 'Boş bırakırsanız siz değiştirene kadar sürer.' },
+      { key: 'note', label: 'Kendinize not', type: 'text', maxLength: 500, wide: true,
+        hint: 'MÜŞTERİ BU NOTU GÖRMEZ. “Okul listesinden geldi” gibi kendi hatırlatmanız.' },
     ],
     value: {
       name: draft.name,
@@ -443,31 +530,45 @@ function paintEditor(pane, row) {
 
   const componentActions = h('div', 'sb-actions');
   componentActions.append(
-    button('Bileşen ekle', { variant: 'primary', onClick: openPicker }),
-    button('Çapraz satıştan al', {
-      title: 'Mağazadaki çapraz satış bağlarını bileşen olarak ekler (adet 1, indirim yok)',
+    button('Ürün ekle', {
+      variant: 'primary',
+      title: 'Setin içine girecek ürünü listeden seçin',
+      onClick: openPicker,
+    }),
+    button('Mağazanın önerdiklerinden getir', {
+      title: 'Mağazada “bu ürünle şunlar da alınıyor” diye bağlanmış ürünleri setin '
+        + 'içine ekler (her birinden 1 adet, indirimsiz)',
       onClick: () => importCrossSells(row.id),
     }),
   );
 
   const saveActions = h('div', 'sb-actions');
   saveActions.append(
-    button('Kaydet', { variant: 'primary', onClick: () => saveBundle(row.id) }),
-    button(row.status ? 'Vitrinden kaldır' : 'Vitrine geri al', {
+    button('Kaydet', {
+      variant: 'primary',
+      title: 'Setin içeriğini ve fiyatını kaydeder',
+      onClick: () => saveBundle(row.id),
+    }),
+    button(row.status ? 'Satıştan kaldır' : 'Yeniden satışa aç', {
       variant: row.status ? 'danger' : '',
+      title: row.status
+        ? 'Müşteri bu seti göremez olur. SİLİNMEZ; istediğiniz gün geri alırsınız.'
+        : 'Müşteri bu seti yeniden görmeye ve satın almaya başlar.',
       onClick: () => changeStatus(row),
     }),
   );
 
   pane.append(
-    card('Künye', editorForm.node),
-    card('Bileşenler', nodes.components, 'Adet · bileşen indirimi · zorunlu/opsiyonel'),
+    card('Set bilgileri', editorForm.node),
+    card('Setin içinde ne var?', nodes.components,
+      'Her satırda: hangi üründen kaç adet, o ürüne ne kadar indirim, zorunlu mu'),
     componentActions,
     nodes.calc,
     saveActions,
-    hintBox('Kâr, KDV hariç set fiyatından bileşen maliyetleri düşülerek bulunur. '
-      + 'Vitrin fiyatı KDV dahil, mağazadaki “maliyet” alanı KDV hariçtir; ikisini '
-      + 'doğrudan çıkarmak seti olduğundan kârlı gösterirdi.'),
+    hintBox('KÂR NASIL BULUNUR: setin KDV’siz satış fiyatından, içindeki ürünlerin alış '
+      + 'fiyatları düşülür. Vitrindeki fiyat KDV DÂHİL, mağazadaki “maliyet” alanı KDV '
+      + 'HARİÇ yazılıyor; ikisini doğrudan çıkarmak seti olduğundan kârlı gösterirdi, '
+      + 'bu yüzden hesap KDV ayıklanarak yapılır.'),
   );
 
   paintComponents();
@@ -480,21 +581,26 @@ function paintComponents() {
   host.replaceChildren();
   if (!draft.components.length) {
     host.append(emptyState({
-      title: 'Bileşen yok',
-      text: 'Set en az bir bileşen ister; bileşensiz bir kayıt normal üründür.',
-      actions: [button('Bileşen ekle', { variant: 'primary', onClick: openPicker })],
+      title: 'Setin içi boş',
+      text: `${BLOCKERS.NO_COMPONENTS.why} ${BLOCKERS.NO_COMPONENTS.next}`,
+      actions: [button('Ürün ekle', { variant: 'primary', onClick: openPicker })],
     }));
     return;
   }
 
   const head = h('div', 'sb-comp-row sb-comp-head');
+  const col = (text, title, cls) => {
+    const node = h('span', cls, text);
+    node.title = title;
+    return node;
+  };
   head.append(
-    h('span', undefined, 'Ürün'),
-    h('span', undefined, 'Adet'),
-    h('span', undefined, 'İndirim %'),
-    h('span', undefined, 'Zorunlu'),
-    h('span', 'sb-right', 'Birim'),
-    h('span', 'sb-right', 'Satır'),
+    col('Ürün', 'Setin içine giren ürün'),
+    col('Adet', 'Bu üründen sette kaç tane var'),
+    col('İndirim %', 'Yalnız bu ürüne yapılan indirim. Boş bırakabilirsiniz.'),
+    col('Zorunlu', 'İşaretliyse müşteri bu ürünü setten çıkaramaz.'),
+    col('Birim fiyat', 'Ürünün tek başına satış fiyatı', 'sb-right'),
+    col('Satır tutarı', 'Adet × birim fiyat − indirim', 'sb-right'),
     h('span', undefined, ''),
   );
   host.append(head);
@@ -506,10 +612,10 @@ function paintComponents() {
     name.append(clip(h('b'), item.name, 30));
     const sub = h('span', 'sb-sub');
     const marks = [];
-    if (item.missing) marks.push('ürün okunamadı');
+    if (item.missing) marks.push('bu ürün mağazadan okunamadı');
     else {
-      if (!item.status) marks.push('PASİF');
-      if (item.stock < item.qty) marks.push(`stok ${num(item.stock)}`);
+      if (!item.status) marks.push('VİTRİNDE YOK');
+      if (item.stock < item.qty) marks.push(`stokta yalnız ${num(item.stock)} adet var`);
     }
     sub.textContent = marks.length ? `${item.sku} · ${marks.join(' · ')}` : item.sku;
     if (marks.length) sub.classList.add('sb-bad');
@@ -537,7 +643,8 @@ function paintComponents() {
     const required = h('input', 'kit-check');
     required.type = 'checkbox';
     required.checked = item.required !== false;
-    required.setAttribute('aria-label', 'Zorunlu bileşen');
+    required.setAttribute('aria-label', 'Bu ürün sette zorunlu olsun');
+    required.title = 'İşaretliyse müşteri bu ürünü setten çıkaramaz.';
     required.addEventListener('change', () => {
       draft.components[index].required = required.checked;
       recalc();
@@ -551,9 +658,9 @@ function paintComponents() {
       ? '—' : money(item.lineNet);
 
     line.append(name, qty, discount, required, unit, total,
-      button('Çıkar', {
+      button('Setten çıkar', {
         variant: 'ghost',
-        title: 'Bileşeni setten çıkar (ürün silinmez)',
+        title: 'Bu ürünü setin içinden çıkarır. ÜRÜN SİLİNMEZ, mağazada durmaya devam eder.',
         onClick: () => {
           draft.components.splice(index, 1);
           paintComponents();
@@ -587,7 +694,9 @@ const recalcSoon = debounce(async () => {
       },
     });
   } catch (error) {
-    nodes.calc?.replaceChildren(alertBox(`Hesap alınamadı — ${error.message}`, 'warn'));
+    nodes.calc?.replaceChildren(alertBox(
+      `Kâr hesabı yapılamadı — ${error.message}. Sıradaki adım: “Yenile” deyip yeniden `
+      + 'deneyin.', 'warn'));
     return;
   }
   // Fiyat/maliyet SUNUCUDAN gelir: bileşen satırları da onun döndürdüğüyle
@@ -628,19 +737,28 @@ function renderCalc(calc, warning) {
   const savings = calc.savingsPercent;
   const savingsText = savings === null || savings === undefined ? ''
     : (surcharge
-      ? `set fiyatı bileşen toplamının ${percent(Math.abs(savings))} ÜSTÜNDE`
-      : `müşteri ${percent(savings)} kazanıyor`);
+      ? `DİKKAT: set fiyatı, ürünleri tek tek almaktan ${percent(Math.abs(savings))} PAHALI`
+      : `müşteri, ürünleri tek tek almaya göre ${percent(savings)} kazanıyor`);
 
+  // HESABIN HER SATIRI TEK CÜMLEYLE AÇIKLANIR. Eskiden "Bileşen toplamı",
+  // "Ara toplam", "Set indirimi" yazıyordu: doğru ama toplamların birbirinden
+  // nasıl çıktığı ekranda hiçbir yerde yazmıyordu ve kullanıcı sayıyı görüp
+  // "bu nereden geldi" diye kalıyordu.
   const box = h('div', 'sb-calc-box');
   box.append(
-    line('Bileşen toplamı', money(calc.componentsTotal),
-      `${num(calc.requiredCount)} zorunlu bileşen`),
-    line('Bileşen indirimi', calc.componentDiscount ? `− ${money(calc.componentDiscount)}` : '—'),
-    line('Ara toplam', money(calc.afterComponentDiscount)),
-    line(surcharge ? 'Set farkı' : 'Set indirimi', discountText, savingsText),
-    line(`KDV (${percent(calc.taxRate)})`, calc.tax === null ? '—' : money(calc.tax)),
-    line('SET FİYATI', calc.setPrice === null ? '—' : money(calc.setPrice),
-      calc.setPrice === null ? 'mağazadaki ürün fiyatı geçerli' : ''),
+    line('İçindekilerin toplamı', money(calc.componentsTotal),
+      `ürünler tek tek alınsa bu kadar tutardı · ${num(calc.requiredCount)} zorunlu ürün`),
+    line('İçindekilere verilen indirim',
+      calc.componentDiscount ? `− ${money(calc.componentDiscount)}` : '—',
+      calc.componentDiscount ? 'tek tek ürünlere yazdığınız indirimlerin toplamı' : ''),
+    line('Ara toplam', money(calc.afterComponentDiscount),
+      'indirim düşüldükten sonra kalan'),
+    line(surcharge ? 'Set fiyatı fazlası' : 'Sete verilen indirim', discountText, savingsText),
+    line(`KDV (${percent(calc.taxRate)})`, calc.tax === null ? '—' : money(calc.tax),
+      'fiyatın içindeki vergi'),
+    line('MÜŞTERİNİN ÖDEYECEĞİ', calc.setPrice === null ? '—' : money(calc.setPrice),
+      calc.setPrice === null
+        ? 'set fiyatı yazılmadı; mağazadaki ürün fiyatı geçerli' : 'KDV dâhil'),
   );
 
   const verdict = h('div', `sb-verdict ${calc.state}`);
@@ -648,29 +766,36 @@ function renderCalc(calc, warning) {
   verdict.append(h('b', 'sb-verdict-value',
     calc.profit === null ? '—' : money(calc.profit)));
   if (calc.marginPercent !== null && calc.marginPercent !== undefined) {
-    verdict.append(h('span', 'sb-sub', `marj ${percent(calc.marginPercent)}`));
+    verdict.append(h('span', 'sb-sub', `her 100 TL satışın ${percent(calc.marginPercent)} `
+      + 'kadarı kâr'));
   }
+  // KÂR NEDEN BİLİNMİYOR — NEDEN + SIRADAKİ ADIM. Eskiden yalnız "maliyeti
+  // girilmemiş" yazıyordu: doğru bir tespit ama kullanıcı nereye gideceğini
+  // bilmiyordu.
   if (calc.profit === null) {
-    verdict.append(h('span', 'sb-sub', calc.unknownCosts.length
-      ? `maliyeti girilmemiş: ${calc.unknownCosts.join(', ')}`
-      : 'set fiyatı belirlenmedi'));
+    const engel = calc.unknownCosts.length ? 'NO_COST' : 'NO_SET_PRICE';
+    const detay = calc.unknownCosts.length
+      ? ` Eksik olan: ${calc.unknownCosts.join(', ')}.` : '';
+    verdict.append(h('span', 'sb-sub',
+      `${BLOCKERS[engel].why}${detay} ${BLOCKERS[engel].next}`));
   }
 
   host.append(kpiRow([
-    { label: 'Satılabilir set', value: calc.stockLimit === null ? '—' : num(calc.stockLimit),
+    { label: 'Kaç set satılabilir', value: calc.stockLimit === null ? '—' : num(calc.stockLimit),
       tone: calc.stockLimit === 0 ? 'bad' : '',
-      title: calc.stockLimitedBy ? `En kısıtlı bileşen: ${calc.stockLimitedBy}` : '' },
-    { label: 'Zorunlu bileşen', value: num(calc.requiredCount) },
-    { label: 'Opsiyonel', value: num(calc.optionalCount) },
-    { label: 'Opsiyonel toplamı', value: money(calc.optionalTotal) },
+      title: calc.stockLimitedBy
+        ? `Stoğu en önce biten ürün: ${calc.stockLimitedBy}. Set sayısını o belirliyor.`
+        : 'İçindeki ürünlerin stoğuna göre kaç set çıkar.' },
+    { label: 'Zorunlu ürün', value: num(calc.requiredCount),
+      title: 'Müşterinin setten çıkaramayacağı ürünler.' },
+    { label: 'İsteğe bağlı ürün', value: num(calc.optionalCount),
+      title: 'Müşteri isterse setten çıkarabilir.' },
+    { label: 'İsteğe bağlıların tutarı', value: money(calc.optionalTotal),
+      title: 'Zorunlu olmayan ürünlerin toplam tutarı.' },
   ]), box, verdict);
 
-  if (warning) host.append(alertBox(`Uyarı: ${warning}.`, 'warn'));
-  if (calc.stockLimit === 0) {
-    host.append(alertBox(
-      'Bu set şu an satılamaz: en kısıtlı bileşende yeterli stok yok. Stok Ürünler '
-      + 'ekranından yazılır.', 'warn'));
-  }
+  if (warning) host.append(alertBox(`Dikkat: ${warning}.`, 'warn'));
+  if (calc.stockLimit === 0) host.append(blockerBox('OUT_OF_STOCK'));
 }
 
 // -------------------------------------------------------------- bileşen seç
@@ -680,20 +805,22 @@ function openPicker({ onPick } = {}) {
   const box = h('div', 'kit-dialog sb-picker');
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-modal', 'true');
-  box.append(h('h3', 'kit-dialog-title', onPick ? 'Set ürününü seçin' : 'Bileşen ekle'));
+  box.append(h('h3', 'kit-dialog-title',
+    onPick ? 'Hangi ürün set olacak?' : 'Setin içine ürün ekle'));
   box.append(h('p', 'kit-dialog-text', onPick
-    ? 'Set bir üründür. Hangi ürünün set olacağını seçin; bileşenleri sonra tanımlanır.'
-    : 'Arama mağazada yapılır; liste sunucudan gelir.'));
+    ? 'Mağazada “set” diye ayrı bir ürün türü yok; set de bir üründür. Önce hangi ürünün '
+      + 'set olacağını seçin, içine ne gireceğini sonraki adımda belirlersiniz.'
+    : 'Aradığınız ürünün adının bir parçasını yazın; liste mağazadan gelir.'));
 
   const search = h('input', 'kit-input');
   search.type = 'search';
-  search.placeholder = 'Ürün adı ara';
+  search.placeholder = 'Ürün adının bir parçasını yazın';
   box.append(search);
 
   const picker = createPicker({
     items: [],
     groupLabel: 'Durum',
-    placeholder: 'Listede süz',
+    placeholder: 'Gelen listede ara',
     single: Boolean(onPick),
   });
   box.append(picker.node);
@@ -726,7 +853,7 @@ function openPicker({ onPick } = {}) {
     picker.setItems((payload.items || []).map((item) => ({
       id: item.id,
       name: item.name,
-      group: item.status ? 'Aktif' : 'Pasif',
+      group: item.status ? 'Satışta' : 'Vitrinde yok',
       // Sunucu fiyatı ONDALIK METİN veriyor ("2363.00"); kuruşa çevirmek
       // kitin `parseMoney` işidir (kit kuralı 5). Elde `Number(x) * 100`
       // yazmak ikinci bir para ayrıştırma kuralı doğurur ve `1234.35` gibi
@@ -740,16 +867,22 @@ function openPicker({ onPick } = {}) {
   const actions = h('div', 'kit-dialog-actions');
   actions.append(
     button('Vazgeç', { onClick: close }),
-    button('Ekle', {
+    button(onPick ? 'Bu ürünü seç' : 'Sete ekle', {
       variant: 'primary',
       onClick: () => {
         const chosen = picker.selectedItems();
-        if (!chosen.length) { toast('Ürün seçilmedi.', 'warn'); return; }
+        if (!chosen.length) {
+          toast('Hiçbir ürün işaretlemediniz. Listeden en az bir ürün seçin.', 'warn');
+          return;
+        }
         close();
         if (onPick) { onPick(Number(chosen[0].id)); return; }
         for (const item of chosen) {
           const productId = Number(item.id);
-          if (productId === draft.id) { toast('Set kendi bileşeni olamaz.', 'bad'); continue; }
+          if (productId === draft.id) {
+            toast('Bir set kendi kendisinin içinde olamaz; o satır atlandı.', 'bad');
+            continue;
+          }
           if (draft.components.some((part) => part.productId === productId)) continue;
           draft.components.push({
             productId, sku: '', name: item.name, qty: 1, discount: 0, required: true,
@@ -769,12 +902,13 @@ function openPicker({ onPick } = {}) {
 }
 
 async function importCrossSells(bundleId) {
-  const payload = await withBusy('Çapraz satış bağları okunuyor…',
+  const payload = await withBusy('Mağazanın önerdiği ürünler okunuyor…',
     () => call(`${BASE}/bundles/${bundleId}`));
   if (!payload) return;
   const links = payload.crossSells || [];
   if (!links.length) {
-    toast('Bu ürünün çapraz satış bağı yok.', 'warn');
+    toast('Mağazada bu ürünle birlikte önerilen başka ürün tanımlanmamış. Setin içine '
+      + '“Ürün ekle” ile tek tek ekleyebilirsiniz.', 'warn');
     return;
   }
   let added = 0;
@@ -789,26 +923,28 @@ async function importCrossSells(bundleId) {
   }
   paintComponents();
   recalc();
-  toast(`${num(added)} bileşen eklendi — adet 1, indirim yok olarak. Çapraz satış bağı bu `
-    + 'bilgileri taşımıyor; kontrol edin.', added ? 'good' : 'warn');
+  toast(`${num(added)} ürün eklendi — her birinden 1 adet, indirimsiz. Mağazanın önerdiği `
+    + 'bağlar adet ve indirim bilgisi taşımıyor; adetleri gözden geçirin.',
+  added ? 'good' : 'warn');
 }
 
 // ------------------------------------------------------------------- yazma
 
 async function saveBundle(bundleId) {
   if (!draft.components.length) {
-    toast('Set en az bir bileşen ister.', 'bad');
+    toast(`${BLOCKERS.NO_COMPONENTS.why} ${BLOCKERS.NO_COMPONENTS.next}`, 'bad');
     return;
   }
   const calc = draft.calc || {};
   const uyari = calc.state === 'loss'
-    ? ' DİKKAT: bu set zararına satılıyor.'
+    ? ' DİKKAT: BU SET ZARARINA SATILIYOR — her satışta para kaybediyorsunuz. Yine de '
+      + 'kaydedebilirsiniz, ama önce fiyatı gözden geçirmenizi öneririz.'
     : '';
   const reason = await askReason({
-    title: 'Set künyesini kaydet',
-    description: `${draft.name} · ${draft.components.length} bileşen. Bileşen adedi, indirimi `
-      + 've zorunluluğu Kontrol Merkezi\'nde saklanır; mağaza ucu yayına girdiğinde oraya da '
-      + `yazılır.${uyari}`,
+    title: 'Set bilgilerini kaydet',
+    description: `“${draft.name}” · içinde ${draft.components.length} ürün var. Hangi üründen `
+      + 'kaç adet gireceği, indirimleri ve zorunlu olup olmadıkları burada saklanır.'
+      + `${uyari}`,
     confirmLabel: 'Kaydet',
   });
   if (!reason) return;
@@ -837,8 +973,11 @@ async function saveBundle(bundleId) {
         dryRun: false,
       },
     });
-    toast(result.stored ? 'Set kaydedildi ve mağazaya yazıldı.' : 'Set künyesi kaydedildi.',
-      result.stored ? 'good' : 'warn');
+    toast(result.stored
+      ? 'Set kaydedildi ve mağazaya yazıldı.'
+      : 'Set bilgileri kaydedildi. Mağazadaki “Setler” kategorisine eklenmesi ayrı bir '
+        + 'adım — aşağıdaki nota bakın.',
+    result.stored ? 'good' : 'warn');
     if (result.notice) toast(result.notice, 'warn');
     await refresh();
   });
@@ -846,12 +985,13 @@ async function saveBundle(bundleId) {
 
 async function changeStatus(row) {
   const reason = await askReason({
-    title: row.status ? 'Seti vitrinden kaldır' : 'Seti vitrine geri al',
+    title: row.status ? 'Seti satıştan kaldır' : 'Seti yeniden satışa aç',
     description: row.status
-      ? `${row.name} vitrinden kalkar. SİLİNMEZ: geçmiş siparişlerde ve raporlarda kalır, `
-        + 'bileşen künyesi de saklanır.'
-      : `${row.name} yeniden satışa açılır.`,
-    confirmLabel: row.status ? 'Vitrinden kaldır' : 'Geri al',
+      ? `“${row.name}” müşteriye görünmez olur. SİLİNMEZ: geçmiş siparişlerde ve `
+        + 'raporlarda kalır, içindeki ürünlerin listesi de saklanır. İstediğiniz gün '
+        + 'tek düğmeyle geri alırsınız.'
+      : `“${row.name}” yeniden satışa açılır; müşteri görmeye başlar.`,
+    confirmLabel: row.status ? 'Satıştan kaldır' : 'Satışa aç',
   });
   if (!reason) return;
   await withBusy('Uygulanıyor…', async () => {
@@ -859,8 +999,9 @@ async function changeStatus(row) {
       method: 'POST',
       body: { active: !row.status, reason, dryRun: false },
     });
-    toast(result.dryRun ? 'Kuru prova: mağazaya istek gönderilmedi.' : 'Uygulandı.',
-      result.dryRun ? 'warn' : 'good');
+    toast(result.dryRun
+      ? 'DENEME yapıldı: mağazaya hiçbir şey yazılmadı.'
+      : 'Yapıldı.', result.dryRun ? 'warn' : 'good');
     if (result.notice) toast(result.notice, 'warn');
     await refresh();
   });
@@ -883,8 +1024,8 @@ function newBundle() {
       state.selected = productId;
       renderList();
       renderEditor();
-      toast('Bu ürün “Setler” kategorisinde değil. Künyeyi kaydedebilirsiniz; kategoriye '
-        + 'eklemek Ürünler ekranından yapılır.', 'warn');
+      toast('Bu ürün mağazadaki “Setler” kategorisinde değil. Set bilgilerini yine de '
+        + 'kaydedebilirsiniz; kategoriye eklemek Ürünler ekranından yapılır.', 'warn');
     },
   });
 }
@@ -903,35 +1044,40 @@ async function paintHistory(pane, bundleId) {
   pane.replaceChildren();
   if (!result.items.length) {
     pane.append(emptyState({
-      title: 'Bu sete bu ekrandan dokunulmadı',
-      text: 'Kontrol Merkezi üzerinden yapılan her yazma gerekçesiyle burada listelenir.',
+      title: 'Bu sete bu ekrandan hiç dokunulmamış',
+      text: 'Buradan yapılan her değişiklik; kimin, ne zaman ve neden yaptığıyla birlikte '
+        + 'bu listeye yazılır.',
     }));
     return;
   }
   const table = dataTable({
     columns: [
-      { key: 'createdAt', label: 'Zaman', width: '150px' },
-      { key: 'action', label: 'İşlem', width: '130px' },
-      { key: 'actor', label: 'Kim', width: '120px' },
+      { key: 'createdAt', label: 'Ne zaman', width: '150px' },
+      { key: 'action', label: 'Ne yapıldı', width: '130px' },
+      { key: 'actor', label: 'Kim yaptı', width: '120px' },
       { key: 'result', label: 'Sonuç', width: '90px' },
-      { key: 'reason', label: 'Gerekçe', width: 'minmax(0, 2fr)', className: 'wrap' },
+      { key: 'reason', label: 'Neden yaptı', width: 'minmax(0, 2fr)', className: 'wrap' },
     ],
     rows: result.items,
     dense: true,
     rowKey: (row) => `${row.createdAt}-${row.action}`,
   });
   pane.append(table.node,
-    hintBox('Bu iz YERELDİR ve gerekçeyi tutar. Mağazanın kendi denetim kaydında gerekçe '
-      + 'alanı yok; ağ koparsa “ne yapmaya çalıştık” bilgisi yalnız burada kalır.'));
+    hintBox('Bu liste bu bilgisayarda tutulur ve “neden” notunu da saklar. Mağazanın '
+      + 'kendi kaydında böyle bir not alanı yok; internet koparsa “ne yapmaya çalışmıştık” '
+      + 'bilgisi yalnız burada kalır.'));
 }
 
 // -------------------------------------------------------------------- CSV
 
 function exportVisible() {
   const rows = visibleRows();
-  if (!rows.length) { toast('İndirilecek satır yok.', 'warn'); return; }
-  const headers = ['Set', 'SKU', 'Bileşen', 'Set fiyatı', 'Bileşen toplamı', 'Kazanç/kayıp',
-    'Kâr', 'Marj %', 'Durum', 'Uyarı'];
+  if (!rows.length) {
+    toast('Ekranda hiç satır yok; indirilecek bir şey bulunamadı.', 'warn');
+    return;
+  }
+  const headers = ['Set', 'Stok kodu', 'Kaç ürün', 'Set fiyatı', 'İçindekilerin toplamı',
+    'Müşterinin kazancı', 'Kâr', 'Kâr oranı %', 'Durum', 'Dikkat'];
   const table = rows.map((row) => [
     row.name, row.sku, row.components.length,
     row.calc.setPrice === null ? '' : money(row.calc.setPrice),
@@ -939,7 +1085,7 @@ function exportVisible() {
     row.calc.setDiscount === null ? '' : money(row.calc.setDiscount),
     row.calc.profit === null ? '' : money(row.calc.profit),
     row.calc.marginPercent === null ? '' : percent(row.calc.marginPercent),
-    row.status ? 'Aktif' : 'Pasif', row.warning || '',
+    row.status ? 'Satışta' : 'Vitrinde yok', row.warning || '',
   ]);
   csvBlob(headers, table, 'setler-gorunen');
   toast(`${num(table.length)} satır indirildi.`, 'good');
@@ -949,7 +1095,7 @@ async function exportAll() {
   await withBusy('Set listesi yazılıyor…', async () => {
     const result = await call(`${BASE}/export`, { method: 'POST', body: {} });
     toast(`${num(result.rows)} satır yazıldı: ${result.name}`, 'good');
-    nodes.status.set(`Dosya: ${result.path}`);
+    nodes.status.set(`Dosya kaydedildi: ${result.path}`);
   });
 }
 
@@ -967,29 +1113,47 @@ export function mount(root, ctx) {
 
   nodes.filters = filterBar({
     fields: [
-      { kind: 'search', key: 'q', placeholder: 'Set adı veya SKU ara', width: '220px' },
+      { kind: 'search', key: 'q', placeholder: 'Set adı ya da stok kodu ara', width: '220px' },
+      // SÜZGEÇLERDE VARSAYILAN "Hepsi": ekran hiçbir şeyi gizlemeden açılır.
       { kind: 'select', key: 'status', label: 'Durum', options: [
-        { value: '', label: 'Tümü' }, { value: '1', label: 'Aktif' }, { value: '0', label: 'Pasif' },
+        { value: '', label: 'Hepsi' },
+        { value: '1', label: 'Satışta' },
+        { value: '0', label: 'Vitrinde yok' },
       ] },
-      { kind: 'select', key: 'validity', label: 'Geçerlilik', options: [
-        { value: '', label: 'Tümü' },
-        { value: 'active', label: 'Yürürlükte' },
-        { value: 'scheduled', label: 'Başlamadı' },
+      { kind: 'select', key: 'validity', label: 'Fiyat geçerliliği', options: [
+        { value: '', label: 'Hepsi' },
+        { value: 'active', label: 'Şu an geçerli' },
+        { value: 'scheduled', label: 'Tarihi gelmedi' },
         { value: 'expired', label: 'Süresi doldu' },
-        { value: 'always', label: 'Süresiz' },
+        { value: 'always', label: 'Her zaman geçerli' },
       ] },
-      { kind: 'toggle', key: 'loss', label: 'Zararına satılıyor' },
-      { kind: 'toggle', key: 'outOfStock', label: 'Bileşeni tükenmiş' },
-      { kind: 'toggle', key: 'passive', label: 'Bileşeni pasif' },
+      { kind: 'toggle', key: 'loss', label: 'Zararına satılanlar' },
+      { kind: 'toggle', key: 'outOfStock', label: 'İçindeki ürün tükenmiş' },
+      { kind: 'toggle', key: 'passive', label: 'İçindeki ürün vitrinde yok' },
     ],
     onChange: () => renderList(),
     actions: [
-      button('Yenile', { onClick: () => refresh() }),
-      button('Yeni set', { variant: 'primary', onClick: newBundle }),
-      button('⤓ Görünen', { title: 'Süzgeçten geçen satırları CSV indir', onClick: exportVisible }),
-      button('⤓ Tümü', { title: 'Tüm setleri rapor klasörüne yaz', onClick: exportAll }),
-      button('Set listesi', { onClick: () => report.run('sets') }),
-      button('Riskli setler', { onClick: () => report.run('risk') }),
+      button('Yenile', {
+        title: 'Mağazadaki güncel fiyat ve stokları yeniden okur',
+        onClick: () => refresh(),
+      }),
+      button('Yeni set oluştur', { variant: 'primary', onClick: newBundle }),
+      button('⤓ Ekrandakiler', {
+        title: 'Şu an listede görünen satırları Excel dosyası olarak indirir',
+        onClick: exportVisible,
+      }),
+      button('⤓ Hepsi', {
+        title: 'Bütün setleri rapor klasörüne yazar',
+        onClick: exportAll,
+      }),
+      button('Set listesi raporu', {
+        title: 'Bütün setleri gösteren, yazdırılabilir PDF hazırlar',
+        onClick: () => report.run('sets'),
+      }),
+      button('Sorunlu setler raporu', {
+        title: 'Zararına satılan ya da içindeki ürünü tükenmiş setleri listeler',
+        onClick: () => report.run('risk'),
+      }),
     ],
   });
 

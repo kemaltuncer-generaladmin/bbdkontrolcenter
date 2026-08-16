@@ -42,19 +42,42 @@ unutulduğunda çelişir.
 ═══════════════════════════════════════════════════════════════════════════════
 NİTELİK KODLARI VARSAYILMAZ, ÇÖZÜLÜR
 
-Yayınevi/yazar/baskı yılı için kataloğun hangi kodu kullandığı bilinmiyor.
-`resolve_codes` bunları mağazanın NİTELİK LİSTESİNDEN çözer: aday adlar sırayla
-aranır, bulunan kod kullanılır, bulunamayan alan EKRANDA HİÇ AÇILMAZ ve nedeni
-yazılır.
+Kataloğun hangi kodu kullandığı kuruluma göre değişiyor. `resolve_codes` bunu
+mağazanın NİTELİK LİSTESİNDEN çözer: aday adlar sırayla aranır, bulunan kod
+kullanılır, bulunamayan alan EKRANDA HİÇ AÇILMAZ ve nedeni yazılır.
 
 Uydurulmuş bir koda yazmanın bedeli sessizdir: Bagisto tanımadığı özniteliği
 yok sayar, istek 200 döner, personel "kaydettim" der ve değer hiçbir yere
 yazılmamıştır.
 
+TİP DE VARSAYILMAZ. Canlıda yayınevi, kitap dili, sınav türü ve yayın tipi
+`select` tipinde ve değerleri SEÇENEK KİMLİĞİ olarak duruyor (yayınevi = `76`).
+Serbest metin yazmak, olmayan bir koda yazmakla aynı sessiz kayıptır; bu yüzden
+`field_specs` tipi ve seçenekleri de taşır ve seçenekleri okunamayan alan
+açılmaz.
+
 SAYFA SAYISI VE DESİ BU ESNEKLİĞİN DIŞINDADIR ve tek bir kodu kabul eder
 (`page_count`, `desi`): mağazanın kargo hesabı bu iki özniteliği ADIYLA
 okuyor, yani eş anlamlı bir koda yazmak ekranda "güncellendi" gösterip kargo
 ücretini hiç değiştirmezdi. Gerekçenin tamamı `FIELD_CANDIDATES` başında.
+
+ÖZNİTELİK AİLESİ DE VARSAYILMAZ. "Nitelik katalogda var" ile "nitelik BU
+ÜRÜNE yazılabilir" ayrı iki sorudur: mağaza gövdenin anahtarlarını ürünün
+ailesinin nitelik listesiyle kesiştiriyor ve dışarıda kalan kodu hata da uyarı
+da üretmeden düşürüyor. Canlıda `default` ailesi kitap alanlarından yalnız
+`desi`yi taşıyor. `field_specs`/`draft_errors`/`patch_for` bu yüzden bir de
+`family_codes` alır; `None` verilirse aile BİLİNMİYOR demektir ve kısıt
+uygulanmaz.
+
+═══════════════════════════════════════════════════════════════════════════════
+TÜRKÇE ONDALIK VİRGÜL: OKUNURKEN KABUL, YAZILIRKEN ÇEVRİLİR
+
+Okuyucular (`positive_float`, `page_count`) virgülü bilerek kabul ediyor —
+personel `0,45` yazacak. Ama mağaza tarafı aynı değeri PHP `is_numeric()` ile
+okuyor ve PHP ondalık ayracı olarak yalnız noktayı tanır. Ham yazılan virgül
+mağazada HİÇ okunmaz ve ürün varsayılan 1,0 desiye düşer. Bu yüzden yazma
+yolunda `canonical_number` var: doğrulayıcı ile yazıcı aynı kabulü paylaşır,
+mağaza her zaman nokta ondalıklı bir sayı görür.
 """
 
 from __future__ import annotations
@@ -275,13 +298,24 @@ DESI_CODE = "desi"
 #:
 #: Yani buradaki darlık bir eksiklik değil, PARANIN DOĞRU YERDEN HESAPLANMASI
 #: kuralıdır: yalnız gerçekten etkisi olan alan düzenlenebilir.
+#:
+#: SIRA EKRANDAKİ SIRADIR: künye alanları önce, elle ölçülen desi en sonda —
+#: desi bir künye bilgisi değil, hesabı ezen bir istisnadır ve listenin
+#: başında dururken kazara doldurulması kolaydı.
 FIELD_CANDIDATES = {
     "pageCount": (PAGE_CODE,),
     "isbn": ("isbn", "isbn_no", "isbn13"),
     "publisher": ("publisher", "yayinevi", "yayin_evi", "yayinci"),
     "author": ("author", "yazar", "writer"),
-    "publishYear": ("publish_year", "publication_year", "baski_yili", "basim_yili",
-                    "yayin_yili", "year"),
+    # `print_year` ÖLÇÜLDÜ (canlı nitelik listesi, 16.08.2026): katalog baskı
+    # yılını bu kodla tutuyor. Aday listesinin başına konmasının sebebi
+    # tahmin değil ölçüm; diğerleri başka bir kurulumda karşılığı olabilecek
+    # adlar olarak arkada durur.
+    "publishYear": ("print_year", "publish_year", "publication_year", "baski_yili",
+                    "basim_yili", "yayin_yili", "year"),
+    "bookLanguage": ("book_language", "kitap_dili"),
+    "examType": ("exam_type", "sinav_turu"),
+    "publishType": ("publish_type", "yayin_tipi"),
     "desi": (DESI_CODE,),
 }
 
@@ -292,6 +326,9 @@ FIELD_LABELS = {
     "publisher": "Yayınevi",
     "author": "Yazar",
     "publishYear": "Baskı yılı",
+    "bookLanguage": "Kitap dili",
+    "examType": "Sınav türü",
+    "publishType": "Yayın tipi",
     "desi": "Desi (elle ölçüm)",
 }
 
@@ -299,6 +336,21 @@ FIELD_LABELS = {
 #: ekran sayı doğrular: "Fasikül" yazan bir `page_count` canlıda zaten var ve
 #: kargo hesabını sessizce varsayılana düşürüyor.
 NUMERIC_FIELDS = ("pageCount", "publishYear", "desi")
+
+#: SEÇENEKLİ nitelik tipleri.
+#:
+#: ═══════════════════════════════════════════════════════════════════════════
+#: NEDEN TİP ÖNEMLİ — ÖLÇÜLDÜ (canlı, 16.08.2026)
+#:
+#: `publisher`, `book_language`, `exam_type` ve `publish_type` mağazada
+#: `select` tipinde ve değerleri SEÇENEK KİMLİĞİ olarak saklanıyor: bir kitabın
+#: yayınevi `76`dır, "Panama Yayıncılık" değil. Bu alana serbest metin yazmak,
+#: var olmayan bir koda yazmakla AYNI sessiz kayıptır — Bagisto isteği kabul
+#: eder, personel "kaydettim" der ve vitrinde yayınevi değişmemiştir.
+#:
+#: Bu yüzden tip VARSAYILMAZ, mağazanın nitelik satırından okunur; seçenekleri
+#: okunamayan seçimli alan EKRANDA HİÇ AÇILMAZ ve nedeni yazılır.
+OPTION_TYPES = ("select", "multiselect")
 
 
 def resolve_codes(attributes: Any) -> dict[str, str]:
@@ -324,26 +376,130 @@ def resolve_codes(attributes: Any) -> dict[str, str]:
     return resolved
 
 
-def field_specs(codes: dict[str, str]) -> list[dict[str, Any]]:
+def attribute_kind(row: Any) -> str:
+    """Nitelik satırından tip. Okunamayan tip METİN sayılır.
+
+    Metne düşmek güvenli tarafa düşmektir: metin alanına metin yazmak en kötü
+    ihtimalle işe yaramaz, seçimli alana metin yazmak ise sessizce yanlış veri
+    üretir. Tersi varsayım (bilinmeyeni seçim saymak) çalışan bir metin alanını
+    kapatırdı.
+    """
+    if not isinstance(row, dict):
+        return "text"
+    return str(row.get("type") or row.get("attributeType") or "text").strip().lower() or "text"
+
+
+def option_rows(detail: Any) -> list[dict[str, str]]:
+    """Nitelik DETAYINDAN seçenek listesi → `[{"value": "76", "label": "…"}]`.
+
+    `value` METİNDİR: panelin `<select>` kutusu değerleri metin olarak
+    karşılaştırıyor ve ürün kaydından okunan değer de metne indiriliyor
+    (`view`). İkisinin aynı biçimde olması, kayıtlı yayınevinin listede
+    SEÇİLİ gelmesini sağlar; sayı/metin karışımı alanı boş gösterirdi.
+
+    Yazarken kimlik yeniden sayıya çevrilir (`patch_for`) — mağaza sayı
+    bekliyor.
+    """
+    body = detail.get("data") if isinstance(detail, dict) and isinstance(
+        detail.get("data"), dict) else detail
+    rows = (body or {}).get("options") if isinstance(body, dict) else None
+    out: list[dict[str, str]] = []
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        value = _text(item.get("id") or item.get("value"))
+        label = _text(item.get("adminName") or item.get("admin_name")
+                      or item.get("label") or item.get("name"))
+        if value:
+            out.append({"value": value, "label": label or value})
+    return out
+
+
+def family_code_set(codes: Any) -> set[str] | None:
+    """Aile nitelik kodlarını kümeye indirger; `None` verilirse `None` kalır.
+
+    `None` ile boş küme AYRI ŞEYLERDİR ve karıştırılırsa kural tersine döner:
+    `None` "ailenin şeması OKUNAMADI" demektir (kısıt uygulanmaz), boş küme
+    "aile okundu ve hiç nitelik taşımıyor" demektir (her alan kapanır).
+    """
+    if codes is None:
+        return None
+    return {str(code).strip() for code in codes if str(code).strip()}
+
+
+def field_specs(codes: dict[str, str],
+                catalog: dict[str, Any] | None = None,
+                family_codes: Any = None) -> list[dict[str, Any]]:
     """Panelin çizeceği alanların tarifi — çözülemeyenler NEDENİYLE birlikte.
 
     Çözülemeyen alan listeden DÜŞÜRÜLMEZ, `available: False` ile döner:
     "yayınevi neden yok" sorusunun cevabı ekranda durmalı, kullanıcının
     tahmin etmesine bırakılmamalı.
+
+    `catalog` mağazadan çözülen nitelik künyesidir —
+    `{kod: {"type": …, "options": [{"value", "label"}]}}`. Verilmezse her alan
+    METİN sayılır: bu, bu dosyanın ağa çıkmadığı ve tipin ancak mağazadan
+    öğrenilebildiği anlamına gelir, "tip yoktur" anlamına değil.
+
+    `family_codes` ÜRÜNÜN ÖZNİTELİK AİLESİNİN taşıdığı kodlardır; `None` ise
+    aile bilinmiyor demektir ve kısıt UYGULANMAZ (ağ hatasını kalıcı bir
+    eksikliğe çevirmemek için).
+
+    DÖRT HÂL VARDIR:
+      · kod çözüldü, alan yazılabilir               → `available: True`
+      · katalogda karşılık gelen nitelik yok        → `available: False` + neden
+      · nitelik katalogda var, ÜRÜNÜN AİLESİNDE YOK → `available: False` + neden
+      · nitelik SEÇİMLİ ama seçenekleri okunamadı   → `available: False` + neden
+
+    ═══════════════════════════════════════════════════════════════════════════
+    ÜÇÜNCÜ HÂL NEDEN AYRI — ÖLÇÜLDÜ (canlı, 16.08.2026)
+
+    Mağaza değeri niteliğin katalogda olmasına göre değil ÜRÜNÜN AİLESİNDE
+    olmasına göre yazıyor: `AdminCatalogProductUpdateProcessor` gövdenin
+    anahtarlarını ailenin nitelik listesiyle kesiştiriyor ve kesişimin dışında
+    kalan kodu HATA DA UYARI DA ÜRETMEDEN düşürüyor. Canlıda `default` ailesi
+    (id 1) kitap alanlarından yalnız `desi`yi taşıyor; `kitap` ailesi (id 2)
+    dokuzunu birden. Yani "katalogda `isbn` var" sorusunun cevabı EVET olduğu
+    hâlde, aile 1'deki bir ürüne ISBN yazmak sessiz kayıptır.
     """
+    known = catalog or {}
+    family = family_code_set(family_codes)
     out: list[dict[str, Any]] = []
     for field, candidates in FIELD_CANDIDATES.items():
         code = codes.get(field, "")
+        entry = known.get(code) if isinstance(known.get(code), dict) else {}
+        selectable = attribute_kind(entry) in OPTION_TYPES if entry else False
+        options = [item for item in (entry or {}).get("options") or []
+                   if isinstance(item, dict)]
+
+        reason = ""
+        if not code:
+            reason = ("Katalogda bu nitelik yok. Aranan kodlar: "
+                      + ", ".join(f"`{name}`" for name in candidates)
+                      + ". Nitelikler sekmesinden açılabilir; açılmadan bu alan yazılamaz.")
+        elif family is not None and code not in family:
+            reason = (f"`{code}` katalogda tanımlı ama ÜRÜNÜN ÖZNİTELİK AİLESİNDE yok. "
+                      "Mağaza değerleri ailenin nitelik listesine göre yazıyor: ailede "
+                      "olmayan koda gönderilen değer 200 ile kabul edilir ve hiçbir yere "
+                      "konmaz. Alan bu yüzden açılmadı — nitelik Aileler ekranından bu "
+                      "aileye eklenirse kendiliğinden gelir.")
+        elif selectable and not options:
+            reason = (f"`{code}` seçenekli (select) bir nitelik ama seçenek listesi "
+                      "okunamadı. Seçenek kimliği bilinmeden yazmak, mağazanın isteği "
+                      "kabul edip değeri hiçbir yere koymaması demektir; alan bu yüzden "
+                      "açılmadı. Bağlantı düzelince kendiliğinden gelir.")
+
         out.append({
             "key": field,
             "code": code,
             "label": FIELD_LABELS[field],
             "numeric": field in NUMERIC_FIELDS,
-            "available": bool(code),
-            "reason": "" if code else
-                      ("Katalogda bu nitelik yok. Aranan kodlar: "
-                       + ", ".join(f"`{name}`" for name in candidates)
-                       + ". Nitelikler sekmesinden açılabilir; açılmadan bu alan yazılamaz."),
+            # Panel alanı BUNA göre çiziyor: `select` ise açılır kutu, aksi
+            # hâlde metin kutusu. Karar mağazadan geliyor, panelde sabit değil.
+            "type": "select" if selectable else "text",
+            "options": options,
+            "available": bool(code) and not reason,
+            "reason": reason,
         })
     return out
 
@@ -421,45 +577,157 @@ def field_error(field: str, value: Any) -> str:
     return ""
 
 
-def draft_errors(draft: Any, codes: dict[str, str]) -> dict[str, str]:
+def option_error(field: str, value: Any, options: Any) -> str:
+    """Seçimli alanın değeri katalogdaki listede var mı ("" = kabul).
+
+    BOŞ MEŞRUDUR (bkz. `field_error`): yayınevi bilinmiyor olabilir.
+
+    Listede olmayan bir kimlik REDDEDİLİR. Bagisto bu alanı seçenek kimliğiyle
+    saklıyor; tanımadığı kimliği sessizce yok sayar ve ürün yayınevsiz kalır.
+    Personel formu doldurup kaydettiği için bunu fark etmesinin hiçbir yolu
+    olmazdı.
+    """
+    text = _text(value)
+    if not text:
+        return ""
+    known = {_text(item.get("value")): _text(item.get("label"))
+             for item in options or [] if isinstance(item, dict)}
+    if text in known:
+        return ""
+    label = FIELD_LABELS.get(field, field)
+    if not known:
+        return (f"{label} için katalogda seçenek tanımlı değil; değer yazılamaz. "
+                "Nitelikler sekmesinden seçenek eklenebilir.")
+    return (f"{label} katalogdaki listeden seçilir ve `{text}` o listede yok. "
+            "Mağaza tanımadığı seçenek kimliğini sessizce yok sayar — ürün alanı "
+            "boş kalırdı.")
+
+
+def draft_errors(draft: Any, codes: dict[str, str],
+                 catalog: dict[str, Any] | None = None,
+                 family_codes: Any = None) -> dict[str, str]:
     """Formun tamamının hataları — alan → metin.
 
     ÇÖZÜLEMEYEN NİTELİĞE YAZMA DENEMESİ DE HATADIR. Ekran o alanı çizmiyor
     ama istek elle de kurulabilir; arayüzde gizlemek yetkilendirme değildir
     (K9) ve burada susmak, hiçbir yere yazılmayan bir "kaydedildi" üretirdi.
+
+    Aynı gerekçe SEÇENEKLERİ OKUNAMAYAN seçimli alan ve ÜRÜNÜN AİLESİNDE
+    OLMAYAN nitelik için de geçerli: ikisinde de değer mağazada hiçbir yere
+    oturmaz.
     """
     form = draft if isinstance(draft, dict) else {}
+    specs = {item["key"]: item for item in field_specs(codes or {}, catalog, family_codes)}
     errors: dict[str, str] = {}
     for field, value in form.items():
         if field not in FIELD_CANDIDATES:
             errors[field] = f"`{field}` bu ekranın kitap alanlarından biri değil."
             continue
-        if not (codes or {}).get(field):
+        spec = specs[field]
+        if not spec["code"]:
             errors[field] = (f"Katalogda `{field}` alanına karşılık gelen nitelik yok; "
                              "yazılsaydı mağaza isteği kabul eder ama değeri hiçbir yere "
                              "koymazdı.")
             continue
-        problem = field_error(field, value)
+        if not spec["available"]:
+            errors[field] = spec["reason"]
+            continue
+        problem = (option_error(field, value, spec["options"])
+                   if spec["type"] == "select" else field_error(field, value))
         if problem:
             errors[field] = problem
     return errors
 
 
-def patch_for(draft: Any, codes: dict[str, str]) -> dict[str, Any]:
+def canonical_number(field: str, value: Any) -> str:
+    """Sayısal künye alanını MAĞAZANIN OKUYABİLECEĞİ metne indirger.
+
+    ═══════════════════════════════════════════════════════════════════════════
+    NEDEN GEREKLİ — VİRGÜL SESSİZCE PARAYA DOKUNUYOR
+
+    Bu dosyanın okuyucuları Türkçe yazımı bilerek kabul ediyor
+    (`positive_float`/`page_count` virgülü noktaya çeviriyor), yani `1,2`
+    ekranda 1,2 desi olarak DOĞRU görünüyor ve doğrulamadan geçiyor. Ama
+    mağaza tarafı aynı değeri PHP `is_numeric()` ile okuyor
+    (`DesiCalculator::positiveFloat`) ve PHP ondalık ayracı olarak yalnız
+    noktayı tanır: `is_numeric("1,2")` FALSE'tur. Ham yazılan `1,2` mağazada
+    HİÇ okunmaz, hesap sayfa sayısına ya da varsayılan 1,0 desiye düşer —
+    ekran "2 desi" derken müşteriden 1 desi tahsil edilir.
+
+    Çözüm doğrulayıcıyı katılaştırmak DEĞİL (kullanıcıyı Türkçe yazımdan
+    caydırırdı), yazarken kanonikleştirmek: doğrulayıcı ile yazıcı aynı kabulü
+    paylaşır, mağaza ise her zaman nokta ondalıklı bir sayı görür.
+
+    OKUNAMAYAN DEĞER OLDUĞU GİBİ BIRAKILIR: kapı `draft_errors`tır ve zaten
+    reddeder; burada uydurma bir sayı üretmek, kullanıcının yazdığından başka
+    bir şeyi kaydetmek olurdu.
+    """
+    text = _text(value)
+    if not text:
+        return ""
+    if field == "desi":
+        number = positive_float(text)
+        if number is None:
+            return text
+        # Dört ondalık desi için fazlasıyla yeter: mağaza ücretlendirmede
+        # küsuratı zaten YUKARI yuvarlıyor (`billed_desi`).
+        short = f"{number:.4f}".rstrip("0").rstrip(".")
+        # SIFIRA İNEN ÖLÇÜM YAZILMAZ. `0,00001` gibi bir değer dört ondalıkta
+        # `0`a düşer ve mağaza `0`ı "ölçüm yok" sayar (`positiveFloat` sıfırı
+        # eler): ölçüm sessizce SİLİNİR ve hesap sayfa sayısına döner. Böyle
+        # bir değerde tam gösterim kullanılır — PHP `is_numeric` üstel yazımı
+        # da kabul ediyor.
+        return short if positive_float(short) is not None else repr(number)
+    if field == "pageCount":
+        pages = page_count(text)
+        return text if pages is None else str(pages)
+    if field == "publishYear":
+        try:
+            return str(int(float(text.replace(",", "."))))
+        except (TypeError, ValueError):
+            return text
+    return text
+
+
+def patch_for(draft: Any, codes: dict[str, str],
+              catalog: dict[str, Any] | None = None,
+              family_codes: Any = None) -> dict[str, Any]:
     """Ekran taslağı → Bagisto nitelik kodlarıyla yama.
 
     BOŞ DEĞER YAZILIR ve bu bilinçli: kitap künyesinde boş bırakmak
     "bilinmiyor" demektir ve yanlış girilmiş bir ISBN'i temizlemenin başka
     yolu yoktur. Sırlarda geçerli olan "boş = dokunma" kuralı burada geçerli
     DEĞİLDİR — burada silinen bir şey geri yazılabilir.
+
+    SEÇİMLİ ALAN SAYIYA ÇEVRİLİR: mağaza seçenek kimliğini tamsayı bekliyor,
+    panel ise `<select>` kutusundan metin gönderiyor.
+
+    SAYISAL ALAN KANONİKLEŞTİRİLİR: `1,2` gibi Türkçe yazım mağazada hiç
+    okunmuyor (bkz. `canonical_number`).
+
+    ÜRÜNÜN AİLESİNDE OLMAYAN KOD YAMAYA GİRMEZ — `draft_errors` ile aynı kapı.
+    Girseydi gövdeye konur, mağaza sessizce düşürür ve denetim satırında
+    "yazıldı" diye görünürdü.
+
+    DEĞER BURAYA DOĞRULANMIŞ GELİR (`draft_errors` kapıdır). Yine de sayıya
+    çevrilemeyen bir kimlik gelirse alan BOŞALTILIR: uydurma bir kimlik
+    yazmak, ürüne başka bir yayınevi yazmak demek olurdu.
     """
     form = draft if isinstance(draft, dict) else {}
+    specs = {item["key"]: item for item in field_specs(codes or {}, catalog, family_codes)}
+    family = family_code_set(family_codes)
     patch: dict[str, Any] = {}
     for field, value in form.items():
         code = (codes or {}).get(field, "")
         if not code or field not in FIELD_CANDIDATES:
             continue
-        patch[code] = _text(value)
+        if family is not None and code not in family:
+            continue
+        text = _text(value)
+        if specs[field]["type"] == "select":
+            patch[code] = int(text) if text.isdigit() else ""
+            continue
+        patch[code] = canonical_number(field, text) if field in NUMERIC_FIELDS else text
     return patch
 
 
@@ -482,7 +750,12 @@ def bulk_rows(rows: Any, *, field: str, mode: str, amount: Any) -> list[dict[str
     if mode not in ("set", "clear"):
         raise ValueError(f"Bilinmeyen kip: {mode}")
 
-    target = "" if mode == "clear" else _text(amount)
+    # KANONİKLEŞTİRME BURADA DA GEREKLİ: toplu uygulama satırın `value`
+    # alanını doğrudan gövdeye koyuyor (`patch_for`den geçmiyor), yani `0,45`
+    # yazan bir toplu iş mağazada okunamayan bir desi bırakırdı. Fark tablosu
+    # da yazılacak GERÇEK değeri göstermelidir; kullanıcı önizlemede `0,45`
+    # görüp üründe `0.45` bulmamalı.
+    target = "" if mode == "clear" else canonical_number(field, amount)
     out: list[dict[str, Any]] = []
     for row in rows or []:
         before = _text((row.get("book") or {}).get(field))

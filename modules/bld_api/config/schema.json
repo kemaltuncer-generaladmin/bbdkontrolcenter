@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_api ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "base_url": {
+      "type": "string",
+      "pattern": "^$|^https://",
+      "description": "BLD sunucusunun kökü. Varsayılan BOŞ: canlı adres config/local.yaml içinde durur, depoda değil. Dolu ise HTTPS zorunlu — imza başlıkları düz metin gider."
+    },
+    "timeout_seconds": { "type": "number", "minimum": 5, "maximum": 120 },
+    "read_only": {
+      "type": "boolean",
+      "description": "Acil fren. true iken GET dışı her istek geçitte reddedilir."
+    },
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "Yazma metotlarının dry_run varsayılanı (sözleşme §4). K-22 §4 ile KAPALI; bayrağın kendisi durur, yalnız varsayılanı gitti. Yazmanın emniyeti read_only acil frenidir."
+    },
+    "require_reason": {
+      "type": "boolean",
+      "description": "Yazma isteği en az 10 karakterlik gerekçe ve aktör olmadan reddedilir."
+    },
+    "requests_per_minute": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Dakikalık kova. Sunucu sınırı saatte 1200; 20 × 60 = 1200 tam sınırdır, 18 önerilir."
+    }
+  }
+}

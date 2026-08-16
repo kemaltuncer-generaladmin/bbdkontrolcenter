@@ -1,10 +1,16 @@
-"""Ders Takvimi — HTTP yüzeyi."""
+"""Ders Takvimi — HTTP yüzeyi. SALT OKUNUR.
+
+`PUT /groups` ve `POST /adopt` KALDIRILDI. Bu ekran artık hiçbir şeyin sahibi
+değil; yazma ucu bırakmak, arayüzde gizlenmiş ama backend'de açık duran bir
+kapı olurdu (K9'un tersi). Eski uçlara gelen istek 405 alır ve bu doğrudur:
+"burada yok" demek, sessizce kabul edip hiçbir yere yazmamaktan iyidir.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
+from km_sdk import APIRouter, CurrentUser, HTTPException, requires
 
 from ..service import ScheduleService
 
@@ -25,29 +31,9 @@ def service() -> ScheduleService:
     return _service
 
 
-class DocumentBody(BaseModel):
-    document: dict[str, Any] = Field(default_factory=dict)
-
-
-@router.get("/groups")
-async def read_groups(
+@router.get("/week")
+async def read_week(
     user: CurrentUser = requires("bbd_class_schedule.view"),
 ) -> dict[str, Any]:
+    """Zil Sistemi'ne girilmiş haftalık saatler ve gruplar."""
     return await service().read()
-
-
-@router.put("/groups")
-async def write_groups(
-    body: DocumentBody,
-    user: CurrentUser = requires("bbd_class_schedule.manage"),
-) -> dict[str, Any]:
-    return await service().write(body.document, actor=user.full_name)
-
-
-@router.post("/adopt")
-async def adopt(
-    body: DocumentBody,
-    user: CurrentUser = requires("bbd_class_schedule.manage"),
-) -> dict[str, Any]:
-    """Tarayıcı belleğindeki eski takvimi bir kez içeri alır (yalnız boşsa)."""
-    return await service().adopt(body.document, actor=user.full_name)

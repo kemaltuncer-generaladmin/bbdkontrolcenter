@@ -1,140 +1,89 @@
 // Zil sistemi — veri katmanı.
 //
-// KALICILIK ARTIK ÇEKİRDEKTE (K5):
+// TARAYICI BELLEĞİ KULLANILMAZ. 0.1 sürümünde ayar localStorage'daydı ve
+// çekirdeğe taşınmıştı; artık tek doğru kaynak modülün kendi tablolarıdır.
+// Bu dosya yalnız uç noktaları tek yerde toplar.
 //
-//     GET  /api/bell/state
-//     PUT  /api/bell/settings
-//
-// Tarayıcı belleğindeki eski ayar, çekirdek tarafı BOŞSA bir kez içeri alınır.
-// `load()`/`save()` eşzamanlı kalır; okuma önbellekten, yazma kuyruklanarak.
-//
-// BURADA DERS SAATİ TUTULMAZ. Saatler Ders Takvimi modülünündür; zil onları
-// `bbd_class_schedule.week` yeteneğinden okur (K3/K5). Burada yalnızca "hangi
-// grup hangi sesi, hangi düzeyde, hangi derste çalsın" kararı durur.
+// GECİKMELİ YAZMA YOK. Eski panel her tuş vuruşunda kaydettiği için 600 ms
+// bekletiyordu. Bu ekranda yazma anları sayılıdır (saat ekle, grup ekle,
+// metni kaydet) ve her biri BİR ses üretimini tetikleyebilir — geciktirmek,
+// kullanıcının ne zaman buluta çıkıldığını görememesi demek olurdu.
 
-const KEY = 'km.bell.v1';
+const BASE = '/api/bell';
 
-export const DEFAULT_SOUND = 'classic_electric';
-export const DEFAULT_VOLUME = 85;
+let call = null;
 
-/** Bir grubun ön tanımlı zil ayarı. */
-export function defaultGroupSettings() {
-  return {
-    enabled: true,
-    soundId: DEFAULT_SOUND,
-    volume: DEFAULT_VOLUME,
-    ringStart: true,
-    ringEnd: true,
-    // Ders bazlı istisnalar. Anahtar: "<gün>|<başlangıç>"
-    // Değer: { start, end, soundId } — soundId null ise grubun sesi çalar.
-    overrides: {},
-  };
+export function connect(api) {
+  call = api;
 }
 
-function normalize(state) {
-  const groups = {};
-  for (const [id, value] of Object.entries(state?.groups || {})) {
-    const base = defaultGroupSettings();
-    groups[id] = {
-      enabled: value?.enabled !== false,
-      soundId: typeof value?.soundId === 'string' ? value.soundId : base.soundId,
-      volume: Math.min(100, Math.max(0, Number(value?.volume ?? base.volume))),
-      ringStart: value?.ringStart !== false,
-      ringEnd: value?.ringEnd !== false,
-      overrides: typeof value?.overrides === 'object' && value.overrides ? value.overrides : {},
-    };
-  }
-  return {
-    version: 1,
-    // Ana şalter: tek yerden tüm zilleri susturmak (deneme sınavı, tören).
-    enabled: state?.enabled !== false,
-    groups,
-  };
+function need() {
+  if (!call) throw new Error('Panel bağlanmadı.');
+  return call;
 }
 
-let apiCall = null;
-let cache = null;
-let writeTimer = null;
-let lastError = '';
-
-function readLocal() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? normalize(JSON.parse(raw)) : null;
-  } catch {
-    return null;
-  }
+/** Ayarlar, saatler, gruplar, ses durumları, ajan ve günlük — tek çağrıda. */
+export function state() {
+  return need()(`${BASE}/state`);
 }
 
-/** Çekirdekten okur; boşsa yereldeki eski ayarı bir kez içeri alır. */
-export async function init(api) {
-  apiCall = api;
-  try {
-    const payload = await api('/api/bell/state');
-    const settings = payload?.settings;
-    const empty = !settings || Object.keys(settings.groups || {}).length === 0;
-    if (empty) {
-      const local = readLocal();
-      if (local && Object.keys(local.groups || {}).length > 0) {
-        const adopted = await api('/api/bell/adopt', { method: 'POST', body: { settings: local } });
-        if (adopted.adopted) {
-          try { localStorage.removeItem(KEY); } catch { /* önemsiz */ }
-          cache = normalize(adopted.settings);
-          return { migrated: true, error: '', state: payload };
-        }
-      }
-    }
-    cache = normalize(settings);
-    return { migrated: false, error: '', state: payload };
-  } catch (error) {
-    lastError = error.message || String(error);
-    cache = readLocal() || normalize(null);
-    return { migrated: false, error: lastError, state: null };
-  }
+export function saveSettings(settings) {
+  return need()(`${BASE}/settings`, { method: 'PUT', body: { settings } });
 }
 
-export function load() {
-  return cache ? normalize(cache) : normalize(null);
+export function saveTimes(times) {
+  return need()(`${BASE}/times`, { method: 'PUT', body: { times } });
 }
 
-/** Yazma gecikmeli: her anahtar değişiminde HTTP isteği atılmaz. */
-export function save(state) {
-  cache = normalize(state);
-  if (!apiCall) return false;
-
-  window.clearTimeout(writeTimer);
-  writeTimer = window.setTimeout(async () => {
-    try {
-      await apiCall('/api/bell/settings', { method: 'PUT', body: { settings: cache } });
-      lastError = '';
-    } catch (error) {
-      lastError = error.message || String(error);
-      console.warn('zil ayarı kaydedilemedi', error);
-    }
-  }, 600);
-  return true;
+/** `kind`: 'grup' (toplu ders) ya da 'ozel' (tek öğrenci). Cümle buna göre kurulur. */
+export function addGroup(name, kind) {
+  return need()(`${BASE}/groups`, { method: 'POST', body: { name, kind } });
 }
 
-export function error() {
-  return lastError;
+/** `kind` boş gönderilirse mevcut tür korunur — ad değiştirmek türü sıfırlamaz. */
+export function renameGroup(id, name, kind = '') {
+  return need()(`${BASE}/groups/${encodeURIComponent(id)}`,
+    { method: 'PUT', body: { name, kind } });
 }
 
-export async function flush() {
-  window.clearTimeout(writeTimer);
-  if (!apiCall || !cache) return;
-  try {
-    await apiCall('/api/bell/settings', { method: 'PUT', body: { settings: cache } });
-  } catch (error) {
-    console.warn('zil ayarı kaydedilemedi', error);
-  }
+export function removeGroup(id) {
+  return need()(`${BASE}/groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-/** Grubun ayarını getirir; yoksa ön tanımlıyı yazar. */
-export function settingsFor(state, groupId) {
-  if (!state.groups[groupId]) state.groups[groupId] = defaultGroupSettings();
-  return state.groups[groupId];
+/** Zili şimdi çalar — okulun hoparlöründen. */
+export function ring() {
+  return need()(`${BASE}/ring`, { method: 'POST' });
 }
 
-export function overrideKey(dayKey, start) {
-  return `${dayKey}|${start}`;
+/** Grubu çağırır: yalnız anons, zil yok. */
+export function callGroup(groupId) {
+  return need()(`${BASE}/call`, { method: 'POST', body: { groupId } });
+}
+
+/**
+ * Sesi YALNIZ bu bilgisayarda dinletir.
+ * `ring`/`callGroup` ile karıştırılmamalı: bu okula duyulmaz.
+ */
+export function preview(sound, volume) {
+  return need()(`${BASE}/preview`, { method: 'POST', body: { sound, volume } });
+}
+
+export function rebuildVoices() {
+  return need()(`${BASE}/voices/rebuild`, { method: 'POST' });
+}
+
+export function syncAgent() {
+  return need()(`${BASE}/sync`, { method: 'POST' });
+}
+
+/** Zil sesi dosyasını yükler. Tauri'de fs eklentisi yok; base64 gider. */
+export async function uploadSound(file) {
+  const data = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Dosya okunamadı.'));
+    // `result` "data:audio/wav;base64,AAAA…" biçiminde gelir; virgülden sonrası.
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.readAsDataURL(file);
+  });
+  return need()(`${BASE}/sound`, { method: 'POST', body: { name: file.name, data } });
 }

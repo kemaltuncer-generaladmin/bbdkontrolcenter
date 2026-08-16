@@ -1,22 +1,58 @@
-# KDS Yönetimi modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# KDS Yönetimi — mutfak ekranı (kasa) cihazlarının yönetim ekranı.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: cihaz, ayar, komut, sipariş ve fiş kaydı
+# BLD'dedir. Yerel tablolar yalnız üç şey içindir — yazma gerekçesi (denetim
+# izi), ayar itme önizlemesi ve ekran tercihi.
+#
+# Sözleşme: K-21 (Kontrol Merkezi ↔ BLD KDS köprüsü) + K-22 (olay bazlı sesler,
+# üç yeni komut, zengin telemetri, kuru provanın kaldırılması). Uçlar, alan
+# adları ve 24 yönetilen ayarın listesi orada sabittir; uydurma alan eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_kds
 name: "KDS Yönetimi"
-description: "Mutfak ekranı cihazlarının ve kuyruklarının yönetimi."
+description: "Mutfak ekranı cihazlarının, ayarlarının, komutlarının ve sipariş revizyonlarının yönetimi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Cihaz, yönetilen ayar, komut kuyruğu, sipariş, revizyon ve fiş denetim
+      kaydı BLD sunucusundadır (K-21 §2) ve oraya yalnız geçitten gidilir (K4).
+      İmza, nonce, zaman penceresi ve oran sınırı tek yerde durur; her ekranın
+      kendi istemcisini yazması aynı hatayı yirmi yerde tekrarlardı.
+  - capability: printer
+    optional: true
+    reason: >
+      Eşleme kodu ve cihaz künyesi kâğıda basılıp mutfağa götürülebilsin diye.
+      Yazıcı yoksa ekran tümüyle çalışır (K7); yanıt `printer_available: false`
+      döner ve panel baskı sunan bölümü hiç açmaz.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_kds.device_revoked
+      payload: "{deviceId, name, reason, actor}"
+      description: >
+        Bir mutfak kasası bu ekrandan iptal edildi; cihaz bir daha bağlanamaz.
+        Kuru provada YAYINLANMAZ — BLD'de hiçbir şey değişmedi.
+    - name: bld_kds.order_status_changed
+      payload: "{orderId, from, to, reason}"
+      description: "Sipariş durumu bu ekrandan değiştirildi. Kuru provada YAYINLANMAZ."
   subscribes: []
 
 http:
@@ -32,24 +68,61 @@ ui:
     title: "KDS Yönetimi"
     icon: monitor
     group: "BLD"
-    order: 30
+    order: 520
     requires: [bld_kds.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran mutfak donanımını ve canlı siparişi yönetir:
+# `bbd_staff` mağaza tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır,
+# `accountant` mali ekranlara bakar. Üçünün de burada işi yok.
+#
+# Yıkıcı işlemler PIN değil GEREKÇE ister (ADR 0012 ile aynı ilke): ayrı izin
+# anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır). Bu yüzden
+# hiçbir izin `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına
+# bağlanacak ve bu ekran PIN istemiyor.
+#
+# KURU PROVA ARTIK ÜÇÜNCÜ BİR EMNİYET DEĞİL (K-22 §4): şalter arayüzden
+# kaldırıldı ve `dry_run_default` kapatıldı. Geriye kalan iki kapı — ayrı izin
+# ve gerekçe — bilerek korundu; kuru prova bir güvenlik ağıydı, gerekçe ise
+# denetim kaydıdır ve ikisi ayrı şeylerdir.
 permissions:
   - key: bld_kds.view
-    description: "KDS Yönetimi ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Cihazları, ayarlarını, komut geçmişini, fiş kaydını ve siparişleri görüntüleme."
+    default_roles: [admin, bld_staff]
   - key: bld_kds.manage
-    description: "KDS Yönetimi kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Cihaz açma ve adlandırma, eşleme kodu üretme, yönetilen ayarları yazma,
+      zararsız komutlar (test fişi, yeniden bas, alarmı sustur), sipariş
+      revizyonu ve durum değişikliği.
+    default_roles: [admin, bld_staff]
+  - key: bld_kds.devices
+    description: >
+      YIKICI cihaz işlemleri: cihaz iptali ve `restart` · `clear_failed` ·
+      `clear_queue` · `update` · `unpair` komutları. Bu yetkiyi taşıyan kişi
+      mutfağı sipariş göremez hâle getirebilir — `restart` ekranı kapatır,
+      `clear_failed` basılamamış fişleri kuyruktan düşürür ve o fişler bir daha
+      basılmaz, `clear_queue` üstelik bekleyenleri de düşürür, `update` kurulum
+      boyunca ekranı alır, `unpair` cihaz token'ını siler ve kasa sahada elle
+      eşleştirilene kadar hiç sipariş göremez, iptal edilen kasa bir daha
+      bağlanamaz. BLD tarafında da ayrı yetki kutusu var
+      (`Veykemtu.KitchenDevices`); iki tarafın ayrımı aynı tutulur.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin, baskı `printer` yeteneğinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden, baskı `printer` platform yeteneğinden
+    gelir; ikisi de burada TEKRAR EDİLMEZ (consumes bloğunda ilan edilir).
 
 tasks: []

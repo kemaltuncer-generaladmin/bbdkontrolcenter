@@ -284,6 +284,33 @@ LIVE_SALES_STATS = [{
     },
 }]
 
+#: CANLI BİÇİM — `GET /api/admin/bbd/return-requests` (bbdstore.com.tr,
+#: 2026-08-16). Bu uç bir dönem 404 dönüyordu; artık YAYINDA ve yanıtı şu üç
+#: şeyi söylüyor:
+#:  · Yazım KARIŞIK: `order_id`/`created_at` snake, `orderIncrementId`/
+#:    `customerName`/`itemCount` camel — aynı sözlükte yan yana.
+#:  · Durum düz metin DEĞİL, SÖZLÜK: `{"id", "title", "color"}`.
+#:  · Başlıklar TÜRKÇE (mağazada `rma_statuses`/`rma_reasons` Türkçeleştirildi).
+#: Canlıdan kopyalanmıştır — değiştirilmeden bırakın.
+LIVE_RETURN_REQUEST = {
+    "id": 2,
+    "order_id": 11,
+    "rma_status_id": 5,
+    "package_condition": "packed",
+    "created_at": "2026-07-20T22:17:51.000000Z",
+    "updated_at": "2026-07-20T22:19:30.000000Z",
+    "status": {"id": 5, "title": "İade Edildi", "color": "#0d9488"},
+    "reason": "Üretim Hatası",
+    "reasons": ["Üretim Hatası"],
+    "itemCount": 1,
+    "totalQuantity": 1,
+    "lastActivityAt": "2026-07-21 01:19:30",
+    "orderIncrementId": "11",
+    "orderStatus": "closed",
+    "customerName": "veysel kemal TUNCER",
+    "isGuest": False,
+}
+
 
 #: Üç kalemli örnek sipariş. Kalem 1 tamamı faturalanmış, kalem 2 kısmen iade
 #: edilmiş, kalem 3 hiç faturalanmamış (iade edilemez olmalı).

@@ -57,8 +57,8 @@ ui:
   nav:
     title: "Dahili AI Ekranları"
     icon: cpu
-    group: "BBD Store"
-    order: 200
+    group: "BBD Store / Sistem ve Kayıt"
+    order: 390
     requires: [store_ai.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

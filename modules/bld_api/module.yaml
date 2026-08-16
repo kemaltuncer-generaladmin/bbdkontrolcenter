@@ -1,0 +1,54 @@
+# BLD geçidi — BLD sunucusunun kontrol API'sine açılan TEK kapı.
+#
+# NEDEN AYRI MODÜL: KDS yönetimi (`bld_kds`) ve ilerideki BLD ekranları aynı
+# imzalı yüzeye bakacak. Her biri kendi HTTP istemcisini yazsaydı imza
+# üretimi, nonce, saat penceresi, yeniden deneme, hız sınırı, kuru prova ve
+# gerekçe taşıma her ekranda tekrarlanır — ve her birinde farklı biçimde
+# yanlış olurdu. İmzayı tek yerde tutmak ayrıca sırrı tek yerde tutmak
+# demektir. Geçit bunları `bld.api` yeteneği olarak sunar (K3, K4).
+#
+# NEDEN PLATFORM DEĞİL: BLD bir iş sistemidir, altyapı değil. Silinebilir
+# olmalı; `km_platform` silinemez olanların yeridir (ADR 0006).
+#
+# EKRANI, İZNİ, HTTP YÜZEYİ YOKTUR: menüde görünmez, uç nokta açmaz. Yalnız
+# diğer modüllere hizmet eder. Yetkilendirme çağıran ekranın işidir (K9).
+
+id: bld_api
+name: "BLD Geçidi"
+description: "BLD kontrol API'sine tek kapı: imzalı kimlik, hız kovası, kuru prova, gerekçe taşıma."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+depends: []
+
+provides:
+  - capability: bld.api
+    contract: km_sdk.contracts:BldApi
+    description: "BLD kontrol API'si: mutfak kasaları, ayarlar, komutlar, fiş kaydı, siparişler."
+
+consumes:
+  - capability: secrets
+    reason: "Kontrol imzasının sırrı kasada durur; depoda ve ayarda bulunmaz (K8)."
+
+events:
+  publishes: []
+  subscribes: []
+
+# HTTP yüzeyi YOK: bu modül dışarıya uç nokta açmaz, yalnız yetenek verir.
+
+permissions: []
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+dependencies:
+  python:
+    - "httpx>=0.28"
+
+tasks: []

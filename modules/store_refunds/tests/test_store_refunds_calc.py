@@ -8,7 +8,13 @@ from __future__ import annotations
 from typing import Any
 
 from store_refunds_backend import calc
-from store_refunds_fakes import LIVE_ORDER, LIVE_REFUND, LIVE_SALES_STATS, ORDER
+from store_refunds_fakes import (
+    LIVE_ORDER,
+    LIVE_REFUND,
+    LIVE_RETURN_REQUEST,
+    LIVE_SALES_STATS,
+    ORDER,
+)
 
 TODAY = "2026-08-13"
 
@@ -372,6 +378,43 @@ def test_kargo_bedeli_kredi_notlarindan_dusulur() -> None:
     assert already == 12_000
     kisik = calc.order_view(LIVE_ORDER, shipping_refunded=already)
     assert kisik["shippingAvailable"] == 0
+
+
+def test_canli_talebin_durumu_sozlukten_okunur_ham_sozluk_ekrana_yazilmaz() -> None:
+    # Uç durumu SÖZLÜK veriyor. `str()`'e vermek rozete ham Python sözlüğünü
+    # ("Bilinmiyor ({'id': 5, ...})") yazıyordu; üstelik Türkçe başlık
+    # aranmadığı için CANLI talebin hepsi "Bilinmiyor" çipine düşüyordu.
+    row = calc.request_row(LIVE_RETURN_REQUEST)
+    assert row["status"] == calc.ST_REFUNDED
+    assert row["statusLabel"] == "İade edildi"
+    assert "{" not in row["statusLabel"]
+
+
+def test_canli_talepte_siparis_numarasi_camelcase_alandan_okunur() -> None:
+    # `orderIncrementId` aranmadığı için "Sipariş" sütunu boş kalıyordu.
+    row = calc.request_row(LIVE_RETURN_REQUEST)
+    assert row["orderNumber"] == "11"
+    assert row["orderId"] == 11
+    assert row["customer"] == "veysel kemal TUNCER"
+    assert row["itemCount"] == 1
+    assert row["date"] == "2026-07-20"
+
+
+def test_canli_turkce_durum_basliklari_kendi_cipine_dusuyor() -> None:
+    assert calc.status_of({"title": "İnceleniyor"}) == calc.ST_REQUESTED
+    assert calc.status_of({"title": "Onaylandı"}) == calc.ST_APPROVED
+    assert calc.status_of({"title": "Kargoda"}) == calc.ST_AWAITING
+    assert calc.status_of({"title": "Reddedildi"}) == calc.ST_REJECTED
+    # "Çözüldü" parası çıktı mı söylemiyor — `closed` gibi BİLİNMEZ kalır.
+    assert calc.status_of({"title": "Çözüldü"}) == calc.ST_OTHER
+
+
+def test_canli_turkce_sebep_eslenir_eslenmeyen_ham_metniyle_gorunur() -> None:
+    assert calc.request_row(LIVE_RETURN_REQUEST)["reasonLabel"] == "Ayıplı"
+    # Mağaza yöneticisi yeni bir sebep tanımlarsa operatör onu OLDUĞU GİBİ
+    # görür; yalnız "Diğer" demek müşterinin yazdığını saklamak olurdu.
+    yeni = {**LIVE_RETURN_REQUEST, "reason": "Yanlış Beden Seçtim"}
+    assert calc.request_row(yeni)["reasonLabel"] == "Diğer (Yanlış Beden Seçtim)"
 
 
 def test_pano_toplam_satisi_canli_bicimden_okunur() -> None:

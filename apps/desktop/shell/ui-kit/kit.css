@@ -422,6 +422,11 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-kpi-value.bad { color: var(--bad); }
 .kit-kpi-value.good { color: var(--good); }
 .kit-kpi-value.muted { color: var(--soft); font-size: 15px; }
+/* Eğilim şeridi kutunun genişliğine uyar: `sparkline` sabit 120px'lik bir
+   viewBox üretir ama `preserveAspectRatio: none` ile esner, dar kutuda
+   taşmaz. */
+.kit-kpi-spark { display: block; margin-top: 2px; line-height: 0; }
+.kit-kpi-spark .kit-spark { width: 100%; height: 22px; }
 .kit-delta { font-size: 11px; font-weight: 600; }
 .kit-delta.up { color: var(--good); }
 .kit-delta.down { color: var(--bad); }
@@ -847,3 +852,99 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-rt-area td, .kit-rt-area th,
 .kit-rt-doc td, .kit-rt-doc th { border: 1px solid var(--line); padding: 5px 8px; }
 .kit-rt-area > :last-child, .kit-rt-doc > :last-child { margin-bottom: 0; }
+
+/* ── akış bileşenleri (flow.js) ────────────────────────────────────────────
+   Zaman çizelgesi, aşama şeridi, ölçü karşılaştırma. Renk hiçbirinde tek
+   başına anlam taşımaz; her öğenin yazısı vardır ve siyah-beyaz yazdırmada
+   bilgi kaybolmaz. */
+
+/* İç boşluk BİLEŞENİN kendisindedir, `.kit-chart` ile aynı kural: bu üçü
+   doğrudan `card()` içine konuluyor ve `card()` çocuklarına boşluk vermiyor.
+   Boşluğu panele bıraktığımızda her panel kendi `padding`'ini uyduruyor,
+   ekranlar birbirinden kayıyordu (ADR 0011 — tek kopya yalnız kod için değil,
+   ölçüler için de geçerli). */
+
+/* Dikey olay akışı. Nokta ile çizgi tek sütunda hizalanır: `padding-left`
+   noktaya yer açar, çizgi `::before` ile noktaların ortasından geçer. */
+.kit-timeline { list-style: none; margin: 0; padding: 12px 14px; position: relative; }
+.kit-timeline-empty { color: var(--soft); font-size: 12.5px; padding: 12px 14px; }
+.kit-tl-item { position: relative; padding: 0 0 14px 22px; }
+.kit-tl-item::before {
+  content: ''; position: absolute; left: 4px; top: 14px; bottom: 0;
+  width: 1px; background: var(--line);
+}
+/* Son satırın altında çizgi uzamaz — yolculuk orada bitiyor. */
+.kit-tl-item:last-child { padding-bottom: 0; }
+.kit-tl-item:last-child::before { display: none; }
+.kit-tl-dot {
+  position: absolute; left: 0; top: 5px; width: 9px; height: 9px;
+  border-radius: 50%; background: #fff; border: 2px solid var(--soft);
+}
+.kit-tl-dot.good { border-color: var(--good); background: var(--good); }
+.kit-tl-dot.warn { border-color: var(--warn); background: var(--warn); }
+.kit-tl-dot.bad  { border-color: var(--bad);  background: var(--bad); }
+.kit-tl-dot.info { border-color: var(--accent); background: var(--accent); }
+.kit-tl-dot.dim  { border-color: var(--line); background: #fff; }
+.kit-tl-item.now > .kit-tl-dot { box-shadow: 0 0 0 3px var(--accent-soft, rgba(91,140,255,0.16)); }
+.kit-tl-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.kit-tl-title { font-size: 13px; font-weight: 600; color: var(--ink, #111722); }
+.kit-tl-item.now .kit-tl-title { color: var(--accent); }
+.kit-tl-at { font-size: 11.5px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.kit-tl-detail { font-size: 12px; color: var(--soft); margin-top: 2px; }
+.kit-tl-note { font-size: 11.5px; color: var(--soft); margin-top: 2px; font-style: italic; }
+.kit-tl-item.pending .kit-tl-title { color: var(--soft); font-weight: 500; }
+
+/* Yatay aşama şeridi. Adımlar eşit paylaşır; dar ekranda alt alta düşer. */
+.kit-stepper {
+  list-style: none; margin: 0; padding: 12px 14px;
+  display: flex; gap: 4px; flex-wrap: wrap;
+}
+.kit-step {
+  flex: 1 1 140px; display: flex; gap: 8px; align-items: flex-start;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff;
+}
+.kit-step.done { border-color: #a7f3d0; background: #f6fefb; }
+.kit-step.now { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, rgba(91,140,255,0.16)); }
+.kit-step-mark {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700;
+  border: 1px solid var(--line); background: #fff; color: var(--soft);
+}
+/* ADIM TONU. `stepper` bu sınıfı hep yazıyordu ama karşılığı yoktu — sessiz
+   ölü kod. Gereken şu: SIRASI GELMEDEN gerçekleşmiş ya da yarım kalmış bir
+   adım, zincirin tamamını tamamlanmış göstermeden işaretlenebilmeli.
+   `done`/`now` zincir hakkındadır, ton TEK ADIM hakkında. Renk yine tek başına
+   anlam taşımaz: adımın durum yazısı (`kit-step-state`) her hâlde orada. */
+.kit-step-mark.good { border-color: var(--good); color: var(--good); }
+.kit-step-mark.warn { border-color: var(--warn); color: var(--warn); }
+.kit-step-mark.bad  { border-color: var(--bad);  color: var(--bad); }
+.kit-step-mark.info { border-color: var(--accent); color: var(--accent); }
+/* Zincir sınıfları tonu YENER (üç sınıflı seçici): kesintisiz tamamlanan
+   başlangıç tek bir dolu şerit gibi okunsun. */
+.kit-step.done .kit-step-mark { border-color: var(--good); background: var(--good); color: #fff; }
+.kit-step.now .kit-step-mark { border-color: var(--accent); background: var(--accent); color: #fff; }
+.kit-step-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.kit-step-label { font-size: 12.5px; font-weight: 600; color: var(--ink, #111722); }
+.kit-step-at { font-size: 11px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.kit-step-state { font-size: 11px; color: var(--soft); }
+.kit-step.done .kit-step-state { color: var(--good); }
+
+/* Ölçü karşılaştırma. Faturalanan satır kalın çerçeveyle AYRICA yazıyla
+   işaretlenir; çubuk uzunluğu tek başına "bu geçerli" demez. */
+.kit-measures { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+.kit-measure { display: flex; flex-direction: column; gap: 4px; }
+.kit-measure-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.kit-measure-label { font-size: 12.5px; color: var(--soft); }
+.kit-measure-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.kit-measure-track { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.kit-measure-fill { height: 100%; background: var(--soft); border-radius: 4px; }
+.kit-measure-fill.good { background: var(--good); }
+.kit-measure-fill.warn { background: var(--warn); }
+.kit-measure-fill.bad  { background: var(--bad); }
+.kit-measure-fill.info { background: var(--accent); }
+.kit-measure.governs .kit-measure-value { color: var(--warn); }
+.kit-measure.governs .kit-measure-fill { background: var(--warn); }
+.kit-measure-governs { font-size: 11.5px; color: var(--warn); font-weight: 600; }
+.kit-measure-note { font-size: 12px; color: var(--soft); border-top: 1px solid var(--line); padding-top: 8px; }

@@ -32,7 +32,7 @@ ui:
     title: "Müşteriler"
     icon: users
     group: "BLD"
-    order: 80
+    order: 570
     requires: [bld_customers.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

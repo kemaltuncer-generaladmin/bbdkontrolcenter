@@ -32,7 +32,7 @@ ui:
     title: "Abonelikler"
     icon: repeat
     group: "BLD"
-    order: 90
+    order: 580
     requires: [bld_subscriptions.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

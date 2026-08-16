@@ -1,0 +1,237 @@
+/* KDS Yönetimi paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bk-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bk-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bk` kökünün kendisidir — o da panelin kendi öneki. */
+
+.bk {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bk > * { flex: none; }
+
+.bk-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bk-body > * { flex: none; }
+
+.bk-sub { font-size: 11px; color: var(--soft); }
+
+.bk-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--tint);
+}
+
+.bk-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Bağlantı uyarısının kabı. Uyarı yokken YER KAPLAMAZ: boş bir kutu tablonun
+   üstünde aralık bırakıyor ve "bir şey mi kayboldu" izlenimi veriyordu.
+   Kap ayrı duruyor ki 15 saniyelik tazeleme yalnız onu yenilesin. */
+.bk-alertbox { display: flex; flex-direction: column; gap: 8px; }
+.bk-alertbox:empty { display: none; }
+
+/* ---------------------------------------------------------------- üst şerit */
+
+/* Şeritte yalnız sekmeler var: kuru prova şalteri K-22 §4 ile kaldırıldı ve
+   yerine başka bir kip anahtarı KONMADI. Yazmanın emniyeti gerekçe kutusu ve
+   yıkıcı işlemlerin ayrı iznidir; tepede duran bir "gerçek mi değil mi"
+   şalteri o iki kapıyı zayıflatan üçüncü bir kip yaratıyordu. */
+.bk-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+}
+
+/* ------------------------------------------------------------------- tablo */
+
+/* Tablo KENDİ kabında yatay kayar; gövde yatay kaymaz — sayfanın tamamını
+   sağa sola sürüklemek okumayı bozuyordu. */
+.bk-table { min-height: 120px; overflow-x: auto; }
+.bk-table > .kit-table { min-width: 900px; }
+
+.bk-stack { display: flex; flex-direction: column; gap: 1px; min-width: 0; align-items: flex-start; }
+.bk-stack b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.bk-stack .bk-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+/* Göreli zaman üstte kalın, mutlak zaman altında küçük: biri ötekini
+   TAMAMLAR. "5 dakika önce" karar verdirir, tam damga kanıt olur. */
+.bk-when { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bk-when b { font-weight: 600; }
+
+/* ------------------------------------------------------------------ künye */
+
+.bk-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+}
+.bk-fact { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bk-fact b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bk-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+}
+
+.bk-note {
+  padding: 10px 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;              /* müşteri notundaki satır sonları korunur */
+}
+
+/* ---------------------------------------------------------------- çekmece */
+
+.bk-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+}
+
+.bk-formbox { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+
+/* --------------------------------------------------------- eşleme kodu */
+
+.bk-pairing { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+
+.bk-code-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Kod ELLE OKUNUP kasaya yazılıyor: küçük punto ve dar aralık burada gerçek
+   bir hata kaynağı. Büyük, seyrek ve tek aralıklı. */
+.bk-code-row .bk-code {
+  font-size: 20px;
+  letter-spacing: 0.16em;
+  padding: 6px 12px;
+  font-weight: 600;
+}
+
+.bk-left { font-size: 12px; font-weight: 600; color: var(--good); }
+.bk-left.over { color: var(--bad); }
+
+/* ---------------------------------------------------------------- ayarlar */
+
+.bk-settings { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+
+/* Bölüm kartları çekmecede iç içe duruyor; dıştaki kartla aynı gölgeyi
+   taşımaları katmanları okunmaz kılıyordu. */
+.bk-settings .kit-card { background: var(--tint); }
+
+/* BİR BÖLÜMÜN İÇİ: ipucu → form → salt okunur künye → düğmeler. Sıra sabit ve
+   kasadaki ayarlar ekranının sırasıyla aynı; yönetici telefonda mutfaktaki
+   personele "üçüncü bölüm" diyebilmeli. */
+.bk-section { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+
+/* Salt okunur künye bloğu (sunucu · kuyruk · cihaz). Formun kendi dolgusu
+   zaten var; blok onunla aynı hizada dursun diye yatay dolgu sıfırlanır. */
+.bk-section-block { display: flex; flex-direction: column; gap: 8px; }
+.bk-section-block .bk-facts,
+.bk-section .bk-facts { padding: 0; }
+.bk-section-block .bk-pairing { padding: 0; }
+
+/* --------------------------------------------------------------- komutlar */
+
+.bk-commands { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+
+/* `reprint` yük ister; tek düğme yerine küçük bir form satırı. */
+.bk-reprint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.bk-reprint .kit-input { width: 150px; }
+
+/* --------------------------------------------------------------- revizyon */
+
+.bk-revision { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
+
+.bk-rev-list { display: flex; flex-direction: column; gap: 6px; }
+
+.bk-rev-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px minmax(0, 1fr) 88px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+/* ÇIKARILAN KALEM SİLİNMEZ, ÜSTÜ ÇİZİLİR: revizyon uygulanana kadar karar
+   geri alınabilir ve kullanıcı ne çıkardığını görmeye devam etmeli. */
+.bk-rev-row.removed {
+  opacity: 0.55;
+  text-decoration: line-through;
+  background: transparent;
+  border-style: dashed;
+}
+.bk-rev-row.removed .kit-btn { text-decoration: none; }
+
+/* SEÇENEKLER SALT OKUNUR. Adet kutusuyla aynı satırda ama girilebilir
+   görünmemeli: kesikli çerçeve ve soluk zemin "buraya dokunulmaz" der. */
+.bk-rev-opts {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--soft);
+  padding: 1px 6px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: var(--tint);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bk-rev-add-host { display: flex; flex-direction: column; gap: 8px; }
+
+/* Seçicinin kendi listesi kaydırılır; çekmecenin tamamını uzatmak,
+   "Revizyonu uygula" düğmesini ekranın dışına itiyordu. */
+.bk-rev-pick .pk-box { max-height: 260px; }
+
+.bk-rev-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.bk-rev-add .kit-input { width: 170px; }
+
+/* ------------------------------------------------------------- dar pencere */
+
+@media (max-width: 900px) {
+  /* Dar çekmecede dört sütunluk kalem satırı kırpılıyor; alt alta geçer. */
+  .bk-rev-row { grid-template-columns: minmax(0, 1fr); }
+  .bk-topbar { padding: 0 12px; }
+  .bk-body { padding: 4px 12px 22px; }
+}

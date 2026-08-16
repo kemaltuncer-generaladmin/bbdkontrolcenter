@@ -110,7 +110,7 @@ def test_zararina_satilan_set_isaretlenir() -> None:
     assert calc["profit"] < 0
     assert calc["state"] == "loss"
     assert bundles.flags(calc, rows)["loss"] is True
-    assert "zararına" in bundles.warning_text(bundles.flags(calc, rows))
+    assert "zararına satılıyor" in bundles.warning_text(bundles.flags(calc, rows))
 
 
 def test_maliyet_bilinmiyorsa_karli_denmez_zararli_da_denmez() -> None:
@@ -174,8 +174,8 @@ def test_tukenmis_ve_pasif_bilesen_ayri_ayri_isaretlenir() -> None:
     assert marks["outOfStock"] is True
     assert marks["passive"] is True
     metin = bundles.warning_text(marks)
-    assert "bileşeni tükenmiş" in metin
-    assert "bileşeni pasif" in metin
+    assert "içindeki ürün tükendi" in metin
+    assert "içindeki ürün vitrinde yok" in metin
 
 
 def test_adedi_karsilamayan_stok_da_tukenmis_sayilir() -> None:

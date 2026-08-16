@@ -87,28 +87,79 @@ async def test_onizleme_satis_gecmisi_bilinmiyorsa_sifir_uydurmaz() -> None:
     assert result["summary"]["salesUnknown"] == 1
 
 
-async def test_onizleme_magaza_suzgeci_uygulamadiysa_baska_urunun_sayisini_yazmaz() -> None:
-    """Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar; dönen satır
-    başka ürünün olabilir. Onu bu ürünün satışı saymak yanlış rakam demektir."""
+async def test_onizleme_baska_urunun_sayisini_bu_urune_yazmaz() -> None:
+    """Listede yalnız BAŞKA ürünün satırı varsa o rakam buraya taşınmaz.
+
+    Uç süzgeç almıyor ve HER ZAMAN sıralamanın başındaki ürünleri döndürüyor
+    (canlıda ölçüldü). Eşleşme tam kimlik üzerinden yapılır; 99'un 12 siparişi
+    5 numaralı ürünün rakamı olamaz.
+    """
     service, api, _ = _service()
     api.bestsellers = {99: (12, 40)}
-    api.bestseller_filter_honored = False
 
     result = await service.delete_preview([5])
 
-    assert result["rows"][0]["sales"]["state"] == "unknown"
-    assert "süzmedi" in result["rows"][0]["sales"]["note"]
+    sales = result["rows"][0]["sales"]
+    assert sales["orderCount"] == 0
+    assert sales["soldQty"] == 0
 
 
 async def test_onizleme_hic_satilmamis_urunde_sifir_der() -> None:
+    """Tablo YALNIZ satılmış ürünleri tutar: tam tarama sonunda satır yoksa 0."""
     service, api, _ = _service()
-    api.bestsellers = {99: (1, 1)}          # süzgeç çalışıyor, bu ürün listede yok
+    api.bestsellers = {99: (1, 1)}          # bu ürün tabloda yok = hiç satılmamış
 
     result = await service.delete_preview([5])
 
     assert result["rows"][0]["sales"] == {
         "state": "known", "orderCount": 0, "soldQty": 0, "lastOrderedAt": "",
         "note": "Bu ürün hiçbir siparişte geçmiyor."}
+
+
+async def test_onizleme_yarim_kalan_taramada_sifir_uydurmaz() -> None:
+    """Tarama kayıt sınırına dayandıysa "satır yok" = "hiç satılmamış" DEĞİLDİR.
+
+    Sıfır göstermek, aslında satılmış bir ürünü yanlış güvenle sildirirdi;
+    silme geri alınamaz.
+    """
+    service, api, _ = _service()
+    api.bestsellers = {99: (1, 1)}
+    api.bestsellers_truncated = True
+
+    result = await service.delete_preview([5])
+
+    sales = result["rows"][0]["sales"]
+    assert sales["state"] == "unknown"
+    assert sales["orderCount"] is None
+    assert "sonuna kadar okunamadı" in sales["note"]
+    assert result["summary"]["salesUnknown"] == 1
+
+
+async def test_onizleme_satis_ozetini_secim_basina_bir_kez_tarar() -> None:
+    """25 ürünlük seçimde 25 tarama hız kovasını (dakikada 55) bitirirdi."""
+    service, api, _ = _service()
+    api.bestsellers = {5: (3, 7), 6: (1, 1)}
+
+    await service.delete_preview([5, 6])
+
+    cagrilar = [args for name, args, _ in api.calls if name == "bbd_bestsellers"]
+    assert len(cagrilar) == 1
+    # Süzgeç GÖNDERİLMEZ: uç onu yok sayıyor, gönderen "süzdüm" sanırdı.
+    assert cagrilar[0][0] is None
+    assert api.used("bbd_bestsellers")[0]["all_pages"] is True
+
+
+async def test_onizleme_gecitte_metot_yoksa_ekran_dusmez() -> None:
+    """K7 dalı DURUYOR: geçit metodu bugün var, ekran ona bağımlı değil."""
+    service, api, _ = _service()
+    # Geçidin bu metodu tanımadığı hâl: servis `getattr(..., None)` ile arıyor.
+    api.bbd_bestsellers = None
+
+    result = await service.delete_preview([5])
+
+    assert result["ok"] is True
+    assert result["rows"][0]["sales"]["state"] == "unavailable"
+    assert result["rows"][0]["sales"]["orderCount"] is None
 
 
 async def test_onizleme_okunamayan_urun_listeye_girmez_ve_silinmez() -> None:

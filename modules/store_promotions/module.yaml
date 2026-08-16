@@ -46,8 +46,8 @@ ui:
   nav:
     title: "Promosyonlar"
     icon: tag
-    group: "BBD Store"
-    order: 40
+    group: "BBD Store / Katalog"
+    order: 280
     requires: [store_promotions.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

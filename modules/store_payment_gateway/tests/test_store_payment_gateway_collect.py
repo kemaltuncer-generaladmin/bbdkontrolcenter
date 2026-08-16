@@ -7,6 +7,8 @@ tek tek denenmesi, bu ekranın güvenilir olmasının tek yolu.
 
 from __future__ import annotations
 
+import inspect
+import re
 from decimal import Decimal
 
 from store_payment_gateway_backend import collect
@@ -248,6 +250,63 @@ def test_para_gosteriminde_lira_isareti_kullanilmaz() -> None:
 def test_binlik_ayraci_dogru_yerlestirilir() -> None:
     assert collect.money_tr(123_456_789) == "1.234.567,89 TL"
     assert collect.money_tr(50) == "0,50 TL"
+
+
+# =========================================== kuruş → TL (telde giden tutar)
+
+def test_kurus_magazanin_bekledigi_ondalik_metne_cevrilir() -> None:
+    """Mağaza `amount` alanını ONDALIK TL METNİ olarak okuyor ("125.00").
+
+    Kuruş tam sayısını olduğu gibi göndermek, 125,00 TL'lik bir tahsilat için
+    12.500,00 TL isteyen bir link üretme denemesiydi (mağaza 422 AMOUNT_DRIFT
+    ile reddederdi).
+    """
+    assert collect.from_kurus(12_500) == "125.00"
+    assert collect.from_kurus(8_615) == "86.15"
+    assert collect.from_kurus(100) == "1.00"
+    assert collect.from_kurus(5) == "0.05"
+    assert collect.from_kurus(0) == "0.00"
+    assert collect.from_kurus(123_456_789) == "1234567.89"
+
+
+def test_kurus_cevriminde_kayan_nokta_kullanilmaz() -> None:
+    """FLOAT TUZAĞI ÖNCE GÖSTERİLİR, SONRA UZAK DURULDUĞU SINANIR.
+
+    Aynı çevrim kayan noktayla yapılsaydı bir kuruş sessizce kaybolurdu:
+    aşağıdaki iki `int(...)` satırı bu makinede 1998 ve 123456788 verir —
+    yani 19,99 TL'lik tahsilat 19,98 TL'ye, 1.234.567,89 TL'lik tahsilat bir
+    kuruş eksiğe düşerdi. `Decimal` yolunda kayıp YOKTUR: metin tekrar kuruşa
+    çevrildiğinde başlangıç değeri birebir geri gelir.
+    """
+    assert int(1999 / 100 * 100) == 1998                  # float — bir kuruş eksik
+    assert int(123_456_789 / 100 * 100) == 123_456_788    # float — bir kuruş eksik
+
+    for kurus in (1, 5, 29, 100, 1_999, 8_615, 12_500, 99_999, 123_456_789):
+        wire = collect.from_kurus(kurus)
+        # Gidiş-dönüş kayıpsız: mağazanın kuruş kuruş karşılaştırdığı sayı bu.
+        assert collect.to_kurus(wire) == kurus
+        # Basamak sayısı HER ZAMAN iki: float'ın "19.990000000000002" ya da
+        # "125.0" yazımlarının hiçbiri üretilemez.
+        assert re.fullmatch(r"-?\d+\.\d{2}", wire), wire
+        assert Decimal(wire) == Decimal(kurus) / 100
+
+    # Kaynakta da float yok: kural yorumla değil, kodun kendisiyle duruyor.
+    assert "float(" not in inspect.getsource(collect.from_kurus)
+
+
+def test_ad_soyad_son_bosluktan_ayrilir_ve_soyad_uydurulmaz() -> None:
+    """Mağaza `firstName`/`lastName` alanlarını ayrı ve dolu istiyor.
+
+    Türkçede ikinci AD yaygın ("Ayşe Nur"), ikinci SOYAD değil; bu yüzden son
+    sözcük soyaddır. Tek sözcüklü adda soyad UYDURULMAZ — adı soyad diye
+    tekrarlamak faturaya ve bankaya var olmayan bir soyad yazmaktır.
+    """
+    assert collect.split_name("Ayşe Nur Yılmaz") == ("Ayşe Nur", "Yılmaz")
+    assert collect.split_name("Ayşe Yılmaz") == ("Ayşe", "Yılmaz")
+    assert collect.split_name("  Ayşe   Yılmaz  ") == ("Ayşe", "Yılmaz")
+    assert collect.split_name("Ayşe") == ("Ayşe", "")
+    assert collect.split_name("") == ("", "")
+    assert collect.split_name(None) == ("", "")
 
 
 # =============================================================== yardımcı

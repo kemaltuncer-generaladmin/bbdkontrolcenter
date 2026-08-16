@@ -52,25 +52,113 @@ import { reportChain } from '../../ui-kit/report.js';
 
 const BASE = '/api/store_home_media';
 
+// ŞERİT ADLARI İŞ DİLİNDE — "Slider" / "Banner" DEĞİL.
+//
+// Bu ekranı kullanan kişi yazılım bilmiyor. "Slider" ve "banner" onun
+// sözlüğünde yok; ekranda okuduğu kelimeyi vitrinde göreceği şeye
+// bağlayamıyor. Ad artık kutunun MÜŞTERİDE NEREYE DÜŞTÜĞÜNÜ söyler; teknik
+// anahtar (`slider`, `banner`) kodda ve mağazaya giden gövdede aynen kalır.
+//
+// `one` = tekil ad ("3 slot" değil "3 kayan görsel"), `what` = sekmenin
+// altında duran tek cümlelik "burası ne işe yarar" açıklaması. Aynı üçlü
+// backend'de de var (slots.py AREA_LABELS/AREA_ONE/AREA_WHAT) ve sözleşme
+// testi ikisinin ayrışmasını yakalar.
 const AREAS = [
-  { key: 'slider', label: 'Slider' },
-  { key: 'banner', label: 'Banner alanları' },
-  { key: 'collection', label: 'Öne çıkan koleksiyonlar' },
-  { key: 'announcement', label: 'Duyuru şeridi' },
+  { key: 'slider', label: 'Ana ekran kayan görseller', one: 'kayan görsel',
+    what: 'Ana sayfanın en üstünde sırayla dönen büyük görseller. Müşterinin siteye '
+      + 'girer girmez gördüğü yer burasıdır.' },
+  { key: 'banner', label: 'Tanıtım görselleri', one: 'tanıtım görseli',
+    what: 'Sayfanın ortasında ve altında duran sabit kampanya görselleri.' },
+  { key: 'collection', label: 'Öne çıkan ürün grupları', one: 'ürün grubu',
+    what: '“Yeni gelenler”, “Çok satanlar” gibi ana sayfadaki ürün şeritleri.' },
+  { key: 'announcement', label: 'Üst duyuru yazısı', one: 'duyuru',
+    what: 'Sayfanın en üstündeki ince şeritte duran yazı — kargo, kampanya ya da tatil '
+      + 'duyurusu. Görsel değil, metindir.' },
 ];
 
 const STATE_TONES = { published: 'good', scheduled: 'info', expired: 'warn', draft: 'dim' };
 const STATE_LABELS = {
-  published: 'Yayında', scheduled: 'Zamanlanmış', expired: 'Süresi doldu', draft: 'Taslak',
+  published: 'Yayında', scheduled: 'Tarihi gelmedi', expired: 'Süresi doldu',
+  draft: 'Hazırlıkta',
+};
+// Rozetin YANINDA duran cümle. "Hazırlıkta" bir durum adıdır; kullanıcının
+// sorduğu soru ise "müşteri şu an görüyor mu". Cevap yazıyla verilir.
+const STATE_WHAT = {
+  published: 'Müşteri şu anda görüyor.',
+  scheduled: 'Başlangıç tarihi gelmedi; o gün kendiliğinden yayına girer.',
+  expired: 'Bitiş tarihi geçti; müşteri artık görmüyor.',
+  draft: 'Müşteri görmüyor. Göstermek için “Yayına al” demeniz gerekir.',
 };
 const SIZE_TONES = { ok: 'good', blurry: 'bad', ratio: 'warn', unknown: 'warn', none: 'dim' };
 
 const LINK_KINDS = [
-  { value: 'url', label: 'Serbest bağlantı' },
-  { value: 'product', label: 'Ürün' },
-  { value: 'category', label: 'Kategori' },
-  { value: 'cms', label: 'CMS sayfası' },
+  { value: 'url', label: 'Adresi ben yazacağım' },
+  { value: 'product', label: 'Bir ürün sayfası' },
+  { value: 'category', label: 'Bir kategori sayfası' },
+  { value: 'cms', label: 'Site içi bilgi sayfası (Hakkımızda, İletişim…)' },
 ];
+
+// ENGELLER — NEDEN + SIRADAKİ ADIM, tek yerde.
+//
+// Desen `store_shipping/backend/geliver.py` içindeki `BLOCKER_ACTIONS`'tan
+// gelir ve aynı kuralı taşır: BİR İŞ YAPILAMIYORSA EKRAN İKİ ŞEY SÖYLER —
+// neden yapılamadığı, ve kullanıcının ŞİMDİ ne yapacağı. "Salt okunur",
+// "uç yayında değil", "sıra değiştirilemez" gibi tek cümlelik ret metinleri
+// kullanıcıyı ekranda bırakıyordu: doğru ama işe yaramaz.
+//
+// `why` kullanıcının SUÇLU OLMADIĞINI da söyler; `next` her zaman bir
+// eylemle başlar. Metin burada durur ki üç ayrı yerde üç ayrı cümleye
+// dönüşmesin.
+const BLOCKERS = {
+  READ_ONLY: {
+    why: 'Şu an yalnız bakabilirsiniz, değiştiremezsiniz. Ana sayfa listesi mağazadan '
+      + 'okunamadı; ekranda gördüğünüz görüntü sitenin temasından çıkarılmış bir özet.',
+    next: 'Sıradaki adım: “Yenile” deyin. Bağlantı düzelir düzelmez düzenleme '
+      + 'kendiliğinden açılır. Sürerse mağazaya bakan kişiye haber verin.',
+  },
+  FILTERED_ORDER: {
+    why: 'Arama ya da süzgeç açıkken sıra değiştirilemez. Sıra bütün şeridi ilgilendirir; '
+      + 'yalnız görünen birkaç satırı sıralamak, görünmeyenleri rastgele yerlere atardı.',
+    next: 'Sıradaki adım: “Filtreyi temizle” deyin, sonra sürükleyerek sıralayın.',
+  },
+  OFFLINE: {
+    why: 'Mağazaya ulaşılamadı; ekran şu an mağazadaki gerçek durumu göremiyor.',
+    next: 'Sıradaki adım: internet bağlantısını kontrol edip “Tekrar dene” deyin.',
+  },
+  NEEDS_IMAGE: {
+    why: 'Bu bölüm görselsiz kaydedilemez: görselsiz bir tanıtım kutusu ana sayfada boş '
+      + 'bir çerçeve olarak çizilir.',
+    next: 'Sıradaki adım: “Dosya seç” ile bir görsel seçin ya da görseli kutunun üstüne '
+      + 'sürükleyin.',
+  },
+  NO_FILE_PICKED: {
+    why: 'Henüz bir dosya seçilmedi; gönderilecek görsel yok.',
+    next: 'Sıradaki adım: “Dosya seç” ile bir görsel seçin.',
+  },
+  AREA_TEXT_ONLY: {
+    why: 'Üstteki duyuru yazısı yalnız metin gösterir; oraya görsel konmaz.',
+    next: 'Sıradaki adım: görsel asmak istiyorsanız “Tanıtım görselleri” sekmesine geçin.',
+  },
+};
+
+/** Engelin iki cümlesini ekranda tek kutuda gösterir (neden + sıradaki adım). */
+function blockerBox(key, tone = 'warn') {
+  const item = BLOCKERS[key];
+  const box = h('div', `kit-alert ${tone} hm-blocker`);
+  box.append(h('div', 'hm-blocker-why', item.why));
+  box.append(h('div', 'hm-blocker-next', item.next));
+  return box;
+}
+
+/** Kapalı düğmenin nedenini fare ipucuna VE ekran okuyucuya yazar. */
+function blockedReason(node, key) {
+  const item = BLOCKERS[key];
+  const text = `${item.why} ${item.next}`;
+  node.title = text;
+  node.setAttribute('aria-label', `${node.textContent} — kapalı: ${text}`);
+  node.dataset.blocked = '1';
+  return node;
+}
 
 const EMPTY_STATE = {
   items: [], preview: { slider: [], banner: [], collection: [], announcement: [] },
@@ -105,8 +193,13 @@ async function withBusy(label, work) {
   try {
     return await work();
   } catch (error) {
-    toast(error.message || 'İşlem başarısız.', 'bad');
-    nodes.status?.set(error.message || 'İşlem başarısız.', true);
+    // "İşlem başarısız" hiçbir şey anlatmıyordu. Sunucunun cevabı VARSA
+    // olduğu gibi gösterilir; yoksa en azından ne yapılacağı yazılır.
+    const message = error.message
+      || 'Bu işlem tamamlanamadı. “Yenile” deyip yeniden deneyin; sürerse mağazaya '
+        + 'bakan kişiye haber verin.';
+    toast(message, 'bad');
+    nodes.status?.set(message, true);
     return null;
   } finally {
     busy = false;
@@ -120,7 +213,8 @@ function askReason({ title, description, confirmLabel }) {
     description,
     confirmLabel,
     minLength: 10,
-    placeholder: 'Gerekçe (en az 10 karakter) — denetim kaydına yazılır',
+    placeholder: 'Neden değiştiriyorsunuz? (en az 10 karakter) — "Eylül kampanyası '
+      + 'başladı" gibi. Bu not kayda geçer.',
   });
 }
 
@@ -129,13 +223,29 @@ function announce(message) {
   if (nodes.live) nodes.live.textContent = message;
 }
 
+/** Açık sekmenin tekil adı — "3 slot" yerine "3 kayan görsel" demek için. */
+function areaOne(key = state.area) {
+  return AREAS.find((item) => item.key === key)?.one || 'öğe';
+}
+
+function areaLabel(key = state.area) {
+  return AREAS.find((item) => item.key === key)?.label || '';
+}
+
+/** "Burası ne işe yarar" tek cümlesi — sekmenin ve kartın altında durur. */
+function areaWhat(key = state.area) {
+  return AREAS.find((item) => item.key === key)?.what || '';
+}
+
 function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
   const stats = state.summary || {};
-  const parts = [`Bağlı · ${num(stats.total || 0)} slot`,
-    `${num(stats.published || 0)} yayında`];
-  if (stats.missingAlt) parts.push(`${num(stats.missingAlt)} slotun alt metni yok`);
-  if (state.source === 'themes') parts.push('salt okunur (tema kayıtları)');
+  const parts = [`Mağazaya bağlı · ana ekranda ${num(stats.total || 0)} görsel/duyuru`,
+    `${num(stats.published || 0)} tanesini müşteri görüyor`];
+  if (stats.missingAlt) {
+    parts.push(`${num(stats.missingAlt)} tanesinin görsel açıklaması eksik`);
+  }
+  if (state.source === 'themes') parts.push('şu an yalnız bakılabiliyor');
   return parts.join(' · ');
 }
 
@@ -172,7 +282,7 @@ function queryString() {
 
 async function refresh() {
   nodes.listWrap?.replaceChildren(skeletonRows(5, 4));
-  nodes.status?.set('Ana sayfa okunuyor…');
+  nodes.status?.set('Ana sayfada ne olduğu okunuyor…');
   let payload;
   try {
     payload = await api(`${BASE}/slots?${queryString()}`);
@@ -221,9 +331,10 @@ async function loadReference() {
   // TEK KANALLI MAĞAZADA KUTU ÇİZİLMEZ (`choice.js`). Karar VERİDEN çıkar;
   // ikinci kanal açılırsa süzgeç kendiliğinden geri gelir.
   applyChoiceFilter(nodes.filters, 'channel', state.reference.channels,
-                    { allLabel: 'Tümü — kanal' });
+                    { allLabel: 'Hepsi — mağaza' });
   if (payload.warnings?.length) {
-    toast(`Bazı referans listeler gelmedi: ${payload.warnings.join(' · ')}`, 'warn');
+    toast('Bazı listeler mağazadan gelmedi; seçim kutuları eksik olabilir. Ekranın geri '
+      + `kalanı çalışıyor. (${payload.warnings.join(' · ')})`, 'warn');
   }
 }
 
@@ -245,9 +356,9 @@ function renderPreview() {
   host.replaceChildren();
 
   const head = h('div', 'hm-preview-head');
-  head.append(h('b', undefined, 'Ana sayfa önizlemesi'));
+  head.append(h('b', undefined, 'Müşteri ana sayfada bunu görüyor'));
   const toggle = h('div', 'hm-device');
-  for (const [key, label] of [['desktop', 'Masaüstü'], ['mobile', 'Mobil']]) {
+  for (const [key, label] of [['desktop', 'Bilgisayarda'], ['mobile', 'Telefonda']]) {
     const item = button(label, {
       variant: state.device === key ? 'primary' : 'ghost',
       onClick: () => { state.device = key; renderPreview(); },
@@ -256,8 +367,9 @@ function renderPreview() {
     toggle.append(item);
   }
   head.append(h('span', 'kit-spacer'), h('span', 'hm-sub',
-    state.device === 'desktop' ? 'Ölçek ~%50 · gerçek genişlik 1920 piksel'
-      : 'Ölçek ~%95 · gerçek genişlik 390 piksel'), toggle);
+    state.device === 'desktop'
+      ? 'Küçültülmüş temsil — gerçek sayfa bunun iki katı genişlikte.'
+      : 'Telefon ekranı kadar; gerçek genişliğe yakın.'), toggle);
   host.append(head);
 
   if (!state.connected) {
@@ -287,9 +399,10 @@ function renderPreview() {
   host.append(stage);
   const note = h('div', 'hm-sub');
   note.textContent = hidden
-    ? `${num(drawn)} slot çizildi · ${num(hidden)} slot bu görünümde yayında değil `
-      + '(taslak, zamanlanmış, süresi dolmuş ya da başka cihaz).'
-    : `${num(drawn)} slot çizildi.`;
+    ? `Müşterinin şu an gördüğü ${num(drawn)} kutu çizildi. ${num(hidden)} tanesi bu `
+      + 'görünümde çıkmıyor: ya hazırlıkta, ya tarihi gelmedi, ya süresi doldu, ya da '
+      + 'yalnız öbür ekranda gösteriliyor.'
+    : `Müşterinin şu an gördüğü ${num(drawn)} kutu çizildi.`;
   host.append(note);
 }
 
@@ -299,7 +412,7 @@ function previewBand(area, rows) {
 
   if (!rows.length) {
     const empty = h('div', 'hm-band-empty');
-    empty.textContent = `${area.label}: boş`;
+    empty.textContent = `${area.label}: boş — müşteri burada hiçbir şey görmüyor`;
     band.append(empty);
     return band;
   }
@@ -318,7 +431,8 @@ function previewBand(area, rows) {
     const more = h('div', 'hm-tile hm-tile-more');
     more.textContent = `+${num(rows.length - limit)}`;
     more.title = area.key === 'slider'
-      ? 'Slider döner; ilk görsel çizildi.' : 'Şeride sığmayan slotlar.';
+      ? 'Görseller sırayla döner; burada yalnız ilki çizildi.'
+      : 'Bu satıra sığmayanlar. Vitrinde hepsi görünür.';
     band.append(more);
   }
   return band;
@@ -329,7 +443,7 @@ function previewTile(row, area) {
   // listeden aramak zorunda kalmamak bu ekranın bütün amacı.
   const tile = h('button', 'hm-tile');
   tile.type = 'button';
-  tile.title = `${row.title} — düzenlemek için tıklayın`;
+  tile.title = `${row.title} — değiştirmek için tıklayın`;
   tile.setAttribute('aria-label', `${area.label}: ${row.title}`);
   tile.addEventListener('click', () => openEditor(row));
 
@@ -348,7 +462,8 @@ function previewTile(row, area) {
     tile.append(h('span', 'hm-tile-text', 'görsel yok'));
   }
   if (row.sizeState === 'blurry' || row.sizeState === 'ratio') {
-    tile.append(h('span', 'hm-tile-flag', row.sizeState === 'blurry' ? 'bulanık' : 'oran'));
+    tile.append(h('span', 'hm-tile-flag',
+      row.sizeState === 'blurry' ? 'bulanık çıkıyor' : 'kenarları kesiliyor'));
   }
   return tile;
 }
@@ -365,18 +480,31 @@ function areaRows() {
 function renderKpi() {
   if (!nodes.kpi) return;
   const stats = state.summary || {};
+  // KUTU BAŞLIKLARI SORUYU CEVAPLAR. "Slot / Yayında / Taslak" bir durum
+  // listesiydi; kullanıcının sorduğu soru ise "müşteri ne görüyor". Başlıklar
+  // artık o soruyla aynı dili konuşuyor, `title` ipucu da tek cümleyle NEDEN
+  // önemli olduğunu söylüyor.
   nodes.kpi.replaceChildren(kpiRow([
-    { label: 'Slot', value: num(stats.total || 0) },
-    { label: 'Yayında', value: num(stats.published || 0), tone: 'good' },
-    { label: 'Zamanlanmış', value: num(stats.scheduled || 0), tone: 'info' },
-    { label: 'Süresi doldu', value: num(stats.expired || 0), tone: 'warn' },
-    { label: 'Taslak', value: num(stats.draft || 0), tone: 'muted' },
-    { label: 'Alt metni yok', value: num(stats.missingAlt || 0), tone: 'bad' },
-    { label: 'Ölçüsü uygunsuz', value: num(stats.lowRes || 0), tone: 'warn' },
+    { label: 'Toplam', value: num(stats.total || 0),
+      title: 'Ana ekranda tanımlı bütün görseller ve duyurular.' },
+    { label: 'Müşteri görüyor', value: num(stats.published || 0), tone: 'good',
+      title: 'Şu anda ana sayfada çizilenler.' },
+    { label: 'Tarihi gelmedi', value: num(stats.scheduled || 0), tone: 'info',
+      title: 'Başlangıç tarihi ileri; o gün kendiliğinden yayına girer.' },
+    { label: 'Süresi doldu', value: num(stats.expired || 0), tone: 'warn',
+      title: 'Bitiş tarihi geçti; müşteri artık görmüyor.' },
+    { label: 'Hazırlıkta', value: num(stats.draft || 0), tone: 'muted',
+      title: 'Kaydedildi ama yayına alınmadı; müşteri görmüyor.' },
+    { label: 'Açıklaması eksik', value: num(stats.missingAlt || 0), tone: 'bad',
+      title: 'Görsel açılmadığında okunacak yazı yok; Google da bu görseli tanıyamaz.' },
+    { label: 'Ölçüsü tutmuyor', value: num(stats.lowRes || 0), tone: 'warn',
+      title: 'Bulanık çıkan ya da kenarları kesilen görseller.' },
     // "0 tıklama" ile "tıklama ölçülmüyor" aynı şey değil: uç bu alanı
     // taşımıyorsa sıfır yazıp ölçüm varmış gibi göstermeyiz.
     { label: 'Tıklama', value: stats.clicksKnown ? num(stats.clicks || 0) : '—',
-      title: stats.clicksKnown ? '' : 'Mağaza tıklama sayısı döndürmüyor.' },
+      title: stats.clicksKnown
+        ? 'Müşterilerin bu görsellere kaç kez tıkladığı.'
+        : 'Mağaza tıklama sayısı tutmuyor; bu yüzden çizgi görünüyor.' },
   ]));
 }
 
@@ -386,17 +514,18 @@ function renderList() {
   host.replaceChildren();
 
   if (state.readOnly) {
-    host.append(alertBox(
-      'Bu görünüm mağazanın TEMA KAYITLARINDAN salt okunur geldi: BBD slot ucu henüz '
-      + 'yayında değil. Ana sayfada ne olduğu görünür, düzenleme uç yayınlanınca açılacak.',
-      'warn',
-    ));
+    // GEREKÇE DÜZELTİLDİ (2026-08-16). Burada eskiden "BBD slot ucu henüz
+    // yayında değil" yazıyordu; slot ucu artık canlıda çalışıyor, dolayısıyla
+    // bu kutuyu gören kullanıcının derdi eksik paket değil, O ANKİ okuma
+    // hatası. Eski metin geçici bir arızayı "beklemekten başka çare yok" gibi
+    // gösteriyordu. Kutu (ve arkasındaki salt okunur dal) duruyor — yalnız
+    // artık gerçek nedeni yazıyor.
+    const box = blockerBox('READ_ONLY');
+    if (state.error) box.append(h('div', 'hm-blocker-detail', `Mağazanın verdiği cevap: ${state.error}`));
+    host.append(box);
   }
   if (!orderEditable() && state.connected && !state.readOnly) {
-    host.append(alertBox(
-      'Süzgeç açıkken sıra değiştirilemez: sıra tüm şeridi ilgilendirir, süzülmüş bir alt '
-      + 'kümeyi sıralamak kalan slotları rastgele yerlere atardı.', 'info',
-    ));
+    host.append(blockerBox('FILTERED_ORDER', 'info'));
   }
 
   const rows = areaRows();
@@ -417,24 +546,26 @@ function emptyNode() {
   if (!state.connected) {
     return emptyState({
       title: 'Mağazaya ulaşılamadı',
-      text: state.error || 'Bağlantı kurulamadı.',
+      text: `${BLOCKERS.OFFLINE.why} ${BLOCKERS.OFFLINE.next}`
+        + (state.error ? ` (Mağazanın verdiği cevap: ${state.error})` : ''),
       actions: [button('Tekrar dene', { variant: 'primary', onClick: () => refresh() })],
     });
   }
   if (!orderEditable()) {
     return emptyState({
-      title: 'Bu süzgeçte slot yok',
-      text: 'Şeritte slot var ama süzgece uyan yok. Süzgeçleri gevşetin.',
+      title: 'Aramanıza uyan bir şey yok',
+      text: `Bu bölümde kayıt var ama arama ya da süzgeçlere uyan yok. `
+        + 'Süzgeçleri temizleyip yeniden bakın.',
       actions: [button('Filtreyi temizle', { onClick: () => nodes.filters.reset() })],
     });
   }
-  const label = AREAS.find((item) => item.key === state.area)?.label || '';
   return emptyState({
-    title: `${label} boş`,
+    title: `${areaLabel()} boş`,
     text: state.area === 'slider'
-      ? 'Slider’da hiç görsel yok — site ana sayfası boş görünüyor.'
-      : `${label} şeridinde hiç slot yok; müşteri bu bölümü hiç görmüyor.`,
-    actions: [button(state.area === 'announcement' ? 'Duyuru ekle' : 'Görsel ekle',
+      ? 'Ana sayfanın en üstünde hiç görsel yok; müşteri siteye girdiğinde boş bir alan '
+        + 'görüyor. Buraya bir kampanya görseli asın.'
+      : `Burada hiç ${areaOne()} yok; müşteri bu bölümü hiç görmüyor.`,
+    actions: [button(state.area === 'announcement' ? 'Duyuru yaz' : 'Görsel ekle',
       { variant: 'primary', onClick: () => openEditor(null) })],
   });
 }
@@ -448,13 +579,15 @@ function slotRow(row, index, total) {
   const movable = orderEditable();
   item.draggable = movable;
   item.setAttribute('aria-label',
-    `${index + 1}. ${row.title} — ${STATE_LABELS[row.state] || row.state}`
-    + (movable ? '. Taşımak için Ctrl ve yukarı/aşağı ok.' : ''));
+    `${index + 1}. ${areaOne(row.area)}: ${row.title} — `
+    + `${STATE_LABELS[row.state] || row.state}. ${STATE_WHAT[row.state] || ''}`
+    + (movable ? ' Sırasını değiştirmek için Ctrl ile yukarı/aşağı ok tuşu.' : ''));
 
   const handle = h('span', 'hm-handle', movable ? '⋮⋮' : '·');
   handle.title = movable
-    ? 'Sürükleyerek ya da Ctrl+↑/↓ ile taşıyın'
-    : 'Sıra değiştirmek için süzgeci temizleyin';
+    ? 'Sürükleyerek ya da Ctrl+↑/↓ ile yukarı-aşağı taşıyın. Üstteki, vitrinde de '
+      + 'en başta görünür.'
+    : `${BLOCKERS.FILTERED_ORDER.why} ${BLOCKERS.FILTERED_ORDER.next}`;
   handle.setAttribute('aria-hidden', 'true');
 
   const thumb = h('span', 'hm-thumb');
@@ -466,48 +599,80 @@ function slotRow(row, index, total) {
     image.addEventListener('error', () => {
       thumb.classList.add('none');
       thumb.replaceChildren(document.createTextNode('!'));
-      thumb.title = 'Görsel bağlantısı açılmıyor';
+      thumb.title = 'Görsel açılmıyor — dosya silinmiş ya da adresi değişmiş olabilir. '
+        + 'Düzenleyip yeniden yükleyin.';
     });
     thumb.append(image);
   } else {
     thumb.classList.add('none');
     thumb.textContent = row.area === 'announcement' ? 'T' : '—';
-    thumb.title = row.area === 'announcement' ? 'Duyuru metni' : 'Görsel yok';
+    thumb.title = row.area === 'announcement'
+      ? 'Duyurular yazıdır; görseli olmaz.'
+      : 'Görsel seçilmemiş — vitrinde boş bir çerçeve çizilir.';
   }
 
   const main = h('div', 'hm-slot-main');
   main.append(clip(h('b'), row.title || '(başlıksız)', 52));
   const meta = h('div', 'hm-sub');
   meta.textContent = [
-    row.link || 'hedef yok',
+    row.link ? `tıklayınca → ${row.link}` : 'tıklanmıyor (gideceği yer yazılmamış)',
     row.placementLabel,
     row.deviceLabel,
-    row.startsAt || row.endsAt ? `${row.startsAt || '…'} → ${row.endsAt || '…'}` : 'süresiz',
+    row.startsAt || row.endsAt
+      ? `${row.startsAt || 'hemen'} → ${row.endsAt || 'süresiz'}`
+      : 'her zaman görünür',
   ].join(' · ');
   main.append(meta);
   if (row.issues?.length) {
-    main.append(h('div', 'hm-issues', `Eksik: ${row.issues.join(', ')}`));
+    // "Eksik: …" listesi ARTIK SONUCU SÖYLER (backend `issues_of`): "oran
+    // farklı" değil "kenarları kesilir". Kullanıcının kararı sonuca göre
+    // değişiyor, teknik tespite göre değil.
+    main.append(h('div', 'hm-issues', `Düzeltilecek: ${row.issues.join(' · ')}`));
   }
 
   const right = h('div', 'hm-slot-right');
   // Renk tek başına anlam taşımaz: rozetin içinde yazı, yanında sayı var.
-  right.append(badge(STATE_LABELS[row.state] || row.state, STATE_TONES[row.state] || ''));
+  // `stateBadge` — `state` DEĞİL: modül düzeyindeki `state` gölgelenirse
+  // aşağıdaki `state.connected` denetimi rozeti sorgular ve sessizce yanlış
+  // çalışır.
+  const stateBadge = badge(STATE_LABELS[row.state] || row.state, STATE_TONES[row.state] || '');
+  stateBadge.title = STATE_WHAT[row.state] || '';
+  right.append(stateBadge);
   right.append(h('span', 'hm-sub', row.clicksKnown
-    ? `${num(row.clicks || 0)} tıklama` : 'tıklama ölçülmüyor'));
+    ? `${num(row.clicks || 0)} kez tıklandı` : 'tıklama sayılmıyor'));
 
   const tools = h('div', 'hm-slot-tools');
   tools.append(
-    button('Düzenle', { onClick: () => openEditor(row) }),
+    button('Değiştir', {
+      title: 'Görselini, yazısını, tarihini ve tıklanınca gideceği yeri düzenleyin',
+      onClick: () => openEditor(row),
+    }),
     row.status
-      ? button('Yayından kaldır', { variant: 'danger', onClick: () => togglePublish(row, false) })
-      : button('Yayına al', { variant: 'primary', onClick: () => togglePublish(row, true) }),
+      ? button('Yayından kaldır', {
+        variant: 'danger',
+        title: 'Müşteri görmez olur. SİLİNMEZ; istediğinizde geri açarsınız.',
+        onClick: () => togglePublish(row, false),
+      })
+      : button('Yayına al', {
+        variant: 'primary',
+        title: 'Müşteri ana sayfada görmeye başlar',
+        onClick: () => togglePublish(row, true),
+      }),
   );
   if (movable) {
     tools.append(
-      button('↑', { variant: 'ghost', title: 'Yukarı taşı (Ctrl+↑)',
+      button('↑', { variant: 'ghost', title: 'Bir üst sıraya taşı (Ctrl+↑)',
         onClick: () => moveSlot(index, -1) }),
-      button('↓', { variant: 'ghost', title: 'Aşağı taşı (Ctrl+↓)',
+      button('↓', { variant: 'ghost', title: 'Bir alt sıraya taşı (Ctrl+↓)',
         onClick: () => moveSlot(index, 1) }),
+    );
+  } else if (state.connected && !state.readOnly) {
+    // DÜĞMELER GİZLENMEZ, NEDENİ SÖYLENİR. Ok tuşlarının sessizce yok olması
+    // "bu ekranda böyle bir şey yok" gibi okunuyordu; oysa yalnız süzgeç
+    // açık ve kapatınca geri geliyor.
+    tools.append(
+      blockedReason(button('↑', { variant: 'ghost', disabled: true }), 'FILTERED_ORDER'),
+      blockedReason(button('↓', { variant: 'ghost', disabled: true }), 'FILTERED_ORDER'),
     );
   }
 
@@ -522,7 +687,8 @@ function slotRow(row, index, total) {
     if (!step) return;
     event.preventDefault();
     if (moveSlot(index, step)) {
-      announce(`${row.title}, ${index + 1 + step}. sıraya taşındı (${total} slot içinde).`);
+      announce(`${row.title}, ${index + 1 + step}. sıraya taşındı (${total} kayıt içinde). `
+        + 'Kalıcı olması için “Sırayı kaydet” demeniz gerekir.');
       focusSlot(row.id);
     }
   });
@@ -573,7 +739,7 @@ function dropSlot(draggedId, targetId) {
   order.splice(at, 0, draggedId);
   state.order = order;
   renderList();
-  announce('Slot taşındı. Kaydetmek için “Sırayı kaydet”.');
+  announce('Taşındı. Kalıcı olması için “Sırayı kaydet” demeniz gerekir.');
 }
 
 function orderDirty() {
@@ -589,12 +755,18 @@ function renderOrderBar() {
     return;
   }
   bar.classList.add('on');
-  bar.append(h('b', undefined, 'Sıra değişti — henüz kaydedilmedi.'));
+  bar.append(h('b', undefined,
+    'Sırayı değiştirdiniz ama HENÜZ KAYDEDİLMEDİ. Müşteri hâlâ eski sırayı görüyor.'));
   bar.append(h('span', 'kit-spacer'));
   bar.append(
-    button('Sırayı kaydet', { variant: 'primary', onClick: saveOrder }),
-    button('Geri al', {
+    button('Sırayı kaydet', {
+      variant: 'primary',
+      title: 'Yeni sırayı mağazaya yazar; müşteri bundan sonra bu sırayla görür',
+      onClick: saveOrder,
+    }),
+    button('Değişiklikleri geri al', {
       variant: 'ghost',
+      title: 'Ekrandaki sırayı, kaydedilmiş hâline döndürür',
       onClick: () => { state.order = [...state.baseOrder]; renderList(); },
     }),
   );
@@ -603,18 +775,18 @@ function renderOrderBar() {
 async function saveOrder() {
   const label = AREAS.find((item) => item.key === state.area)?.label || '';
   const reason = await askReason({
-    title: 'Şerit sırasını kaydet',
-    description: `${label} şeridinin sırası değişecek. Listenin ilk slotu vitrinde en başta `
-      + 'görünür; sıra yalnız bu şeridi etkiler.',
+    title: 'Yeni sırayı kaydet',
+    description: `“${label}” bölümünün sırası değişecek. Listede en üstteki, ana sayfada da `
+      + 'en başta görünür. Diğer bölümler etkilenmez.',
     confirmLabel: 'Sırayı kaydet',
   });
   if (!reason) return;
-  await withBusy('Sıra yazılıyor…', async () => {
+  await withBusy('Sıra kaydediliyor…', async () => {
     const result = await call(`${BASE}/reorder`, {
       method: 'POST',
       body: { area: state.area, order: state.order, reason, dryRun: false },
     });
-    toast('Sıra kaydedildi.', 'good');
+    toast('Yeni sıra kaydedildi.', 'good');
     if (result.notice) toast(result.notice, 'warn');
     await refresh();
   });
@@ -622,20 +794,23 @@ async function saveOrder() {
 
 async function togglePublish(row, published) {
   const reason = await askReason({
-    title: published ? 'Slotu yayına al' : 'Slotu yayından kaldır',
+    title: published ? 'Müşteriye göster' : 'Müşteriden kaldır',
     description: published
-      ? `“${row.title}” ana sayfada görünmeye başlayacak. Yayın aralığı tanımlıysa slot ancak `
-        + 'o aralıkta çizilir.'
-      : `“${row.title}” ana sayfadan kalkacak. SİLİNMEZ: listede kalır, tıklama geçmişi ve `
-        + 'görseli durur; istediğinizde geri açarsınız.',
+      ? `“${row.title}” ana sayfada görünmeye başlayacak. Başlangıç/bitiş tarihi `
+        + 'yazdıysanız yalnız o tarihler arasında görünür.'
+      : `“${row.title}” ana sayfadan kalkacak, müşteri artık görmeyecek. SİLİNMEZ: `
+        + 'listede kalır, görseli ve tıklanma sayısı durur; istediğiniz gün tek düğmeyle '
+        + 'geri açarsınız.',
     confirmLabel: published ? 'Yayına al' : 'Yayından kaldır',
   });
   if (!reason) return;
-  await withBusy('Yayın durumu yazılıyor…', async () => {
+  await withBusy('Kaydediliyor…', async () => {
     const result = await call(`${BASE}/slots/${row.id}/status`, {
       method: 'POST', body: { published, reason, dryRun: false },
     });
-    toast(published ? 'Slot yayına alındı.' : 'Slot yayından kaldırıldı.', 'good');
+    toast(published
+      ? 'Yayına alındı; müşteri ana sayfada görecek.'
+      : 'Yayından kaldırıldı; müşteri artık görmüyor. Kayıt listede duruyor.', 'good');
     if (result.notice) toast(result.notice, 'warn');
     await refresh();
   });
@@ -657,18 +832,19 @@ function openEditor(row) {
     cleaners.length = 0;
   };
   const area = row?.area || state.area;
+  const one = areaOne(area);
   const box = drawer(nodes.root, {
-    title: row ? row.title || '(başlıksız slot)' : 'Yeni slot',
-    subtitle: `${AREAS.find((item) => item.key === area)?.label || ''}`
-      + (row ? ` · #${row.id}` : ' · taslak olarak açılır'),
+    title: row ? row.title || '(başlık yazılmamış)' : `Yeni ${one}`,
+    subtitle: `${areaLabel(area)}`
+      + (row ? ` · kayıt no ${row.id}` : ' · kaydettiğinizde müşteri HENÜZ görmez'),
     onClose: dropAll,
   });
   closers.push(dropAll);
 
   if (state.readOnly) {
-    box.body.append(alertBox(
-      'Salt okunur görünüm: slot ayrıntıları mağazadaki BBD ucu yayınlanınca düzenlenebilecek.',
-      'warn'));
+    // Aynı düzeltme (2026-08-16): neden "uç yayınlanmadı" değil, "liste
+    // okunamadı". Backend de aynı gerekçeyi döndürür (service.save).
+    box.body.append(blockerBox('READ_ONLY'));
   }
 
   // Görsel taslağı çekmece kapanana kadar burada durur; kaydedilene dek
@@ -677,33 +853,44 @@ function openEditor(row) {
 
   const form = formGrid({
     fields: [
-      { key: 'title', label: 'Başlık', type: 'text', required: true, maxLength: 160, wide: true,
-        hint: 'Listede ve raporda bu isimle görünür.' },
-      { key: 'altText', label: 'Görselin alt metni', type: 'text', required: area !== 'announcement',
-        maxLength: 200, wide: true,
-        hint: 'ZORUNLU. Ekran okuyucu ve arama motoru banner’ı yalnız bu metinden okur. '
-          + '“banner1.jpg” değil, ne anlattığını yazın.' },
-      { key: 'linkKind', label: 'Hedef türü', type: 'select', options: LINK_KINDS },
-      { key: 'link', label: 'Hedef bağlantı', type: 'text', maxLength: 400, wide: true,
-        hint: 'Serbest bağlantı `https://` ya da `/` ile başlar.' },
-      { key: 'placement', label: 'Yerleşim', type: 'select', options: [
-        { value: 'slider', label: 'Slider' }, { value: 'top', label: 'Üst' },
-        { value: 'middle', label: 'Orta' }, { value: 'bottom', label: 'Alt' },
-        { value: 'side', label: 'Yan' },
-      ] },
-      { key: 'device', label: 'Cihaz', type: 'select', options: [
-        { value: 'all', label: 'Tümü' }, { value: 'desktop', label: 'Masaüstü' },
-        { value: 'mobile', label: 'Mobil' },
-      ] },
+      { key: 'title', label: 'Bu görsele ne ad verelim?', type: 'text', required: true,
+        maxLength: 160, wide: true,
+        hint: 'MÜŞTERİ BU ADI GÖRMEZ — bu ad yalnız sizin listede tanımanız için. '
+          + 'Örnek: “Eylül kırtasiye kampanyası”.' },
+      { key: 'altText',
+        label: area === 'announcement' ? 'Kısa açıklama' : 'Görselde ne var? (kısa açıklama)',
+        type: 'text', required: area !== 'announcement', maxLength: 200, wide: true,
+        hint: 'Görsel açılmadığında müşterinin okuduğu, Google’ın da gördüğü yazı budur. '
+          + 'Dosya adı yazmayın; ne olduğunu yazın: “Sırt çantası kampanyası, %30 indirim”.' },
+      { key: 'linkKind', label: 'Tıklayınca nereye gitsin?', type: 'select', options: LINK_KINDS,
+        hint: 'Müşteri bu görsele tıkladığında açılacak sayfayı seçin.' },
+      { key: 'link', label: 'Gideceği sayfanın adresi', type: 'text', maxLength: 400, wide: true,
+        hint: 'Kendi sitemizde kalacaksa `/` ile başlar (`/kampanya`), başka bir siteye '
+          + 'gidecekse `https://` ile. Boş bırakırsanız görsel tıklanmaz.' },
+      { key: 'placement', label: 'Sayfanın neresinde dursun?', type: 'select', options: [
+        { value: 'slider', label: 'En üstteki kayan bölüm' },
+        { value: 'top', label: 'Sayfanın üstü' },
+        { value: 'middle', label: 'Sayfanın ortası' },
+        { value: 'bottom', label: 'Sayfanın altı' },
+        { value: 'side', label: 'Yan sütun' },
+      ], hint: 'Yukarı çıktıkça daha çok kişi görür.' },
+      { key: 'device', label: 'Hangi ekranda görünsün?', type: 'select', options: [
+        { value: 'all', label: 'Her ekranda' },
+        { value: 'desktop', label: 'Yalnız bilgisayarda' },
+        { value: 'mobile', label: 'Yalnız telefonda' },
+      ], hint: 'Emin değilseniz “Her ekranda” bırakın — müşterilerin çoğu telefondan '
+        + 'giriyor.' },
       // KANAL ALANI TEK SEÇENEKTE SORULMAZ ama DEĞER KAYBOLMAZ: `choiceField`
       // `null` döndürdüğünde `formGrid` alanı atlar, `choiceValues` da tek
       // seçeneği taslağa koyar ve slot o kanalla kaydedilir. Süzgeçten farkı
       // bilinçli: yazarken kanal boş bırakılırsa mağaza kendi varsayılanına
       // düşer ve hangi varsayılan olduğu uçtan uca aynı değil.
-      choiceField({ key: 'channel', label: 'Kanal', options: state.reference.channels }),
-      { key: 'startsAt', label: 'Yayın başlangıcı', type: 'date',
-        hint: 'Boşsa hemen başlar.' },
-      { key: 'endsAt', label: 'Yayın bitişi', type: 'date', hint: 'Boşsa süresiz.' },
+      choiceField({ key: 'channel', label: 'Hangi mağaza', options: state.reference.channels }),
+      { key: 'startsAt', label: 'Ne zaman başlasın?', type: 'date',
+        hint: 'Boş bırakırsanız yayına aldığınız an başlar.' },
+      { key: 'endsAt', label: 'Ne zaman bitsin?', type: 'date',
+        hint: 'Boş bırakırsanız siz kaldırana kadar durur. Kampanya bitişini buraya '
+          + 'yazarsanız o gün kendiliğinden kalkar.' },
     ],
     value: {
       title: row?.title || '',
@@ -726,7 +913,7 @@ function openEditor(row) {
   const target = h('div', 'hm-target');
   const searchInput = h('input', 'kit-input');
   searchInput.type = 'search';
-  searchInput.placeholder = 'Ürün adı ara';
+  searchInput.placeholder = 'Ürün adının bir parçasını yazın';
   const results = h('div', 'hm-target-results');
   const search = debounce(async () => {
     const query = searchInput.value.trim();
@@ -740,7 +927,8 @@ function openEditor(row) {
       return;
     }
     if (!payload.items.length) {
-      results.append(h('div', 'hm-sub', 'Eşleşen ürün yok.'));
+      results.append(h('div', 'hm-sub',
+        'Bu adda ürün bulunamadı. Adın daha kısa bir parçasını yazmayı deneyin.'));
       return;
     }
     for (const item of payload.items) {
@@ -757,15 +945,17 @@ function openEditor(row) {
     const kind = form.draft().linkKind;
     target.replaceChildren();
     if (kind === 'product') {
-      target.append(h('div', 'hm-sub', 'Ürün seçin; seçim hedef bağlantı alanına yazılır.'),
-        searchInput, results);
+      target.append(h('div', 'hm-sub',
+        'Ürünü aratıp seçin; adresi yukarıdaki adres kutusuna kendiliğinden yazılır.'),
+      searchInput, results);
     } else if (kind === 'category' || kind === 'cms') {
       const list = kind === 'category'
         ? state.reference.categories.map((item) => ({ value: item.url, label: item.label }))
         : state.reference.pages.map((item) => ({ value: item.url, label: item.title }));
       const select = h('select', 'kit-select');
-      select.setAttribute('aria-label', kind === 'category' ? 'Kategori seç' : 'Sayfa seç');
-      for (const option of [{ value: '', label: 'Seçin…' }, ...list]) {
+      select.setAttribute('aria-label',
+        kind === 'category' ? 'Kategori seçin' : 'Bilgi sayfası seçin');
+      for (const option of [{ value: '', label: 'Listeden seçin…' }, ...list]) {
         const node = h('option', undefined, option.label);
         node.value = option.value;
         select.append(node);
@@ -775,11 +965,13 @@ function openEditor(row) {
       });
       target.append(select);
       if (!list.length) {
-        target.append(h('div', 'hm-sub', 'Liste mağazadan gelmedi; bağlantıyı elle yazın.'));
+        target.append(h('div', 'hm-sub',
+          'Liste mağazadan gelmedi. “Adresi ben yazacağım” seçip adresi elle yazabilirsiniz.'));
       }
     } else {
       target.append(h('div', 'hm-sub',
-        'Serbest bağlantı: `/kampanya` gibi site içi ya da `https://…` tam adres.'));
+        'Kendi sitemizde bir sayfaya gidecekse `/kampanya` gibi yazın; başka bir siteye '
+        + 'gidecekse `https://…` diye tam adresini yazın.'));
     }
   }
   paintTarget();
@@ -789,28 +981,35 @@ function openEditor(row) {
 
   // ----------------------------------------------------------------- eylemler
   const actions = h('div', 'hm-actions');
-  const save = button(row ? 'Kaydet' : 'Slotu oluştur', {
+  const save = button(row ? 'Kaydet' : `${one.charAt(0).toLocaleUpperCase('tr')}${one.slice(1)} oluştur`, {
     variant: 'primary',
     onClick: async () => {
-      if (!form.valid()) { form.showErrors(); toast('Alanları düzeltin.', 'bad'); return; }
+      if (!form.valid()) {
+        form.showErrors();
+        toast('Kırmızı işaretli alanları doldurun; hangisi olduğu alanın altında yazıyor.',
+          'bad');
+        return;
+      }
       const draft = form.draft();
       if (area !== 'announcement' && !row?.imageUrl && !picked.data) {
-        toast('Görsel seçin: görselsiz banner vitrinde boş bir kutu olarak çizilir.', 'bad');
+        toast(`${BLOCKERS.NEEDS_IMAGE.why} ${BLOCKERS.NEEDS_IMAGE.next}`, 'bad');
         return;
       }
       const patch = row ? form.patch() : { ...draft, area };
       if (row) patch.area = area;
       if (!Object.keys(patch).length && !picked.data) {
-        toast('Değişen alan yok.', 'warn');
+        toast('Hiçbir şeyi değiştirmediniz; kaydedilecek bir şey yok.', 'warn');
         return;
       }
       const reason = await askReason({
-        title: row ? 'Slotu güncelle' : 'Slot oluştur',
+        title: row ? 'Değişiklikleri kaydet' : `Yeni ${one} oluştur`,
         description: row
-          ? `${row.title} · ${form.dirty().length} alan değişti`
-            + `${picked.data ? ' ve görsel değişiyor' : ''}. Gerekçe denetim kaydına yazılır.`
-          : 'Yeni slot TASLAK olarak açılır; vitrinde görünmesi için ayrıca “Yayına al” '
-            + 'demeniz gerekir.',
+          ? `“${row.title}” için ${form.dirty().length} alan değişti`
+            + `${picked.data ? ' ve görsel değişiyor' : ''}. Neden değiştirdiğinizi yazın; `
+            + 'ileride "bunu kim, niye yaptı" sorusunun cevabı bu not olacak.'
+          : 'ÖNEMLİ: kaydettiğinizde müşteri HENÜZ görmez. Görünmesi için ayrıca '
+            + '“Yayına al” demeniz gerekir — böylece yarım kalan bir çalışma yanlışlıkla '
+            + 'vitrine düşmez.',
         confirmLabel: row ? 'Kaydet' : 'Oluştur',
       });
       if (!reason) return;
@@ -820,7 +1019,9 @@ function openEditor(row) {
           method: row ? 'PUT' : 'POST',
           body: { patch, image: picked.data || '', reason, dryRun: false },
         });
-        toast(row ? 'Slot kaydedildi.' : 'Slot taslak olarak oluşturuldu.', 'good');
+        toast(row
+          ? 'Kaydedildi.'
+          : 'Oluşturuldu. Müşterinin görmesi için şimdi “Yayına al” deyin.', 'good');
         // Ölçü ve kırpma TEK toast'ta: iki ayrı bildirim üst üste binip
         // birbirini yiyordu. "Uygun" durumunda hiç uyarı çıkmaz.
         if (result.sizeNote && result.sizeState !== 'ok') {
@@ -832,27 +1033,40 @@ function openEditor(row) {
       });
     },
   });
-  if (state.readOnly) save.disabled = true;
-  actions.append(save, button('Vazgeç', { variant: 'ghost', onClick: box.close }));
+  // KAPALI DÜĞME NEDENİNİ SÖYLER. Eskiden yalnız `disabled = true` vardı:
+  // düğme soluklaşıyor, kullanıcı tıklıyor, hiçbir şey olmuyordu.
+  if (state.readOnly) {
+    save.disabled = true;
+    blockedReason(save, 'READ_ONLY');
+  }
+  actions.append(save, button('Vazgeç', {
+    variant: 'ghost',
+    title: 'Hiçbir şey kaydetmeden kapat',
+    onClick: box.close,
+  }));
   if (row) {
     actions.append(row.status
       ? button('Yayından kaldır', {
         variant: 'danger',
+        title: 'Müşteri görmez olur; kayıt silinmez',
         onClick: async () => { box.close(); await togglePublish(row, false); },
       })
       : button('Yayına al', {
         variant: 'primary',
+        title: 'Müşteri ana sayfada görmeye başlar',
         onClick: async () => { box.close(); await togglePublish(row, true); },
       }));
   }
 
   box.body.append(
     imageBox,
-    card('Künye', form.node),
-    card('Hedef', target),
+    card('Bilgiler', form.node, areaWhat(area)),
+    card('Tıklayınca açılacak sayfa', target),
     actions,
-    hintBox('Slot SİLİNMEZ. Yayından kaldırılan slot listede kalır; tıklama geçmişi ve '
-      + 'görseli durur. “Kaydet” yayın durumunu değiştirmez — o ayrı bir izindir.'),
+    hintBox('Buradan hiçbir şey SİLİNMEZ. “Yayından kaldır” dediğinizde kayıt listede '
+      + 'kalır, görseli ve tıklanma sayısı durur; istediğiniz gün geri açarsınız. '
+      + '“Kaydet” yayın durumunu değiştirmez: kaydetmek ile müşteriye göstermek ayrı '
+      + 'iki iştir.'),
   );
 }
 
@@ -895,14 +1109,30 @@ function imagePane(area, row, picked) {
   // sekme tuşuyla erişilemez ve dosya seçmenin klavye yolu kalmazdı.
   const label = h('label', 'kit-btn kit-btn-primary hm-file-label', 'Dosya seç');
   label.setAttribute('for', input.id);
+  label.title = 'Bilgisayarınızdan bir görsel dosyası seçin (PNG ya da JPG)';
 
-  const upload = button('Görseli yükle', {
-    title: 'Dosyayı mağazanın görsel ucuna gönderir (slot kaydından ayrı yol).',
+  const upload = button('Görseli şimdi yükle', {
+    title: 'Dosyayı mağazaya hemen gönderir. Kaydetmeden de yükleyebilirsiniz.',
     onClick: () => uploadPicked(),
   });
 
+  /**
+   * Yükleme düğmesi kapalıysa NEDENİNİ söyler.
+   *
+   * Üç ayrı neden vardı ve üçü de aynı soluk düğmeye çıkıyordu: kullanıcı
+   * tıklıyor, hiçbir şey olmuyor, hangi eksiği kapatacağını bilmiyordu.
+   */
   function refreshTools() {
-    upload.disabled = Boolean(state.readOnly) || !wantsImage || !picked.data;
+    const blocked = state.readOnly ? 'READ_ONLY'
+      : (!wantsImage ? 'AREA_TEXT_ONLY' : (!picked.data ? 'NO_FILE_PICKED' : ''));
+    upload.disabled = Boolean(blocked);
+    if (blocked) {
+      blockedReason(upload, blocked);
+    } else {
+      upload.removeAttribute('data-blocked');
+      upload.removeAttribute('aria-label');
+      upload.title = 'Dosyayı mağazaya hemen gönderir. Kaydetmeden de yükleyebilirsiniz.';
+    }
   }
 
   function paint() {
@@ -910,8 +1140,9 @@ function imagePane(area, row, picked) {
     const source = picked.data || row?.imageUrl || '';
     if (!source) {
       preview.append(h('span', 'hm-drop-text', wantsImage
-        ? 'Görseli buraya sürükleyin ya da “Dosya seç”'
-        : 'Bu alan görsel istemez; metin yeterli.'));
+        ? `Görseli buraya sürükleyip bırakın ya da “Dosya seç” deyin. Bu bölüme `
+          + `${recommended} piksel ölçüsünde bir görsel yakışır.`
+        : 'Burası görsel istemez; yazı yeterli.'));
       return;
     }
     // Ölçü SUNUCUDAN gelir. Taze seçimde `/image/check` yanıtından, var olan
@@ -928,7 +1159,9 @@ function imagePane(area, row, picked) {
       shown.src = source;
       shown.alt = '';
       viewport.append(shown);
-      shop.append(viewport, h('figcaption', 'hm-sub', `Vitrinde — ${recommended}`));
+      shop.append(viewport, h('figcaption', 'hm-sub',
+        `MÜŞTERİ BÖYLE GÖRECEK (${recommended} piksel). Kenarları kesildiyse burada `
+        + 'görürsünüz.'));
       preview.append(shop);
     }
 
@@ -944,10 +1177,11 @@ function imagePane(area, row, picked) {
     } else if (width > 0 && height > 0) {
       image.style.aspectRatio = `${width} / ${height}`;
     }
-    const ratio = fresh?.aspect ? `Gerçek oranı ${fresh.aspect}` : 'Gerçek oranı';
+    const ratio = fresh?.aspect
+      ? `SEÇTİĞİNİZ DOSYA (en-boy ${fresh.aspect})` : 'SEÇTİĞİNİZ DOSYA';
     real.append(image, h('figcaption', 'hm-sub', width
-      ? `${ratio} · ${num(width)}×${num(height)}`
-      : 'Ölçü okunamadı — gerçek oran gösterilemiyor.'));
+      ? `${ratio} · ${num(width)}×${num(height)} piksel`
+      : 'Dosyanın ölçüsü okunamadı; nasıl görüneceğini gösteremiyoruz.'));
     preview.append(real);
   }
 
@@ -955,11 +1189,12 @@ function imagePane(area, row, picked) {
     note.replaceChildren();
     if (!verdict) {
       note.append(h('span', 'hm-sub', wantsImage
-        ? `Önerilen ölçü ${recommended}.` : 'Bu alan görsel istemez.'));
+        ? `Bu bölüm için en uygun ölçü: ${recommended} piksel.`
+        : 'Burası görsel istemez.'));
       return;
     }
     note.append(badge(
-      { ok: 'Uygun', blurry: 'Düşük çözünürlük', ratio: 'Oran farklı',
+      { ok: 'Ölçü uygun', blurry: 'Bulanık çıkar', ratio: 'Kenarları kesilir',
         unknown: 'Ölçü okunamadı', none: 'Görsel gerekmiyor' }[verdict.sizeState]
         || verdict.sizeState,
       SIZE_TONES[verdict.sizeState] || '',
@@ -974,17 +1209,21 @@ function imagePane(area, row, picked) {
   async function accept(file) {
     if (!file) return;
     if (!state.allowedTypes.includes(file.type)) {
-      toast(`${file.type || 'Bilinmeyen tür'} kabul edilmiyor: `
-        + `${state.allowedTypes.join(', ')}.`, 'bad');
+      const kinds = state.allowedTypes
+        .map((item) => String(item).split('/')[1]?.toUpperCase()).filter(Boolean).join(' ya da ');
+      toast(`Bu dosya türü kullanılamaz. Yalnız ${kinds} dosyası yükleyebilirsiniz — `
+        + 'PDF, Word ya da başka bir dosya olmaz.', 'bad');
       return;
     }
     if (file.size > state.maxImageBytes) {
-      toast(`Dosya ${formatBytes(file.size)}; tavan ${formatBytes(state.maxImageBytes)}. `
-        + 'Yüklemeden önce küçültün.', 'bad');
+      toast(`Dosya çok büyük: ${formatBytes(file.size)}. En fazla `
+        + `${formatBytes(state.maxImageBytes)} olabilir. Görseli küçültüp yeniden deneyin.`,
+      'bad');
       return;
     }
     const reader = new FileReader();
-    reader.onerror = () => toast('Dosya okunamadı.', 'bad');
+    reader.onerror = () => toast('Dosya okunamadı; bozuk olabilir. Başka bir dosya deneyin.',
+      'bad');
     reader.onload = async () => {
       picked.data = String(reader.result || '');
       picked.name = file.name;
@@ -1017,15 +1256,19 @@ function imagePane(area, row, picked) {
 
   /** Dosyayı mağazanın görsel ucuna gönderir. Slot kaydından AYRI yoldur. */
   async function uploadPicked() {
-    if (!picked.data) { toast('Önce dosya seçin.', 'bad'); return; }
+    if (!picked.data) {
+      toast(`${BLOCKERS.NO_FILE_PICKED.why} ${BLOCKERS.NO_FILE_PICKED.next}`, 'bad');
+      return;
+    }
     if (picked.verdict?.needsConfirm && !picked.acknowledged) {
       // Onay burada KOLAYLIK, kapı değil: sunucu `acknowledged` bayrağı
       // olmadan yüklemeyi zaten reddediyor (K9).
       const go = await confirmSimple(nodes.root, {
-        title: 'Ölçü önerilenden farklı',
+        title: 'Görselin ölçüsü tam tutmuyor',
         description: `${picked.verdict.sizeNote} ${picked.verdict.cropNote || ''} `.trim()
-          + ' Yine de yüklensin mi? Karar denetim kaydına yazılır.',
-        confirmLabel: 'Yine de yükle',
+          + ' Yine de kullanılsın mı? İsterseniz vazgeçip görseli doğru ölçüde '
+          + 'hazırlatabilirsiniz.',
+        confirmLabel: 'Yine de kullan',
         danger: true,
       });
       if (!go) return;
@@ -1033,8 +1276,8 @@ function imagePane(area, row, picked) {
     }
     const reason = await askReason({
       title: 'Görseli mağazaya yükle',
-      description: 'Dosya mağazanın görsel ucuna gönderilir; slotun künyesi değişmez. '
-        + 'Gerekçe denetim kaydına yazılır.',
+      description: 'Dosya mağazaya gönderilir. Bu görselin başlığı, tarihi ve tıklanınca '
+        + 'gideceği yer DEĞİŞMEZ — onlar için “Kaydet” demeniz gerekir.',
       confirmLabel: 'Yükle',
     });
     if (!reason) return;
@@ -1051,8 +1294,8 @@ function imagePane(area, row, picked) {
       outcome.replaceChildren();
       if (result.pending) {
         outcome.append(alertBox(result.error, 'info'));
-        toast('Yükleme ucu hazır olunca açılacak; görsel şimdilik “Kaydet” ile gidiyor.',
-          'warn');
+        toast('Bu yol mağaza tarafında henüz açılmadı. Endişelenmeyin: görseli “Kaydet” '
+          + 'ile gönderebilirsiniz, sonuç aynı.', 'warn');
         return;
       }
       if (result.ok === false) {
@@ -1061,7 +1304,7 @@ function imagePane(area, row, picked) {
         toast(result.error, 'bad');
         return;
       }
-      outcome.append(alertBox(`Görsel yüklendi: ${result.file}`, 'good'));
+      outcome.append(alertBox(`Görsel mağazaya yüklendi: ${result.file}`, 'good'));
       toast('Görsel yüklendi.', 'good');
       if (result.notice) toast(result.notice, 'warn');
     });
@@ -1083,8 +1326,9 @@ function imagePane(area, row, picked) {
   // Sıra önemli: gizli girdi ETİKETTEN ÖNCE gelir, yoksa odak halkasını
   // etikete taşıyan kardeş seçici (.hm-file:focus-visible + .hm-file-label)
   // eşleşmez ve klavye kullanıcısı nereye bastığını göremez.
-  tools.append(input, label, upload, button('Seçimi bırak', {
+  tools.append(input, label, upload, button('Seçtiğim dosyayı bırak', {
     variant: 'ghost',
+    title: 'Seçtiğiniz dosyayı iptal eder; mağazadaki görsel değişmez',
     onClick: () => {
       picked.data = '';
       picked.verdict = null;
@@ -1102,8 +1346,9 @@ function imagePane(area, row, picked) {
   refreshTools();
   showVerdict(row && row.imageUrl
     ? { sizeState: row.sizeState, sizeNote: row.sizeNote } : null);
-  wrap.append(card('Görsel', frame, wantsImage ? `Önerilen ${recommended}` : 'Görsel istemez'),
-    tools, meta, note, outcome);
+  wrap.append(card('Görsel', frame,
+    wantsImage ? `En uygun ölçü: ${recommended} piksel` : 'Burası görsel istemez'),
+  tools, meta, note, outcome);
   return wrap;
 }
 
@@ -1112,8 +1357,8 @@ function imagePane(area, row, picked) {
 function exportVisible() {
   const rows = areaRows();
   const written = csvBlob(
-    ['Başlık', 'Alt metni', 'Hedef', 'Yerleşim', 'Cihaz', 'Başlangıç', 'Bitiş', 'Durum',
-      'Tıklama', 'Uyarı'],
+    ['Başlık', 'Görsel açıklaması', 'Tıklayınca gideceği yer', 'Sayfadaki yeri',
+      'Hangi ekranda', 'Başlangıç', 'Bitiş', 'Durum', 'Tıklama', 'Düzeltilecek'],
     rows.map((row) => [row.title, row.altText, row.link, row.placementLabel, row.deviceLabel,
       row.startsAt, row.endsAt, row.stateLabel,
       row.clicksKnown ? row.clicks : '', (row.issues || []).join(', ')]),
@@ -1123,10 +1368,10 @@ function exportVisible() {
 }
 
 async function exportAll() {
-  await withBusy('CSV yazılıyor…', async () => {
+  await withBusy('Dosya hazırlanıyor…', async () => {
     const result = await call(`${BASE}/export`, { method: 'POST', body: {} });
     toast(`${num(result.rows)} satır yazıldı: ${result.name}`, 'good');
-    nodes.status.set(`Dosya: ${result.path}`);
+    nodes.status.set(`Dosya kaydedildi: ${result.path}`);
   });
 }
 
@@ -1136,6 +1381,9 @@ function renderAll() {
   renderPreview();
   renderKpi();
   renderList();
+  // Sekmenin altında "burası ne işe yarar" tek cümlesi. Sekme adı ne kadar
+  // iyi olursa olsun, müşterinin bunu NEREDE göreceğini söylemiyor.
+  if (nodes.areaWhat) nodes.areaWhat.textContent = areaWhat();
   nodes.tabs?.badge('slider', state.counts.slider || undefined);
   nodes.tabs?.badge('banner', state.counts.banner || undefined);
   nodes.tabs?.badge('collection', state.counts.collection || undefined);
@@ -1159,7 +1407,8 @@ export function mount(root, ctx) {
   nodes.tabs = tabBar(AREAS, 'slider', (key) => {
     if (reverting) { reverting = false; return; }
     if (orderDirty()
-      && !window.confirm('Kaydedilmemiş sıra değişikliği var; sekme değişince gider.')) {
+      && !window.confirm('Sırayı değiştirdiniz ama kaydetmediniz. Başka sekmeye geçerseniz '
+        + 'bu değişiklik kaybolur. Yine de geçilsin mi?')) {
       reverting = true;
       nodes.tabs.select(state.area);
       return;
@@ -1170,38 +1419,61 @@ export function mount(root, ctx) {
 
   nodes.filters = filterBar({
     fields: [
-      { kind: 'search', key: 'q', placeholder: 'Başlık ya da hedef ara', width: '240px' },
+      { kind: 'search', key: 'q', placeholder: 'Başlıkta ya da adreste ara', width: '240px' },
+      // SÜZGEÇLERDE VARSAYILAN "Tümü": ekran hiçbir şeyi gizlemeden açılır.
+      // Kullanıcı daraltmayı kendi seçer; ekran kendiliğinden daraltmaz.
       { kind: 'select', key: 'status', label: 'Durum', options: [
-        { value: '', label: 'Tümü' },
-        { value: 'published', label: 'Yayında' },
-        { value: 'scheduled', label: 'Zamanlanmış' },
+        { value: '', label: 'Hepsi' },
+        { value: 'published', label: 'Müşteri görüyor' },
+        { value: 'scheduled', label: 'Tarihi gelmedi' },
         { value: 'expired', label: 'Süresi doldu' },
-        { value: 'draft', label: 'Taslak' },
+        { value: 'draft', label: 'Hazırlıkta' },
       ] },
-      { kind: 'select', key: 'placement', label: 'Yerleşim', options: [
-        { value: '', label: 'Tümü' }, { value: 'slider', label: 'Slider' },
-        { value: 'top', label: 'Üst' }, { value: 'middle', label: 'Orta' },
-        { value: 'bottom', label: 'Alt' }, { value: 'side', label: 'Yan' },
+      { kind: 'select', key: 'placement', label: 'Sayfadaki yeri', options: [
+        { value: '', label: 'Hepsi' },
+        { value: 'slider', label: 'En üstteki kayan bölüm' },
+        { value: 'top', label: 'Sayfanın üstü' },
+        { value: 'middle', label: 'Sayfanın ortası' },
+        { value: 'bottom', label: 'Sayfanın altı' },
+        { value: 'side', label: 'Yan sütun' },
       ] },
-      { kind: 'select', key: 'device', label: 'Cihaz', options: [
-        { value: '', label: 'Tümü' }, { value: 'desktop', label: 'Masaüstü' },
-        { value: 'mobile', label: 'Mobil' },
+      { kind: 'select', key: 'device', label: 'Hangi ekranda', options: [
+        { value: '', label: 'Hepsi' },
+        { value: 'desktop', label: 'Bilgisayarda' },
+        { value: 'mobile', label: 'Telefonda' },
       ] },
       // Başlangıçta GİZLİ: kanal listesi `reference` isteğiyle geliyor ve
       // kutunun çizilip çizilmeyeceğine ancak o zaman karar verilebiliyor.
-      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true, options: [] },
-      { kind: 'dateRange', key: 'range', label: 'Yayın aralığı' },
+      { kind: 'select', key: 'channel', label: 'Hangi mağaza', hidden: true, options: [] },
+      { kind: 'dateRange', key: 'range', label: 'Şu tarihler arasında görünenler' },
     ],
     onChange: () => refresh(),
     actions: [
-      button('Slot ekle', { variant: 'primary', onClick: () => openEditor(null) }),
-      button('Yenile', { onClick: () => refresh() }),
-      button('⤓ Görünen', { title: 'Ekrandaki listeyi CSV indir', onClick: exportVisible }),
-      button('⤓ Tümü', { title: 'Tüm slotları rapor klasörüne yaz', onClick: exportAll }),
-      button('Yerleşim raporu', { onClick: () => report.run('layout', { area: '' }) }),
+      button('Yeni ekle', {
+        variant: 'primary',
+        title: 'Açık sekmeye yeni bir görsel ya da duyuru ekler',
+        onClick: () => openEditor(null),
+      }),
+      button('Yenile', {
+        title: 'Mağazadaki güncel durumu yeniden okur',
+        onClick: () => refresh(),
+      }),
+      button('⤓ Ekrandakiler', {
+        title: 'Şu an listede görünen satırları Excel dosyası olarak indirir',
+        onClick: exportVisible,
+      }),
+      button('⤓ Hepsi', {
+        title: 'Bütün bölümlerdeki her şeyi rapor klasörüne yazar',
+        onClick: exportAll,
+      }),
+      button('Yazdırılabilir rapor', {
+        title: 'Ana sayfada ne olduğunu gösteren, yazdırılabilir PDF hazırlar',
+        onClick: () => report.run('layout', { area: '' }),
+      }),
     ],
   });
 
+  nodes.areaWhat = h('div', 'hm-areawhat');
   nodes.preview = h('div', 'hm-preview');
   nodes.kpi = h('div', 'hm-kpi');
   nodes.orderbar = h('div', 'hm-orderbar');
@@ -1215,10 +1487,12 @@ export function mount(root, ctx) {
   nodes.body = h('div', 'hm-body');
   nodes.body.append(nodes.preview, nodes.kpi, nodes.orderbar, nodes.listWrap);
 
-  view.append(nodes.tabs.node, nodes.filters.node, nodes.status.node, nodes.live, nodes.body);
+  view.append(nodes.tabs.node, nodes.areaWhat, nodes.filters.node, nodes.status.node,
+    nodes.live, nodes.body);
   root.replaceChildren(view);
 
-  nodes.status.set('Ana sayfa okunuyor…');
+  nodes.areaWhat.textContent = areaWhat();
+  nodes.status.set('Ana sayfada ne olduğu okunuyor…');
   // Referans listeler ÖNCE gelir: kanal süzgeci dolmadan liste çekmek,
   // kullanıcının seçtiği kanalı kaybettiriyordu.
   loadReference().then(() => refresh());

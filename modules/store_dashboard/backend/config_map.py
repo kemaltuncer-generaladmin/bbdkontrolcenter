@@ -1,11 +1,13 @@
 """Yapılandırma sekmesinin saf haritası — ağa çıkmaz, durum tutmaz, testin hedefi.
 
-NEDEN BEYAZ LİSTE. Bagisto'nun ayar ağacı bu kurulumda **344 alan** taşıyor;
-`GET /api/admin/configuration/menu` yanıtı 156 KB. Tamamını ekrana dökmek
-işletmeye yardımcı olmaz: aradığı beş ayarı üç yüz kırk dört satırın içinde
-kaybeder ve yanlışlıkla ödeme sağlayıcısının test kipini açar. Bu dosya
-işletmenin gerçekten dokunduğu alanları adıyla sayar; ağacın geri kalanı
-okunur ama ekrana ÇIKMAZ.
+NEDEN BEYAZ LİSTE. Bagisto'nun ayar ağacı bu kurulumda **345 alan** taşıyor;
+`GET /api/admin/configuration/menu?include_values=1` yanıtı 158 KB (yeniden
+ölçüldü 2026-08-16; bir dönem burada 344 alan / 156 KB yazıyordu — sayı
+mağazaya eklenti/alan girdikçe kayar, bu yüzden gerekçe sayıya değil BÜYÜKLÜK
+MERTEBESİNE dayanır). Tamamını ekrana dökmek işletmeye yardımcı olmaz: aradığı
+beş ayarı üç yüz küsur satırın içinde kaybeder ve yanlışlıkla ödeme
+sağlayıcısının test kipini açar. Bu dosya işletmenin gerçekten dokunduğu
+alanları adıyla sayar; ağacın geri kalanı okunur ama ekrana ÇIKMAZ.
 
 ANAHTARLAR CANLIDAN ÖĞRENİLDİ, KODDAN VARSAYILMADI (2026-08-13). İki tuzak
 canlıda ortaya çıktı:
@@ -21,11 +23,12 @@ canlıda ortaya çıktı:
     parçalıdır. Slug her zaman ağacın DÜĞÜM ANAHTARINDAN okunur.
 
 KANAL SÜZGECİ KOD İSTER, KİMLİK DEĞİL — SİPARİŞ UCUNUN TAM TERSİ (2026-08-13
-canlıda ölçüldü). `/api/admin/configuration/menu` için:
+ölçüldü, 2026-08-16 CANLIDA YENİDEN DOĞRULANDI: kural aynı, yalnız sayılar
+kaydı). `/api/admin/configuration/menu?include_values=1&locale=tr` için:
 
-    channel=default  → 344 alan, etkin değerlerle       (DOĞRU)
-    channel=1        → 344 alan, 49 alan varsayılana düşmüş
-    channel=zzzyok   → channel=1 ile BİREBİR AYNI yanıt
+    channel=default  → 345 alan, etkin değerlerle       (DOĞRU)
+    channel=1        → 345 alan, 53 alan varsayılana düşmüş
+    channel=zzzyok   → channel=1 ile BİREBİR AYNI yanıt (md5 eşit)
 
 Yani kanal KİMLİĞİ göndermek, olmayan bir kanal göndermekle aynı şeydir ve
 HATA VERMEZ: `sales.payment_methods.kuveytturk.active` `"1"` yerine `"False"`,

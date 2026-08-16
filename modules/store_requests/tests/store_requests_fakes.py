@@ -82,6 +82,19 @@ class FakeApi:
         self.list_payload: dict[str, Any] = {"items": [], "meta": {}}
         self.pages: list[dict[str, Any]] = []
         self.users_payload: dict[str, Any] = {"items": [{"id": 1, "name": "Ayşe"}]}
+        #: İade kargosu. `None` = "bu talebin kargosu yok" — mağazada bu 404
+        #: DEĞİL 200'dür ve geçerli bir cevaptır.
+        self.return_shipment: dict[str, Any] | None = None
+        self.return_stage = "yok"
+        self.return_received = False
+        self.label_purchased = False
+        self.return_offers: list[dict[str, Any]] = [
+            {"id": "of_1", "providerName": "Sürat Kargo", "price": "84.50", "currency": "TRY"},
+        ]
+        self.label_bytes = b"%PDF-1.4 sahte etiket"
+        #: GERÇEKTEN satın alınan etiketler. Kuru provanın buraya satır
+        #: eklememesi, "prova para harcamadı"nın ölçülebilir kanıtıdır.
+        self.purchases: list[int] = []
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail:
@@ -113,6 +126,99 @@ class FakeApi:
         self._record("bbd_update_return_request", request_id, payload=payload, reason=reason,
                      actor=actor, dry_run=dry_run)
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
+
+    # ------------------------------------------------------- iade kargosu
+    #
+    # MAĞAZANIN BÜTÜN BU UÇLARI AYNI GÖVDEYİ DÖNER (`ReturnShipmentController::present`):
+    # "aç", "senkronla", "etiket al" ve salt okuma tek sözlükten okunur. Sahte
+    # de öyle davranır — ayrı biçimler üretseydi testler gerçekte olmayan bir
+    # sözleşmeyi doğrulardı.
+
+    def _present(self) -> dict[str, Any]:
+        acik = self.return_shipment is not None
+        return {
+            "rmaId": 1, "orderId": 9,
+            "rmaStatus": {"id": 2, "title": "Onaylandı"},
+            "stage": self.return_stage, "stageLabel": "İade gönderisi yok" if not acik else "",
+            "received": bool(self.return_received),
+            "receivedAt": "2026-08-16 10:00:00" if self.return_received else None,
+            "labelPurchased": bool(self.label_purchased),
+            "labelStored": bool(self.label_purchased),
+            "shipment": self.return_shipment,
+            "refund": {"allowedHere": False, "code": "RMA_MONEY_TRANSITION_BLOCKED",
+                       "panelButtonUnlocked": True,
+                       "message": "Para iadesi bu uçtan yapılamaz; panelden yapılır."},
+        }
+
+    async def bbd_return_request_shipment(self, request_id: int) -> dict[str, Any]:
+        self._record("bbd_return_request_shipment", request_id)
+        return self._present()
+
+    @staticmethod
+    def _dry(would_change: dict[str, Any]) -> dict[str, Any]:
+        """`DryRun::response` zarfı — prova alanları `wouldChange` İÇİNDE gelir.
+
+        Gerçek yazmada alanlar KÖKTEDİR. Sahtenin provada da kök döndürmesi,
+        canlıda her provanın boş görüneceği bir kodu testte yeşil gösterirdi.
+        """
+        return {"dryRun": True, "wouldChange": would_change}
+
+    async def bbd_open_return_request_shipment(self, request_id: int, *, reason: str,
+                                               actor: str = "",
+                                               dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_open_return_request_shipment", request_id, reason=reason, actor=actor,
+                     dry_run=dry_run)
+        if dry_run:
+            return self._dry({
+                "action": "returnShipment.create",
+                "rmaId": int(request_id),
+                "existingShipmentId": (self.return_shipment or {}).get("id"),
+                "wouldCreate": self.return_shipment is None,
+                "rmaStatus": {"id": 2, "title": "Onaylandı"},
+                "wouldSpendMoney": False, "labelPurchased": False,
+            })
+        if self.return_shipment is None:
+            # MÜKERRER KORUMALI: ikinci çağrı yeni gönderi açmaz, var olanı döner.
+            self.return_shipment = {"id": 77, "providerName": "Sürat Kargo",
+                                    "canPurchase": True, "canCancel": True}
+            self.return_stage = "acik"
+        return self._present()
+
+    async def bbd_sync_return_request_shipment(self, request_id: int, *, reason: str,
+                                               actor: str = "",
+                                               dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_sync_return_request_shipment", request_id, reason=reason, actor=actor,
+                     dry_run=dry_run)
+        if dry_run:
+            return self._dry({"action": "returnShipment.sync", "rmaId": int(request_id),
+                              "shipmentId": 77, "stage": self.return_stage})
+        return self._present()
+
+    async def bbd_purchase_return_request_label(self, request_id: int, *, offer_id: str = "",
+                                                reason: str, actor: str = "",
+                                                dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_purchase_return_request_label", request_id, offer_id=offer_id,
+                     reason=reason, actor=actor, dry_run=dry_run)
+        if dry_run:
+            return self._dry({
+                "action": "returnShipment.purchaseLabel", "rmaId": int(request_id),
+                "shipmentId": 77, "canPurchase": True, "isPurchased": self.label_purchased,
+                "offersReady": True, "offers": self.return_offers,
+                "wouldSpendMoney": True,
+            })
+        self.label_purchased = True
+        self.purchases.append(int(request_id))
+        return self._present()
+
+    async def bbd_return_request_label_info(self, request_id: int) -> dict[str, Any]:
+        self._record("bbd_return_request_label_info", request_id)
+        return {"rmaId": request_id, "shipmentId": 77, "labelStored": self.label_purchased,
+                "isPurchased": self.label_purchased, "barcode": "BC-1",
+                "trackingNumber": "TR-1"}
+
+    async def bbd_return_request_label(self, request_id: int) -> bytes:
+        self._record("bbd_return_request_label", request_id)
+        return self.label_bytes
 
     async def order(self, order_id: int) -> dict[str, Any]:
         self._record("order", order_id)

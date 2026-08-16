@@ -189,7 +189,13 @@ async def remove_member(
     body: MemberBody,
     user: CurrentUser = requires("store_trial_club.enroll"),
 ) -> dict[str, Any]:
-    """Kayıt SİLİNMEZ, iptal edilir (ADR 0012). O uç da henüz yayında değil."""
+    """Kayıt SİLİNMEZ, iptal edilir (ADR 0012).
+
+    Mağaza ucu 2026-08-16 itibarıyla YAYINDA (bir dönem burada "o uç da henüz
+    yayında değil" yazıyordu — artık doğru değil). Eksik olan `store.api`
+    içindeki saran metot; K4 gereği bu modül mağazaya doğrudan gidemez, o
+    yüzden uç yine `{ok: false, pending: true}` döner ve NEDENİNİ söyler.
+    """
     return await service().remove_member(member_id, reason=body.reason, actor=user.full_name)
 
 

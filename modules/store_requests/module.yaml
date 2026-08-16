@@ -57,8 +57,8 @@ ui:
   nav:
     title: "Talepler"
     icon: inbox
-    group: "BBD Store"
-    order: 90
+    group: "BBD Store / Satış ve Kargo"
+    order: 230
     requires: [store_requests.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
@@ -76,6 +76,15 @@ permissions:
     description: >-
       Talebi onaylama/reddetme. Onay, seçili kalemleri İadeler ekranına devreder;
       para iadesi orada ayrı izinle yapılır.
+    default_roles: [admin, bbd_staff]
+  # İADE ETİKETİ PARA HARCAR — bu yüzden `manage`den AYRI anahtar.
+  # İade gönderisi açmak (kargo taslağı) bedava ve geri alınabilirdir; etiketi
+  # satın almak faturalanır ve geri alınamaz. Onaylanan her talep etiketle
+  # sonuçlanmaz: müşteri ürünü kendi getirebilir, vazgeçebilir, talep sonradan
+  # reddedilebilir. Anahtarın ayrı olması izni sonradan daraltabilmek içindir.
+  # Kargo ekranındaki karşılığı `store_shipping.purchase`.
+  - key: store_requests.purchase
+    description: "İade kargo etiketini SATIN ALMA. PARA HARCAR; gerekçe en az 20 karakter."
     default_roles: [admin, bbd_staff]
 
 config:

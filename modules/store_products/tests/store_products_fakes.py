@@ -138,10 +138,17 @@ class FakeApi:
         #: Silinen ürünlerin kimlikleri — silme gerçekten oldu mu, test bakar.
         self.deleted_ids: list[int] = []
         #: {ürün: (siparişSayısı, satılanAdet)} — satış özeti tablosu.
+        #: YALNIZ SATILMIŞ ürünler burada satır tutar (mağazada da öyle).
         self.bestsellers: dict[int, tuple[int, int]] = {}
-        #: Laravel tanımadığı sorgu parametresini SESSİZCE yok sayar. Kapatınca
-        #: sahte de öyle davranır: süzgeç gönderilir, BAŞKA ürünün satırı döner.
-        self.bestseller_filter_honored = True
+        #: Tam tarama kayıt sınırına dayandı mı. Açıkken sahte, canlıdaki
+        #: `collect_all` gibi "liste yarım" der; o hâlde satırı bulunamayan
+        #: ürün "hiç satılmamış" SAYILMAMALIDIR.
+        self.bestsellers_truncated = False
+        #: Mağazaya GERÇEKTEN giden görseller — sıra ve konum burada okunur.
+        self.uploaded_images: list[dict[str, Any]] = []
+        #: Adı buraya yazılan dosya reddedilir; diğerleri geçer. Kısmi başarı
+        #: ancak dosya bazında patlatılabilirse ölçülebilir.
+        self.failing_images: set[str] = set()
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail:
@@ -253,16 +260,22 @@ class FakeApi:
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
 
     async def bbd_bestsellers(self, filters: Any = None, *, page: int = 1,
-                              per_page: int | None = None) -> dict[str, Any]:
-        self._record("bbd_bestsellers", filters, page=page, per_page=per_page)
-        wanted = (filters or {}).get("product_id")
+                              per_page: int | None = None,
+                              all_pages: bool = False) -> dict[str, Any]:
+        """Canlı ucun DAVRANIŞINI taklit eder: SÜZGEÇ YOKTUR.
+
+        `CatalogController::bestsellers` isteği yalnız `page`/`limit` ile okur;
+        `product_id`/`productId`/`sku` gönderilse de aynı liste döner (canlıda
+        ölçüldü 2026-08-16). Sahtenin süzüyormuş gibi davranması, gerçekte
+        çalışmayan bir çağrıyı testte yeşil gösterirdi.
+        """
+        self._record("bbd_bestsellers", filters, page=page, per_page=per_page,
+                     all_pages=all_pages)
         rows = [{"productId": key, "orderCount": counts[0], "soldQty": counts[1],
                  "lastOrderedAt": "2026-08-01T10:00:00"}
                 for key, counts in sorted(self.bestsellers.items())]
-        if wanted is None or not self.bestseller_filter_honored:
-            return {"items": rows[:1], "meta": {"total": len(rows)}}
-        hit = [row for row in rows if row["productId"] == int(wanted)]
-        return {"items": hit, "meta": {"total": len(hit)}}
+        return {"items": rows, "meta": {"total": len(rows)},
+                "truncated": bool(self.bestsellers_truncated)}
 
     async def configuration(self, slug: str, *, channel: str = "",
                             locale: str = "") -> dict[str, Any]:
@@ -286,7 +299,16 @@ class FakeApi:
                      position=position, reason=reason, actor=actor, dry_run=dry_run,
                      # İçeriğin kendisi kaydedilmez; testin ilgilendiği uzunluğudur.
                      content_len=len(content) if isinstance(content, str) else len(content or b""))
-        return {"ok": True, "data": {"id": 77}, "dryRun": bool(dry_run)}
+        # DOSYA BAZINDA PATLAMA. `fail` metodun tamamını düşürüyor; oysa
+        # gerçekte olan şey "üçüncü dosya gitmedi, diğerleri gitti" ve kısmi
+        # başarının test edilebilmesi için taklidin de dosya ayrımı yapması
+        # gerekiyor.
+        if filename in self.failing_images:
+            raise FakeStoreError(f"Mağaza `{filename}` dosyasını reddetti", status=500)
+        self.uploaded_images.append({"productId": int(product_id), "file": filename,
+                                     "position": position})
+        return {"ok": True, "data": {"id": 77 + len(self.uploaded_images)},
+                "dryRun": bool(dry_run)}
 
     # ---------------------------------------------------- nitelik ve aile
 

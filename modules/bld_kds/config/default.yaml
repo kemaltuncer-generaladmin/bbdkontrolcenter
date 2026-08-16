@@ -1,0 +1,32 @@
+# KDS Yönetimi ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI (K-22 §4): kuru prova arayüzden kaldırıldı ve panel bu
+# alanı artık hiç göndermiyor — açık kalsaydı panelden yapılan HER yazma
+# sessizce bir provaya döner, ekran "yazıldı" der ve kasada hiçbir şey
+# değişmezdi. Geçidin kendi varsayılanı (modules.bld_api.dry_run_default) da
+# aynı sebeple kapalıdır; ikisinden biri açık kalırsa yazma yine yapılmaz.
+#
+# UÇ HÂLÂ `dryRun: true` KABUL EDER — sözleşme §4 additive; kaldırmak alanı
+# açıkça gönderen eski çağrıları kırardı. Yalnız varsayılanı ve arayüzü gitti.
+# Gerekçe zorunluluğu (min 10 karakter) DURUYOR: kuru prova bir güvenlik ağıydı,
+# gerekçe ise denetim kaydıdır; ikisi ayrı şeylerdir.
+dry_run_default: false
+
+# Cihaz komut listesinde en çok kaç kayıt gösterilsin. Sunucu son 50'yi
+# tutuyor (K-21 §2.1); büyütmek yeni kayıt getirmez.
+command_limit: 50
+
+# Fiş DENETİM kaydında sayfa başına satır. Bu bir kuyruk değil, basılmış
+# fişlerin listesidir; bekleyen iş sayısı cihaz sağlığından okunur.
+print_job_limit: 100
+
+# Teslim edilmiş ama sonucu gelmemiş komut kaç dakika sonra "takıldı" diye
+# etiketlensin. `KitchenCommand::STALE_AFTER_MINUTES` ile aynı tutulmalıdır;
+# yalnız EKRANDAKİ etiketi belirler, sunucudaki kaydı etkilemez.
+stale_command_minutes: 10
+
+# Ayar önizlemesinin (kuru prova jetonunun) ömrü. Süre dolduktan sonra gelen
+# gerçek uygulama reddedilir ve kuru prova tekrarlanır: yarım saat önce
+# görülen tablo, cihazın bugünkü ayarını göstermiyor olabilir.
+settings_preview_ttl_minutes: 30

@@ -13,7 +13,7 @@ Grup: **BBD Store** · CSS öneki: `nt` · Rapor rafı:
 | Gönderim geçmişi | **Sunucu tarafı sayfalama** (100/sayfa). Süzgeç: arama · kanal · durum · olay · tarih aralığı · maliyet aralığı · anahtar `Başarısızlar`. Başarısız satırda `[Yeniden gönder]`. |
 | Şablonlar | Değişken paleti (tıklayınca **imlece ekler**), örnek veriyle önizleme, SMS karakter/parça/kredi sayacı, `[Kendime test gönder]`, `[Toplu gönderim]`. |
 | Müşteri SMS'i | **Üç aşama** (sipariş alındı · kargoya verildi · teslim edildi): aşama başına Açık/Kapalı, düzenlenebilir metin, örnek veriyle önizleme, **tek segment zorlayan** sayaç ve gönderim izi. Elle gönderim **yoktur**. |
-| Kurallar | Olay → koşul → şablon + kanal + gecikme. Aktif/pasif, son tetiklenme. |
+| Kurallar | Olay → koşul → şablon + kanal + gecikme. Aktif/pasif, son tetiklenme. **Mağaza tarafı salt okunur** (aşağıda). |
 | Kanallar | SMTP + SMS sağlayıcı (**sırlar maskeli**), sessiz saatler, günlük limit, `[Bağlantıyı sına]`, mobil uygulama ayarları, **yerel denetim izi** (son 50 yazma, gerekçeleriyle). |
 | Abonelikler | Bülten aboneleri, sayfalı. |
 | Çıktı | Gönderim raporu PDF · SMS maliyet icmali PDF · görünen sayfa CSV · tüm geçmiş CSV. |
@@ -106,6 +106,20 @@ numaralara gerçek mesaj gider — canlıya geçerken önce kendi numaranız.
   sayar (canlıda kanıtlandı), yani yazım hatalı bir kitle adı süzgeci düşürür
   ve iş "kime?" sorusu olmayan — yani herkese giden — bir gönderime dönerdi.
   Liste `GET /catalog` ile panele verilir; panel kendi kopyasını tutmaz.
+- **Kural YAZMAZ — mağazada öyle bir uç yok.** Canlıda doğrulandı
+  (2026-08-16, `route:list --path=api/admin/bbd/notifications`): önek altında
+  `GET notifications` · `GET notifications/rules` · `POST notifications/send`
+  var, kural için POST/PUT **yok**. Bir dönem "kural ucu henüz dağıtılmadı,
+  liste 404 dönüyor; yazma da aynı pakette gelecek" deniyordu — **ikisi de
+  artık doğru değil**: liste ucu yayında ve gerçek kuralları döndürüyor, yazma
+  ucu ise gecikmedi, mağaza onu **bilerek** yazmadı. Kurallar veritabanında
+  değil **kodda** yaşar (her biri bir `Event::listen` satırı ya da bir
+  zamanlayıcı kaydı); düzenlenebilir bir kural tablosu aynı gerçeğin ikinci
+  kopyasını üretirdi ve iki kopya ayrıştığında hiçbir belirti kalmazdı — tablo
+  "kapalı" derken dinleyici bildirim göndermeye devam ederdi. Ekran listeyi
+  gösterir, satırı salt okunur açar ve yazma düğmelerini **nedeniyle** kapatır.
+  Liste ucu bir gün geri çekilirse "okunamadı" / "uç yayında değil" dalları
+  yerinde durur (K7).
 - **Şablon ve kural silmez, pasifleştirir** (ADR 0012). Geçmiş gönderimler
   hangi şablonla gittiğini göstermeye devam etmeli; kapalı kural neyin neden
   durdurulduğunu anlatır.
@@ -113,9 +127,22 @@ numaralara gerçek mesaj gider — canlıya geçerken önce kendi numaranız.
   kendi mailer'ı onları kullanır; kopya ilk değişiklikte yalan söyler. SMS ve
   Push şablonlarının Bagisto'da karşılığı YOK — onlar yereldedir.
 
-## Mağazanın yanıt biçimi (canlıda doğrulandı — 2026-08-13)
+## Mağazanın yanıt biçimi (canlıda doğrulandı — 2026-08-16)
 
-Salt okunarak sınandı; varsayım değildir.
+Salt okunarak sınandı; varsayım değildir. Aşağıdakiler ilk kez 2026-08-13'te
+ölçüldü ve **2026-08-16'da yeniden ölçülüp hepsi hâlâ geçerli bulundu**
+(abone alanları, `perPage: 50` kırpması, `AdminMarketingTemplate` şeması,
+SMTP anahtar grupları). Tarih, "bir zamanlar böyleydi" ile "bugün de böyle"
+arasındaki farkı okuyucuya göstermek için duruyor.
+
+**Kural listesi ayrı hikâye:** `GET /api/admin/bbd/notifications/rules` bir
+dönem 404 dönüyordu, artık 200 dönüyor ve satırlar `{id, title, description,
+trigger, event, schedule, channel, audience, handler, enabled, blockedBy}`
+biçiminde geliyor — `id` **sayı değil dize** (`order.created.telegram`),
+açıklık alanı `active`/`status` değil **`enabled`**, olay adı mağazanın kendi
+olayı (`checkout.order.save.after`). Üçü de `messaging.rule_row` içinde
+karşılanır; karşılanmasaydı ekran çalışan kuralları "Kapalı" ve "tanınmayan
+olay" diye çizerdi.
 
 - **Alan adları camelCase'tir.** Abone satırı `{id, email, isSubscribed,
   customerId, customerName, channel, createdAt}` döner. `is_subscribed` diye

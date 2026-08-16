@@ -5,9 +5,24 @@ eski", "kalan alanla kaç yedek daha alınır", "bu yedek silinebilir mi",
 "dosya adı yola konabilir mi". Hepsi girdi→çıktı fonksiyonu olarak burada
 durur; serviste gömülü olsalardı tek satırı bile ağ olmadan test edilemezdi.
 
-MAĞAZA UCU HENÜZ YAYINDA DEĞİL (`/api/admin/bbd/backups`). Alan adlarının
-kesin biçimi bilinmiyor; bu yüzden her alan BİRDEN ÇOK adayla aranır
-(`pick`). Tek ada bağlanmak, uç yayınlandığı gün ekranı boş gösterirdi.
+MAĞAZA UCU ARTIK YAYINDA (`/api/admin/bbd/backups`). Bir dönem bu dosyanın
+başında "uç yayında değil, alan adları bilinmiyor" yazıyordu; ARTIK ÖYLE
+DEĞİL. CANLIDA ÖLÇÜLDÜ (2026-08-16): uç **200** dönüyor ve gerçek envanter
+geliyor (o an 2 yedek). Gelen alan adları:
+
+    name · size · createdAt · reason · actor · durationSeconds · database
+    · requestId          (meta: page · limit · total · last_page · keep)
+
+`pick`'in BİRDEN ÇOK ADAY araması yine de KALIYOR ve zayıflatılmıyor: mağaza
+tarafı hâlâ gelişiyor, `created_at`/`createdAt` gibi bir yazım değişikliği tek
+ada bağlanmış bir okumayı sessizce "—" dolu gösterirdi (istisna bile atmaz).
+
+BİLİNEN BOŞLUK (2026-08-16, canlıdan ölçüldü): uç `scope`, `sha256` ve
+doğrulama alanı GÖNDERMİYOR; ekranda Kapsam "—", Doğrulama "Doğrulanmadı"
+görünür — bu uydurmama kuralının doğru davranışıdır, arıza değil. Notu ise
+mağaza `reason` adıyla gönderiyor, `pick` ise `note`/`comment`/`description`
+arıyor; o sütun bugün "—" kalıyor. Aday listesini genişletmek ayrı bir karar
+olduğu için burada YAPILMADI, kaydedildi.
 
 ALTI KURAL — hepsinin karşılığı burada bir fonksiyondur:
 
@@ -45,15 +60,22 @@ MISSING_CODE = "bbd_endpoint_missing"
 #: Mağazanın KENDİ hata kodu — çeviri değil, makine jetonu. Uç YAYINDA ama
 #: `BBD_CONTROL_API_ENABLED` anahtarı kapalı olduğunda gövdede bu gelir.
 #:
-#: CANLIDA DOĞRULANDI (2026-08-13): `GET /api/admin/bbd/backups` artık 404
-#: DEĞİL, **HTTP 503** dönüyor:
-#:     {"error": {"code": "CONTROL_API_DISABLED",
-#:                "message": "Kontrol Merkezi API'si kapalı. ..."}}
-#: Aynı anda `/api/admin/settings/channels` 200, `/api/admin/orders` 200 —
-#: mağaza AYAKTA. Geçit 503'ü `code="server"` diye işaretlediği için
-#: `MISSING_CODE` bu hâli YAKALAMAZ; jeton geçidin ürettiği hata metninde
-#: taşınır (`client._fail` gövdedeki `error` alanını metne koyuyor, `mask_text`
-#: yalnız sır alanlarını yıldızlıyor, `code` sırlı sayılmıyor).
+#: CANLIDA ÖLÇÜLDÜ (2026-08-16): `GET /api/admin/bbd/backups` **200** dönüyor
+#: ve gerçek envanter geliyor. Yani bu jetonu bugün canlıdan GÖRMÜYORUZ.
+#:
+#: BİR DÖNEM ÖYLE DEĞİLDİ: 2026-08-13'te aynı uç 503 `CONTROL_API_DISABLED`
+#: dönüyordu (mağaza ayaktayken — `/settings/channels` ve `/orders` 200'dü) ve
+#: bu dosyanın başında "bugün geçerli olan hâl bu" yazıyordu. ARTIK ÖYLE
+#: DEĞİL; anahtar açılmış. Gelecekteki okuyucu aynı yanılgıya düşmesin diye
+#: eskidiği burada yazılı.
+#:
+#: JETON YİNE DE TANINIYOR — dal SİLİNMEZ. Anahtar bir gün geri kapatılırsa
+#: (yapılandırma önbelleği yenilenmemiş bir dağıtım buna yeter) ekranın
+#: "mağaza çöktü" dememesi gerekir. Geçit 503'ü `code="server"` diye
+#: işaretlediği için `MISSING_CODE` bu hâli YAKALAMAZ; jeton geçidin ürettiği
+#: hata metninde taşınır (`client._fail` gövdedeki `error` alanını metne
+#: koyuyor, `mask_text` yalnız sır alanlarını yıldızlıyor, `code` sırlı
+#: sayılmıyor).
 DISABLED_TOKEN = "CONTROL_API_DISABLED"
 
 #: Ucun üç hâli. İkisi de "yayında değil"dir ama ÇARESİ farklıdır ve bu ekranın
@@ -174,9 +196,13 @@ def pick(raw: Any, *names: str) -> Any:
 def parse_time(value: Any) -> datetime | None:
     """Zaman damgasını okur. Çözülemezse `None` — bugün uydurulmaz.
 
-    SAAT DİLİMSİZ DAMGA YEREL SAYILIR, UTC DEĞİL. Mağaza `"2026-08-13 19:54:51"`
-    biçiminde, saat dilimsiz ve YEREL damga gönderiyor (canlıda doğrulandı;
-    aynı tuzak store_orders README'sinde de yazılı). UTC saymak yedeği üç saat
+    SAAT DİLİMSİZ DAMGA YEREL SAYILIR, UTC DEĞİL. Bir dönem burada "mağaza
+    `2026-08-13 19:54:51` biçiminde, saat dilimsiz damga gönderiyor" yazıyordu;
+    YEDEK UCU İÇİN ARTIK ÖYLE DEĞİL — canlıda ölçüldü (2026-08-16):
+    `"2026-08-14T16:00:40+03:00"`, yani saat dilimi AÇIKÇA geliyor ve `pick`
+    edilen damga zaten doğru ana oturuyor. Saat dilimsiz dalı silmiyoruz: aynı
+    tuzak store_orders README'sinde hâlâ yazılı, mağazanın başka uçları saat
+    dilimsiz gönderiyor ve bu uç da bir gün geri dönebilir. UTC saymak yedeği üç saat
     GENÇLEŞTİRİR: 50 saatlik bir yedek 47 saatlik görünür ve 48 saatlik
     bayatlama eşiğini hiç tetiklemez — durum bandı yeşil kalırken elimizdeki
     en yeni yedek çoktan eskimiş olur. Aynı kayma silme yaş kapısını da üç

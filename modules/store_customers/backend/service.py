@@ -1241,18 +1241,29 @@ class CustomersService:
             # AYRIM ÖNEMLİ: `values` BOŞ ama VAR ise bölüm okundu, anahtar yok
             # demektir (aşağıda "bulunamadı" diye raporlanır). Payload'ın
             # KENDİSİ boşsa bölüm hiç okunamamıştır.
-            # CANLIDA DOĞRULANDI: `/api/admin/configuration` TEK ELEMANLI LİSTE
-            # döndürüyor (`[{slug, channel, locale, values:{…}}]`), geçidin
-            # tekil-kayıt yolu ise listeyi sözlüğe çeviremeyip boş sözlük
-            # veriyor. Boş sözlüğü "anahtar bulunamadı" saymak yanlış teşhistir:
-            # kullanıcı anahtar adlarını düzeltmeye çalışır, sorun orada
-            # değildir. Ekran bunu AÇIKÇA söyler ve ayar yazılmaz.
+            #
+            # CANLIDA DOĞRULANDI (2026-08-16): `/api/admin/configuration?slug=…`
+            # 200 + TEK ELEMANLI LİSTE döndürüyor
+            # (`[{slug, channel, locale, values:{…}}]`) ve store_api geçidi bu
+            # zarfı `_first_object` ile AÇIYOR — `customer.settings` bölümü
+            # gerçek değerleriyle geliyor (`…email.verification` = "1",
+            # `…create_new_account_options.default_group` = "general").
+            #
+            # BİR DÖNEM BÖYLE DEĞİLDİ: geçidin tekil-kayıt yolu listeyi sözlüğe
+            # çeviremeyip boş sözlük veriyordu ve bu dal "geçit düzeltilmeli"
+            # diye teşhis koyuyordu. O kusur geçitte giderildi; teşhis artık
+            # yanlış yönlendirir, bu yüzden metin değişti. DAL DURUYOR (K7):
+            # bölüm bir gün gerçekten okunamazsa boş sözlüğü "anahtar
+            # bulunamadı" saymak yanlış teşhistir — kullanıcı anahtar adlarını
+            # düzeltmeye uğraşır, sorun orada değildir. Ekran bunu AÇIKÇA
+            # söyler ve ayar yazılmaz.
             out["storeAvailable"] = False
             out["error"] = (
-                f"Mağaza ayar bölümü ({slug}) okunamadı: mağaza tek elemanlı LİSTE "
-                "döndürüyor, store_api geçidi ise tekil kayıt bekliyor ve boş sözlük "
-                "veriyor. Ayarlar bu yüzden okunamıyor ve yazılamıyor; geçidin "
-                "`configuration` metodu listeyi açacak şekilde düzeltilmeli. "
+                f"Mağaza ayar bölümü ({slug}) okunamadı: mağaza bu bölüm için BOŞ ZARF "
+                "döndürdü, tek bir ayar bile gelmedi. Bu \"anahtar bulunamadı\" demek "
+                "DEĞİLDİR; bölümün kendisi okunamamıştır — slug yanlış olabilir ya da "
+                "mağaza tarafında bir aksaklık vardır. Ayarlar bu yüzden okunamıyor ve "
+                "yazılmıyor; yanlış yere yazmaktansa hiç yazmamak doğrudur. "
                 "Ekranın diğer sekmeleri çalışmaya devam eder.")
             return out
         gdpr_values = values

@@ -46,7 +46,7 @@
 
 import {
   button, clip, confirmSimple, confirmWithReason, copyText, csvBlob, h, loadStyles,
-  money, num, percent, toaster, todayIso,
+  money, num, percent, stampIso, toaster, todayIso,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
@@ -55,7 +55,8 @@ import {
   skeletonRows, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
-import { barChart, groupedBar } from '../../ui-kit/charts.js';
+import { barChart, groupedBar, stackedBar } from '../../ui-kit/charts.js';
+import { measureBar, stepper, timeline } from '../../ui-kit/flow.js';
 import { reportChain } from '../../ui-kit/report.js';
 
 const BASE = '/api/store_shipping';
@@ -222,6 +223,43 @@ function desiCell(row) {
   box.append(h('span', 'sh-sub', `${num(row.desi, 1)} / ${num(row.weight, 1)} kg`));
   box.title = 'Üstte faturalanacak desi, altta ölçülen desi ve ağırlık.';
   return box;
+}
+
+/**
+ * Ölçü karşılaştırması — kitin `measureBar`'ı (ADR 0011).
+ *
+ * NEDEN ÇEKMECEDE AYRI BİR KART. Künyede "Faturalanan desi 5" ile "Ölçülen
+ * 2,4 desi / 5,0 kg" alt alta iki satırdı; hangisinin ücreti belirlediği
+ * okunmuyordu ve personel küçük olana bakıp ücreti yanlış bekliyordu. Taşıyıcı
+ * DESİ ile AĞIRLIĞIN büyüğünü alır ve tam sayıya YUKARI yuvarlar; faturalanan
+ * satır bu yüzden ayrıca işaretli ve yazıyla söylenir.
+ *
+ * ÖLÇÜ YOKSA ÇUBUK ÇİZİLMEZ. Üçü de sıfırken `measureBar` üç boş çubuk ve üç
+ * "0" gösterirdi — "ölçü sıfır" ile "taşıyıcı ölçü bildirmedi" farklı şeyler
+ * ve ikincisi sıfır gibi görünmemeli.
+ */
+function measureView(row) {
+  const desi = Number(row.desi) || 0;
+  const weight = Number(row.weight) || 0;
+  const units = Number(row.units) || 0;
+  if (!desi && !weight && !units) {
+    return emptyState({
+      title: 'Ölçü bilgisi yok',
+      text: 'Taşıyıcı bu gönderi için desi ve ağırlık bildirmedi; faturalanan desinin '
+        + 'neye göre çıktığı buradan doğrulanamaz. Ölçüyü taşıyıcının kendi kaydından '
+        + 'kontrol edin.',
+    });
+  }
+  // Desi ile kilogram farklı birimlerdir; burada YAN YANA konmaları doğrudur,
+  // çünkü taşıyıcının kuralı tam olarak iki SAYIYI karşılaştırmaktır.
+  return measureBar([
+    { label: 'Ölçülen hacim', value: desi, text: `${num(desi, 1)} desi` },
+    { label: 'Ölçülen ağırlık', value: weight, text: `${num(weight, 1)} kg` },
+    { label: 'Faturalanan', value: units, text: `${num(units)} desi`, governs: true },
+  ], {
+    note: 'Taşıyıcı desi ile ağırlığın BÜYÜĞÜNÜ alır ve tam sayıya yukarı yuvarlar: '
+      + '1,2 desi 2 desi olarak faturalanır.',
+  });
 }
 
 // ==================================================================== veri
@@ -680,7 +718,11 @@ function showDispatchResult(row, result) {
         variant: 'primary',
         onClick: () => report.run('labels', {
           shipmentIds: [result.shipmentId],
-          format: state.settings?.labelFormat || 'thermal-100x150',
+          // Biçim BOŞ GEÇİLEBİLİR: ayar okunamadıysa sunucu kendi çözer
+        // (`label_format_on` — tercih, yoksa ayar). Buraya elle bir varsayılan
+        // yazmak dördüncü bir kopya olurdu ve tercih değiştiğinde ekran
+        // sunucudan farklı bir biçim isteyerek sessizce yanlış kâğıt bastırırdı.
+        format: state.settings?.labelFormat,
         }),
       }));
     }
@@ -1275,8 +1317,6 @@ async function openShipment(shipmentId) {
   };
   facts.append(
     fact('Sipariş', row.orderNumber || '—'),
-    fact('Faturalanan desi', `${num(row.units)} desi`),
-    fact('Ölçülen', `${num(row.desi, 1)} desi / ${num(row.weight, 1)} kg`),
     fact('Paket', num(row.packages)),
     fact('Ücret', money(row.fee)),
     fact('Kapıda ödeme', row.cod ? `${money(row.cod)}${row.codCollected ? ' (tahsil edildi)' : ' (tahsil edilmedi)'}` : '—'),
@@ -1285,22 +1325,28 @@ async function openShipment(shipmentId) {
     fact('Hareketsiz', row.idleDays === null ? '—' : `${num(row.idleDays)} gün`),
   );
   box.body.append(card('Künye', facts));
+  box.body.append(card('Ölçü ve faturalama', measureView(row),
+    'Faturayı belirleyen ölçü işaretli'));
 
-  const timeline = h('div', 'sh-timeline');
-  if (!payload.movements.length) {
-    timeline.append(h('div', 'sh-sub', 'Taşıyıcı henüz hareket bildirmedi.'));
-  }
-  for (const move of payload.movements) {
-    const line = h('div', 'sh-move');
-    line.append(h('span', 'sh-move-dot'),
-      h('b', undefined, move.statusLabel),
-      h('span', 'sh-sub', move.location || ''),
-      h('span', 'kit-spacer'),
-      h('span', 'sh-sub', move.at.replace('T', ' ')));
-    if (move.note) line.append(h('span', 'sh-sub', move.note));
-    timeline.append(line);
-  }
-  box.body.append(card('Hareket geçmişi', timeline));
+  // KİTTEN GELİR (ADR 0011). Burada elle yazılmış bir zaman çizelgesi vardı
+  // (`sh-timeline` / `sh-move`); kitin `timeline()`'ı aynı işi yapıyor, üstelik
+  // bekleyen adımı ve tonu da biliyor. İkinci kopya kitteki düzeltmeleri
+  // almıyordu.
+  //
+  // SIRA ÇEVRİLİR. `movement_rows` en yeniyi ÜSTE koyuyor — bir liste için
+  // doğrudur, bir YOLCULUK için değildir: `timeline` eskiden yeniye okutur ve
+  // "nereye kadar geldi" sorusunu son satıra bakarak yanıtlatır. Kaynak dizi
+  // KOPYALANIR; `reverse()` yerinde çalışır ve `payload.movements`'ı bozarsa
+  // aynı çekmece ikinci kez çizildiğinde sıra ters dönerdi.
+  const moves = [...(payload.movements || [])].reverse().map((move) => ({
+    title: move.statusLabel,
+    at: (move.at || '').replace('T', ' '),
+    detail: [move.location, move.note].filter(Boolean).join(' · '),
+    tone: STATUS_TONES[move.status] || '',
+  }));
+  box.body.append(card('Hareket geçmişi', timeline(moves, {
+    emptyText: 'Taşıyıcı henüz hareket bildirmedi.',
+  })));
 
   const actions = h('div', 'sh-actions');
   actions.append(
@@ -1312,7 +1358,11 @@ async function openShipment(shipmentId) {
     button('Etiketi yeniden bas', {
       onClick: () => report.run('labels', {
         shipmentIds: [row.id],
-        format: state.settings?.labelFormat || 'thermal-100x150',
+        // Biçim BOŞ GEÇİLEBİLİR: ayar okunamadıysa sunucu kendi çözer
+        // (`label_format_on` — tercih, yoksa ayar). Buraya elle bir varsayılan
+        // yazmak dördüncü bir kopya olurdu ve tercih değiştiğinde ekran
+        // sunucudan farklı bir biçim isteyerek sessizce yanlış kâğıt bastırırdı.
+        format: state.settings?.labelFormat,
       }),
     }),
     button('Takip bağlantısını kopyala', {
@@ -1837,6 +1887,37 @@ async function renderZones(host) {
 
 // ================================================================ sekme 6
 
+/**
+ * Gönderi durum dağılımı — kitin `stackedBar`'ı.
+ *
+ * SAYILAR ZATEN VARDI, PAY YOKTU. Aynı rakamlar yukarıdaki KPI kutularında
+ * duruyor; yedi kutuya dağılmış sayı "yolda olanlar teslim edilenin kaç katı"
+ * sorusunu cevaplamıyor. Tek çubuk bütünü ve içindeki payı birlikte gösterir;
+ * her parçanın SAYISI da altındaki açıklama şeridinde yazar.
+ *
+ * "GECİKEN" ÇUBUĞA GİRMEZ — bilerek. `late` bir DURUM değil, yoldaki bir
+ * gönderiye takılan bayraktır; parçalardan biri yapılsaydı aynı gönderi hem
+ * "Yolda" hem "Geciken" olarak iki kez sayılır ve toplam gerçek gönderi
+ * sayısını aşardı. Geciken sayısı kendi KPI kutusunda ve "Dikkat gerektirenler"
+ * listesinde duruyor.
+ *
+ * İPTAL ARTIKTAN HESAPLANIR: `totals` iptal edilen gönderiyi dört durumun
+ * hiçbirine yazmıyor. Toplamdan düşmezsek çubuk, gerçekte var olan gönderilerin
+ * tamamını gösterdiğini iddia ederdi.
+ */
+function statusSpread(counts) {
+  const bilinen = ['delivered', 'inTransit', 'undelivered', 'returning']
+    .reduce((total, key) => total + (Number(counts[key]) || 0), 0);
+  const iptal = Math.max(0, (Number(counts.total) || 0) - bilinen);
+  return stackedBar([
+    { label: 'Teslim edildi', value: counts.delivered },
+    { label: 'Yolda', value: counts.inTransit },
+    { label: 'Teslim edilemedi', value: counts.undelivered },
+    { label: 'İade', value: counts.returning },
+    { label: 'İptal', value: iptal },
+  ]);
+}
+
 async function renderPerformance(host) {
   host.replaceChildren(skeletonRows(6, 5));
   let payload;
@@ -1890,6 +1971,9 @@ async function renderPerformance(host) {
     }));
     return;
   }
+
+  host.append(card('Gönderiler şu an nerede', statusSpread(counts),
+    `son ${payload.days} günde açılan ${num(counts.total)} gönderi`));
 
   // Renk tek başına anlam taşımaz: grafiğin altında her taşıyıcının sayıları
   // tabloda da durur.
@@ -2370,4 +2454,125 @@ export function mount(root, ctx) {
     state = freshState();
     busy = false;
   };
+}
+
+// ═══════════════════════════════════════════════ paylaşılan yetenek: yüzey
+
+/**
+ * Bir siparişin gönderisini BAŞKA ekranlara gösterir — `store.shipment.byOrder`.
+ *
+ * NEDEN BU DIŞA VURUM ŞARTTI. Manifest bu yeteneği ilan ediyor ve backend
+ * sağlıyordu, ama panel `capabilities()` dışa vurmadığı için kabuk onu HİÇ
+ * çözemiyordu (ui-kernel.js: `typeof module.capabilities !== 'function' → {}`).
+ * Sonuç: Siparişler ekranının Kargo sekmesi hiç açılmıyor ve kullanıcıya
+ * "veriyi veren ekran bu kurulumda yok" deniyordu — oysa ekran iki dosya
+ * ötede duruyordu. Doğru yolu deneyen kişi duvara çarpıp kendi kopyasını
+ * yazıyordu; üç ayrı "kargoya ver" düğmesinin kökeni budur.
+ *
+ * SALT OKUMA — BİLEREK. Buradan gönderi açılmaz, etiket alınmaz, iptal
+ * edilmez. Kargoya vermenin tek evi bu panelin kendisidir; başka ekranda
+ * düğme bulunmaz, yalnız DURUM görünür. Yüzeyin dar olması bunu kaza eseri
+ * bozmayı da imkânsız kılar (K3).
+ */
+export function capabilities(ctx) {
+  return {
+    'store.shipment.byOrder': async (orderId) => {
+      let payload;
+      try {
+        payload = await ctx.api(`${BASE}/orders/${Number(orderId)}/shipments`);
+      } catch (error) {
+        return { ok: false, error: error.message || 'Gönderi bilgisi okunamadı.' };
+      }
+      // BAĞLANTI YOKSA "GÖNDERİ YOK" DENMEZ. İkisi çok farklı: biri "bu
+      // sipariş kargoya verilmedi", diğeri "bilmiyoruz". İkincisini
+      // birincisi gibi göstermek, kargolanmış bir siparişi kargosuz sanmaya
+      // ve ikinci kez göndermeye yol açar.
+      if (payload?.connected === false) {
+        return { ok: false, error: payload.error || 'Kargo bilgisine şu an ulaşılamıyor.' };
+      }
+      const items = payload?.items || [];
+      if (!items.length) return { rows: [] };
+      // STİL BURADA YÜKLENİR, DOSYA TEPESİNDE DEĞİL. Kart başka panelin
+      // içine çiziliyor ve oranın `panel.css`'i bizimkini taşımıyor. Tepede
+      // yüklemek ise kabuk yetenek çözümü sırasında HİÇ AÇILMAYAN panelleri
+      // de import ettiği için kullanılmayan stilleri head'e sızdırırdı
+      // (kit.js:399-401). Burası kartın gerçekten çizildiği tek an.
+      loadStyles(import.meta.url);
+      return { node: shipmentCards(items, ctx) };
+    },
+  };
+}
+
+/** Mutlu yol — aşama şeridi bu sırayı çizer. */
+const JOURNEY = ['created', 'picked_up', 'in_transit', 'out_for_delivery', 'delivered'];
+
+/** Mutlu yoldan çıkmış durumlar: şeritte değil, ayrı uyarı olarak gösterilir. */
+const OFF_TRACK = {
+  undelivered: ['Teslim edilemedi', 'bad'],
+  returning: ['İade dönüyor', 'warn'],
+  returned: ['İade teslim edildi', 'warn'],
+  cancelled: ['İptal edildi', 'dim'],
+};
+
+function shipmentCards(items, ctx) {
+  const box = h('div', 'sh-cap');
+  for (const row of items) box.append(shipmentCard(row, ctx));
+  return box;
+}
+
+function shipmentCard(row, ctx) {
+  const body = h('div', 'sh-cap-body');
+
+  // ── künye: takip numarası kopyalanabilir, çünkü aranan şey odur
+  const head = h('div', 'sh-cap-head');
+  const track = h('span', 'sh-cap-track', row.trackingNo || 'takip numarası yok');
+  head.append(track);
+  if (row.carrierLabel) head.append(badge(row.carrierLabel, 'info'));
+  if (row.trackingNo) {
+    head.append(button('Kopyala', {
+      title: 'Takip numarasını panoya kopyalar',
+      onClick: () => copyText(row.trackingNo),
+    }));
+  }
+  body.append(head);
+
+  // ── mutlu yoldan çıktıysa ÖNCE o söylenir; şerit yanıltıcı olurdu
+  const sapma = OFF_TRACK[row.status];
+  if (sapma) {
+    body.append(alertBox(
+      `${sapma[0]}${row.error ? ` — ${row.error}` : ''}`,
+      sapma[1] === 'dim' ? 'warn' : sapma[1],
+    ));
+  } else {
+    const index = JOURNEY.indexOf(row.status);
+    body.append(stepper(
+      JOURNEY.map((code) => ({ label: STATUS_LABELS[code] || code })),
+      index,
+    ));
+  }
+
+  // ── tek satırlık olgu şeridi. Bilinmeyen alan UYDURULMAZ, hiç yazılmaz.
+  const facts = [];
+  if (row.city) facts.push(`${row.city}${row.district ? ` · ${row.district}` : ''}`);
+  if (row.createdAt) facts.push(`açıldı ${stampIso(row.createdAt)}`);
+  if (row.deliveredAt) facts.push(`teslim ${stampIso(row.deliveredAt)}`);
+  else if (row.lastMoveAt) facts.push(`son hareket ${stampIso(row.lastMoveAt)}`);
+  if (row.packages > 1) facts.push(`${row.packages} paket`);
+  if (facts.length) body.append(h('div', 'sh-cap-facts', facts.join('  ·  ')));
+
+  // ── dikkat çeken yanlar zaten YAZIYLA geliyor (shipping.flags)
+  if (row.flags?.length) {
+    const chips = h('div', 'sh-cap-flags');
+    for (const flagText of row.flags) chips.append(badge(flagText, 'warn'));
+    body.append(chips);
+  }
+
+  // ── TEK EYLEM: buraya gitmek. Kargoya verme, iptal, etiket YOK.
+  body.append(h('div', 'sh-cap-go', ''));
+  body.lastChild.append(button('Kargo Yönetimi’nde aç', {
+    title: 'Bu siparişi kargo ekranında açar — gönderme, iptal ve etiket işlemleri orada',
+    onClick: () => ctx.open?.('store_shipping', { orderId: row.orderId, shipmentId: row.id }),
+  }));
+
+  return card('', body);
 }

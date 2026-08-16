@@ -52,7 +52,7 @@ ui:
     title: "Çıktı Merkezi"
     icon: printer
     group: "Kurumsal"
-    order: 40
+    order: 830
     requires: [print.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

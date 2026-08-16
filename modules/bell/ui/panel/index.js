@@ -1,578 +1,744 @@
 // Zil Sistemi paneli.
 //
-// Kurgu: zil kendi başına bir takvim TUTMAZ. Ders saatleri Ders Takvimi
-// modülünündür; zil onları `bbd_class_schedule.week` yeteneğinden okur ve
-// yalnızca "hangi grup, hangi derste, hangi sesi, hangi düzeyde" kararını
-// saklar (K3 — modül modülü import etmez, K5 — kimse başkasının verisini
-// kopyalamaz).
+// EKRANIN ANLATTIĞI ÜÇ ŞEY, BU SIRAYLA:
 //
-// Üç kademeli karar:
-//   1. Ana şalter   — tüm zilleri tek yerden sustur (tören, deneme sınavı)
-//   2. Grup ayarı   — sesi, düzeyi, ders başı/sonu kuralı
-//   3. Ders istisnası — tek bir dersi sustur veya ona başka ses ver
+//   1. ÇALIYOR MU?  Ajan bağlı mı, sıradaki zil ne zaman, eksik ses var mı.
+//      En üstte durur ve arıza varsa kırmızıdır. Çalmayan zil, fark
+//      edilmeyen arızadır — ekran bunu saklarsa hata haftalarca yaşar.
+//   2. ŞİMDİ NE YAPABİLİRİM?  Grup çağır, zil çal. Elle yapılan iş budur.
+//   3. NASIL KURULUYOR?  Haftalık saatler, ses ve metinler.
+//
+// SESİ OLMAYAN DÜĞME ÇİZİLİR AMA KAPALIDIR ve nedeni yazar. Basılabilen ama
+// sessizlikle biten bir "Çağır", hiç olmayandan kötüdür.
+//
+// Ortak bileşenler kabuktan gelir (ADR 0011). Yol, panelin KOPYALANMIŞ
+// konumuna göredir: shell/panels/bell/ → shell/ui-kit/. Depoda
+// '../../ui-kit/' çözülmez; normaldir.
 
-import { BELLS, bellById, play, release, stop } from './sounds.js';
-import { DEFAULT_SOUND, flush, init, load, overrideKey, save, settingsFor } from './store.js';
+import {
+  ago, blockedButton, button, confirmSimple, h, loadStyles, toaster,
+} from '../../ui-kit/kit.js';
+import * as store from './store.js';
 
 const DAYS = [
-  { key: 'mon', name: 'Pazartesi' },
-  { key: 'tue', name: 'Salı' },
-  { key: 'wed', name: 'Çarşamba' },
-  { key: 'thu', name: 'Perşembe' },
-  { key: 'fri', name: 'Cuma' },
+  { key: 'mon', name: 'Pazartesi', short: 'Pzt' },
+  { key: 'tue', name: 'Salı', short: 'Sal' },
+  { key: 'wed', name: 'Çarşamba', short: 'Çar' },
+  { key: 'thu', name: 'Perşembe', short: 'Per' },
+  { key: 'fri', name: 'Cuma', short: 'Cum' },
+  { key: 'sat', name: 'Cumartesi', short: 'Cmt' },
+  { key: 'sun', name: 'Pazar', short: 'Paz' },
 ];
 
-const VOLUME_PRESETS = [
-  { label: 'Düşük', value: 40 },
-  { label: 'Orta', value: 70 },
-  { label: 'Yüksek', value: 95 },
-];
+/** Ajan bu süre görünmezse bağlı sayılmaz. Sorgulama 3 sn; 90 sn bolca pay. */
+const AGENT_STALE_MS = 90_000;
 
-let state = null;
-let groups = [];        // ders takviminden gelen gruplar (salt okunur)
-let activeGroupId = null;
+/** Ekran kendini bu sıklıkta tazeler: ajan durumu ve ses kuyruğu canlı kalsın. */
+const REFRESH_MS = 10_000;
+
+let ctx = null;
+let data = null;
+let activeDay = DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1].key;
+let notify = () => {};
+let timer = null;
+let disposed = false;
 const nodes = {};
 
-const h = (tag, className, text) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-};
+/**
+ * Kullanıcının yazdığını saate çevirir. Klavyeden hızlı girişi hedefler:
+ *   "9" → 09:00 · "930" → 09:30 · "9:3" → 09:30 · "0930" → 09:30
+ * Anlamlandıramazsa null döner ve ekran bunu söyler.
+ */
+export function parseTime(input) {
+  const raw = String(input ?? '').trim();
+  if (raw === '') return null;
+  const digits = raw.replace(/\D/g, '');
+  if (digits === '' || digits.length > 4) return null;
 
-function activeGroup() {
-  return groups.find((group) => group.id === activeGroupId) || groups[0] || null;
-}
-
-function activeSettings() {
-  const group = activeGroup();
-  return group ? settingsFor(state, group.id) : null;
-}
-
-function commit() {
-  save(state);
-}
-
-/** Bir grubun haftada kaç kez zil çalacağı — ana şalter ve istisnalar dahil. */
-function bellCount(group) {
-  const settings = settingsFor(state, group.id);
-  if (!state.enabled || !settings.enabled) return 0;
-
-  let count = 0;
-  for (const day of DAYS) {
-    for (const block of group.week[day.key] || []) {
-      const override = settings.overrides[overrideKey(day.key, block.start)] || {};
-      if (settings.ringStart && override.start !== false) count += 1;
-      if (settings.ringEnd && override.end !== false) count += 1;
-    }
+  let hours;
+  let minutes;
+  if (raw.includes(':') || raw.includes('.')) {
+    const [left, right = ''] = raw.split(/[:.]/);
+    hours = Number(left.replace(/\D/g, ''));
+    minutes = right === '' ? 0 : Number(right.replace(/\D/g, '').padEnd(2, '0'));
+  } else if (digits.length <= 2) {
+    hours = Number(digits);
+    minutes = 0;
+  } else {
+    hours = Number(digits.slice(0, digits.length - 2));
+    minutes = Number(digits.slice(-2));
   }
-  return count;
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours > 23 || minutes > 59) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-function effectiveSound(settings, override) {
-  return bellById(override?.soundId || settings.soundId || DEFAULT_SOUND);
+// --------------------------------------------------------------- yardımcı
+
+async function run(action, { success = '', reload = true } = {}) {
+  try {
+    const result = await action();
+    if (result && result.ok === false) {
+      notify(result.detail || 'İşlem yapılamadı.', 'bad');
+    } else if (success) {
+      notify(typeof success === 'function' ? success(result) : success);
+    }
+    if (reload) await refresh();
+    return result;
+  } catch (error) {
+    notify(error.message || String(error), 'bad');
+    return null;
+  }
 }
 
-// ------------------------------------------------------------------- çizim
+async function refresh() {
+  const next = await store.state();
+  if (disposed) return;
+  data = next;
+  render();
+}
+
+function agentOnline() {
+  const agent = data.agent || {};
+  if (!agent.online) return false;
+  const seen = Date.parse(agent.lastSeen || '');
+  return !seen || Number.isNaN(seen) || Date.now() - seen < AGENT_STALE_MS;
+}
+
+/** Zil neden çalmaz? Boş dizi dönerse her şey yolunda. */
+function blockers() {
+  const list = [];
+  const settings = data.settings || {};
+  if (!settings.enabled) list.push('ana şalter kapalı');
+  if (!Object.values(data.times || {}).some((items) => items.length)) {
+    list.push('hiç zil saati girilmemiş');
+  }
+  if (!agentOnline() && !settings.playLocally) {
+    list.push(data.agent?.error || 'zil ajanı görünmüyor');
+  }
+  if ((data.missingVoices || []).length) {
+    list.push(`${data.missingVoices.length} grubun sesi hazır değil`);
+  }
+  if (data.lessonVoice?.state !== 'ready') list.push('“derse geçiniz” anonsu hazır değil');
+  return list;
+}
+
+// ------------------------------------------------------------------- şerit
+
+function renderHeader() {
+  const bar = h('header', 'bl-top');
+
+  const master = h('label', 'bl-switch');
+  const box = h('input');
+  box.type = 'checkbox';
+  box.checked = Boolean(data.settings.enabled);
+  box.addEventListener('change', () => run(
+    () => store.saveSettings({ ...data.settings, enabled: box.checked }),
+    { success: box.checked ? 'Zil sistemi açıldı.' : 'Zil sistemi kapatıldı.' },
+  ));
+  master.append(box, h('i', 'bl-switch-track'), h('span', null, 'Zil sistemi'));
+
+  const online = agentOnline();
+  const agent = h('div', `bl-agent${online ? '' : ' off'}`);
+  agent.append(h('i', 'bl-dot'));
+  const seen = data.agent?.lastSeen ? ago(data.agent.lastSeen) : '';
+  agent.append(h('span', null, online
+    ? `Zil ajanı bağlı${seen ? ` · ${seen}` : ''}`
+    : 'Zil ajanı görünmüyor'));
+  if (data.agent?.error) agent.title = data.agent.error;
+
+  // Ajanın yerelinde bulunması gereken dosyalar: teneffüs zili + "derse
+  // geçiniz" anonsu + her grup için bir anons.
+  const wanted = 2 + (data.groups || []).length;
+  const present = (data.agent?.sounds || []).length;
+  const library = h('span', `bl-library${present >= wanted ? ' ok' : ''}`,
+    online ? `Ajanda ${present}/${wanted} ses` : '');
+  library.title = 'Sesler ajanın yerelinde durur; komut gelince indirme '
+    + 'beklenmez. Eksik varsa arka planda iniyor demektir.';
+
+  const ring = button('Şimdi zil çal', {
+    variant: 'primary',
+    title: 'Zili okulun hoparlöründen çalar. Anons çalmaz.',
+    onClick: () => run(store.ring, { success: (r) => `Zil çaldı — ${r.detail}` }),
+  });
+
+  bar.append(master, agent, library, h('div', 'kit-spacer'), ring);
+  return bar;
+}
+
+function renderStatus() {
+  const problems = blockers();
+  if (!problems.length) {
+    const next = data.scheduler?.next?.[0];
+    return h('p', 'bl-status',
+      next ? `Sıradaki zil: ${next.label} · ${next.at.slice(11)}`
+        : 'Zil etkin. Bugün için sırada zil yok.');
+  }
+  const line = h('p', 'bl-status bad');
+  line.append(h('b', null, 'ZİL ÇALMAZ — '), h('span', null, `${problems.join(', ')}.`));
+  return line;
+}
+
+// ------------------------------------------------------------------ gruplar
 
 function renderGroups() {
-  nodes.groups.replaceChildren();
+  const card = h('section', 'bl-card');
+  const head = h('div', 'bl-card-head');
+  head.append(h('h4', null, 'Grup çağır'));
+  head.append(h('span', 'bl-hint',
+    'Seçilen gruba anons geçer. Zil çalmaz.'));
+  card.append(head);
 
-  for (const group of groups) {
-    const settings = settingsFor(state, group.id);
-    const chip = h('button', 'bl-chip');
-    chip.type = 'button';
-    chip.style.setProperty('--chip', group.color || '#5b8cff');
-    chip.classList.toggle('active', group.id === activeGroupId);
-    chip.classList.toggle('muted', !settings.enabled || !state.enabled);
+  const grid = h('div', 'bl-groups');
+  for (const group of data.groups || []) grid.append(groupCard(group));
+  grid.append(newGroupCard());
+  card.append(grid);
 
-    chip.append(h('i', 'bl-chip-dot'), h('span', null, group.name));
-    chip.append(h('em', 'bl-chip-count', `${bellCount(group)} zil`));
+  if (!(data.groups || []).length) {
+    card.append(h('p', 'bl-empty',
+      'Henüz grup yok. Bir grup açtığında anons sesi bir kez üretilir; '
+      + 'sonraki çağrılarda buluta çıkılmaz.'));
+  }
+  return card;
+}
 
-    chip.addEventListener('click', () => {
-      activeGroupId = group.id;
-      renderAll();
+function groupCard(group) {
+  const card = h('div', `bl-group bl-voice-${group.voice.state}`);
+
+  const name = h('div', 'bl-group-name', group.name);
+  name.title = group.text;
+  card.append(name);
+
+  const meta = h('div', 'bl-group-meta');
+  meta.append(h('span', `bl-kind bl-kind-${group.kind}`,
+    group.kind === 'ozel' ? 'özel ders' : 'grup'));
+  meta.append(voiceBadge(group.voice));
+  card.append(meta);
+
+  const actions = h('div', 'bl-group-actions');
+  if (group.voice.state === 'ready') {
+    actions.append(button('Çağır', {
+      variant: 'primary',
+      title: group.text,
+      onClick: () => run(() => store.callGroup(group.id),
+        { success: `Anons geçildi: ${group.name}` }),
+    }));
+  } else {
+    actions.append(blockedButton('Çağır', voiceReason(group.voice)));
+  }
+
+  const menu = h('div', 'bl-group-menu');
+  const rename = h('button', 'bl-icon-btn', '✎');
+  rename.type = 'button';
+  rename.title = 'Adını değiştir';
+  rename.addEventListener('click', () => startRename(name, group));
+
+  const drop = h('button', 'bl-icon-btn', '✕');
+  drop.type = 'button';
+  drop.title = 'Grubu kaldır';
+  drop.addEventListener('click', async () => {
+    const yes = await confirmSimple(nodes.view, {
+      title: `“${group.name}” kaldırılsın mı?`,
+      description: 'Grup listeden çıkar. Kaydı ve üretilmiş sesi silinmez; '
+        + 'aynı adla yeniden açarsan ses tekrar üretilmez.',
+      confirmLabel: 'Kaldır',
+      danger: true,
     });
-    nodes.groups.append(chip);
-  }
+    if (yes) await run(() => store.removeGroup(group.id), { success: 'Grup kaldırıldı.' });
+  });
+  menu.append(rename, drop);
+  card.append(menu, actions);
+  return card;
 }
 
-function renderSettings() {
-  const group = activeGroup();
-  const settings = activeSettings();
-  if (!group) return;
-
-  const off = !state.enabled || !settings.enabled;
-  nodes.body.classList.toggle('off', off);
-
-  nodes.groupName.textContent = group.name;
-  nodes.groupSwitch.checked = settings.enabled;
-  nodes.groupNote.textContent = !state.enabled
-    ? 'Ana şalter kapalı — hiçbir grup çalmıyor.'
-    : settings.enabled
-      ? `Haftada ${bellCount(group)} zil`
-      : 'Bu grup susturuldu.';
-
-  for (const card of nodes.soundCards) {
-    card.input.checked = card.id === settings.soundId;
-    card.root.classList.toggle('active', card.id === settings.soundId);
-  }
-
-  nodes.volume.value = String(settings.volume);
-  nodes.volumeValue.textContent = `%${settings.volume}`;
-  for (const preset of nodes.volumePresets) {
-    preset.button.classList.toggle('active', settings.volume === preset.value);
-  }
-
-  nodes.ringStart.checked = settings.ringStart;
-  nodes.ringEnd.checked = settings.ringEnd;
+function voiceBadge(voice) {
+  const map = {
+    ready: ['✓ ses hazır', 'ok'],
+    pending: ['⏳ ses üretiliyor', 'wait'],
+    error: ['✕ ses üretilemedi', 'bad'],
+    missing: ['⏳ sıraya alınacak', 'wait'],
+  };
+  const [text, tone] = map[voice.state] || map.missing;
+  const badge = h('span', `bl-badge ${tone}`, text);
+  if (voice.state === 'error') badge.title = voice.detail;
+  return badge;
 }
 
-function renderLessons() {
-  const group = activeGroup();
-  const settings = activeSettings();
-  nodes.lessons.replaceChildren();
-  if (!group) return;
+function voiceReason(voice) {
+  if (voice.state === 'error') {
+    return `Bu grubun anons sesi üretilemedi: ${voice.detail} `
+      + 'Aşağıdaki “Sesleri yeniden üret” düğmesiyle yeniden denenebilir.';
+  }
+  return 'Bu grubun anons sesi henüz üretilmedi. Birkaç saniye içinde hazır olur.';
+}
 
-  const total = DAYS.reduce((sum, day) => sum + (group.week[day.key] || []).length, 0);
-  if (total === 0) {
-    nodes.lessons.append(
-      h('p', 'bl-empty', 'Bu grupta ders saati yok. Saatler Ders Takvimi ekranından girilir.'),
-    );
-    return;
+/**
+ * Ad alanını yerinde düzenlemeye açar.
+ *
+ * Kartın tamamı değil YALNIZCA ad değiştirilir; rozet ve düğmeler yerinde
+ * kalır. Bitince her hâlükârda `render()` çalışır — kaydedilsin ya da
+ * vazgeçilsin, ekran tek doğru kaynaktan yeniden çizilir.
+ */
+function startRename(nameNode, group) {
+  const field = h('input', 'kit-input');
+  field.value = group.name;
+  field.maxLength = 60;
+
+  let closed = false;
+  const finish = async (save) => {
+    if (closed) return;           // blur + Enter birlikte tetiklenebilir
+    closed = true;
+    const next = field.value.trim();
+    if (save && next && next !== group.name) {
+      await run(() => store.renameGroup(group.id, next),
+        { success: 'Grup adı değişti. Anons sesi yeniden üretiliyor.' });
+    } else {
+      render();
+    }
+  };
+
+  field.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') finish(true);
+    if (event.key === 'Escape') finish(false);
+  });
+  field.addEventListener('blur', () => finish(true));
+
+  nameNode.replaceWith(field);
+  field.focus();
+  field.select();
+}
+
+function newGroupCard() {
+  const card = h('div', 'bl-group bl-group-new');
+  const field = h('input', 'kit-input');
+  field.placeholder = 'Ad';
+  field.maxLength = 60;
+
+  // TÜR SEÇİMİ ZORUNLU GÖRÜNÜR, gizli bir varsayılan değil: cümle buna göre
+  // kuruluyor ve yanlış seçim, tek öğrenciye "dersiniz başlıyor" diyen bir
+  // anons üretir. Kullanıcı sesi duyana kadar bunu fark etmez.
+  const kind = h('select', 'kit-select');
+  for (const [value, label] of [['grup', 'Grup dersi'], ['ozel', 'Özel ders']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    kind.append(option);
+  }
+  kind.title = 'Grup dersi çoğul hitap eder ("dersiniz başlıyor"), '
+    + 'özel ders tekil ("özel dersin başlıyor").';
+
+  const submit = async () => {
+    const name = field.value.trim();
+    if (!name) return;
+    field.value = '';
+    await run(() => store.addGroup(name, kind.value),
+      { success: `“${name}” eklendi. Anons sesi üretiliyor.` });
+  };
+  field.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submit();
+  });
+
+  card.append(h('div', 'bl-group-name', '+ Yeni'), field, kind,
+    button('Ekle', { onClick: submit }));
+  return card;
+}
+
+// -------------------------------------------------------------- zil saatleri
+
+function renderTimes() {
+  const card = h('section', 'bl-card');
+  const head = h('div', 'bl-card-head');
+  head.append(h('h4', null, 'Zil saatleri'));
+  head.append(h('span', 'bl-hint', 'Her hafta aynı saatlerde tekrar eder.'));
+  card.append(head);
+
+  const tabs = h('div', 'bl-tabs');
+  for (const day of DAYS) {
+    const count = (data.times[day.key] || []).length;
+    const tab = h('button', `bl-tab${day.key === activeDay ? ' active' : ''}`);
+    tab.type = 'button';
+    tab.append(h('span', null, day.short));
+    if (count) tab.append(h('em', 'bl-tab-count', String(count)));
+    tab.addEventListener('click', () => { activeDay = day.key; render(); });
+    tabs.append(tab);
+  }
+  card.append(tabs);
+
+  const list = h('div', 'bl-times');
+  const entries = data.times[activeDay] || [];
+  for (const entry of entries) list.append(timeRow(entry));
+  if (!entries.length) {
+    list.append(h('p', 'bl-empty',
+      `${DAYS.find((day) => day.key === activeDay).name} için zil saati yok.`));
+  }
+  card.append(list, timeForm());
+
+  const copy = h('div', 'bl-copy');
+  copy.append(h('span', 'bl-hint', 'Bu günü kopyala:'));
+  for (const day of DAYS.filter((item) => item.key !== activeDay)) {
+    const link = h('button', 'bl-link', day.short);
+    link.type = 'button';
+    link.title = `${DAYS.find((d) => d.key === activeDay).name} saatlerini `
+      + `${day.name} gününe kopyalar (o günün mevcut saatlerinin üstüne yazar).`;
+    link.addEventListener('click', () => copyDay(day.key));
+    copy.append(link);
+  }
+  if (entries.length) card.append(copy);
+  return card;
+}
+
+function timeRow(entry) {
+  const row = h('div', 'bl-time');
+  row.append(h('b', 'bl-time-clock', entry.time));
+
+  const label = h('input', 'kit-input bl-time-label');
+  label.value = entry.label || '';
+  label.placeholder = 'teneffüs';
+  label.maxLength = 40;
+  label.addEventListener('change', () => {
+    const next = cloneTimes();
+    const found = next[activeDay].find((item) => item.time === entry.time);
+    if (found) found.label = label.value.trim();
+    run(() => store.saveTimes(next), { success: '' });
+  });
+  row.append(label);
+
+  const drop = h('button', 'bl-icon-btn', '✕');
+  drop.type = 'button';
+  drop.title = 'Bu zili kaldır';
+  drop.addEventListener('click', () => {
+    const next = cloneTimes();
+    next[activeDay] = next[activeDay].filter((item) => item.time !== entry.time);
+    run(() => store.saveTimes(next), { success: `${entry.time} zili kaldırıldı.` });
+  });
+  row.append(drop);
+  return row;
+}
+
+function timeForm() {
+  const form = h('div', 'bl-time-form');
+  const clock = h('input', 'kit-input');
+  clock.placeholder = 'Saat (930 → 09:30)';
+  const label = h('input', 'kit-input');
+  label.placeholder = 'Etiket (isteğe bağlı)';
+  label.maxLength = 40;
+
+  const submit = () => {
+    const parsed = parseTime(clock.value);
+    if (parsed === null) {
+      notify('Saat anlaşılmadı. Örnek: 930, 9:30, 0930.', 'bad');
+      clock.focus();
+      return;
+    }
+    const next = cloneTimes();
+    if (next[activeDay].some((item) => item.time === parsed)) {
+      notify(`${parsed} zaten var.`, 'bad');
+      return;
+    }
+    next[activeDay].push({ time: parsed, label: label.value.trim() });
+    clock.value = '';
+    label.value = '';
+    run(() => store.saveTimes(next), { success: `${parsed} zili eklendi.` });
+    clock.focus();
+  };
+  clock.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
+  label.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
+
+  form.append(clock, label, button('Saat ekle', { onClick: submit }));
+  return form;
+}
+
+function cloneTimes() {
+  const next = {};
+  for (const day of DAYS) {
+    next[day.key] = (data.times[day.key] || []).map((item) => ({ ...item }));
+  }
+  return next;
+}
+
+async function copyDay(target) {
+  const source = DAYS.find((day) => day.key === activeDay).name;
+  const name = DAYS.find((day) => day.key === target).name;
+  const yes = await confirmSimple(nodes.view, {
+    title: `${source} saatleri ${name} gününe kopyalansın mı?`,
+    description: `${name} gününde şu an ${(data.times[target] || []).length} zil var; `
+      + 'hepsi bu listeyle değiştirilecek.',
+    confirmLabel: 'Kopyala',
+  });
+  if (!yes) return;
+  const next = cloneTimes();
+  next[target] = next[activeDay].map((item) => ({ ...item }));
+  await run(() => store.saveTimes(next), { success: `${name} gününe kopyalandı.` });
+}
+
+// ---------------------------------------------------------- ses ve metinler
+
+function renderSound() {
+  const card = h('section', 'bl-card bl-card-wide');
+  card.append(h('h4', null, 'Ses ve metin'));
+
+  // --- teneffüs zili ---
+  const row = h('div', 'bl-row');
+  row.append(h('label', 'bl-label', 'Teneffüs zili'));
+
+  const select = h('select', 'kit-select');
+  for (const item of data.sounds || []) {
+    const option = document.createElement('option');
+    option.value = item.stem;
+    option.textContent = item.name;
+    select.append(option);
+  }
+  select.value = data.settings.bellSound;
+  select.addEventListener('change', () => run(
+    () => store.saveSettings({ ...data.settings, bellSound: select.value }),
+    { success: 'Zil sesi değişti. Ajana gönderiliyor.' },
+  ));
+  row.append(select);
+
+  row.append(button('Dinle', {
+    title: 'Yalnız bu bilgisayardan çalar; okula duyulmaz.',
+    onClick: () => run(() => store.preview(select.value), { reload: false }),
+  }));
+
+  const upload = h('input');
+  upload.type = 'file';
+  upload.accept = '.wav,.ogg,.mp3,.flac,audio/*';
+  upload.hidden = true;
+  upload.addEventListener('change', async () => {
+    const file = upload.files?.[0];
+    upload.value = '';
+    if (!file) return;
+    await run(() => store.uploadSound(file),
+      { success: (r) => `“${r.name}” yüklendi. Zil sesi olarak seçebilirsin.` });
+  });
+  row.append(button('Dosya yükle', { onClick: () => upload.click() }), upload);
+  card.append(row, volumeRow());
+
+  if (!(data.sounds || []).length) {
+    card.append(h('p', 'bl-empty',
+      'Hiç zil sesi dosyası yok. “Dosya yükle” ile bir wav ekle.'));
+  }
+
+  card.append(h('hr', 'bl-rule'));
+
+  // --- metinler ---
+  card.append(textRow({
+    key: 'lesson',
+    label: 'Zilden sonra',
+    hint: 'Her zil saatinde, zilin arkasından duyulur.',
+    voice: data.lessonVoice,
+  }));
+  const grup = (data.groups || []).filter((g) => g.kind !== 'ozel').length;
+  const ozel = (data.groups || []).filter((g) => g.kind === 'ozel').length;
+
+  card.append(textRow({
+    key: 'call',
+    label: 'Grup dersi çağrısı',
+    hint: 'Çoğul hitap. {grup} yerine grubun adı yazılır. '
+      + `Değiştirirsen ${grup} grubun sesi yeniden üretilir.`,
+    voice: null,
+  }));
+  card.append(textRow({
+    key: 'solo',
+    label: 'Özel ders çağrısı',
+    hint: 'Tekil hitap — tek öğrenciyle yapılan ders. '
+      + `Değiştirirsen ${ozel} öğrencinin sesi yeniden üretilir.`,
+    voice: null,
+  }));
+
+  const tools = h('div', 'bl-tools');
+  tools.append(h('span', 'bl-hint', `Kuyrukta ${data.queue?.queued || 0} ses.`));
+  tools.append(button('Sesleri yeniden üret', {
+    title: 'Eksik ya da hata almış sesleri yeniden üretim sırasına alır.',
+    onClick: () => run(store.rebuildVoices,
+      { success: (r) => (r.queued ? `${r.queued} ses sıraya alındı.`
+        : 'Eksik ses yok.') }),
+  }));
+  tools.append(button('Ajanı eşitle', {
+    title: 'Ajanın yerelindeki ses kitaplığını hemen tazeler.',
+    onClick: () => run(store.syncAgent,
+      { success: (r) => (r.ok ? `${r.uploaded} ses gönderildi.` : r.detail) }),
+  }));
+
+  const local = h('label', 'bl-check');
+  const box = h('input');
+  box.type = 'checkbox';
+  box.checked = Boolean(data.settings.playLocally);
+  box.addEventListener('change', () => run(
+    () => store.saveSettings({ ...data.settings, playLocally: box.checked }),
+    { success: box.checked
+      ? 'Bu bilgisayardan da çalacak.'
+      : 'Yalnız okulun hoparlöründen çalacak.' },
+  ));
+  local.append(box, h('span', null, 'Bu bilgisayardan da çal'));
+  local.title = 'Asıl hoparlör zil ajanındadır. Bu seçenek yedek ve deneme içindir.';
+
+  tools.append(h('div', 'kit-spacer'), local);
+  card.append(tools);
+  return card;
+}
+
+function volumeRow() {
+  const row = h('div', 'bl-row');
+  row.append(h('label', 'bl-label', 'Ses düzeyi'));
+
+  const range = h('input', 'bl-range');
+  range.type = 'range';
+  range.min = '0';
+  range.max = '100';
+  range.step = '5';
+  range.value = String(data.settings.volume);
+  range.setAttribute('aria-label', 'Ses düzeyi');
+
+  const value = h('b', 'bl-volume-value', `%${data.settings.volume}`);
+  range.addEventListener('input', () => { value.textContent = `%${range.value}`; });
+  range.addEventListener('change', () => run(
+    () => store.saveSettings({ ...data.settings, volume: Number(range.value) }),
+    { success: '' },
+  ));
+
+  row.append(range, value);
+  row.append(h('span', 'bl-hint',
+    'Cihazın kendi ses ayarı ayrıca geçerlidir.'));
+  return row;
+}
+
+function textRow({ key, label, hint, voice }) {
+  const wrap = h('div', 'bl-text');
+  const head = h('div', 'bl-text-head');
+  head.append(h('label', 'bl-label', label));
+  if (voice) head.append(voiceBadge(voice));
+  wrap.append(head);
+
+  const field = h('textarea', 'kit-textarea');
+  field.value = data.settings.texts[key] || '';
+  field.rows = 2;
+  field.maxLength = 300;
+
+  const save = button('Kaydet', {
+    variant: 'primary',
+    onClick: () => {
+      const text = field.value.trim();
+      if (text === (data.settings.texts[key] || '')) {
+        notify('Metin değişmedi.');
+        return;
+      }
+      run(() => store.saveSettings({
+        ...data.settings,
+        texts: { ...data.settings.texts, [key]: text },
+      }), { success: 'Metin kaydedildi. Sesler yeniden üretiliyor.' });
+    },
+  });
+
+  wrap.append(field, h('p', 'bl-hint', hint), save);
+  return wrap;
+}
+
+// ------------------------------------------------------------------ günlük
+
+function renderLog() {
+  const card = h('section', 'bl-card bl-card-wide');
+  card.append(h('h4', null, 'Günlük'));
+
+  const rows = data.log || [];
+  if (!rows.length) {
+    card.append(h('p', 'bl-empty', 'Henüz çalma kaydı yok.'));
+    return card;
   }
 
   const table = h('table', 'bl-table');
   const head = h('thead');
   const headRow = h('tr');
-  for (const label of ['Gün', 'Ders', 'Saat', 'Başı', 'Sonu', 'Ses', '']) {
-    headRow.append(h('th', null, label));
+  for (const title of ['Zaman', 'Tür', 'Ne', 'Sonuç', 'Ayrıntı']) {
+    headRow.append(h('th', null, title));
   }
   head.append(headRow);
   table.append(head);
 
   const body = h('tbody');
-  for (const day of DAYS) {
-    const blocks = group.week[day.key] || [];
-    blocks.forEach((block, index) => {
-      const key = overrideKey(day.key, block.start);
-      const override = settings.overrides[key] || {};
-      const row = h('tr');
-
-      row.append(h('td', 'bl-day', index === 0 ? day.name : ''));
-      row.append(h('td', 'bl-lesson', block.name || `${index + 1}. ders`));
-      row.append(h('td', 'bl-time', `${block.start} – ${block.end}`));
-
-      row.append(ringCell(key, override, 'start', settings));
-      row.append(ringCell(key, override, 'end', settings));
-
-      // Ses istisnası: boş bırakılırsa grubun sesi çalar.
-      const soundCell = h('td');
-      const select = h('select', 'bl-select');
-      const inherit = document.createElement('option');
-      inherit.value = '';
-      inherit.textContent = `Grubun sesi (${bellById(settings.soundId).name})`;
-      select.append(inherit);
-      for (const bell of BELLS) {
-        const option = document.createElement('option');
-        option.value = bell.id;
-        option.textContent = bell.name;
-        select.append(option);
-      }
-      select.value = override.soundId || '';
-      select.addEventListener('change', () => {
-        const next = { ...override, soundId: select.value || null };
-        setOverride(key, next);
-        renderLessons();
-      });
-      soundCell.append(select);
-      row.append(soundCell);
-
-      const playCell = h('td');
-      const listen = h('button', 'bl-row-play', '▶');
-      listen.type = 'button';
-      listen.title = 'Bu dersin zilini dinle';
-      listen.addEventListener('click', () => {
-        play(effectiveSound(settings, override).id, settings.volume);
-      });
-      playCell.append(listen);
-      row.append(playCell);
-
-      if (index === 0) row.classList.add('bl-day-first');
-      body.append(row);
-    });
+  const kinds = { zil: 'Zil', anons: 'Anons', cagri: 'Çağrı' };
+  for (const row of rows.slice(0, 40)) {
+    const line = h('tr', row.ok ? '' : 'bad');
+    line.append(h('td', 'bl-time-cell', String(row.at || '').slice(11, 19)));
+    line.append(h('td', null, kinds[row.kind] || row.kind || '—'));
+    line.append(h('td', null, row.group_name || '—'));
+    line.append(h('td', null, row.ok ? '✓' : '✕'));
+    line.append(h('td', 'bl-detail', row.detail || ''));
+    body.append(line);
   }
-
   table.append(body);
-  nodes.lessons.append(table);
+  card.append(table);
+  return card;
 }
 
-function ringCell(key, override, edge, settings) {
-  const cell = h('td', 'bl-tick');
-  const box = h('input');
-  box.type = 'checkbox';
-  const groupRule = edge === 'start' ? settings.ringStart : settings.ringEnd;
-  box.checked = groupRule && override[edge] !== false;
-  box.disabled = !groupRule;
-  box.title = groupRule
-    ? 'Bu ders için zili aç/kapat'
-    : `Grup ayarında "ders ${edge === 'start' ? 'başı' : 'sonu'}" kapalı.`;
-  box.addEventListener('change', () => {
-    setOverride(key, { ...override, [edge]: box.checked ? undefined : false });
-    renderGroups();
-    renderSettings();
-  });
-  cell.append(box);
-  return cell;
-}
+// -------------------------------------------------------------------- çizim
 
-/** İstisna yazar; hepsi ön tanımlıysa kaydı siler — çöp birikmesin. */
-function setOverride(key, next) {
-  const settings = activeSettings();
-  const clean = {};
-  if (next.start === false) clean.start = false;
-  if (next.end === false) clean.end = false;
-  if (next.soundId) clean.soundId = next.soundId;
-
-  if (Object.keys(clean).length === 0) delete settings.overrides[key];
-  else settings.overrides[key] = clean;
-
-  commit();
-}
-
-function renderAll() {
-  renderGroups();
-  renderSettings();
-  renderLessons();
-}
-
-// ----------------------------------------------------------------- kurulum
-
-function buildSoundCard(bell) {
-  const root = h('label', 'bl-sound');
-  const input = h('input');
-  input.type = 'radio';
-  input.name = 'bl-sound';
-  input.value = bell.id;
-  input.addEventListener('change', () => {
-    const settings = activeSettings();
-    settings.soundId = bell.id;
-    commit();
-    renderAll();
-    play(bell.id, settings.volume);
-  });
-
-  const text = h('div', 'bl-sound-text');
-  text.append(h('b', null, bell.name), h('span', null, bell.note));
-
-  const listen = h('button', 'bl-play', '▶');
-  listen.type = 'button';
-  listen.title = 'Dinle';
-  listen.addEventListener('click', (event) => {
-    event.preventDefault();
-    play(bell.id, activeSettings()?.volume ?? 85);
-  });
-
-  root.append(input, text, listen);
-  nodes.soundCards.push({ id: bell.id, root, input });
-  return root;
-}
-
-/** Zili gerçekten çalar — tarayıcı önizlemesi değil, hoparlör. */
-async function ringForReal(ctx) {
-  const settings = settingsFor(state, activeGroupId);
-  say('Çalınıyor…');
-  try {
-    const result = await ctx.api('/api/bell/ring', {
-      method: 'POST',
-      body: { groupId: activeGroupId || '', sound: settings.soundId, volume: settings.volume },
-    });
-    say(result.ok
-      ? `Çaldı: ${result.sound} · ${result.detail}`
-      : `ÇALAMADI — ${result.detail}`, !result.ok);
-  } catch (error) {
-    say(`Çalamadı: ${error.message}`, true);
-  }
-}
-
-/** Üstteki canlı durum satırı. */
-function say(text, bad = false) {
-  if (!nodes.status) return;
-  nodes.status.textContent = text;
-  nodes.status.classList.toggle('bad', bad);
-}
-
-/**
- * Paneli kurar.
- *
- * SIRA ÖNEMLİ: önce veri, sonra çizim. Eskiden tersiydi — ekran `groups`
- * henüz boşken çiziliyor, "önce ders takvimi" boş durumuna girip `return`
- * ediyordu; veri sonradan gelse bile ekran bir daha çizilmiyordu. Üstelik o
- * dal, çok aşağıda ayrı bir kapsamda tanımlı `readWeek`'e bakıyordu:
- * ReferenceError → kabuk paneli boşaltıyordu. İkisi de bu düzenle bitti.
- */
-function buildView(root, ctx, readWeek) {
-  const styleHref = new URL('./panel.css', import.meta.url).href;
-  if (!document.querySelector(`link[href="${styleHref}"]`)) {
-    const style = h('link');
-    style.rel = 'stylesheet';
-    style.href = styleHref;
-    document.head.append(style);
-  }
-
-  const view = h('div', 'bl');
-  nodes.soundCards = [];
-  nodes.volumePresets = [];
-
-  // --- ana şalter -----------------------------------------------------
-  const top = h('header', 'bl-top');
-  const master = h('label', 'bl-switch');
-  const masterBox = h('input');
-  masterBox.type = 'checkbox';
-  masterBox.checked = state.enabled;
-  masterBox.addEventListener('change', () => {
-    state.enabled = masterBox.checked;
-    commit();
-    renderAll();
-  });
-  master.append(masterBox, h('i', 'bl-switch-track'), h('span', null, 'Zil sistemi'));
-  top.append(master);
-
-  // Çalma durumu CANLI: zil gerçekten çalıyor mu, çalmıyorsa neden.
-  // Ekranın bunu saklaması yanlış olurdu — çalmayan zil, fark edilmeyen arızadır.
-  nodes.status = h('p', 'bl-status', 'Durum okunuyor…');
-  top.append(nodes.status);
-
-  // GERÇEK çalma: hoparlörden, çekirdeğin ses yeteneğiyle. Yandaki ▶ düğmeleri
-  // yalnız tarayıcıda önizleme yapar — ikisi farklı şeydir, ayrı düğme gerekir.
-  nodes.ringNow = h('button', 'bl-ring-now', 'Hoparlörden çal');
-  nodes.ringNow.type = 'button';
-  nodes.ringNow.title = 'Zili gerçekten çalar (çekirdeğin ses aygıtından) ve günlüğe yazar.';
-  nodes.ringNow.addEventListener('click', () => ringForReal(ctx));
-  top.append(nodes.ringNow);
-
-  view.append(top);
-
-  // --- gruplar --------------------------------------------------------
-  nodes.groups = h('div', 'bl-groups');
-  view.append(nodes.groups);
-
-  // --- grup yoksa -----------------------------------------------------
-  if (groups.length === 0) {
-    const empty = h('div', 'bl-empty-state');
-    empty.append(h('h3', null, 'Önce ders takvimi'));
-    empty.append(h('p', null,
-      readWeek
-        ? 'Ders Takvimi ekranında henüz grup yok. Zil, ders saatlerini oradan '
-          + 'okur; grup ve ders saati girildiğinde bu ekran kendiliğinden dolar.'
-        : 'Ders Takvimi modülü çözümlenemedi. Zil, ders saatlerini o modülden '
-          + 'okur; modül gelmeden zil kuralı girilemez.'));
-    view.append(empty);
-    root.replaceChildren(view);
-    return;
-  }
-
-  // --- grup ayarları ---------------------------------------------------
-  const body = h('div', 'bl-body');
-  nodes.body = body;
-
-  const headline = h('div', 'bl-headline');
-  nodes.groupName = h('h3');
-  nodes.groupNote = h('span', 'bl-note');
-
-  const groupSwitch = h('label', 'bl-switch bl-switch-sm');
-  nodes.groupSwitch = h('input');
-  nodes.groupSwitch.type = 'checkbox';
-  nodes.groupSwitch.addEventListener('change', () => {
-    activeSettings().enabled = nodes.groupSwitch.checked;
-    commit();
-    renderAll();
-  });
-  groupSwitch.append(nodes.groupSwitch, h('i', 'bl-switch-track'), h('span', null, 'Bu grup çalsın'));
-
-  headline.append(nodes.groupName, nodes.groupNote, h('div', 'bl-spacer'), groupSwitch);
-  body.append(headline);
+function render() {
+  if (!nodes.body) return;
+  // Yeniden çizimde kaydırma konumu korunur: 10 saniyede bir tazelenen bir
+  // ekranda listenin başa fırlaması, kullanıcıyı okuduğu yerden koparır.
+  const scroll = nodes.body.scrollTop;
 
   const columns = h('div', 'bl-columns');
+  columns.append(renderGroups(), renderTimes());
 
-  // ses seçimi
-  const sounds = h('section', 'bl-card');
-  sounds.append(h('h4', null, 'Zil sesi'));
-  const soundList = h('div', 'bl-sounds');
-  for (const bell of BELLS) soundList.append(buildSoundCard(bell));
-  sounds.append(soundList);
-  columns.append(sounds);
-
-  // düzey ve kurallar
-  const rules = h('section', 'bl-card');
-  rules.append(h('h4', null, 'Ses düzeyi'));
-
-  const volumeRow = h('div', 'bl-volume');
-  nodes.volume = h('input', 'bl-range');
-  nodes.volume.type = 'range';
-  nodes.volume.min = '0';
-  nodes.volume.max = '100';
-  nodes.volume.step = '5';
-  nodes.volume.setAttribute('aria-label', 'Ses düzeyi');
-  nodes.volume.addEventListener('input', () => {
-    activeSettings().volume = Number(nodes.volume.value);
-    commit();
-    renderSettings();
-  });
-  nodes.volumeValue = h('b', 'bl-volume-value');
-  volumeRow.append(nodes.volume, nodes.volumeValue);
-  rules.append(volumeRow);
-
-  const presets = h('div', 'bl-presets');
-  for (const preset of VOLUME_PRESETS) {
-    const button = h('button', 'bl-preset', preset.label);
-    button.type = 'button';
-    button.addEventListener('click', () => {
-      const settings = activeSettings();
-      settings.volume = preset.value;
-      commit();
-      renderSettings();
-      play(settings.soundId, settings.volume);
-    });
-    presets.append(button);
-    nodes.volumePresets.push({ value: preset.value, button });
-  }
-
-  const test = h('button', 'bl-preset bl-test', 'Dinle');
-  test.type = 'button';
-  test.addEventListener('click', () => {
-    const settings = activeSettings();
-    play(settings.soundId, settings.volume);
-  });
-  presets.append(test);
-  rules.append(presets);
-
-  rules.append(h('p', 'bl-hint',
-    'Düzey bu grubun zilleri içindir. Cihazın kendi ses ayarı ayrıca geçerlidir.'));
-
-  rules.append(h('h4', 'bl-h4-gap', 'Ne zaman çalsın'));
-  const when = h('div', 'bl-checks');
-
-  const startLabel = h('label', 'bl-check');
-  nodes.ringStart = h('input');
-  nodes.ringStart.type = 'checkbox';
-  nodes.ringStart.addEventListener('change', () => {
-    activeSettings().ringStart = nodes.ringStart.checked;
-    commit();
-    renderAll();
-  });
-  startLabel.append(nodes.ringStart, h('span', null, 'Ders başında'));
-
-  const endLabel = h('label', 'bl-check');
-  nodes.ringEnd = h('input');
-  nodes.ringEnd.type = 'checkbox';
-  nodes.ringEnd.addEventListener('change', () => {
-    activeSettings().ringEnd = nodes.ringEnd.checked;
-    commit();
-    renderAll();
-  });
-  endLabel.append(nodes.ringEnd, h('span', null, 'Ders bitiminde'));
-
-  when.append(startLabel, endLabel);
-  rules.append(when);
-  rules.append(h('p', 'bl-hint',
-    'Tek bir dersi susturmak ya da ona başka ses vermek için alttaki listeyi kullanın.'));
-
-  columns.append(rules);
-  body.append(columns);
-
-  // --- ders listesi ----------------------------------------------------
-  const lessons = h('section', 'bl-card bl-card-wide');
-  lessons.append(h('h4', null, 'Dersler'));
-  nodes.lessons = h('div');
-  lessons.append(nodes.lessons);
-  body.append(lessons);
-
-  view.append(body);
-  root.replaceChildren(view);
-  renderAll();
+  nodes.head.replaceChildren(renderHeader(), renderStatus());
+  nodes.body.replaceChildren(columns, renderSound(), renderLog());
+  nodes.body.scrollTop = scroll;
 }
 
-export function mount(root, ctx) {
-  groups = [];
-  activeGroupId = null;
-  state = load();
+export function mount(root, context) {
+  ctx = context;
+  disposed = false;
+  data = null;
+  loadStyles(import.meta.url);
+  store.connect(ctx.api);
 
-  // Veri gelene kadar ekran boş kalmasın; "boş ekran" ile "yükleniyor" farkı
-  // kullanıcı için hatanın var olup olmadığı farkıdır.
-  root.replaceChildren(loading());
+  // `kit-panel` paylaşılan renk jetonlarını taşır ve bildirim şeridinin
+  // konumlandığı köktür; olmazsa uyarılar tüm pencereye taşar (ADR 0011).
+  nodes.view = h('div', 'bl kit-panel');
+  nodes.head = h('div', 'bl-head');
+  nodes.body = h('div', 'bl-body kit-body');
+  nodes.view.append(nodes.head, nodes.body);
+  notify = toaster(nodes.view);
 
-  let disposed = false;
+  const loading = h('div', 'bl-loading');
+  loading.append(h('span', 'bl-spinner'), h('p', null, 'Zil sistemi okunuyor…'));
+  root.replaceChildren(loading);
 
   (async () => {
-    const result = await init(ctx.api);
-
-    // `bbd_class_schedule.week` ASENKRON: takvim de kalıcı depoda, yetenek
-    // çağrısı ağ üzerinden dönüyor.
-    const readWeek = ctx.capability('bbd_class_schedule.week');
-    if (readWeek) {
-      try {
-        groups = await readWeek();
-      } catch (error) {
-        console.warn('ders takvimi okunamadı', error);
-        groups = [];
-      }
-    }
-
-    // Panel bu arada kapatılmış olabilir; kapalı ekrana çizmeyiz.
+    const first = await store.state();
     if (disposed) return;
-
-    activeGroupId = groups[0]?.id ?? null;
-    state = load();
-    buildView(root, ctx, readWeek);
-
-    if (result.migrated) {
-      say('Zil ayarı tarayıcı belleğinden kalıcı depoya taşındı.');
-    } else if (result.error) {
-      say(`Zil ayarı okunamadı: ${result.error}`, true);
-    }
-
-    // Ses aygıtı ya da zamanlayıcı yoksa zil ÇALMAZ; ekran bunu saklamamalı.
-    const status = result.state;
-    if (status?.ready) {
-      const next = status.scheduler?.next?.[0];
-      say(`Zil etkin · ${status.sounds?.length || 0} ses · `
-        + (next ? `sıradaki: ${next.label} (${next.at.slice(11)})` : 'sırada zil yok'));
-    }
-    if (status && !status.ready) {
-      const missing = [];
-      if (!status.audio?.ready) missing.push('ses aygıtı bulunamadı');
-      if (!status.scheduler?.running) missing.push('zamanlayıcı çalışmıyor');
-      if (!(status.groups || []).length) missing.push('ders takvimi boş');
-      if (!status.settings?.enabled) missing.push('ana şalter kapalı');
-      if (missing.length) say(`ZİL ÇALMAZ — ${missing.join(', ')}.`, true);
-    }
+    data = first;
+    root.replaceChildren(nodes.view);
+    render();
+    // Ajan durumu ve ses kuyruğu canlı: ekran açıkken kendini tazeler.
+    timer = window.setInterval(() => {
+      refresh().catch(() => { /* geçici ağ hatası ekranı boşaltmasın */ });
+    }, REFRESH_MS);
   })().catch((error) => {
-    // Buraya düşmek beklenmez; düşerse ekran yine boş kalmamalı.
-    console.error('zil paneli kurulamadı', error);
-    if (!disposed) root.replaceChildren(failure(error));
+    if (disposed) return;
+    const box = h('div', 'bl-empty-state');
+    box.append(h('h3', null, 'Zil sistemi açılamadı'));
+    box.append(h('p', null, error?.message || String(error)));
+    root.replaceChildren(box);
   });
 
   return () => {
     disposed = true;
-    stop();
-    release();
-    flush();
+    window.clearInterval(timer);
     root.replaceChildren();
   };
 }
 
-/** Veri beklenirken görünen ara ekran. */
-function loading() {
-  const box = h('div', 'bl-loading');
-  box.append(h('span', 'bl-spinner'), h('p', null, 'Zil ayarı ve ders saatleri okunuyor…'));
-  return box;
-}
-
-/** Kurulum tümden başarısızsa görünen kart — boş ekran yerine. */
-function failure(error) {
-  const box = h('div', 'bl-empty-state');
-  box.append(h('h3', null, 'Zil sistemi açılamadı'));
-  box.append(h('p', null, error?.message || String(error)));
-  return box;
-}
+// ARAYÜZ TARAFINDA YETENEK SUNULMUYOR — bilerek.
+//
+// Manifestteki `provides: bell.week` BACKEND yeteneğidir: Ders Takvimi
+// modülünün backend'i onu registry'den çözer ve kendi ucundan servis eder.
+// Zincir Python içinde kapanır, ağa hiç çıkmaz.
+//
+// Burada bir `capabilities()` de sunulabilirdi ama tek yolu `/api/bell/state`
+// çağırmaktı; o uç köprüye HTTP isteği atıyor (ajan durumu için). Ders
+// takvimini görmek isteyen bir ekranın bbdstore'a gitmesi için hiçbir sebep
+// yok. Kullanılmayan ama pahalı bir yol bırakmak, birinin onu bulup
+// kullanmasını beklemekten ibarettir.

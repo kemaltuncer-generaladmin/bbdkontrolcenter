@@ -32,7 +32,7 @@ ui:
     title: "Cari Hesap Yönetimi"
     icon: wallet
     group: "BLD"
-    order: 100
+    order: 590
     requires: [bld_accounts.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

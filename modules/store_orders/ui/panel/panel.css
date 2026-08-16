@@ -164,6 +164,13 @@
 
 .so-digest { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; }
 
+/* Aşama şeridinin kabı. İç boşluk YOK: şeridi kitin `.kit-stepper`'ı çiziyor
+   ve boşluğunu kendi taşıyor. Buraya ikinci bir `padding` yazmak, aynı ölçüyü
+   iki yerde tutmak olurdu. Altındaki uyarı kutusu şeritle aynı hizada dursun
+   diye yanlardan aynı miktarda içeri alınır. */
+.so-journey { display: flex; flex-direction: column; }
+.so-journey > .kit-alert { margin: 0 14px 12px; }
+
 /* ----------------------------------------------------------------- notlar */
 
 .so-notes { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }

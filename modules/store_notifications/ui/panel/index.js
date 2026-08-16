@@ -842,11 +842,22 @@ function openBroadcast(draft, body) {
 /**
  * Kural YAZMA neden kapalı — kapalı değilse boş dize.
  *
- * Kural yazma ucu okuma ucuyla AYNI pakette geliyor: liste 404 dönüyorsa
- * yazma da dönecektir. Düğmeyi açık bırakmak, kullanıcıya kuralı kurdurup
- * gerekçe yazdırdıktan SONRA reddetmek olurdu.
+ * ÜÇ AYRI NEDEN, ÜÇ AYRI CÜMLE ve sıra önemli: önce "hiç yazılamaz", sonra
+ * "şu an okunamadı". Nedeni okunup kapatılmış bir düğme, her tıklamada aynı
+ * cümleyi gösteren bir düğmeden iyidir.
+ *
+ * BİR DÖNEM "yazma ucu okuma ucuyla aynı pakette geliyor; liste 404 dönüyorsa
+ * yazma da dönecektir" deniyordu. Artık böyle değil: liste ucu 2026-08-16
+ * itibarıyla YAYINDA (canlıda gerçek kural listesi geliyor), yazma ucu ise
+ * gecikmedi — mağaza onu bilerek yazmadı. Eski varsayım bırakılsaydı liste
+ * geldiği için düğme AÇIK görünür, kullanıcı formu doldurup gerekçe
+ * yazdıktan SONRA reddedilirdi.
+ *
+ * `writeReason` backend'den gelir; alan hiç gelmezse (uç bir gün yazılabilir
+ * olursa) aşağıdaki iki dal olduğu gibi çalışmaya devam eder.
  */
 function ruleWriteReason() {
+  if (state.rules?.writeReason) return state.rules.writeReason;
   if (state.rules?.connected) return '';
   return state.rules?.endpointPending
     ? 'Kural ucu mağazada henüz yayında değil; paket yayınlanınca bu düğme açılacak.'
@@ -877,6 +888,11 @@ function renderRules() {
       : `Kurallar okunamadı — ${state.rules.error} Yazma da kapalıdır: okunamayan bir `
         + 'listenin üstüne kural yazmak, var olan bir kuralı sessizce ezebilirdi.',
     state.rules.endpointPending ? 'info' : 'warn'));
+  } else if (state.rules.writeReason) {
+    // Liste GELİYOR ama düzenlenemiyor. Bu, üstteki iki durumdan da farklıdır
+    // ve söylenmezse ekran "bozuk" görünür: satırlar dolu, düğmeler kapalı ve
+    // ortada bir açıklama yok. Cümle backend'den gelir — nedeni bilen taraf o.
+    wrap.append(alertBox(`Kurallar salt okunur. ${state.rules.writeReason}`, 'info'));
   }
 
   const table = dataTable({
@@ -917,7 +933,44 @@ function renderRules() {
   wrap.append(table.node);
 }
 
+/**
+ * Kural DETAYI — yazma kapalıyken açılan salt okunur çekmece.
+ *
+ * Satıra tıklamak düzenleme formu açardı; yazma kapalıyken o form, doldurulup
+ * ancak kaydederken reddedilen bir tuzaktır. Satır yine açılır — kuralın ne
+ * yaptığını okumak yazma iznine bağlı değildir — ama düzenlenebilir alan
+ * göstermez ve neden kapalı olduğunu söyler.
+ */
+function openRuleDetail(row, reason) {
+  const box = drawer(nodes.root, {
+    title: row.eventLabel || 'Kural',
+    subtitle: 'Salt okunur',
+  });
+  const facts = h('div');
+  const line = (label, value) => {
+    const node = h('div', 'nt-sub');
+    node.append(h('b', undefined, `${label}: `), document.createTextNode(value || '—'));
+    return node;
+  };
+  facts.append(
+    line('Kimlik', row.id),
+    line('Olay', row.event),
+    line('Kanal', row.channelLabel),
+    line('Durum', row.active ? 'Açık' : 'Kapalı'),
+  );
+  if (row.description) facts.append(h('p', 'nt-sub', row.description));
+
+  const actions = h('div', 'nt-actions');
+  actions.append(button('Kapat', { onClick: box.close }));
+  box.body.append(facts, alertBox(reason, 'info'), actions);
+}
+
 function openRule(row) {
+  const blocked = ruleWriteReason();
+  if (blocked) {
+    if (row) openRuleDetail(row, blocked);
+    return;
+  }
   const box = drawer(nodes.root, {
     title: row ? 'Kuralı düzenle' : 'Yeni kural',
     subtitle: 'Olay → koşul → şablon + kanal + gecikme',

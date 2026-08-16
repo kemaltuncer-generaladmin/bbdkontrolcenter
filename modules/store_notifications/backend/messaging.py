@@ -590,24 +590,51 @@ def limit_state(sent_today: int, limit: int, *, wanted: int = 0) -> dict[str, An
 # ================================================================= kurallar
 
 def rule_row(raw: dict[str, Any]) -> dict[str, Any]:
+    """Mağazanın kural satırı → tablo satırı.
+
+    CANLI ALAN ADLARI (2026-08-16, `GET /api/admin/bbd/notifications/rules`):
+    `{id, title, description, trigger, event, schedule, channel, audience,
+    handler, enabled, blockedBy}`. Bu satır bir dönem yalnız VARSAYILAN bir
+    şema üzerine yazılmıştı (uç o zaman yayında değildi); uç yayına girince üç
+    yer birden yanlış çizmeye başlamıştı ve üçü de burada düzeltildi:
+
+    · **Kimlik SAYI DEĞİL.** Canlı kimlik `order.created.telegram` gibi bir
+      dizedir — dinleyicinin adıdır, tablo satırı numarası değil. `as_int`
+      hepsini `0` yapıyordu: beş ayrı kural ekranda aynı kimliği taşırdı.
+    · **Açıklık alanı `enabled`.** `active` de `status` da canlı yanıtta YOK;
+      ikisine bakan kod varsayılana düşüp `enabled: true` olan beş kuralı da
+      "Kapalı" gösteriyordu — yani ekran, gerçekten çalışan bildirimleri
+      kapalı sanıyordu. Sıra `active` → `enabled` → `status`: mağaza hangisini
+      gönderirse o okunur.
+    · **Olay adı mağazanın kendi olayı.** Canlıda `checkout.order.save.after`
+      geliyor; bu ad `EVENTS` listesinde yok ve her satır "tanınmayan olay"
+      rozeti alıyordu. Mağaza kuralı kendi `title` alanıyla ZATEN anlatıyor;
+      rozet artık yalnız hiçbir tarafın adlandırmadığı olay için çıkar.
+    """
     event = text(raw.get("event"))
     channel = text(raw.get("channel")) or "email"
+    title = text(pick(raw, "title"))
     return {
-        "id": as_int(raw.get("id")),
+        # Kimlik OLDUĞU GİBİ taşınır (dize ya da sayı): mağaza ne verdiyse o.
+        "id": text(raw.get("id")),
         "event": event,
-        "eventLabel": EVENT_LABELS.get(event, event or "(tanımsız)"),
-        "known": event in EVENT_KEYS,
+        "eventLabel": EVENT_LABELS.get(event) or title or event or "(tanımsız)",
+        "known": event in EVENT_KEYS or bool(title),
+        "description": text(pick(raw, "description")),
         "channel": channel,
         "channelLabel": CHANNEL_LABELS.get(channel, channel),
         "templateId": text(pick(raw, "template_id")),
         "templateName": text(pick(raw, "template_name")),
         "condition": text(pick(raw, "condition")),
         "delayMinutes": as_int(pick(raw, "delay_minutes")),
-        # `or` ZİNCİRİ KULLANILMAZ: `active: false` yanlış olduğu için `status`a
-        # düşer ve kapalı kural açık görünürdü. `pick` de `False`ı geçerli değer
-        # sayar; yalnız alan HİÇ YOKSA `status`a bakılır.
-        "active": as_bool(pick(raw, "active") if _has(raw, "active") else pick(raw, "status"),
-                          False),
+        # `or` ZİNCİRİ KULLANILMAZ: `active: false` yanlış olduğu için sıradaki
+        # alana düşer ve kapalı kural açık görünürdü. `pick` de `False`ı geçerli
+        # değer sayar; yalnız alan HİÇ YOKSA sıradakine bakılır.
+        "active": as_bool(
+            pick(raw, "active") if _has(raw, "active")
+            else pick(raw, "enabled") if _has(raw, "enabled")
+            else pick(raw, "status"),
+            False),
         "lastFiredAt": text(pick(raw, "last_fired_at"))[:19],
         "firedCount": as_int(pick(raw, "fired_count")),
     }

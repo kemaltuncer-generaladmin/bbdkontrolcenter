@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_kds ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. K-22 §4 ile KAPALI: kuru prova arayüzden kaldırıldı ve panel bayrağı hiç göndermiyor; açık kalsaydı her yazma sessizce provaya dönerdi. Uç `dryRun: true` kabul etmeye devam eder."
+    },
+    "command_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "Cihaz komut listesinde en çok kaç kayıt. Sunucu son 50'yi tutuyor; büyütmek yeni kayıt getirmez."
+    },
+    "print_job_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Fiş denetim kaydında sayfa başına satır."
+    },
+    "stale_command_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Teslim edilmiş ama sonucu gelmemiş komut kaç dakika sonra 'takıldı' etiketlensin. Yalnız ekrandaki etiketi belirler."
+    },
+    "settings_preview_ttl_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Kuru prova jetonunun ömrü (dakika). Süresi dolmuş jetonla gelen gerçek uygulama reddedilir."
+    }
+  }
+}

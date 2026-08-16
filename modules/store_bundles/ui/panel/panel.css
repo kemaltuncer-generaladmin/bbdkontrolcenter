@@ -157,3 +157,10 @@
    okunabilmeli. */
 .sb-picker { width: min(680px, 92vw); }
 .sb-picker .pk-list { max-height: 46vh; }
+
+/* ENGEL KUTUSU — neden + sıradaki adım.
+   İki satır BİLEREK ayrı: ilk satır "niye olmadı", ikincisi "şimdi ne
+   yapacağım". Tek paragrafa sıkıştırıldığında ikinci cümle okunmuyordu. */
+.sb-blocker { display: block; }
+.sb-blocker-why { font-weight: 600; }
+.sb-blocker-next { margin-top: 4px; }

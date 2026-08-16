@@ -1,28 +1,39 @@
 # Ders Takvimi modülü
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 #
-# Haftalık ders/teneffüs saatleri. Veri artık KALICI (modülün kendi tablosunda);
-# tarayıcı belleğindeki eski takvim ilk açılışta bir kez içeri alınır.
+# SALT OKUNUR AYNA. Bu ekran hiçbir şeyin sahibi değildir.
+#
+# 0.1'de haftalık saatlerin ve grupların sahibi burasıydı; zil sistemi onları
+# `bbd_class_schedule.week` yeteneğinden okuyordu. 0.2'de yön TERSİNE ÇEVRİLDİ:
+# sahip Zil Sistemi'dir, bu ekran `bell.week` yeteneğinden okuyup gösterir.
+#
+# Gerekçe: saatleri giren kişi zili kuran kişiyle aynı ve iki ekranda iki ayrı
+# doğru kaynak tutmak, hangisinin geçerli olduğunu belirsiz kılıyordu.
+#
+# `depends: [bell]` ZORUNLU — ters yön hâlâ dursaydı çekirdek bağımlılık
+# döngüsünü reddeder ve İKİ modül birden düşerdi.
 
 id: bbd_class_schedule
 name: "Ders Takvimi"
-description: "Ders ve teneffüs saatlerinin takvimi; zil sisteminin beslendiği kaynak."
-version: 0.1.0
+description: "Zil sistemine girilen haftalık saatlerin ve grupların salt okunur görünümü."
+version: 0.2.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+depends: [bell]
 
-# Haftalık plan başka modüllerin işine yarar (zil sistemi ders başı/sonu
-# zillerini buradan kurar). Modül modülü import etmez; yetenek ilan edilir (K3).
-provides:
-  - capability: bbd_class_schedule.week
-    contract: km_sdk.contracts:WeeklyScheduleProvider
-    description: "Grupların haftalık ders saatleri — salt okunur."
+# Bu modül artık hiçbir yetenek SAĞLAMAZ. Sağladığı `bbd_class_schedule.week`
+# yeteneği kaldırıldı; tüketicisi (zil sistemi) artık kendi verisinin sahibi.
+provides: []
 
-consumes: []
+consumes:
+  # optional: Zil Sistemi silinse bile bu ekran ayakta kalır ve "kaynak yok"
+  # der; boş ekran yerine nedenini gösterir (K7).
+  - capability: bell.week
+    optional: true
+    reason: "Haftalık zil saatleri ve gruplar Zil Sistemi'nindir; buradan okunur (K3)."
 
 events:
   publishes: []
@@ -45,20 +56,20 @@ ui:
     requires: [bbd_class_schedule.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# `bbd_class_schedule.manage` KALDIRILDI. Ekranda değiştirilebilir hiçbir şey
+# yok; düzenleme izni tanımlamak, olmayan bir kapıya anahtar dağıtmaktır.
 permissions:
   - key: bbd_class_schedule.view
     description: "Ders Takvimi ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
-  - key: bbd_class_schedule.manage
-    description: "Ders Takvimi kayıtlarını düzenleme."
     default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
+# 001_groups.sql yerinde durur: uygulanmış bir göç geri alınmaz ve tablo
+# başka bir modülün alanı değildir (K5). Artık okunmuyor, silinmiyor.
 migrations: backend/migrations
 
 tasks: []

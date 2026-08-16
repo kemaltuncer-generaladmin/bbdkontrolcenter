@@ -32,7 +32,7 @@ ui:
     title: "Bildirimler"
     icon: megaphone
     group: "BLD"
-    order: 160
+    order: 650
     requires: [bld_notifications.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

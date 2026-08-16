@@ -1,6 +1,35 @@
 # Zil Sistemi — varsayılan ayarlar.
 # Kök ayardaki `modules.bell.*` bloğu bunları ezer.
+# SIR YAZILMAZ (K8): Vertex servis hesabı ve köprü belirteci kasadan gelir.
 
 # Ses dosyaları `platform.audio.sounds_path` altında durur (varsayılan data/sounds).
+# Kullanıcı kendi teneffüs zilini yükleyene dek hazır gelen ses kullanılır.
 default_sound: "classic_electric"
-default_volume: 85
+default_volume: 90
+
+# --- anons sesi (Vertex AI) ------------------------------------------------
+# Projede yalnız Vertex AI açık; ayrı Text-to-Speech API'si kullanılmaz.
+# Ses ÖNCEDEN üretilir ve önbelleğe alınır: zil çalarken buluta çıkılmaz.
+vertex:
+  project_id: ""              # boşsa servis hesabı JSON'undaki project_id kullanılır
+  location: "us-central1"
+  model: "gemini-2.5-flash-preview-tts"
+  voice: "Kore"
+  timeout_seconds: 60
+  # 429 disiplini: aynı anda tek çağrı, çağrılar arası bekleme, üstel geri çekilme.
+  min_interval_seconds: 1.0
+  max_attempts: 5
+  backoff_seconds: 2.0
+  backoff_cap_seconds: 32.0
+
+# --- Windows zil ajanı köprüsü (bbdstore) ----------------------------------
+bridge:
+  base_url: "https://bbdstore.com.tr"
+  timeout_seconds: 20
+  # Komut zil saatinden bu kadar önce kuyruğa yazılır; ajan `playAt` anına dek
+  # bekler. Saniye hassasiyeti buradan gelir, ajanın kendi planı yoktur.
+  lead_seconds: 30
+
+# Yerel hoparlörden de çalınsın mı? Asıl hedef Windows ajanıdır; bu yalnızca
+# geliştirme ve köprü çöktüğünde duyulabilir bir yedek içindir.
+play_locally: true

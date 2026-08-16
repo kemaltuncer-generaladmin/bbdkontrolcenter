@@ -9,7 +9,8 @@ yeteneğidir ve `backend/src/km_platform/` altındadır (ADR 0006).
 
 | Modül | Durum |
 |---|---|
-| `bell/` — Zil Sistemi | iskelet (`enabled: false`) |
+| `bell/` — Zil Sistemi | **Çalışıyor.** Haftalık saatler, Vertex anonsu, Windows zil ajanı (ADR 0013) |
+| `bbd_class_schedule/` — Ders Takvimi | **Çalışıyor.** `bell.week` yeteneğinin salt okunur aynası |
 | `print/` — Baskı Yönetimi | iskelet (`enabled: false`) |
 | `antivirus/` — Antivirüs (ClamAV) | iskelet (`enabled: false`) |
 

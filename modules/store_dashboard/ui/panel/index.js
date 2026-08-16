@@ -17,15 +17,19 @@
 //    taramasından çıkar; mağazanın kendi pano ucu ayrıca sorgulanmaz.
 //  · Sipariş/ürün DÜZENLEMEZ. Pano okur ve yol gösterir; işlem kendi
 //    ekranında yapılır.
-//  · Mağazanın 344 ayarını dökmez. Yapılandırma sekmesi adı geçen bir beyaz
+//  · Mağazanın 345 ayarını dökmez (2026-08-16 ölçümü; bir dönem 344'tü —
+//    alan sayısı mağazaya eklenti girdikçe kayar). Yapılandırma sekmesi beyaz
 //    listedir; sanal POS parolası, kargo API belirteci gibi sır taşıyan
 //    alanlar ekrana HİÇ GELMEZ.
 //
 // TUZAKLAR (ekranda karşılığı olanlar):
-//  · `/api/admin/bbd/*` uçları mağazada YAZILMAKTADIR. Onlara bağlı kartlar
-//    (kritik stok, yedek, POS, kargo, BLD) boş sıfır göstermez: "uç hazır
-//    olunca açılacak" der. Sıfır göstermek olmayan bir sağlığı var göstermek
-//    olurdu.
+//  · `/api/admin/bbd/*` uçları YAYINDA (canlıda ölçüldü 2026-08-16). Burada
+//    bir dönem "mağazada YAZILMAKTADIR" yazıyordu ve kartların "uç hazır
+//    olunca açılacak" dediği söyleniyordu; artık öyle değil — yedek, POS,
+//    kargo ve BLD kartları doluyor, kritik stok ise 2026-08-14'te Bagisto'nun
+//    kendi `dashboard/stats` ucuna taşındı. Okunamama dalı yine de duruyor
+//    (K7): uç geri çekilirse kart boş kalır, sıfır GÖSTERMEZ — sıfır
+//    göstermek olmayan bir sağlığı var göstermek olurdu.
 //  · Mağaza tarih süzgecini yok sayabiliyor; sunucu sonucu yerelde süzüyor ve
 //    bunu bir not olarak gönderiyor. Not ekranda AYNEN gösterilir.
 //  · İptal edilen sipariş ciroya girmez ama durum dağılımında görünür; bu
@@ -437,6 +441,13 @@ function statusTone(status) {
 
 function paintKpi(payload) {
   const compare = COMPARE_LABELS[payload.compare];
+  // Ciro kutusunun altındaki eğilim şeridi AYNI seriden gelir: `paintDaily`
+  // grafiği de bu diziyi çiziyor. İkinci bir kaynak (ör. mağazanın kendi pano
+  // ucu) kullanılsaydı iki gösterim zamanla ayrışır ve kullanıcı hangisine
+  // güveneceğini bilemezdi — panonun temel kuralı budur.
+  const seri = fillDays(payload.daily, payload.range.start, payload.range.end)
+    .map((point) => point.value);
+
   nodes.kpi.replaceChildren(kpiRow(payload.kpis.map((tile) => {
     const known = tile.value !== null && tile.value !== undefined;
     const shown = known
@@ -453,6 +464,15 @@ function paintKpi(payload) {
     if (!known) box.tone = 'muted';
     else if (tile.key === 'outOfStock' && tile.value > 0) box.tone = 'bad';
     else if (['pending', 'unshipped'].includes(tile.key) && tile.value > 0) box.tone = 'warn';
+    // ŞERİT YALNIZ CİRODA. Elimizde gün gün seri olan tek rakam ciro; sipariş
+    // sayısının, sepetin ya da iadenin günlük dökümü uçtan gelmiyor. Diğer
+    // kutulara da şerit koymak ciro eğilimini onların eğilimiymiş gibi
+    // göstermek olurdu — bakan kişi bunu fark etmez, çünkü şeridin ekseni yok.
+    if (tile.key === 'revenue' && known && seri.length > 1) {
+      box.spark = seri;
+      box.sparkTitle = `${seri.length} günün günlük cirosu — aynı seri "Günlük ciro" `
+        + 'grafiğinde çizilidir.';
+    }
     if (tile.delta && tile.delta.percent !== null) {
       box.delta = { percent: tile.delta.percent, title: box.title };
     }

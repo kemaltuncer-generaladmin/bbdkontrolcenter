@@ -11,10 +11,25 @@
 # yalnız Bagisto'da KARŞILIĞI OLMAYAN veriyi tutar: müşteri ödemeden önce
 # sipariş yoktur, dolayısıyla tahsilat talebi hiçbir mağaza tablosuna düşmez.
 #
-# BUGÜNKÜ GERÇEK (13.08.2026, canlıya karşı doğrulandı): mağazanın ödeme
-# uçlarının tamamı (`/api/admin/bbd/payments/*`) 404 — bağlantı üretilemiyor.
-# Modül bunu açılışta yoklayıp ekranda söylüyor; çalışan tahsilat yolu Elden
+# BUGÜNKÜ GERÇEK (16.08.2026, canlıya karşı GET ile doğrulandı): mağazanın
+# ödeme uçları YAYINDA — `payment-links`, `payments/attempts` ve
+# `payments/terminals` 200 dönüyor, `POST payment-links` route:list'te kayıtlı.
+# 13.08.2026'da üçü de 404'tü ve burada "hiçbiri yayında değil" yazıyordu;
+# o cümle artık geçerli değil, yol adı da `payments/links` değil `payment-links`.
+#
+# Geçit eşlemesi BAĞLANDI: ekran artık `store.api → bbd_create_payment_link`
+# metodunu çağırıyor (bir dönem hiç var olmamış `bbd_create_payment_request`
+# adını yokluyordu ve düğme bu yüzden hiç açılmadı). Gövde mağazanın
+# sözleşmesidir: tutar ondalık TL metni, il `state`/ilçe `city`, sipariş kimliği
+# GÖNDERİLMEZ, `dryRun` gövdeye AÇIKÇA yazılır (mağaza varsayılanı true; alan
+# hiç gitmezse gerçek istek sessizce kuru provaya düşerdi). Modül durumu yine
+# açılışta yokluyor ve uç düşerse ekranda söylüyor; ikinci tahsilat yolu Elden
 # Kapatma (çekirdek `POST /admin/transactions`). Ayrıntı: README.
+#
+# LİNKİN İKİ KİMLİĞİ AYRI TUTULUR: `token` (= mağazanın `code`u) insanın
+# okuduğu koddur; mağaza uçları ise SAYISAL `id` ister (`whereNumber('id')`).
+# Sayısal kimlik `link_id` sütununda durur (göç 002); yoklama tekil uçtan okur,
+# iptal onunla çağrılır ve yeni bağlantı üretilmeden önce eskisi kapatılır.
 #
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
@@ -57,8 +72,8 @@ ui:
   nav:
     title: "Link ile Ödeme"
     icon: credit_card
-    group: "BBD Store"
-    order: 110
+    group: "BBD Store / Satış ve Kargo"
+    order: 250
     requires: [store_payment_gateway.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

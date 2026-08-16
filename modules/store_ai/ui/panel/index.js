@@ -53,14 +53,23 @@ const BASE = '/api/store_ai';
 
 // YAYINDA DEĞİL — bilinçli kapalı, bozuk değil.
 //
-// Ekranın iki yarısı var ve ikisi de bugün kullanılamaz durumda:
-//  · ARAÇLAR: mağaza tarafındaki uçlar farklı bir modele oturdu. Bu panel
-//    "aracı çalıştır → sonucu al" varsayıyor; yayındaki ControlApi ise
-//    "taslak üret → onayla" akışı sunuyor. İsim eşlemesiyle kapanmaz;
-//    ekranın onay/fark tablosu mantığı taslak modeline göre yeniden
-//    kurulmalı.
+// SEBEP "UÇ YOK" DEĞİL, AKIŞ MODELİ UYUŞMAZLIĞI. Bir dönem burada
+// "ai/* uçlarının hiçbiri yayında değil" deniyordu; artık böyle değil.
+// Canlıda ölçüldü (2026-08-16, salt okuma):
+//    GET  ai/drafts                     → 200 (taslak ailesi YAYINDA)
+//    POST ai/drafts | .../apply | .../discard → route:list'te VAR
+//    GET  ai/tools · ai/usage           → 404
+//    POST ai/tools/{tool}/run           → route:list'te YOK
+//
+// Ekranın iki yarısı var:
+//  · ARAÇLAR: bu panel "aracı çalıştır → sonucu al" varsayıyor; yayındaki
+//    ControlApi ise "taslağı KM üretir → mağaza saklar → onaylanınca
+//    uygular" akışı sunuyor. Uçların varlığı bunu kapatmıyor: isim
+//    eşlemesiyle de kapanmaz, ekranın onay/fark tablosu mantığı taslak
+//    modeline göre yeniden kurulmalı ve metin üretimi KM'de kalmalı.
 //  · KATALOG SAĞLIĞI: kural motoru burada çalışıyor ve doğru sonuç üretiyor
-//    (canlıda 81 görselsiz ürün), ama sonucun tek çıkışı Araçlar sekmesinin
+//    (canlıda 81 görselsiz ürün — 2026-08-16'da bbd/catalog/health ile
+//    doğrulandı, sayı değişmemiş), ama sonucun tek çıkışı Araçlar sekmesinin
 //    onay akışı. Yarım ekran açık bırakmak, "düzelt" düğmesi hiçbir şey
 //    yapmayan bir liste demek olurdu.
 //
@@ -210,9 +219,12 @@ function renderTools() {
       state.endpointReady
         ? `Mağazaya ulaşılamadı — ${state.toolsError}. Katalog Sağlığı sekmesi kural `
           + 'tabanlıdır ve çalışmaya devam eder.'
-        : 'Mağazadaki AI uçları (/api/admin/bbd/ai/*) henüz yayında değil. Araçlar uç hazır '
-          + 'olunca kendiliğinden açılacak. Katalog Sağlığı sekmesi AI kullanmaz ve şimdi '
-          + 'çalışır.',
+        // Uç adı TEK TEK yazılır: "ai/* yayında değil" demek yanlıştı —
+        // taslak uçları yayında, eksik olan yalnız araç/kullanım uçları.
+        // Kullanıcı hangi parçanın beklediğini bilmeden destek çağıramaz.
+        : 'Mağazadaki AI araç uçları (ai/tools, ai/tools/{tool}/run, ai/usage) yayında '
+          + 'değil; taslak uçları (ai/drafts) yayında. Araçlar eksik uçlar gelince '
+          + 'kendiliğinden açılacak. Katalog Sağlığı sekmesi AI kullanmaz ve şimdi çalışır.',
       state.endpointReady ? 'bad' : 'warn'));
   }
 
@@ -1097,9 +1109,13 @@ export function mount(root, ctx) {
     const view = h('div', 'kit-panel ai');
     view.append(emptyState({
       title: 'Bu ekran geliştiriliyor',
-      text: 'Dahili AI araçları henüz yayında değil. Hazır olduğunda burada '
-          + 'katalog sağlığı denetimi ve onaya bağlı metin önerileri olacak. '
-          + 'Diğer mağaza ekranları bundan etkilenmez.',
+      // "Uç yok" DEMİYORUZ — yanlış olurdu (taslak uçları yayında) ve
+      // kullanıcıyı mağazada olmayan bir arızayı aramaya gönderirdi.
+      // Söylenen şey gerçek engel: onay akışı iki tarafta aynı değil.
+      text: 'Mağazadaki AI taslak uçları yayında, ama onay akışı iki tarafta '
+          + 'henüz aynı değil; yarım bir onay ekranı açmak yerine bekletiliyor. '
+          + 'Hazır olduğunda burada katalog sağlığı denetimi ve onaya bağlı metin '
+          + 'önerileri olacak. Diğer mağaza ekranları bundan etkilenmez.',
     }));
     root.append(view);
     return () => { view.remove(); };   // kabuk sökerken çağırır (K7)

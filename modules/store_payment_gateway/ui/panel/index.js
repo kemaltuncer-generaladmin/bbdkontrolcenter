@@ -826,6 +826,11 @@ function paintDrawer(box, payload) {
       attempts.append(item);
     }
     box.body.append(card('POS denemeleri', attempts, 'Kart verisi mağazada maskelidir'));
+  } else if (payload.attemptsNote) {
+    // NEDEN BOŞ olduğu söylenir. Denemeler yalnız sipariş numarasıyla
+    // listelenebiliyor (uçta `token` süzgeci yok); sipariş de ödeme
+    // tamamlanınca oluşuyor. Boş bırakmak "veri kayboldu" gibi okunurdu.
+    box.body.append(hintBox(payload.attemptsNote));
   }
 
   // Olay zinciri

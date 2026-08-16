@@ -408,3 +408,306 @@ async def test_toplu_uc_yokken_sirali_yazma_kapalidir() -> None:
                                       actor="Test", dry_run=False)
     assert result["ok"] is False
     assert api.used("update_product") == []
+
+
+# ═══════════════════════════════════════════════ seçimli nitelikler
+#
+# CANLIDA ÖLÇÜLDÜ (16.08.2026): `publisher`, `book_language`, `exam_type` ve
+# `publish_type` `select` tipinde ve değerlerini SEÇENEK KİMLİĞİYLE saklıyor
+# (bir kitabın yayınevi `76`dır, "Panama Yayıncılık" değil). Bu alana serbest
+# metin yazmak, olmayan bir koda yazmakla AYNI sessiz kayıptır: Bagisto isteği
+# kabul eder, ürün yayınevsiz kalır, personel "kaydettim" sanır.
+
+SECIMLI = [
+    {"id": 33, "code": "publisher", "type": "select", "adminName": "Yayınevi"},
+    {"id": 37, "code": "page_count", "type": "text", "adminName": "Sayfa Sayısı"},
+]
+
+SECENEKLER = {"publisher": {"type": "select", "options": [
+    {"value": "76", "label": "YILDIZLAR YARIŞIYOR YAYINLARI"},
+    {"value": "10", "label": "Benim Başarı Dünyam"},
+]}}
+
+
+def test_secimli_nitelik_metin_kutusu_olarak_acilmaz() -> None:
+    codes = book.resolve_codes(SECIMLI)
+    specs = {item["key"]: item for item in book.field_specs(codes, SECENEKLER)}
+    assert specs["publisher"]["type"] == "select"
+    assert specs["publisher"]["available"] is True
+    assert specs["publisher"]["options"] == [
+        {"value": "76", "label": "YILDIZLAR YARIŞIYOR YAYINLARI"},
+        {"value": "10", "label": "Benim Başarı Dünyam"},
+    ]
+    # Metin alanı METİN kalır: tip mağazadan geliyor, tahminle değil.
+    assert specs["pageCount"]["type"] == "text"
+
+
+def test_secenegi_okunamayan_secimli_alan_acilmaz_ve_nedeni_yazilir() -> None:
+    """Kod çözüldü ama seçenek listesi okunamadı. Alanı yine de açmak,
+    kimliği bilinmeyen bir değer yazdırmak olurdu."""
+    codes = book.resolve_codes(SECIMLI)
+    specs = {item["key"]: item for item in book.field_specs(codes, {
+        "publisher": {"type": "select", "options": []}})}
+    assert specs["publisher"]["available"] is False
+    assert "seçenek" in specs["publisher"]["reason"]
+    # Alan listeden DÜŞÜRÜLMEZ: "neden yok" sorusunun cevabı ekranda durur.
+    assert specs["publisher"]["code"] == "publisher"
+
+
+def test_listede_olmayan_secenek_kimligi_reddedilir() -> None:
+    codes = book.resolve_codes(SECIMLI)
+    hatalar = book.draft_errors({"publisher": "999"}, codes, SECENEKLER)
+    assert "publisher" in hatalar
+    assert "listede yok" in hatalar["publisher"]
+    # Listedeki kimlik geçer.
+    assert book.draft_errors({"publisher": "76"}, codes, SECENEKLER) == {}
+
+
+def test_secimli_alanda_bos_deger_mesrudur() -> None:
+    """Yayınevi bilinmiyor olabilir; zorunlu tutmak bilmeyeni uydurmaya
+    zorlardı ve yanlış yayınevi yazdırırdı."""
+    codes = book.resolve_codes(SECIMLI)
+    assert book.draft_errors({"publisher": ""}, codes, SECENEKLER) == {}
+
+
+def test_secim_degeri_sayiya_cevrilerek_yazilir() -> None:
+    """Panel `<select>` kutusundan METİN gönderiyor, mağaza TAMSAYI bekliyor."""
+    codes = book.resolve_codes(SECIMLI)
+    assert book.patch_for({"publisher": "76"}, codes, SECENEKLER) == {"publisher": 76}
+    assert book.patch_for({"publisher": ""}, codes, SECENEKLER) == {"publisher": ""}
+
+
+def test_baski_yili_canlidaki_koddan_cozulur() -> None:
+    """`print_year` ÖLÇÜLDÜ: katalog baskı yılını bu kodla tutuyor. Aday
+    listesinde olmadığı sürece alan hiç açılmıyordu."""
+    codes = book.resolve_codes([{"code": "print_year", "type": "text"}])
+    assert codes["publishYear"] == "print_year"
+
+
+async def test_secenekler_nitelik_detayindan_cekilir_ve_bir_kez_sorulur() -> None:
+    """Liste ucu `options: null` döndürüyor (canlıda ölçüldü); seçenekler
+    yalnız detay ucundan geliyor. Ek istek SEÇİMLİ alan başına birdir ve
+    kodlarla birlikte saklanır."""
+    service, api = _service()
+    # `_service` nitelik listesini kendi kurgusuyla yazıyor; seçimli dünyayı
+    # ondan SONRA koyuyoruz.
+    api.attributes_payload = {"items": list(SECIMLI), "meta": {}}
+    api.attributes_by_id = {33: {"id": 33, "code": "publisher", "type": "select",
+                                 "options": [{"id": 76, "adminName": "YILDIZLAR"}]}}
+
+    ilk = await service.reference()
+    await service.reference()
+    yayinevi = next(item for item in ilk["bookFields"] if item["key"] == "publisher")
+    assert yayinevi["type"] == "select"
+    assert yayinevi["options"] == [{"value": "76", "label": "YILDIZLAR"}]
+    # Metin alanı için detay İSTENMEZ: yalnız seçimli olan sorulur.
+    assert len(api.used("attribute")) == 1
+
+
+async def test_secenek_detayi_okunamazsa_ekran_ayakta_kalir() -> None:
+    """K7: detay ucu düşerse alan açılmaz ama künye ekranı yine çizilir."""
+    service, api = _service()
+    api.attributes_payload = {"items": list(SECIMLI), "meta": {}}
+    api.fail.add("attribute")
+
+    sonuc = await service.card(7)
+    assert sonuc["ok"] is True
+    yayinevi = next(item for item in sonuc["book"]["fields"] if item["key"] == "publisher")
+    assert yayinevi["available"] is False
+    assert "seçenek" in yayinevi["reason"]
+    # Sayfa sayısı çalışmaya devam eder — bir alanın düşmesi diğerini düşürmez.
+    assert sonuc["book"]["desi"]["source"] == book.SOURCE_PAGE_COUNT
+
+
+# ═══════════════════════════════════════════════ öznitelik AİLESİ kapsamı
+#
+# CANLIDA ÖLÇÜLDÜ (16.08.2026): mağaza künye değerini niteliğin KATALOGDA
+# olmasına göre değil ÜRÜNÜN AİLESİNDE olmasına göre yazıyor —
+# `AdminCatalogProductUpdateProcessor::resolveAttributeCodes` gövdenin
+# anahtarlarını ailenin nitelik listesiyle kesiştiriyor ve dışarıda kalan kodu
+# HATA DA UYARI DA ÜRETMEDEN düşürüyor. `default` ailesi (id 1) kitap
+# alanlarından yalnız `desi`yi taşıyor, `kitap` ailesi (id 2) dokuzunu birden.
+#
+# Ürün detayının `attributes` dizisi zaten aile kapsamlı geliyor (aile 1 → 22
+# satır, aile 2 → 36 satır), yani kapsam EK İSTEK OLMADAN biliniyor.
+
+#: Aile 1'deki bir ürün: kitap alanlarından yalnız `desi` var.
+AILESIZ_KITAP = {
+    "id": 8, "sku": "BBD-OZEL-TAHSILAT", "type": "simple", "status": 1, "name": "Tahsilat",
+    "url_key": "tahsilat", "attributes": [
+        {"code": "sku", "value": "BBD-OZEL-TAHSILAT"},
+        {"code": "name", "value": "Tahsilat"},
+        {"code": "desi", "value": ""},
+    ],
+}
+
+
+def test_ailede_olmayan_nitelik_katalogda_varsa_bile_acilmaz() -> None:
+    """Dördüncü hâl: kod çözüldü ama ürünün ailesi o niteliği taşımıyor."""
+    codes = book.resolve_codes(NITELIKLER)
+    specs = {item["key"]: item
+             for item in book.field_specs(codes, None, {"sku", "name", "desi"})}
+    assert specs["isbn"]["code"] == "isbn"          # katalogda VAR
+    assert specs["isbn"]["available"] is False      # ama bu ailede yazılamaz
+    assert "AİLESİNDE yok" in specs["isbn"]["reason"]
+    # Ailenin taşıdığı alan açık kalır: kısıt toptan kapatma değil.
+    assert specs["desi"]["available"] is True
+
+
+def test_aile_bilinmiyorsa_kisit_uygulanmaz() -> None:
+    """`None` ile boş küme AYNI ŞEY DEĞİL.
+
+    Aile şeması okunamadığında bütün künye alanlarını kapatmak, geçici bir ağ
+    hatasını kalıcı bir eksikliğe çevirirdi — modülün her yerinde reddedilen
+    davranışın ta kendisi.
+    """
+    codes = book.resolve_codes(NITELIKLER)
+    acik = {item["key"]: item for item in book.field_specs(codes, None, None)}
+    kapali = {item["key"]: item for item in book.field_specs(codes, None, set())}
+    assert acik["isbn"]["available"] is True
+    assert kapali["isbn"]["available"] is False
+
+
+def test_ailede_olmayan_koda_yazma_denemesi_hatadir_ve_yamaya_girmez() -> None:
+    codes = book.resolve_codes(NITELIKLER)
+    aile = {"sku", "name", "desi"}
+    hatalar = book.draft_errors({"isbn": "9786051234567"}, codes, None, aile)
+    assert "isbn" in hatalar
+    # Kapı ile yazıcı AYNI kararı verir: yama sessizce dolmaz.
+    assert book.patch_for({"isbn": "9786051234567", "desi": "1"}, codes, None, aile) == {
+        "desi": "1"}
+
+
+async def test_urunun_ailesinde_olmayan_kunye_alani_kartta_acilmaz() -> None:
+    service, _api = _service(FakeApi({8: dict(AILESIZ_KITAP)}))
+    sonuc = await service.card(8)
+
+    alanlar = {item["key"]: item for item in sonuc["book"]["fields"]}
+    assert alanlar["isbn"]["available"] is False
+    assert alanlar["desi"]["available"] is True
+
+
+async def test_ailede_olmayan_alana_kaydetme_magazaya_hic_gitmez() -> None:
+    """Sessiz kaybın kendisi: istek 200 döner, personel "kaydettim" der.
+
+    Ekran o alanı zaten çizmiyor ama istek elle kurulabilir (K9); kapı
+    backend'de de durur.
+    """
+    service, api = _service(FakeApi({8: dict(AILESIZ_KITAP)}))
+    sonuc = await service.save(8, patch={}, book_patch={"isbn": "9786051234567"},
+                               reason="ISBN girişi yapılıyor", actor="Test", dry_run=False)
+
+    assert sonuc["ok"] is False
+    assert "AİLESİNDE yok" in sonuc["error"]
+    assert api.used("update_product") == []
+
+
+# ═══════════════════════════════════════════ seçenek okunamama KALICI DEĞİL
+
+async def test_secenek_ucu_duzelince_secimli_alan_kendiliginden_gelir() -> None:
+    """Alanın kendi gerekçesi "bağlantı düzelince kendiliğinden gelir" diyor.
+
+    Eksik çözüm saklanırsa gelmez: `book_codes` bir daha hiç sormaz ve alan
+    sidecar yeniden başlayana kadar kapalı kalırdı.
+    """
+    service, api = _service()
+    api.attributes_payload = {"items": list(SECIMLI), "meta": {}}
+    api.attributes_by_id = {33: {"id": 33, "code": "publisher", "type": "select",
+                                 "options": [{"id": 76, "adminName": "YILDIZLAR"}]}}
+    api.fail.add("attribute")
+
+    kopuk = await service.reference()
+    assert next(item for item in kopuk["bookFields"]
+                if item["key"] == "publisher")["available"] is False
+
+    api.fail.discard("attribute")
+    duzelen = await service.reference()
+    yayinevi = next(item for item in duzelen["bookFields"] if item["key"] == "publisher")
+    assert yayinevi["available"] is True
+    assert yayinevi["options"] == [{"value": "76", "label": "YILDIZLAR"}]
+
+
+async def test_secenegi_hic_olmayan_nitelik_her_seferinde_yeniden_sorulmaz() -> None:
+    """"Seçeneği YOK" ile "seçeneği OKUNAMADI" ayrı şeylerdir.
+
+    Birincisi tam bir cevaptır ve saklanır; ikisini karıştırmak seçeneksiz bir
+    niteliği her çağrıda yeniden sorduran sonsuz bir tur üretirdi.
+    """
+    service, api = _service()
+    api.attributes_payload = {"items": list(SECIMLI), "meta": {}}
+    api.attributes_by_id = {33: {"id": 33, "code": "publisher", "type": "select",
+                                 "options": []}}
+
+    await service.reference()
+    await service.reference()
+    assert len(api.used("attributes")) == 1
+    assert len(api.used("attribute")) == 1
+
+
+# ═══════════════════════════════════════ Türkçe ondalık virgül · kanonikleşme
+#
+# KM tarafı virgülü BİLEREK kabul ediyor (`positive_float` noktaya çeviriyor),
+# yani `1,2` ekranda doğru görünür ve doğrulamadan geçer. Mağaza tarafı ise
+# PHP `is_numeric()` ile okuyor ve PHP ondalık ayracı olarak yalnız noktayı
+# tanır: `is_numeric("1,2")` FALSE'tur. Ham yazılan virgül mağazada HİÇ
+# okunmaz, hesap varsayılan 1,0 desiye düşer — ekran "2 desi" derken müşteriden
+# 1 desi tahsil edilir.
+
+def test_virgullu_desi_noktaya_cevrilerek_yazilir() -> None:
+    codes = book.resolve_codes(NITELIKLER)
+    yama = book.patch_for({"desi": "1,2", "pageCount": "176", "publishYear": "2024"}, codes)
+    assert yama["desi"] == "1.2"
+    assert yama["page_count"] == "176"
+    assert yama["baski_yili"] == "2024"
+
+
+def test_yamada_hicbir_alanda_virgul_kalmaz() -> None:
+    """KİLİT: `patch_for` çıktısında virgül bulunmaz.
+
+    Doğrulayıcı virgülü kabul ettiği sürece yazıcının onu temizlemesi
+    zorunludur; ikisi ayrışırsa ekranda geçen değer mağazada okunamaz.
+    """
+    codes = book.resolve_codes(NITELIKLER)
+    yama = book.patch_for({"desi": "0,45", "pageCount": "176,0", "publishYear": "2024"}, codes)
+    assert not any("," in str(value) for value in yama.values())
+
+
+def test_kanoniklestirme_degeri_bozmaz() -> None:
+    # Tam sayı desi kuyruk sıfır taşımaz; okunamayan değer OLDUĞU GİBİ kalır
+    # (kapı `draft_errors`tır ve zaten reddeder — burada sayı UYDURULMAZ).
+    assert book.canonical_number("desi", "2,0") == "2"
+    assert book.canonical_number("desi", "0,45") == "0.45"
+    assert book.canonical_number("pageCount", "176,5") == "176"
+    assert book.canonical_number("desi", "Fasikül") == "Fasikül"
+    assert book.canonical_number("isbn", "978-605") == "978-605"
+    assert book.canonical_number("desi", "") == ""
+
+
+def test_toplu_yazmada_da_virgul_temizlenir() -> None:
+    """Toplu uygulama satırın `value` alanını doğrudan gövdeye koyuyor
+    (`patch_for`den geçmiyor); kanonikleştirme orada da gerekli."""
+    satirlar = book.bulk_rows([{"id": 7, "sku": "A", "name": "A", "book": {"desi": ""}}],
+                              field="desi", mode="set", amount="0,45")
+    assert satirlar[0]["value"] == "0.45"
+    assert satirlar[0]["after"] == "0.45"
+
+
+async def test_virgullu_desi_magazaya_nokta_ile_gider() -> None:
+    """Tel üzerinde ölçüm: gövdeye giren gerçek değer."""
+    service, api = _service()
+    await service.save(7, patch={}, book_patch={"desi": "0,45"},
+                       reason="Depoda ölçüldü", actor="Test", dry_run=False)
+
+    govde = api.used("update_product")[0]["payload"]
+    assert govde["desi"] == "0.45"
+
+
+def test_sifira_inen_olcum_yazilmaz_tam_gosterim_kullanilir() -> None:
+    """Dört ondalıkta `0`a düşen bir desi, mağazada "ölçüm yok" demek olurdu.
+
+    `positiveFloat` sıfırı eliyor: yazılan `0`, elle girilmiş ölçümü sessizce
+    silip hesabı sayfa sayısına döndürürdü.
+    """
+    yazilan = book.canonical_number("desi", "0,00001")
+    assert book.positive_float(yazilan) is not None
+    assert "," not in yazilan

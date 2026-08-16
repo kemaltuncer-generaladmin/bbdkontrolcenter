@@ -43,20 +43,28 @@ kapısına bağlanacak, mağaza ekranları PIN istemiyor.
 
 ## Mağazanın yanıt biçimi
 
-**Yedek uçları çalışmıyor — ama 404 diye değil.** `GET /api/admin/bbd/backups`
-bugün (2026-08-13) canlıda **503** dönüyor:
+**Yedek uçları ÇALIŞIYOR.** `GET /api/admin/bbd/backups` bugün (2026-08-16)
+canlıda **200** dönüyor ve gerçek envanter geliyor:
 
 ```json
-{"error": {"code": "CONTROL_API_DISABLED",
-           "message": "Kontrol Merkezi API'si kapalı. Açmak için
-                       BBD_CONTROL_API_ENABLED=true yapıp yapılandırma
-                       önbelleğini yenileyin."}}
+{"data": [{"name": "bbd-db-20260814-160040-8b8320.sql.gz", "size": 1824465,
+           "createdAt": "2026-08-14T16:00:40+03:00", "reason": "…",
+           "actor": "…", "durationSeconds": 1.37, "database": "default",
+           "requestId": "…"}],
+ "meta": {"page": 1, "limit": 25, "total": 2, "last_page": 1, "keep": 14}}
 ```
 
-Aynı anda `/api/admin/settings/channels` ve `/api/admin/orders` **200** dönüyor:
-**mağaza ayakta.** Uç da yayında; kapalı olan bir **anahtar**.
+`GET /backups/{name}/download` de **200** ve dosyanın tamamını veriyor
+(1.824.465 bayt, envanterdeki `size` ile birebir).
 
-Bu, ekranın gördüğü hâllerin **üçe** çıktığı anlamına gelir
+> **Bu bölüm bir dönem tersini söylüyordu.** 2026-08-13'te aynı uç **503
+> `CONTROL_API_DISABLED`** dönüyordu ve burada "yedek uçları çalışmıyor"
+> yazıyordu. **Artık öyle değil** — `BBD_CONTROL_API_ENABLED` açılmış. Eski
+> cümleyi okuyup "bu ekran zaten çalışmıyor" diye geçmeyin.
+
+Aşağıdaki üç hâl ayrımı **kalıcıdır ve kaldırılmadı**: anahtar bir dağıtımda
+geri kapanabilir, paket geri çekilebilir. Ekranın o gün "mağaza çöktü" dememesi
+gerekir (K7). Ekranın gördüğü hâller **üçtür**
 (`endpointState`) — ve üçü de ayrı cümleyle anlatılır, çünkü **çareleri
 farklı**:
 
@@ -70,7 +78,9 @@ Geçit 503'e `code="server"` verir, `bbd_endpoint_missing` **vermez**. Yalnız o
 koda bakan sürüm bu hâli "gerçek arıza" sayıyordu; sonucu iki ayrı zarardı:
 ekran ayakta olan bir mağaza için **"Mağazaya ulaşılamadı"** diyordu ve
 **"Yedeği başlat" düğmesi açık kalıyordu** — kullanıcı kapsam seçip gerekçe
-yazıp onaylıyor, sonunda 503 görüyordu. İkisi de düzeltildi.
+yazıp onaylıyor, sonunda 503 görüyordu. İkisi de düzeltildi. Bugün bu dal
+tetiklenmiyor (uç 200), ama **zayıflatılmadı**: ölçülmüş bir zararın önündeki
+tek koruma odur.
 
 Jeton **metinde** aranır (`inventory.endpoint_state`) ve bu, "metne bakma"
 kuralının ihlali değildir: `CONTROL_API_DISABLED` çevrilen bir cümle değil,
@@ -90,17 +100,27 @@ Değişmeyen kurallar:
   yoksa çöken bir mağaza "anahtar kapalı, sunucuya gitmeyin" diye anlatılırdı.
 
 Aşağıdakiler `bbdstore.com.tr` üzerinde salt okunarak sınandı (varsayım
-değildir) ve yedek ucu yayınlandığında da geçerli olacak:
+değildir; son ölçüm 2026-08-16, uç artık yayında):
 
-- **Alan adları camelCase'tir** (`createdAt`, `grandTotal`, `qtyOrdered`).
-  `created_at` diye bakan kod hiçbir şey bulamaz ve **istisna da atmaz** —
-  ekran sessizce "—" dolu görünür. Bu modülde her okuma `inventory.pick()`
-  üzerinden geçer ve **iki yazımı da** çözer.
-- **Zaman damgası saat dilimsizdir ve YEREL saattir** (`"2026-08-13 19:54:51"`).
-  `inventory.parse_time` saat dilimsiz damgayı **yerel** sayar. UTC saymak
-  yedeği üç saat gençleştirir: 50 saatlik bir yedek 47 saatlik görünür ve 48
-  saatlik bayatlama eşiği hiç tetiklenmez — durum bandı yeşil kalırken elde
-  kalan en yeni yedek çoktan eskimiştir.
+- **Alan adları camelCase'tir** (`createdAt`, `durationSeconds`). `created_at`
+  diye bakan kod hiçbir şey bulamaz ve **istisna da atmaz** — ekran sessizce
+  "—" dolu görünür. Bu modülde her okuma `inventory.pick()` üzerinden geçer ve
+  **iki yazımı da** çözer.
+- **Uç `scope`, `sha256` ve doğrulama alanı GÖNDERMİYOR** (2026-08-16).
+  Ekranda Kapsam "—", Doğrulama "Doğrulanmadı" görünür; bu uydurmama kuralının
+  doğru davranışıdır, arıza değil. Notu ise mağaza **`reason`** adıyla
+  gönderiyor, `inventory.pick` `note`/`comment`/`description` arıyor — Not
+  sütunu bugün "—" kalıyor. Aday listesini genişletmek ayrı bir karar; burada
+  yapılmadı, **kayda geçirildi**.
+- **Zaman damgası yedek ucunda saat dilimi TAŞIYOR**:
+  `"2026-08-14T16:00:40+03:00"` (2026-08-16'da ölçüldü). Burada bir dönem
+  "damga saat dilimsizdir ve yerel saattir (`2026-08-13 19:54:51`)" yazıyordu;
+  **bu uç için artık öyle değil.** `inventory.parse_time`'ın saat dilimsiz
+  damgayı **yerel** sayan dalı yine de duruyor: mağazanın başka uçları hâlâ
+  öyle gönderiyor (bkz. store_orders) ve UTC saymak yedeği üç saat gençleştirir
+  — 50 saatlik bir yedek 47 saatlik görünür, 48 saatlik bayatlama eşiği hiç
+  tetiklenmez ve durum bandı yeşil kalırken elde kalan en yeni yedek çoktan
+  eskimiştir.
 - `per_page` sunucuda **50'ye kırpılır**, `meta` camelCase, `links` boş döner.
   Bu ekranın listesi onlarca satır olduğu için **sayfalama yoktur**; süzme
   istemcide yapılır.
@@ -130,7 +150,11 @@ farklı:
   `download_limit_mb` (varsayılan 200) üstündeki dosyada indirme hiç başlamaz;
   sunucudaki yol gösterilir. Envanterdeki boyut yanlış olabileceği için
   **gerçek boyut da** indirmeden sonra denetlenir.
-- **Yedek silme.** Mağaza tarafında silme ucu yok. Uydurma bir çağrı yazmak
+- **Yedek silme.** Mağaza tarafında **ada göre** silme ucu yok — 2026-08-16'da
+  sunucudaki rota listesiyle doğrulandı: `GET ''`, `POST ''`, `POST prune`,
+  `GET {name}/download`, `POST {name}/verify`. `prune` saklama süresine göre
+  **toplu budama** yapar, "şu yedeği sil" değildir ve geçitte karşılığı yok.
+  Uydurma bir çağrı yazmak
   yerine düğme **kapalı** durur ve nedenini yazar; yaş kapısı
   (`delete_min_age_days`, varsayılan 30) yine de bugünden yazılmış ve test
   edilmiştir — uç yayınlandığı gün kural "sonra ekleriz" borcuna kalmaz.
@@ -184,8 +208,11 @@ Kuru provada **yayımlanmaz**. Dinleyen yoksa ya da dinleyici patlarsa iş durma
   "uç yok" · "uç kapalı" · "mağaza çöktü" **üçlü** ayrımı.
 
 Sahtedeki 503 gövdesi (`store_backups_fakes.DISABLED_MESSAGE`) canlıdan
-alınmıştır ve geçidin o gövdeden ürettiği metnin aynısıdır; uydurulmuş bir
-hata metnine karşı geçen test hiçbir şey kanıtlamazdı.
+(2026-08-13) alınmıştır ve geçidin o gövdeden ürettiği metnin aynısıdır;
+uydurulmuş bir hata metnine karşı geçen test hiçbir şey kanıtlamazdı. Uç
+2026-08-16'da 200 dönüyor, yani bu gövde artık canlıda görülmüyor — **test yine
+de kalıyor**: anahtar geri kapanırsa ekranın "mağaza çöktü" dememesi K7'nin
+gereği ve bunu sınayan tek şey bu test.
 
 Ağa çıkılmaz; `store.api` taklit edilir. Sahtede **uydurulmuş metot yoktur** —
 gerçek geçitte olmayan bir çağrıyı sahtede yazmak, olmayan bir uca güvenen bir

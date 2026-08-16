@@ -20,3 +20,4 @@ Durum değerleri: `Kabul edildi` · `Superseded by NNNN` · `Reddedildi`
 | 0010 | SMS sağlayıcı entegrasyonu: sarmalanmış Netgsm | Kabul edildi |
 | 0011 | Panel arayüz kiti kabukta durur | Kabul edildi |
 | 0012 | Mağaza yıkıcı işlemleri PIN yerine gerekçeli onay ister | Kabul edildi |
+| 0013 | Anons sesi: Vertex AI, önden üretim | Kabul edildi |

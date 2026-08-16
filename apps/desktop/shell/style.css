@@ -413,3 +413,70 @@ kbd {
   border-radius: 999px;
 }
 .sidebar ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); }
+
+/* ── iki seviyeli menü: bölüm başlıkları ve girintili satırlar ─────────────
+   Elli bir ekran düz çizildiğinde şerit ~1800px oluyordu ve kenar çubuğu
+   ~800px görüyor; her gidişte kaydırmak gerekiyordu. Bölümler katlanınca
+   aynı anda on satır görünüyor. */
+
+.nav-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px 7px 8px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 130ms, color 130ms;
+}
+
+.nav-section:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
+.nav-section:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Ok YÖN DEĞİŞTİRİR, kaybolmaz: kapalı bölümün açılabildiği görünmeli. */
+.nav-caret {
+  flex: none;
+  width: 0;
+  height: 0;
+  margin-left: 3px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  opacity: 0.55;
+  transition: transform 130ms;
+}
+
+.nav-section.open .nav-caret { transform: rotate(90deg) translateX(-1px); }
+.nav-section.open { color: var(--ink); }
+
+/* Sayaç KAPALIYKEN DE DURUR: "bu bölümde kaç ekran var" sorusu, bölümü
+   açmadan yanıtlanabilmeli. */
+.nav-count {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Girinti seviyeyi GÖSTERİR; sol çizgi hangi bölüme ait olduğunu bağlar. */
+.nav-nested {
+  padding-left: 22px;
+  margin-left: 9px;
+  border-left: 1px solid var(--sb-line);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.nav-nested.active::before { left: -1px; }

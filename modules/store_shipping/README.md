@@ -57,6 +57,19 @@ başlıklarında gelir; geçit ikisini birden taşıyan bir zarf döndürür
 (`handover`) bu akışa **girmez** — kullanıcının kararı "fiş yok". Fişin kodu
 duruyor ve sihirbazdaki düğmesinden elle basılıyor.
 
+**Etiket A4'ten çıkar, katlanıp kargo poşetinin cebine konur.** Varsayılan
+biçim `a4-4up`: etiket A4'ün bir A6 çeyreğine oturur, kâğıt ikiye ikiye
+katlandığında etiket tek çeyrekte **katsız** kalır. Sayfayı kaplayan tek
+etiket katlandığında barkodun üstünden kat geçerdi ve şubede okutulamayan
+barkod paketi elde bırakırdı. Bu kurulumdaki tek termal yazıcı (`80mm`)
+**BLD KDS'nin mutfak bildirim yazıcısıdır** ve kargo akışında kullanılmaz.
+
+**Biçim tek yerden çözülür** (`label_format_on`): ekran tercihi ayarı ezer,
+tanınmayan tercih yok sayılır. Üç çağıran vardır — ayar ekranı, toplu etiket
+sayfası ve kargoya vermenin otomatik basımı — ve bir dönem sonuncusu tercihi
+hiç okumuyordu: ekran "A4" gösterirken kâğıda termal ölçüde etiket çıkıyordu,
+hata da vermiyordu.
+
 **Etiket ancak satın alındıktan sonra vardır**, basım o adımdan sonra
 tetiklenir. Uç etiketi indiremediyse (200 + `labelReady:false`) kâğıt çıkmaz;
 gönderi açılmıştır ve ekran "etiketi yeniden al" düğmesini gösterir.
@@ -158,11 +171,17 @@ listedeki **her** siparişi engelliyordu. Bilgi yoksa engel konmuyor; ekran
 `verified: false` ile hazırlığın doğrulanmadığını yazıyor ve sihirbaz
 siparişi tek tek okuyup yeniden denetliyor.
 
-**BBD kargo uçları henüz yayında değil.** `/api/admin/bbd/shipments` bugün 404
-dönüyor; geçit bunu `bbd_endpoint_missing` koduyla anlaşılır bir metne
-çeviriyor ve `Gönderiler` sekmesi "gönderi listesi okunamadı — uç henüz
-yayında değil" diyor. Ekran ayakta kalıyor (K7); `Kargoya hazır`,
-`Bölgeler` ve tercihler bundan etkilenmiyor.
+**BBD kargo uçları YAYINDA** (16 Ağustos 2026'da doğrulandı).
+`/api/admin/bbd/shipments`, `/shipping/rates`, `/orders` ve
+`/settings/geliver` canlıda 200 dönüyor. Bu satır bir dönem "uç 404 dönüyor"
+diyordu ve **eskimişti**: ekran çalışan bir uç için "yayında değil" der
+hâle gelmişti.
+
+`bbd_endpoint_missing` yolu yine de KALDI ve kaldırılmayacak: uç bir gün
+geri çekilirse geçit onu anlaşılır bir metne çevirir, `Gönderiler` sekmesi
+nedeni söyler, ekran ayakta kalır (K7) ve `Kargoya hazır`, `Bölgeler`,
+tercihler bundan etkilenmez. Dayanıklılık yolunu, bugün uç ayakta diye
+sökmek yanlış olurdu.
 
 ---
 
