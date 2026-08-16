@@ -1,0 +1,32 @@
+# Müşteriler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: açık kalsaydı panelden yapılan HER yazma sessizce bir
+# provaya döner, ekran "kaydedildi" der ve müşterinin telefonu eski hâlinde
+# kalırdı — hatayı da yalnız müşteri fark ederdi, aranmadığında.
+#
+# Geçidin kendi varsayılanı (`modules.bld_api.dry_run_default`) da aynı sebeple
+# kapalıdır; ikisinden biri açık kalırsa yazma yine yapılmaz. Bu yüzden bu
+# modül geçide her çağrıda AÇIK bir `dry_run=` geçirir ve varsayılana hiç
+# güvenmez.
+dry_run_default: false
+
+# Müşteri listesinde sayfa başına satır. Sözleşme tavanı 100 (`00-genel.md` §5)
+# ve büyütmek burada bilerek özendirilmez: her sayfa bir denetim satırı yazar
+# ama YÜZ MÜŞTERİNİN telefonunu birden ekrana getirmek, arayanın gerçekten
+# aradığı tek kaydı bulmasını kolaylaştırmaz.
+page_size: 25
+
+# Müşteri kartındaki sipariş geçmişinde sayfa başına satır.
+order_page_size: 25
+
+# Müşteri kartındaki SMS gönderim kaydında sayfa başına satır. Telefon zaten
+# maskeli döner ve gövde 120 karakterde kırpılır (`sms.md`).
+sms_page_size: 25
+
+# YEREL KVKK erişim izinde bir ekranda gösterilecek en fazla satır. Tablo
+# silinmez; bu yalnız okuma penceresidir.
+access_log_limit: 200
+
+# YEREL yazma denemesi izinde bir ekranda gösterilecek en fazla satır.
+audit_limit: 100

@@ -1,22 +1,56 @@
-# Ürün Yönetimi modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Ürün Yönetimi — BLD ürün kataloğunun (menus/categories) yönetim ekranı.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# ÜRÜN KATALOĞU İLE GÜNLÜK MENÜ AYRI ALANLARDIR (`docs/control/products.md`).
+# Bir ürün burada doğar, fiyatlanır, görsellenir ve satıştan kaldırılır; hangi
+# gün satılacağı `bld_menu` ekranının ve `/api/control/menu/*` uçlarının işidir.
+# Katalog haftalarca değişmez, günlük menü her gün değişir; ikisini tek ekranda
+# birleştirmek "bugünkü menüden çıkar" ile "kataloğdan kaldır" arasındaki farkı
+# görünmez kılardı.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: ürün, kategori, görsel ve tükendi işareti
+# BLD'dedir. Yerel tablolar yalnız iki şey içindir — yazma denemesinin izi ve
+# bu ekrana özel tercih.
+#
+# Sözleşme: `BLD/docs/control/products.md` + `00-genel.md`. Uçlar, alan adları,
+# doğrulama sırası ve görsel sınırları orada sabittir; uydurma alan eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_products
 name: "Ürün Yönetimi"
-description: "Ürün, seçenek ve fiyat yönetimi."
+description: "Ürün, kategori, fiyat ve görsel yönetimi; gün bazlı tükendi işareti."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Ürün kataloğu, kategori ağacı, ürün görseli ve günlük tükendi işareti BLD
+      sunucusundadır (`docs/control/products.md`) ve oraya yalnız geçitten
+      gidilir (K4). İmza, nonce, zaman penceresi, oran sınırı ve görselin
+      base64 hazırlığı tek yerde durur; her ekranın kendi istemcisini yazması
+      aynı hatayı yirmi yerde tekrarlardı.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_products.product_retired
+      payload: "{menuId, name, reason, actor}"
+      description: >
+        Bir ürün bu ekrandan satıştan kaldırıldı (`menu_status = 0`). Kayıt
+        SİLİNMEZ. Kuru provada YAYINLANMAZ — BLD'de hiçbir şey değişmedi.
   subscribes: []
 
 http:
@@ -36,20 +70,59 @@ ui:
     requires: [bld_products.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran satılan ürünün adını, fiyatını ve görselini
+# yazıyor: `bbd_staff` mağaza tarafındadır, `org_staff` zil/baskı/rehber ile
+# sınırlıdır, `accountant` mali ekranlara bakar. Üçünün de burada işi yok.
+#
+# ÜÇÜNCÜ ANAHTAR — `bld_products.retire`. Satıştan kaldırma ürünü siteden ve
+# sipariş yolundan düşürür; yayınlanmamış bir menüde kullanılan ürün sessizce
+# satılamaz hâle gelir ve bunu yalnız müşteri fark eder. `manage` fiyat ve ad
+# düzeltmesi için günlük bir yetkidir, kaldırma değildir.
+#
+# Yıkıcı işlem PIN değil GEREKÇE ister (ADR 0012; `bld_kds` de bunu benimsedi):
+# ayrı izin anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır) + çift
+# denetim satırı. Bu yüzden hiçbir izin `destructive: true` taşımaz — o bayrak
+# çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
+#
+# NOT — `00-genel.md` §10 tablosu bu alan için `bld_menu.view/manage` diyor.
+# Manifestteki anahtarlar modül iskeletinde DONMUŞ hâlde `bld_products.*`
+# olarak duruyordu ve Kontrol Merkezi izin kataloğu modül kimliğine bağlıdır;
+# ikisini burada uyumlamak modül kimliğini değiştirmek olurdu. Ayrım raporlandı.
 permissions:
   - key: bld_products.view
-    description: "Ürün Yönetimi ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Ürün kataloğunu, kategori ağacını ve yerel deneme izini görüntüleme."
+    default_roles: [admin, bld_staff]
   - key: bld_products.manage
-    description: "Ürün Yönetimi kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Ürün açma ve düzenleme (ad, açıklama, fiyat, en az adet, sıra, kategori),
+      ürünü yeniden satışa açma, görsel yükleme ve kaldırma, gün bazlı tükendi
+      işareti koyma ve kaldırma, kategori açma ve düzenleme.
+    default_roles: [admin, bld_staff]
+  - key: bld_products.retire
+    description: >
+      Ürünü satıştan kaldırma (`menu_status = 0`). Satır SİLİNMEZ — gerçek
+      silme geçmiş siparişlerin ürün bağını koparır ve "bu sipariş neydi"
+      sorusunu cevapsız bırakırdı. Yine de ürün siteden ve sipariş yolundan
+      düşer; yayınlanmış bir günlük menüde kullanılıyorsa sunucu `409` ile
+      engeller ve yönetici önce menüden çıkarmak zorundadır.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# ve görselin base64 hazırlığı `bld.api` geçidinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). Görsel çözme/denetleme de geçidin
+    `upload.py` dosyasındadır; bu modül baytı yalnız taşır.
 
 tasks: []

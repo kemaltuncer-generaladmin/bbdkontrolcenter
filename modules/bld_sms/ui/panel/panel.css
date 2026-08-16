@@ -1,0 +1,153 @@
+/* SMS Paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir (docs/adr/0011).
+   Burada YALNIZCA `bs-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bs-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bs` kökünün kendisidir — o da panelin kendi öneki. */
+
+.bs {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bs > * { flex: none; }
+
+.bs-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bs-body > * { flex: none; }
+
+/* ---------------------------------------------------------------- üst şerit */
+
+.bs-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px 6px;
+  flex-wrap: wrap;
+}
+
+.bs-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 4px;
+}
+
+/* Sağlayıcı şeridi. İKİ AYRI GERÇEK İKİ AYRI SATIRDA durur: BLD'nin sağlayıcısı
+   gönderimi yapan taraftır, Kontrol Merkezi'nin kendi şeridi ise bu ekranda
+   kullanılmaz. Alt alta ve ayrı kutularda olmaları bilinçli — tek satırda
+   birleştirmek, yanlış ayarın düzeltilmesine yol açıyordu. */
+.bs-notice { display: flex; flex-direction: column; gap: 8px; }
+.bs-notice:empty { display: none; }
+
+.bs-dim { font-size: 11.5px; color: var(--soft); }
+
+.bs-card-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--soft);
+  margin: 6px 0 4px;
+}
+
+/* Tablo hücresi içinde iki satırlık içerik (ad + anahtar). */
+.bs-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bs-cell-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+
+/* ------------------------------------------------------------- tetikleyici */
+
+.bs-triggers { display: flex; flex-direction: column; }
+
+.bs-trigger {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+.bs-trigger:first-child { border-top: none; }
+
+.bs-trigger-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+
+/* ------------------------------------------------------------------ ölçüm */
+
+.bs-measure { display: flex; flex-direction: column; gap: 6px; }
+
+.bs-measure-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Sadeleştirme önerisi. YALNIZ KAZANÇ VARSA çizilir; kazandırmayan bir düğme
+   gereksiz bir karardır ve kullanıcıyı metnini bozmaya çağırır. */
+.bs-simplify {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+/* ---------------------------------------------------------- önizleme metni */
+
+.bs-preview { display: flex; flex-direction: column; gap: 4px; }
+
+/* Müşterinin göreceği metin. Tek tırnaklı ve tek boşluklu görünmesi önemli:
+   SMS gövdesinde satır sonu da karakter sayar ve ekranda "sarılmış" bir metin
+   olduğundan uzun görünmemeli. */
+.bs-rendered {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+/* Değişken çipleri — tıklayınca metnin sonuna eklenir. */
+.bs-chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0 2px; }
+
+/* Şablon çekmecesindeki açıklama bloğu. */
+.bs-info { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.bs-info p { margin: 0; font-size: 12.5px; color: var(--soft); }
+
+/* ------------------------------------------------------------ toplu duyuru */
+
+.bs-announce { display: flex; flex-direction: column; gap: 10px; }
+
+/* Kuru prova bloğu. Gönder düğmesi BURADADIR ve prova yapılmadan bu kutuda
+   yalnız kapalı düğme ile nedeni durur — düğmeyi başka yere koymak,
+   "önce prova" kuralını ekranda görünmez yapardı. */
+.bs-dry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}

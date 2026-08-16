@@ -90,6 +90,9 @@ iskeletlerin ilan ettikleridir.
 > daraltma, o modülün işi başlarken yapılır. Tek tek listelenmezler; kaynak
 > her zaman modülün kendi `module.yaml` dosyasıdır. Aşağıdaki tablo ve
 > matrisler, daraltması **bilinçli olarak yapılmış** modülleri gösterir.
+>
+> **Daraltmayı yaparken:** manifesti düzeltmek kurulu bir sistemde tek başına
+> yetmez — bkz. [Manifest'i daraltmak tek başına yetmez](#manifesti-daraltmak-tek-başına-yetmez).
 
 | Modül | İzin | Ne yapar |
 |---|---|---|
@@ -189,6 +192,62 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 Kapsamlı ekranlarda (Sunucular, Veritabanı) **ekran açılır, içerik kapsamla
 süzülür.** BLD Personeli yalnızca `bld` kapsamlı sunucu ve veritabanlarını
 görür; iki rolü olan kişi ikisini birden görür.
+
+---
+
+## Manifest'i daraltmak tek başına yetmez
+
+Bir modülün izinlerini `module.yaml` içinde daraltmak, **yalnızca hiç açılmamış
+kurulumlarda** geçerlidir. Bir kez çalışmış her makinede eski geniş hâl
+veritabanında durmaya devam eder.
+
+### Neden
+
+İki mekanizma da bilerek "ekleyici"dir ve ayrı ayrı doğrudur:
+
+| Yer | Davranış | Neden böyle |
+|---|---|---|
+| `km_core/security/identity.py` → `grant_defaults()` | Yalnızca **ekler** (`INSERT OR IGNORE`) | Yöneticinin sonradan elle kaldırdığı izni her açılışta geri getirmemek için |
+| `km_core/http/app.py` | **Keşfedilen her modülü** tohumlar, `enabled: false` olanlar dahil | İzin manifestte ilan edilir, kodun hazır olmasına bağlı değildir; aksi hâlde iskelet modülün ekranı menüden süzülür ve hiç görünmez |
+
+İkisi birlikte tek yönlü bir kapı bırakır: **genişletme yürürlüğe girer,
+daraltma girmez.** Yukarıdaki geliştirme kuralı gereği beş rolün hepsine açık
+ilan edilmiş bir iskelet, manifesti daraltıldıktan sonra da o beş rolde durmayı
+sürdürür. Ekran menüden kaybolmaz ve `/api/<id>` uçları hâlâ o rollere açıktır —
+K9'un iki kapısı da açık kalır, çünkü sorun arayüzde değil, veridedir.
+
+### Ne yapılır
+
+Daraltma iki adımdır ve ikincisi elle yapılır:
+
+1. `module.yaml` içindeki `permissions[].default_roles` daraltılır (gerekçesi
+   manifest yorumuna yazılır).
+2. `scripts/reconcile-permissions.py` çalıştırılır.
+
+```bash
+scripts/reconcile-permissions.py            # rapor — hiçbir şeyi değiştirmez
+scripts/reconcile-permissions.py --uygula   # yalnız açık onayla geri alır
+```
+
+Betik sapmayı dört kutuya ayırır; yalnız **birincisi** geri alınabilir:
+
+| Kutu | Anlamı | Ne yapılır |
+|---|---|---|
+| `FAZLA` | Satır `grant_defaults` biçiminde yazılmış, manifest artık o rolü önermiyor | `--uygula` geri alır |
+| `EKSİK` | Manifest öneriyor, veritabanında yok | Elle iş yok; çekirdek bir sonraki açılışta ekler |
+| `ELLE` | Kapsam biçimi manifestten farklı (`izin:bld` gibi) | Dokunulmaz — `grant_defaults` çıktısı olamaz, biri bilerek yazmıştır |
+| `YETİM` | Modül duruyor ama o anahtarı hiç ilan etmiyor | Dokunulmaz — silinmiş mi, yeniden mi adlandırılmış, ayrımı insan yapar |
+
+### Neden otomatik budama yok
+
+`grant_defaults`'un ekleyici olmasının **tek sebebi** yöneticinin bilinçli
+verdiği izni sessizce geri almamaktır. Açılışta otomatik budama yapmak tam da
+onu kırardı: elle verilmiş her izin bir sonraki yeniden başlatmada sessizce yok
+olurdu ve kimse nedenini bulamazdı. Bu yüzden betik raporlar, **insan karar
+verir**; `--uygula` etkileşimli terminal ve açık onay ister, zamanlayıcıya
+bağlanamaz. Geri alınan her satır denetim izine (`roles.manage`) yazılır.
+
+Çekirdek geri alınanları geri getirmez: manifest o rolleri artık önermemektedir.
 
 ---
 

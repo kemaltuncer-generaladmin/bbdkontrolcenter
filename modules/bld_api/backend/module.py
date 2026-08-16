@@ -33,6 +33,14 @@ def register(ctx: ModuleContext) -> None:
         dry_run_default=bool(config.get("dry_run_default", False)),
         require_reason=bool(config.get("require_reason", True)),
         requests_per_minute=int(config.get("requests_per_minute") or 18),
+        # Sayfalama ve önbellek: on üç panel alanının yoklamasını tek hız
+        # kovasının altında tutan iki ayar. Önbellek YALNIZCA referans veri
+        # içindir (bkz. `cache.py`); değeri sıfırlamak onu kapatır.
+        page_size=int(config.get("page_size") or 25),
+        reference_ttl=int(config.get("reference_ttl_seconds") or 900),
+        snapshot_ttl=int(config.get("snapshot_ttl_seconds") or 1800),
+        max_items=int(config.get("max_items") or 5000),
+        max_upload_mb=int(config.get("max_upload_mb") or 8),
     )
 
     ctx.provide("bld.api", api)

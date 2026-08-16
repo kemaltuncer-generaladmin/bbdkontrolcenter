@@ -1,0 +1,22 @@
+# Ürün Yönetimi ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: açık kalsaydı panelden yapılan HER yazma sessizce bir
+# provaya döner, ekran "kaydedildi" der ve BLD'de hiçbir şey değişmezdi.
+#
+# BU AYAR GEÇİDİN AYARININ YERİNE GEÇMEZ. Servis `dry_run=` bayrağını her
+# çağrıda AÇIKÇA gönderiyor (`ProductsService._dry`), yani geçidin kendi
+# varsayılanı (`modules.bld_api.dry_run_default`) bu modülün yazmalarını
+# etkilemez — `config/local.yaml` git dışıdır ve orada `true` yazıyor olabilir.
+# Buradaki değer yalnız "istemci bayrağı hiç göndermediğinde ne olsun"
+# sorusunu cevaplar.
+dry_run_default: false
+
+# Ürün listesinde sayfa başına satır. Sunucunun tavanı 100 (`00-genel.md` §5);
+# büyütmek sunucuda kırpılır ve ekran istediğinden azını sessizce alır.
+page_size: 25
+
+# Yerel deneme izinde (bu ekrandan yapılan yazmalar) gösterilecek satır sayısı.
+# Bu tablo BLD'de DEĞİL, Kontrol Merkezi'nin kendi deposundadır; sunucunun
+# denetim defteri hiç gönderilememiş isteği bilmez.
+audit_limit: 100

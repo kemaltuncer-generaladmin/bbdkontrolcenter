@@ -1,11 +1,18 @@
 # BLD geçidi — BLD sunucusunun kontrol API'sine açılan TEK kapı.
 #
-# NEDEN AYRI MODÜL: KDS yönetimi (`bld_kds`) ve ilerideki BLD ekranları aynı
-# imzalı yüzeye bakacak. Her biri kendi HTTP istemcisini yazsaydı imza
+# NEDEN AYRI MODÜL: KDS yönetimi (`bld_kds`) ve on iki BLD yönetim ekranı aynı
+# imzalı yüzeye bakıyor. Her biri kendi HTTP istemcisini yazsaydı imza
 # üretimi, nonce, saat penceresi, yeniden deneme, hız sınırı, kuru prova ve
 # gerekçe taşıma her ekranda tekrarlanır — ve her birinde farklı biçimde
 # yanlış olurdu. İmzayı tek yerde tutmak ayrıca sırrı tek yerde tutmak
 # demektir. Geçit bunları `bld.api` yeteneği olarak sunar (K3, K4).
+#
+# NEDEN ALAN BAŞINA GEÇİT DEĞİL: sunucu hız sınırları IP başına
+# (`bld-control` 1200/saat, `bld-control-panel` 3000/saat) ve Kontrol Merkezi
+# tek IP'den çıkıyor. Geçit alan başına bölünseydi her parça kendi dakikalık
+# kovasını taşır, her biri kendini uyumlu sanar ve toplam sunucu tavanını
+# katlayarak aşardı. Paylaşılan bir sunucu bütçesi ancak paylaşılan bir
+# istemci kovasıyla onurlandırılır.
 #
 # NEDEN PLATFORM DEĞİL: BLD bir iş sistemidir, altyapı değil. Silinebilir
 # olmalı; `km_platform` silinemez olanların yeridir (ADR 0006).
@@ -15,8 +22,8 @@
 
 id: bld_api
 name: "BLD Geçidi"
-description: "BLD kontrol API'sine tek kapı: imzalı kimlik, hız kovası, kuru prova, gerekçe taşıma."
-version: 0.1.0
+description: "BLD kontrol API'sine tek kapı: imzalı kimlik, tek hız kovası, kuru prova defteri, gerekçe taşıma, referans önbelleği."
+version: 0.2.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
@@ -27,7 +34,7 @@ depends: []
 provides:
   - capability: bld.api
     contract: km_sdk.contracts:BldApi
-    description: "BLD kontrol API'si: mutfak kasaları, ayarlar, komutlar, fiş kaydı, siparişler."
+    description: "BLD kontrol API'si: mutfak kasaları ve fiş kaydı (KDS) + on üç panel alanı — günlük menü, ürün kataloğu, satış ayarları, siparişler, abonelik/sözleşme/ödeme, müşteriler (KVKK), fatura belgesi, site içeriği, SMS, uygulama-içi duyuru, izleme, gösterge paneli, denetim izi."
 
 consumes:
   - capability: secrets

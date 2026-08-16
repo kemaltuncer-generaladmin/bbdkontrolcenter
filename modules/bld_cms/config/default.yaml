@@ -1,0 +1,45 @@
+# Site İçeriği ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: ekranda kuru prova şalteri yok ve panel bu alanı hiç
+# göndermiyor — açık kalsaydı panelden yapılan HER yazma sessizce bir provaya
+# döner, ekran "kaydedildi" der ve sitede hiçbir şey değişmezdi. Geçidin kendi
+# varsayılanı (modules.bld_api.dry_run_default) da aynı sebeple kapalıdır;
+# ikisinden biri açık kalırsa yazma yine yapılmaz.
+#
+# UÇ HÂLÂ `dryRun: true` KABUL EDER: alanı açıkça gönderen bir çağrıyı kırmamak
+# için duruyor. Gerekçe zorunluluğu (min 10 karakter) bundan bağımsızdır ve
+# DURUR — kuru prova bir güvenlik ağıydı, gerekçe bir denetim kaydıdır.
+dry_run_default: false
+
+# YAZMA SONRASI SİTEYİ TAZELEME VARSAYILANI. Panel her kaydetmede bu değeri
+# açıkça gönderir; ayar yalnız alan hiç gelmediğinde geçerlidir. AÇIK, çünkü
+# kapalı bir varsayılan olağan akışı "kaydettim ama sitede yok" ile bitirir ve
+# yönetici eksik adımı ancak siteyi açıp bakınca öğrenir.
+revalidate_after_save: true
+
+# Yazı listesinde sayfa başına satır. Sunucu sayfalıyor; bu yalnız istenen
+# boyuttur ve uç noktanın şema kapısı 200'de duruyor.
+page_size: 25
+
+# Yerel düzenleme geçmişi listesinde en çok kaç satır gösterilsin.
+revision_limit: 50
+
+# Bir sürüm satırında saklanacak en büyük gövde (bayt). Aşan değer KIRPILMAZ,
+# künyeye düşürülür ve satır "gövdesi saklanmadı" diye işaretlenir: yarım bir
+# metni "eski hâl" diye saklamak, geri getirildiğinde yarım bir sayfa üretirdi.
+# Varsayılan, içerik anahtarının sunucu sınırıyla aynı (256 KB) — o sınırın
+# altında kalan hiçbir değer künyeye düşmez.
+revision_max_bytes: 262144
+
+# Sitenin herkese açık adresi — YALNIZ "sitede gör" bağlantısı için kullanılır.
+# BOŞ BIRAKILDI ve kurulum `config/local.yaml` ile verir: depoda yazan bir
+# adres, başka bir kurulumda yöneticiyi yanlış siteye gönderirdi. Boşken
+# bağlantı hiç çizilmez.
+site_url: ""
+
+# Satır içi görselin ön denetim sınırı (MB). ASIL KAPI SUNUCUDADIR; bu değer
+# yalnız kullanıcıya erken ve anlaşılır bir cevap vermek içindir. Bugün hiç
+# kullanılmıyor: sözleşmede (docs/control/cms.md) görsel yükleme ucu yok ve
+# düzenleyicideki görsel düğmesi bu yüzden hiç çizilmiyor.
+image_max_mb: 5

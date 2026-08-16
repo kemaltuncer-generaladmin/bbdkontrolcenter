@@ -1,22 +1,63 @@
-# Menü Yönetimi modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Menü Yönetimi — günlük menü takvimi, kalemleri, yayını ve stok tavanları.
+#
+# SATILAN ŞEY SABİT BİR KATALOG DEĞİL, GÜN GÜN GİRİLEN MENÜDÜR. Ürünlerin
+# kendisi `bld_products` alanındadır; burada yalnız "hangi gün, hangi üründen,
+# kaç porsiyon, ne fiyata" sorusu vardır (`BLD/docs/control/menu.md`).
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: gün, kalem, stok sayacı ve satış durumu
+# BLD'dedir. Yerel tablolar yalnız üç şey içindir — yazma gerekçesi (denetim
+# izi), stok tavanı önizlemesi (temel çizgi) ve ekran tercihi.
+#
+# Sözleşme: `BLD/docs/control/menu.md` (13 uç) + `00-genel.md` (ortak gövde,
+# hata kodları, biçimler). Uçlar, alan adları ve `not_orderable_reason`
+# değerleri orada sabittir; uydurma alan eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_menu
 name: "Menü Yönetimi"
-description: "Menü, kategori ve servis saatlerinin düzenlenmesi."
+description: "Günlük menü takvimi, kalemleri, yayını ve porsiyon tavanları."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Menü günü, kalemleri, yayın durumu ve stok sayaçları BLD sunucusundadır
+      (`docs/control/menu.md`) ve oraya yalnız geçitten gidilir (K4). İmza,
+      nonce, zaman penceresi, oran sınırı ve kuru prova tek yerde durur; her
+      ekranın kendi istemcisini yazması aynı hatayı on üç yerde tekrarlardı.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_menu.day_published
+      payload: "{date, itemCount, packagePriceKurus, actor}"
+      description: >
+        Bir servis günü bu ekrandan yayına alındı; müşteri artık o güne sipariş
+        verebilir. Kuru provada YAYINLANMAZ — BLD'de hiçbir şey değişmedi.
+    - name: bld_menu.day_unpublished
+      payload: "{date, reason, actor}"
+      description: >
+        Yayındaki bir gün taslağa çekildi; satış kanalından düştü. Kuru provada
+        YAYINLANMAZ.
+    - name: bld_menu.stock_changed
+      payload: "{date, capacityTotal, warningCount, actor}"
+      description: >
+        Gün ya da kalem porsiyon tavanı yazıldı. `warningCount` tavanı
+        satılmışın altına düşen kalem sayısıdır. Kuru provada YAYINLANMAZ.
   subscribes: []
 
 http:
@@ -36,20 +77,56 @@ ui:
     requires: [bld_menu.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran BLD'nin satış takvimini kuruyor: `bbd_staff`
+# mağaza tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır,
+# `accountant` mali ekranlara bakar. Üçünün de burada işi yok.
+#
+# ÜÇÜNCÜ ANAHTAR `bld_menu.remove` YALNIZ SİLMEYİ TAŞIR. Ayrımın yeri şu:
+# yayından çekmek (`unpublish`) bir şalterdir ve tersi tek tıktır — gün taslak
+# olarak yerinde durur, kalemleri durur, yeniden yayınlanır. Silmek ise geri
+# alınamaz: gün kaydı ve TÜM kalemleri (fiyat geçersiz kılmaları, tavanları,
+# etiketleri) birlikte gider ve yeniden yazmanın tek yolu hepsini elle girmek.
+# İkisini aynı anahtara koymak, geri alınabilir bir işlemle geri alınamaz bir
+# işlemi aynı kapıdan geçirmek olurdu.
+#
+# Yıkıcı işlemler PIN değil GEREKÇE ister (ADR 0012 ile aynı ilke): ayrı izin
+# anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır) + çift denetim
+# satırı. Bu yüzden hiçbir izin `destructive: true` taşımaz — o bayrak
+# çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
 permissions:
   - key: bld_menu.view
-    description: "Menü Yönetimi ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Menü takvimini, gün ayrıntısını, kalemleri ve stok sayaçlarını görüntüleme."
+    default_roles: [admin, bld_staff]
   - key: bld_menu.manage
-    description: "Menü Yönetimi kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Gün kurma, gün başlığı/fiyatı/notu/kesim saati düzenleme, kalem ekleme ve
+      güncelleme, yayınlama ve taslağa çekme, porsiyon tavanı yazma, günü başka
+      güne kopyalama.
+    default_roles: [admin, bld_staff]
+  - key: bld_menu.remove
+    description: >
+      GERİ ALINAMAZ silme: menü gününü (kalemleriyle birlikte) ve tek kalemi
+      silme. Sunucu iki kapı daha tutuyor — yayınlanmış gün ve siparişi olan
+      gün silinemez, bugünün siparişlerinde kullanılmış kalem silinemez — ama
+      taslak bir haftalık menü tek tıkla yok edilebilir ve geri getirmenin yolu
+      yoktur. Yayından çekmek bu anahtara girmez: o geri alınabilir.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir).
 
 tasks: []

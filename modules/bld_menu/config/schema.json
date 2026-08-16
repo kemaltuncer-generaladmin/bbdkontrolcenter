@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_menu ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "location_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hangi vitrinin takvimi yönetilsin. 0 = alanı hiç gönderme, sunucu varsayılan vitrini kullansın (Location::getDefault())."
+    },
+    "calendar_max_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 92,
+      "description": "Takvim aralığının en çok kaç günü. DailyMenuService::MAX_CALENDAR_DAYS ile aynı; aşan istek sunucudan 422 alır."
+    },
+    "calendar_refresh_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 3600,
+      "description": "Takvim tazeleme aralığı (saniye). 00-genel.md §2 bütçe tablosunda 120 sn varsayıldı; küçültmek öteki panellerin hız payını yer."
+    },
+    "stock_preview_ttl_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Stok önizlemesinin (kuru prova jetonunun) ömrü. Süresi dolmuş jetonla gelen gerçek uygulama reddedilir."
+    },
+    "product_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2000,
+      "description": "Ürün seçicisinde en çok kaç kayıt çizilsin. Aşıldığında ekran kırpıldığını yazar."
+    }
+  }
+}

@@ -2,14 +2,18 @@
 
 BLD sunucusunun kontrol API'sine açılan **tek kapı** (K4). Ekranı, izni, HTTP
 yüzeyi yoktur; yalnızca `bld.api` yeteneğini sağlar. KDS Yönetimi (`bld_kds`)
-ve ilerideki BLD ekranları mutfak verisine buradan ulaşır.
+ve on iki BLD yönetim ekranı BLD verisine buradan ulaşır.
 
-Hedef: `platform/extensions/veykemtu/bridgeapi` (TastyIgniter/Laravel) ·
-uçlar `/api/control/kds/*` · sözleşme **K-21 §1-§4**.
+Hedef: `platform/extensions/veykemtu/bridgeapi` (TastyIgniter/Laravel).
+Sözleşme iki parçalı ve ikisi de dondurulmuş:
+
+| Yüzey | Uçlar | Sözleşme |
+|---|---|---|
+| Mutfak kasaları | `/api/control/kds/*` | K-21 §1-§4 |
+| Panel alanları (13) | `/api/control/<alan>/*` | `BLD/docs/control/` |
 
 Canlı adres **depoda yazmaz**: `config/default.yaml` içinde `base_url` boştur
-ve gerçek değer `config/local.yaml` ile verilir (canlı sistemin adresi
-`https://api.benimlezzetdunyam.com.tr`). Adres boşken geçit ilk istekte
+ve gerçek değer `config/local.yaml` ile verilir. Adres boşken geçit ilk istekte
 `config_missing` hatası döner — sessizce başka bir yere gitmez.
 
 ## Kullanımı
@@ -25,10 +29,36 @@ consumes:
 ```python
 api = ctx.capability("bld.api")
 
-kasalar = await api.devices()                                   # list[dict]
-ozet    = await api.overview()                                  # dict
-sonuc   = await api.revoke_device(3, reason=gerekce, actor=user.full_name, dry_run=dry)
+takvim = await api.menu_calendar(date_from="2026-08-17", date_to="2026-08-23")
+sonuc  = await api.publish_menu_day("2026-08-17", reason=gerekce,
+                                    actor=user.full_name, dry_run=False)
 ```
+
+> ### HER YAZMA AÇIK `dry_run=` GEÇİRİR — geçidin varsayılanına GÜVENİLMEZ
+>
+> `config/default.yaml` içinde `dry_run_default: false` durur, ama
+> `config/local.yaml` **git dışıdır** ve o dosyada bugün `true` yazıyor. Bayrağı
+> atlayan bir modül, hiçbir şey yazmadan `{"ok": true}` alır ve ekran
+> "kaydedildi" der. On iki panel modülünün tamamı için kural tektir:
+> **`dry_run=` her çağrıda açıkça verilir.** Prova isteniyorsa `True`,
+> uygulanacaksa `False`; varsayılana bırakılmaz.
+
+## Neden tek modül, neden alan başına geçit değil
+
+Sunucu hız sınırları IP başınadır ve Kontrol Merkezi tek IP'den çıkar:
+
+| Sınır | Değer | Kimin |
+|---|---|---|
+| `bld-control` | 1200/saat/IP | `/api/control/kds/*` |
+| `bld-control-panel` | 3000/saat/IP | 13 panel alanı |
+
+Geçit alan başına bölünseydi her parça kendi 18/dk kovasını taşır, her biri
+kendini uyumlu sanar ve toplam sunucu tavanını katlayarak aşardı — üstelik
+geçit 429'u yalnız **bir kez** yeniden deniyor. Paylaşılan bir sunucu bütçesi
+ancak paylaşılan bir istemci kovasıyla onurlandırılır.
+
+Yoklama baskısı kovayı büyüterek değil, **referans veriyi önbelleğe alarak**
+karşılanır (aşağıya bakın).
 
 ## İmza — sözleşme §1
 
@@ -44,118 +74,353 @@ kanonik = METOT \n YOL \n ZAMAN \n NONCE \n sha256_hex(ham gövde)
 imza    = "sha256=" + hmac_sha256(kanonik, sır)
 ```
 
-- **Yol sorgu dizesi HARİÇ** imzalanır (`/api/control/kds/devices`); süzgeçler
-  isteğe girer, imzaya girmez.
-- **Gövde ham bayt olarak imzalanır ve aynen gönderilir.** İstemci gövdeyi bir
-  kez üretip `httpx`'e `content=` ile verir; `json=` kullanılsaydı httpx gövdeyi
-  yeniden serileştirir ve en küçük fark (ayraç boşluğu, `\uXXXX` kaçışı, anahtar
-  sırası) sunucuda başka bir özet üretirdi. Hata da "gövde bozuk" demez, "imza
-  doğrulanamadı" der — sahada teşhis edilemez.
-- **Her deneme yeniden imzalanır.** Nonce sunucuda 600 sn hatırlanıyor; 429
-  sonrası aynı başlıklarla yinelemek "Bu istek daha önce işlendi" üretirdi.
-- Pencere ±300 sn. 401 alındığında geçit üç olası sebebi birden söyler: yanlış
-  sır, saat kayması, tekrar oynatma.
-- Sır **kasadadır**: `server.bld.control_secret` (kasadaki adlandırma kuralı
-  `server.<uygulama>.<alan>`). Değeri sunucudaki `BLD_CONTROL_SECRET` ortam
-  değişkeniyle aynı olmalıdır. Sır yoksa istek **hiç gönderilmez**.
+- **Yol sorgu dizesi HARİÇ** imzalanır; süzgeçler isteğe girer, imzaya girmez.
+  (Müşteri okumalarındaki zorunlu `actor` da bu yüzden imzaya bağlı değildir —
+  sınır bilinçli ve `00-genel.md` §9'da yazılı.)
+- **Gövde ham bayt olarak imzalanır ve aynen gönderilir.** `json=` kullanılsaydı
+  httpx gövdeyi yeniden serileştirir ve en küçük fark (ayraç boşluğu, `\uXXXX`
+  kaçışı, anahtar sırası) sunucuda başka bir özet üretirdi. Hata da "gövde
+  bozuk" demez, "imza doğrulanamadı" der — sahada teşhis edilemez.
+  **Görsel yüklemenin base64 olmasının sebebi budur** (`upload.py`).
+- **Her deneme yeniden imzalanır.** Nonce sunucuda 600 sn hatırlanıyor.
+- Pencere ±300 sn. 401 alındığında geçit üç olası sebebi birden söyler.
+- Sır **kasadadır**: `server.bld.control_secret`. Sır yoksa istek **hiç
+  gönderilmez**.
 
-## Bilmen gereken beş kural
+## Bilmen gereken altı kural
 
 1. **Acil fren** — `read_only` **varsayılan olarak açıktır**. Açıkken GET dışı
-   her istek geçitte reddedilir (`BldApiError.code == "read_only"`), uzağa hiç
-   gitmez. Deneme yine de `mod_bld_api_audit` tablosuna işlenir.
-2. **Kuru prova** — yazma metotlarının `dry_run` varsayılanı **False**
-   (K-22 §4 ile kapatıldı; şalter arayüzden kaldırıldı ve `bld_kds` paneli
-   bayrağı artık hiç göndermiyor). **Bayrağın kendisi durur:** `dry_run=True`
-   veren bir çağrı hâlâ prova yapar — sözleşme §4 additive'dir ve kaldırmak
-   bayrağı açıkça gönderen eski çağrıları kırardı. Yazmanın emniyeti artık tek
-   başına `read_only` acil frenidir. Sözleşmedeki yazma uçları bayrağı anlar: yazma yapılmaz,
-   sunucu denetim satırını `result="dry_run"` ile yine de yazar ve
-   `{"ok": true, "dry_run": true, "would": {...}}` döner — yani istek gerçekten
-   gider. Sözleşmede **olmayan** bir yola kuru prova ile yazılmak istenirse
-   istek **hiç gönderilmez** ve `{"ok": true, "dry_run": true, "sent": false}`
-   döner; Laravel tanımadığı alanı yok saydığı için o bayrak sessizce düşer ve
-   "prova" gerçek yazmaya dönüşürdü.
-3. **Gerekçe ve aktör zorunlu** — her yazma metodu `reason` (en az 10 karakter;
-   revizyon ve durum uçlarında en çok 160) ve `actor` alır. İkisi de **gövdeye**
-   konur (sözleşme §3); sözleşme başka başlık tanımlamadığı için başlıkla
-   taşınmaz. İstek çıkmadan aynı bilgi `mod_bld_api_audit` tablosuna yazılır.
-4. **Hata biçimi** — her şey `BldApiError` olarak gelir: `.message` (Türkçe,
-   maskelenmiş) · `.status` · `.code` (`config_missing` · `read_only` ·
-   `reason_required` · `actor_required` · `payload` · `unauthorized` ·
-   `forbidden` · `not_found` · `control_endpoint_missing` · `validation` ·
-   `conflict` · `rate_limited` · `transport` · `server` · `http`). Servis
-   katmanı bunu yakalar ve ekran ayakta kalır (K7).
+   her istek geçitte reddedilir (`code == "read_only"`), uzağa hiç gitmez.
+   Deneme yine de `mod_bld_api_audit` tablosuna işlenir.
+2. **Kuru prova ve KAYIT DEFTERİ** — yazma metotlarının `dry_run` varsayılanı
+   `False`. Sözleşmedeki yazma uçları bayrağı anlar: yazma yapılmaz, sunucu
+   denetim satırını `result="dry_run"` ile yine de yazar ve `would` döner —
+   yani istek gerçekten gider. Sözleşmede **olmayan** bir yola kuru prova ile
+   yazılmak istenirse istek **hiç gönderilmez** ve `{"ok": true, "dry_run":
+   true, "sent": false}` döner; Laravel tanımadığı alanı yok saydığı için o
+   bayrak sessizce düşer ve "prova" gerçek yazmaya dönüşürdü.
+   Yolların defteri `client.py` içinde her alanın metot bloğunun başındaki
+   `register_dry_run(...)` çağrılarıdır; kapsamı bir test kanıtlıyor
+   (`test_bld_api_dry_run_registry.py`).
+3. **Gerekçe ve aktör zorunlu** — her yazma metodu `reason` ve `actor` alır.
+   İkisi de **gövdeye** konur (sözleşme §3). Sınırlar:
+
+   | Nerede | `reason` | Kaynak |
+   |---|---|---|
+   | Sipariş revizyon/durum/iptal (KDS ve panel) | 10–160 | `veykemtu_order_revisions.reason` sütunu |
+   | Diğer panel uçları | 10–500 | `00-genel.md` §3 |
+   | KDS cihaz/komut uçları | en az 10, üst sınır YOK | K-21 bir sınır söylemiyor; uydurulmaz |
+
+   `actor` her yerde 1–120 karakter (boş olamaz).
+4. **Hata biçimi** — her şey `BldApiError`: `.message` (Türkçe, maskelenmiş) ·
+   `.status` · `.code` (`config_missing` · `read_only` · `reason_required` ·
+   `actor_required` · `payload` · `unauthorized` · `forbidden` · `not_found` ·
+   `control_endpoint_missing` · `validation` · `conflict` · `rate_limited` ·
+   `transport` · `server` · `http`). Servis katmanı bunu yakalar ve ekran
+   ayakta kalır (K7).
 5. **Yineleme ve hız** — GET üç kez denenir, **yazma yinelenmez** (sözleşmede
    idempotency anahtarı taşıyan başlık yok). 429 istisnadır: `Retry-After`
-   kadar beklenip bir kez yinelenir. Hız kovası dakikada 18 istekte durur —
-   sunucu sınırı saatte 1200 ve 18 × 60 = 1080 < 1200.
+   kadar beklenip bir kez yinelenir. Hız kovası **tek**tir ve dakikada 18
+   istekte durur.
+6. **Okuma önbelleği** — yalnızca **referans** veri. Ayrıntı aşağıda.
 
 `not_found` ile `control_endpoint_missing` **ayrı** şeylerdir: ilki "uç var,
-kayıt yok", ikincisi "uç sunucuya henüz dağıtılmamış, bekle". Ayrımı yanıtın
-zarfı kanıtlar — sözleşmenin `{"error": {...}}` zarfı geldiyse istek
-denetleyiciye ulaşmış demektir.
+kayıt yok", ikincisi "uç sunucuya henüz dağıtılmamış, bekle".
 
-## Yöntem yüzeyi
+## Önbellek — neyin alındığı ve neyin ALINMADIĞI
 
-`bld_kds` ekranı bu imzaları çağırır. Yazma metotlarında `reason` ve `actor`
-**zorunlu anahtar argümandır**; `dry_run` verilmezse ayardaki varsayılan geçer.
-
-| Alan | İmza | Uç |
+| Metot | Anahtar | Düşüren yazmalar |
 |---|---|---|
-| Durum | `state() -> dict` | — (yerel) |
-| Durum | `await health() -> dict` | `GET /overview` |
-| Durum | `await audit_trail(*, limit: int = 100) -> list[dict]` | — (yerel tablo) |
-| Özet | `await overview() -> dict` | `GET /overview` |
-| Cihaz | `await devices() -> list[dict]` | `GET /devices` |
-| Cihaz | `await create_device(*, name: str, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `POST /devices` |
-| Cihaz | `await rename_device(device_id: int, *, name: str, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `PATCH /devices/{id}` |
-| Cihaz | `await new_pairing_code(device_id: int, *, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `POST /devices/{id}/pairing-code` |
-| Cihaz | `await revoke_device(device_id: int, *, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `POST /devices/{id}/revoke` |
-| Ayar | `await update_device_settings(device_id: int, *, settings: dict, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `PATCH /devices/{id}/settings` |
-| Komut | `await device_commands(device_id: int) -> list[dict]` | `GET /devices/{id}/commands` |
-| Komut | `await send_command(device_id: int, *, command: str, payload: dict \| None = None, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `POST /devices/{id}/commands` |
-| Fiş | `await print_jobs(*, device_id: int \| None = None, order_id: int \| None = None, limit: int \| None = None) -> list[dict]` | `GET /print-jobs` |
-| Sipariş | `await orders(*, include_completed: bool = False, since: str = "") -> list[dict]` | `GET /orders` |
-| Sipariş | `await order(order_id: int) -> dict` | `GET /orders/{id}` |
-| Sipariş | `await order_revisions(order_id: int) -> list[dict]` | `GET /orders/{id}/revisions` |
-| Sipariş | `await create_order_revision(order_id: int, *, items: list[dict], reason: str, actor: str, note: str = "", requested_at: str = "", customer_note: str = "", dry_run: bool \| None = None) -> dict` | `POST /orders/{id}/revisions` |
-| Sipariş | `await set_order_status(order_id: int, *, status: str, reason: str, actor: str, dry_run: bool \| None = None) -> dict` | `POST /orders/{id}/status` |
+| `categories()` | `category:list` | `create_category`, `update_category` |
+| `product_picker()` | `product:picker:*` | bütün ürün yazmaları |
+| `settings_reference()` | `settings:reference:*` | bütün ayar yazmaları |
+| `audit_actions()` | `audit:actions` | — (salt okunur alan) |
+
+**Bunların dışında hiçbir şey önbelleğe alınmaz.** Sipariş, stok sayısı,
+müşteri, abonelik, fatura, SMS şablonu, izleme olayı ve gösterge paneli
+**her çağrıda sunucuya gider**: personel "kaydettim ama listede yok"
+yaşamamalı ve bayat bir satış şalteri, kazandığı istekten çok daha pahalıya
+patlar. Bu olumsuz iddia testle sabitlenmiştir
+(`test_bld_api_cache.py::test_canli_veri_onbellege_alinmaz`).
+
+`reference_snapshot()` dört referans listesini tek çağrıda toplar ve SQLite'a
+yazar (L2). Süreç yeniden başladığında ekran BLD'ye hiç gitmeden dolar; BLD
+erişilemezken **son bilinen hâl** `stale: true` ve `errors` ile döner (K7).
+Hiç görüntü yoksa hata yukarı gider: bayat veri iyi, uydurma veri değil.
+
+## Yöntem yüzeyi — DONMUŞ TABLO
+
+Panel modülleri bu tabloyu okur. Yazma metotlarında `reason` ve `actor`
+**zorunlu anahtar argümandır**; `dry_run` her çağrıda açıkça verilir.
+
+Yol sütunundaki önek gösterilmez: KDS satırlarında `/api/control/kds`, panel
+satırlarında `/api/control` + alan adı.
+
+Dönüş şekilleri:
+
+| Kısaltma | Şekil |
+|---|---|
+| `dict` | Düz sözlük (`data` zarfı açılmış) |
+| `liste` | `list[dict]` — **yalnız KDS metotları** |
+| `sayfa` | `{"items": [...], "meta": {...}}` |
+| `tarama` | `{"items": [...], "total": int, "pages": int, "truncated": bool}` |
+| `belge` | `{"content": bayt, "text": str, "content_type", "filename", "bytes", "total_rows", "truncated", "status"}` |
+
+### 0 · Geçit durumu (yerel, ağa çıkmaz)
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `state()` | — | — | — | — | `dict` |
+| `await audit_trail(*, limit=100)` | — | — | — | — | `liste` |
+| `forget_reference(prefix="")` | — | — | — | — | `None` |
+| `await health()` | GET | `/overview` | — | — | `dict` |
+
+### 1 · KDS — mutfak kasaları (K-21, `bld_kds` kullanıyor)
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `overview()` | GET | `/overview` | — | — | `dict` |
+| `devices()` | GET | `/devices` | — | — | `liste` |
+| `create_device(*, name)` | POST | `/devices` | ✔ | ✔ | `dict` |
+| `rename_device(device_id, *, name)` | PATCH | `/devices/{id}` | ✔ | ✔ | `dict` |
+| `new_pairing_code(device_id)` | POST | `/devices/{id}/pairing-code` | ✔ | ✔ | `dict` |
+| `revoke_device(device_id)` | POST | `/devices/{id}/revoke` | ✔ | ✔ | `dict` |
+| `update_device_settings(device_id, *, settings)` | PATCH | `/devices/{id}/settings` | ✔ | ✔ | `dict` |
+| `device_commands(device_id)` | GET | `/devices/{id}/commands` | — | — | `liste` |
+| `send_command(device_id, *, command, payload=None)` | POST | `/devices/{id}/commands` | ✔ | ✔ | `dict` |
+| `print_jobs(*, device_id, order_id, limit)` | GET | `/print-jobs` | — | — | `liste` |
+| `orders(*, include_completed=False, since="")` | GET | `/orders` | — | — | `liste` |
+| `order(order_id)` | GET | `/orders/{id}` | — | — | `dict` |
+| `order_revisions(order_id)` | GET | `/orders/{id}/revisions` | — | — | `liste` |
+| `create_order_revision(order_id, *, items, note, requested_at, customer_note)` | POST | `/orders/{id}/revisions` | ✔ 160 | ✔ | `dict` |
+| `set_order_status(order_id, *, status)` | POST | `/orders/{id}/status` | ✔ 160 | ✔ | `dict` |
+
+### 2 · `menu` — günlük menü takvimi
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `menu_calendar(*, date_from, date_to, location_id=None)` | GET | `/menu/calendar` | — | — | `sayfa` |
+| `menu_day(date, *, location_id=None)` | GET | `/menu/days/{date}` | — | — | `dict` |
+| `create_menu_day(*, date, title, description, internal_note, package_price_kurus, components_sellable, cutoff_time, capacity_total, items, location_id)` | POST | `/menu/days` | ✔ 500 | ✔ | `dict` |
+| `update_menu_day(date, *, title, description, internal_note, package_price_kurus, components_sellable, cutoff_time, capacity_total, image_path, location_id)` | PATCH | `/menu/days/{date}` | ✔ 500 | ✔ | `dict` |
+| `delete_menu_day(date, *, location_id=None)` | DELETE | `/menu/days/{date}` | ✔ 500 | ✔ | `dict` |
+| `publish_menu_day(date, *, location_id=None)` | POST | `/menu/days/{date}/publish` | ✔ 500 | ✔ | `dict` |
+| `unpublish_menu_day(date, *, location_id=None)` | POST | `/menu/days/{date}/unpublish` | ✔ 500 | ✔ | `dict` |
+| `create_menu_item(date, *, menu_id, quantity, sort_order, label, price_override_kurus, is_required, sellable_alone, capacity, location_id)` | POST | `/menu/days/{date}/items` | ✔ 500 | ✔ | `dict` |
+| `update_menu_item(date, item_id, *, quantity, sort_order, label, price_override_kurus, is_required, sellable_alone, capacity)` | PATCH | `/menu/days/{date}/items/{item}` | ✔ 500 | ✔ | `dict` |
+| `delete_menu_item(date, item_id)` | DELETE | `/menu/days/{date}/items/{item}` | ✔ 500 | ✔ | `dict` |
+| `menu_stock(date, *, location_id=None)` | GET | `/menu/days/{date}/stock` | — | — | `dict` |
+| `set_menu_stock(date, *, capacity_total, items, location_id)` | PUT | `/menu/days/{date}/stock` | ✔ 500 | ✔ | `dict` |
+| `duplicate_menu_day(date, *, target_date, overwrite=False, location_id)` | POST | `/menu/days/{date}/duplicate` | ✔ 500 | ✔ | `dict` |
+
+### 3 · `products` — ürün kataloğu
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `products(*, q, category_id, status, sold_out, sort, direction, page, per_page)` | GET | `/products` | — | — | `sayfa` |
+| `product(menu_id)` | GET | `/products/{menu}` | — | — | `dict` |
+| `product_picker(*, only_active=True)` | GET | `/products` (tüm sayfalar) | — | — | `tarama` **önbellekli** |
+| `create_product(*, name, price_kurus, description, minimum_qty, priority, status, category_ids)` | POST | `/products` | ✔ 500 | ✔ | `dict` |
+| `update_product(menu_id, *, name, description, price_kurus, minimum_qty, priority, status, category_ids)` | PATCH | `/products/{menu}` | ✔ 500 | ✔ | `dict` |
+| `delete_product(menu_id)` | DELETE | `/products/{menu}` | ✔ 500 | ✔ | `dict` |
+| `set_product_image(menu_id, *, content, filename)` | PUT | `/products/{menu}/image` | ✔ 500 | ✔ | `dict` (+`upload` künyesi) |
+| `delete_product_image(menu_id)` | DELETE | `/products/{menu}/image` | ✔ 500 | ✔ | `dict` |
+| `mark_product_sold_out(menu_id, *, note=None)` | POST | `/products/{menu}/sold-out` | ✔ 500 | ✔ | `dict` |
+| `clear_product_sold_out(menu_id)` | DELETE | `/products/{menu}/sold-out` | ✔ 500 | ✔ | `dict` |
+| `categories()` | GET | `/products/categories` | — | — | `sayfa` **önbellekli** |
+| `create_category(*, name, description, parent_id, priority, status)` | POST | `/products/categories` | ✔ 500 | ✔ | `dict` |
+| `update_category(category_id, *, name, description, parent_id, priority, status)` | PATCH | `/products/categories/{id}` | ✔ 500 | ✔ | `dict` |
+
+### 4 · `settings` — satış ayarları
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `sales_settings(*, location_id=None)` | GET | `/settings/sales` | — | — | `dict` |
+| `settings_reference(*, location_id=None)` | GET | `/settings/sales` (`meta`) | — | — | `dict` **önbellekli** |
+| `update_sales_settings(*, order_cutoff, max_lookahead_days, subscription_release_time, min_order_total_kurus, delivery_fee_kurus, payment_methods, busy, busy_message, prep_minutes, delivery_minutes, busy_extra_minutes, daily_menu_enabled, auto_invoice, location_id)` | PUT | `/settings/sales` | ✔ 500 | ✔ | `dict` |
+| `pause_ordering(*, until=None, customer_message=None, location_id)` | POST | `/settings/ordering/pause` | ✔ 500 | ✔ | `dict` |
+| `resume_ordering(*, location_id=None)` | POST | `/settings/ordering/resume` | ✔ 500 | ✔ | `dict` |
+| `closed_days(*, date_from="", date_to="")` | GET | `/settings/closed-days` | — | — | `sayfa` |
+| `create_closed_day(*, date, description=None)` | POST | `/settings/closed-days` | ✔ 500 | ✔ | `dict` |
+| `delete_closed_day(date)` | DELETE | `/settings/closed-days/{date}` | ✔ 500 | ✔ | `dict` |
+
+### 5 · `orders` — siparişler (panel yolu)
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `order_list(*, service_date, date_from, date_to, status, delivery_type, customer_id, subscription_id, source, q, page, per_page)` | GET | `/orders` | — | — | `sayfa` |
+| `order_detail(order_id)` | GET | `/orders/{order}` | — | — | `dict` |
+| `order_revision_history(order_id)` | GET | `/orders/{order}/revisions` | — | — | `sayfa` |
+| `revise_order(order_id, *, items, note, requested_at, customer_note)` | POST | `/orders/{order}/revisions` | ✔ 160 | ✔ | `dict` |
+| `change_order_status(order_id, *, status)` | POST | `/orders/{order}/status` | ✔ 160 | ✔ | `dict` |
+| `cancel_order(order_id, *, refund=True, notify_customer=True)` | POST | `/orders/{order}/cancel` | ✔ 160 | ✔ | `dict` |
+| `export_orders(*, süzgeçler, max_rows)` | GET | `/orders/export` | — | — | `belge` |
+| `order_invoice(order_id)` | GET | `/orders/{order}/invoice` | — | — | `dict` |
+
+### 6 · `subscriptions` — abonelik, talep, sözleşme, ödeme
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `subscriptions(*, status, customer_id, q, service_day, active_on, page, per_page)` | GET | `/subscriptions` | — | — | `sayfa` |
+| `subscription(subscription_id)` | GET | `/subscriptions/{id}` | — | — | `dict` |
+| `create_subscription(*, customer_id, start_date, service_days, default_quantity, delivery_type, menu_mode, payment_mode, end_date, delivery_time_from, delivery_time_to, agreed_unit_price_kurus, lines, delivery_points, location_id)` | POST | `/subscriptions` | ✔ 500 | ✔ | `dict` |
+| `update_subscription(subscription_id, *, end_date, delivery_type, delivery_time_from, delivery_time_to, service_days, menu_mode, default_quantity, agreed_unit_price_kurus, lines, delivery_points)` | PATCH | `/subscriptions/{id}` | ✔ 500 | ✔ | `dict` |
+| `activate_subscription(subscription_id)` | POST | `/subscriptions/{id}/activate` | ✔ 500 | ✔ | `dict` |
+| `pause_subscription(subscription_id, *, start_date, end_date, pause_reason)` | POST | `/subscriptions/{id}/pause` | ✔ 500 | ✔ | `dict` |
+| `resume_subscription(subscription_id)` | POST | `/subscriptions/{id}/resume` | ✔ 500 | ✔ | `dict` |
+| `cancel_subscription(subscription_id, *, effective_date)` | POST | `/subscriptions/{id}/cancel` | ✔ 500 | ✔ | `dict` |
+| `subscription_calendar(subscription_id, *, date_from, days)` | GET | `/subscriptions/{id}/calendar` | — | — | `sayfa` |
+| `create_subscription_exception(subscription_id, *, service_date, skip, quantity_override, note)` | POST | `/subscriptions/{id}/exceptions` | ✔ 500 | ✔ | `dict` |
+| `delete_subscription_exception(subscription_id, service_date)` | DELETE | `/subscriptions/{id}/exceptions/{date}` | ✔ 500 | ✔ | `dict` |
+| `subscription_runs(subscription_id, *, date_from, date_to, page, per_page)` | GET | `/subscriptions/{id}/runs` | — | — | `sayfa` |
+| `generate_subscription_orders(subscription_id, *, service_date, release_now=False)` | POST | `/subscriptions/{id}/generate` | ✔ 500 | ✔ | `dict` |
+| `release_subscription_order(order_id)` | POST | `/subscriptions/orders/{order}/release` | ✔ 500 | ✔ | `dict` |
+| `quote_requests(*, status, q, date_from, date_to, page, per_page)` | GET | `/subscriptions/requests` | — | — | `sayfa` |
+| `quote_request(request_id)` | GET | `/subscriptions/requests/{id}` | — | — | `dict` |
+| `update_quote_request(request_id, *, status, admin_note)` | PATCH | `/subscriptions/requests/{id}` | ✔ 500 | ✔ | `dict` |
+| `convert_quote_request(request_id, *, customer_id, subscription)` | POST | `/subscriptions/requests/{id}/convert` | ✔ 500 | ✔ | `dict` |
+| `subscription_contracts(subscription_id)` | GET | `/subscriptions/{id}/contracts` | — | — | `sayfa` |
+| `create_subscription_contract(subscription_id, *, phone, expires_in_days=7, send_sms=True)` | POST | `/subscriptions/{id}/contracts` | ✔ 500 | ✔ | `dict` |
+| `subscription_contract(contract_id)` | GET | `/subscriptions/contracts/{c}` | — | — | `dict` |
+| `resend_subscription_contract(contract_id, *, expires_in_days)` | POST | `/subscriptions/contracts/{c}/resend` | ✔ 500 | ✔ | `dict` |
+| `cancel_subscription_contract(contract_id)` | POST | `/subscriptions/contracts/{c}/cancel` | ✔ 500 | ✔ | `dict` |
+| `subscription_payments(subscription_id, *, status, date_from, date_to)` | GET | `/subscriptions/{id}/payments` | — | — | `sayfa` |
+| `create_subscription_payment(subscription_id, *, period_start, period_end, due_date, amount_kurus=None, note)` | POST | `/subscriptions/{id}/payments` | ✔ 500 | ✔ | `dict` |
+| `mark_subscription_payment_paid(payment_id, *, method, paid_at, reference, create_invoice=False)` | POST | `/subscriptions/payments/{p}/mark-paid` | ✔ 500 | ✔ | `dict` |
+
+### 7 · `customers` — müşteriler (**KVKK: okumalar da denetlenir**)
+
+Her `GET` **`actor` anahtar argümanı** ister (1–120 karakter) ve sorgu
+dizesine koyar. **Bu ekranlarda otomatik yenileme KURULMAZ.**
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `customers(*, actor, q, status, has_subscription, sort, direction, page, per_page)` | GET | `/customers` | — | — | `sayfa` |
+| `customer(customer_id, *, actor)` | GET | `/customers/{id}` | — | — | `dict` |
+| `update_customer(customer_id, *, first_name, last_name, telephone, org_name, tax_office, tax_no, contact_person, org_phone)` | PATCH | `/customers/{id}` | ✔ 500 | ✔ | `dict` |
+| `customer_orders(customer_id, *, actor, status, date_from, date_to, page, per_page)` | GET | `/customers/{id}/orders` | — | — | `sayfa` |
+| `customer_subscriptions(customer_id, *, actor)` | GET | `/customers/{id}/subscriptions` | — | — | `sayfa` |
+| `customer_addresses(customer_id, *, actor)` | GET | `/customers/{id}/addresses` | — | — | `sayfa` |
+| `disable_customer(customer_id)` | POST | `/customers/{id}/disable` | ✔ 500 | ✔ | `dict` |
+| `enable_customer(customer_id)` | POST | `/customers/{id}/enable` | ✔ 500 | ✔ | `dict` |
+
+### 8 · `invoices` — fatura belgesi (mali değeri yoktur)
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `invoices(*, customer_id, subscription_id, order_id, status, date_from, date_to, q, page, per_page)` | GET | `/invoices` | — | — | `sayfa` |
+| `invoice(invoice_id)` | GET | `/invoices/{id}` | — | — | `dict` |
+| `invoice_html(invoice_id)` | GET | `/invoices/{id}/html` | — | — | `belge` |
+| `create_invoice(*, order_id \| subscription_id + period_start + period_end, subscription_payment_id)` | POST | `/invoices` | ✔ 500 | ✔ | `dict` |
+| `void_invoice(invoice_id)` | POST | `/invoices/{id}/void` | ✔ 500 | ✔ | `dict` |
+
+### 9 · `cms` — site içeriği
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `site_content()` | GET | `/cms/content` | — | — | `dict` |
+| `set_site_content(key, *, value, revalidate=True)` | PUT | `/cms/content/{key}` | ✔ 500 | ✔ | `dict` |
+| `site_services(*, published="")` | GET | `/cms/services` | — | — | `sayfa` |
+| `create_site_service(*, slug, title, fields, revalidate=True)` | POST | `/cms/services` | ✔ 500 | ✔ | `dict` |
+| `update_site_service(service_id, *, fields, revalidate=True)` | PATCH | `/cms/services/{id}` | ✔ 500 | ✔ | `dict` |
+| `delete_site_service(service_id, *, revalidate=True)` | DELETE | `/cms/services/{id}` | ✔ 500 | ✔ | `dict` |
+| `site_posts(*, q, category, published, page, per_page)` | GET | `/cms/posts` | — | — | `sayfa` |
+| `create_site_post(*, slug, title, body_html, fields, revalidate=True)` | POST | `/cms/posts` | ✔ 500 | ✔ | `dict` |
+| `update_site_post(post_id, *, fields, revalidate=True)` | PATCH | `/cms/posts/{id}` | ✔ 500 | ✔ | `dict` |
+| `delete_site_post(post_id, *, revalidate=True)` | DELETE | `/cms/posts/{id}` | ✔ 500 | ✔ | `dict` |
+| `revalidate_site(*, paths=None)` | POST | `/cms/revalidate` | ✔ 500 | ✔ | `dict` |
+
+`fields` sözlüğü sözleşmedeki kalan alanları **olduğu gibi** taşır; geçit
+onları ayıklamaz — bilinen alanları seçen bir dönüşüm, sözleşmeye yeni bir
+alan eklendiğinde onu sessizce düşürürdü.
+
+### 10 · `sms` — şablon, kayıt, duyuru
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `sms_templates()` | GET | `/sms/templates` | — | — | `sayfa` |
+| `update_sms_template(key, *, body, enabled)` | PATCH | `/sms/templates/{key}` | ✔ 500 | ✔ | `dict` |
+| `preview_sms_template(key, *, body="", sample=None)` | POST | `/sms/templates/{key}/preview` | ✔ 500 | ✔ | `dict` |
+| `send_test_sms(*, phone, template_key \| body, sample)` | POST | `/sms/send-test` | ✔ 500 | ✔ | `dict` |
+| `sms_log(*, phone, template_key, status, context, customer_id, date_from, date_to, page, per_page)` | GET | `/sms/log` | — | — | `sayfa` |
+| `sms_announcement()` | GET | `/sms/announcement` | — | — | `dict` |
+| `set_sms_announcement(*, body, audience)` | PUT | `/sms/announcement` | ✔ 500 | ✔ | `dict` |
+| `run_sms_announcement(*, confirm_recipients)` | POST | `/sms/announcement/run` | ✔ 500 | ✔ | `dict` |
+
+### 11 · `notifications` — uygulama-içi duyuru
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `notifications(*, status, audience, level, live, q, page, per_page)` | GET | `/notifications` | — | — | `sayfa` |
+| `create_notification(*, title, body, level, audience, starts_at, ends_at, action_label, action_url, dismissible)` | POST | `/notifications` | ✔ 500 | ✔ | `dict` |
+| `update_notification(notification_id, *, title, body, level, audience, starts_at, ends_at, action_label, action_url, dismissible)` | PATCH | `/notifications/{id}` | ✔ 500 | ✔ | `dict` |
+| `publish_notification(notification_id)` | POST | `/notifications/{id}/publish` | ✔ 500 | ✔ | `dict` |
+| `archive_notification(notification_id)` | DELETE | `/notifications/{id}` | ✔ 500 | ✔ | `dict` |
+| `notification_stats(notification_id)` | GET | `/notifications/{id}/stats` | — | — | `dict` |
+
+### 12 · `monitor` — hata olayları ve cihaz sağlığı
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `monitor_events(*, source, level, code, device_id, since, resolved, q, page, per_page)` | GET | `/monitor/events` | — | — | `sayfa` |
+| `monitor_event(event_id)` | GET | `/monitor/events/{id}` | — | — | `dict` |
+| `resolve_monitor_event(event_id, *, note="")` | POST | `/monitor/events/{id}/resolve` | ✔ 500 | ✔ | `dict` |
+| `monitor_devices()` | GET | `/monitor/devices` | — | — | `sayfa` |
+| `monitor_summary()` | GET | `/monitor/summary` | — | — | `dict` |
+
+### 13 · `dashboard` — açılış özeti
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `dashboard_overview(*, location_id=None, date="")` | GET | `/dashboard/overview` | — | — | `dict` |
+
+### 14 · `audit` — denetim izi (salt okunur)
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `server_audit(*, actor, action, target_type, target_id, result, date_from, date_to, q, page, per_page=50)` | GET | `/audit` | — | — | `sayfa` |
+| `server_audit_entry(audit_id)` | GET | `/audit/{id}` | — | — | `dict` |
+| `audit_actions()` | GET | `/audit/actions` | — | — | `sayfa` **önbellekli** |
+
+Bu alanda yazma ucu **yoktur ve olmayacaktır**. `server_audit()` sunucunun
+izini okur; `audit_trail()` geçidin **yerel** izini okur ve sunucuya hiç
+gitmez. İkisi ayrı sorulara cevap verir.
+
+### 15 · Referans görüntüsü
+
+| Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
+|---|---|---|---|---|---|
+| `reference_snapshot(*, refresh=False)` | GET | dört referans ucu | — | — | `dict` |
 
 Yanıt alanları **snake_case**'tir ve dönüştürülmez (sözleşme §2). `store_api`
 camelCase döndürür; iki geçidin biçimini birbirine benzetmek sözleşmeyle ekran
 arasına sessiz bir çeviri katmanı sokardı.
 
-### Geçidin istek göndermeden kestiği durumlar
+## Geçidin istek göndermeden kestiği durumlar
 
 Hepsinin sebebi tek: **Laravel tanımadığı alanı sessizce yok sayar.**
 "Kaydedildi" diyen bir ekranın arkasında hiçbir yere yazılmamış bir değer
 bırakmak, açık bir hatadan çok daha pahalıdır.
 
-- **Tanınmayan ayar anahtarı.** Yönetilen ayar 24 tanedir (16 mevcut + 7 kilit,
-  sözleşme §2.2, + `disabled_sound_events`, K-22 §1); listede olmayan anahtar
-  `payload` koduyla reddedilir.
-- **`None` düşürülmez.** Kilit alanlarında `null` = "yönetici dokunmadı" =
-  **serbest**, `false` = kilitli. `None`'ları gövdeden atmak bir kilidi
-  kaldırmayı imkânsız kılardı — geçit `null`'ı JSON `null` olarak gönderir.
-  Aynı ayrım `disabled_sound_events`te de var ve orada üçüncü bir hâl daha
-  taşıyor: `null` "dokunmadım", **boş dize** "hiçbiri kapalı olmasın". Boş
-  dizeyi düşüren bir geçit, kasadaki bütün susturmaları kaldırma komutunu
-  "hiç dokunma"ya çevirirdi.
-- **Tanınmayan komut.** `test_receipt · reprint · clear_failed ·
-  silence_alarm · restart · update · unpair · clear_queue`
-  (`KitchenCommand::ALL`; son üçü K-22 §2). `reprint` için fiş türü
-  (`mutfak` · `musteri` · `kurye`) zorunludur, son üçü **yüksüzdür**.
-- **Boş revizyon listesi.** `items` kalem farkı değil **tam listedir**; boş
-  liste "hepsini sil" anlamına gelirdi ve iptal işi durum ucunun işidir.
-
-### Fiş kuyruğu bir kuyruk değildir
-
-`print_jobs()` **denetim kaydı** döndürür: basılmış işler, en yeni önce.
-Kasanın kendi disk kuyruğu sunucuda **yoktur** (sözleşme §2.4). "Bekleyen iş"
-sayısı cihaz sağlığından okunur:
-`device["health"]["print_queue_pending"]` ve `["print_queue_failed"]`.
-Bu tabloyu kuyruk sanan bir ekran bekleyen işi hiç göremezdi.
+- **Kuru prova defterinde olmayan yol.** İstek gönderilmez, sentetik yanıt döner.
+- **Tanınmayan ayar anahtarı** (KDS, 24 yönetilen ayar) ve **tanınmayan komut**.
+- **Boş revizyon listesi.** `items` kalem farkı değil **tam listedir**.
+- **Boş kısmi yazma.** Yalnız `reason`/`actor` taşıyan bir `PATCH`, hiçbir şey
+  değiştirmeden denetim izine satır yazardı.
+- **`item_id` taşımayan stok satırı.** Liste tam listedir; eksik satır o
+  kalemin tavanını sessizce kaldırırdı.
+- **Bozuk tarih** (`YYYY-MM-DD` değil). Yol kuru prova defterine bu kalıpla
+  kayıtlı; bozuk bir tarih "uç sözleşmede yok" gibi görünen bir hata üretirdi.
+- **`payment_mode="account"` ve `method="account"`.** Cari hesap kalktı.
+- **`skip=True` + `quantity_override`.** "Atla ama 12 yap" tutarsız.
+- **Fatura kipinin belirsizliği** (`order_id` ve `subscription_id` birlikte ya
+  da hiçbiri).
+- **Deneme SMS'inde şablon + serbest metnin birlikte verilmesi.**
+- **Kapatılamayan bilgilendirme duyurusu** ve **etiketsiz düğme**.
+- **Görselde**: bozuk base64, sınırı aşan boyut, içerikten okunan türün
+  desteklenmemesi.
+- **Aktör adının 120 karakteri aşması.**
+- **`actor`süz müşteri okuması** (KVKK).
 
 ## Ayar ve sır
 
@@ -167,55 +432,60 @@ modules:
   bld_api:
     base_url: "https://api.benimlezzetdunyam.com.tr"
     read_only: false          # yazma açılacaksa — varsayılan güvenli taraftadır
-    dry_run_default: false    # K-22 §4; bayrak durur, varsayılanı kalktı
+    dry_run_default: false    # çağrılar yine de açıkça dry_run= geçirir
 
 secrets:
   server.bld.control_secret: "<sunucudaki BLD_CONTROL_SECRET ile aynı>"
 ```
 
-Sır depoda, ayarda, log'da ve hata metninde bulunmaz. Maskeleme iki katmanlıdır:
-ad tabanlı desen (`secret`, `token`, `password` … geçen alanlar) ve
-**yüklenmiş sır değerinin kendisi**. İkincisi şart: sır rastgele bir dizedir,
-sunucu onu alan adı olmadan yankılarsa desen yakalayamaz.
+Ayar anahtarları: `base_url` · `timeout_seconds` · `read_only` ·
+`dry_run_default` · `require_reason` · `requests_per_minute` · `page_size` ·
+`reference_ttl_seconds` · `snapshot_ttl_seconds` · `max_items` ·
+`max_upload_mb`.
+
+Sır depoda, ayarda, log'da ve hata metninde bulunmaz. Maskeleme iki
+katmanlıdır: ad tabanlı desen ve **yüklenmiş sır değerinin kendisi**.
 
 ## Tablolar
 
 | Tablo | İçerik |
 |---|---|
-| `mod_bld_api_audit` | Yazma denemeleri — istek **çıkmadan** yazılır, gerekçe ve aktör taşır. `result` boşsa "gönderildi mi belli değil". |
+| `mod_bld_api_audit` | Yazma denemeleri — istek **çıkmadan** yazılır. `result` boşsa "gönderildi mi belli değil". |
+| `mod_bld_api_snapshot` | Referans verinin L2 anlık görüntüsü. BLD verisi **kopyalanmaz**; yalnız kategori/ayar/katalog/sözlük durur. |
 
-Sunucunun kendi denetim tablosu (`veykemtu_control_audit`) iki şeyi bilmez:
-hiç gönderilemeyen istek (ağ koptu, acil fren kapattı) ve imzası reddedildiği
-için denetleyiciye **ulaşamayan** istek — imza doğrulaması middleware'de,
-denetleyiciden önce çalışıyor.
+Görsel yükleme gövdesi denetim izine **künye olarak** yazılır
+(`{filename, mime, bytes}`); base64 içerik hiçbir yere yazılmaz (§8.2).
 
 ## Sözleşmede eksik görülenler
 
 Bunlar uydurulmadı; olduğu gibi bildirilir:
 
-1. **Liste zarfı belirsiz.** §2 yalnız alan adlarının snake_case olduğunu
-   söylüyor; liste yanıtının düz dizi mi `{"data": [...]}` mı olduğu yazmıyor.
-   Geçit ikisini de açar, üçüncü bir ad (`items`, `rows`) aramaz.
-2. **Ayar gövdesinin biçimi belirsiz.** `PATCH /devices/{id}/settings` gövdesi
-   sözleşmede tarif edilmiyor. Geçit ayarları `settings` nesnesinin içine
-   koyar — §2.1'deki `device` nesnesi de onları orada taşıyor ve §3'ün zorunlu
-   `reason`/`actor` alanlarıyla karışma ihtimali böyle kalkıyor. **Sunucu
-   tarafı yazılırken teyit edilmelidir.**
-3. **İdempotency anahtarı yok.** Sözleşme istek kimliği taşıyan bir başlık
-   tanımlamıyor. Bu yüzden `mod_bld_api_audit.request_id` yalnız yerel bir
-   anahtardır ve yazma isteğinin yinelenmemesi bir tercih değil zorunluluktur.
-4. **Uçlar sunucuda henüz yayında değil.** `routes/api.php` içinde
-   `/api/control/kds` öneki yok (imza middleware'i yazılmış durumda). Bu hâlde
-   çağrılar `control_endpoint_missing` koduyla döner ve ekran "sunucu eklentisi
-   güncellenince çalışacak" diyerek ayakta kalır (K7).
+1. **Ayar gövdesinin biçimi belirsiz** (KDS `PATCH /devices/{id}/settings`).
+   Geçit ayarları `settings` nesnesine koyar; sunucu tarafı yazılırken teyit
+   edilmelidir.
+2. **İdempotency anahtarı yok.** `mod_bld_api_audit.request_id` yalnız yerel
+   bir anahtardır ve yazma isteğinin yinelenmemesi bir tercih değil
+   zorunluluktur.
+3. **Ürün seçenekleri salt okunur.** Seçenek yazan uç sözleşmede tanımlanmadı;
+   düzenleme TastyIgniter admin panelinde kalıyor.
+4. **Uçların sunucuda yayında olması gerekiyor.** Panel alanları henüz
+   dağıtılmadıysa çağrılar `control_endpoint_missing` koduyla döner ve ekran
+   "sunucu eklentisi güncellenince çalışacak" diyerek ayakta kalır (K7).
 
 ## Testler
 
 ```bash
-.venv/bin/python -m pytest modules/bld_api/tests -q
+.venv/bin/python -m pytest modules/bld_api -q
 .venv/bin/ruff check modules/bld_api
 ```
 
 Testler ağa çıkmaz: `httpx.MockTransport` ile sahte sunucu, sahte kasa ve sahte
-depo kullanılır. Kanonik imza biçimi **sabit vektörle** çakılıdır — ayraç, sıra
-ya da kodlama bir gün değişirse hata sahada değil testte çıkar.
+depo kullanılır. Üç davranış **sabitlenmiştir** ve değiştirilmesi bilinçli bir
+karar gerektirir:
+
+- kanonik imza biçimi (sabit vektör),
+- kuru prova defterinin **kapsamı** — `BldApi` üzerindeki her yazma metodu
+  (imzasında `reason` ve `actor` taşıyan her metot) listede sayılı olmalı ve
+  kuru provada gerçekten istek göndermeli,
+- önbelleğin **neyi almadığı** — sipariş, stok, müşteri, abonelik, fatura,
+  şablon, izleme ve gösterge paneli her çağrıda sunucuya gider.

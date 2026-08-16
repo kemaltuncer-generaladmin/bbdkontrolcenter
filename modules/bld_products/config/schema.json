@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_products ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI: açık kalsaydı panelden yapılan her yazma sessizce provaya döner ve ekran 'kaydedildi' derken BLD'de hiçbir şey değişmezdi. Servis bayrağı geçide HER ÇAĞRIDA açıkça gönderir; geçidin kendi varsayılanı bu modülü etkilemez."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Ürün listesinde sayfa başına satır. Tavan sunucunun tavanıdır (00-genel.md §5); büyütmek sunucuda kırpılır."
+    },
+    "audit_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Yerel deneme izinde gösterilecek satır sayısı. Bu tablo Kontrol Merkezi'nin kendi deposundadır; sunucunun defteri hiç gönderilememiş isteği bilmez."
+    }
+  }
+}

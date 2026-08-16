@@ -195,7 +195,7 @@ class Kernel:
                 "state": record.state,
                 "reason": record.reason,
                 "provides": [entry.capability for entry in record.manifest.provides],
-                "ui": record.manifest.ui,
+                "ui": _reported_ui(record.manifest),
                 "permissions": [
                     {
                         "key": permission.key,
@@ -212,6 +212,35 @@ class Kernel:
 
 
 # ------------------------------------------------------------------ yardım
+
+
+def _reported_ui(manifest: Manifest) -> dict[str, Any]:
+    """Rapora giren `ui` bloğu: diskte OLMAYAN panel girişi ilan sayılmaz.
+
+    BULUNAN HATA (2026-08-16). Aynı soruya iki yerden iki farklı yanıt
+    veriliyordu. `tools/build-ui-registry.py` → `copy_panel()` dosya yoksa
+    `None` döner, kayıt defterine `entry` hiç yazılmaz; kabuk `entry` boş
+    görünce "ekranı henüz yok" diyen GRİ kartı çizer — bu bir arıza değil,
+    bir eksiktir. Çalışma anında ise burası ham manifesti olduğu gibi
+    döndürüyordu: kabuk var olmayan dosya için `import()` deniyor, hata
+    yakalanıp yığın iziyle KIRMIZI arıza kartı çiziliyordu. Kodlanmamış
+    iskelet modüller bozukmuş gibi görünüyordu.
+
+    Kural GENELDİR ve modül bilmez (K1): "bildirilmiş ama diskte olmayan
+    giriş, giriş değildir." Modül adı geçmez, modüle özel dal yoktur.
+
+    Hata kabukta yakalanıp geri düşülerek KAPATILMAZ: o çözüm "dosya yok" ile
+    "panelde sözdizimi hatası var" durumlarını ayırt edemez ve ikincisi
+    kırmızıyı gerçekten hak eder. Gerekçe: ADR 0015.
+    """
+    ui = manifest.ui
+    entry = ui.get("entry")
+    if not entry or (manifest.path / str(entry)).is_file():
+        return ui
+    # Manifest nesnesi bozulmasın: yalnız rapor kopyasından düşürülür.
+    trimmed = dict(ui)
+    del trimmed["entry"]
+    return trimmed
 
 
 def _module_defaults(manifest: Manifest) -> dict[str, Any]:

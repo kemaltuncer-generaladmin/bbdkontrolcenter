@@ -1,19 +1,51 @@
-# Bildirimler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Bildirimler — müşteri uygulamasında ve sitede gösterilen UYGULAMA-İÇİ
+# duyuruların yönetim ekranı.
+#
+# PUSH BİLDİRİMİ (FCM) YOKTUR ve bu bilinçli bir iş kararıdır (BLD iş kararı 11,
+# `docs/control/notifications.md`). Duyuru İTTİRİLMEZ: müşteri uygulamayı
+# açtığında görür. Acil bir şey duyurulacaksa SMS kullanılır (`bld_sms`
+# kulvarı). Arayüzde "push" kelimesi GEÇMEZ; geçseydi ekran, sistemin
+# yapamadığı bir şeyi vaat ederdi.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: duyuru kaydı ve okunma sayaçları BLD'dedir
+# (`veykemtu_notifications`, `veykemtu_notification_reads`). Tek yerel tablo
+# yazma DENEMESİNİN izidir — sunucunun izi yalnız kendisine ULAŞAN isteği bilir.
+#
+# Sözleşme: `BLD/docs/control/notifications.md` (+ ortak kurallar `00-genel.md`).
+# Uçlar, alan adları ve doğrulama kuralları orada sabittir; uydurma alan
+# eklenmez. Sunucu tarafı duyuru tabloları BAŞKA BİR AJANIN KULVARINDA ve
+# sonraki fazda geliyor: uç yayında değilken geçit `control_endpoint_missing`
+# veriyor ve ekran zarifçe bozuluyor (K7).
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_notifications
 name: "Bildirimler"
-description: "Bildirim kuralları ve gönderim geçmişi."
+description: "Uygulama-içi duyuruların hazırlanması, yayını ve görülme istatistiği."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Duyuru kaydı, hedef kitle büyüklüğü ve okunma sayaçları BLD
+      sunucusundadır (`docs/control/notifications.md`) ve oraya yalnız
+      geçitten gidilir (K4). İmza, nonce, zaman penceresi ve oran sınırı tek
+      yerde durur; her ekranın kendi istemcisini yazması aynı hatayı yirmi
+      yerde tekrarlardı.
 
 events:
   publishes: []
@@ -36,20 +68,51 @@ ui:
     requires: [bld_notifications.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran MÜŞTERİYE GÖRÜNEN metni yönetir: `bbd_staff`
+# mağaza tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır, `accountant`
+# mali ekranlara bakar. Üçünün de burada işi yok.
+#
+# ÜÇÜNCÜ ANAHTAR — `publish`. Yayınlanan duyuru bütün hedef kitlenin
+# uygulamasında açılır ve sözleşmede geri alma ucu YOKTUR
+# (`POST /{id}/unpublish` bilerek tanımlanmadı); arşivleme de yayında duran bir
+# duyuruyu ANINDA görünmez yapar. İkisi de dışa dönük karardır ve aynı eşiği
+# hak eder. Taslak yazmak dışa dönük değildir; metni hazırlayan kişiye
+# hazırladığını yayınlama yetkisini otomatik vermemek için `manage` ile kalır.
+#
+# Yıkıcı/dışa dönük işlemler PIN değil GEREKÇE ister (ADR 0012): ayrı izin
+# anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır) + çift denetim
+# satırı. Bu yüzden hiçbir izin `destructive: true` taşımaz — o bayrak
+# çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
 permissions:
   - key: bld_notifications.view
-    description: "Bildirimler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Duyuruları, görülme istatistiğini ve yerel yazma izini görüntüleme."
+    default_roles: [admin, bld_staff]
   - key: bld_notifications.manage
-    description: "Bildirimler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Duyuru taslağı oluşturma ve duyuru içeriğini düzenleme."
+    default_roles: [admin, bld_staff]
+  - key: bld_notifications.publish
+    description: >
+      DIŞA DÖNÜK: duyuruyu yayına alma ve arşivleme. Bu yetkiyi taşıyan kişi
+      bütün müşterilerin uygulamasında açılan metni değiştirir; yayının geri
+      alma ucu yoktur (yayından kaldırmanın yolu bitiş anını geçmişe çekmek ya
+      da arşivlemektir) ve arşivlenen duyuru anında görünmez olur.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir).
 
 tasks: []

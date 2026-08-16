@@ -1,0 +1,123 @@
+/* Ürün Yönetimi paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bp-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bp-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bp` kökünün kendisidir — o da panelin kendi öneki.
+
+   Dosya `mount()` İÇİNDE yükleniyor (`loadStyles(import.meta.url)`), modül
+   tepesinde değil: kabuk yetenek çözümü sırasında hiç açılmayacak panelleri de
+   import ediyor ve tepedeki bir yükleme kullanılmayan stilleri head'e sızdırır. */
+
+.bp {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bp > * { flex: none; }
+
+.bp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bp-body > * { flex: none; }
+
+.bp-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px 0;
+}
+
+.bp-tabview { display: flex; flex-direction: column; gap: 12px; }
+
+.bp-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.bp-dim { color: var(--soft); font-size: 12px; }
+
+.bp-text { margin: 0 0 10px; line-height: 1.5; max-width: 62ch; }
+
+/* ------------------------------------------------------------------ liste */
+
+/* Küçük resim kutusu. Görsel YOKKEN de aynı ölçüde durur: kutu kaybolsaydı
+   satırlar birbirine göre kayar ve göz listeyi tarayamazdı. */
+.bp-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--tint);
+}
+.bp-thumb img { width: 100%; height: 100%; object-fit: cover; }
+/* "—" (hiç yüklenmemiş) ve "!" (adresi var, açılmıyor) aynı kutuyu kullanır;
+   ayrım metinde ve `title` ipucundadır, renkte değil (kural 7). */
+.bp-thumb.none { color: var(--soft); font-size: 12px; }
+
+.bp-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bp-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.bp-marks { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.bp-price { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.bp-price b { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------- çekmece */
+
+.bp-pane { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
+
+.bp-block { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.bp-block .kit-textarea { width: 100%; }
+
+/* Kayıtlı görselin önizlemesi. Ölçü SABİT DEĞİL, üst sınırlı: kareye zorlamak
+   kırpma yaratır ve kullanıcı sitede göreceği hâlden başka bir şey görürdü. */
+.bp-current { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.bp-current-img {
+  max-width: 100%;
+  max-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+/* ------------------------------------------------------------- seçenekler */
+
+/* Seçenekler SALT OKUNUR (sözleşme kararı): düğme yok, kutu yok. Görünüm de
+   bunu söylemeli — girilebilir bir alana benzeyen bir kutu, düzenlenebileceği
+   izlenimi verirdi. */
+.bp-options { display: flex; flex-direction: column; gap: 10px; }
+
+.bp-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+}
+.bp-option > b { display: inline-flex; align-items: center; gap: 6px; }
+
+.bp-option-value {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-left: 10px;
+  font-size: 12.5px;
+}
+.bp-option-value span:last-child { font-variant-numeric: tabular-nums; }

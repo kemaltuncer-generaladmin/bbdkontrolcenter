@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_customers ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI: açık kalsaydı her yazma sessizce provaya döner ve ekran 'kaydedildi' derken müşterinin telefonu eski hâlinde kalırdı."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Müşteri listesinde sayfa başına satır. Tavan sözleşmenin tavanıdır (00-genel.md §5)."
+    },
+    "order_page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Müşteri kartındaki sipariş geçmişinde sayfa başına satır."
+    },
+    "sms_page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Müşteri kartındaki SMS gönderim kaydında sayfa başına satır."
+    },
+    "access_log_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "Yerel KVKK erişim izinde bir ekranda gösterilecek en fazla satır. Tablo silinmez; bu yalnız okuma penceresidir."
+    },
+    "audit_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Yerel yazma denemesi izinde bir ekranda gösterilecek en fazla satır."
+    }
+  }
+}

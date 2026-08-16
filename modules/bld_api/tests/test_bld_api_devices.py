@@ -240,11 +240,18 @@ def test_state_snake_case_dondurur() -> None:
 
     # BLD sözleşmesinin tamamı snake_case (§2); aynı ekranda iki adlandırma
     # bulundurmak yazım hatasını sessiz bırakırdı.
+    #
+    # Kümenin TAMAMI karşılaştırılır (alt küme değil): `state()` ekranların
+    # acil freni gösterdiği tek kaynak ve buraya sessizce eklenen camelCase bir
+    # anahtar, ancak ekranda yanlış çizim olarak fark edilirdi. Panel alanları
+    # eklenirken iki anahtar daha geldi ve ikisi de snake_case.
     assert durum == {
         "base_url": "https://ornek.test",
         "read_only": True,
         "dry_run_default": True,
         "require_reason": True,
+        "page_size": 25,
+        "max_upload_bytes": 8 * 1024 * 1024,
     }
 
 

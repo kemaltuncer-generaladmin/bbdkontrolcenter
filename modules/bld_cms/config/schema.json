@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_cms ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI: ekranda kuru prova şalteri yok ve panel bayrağı hiç göndermiyor; açık kalsaydı her yazma sessizce provaya döner ve site hiç değişmezdi. Uç `dryRun: true` kabul etmeye devam eder."
+    },
+    "revalidate_after_save": {
+      "type": "boolean",
+      "description": "Yazma sonrası siteyi yeniden çizdirme varsayılanı. AÇIK: kapalı bir varsayılan olağan akışı 'kaydettim ama sitede yok' ile bitirir. Panel bu alanı her kaydetmede açıkça gönderir; ayar yalnız alan hiç gelmediğinde geçerlidir."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 200,
+      "description": "Yazı listesinde sayfa başına satır. Sunucu sayfalıyor; bu yalnız istenen boyuttur."
+    },
+    "revision_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Yerel düzenleme geçmişi listesinde en çok kaç satır gösterilsin."
+    },
+    "revision_max_bytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 4194304,
+      "description": "Bir sürüm satırında saklanacak en büyük gövde (bayt). Aşan değer kırpılmaz, künyeye düşürülür ve satır 'gövdesi saklanmadı' diye işaretlenir."
+    },
+    "site_url": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Sitenin herkese açık adresi — yalnız 'sitede gör' bağlantısı için. Boşken bağlantı hiç çizilmez; depoda boş bırakılır ve kurulum `config/local.yaml` ile verir."
+    },
+    "image_max_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "Satır içi görselin ön denetim sınırı (MB). Asıl kapı sunucudadır; bu değer yalnız erken geri bildirim içindir ve sözleşmede görsel yükleme ucu olmadığı için bugün kullanılmıyor."
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_notifications ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI olmalıdır: açık kalırsa panelden yapılan her yazma sessizce provaya döner, ekran 'yayınlandı' der ve müşteride hiçbir şey görünmez. Uç `dryRun: true` kabul etmeye devam eder (sözleşme §4 additive)."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Liste sayfası başına kayıt. Sözleşme tavanı 100 (`00-genel.md` §5)."
+    },
+    "refresh_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 3600,
+      "description": "Liste sekmesi açıkken tazeleme aralığı (saniye). Varsayılan 120, `00-genel.md` §2 bütçe tablosunda duyuru rozetine ayrılan pay. Kısaltmak paylaşılan `bld-control-panel` kovasından başka ekranların payını yer."
+    },
+    "ending_soon_hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 720,
+      "description": "'Yakında bitiyor' uyarısının eşiği (saat). Ekran kararıdır; sözleşmede karşılığı yoktur ve sunucudaki hiçbir davranışı değiştirmez."
+    },
+    "audit_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Yerel denetim izinde varsayılan satır sayısı. Gerçek tavan uç noktanın şema kapısındadır (le=500)."
+    }
+  }
+}

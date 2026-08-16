@@ -1,22 +1,62 @@
-# SMS Paneli modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# SMS Paneli — BLD'nin müşteriye giden SMS metinleri, tetikleyicileri ve kaydı.
+#
+# Bu ekran SMS GÖNDERMEZ. Gönderim BLD sunucusundadır (`Services\Sms\SmsSender`;
+# üretimde `NetgsmSmsSender`, sır tanımsızsa `LogSmsSender`) ve buraya yalnız
+# imzalı `/api/control/sms/*` uçlarından bakılır (K4). Kontrol Merkezi'nin kendi
+# `notify` şeridi BU EKRANIN GÖNDERİM YOLU DEĞİLDİR — ayrım aşağıda yazılı.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: şablon metni, gönderim kaydı ve duyuru taslağı
+# BLD'dedir. Yerel tablolar yalnız üç şey içindir — yazma denemesinin izi,
+# yazdığımız anın temel çizgisi (sapma yakalamak için) ve toplu duyurunun kuru
+# prova jetonu.
+#
+# Sözleşme: BLD/docs/control/sms.md + BLD/docs/control/00-genel.md.
+# Şablon anahtarları, değişken adları ve kitle değerleri orada SABİTTİR.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_sms
 name: "SMS Paneli"
-description: "Müşteri ve personele SMS gönderimi ve gönderim geçmişi."
+description: "BLD SMS şablonları, tetikleyicileri, toplu duyuru ve gönderim kaydı."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Şablon, gönderim kaydı ve duyuru taslağı BLD sunucusundadır
+      (`BLD/docs/control/sms.md`) ve oraya yalnız geçitten gidilir (K4). İmza,
+      nonce, zaman penceresi, oran sınırı ve `dry_run` taşıma tek yerde durur.
+  - capability: notify
+    optional: true
+    reason: >
+      YALNIZ AYIRT ETMEK İÇİN. Kontrol Merkezi'nin kendi Netgsm şeridi vardır
+      (`km_platform/notify`) ve bu ekrandan çıkan SMS ONDAN GEÇMEZ: gönderimi
+      BLD sunucusu kendi sağlayıcısıyla yapar. Yetenek burada tek bir soruya
+      cevap verir — "bu makinede ayrı bir SMS şeridi var mı" — ve panel bunu
+      BLD'nin sağlayıcı durumundan AYRI bir satırda yazar. Aksi hâlde BLD'nin
+      sırrı eksikken yönetici Kontrol Merkezi'nin Netgsm ayarını düzeltmeye
+      çalışır ve hiçbir şey değişmez. Yetenek yoksa ekran tümüyle çalışır (K7).
+      Metin ölçümü ve numara normalleştirme yeteneğe DEĞİL, `km_sdk`'nin
+      `plan_text` / `normalize_msisdn` yardımcılarına dayanır; bu modül Netgsm
+      istemcisi yazmaz.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_sms.announcement_sent
+      payload: "{recipients, sent, failed, segments, audience, actor}"
+      description: >
+        Toplu duyuru GERÇEKTEN gönderildi. Kuru provada YAYINLANMAZ — hiçbir
+        müşteriye mesaj gitmedi, dinleyicileri uyandırmak yalan olurdu.
   subscribes: []
 
 http:
@@ -36,20 +76,52 @@ ui:
     requires: [bld_sms.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran müşteriye giden metni ve toplu gönderimi yönetir:
+# `bbd_staff` mağaza tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır,
+# `accountant` mali ekranlara bakar. Üçünün de burada işi yok.
+#
+# ÜÇÜNCÜ ANAHTAR — `bld_sms.announce`. Toplu duyuru yüzlerce müşteriye tek
+# tuşla gider, geri alınamaz ve GERÇEK PARA harcar (her alıcı için segment
+# başına kredi). Şablon metnini düzeltmekle yüzlerce SMS göndermek aynı yetki
+# olamaz. Yıkıcı işlem PIN değil GEREKÇELİ ONAY ister (ADR 0012): ayrı izin +
+# zorunlu gerekçe + çift denetim satırı. Bu yüzden hiçbir izin
+# `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak ve
+# bu ekran PIN istemiyor.
 permissions:
   - key: bld_sms.view
-    description: "SMS Paneli ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Şablonları, tetikleyici durumlarını, gönderim kaydını ve duyuru taslağını
+      görüntüleme; metin ölçümü ve sunucu önizlemesi (hiçbir SMS göndermez).
+    default_roles: [admin, bld_staff]
   - key: bld_sms.manage
-    description: "SMS Paneli kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Şablon metnini yazma, bir bildirimi açma/kapatma, tek numaraya
+      `[DENEME]` SMS'i ve duyuru TASLAĞINI yazma. Taslak yazmak göndermek
+      değildir; gönderim ayrı anahtardadır.
+    default_roles: [admin, bld_staff]
+  - key: bld_sms.announce
+    description: >
+      TOPLU DUYURUYU GÖNDERME. Bu yetkiyi taşıyan kişi tek istekle yüzlerce
+      müşteriye SMS yollar; gönderilen mesaj geri alınamaz, her segment
+      faturalanır ve yanlış metin spam şikâyeti ile numara kaybı demektir.
+      Ayrıca `all_customers` kitlesi panelde ikinci bir onay ister.
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` geçidinden, SMS şeridi bilgisi `notify` platform
+    yeteneğinden gelir; ikisi de burada TEKRAR EDİLMEZ (consumes bloğunda
+    ilan edilir). Netgsm istemcisi bu modülde YOKTUR.
 
 tasks: []

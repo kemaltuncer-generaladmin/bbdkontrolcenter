@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_orders ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI olmalıdır: açık kalırsa panelden yapılan her yazma sessizce provaya döner ve ekran 'kaydedildi' der. Servis yine de her geçit çağrısında `dry_run=` değerini açıkça geçirir."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "description": "Liste sayfa boyutu varsayılanı. Sözleşme tavanı 100."
+    },
+    "default_range_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90,
+      "description": "Süzgeç verilmediğinde panelin açtığı gün aralığı. Sunucunun süzgeçsiz varsayılanı (son 7 gün) ile aynı tutulmalıdır."
+    },
+    "poll_seconds": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 300,
+      "description": "Canlı liste yoklama aralığı. `bld-control-panel` bütçesi (3000/saat/IP) bu ekran için 15 saniye varsayıyor; kısaltmak ikinci bir yöneticinin ekranını 429'a düşürür."
+    },
+    "export_max_rows": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 20000,
+      "description": "CSV dışa aktarımın satır tavanı. Aşılırsa sunucu satırları keser ve `X-Truncated: true` döner; hata verilmez."
+    },
+    "export_path": {
+      "type": "string",
+      "description": "Dışa aktarım klasörü. Boşsa masaüstündeki rapor hiyerarşisi kullanılır (Raporlar/BLD/Siparişler/<yıl>/<ay>)."
+    }
+  }
+}

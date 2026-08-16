@@ -1,0 +1,30 @@
+# SMS Paneli ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: açık kalsaydı panelden yapılan her yazma sessizce bir
+# provaya döner, ekran "kaydedildi" der ve BLD'de hiçbir şey değişmezdi.
+#
+# Bu ekranın panelinde şablon ve taslak yazmaları bayrağı AÇIKÇA `false`
+# gönderir; toplu duyuru ise önce `true` (zorunlu kuru prova), sonra `false`
+# ile çağrılır. Varsayılan yalnız gövdeyi elle kuran bir çağrı için geçerlidir.
+dry_run_default: false
+
+# Gönderim kaydında sayfa başına satır. Sunucu sayfalıyor; bu yalnız istemcinin
+# istediği varsayılan boydur (tavan uç noktanın şema kapısındadır).
+log_page_size: 25
+
+# Toplu duyurunun KURU PROVA JETONU kaç dakika geçerli olsun. Süre dolduktan
+# sonra gelen gerçek gönderim reddedilir ve prova tekrarlanır: yarım saat önce
+# görülen alıcı sayısı bugünün sayısı değildir ve sunucu zaten birebir eşleşme
+# istiyor (`confirm_recipients` → 409).
+announcement_dry_run_ttl_minutes: 15
+
+# Kaç segmenti aşan metin panelde UYARIYLA gösterilsin. Sunucu ENGELLEMEZ
+# (bazı mesajlar gerçekten uzundur); bu yalnız ekranın eşiğidir ve doğrudan
+# maliyettir — iki segment iki kredi demektir.
+segment_warn_threshold: 2
+
+# Duyuru kitlesi seçilirken kaç alıcıdan sonra ekran ek onay istesin. Sunucu
+# tarafında böyle bir eşik YOK; burası yalnız "yanlışlıkla herkese" hatasının
+# önündeki ikinci kapıdır.
+announcement_confirm_threshold: 100

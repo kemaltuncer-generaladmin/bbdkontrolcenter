@@ -1,22 +1,67 @@
-# Sipariş Yönetimi modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Sipariş Yönetimi — gelen siparişlerin listesi, ayrıntısı, revizyonu, durum
+# ilerletmesi, iptali ve muhasebe için CSV dışa aktarımı.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: sipariş, kalem, revizyon, ödeme ve fatura
+# kaydı BLD'dedir. Yerel tablolar yalnız iki şey içindir — yazma gerekçesi
+# (denetim izi) ve ekran tercihi.
+#
+# DURUM MAKİNESİ SUNUCUDADIR. `OrderStatusTransition` geçiş matrisi ve 120
+# saniyelik tek adım geri alma penceresi burada YENİDEN YAZILMADI; ekran
+# sunucunun cevabını Türkçeleştirir ve `can_undo` alanını yüzeye çıkarır.
+# Gerekçesi `backend/orders.py` başlığında.
+#
+# Sözleşme: `BLD/docs/control/orders.md` (sekiz uç) + `00-genel.md`. Uçlar,
+# alan adları ve durum kodları orada sabittir; uydurma alan eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_orders
 name: "Sipariş Yönetimi"
-description: "Gelen siparişlerin görüntülenmesi ve durum ilerletme."
+description: "Gelen siparişlerin görüntülenmesi, revizyonu, durum ilerletme, iptal ve dışa aktarım."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Sipariş, kalem, revizyon, ödeme ve fatura kaydı BLD sunucusundadır
+      (`docs/control/orders.md`) ve oraya yalnız geçitten gidilir (K4). İmza,
+      nonce, zaman penceresi ve oran sınırı tek yerde durur; her ekranın kendi
+      istemcisini yazması aynı hatayı yirmi yerde tekrarlardı. Panel yolu
+      (`/api/control/orders/*`) KDS yolundan ayrı bir hız kovası kullanıyor
+      (`bld-control-panel`, 3000/saat) ve o ayrımı da geçit koruyor.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_orders.order_status_changed
+      payload: "{orderId, from, to, reason, actor}"
+      description: >
+        Sipariş durumu BU EKRANDAN değiştirildi. Ad `bld_kds`inkinden ayrıdır
+        (`bld_kds.order_status_changed` alınmış): aynı adı ikinci kez
+        yayınlamak, dinleyicinin olayın mutfak kasasından mı yönetim
+        panelinden mi geldiğini ayırt edememesi olurdu. Kuru provada
+        YAYINLANMAZ — BLD'de hiçbir şey değişmedi.
+    - name: bld_orders.order_cancelled
+      payload: "{orderId, from, reason, actor, refundKurus, refundCreated, stockReleasedDay}"
+      description: >
+        Sipariş bu ekrandan iptal edildi. `order_status_changed` ile `to=iptal`
+        DEĞİL, ayrı bir olay: iptal para hareketi (iade) ve stok serbest
+        bırakma üretir; ayrımı gövdeye bakarak yapmak zorunda kalan bir
+        dinleyici, iadeyi kaçırdığında sessizce yanlış çalışırdı. Kuru provada
+        YAYINLANMAZ.
   subscribes: []
 
 http:
@@ -36,20 +81,58 @@ ui:
     requires: [bld_orders.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran canlı siparişi, müşteri telefonunu ve ciroyu
+# gösteriyor: `bbd_staff` mağaza tarafındadır, `org_staff` zil/baskı/rehber ile
+# sınırlıdır, `accountant` mali ekranlara bakar ve sipariş ilerletmez.
+#
+# ÜÇÜNCÜ ANAHTAR PARA YÜZÜNDEN VAR. İptal, `status` ucundan `iptal` göndermekle
+# aynı şey değildir ve sözleşmede de ayrı bir uçtur: ödenmiş siparişin İADE
+# KAYDINI üretir, müşteriye SMS gönderir ve porsiyonları gün toplamı ile ürün
+# tavanından düşürür. Revizyon yazabilen birinin tek tıkla iade üretebilmesi
+# için sebep yok.
+#
+# Yıkıcı işlem PIN değil GEREKÇE ister (ADR 0012, `bld_kds` ile aynı ilke):
+# ayrı izin anahtarı + gerekçe (10-160 karakter, backend'de de doğrulanır) +
+# iki denetim satırı ("ne denendi" ve "ne oldu"). Bu yüzden hiçbir izin
+# `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak ve
+# bu ekran PIN istemiyor.
 permissions:
   - key: bld_orders.view
-    description: "Sipariş Yönetimi ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Sipariş listesini, ayrıntısını, revizyon geçmişini, fatura künyesini ve
+      bu ekranın yerel denetim izini görüntüleme; CSV dışa aktarım ve kendi
+      görüntüleme tercihini kaydetme.
+    default_roles: [admin, bld_staff]
   - key: bld_orders.manage
-    description: "Sipariş Yönetimi kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Sipariş revizyonu yazma (tam kalem listesi) ve durum ilerletme. İPTAL
+      BUNA DÂHİL DEĞİLDİR.
+    default_roles: [admin, bld_staff]
+  - key: bld_orders.cancel
+    description: >
+      YIKICI: sipariş iptali. Ödenmiş siparişte iade kaydı üretir, müşteriye
+      iptal SMS'i gönderir ve porsiyonları gün toplamı ile ürün tavanından
+      düşürür (o kadar sipariş yeniden alınabilir hâle gelir). Teslim edilmiş
+      sipariş iptal edilemez; abonelikten üretilmiş bir siparişin iptali
+      aboneliği DURDURMAZ.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir, dosya yazma çekirdeğin `write_private`ıdır.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). CSV dışa aktarım `printer` yeteneği
+    İSTEMEZ: dosya diske yazılır, basılmaz.
 
 tasks: []

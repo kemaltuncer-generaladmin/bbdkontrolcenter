@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_sms ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI: açık kalsaydı her yazma sessizce provaya döner ve ekran 'kaydedildi' derdi."
+    },
+    "log_page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200,
+      "description": "Gönderim kaydında sayfa başına varsayılan satır sayısı."
+    },
+    "announcement_dry_run_ttl_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 240,
+      "description": "Toplu duyurunun kuru prova jetonu kaç dakika geçerli. Süresi dolmuş jetonla gelen gerçek gönderim reddedilir."
+    },
+    "segment_warn_threshold": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Kaç segmenti aşan metin panelde uyarıyla gösterilsin. Sunucu engellemez; bu yalnız ekranın eşiğidir."
+    },
+    "announcement_confirm_threshold": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000,
+      "description": "Duyuru gönderiminde kaç alıcıdan sonra panel ek onay istesin. Sunucu tarafında karşılığı yoktur."
+    }
+  }
+}

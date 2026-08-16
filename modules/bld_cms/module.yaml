@@ -1,19 +1,46 @@
-# Site İçeriği modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Site İçeriği — kurumsal sitenin (Next.js) beslendiği metinler.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı,
+# zaman penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin
+# işidir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: yedi içerik anahtarı, hizmet sayfaları ve
+# bilgi merkezi yazıları `veykemtu_site_*` tablolarındadır. Yerel tablolar
+# yalnız BLD'de KARŞILIĞI OLMAYAN iki şey içindir — yazma gerekçesi (denetim
+# izi) ve DÜZENLEME GEÇMİŞİ. İkincisi sunucuda hiç yok: `PUT /content/{key}`
+# değeri üstüne yazıyor ve `payload_json` bilerek yalnız künye tutuyor
+# ("İçeriğin tam kopyasını denetime yazmak, tabloyu bir sürüm deposu hâline
+# getirirdi" — cms.md). O kararı bozmadan "dün ne yazıyordu" sorusunu
+# cevaplayabilmenin tek yolu, kopyayı BURADA tutmaktır.
+#
+# Sözleşme: BLD/docs/control/cms.md + 00-genel.md. Uçlar, alan adları ve yedi
+# içerik anahtarının listesi orada sabittir; uydurma anahtar eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_cms
 name: "Site İçeriği"
-description: "Kurumsal site metinleri, hizmetler ve marka bilgileri."
+description: "Kurumsal site metinleri, hizmet sayfaları ve bilgi merkezi yazıları."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Site içeriği, hizmet sayfaları, yazılar ve yeniden çizdirme (ISR)
+      BLD sunucusundadır (cms.md) ve oraya yalnız geçitten gidilir (K4).
+      İmza, nonce, zaman penceresi ve oran sınırı tek yerde durur; her
+      ekranın kendi istemcisini yazması aynı hatayı yirmi yerde tekrarlardı.
 
 events:
   publishes: []
@@ -36,20 +63,50 @@ ui:
     requires: [bld_cms.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran herkese açık kurumsal sitenin metinlerini yazar:
+# `bbd_staff` mağaza tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır,
+# `accountant` mali ekranlara bakar. Üçünün de burada işi yok.
+#
+# YIKICI İŞLEM PIN DEĞİL GEREKÇE İSTER (ADR 0012, `bld_kds` ile aynı ilke):
+# ayrı izin anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır) + çift
+# denetim satırı. Bu yüzden hiçbir izin `destructive: true` taşımaz — o bayrak
+# çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
 permissions:
   - key: bld_cms.view
-    description: "Site İçeriği ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: "Site metinlerini, hizmetleri, yazıları ve yerel düzenleme geçmişini görüntüleme."
+    default_roles: [admin, bld_staff]
   - key: bld_cms.manage
-    description: "Site İçeriği kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      İçerik anahtarlarını yazma, hizmet ve yazı açma/güncelleme, yayına alma
+      ve yayından çıkarma, siteyi yeniden çizdirme.
+    default_roles: [admin, bld_staff]
+  - key: bld_cms.delete
+    description: >
+      YIKICI: hizmet sayfasını ve yazıyı GERÇEKTEN silme. Sözleşme yumuşak
+      silme sunmuyor (cms.md — "Gerçek silme"), yani kayıt geri gelmez ve o
+      adrese verilmiş bütün bağlantılar kırılır. Günlük ihtiyaç olan "sitede
+      görünmesin" için `is_published = false` zaten var ve `bld_cms.manage`
+      ile yapılır; bu anahtar yalnız kaydın tümden gitmesi içindir. Yerel
+      düzenleme geçmişi silinen kaydın son hâlini saklamaya devam eder ama o
+      bir yedek değil, bir denetim izidir — geri yükleyen bir uç YOKTUR.
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işi, HTML temizliği standart kitaplığın `html.parser`'ı.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). Yazıcı yeteneği KULLANILMAZ: bu ekranın
+    çıktısı kâğıt değil, herkese açık bir web sayfasıdır.
 
 tasks: []

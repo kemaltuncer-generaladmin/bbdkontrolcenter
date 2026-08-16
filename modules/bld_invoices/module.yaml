@@ -1,19 +1,50 @@
-# Faturalar modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
-# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+# Faturalar — BLD bilgi belgesi ekranı.
+#
+# BU BELGENİN MALİ DEĞERİ YOKTUR (iş kararı 10). Yazdırılabilir bir A4
+# belgedir: resmî fatura değildir, e-Fatura/e-Arşiv değildir, GİB'e gitmez,
+# vergi hesaplamaz. Ekran bunu KAPATILAMAZ bir bantla söyler ve üretilen her
+# dosyanın her sayfasında aynı dipnot basılır.
+#
+# BELGE DÜZENLENMEZ. Sözleşmede `PATCH` ve `DELETE` yoktur: kesilmiş bir
+# belgenin içeriği değiştirilemez (yanlışsa iptal edilip yenisi kesilir) ve
+# numara boşluğu bırakan bir seri, "44 nerede" sorusunu cevapsız bırakır.
+# Arayüz düzeltmeyi `void` + yeni belge olarak gösterir; "düzenle" düğmesi
+# YOKTUR — olmayan bir uca bağlı düğme, kullanıcıya düzelttiğini sandırırdı.
+#
+# BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4). Yerel tek tablo çifti
+# BLD'de karşılığı olmayan iki şeyi tutar: yazma denemesinin izi ve ÜRETİLEN
+# DOSYANIN künyesi (yol, hash, basıldığı an) — fatura verisinin kendisi değil.
+#
+# Sözleşme: BLD/docs/control/invoices.md · Şema: docs/schemas/module.schema.json
 
 id: bld_invoices
 name: "Faturalar"
 description: "Sipariş ve abonelik faturalarının üretimi ve arşivi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Belge kaydı, numarası ve donmuş içeriği (`snapshot_json`) BLD
+      sunucusundadır (invoices.md) ve oraya yalnız geçitten gidilir (K4).
+      İmza, nonce, zaman penceresi, oran sınırı ve kuru prova taşıma tek
+      yerde durur.
+  - capability: printer
+    optional: true
+    reason: >
+      A4 belge kâğıda basılabilsin diye. YAZICI YOKSA EKRAN TÜMÜYLE ÇALIŞIR
+      (K7): belge yine üretilir ve rapor klasörüne yazılır, yalnız "Yazdır"
+      düğmesi kapanır ve nedenini söyler.
 
 events:
   publishes: []
@@ -35,21 +66,55 @@ ui:
     order: 600
     requires: [bld_invoices.view]
 
-# Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+# Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme
+# satırı artık geçerli değil).
+#
+# ÜÇ İZİN, İKİ DEĞİL. `void` bilerek `manage`den ayrıldı: belge üretmek geri
+# alınabilir bir iş değildir ama sonucu bellidir; İPTAL ise müşterinin elindeki
+# kâğıdı geçersiz kılar, numarayı seride ölü bırakır ve GERİ ALINAMAZ — iptal
+# edilmiş bir belge "geçerli"ye döndürülemez, yerine yenisi kesilir.
+#
+# PIN YOK, GEREKÇE VAR (ADR 0012; `bld_kds` de bunu benimsedi). Koruma iki
+# katmanlı: ayrı izin anahtarı + gerekçe (>=10 karakter, şemada VE serviste
+# denetlenir). Bu yüzden hiçbir izin `destructive: true` taşımaz — o bayrak
+# çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
 permissions:
   - key: bld_invoices.view
-    description: "Faturalar ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Belge listesini, tek belgenin donmuş içeriğini, yerel arşivi ve denetim
+      izini görüntüleme; A4 belge üretme, önizleme ve yazdırma.
+    default_roles: [admin, bld_staff]
   - key: bld_invoices.manage
-    description: "Faturalar kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Sipariş ya da dönem belgesi kesme (kuru prova dâhil). Kesilen belge
+      DÜZENLENEMEZ ve SİLİNEMEZ.
+    default_roles: [admin, bld_staff]
+  - key: bld_invoices.void
+    description: >
+      YIKICI: geçerli bir belgeyi iptal etme. Müşterinin elindeki kâğıt
+      geçersiz olur, numara seride ölü kalır (boşluk bırakılmaz, geri
+      kullanılmaz) ve işlem geri alınamaz — düzeltme, iptalden sonra kesilen
+      YENİ bir belgedir.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin, PDF üretimi `km_sdk.build_pdf`in, baskı `printer`
+# yeteneğinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden, baskı `printer` platform yeteneğinden
+    gelir; ikisi de burada TEKRAR EDİLMEZ (consumes bloğunda ilan edilir).
+    Önizleme görüntüsü `pdftoppm` (poppler-utils) ile üretilir; yoksa dosya
+    yine yazılır ve basılabilir, yalnız önizleme boş kalır.
 
 tasks: []

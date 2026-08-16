@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_sales_settings ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "location_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Ayarların yazılacağı vitrin. 0 = varsayılan vitrin; geçide `location_id` hiç gönderilmez."
+    },
+    "baseline_ttl_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Taban çizgisi jetonunun ömrü (dakika). Panelin 'formu tazele' uyarısını belirler; sunucudaki bir kaydı etkilemez."
+    },
+    "stock_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 7,
+      "description": "Hızlı stok şeridinde kaç gün. 2 = bugün + yarın."
+    },
+    "closed_day_days_ahead": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 730,
+      "description": "Kapalı gün listesi kaç gün ileri istensin. Sunucu varsayılanı 365."
+    },
+    "poll_seconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 900,
+      "description": "Ayar ekranının canlı tazeleme aralığı (saniye). Yoğunluk anahtarını mutfak ekranı da değiştiriyor; sekme gizliyken yoklama durur."
+    }
+  }
+}

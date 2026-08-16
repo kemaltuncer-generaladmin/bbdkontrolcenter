@@ -1,5 +1,38 @@
-# Müşteriler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Müşteriler — BLD müşteri kayıtlarının yönetim ekranı.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# ================== BU, SİSTEMDEKİ EN GENİŞ KİŞİSEL VERİ YÜZEYİ ==================
+#
+# Ad, telefon, e-posta, kurum bilgisi, adres defteri, sipariş geçmişi, abonelik
+# ve SMS kaydı tek ekranda birleşiyor. Sözleşme (`docs/control/customers.md` +
+# `00-genel.md` §9) bu yüzden diğer alanlardan AYRILIYOR:
+#
+#   · Diğer alanlarda yalnız YAZMALAR denetim izine düşer. Burada OKUMALAR DA
+#     düşer — sızıntı çoğu zaman bir yazma değil bir okumadır.
+#   · Her `GET` zorunlu bir `actor` taşır ve sunucu `customer.read` satırı yazar.
+#   · BU EKRANLAR YOKLANMAZ. Panelde `pollLoop` YOKTUR ve konmayacaktır:
+#     15 saniyede bir yoklayan bir ekran, denetim izini günde binlerce anlamsız
+#     satırla doldurup içindeki gerçek erişimi görünmez kılardı.
+#
+# PAROLA HİÇBİR UÇTA GEÇMEZ: ne okunur, ne yazılır, ne sıfırlanır. E-POSTA
+# YAZILAMAZ — giriş kimliğidir ve değiştirmek hesabı devretmektir.
+#
+# SİLME UCU YOKTUR VE OLMAYACAKTIR. Hesap kapatılır (`status = false`), kayıt
+# durur: geçmiş siparişlerin müşterisi olmayan kayıtlara dönüşmesi muhasebe ve
+# denetim açısından geri alınamaz bir kayıptır. KVKK silme talebi geldiğinde
+# izlenecek yol ayrıca belirlenir ve panelden tek tuşla yapılan bir iş değildir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: müşteri, adres, sipariş ve abonelik BLD'dedir.
+# Yerel tablolar yalnız üç şey içindir — KVKK erişim izi, yazma denemesinin izi
+# ve bu ekrana özel tercih. Müşteri satırı ASLA yerele yazılmaz; yazılsaydı bu
+# modül ikinci bir müşteri veritabanına dönerdi ve KVKK yüzeyi ikiye katlanırdı.
+#
+# Sözleşme: `BLD/docs/control/customers.md` + `00-genel.md`. Uçlar, alan adları
+# ve yazılabilir alanların listesi orada sabittir; uydurma alan eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_customers
@@ -7,16 +40,35 @@ name: "Müşteriler"
 description: "Müşteri kayıtları, adresler ve sipariş geçmişi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Müşteri kaydı, adres defteri, sipariş geçmişi, abonelik ve SMS gönderim
+      kaydı BLD sunucusundadır (`docs/control/customers.md`) ve oraya yalnız
+      geçitten gidilir (K4). İmza, nonce, zaman penceresi, oran sınırı ve
+      KVKK'nın zorunlu kıldığı `actor` sorgu parametresi tek yerde durur; her
+      ekranın kendi istemcisini yazması aynı hatayı yirmi yerde tekrarlardı —
+      ve burada o hata bir kişisel veri sızıntısı olurdu.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_customers.account_disabled
+      payload: "{customerId, name, reason, actor}"
+      description: >
+        Bir müşteri hesabı bu ekrandan kapatıldı; hesap giriş yapamaz ve
+        sipariş veremez. Kayıt SİLİNMEZ. Yükte telefon, e-posta ya da adres
+        YOKTUR — olay yolu bir kişisel veri kanalı değildir. Kuru provada
+        YAYINLANMAZ: BLD'de hiçbir şey değişmedi.
   subscribes: []
 
 http:
@@ -36,20 +88,66 @@ ui:
     requires: [bld_customers.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil) ve buradaki daraltma öbür BLD ekranlarından daha sert
+# okunmalıdır: `00-genel.md` §10 `bld_customers.*` iznini AYRI BİR KUTU olarak
+# tanımlıyor, gerekçesi de yazılı — "içerik yazan ya da menü kuran birinin
+# müşteri telefon defterine erişmesi için hiçbir sebep yok". `bbd_staff` mağaza
+# tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır, `accountant` mali
+# ekranlara bakar; üçünün de burada işi yok.
+#
+# ÜÇÜNCÜ ANAHTAR — `bld_customers.disable`. Hesap kapatmak müşteriyi giriş
+# yapamaz ve sipariş veremez hâle getirir; sonucu ilk fark eden çoğu zaman
+# müşterinin kendisi olur ve o an satış kaybedilmiştir. `manage` bir telefon
+# düzeltmesi için günlük bir yetkidir, hesabı kapatmak bir karardır.
+#
+# HESABI AÇMAK aynı anahtarı istemez (`manage` da yeter): kapatmak yıkıcı,
+# açmak onarıcıdır. Açmayı da üçüncü anahtara bağlamak, yanlışlıkla kapatılmış
+# bir hesabı düzeltebilecek kişi sayısını azaltırdı — yani hatayı uzatırdı.
+#
+# Yıkıcı işlem PIN değil GEREKÇE ister (ADR 0012; `bld_kds` ve `bld_products`
+# de bunu benimsedi): ayrı izin anahtarı + gerekçe (>=10 karakter, backend'de
+# de doğrulanır) + çift denetim satırı. Bu yüzden hiçbir izin
+# `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak ve
+# bu ekran PIN istemiyor.
 permissions:
   - key: bld_customers.view
-    description: "Müşteriler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Müşteri arama, müşteri kartı, adres defteri, sipariş geçmişi, abonelik ve
+      SMS gönderim kaydını görüntüleme. BU İZİN BİR OKUMA İZNİNDEN FAZLASIDIR:
+      taşıyan kişi bütün müşteri telefon ve e-posta defterine erişir ve her
+      erişimi hem BLD'de hem yerelde denetim izine yazılır.
+    default_roles: [admin, bld_staff]
   - key: bld_customers.manage
-    description: "Müşteriler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      İletişim bilgilerini (ad, soyad, telefon) ve serbest metin kurum
+      etiketlerini (kurum adı, vergi dairesi, vergi/TC numarası, yetkili kişi,
+      kurum telefonu) düzenleme; kapatılmış bir hesabı yeniden açma.
+      E-POSTA VE PAROLA BU İZİNLE DE YAZILAMAZ — sözleşmede yazma yolu yok.
+    default_roles: [admin, bld_staff]
+  - key: bld_customers.disable
+    description: >
+      YIKICI: müşteri hesabını kapatma (`customers.status = false`). Kapalı
+      hesap giriş yapamaz ve sipariş veremez; aktif aboneliği olan bir hesapta
+      abonelik üretimi DURMAZ (kural hesaba değil aboneliğe bağlıdır) ve bu
+      yüzden yanıttaki uyarı yöneticiye gösterilir. Hesap kapatmak VERİ SİLMEZ;
+      silme ucu yoktur.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# ve imza `bld.api` geçidinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir).
 
 tasks: []

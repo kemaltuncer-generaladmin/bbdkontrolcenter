@@ -27,7 +27,43 @@ dry_run_default: false
 # ikisini de zorunlu sayıyor. Kapatmak denetim izini işe yaramaz kılar.
 require_reason: true
 
-# HIZ KOVASI. Sunucu sınırı saatlik: `throttle:bld-control` = 1200/saat/IP.
-# Kova dakikalıktır ve 18'de durur — 18 × 60 = 1080 < 1200, yani dakikalık
-# bir patlama saatlik bütçeyi tüketemez ve pay elle atılan istekler için kalır.
+# HIZ KOVASI — TEK KOVA, ALAN BAŞINA DEĞİL. Sunucu sınırlarının en darı
+# `throttle:bld-control` = 1200/saat/IP (KDS ailesi); panel alanlarının kendi
+# kovası `bld-control-panel` = 3000/saat/IP. Kova dakikalıktır ve 18'de durur
+# — 18 × 60 = 1080 < 1200, yani dakikalık bir patlama en dar saatlik bütçeyi
+# bile tüketemez ve pay elle atılan istekler için kalır.
+#
+# ALAN BAŞINA AYRI KOVA AÇILMAZ: Kontrol Merkezi tek IP'den çıkıyor ve
+# paylaşılan bir sunucu bütçesi ancak paylaşılan bir istemci kovasıyla
+# onurlandırılır. Yoklama baskısı kovayı büyüterek değil, referans veriyi
+# önbelleğe alarak karşılanır (aşağıya bakın).
 requests_per_minute: 18
+
+# SAYFA BOYU. Sunucunun varsayılanı 25, tavanı 100 (`per_page`); üstü sessizce
+# kırpılıyor ve kırpılmış bir sayfayı "hepsi" sanan istemci veri kaybeder,
+# bu yüzden istek çıkmadan burada sınırlanır.
+page_size: 25
+
+# REFERANS ÖNBELLEĞİ (L1, süreç belleği, saniye). Kategoriler, ödeme
+# yöntemleri ve ayar varsayılanları, seçici için ürün kataloğu, denetim eylem
+# sözlüğü. YALNIZCA BUNLAR: sipariş, stok sayısı, müşteri, abonelik ve fatura
+# listesi önbelleğe alınmaz — personel "kaydettim ama listede yok" yaşamamalı.
+# Yazan her metot kendi dalını düşürür, yani süre dolmasını beklemeye gerek yok.
+# 0 yazmak önbelleği tamamen kapatır.
+reference_ttl_seconds: 900
+
+# ANLIK GÖRÜNTÜ (L2, SQLite, saniye). Referans kümesinin tamamı tek satırda.
+# Süreç yeniden başladığında ekran BLD'ye hiç gitmeden dolar; BLD
+# erişilemezken de son bilinen hâl gösterilir ve "bayat" işaretlenir (K7).
+snapshot_ttl_seconds: 1800
+
+# Tam tarama üst sınırı (seçici ürün kataloğu gibi çok sayfalı referans
+# okumaları). Sınır, bozuk bir `meta` yüzünden sonsuz döngüye girmemek için
+# var; aşılırsa yanıt `truncated: true` taşır ve ekran bunu SÖYLEMELİ.
+max_items: 5000
+
+# GÖRSEL YÜKLEME üst sınırı (MB, çözülmüş bayt üzerinden). Ürün görseli ucunun
+# kendi sınırı 5 MB'dır ve ikisinin KÜÇÜĞÜ uygulanır. Sekiz seçildi çünkü
+# base64 ~%33 şişiriyor: 5 MB'lık görsel ~6,7 MB gövde eder ve ayar sınırının
+# uç sınırının altında kalması, uç hatasını ayar hatası gibi gösterirdi.
+max_upload_mb: 8

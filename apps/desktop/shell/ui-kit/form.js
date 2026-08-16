@@ -41,6 +41,8 @@ export function formatPhone(value) {
  *
  *   'richtext' HTML tutar; `maxLength` etiketleri değil DÜZ METNİ sayar —
  *   sınır mağazanın alan sınırıdır ve `<strong>` onu doldurmamalıdır.
+ *   Satır içi görsel için alana `onInsertImage(file) -> url` (ve isterse
+ *   `imageRules`) verilir; verilmezse düzenleyicide görsel düğmesi çizilmez.
  * @param {object} [spec.value] — başlangıç kaydı
  * @param {(draft:object, dirty:string[])=>void} [spec.onChange]
  */
@@ -124,6 +126,10 @@ export function formGrid({ fields: given = [], value = {}, onChange } = {}) {
           maxLength: field.maxLength || 0,
           placeholder: field.placeholder || 'Yazmaya başlayın…',
           allowSource: field.allowSource !== false,
+          // Görsel yükleme yolu ALANDAN gelir, formdan değil: yükleme ucu
+          // modülün işidir ve kit onu bilmez. Verilmezse düğme çizilmez.
+          onInsertImage: field.onInsertImage,
+          imageRules: field.imageRules || {},
           onChange: (value) => write(value),
         });
         disposers.push(() => editor.destroy());

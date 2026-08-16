@@ -1,0 +1,34 @@
+# Menü Yönetimi ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# HANGİ VİTRİN. `0` = "verme, sunucu varsayılanı kullansın"
+# (`Location::getDefault()`). Faz 1 tek vitrindir ama alan bugünden sözleşmede
+# duruyor (`menu.md`); sıfır bırakmak, tek vitrinli kurulumda her isteğe
+# gereksiz bir kimlik iliştirmemek demektir. Sonradan ikinci vitrin açılırsa
+# değer burada verilir ve ekranın kodu değişmez.
+location_id: 0
+
+# Takvim aralığının EN ÇOK kaç günü. `DailyMenuService::MAX_CALENDAR_DAYS`
+# ile aynı; aşan istek sunucudan `422 VALIDATION_FAILED` alır. Burada da
+# durması, ekranın kendi hatasını 422'ye çevirmeden anlaşılır bir cümleyle
+# söylemesi içindir (K9 — çift kapı). Ay ızgarası 42 hücre istiyor, yani
+# normal kullanımda bu tavana yaklaşılmaz.
+calendar_max_days: 92
+
+# Takvim tazeleme aralığı (saniye). `00-genel.md` §2'deki bütçe tablosunda
+# `menu/calendar` için 120 sn hesaplanmıştır ve 3000/saat kovası bu varsayımla
+# paylaştırıldı; küçültmek öteki on iki ekranın payını yer. Sekme gizliyken
+# yoklama zaten durur (`pollLoop`).
+calendar_refresh_seconds: 120
+
+# Stok tavanı önizlemesinin (kuru prova jetonunun) ömrü, dakika. Süre
+# dolduktan sonra gelen gerçek uygulama reddedilir ve önizleme tekrarlanır:
+# yarım saat önce görülen "34 porsiyon kaldı" tablosu, bu arada giren
+# siparişlerden sonra artık doğru değildir ve tavanı ona göre yazmak yanlış
+# kararı sağlam bir sayıya dayandırmak olurdu.
+stock_preview_ttl_minutes: 30
+
+# Ürün seçicisinde en çok kaç kayıt çizilsin. Geçit tam taramayı önbellekte
+# tutuyor (`product_picker`); bu sayı yalnız EKRANDAKİ listeyi kırpar ve
+# aşıldığında ekran bunu yazar — sessizce kırpılmış bir liste, aranan ürünün
+# "silinmiş" sanılmasına yol açardı.
+product_limit: 400

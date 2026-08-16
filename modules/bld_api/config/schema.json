@@ -26,7 +26,37 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 20,
-      "description": "Dakikalık kova. Sunucu sınırı saatte 1200; 20 × 60 = 1200 tam sınırdır, 18 önerilir."
+      "description": "Dakikalık TEK kova (alan başına ayrı kova yoktur). Sunucunun en dar sınırı saatte 1200; 20 × 60 = 1200 tam sınırdır, 18 önerilir."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Sayfalı liste uçlarının varsayılan `per_page` değeri. Sunucu 100'ün üstünü sessizce kırpar."
+    },
+    "reference_ttl_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400,
+      "description": "L1 referans önbelleği (kategori, ödeme yöntemi, ayar varsayılanları, seçici ürün kataloğu, denetim eylem sözlüğü). 0 = kapalı. Sipariş/stok/müşteri ASLA önbelleğe alınmaz."
+    },
+    "snapshot_ttl_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 86400,
+      "description": "L2 anlık görüntü (SQLite). Süresi geçen kayıt silinmez, bayat işaretlenir: BLD erişilemezken ekranın gösterebileceği tek veri odur."
+    },
+    "max_items": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 50000,
+      "description": "Çok sayfalı referans taramasının üst sınırı. Aşılırsa yanıt truncated: true taşır."
+    },
+    "max_upload_mb": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 128,
+      "description": "Görsel yükleme üst sınırı (MB, çözülmüş bayt). Ucun kendi sınırı 5 MB'dır ve ikisinin küçüğü uygulanır."
     }
   }
 }

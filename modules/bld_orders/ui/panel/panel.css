@@ -1,0 +1,146 @@
+/* Sipariş Yönetimi paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bo-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bo-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bo` kökünün kendisidir — o da panelin kendi öneki.
+
+   Önek `bk` (KDS) ile çakışmaz ve çakışmamalıdır: iki BLD paneli aynı kabukta
+   yan yana yüklü duruyor. */
+
+.bo {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bo > * { flex: none; }
+
+.bo-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;                     /* dikey kayma GÖVDEDE, sayfada değil */
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bo-body > * { flex: none; }
+
+.bo-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+}
+
+.bo-stack { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.bo-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.bo-dim { color: var(--soft); font-size: 11.5px; }
+
+/* Tablo hücresi: ana bilgi üstte, tamamlayıcı altta küçük. Telefon numarası
+   müşteri adının ALTINDA durur — ikisi ayrı sütun olsaydı tablo yatayda
+   taşardı ve asıl soru ("kimin siparişi") ikiye bölünürdü. */
+.bo-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  align-items: flex-start;
+}
+.bo-cell > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+/* Durum çipleri şeridi. Sayaç açıklaması çiplerin ALTINDA durur: "sayfadaki"
+   ile "toplam" karıştırılırsa yönetici yanlış karar verir. */
+.bo-chips { display: flex; flex-direction: column; gap: 4px; }
+
+/* ----------------------------------------------------------------- kalemler */
+
+.bo-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.bo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 2px;
+}
+.bo-item + .bo-item { border-top: 1px solid var(--line); }
+
+.bo-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.bo-item-info b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Adet kutusu dar ve sağda: revizyonda değişen TEK ŞEY adettir ve göz onu tek
+   bir sütunda tarayabilmeli. */
+.bo-qty {
+  width: 84px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-bg, #fff);
+  color: inherit;
+}
+.bo-qty:disabled { background: var(--tint); color: var(--soft); }
+
+/* ------------------------------------------------------------- geri alma */
+
+/* Geri sayım şeridi. Rozet TEK BAŞINA anlam taşımaz (kit kuralı 7): yanındaki
+   cümle pencerenin ne zaman kapanacağını da yazar. */
+.bo-undo {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------- alanlar */
+
+.bo-check {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+}
+.bo-check small { grid-column: 2; }
+
+.bo-field { display: flex; flex-direction: column; gap: 4px; max-width: 320px; }
+
+.bo-num {
+  width: 140px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-bg, #fff);
+  color: inherit;
+}

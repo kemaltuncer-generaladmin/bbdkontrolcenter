@@ -1,0 +1,33 @@
+# Bildirimler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: panel bu alanı hiç göndermiyor ve açık kalsaydı panelden
+# yapılan HER yazma sessizce bir provaya döner, ekran "yayınlandı" der ve
+# müşteride hiçbir şey görünmezdi. Geçidin kendi varsayılanı
+# (`modules.bld_api.dry_run_default`) da aynı sebeple kapalı olmalıdır; ikisinden
+# biri açık kalırsa yazma yine yapılmaz.
+#
+# UÇ HÂLÂ `dryRun: true` KABUL EDER (sözleşme §4 additive); yalnız varsayılanı
+# ve arayüzdeki şalteri yoktur. Gerekçe zorunluluğu (en az 10 karakter) DURUYOR:
+# kuru prova bir güvenlik ağıydı, gerekçe ise denetim kaydıdır ve ikisi ayrı
+# şeylerdir.
+dry_run_default: false
+
+# Liste sayfası başına kayıt. Sözleşme tavanı 100 (`00-genel.md` §5); duyuru
+# sayısı azdır ve 25 satır bir ekrana sığar.
+page_size: 25
+
+# Liste sekmesi AÇIKKEN tazeleme aralığı (saniye). 120 sn, `00-genel.md` §2'deki
+# bütçe tablosunda duyuru rozeti için ayrılan payın ta kendisidir; kısaltmak
+# paylaşılan `bld-control-panel` kovasından başka ekranların payını yer.
+# Yoklama sekme gizliyken durur (`pollLoop`).
+refresh_seconds: 120
+
+# "Yakında bitiyor" uyarısının eşiği (saat). Ekran kararıdır, sözleşmede
+# karşılığı yoktur: süresi dolmak üzere olan bir duyuru listede sessizce durur
+# ve bir sabah kaybolur. Uyarı, süreyi uzatma fırsatını yöneticinin önüne koyar.
+ending_soon_hours: 48
+
+# Yerel denetim izinde sayfa başına satır. Bu iz YEREL'dir ve ağa çıkmaz;
+# sunucunun kendi izi ayrı bir ekranın işidir.
+audit_limit: 100

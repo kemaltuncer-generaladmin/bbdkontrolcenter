@@ -1,0 +1,135 @@
+/* Bildirimler paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bn-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bn-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bn` kökünün kendisidir — o da panelin kendi öneki. */
+
+.bn {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bn > * { flex: none; }
+
+.bn-topbar { display: flex; align-items: center; gap: 12px; padding: 0 20px; }
+
+.bn-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bn-body > * { flex: none; }
+
+.bn-sub { font-size: 11px; color: var(--soft); }
+.bn-dim { color: var(--soft); font-style: italic; }
+.bn-warn { font-size: 11px; color: var(--warn, #a35b00); }
+
+.bn-cellstack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bn-cellstack > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.bn-when { display: flex; flex-direction: column; gap: 1px; }
+
+.bn-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.bn-note {
+  font-size: 12px;
+  color: var(--soft);
+  line-height: 1.5;
+}
+
+/* Uyarı kabı. Uyarı yokken YER KAPLAMAZ: boş bir kutu tablonun üstünde aralık
+   bırakıyor ve "bir şey mi kayboldu" izlenimi veriyordu. */
+.bn-alertbox { display: flex; flex-direction: column; gap: 8px; }
+.bn-alertbox:empty { display: none; }
+
+.bn-statsbox { display: flex; flex-direction: column; gap: 10px; }
+
+/* ------------------------------------------------------------- önizleme
+
+   MÜŞTERİNİN GÖRECEĞİ KART. Ölçüler telefon genişliğine göre: yönetici
+   duyurunun dar bir ekranda nasıl duracağını burada görmeli, geniş bir
+   masaüstü kutusunda değil. Üç satırdan uzun bir başlık, telefonda kartın
+   yarısını yer ve bunu ancak gerçek genişlikte görebilirsiniz. */
+
+.bn-previewbox {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 2px;
+}
+
+.bn-preview {
+  width: 100%;
+  max-width: 380px;                   /* telefon kartı genişliği */
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--soft);  /* düzey şeridi — rengi aşağıda */
+  border-radius: 10px;
+  background: var(--paper, #fff);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+}
+
+/* Düzey rengi YALNIZ şeritte; anlamı rozetteki YAZI taşır (kit kuralı 7). */
+.bn-level-info { border-left-color: #3b78c3; }
+.bn-level-warning { border-left-color: #c58a1a; }
+.bn-level-critical { border-left-color: #c0392b; }
+
+.bn-preview-head { display: flex; align-items: center; gap: 8px; }
+
+.bn-preview-close {
+  font-size: 13px;
+  color: var(--soft);
+  cursor: default;
+}
+
+.bn-preview-locked {
+  font-size: 10.5px;
+  color: var(--soft);
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.bn-preview-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;            /* boşluksuz uzun başlık kartı taşırmasın */
+}
+
+.bn-preview-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--paper-ink);
+  overflow-wrap: anywhere;
+}
+
+/* Her satır AYRI düğüm: gövde düz metindir ve `\n` sözleşmede desteklidir.
+   Boş satır da bir satırdır; yüksekliği korunur ki önizleme müşterideki
+   boşluğu birebir göstersin. */
+.bn-preview-line { min-height: 1.2em; }
+
+.bn-preview-action {
+  align-self: flex-start;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: #3b78c3;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: default;
+}

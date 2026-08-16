@@ -1,8 +1,10 @@
 """Testlerin sahte bağlamı. AĞA ÇIKMAZ, GERÇEK DB KULLANMAZ.
 
-`FakeStore` SQL'i ayrıştırmaz; geçidin yazdığı iki ifadeyi (denetim satırı ve
-denetim güncellemesi) tanıyacak kadarını yapar. Amaç, çekirdek depoyu taklit
-etmek değil, geçidin doğru anda doğru satırı yazdığını görmek.
+`FakeStore` SQL'i ayrıştırmaz; geçidin yazdığı ifadeleri (denetim satırı,
+denetim güncellemesi, anlık görüntü yazma/okuma) tanıyacak kadarını yapar.
+Amaç, çekirdek depoyu taklit etmek değil, geçidin doğru anda doğru satırı
+yazdığını görmek. Tanınmayan bir ifade sessizce yutulmaz, `AssertionError`
+olur: geçit bir gün başka bir tabloya yazmaya kalkarsa test bunu söyler.
 """
 
 from __future__ import annotations
@@ -55,6 +57,8 @@ class FakeStore:
     def __init__(self, module_id: str = "bld_api") -> None:
         self.module_id = module_id
         self.audit: list[dict[str, Any]] = []
+        #: `mod_bld_api_snapshot` — anahtar → (payload, stored_at).
+        self.snapshot: dict[str, tuple[str, str]] = {}
         self.fail = False
 
     def table(self, name: str) -> str:
@@ -64,7 +68,10 @@ class FakeStore:
         if self.fail:
             raise RuntimeError("depo kapalı")
         text = " ".join(sql.split())
-        if "mod_bld_api_audit" in text and text.startswith("INSERT"):
+        if "mod_bld_api_snapshot" in text and text.startswith("INSERT"):
+            key, payload, stored_at = params
+            self.snapshot[key] = (payload, stored_at)
+        elif "mod_bld_api_audit" in text and text.startswith("INSERT"):
             columns = ("request_id", "method", "path", "action", "reason", "actor",
                        "dry_run", "body", "created_at")
             self.audit.append(dict(zip(columns, params, strict=True)) | {"result": "",
@@ -83,6 +90,14 @@ class FakeStore:
         if "mod_bld_api_audit" in sql:
             return list(reversed(self.audit))[: params[0]]
         return []  # pragma: no cover
+
+    async def fetch_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+        if self.fail:
+            raise RuntimeError("depo kapalı")
+        if "mod_bld_api_snapshot" in sql:
+            row = self.snapshot.get(params[0])
+            return {"payload": row[0], "stored_at": row[1]} if row else None
+        return None  # pragma: no cover
 
 
 # Testler gerçekten beklemesin: geçidin uykusu yutulur.

@@ -1,0 +1,138 @@
+/* Satış Ayarları paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bss-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bss-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bss` kökünün kendisidir — o da panelin kendi öneki. */
+
+.bss {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bss > * { flex: none; }
+
+.bss-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bss-body > * { flex: none; }
+
+.bss-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+}
+
+.bss-sub { font-size: 11px; color: var(--soft); }
+
+.bss-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ---------------------------------------------------------- satış şalteri */
+
+/* Şalter kutusu ayar formundan GÖRSEL OLARAK ayrı durur: `busy` anahtarı ile
+   durdurmayı karıştırmak bu ekranın en pahalı yanlış anlaması. Biri uyarı
+   gösterir, öteki satışı keser; ikisi aynı ızgarada yan yana durmamalı. */
+.bss-switch {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.bss-switch-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+/* Saat kutusu dar: `HH:mm` beş karakter ve geniş bir alan, kullanıcıya tarih
+   yazabileceğini düşündürüyor. */
+.bss-time { max-width: 120px; }
+
+/* --------------------------------------------------------------- ayar formu */
+
+.bss-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 2px 2px 0;
+}
+
+/* Kirli alan sayacı RENKLE DEĞİL, YAZIYLA anlatır (kit kuralı 7): "3 alan
+   değişti; kaydedilmedi." Renk yalnız gözü çeker. */
+.bss-dirty { font-size: 12px; color: var(--soft); }
+.bss-dirty.on { color: var(--warn); font-weight: 600; }
+
+/* Uyarı kabı boşken YER KAPLAMAZ: boş bir kutu formun altında aralık bırakıp
+   "bir şey mi kayboldu" izlenimi veriyordu. */
+.bss-drift:empty,
+.bss-changes:empty { display: none; }
+
+.bss-drift,
+.bss-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --------------------------------------------------------------- kapalı gün */
+
+.bss-add {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  padding: 10px 12px;
+}
+.bss-add .bss-actions { grid-column: 1 / -1; }
+
+/* ---------------------------------------------------------------- hızlı stok */
+
+.bss-stock {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.bss-stock-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* Tablo KENDİ kabında yatay kayar; gövde yatay kaymaz — sayfanın tamamını
+   sağa sola sürüklemek okumayı bozuyordu. */
+.bss-stock > .kit-table { overflow-x: auto; }
+
+/* Tavan girişi dar ve sağa yaslı: bir porsiyon sayısı en çok üç dört hane ve
+   satır içinde geniş bir kutu, ürün adını sıkıştırıyordu. Boş alan
+   "sınırsız" demektir ve yer tutucu bunu YAZAR — sıfır ile karıştırılmamalı. */
+.bss-cap {
+  max-width: 110px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bss-cap.bad { border-color: var(--bad); }

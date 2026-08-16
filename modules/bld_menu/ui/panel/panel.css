@@ -1,0 +1,310 @@
+/* Menü Yönetimi paneli — YALNIZ bu panelin kuralları.
+ *
+ * ÖNEK `bm` ve benzersizdir (kit kuralı 9): panel CSS'i `document.head`'e
+ * ekleniyor ve hiç kaldırılmıyor; çakışan bir önek başka panelin görünümünü
+ * bozar. `bm` = bld_menu.
+ *
+ * Renk, boşluk ve tipografi jetonları kitten (`kit.css`) gelir; burada
+ * TEKRARLANMAZ. Burada yalnız bu ekrana özgü YERLEŞİM var: takvim hücresinin
+ * rozet düzeni, gün başlığı şeridi, stok ölçerleri ve tavan kutuları.
+ *
+ * RENK TEK BAŞINA ANLAM TAŞIMAZ (kit kuralı 7): aşağıdaki `good`/`warn`/`bad`
+ * sınıfları yalnız YAZIYI renklendirir, yazının yerine geçmez — her rozetin
+ * içinde "Yayın", "Taslak", "Tükendi" yazıyor.
+ */
+
+/* ------------------------------------------------------------- yerleşim */
+
+.bm .bm-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.bm .bm-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.bm .bm-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* `minmax(0, …)` ile birlikte: uzun bir gün başlığı sütunu şişirmesin. */
+  min-width: 0;
+}
+
+.bm .bm-lefthead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bm .bm-refreshhint {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.bm .bm-right {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bm .bm-summary {
+  min-width: 0;
+}
+
+.bm .bm-tabbody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* `card()` çocuklarına boşluk vermiyor ve `formGrid` kendi boşluğunu taşımıyor
+ * (kitin 1.3.0 notu bunu yalnız `timeline`/`stepper`/`measures` için çözdü).
+ * Formu kart kenarına yapıştırmamak için sarmalayıcı burada. */
+.bm .bm-formbox {
+  padding: 12px 14px;
+}
+
+/* ------------------------------------------------- takvim hücresi rozeti */
+
+.bm .bm-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  /* Hücre dar; rozet taşarsa ızgara zıplar. */
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.bm .bm-cell-tag {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* Tonlar KİTİN jetonlarından okunur (`--good`/`--warn`/`--bad`, `.kit-panel`
+ * üzerinde tanımlı). Kendi renklerini yazmak, kabuk paleti değiştiğinde bu
+ * ekranı tek başına eski renkte bırakırdı. */
+.bm .bm-cell-tag.good { background: #ecfdf5; color: var(--good); }
+.bm .bm-cell-tag.warn { background: #fff7ed; color: var(--warn); }
+.bm .bm-cell-tag.bad  { background: #fef2f2; color: var(--bad); }
+
+.bm .bm-cell-num {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------- gün başlığı */
+
+.bm .bm-dayhead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bm .bm-dayhead-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bm .bm-daytitle {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.bm .bm-marks,
+.bm .bm-dayactions,
+.bm .bm-itemmarks,
+.bm .bm-rowactions,
+.bm .bm-formactions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bm .bm-formactions {
+  gap: 8px;
+}
+
+/* --------------------------------------------------------------- özet */
+
+.bm .bm-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 16px;
+  padding: 10px 12px;
+}
+
+.bm .bm-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bm .bm-fact-label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.bm .bm-fact-value {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------- kalemler */
+
+.bm .bm-itemname {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* ----------------------------------------------------------------- stok */
+
+.bm .bm-stockday {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.bm .bm-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bm .bm-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bm .bm-meter-label {
+  font-weight: 600;
+}
+
+.bm .bm-meter-value {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.bm .bm-itemmeter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Tablo hücresindeki çubuk, satır yüksekliğini bozmayacak kadar ince. */
+.bm .bm-itemmeter .kit-progress {
+  height: 6px;
+}
+
+.bm .bm-itemmeter .kit-progress-label {
+  font-size: 11px;
+}
+
+.bm .bm-capfield {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 280px;
+}
+
+.bm .bm-capfield-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Tavan kutusu dar: porsiyon sayısı üç haneyi geçmiyor ve geniş bir kutu,
+ * tablonun okunur sütun genişliklerini yiyordu. */
+.bm .bm-cap {
+  width: 100%;
+  max-width: 110px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bm .bm-previewbox:empty {
+  display: none;
+}
+
+.bm .bm-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+.bm .bm-preview-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.bm .bm-preview-note {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.bm .bm-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Çekmece gövdesinin çocukları arasında boşluk yok; kit yalnız dış boşluğu
+ * veriyor ve alanlar birbirine yapışıyordu. */
+.bm .kit-drawer-body > * + * {
+  margin-top: 12px;
+}
+
+/* --------------------------------------------------------------- dar ekran
+ *
+ * Kabuk penceresi küçültüldüğünde iki sütun 380px + kalanı olarak duruyor ve
+ * düzenleyici okunamaz hâle geliyordu. Eşik takvimin kendi asgari genişliğine
+ * göre seçildi: altında ızgara ile düzenleyici ALT ALTA geçer.
+ */
+@media (max-width: 900px) {
+  .bm .kit-split {
+    /* `splitView` sütun şablonunu SATIR İÇİ yazıyor; onu yenmenin başka yolu
+       yok. Kitin imzası değişmeden bu ekranın dar pencerede okunur kalması
+       gerekiyordu. */
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Alt alta dizilince soldaki kenarlık ARTIK AYIRICI DEĞİL, boş bir dikey
+     çizgi olurdu; ayırma işini üst kenarlık yapar. */
+  .bm .kit-split > * + * {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}

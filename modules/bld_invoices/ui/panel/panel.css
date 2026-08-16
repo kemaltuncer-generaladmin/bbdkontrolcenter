@@ -1,0 +1,133 @@
+/* Faturalar paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bi-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bi-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bi` kökünün kendisidir — o da panelin kendi öneki. */
+
+.bi {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bi > * { flex: none; }
+
+.bi-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+}
+
+.bi-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bi-body > * { flex: none; }
+
+.bi-sub { font-size: 11px; color: var(--soft); }
+
+.bi-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 4px;
+}
+
+/* Bağlam süzgeci şeridi: başka ekrandan gelindiğinde hangi süzgeçle
+   bakıldığını söyler ve bırakma yolunu yanında tutar. */
+.bi-pinned {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  font-size: 12px;
+}
+
+/* Alt toplam satırı. Sayfanın değil SÜZGECİN toplamıdır; açıklaması yanında
+   durur çünkü "sayfa değiştirdim, toplam değişmedi" sorusu kaçınılmaz. */
+.bi-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.bi-total-label { font-size: 12px; color: var(--soft); }
+
+.bi-total-value {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Etiket/değer listesi — belgenin donmuş bloklarını çizer. Boş satır hiç
+   yazılmaz (panelde `pairList` eler), bu yüzden tire dolu bir tablo çıkmaz. */
+.bi-pairs {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+}
+
+.bi-pairs dt {
+  font-size: 11.5px;
+  color: var(--soft);
+}
+
+.bi-pairs dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;            /* uzun adres satırı kutuyu taşırmasın */
+}
+
+/* Dosya özeti (sha256) rozeti — tıklayınca DOSYA YOLUNU kopyalar. Özetin
+   tamamı ve yol `title` içinde durur. */
+.bi-hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--tint);
+  color: var(--paper-ink);
+  cursor: pointer;
+}
+
+.bi-hash:hover { border-color: var(--accent); }
+
+/* Belge kesme formu. İki kip aynı yerde durur, yalnız biri görünür. */
+.bi-mode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bi-mode-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.bi-mode-fields[hidden] { display: none; }

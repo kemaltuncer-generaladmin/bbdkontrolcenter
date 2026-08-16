@@ -24,10 +24,33 @@
 // standart YOK; elle Range işlemek geri-al yığınını (Ctrl+Z) bozardı. Çıktısı
 // düzensizdir (`<b>`, `<font>`, `<div>`) — bu yüzden okunan her değer
 // `sanitizeHtml`'den geçer ve etiketler normal biçimlerine eşlenir.
+//
+// SATIR İÇİ GÖRSEL — "ÖNCE YÜKLE, SONRA ADRESİ EKLE". `img` beyaz listede ve
+// `src/alt/title/width/height` öznitelikleri geçiyor; yani görseller zaten
+// ÇİZİLİYORDU. Eksik olan araç çubuğu düğmesiydi ve tek yol "Kaynak" sekmesine
+// elle `<img>` yazmaktı — no-code bir ekranda kabul edilemez.
+// Akış base64 GÖMMEZ, gömemez: `safeUrl` yalnız `/` göreli adresleri ve
+// http/https/mailto/tel şemalarını kabul eder, `data:` reddedilir. Bu tasarım
+// doğrudur — sayfa gövdesine gömülü 2 MB'lık bir base64, kaydedilen HTML'i
+// şişirir ve tarayıcı önbelleğine hiç girmez. Bu yüzden düzenleyici dosyayı
+// ALIR, `onInsertImage` ile ÇAĞIRANA verir ve geri dönen ADRESİ ekler.
+// Düzenleyici hangi ucun yüklediğini bilmez (bilmemeli): yükleme yolu
+// modülündür, biçimlendirme kitindir.
+//
+// YAZI TİPİ SEÇİMİ BİLEREK YOK. `TAG_ALIASES` `font` etiketini `span`'e
+// katlıyor ve `STYLE_PROPS` yalnız `color`, `background-color`, `text-align`
+// kabul ediyor; `font-family` `filterStyle` tarafından ZATEN çıkarılıyor.
+// Düğme eklemek üç şeyi birden gerektirirdi: beyaz listeyi genişletmek,
+// sunucudaki aynalanmış listeyi (`store_cms/backend/content.py`) birlikte
+// genişletmek ve herkese açık sitede her sayfanın başka bir yazı tipiyle
+// çıkmasını göze almak. İhtiyaç — "başlık gibi dursun", "bu satır öne çıksın"
+// — mevcut blok biçimleriyle (`BLOCKS`) ve renklerle zaten karşılanıyor.
+// Sonradan gelen biri "eksik kalmış" sanmasın diye burada yazıyor.
 
 import { h, button, debounce } from './kit.js';
+import { imageField } from './imagefield.js';
 
-export const RICHTEXT_VERSION = '1.1.0';
+export const RICHTEXT_VERSION = '1.2.0';
 
 // ------------------------------------------------------------- beyaz liste
 
@@ -283,6 +306,11 @@ function colorPicker(options, { title, ariaLabel, onPick }) {
  * @param {number}   [spec.maxLength]    — DÜZ METİN karakter sınırı (etiketler sayılmaz)
  * @param {string}   [spec.placeholder]
  * @param {boolean}  [spec.allowSource]  — "Kaynak" sekmesi (varsayılan açık)
+ * @param {(file:object)=>Promise<string|{url:string}>} [spec.onInsertImage]
+ *   — dosyayı yükler ve ADRESİNİ döndürür. VERİLMEZSE görsel düğmesi hiç
+ *     çizilmez: yükleme yolu olmayan bir düğme, basınca hiçbir şey olmayan
+ *     düğmedir (bkz. `blockedButton` gerekçesi).
+ * @param {object}   [spec.imageRules]   — `imageField` kuralları (tür, boyut, ölçü)
  * @param {(html:string)=>void} [spec.onChange]
  * @returns {{node:HTMLElement, get:()=>string, set:(html:string)=>void,
  *            text:()=>string, focus:()=>void, destroy:()=>void}}
@@ -292,6 +320,8 @@ export function richText({
   maxLength = 0,
   placeholder = 'Yazmaya başlayın…',
   allowSource = true,
+  onInsertImage,
+  imageRules = {},
   onChange,
 } = {}) {
   const node = h('div', 'kit-rt');
@@ -303,6 +333,10 @@ export function richText({
 
   let html = sanitizeHtml(value);
   let sourceMode = false;
+  // Görsel penceresi açılınca odak alandan çıkar ve seçim silinir; imlecin
+  // nerede olduğu ÖNCEDEN saklanmazsa görsel metnin başına düşer.
+  let savedRange = null;
+  let closeImageDialog = null;
 
   area.contentEditable = 'true';
   area.spellcheck = true;
@@ -313,7 +347,12 @@ export function richText({
   source.setAttribute('aria-label', 'HTML kaynağı');
   source.hidden = true;
 
-  const paint = () => { area.replaceChildren(...renderHtml(html).childNodes); };
+  const paint = () => {
+    area.replaceChildren(...renderHtml(html).childNodes);
+    // Yeniden çizim eski düğümleri attı: saklanan aralık artık ekranda
+    // olmayan bir düğümü işaret ediyor ve geri yüklenirse imleç kaybolur.
+    savedRange = null;
+  };
   paint();
 
   const updateCounter = () => {
@@ -360,6 +399,169 @@ export function richText({
     readArea();
     emit();
   };
+
+  // --- imleç hafızası (görsel penceresi için)
+
+  /** Alan içindeki son seçimi saklar. Alan dışındaki seçim ilgilendirmez. */
+  const rememberRange = () => {
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    if (area.contains(range.commonAncestorContainer)) savedRange = range.cloneRange();
+  };
+  area.addEventListener('keyup', rememberRange);
+  area.addEventListener('mouseup', rememberRange);
+
+  /**
+   * Saklanan imleci geri koyar. Saklı aralık yoksa ya da artık ekranda
+   * değilse İÇERİĞİN SONUNA gider — görselin metnin başına düşmesi,
+   * kullanıcının bakmadığı bir yere eklenmesi demekti.
+   */
+  const restoreRange = () => {
+    area.focus();
+    const selection = window.getSelection();
+    if (!selection) return;
+    const usable = savedRange && area.contains(savedRange.commonAncestorContainer);
+    const range = usable ? savedRange : document.createRange();
+    if (!usable) {
+      range.selectNodeContents(area);
+      range.collapse(false);
+    }
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+
+  // --- görsel ekleme
+
+  /**
+   * Adresi metne ekler. Elle kurulan düğüm DOĞRUDAN yerleştirilmez: ekleme
+   * de okuma gibi `sanitizeHtml`'den geçer, yoksa beyaz liste yalnız
+   * kullanıcının yazdığına uygulanır, kitin kendi ürettiğine uygulanmazdı.
+   * Temizlikten bir şey çıkmazsa `false` döner ve çağıran sebebi söyler.
+   */
+  const insertImage = (url, altText) => {
+    restoreRange();
+    const picture = document.createElement('img');
+    picture.setAttribute('src', url);
+    picture.setAttribute('alt', altText || '');
+    const clean = sanitizeHtml(picture.outerHTML);
+    if (!clean) return false;
+    document.execCommand('insertHTML', false, clean);
+    readArea();
+    emit();
+    return true;
+  };
+
+  /**
+   * Görsel ekleme penceresi.
+   *
+   * OVERLAY PANEL KÖKÜNE eklenir, `document.body`'ye DEĞİL (kit kuralı 3):
+   * panel değişince kabuk `root.replaceChildren()` yapıyor ve body'deki bir
+   * katman orada asılı kalırdı. Kök `closest('.kit-panel')` ile bulunur —
+   * düzenleyici zaten panelin içinde duruyor, ayrıca parametre istemeye
+   * gerek yok.
+   */
+  function openImageDialog() {
+    if (closeImageDialog) return;              // ikinci pencere açılmaz
+    rememberRange();
+    const host = node.closest('.kit-panel') || node;
+
+    const overlay = h('div', 'kit-overlay');
+    const card = h('div', 'kit-dialog kit-rt-imgdialog');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.append(h('h3', 'kit-dialog-title', 'Görsel ekle'));
+    card.append(h('p', 'kit-dialog-text',
+      'Dosya önce yüklenir, sonra adresi metnin içine eklenir. Görsel metnin '
+      + 'içine GÖMÜLMEZ: gömülü görsel kaydedilen sayfayı şişirir ve tarayıcı '
+      + 'önbelleğine hiç girmez.'));
+
+    const field = imageField({
+      rules: imageRules,
+      multiple: false,
+      reorder: false,
+      label: 'Görsel seç',
+      dropText: 'Görseli buraya sürükleyip bırakın',
+      emptyText: 'Henüz görsel seçilmedi.',
+    });
+    card.append(field.node);
+
+    const altWrap = h('label', 'kit-field');
+    altWrap.append(h('span', 'kit-field-label', 'Kısa açıklama'));
+    const alt = h('input', 'kit-input');
+    alt.type = 'text';
+    alt.maxLength = 160;
+    alt.placeholder = 'Görselde ne var?';
+    altWrap.append(alt, h('span', 'kit-field-hint',
+      'Görsel yüklenemediğinde bu yazı görünür, ekran okuyucu da bunu okur. '
+      + 'Boş bırakılabilir ama bırakılmaması iyidir.'));
+    card.append(altWrap);
+
+    const error = h('div', 'kit-dialog-error');
+    card.append(error);
+
+    const close = () => {
+      document.removeEventListener('keydown', onKey);
+      field.destroy();                 // önizlemenin nesne URL'i bırakılır
+      overlay.remove();
+      closeImageDialog = null;
+    };
+
+    const submit = async () => {
+      if (!field.count()) { error.textContent = 'Önce bir görsel seçin.'; return; }
+      error.textContent = '';
+      confirm.disabled = true;
+      cancel.disabled = true;
+      confirm.textContent = 'Yükleniyor…';
+      try {
+        const [file] = await field.payload();
+        const answer = await onInsertImage({ ...file, alt: alt.value.trim() });
+        const url = typeof answer === 'string' ? answer : (answer?.url || '');
+        const clean = safeUrl(url);
+        if (!clean) {
+          // Yükleme başarılı ama adres kullanılamıyorsa bunu SÖYLEMEK gerek:
+          // sessizce hiçbir şey eklememek, kullanıcıya "düğme bozuk" dedirtir.
+          error.textContent = url
+            ? 'Yükleme bir adres döndürdü ama kabul edilmedi. Adres `/` ile başlamalı '
+              + 'ya da http/https olmalı; gömülü (`data:`) içerik eklenmez.'
+            : 'Yükleme bir adres döndürmedi; görsel eklenmedi.';
+          return;
+        }
+        if (!insertImage(clean, alt.value.trim())) {
+          error.textContent = 'Görsel eklenemedi: adres temizlikten geçmedi.';
+          return;
+        }
+        close();
+      } catch (failure) {
+        error.textContent = failure?.message || 'Görsel yüklenemedi.';
+      } finally {
+        confirm.disabled = false;
+        cancel.disabled = false;
+        confirm.textContent = 'Ekle';
+      }
+    };
+
+    const onKey = (event) => {
+      if (event.key === 'Escape') close();
+    };
+    alt.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); submit(); }
+    });
+
+    const cancel = button('Vazgeç', { onClick: close });
+    const confirm = button('Ekle', { variant: 'primary', onClick: submit });
+    const actions = h('div', 'kit-dialog-actions');
+    actions.append(cancel, confirm);
+    card.append(actions);
+
+    overlay.append(card);
+    overlay.addEventListener('mousedown', (event) => {
+      if (event.target === overlay) close();
+    });
+    document.addEventListener('keydown', onKey);
+    host.append(overlay);
+    closeImageDialog = close;
+  }
 
   // --- araç çubuğu
 
@@ -429,6 +631,16 @@ export function richText({
     ),
   );
 
+  // Görsel düğmesi YALNIZ yükleme yolu varken çizilir. `onInsertImage`
+  // olmadan bu düğme dosya seçtirip hiçbir şey yapamazdı; kitin kuralı bir
+  // düğmenin ya çalışması ya da hiç çizilmemesidir.
+  if (onInsertImage) {
+    bar.append(group(tool('Görsel', {
+      title: 'Metnin içine görsel ekler (önce yüklenir, sonra adresi eklenir)',
+      onRun: () => openImageDialog(),
+    })));
+  }
+
   if (allowSource) {
     const toggle = tool('Kaynak', {
       title: 'HTML kaynağını göster/gizle',
@@ -473,6 +685,14 @@ export function richText({
       updateCounter();
     },
     focus() { area.focus(); },
-    destroy() { emitSoon.cancel(); },
+    /**
+     * Panel cleanup'ında ÇAĞRILMALI. Açık görsel penceresi de kapatılır:
+     * penceresi açıkken kapanan bir panel, `document` üzerinde bir `keydown`
+     * dinleyicisi ve bir nesne URL'i bırakırdı.
+     */
+    destroy() {
+      emitSoon.cancel();
+      closeImageDialog?.();
+    },
   };
 }

@@ -1,0 +1,29 @@
+# Faturalar ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: panel belge kesmeden önce zaten AÇIKÇA bir prova çağrısı
+# yapıyor (`dryRun: true`) ve ardından gerçek çağrıyı `dryRun: false` ile
+# gönderiyor. Varsayılan açık kalsaydı, alanı unutan bir çağrı hiçbir şey
+# yazmadan `{"ok": true}` döner ve ekran "belge kesildi" derdi.
+#
+# Geçidin kendi varsayılanı (modules.bld_api.dry_run_default) ayrı bir
+# şalterdir ve `config/local.yaml` git dışıdır: bu yüzden servis geçide HER
+# ÇAĞRIDA açık `dry_run=` geçirir, varsayılana asla güvenmez.
+dry_run_default: false
+
+# Belge listesinde sayfa başına satır. Sunucu sözleşmesi 25 ile örnekliyor;
+# büyütmek sayfa sayısını düşürür ama tek istekte daha çok satır taşır.
+page_size: 25
+
+# Rapor/arşiv dosyalarının yazılacağı klasör. Boşsa masaüstü hiyerarşisi
+# kullanılır: Raporlar/BLD/Faturalar/<yıl>/<ay>
+export_path: ""
+
+# Yerel arşiv ve denetim izi listelerinde varsayılan satır sayısı. Gerçek
+# tavan uç noktanın şema kapısındadır (le=500); bu yalnız istek limit
+# vermediğinde geçerli olan varsayılandır.
+archive_limit: 100
+
+# Liste dökümü (süzgeçlenmiş belgelerin tek PDF'i) en çok kaç satır taşısın.
+# Her 200 satır bir istektir; tavanı büyütmek oran sınırından pay yer.
+list_report_rows: 500

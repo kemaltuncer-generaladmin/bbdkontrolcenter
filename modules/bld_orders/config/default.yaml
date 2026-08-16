@@ -1,0 +1,43 @@
+# Sipariş Yönetimi ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: açık kalsaydı panelden yapılan HER yazma sessizce bir
+# provaya döner, ekran "kaydedildi" der ve siparişte hiçbir şey değişmezdi —
+# fark ancak müşteri aradığında anlaşılırdı. Geçidin kendi varsayılanı
+# (modules.bld_api.dry_run_default) da aynı sebeple kapalı olmalıdır; servis
+# yine de HER çağrıda `dry_run=` değerini AÇIKÇA geçirir ve varsayılana
+# güvenmez (bld_api/README.md).
+#
+# Uç `dryRun: true` KABUL ETMEYE DEVAM EDER: sözleşme §4 additive'dir ve
+# panelin iptal ekranındaki "önce prova et" yolu bu alanı kullanır. Gerekçe
+# zorunluluğu (10-160 karakter) DURUYOR: kuru prova bir güvenlik ağıdır,
+# gerekçe ise denetim kaydıdır; ikisi ayrı şeylerdir.
+dry_run_default: false
+
+# Liste sayfa boyutu varsayılanı. Sözleşme tavanı 100 (`00-genel.md` §5);
+# büyütmek yalnız tek isteğin gövdesini şişirir, toplam kaydı değiştirmez.
+page_size: 25
+
+# Süzgeç verilmediğinde panelin açtığı gün aralığı. Sunucu süzgeçsiz istekte
+# SON 7 GÜNÜ döndürüyor; aynı değeri burada tutmak, ekrandaki tarih kutularının
+# sunucunun sessiz varsayılanıyla aynı kümeyi göstermesi demektir. Farklı
+# olsaydı "aralığı temizleyince neden başka sayıda kayıt geliyor" sorusunun
+# ekranda cevabı olmazdı.
+default_range_days: 7
+
+# Canlı liste yoklama aralığı (saniye). `00-genel.md` §2'deki bütçe hesabı bu
+# ekran için 15 saniye varsayıyor (saatte 240 istek). Kısaltmak paylaşılan
+# `bld-control-panel` kovasını (3000/saat/IP) hızlandırılmış biçimde yakar ve
+# ikinci bir yöneticinin ekranını 429'a düşürür. Sekme gizliyken yoklama zaten
+# durur (kit `pollLoop`).
+poll_seconds: 15
+
+# CSV dışa aktarımın satır tavanı. Sunucu tavanı 20000; aşılırsa satırlar
+# KESİLİR ve yanıt `X-Truncated: true` taşır — hata verilmez, çünkü kesilmiş
+# bir dosya hiç dosya olmamasından iyidir. Ekran kesilmeyi yazıyla söyler.
+export_max_rows: 5000
+
+# Dışa aktarım klasörü. Boşsa masaüstündeki rapor hiyerarşisi kullanılır
+# (Raporlar/BLD/Siparişler/<yıl>/<ay>). Dolu yazılırsa kullanıcının açık
+# tercihi kazanır ve hiyerarşi uygulanmaz.
+export_path: ""

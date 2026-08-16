@@ -11,7 +11,7 @@
 // SÜRÜM SÖZLEŞMESİ: yayınlanmış imza geriye dönük uyumsuz değiştirilmez.
 // Yeni davranış yeni parametreyle gelir. Değişiklikler README.md'de.
 
-export const KIT_VERSION = '1.2.0';
+export const KIT_VERSION = '1.4.0';
 
 /** Tek satırda element: h('div', 'sinif', 'metin'). */
 export const h = (tag, className, text) => {
@@ -191,6 +191,88 @@ export function debounce(fn, delay = 260) {
   };
   wrapped.cancel = () => window.clearTimeout(timer);
   return wrapped;
+}
+
+// ---------------------------------------------------------------- yoklama
+
+/**
+ * Belirli aralıkla koşan yoklama döngüsü. SEKME GİZLİYKEN DURUR.
+ *
+ * NEDEN KİTTE: `setInterval` + `clearInterval` kalıbı zaten doğruydu ve
+ * temizlik kuralına da uyuyordu (bkz. `bld_kds`), ama `document.hidden`
+ * denetlemiyordu. Tek yoklayan panelle bu kabul edilebilir; dördü aynı anda
+ * yoklayınca (panel · siparişler · durum izleme · KDS) arka planda duran bir
+ * pencere paylaşılan sunucu hız bütçesini boşuna yakar. Kararın tek yerde
+ * durması, dört panelin dördünde de aynı davranışı garanti eder.
+ *
+ * ÜST ÜSTE BİNME YOK: önceki koşu bitmediyse tik ATLANIR. Yavaş bir uçta
+ * aralık dolduğu için ikinci istek atmak, sunucuyu sıkıştıran ilk isteğin
+ * üstüne binmekti.
+ *
+ * HATA DÖNGÜYÜ ÖLDÜRMEZ (K7): `run` patlarsa yutulur ve bir sonraki tik
+ * normal gelir. Hatayı GÖSTERMEK çağıranın işidir — `run` içinde durum
+ * satırına yazılır; buradan sessizce yeniden denemek, bağlantı gelince
+ * ekranın kendiliğinden düzelmesi demektir.
+ *
+ * @param {object} spec
+ * @param {number} spec.every              — aralık (ms), en az 1000
+ * @param {() => (void|Promise<void>)} spec.run
+ * @param {boolean} [spec.pauseWhenHidden] — varsayılan açık
+ * @param {boolean} [spec.immediate]       — kurulur kurulmaz bir kez koş
+ * @returns {{stop: () => void, now: () => void}} — `stop()` panel
+ *   cleanup'ında ÇAĞRILMALI: hem zamanlayıcıyı hem `visibilitychange`
+ *   dinleyicisini bırakır.
+ */
+export function pollLoop({ every, run, pauseWhenHidden = true, immediate = false } = {}) {
+  const period = Math.max(1000, Number(every) || 0);
+  let timer = null;
+  let running = false;
+  let stopped = false;
+
+  const tick = async () => {
+    if (stopped || running || typeof run !== 'function') return;
+    running = true;
+    try {
+      await run();
+    } catch {
+      /* döngü tek bir hatayla ölmez; sonraki tik normal gelir */
+    } finally {
+      running = false;
+    }
+  };
+
+  const start = () => {
+    if (stopped || timer !== null) return;
+    timer = window.setInterval(tick, period);
+  };
+
+  const pause = () => {
+    if (timer === null) return;
+    window.clearInterval(timer);
+    timer = null;
+  };
+
+  const onVisibility = () => {
+    if (document.hidden) { pause(); return; }
+    start();
+    // Görünür olur olmaz BİR KEZ koşar: aksi hâlde kullanıcı sekmeye
+    // döndüğünde bir periyot boyunca eski veriye bakardı.
+    tick();
+  };
+
+  if (pauseWhenHidden) document.addEventListener('visibilitychange', onVisibility);
+  if (!(pauseWhenHidden && document.hidden)) start();
+  if (immediate) tick();
+
+  return {
+    stop() {
+      stopped = true;
+      pause();
+      if (pauseWhenHidden) document.removeEventListener('visibilitychange', onVisibility);
+    },
+    /** Aralığı beklemeden bir kez koşar — "Yenile" düğmesi için. */
+    now: tick,
+  };
 }
 
 /** Panoya kopyalar; başarıyı bildirir. Tarayıcı reddederse sessizce false. */

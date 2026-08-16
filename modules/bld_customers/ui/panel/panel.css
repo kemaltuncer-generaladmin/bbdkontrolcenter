@@ -1,0 +1,157 @@
+/* Müşteriler paneli — YALNIZ bu panele özel kurallar.
+ *
+ * Ortak görsel dil kitin `kit.css` dosyasındadır ve buraya KOPYALANMAZ
+ * (ADR 0011). Burada yalnız kitte karşılığı olmayan üç şey var: künye
+ * ızgarası, adres/abonelik kartlarının iç düzeni ve kaydet şeridi.
+ *
+ * ÖNEK `bc-` VE BENZERSİZDİR. Panel CSS'i `document.head`'e ekleniyor ve hiç
+ * kaldırılmıyor; çakışan bir önek başka panelin görünümünü bozar.
+ *
+ * RENK JETONLARI KİTTEN GELİR (`--soft`, `--line`, `--ink`… — `.kit-panel`
+ * üzerinde tanımlı). Burada ham renk yazılmaz: kabuk temayı değiştirdiğinde
+ * sabit bir renk yerinde kalır ve okunmaz hâle gelir.
+ */
+
+.bc-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+/* Çekmecenin gövdesi: sekme şeridinin altındaki alan kendi kayar. */
+.bc-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* Listedeki ad hücresi — kurum adı adın altında ikinci satır olur. */
+.bc-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bc-sub,
+.bc-dim {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.bc-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Künye ızgarası. `auto-fill` ile dar çekmecede tek sütuna iner; sabit sütun
+ * sayısı, çekmece daraldığında değerleri kırpardı. */
+.bc-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.bc-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bc-fact-label {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.bc-fact-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+/* Alanın NEDEN değiştirilemediğini yazan satır. Küçük ama silinmemeli:
+ * "e-postayı neden düzenleyemiyorum" sorusunun tek cevabı burası. */
+.bc-fact-hint {
+  color: var(--soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.bc-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bc-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Kaydet şeridi — formun hemen altında, kartın içinde durur. */
+.bc-savebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.bc-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+/* "Yenile" satırı — yanındaki yazı, yenilemenin bir erişim kaydı doğurduğunu
+ * söylüyor ve düğmeyle aynı hizada durmalı. */
+.bc-refresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.bc-address,
+.bc-sub-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bc-address-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Çekmecedeki yazma izi tablosu dar bir alanda duruyor; kendi içinde kayar,
+ * çekmeceyi yatay kaydırmaz. */
+.bc-inline-audit {
+  overflow-x: auto;
+}
+
+/* KVKK uyarısının ikinci paragrafı (salt okunur alanların gerekçesi). */
+.bc-notice-sub {
+  margin-top: 6px;
+  opacity: 0.85;
+}

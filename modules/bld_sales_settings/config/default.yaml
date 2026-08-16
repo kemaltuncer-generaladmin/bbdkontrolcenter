@@ -1,0 +1,40 @@
+# Satış Ayarları ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yok.
+
+# KURU PROVA VARSAYILANI BURADA YOKTUR VE OLMAYACAKTIR.
+#
+# `bld_kds`'te `dry_run_default` var; bu modül o kalıbı BİLEREK almadı. Kuru
+# prova bayrağı gövdede `preview: bool` olarak durur ve varsayılanı `false`;
+# üçüncü bir hâl (istemci göndermedi → ayardan oku) yok. Sebebi bu ekrana
+# özeldir: sessizce no-op olan bir ayar yazması başarıdan AYIRT EDİLEMEZ.
+# Ekran "kaydedildi" der, denetim izine satır düşer, `location_options`
+# tablosunda hiçbir şey değişmez ve yönetici bunu ancak ertesi sabah kesim
+# saatinin eski değerde olduğunu görünce anlar. Yanlış yapılandırılabilecek
+# bir varsayılan bırakmamak, o hatayı imkânsız kılar.
+
+# Yazılacak vitrin. 0 = varsayılan vitrin (geçide `location_id` hiç
+# gönderilmez ve sunucu kendi varsayılanını kullanır). Birden çok vitrinli bir
+# kurulumda buraya kimlik yazılır; ayarların hangi vitrine gittiği başka
+# hiçbir ekranda sorulmuyor, bu yüzden değer açılışta günlüğe de yazılır.
+location_id: 0
+
+# Taban çizgisi jetonunun ömrü (dakika) — panelin "formu tazele" uyarısını
+# ne zaman göstereceğini belirler. Sunucudaki bir kaydı ETKİLEMEZ; yarım saat
+# önce okunmuş bir ayar tablosunun üstüne yazmak, mutfağın aradan değiştirdiği
+# yoğunluk anahtarını geri çevirme riskini taşır.
+baseline_ttl_minutes: 30
+
+# Hızlı stok şeridinde kaç gün gösterilsin. 2 = bugün + yarın. Daha ileri
+# günlerin stoğu Günlük Menü ekranının işidir; bu şerit yalnız "sabah mutfaktan
+# haber geldi, tavuk sote tavanını düşür" için var.
+stock_days: 2
+
+# Kapalı gün listesi kaç gün ileri istensin. Sunucu aralık verilmezse bugünden
+# 365 gün döndürüyor; burada açıkça yazmak, panelin takvimde hangi aralığı
+# çizebileceğini bilmesini sağlar.
+closed_day_days_ahead: 365
+
+# Ayar ekranının canlı tazeleme aralığı (saniye). Yoğunluk anahtarını MUTFAK
+# EKRANI da değiştiriyor ve yönetici bunu görmeden kaydetmemeli. Sekme
+# gizliyken yoklama durur (`pollLoop`), yani bu aralık paylaşılan
+# `bld-control-panel` bütçesinden yalnız ekran açıkken yer alır.
+poll_seconds: 60
