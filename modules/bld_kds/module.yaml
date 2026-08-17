@@ -87,16 +87,41 @@ ui:
 # kaldırıldı ve `dry_run_default` kapatıldı. Geriye kalan iki kapı — ayrı izin
 # ve gerekçe — bilerek korundu; kuru prova bir güvenlik ağıydı, gerekçe ise
 # denetim kaydıdır ve ikisi ayrı şeylerdir.
+#
+# 17.08.2026 — `bld_kds.manage` BÖLÜNDÜ (kullanıcı kararı). Anahtar iki ayrı işi
+# birden taşıyordu: (a) günlük mutfak işi — sipariş durumu, revizyon, cihaz
+# açma/adlandırma, zararsız komutlar; (b) KASA AYARLARINI YAZMA. Kullanıcı
+# BLD personelinin (a)'yı yapmasını istiyor, (b)'yi istemiyor: yönetilen 24
+# ayar mutfaktaki donanımın kendisini biçimlendirir — yanlış bir yazıcı yolu
+# fiş basımını tümüyle durdurur, bir kilit `false`a çekilince kasadaki düğme
+# ölür ve düzeltme yalnız merkezden gelebilir. (b) artık `bld_kds.settings`
+# altında ve YALNIZ `admin`de.
+#
+# YENİ ANAHTAR OLDUĞU İÇİN HİÇBİR SATIR SİLİNMEDİ. `grant_defaults()` yalnız
+# ekler; `bld_kds.settings` doğduğu andan beri `bld_staff`a HİÇ verilmemiştir,
+# bu yüzden geri alınacak bir satır da yok ve göç yazılmadı. Daraltmayı
+# kurulu sistemde de geçerli kılmanın ucuz yolu budur: var olan anahtarı
+# daraltmak yerine yeni bir anahtar açmak.
 permissions:
   - key: bld_kds.view
     description: "Cihazları, ayarlarını, komut geçmişini, fiş kaydını ve siparişleri görüntüleme."
     default_roles: [admin, bld_staff]
   - key: bld_kds.manage
     description: >
-      Cihaz açma ve adlandırma, eşleme kodu üretme, yönetilen ayarları yazma,
-      zararsız komutlar (test fişi, yeniden bas, alarmı sustur), sipariş
-      revizyonu ve durum değişikliği.
+      Cihaz açma ve adlandırma, eşleme kodu üretme, zararsız komutlar (test
+      fişi, yeniden bas, alarmı sustur), sipariş revizyonu ve durum
+      değişikliği. AYAR YAZMAYI İÇERMEZ — o `bld_kds.settings`tedir.
     default_roles: [admin, bld_staff]
+  - key: bld_kds.settings
+    description: >
+      KASA AYARLARI: yönetilen 24 ayarın kasaya yazılması (çalışma, yazıcı,
+      ses ve kilit politikası). Ayrı durur çünkü mutfağın günlük işi değil,
+      donanımın biçimlendirilmesidir: yanlış bir `printer_device_path` fiş
+      basımını tümüyle durdurur, `poll_seconds` kasayı oran sınırına sokar ve
+      bir kilit anahtarını `false` yapmak kasadaki düğmeyi öldürür — hepsinin
+      düzeltmesi yalnız merkezden gelebilir. Sipariş durumunu değiştirmek
+      (`bld_kds.manage`) bunların hiçbirini yapmaz.
+    default_roles: [admin]
   - key: bld_kds.devices
     description: >
       YIKICI cihaz işlemleri: cihaz iptali ve `restart` · `clear_failed` ·

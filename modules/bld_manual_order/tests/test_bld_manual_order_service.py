@@ -379,3 +379,87 @@ async def test_acilis_ucu_aga_cikmaz() -> None:
     assert sonuc["connected"] is None
     assert sonuc["contract"]["reason_required"] is False
     assert api.names() == []
+
+
+# ================================================ anlaşmalı sepet fiyatı
+
+async def test_anlasmali_tutar_gecide_aynen_gecer() -> None:
+    # Personel telefonda 400,00 ₺ dedi; geçide giden sayı tam olarak o olmalı.
+    # Aradaki her dönüşüm (bölme, yuvarlama, TL'ye çevirme) müşterinin duyduğu
+    # tutardan başka bir sipariş üretirdi.
+    api = FakeApi()
+    servis = make_service(api=api)
+    sonuc = await servis.create(**draft(agreed_total_kurus=40000,
+                                        allow_price_override=True))
+
+    assert sonuc["ok"] is True
+    assert api.used("create_order")[0]["agreed_total_kurus"] == 40000
+
+
+async def test_alan_bos_birakilinca_gecide_HIC_gonderilmez() -> None:
+    # "Anlaşma yok" hâlinin tek bir biçimi olmalı: `None`. Gövdeye `null`
+    # koymak, denetim izine hiçbir şey anlatmayan bir alan yazdırırdı.
+    api = FakeApi()
+    servis = make_service(api=api)
+    await servis.create(**draft())
+
+    assert api.used("create_order")[0]["agreed_total_kurus"] is None
+
+
+async def test_fiyat_kirma_ayri_yetki_ister_cift_kapi() -> None:
+    # K9, İKİNCİ ANAHTAR. Sipariş AÇMAK ile katalog fiyatını KIRMAK aynı iş
+    # değil; `manage` taşıyan ama `price_override` taşımayan biri gövdeyi elle
+    # kurabilir ve kapı serviste de durmalı.
+    api = FakeApi()
+    servis = make_service(api=api)
+    sonuc = await servis.create(**draft(agreed_total_kurus=40000,
+                                        allow_price_override=False))
+
+    assert sonuc["ok"] is False
+    assert "price_override" in sonuc["error"]
+    # AĞA HİÇ ÇIKILMADI: reddedilen bir istek geçidin hız kovasından pay
+    # yememeli ve denetim izine "denendi" satırı bırakmamalı.
+    assert api.names() == []
+
+
+async def test_yetkisiz_personel_alani_bos_birakirsa_reddedilmez() -> None:
+    # Kutuya hiç dokunmamış personel, yetkisi yok diye sipariş açamaz hâle
+    # gelmemeli — siparişlerin ezici çoğunluğu katalog fiyatıyla giriliyor.
+    api = FakeApi()
+    servis = make_service(api=api)
+    sonuc = await servis.create(**draft(allow_price_override=False))
+
+    assert sonuc["ok"] is True
+    assert "create_order" in api.names()
+
+
+async def test_sifir_tutar_aga_cikmadan_reddedilir() -> None:
+    api = FakeApi()
+    servis = make_service(api=api)
+    sonuc = await servis.create(**draft(agreed_total_kurus=0,
+                                        allow_price_override=True))
+
+    assert sonuc["ok"] is False
+    assert "BOŞ bırakın" in sonuc["error"]
+    assert api.names() == []
+
+
+async def test_kuru_provada_da_anlasmali_tutar_gider_ve_yansir() -> None:
+    # Prova gövdenin nasıl OKUNDUĞUNU söyler; fiyattan hiç söz etmeyen bir
+    # prova, personeli "400 yazdım ama geçti mi" belirsizliğinde bırakırdı.
+    api = FakeApi()
+    servis = make_service(api=api)
+    sonuc = await servis.create(**draft(agreed_total_kurus=40000, dry_run=True,
+                                        allow_price_override=True))
+
+    assert sonuc["dry_run"] is True
+    assert api.used("create_order")[0]["dry_run"] is True
+    assert sonuc["would"]["agreed_total_kurus"] == 40000
+
+
+async def test_acilis_ucu_fiyat_kirma_yetkisini_soyler_ve_varsayilani_kapali() -> None:
+    # Bayrak YETKİLENDİRME DEĞİL, çizim bilgisi (asıl kapı `create` içinde).
+    # Varsayılanı `False`: bayrağı vermeyi unutan bir çağıran kutuyu AÇMAZ.
+    servis = make_service()
+    assert (await servis.overview())["can_price_override"] is False
+    assert (await servis.overview(allow_price_override=True))["can_price_override"] is True

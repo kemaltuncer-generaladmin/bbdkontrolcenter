@@ -332,6 +332,9 @@ kbd {
 }
 
 .sidebar-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 11px 18px 14px;
   border-top: 1px solid var(--sb-line);
   font-size: 11px;
@@ -339,6 +342,39 @@ kbd {
 }
 
 .sidebar-foot kbd { margin-right: 2px; }
+
+/* Ad uzunsa kısalır, düğme HER ZAMAN görünür kalır: çıkış yolunu bir ismin
+   uzunluğuna bağlamak, uzun adlı kullanıcıda kapıyı kapatmak olurdu. */
+.sidebar-user {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-signout {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--sb-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+
+.sidebar-signout:hover {
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-signout:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* ------------------------------------------------------------------ panel */
 

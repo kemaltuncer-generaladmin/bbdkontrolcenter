@@ -271,7 +271,15 @@ def test_esleme_yokken_giris_bugunku_gibi_calisir(client: TestClient) -> None:
 
 @pytest.fixture
 def kapali_client(tmp_path: Path) -> Iterator[TestClient]:
-    """Varsayılan ayar: `platform.identity_sync.enabled: false`."""
+    """Varsayılan ayar: `platform.identity_sync.enabled: false`.
+
+    KAPALI DURUM AYARDAN DEĞİL, BURADAN GELİR. `load_config()` makineye özel
+    `config/local.yaml` dosyasını da okur; o dosyada merkez AÇILDIĞI gün
+    (17.08.2026 — uygulama birden çok cihaza kurulacak) bu fixture sessizce
+    "açık" hâle geldi ve testin sınadığı gerileme yasağı sınanmaz oldu.
+    Git dışı bir dosyanın kapıyı belirlemesi, açık kapıyı yeşil gösteren bir
+    kapıdır; beklenen ayar testin kendisinde durur.
+    """
     data = deepcopy(load_config().as_dict())
     data["core"] = {
         **data.get("core", {}),
@@ -279,6 +287,14 @@ def kapali_client(tmp_path: Path) -> Iterator[TestClient]:
         "secret_key_path": str(tmp_path / "secret.key"),
     }
     data["auth"] = {**data.get("auth", {}), "bootstrap_pin": YEREL_PIN}
+    data["platform"] = {
+        **data.get("platform", {}),
+        "identity_sync": {
+            **(data.get("platform", {}).get("identity_sync") or {}),
+            "enabled": False,
+            "base_url": "",
+        },
+    }
     with TestClient(create_app(Config(data, root=ROOT)), raise_server_exceptions=False) as test:
         yield test
 

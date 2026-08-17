@@ -3,7 +3,6 @@
 Sözleşme — kabuk bu adreslere konuşur:
 
     POST /api/auth/login            {password}                → {token, user}
-                                                              | {mustSetPassword: true, …}
     POST /api/auth/set-password     {currentSecret, password} → {token, user}
     GET  /api/users                                           → {users: [...]}
     POST /api/users                 {firstName, …, password}
@@ -26,6 +25,12 @@ gerekçesi kendi gövdelerinde yazılıdır.
 veri riski demekti. Ekran metinleri ve doğrulama her yerde PIN'i anlatır
 (kural: `km_core/security/identity.py` → `validate_pin`).
 
+**ZORLAMA YOK.** 0016'nın "önce sır belirle" adımı (`mustSetPassword`) kodda
+unutulmuştu ve 17.08.2026'da gerçek bir kurulumu kilitledi; tümüyle kaldırıldı.
+`/auth/login` YA oturum açar YA 401 döner, üçüncü bir durum yoktur.
+`/auth/set-password` yalnızca kullanıcının KENDİ İSTEĞİYLE PIN değiştirmesidir;
+giriş yolu oraya asla yönlendirmez.
+
 Yanıtlarda `password_hash`, `secret_lookup` ve PIN sütunları HİÇBİR ZAMAN
 bulunmaz: gövde `_user_row` ile açıkça beyaz listeden geçirilir.
 
@@ -43,7 +48,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from km_core.http.deps import requires
@@ -81,8 +86,7 @@ class LoginRequest(_Body):
 
 
 class SetPasswordRequest(_Body):
-    # Göç yolunda `currentSecret` eski sütunda duran PIN'dir; PIN'ini kurmuş
-    # kullanıcı için mevcut PIN'idir.
+    # `currentSecret` kullanıcının MEVCUT PIN'idir; kendi isteğiyle değiştirir.
     current_secret: str = Field(alias="currentSecret", min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=256)
 
@@ -164,9 +168,6 @@ def _user_row(row: dict[str, Any]) -> dict[str, Any]:
         # mı olduğu. Yönetici, merkezden gelen bir satırı burada düzenlemeye
         # çalışmadan önce görebilmeli: merkez kaydının yazması merkeze gider.
         "origin": row.get("origin") or "local",
-        # PIN'ini yeni sütuna hiç kurmamış (göçten gelen) kullanıcı işaretlenir:
-        # yönetici kimin hâlâ eski sütunda olduğunu görebilsin.
-        "mustSetPassword": row.get("password_hash") is None,
         "passwordSetAt": row.get("password_set_at"),
         "lastLoginAt": row.get("last_login_at"),
         "lockedUntil": row.get("locked_until"),
@@ -262,31 +263,20 @@ def create_identity_router() -> APIRouter:
             # TEK TİP MESAJ: sebep ayırt edilmez (kilitli mi, yok mu, yanlış mı).
             raise HTTPException(status_code=401, detail="Giriş yapılamadı.")
 
-        if result.must_set_password:
-            # Sır doğrulandı ama OTURUM AÇILMADI. Belirteç yok; kabuk PIN kurma
-            # adımına geçer ve eski sırrı `currentSecret` olarak geri gönderir.
-            # İzin listesi de dönmez — oturum yoktur.
-            return {
-                "mustSetPassword": True,
-                "message": "Devam etmek için kendinize bir PIN belirleyin.",
-                "user": {
-                    "id": result.user.id,
-                    "firstName": result.user.first_name,
-                    "lastName": result.user.last_name,
-                    "fullName": result.user.full_name,
-                },
-            }
-
+        # BAŞKA DAL YOK. Doğrulama geçtiyse oturum açılmıştır; "önce sır belirle"
+        # ara durumu reddedilmiş ADR 0016'nın kalıntısıydı ve kaldırıldı.
         return {"token": result.token, "user": user_payload(result.user)}
 
     @router.post("/auth/set-password")
     async def set_own_password(request: Request, body: SetPasswordRequest) -> dict[str, Any]:
-        """Kullanıcının kendi PIN'ini kurması/değiştirmesi.
+        """Kullanıcının kendi PIN'ini İSTEYEREK değiştirmesi.
 
         İzin İSTEMEZ; bu K9'a aykırı değildir çünkü uç, oturumun değil MEVCUT
         SIRRIN doğrulanmasıyla korunur. Kişi kendi sırrını bilmeden buradan
-        hiçbir şey değiştiremez. Yeni sütunda PIN'i olmayan göç kullanıcısının
-        oturumu da zaten yoktur; başka türlü kilitlenirdi.
+        hiçbir şey değiştiremez.
+
+        BURAYA KİMSE ZORLANMAZ: `/auth/login` bu uca yönlendirmez, çağrı
+        yalnızca kullanıcının kendi isteğiyle başlar.
         """
         identity = _identity(request)
         # Bu uç da OTURUM AÇAR; kapı girişle aynı olmalı, aksi hâlde yaş sınırı
@@ -298,6 +288,36 @@ def create_identity_router() -> APIRouter:
             raise HTTPException(status_code=401, detail="Giriş yapılamadı.")
         token, user = result
         return {"token": token, "user": user_payload(user)}
+
+    @router.post("/auth/logout")
+    async def logout(
+        request: Request,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, bool]:
+        """Oturumu kapatır — SUNUCUDA, yalnız arayüzde değil.
+
+        İZİN İSTEMEZ ve bu K9'a aykırı değildir: uç, taşınan belirtecin
+        KENDİSİNDEN başka hiçbir şeye dokunmaz. Kişi ancak elindeki oturumu
+        kapatabilir; başkasınınkine erişimi yoktur.
+
+        BELİRTECİ ARAYÜZDE UNUTMAK YETMEZ. Kabuk `token` değişkenini boşaltsa
+        bile satır `sessions` tablosunda `session_idle_minutes` boyunca geçerli
+        kalırdı; o aralıkta ele geçen belirteç hâlâ çalışan bir anahtardır.
+        Kapatma bu yüzden sunucuda yapılır.
+
+        YANIT TEK TİPTİR. Belirteç geçersiz, süresi dolmuş ya da hiç yoksa da
+        `{"closed": true}` döner: ayırt etmek, elindeki dizginin geçerli bir
+        oturum olup olmadığını deneyerek öğrenmenin yolunu açardı.
+        """
+        identity = _identity(request)
+        token = (
+            authorization[7:].strip()
+            if authorization and authorization.lower().startswith("bearer ")
+            else ""
+        )
+        if token:
+            await identity.logout(token)
+        return {"closed": True}
 
     # ---------------------------------------------------------- kullanıcılar
 

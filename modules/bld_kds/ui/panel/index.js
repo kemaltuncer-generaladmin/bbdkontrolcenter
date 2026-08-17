@@ -18,7 +18,14 @@
 //  · KAYIT SİLMEZ. İptal edilen kasa listede kalır (`revoked_at` dolar),
 //    revizyonlar üst üste yazılır, denetim satırı hiç silinmez.
 //  · İZİN DENETLEMEZ. Görünürlük sunucuda süzülür (K9); bir uç 403 dönerse
-//    ekran bunu söyler ve çalışmaya devam eder.
+//    ekran bunu söyler ve çalışmaya devam eder. TEK İSTİSNA kasa ayarlarıdır:
+//    `GET /devices` yanıtındaki `can.settings` bayrağı `false` ise 24 ayar
+//    alanı SALT OKUNUR çizilir ve yazma düğmesi nedeniyle birlikte kapanır.
+//    Bu da bir yetki kapısı değil, K9'un ARAYÜZ yarısıdır — kapı `PATCH
+//    /devices/{id}/settings` ucundaki `bld_kds.settings` iznidir. Bayrağın
+//    sunucudan gelmesinin sebebi kabuğun panele izin listesi VERMEMESİDİR
+//    (`ui-kernel.js` → `mountPanel`); panelin izni sorabileceği tek yer
+//    sunucunun kendisi.
 //  · SİPARİŞİN İSTENEN SAATİNİ değiştirmez — aşağıdaki "requested_at" notu.
 //
 // TUZAKLAR (ekranda karşılığı olanlar):
@@ -447,6 +454,12 @@ const EMPTY_STATE = {
   menuLoaded: false,
   menuMissing: false,
   menuError: '',
+  // Bu oturum KASA AYARI yazabilir mi (`bld_kds.settings`). Sunucudan gelir —
+  // kabuğun panele verdiği bağlamda izin listesi yok, panelin izni sorabileceği
+  // tek yer `GET /devices` yanıtı. Varsayılan `false`: yanıt gelmeden ayar
+  // formu düzenlenebilir çizilseydi, yetkisi olmayan yönetici 24 alanı
+  // doldurup 403 yerdi. Kapı zaten sunucuda (K9); buradaki karar görünürlük.
+  canSettings: false,
 };
 
 let api = null;
@@ -729,6 +742,10 @@ async function loadOverview() {
 async function loadDevices() {
   try {
     const payload = await call(`${BASE}/devices`);
+    // İZİN SÖZLEŞMEYLE BİRLİKTE GELİR ve bağlantı kopukken de gelir: geçit
+    // düşse bile yanıt `can` taşır (servis `contract`i yerel kuruyor), yani
+    // BLD'ye ulaşılamadığı için form gereksiz yere kilitlenmez.
+    state.canSettings = payload?.can?.settings === true;
     if (linkOk(payload)) {
       state.devices = listOf(payload, 'devices');
       state.devicesStale = false;
@@ -1538,13 +1555,17 @@ function seedSettings(settings, fields) {
  * Virgüllü dizeyi kullanıcıya elle yazdırmak, "newOrder" ile "new_order"
  * arasındaki farkı personelin ezberlemesini istemek olurdu.
  */
-function sectionFields(fields) {
+function sectionFields(fields, readOnly = false) {
   const out = [];
   for (const field of fields) {
     if (field.kind === 'events') { out.push(...soundEventFields(field)); continue; }
     out.push(settingsField(field));
   }
-  return out;
+  // AYAR YAZMA YETKİSİ YOKSA ALANLAR SALT OKUNUR. Değerler görünmeye devam
+  // eder — okumanın izni ayrı (`bld_kds.view`) ve "bu kasada yoklama kaç
+  // saniyede" sorusu ayar yazmadan da sorulur. Kapatılan şey YAZMA
+  // AFFORDANSIDIR: düzenlenebilir bir kutu, yazılabileceği sözünü verir.
+  return readOnly ? out.map((field) => ({ ...field, readOnly: true })) : out;
 }
 
 function soundEventFields(field) {
@@ -1695,6 +1716,20 @@ function describeSettingsPatch(body, limit = 8) {
 function settingsCard(device, forms, repaint, revoked) {
   const settings = device.settings || {};
   const body = h('div', 'bk-settings');
+  // AYAR YAZMA AYRI İZİNDEDİR (`bld_kds.settings`, 17.08.2026 kullanıcı
+  // kararı): sipariş durumunu ilerleten personel kasanın ayarına dokunmaz.
+  // BURASI YETKİLENDİRME DEĞİL, GÖRÜNÜRLÜKTÜR — kapı `PATCH .../settings`
+  // ucundadır (K9) ve bu bayrağı da o sunucu söylüyor.
+  const yazabilir = state.canSettings;
+
+  if (!yazabilir) {
+    body.append(alertBox(
+      'Kasa ayarlarını yazma yetkiniz yok (bld_kds.settings): alanlar SALT '
+      + 'OKUNUR. Bu ekranın geri kalanı — sipariş durumu, revizyon, komutlar — '
+      + 'açık kalır. Ayar yazma ayrı bir yetkidir çünkü yanlış bir yazıcı yolu '
+      + 'fiş basımını tümüyle durdurur ve düzeltmesi yalnız merkezden gelir.',
+      'warn'));
+  }
 
   body.append(hintBox(
     'Bu bölümler kasanın AYARLAR EKRANIYLA AYNI SIRADADIR. Ayarlar KASADA '
@@ -1712,7 +1747,7 @@ function settingsCard(device, forms, repaint, revoked) {
 
     if (section.fields.length) {
       const form = formGrid({
-        fields: sectionFields(section.fields),
+        fields: sectionFields(section.fields, !yazabilir),
         value: seedSettings(settings, section.fields),
       });
       forms.push(form);
@@ -1733,7 +1768,15 @@ function settingsCard(device, forms, repaint, revoked) {
   const actions = h('div', 'bk-actions');
   actions.append(writeButton('Ayarları kasaya yaz', {
     variant: 'primary',
-    blocked: revoked ? 'Kasa iptal edilmiş; ayar yazmak etkisiz olurdu.' : '',
+    // Düğme KALDIRILMAZ, KAPATILIR ve nedenini söyler (kit README
+    // §"blockedButton"): olmayan bir düğme, yöneticiye ekranın bozuk olduğunu
+    // ya da ayarın hiç yazılamayacağını düşündürürdü. Yetki kimden istenir,
+    // o yazıyor.
+    blocked: !yazabilir
+      ? 'Kasa ayarlarını yazmak ayrı yetki ister (bld_kds.settings); '
+        + 'yöneticinizden isteyin. Sipariş durumu ve komutlar bu yetkiye bağlı '
+        + 'değildir.'
+      : (revoked ? 'Kasa iptal edilmiş; ayar yazmak etkisiz olurdu.' : ''),
     onClick: async () => {
       const broken = sectionForms.flatMap((form) => form.errors());
       if (broken.length) {

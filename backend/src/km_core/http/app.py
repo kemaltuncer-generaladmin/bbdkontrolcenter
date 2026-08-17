@@ -63,6 +63,15 @@ CORE_PANELS_UI: list[dict[str, Any]] = [
         "ui": {"nav": {"title": "Sistem Sağlığı", "icon": "pulse", "group": "Kurumsal",
                        "order": 820, "requires": ["settings.view"]}},
     },
+    {
+        # ADR 0021 §4 — merkeze eşlenmiş makineler. Ekran `installations.view`
+        # ile menüye girer, yönetim düğmeleri ayrıca `installations.manage`
+        # ister ve ikisi de backend'de yeniden sorulur (K9).
+        "id": "core_pairing", "name": "KM Cihaz Eşle", "version": "0.1.0", "provides": [],
+        "permissions": [],
+        "ui": {"nav": {"title": "KM Cihaz Eşle", "icon": "monitor", "group": "Kurumsal",
+                       "order": 830, "requires": ["installations.view"]}},
+    },
 ]
 
 

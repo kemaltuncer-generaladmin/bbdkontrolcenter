@@ -24,6 +24,13 @@
 //    tutarı `OrderFactory` çözer (paket çözümlemesi, seçenek farkları,
 //    kampanya). Tahmini "toplam" diye sunmak, personelin telefonda müşteriye
 //    YANLIŞ tutar söylemesi demekti.
+//    ANLAŞMALI SEPET FİYATI BUNUN İSTİSNASI DEĞİL: ekran o sayıyı HESAPLAMAZ,
+//    personelden alır ve sunucuya taşır. Kutu doluyken ekran KATALOG TAHMİNİNİ
+//    DE gösterir ve farkı yazar — yalnız anlaşmalı tutarı göstermek, personelin
+//    ne kadar indirim yaptığını görmemesi demekti. Tutar SEPETİN TAMAMI
+//    içindir, kalem başına değil; teslimat ücreti ona DÂHİLDİR, eklenmez.
+//    Kutu ayrı bir yetki ister (`bld_manual_order.price_override`) ve yetki
+//    yoksa hiç çizilmez — asıl kapı yine uçta ve serviste (K9).
 //  · DURUM DEĞİŞTİRMEZ, İPTAL ETMEZ, REVİZYON YAZMAZ. Onlar Sipariş Yönetimi
 //    ekranının işi; bu ekranın tek yazması sipariş AÇMAKTIR.
 //  · İZİN DENETLEMEZ. Görünürlük sunucuda süzülür (K9); bir uç 403 dönerse
@@ -54,7 +61,7 @@
 // dizeyle HTML kurmak, tek bir `<` karakterinin ekranı bozması demekti.
 
 import {
-  button, debounce, h, loadStyles, money, toaster, todayIso,
+  button, debounce, h, loadStyles, money, moneyInput, parseMoney, toaster, todayIso,
 } from '../../ui-kit/kit.js';
 import { dateField } from '../../ui-kit/datefield.js';
 import { createPicker } from '../../ui-kit/picker.js';
@@ -100,6 +107,16 @@ const EMPTY_STATE = {
 
   day: null,               // /service-day yanıtı
   stockWarnings: [],
+
+  // ANLAŞMALI SEPET FİYATI. Personelin YAZDIĞI ham metin tutuluyor, çözülmüş
+  // kuruş değil: yarım yazılmış bir sayıyı ("40," gibi) her tuşta kuruşa
+  // çevirip geri yazmak, imleci kutudan atar ve yazmayı imkânsız kılardı.
+  // Çözüm `agreedPrice()` içinde ve tek yerde.
+  agreedRaw: '',
+  // Yetki yoksa kutu HİÇ ÇİZİLMEZ. Bu yetkilendirme DEĞİL (asıl kapı uçta ve
+  // serviste, K9); her seferinde reddedilecek bir kutu göstermemek için.
+  canPriceOverride: false,
+
   saving: false,
   result: null,
 };
@@ -181,6 +198,58 @@ function estimatedTotal() {
     ? Number(state.day?.delivery_fee_kurus || 0)
     : 0;
   return items + fee;
+}
+
+/**
+ * ANLAŞMALI SEPET FİYATININ okunuşu — `{kurus, error}`.
+ *
+ * `kurus === null` ve `error === ''` demek KUTU BOŞ demektir: anlaşma yok,
+ * sunucu tutarı katalogdan hesaplar (bugünkü davranış). Alan gövdeye o hâlde
+ * hiç konmaz.
+ *
+ * OKUNAMAYAN METİN SESSİZ GEÇİLMEZ, KAYDETMEYİ ENGELLER. Bu ekranın başka
+ * hiçbir uyarısı engellemiyor (kesim saati, stok tavanı) çünkü onlar sunucunun
+ * bilerek atladığı kurallar. Burası farklı: personel bir fiyat YAZDI ve o
+ * fiyat okunamadıysa, siparişi katalog fiyatıyla açmak "personel bir fiyat
+ * söyler, sistem başka tutar yazar" hâlinin ta kendisi olurdu.
+ *
+ * SINIRLAR SÖZLEŞMEDEN OKUNUR (`/overview` → `contract.agreed_total`).
+ * Ekrana gömülü bir sayı, sunucu kuralı değiştiğinde sessizce yalan söylerdi.
+ */
+function agreedPrice() {
+  const raw = String(state.agreedRaw || '').trim();
+  if (!raw) return { kurus: null, error: '' };
+
+  const kurus = parseMoney(raw);
+  if (kurus === null) {
+    return {
+      kurus: null,
+      error: 'Anlaşmalı fiyat okunamadı. Örnek: 400 · 400,50 · 1.250,00',
+    };
+  }
+
+  const limits = state.contract?.agreed_total || {};
+  const min = Number(limits.min ?? 1);
+  const max = Number(limits.max ?? 100000000);
+
+  if (kurus < min) {
+    // SIFIR AYRI BİR CÜMLE HAK EDİYOR: personel kutuyu boşaltmak isterken "0"
+    // yazmış olabilir ve "en az 1 kuruş" ona ne yapacağını söylemez.
+    return {
+      kurus: null,
+      error: 'Anlaşmalı fiyat sıfırdan büyük olmalı. Anlaşma yoksa alanı BOŞ '
+        + 'bırakın — sıfır yazmak bedava sipariş demektir ve sunucu reddeder.',
+    };
+  }
+  if (kurus > max) {
+    return {
+      kurus: null,
+      error: `Anlaşmalı fiyat en çok ${money(max)} olabilir; fazladan basılmış `
+        + 'bir sıfır olabilir mi?',
+    };
+  }
+
+  return { kurus, error: '' };
 }
 
 // ------------------------------------------------------------------ müşteri
@@ -525,8 +594,12 @@ function itemsCard() {
   // etkiliyor. Bu yüzden arama değiştikçe `setItems()` ÇAĞRILMAZ — o çağrı
   // listede olmayan seçimleri temizler ve personelin biriktirdiği sepeti
   // sessizce boşaltırdı.
+  // KATALOG ELDEYSE SEÇİCİ ONUNLA DOĞAR. Boş doğup `loadProducts()`in
+  // doldurmasını beklemek, katalog ONDAN ÖNCE gelmiş her durumda (panele
+  // yeniden girmek, kart yeniden çizilmek) seçiciyi kalıcı olarak BOŞ
+  // bırakıyordu: `state.products` doluyken bile liste "Liste boş." diyordu.
   nodes.picker = createPicker({
-    items: [],
+    items: pickerItems(),
     groupLabel: 'Kategori',
     placeholder: 'Ürün ara — seçimler birikir',
     single: false,
@@ -548,6 +621,22 @@ function itemsCard() {
   return card('3 · Kalemler', box,
     'Seçici açık kalır: ürünlere sırayla basın, seçim birikir, tek düğmeyle '
     + 'hepsi eklenir. Adet satırın üstünde değiştirilir.');
+}
+
+/**
+ * Katalog satırlarını seçicinin `{id, name, group, meta}` sözleşmesine çevirir.
+ *
+ * TEK YERDE DURUR: hem seçici doğarken (`itemsCard`) hem katalog geldiğinde
+ * (`loadProducts`) aynı eşleme gerekiyor. İki kopya olsaydı biri değişip
+ * öteki kalırdı ve fark ancak "fiyat seçicide yanlış" diye görünürdü.
+ */
+function pickerItems() {
+  return state.products.map((row) => ({
+    id: row.menu_id,
+    name: row.name,
+    group: row.category || '',
+    meta: money(row.price_kurus),
+  }));
 }
 
 function paintAddButton() {
@@ -674,12 +763,20 @@ async function loadProducts() {
 
   // `setItems` YALNIZ BURADA çağrılır (katalog bir kez gelir): arama sırasında
   // çağrılsaydı biriken seçimler temizlenirdi.
-  nodes.picker?.setItems(state.products.map((row) => ({
-    id: row.menu_id,
-    name: row.name,
-    group: row.category || '',
-    meta: money(row.price_kurus),
-  })));
+  //
+  // SEÇİCİ YOKSA SESSİZ GEÇİLMEZ. Burada eskiden yalnız `nodes.picker?.` vardı
+  // ve o soru işareti gerçek bir arızayı gizliyordu: seçici referansı düşmüşse
+  // (panel kapanırken `cleanup` onu `null` yapar ve uçuştaki bu yükleme o
+  // boşluğa düşer) katalog sessizce atılıyor, ama hemen aşağıdaki satır not
+  // alanına "81 ürün." yazmayı sürdürüyordu. Ekranda ürün listesi BOŞ, altında
+  // "81 ürün." — kullanıcının gördüğü tam olarak buydu ve hiçbir yerde iz
+  // bırakmıyordu. Artık kataloğu `state.products` taşıyor; seçici de onunla
+  // doğuyor (`itemsCard`), yani bu yol düşse bile liste dolu açılır.
+  if (nodes.picker) {
+    nodes.picker.setItems(pickerItems());
+  } else if (state.products.length) {
+    console.warn('[bld_manual_order] katalog geldi ama seçici yok — panel kapanmış olabilir');
+  }
   if (nodes.productsNote) nodes.productsNote.textContent = state.productsNote;
   paintAddButton();
 }
@@ -723,8 +820,11 @@ function summaryBar() {
   const box = h('div', 'bmo-summary');
 
   nodes.warnBox = h('div', 'bmo-stack');
+  nodes.agreedBox = h('div', 'bmo-agreed');
+  nodes.agreedNote = h('div', 'bmo-stack');
   nodes.totalLine = h('div', 'bmo-total');
   nodes.blockLine = h('div', 'bmo-dim');
+  paintAgreed();
 
   const reason = h('input', 'kit-input bmo-reason');
   reason.type = 'text';
@@ -742,9 +842,60 @@ function summaryBar() {
 
   nodes.resultBox = h('div', 'bmo-stack');
 
-  box.append(nodes.warnBox, nodes.totalLine, nodes.blockLine, actions, nodes.resultBox);
+  box.append(nodes.warnBox, nodes.agreedBox, nodes.totalLine, nodes.blockLine,
+    actions, nodes.resultBox);
   paintSummary();
   return box;
+}
+
+/**
+ * Anlaşmalı fiyat kutusunu çizer. `paintSummary()` BU İŞİ YAPMAZ ve yapamaz:
+ * her tuşta yeniden çizilen bir kutu imleci dışarı atardı (adet kutularındaki
+ * aynı tuzak). Buradan yalnız iki şey tetikler — kart ilk kuruluş ve
+ * `/overview` yanıtıyla gelen yetki bilgisi.
+ *
+ * YETKİ YOKSA KUTU HİÇ ÇİZİLMEZ. Bu bir yetkilendirme değil (asıl kapı uçta ve
+ * serviste, K9); amacı personele her seferinde reddedilecek bir alan
+ * göstermemek.
+ */
+function paintAgreed() {
+  if (!nodes.agreedBox) return;
+  nodes.agreedBox.replaceChildren();
+  nodes.agreedInput = null;
+
+  if (!state.canPriceOverride) return;
+
+  const input = h('input', 'kit-input bmo-agreed-input');
+  input.type = 'text';
+  // `number` DEĞİL: Türkçe yazımda ondalık ayracı virgül ve `type="number"`
+  // virgülü olan bir girişi bazı yerelleştirmelerde boş sayar — personelin
+  // gördüğü kutuda "400,50" yazarken `value` boş dönerdi.
+  input.inputMode = 'decimal';
+  input.placeholder = 'örn. 400,00 — boş bırakılırsa katalog fiyatı';
+  input.value = state.agreedRaw || '';
+  input.setAttribute('aria-label', 'Anlaşmalı sepet fiyatı');
+  input.addEventListener('input', () => {
+    state.agreedRaw = input.value;
+    // KUTU YENİDEN ÇİZİLMEZ, yalnız özet tazelenir.
+    paintSummary();
+  });
+  input.addEventListener('blur', () => {
+    const { kurus, error } = agreedPrice();
+    // OKUNAN DEĞER GERİ YAZILIR: personel "400" yazar, kutu "400,00" gösterir
+    // ve sistemin ne anladığı görünür olur. OKUNAMAYAN METNE DOKUNULMAZ —
+    // düzeltmesi gereken kişi yazdığını görmeli.
+    if (!error && kurus !== null) {
+      state.agreedRaw = moneyInput(kurus);
+      input.value = state.agreedRaw;
+      paintSummary();
+    }
+  });
+  nodes.agreedInput = input;
+
+  nodes.agreedBox.append(
+    labelled('Anlaşmalı sepet fiyatı (isteğe bağlı)', input),
+    nodes.agreedNote,
+  );
 }
 
 /** Kaydetmeye engel olan (GERÇEK engel) durumlar. Kesim ve stok BURADA YOK. */
@@ -765,6 +916,12 @@ function blockers() {
       list.push('teslimat adresi eksik');
     }
   }
+  // TEK ENGELLEYEN UYARI BU VE İSTİSNA BİLİNÇLİ. Kesim saati ve stok tavanı
+  // engellemiyor çünkü onlar sunucunun BİLEREK atladığı kurallar. Okunamayan
+  // bir fiyat farklı: personel bir tutar YAZDI ve o tutar okunamadıysa,
+  // siparişi katalog fiyatıyla açmak tam olarak "personel bir fiyat söyler,
+  // sistem başka tutar yazar" hâlidir.
+  if (agreedPrice().error) list.push('anlaşmalı fiyat okunamadı');
   return list;
 }
 
@@ -778,15 +935,54 @@ function paintSummary() {
   if (cutoff.closed && cutoff.label) nodes.warnBox.append(alertBox(cutoff.label, 'warn'));
   for (const line of state.stockWarnings) nodes.warnBox.append(alertBox(line, 'warn'));
 
+  // ANLAŞMALI FİYAT: kutu boşken bugünkü davranış aynen; doluyken ekran
+  // KATALOG TAHMİNİNİ DE gösterir ve farkı yazar. Yalnız anlaşmalı tutarı
+  // göstermek, personelin ne kadar indirim yaptığını görmemesi demekti.
+  const agreed = agreedPrice();
+  const catalog = estimatedTotal();
+  const fee = Number(state.day?.delivery_fee_kurus || 0);
+  const delivering = state.deliveryType === 'delivery' && fee > 0;
+
+  nodes.agreedNote.replaceChildren();
+  if (state.canPriceOverride) {
+    if (agreed.error) {
+      nodes.agreedNote.append(alertBox(agreed.error, 'warn'));
+    } else if (agreed.kurus !== null) {
+      nodes.agreedNote.append(h('div', 'bmo-dim',
+        'Tutar SEPETİN TAMAMI içindir, kalem başına değil. Kalemler siparişe '
+        + 'FİYATSIZ yazılır; para sipariş toplamında durur'
+        + (delivering
+          ? `. Teslimat ücreti (${money(fee)}) bu tutara DÂHİLDİR — sunucu `
+            + 'ayrıca eklemez; ayrıca almak istiyorsanız tutara siz ekleyin'
+          : '')
+        + '.'));
+    } else {
+      nodes.agreedNote.append(h('div', 'bmo-dim',
+        'Boş bırakılırsa tutar katalogdan hesaplanır (bugünkü davranış) ve '
+        + 'adrese teslimde teslimat ücreti eklenir.'));
+    }
+  }
+
   nodes.totalLine.replaceChildren();
-  nodes.totalLine.append(h('span', 'bmo-total-label', 'Tahmini toplam'));
-  nodes.totalLine.append(h('span', 'bmo-total-value', money(estimatedTotal())));
-  nodes.totalLine.append(h('span', 'bmo-dim',
-    `${totalQuantity()} porsiyon · katalog fiyatından hesaplandı, `
-    + 'kesin tutarı sunucu belirler'
-    + (state.deliveryType === 'delivery' && state.day?.delivery_fee_kurus
-      ? ` · teslimat ${money(state.day.delivery_fee_kurus)} dâhil`
-      : '')));
+  if (agreed.kurus !== null) {
+    const diff = agreed.kurus - catalog;
+    // İŞARET AÇIKÇA YAZILIR: "80,00 ₺ fark" hangi yöne olduğunu söylemez ve
+    // personel zam yaptığını indirim sanabilirdi.
+    const sign = diff > 0 ? '+' : (diff < 0 ? '−' : '±');
+
+    nodes.totalLine.append(h('span', 'bmo-total-label', 'Anlaşmalı toplam'));
+    nodes.totalLine.append(h('span', 'bmo-total-value', money(agreed.kurus)));
+    nodes.totalLine.append(h('span', 'bmo-dim',
+      `${totalQuantity()} porsiyon · katalog ${money(catalog)} · `
+      + `anlaşmalı ${money(agreed.kurus)} · fark ${sign}${money(Math.abs(diff))}`));
+  } else {
+    nodes.totalLine.append(h('span', 'bmo-total-label', 'Tahmini toplam'));
+    nodes.totalLine.append(h('span', 'bmo-total-value', money(catalog)));
+    nodes.totalLine.append(h('span', 'bmo-dim',
+      `${totalQuantity()} porsiyon · katalog fiyatından hesaplandı, `
+      + 'kesin tutarı sunucu belirler'
+      + (delivering ? ` · teslimat ${money(fee)} dâhil` : '')));
+  }
 
   const missing = blockers();
   nodes.blockLine.textContent = missing.length
@@ -832,6 +1028,11 @@ function requestBody(dryRun) {
   }
   if (state.customerNote.trim()) body.customer_note = state.customerNote.trim();
   if (state.reason.trim()) body.reason = state.reason.trim();
+  // YALNIZ DOLUYKEN: "anlaşma yok" hâlinin tek bir biçimi var ve o da alanın
+  // hiç gönderilmemesi. `null` yollamak, denetim izine hiçbir şey anlatmayan
+  // bir alan yazdırırdı.
+  const agreed = agreedPrice();
+  if (agreed.kurus !== null) body.agreed_total_kurus = agreed.kurus;
   return body;
 }
 
@@ -877,6 +1078,12 @@ function paintResult(result) {
       `Prova: ${would.item_count ?? state.items.length} kalem, `
       + `${would.service_date || state.serviceDate}, `
       + `${would.payment_method || state.paymentMethod}`
+      // ANLAŞMALI TUTAR PROVADA DA YAZILIR: fiyattan hiç söz etmeyen bir prova,
+      // personeli "400 yazdım ama sunucu okudu mu" belirsizliğinde bırakırdı.
+      // Sayı SUNUCUNUN ECHO'SUDUR, ekranın kendi durumundan değil.
+      + `${would.agreed_total_kurus
+        ? ` · ANLAŞMALI ${money(would.agreed_total_kurus)} (katalog değil)`
+        : ''}`
       + `${would.would_create_customer ? ' · YENİ müşteri açılacak' : ''}. `
       + 'Sipariş AÇILMADI.', 'info'));
     // PROVANIN SINIRI YAZILIR: gövdeyi ve ödeme yöntemini denetler; kalem
@@ -914,8 +1121,13 @@ function resetDraft() {
   state.customerNote = '';
   state.reason = '';
   state.stockWarnings = [];
+  // ANLAŞMALI FİYAT DA DÜŞER. Müşteri ve gün kalıyor ama fiyat SEPETE aitti;
+  // taşınsaydı "bir de yarına verelim" denen ikinci sipariş, ilkinin
+  // pazarlığıyla açılırdı.
+  state.agreedRaw = '';
   if (nodes.customerNote) nodes.customerNote.value = '';
   if (nodes.reason) nodes.reason.value = '';
+  if (nodes.agreedInput) nodes.agreedInput.value = '';
   nodes.picker?.clear();
   paintAddButton();
   paintItems();
@@ -1050,9 +1262,15 @@ export function mount(root, ctx) {
       const payload = await call(`${BASE}/overview`);
       state.contract = payload.contract || null;
       state.limits = payload.limits || null;
+      // FİYAT KIRMA YETKİSİ SUNUCUDAN OKUNUR. Varsayılan `false` (EMPTY_STATE):
+      // yanıt gelmezse ya da alan yoksa kutu ÇİZİLMEZ. Ters varsayılan,
+      // yetkisiz personele her seferinde 403 alacak bir alan gösterirdi.
+      state.canPriceOverride = Boolean(payload.can_price_override);
+      paintAgreed();
       // Alan sınırları ve arama eşiği SUNUCUDAN gelir: ekrana gömülü bir sayı,
       // modül ayarı değiştiğinde sessizce yalan söylerdi.
       applyLimits();
+      paintSummary();
       if (payload.dry_run_default) {
         // AYAR AÇIKSA SÖYLENİR: "kaydet" düğmesinin sessizce provaya dönmesi,
         // ekranın yalan söylemesi olurdu.
@@ -1077,6 +1295,9 @@ export function mount(root, ctx) {
     nodes.stockDebounced?.cancel();
     nodes.picker = null;
     nodes.date = null;
+    // Kopmuş bir DOM düğümüne tutunmamak için: panel her açılışta yenisini
+    // kuruyor ve eskisi burada bırakılmazsa bellekte kalırdı.
+    nodes.agreedInput = null;
     nodes.searchDebounced = null;
     nodes.stockDebounced = null;
     root.replaceChildren();

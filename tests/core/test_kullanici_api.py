@@ -94,6 +94,26 @@ def test_yanlis_pin_TEK_TIP_401_doner(client: TestClient) -> None:
     assert cevap.json()["error"]["message"] == "Giriş yapılamadı."
 
 
+def test_giris_yaniti_SIR_BELIRLEMEYE_ZORLAMAZ(client: TestClient) -> None:
+    """KİLİTLENME REGRESYONU — 17.08.2026.
+
+    Reddedilmiş ADR 0016'nın zorlama akışı kodda kalmıştı: giriş bazen belirteç
+    yerine `mustSetPassword` döndürüyor, kabuk yeni sır yazdırıyor ve orijinal
+    PIN o andan sonra reddediliyordu. Uçta artık İKİ SONUÇ var: belirteç ya da
+    401. `/auth/login` aynı PIN'e ikinci kez de belirteç verir.
+    """
+    for _ in range(2):
+        cevap = giris(client, YONETICI_PINI)
+        assert cevap.status_code == 200, cevap.text
+        govde = cevap.json()
+        assert govde["token"]
+        assert "mustSetPassword" not in govde
+
+    # Yönetim listesindeki kayıt da o alanı taşımaz: zorlama diye bir durum yok.
+    kayit = client.get("/api/users", headers=basliklar(str(govde["token"]))).json()["users"][0]
+    assert "mustSetPassword" not in kayit
+
+
 # ------------------------------------------------------------ izin kapısı
 
 
@@ -223,7 +243,7 @@ def test_yonetici_pin_sifirlayabilir(client: TestClient) -> None:
     assert giris(client, PERSONEL_PINI).status_code == 401
 
 
-def test_kullanici_kendi_pinini_degistirir(client: TestClient) -> None:
+def test_kullanici_kendi_pinini_ISTEYEREK_degistirir(client: TestClient) -> None:
     yonetici = yonetici_token(client)
     personel_ac(client, yonetici)
 
@@ -308,3 +328,47 @@ def test_olmayan_kullanici_404(client: TestClient) -> None:
     cevap = client.put("/api/users/yok-boyle-biri", headers=basliklar(token),
                        json={"title": "X"})
     assert cevap.status_code == 404
+
+
+# ------------------------------------------------------------------- çıkış
+#
+# ÇIKIŞ SUNUCUDA OLUR. Kabuğun belirteci unutması yeterli sayılsaydı, satır
+# `sessions` tablosunda boşta kalma süresi (varsayılan 30 dk) dolana kadar
+# geçerli kalırdı; o aralıkta ele geçen belirteç çalışan bir anahtardır.
+# Aşağıdaki test tam olarak bunu sınar: çıkıştan SONRA aynı belirteçle korunan
+# bir uca gidilir ve 401 beklenir.
+
+
+def test_cikis_belirteci_sunucuda_gecersiz_kilar(client: TestClient) -> None:
+    token = yonetici_token(client)
+    # Çıkıştan önce belirteç çalışıyor olmalı — yoksa test kendi kendini kanıtlar.
+    assert client.get("/api/users", headers=basliklar(token)).status_code == 200
+
+    cevap = client.post("/api/auth/logout", headers=basliklar(token))
+    assert cevap.status_code == 200
+    assert cevap.json() == {"closed": True}
+
+    assert client.get("/api/users", headers=basliklar(token)).status_code == 401
+
+
+def test_cikis_gecersiz_belirtecte_de_ayni_yaniti_verir(client: TestClient) -> None:
+    """Yanıt TEK TİPTİR.
+
+    Geçersiz belirteçte 401 dönseydi, elindeki dizginin geçerli bir oturum olup
+    olmadığı bu uca sorularak öğrenilebilirdi.
+    """
+    for baslik in ({}, basliklar("boyle-bir-belirtec-yok")):
+        cevap = client.post("/api/auth/logout", headers=baslik)
+        assert cevap.status_code == 200
+        assert cevap.json() == {"closed": True}
+
+
+def test_cikis_baskasinin_oturumunu_kapatmaz(client: TestClient) -> None:
+    """Kişi ancak ELİNDEKİ oturumu kapatır."""
+    yonetici = yonetici_token(client)
+    personel_ac(client, yonetici)
+    personel = str(giris(client, PERSONEL_PINI).json()["token"])
+
+    assert client.post("/api/auth/logout", headers=basliklar(personel)).status_code == 200
+    # Yöneticinin oturumu dokunulmadan durur.
+    assert client.get("/api/users", headers=basliklar(yonetici)).status_code == 200

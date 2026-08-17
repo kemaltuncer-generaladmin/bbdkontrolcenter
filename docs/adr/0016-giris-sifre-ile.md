@@ -23,8 +23,13 @@ ele alınacaktır; o zamana kadar sır makineden çıkmıyor.
 | `POST /api/auth/set-password`, gövdedeki `password` alanı | HTTP sözleşmesi | PIN kurma |
 
 Kural her yerde PIN'dir (`Identity.validate_pin`); yalnız ADLAR şifre der.
-Aynı nedenle `mustSetPassword` akışı da duruyor: `password_hash` sütunu boş olan
-göç kullanıcısı ilk girişinde kendi PIN'ini kurar, kimse kilitlenmez.
+
+**`mustSetPassword` akışı ise KALDIRILDI.** Geri alma sırasında kodda bırakılan
+"şifre belirlemeye zorlama" akışı 17.08.2026'da gerçek kurulumu kilitledi —
+kullanıcı orijinal PIN'iyle girdi, akış yerine yeni bir sır yazdı, `secret_lookup`
+değişti ve orijinal PIN o günden sonra reddedildi; kalıntı bu yüzden tümüyle
+kaldırıldı (giriş tek sırra bakar, geride kalan satırları
+`0006_backfill_secret_lookup` göçü onarır).
 
 Aşağıdaki metin kararın kendisidir ve tarihsel kayıt olarak olduğu gibi
 bırakılmıştır; **uygulanmamıştır.**

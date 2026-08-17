@@ -13,15 +13,27 @@ sütunları bu dosyadaki göçlerle açılır.
 İki kural bağlayıcıdır:
 
   · **Hiçbir kayıt kaybolmaz.** `pin_hash` / `pin_lookup` / `pin_set_at`
-    DÜŞÜRÜLMEZ; yalnız kullanılmaz hâle gelir. Yeni sütunda sırrı olmayan
-    kullanıcı eski PIN'iyle doğrulanır, oturumu ancak yeni PIN'ini kurduktan
-    sonra açılır — kimse kilitlenmez.
+    DÜŞÜRÜLMEZ; yalnız giriş yolunda okunmaz hâle gelir. Yeni sütunda sırrı
+    olmayan kullanıcının ESKİ SIRRI yeni sütuna kopyalanır
+    (`0006_backfill_secret_lookup`) ve kişi orijinal PIN'iyle girmeye devam eder
+    — kimse kilitlenmez, kimseden yeni sır istenmez.
   · **Göçler iki kez uygulanmaz.** `schema_migrations` tablosu (`owner='core'`)
     zaten vardır; hangi göçün uygulandığı oradan okunur.
 
 Her göç, çalıştırılmadan önce veritabanının GERÇEK hâline bakar: yeni kurulumda
 sütun `CORE_SCHEMA` ile zaten gelmiştir ve o adım atlanır. Böylece aynı kod hem
 yeni hem eski veritabanında çalışır.
+
+Dosyada şema göçü olmayan tek bir göç var: `0008_restore_bld_staff_core` bir
+YETKİ göçüdür. Burada durmasının sebebi `0003`ünkiyle aynı: izin atamaları
+veritabanında yaşar, kaynak dosyayı değiştirmek onları tek başına geri
+getirmez ve açılışta koşan tek yol budur.
+
+`0007_narrow_bld_staff_core` BU LİSTEDE ARTIK YOK. Daraltma kararı 17.08.2026'da
+REDDEDİLDİ ve göç kaldırıldı; ama koştuğu makinelerde `schema_migrations`
+satırı DURUYOR — uygulanmış bir göçün kaydı silinmez, tarih öyle. Sildiği
+dokuz satırı `0008` geri koyar. GERİ ALMA DAİMA EKLEYEREK YAPILIR: bu dosyada
+satır silen bir göç bir daha yazılmaz.
 """
 
 from __future__ import annotations
@@ -154,12 +166,151 @@ CREATE INDEX IF NOT EXISTS idx_identity_audit_queue_next
 """
 
 
+async def _backfill_secret_lookup(store: Store) -> str:
+    """Reddedilmiş ADR 0016'nın son kalıntısını ONARIR — 17.08.2026.
+
+    0016 reddedildiğinde "mevcut kullanıcı ilk girişte sır belirlemeye zorlanır"
+    adımı kodda unutuldu. Gerçek bir kurulumda o akış devreye girdi, kullanıcının
+    orijinal PIN'i yerine YENİ bir sır yazdı ve `secret_lookup` değiştiği için
+    orijinal PIN o günden sonra reddedildi. Zorlama akışı ve girişteki
+    `pin_lookup` yedek yolu kaldırıldı; geriye TEK bir soru kalıyor: yeni sütuna
+    hiç yazılmamış, sırrı hâlâ eski sütunda duran satırlar ne olacak?
+
+    Cevap: eski sır YENİ sütuna KOPYALANIR. Argon2 özeti olduğu gibi taşınır —
+    düz PIN hiçbir yerde yok, yeniden hash'lenemez; `pin_lookup` da aynı pepper
+    ile üretilmiş aynı biçimde bir HMAC olduğundan `secret_lookup` yerine
+    doğrudan geçer. Kullanıcı ORİJİNAL PIN'iyle girmeye devam eder ve kimseden
+    yeni sır istenmez.
+
+    HİÇBİR SATIR SİLİNMEZ, HİÇBİR SÜTUN DÜŞÜRÜLMEZ: `pin_hash` / `pin_lookup` /
+    `pin_set_at` okundukları yerde durur, yalnız kopyalanır.
+
+    İki eleme bilerek vardır:
+
+      · `pin_hash <> ''` — `Identity.create_user` ve kadro yansıtması sırrı
+        OLMAYAN satıra `pin_hash = ''`, `pin_lookup = 'pin-yok:<id>'` yer
+        tutucusunu yazar. O yer tutucuyu sır sütununa taşımak, sırsız kaydı
+        sırlıymış gibi göstermek olurdu.
+      · Çakışan satır ATLANIR. `secret_lookup` UNIQUE'tir; eski sırrı başka bir
+        kullanıcının bugünkü PIN'iyle aynı olan satır (eski yol benzersizliği
+        denetlemiyordu, mümkün) yazılamaz. Göçü patlatmak tüm kurulumu açılışta
+        düşürürdü — satır olduğu gibi bırakılır, loga düşer, çözüm yöneticinin
+        PIN'i sıfırlamasıdır.
+    """
+    kalanlar = await store.fetch_all(
+        "SELECT id FROM users WHERE password_hash IS NULL AND pin_hash IS NOT NULL "
+        "AND pin_hash <> ''"
+    )
+    if kalanlar:
+        log.info("0016 kalıntısı onarılıyor: eski sır yeni sütuna taşınıyor",
+                 users=len(kalanlar))
+    catisan = await store.fetch_all(
+        "SELECT u.id FROM users u WHERE u.password_hash IS NULL AND u.pin_hash IS NOT NULL "
+        "AND u.pin_hash <> '' AND EXISTS ("
+        "  SELECT 1 FROM users o WHERE o.secret_lookup = u.pin_lookup AND o.id <> u.id)"
+    )
+    for row in catisan:
+        log.warning(
+            "eski sır başka kullanıcının PIN'iyle çakışıyor; satır olduğu gibi "
+            "bırakıldı, PIN sıfırlanmalı",
+            user=str(row["id"]),
+        )
+
+    return """
+UPDATE users
+SET password_hash   = pin_hash,
+    secret_lookup   = pin_lookup,
+    password_set_at = pin_set_at
+WHERE password_hash IS NULL
+  AND pin_hash IS NOT NULL
+  AND pin_hash <> ''
+  AND NOT EXISTS (
+      SELECT 1 FROM users o
+      WHERE o.secret_lookup = users.pin_lookup AND o.id <> users.id
+  );
+"""
+
+
+# Kaldırılmış `0007_narrow_bld_staff_core` göçünün SİLDİĞİ dokuz satır.
+# DONMUŞ LİSTEDİR: `permissions.py`den türetilmez. Bu liste bir katalog değil,
+# bir OLAYIN kaydıdır — o gün hangi satırlar gitmişse onlar. Katalogdan
+# türetilseydi, yarın çekirdeğe eklenen bir anahtar bu göçün geriye dönük
+# olarak "onu da geri koymuş" görünmesine yol açardı.
+#
+# Yalnız `grant_defaults()` biçimi yazılıdır (kapsamlı izin `izin:*`), çünkü
+# `0007` de yalnız o biçimi silmişti. Elle yazılmış dar kapsamlı satır
+# (`servers.view:bld` gibi) hiç silinmediği için geri konacak bir şey de yok.
+BLD_STAFF_CORE_RESTORED = (
+    "servers.view:*",
+    "ssh.execute:*",
+    "ssh.transfer:*",
+    "database.view:*",
+    "database.query:*",
+    "database.write:*",
+    "database.backup:*",
+    "directory.view",
+    "directory.view_external",
+)
+
+
+async def _restore_bld_staff_core(store: Store) -> str:
+    """`0007`in aldığı dokuz çekirdek satırını GERİ KOYAR — 17.08.2026.
+
+    KARAR REDDEDİLDİ. `bld_staff` BLD'ye dair her şeyi yapar; daraltma bir
+    gün yürürlükte kaldı ve geri alınıyor. Tek istisna KDS cihaz ayarlarıdır
+    ve onun çaresi bu göç değil, `bld_kds.settings` adında YENİ bir izin
+    anahtarıdır: yeni anahtar hiç kimseye verilmemiş olarak doğar, bu yüzden
+    onun için silinecek satır da yoktur (K6 — çare modülde, çekirdekte değil).
+
+    GERİ ALMA EKLEYEREK YAPILIR. Bu göç `INSERT OR IGNORE` dışında hiçbir şey
+    yapmaz: tek bir satır bile silmez, güncellemez. Kullanıcının kuralı budur
+    ve `0007`in kendisi tam da bu kurala aykırı olduğu için reddedildi.
+
+    ZATEN VAR OLAN SATIR İKİNCİ KEZ YAZILMAZ ve iz de bırakmaz — göç iki kez
+    koşsa (ya da yönetici satırı elle geri vermiş olsa) sonuç aynıdır. Denetim
+    izi bu yüzden `WHERE NOT EXISTS` ile süzülür: gerçekten geri konan satır
+    kadar `roles.manage` kaydı düşer, ne bir eksik ne bir fazla.
+
+    TEK ÇARE BU GÖÇ DEĞİLDİR, ama tek AÇIK olan çare budur. `permissions.py`
+    HEAD'e döndüğü için `grant_defaults(CORE_PERMISSIONS)` bir sonraki açılışta
+    aynı dokuz satırı zaten sessizce eklerdi (`http/app.py` — göçlerden sonra
+    koşar). "Sessizce" sorunun kendisi: bir gün geri alınan yetki, ertesi gün
+    hiçbir yere yazılmadan geri gelirdi. Göç önce koşar, satırları o koyar ve
+    denetim izine kimin ne aldığını yazar; `grant_defaults` arkadan gelip
+    yapacak iş bulamaz.
+
+    `0007` KAYDI SİLİNMEZ. Koşmuş bir göçün `schema_migrations` satırı tarihin
+    kendisidir; silmek "bu hiç olmadı" demek olurdu. Kaldırılan yalnız kodudur.
+
+    KULLANICI SATIRI HİÇ OKUNMAZ. Dokunulan tek tablo `role_permissions`.
+    """
+    del store  # bu göç veritabanının hâline SQL içinde bakar, Python'da değil
+    liste = ", ".join(f"('{entry}')" for entry in BLD_STAFF_CORE_RESTORED)
+    return f"""
+INSERT INTO audit_log (at, user_id, action, scope, result, detail)
+SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'), NULL, 'roles.manage', NULL, 'ok',
+       '0008_restore_bld_staff_core: ' || geri.column1 || ' -> bld_staff'
+FROM (VALUES {liste}) AS geri
+WHERE NOT EXISTS (
+    SELECT 1 FROM role_permissions
+    WHERE role_id = 'bld_staff' AND permission = geri.column1
+);
+
+INSERT OR IGNORE INTO role_permissions (role_id, permission)
+SELECT 'bld_staff', geri.column1 FROM (VALUES {liste}) AS geri;
+"""
+
+
 CORE_MIGRATIONS: list[tuple[str, Callable[[Store], Awaitable[str]]]] = [
     ("0001_password_columns", _password_columns),
     ("0002_users_revision", _users_revision),
     ("0003_users_set_password_permission", _rename_set_pin_permission),
     ("0004_roster_projection", _roster_projection),
     ("0005_identity_audit_queue", _identity_audit_queue),
+    ("0006_backfill_secret_lookup", _backfill_secret_lookup),
+    # `0007_narrow_bld_staff_core` REDDEDİLDİ ve kaldırıldı; numarası da
+    # kullanılmaz. Koştuğu makinelerde `schema_migrations` kaydı durur.
+    ("0008_restore_bld_staff_core", _restore_bld_staff_core),
 ]
 
 

@@ -114,6 +114,16 @@ tanımsızken bu uçlar **503** döner ve `503` demek **açık kalmamak** demekt
 "denetim yoksa serbest" davranışı, kurulum listesini ve kod üretimini internete
 açık bırakırdı.
 
+**Kontrol Merkezi'ndeki karşılığı `identity_sync.admin_token` kasa
+anahtarıdır.** "KM Cihaz Eşle" ekranı (`shell/core-panels/pairing/`) kodu
+buradaki `curl` yerine uygulamanın içinden üretir ve o istek bu token'la
+imzalanır. Anahtar **kurulum token'ından ayrıdır** ve ayrı olmalıdır: kurulum
+token'ı "bu makine bizim" der, yönetim anahtarı "bu makine yeni makineler
+kaydedebilir" der. İkisini birleştirmek, eşlenmiş her makineyi yeni makine
+eşleyebilir hâle getirirdi. Anahtar yalnız yönetimin oturduğu kurulumun
+kasasına yazılır; olmadığı kurulumda ekran açılır, yalnız yönetim düğmeleri
+nedenini yazarak kapanır.
+
 ---
 
 ## Uçlar
@@ -122,9 +132,10 @@ açık bırakırdı.
 |---|---|---|
 | `GET /health` | sağlık | herkes |
 | `GET /roster?known_revision=N` | kadro; değişmemişse `{"changed": false}` | kurulum |
+| `POST /roster/import` | var olan bir kurulumun kadrosunu taşır — **yalnız ekler** | yönetim |
 | `POST /users` · `PUT /users/{id}` · `POST /users/{id}/status` | kadro yazma | kurulum + kişi |
 | `POST /audit` | kurulumlardan denetim kaydı | kurulum |
-| `POST /installations/pair-code` | tek kullanımlık, süreli kod | yönetim |
+| `POST /installations/pair-code` | tek kullanımlık, süreli kod — **bekleyen eski kodları geçersiz kılar** | yönetim |
 | `POST /pair` | `{code, publicKey, machineName, platform, version}` → token | kod |
 | `GET /installations` | makine adı, platform, sürüm, son görülme, durum | yönetim |
 | `POST /installations/{id}/revoke` | token iptali | yönetim |
@@ -147,6 +158,26 @@ servis o kişinin iznini **kendi veritabanından** denetler (K9 — çift kapı)
 (ADR 0021 §2): giriş kurulumda, yerel önbellekten yapılır ve **çevrimdışı
 çalışır**. Merkezî *doğrulama* elenmiş bir alternatiftir — servis düştüğünde
 herkesin kilitlenmesi, uzaktan müdahaleye en çok ihtiyaç duyulan anda olurdu.
+
+### Var olan kadroyu taşımak — `POST /roster/import`
+
+Merkez, kadro biriktikten SONRA kuruldu. Kadrosunda yalnız dağıtımda doğan
+bootstrap yöneticisi vardır; ilk kurulumun kullanıcıları orada yoktur ve
+taşınmazsa eşlenen ikinci cihazda kimse kendi PIN'iyle giremez.
+
+**PIN'ler korunur.** Gövde düz PIN değil, `password_hash` (Argon2id) +
+`secret_lookup` (peppered HMAC) taşır; kimseye yeni PIN verilmez. Bu yalnızca
+`KM_IDENTITY_PEPPER` ile kurulumun kasasındaki `core.pin_pepper` AYNI ise
+çalışır (yukarıdaki "bir kez belirlenir" başlığı).
+
+Uç **yalnız ekler**: var olan bir `id` ikinci kez geldiğinde satır ezilmez,
+atlanır. Düzenleme `PUT /users/{id}` yolunda kalır — orada işlemin arkasındaki
+kişi ve izni denetlenir (K9), burada yalnız yönetim token'ı vardır. `secret_lookup`
+çakışan ve merkezde tanımsız rol taşıyan satırlar da atlanır; hepsi yanıtta
+nedeniyle döner (`added`, `skipped`, `skips[]`). Bir şey eklendiyse kadro
+revizyonu artar.
+
+Gönderen taraf: `scripts/push-roster.py` (varsayılan **kuru prova**).
 
 ---
 

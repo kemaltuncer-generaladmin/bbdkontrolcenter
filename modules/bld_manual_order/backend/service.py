@@ -166,7 +166,7 @@ class ManualOrderService:
 
     # ================================================================= okuma
 
-    async def overview(self) -> dict[str, Any]:
+    async def overview(self, *, allow_price_override: bool = False) -> dict[str, Any]:
         """Panel açılışı — SÖZLEŞME VE SINIRLAR, ağa çıkmaz.
 
         Ekranın açılışta ihtiyacı olan şey zaten sunucuda değil: teslimat
@@ -174,6 +174,11 @@ class ManualOrderService:
         çıkmadan vermek, geçit düşükken bile formun çizilebilmesi demektir
         (K7). Servis gününe bağlı olan her şey (kesim saati, stok, gerçek ödeme
         yöntemi listesi) `service_day()` ucundadır.
+
+        `can_price_override` YETKİLENDİRME DEĞİL, ÇİZİM BİLGİSİDİR. Asıl kapı
+        `create()` içindedir (K9); buradaki bayrak yalnız ekranın her seferinde
+        reddedilecek bir kutu çizmesini önler. Varsayılanı `False`: bayrağı
+        vermeyi unutan bir çağıran kutuyu AÇMAZ, açık bırakmaz.
         """
         return {
             "ok": True,
@@ -185,6 +190,7 @@ class ManualOrderService:
                 "min_search_chars": self._min_search,
             },
             "dry_run_default": self._dry_run_default,
+            "can_price_override": bool(allow_price_override),
         }
 
     async def customers(self, *, q: str, actor: str) -> dict[str, Any]:
@@ -379,7 +385,8 @@ class ManualOrderService:
         items: Any, actor: str, customer_id: int = 0, customer_name: str = "",
         customer_phone: str = "", address: Any = None, customer_note: str = "",
         reason: str = "", location_id: int = 0, dry_run: bool | None = None,
-        allow_manage: bool = False,
+        agreed_total_kurus: Any = None, allow_manage: bool = False,
+        allow_price_override: bool = False,
     ) -> dict[str, Any]:
         """Yeni sipariş açar — `POST /api/control/orders`.
 
@@ -397,6 +404,16 @@ class ManualOrderService:
         e-posta (`tel-<ulusal numara>@bld.invalid`) numaranın ulusal biçiminden
         türüyor ve kayıt varsa döndürülüyor. Yanıttaki `customer.created`
         hangisinin olduğunu söyler ve ekran onu yazar.
+
+        ANLAŞMALI SEPET FİYATI (`agreed_total_kurus`) AYRI BİR YETKİ İSTER
+        (`bld_manual_order.price_override`). Sipariş AÇMAK ile katalog fiyatını
+        KIRMAK aynı iş değil: birincisi rutin bir kayıt, ikincisi ciroyu
+        değiştiren bir ticari karar. Tek anahtar olsaydı fiyat kırmayı
+        engellemenin yolu sipariş girmeyi engellemekten geçerdi. Ölçüt
+        `bld_orders`'ın iptali ayrı anahtara almasıyla aynı: PARA.
+
+        Alan BOŞSA yetki de sorulmaz — kutuya hiç dokunmamış bir personel,
+        yetkisi yok diye reddedilmemeli.
         """
         if not allow_manage:
             # ÇİFT KAPI (K9): uç noktada da denetleniyor. Arayüzde düğmeyi
@@ -408,9 +425,18 @@ class ManualOrderService:
             service_date=service_date, delivery_type=delivery_type,
             payment_method=payment_method, items=items, customer_id=customer_id,
             customer_name=customer_name, customer_phone=customer_phone,
-            address=address, customer_note=customer_note, reason=reason)
+            address=address, customer_note=customer_note, reason=reason,
+            agreed_total_kurus=agreed_total_kurus)
         if problem:
             return {"ok": False, "error": problem}
+
+        if clean["agreed_total_kurus"] is not None and not allow_price_override:
+            # ÇİFT KAPI (K9), İKİNCİ ANAHTAR. Ekran kutuyu gizliyor olabilir
+            # ama gövde elle kurulabilir; kapı burada da duruyor.
+            return {"ok": False,
+                    "error": ("Müşteriye özel sepet fiyatı uygulamak "
+                              "`bld_manual_order.price_override` yetkisi ister. "
+                              "Siparişi katalog fiyatıyla açabilirsiniz.")}
 
         call = getattr(self._api, CREATE_METHOD, None)
         if not callable(call):
@@ -440,6 +466,10 @@ class ManualOrderService:
             payload["customer_note"] = clean["customer_note"]
         if dr.as_int(location_id) > 0:
             payload["location_id"] = dr.as_int(location_id)
+        if clean["agreed_total_kurus"] is not None:
+            # YALNIZ DOLUYKEN. Geçit `None`u zaten gövdeye koymuyor; burada da
+            # koymamak, "anlaşma yok" hâlinin tek bir biçimi olmasını sağlıyor.
+            payload["agreed_total_kurus"] = clean["agreed_total_kurus"]
 
         try:
             result = await call(**payload)
@@ -500,6 +530,13 @@ class ManualOrderService:
         if problem:
             return {}, problem
 
+        # BİÇİM DENETİMİ, İŞ KURALI DEĞİL. Tutarın kalem toplamının yerine
+        # geçmesine, kalemlerin fiyatsız yazılmasına ve teslimat ücretinin
+        # içinde sayılmasına sunucu karar veriyor (`OrderFactory::create()`).
+        agreed_total, problem = dr.clean_agreed_total(fields.get("agreed_total_kurus"))
+        if problem:
+            return {}, problem
+
         address: dict[str, Any] | None = None
         if delivery_type == "delivery":
             raw = fields.get("address") if isinstance(fields.get("address"), dict) else {}
@@ -526,6 +563,8 @@ class ManualOrderService:
             "address": address,
             "customer_note": note,
             "reason": dr.text(fields.get("reason")),
+            # `None` = anlaşma yok; alanın hiç gönderilmemesiyle eşdeğerdir.
+            "agreed_total_kurus": agreed_total,
         }, ""
 
     def _explain(self, failure: Exception) -> str:

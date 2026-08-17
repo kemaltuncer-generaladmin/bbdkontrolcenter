@@ -176,6 +176,18 @@
   letter-spacing: -0.01em;
 }
 
+/* Anlaşmalı sepet fiyatı — özet şeridinin İÇİNDE, toplamın hemen ÜSTÜNDE.
+   Kalem kartına konsaydı "kalem başına fiyat" sanılırdı; tutar sepetin
+   tamamı içindir ve toplamın yanında durması bunu tek bakışta söyler.
+   Yetki yoksa kutu hiç çizilmez ve boş kalan kap yer kaplamasın diye
+   `:empty` gizleniyor — `gap` boş bir düğüme de boşluk verirdi. */
+.bmo-agreed { display: flex; flex-direction: column; gap: 8px; }
+.bmo-agreed:empty { display: none; }
+.bmo-agreed-input {
+  max-width: 220px;
+  font-variant-numeric: tabular-nums;
+}
+
 .bmo-reason { flex: 1; min-width: 220px; }
 
 /* Sonuç: sipariş numarası BAŞARI MESAJININ KENDİSİDİR — personel telefondaki

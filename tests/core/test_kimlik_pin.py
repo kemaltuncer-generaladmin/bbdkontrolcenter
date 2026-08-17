@@ -8,6 +8,10 @@ ADI ŞİFRE, DEĞERİ PIN: ADR 0016 reddedildi ama göçü koştu; `password_has
 sütunu, `set_password` metodu ve `PasswordError` sınıfı adlarını korudu.
 Buradaki her "password" argümanı 6 haneli bir PIN alır.
 
+0016'nın "önce kendine sır belirle" ZORLAMASI 17.08.2026'da kaldırıldı; giriş
+artık tek sırra (`secret_lookup`) bakar ve hiçbir koşulda yeni sır istemez.
+Kilitlenme regresyonu: `test_giris_HICBIR_KOSULDA_yeni_sir_istemez`.
+
 Ağa çıkılmaz.
 """
 
@@ -142,7 +146,6 @@ async def test_dogru_pinle_oturum_acilir(identity: Identity) -> None:
     sonuc = await identity.login(PIN)
     assert sonuc is not None
     assert sonuc.token
-    assert sonuc.must_set_password is False
     assert sonuc.user.id == user_id
 
 
@@ -241,75 +244,80 @@ class _SayanHasher:
         return bool(self._inner.verify(hash_, secret))
 
 
-# ------------------------------------------------------- göç: eski kullanıcı
+# --------------------------------------------- kendi PIN'ini DEĞİŞTİRME
+#
+# ADR 0016'nın "önce kendine sır belirle" ZORLAMASI kaldırıldı (17.08.2026); geri
+# kalan tek yol kullanıcının kendi isteğiyle PIN değiştirmesidir. Aşağıdaki
+# testler o yolun sürdüğünü ve hiçbir yerden zorlama doğmadığını sınar.
 
 
-async def eski_kayit(identity: Identity, pin: str = "913472") -> str:
-    """ADR 0016 göçünden önce açılmış kayıt: PIN eski sütunda, yeni sütun boş.
+async def test_kullanici_kendi_pinini_ISTEYEREK_degistirir(identity: Identity) -> None:
+    user_id = await yeni_kullanici(identity)
 
-    0016 reddedildi ama göçü koştu; bu satırlar hâlâ böyle duruyor ve giriş
-    yolunun onları kilitlememesi gerekir.
-    """
-    user_id = "eski-kullanici"
-    await identity.store.execute(
-        "INSERT INTO users (id, first_name, last_name, org_scope, directory_visible, status, "
-        "pin_hash, pin_lookup, pin_set_at, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            user_id, "Eski", "Kayit", "org", 1, "active",
-            identity_module._hasher.hash(pin), identity.secret_lookup(pin),
-            identity_module.now(), identity_module.now(), identity_module.now(),
-        ),
-    )
-    await identity.store.execute(
-        "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)", (user_id, "org_staff")
-    )
-    return user_id
-
-
-async def test_goc_sonrasi_eski_kullanici_PIN_KURMAYA_ZORLANIR(identity: Identity) -> None:
-    """Eski PIN doğrulanır ama OTURUM AÇILMAZ. Kimse kilitlenmez."""
-    user_id = await eski_kayit(identity)
-
-    sonuc = await identity.login("913472")
-    assert sonuc is not None
-    assert sonuc.must_set_password is True
-    assert sonuc.token is None
-    assert sonuc.user.id == user_id
-
-    # Oturum açılmadığı için hiçbir oturum satırı doğmamalı.
-    assert await identity.store.fetch_all("SELECT token FROM sessions") == []
-
-
-async def test_eski_kullanici_pin_kurunca_oturum_acilir(identity: Identity) -> None:
-    user_id = await eski_kayit(identity)
-
-    sonuc = await identity.set_password_with_secret("913472", PIN)
+    sonuc = await identity.set_password_with_secret(PIN, BASKA_PIN)
     assert sonuc is not None
     token, user = sonuc
     assert token
     assert user.id == user_id
 
-    # Artık yeni PIN'le doğrudan girer, eskisi GEÇMEZ.
-    giris = await identity.login(PIN)
+    # Yeni PIN geçer, eskisi GEÇMEZ.
+    giris = await identity.login(BASKA_PIN)
     assert giris is not None and giris.token
-    assert await identity.login("913472") is None
+    assert await identity.login(PIN) is None
 
 
-async def test_hatali_eski_sirla_pin_kurulamaz(identity: Identity) -> None:
-    await eski_kayit(identity)
-    assert await identity.set_password_with_secret("805213", PIN) is None
+async def test_hatali_mevcut_sirla_pin_degistirilemez(identity: Identity) -> None:
+    await yeni_kullanici(identity)
+    assert await identity.set_password_with_secret("805213", BASKA_PIN) is None
+    # Eski PIN yerinde durur.
+    assert await identity.login(PIN) is not None
 
 
-async def test_eski_pin_kaydi_SILINMEZ(identity: Identity) -> None:
+async def test_pin_degisince_eski_PIN_SUTUNLARI_SILINMEZ(identity: Identity) -> None:
     """`pin_hash` / `pin_lookup` düşürülmez; hiçbir satır kaybolmaz."""
-    await eski_kayit(identity)
-    await identity.set_password_with_secret("913472", PIN)
+    user_id = await yeni_kullanici(identity)
+    once = await identity.store.fetch_one(
+        "SELECT pin_hash, pin_lookup, pin_set_at FROM users WHERE id = ?", (user_id,)
+    )
+    await identity.set_password_with_secret(PIN, BASKA_PIN)
 
-    satir = await identity.store.fetch_one("SELECT pin_hash, pin_lookup FROM users")
-    assert satir is not None
-    assert satir["pin_hash"]
-    assert satir["pin_lookup"]
+    sonra = await identity.store.fetch_one(
+        "SELECT pin_hash, pin_lookup, pin_set_at FROM users WHERE id = ?", (user_id,)
+    )
+    assert once is not None and sonra is not None
+    assert dict(sonra) == dict(once)
+
+
+async def test_giris_HICBIR_KOSULDA_yeni_sir_istemez(identity: Identity) -> None:
+    """KİLİTLENME REGRESYONU — 17.08.2026.
+
+    O gün olan şuydu: kullanıcı orijinal PIN'iyle girdi, `must_set_password`
+    akışı devreye girdi, yeni bir sır yazıldı, `secret_lookup` değişti ve
+    orijinal PIN "bilinmeyen sır" ile reddedilir oldu.
+
+    Bu test o zinciri baştan kurar: giriş sonucunun oturum AÇMAYAN bir ara
+    durumu olamaz, giriş sırrı YAZMAZ ve aynı PIN ikinci kez de çalışır.
+    """
+    user_id = await yeni_kullanici(identity)
+    once = await identity.store.fetch_one(
+        "SELECT password_hash, secret_lookup FROM users WHERE id = ?", (user_id,)
+    )
+
+    ilk = await identity.login(PIN)
+    assert ilk is not None
+    assert ilk.token, "giriş oturum açmadı — sır belirlemeye zorlanmış olabilir"
+    # Ara durum diye bir ŞEY yoktur: alanın kendisi de kaldırıldı.
+    assert not hasattr(ilk, "must_set_password")
+
+    sonra = await identity.store.fetch_one(
+        "SELECT password_hash, secret_lookup FROM users WHERE id = ?", (user_id,)
+    )
+    assert once is not None and sonra is not None
+    assert dict(sonra) == dict(once), "giriş sırrı yeniden yazmış"
+
+    # AYNI PIN İKİNCİ KEZ DE ÇALIŞIR. Kilitlenmenin görünür belirtisi buydu.
+    ikinci = await identity.login(PIN)
+    assert ikinci is not None and ikinci.token
 
 
 # -------------------------------------------------------------- kısıtlar

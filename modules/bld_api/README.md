@@ -277,10 +277,21 @@ ikisi birden değil) ve yanıttaki `customer.created` yeni kayıt açılıp
 açılmadığını söyler; kuru prova **kalemi, fiyatı ve stoğu denetlemez** — "gövde
 doğru mu" sorusunun cevabıdır, "sipariş geçecek mi" sorusunun değil.
 
+`agreed_total_kurus` **isteğe bağlıdır ve SEPETİN TAMAMI içindir**, kalem
+başına değil. Dolu gönderilirse sunucu kalem toplamı yerine bu tutarı yazar ve
+kalemleri fiyatsız bırakır (aboneliğin `agreed_unit_price_kurus` deseninin sepet
+düzeyine taşınmış hâli). **Teslimat ücreti bu tutara eklenmez, dâhildir.** Alan
+gönderilmezse (`None`) davranış bugünkünün aynısıdır: tutar katalogdan
+hesaplanır ve adrese teslimde ücret eklenir. **Sıfır gönderilemez** — sıfır bir
+fiyat kararı değil, boş bırakılmış bir kutudur; tavan `MAX_AGREED_TOTAL_KURUS`
+(1.000.000 ₺) ve bir iş kuralı değil, fazladan basılmış sıfırlara karşı akıl
+sınırıdır. Yetki denetimi ekranın tarafındadır
+(`bld_manual_order.price_override`); geçit yalnız aralığa bakar.
+
 | Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
 |---|---|---|---|---|---|
 | `order_list(*, service_date, date_from, date_to, status, delivery_type, customer_id, subscription_id, source, q, page, per_page)` | GET | `/orders` | — | — | `sayfa` |
-| `create_order(*, service_date, delivery_type, payment_method, items, customer_id, customer, address, customer_note, location_id)` | POST | `/orders` | — | ✔ | `dict` (+`customer`, `warnings`) |
+| `create_order(*, service_date, delivery_type, payment_method, items, customer_id, customer, address, customer_note, location_id, agreed_total_kurus)` | POST | `/orders` | — | ✔ | `dict` (+`customer`, `warnings`) |
 | `order_detail(order_id)` | GET | `/orders/{order}` | — | — | `dict` |
 | `order_revision_history(order_id)` | GET | `/orders/{order}/revisions` | — | — | `sayfa` |
 | `revise_order(order_id, *, items, note, requested_at, customer_note)` | POST | `/orders/{order}/revisions` | ✔ 160 | ✔ | `dict` |

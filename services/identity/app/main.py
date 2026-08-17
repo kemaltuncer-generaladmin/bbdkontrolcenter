@@ -2,6 +2,7 @@
 
     GET  /health
     GET  /roster                      [kurulum]  → {revision, users, roles, grants}
+    POST /roster/import               [yönetim]  → var olan kurulumun kadrosunu taşır
     POST /users                       [kurulum + kişi]
     PUT  /users/{id}                  [kurulum + kişi]
     POST /users/{id}/status           [kurulum + kişi]
@@ -49,7 +50,7 @@ from km_core.security.permissions import CORE_PERMISSIONS
 from km_core.store.db import Store
 
 from . import installations as inst
-from . import locks, roster
+from . import locks, roster, roster_import
 from .auth import Installation, require_actor, require_admin, require_installation
 from .schema import apply_service_migrations
 from .settings import Settings
@@ -428,6 +429,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request.app.state.store, lock_id, installation_id=installation.id
         )
         return {"released": released}
+
+    # --------------------------------------------------------- kadro göçü
+    #
+    # Tek satırlık kayıt; mantık `roster_import.py` içindedir. Göç ucu buraya
+    # yazılmadı çünkü bu dosya kadronun GÜNLÜK sözleşmesidir, tek seferlik bir
+    # taşımanın kuralları onun içine karışmamalı.
+    app.include_router(roster_import.router)
 
     return app
 

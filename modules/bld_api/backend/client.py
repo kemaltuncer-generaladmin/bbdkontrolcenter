@@ -196,6 +196,13 @@ MAX_REASON_STRICT = 160
 #: reddederdi.
 MAX_REASON = 500
 
+#: Elle siparişte ANLAŞMALI SEPET TUTARININ tavanı, kuruş (1.000.000 ₺).
+#: Sunucudaki `agreed_total_kurus` kuralının (`min:1`, `max:100000000`) aynısı.
+#: Bir iş kuralı DEĞİL, fazladan basılmış sıfırlara karşı akıl sınırı: burada
+#: kesmek hız kovasından pay harcamaz ve hatayı "BLD isteği doğrulayamadı"
+#: yerine anlaşılır bir cümleye çevirir.
+MAX_AGREED_TOTAL_KURUS = 100_000_000
+
 #: `actor` alanının sınırları (`00-genel.md` §3: 2–120 karakter). Sunucu
 #: aşanı 422 ile reddediyor; burada kesmek hız kovasından pay harcamaz ve
 #: hatayı "BLD isteği doğrulayamadı" yerine anlaşılır bir cümleye çevirir.
@@ -2157,6 +2164,7 @@ class BldApi:
         items: list[dict[str, Any]], customer_id: int | None = None,
         customer: dict[str, Any] | None = None, address: dict[str, Any] | None = None,
         customer_note: str = "", location_id: int | None = None,
+        agreed_total_kurus: int | None = None,
         reason: str = "", actor: str, dry_run: bool | None = None,
     ) -> dict[str, Any]:
         """Elle sipariş — POST /api/control/orders. **Gerekçe İSTEMEZ.**
@@ -2190,6 +2198,30 @@ class BldApi:
         hangisinin olduğunu söyler. Kayıtlı bir müşterinin telefonu
         EŞLEŞTİRİLMEZ (santral numarası birden çok kayıtta durabilir); arama
         `customers()` ucundadır.
+
+        ANLAŞMALI SEPET TUTARI (`agreed_total_kurus`) İSTEĞE BAĞLIDIR ve
+        SEPETİN TAMAMI İÇİNDİR, kalem başına değil. Dolu gönderilirse sunucu
+        kalem toplamı yerine bu tutarı yazar ve KALEMLERİ FİYATSIZ bırakır
+        (`unit_price = 0`, `line_total = 0`, seçenek farkları dâhil); para
+        `orders.order_total` ile `order_totals` satırlarında, yani sepet
+        düzeyinde durur. Desen abonelikten geliyor
+        (`subscriptions.agreed_unit_price_kurus` porsiyon başına aynı işi
+        yapıyor) ve kalemlerde fiyat bırakmamanın sebebi çelişki üretmemek:
+        fatura satırları `order_menus`tan, toplamı `order_totals`tan okunuyor.
+
+        TESLİMAT ÜCRETİ ANLAŞMALI TUTARA EKLENMEZ, DÂHİLDİR. Abonelik de öyle
+        yapıyor; asıl gerekçe alanın var olma sebebi — personel telefonda bir
+        sayı söylüyor ve sisteme yazılan tutar o sayı olmalı. Teslimatı ayrıca
+        almak isteyen personel ücreti tutara ekleyip yazar.
+
+        ALAN GÖNDERİLMEZSE DAVRANIŞ BUGÜNKÜNÜN AYNISIDIR: tutar katalogdan
+        hesaplanır, adrese teslimde teslimat ücreti eklenir. `None` ile alanın
+        hiç gönderilmemesi EŞDEĞERDİR — gövdeye yalnız doluyken konur, çünkü
+        `null` yollamak denetim izine hiçbir şey anlatmayan bir alan yazdırırdı.
+        SIFIR GÖNDERİLEMEZ: "bedava sipariş" bir fiyat kararı değil, boş
+        bırakılmış bir kutunun sessizce sıfıra düşmesidir; sunucu da `min:1`
+        diyor. Asgari sepet tutarı bu tutarı ENGELLEMEZ (`adminContext: true`
+        zaten atlıyor).
 
         Stok tavanı AŞILABİLİR (`allowOvershoot: true`): personel "bir porsiyon
         daha çıkarırız" diyebilir, sipariş reddedilmez, aşım kayda geçer.
@@ -2253,6 +2285,19 @@ class BldApi:
                 "nereye götüreceğini bilemezdi.",
                 code="payload",
             )
+        if agreed_total_kurus is not None and not (
+            1 <= int(agreed_total_kurus) <= MAX_AGREED_TOTAL_KURUS
+        ):
+            # SIFIR AYRI BİR HATA DEĞİL, AYNI HATA: `0` da `None` da "kutu boş"
+            # demenin iki yolu gibi görünür ama biri sunucuya gider ve orada
+            # 422 olur. Burada kesmek, personelin telefonda bir tur daha
+            # beklemesini önler.
+            raise BldApiError(
+                f"Anlaşmalı sepet tutarı 1 ile {MAX_AGREED_TOTAL_KURUS} kuruş "
+                "arasında olmalı. Anlaşma yoksa alan HİÇ gönderilmez (`None`); "
+                "sıfır bir fiyat kararı değil, boş bırakılmış bir kutudur.",
+                code="payload",
+            )
         body: dict[str, Any] = {
             "service_date": self._date(service_date),
             "delivery_type": delivery_type,
@@ -2276,6 +2321,10 @@ class BldApi:
             body["customer_note"] = customer_note
         if location_id is not None:
             body["location_id"] = int(location_id)
+        if agreed_total_kurus is not None:
+            # YALNIZ DOLUYKEN. `null` yollamak, denetim izine hiçbir şey
+            # anlatmayan bir alan yazdırırdı; sunucu da ikisini eşdeğer sayıyor.
+            body["agreed_total_kurus"] = int(agreed_total_kurus)
         return await self._request("POST", ORDERS, body=body, reason=reason, actor=actor,
                                    dry_run=dry_run, action="order.create",
                                    reason_max=MAX_REASON)

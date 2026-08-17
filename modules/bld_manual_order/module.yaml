@@ -109,6 +109,32 @@ permissions:
       Kayıtlı müşterisi olmayan arayan için telefonla yeni müşteri kaydı da bu
       yetkiyle açılır.
     default_roles: [admin, bld_staff]
+  # ÜÇÜNCÜ ANAHTAR — yukarıdaki "iki anahtar, üç değil" notu artık eskidir ve
+  # sebebi orada zaten yazılı: ölçüt PARA. O not yazıldığında ekranın tek
+  # yazması sipariş açmaktı; anlaşmalı sepet fiyatıyla birlikte ikinci bir para
+  # kararı doğdu. Sipariş AÇMAK rutin bir kayıt akışıdır, katalog fiyatını
+  # KIRMAK ciroyu değiştiren ticari bir karardır. Tek anahtarda kalsaydı fiyat
+  # kırmayı engellemenin tek yolu sipariş girmeyi engellemek olurdu.
+  #
+  # VARSAYILAN ROLLER `manage` İLE AYNI ve bu bilinçli: telefonu açan personel,
+  # telefonda pazarlığı yapan kişinin ta kendisi. Ayrı anahtarın değeri
+  # "varsayılan olarak kısıtlı" olması değil, AYRILABİLİR olması — yönetici
+  # `bld_staff`tan bu tek anahtarı geri alarak fiyat kırmayı kapatabilir ve
+  # sipariş girişi çalışmaya devam eder. Aynı kalıp `bld_orders.cancel`ta da
+  # var: yıkıcı ama varsayılanı iki rol.
+  #
+  # `destructive: true` DEĞİL: PIN teyidi istemek, personel müşteriyle
+  # telefondayken her indirimde altı hane yazdırmak olurdu. İz zaten var —
+  # tutar BLD'de `veykemtu_control_audit.payload_json.agreed_total_kurus`
+  # olarak ve geçitte `mod_bld_api_audit` satırında duruyor.
+  - key: bld_manual_order.price_override
+    description: >
+      Müşteriye özel SEPET fiyatı uygulama: siparişin toplamı katalog yerine
+      personelin telefonda anlaştığı tutar olur. Tutar sepetin tamamı içindir,
+      kalem başına değil; kalemler siparişe fiyatsız yazılır ve teslimat ücreti
+      bu tutara DÂHİL sayılır (ayrıca eklenmez). Anlaşma girilen her sipariş
+      BLD denetim izinde tutarıyla birlikte durur.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml

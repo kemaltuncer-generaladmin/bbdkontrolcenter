@@ -4,8 +4,12 @@ Sözleşme:
 
     await sync.state()                  → ekranın ihtiyacı olan her şey
     await sync.pair(code)               → eşleme; token kasaya yazılır
+    await sync.unpair()                 → eşlemeyi çözer; özel anahtar KALIR
     await sync.sync()                   → revision değişmişse kadroyu çeker
     sync.login_policy()                 → "local" | "online_only"
+    await sync.create_pair_code(note)   → yeni kurulumlar için tek kullanımlık kod
+    await sync.installations()          → merkezdeki kurulum listesi
+    await sync.revoke_installation(id)  → kurulumu iptal eder; satır SİLİNMEZ
     await sync.create_user(actor, body) → yalnız çevrimiçi; yoksa DENEMEZ
     await sync.push_audit(entries)      → kuyruğa yazar, sonra göndermeyi dener
     await sync.flush_audit()            → kuyruğu boşaltmayı dener (hata yükseltmez)
@@ -34,7 +38,12 @@ from km_core.config.loader import Config
 
 from .cache import RosterCache
 from .client import CLIENT_VERSION, IdentityClient
-from .errors import IdentitySyncError, NotPaired, WriteRequiresConnection
+from .errors import (
+    IdentitySyncError,
+    ManagementKeyMissing,
+    NotPaired,
+    WriteRequiresConnection,
+)
 from .queue import BATCH_SIZE, AuditQueue, QueueStore
 
 log = structlog.get_logger("km.identity_sync")
@@ -43,6 +52,10 @@ log = structlog.get_logger("km.identity_sync")
 TOKEN_KEY = "identity_sync.installation_token"
 PRIVATE_KEY = "identity_sync.private_key"
 INSTALLATION_ID_KEY = "identity_sync.installation_id"
+# Merkezin yönetim anahtarı (`KM_IDENTITY_ADMIN_TOKEN` karşılığı). Kurulum
+# token'ından AYRIDIR: biri "bu makine bizim", öteki "yeni makine kaydedebilir"
+# der. Ayara yazılmaz, kasada durur (K8).
+ADMIN_TOKEN_KEY = "identity_sync.admin_token"
 
 # Çevrimiçilik bilgisinin tazelik süresi. Her yazmadan önce `/health` sormak
 # gereksiz; hiç sormamak ise "ağ yoksa denemez" kuralını boşa çıkarır.
@@ -54,6 +67,7 @@ class SecretStore(Protocol):
 
     async def get(self, key: str) -> str | None: ...
     async def set(self, key: str, value: str) -> None: ...
+    async def delete(self, key: str) -> None: ...
 
 
 class IdentitySync:
@@ -77,6 +91,7 @@ class IdentitySync:
         # şeyi "ağ yok" saymak, çalışan bir merkezde yazmayı reddetmek olurdu.
         self._online: bool | None = None
         self._online_checked_at: float = 0.0
+        self._store: QueueStore | None = store
         self._queue: AuditQueue | None = AuditQueue(store) if store is not None else None
 
     def attach_store(self, store: QueueStore) -> None:
@@ -87,8 +102,13 @@ class IdentitySync:
         olduğunda yapılır — `km_platform/identity_sync/http.py` ve giriş yolu
         çağırır. **İkinci çağrı hiçbir şey yapmaz**: bağlanmış bir kuyruğu
         değiştirmek, içindeki bekleyen kayıtları görünmez kılardı.
+
+        Depo ayrıca `unpair()` için tutulur: eşleme çözülünce merkezden
+        yansıtılmış kullanıcıların pasifleştirilmesi gerekiyor ve o satırlar
+        çekirdeğin `users` tablosundadır.
         """
         if self._queue is None:
+            self._store = store
             self._queue = AuditQueue(store)
 
     # ------------------------------------------------------------- durum
@@ -103,6 +123,13 @@ class IdentitySync:
         if not self.configured:
             return None
         return await self._vault.get(TOKEN_KEY)
+
+    async def installation_id(self) -> str | None:
+        """Merkezin bu makineye verdiği kimlik. Ekranda görünür — sır değildir,
+        kurulum listesindeki satırı işaret eder."""
+        if not self.configured:
+            return None
+        return await self._vault.get(INSTALLATION_ID_KEY)
 
     async def is_paired(self) -> bool:
         return bool(await self.installation_token())
@@ -142,12 +169,18 @@ class IdentitySync:
             "configured": self.configured,
             "baseUrl": self.base_url,
             "paired": paired,
+            "installationId": await self.installation_id(),
             "pairingRequired": await self.pairing_required(),
             "loginPolicy": self.login_policy(),
             "maxCacheAgeHours": self.max_cache_age_hours,
             "cache": self.cache.summary(),
             "machine": self.machine(),
             "online": self._online,
+            # Yönetim anahtarının VARLIĞI bildirilir, KENDİSİ değil. Ekran
+            # "kurulum listesi çekilebilir mi" sorusunu buradan yanıtlar ve
+            # olmayan bir yetenek için düğme çizmez.
+            "managementKey": bool(await self._vault.get(ADMIN_TOKEN_KEY))
+            if self.configured else False,
             # Kuyrukta bekleyen denetim kaydı. "Asla düşürülmez" sözünün
             # görünür karşılığı budur: sayı büyüyorsa merkez ulaşılamıyordur.
             "auditPending": await self.audit_pending(),
@@ -241,6 +274,114 @@ class IdentitySync:
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo,
         ).decode("ascii")
+
+    # -------------------------------------------------------- kurulum yönetimi
+    #
+    # Üçü de YAZMA YOLUNDADIR (ADR 0021 §3): ağ yoksa DENENMEZ. Listeleme bir
+    # okuma gibi görünse de merkezin kaydını okur; önbelleği yoktur ve
+    # olmamalıdır — bayat bir kurulum listesine bakarak "bu makineyi iptal
+    # ettim" demek, iptal edilmemiş bir makineyi iptal edilmiş sanmaktır.
+
+    async def _management_token(self) -> str:
+        if not self.configured:
+            raise IdentitySyncError("Kimlik servisi ayarlanmamış.")
+        token = await self._vault.get(ADMIN_TOKEN_KEY)
+        if not token:
+            raise ManagementKeyMissing
+        if not await self._ensure_online():
+            raise WriteRequiresConnection
+        return token
+
+    async def create_pair_code(self, note: str | None = None) -> dict[str, Any]:
+        """Yeni eşleme kodu üretir.
+
+        **YENİ KOD BEKLEYEN ESKİ KODLARI GEÇERSİZ KILAR** — kararı merkez
+        uygular (`services/identity/app/installations.py`). Ekranda yazılı olan
+        cümle budur ve kodun karşılığı oradadır.
+
+        SÜREYİ MERKEZ SÖYLER. `expiresAt` yanıtta gelir; arayüz yalnız geri
+        sayar. Süreyi burada hesaplamak, ayarı değişen bir merkezle sessizce
+        yalan söyleyen bir sayaç üretirdi.
+
+        KOD DENETİM İZİNE YAZILMAZ. Kod bir sırdır ve iz satırı silinmez; koda
+        yazsaydık kodun ömrü on dakika yerine sonsuz olurdu.
+        """
+        token = await self._management_token()
+        result = await self._client.create_pair_code(token, note=note)
+        log.info("eşleme kodu üretildi", expires=result.get("expiresAt"))
+        return result
+
+    async def installations(self) -> list[dict[str, Any]]:
+        """Merkezdeki kurulum listesi. Token ve açık anahtar merkezde zaten
+        listeye girmez."""
+        token = await self._management_token()
+        return await self._client.installations(token)
+
+    async def revoke_installation(self, installation_id: str) -> dict[str, Any]:
+        """Kurulumu iptal eder. SATIR SİLİNMEZ, durumu değişir."""
+        token = await self._management_token()
+        row = await self._client.revoke_installation(token, installation_id)
+        log.warning("kurulum iptal edildi", installation=installation_id)
+        return row
+
+    async def unpair(self) -> dict[str, Any]:
+        """BU MAKİNENİN eşlemesini çözer. Merkeze gitmez, YERELDE çalışır.
+
+        Merkezdeki satırı düşürmek `revoke_installation()`ın işidir ve ayrı bir
+        karardır: ağ yokken de bir makineyi merkezden koparabilmek gerekir
+        (çalınan dizüstü), ama merkezdeki kaydı silmek çevrimiçilik ister.
+
+        Ne olur, ne olmaz:
+
+          · `installation_token` ve `installation_id` KASADAN SİLİNİR.
+          · `private_key` SİLİNMEZ. Aynı makine yeniden eşlendiğinde merkez onu
+            aynı açık anahtarla tanır; anahtarı atmak, her eşlemede yeni bir
+            kimlik doğurup merkezdeki geçmişi koparırdı.
+          · `origin='central'` kullanıcılar PASİFLEŞTİRİLİR, SİLİNMEZ. Merkezden
+            gelen kadro artık tazelenemez; o satırların girişte kabul edilmeye
+            devam etmesi, merkezden çıkarılmış birinin bu makinede süresiz
+            girebilmesi demekti. Silmek ise denetim izindeki "kim yaptı"
+            bağını öksüz bırakırdı.
+          · `origin='local'` kullanıcılara DOKUNULMAZ. Bu makinenin kendi
+            kadrosu eşlemeden önce de vardı, sonra da durur — yoksa eşlemeyi
+            çözen yönetici kendini dışarıda bırakırdı.
+          · Kadro önbelleği silinir: içinde merkezin `password_hash` kopyaları
+            var ve eşleme çözülmüşken onları tutmanın hiçbir karşılığı yok.
+        """
+        await self._vault.delete(TOKEN_KEY)
+        await self._vault.delete(INSTALLATION_ID_KEY)
+
+        disabled = await self._disable_central_users()
+
+        try:
+            self.cache.path.unlink(missing_ok=True)
+        except OSError as error:  # pragma: no cover — salt okunur bağlama vb.
+            log.warning("kadro önbelleği silinemedi", error=str(error))
+
+        self._online = None
+        self._online_checked_at = 0.0
+        log.warning("kurulum eşlemesi çözüldü", disabled=disabled)
+        return {"paired": False, "disabledUsers": disabled}
+
+    async def _disable_central_users(self) -> int:
+        """Merkezden yansıtılmış kullanıcıları pasifleştirir ve oturumlarını
+        kapatır. Depo bağlanmamışsa hiçbir şey yapmaz (K7)."""
+        if self._store is None:
+            return 0
+        rows = await self._store.fetch_all(
+            "SELECT id FROM users WHERE origin = 'central' AND status = 'active'"
+        )
+        if not rows:
+            return 0
+        ids = [str(row["id"]) for row in rows]
+        await self._store.execute_many(
+            "UPDATE users SET status = 'disabled', revision = revision + 1 WHERE id = ?",
+            [(user_id,) for user_id in ids],
+        )
+        await self._store.execute_many(
+            "DELETE FROM sessions WHERE user_id = ?", [(user_id,) for user_id in ids]
+        )
+        return len(ids)
 
     # -------------------------------------------------------------- kadro
 

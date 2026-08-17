@@ -3,15 +3,25 @@
 Her uçta `requires(...)` vardır (K9): arayüzde düğmeyi gizlemek yetkilendirme
 değildir. `module.yaml` → `http.requires` taban izni verir, uçlar onu DARALTIR.
 
-İKİ İZİN:
+ÜÇ İZİN:
 
-    bld_manual_order.view     okuma — ekranın sözleşmesi, müşteri araması,
-                              ürün kataloğu, servis gününün kesimi ve stoğu
-    bld_manual_order.manage   YAZMA — siparişi açar (ve gerekirse müşteriyi)
+    bld_manual_order.view            okuma — ekranın sözleşmesi, müşteri
+                                     araması, ürün kataloğu, servis gününün
+                                     kesimi ve stoğu
+    bld_manual_order.manage          YAZMA — siparişi açar (ve gerekirse
+                                     müşteriyi)
+    bld_manual_order.price_override  KATALOG FİYATINI KIRAR — siparişe
+                                     müşteriye özel sepet fiyatı yazar
 
-`bld_orders` üçüncü bir anahtarı (iptal) PARA yüzünden ayırıyor; burada para
-hareketi üreten ikinci bir eylem yok. Var olmayan bir ayrım için anahtar açmak,
-gerçek ayrımların anlamını ucuzlatırdı.
+ÜÇÜNCÜ ANAHTARIN ÖLÇÜTÜ `bld_orders`INKİYLE AYNI: PARA. Bu ekran uzun süre tek
+bir yazma taşıdı (sipariş açmak) ve o yüzden iki anahtar yetiyordu; anlaşmalı
+sepet fiyatıyla birlikte İKİNCİ bir para kararı doğdu. Sipariş AÇMAK rutin bir
+kayıt akışıdır, katalog fiyatını KIRMAK ciroyu değiştiren ticari bir karardır.
+Tek anahtarda kalsaydı fiyat kırmayı engellemenin tek yolu sipariş girmeyi
+engellemek olurdu — yani telefonu açan personelin işini yapamaz hâle getirmek.
+
+Anahtar `manage`ı KAPSAMAZ, ona EKLENİR: yalnız `price_override` taşıyan biri
+sipariş açamaz.
 
 GEREKÇE ZORUNLU DEĞİL. `orders.md` → "POST /" bunu açıkça karara bağladı:
 telefon siparişi açmak rutin bir KAYIT akışıdır ve `00-genel.md` §3'ün
@@ -50,6 +60,7 @@ from ..service import ManualOrderService
 #: hatası bir kapıyı sessizce açık bırakamaz.
 VIEW = "bld_manual_order.view"
 MANAGE = "bld_manual_order.manage"
+PRICE_OVERRIDE = "bld_manual_order.price_override"
 
 router = APIRouter()
 _service: ManualOrderService | None = None
@@ -73,8 +84,16 @@ def service() -> ManualOrderService:
 async def overview(
     user: CurrentUser = requires(VIEW),
 ) -> dict[str, Any]:
-    """Ekranın sözleşmesi ve alan sınırları. AĞA ÇIKMAZ (K7)."""
-    return await service().overview()
+    """Ekranın sözleşmesi ve alan sınırları. AĞA ÇIKMAZ (K7).
+
+    `can_price_override` DA BURADAN GELİR. Ekran fiyat kutusunu buna göre
+    çiziyor; gizlemek YETKİLENDİRME DEĞİLDİR (asıl kapı `POST /orders` ve
+    servistedir, K9) ama her seferinde 403 alan bir kutu çizmek de personele
+    çalışmayan bir alan göstermek olurdu.
+    """
+    return await service().overview(
+        allow_price_override=user.has_permission(PRICE_OVERRIDE),
+    )
 
 
 @router.get("/customers")
@@ -221,6 +240,19 @@ class CreateBody(BaseModel):
     reason: str = Field(default="", max_length=MAX_REASON)
     dryRun: bool | None = None
 
+    #: ANLAŞMALI SEPET FİYATI — kuruş, SEPETİN TAMAMI için, kalem başına DEĞİL.
+    #: `None` = anlaşma yok; sunucu tutarı katalogdan hesaplar (bugünkü
+    #: davranış) ve adrese teslimde teslimat ücretini ekler. Doluyken tutar
+    #: kalem toplamının yerine geçer, kalemler fiyatsız yazılır ve teslimat
+    #: ücreti bu tutara DÂHİL sayılır.
+    #:
+    #: ŞEMADA `ge`/`le` YOK ve bu bilinçli: sıfır ya da tavan aşımı pydantic'in
+    #: İngilizce şema hatasına düşerdi. Aralığı servis denetliyor ve personele
+    #: ne yapacağını söyleyen Türkçe bir cümle döndürüyor ("anlaşma yoksa alanı
+    #: BOŞ bırakın"). Tip yine de `int`: "400,00" gibi bir metin şema kapısında
+    #: kalır ve sessizce 400 kuruşa dönüşemez.
+    agreed_total_kurus: int | None = None
+
 
 @router.post("/orders")
 async def create_order(
@@ -230,6 +262,12 @@ async def create_order(
     """Siparişi açar. Sipariş `onaylandi` doğar ve mutfağa düşer.
 
     İzin kapısı burada ve serviste iki kez denetlenir (K9 — çift kapı).
+
+    İKİ AYRI ANAHTAR: uca girmek `manage` ister; gövdede `agreed_total_kurus`
+    doluysa AYRICA `price_override` istenir. İkincisi uç düzeyinde
+    `requires(...)` ile İSTENMEZ, çünkü o alanı hiç kullanmayan personel
+    (siparişlerin çoğu) ekrana giremez olurdu. Kapı gövdeye bakıyor ve karar
+    serviste veriliyor.
 
     SİPARİŞ PENCERESİ BURADA DENETLENMEZ: sunucu onu `adminContext: true` ile
     bilerek atlıyor. Kesim saati ve stok tavanı ekranda YAZIYLA söylenir,
@@ -250,5 +288,7 @@ async def create_order(
         reason=body.reason,
         location_id=body.location_id,
         dry_run=body.dryRun,
+        agreed_total_kurus=body.agreed_total_kurus,
         allow_manage=user.has_permission(MANAGE),
+        allow_price_override=user.has_permission(PRICE_OVERRIDE),
     )

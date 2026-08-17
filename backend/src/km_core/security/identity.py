@@ -26,11 +26,21 @@ kaldı: adları geri çevirmek ikinci bir göç ve veri riski demekti. Bu dosyad
 "password" geçen her ad o sütunlara/anahtara bağlıdır; doğrulama kuralı her
 yerde 6 haneli PIN'dir (`validate_pin`).
 
-Göç yolu (0016'dan kalan, hâlâ geçerli): `pin_hash` / `pin_lookup` DÜŞÜRÜLMEZ
-ve hiçbir satır silinmez. `password_hash` sütunu henüz boş olan mevcut kullanıcı
-eski PIN'iyle doğrulanabilir ama **oturum açılmaz**: giriş "PIN belirlenmeli"
-durumu döndürür ve oturum ancak yeni PIN kurulduktan sonra açılır. Kimse
-kilitlenmez.
+**ZORLAMA AKIŞI KALDIRILDI (17.08.2026).** 0016'nın "mevcut kullanıcı ilk
+girişte sır belirlemeye zorlanır" adımı reddedilmiş kararın göç yoluydu ve geri
+alma sırasında kodda unutulmuştu. Gerçek bir kurulumda kullanıcı orijinal
+PIN'iyle girdi, akış devreye girip YENİ bir sır yazdı, `secret_lookup` değişti ve
+o günden sonra orijinal PIN "bilinmeyen sır" ile reddedildi — yani akış tam da
+önlemeyi vaat ettiği şeyi, kilitlenmeyi yaptı. Kalıntı bu yüzden tümüyle
+silindi: giriş artık TEK sırra bakar (`secret_lookup`) ve hiçbir koşulda yeni
+sır belirlemeye zorlamaz. Geride kalmış satırları `0006_backfill_secret_lookup`
+göçü onarır.
+
+`pin_hash` / `pin_lookup` / `pin_set_at` DÜŞÜRÜLMEZ ve hiçbir satır silinmez;
+yalnız giriş yolunda okunmazlar.
+
+Kullanıcının kendi PIN'ini İSTEYEREK değiştirmesi (mevcut PIN'ini girerek)
+sürer: `set_password_with_secret`. Kaldırılan yalnız ZORLAMAYDI.
 
 K10 — rol adı sorulmaz. Dışarıya açılan tek yetki sorusu `has_permission`.
 """
@@ -134,14 +144,13 @@ class CurrentUser:
 class LoginResult:
     """Giriş sonucu.
 
-    `must_set_password` göç yolundaki kullanıcıyı anlatır: eski PIN doğrulandı
-    ama `password_hash` sütunu hâlâ boş olduğu için OTURUM AÇILMADI. Alan adı
-    göçten kalmıştır; istenen şey yeni bir PIN'dir.
+    TEK SONUÇ VARDIR: doğrulama geçtiyse oturum açılır ve `token` dolar.
+    "Doğrulandı ama oturum açılmadı" diye bir ara durum YOKTUR — o durum
+    reddedilmiş ADR 0016'nın zorlama akışıydı ve kaldırıldı (modül başlığı).
     """
 
     user: CurrentUser
-    token: str | None = None
-    must_set_password: bool = False
+    token: str
 
 
 class IdentityError(ValueError):
@@ -461,14 +470,16 @@ class Identity:
     async def set_password_with_secret(
         self, current_secret: str, password: str
     ) -> tuple[str, CurrentUser] | None:
-        """Kullanıcının kendi PIN'ini kurması/değiştirmesi.
+        """Kullanıcının kendi PIN'ini İSTEYEREK değiştirmesi.
 
-        `current_secret` mevcut PIN'dir; göç yolundaki kullanıcı için eski
-        sütunda duran PIN'dir. Doğrulanamazsa None döner — sebep AYIRT EDİLMEZ.
-        Başarıda oturum açılır: PIN'ini kuran kullanıcı ikinci kez giriş yapmak
-        zorunda kalmaz.
+        `current_secret` mevcut PIN'dir. Doğrulanamazsa None döner — sebep AYIRT
+        EDİLMEZ. Başarıda oturum açılır: PIN'ini değiştiren kullanıcı ikinci kez
+        giriş yapmak zorunda kalmaz.
+
+        BU YOL KİMSEYİ ZORLAMAZ. Giriş akışı buraya asla yönlendirmez; çağrı
+        yalnızca kullanıcının kendi isteğiyle başlar.
         """
-        row, legacy = await self._find_by_secret(current_secret)
+        row = await self._find_by_secret(current_secret)
         if row is None:
             self._burn_time(current_secret)
             await self.audit(None, "auth.set_password", result="fail", detail="bilinmeyen sır")
@@ -478,8 +489,7 @@ class Identity:
             await self.audit(row["id"], "auth.set_password", result="fail", detail="kilitli")
             return None
 
-        stored = row["pin_hash"] if legacy else row["password_hash"]
-        if not _verify(stored, current_secret):
+        if not _verify(row["password_hash"], current_secret):
             await self._register_failure(row, action="auth.set_password")
             return None
 
@@ -499,8 +509,11 @@ class Identity:
 
         Argüman adı uçtaki alan adıyla (`password`) aynı kalır; beklenen değer
         6 haneli PIN'dir.
+
+        DOĞRULAMA GEÇTİYSE OTURUM AÇILIR. Bu metot hiçbir koşulda kullanıcıyı
+        yeni sır belirlemeye zorlamaz (modül başlığı).
         """
-        row, legacy = await self._find_by_secret(password)
+        row = await self._find_by_secret(password)
 
         if row is None:
             # Sahte doğrulama: yanıt süresi kullanıcı varmış gibi geçsin.
@@ -512,8 +525,7 @@ class Identity:
             await self.audit(row["id"], "auth.login", result="fail", detail="kilitli")
             return None
 
-        stored = row["pin_hash"] if legacy else row["password_hash"]
-        if not _verify(stored, password):
+        if not _verify(row["password_hash"], password):
             await self._register_failure(row, action="auth.login")
             return None
 
@@ -526,31 +538,23 @@ class Identity:
             (row["id"],),
         )
 
-        if legacy:
-            # Sır doğru ama yeni PIN henüz kurulmadı: OTURUM AÇILMAZ.
-            await self.audit(row["id"], "auth.login", result="ok", detail="PIN belirlenmeli")
-            return LoginResult(user=await self._current_user(row), must_set_password=True)
-
         token, user = await self._open_session(row)
         return LoginResult(user=user, token=token)
 
-    async def _find_by_secret(self, secret: str) -> tuple[dict[str, Any] | None, bool]:
-        """(satır, eski_sütun_mu) — arama tek HMAC ile tek satıra iner.
+    async def _find_by_secret(self, secret: str) -> dict[str, Any] | None:
+        """Arama TEK HMAC ile TEK sütundan tek satıra iner.
 
-        `password_hash` sütunu boş olan kullanıcı için eski `pin_lookup` da
-        denenir; böylece göçte kimse kilitlenmez. Yeni PIN'ini kurmuş
-        kullanıcının eski sütundaki PIN'i artık geçmez.
+        İKİNCİ BİR YOL YOKTUR. Eskiden `secret_lookup` tutmazsa
+        `pin_lookup AND password_hash IS NULL` da denenirdi; o yol reddedilmiş
+        ADR 0016'nın göç yoluydu ve iki kusuru vardı: `password_hash` dolduğu an
+        sessizce devre dışı kalıyordu (kullanıcı nedenini göremiyordu) ve
+        bağlandığı zorlama akışı gerçek bir kurulumu kilitledi. Geride kalmış
+        satırlar artık girişte değil, GÖÇTE onarılır
+        (`migrations.py` → `0006_backfill_secret_lookup`).
         """
-        lookup = self.secret_lookup(secret)
-        row = await self.store.fetch_one(
-            "SELECT * FROM users WHERE secret_lookup = ?", (lookup,)
+        return await self.store.fetch_one(
+            "SELECT * FROM users WHERE secret_lookup = ?", (self.secret_lookup(secret),)
         )
-        if row is not None:
-            return row, False
-        row = await self.store.fetch_one(
-            "SELECT * FROM users WHERE pin_lookup = ? AND password_hash IS NULL", (lookup,)
-        )
-        return row, row is not None
 
     def _locked(self, row: dict[str, Any]) -> bool:
         locked_until = row.get("locked_until")

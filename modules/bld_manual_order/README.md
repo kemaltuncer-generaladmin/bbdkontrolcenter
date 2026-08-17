@@ -4,7 +4,8 @@ Personel **müşteriyle telefondayken** siparişi merkezden açar: müşteri, se
 günü, kalemler, teslimat ve ödeme.
 
 Grup: **BLD** (sıra 515 — Sipariş Yönetimi 510 ile KDS 520 arasında) ·
-İzinler: `bld_manual_order.view`, `bld_manual_order.manage`
+İzinler: `bld_manual_order.view`, `bld_manual_order.manage`,
+`bld_manual_order.price_override`
 
 Sözleşme: [`BLD/docs/control/orders.md`](../../../BLD/docs/control/orders.md)
 → **`POST /`** bölümü. Geçit metotları
@@ -73,7 +74,38 @@ koyduğu `sold_out` işareti tavandan ayrı bir şeydir ve sunucu o kalemi
 | GET | `/products` | `.view` | Geçitte **önbellekli** referans veri, yalnız satıştakiler |
 | GET | `/service-day?date=` | `.view` | Kesim + stok + ödeme listesi + teslimat ücreti (üç okuma, tek cevap) |
 | POST | `/stock-check` | `.view` | **Okumadır**; fiil gövde şeklinden seçildi (kalem listesi sorgu dizesine sığmaz) |
-| POST | `/orders` | `.manage` | Tek yazma ucu |
+| POST | `/orders` | `.manage` (+ `.price_override`, yalnız `agreed_total_kurus` doluysa) | Tek yazma ucu |
+
+## Anlaşmalı sepet fiyatı
+
+Personel telefonda bir fiyatta anlaşır ve o fiyat **sepetin tamamı içindir,
+kalem başına değil.** Alan (`agreed_total_kurus`, kuruş) doluysa sunucu kalem
+toplamı yerine bu tutarı yazar ve **kalemleri fiyatsız bırakır**; para sipariş
+toplamında durur. Desen abonelikten geliyor
+(`subscriptions.agreed_unit_price_kurus` porsiyon başına aynı işi yapıyor).
+
+**Teslimat ücreti bu tutara eklenmez, dâhildir.** Personel telefonda bir sayı
+söylüyor ve sisteme yazılan tutar o sayı olmalı; ayrıca almak isteyen ücreti
+tutara ekleyip yazar. **Alan boşken davranış bugünkünün aynısıdır.**
+
+Ekran kutu doluyken **katalog tahminini de gösterir ve farkı yazar** ("katalog
+480,00 ₺ · anlaşmalı 400,00 ₺ · fark −80,00 ₺"): yalnız anlaşmalı tutarı
+göstermek, personelin ne kadar indirim yaptığını görmemesi demekti.
+
+**Ayrı izin ister** (`bld_manual_order.price_override`) ve ölçüt
+`bld_orders.cancel`ınkiyle aynı: **para**. Sipariş açmak rutin bir kayıt
+akışıdır, katalog fiyatını kırmak ciroyu değiştiren ticari bir karardır; tek
+anahtarda kalsaydı fiyat kırmayı engellemenin tek yolu sipariş girmeyi
+engellemek olurdu. Varsayılan roller `.manage` ile aynıdır — anahtarın değeri
+"varsayılan olarak kısıtlı" olması değil, **ayrılabilir** olması. Yetki yoksa
+kutu ekranda hiç çizilmez; asıl kapı yine uçta ve serviste (K9). Tutar BLD
+denetim izinde (`payload_json.agreed_total_kurus`) durur.
+
+**Yazılan fiyat okunamazsa kaydetme ENGELLENİR** — ekranın engelleyen tek
+uyarısı budur. Kesim saati ve stok tavanı engellemiyor çünkü onlar sunucunun
+bilerek atladığı kurallar; okunamayan bir fiyat farklı: siparişi katalog
+fiyatıyla açmak "personel bir fiyat söyler, sistem başka tutar yazar" hâlinin
+ta kendisi olurdu.
 
 Okumalar **asla fırlatmaz**: geçit düşerse
 `{"ok": true, "connected": false, "error": …}` döner ve panel `connected`

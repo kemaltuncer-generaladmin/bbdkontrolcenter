@@ -28,7 +28,10 @@ BEKLENEN = {
     ("PATCH", "/devices/{device_id}"): {"bld_kds.manage"},
     ("POST", "/devices/{device_id}/pairing-code"): {"bld_kds.manage"},
     ("POST", "/devices/{device_id}/revoke"): {"bld_kds.devices"},
-    ("PATCH", "/devices/{device_id}/settings"): {"bld_kds.manage"},
+    # AYAR YAZMA `manage`TE DEĞİL (17.08.2026 kullanıcı kararı): sipariş
+    # durumunu ilerleten personel kasanın ayarına dokunmaz. Ayar yazan TEK uç
+    # budur — `PATCH /devices/{id}` yalnız adı değiştirir.
+    ("PATCH", "/devices/{device_id}/settings"): {"bld_kds.settings"},
     # İKİ İZİN, "en az biri": yıkıcı komut ayrımı gövdeye bakılarak yapılır ve
     # servis `allow_destructive` ile ayrıca denetler.
     ("POST", "/devices/{device_id}/commands"): {"bld_kds.manage", "bld_kds.devices"},

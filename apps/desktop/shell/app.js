@@ -11,7 +11,7 @@
 
 import { iconSvg } from './icons.js';
 import {
-  api, loadRegistry, login, mountPanel, navTree, setNavigator, setOwnPassword, waitForCore,
+  api, loadRegistry, login, logout, mountPanel, navTree, setNavigator, waitForCore,
 } from './ui-kernel.js';
 
 const PIN_MIN = 6;
@@ -250,7 +250,15 @@ async function openWorkspace(user) {
   who.className = 'sidebar-user';
   who.textContent = user.fullName;
   who.title = `Roller: ${user.roles.join(', ') || '—'}`;
-  el.foot.append(who);
+
+  const cikis = document.createElement('button');
+  cikis.type = 'button';
+  cikis.className = 'sidebar-signout';
+  cikis.textContent = 'Çıkış Yap';
+  cikis.title = 'Oturumu kapat';
+  cikis.addEventListener('click', signOut);
+
+  el.foot.append(who, cikis);
 
   // Paneller birbirine `ctx.open(id, payload)` ile gezinir. Kabuk yalnız
   // taşıyıcıdır: hangi panelin hangisine gittiğini bilmez (K1).
@@ -264,37 +272,65 @@ async function openWorkspace(user) {
   el.filter.focus();
 }
 
+/**
+ * Oturumu kapatır ve giriş ekranına döner.
+ *
+ * EKRAN ÖNCE SÖKÜLÜR, sonra belirteç düşer. Etkin panelin `cleanup`'ı
+ * çalışmazsa açık kalan zamanlayıcıları ve dinleyicileri, artık yetkisi
+ * olmayan bir oturumun ardından istek atmaya devam ederdi.
+ *
+ * MENÜ VE KAYIT DA BOŞALTILIR. Yalnız giriş kartını göstermek, bir sonraki
+ * kişinin ekranında bir öncekinin ekran listesini bir an için bırakırdı —
+ * ekran adları da yetki bilgisidir.
+ */
+async function signOut() {
+  try {
+    shell.cleanup?.();
+  } catch (error) {
+    console.error('[kabuk] panel temizliği hata verdi:', error);
+  }
+  shell.cleanup = null;
+  shell.activeId = null;
+  shell.user = null;
+  shell.registry = { groups: [], panels: [] };
+  shell.panels = [];
+
+  await logout();
+
+  document.getElementById('panel-body').replaceChildren();
+  el.nav.replaceChildren();
+  el.foot.replaceChildren();
+  el.filter.value = '';
+  el.crumb.textContent = '';
+  el.title.textContent = '';
+  document.title = 'Kontrol Merkezi';
+
+  el.workspace.hidden = true;
+  el.login.hidden = false;
+  clearError();
+  resetPin();
+  setHint(LOGIN_HINT);
+}
+
 // ================================================================== GİRİŞ
 //
 // TUŞ TAKIMI. Kullanıcı adı sorulmaz — 6 haneli PIN hem kimliği hem girişi
 // belirler (docs/identity-model.md — Giriş akışı). Metin alanı YOKTUR: rakamlar
 // pencere tuş dinleyicisinden toplanır, ekranda yalnız hane SAYISI görünür.
 //
-// EKRANIN ÜÇ KİPİ VAR:
-//   · 'login'  — PIN yazılır, oturum açılır.
-//   · 'set'    — sır doğrulandı ama yeni PIN henüz kurulmadı; oturum AÇILMADI.
-//   · 'repeat' — yeni PIN ikinci kez istenir (yazım hatası kişiyi dışarıda
-//                bırakırdı; teyit tuş takımının kendi güvenliğidir).
+// EKRANIN TEK KİPİ VAR: PIN yazılır, oturum açılır ya da tek tip redde varılır.
 //
-// 'set'/'repeat' GÖÇ YOLUDUR ve ADR 0016'dan kalmıştır: 0016 reddedildi ama
-// göçü koştu, `password_hash` sütunu duruyor. O sütunu boş olan eski kayıt ilk
-// girişinde kendi PIN'ini kurar (`Identity.login` → `must_set_password`).
+// ESKİDEN İKİ KİP DAHA VARDI ('set' / 'repeat'): reddedilmiş ADR 0016'nın "önce
+// kendine sır belirle" adımı. O akış 17.08.2026'da gerçek bir kurulumu kilitledi
+// — kullanıcı orijinal PIN'iyle girdi, akış yerine YENİ bir sır yazdı ve eski
+// PIN o günden sonra reddedildi. Kalıntı tümüyle kaldırıldı; kullanıcı kendi
+// PIN'ini yalnız İSTEYEREK değiştirir (mevcut PIN'ini girerek).
 
 /** İpucu satırının parçaları: [metin, tuş?, kuyruk?]. */
 const LOGIN_HINT = ["PIN'inizi yazın, ", 'Enter', ' ile girin'];
-const SET_HINT = ['Devam etmek için kendinize bir PIN belirleyin.'];
-const REPEAT_HINT = ["Yeni PIN'i bir kez daha yazın."];
 
 let pin = '';
 let busy = false;
-let mode = 'login';
-// Göç yolunda backend'e geri gönderilecek ESKİ sır ve teyidi bekleyen yeni PIN.
-// İkisi de yalnız bellekte durur, hiçbir yere yazılmaz, iş bitince silinir.
-let carriedSecret = '';
-let newPin = '';
-// İşlem bitince ipucu satırının döneceği yazı. "Doğrulanıyor…" geçicidir;
-// kipin kendi cümlesini ezmemeli.
-let restingHint = LOGIN_HINT;
 
 /**
  * GİRİŞ REDDİNİN TEK CÜMLESİ.
@@ -359,60 +395,6 @@ function resetPin() {
   renderSlots();
 }
 
-function resetToLogin(message = '') {
-  mode = 'login';
-  carriedSecret = '';
-  newPin = '';
-  restingHint = LOGIN_HINT;
-  if (message) failLogin(message);
-  else resetPin();
-}
-
-async function stepLogin(entered) {
-  const result = await login(entered);
-
-  if (result.mustSetPassword) {
-    // OTURUM AÇILMADI. Sır doğru ama yeni PIN kurulmamış; eski sır ikinci
-    // adımda `currentSecret` olarak geri gider.
-    carriedSecret = entered;
-    mode = 'set';
-    // Çekirdeğin cümlesi OLDUĞU GİBİ taşınır; kendi cümlemizle değiştirmek
-    // sunucunun anlattığı durumu gizlerdi.
-    restingHint = result.message ? [result.message] : SET_HINT;
-    resetPin();
-    return;
-  }
-
-  await enterWorkspace(result.user);
-}
-
-/** Yeni PIN alındı; ağ yok, yalnız teyide geçilir. */
-function stepSetPin(entered) {
-  newPin = entered;
-  mode = 'repeat';
-  restingHint = REPEAT_HINT;
-  resetPin();
-}
-
-async function stepConfirmPin(entered) {
-  // İKİ GİRİŞİN EŞİTLİĞİ BURADA DENETLENİR: sunucunun bilebileceği bir şey
-  // değil, yazım hatasına karşı kullanıcıya verilen erken cevaptır.
-  if (entered !== newPin) {
-    mode = 'set';
-    newPin = '';
-    restingHint = SET_HINT;
-    failLogin('İki PIN aynı değil.');
-    return;
-  }
-
-  const user = await setOwnPassword(carriedSecret, entered);
-  carriedSecret = '';
-  newPin = '';
-  mode = 'login';
-  restingHint = LOGIN_HINT;
-  await enterWorkspace(user);
-}
-
 async function enterWorkspace(user) {
   resetPin();
   el.login.classList.add('leaving');
@@ -433,27 +415,18 @@ async function submitPin() {
   const entered = pin;
   busy = true;
   clearError();
-  setHint([mode === 'login' ? 'Doğrulanıyor…' : 'PIN kuruluyor…']);
+  setHint(['Doğrulanıyor…']);
   el.loginHint.classList.add('busy');
 
   try {
-    if (mode === 'login') await stepLogin(entered);
-    else if (mode === 'set') stepSetPin(entered);
-    else await stepConfirmPin(entered);
+    const result = await login(entered);
+    await enterWorkspace(result.user);
   } catch (error) {
-    if (error.status === 401) {
-      // PIN kurma adımında 401, eski sırrın artık geçmediğini söyler: baştan
-      // başlanır. Cümle yine tek tiptir.
-      if (mode === 'login') failLogin(LOGIN_REJECTED);
-      else resetToLogin(LOGIN_REJECTED);
-    } else if (error.status >= 400 && error.status < 500) {
-      // KURAL İHLALİ PIN KURULURKEN SÖYLENİR: hane sayısı, yalnız rakam, basit
-      // PIN, benzersizlik. Backend'in cümlesi OLDUĞU GİBİ gösterilir —
-      // benzersizlik hatası da kiminle çakıştığını zaten söylemez.
-      mode = 'set';
-      newPin = '';
-      restingHint = SET_HINT;
-      failLogin(error.message);
+    if (error.status >= 400 && error.status < 500) {
+      // 401 TEK TİPTİR (`LOGIN_REJECTED`) — sebep ayırt edilmez. Diğer 4xx
+      // çekirdeğin kendi cümlesiyle gösterilir; o cümleler sır hakkında değil,
+      // isteğin biçimi hakkındadır ve hiçbir şey ele vermez.
+      failLogin(error.status === 401 ? LOGIN_REJECTED : error.message);
     } else {
       failLogin('Çekirdeğe ulaşılamadı.');
     }
@@ -461,7 +434,7 @@ async function submitPin() {
     busy = false;
     el.loginHint.classList.remove('busy');
     // Giriş ekranı kapandıysa dokunulmaz: kullanıcı artık menüdedir.
-    if (!el.login.hidden) setHint(restingHint);
+    if (!el.login.hidden) setHint(LOGIN_HINT);
   }
 }
 
@@ -732,7 +705,7 @@ async function start() {
   // yapmaz ve ekran bugünkü gibi doğrudan PIN tuş takımıyla açılır.
   if (await pairingRequired()) await runPairing();
 
-  setHint(restingHint);
+  setHint(LOGIN_HINT);
 }
 
 start();

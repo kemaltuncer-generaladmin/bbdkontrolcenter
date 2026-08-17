@@ -564,37 +564,57 @@ function closeOrder() {
   state.order = null;
 }
 
+/**
+ * Çekmecenin üç okuması. ÜÇÜ AYNI ANDA gider.
+ *
+ * Aralarında bağ yok — hiçbiri ötekinin sonucunu kullanmıyor — ve ayrı ayrı
+ * beklemek üç uzak turu arka arkaya eklemekten başka bir şey yapmıyordu.
+ * Üçü kendi `try/catch`ini taşıdığı için `Promise.all` reject etmez ve biri
+ * patladığında çekmece yine çizilir (K7).
+ *
+ * ORTAK ALANA TEK YAZAN VAR: `state.link` yalnız ayrıntı okumasında
+ * (`linkOk`), `state.order.error` yine yalnız orada güncelleniyor; geçmiş ve
+ * fatura kendi alanlarına yazıyor. Bu yüzden burada birleştirilecek bir yarış
+ * yok — sıralı hâlde de tek yazan oydu.
+ */
 async function loadOrderDetail(orderId) {
-  try {
-    const payload = await call(`${BASE}/orders/${orderId}`);
-    linkOk(payload);
-    state.order.detail = payload.order || null;
-    state.order.undo = payload.undo || null;
-    state.order.serverTime = payload.server_time || '';
-    // Geri sayımın tabanı sunucunun saatidir; istemcinin saati kaymış olabilir
-    // (`00-genel.md` §6). Aradaki farkı bir kez ölçüp yerelde ilerletiyoruz.
-    state.order.skewMs = payload.server_time
-      ? Date.parse(payload.server_time) - Date.now() : 0;
-    state.order.draft = (payload.order?.items || []).map((item) => ({ ...item }));
-  } catch (failure) {
-    state.order.error = failure.message;
-  }
+  const detail = async () => {
+    try {
+      const payload = await call(`${BASE}/orders/${orderId}`);
+      linkOk(payload);
+      state.order.detail = payload.order || null;
+      state.order.undo = payload.undo || null;
+      state.order.serverTime = payload.server_time || '';
+      // Geri sayımın tabanı sunucunun saatidir; istemcinin saati kaymış olabilir
+      // (`00-genel.md` §6). Aradaki farkı bir kez ölçüp yerelde ilerletiyoruz.
+      state.order.skewMs = payload.server_time
+        ? Date.parse(payload.server_time) - Date.now() : 0;
+      state.order.draft = (payload.order?.items || []).map((item) => ({ ...item }));
+    } catch (failure) {
+      state.order.error = failure.message;
+    }
+  };
 
-  try {
-    const revisions = await call(`${BASE}/orders/${orderId}/revisions`);
-    state.order.revisions = revisions.items || [];
-  } catch {
-    // Geçmiş okunamadı: ayrıntı ekranı yine çizilir (K7). Boş bir geçmiş
-    // "hiç revizyon yok" demek DEĞİLDİR ve bölümde yazılı.
-    state.order.revisions = null;
-  }
+  const revisions = async () => {
+    try {
+      const payload = await call(`${BASE}/orders/${orderId}/revisions`);
+      state.order.revisions = payload.items || [];
+    } catch {
+      // Geçmiş okunamadı: ayrıntı ekranı yine çizilir (K7). Boş bir geçmiş
+      // "hiç revizyon yok" demek DEĞİLDİR ve bölümde yazılı.
+      state.order.revisions = null;
+    }
+  };
 
-  try {
-    const invoice = await call(`${BASE}/orders/${orderId}/invoice`);
-    state.order.invoice = invoice;
-  } catch (failure) {
-    state.order.invoice = { missing: false, error: failure.message };
-  }
+  const invoice = async () => {
+    try {
+      state.order.invoice = await call(`${BASE}/orders/${orderId}/invoice`);
+    } catch (failure) {
+      state.order.invoice = { missing: false, error: failure.message };
+    }
+  };
+
+  await Promise.all([detail(), revisions(), invoice()]);
 }
 
 function paintDrawer() {

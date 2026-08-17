@@ -14,6 +14,10 @@ NE YOK — ve bilerek yok:
     `Services\\OrderFactory` içindedir. Buraya bir kopyası konsaydı panelin
     gösterdiği tutar ile siparişin gerçek tutarı sessizce ayrışırdı; ekran
     yalnız KATALOG FİYATINDAN tahmin gösterir ve tahmin olduğunu yazar.
+    ANLAŞMALI SEPET TUTARI BUNUN İSTİSNASI DEĞİL: burada yalnız BİÇİMİ
+    denetleniyor (tam sayı, kuruş, aralık). O sayıyla ne yapılacağına — kalem
+    toplamının yerine geçmesi, kalemlerin fiyatsız yazılması, teslimat
+    ücretinin içinde sayılması — yine sunucu karar veriyor.
   · SİPARİŞ PENCERESİ. Kesim saati, ileri görüş sınırı, sipariş alım şalteri,
     asgari sepet tutarı ve menü üyeliği sunucuda `adminContext: true` ile
     BİLEREK atlanıyor (`orders.md`). Burada yeniden uygulanmaz — atlanan bir
@@ -56,6 +60,15 @@ MAX_ADDRESS_PART = 96
 MAX_ADDRESS_NOTE = 255
 MAX_ITEM_NOTE = 255
 MAX_CUSTOMER_NOTE = 500
+
+#: ANLAŞMALI SEPET TUTARI (`agreed_total_kurus`) sınırları — sunucudaki
+#: `min:1` / `max:100000000` kuralının aynısı. Tavan bir iş kuralı DEĞİL,
+#: fazladan basılmış sıfırlara karşı akıl sınırı: 1.000.000 ₺'lik tek bir
+#: telefon siparişi yok. Taban SIFIR DEĞİL BİR — "bedava sipariş" bir fiyat
+#: kararı değil, boş bırakılmış bir kutunun sessizce sıfıra düşmesidir ve
+#: anlaşma yoksa alan HİÇ gönderilmez.
+MIN_AGREED_TOTAL_KURUS = 1
+MAX_AGREED_TOTAL_KURUS = 100_000_000
 
 #: Gerekçe bu uçta OPSİYONELDİR (`orders.md` → "KARAR — gerekçe zorunlu
 #: değildir"). Gönderilirse yalnız ÜST sınır denetlenir; on karakterlik alt
@@ -176,6 +189,63 @@ def customer_error(*, customer_id: int, name: Any, phone: Any) -> str:
     if not re.fullmatch(r"[0-9 ()+\-]*[0-9][0-9 ()+\-]*", raw_phone):
         return "Telefon en az bir rakam içermeli (yalnız rakam, boşluk, +, -, parantez)."
     return ""
+
+
+def clean_agreed_total(value: Any) -> tuple[int | None, str]:
+    """Anlaşmalı SEPET tutarını okur. `(kuruş | None, hata)`.
+
+    `None` DÖNMEK "anlaşma yok" DEMEKTİR ve alanın hiç gönderilmemesiyle
+    eşdeğerdir: sunucu o hâlde tutarı katalogdan hesaplar (bugünkü davranış).
+    Boş dize de aynı yola çıkar — panel kutusu boş bırakıldığında oradan `""`
+    gelebiliyor ve onu sıfıra çevirmek "bedava sipariş" demek olurdu.
+
+    TAM SAYI ZORUNLU, KIRPMA YOK. `int(40000.5)` sessizce 40000 üretir; yarım
+    kuruşluk bir girişi kırpmak, personelin yazdığı sayıdan BAŞKA bir tutarın
+    siparişe düşmesidir — bu alanın önlemek için var olduğu şeyin ta kendisi.
+    Kuruşun altında birim yok, o yüzden cevap kırpmak değil REDDETMEK.
+
+    `bool` ayrıca eleniyor: Python'da `True` bir `int`tir ve `1` kuruşluk bir
+    sipariş olarak geçerdi.
+
+    ARALIK SUNUCUDAKİNİN AYNISI (`min:1`, `max:100000000`); buradaki kopya
+    yalnız erken geri bildirim içindir ve ayrışırsa sunucununki kazanır.
+    """
+    if value is None:
+        return None, ""
+    if isinstance(value, str) and not value.strip():
+        return None, ""
+
+    problem = ("Anlaşmalı sepet fiyatı KURUŞ cinsinden TAM SAYI olmalı "
+               "(400,00 ₺ → 40000). Anlaşma yoksa alan boş bırakılır.")
+
+    if isinstance(value, bool):
+        return None, problem
+    if isinstance(value, int):
+        kurus = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            return None, problem
+        kurus = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
+        kurus = int(value.strip())
+    else:
+        return None, problem
+
+    if kurus < MIN_AGREED_TOTAL_KURUS:
+        # SIFIR AYRI BİR CÜMLE HAK EDİYOR: personel kutuyu boşaltmak isterken
+        # "0" yazmış olabilir ve "en az 1 kuruş" mesajı ona ne yapacağını
+        # söylemez.
+        return None, ("Anlaşmalı sepet fiyatı sıfırdan büyük olmalı. Anlaşma "
+                      "yoksa alanı BOŞ bırakın — sıfır yazmak bedava sipariş "
+                      "demektir ve sunucu bunu reddeder.")
+    if kurus > MAX_AGREED_TOTAL_KURUS:
+        # Binlik ayracı ELLE konuyor: `:n` yerel ayara bağlıdır ve sunucuda
+        # `LC_ALL=C` iken "1000000" basardı — okunması en zor hâli.
+        ceiling = f"{MAX_AGREED_TOTAL_KURUS // 100:,}".replace(",", ".")
+        return None, (f"Anlaşmalı sepet fiyatı en çok {ceiling} ₺ olabilir; "
+                      "fazladan basılmış bir sıfır olabilir mi?")
+
+    return kurus, ""
 
 
 def address_error(delivery_type: Any, address: Any) -> str:
@@ -541,6 +611,12 @@ def screen_contract() -> dict[str, Any]:
             "address_note": MAX_ADDRESS_NOTE,
             "item_note": MAX_ITEM_NOTE,
             "reason": MAX_REASON,
+        },
+        # Anlaşmalı sepet fiyatının sınırları EKRANA da veriliyor: kutuya gömülü
+        # bir sayı, sunucu kuralı değiştiğinde sessizce yalan söylerdi.
+        "agreed_total": {
+            "min": MIN_AGREED_TOTAL_KURUS,
+            "max": MAX_AGREED_TOTAL_KURUS,
         },
         # Gerekçe bu uçta opsiyoneldir; panel kutuyu "isteğe bağlı" diye çizer.
         "reason_required": False,

@@ -21,6 +21,9 @@ CORE_PERMISSIONS: list[dict[str, Any]] = [
     {"key": "settings.view", "default_roles": ["admin"]},
     {"key": "settings.manage", "default_roles": ["admin"]},
     {"key": "audit.view", "default_roles": ["admin"]},
+    # kurulumlar (ADR 0021 §4) — merkeze eşlenmiş makineler
+    {"key": "installations.view", "default_roles": ["admin"]},
+    {"key": "installations.manage", "default_roles": ["admin"]},
     {"key": "secrets.view", "default_roles": ["admin"]},
     {"key": "secrets.manage", "default_roles": ["admin"]},
     # sunucu ve ssh — kapsamlı

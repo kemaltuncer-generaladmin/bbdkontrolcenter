@@ -204,3 +204,63 @@ def test_gerekce_opsiyonel_ama_ust_sinir_500() -> None:
     assert dr.reason_error("ok") == ""
     assert dr.reason_error("x" * 500) == ""
     assert dr.reason_error("x" * 501)
+
+
+# ------------------------------------------------------- anlaşmalı sepet fiyatı
+
+def test_anlasmali_tutar_bos_birakilinca_None_doner_hata_degil() -> None:
+    # `None` = "anlaşma yok" ve alanın hiç gönderilmemesiyle EŞDEĞER: sunucu o
+    # hâlde tutarı katalogdan hesaplar. Kutuyu hiç açmamış personel hata
+    # görmemeli.
+    for bos in (None, "", "   "):
+        assert dr.clean_agreed_total(bos) == (None, "")
+
+
+def test_anlasmali_tutar_tam_sayi_kurus_olarak_okunur() -> None:
+    # 400,00 ₺ → 40000 kuruş. Bölme yok, dönüşüm yok: tel de ekran da kuruş
+    # taşıyor.
+    assert dr.clean_agreed_total(40000) == (40000, "")
+    assert dr.clean_agreed_total("40000") == (40000, "")
+    assert dr.clean_agreed_total(40000.0) == (40000, "")
+
+
+def test_kurusun_altindaki_deger_KIRPILMAZ_reddedilir() -> None:
+    # `int(40000.5)` sessizce 40000 üretir; personelin yazdığı sayıdan BAŞKA
+    # bir tutarın siparişe düşmesi, bu alanın önlemek için var olduğu şeyin ta
+    # kendisi. Kuruşun altında birim yok — cevap kırpmak değil reddetmek.
+    kurus, hata = dr.clean_agreed_total(40000.5)
+    assert kurus is None
+    assert "TAM SAYI" in hata
+
+    # `True` Python'da bir `int`tir ve elenmeseydi 1 kuruşluk sipariş geçerdi.
+    assert dr.clean_agreed_total(True)[0] is None
+    assert dr.clean_agreed_total("400,00")[0] is None
+    assert dr.clean_agreed_total("dört yüz")[0] is None
+
+
+def test_sifir_reddedilir_ve_mesaj_ne_yapilacagini_soyler() -> None:
+    # "Bedava sipariş" bir fiyat kararı değil, boş bırakılmış bir kutunun
+    # sessizce sıfıra düşmesidir. "En az 1 kuruş" demek personele ne
+    # yapacağını söylemezdi.
+    kurus, hata = dr.clean_agreed_total(0)
+    assert kurus is None
+    assert "BOŞ bırakın" in hata
+
+    assert dr.clean_agreed_total(-1)[0] is None
+
+
+def test_tavan_fazladan_sifira_karsi_akil_siniri() -> None:
+    assert dr.clean_agreed_total(dr.MAX_AGREED_TOTAL_KURUS)[0] == dr.MAX_AGREED_TOTAL_KURUS
+
+    kurus, hata = dr.clean_agreed_total(dr.MAX_AGREED_TOTAL_KURUS + 1)
+    assert kurus is None
+    # Binlik ayracı elle konuyor: `:n` yerel ayara bağlıdır ve `LC_ALL=C`
+    # altında "1000000" basardı.
+    assert "1.000.000 ₺" in hata
+
+
+def test_sozlesme_anlasmali_tutar_sinirlarini_ekrana_verir() -> None:
+    # Ekrana gömülü bir sayı, sunucu kuralı değiştiğinde sessizce yalan söyler.
+    sinirlar = dr.screen_contract()["agreed_total"]
+    assert sinirlar == {"min": dr.MIN_AGREED_TOTAL_KURUS,
+                        "max": dr.MAX_AGREED_TOTAL_KURUS}

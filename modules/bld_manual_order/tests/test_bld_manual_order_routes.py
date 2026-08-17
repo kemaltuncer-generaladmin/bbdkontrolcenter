@@ -171,3 +171,39 @@ def test_musteri_kimligi_ve_yeni_musteri_ayri_alanlar() -> None:
     assert {"customer_id", "customer"} <= alanlar
     assert "requested_at" not in alanlar
     assert "actor" not in alanlar, "aktör oturumdan gelir, gövdeden değil"
+
+
+def test_anlasmali_sepet_tutari_alani_kabul_edilir_ve_varsayilani_None() -> None:
+    # Alan İSTEĞE BAĞLI: gönderilmeyince `None` kalır ve sunucu tutarı
+    # katalogdan hesaplar (bugünkü davranış).
+    ortak = {"service_date": "2026-08-18", "delivery_type": "pickup",
+             "payment_method": "cash", "items": [{"menu_id": 88, "quantity": 2}],
+             "customer_id": 312}
+
+    assert routes.CreateBody(**ortak).agreed_total_kurus is None
+    assert routes.CreateBody(**ortak, agreed_total_kurus=40000).agreed_total_kurus == 40000
+
+
+def test_metin_tutar_sema_kapisinda_kalir() -> None:
+    # "400,00" sessizce 400 kuruşa dönüşemez: tip `int` ve pydantic ondalık
+    # ayraçlı bir metni kabul etmez.
+    ortak = {"service_date": "2026-08-18", "delivery_type": "pickup",
+             "payment_method": "cash", "items": [{"menu_id": 88, "quantity": 2}],
+             "customer_id": 312}
+
+    with pytest.raises(ValidationError):
+        routes.CreateBody(**ortak, agreed_total_kurus="400,00")
+
+    # Kuruşun altında birim yok; kesirli bir tutar kırpılmaz, reddedilir.
+    with pytest.raises(ValidationError):
+        routes.CreateBody(**ortak, agreed_total_kurus=40000.5)
+
+
+def test_ucuncu_izin_anahtari_uc_duzeyinde_ISTENMEZ() -> None:
+    # `POST /orders` yalnız `manage` ilan eder. `price_override` de uç
+    # düzeyinde istenseydi, fiyat kırma yetkisi olmayan personel (siparişlerin
+    # ezici çoğunluğu) ekrandan hiç sipariş açamazdı. Kapı gövdeye bakar ve
+    # karar serviste verilir.
+    yazma = _endpoints()[("POST", "/orders")]
+    assert _declared(yazma) == {"bld_manual_order.manage"}
+    assert routes.PRICE_OVERRIDE == "bld_manual_order.price_override"

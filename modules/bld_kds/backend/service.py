@@ -275,15 +275,27 @@ class KdsService:
                 # devam eder, yalnız baskı sunan bölümler kapanır.
                 "printer_available": self._printer is not None}
 
-    async def devices(self) -> dict[str, Any]:
-        """Cihaz listesi + panelin ayar formunu çizmek için okuduğu sözleşme."""
+    async def devices(self, *, can_settings: bool = False) -> dict[str, Any]:
+        """Cihaz listesi + panelin ayar formunu çizmek için okuduğu sözleşme.
+
+        `can_settings` OTURUMUN `bld_kds.settings` İZNİDİR ve uçtan gelir.
+        Yetkilendirme DEĞİLDİR — kapı `PATCH .../settings` ucundadır (K9); bu
+        değer panelin ayar formunu salt okunur çizmesi ve çalışmayacak bir
+        düğme bırakmaması içindir.
+
+        VARSAYILAN `False`, yani "yazamaz". Değeri geçirmeyi unutan bir çağrı
+        formu gereksiz yere kilitler; tersi (varsayılan `True`) yetkisiz
+        kullanıcıya çalışan sanılan bir düğme gösterir ve K9'un arayüz yarısını
+        sessizce açık bırakırdı. İkisinden ucuz olan seçildi.
+        """
         spec = dev.settings_spec()
         # Sözleşme YEREL: geçit düşse bile form ve düğmeler çizilebilir (K7).
         # `sound_events` ayrıca veriliyor çünkü panel beş onay kutusunu bu
         # listeden çiziyor ve olay adlarını kendi elinde tutmamalı.
         contract: dict[str, Any] = {"settings_spec": spec,
                                     "commands": self._command_spec(),
-                                    "sound_events": self.sound_events_spec()}
+                                    "sound_events": self.sound_events_spec(),
+                                    "can": {"settings": bool(can_settings)}}
         try:
             payload = await self._api.devices()
         except Exception as failure:  # noqa: BLE001 — K7
@@ -653,6 +665,14 @@ class KdsService:
                             reason: str, actor: str, dry_run: bool | None = None,
                             token: str = "") -> dict[str, Any]:
         """Yönetilen ayarları KISMİ olarak yazar.
+
+        AYRI İZİN İSTER (`bld_kds.settings`) ve kapı UÇ NOKTADADIR. Burada
+        `allow_destructive` benzeri ikinci bir bayrak YOKTUR ve olmamalı:
+        `revoke_device`/`send_command` uçları iki izni birden kabul ettiği için
+        (`requires(MANAGE, DEVICES)`) kararı gövdeye bakarak serviste veriyor.
+        Bu uç tek bir izne bağlıdır; `requires(SETTINGS)` geçilmeden gövdeye
+        hiç girilmez. İkinci bir bayrak eklemek, hiçbir zaman `False`
+        olmayacak bir dal ve onunla birlikte yanlış bir güven yaratırdı.
 
         Kuru provada önizleme yerel tabloya kaydedilir ve bir jeton döner.
         Jeton İSTEĞE BAĞLIDIR (sözleşmede jeton isteyen bir uç yok), ama

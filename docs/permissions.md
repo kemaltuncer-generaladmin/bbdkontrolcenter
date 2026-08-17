@@ -19,7 +19,7 @@ Kodda rol adı sorulmaz, izin sorulur. `if role == "admin"` yasaktır.
 | id | Ad | Kapsam | Özet |
 |---|---|---|---|
 | `admin` | Admin | `*` | Tam yetki. Kullanıcı, rol, ayar, sır ve yıkıcı işlemler. |
-| `bld_staff` | BLD Personeli | `bld` | BLD sunucuları ve Laravel tabanlı BLD veritabanı. |
+| `bld_staff` | BLD Personeli | `bld` | BLD sunucuları ve Laravel tabanlı BLD veritabanı. BLD'ye dair her şey — **tek istisna KDS cihaz ayarlarıdır** ([aşağıya](#kds-cihaz-ayarları-ayrı-anahtardadır)). |
 | `bbd_staff` | BBD Personeli | `bbd` | BBD sunucuları ve Bagisto çekirdekli BBD veritabanı. |
 | `org_staff` | Kurum Personeli | `org` | Zil, çıktı merkezi, rehber. Sunucu ve veritabanına erişimi yok. |
 | `accountant` | Mali Müşavir | `bbd` `bld` | Mali ekranlar: fatura, vergilendirme, cari hesap, raporlar. Kullanıcı, sır ve sunucu yönetimi yok. |
@@ -51,6 +51,8 @@ Bunları çekirdek tanımlar; modüller tanımlayamaz.
 | `settings.view` | hayır | Uygulama ayarlarını görür |
 | `settings.manage` | hayır | Ayarları değiştirir, modül açar/kapatır |
 | `audit.view` | hayır | Denetim izini okur |
+| `installations.view` | hayır | Merkeze eşlenmiş kurulumları ve bu makinenin eşleme durumunu görür (ADR 0021) |
+| `installations.manage` | hayır | Eşleme kodu üretir, kurulum iptal eder, bu kurulumun eşlemesini çözer — **yıkıcı: PIN teyidi ister** |
 | `secrets.view` | hayır | Kasadaki kayıtları **listeler** — değerleri değil |
 | `secrets.manage` | hayır | Kimlik bilgisi ekler, değiştirir, siler |
 
@@ -108,6 +110,37 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `antivirus` | `antivirus.manage` | Tarama takvimi, hariç tutulan yollar, imza güncelleme |
 | `antivirus` | `antivirus.quarantine` | **Yıkıcı.** Dosyayı karantinaya alır / geri yükler |
 | `antivirus` | `antivirus.delete_threat` | **Yıkıcı.** Karantinadaki dosyayı kalıcı siler |
+| `bld_kds` | `bld_kds.view` | Kasaları, ayarlarını, komut geçmişini, fiş kaydını ve siparişleri görür |
+| `bld_kds` | `bld_kds.manage` | Kasa açar ve adlandırır, eşleme kodu üretir, zararsız komut gönderir, sipariş revizyonu yazar ve **durum ilerletir** |
+| `bld_kds` | `bld_kds.settings` | Kasanın **yönetilen 24 ayarını** yazar (çalışma, yazıcı, ses, kilit politikası) |
+| `bld_kds` | `bld_kds.devices` | **Yıkıcı.** Kasa iptali ve `restart` · `clear_failed` · `clear_queue` · `update` · `unpair` komutları |
+
+### KDS cihaz ayarları ayrı anahtardadır
+
+**Karar (17.08.2026).** BLD personeli **sipariş durumunu değiştirir, kasa
+ayarına dokunmaz.** `bld_kds.manage` bu iki işi birden taşıyordu; ayar yazma
+kısmı `bld_kds.settings` adıyla ayrıldı ve yalnız `admin`e verildi.
+
+Ayrımın nedeni yetkinin büyüklüğü değil, **geri alınabilirliği**:
+
+| İş | Anahtar | Yanlış yapılırsa |
+|---|---|---|
+| Sipariş durumu, revizyon, kasa adı | `bld_kds.manage` | Aynı ekrandan geri alınır; her adım revizyon geçmişine ve denetim izine yazılır |
+| Yönetilen 24 ayarın kasaya yazılması | `bld_kds.settings` | Düzeltme **yalnız merkezden** gidebilir: yanlış bir `printer_device_path` fiş basımını tümüyle durdurur, `poll_seconds` kasayı oran sınırına sokar, bir kilit anahtarını `false` yapmak kasadaki düğmeyi öldürür |
+
+**Anahtar BÖLÜNDÜ, DARALTILMADI** — ve bu bilinçli bir tercihtir.
+`bld_kds.manage` daraltılsaydı `bld_staff`tan bir satır silmek gerekirdi;
+kurulu bir sistemde bunun tek yolu göç yazmaktır ([Manifest'i daraltmak tek
+başına yetmez](#manifesti-daraltmak-tek-başına-yetmez)) ve sipariş durumunu
+ilerletme yetkisi de birlikte giderdi. Yeni anahtar ise **hiç kimseye
+verilmemiş** olarak doğar: `grant_defaults` yalnız ekler, `bld_kds.settings`
+satırı `bld_staff` için hiç yazılmaz ve geri alınacak bir şey olmaz. Daraltmayı
+kurulu sistemde de geçerli kılmanın ucuz yolu budur.
+
+`bld_sales_settings` **bu istisnanın dışındadır.** İki ekranın da adında "ayar"
+geçiyor ve karışmaya en açık nokta burasıdır; ayrılan şey **kasanın** (KDS
+cihazının) ayarıdır. Satış kuralları — sabah kesim saati, kapalı gün, satış
+şalteri — BLD'nin günlük işidir ve üç anahtarı da `bld_staff`tadır.
 
 `print` modülünün ekranı **Çıktı Merkezi**'dir: yazıcı kuyruğunu değil,
 üretilmiş rapor ve dışa aktarımların kaydını yönetir (ADR 0019). Yazıcı
@@ -132,6 +165,8 @@ anahtarının modül kimliğiyle başlamasını şart koştuğu için anahtarlar
 | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `settings.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `audit.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `installations.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `installations.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `secrets.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `secrets.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `servers.view` | ✓ `*` | ✓ `bld` | ✓ `bbd` | ✗ | ✗ |
@@ -157,6 +192,10 @@ anahtarının modül kimliğiyle başlamasını şart koştuğu için anahtarlar
 | `antivirus.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `antivirus.quarantine` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `antivirus.delete_threat` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `bld_kds.view` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `bld_kds.manage` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `bld_kds.settings` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `bld_kds.devices` | ✓ | ✓ | ✗ | ✗ | ✗ |
 
 Bilinçli kararlar:
 - **`servers.manage` yalnızca Admin.** Personel sunucuya bağlanır ve iş yapar,
@@ -171,6 +210,12 @@ Bilinçli kararlar:
 - **Rehber herkeste okunur.** Uygulamanın ortak zeminidir.
 - **Antivirüsü personel görür ve tarar, ama yönetemez.** Karantina ve kalıcı
   silme yıkıcıdır, yalnızca Admin'dedir. Kurum Personeli antivirüs görmez.
+- **KDS'te yıkıcı komut BLD Personeli'nde, cihaz AYARI Admin'de.** Ters
+  görünür ama değil: `bld_kds.devices` mutfağı geçici olarak durdurur ve
+  düzeltmesi aynı ekrandadır (`restart` sonrası kasa kendi kendine döner);
+  `bld_kds.settings` kasayı yanlış yapılandırır ve düzeltme yalnız merkezden
+  gidebilir — kasa yanlış ayarla artık merkeze de ulaşamıyorsa hiç gidemez.
+  Ayrıntı: [KDS cihaz ayarları ayrı anahtardadır](#kds-cihaz-ayarları-ayrı-anahtardadır).
 
 ---
 
@@ -186,6 +231,7 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Kullanıcı Yönetimi | `users.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Sistem Ayarları | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Sistem Sağlığı ¹ | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| KM Cihaz Eşle | `installations.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Roller ve İzinler ² | `roles.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Denetim İzi ² | `audit.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Kimlik Kasası ² | `secrets.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -196,6 +242,7 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Çıktı Merkezi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Antivirüs *(yalnız Linux — ADR 0022)* | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
+| KDS Yönetimi ³ | `bld_kds.view` | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Rehber | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Profilim | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -210,6 +257,14 @@ kabuktaki sabit listeden (`shell/ui-kernel.js` → `CORE_PANELS`) gelirler
 çıkar. ² Sözleşme olarak sabittir, kabuğun `CORE_PANELS` listesine henüz
 girmedi — bugün menüde görünmez. Bu satırlar izin dağılımını bağlar; ekran
 yazıldığında matris değil, yalnız kabuk listesi değişir.
+
+³ **Ekran açılır, içindeki ayar bölümü izne göre kapanır.** BLD Personeli
+ekranı görür ve siparişi ilerletir; `bld_kds.settings` taşımadığı için 24 ayar
+alanı **salt okunur** çizilir ve yazma düğmesi nedeniyle birlikte kapanır.
+Bayrağı sunucu söylüyor (`GET /api/bld_kds/devices` → `can.settings`), çünkü
+kabuk panele izin listesi vermiyor. Bu K9'un **arayüz** yarısıdır; kapı
+`PATCH /api/bld_kds/devices/{id}/settings` ucundaki izin denetimidir ve
+arayüz hiç olmasa da o kapı kapalıdır.
 
 Kapsamlı ekranlarda (Sunucular, Veritabanı) **ekran açılır, içerik kapsamla
 süzülür.** BLD Personeli yalnızca `bld` kapsamlı sunucu ve veritabanlarını
@@ -336,7 +391,8 @@ manifest düzeltilir, sonra betik yeniden koşulur.
    eder. İlan etmeyen uç nokta reddedilir (varsayılan: kapalı).
 2. Kapsamlı bir izin kapsam belirtilmeden sorulamaz.
 3. Yıkıcı **çekirdek** işlemleri (`database.restore`, `users.manage` silme,
-   `roles.manage`) izin yeterli olsa bile **PIN teyidi** ister. Bunlar seyrek
+   `roles.manage`, `installations.manage` ile eşleme çözme) izin yeterli olsa
+   bile **PIN teyidi** ister. Bunlar seyrek
    ve kurumsal işlemlerdir.
    **İstisna — BBD Store:** `store_*` modüllerindeki yıkıcı ve para harcayan
    işlemler PIN yerine **gerekçeli onay** ister (ayrı izin anahtarı + zorunlu

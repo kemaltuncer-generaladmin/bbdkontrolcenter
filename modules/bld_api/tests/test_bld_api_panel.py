@@ -22,7 +22,7 @@ from typing import Any
 
 import httpx
 import pytest
-from bld_api_backend.client import MAX_REASON, BldApi
+from bld_api_backend.client import MAX_AGREED_TOTAL_KURUS, MAX_REASON, BldApi
 from bld_api_backend.errors import BldApiError
 from bld_api_fakes import gateway
 
@@ -489,6 +489,27 @@ async def test_elle_sipariste_kuru_prova_bayragi_govdeye_konur() -> None:
     assert json.loads(istekler[0].content)["dry_run"] is True
 
 
+async def test_anlasmali_sepet_tutari_govdeye_YALNIZ_doluyken_konur() -> None:
+    """`None` = anlaşma yok ve bu, alanın hiç gönderilmemesiyle EŞDEĞER.
+
+    `null` yollamak denetim izine hiçbir şey anlatmayan bir alan yazdırırdı;
+    sunucu da ikisini eşdeğer sayıyor (`isset()`).
+    """
+    istekler: list[httpx.Request] = []
+    api, _, _, _ = gateway(kaydeden(istekler))
+
+    ortak = {"customer_id": 312, "service_date": "2026-08-18",
+             "delivery_type": "pickup", "payment_method": "cash",
+             "items": [{"menu_id": 88, "quantity": 2}], "actor": AKTOR}
+
+    await api.create_order(**ortak)
+    assert "agreed_total_kurus" not in json.loads(istekler[0].content)
+
+    # 400,00 ₺ → 40000 kuruş. Telde de ekranda da kuruş: bölme yok.
+    await api.create_order(**ortak, agreed_total_kurus=40000)
+    assert json.loads(istekler[1].content)["agreed_total_kurus"] == 40000
+
+
 async def test_yeni_musteri_kipinde_kimlik_gonderilmez() -> None:
     """Telefonda ilk kez arayan: `customer` nesnesi, `customer_id` YOK."""
     istekler: list[httpx.Request] = []
@@ -558,8 +579,19 @@ async def test_alma_sipariste_adres_govdeye_konmaz() -> None:
     lambda api: api.create_order(customer_id=312, service_date="18.08.2026",
                                  delivery_type="pickup", payment_method="cash",
                                  items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # Sıfır anlaşmalı tutar: "bedava sipariş" bir fiyat kararı değil, boş
+    # bırakılmış bir kutudur. Sunucu da `min:1` diyor.
+    lambda api: api.create_order(customer_id=312, service_date="2026-08-18",
+                                 delivery_type="pickup", payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR,
+                                 agreed_total_kurus=0),
+    # Tavan aşımı: fazladan basılmış sıfırlara karşı akıl sınırı.
+    lambda api: api.create_order(customer_id=312, service_date="2026-08-18",
+                                 delivery_type="pickup", payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR,
+                                 agreed_total_kurus=MAX_AGREED_TOTAL_KURUS + 1),
 ], ids=["odeme", "musterisiz", "iki-musteri", "numarasiz", "kalemsiz", "adressiz",
-        "eksik-adres", "bozuk-gun"])
+        "eksik-adres", "bozuk-gun", "sifir-anlasma", "asiri-anlasma"])
 async def test_elle_siparis_govdesi_istek_cikmadan_denetlenir(cagri: Any) -> None:
     """Hatalı gövde hız kovasından pay HARCAMADAN durur ve hata anlaşılır olur."""
     def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover

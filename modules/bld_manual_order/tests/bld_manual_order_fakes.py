@@ -242,7 +242,8 @@ class FakeApi:
         self, *, service_date: str, delivery_type: str, payment_method: str,
         items: list[dict[str, Any]], actor: str, customer_id: int | None = None,
         customer: dict[str, Any] | None = None, address: dict[str, Any] | None = None,
-        customer_note: str = "", location_id: int | None = None, reason: str = "",
+        customer_note: str = "", location_id: int | None = None,
+        agreed_total_kurus: int | None = None, reason: str = "",
         dry_run: bool | None = None,
     ) -> dict[str, Any]:
         """`POST /api/control/orders`.
@@ -262,7 +263,8 @@ class FakeApi:
                      delivery_type=delivery_type, payment_method=payment_method,
                      items=items, actor=actor, customer_id=customer_id,
                      customer=customer, address=address, customer_note=customer_note,
-                     location_id=location_id, reason=reason, dry_run=dry_run)
+                     location_id=location_id, agreed_total_kurus=agreed_total_kurus,
+                     reason=reason, dry_run=dry_run)
         if dry_run:
             # Kuru provada `201` DEĞİL `200` döner ve sipariş numarası YOKTUR:
             # hiçbir satır oluşmadı, `201 Created` yalan olurdu.
@@ -272,7 +274,11 @@ class FakeApi:
                               "payment_method": payment_method,
                               "customer_id": customer_id,
                               "would_create_customer": customer_id is None,
-                              "item_count": len(items), "items": items},
+                              "item_count": len(items), "items": items,
+                              # Sunucu anlaşmalı tutarı provada da yansıtıyor;
+                              # taklit onu yansıtmasaydı ekranın "prova fiyattan
+                              # hiç söz etmiyor" hâli testte görünmezdi.
+                              "agreed_total_kurus": agreed_total_kurus},
                     "warnings": []}
         return _deep(self.order_payload)
 

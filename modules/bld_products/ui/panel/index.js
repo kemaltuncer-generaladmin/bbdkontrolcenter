@@ -138,6 +138,9 @@ const EMPTY_STATE = {
   connected: true,
   error: '',
   code: '',
+  // Bağlantı gözleri — istek başına ayrı. Ekranın okuduğu `connected/error/code`
+  // bunlardan türetilir; gerekçesi `noteLink()` başlığında.
+  link: {},
 };
 
 let api = null;
@@ -330,17 +333,47 @@ function categoryItems() {
 
 // ------------------------------------------------------------------ veri
 
+/**
+ * BAĞLANTI DURUMU ÜÇ OKUMADAN GELİR VE BİRLEŞTİRİLİR.
+ *
+ * Kategoriler, özet ve liste aynı `connected/error/code` alanlarına yazıyordu.
+ * Sıralı çalışırken "son yazan" belliydi (hep `refreshProducts`) ve önündeki
+ * hatayı sessizce siliyordu. Paralelde son yazan YARIŞA bağlı olur: aynı arıza
+ * bir açılışta "kategoriler okunamadı", ötekinde "liste okunamadı" derdi ve
+ * kullanıcı hatayı yanlış yerde arardı.
+ *
+ * Bu yüzden her okuma yalnız KENDİ gözünü yazar; ekranın gördüğü tek durum
+ * gözlerden SABİT bir sırayla türetilir — kategoriler → özet → liste, yani eski
+ * sıralı akışın sırası. Mesaj artık bitiş sırasına değil, verinin mantıksal
+ * sırasına göre seçilir ve iki koşuda aynı çıkar.
+ *
+ * BAĞLANTI YAPIŞKAN, HATA İLK GÖZDEN: bir göz bile kopuksa ekran "bağlı"
+ * demez; gösterilen cümle sıradaki ilk arızalı gözündür. Tek başına yenilenen
+ * bir okuma da doğru çalışır — yalnız kendi gözünü tazeler, ötekilerin süren
+ * arızasını silmez.
+ */
+const LINK_ORDER = ['categories', 'overview', 'products'];
+
+function noteLink(source, connected, error = '', code = '') {
+  // Göz kümesi KOPYALANARAK değişir: `state` EMPTY_STATE'ten sığ kopyalanıyor
+  // ve iç sözlüğü yerinde değiştirmek şablonu kirletirdi.
+  state.link = { ...state.link, [source]: { connected, error, code } };
+  const eyes = LINK_ORDER.map((name) => state.link[name]).filter(Boolean);
+  const broken = eyes.find((eye) => !eye.connected || eye.error);
+  state.connected = !eyes.some((eye) => !eye.connected);
+  state.error = broken?.error || '';
+  state.code = broken?.code || '';
+}
+
 async function refreshOverview() {
   try {
     const payload = await api(`${BASE}/overview`);
     state.counts = payload?.counts || {};
     state.imageRules = payload?.filters?.image || {};
-    state.connected = payload?.connected !== false;
-    state.error = payload?.error || '';
-    state.code = payload?.code || '';
+    noteLink('overview', payload?.connected !== false,
+             payload?.error || '', payload?.code || '');
   } catch (failure) {
-    state.connected = false;
-    state.error = explain(failure);
+    noteLink('overview', false, explain(failure));
   }
 }
 
@@ -348,14 +381,11 @@ async function refreshCategories() {
   try {
     const payload = await api(`${BASE}/categories`);
     state.categories = payload?.items || [];
-    if (payload?.connected === false) {
-      state.connected = false;
-      state.error = payload.error || state.error;
-    }
+    noteLink('categories', payload?.connected !== false,
+             payload?.error || '', payload?.code || '');
   } catch (failure) {
     state.categories = [];
-    state.connected = false;
-    state.error = explain(failure);
+    noteLink('categories', false, explain(failure));
   }
 }
 
@@ -377,13 +407,11 @@ async function refreshProducts() {
     const payload = await api(`${BASE}/products?${params.toString()}`);
     state.products = payload?.items || [];
     state.meta = payload?.meta || EMPTY_STATE.meta;
-    state.connected = payload?.connected !== false;
-    state.error = payload?.error || '';
-    state.code = payload?.code || '';
+    noteLink('products', payload?.connected !== false,
+             payload?.error || '', payload?.code || '');
   } catch (failure) {
     state.products = [];
-    state.connected = false;
-    state.error = explain(failure);
+    noteLink('products', false, explain(failure));
   }
 }
 
@@ -392,9 +420,12 @@ async function refreshProducts() {
 function showProducts() {
   nodes.body.replaceChildren(skeletonRows(8, 6));
   withBusy('Katalog okunuyor…', async () => {
-    await refreshCategories();
-    await refreshOverview();
-    await refreshProducts();
+    // ÜÇÜ BİRDEN. Aralarında bağ yok: hiçbiri ötekinin sonucunu okumuyor,
+    // sıralı beklemek yalnız üç uzak turu arka arkaya eklemek demekti (ölçümde
+    // tur başına ~0,5-1,2 sn). Üçü de kendi `try/catch`ini taşıdığı için
+    // `Promise.all` reject etmez ve bir isteğin patlaması ötekini düşürmez (K7);
+    // ortak `connected/error` alanları `noteLink()` ile birleştirilir.
+    await Promise.all([refreshCategories(), refreshOverview(), refreshProducts()]);
     paintProducts();
   });
 }
@@ -933,8 +964,9 @@ function askReason({ title, description, confirmLabel, danger = true }) {
 }
 
 async function reloadList() {
-  await refreshOverview();
-  await refreshProducts();
+  // Yazma sonrası tazeleme de PARALEL: sayaçlar ile liste birbirinden bağımsız
+  // okunuyor ve ikisi de kendi hatasını yutuyor.
+  await Promise.all([refreshOverview(), refreshProducts()]);
   if (state.tab === 'products') paintProducts();
 }
 

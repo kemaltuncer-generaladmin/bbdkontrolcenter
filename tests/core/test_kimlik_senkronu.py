@@ -32,8 +32,10 @@ from km_core.config.loader import ROOT, Config, load_config
 from km_core.http.app import create_app
 from km_core.security.migrations import apply_core_migrations
 from km_core.store.db import Store
+from km_platform.identity_sync.client import IdentityResponseError
 from km_platform.identity_sync.errors import (
     IdentitySyncError,
+    ManagementKeyMissing,
     NotPaired,
     WriteRequiresConnection,
 )
@@ -62,6 +64,9 @@ class SahteKasa:
 
     async def set(self, key: str, value: str) -> None:
         self.data[key] = value
+
+    async def delete(self, key: str) -> None:
+        self.data.pop(key, None)
 
 
 class SahteIstemci:
@@ -113,6 +118,31 @@ class SahteIstemci:
         self.calls.append("push_audit")
         self._guard()
         return {"accepted": len(entries)}
+
+    # -------------------------------------------------------- kurulum yönetimi
+
+    async def create_pair_code(self, admin_token: str, *,
+                               note: str | None = None) -> dict[str, Any]:
+        self.calls.append("create_pair_code")
+        self._guard()
+        self.admin_token = admin_token
+        return {"code": "12345678", "expiresAt": "2026-08-17T09:10:00+00:00"}
+
+    async def installations(self, admin_token: str) -> list[dict[str, Any]]:
+        self.calls.append("installations")
+        self._guard()
+        self.admin_token = admin_token
+        return [{"id": "i-1", "machineName": "MSI", "platform": "Linux",
+                 "version": "0.1.0", "status": "active", "pairedAt": "2026-08-17T08:00:00+00:00",
+                 "lastSeenAt": "2026-08-17T09:00:00+00:00", "revokedAt": None}]
+
+    async def revoke_installation(self, admin_token: str,
+                                  installation_id: str) -> dict[str, Any]:
+        self.calls.append("revoke_installation")
+        self._guard()
+        self.admin_token = admin_token
+        return {"id": installation_id, "status": "revoked",
+                "revokedAt": "2026-08-17T09:30:00+00:00"}
 
 
 def yapilandir(tmp_path: Path, **overrides: Any) -> Config:
@@ -337,6 +367,135 @@ async def test_cevrimiciyken_yazma_merkeze_gider(tmp_path: Path) -> None:
     assert istemci.calls.count("set_status") == 1
 
 
+# ------------------------------------------------- kurulum yönetimi (§4)
+#
+# "KM Cihaz Eşle" ekranının dayandığı üçlü. Hepsi YAZMA YOLUNDADIR: ağ yoksa
+# denenmez; yönetim anahtarı yoksa hiç başlamaz.
+
+ADMIN_KEY = "identity_sync.admin_token"
+
+
+async def test_yonetim_anahtari_yoksa_KOD_URETILMEZ(tmp_path: Path) -> None:
+    """Merkezdeki `/installations*` uçları yönetim token'ıyla korunuyor; o
+    anahtar kasada yoksa istek HİÇ GÖNDERİLMEZ ve ekran nedenini yazar."""
+    sync, istemci = kur(tmp_path)
+
+    with pytest.raises(ManagementKeyMissing) as hata:
+        await sync.create_pair_code()
+    assert "identity_sync.admin_token" in str(hata.value)
+
+    with pytest.raises(ManagementKeyMissing):
+        await sync.installations()
+    with pytest.raises(ManagementKeyMissing):
+        await sync.revoke_installation("i-1")
+
+    assert istemci.calls == []
+
+
+async def test_baglanti_yokken_kurulum_listesi_DENENMEZ(tmp_path: Path) -> None:
+    """Listeleme bir okuma gibi görünse de merkezin kaydını okur; önbelleği
+    yoktur. Ağ yokken denemek, bayat bir listeye bakıp "iptal ettim" demeye
+    davet olurdu."""
+    kasa = SahteKasa()
+    kasa.data[ADMIN_KEY] = "yonetim-anahtari"
+    sync, istemci = kur(tmp_path, kasa=kasa, istemci=SahteIstemci(online=False))
+
+    with pytest.raises(WriteRequiresConnection):
+        await sync.installations()
+    with pytest.raises(WriteRequiresConnection):
+        await sync.create_pair_code()
+
+    # YALNIZ SAĞLIK SORULDU.
+    assert set(istemci.calls) == {"health"}
+
+
+async def test_kurulum_yonetimi_YONETIM_ANAHTARIYLA_konusur(tmp_path: Path) -> None:
+    """Kurulum token'ı "bu makine bizim" der, "yeni makine kaydedebilirim"
+    demez. İkisi ayrı anahtardır ve karıştırılmaz."""
+    kasa = SahteKasa()
+    kasa.data[TOKEN_KEY] = "kurulum-tokeni"
+    kasa.data[ADMIN_KEY] = "yonetim-anahtari"
+    sync, istemci = kur(tmp_path, kasa=kasa)
+
+    kod = await sync.create_pair_code("Muhasebe dizüstü")
+    assert kod["code"] == "12345678"
+    # SÜREYİ SUNUCU SÖYLER — arayüz yalnız geri sayar.
+    assert kod["expiresAt"] == "2026-08-17T09:10:00+00:00"
+    assert istemci.admin_token == "yonetim-anahtari"
+
+    liste = await sync.installations()
+    assert liste[0]["machineName"] == "MSI"
+
+    iptal = await sync.revoke_installation("i-1")
+    assert iptal["status"] == "revoked"
+    assert iptal["revokedAt"]
+    assert istemci.admin_token == "yonetim-anahtari"
+
+
+# ----------------------------------------------------------- eşlemeyi çöz
+
+
+async def test_esleme_cozulunce_TOKEN_SILINIR_OZEL_ANAHTAR_KALIR(
+    tmp_path: Path, depo: Store,
+) -> None:
+    """Aynı makine yeniden eşlendiğinde merkez onu AYNI kimlikle tanımalı."""
+    kasa = SahteKasa()
+    sync, _ = kur(tmp_path, kasa=kasa, depo=depo)
+    await sync.pair("12345678")
+    assert kasa.data[TOKEN_KEY]
+
+    sonuc = await sync.unpair()
+
+    assert sonuc["paired"] is False
+    assert TOKEN_KEY not in kasa.data
+    assert "identity_sync.installation_id" not in kasa.data
+    # ÖZEL ANAHTAR KALIR.
+    assert "identity_sync.private_key" in kasa.data
+    assert await sync.is_paired() is False
+    # Önbellek de gider: içinde merkezin PIN hash'leri vardı.
+    assert sync.cache.read() is None
+
+
+async def test_esleme_cozulunce_MERKEZ_KULLANICILARI_PASIFLESIR(
+    tmp_path: Path, depo: Store,
+) -> None:
+    """Merkezden gelen kadro artık tazelenemez; o satırların girişte kabul
+    edilmeye devam etmesi, merkezden çıkarılmış birinin bu makinede süresiz
+    girebilmesi demekti. SİLİNMEZ — denetim izindeki bağ kopmasın."""
+    await depo.execute(
+        "INSERT INTO users (id, first_name, last_name, org_scope, status, origin, "
+        "pin_hash, pin_lookup, pin_set_at, created_at, updated_at) "
+        "VALUES ('u-merkez', 'Merkez', 'Kullanıcı', 'org', 'active', 'central', "
+        "'', 'pin-yok:u-merkez', 'dun', 'dun', 'dun')"
+    )
+    await depo.execute(
+        "INSERT INTO users (id, first_name, last_name, org_scope, status, origin, "
+        "pin_hash, pin_lookup, pin_set_at, created_at, updated_at) "
+        "VALUES ('u-yerel', 'Yerel', 'Kullanıcı', 'org', 'active', 'local', "
+        "'', 'pin-yok:u-yerel', 'dun', 'dun', 'dun')"
+    )
+    await depo.execute(
+        "INSERT INTO sessions (token, user_id, created_at, last_seen, expires_at) "
+        "VALUES ('t-merkez', 'u-merkez', 'dun', 'dun', '2999-01-01T00:00:00+00:00')"
+    )
+
+    kasa = SahteKasa()
+    kasa.data[TOKEN_KEY] = "kurulum-tokeni"
+    sync, _ = kur(tmp_path, kasa=kasa, depo=depo)
+
+    sonuc = await sync.unpair()
+    assert sonuc["disabledUsers"] == 1
+
+    satirlar = {
+        str(row["id"]): str(row["status"])
+        for row in await depo.fetch_all("SELECT id, status FROM users")
+    }
+    # İKİ SATIR DA DURUYOR: silme yok.
+    assert satirlar == {"u-merkez": "disabled", "u-yerel": "active"}
+    # Pasifleşenin açık oturumu da kapanır.
+    assert await depo.fetch_all("SELECT token FROM sessions") == []
+
+
 async def test_denetim_itisi_esleme_ister(tmp_path: Path) -> None:
     """Kuyruk BAĞLANMAMIŞKEN eski sözleşme geçerlidir: hata yükselir ki çağıran
     kayıtları elinde tuttuğunu bilsin."""
@@ -426,6 +585,15 @@ async def test_geri_cekilme_ikiye_katlanir_ve_bir_saatte_durur() -> None:
 
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
+    """Aşağıdaki testler "merkez KAPALI" varsayımına dayanır — ayar BURADA
+    sabitlenir.
+
+    `load_config()` makineye özel `config/local.yaml` dosyasını da okur ve o
+    dosyada merkez açıldığı gün (17.08.2026) bu fixture sessizce "açık" hâle
+    geldi: `enabled` alanı `True` döndü, 503 bekleyen uçlar 401 vermeye başladı.
+    Git dışı bir dosyanın kapıyı belirlemesi, geliştiricinin makinesine göre
+    renk değiştiren bir kapıdır; beklenen ayar testin kendisinde durur.
+    """
     data = deepcopy(load_config().as_dict())
     data["core"] = {
         **data.get("core", {}),
@@ -433,6 +601,14 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         "secret_key_path": str(tmp_path / "secret.key"),
     }
     data["auth"] = {**data.get("auth", {}), "bootstrap_pin": "482913"}
+    data["platform"] = {
+        **data.get("platform", {}),
+        "identity_sync": {
+            **(data.get("platform", {}).get("identity_sync") or {}),
+            "enabled": False,
+            "base_url": "",
+        },
+    }
     with TestClient(create_app(Config(data, root=ROOT)), raise_server_exceptions=False) as c:
         yield c
 
@@ -453,3 +629,168 @@ def test_ayarlanmamis_serviste_esleme_503_doner(client: TestClient) -> None:
     cevap = client.post("/api/pairing/pair", json={"code": "12345678"})
     assert cevap.status_code == 503
     assert "ayarlanmamış" in cevap.json()["error"]["message"]
+
+
+# ---------------------------------------------- çift kapının backend yarısı
+#
+# K9: "KM Cihaz Eşle" ekranını menüden gizlemek yetkilendirme DEĞİLDİR. Aşağıda
+# sınanan şey, izni olmayan bir oturumun uçlara ULAŞAMADIĞIDIR — gerçek oturum
+# belirteciyle, taklit bir izin nesnesiyle değil.
+
+YONETICI_PINI = "482913"
+PERSONEL_PINI = "735204"
+
+#: Ekranın kullandığı dört uç: (metot, yol, gövde).
+YONETIM_UCLARI = [
+    ("GET", "/api/pairing/installations", None),
+    ("POST", "/api/pairing/pair-code", {"note": None}),
+    ("POST", "/api/pairing/installations/i-1/revoke", None),
+    ("POST", "/api/pairing/unpair", {"password": PERSONEL_PINI}),
+]
+
+
+def _istek(client: TestClient, metot: str, yol: str, govde: Any,
+           token: str | None) -> Any:
+    basliklar = {"Authorization": f"Bearer {token}"} if token else {}
+    return client.request(metot, yol, headers=basliklar, json=govde)
+
+
+def _yonetici_token(client: TestClient) -> str:
+    cevap = client.post("/api/auth/login", json={"password": YONETICI_PINI})
+    assert cevap.status_code == 200, cevap.text
+    return str(cevap.json()["token"])
+
+
+def _personel_token(client: TestClient) -> str:
+    """`installations.*` taşımayan gerçek bir oturum."""
+    yonetici = _yonetici_token(client)
+    acildi = client.post("/api/users", headers={"Authorization": f"Bearer {yonetici}"}, json={
+        "firstName": "Veli", "lastName": "Demir", "orgScope": "org",
+        "roles": ["org_staff"], "password": PERSONEL_PINI,
+    })
+    assert acildi.status_code == 201, acildi.text
+    cevap = client.post("/api/auth/login", json={"password": PERSONEL_PINI})
+    assert cevap.status_code == 200, cevap.text
+    return str(cevap.json()["token"])
+
+
+@pytest.mark.parametrize(("metot", "yol", "govde"), YONETIM_UCLARI)
+def test_oturumsuz_istek_401(client: TestClient, metot: str, yol: str, govde: Any) -> None:
+    assert _istek(client, metot, yol, govde, None).status_code == 401
+
+
+@pytest.mark.parametrize(("metot", "yol", "govde"), YONETIM_UCLARI)
+def test_izinsiz_oturum_403(client: TestClient, metot: str, yol: str, govde: Any) -> None:
+    """Kurum personelinin oturumu geçerlidir; işlem yine reddedilir."""
+    token = _personel_token(client)
+    cevap = _istek(client, metot, yol, govde, token)
+    assert cevap.status_code == 403, cevap.text
+    assert cevap.json()["error"]["message"] == "Bu işlem için yetkiniz yok."
+
+
+def test_yetkili_oturum_403_ALMAZ(client: TestClient) -> None:
+    """Kapı izne bakıyor, role değil (K10).
+
+    Varsayılan ayarda merkez KAPALI olduğu için uçlar 503 döner — burada
+    sınanan şey reddin 403 OLMAMASIDIR: izin kapısı geçilmiş, iş merkezin
+    kapalı olmasına takılmıştır.
+    """
+    token = _yonetici_token(client)
+    for metot, yol, govde in YONETIM_UCLARI[:3]:
+        cevap = _istek(client, metot, yol, govde, token)
+        assert cevap.status_code == 503, f"{yol}: {cevap.text}"
+        assert "ayarlanmamış" in cevap.json()["error"]["message"]
+
+
+def test_esleme_cozme_YANLIS_PIN_ile_yapilamaz(client: TestClient) -> None:
+    """YIKICI İŞLEM PIN TEYİDİ İSTER: izin yeterli değildir (permissions.md 3)."""
+    token = _yonetici_token(client)
+
+    yanlis = _istek(client, "POST", "/api/pairing/unpair", {"password": "111111"}, token)
+    assert yanlis.status_code == 403
+    assert "PIN doğrulanamadı" in yanlis.json()["error"]["message"]
+
+    dogru = _istek(client, "POST", "/api/pairing/unpair",
+                   {"password": YONETICI_PINI}, token)
+    assert dogru.status_code == 200, dogru.text
+    assert dogru.json()["paired"] is False
+
+
+@pytest.fixture
+def acik_client(tmp_path: Path) -> Iterator[TestClient]:
+    """Kimlik senkronu AÇIK bir kurulum; merkez istemcisi taklit edilir."""
+    data = deepcopy(load_config().as_dict())
+    data["core"] = {
+        **data.get("core", {}),
+        "store_path": str(tmp_path / "km.sqlite"),
+        "secret_key_path": str(tmp_path / "secret.key"),
+    }
+    data["auth"] = {**data.get("auth", {}), "bootstrap_pin": YONETICI_PINI}
+    data["platform"] = {
+        **data.get("platform", {}),
+        "identity_sync": {
+            **(data.get("platform", {}).get("identity_sync") or {}),
+            "enabled": True,
+            "base_url": "https://kontrolmerkezi.example",
+            "cache_path": str(tmp_path / "identity-roster.json"),
+        },
+    }
+    # Yönetim anahtarı KASADAN gelir; `Vault.get` önce ayardaki `secrets`
+    # bloğuna bakar (K8 — depoda sır yoktur, testte taklidi vardır). Kasaya
+    # doğrudan yazmak, TestClient'ın kendi olay döngüsündeki bağlantıyı başka
+    # bir döngüden kullanmak olurdu.
+    data["secrets"] = {**data.get("secrets", {}), ADMIN_KEY: "yonetim-anahtari"}
+    with TestClient(create_app(Config(data, root=ROOT)), raise_server_exceptions=False) as c:
+        yield c
+
+
+def test_kurulum_listesi_yetkiliye_doner(acik_client: TestClient) -> None:
+    token = _yonetici_token(acik_client)
+    acik_client.app.state.identity_sync._client = SahteIstemci()
+
+    cevap = _istek(acik_client, "GET", "/api/pairing/installations", None, token)
+    assert cevap.status_code == 200, cevap.text
+    assert cevap.json()["installations"][0]["machineName"] == "MSI"
+
+    # Kod üretimi de geçer ve SÜREYİ SUNUCU söyler.
+    kod = _istek(acik_client, "POST", "/api/pairing/pair-code", {"note": None}, token)
+    assert kod.status_code == 200, kod.text
+    assert kod.json()["expiresAt"]
+
+
+def test_merkezin_DURUM_KODU_korunur(acik_client: TestClient) -> None:
+    """Merkez "kurulum bulunamadı" diyorsa kabuk 404 görür, 503 değil: yeniden
+    denemek hiçbir şeyi değiştirmeyecek bir işi "sonra dene" diye göstermek,
+    kullanıcıyı olmayan bir arıza aramaya gönderirdi."""
+    token = _yonetici_token(acik_client)
+
+    class Yok(SahteIstemci):
+        async def revoke_installation(self, admin_token: str,
+                                      installation_id: str) -> dict[str, Any]:
+            raise IdentityResponseError(404, "Kurulum bulunamadı.")
+
+    acik_client.app.state.identity_sync._client = Yok()
+
+    cevap = _istek(acik_client, "POST", "/api/pairing/installations/yok/revoke", None, token)
+    assert cevap.status_code == 404, cevap.text
+    assert cevap.json()["error"]["message"] == "Kurulum bulunamadı."
+
+
+def test_esleme_ekrani_cekirdek_ekranlar_listesinde(client: TestClient) -> None:
+    """Ekran menüye `installations.view` ile girer ve `source: core` taşır —
+    modül değildir (ADR 0017)."""
+    token = _yonetici_token(client)
+    cevap = client.get("/modules", headers={"Authorization": f"Bearer {token}"})
+    assert cevap.status_code == 200
+    kayit = next(m for m in cevap.json()["modules"] if m["id"] == "core_pairing")
+    assert kayit["source"] == "core"
+    assert kayit["visible"] is True
+    assert kayit["ui"]["nav"]["requires"] == ["installations.view"]
+
+
+def test_esleme_ekrani_yetkisiz_kullaniciya_GORUNMEZ(client: TestClient) -> None:
+    """Menü süzmesini çekirdek yapar; kabuk yalnız çizer (K1, K9)."""
+    token = _personel_token(client)
+    cevap = client.get("/modules", headers={"Authorization": f"Bearer {token}"})
+    kayit = next(m for m in cevap.json()["modules"] if m["id"] == "core_pairing")
+    assert kayit["visible"] is False

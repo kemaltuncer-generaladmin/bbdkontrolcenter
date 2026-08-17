@@ -1,0 +1,121 @@
+/* KM Cihaz Eşle — panelin KENDİ kuralları.
+ *
+ * Ortak görsel dil `ui-kit/kit.css` içindedir ve buraya kopyalanmaz (ADR 0011).
+ * Burada yalnız bu ekrana özgü yerleşim vardır.
+ *
+ * ÖNEK `ce-` (cihaz eşle). Panel CSS'i `document.head`'e eklenir ve HİÇ
+ * KALDIRILMAZ; çakışan bir önek, bu ekran bir kez açıldıktan sonra başka
+ * panellerin görünümünü de bozardı (kit kuralı 9).
+ *
+ * `pr-` DEĞİL, BİLEREK: o önek `bbd_payment_request` panelinde kullanılıyor ve
+ * oradaki `.pr-input`, `.pr-status`, `.pr-tab` kuralları panel köküne
+ * bağlanmadan yazılmış — aynı öneki almak, bu ekran bir kez açıldıktan sonra
+ * ödeme talebi ekranının formunu ve sekmelerini bozardı. Hata da ancak "önce
+ * cihaz eşlemeyi açtıysan" koşuluyla görünürdü. */
+
+.ce .ce-notice:not(:empty) { padding: 10px 20px 0; }
+
+/* --------------------------------------------------------------- künye */
+
+/* Kurulum künyesi: dar pencerede tek sütun, genişledikçe iki sütun. Satır
+   sayısı sabit değil (bekleyen denetim kaydı yalnız varsa çıkar), bu yüzden
+   ızgara otomatik doldurur. */
+.ce .ce-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px 18px;
+  padding: 14px 16px 16px;
+}
+
+.ce .ce-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ce .ce-fact-label { font-size: 11px; color: var(--soft); }
+
+.ce .ce-fact-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+/* Kurulum kimliği ve adres teknik değerlerdir: harf harf okunacak, birine
+   okunacak, kopyalanacak. Orantılı yazıtipinde `l` ile `1` ayırt edilmiyor. */
+.ce .ce-fact-value.mono {
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--soft);
+}
+
+.ce .ce-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Künyedeki eylemler ızgaranın TAMAMINI kaplar ve alta iner. */
+.ce .ce-facts > .ce-actions { grid-column: 1 / -1; }
+
+.ce .ce-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* ----------------------------------------------------------- kart gövdesi */
+
+.ce .ce-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.ce .ce-text {
+  margin: 0;
+  max-width: 70ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--soft);
+}
+
+.ce .ce-sub { font-size: 11.5px; color: var(--soft); }
+.ce .ce-never { color: var(--soft); font-style: italic; }
+
+/* ------------------------------------------------------------ eşleme kodu */
+
+.ce .ce-code-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+/* KOD BÜYÜK VE OKUNUR. Telefonla okunuyor ve elle yazılıyor: haneler arası
+   boşluk, sekiz haneyi tek nefeste okunur kılar. `user-select` açık bırakılır —
+   panosu olmayan bir makinede fareyle seçmek tek yoldur. */
+.ce .ce-code {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+  color: var(--ink);
+  font: 600 26px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.16em;
+  user-select: all;
+}
+
+/* Kalan süre. Dolduğunda renk DEĞİŞİR ama tek başına anlam taşımaz: metnin
+   kendisi de "süresi doldu" yazar (kit kuralı 7). */
+.ce .ce-left {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--good);
+}
+
+.ce .ce-left.over { color: var(--bad); }

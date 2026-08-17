@@ -112,6 +112,12 @@ platform:
     require_pairing: true
     # Kurulum token'ı ve özel anahtar KASADADIR, buraya yazılmaz (K8):
     #   identity_sync.installation_token · identity_sync.private_key
+    # "KM Cihaz Eşle" ekranının kod üretmesi, kurulum listelemesi ve iptal
+    # etmesi için MERKEZİN YÖNETİM ANAHTARI da kasada olmalıdır:
+    #   identity_sync.admin_token   (merkezdeki KM_IDENTITY_ADMIN_TOKEN'ın eşi)
+    # Kurulum token'ından AYRI bir anahtardır: biri "bu makine bizim", öteki
+    # "bu makine yeni makine kaydedebilir" der. Anahtar yoksa ekran açılır,
+    # yalnız yönetim düğmeleri nedenini yazarak kapanır.
 
 modules:
   # Modül ayarları modülün kendi config/default.yaml dosyasındadır.

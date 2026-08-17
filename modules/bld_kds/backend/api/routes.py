@@ -3,16 +3,26 @@
 Her uçta `requires(...)` vardır (K9): arayüzde düğmeyi gizlemek yetkilendirme
 değildir. `module.yaml` → `http.requires` taban izni verir, uçlar onu DARALTIR.
 
-ÜÇ İZİN, İKİ DEĞİL:
+DÖRT İZİN, ÜÇ DEĞİL:
 
     bld_kds.view      okuma
-    bld_kds.manage    cihaz açma/adlandırma, eşleme kodu, ayar itme, zararsız
-                      komutlar (`test_receipt`, `reprint`, `silence_alarm`),
-                      revizyon, durum değişikliği
+    bld_kds.manage    cihaz açma/adlandırma, eşleme kodu, zararsız komutlar
+                      (`test_receipt`, `reprint`, `silence_alarm`), revizyon,
+                      durum değişikliği
+    bld_kds.settings  yönetilen 24 ayarın kasaya yazılması
     bld_kds.devices   YIKICI: cihaz iptali, `restart`, `clear_failed`,
                       `clear_queue`, `update`, `unpair`
 
-Üçüncüsünün ayrı durmasının nedeni şudur: bu yetkiyi taşıyan kişi mutfağı
+`bld_kds.settings` 17.08.2026'da `manage`ten AYRILDI (kullanıcı kararı). Aynı
+anahtar iki farklı işi taşıyordu: mutfağın günlük işi (siparişi ilerletmek) ve
+kasanın kendisini biçimlendirmek. İkincisi geri alınması merkeze bağlı bir
+iştir — yanlış bir `printer_device_path` fiş basımını durdurur, bir kilit
+anahtarını `false` yapmak kasadaki düğmeyi öldürür — ve mutfak personelinin
+günlük işi değildir. Ayrım YENİ BİR ANAHTARLA yapıldı, `manage` daraltılarak
+değil: yeni anahtar hiç kimseye verilmemiş doğar, eski anahtarı daraltmak ise
+kurulu sistemde satır silmeyi gerektirirdi.
+
+Sonuncusunun ayrı durmasının nedeni şudur: bu yetkiyi taşıyan kişi mutfağı
 sipariş göremez hâle getirebilir. `restart` ekranı kapatır (systemd geri
 getirene kadar mutfak kör kalır), `clear_failed` basılamamış fişleri kuyruktan
 düşürür ve o fişler BİR DAHA basılmaz, `clear_queue` üstelik bekleyenleri de
@@ -44,6 +54,8 @@ from ..service import KdsService
 #: aynı dizgeyi okur, yazım hatası bir kapıyı sessizce açık bırakamaz.
 DEVICES = "bld_kds.devices"
 MANAGE = "bld_kds.manage"
+#: KASA AYARLARI. `manage`ten ayrıdır — bkz. modül başlığı.
+SETTINGS = "bld_kds.settings"
 VIEW = "bld_kds.view"
 
 router = APIRouter()
@@ -107,8 +119,15 @@ async def overview(
 async def devices(
     user: CurrentUser = requires(VIEW),
 ) -> dict[str, Any]:
-    """Cihaz listesi + ayar formunun sözleşmesi + komut kataloğu."""
-    return await service().devices()
+    """Cihaz listesi + ayar formunun sözleşmesi + komut kataloğu.
+
+    Yanıt ayrıca `can.settings` taşır: bu oturum ayar YAZABİLİR mi. Kapı bu
+    değil — kapı `PATCH .../settings` ucundadır (K9'un backend yarısı); bu
+    alan panelin ayar formunu salt okunur çizebilmesi içindir. Kabuğun panele
+    verdiği bağlamda izin listesi YOKTUR (`ui-kernel.js` → `mountPanel`), yani
+    panelin izni sorabileceği tek yer sunucunun kendisidir.
+    """
+    return await service().devices(can_settings=user.has_permission(SETTINGS))
 
 
 @router.get("/devices/{device_id}/commands")
@@ -238,7 +257,10 @@ class SettingsBody(ReasonBody):
 async def push_settings(
     device_id: int,
     body: SettingsBody,
-    user: CurrentUser = requires(MANAGE),
+    #: AYRI İZİN (`bld_kds.settings`), `manage` DEĞİL. Kasa ayarı yazan TEK uç
+    #: budur: `PATCH /devices/{id}` yalnız adı değiştirir, komut ucu ayarlara
+    #: dokunmaz. Bu yüzden anahtarı ayırmak tek bir satırın değişmesi demek.
+    user: CurrentUser = requires(SETTINGS),
 ) -> dict[str, Any]:
     """Yönetilen 24 ayarı kısmi olarak yazar (23 + `disabled_sound_events`)."""
     return await service().push_settings(device_id, settings=body.settings,

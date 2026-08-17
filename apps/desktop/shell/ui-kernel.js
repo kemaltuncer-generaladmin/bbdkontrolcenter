@@ -141,6 +141,26 @@ export async function setOwnPassword(currentSecret, password) {
   return result.user;
 }
 
+/**
+ * Oturumu kapatır.
+ *
+ * SUNUCUYA HABER VERİLİR, sonra belirteç düşürülür. Yalnız `setToken(null)`
+ * demek, satırı `sessions` tablosunda boşta kalma süresi dolana kadar geçerli
+ * bırakırdı; kapanmış sanılan bir oturumun anahtarı hâlâ çalışıyor olurdu.
+ *
+ * UÇ PATLASA DA BELİRTEÇ DÜŞER. Ağ koptuğunda ekranı açık bırakmak, kullanıcı
+ * "çıktım" dedikten sonra onu girişte tutmaktan kötüdür; `finally` bu yüzden.
+ */
+export async function logout() {
+  try {
+    await api('/api/auth/logout', { method: 'POST' });
+  } catch {
+    /* merkez ya da çekirdek ulaşılmazsa da yerel oturum kapanır */
+  } finally {
+    setToken(null);
+  }
+}
+
 // --------------------------------------------------------------- ekranlar
 
 /**
@@ -182,6 +202,17 @@ export const CORE_PANELS = [
     order: 30,
     requires: ['settings.view'],
     entry: null,
+  },
+  {
+    // ADR 0021 §4 — merkeze eşlenmiş makineler. Menüde görünmesi için
+    // `installations.view`, kod üretmek/iptal etmek için `installations.manage`
+    // gerekir; ikincisini ekran düğme düğme sorar ve backend yeniden denetler.
+    id: 'core_pairing',
+    title: 'KM Cihaz Eşle',
+    icon: 'monitor',
+    order: 40,
+    requires: ['installations.view'],
+    entry: 'core-panels/pairing/index.js',
   },
 ];
 
@@ -378,10 +409,31 @@ async function ensureProviders(registry) {
   if (providersReady) return providersReady;
 
   providersReady = (async () => {
-    for (const panel of registry.panels || []) {
-      if (!panel.entry || !(panel.provides || []).length) continue;
+    const sources = (registry.panels || [])
+      .filter((panel) => panel.entry && (panel.provides || []).length);
+
+    // DOSYALAR AYNI ANDA İSTENİR. Döngüdeki `await import(...)` her paneli bir
+    // öncekinin inmesini bekletiyordu; aralarında hiçbir bağ yok ve açılıştaki
+    // gecikme sağlayıcı sayısıyla doğru orantılı büyüyordu.
+    //
+    // K7 KORUNUR: her yükleme kendi `catch`ini taşır, bu yüzden `Promise.all`
+    // reject etmez — patlayan bir panel ötekilerin yeteneklerini düşürmez.
+    const loaded = await Promise.all(sources.map(async (panel) => {
       try {
-        const module = await import(`./${panel.entry}`);
+        return { panel, module: await import(`./${panel.entry}`) };
+      } catch (error) {
+        console.error(`[ui-kernel] ${panel.id} yetenekleri okunamadı:`, error);
+        return null;
+      }
+    }));
+
+    // KAYIT SIRALI KALIR — yükleme paralel, kayıt değil. Aynı adı iki panel
+    // ilan ederse kazanan kayıttaki SON paneldir; "önce inen kazansın"
+    // deseydik hangi sağlayıcının geçerli olduğu açılıştan açılışa değişirdi.
+    for (const entry of loaded) {
+      if (!entry) continue;
+      const { panel, module } = entry;
+      try {
         // GEZİNME DE VERİLİR. Bir yetenek başka ekranın içine çiziliyor ve
         // oradan "asıl evinde aç" demesi gerekiyor; `open` verilmezse o düğme
         // sessizce hiçbir şey yapmayan bir düğme olurdu — kitin kendi kuralı

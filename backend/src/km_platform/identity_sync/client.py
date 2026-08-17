@@ -105,6 +105,37 @@ class IdentityClient:
             raise
         return dict(result)
 
+    # --------------------------------------------------------- kurulumlar
+    #
+    # BU ÜÇÜ YÖNETİM TOKEN'IYLA KONUŞUR, kurulum token'ıyla değil. Merkezde
+    # `/installations*` uçlarının kapısı `require_admin`dir (`services/identity/
+    # app/auth.py`): kurulum token'ı "bu makine bizim" der, "bu makine yeni
+    # makineler kaydedebilir" demez. İkisini aynı anahtara bağlamak, eşlenmiş
+    # HER makineyi yeni makine eşleyebilir hâle getirirdi.
+
+    async def create_pair_code(self, admin_token: str, *,
+                               note: str | None = None) -> dict[str, Any]:
+        """Tek kullanımlık, süreli kod üretir. SÜREYİ MERKEZ SÖYLER: `expiresAt`
+        yanıtta gelir, burada hesaplanmaz."""
+        return dict(await self._request(
+            "POST", "/installations/pair-code", token=admin_token,
+            json_body={"note": note},
+        ))
+
+    async def installations(self, admin_token: str) -> list[dict[str, Any]]:
+        payload = await self._request("GET", "/installations", token=admin_token)
+        rows = payload.get("installations") if isinstance(payload, dict) else None
+        return list(rows or [])
+
+    async def revoke_installation(self, admin_token: str,
+                                  installation_id: str) -> dict[str, Any]:
+        """Kurulumu iptal eder. SATIR SİLİNMEZ — merkez `status` alanını
+        değiştirir ve `revokedAt` yazar."""
+        payload = await self._request(
+            "POST", f"/installations/{installation_id}/revoke", token=admin_token
+        )
+        return dict((payload or {}).get("installation") or {})
+
     async def roster(self, token: str, *, known_revision: int | None = None) -> dict[str, Any]:
         params = {} if known_revision is None else {"known_revision": known_revision}
         return dict(await self._request("GET", "/roster", token=token, params=params))
