@@ -147,7 +147,8 @@ class LunchService:
             (service_date,),
         )
         entries = await self._store.fetch_all(
-            f"SELECT * FROM {self._entries} WHERE service_date = ? ORDER BY rowid",
+            f"SELECT * FROM {self._entries} WHERE service_date = ? "
+            "ORDER BY created_at, local_id",
             (service_date,),
         )
 
@@ -396,7 +397,8 @@ class LunchService:
         self._log.info("yemek partisi işlendi", batch=batch_ref, ok=ok, failed=failed)
 
         entries = await self._store.fetch_all(
-            f"SELECT * FROM {self._entries} WHERE batch_ref = ? ORDER BY rowid", (batch_ref,)
+            f"SELECT * FROM {self._entries} WHERE batch_ref = ? "
+            "ORDER BY created_at, local_id", (batch_ref,)
         )
         return {
             "ok": True, "committed": True, "batchRef": batch_ref,

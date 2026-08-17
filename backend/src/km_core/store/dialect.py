@@ -79,6 +79,20 @@ _STRAY_AUTOINCREMENT = re.compile(r"\bAUTOINCREMENT\b", re.IGNORECASE)
 
 _INSERT_OR = re.compile(r"^\s*INSERT\s+OR\s+(IGNORE|REPLACE)\s+INTO\s+", re.IGNORECASE)
 
+# NULL-GÜVENLİ KARŞILAŞTIRMA. SQLite `x IS ?` / `x IS NOT ?` yazar; PostgreSQL
+# bunu `IS [NOT] DISTINCT FROM` ile yapar ve `IS NOT $2` SÖZDİZİMİ HATASIDIR.
+# Yalnız yer tutucu gelen biçim çevrilir: `IS NOT NULL` ikisinde de geçerlidir
+# ve ELLENMEZ.
+_IS_NOT_PLACEHOLDER = re.compile(r"\bIS\s+NOT\s+\?", re.IGNORECASE)
+_IS_PLACEHOLDER = re.compile(r"\bIS\s+\?", re.IGNORECASE)
+
+# SESSİZ DAVRANIŞ FARKI — hata vermez, YANLIŞ SONUÇ verir.
+# SQLite'ta `LIKE` ASCII harflerde büyük/küçük harf duyarsızdır; PostgreSQL'de
+# duyarlıdır. Çevrilmezse "ahmet" araması "Ahmet"i bulmaz ve kimse bunun bir
+# lehçe farkı olduğunu anlamaz. `ILIKE` SQLite'ın davranışını korur, üstelik
+# Türkçe harflerde SQLite'tan da doğru çalışır.
+_LIKE = re.compile(r"\bLIKE\b", re.IGNORECASE)
+
 # `INSERT [OR ...] INTO <tablo> (<sütunlar>)` — tablo ve sütun listesini alır.
 _INSERT_TARGET = re.compile(
     r"^\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+([\"'`]?)([a-zA-Z0-9_.]+)\1\s*\(([^)]*)\)",
@@ -96,6 +110,12 @@ _KNOWN_UNSUPPORTED = (
     (re.compile(r"\bGROUP_CONCAT\s*\(", re.IGNORECASE), "GROUP_CONCAT()"),
     (re.compile(r"\bIFNULL\s*\(", re.IGNORECASE), "IFNULL()"),
     (re.compile(r"\bPRAGMA\b", re.IGNORECASE), "PRAGMA"),
+    # SQLite'ın örtük satır kimliği. PostgreSQL'de karşılığı YOKTUR ve
+    # uydurulamaz: `ctid` fiziksel adrestir, satır güncellenince değişir.
+    # `ORDER BY rowid` yazan sorgu gerçek bir sütuna geçirilmelidir
+    # (`created_at` + birincil anahtar). Üretimde 500 vermektense burada
+    # patlasın.
+    (re.compile(r"\browid\b", re.IGNORECASE), "rowid"),
 )
 
 
@@ -219,6 +239,17 @@ def _time_functions(sql: str) -> str:
     return _STRFTIME_ISO_UTC.sub(lambda _match: _STRFTIME_ISO_UTC_PG, text)
 
 
+def _operators(sql: str) -> str:
+    """Karşılığı farklı yazılan işleçleri çevirir. YALNIZ kod parçalarında."""
+
+    def transform(part: str) -> str:
+        part = _IS_NOT_PLACEHOLDER.sub("IS DISTINCT FROM ?", part)
+        part = _IS_PLACEHOLDER.sub("IS NOT DISTINCT FROM ?", part)
+        return _LIKE.sub("ILIKE", part)
+
+    return _map_code(sql, transform)
+
+
 def _reject_unsupported(sql: str) -> None:
     code = _code_only(sql)
     for pattern, label in _KNOWN_UNSUPPORTED:
@@ -292,6 +323,7 @@ def to_postgres(
     _reject_unsupported(text)
     if _STRAY_AUTOINCREMENT.search(_code_only(text)):
         raise UnsupportedDialect("AUTOINCREMENT bir DML ifadesinde bulunamaz.")
+    text = _operators(text)
     text = _rewrite_insert_or(text, pk_of)
     translated, _ = _renumber_placeholders(text, start)
     return translated
@@ -304,7 +336,7 @@ def translate_ddl(sql: str) -> str:
     `?` dönüşümü UYGULANMAZ; göçteki bir `?` yazım hatasıdır ve öyle kalır ki
     fark edilsin.
     """
-    text = _time_functions(sql)
+    text = _operators(_time_functions(sql))
     _reject_unsupported(text)
     text = _AUTOINCREMENT.sub("BIGSERIAL PRIMARY KEY", text)
     text = _map_code(text, lambda part: _INTEGER_COLUMN.sub("BIGINT", part))

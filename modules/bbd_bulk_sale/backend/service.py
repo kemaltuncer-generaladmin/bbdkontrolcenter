@@ -92,7 +92,8 @@ class BulkSaleService:
         if batch is None:
             return {"ok": False, "error": "Parti bulunamadı."}
         entries = await self._store.fetch_all(
-            f"SELECT * FROM {self._entries} WHERE batch_ref = ? ORDER BY rowid", (batch_ref,)
+            f"SELECT * FROM {self._entries} WHERE batch_ref = ? "
+            "ORDER BY created_at, local_id", (batch_ref,)
         )
         return {
             "ok": True,

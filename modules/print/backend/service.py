@@ -112,7 +112,12 @@ class OutputsService:
             # kimliği durur. Yazma yok, yalnız gösterim.
             f"SELECT o.*, u.first_name, u.last_name FROM {OUTPUTS} o "
             f"LEFT JOIN users u ON u.id = o.user_id {where} "
-            "ORDER BY o.created_at DESC, o.rowid DESC LIMIT ? OFFSET ?",
+            # `rowid` SQLite'a özgüdür ve merkezdeki PostgreSQL'de YOKTUR.
+            # Eşitlik bozucu olarak `id` kullanılır: ekleme sırasını birebir
+            # vermez ama aynı saniyeye düşen iki çıktının sırası zaten
+            # keyfiydi — önemli olan sıranın BELİRLENİMLİ olması, yoksa
+            # sayfalama arasında satır tekrar eder ya da kaybolur.
+            "ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?",
             (*params, size, (page - 1) * size),
         )
 
@@ -140,7 +145,12 @@ class OutputsService:
         users = await self._store.fetch_all(
             f"SELECT o.user_id AS value, COUNT(*) AS count, u.first_name, u.last_name "
             f"FROM {OUTPUTS} o LEFT JOIN users u ON u.id = o.user_id "
-            "GROUP BY o.user_id ORDER BY u.first_name, u.last_name")
+            # AD SÜTUNLARI DA GROUP BY'A GİRER. SQLite gruplanmamış sütuna
+            # izin verip rastgele bir satırdan değer seçiyordu; standart SQL
+            # (ve PostgreSQL) bunu reddeder. Sonuç değişmez: `u.id` birincil
+            # anahtar olduğu için bir `user_id` için tek ad çifti vardır.
+            "GROUP BY o.user_id, u.first_name, u.last_name "
+            "ORDER BY u.first_name, u.last_name")
         return {
             "sources": [{"value": row["value"] or "", "label": row["value"] or "—",
                          "count": row["count"]} for row in sources],

@@ -105,6 +105,45 @@ def test_insert_or_replace_anahtar_sutunu_eksikse_reddedilir() -> None:
         to_postgres("INSERT OR REPLACE INTO t (b) VALUES (?)", pk_of=lambda _t: ["a"])
 
 
+# -------------------------------------------------------------- işleçler
+
+def test_is_not_yer_tutucu_distinct_from_olur() -> None:
+    """`IS NOT $2` PostgreSQL'de SÖZDİZİMİ HATASIDIR — sunucu açılışta öldü."""
+    sql = "SELECT id FROM users WHERE secret_lookup = ? AND id IS NOT ?"
+    assert to_postgres(sql) == (
+        "SELECT id FROM users WHERE secret_lookup = $1 AND id IS DISTINCT FROM $2"
+    )
+
+
+def test_is_yer_tutucu_not_distinct_from_olur() -> None:
+    assert to_postgres("SELECT 1 WHERE a IS ?") == "SELECT 1 WHERE a IS NOT DISTINCT FROM $1"
+
+
+def test_is_not_null_ellenmez() -> None:
+    """`IS NOT NULL` ikisinde de geçerlidir; çevrilirse bozulurdu."""
+    sql = "SELECT 1 FROM t WHERE a IS NOT NULL AND b IS NULL"
+    assert to_postgres(sql) == sql
+
+
+def test_like_ilike_olur() -> None:
+    """SQLite'ta LIKE harf duyarsız, PostgreSQL'de duyarlı.
+
+    Çevrilmezse hata ÇIKMAZ, yalnız "ahmet" araması "Ahmet"i bulmaz — sessiz
+    ve teşhisi zor bir davranış farkı.
+    """
+    sql = "SELECT * FROM users WHERE full_name LIKE ?"
+    assert to_postgres(sql) == "SELECT * FROM users WHERE full_name ILIKE $1"
+
+
+def test_not_like_da_cevrilir() -> None:
+    assert "NOT ILIKE" in to_postgres("SELECT 1 FROM t WHERE a NOT LIKE ?")
+
+
+def test_dize_sabitindeki_like_ellenmez() -> None:
+    sql = "INSERT INTO t (note) VALUES ('LIKE yazısı')"
+    assert to_postgres(sql) == sql
+
+
 # ------------------------------------------------------------------- DDL
 
 def test_autoincrement_bigserial_olur() -> None:
@@ -143,6 +182,7 @@ def test_ddl_ifade_ayirmada_dize_sabiti_korunur() -> None:
     "PRAGMA journal_mode=WAL",
     "CREATE TABLE t (a TEXT COLLATE NOCASE)",
     "CREATE TABLE t (a TEXT) WITHOUT ROWID",
+    "SELECT * FROM t ORDER BY rowid",
 ])
 def test_tanimadigini_reddeder(sql: str) -> None:
     """Sessizce yanlış çevirmektense gürültülü patlamak yeğdir."""
