@@ -57,6 +57,34 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # `%b` — ileti içindeki `\n` kaçışları gerçek satır sonuna çevrilsin.
 die() { printf '\033[31mHATA:\033[0m %b\n' "$*" >&2; exit 1; }
 
+# --- sessiz başarı yasağı -------------------------------------------------
+#
+# 30 SANİYEDE "BAŞARILI" GÖRÜNEN DERLEME, DÜŞEN DERLEMEDEN KÖTÜDÜR. Bu tuzak,
+# betik sonuna varmadan 0 ile çıkarsa çıkışı hataya çevirir.
+#
+# Somut olay (run 32038408984, macOS): koşucunun /bin/bash'i 3.2'dir ve
+# `$( … <<'PY' … PY … )` biçimini ayrıştıramaz. Ayrıştırma hatasını basıp
+# betiği SON BAŞARILI KOMUTUN durumuyla — yani 0 ile — sonlandırdı. İş akışı
+# adımı yeşil göründü, dist/ boş kaldı ve hata ancak artefakt yükleme
+# adımında "No files were found" olarak ortaya çıktı. Ayrıştırma sorunu
+# aşağıda giderildi; bu tuzak ise SINIFIN tamamına karşı durur: hangi neden
+# olursa olsun, yarıda kesilen bir derleme bir daha sessizce başarılı sayılmaz.
+FINISHED=0
+WORK=""
+COLLECT=""
+on_exit() {
+  status=$?
+  if [ -n "$WORK" ]; then rm -rf "$WORK"; fi
+  if [ -n "$COLLECT" ]; then rm -f "$COLLECT"; fi
+  if [ "$status" -eq 0 ] && [ "$FINISHED" -ne 1 ]; then
+    printf '\033[31mHATA:\033[0m betik sonuna varmadan sessizce çıktı (çıkış 0).\n' >&2
+    printf '  Yukarıdaki son adım tamamlanmadı; üretilmiş paket YOKTUR.\n' >&2
+    status=1
+  fi
+  exit "$status"
+}
+trap on_exit EXIT
+
 cd "$ROOT"
 
 # --- 0. araçlar -----------------------------------------------------------
@@ -94,8 +122,8 @@ else
 
   ASSET="cpython-${PY_VERSION}+${PBS_RELEASE}-${PBS_ARCH}-${PBS_OS}-install_only.tar.gz"
   URL="$PBS_BASE/$PBS_RELEASE/$ASSET"
+  # Temizliği `on_exit` üstlenir; buradaki ayrı `trap … EXIT` onu ezerdi.
   WORK="$(mktemp -d)"
-  trap 'rm -rf "$WORK"' EXIT
 
   echo "  $URL"
   curl -fL --retry 3 -o "$WORK/$ASSET" "$URL" \
@@ -134,7 +162,20 @@ say "2) Bağımlılıklar gömülü ortama kuruluyor"
 "$PYTHON" -m pip install --upgrade pip >/dev/null
 "$PYTHON" -m pip install pyyaml >/dev/null   # aşağıdaki toplayıcı manifest okur
 
-REQS="$("$PYTHON" - <<'PY'
+# TOPLAYICI ÖNCE DOSYAYA YAZILIR, `$( … <<'PY' … PY … )` İÇİNE GÖMÜLMEZ.
+#
+# macOS koşucusunun /bin/bash'i 3.2.57'dir ve komut ikamesinin içindeki
+# here-document'ı tanımaz: kapanış parantezini ararken metni salt karakter
+# olarak tarar, Python yorumlarındaki kesme işaretlerini (Windows'ta,
+# macOS'ta …) dizgi başlangıcı sayar. Buradaki üç kesme işareti TEK sayı
+# olduğu için tarayıcı açık bir tırnakla dosya sonuna kadar sürükleniyor,
+# `unexpected EOF while looking for matching` verip betiği yarıda bırakıyordu
+# (run 32038408984). Sorun Türkçe metnin kendisi değil, bash 3.2'nin bu
+# birleşimi ayrıştıramaması — bu yüzden yorumlar sadeleştirilmiyor, yapı
+# değiştiriliyor: dosyaya yazılan betik her bash sürümünde aynı çalışır ve
+# .ps1 karşılığı da zaten bu yolu izliyor.
+COLLECT="$(mktemp)"
+cat > "$COLLECT" <<'PY'
 import pathlib, sys, tomllib
 
 import yaml
@@ -181,7 +222,12 @@ for req in reqs:
         out.append(req)
 print("\n".join(out))
 PY
-)"
+
+REQS="$("$PYTHON" "$COLLECT")" || die "Bağımlılık listesi çıkarılamadı."
+rm -f "$COLLECT"
+COLLECT=""
+
+[ -n "$REQS" ] || die "Bağımlılık listesi boş çıktı; toplayıcı hiçbir şey bulamadı."
 
 echo "$REQS" | sed 's/^/  /'
 echo "$REQS" | "$PYTHON" -m pip install -r /dev/stdin
@@ -192,6 +238,7 @@ find "$RUNTIME" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null
 
 if [ "$RUNTIME_ONLY" = 1 ]; then
   say "Çalışma zamanı hazır: $RUNTIME"
+  FINISHED=1   # istenen iş buydu: erken çıkış meşrudur
   exit 0
 fi
 
@@ -222,8 +269,14 @@ say "5) Çıktı toplanıyor"
 mkdir -p "$DIST"
 BUNDLE_DIR="$TAURI/target/release/bundle"
 
+# Desen listesi TEK YERDE durur: aşağıdaki hata iletisi de bunu yazar, yoksa
+# "aradım bulamadım" diyen ileti neyi aradığını söylemeyen bir ileti olurdu.
+# Dizi: düz dizge olsaydı `$PATTERNS` açılırken desenler ÇALIŞMA DİZİNİNE göre
+# genişler, `$BUNDLE_DIR` altına bakılmadan önce eşleşip bozulurdu.
+PATTERNS=("deb/*.deb" "appimage/*.AppImage" "rpm/*.rpm" "dmg/*.dmg")
+
 FOUND=0
-for pattern in "deb/*.deb" "appimage/*.AppImage" "rpm/*.rpm" "dmg/*.dmg"; do
+for pattern in "${PATTERNS[@]}"; do
   for file in $BUNDLE_DIR/$pattern; do
     [ -e "$file" ] || continue
     cp -f "$file" "$DIST/"
@@ -232,6 +285,23 @@ for pattern in "deb/*.deb" "appimage/*.AppImage" "rpm/*.rpm" "dmg/*.dmg"; do
   done
 done
 
-[ "$FOUND" = 1 ] || die "Paket bulunamadı: $BUNDLE_DIR altı boş."
+# PAKET YOKSA AÇIK HATAYLA DÜŞÜLÜR. Eskiden buradaki ileti yalnız "altı boş"
+# diyordu; hangi hedefin istendiği, nereye bakıldığı ve kabuğun ne ürettiği
+# yazılmadan hata koşucu günlüğünden ayıklanamıyor.
+if [ "$FOUND" != 1 ]; then
+  {
+    printf '  istenen hedefler : %s\n' "${BUNDLES:-(yapılandırmadaki tümü: tauri.conf.json → bundle.targets)}"
+    printf '  aranan kök       : %s\n' "$BUNDLE_DIR"
+    printf '  aranan desenler  : %s\n' "${PATTERNS[*]}"
+    printf '  kabuğun ürettiği :\n'
+    if [ -d "$BUNDLE_DIR" ]; then
+      find "$BUNDLE_DIR" -mindepth 1 -maxdepth 2 | sed 's/^/    /' || true
+    else
+      printf '    (klasör hiç oluşmadı — `cargo tauri build` tek bir hedef üretmedi)\n'
+    fi
+  } >&2
+  die "Paket üretilmedi; dist/ boş kalacaktı."
+fi
 
+FINISHED=1
 say "Bitti. Çıktı: $DIST"

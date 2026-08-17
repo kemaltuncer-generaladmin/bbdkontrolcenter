@@ -45,6 +45,23 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest'in ilerleme çubuğu indirmeyi yavaşlatır
 
+# --- kodlama --------------------------------------------------------------
+#
+# WINDOWS KONSOLU cp1252'DIR VE TURKCE CIKTIYI KODLAYAMAZ. Cagrilan Python'un
+# stdout'u varsayilan olarak o kod sayfasini kullanir; `tools/build-ui-registry.py`
+# menu kaydini basarken UnicodeEncodeError atip 1 ile dondu ve derleme
+# "Menu kaydi uretilemedi" diyerek dustu (run 32038408984).
+#
+# Kok neden kodlamadir, tek bir karakter degil: `→` sadelestirilseydi siradaki
+# Turkce ileti ayni yerde patlardi. Bu yuzden karakter degil KODLAMA sabitlenir.
+# Betik kendi ciktisini de UTF-8'e zorluyor; burasi cocuk sureclerin tamami
+# icin ayni guvenceyi verir, is akisi disinda elle calistirildiginda da.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+# PowerShell'in yerel komutlarin ciktisini UTF-8 cozmesi icin. Konsolu olmayan
+# barindiricilarda atilabilir; basarisiz olmasi derlemeyi durdurmamali.
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
+
 $Root    = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Tauri   = Join-Path $Root "apps\desktop\src-tauri"
 $Runtime = Join-Path $Tauri "runtime"
@@ -228,8 +245,11 @@ Say "5) Cikti toplaniyor"
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
 $bundleDir = Join-Path $Tauri "target\release\bundle"
 
+# Desen listesi TEK YERDE durur: asagidaki hata iletisi de bunu yazar.
+$patterns = @("nsis\*.exe", "msi\*.msi")
+
 $found = 0
-foreach ($pattern in @("nsis\*.exe", "msi\*.msi")) {
+foreach ($pattern in $patterns) {
     Get-ChildItem -Path (Join-Path $bundleDir $pattern) -ErrorAction SilentlyContinue |
         ForEach-Object {
             Copy-Item $_.FullName -Destination $Dist -Force
@@ -237,7 +257,23 @@ foreach ($pattern in @("nsis\*.exe", "msi\*.msi")) {
             $script:found = 1
         }
 }
-if ($found -ne 1) { Die "Paket bulunamadi: $bundleDir alti bos." }
+
+# PAKET YOKSA ACIK HATAYLA DUSULUR — "alti bos" tek basina ayiklanamaz bir
+# iletidir. Ne istendigi, nereye bakildigi ve kabugun ne urettigi yazilir.
+if ($found -ne 1) {
+    $istenen = if ($Bundles) { $Bundles } else { "(yapilandirmadaki tumu: tauri.conf.json -> bundle.targets)" }
+    Write-Host "  istenen hedefler : $istenen"
+    Write-Host "  aranan kok       : $bundleDir"
+    Write-Host "  aranan desenler  : $($patterns -join ' ')"
+    Write-Host "  kabugun urettigi :"
+    if (Test-Path $bundleDir) {
+        Get-ChildItem -Path $bundleDir -Recurse -Depth 1 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "    $($_.FullName)" }
+    } else {
+        Write-Host "    (klasor hic olusmadi - cargo tauri build tek bir hedef uretmedi)"
+    }
+    Die "Paket uretilmedi; dist\ bos kalacakti."
+}
 
 Say "Bitti. Cikti: $Dist"
 Write-Host "Kurucu IMZASIZDIR — SmartScreen uyarisi icin deploy\README.md."

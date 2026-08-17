@@ -34,6 +34,24 @@ import sys
 
 import yaml
 
+# ÇIKTI UTF-8'DİR, KONSOLUN KOD SAYFASI NE OLURSA OLSUN. Windows'ta Python'un
+# stdout'u varsayılan olarak konsolun kod sayfasını (cp1252) kullanır ve
+# `errors="strict"` çalışır: bu betiğin bastığı Türkçe metin kodlanamayınca
+# `print()` UnicodeEncodeError atar, betik 1 ile döner ve paket derlemesi
+# "Menu kaydi uretilemedi" diyerek düşer (run 32038408984 — `→`, cp1252'de yok).
+#
+# İŞARET ASCII'YE DÜŞÜRÜLEREK KAÇILMAZ. Kök neden tek bir karakter değil, çıktı
+# kodlamasıdır: `→` sadeleştirilseydi sıradaki "çalışmaz"ın `ı`/`ş` harfi aynı
+# yerde patlardı. Kodlama bir kez burada sabitlenir; böylece betiği kim çağırırsa
+# çağırsın (iş akışı, .ps1, elle) davranış aynıdır.
+#
+# stderr de zorlanır: oradaki eleme notları (`elendi — antivirüs …`) varsayılan
+# `backslashreplace` yüzünden patlamaz ama okunamaz hâle gelirdi.
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:  # yakalanmış akış (test) reconfigure taşımaz
+        _reconfigure(encoding="utf-8")
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MODULES = ROOT / "modules"
 SCHEMA = ROOT / "docs" / "schemas" / "module.schema.json"

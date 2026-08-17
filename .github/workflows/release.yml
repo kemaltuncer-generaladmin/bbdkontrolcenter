@@ -35,6 +35,14 @@ env:
   # tek bir cache adımı yetsin. Gömülü Python'un pip'i de bu değişkeni okur.
   PIP_CACHE_DIR: ${{ github.workspace }}/.cache/pip
   CARGO_TERM_COLOR: always
+  # ÜÇ KOŞUCUDA DA PYTHON UTF-8 KONUŞUR. Windows koşucusunun konsolu cp1252'dir;
+  # Python çıktısını oraya kodlayamayınca UnicodeEncodeError atar ve derleme
+  # düşer (run 32038408984 — `→` cp1252'de yok, Türkçe harfler de).
+  # `tools/build-ui-registry.py` kendi çıktısını zaten sabitliyor; bu iki
+  # değişken aynı güvenceyi ÇAĞRILAN her Python'a yayar (pip, toplayıcı, sonra
+  # eklenecek adımlar) ki düzeltme tek betikte kalmasın.
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
 
 jobs:
   build:
@@ -64,22 +72,56 @@ jobs:
       - name: Depoyu al
         uses: actions/checkout@v4
 
-      # Kabuğun derleme bağımlılıkları. Liste `deploy/packaging/system-packages.yaml`
-      # içindeki `desktop` grubuyla AYNIDIR; o grup değişirse burası da değişir.
+      # Derleme bağımlılıkları. LİSTE BURAYA ELLE YAZILMAZ, TÜRETİLİR: tek kaynak
+      # `deploy/packaging/system-packages.yaml`.
+      #
+      # Neden: liste burada elle kopyalanmıştı ve `desktop` grubuyla "AYNIDIR"
+      # deniyordu — ama yalnız o grup kopyalanmıştı. `printer` grubundaki
+      # `libcups2-dev` koşucuya hiç kurulmadı ve gömülü ortama pycups derlenirken
+      # düştü (run 32038408984: "fatal error: 'cups/http.h' file not found").
+      # İki listenin ayrışması kaçınılmazdı; artık tek liste var.
+      #
+      # Ne kurulur:
+      #   - `desktop` grubunun tamamı — Tauri kabuğunu derlemek için.
+      #   - HER gruptaki `-dev` paketleri — gömülü Python'a kurulan C uzantıları
+      #     bu başlıklara karşı derlenir (pycups → libcups2-dev).
+      # Ne kurulmaz: sürücüler, sunucular, istemciler (hplip, cups, mariadb-client…)
+      # ve `optional:` girdileri. Koşucuda çalıştırılmıyorlar, yalnız derleniyor.
       - name: Sistem bağımlılıkları (Linux)
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            libssl-dev \
-            build-essential \
-            curl \
-            wget \
-            file
+          # Manifesti okuyacak olan bu; koşucu imajında bulunduğu varsayılmaz.
+          sudo apt-get install -y --no-install-recommends python3-yaml
+
+          cat > "$RUNNER_TEMP/km-apt-packages.py" <<'PY'
+          import sys
+
+          import yaml
+
+          MANIFEST = "deploy/packaging/system-packages.yaml"
+          groups = yaml.safe_load(open(MANIFEST, encoding="utf-8")) or {}
+
+          wanted: list[str] = []
+          for name, group in groups.items():
+              for package in (group or {}).get("packages") or []:
+                  if name != "desktop" and not package.endswith("-dev"):
+                      continue
+                  if package not in wanted:
+                      wanted.append(package)
+
+          if "desktop" not in groups:
+              sys.exit(f"{MANIFEST}: 'desktop' grubu yok — dosya yeniden mi düzenlendi?")
+          if not wanted:
+              sys.exit(f"{MANIFEST}: hiç paket çıkmadı.")
+          print(" ".join(wanted))
+          PY
+
+          PACKAGES="$(python3 "$RUNNER_TEMP/km-apt-packages.py")"
+          echo "system-packages.yaml'dan türetildi: $PACKAGES"
+          # Bölünmesi İSTENİYOR: tek dizgede boşlukla ayrılmış paket adları.
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $PACKAGES
 
       - name: Rust araç zinciri
         uses: dtolnay/rust-toolchain@stable
