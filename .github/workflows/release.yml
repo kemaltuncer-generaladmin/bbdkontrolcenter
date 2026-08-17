@@ -247,14 +247,37 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # `_GIRDI` SONEKİ ZORUNLU — doğrudan `APPLE_*` diye geçirilemez.
+          #
+          # Tanımlanmamış bir secret BOŞ DİZE olarak gelir ve değişkeni
+          # TANIMLI yapar. Tauri `APPLE_CERTIFICATE`i görünce imzalamayı
+          # dener, boş sertifikayı `security import`a verir ve derleme
+          # "failed to import keychain certificate" ile düşer — sertifikası
+          # olmayan herkeste (run 32060759605, v0.1.3 macOS işi). macOS
+          # düştüğü için Release işi de atlanır ve yayın hiç oluşmaz.
+          #
+          # Bu yüzden değişkenler aşağıda YALNIZ DOLUYSA dışa aktarılır.
+          APPLE_CERTIFICATE_GIRDI: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_GIRDI: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_GIRDI: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_GIRDI: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_GIRDI: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_GIRDI: ${{ secrets.APPLE_TEAM_ID }}
         # `bash ...` bilerek: betiğin çalıştırma bitine bağlı kalmasın.
-        run: bash scripts/build-release.sh --bundles ${{ matrix.bundles }}
+        run: |
+          for ad in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+                    APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            kaynak="${ad}_GIRDI"
+            deger="${!kaynak}"
+            if [ -n "$deger" ]; then
+              export "$ad=$deger"
+              echo "  imzalama: $ad tanımlı"
+            fi
+          done
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && [ "${{ matrix.platform }}" = "macos" ]; then
+            echo "  UYARI: Apple imzası yok — paket Gatekeeper uyarısı verecek (ADR 0024)"
+          fi
+          bash scripts/build-release.sh --bundles ${{ matrix.bundles }}
 
       - name: Paketle (Windows)
         if: matrix.platform == 'windows'
