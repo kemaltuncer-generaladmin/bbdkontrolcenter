@@ -95,19 +95,43 @@ platform:
   identity_sync:
     # Merkezî kimlik servisi (ADR 0021) — services/identity/.
     #
-    # KAPALIYKEN HİÇBİR YETENEK GERİLEMEZ: kurulum bugünkü gibi tek makinede
-    # çalışır, giriş yerel depodan yapılır, eşleme ekranı hiç açılmaz. Servis
-    # kurulmadan açılmaz — adres boşken "açık" ayar zaten açık sayılmaz.
-    enabled: false
-    base_url: ""                # https://kontrolmerkezi.bbdstore.com.tr
+    # ADRES BURADA DURUR, `local.yaml`DA DEĞİL — ve bu bir kolaylık değil,
+    # zorunluluk. `CONFIG_DIR` kurulum klasörüdür (`ROOT/config`): macOS'ta
+    # `.app` paketinin içi, Windows'ta `Program Files`. İkisi de SALT OKUNUR ve
+    # `local.yaml` pakete girmez (ADR 0023 §3). Yani adres burada olmazsa taze
+    # bir kurulumun merkezi öğrenmesinin HİÇBİR YOLU YOKTUR: 17.08.2026'da
+    # kurulan ilk macOS paketi tam olarak buna takıldı — eşleme ekranı hiç
+    # açılmadı, boş veritabanıyla giriş ekranına düştü ve kullanıcının kendi
+    # PIN'i "yanlış" dedi, çünkü o kurulum onu hiç görmemişti.
+    #
+    # ADRES SIR DEĞİLDİR (K8 sırları konuşur, adresleri değil): ADR 0021 §1'de
+    # ve bu dosyanın geçmişinde zaten yazılı. Sır olan kurulum token'ı ve
+    # yönetim anahtarıdır; ikisi de kasadadır.
+    #
+    # GELİŞTİRME KURULUMU İÇİN: depodan çalışırken eşleme istemiyorsanız
+    # `config/local.yaml` içine `platform.identity_sync.enabled: false` yazın —
+    # yerel katman bunu ezer.
+    enabled: true
+    base_url: "https://kontrolmerkezi.bbdstore.com.tr"
     timeout_seconds: 10
     # Kadro önbelleği. İçinde PIN hash'i vardır (çevrimdışı giriş bunun için
     # mümkündür) ve dosya 0600 yazılır.
     cache_path: data/identity-roster.json
-    # ÖNBELLEK SINIRSIZ ESKİYEMEZ. Sınır aşılınca kurulum yalnız çevrimiçi
-    # giriş kabul eder: pasifleştirilen bir kullanıcının çevrimdışı bir
-    # makinede sonsuza dek giriş yapabilmesi kabul edilemez. 0 = sınırsız.
-    max_cache_age_hours: 72
+    # 0 = SINIRSIZ, ve bu bilerek seçildi.
+    #
+    # Varsayılan 72 saatti: sınır aşılınca kurulum yalnız çevrimiçi giriş kabul
+    # ediyor. Ama o dal kullanıcının `origin` alanına BAKMIYOR — merkez üç
+    # günden uzun ulaşılamazsa kurulumun KENDİ yerel kullanıcıları da dışarıda
+    # kalıyor, hem de uzaktan müdahaleye en çok ihtiyaç duyulan anda. ADR 0021
+    # §2 "giriş çevrimdışı çalışır, bu pazarlık konusu değildir" diyor; 72
+    # saatlik sınır o sözle çelişiyordu.
+    #
+    # BEDELİ ÖDENİYOR: merkezde pasifleştirilen bir kullanıcı, kadroyu bir daha
+    # çekemeyen çevrimdışı bir makinede girmeye devam edebilir. Kabul
+    # edilmesinin sebebi kurulumların şirket içinde ve fiziksel denetim altında
+    # olması. Kaybolan cihazın çaresi bu ayar değil, o kurulumun merkezden
+    # İPTAL EDİLMESİDİR ("KM Cihaz Eşle" → İptal et).
+    max_cache_age_hours: 0
     # Eşleşmemiş kurulumda giriş ekranı yerine eşleme ekranı açılır.
     require_pairing: true
     # Kurulum token'ı ve özel anahtar KASADADIR, buraya yazılmaz (K8):
