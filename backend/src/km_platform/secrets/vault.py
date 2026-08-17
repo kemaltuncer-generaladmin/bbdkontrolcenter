@@ -10,6 +10,17 @@ Tabloya yazılan değerler anahtar dosyasıyla şifrelenir. Anahtar dosyası
 
 Şifreleme Fernet (AES-128-CBC + HMAC) — `cryptography` zaten bağımlılıkta
 (argon2/asyncssh üzerinden gelir).
+
+## Anahtar sunucuda ORTAM DEĞİŞKENİNDEN gelir (`KM_SECRET_KEY`)
+
+Konteynerde `/data` ilk açılışta boştur. Anahtar yalnız dosyadan okunsaydı
+kasa YENİ BİR ANAHTAR ÜRETİR ve veritabanındaki şifreli sırların hiçbirini
+çözemezdi — `core.pin_pepper` dahil. Belirti "kimse giriş yapamıyor" olurdu ve
+sebebi (anahtar değişti) hiç ele vermezdi; PIN'ler doğru, kadro dolu, log
+temiz görünürdü.
+
+`KM_SECRET_KEY` tanımlıysa dosyaya HİÇ BAKILMAZ ve dosya YAZILMAZ: sır
+Coolify'ın kasasında kalır, konteynerin diskine düşmez.
 """
 
 from __future__ import annotations
@@ -22,6 +33,9 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from km_core.config.loader import Config
 from km_core.store.base import StoreLike
+
+#: Kasa anahtarını taşıyan ortam değişkeni. Tanımlıysa dosyaya bakılmaz.
+SECRET_KEY_ENV = "KM_SECRET_KEY"
 
 
 class Vault:
@@ -37,6 +51,20 @@ class Vault:
     # ------------------------------------------------------------- anahtar
 
     def _load_or_create_key(self) -> bytes:
+        # Ortam değişkeni EN ÜSTTE. Sunucuda anahtar Coolify kasasından gelir;
+        # dosyaya düşmez ve her dağıtımda aynı kalır (bkz. modül başlığı).
+        from_env = os.environ.get(SECRET_KEY_ENV, "").strip()
+        if from_env:
+            try:
+                Fernet(from_env.encode("ascii"))
+            except (ValueError, TypeError) as error:
+                # Bozuk anahtarla açılmak, "sır çözülemedi" hatalarını
+                # veritabanına ya da PIN'lere yıkardı. Açılışta patlamak yeğdir.
+                raise ValueError(
+                    f"{SECRET_KEY_ENV} geçerli bir Fernet anahtarı değil: {error}"
+                ) from error
+            return from_env.encode("ascii")
+
         if self._key_path.is_file():
             return self._key_path.read_bytes().strip()
 
