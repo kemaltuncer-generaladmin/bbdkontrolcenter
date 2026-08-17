@@ -231,11 +231,28 @@ jobs:
       # paketler imzasız üretilir, `dist/updater/` künyesi hiç yazılmaz ve
       # aşağıdaki `latest.json` adımı bunu açık bir hatayla söyler — sessizce
       # güncellenemeyen bir sürüm yayınlanmaz.
+      # macOS KOD İMZASI VE NOTARIZATION — GÜNCELLEME İMZASINDAN AYRI ŞEY.
+      #
+      # `TAURI_SIGNING_*` güncelleyicinin paketi doğrulaması içindir; aşağıdaki
+      # `APPLE_*` değişkenleri Apple'ın Gatekeeper'ı içindir. İkincisi olmadan
+      # kurulan uygulama "bu uygulama hasar görmüş" der ve HİÇ AÇILMAZ —
+      # karantina özniteliği elle silinmedikçe (ADR 0023 §5 eki).
+      #
+      # SECRETS TANIMLI DEĞİLSE İMZALAMA SESSİZCE ATLANIR: Tauri bu değişkenler
+      # boşken imzalamayı denemez ve derleme düşmez. Böylece sertifikası
+      # olmayan bir çatal (fork) da paket üretebilir; yalnız o paket Gatekeeper
+      # uyarısı verir.
       - name: Paketle (Linux / macOS)
         if: matrix.platform != 'windows'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         # `bash ...` bilerek: betiğin çalıştırma bitine bağlı kalmasın.
         run: bash scripts/build-release.sh --bundles ${{ matrix.bundles }}
 

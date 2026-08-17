@@ -31,6 +31,7 @@ Durum değerleri: `Kabul edildi` · `Superseded by NNNN` · `Reddedildi`
 | 0021 | Merkezî kimlik servisi ve cihaz eşlemesi | Kabul edildi |
 | 0022 | Modül platform kapsamı manifestte ilan edilir | Kabul edildi |
 | 0023 | Paketleme: gömülü Python çalışma zamanı ve platforma göre veri dizini | Kabul edildi |
+| 0024 | macOS kod imzası ve notarization (0023 §5'i genişletir) | Kabul edildi |
 
 ---
 
