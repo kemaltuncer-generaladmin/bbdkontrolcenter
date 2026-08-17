@@ -21,11 +21,11 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 
 from km_core.config.loader import Config
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 
 class Vault:
-    def __init__(self, store: Store, config: Config) -> None:
+    def __init__(self, store: StoreLike, config: Config) -> None:
         self._store = store
         self._config = config
         self._key_path: Path = config.path("core.secret_key_path", "data/secret.key")

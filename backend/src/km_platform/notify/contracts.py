@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class DeliveryStatus(IntEnum):
@@ -59,7 +59,7 @@ class SmsResult:
     encoding: str | None = None
     dry_run: bool = False
     provider_code: str | None = None
-    raw: dict = field(default_factory=dict, repr=False)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ class DeliveryReport:
     to: str
     status: DeliveryStatus
     delivered_at: datetime | None = None
-    raw: dict = field(default_factory=dict, repr=False)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 class SmsProvider(Protocol):

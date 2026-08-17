@@ -109,7 +109,7 @@ Tümü **depo kökünden** çalıştırılır — `pytest.ini` ve `ruff.toml` k�
 ```bash
 .venv/bin/python -m pytest         # testler
 .venv/bin/ruff check .             # lint
-.venv/bin/python -m mypy backend/src   # tip denetimi
+.venv/bin/python -m mypy backend/src --config-file backend/pyproject.toml   # tip
 scripts/install-deps.sh            # bağımlılıklar (üç kaynaktan toplar)
 ```
 
@@ -118,11 +118,11 @@ anında gömen bir sarmalayıcıdır ve o sarmalayıcı bozulduğunda/eskidiğin
 mypy hiç koşmadan da geçmiş görünebilir — `-m` biçimi denetimi sanal ortamın
 kendi yorumlayıcısıyla çalıştırır ve çıkış kodu gerçekten mypy'den gelir.
 
-> **Açık kalan kapı.** mypy ayarını (`[tool.mypy] strict = true`)
-> `backend/pyproject.toml` taşıyor, ama mypy yapılandırmayı **çalışılan
-> dizinde** arıyor ve depo kökünde `pyproject.toml` yok. Yani yukarıdaki komut
-> bugün **katı kip olmadan** koşuyor. Katı kiple denetlemek için
-> `--config-file backend/pyproject.toml` verilir; kalıcı çözüm ayrı bir karardır.
+`--config-file` ŞARTTIR ve komuttan düşürülmez. mypy ayarını
+(`[tool.mypy] strict = true`) `backend/pyproject.toml` taşıyor; mypy
+yapılandırmayı **çalışılan dizinde** arıyor ve depo kökünde `pyproject.toml`
+yok. Bayrak olmadan komut katı kip olmadan koşar ve **geçmiş görünür**.
+18.08.2026'da bayrak eklenip biriken 14 hata kapatıldı; kapı artık gerçek.
 
 Testler ağa çıkmaz; dış servisler taklit edilir. Gerçek SMS gönderen test
 yazılmaz — SMS katmanında `dry_run` varsayılan açıktır.

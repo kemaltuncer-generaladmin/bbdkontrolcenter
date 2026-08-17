@@ -25,15 +25,17 @@ ssh = [
 ]
 
 # --- km_core/store + km_platform/database ---
-# store: çekirdek metadata (SQLite). database: yönetilen BBD/BLD (MySQL/MariaDB).
+# store: çekirdeğin kendi verisi. database: yönetilen BBD/BLD (MySQL/MariaDB).
+#
+# ÇEKİRDEK ARTIK İKİ MOTOR KULLANIR (ADR 0026): doğruluk kaynağı merkezdeki
+# PostgreSQL'dir, SQLite yerel AYNA olarak kalır. Bu yüzden `asyncpg` ayrı bir
+# extra değil, `database` extra'sının parçasıdır — onsuz kurulum yazamaz.
 database = [
     "sqlalchemy[asyncio]>=2.0",
     "alembic>=1.14",
-    "aiosqlite>=0.20",          # çekirdek store
+    "aiosqlite>=0.20",          # yerel ayna
+    "asyncpg>=0.30",            # merkez (doğruluk kaynağı)
     "aiomysql>=0.2",            # BBD (Bagisto) ve BLD (Laravel) — MySQL/MariaDB
-]
-database-postgres = [
-    "asyncpg>=0.30",            # yalnızca PostgreSQL gerekirse
 ]
 
 # --- km_platform/printer ---
@@ -92,6 +94,10 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "import-linter>=2.1",       # K1–K3 bağımlılık yönü denetimi
+    # Tip saplamaları. Kurulu değillerse mypy katı kipte "stub yok" diye
+    # patlar; ilan edilmezlerse kapı yalnız bu makinede yeşil olur (K11).
+    "types-PyYAML>=6.0",
+    "types-jsonschema>=4.23",
 ]
 
 # Tüm çalışma zamanı yetenekleri
@@ -111,6 +117,14 @@ strict = true
 # yalnız bu dış paket için gevşetilir; kendi kodumuz `Any` sınırında durur.
 [[tool.mypy.overrides]]
 module = ["reportlab.*"]
+ignore_missing_imports = true
+
+# `asyncpg` ve `netgsm` py.typed taşımıyor ve resmi stub'ları yok. İkisi de
+# sınırda durur: asyncpg yalnız `km_core/store/postgres.py` içinde, netgsm
+# yalnız kendi adaptöründe kullanılır. Katı kip bu iki dış paket için gevşer;
+# kendi kodumuz `Any` sınırında durmaya devam eder.
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "netgsm.*"]
 ignore_missing_imports = true
 
 # pytest yapılandırması depo kökündeki pytest.ini dosyasındadır — testler

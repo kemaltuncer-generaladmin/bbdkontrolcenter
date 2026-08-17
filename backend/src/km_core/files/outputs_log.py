@@ -46,17 +46,30 @@ import re
 import sqlite3
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 import structlog
 
 log = structlog.get_logger("km.files.outputs")
+
+#: `outputs` satırı. Sütun sırası `OUTPUT_COLUMNS` ile sabittir.
+OutputRow = dict[str, Any]
+
+#: Satırı depoya teslim eden işlev. Senkrondur — çağıran taraf da öyle.
+OutputWriter = Callable[[OutputRow], None]
+
+#: `outputs` tablosunun yazılan sütunları, SQL'deki sırayla.
+OUTPUT_COLUMNS = (
+    "id", "created_at", "user_id", "source", "kind",
+    "title", "path", "bytes", "pages", "params_digest",
+)
 
 #: Modülü olmayan çağrılar (çekirdeğin kendi yazdıkları, testler) bu kaynakla
 #: kaydedilir. Satır GİZLENMEZ; nereden geldiği belirsiz bir çıktı listede
@@ -90,6 +103,18 @@ _actor: ContextVar[str | None] = ContextVar("km_output_actor", default=None)
 #: Bildirilen depo. `None` ise kayıt tutulmaz — tahmin edilmez.
 _database: Path | None = None
 
+#: Satırı yazan işlev. `None` ise kayıt tutulmaz.
+#:
+#: NEDEN İŞLEV, NEDEN YOL DEĞİL. Bu modül SENKRONDUR: dosyayı yazan derin kod
+#: async değil ve olamaz. Yol bağlandığında yazma yolu SQLite'a çivilenmiş
+#: oluyordu; backend sunucuya taşınıp depo PostgreSQL olunca o yol sessizce
+#: yazmayı bırakırdı — çıktı üretilir, listede hiç görünmezdi (ADR 0019'un
+#: baştan beri korktuğu sessiz kayıp).
+#:
+#: `use_database()` KALDIRILMADI: SQLite yazıcısını kuran ince bir sarmalayıcı
+#: oldu. Testler, betikler ve gömülü kullanım aynı kapıdan geçmeye devam eder.
+_writer: OutputWriter | None = None
+
 #: "Depo bildirilmedi" uyarısı bağ çözülü kaldığı sürece BİR KEZ verilir.
 #: Her yazmada bağırmak takım koşusunu okunmaz eder; hiç bağırmamak ise
 #: kaydın sessizce durduğu bir kurulumu fark edilmez kılardı.
@@ -99,24 +124,71 @@ _unbound_warned = False
 # ------------------------------------------------------------------ ayarlar
 
 
-def use_database(path: Path | None) -> None:
-    """Kaydın yazılacağı depoyu bildirir; `None` bağı çözer.
+def use_writer(writer: OutputWriter | None) -> None:
+    """Satırı yazacak işlevi bildirir; `None` bağı çözer.
 
-    Bağı uygulama kurar (`km_core/http/app.py` lifespan). Testler ve gömülü
-    kullanım kendi deposunu aynı kapıdan gösterir.
+    Uygulama motoruna göre bunu kurar: SQLite kurulumunda `use_database()`,
+    sunucuda `outputs` tablosuna async yazan bir kuyruk. Modül hangisi
+    olduğunu BİLMEZ — tek bildiği satırı teslim edeceği kapıdır.
     """
-    global _database, _unbound_warned
-    _database = path
-    if path is not None:
+    global _writer, _database, _unbound_warned
+    _writer = writer
+    if writer is None:
+        # Bağ çözülünce `database_path()` de susmalı; yoksa kapanmış bir
+        # uygulamanın deposunu göstermeye devam eder ve "bağ çözüldü mü"
+        # sorusunun iki farklı cevabı olurdu.
+        _database = None
+    else:
         _unbound_warned = False
 
 
-def database_path() -> Path | None:
-    """Kayıt veritabanı — YALNIZ bildirilen depo, yoksa `None`.
+def use_database(path: Path | None) -> None:
+    """SQLite deposunu bildirir; `None` bağı çözer.
 
-    Ayara bakılmaz; gerekçesi modül başlığında.
+    `use_writer()` üzerine kurulu ince sarmalayıcı — çağıranların hiçbiri
+    değişmedi.
+    """
+    global _database
+    if path is None:
+        use_writer(None)
+        return
+    use_writer(_sqlite_writer(path))
+    _database = path
+
+
+def database_path() -> Path | None:
+    """Bildirilen SQLite deposu — bildirilmediyse `None`.
+
+    Ayara bakılmaz; gerekçesi modül başlığında. Sunucuda depo PostgreSQL'dir
+    ve bu `None` döner; kayıt yine tutulur, yalnız yolu bu değildir.
     """
     return _database
+
+
+def _sqlite_writer(database: Path) -> OutputWriter:
+    """SQLite'a senkron yazan yazıcı — modülün bugüne kadarki davranışı."""
+
+    def write(row: OutputRow) -> None:
+        if not database.is_file():
+            # Açılışta `Store.open()` dosyayı kurar. Yoksa uygulama henüz
+            # ayakta değildir; burada yeni bir dosya yaratmak şemasız bir depo
+            # bırakırdı.
+            log.debug("çıktı kaydı atlandı — depo dosyası yok",
+                      path=row["path"], database=str(database))
+            return
+        connection = sqlite3.connect(database, timeout=BUSY_TIMEOUT)
+        try:
+            connection.execute(
+                "INSERT INTO outputs (id, created_at, user_id, source, kind, title, "
+                "path, bytes, pages, params_digest) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                tuple(row[column] for column in OUTPUT_COLUMNS),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    return write
 
 
 @contextmanager
@@ -158,40 +230,25 @@ def record_write(path: Path, content: bytes) -> str | None:
 
 def _insert(*, path: Path, size: int, digest: str, pages: int | None,
             source: str, user_id: str | None) -> str | None:
-    database = database_path()
-    if database is None:
+    writer = _writer
+    if writer is None:
         _warn_unbound(path)
-        return None
-    if not database.is_file():
-        # Açılışta `Store.open()` dosyayı kurar. Yoksa uygulama henüz ayakta
-        # değildir; burada yeni bir dosya yaratmak şemasız bir depo bırakırdı.
-        log.debug("çıktı kaydı atlandı — depo dosyası yok",
-                  path=str(path), database=str(database))
         return None
 
     output_id = uuid.uuid4().hex
-    row = (
-        output_id,
-        datetime.now(UTC).astimezone().isoformat(timespec="seconds"),
-        user_id,
-        source,
-        _kind_of(path),
-        path.name,
-        str(path),
-        size,
-        pages,
-        digest,
-    )
-    connection = sqlite3.connect(database, timeout=BUSY_TIMEOUT)
-    try:
-        connection.execute(
-            "INSERT INTO outputs (id, created_at, user_id, source, kind, title, path, "
-            "bytes, pages, params_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            row,
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    row: OutputRow = {
+        "id": output_id,
+        "created_at": datetime.now(UTC).astimezone().isoformat(timespec="seconds"),
+        "user_id": user_id,
+        "source": source,
+        "kind": _kind_of(path),
+        "title": path.name,
+        "path": str(path),
+        "bytes": size,
+        "pages": pages,
+        "params_digest": digest,
+    }
+    writer(row)
     return output_id
 
 

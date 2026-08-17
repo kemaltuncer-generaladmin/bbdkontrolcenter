@@ -51,19 +51,24 @@ from collections.abc import Awaitable, Callable
 
 import structlog
 
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.security")
 
 OWNER = "core"
 
 
-async def table_columns(store: Store, table: str) -> set[str]:
-    rows = await store.fetch_all(f"PRAGMA table_info({table})")
-    return {str(row["name"]) for row in rows}
+async def table_columns(store: StoreLike, table: str) -> set[str]:
+    """Tablonun sütun adları.
+
+    Sorguyu MOTOR yanıtlar: SQLite `PRAGMA table_info`, PostgreSQL
+    `information_schema`. Burada `PRAGMA` yazmak, çekirdek göçlerini tek bir
+    motora çivilerdi — merkez PostgreSQL'de bu göçler hiç koşamazdı.
+    """
+    return await store.table_columns(table)
 
 
-async def _password_columns(store: Store) -> str:
+async def _password_columns(store: StoreLike) -> str:
     """Yeni sır sütunlarını EKLER, eski PIN sütunlarına dokunmaz."""
     columns = await table_columns(store, "users")
     parts: list[str] = []
@@ -82,7 +87,7 @@ async def _password_columns(store: Store) -> str:
     return "\n".join(parts)
 
 
-async def _users_revision(store: Store) -> str:
+async def _users_revision(store: StoreLike) -> str:
     """ADR 0020 — iyimser kilit. `expectedRevision` gönderen istemci gerçekten
     korunur; korunuyormuş gibi davranmak hiç korumamaktan kötüdür."""
     if "revision" in await table_columns(store, "users"):
@@ -90,7 +95,7 @@ async def _users_revision(store: Store) -> str:
     return "ALTER TABLE users ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;"
 
 
-async def _rename_set_pin_permission(store: Store) -> str:
+async def _rename_set_pin_permission(store: StoreLike) -> str:
     """`users.set_pin` → `users.set_password`.
 
     İzin ANAHTARI değişti; rol atamaları veritabanında durduğu için ad
@@ -113,7 +118,7 @@ WHERE permission = 'users.set_pin' OR permission LIKE 'users.set_pin:%';
 """
 
 
-async def _roster_projection(store: Store) -> str:
+async def _roster_projection(store: StoreLike) -> str:
     """ADR 0021 §2 — merkezden gelen kadro YEREL tablolara yansıtılır.
 
     İki şey açılır:
@@ -144,7 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_users_origin ON users (origin);
     return "\n".join(parts)
 
 
-async def _identity_audit_queue(store: Store) -> str:
+async def _identity_audit_queue(store: StoreLike) -> str:
     """ADR 0021 §5 — merkeze itilemeyen denetim kaydı YERELDE BİRİKİR.
 
     ADR'nin cümlesi kesindir: kayıt "yerelde birikir ve yeniden denenir; asla
@@ -175,7 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_identity_audit_queue_next
 """
 
 
-async def _backfill_secret_lookup(store: Store) -> str:
+async def _backfill_secret_lookup(store: StoreLike) -> str:
     """Reddedilmiş ADR 0016'nın son kalıntısını ONARIR — 17.08.2026.
 
     0016 reddedildiğinde "mevcut kullanıcı ilk girişte sır belirlemeye zorlanır"
@@ -262,7 +267,7 @@ BLD_STAFF_CORE_RESTORED = (
 )
 
 
-async def _restore_bld_staff_core(store: Store) -> str:
+async def _restore_bld_staff_core(store: StoreLike) -> str:
     """`0007`in aldığı dokuz çekirdek satırını GERİ KOYAR — 17.08.2026.
 
     KARAR REDDEDİLDİ. `bld_staff` BLD'ye dair her şeyi yapar; daraltma bir
@@ -342,7 +347,7 @@ BLD_STAFF_BBD_REVOKED = (
 )
 
 
-async def _revoke_bld_staff_bbd(store: Store) -> str:
+async def _revoke_bld_staff_bbd(store: StoreLike) -> str:
     """BLD personelinin BBD ekranlarını KAPATIR — 17.08.2026 kullanıcı kararı.
 
     Manifestler aynı gün daraltıldı, ama daraltma KURULU sistemde tek başına
@@ -389,7 +394,7 @@ WHERE role_id = 'bld_staff' AND permission IN ({liste});
 """
 
 
-CORE_MIGRATIONS: list[tuple[str, Callable[[Store], Awaitable[str]]]] = [
+CORE_MIGRATIONS: list[tuple[str, Callable[[StoreLike], Awaitable[str]]]] = [
     ("0001_password_columns", _password_columns),
     ("0002_users_revision", _users_revision),
     ("0003_users_set_password_permission", _rename_set_pin_permission),
@@ -405,7 +410,7 @@ CORE_MIGRATIONS: list[tuple[str, Callable[[Store], Awaitable[str]]]] = [
 ]
 
 
-async def apply_core_migrations(store: Store) -> list[str]:
+async def apply_core_migrations(store: StoreLike) -> list[str]:
     """Uygulanmamış çekirdek göçlerini sırayla işler; uygulananları döndürür."""
     applied = await store.applied_migrations(OWNER)
     fresh: list[str] = []

@@ -22,16 +22,17 @@ from fastapi.responses import JSONResponse
 from km_core.build_info import build_info
 from km_core.bus.bus import EventBus
 from km_core.config.loader import Config, load_config, nest, with_store_layer
-from km_core.config.settings_store import SettingsStore, apply_settings_migrations
+from km_core.config.settings_store import SettingsStore
 from km_core.files import outputs_log
+from km_core.files.outputs_queue import OutputsQueue
 from km_core.http.settings import create_settings_router
 from km_core.http.users import create_identity_router, user_payload
 from km_core.kernel.kernel import Kernel
 from km_core.registry.registry import Registry
 from km_core.security.identity import CurrentUser, Identity, PasswordError
-from km_core.security.migrations import apply_core_migrations
 from km_core.security.permissions import CORE_PERMISSIONS
-from km_core.store.db import Store
+from km_core.store.bootstrap import build_schema
+from km_core.store.engine import create_store, selected_engine
 from km_platform.audio.player import AudioPlayer
 from km_platform.identity_sync.http import create_pairing_router
 from km_platform.identity_sync.service import IdentitySync
@@ -87,20 +88,39 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config = base_config
 
-        store = Store(config.path("core.store_path", "data/kontrol-merkezi.sqlite"))
+        # ADR 0026 — motor ortam değişkeninden seçilir. Sunucuda PostgreSQL,
+        # yerelde SQLite; değişken yoksa bugüne kadarki davranış aynen sürer.
+        sqlite_path = config.path("core.store_path", "data/kontrol-merkezi.sqlite")
+        store = create_store(sqlite_path)
         await store.open()
 
         # ADR 0019 — çıktı kaydının deposu BURADAN bildirilir. Kayıt katmanı
         # senkrondur ve ayara bakmaz; hangi depoya yazacağını ancak ayakta olan
         # uygulama söyleyebilir. Bildirilmezse çıktı yine üretilir, yalnız
         # listeye düşmez (K7) — ayrıntı `km_core/files/outputs_log.py`.
-        outputs_log.use_database(store.path)
+        #
+        # SQLite'ta kayıt SENKRON yazılır — bugüne kadarki yol. PostgreSQL'de
+        # senkron yazmak olay döngüsünü bloklardı, o yüzden araya kuyruk girer.
+        # İki yol bilerek ayrı: kanıtlanmış SQLite yolunu asenkron yapmak,
+        # "dosya yazıldı ama kayıt henüz düşmedi" penceresini yoktan var eder
+        # ve testleri zamanlamaya bağımlı kılardı.
+        outputs_queue: OutputsQueue | None = None
+        if selected_engine() == "sqlite":
+            outputs_log.use_database(sqlite_path)
+        else:
+            outputs_queue = OutputsQueue(store)
+            await outputs_queue.start()
+            outputs_log.use_writer(outputs_queue.writer())
 
         # Var olan veritabanına sır sütunları eklenir, eski PIN sütunları
         # DÜŞÜRÜLMEZ. `CORE_SCHEMA` yalnız yeni kurulumu kurar; çalışmış bir
         # makinede sütunlar ancak buradan gelir (ADR 0016 reddedildi ama göçü
         # koştu — sütun adları olduğu gibi bırakıldı).
-        await apply_core_migrations(store)
+        # `build_schema` çekirdek şemasını VE göçlerini kurar. Tek yerden
+        # geçmesinin sebebi: yerel SQLite ile sunucudaki PostgreSQL'in şeması
+        # ayrışamasın (`km_core/store/bootstrap.py`). Modül göçleri BURADA
+        # DEĞİL, kernel'de kalır — düşen bir modül diğerlerini düşürmesin (K7).
+        await build_schema(store)
 
         # ADR 0018 §4 — ARAYÜZDEN DEĞİŞEN AYAR ÇEKİRDEK DEPOSUNA YAZILIR ve
         # zincirde `local.yaml`'ı EZER. Katman burada, yetenekler kurulmadan
@@ -109,8 +129,8 @@ def create_app(config: Config | None = None) -> FastAPI:
         # yapılan değişiklik hiçbir zaman etkili olmazdı.
         #
         # Ortam değişkeni en üstte kalır (`with_store_layer` onu yeniden
-        # uygular): acil müdahale yolu kapanmaz.
-        await apply_settings_migrations(store)
+        # uygular): acil müdahale yolu kapanmaz. `settings` tablosunun göçü
+        # yukarıdaki `build_schema` içinde uygulandı.
         config = with_store_layer(config, nest(await SettingsStore(store).values()))
 
         registry = Registry()
@@ -203,7 +223,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         finally:
             # Bağ depo KAPANMADAN önce çözülür: kapanış sırasında yazılan bir
             # dosya, kapanmış bir bağlantıya kayıt düşürmeye çalışmasın.
-            outputs_log.use_database(None)
+            # SIRA ÖNEMLİ: önce kapı kapanır, sonra kuyruk boşaltılır. Ters
+            # olsaydı boşaltma sırasında düşen yeni bir satır kuyrukta kalırdı.
+            outputs_log.use_writer(None)
+            if outputs_queue is not None:
+                await outputs_queue.stop()
             await scheduler.stop()
             await store.close()
 
@@ -407,7 +431,8 @@ def _mount_modules(app: FastAPI, kernel: Kernel, identity: Identity) -> None:
         log.info("router monte edildi", module=manifest.id, prefix=spec.prefix)
 
 
-def _permission_guard(requires: list[str], current_user: Any, identity: Identity, module_id: str):
+def _permission_guard(requires: list[str], current_user: Any, identity: Identity,
+                      module_id: str) -> Any:
     async def guard(user: CurrentUser = Depends(current_user)) -> CurrentUser:
         for entry in requires:
             key, scope = _split_permission(entry)

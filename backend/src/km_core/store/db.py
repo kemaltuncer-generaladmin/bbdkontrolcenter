@@ -197,6 +197,20 @@ class Store:
         await self.db.executemany(sql, rows)
         await self.db.commit()
 
+    async def execute_script(self, sql: str) -> None:
+        """Çok ifadeli DDL. `PostgresStore` ile aynı yüzey (bkz. bootstrap)."""
+        await self.db.executescript(sql)
+        await self.db.commit()
+
+    async def table_columns(self, table: str) -> set[str]:
+        """Tablonun sütun adları — motora özgü introspeksiyon.
+
+        Çağıran (`km_core/security/migrations.py`) `PRAGMA` yazmaz; yazsaydı
+        aynı göçler merkezdeki PostgreSQL'de koşamazdı.
+        """
+        rows = await self.fetch_all(f"PRAGMA table_info({table})")
+        return {str(row["name"]) for row in rows}
+
     # ------------------------------------------------------------- göçler
 
     async def applied_migrations(self, owner: str) -> set[str]:

@@ -60,7 +60,7 @@ from km_core.http.masking import mask_text
 from km_core.http.support_bundle import app_summary, bundle_bytes, bundle_name, read_log_tail
 from km_core.kernel.kernel import Kernel
 from km_core.security.identity import CurrentUser, Identity
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.http.settings")
 
@@ -106,7 +106,7 @@ def _config(request: Request) -> Config:
 
 
 def _settings_store(request: Request) -> SettingsStore:
-    store: Store | None = getattr(request.app.state, "store", None)
+    store: StoreLike | None = getattr(request.app.state, "store", None)
     if store is None:  # pragma: no cover
         raise HTTPException(status_code=503, detail="Depo hazır değil.")
     return SettingsStore(store)

@@ -60,7 +60,7 @@ import structlog
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.security")
 
@@ -175,7 +175,7 @@ class UserNotFound(IdentityError):
 
 
 class Identity:
-    def __init__(self, store: Store, pepper: str, *, pin_min_length: int = 6,
+    def __init__(self, store: StoreLike, pepper: str, *, pin_min_length: int = 6,
                  max_failed_attempts: int = 5, lockout_minutes: int = 15,
                  session_idle_minutes: int = 30) -> None:
         self.store = store

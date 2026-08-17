@@ -26,9 +26,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-# jsonschema tip saplaması taşımıyor (contracts/manifest.py aynı durumda).
-# Susturulmazsa tip denetimine yeni bir hata eklenirdi; davranış değişmez.
-import jsonschema  # type: ignore[import-untyped]
+# Tip saplaması `types-jsonschema` ile gelir ve `backend/pyproject.toml`
+# içinde ilan edilir (K11); susturma gerekmez.
+import jsonschema
 
 #: Şema dosyasındaki alt şemanın adı: `#/$defs/settings`.
 DEFINITION = "settings"

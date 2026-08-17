@@ -17,7 +17,7 @@ if TYPE_CHECKING:  # pragma: no cover - yalnızca tip denetimi
 
     from km_core.bus.bus import EventBus
     from km_core.registry.registry import Registry
-    from km_core.store.db import Store
+    from km_core.store.base import StoreLike
 
 
 class ModuleStore(Protocol):
@@ -33,7 +33,7 @@ class ModuleStore(Protocol):
 class ScopedStore:
     """`Store`un modüle açılan yüzü. Tablo adlarını modül önekiyle üretir."""
 
-    _store: Store
+    _store: StoreLike
     module_id: str
 
     def table(self, name: str) -> str:

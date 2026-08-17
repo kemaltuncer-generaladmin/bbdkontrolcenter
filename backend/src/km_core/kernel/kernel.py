@@ -26,7 +26,7 @@ from km_core.contracts.module import ModuleContext, ScopedStore
 from km_core.kernel.module_settings import SettingsSchema
 from km_core.kernel.platforms import current_platform, runs_on, skip_note
 from km_core.registry.registry import Registry
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.kernel")
 
@@ -53,7 +53,7 @@ class Kernel:
     def __init__(
         self,
         config: Config,
-        store: Store,
+        store: StoreLike,
         registry: Registry,
         bus: EventBus,
         platform: str | None = None,
@@ -332,7 +332,7 @@ def _import_module(manifest: Manifest) -> Any:
     if package_name not in sys.modules:
         package = types.ModuleType(package_name)
         # __path__ verilince altındaki klasörler ad alanı paketi olarak bulunur.
-        package.__path__ = [str(manifest.path)]  # type: ignore[attr-defined]
+        package.__path__ = [str(manifest.path)]
         sys.modules[package_name] = package
 
     return importlib.import_module(f"{package_name}.{module_path}")

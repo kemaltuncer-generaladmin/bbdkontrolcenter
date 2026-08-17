@@ -28,7 +28,7 @@ from typing import Any
 
 import structlog
 
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.settings")
 
@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_settings_updated ON settings (updated_at);
 """
 
 
-async def apply_settings_migrations(store: Store) -> list[str]:
+async def apply_settings_migrations(store: StoreLike) -> list[str]:
     """Uygulanmamışsa `settings` tablosunu açar; uygulanan göçleri döndürür."""
     applied = await store.applied_migrations(OWNER)
     if MIGRATION_NAME in applied:
@@ -70,7 +70,7 @@ class SettingsStore:
 
     __slots__ = ("_store",)
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: StoreLike) -> None:
         self._store = store
 
     async def values(self) -> dict[str, Any]:

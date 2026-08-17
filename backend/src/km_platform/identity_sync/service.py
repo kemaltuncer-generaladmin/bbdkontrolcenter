@@ -40,7 +40,7 @@ from km_core.config.loader import Config
 from km_core.config.settings_store import SettingsStore
 
 if TYPE_CHECKING:  # pragma: no cover — yalnız tip denetimi için
-    from km_core.store.db import Store
+    from km_core.store.base import StoreLike
 
 from .cache import RosterCache
 from .client import CLIENT_VERSION, IdentityClient, IdentityResponseError
@@ -727,7 +727,7 @@ class IdentitySync:
         # protokolüyle tutuluyor (`QueueStore`) ve çalışma anında zaten o
         # `Store`dur. Protokolü genişletmek yerine dönüştürmek, kuyruğun sahte
         # bir depoyla test edilebilir kalmasını bozmaz.
-        store = SettingsStore(cast("Store", self._store))
+        store = SettingsStore(cast("StoreLike", self._store))
         mevcut = await store.values()
         yazilan = 0
         for key, value in settings.items():

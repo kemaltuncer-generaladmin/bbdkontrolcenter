@@ -59,7 +59,7 @@ def backoff_seconds(attempts: int) -> float:
     """`attempts` kez denenmiş bir kaydın bir sonraki denemeye kalan süresi."""
     if attempts <= 0:
         return BASE_BACKOFF_SECONDS
-    return min(BASE_BACKOFF_SECONDS * (2 ** (attempts - 1)), MAX_BACKOFF_SECONDS)
+    return float(min(BASE_BACKOFF_SECONDS * (2 ** (attempts - 1)), MAX_BACKOFF_SECONDS))
 
 
 class AuditQueue:

@@ -43,7 +43,7 @@ from typing import Any
 
 import structlog
 
-from km_core.store.db import Store
+from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.security")
 
@@ -90,7 +90,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-async def projected_revision(store: Store) -> int | None:
+async def projected_revision(store: StoreLike) -> int | None:
     """En son yansıtılan kadro revizyonu. Hiç yansıtılmadıysa `None`."""
     row = await store.fetch_one("SELECT revision FROM roster_projection WHERE id = 1")
     if row is None:
@@ -99,7 +99,7 @@ async def projected_revision(store: Store) -> int | None:
     return int(value) if isinstance(value, int) else None
 
 
-async def project_roster(store: Store, payload: dict[str, Any]) -> dict[str, Any]:
+async def project_roster(store: StoreLike, payload: dict[str, Any]) -> dict[str, Any]:
     """Önbellekteki kadroyu yerel tablolara yansıtır.
 
     `revision` en son yansıtılanla aynıysa HİÇBİR YAZMA YAPILMAZ: yansıtma her
@@ -128,7 +128,7 @@ async def project_roster(store: Store, payload: dict[str, Any]) -> dict[str, Any
         return {"projected": False, "reason": str(error)}
 
 
-async def _project(store: Store, payload: dict[str, Any], users: list[Any],
+async def _project(store: StoreLike, payload: dict[str, Any], users: list[Any],
                    revision: int | None) -> dict[str, Any]:
     # Roller ÖNCE: kullanıcı-rol bağı boş bir role işaret etmesin.
     await _mirror_roles(store, payload.get("roles") or [])
@@ -178,7 +178,7 @@ async def _project(store: Store, payload: dict[str, Any], users: list[Any],
     }
 
 
-async def _mirror_roles(store: Store, roles: list[Any]) -> None:
+async def _mirror_roles(store: StoreLike, roles: list[Any]) -> None:
     """Merkezin rollerini açar/tazeler. YEREL ROL SİLİNMEZ."""
     for role in roles:
         if not isinstance(role, dict) or not role.get("id"):
@@ -226,7 +226,7 @@ def _user_values(entry: dict[str, Any], *, with_secret: bool) -> list[Any]:
     ]
 
 
-async def _mirror_user(store: Store, entry: dict[str, Any]) -> None:
+async def _mirror_user(store: StoreLike, entry: dict[str, Any]) -> None:
     """Tek kullanıcıyı yansıtır.
 
     `secret_lookup` sütunu UNIQUE'tir: yerelde açılmış bir kullanıcı merkezdeki
@@ -245,7 +245,7 @@ async def _mirror_user(store: Store, entry: dict[str, Any]) -> None:
         await store.execute(_INSERT_USER, _user_values(entry, with_secret=False))
 
 
-async def _mirror_user_roles(store: Store, user_id: str, roles: list[Any]) -> None:
+async def _mirror_user_roles(store: StoreLike, user_id: str, roles: list[Any]) -> None:
     """Merkez kaydının rolleri MERKEZDEKİNİN AYNISI olur.
 
     Yalnız `origin='central'` kullanıcılar için çağrılır; yerel kullanıcının rol
@@ -259,7 +259,7 @@ async def _mirror_user_roles(store: Store, user_id: str, roles: list[Any]) -> No
         )
 
 
-async def _mirror_grants(store: Store, payload: dict[str, Any]) -> None:
+async def _mirror_grants(store: StoreLike, payload: dict[str, Any]) -> None:
     """Rol → izin bağını EKLER (modül başlığındaki üçüncü kural)."""
     grants = (payload.get("grants") or {}).get("role_permissions") or []
     rows = [
@@ -274,7 +274,7 @@ async def _mirror_grants(store: Store, payload: dict[str, Any]) -> None:
         )
 
 
-async def _disable_missing(store: Store, keep: set[str]) -> list[str]:
+async def _disable_missing(store: StoreLike, keep: set[str]) -> list[str]:
     """Kadrodan düşen merkez kaydını PASİFLEŞTİRİR — SİLMEZ.
 
     Silmek, kaydın ne zaman açıldığını ve denetim izindeki kimliğini götürürdü;
@@ -294,7 +294,7 @@ async def _disable_missing(store: Store, keep: set[str]) -> list[str]:
     return vanished
 
 
-async def _close_sessions_of_inactive(store: Store) -> None:
+async def _close_sessions_of_inactive(store: StoreLike) -> None:
     """Pasifleşen merkez kullanıcısının AÇIK OTURUMU DA KAPANIR.
 
     `Identity.set_status` yerel yolda aynısını yapar; merkezden gelen

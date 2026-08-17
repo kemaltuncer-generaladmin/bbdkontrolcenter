@@ -249,7 +249,7 @@ class NetgsmSmsProvider:
 
     # ------------------------------------------------------------- dahili
 
-    async def _call(self, fn: Any, **kwargs: Any) -> dict:
+    async def _call(self, fn: Any, **kwargs: Any) -> dict[str, Any]:
         """Senkron SDK çağrısını iş parçacığında ve zaman aşımıyla çalıştırır.
 
         Uyarı: zaman aşımında ``asyncio.to_thread`` iş parçacığını durduramaz;
