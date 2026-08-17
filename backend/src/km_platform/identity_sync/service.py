@@ -69,6 +69,11 @@ class SecretStore(Protocol):
     async def set(self, key: str, value: str) -> None: ...
     async def delete(self, key: str) -> None: ...
 
+    # Cihaz eşlemesi merkezin kimlik anahtarını benimsemek zorunda; bu ikisi o
+    # kararı verebilmek için gerekli (bkz. `_adopt_pepper`).
+    async def pepper_is_auto(self) -> bool: ...
+    async def adopt_pepper(self, value: str) -> None: ...
+
 
 class IdentitySync:
     def __init__(self, vault: SecretStore, config: Config,
@@ -240,6 +245,13 @@ class IdentitySync:
             platform=machine["platform"],
             version=machine["version"],
         )
+        # PEPPER, KADRODAN ÖNCE BENİMSENİR. Sıra pazarlık konusu değil: kadro
+        # `secret_lookup` taşır ve o değer pepper'la üretilir. Önce kadro
+        # çekilseydi satırlar yerel (yanlış) pepper'a göre yansıtılır ve hiçbir
+        # PIN tutmazdı — belirti de sebebi ele vermezdi.
+        pepper = str(result.get("pepper") or "")
+        benimsendi = await self._adopt_pepper(pepper)
+
         await self._vault.set(TOKEN_KEY, str(result["token"]))
         await self._vault.set(INSTALLATION_ID_KEY, str(result["installationId"]))
         self._online = True
@@ -248,7 +260,48 @@ class IdentitySync:
         # Eşlemenin hemen ardından kadro çekilir: kullanıcı eşleme ekranından
         # boş bir giriş ekranına düşmemeli.
         await self.sync()
-        return {"paired": True, "installationId": result["installationId"]}
+        # `pepper` çağırana DÖNER: çalışan `Identity` nesnesi açılışta eski
+        # değeri belleğine almıştı ve yeniden başlatılmadan onu bilmez. HTTP
+        # katmanı bunu görüp canlı nesneyi tazeler; yoksa kullanıcı eşleme
+        # ekranından çıkıp yine giremezdi.
+        return {
+            "paired": True,
+            "installationId": result["installationId"],
+            "pepperAdopted": benimsendi,
+            "pepper": pepper if benimsendi else "",
+        }
+
+    async def _adopt_pepper(self, pepper: str) -> bool:
+        """Merkezin pepper'ını kasaya yazar. Dönüş: gerçekten değişti mi.
+
+        ÜÇ DURUM VE ÜÇÜ DE FARKLI:
+
+          · Merkez pepper göndermedi (eski sürüm) → dokunma. Kadro yine çekilir;
+            pepper zaten tutuyorsa çalışır, tutmuyorsa eski davranış sürer.
+          · Yereldeki değer merkezinkiyle AYNI → yapacak bir şey yok.
+          · Farklı → yalnız yerel değer KENDİLİĞİNDEN doğduysa ezilir. Elle
+            konmuş ya da daha önce benimsenmiş bir pepper'ı ezmek, o makinedeki
+            herkesin girişini bir anda kırardı ve düz PIN'ler hiçbir yerde
+            saklanmadığı için geri getirilemezdi.
+        """
+        if not pepper:
+            log.warning("merkez pepper göndermedi — eski sürüm olabilir")
+            return False
+
+        mevcut = await self._vault.get("core.pin_pepper")
+        if mevcut == pepper:
+            return False
+
+        if mevcut is not None and not await self._vault.pepper_is_auto():
+            raise IdentitySyncError(
+                "Bu kurulumun kendi kimlik anahtarı var ve merkezinkinden farklı. "
+                "Eşleme sürdürülseydi buradaki kullanıcıların hiçbiri giriş "
+                "yapamazdı. Önce bu makinenin kadrosunu merkeze taşıyın."
+            )
+
+        await self._vault.adopt_pepper(pepper)
+        log.warning("merkezin kimlik anahtarı benimsendi — yereldeki değiştirildi")
+        return True
 
     async def _ensure_key_pair(self) -> str:
         """Ed25519 çifti. Varsa kasadan okunur, yoksa üretilir.

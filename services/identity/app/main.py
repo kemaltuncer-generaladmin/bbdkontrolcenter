@@ -382,7 +382,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=401, detail=str(error)) from error
         log.info("kurulum eşlendi", installation=result["installationId"],
                  machine=body.machine_name)
-        return result
+        # PEPPER EŞLEME YANITIYLA GİDER — ve bu, kadro çekmenin ÖN KOŞULUDUR.
+        #
+        # `secret_lookup` sabit anahtarlı bir HMAC'tir. Kurulumun kasasındaki
+        # `core.pin_pepper` merkezinkiyle aynı olmazsa çekilen kadro hiçbir
+        # PIN'le eşleşmez — kullanıcı tabloda görünür, girişi reddedilir ve
+        # BELİRTİ SEBEBİ HİÇ ELE VERMEZ. `roster_projection.py` bu şartı
+        # yazıyordu ama onu sağlayacak hiçbir yol yoktu: taze kurulum kendi
+        # rastgele pepper'ını üretiyor ve eşleştikten sonra bile kimse
+        # giremiyordu (17.08.2026, ilk macOS kurulumu).
+        #
+        # KANAL YETERİNCE DAR: HTTPS üzerinden, tek kullanımlık ve süreli bir
+        # kodu doğru bilene, bir kez. Aynı yanıt zaten kadronun TAMAMINI —
+        # Argon2 parola hash'leri dahil — çekebilen token'ı veriyor; pepper
+        # ondan daha az hassastır. Ayrı bir uç açmak, aynı sırrı ikinci bir
+        # kapıdan da sunmak olurdu.
+        return {**result, "pepper": request.app.state.settings.pepper}
 
     @app.get("/installations", dependencies=[Depends(require_admin)])
     async def list_installations(request: Request) -> dict[str, Any]:

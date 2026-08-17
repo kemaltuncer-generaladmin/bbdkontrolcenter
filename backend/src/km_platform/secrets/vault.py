@@ -93,13 +93,37 @@ class Vault:
         rows = await self._store.fetch_all("SELECT key FROM secrets ORDER BY key")
         return [row["key"] for row in rows]
 
+    #: Pepper'ın KENDİLİĞİNDEN üretildiğini söyleyen işaret.
+    #
+    # NEDEN GEREKLİ. Merkeze eşlenen bir kurulum, merkezin pepper'ını almak
+    # ZORUNDADIR (`roster_projection` — kadro `secret_lookup` taşır). Ama
+    # eşleme, gerçek kullanıcısı olan bir kurulumun pepper'ını EZEMEZ: ezerse o
+    # makinedeki herkesin girişi bir anda kırılır ve düz PIN'ler hiçbir yerde
+    # saklanmadığı için geri getirilemez.
+    #
+    # İkisini ayırmanın tek yolu, değerin nereden geldiğini bilmektir: taze bir
+    # kurulumda pepper açılışta rastgele doğar ve o an hiçbir kullanıcıyı
+    # bağlamaz — ezilmesi zararsızdır. Elle konmuş ya da eşlemeyle benimsenmiş
+    # bir pepper ise kullanıcılara bağlıdır ve dokunulmaz.
+    AUTO_FLAG = "core.pin_pepper_auto"
+
     async def pepper(self) -> str:
         """PIN arama hash'inin sabit anahtarı. Veritabanında değil, kasada durur."""
         value = await self.get("core.pin_pepper")
         if value is None:
             value = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii")
             await self.set("core.pin_pepper", value)
+            await self.set(self.AUTO_FLAG, "1")
         return value
+
+    async def pepper_is_auto(self) -> bool:
+        """Pepper kendiliğinden mi doğdu? (bkz. `AUTO_FLAG`)"""
+        return await self.get(self.AUTO_FLAG) == "1"
+
+    async def adopt_pepper(self, value: str) -> None:
+        """Merkezin pepper'ını benimser ve 'kendiliğinden' işaretini kaldırır."""
+        await self.set("core.pin_pepper", value)
+        await self.delete(self.AUTO_FLAG)
 
     @property
     def _cipher(self) -> Fernet:

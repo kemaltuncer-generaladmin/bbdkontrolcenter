@@ -195,6 +195,21 @@ class Identity:
         """
         return hmac.new(self._pepper, secret.encode("utf-8"), hashlib.sha256).hexdigest()
 
+    def adopt_pepper(self, pepper: str) -> None:
+        """Çalışan nesnenin pepper'ını değiştirir — YALNIZ cihaz eşlemesi için.
+
+        Pepper açılışta kasadan okunup belleğe alınıyor. Kurulum merkeze
+        eşlenip merkezin anahtarını benimsediğinde bu nesne hâlâ ESKİ değeri
+        taşır ve yeniden başlatılana kadar hiçbir PIN tutmaz — kullanıcı eşleme
+        ekranından çıkar ve yine giremez.
+
+        BAŞKA HİÇBİR YERDEN ÇAĞRILMAZ. Pepper "bir kez belirlenir, bir daha
+        değişmez" (`services/identity/README.md`); buradaki tek istisna, henüz
+        kimseyi bağlamamış taze bir kurulumun merkeze katılma anıdır ve o kararı
+        `IdentitySync._adopt_pepper` veriyor.
+        """
+        self._pepper = pepper.encode("utf-8")
+
     def validate_pin(self, pin: str) -> None:
         """PIN kuralları (ADR 0007, docs/identity-model.md).
 

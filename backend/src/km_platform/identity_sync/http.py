@@ -172,6 +172,19 @@ def create_pairing_router() -> APIRouter:
             # kodun yanlış olduğunu göstermez ve kullanıcıyı cezalandırmamalı.
             raise HTTPException(status_code=503, detail=str(error)) from error
         throttle.reset()
+
+        # ÇALIŞAN `Identity` NESNESİ TAZELENİR. Pepper açılışta kasadan okunup
+        # belleğe alınıyor; eşleme merkezinkini benimsediyse bu nesne hâlâ eski
+        # değeri taşır ve HİÇBİR PIN TUTMAZ. Kullanıcı eşleme ekranından çıkar,
+        # giriş ekranına düşer ve kendi PIN'i "yanlış" der — sebebi hiçbir yerde
+        # görünmeden. Yeniden başlatmayı beklemek, kurulumu tamamlayan kişiyi
+        # kapalı bir kapıda bırakmak olurdu.
+        pepper = str(result.pop("pepper", "") or "")
+        if result.get("pepperAdopted") and pepper:
+            identity = getattr(request.app.state, "identity", None)
+            if identity is not None:
+                identity.adopt_pepper(pepper)
+
         return result
 
     # ------------------------------------------------------- kurulum yönetimi
