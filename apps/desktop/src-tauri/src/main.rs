@@ -116,17 +116,74 @@ fn core_is_running() -> bool {
     .is_ok()
 }
 
+/// Açılış tanılaması — kabuğun kendi kararlarını yazdığı dosya.
+///
+/// NEDEN VAR. Bu fonksiyonun aldığı kararlar bugüne kadar `eprintln!` ile
+/// yazılıyordu ve PAKETLENMİŞ UYGULAMADA HİÇBİR YERE ÇIKMIYORDU: kabuk
+/// `windows_subsystem = "windows"` ile derleniyor, konsol yok. Çekirdek
+/// başlamadığında kullanıcı yalnız "Çekirdeğe ulaşılamadı" görüyor ve NEDENİ
+/// hiçbir yerde durmuyordu — v0.1.1'de tam olarak bu oldu ve uzaktan teşhis
+/// edilemedi.
+///
+/// Dosya UYGULAMA VERİ DİZİNİNE yazılır, kurulum klasörüne değil: `Program
+/// Files` altı salt okunurdur ve asıl arıza anında ikinci bir arıza üretirdi.
+/// Kök bulunamadığında da yazılabilmesi gerekiyor — bu yüzden `find_root`a
+/// bağlı DEĞİLDİR.
+fn diag_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let dir = app.path().app_data_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn diag(app: &tauri::AppHandle, satir: &str) {
+    eprintln!("[kabuk] {satir}");
+    let Some(dir) = diag_dir(app) else { return };
+    let saniye = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Yazamamak sessizce geçilir: tanılama tutamamak, uygulamayı açmamak için
+    // yeterli bir sebep değildir.
+    if let Ok(mut dosya) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("kabuk-acilis.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(dosya, "{saniye} {satir}");
+    }
+}
+
 fn spawn_core(app: &tauri::AppHandle) -> Option<Child> {
     if core_is_running() {
-        eprintln!("[kabuk] çekirdek zaten çalışıyor, yenisi başlatılmadı");
+        diag(app, "çekirdek zaten çalışıyor, yenisi başlatılmadı");
         return None;
     }
 
     let Some(root) = find_root(app) else {
-        eprintln!("[kabuk] çekirdek kaynağı bulunamadı (backend/src/km_core)");
+        // ADAYLARI DA YAZ: "bulunamadı" tek başına hangi yola bakıldığını
+        // söylemiyor ve teşhis yine tahmine kalıyor.
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "?".into());
+        let kaynak = app
+            .path()
+            .resource_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "?".into());
+        diag(app, "ÇEKİRDEK KAYNAĞI BULUNAMADI — aranan ölçüt: backend/src/km_core");
+        diag(app, &format!("  exe        : {exe}"));
+        diag(app, &format!("  kaynak dizini: {kaynak}"));
         return None;
     };
+    diag(app, &format!("kök bulundu: {}", root.display()));
+
     let python = python_path(&root);
+    diag(app, &format!(
+        "python: {} (var mı: {})",
+        python.display(),
+        python.is_file()
+    ));
 
     let mut command = Command::new(&python);
     command
@@ -135,6 +192,18 @@ fn spawn_core(app: &tauri::AppHandle) -> Option<Child> {
         .current_dir(&root)
         .env("PYTHONPATH", root.join("backend/src"))
         .env("PYTHONUNBUFFERED", "1");
+
+    // ÇEKİRDEĞİN ÇIKTISI TUTULUR. Python açılışta patlarsa (eksik DLL, bozuk
+    // gömülü kurulum, import hatası) izi yalnız burada kalır: kendi log
+    // dosyasını `setup_logging`ten SONRA açıyor, yani ondan önceki her hata
+    // bugüne kadar tümüyle kayboluyordu.
+    if let Some(dir) = diag_dir(app) {
+        if let Ok(cikti) = std::fs::File::create(dir.join("cekirdek-cikti.log")) {
+            if let Ok(hata) = cikti.try_clone() {
+                command.stdout(cikti).stderr(hata);
+            }
+        }
+    }
 
     // Windows'ta kabuk konsolsuz derleniyor (`windows_subsystem = "windows"`).
     // Bayrak konmazsa çekirdek süreci KENDİ konsol penceresini açar: kullanıcı
@@ -149,13 +218,16 @@ fn spawn_core(app: &tauri::AppHandle) -> Option<Child> {
 
     match command.spawn() {
         Ok(child) => {
-            eprintln!("[kabuk] çekirdek başlatıldı: {}", python.display());
+            diag(app, &format!("çekirdek başlatıldı: {}", python.display()));
             Some(child)
         }
         Err(error) => {
             // Çekirdek açılmazsa pencere yine açılır ve giriş ekranı durumu
             // söyler; kabuk sessizce ölmez.
-            eprintln!("[kabuk] çekirdek başlatılamadı ({}): {error}", python.display());
+            diag(app, &format!(
+                "ÇEKİRDEK BAŞLATILAMADI ({}): {error}",
+                python.display()
+            ));
             None
         }
     }

@@ -5,6 +5,7 @@
       "../../../backend/src": "backend/src",
       "../../../modules": "modules",
       "../../../config/default.yaml": "config/default.yaml",
+      "../../../docs/schemas/module.schema.json": "docs/schemas/module.schema.json",
       "runtime": "runtime"
     }
   }

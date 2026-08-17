@@ -74,6 +74,26 @@ class Kernel:
     # ---------------------------------------------------------------- keşif
 
     def discover(self, modules_dir: Path, schema_path: Path) -> None:
+        # ŞEMA OKUNAMIYORSA UYGULAMA YİNE AYAĞA KALKAR (ARCHITECTURE §5).
+        #
+        # `read_manifest` şemayı her modül için yeniden okur ve oradaki
+        # `read_text()` korumasızdır; dosya yoksa `FileNotFoundError` atar.
+        # Aşağıdaki döngü yalnız `ManifestError` yakaladığı için o hata dışarı
+        # kaçar, `lifespan` içinden geçip UYGULAMAYI HİÇ AÇTIRMAZDI.
+        #
+        # v0.1.1 paketinde tam olarak bu oldu: `docs/schemas/module.schema.json`
+        # kaynak listesine konmamıştı, kurulu uygulamada çekirdek açılırken
+        # patlıyor, 8787'de dinleyen kimse olmuyor ve kabuk "Çekirdeğe
+        # ulaşılamadı — bağlantı reddedildi" diyordu. Şema artık pakete giriyor;
+        # bu denetim ikinci kapıdır, çünkü tek bir eksik dosyanın bütün
+        # uygulamayı kapatması sözleşmeye aykırıdır.
+        if not schema_path.is_file():
+            sorun = f"manifest şeması bulunamadı: {schema_path}"
+            self.problems.append(sorun)
+            log.error("manifest şeması yok — hiçbir modül yüklenmeyecek",
+                      path=str(schema_path))
+            return
+
         settings_schema = SettingsSchema.load(schema_path)
         for manifest_file in sorted(modules_dir.glob("*/module.yaml")):
             try:
