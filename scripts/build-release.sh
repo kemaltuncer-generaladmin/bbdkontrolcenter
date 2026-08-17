@@ -442,5 +442,57 @@ if [ "$FOUND" != 1 ]; then
   die "Paket üretilmedi; dist/ boş kalacaktı."
 fi
 
+# --- 6. depo içi kalıntılar -----------------------------------------------
+#
+# TAURI KAYNAKLARI İKİLİNİN YANINA KOPYALAR. `tauri.release.json` → `resources`
+# altındaki her hedef, paketin içine girmeden önce `target/release/` altına da
+# düşer: `backend/`, `modules/`, `config/`, `docs/`, `runtime/`.
+#
+# BU KOPYALAR MASUM DEĞİL. `scripts/launch-desktop.sh` geliştirmede
+# `target/release/kontrol-merkezi` ikilisini çalıştırıyor; kabuk kökü ikilinin
+# yanından yukarı doğru arıyor (`main.rs` → `root_beside_exe`) ve İLK olarak bu
+# kopyayı buluyor. Kopyada `.git` yok, dolayısıyla çekirdek kendini kurulu
+# uygulama sanıp veri dizinini sistemin kullanıcı veri klasörüne alıyor
+# (`km_core/config/paths.py`) — deponun `data/` klasörüne değil. Belirti "giriş
+# yapılamadı"; sebebi hiçbir günlükte yazmıyor.
+#
+# Bir paket üretimi, aynı depodaki geliştirme kurulumunu bu yüzden bozuyordu.
+# Kalıntı burada temizlenir; `launch-desktop.sh` ayrıca `KM_ROOT` vererek
+# kökü açıkça söyler. İkisi birbirinin yedeğidir: biri unutulursa öteki tutar.
+#
+# Silinen şey ÜRETİLMİŞ KOPYADIR, kaynak değil — depodaki `backend/`,
+# `modules/`, `config/` klasörlerine dokunulmaz. Paket de etkilenmez: bu adım
+# `dist/` toplandıktan sonra koşar.
+say "6) Derleme kalıntıları temizleniyor"
+
+# Adlar `tauri.release.json` → `bundle.resources` hedeflerinin İLK basamağıdır
+# ve elle yazılır. Yeni bir kaynak eklenirse buraya da eklenir; JSON'u burada
+# ayrıştırmak, bash 3.2'de yasak olan "komut ikamesi içinde here-document"
+# yapısına geri dönmek olurdu (bkz. 2. adımdaki not).
+LEFTOVERS=(backend modules config docs runtime)
+CLEANED=0
+for name in "${LEFTOVERS[@]}"; do
+  target="$TAURI/target/release/$name"
+  [ -e "$target" ] || continue
+  # SİLEMEMEK DERLEMEYİ DÜŞÜRMEZ: paketler `dist/` altına çoktan kopyalandı ve
+  # üretilmiş bir yayını temizlik yüzünden çöpe atmak orantısız olurdu. Ama
+  # sessiz de kalınmaz — kalıntı kalırsa `launch-desktop.sh` yine `KM_ROOT`
+  # verdiği için geliştirme kurulumu ayakta kalır, yalnız yedek kapı iner.
+  if rm -rf "$target"; then
+    echo "  silindi: target/release/$name"
+    CLEANED=$((CLEANED + 1))
+  else
+    warn "target/release/$name silinemedi — depo içinden başlatılan kabuk bu kopyayı kök sanabilir."
+  fi
+done
+
+if [ "$CLEANED" -eq 0 ]; then
+  echo "  kalıntı yok"
+else
+  # Sessiz temizlik, bir dahaki sefere kalıntının geri geldiğini fark
+  # etmemize engel olurdu.
+  warn "$CLEANED kalıntı klasör silindi (target/release). Depodaki kaynaklara dokunulmadı."
+fi
+
 FINISHED=1
 say "Bitti. Çıktı: $DIST"

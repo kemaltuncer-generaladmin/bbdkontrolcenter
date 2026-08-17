@@ -193,6 +193,31 @@ fi
 # --- 6. başlat ve doğrula --------------------------------------------------
 log "kabuk başlatılıyor: $BIN"
 cd "$ROOT" || die "Proje klasörüne girilemedi: $ROOT"
+
+# ÇEKİRDEK KÖKÜ AÇIKÇA SÖYLENİR — tahmine bırakılmaz.
+#
+# Kabuk kökü kendi başına arıyor (`main.rs` → `find_root`): önce `KM_ROOT`,
+# sonra ikilinin yanından yukarı doğru `backend/src/km_core` taşıyan ilk
+# klasör. İkinci ölçüt bu betikte SESSİZCE YANLIŞ SONUÇ VERİYORDU.
+#
+# `scripts/build-release.sh` depo içinde koşturulduğunda Tauri, paket
+# kaynaklarını (`backend/`, `modules/`, `config/`, `runtime/`) ikilinin YANINA
+# — yani `target/release/` altına — kopyalıyor. Kabuk o klasörü kök sayıyor;
+# orada `.git` olmadığı için çekirdek kendini KURULU UYGULAMA sanıyor ve veri
+# dizini olarak sistemin kullanıcı veri klasörünü seçiyor
+# (`km_core/config/paths.py`), deponun `data/` klasörünü değil.
+#
+# Sonuç: aynı ikili, aynı depo, BAŞKA veritabanı. Kullanıcılar, kasa ve
+# ayarlar görünmez oluyor; belirti "giriş yapılamadı" oluyor ve hiçbir günlükte
+# "veri dizini değişti" yazmıyor.
+#
+# Değişkeni burada vermek en dar ve en kesin çözüm: geliştirme başlatıcısının
+# kökü NE OLDUĞU zaten kesin biliniyor (betiğin kendi konumundan türedi) ve
+# arama sırasının ilk basamağı bu. Kalıntıları ayrıca `build-release.sh`
+# temizler; ikisi birbirinin yedeğidir.
+export KM_ROOT="$ROOT"
+log "KM_ROOT=$ROOT"
+
 nohup "$BIN" >>"$LOG" 2>&1 &
 SHELL_PID=$!
 

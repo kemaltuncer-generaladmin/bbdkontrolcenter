@@ -13,6 +13,7 @@ Sözleşme:
     await sync.create_user(actor, body) → yalnız çevrimiçi; yoksa DENEMEZ
     await sync.push_audit(entries)      → kuyruğa yazar, sonra göndermeyi dener
     await sync.flush_audit()            → kuyruğu boşaltmayı dener (hata yükseltmez)
+    await sync.fetch_provisioning()     → sırları kasaya, ayarları ayar deposuna yazar
 
 Çekilen kadronun yerel `users`/`roles`/`user_roles` tablolarına YANSITILMASI bu
 nesnenin işi değildir: yansıtma çekirdektedir
@@ -31,14 +32,18 @@ import hashlib
 import platform as platform_info
 import socket
 from time import monotonic
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
 
 from km_core.config.loader import Config
+from km_core.config.settings_store import SettingsStore
+
+if TYPE_CHECKING:  # pragma: no cover — yalnız tip denetimi için
+    from km_core.store.db import Store
 
 from .cache import RosterCache
-from .client import CLIENT_VERSION, IdentityClient
+from .client import CLIENT_VERSION, IdentityClient, IdentityResponseError
 from .errors import (
     IdentitySyncError,
     ManagementKeyMissing,
@@ -57,10 +62,37 @@ INSTALLATION_ID_KEY = "identity_sync.installation_id"
 # token'ından AYRIDIR: biri "bu makine bizim", öteki "yeni makine kaydedebilir"
 # der. Ayara yazılmaz, kasada durur (K8).
 ADMIN_TOKEN_KEY = "identity_sync.admin_token"
+# Merkezden çekilen kurulum paketinin revizyonu (ADR 0025). Kasada durur çünkü
+# kasa zaten bu yeteneğin kalıcı defteridir; ayrı bir dosya açmak, eşleme
+# çözülünce temizlenmesi unutulacak ikinci bir durum yaratırdı.
+PROVISIONING_REVISION_KEY = "identity_sync.provisioning_revision"
 
 # Çevrimiçilik bilgisinin tazelik süresi. Her yazmadan önce `/health` sormak
 # gereksiz; hiç sormamak ise "ağ yoksa denemez" kuralını boşa çıkarır.
 ONLINE_PROBE_TTL_SECONDS = 15.0
+
+# MERKEZ BUNLARI GÖNDEREMEZ — gönderse de yazılmaz.
+#
+# `services/identity/app/provisioning.py` aynı yasağı YAZMA tarafında da
+# uyguluyor; buradaki kopya gereksiz değil, İKİNCİ KAPIDIR (K9 ile aynı fikir).
+# Yanlış yapılandırılmış ya da ele geçirilmiş bir merkez `identity_sync.*`
+# gönderirse bütün kurulumlar tek kurulum token'ını paylaşır; `core.pin_pepper`
+# gönderirse o makinedeki herkesin girişi bir anda kırılır ve düz PIN'ler
+# hiçbir yerde saklanmadığı için geri getirilemez. Kimlik anahtarı eşlemeyle
+# gelir (`_adopt_pepper`), paketle değil.
+UNDISTRIBUTABLE_PREFIXES = ("identity_sync.",)
+UNDISTRIBUTABLE_KEYS = frozenset({
+    "core.pin_pepper",
+    "core.pin_pepper_auto",
+    "core.pin_pepper_previous",
+})
+
+
+def distributable(key: str) -> bool:
+    """Merkezden gelen bu anahtar kasaya yazılabilir mi?"""
+    if key in UNDISTRIBUTABLE_KEYS:
+        return False
+    return not any(key.startswith(prefix) for prefix in UNDISTRIBUTABLE_PREFIXES)
 
 
 def pepper_fingerprint(pepper: str) -> str:
@@ -204,6 +236,10 @@ class IdentitySync:
             # Kuyrukta bekleyen denetim kaydı. "Asla düşürülmez" sözünün
             # görünür karşılığı budur: sayı büyüyorsa merkez ulaşılamıyordur.
             "auditPending": await self.audit_pending(),
+            # Merkezden alınan kurulum paketinin revizyonu (ADR 0025). `None`
+            # = hiç alınmadı. SIR DÖNMEZ, yalnız sayı: "bu makine paketi aldı
+            # mı" sorusu ekranda cevaplanabilmeli.
+            "provisioningRevision": await self.provisioning_revision(),
         }
 
     def machine(self) -> dict[str, str]:
@@ -274,6 +310,11 @@ class IdentitySync:
         log.info("kurulum eşlendi", installation=result["installationId"])
         # Eşlemenin hemen ardından kadro çekilir: kullanıcı eşleme ekranından
         # boş bir giriş ekranına düşmemeli.
+        #
+        # KURULUM PAKETİ DE BURADAN GELİR (ADR 0025): `sync()` kadroyu
+        # tazeledikten sonra `fetch_provisioning()` çağırıyor, yani eşlenen
+        # makine sırlarını ve modül ayarlarını aynı turda alır. Ayrı bir çağrı
+        # eklemek aynı isteği iki kez yapardı.
         await self.sync()
         # `pepper` çağırana DÖNER: çalışan `Identity` nesnesi açılışta eski
         # değeri belleğine almıştı ve yeniden başlatılmadan onu bilmez. HTTP
@@ -307,11 +348,36 @@ class IdentitySync:
         if mevcut == pepper:
             return False
 
-        if mevcut is not None and not await self._vault.pepper_is_auto():
-            raise IdentitySyncError(
-                "Bu kurulumun kendi kimlik anahtarı var ve merkezinkinden farklı. "
-                "Eşleme sürdürülseydi buradaki kullanıcıların hiçbiri giriş "
-                "yapamazdı. Önce bu makinenin kadrosunu merkeze taşıyın."
+        # ESKİ ANAHTAR SİLİNMEZ, SAKLANIR — ve eşleme REDDEDİLMEZ.
+        #
+        # Burada önce sert bir ret vardı: işaretsiz bir pepper görülünce eşleme
+        # `IdentitySyncError` ile düşüyordu. İki nedenle yanlıştı:
+        #
+        #   · MERKEZ KODU ÇOKTAN YAKMIŞ OLUYOR. Ret yerelde, merkez `/pair`e
+        #     200 döndükten SONRA gerçekleşiyor; tek kullanımlık kod harcanmış,
+        #     merkezde öksüz bir kurulum satırı açılmış, yerelde tek bayt
+        #     yazılmamış oluyordu. Her yeni kod aynı yerde ölüyordu ve kurulum
+        #     ASLA düzelmiyordu.
+        #   · İŞARETİN YOKLUĞU "bu anahtar kullanılıyor" demek DEĞİL. İşaret
+        #     (`AUTO_FLAG`) 17.08.2026'da eklendi; ondan önce doğmuş her kasada
+        #     pepper var, işaret yok. Yani ölçüt, korumak istediği durumu değil
+        #     yalnızca "eski kurulum" olmayı ölçüyordu.
+        #
+        # Yeni davranış: merkezin anahtarı benimsenir, eskisi
+        # `core.pin_pepper_previous` altında KALIR. Hiçbir şey geri
+        # döndürülemez biçimde kaybolmaz (geri alma ekleyerek yapılır) ve
+        # gerekirse eski anahtar elle geri konabilir.
+        #
+        # BEDELİ AÇIKÇA YAZILIR: eski anahtarla üretilmiş YEREL kullanıcılar
+        # (örneğin ilk açılışın bootstrap yöneticisi) bu andan sonra giriş
+        # yapamaz — `secret_lookup`ları artık tutmaz. Merkezden gelen kadro
+        # çalışır; zaten eşlemenin amacı odur.
+        if mevcut is not None:
+            await self._vault.set("core.pin_pepper_previous", mevcut)
+            log.warning(
+                "ÖNCEKİ KİMLİK ANAHTARI SAKLANDI — bu anahtarla üretilmiş YEREL "
+                "kullanıcılar artık giriş yapamaz; merkezden gelen kadro çalışır",
+                onceki=pepper_fingerprint(mevcut), yeni=pepper_fingerprint(pepper),
             )
 
         await self._vault.adopt_pepper(pepper)
@@ -418,6 +484,18 @@ class IdentitySync:
         """
         await self._vault.delete(TOKEN_KEY)
         await self._vault.delete(INSTALLATION_ID_KEY)
+        # PAKET REVİZYONU DÜŞER, PAKETİN KENDİSİ KALIR (ADR 0025).
+        #
+        # Dağıtılmış sırları silmek, eşlemeyi yeniden kurmak isteyen yöneticinin
+        # elindeki makineyi çalışmaz hâle getirirdi: geçitler o an ölür ve geri
+        # getirmenin yolu 17 sırrı elle girmektir. Revizyon işaretinin düşmesi
+        # yeter — makine yeniden eşlendiğinde paketi baştan çeker ve tazelenir.
+        #
+        # BEDELİ AÇIKÇA YAZILIR: eşlemesi çözülmüş bir makinede iş sırları
+        # kasada durmaya devam eder. Kullanıcının tehdit modeli bunu kabul
+        # ediyor (kurum içi, fiziksel denetim); kaybolan cihazın çaresi
+        # `unpair` değil, merkezden iptal ve yerinde silmedir.
+        await self._vault.delete(PROVISIONING_REVISION_KEY)
 
         disabled = await self._disable_central_users()
 
@@ -466,6 +544,31 @@ class IdentitySync:
         known = self.cache.revision()
         try:
             payload = await self._client.roster(token, known_revision=known)
+        except IdentityResponseError as error:
+            # TOKEN ARTIK GEÇERSİZ (401/403) — kurulum merkezden İPTAL EDİLMİŞ.
+            #
+            # BU DAL AYRI DURUR ve ayrı durmak zorunda: iptal edilmiş bir
+            # kurulum "ağ yok" değildir. Ağ hatası gibi ele alınırsa makine
+            # sonsuza dek eldeki bayat kadroyla çalışmaya devam eder, eşleme
+            # ekranı hiç açılmaz ve kimse giremez — kullanıcı da neden
+            # giremediğini hiçbir yerde göremez. 17.08.2026'da bir MacBook tam
+            # olarak bu duruma düştü: token iptal edilmişti, kadro çekilemiyordu,
+            # ve `paired: true` olduğu için eşleme ekranı bir daha hiç gelmedi.
+            #
+            # Kurulum bu durumda kendi eşlemesini düşürür: bir sonraki açılışta
+            # EŞLEME EKRANI gelir ve makine yeniden eşlenebilir. Yerel
+            # kullanıcılara ve kasadaki öteki sırlara dokunulmaz.
+            if error.status in (401, 403):
+                log.error(
+                    "kurulum token'ı merkezde geçersiz — eşleme sıfırlanıyor",
+                    status=error.status,
+                )
+                await self.reset_pairing()
+                return {"synced": False, "reason": "kurulum iptal edilmiş", "reset": True}
+            self._online = False
+            self._online_checked_at = monotonic()
+            log.warning("kadro çekilemedi", error=str(error))
+            return {"synced": False, "reason": str(error)}
         except IdentitySyncError as error:
             self._online = False
             self._online_checked_at = monotonic()
@@ -482,11 +585,157 @@ class IdentitySync:
         # yaşandı ve uzaktan teşhis edilemedi.
         await self._check_pepper(payload.get("pepperFingerprint"))
 
+        # KURULUM PAKETİ HER TURDA SORULUR (ADR 0025) — kadro değişmemiş olsa
+        # bile. İki defter ayrıdır: bir sırrın döndürülmesi kadroyu
+        # ilgilendirmez. `changed is False` dalının ÜSTÜNDE durmasının sebebi
+        # budur; altına konsaydı, kadrosu sabit bir kurulum yeni sırrı hiç
+        # görmezdi.
+        paket = await self.fetch_provisioning()
+
         if payload.get("changed") is False:
-            return {"synced": True, "changed": False, "revision": known}
+            return {"synced": True, "changed": False, "revision": known,
+                    "provisioning": paket}
 
         self.cache.write(payload)
-        return {"synced": True, "changed": True, "revision": payload.get("revision")}
+        return {"synced": True, "changed": True, "revision": payload.get("revision"),
+                "provisioning": paket}
+
+    # ------------------------------------------------------ kurulum paketi
+
+    async def provisioning_revision(self) -> int | None:
+        """Kasadaki paket revizyonu. Hiç çekilmemişse `None`."""
+        raw = await self._vault.get(PROVISIONING_REVISION_KEY)
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:  # pragma: no cover — kasaya elle yazılmış bozuk değer
+            return None
+
+    async def fetch_provisioning(self) -> dict[str, Any]:
+        """Merkezdeki kurulum paketini çeker ve UYGULAR (ADR 0025).
+
+        Sırlar KASAYA, modül ayarları ÇEKİRDEK AYAR DEPOSUNA yazılır. İkisi
+        ayrı yere gider çünkü ayrı şeylerdir: kasa şifreler ve ekranda değer
+        göstermez, ayar deposu düz durur ve Sistem Ayarları ekranında görünür
+        (K8 — sır ayar deposuna yazılmaz).
+
+        **HATA YÜKSELTMEZ** (K7). Paket çekilemezse kurulum eldeki değerlerle
+        çalışmaya devam eder; kimlik ve giriş bundan etkilenmez. Merkez eski
+        sürümse (uç yok → 404) bu bir arıza değildir, sessizce geçilir.
+
+        `known_revision` gönderilir: değişmemişse sırlar ağa HİÇ ÇIKMAZ.
+        """
+        token = await self.installation_token()
+        if token is None:
+            return {"applied": False, "reason": "eşlenmemiş"}
+
+        known = await self.provisioning_revision()
+        try:
+            payload = await self._client.provisioning(token, known_revision=known)
+        except IdentityResponseError as error:
+            if error.status == 404:
+                # Merkez bu ucu tanımıyor — 0025 öncesi sürüm. Kurulum bugünkü
+                # gibi kendi kasasıyla çalışır; uyarı bile gereksizdir.
+                return {"applied": False, "reason": "merkezde kurulum paketi ucu yok"}
+            log.warning("kurulum paketi çekilemedi", status=error.status, error=str(error))
+            return {"applied": False, "reason": str(error)}
+        except IdentitySyncError as error:
+            log.warning("kurulum paketi çekilemedi", error=str(error))
+            return {"applied": False, "reason": str(error)}
+
+        if payload.get("changed") is False:
+            return {"applied": False, "changed": False, "revision": known}
+
+        secrets = payload.get("secrets") or {}
+        settings = payload.get("settings") or {}
+        try:
+            yazilan_sir = await self._apply_secrets(dict(secrets))
+            yazilan_ayar = await self._apply_settings(dict(settings))
+        except Exception as error:  # noqa: BLE001 — K7, gerekçe aşağıda
+            # UYGULAMA PATLARSA REVİZYON YAZILMAZ ve bir sonraki tur yeniden
+            # dener. Hata sınıfı dar tutulamaz: kasa (disk, izin, bozuk anahtar)
+            # ve ayar deposu (eksik tablo, kilitli veritabanı) birbirinden çok
+            # farklı türler atar ve HEPSİNİN buradaki karşılığı aynıdır — bu
+            # tur olmadı, kimlik ve giriş bundan etkilenmemeli (K7).
+            #
+            # Sessiz yutulmaz: `error` seviyesinde loga düşer ve çağırana
+            # sebebiyle döner.
+            log.error("kurulum paketi uygulanamadı", error=str(error))
+            return {"applied": False, "reason": str(error)}
+
+        revision = payload.get("revision")
+        if revision is not None:
+            await self._vault.set(PROVISIONING_REVISION_KEY, str(int(revision)))
+
+        log.info("kurulum paketi uygulandı", revision=revision,
+                 secrets=yazilan_sir, settings=yazilan_ayar)
+        return {
+            "applied": True,
+            "changed": True,
+            "revision": revision,
+            "secrets": yazilan_sir,
+            "settings": yazilan_ayar,
+        }
+
+    async def _apply_secrets(self, secrets: dict[str, Any]) -> int:
+        """Sırları kasaya yazar; DEĞİŞMEYENE DOKUNMAZ. Dönüş: yazılan sayısı.
+
+        Değişmeyeni atlamak yalnız hız değil: kasa yazması `updated_at` alanını
+        tazeliyor ve her senkron turunda 17 satırı yenilemek, "bu sır ne zaman
+        değişti" sorusunu cevapsız bırakırdı.
+
+        Yasaklı anahtar GELİRSE YAZILMAZ ve uyarı düşer (`distributable`).
+        """
+        yazilan = 0
+        for key, value in secrets.items():
+            if not distributable(key):
+                log.error("merkez dağıtılamaz bir anahtar gönderdi, YAZILMADI", key=key)
+                continue
+            metin = value if isinstance(value, str) else str(value)
+            if await self._vault.get(key) == metin:
+                continue
+            await self._vault.set(key, metin)
+            yazilan += 1
+        return yazilan
+
+    async def _apply_settings(self, settings: dict[str, Any]) -> int:
+        """Modül ayarlarını çekirdek ayar deposuna yazar (ADR 0018 §4).
+
+        **DEPO BAĞLANMAMIŞSA HİÇBİR ŞEY YAPILMAZ** (K7): yetenek `Vault` ve
+        `Config` ile kuruluyor, çekirdek deposunu `attach_store` ile sonradan
+        görüyor. Bağlanmamış bir depoda patlamak, eşleme akışının tamamını
+        düşürürdü.
+
+        **AYAR HEMEN ETKİLİ OLMAZ.** Modül geçitleri adreslerini kurulurken
+        okuyor (`modules/*/backend/module.py` → `setup`) ve ayar katmanı
+        açılışta uygulanıyor (`km_core/http/app.py`). Yani ilk eşlemeden sonra
+        geçitler BİR SONRAKİ AÇILIŞTA çalışır. Bu yeni bir davranış değil:
+        Sistem Ayarları ekranından değiştirilen ayar da aynı yolu izler
+        (ADR 0018 §4). Ayrıntı ve gerekçe: ADR 0025 — açık kalan kapılar.
+
+        SIR BURAYA YAZILMAZ (K8). Merkez sırrı `secrets` sözlüğünde gönderir;
+        bu sözlük yalnız ayar taşır ve değerleri Sistem Ayarları ekranında
+        GÖRÜNÜR.
+        """
+        if self._store is None:
+            log.warning("ayar deposu bağlanmamış; modül ayarları uygulanmadı",
+                        count=len(settings))
+            return 0
+
+        # `SettingsStore` bir `Store` bekler; buradaki nesne kuyruğun dar
+        # protokolüyle tutuluyor (`QueueStore`) ve çalışma anında zaten o
+        # `Store`dur. Protokolü genişletmek yerine dönüştürmek, kuyruğun sahte
+        # bir depoyla test edilebilir kalmasını bozmaz.
+        store = SettingsStore(cast("Store", self._store))
+        mevcut = await store.values()
+        yazilan = 0
+        for key, value in settings.items():
+            if key in mevcut and mevcut[key] == value:
+                continue
+            await store.put(key, value, actor_id=None)
+            yazilan += 1
+        return yazilan
 
     async def _check_pepper(self, uzak_izi: Any) -> None:
         """Merkezin anahtarıyla kurulumunki aynı mı?
@@ -525,6 +774,8 @@ class IdentitySync:
         """
         await self._vault.delete(TOKEN_KEY)
         await self._vault.delete(INSTALLATION_ID_KEY)
+        # Paket revizyonu düşer; sırlar kalır (`unpair` ile aynı gerekçe).
+        await self._vault.delete(PROVISIONING_REVISION_KEY)
         # Anahtar "kendiliğinden" sayılır ki bir sonraki eşleme onu benimseyebilsin.
         # Bu satır olmadan sıfırlama işe yaramaz: `_adopt_pepper` "bu kurulumun
         # kendi anahtarı var" deyip reddeder ve kilit geri gelirdi.

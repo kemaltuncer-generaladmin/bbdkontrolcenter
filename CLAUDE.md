@@ -72,11 +72,29 @@ ayağa kalkıyor, kabuk modülleri dinamik yüklüyor. `modules/` altındaki
 ikisinin de backend'i, paneli ve testleri var. `antivirus` yalnız Linux'ta
 yüklenir (`platforms: [linux]`).
 
+**Merkezî kimlik servisi canlıdır** (ADR 0021): `services/identity/`, Coolify
+üzerinde `https://kontrolmerkezi.bbdstore.com.tr`. Adres pakete gömülü gelir
+(`config/default.yaml` → `platform.identity_sync.base_url`) ve şalter açıktır.
+Eşleme, kadro göçü, merkezin kimlik anahtarının (pepper) benimsenmesi ve
+kurulumun kendi bozukluğunu görüp onarması (`/api/pairing/reset`) çalışır
+durumdadır; yeni bir makine merkezden alınan 8 haneli tek kullanımlık kodla
+eşlenir. Sıfırdan kurulumun tam sırası: [deploy/README.md](deploy/README.md)
+→ "Yeni cihaz kurulumu".
+
 Çekirdek ekranları kabukta ayrı hiyerarşide durur (ADR 0017):
-`apps/desktop/shell/core-panels/`. Bugün **Kullanıcı Yönetimi** ve **Sistem
-Ayarları** panelleri yazılmıştır; Sistem Sağlığı menüde durur ama paneli
-yoktur, Roller ve İzinler / Denetim İzi / Kimlik Kasası ise henüz kabuğun
-listesine girmemiştir.
+`apps/desktop/shell/core-panels/`. Bugün **dört** çekirdek ekranı ilan edilir
+(`shell/ui-kernel.js` → `CORE_PANELS`, backend karşılığı
+`km_core/http/app.py` → `CORE_PANELS_UI`): **Kullanıcı Yönetimi**, **Sistem
+Ayarları**, **Sistem Sağlığı** ve **KM Cihaz Eşle**. Üçünün paneli yazılmıştır;
+Sistem Sağlığı menüde durur ama `entry` alanı hâlâ boştur — gövdesinde "ekranı
+henüz yok" kartı çıkar. Roller ve İzinler / Denetim İzi / Kimlik Kasası ise
+henüz kabuğun listesine girmemiştir.
+
+KM Cihaz Eşle ekranı kurulumun merkezden ne aldığını da yazar (kadro
+revizyonu, dağıtılan ayar/sır sayısı, son tazeleme) ve **Şimdi tazele**
+düğmesini `POST /api/pairing/refresh` ucuna bağlar. **Bu uç henüz
+yazılmamıştır**; yokluğunda ekran 404'ü ham hata olarak göstermez, sebebini
+söyler.
 
 > Bu bölüm eskimeye açıktır. Bir modülün gerçek durumu tek yerden okunur:
 > kendi `module.yaml` dosyasındaki `enabled` alanı ve klasöründeki kod.

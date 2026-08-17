@@ -80,9 +80,41 @@ ALTER TABLE audit_log ADD COLUMN installation_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_audit_installation ON audit_log (installation_id);
 """
 
+# Kurulum paketi (ADR 0025): dağıtılan sırlar ve modül ayarları.
+#
+# DEĞER SÜTUNU ŞİFRELİDİR ve şeması bunu söyleyemez — bu yüzden burada yazılı:
+# `value` alanı Fernet çıktısıdır, anahtarı `KM_IDENTITY_VAULT_KEY` ortam
+# değişkeninde durur ve BU VERİTABANINDA YOKTUR. Dosya sızarsa sırlar açılmaz.
+#
+# `kind` değerin kurulumda NEREYE yazılacağını söyler (`secret` → kasa,
+# `setting` → çekirdek ayar deposu), ne kadar korunacağını değil: ikisi de aynı
+# ölçüde şifrelenir.
+#
+# Revizyon KADRONUNKİNDEN AYRIDIR. Tek sayaç olsaydı her kullanıcı eklendiğinde
+# sahadaki bütün kurulumlar bütün sırları yeniden çekerdi.
+_0003_PROVISIONING = """
+CREATE TABLE IF NOT EXISTS provisioning_items (
+    key         TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,          -- secret | setting
+    value       TEXT NOT NULL,          -- Fernet ile şifreli JSON; DÜZ DEĞİL
+    updated_at  TEXT NOT NULL,
+    updated_by  TEXT                    -- users.id; acil yoldan gelirse NULL
+);
+
+CREATE TABLE IF NOT EXISTS provisioning_meta (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    revision    INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO provisioning_meta (id, revision, updated_at)
+VALUES (1, 1, datetime('now'));
+"""
+
 SERVICE_MIGRATIONS: list[tuple[str, str]] = [
     ("0001_installations", _0001_INSTALLATIONS),
     ("0002_audit_installation", _0002_AUDIT_INSTALLATION),
+    ("0003_provisioning", _0003_PROVISIONING),
 ]
 
 

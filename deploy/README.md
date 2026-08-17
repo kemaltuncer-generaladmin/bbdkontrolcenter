@@ -115,6 +115,182 @@ KM_PY_VERSION=3.12.11 KM_PBS_RELEASE=20250612 scripts/build-release.sh
 
 ---
 
+## Yeni cihaz kurulumu
+
+Sıfırdan bir Mac ya da Windows makineye Kontrol Merkezi kurmanın tam sırası.
+Linux için tek fark paket biçimidir (`.deb` / `.AppImage`); adımlar aynıdır.
+
+Kurulum **merkezî kimlik servisiyle** eşlenerek tamamlanır (ADR 0021): makine
+kullanıcı listesini kendi veritabanında doğurmaz, merkezden alır. Eşlenmemiş
+bir kurulumda merkezdeki hiç kimse giriş yapamaz.
+
+### 0. Önce eşleme kodunu alın
+
+Kodu **başka bir makinede**, merkeze zaten eşli bir kurulumdan üretirsiniz:
+**KM Cihaz Eşle** ekranı → **Eşleme kodu üret**. Gereken izin
+`installations.manage`.
+
+- Kod **8 hanelidir, tek kullanımlıktır** ve süresini merkez belirler
+  (ekrandaki geri sayım sunucunun verdiği bitiş anından türer).
+- Yeni kod üretmek **bekleyen eski kodları geçersiz kılar.**
+- Kodu makinenin başına geçmeden üretmeyin: ömrü dakikalarla ölçülür.
+- Kod hiçbir yere yazılmaz — denetim izine de girmez. Panoya yalnız siz
+  isterseniz gider.
+
+Hiç eşli makine kalmadıysa (ilk kurulum, ya da tek makine bozulduysa) kod
+merkezin kendi yönetim ucundan üretilir; o yol `KM_IDENTITY_ADMIN_TOKEN` ister
+ve token merkezin ortam değişkenlerindedir — depoda ve bu belgede durmaz (K8).
+
+### 1. Paketi kurun
+
+| Platform | Dosya | Kurulum |
+|---|---|---|
+| Windows | `*-setup.exe` (NSIS) veya `*.msi` | çift tıkla; SmartScreen uyarısı için aşağıdaki bölüm |
+| macOS | `*.dmg` | aç, uygulamayı **Applications** klasörüne sürükle |
+| Linux | `*.deb` / `*.AppImage` | `sudo apt install ./dosya.deb` / dosyayı çalıştırılabilir yapın |
+
+Kurulan makinede **Python gerekmez** — uygulama kendi yorumlayıcısını taşır
+(ADR 0023). Windows'ta **WebView2 Runtime** gerekir; Windows 11'de yerleşiktir,
+yoksa kurucu getirir.
+
+macOS paketleri imzalı ve notarize üretilir (ADR 0024). İmzasız üretilmiş bir
+paket Gatekeeper'a takılır ve **"uygulama hasar görmüş"** der; ileti imzadan hiç
+söz etmez. Böyle bir paketi kurmayın, imzalısını isteyin.
+
+Makinenin merkeze **https** ile ulaşabilmesi gerekir:
+`https://kontrolmerkezi.bbdstore.com.tr`. Adres pakete gömülü gelir
+(`config/default.yaml` → `platform.identity_sync.base_url`); taze kurulumda
+elle ayar yapılmaz.
+
+### 2. İlk açılış — ne zaman ne beklenir
+
+| Sıra | Ekranda | Süre | Arkada olan |
+|---|---|---|---|
+| 1 | "Çekirdek başlatılıyor…" | ilk açılışta 5–20 sn | kabuk gömülü Python'u başlatır, çekirdek 127.0.0.1:8787'yi açar |
+| 2 | **"Bu kurulum henüz eşlenmedi"** + 8 kutucuk | kod yazılana kadar | eşleme ekranı; giriş ekranı gizli |
+| 3 | kutucuklar dolar, "Eşleniyor…" | 1–3 sn | kod merkeze gider; kurulum token'ı **kasaya** yazılır, merkezin kimlik anahtarı benimsenir |
+| 4 | giriş ekranı (6 haneli PIN) | — | eşleme bitti |
+| 5 | ilk giriş | 1–3 sn | kadro merkezden çekilir ve yerel tablolara yansıtılır |
+
+İkinci ve sonraki açılışlar 2. ve 3. adımı atlar: eşleme bir kez yapılır.
+
+**Eşleme ekranı gelmediyse** ve doğrudan giriş ekranı açıldıysa, kurulum kendini
+"eşlenmiş" sanıyor ya da merkezi hiç tanımıyordur. İkisi de aşağıdaki "Takılırsa
+nereye bakılır" bölümünde.
+
+### 3. Kurulumu doğrulayın
+
+Giriş yaptıktan sonra **KM Cihaz Eşle** ekranını açın (izin:
+`installations.view`). **Merkezden gelenler** kartında şunlar yazar:
+
+- **Kadro revizyonu** ve içeriği (kaç kullanıcı, kaç rol),
+- **son kadro tazeleme** anı,
+- merkezden alınan **kurulum paketinin revizyonu** — dağıtılan ayar ve sırlar
+  (ADR 0025); "hiç alınmamış" yazıyorsa merkez bu kuruluma paket göndermemiştir,
+- **Şimdi tazele** düğmesi — kadroyu ve kurulum paketini beklemeden çeker; o
+  turda **kaç ayar ve kaç sırrın yazıldığını** da söyler (değişmeyene
+  dokunulmaz, sayı yalnız yazılanları gösterir).
+
+Aynı ekrandaki **Kurulumlar** listesinde yeni makinenin satırı "Etkin" rozetiyle
+görünür. Görünmüyorsa eşleme tamamlanmamıştır.
+
+### Veri dizini — nerede durur
+
+Uygulamanın yazdığı her şey (veritabanı, kasa anahtarı, kadro önbelleği,
+yedekler, ses kitaplığı) **program klasöründen ayrı** bir yerde durur; program
+klasörü salt okunurdur (ADR 0023).
+
+| Platform | Veri dizini |
+|---|---|
+| Windows | `%APPDATA%\Kontrol Merkezi\` |
+| macOS | `~/Library/Application Support/Kontrol Merkezi/` |
+| Linux | `~/.local/share/kontrol-merkezi/` (`XDG_DATA_HOME` ezerse orası) |
+| Depodan çalışırken | `<depo kökü>/data/` — ölçüt kökte `.git` bulunmasıdır |
+
+`KM_DATA_DIR` ortam değişkeni **hepsini ezer.** Uygulamayı kaldırmak veri
+dizinini silmez; **yedeklenecek olan burasıdır.**
+
+**Kabuğun tanılama dosyaları BAŞKA bir klasördedir** ve bu ayrım en çok vakit
+kaybettiren şeydir: kabuk (Tauri) kendi klasörünü *paket kimliğiyle* açar,
+çekirdek (Python) ise ürün adıyla.
+
+| Platform | Kabuk tanılama klasörü |
+|---|---|
+| Windows | `%APPDATA%\com.benimdunyam.kontrolmerkezi\` |
+| macOS | `~/Library/Application Support/com.benimdunyam.kontrolmerkezi/` |
+| Linux | `~/.local/share/com.benimdunyam.kontrolmerkezi/` |
+
+İçinde iki dosya vardır:
+
+| Dosya | Ne yazar |
+|---|---|
+| `kabuk-acilis.log` | kabuğun kararları: çekirdek kökü nerede bulundu, hangi Python seçildi, çekirdek başlatılabildi mi |
+| `cekirdek-cikti.log` | çekirdeğin ham çıktısı: import hatası, eksik kütüphane, açılışta patlayan her şey |
+
+### Takılırsa nereye bakılır
+
+**1. `/health` künyesi — hangi kod çalışıyor.** Çekirdek ayaktaysa yanıt verir:
+
+```bash
+curl http://127.0.0.1:8787/health          # macOS / Linux
+```
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/health   # Windows
+```
+
+Yanıtta `build.commit`, `build.version`, `build.builtAt` ve `build.source`
+bulunur. `source` **`paket`** ise kurulu uygulama, **`depo`** ise depo
+klasöründen çalışan bir kopya konuşuyordur — "düzelttim ama düzelmedi"
+tartışmasını bitiren alan budur. `modules.problems` yüklenemeyen modülleri
+sayar; çekirdek onlarsız da ayağa kalkar (K7).
+
+Yanıt hiç gelmiyorsa çekirdek başlamamıştır → `cekirdek-cikti.log`.
+
+**2. Belirtiye göre:**
+
+| Belirti | Bakılacak yer / yapılacak |
+|---|---|
+| "Çekirdeğe ulaşılamadı" | `kabuk-acilis.log` (kök ve Python seçimi), sonra `cekirdek-cikti.log` |
+| Eşleme ekranı hiç gelmiyor, PIN'ler çalışmıyor | kurulum merkezi tanımıyor ya da kimlik anahtarı ayrışmış olabilir; **KM Cihaz Eşle** ekranı hangisi olduğunu ve adımları yazar |
+| "Kod geçersiz" | kod kullanılmış ya da süresi dolmuş — yeni kod üretin |
+| "Çok fazla deneme yapıldı" | beş yanlış koddan sonra 1 dakika beklenir |
+| Giriş yapılamıyor, veriler "kaybolmuş" gibi | veri dizini beklenen yerde olmayabilir: `KM_DATA_DIR` tanımlı kalmış olabilir ya da **depo içinde paket derlemesi** yapılmıştır (aşağıdaki "Depo içinde derleme" uyarısı) |
+| Kurulum merkezde iptal edilmiş | kurulum bir sonraki tazelemede kendi eşlemesini düşürür ve eşleme ekranı geri gelir; yeni kodla yeniden eşlenir |
+| Çekirdek kaynağı bulunamadı | `KM_ROOT` ortam değişkeniyle kök elle gösterilir |
+
+**3. Kurulum kendini onarabilir.** Merkezle anahtarı uyuşmayan ya da iptal
+edilmiş bir kurulumda kimse giriş yapamaz — dolayısıyla oturum isteyen hiçbir
+düğmeye ulaşılamaz. Bu kilidi açan uç oturum istemez:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/pairing/reset
+```
+
+Yalnız **bu makinenin** eşleme durumunu düşürür: yerel kullanıcılara, kasadaki
+öteki sırlara ve özel anahtara dokunmaz. Yeniden eşlenmek merkezden yeni bir kod
+ister ve onu ancak yetkili biri üretir.
+
+### Depo içinde derleme — kurulumu bozan tuzak
+
+`scripts/build-release.sh` depo klasöründe koşturulduğunda `backend/`,
+`modules/`, `config/` ve `runtime/` klasörlerinin birer **kopyası**
+`apps/desktop/src-tauri/target/release/` altına düşer (Tauri kaynakları ikilinin
+yanına koyar). Bu kopya `.git` taşımadığı için kabuk oradan başlatılan çekirdeği
+**kurulu uygulama** sanır ve veri dizini olarak sistem klasörünü seçer — deponun
+`data/` klasörünü değil. Belirti: "giriş yapılamadı", kullanıcılar yok olmuş
+gibi görünür.
+
+İki taraf da kapatıldı: `scripts/launch-desktop.sh` artık `KM_ROOT`u açıkça
+verir, `scripts/build-release.sh` de derleme bittikten sonra bu kalıntıları
+temizler. Elle derleme yapıyorsanız (`cargo tauri build --config
+tauri.release.json`) kalıntıları kendiniz silin:
+
+```bash
+rm -rf apps/desktop/src-tauri/target/release/{backend,modules,config,docs,runtime}
+```
+
+---
+
 ## Windows kurulumu
 
 ### Derleme makinesinde gerekenler

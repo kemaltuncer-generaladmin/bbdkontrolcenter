@@ -217,15 +217,38 @@ async def _prepare_login(request: Request) -> None:
     # Denetim kuyruğunun deposu (ADR 0021 §5) — etkisiz, ikinci kez bağlamaz.
     sync.attach_store(store)
 
+    # HER GİRİŞTE TAZELEME DENENİR — yalnız önbellek eskidiğinde değil.
+    #
+    # Eskiden senkron SADECE `online_only` dalında koşuyordu; `max_cache_age_hours: 0`
+    # (sınırsız) ayarıyla o dal hiç açılmıyor ve eşlenmiş bir kurulum kadroyu
+    # BİR DAHA ASLA tazelemiyordu. İki sonucu vardı, ikisi de sessizdi:
+    #   · merkezde açılan kullanıcı o makineye hiç ulaşmıyordu,
+    #   · merkezden İPTAL EDİLMİŞ bir kurulum bunu hiç öğrenmiyordu ve
+    #     bayat kadroyla sonsuza dek kilitli kalıyordu (17.08.2026, MacBook).
+    #
+    # `revision` değişmemişse merkez veri göndermez (ADR 0021 §2), yani bu deneme
+    # normalde bir tur ve birkaç yüz bayttır.
+    #
+    # BAŞARISIZLIK GİRİŞİ DÜŞÜRMEZ (K7): ağ yoksa eldeki önbellekle devam edilir.
+    # Tek istisna aşağıdaki `online_only` dalıdır — orada tazelik zorunludur.
+    sonuc = await sync.sync()
+
+    # Kurulum merkezde iptal edilmişse `sync` eşlemeyi düşürür. Sessiz geçilmez:
+    # kullanıcı neden giremediğini bilmeli, yoksa "PIN yanlış" sanır.
+    if sonuc.get("reset"):
+        raise HTTPException(
+            status_code=409,
+            detail="Bu kurulum merkezde iptal edilmiş. Eşleme sıfırlandı; "
+                   "uygulamayı yeniden başlatıp merkezden aldığınız kodla "
+                   "yeniden eşleyin.",
+        )
+
     payload = sync.cache.read()
     if payload is None:
         return
 
-    if sync.login_policy() == "online_only":
-        result = await sync.sync()
-        if not result.get("synced"):
-            raise HTTPException(status_code=503, detail=STALE_ROSTER_MESSAGE)
-        payload = sync.cache.read() or payload
+    if sync.login_policy() == "online_only" and not sonuc.get("synced"):
+        raise HTTPException(status_code=503, detail=STALE_ROSTER_MESSAGE)
 
     # ANAHTAR UYUŞMAZSA KADRO YANSITILMAZ ve eşleme KENDİLİĞİNDEN sıfırlanır.
     #

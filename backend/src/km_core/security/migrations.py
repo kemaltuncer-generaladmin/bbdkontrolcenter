@@ -24,16 +24,25 @@ Her göç, çalıştırılmadan önce veritabanının GERÇEK hâline bakar: yen
 sütun `CORE_SCHEMA` ile zaten gelmiştir ve o adım atlanır. Böylece aynı kod hem
 yeni hem eski veritabanında çalışır.
 
-Dosyada şema göçü olmayan tek bir göç var: `0008_restore_bld_staff_core` bir
-YETKİ göçüdür. Burada durmasının sebebi `0003`ünkiyle aynı: izin atamaları
-veritabanında yaşar, kaynak dosyayı değiştirmek onları tek başına geri
-getirmez ve açılışta koşan tek yol budur.
+Dosyada şema göçü olmayan İKİ göç var: `0008_restore_bld_staff_core` ve
+`0009_bld_staff_bbd_ayrimi` birer YETKİ göçüdür. Burada durmalarının sebebi
+`0003`ünkiyle aynı: izin atamaları veritabanında yaşar, kaynak dosyayı
+değiştirmek onları tek başına geri getirmez/götürmez ve açılışta koşan tek yol
+budur.
 
 `0007_narrow_bld_staff_core` BU LİSTEDE ARTIK YOK. Daraltma kararı 17.08.2026'da
 REDDEDİLDİ ve göç kaldırıldı; ama koştuğu makinelerde `schema_migrations`
 satırı DURUYOR — uygulanmış bir göçün kaydı silinmez, tarih öyle. Sildiği
-dokuz satırı `0008` geri koyar. GERİ ALMA DAİMA EKLEYEREK YAPILIR: bu dosyada
-satır silen bir göç bir daha yazılmaz.
+dokuz satırı `0008` geri koyar.
+
+**"EKLEYEREK GERİ AL" KURALININ SINIRI.** Kural bir VERİ kuralıdır: bir kaydın
+(öğrenci, satış, fiş) geri alınması ters kayıtla yapılır, satır silinmez.
+`0009` bu kuralın kapsamında DEĞİLDİR ve bilerek satır siler. Sebep: istenen
+şey bir kaydın geri alınması değil, bir YETKİNİN daraltılmasıdır; yetkinin
+karşılığı `role_permissions` satırının varlığıdır ve "yetkiyi ekleyerek geri
+almak" diye bir şey yoktur. `0007` bunun için reddedilmedi — o, kararın
+KENDİSİ reddedildiği için kaldırıldı. Silinen her satır denetim izine yazılır;
+göçün bıraktığı iz, silinen satırın yerini tutan kayıttır.
 """
 
 from __future__ import annotations
@@ -301,6 +310,85 @@ SELECT 'bld_staff', geri.column1 FROM (VALUES {liste}) AS geri;
 """
 
 
+# `bld_staff`tan ALINAN on dört BBD anahtarı — 17.08.2026 kullanıcı kararı:
+# "bld personeli bbd ekranlarını da göremesin."
+#
+# DONMUŞ LİSTEDİR: manifestlerden türetilmez. Bu liste bir katalog değil, bir
+# KARARIN kaydıdır — o gün `bld_staff`ta duran BBD anahtarları bunlardır.
+# Türetilseydi, yarın `bbd_*` altına eklenen bir anahtar bu göçün geriye dönük
+# olarak "onu da almış" görünmesine yol açardı; üstelik manifest zaten
+# daraltıldığı için türetme bugün BOŞ küme döndürürdü ve göç hiçbir şey yapmazdı.
+#
+# `grant_defaults()` biçimi yazılıdır. Anahtarların hiçbiri kapsamlı değildir,
+# bu yüzden satırlar sade anahtardır (`bbd_students.view`). Elle yazılmış
+# kapsamlı bir satır (`bbd_students.view:bbd` gibi) hiç yazılmamıştır ve
+# yazılsaydı da yetki VERMEZDİ: `has_permission` kapsamsız bir izni yalnız sade
+# anahtarla karşılar (bkz. `identity.py`).
+BLD_STAFF_BBD_REVOKED = (
+    "bbd_bulk_sale.manage",
+    "bbd_bulk_sale.view",
+    "bbd_canteen_backups.view",
+    "bbd_canteen_products.manage",
+    "bbd_canteen_products.view",
+    "bbd_canteen_reports.view",
+    "bbd_class_schedule.view",
+    "bbd_lunch.manage",
+    "bbd_lunch.view",
+    "bbd_payment_request.view",
+    "bbd_sms.view",
+    "bbd_students.manage",
+    "bbd_students.qr",
+    "bbd_students.view",
+)
+
+
+async def _revoke_bld_staff_bbd(store: Store) -> str:
+    """BLD personelinin BBD ekranlarını KAPATIR — 17.08.2026 kullanıcı kararı.
+
+    Manifestler aynı gün daraltıldı, ama daraltma KURULU sistemde tek başına
+    yürürlüğe girmez: `grant_defaults()` yalnız ekler ve bir kez açılmış her
+    makinede on dört satır `role_permissions` içinde durmayı sürdürür. Ekran
+    menüde kalır, `/api/bbd_*` uçları açık kalır — K9'un iki kapısı da açık.
+    Kapatan tek şey bu göçtür.
+
+    SATIR SİLER; dosyadaki tek silen göç budur ve gerekçesi başlıkta yazılıdır.
+    Daraltmanın karşılığı satırın yokluğudur: eklenerek geri alınamaz.
+
+    YALNIZ `bld_staff` OKUNUR. `admin`, `bbd_staff`, `org_staff` ve `accountant`
+    aynı anahtarların çoğunu taşır; `role_id` süzgeci her ifadede vardır ve
+    tekrarı bilinçlidir — süzgeçsiz tek bir `DELETE`, BBD personelini kendi
+    ekranından etmek demekti.
+
+    İKİ KEZ KOŞSA DA BOZMAZ. `DELETE` zaten yok olanı silmez; denetim izi
+    `WHERE EXISTS` ile süzülür, yani GERÇEKTEN silinen satır kadar `roles.manage`
+    kaydı düşer. Yönetici satırları elle kaldırmışsa göç sessiz kalır ve
+    "on dört yetki alındı" diye olmamış bir olayı yazmaz.
+
+    SIRA ÖNEMLİ: iz önce yazılır. `DELETE` önce koşsaydı `WHERE EXISTS`
+    süzgeci hiçbir satır bulamaz ve göç hiç iz bırakmadan on dört satırı
+    silerdi.
+
+    KULLANICI VE ROL SATIRINA DOKUNULMAZ. `bld_staff` rolü durur, kişilerin rol
+    atamaları durur; giden yalnızca rolün BBD anahtarlarıdır.
+    """
+    del store  # bu göç veritabanının hâline SQL içinde bakar, Python'da değil
+    degerler = ", ".join(f"('{entry}')" for entry in BLD_STAFF_BBD_REVOKED)
+    liste = ", ".join(f"'{entry}'" for entry in BLD_STAFF_BBD_REVOKED)
+    return f"""
+INSERT INTO audit_log (at, user_id, action, scope, result, detail)
+SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'), NULL, 'roles.manage', NULL, 'ok',
+       '0009_bld_staff_bbd_ayrimi: ' || alinan.column1 || ' -> bld_staff geri alındı'
+FROM (VALUES {degerler}) AS alinan
+WHERE EXISTS (
+    SELECT 1 FROM role_permissions
+    WHERE role_id = 'bld_staff' AND permission = alinan.column1
+);
+
+DELETE FROM role_permissions
+WHERE role_id = 'bld_staff' AND permission IN ({liste});
+"""
+
+
 CORE_MIGRATIONS: list[tuple[str, Callable[[Store], Awaitable[str]]]] = [
     ("0001_password_columns", _password_columns),
     ("0002_users_revision", _users_revision),
@@ -311,6 +399,9 @@ CORE_MIGRATIONS: list[tuple[str, Callable[[Store], Awaitable[str]]]] = [
     # `0007_narrow_bld_staff_core` REDDEDİLDİ ve kaldırıldı; numarası da
     # kullanılmaz. Koştuğu makinelerde `schema_migrations` kaydı durur.
     ("0008_restore_bld_staff_core", _restore_bld_staff_core),
+    # `0009` `0008`in AKSİ DEĞİLDİR: `0008` çekirdek satırlarını (sunucu,
+    # veritabanı, rehber) geri verir, `0009` BBD ekranlarını alır. Kesişmezler.
+    ("0009_bld_staff_bbd_ayrimi", _revoke_bld_staff_bbd),
 ]
 
 

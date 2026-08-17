@@ -51,17 +51,27 @@ ui:
     requires: [bbd_students.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık.
+# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık — BLD personeli
+# hariç, bkz. aşağıdaki daraltma.
+#
+# YETKİ DARALTMASI — 17.08.2026 kullanıcı kararı: "BLD personeli BBD ekranlarını
+# da göremesin." `bld_staff` aşağıdaki anahtarların hiçbirinde YOKTUR; rolün BBD
+# tarafında işi kalmadı. `admin`, `bbd_staff`, `org_staff` ve `accountant`
+# DEĞİŞMEDİ.
+#
+# Manifesti daraltmak KURULU sistemde tek başına yetmez (`grant_defaults` yalnız
+# ekler): var olan satırları `0009_bld_staff_bbd_ayrimi` göçü kaldırır.
+# Bkz. docs/permissions.md → "Manifest'i daraltmak tek başına yetmez".
 permissions:
   - key: bbd_students.view
     description: "Öğrenci listesini ve bilgilerini görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
   - key: bbd_students.manage
     description: "Öğrenci ekleme ve bilgilerini düzenleme (kantine yazar)."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
   - key: bbd_students.qr
     description: "Öğrencinin kantin kart QR'ını ve toplu kart PDF'ini üretme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
 dependencies:

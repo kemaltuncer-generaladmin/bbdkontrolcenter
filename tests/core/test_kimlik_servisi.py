@@ -105,13 +105,24 @@ def test_saglik_kimlik_istemez(client: TestClient) -> None:
 # ------------------------------------------------------- yönetim token'ı
 
 
-def test_yonetim_tokeni_tanimsizsa_uc_503(tmp_path: Path) -> None:
-    """TANIMSIZ TOKEN AÇIK KAPI DEĞİLDİR. Uç kapalı olduğunu söyler."""
+def test_yonetim_tokeni_tanimsizsa_uc_ACIK_KALMAZ(tmp_path: Path) -> None:
+    """TANIMSIZ TOKEN AÇIK KAPI DEĞİLDİR — ama tek kapı da değildir.
+
+    Yönetim uçları artık İKİ yoldan korunuyor: olağan yol eşlenmiş bir makine
+    + `installations.manage` izni olan kişi, acil yol yönetim token'ı. Amaç,
+    kod üretmenin tek bir makineye ya da dağıtılan bir sırra bağlı kalmaması.
+
+    Token tanımsızken acil yol kapalıdır ve istek kimliksiz geldiği için
+    OLAĞAN yolun ilk kapısına (kurulum token'ı) takılır: 401. Eskiden 503
+    dönüyordu; değişen şey kapının KAPALI olması değil, hangi kapının
+    konuştuğu.
+    """
     app = create_app(_settings(tmp_path, admin_token=""))
     with TestClient(app, raise_server_exceptions=False) as test_client:
         cevap = test_client.post("/installations/pair-code", json={})
-        assert cevap.status_code == 503
-        assert "tanımsız" in cevap.json()["error"]["message"]
+        assert cevap.status_code == 401
+        # Kapı gerçekten kapalı: kod üretilmedi.
+        assert "code" not in cevap.json()
 
 
 def test_yanlis_yonetim_tokeni_reddedilir(client: TestClient) -> None:

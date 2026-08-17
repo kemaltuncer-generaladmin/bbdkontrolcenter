@@ -42,13 +42,21 @@ ui:
     order: 50
     requires: [bbd_canteen_products.view]
 
+# YETKİ DARALTMASI — 17.08.2026 kullanıcı kararı: "BLD personeli BBD ekranlarını
+# da göremesin." `bld_staff` aşağıdaki anahtarların hiçbirinde YOKTUR; rolün BBD
+# tarafında işi kalmadı. `admin`, `bbd_staff`, `org_staff` ve `accountant`
+# DEĞİŞMEDİ.
+#
+# Manifesti daraltmak KURULU sistemde tek başına yetmez (`grant_defaults` yalnız
+# ekler): var olan satırları `0009_bld_staff_bbd_ayrimi` göçü kaldırır.
+# Bkz. docs/permissions.md → "Manifest'i daraltmak tek başına yetmez".
 permissions:
   - key: bbd_canteen_products.view
     description: "Ürün listesini ve değişiklik günlüğünü görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
   - key: bbd_canteen_products.manage
     description: "Ürün ekleme, düzenleme, görsel yükleme ve stok işlemleri."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
   - key: bbd_canteen_products.deactivate
     description: "Ürünü pasifleştirme — kasada satışa çıkmaz. Veri silinmez."
     default_roles: [admin, bbd_staff]

@@ -276,8 +276,14 @@ async def test_paket_fiyati_sifir_reddedilir() -> None:
 
 async def test_kismi_guncellemede_yalniz_degisen_alan_gider() -> None:
     # Tam gövde göndermek, dokunulmamış alanları yanlışlıkla ezmek olurdu.
-    service, api, _, _ = _service()
-    sonuc = await service.update_day(TARIH, fields={"package_price_kurus": 19000},
+    #
+    # GÜN GELECEKTE OLMALI: sabit `TARIH` takvim ilerledikçe geçmişte kalıyor
+    # ve yayınlanmış geçmiş günün fiyat kilidi (`MenuService._price_lock`)
+    # devreye girip testi konusuyla ilgisiz bir sebepten kırmızıya çeviriyor.
+    # Kilit doğru çalışıyor; kırılan, tarihi çakılı bırakan testti.
+    gun = _yarin()
+    service, api, _, _ = _service(day={**DAY, "date": gun})
+    sonuc = await service.update_day(gun, fields={"package_price_kurus": 19000},
                                      actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is True
     gonderilen = api.used("update_menu_day")[0]

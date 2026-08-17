@@ -86,6 +86,31 @@
 .ce .ce-sub { font-size: 11.5px; color: var(--soft); }
 .ce .ce-never { color: var(--soft); font-style: italic; }
 
+/* -------------------------------------------------------------- yönerge */
+
+/* Bozuk kurulumun yapılacaklar listesi. NUMARA GÖRÜNÜR KALIR: adımlar
+   birbirinin önkoşulu ve "önce hangisi" sorusu madde imiyle yanıtlanamaz.
+   Tarayıcı sıfırlaması `list-style`ı silmiş olabileceği için burada yeniden
+   verilir. */
+.ce .ce-steps {
+  margin: 0;
+  padding-left: 22px;
+  list-style: decimal;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ce .ce-step {
+  max-width: 70ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+/* Tazeleme sonucu düğmenin altında durur; ızgaranın tamamını kaplar. */
+.ce .ce-facts > .ce-note { grid-column: 1 / -1; }
+
 /* ------------------------------------------------------------ eşleme kodu */
 
 .ce .ce-code-row {

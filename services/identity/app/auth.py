@@ -87,6 +87,34 @@ async def require_admin(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Yönetim token'ı geçersiz.")
 
 
+async def require_management(request: Request) -> CurrentUser | None:
+    """Yönetim kapısı — İKİ YOL, biri olağan biri acil.
+
+    OLAĞAN YOL: eşlenmiş bir makine + `installations.manage` izni olan kişi.
+    Böylece kod üretmek, kurulumları listelemek ve iptal etmek **tek bir
+    makineye ya da dağıtılan bir sırra bağlı kalmaz**; eşlenmiş her kurulumda
+    yetkili biri yapabilir. Denetim izinde de KİŞİ görünür — yönetim token'ı
+    kimin yaptığını hiç söylemiyordu.
+
+    ACİL YOL (break-glass): `KM_IDENTITY_ADMIN_TOKEN`. Kaldırılamaz, çünkü
+    tavuk-yumurta sorunu gerçektir: HİÇBİR kurulum eşlenmemişken ilk kodu
+    üretecek bir kurulum da yoktur. Bu yol yalnız kuruluşta ve kurtarmada
+    kullanılır; anahtar tek bir yerde (yönetimin kasasında) durur ve
+    PAKETE GÖMÜLMEZ — gömülseydi paketi eline geçiren herkes sınırsız cihaz
+    eşleyip kadronun tamamını çekebilirdi.
+
+    Dönüş: acil yolda `None` (kişi yok), olağan yolda kişinin kendisi.
+    """
+    settings = _settings(request)
+    sunulan = bearer(request)
+    if settings.admin_token and constant_time_equals(sunulan, settings.admin_token):
+        return None
+
+    # Kurulum token'ı doğrulanır; ardından kişinin izni sorulur (K9 — çift kapı).
+    await require_installation(request)
+    return await require_actor(request, "installations.manage")
+
+
 async def require_installation(request: Request) -> Installation:
     """Kurulum token'ını doğrular ve `last_seen` alanını tazeler.
 

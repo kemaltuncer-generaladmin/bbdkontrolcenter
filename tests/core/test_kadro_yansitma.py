@@ -82,6 +82,18 @@ class SahteIstemci:
         self._guard()
         return {"accepted": len(entries)}
 
+    async def provisioning(self, token: str, *,
+                           known_revision: int | None = None) -> dict[str, Any]:
+        """ADR 0025 — `sync()` kadronun ardından kurulum paketini de sorar.
+
+        BOŞ PAKET döner: bu dosya yansıtmayı ölçüyor, paketin içeriği onu
+        ilgilendirmiyor. Paketin kendi davranışı `test_kimlik_kurulum_paketi.py`
+        içinde sınanır.
+        """
+        self.calls.append("provisioning")
+        self._guard()
+        return {"revision": 1, "changed": True, "secrets": {}, "settings": {}}
+
 
 def kadro(*, lookup: str, revision: int = 7, status: str = "active",
           users: list[dict[str, Any]] | None = None) -> dict[str, Any]:

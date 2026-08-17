@@ -2,6 +2,9 @@
 
     GET  /health
     GET  /roster                      [kurulum]  → {revision, users, roles, grants}
+    GET  /provisioning                [kurulum]  → {revision, secrets, settings}
+    GET  /provisioning/summary        [yönetim]  → anahtar ADLARI, değer YOK
+    PUT  /provisioning                [yönetim]  → sır ve ayar yükler
     POST /roster/import               [yönetim]  → var olan kurulumun kadrosunu taşır
     POST /users                       [kurulum + kişi]
     PUT  /users/{id}                  [kurulum + kişi]
@@ -40,6 +43,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from km_core.security.identity import (
+    CurrentUser,
     Identity,
     IdentityError,
     PasswordError,
@@ -51,10 +55,16 @@ from km_core.security.permissions import CORE_PERMISSIONS
 from km_core.store.db import Store
 
 from . import installations as inst
-from . import locks, roster, roster_import
-from .auth import Installation, require_actor, require_admin, require_installation
+from . import locks, provisioning, roster, roster_import
+from .auth import (
+    Installation,
+    require_actor,
+    require_installation,
+    require_management,
+)
 from .schema import apply_service_migrations
 from .settings import Settings
+from .vault import VaultCorrupt, VaultUnavailable, build_cipher
 
 log = structlog.get_logger("identity.http")
 
@@ -146,6 +156,23 @@ class LockRequest(_Body):
     resource: str = Field(min_length=1, max_length=200)
     holder_name: str = Field(alias="holderName", min_length=1, max_length=200)
     ttl_seconds: int | None = Field(default=None, alias="ttlSeconds", ge=1, le=3600)
+
+
+class ProvisioningRequest(_Body):
+    """Merkeze yüklenen kurulum paketi (ADR 0025 §3).
+
+    İKİ SÖZLÜK AYRI DURUR ve birleştirilemez: `secrets` kurulumun KASASINA,
+    `settings` çekirdek AYAR DEPOSUNA yazılır. Tek sözlükte gelselerdi
+    kurulumun hangisini nereye koyacağını anahtarın adından tahmin etmesi
+    gerekirdi — bir gün `store_api.read_only` gibi bir ad yanlış tarafa düşerdi.
+
+    Sır DEĞERİ metindir: kasa (`km_platform/secrets/vault.py`) metin saklar.
+    Ayar değeri her JSON tipini alabilir — `read_only: false` bir mantıksal
+    değerdir ve metne çevrilirse `"false"` ile `False` ayırt edilemez.
+    """
+
+    secrets: dict[str, str] = Field(default_factory=dict)
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 @contextmanager
@@ -269,6 +296,127 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log.info("kadro gönderildi", installation=installation.id, revision=current)
         return {**payload, "changed": True, "pepperFingerprint": izi}
 
+    # ------------------------------------------------------ kurulum paketi
+    #
+    # ADR 0025 — sırlar ve modül ayarları kurulumlara dağıtılır. ADR 0021 §6
+    # ("sırlar bu sürümde merkeze taşınmaz") bu üç uçla tersine çevrildi.
+
+    def _cipher(request: Request) -> Any:
+        """Kasa şifreleyicisi. ANAHTAR YOKSA UÇ KAPALIDIR (503).
+
+        Sessizce düz metne düşmek, sunucu parolalarını bir gün açıkta
+        bırakırdı. 503 "bu uç şu an kapalı" der ve nedeni cümlenin içindedir.
+        """
+        try:
+            return build_cipher(request.app.state.settings.vault_key)
+        except VaultUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.get("/provisioning")
+    async def get_provisioning(
+        request: Request,
+        known_revision: int | None = None,
+        installation: Installation = Depends(require_installation),
+    ) -> dict[str, Any]:
+        """Kurulum paketi: dağıtılan sırlar ve modül ayarları.
+
+        **YALNIZ `require_installation`.** Eşlenmiş ve İPTAL EDİLMEMİŞ bir
+        makine çeker; bir kişinin izni SORULMAZ ve bu K9'a aykırı değildir.
+        Paket makinenin kendi kurulumudur, bir kişinin işlemi değil: sidecar
+        açılışta — henüz kimse giriş yapmamışken — geçitleri kurabilmek
+        zorundadır. İzne bağlansaydı, kimsenin giremediği taze bir kurulumda
+        paket hiç çekilemezdi.
+        İptal edilen kurulum buraya HİÇ GİREMEZ: `require_installation` yalnız
+        `status = 'active'` satırları eşleştirir ve iptal edilmiş token 401 alır.
+
+        `known_revision` gönderilir ve değişmemişse SIR HİÇ TAŞINMAZ — kadroyla
+        aynı desen (ADR 0021 §2). Faydası burada daha büyük: her senkron
+        turunda 17 sırrı ağa çıkarmanın hiçbir karşılığı yok.
+        """
+        store: Store = request.app.state.store
+        cipher = _cipher(request)
+        current = await provisioning.revision(store)
+        if known_revision is not None and int(known_revision) == current:
+            return {"revision": current, "changed": False}
+
+        try:
+            payload = await provisioning.bundle(store, cipher)
+        except VaultCorrupt as error:
+            # Anahtar değişmiş: yarım paket göndermektense uç kapanır. Yarım
+            # paket, geçidi çalışmayan bir kuruluma "her şey yolunda" dedirtirdi.
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+        # HER DAĞITIM İZE DÜŞER (ADR 0025 §5): hangi kurulum, ne zaman, kaç
+        # anahtar. Değer yazılmaz. "Değişmedi" yanıtı dağıtım değildir ve iz
+        # bırakmaz — bırakaydı, her senkron turu izi doldururdu.
+        await provisioning.audit(
+            store,
+            action="provisioning.pull",
+            result="ok",
+            installation_id=installation.id,
+            detail=f"{len(payload['secrets'])} sır, {len(payload['settings'])} ayar "
+                   f"(revizyon {payload['revision']})",
+        )
+        log.info("kurulum paketi gönderildi", installation=installation.id,
+                 revision=payload["revision"])
+        return {**payload, "changed": True}
+
+    @app.get("/provisioning/summary", dependencies=[Depends(require_management)])
+    async def provisioning_summary(request: Request) -> dict[str, Any]:
+        """Merkezde ne var? Anahtar ADLARI, kim yazdı, ne zaman — DEĞER YOK.
+
+        Kasa anahtarı İSTEMEZ: burada çözülecek bir şey yoktur. Anahtar
+        kaybolmuş bir merkezde bile "hangi sırlar dağıtılıyordu" sorusunun
+        cevabı okunabilir kalır.
+        """
+        return await provisioning.summary(request.app.state.store)
+
+    @app.put("/provisioning")
+    async def put_provisioning(
+        request: Request,
+        body: ProvisioningRequest,
+        actor: CurrentUser | None = Depends(require_management),
+    ) -> dict[str, Any]:
+        """Paketi yükler — `scripts/push-secrets.py` bu ucu çağırır.
+
+        YÖNETİM KAPISI (iki yol): eşlenmiş makine + `installations.manage`
+        izinli kişi, ya da acil yol olarak `KM_IDENTITY_ADMIN_TOKEN`. Acil
+        yolda arkada bir KİŞİ yoktur ve denetim satırı `user_id` alanını boş
+        bırakır; hangi yoldan gelindiği izde görünür.
+
+        YALNIZ EKLER VE GÜNCELLER. Gönderilmeyen anahtar dokunulmadan kalır.
+        """
+        store: Store = request.app.state.store
+        cipher = _cipher(request)
+        if not body.secrets and not body.settings:
+            raise HTTPException(status_code=400, detail="Gönderilecek anahtar yok.")
+
+        try:
+            result = await provisioning.put_items(
+                store, cipher,
+                secrets=dict(body.secrets),
+                settings=dict(body.settings),
+                actor_id=actor.id if actor else None,
+            )
+        except provisioning.ForbiddenKey as error:
+            # Reddedilen anahtar da ize düşer: "gönderdim ama merkezde yok"
+            # sorusunun cevabı bir yerde durmalı.
+            await provisioning.audit(
+                store, action="provisioning.push", result="denied",
+                user_id=actor.id if actor else None, detail=str(error),
+            )
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except VaultCorrupt as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+        await provisioning.audit(
+            store, action="provisioning.push", result="ok",
+            user_id=actor.id if actor else None,
+            detail=(", ".join(result["keys"]) or "değişen anahtar yok")
+                   + f" (revizyon {result['revision']})",
+        )
+        return result
+
     # ---------------------------------------------------------- kullanıcılar
     #
     # YAZMA YALNIZ ÇEVRİMİÇİDİR (ADR 0021 §3): kurulum bunları yerelde
@@ -372,7 +520,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ----------------------------------------------------------- kurulumlar
 
-    @app.post("/installations/pair-code", dependencies=[Depends(require_admin)])
+    @app.post("/installations/pair-code", dependencies=[Depends(require_management)])
     async def pair_code(request: Request, body: PairCodeRequest) -> dict[str, Any]:
         store: Store = request.app.state.store
         return await inst.create_pair_code(
@@ -421,12 +569,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # kapıdan da sunmak olurdu.
         return {**result, "pepper": request.app.state.settings.pepper}
 
-    @app.get("/installations", dependencies=[Depends(require_admin)])
+    @app.get("/installations", dependencies=[Depends(require_management)])
     async def list_installations(request: Request) -> dict[str, Any]:
         return {"installations": await inst.listing(request.app.state.store)}
 
     @app.post("/installations/{installation_id}/revoke",
-              dependencies=[Depends(require_admin)])
+              dependencies=[Depends(require_management)])
     async def revoke_installation(request: Request, installation_id: str) -> dict[str, Any]:
         row = await inst.revoke(request.app.state.store, installation_id)
         if row is None:

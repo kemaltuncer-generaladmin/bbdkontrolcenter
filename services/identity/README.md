@@ -81,6 +81,7 @@ Kimlik istemez; kadro sayısını değil yalnız revizyon numarasını verir.
 |---|---|---|---|
 | `KM_IDENTITY_PEPPER` | **evet** | — | `secret_lookup` HMAC anahtarı |
 | `KM_IDENTITY_ADMIN_TOKEN` | **evet** | — | yönetim uçlarının anahtarı |
+| `KM_IDENTITY_VAULT_KEY` | hayır | — | dağıtılan sırların şifresi (ADR 0025); yoksa kurulum paketi uçları **503** |
 | `KM_IDENTITY_DB_PATH` | hayır | `/data/identity.sqlite` | kalıcı diskte olmalı |
 | `KM_IDENTITY_BOOTSTRAP_PIN` | hayır | üretilir | ilk yöneticinin PIN'i |
 | `KM_IDENTITY_PAIR_CODE_TTL_SECONDS` | hayır | `600` | eşleme kodu ömrü |
@@ -95,6 +96,9 @@ Değer üretmek için:
 ```bash
 openssl rand -base64 32     # KM_IDENTITY_PEPPER
 openssl rand -base64 32     # KM_IDENTITY_ADMIN_TOKEN
+
+# KM_IDENTITY_VAULT_KEY — Fernet anahtarıdır, rastgele metin DEĞİL:
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 ### `KM_IDENTITY_PEPPER` — bir kez belirlenir, bir daha değişmez
@@ -113,6 +117,23 @@ Eşleme kodu üretimi, kurulum listesi ve iptal bu token'a bağlıdır. Token
 tanımsızken bu uçlar **503** döner ve `503` demek **açık kalmamak** demektir:
 "denetim yoksa serbest" davranışı, kurulum listesini ve kod üretimini internete
 açık bırakırdı.
+
+### `KM_IDENTITY_VAULT_KEY` — dağıtılan sırların kilidi
+
+ADR 0025 ile sırlar ve geçit ayarları merkezden kurulumlara dağıtılıyor.
+Değerler bu anahtarla şifrelenip saklanır; anahtar **veritabanında durmaz** —
+aynı dosyada hem kilit hem anahtar tutmanın karşılığı yok. `/data/identity.sqlite`
+yedeği sızarsa sırlar açılamaz.
+
+Tanımsızsa `GET /provisioning`, `GET /provisioning/summary` ve
+`PUT /provisioning` **503** döner ve servis **sessizce düz metin yazmaz**.
+Kimlik tarafı bundan etkilenmez: kadro, eşleme ve denetim çalışmaya devam eder.
+
+Fernet anahtarıdır — 32 baytın urlsafe-base64 kodu. Elle yazılmış bir parola bu
+biçimde değildir ve uç yine 503 der (loga "geçersiz biçimde" düşer).
+
+**Kaybedilirse dağıtılan paket açılamaz.** Çare, paketi bir kurulumdan yeniden
+yüklemektir: `scripts/push-secrets.py --uygula`.
 
 **Kontrol Merkezi'ndeki karşılığı `identity_sync.admin_token` kasa
 anahtarıdır.** "KM Cihaz Eşle" ekranı (`shell/core-panels/pairing/`) kodu
@@ -139,6 +160,9 @@ nedenini yazarak kapanır.
 | `POST /pair` | `{code, publicKey, machineName, platform, version}` → token | kod |
 | `GET /installations` | makine adı, platform, sürüm, son görülme, durum | yönetim |
 | `POST /installations/{id}/revoke` | token iptali | yönetim |
+| `GET /provisioning?known_revision=N` | kurulum paketi: dağıtılan sırlar + modül ayarları | kurulum |
+| `GET /provisioning/summary` | anahtar **adları**, kim yazdı, ne zaman — **değer yok** | yönetim |
+| `PUT /provisioning` | `{secrets, settings}` yükler — **yalnız ekler ve günceller** | yönetim |
 | `POST /locks` · `DELETE /locks/{id}` | TTL'li danışma kilidi | kurulum |
 
 **Yönetim** = `Authorization: Bearer <KM_IDENTITY_ADMIN_TOKEN>`
@@ -178,6 +202,30 @@ nedeniyle döner (`added`, `skipped`, `skips[]`). Bir şey eklendiyse kadro
 revizyonu artar.
 
 Gönderen taraf: `scripts/push-roster.py` (varsayılan **kuru prova**).
+
+### Kurulum paketi — `GET /provisioning` (ADR 0025)
+
+Eşlenen bir makinede kimlik çalışıyor ama BLD/BBD/mağaza geçitleri
+çalışmıyordu: `config/local.yaml` git dışıdır ve **pakete girmez**, kasadaki 17
+iş sırrı da o makinenin diskinde doğup orada kalır. Bu uç ikisini birden
+dağıtır.
+
+Kapı **yalnız `require_installation`**dır — bir kişinin izni sorulmaz, çünkü
+paket makinenin kendi kurulumudur ve sidecar geçitleri henüz kimse giriş
+yapmamışken kurmak zorundadır. **İptal edilen kurulum paket alamaz**: token
+401 alır.
+
+`known_revision` gönderilir; değişmemişse `{"changed": false}` döner ve
+**sırlar ağa hiç çıkmaz**. Paket revizyonu kadro revizyonundan ayrı sayaçtır.
+
+`identity_sync.*` ve `core.pin_pepper` **yazılamaz** (400): biri makineye
+özeldir, öteki zaten eşlemeyle gelir. Aynı yasak betikte ve kurulum tarafında
+da uygulanır.
+
+Her dağıtım denetim izine düşer (`provisioning.pull`, `installation_id` ile) ve
+her yükleme de (`provisioning.push`). **Değer yazılmaz**, yalnız anahtar adı.
+
+Gönderen taraf: `scripts/push-secrets.py` (varsayılan **kuru prova**).
 
 ---
 

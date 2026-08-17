@@ -19,7 +19,7 @@ Kodda rol adı sorulmaz, izin sorulur. `if role == "admin"` yasaktır.
 | id | Ad | Kapsam | Özet |
 |---|---|---|---|
 | `admin` | Admin | `*` | Tam yetki. Kullanıcı, rol, ayar, sır ve yıkıcı işlemler. |
-| `bld_staff` | BLD Personeli | `bld` | BLD sunucuları ve Laravel tabanlı BLD veritabanı. BLD'ye dair her şey — **tek istisna KDS cihaz ayarlarıdır** ([aşağıya](#kds-cihaz-ayarları-ayrı-anahtardadır)). |
+| `bld_staff` | BLD Personeli | `bld` | BLD sunucuları ve Laravel tabanlı BLD veritabanı. BLD'ye dair her şey — **tek istisna KDS cihaz ayarlarıdır** ([aşağıya](#kds-cihaz-ayarları-ayrı-anahtardadır)). **BBD ekranlarını görmez** ([aşağıya](#bld-personeli-bbd-ekranlarını-görmez)). |
 | `bbd_staff` | BBD Personeli | `bbd` | BBD sunucuları ve Bagisto çekirdekli BBD veritabanı. |
 | `org_staff` | Kurum Personeli | `org` | Zil, çıktı merkezi, rehber. Sunucu ve veritabanına erişimi yok. |
 | `accountant` | Mali Müşavir | `bbd` `bld` | Mali ekranlar: fatura, vergilendirme, cari hesap, raporlar. Kullanıcı, sır ve sunucu yönetimi yok. |
@@ -94,6 +94,11 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 > her zaman modülün kendi `module.yaml` dosyasıdır. Aşağıdaki tablo ve
 > matrisler, daraltması **bilinçli olarak yapılmış** modülleri gösterir.
 >
+> **`bbd_*` modüllerinde bu kural artık `bld_staff` için geçerli DEĞİLDİR.**
+> 17.08.2026 kararıyla rol dokuz BBD modülünün hiçbirinde yer almaz; yeni bir
+> `bbd_*` modülü açılırken `default_roles` listesine `bld_staff` yazılmaz.
+> Ayrıntı: [BLD personeli BBD ekranlarını görmez](#bld-personeli-bbd-ekranlarını-görmez).
+>
 > **Daraltmayı yaparken:** manifesti düzeltmek kurulu bir sistemde tek başına
 > yetmez — bkz. [Manifest'i daraltmak tek başına yetmez](#manifesti-daraltmak-tek-başına-yetmez).
 
@@ -149,6 +154,58 @@ donanımına erişim modülde değil, `km_platform/printer` yeteneğindedir (ADR
 anahtarının modül kimliğiyle başlamasını şart koştuğu için anahtarlar
 `print.view` / `print.reprint` yazıldı — anlam birebir aynıdır.
 
+### BLD personeli BBD ekranlarını görmez
+
+**Karar (17.08.2026).** Kullanıcının sözü: *"bld personeli bbd ekranlarını da
+göremesin."* `bld_staff` bugüne dek on dört `bbd_*` anahtarı taşıyordu; hepsi
+alındı. Rolün izin sayısı 64'ten **50**'ye indi.
+
+**Neden.** BBD ve BLD ayrı kurumların ekranlarıdır. BLD personelinin işi BLD
+sipariş, menü, mutfak ve abonelik ekranlarındadır; kantin öğrencisinin adı,
+veli telefonu, bakiyesi ve ders takvimi o işin parçası değildir. Bu izinler
+rolde bir karar sonucu değil, geliştirme kuralının kalıntısı olarak duruyordu:
+ekran modülleri "şimdilik beş rolün hepsine açık" ilan ediliyor ve daraltma
+modülün işi başlayınca yapılıyor ([yukarı](#modül-izinleri)). BBD tarafında o
+daraltma bugün yapıldı.
+
+**Bu karar KDS istisnasıyla çelişmez.** İkisi ayrı şeyi söyler: KDS istisnası
+rolün *kendi alanı* içinde nerede durduğunu, bu karar *alanın kendisinin*
+nerede bittiğini belirler.
+
+Alınan on dört anahtar:
+
+| Modül | Alınan anahtarlar |
+|---|---|
+| `bbd_bulk_sale` | `.view` · `.manage` |
+| `bbd_canteen_backups` | `.view` |
+| `bbd_canteen_products` | `.view` · `.manage` |
+| `bbd_canteen_reports` | `.view` |
+| `bbd_class_schedule` | `.view` |
+| `bbd_lunch` | `.view` · `.manage` |
+| `bbd_payment_request` | `.view` |
+| `bbd_sms` | `.view` |
+| `bbd_students` | `.view` · `.manage` · `.qr` |
+
+`bbd_canteen_api` listede yoktur: **hiç izin ilan etmez** ve ekranı da yoktur
+(diğer modüllere `canteen.api` yeteneği verir). Alınacak bir anahtarı hiç
+olmadı.
+
+**Diğer roller DEĞİŞMEDİ.** On dört anahtarın hepsi `admin` ve `bbd_staff`ta,
+çoğu `org_staff` ve `accountant`ta durmayı sürdürür. Kullanıcı tek bir rolden
+söz etti.
+
+**`store_*` izinlerine DOKUNULMADI** — dokunulacak bir şey de yoktu:
+`bld_staff` bugün **hiçbir** `store_*` izni taşımıyor. Mağaza ekranları
+`admin`, `bbd_staff`, `org_staff` ve `accountant` arasında dağılmıştır.
+
+**Bu daraltma anahtar BÖLEREK yapılamazdı.** KDS ayarında olduğu gibi yeni bir
+anahtar doğurmak burada işe yaramaz: kapatılmak istenen şey bir işlemin bir
+parçası değil, ekranın **tamamıdır**. Karşılığı `role_permissions` satırının
+yokluğudur ve kurulu sistemde bunun tek yolu satırı silen bir göçtür —
+`0009_bld_staff_bbd_ayrimi` (`km_core/security/migrations.py`). Göç idempotenttir
+ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
+[Manifest'i daraltmak tek başına yetmez](#manifesti-daraltmak-tek-başına-yetmez).
+
 ---
 
 ## Rol → izin matrisi
@@ -184,7 +241,7 @@ anahtarının modül kimliğiyle başlamasını şart koştuğu için anahtarlar
 | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bell.manage` | ✓ | ✗ | ✗ | ✓ | ✗ |
 | `bell.ring_now` | ✓ | ✗ | ✓ | ✓ | ✗ |
-| `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `bbd_class_schedule.view` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `print.reprint` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
@@ -207,6 +264,10 @@ Bilinçli kararlar:
 - **Yeniden baskı görüntülemeyle aynı rollerdedir.** Kayıt zaten görülebiliyorsa
   aynı çıktının kâğıda ikinci kez dökülmesi yeni bir yetki açmaz; ayrı anahtar
   tutulmasının nedeni yetki değil, denetim izinde ayrı görünmesidir.
+- **BLD Personeli BBD ekranlarını görmez.** 17.08.2026 kullanıcı kararı; on
+  dört `bbd_*` anahtarı rolden alındı. Ayrı kurumların ekranlarıdır ve BLD'nin
+  işi orada bitmez, hiç başlamaz. Ayrıntı ve tam liste:
+  [BLD personeli BBD ekranlarını görmez](#bld-personeli-bbd-ekranlarını-görmez).
 - **Rehber herkeste okunur.** Uygulamanın ortak zeminidir.
 - **Antivirüsü personel görür ve tarar, ama yönetemez.** Karantina ve kalıcı
   silme yıkıcıdır, yalnızca Admin'dedir. Kurum Personeli antivirüs görmez.
@@ -239,7 +300,7 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Uzak Terminal | `ssh.execute` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Veritabanı | `database.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Zil Sistemi | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
-| Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | Çıktı Merkezi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Antivirüs *(yalnız Linux — ADR 0022)* | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | KDS Yönetimi ³ | `bld_kds.view` | ✓ | ✓ | ✗ | ✗ | ✗ |
@@ -316,6 +377,24 @@ bekler:
 | `ELLE` | Kapsam biçimi manifestten farklı (`izin:bld` gibi) | Dokunulmaz — `grant_defaults` çıktısı olamaz, biri bilerek yazmıştır |
 | `YETİM ANAHTAR` | Modül duruyor ama o anahtarı hiç ilan etmiyor | Dokunulmaz — silinmiş mi, yeniden mi adlandırılmış, ayrımı insan yapar |
 | `YETİM MODÜL` | Modülün manifesti diskte yok; izin satırları kalmış | `--uygula` siler (ayrı onay: `SIL`) — bkz. [Silinen modülün izinleri kalır](#silinen-modülün-izinleri-kalır) |
+
+### Betik mi, göç mü
+
+İkinci adımın **iki** yolu vardır ve seçim yöneticiye kalmaz:
+
+| Yol | Ne zaman | Örnek |
+|---|---|---|
+| `scripts/reconcile-permissions.py` | Sapma **bu makinede** düzeltilir; karar yerel, yönetici başında | Bir modülün işi başlarken yapılan olağan daraltma |
+| Çekirdek göçü (`km_core/security/migrations.py`) | Daraltma **her kurulumda** yürürlüğe girmeli; kimsenin betik koşturmasına bağlı olamaz | `0009_bld_staff_bbd_ayrimi` — kullanıcı kararıyla BLD personelinden alınan BBD ekranları |
+
+Ölçüt "kaç satır" değil, **kararın nereye ait olduğudur.** Betik bir makinenin
+sapmasını onarır; göç, kararın kendisini taşır. Elle koşturulan bir betiğe
+bırakılan kullanıcı kararı, betiği koşturmayan makinede hiç yürürlüğe girmez ve
+bunu kimse fark etmez.
+
+Göç yazılırken iki şey zorunludur: **idempotentlik** (iki kez koşarsa bozmaz)
+ve **denetim izi** (silinen her satır için bir `roles.manage` kaydı; iz,
+silinen satırın yerini tutan tek kayıttır).
 
 ### Neden otomatik budama yok
 

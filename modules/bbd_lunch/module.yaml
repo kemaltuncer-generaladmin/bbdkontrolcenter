@@ -43,13 +43,22 @@ ui:
     requires: [bbd_lunch.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
+#
+# YETKİ DARALTMASI — 17.08.2026 kullanıcı kararı: "BLD personeli BBD ekranlarını
+# da göremesin." `bld_staff` aşağıdaki anahtarların hiçbirinde YOKTUR; rolün BBD
+# tarafında işi kalmadı. `admin`, `bbd_staff`, `org_staff` ve `accountant`
+# DEĞİŞMEDİ.
+#
+# Manifesti daraltmak KURULU sistemde tek başına yetmez (`grant_defaults` yalnız
+# ekler): var olan satırları `0009_bld_staff_bbd_ayrimi` göçü kaldırır.
+# Bkz. docs/permissions.md → "Manifest'i daraltmak tek başına yetmez".
 permissions:
   - key: bbd_lunch.view
     description: "Öğle Yemeği ekranını ve geçmiş girdileri görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
   - key: bbd_lunch.manage
     description: "Toplu yemek kaydı işleme, sabit liste ve tatil günlerini düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    default_roles: [admin, bbd_staff, org_staff, accountant]
   - key: bbd_lunch.reverse
     description: "İşlenmiş yemek kaydını geri alma (kantinde ters kayıt oluşturur)."
     default_roles: [admin, bbd_staff]

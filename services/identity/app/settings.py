@@ -19,6 +19,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+#: Dağıtılan sırların şifresini açan anahtarın ortam değişkeni (ADR 0025).
+#:
+#: ADI BURADA DURUR, `vault.py` içinde DEĞİL: `vault.py` `cryptography` import
+#: eder ve bu dosya hiçbir ağır bağımlılık taşımaz. Ad buraya konunca ayarı
+#: okuyan taraf şifreleme paketini hiç görmez; `vault.py` adı buradan alır ve
+#: ters yönde bir döngü doğmaz.
+VAULT_KEY_ENV = "KM_IDENTITY_VAULT_KEY"
+
 
 class SettingsError(RuntimeError):
     """Servis bu ayarla ayağa kalkamaz."""
@@ -43,6 +51,11 @@ class Settings:
     pepper: str = ""
     # Yönetim uçlarının (eşleme kodu, kurulum listesi, iptal) tek anahtarı.
     admin_token: str = ""
+    # Dağıtılan sırların şifresini açan anahtar (ADR 0025). VERİTABANINDA
+    # DURMAZ: aynı dosyada hem kilit hem anahtar tutmanın karşılığı yok.
+    # Tanımsızsa kurulum paketi uçları 503 döner ve sessizce düz metne DÜŞMEZ
+    # (bkz. `vault.py`).
+    vault_key: str = ""
     pair_code_ttl_seconds: int = 600
     # Kilit TTL'i ZORUNLUDUR (ADR 0020 §2): süresiz kilit, çöken bir istemcinin
     # kaydı sonsuza kapatması demektir.
@@ -67,6 +80,7 @@ class Settings:
             or "/data/identity.sqlite",
             pepper=pepper,
             admin_token=os.environ.get("KM_IDENTITY_ADMIN_TOKEN", "").strip(),
+            vault_key=os.environ.get(VAULT_KEY_ENV, "").strip(),
             pair_code_ttl_seconds=_int_env("KM_IDENTITY_PAIR_CODE_TTL_SECONDS", 600),
             lock_default_ttl_seconds=_int_env("KM_IDENTITY_LOCK_TTL_SECONDS", 120),
             lock_max_ttl_seconds=_int_env("KM_IDENTITY_LOCK_MAX_TTL_SECONDS", 900),

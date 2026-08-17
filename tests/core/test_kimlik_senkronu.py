@@ -70,9 +70,17 @@ class SahteKasa:
 
 
 class SahteIstemci:
-    def __init__(self, *, online: bool = True, roster: dict[str, Any] | None = None) -> None:
+    def __init__(self, *, online: bool = True, roster: dict[str, Any] | None = None,
+                 provisioning: dict[str, Any] | None = None) -> None:
         self.online = online
         self.roster_payload = roster or deepcopy(KADRO)
+        # ADR 0025 — `sync()` kadronun ardından kurulum paketini de sorar.
+        # Varsayılan BOŞ PAKETTİR: bu dosyanın testleri kadroyu ölçüyor ve
+        # paketin içeriği onları ilgilendirmiyor. Paketin kendi davranışı
+        # `test_kimlik_kurulum_paketi.py` içinde sınanır.
+        self.provisioning_payload = provisioning or {
+            "revision": 1, "changed": True, "secrets": {}, "settings": {},
+        }
         self.calls: list[str] = []
 
     def _guard(self) -> None:
@@ -90,6 +98,14 @@ class SahteIstemci:
         if known_revision is not None and known_revision == self.roster_payload["revision"]:
             return {"revision": known_revision, "changed": False}
         return deepcopy(self.roster_payload)
+
+    async def provisioning(self, token: str, *,
+                           known_revision: int | None = None) -> dict[str, Any]:
+        self.calls.append("provisioning")
+        self._guard()
+        if known_revision is not None and known_revision == self.provisioning_payload["revision"]:
+            return {"revision": known_revision, "changed": False}
+        return deepcopy(self.provisioning_payload)
 
     async def pair(self, **kwargs: Any) -> dict[str, Any]:
         self.calls.append("pair")
@@ -248,7 +264,11 @@ async def test_revizyon_degismemisse_onbellek_yeniden_yazilmaz(tmp_path: Path) -
     sync, _ = kur(tmp_path, kasa=kasa)
 
     ilk = await sync.sync()
-    assert ilk == {"synced": True, "changed": True, "revision": 7}
+    # `provisioning` alanı ADR 0025 ile eklendi: senkron artık kadronun
+    # ardından kurulum paketini de soruyor. Kadro sözleşmesi değişmedi.
+    assert {k: v for k, v in ilk.items() if k != "provisioning"} == {
+        "synced": True, "changed": True, "revision": 7,
+    }
     once = sync.cache.path.stat().st_mtime_ns
 
     ikinci = await sync.sync()

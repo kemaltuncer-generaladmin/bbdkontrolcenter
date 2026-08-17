@@ -1,28 +1,39 @@
-"""`bld_staff`in izin kümesi — 17.08.2026 kullanıcı kararı.
+"""`bld_staff`in izin kümesi — 17.08.2026 kullanıcı kararları.
 
-KARAR TEK CÜMLE: **BLD personeli BLD'ye dair her şeyi yapar; tek istisna KDS
-CİHAZ AYARLARIDIR.**
+KARAR İKİ CÜMLE:
+
+  1. **BLD personeli BLD'ye dair her şeyi yapar; tek istisna KDS CİHAZ
+     AYARLARIDIR.**
+  2. **BLD personeli BBD ekranlarını GÖRMEZ.** Kullanıcının sözü: "bld
+     personeli bbd ekranlarını da göremesin." Rolde bugüne dek duran on dört
+     `bbd_*` anahtarı ALINDI.
+
+İkisi çelişmez, çünkü BBD ile BLD ayrı kurumların ekranlarıdır: birincisi
+rolün KENDİ alanında sınırsız olduğunu, ikincisi o alanın nerede bittiğini
+söyler.
 
 Bu dosyanın öncülü `test_rol_daraltma.py` idi ve REDDEDİLMİŞ bir kararı
 kodluyordu (rol altı ekrana, 63 izinden 7'ye iniyordu). Kayıt olsun: reddedilen
-şey daraltmanın kendisiydi, ölçme biçimi değil. Sınanan söz üç parçalı kalıyor
-ve üçü de ayrı ayrı kırılabilir:
+şey BLD tarafındaki daraltmaydı, ölçme biçimi değil — ve bugünkü BBD
+daraltması onunla aynı şey değildir. Sınanan söz üç parçalı kalıyor ve üçü de
+ayrı ayrı kırılabilir:
 
-  · **Manifestler.** `bld_staff`in izin kümesi tam olarak aşağıdaki 64
-    anahtardır. Yeni `bld_kds.settings` bu listede YOKTUR — kararın tek
-    istisnası odur.
+  · **Manifestler.** `bld_staff`in izin kümesi tam olarak aşağıdaki 50
+    anahtardır. İçinde tek bir `bbd_*` anahtarı YOKTUR; `bld_kds.settings` de
+    yoktur — biri ikinci kararın, öbürü birincinin istisnasıdır.
   · **Belge.** `docs/permissions.md` → "Rol → izin matrisi" her satırda beş
     rolün ✓/✗ dağılımını yazıyor. Belge ile manifest ayrılırsa yetki tablosu
     sistemin gerçeğini anlatmayı bırakır; ikisi burada karşılaştırılır.
-  · **Kurulu sistem.** Reddedilen daraltmanın göçü (`0007_narrow_bld_staff_core`)
-    yerel veritabanında KOŞTU ve dokuz çekirdek satırını sildi. Kaynak dosyayı
-    geri almak o satırları geri getirmez; getiren `0008_restore_bld_staff_core`
-    göçüdür ve burada gerçek bir veritabanında koşturulur.
+  · **Kurulu sistem.** İki göç de gerçek bir veritabanında koşturulur.
+    `0008_restore_bld_staff_core` reddedilen daraltmanın (`0007`) sildiği dokuz
+    çekirdek satırını geri koyar; `0009_bld_staff_bbd_ayrimi` on dört BBD
+    satırını alır. Manifesti daraltmak kurulu sistemde tek başına yetmez —
+    `grant_defaults` yalnız ekler.
 
 BEKLENEN KÜMELER ELLE YAZILDI. Manifestlerden türetilseydi test yalnız
 "kendisiyle tutarlı" olurdu: birinin `default_roles` satırına `bld_staff`
 eklemesi testi bozmaz, sessizce kabul ederdi. Sayının kendisi de yazılıdır —
-64 anahtarlık bir listede tek bir satırın eksilmesi göze çarpmaz.
+50 anahtarlık bir listede tek bir satırın eksilmesi göze çarpmaz.
 """
 
 from __future__ import annotations
@@ -35,8 +46,10 @@ import pytest
 import yaml
 
 from km_core.security.migrations import (
+    BLD_STAFF_BBD_REVOKED,
     BLD_STAFF_CORE_RESTORED,
     CORE_MIGRATIONS,
+    _revoke_bld_staff_bbd,
     apply_core_migrations,
 )
 from km_core.security.permissions import CORE_PERMISSIONS
@@ -99,21 +112,16 @@ BLD_STAFF_BEKLENEN = {
     "bld_status_monitor.view",
     "bld_subscriptions.manage",
     "bld_subscriptions.view",
-    # --- BBD ve kantin ekranları ------------------------------------------
-    "bbd_bulk_sale.manage",
-    "bbd_bulk_sale.view",
-    "bbd_canteen_backups.view",
-    "bbd_canteen_products.manage",
-    "bbd_canteen_products.view",
-    "bbd_canteen_reports.view",
-    "bbd_class_schedule.view",
-    "bbd_lunch.manage",
-    "bbd_lunch.view",
-    "bbd_payment_request.view",
-    "bbd_sms.view",
-    "bbd_students.manage",
-    "bbd_students.qr",
-    "bbd_students.view",
+    # --- BBD ve kantin ekranları: HİÇBİRİ YOK ------------------------------
+    # 17.08.2026 kullanıcı kararı: "bld personeli bbd ekranlarını da
+    # göremesin." Alınan on dört anahtar `BLD_STAFF_BBD_ALINAN` altında tek
+    # tek yazılıdır ve `test_bbd_anahtarlari_alindi` her birini ayrı ayrı
+    # sınar. Burada boş bir bölüm bırakılmasının sebebi, ileride birinin
+    # `bbd_*` bir anahtarı bu kümeye "eksik kalmış" diye geri eklememesidir.
+    #
+    # `bbd_canteen_api` KARŞI ÖRNEK DEĞİLDİR: hiç izin ilan etmez (ekranı da
+    # yoktur), yani alınacak bir anahtarı hiç olmadı. BLD ekranlarının kantin
+    # verisine erişimi zaten o geçidin arkasındadır ve rol izniyle gelmez.
     # --- ortak ekranlar ----------------------------------------------------
     "antivirus.scan",
     "antivirus.view",
@@ -131,9 +139,33 @@ BLD_STAFF_BEKLENEN = {
     "directory.view_external",
 }
 
-#: Sayı da yazılıdır. 64 satırlık bir kümede tek bir eksilme göze çarpmaz;
+#: Sayı da yazılıdır. 50 satırlık bir kümede tek bir eksilme göze çarpmaz;
 #: kümenin kendisi değişirse bu sayı da elle düzeltilmek zorunda kalır.
-BLD_STAFF_SAYISI = 64
+#: 64'ten 50'ye indi — aradaki on dört, alınan BBD anahtarlarıdır.
+BLD_STAFF_SAYISI = 50
+
+#: `bld_staff`tan ALINAN on dört BBD anahtarı — 17.08.2026 kullanıcı kararı.
+#: ELLE yazılıdır ve göçün listesinden (`BLD_STAFF_BBD_REVOKED`) BAĞIMSIZDIR:
+#: ikisi aynı yerden okunsaydı, göçün listesinden bir anahtar düşmesi burada
+#: da sessizce düşer ve test hiçbir şey söylemezdi. Eşitlikleri ayrıca sınanır.
+BLD_STAFF_BBD_ALINAN = {
+    "bbd_bulk_sale.manage",
+    "bbd_bulk_sale.view",
+    "bbd_canteen_backups.view",
+    "bbd_canteen_products.manage",
+    "bbd_canteen_products.view",
+    "bbd_canteen_reports.view",
+    "bbd_class_schedule.view",
+    "bbd_lunch.manage",
+    "bbd_lunch.view",
+    "bbd_payment_request.view",
+    "bbd_sms.view",
+    "bbd_students.manage",
+    "bbd_students.qr",
+    "bbd_students.view",
+}
+
+BLD_STAFF_BBD_ALINAN_SAYISI = 14
 
 #: `accountant` KARARIN DIŞINDADIR. Kullanıcı ondan hiç söz etmedi; rol
 #: HEAD'deki hâlindedir ve burada yalnız "değişmediği" için duruyor.
@@ -253,6 +285,60 @@ def test_bld_staff_kumesi_karara_uyuyor() -> None:
     izinler = _rol_izinleri()["bld_staff"]
     assert izinler == BLD_STAFF_BEKLENEN
     assert len(izinler) == BLD_STAFF_SAYISI
+
+
+def test_bbd_anahtarlari_alindi() -> None:
+    """`bld_staff` HİÇBİR `bbd_*` anahtarı taşımaz — 17.08.2026 kararı.
+
+    İki ayrı iddia sınanır ve ikisi de gereklidir:
+
+      · **On dört anahtarın her biri gitti.** Tek tek sayılır; küme
+        karşılaştırması bir anahtarın adı değişse "gitmiş" sanırdı.
+      · **Yeni bir `bbd_*` anahtarı da gelemez.** Önek taraması bugün var
+        olmayan bir modülün yarın `bld_staff`a düşmesini de yakalar — asıl
+        korunan söz budur, listenin kendisi değil.
+
+    Anahtarlar İLAN EDİLMİŞ olmalı: hiç var olmayan bir anahtarın "verilmemiş"
+    olması hiçbir şey kanıtlamaz, ekranı kapalı da göstermez.
+    """
+    kayitlar = _izin_kayitlari()
+    izinler = _rol_izinleri()["bld_staff"]
+
+    assert len(BLD_STAFF_BBD_ALINAN) == BLD_STAFF_BBD_ALINAN_SAYISI
+    for key in sorted(BLD_STAFF_BBD_ALINAN):
+        assert key in kayitlar, f"{key} hiçbir manifestte ilan edilmemiş"
+        assert key not in izinler, f"{key} hâlâ bld_staff'ta"
+
+    assert not [entry for entry in izinler if entry.startswith("bbd_")]
+
+
+def test_alinan_anahtarlar_gocun_listesiyle_ayni() -> None:
+    """Manifest ile göç AYNI on dört anahtarı anlatmalı.
+
+    İki liste iki ayrı yerde elle yazılıdır (biri burada, biri
+    `migrations.py`), çünkü biri kataloğun BUGÜNKÜ hâlini, öbürü o gün
+    veritabanından alınan satırları anlatır. Ayrılmaları meşru bir olay
+    değildir: manifestten çıkarılıp göçe yazılmayan anahtar kurulu sistemde
+    durmayı sürdürür, göçe yazılıp manifestte kalan anahtar ise bir sonraki
+    açılışta `grant_defaults` tarafından geri konur. Sessizce olmasın diye
+    burada karşılaştırılır.
+    """
+    assert set(BLD_STAFF_BBD_REVOKED) == BLD_STAFF_BBD_ALINAN
+    assert len(BLD_STAFF_BBD_REVOKED) == BLD_STAFF_BBD_ALINAN_SAYISI
+
+
+def test_diger_roller_bbd_ekranlarini_korudu() -> None:
+    """Alınan anahtarlar YALNIZ `bld_staff`tan alındı.
+
+    Kullanıcı tek bir rolden söz etti. On dört anahtarın on dördü de başka
+    rollerde duruyordu; manifest düzenlemesi sırasında bir `default_roles`
+    satırının fazladan budanması, BBD personelini kendi ekranından etmek
+    olurdu ve testin geri kalanı bunu fark etmezdi.
+    """
+    izinler = _rol_izinleri()
+    for key in sorted(BLD_STAFF_BBD_ALINAN):
+        assert key in izinler["admin"], key
+        assert key in izinler["bbd_staff"], key
 
 
 def test_kds_cihaz_ayarlari_kararin_tek_istisnasi() -> None:
@@ -475,7 +561,32 @@ def test_reddedilen_goc_artik_kosmuyor() -> None:
     adlar = [name for name, _ in CORE_MIGRATIONS]
     assert "0007_narrow_bld_staff_core" not in adlar
     assert not [name for name in adlar if name.startswith("0007")]
-    assert adlar[-1] == "0008_restore_bld_staff_core"
+    assert adlar[-2:] == ["0008_restore_bld_staff_core", "0009_bld_staff_bbd_ayrimi"]
+
+
+def test_bbd_ayrimi_gocu_sirada_sonuncu() -> None:
+    """`0009` `0008`den SONRA koşar ve numarası benzersizdir.
+
+    Sıra burada anlam taşır: `0008` `bld_staff`a satır ekler, `0009` başka
+    satırları alır. Kesişmedikleri `test_iki_goc_kesismez`de sınanır — ama
+    ileride kesişselerdi, hangisinin son sözü söylediğini sıra belirlerdi.
+    """
+    adlar = [name for name, _ in CORE_MIGRATIONS]
+    assert len(adlar) == len(set(adlar)), "aynı göç adı iki kez yazılmış"
+    assert adlar.index("0009_bld_staff_bbd_ayrimi") > adlar.index(
+        "0008_restore_bld_staff_core"
+    )
+
+
+def test_iki_goc_kesismez() -> None:
+    """`0008`in geri verdiği satırla `0009`un aldığı satır aynı olamaz.
+
+    Biri çekirdek anahtarları (sunucu, veritabanı, rehber), öbürü BBD ekran
+    anahtarları. Kesişselerdi göçlerin sırası sessiz bir yetki kararına
+    dönüşürdü: aynı satır önce konup sonra alınırdı ve hangisinin kastedildiği
+    yalnızca liste sırasından okunurdu.
+    """
+    assert not set(BLD_STAFF_CORE_RESTORED) & set(BLD_STAFF_BBD_REVOKED)
 
 
 async def test_goc_dokuz_cekirdek_satirini_geri_koyar(depo: Store) -> None:
@@ -498,7 +609,14 @@ async def test_goc_dokuz_cekirdek_satirini_geri_koyar(depo: Store) -> None:
 
 
 async def test_goc_hicbir_satir_silmez(depo: Store) -> None:
-    """GERİ ALMA DAİMA EKLEYEREK YAPILIR (kullanıcı kuralı)."""
+    """`0008` YALNIZ EKLER — geri verdiği yetkiyi ekleyerek verir.
+
+    Bu fixture'da tek bir BBD satırı yoktur, yani `0009`un alacağı bir şey de
+    yoktur; ölçülen tam olarak `0008`in davranışıdır. `0009`un silmesi
+    bilinçlidir ve kendi kurulumunda (`bbd_kurulumu`) ayrıca sınanır: bir
+    yetkiyi daraltmanın karşılığı satırın yokluğudur, "ekleyerek geri alma"
+    kuralı ise VERİ kaydı içindir.
+    """
     onceki = await _satirlar(depo)
     await apply_core_migrations(depo)
     sonraki = await _satirlar(depo)
@@ -598,5 +716,174 @@ async def test_goc_bos_veritabaninda_da_ekler(tmp_path: Path) -> None:
         kalan = await _satirlar(store)
         assert {entry for _, entry in kalan} == set(BLD_STAFF_CORE_RESTORED)
         assert {role for role, _ in kalan} == {"bld_staff"}
+    finally:
+        await store.close()
+
+
+# ------------------------------------------- kurulu sistem: BBD ayrımı (0009)
+
+
+#: `0009` koşmadan ÖNCEKİ kurulumun `bld_staff` dışındaki BBD satırları.
+#: Aynı on dört anahtar dört rolde birden duruyordu; giden yalnız biri olmalı.
+_BASKA_ROLLERIN_BBD_SATIRLARI = [
+    (role_id, key)
+    for role_id in ("admin", "bbd_staff", "org_staff", "accountant")
+    for key in sorted(BLD_STAFF_BBD_ALINAN)
+]
+
+
+@pytest.fixture
+async def bbd_kurulumu(tmp_path: Path) -> AsyncIterator[Store]:
+    """BİR KEZ AÇILMIŞ kurulum: on dört BBD satırı `bld_staff`ta duruyor.
+
+    Gerçek makinelerin bugünkü hâli budur. Manifestler daraltıldı ama
+    `grant_defaults` yalnız ekler; satırlar veritabanında kaldı ve ekran
+    menüde durmayı, `/api/bbd_*` uçları açık olmayı sürdürüyor. `0009`un
+    onarması gereken durum tam olarak budur.
+
+    Fixture bilerek `depo`dan AYRIDIR. `depo` reddedilen `0007` daraltmasının
+    koştuğu makineyi anlatır ve `0008`in hikâyesidir; ikisini tek fixture'da
+    toplamak, iki ayrı olayı tek bir kurulumun tarihi gibi göstermek olurdu.
+    """
+    store = Store(tmp_path / "kurulu-bbd.sqlite")
+    await store.open()
+    await store.execute_many(
+        "INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?, ?)",
+        [
+            *[("bld_staff", key) for key in sorted(BLD_STAFF_BBD_ALINAN)],
+            *_BASKA_ROLLERIN_BBD_SATIRLARI,
+            # `bld_staff`in BBD DIŞINDAKİ satırları — göç bunlara bakmaz.
+            ("bld_staff", "bld_menu.view"),
+            ("bld_staff", "bld_kds.manage"),
+            ("bld_staff", "print.view"),
+            ("bld_staff", "antivirus.view"),
+            # ELLE yazılmış dar kapsam; `grant_defaults` çıktısı olamaz.
+            ("bld_staff", "servers.view:bld"),
+        ],
+    )
+    await store.execute(
+        "INSERT INTO users (id, first_name, last_name, org_scope, status, pin_hash, "
+        "pin_lookup, pin_set_at, created_at, updated_at) "
+        "VALUES ('u-9', 'BLD', 'Personeli', 'bld', 'active', '', 'pin-yok:u-9', "
+        "'dun', 'dun', 'dun')"
+    )
+    await store.execute(
+        "INSERT INTO user_roles (user_id, role_id) VALUES ('u-9', 'bld_staff')"
+    )
+    yield store
+    await store.close()
+
+
+async def test_bbd_gocu_on_dort_satiri_kaldirir(bbd_kurulumu: Store) -> None:
+    """KURULU sistemde on dört satır gerçekten gidiyor mu."""
+    onceki = await _satirlar(bbd_kurulumu)
+    for key in sorted(BLD_STAFF_BBD_ALINAN):
+        assert ("bld_staff", key) in onceki, key
+
+    await apply_core_migrations(bbd_kurulumu)
+    kalan = await _satirlar(bbd_kurulumu)
+
+    for key in sorted(BLD_STAFF_BBD_ALINAN):
+        assert ("bld_staff", key) not in kalan, key
+    # Önek taraması: göçün listesi eksik kalmışsa tek tek denetim bunu
+    # yakalamaz — kümede kalan herhangi bir `bbd_*` satırı da kabul edilmez.
+    assert not [row for row in kalan if row[0] == "bld_staff" and row[1].startswith("bbd_")]
+
+
+async def test_bbd_gocu_diger_rollere_dokunmaz(bbd_kurulumu: Store) -> None:
+    """`admin`, `bbd_staff`, `org_staff`, `accountant` satırları YERİNDE.
+
+    Aynı on dört anahtar dört rolde daha duruyor. `role_id` süzgeci olmayan
+    tek bir `DELETE`, BBD personelini kendi ekranından ederdi ve `bld_staff`ı
+    ölçen testlerin hiçbiri bunu görmezdi.
+    """
+    await apply_core_migrations(bbd_kurulumu)
+    kalan = await _satirlar(bbd_kurulumu)
+
+    for row in _BASKA_ROLLERIN_BBD_SATIRLARI:
+        assert row in kalan, row
+
+
+async def test_bbd_gocu_bld_satirlarini_birakir(bbd_kurulumu: Store) -> None:
+    """Rolün BBD dışındaki yetkileri değişmez — daraltma BBD ile sınırlıdır.
+
+    Elle yazılmış dar kapsamlı satır da durur: `grant_defaults` çıktısı
+    olmadığı için biri onu bilerek yazmıştır (docs/permissions.md → `ELLE`).
+    """
+    await apply_core_migrations(bbd_kurulumu)
+    kalan = await _satirlar(bbd_kurulumu)
+
+    for key in ("bld_menu.view", "bld_kds.manage", "print.view", "antivirus.view",
+                "servers.view:bld"):
+        assert ("bld_staff", key) in kalan, key
+
+
+async def test_bbd_gocu_denetim_izine_yazar(bbd_kurulumu: Store) -> None:
+    """Silinen her satır için bir `roles.manage` kaydı düşer.
+
+    Satır silen tek göç budur; sildiğinin kaydı iz dışında hiçbir yerde
+    kalmaz. On dört satır gitti, on dört kayıt yazıldı.
+    """
+    await apply_core_migrations(bbd_kurulumu)
+
+    rows = await bbd_kurulumu.fetch_all(
+        "SELECT action, result, detail FROM audit_log WHERE detail LIKE ?",
+        ("0009_bld_staff_bbd_ayrimi:%",),
+    )
+    assert len(rows) == len(BLD_STAFF_BBD_REVOKED)
+    assert {row["action"] for row in rows} == {"roles.manage"}
+    assert {row["result"] for row in rows} == {"ok"}
+    # Hangi anahtarın alındığı izden okunabilmeli; "on dört satır gitti"
+    # demek, altı ay sonra hangisinin gittiğini söylemez.
+    for key in sorted(BLD_STAFF_BBD_ALINAN):
+        assert [row for row in rows if key in str(row["detail"])], key
+
+
+async def test_bbd_gocu_kullanici_ve_rol_satirina_dokunmaz(bbd_kurulumu: Store) -> None:
+    await apply_core_migrations(bbd_kurulumu)
+
+    users = await bbd_kurulumu.fetch_all("SELECT id FROM users")
+    roles = await bbd_kurulumu.fetch_all("SELECT user_id, role_id FROM user_roles")
+    assert [row["id"] for row in users] == ["u-9"]
+    assert [(row["user_id"], row["role_id"]) for row in roles] == [("u-9", "bld_staff")]
+
+
+async def test_bbd_gocu_iki_kez_kosunca_bozmaz(bbd_kurulumu: Store) -> None:
+    """İdempotent: ikinci koşuş ne siler ne de ikinci bir iz bırakır.
+
+    `schema_migrations` göçü zaten bir kez koşturur; burada sınanan o kapı
+    DEĞİL, göçün kendisidir. SQL elle ikinci kez uygulanır ki idempotentlik
+    kayıt tablosuna değil, ifadelerin kendisine dayansın.
+    """
+    await apply_core_migrations(bbd_kurulumu)
+    ilk = await _satirlar(bbd_kurulumu)
+
+    await bbd_kurulumu.db.executescript(await _revoke_bld_staff_bbd(bbd_kurulumu))
+    await bbd_kurulumu.db.commit()
+
+    assert await _satirlar(bbd_kurulumu) == ilk
+    rows = await bbd_kurulumu.fetch_all(
+        "SELECT id FROM audit_log WHERE detail LIKE ?",
+        ("0009_bld_staff_bbd_ayrimi:%",),
+    )
+    assert len(rows) == len(BLD_STAFF_BBD_REVOKED)
+
+
+async def test_bbd_gocu_bos_veritabaninda_iz_birakmaz(tmp_path: Path) -> None:
+    """Hiç açılmamış kurulumda alınacak satır yoktur — iz de yazılmaz.
+
+    Süzgeçsiz bir `INSERT ... SELECT`, hiçbir şey yapmadığı hâlde "on dört
+    yetki alındı" diye on dört kayıt yazardı ve denetim izi olmamış bir olayı
+    anlatırdı.
+    """
+    store = Store(tmp_path / "yeni-bbd.sqlite")
+    await store.open()
+    try:
+        await apply_core_migrations(store)
+        rows = await store.fetch_all(
+            "SELECT id FROM audit_log WHERE detail LIKE ?",
+            ("0009_bld_staff_bbd_ayrimi:%",),
+        )
+        assert rows == []
     finally:
         await store.close()

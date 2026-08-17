@@ -140,6 +140,20 @@ class IdentityClient:
         params = {} if known_revision is None else {"known_revision": known_revision}
         return dict(await self._request("GET", "/roster", token=token, params=params))
 
+    async def provisioning(self, token: str, *,
+                           known_revision: int | None = None) -> dict[str, Any]:
+        """Kurulum paketi: dağıtılacak sırlar ve modül ayarları (ADR 0025).
+
+        KURULUM TOKEN'IYLA çekilir, yönetim token'ıyla değil: paket makinenin
+        kendi kurulumudur ve sidecar onu henüz kimse giriş yapmamışken kurmak
+        zorundadır. Merkezde kapı `require_installation`dır — iptal edilmiş bir
+        kurulum 401 alır ve hiçbir sır göremez.
+
+        `known_revision` gönderilir: değişmemişse merkez sırları HİÇ TAŞIMAZ.
+        """
+        params = {} if known_revision is None else {"known_revision": known_revision}
+        return dict(await self._request("GET", "/provisioning", token=token, params=params))
+
     async def create_user(self, token: str, actor_id: str, body: dict[str, Any]) -> dict[str, Any]:
         return dict(await self._request(
             "POST", "/users", token=token, actor_id=actor_id, json_body=body
