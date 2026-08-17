@@ -40,7 +40,7 @@ Bunları çekirdek tanımlar; modüller tanımlayamaz.
 |---|---|---|
 | `users.view` | hayır | Kullanıcı listesini ve profillerini görür |
 | `users.manage` | hayır | Kullanıcı ekler, düzenler, pasifleştirir |
-| `users.set_pin` | hayır | PIN atar ve sıfırlar |
+| `users.set_password` | hayır | Şifre atar ve sıfırlar (eski adı `users.set_pin`) |
 | `roles.view` | hayır | Rolleri ve izinlerini görür |
 | `roles.manage` | hayır | Rol tanımlar, izin atar, kullanıcıya rol verir |
 
@@ -172,7 +172,7 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 
 | Ekran | Gerektirdiği izin | Admin | BLD | BBD | Kurum | Mali |
 |---|---|:---:|:---:|:---:|:---:|:---:|
-| Giriş (PIN) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Giriş (şifre) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Ana panel | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kullanıcılar | `users.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Roller ve İzinler | `roles.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -185,7 +185,7 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Zil Sistemi | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Baskı Yönetimi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
-| Antivirüs | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Antivirüs *(yalnız Linux — ADR 0022)* | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Rehber | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Profilim | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -314,10 +314,10 @@ manifest düzeltilir, sonra betik yeniden koşulur.
    eder. İlan etmeyen uç nokta reddedilir (varsayılan: kapalı).
 2. Kapsamlı bir izin kapsam belirtilmeden sorulamaz.
 3. Yıkıcı **çekirdek** işlemleri (`database.restore`, `users.manage` silme,
-   `roles.manage`) izin yeterli olsa bile **PIN teyidi** ister. Bunlar seyrek
+   `roles.manage`) izin yeterli olsa bile **şifre teyidi** ister. Bunlar seyrek
    ve kurumsal işlemlerdir.
    **İstisna — BBD Store:** `store_*` modüllerindeki yıkıcı ve para harcayan
-   işlemler PIN yerine **gerekçeli onay** ister (ayrı izin anahtarı + zorunlu
+   işlemler şifre yerine **gerekçeli onay** ister (ayrı izin anahtarı + zorunlu
    gerekçe + çift denetim kaydı + kuru prova). Gerekçe:
    [ADR 0012](adr/0012-magaza-yikici-islem-onayi.md). Bu yüzden `store_*`
    izinleri `destructive: true` bayrağı **taşımaz**.

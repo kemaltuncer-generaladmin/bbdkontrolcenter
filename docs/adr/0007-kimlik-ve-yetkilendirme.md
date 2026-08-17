@@ -1,6 +1,11 @@
 # 0007 — Kimlik ve yetkilendirme: PIN ile giriş, izin tabanlı çok rollü model
 
-**Durum:** Kabul edildi · 2026-08-12
+**Durum:** Superseded by [0016](0016-giris-sifre-ile.md) · 2026-08-12
+
+> Yerine geçen ADR **yalnız kimlik doğrulama bölümünü** değiştirir: giriş 6 haneli
+> PIN yerine kişiye özel şifre iledir. Kullanıcı adsızlık, çok rollü izin modeli,
+> kapsam mekanizması ve `has_permission` kuralı (K10) aynen sürer ve 0016'da
+> yeniden onaylanır.
 
 ## Bağlam
 Uygulamayı kurum içinden sınırlı sayıda kişi kullanacak. Kullanıcıları yönetici

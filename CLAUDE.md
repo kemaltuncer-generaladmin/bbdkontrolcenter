@@ -36,7 +36,8 @@ Bu kararlar sabittir. Değişiklik ancak yeni bir ADR ile olur — kod içinde
   taşımaz, kapatılamaz. **SSH gereken her şey buraya bağlanır.**
 - `km_core/store` = çekirdeğin kendi metadata deposu.
   `km_platform/database` = yönetilen uzak veritabanları (BBD/BLD). Ayrı şeyler.
-- **Kimlik çekirdektedir**, modül değildir. Giriş kullanıcı adsız, PIN iledir.
+- **Kimlik çekirdektedir**, modül değildir. Giriş kullanıcı adsız, kişiye özel
+  **şifre** iledir (ADR 0016; 0007'deki PIN yerine).
   Rol = izin kümesi; bir kullanıcı **birden fazla rol** taşıyabilir, etkin
   izinler bunların birleşimidir. İzinler kapsamlıdır (`database.query:bld`).
 - Kullanıcının `org_scope` alanı nereye bağlı olduğunu söyler, **yetkiyi
@@ -50,7 +51,7 @@ Katalog ve rol → ekran matrisi: [docs/permissions.md](docs/permissions.md)
 
 Ön tanımlı roller: `admin`, `bld_staff`, `bbd_staff`, `org_staff`.
 Modül izinlerini `module.yaml` içinde ilan eder; çekirdek yalnızca uygular.
-Yıkıcı işlemler izin yeterli olsa bile PIN teyidi ister.
+Yıkıcı işlemler izin yeterli olsa bile şifre teyidi ister.
 
 ## Teknoloji
 

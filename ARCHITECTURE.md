@@ -69,7 +69,7 @@ uygulamanın altyapısıdır. Modüller bunları tüketir.
 |---|---|
 | `ssh/` | Sunucu envanteri, bağlantı havuzu, uzak komut çalıştırma, dosya aktarımı, tünel. **SSH'a ihtiyaç duyan her şey buraya bağlanır.** |
 | `database/` | Yönetilen veritabanlarına erişim. `engines/` sürücü sarmalayıcıları (MySQL/MariaDB/PostgreSQL), `bbd/` Bagisto çekirdekli BBD şema adaptörü, `bld/` Laravel tabanlı BLD şema adaptörü |
-| `printer/` | CUPS erişimi: yazıcı keşfi, kuyruk, iş gönderimi, durum |
+| `printer/` | Baskı. Arka uç platforma göre seçilir (ADR 0014): Linux'ta CUPS ile sessiz baskı (keşif, kuyruk, iş gönderimi, durum), Windows/macOS'ta işletim sisteminin yazdırma penceresine devir |
 | `audio/` | Ses aygıtı ve çalma (zil sisteminin dayandığı katman) |
 | `scheduler/` | Takvim/cron soyutlaması |
 | `secrets/` | Kimlik bilgisi kasası (SSH anahtarı, DB parolası) — düz metin yok |
@@ -176,8 +176,9 @@ Ayrıntı: [docs/identity-model.md](docs/identity-model.md) ·
 İzin kataloğu ve rol matrisi: [docs/permissions.md](docs/permissions.md) ·
 Gerekçe: [ADR 0007](docs/adr/0007-kimlik-ve-yetkilendirme.md)
 
-**Giriş.** Kullanıcı adı yoktur. Kişiye özel PIN hem girişi hem kimliği
-belirler. PIN benzersizdir, en az 6 hanedir, Argon2id ile hash'lenir. Deneme
+**Giriş.** Kullanıcı adı yoktur. Kişiye özel **şifre** hem girişi hem kimliği
+belirler (ADR 0016 — 0007'nin yerine). Şifre benzersizdir, en az 10 karakterdir,
+Argon2id ile hash'lenir; karmaşıklık dayatılmaz, yaygın şifreler reddedilir. Deneme
 sınırı, kilitlenme ve denetim izi sözleşmenin zorunlu parçasıdır.
 
 **Roller.** Rol = izin kümesi. Ön tanımlı dört rol: `admin`, `bld_staff`,
@@ -232,8 +233,16 @@ Modül kendi bağımlılığını kendisi getirir; çekirdeğin listesine dokunu
 | Bağımlılık yönü | Çekirdek modülü bilmez | 0004 |
 | Modül sınırı | Dikey dilim (backend+ui+göç+ayar+test) | 0005 |
 | ssh / database | Platform yeteneği, modül değil | 0006 |
-| Kimlik ve yetki | PIN ile giriş, izin tabanlı çok rollü model | 0007 |
+| Kimlik ve yetki | İzin tabanlı çok rollü model | 0007 (superseded) |
+| Giriş | Kullanıcı adsız, kişiye özel şifre | 0016 |
 | Bağımlılıklar | İlan edilir, kopyalanmaz; sürücüler apt'tan | 0008 |
 | Panel bileşenleri | Ortak kit kabukta, tek kopya (`shell/ui-kit/`) | 0011 |
 | Mağaza yıkıcı işlemi | PIN değil, gerekçeli onay + kuru prova | 0012 |
 | Anons sesi | Vertex AI (Gemini TTS), çalma anında değil ÖNDEN üretim | 0013 |
+| Baskı | Linux'ta sessiz CUPS; Windows/macOS'ta sistem yazdırma penceresi | 0014 |
+| Çekirdek ekranlar | Kabukta `shell/core-panels/`, registry'ye girmez | 0017 |
+| Sistem Ayarları | Tek ekran; sekmeleri modüller manifestte ilan eder | 0018 |
+| Çıktı kaydı | Dosyayı yazan çekirdek fonksiyonunda doğar | 0019 |
+| Eşzamanlılık | İyimser kilit (`revision` + 409) zorunlu | 0020 |
+| Kimlik dağıtımı | Merkezî servis + cihaz eşlemesi; giriş çevrimdışı çalışır | 0021 |
+| Modül platform kapsamı | `module.yaml` → `platforms`, keşifte elenir | 0022 |
