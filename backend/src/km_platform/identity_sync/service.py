@@ -27,6 +27,7 @@ makinede çalışır (ADR 0021 — Sonuçlar).
 
 from __future__ import annotations
 
+import hashlib
 import platform as platform_info
 import socket
 from time import monotonic
@@ -62,6 +63,12 @@ ADMIN_TOKEN_KEY = "identity_sync.admin_token"
 ONLINE_PROBE_TTL_SECONDS = 15.0
 
 
+def pepper_fingerprint(pepper: str) -> str:
+    """Merkezdeki `pepper_fingerprint` ile AYNI hesap — iki taraf da sha256'nın
+    ilk 16 hex hanesini kullanır. Anahtarın kendisi taşınmaz."""
+    return hashlib.sha256(pepper.encode("utf-8")).hexdigest()[:16]
+
+
 class SecretStore(Protocol):
     """Kasanın yeteneğe bakan yüzü (`km_platform/secrets/vault.py`)."""
 
@@ -73,6 +80,9 @@ class SecretStore(Protocol):
     # kararı verebilmek için gerekli (bkz. `_adopt_pepper`).
     async def pepper_is_auto(self) -> bool: ...
     async def adopt_pepper(self, value: str) -> None: ...
+
+    #: Kasanın "kendiliğinden üretildi" işareti — sıfırlama bunu geri koyar.
+    AUTO_FLAG: str
 
 
 class IdentitySync:
@@ -94,6 +104,8 @@ class IdentitySync:
         )
         # `None` = HENÜZ BİLİNMİYOR. `False` ile karıştırılmaz: bilmediğimiz bir
         # şeyi "ağ yok" saymak, çalışan bir merkezde yazmayı reddetmek olurdu.
+        #: Merkezin kimlik anahtarıyla bu kurulumunki ayrıştı mı (bkz. `_check_pepper`).
+        self.pepper_mismatch = False
         self._online: bool | None = None
         self._online_checked_at: float = 0.0
         self._store: QueueStore | None = store
@@ -184,7 +196,10 @@ class IdentitySync:
             # Yönetim anahtarının VARLIĞI bildirilir, KENDİSİ değil. Ekran
             # "kurulum listesi çekilebilir mi" sorusunu buradan yanıtlar ve
             # olmayan bir yetenek için düğme çizmez.
-            "managementKey": bool(await self._vault.get(ADMIN_TOKEN_KEY))
+            "managementKey": bool(await self._vault.get(ADMIN_TOKEN_KEY)),
+            # True ise bu kurulumda HİÇBİR PIN çalışmaz; ekran bunu söyleyip
+            # yeniden eşlemeyi önerir.
+            "pepperMismatch": self.pepper_mismatch
             if self.configured else False,
             # Kuyrukta bekleyen denetim kaydı. "Asla düşürülmez" sözünün
             # görünür karşılığı budur: sayı büyüyorsa merkez ulaşılamıyordur.
@@ -460,11 +475,64 @@ class IdentitySync:
         self._online = True
         self._online_checked_at = monotonic()
 
+        # PEPPER UYUŞMAZLIĞI BURADA YAKALANIR. Merkez her kadro yanıtında
+        # anahtarının parmak izini gönderiyor; kurulumunki tutmuyorsa çekilen
+        # satırlar HİÇBİR PIN'le eşleşmez ve kullanıcı yalnız "PIN yanlış"
+        # görür — sebebi hiçbir yerde yazmadan. 17.08.2026'da tam olarak bu
+        # yaşandı ve uzaktan teşhis edilemedi.
+        await self._check_pepper(payload.get("pepperFingerprint"))
+
         if payload.get("changed") is False:
             return {"synced": True, "changed": False, "revision": known}
 
         self.cache.write(payload)
         return {"synced": True, "changed": True, "revision": payload.get("revision")}
+
+    async def _check_pepper(self, uzak_izi: Any) -> None:
+        """Merkezin anahtarıyla kurulumunki aynı mı?
+
+        Yalnız İŞARETLER, hiçbir şeyi düzeltmez: sessizce yeni anahtar
+        benimsemek, o makinede zaten çalışan kullanıcıların girişini kırardı.
+        Kararı kullanıcı verir — ekran "yeniden eşlenmeli" der.
+        """
+        self.pepper_mismatch = False
+        if not uzak_izi:
+            return  # eski merkez sürümü — sessiz kal, eski davranış sürsün
+        yerel = await self._vault.get("core.pin_pepper")
+        if not yerel:
+            return
+        if pepper_fingerprint(yerel) != str(uzak_izi):
+            self.pepper_mismatch = True
+            log.error(
+                "KİMLİK ANAHTARI UYUŞMUYOR — bu kurulumdaki hiçbir PIN çalışmaz, "
+                "yeniden eşlenmesi gerekiyor",
+                yerel=pepper_fingerprint(yerel), merkez=str(uzak_izi),
+            )
+
+    async def reset_pairing(self) -> dict[str, Any]:
+        """Kurulumun eşlemesini SIFIRLAR — eşleme ekranı yeniden açılsın diye.
+
+        NEDEN GİRİŞ İSTEMEZ. Bu yol tam da giriş yapılamadığında gerekiyor:
+        anahtarı uyuşmayan bir kurulumda kimse giremez, dolayısıyla
+        `unpair`in istediği oturum hiçbir zaman kurulamaz. Kilit buydu ve
+        kurulum kendi kendini onaramıyordu.
+
+        RİSKİ DAR: yalnız BU makinenin eşleme durumunu düşürür. Yeniden
+        eşlenmek için merkezden yeni bir kod gerekir ve onu ancak yetkili biri
+        üretebilir. Yerel kullanıcı kayıtlarına ve kasadaki öteki sırlara
+        dokunulmaz; `private_key` de KALIR, makine yeniden eşlenince aynı
+        kimlikle döner.
+        """
+        await self._vault.delete(TOKEN_KEY)
+        await self._vault.delete(INSTALLATION_ID_KEY)
+        # Anahtar "kendiliğinden" sayılır ki bir sonraki eşleme onu benimseyebilsin.
+        # Bu satır olmadan sıfırlama işe yaramaz: `_adopt_pepper` "bu kurulumun
+        # kendi anahtarı var" deyip reddeder ve kilit geri gelirdi.
+        await self._vault.set(self._vault.AUTO_FLAG, "1")
+        self.cache.clear()
+        self.pepper_mismatch = False
+        log.warning("kurulum eşlemesi sıfırlandı — eşleme ekranı yeniden açılacak")
+        return {"reset": True}
 
     # -------------------------------------------------------------- yazma
 

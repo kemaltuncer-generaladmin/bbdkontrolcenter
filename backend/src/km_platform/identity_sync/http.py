@@ -187,6 +187,26 @@ def create_pairing_router() -> APIRouter:
 
         return result
 
+    @router.post("/pairing/reset")
+    async def reset(request: Request) -> dict[str, Any]:
+        """Bu kurulumun eşlemesini sıfırlar — GİRİŞ İSTEMEZ, bilerek.
+
+        Tam da giriş yapılamadığında gerekiyor: anahtarı merkezle uyuşmayan bir
+        kurulumda kimse giremez, dolayısıyla `unpair`in istediği oturum hiç
+        kurulamaz. O kilit yüzünden kurulum kendi kendini onaramıyordu.
+
+        Riski dardır: yalnız BU makinenin eşleme durumunu düşürür. Yeniden
+        eşlenmek merkezden yeni bir kod ister ve onu ancak yetkili biri üretir.
+        Yerel kullanıcılara, kasadaki öteki sırlara ve özel anahtara dokunulmaz.
+        """
+        if throttle.blocked():
+            raise HTTPException(
+                status_code=429,
+                detail="Çok fazla deneme yapıldı. Bir dakika sonra tekrar deneyin.",
+            )
+        with _translated():
+            return await _sync(request).reset_pairing()
+
     # ------------------------------------------------------- kurulum yönetimi
 
     @router.get("/pairing/installations")

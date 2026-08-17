@@ -202,8 +202,17 @@ def test_revizyon_degismemisse_veri_gonderilmez(client: TestClient) -> None:
     ikinci = client.get(
         "/roster", headers=kurulum(token), params={"known_revision": ilk["revision"]}
     ).json()
-    assert ikinci == {"revision": ilk["revision"], "changed": False}
+    # KADRO GÖNDERİLMEZ — sınanan söz bu. `pepperFingerprint` kadro değil,
+    # kurulumun kendi anahtarının merkezinkiyle uyuşup uyuşmadığını anlamasını
+    # sağlayan denetim alanıdır ve HER yanıtta gider: uyuşmazlık "değişmedi"
+    # turlarında da fark edilebilmeli, yoksa kurulum günlerce sessizce kırık
+    # kalırdı.
+    assert ikinci["revision"] == ilk["revision"]
+    assert ikinci["changed"] is False
     assert "users" not in ikinci
+    assert "roles" not in ikinci
+    assert "grants" not in ikinci
+    assert ikinci["pepperFingerprint"] == ilk["pepperFingerprint"]
 
 
 def test_iptal_edilen_kurulum_kadro_cekemez(client: TestClient) -> None:

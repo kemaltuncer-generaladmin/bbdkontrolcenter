@@ -94,6 +94,20 @@ class RosterCache:
         write_private(self.path, json.dumps(record, ensure_ascii=False).encode("utf-8"))
         log.info("kadro önbelleği güncellendi", revision=record.get("revision"))
 
+    def clear(self) -> None:
+        """Önbelleği siler — eşleme sıfırlanırken.
+
+        İÇİNDE PIN HASH'İ VAR. Eşlemesi düşürülen bir kurulumda bayat kadroyu
+        bırakmak, merkezle bağı kopmuş bir makinede eski kullanıcıların
+        çevrimdışı girmeye devam etmesi demekti. Dosya yoksa sessiz geçilir.
+        """
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as error:  # pragma: no cover — izin/kilit
+            log.warning("kadro önbelleği silinemedi", error=str(error))
+
     def summary(self) -> dict[str, Any]:
         """Ekrana ve sağlık ucuna verilen özet. SIR ALANI ÇIKMAZ: yalnız sayılar
         ve zaman damgası."""

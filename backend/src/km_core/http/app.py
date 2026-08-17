@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from km_core.build_info import build_info
 from km_core.bus.bus import EventBus
 from km_core.config.loader import Config, load_config, nest, with_store_layer
 from km_core.config.settings_store import SettingsStore, apply_settings_migrations
@@ -298,6 +299,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         kernel: Kernel = request.app.state.kernel
         return {
             "status": "ok",
+            # KÜNYE: hangi koddan derlendiği. İzin İSTEMEZ ve sır taşımaz —
+            # bir commit kısaltması. "Düzelttim" ile "bende düzelmedi"
+            # arasındaki farkı ölçmenin tek yolu budur (bkz. build_info).
+            "build": build_info(request.app.state.config.root),
             "modules": {
                 "loaded": len(kernel.loaded()),
                 "total": len(kernel.records),

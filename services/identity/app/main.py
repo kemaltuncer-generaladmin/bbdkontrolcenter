@@ -26,6 +26,7 @@ edilemez.
 
 from __future__ import annotations
 
+import hashlib
 import secrets as pysecrets
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -56,6 +57,16 @@ from .schema import apply_service_migrations
 from .settings import Settings
 
 log = structlog.get_logger("identity.http")
+
+
+def pepper_fingerprint(pepper: str) -> str:
+    """Pepper'ın karşılaştırılabilir ama geri döndürülemez özeti.
+
+    Kurulum kendi anahtarının merkezinkiyle aynı olup olmadığını buradan
+    anlar. Anahtarın kendisi DEĞİLDİR — 16 hex karakter, çakışması pratikte
+    imkânsız ve tersine çevrilemez.
+    """
+    return hashlib.sha256(pepper.encode("utf-8")).hexdigest()[:16]
 
 SERVICE_VERSION = "0.1.0"
 
@@ -241,11 +252,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         (ADR 0021 §2) — yanıt yalnız "değişmedi" der."""
         store: Store = request.app.state.store
         current = await roster.revision(store)
+        # PEPPER PARMAK İZİ HER YANITTA GİDER — "değişmedi" yanıtında da.
+        #
+        # Kurulumun pepper'ı merkezinkiyle uyuşmuyorsa çekilen kadro hiçbir
+        # PIN'le eşleşmez ve BELİRTİ SEBEBİ ELE VERMEZ: kullanıcı yalnız "PIN
+        # yanlış" görür. Parmak izi, kurulumun bu durumu KENDİ BAŞINA fark
+        # edip söyleyebilmesi içindir.
+        #
+        # Parmak izidir, pepper'ın kendisi DEĞİL: karşılaştırmaya yeter,
+        # anahtarı ele vermez. Pepper yalnız `/pair` yanıtında, tek kullanımlık
+        # kodu doğru bilene bir kez gider.
+        izi = pepper_fingerprint(request.app.state.settings.pepper)
         if known_revision is not None and int(known_revision) == current:
-            return {"revision": current, "changed": False}
+            return {"revision": current, "changed": False, "pepperFingerprint": izi}
         payload = await roster.build(store)
         log.info("kadro gönderildi", installation=installation.id, revision=current)
-        return {**payload, "changed": True}
+        return {**payload, "changed": True, "pepperFingerprint": izi}
 
     # ---------------------------------------------------------- kullanıcılar
     #

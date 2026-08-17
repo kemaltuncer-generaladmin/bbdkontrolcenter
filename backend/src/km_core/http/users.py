@@ -227,6 +227,25 @@ async def _prepare_login(request: Request) -> None:
             raise HTTPException(status_code=503, detail=STALE_ROSTER_MESSAGE)
         payload = sync.cache.read() or payload
 
+    # ANAHTAR UYUŞMAZSA KADRO YANSITILMAZ ve eşleme KENDİLİĞİNDEN sıfırlanır.
+    #
+    # Uyuşmazlıkta yansıtılan satırların hiçbiri hiçbir PIN'le eşleşmez; onları
+    # yazmak yalnız yerel tabloyu çalışmayan kayıtlarla doldurur. Kurulum bunun
+    # yerine eşleme durumunu düşürür, böylece bir sonraki açılışta EŞLEME EKRANI
+    # gelir ve makine yeniden eşlenip merkezin anahtarını benimseyebilir.
+    #
+    # 17.08.2026'nın kilidi buydu: kurulum "eşliyim" sanıyor, eşleme ekranı hiç
+    # açılmıyor, hiç kimse giremiyor ve sebep hiçbir yerde yazmıyordu. Kendini
+    # onarmasının tek yolu bu dal.
+    if getattr(sync, "pepper_mismatch", False):
+        await sync.reset_pairing()
+        raise HTTPException(
+            status_code=409,
+            detail="Bu kurulumun kimlik anahtarı merkezle uyuşmuyordu ve eşlemesi "
+                   "sıfırlandı. Uygulamayı yeniden başlatıp merkezden aldığınız "
+                   "kodla yeniden eşleyin.",
+        )
+
     await project_roster(store, payload)
 
 

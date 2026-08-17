@@ -75,6 +75,9 @@ done
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # `%b` — ileti içindeki `\n` kaçışları gerçek satır sonuna çevrilsin.
 die() { printf '\033[31mHATA:\033[0m %b\n' "$*" >&2; exit 1; }
+# Uyarı derlemeyi DÜŞÜRMEZ ama gözden kaçmasın diye renklidir: buradan geçen
+# şeyler "paket üretildi ama beklediğin paket olmayabilir" anlamına gelir.
+warn() { printf '\033[33mUYARI:\033[0m %b\n' "$*" >&2; }
 
 # --- sessiz başarı yasağı -------------------------------------------------
 #
@@ -261,6 +264,41 @@ if [ "$RUNTIME_ONLY" = 1 ]; then
   say "Çalışma zamanı hazır: $RUNTIME_PY"
   FINISHED=1   # istenen iş buydu: erken çıkış meşrudur
   exit 0
+fi
+
+# --- 2.5 künye: HANGİ KODDAN DERLENDİĞİ -----------------------------------
+#
+# 17.08.2026'da aynı arıza üç kez düzeltildi ve üç kez geri geldi; sonunda
+# paketin ESKİ KODDAN derlendiği anlaşıldı. Bunu anlamanın hiçbir yolu yoktu:
+# sürüm numarası commit'i tek anlamlı belirlemiyor (üç ayrı commit aynı
+# "0.1.2"yi taşıyordu) ve bu betik git'e hiç bakmıyordu.
+say "2.5) Künye damgalanıyor"
+
+KM_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '')"
+KM_KIRLI="$(git -C "$ROOT" status --porcelain 2>/dev/null || echo '')"
+KM_SURUM="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" \
+            "$TAURI/tauri.conf.json" 2>/dev/null || echo '')"
+
+if [ -z "$KM_COMMIT" ]; then
+  warn "git bulunamadı — paket künyesiz çıkacak, hangi koddan geldiği anlaşılmaz."
+else
+  # KİRLİ AĞAÇ SESSİZ GEÇİLMEZ. Kaydedilmemiş değişiklikle üretilen paket,
+  # hiçbir commit'e karşılık gelmez ve "sende çalışıyor mu" sorusu cevapsız kalır.
+  if [ -n "$KM_KIRLI" ]; then
+    KM_COMMIT="${KM_COMMIT}+degisiklik"
+    warn "ÇALIŞMA AĞACI KİRLİ — paket hiçbir commit'e birebir karşılık gelmiyor."
+  fi
+  # Uzakla farkı da söyle: `git pull` unutulmuşsa paket eski kodu taşır.
+  if git -C "$ROOT" rev-parse '@{u}' >/dev/null 2>&1; then
+    GERIDE="$(git -C "$ROOT" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"
+    if [ "${GERIDE:-0}" -gt 0 ]; then
+      warn "UZAKTA $GERIDE COMMIT DAHA VAR — 'git pull' yapmadan derliyorsunuz."
+    fi
+  fi
+  printf 'COMMIT = "%s"\nBUILT_AT = "%s"\nVERSION = "%s"\n' \
+    "$KM_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$KM_SURUM" \
+    > "$ROOT/backend/src/km_core/_build_stamp.py"
+  echo "  künye: $KM_COMMIT · sürüm $KM_SURUM"
 fi
 
 # --- 3. kabuk menü kaydı --------------------------------------------------
