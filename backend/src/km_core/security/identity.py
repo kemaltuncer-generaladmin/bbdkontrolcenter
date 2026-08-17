@@ -2,13 +2,35 @@
 
 Kimlik ÇEKİRDEĞE aittir; modül değildir, kapatılamaz.
 
-Giriş kullanıcı adsızdır: PIN hem kimliği hem girişi belirler.
-  · PIN en az 6 hane, yalnızca rakam, benzersiz.
+Giriş kullanıcı adsızdır: **PIN** hem kimliği hem girişi belirler.
+
+  · En az 6 hane, yalnızca rakam. Basit PIN'ler (`BASIT_PINLER`, tek rakamın
+    tekrarı, ardışık artan/azalan diziler) reddedilir.
+  · **Benzersizdir.** Aynı PIN ikinci kullanıcıya atanamaz; sır kimliği
+    belirliyorsa iki kişiye ait olamaz. Çakışma hatası KİMİNLE çakıştığını
+    SÖYLEMEZ — aksi hâli, yöneticinin deneme yoluyla başkasının PIN'ini
+    öğrenmesine kapı açardı.
   · Argon2id ile hash'lenir; düz PIN hiçbir yerde saklanmaz.
-  · Ayrıca sabit anahtarlı (pepper) `pin_lookup` üretilir — girişte tüm
+  · Ayrıca sabit anahtarlı (pepper) `secret_lookup` üretilir — girişte tüm
     kullanıcıları tarayıp tek tek Argon2 denemek yerine tek satır bulunur.
+    Pepper **kasada** durur, veritabanında değil.
   · Kullanıcı bulunamasa bile doğrulama süresi harcanır: yanıt süresinden
-    "bu PIN kimseye ait değil" bilgisi sızmaz.
+    "bu PIN kimseye ait değil" bilgisi sızmaz. Deneme sayacı
+    (`failed_attempts`) ve kilitlenme (`locked_until`) sözleşmenin zorunlu
+    parçasıdır.
+
+**ADI ŞİFRE, KURALI PIN.** ADR 0016 (kişiye özel şifreyle giriş) 2026-08-17'de
+reddedildi; ancak göçü çoktan koşmuştu. `password_hash`, `secret_lookup`,
+`password_set_at` sütunları ve `users.set_password` izin anahtarı ADI DEĞİŞMEDEN
+kaldı: adları geri çevirmek ikinci bir göç ve veri riski demekti. Bu dosyada
+"password" geçen her ad o sütunlara/anahtara bağlıdır; doğrulama kuralı her
+yerde 6 haneli PIN'dir (`validate_pin`).
+
+Göç yolu (0016'dan kalan, hâlâ geçerli): `pin_hash` / `pin_lookup` DÜŞÜRÜLMEZ
+ve hiçbir satır silinmez. `password_hash` sütunu henüz boş olan mevcut kullanıcı
+eski PIN'iyle doğrulanabilir ama **oturum açılmaz**: giriş "PIN belirlenmeli"
+durumu döndürür ve oturum ancak yeni PIN kurulduktan sonra açılır. Kimse
+kilitlenmez.
 
 K10 — rol adı sorulmaz. Dışarıya açılan tek yetki sorusu `has_permission`.
 """
@@ -26,7 +48,7 @@ from typing import Any
 
 import structlog
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 
 from km_core.store.db import Store
 
@@ -38,6 +60,12 @@ _hasher = PasswordHasher()
 # sahte hash. Zamanlama farkını kapatır.
 _DUMMY_HASH = _hasher.hash("000000-bulunamadi")
 
+# Çakışma hatası tek tip metindir: hangi kullanıcıyla çakıştığı SÖYLENMEZ.
+PASSWORD_UNAVAILABLE = "Bu PIN kullanılamaz, başka bir tane seçin."
+
+# Elenen bilinen PIN'ler. Tek rakam tekrarı ve ardışık diziler ayrıca
+# `validate_pin` içinde kuralla elenir; bu küme yalnız kalıplaşmış tercihleri
+# kapatır.
 BASIT_PINLER = {"123456", "000000", "111111", "654321", "123123", "112233"}
 
 # Ön tanımlı roller (docs/permissions.md). İzinler modüllerin manifestlerinden
@@ -49,6 +77,31 @@ BUILTIN_ROLES = [
     ("org_staff", "Kurum Personeli", "Zil, baskı, rehber."),
     ("accountant", "Mali Müşavir", "Mali ekranlar: fatura, cari, vergilendirme, raporlar."),
 ]
+
+# "Son yönetici" kısıtının dayandığı rol (docs/identity-model.md — Kısıtlar).
+#
+# BU K10'A AYKIRI DEĞİLDİR. K10, YETKİ sorusunun rol adıyla sorulmasını
+# yasaklar (`if role == "admin"` yerine `has_permission`). Buradaki rol bir
+# yetki dalı değil, KORUNAN VERİDİR: sistemde yönetici rolü taşıyan son aktif
+# kullanıcının pasifleştirilmesini veya rolünün alınmasını engelleyen bir
+# bütünlük kısıtıdır. Tek yerde durur ve yetkilendirmede kullanılmaz.
+ADMIN_ROLE_ID = "admin"
+
+# `update_user` ile düzenlenebilen alanlar. Sır ve sayaç alanları BURADA
+# BULUNMAZ: PIN yalnız `set_password` yolundan, sayaçlar yalnız giriş
+# akışından değişir.
+EDITABLE_FIELDS = (
+    "first_name",
+    "last_name",
+    "title",
+    "department",
+    "org_scope",
+    "phone_mobile",
+    "phone_ext",
+    "email",
+    "note",
+    "directory_visible",
+)
 
 
 def now() -> str:
@@ -77,8 +130,39 @@ class CurrentUser:
         return scope is not None and f"{key}:{scope}" in self.permissions
 
 
-class PinError(ValueError):
-    """PIN sözleşmeye uymuyor."""
+@dataclass(slots=True)
+class LoginResult:
+    """Giriş sonucu.
+
+    `must_set_password` göç yolundaki kullanıcıyı anlatır: eski PIN doğrulandı
+    ama `password_hash` sütunu hâlâ boş olduğu için OTURUM AÇILMADI. Alan adı
+    göçten kalmıştır; istenen şey yeni bir PIN'dir.
+    """
+
+    user: CurrentUser
+    token: str | None = None
+    must_set_password: bool = False
+
+
+class IdentityError(ValueError):
+    """Kimlik sözleşmesi ihlali (rol, durum, kısıt)."""
+
+
+class PasswordError(IdentityError):
+    """PIN sözleşmeye uymuyor.
+
+    Sınıf adı göçten kalmıştır (bkz. modül başlığı — "adı şifre, kuralı PIN");
+    taşıdığı ihlaller `validate_pin` kurallarıdır.
+    """
+
+
+class RevisionConflict(IdentityError):
+    """İyimser kilit çakışması (ADR 0020) — kayıt aradan değişmiş."""
+
+
+class UserNotFound(IdentityError):
+    """Kayıt yok. Kendi sınıfı vardır: `LookupError` kullanılsaydı gövdedeki
+    her `KeyError` de sessizce 404'e dönerdi."""
 
 
 class Identity:
@@ -92,24 +176,48 @@ class Identity:
         self.lockout_minutes = lockout_minutes
         self.session_idle_minutes = session_idle_minutes
 
-    # ------------------------------------------------------------------ PIN
+    # ------------------------------------------------------------------ sır
 
-    def _lookup(self, pin: str) -> str:
-        return hmac.new(self._pepper, pin.encode("utf-8"), hashlib.sha256).hexdigest()
+    def secret_lookup(self, secret: str) -> str:
+        """Sabit anahtarlı (pepper) arama hash'i.
+
+        Mekanizma eski `pin_lookup` ile aynıdır; değişen yalnız adıdır — sütun
+        adı göçten kalmıştır. Pepper kasadan gelir, veritabanında durmaz (K8).
+        """
+        return hmac.new(self._pepper, secret.encode("utf-8"), hashlib.sha256).hexdigest()
 
     def validate_pin(self, pin: str) -> None:
+        """PIN kuralları (ADR 0007, docs/identity-model.md).
+
+        Sözleşmenin tamamı burada: yalnız rakam, en az `pin_min_length` hane,
+        kalıplaşmış ve ardışık diziler kapalı. Uzunluk sınırı yukarıdan
+        `config/default.yaml` → `auth.pin_min_length` ile gelir.
+        """
         if not pin.isdigit():
-            raise PinError("PIN yalnızca rakamlardan oluşur.")
+            raise PasswordError("PIN yalnızca rakamlardan oluşur.")
         if len(pin) < self.pin_min_length:
-            raise PinError(f"PIN en az {self.pin_min_length} hane olmalı.")
+            raise PasswordError(f"PIN en az {self.pin_min_length} hane olmalı.")
         if pin in BASIT_PINLER or len(set(pin)) == 1:
-            raise PinError("Bu PIN fazla basit.")
+            raise PasswordError("Bu PIN fazla basit.")
         # ardışık artan/azalan dizi
         digits = [int(char) for char in pin]
         if all(b - a == 1 for a, b in pairwise(digits)):
-            raise PinError("Ardışık PIN kullanılamaz.")
+            raise PasswordError("Ardışık PIN kullanılamaz.")
         if all(a - b == 1 for a, b in pairwise(digits)):
-            raise PinError("Ardışık PIN kullanılamaz.")
+            raise PasswordError("Ardışık PIN kullanılamaz.")
+
+    async def _assert_password_free(self, lookup: str, *, except_user_id: str | None = None) -> None:
+        """Benzersizlik kapısı.
+
+        Hata KİMİNLE çakıştığını söylemez; aksi hâli yöneticinin deneme yoluyla
+        başkasının PIN'ini öğrenmesine kapı açardı.
+        """
+        row = await self.store.fetch_one(
+            "SELECT id FROM users WHERE secret_lookup = ? AND id IS NOT ?",
+            (lookup, except_user_id),
+        )
+        if row is not None:
+            raise PasswordError(PASSWORD_UNAVAILABLE)
 
     # --------------------------------------------------------------- roller
 
@@ -139,28 +247,66 @@ class Identity:
                 rows,
             )
 
+    async def list_roles(self) -> list[dict[str, Any]]:
+        roles = await self.store.fetch_all(
+            "SELECT id, name, description, builtin FROM roles ORDER BY id"
+        )
+        grants = await self.store.fetch_all(
+            "SELECT role_id, permission FROM role_permissions ORDER BY role_id, permission"
+        )
+        by_role: dict[str, list[str]] = {}
+        for grant in grants:
+            by_role.setdefault(str(grant["role_id"]), []).append(str(grant["permission"]))
+        return [
+            {
+                "id": role["id"],
+                "name": role["name"],
+                "description": role["description"],
+                "builtin": bool(role["builtin"]),
+                "permissions": by_role.get(str(role["id"]), []),
+            }
+            for role in roles
+        ]
+
+    async def _assert_roles_exist(self, roles: list[str]) -> None:
+        if not roles:
+            raise IdentityError("En az bir rol zorunlu.")
+        known = {str(row["id"]) for row in await self.store.fetch_all("SELECT id FROM roles")}
+        unknown = [role for role in roles if role not in known]
+        if unknown:
+            raise IdentityError(f"Tanımsız rol: {', '.join(sorted(unknown))}")
+
     # ----------------------------------------------------------- kullanıcı
 
     async def create_user(self, *, first_name: str, last_name: str, org_scope: str,
-                          pin: str, roles: list[str], created_by: str | None = None,
+                          password: str, roles: list[str], created_by: str | None = None,
                           **extra: Any) -> str:
-        self.validate_pin(pin)
-        lookup = self._lookup(pin)
+        phone_mobile = extra.get("phone_mobile")
+        # Argüman adı `password`, denetlenen şey PIN'dir (modül başlığı).
+        self.validate_pin(password)
+        await self._assert_roles_exist(roles)
 
-        if await self.store.fetch_one("SELECT id FROM users WHERE pin_lookup = ?", (lookup,)):
-            raise PinError("Bu PIN başka bir kullanıcıda kayıtlı.")
+        lookup = self.secret_lookup(password)
+        await self._assert_password_free(lookup)
 
         user_id = str(uuid.uuid4())
+        # Eski PIN sütunları DÜŞÜRÜLMEDİ ve `NOT NULL`. Yeni kullanıcının PIN'i
+        # `password_hash` sütununda durur; eski sütunlar giriş yolunda asla
+        # eşleşmeyecek bir yer tutucuyla doldurulur (`pin_lookup` HMAC hexdigest
+        # biçiminde olmadığı için hiçbir sırla çakışamaz).
         await self.store.execute(
             "INSERT INTO users (id, first_name, last_name, title, department, org_scope, "
             "phone_mobile, phone_ext, email, note, directory_visible, status, pin_hash, "
-            "pin_lookup, pin_set_at, created_at, updated_at, created_by) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "pin_lookup, pin_set_at, password_hash, secret_lookup, password_set_at, "
+            "created_at, updated_at, created_by) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 user_id, first_name, last_name, extra.get("title"), extra.get("department"),
-                org_scope, extra.get("phone_mobile"), extra.get("phone_ext"), extra.get("email"),
+                org_scope, phone_mobile, extra.get("phone_ext"), extra.get("email"),
                 extra.get("note"), int(extra.get("directory_visible", True)), "active",
-                _hasher.hash(pin), lookup, now(), now(), now(), created_by,
+                "", f"pin-yok:{user_id}", now(),
+                _hasher.hash(password), lookup, now(),
+                now(), now(), created_by,
             ),
         )
         await self.store.execute_many(
@@ -173,6 +319,24 @@ class Identity:
     async def user_count(self) -> int:
         row = await self.store.fetch_one("SELECT COUNT(*) AS n FROM users")
         return int(row["n"]) if row else 0
+
+    async def list_users(self) -> list[dict[str, Any]]:
+        rows = await self.store.fetch_all(
+            "SELECT * FROM users ORDER BY first_name, last_name"
+        )
+        grants = await self.store.fetch_all(
+            "SELECT user_id, role_id FROM user_roles ORDER BY user_id, role_id"
+        )
+        by_user: dict[str, list[str]] = {}
+        for grant in grants:
+            by_user.setdefault(str(grant["user_id"]), []).append(str(grant["role_id"]))
+        return [{**row, "roles": by_user.get(str(row["id"]), [])} for row in rows]
+
+    async def get_user(self, user_id: str) -> dict[str, Any]:
+        row = await self.store.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
+        if row is None:
+            raise UserNotFound("Kullanıcı bulunamadı.")
+        return {**row, "roles": await self.roles_of(user_id)}
 
     async def permissions_of(self, user_id: str) -> set[str]:
         rows = await self.store.fetch_all(
@@ -188,32 +352,169 @@ class Identity:
         )
         return [row["role_id"] for row in rows]
 
+    async def update_user(self, user_id: str, *, fields: dict[str, Any],
+                          roles: list[str] | None = None,
+                          expected_revision: int | None = None,
+                          actor_id: str | None = None) -> dict[str, Any]:
+        """Kullanıcı kaydını günceller. İyimser kilit ZORUNLU değil, ama
+        `expected_revision` gönderilmişse BAĞLAYICIDIR (ADR 0020).
+
+        Sessizce korunuyormuş gibi davranmak hiç korumamaktan kötüdür: beklenen
+        revizyon uymuyorsa yazma yapılmaz, 409 doğar.
+        """
+        row = await self.get_user(user_id)
+        current = int(row.get("revision") or 1)
+        if expected_revision is not None and expected_revision != current:
+            raise RevisionConflict(
+                f"Bu kayıt aradan değişti (son değişiklik: {row['updated_at']}). "
+                "Yenileyip tekrar deneyin."
+            )
+
+        unknown = [name for name in fields if name not in EDITABLE_FIELDS]
+        if unknown:
+            raise IdentityError(f"Düzenlenemeyen alan: {', '.join(sorted(unknown))}")
+
+        if roles is not None:
+            await self._assert_roles_exist(roles)
+            await self._assert_admin_remains(user_id, keeps_admin=ADMIN_ROLE_ID in roles)
+
+        assignments = [f"{name} = ?" for name in fields]
+        values: list[Any] = [
+            int(bool(value)) if name == "directory_visible" else value
+            for name, value in fields.items()
+        ]
+        assignments += ["updated_at = ?", "revision = revision + 1"]
+        values += [now(), user_id]
+        await self.store.execute(
+            f"UPDATE users SET {', '.join(assignments)} WHERE id = ?", values
+        )
+
+        if roles is not None:
+            await self.store.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
+            await self.store.execute_many(
+                "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
+                [(user_id, role) for role in roles],
+            )
+            await self.audit(actor_id, "roles.manage", result="ok",
+                             detail=f"{user_id}: {', '.join(sorted(roles))}")
+
+        await self.audit(actor_id, "users.update", result="ok", detail=user_id)
+        return await self.get_user(user_id)
+
+    async def set_status(self, user_id: str, status: str, *,
+                         actor_id: str | None = None) -> dict[str, Any]:
+        if status not in ("active", "disabled"):
+            raise IdentityError("Durum yalnız 'active' veya 'disabled' olabilir.")
+        await self.get_user(user_id)
+        await self._assert_admin_remains(user_id, keeps_admin=status == "active")
+        await self.store.execute(
+            "UPDATE users SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+            (status, now(), user_id),
+        )
+        if status != "active":
+            # Pasifleşen kullanıcının açık oturumları da kapanır.
+            await self.store.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        await self.audit(actor_id, "users.status", result="ok", detail=f"{user_id}: {status}")
+        return await self.get_user(user_id)
+
+    async def _assert_admin_remains(self, user_id: str, *, keeps_admin: bool) -> None:
+        """Son yönetici pasifleştirilemez, rolü alınamaz (identity-model.md).
+
+        Bütünlük kısıtıdır, yetkilendirme değildir — bkz. `ADMIN_ROLE_ID` notu.
+        """
+        if keeps_admin:
+            return
+        rows = await self.store.fetch_all(
+            "SELECT ur.user_id FROM user_roles ur JOIN users u ON u.id = ur.user_id "
+            "WHERE ur.role_id = ? AND u.status = 'active'",
+            (ADMIN_ROLE_ID,),
+        )
+        admins = {str(row["user_id"]) for row in rows}
+        if user_id in admins and len(admins) <= 1:
+            raise IdentityError(
+                "Sistemde yönetici rolü taşıyan son aktif kullanıcı bu; "
+                "pasifleştirilemez ve rolü alınamaz."
+            )
+
+    # ---------------------------------------------------------------- PIN
+
+    async def set_password(self, user_id: str, password: str, *,
+                           actor_id: str | None = None) -> None:
+        """PIN atar/sıfırlar. Düz PIN hiçbir yerde saklanmaz, denetim izine de
+        yazılmaz.
+
+        Metot adı ve denetim eylemi (`users.set_password`) izin anahtarıyla aynı
+        kalır — anahtar göçle yazıldı, geri çevirmek ikinci bir göç demekti.
+        """
+        await self.get_user(user_id)
+        self.validate_pin(password)
+        lookup = self.secret_lookup(password)
+        await self._assert_password_free(lookup, except_user_id=user_id)
+
+        await self.store.execute(
+            "UPDATE users SET password_hash = ?, secret_lookup = ?, password_set_at = ?, "
+            "failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
+            (_hasher.hash(password), lookup, now(), now(), user_id),
+        )
+        await self.audit(actor_id, "users.set_password", result="ok", detail=user_id)
+
+    async def set_password_with_secret(
+        self, current_secret: str, password: str
+    ) -> tuple[str, CurrentUser] | None:
+        """Kullanıcının kendi PIN'ini kurması/değiştirmesi.
+
+        `current_secret` mevcut PIN'dir; göç yolundaki kullanıcı için eski
+        sütunda duran PIN'dir. Doğrulanamazsa None döner — sebep AYIRT EDİLMEZ.
+        Başarıda oturum açılır: PIN'ini kuran kullanıcı ikinci kez giriş yapmak
+        zorunda kalmaz.
+        """
+        row, legacy = await self._find_by_secret(current_secret)
+        if row is None:
+            self._burn_time(current_secret)
+            await self.audit(None, "auth.set_password", result="fail", detail="bilinmeyen sır")
+            return None
+
+        if self._locked(row):
+            await self.audit(row["id"], "auth.set_password", result="fail", detail="kilitli")
+            return None
+
+        stored = row["pin_hash"] if legacy else row["password_hash"]
+        if not _verify(stored, current_secret):
+            await self._register_failure(row, action="auth.set_password")
+            return None
+
+        if row["status"] != "active":
+            await self.audit(row["id"], "auth.set_password", result="fail",
+                             detail="pasif kullanıcı")
+            return None
+
+        await self.set_password(str(row["id"]), password, actor_id=str(row["id"]))
+        fresh = await self.get_user(str(row["id"]))
+        return await self._open_session(fresh)
+
     # ------------------------------------------------------------- giriş
 
-    async def login(self, pin: str) -> tuple[str, CurrentUser] | None:
-        """PIN ile giriş. Başarısızsa None — sebep AYIRT EDİLMEZ."""
-        row = await self.store.fetch_one(
-            "SELECT * FROM users WHERE pin_lookup = ?", (self._lookup(pin),)
-        )
+    async def login(self, password: str) -> LoginResult | None:
+        """PIN ile giriş. Başarısızsa None — sebep AYIRT EDİLMEZ.
+
+        Argüman adı uçtaki alan adıyla (`password`) aynı kalır; beklenen değer
+        6 haneli PIN'dir.
+        """
+        row, legacy = await self._find_by_secret(password)
 
         if row is None:
             # Sahte doğrulama: yanıt süresi kullanıcı varmış gibi geçsin.
-            try:
-                _hasher.verify(_DUMMY_HASH, pin)
-            except VerifyMismatchError:
-                pass
-            await self.audit(None, "auth.login", result="fail", detail="bilinmeyen PIN")
+            self._burn_time(password)
+            await self.audit(None, "auth.login", result="fail", detail="bilinmeyen sır")
             return None
 
-        locked_until = row.get("locked_until")
-        if locked_until and datetime.fromisoformat(locked_until) > datetime.now(UTC):
+        if self._locked(row):
             await self.audit(row["id"], "auth.login", result="fail", detail="kilitli")
             return None
 
-        try:
-            _hasher.verify(row["pin_hash"], pin)
-        except VerifyMismatchError:
-            await self._register_failure(row)
+        stored = row["pin_hash"] if legacy else row["password_hash"]
+        if not _verify(stored, password):
+            await self._register_failure(row, action="auth.login")
             return None
 
         if row["status"] != "active":
@@ -221,11 +522,48 @@ class Identity:
             return None
 
         await self.store.execute(
-            "UPDATE users SET failed_attempts = 0, locked_until = NULL, last_login_at = ? "
-            "WHERE id = ?",
-            (now(), row["id"]),
+            "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?",
+            (row["id"],),
         )
 
+        if legacy:
+            # Sır doğru ama yeni PIN henüz kurulmadı: OTURUM AÇILMAZ.
+            await self.audit(row["id"], "auth.login", result="ok", detail="PIN belirlenmeli")
+            return LoginResult(user=await self._current_user(row), must_set_password=True)
+
+        token, user = await self._open_session(row)
+        return LoginResult(user=user, token=token)
+
+    async def _find_by_secret(self, secret: str) -> tuple[dict[str, Any] | None, bool]:
+        """(satır, eski_sütun_mu) — arama tek HMAC ile tek satıra iner.
+
+        `password_hash` sütunu boş olan kullanıcı için eski `pin_lookup` da
+        denenir; böylece göçte kimse kilitlenmez. Yeni PIN'ini kurmuş
+        kullanıcının eski sütundaki PIN'i artık geçmez.
+        """
+        lookup = self.secret_lookup(secret)
+        row = await self.store.fetch_one(
+            "SELECT * FROM users WHERE secret_lookup = ?", (lookup,)
+        )
+        if row is not None:
+            return row, False
+        row = await self.store.fetch_one(
+            "SELECT * FROM users WHERE pin_lookup = ? AND password_hash IS NULL", (lookup,)
+        )
+        return row, row is not None
+
+    def _locked(self, row: dict[str, Any]) -> bool:
+        locked_until = row.get("locked_until")
+        if not locked_until:
+            return False
+        return datetime.fromisoformat(str(locked_until)) > datetime.now(UTC)
+
+    def _burn_time(self, secret: str) -> None:
+        """Kullanıcı yokken de Argon2 maliyeti ödenir — zamanlama sızıntısı
+        kapalı kalır."""
+        _verify(_DUMMY_HASH, secret)
+
+    async def _open_session(self, row: dict[str, Any]) -> tuple[str, CurrentUser]:
         token = secrets.token_urlsafe(32)
         expires = datetime.now(UTC) + timedelta(minutes=self.session_idle_minutes)
         await self.store.execute(
@@ -233,11 +571,13 @@ class Identity:
             "VALUES (?, ?, ?, ?, ?)",
             (_hash_token(token), row["id"], now(), now(), expires.isoformat(timespec="seconds")),
         )
-
+        await self.store.execute(
+            "UPDATE users SET last_login_at = ? WHERE id = ?", (now(), row["id"])
+        )
         await self.audit(row["id"], "auth.login", result="ok")
         return token, await self._current_user(row)
 
-    async def _register_failure(self, row: dict[str, Any]) -> None:
+    async def _register_failure(self, row: dict[str, Any], *, action: str) -> None:
         attempts = int(row["failed_attempts"]) + 1
         locked = None
         if attempts >= self.max_failed_attempts:
@@ -249,7 +589,7 @@ class Identity:
             (attempts, locked, row["id"]),
         )
         await self.audit(
-            row["id"], "auth.login", result="fail",
+            row["id"], action, result="fail",
             detail=f"hatalı PIN ({attempts}){' — kilitlendi' if locked else ''}",
         )
 
@@ -293,12 +633,20 @@ class Identity:
 
     async def audit(self, user_id: str | None, action: str, *, result: str,
                     scope: str | None = None, detail: str | None = None) -> None:
-        """Denetim izi. PIN ve sır değerleri BURAYA YAZILMAZ."""
+        """Denetim izi. PIN VE SIR DEĞERLERİ BURAYA YAZILMAZ."""
         await self.store.execute(
             "INSERT INTO audit_log (at, user_id, action, scope, result, detail) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (now(), user_id, action, scope, result, detail),
         )
+
+
+def _verify(stored: str | None, secret: str) -> bool:
+    """Argon2 doğrulaması. Bozuk/boş hash de sessizce `False` döner (K7)."""
+    try:
+        return bool(_hasher.verify(stored or "", secret))
+    except (VerificationError, InvalidHashError):
+        return False
 
 
 def _hash_token(token: str) -> str:

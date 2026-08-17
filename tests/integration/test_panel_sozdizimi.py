@@ -32,9 +32,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 #: Denetlenecek yerler: panel girişleri, ortak kit ve kabuğun kendi dosyaları.
+#:
+#: `shell/core-panels/**` AYRICA YAZILIR. Çekirdek ekranları modül DEĞİLDİR
+#: (ADR 0017): manifestleri yoktur, `modules/*/ui/panel/` altından gelmezler ve
+#: `shell/*.js` deseni de alt klasöre inmez. Desen genişletilmeden önce bu
+#: dosyalar HİÇBİR desene girmiyordu — yeni bir çekirdek panelindeki sözdizimi
+#: hatası tüm süiti yeşil bırakırdı.
 DESENLER = (
     "modules/*/ui/panel/**/*.js",
     "apps/desktop/shell/ui-kit/*.js",
+    "apps/desktop/shell/core-panels/**/*.js",
     "apps/desktop/shell/*.js",
 )
 

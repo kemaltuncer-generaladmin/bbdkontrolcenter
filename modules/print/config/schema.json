@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "print ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "keep_job_history_days": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Kayıt satırlarının saklanma süresi (gün). Kullanıcının dosyaları silinmez. 0 = budama yok."
+    },
+    "max_copies": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Yeniden basmada kabul edilen en fazla kopya."
+    },
+    "preview_pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50,
+      "description": "PDF önizlemesinde görüntüye çevrilecek en fazla sayfa."
+    },
+    "preview_dpi": {
+      "type": "integer",
+      "minimum": 40,
+      "maximum": 300,
+      "description": "Önizleme çözünürlüğü."
+    },
+    "preview_text_bytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "description": "Metin türü çıktılarda önizlemeye okunacak en fazla bayt."
+    }
+  }
+}

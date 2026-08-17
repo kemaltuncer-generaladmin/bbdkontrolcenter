@@ -1,0 +1,98 @@
+/* Kullanıcı Yönetimi — panelin KENDİ kuralları.
+ *
+ * Ortak görsel dil `ui-kit/kit.css` içindedir ve buraya kopyalanmaz (ADR 0011).
+ * Burada yalnız bu ekrana özgü yerleşim vardır.
+ *
+ * ÖNEK `us-`. Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ; çakışan
+ * bir önek, bu ekran bir kez açıldıktan sonra başka panellerin görünümünü de
+ * bozardı (kit kuralı 9). `us-` başka hiçbir panelde kullanılmıyor. */
+
+.us .us-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 20px 24px;
+}
+
+.us .us-notice:not(:empty) { padding: 0 20px 10px; }
+
+/* Roller satır içinde yan yana; sığmazsa alta iner — üç rolü olan bir
+   kullanıcının rozetleri kırpılmamalı. */
+.us .us-roles,
+.us .us-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.us .us-never { color: var(--soft); font-style: italic; }
+
+/* ------------------------------------------------------------- çekmece */
+
+.us .us-drawer-notice:not(:empty) { margin-bottom: 14px; }
+
+.us .us-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* --------------------------------------------------------- rol seçimi */
+
+.us .us-roles-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 16px;
+}
+
+.us .us-role-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.us .us-role {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.us .us-role:hover { background: var(--tint); }
+.us .us-role .kit-check { margin-top: 1px; flex: none; }
+.us .us-role-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.us .us-role-name { font-weight: 600; }
+.us .us-role-desc { font-size: 11px; color: var(--soft); line-height: 1.45; }
+
+/* ------------------------------------------------------------ çakışma */
+
+.us .us-diff-title {
+  margin: 10px 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--soft);
+}
+
+.us .us-diff {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.us .us-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}

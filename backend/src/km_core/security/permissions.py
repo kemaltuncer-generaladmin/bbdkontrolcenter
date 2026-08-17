@@ -12,7 +12,9 @@ CORE_PERMISSIONS: list[dict[str, Any]] = [
     # kullanıcı ve rol
     {"key": "users.view", "default_roles": ["admin"]},
     {"key": "users.manage", "default_roles": ["admin"]},
-    {"key": "users.set_pin", "default_roles": ["admin"]},
+    # ADR 0016 — eski adı `users.set_pin`. Anahtar değiştiği için rol atamaları
+    # göç ister: `km_core/security/migrations.py` → 0003.
+    {"key": "users.set_password", "default_roles": ["admin"]},
     {"key": "roles.view", "default_roles": ["admin"]},
     {"key": "roles.manage", "default_roles": ["admin"]},
     # sistem

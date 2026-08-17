@@ -1,12 +1,17 @@
 // Kontrol Merkezi — kabuk davranışı.
 //
 // Kabuk hiçbir modülün adını bilmez (K1): menü, çekirdeğin verdiği kayıttan
-// kurulur. Giriş de çekirdeğe aittir — PIN sidecar'daki `POST /auth/login`
+// kurulur. Giriş de çekirdeğe aittir — PIN sidecar'daki `POST /api/auth/login`
 // ucunda Argon2id ile doğrulanır, kabuk yalnızca sorar ve belirteci taşır.
+//
+// ADR 0016 (kişiye özel şifreyle giriş) REDDEDİLDİ: giriş yine 6 haneli PIN'dir
+// ve ekran tuş takımıdır. Uçtaki alan adı (`password`) ve `users.set_password`
+// izni, göç zaten koştuğu için olduğu gibi bırakıldı — ad şifre der, kural
+// PIN'dir (docs/adr/0016-giris-sifre-ile.md — Neden reddedildi).
 
 import { iconSvg } from './icons.js';
 import {
-  loadRegistry, login, mountPanel, navTree, setNavigator, waitForCore,
+  api, loadRegistry, login, mountPanel, navTree, setNavigator, setOwnPassword, waitForCore,
 } from './ui-kernel.js';
 
 const PIN_MIN = 6;
@@ -233,7 +238,11 @@ function step(delta) {
 
 async function openWorkspace(user) {
   shell.user = user;
-  shell.registry = await loadRegistry();
+  // Kullanıcı ÇEKİRDEK EKRANLARININ görünürlüğü için verilir: modül ekranlarını
+  // sidecar süzer, çekirdek ekranlarının listesi kabukta durur (ADR 0017 §1) ve
+  // izin süzgeci de burada uygulanır. Her ikisinin de arkasında backend'in
+  // kendi denetimi vardır (K9).
+  shell.registry = await loadRegistry(user);
   shell.panels = shell.registry.panels;
 
   el.foot.replaceChildren();
@@ -256,9 +265,46 @@ async function openWorkspace(user) {
 }
 
 // ================================================================== GİRİŞ
+//
+// TUŞ TAKIMI. Kullanıcı adı sorulmaz — 6 haneli PIN hem kimliği hem girişi
+// belirler (docs/identity-model.md — Giriş akışı). Metin alanı YOKTUR: rakamlar
+// pencere tuş dinleyicisinden toplanır, ekranda yalnız hane SAYISI görünür.
+//
+// EKRANIN ÜÇ KİPİ VAR:
+//   · 'login'  — PIN yazılır, oturum açılır.
+//   · 'set'    — sır doğrulandı ama yeni PIN henüz kurulmadı; oturum AÇILMADI.
+//   · 'repeat' — yeni PIN ikinci kez istenir (yazım hatası kişiyi dışarıda
+//                bırakırdı; teyit tuş takımının kendi güvenliğidir).
+//
+// 'set'/'repeat' GÖÇ YOLUDUR ve ADR 0016'dan kalmıştır: 0016 reddedildi ama
+// göçü koştu, `password_hash` sütunu duruyor. O sütunu boş olan eski kayıt ilk
+// girişinde kendi PIN'ini kurar (`Identity.login` → `must_set_password`).
+
+/** İpucu satırının parçaları: [metin, tuş?, kuyruk?]. */
+const LOGIN_HINT = ["PIN'inizi yazın, ", 'Enter', ' ile girin'];
+const SET_HINT = ['Devam etmek için kendinize bir PIN belirleyin.'];
+const REPEAT_HINT = ["Yeni PIN'i bir kez daha yazın."];
 
 let pin = '';
 let busy = false;
+let mode = 'login';
+// Göç yolunda backend'e geri gönderilecek ESKİ sır ve teyidi bekleyen yeni PIN.
+// İkisi de yalnız bellekte durur, hiçbir yere yazılmaz, iş bitince silinir.
+let carriedSecret = '';
+let newPin = '';
+// İşlem bitince ipucu satırının döneceği yazı. "Doğrulanıyor…" geçicidir;
+// kipin kendi cümlesini ezmemeli.
+let restingHint = LOGIN_HINT;
+
+/**
+ * GİRİŞ REDDİNİN TEK CÜMLESİ.
+ *
+ * Sebep AYIRT EDİLMEZ: PIN yanlış mı, hesap kilitli mi, o PIN kimseye ait değil
+ * mi — üçü de aynı cümleyi verir. Farklı cümle yazmak, deneme yoluyla "bu PIN
+ * birine ait" bilgisini sızdırırdı; backend de aynı nedenle tek tip 401
+ * döndürüyor (`km_core/http/users.py`).
+ */
+const LOGIN_REJECTED = 'Giriş yapılamadı.';
 
 function renderSlots() {
   const count = Math.max(PIN_MIN, pin.length);
@@ -282,8 +328,7 @@ function clearError() {
   el.error.textContent = '';
 }
 
-function failLogin(text = 'Giriş yapılamadı.') {
-  // Tek tip mesaj: sebep ayırt edilmez (yanlış PIN mi, kilitli mi, yok mu).
+function failLogin(text = LOGIN_REJECTED) {
   el.error.textContent = text;
   el.error.classList.add('show');
   el.slots.classList.remove('shake');
@@ -293,31 +338,130 @@ function failLogin(text = 'Giriş yapılamadı.') {
   renderSlots();
 }
 
-function setHint(html) {
-  el.loginHint.innerHTML = html;
+/**
+ * İpucu satırı.
+ *
+ * METİN DÜĞÜM OLARAK YAZILIR, `innerHTML` İLE DEĞİL. Buradan ÇEKİRDEKTEN GELEN
+ * veri de geçiyor (sunucunun "PIN belirleyin" cümlesi, son bağlantı hatası);
+ * `innerHTML` olsaydı o veri HTML olarak yorumlanırdı. Tuş rozeti ihtiyacı bu
+ * yüzden ayrı bir parça olarak alınır.
+ */
+function setHint([text = '', key = '', tail = '']) {
+  el.loginHint.replaceChildren(document.createTextNode(text));
+  if (!key) return;
+  const rozet = document.createElement('kbd');
+  rozet.textContent = key;
+  el.loginHint.append(rozet, document.createTextNode(tail));
+}
+
+function resetPin() {
+  pin = '';
+  renderSlots();
+}
+
+function resetToLogin(message = '') {
+  mode = 'login';
+  carriedSecret = '';
+  newPin = '';
+  restingHint = LOGIN_HINT;
+  if (message) failLogin(message);
+  else resetPin();
+}
+
+async function stepLogin(entered) {
+  const result = await login(entered);
+
+  if (result.mustSetPassword) {
+    // OTURUM AÇILMADI. Sır doğru ama yeni PIN kurulmamış; eski sır ikinci
+    // adımda `currentSecret` olarak geri gider.
+    carriedSecret = entered;
+    mode = 'set';
+    // Çekirdeğin cümlesi OLDUĞU GİBİ taşınır; kendi cümlemizle değiştirmek
+    // sunucunun anlattığı durumu gizlerdi.
+    restingHint = result.message ? [result.message] : SET_HINT;
+    resetPin();
+    return;
+  }
+
+  await enterWorkspace(result.user);
+}
+
+/** Yeni PIN alındı; ağ yok, yalnız teyide geçilir. */
+function stepSetPin(entered) {
+  newPin = entered;
+  mode = 'repeat';
+  restingHint = REPEAT_HINT;
+  resetPin();
+}
+
+async function stepConfirmPin(entered) {
+  // İKİ GİRİŞİN EŞİTLİĞİ BURADA DENETLENİR: sunucunun bilebileceği bir şey
+  // değil, yazım hatasına karşı kullanıcıya verilen erken cevaptır.
+  if (entered !== newPin) {
+    mode = 'set';
+    newPin = '';
+    restingHint = SET_HINT;
+    failLogin('İki PIN aynı değil.');
+    return;
+  }
+
+  const user = await setOwnPassword(carriedSecret, entered);
+  carriedSecret = '';
+  newPin = '';
+  mode = 'login';
+  restingHint = LOGIN_HINT;
+  await enterWorkspace(user);
+}
+
+async function enterWorkspace(user) {
+  resetPin();
+  el.login.classList.add('leaving');
+  try {
+    await openWorkspace(user);
+  } finally {
+    // `leaving` SINIFI HER DURUMDA KALKAR. Kart `opacity: 0` ve
+    // `pointer-events: none` alıyor; menü kurulamadığında (ör. `/modules`
+    // patlarsa) orada bırakmak, kullanıcıyı görünmez ve tıklanamaz bir giriş
+    // ekranına kilitlerdi — hata mesajı yazılır ama kimse okuyamazdı.
+    el.login.classList.remove('leaving');
+  }
 }
 
 async function submitPin() {
   if (busy || pin.length < PIN_MIN) return;
 
+  const entered = pin;
   busy = true;
   clearError();
-  setHint('Doğrulanıyor…');
+  setHint([mode === 'login' ? 'Doğrulanıyor…' : 'PIN kuruluyor…']);
   el.loginHint.classList.add('busy');
 
   try {
-    const user = await login(pin);
-    pin = '';
-    renderSlots();
-    el.login.classList.add('leaving');
-    await openWorkspace(user);
-    el.login.classList.remove('leaving');
+    if (mode === 'login') await stepLogin(entered);
+    else if (mode === 'set') stepSetPin(entered);
+    else await stepConfirmPin(entered);
   } catch (error) {
-    failLogin(error.status === 401 ? 'Giriş yapılamadı.' : 'Çekirdeğe ulaşılamadı.');
+    if (error.status === 401) {
+      // PIN kurma adımında 401, eski sırrın artık geçmediğini söyler: baştan
+      // başlanır. Cümle yine tek tiptir.
+      if (mode === 'login') failLogin(LOGIN_REJECTED);
+      else resetToLogin(LOGIN_REJECTED);
+    } else if (error.status >= 400 && error.status < 500) {
+      // KURAL İHLALİ PIN KURULURKEN SÖYLENİR: hane sayısı, yalnız rakam, basit
+      // PIN, benzersizlik. Backend'in cümlesi OLDUĞU GİBİ gösterilir —
+      // benzersizlik hatası da kiminle çakıştığını zaten söylemez.
+      mode = 'set';
+      newPin = '';
+      restingHint = SET_HINT;
+      failLogin(error.message);
+    } else {
+      failLogin('Çekirdeğe ulaşılamadı.');
+    }
   } finally {
     busy = false;
     el.loginHint.classList.remove('busy');
-    setHint("PIN'inizi yazın, <kbd>Enter</kbd> ile girin");
+    // Giriş ekranı kapandıysa dokunulmaz: kullanıcı artık menüdedir.
+    if (!el.login.hidden) setHint(restingHint);
   }
 }
 
@@ -394,19 +538,201 @@ window.addEventListener('keydown', (event) => {
 
 window.addEventListener('contextmenu', (event) => event.preventDefault());
 
+// ================================================================ EŞLEME
+//
+// ADR 0021 §4 — CİHAZ EŞLEMESİ. Eşleşmemiş bir kurulum giriş ekranını hiç
+// görmez: önce "bu makine bizim" demesi gerekir. Yönetici merkezde tek
+// kullanıcılık, süreli bir kod üretir; kod buraya girilir ve kurulum karşılığında
+// kendi token'ını alır.
+//
+// EŞLEME TOKEN'I OTURUM DEĞİLDİR. Kod girildikten sonra kullanıcı yine kendi
+// PIN'ini yazar; aşağıdaki tuş takımına ve giriş akışına DOKUNULMAZ. Bu bölüm
+// yalnızca onun ÖNÜNE eklenir ve iş bitince kendini tümüyle söker.
+//
+// YENİ CSS YOK: ekran, giriş kartının sınıflarını (`login`, `login-card`,
+// `slots`) yeniden kullanır. Kod da PIN gibi rakamdır ve tuş takımıyla girilir —
+// metin alanı açmak, ekranın kendi diline yabancı bir kutu koymak olurdu.
+
+const PAIR_LENGTH = 8;
+
+// Eşleme etkinken DOM düğümlerini ve durumu taşır; kapanınca null olur.
+let pairing = null;
+
+/**
+ * Çekirdeğe eşleme durumunu sorar.
+ *
+ * HATA "EŞLEME GEREKMİYOR" SAYILIR. Uç yoksa, yetenek kapalıysa ya da istek
+ * düşerse kurulum bugünkü gibi tek makinede açılmalıdır (ADR 0021 — Sonuçlar):
+ * merkez yüzünden giriş ekranını göstermemek, tam da o kararın yasakladığı
+ * gerilemedir.
+ */
+async function pairingRequired() {
+  try {
+    const state = await api('/api/pairing/state');
+    return Boolean(state?.pairingRequired);
+  } catch {
+    return false;
+  }
+}
+
+function pairSlots() {
+  const dots = [...pairing.slots.children];
+  for (const [i, dot] of dots.entries()) {
+    dot.classList.toggle('filled', i < pairing.code.length);
+  }
+  pairing.slots.setAttribute('aria-label', `Girilen hane sayısı: ${pairing.code.length}`);
+}
+
+function pairFail(text) {
+  pairing.error.textContent = text;
+  pairing.error.classList.add('show');
+  pairing.slots.classList.remove('shake');
+  void pairing.slots.offsetWidth;
+  pairing.slots.classList.add('shake');
+  pairing.code = '';
+  pairSlots();
+}
+
+function pairHint(text) {
+  // Metin DÜĞÜM olarak yazılır, `innerHTML` ile değil: buradan çekirdeğin ve
+  // merkezin cümleleri geçiyor (giriş ekranındaki `setHint` ile aynı gerekçe).
+  pairing.hint.replaceChildren(document.createTextNode(text));
+}
+
+async function submitPairCode() {
+  if (pairing.busy || pairing.code.length !== PAIR_LENGTH) return;
+
+  const code = pairing.code;
+  pairing.busy = true;
+  pairing.error.classList.remove('show');
+  pairing.error.textContent = '';
+  pairHint('Eşleniyor…');
+
+  try {
+    await api('/api/pairing/pair', { method: 'POST', body: { code } });
+    pairing.done();
+  } catch (error) {
+    // MERKEZİN CÜMLESİ OLDUĞU GİBİ GÖSTERİLİR: kod geçersiz mi, merkeze mi
+    // ulaşılamıyor, deneme sınırına mı takıldı — üçü ayrı ekran davranışı
+    // ister ve kendi cümlemizle değiştirmek durumu gizlerdi.
+    pairFail(error.message || 'Eşleme yapılamadı.');
+    pairing.busy = false;
+    pairHint(`Merkezden aldığınız ${PAIR_LENGTH} haneli kodu yazın.`);
+  }
+}
+
+function onPairKey(event) {
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+
+  if (event.key >= '0' && event.key <= '9') {
+    if (pairing.busy || pairing.code.length >= PAIR_LENGTH) return;
+    pairing.error.classList.remove('show');
+    pairing.code += event.key;
+    pairSlots();
+  } else if (event.key === 'Backspace') {
+    if (pairing.busy || pairing.code.length === 0) return;
+    pairing.code = pairing.code.slice(0, -1);
+    pairSlots();
+  } else if (event.key === 'Escape') {
+    if (pairing.busy) return;
+    pairing.code = '';
+    pairSlots();
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    submitPairCode();
+  } else {
+    return;
+  }
+  // OLAY AŞAĞI GEÇMEZ. Dinleyici YAKALAMA evresindedir; giriş ekranının kendi
+  // tuş dinleyicisi bu sırada hiç çalışmaz ve ona tek satır dokunulmamış olur.
+  event.stopPropagation();
+}
+
+/** Eşleme ekranını kurar ve kod girilene kadar bekleyen bir söz döndürür. */
+function runPairing() {
+  const section = document.createElement('section');
+  section.className = 'login';
+
+  const aurora = document.createElement('div');
+  aurora.className = 'aurora';
+  aurora.setAttribute('aria-hidden', 'true');
+
+  const card = document.createElement('div');
+  card.className = 'login-card';
+
+  // Marka işareti giriş kartından KOPYALANIR: SVG'yi elle kurmak aynı çizimi
+  // ikinci kez yazmak olurdu.
+  const mark = document.querySelector('#login .mark');
+  if (mark) card.append(mark.cloneNode(true));
+
+  const heading = document.createElement('h1');
+  heading.textContent = 'Kontrol Merkezi';
+  const org = document.createElement('p');
+  org.className = 'org';
+  org.textContent = 'Bu kurulum henüz eşlenmedi';
+
+  const slots = document.createElement('div');
+  slots.className = 'slots';
+  slots.setAttribute('role', 'img');
+  slots.append(...Array.from({ length: PAIR_LENGTH }, () => {
+    const dot = document.createElement('span');
+    dot.className = 'slot';
+    return dot;
+  }));
+
+  const error = document.createElement('p');
+  error.className = 'error';
+  error.setAttribute('role', 'alert');
+  error.setAttribute('aria-live', 'assertive');
+
+  const hint = document.createElement('p');
+  hint.className = 'login-hint';
+
+  card.append(heading, org, slots, error, hint);
+  section.append(aurora, card);
+  document.body.append(section);
+
+  // Giriş kartı bu sırada GİZLENİR ve sonunda geri açılır; kendisine
+  // dokunulmaz.
+  el.login.hidden = true;
+
+  return new Promise((resolve) => {
+    pairing = {
+      section, slots, error, hint, code: '', busy: false,
+      done: () => {
+        window.removeEventListener('keydown', onPairKey, true);
+        section.remove();
+        pairing = null;
+        el.login.hidden = false;
+        resolve();
+      },
+    };
+    pairSlots();
+    pairHint(`Merkezden aldığınız ${PAIR_LENGTH} haneli kodu yazın.`);
+    window.addEventListener('keydown', onPairKey, true);
+  });
+}
+
 // ================================================================ AÇILIŞ
 
 async function start() {
   el.login.hidden = false;
   renderSlots();
-  setHint('Çekirdek başlatılıyor…');
+  setHint(['Çekirdek başlatılıyor…']);
 
   const ready = await waitForCore();
   if (!ready.ok) {
-    setHint(`Çekirdeğe ulaşılamadı — <code>${ready.error}</code>`);
+    // SON HATA OLDUĞU GİBİ YAZILIR ama METİN olarak: içeriği çekirdekten
+    // geliyor ve `innerHTML` ile basılırsa yorumlanırdı.
+    setHint([`Çekirdeğe ulaşılamadı — ${ready.error}`]);
     return;
   }
-  setHint("PIN'inizi yazın, <kbd>Enter</kbd> ile girin");
+
+  // EŞLEME GİRİŞTEN ÖNCE GELİR (ADR 0021 §4). Gerekmiyorsa bu satır hiçbir şey
+  // yapmaz ve ekran bugünkü gibi doğrudan PIN tuş takımıyla açılır.
+  if (await pairingRequired()) await runPairing();
+
+  setHint(restingHint);
 }
 
 start();

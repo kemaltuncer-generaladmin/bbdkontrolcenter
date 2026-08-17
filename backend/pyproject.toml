@@ -73,6 +73,18 @@ notify = [
     "httpx>=0.28",              # webhook bildirimleri
 ]
 
+# --- km_platform/identity_sync ---
+# Merkezî kimlik servisiyle konuşan istemci (ADR 0021). `httpx` fonksiyon içinde
+# import edilir — paket yoksa çekirdek yine ayağa kalkar, yalnız bu yetenek
+# anlaşılır hata döner (K7). Bu, ilan edilmeyeceği anlamına gelmez (K11).
+#
+# `notify` de httpx getiriyor; buraya AYRICA yazılmasının nedeni, iki yeteneğin
+# birbirinden bağımsız kurulabilmesi: SMS kullanmayan bir kurulum `notify`
+# extra'sını kurmaz ve o hâlde kimlik senkronu bağımlılıksız kalırdı.
+identity-sync = [
+    "httpx>=0.28",
+]
+
 # --- geliştirme ---
 dev = [
     "pytest>=8.3",
@@ -84,7 +96,7 @@ dev = [
 
 # Tüm çalışma zamanı yetenekleri
 all = [
-    "kontrol-merkezi[ssh,database,printer,audio,notify]",
+    "kontrol-merkezi[ssh,database,printer,audio,notify,identity-sync]",
 ]
 
 # Ruff yapılandırması depo kökündeki ruff.toml dosyasındadır.

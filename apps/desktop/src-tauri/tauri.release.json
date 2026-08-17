@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../../backend/src": "backend/src",
+      "../../../modules": "modules",
+      "../../../config/default.yaml": "config/",
+      "runtime": "runtime"
+    }
+  }
+}

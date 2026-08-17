@@ -1,6 +1,7 @@
 """Modül keşfi, sıralaması ve yaşam döngüsü (ARCHITECTURE.md §5).
 
-Sıra: keşfet → doğrula → bağımlılığa göre diz → göçleri uygula → `register(ctx)`.
+Sıra: keşfet → doğrula → platforma göre ele → bağımlılığa göre diz → göçleri
+uygula → `register(ctx)`.
 
 K7 — İzolasyon: her adım modül düzeyinde sınırlanır. Patlayan modül `failed`
 işaretlenir, nedeni saklanır; çekirdek ve diğer modüller ayakta kalır.
@@ -22,6 +23,8 @@ from km_core.bus.bus import EventBus
 from km_core.config.loader import Config
 from km_core.contracts.manifest import Manifest, ManifestError, read_manifest
 from km_core.contracts.module import ModuleContext, ScopedStore
+from km_core.kernel.module_settings import SettingsSchema
+from km_core.kernel.platforms import current_platform, runs_on, skip_note
 from km_core.registry.registry import Registry
 from km_core.store.db import Store
 
@@ -36,6 +39,10 @@ class ModuleRecord:
     state: str = "pending"      # pending | loaded | disabled | failed
     reason: str = ""
     context: ModuleContext | None = None
+    # Doğrulanmış `settings` bloğu (ADR 0018). Blok yoksa ya da geçersizse
+    # None kalır: modül SEKMESİZ yüklenir, nedeni `settings_error` içindedir.
+    settings: dict[str, Any] | None = None
+    settings_error: str = ""
 
     @property
     def id(self) -> str:
@@ -43,17 +50,31 @@ class ModuleRecord:
 
 
 class Kernel:
-    def __init__(self, config: Config, store: Store, registry: Registry, bus: EventBus) -> None:
+    def __init__(
+        self,
+        config: Config,
+        store: Store,
+        registry: Registry,
+        bus: EventBus,
+        platform: str | None = None,
+    ) -> None:
         self.config = config
         self.store = store
         self.registry = registry
         self.bus = bus
+        # Platform dışarıdan verilebilir: eleme davranışı, üzerinde koşulan
+        # makineye bağlı kalmadan sınanabilsin (ADR 0022).
+        self.platform = platform or current_platform()
         self.records: dict[str, ModuleRecord] = {}
         self.problems: list[str] = []
+        # Bu platformda çalışmadığı için hiç yüklenmeyen modüller. `problems`
+        # değildir: eleme bir arıza değil, ilan edilmiş bir karardır.
+        self.skipped: list[str] = []
 
     # ---------------------------------------------------------------- keşif
 
     def discover(self, modules_dir: Path, schema_path: Path) -> None:
+        settings_schema = SettingsSchema.load(schema_path)
         for manifest_file in sorted(modules_dir.glob("*/module.yaml")):
             try:
                 manifest = read_manifest(manifest_file.parent, schema_path)
@@ -62,7 +83,26 @@ class Kernel:
                 self.problems.append(str(error))
                 log.warning("manifest reddedildi", detail=str(error))
                 continue
-            self.records[manifest.id] = ModuleRecord(manifest)
+
+            # Platform elemesi KEŞİFTE olur: elenen modül kayda hiç girmez,
+            # dolayısıyla router'ı monte edilmez, göçü koşmaz, görevi
+            # planlanmaz ve menüye girmez (ADR 0022 §2). Çekirdek modül adına
+            # bakmaz; `platforms` alanını veri olarak okur (K1).
+            if not runs_on(manifest.raw, self.platform):
+                note = skip_note(manifest.id, manifest.raw)
+                self.skipped.append(note)
+                # Eleme sessiz olmaz: ekranını arayan yönetici nedenini bulur.
+                log.info("modül bu platformda çalışmaz",
+                         module=manifest.id, running=self.platform, detail=note)
+                continue
+
+            record = ModuleRecord(manifest)
+            record.settings, record.settings_error = settings_schema.validate(manifest.raw)
+            if record.settings_error:
+                # Ayar bloğunun bozukluğu modülü düşürmez (K7).
+                log.warning("ayar sekmesi kurulmadı",
+                            module=manifest.id, detail=record.settings_error)
+            self.records[manifest.id] = record
 
     # ------------------------------------------------------------- sıralama
 

@@ -13,12 +13,18 @@ server:
   port: 8787
 
 auth:
-  # ADR 0007 — PIN ile giriş
+  # ADR 0007 — kullanıcı adsız, 6 haneli PIN ile giriş.
+  # ADR 0016 (kişiye özel şifre) reddedildi; giriş PIN'de kaldı.
   pin_min_length: 6
   max_failed_attempts: 5
   lockout_minutes: 15
   session_idle_minutes: 30
-  require_pin_for_destructive: true
+  # Yıkıcı işlem, izin yeterli olsa bile ikinci kez sır ister. Anahtarın adı
+  # göçten kalmıştır; istenen teyit PIN teyididir.
+  require_password_for_destructive: true
+  # İlk yöneticinin PIN'i `config/local.yaml` → auth.bootstrap_pin alanından
+  # gelir. SIR DEPOYA YAZILMAZ (K8); boşsa rastgele üretilir ve yalnız bir kez
+  # loga düşer.
 
 platform:
 
@@ -85,6 +91,27 @@ platform:
     read_only_by_default: true  # yazma yalnızca database.write izniyle
     backup_path: data/backups
     connections: []             # sunucu ve kimlik eşlemesi local.yaml / kasada
+
+  identity_sync:
+    # Merkezî kimlik servisi (ADR 0021) — services/identity/.
+    #
+    # KAPALIYKEN HİÇBİR YETENEK GERİLEMEZ: kurulum bugünkü gibi tek makinede
+    # çalışır, giriş yerel depodan yapılır, eşleme ekranı hiç açılmaz. Servis
+    # kurulmadan açılmaz — adres boşken "açık" ayar zaten açık sayılmaz.
+    enabled: false
+    base_url: ""                # https://kontrolmerkezi.bbdstore.com.tr
+    timeout_seconds: 10
+    # Kadro önbelleği. İçinde PIN hash'i vardır (çevrimdışı giriş bunun için
+    # mümkündür) ve dosya 0600 yazılır.
+    cache_path: data/identity-roster.json
+    # ÖNBELLEK SINIRSIZ ESKİYEMEZ. Sınır aşılınca kurulum yalnız çevrimiçi
+    # giriş kabul eder: pasifleştirilen bir kullanıcının çevrimdışı bir
+    # makinede sonsuza dek giriş yapabilmesi kabul edilemez. 0 = sınırsız.
+    max_cache_age_hours: 72
+    # Eşleşmemiş kurulumda giriş ekranı yerine eşleme ekranı açılır.
+    require_pairing: true
+    # Kurulum token'ı ve özel anahtar KASADADIR, buraya yazılmaz (K8):
+    #   identity_sync.installation_token · identity_sync.private_key
 
 modules:
   # Modül ayarları modülün kendi config/default.yaml dosyasındadır.

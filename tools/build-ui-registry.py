@@ -9,6 +9,16 @@ GEÇİCİ OLAN NE: kaydın kaynağı. Çekirdek ayağa kalkınca `ui-kernel` ayn
 JSON'u sidecar'ın modül kayıt ucundan çekecek; bu betik o gün silinir.
 Manifest formatı, menü mantığı ve kabuk kodu değişmez.
 
+BURASI ÇALIŞILAN PLATFORMA GÖRE ELER (ADR 0022). Çekirdek keşifte eliyor;
+üretici elemiyordu ve fark SESSİZDİ: Windows'ta `/modules` antivirüs ekranını
+hiç saymazken aynı depodan üretilen `registry.json` onu yazmayı sürdürüyordu.
+Kural TEK YERDE durur — `km_core.kernel.platforms` buradan da okunur, ikinci
+bir kopya yazılmaz (bu deponun tekrar tekrar ödediği bedel budur).
+
+Sonucu: çıktı üretildiği makinenin platformunu anlatır. `--check` de aynı
+platformda koşmalıdır; başka bir platformda üretilmiş bir dosyayla
+karşılaştırmak farkı "güncel değil" diye okur — doğru cevaptır.
+
 Kullanım:
     python3 tools/build-ui-registry.py [--check]
 
@@ -30,6 +40,12 @@ SCHEMA = ROOT / "docs" / "schemas" / "module.schema.json"
 SHELL = ROOT / "apps" / "desktop" / "shell"
 OUT = SHELL / "registry.json"
 
+# Platform elemesinin kuralı çekirdekte tanımlıdır; burada YENİDEN YAZILMAZ.
+# Proje henüz kurulabilir paket değil (bkz. tests/conftest.py), bu yüzden
+# kaynak dizini sys.path'e eklenir.
+sys.path.insert(0, str(ROOT / "backend" / "src"))
+from km_core.kernel.platforms import current_platform, runs_on, skip_note
+
 # Modül panelleri buraya kopyalanır: webview yalnızca `shell/` kökünü görüyor,
 # paket toplayıcı da yok. Kaynak her zaman modülün kendi klasörüdür (K6);
 # burası üretilen çıktıdır, git dışıdır.
@@ -47,35 +63,16 @@ PANELS_OUT = SHELL / "panels"
 # Artık grup açmak saf `module.yaml` işidir: `ui.nav.group` adı, `ui.nav.order`
 # nereye düşeceğini söyler.
 
-# Çekirdeğin kendi ekranları. Bunlar modül DEĞİLDİR ve silinemez: kimlik,
-# ayar ve sistem sağlığı çekirdeğe aittir (CLAUDE.md — kavram ayrımı,
-# ADR 0007). Menüde modüllerle aynı biçimde görünürler.
-CORE_PANELS = [
-    {
-        "id": "core_users",
-        "title": "Kullanıcı Yönetimi",
-        "icon": "users",
-        "group": "Kurumsal",
-        "order": 800,
-        "requires": ["users.view"],
-    },
-    {
-        "id": "core_settings",
-        "title": "Sistem Ayarları",
-        "icon": "sliders",
-        "group": "Kurumsal",
-        "order": 810,
-        "requires": ["settings.view"],
-    },
-    {
-        "id": "core_health",
-        "title": "Sistem Sağlığı",
-        "icon": "pulse",
-        "group": "Kurumsal",
-        "order": 820,
-        "requires": ["settings.view"],
-    },
-]
+# ÇEKİRDEK EKRANLARI BURADA YOKTUR (ADR 0017 §1). Kullanıcılar, Ayarlar,
+# Sistem Sağlığı gibi ekranlar modül değildir: manifestleri yoktur, silinemezler
+# ve `modules/` klasörü tümüyle silinse bile çalışmaları gerekir. Bu dosya
+# manifest tarayıcısıdır; modül olmayan bir şeyi modülmüş gibi yazmak, hem
+# manifest doğrulamasını anlamsızlaştırır hem de çekirdek ekranı `modules/`
+# ile aynı kaderi paylaşan bir şeye çevirirdi.
+#
+# Çekirdek ekranlarının sabit listesi kabuktadır: `shell/ui-kernel.js` →
+# `CORE_PANELS`. Dosyaları da `shell/core-panels/<ad>/` altındadır; buradan
+# kopyalanmazlar, doğrudan servis edilirler.
 
 
 def load_schema_validator():
@@ -107,9 +104,10 @@ def copy_panel(module_dir: pathlib.Path, entry: str | None) -> str | None:
     return f"panels/{module_dir.name}/{source_file.name}"
 
 
-def collect_panels(validator) -> tuple[list[dict], list[str]]:
+def collect_panels(validator, platform: str) -> tuple[list[dict], list[str], list[str]]:
     panels: list[dict] = []
     problems: list[str] = []
+    skipped: list[str] = []
 
     for manifest_path in sorted(MODULES.glob("*/module.yaml")):
         folder = manifest_path.parent.name
@@ -128,6 +126,14 @@ def collect_panels(validator) -> tuple[list[dict], list[str]]:
 
         if manifest.get("id") != folder:
             problems.append(f"{folder}: id ('{manifest.get('id')}') klasör adıyla aynı değil")
+            continue
+
+        # PLATFORM ELEMESİ, ÇEKİRDEKLE AYNI YERDE: menüye girmeyen modülün
+        # paneli de yazılmaz ve dosyaları da kopyalanmaz (ADR 0022 §2).
+        # `problems` değil `skipped`: eleme bir arıza değil, ilan edilmiş bir
+        # karardır — aksi hâlde her Windows derlemesi "sorun var" derdi.
+        if not runs_on(manifest, platform):
+            skipped.append(skip_note(str(manifest.get("id", folder)), manifest))
             continue
 
         nav = (manifest.get("ui") or {}).get("nav")
@@ -154,10 +160,7 @@ def collect_panels(validator) -> tuple[list[dict], list[str]]:
 
         panels.append(panel)
 
-    for panel in CORE_PANELS:
-        panels.append({**panel, "source": "core", "enabled": True, "provides": []})
-
-    return panels, problems
+    return panels, problems, skipped
 
 
 def group_ranks(panels: list[dict]) -> dict[str, int]:
@@ -170,7 +173,7 @@ def group_ranks(panels: list[dict]) -> dict[str, int]:
     return ranks
 
 
-def build(*, copy_panels: bool = True) -> dict:
+def build(*, copy_panels: bool = True, platform: str | None = None) -> dict:
     """Kayıt defterini üretir. `copy_panels=False` iken DİSKE DOKUNMAZ.
 
     BULUNAN HATA (2026-08-15). `--check` "dosyayı yazmaz" diye belgelenmişti
@@ -181,16 +184,23 @@ def build(*, copy_panels: bool = True) -> dict:
     CI'da salt-okunur sanılan bir komutun üretilmiş panelleri silmesi, hem
     sözleşme ihlali hem de yarış kaynağı: doğrulama koşarken uygulama açıksa
     panel klasörü bir an için boşalır.
+
+    `platform` dışarıdan verilebilir: eleme davranışı, üzerinde koşulan
+    makineye bağlı kalmadan sınanabilsin (çekirdekteki `Kernel` ile aynı
+    gerekçe, ADR 0022).
     """
     if copy_panels:
         # Silinen/yeniden adlandırılan panel artığı kalmasın.
         shutil.rmtree(PANELS_OUT, ignore_errors=True)
 
     validator = load_schema_validator()
-    panels, problems = collect_panels(validator)
+    panels, problems, skipped = collect_panels(validator, platform or current_platform())
 
     for problem in problems:
         print(f"  atlandı — {problem}", file=sys.stderr)
+    # Eleme SESSİZ OLMAZ: ekranını arayan yönetici nedenini burada da bulur.
+    for note in skipped:
+        print(f"  elendi — {note}", file=sys.stderr)
 
     ranks = group_ranks(panels)
     # AYNI SIRA DEĞERİNDE AD KAZANIR: iki grup aynı `order`ı taşırsa sıra

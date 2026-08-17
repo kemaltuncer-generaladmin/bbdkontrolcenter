@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "antivirus ayarları",
+  "description": "ClamAV motoru, tarama kapsamı, zaman aşımı ve imza yaşı eşiği. Kimlik bilgisi YOKTUR: motor yereldir, kasa kullanılmaz (K8).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "clamdscan": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Birincil tarayıcı — daemon üzerinden. İkili adı ya da tam yolu."
+    },
+    "clamscan": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Yedek tarayıcı — daemon yoksa. İmzaları her taramada diskten yükler."
+    },
+    "database_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "freshclam imza dizini. Buradaki daily/main dosyalarının varlığı 'hazır', mtime'ı 'imza yaşı' demektir."
+    },
+    "full_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Tam taramanın kökleri. '/' KULLANILMAZ: clamdscan --exclude-dir tanımaz, sanal dosya sistemlerine dalar."
+    },
+    "quick_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Hızlı taramanın yolları. '~' ev dizinine açılır."
+    },
+    "exclude_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Bilerek taranmayan yollar. Raporda 'hariç' olarak listelenir; erişilemeyen yoldan ayrıdır."
+    },
+    "full_timeout_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Tam taramanın üst sınırı. Aşılırsa süreç öldürülür ve sonuç 'başarısız' yazılır."
+    },
+    "quick_timeout_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Hızlı taramanın üst sınırı."
+    },
+    "schedule": {
+      "type": "string",
+      "pattern": "^\\S+(\\s+\\S+){4}$",
+      "description": "Zamanlanmış tam taramanın 5 alanlı cron ifadesi. Zamanlayıcı haftalık tabloya dayandığı için dakika ve saat SABİT sayı olmalıdır; gün alanları '*' ya da virgüllü liste."
+    },
+    "signature_max_age_hours": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 720,
+      "description": "İmza yaşı eşiği. Aşılırsa antivirus.signatures_stale yayınlanır."
+    }
+  }
+}

@@ -1,0 +1,102 @@
+/* Antivirüs paneli — kendi kuralları.
+ *
+ * ÖNEK `av-`. Panel CSS'i `document.head`'e eklenir ve hiç kaldırılmaz;
+ * çakışan bir önek başka panelin görünümünü bozar (ui-kit kuralı 9).
+ *
+ * Ortak görsel dil `kit.css` içindedir ve burada TEKRARLANMAZ: kart, düğme,
+ * rozet, KPI kutusu ve uyarı kutusu oradan gelir. Buradaki kurallar yalnız bu
+ * ekranın kendi parçaları içindir.
+ */
+
+.av-body { max-width: 900px; }
+
+/* Rozet + açıklama satırı. */
+.av-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.av-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.av-dim {
+  color: var(--soft);
+  font-size: 12.5px;
+}
+
+.av-bad { color: var(--bad); font-weight: 600; }
+
+/* Eylem şeridi — iki düğme yan yana, açıklama sağda. */
+.av-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* -------------------------------------------------------------- ilerleme */
+
+/* BELİRSİZ ÇUBUK. Toplam dosya sayısı bilinmediği için yüzde gösterilmez;
+   çubuk yalnız "iş sürüyor" der, sayıyı altındaki yazı söyler. */
+.av-progress { display: flex; flex-direction: column; gap: 8px; }
+
+.av-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--tint);
+  overflow: hidden;
+}
+
+.av-bar-run {
+  width: 35%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: av-sweep 1.5s ease-in-out infinite;
+}
+
+@keyframes av-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* Hareket duyarlılığı olan kullanıcıda animasyon durur; çubuk yine görünür. */
+@media (prefers-reduced-motion: reduce) {
+  .av-bar-run { animation: none; width: 100%; opacity: 0.5; }
+}
+
+.av-progress-text { font-weight: 600; }
+
+/* ----------------------------------------------------------- yol listesi */
+
+.av-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.av-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--tint);
+}
+
+.av-list code {
+  font-size: 12px;
+  word-break: break-all;
+  flex: 1;
+}

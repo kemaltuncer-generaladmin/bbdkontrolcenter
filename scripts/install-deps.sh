@@ -41,6 +41,21 @@ try:
 except ImportError:
     print("__NO_YAML__"); sys.exit(0)
 
+# Bu platformda çalışmayan modülün bağımlılığı TOPLANMAZ — Windows kurulumunda
+# clamav-daemon istemenin anlamı yok (ADR 0022 §4). Alanı olmayan modül her
+# platformda geçerlidir. Liste stdout'a değil stderr'e yazılır: stdout paket
+# listesidir, kirletilemez.
+def platform_name():
+    if sys.platform.startswith("win"): return "windows"
+    if sys.platform == "darwin": return "macos"
+    return "linux"
+
+HERE = platform_name()
+
+def skipped(manifest):
+    declared = manifest.get("platforms")
+    return bool(declared) and HERE not in declared
+
 pkgs = []
 data = yaml.safe_load(open("deploy/packaging/system-packages.yaml")) or {}
 for group, body in data.items():
@@ -51,6 +66,10 @@ for group, body in data.items():
 # modüllerin kendi sistem bağımlılıkları
 for mf in sorted(pathlib.Path("modules").glob("*/module.yaml")):
     m = yaml.safe_load(open(mf)) or {}
+    if skipped(m):
+        print(f"  {m.get('id', mf.parent.name)} — bu platformda çalışmaz "
+              f"({', '.join(m['platforms'])}), bağımlılığı atlandı", file=sys.stderr)
+        continue
     pkgs += ((m.get("dependencies") or {}).get("system") or [])
 
 seen, out = set(), []
@@ -88,7 +107,21 @@ run "$VENV/bin/python" -m pip install --upgrade pip
 
 say "3) Python bağımlılıkları"
 PY_REQS="$(python3 - <<'PY'
-import pathlib, tomllib
+import sys, pathlib, tomllib
+
+# Sistem paketlerindeki eleme burada da geçerlidir: elenen modülün Python
+# bağımlılığı da toplanmaz (ADR 0022 §4).
+def platform_name():
+    if sys.platform.startswith("win"): return "windows"
+    if sys.platform == "darwin": return "macos"
+    return "linux"
+
+HERE = platform_name()
+
+def skipped(manifest):
+    declared = manifest.get("platforms")
+    return bool(declared) and HERE not in declared
+
 reqs = []
 data = tomllib.load(open("backend/pyproject.toml", "rb"))
 proj = data["project"]
@@ -102,6 +135,8 @@ try:
     import yaml
     for mf in sorted(pathlib.Path("modules").glob("*/module.yaml")):
         m = yaml.safe_load(open(mf)) or {}
+        if skipped(m):
+            continue
         reqs += ((m.get("dependencies") or {}).get("python") or [])
 except ImportError:
     pass

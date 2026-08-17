@@ -1,43 +1,30 @@
-# Baskı yönetimi modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
-# Şema: docs/schemas/module.schema.json
+# Çıktı Merkezi — üretilen her raporun kaydı, önizlemesi ve yeniden baskısı.
+# Şema: docs/schemas/module.schema.json · Karar: ADR 0019 (ve baskı yolu için 0014)
 #
 # NOT: Yazıcı donanımına erişim bu modüle ait DEĞİLDİR — km_platform/printer
-# yeteneğidir (ADR 0006, tek kapı kuralı). Bu modül kuyruk, iş geçmişi,
-# yetkilendirme ve arayüzü yönetir.
+# yeteneğidir (ADR 0006, tek kapı kuralı). Bu modül kaydı, arayüzü,
+# yetkilendirmeyi ve yeniden basma akışını yönetir.
+#
+# KAYIT BU MODÜLÜN TABLOSU DEĞİLDİR. Yirmi modülün ortak çıktı kaydı
+# `km_core/store` içindeki `outputs` tablosunda durur ve dosyayı yazan çekirdek
+# fonksiyonunda doğar (ADR 0019 §1–2). Bu modül kapatılsa bile kayıt düşmeye
+# devam eder; yalnız ekranı kaybolur.
 
 id: print
-name: "Baskı Yönetimi"
-description: "Yazıcı keşfi, kuyruk yönetimi, baskı işleri ve iş geçmişi."
-version: 0.1.0
+name: "Çıktı Merkezi"
+description: "Üretilen tüm rapor ve dışa aktarımların kaydı: liste, süzgeç, önizleme, yeniden baskı."
+version: 0.2.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
 depends: []
 
-provides:
-  - capability: print.jobs
-    contract: km_sdk.contracts:PrintJobProvider
-    description: "Baskı işi gönderme ve durum sorgulama yüzeyi."
-
 consumes:
   - capability: printer
-    reason: "CUPS üzerinden yazıcı keşfi, kuyruk ve iş gönderimi."
-  - capability: ssh
     optional: true
-    reason: "Uzak makinedeki yazıcı kuyruğunu yönetmek için."
-  - capability: notify
-    optional: true
-    reason: "Baskı hatası bildirimi."
-
-events:
-  publishes:
-    - name: print.job_submitted
-    - name: print.job_completed
-    - name: print.job_failed
-  subscribes: []
+    reason: "Yeniden basma tek kapıdan geçer (ADR 0006/0014). Yetenek yoksa liste yine çalışır."
 
 http:
   prefix: /api/print
@@ -56,21 +43,24 @@ ui:
     requires: [print.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
+#
+# ADR 0019 §6 izinleri `outputs.view` ve `outputs.reprint` diye adlandırıyor.
+# Anahtarlar burada `print.` önekiyle yazıldı çünkü çekirdek manifest kapısı
+# (`km_core/contracts/manifest.py`) izin anahtarının MODÜL KİMLİĞİYLE
+# başlamasını şart koşuyor; `outputs.view` yazıldığında manifest reddedilir ve
+# modül hiç yüklenmez. Anlam ADR'deki ile birebir aynıdır: görüntüleme ile
+# yeniden basma AYRI izinlerdir. Adın gerçekten `outputs.*` olması modül
+# kimliğinin değişmesini gerektirir; bu kapsam dışıdır ve ayrı bir karardır.
 permissions:
   - key: print.view
-    description: "Yazıcıları ve kuyruğu görüntüleme."
+    description: "Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görüntüleme."
     default_roles: [admin, org_staff, bld_staff, bbd_staff]
-  - key: print.submit
-    description: "Baskı işi gönderme."
+  - key: print.reprint
+    description: "Üretilmiş bir çıktıyı yeniden yazıcıya gönderme."
     default_roles: [admin, org_staff, bld_staff, bbd_staff]
-  - key: print.manage
-    description: "Kuyruk yönetimi, iş iptali, yazıcı ayarları."
-    default_roles: [admin, org_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
-
-migrations: backend/migrations
 
 tasks: []

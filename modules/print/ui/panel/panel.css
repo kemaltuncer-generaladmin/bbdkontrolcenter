@@ -1,0 +1,75 @@
+/* Çıktı Merkezi paneli — kendi kuralları.
+ *
+ * ÖNEK `ck-` (çıktı kaydı). Panel CSS'i `document.head`'e eklenir ve HİÇ
+ * KALDIRILMAZ; `ck-` dışında bir seçici yazmak, bu panel bir kez açıldıktan
+ * sonra başka panelleri de boyar (ui-kit kuralı 9).
+ *
+ * Ortak görsel dil `kit.css` içindedir ve burada TEKRARLANMAZ: tablo, süzgeç
+ * şeridi, rozet, düğme, önizleme katmanı ve sayfalama oradan gelir.
+ */
+
+.ck-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 20px 6px;
+}
+
+.ck-brand {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.ck-brand-note,
+.ck-note {
+  color: var(--soft);
+  font-size: 12.5px;
+}
+
+.ck-banner:empty { display: none; }
+
+.ck-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Satır eylemleri — üç düğme yan yana, dar sütunda sarmalanır. */
+.ck-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Kayıp dosya: rozetin yanında NEDENİ yazar; renk tek başına anlatmaz. */
+.ck-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ck-why {
+  color: var(--soft);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+/* Metin önizlemesi (csv/txt): satırlar kaydırılmadan, olduğu gibi. */
+.ck-text {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--tint);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+  max-height: 60vh;
+}
+
+.ck-overlay .kit-preview-body {
+  background: var(--tint);
+}

@@ -1,13 +1,25 @@
 // ui-kernel — çekirdekle konuşan katman ve ekran keşfi.
 //
-// Kabuk hangi ekranların var olduğunu BİLMEZ; sidecar'daki çekirdeğe sorar
-// (`GET /modules`). Menü, modüllerin `module.yaml` → `ui.nav` bloklarından
-// gelir ve kullanıcının izinlerine göre süzülür — süzmeyi de çekirdek yapar,
-// kabuk yalnızca çizer (K1, K9).
+// MENÜ İKİ KAYNAKTAN KURULUR (ADR 0017):
 //
-// Panel dosyaları statik olarak `shell/panels/<id>/` altından servis edilir;
-// oraya `tools/build-ui-registry.py` kopyalar. Kaynak her zaman modülün kendi
-// klasörüdür.
+//  1. MODÜL EKRANLARI — kabuk hangilerinin var olduğunu BİLMEZ; sidecar'daki
+//     çekirdeğe sorar (`GET /modules`). Kayıt, modüllerin `module.yaml` →
+//     `ui.nav` bloklarından gelir ve kullanıcının izinlerine göre süzülür;
+//     süzmeyi çekirdek yapar, kabuk yalnızca çizer (K1, K9). Panel dosyaları
+//     `shell/panels/<id>/` altından servis edilir; oraya
+//     `tools/build-ui-registry.py` kopyalar, kaynak her zaman modülün kendi
+//     klasörüdür.
+//
+//  2. ÇEKİRDEK EKRANLARI — aşağıdaki `CORE_PANELS` sabit listesi. Bunlar modül
+//     DEĞİLDİR: manifestleri yoktur, `registry.json`'a girmezler, kapatılamaz
+//     ve `modules/` klasörü tümüyle silinse bile çalışırlar (ADR 0017 §4).
+//     Dosyaları `shell/core-panels/<ad>/` altındadır ve kopyalanmaz.
+//
+// İki liste burada birleşir ve menüde TEK ağaç olur; çekirdek ekranları en
+// altta kendi "Sistem" grubunda durur (ADR 0017 §2).
+//
+// BURADA MODÜL ADI YİNE GEÇMEZ. Eklenen şey modül adı değil, çekirdeğin kendi
+// ekranıdır — ARCHITECTURE §6'nın kuralı korunur.
 
 const BASE = 'http://127.0.0.1:8787';
 
@@ -91,8 +103,40 @@ export async function waitForCore(timeoutMs = 20000) {
   return { ok: false, error: lastError };
 }
 
-export async function login(pin) {
-  const result = await api('/auth/login', { method: 'POST', body: { pin } });
+/**
+ * Giriş. TEK ALAN: şifre (ADR 0016 — kullanıcı adı yoktur, şifre hem kimliği
+ * hem girişi belirler).
+ *
+ * İKİ SONUÇ döner ve ikisi de normaldir:
+ *  · `{mustSetPassword: false, user}` — oturum açıldı, belirteç kuruldu.
+ *  · `{mustSetPassword: true, user, message}` — sır DOĞRULANDI ama oturum
+ *    AÇILMADI (ADR 0016 §7). Göç yolundaki kullanıcı önce kendi şifresini
+ *    kurar; belirteç `setOwnPassword()` sonunda gelir.
+ *
+ * Hata gövdesi ele vermez: reddin sebebi (yanlış / kilitli / hiç yok) tek tip
+ * 401'dir ve kabuk da tek tip cümle gösterir.
+ */
+export async function login(password) {
+  const result = await api('/api/auth/login', { method: 'POST', body: { password } });
+  if (result?.mustSetPassword) {
+    return { mustSetPassword: true, user: result.user, message: result.message || '' };
+  }
+  setToken(result.token);
+  return { mustSetPassword: false, user: result.user };
+}
+
+/**
+ * Kullanıcının kendi şifresini kurması. `currentSecret` göç yolunda ESKİ
+ * sırdır (girişte yazdığı şey), şifresi olanda mevcut şifresidir.
+ *
+ * Uç izin istemez; oturumun değil MEVCUT SIRRIN doğrulanmasıyla korunur —
+ * şifresi kurulmamış kullanıcının zaten oturumu yoktur.
+ */
+export async function setOwnPassword(currentSecret, password) {
+  const result = await api('/api/auth/set-password', {
+    method: 'POST',
+    body: { currentSecret, password },
+  });
   setToken(result.token);
   return result.user;
 }
@@ -100,16 +144,89 @@ export async function login(pin) {
 // --------------------------------------------------------------- ekranlar
 
 /**
- * Ekran kaydı. Çekirdek modül raporunu döner; burada menüye uygun biçime
- * çevrilir. Panel dosyası olmayan ekran boş gövdeyle açılır.
+ * ÇEKİRDEK EKRANLARI — sabit liste (ADR 0017 §1).
+ *
+ * `registry.json`'a girmezler ve manifest taramasından gelmezler: modül
+ * değildirler. Menüde modüllerle aynı biçimde dururlar ama kendi grubunda ve
+ * her zaman EN ALTTA (§2) — kullanıcı "bu ekran uygulamanın kendisine mi, bir
+ * iş alanına mı ait" sorusunu menüye bakarak yanıtlar.
+ *
+ * `requires` yetkilendirme DEĞİLDİR, yalnız menü görünürlüğüdür; aynı izin
+ * backend'de yeniden denetlenir (K9 — çift kapı). "Çekirdek olduğu için
+ * güvenilir" diye bir istisna yoktur (§3).
+ *
+ * `entry` yoksa ekran menüde durur ve gövdesinde "ekranı henüz yok" kartı
+ * çıkar — paneli yazılmamış çekirdek ekranının bugünkü hâli budur.
  */
-export async function loadRegistry() {
+export const CORE_PANELS = [
+  {
+    id: 'core_users',
+    title: 'Kullanıcı Yönetimi',
+    icon: 'users',
+    order: 10,
+    requires: ['users.view'],
+    entry: 'core-panels/users/index.js',
+  },
+  {
+    id: 'core_settings',
+    title: 'Sistem Ayarları',
+    icon: 'sliders',
+    order: 20,
+    requires: ['settings.view'],
+    entry: 'core-panels/settings/index.js',
+  },
+  {
+    id: 'core_health',
+    title: 'Sistem Sağlığı',
+    icon: 'pulse',
+    order: 30,
+    requires: ['settings.view'],
+    entry: null,
+  },
+];
+
+/** Çekirdek ekranlarının menü grubu. Modül grupları arasına karışmaz. */
+const CORE_GROUP = 'Sistem';
+
+/**
+ * Kullanıcı bu izne sahip mi? Backend'deki `has_permission` ile AYNI kural:
+ * kapsamsız anahtar birebir eşleşir, `anahtar:*` her kapsamı karşılar,
+ * kapsamlı sorgu birebir de eşleşebilir.
+ *
+ * Bu bir yetki kapısı DEĞİLDİR — menüyü çizmek için gereken görünürlük
+ * kararıdır. Yetki backend'dedir (K9).
+ */
+function allows(permissions, entry) {
+  const cut = entry.indexOf(':');
+  const key = cut === -1 ? entry : entry.slice(0, cut);
+  const scope = cut === -1 ? null : entry.slice(cut + 1);
+  if (permissions.has(key)) return scope === null;
+  if (permissions.has(`${key}:*`)) return true;
+  return scope !== null && permissions.has(`${key}:${scope}`);
+}
+
+/**
+ * Ekran kaydı. Çekirdek modül raporunu döner; burada menüye uygun biçime
+ * çevrilir ve çekirdek ekranları eklenir. Panel dosyası olmayan ekran boş
+ * gövdeyle açılır.
+ *
+ * `user` giriş yanıtındaki özettir; `permissions` alanı çekirdek ekranlarının
+ * görünürlüğünü süzer. Verilmezse çekirdek ekranı çizilmez — izin listesi
+ * bilinmeden "görünsün" demek, K9'un arayüz tarafındaki kapısını açık
+ * bırakmak olurdu.
+ */
+export async function loadRegistry(user = null) {
   const payload = await api('/modules');
   const panels = [];
 
   for (const entry of payload.modules || []) {
     const nav = entry.ui?.nav;
     if (!nav || entry.visible === false) continue;
+
+    // ÇEKİRDEK EKRANI BURADAN GELMEZ (ADR 0017 §1). Çekirdek kendi ekranlarını
+    // da bu uçta bildiriyor; menüdeki karşılıkları aşağıdaki sabit listeden
+    // kurulur, yoksa aynı ekran iki kez çizilirdi.
+    if (entry.source === 'core') continue;
 
     panels.push({
       id: entry.id,
@@ -156,6 +273,31 @@ export async function loadRegistry() {
     || a.title.localeCompare(b.title, 'tr'));
 
   const groups = [...new Set(panels.map((panel) => panel.group))];
+
+  // ÇEKİRDEK EKRANLARI EN SONA EKLENİR — SAYIYLA DEĞİL, KURALLA.
+  //
+  // Modül grupları sıralarını veriden alıyor (gruptaki en küçük `order`).
+  // Çekirdeğin de büyük bir `order` yazması yeterdi ama o sıra bir yarışa
+  // dönerdi: yarın 9999 yazan bir `module.yaml` Sistem grubunu ortada
+  // bırakırdı ve kimse nedenini aramazdı. ADR 0017 §2 "en altta" diyor;
+  // burada olan tam olarak budur ve modüllerin ne yazdığından bağımsızdır.
+  const permissions = new Set(user?.permissions || []);
+  const core = CORE_PANELS
+    .filter((panel) => panel.requires.some((entry) => allows(permissions, entry)))
+    .sort((a, b) => a.order - b.order)
+    .map((panel) => ({
+      ...panel,
+      group: CORE_GROUP,
+      source: 'core',
+      state: 'loaded',
+      reason: '',
+      provides: [],
+    }));
+
+  if (core.length) {
+    panels.push(...core);
+    groups.push(CORE_GROUP);
+  }
 
   return { groups, panels };
 }

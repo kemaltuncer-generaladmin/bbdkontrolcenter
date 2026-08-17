@@ -6,6 +6,9 @@ ona `127.0.0.1` üzerinden konuşur.
 | Klasör | Sorumluluk |
 |---|---|
 | `shell/` | Kabuk arayüzü: pencere, menü, yerleşim, oturum |
+| `shell/core-panels/` | **Çekirdek ekranları** — modül değildirler (ADR 0017) |
+| `shell/ui-kit/` | Panellerin ortak bileşen seti (ADR 0011) |
+| `shell/panels/` | Modül panellerinin **üretilen** kopyası — git dışı |
 | `ui-kernel/` | Modül panellerinin keşfi ve dinamik yüklenmesi. Backend'in modül kayıt uç noktasını okur, `module.yaml` içindeki `ui` bloğuna göre paneli yükler ve menüye yerleştirir |
 | `src-tauri/` | Rust tarafı: pencere yapılandırması, sidecar yaşam döngüsü, paketleme |
 
@@ -47,16 +50,60 @@ npm run build        # .deb + AppImage
 
 ## Menü nereden geliyor
 
-Kabuk hangi ekranların olduğunu bilmez; `shell/registry.json` dosyasından
-okur. O dosyayı `tools/build-ui-registry.py` üretir: `modules/*/module.yaml`
-içindeki `ui.nav` bloklarını toplar, şemaya uymayan manifesti atlar (o modül
-düşer, kabuk ayakta kalır — K7) ve çekirdeğin kendi ekranlarını ekler. `npm run
-dev` / `npm run build` bunu kendiliğinden çalıştırır; dosya git dışıdır.
+Menü **iki kaynaktan** kurulur ve ikisi `shell/ui-kernel.js` →
+`loadRegistry()` içinde birleşir (ADR 0017).
+
+### 1. Modül ekranları — çalışma anında sidecar'dan
+
+Kabuk hangi modüllerin olduğunu bilmez; **çekirdeğe sorar**:
+`GET /modules`. Kayıt modüllerin `module.yaml` → `ui.nav` bloklarından gelir,
+platforma göre elenir (ADR 0022) ve kullanıcının izinlerine göre süzülür —
+süzmeyi çekirdek yapar, kabuk yalnızca çizer (K1, K9).
+
+`shell/registry.json` **artık çalışma anında okunmaz.** Dosya hâlâ üretiliyor:
+`tools/build-ui-registry.py` `modules/*/module.yaml` bloklarını toplar, şemaya
+uymayan manifesti atlar (o modül düşer, kabuk ayakta kalır — K7) ve sonucu
+`registry.json` olarak yazar; `--check` ile CI'da doğrulanır. Asıl işi ise
+panel dosyalarını `shell/panels/<id>/` altına **kopyalamaktır** — webview
+yalnız `shell/` kökünü görüyor ve paket toplayıcı yok. `npm run dev` /
+`npm run build` betiği kendiliğinden çalıştırır; hem `registry.json` hem
+`shell/panels/` git dışıdır ve **üretilen** çıktıdır. Kaynak her zaman modülün
+kendi klasörüdür (K6).
 
 Yeni ekran = `modules/` altına yeni klasör. Kabukta tek satır değişmez (K6).
+Menü grubunun sırası da veriden gelir: bir grubun sırası içindeki en küçük
+`ui.nav.order` değeridir, kabukta sabit grup listesi tutulmaz.
 
-Çekirdek ayağa kalkınca kaydın kaynağı sidecar'ın modül kayıt ucu olacak;
-değişecek tek yer `shell/ui-kernel.js` içindeki `loadRegistry()`.
+### 2. Çekirdek ekranları — `shell/core-panels/`
+
+Kullanıcı Yönetimi, Sistem Ayarları gibi ekranlar **modül değildir**:
+manifestleri yoktur, `registry.json`'a girmezler, kapatılamazlar ve `modules/`
+klasörü tümüyle silinse bile çalışırlar (ADR 0017 §4).
+
+```
+shell/
+  core-panels/
+    users/      index.js · panel.css     Kullanıcı Yönetimi (users.view)
+    settings/   index.js · panel.css     Sistem Ayarları    (settings.view)
+  panels/       ← modüllerden KOPYALANAN paneller (git dışı)
+```
+
+Listeleri `shell/ui-kernel.js` içindeki sabit `CORE_PANELS` dizisidir; manifest
+taramasından gelmez ve `shell/panels/` altına kopyalanmaz. `/modules` ucu
+çekirdek ekranlarını da bildirir, ama `loadRegistry()` `source === 'core'`
+girdilerini atlar — yoksa aynı ekran iki kez çizilirdi.
+
+Menüde modül gruplarının arasına karışmazlar: en altta kendi **"Sistem"**
+grubunda dururlar ve bu sıra bir `order` yarışına değil, kurala bağlıdır
+(ADR 0017 §2). `entry` alanı boş olan çekirdek ekranı menüde durur, gövdesinde
+"ekranı henüz yok" kartı çıkar — paneli yazılmamış ekranın bugünkü hâli budur.
+
+`requires` burada **yetkilendirme değildir**, yalnız menü görünürlüğüdür; aynı
+izin backend'de yeniden denetlenir (K9 — çift kapı, ADR 0017 §3). Çekirdek
+panelleri de `shell/ui-kit/` bileşenlerini kullanır (ADR 0011); ayrı bir
+bileşen seti doğmaz.
+
+---
 
 Arayüz saf HTML/CSS/JS'tir: paket toplayıcı (bundler) yok, `shell/` doğrudan
 `frontendDist` olarak sunulur. Dosyayı kaydedip pencereyi yenilemek yeter.

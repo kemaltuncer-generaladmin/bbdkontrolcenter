@@ -7,7 +7,8 @@ Bağlayıcıdır. Gerekçe: [adr/0007-kimlik-ve-yetkilendirme.md](adr/0007-kimli
 - **İzin (permission):** yapılabilecek tek bir iş. `database.query` gibi.
 - **Kapsam (scope):** iznin hangi alanda geçerli olduğu. `bbd`, `bld`, `org`,
   hepsi için `*`. Yazımı `izin:kapsam` → `database.query:bld`.
-- **Rol:** izin kümesi. Ön tanımlı dört rol vardır, yenisi tanımlanabilir.
+- **Rol:** izin kümesi. Ön tanımlı **beş** rol vardır, yenisi tanımlanabilir.
+  Kaynağı `km_core/security/identity.py` → `BUILTIN_ROLES`.
 - **Kullanıcı:** **birden fazla rol** taşıyabilir. Etkin izinleri rollerinin
   **birleşimidir.**
 
@@ -20,7 +21,7 @@ Kodda rol adı sorulmaz, izin sorulur. `if role == "admin"` yasaktır.
 | `admin` | Admin | `*` | Tam yetki. Kullanıcı, rol, ayar, sır ve yıkıcı işlemler. |
 | `bld_staff` | BLD Personeli | `bld` | BLD sunucuları ve Laravel tabanlı BLD veritabanı. |
 | `bbd_staff` | BBD Personeli | `bbd` | BBD sunucuları ve Bagisto çekirdekli BBD veritabanı. |
-| `org_staff` | Kurum Personeli | `org` | Zil, baskı, rehber. Sunucu ve veritabanına erişimi yok. |
+| `org_staff` | Kurum Personeli | `org` | Zil, çıktı merkezi, rehber. Sunucu ve veritabanına erişimi yok. |
 | `accountant` | Mali Müşavir | `bbd` `bld` | Mali ekranlar: fatura, vergilendirme, cari hesap, raporlar. Kullanıcı, sır ve sunucu yönetimi yok. |
 
 Bir kullanıcıya hem `bld_staff` hem `bbd_staff` atanırsa her iki kapsamı da alır.
@@ -40,7 +41,7 @@ Bunları çekirdek tanımlar; modüller tanımlayamaz.
 |---|---|---|
 | `users.view` | hayır | Kullanıcı listesini ve profillerini görür |
 | `users.manage` | hayır | Kullanıcı ekler, düzenler, pasifleştirir |
-| `users.set_password` | hayır | Şifre atar ve sıfırlar (eski adı `users.set_pin`) |
+| `users.set_password` | hayır | PIN atar ve sıfırlar (anahtarın adı ADR 0016'nın göçünden kalmıştır; ADR 0016 reddedildi) |
 | `roles.view` | hayır | Rolleri ve izinlerini görür |
 | `roles.manage` | hayır | Rol tanımlar, izin atar, kullanıcıya rol verir |
 
@@ -81,8 +82,8 @@ Bunları çekirdek tanımlar; modüller tanımlayamaz.
 
 ## Modül izinleri
 
-Modüller kendi izinlerini `module.yaml` içinde ilan eder. Aşağıdakiler mevcut
-iskeletlerin ilan ettikleridir.
+Modüller kendi izinlerini `module.yaml` içinde ilan eder. Aşağıdaki tablo,
+manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 
 > **Geliştirme kuralı (geçici).** BBD, BBD Store ve BLD gruplarındaki ekran
 > modülleri şu an ikişer izin ilan ediyor — `<id>.view` ve `<id>.manage` — ve
@@ -100,14 +101,20 @@ iskeletlerin ilan ettikleridir.
 | `bell` | `bell.manage` | Saatleri, grupları, sesleri ve anons metinlerini düzenler |
 | `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
-| `print` | `print.view` | Yazıcıları ve kuyruğu görür |
-| `print` | `print.submit` | Baskı işi gönderir |
-| `print` | `print.manage` | Kuyruğu yönetir, iş iptal eder, yazıcı ayarlar |
+| `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
+| `print` | `print.reprint` | Üretilmiş bir çıktıyı yeniden yazıcıya gönderir |
 | `antivirus` | `antivirus.view` | Tarama geçmişini, karantinayı, imza durumunu görür |
 | `antivirus` | `antivirus.scan` | Tarama başlatır ve durdurur |
 | `antivirus` | `antivirus.manage` | Tarama takvimi, hariç tutulan yollar, imza güncelleme |
 | `antivirus` | `antivirus.quarantine` | **Yıkıcı.** Dosyayı karantinaya alır / geri yükler |
 | `antivirus` | `antivirus.delete_threat` | **Yıkıcı.** Karantinadaki dosyayı kalıcı siler |
+
+`print` modülünün ekranı **Çıktı Merkezi**'dir: yazıcı kuyruğunu değil,
+üretilmiş rapor ve dışa aktarımların kaydını yönetir (ADR 0019). Yazıcı
+donanımına erişim modülde değil, `km_platform/printer` yeteneğindedir (ADR
+0006/0014). ADR 0019 §6 izinleri `outputs.*` diye anıyor; manifest kapısı izin
+anahtarının modül kimliğiyle başlamasını şart koştuğu için anahtarlar
+`print.view` / `print.reprint` yazıldı — anlam birebir aynıdır.
 
 ---
 
@@ -119,7 +126,7 @@ iskeletlerin ilan ettikleridir.
 |---|:---:|:---:|:---:|:---:|:---:|
 | `users.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `users.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `users.set_pin` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `users.set_password` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `roles.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `roles.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -144,8 +151,7 @@ iskeletlerin ilan ettikleridir.
 | `bell.ring_now` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
-| `print.submit` | ✓ | ✓ | ✓ | ✓ | ✗ |
-| `print.manage` | ✓ | ✗ | ✗ | ✓ | ✗ |
+| `print.reprint` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | `antivirus.scan` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | `antivirus.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -157,8 +163,11 @@ Bilinçli kararlar:
   envanteri ve kimlik eşlemesini değiştiremez.
 - **`database.restore` yalnızca Admin.** Geri yükleme yıkıcıdır; yedek almak
   personelde, geri yüklemek yönetimdedir.
-- **Kurum Personeli sunucu ve veritabanı görmez.** Zil, baskı ve rehber ile
-  sınırlıdır.
+- **Kurum Personeli sunucu ve veritabanı görmez.** Zil, Çıktı Merkezi ve
+  rehber ile sınırlıdır.
+- **Yeniden baskı görüntülemeyle aynı rollerdedir.** Kayıt zaten görülebiliyorsa
+  aynı çıktının kâğıda ikinci kez dökülmesi yeni bir yetki açmaz; ayrı anahtar
+  tutulmasının nedeni yetki değil, denetim izinde ayrı görünmesidir.
 - **Rehber herkeste okunur.** Uygulamanın ortak zeminidir.
 - **Antivirüsü personel görür ve tarar, ama yönetemez.** Karantina ve kalıcı
   silme yıkıcıdır, yalnızca Admin'dedir. Kurum Personeli antivirüs görmez.
@@ -172,22 +181,35 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 
 | Ekran | Gerektirdiği izin | Admin | BLD | BBD | Kurum | Mali |
 |---|---|:---:|:---:|:---:|:---:|:---:|
-| Giriş (şifre) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Giriş (PIN) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Ana panel | — | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kullanıcılar | `users.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Roller ve İzinler | `roles.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Ayarlar | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Denetim İzi | `audit.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Kimlik Kasası | `secrets.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Kullanıcı Yönetimi | `users.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Sistem Ayarları | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Sistem Sağlığı ¹ | `settings.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Roller ve İzinler ² | `roles.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Denetim İzi ² | `audit.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Kimlik Kasası ² | `secrets.view` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | Sunucular | `servers.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Uzak Terminal | `ssh.execute` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Veritabanı | `database.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Zil Sistemi | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Baskı Yönetimi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
+| Çıktı Merkezi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Antivirüs *(yalnız Linux — ADR 0022)* | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Rehber | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Profilim | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+Kullanıcı Yönetimi, Sistem Ayarları, Sistem Sağlığı, Roller ve İzinler, Denetim
+İzi ve Kimlik Kasası **çekirdek ekranıdır**: modül değildirler, kapatılamazlar
+ve `modules/` tümüyle silinse bile dururlar. Menüde en alttaki "Sistem" grubunda
+toplanırlar; dosyaları `apps/desktop/shell/core-panels/<ad>/` altındadır ve
+kabuktaki sabit listeden (`shell/ui-kernel.js` → `CORE_PANELS`) gelirler
+(ADR 0017). Kullanıcı Yönetimi ve Sistem Ayarları panelleri **yazılmıştır**.
+
+¹ Menüde durur, paneli henüz yazılmadı; açıldığında "ekranı henüz yok" kartı
+çıkar. ² Sözleşme olarak sabittir, kabuğun `CORE_PANELS` listesine henüz
+girmedi — bugün menüde görünmez. Bu satırlar izin dağılımını bağlar; ekran
+yazıldığında matris değil, yalnız kabuk listesi değişir.
 
 Kapsamlı ekranlarda (Sunucular, Veritabanı) **ekran açılır, içerik kapsamla
 süzülür.** BLD Personeli yalnızca `bld` kapsamlı sunucu ve veritabanlarını
@@ -314,10 +336,10 @@ manifest düzeltilir, sonra betik yeniden koşulur.
    eder. İlan etmeyen uç nokta reddedilir (varsayılan: kapalı).
 2. Kapsamlı bir izin kapsam belirtilmeden sorulamaz.
 3. Yıkıcı **çekirdek** işlemleri (`database.restore`, `users.manage` silme,
-   `roles.manage`) izin yeterli olsa bile **şifre teyidi** ister. Bunlar seyrek
+   `roles.manage`) izin yeterli olsa bile **PIN teyidi** ister. Bunlar seyrek
    ve kurumsal işlemlerdir.
    **İstisna — BBD Store:** `store_*` modüllerindeki yıkıcı ve para harcayan
-   işlemler şifre yerine **gerekçeli onay** ister (ayrı izin anahtarı + zorunlu
+   işlemler PIN yerine **gerekçeli onay** ister (ayrı izin anahtarı + zorunlu
    gerekçe + çift denetim kaydı + kuru prova). Gerekçe:
    [ADR 0012](adr/0012-magaza-yikici-islem-onayi.md). Bu yüzden `store_*`
    izinleri `destructive: true` bayrağı **taşımaz**.

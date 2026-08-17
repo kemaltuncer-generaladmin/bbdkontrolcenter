@@ -1,0 +1,178 @@
+# Kontrol Merkezi — kurulabilir paketlerin üretimi (ADR 0023).
+#
+# ÇAPRAZ DERLEME YOKTUR: her paket kendi platformunda üretilir. Geliştirme
+# makinesi Linux'tur, orada .exe/.msi/.dmg çıkmaz; bu iş akışı üç koşucuyu
+# yan yana çalıştırır ve her biri kendi platformunun paketini derler.
+#
+# Mantık BURADA YAZILMAZ, ÇAĞRILIR: adımların sırası `scripts/build-release.sh`
+# ve `scripts/build-release.ps1` içindedir. Bu dosya yalnız koşucuyu hazırlar
+# (Rust, Tauri CLI, sistem paketleri, önbellek) ve betiği çağırır. İkinci bir
+# derleme reçetesi tutmak, iki reçetenin ayrışması demektir.
+
+name: Paket üretimi
+
+on:
+  # Elle tetikleme: Actions → "Paket üretimi" → Run workflow.
+  workflow_dispatch:
+  # Yayın etiketi: v0.1.0, v0.2.0 ...
+  push:
+    tags:
+      - "v*"
+
+# `main`'e her push'ta DERLEME YOK. Bu depo bir masaüstü uygulamasıdır; her
+# commit'te üç platformu derlemek 3 × ~20 dakika koşucu zamanı harcar ve
+# kimsenin indirmeyeceği paketler üretir. Paket, elle ya da etiketle istenir.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: paket-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # pip'in indirme önbelleği üç platformda da depo içinde aynı yere düşsün ki
+  # tek bir cache adımı yetsin. Gömülü Python'un pip'i de bu değişkeni okur.
+  PIP_CACHE_DIR: ${{ github.workspace }}/.cache/pip
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.platform }} paketi
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      # Bir platformun derlemesi patlarsa diğer ikisi yine tamamlansın:
+      # elde en az iki paket kalır ve hata tek platforma özgü mü, ortak mı
+      # görülür.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            bundles: deb,appimage
+          - os: windows-latest
+            platform: windows
+            bundles: nsis,msi
+          # macos-latest arm64'tür (Apple Silicon); üretilen .dmg de arm64
+          # olur. Intel Mac gerekirse ayrı bir matris satırı (macos-13) açılır.
+          - os: macos-latest
+            platform: macos
+            bundles: dmg
+
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+
+      # Kabuğun derleme bağımlılıkları. Liste `deploy/packaging/system-packages.yaml`
+      # içindeki `desktop` grubuyla AYNIDIR; o grup değişirse burası da değişir.
+      - name: Sistem bağımlılıkları (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      - name: Rust araç zinciri
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cargo kayıt defteri + target/ önbelleği. Soğuk derleme ~20 dakika;
+      # önbellek ısındığında birkaç dakikaya iner.
+      - name: Rust önbelleği
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: ${{ matrix.platform }}
+
+      # Betikler `cargo tauri` yoksa anlaşılır hatayla durur; koşucuda yok,
+      # kurulur. Önbellekten geldiyse yeniden derlenmesin diye önce bakılır.
+      - name: Tauri CLI
+        shell: bash
+        run: |
+          if cargo tauri --version >/dev/null 2>&1; then
+            echo "önbellekten: $(cargo tauri --version)"
+          else
+            cargo install tauri-cli --version "^2" --locked
+          fi
+
+      # Gömülü Python'a kurulan bağımlılıklar her koşuda yeniden indirilmesin.
+      # Anahtar bağımlılık kaynaklarının özetidir (K11: liste pyproject.toml ve
+      # modül manifestlerinden türetilir, elle yazılmaz).
+      - name: pip önbelleği
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PIP_CACHE_DIR }}
+          key: pip-${{ matrix.platform }}-${{ hashFiles('backend/pyproject.toml', 'modules/*/module.yaml') }}
+          restore-keys: |
+            pip-${{ matrix.platform }}-
+
+      # İMZALAMA YOK: kod imzalama sertifikası alınmadı (ADR 0023 §5). Kurucu
+      # imzasız çıkar ve Windows'ta SmartScreen uyarısı verir; nasıl geçileceği
+      # deploy/README.md içinde yazılıdır. Buraya imzalama adımı eklenmez —
+      # sertifika kararı verildiğinde ADR yeni bir kararla güncellenir.
+      - name: Paketle (Linux / macOS)
+        if: matrix.platform != 'windows'
+        # `bash ...` bilerek: betiğin çalıştırma bitine bağlı kalmasın.
+        run: bash scripts/build-release.sh --bundles ${{ matrix.bundles }}
+
+      - name: Paketle (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          ./scripts/build-release.ps1 -Bundles '${{ matrix.bundles }}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Betik çıktıyı dist/ altına topluyor; koşucu silinmeden önce alınır.
+      - name: Artefaktı yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: kontrol-merkezi-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # Yalnız `v*` etiketiyle koşulduğunda: üç platformun artefaktı tek Release'e
+  # asılır. Elle tetiklemede bu iş atlanır, paketler Actions çalıştırmasının
+  # artefakt listesinde durur.
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Artefaktları indir
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Dosyaları listele
+        run: ls -lh dist
+
+      - name: Release'e ekle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          body: |
+            Kurulabilir paketler (ADR 0023).
+
+            | Platform | Dosya |
+            |---|---|
+            | Windows | `*-setup.exe` (NSIS), `*.msi` |
+            | Linux | `*.deb`, `*.AppImage` |
+            | macOS | `*.dmg` (arm64) |
+
+            Kurucular **imzasızdır** — kod imzalama sertifikası alınmadı.
+            Windows'ta SmartScreen uyarısının nasıl geçileceği
+            `deploy/README.md` içinde yazılıdır.

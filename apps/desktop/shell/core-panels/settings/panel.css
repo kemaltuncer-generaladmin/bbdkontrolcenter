@@ -1,0 +1,115 @@
+/* Sistem Ayarları — panelin KENDİ kuralları.
+ *
+ * Ortak görsel dil `ui-kit/kit.css` içindedir ve buraya kopyalanmaz (ADR 0011).
+ * Burada yalnız bu ekrana özgü yerleşim vardır.
+ *
+ * ÖNEK `sa-`. Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ; çakışan
+ * bir önek, bu ekran bir kez açıldıktan sonra başka panellerin görünümünü de
+ * bozardı (kit kuralı 9).
+ *
+ * `st-` DEĞİL, BİLEREK: o önek `bbd_students` panelinde kullanılıyor ve orada
+ * `.st-card`, `.st-input`, `.st-field` gibi geniş kurallar var. Aynı öneki
+ * almak, ayar ekranı bir kez açıldıktan sonra öğrenci ekranının formunu
+ * bozardı — üstelik hata ancak "önce ayarları açtıysan" koşuluyla görünür ve
+ * kovalanması çok zor olurdu. */
+
+.sa .sa-tabs {
+  padding: 10px 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.sa .sa-notice:not(:empty) { padding: 10px 20px 0; }
+
+/* --------------------------------------------------------------- alanlar */
+
+/* `formGrid` ızgarası kartın içine taşınıyor; kart çocuklarına boşluk
+   vermediği için ölçü burada verilir. */
+.sa .sa-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px 16px;
+  padding: 14px 16px 16px;
+}
+
+.sa .sa-group .kit-field-wide { grid-column: 1 / -1; }
+
+/* Kaynak rozeti etiketin YANINDA durur: on alanlık bir sekmede hangisinin
+   ezildiği bir bakışta görünmeli. */
+.sa .sa-group .kit-field-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Kilitli alan (ortam değişkeni) dokunulamaz olduğunu göstersin — rengin
+   yanında rozet de var, renk tek başına anlam taşımaz (kit kuralı 7). */
+.sa .sa-group .kit-input[readonly],
+.sa .sa-group .kit-textarea[readonly] {
+  background: var(--tint);
+  color: var(--soft);
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- şerit */
+
+.sa .sa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sa .sa-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+/* -------------------------------------------------------------- yazıcı */
+
+.sa .sa-printer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sa .sa-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ------------------------------------------------------------ tanılama */
+
+/* Günlük tek parça metindir ve KENDİ kaydırmasını taşır: panelin gövdesini
+   yatayda kaydırmaya zorlarsa sekme şeridi de kayar. */
+.sa .sa-log {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--tint);
+  color: var(--ink);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.sa .sa-dropped {
+  margin: 0;
+  padding: 12px 16px 14px 34px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--soft);
+}
+
+.sa .sa-bundle {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

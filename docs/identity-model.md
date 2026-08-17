@@ -1,8 +1,13 @@
 # Kimlik Veri Modeli ve `identity` Yeteneği (SABİT)
 
-Gerekçe: [adr/0016-giris-sifre-ile.md](adr/0016-giris-sifre-ile.md)
-(rol modeli: [adr/0007](adr/0007-kimlik-ve-yetkilendirme.md), kimlik doğrulama
-bölümü 0016 ile değişti) · İzinler: [permissions.md](permissions.md)
+Gerekçe: [adr/0007-kimlik-ve-yetkilendirme.md](adr/0007-kimlik-ve-yetkilendirme.md)
+· İzinler: [permissions.md](permissions.md)
+
+> **Adı şifre, kuralı PIN.** [ADR 0016](adr/0016-giris-sifre-ile.md) (kişiye özel
+> şifreyle giriş) reddedildi ve giriş 6 haneli PIN'de kaldı; ancak 0016'nın göçü
+> koşmuştu. `password_hash`, `secret_lookup`, `password_set_at` sütunları ve
+> `users.set_password` izin anahtarı ADI DEĞİŞMEDEN kaldı — geri çevirmek ikinci
+> bir göç ve veri riski demekti. Aşağıda bu adlar geçtiğinde tutulan şey PIN'dir.
 
 Kimlik çekirdeğe aittir (`km_core/security` + `km_core/store`). Modül değildir,
 kapatılamaz. Modüller kullanıcı bilgisine `km_sdk` üzerinden `identity`
@@ -31,7 +36,7 @@ geldiğinde veri modeli değişmez.
 | `directory_visible` | boole | ✓ | İç rehberde görünsün mü (varsayılan: evet) |
 | `roles` | rol id listesi | ✓ | **Birden fazla olabilir.** En az bir rol zorunlu |
 | `status` | sabit liste | ✓ | `active` · `disabled` |
-| `password_hash` | metin | ✓ | Argon2id. Düz şifre hiçbir yerde saklanmaz |
+| `password_hash` | metin | ✓ | Argon2id. Düz PIN hiçbir yerde saklanmaz |
 | `secret_lookup` | metin | ✓ | Sabit anahtarlı arama hash'i — girişte kullanıcıyı bulmak için |
 | `password_set_at` | zaman | ✓ | |
 | `failed_attempts` | tam sayı | ✓ | Ardışık başarısız deneme |
@@ -41,9 +46,9 @@ geldiğinde veri modeli değişmez.
 | `created_by` | UUID | | Kaydı ekleyen yönetici |
 
 Kısıtlar:
-- `secret_lookup` **benzersizdir.** Aynı şifre ikinci kullanıcıya atanamaz;
+- `secret_lookup` **benzersizdir.** Aynı PIN ikinci kullanıcıya atanamaz;
   çakışma denemesi hata verir. Hata **kiminle çakıştığını söylemez** — aksi hâli,
-  yöneticinin deneme yoluyla başkasının şifresini öğrenmesine kapı açardı.
+  yöneticinin deneme yoluyla başkasının PIN'ini öğrenmesine kapı açardı.
 - `status = disabled` olan kullanıcı giriş yapamaz, rehberde görünmez.
 - Son `admin` rolü taşıyan aktif kullanıcı pasifleştirilemez ve rolü alınamaz.
 - `org_scope` kişinin nereye bağlı olduğunu söyler; **yetkiyi belirlemez.**
@@ -59,24 +64,26 @@ Kısıtlar:
 | `permissions` | liste | `izin:kapsam` biçiminde. `*` tüm kapsamlar |
 | `builtin` | boole | Ön tanımlı dört rol `true`. Silinemez, izinleri düzenlenebilir |
 
-## Şifre
+## PIN
 
-- **En az 10 karakter.** Karmaşıklık dayatılmaz (büyük harf/rakam/simge
-  zorunluluğu yazılmaz) — o dayatma kullanıcıyı kısa ve tahmin edilebilir
-  şifrelere iter; uzunluk tek başına daha iyi korur.
+- **En az 6 hane, yalnızca rakam.** Uzunluk `config/default.yaml` →
+  `auth.pin_min_length` ile gelir.
 - Argon2id ile hash'lenir. Ek olarak sabit anahtarlı (pepper) `secret_lookup`
   üretilir — giriş anında tüm kullanıcıları tarayarak deneme yapılmaz.
 - Pepper kasada durur, veritabanında değil.
-- Yönetici şifre atar/sıfırlar (`users.set_password`); kullanıcı kendi şifresini
-  değiştirebilir, bunun için mevcut şifresini girer.
-- Yaygın şifreler ve kişinin ad/soyad/telefonunu içeren şifreler reddedilir.
-- Sıfırlama tek kullanımlık kodla yapılabilir; kod `phone_mobile` numarasına SMS
-  ile gider (`notify` yeteneği). Telefon **giriş anahtarı değildir.**
+- Yönetici PIN atar/sıfırlar (`users.set_password` — anahtarın adı göçten
+  kalmıştır); kullanıcı kendi PIN'ini değiştirebilir, bunun için mevcut PIN'ini
+  girer.
+- Basit PIN'ler (`123456`, `000000`, tekrar eden/ardışık diziler) reddedilir.
+- **Göç yolu.** `password_hash` sütunu boş olan (0016 göçünden önce açılmış)
+  kullanıcı eski `pin_hash` sütunuyla doğrulanır ama **oturumu açılmaz**: ilk
+  girişinde kendi PIN'ini kurar, PIN yeni sütunlara yazılır. Hiçbir satır
+  silinmez, kimse kilitlenmez.
 
 ## Giriş akışı
 
 ```
-Şifre girilir
+PIN girilir
   → kilitli mi / oran sınırı aşıldı mı?  → evet: reddet, denetime yaz
   → secret_lookup ile kullanıcı bulunur  → yok: sabit süreli sahte doğrulama, reddet
   → Argon2id doğrulaması                 → hatalı: failed_attempts++, gerekirse kilitle
@@ -86,13 +93,13 @@ Kısıtlar:
 ```
 
 Kullanıcı bulunamadığında da doğrulama süresi harcanır — yanıt süresinden
-"bu şifre kimseye ait değil" bilgisi sızdırılmaz. Hata mesajı her durumda aynıdır.
+"bu PIN kimseye ait değil" bilgisi sızdırılmaz. Hata mesajı her durumda aynıdır.
 
 ## Oturum
 
 - Oturum belirteci çekirdek tarafından verilir, süresi ayarlanabilir.
-- Boşta kalma süresi dolunca kilitlenir; yeniden şifre istenir.
-- Yıkıcı işlemler açık oturumda bile şifre teyidi ister.
+- Boşta kalma süresi dolunca kilitlenir; yeniden PIN istenir.
+- Yıkıcı işlemler açık oturumda bile PIN teyidi ister.
 - Rol veya izin değişirse ilgili kullanıcının etkin izin kümesi anında
   yenilenir; oturumu kapatmak gerekmez.
 
@@ -113,12 +120,12 @@ Modüller `km_sdk` üzerinden erişir. Doğrudan kullanıcı tablosu okumak yasa
 
 ## Denetim izi
 
-Şunlar her durumda yazılır: giriş başarısı ve başarısızlığı, kilitlenme, şifre
+Şunlar her durumda yazılır: giriş başarısı ve başarısızlığı, kilitlenme, PIN
 atama/sıfırlama/değiştirme, kullanıcı ekleme/düzenleme/pasifleştirme, rol ve
 izin değişikliği, yetki reddi, yıkıcı işlemler.
 
 Kayıtta kim, ne zaman, hangi işlem, hangi kapsam ve sonuç bulunur.
-**Şifre ve sır değerleri denetim iziyle birlikte yazılmaz.**
+**PIN ve sır değerleri denetim iziyle birlikte yazılmaz.**
 
 ## Rehber — ileriye dönük not
 

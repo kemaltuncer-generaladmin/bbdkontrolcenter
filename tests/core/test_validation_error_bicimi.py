@@ -12,15 +12,35 @@ kullanıcı boş bırakıyor, uç `min_length=10` istiyor ve ekranda
 `[object Object]` beliriyordu. Şema o uçta gevşetildi ama BİÇİM sorunu
 ayrıydı ve tek başına kalsaydı bir sonraki zorunlu alanda aynen tekrarlardı.
 
-Ağa çıkmaz, çekirdeğin kendi uygulamasını kurar.
+Ağa çıkmaz, çekirdeğin kendi uygulamasını kurar. DEPO GEÇİCİ DİZİNDEDİR:
+ayarsız `create_app()` geliştiricinin gerçek `data/kontrol-merkezi.sqlite`
+dosyasını açar ve çıktı kaydı da (ADR 0019) o depoya bağlanırdı. Biçim sınayan
+bir testin gerçek depoya dokunması için hiçbir neden yok.
 """
+
+from copy import deepcopy
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
+from km_core.config.loader import ROOT, Config, load_config
 from km_core.http.app import create_app
+
+
+def _uygulama(tmp_path: Path) -> FastAPI:
+    """Çekirdek uygulaması — deposu, kasası ve günlüğü geçici dizinde."""
+    data = deepcopy(load_config().as_dict())
+    data["core"] = {
+        **data.get("core", {}),
+        "store_path": str(tmp_path / "km.sqlite"),
+        "secret_key_path": str(tmp_path / "secret.key"),
+        "log_path": str(tmp_path / "gunluk.log"),
+    }
+    data["files"] = {"output_path": str(tmp_path / "cikti")}
+    return create_app(Config(data, root=ROOT))
 
 
 class Gövde(BaseModel):
@@ -28,13 +48,13 @@ class Gövde(BaseModel):
     packages: int = Field(ge=1, le=99)
 
 
-def test_422_govdesi_DIZI_DEGIL_tekduze_zarf() -> None:
+def test_422_govdesi_DIZI_DEGIL_tekduze_zarf(tmp_path: Path) -> None:
     """`detail` dizisi değil, `error.message` metni dönmeli.
 
     Kabuk `error.message` okuyabildiği sürece kullanıcı gerçek cümleyi görür;
     dizi döndüğü an `[object Object]` yazardı.
     """
-    app: FastAPI = create_app()
+    app: FastAPI = _uygulama(tmp_path)
 
     @app.post("/sinama/dogrulama")
     async def _sinama(body: Gövde) -> dict[str, str]:  # pragma: no cover
@@ -53,8 +73,8 @@ def test_422_govdesi_DIZI_DEGIL_tekduze_zarf() -> None:
     assert "detail" not in govde
 
 
-def test_eksik_alan_TURKCE_ve_alan_adiyla_soyleniyor() -> None:
-    app: FastAPI = create_app()
+def test_eksik_alan_TURKCE_ve_alan_adiyla_soyleniyor(tmp_path: Path) -> None:
+    app: FastAPI = _uygulama(tmp_path)
 
     @app.post("/sinama/dogrulama")
     async def _sinama(body: Gövde) -> dict[str, str]:  # pragma: no cover
@@ -70,8 +90,8 @@ def test_eksik_alan_TURKCE_ve_alan_adiyla_soyleniyor() -> None:
     assert "field required" not in mesaj.lower()
 
 
-def test_kisa_metin_SINIRI_SAYIYLA_soyluyor() -> None:
-    app: FastAPI = create_app()
+def test_kisa_metin_SINIRI_SAYIYLA_soyluyor(tmp_path: Path) -> None:
+    app: FastAPI = _uygulama(tmp_path)
 
     @app.post("/sinama/dogrulama")
     async def _sinama(body: Gövde) -> dict[str, str]:  # pragma: no cover
@@ -87,8 +107,8 @@ def test_kisa_metin_SINIRI_SAYIYLA_soyluyor() -> None:
     assert "string_too_short" not in mesaj
 
 
-def test_sayi_siniri_da_okunur_yazilir() -> None:
-    app: FastAPI = create_app()
+def test_sayi_siniri_da_okunur_yazilir(tmp_path: Path) -> None:
+    app: FastAPI = _uygulama(tmp_path)
 
     @app.post("/sinama/dogrulama")
     async def _sinama(body: Gövde) -> dict[str, str]:  # pragma: no cover
@@ -103,13 +123,13 @@ def test_sayi_siniri_da_okunur_yazilir() -> None:
     assert "1" in mesaj
 
 
-def test_TANIMADIGIMIZ_hata_turu_yutulmaz() -> None:
+def test_TANIMADIGIMIZ_hata_turu_yutulmaz(tmp_path: Path) -> None:
     """Bilinmeyen doğrulama türü listeden DÜŞMEZ, kendi mesajıyla gösterilir.
 
     Tanımadığımız bir hatayı atlamak, ekranı "sorun yok" der hâle getirirdi:
     istek reddedilmiş ama kullanıcı nedenini hiç görmemiş olurdu.
     """
-    app: FastAPI = create_app()
+    app: FastAPI = _uygulama(tmp_path)
 
     @app.get("/sinama/patlat")
     async def _patlat() -> dict[str, str]:  # pragma: no cover

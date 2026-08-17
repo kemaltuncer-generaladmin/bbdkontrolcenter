@@ -45,9 +45,14 @@ CREATE TABLE IF NOT EXISTS users (
     note               TEXT,
     directory_visible  INTEGER NOT NULL DEFAULT 1,
     status             TEXT NOT NULL DEFAULT 'active',
+    -- ADR 0016: giriş şifre iledir. PIN sütunları DÜŞÜRÜLMEZ — var olan
+    -- kurulumda kimse kilitlenmesin diye bırakılır ve kullanılmaz.
     pin_hash           TEXT NOT NULL,
     pin_lookup         TEXT NOT NULL UNIQUE,
     pin_set_at         TEXT NOT NULL,
+    password_hash      TEXT,
+    secret_lookup      TEXT UNIQUE,
+    password_set_at    TEXT,
     failed_attempts    INTEGER NOT NULL DEFAULT 0,
     locked_until       TEXT,
     last_login_at      TEXT,
@@ -100,6 +105,26 @@ CREATE TABLE IF NOT EXISTS secrets (
     value       TEXT NOT NULL,          -- şifreli
     updated_at  TEXT NOT NULL
 );
+
+-- ADR 0019 — Çıktı Merkezi. Kayıt, dosyayı yazan çekirdek fonksiyonunda doğar;
+-- yirmi modülün ortak kaydı olduğu için hiçbir modülün tablosu olamaz (K5).
+-- `source` modül kimliğini VERİ olarak taşır; çekirdek ona göre dallanmaz (K1).
+CREATE TABLE IF NOT EXISTS outputs (
+    id             TEXT PRIMARY KEY,
+    created_at     TEXT NOT NULL,
+    user_id        TEXT,
+    source         TEXT NOT NULL,
+    kind           TEXT,
+    title          TEXT,
+    path           TEXT NOT NULL,
+    bytes          INTEGER,
+    pages          INTEGER,
+    params_digest  TEXT,
+    printed_count  INTEGER NOT NULL DEFAULT 0,
+    last_printed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_outputs_created ON outputs (created_at);
 """
 
 

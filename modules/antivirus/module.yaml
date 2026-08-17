@@ -1,6 +1,5 @@
-# Antivirüs modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
-# Şema: docs/schemas/module.schema.json · Gerekçe: ADR 0009
+# Antivirüs modülü
+# Şema: docs/schemas/module.schema.json · Gerekçe: ADR 0009, ADR 0022
 #
 # ClamAV motoruna erişim bu modüle aittir. Şu an tek tüketicisi olduğu için
 # platform yeteneği yapılmadı; ikinci bir tüketici çıkarsa (yükleme taraması,
@@ -12,7 +11,13 @@ name: "Antivirüs"
 description: "ClamAV ile sistem taraması, karantina yönetimi, imza güncelliği takibi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
+
+# YALNIZ UBUNTU (ADR 0022). Modül clamdscan/clamscan ikililerine, clamd
+# daemon'ına ve freshclam servisine dayanıyor; hiçbirinin Windows ve macOS'ta
+# karşılığı yok. Eleme keşifte olur: uymayan platformda router monte edilmez,
+# göç koşmaz, görev planlanmaz, menüye girmez.
+platforms: [linux]
 
 entrypoint: backend.module:register
 
@@ -99,6 +104,51 @@ dependencies:
 config:
   defaults: config/default.yaml
   schema: config/schema.json
+
+# Sistem Ayarları ekranındaki kendi sekmemiz (ADR 0018 §1). Anahtarlar
+# `config/default.yaml` içindeki adlarla BİREBİR aynıdır; ekran modülün ayar
+# ad alanına yazar. Sır burada tutulmaz (K8) — zaten antivirüsün sırrı yok.
+#
+# Sekme yalnız modülün yüklendiği platformda görünür (ADR 0018 sonuçları).
+settings:
+  tab: "Antivirüs"
+  # İZİN İLAN EDİLMEZSE BLOK REDDEDİLİR (K9, varsayılan kapalı). Bu alanlar
+  # tarama davranışını değiştirir; görüntüleme izni (antivirus.view) yetmez.
+  requires: [antivirus.manage]
+  groups:
+    - id: tarama
+      title: "Tarama"
+      fields:
+        - key: schedule
+          type: cron
+          title: "Otomatik tam tarama zamanı"
+          description: "Tam sistem taraması G/Ç yoğundur; varsayılanı gecedir (ADR 0009)."
+          default: "0 3 * * *"
+        - key: quick_paths
+          type: path_list
+          title: "Hızlı tarama yolları"
+          description: "Hızlı tarama yalnız bu yolları tarar. '~' ev dizinine açılır."
+          default: ["~"]
+        - key: exclude_paths
+          type: path_list
+          title: "Hariç tutulan yollar"
+          description: >
+            Bu yollar bilerek taranmaz ve raporda 'hariç' olarak listelenir.
+            Erişilemeyen yollardan ayrıdır: hariç tutmak yöneticinin kararıdır.
+          default: ["/proc", "/sys", "/dev", "/run", "/snap", "/var/lib/clamav"]
+    - id: imza
+      title: "İmzalar"
+      fields:
+        - key: signature_max_age_hours
+          type: int
+          title: "İmza yaşı eşiği (saat)"
+          description: >
+            İmzalar bu süreden eskiyse antivirus.signatures_stale olayı
+            yayınlanır. Güncellemeyi freshclam servisi yapar; uygulama
+            içinden elle çalıştırılmaz (ADR 0009 §5).
+          default: 48
+          min: 1
+          max: 720
 
 migrations: backend/migrations
 

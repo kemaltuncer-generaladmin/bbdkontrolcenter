@@ -1,9 +1,33 @@
 # 0016 — Giriş: kullanıcı adsız, kişiye özel şifre
 
-**Durum:** Kabul edildi · 2026-08-16
-**Yerine geçtiği:** [0007](0007-kimlik-ve-yetkilendirme.md) — yalnız kimlik
-doğrulama bölümü. Rol modeli, çok rollülük ve kapsam mekanizması aynen
-sürüyor ve bu ADR'de yeniden onaylanır.
+**Durum:** Reddedildi · 2026-08-17
+**Yerini aldığı sanılan:** [0007](0007-kimlik-ve-yetkilendirme.md) —
+**süperseleme geri alındı.** 0007 yürürlüktedir; giriş 6 haneli PIN'dir.
+
+## Neden reddedildi
+
+Karar sahibi mevcut giriş ekranını korumayı seçti: tuş takımı ve 6 haneli PIN
+kalıyor, şifre alanı gelmiyor. Aşağıdaki gerekçe (uzayın küçüklüğü, kadronun
+merkezîleşmesi) yanlışlanmadı — **ertelendi**: 6 hane bugün yalnız YEREL
+doğrulamada duruyor ve o dosyayı okuyan zaten her şeyi okumuştur. Sır uzunluğu,
+merkezî kadro servisi (ADR 0021) gerçekten geldiğinde yeni bir ADR ile yeniden
+ele alınacaktır; o zamana kadar sır makineden çıkmıyor.
+
+**Kod tarafında geri ALINMAYAN üç şey var** — göç çoktan koşmuştu ve adları geri
+çevirmek ikinci bir göç, yani veri riski demekti:
+
+| Kalan | Nerede | Anlamı bugün |
+|---|---|---|
+| `password_hash`, `secret_lookup`, `password_set_at` sütunları | `users` tablosu | PIN'in Argon2id özeti ve arama hash'i |
+| `users.set_password` izin anahtarı | roller | PIN atama/sıfırlama yetkisi |
+| `POST /api/auth/set-password`, gövdedeki `password` alanı | HTTP sözleşmesi | PIN kurma |
+
+Kural her yerde PIN'dir (`Identity.validate_pin`); yalnız ADLAR şifre der.
+Aynı nedenle `mustSetPassword` akışı da duruyor: `password_hash` sütunu boş olan
+göç kullanıcısı ilk girişinde kendi PIN'ini kurar, kimse kilitlenmez.
+
+Aşağıdaki metin kararın kendisidir ve tarihsel kayıt olarak olduğu gibi
+bırakılmıştır; **uygulanmamıştır.**
 
 ## Bağlam
 

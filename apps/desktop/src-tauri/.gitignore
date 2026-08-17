@@ -1,0 +1,3 @@
+# Gömülü Python çalışma zamanı (ADR 0023). İndirilen bir ikilidir; depoya
+# konmaz (K11). `scripts/build-release.sh` / `.ps1` paketleme sırasında doldurur.
+runtime/

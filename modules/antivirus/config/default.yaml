@@ -1,0 +1,66 @@
+# Antivirüs — varsayılan ayarlar.
+# Kök ayardaki `modules.antivirus.*` bloğu bunları ezer.
+# SIR YAZILMAZ (K8) — antivirüsün kimlik bilgisi yoktur; ClamAV yereldir.
+#
+# Buradaki anahtarların bir bölümü Sistem Ayarları ekranında da görünür
+# (module.yaml → `settings`, ADR 0018). Adlar birebir aynıdır; ikinci bir
+# ad alanı açılmaz.
+
+# --- motor -----------------------------------------------------------------
+# Birincil yol daemon üzerinden gider (imzalar bellekte, tarama hızlı); daemon
+# yoksa yedek yol her taramada imzaları diskten yükler ve belirgin biçimde
+# yavaştır (ADR 0009 §2). İkili adları ayardan değiştirilebilir: özel kurulumda
+# tam yol verilebilsin.
+clamdscan: "clamdscan"
+clamscan: "clamscan"
+
+# freshclam imzaları buraya indirir. İlk kurulumda ~300 MB'lık indirme biter
+# ve `daily` + `main` dosyaları oluşana dek clamd BAŞLAMAZ; bu durum hata
+# değil "hazırlanıyor"dur (ADR 0009 sonuçları).
+database_path: "/var/lib/clamav"
+
+# --- tarama kapsamı --------------------------------------------------------
+# TAM TARAMA KÖKLERİ. `/` yazılmaz: clamdscan `--exclude-dir` seçeneğini
+# TANIMAZ (o seçenek clamscan'e özgüdür), dolayısıyla `/` verildiğinde /proc,
+# /sys ve /dev sanal dosya sistemlerine de dalardı. Kapsam bu yüzden gerçek
+# içerik köklerinden kurulur; listeye ekleme yapmak serbesttir.
+full_paths:
+  - "/home"
+  - "/opt"
+  - "/srv"
+  - "/tmp"
+  - "/var/tmp"
+  - "/var/www"
+  - "/usr/local"
+  - "/etc"
+
+# HIZLI TARAMA. Ev dizini indirilenleri ve masaüstünü zaten kapsar; tek yol
+# vermek, "yol yok" yüzünden hiçbir şey taramayan bir hızlı taramadan iyidir.
+quick_paths:
+  - "~"
+
+# Bilerek taranmayan yollar. Raporda 'hariç' olarak GÖRÜNÜR — sessizce
+# düşürülmez. Erişilemeyen yoldan ayrıdır: hariç tutmak yöneticinin kararıdır,
+# erişilememek ise taramanın eksik kalmasıdır ve "temiz" denmesini engeller.
+exclude_paths:
+  - "/proc"
+  - "/sys"
+  - "/dev"
+  - "/run"
+  - "/snap"
+  - "/var/lib/clamav"
+
+# --- zaman aşımı -----------------------------------------------------------
+# Tarama ayrı süreçte koşar ve süre aşılırsa süreç öldürülür: takılan bir
+# tarama çekirdeği kilitlemez (K7). Aşımda sonuç "başarısız"tır — o ana kadar
+# bulunan tehditler raporda kalır, ama tarama asla "temiz" sayılmaz.
+full_timeout_minutes: 240
+quick_timeout_minutes: 30
+
+# --- takvim ve imza --------------------------------------------------------
+# Zamanlanmış tam tarama. Tam sistem taraması G/Ç yoğundur; gece 03:00
+# varsayılanı ADR 0009'dan gelir.
+schedule: "0 3 * * *"
+
+# İmza yaşı eşiği. Aşılırsa `antivirus.signatures_stale` yayınlanır.
+signature_max_age_hours: 48

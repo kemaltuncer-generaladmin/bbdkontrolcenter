@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+#
+# Kontrol Merkezi — kurulabilir paket üretimi (Linux / macOS). ADR 0023.
+#
+# Ne yapar:
+#   1. Kabuk menü kaydını üretir (shell/registry.json ikiliye gömülür)
+#   2. Gömülü Python çalışma zamanını indirir ve bağımlılıklarını kurar
+#   3. `cargo tauri build` ile paketi üretir
+#   4. Çıktıyı dist/ altına toplar
+#
+# ÇAPRAZ DERLEME YOKTUR. Bu betik çalıştığı platformun paketini üretir:
+# Linux'ta .deb/.AppImage, macOS'ta .dmg. Windows kurucusu Windows'ta,
+# `scripts/build-release.ps1` ile üretilir — WebView2/WiX/NSIS zinciri orada.
+#
+# Kullanım:
+#   scripts/build-release.sh                 # tam üretim
+#   scripts/build-release.sh --skip-runtime  # var olan runtime/ ile derle
+#   scripts/build-release.sh --runtime-only  # yalnız çalışma zamanını hazırla
+#   scripts/build-release.sh --bundles deb   # yalnız belirtilen hedef(ler)
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TAURI="$ROOT/apps/desktop/src-tauri"
+RUNTIME="$TAURI/runtime"
+DIST="$ROOT/dist"
+
+# --- gömülü Python sürümü -------------------------------------------------
+#
+# python-build-standalone: bağımsız, taşınabilir CPython. Kullanıcının
+# makinesindeki Python'a güvenilmez (ADR 0023 — elenen alternatifler).
+#
+# BU İKİ DEĞER ELLE DOĞRULANIR. Yayın etiketleri tarih biçimindedir ve varlık
+# adları sürümle birlikte değişir; listeyi görmeden yükseltilmez:
+#   https://github.com/astral-sh/python-build-standalone/releases
+# Ortamdan ezilebilir: KM_PY_VERSION=3.12.11 KM_PBS_RELEASE=20250612 ...
+PY_VERSION="${KM_PY_VERSION:-3.12.11}"
+PBS_RELEASE="${KM_PBS_RELEASE:-20250612}"
+PBS_BASE="https://github.com/astral-sh/python-build-standalone/releases/download"
+
+SKIP_RUNTIME=0
+RUNTIME_ONLY=0
+BUNDLES=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --skip-runtime) SKIP_RUNTIME=1 ;;
+    --runtime-only) RUNTIME_ONLY=1 ;;
+    --bundles) shift; BUNDLES="${1:-}" ;;
+    -h|--help) sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "Bilinmeyen seçenek: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+# `%b` — ileti içindeki `\n` kaçışları gerçek satır sonuna çevrilsin.
+die() { printf '\033[31mHATA:\033[0m %b\n' "$*" >&2; exit 1; }
+
+cd "$ROOT"
+
+# --- 0. araçlar -----------------------------------------------------------
+say "0) Araç denetimi"
+command -v cargo >/dev/null 2>&1 || die "cargo yok. Kurulum: scripts/install-deps.sh --with-desktop"
+command -v curl  >/dev/null 2>&1 || die "curl yok."
+command -v tar   >/dev/null 2>&1 || die "tar yok."
+
+if ! cargo tauri --version >/dev/null 2>&1; then
+  die "Tauri CLI yok. Kurulum:  cargo install tauri-cli --version '^2' --locked"
+fi
+echo "  cargo: $(cargo -V)"
+echo "  tauri: $(cargo tauri --version)"
+
+case "$(uname -s)" in
+  Linux)  PBS_OS="unknown-linux-gnu"; PY_BIN="bin/python3" ;;
+  Darwin) PBS_OS="apple-darwin";      PY_BIN="bin/python3" ;;
+  *) die "Bu betik yalnız Linux ve macOS içindir. Windows: scripts/build-release.ps1" ;;
+esac
+
+case "$(uname -m)" in
+  x86_64|amd64)  PBS_ARCH="x86_64" ;;
+  aarch64|arm64) PBS_ARCH="aarch64" ;;
+  *) die "Desteklenmeyen mimari: $(uname -m)" ;;
+esac
+
+PYTHON="$RUNTIME/$PY_BIN"
+
+# --- 1. gömülü Python -----------------------------------------------------
+if [ "$SKIP_RUNTIME" = 1 ]; then
+  say "1) Gömülü Python — atlandı (--skip-runtime)"
+  [ -x "$PYTHON" ] || die "runtime/ boş; --skip-runtime kullanılamaz."
+else
+  say "1) Gömülü Python indiriliyor ($PY_VERSION / $PBS_RELEASE / $PBS_ARCH-$PBS_OS)"
+
+  ASSET="cpython-${PY_VERSION}+${PBS_RELEASE}-${PBS_ARCH}-${PBS_OS}-install_only.tar.gz"
+  URL="$PBS_BASE/$PBS_RELEASE/$ASSET"
+  WORK="$(mktemp -d)"
+  trap 'rm -rf "$WORK"' EXIT
+
+  echo "  $URL"
+  curl -fL --retry 3 -o "$WORK/$ASSET" "$URL" \
+    || die "İndirilemedi. Sürüm/etiket doğru mu?\n  KM_PY_VERSION / KM_PBS_RELEASE ile ezilebilir.\n  Liste: https://github.com/astral-sh/python-build-standalone/releases"
+
+  # BÜTÜNLÜK DENETİMİ ATLANMAZ: uygulamanın içine gömülen bir yorumlayıcıdır,
+  # kullanıcının makinesinde bizim adımıza kod çalıştırır.
+  curl -fL --retry 3 -o "$WORK/$ASSET.sha256" "$URL.sha256" \
+    || die "Özet dosyası indirilemedi; doğrulanmamış çalışma zamanı gömülmez."
+
+  # Özet dosyası yalnız onaltılık değeri taşır; `-c` biçimi ad da ister.
+  if command -v sha256sum >/dev/null 2>&1; then CHECK=(sha256sum -c -)
+  else CHECK=(shasum -a 256 -c -); fi
+  ( cd "$WORK" \
+      && printf '%s  %s\n' "$(tr -d '[:space:]' < "$ASSET.sha256")" "$ASSET" | "${CHECK[@]}" ) \
+    || die "SHA256 uyuşmadı — indirilen dosya atıldı."
+
+  tar -xzf "$WORK/$ASSET" -C "$WORK"
+  [ -d "$WORK/python" ] || die "Arşiv beklenen 'python/' klasörünü taşımıyor."
+
+  rm -rf "$RUNTIME"
+  mkdir -p "$(dirname "$RUNTIME")"
+  mv "$WORK/python" "$RUNTIME"
+  echo "  yerleşti: $RUNTIME"
+fi
+
+[ -x "$PYTHON" ] || die "Gömülü Python bulunamadı: $PYTHON"
+echo "  sürüm: $("$PYTHON" -V)"
+
+# --- 2. çalışma zamanı bağımlılıkları -------------------------------------
+say "2) Bağımlılıklar gömülü ortama kuruluyor"
+
+# BAĞIMLILIK İLAN EDİLİR, KOPYALANMAZ (K11): liste burada yazılmaz,
+# `backend/pyproject.toml` ve modüllerin `module.yaml` dosyalarından türetilir
+# — `scripts/install-deps.sh` ile aynı kaynak.
+"$PYTHON" -m pip install --upgrade pip >/dev/null
+"$PYTHON" -m pip install pyyaml >/dev/null   # aşağıdaki toplayıcı manifest okur
+
+REQS="$("$PYTHON" - <<'PY'
+import pathlib, sys, tomllib
+
+import yaml
+
+
+def platform_name() -> str:
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+HERE = platform_name()
+
+# Çalışma zamanı yetenekleri. `dev` ve isteğe bağlı sürücüler dışarıda —
+# scripts/install-deps.sh ile AYNI küme; iki liste ayrışmasın.
+EXTRAS = ["ssh", "database", "printer", "audio", "notify"]
+if HERE in ("windows", "macos"):
+    # Baskı işletim sistemine devredilir (ADR 0014): Windows'ta CUPS hiç yok,
+    # macOS'ta var ama arka uç `backends/system.py` — pycups çağrılmaz. İki
+    # platformda da kurulmaz; Windows'ta zaten derlenmez.
+    EXTRAS.remove("printer")
+
+data = tomllib.load(open("backend/pyproject.toml", "rb"))
+project = data["project"]
+reqs = list(project.get("dependencies", []))
+extras = project.get("optional-dependencies", {})
+for name in EXTRAS:
+    reqs += extras.get(name, [])
+
+# Bu platformda çalışmayan modülün bağımlılığı toplanmaz (ADR 0022).
+for manifest_path in sorted(pathlib.Path("modules").glob("*/module.yaml")):
+    manifest = yaml.safe_load(open(manifest_path, encoding="utf-8")) or {}
+    declared = manifest.get("platforms")
+    if declared and HERE not in declared:
+        continue
+    reqs += ((manifest.get("dependencies") or {}).get("python") or [])
+
+seen, out = set(), []
+for req in reqs:
+    if req not in seen:
+        seen.add(req)
+        out.append(req)
+print("\n".join(out))
+PY
+)"
+
+echo "$REQS" | sed 's/^/  /'
+echo "$REQS" | "$PYTHON" -m pip install -r /dev/stdin
+
+# Derlenmiş önbellek pakete girmez: hem şişirir hem başka bir Python
+# sürümünde geçersizdir.
+find "$RUNTIME" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+if [ "$RUNTIME_ONLY" = 1 ]; then
+  say "Çalışma zamanı hazır: $RUNTIME"
+  exit 0
+fi
+
+# --- 3. kabuk menü kaydı --------------------------------------------------
+say "3) Menü kaydı üretiliyor"
+# registry.json ve panels/ ikiliye GÖMÜLÜR (frontendDist). Derlemeden önce
+# üretilmezse paket eski menüyle çıkar.
+PYTHONPATH="$ROOT/backend/src" "$PYTHON" "$ROOT/tools/build-ui-registry.py" \
+  || die "Menü kaydı üretilemedi; manifestlerden biri bozuk olabilir."
+
+# Depo ağacındaki .pyc dosyaları pakete kopyalanır ve boşuna yer kaplar.
+find "$ROOT/backend/src" "$ROOT/modules" -name '__pycache__' -type d -prune \
+  -exec rm -rf {} + 2>/dev/null || true
+
+# --- 4. paket -------------------------------------------------------------
+say "4) Paket üretiliyor"
+# `tauri.release.json` yalnız burada devreye girer: kaynak dosyaları (backend,
+# modules, runtime) pakete YALNIZ yayın derlemesinde kopyalanır. Ana
+# yapılandırmada dursaydı her geliştirme derlemesi 30 MB modülü yeniden
+# damgalar ve `scripts/launch-desktop.sh` her açılışta yeniden derlerdi.
+BUILD_ARGS=(--config tauri.release.json)
+[ -n "$BUNDLES" ] && BUILD_ARGS+=(--bundles "$BUNDLES")
+
+( cd "$TAURI" && cargo tauri build "${BUILD_ARGS[@]}" ) || die "Paket üretimi başarısız."
+
+# --- 5. çıktı -------------------------------------------------------------
+say "5) Çıktı toplanıyor"
+mkdir -p "$DIST"
+BUNDLE_DIR="$TAURI/target/release/bundle"
+
+FOUND=0
+for pattern in "deb/*.deb" "appimage/*.AppImage" "rpm/*.rpm" "dmg/*.dmg"; do
+  for file in $BUNDLE_DIR/$pattern; do
+    [ -e "$file" ] || continue
+    cp -f "$file" "$DIST/"
+    echo "  $(basename "$file")"
+    FOUND=1
+  done
+done
+
+[ "$FOUND" = 1 ] || die "Paket bulunamadı: $BUNDLE_DIR altı boş."
+
+say "Bitti. Çıktı: $DIST"

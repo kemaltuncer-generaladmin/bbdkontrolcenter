@@ -22,13 +22,23 @@ const CORE_ADDR: &str = "127.0.0.1:8787";
 
 struct Sidecar(Mutex<Option<Child>>);
 
-/// Depo kökünü bulur: çalıştırılabilir dosyadan yukarı doğru, çekirdeğin
-/// kaynağını taşıyan klasör aranır. Geliştirmede `target/debug` altından,
-/// kurulumda paket kökünden çalışır.
-fn find_root() -> Option<PathBuf> {
+/// Kökü elle söylemenin yolu — geliştirmede ve arıza takibinde.
+const ROOT_ENV: &str = "KM_ROOT";
+
+/// Bir klasörün çekirdek kaynağını taşıyıp taşımadığı. Kök arayan her yol bu
+/// tek ölçüte bakar.
+fn is_root(dir: &Path) -> bool {
+    dir.join("backend/src/km_core").is_dir()
+}
+
+/// Çalıştırılabilir dosyadan yukarı doğru çekirdek kaynağını arar.
+///
+/// Geliştirmede ikili `target/release` altındadır ve depo kökü birkaç üsttedir.
+/// Windows kurulumunda kaynaklar exe'nin YANINA açılır, yani ilk adımda bulunur.
+fn root_beside_exe() -> Option<PathBuf> {
     let mut dir: PathBuf = std::env::current_exe().ok()?.parent()?.to_path_buf();
     for _ in 0..8 {
-        if dir.join("backend/src/km_core").is_dir() {
+        if is_root(&dir) {
             return Some(dir);
         }
         dir = dir.parent()?.to_path_buf();
@@ -36,13 +46,63 @@ fn find_root() -> Option<PathBuf> {
     None
 }
 
-fn python_path(root: &Path) -> PathBuf {
-    let venv = root.join(".venv/bin/python");
-    if venv.is_file() {
-        venv
-    } else {
-        PathBuf::from("python3")
+/// Çekirdek kaynağının kökü.
+///
+/// Sıra: `KM_ROOT` → exe'nin yanı/üstü → paketin kaynak klasörü. Linux `.deb`
+/// kurulumunda exe `/usr/bin` altındadır ve kaynak `/usr/lib/<uygulama>` içine
+/// açılır; oraya yalnızca Tauri'nin kendi kaynak yolu ulaşır. Üç adayın da
+/// aynı ölçütten geçmesi, hangisinin geldiğinin önemsiz olmasını sağlar.
+fn find_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Ok(value) = std::env::var(ROOT_ENV) {
+        let dir = PathBuf::from(value);
+        if is_root(&dir) {
+            return Some(dir);
+        }
+        eprintln!("[kabuk] {ROOT_ENV} çekirdek kaynağı taşımıyor, yok sayıldı: {}", dir.display());
     }
+    if let Some(dir) = root_beside_exe() {
+        return Some(dir);
+    }
+    let resource = app.path().resource_dir().ok()?;
+    if is_root(&resource) {
+        return Some(resource);
+    }
+    None
+}
+
+/// Çekirdeği çalıştıracak Python.
+///
+/// Sıra bilinçlidir:
+///   1. **gömülü çalışma zamanı** (`runtime/python`) — kurulu uygulamanın tek
+///      doğru yanıtı. Kullanıcının makinesinde Python olmayabilir, olan sürüm
+///      3.12'den eski olabilir ya da bizim paketlerimiz orada bulunmaz.
+///   2. **`.venv`** — geliştirme kurulumu. Depo klasöründen çalışırken bugünkü
+///      davranış aynen korunur.
+///   3. **sistem Python'u** — son çare. Bulunursa çalışır, bulunmazsa kabuk
+///      pencereyi yine açar ve giriş ekranı durumu söyler (K7).
+///
+/// Platform farkı burada, Rust tarafında biter: Python'un dosya yolu
+/// Windows'ta `Scripts\python.exe`, ötekilerde `bin/python`'dur.
+fn python_path(root: &Path) -> PathBuf {
+    let embedded = if cfg!(windows) {
+        root.join("runtime/python/python.exe")
+    } else {
+        root.join("runtime/python/bin/python3")
+    };
+    if embedded.is_file() {
+        return embedded;
+    }
+
+    let venv = if cfg!(windows) {
+        root.join(".venv/Scripts/python.exe")
+    } else {
+        root.join(".venv/bin/python")
+    };
+    if venv.is_file() {
+        return venv;
+    }
+
+    PathBuf::from(if cfg!(windows) { "python" } else { "python3" })
 }
 
 /// Çekirdek zaten ayaktaysa ikincisini başlatmayız: geliştirme sırasında elle
@@ -55,23 +115,38 @@ fn core_is_running() -> bool {
     .is_ok()
 }
 
-fn spawn_core() -> Option<Child> {
+fn spawn_core(app: &tauri::AppHandle) -> Option<Child> {
     if core_is_running() {
         eprintln!("[kabuk] çekirdek zaten çalışıyor, yenisi başlatılmadı");
         return None;
     }
 
-    let root = find_root()?;
+    let Some(root) = find_root(app) else {
+        eprintln!("[kabuk] çekirdek kaynağı bulunamadı (backend/src/km_core)");
+        return None;
+    };
     let python = python_path(&root);
 
-    match Command::new(&python)
+    let mut command = Command::new(&python);
+    command
         .arg("-m")
         .arg("km_core.main")
         .current_dir(&root)
         .env("PYTHONPATH", root.join("backend/src"))
-        .env("PYTHONUNBUFFERED", "1")
-        .spawn()
+        .env("PYTHONUNBUFFERED", "1");
+
+    // Windows'ta kabuk konsolsuz derleniyor (`windows_subsystem = "windows"`).
+    // Bayrak konmazsa çekirdek süreci KENDİ konsol penceresini açar: kullanıcı
+    // uygulamanın yanında siyah bir pencere görür ve onu kapatınca çekirdeği
+    // öldürür.
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    match command.spawn() {
         Ok(child) => {
             eprintln!("[kabuk] çekirdek başlatıldı: {}", python.display());
             Some(child)
@@ -79,7 +154,7 @@ fn spawn_core() -> Option<Child> {
         Err(error) => {
             // Çekirdek açılmazsa pencere yine açılır ve giriş ekranı durumu
             // söyler; kabuk sessizce ölmez.
-            eprintln!("[kabuk] çekirdek başlatılamadı: {error}");
+            eprintln!("[kabuk] çekirdek başlatılamadı ({}): {error}", python.display());
             None
         }
     }
@@ -165,10 +240,19 @@ async fn core_request(
 }
 
 fn main() {
-    let sidecar = Sidecar(Mutex::new(spawn_core()));
-
     tauri::Builder::default()
-        .manage(sidecar)
+        .manage(Sidecar(Mutex::new(None)))
+        .setup(|app| {
+            // Çekirdek BURADA başlatılır, `main`in başında değil: kurulu
+            // uygulamada kaynak klasörünün yerini yalnız Tauri bilir
+            // (`resource_dir`) ve o yol ancak uygulama kurulduktan sonra
+            // sorulabilir.
+            let child = spawn_core(app.handle());
+            if let Ok(mut guard) = app.state::<Sidecar>().0.lock() {
+                *guard = child;
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![core_request])
         .build(tauri::generate_context!())
         .expect("Kontrol Merkezi kabuğu başlatılamadı")

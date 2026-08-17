@@ -29,15 +29,16 @@ Bu kararlar sabittir. Değişiklik ancak yeni bir ADR ile olur — kod içinde
 
 ## Kavram ayrımı — karıştırılmaz
 
-- **Modül** = silinebilir iş özelliği (zil sistemi, baskı yönetimi, BLD ürün
+- **Modül** = silinebilir iş özelliği (zil sistemi, çıktı merkezi, BLD ürün
   yönetimi). `modules/` altında, `module.yaml` taşır, kapatılabilir.
 - **Platform yeteneği** = silinemez altyapı (`ssh`, `database`, `printer`,
   `audio`, `scheduler`, `secrets`, `notify`). `km_platform/` altında, manifest
   taşımaz, kapatılamaz. **SSH gereken her şey buraya bağlanır.**
 - `km_core/store` = çekirdeğin kendi metadata deposu.
   `km_platform/database` = yönetilen uzak veritabanları (BBD/BLD). Ayrı şeyler.
-- **Kimlik çekirdektedir**, modül değildir. Giriş kullanıcı adsız, kişiye özel
-  **şifre** iledir (ADR 0016; 0007'deki PIN yerine).
+- **Kimlik çekirdektedir**, modül değildir. Giriş kullanıcı adsız, 6 haneli
+  **PIN** iledir (ADR 0007; 0016 reddedildi — kodda kalan `password_*` adları
+  göçten kalmıştır, kural PIN'dir).
   Rol = izin kümesi; bir kullanıcı **birden fazla rol** taşıyabilir, etkin
   izinler bunların birleşimidir. İzinler kapsamlıdır (`database.query:bld`).
 - Kullanıcının `org_scope` alanı nereye bağlı olduğunu söyler, **yetkiyi
@@ -49,9 +50,10 @@ Katalog ve rol → ekran matrisi: [docs/permissions.md](docs/permissions.md)
 · Veri modeli: [docs/identity-model.md](docs/identity-model.md)
 · Gerekçe: [ADR 0007](docs/adr/0007-kimlik-ve-yetkilendirme.md)
 
-Ön tanımlı roller: `admin`, `bld_staff`, `bbd_staff`, `org_staff`.
+Ön tanımlı roller: `admin`, `bld_staff`, `bbd_staff`, `org_staff`, `accountant`
+(`km_core/security/identity.py` → `BUILTIN_ROLES`).
 Modül izinlerini `module.yaml` içinde ilan eder; çekirdek yalnızca uygular.
-Yıkıcı işlemler izin yeterli olsa bile şifre teyidi ister.
+Yıkıcı işlemler izin yeterli olsa bile PIN teyidi ister.
 
 ## Teknoloji
 
@@ -64,9 +66,17 @@ Yıkıcı işlemler izin yeterli olsa bile şifre teyidi ister.
 Çekirdek (`km_core`), SDK ve platform yeteneklerinin çoğu (`audio`,
 `scheduler`, `secrets`, `notify`, `printer`) yazıldı ve çalışıyor; sidecar
 ayağa kalkıyor, kabuk modülleri dinamik yüklüyor. `modules/` altındaki
-modüllerin büyük bölümü kodlu ve `enabled: true`.
+**49 modülün hepsi** `enabled: true`; iskelet olarak kapatılmış modül kalmadı.
 
-`print` ve `antivirus` hâlâ iskelettir (`enabled: false`).
+`print` (Çıktı Merkezi — ADR 0019) ve `antivirus` (ADR 0009/0022) da yazıldı:
+ikisinin de backend'i, paneli ve testleri var. `antivirus` yalnız Linux'ta
+yüklenir (`platforms: [linux]`).
+
+Çekirdek ekranları kabukta ayrı hiyerarşide durur (ADR 0017):
+`apps/desktop/shell/core-panels/`. Bugün **Kullanıcı Yönetimi** ve **Sistem
+Ayarları** panelleri yazılmıştır; Sistem Sağlığı menüde durur ama paneli
+yoktur, Roller ve İzinler / Denetim İzi / Kimlik Kasası ise henüz kabuğun
+listesine girmemiştir.
 
 > Bu bölüm eskimeye açıktır. Bir modülün gerçek durumu tek yerden okunur:
 > kendi `module.yaml` dosyasındaki `enabled` alanı ve klasöründeki kod.
@@ -79,11 +89,22 @@ Proje henüz kurulabilir paket değil; `tests/conftest.py` kaynak dizinini
 Tümü **depo kökünden** çalıştırılır — `pytest.ini` ve `ruff.toml` kökte durur.
 
 ```bash
-.venv/bin/python -m pytest       # testler
-.venv/bin/ruff check .           # lint
-.venv/bin/mypy backend/src       # tip denetimi
-scripts/install-deps.sh          # bağımlılıklar (üç kaynaktan toplar)
+.venv/bin/python -m pytest         # testler
+.venv/bin/ruff check .             # lint
+.venv/bin/python -m mypy backend/src   # tip denetimi
+scripts/install-deps.sh            # bağımlılıklar (üç kaynaktan toplar)
 ```
+
+Tip denetimi `-m` ile çağrılır: `.venv/bin/mypy` yorumlayıcı yolunu kurulum
+anında gömen bir sarmalayıcıdır ve o sarmalayıcı bozulduğunda/eskidiğinde kapı
+mypy hiç koşmadan da geçmiş görünebilir — `-m` biçimi denetimi sanal ortamın
+kendi yorumlayıcısıyla çalıştırır ve çıkış kodu gerçekten mypy'den gelir.
+
+> **Açık kalan kapı.** mypy ayarını (`[tool.mypy] strict = true`)
+> `backend/pyproject.toml` taşıyor, ama mypy yapılandırmayı **çalışılan
+> dizinde** arıyor ve depo kökünde `pyproject.toml` yok. Yani yukarıdaki komut
+> bugün **katı kip olmadan** koşuyor. Katı kiple denetlemek için
+> `--config-file backend/pyproject.toml` verilir; kalıcı çözüm ayrı bir karardır.
 
 Testler ağa çıkmaz; dış servisler taklit edilir. Gerçek SMS gönderen test
 yazılmaz — SMS katmanında `dry_run` varsayılan açıktır.

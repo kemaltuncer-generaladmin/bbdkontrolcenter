@@ -176,10 +176,11 @@ Ayrıntı: [docs/identity-model.md](docs/identity-model.md) ·
 İzin kataloğu ve rol matrisi: [docs/permissions.md](docs/permissions.md) ·
 Gerekçe: [ADR 0007](docs/adr/0007-kimlik-ve-yetkilendirme.md)
 
-**Giriş.** Kullanıcı adı yoktur. Kişiye özel **şifre** hem girişi hem kimliği
-belirler (ADR 0016 — 0007'nin yerine). Şifre benzersizdir, en az 10 karakterdir,
-Argon2id ile hash'lenir; karmaşıklık dayatılmaz, yaygın şifreler reddedilir. Deneme
+**Giriş.** Kullanıcı adı yoktur. Kişiye özel PIN hem girişi hem kimliği
+belirler. PIN benzersizdir, en az 6 hanedir, Argon2id ile hash'lenir. Deneme
 sınırı, kilitlenme ve denetim izi sözleşmenin zorunlu parçasıdır.
+ADR 0016 (kişiye özel şifre) reddedildi; göçü koştuğu için `password_hash`,
+`secret_lookup` ve `users.set_password` ADLARI kaldı — kural PIN'dir.
 
 **Roller.** Rol = izin kümesi. Ön tanımlı dört rol: `admin`, `bld_staff`,
 `bbd_staff`, `org_staff`. Yeni rol tanımlanabilir. **Bir kullanıcıya birden
@@ -233,8 +234,8 @@ Modül kendi bağımlılığını kendisi getirir; çekirdeğin listesine dokunu
 | Bağımlılık yönü | Çekirdek modülü bilmez | 0004 |
 | Modül sınırı | Dikey dilim (backend+ui+göç+ayar+test) | 0005 |
 | ssh / database | Platform yeteneği, modül değil | 0006 |
-| Kimlik ve yetki | İzin tabanlı çok rollü model | 0007 (superseded) |
-| Giriş | Kullanıcı adsız, kişiye özel şifre | 0016 |
+| Kimlik ve yetki | PIN ile giriş, izin tabanlı çok rollü model | 0007 |
+| Giriş | Kullanıcı adsız, 6 haneli PIN (0016 reddedildi) | 0007 |
 | Bağımlılıklar | İlan edilir, kopyalanmaz; sürücüler apt'tan | 0008 |
 | Panel bileşenleri | Ortak kit kabukta, tek kopya (`shell/ui-kit/`) | 0011 |
 | Mağaza yıkıcı işlemi | PIN değil, gerekçeli onay + kuru prova | 0012 |

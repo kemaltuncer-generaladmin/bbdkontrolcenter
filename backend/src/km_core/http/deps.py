@@ -11,10 +11,12 @@ tek uç noktalar bunu DARALTIR (genişletemez). Modüller bunu `km_sdk.requires`
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request
 
+from km_core.files import outputs_log
 from km_core.security.identity import CurrentUser
 
 
@@ -24,14 +26,19 @@ def split_permission(entry: str) -> tuple[str, str | None]:
 
 
 def requires(*permissions: str) -> Any:
-    """Verilen izinlerden EN AZ BİRİNE sahip kullanıcıyı döndürür."""
+    """Verilen izinlerden EN AZ BİRİNE sahip kullanıcıyı döndürür.
+
+    İki izni birden ARAYAN uç, kapıyı iki kez kurar: biri `dependencies=[...]`
+    listesinde, biri argümanda. Her ikisi de bağımsız çalışır, ikisi de
+    geçilmeden gövdeye girilmez.
+    """
     if not permissions:
         raise ValueError("İzin belirtilmeyen uç nokta tanımlanamaz (K9).")
 
     async def dependency(
         request: Request,
         authorization: str | None = Header(default=None),
-    ) -> CurrentUser:
+    ) -> AsyncIterator[CurrentUser]:
         identity = getattr(request.app.state, "identity", None)
         if identity is None:
             raise HTTPException(status_code=503, detail="Kimlik hazır değil.")
@@ -41,14 +48,18 @@ def requires(*permissions: str) -> Any:
         if user is None:
             raise HTTPException(status_code=401, detail="Oturum yok veya süresi doldu.")
 
-        for entry in permissions:
-            key, scope = split_permission(entry)
-            if user.has_permission(key, scope):
-                return user
+        if not any(user.has_permission(*split_permission(entry)) for entry in permissions):
+            await identity.audit(
+                user.id, "permission.denied", result="denied", detail=",".join(permissions)
+            )
+            raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
 
-        await identity.audit(
-            user.id, "permission.denied", result="denied", detail=",".join(permissions)
-        )
-        raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
+        # Çıktı kaydına üreten kişiyi tanıtır (ADR 0019 §2). Kapı burada da
+        # kurulur çünkü çekirdeğin kendi router'ları (`settings`, `users`)
+        # `app.py` içindeki `current_user`dan GEÇMEZ — destek paketi gibi
+        # oradan doğan çıktılar da sahipsiz kalmasın. Değer istek bitince
+        # geri alınır; sızarsa bir sonraki istek yanlış kişiye yazılır.
+        with outputs_log.use_actor(user.id):
+            yield user
 
     return Depends(dependency)

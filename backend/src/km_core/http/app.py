@@ -18,26 +18,28 @@ import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 
 from km_core.bus.bus import EventBus
-from km_core.config.loader import Config, load_config
+from km_core.config.loader import Config, load_config, nest, with_store_layer
+from km_core.config.settings_store import SettingsStore, apply_settings_migrations
+from km_core.files import outputs_log
+from km_core.http.settings import create_settings_router
+from km_core.http.users import create_identity_router, user_payload
 from km_core.kernel.kernel import Kernel
 from km_core.registry.registry import Registry
-from km_core.security.identity import CurrentUser, Identity, PinError
+from km_core.security.identity import CurrentUser, Identity, PasswordError
+from km_core.security.migrations import apply_core_migrations
 from km_core.security.permissions import CORE_PERMISSIONS
 from km_core.store.db import Store
 from km_platform.audio.player import AudioPlayer
+from km_platform.identity_sync.http import create_pairing_router
+from km_platform.identity_sync.service import IdentitySync
 from km_platform.notify.service import NotifyService
 from km_platform.printer.cups import PrinterService
 from km_platform.scheduler.weekly import WeeklyScheduler
 from km_platform.secrets.vault import Vault
 
 log = structlog.get_logger("km.http")
-
-
-class LoginRequest(BaseModel):
-    pin: str = Field(min_length=4, max_length=32)
 
 
 # Çekirdeğin kendi ekranları. Kimlik, ayar ve sistem sağlığı modül DEĞİLDİR
@@ -65,13 +67,41 @@ CORE_PANELS_UI: list[dict[str, Any]] = [
 
 
 def create_app(config: Config | None = None) -> FastAPI:
-    config = config or load_config()
-    root = config.root
+    # Açılışta okunan ayar. Çalışma anındaki ayar bunun ÜSTÜNE depo katmanı
+    # eklenerek kurulur (aşağıda); ikisi ayrı adlarla durur ki hangisine
+    # bakıldığı okurken belirsiz kalmasın.
+    base_config: Config = config or load_config()
+    root = base_config.root
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        config = base_config
+
         store = Store(config.path("core.store_path", "data/kontrol-merkezi.sqlite"))
         await store.open()
+
+        # ADR 0019 — çıktı kaydının deposu BURADAN bildirilir. Kayıt katmanı
+        # senkrondur ve ayara bakmaz; hangi depoya yazacağını ancak ayakta olan
+        # uygulama söyleyebilir. Bildirilmezse çıktı yine üretilir, yalnız
+        # listeye düşmez (K7) — ayrıntı `km_core/files/outputs_log.py`.
+        outputs_log.use_database(store.path)
+
+        # Var olan veritabanına sır sütunları eklenir, eski PIN sütunları
+        # DÜŞÜRÜLMEZ. `CORE_SCHEMA` yalnız yeni kurulumu kurar; çalışmış bir
+        # makinede sütunlar ancak buradan gelir (ADR 0016 reddedildi ama göçü
+        # koştu — sütun adları olduğu gibi bırakıldı).
+        await apply_core_migrations(store)
+
+        # ADR 0018 §4 — ARAYÜZDEN DEĞİŞEN AYAR ÇEKİRDEK DEPOSUNA YAZILIR ve
+        # zincirde `local.yaml`'ı EZER. Katman burada, yetenekler kurulmadan
+        # ÖNCE uygulanır: yazıcı kuyruğu, günlük düzeyi ve çıktı klasörü gibi
+        # ayarlar nesneler kurulurken okunuyor. Sonradan uygulansaydı ekrandan
+        # yapılan değişiklik hiçbir zaman etkili olmazdı.
+        #
+        # Ortam değişkeni en üstte kalır (`with_store_layer` onu yeniden
+        # uygular): acil müdahale yolu kapanmaz.
+        await apply_settings_migrations(store)
+        config = with_store_layer(config, nest(await SettingsStore(store).values()))
 
         registry = Registry()
         bus = EventBus()
@@ -99,6 +129,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         # kurulum PATLAMAZ: yetenek yine kayıtlıdır, `ready()` durumu anlatır
         # ve gönderim denendiğinde anlaşılır hata döner (K7).
         registry.register("notify", NotifyService(vault, config, log), provider="platform")
+
+        # Kimlik senkronu da platform yeteneğidir (ADR 0021): kurulum token'ı
+        # kasadan gelir, kadro merkezden çekilir, yazma merkeze gider. Ayar
+        # kapalıysa ya da merkez ulaşılamazsa HİÇBİR YETENEK GERİLEMEZ —
+        # kurulum bugünkü gibi tek makinede çalışır ve giriş yereldedir (K7).
+        identity_sync = IdentitySync(vault, config)
+        registry.register("identity_sync", identity_sync, provider="platform")
 
         identity = Identity(
             store,
@@ -140,6 +177,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         app.state.bus = bus
         app.state.kernel = kernel
         app.state.identity = identity
+        app.state.identity_sync = identity_sync
 
         log.info(
             "çekirdek hazır",
@@ -153,6 +191,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         try:
             yield
         finally:
+            # Bağ depo KAPANMADAN önce çözülür: kapanış sırasında yazılan bir
+            # dosya, kapanmış bir bağlantıya kayıt düşürmeye çalışmasın.
+            outputs_log.use_database(None)
             await scheduler.stop()
             await store.close()
 
@@ -221,7 +262,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def current_user(
         request: Request,
         authorization: str | None = Header(default=None),
-    ) -> CurrentUser:
+    ) -> AsyncIterator[CurrentUser]:
         identity: Identity = request.app.state.identity
         token = ""
         if authorization and authorization.lower().startswith("bearer "):
@@ -229,7 +270,17 @@ def create_app(config: Config | None = None) -> FastAPI:
         user = await identity.resolve_session(token) if token else None
         if user is None:
             raise HTTPException(status_code=401, detail="Oturum yok veya süresi doldu.")
-        return user
+
+        # ADR 0019 §2 — "bu raporu kim aldı" sorusunun cevabı burada doğar.
+        # Modüller çıktıyı SENKRON `write_private` ile yazar ve oradan oturuma
+        # ulaşamaz; kimlik bu yüzden bağlam değişkeninde taşınır.
+        #
+        # BAĞLAM İSTEKLE BİRLİKTE BİTER: `use_actor` çıkışta değeri geri alır.
+        # Bırakılsaydı, aynı olay döngüsünde sırayı devralan bir sonraki istek
+        # başkasının kimliğiyle çıktı üretirdi — kaydın yanlış olması, hiç
+        # olmamasından kötüdür.
+        with outputs_log.use_actor(user.id):
+            yield user
 
     app.state.current_user_dependency = current_user
 
@@ -245,15 +296,20 @@ def create_app(config: Config | None = None) -> FastAPI:
             },
         }
 
-    @app.post("/auth/login")
-    async def login(request: Request, body: LoginRequest) -> dict[str, Any]:
-        identity: Identity = request.app.state.identity
-        result = await identity.login(body.pin)
-        if result is None:
-            # Tek tip mesaj: sebep ayırt edilmez (kilitli mi, yok mu, yanlış mı).
-            raise HTTPException(status_code=401, detail="Giriş yapılamadı.")
-        token, user = result
-        return {"token": token, "user": _user_payload(user)}
+    # Giriş, PIN kurma, kullanıcı ve rol uçları tek yerde durur. Sözleşme
+    # `/api` önekiyle yayınlanır; ayrıntı `km_core/http/users.py`.
+    app.include_router(create_identity_router(), prefix="/api")
+
+    # Sistem Ayarları çekirdek ekranıdır (ADR 0017): modül değildir, manifesti
+    # yoktur, kapatılamaz. Router'ı bu yüzden `_mount_modules` kapısından değil
+    # doğrudan buradan geçer — ama izin denetimi aynıdır: her uç kendi iznini
+    # `km_core/http/settings.py` içinde bağımsız olarak sorar (K9).
+    app.include_router(create_settings_router(), prefix="/api")
+
+    # Eşleme uçları GİRİŞTEN ÖNCE gelir (ADR 0021 §4): eşleşmemiş kurulumda
+    # henüz kadro ve dolayısıyla oturum yoktur. Uçlar oturumla değil tek
+    # kullanımlık KODLA korunur; gerekçe `km_platform/identity_sync/http.py`.
+    app.include_router(create_pairing_router(), prefix="/api")
 
     @app.post("/auth/logout")
     async def logout(request: Request, authorization: str | None = Header(default=None)) -> dict[str, str]:
@@ -264,7 +320,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/auth/me")
     async def me(user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
-        return _user_payload(user)
+        return user_payload(user)
 
     @app.get("/modules")
     async def modules(request: Request, user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
@@ -300,18 +356,6 @@ def create_app(config: Config | None = None) -> FastAPI:
 def _split_permission(entry: str) -> tuple[str, str | None]:
     key, _, scope = entry.partition(":")
     return key, (scope or None)
-
-
-def _user_payload(user: CurrentUser) -> dict[str, Any]:
-    return {
-        "id": user.id,
-        "firstName": user.first_name,
-        "lastName": user.last_name,
-        "fullName": user.full_name,
-        "orgScope": user.org_scope,
-        "roles": user.roles,
-        "permissions": sorted(user.permissions),
-    }
 
 
 def _mount_modules(app: FastAPI, kernel: Kernel, identity: Identity) -> None:
@@ -381,23 +425,23 @@ async def _bootstrap_admin(identity: Identity, config: Config) -> None:
             try:
                 identity.validate_pin(pin)
                 break
-            except PinError:
+            except PasswordError:
                 continue
         generated = True
 
     try:
-        identity.validate_pin(pin)
-    except PinError as error:
+        # `password` argüman adı göçten kalmıştır; verilen değer PIN'dir.
+        await identity.create_user(
+            first_name="Sistem",
+            last_name="Yöneticisi",
+            org_scope="org",
+            password=pin,
+            roles=["admin"],
+        )
+    except PasswordError as error:
         log.error("bootstrap PIN reddedildi", detail=str(error))
         return
 
-    await identity.create_user(
-        first_name="Sistem",
-        last_name="Yöneticisi",
-        org_scope="org",
-        pin=pin,
-        roles=["admin"],
-    )
     if generated:
         log.warning("İLK YÖNETİCİ OLUŞTURULDU — girip PIN'inizi değiştirin", pin=pin)
     else:

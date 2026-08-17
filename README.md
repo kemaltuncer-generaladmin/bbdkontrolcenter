@@ -7,18 +7,26 @@ SMS ile uyarır.
 
 ## Durum
 
-Mimari kararlar sabitlendi, ortam kuruldu, ilk katman yazıldı.
+Mimari kararlar sabit; çekirdek, platform ve modül katmanı yazıldı ve
+çalışıyor. Süitte **4381 test** var (`.venv/bin/python -m pytest`).
 
 | Alan | Durum |
 |---|---|
-| Mimari kararlar (10 ADR), kural seti K1–K11 | Sabit |
-| Kimlik, rol ve izin sözleşmesi | Sabit — kod bekliyor |
+| Mimari kararlar (22 ADR), kural seti K1–K11 | Sabit |
+| Kimlik, rol ve izin sözleşmesi | **Çalışıyor** — PIN girişi, çok rollü izin modeli |
 | Geliştirme ortamı (`.venv`, sistem paketleri) | Kurulu ve doğrulandı |
-| `km_platform/notify` — SMS/bildirim katmanı | **Çalışıyor**, 36 test |
-| `km_core`, `km_sdk`, diğer platform yetenekleri | İskelet — sözleşmesi sabit, kod yok |
-| `bell` — Zil Sistemi | **Çalışıyor**, 77 test · Vertex anonsu + Windows zil ajanı |
-| Modüller (`print`, `antivirus`) | İskelet, `enabled: false` |
-| Masaüstü kabuk (Tauri) | İskelet |
+| `km_core`, `km_sdk` | **Çalışıyor** — keşif, yükleme, registry, olay yolu, HTTP |
+| Platform yetenekleri (`audio`, `scheduler`, `secrets`, `notify`, `printer`, `ssh`, `database`) | **Çalışıyor** |
+| `km_platform/notify` — SMS/bildirim katmanı | **Çalışıyor**, 47 test |
+| `bell` — Zil Sistemi | **Çalışıyor**, 85 test · Vertex anonsu + Windows zil ajanı |
+| `print` — Çıktı Merkezi (ADR 0019) | **Çalışıyor**, 20 test · `enabled: true` |
+| `antivirus` — ClamAV (ADR 0009) | **Çalışıyor**, 41 test · `enabled: true`, yalnız Linux (ADR 0022) |
+| `modules/` — 49 modülün tümü | `enabled: true`; kapatılmış iskelet kalmadı |
+| Çekirdek ekranları (`shell/core-panels/`, ADR 0017) | Kullanıcı Yönetimi ve Sistem Ayarları yazıldı; Roller/Denetim/Kasa bekliyor |
+| Masaüstü kabuk (Tauri) | **Çalışıyor** — panelleri `/modules` ucundan dinamik yüklüyor |
+
+Bir modülün gerçek durumu tek yerden okunur: kendi `module.yaml` dosyasındaki
+`enabled` alanı ve klasöründeki kod.
 
 ## Başlarken
 
@@ -51,7 +59,7 @@ Sıfırdan kurulum ve sorun giderme: [docs/setup-guide.md](docs/setup-guide.md)
 ### Kararlar ve araştırma
 | Belge | İçerik |
 |---|---|
-| [docs/adr/](docs/adr/) | 10 karar, gerekçeleri ve elenen alternatifleriyle |
+| [docs/adr/](docs/adr/) | 22 karar, gerekçeleri ve elenen alternatifleriyle · sonradan düşülen notlar |
 | [netgsm-integration.md](docs/netgsm-integration.md) | Netgsm SDK bulguları ve tuzakları |
 
 ## Yapı
@@ -75,7 +83,7 @@ Kök dosyalar: `pytest.ini` ve `ruff.toml` — araçlar depo kökünden çalış
 
 ## Temel ayrım
 
-**Modül** silinebilir bir iş özelliğidir (zil sistemi, baskı yönetimi, BLD ürün
+**Modül** silinebilir bir iş özelliğidir (zil sistemi, çıktı merkezi, BLD ürün
 yönetimi). Klasörünü silmek özelliği tümüyle kaldırır.
 
 **Platform yeteneği** silinemez altyapıdır — `ssh` ve `database` buraya girer:

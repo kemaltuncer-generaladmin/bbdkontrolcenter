@@ -34,6 +34,13 @@
       "default": true,
       "description": "false ise modül hiç yüklenmez."
     },
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["linux", "windows", "macos"] },
+      "description": "Modülün çalışabildiği platformlar (ADR 0022). ALAN YOKSA modül her platformda yüklenir — bu yüzden mevcut manifestlerin hepsi geçerliliğini korur. Çalışılan platform listede değilse modül keşifte elenir: router monte edilmez, göç koşmaz, görev planlanmaz, menüye girmez. Eleme sessiz değildir; açılış günlüğüne nedeni yazılır. Çekirdek bu alanı VERİ olarak okur, modül adına göre dallanmaz (K1)."
+    },
     "entrypoint": {
       "type": "string",
       "description": "register(ctx) fonksiyonunun yolu, modül köküne göre. Ör: 'backend.module:register'."
@@ -188,6 +195,9 @@
         "schema": { "type": "string", "description": "Ör. 'config/schema.json'. Şemaya uymayan ayar açılışta hata verir." }
       }
     },
+    "settings": {
+      "description": "Sistem Ayarları ekranının bu modüle ait sekmesi (ADR 0018 §1). BURADA KASITLI OLARAK KISIT YOKTUR — 'type: object' bile yazılmaz; yapı '#/$defs/settings' altında tanımlıdır ve çekirdek tarafından ayrı bir kapıda uygulanır. Ayrım bilinçlidir: geçersiz bir ayar bloğu modülü DÜŞÜRMEZ — modül sekmesiz yüklenir ve hata loglanır (K7). Blok burada da katı doğrulansaydı, yalnızca bir alan başlığı yüzünden modülün tamamı yüklenmezdi. Sekmeyi görmek/yazmak için gereken izin 'requires' ile ilan edilir; izin ilan etmeyen blok reddedilir (K9, varsayılan kapalı). Sır bu blokta tutulmaz, kasaya aittir (K8)."
+    },
     "dependencies": {
       "type": "object",
       "additionalProperties": false,
@@ -230,6 +240,118 @@
           "enabled": { "type": "boolean", "default": true }
         }
       }
+    }
+  },
+  "$defs": {
+    "settings": {
+      "title": "Sistem Ayarları sekmesi",
+      "description": "Modülün ayar sözleşmesi (ADR 0018 §1). Manifest doğrulamasının DIŞINDA, ayrı bir kapıda uygulanır: geçersiz blok modülü düşürmez, yalnız sekmeyi düşürür.",
+      "type": "object",
+      "required": ["tab", "requires", "groups"],
+      "additionalProperties": false,
+      "properties": {
+        "tab": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Sekme başlığı, ör. 'Antivirüs'. Ekran sekmeleri modül manifestlerinden okur; çekirdekte sabit liste yoktur (K1)."
+        },
+        "requires": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*(:([a-z][a-z0-9_]*|\\*))?$" },
+          "description": "Sekmeyi görmek ve yazmak için gereken izinler. ZORUNLUDUR: izin ilan etmeyen blok reddedilir, varsayılan kapalıdır (K9). Menüde gizlemek yetkilendirme değildir — ayar yazan uç nokta aynı izni bağımsız olarak sorar."
+        },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/settings_group" },
+          "description": "Sekmenin içindeki alan öbekleri."
+        }
+      }
+    },
+    "settings_group": {
+      "type": "object",
+      "required": ["id", "title", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Öbek kimliği, ör. 'tarama'." },
+        "title": { "type": "string", "minLength": 1, "description": "Öbek başlığı." },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/settings_field" }
+        }
+      }
+    },
+    "settings_field": {
+      "type": "object",
+      "required": ["key", "type", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Ayar anahtarı. Modülün ayar ad alanı içinde benzersizdir." },
+        "type": {
+          "enum": ["bool", "int", "text", "select", "path", "path_list", "cron"],
+          "description": "Alan tipi. Sır tipi YOKTUR: şifre, token ve anahtar bu ekrandan yazılmaz, kasaya aittir (K8 — ADR 0018 §5)."
+        },
+        "title": { "type": "string", "minLength": 1, "description": "Alan başlığı, ör. 'Otomatik tarama zamanı'." },
+        "description": { "type": "string", "description": "Alanın altında görünen açıklama." },
+        "default": { "description": "Varsayılan değer. Tipi alanın tipine uymak zorundadır." },
+        "min": { "type": "integer", "description": "Yalnız 'int' için alt sınır." },
+        "max": { "type": "integer", "description": "Yalnız 'int' için üst sınır." },
+        "max_length": { "type": "integer", "minimum": 1, "description": "Yalnız 'text' için en fazla karakter." },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Yalnız 'select' için seçenekler. Ya düz değer listesi ya da {value, title} nesneleri.",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "required": ["value"],
+                "additionalProperties": false,
+                "properties": {
+                  "value": { "type": "string" },
+                  "title": { "type": "string" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "bool" } } },
+          "then": { "properties": { "default": { "type": "boolean" } } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "int" } } },
+          "then": { "properties": { "default": { "type": "integer" } } },
+          "else": { "properties": { "min": false, "max": false } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "text" } } },
+          "then": { "properties": { "default": { "type": "string" } } },
+          "else": { "properties": { "max_length": false } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "select" } } },
+          "then": { "required": ["options"], "properties": { "default": { "type": "string" } } },
+          "else": { "properties": { "options": false } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "path" } } },
+          "then": { "properties": { "default": { "type": "string" } } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "path_list" } } },
+          "then": { "properties": { "default": { "type": "array", "items": { "type": "string" } } } }
+        },
+        {
+          "if": { "required": ["type"], "properties": { "type": { "const": "cron" } } },
+          "then": { "properties": { "default": { "type": "string", "pattern": "^\\S+(\\s+\\S+){4}$" } } }
+        }
+      ]
     }
   }
 }

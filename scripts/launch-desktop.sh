@@ -2,6 +2,13 @@
 #
 # Kontrol Merkezi — tek tıkla tam başlatma.
 #
+# BU BETİK GELİŞTİRME KURULUMU İÇİNDİR (ADR 0023). Depo klasöründen çalışır,
+# `.venv` kullanır ve arayüz değiştiyse kabuğu yeniden derler. Kurulan
+# uygulamada bunların hiçbiri olmaz: orada gömülü Python vardır, derleme
+# yapılmaz ve veri dizini deponun içinde değildir. Kurulabilir paket
+# `scripts/build-release.sh` (Linux/macOS) ve `scripts/build-release.ps1`
+# (Windows) ile üretilir.
+#
 # Masaüstündeki kısayol bu betiği çağırır. İşi: kabuğu GÜNCEL koduyla açmak ve
 # çekirdeğin (web sunucusu) gerçekten ayağa kalktığını doğrulamak.
 #

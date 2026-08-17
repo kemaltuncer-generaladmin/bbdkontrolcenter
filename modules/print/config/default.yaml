@@ -1,0 +1,18 @@
+# Çıktı Merkezi — varsayılan ayarlar.
+# Kök ayardaki `modules.print.*` bloğu bunları ezer.
+
+# KAYIT SAKLAMA SÜRESİ — DOSYA SAKLAMA SÜRESİ DEĞİLDİR (ADR 0019 §5).
+# Bu süreden eski KAYIT SATIRLARI budanır; kullanıcının masaüstündeki dosyalara
+# dokunulmaz, orası kullanıcının alanıdır. 0 yazılırsa budama hiç yapılmaz.
+keep_job_history_days: 30
+
+# Yeniden basmada istenebilecek en fazla kopya. Üst sınır bilerek dardır:
+# yanlışlıkla yazılan bir sayı yüzlerce sayfa kâğıt demektir.
+max_copies: 20
+
+# Önizleme (yalnız PDF): sayfalar `pdftoppm` ile görüntüye çevrilir.
+preview_pages: 8
+preview_dpi: 110
+
+# Metin türü çıktılarda (csv, txt) önizleme dosyanın BAŞINI gösterir.
+preview_text_bytes: 65536
