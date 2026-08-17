@@ -11,10 +11,11 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
 
 /// Çekirdeğin dinlediği yerel adres. Ayarla değiştirilirse burası da değişir
 /// (config/default.yaml → server.port).
@@ -239,9 +240,306 @@ async fn core_request(
     .map_err(|error| format!("istek tamamlanamadı: {error}"))?
 }
 
+// --------------------------------------------------------------- güncelleme
+//
+// GÜNCELLEYİCİ KABUKTADIR, ÇEKİRDEKTE DEĞİL. Yerine konacak dosya kabuğun
+// kendi ikilisi (ve yanındaki kaynaklar); Python sidecar kendi altındaki
+// zemini değiştiremez. Bu yüzden denetleme/indirme/kurma üç komut olarak
+// burada durur, arayüz de bunlara `invoke` ile ulaşır — `core_request` ile
+// aynı desen.
+//
+// ÜÇ ADIM DA KULLANICININ ELİNDE. `download_and_install` tek çağrıda her şeyi
+// yapardı ve buradaki durum taşımaya gerek kalmazdı; ama o zaman uygulama
+// kasada sipariş girilirken kendi kendine kapanabilirdi. Bu yüzden denetleme
+// indirmeyi, indirme de kurulumu KENDİLİĞİNDEN başlatmaz; her adımı kullanıcı
+// başlatır ve adımlar arasında taşınan şey aşağıdaki durumdur.
+
+/// Adımlar arasında taşınan durum: bulunan güncelleme ve inen paket.
+#[derive(Default)]
+struct UpdateFlow {
+    /// `update_check`in bulduğu güncelleme. İndirme ve kurulum bunu kullanır.
+    found: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// İnmiş paket. Kurulum ayrı bir düğme olduğu için bellekte bekler.
+    package: Mutex<Option<Vec<u8>>>,
+    /// İndirme ilerlemesi — arayüz `update_progress` ile yoklar.
+    progress: Mutex<Progress>,
+}
+
+/// Zehirlenmiş kilit yüzünden kabuk düşmez.
+///
+/// İndirme görevi panikleyip kilidi zehirlerse `unwrap()` çağıran her yer de
+/// panikler ve pencere kapanırdı. Güncelleme ekranının bozulması, uygulamanın
+/// kapanmasından kat kat ucuzdur (K7'nin kabuk tarafındaki karşılığı).
+fn lock<T>(cell: &Mutex<T>) -> MutexGuard<'_, T> {
+    cell.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// İndirme ilerlemesi. `state`: `idle` · `running` · `done` · `error`.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Progress {
+    state: String,
+    downloaded: u64,
+    /// Sunucu `Content-Length` vermezse boş kalır: ekran o zaman yüzde değil
+    /// inen miktarı gösterir. Uydurulmuş bir yüzde, hiç yüzde olmamasından
+    /// kötüdür.
+    total: Option<u64>,
+    error: Option<String>,
+    /// İnen (ya da inmekte olan) paketin sürümü.
+    ///
+    /// DURUM BURADA DURUYOR ki ekran onu unutabilsin: kullanıcı sekmeden çıkıp
+    /// geri geldiğinde panel sıfırdan kurulur ama indirme kabukta sürmüştür.
+    /// Bu alan olmasaydı ekran "Sürüm ___ indirildi" diye boşluklu bir cümle
+    /// yazardı.
+    version: Option<String>,
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Self {
+            state: "idle".into(),
+            downloaded: 0,
+            total: None,
+            error: None,
+            version: None,
+        }
+    }
+}
+
+/// Güncelleyicinin bu kurulumda çalışıp çalışmadığı.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSupport {
+    /// Denetlemeye girişilebilir mi (kaynak tanımlı ve mimari destekli mi).
+    ready: bool,
+    /// `tauri dev` / `cargo run` ile çalışıyoruz: paket yerine derleme
+    /// klasörü var, kurulum yapılmaz.
+    dev: bool,
+    /// Kabuğun sürümü — güncelleyicinin karşılaştırdığı sayı budur.
+    current_version: String,
+    /// `ready` yanlışsa nedeni; doğruysa boş.
+    reason: String,
+}
+
+/// Denetleme sonucu.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStatus {
+    available: bool,
+    current_version: String,
+    version: Option<String>,
+    /// Yayın notu (`latest.json` → `notes`). Yoksa boş.
+    notes: Option<String>,
+    /// Yayın tarihi (`YYYY-AA-GG`). Yoksa boş.
+    date: Option<String>,
+}
+
+/// Güncelleyici hatalarını kullanıcının okuyabileceği cümleye çevirir.
+///
+/// Ham `Display` metni İngilizce ve teknik: "None of the fallback platforms
+/// were found" cümlesi, kullanıcıya ".deb ile kurdunuz, o biçim kendini
+/// güncellemiyor" demez. En sık karşılaşılacak üç hâl çevrilir; gerisi
+/// olduğu gibi geçer — uydurma bir açıklama, teknik metinden kötüdür.
+fn explain(error: tauri_plugin_updater::Error) -> String {
+    use tauri_plugin_updater::Error;
+
+    // `latest.json` her biçim için ayrı paket taşır; aranan anahtar
+    // `{işletim sistemi}-{mimari}-{kurulum biçimi}` düzenindedir.
+    let no_package = |targets: String| {
+        format!(
+            "Yayında bu kurulum biçimi için paket yok ({targets}). Kendi kendini \
+             güncelleyen biçimler: Windows kurucusu, macOS uygulaması ve Linux \
+             AppImage; .deb ile kurulmuş uygulama depodan yenilenir."
+        )
+    };
+
+    match error {
+        Error::EmptyEndpoints => "Bu yapıda güncelleme kaynağı tanımlı değil \
+             (tauri.conf.json → plugins.updater.endpoints)."
+            .into(),
+        Error::TargetNotFound(target) => no_package(target),
+        Error::TargetsNotFound(targets) => no_package(targets.join(", ")),
+        Error::ReleaseNotFound => "Yayın bilgisi okunamadı: adres bir sürüm listesi \
+             döndürmedi. Henüz hiç sürüm yayınlanmamış olabilir."
+            .into(),
+        other => format!("Güncelleme başarısız: {other}"),
+    }
+}
+
+#[tauri::command]
+fn update_support(app: tauri::AppHandle) -> UpdateSupport {
+    let current_version = app.package_info().version.to_string();
+    match app.updater() {
+        Ok(_) => UpdateSupport {
+            ready: true,
+            dev: tauri::is_dev(),
+            current_version,
+            reason: String::new(),
+        },
+        Err(error) => UpdateSupport {
+            ready: false,
+            dev: tauri::is_dev(),
+            current_version,
+            reason: explain(error),
+        },
+    }
+}
+
+/// 1. adım — DENETLE. İndirmeyi başlatmaz, yalnız sorar.
+#[tauri::command]
+async fn update_check(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<UpdateFlow>>,
+) -> Result<UpdateStatus, String> {
+    let flow = state.inner().clone();
+    let current_version = app.package_info().version.to_string();
+
+    // İNDİRME SÜRERKEN DENETLENMEZ. Yeni denetim `found`u değiştirir; arkada
+    // süren indirme bittiğinde paket BAŞKA bir sürümün paketiyken "hazır"
+    // görünür ve kurulum onu kurardı. Arayüz düğmeyi zaten kapatıyor — ama
+    // kural burada da durmalı: kabuk kendi tutarlılığını arayüze emanet etmez.
+    if lock(&flow.progress).state == "running" {
+        return Err("İndirme sürerken yeni denetim yapılmaz.".into());
+    }
+
+    let found = app.updater().map_err(explain)?.check().await.map_err(explain)?;
+
+    // Yeni denetim, eski indirmeyi geçersiz kılar: elde bekleyen paket bir
+    // önceki sürümün paketi olabilir.
+    *lock(&flow.package) = None;
+    *lock(&flow.progress) = Progress::default();
+
+    let status = match &found {
+        Some(update) => UpdateStatus {
+            available: true,
+            current_version,
+            version: Some(update.version.clone()),
+            notes: update.body.clone().filter(|text| !text.trim().is_empty()),
+            date: update.date.map(|stamp| stamp.date().to_string()),
+        },
+        None => UpdateStatus {
+            available: false,
+            current_version,
+            version: None,
+            notes: None,
+            date: None,
+        },
+    };
+    *lock(&flow.found) = found;
+    Ok(status)
+}
+
+/// 2. adım — İNDİR. Kurmaz; paket bellekte bekler.
+///
+/// HEMEN DÖNER, indirmeyi arka plana bırakır: 100 MB'lık bir paketi tek bir
+/// `invoke` çağrısının içinde beklemek, ilerlemeyi gösterecek hiçbir aralık
+/// bırakmazdı. Arayüz `update_progress` ile yoklar (kabukta olay dinlemek
+/// için eklenti izni gerekirdi; yoklama aynı işi ek yüzey açmadan görüyor).
+#[tauri::command]
+fn update_download(state: tauri::State<'_, Arc<UpdateFlow>>) -> Result<Progress, String> {
+    let flow = state.inner().clone();
+    let Some(update) = lock(&flow.found).clone() else {
+        return Err("Önce güncelleme denetlenmeli.".into());
+    };
+
+    {
+        let mut progress = lock(&flow.progress);
+        // İKİNCİ TIK İKİNCİ İNDİRME BAŞLATMAZ: aynı paketi iki kez indirmek
+        // ilerlemeyi de bozardı (iki görev aynı sayacı artırırdı).
+        if progress.state == "running" {
+            return Ok(progress.clone());
+        }
+        *progress = Progress {
+            state: "running".into(),
+            version: Some(update.version.clone()),
+            ..Progress::default()
+        };
+    }
+    *lock(&flow.package) = None;
+
+    let task = flow.clone();
+    tauri::async_runtime::spawn(async move {
+        let outcome = update
+            .download(
+                |chunk, total| {
+                    let mut progress = lock(&task.progress);
+                    progress.downloaded += chunk as u64;
+                    progress.total = total;
+                },
+                || {},
+            )
+            .await;
+
+        match outcome {
+            Ok(bytes) => {
+                // İMZA BURADA DOĞRULANDI. `download` paketi indirdikten sonra
+                // `pubkey` ile imzayı denetler; doğrulanmamış bayt buraya hiç
+                // ulaşmaz.
+                *lock(&task.package) = Some(bytes);
+                let mut progress = lock(&task.progress);
+                let downloaded = progress.downloaded;
+                if progress.total.is_none() {
+                    progress.total = Some(downloaded);
+                }
+                progress.state = "done".into();
+            }
+            Err(error) => {
+                let mut progress = lock(&task.progress);
+                progress.state = "error".into();
+                progress.error = Some(explain(error));
+            }
+        }
+    });
+
+    // Kilit AYRI SATIRDA bırakılır: son ifadenin içinde tutulsaydı geçici
+    // `MutexGuard`, `flow` düştükten sonra bırakılacağı için ödünç denetimi
+    // reddederdi.
+    let started = lock(&flow.progress).clone();
+    Ok(started)
+}
+
+/// İndirme durumu — arayüz bunu yoklar.
+#[tauri::command]
+fn update_progress(state: tauri::State<'_, Arc<UpdateFlow>>) -> Progress {
+    lock(&state.progress).clone()
+}
+
+/// 3. adım — KUR VE YENİDEN BAŞLAT. Yalnız kullanıcı bastığında çalışır.
+#[tauri::command]
+fn update_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<UpdateFlow>>,
+) -> Result<(), String> {
+    if tauri::is_dev() {
+        return Err("Geliştirme kipinde kurulum yapılmaz: ortada paket değil, \
+                    derleme klasörü var."
+            .into());
+    }
+
+    let Some(update) = lock(&state.found).clone() else {
+        return Err("Önce güncelleme denetlenmeli.".into());
+    };
+
+    // PAKET TÜKETİLMEDEN KURULUR: `take()` ile alınsaydı kurulum patladığında
+    // inen 100 MB da kaybolur, kullanıcı baştan indirmek zorunda kalırdı.
+    let package = lock(&state.package);
+    let Some(bytes) = package.as_ref() else {
+        return Err("Önce paket indirilmeli.".into());
+    };
+    update.install(bytes.as_slice()).map_err(explain)?;
+    drop(package);
+
+    // WINDOWS'TA BURAYA HİÇ GELİNMEZ: `install` kurucuyu başlatır ve süreci
+    // `exit(0)` ile kapatır; uygulamayı kurucunun kendisi geri açar. Linux ve
+    // macOS'ta paket yerine konur, yeniden başlatmak bize kalır.
+    app.restart();
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sidecar(Mutex::new(None)))
+        .manage(Arc::new(UpdateFlow::default()))
         .setup(|app| {
             // Çekirdek BURADA başlatılır, `main`in başında değil: kurulu
             // uygulamada kaynak klasörünün yerini yalnız Tauri bilir
@@ -253,7 +551,14 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![core_request])
+        .invoke_handler(tauri::generate_handler![
+            core_request,
+            update_support,
+            update_check,
+            update_download,
+            update_progress,
+            update_install,
+        ])
         .build(tauri::generate_context!())
         .expect("Kontrol Merkezi kabuğu başlatılamadı")
         .run(|app, event| {

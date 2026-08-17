@@ -362,14 +362,23 @@ def test_modul_ayari_kendi_ad_alanina_yazilir(client: TestClient) -> None:
 # ------------------------------------------------------------- diğer uçlar
 
 
-def test_guncelleme_ucu_olmadigini_soyler(client: TestClient) -> None:
-    """Sahte düğme konmaz: yokluğu ekran değil sunucu bildirir."""
+def test_guncellemeyi_kabugun_yuruttugunu_soyler(client: TestClient) -> None:
+    """Güncelleyici kabukta; çekirdek bunu saklamaz, açıkça söyler.
+
+    `canCheck`/`canInstall` BİLEREK yanlıştır: bu süreçte denetleme ya da
+    kurulum ucu yok ve olmayacak — sidecar kendi altındaki dosyaları
+    değiştiremez. Ekran düğmeleri bu yüzden buradaki yollara değil, kabuğun
+    komutlarına bağlanır.
+    """
     govde = client.get("/api/settings/update",
                        headers=basliklar(yonetici_token(client))).json()
 
     assert govde["canCheck"] is False
     assert govde["canInstall"] is False
-    assert govde["reason"], "kapalı düğmenin nedeni boş"
+    assert govde["checkPath"] is None
+    assert govde["installPath"] is None
+    assert govde["handledBy"] == "shell"
+    assert govde["reason"], "nedeni boş bırakılmaz"
     assert govde["version"]
 
 

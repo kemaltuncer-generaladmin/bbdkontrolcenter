@@ -11,9 +11,11 @@
 //  · MODÜL ADI BİLMEZ (K1). Sekme listesi `GET /api/settings`ten gelir; burada
 //    hiçbir modül adı yazılı değildir. `modules/` silinse ekran açılır ve
 //    yalnız çekirdek sekmeleri kalır.
-//  · SAHTE DÜĞME KOYMAZ. Güncelleme uçları yoksa düğmeler `blockedButton` ile
-//    kapalıdır ve NEDENİ üzerlerinde yazılıdır; tıklanınca ham 404 gösteren
-//    bir düğme bırakılmaz.
+//  · SAHTE DÜĞME KOYMAZ. Bir düğme ya çalışır ya da `blockedButton` ile kapalı
+//    durur ve NEDENİ üzerinde yazılıdır; tıklanınca hiçbir şey yapmayan düğme
+//    bırakılmaz. Güncelleme bölümünde kapalılık artık "uç yok" demek değildir:
+//    kabuk dışında açılmış ekran, geliştirme kipi ya da "önce indirin" gibi
+//    gerçek durumları anlatır.
 //
 // KATMAN CÜMLESİ EKRANIN ASIL İŞİ. Ayar zinciri
 // `dosya → çekirdek deposu → ortam değişkeni` biçiminde ve depo katmanı
@@ -33,10 +35,12 @@
 // ORTAK BİLEŞENLER kabuğun kitinden gelir (ADR 0011); `ui-kit/` değiştirilmez.
 
 import {
-  blockedButton, button, bytes, confirmSimple, copyText, h, loadStyles, stampIso, toaster,
+  blockedButton, button, bytes, confirmSimple, copyText, h, loadStyles, pollLoop,
+  stampIso, toaster,
 } from '../../ui-kit/kit.js';
 import {
-  alertBox, badge, card, emptyState, hintBox, kpiRow, skeletonRows, statusLine, tabBar,
+  alertBox, badge, card, emptyState, hintBox, kpiRow, progress, skeletonRows,
+  statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
 import { dataTable } from '../../ui-kit/table.js';
@@ -278,6 +282,9 @@ export function mount(root, ctx) {
   function paintBody() {
     form?.destroy();
     form = null;
+    // Sekme değişiyor: yoklama döngüsü ölü düğümleri boyamasın. İndirme
+    // kabukta sürer; geri dönüldüğünde durum yeniden okunur.
+    stopUpdatePoll();
 
     const tab = currentTab();
     if (!tab) {
@@ -554,6 +561,59 @@ export function mount(root, ctx) {
   }
 
   // ---------------------------------------------------------- güncelleme
+  //
+  // ÜÇ ADIM, ÜÇ DÜĞME: **denetle → indir → yeniden başlat ve kur**. Hiçbiri
+  // ötekini kendiliğinden başlatmaz. Denetleme indirmeyi tetikleseydi, ölçülü
+  // bir hatta kimsenin istemediği 100 MB akmaya başlardı; indirme kurulumu
+  // tetikleseydi uygulama kasada sipariş girilirken kapanırdı. Kararı her
+  // adımda kullanıcı verir.
+  //
+  // GÜNCELLEYİCİ KABUKTADIR, ÇEKİRDEKTE DEĞİL. Değiştirilecek dosyalar
+  // kabuğun ikilisi ve yanındaki kaynaklardır; sidecar tam da o ağacın
+  // içinden çalışıyor. Bu yüzden bu bölüm HTTP ucuna değil, kabuğun
+  // komutlarına konuşur (`update_check` / `update_download` /
+  // `update_progress` / `update_install`). `/api/settings/update` yalnız
+  // çekirdeğin sürümünü ve işin nerede yürüdüğünü söyler.
+  //
+  // KABUK YOKSA EKRAN PATLAMAZ. Depodan `python -m km_core.main` ile
+  // koşulduğunda ya da ekran tarayıcıda açıldığında `window.__TAURI__` yoktur;
+  // bu bir arıza değildir, durum sakin bir cümleyle yazılır ve düğmeler
+  // nedeni üzerinde yazılı olarak kapalı durur.
+
+  /**
+   * Kabuğun komut kapısı. Yoksa `null`.
+   *
+   * BURADA DURUYOR, `ui-kernel` İÇİNDE DEĞİL: orası çekirdeğe giden HTTP
+   * borusudur (`core_request`) ve bu ekranın komutlarıyla ilgisi yok. Tek
+   * kullanıcısı olan bir sarmalayıcıyı paylaşılan katmana koymak, o katmanı
+   * ekran ekran büyütmenin ilk adımı olurdu.
+   */
+  const shellInvoke = () => window.__TAURI__?.core?.invoke || null;
+
+  /**
+   * Kabuk hatası METİNDİR, `Error` değil: komutlarımız `Err(String)` döner ve
+   * `invoke` o dizgiyi olduğu gibi reddeder. `error.message` okumak burada
+   * `undefined` verirdi.
+   */
+  const say = (error) => (typeof error === 'string'
+    ? error
+    : error?.message || String(error));
+
+  /** Güncelleme bölümünün tüm durumu. Ekran bundan çizilir. */
+  const update = {
+    core: null,          // /api/settings/update gövdesi (çekirdek sürümü)
+    support: null,       // kabuk: {ready, dev, currentVersion, reason}
+    found: null,         // son denetimin sonucu
+    progress: null,      // indirme durumu (kabuktan yoklanır)
+    lastChecked: null,   // BU OTURUMDA son denetim — kalıcı değil, öyle de yazılır
+    busy: '',            // '' | 'check'
+    bar: null,           // açık ilerleme çubuğu
+  };
+
+  let updatePoll = null;
+
+  /** Elde bekleyen sürüm — önce bu oturumun denetimi, sonra kabuğun durumu. */
+  const pendingVersion = () => update.found?.version || update.progress?.version || '';
 
   function updateCard() {
     const slot = h('div', 'sa-stack');
@@ -563,68 +623,273 @@ export function mount(root, ctx) {
 
   async function loadUpdate(slot) {
     slot.replaceChildren(skeletonRows(2, 3));
-    let payload;
     try {
-      payload = await api('/api/settings/update');
+      update.core = await api('/api/settings/update');
     } catch (error) {
       slot.replaceChildren(alertBox(error.message, 'bad'));
       return;
     }
     if (disposed) return;
 
-    const actions = h('div', 'sa-actions');
-    // DÜĞME YA ÇALIŞIR YA NEDENİ YAZILI DURUR. Bugün güncelleme ucu yok ve
-    // bunu ekran uydurmuyor — sunucu söylüyor (`canCheck` / `canInstall`).
-    actions.append(payload.canCheck && payload.checkPath
-      ? button('Denetle', { onClick: () => checkUpdate(payload.checkPath, slot) })
-      : blockedButton('Denetle', payload.reason));
-    actions.append(payload.canInstall && payload.installPath
-      ? button('Şimdi kur', {
-        variant: 'primary',
-        onClick: () => installUpdate(payload.installPath),
-      })
-      : blockedButton('Şimdi kur', payload.reason, { variant: 'primary' }));
+    const invoke = shellInvoke();
+    if (invoke) {
+      try {
+        update.support = await invoke('update_support');
+        // İNDİRME KABUKTA SÜRÜYOR OLABİLİR: sekmeden çıkıp geri gelmek onu
+        // kesmez. Durum Rust tarafında durduğu için ekran her açılışta
+        // gerçeği yeniden okur.
+        update.progress = await invoke('update_progress');
+      } catch (error) {
+        update.support = { ready: false, dev: false, currentVersion: '', reason: say(error) };
+      }
+    } else {
+      update.support = null;
+    }
+    if (disposed) return;
 
-    slot.replaceChildren(
-      kpiRow([
-        { label: 'Kurulu sürüm', value: payload.version || '—' },
-        {
-          label: 'Son denetim',
-          value: payload.lastChecked ? stampIso(payload.lastChecked) : 'hiç',
-        },
-      ]),
-      alertBox(payload.reason || 'Güncelleme durumu bilinmiyor.', 'info'),
-      actions,
-    );
+    paintUpdate(slot);
+    if (update.progress?.state === 'running') startUpdatePoll(slot);
   }
 
-  /**
-   * Denetleme ucunun ADRESİNİ DE SUNUCU VERİR. `loadUpdate` yalnız durumu
-   * okur; "Denetle" ise uzaktaki sürümü sorar. İkisini aynı şey saymak,
-   * hiçbir şey denetlemeyen bir düğme bırakmaktı.
-   */
-  async function checkUpdate(path, slot) {
-    try {
-      await api(path, { method: 'POST' });
-      await loadUpdate(slot);
-    } catch (error) {
-      setNotice(alertBox(error.message, 'bad'));
+  function paintUpdate(slot) {
+    const invoke = shellInvoke();
+    const support = update.support;
+    const found = update.found;
+    const durum = update.progress?.state || 'idle';
+
+    // Neden hiçbir şey yapılamıyor? Tek cümle, tek yerde: üç düğme de aynı
+    // gerekçeyi gösterir ve gerekçeler ekranda uydurulmaz.
+    let engel = '';
+    if (!invoke) {
+      engel = 'Bu ekran uygulama kabuğunun dışında açık (geliştirme kipi ya da '
+        + 'tarayıcı). Güncelleyici kabukta çalışır.';
+    } else if (support && support.ready === false) {
+      engel = support.reason || 'Güncelleyici bu yapıda kullanılamıyor.';
+    }
+
+    const parts = [kpiRow([
+      {
+        label: 'Uygulama sürümü',
+        value: support?.currentVersion || '—',
+        title: 'Kabuğun sürümü — güncelleyicinin karşılaştırdığı sayı budur.',
+      },
+      { label: 'Çekirdek sürümü', value: update.core?.version || '—' },
+      {
+        label: 'Son denetim',
+        value: update.lastChecked ? stampIso(update.lastChecked) : 'bu oturumda hiç',
+      },
+    ])];
+
+    if (engel) {
+      parts.push(alertBox(engel, 'info'));
+    } else if (support?.dev) {
+      // Geliştirme kipinde denetlemek çalışır, kurmak çalışmaz: ortada paket
+      // değil derleme klasörü var. Bu bir arıza değil, söylenmesi gereken bir
+      // durumdur.
+      parts.push(alertBox('Uygulama geliştirme kipinde çalışıyor: denetleme yapılır, '
+        + 'kurulum yapılmaz.', 'warn'));
+    }
+
+    if (durum === 'error') {
+      parts.push(alertBox(update.progress.error || 'İndirme başarısız.', 'bad'));
+    } else if (durum === 'done') {
+      // SÜRÜM ADI KABUKTAN DA OKUNUR: panel sekme değişiminde sıfırdan
+      // kurulur, indirme ise kabukta sürer. `pendingVersion` olmasaydı ekran
+      // burada boşluklu bir cümle yazardı.
+      parts.push(alertBox(`Sürüm ${pendingVersion()} indirildi ve imzası doğrulandı. `
+        + 'Kurulum yeniden başlatma ister; ne zaman olacağına siz karar verirsiniz.', 'good'));
+    } else if (found && found.available) {
+      parts.push(alertBox(`Yeni sürüm hazır: ${found.version} `
+        + `(kurulu: ${found.currentVersion})${found.date ? ` · ${found.date}` : ''}. `
+        + 'Paket boyutu indirme başlayınca görünür.', 'warn'));
+      if (found.notes) {
+        const notlar = h('pre', 'sa-log');
+        notlar.textContent = found.notes;
+        parts.push(notlar);
+      }
+    } else if (found) {
+      parts.push(alertBox(`Kurulu sürüm güncel (${found.currentVersion}).`, 'good'));
+    } else if (!engel) {
+      parts.push(alertBox(update.core?.reason || 'Güncelleme durumu bilinmiyor.', 'info'));
+    }
+
+    if (durum === 'running' || durum === 'done') {
+      update.bar = progress();
+      parts.push(update.bar.node);
+    } else {
+      update.bar = null;
+    }
+
+    parts.push(updateActions(slot, engel));
+    slot.replaceChildren(...parts);
+    paintProgress();
+  }
+
+  /** İlerleme çubuğunun metni — yüzde bilinmiyorsa uydurulmaz. */
+  function paintProgress() {
+    if (!update.bar || !update.progress) return;
+    const { downloaded = 0, total } = update.progress;
+    if (total) {
+      update.bar.percent(
+        (downloaded / total) * 100,
+        `${bytes(downloaded)} / ${bytes(total)} (%${Math.round((downloaded / total) * 100)})`,
+      );
+    } else {
+      // Sunucu uzunluk bildirmedi: yüzde yok, inen miktar var.
+      update.bar.percent(0, `${bytes(downloaded)} indirildi`);
     }
   }
 
   /**
-   * Kurulum ucunun ADRESİNİ SUNUCU VERİR (`installPath`).
-   *
-   * Adresi ekrana yazmak, uç eklendiği gün iki yerin birbirinden habersiz
-   * ayrışması demekti; düğme de "var ama yanlış yere gidiyor" olurdu. Adres
-   * gelmediği sürece bu işlev hiç çağrılmaz — düğme kapalıdır.
+   * Üç düğme. DÜĞME YA ÇALIŞIR YA NEDENİ YAZILI DURUR — `blockedButton`
+   * yalnız gerçekten yapılamayan durumda kullanılır, "henüz yazılmadı" için
+   * değil.
    */
-  async function installUpdate(path) {
+  function updateActions(slot, engel) {
+    const actions = h('div', 'sa-actions');
+    const durum = update.progress?.state || 'idle';
+    const iniyor = durum === 'running';
+    const hazir = durum === 'done';
+    const bulundu = Boolean(update.found?.available);
+
+    actions.append(engel
+      ? blockedButton('Güncellemeleri denetle', engel)
+      : button(update.busy === 'check' ? 'Denetleniyor…' : 'Güncellemeleri denetle', {
+        disabled: update.busy === 'check' || iniyor,
+        onClick: () => checkUpdate(slot),
+      }));
+
+    if (engel) {
+      actions.append(blockedButton('İndir', engel));
+    } else if (!bulundu) {
+      actions.append(blockedButton('İndir',
+        'Önce denetleyin: indirilecek bir sürüm bulunmuş değil.'));
+    } else if (iniyor) {
+      actions.append(blockedButton('İndiriliyor…', 'İndirme sürüyor.'));
+    } else {
+      actions.append(button(hazir ? 'Yeniden indir' : `Sürüm ${update.found.version} indir`, {
+        variant: hazir ? '' : 'primary',
+        onClick: () => downloadUpdate(slot),
+      }));
+    }
+
+    if (engel) {
+      actions.append(blockedButton('Yeniden başlat ve kur', engel, { variant: 'primary' }));
+    } else if (update.support?.dev) {
+      actions.append(blockedButton('Yeniden başlat ve kur',
+        'Geliştirme kipinde kurulum yapılmaz: ortada paket değil, derleme klasörü var.',
+        { variant: 'primary' }));
+    } else if (!hazir) {
+      actions.append(blockedButton('Yeniden başlat ve kur',
+        'Önce paketi indirin.', { variant: 'primary' }));
+    } else {
+      actions.append(button('Yeniden başlat ve kur', {
+        variant: 'primary',
+        onClick: () => installUpdate(slot),
+      }));
+    }
+
+    return actions;
+  }
+
+  /** 1. adım — DENETLE. İndirmeyi başlatmaz. */
+  async function checkUpdate(slot) {
+    const invoke = shellInvoke();
+    if (!invoke) return;
+
+    update.busy = 'check';
+    paintUpdate(slot);
     try {
-      await api(path, { method: 'POST' });
-      toast('Güncelleme başlatıldı.', 'good');
+      update.found = await invoke('update_check');
+      update.lastChecked = new Date().toISOString();
+      update.progress = await invoke('update_progress');
+      setNotice(null);
     } catch (error) {
-      setNotice(alertBox(error.message, 'bad'));
+      update.found = null;
+      setNotice(alertBox(say(error), 'bad'));
+    } finally {
+      update.busy = '';
+      if (!disposed) paintUpdate(slot);
+    }
+  }
+
+  /**
+   * 2. adım — İNDİR. Onay kutusu YOK: indirilecek sürüm, tarihi ve yayın notu
+   * düğmenin hemen üstünde duruyor; düğmeye basmak zaten onaydır. Kurmuyor,
+   * uygulamayı kapatmıyor — geri alınamaz bir şey yapmıyor.
+   */
+  async function downloadUpdate(slot) {
+    const invoke = shellInvoke();
+    if (!invoke) return;
+    try {
+      update.progress = await invoke('update_download');
+      paintUpdate(slot);
+      startUpdatePoll(slot);
+    } catch (error) {
+      setNotice(alertBox(say(error), 'bad'));
+    }
+  }
+
+  /**
+   * İlerleme YOKLANARAK okunur.
+   *
+   * Kabuk olay yayınlayabilirdi ama olay dinlemek eklenti izni ister ve bu
+   * kurulumda hiçbir kapasite açık değil; yoklama aynı işi yeni bir yüzey
+   * açmadan görür. Döngü sekme değişince ve panel kapanınca durur — indirme
+   * ise kabukta sürer, geri gelindiğinde durum yeniden okunur.
+   */
+  function startUpdatePoll(slot) {
+    stopUpdatePoll();
+    updatePoll = pollLoop({
+      every: 1000,
+      run: async () => {
+        const invoke = shellInvoke();
+        if (disposed || !invoke) { stopUpdatePoll(); return; }
+        update.progress = await invoke('update_progress');
+        if (update.progress.state === 'running') {
+          paintProgress();
+          return;
+        }
+        // Durum değişti: düğmeler de değişmeli.
+        stopUpdatePoll();
+        paintUpdate(slot);
+      },
+    });
+  }
+
+  function stopUpdatePoll() {
+    updatePoll?.stop();
+    updatePoll = null;
+  }
+
+  /**
+   * 3. adım — KUR. TEK ONAY KUTUSU BURADA: uygulama kapanacak.
+   *
+   * "Kaydedilmemiş iş" uyarısı süs değil — kasada yarım kalmış bir sipariş
+   * uygulamayla birlikte gider.
+   */
+  async function installUpdate(slot) {
+    const invoke = shellInvoke();
+    if (!invoke) return;
+
+    const onay = await confirmSimple(view, {
+      title: 'Yeniden başlat ve kur',
+      description: `Sürüm ${pendingVersion()} kurulacak: uygulama şimdi `
+        + 'kapanacak ve yeni sürümle açılacak. Yarım kalmış bir iş varsa (girilmekte '
+        + 'olan sipariş, kaydedilmemiş form) önce onu bitirin.',
+      confirmLabel: 'Kapat ve kur',
+    });
+    if (!onay) return;
+
+    try {
+      await invoke('update_install');
+      // BURAYA NORMALDE GELİNMEZ: Linux ve macOS'ta uygulama yeniden başlar,
+      // Windows'ta kurucu süreci kapatır. Gelindiyse kurulum başlamış ama
+      // yeniden başlatma gerçekleşmemiştir; ekran sessiz kalmaz.
+      toast('Kurulum tamamlandı; uygulama yeniden başlatılıyor.', 'good');
+    } catch (error) {
+      setNotice(alertBox(say(error), 'bad'));
+      if (!disposed) paintUpdate(slot);
     }
   }
 
@@ -728,5 +993,6 @@ export function mount(root, ctx) {
   return () => {
     disposed = true;
     form?.destroy();
+    stopUpdatePoll();
   };
 }

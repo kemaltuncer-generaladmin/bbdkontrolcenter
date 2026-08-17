@@ -4,7 +4,7 @@
     "resources": {
       "../../../backend/src": "backend/src",
       "../../../modules": "modules",
-      "../../../config/default.yaml": "config/",
+      "../../../config/default.yaml": "config/default.yaml",
       "runtime": "runtime"
     }
   }

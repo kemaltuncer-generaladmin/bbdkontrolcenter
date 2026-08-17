@@ -59,9 +59,19 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             bundles: deb,appimage
+          # İLK TURDA YALNIZ NSIS. İstenen teslimat `-setup.exe`, yani NSIS
+          # kurucusudur; MSI onun yanında ikinci bir pakettir, alternatifi
+          # değil. MSI şu an iki ek risk taşıyor: Tauri CLI WiX'i koşuda
+          # İNDİRİYOR (ağ hatası tüm işi düşürür) ve MSI kaynak ağacına
+          # gömülü ~100 MB Python'u ikinci kez paketlemek süreyi ve bellek
+          # kullanımını belirgin biçimde artırıyor. İkisi de .exe'yi bugün
+          # eline almakla ilgisiz nedenlerle işi düşürebilir.
+          #
+          # MSI İKİNCİ TURDA GERİ KONUR: `bundles: nsis,msi` yazmak yeter,
+          # betikler ve `tauri.conf.json` → bundle.targets zaten hazır.
           - os: windows-latest
             platform: windows
-            bundles: nsis,msi
+            bundles: nsis
           # macos-latest arm64'tür (Apple Silicon); üretilen .dmg de arm64
           # olur. Intel Mac gerekirse ayrı bir matris satırı (macos-13) açılır.
           - os: macos-latest
@@ -123,16 +133,65 @@ jobs:
           # shellcheck disable=SC2086
           sudo apt-get install -y --no-install-recommends $PACKAGES
 
+      # ÜÇÜNCÜ PARTİ EYLEM KULLANILMIYOR — NEDENİ ÖLÇÜLDÜ.
+      #
+      # Burada `dtolnay/rust-toolchain@stable` ve `Swatinem/rust-cache@v2`
+      # duruyordu. Doğrulama koşusunda (run 32042258828) Windows işi İKİ KEZ
+      # ÜST ÜSTE daha "Set up job" adımında düştü:
+      #
+      #   Failed to download archive 'https://codeload.github.com/...'
+      #   after 3 attempts. — 429 (Too Many Requests)
+      #
+      # `actions/*` dışındaki her eylem koşuya codeload.github.com'dan zip
+      # olarak indirilir ve o uç nokta hız sınırı uyguluyor. İş `cargo tauri
+      # build`e HİÇ ULAŞMADI: derlemeyle, kodumuzla, platformla ilgisi yok —
+      # bir indirme kotasına takıldık. Yeniden denemek çözüm değil, aynı
+      # kotaya yeniden girmektir.
+      #
+      # Bu yüzden zincirdeki iki üçüncü parti eylem kaldırıldı: araç zinciri
+      # kabuk komutuyla, önbellek `actions/cache@v4` ile kuruluyor. `actions/*`
+      # eylemleri GitHub'ın kendi dağıtımından gelir ve bu vektöre girmez.
+      # Karşılığında kaybedilen tek şey rust-cache'in akıllı budaması; onun
+      # yerine anahtar `Cargo.lock` özetine bağlandı.
+      #
+      # GERİ ALINMASI: eylemler geri konursa 429 riski de geri gelir. Bugün
+      # kaldırıldılar çünkü teslim edilecek bir .exe vardı ve iş akışı onu
+      # üretemiyordu.
       - name: Rust araç zinciri
-        uses: dtolnay/rust-toolchain@stable
+        shell: bash
+        run: |
+          # GitHub'ın ubuntu/windows/macos imajlarında rustup ZATEN kuruludur;
+          # aşağısı kuruluysa saniyeler sürer, değilse toolchain'i kurar.
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup koşucuda yok — koşucu imajı değişmiş olabilir."
+            exit 1
+          fi
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          rustc --version
+          cargo --version
 
       # Cargo kayıt defteri + target/ önbelleği. Soğuk derleme ~20 dakika;
       # önbellek ısındığında birkaç dakikaya iner.
+      #
+      # `cargo-tauri*` de saklanıyor: aşağıdaki "Tauri CLI" adımı ikili
+      # önbellekten geldiyse yeniden derlemiyor (tek başına ~5 dakika).
+      #
+      # ÖNBELLEK İSTEĞE BAĞLIDIR. `continue-on-error` bilinçli: önbellek bir
+      # hızlandırmadır, derlemenin ön koşulu değil. Sunucu tarafında bir sorun
+      # olursa derleme yavaşlar, DÜŞMEZ — 429'dan çıkardığımız ders bu.
       - name: Rust önbelleği
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          workspaces: apps/desktop/src-tauri
-          key: ${{ matrix.platform }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-tauri*
+            apps/desktop/src-tauri/target
+          key: cargo-${{ matrix.os }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.os }}-
 
       # Betikler `cargo tauri` yoksa anlaşılır hatayla durur; koşucuda yok,
       # kurulur. Önbellekten geldiyse yeniden derlenmesin diye önce bakılır.
@@ -156,18 +215,36 @@ jobs:
           restore-keys: |
             pip-${{ matrix.platform }}-
 
-      # İMZALAMA YOK: kod imzalama sertifikası alınmadı (ADR 0023 §5). Kurucu
-      # imzasız çıkar ve Windows'ta SmartScreen uyarısı verir; nasıl geçileceği
-      # deploy/README.md içinde yazılıdır. Buraya imzalama adımı eklenmez —
-      # sertifika kararı verildiğinde ADR yeni bir kararla güncellenir.
+      # İKİ AYRI İMZA, KARIŞTIRILMAZ.
+      #
+      #  · KOD İMZALAMA YOK: sertifika alınmadı (ADR 0023 §5). Kurucu imzasız
+      #    çıkar ve Windows'ta SmartScreen uyarısı verir; nasıl geçileceği
+      #    deploy/README.md içinde yazılıdır. Buraya kod imzalama adımı
+      #    eklenmez — sertifika kararı verildiğinde ADR güncellenir.
+      #
+      #  · GÜNCELLEME İMZASI VAR: aşağıdaki iki değişken. Bu, işletim sistemine
+      #    "bu yazılıma güven" demez; kurulu uygulamaya "indirdiğin paket
+      #    gerçekten bizden geldi" dedirtir. Anahtar olmadan güncelleyici hiçbir
+      #    paketi kabul etmez — imzasız güncelleme diye bir şey yoktur.
+      #
+      # ANAHTAR DEPODA DURMAZ (K8): GitHub Secrets'tan gelir. Tanımlı değilse
+      # paketler imzasız üretilir, `dist/updater/` künyesi hiç yazılmaz ve
+      # aşağıdaki `latest.json` adımı bunu açık bir hatayla söyler — sessizce
+      # güncellenemeyen bir sürüm yayınlanmaz.
       - name: Paketle (Linux / macOS)
         if: matrix.platform != 'windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         # `bash ...` bilerek: betiğin çalıştırma bitine bağlı kalmasın.
         run: bash scripts/build-release.sh --bundles ${{ matrix.bundles }}
 
       - name: Paketle (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           ./scripts/build-release.ps1 -Bundles '${{ matrix.bundles }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -192,6 +269,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # `make-latest-json.py` için gerekli; artefaktlar depo olmadan da inerdi
+      # ama sürüm listesini üreten betik depoda duruyor.
+      - name: Depoyu al
+        uses: actions/checkout@v4
+
       - name: Artefaktları indir
         uses: actions/download-artifact@v4
         with:
@@ -199,8 +281,10 @@ jobs:
           merge-multiple: true
 
       - name: Dosyaları listele
-        run: ls -lh dist
+        run: ls -lhR dist
 
+      # `dist/*` yalnız DOSYALARI alır; `dist/updater/` klasörü (güncelleme
+      # künyeleri) yayına girmez — o, bir sonraki adımın iç verisidir.
       - name: Release'e ekle
         uses: softprops/action-gh-release@v2
         with:
@@ -211,10 +295,39 @@ jobs:
 
             | Platform | Dosya |
             |---|---|
-            | Windows | `*-setup.exe` (NSIS), `*.msi` |
+            | Windows | `*-setup.exe` (NSIS) |
             | Linux | `*.deb`, `*.AppImage` |
             | macOS | `*.dmg` (arm64) |
 
-            Kurucular **imzasızdır** — kod imzalama sertifikası alınmadı.
-            Windows'ta SmartScreen uyarısının nasıl geçileceği
-            `deploy/README.md` içinde yazılıdır.
+            MSI bu turda üretilmiyor (iş akışı matrisindeki gerekçe).
+
+            **Otomatik güncelleme:** kurulu uygulama Sistem Ayarları →
+            Güncelleme sekmesinden bu yayına bakar ve kendi platformunun
+            paketini indirir (`latest.json`). Yanındaki `*.sig` dosyaları
+            paketlerin imzasıdır; uygulama imzayı doğrulamadan hiçbir paketi
+            kurmaz. Kurulum her zaman kullanıcının onayıyla ve yeniden
+            başlatmayla olur.
+
+            Kurucular **kod imzalı değildir** — kod imzalama sertifikası
+            alınmadı (yukarıdaki `.sig` başka bir şeydir). Windows'ta
+            SmartScreen uyarısının nasıl geçileceği `deploy/README.md`
+            içinde yazılıdır.
+
+      # SÜRÜM LİSTESİ EN SONA KALIR: paketlerin yayındaki adresi ancak
+      # yüklendikten sonra bellidir. GitHub varlık adlarındaki boşlukları
+      # noktaya çevirdiği için adres tahmin edilmez, varlık listesinden okunur
+      # — tahmin edilseydi bağlantı ilk indirmede 404 verirdi.
+      - name: latest.json üret ve yayına ekle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/release.json"
+          python3 scripts/make-latest-json.py \
+            --dist dist \
+            --assets "$RUNNER_TEMP/release.json" \
+            --version "${TAG#v}" \
+            --out "$RUNNER_TEMP/latest.json"
+          cat "$RUNNER_TEMP/latest.json"
+          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --clobber

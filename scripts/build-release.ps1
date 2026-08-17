@@ -7,7 +7,7 @@
       1. Gömülü Python çalışma zamanını indirir ve bağımlılıklarını kurar
       2. Kabuk menü kaydını üretir (registry.json ikiliye gömülür)
       3. `cargo tauri build` ile NSIS kurucusunu ve MSI paketini üretir
-      4. Çıktıyı dist\ altına toplar
+      4. Çıktıyı dist\ altına toplar (paket + `.sig` imzası + güncelleme künyesi)
 
     ÇAPRAZ DERLEME YOKTUR: bu betik Windows üzerinde koşar. Linux/macOS için
     scripts/build-release.sh kullanılır.
@@ -64,8 +64,27 @@ try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } c
 
 $Root    = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Tauri   = Join-Path $Root "apps\desktop\src-tauri"
-$Runtime = Join-Path $Tauri "runtime"
 $Dist    = Join-Path $Root "dist"
+
+# --- gomulu calisma zamaninin YERI ----------------------------------------
+#
+# IKI AD, IKI IS. $Runtime pakete kopyalanan KOKtur (tauri.release.json ->
+# "runtime": "runtime"); $RuntimePy yorumlayicinin kendisinin durdugu
+# klasordur ve kokun ALTINDA bir basamak daha iceridedir.
+#
+# Fazladan gorunen bu basamak keyfi degil, ADR 0023 §1'in yazdigi yoldur ve
+# main.rs (python_path) tam olarak orayi arar:
+#
+#     runtime\python\python.exe        (Windows)
+#     runtime/python/bin/python3       (Linux, macOS)
+#
+# Arsiv zaten python\ klasoru olarak aciliyor; onu dogrudan runtime\ yapmak
+# (eski davranis) yorumlayiciyi runtime\python.exe konumuna koyuyordu.
+# Derleme yine yesil biterdi — kurulu uygulama acilirken gomulu Python'u
+# bulamaz, sessizce sistem Python'una duser ya da hic acilmazdi. Kirilma
+# calisma anina ertelendigi icin en pahali turden bir sapmaydi.
+$Runtime   = Join-Path $Tauri "runtime"
+$RuntimePy = Join-Path $Runtime "python"
 
 # --- gömülü Python sürümü -------------------------------------------------
 #
@@ -99,9 +118,9 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     default { Die "Desteklenmeyen mimari: $env:PROCESSOR_ARCHITECTURE" }
 }
 
-# python-build-standalone Windows dağıtımında yorumlayıcı kökte durur
-# (Unix'teki gibi bin/ altında değil). main.rs bu farkı bilir.
-$Python = Join-Path $Runtime "python.exe"
+# python-build-standalone Windows dağıtımında yorumlayıcı arşiv klasörünün
+# KÖKÜNDE durur (Unix'teki gibi bin/ altında değil). main.rs bu farkı bilir.
+$Python = Join-Path $RuntimePy "python.exe"
 
 # --- 1. gömülü Python -----------------------------------------------------
 if ($SkipRuntime) {
@@ -139,9 +158,12 @@ if ($SkipRuntime) {
         $extracted = Join-Path $work "python"
         if (-not (Test-Path $extracted)) { Die "Arsiv beklenen 'python\' klasorunu tasimiyor." }
 
+        # Arsivin python\ klasoru kokun ICINE tasinir, kokun YERINE degil:
+        # sonuc runtime\python\python.exe olur (yukaridaki yer aciklamasi).
         if (Test-Path $Runtime) { Remove-Item $Runtime -Recurse -Force }
-        Move-Item $extracted $Runtime
-        Write-Host "  yerlesti: $Runtime"
+        New-Item -ItemType Directory -Path $Runtime -Force | Out-Null
+        Move-Item $extracted $RuntimePy
+        Write-Host "  yerlesti: $RuntimePy"
     }
     finally {
         Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -161,7 +183,10 @@ Say "2) Bagimliliklar gomulu ortama kuruluyor"
 & $Python -m pip install --upgrade pip | Out-Null
 & $Python -m pip install pyyaml | Out-Null
 
-$collector = Join-Path $Runtime "km-collect-reqs.py"
+# Toplayici gecici klasore yazilir, runtime\ ICINE DEGIL: orasi pakete
+# oldugu gibi kopyalanan agactir ve betik arada duserse arta kalan dosya
+# kuruculara girer.
+$collector = Join-Path ([System.IO.Path]::GetTempPath()) "km-collect-reqs.py"
 @'
 import pathlib, sys, tomllib
 
@@ -210,7 +235,7 @@ Get-ChildItem -Path $Runtime -Filter "__pycache__" -Recurse -Directory -ErrorAct
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($RuntimeOnly) {
-    Say "Calisma zamani hazir: $Runtime"
+    Say "Calisma zamani hazir: $RuntimePy"
     exit 0
 }
 
@@ -248,6 +273,25 @@ $bundleDir = Join-Path $Tauri "target\release\bundle"
 # Desen listesi TEK YERDE durur: asagidaki hata iletisi de bunu yazar.
 $patterns = @("nsis\*.exe", "msi\*.msi")
 
+# --- guncelleme paketlerinin kunyesi --------------------------------------
+#
+# latest.json BURADA URETILMEZ: dosyalarin yayindaki ADRESI ancak Release
+# olustuktan sonra bilinir (GitHub varlik adlarindaki bosluklari noktaya
+# cevirir). Burada uretilen sey kunyedir — hangi imzali dosya hangi guncelleme
+# hedefine karsilik geliyor; scripts\make-latest-json.py bunu gercek adreslerle
+# birlestirir.
+#
+# HEDEF ADI EKLENTININ KENDI DUZENIDIR: {sistem}-{mimari}-{kurulum bicimi}
+# (tauri-plugin-updater -> get_urls). Uydurulmus bir ad, guncelleyicinin
+# "bu kurulum icin paket yok" demesiyle sonuclanir.
+function Get-UpdaterKey([string]$Name) {
+    if ($Name -like "*-setup.exe") { return "windows-$arch-nsis" }
+    if ($Name -like "*.msi")       { return "windows-$arch-msi" }
+    return ""
+}
+
+$updater = [ordered]@{}
+
 $found = 0
 foreach ($pattern in $patterns) {
     Get-ChildItem -Path (Join-Path $bundleDir $pattern) -ErrorAction SilentlyContinue |
@@ -255,7 +299,32 @@ foreach ($pattern in $patterns) {
             Copy-Item $_.FullName -Destination $Dist -Force
             Write-Host "  $($_.Name)"
             $script:found = 1
+
+            # IMZASIZ PAKET GUNCELLEME PAKETI DEGILDIR. .sig yoksa dosya yayina
+            # yine girer (elle indirilebilir) ama kunyeye YAZILMAZ: imzasiz bir
+            # girdi guncelleyicide "signature could not be decoded" hatasidir.
+            $sig = "$($_.FullName).sig"
+            if (Test-Path $sig) {
+                Copy-Item $sig -Destination $Dist -Force
+                Write-Host "  $($_.Name).sig"
+                $key = Get-UpdaterKey $_.Name
+                if ($key) { $updater[$key] = $_.Name }
+            }
         }
+}
+
+if ($updater.Count -gt 0) {
+    $updaterDir = Join-Path $Dist "updater"
+    New-Item -ItemType Directory -Path $updaterDir -Force | Out-Null
+    $updaterFile = Join-Path $updaterDir "windows-$arch.json"
+    # ConvertTo-Json kacislari kendisi yapar; dosya adinda bosluk olabilir.
+    $updater | ConvertTo-Json | Set-Content -Path $updaterFile -Encoding UTF8
+    Write-Host "  updater\windows-$arch.json ($($updater.Count) hedef)"
+} else {
+    # SESSIZ KALINMAZ: imzasiz paketlerle guncelleme calismaz ve bu, ancak
+    # kullanici "denetle" dediginde ortaya cikardi.
+    Write-Host "  UYARI: hic imza (.sig) uretilmedi — TAURI_SIGNING_PRIVATE_KEY" -ForegroundColor Yellow
+    Write-Host "         verilmemis olabilir. Bu paketler elle kurulur." -ForegroundColor Yellow
 }
 
 # PAKET YOKSA ACIK HATAYLA DUSULUR — "alti bos" tek basina ayiklanamaz bir

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater",
+  "description": "Güncelleme eklentisinin izinleri. Akış kabuğun kendi komutlarından yürür (update_check / update_download / update_progress / update_install) ve uygulamanın kendi komutları ACL'e tabi değildir; bu dosya eklentinin KENDİ JS komutlarını açar, böylece o yol kullanılırsa izin sessizce reddedilmez. Başka bir yetenek açılmaz: kabuk bugün hiçbir eklenti komutunu çağırmıyor.",
+  "windows": ["main"],
+  "permissions": ["updater:default"]
+}

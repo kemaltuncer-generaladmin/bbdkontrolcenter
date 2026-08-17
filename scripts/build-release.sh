@@ -6,7 +6,7 @@
 #   1. Kabuk menü kaydını üretir (shell/registry.json ikiliye gömülür)
 #   2. Gömülü Python çalışma zamanını indirir ve bağımlılıklarını kurar
 #   3. `cargo tauri build` ile paketi üretir
-#   4. Çıktıyı dist/ altına toplar
+#   4. Çıktıyı dist/ altına toplar (paket + `.sig` imzası + güncelleme künyesi)
 #
 # ÇAPRAZ DERLEME YOKTUR. Bu betik çalıştığı platformun paketini üretir:
 # Linux'ta .deb/.AppImage, macOS'ta .dmg. Windows kurucusu Windows'ta,
@@ -22,8 +22,27 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI="$ROOT/apps/desktop/src-tauri"
-RUNTIME="$TAURI/runtime"
 DIST="$ROOT/dist"
+
+# --- gömülü çalışma zamanının YERİ ---------------------------------------
+#
+# İKİ AD, İKİ İŞ. `RUNTIME` pakete kopyalanan KÖKtür (`tauri.release.json` →
+# "runtime": "runtime"); `RUNTIME_PY` yorumlayıcının kendisinin durduğu
+# klasördür ve kökün ALTINDA bir basamak daha içeridedir.
+#
+# Fazladan görünen bu basamak keyfi değil, ADR 0023 §1'in yazdığı yoldur ve
+# `main.rs` (python_path) tam olarak orayı arar:
+#
+#     runtime/python/python.exe        (Windows)
+#     runtime/python/bin/python3       (Linux, macOS)
+#
+# Arşiv zaten `python/` klasörü olarak açılıyor; onu doğrudan `runtime/`
+# yapmak (eski davranış) yorumlayıcıyı `runtime/bin/python3` konumuna
+# koyuyordu. Derleme yine yeşil biterdi — kurulu uygulama açılırken gömülü
+# Python'u bulamaz, sessizce sistem Python'una düşer ya da hiç açılmazdı.
+# Kırılma çalışma anına ertelendiği için en pahalı türden bir sapmaydı.
+RUNTIME="$TAURI/runtime"
+RUNTIME_PY="$RUNTIME/python"
 
 # --- gömülü Python sürümü -------------------------------------------------
 #
@@ -111,7 +130,7 @@ case "$(uname -m)" in
   *) die "Desteklenmeyen mimari: $(uname -m)" ;;
 esac
 
-PYTHON="$RUNTIME/$PY_BIN"
+PYTHON="$RUNTIME_PY/$PY_BIN"
 
 # --- 1. gömülü Python -----------------------------------------------------
 if [ "$SKIP_RUNTIME" = 1 ]; then
@@ -144,10 +163,12 @@ else
   tar -xzf "$WORK/$ASSET" -C "$WORK"
   [ -d "$WORK/python" ] || die "Arşiv beklenen 'python/' klasörünü taşımıyor."
 
+  # Arşivin `python/` klasörü kökün İÇİNE taşınır, kökün YERİNE değil:
+  # sonuç `runtime/python/bin/python3` olur (yukarıdaki yer açıklaması).
   rm -rf "$RUNTIME"
-  mkdir -p "$(dirname "$RUNTIME")"
-  mv "$WORK/python" "$RUNTIME"
-  echo "  yerleşti: $RUNTIME"
+  mkdir -p "$RUNTIME"
+  mv "$WORK/python" "$RUNTIME_PY"
+  echo "  yerleşti: $RUNTIME_PY"
 fi
 
 [ -x "$PYTHON" ] || die "Gömülü Python bulunamadı: $PYTHON"
@@ -237,7 +258,7 @@ echo "$REQS" | "$PYTHON" -m pip install -r /dev/stdin
 find "$RUNTIME" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 if [ "$RUNTIME_ONLY" = 1 ]; then
-  say "Çalışma zamanı hazır: $RUNTIME"
+  say "Çalışma zamanı hazır: $RUNTIME_PY"
   FINISHED=1   # istenen iş buydu: erken çıkış meşrudur
   exit 0
 fi
@@ -273,7 +294,54 @@ BUNDLE_DIR="$TAURI/target/release/bundle"
 # "aradım bulamadım" diyen ileti neyi aradığını söylemeyen bir ileti olurdu.
 # Dizi: düz dizge olsaydı `$PATTERNS` açılırken desenler ÇALIŞMA DİZİNİNE göre
 # genişler, `$BUNDLE_DIR` altına bakılmadan önce eşleşip bozulurdu.
-PATTERNS=("deb/*.deb" "appimage/*.AppImage" "rpm/*.rpm" "dmg/*.dmg")
+#
+# `macos/*.app.tar.gz` KURULACAK PAKET DEĞİL, GÜNCELLEME PAKETİDİR: macOS'ta
+# kullanıcı .dmg indirir, güncelleyici ise uygulamanın kendisini sıkıştırılmış
+# olarak çeker (.dmg'yi bağlayıp kopyalayamaz). İkisi de yayına konur.
+PATTERNS=("deb/*.deb" "appimage/*.AppImage" "appimage/*.AppImage.tar.gz" \
+          "rpm/*.rpm" "dmg/*.dmg" "macos/*.app.tar.gz")
+
+# --- güncelleme paketlerinin künyesi --------------------------------------
+#
+# `latest.json`ı burada üretmiyoruz: dosyaların yayındaki ADRESİ ancak Release
+# oluştuktan sonra bilinir (GitHub varlık adlarındaki boşlukları noktaya
+# çevirir; adresi tahmin etmek sessizce kırık bir bağlantı demektir). Burada
+# üretilen şey künyedir — hangi imzalı dosya hangi güncelleme hedefine karşılık
+# geliyor. `scripts/make-latest-json.py` bunu gerçek adreslerle birleştirir.
+#
+# HEDEF ADI EKLENTİNİN KENDİ DÜZENİDİR: `{sistem}-{mimari}-{kurulum biçimi}`
+# (tauri-plugin-updater → `get_urls`). Uydurulmuş bir ad, güncelleyicinin
+# "bu kurulum için paket yok" demesiyle sonuçlanır.
+case "$(uname -s)" in
+  Linux)  UPD_OS="linux" ;;
+  Darwin) UPD_OS="darwin" ;;
+esac
+UPD_ARCH="$PBS_ARCH"          # x86_64 | aarch64 — updater'ın kullandığı adlar
+
+updater_key() {
+  case "$1" in
+    *.AppImage|*.AppImage.tar.gz) printf '%s-%s-appimage' "$UPD_OS" "$UPD_ARCH" ;;
+    *.app.tar.gz)                 printf '%s-%s-app'      "$UPD_OS" "$UPD_ARCH" ;;
+    *.deb)                        printf '%s-%s-deb'      "$UPD_OS" "$UPD_ARCH" ;;
+    *.rpm)                        printf '%s-%s-rpm'      "$UPD_OS" "$UPD_ARCH" ;;
+    *) printf '' ;;
+  esac
+}
+
+UPDATER_KEYS=()
+UPDATER_FILES=()
+
+# AYNI HEDEF İKİ KEZ YAZILMAZ. Kabuk sürümüne göre AppImage hem düz imzalı
+# dosya hem `.tar.gz` olarak çıkabiliyor; ikisi de aynı hedefe düşer ve künyede
+# çift anahtar bırakmak, hangisinin geçerli olduğunu okuyucuya bırakmak olurdu.
+# İlk eşleşen kazanır — desen sırası (`.AppImage`, sonra `.AppImage.tar.gz`)
+# kararı belirler.
+has_key() {
+  for existing in ${UPDATER_KEYS[@]+"${UPDATER_KEYS[@]}"}; do
+    [ "$existing" = "$1" ] && return 0
+  done
+  return 1
+}
 
 FOUND=0
 for pattern in "${PATTERNS[@]}"; do
@@ -282,8 +350,41 @@ for pattern in "${PATTERNS[@]}"; do
     cp -f "$file" "$DIST/"
     echo "  $(basename "$file")"
     FOUND=1
+
+    # İMZASIZ PAKET GÜNCELLEME PAKETİ DEĞİLDİR. `.sig` yoksa dosya yayına yine
+    # girer (elle indirilebilir) ama künyeye YAZILMAZ: imzasız bir girdi
+    # güncelleyicide "signature could not be decoded" hatasına dönerdi.
+    [ -e "$file.sig" ] || continue
+    cp -f "$file.sig" "$DIST/"
+    echo "  $(basename "$file").sig"
+    key="$(updater_key "$file")"
+    if [ -n "$key" ] && ! has_key "$key"; then
+      UPDATER_KEYS+=("$key")
+      UPDATER_FILES+=("$(basename "$file")")
+    fi
   done
 done
+
+if [ "${#UPDATER_KEYS[@]}" -gt 0 ]; then
+  mkdir -p "$DIST/updater"
+  {
+    printf '{\n'
+    index=0
+    while [ "$index" -lt "${#UPDATER_KEYS[@]}" ]; do
+      comma=","
+      [ "$((index + 1))" -eq "${#UPDATER_KEYS[@]}" ] && comma=""
+      printf '  "%s": "%s"%s\n' "${UPDATER_KEYS[$index]}" "${UPDATER_FILES[$index]}" "$comma"
+      index=$((index + 1))
+    done
+    printf '}\n'
+  } > "$DIST/updater/$UPD_OS-$UPD_ARCH.json"
+  echo "  updater/$UPD_OS-$UPD_ARCH.json (${#UPDATER_KEYS[@]} hedef)"
+else
+  # SESSİZ KALINMAZ: imzasız paketlerle güncelleme çalışmaz ve bu, ancak
+  # kullanıcı "denetle" dediğinde ortaya çıkardı.
+  echo "  UYARI: hiç imza (.sig) üretilmedi — TAURI_SIGNING_PRIVATE_KEY verilmemiş" >&2
+  echo "         olabilir. Bu paketler elle kurulur; kendi kendini güncelleyemez." >&2
+fi
 
 # PAKET YOKSA AÇIK HATAYLA DÜŞÜLÜR. Eskiden buradaki ileti yalnız "altı boş"
 # diyordu; hangi hedefin istendiği, nereye bakıldığı ve kabuğun ne ürettiği

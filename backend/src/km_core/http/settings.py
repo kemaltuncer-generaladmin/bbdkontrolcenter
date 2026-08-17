@@ -6,7 +6,7 @@ Sözleşme — kabuk bu adreslere konuşur:
     PUT  /api/settings                     {tab, values}  → {tab, changed, restartRequired}
     GET  /api/settings/printer             → yazıcı durumu ve tanılaması
     POST /api/settings/printer/test-page   → test sayfası basar
-    GET  /api/settings/update              → sürüm ve güncelleme yolu
+    GET  /api/settings/update              → çekirdek sürümü + güncelleme nerede
     GET  /api/settings/diagnostics         → maskelenmiş teknik günlük
     POST /api/settings/support-bundle      → destek paketi (zip) üretir
 
@@ -443,28 +443,42 @@ def create_settings_router() -> APIRouter:
 
     @router.get("/settings/update", dependencies=[requires(VIEW_PERMISSION)])
     async def update_state(request: Request) -> dict[str, Any]:
-        """Sürüm ve güncelleme yolu.
+        """Çekirdeğin sürümü ve güncellemenin NEREDE çalıştığı.
 
-        BUGÜN GÜNCELLEME YOLU YOK ve bu gövde bunu AÇIKÇA söyler. Kabuğun
-        güncelleyicisi (`tauri.conf.json` → updater) yapılandırılmamış,
-        çekirdekte de kurulum ucu yok. Ekran bu yüzden çalışmayan bir düğme
-        değil, kapalı ve NEDENİ yazılı bir düğme çizer.
+        GÜNCELLEYİCİ KABUKTADIR, BU SÜREÇTE DEĞİL — ve bu gövde bunu açıkça
+        söyler. Yerine konacak dosyalar kabuğun ikilisi ve yanındaki
+        kaynaklardır; sidecar tam da o ağacın içinden çalışıyor, kendi
+        altındaki zemini değiştiremez. Bu yüzden `canCheck`/`canInstall`
+        BİLEREK yanlıştır: burada böyle bir uç yok ve olmayacak.
 
-        UÇ ADRESLERİNİ DE BURASI VERİR (`checkPath` / `installPath`). Adres
-        ekrana yazılsaydı, uç eklendiği gün iki yer birbirinden habersiz
-        ayrışabilir ve düğme "var ama yanlış yere gidiyor" hâline gelirdi. Uç
-        yazıldığında bu gövde değişir, ekranda tek satır değişmez.
+        Uygulama sürümünü de kabuk söyler (`update_support`): güncelleyicinin
+        karşılaştırdığı sayı `tauri.conf.json` içindeki sürümdür. Buradaki
+        `version` çekirdeğin kendi sürümüdür; ekran ikisini ayrı ayrı yazar,
+        çünkü paket dışı bir kurulumda (depodan koşarken) bu ikisi ayrışır ve
+        tek bir sayı göstermek yanlış olurdu.
+
+        UÇ ADRESİ ARTIK BURADAN GELMİYOR. Eski gövde `checkPath`/`installPath`
+        veriyordu ve gerekçesi doğruydu: adresi veren, o adresi karşılayan
+        taraf olmalı. Bugün karşılayan taraf kabuk; komutların adı da onun
+        ikilisine gömülü. Adı burada ikinci kez yazmak, hiçbir zaman
+        denetlenmeyen bir kopya tutmak olurdu.
         """
         return {
+            # Çekirdeğin sürümü. Kabuk kendi sürümünü ayrıca bildirir.
             "version": request.app.version,
+            # Bu SÜREÇTE denetleme/kurulum ucu yok (yukarıdaki gerekçe).
             "canCheck": False,
             "canInstall": False,
             "checkPath": None,
             "installPath": None,
-            "reason": "Bu kurulumda güncelleme ucu yok: kabuğun güncelleyicisi "
-                      "yapılandırılmamış ve çekirdekte kurulum ucu bulunmuyor. "
-                      "Güncelleme şimdilik depodan elle yapılır.",
-            "lastChecked": None,
+            # Güncellemeyi kim yürütüyor: kabuk (Tauri güncelleyicisi).
+            "handledBy": "shell",
+            "source": "GitHub Releases",
+            "reason": "Güncelleme uygulamanın kabuğunda çalışır: sürüm listesi "
+                      "GitHub Releases'ten okunur, paket imzasıyla birlikte "
+                      "indirilir ve kurulum kullanıcının onayıyla yapılır. "
+                      "Çekirdek kendi altındaki dosyaları değiştiremeyeceği "
+                      "için burada bir kurulum ucu yoktur.",
         }
 
     # ----------------------------------------------------------- tanılama

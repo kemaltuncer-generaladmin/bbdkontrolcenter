@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kontrol Merkezi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.benimdunyam.kontrolmerkezi",
   "build": {
     "frontendDist": "../shell"
@@ -26,8 +26,20 @@
     },
     "withGlobalTauri": true
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVGRjEyMTA2ODY1RDBFNDcKUldSSERsMkdCaUh4WHpxeHl0bjhsL0FTbUJHMXNCaENpakxmb3JBOE9mUFVWdFpqWDZWK0U0L2MK",
+      "endpoints": [
+        "https://github.com/kemaltuncer-generaladmin/bbdkontrolcenter/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
       "deb",
       "appimage",
@@ -38,7 +50,10 @@
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/icon.png"
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
     ],
     "category": "Utility",
     "publisher": "Benim Dünyam Şirketler Grubu",

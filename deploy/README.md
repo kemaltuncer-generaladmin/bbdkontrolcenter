@@ -54,8 +54,50 @@ git push origin v0.1.0
 `main`'e yapılan sıradan push'lar derleme başlatmaz: bu bir masaüstü
 uygulamasıdır, her commit'te üç platform derlemek koşucu zamanını boşa harcar.
 
-İş akışında **imzalama adımı yoktur** (ADR 0023 §5) — aşağıdaki SmartScreen
-bölümü geçerlidir.
+İş akışında **kod imzalama adımı yoktur** (ADR 0023 §5) — aşağıdaki
+SmartScreen bölümü geçerlidir. Güncelleme imzası ayrı bir şeydir; bir sonraki
+bölüm onu anlatır.
+
+### Otomatik güncelleme — yayına ne eklenir
+
+Kurulu uygulama, **Sistem Ayarları → Güncelleme** sekmesinden bu depodaki en
+son yayına bakar. Denetleme, indirme ve kurulum üç ayrı düğmedir: uygulama
+kendiliğinden indirmez ve kendiliğinden yeniden başlamaz.
+
+Yayına üç tür dosya girer:
+
+| Dosya | Ne işe yarar |
+|---|---|
+| `*-setup.exe`, `*.AppImage`, `*.dmg`, `*.deb` | elle kurulum |
+| `*.app.tar.gz` | macOS'un **güncelleme** paketi (kullanıcı bunu indirmez) |
+| `*.sig` | paketin imzası |
+| `latest.json` | hangi platform hangi paketi indirecek |
+
+`latest.json` iş akışının son adımında üretilir: paketler yayına yüklendikten
+sonra gerçek indirme adresleri okunur ve dosya ona göre yazılır. Adres
+tahmin edilmez — GitHub varlık adlarındaki boşlukları noktaya çevirdiği için
+kalıptan kurulan bir adres indirme anında 404 verirdi.
+
+**İki GitHub Secret gerekir** (Settings → Secrets and variables → Actions):
+
+| Secret | İçerik |
+|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | `tauri signer generate` ile üretilen özel anahtar dosyasının **içeriği** |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | anahtarın parolası; parolasız anahtarda **boş** bırakılır |
+
+Açık anahtar sır değildir ve `apps/desktop/src-tauri/tauri.conf.json` içinde
+`plugins.updater.pubkey` olarak durur. **Özel anahtar depoya konmaz (K8).**
+İkisi bir çifttir: özel anahtar yenilenirse `pubkey` de aynı anda
+güncellenmelidir, yoksa yeni paketleri eski kurulumlar reddeder — ve
+kaybedilen bir özel anahtarın yerine yenisi konana kadar hiçbir kurulu
+uygulama güncellenemez.
+
+Secret tanımlı değilse paketler imzasız çıkar, `latest.json` adımı **açık bir
+hatayla durur** ve güncellenemeyen bir sürüm sessizce yayınlanmış olmaz.
+
+Kendi kendini güncelleyen biçimler: Windows kurucusu (NSIS), macOS uygulaması
+ve Linux **AppImage**. `.deb` ile kurulmuş bir uygulama güncelleme paketini
+bulamaz; ekran bunu sebebiyle birlikte söyler.
 
 ### 2. Yol — yerel betik
 

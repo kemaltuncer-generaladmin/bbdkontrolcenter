@@ -158,9 +158,12 @@ def core_tabs() -> list[dict[str, Any]]:
             "title": "Güncelleme",
             "kind": "core",
             "requires": [MANAGE_PERMISSION],
-            # Yazılabilir alanı YOK. Sürüm ve güncelleme durumu
-            # `GET /api/settings/update` ile gelir; ekranda düğmeler ancak
-            # gerçekten bir uç varsa çalışır (sahte düğme konmaz).
+            # Yazılabilir alanı YOK — ve olmayacak. Çekirdek sürümü
+            # `GET /api/settings/update` ile gelir; denetleme, indirme ve
+            # kurulum ise KABUKTA çalışır (Tauri güncelleyicisi). Buraya
+            # "otomatik güncelle" gibi bir onay kutusu konmaz: çekirdeğin
+            # deposuna yazılan bir ayarı kabuk okumuyor, okuduğunu sanmak
+            # hiçbir şeyi çevirmeyen bir düğme koymak olurdu.
             "groups": [],
         },
         {
