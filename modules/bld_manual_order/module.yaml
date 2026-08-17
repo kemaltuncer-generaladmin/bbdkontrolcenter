@@ -1,0 +1,127 @@
+# Elle Sipariş — personel müşteriyle TELEFONDAYKEN sipariş açar.
+#
+# Devraldığı akış BLD'nin TastyIgniter admin panelindeki `Admin\PhoneOrders`
+# ekranıdır; o panel kapatılıyor ve elle sipariş girmenin başka yolu kalmıyor
+# (`BLD/docs/control/orders.md` → "POST / — yeni sipariş").
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı,
+# zaman penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin
+# işidir.
+#
+# KENDİ TABLOSU YOKTUR ve `migrations` alanı BİLEREK İLAN EDİLMEMİŞTİR.
+# Sipariş, müşteri, ürün ve stok kaydı BLD'dedir; buraya kopyalanmaz. Yerel bir
+# tablonun tutabileceği tek şey yazma gerekçesinin izi olurdu — onu zaten geçit
+# tutuyor: `bld_api` her yazmada, istek çıkmadan ÖNCE `mod_bld_api_audit`
+# satırını açıyor (`bld_api/backend/client.py` → beşinci politika). İkinci bir
+# defter, aynı satırı iki yerde tutup birinin eksik kalmasına açık kapı
+# bırakırdı. Boş bir göç dizini ilan etmek de çekirdeğe var olmayan bir dizini
+# taratmak olurdu.
+#
+# İŞ MANTIĞI BURADA DEĞİL SUNUCUDADIR. Fiyat, satır çözümleme, stok düşümü,
+# müşteri açma ve serbest bırakma kararı `Services\OrderFactory::create()`
+# içindedir ve uç onu `adminContext: true` ile çağırır. Bu ekran o kararların
+# hiçbirinin kopyasını taşımaz; yalnız gövdeyi doğru kurar ve sunucunun
+# cevabını Türkçeleştirir.
+#
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: bld_manual_order
+name: "Elle Sipariş"
+description: "Telefonla alınan siparişin merkezden açılması: müşteri, servis günü, kalemler, ödeme."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
+provides: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Sipariş açma ucu (`POST /api/control/orders`), müşteri araması, ürün
+      kataloğu, satış ayarı ve gün stoğu BLD sunucusundadır
+      (`docs/control/orders.md` · `customers.md` · `products.md` ·
+      `settings.md` · `menu.md`) ve oraya yalnız geçitten gidilir (K4). İmza,
+      nonce, zaman penceresi ve oran sınırı tek yerde durur; her ekranın kendi
+      istemcisini yazması aynı hatayı yirmi yerde tekrarlardı. Panel yolu
+      (`/api/control/*`) KDS yolundan ayrı bir hız kovası kullanıyor
+      (`bld-control-panel`, 3000/saat) ve o ayrımı da geçit koruyor.
+
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bld_manual_order
+  router: backend.api.routes:router
+  tags: ["bld_manual_order"]
+  requires: [bld_manual_order.view]
+
+ui:
+  entry: ui/panel/index.js
+  nav:
+    title: "Manuel Sipariş Ekranı"
+    icon: phone
+    group: "BLD"
+    # Sipariş Yönetimi (510) ile KDS Yönetimi (520) ARASINA girer: personel
+    # önce siparişi açar, sonra listede görür, en sonda mutfağa bakar. Menü
+    # sırası o akışı izlemezse ekran her seferinde aranır.
+    order: 515
+    requires: [bld_manual_order.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+#
+# İKİ ANAHTAR, ÜÇ DEĞİL. `bld_orders` üçüncü bir anahtarı (iptal) PARA yüzünden
+# ayırıyor; burada para hareketi üreten ikinci bir eylem YOK: ekranın tek
+# yazması sipariş açmaktır. Var olmayan bir ayrım için anahtar açmak, gerçek
+# ayrımların anlamını ucuzlatırdı.
+#
+# İSKELETTEKİ BEŞ ROLLÜ SATIR KULLANILMADI (kodlama başladı; "tüm rollere açık"
+# geliştirme kuralı artık geçerli değil). Ekran müşteri telefonunu, ürün
+# fiyatını ve ciroyu gösteriyor: `bbd_staff` mağaza tarafındadır, `org_staff`
+# zil/baskı/rehber ile sınırlıdır, `accountant` mali ekranlara bakar ve sipariş
+# açmaz.
+#
+# GEREKÇE ZORUNLU DEĞİL, bu yüzden hiçbir izin `destructive: true` taşımaz.
+# Sözleşme (`orders.md` → "POST /") gerekçeyi bilerek opsiyonel bıraktı:
+# telefon siparişi açmak rutin bir KAYIT akışıdır, geri alınması zor ve
+# müşteriye görünür bir işlem değildir. Personel müşteriyle konuşurken on
+# karakter yazmak zorunda kalsaydı sınırın kaçındığı şey üretilirdi
+# ("sipariş", "asdasd"). `actor` yine de her yazmada gider — gerekçe seyreldi,
+# iz seyrelmedi.
+permissions:
+  - key: bld_manual_order.view
+    description: >
+      Elle sipariş ekranını açma: müşteri arama, ürün kataloğu, servis gününün
+      kesim saati ve stok durumu. Müşteri okumaları KVKK gereği BLD tarafında
+      `actor` ile denetlenir.
+    default_roles: [admin, bld_staff]
+  - key: bld_manual_order.manage
+    description: >
+      Sipariş açma. Sipariş `onaylandi` doğar ve servis günü bugünse ANINDA
+      mutfak ekranına düşer; ileri tarihliyse o günün kesim anında düşer.
+      Kayıtlı müşterisi olmayan arayan için telefonla yeni müşteri kaydı da bu
+      yetkiyle açılır.
+    default_roles: [admin, bld_staff]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir, saat dilimi çözümü Python'un `zoneinfo`u.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). Bu ekran dosya yazmaz, baskı yapmaz,
+    SMS göndermez — `printer` ve `notify` yetenekleri İSTENMEZ.
+
+tasks: []

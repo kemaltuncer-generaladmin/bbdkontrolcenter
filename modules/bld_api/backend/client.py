@@ -2104,10 +2104,26 @@ class BldApi:
     # bir liste ekranı mutfağın kasa yönetimini kilitlerdi.
 
     register_dry_run(
+        rf"^{ORDERS}$",
         rf"^{ORDERS}/\d+/revisions$",
         rf"^{ORDERS}/\d+/status$",
         rf"^{ORDERS}/\d+/cancel$",
     )
+
+    # GEREKÇE MUAFİYETİ — bu alanda YALNIZ `POST /orders` (elle sipariş).
+    #
+    # Ölçüt `control/menu` alanında konulanın aynısı: işlem müşteriye GÖRÜNÜR
+    # HÂLE GELİYOR mu ve GERİ ALINMASI ZOR mu. Telefon siparişini kaydetmek
+    # rutin bir veri girişidir; personel müşteriyle konuşurken on karakter
+    # yazmak zorunda kalsaydı sınırın kaçındığı metinlerin ta kendisi
+    # üretilirdi ("sipariş", "asdasd"). Sunucu da bu uçta `reasonRequired:
+    # false` diyor (`Control\OrderController::store`); defter ondan ayrı
+    # kalsaydı geçit, sunucunun kabul ettiği bir çağrıyı yerelde keserdi.
+    #
+    # ALANIN GERİSİ MUAF DEĞİL: revizyon, durum geçişi ve iptal gerekçe ister
+    # — üçü de müşteriye görünür ve geri alınması zordur. Sipariş AÇMAK ile
+    # sipariş İPTAL ETMEK arasındaki fark tam olarak budur.
+    register_reason_optional(("POST", rf"^{ORDERS}$"))
 
     async def order_list(
         self, *, service_date: str = "", date_from: str = "", date_to: str = "",
@@ -2135,6 +2151,134 @@ class BldApi:
             customer_id=customer_id, subscription_id=subscription_id, source=source, q=q,
             **self._paging(page, per_page),
         ))
+
+    async def create_order(
+        self, *, service_date: str, delivery_type: str, payment_method: str,
+        items: list[dict[str, Any]], customer_id: int | None = None,
+        customer: dict[str, Any] | None = None, address: dict[str, Any] | None = None,
+        customer_note: str = "", location_id: int | None = None,
+        reason: str = "", actor: str, dry_run: bool | None = None,
+    ) -> dict[str, Any]:
+        """Elle sipariş — POST /api/control/orders. **Gerekçe İSTEMEZ.**
+
+        Müşteri telefonla arıyor, personel siparişi giriyor. Bu uç TastyIgniter
+        yönetim panelindeki `Admin\\PhoneOrders` ekranını devralıyor ve o panel
+        kapandığında **elle sipariş girmenin başka yolu kalmıyor.**
+
+        SİPARİŞ PENCERESİ BİLEREK ATLANIYOR. Sunucu `OrderFactory::create()`'i
+        `adminContext: true` ile çağırıyor: kesim saati, ileri görüş penceresi,
+        satış şalteri, asgari sepet tutarı ve menü üyeliği denetlenmiyor. Bu bir
+        ONAY akışı değil KAYIT akışıdır — istisnayı telefondaki insan verdi,
+        sistemin aynı kararı ikinci kez sorgulaması işi yapılamaz kılardı.
+        Atlanmayan tek kapı ödeme yöntemi (aşağıda) — vitrinde tanımlı olmayan
+        bir yöntemle açılan sipariş tahsilat tarafında karşılıksız kalır.
+
+        SİPARİŞ `onaylandi` DOĞAR. `yeni` bırakılsaydı mutfağa hiç düşmez, tek
+        belirtisi aç kalan bir müşteri olurdu. Bugüne açılan sipariş ANINDA
+        KDS'e düşer, ileri tarihli olan o günün kesim anında.
+
+        `service_date` ZORUNLU VE TÜRETİLMEZ: sessizce bugüne düşmesi, yarına
+        alınan bir siparişin bugün pişmesi demekti. **`requested_at` alanı
+        YOKTUR** — saati sunucu çözer (bugünse "şimdi", ileriyse 12:00);
+        gerekirse `revise_order` üzerinden yazılır.
+
+        Müşteri İKİ KİPTEN BİRİYLE verilir: `customer_id` (kayıtlı) ya da
+        `customer={"name": ..., "phone": ...}` (telefonda ilk kez arayan).
+        Yenisi `bld_account_type = corporate` ve yer tutucu e-posta ile açılır;
+        **aynı telefonla ikinci sipariş ikinci müşteri yaratmaz** çünkü yer
+        tutucu adres ulusal numaradan türüyor. Yanıttaki `customer.created`
+        hangisinin olduğunu söyler. Kayıtlı bir müşterinin telefonu
+        EŞLEŞTİRİLMEZ (santral numarası birden çok kayıtta durabilir); arama
+        `customers()` ucundadır.
+
+        Stok tavanı AŞILABİLİR (`allowOvershoot: true`): personel "bir porsiyon
+        daha çıkarırız" diyebilir, sipariş reddedilmez, aşım kayda geçer.
+
+        KURU PROVA KALEMİ, FİYATI VE STOĞU DENETLEMEZ — yalnız ödeme yöntemi
+        kapısını ve müşteri çözümlemesini gerçekten koşar. "Gövde doğru mu"
+        sorusunun cevabıdır, "sipariş geçecek mi" sorusunun değil; satılmayan
+        bir ürün gerçek gönderimde `validation` (`ITEM_UNAVAILABLE`) verir.
+
+        Yanıt `data` (liste satırının aynı biçimi), `customer` ve `warnings`
+        taşır. `warnings` dolu ve `ok` yine `true` ise sipariş YAZILDI ama
+        `onaylandi` geçişi patladı: kaybolmadı, `change_order_status` ile elle
+        onaylanır.
+        """
+        if payment_method not in ("online", "cash"):
+            raise BldApiError(
+                f"Tanınmayan ödeme yöntemi: {payment_method}. Geçerli değerler: "
+                "online, cash. Cari hesap (`account`) iş modelinden kalktı ve "
+                "sunucu bu değeri 422 ile reddeder.",
+                code="payload",
+            )
+        if bool(customer_id) == bool(customer):
+            # İKİSİ BİRDEN DE HATA: sunucu `customer_id`'yi seçer ve `customer`
+            # nesnesini sessizce yok sayar. Ekran yeni müşteri açtığını sanırken
+            # sipariş başka bir hesaba yazılırdı — ve fark, o hesabın sahibi
+            # yemediği bir yemeğin faturasını görene kadar anlaşılmazdı.
+            raise BldApiError(
+                "Müşteri iki kipten biriyle verilir: kayıtlı müşteri için "
+                "`customer_id`, telefonda ilk kez arayan için "
+                "`customer={'name': ..., 'phone': ...}`. İkisi birden ya da hiçbiri "
+                "gönderilemez.",
+                code="payload",
+            )
+        new_customer = dict(customer or {})
+        if customer is not None and not (str(new_customer.get("name") or "").strip()
+                                         and str(new_customer.get("phone") or "").strip()):
+            # TELEFON YER TUTUCU E-POSTAYI ÜRETİYOR (`tel-<numara>@bld.invalid`)
+            # ve `customers.email` çekirdekte TEKİL: rakamsız bir giriş
+            # `tel-@bld.invalid` üretir, ikinci rakamsız müşteri de aynı adrese
+            # düşer ve iki ayrı kurum tek kayda karışırdı.
+            raise BldApiError(
+                "Yeni müşteri `name` ve `phone` ister: yer tutucu e-posta "
+                "telefondan türüyor ve numarasız bir kayıt başka bir numarasız "
+                "kayıtla aynı adrese düşerdi.",
+                code="payload",
+            )
+        if not items:
+            raise BldApiError(
+                "Sipariş en az bir kalem ister: kalemsiz bir sipariş mutfağa boş "
+                "bir fiş olarak düşerdi.",
+                code="payload",
+            )
+        delivery_address = dict(address or {})
+        if delivery_type == "delivery" and not all(
+            str(delivery_address.get(field) or "").strip()
+            for field in ("line1", "district", "city")
+        ):
+            raise BldApiError(
+                "Teslimatlı siparişte adres zorunlu: `line1`, `district` ve `city` "
+                "dolu olmalı (`note` isteğe bağlı). Eksik adresle kurye siparişi "
+                "nereye götüreceğini bilemezdi.",
+                code="payload",
+            )
+        body: dict[str, Any] = {
+            "service_date": self._date(service_date),
+            "delivery_type": delivery_type,
+            "payment_method": payment_method,
+            # KALEMLER OLDUĞU GİBİ GEÇER, AYIKLANMAZ: bilinen alanları seçip
+            # gerisini atan bir dönüşüm `option_value_ids`'i düşürürdü —
+            # "ekstra peynir" silinir, sipariş ucuzlar, mutfak yanlış yemeği
+            # yapar. Aynı gerekçe `revise_order` içinde de yazılı.
+            "items": [dict(item) for item in items],
+        }
+        if customer_id:
+            body["customer_id"] = int(customer_id)
+        else:
+            body["customer"] = new_customer
+        if delivery_type == "delivery":
+            # `pickup` siparişte adres GÖNDERİLMEZ: sunucu onu zaten `null`'a
+            # çeviriyor ve yollamak, denetim izine hiçbir yerde kullanılmayan
+            # bir adres yazdırırdı.
+            body["address"] = delivery_address
+        if customer_note:
+            body["customer_note"] = customer_note
+        if location_id is not None:
+            body["location_id"] = int(location_id)
+        return await self._request("POST", ORDERS, body=body, reason=reason, actor=actor,
+                                   dry_run=dry_run, action="order.create",
+                                   reason_max=MAX_REASON)
 
     async def order_detail(self, order_id: int) -> dict[str, Any]:
         """Tek sipariş, düzenlenebilir görünüm — GET /control/orders/{order}.

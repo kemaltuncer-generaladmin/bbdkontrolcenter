@@ -9,7 +9,7 @@ NEDEN BU TEST VAR — KORUDUĞU ARIZA
 
     Kilit tersten de bozulabilir: yeni bir alan eklenip deseni kaydedilmezse o
     alanın bütün yazmaları sessiz bir no-op'a döner ve ekran "yazıldı" derken
-    hiçbir şey değişmez. On üç alan ve yetmiş beş yazma metoduyla bu, unutması
+    hiçbir şey değişmez. On üç alan ve yetmiş altı yazma metoduyla bu, unutması
     en kolay adımdır.
 
 İKİ TEST, İKİ AYRI SORU
@@ -131,6 +131,11 @@ WRITES: tuple[tuple[str, Cagri], ...] = (
      lambda api: api.delete_closed_day("2026-08-30", reason=GEREKCE, actor=AKTOR)),
 
     # --- orders (panel yolu) ---
+    ("create_order",
+     lambda api: api.create_order(service_date="2026-08-18", delivery_type="pickup",
+                                  payment_method="cash", customer_id=312,
+                                  items=[{"menu_id": 88, "quantity": 12}],
+                                  reason=GEREKCE, actor=AKTOR)),
     ("revise_order",
      lambda api: api.revise_order(8421, items=[{"menu_id": 88, "quantity": 10}],
                                   reason=GEREKCE, actor=AKTOR)),

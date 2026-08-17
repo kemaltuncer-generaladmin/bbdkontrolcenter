@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_manual_order ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI olmalıdır: açık kalırsa panelden açılan her sipariş sessizce provaya döner, ekran 'sipariş açıldı' der ve mutfakta hiçbir şey görünmez. Servis yine de her geçit çağrısında `dry_run=` değerini açıkça geçirir."
+    },
+    "customer_page_size": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "description": "Müşteri aramasının sayfa boyutu. Sözleşme tavanı 100."
+    },
+    "min_search_chars": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 6,
+      "description": "Müşteri aramasının açılması için gereken en az karakter. Sunucu iki karakter istiyor; daha kısasını hiç göndermemek, KVKK denetim izini personelin her tuşuyla şişirmemek içindir."
+    }
+  }
+}

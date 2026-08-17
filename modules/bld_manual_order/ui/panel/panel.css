@@ -1,0 +1,203 @@
+/* Elle Sipariş paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bmo-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bmo-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bmo` kökünün kendisidir — o da panelin kendi öneki.
+
+   ÖNEK BENZERSİZ OLMALI: aynı kabukta `bo` (Sipariş Yönetimi), `bk` (KDS) ve
+   `bm` (Menü) yüklü duruyor. `bmo` üçünden de ayrıdır; `bm` seçilseydi Menü
+   panelinin kuralları bu panele sızardı. */
+
+.bmo {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bmo > * { flex: none; }
+
+.bmo-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;                     /* dikey kayma GÖVDEDE, sayfada değil */
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bmo-body > * { flex: none; }
+
+.bmo-stack { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.bmo-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.bmo-dim { color: var(--soft); font-size: 11.5px; line-height: 1.5; }
+
+/* --------------------------------------------------------------- müşteri */
+
+.bmo-search { width: 100%; max-width: 420px; }
+
+.bmo-found {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.bmo-found:empty { display: none; }    /* boş çerçeve "sonuç var" sanılırdı */
+
+/* Arama sonucu satırı: ad solda, telefon ve unvan yanında küçük. Telefon
+   MASKELENMEZ — personel müşteriyi numarasından tanır ve maskeli bir listede
+   doğru kaydı seçemez. */
+.bmo-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 11px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.bmo-hit:last-child { border-bottom: 0; }
+.bmo-hit:hover { background: var(--tint); }
+.bmo-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.bmo-hit-name { font-weight: 600; }
+.bmo-hit-meta { color: var(--soft); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+/* Seçili müşteri: telefonda konuşurken "kimin siparişi" sorusunun cevabı
+   ekranda sabit durmalı. */
+.bmo-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 11px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, #fff);
+}
+.bmo-chip-name { font-weight: 600; }
+.bmo-chip-meta { color: var(--soft); font-variant-numeric: tabular-nums; }
+
+.bmo-newbox { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+/* ------------------------------------------------------------------ alanlar */
+
+.bmo-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bmo-field-label { font-size: 11.5px; color: var(--soft); }
+
+.bmo-grid2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.bmo-wide { grid-column: 1 / -1; }
+
+.bmo-addr:empty { display: none; }
+
+/* ----------------------------------------------------------------- kalemler */
+
+.bmo-items { display: flex; flex-direction: column; gap: 6px; }
+
+/* Satır: ad+fiyat esner, adet dar ve sayısal, not esner, çıkar sabit.
+   Adet SATIRIN ÜSTÜNDE düzenlenir — ayrı bir pencere, telefonda "üç olsun"
+   diyen müşteri için iki tık daha demekti. */
+.bmo-item {
+  display: grid;
+  grid-template-columns: minmax(160px, 2fr) 78px minmax(140px, 2fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.bmo-item-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bmo-item-name > span:first-child {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bmo-qty { text-align: right; font-variant-numeric: tabular-nums; }
+.bmo-item-note { min-width: 0; }
+
+@media (max-width: 720px) {
+  /* Dar pencerede satır tek sütuna iner: yatayda taşan bir sepet, adet
+     kutusunu ekran dışında bırakırdı. */
+  .bmo-item { grid-template-columns: 1fr; }
+  .bmo-qty { width: 78px; }
+}
+
+/* -------------------------------------------------------------------- özet */
+
+/* Özet ŞERİDİ gövdenin sonunda durur ve yapışkan DEĞİLDİR: yapışkan bir şerit,
+   kısa pencerelerde kalem listesinin son satırını kapatırdı. Kaydetme
+   düğmesine ulaşmak için sepetin sonuna inmek zaten doğal akış. */
+.bmo-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+
+.bmo-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bmo-total-label { font-size: 11.5px; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
+.bmo-total-value {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.bmo-reason { flex: 1; min-width: 220px; }
+
+/* Sonuç: sipariş numarası BAŞARI MESAJININ KENDİSİDİR — personel telefondaki
+   müşteriye onu okur, bu yüzden en büyük yazı odur. */
+.bmo-ok {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--good) 35%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--good) 7%, #fff);
+}
+.bmo-ok-no {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--good);
+}
+
+/* Seçicinin listesi uzun: kendi yüksekliğiyle gövdeyi itmesin diye sınırlanır
+   ve kendi içinde kayar. Kitin `pk-list`i yüksekliği çağırana bırakıyor. */
+.bmo .pk-list { max-height: 260px; overflow: auto; }

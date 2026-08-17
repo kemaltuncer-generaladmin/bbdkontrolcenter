@@ -435,6 +435,143 @@ async def test_bos_revizyon_listesi_reddedilir() -> None:
     assert hata.value.code == "payload"
 
 
+# ------------------------------------------- elle sipariş (`POST /orders`)
+
+async def test_elle_siparis_yolu_fiili_ve_govdesi() -> None:
+    """Sözleşmenin gövdesi birebir gider — alan uydurulmaz, alan düşürülmez."""
+    istekler: list[httpx.Request] = []
+    api, _, _, _ = gateway(kaydeden(istekler, {"ok": True, "data": {"id": 8421}}))
+
+    await api.create_order(
+        customer_id=312, service_date="2026-08-18", delivery_type="delivery",
+        address={"line1": "Örnek Mah. 12. Sk No:3", "district": "Selçuklu",
+                 "city": "Konya", "note": "Zili çalmayın"},
+        payment_method="cash",
+        items=[{"menu_id": 88, "quantity": 12, "option_value_ids": [7], "note": None}],
+        customer_note="Fatura kuruma kesilecek", actor=AKTOR,
+    )
+
+    assert istekler[0].method == "POST"
+    # KDS önekine DÜŞMEZ: `control/kds` altında bu ucun karşılığı yok, mutfak
+    # kasası sipariş açmaz.
+    assert istekler[0].url.path == "/api/control/orders"
+    govde = json.loads(istekler[0].content)
+    assert govde["customer_id"] == 312
+    assert govde["service_date"] == "2026-08-18"
+    assert govde["delivery_type"] == "delivery"
+    assert govde["payment_method"] == "cash"
+    assert govde["address"]["note"] == "Zili çalmayın"
+    assert govde["customer_note"] == "Fatura kuruma kesilecek"
+    # KALEM OLDUĞU GİBİ: `option_value_ids` düşseydi "ekstra peynir" silinir,
+    # sipariş ucuzlar, mutfak yanlış yemeği yapardı.
+    assert govde["items"] == [
+        {"menu_id": 88, "quantity": 12, "option_value_ids": [7], "note": None},
+    ]
+    # SÖZLEŞMEDE OLMAYAN ALAN UYDURULMAZ: saati sunucu çözüyor.
+    assert "requested_at" not in govde
+
+
+async def test_elle_sipariste_kuru_prova_bayragi_govdeye_konur() -> None:
+    """Yol defterde: bayrak telde gider ve istek gerçekten çıkar.
+
+    Defterde olmasaydı istek HİÇ gönderilmez, ekran "prova geçti" sanırdı.
+    """
+    istekler: list[httpx.Request] = []
+    api, _, _, _ = gateway(kaydeden(istekler, {"ok": True, "dry_run": True}))
+
+    sonuc = await api.create_order(
+        customer_id=312, service_date="2026-08-18", delivery_type="pickup",
+        payment_method="online", items=[{"menu_id": 88, "quantity": 2}],
+        actor=AKTOR, dry_run=True,
+    )
+
+    assert sonuc.get("sent") is not False
+    assert json.loads(istekler[0].content)["dry_run"] is True
+
+
+async def test_yeni_musteri_kipinde_kimlik_gonderilmez() -> None:
+    """Telefonda ilk kez arayan: `customer` nesnesi, `customer_id` YOK."""
+    istekler: list[httpx.Request] = []
+    api, _, _, _ = gateway(kaydeden(istekler))
+
+    await api.create_order(
+        customer={"name": "Acme Gıda", "phone": "0532 123 45 67"},
+        service_date="2026-08-18", delivery_type="pickup", payment_method="cash",
+        items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR,
+    )
+
+    govde = json.loads(istekler[0].content)
+    assert govde["customer"] == {"name": "Acme Gıda", "phone": "0532 123 45 67"}
+    assert "customer_id" not in govde
+
+
+async def test_alma_sipariste_adres_govdeye_konmaz() -> None:
+    """`pickup` siparişte adres alanı hiç gitmez: sunucu onu zaten `null` yapıyor
+    ve göndermek denetim izine hiç kullanılmayan bir adres yazdırırdı."""
+    istekler: list[httpx.Request] = []
+    api, _, _, _ = gateway(kaydeden(istekler))
+
+    await api.create_order(
+        customer_id=312, service_date="2026-08-18", delivery_type="pickup",
+        payment_method="cash", items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR,
+    )
+
+    assert "address" not in json.loads(istekler[0].content)
+
+
+@pytest.mark.parametrize("cagri", [
+    # Cari hesap iş modelinden kalktı; sunucu 422 verirdi.
+    lambda api: api.create_order(customer_id=312, service_date="2026-08-18",
+                                 delivery_type="pickup", payment_method="account",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # Müşterisiz: sipariş kimin hesabına yazılacağı belirsiz kalırdı.
+    lambda api: api.create_order(service_date="2026-08-18", delivery_type="pickup",
+                                 payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # İkisi birden: sunucu `customer_id`'yi seçer, `customer` sessizce yok
+    # sayılır ve ekran yeni müşteri açtığını sanırdı.
+    lambda api: api.create_order(customer_id=312, customer={"name": "Acme",
+                                                            "phone": "5321234567"},
+                                 service_date="2026-08-18", delivery_type="pickup",
+                                 payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # Numarasız yeni müşteri: yer tutucu e-posta telefondan türüyor.
+    lambda api: api.create_order(customer={"name": "Acme", "phone": " "},
+                                 service_date="2026-08-18", delivery_type="pickup",
+                                 payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # Kalemsiz sipariş mutfağa boş bir fiş olarak düşerdi.
+    lambda api: api.create_order(customer_id=312, service_date="2026-08-18",
+                                 delivery_type="pickup", payment_method="cash",
+                                 items=[], actor=AKTOR),
+    # Teslimat var, adres yok: kurye nereye götüreceğini bilemezdi.
+    lambda api: api.create_order(customer_id=312, service_date="2026-08-18",
+                                 delivery_type="delivery", payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # Adres eksik: `city` boş.
+    lambda api: api.create_order(customer_id=312, service_date="2026-08-18",
+                                 delivery_type="delivery",
+                                 address={"line1": "Örnek Mah.", "district": "Selçuklu"},
+                                 payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+    # Bozuk servis günü.
+    lambda api: api.create_order(customer_id=312, service_date="18.08.2026",
+                                 delivery_type="pickup", payment_method="cash",
+                                 items=[{"menu_id": 88, "quantity": 2}], actor=AKTOR),
+], ids=["odeme", "musterisiz", "iki-musteri", "numarasiz", "kalemsiz", "adressiz",
+        "eksik-adres", "bozuk-gun"])
+async def test_elle_siparis_govdesi_istek_cikmadan_denetlenir(cagri: Any) -> None:
+    """Hatalı gövde hız kovasından pay HARCAMADAN durur ve hata anlaşılır olur."""
+    def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("istek gitmemeliydi")
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(BldApiError) as hata:
+        await cagri(api)
+
+    assert hata.value.code == "payload"
+
+
 async def test_abonelik_alt_yollari_kimlik_sanilmaz() -> None:
     """Sunucuda sabit parçalı yollar `{subscription}` önünde kayıtlı olmalı;
     istemci tarafındaki karşılığı, kimliğin o parçaların yerine konmaması."""

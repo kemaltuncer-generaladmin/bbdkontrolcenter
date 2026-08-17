@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 import pytest
-from bld_api_backend.client import MENU, BldApi
+from bld_api_backend.client import MENU, ORDERS, BldApi
 from bld_api_backend.errors import BldApiError
 from bld_api_fakes import gateway
 
@@ -224,11 +224,13 @@ async def test_ayni_yolun_iki_fiili_ayri_politikadadir() -> None:
     lambda api: api.pause_ordering(reason="", actor=AKTOR),
     lambda api: api.cancel_order(8421, reason="", actor=AKTOR),
 ], ids=["kds", "products", "settings", "orders"])
-async def test_menu_disi_alanlar_degismedi(cagri: Cagri) -> None:
-    """KAPSAM YALNIZ `control/menu`.
+async def test_muafiyet_defteri_alanlara_yayilmadi(cagri: Cagri) -> None:
+    """MUAFİYET ADI ADINA VERİLDİ, ALANA DEĞİL.
 
-    Diğer on iki alan bu turda DEĞİŞMEDİ; muafiyet defteri boş bir küresel
-    gevşetme değil, adı adına yazılmış altı satırdır.
+    Defterde bugün yedi satır var: `control/menu`'nün altısı ve `control/orders`
+    alanından YALNIZ `POST /orders`. Muafiyet bir alanın tamamına verilseydi,
+    aşağıdaki `cancel_order` da sessizce gerekçesiz geçerdi — oysa iptal
+    müşteriye görünür ve geri alınması zor bir işlemdir.
     """
     def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
         raise AssertionError("istek gitmemeliydi")
@@ -238,6 +240,83 @@ async def test_menu_disi_alanlar_degismedi(cagri: Cagri) -> None:
         await cagri(api)
 
     assert hata.value.code == "reason_required"
+
+
+# ------------------------------------------- elle sipariş (`POST /orders`)
+#
+# Sunucu bu uçta `reasonRequired: false` diyor. Defter ondan ayrı kalsaydı
+# geçit, sunucunun kabul ettiği bir çağrıyı YERELDE keserdi: personel telefonda
+# konuşurken on karakterlik bir gerekçe yazmak zorunda kalır, sınırın kaçındığı
+# metinler ("sipariş", "asdasd") üretilirdi.
+
+def _siparis(api: BldApi, **ek: Any) -> Any:
+    return api.create_order(service_date="2026-08-18", delivery_type="pickup",
+                            payment_method="cash", customer_id=312,
+                            items=[{"menu_id": 88, "quantity": 12}], **ek)
+
+
+async def test_elle_siparis_gerekcesiz_gecer() -> None:
+    """Gerekçesiz çağrı yerelde DURMAZ ve gövdede boş bir `reason` alanı olmaz."""
+    gonderilen: list[httpx.Request] = []
+    api, _, _, _ = gateway(_kabul(gonderilen))
+
+    await _siparis(api, actor=AKTOR)
+
+    assert len(gonderilen) == 1, "gerekçesiz sipariş yerelde durduruldu"
+    govde = json.loads(gonderilen[0].content)
+    assert "reason" not in govde
+    # GEREKÇE SEYRELDİ, İZ SEYRELMEDİ.
+    assert govde["actor"] == AKTOR
+
+
+async def test_elle_siparis_gerekcesiz_de_olsa_denetim_satiri_acar() -> None:
+    """Ağ koparsa "kim hangi siparişi denedi" sorusunun cevabı yalnız burada."""
+    gonderilen: list[httpx.Request] = []
+    api, depo, _, _ = gateway(_kabul(gonderilen))
+
+    await _siparis(api, actor=AKTOR)
+
+    assert len(depo.audit) == 1
+    assert depo.audit[0]["action"] == "order.create"
+    assert depo.audit[0]["actor"] == AKTOR
+    assert depo.audit[0]["reason"] == ""
+
+
+async def test_elle_siparis_aktorsuz_gecmez() -> None:
+    """Muafiyet defteri AKTÖRÜ KAPSAMAZ: seyrekleşen soru "neden", "kim" değil."""
+    def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("istek gitmemeliydi")
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(BldApiError) as hata:
+        await _siparis(api, actor="  ")
+
+    assert hata.value.code == "actor_required"
+
+
+async def test_elle_sipariste_uzun_gerekce_yine_reddedilir() -> None:
+    """ÜST SINIR MUAF UÇTA DA GEÇERLİ: sunucu 500 karakteri aşanı 422 ile döner."""
+    def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("istek gitmemeliydi")
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(BldApiError) as hata:
+        await _siparis(api, reason="x" * 501, actor=AKTOR)
+
+    assert hata.value.code == "reason_required"
+
+
+def test_siparis_alaninda_yalniz_acma_muaf() -> None:
+    """Aynı alanın dört yazması, iki ayrı politika.
+
+    Sipariş AÇMAK rutin bir kayıt akışıdır; revizyon, durum geçişi ve iptal
+    müşteriye görünür ve geri alınması zordur. Defter yalnız alana baksaydı
+    ikisi aynı kovaya düşerdi.
+    """
+    assert BldApi._reason_optional("POST", ORDERS) is True
+    for yol in (f"{ORDERS}/8421/revisions", f"{ORDERS}/8421/status",
+                f"{ORDERS}/8421/cancel"):
+        assert BldApi._reason_optional("POST", yol) is False
 
 
 async def test_kuresel_salter_kapaliyken_hicbir_ucta_gerekce_aranmaz() -> None:

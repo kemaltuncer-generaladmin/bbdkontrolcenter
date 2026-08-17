@@ -110,13 +110,16 @@ imza    = "sha256=" + hmac_sha256(kanonik, sır)
    uçta gerekçe verilirse gövdeye konur, verilmezse **alan hiç gönderilmez**.
    Kapsamı bir test kanıtlıyor (`test_bld_api_reason_policy.py`).
 
-   Bugün defterde **yalnız `control/menu`** var (altı satır); diğer on iki alan
-   değişmedi. Gerekçe istemeyenler: `POST days` · `PATCH days/{date}` ·
-   `POST/PATCH/DELETE items` · `PUT stock`. İsteyenler: `POST publish` ·
-   `POST unpublish` · `DELETE days/{date}` · `POST duplicate`. Ölçüt tek
-   cümledir: işlem müşteriye **görünür hâle geliyor** mu ve **geri alınması
-   zor** mu. Defter fiili de tutar — `PATCH days/{date}` muaf, `DELETE`
-   değil.
+   Bugün defterde **yedi satır** var; kalan on bir alan değişmedi.
+   `control/menu`'den altısı — gerekçe istemeyenler: `POST days` ·
+   `PATCH days/{date}` · `POST/PATCH/DELETE items` · `PUT stock`; isteyenler:
+   `POST publish` · `POST unpublish` · `DELETE days/{date}` · `POST duplicate`.
+   `control/orders`'tan **yalnız `POST /orders`** (elle sipariş): telefon
+   siparişini kaydetmek rutin bir veri girişidir ve sunucu da bu uçta
+   `reasonRequired: false` diyor. Aynı alanın revizyon, durum ve **iptal**
+   uçları gerekçe **ister**. Ölçüt tek cümledir: işlem müşteriye **görünür hâle
+   geliyor** mu ve **geri alınması zor** mu. Defter fiili de tutar —
+   `PATCH days/{date}` muaf, `DELETE` değil.
 
    Sınırlar **değişmedi**; yalnız nerede sorulduğu değişti:
 
@@ -265,9 +268,19 @@ Dönüş şekilleri:
 
 ### 5 · `orders` — siparişler (panel yolu)
 
+`create_order` **elle (telefonla alınan) siparişin tek yoludur** ve tek başına
+`—` gerekçe sütunu taşır: kayıt akışıdır, onay akışı değil. Ekranın bilmesi
+gereken üç davranış: sipariş **`onaylandi` doğar** (bugüne açılansa anında
+KDS'e düşer, ileri tarihliyse o günün kesim anında); müşteri **iki kipten
+biriyle** verilir (`customer_id` **ya da** `customer={"name", "phone"}`,
+ikisi birden değil) ve yanıttaki `customer.created` yeni kayıt açılıp
+açılmadığını söyler; kuru prova **kalemi, fiyatı ve stoğu denetlemez** — "gövde
+doğru mu" sorusunun cevabıdır, "sipariş geçecek mi" sorusunun değil.
+
 | Metot | Fiil | Yol | Gerekçe | dry_run | Dönüş |
 |---|---|---|---|---|---|
 | `order_list(*, service_date, date_from, date_to, status, delivery_type, customer_id, subscription_id, source, q, page, per_page)` | GET | `/orders` | — | — | `sayfa` |
+| `create_order(*, service_date, delivery_type, payment_method, items, customer_id, customer, address, customer_note, location_id)` | POST | `/orders` | — | ✔ | `dict` (+`customer`, `warnings`) |
 | `order_detail(order_id)` | GET | `/orders/{order}` | — | — | `dict` |
 | `order_revision_history(order_id)` | GET | `/orders/{order}/revisions` | — | — | `sayfa` |
 | `revise_order(order_id, *, items, note, requested_at, customer_note)` | POST | `/orders/{order}/revisions` | ✔ 160 | ✔ | `dict` |
@@ -430,7 +443,15 @@ bırakmak, açık bir hatadan çok daha pahalıdır.
   kalemin tavanını sessizce kaldırırdı.
 - **Bozuk tarih** (`YYYY-MM-DD` değil). Yol kuru prova defterine bu kalıpla
   kayıtlı; bozuk bir tarih "uç sözleşmede yok" gibi görünen bir hata üretirdi.
-- **`payment_mode="account"` ve `method="account"`.** Cari hesap kalktı.
+- **`payment_mode="account"`, `method="account"` ve `payment_method="account"`.**
+  Cari hesap kalktı.
+- **Elle sipariş: müşteri kipinin belirsizliği** (`customer_id` ve `customer`
+  birlikte ya da hiçbiri). İkisi birden gönderilseydi sunucu kimliği seçer,
+  `customer` sessizce yok sayılır ve ekran yeni müşteri açtığını sanırdı.
+- **Numarasız (ya da adsız) yeni müşteri.** Yer tutucu e-posta telefondan
+  türüyor; numarasız iki kayıt aynı adrese düşerdi.
+- **Kalemsiz sipariş** — mutfağa boş bir fiş olarak düşerdi.
+- **Teslimatlı siparişte eksik adres** (`line1`/`district`/`city`).
 - **`skip=True` + `quantity_override`.** "Atla ama 12 yap" tutarsız.
 - **Fatura kipinin belirsizliği** (`order_id` ve `subscription_id` birlikte ya
   da hiçbiri).
