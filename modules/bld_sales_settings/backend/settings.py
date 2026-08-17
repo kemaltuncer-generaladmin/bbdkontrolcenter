@@ -21,11 +21,11 @@ BEŞ TUZAK — her birinin karşılığı burada bir fonksiyondur:
     çeviriyordu)                               süresi yazan yönetici sessizce 40
                                                almamalı; ne yazdığını ve neyin
                                                kabul edildiğini bilmeli.
- 2. `order_cutoff` `null` OLABİLİR,         → `clean_patch` ikisini ayırır:
-    `subscription_release_time` OLAMAZ         boş kesim saati "kesim yok"
-                                               demektir, boş serbest bırakma
-                                               saati mutfağın sabah boş ekrana
-                                               bakması demektir.
+ 2. `subscription_release_time` KALDIRILDI  → `REMOVED_FIELDS` gönderilirse
+    (17.08.2026)                               NEDENİYLE BİRLİKTE reddeder.
+                                               "Tanımlı alan değil" demek yetmez:
+                                               yönetici alanın yanlış yazıldığını
+                                               sanardı, oysa ayar artık YOK.
  3. `account` ödeme yöntemi KALKTI          → `clean_payment_methods` yalnız
     (iş kararı 1)                              `online` ve `cash` kabul eder;
                                                boş liste de reddedilir.
@@ -45,6 +45,13 @@ BEŞ TUZAK — her birinin karşılığı burada bir fonksiyondur:
 varsayılandır, `DailyMenuDay.cutoff_time` o servis gününe özeldir ve doluysa
 genel olanı EZER. Birleştirme kuralı sunucuda tektir: `gün ?? ayar`. Bu ekran
 yalnız genel olanı yazar; gün bazlı saat menü ekranının işidir.
+
+KESİM SAATİNİN İKİNCİ İŞİ: siparişin mutfak ekranında görünür olduğu anı da o
+belirliyor (`orders.bld_released_at`). Bu bir AYAR DEĞİL, kesim saatinden
+TÜRETİLEN bilgidir — eskiden `subscription_release_time` diye ayrı bir anahtar
+vardı ve 17.08.2026'da kaldırıldı. İki ayar iki doğruluk kaynağı demekti:
+kesimi 09:00'a çekip düşme saatini 07:00'de unutan yönetici, satış hâlâ açıkken
+mutfağa eksik bir listeyi tam diye gösterirdi.
 """
 
 from __future__ import annotations
@@ -101,11 +108,11 @@ PAUSE_MAX_DAYS = 30
 
 # ==================================================================== alanlar
 
-#: `PUT /sales` ile yazılabilen 13 alan — sözleşmedeki sırayla.
+#: `PUT /sales` ile yazılabilen 12 alan — sözleşmedeki sırayla
+#: (`SettingsRepository::controlWritableFields()` ile birebir aynı).
 WRITABLE_FIELDS = (
     "order_cutoff",
     "max_lookahead_days",
-    "subscription_release_time",
     "min_order_total_kurus",
     "delivery_fee_kurus",
     "payment_methods",
@@ -124,6 +131,25 @@ WRITABLE_FIELDS = (
 #: üretirdi.
 READ_ONLY_FIELDS = ("is_open", "daily_package_menu_id", "ordering_enabled")
 
+#: KALDIRILMIŞ alanlar → gönderilirse reddedilir, SEBEBİYLE BİRLİKTE.
+#:
+#: "SALT OKUNUR" İLE "ARTIK YOK" AYRI ŞEYLER. `READ_ONLY_FIELDS` "bu alan var
+#: ama buradan yazılmaz" diyor; burası "bu ayar bir daha gelmeyecek" diyor ve
+#: yöneticiye söylenecek cümle ikisinde farklı. Sunucu tarafındaki karşılığı
+#: `SettingsController::rejectRemovedFields()`.
+#:
+#: Alanı listeden sessizce çıkarmak yetmezdi: `clean_patch` onu "tanımlı bir
+#: alan değil" diye reddeder ve yönetici adı yanlış yazdığını sanardı — oysa
+#: doğru yazmış, ayar kaldırılmış. Kaldırılan şey silinmez, "kaldırıldı" diye
+#: işaretlenir (`BLD/docs/00-INDEX.md`).
+REMOVED_FIELDS = {
+    "subscription_release_time": (
+        "Abonelik serbest bırakma saati 17.08.2026'da KALDIRILDI. Sipariş artık "
+        "servis gününün kesim saatinde mutfağa düşer (`order_cutoff` ve güne özel "
+        "saat); ayrı bir serbest bırakma saati yoktur."
+    ),
+}
+
 #: 1–480 aralığındaki üçlü.
 MINUTE_FIELDS = ("prep_minutes", "delivery_minutes", "busy_extra_minutes")
 
@@ -135,7 +161,6 @@ MONEY_FIELDS = ("min_order_total_kurus", "delivery_fee_kurus")
 FIELD_LABELS = {
     "order_cutoff": "Sabah kesim saati",
     "max_lookahead_days": "İleri gün sınırı",
-    "subscription_release_time": "Abonelik serbest bırakma saati",
     "min_order_total_kurus": "Minimum sepet tutarı",
     "delivery_fee_kurus": "Teslimat ücreti",
     "payment_methods": "Ödeme yöntemleri",
@@ -330,6 +355,14 @@ def clean_patch(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str
             else:
                 fail(field, f"{label} salt okunurdur ve yazılamaz.")
 
+    # KALDIRILMIŞ ALAN, BİLİNMEYEN ALAN DEĞİLDİR. Aşağıdaki "tanımlı bir alan
+    # değil" cümlesi yöneticiye adı yanlış yazdığını düşündürürdü; oysa doğru
+    # yazmış, ayar artık yok. Eski bir panel derlemesi de bu cümleyle ne olduğunu
+    # anlar — sunucu aynı alanı `422` ile aynı gerekçeyle reddediyor.
+    for field, why in REMOVED_FIELDS.items():
+        if field in raw:
+            fail(field, why)
+
     if "order_cutoff" in raw:
         value = raw["order_cutoff"]
         if value is None or text(value) == "":
@@ -341,21 +374,6 @@ def clean_patch(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str
             body["order_cutoff"] = text(value)
         else:
             fail("order_cutoff", "Sabah kesim saati 08:00 gibi HH:mm biçiminde olmalı.")
-
-    if "subscription_release_time" in raw:
-        value = text(raw["subscription_release_time"])
-        if not value:
-            # `null` KABUL EDİLMEZ. Abonelik siparişlerinin KDS'e hiç
-            # düşmediği bir yapılandırma, mutfağın sabah boş ekrana bakması
-            # ve o günün aboneliklerinin pişmemesi demektir.
-            fail("subscription_release_time",
-                 "Abonelik serbest bırakma saati boş bırakılamaz; boş bir saat "
-                 "abonelik siparişlerinin mutfak ekranına hiç düşmemesi demektir.")
-        elif TIME_PATTERN.match(value):
-            body["subscription_release_time"] = value
-        else:
-            fail("subscription_release_time",
-                 "Abonelik serbest bırakma saati 07:00 gibi HH:mm biçiminde olmalı.")
 
     if "max_lookahead_days" in raw:
         value = raw["max_lookahead_days"]
@@ -419,7 +437,8 @@ def clean_patch(raw: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str
             body[field] = flag
 
     unknown = [key for key in raw
-               if key not in WRITABLE_FIELDS and key not in READ_ONLY_FIELDS]
+               if key not in WRITABLE_FIELDS and key not in READ_ONLY_FIELDS
+               and key not in REMOVED_FIELDS]
     for key in unknown:
         # Bilinmeyen alan SESSİZCE DÜŞÜRÜLMEZ: sözleşmede olmayan bir anahtar
         # sunucuda da yok sayılır ve yönetici "kaydettim" der, hiçbir şey

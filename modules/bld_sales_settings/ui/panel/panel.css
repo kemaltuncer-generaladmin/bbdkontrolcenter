@@ -71,6 +71,17 @@
 
 /* --------------------------------------------------------------- ayar formu */
 
+/* Kesim saati kartı ızgara + ipucu kutusundan oluşuyor. İpucu AYRI BİR KART
+   DEĞİL, aynı kartın içinde: "sipariş mutfağa ne zaman düşer" artık bir ayar
+   değil kesim saatinden türetilen bilgi ve cevabın alanın yanında durması
+   gerekiyor. Uzağa koymak, yöneticinin kesim saatini değiştirirken düşme anını
+   da değiştirdiğini görmemesi demekti. */
+.bss-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .bss-foot {
   display: flex;
   align-items: center;

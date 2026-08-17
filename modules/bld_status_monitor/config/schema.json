@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_status_monitor ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI olmalıdır: açık kalırsa panelden gönderilen her düzeltme komutu sessizce provaya döner ve ekran 'gönderildi' der. Servis yine de her geçit çağrısında `dry_run=` değerini açıkça geçirir."
+    },
+    "poll_seconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 600,
+      "description": "Özet yoklama aralığı. `bld-control-panel` bütçesi (3000/saat/IP) bu ekran için 60 saniye varsayıyor; kısaltmak ikinci bir yöneticinin ekranını 429'a düşürür."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "description": "Hata olayı listesinin sayfa boyutu varsayılanı. Sözleşme tavanı 100."
+    },
+    "history_limit": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 500,
+      "description": "Olay geçmişi ve yerel defter için varsayılan satır sayısı. Çizelge gözlem defteri ile yazma izini birleştirir."
+    }
+  }
+}

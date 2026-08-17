@@ -1,5 +1,31 @@
-# Kontrol Paneli modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Kontrol Paneli — BLD işletmesinin açılış ekranı: bugünün satışı, bekleyen
+# işler ve canlı sipariş akışı.
+#
+# TEK EKRAN, TEK BAKIŞ. Panel açıldığında görülen ilk şey burasıdır ve sayıları
+# KENDİ HESAPLAMAZ: "kaç sipariş aktif" sorusunun cevabı sunucudadır
+# (`BLD/docs/control/dashboard.md`). İstemcide toplansaydı aynı sorunun cevabı
+# panel sürümüne göre değişirdi ve sahada telefonda konuşan iki kişi farklı
+# sayı söylerdi.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı,
+# zaman penceresi, nonce hatırlama ve oran sınırı geçidin işidir.
+#
+# YAZMA UCU YOKTUR. Sözleşme bu alanda tek bir okuma ucu sayıyor
+# (`GET /api/control/dashboard/overview`) ve BLD'ye giden hiçbir yazma yoktur;
+# bu yüzden `events.publishes` boştur ve `dry_run` taşıyan tek bir çağrı bile
+# bulunmaz. Ekrandan yapılan tek yazma YERELDİR: kullanıcının kendi görüntüleme
+# tercihi (`mod_bld_dashboard_prefs`).
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: sipariş, ciro, kapasite ve olay sayaçları
+# BLD'dedir ve 30 saniyede bir tazelenir. Yerel bir kopya her zaman bir tur
+# geride olurdu ve gösterge paneli en çok "şu an ne oluyor" sorusuna bakıldığı
+# için o bir tur, ekranın tek işini bozardı.
+#
+# Sözleşme: `BLD/docs/control/dashboard.md` (tek uç) + `00-genel.md`. Canlı
+# akış kutusu ayrıca `orders.md` → `GET /api/control/orders` okur; gerekçesi
+# `backend/service.py` başlığında.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_dashboard
@@ -7,14 +33,28 @@ name: "Kontrol Paneli"
 description: "BLD işletmesinin canlı özeti: sipariş, ciro ve servis durumu."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
-provides: []
-consumes: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
 
+provides: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Bütün sayaçlar BLD sunucusunda hesaplanır (`docs/control/dashboard.md`)
+      ve oraya yalnız geçitten gidilir (K4). İmza, nonce, zaman penceresi ve
+      oran sınırı tek yerde durur. Bu ekran paylaşılan panel kovasını
+      (`bld-control-panel`, 3000/saat/IP) kullanır ve 30 saniyede bir yoklar;
+      aralığı kısaltmak ikinci bir yöneticinin ekranını 429'a düşürür.
+
+# BLD'de HİÇBİR ŞEY DEĞİŞMEZ, bu yüzden yayınlanacak bir olay da yoktur.
+# Boş bırakmak bilinçli: "panel açıldı" gibi bir olay yayınlamak, 30 saniyede
+# bir tetiklenen ve hiçbir dinleyicinin işine yaramayan bir gürültü olurdu.
 events:
   publishes: []
   subscribes: []
@@ -32,24 +72,53 @@ ui:
     title: "Kontrol Paneli"
     icon: gauge
     group: "BLD"
+    # 500 KORUNDU: bu ekran BLD grubunun ilk sırasıdır ve kabuk açılışta ilk
+    # paneli seçer. Sıra numarasını değiştirmek, panelin açılış ekranı olmaktan
+    # çıkması demekti.
     order: 500
     requires: [bld_dashboard.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran günün cirosunu, müşteri sayısını, ödenmemiş
+# abonelik borcunu ve açık hata olaylarını tek yerde topluyor: `bbd_staff`
+# mağaza tarafındadır, `org_staff` zil/baskı/rehber ile sınırlıdır,
+# `accountant` mali ekranlara bakar ve işletmenin canlı durumunu yönetmez.
+#
+# İKİ ANAHTAR, İKİNCİSİ SÜS DEĞİL. Bu modülde BLD'ye giden yazma yoktur; geriye
+# yazılabilir tek şey kullanıcının kendi görüntüleme tercihi kalır ve `manage`
+# onu bekler. `bld_orders` aynı tercihi `view` altında tutuyor ve gerekçesi
+# oradaki üç gerçek yazma ucundan ayrışmaktı; burada ayrışacak bir yazma yok.
+# İkisini de `view`e bağlasaydık `manage` hiçbir kapıyı açmayan bir anahtar
+# olurdu — rol matrisinde söz veren ama karşılığı olmayan bir satır, olmayan
+# bir izinden kötüdür.
 permissions:
   - key: bld_dashboard.view
-    description: "Kontrol Paneli ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Açılış özetini görüntüleme: bugünün satış tablosu, bekleyen işler listesi
+      ve canlı sipariş akışı.
+    default_roles: [admin, bld_staff]
   - key: bld_dashboard.manage
-    description: "Kontrol Paneli kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Bu ekranın görüntüleme tercihini kaydetme (yoklama aralığı, işletme
+      seçimi, akış satır sayısı). BLD'ye hiçbir şey göndermez.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir, tercih yazma çekirdeğin deposudur.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). Bu ekran dosya üretmez, yazdırmaz ve
+    bildirim göndermez; `printer` ya da `notify` yeteneği İSTEMEZ.
 
 tasks: []

@@ -1,0 +1,39 @@
+# Abonelikler ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+
+# KURU PROVA VARSAYILANI. İstemci `dryRun` alanını HİÇ göndermezse bu değer
+# geçerlidir. KAPALI: açık kalsaydı panelden yapılan HER yazma sessizce bir
+# provaya döner, ekran "sözleşme gönderildi" der ve müşteriye SMS hiç gitmezdi —
+# fark ancak müşteri "ben bir şey almadım" diye aradığında anlaşılırdı.
+# Geçidin kendi varsayılanı (modules.bld_api.dry_run_default) da aynı sebeple
+# kapalı olmalıdır; servis yine de HER çağrıda `dry_run=` değerini AÇIKÇA
+# geçirir ve varsayılana güvenmez (bld_api/README.md).
+#
+# Uç `dryRun: true` KABUL ETMEYE DEVAM EDER ve bu ekranda kuru provanın gerçek
+# bir faydası var: dönem borcu açarken sunucu tutarı HESAPLAR ve `order_count`
+# ile döndürür, hiçbir satır yazmadan. Yöneticinin borcu yazmadan önce görmesi
+# gereken tam olarak budur. Aynı şekilde yeni abonelikte `first_service_dates`
+# kuralın gerçekten hangi günleri ürettiğini kaydetmeden gösterir.
+dry_run_default: false
+
+# Liste sayfa boyutu varsayılanı. Sözleşme tavanı 100 (`00-genel.md` §5).
+# Abonelik sayısı sipariş sayısından çok daha küçüktür (kurum başına bir kayıt),
+# bu yüzden 25 çoğu kurulumda tek sayfa demektir.
+page_size: 25
+
+# Servis takviminin açtığı pencere (gün). Sunucu tavanı 92, varsayılanı 30.
+# 30 gün, "önümüzdeki ay hangi günler üretilecek" sorusunun doğal cevabıdır;
+# büyütmek yalnız tek isteğin gövdesini şişirir.
+calendar_days: 30
+
+# İmza bağlantısının varsayılan ömrü (gün). Sözleşme sınırı 1-30, varsayılanı 7.
+# Süresiz bir imza bağlantısı, bir yıl sonra ele geçtiğinde hâlâ geçerli olurdu;
+# bu yüzden "0" ya da boş kabul edilmez. Kutuya önceden yazılır ama sunucuya
+# giden değeri kullanıcı o an onaylar.
+expires_in_days: 7
+
+# YOKLAMA AYARI YOKTUR ve bu bilinçli. Abonelik saatler-günler ölçeğinde
+# değişen bir kayıttır: kural yazılır, sözleşme gönderilir, müşteri ertesi gün
+# imzalar. 15 saniyede bir yoklayan bir ekran, paylaşılan `bld-control-panel`
+# kovasını (3000/saat/IP, TÜM BLD ekranları için) hiçbir şey öğrenmeden yakar
+# ve ikinci bir yöneticinin ekranını 429'a düşürür. Liste "Yenile" ile
+# tazelenir ve ekran ne zaman okuduğunu yazar.

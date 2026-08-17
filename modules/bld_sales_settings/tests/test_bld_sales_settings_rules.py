@@ -7,6 +7,40 @@ from __future__ import annotations
 
 from bld_sales_settings_backend import settings as rules
 
+# ================================================================== sözleşme
+
+
+def test_yazilabilir_alanlar_sunucunun_listesiyle_birebir_ortusur() -> None:
+    """`SettingsRepository::controlWritableFields()` ile BİREBİR aynı olmalı.
+
+    Bu liste iki yerde birden yaşıyor ve ayrıştığında arıza SESSİZ oluyor:
+    17.08.2026'da panel `subscription_release_time`'ı `required` çizmeyi
+    sürdürdü, alan sunucudan hiç gelmedi ve form doğrulamadan geçmediği için
+    ekran YALNIZ O ALANI DEĞİL, HİÇBİR AYARI kaydedemez oldu. Sayıyı ve sırayı
+    burada sabitlemek, aynı ayrışmanın bir dahaki sefere testte görünmesi
+    içindir.
+    """
+    assert rules.WRITABLE_FIELDS == (
+        "order_cutoff",
+        "max_lookahead_days",
+        "min_order_total_kurus",
+        "delivery_fee_kurus",
+        "payment_methods",
+        "busy",
+        "busy_message",
+        "prep_minutes",
+        "delivery_minutes",
+        "busy_extra_minutes",
+        "daily_menu_enabled",
+        "auto_invoice",
+    )
+    # Panel etiketi olmayan bir alan fark tablosunda ham anahtar adıyla
+    # görünürdü ("busy_extra_minutes: 15 → 30"); yönetici hangi ayara
+    # baktığını okumalı.
+    for alan in rules.WRITABLE_FIELDS:
+        assert alan in rules.FIELD_LABELS
+
+
 # ================================================================ kesim saati
 
 
@@ -27,17 +61,24 @@ def test_kesim_saati_bos_birakilabilir_ama_bicimsizi_reddedilir() -> None:
     assert hatalar and hatalar[0]["field"] == "order_cutoff"
 
 
-def test_abonelik_serbest_birakma_saati_bos_birakilamaz() -> None:
-    # Boş bir saat, abonelik siparişlerinin mutfak ekranına hiç düşmemesi ve
-    # mutfağın sabah boş ekrana bakması demektir. Kesim saatinden farkı budur.
-    _, hatalar = rules.clean_patch({"subscription_release_time": ""})
-    assert hatalar and hatalar[0]["field"] == "subscription_release_time"
-    _, hatalar = rules.clean_patch({"subscription_release_time": None})
-    assert hatalar and hatalar[0]["field"] == "subscription_release_time"
+def test_abonelik_serbest_birakma_saati_kaldirildi_ve_yazilamaz() -> None:
+    # Ayar 17.08.2026'da sunucudan kaldırıldı: sipariş artık servis gününün
+    # kesim anında mutfağa düşüyor. Alan yazılabilirler listesinde OLMAMALI —
+    # panel onu `required` çizdiği sürece form doğrulamadan geçmiyor ve ekran
+    # HİÇBİR ayarı kaydedemiyordu.
+    assert "subscription_release_time" not in rules.WRITABLE_FIELDS
 
-    govde, hatalar = rules.clean_patch({"subscription_release_time": "07:00"})
-    assert hatalar == []
-    assert govde == {"subscription_release_time": "07:00"}
+    # Gönderilirse reddedilir ama "tanımlı bir alan değil" DENMEZ: yönetici adı
+    # yanlış yazdığını sanardı, oysa doğru yazmış ve ayar kalkmış.
+    _, hatalar = rules.clean_patch({"subscription_release_time": "07:00"})
+    assert hatalar and hatalar[0]["field"] == "subscription_release_time"
+    assert "KALDIRILDI" in hatalar[0]["message"]
+    assert "kesim saatinde" in hatalar[0]["message"]
+
+    # Tek hata düşer; "bilinmeyen alan" süzgeci aynı anahtarı ikinci kez
+    # yakalamamalı — iki cümle, yöneticiye iki ayrı sorun varmış gibi görünürdü.
+    _, hatalar = rules.clean_patch({"subscription_release_time": ""})
+    assert len(hatalar) == 1
 
 
 # ================================================================== ileri gün

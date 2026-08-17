@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -131,27 +132,80 @@ async def test_urun_seciciye_yalniz_satistaki_urunler_gelir() -> None:
 
 # ============================================================ gerekçe ve izin
 
-async def test_kisa_gerekce_her_yazmada_reddedilir() -> None:
+async def test_kisa_gerekce_gerekce_isteyen_dort_ucta_reddedilir() -> None:
     # Arayüzde alanı zorunlu göstermek yetkilendirme değildir (K9): istemci
-    # gövdeyi elle kurabilir.
-    service, api, _, _ = _service()
+    # gövdeyi elle kurabilir. GEREKÇE İSTEYEN DÖRT UÇ: yayınlama, yayından
+    # çekme, gün silme, kopyalama — hepsi müşteriye görünür hâle gelen ya da
+    # geri alınması zor işlemler.
+    #
+    # SINIR DEĞİŞMEDİ: 10 karakter. Değişen tek şey NEREDE sorulduğu.
+    service, api, _, _ = _service(day=dict(DRAFT_DAY))
+    yayindaki, yayindaki_api, _, _ = _service()
     cagrilar = [
-        service.create_day(date=_yarin(), fields={}, items=[], reason="kısa",
-                           actor=ACTOR, dry_run=False),
-        service.update_day(TARIH, fields={"title": "x"}, reason="kısa", actor=ACTOR,
-                           dry_run=False),
-        service.publish(TARIH, reason="kısa", actor=ACTOR, dry_run=False),
-        service.unpublish(TARIH, reason="kısa", actor=ACTOR, dry_run=False),
-        service.add_item(TARIH, fields={"menu_id": 55}, reason="kısa", actor=ACTOR,
-                         dry_run=False),
-        service.duplicate(TARIH, target_date=_yarin(), overwrite=False, reason="kısa",
-                          actor=ACTOR, dry_run=False),
+        service.publish("2026-08-24", reason="kısa", actor=ACTOR, dry_run=False),
+        service.delete_day("2026-08-24", reason="kısa", actor=ACTOR, dry_run=False,
+                           allow_remove=True),
+        yayindaki.unpublish(TARIH, reason="kısa", actor=ACTOR, dry_run=False),
+        yayindaki.duplicate(TARIH, target_date=_yarin(), overwrite=False, reason="kısa",
+                            actor=ACTOR, dry_run=False),
     ]
     for cagri in cagrilar:
         sonuc = await cagri
         assert sonuc["ok"] is False
         assert "en az 10" in sonuc["error"]
     assert api.writes() == []
+    assert yayindaki_api.writes() == []
+
+
+def test_gerekce_istemeyen_metotlar_reason_parametresi_almaz() -> None:
+    """Gerekçe İSTEMEYEN yedi metodun imzasında `reason` BULUNMAZ.
+
+    Alanı imzada bırakıp görmezden gelmek daha küçük bir değişiklik olurdu ama
+    sessiz bir tuzak kurardı: panel gerekçe göndermeye devam eder ve hiçbir
+    yere yazılmadığını kimse fark etmezdi. Parametre yoksa yanlış çağrı
+    `TypeError` verir — yanlış, ama GÜRÜLTÜLÜ.
+
+    Aynı iddianın tersi de burada: gerekçe İSTEYEN dört metotta parametre
+    duruyor ve varsayılanı YOK. Unutulan gerekçe orada da `TypeError` verir.
+    """
+    istemez = ("create_day", "update_day", "add_item", "update_item", "delete_item",
+               "preview_stock", "apply_stock")
+    for ad in istemez:
+        parametreler = inspect.signature(getattr(MenuService, ad)).parameters
+        assert "reason" not in parametreler, f"{ad}: gerekçe parametresi hâlâ duruyor"
+        assert "actor" in parametreler, f"{ad}: aktör her yazmada kalmalıydı"
+
+    ister = ("publish", "unpublish", "delete_day", "duplicate")
+    for ad in ister:
+        parametreler = inspect.signature(getattr(MenuService, ad)).parameters
+        assert "reason" in parametreler, f"{ad}: gerekçe parametresi düşmüş"
+        assert parametreler["reason"].default is inspect.Parameter.empty, \
+            f"{ad}: gerekçe varsayılanı var — unutulduğunda sessizce boş geçerdi"
+
+
+async def test_gerekcesiz_yazma_denetim_satirini_yine_acar() -> None:
+    # SATIR GEREKÇEDEN BAĞIMSIZDIR. Ağ koparsa "kim neyi denedi" sorusunun
+    # cevabı yalnız bu satırda kalır; satırı hiç açmamak, hızlanma uğruna izin
+    # kendisini atmak olurdu. Atılan tek şey `reason` sütununun DOLULUĞUDUR.
+    service, _, store, _ = _service()
+    sonuc = await service.add_item(TARIH, fields={"menu_id": 55}, actor=ACTOR,
+                                   dry_run=False)
+    assert sonuc["ok"] is True
+    satirlar = store.actions("item.create")
+    assert [row["result"] for row in satirlar] == ["denendi", "ok"]
+    assert {row["actor"] for row in satirlar} == {ACTOR}
+    assert {row["reason"] for row in satirlar} == {""}
+
+
+async def test_gerekcesiz_yazmada_gecide_de_gerekce_gitmez() -> None:
+    # Servis kendi kafasından bir gerekçe uydurmaz ("panelden eklendi" gibi):
+    # uydurulmuş bir gerekçe denetim izini, boş bir sütundan DAHA yanıltıcı
+    # yapardı — okuyanın gerçek bir açıklama sandığı bir metin olurdu.
+    service, api, _, _ = _service()
+    await service.add_item(TARIH, fields={"menu_id": 55}, actor=ACTOR, dry_run=False)
+    gonderilen = api.used("create_menu_item")[0]
+    assert gonderilen["reason"] == ""
+    assert gonderilen["actor"] == ACTOR
 
 
 async def test_remove_izni_olmayan_gunu_silemez() -> None:
@@ -168,7 +222,7 @@ async def test_remove_izni_olmayan_gunu_silemez() -> None:
 
 async def test_remove_izni_olmayan_kalemi_silemez() -> None:
     service, api, store, _ = _service()
-    sonuc = await service.delete_item(TARIH, 901, reason=GEREKCE, actor=ACTOR,
+    sonuc = await service.delete_item(TARIH, 901, actor=ACTOR,
                                       dry_run=False, allow_remove=False)
     assert sonuc["ok"] is False
     assert api.writes() == []
@@ -180,7 +234,7 @@ async def test_remove_izni_olmayan_kalemi_silemez() -> None:
 async def test_gun_kurma_gecmis_tarihi_reddeder() -> None:
     service, api, _, _ = _service()
     sonuc = await service.create_day(date="2020-01-01", fields={}, items=[],
-                                     reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                     actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert "geçmişte kaldı" in sonuc["error"]
     assert api.writes() == []
@@ -191,7 +245,7 @@ async def test_gun_kurma_ayni_urunu_iki_kez_kabul_etmez() -> None:
     sonuc = await service.create_day(
         date=_yarin(), fields={},
         items=[{"menu_id": 12}, {"menu_id": 12}],
-        reason=GEREKCE, actor=ACTOR, dry_run=False)
+        actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert "iki kez" in sonuc["error"]
     assert api.writes() == []
@@ -203,7 +257,7 @@ async def test_gun_kurulurken_gorsel_verilemez() -> None:
     # üretmesi olurdu.
     service, api, _, _ = _service()
     sonuc = await service.create_day(date=_yarin(), fields={"image_path": "a/b.jpg"},
-                                     items=[], reason=GEREKCE, actor=ACTOR,
+                                     items=[], actor=ACTOR,
                                      dry_run=False)
     assert sonuc["ok"] is False
     assert "Görsel" in sonuc["error"]
@@ -213,7 +267,7 @@ async def test_gun_kurulurken_gorsel_verilemez() -> None:
 async def test_paket_fiyati_sifir_reddedilir() -> None:
     service, api, _, _ = _service()
     sonuc = await service.create_day(date=_yarin(), fields={"package_price_kurus": 0},
-                                     items=[], reason=GEREKCE, actor=ACTOR,
+                                     items=[], actor=ACTOR,
                                      dry_run=False)
     assert sonuc["ok"] is False
     assert "sıfırdan büyük" in sonuc["error"]
@@ -224,7 +278,7 @@ async def test_kismi_guncellemede_yalniz_degisen_alan_gider() -> None:
     # Tam gövde göndermek, dokunulmamış alanları yanlışlıkla ezmek olurdu.
     service, api, _, _ = _service()
     sonuc = await service.update_day(TARIH, fields={"package_price_kurus": 19000},
-                                     reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                     actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is True
     gonderilen = api.used("update_menu_day")[0]
     assert gonderilen["package_price_kurus"] == 19000
@@ -236,7 +290,7 @@ async def test_bos_guncelleme_reddedilir() -> None:
     # Yalnız `reason` taşıyan bir `PATCH`, hiçbir şey değiştirmeden denetim
     # izine satır yazardı.
     service, api, _, _ = _service()
-    sonuc = await service.update_day(TARIH, fields={}, reason=GEREKCE, actor=ACTOR,
+    sonuc = await service.update_day(TARIH, fields={}, actor=ACTOR,
                                      dry_run=False)
     assert sonuc["ok"] is False
     assert api.writes() == []
@@ -247,7 +301,7 @@ async def test_bayrak_bosaltilamaz() -> None:
     # sessizce `False` olsaydı kalem satışı kapanırdı.
     service, _, _, _ = _service()
     sonuc = await service.update_day(TARIH, fields={"components_sellable": None},
-                                     reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                     actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert "boşaltılamaz" in sonuc["error"]
 
@@ -256,7 +310,7 @@ async def test_null_gonderilen_metin_alani_temizlenir() -> None:
     # "Dokunma" ile "boşalt" ayrımı geçide kadar korunur.
     service, api, _, _ = _service()
     sonuc = await service.update_day(TARIH, fields={"internal_note": None},
-                                     reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                     actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is True
     assert api.used("update_menu_day")[0]["internal_note"] is None
 
@@ -268,7 +322,7 @@ async def test_gecmis_yayinlanmis_gunun_fiyati_degistirilemez() -> None:
     gecmis = (datetime.now(UTC) - timedelta(days=5)).strftime("%Y-%m-%d")
     service, api, store, _ = _service(day={**DAY, "date": gecmis, "status": "published"})
     sonuc = await service.update_day(gecmis, fields={"package_price_kurus": 19000},
-                                     reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                     actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert sonuc["code"] == "conflict"
     assert api.writes() == []
@@ -281,7 +335,7 @@ async def test_gecmis_gunun_baslik_ve_notu_yine_de_duzeltilebilir() -> None:
     gecmis = (datetime.now(UTC) - timedelta(days=5)).strftime("%Y-%m-%d")
     service, api, _, _ = _service(day={**DAY, "date": gecmis, "status": "published"})
     sonuc = await service.update_day(gecmis, fields={"internal_note": "Tedarikçi C"},
-                                     reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                     actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is True
     assert api.writes() == ["update_menu_day"]
 
@@ -412,8 +466,7 @@ async def test_ayni_urun_iki_kez_menuye_eklenmez() -> None:
     # Tekil indeks var (`veykemtu_daily_menu_item_essiz`); buradaki kapı
     # "Tavuk Sote zaten menüde" cümlesini kurar.
     service, api, store, _ = _service()
-    sonuc = await service.add_item(TARIH, fields={"menu_id": 27}, reason=GEREKCE,
-                                   actor=ACTOR, dry_run=False)
+    sonuc = await service.add_item(TARIH, fields={"menu_id": 27}, actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert sonuc["code"] == "conflict"
     assert api.writes() == []
@@ -424,7 +477,7 @@ async def test_yeni_urun_eklenebilir() -> None:
     service, api, store, _ = _service()
     sonuc = await service.add_item(TARIH, fields={"menu_id": 55, "quantity": 1,
                                                   "sellable_alone": False},
-                                   reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                   actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is True
     assert api.used("create_menu_item")[0]["menu_id"] == 55
     # `sort_order` GÖNDERİLMEDİ: sunucu mevcut en büyüğe 10 ekliyor ve `null`
@@ -436,7 +489,7 @@ async def test_yeni_urun_eklenebilir() -> None:
 async def test_kalem_guncellemede_urun_degistirilemez() -> None:
     service, api, _, _ = _service()
     sonuc = await service.update_item(TARIH, 901, fields={"menu_id": 27},
-                                      reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                      actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert "silip yenisini eklemektir" in sonuc["error"]
     assert api.writes() == []
@@ -445,7 +498,7 @@ async def test_kalem_guncellemede_urun_degistirilemez() -> None:
 async def test_olmayan_kalem_guncellenmez() -> None:
     service, api, _, _ = _service()
     sonuc = await service.update_item(TARIH, 999, fields={"quantity": 2},
-                                      reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                      actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is False
     assert sonuc["code"] == "not_found"
     assert api.writes() == []
@@ -456,14 +509,14 @@ async def test_kalem_fiyati_sifir_gecerlidir() -> None:
     # aksine burada sıfır bir anlam taşır.
     service, api, _, _ = _service()
     sonuc = await service.update_item(TARIH, 901, fields={"price_override_kurus": 0},
-                                      reason=GEREKCE, actor=ACTOR, dry_run=False)
+                                      actor=ACTOR, dry_run=False)
     assert sonuc["ok"] is True
     assert api.used("update_menu_item")[0]["price_override_kurus"] == 0
 
 
 async def test_kalem_silme_denetim_izine_adi_yazar() -> None:
     service, _, store, _ = _service()
-    sonuc = await service.delete_item(TARIH, 902, reason=GEREKCE, actor=ACTOR,
+    sonuc = await service.delete_item(TARIH, 902, actor=ACTOR,
                                       dry_run=False, allow_remove=True)
     assert sonuc["ok"] is True
     detay = json.loads(store.actions("item.delete")[0]["detail"])
@@ -480,7 +533,7 @@ async def test_stok_onizlemesi_uyarilari_ve_jeton_dondurur() -> None:
     sonuc = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
+        actor=ACTOR)
     assert sonuc["ok"] is True
     assert sonuc["dry_run"] is True
     assert sonuc["token"]
@@ -496,7 +549,7 @@ async def test_eksik_tavan_tablosu_onizlemede_reddedilir() -> None:
     service, api, _, _ = _service()
     sonuc = await service.preview_stock(TARIH, capacity_total=120,
                                         items=[{"item_id": 901, "capacity": None}],
-                                        reason=GEREKCE, actor=ACTOR)
+                                        actor=ACTOR)
     assert sonuc["ok"] is False
     assert "902" in sonuc["error"]
     assert api.writes() == []
@@ -504,7 +557,7 @@ async def test_eksik_tavan_tablosu_onizlemede_reddedilir() -> None:
 
 async def test_stok_jetonsuz_uygulanamaz() -> None:
     service, api, _, _ = _service()
-    sonuc = await service.apply_stock(TARIH, token="", reason=GEREKCE, actor=ACTOR)
+    sonuc = await service.apply_stock(TARIH, token="", actor=ACTOR)
     assert sonuc["ok"] is False
     assert api.writes() == []
 
@@ -514,9 +567,8 @@ async def test_onizlenen_tablo_jetonla_uygulanir() -> None:
     onizleme = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
-    sonuc = await service.apply_stock(TARIH, token=onizleme["token"], reason=GEREKCE,
-                                      actor=ACTOR)
+        actor=ACTOR)
+    sonuc = await service.apply_stock(TARIH, token=onizleme["token"], actor=ACTOR)
     assert sonuc["ok"] is True
     assert sonuc["dry_run"] is False
     # İkinci çağrı GERÇEK yazma olarak gitti ve tablo jetondan geldi.
@@ -536,11 +588,9 @@ async def test_jeton_bir_kez_kullanilir() -> None:
     onizleme = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
-    await service.apply_stock(TARIH, token=onizleme["token"], reason=GEREKCE,
-                              actor=ACTOR)
-    ikinci = await service.apply_stock(TARIH, token=onizleme["token"], reason=GEREKCE,
-                                       actor=ACTOR)
+        actor=ACTOR)
+    await service.apply_stock(TARIH, token=onizleme["token"], actor=ACTOR)
+    ikinci = await service.apply_stock(TARIH, token=onizleme["token"], actor=ACTOR)
     assert ikinci["ok"] is False
     assert "süresi doldu" in ikinci["error"]
 
@@ -552,12 +602,11 @@ async def test_arada_satis_degistiyse_uygulama_reddedilir() -> None:
     onizleme = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
+        actor=ACTOR)
 
     api.stock_payload = {**api.stock_payload,
                          "day": {**api.stock_payload["day"], "sold": 92}}
-    sonuc = await service.apply_stock(TARIH, token=onizleme["token"], reason=GEREKCE,
-                                      actor=ACTOR)
+    sonuc = await service.apply_stock(TARIH, token=onizleme["token"], actor=ACTOR)
     assert sonuc["ok"] is False
     assert sonuc["code"] == "conflict"
     assert "86 → 92" in sonuc["error"]
@@ -572,12 +621,11 @@ async def test_suresi_dolmus_onizleme_uygulanmaz() -> None:
     onizleme = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
+        actor=ACTOR)
     eski = (datetime.now(UTC) - timedelta(minutes=5)).isoformat(timespec="seconds")
     store.previews[onizleme["token"]]["created_at"] = eski.replace("+00:00", "Z")
 
-    sonuc = await service.apply_stock(TARIH, token=onizleme["token"], reason=GEREKCE,
-                                      actor=ACTOR)
+    sonuc = await service.apply_stock(TARIH, token=onizleme["token"], actor=ACTOR)
     assert sonuc["ok"] is False
     assert "süresi doldu" in sonuc["error"]
 
@@ -587,9 +635,9 @@ async def test_baska_gunun_jetonu_kabul_edilmez() -> None:
     onizleme = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
+        actor=ACTOR)
     sonuc = await service.apply_stock("2026-08-18", token=onizleme["token"],
-                                      reason=GEREKCE, actor=ACTOR)
+                                      actor=ACTOR)
     assert sonuc["ok"] is False
     assert "başka bir güne" in sonuc["error"]
 
@@ -651,8 +699,7 @@ async def test_iz_yazilamazsa_is_durmaz() -> None:
 
 async def test_aktor_izde_saklanir() -> None:
     service, _, store, _ = _service()
-    await service.update_day(TARIH, fields={"title": "Yeni"}, reason=GEREKCE,
-                             actor=ACTOR, dry_run=False)
+    await service.update_day(TARIH, fields={"title": "Yeni"}, actor=ACTOR, dry_run=False)
     assert {row["actor"] for row in store.actions("day.update")} == {ACTOR}
 
 
@@ -671,24 +718,21 @@ async def test_her_yazmada_dry_run_acikca_gecilir() -> None:
     hedef = _yarin()
 
     await service.create_day(date=hedef, fields={"title": "Deneme"}, items=[],
-                             reason=GEREKCE, actor=ACTOR, dry_run=False)
-    await service.update_day(TARIH, fields={"title": "Yeni"}, reason=GEREKCE,
                              actor=ACTOR, dry_run=False)
+    await service.update_day(TARIH, fields={"title": "Yeni"}, actor=ACTOR, dry_run=False)
     await service.unpublish(TARIH, reason=GEREKCE, actor=ACTOR, dry_run=False)
-    await service.add_item(TARIH, fields={"menu_id": 55}, reason=GEREKCE, actor=ACTOR,
+    await service.add_item(TARIH, fields={"menu_id": 55}, actor=ACTOR,
                            dry_run=False)
-    await service.update_item(TARIH, 901, fields={"quantity": 2}, reason=GEREKCE,
-                              actor=ACTOR, dry_run=False)
-    await service.delete_item(TARIH, 902, reason=GEREKCE, actor=ACTOR, dry_run=False,
+    await service.update_item(TARIH, 901, fields={"quantity": 2}, actor=ACTOR, dry_run=False)
+    await service.delete_item(TARIH, 902, actor=ACTOR, dry_run=False,
                               allow_remove=True)
     await service.duplicate(TARIH, target_date=hedef, overwrite=False, reason=GEREKCE,
                             actor=ACTOR, dry_run=False)
     onizleme = await service.preview_stock(
         TARIH, capacity_total=120,
         items=[{"item_id": 901, "capacity": None}, {"item_id": 902, "capacity": 60}],
-        reason=GEREKCE, actor=ACTOR)
-    await service.apply_stock(TARIH, token=onizleme["token"], reason=GEREKCE,
-                              actor=ACTOR)
+        actor=ACTOR)
+    await service.apply_stock(TARIH, token=onizleme["token"], actor=ACTOR)
 
     taslak, taslak_api, _, _ = _service(day=dict(DRAFT_DAY))
     await taslak.publish("2026-08-24", reason=GEREKCE, actor=ACTOR, dry_run=False)

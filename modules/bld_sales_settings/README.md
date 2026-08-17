@@ -1,9 +1,14 @@
 # Satış Ayarları
 
 Satışı açan, kapatan ve kurallarını belirleyen tek ekran. Sipariş şalteri,
-sabah kesim saati, ileri gün sınırı, abonelik serbest bırakma saati, minimum
-sepet tutarı, teslimat ücreti, ödeme yöntemleri, yoğunluk anahtarı, süre
-alanları, kapalı günler ve günün hızlı stok tavanları.
+sabah kesim saati, ileri gün sınırı, minimum sepet tutarı, teslimat ücreti,
+ödeme yöntemleri, yoğunluk anahtarı, süre alanları, kapalı günler ve günün
+hızlı stok tavanları.
+
+**Siparişin mutfağa düştüğü an bir ayar değildir**, kesim saatinden türetilir
+(`docs/control/settings.md` → "Sipariş mutfağa ne zaman düşer"). Ayrı bir
+`subscription_release_time` anahtarı vardı ve 17.08.2026'da kaldırıldı; ekran
+cevabı kesim saati alanının yanındaki ipucu kutusunda YAZAR.
 
 Grup: **BLD** · Sözleşme: `BLD/docs/control/settings.md` (+ stok şeridi için
 `menu.md` → `GET|PUT /days/{date}/stock`) · Geçit: `bld_api` (K4).
@@ -74,7 +79,7 @@ yarım saat önceki hâli geri yazar. İki savunma var:
 - **Kısmi yazma.** Panel yalnız kirli alanları gönderir; dokunulmamış bir
   anahtar gövdeye hiç girmez.
 - **Taban çizgisi.** `GET /sales` bir jeton döndürür ve formun açıldığı andaki
-  13 alanı yerelde saklar. Yazmada servis taze okuma yapar ve **yazılan
+  12 alanı yerelde saklar. Yazmada servis taze okuma yapar ve **yazılan
   alanların** taban çizgisinden farkını arar; fark varsa yazma yapılmaz ve
   hangi alanın kim tarafından değiştirildiği ekranda yazar.
 

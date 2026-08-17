@@ -1,0 +1,173 @@
+/* Durum Monitörü paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `sm-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `sm-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.sm` kökünün kendisidir — o da panelin kendi öneki.
+
+   Önek `bo` (siparişler) ve `bk` (KDS) ile çakışmaz ve çakışmamalıdır: üç BLD
+   paneli aynı kabukta yan yana yüklü duruyor. */
+
+.sm {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.sm > * { flex: none; }
+
+.sm-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;                     /* dikey kayma GÖVDEDE, sayfada değil */
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sm-body > * { flex: none; }
+
+.sm-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+}
+
+.sm-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.sm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sm-dim { color: var(--soft); font-size: 11.5px; }
+
+/* Tablo hücresi: ana bilgi üstte, tamamlayıcı altta küçük. Hata kodu mesajın
+   ALTINDA durur — ikisi ayrı sütun olsaydı tablo yatayda taşardı ve asıl soru
+   ("ne oldu") ikiye bölünürdü. */
+.sm-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.sm-cell > b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm-cell > .sm-dim {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rozet şeridi. Renk tek başına anlam taşımadığı için her rozette yazı var
+   (kit kuralı 7); şerit yalnız onları hizalar. */
+.sm-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+/* Sunucunun hükmü. Kutunun kendisi vurgulu değil: hüküm zaten bir rozet
+   taşıyor ve iki vurgu, hangisinin okunacağını belirsiz kılardı. */
+.sm-verdict {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 12px;
+}
+
+.sm-verdict-label {
+  font-size: 11.5px;
+  color: var(--soft);
+  letter-spacing: 0.02em;
+}
+
+/* Araştırma satırları alt alta durur ve her biri kendi `statusLine`ıdır:
+   dördünü tek satıra sıkıştırmak, hangi bileşenin neden aksadığını görünmez
+   yapardı. */
+.sm-probes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px 12px;
+}
+
+.sm-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  max-width: 560px;
+}
+
+.sm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sm-label {
+  font-size: 11.5px;
+  color: var(--soft);
+}
+
+.sm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.sm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+/* Olay mesajı çekmecede TAM görünür: kısaltmak, teşhis için gereken tek
+   cümleyi kesmek olurdu. */
+.sm-message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+/* Bağlam sözlüğü. Değerler uzun olabiliyor (dosya yolu, yığın izi parçası);
+   satır kaydırılır, kısaltılmaz. */
+.sm-kv {
+  display: grid;
+  grid-template-columns: minmax(120px, 220px) minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 12px;
+  font-size: 12.5px;
+}
+
+.sm-kv-key {
+  color: var(--soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.sm-kv-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}

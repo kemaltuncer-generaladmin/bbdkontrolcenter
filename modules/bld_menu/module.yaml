@@ -91,10 +91,17 @@ ui:
 # İkisini aynı anahtara koymak, geri alınabilir bir işlemle geri alınamaz bir
 # işlemi aynı kapıdan geçirmek olurdu.
 #
-# Yıkıcı işlemler PIN değil GEREKÇE ister (ADR 0012 ile aynı ilke): ayrı izin
-# anahtarı + gerekçe (>=10 karakter, backend'de de doğrulanır) + çift denetim
-# satırı. Bu yüzden hiçbir izin `destructive: true` taşımaz — o bayrak
-# çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
+# Yıkıcı işlemler PIN İSTEMEZ (ADR 0012 ile aynı ilke): ayrı izin anahtarı +
+# çift denetim satırı yeter. Bu yüzden hiçbir izin `destructive: true` taşımaz
+# — o bayrak çekirdekte PIN kapısına bağlanacak ve bu ekran PIN istemiyor.
+#
+# İZİN İLE GEREKÇE AYRI SORULARDIR ve bu ekranda ayrıştılar. İzin "kim
+# yapabilir", gerekçe "neden yapıldı" sorusunu cevaplar. Gerekçe artık her
+# yazmada değil, sonucu MÜŞTERİYE GÖRÜNÜR hâle gelen ve GERİ ALINMASI ZOR olan
+# dört uçta isteniyor: yayınlama, yayından çekme, gün silme, kopyalama. Tek
+# KALEM silmek `bld_menu.remove` istemeye devam ediyor ama gerekçe istemiyor —
+# menü kurarken yapılan olağan bir düzeltme, geri alma maliyeti bir seçici.
+# Bağlayıcı tablo: `BLD/docs/control/menu.md` → "Gerekçe politikası".
 permissions:
   - key: bld_menu.view
     description: "Menü takvimini, gün ayrıntısını, kalemleri ve stok sayaçlarını görüntüleme."

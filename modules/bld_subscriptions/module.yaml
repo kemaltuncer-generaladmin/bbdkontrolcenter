@@ -1,22 +1,79 @@
-# Abonelikler modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Abonelikler — talep kuyruğu, abonelik kuralı, sözleşme ve dönem ödemeleri.
+#
+# Abonelik bir sipariş DEĞİL, sipariş üreten kuraldır. Gece işi `runsOnDate()`
+# true olan her (abonelik × teslimat noktası) için o günün siparişini üretir ve
+# sipariş KDS'e 07:00'de düşer (iş kararı 7). Kural sonradan değişse bile
+# üretilmiş sipariş değişmez; onu düzeltmek `bld_orders` revizyonunun işidir.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı,
+# zaman penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin
+# işidir.
+#
+# UZAK VERİNİN KOPYASI TUTULMAZ: abonelik, satır, nokta, duraklama, istisna,
+# üretim defteri, sözleşme ve ödeme kaydı BLD'dedir. Yerel tablolar yalnız iki
+# şey içindir — yazma gerekçesi (özellikle "fiyatı kim, ne zaman, neden
+# anlaştı") ve ekran tercihi.
+#
+# OTP VE SÖZLEŞME SMS'İ SUNUCU TARAFI AKIŞLARIDIR. Kontrol Merkezi yalnız
+# tetikler: `POST /{id}/contracts` sözleşmeyi oluşturur ve linki gönderir,
+# müşteri telefonundaki kodu SUNUCUNUN sayfasında girer. Burada OTP kutusu,
+# kod doğrulama ya da SMS gövdesi YOKTUR ve olmayacaktır — bu, ekranı
+# `bld_sms`ten bağımsız tutan şeyin ta kendisidir (K3).
+#
+# Talepler sekmesi kaldırılan `bld_quotes` modülünün işini devraldı:
+# `veykemtu_quote_requests` kayıtları burada görünür, fiyat girilir ve talep
+# aboneliğe çevrilir. Ayrı bir modül, aynı sözleşmenin (`subscriptions.md`)
+# iki modüle bölünmesi olurdu.
+#
+# Sözleşme: `BLD/docs/control/subscriptions.md` (28 uç) + `00-genel.md`.
+# Uçlar, alan adları ve durum kodları orada sabittir; uydurma alan eklenmez.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_subscriptions
 name: "Abonelikler"
-description: "Abonelik planları, kapalı günler ve yenileme takibi."
+description: "Teklif talepleri, abonelik kuralları, imzalı sözleşmeler ve 30 günlük peşin ödeme takibi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      Abonelik, alt kayıtları, üretim defteri, sözleşme ve dönem ödemeleri BLD
+      sunucusundadır (`docs/control/subscriptions.md`) ve oraya yalnız
+      geçitten gidilir (K4). İmza, nonce, zaman penceresi ve oran sınırı tek
+      yerde durur; her ekranın kendi istemcisini yazması aynı hatayı yirmi
+      yerde tekrarlardı. Panel yolu (`/api/control/subscriptions/*`) KDS
+      yolundan ayrı bir hız kovası kullanıyor (`bld-control-panel`,
+      3000/saat) ve o ayrımı da geçit koruyor.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_subscriptions.subscription_status_changed
+      payload: "{subscriptionId, from, to, action, reason, actor}"
+      description: >
+        Abonelik durumu bu ekrandan değişti (`activate` · `pause` · `resume` ·
+        `cancel`). Dört eylem TEK olayda toplandı çünkü dinleyicinin sorusu
+        "bu abonelik artık üretiyor mu" biçimindedir ve cevabı `to` alanında
+        yazılı; `action` hangi kapıdan geçildiğini söyler. Kuru provada
+        YAYINLANMAZ — BLD'de hiçbir şey değişmedi.
+    - name: bld_subscriptions.payment_marked_paid
+      payload: "{subscriptionId, paymentId, amountKurus, method, invoiceId, actor}"
+      description: >
+        Dönem borcu tahsil edildi olarak işaretlendi. Durum olayından AYRI:
+        bu bir para hareketidir ve geri alma ucu YOKTUR; iki olayı gövdeye
+        bakarak ayırmak zorunda kalan bir dinleyici, tahsilatı kaçırdığında
+        sessizce yanlış çalışırdı. Kuru provada YAYINLANMAZ.
   subscribes: []
 
 http:
@@ -36,20 +93,55 @@ ui:
     requires: [bld_subscriptions.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran kurum adını, yetkili telefonunu, anlaşılan birim
+# fiyatı ve ödenmemiş dönem borcunu gösteriyor: `bbd_staff` mağaza tarafındadır,
+# `org_staff` zil/baskı/rehber ile sınırlıdır, `accountant` mali ekranlara bakar
+# ama abonelik kuralı yazmaz ve sözleşme göndermez.
+#
+# İKİ ANAHTAR, ÜÇ DEĞİL. `bld_orders` iptali ayrı bir anahtara aldı çünkü orada
+# iptal PARA HAREKETİ (iade) üretiyor. Burada iptal para üretmez: aboneliği
+# durdurur, üretilmiş siparişlere DOKUNMAZ ve onları düşürmek zaten
+# `bld_orders.cancel` iznini ister. Yıkıcılığın karşılığı bu ekranda gerekçe +
+# çift denetim satırıdır (ADR 0012), üçüncü bir anahtar değil.
+#
+# Yıkıcı işlem PIN değil GEREKÇE ister (ADR 0012, `bld_kds` ile aynı ilke):
+# en az 10 karakter gerekçe (backend'de de doğrulanır) + iki denetim satırı
+# ("ne denendi" ve "ne oldu"). Bu yüzden hiçbir izin `destructive: true`
+# taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak ve bu ekran PIN
+# istemiyor.
 permissions:
   - key: bld_subscriptions.view
-    description: "Abonelikler ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Teklif taleplerini, abonelik listesini ve ayrıntısını, servis takvimini,
+      üretim defterini, sözleşmeleri, dönem ödemelerini ve bu ekranın yerel
+      denetim izini (fiyat geçmişi dâhil) görüntüleme; kendi görüntüleme
+      tercihini kaydetme.
+    default_roles: [admin, bld_staff]
   - key: bld_subscriptions.manage
-    description: "Abonelikler kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Talep durumu ve iç notu yazma, talebi aboneliğe çevirme; abonelik
+      açma/güncelleme, aktifleştirme, duraklatma, devam ettirme ve İPTAL;
+      tek-gün istisnası; elle üretim ve siparişi KDS'e erken düşürme;
+      sözleşme oluşturma/yeniden gönderme/iptal; dönem borcu açma ve tahsil
+      edildi işaretleme.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). `notify` yeteneği İSTENMEZ: sözleşme
+    SMS'ini ve OTP'yi BLD sunucusu gönderir, Kontrol Merkezi yalnız tetikler.
 
 tasks: []

@@ -1,0 +1,115 @@
+/* Abonelikler paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir
+   (docs/adr/0011). Burada YALNIZCA `bsu-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bsu-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bsu` kökünün kendisidir — o da panelin kendi öneki.
+
+   ÖNEK NEDEN `bsu`, `bs` DEĞİL: `bs-` ZATEN ALINMIŞ (bld_sms ve
+   bbd_bulk_sale). BLD panellerinin hepsi aynı kabukta yan yana yüklü duruyor
+   ve iki panelin aynı öneki paylaşması, birinin kutu ölçüsünün öbürünün
+   tablosunu bozması demekti — üstelik hata yalnız iki panel de açıldıktan
+   sonra görünürdü. `bss` (satış ayarları) ve `bsi` (site içeriği) de dolu. */
+
+.bsu {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--paper-ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bsu > * { flex: none; }
+
+.bsu-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;                     /* dikey kayma GÖVDEDE, sayfada değil */
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bsu-body > * { flex: none; }
+
+.bsu-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 0 20px;
+}
+
+.bsu-stack { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.bsu-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.bsu-dim { color: var(--soft); font-size: 11.5px; }
+
+.bsu-label { font-size: 12px; color: var(--soft); }
+
+/* Tablo hücresi: ana bilgi üstte, tamamlayıcı altta küçük. Telefon numarası
+   kurum adının ALTINDA durur — ikisi ayrı sütun olsaydı tablo yatayda taşardı
+   ve asıl soru ("kimin talebi") ikiye bölünürdü. */
+.bsu-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  align-items: flex-start;
+}
+.bsu-cell > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+/* Etiket–değer satırı. Talep kaydında on üç alan alt alta geliyor ve iki
+   sütunlu bir ızgara, uzun mesaj metninin etiketi aşağı itmesini önler. */
+.bsu-kv {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: baseline;
+  line-height: 1.5;
+}
+.bsu-kv > span:last-child { overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------ hafta günleri */
+
+/* Gün çipleri. `<select multiple>` KULLANILMIYOR: beş günü seçmek için Ctrl
+   basılı tutmak gerekirdi ve seçili olmayan gün ile hiç seçilmemiş liste
+   ekranda aynı görünürdü. Seçim ayrıca YAZIYLA da özetlenir (kit kuralı 7 —
+   renk tek başına anlam taşımaz). */
+.bsu-days {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bsu-day {
+  min-width: 46px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper-bg, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.bsu-day:hover { border-color: var(--soft); }
+.bsu-day:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }
+
+/* Seçili çip yalnız renkle ayrılmaz: kalın yazı ve kenarlık da değişir, çünkü
+   renk körlüğünde ya da renksiz yazdırmada "hangi günler seçili" bilgisi
+   tümüyle kaybolurdu. */
+.bsu-day.on {
+  background: var(--tint);
+  border-color: var(--accent, #3b82f6);
+  font-weight: 600;
+}

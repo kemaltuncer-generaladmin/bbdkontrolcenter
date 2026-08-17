@@ -25,7 +25,7 @@ Buradan okunmayan hiçbir alan adı, yol ya da başlık uydurulmaz.
 |---|---|
 | Takvim | Ay ızgarası; gün başına rozet: **Yayın · Taslak · Tükendi**, rozetsiz = menü girilmemiş. Kapalı günler gri + ipucu. |
 | Gün bilgileri | Başlık, açıklama, iç not, paket fiyatı (kuruş), bileşen satışı, **güne özel kesim saati**, gün tavanı, görsel yolu. Kısmi yazar. |
-| Kalemler | Ürün seçicisiyle kalem ekleme; adet, sıra, etiket, fiyat geçersiz kılma, zorunlu / yalnız pakette, kalem tavanı. |
+| Kalemler | **Hızlı ekleme**: gün düzenleyicinin içinde duran arama kutusuna yazıp Enter'a basmak kalemi anında ekler (adet 1, ürünün kendi fiyatı, listenin sonu); kutu temizlenir, odak kutuda kalır. Ayrıntı — adet, sıra, etiket, fiyat geçersiz kılma, zorunlu / yalnız pakette, kalem tavanı — satır üstünde düzenlenir. Az önce eklenen kalem tek tıkla geri alınır. |
 | Stok | Gün toplamı **ve** kalem başına porsiyon tavanı; rezerve/kalan ölçerleri; iki adımlı yazma (kuru prova → jetonla uygulama). |
 | Eylemler | Yayınla · Yayından çek · **Kopyala** (takvimi dolduranın en büyük zaman kazancı) · Sil. |
 
@@ -38,8 +38,30 @@ tüm kalemleri (fiyat geçersiz kılmaları, tavanları, etiketleri) birlikte gi
 İkisini aynı anahtara koymak, geri alınabilir bir işlemle geri alınamaz bir
 işlemi aynı kapıdan geçirmek olurdu.
 
-Yıkıcı işlemler PIN değil **gerekçe** ister (ADR 0012): ayrı izin + en az 10
-karakterlik gerekçe (backend'de de doğrulanır) + çift denetim satırı.
+## Gerekçe uç başına istenir
+
+Bu alanda gerekçe **her yazmada sorulmaz.** Yalnız iki şartı birden taşıyan
+uçlarda zorunludur: sonucu **müşteriye görünür** hâle gelir **ve** geri
+alınması zordur. Dört uç: `publish`, `unpublish`, `DELETE days/{date}`,
+`duplicate`. Bağlayıcı tablo `BLD/docs/control/menu.md` → "Gerekçe politikası".
+
+Gün kurmak, gün düzenlemek, kalem eklemek/güncellemek/silmek ve tavan yazmak
+**gerekçesizdir.** Neden: bir güne beş ürün koymak beş kez on karakter demekti
+ve ürettiği metinler "düzeltme", "ok", "asdasd" oldu — yani sınırın engellemek
+için var olduğu şeyin ta kendisi. Az yerde istenen gerekçe, çok yerde
+istenenden daha değerlidir.
+
+**Gevşemeyen üç şey.** `actor` her yazmada gider; denetim satırı her yazmada
+açılır; silmek hâlâ ayrı izin (`bld_menu.remove`) ve ayrı onay ister — kalem
+silmede gerekçe kutusu kalktı, onay penceresi kalkmadı (ADR 0012'nin "yıkıcı
+işlem onaysız geçmez" kuralı gerekçeden bağımsızdır). Gerekçe istenen dört
+uçta alt sınır hâlâ **10 karakter**.
+
+Zincirin dördü de birlikte gevşedi: panel · KM backend (`WriteBody` /
+`ReasonBody` ayrımı) · geçit (`_REASON_OPTIONAL`) · BLD sunucusu
+(`ControlController::write(..., $reasonRequired)`). Gerekçe istemeyen bir uca
+`reason` göndermek `extra="forbid"` yüzünden **422** verir — panel o alanı hiç
+göndermez.
 
 ## Kuru prova
 

@@ -7,10 +7,9 @@ değildir. `module.yaml` → `http.requires` taban izni verir, uçlar onu DARALT
 
     bld_sales_settings.view       okuma
     bld_sales_settings.manage     satış KURALLARI: kesim saati, ileri gün
-                                  sınırı, abonelik serbest bırakma saati,
-                                  minimum sepet, teslimat ücreti, ödeme
-                                  yöntemleri, yoğunluk anahtarı ve metni,
-                                  süre alanları, günün menüsü rejimi,
+                                  sınırı, minimum sepet, teslimat ücreti,
+                                  ödeme yöntemleri, yoğunluk anahtarı ve
+                                  metni, süre alanları, günün menüsü rejimi,
                                   otomatik fatura, hızlı stok tavanları,
                                   ekran tercihi
     bld_sales_settings.ordering   SATIŞ KANALININ AÇIK/KAPALI olması: satışı
@@ -196,11 +195,13 @@ async def update_sales(
     body: SalesBody,
     user: CurrentUser = requires(MANAGE),
 ) -> dict[str, Any]:
-    """13 satış ayarını KISMİ olarak yazar.
+    """12 satış ayarını KISMİ olarak yazar.
 
     `ordering_enabled` burada YAZILAMAZ (kendi uçları var), `is_open` ve
     `daily_package_menu_id` hiç yazılamaz. Üçünün de reddi serviste yapılır ve
-    hangi alanın neden reddedildiği yazılır.
+    hangi alanın neden reddedildiği yazılır. KALDIRILMIŞ bir alan
+    (`subscription_release_time`) gönderilirse ayrı bir cümleyle reddedilir:
+    "tanımlı değil" demek, yöneticiye adı yanlış yazdığını düşündürürdü.
     """
     return await service().update_sales(settings=body.settings, reason=body.reason,
                                         actor=user.full_name, preview=body.preview,

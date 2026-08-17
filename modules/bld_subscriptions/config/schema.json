@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_subscriptions ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "dry_run_default": {
+      "type": "boolean",
+      "description": "İstemci `dryRun` alanını göndermezse geçerli olan varsayılan. KAPALI olmalıdır: açık kalırsa panelden yapılan her yazma sessizce provaya döner, ekran 'sözleşme gönderildi' der ve müşteriye SMS hiç gitmez. Servis yine de her geçit çağrısında `dry_run=` değerini açıkça geçirir."
+    },
+    "page_size": {
+      "type": "integer",
+      "minimum": 5,
+      "maximum": 100,
+      "description": "Abonelik ve talep listelerinin sayfa boyutu varsayılanı. Sözleşme tavanı 100."
+    },
+    "calendar_days": {
+      "type": "integer",
+      "minimum": 7,
+      "maximum": 92,
+      "description": "Servis takviminin açtığı pencere (gün). Sunucu tavanı 92, varsayılanı 30."
+    },
+    "expires_in_days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30,
+      "description": "İmza bağlantısının varsayılan ömrü (gün). Süresiz bir bağlantı, bir yıl sonra ele geçtiğinde hâlâ geçerli olurdu; bu yüzden 0 kabul edilmez."
+    }
+  }
+}

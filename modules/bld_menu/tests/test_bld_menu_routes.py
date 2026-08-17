@@ -1,9 +1,14 @@
-"""HTTP yüzeyinin sözleşmesi — izin kapıları ve gövde alan adları.
+"""HTTP yüzeyinin sözleşmesi — izin kapıları, gerekçe politikası, gövde alanları.
 
 Bu dosya iş kuralı sınamaz (o `test_bld_menu_service.py`'nin işi); ucun DIŞ
 yüzeyini sabitler: her uç bir izin ilan ediyor mu (K9), silme uçları ayrı
-anahtara mı bağlı, ve panelden gelen gövde tam olarak beklenen alan adlarını mı
-taşıyor.
+anahtara mı bağlı, hangi uç gerekçe istiyor, ve panelden gelen gövde tam olarak
+beklenen alan adlarını mı taşıyor.
+
+İZİN İLE GEREKÇE AYRI SÜTUNLARDIR ve bilerek ayrı: `DELETE items` ayrı bir
+izin anahtarı (`bld_menu.remove`) ister ama gerekçe İSTEMEZ. Tek sütuna
+indirilseydi bu satır yazılamazdı — ve tam da o satır politikanın en kolay
+yanlış anlaşılan yeri.
 """
 
 from __future__ import annotations
@@ -14,27 +19,32 @@ from pydantic import ValidationError
 
 GEREKCE = "17 Ağustos menüsü takvimden kuruldu"
 
-#: Uç → beklenen izin(ler). Tabloyu ELLE yazmak bilinçli: `requires` çağrısını
-#: koddan okuyup kendine karşı doğrulamak, hiçbir şey doğrulamazdı.
+#: Uç → (beklenen izinler, gerekçe istiyor mu). Tabloyu ELLE yazmak bilinçli:
+#: `requires` çağrısını ve gövde modelini koddan okuyup kendine karşı
+#: doğrulamak, hiçbir şey doğrulamazdı.
 #:
 #: DİKKAT — iki DELETE ucu `bld_menu.remove` ister, ötekiler `manage`. Bu
 #: satırlar bir ayrımın kanıtı: yayından çekmek geri alınabilir, silmek değil.
-BEKLENEN = {
-    ("GET", "/calendar"): {"bld_menu.view"},
-    ("GET", "/days/{date}"): {"bld_menu.view"},
-    ("GET", "/days/{date}/stock"): {"bld_menu.view"},
-    ("GET", "/products"): {"bld_menu.view"},
-    ("POST", "/days"): {"bld_menu.manage"},
-    ("PATCH", "/days/{date}"): {"bld_menu.manage"},
-    ("DELETE", "/days/{date}"): {"bld_menu.remove"},
-    ("POST", "/days/{date}/publish"): {"bld_menu.manage"},
-    ("POST", "/days/{date}/unpublish"): {"bld_menu.manage"},
-    ("POST", "/days/{date}/items"): {"bld_menu.manage"},
-    ("PATCH", "/days/{date}/items/{item_id}"): {"bld_menu.manage"},
-    ("DELETE", "/days/{date}/items/{item_id}"): {"bld_menu.remove"},
-    ("POST", "/days/{date}/stock/preview"): {"bld_menu.manage"},
-    ("PUT", "/days/{date}/stock"): {"bld_menu.manage"},
-    ("POST", "/days/{date}/duplicate"): {"bld_menu.manage"},
+#:
+#: GEREKÇE SÜTUNUNUN ÖLÇÜTÜ: işlem müşteriye GÖRÜNÜR HÂLE GELİYOR mu ve GERİ
+#: ALINMASI ZOR mu. Taslak kurmak ikisi de değil; yayınlamak ikisi de. Okumalar
+#: gövde bile taşımıyor, onlarda sütun her zaman `False`.
+BEKLENEN: dict[tuple[str, str], tuple[set[str], bool]] = {
+    ("GET", "/calendar"): ({"bld_menu.view"}, False),
+    ("GET", "/days/{date}"): ({"bld_menu.view"}, False),
+    ("GET", "/days/{date}/stock"): ({"bld_menu.view"}, False),
+    ("GET", "/products"): ({"bld_menu.view"}, False),
+    ("POST", "/days"): ({"bld_menu.manage"}, False),
+    ("PATCH", "/days/{date}"): ({"bld_menu.manage"}, False),
+    ("DELETE", "/days/{date}"): ({"bld_menu.remove"}, True),
+    ("POST", "/days/{date}/publish"): ({"bld_menu.manage"}, True),
+    ("POST", "/days/{date}/unpublish"): ({"bld_menu.manage"}, True),
+    ("POST", "/days/{date}/items"): ({"bld_menu.manage"}, False),
+    ("PATCH", "/days/{date}/items/{item_id}"): ({"bld_menu.manage"}, False),
+    ("DELETE", "/days/{date}/items/{item_id}"): ({"bld_menu.remove"}, False),
+    ("POST", "/days/{date}/stock/preview"): ({"bld_menu.manage"}, False),
+    ("PUT", "/days/{date}/stock"): ({"bld_menu.manage"}, False),
+    ("POST", "/days/{date}/duplicate"): ({"bld_menu.manage"}, True),
 }
 
 
@@ -44,6 +54,18 @@ def _endpoints() -> dict[tuple[str, str], object]:
         for method in sorted(route.methods):
             out[(method, route.path)] = route
     return out
+
+
+def _body_model(route: object) -> object | None:
+    """Ucun gövde modeli — yoksa `None` (okuma uçları).
+
+    FastAPI çözümlenmiş modeli `dependant.body_params` içinde tutuyor;
+    fonksiyonun `__annotations__` değeri `from __future__ import annotations`
+    yüzünden DİZE olduğu için oradan okunamaz.
+    """
+    for field in getattr(route.dependant, "body_params", []):  # type: ignore[attr-defined]
+        return field.field_info.annotation
+    return None
 
 
 def _declared(route: object) -> set[str]:
@@ -74,19 +96,55 @@ def test_her_uc_izin_ilan_eder_ve_beklenen_izni_tasir() -> None:
     for anahtar, route in bulunan.items():
         izinler = _declared(route)
         assert izinler, f"{anahtar} izin ilan etmiyor (K9)"
-        assert izinler == BEKLENEN[anahtar], f"{anahtar} izni değişmiş: {izinler}"
+        assert izinler == BEKLENEN[anahtar][0], f"{anahtar} izni değişmiş: {izinler}"
+
+
+def test_her_uc_gerekce_politikasindaki_govdeyi_tasir() -> None:
+    """Gerekçe sütunu ile ucun GÖVDE MODELİ birbirini tutmalı.
+
+    Politikayı yalnız belgeye yazmak yetmez: alanı olmayan bir gövdeye gerekçe
+    göndermek 422 verir ve alanı olan bir gövdeye göndermemek de. Tablo ile kod
+    ayrıştığı anda paneli hangi tarafın kırdığı belirsizleşir.
+    """
+    for anahtar, route in _endpoints().items():
+        model = _body_model(route)
+        ister = BEKLENEN[anahtar][1]
+        if model is None:
+            # Okuma uçları gövde taşımaz; gerekçe sütunu zorunlu olarak `False`.
+            assert ister is False, f"{anahtar}: gövdesiz uç gerekçe isteyemez"
+            continue
+        assert ("reason" in model.model_fields) is ister, \
+            f"{anahtar}: gövde modeli ({model.__name__}) gerekçe sütunuyla uyuşmuyor"
 
 
 def test_silme_uclari_ucuncu_anahtara_bagli() -> None:
     # Ayrım kâğıt üstünde kalmasın: `manage` taşıyan biri günü silememelidir.
     # Yayından çekmek `manage`te KALIR — geri alınabilir bir şalter, geri
     # alınamaz bir silmeyle aynı kapıdan geçmemeli.
-    silen = {yol for (metot, yol), izin in BEKLENEN.items()
-             if metot == "DELETE"}
+    silen = {yol for (metot, yol) in BEKLENEN if metot == "DELETE"}
     assert silen == {"/days/{date}", "/days/{date}/items/{item_id}"}
     for yol in silen:
-        assert BEKLENEN[("DELETE", yol)] == {"bld_menu.remove"}
-    assert BEKLENEN[("POST", "/days/{date}/unpublish")] == {"bld_menu.manage"}
+        assert BEKLENEN[("DELETE", yol)][0] == {"bld_menu.remove"}
+    assert BEKLENEN[("POST", "/days/{date}/unpublish")][0] == {"bld_menu.manage"}
+
+
+def test_izin_ile_gerekce_ayri_sorulardir() -> None:
+    """`DELETE items`: AYRI İZİN ister, gerekçe İSTEMEZ.
+
+    Politikanın en kolay yanlış anlaşılan yeri burası. "Yıkıcı işlem gerekçe
+    ister" diye özetlemek bu satırı yanlış yazdırırdı: silme iznini gerekçeye
+    bağlayan bir kural, kalem silmeyi de gerekçeli yapardı ve menü kurarken
+    yapılan olağan bir düzeltme yeniden yavaşlardı.
+
+    Gün silme İKİSİNİ DE ister; ayrım ölçekte: gün, TÜM kalemleriyle gider.
+    """
+    izin, gerekce = BEKLENEN[("DELETE", "/days/{date}/items/{item_id}")]
+    assert izin == {"bld_menu.remove"}
+    assert gerekce is False
+
+    izin, gerekce = BEKLENEN[("DELETE", "/days/{date}")]
+    assert izin == {"bld_menu.remove"}
+    assert gerekce is True
 
 
 def test_kuru_prova_bayragi_yalniz_dryRun_adiyla_kabul_edilir() -> None:
@@ -113,6 +171,10 @@ def test_gerekce_semada_da_denetlenir() -> None:
     # Servis ayrıca denetliyor (K9 — çift kapı); buradaki kapı erken geri
     # bildirim içindir. Üst sınır 500'dür: sipariş revizyonundaki 160'lık
     # sınır bu alanda geçerli değil ve buraya kopyalanmadı.
+    #
+    # SINIRLAR POLİTİKAYLA DEĞİŞMEDİ: gerekçe artık az yerde isteniyor ama
+    # istendiği yerde hâlâ 10–500 karakter. Sınırı gevşetmek yanlış çözüm
+    # olurdu — sorun gerekçenin kendisinde değil, gereksiz yere sorulmasındaydı.
     with pytest.raises(ValidationError):
         routes.ReasonBody(reason="kısa")
     with pytest.raises(ValidationError):
@@ -120,14 +182,43 @@ def test_gerekce_semada_da_denetlenir() -> None:
     assert routes.ReasonBody(reason="x" * 500).reason
 
 
+def test_gerekce_istemeyen_govde_gerekceyi_sessizce_yutmaz() -> None:
+    """Muaf bir gövdeye `reason` göndermek 422 verir — `extra="forbid"`.
+
+    Sessizce yok saymak, gerekçe yazdığını sanan ve hiçbir yere yazılmayan bir
+    metin bırakırdı. Panel bu uçlarda gerekçe SORMAMALI ve o kararın tek
+    gürültülü kanıtı budur.
+    """
+    for model in (routes.DayCreateBody, routes.ItemCreateBody):
+        with pytest.raises(ValidationError):
+            model(date="2026-08-17", menu_id=27, reason=GEREKCE)
+    with pytest.raises(ValidationError):
+        routes.ItemPatchBody(quantity=2, reason=GEREKCE)
+    with pytest.raises(ValidationError):
+        routes.WriteBody(reason=GEREKCE)
+
+
+def test_gerekce_istemeyen_govde_aktor_da_kabul_etmez() -> None:
+    """`actor` GÖVDEDEN ALINMAZ — oturumdan gelir; politika bunu değiştirmedi.
+
+    Gerekçeyi kaldırırken aktörü gövdeye açmak, denetim izini imzalanmamış bir
+    deftere çevirirdi: silinmeyen bir satıra istediği adı yazan biri, işi
+    başkasının üstüne bırakabilirdi.
+    """
+    with pytest.raises(ValidationError):
+        routes.ItemCreateBody(menu_id=27, actor="Başkası")
+    with pytest.raises(ValidationError):
+        routes.ReasonBody(reason=GEREKCE, actor="Başkası")
+
+
 def test_kismi_yazmada_gonderilmeyen_alan_govdeye_girmez() -> None:
     # `exclude_unset` kısmi yazmanın bel kemiği: alanı hiç göndermemek
     # "dokunma", `null` göndermek "boşalt". Varsayılanı `None` olan bir modelde
     # bu iki niyet ancak böyle ayrılabilir.
-    dokunma = routes.DayPatchBody(reason=GEREKCE, title="Yeni başlık")
+    dokunma = routes.DayPatchBody(title="Yeni başlık")
     assert dokunma.changes() == {"title": "Yeni başlık"}
 
-    bosalt = routes.DayPatchBody(reason=GEREKCE, internal_note=None)
+    bosalt = routes.DayPatchBody(internal_note=None)
     assert bosalt.changes() == {"internal_note": None}
     assert "title" not in bosalt.changes()
 
@@ -137,31 +228,30 @@ def test_gun_govdesinde_tasima_ve_durum_alanlari_reddedilir() -> None:
     # yönetici günü taşıdığını ya da yayınladığını sanırdı.
     for alan in ("date", "location_id", "status"):
         with pytest.raises(ValidationError):
-            routes.DayPatchBody(**{"reason": GEREKCE, alan: "2026-08-18"})
+            routes.DayPatchBody(**{alan: "2026-08-18"})
 
 
 def test_kalem_guncellemede_urun_degistirilemez() -> None:
     # Ürünü değiştirmek kalemi silip yenisini eklemektir ve denetim izinde iki
     # ayrı satır olarak görünmelidir.
     with pytest.raises(ValidationError):
-        routes.ItemPatchBody(reason=GEREKCE, menu_id=27)
-    assert routes.ItemCreateBody(reason=GEREKCE, menu_id=27).menu_id == 27
+        routes.ItemPatchBody(menu_id=27)
+    assert routes.ItemCreateBody(menu_id=27).menu_id == 27
 
 
 def test_stok_uygulama_govdesi_tabloyu_tasimaz() -> None:
     # Tablo jetonun arkasındadır: gövdede tekrar gönderilseydi, onaylanan tablo
     # ile uygulanan tablonun aynı olduğunu kanıtlamanın yolu kalmazdı.
-    govde = routes.StockApplyBody(reason=GEREKCE, token="abcdefgh1234")
+    govde = routes.StockApplyBody(token="abcdefgh1234")
     assert govde.token == "abcdefgh1234"
     with pytest.raises(ValidationError):
-        routes.StockApplyBody(reason=GEREKCE, token="abcdefgh1234", capacity_total=120)
+        routes.StockApplyBody(token="abcdefgh1234", capacity_total=120)
 
 
 def test_stok_onizleme_govdesi_tam_listedir() -> None:
     # Fark değil TAM LİSTE: `capacity_total` gönderilmezse `None` kalır ve
     # "tavan yok" anlamına gelir; alanın hiç gönderilmemesiyle `null`
     # gönderilmesi burada AYNI şeydir çünkü tablo bütünüyle yeniden yazılıyor.
-    govde = routes.StockPreviewBody(reason=GEREKCE,
-                                    items=[{"item_id": 901, "capacity": None}])
+    govde = routes.StockPreviewBody(items=[{"item_id": 901, "capacity": None}])
     assert govde.capacity_total is None
     assert govde.items == [{"item_id": 901, "capacity": None}]

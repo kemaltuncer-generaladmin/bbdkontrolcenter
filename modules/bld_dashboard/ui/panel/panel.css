@@ -1,0 +1,148 @@
+/* Kontrol Paneli. Ortak sınıflar (kit-*) KABUĞUN kitindedir (docs/adr/0011).
+   Burada YALNIZCA `bd-` öneki tanımlanır.
+
+   Panel CSS'i `document.head`'e eklenir ve HİÇ KALDIRILMAZ: `bd-` dışında bir
+   seçici yazmak, bu panel bir kez açıldıktan sonra başka panelleri de boyar.
+   Tek istisna `.bd` kökünün kendisidir — o da panelin kendi öneki.
+
+   RENK TEK BAŞINA ANLAM TAŞIMAZ (kit kuralı 7). Aşağıdaki seviye şeritleri
+   yalnız vurgu içindir; her satırda seviyenin yazısı da (`Kritik`, `Uyarı`)
+   rozet olarak duruyor ve ekran siyah-beyaz basıldığında bilgi kaybolmuyor. */
+
+.bd {
+  position: relative;                 /* kit-toast / kit-overlay buna göre konumlanır */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;                      /* çocukların küçülebilmesi için */
+  font-size: 13.5px;
+  color: var(--ink);
+  user-select: text;
+  -webkit-user-select: text;          /* kabuk body{user-select:none} */
+}
+
+.bd > * { flex: none; }
+
+.bd-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+}
+
+.bd-label { font-size: 12px; color: var(--soft); }
+
+.bd-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 20px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bd-body > * { flex: none; }
+
+.bd-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px 12px;
+}
+
+.bd-sub {
+  font-size: 11.5px;
+  color: var(--soft);
+  line-height: 1.45;
+}
+
+/* Kart içindeki alt bölüm: başlık + grafik/çubuk. Kartın kendisi çocuklarına
+   boşluk vermiyor, o yüzden ayrım buradan geliyor. */
+.bd-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.bd-block:first-child { border-top: none; padding-top: 0; }
+
+.bd-block-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--soft);
+  text-transform: uppercase;
+}
+
+.bd-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bd-blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.bd-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* --------------------------------------------------------- bekleyen işler */
+
+/* Satır bir kutu değil bir SATIRDIR: on iki maddeyi on iki ayrı kutuya koymak
+   ekranı kutu duvarına çevirirdi. Seviye yalnız sol şeritten okunur ve yanında
+   rozeti de durur. */
+.bd-task {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+.bd-task.critical { border-left-color: var(--bad); }
+.bd-task.warning { border-left-color: var(--warn); }
+.bd-task.info { border-left-color: var(--accent); }
+
+.bd-task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bd-task-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.bd-task-detail {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* Tanınmayan atlama yolu. Düğme yerine ham yol gösterilir: kullanıcı nereye
+   bakması gerektiğini okuyabilsin ama tıklayınca hiçbir şey olmayan bir
+   düğmeye tıklamasın. */
+.bd-link {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px dashed var(--line);
+  border-radius: 5px;
+  color: var(--soft);
+}

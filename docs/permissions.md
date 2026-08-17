@@ -229,14 +229,16 @@ scripts/reconcile-permissions.py            # rapor — hiçbir şeyi değiştir
 scripts/reconcile-permissions.py --uygula   # yalnız açık onayla geri alır
 ```
 
-Betik sapmayı dört kutuya ayırır; yalnız **birincisi** geri alınabilir:
+Betik sapmayı beş kutuya ayırır; yalnız **birincisi ve sonuncusu** elle karar
+bekler:
 
 | Kutu | Anlamı | Ne yapılır |
 |---|---|---|
-| `FAZLA` | Satır `grant_defaults` biçiminde yazılmış, manifest artık o rolü önermiyor | `--uygula` geri alır |
+| `FAZLA` | Satır `grant_defaults` biçiminde yazılmış, manifest artık o rolü önermiyor | `--uygula` geri alır (onay: `UYGULA`) |
 | `EKSİK` | Manifest öneriyor, veritabanında yok | Elle iş yok; çekirdek bir sonraki açılışta ekler |
 | `ELLE` | Kapsam biçimi manifestten farklı (`izin:bld` gibi) | Dokunulmaz — `grant_defaults` çıktısı olamaz, biri bilerek yazmıştır |
-| `YETİM` | Modül duruyor ama o anahtarı hiç ilan etmiyor | Dokunulmaz — silinmiş mi, yeniden mi adlandırılmış, ayrımı insan yapar |
+| `YETİM ANAHTAR` | Modül duruyor ama o anahtarı hiç ilan etmiyor | Dokunulmaz — silinmiş mi, yeniden mi adlandırılmış, ayrımı insan yapar |
+| `YETİM MODÜL` | Modülün manifesti diskte yok; izin satırları kalmış | `--uygula` siler (ayrı onay: `SIL`) — bkz. [Silinen modülün izinleri kalır](#silinen-modülün-izinleri-kalır) |
 
 ### Neden otomatik budama yok
 
@@ -248,6 +250,61 @@ verir**; `--uygula` etkileşimli terminal ve açık onay ister, zamanlayıcıya
 bağlanamaz. Geri alınan her satır denetim izine (`roles.manage`) yazılır.
 
 Çekirdek geri alınanları geri getirmez: manifest o rolleri artık önermemektedir.
+
+---
+
+## Silinen modülün izinleri kalır
+
+Bir modülü `modules/` altından kaldırmak izin satırlarını götürmez. Çekirdek
+**keşfettiği** modülü tohumlar; keşfetmediğini ne tohumlar ne de siler
+(`grant_defaults` yalnızca ekler). Silinen modülün manifesti de yoktur — yani
+karşılaştırılacak taraf hiç kalmaz. Uzlaştırma betiği bu yüzden uzun süre bu
+satırları **göremedi**: yalnızca diskte manifesti duran modülleri karşılaştırıyordu.
+
+`<modul>.view` ve `<modul>.manage` satırları rollerde durmayı sürdürür. İlk
+bakışta zararsızdır, çünkü o izni soran hiçbir uç kalmamıştır. İki sorun yaratır:
+
+- **Roller ve İzinler ekranında** var olmayan bir modülün yetkisi gibi görünür;
+  yetki tablosu artık sistemin gerçeğini anlatmaz.
+- **Aynı kimlikle yeni bir modül yazılırsa** eski geniş küme yürürlükte olur.
+  `bld_mail` yeniden açıldığında manifesti dar ilan edilse bile satırlar zaten
+  veritabanındadır; daraltma yine yürürlüğe girmez ve modül, ilk günün
+  geliştirme kuralıyla (beş rolün hepsi) açık başlar.
+
+İkincisi asıl tehlikelidir: kimse yeni modülün izinlerini genişletmemiştir,
+geniş hâl silinen modülden **miras** kalmıştır.
+
+### Ne zaman koşulur
+
+**Bir modül silindikten sonra**, aynı temizliğin parçası olarak:
+
+```bash
+scripts/reconcile-permissions.py            # YETİM MODÜL kutusunu listeler
+scripts/reconcile-permissions.py --uygula   # ayrı bir onayla siler
+```
+
+`--uygula` iki silinebilir kutuyu iki **ayrı** soruya bağlar ve onay sözcükleri
+bilerek farklıdır (`UYGULA` ve `SIL`). İki kutu iki ayrı karardır: manifestin
+daralttığı rolleri onaylayan biri, silinen modülün artıklarını da onaylamış
+sayılmaz.
+
+Silinen her satır denetim izine `roles.manage` olarak yazılır; gerekçe alanı
+`reconcile-permissions (yetim modül)` etiketini taşır.
+
+### Betiğin sormadıkları
+
+Bu kutu yıkıcıdır, bu yüzden "diskte yok" iddiası üç yerde daraltılmıştır:
+
+| Satır | Neden sorulmaz |
+|---|---|
+| Çekirdek izni (`users.view`, `database.query:bld`) | Çekirdek izinleri de hiçbir manifestte geçmez; katalog `km_core/security/permissions.py` içinden **okunur**, betikte kopyası tutulmaz. Kopya olsaydı çekirdeğe eklenen her yeni izin ertesi gün "yetim" görünürdü |
+| Manifesti okunamayan modül | Bozuk YAML "bu modül silinmiş" demek değildir. Klasör diskte durduğu sürece izinlerine dokunulmaz |
+| Klasörü duran ama `module.yaml` dosyası olmayan modül | Yarım kalmış silme de olabilir, yeni açılmış klasör de. Ayrımı insan yapar |
+
+Ayrıca: **kimliği okunamayan tek bir klasör bile varsa** `YETİM MODÜL` kutusu
+hiç silinmez, yalnızca listelenir. Silmenin dayanağı "diskte yok" iddiasıdır ve
+o klasörün hangi kimliği ilan ettiği bilinmezken iddia doğrulanamaz. Önce
+manifest düzeltilir, sonra betik yeniden koşulur.
 
 ---
 

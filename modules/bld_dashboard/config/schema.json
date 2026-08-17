@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bld_dashboard ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "poll_seconds": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 300,
+      "description": "Yoklama aralığı. Sözleşmenin değeri 30. Ekran her yoklamada iki geçit çağrısı yapar (özet + canlı akış); `bld-control-panel` kovası 3000/saat/IP ve kısaltmak ikinci bir yöneticinin ekranını 429'a düşürür."
+    },
+    "location_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "İşletme kimliği. 0 ise sorguya hiç eklenmez ve sunucunun varsayılanı kullanılır."
+    },
+    "flow_enabled": {
+      "type": "boolean",
+      "description": "Canlı sipariş akışı kutusu. Açıkken her yoklamada ikinci bir geçit çağrısı yapılır (`GET /api/control/orders`), çünkü gösterge ucu sayaç döndürür, satır değil. Kapalıyken kutu 'akış kapatıldı' der; 'sipariş yok' demez."
+    },
+    "flow_limit": {
+      "type": "integer",
+      "minimum": 3,
+      "maximum": 50,
+      "description": "Akışta gösterilen satır sayısı. Gösterge paneli bir liste ekranı değil, bakışta okunan bir özettir; ayrıntı Sipariş Yönetimi ekranındadır."
+    }
+  }
+}

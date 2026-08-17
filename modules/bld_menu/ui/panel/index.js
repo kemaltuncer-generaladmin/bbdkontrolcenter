@@ -48,6 +48,9 @@
 //    çekmek ayrı bir iştir, geri alınabilir ve `bld_menu.manage`e düşer.
 //  · GÜNE ÖZEL KESİM SAATİ BOŞ BIRAKILABİLİR; boşken küresel ayar geçerlidir
 //    ve ekran o değeri yazar.
+//  · GEREKÇE ARTIK HER YAZMADA SORULMAZ — aşağıdaki "gerekçe politikası".
+//    Kalem eklemek, gün düzenlemek ve tavan yazmak doğrudan yazar; taahhüt
+//    anları (yayınla · yayından çek · günü sil · kopyala) gerekçe ister.
 //
 // ORTAK BİLEŞENLER kabuğun kitinden gelir (docs/adr/0011). Import yolu
 // KOPYALANMIŞ konuma göredir: shell/panels/bld_menu/ → shell/ui-kit/.
@@ -55,8 +58,8 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, confirmWithReason, h, isoOf, loadStyles, longDate, money, num,
-  pollLoop, toaster, todayIso,
+  button, confirmSimple, confirmWithReason, h, isoOf, loadStyles, longDate, money,
+  num, pollLoop, toaster, todayIso,
 } from '../../ui-kit/kit.js';
 import { monthCalendar } from '../../ui-kit/calendar.js';
 import { dateField } from '../../ui-kit/datefield.js';
@@ -69,6 +72,36 @@ import { createPicker } from '../../ui-kit/picker.js';
 import { dataTable } from '../../ui-kit/table.js';
 
 const BASE = '/api/bld_menu';
+
+// ------------------------------------------------------ gerekçe politikası
+//
+// GEREKÇE BU ALANDA HER YAZMADA SORULMAZ. Yalnız iki şartı BİRDEN taşıyan
+// uçlarda sorulur: sonucu müşteriye görünür hâle gelir VE geri alınması
+// zordur. Bu tanım dört ucu seçer ve `BLD/docs/control/menu.md` → "Gerekçe
+// politikası" bölümü bağlayıcıdır:
+//
+//     POST   days/{date}/publish      EVET   müşteri o güne sipariş verebilir
+//     POST   days/{date}/unpublish    EVET   satış kanalından düşer
+//     DELETE days/{date}              EVET   gün + kalemleri geri alınamaz gider
+//     POST   days/{date}/duplicate    EVET   toplu ve hedefin üzerine yazabilir
+//
+//     POST/PATCH days                 hayır  taslak kurmak taahhüt değil
+//     POST/PATCH/DELETE .../items     hayır  kalem girmek menü yazmaktır
+//     PUT    days/{date}/stock        hayır  tavan yeniden yazılabilir
+//
+// NEDEN GEVŞEDİ: bir güne beş ürün koymak beş kez on karakterlik gerekçe
+// demekti ve ürettiği metinler "düzeltme", "ok", "asdasd" oldu — yani sınırın
+// engellemek için var olduğu şeyin ta kendisi. Az yerde istenen gerekçe, çok
+// yerde istenenden daha değerlidir: dört satırlık bir denetim izi okunur,
+// dört yüz satırlık bir "düzeltme" listesi okunmaz.
+//
+// GEVŞEMEYEN: `actor` her yazmada gider (oturumdan, gövdeden değil) ve denetim
+// satırı her yazmada açılır. Seyrekleşen tek soru "neden".
+//
+// YIKICI AMA GEREKÇESİZ olan tek iş kalem silmedir: onay YİNE İSTENİR
+// (`confirmSimple` + `danger`), yalnız gerekçe kutusu kalkar. Kitin 8. kuralı
+// "yıkıcı işlem onaysız geçmez" der; gerekçe o onayın bir alanıydı, kendisi
+// değil.
 
 /** Gerekçe alt sınırı — sunucu da denetliyor (`00-genel.md` §3). */
 const REASON_MIN = 10;
@@ -94,6 +127,16 @@ const EMPTY_STATE = {
   productsError: '',
   tab: 'day',
   preview: null,
+  //: BU OTURUMDA hızlı ekleme kutusundan eklenmiş kalem kimlikleri. Yalnız
+  //: onlar tek tıkla geri alınır: yanlış tuşla eklenmiş, üzerinde henüz hiçbir
+  //: şey düzenlenmemiş bir kalemi silmek için onay penceresi açmak, hızlı
+  //: eklemenin kazandırdığı süreyi geri alırdı. Eski bir kalemi silmek onay
+  //: ister — orada kaybolan gerçek emek var.
+  //:
+  //: DİZİ, KÜME DEĞİL ve HİÇ YERİNDE DEĞİŞTİRİLMEZ: `{ ...EMPTY_STATE }` sığ
+  //: kopya yapıyor, yani yerinde değiştirilen bir küme/dizi bütün mount'lar
+  //: arasında paylaşılırdı. Her yazma yeni dizi üretir.
+  justAdded: [],
   connected: true,
   error: '',
 };
@@ -129,7 +172,16 @@ async function call(path, options) {
   return result;
 }
 
-/** Gerekçeli onay — her yazma buradan geçer (`00-genel.md` §3, ADR 0012). */
+/**
+ * Gerekçeli onay — YALNIZ DÖRT ÇAĞRI YERİ vardır ve hepsi bir taahhüttür:
+ * `doPublish`, `doUnpublish`, `doDeleteDay`, `openDuplicate`. Listenin
+ * gerekçesi dosya tepesindeki "gerekçe politikası" bölümündedir.
+ *
+ * Beşinci bir çağrı yeri eklemek, politikayı sunucudaki tabloyla (ve
+ * `docs/control/menu.md` ile) çelişkiye düşürür: orada gerekçe istenmeyen bir
+ * uca burada gerekçe sormak, kullanıcıdan hiçbir yere yazılmayan bir metin
+ * istemek olurdu.
+ */
 function askReason({ title, description, confirmLabel, danger = false }) {
   return confirmWithReason(nodes.root, {
     title,
@@ -139,6 +191,17 @@ function askReason({ title, description, confirmLabel, danger = false }) {
     minLength: REASON_MIN,
     placeholder: `Gerekçe (en az ${REASON_MIN}, en çok ${REASON_MAX} karakter)`,
   });
+}
+
+/**
+ * Gerekçesiz ama YIKICI işlemin onayı.
+ *
+ * Kitin 8. kuralı yıkıcı işlemin onaydan geçmesini istiyor; gerekçe o onayın
+ * bir ALANIYDI, kendisi değil. Alan kalkınca onay penceresi kalır — silinen
+ * şeyin ne olduğu ve geri gelmeyeceği yine ekranda yazar.
+ */
+function confirmDestructive({ title, description, confirmLabel }) {
+  return confirmSimple(nodes.root, { title, description, confirmLabel, danger: true });
 }
 
 /**
@@ -234,6 +297,25 @@ function padded(node) {
   return box;
 }
 
+/** Bu oturumda hızlı eklenmiş bir kalem mi (tek tıkla geri alınır). */
+function isJustAdded(itemId) {
+  return state.justAdded.includes(itemId);
+}
+
+/** Hızlı ekleme izini — dizi HER ZAMAN yeniden üretilir (`EMPTY_STATE` notu). */
+function markJustAdded(itemId) {
+  if (!isJustAdded(itemId)) state.justAdded = [...state.justAdded, itemId];
+}
+
+function forgetJustAdded(itemId) {
+  state.justAdded = state.justAdded.filter((id) => id !== itemId);
+}
+
+/** Gün değişti: "az önce ekledim" izi o güne aitti, yenisine taşınmaz. */
+function clearJustAdded() {
+  state.justAdded = [];
+}
+
 // ------------------------------------------------------------- takvim
 
 function badgeFor(iso, info) {
@@ -327,22 +409,37 @@ function summaryRow() {
 
 // ------------------------------------------------------------ gün yükleme
 
+/**
+ * Gün + stok verisini tazeler ve EKRANI ÇİZMEZ.
+ *
+ * Çizimden ayrılmasının nedeni hızlı kalem eklemedir: her eklemeden sonra sağ
+ * panoyu baştan çizmek, arama kutusunu da yok eder ve ODAK KAYBOLUR — hızlı
+ * eklemenin bütün kazancı tam olarak odağın kutuda kalmasıdır. Veri tazeleme
+ * ile çizim ayrı durunca, ekleme sonrası yalnız kalem tablosu yeniden çizilir.
+ *
+ * @returns {Promise<boolean>} kullanıcı aradan gün değiştirdiyse `false`
+ */
+async function fetchDay(iso) {
+  const [dayResult, stockResult] = await Promise.all([
+    call(`${BASE}/days/${iso}`),
+    call(`${BASE}/days/${iso}/stock`).catch(() => null),
+  ]);
+  if (state.selected !== iso) return false;
+  state.exists = Boolean(dayResult.exists);
+  // BOŞ SÖZLÜK "veri var" DEĞİLDİR. Servis bağlanamadığında ya da gün
+  // olmadığında `{}` döndürüyor ve `payload || null` yazmak onu doğru
+  // sanardı; ekran da `day.title` okumaya çalışıp çökerdi.
+  state.day = state.exists ? (dayResult.day || null) : null;
+  state.stock = stockResult?.stock?.day ? stockResult.stock : null;
+  return true;
+}
+
 async function reloadDay({ quiet = false } = {}) {
   if (!state.selected) return;
   const iso = state.selected;
   if (!quiet) nodes.right.replaceChildren(skeletonRows(6, 3));
   try {
-    const [dayResult, stockResult] = await Promise.all([
-      call(`${BASE}/days/${iso}`),
-      call(`${BASE}/days/${iso}/stock`).catch(() => null),
-    ]);
-    if (state.selected !== iso) return;      // kullanıcı aradan gün değiştirdi
-    state.exists = Boolean(dayResult.exists);
-    // BOŞ SÖZLÜK "veri var" DEĞİLDİR. Servis bağlanamadığında ya da gün
-    // olmadığında `{}` döndürüyor ve `payload || null` yazmak onu doğru
-    // sanardı; ekran da `day.title` okumaya çalışıp çökerdi.
-    state.day = state.exists ? (dayResult.day || null) : null;
-    state.stock = stockResult?.stock?.day ? stockResult.stock : null;
+    if (!await fetchDay(iso)) return;        // kullanıcı aradan gün değiştirdi
     state.preview = null;
   } catch (failure) {
     if (state.selected !== iso) return;
@@ -354,8 +451,42 @@ async function reloadDay({ quiet = false } = {}) {
   paintDay();
 }
 
-async function ensureProducts() {
-  if (state.products.length || state.productsError) return;
+/**
+ * Kalem eklendikten/kaldırıldıktan sonraki tazeleme: veriyi yeniler ama YALNIZ
+ * kalem tablosunu yeniden çizer. `mark` verilirse o üründen doğan yeni kalem
+ * "az önce eklendi" diye işaretlenir — kimliği sunucudan gelen yanıtta değil,
+ * tazelenmiş listede aranır, çünkü seçici menüde ZATEN OLAN ürünleri hiç
+ * göstermiyor: bir gün içinde bir `menu_id` en çok bir kez bulunur.
+ */
+async function refreshItems({ mark = 0 } = {}) {
+  const iso = state.selected;
+  try {
+    if (!await fetchDay(iso)) return;
+  } catch (failure) {
+    toast(failure.message, 'bad');
+    return;
+  }
+  if (mark) {
+    const fresh = (state.day?.items || []).find((item) => item.menu_id === mark);
+    if (fresh) markJustAdded(fresh.id);
+  }
+  redrawItems();
+}
+
+/**
+ * Ürün kataloğu — bir kez okunur ve panelin ömrü boyunca saklanır.
+ *
+ * `force` YENİDEN DENEME İÇİNDİR: liste bir kez hata verdiğinde önbellek onu
+ * kalıcı kılıyordu ve hızlı ekleme kutusu, bağlantı düzelse bile boş kalırdı.
+ * Kutu artık bir "yeniden dene" düğmesi çiziyor ve tek yolu bu bayrak.
+ */
+async function ensureProducts({ force = false } = {}) {
+  if (force) {
+    state.products = [];
+    state.productsError = '';
+  } else if (state.products.length || state.productsError) {
+    return;
+  }
   try {
     const result = await call(`${BASE}/products`);
     state.products = result.items || [];
@@ -370,7 +501,22 @@ async function ensureProducts() {
 
 // ================================================================ sağ pano
 
+/**
+ * Kalem sekmesinin CANLI düğümlerini bırakır.
+ *
+ * Bu düğümler sekme/gün değişince DOM'dan düşüyor ama `nodes` üzerinde asılı
+ * kalıyordu; ölü bir seçiciye `setItems` çağırmak ya da ölü bir arama kutusuna
+ * odak vermek sessizce hiçbir şey yapmaz — sessiz bir arıza da arızadır.
+ */
+function dropItemNodes() {
+  nodes.quickPicker = null;
+  nodes.quickSearch = null;
+  nodes.quickNote = null;
+  nodes.itemsBox = null;
+}
+
 function paintDay() {
+  dropItemNodes();
   nodes.right.replaceChildren();
   if (!state.selected) {
     nodes.right.append(emptyState({
@@ -416,6 +562,7 @@ function paintTab() {
   // üzerinde dinlemeye devam eder ve panel açıldıkça birikirler.
   nodes.dayForm?.destroy();
   nodes.dayForm = null;
+  dropItemNodes();
   nodes.tabBody.replaceChildren();
   ({ day: paintDayForm, items: paintItems, stock: paintStock }[state.tab]
     || paintDayForm)();
@@ -445,15 +592,43 @@ function dayHeader(info) {
   const actions = h('div', 'bm-dayactions');
   if (state.exists && state.day) {
     if (state.day.status === 'published') {
-      actions.append(button('Yayından çek', { onClick: () => doUnpublish() }));
+      actions.append(commitGroup(
+        button('Yayından çek', {
+          title: 'Gün satış kanalından düşer ve taslağa döner.',
+          onClick: () => doUnpublish(),
+        }),
+        'Müşteriye görünürlüğü kaldırır · gerekçe istenir',
+      ));
     } else {
-      actions.append(button('Yayınla', { variant: 'primary', onClick: () => doPublish() }));
+      actions.append(commitGroup(
+        button('Yayınla', {
+          variant: 'primary',
+          title: 'Yayınlandığı anda müşteri bu güne sipariş verebilir.',
+          onClick: () => doPublish(),
+        }),
+        'Müşteriye açar · gerekçe istenir',
+      ));
     }
     actions.append(button('Kopyala', { onClick: () => openDuplicate({ toHere: false }) }));
     actions.append(button('Sil', { variant: 'danger', onClick: () => doDeleteDay() }));
   }
   head.append(left, actions);
   return head;
+}
+
+/**
+ * Taahhüt düğmesinin çerçevesi — yayınla ve yayından çek burada durur.
+ *
+ * Gerekçe artık YALNIZ taahhüt anlarında isteniyorsa, o an ekranda da öyle
+ * görünmeli: aynı şeritte duran "Kopyala" ve "Sil" ile aynı ağırlıkta çizilen
+ * bir yayın düğmesi, kullanıcıya diyaloğun neden yalnız burada açıldığını
+ * anlatmaz. Çerçeve RENKLE DEĞİL YAZIYLA ayrışır (kit kuralı 7): altındaki
+ * satır ne olacağını ve gerekçe isteneceğini önceden söyler.
+ */
+function commitGroup(control, note) {
+  const box = h('div', 'bm-commit');
+  box.append(control, h('span', 'bm-commit-note', note));
+  return box;
 }
 
 // --------------------------------------------------------- gün bilgileri
@@ -554,23 +729,44 @@ async function saveDay(form) {
   for (const [key, value] of Object.entries(patch)) {
     payload[key] = typeof value === 'string' && value.trim() === '' ? null : value;
   }
-  const reason = await askReason({
-    title: 'Gün bilgilerini kaydet',
-    description: `${longDate(state.selected)} · değişen alanlar: `
-      + `${Object.keys(payload).join(', ')}`,
-    confirmLabel: 'Kaydet',
-  });
-  if (!reason) return;
+  // GEREKÇE SORULMAZ (politika): gün bilgisi düzenlemek taahhüt değil, menüyü
+  // kurmanın kendisidir. Kullanıcı yine de kaydedildiğini GÖRÜR — `success`
+  // toast'ı bilerek duruyor; sessiz bir yazma, kaydedip kaydetmediğini
+  // bilmeyen kullanıcı üretir.
   await write(`${BASE}/days/${state.selected}`,
-    { method: 'PATCH', payload: { reason, ...payload } },
-    { success: 'Gün bilgileri kaydedildi.',
+    { method: 'PATCH', payload },
+    { success: `Gün bilgileri kaydedildi (${Object.keys(payload).length} alan).`,
       after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
 }
 
 // -------------------------------------------------------------- kalemler
 
 function paintItems() {
-  const items = state.day.items || [];
+  // Sıra ÖNEMLİ: arama kutusu tablonun ÜSTÜNDE durur. Altta olsaydı liste
+  // uzadıkça aşağı kayar ve beş kalem ekleyen yönetici her seferinde onu
+  // aramak zorunda kalırdı — kutunun sabit kalması akışın kendisidir.
+  nodes.itemsBox = h('div', 'bm-itemsbox');
+  nodes.itemsBox.append(itemsTable());
+
+  nodes.tabBody.append(
+    quickAddCard(),
+    card('Kalemler', nodes.itemsBox,
+      'Sıra sunucudan gelir: çorba → ana yemek → pilav → tatlı.'),
+    hintBox('Adet, fiyat geçersiz kılma, etiket, zorunluluk ve tek satılabilirlik '
+      + 'SATIR ÜSTÜNDEN düzenlenir: hızlı ekleme kalemi listeye koyar, ayrıntı '
+      + '"Düzenle" ile girilir. Böyle olması, beş kalem eklerken beş kez form '
+      + 'doldurmayı gereksiz kılar.'),
+    hintBox('Kalemin ürünü değiştirilemez. Ürünü değiştirmek kalemi silip yenisini '
+      + 'eklemektir ve denetim izinde iki ayrı satır olarak görünmelidir.'),
+  );
+
+  // Ürün listesi ağdan gelir; kutu ONU BEKLEMEDEN çizilir ve dolunca dolar.
+  // Beklemek, sekmeye her geçişte boş bir ekran demekti.
+  ensureProducts().then(() => fillQuickAdd());
+}
+
+/** Kalem tablosu — hızlı eklemeden sonra TEK BAŞINA yeniden çizilir. */
+function itemsTable() {
   const table = dataTable({
     columns: [
       { key: 'sort_order', label: 'Sıra', width: '70px', align: 'num' },
@@ -579,6 +775,9 @@ function paintItems() {
           const box = h('div', 'bm-itemname');
           box.append(h('b', undefined, row.name || `#${row.menu_id}`));
           const marks = h('div', 'bm-itemmarks');
+          // ROZET, FARKLI DÜĞMENİN AÇIKLAMASIDIR: bu satırda "Sil" yerine
+          // "Geri al" duruyor ve nedeni yazılı olmalı (kit kuralı 7).
+          if (isJustAdded(row.id)) marks.append(badge('Az önce eklendi', 'info'));
           if (row.is_required) marks.append(badge('Zorunlu', 'info'));
           if (!row.sellable_alone) marks.append(badge('Yalnız pakette', 'dim'));
           if (row.sold_out) marks.append(badge('Mutfak tükendi dedi', 'bad'));
@@ -592,38 +791,115 @@ function paintItems() {
           : `${money(row.unit_price_kurus)} (özel)`) },
       { key: 'capacity', label: 'Tavan', width: '110px', align: 'num',
         cell: (row) => (row.capacity === null ? 'sınırsız' : `${num(row.capacity)} porsiyon`) },
-      { key: 'actions', label: '', width: '150px',
+      { key: 'actions', label: '', width: '175px',
         cell: (row) => {
           const box = h('div', 'bm-rowactions');
           box.append(button('Düzenle', { variant: 'ghost', onClick: () => openItemEditor(row) }));
-          box.append(button('Sil', { variant: 'ghost', onClick: () => doDeleteItem(row) }));
+          box.append(isJustAdded(row.id)
+            ? button('Geri al', {
+              variant: 'ghost',
+              title: 'Bu kalemi az önce siz eklediniz: tek tıkla kaldırılır, onay '
+                + 'sorulmaz. Üzerinde henüz hiçbir düzenleme yok.',
+              onClick: () => undoItem(row),
+            })
+            : button('Sil', { variant: 'ghost', onClick: () => doDeleteItem(row) }));
           return box;
         } },
     ],
-    rows: items,
+    rows: state.day?.items || [],
     empty: emptyState({
       title: 'Bu günde kalem yok',
-      text: 'Yayınlamak için en az bir kalem gerekli. Kalemsiz bir gün müşteriye '
-        + 'boş bir menü kartı gösterirdi.',
+      text: 'Yukarıdaki kutuya ürün adını yazıp Enter\'a basın. Yayınlamak için en '
+        + 'az bir kalem gerekli: kalemsiz bir gün müşteriye boş bir menü kartı '
+        + 'gösterirdi.',
     }),
   });
-
-  const actions = h('div', 'bm-formactions');
-  actions.append(button('Kalem ekle', { variant: 'primary',
-    onClick: () => openItemPicker() }));
-
-  nodes.tabBody.append(
-    card('Kalemler', table.node,
-      'Sıra sunucudan gelir: çorba → ana yemek → pilav → tatlı.'),
-    actions,
-    hintBox('Kalemin ürünü değiştirilemez. Ürünü değiştirmek kalemi silip yenisini '
-      + 'eklemektir ve denetim izinde iki ayrı satır olarak görünmelidir.'),
-  );
+  return table.node;
 }
 
-async function openItemPicker() {
-  await ensureProducts();
-  const used = new Set((state.day.items || []).map((item) => item.menu_id));
+/** Tabloyu, sekme rozetini ve seçicinin kalan ürünlerini birlikte tazeler. */
+function redrawItems() {
+  if (!nodes.itemsBox) return;
+  // Gün aradan silinmiş ya da kaybolmuşsa kalem tablosu yeniden çizilemez;
+  // tam çizim doğru ekranı ("menü girilmemiş") getirir.
+  if (!state.exists || !state.day) { paintDay(); return; }
+  nodes.itemsBox.replaceChildren(itemsTable());
+  nodes.tabs?.badge('items', state.day.item_count || 0);
+  fillQuickAdd();
+}
+
+// ------------------------------------------------------- hızlı kalem ekleme
+//
+// ASIL İŞ BU. Eskiden bir güne ürün koymak dört adımdı: çekmeceyi aç → ürünü
+// bul → formu doldur → gerekçe yaz. Beş ürün için beş tur, her turda odak
+// başka yerde. Şimdi gün düzenleyicinin içinde duran tek bir arama kutusu var:
+// yaz → Enter → kalem listeye düşer → kutu temizlenir → ODAK KUTUDA KALIR.
+//
+// ODAK AYRINTISI İŞİN TAMAMIDIR. Odak kaybolursa kullanıcı her kalemden sonra
+// fareye uzanır ve kazanılan süre geri gider; bu yüzden ekleme sonrası sağ pano
+// BAŞTAN ÇİZİLMEZ (`refreshItems` yalnız tabloyu tazeler) ve kutuya odak
+// açıkça geri verilir.
+//
+// SEÇİCİ YENİDEN YAZILMADI (ADR 0011): `createPicker` zaten gruplu, aranabilir
+// ve kırpma uyarısını kendisi veriyor. Kitin vermediği iki şey var — sorguyu
+// temizlemek ve Enter'ı yakalamak — ve kit ORTAK MAL olduğu için bu turda ona
+// yazılmıyor. İkisi de seçicinin KENDİ düğümü üzerinden yapılıyor; bağımlılık
+// burada yazılı dursun ki kit bir gün `clearQuery()`/`onSubmit` verdiğinde
+// buranın sadeleşeceği bilinsin.
+
+function quickAddCard() {
+  const box = h('div', 'bm-quickadd');
+
+  const picker = createPicker({
+    items: [],
+    groupLabel: 'Kategori',
+    placeholder: 'Ürün ara — Enter kalemi ekler',
+    single: true,
+    // TIKLAMA DA ANINDA EKLER: seçim ile ekleme arasına bir "Ekle" düğmesi
+    // koymak, tek seçimli bir listede ikinci bir tıklama istemekti.
+    onChange: (ids) => {
+      const menuId = Number(ids[0] || 0);
+      if (menuId) quickAdd(menuId);
+    },
+  });
+  nodes.quickPicker = picker;
+
+  // Kitin `focus()` metodu var, `clearQuery()` yok. Kutuyu doğrudan tutmanın
+  // tek yolu seçicinin düğümü; sınıf adı yerine TİP seçicisi kullanıldı, çünkü
+  // "seçicinin arama kutusu" bir `type=search` olmaya sınıf adını korumaktan
+  // daha çok bağlı. Bulunamazsa Enter kısayolu düşer, tıklama çalışmaya
+  // devam eder — kısayolun yokluğu ekranı kilitlemez.
+  const search = picker.node.querySelector('input[type="search"]');
+  nodes.quickSearch = search || null;
+
+  picker.node.addEventListener('keydown', (event) => {
+    // YALNIZ ARAMA KUTUSU: liste satırı da bir `button` ve Enter'ı kendisi
+    // tıklamaya çeviriyor. Buradan da tıklarsak kalem İKİ KEZ eklenirdi.
+    if (event.key !== 'Enter' || event.target !== search) return;
+    event.preventDefault();
+    const first = picker.node.querySelector('button.pk-row');
+    if (first) first.click();
+    else toast('Aramaya uyan ürün yok; yazımı kısaltın.', 'warn');
+  });
+
+  nodes.quickNote = h('div', 'bm-quicknote');
+  box.append(picker.node, nodes.quickNote);
+
+  return card('Hızlı kalem ekleme', box,
+    'Yaz, Enter\'a bas: kalem ADET 1, ÜRÜNÜN KENDİ FİYATIYLA ve listenin sonuna '
+    + 'eklenir. Gerekçe sorulmaz; kutu temizlenir ve odak kutuda kalır.');
+}
+
+/** Seçicinin listesi = SATIŞTAKİ ürünler eksi bu güne zaten girilmiş olanlar. */
+function fillQuickAdd() {
+  const picker = nodes.quickPicker;
+  const note = nodes.quickNote;
+  // Düğümler YEREL DEĞİŞKENE ALINIR: bu işlev ağ beklemesinden sonra da
+  // çağrılıyor ve o arada sekme değişmiş olabilir. `nodes` üzerinden okumak,
+  // ölmüş bir kutuyu doldurmak ya da yenisini yarıda kesmek olurdu.
+  if (!picker || !note) return;
+
+  const used = new Set((state.day?.items || []).map((item) => item.menu_id));
   const rows = state.products
     .filter((row) => !used.has(row.menu_id))
     .map((row) => ({
@@ -632,56 +908,94 @@ async function openItemPicker() {
       group: row.category || 'Diğer',
       meta: `${money(row.price_kurus)}${row.sold_out ? ' · mutfak tükendi dedi' : ''}`,
     }));
+  picker.setItems(rows);
 
-  const body = h('div');
+  note.replaceChildren();
   if (state.productsError) {
-    body.append(alertBox(`Ürün listesi alınamadı: ${state.productsError} `
-      + 'Ürün kimliğini elle girebilirsiniz.', 'warn'));
+    // ESKİ METİN BİR SÖZ VERİYORDU VE TUTMUYORDU ("ürün kimliğini elle
+    // girebilirsiniz" — öyle bir alan hiç yoktu). Yerine çalışan bir çıkış
+    // yolu kondu: yeniden deneme düğmesi.
+    note.append(
+      alertBox(`Ürün listesi alınamadı: ${state.productsError} `
+        + 'Bu liste gelmeden kalem eklenemez.', 'warn'),
+      button('Ürün listesini yeniden dene', {
+        onClick: async () => {
+          note.replaceChildren(h('p', 'bm-quick-line', 'Ürünler okunuyor…'));
+          await ensureProducts({ force: true });
+          fillQuickAdd();
+        },
+      }),
+    );
+    return;
   }
-  body.append(hintBox('Listede yalnız SATIŞTAKİ ürünler var. Satıştan kalkmış bir '
-    + 'ürünü içeren gün yayınlanamıyor; burada göstermek, kurduğunuz menünün '
-    + 'yayınlanmayacağını size ancak yayın düğmesinde söylemek olurdu. Menüde '
-    + 'zaten olan ürünler de listede yok.'));
+  note.append(h('p', 'bm-quick-line',
+    `${num(rows.length)} ürün eklenebilir · bu güne girilmiş ${num(used.size)} ürün `
+    + 'listede yok · yalnız SATIŞTAKİ ürünler listelenir (satıştan kalkmış bir '
+    + 'ürünü içeren gün yayınlanamıyor).'));
+}
 
-  const picker = createPicker({
-    items: rows,
-    groupLabel: 'Kategori',
-    placeholder: 'Ürün ara',
-    single: true,
-    onChange: (ids) => { chosen = ids[0] || ''; addButton.disabled = !chosen; },
-  });
-  let chosen = '';
-  body.append(picker.node);
+/**
+ * Kalemi ANINDA ekler: diyalog yok, gerekçe yok, form yok.
+ *
+ * `sort_order` GÖNDERİLMEZ — sunucu mevcut en büyüğe 10 ekliyor, yani kalem
+ * listenin sonuna düşüyor. Burada hesaplamak, iki yerde duran aynı kuralın bir
+ * gün ayrışması demekti.
+ *
+ * `price_override_kurus` de gönderilmez: ürünün kendi fiyatı geçerli olur.
+ */
+async function quickAdd(menuId) {
+  // `write()` eşzamanlı ikinci yazmayı SESSİZCE düşürüyor. Hızlı eklemede bu
+  // en kötü hâl: kullanıcı Enter'a bastı, hiçbir şey olmadı, kalem de yok.
+  if (busy) {
+    toast('Önceki ekleme sürüyor; bir saniye bekleyin.', 'warn');
+    return;
+  }
+  const product = state.products.find((row) => row.menu_id === menuId);
+  const name = product?.name || `#${menuId}`;
 
-  const addButton = button('Seçilen ürünü ekle', {
-    variant: 'primary',
-    disabled: true,
-    onClick: async () => {
-      const menuId = Number(chosen);
-      if (!menuId) return;
-      const product = state.products.find((row) => row.menu_id === menuId);
-      const reason = await askReason({
-        title: 'Menüye kalem ekle',
-        description: `${longDate(state.selected)} · ${product?.name || `#${menuId}`}`,
-        confirmLabel: 'Ekle',
-      });
-      if (!reason) return;
-      handle.close();
-      await write(`${BASE}/days/${state.selected}/items`,
-        { method: 'POST', payload: { reason, menu_id: menuId, quantity: 1,
-          is_required: false, sellable_alone: true } },
-        { success: 'Kalem eklendi.',
-          after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
-    },
-  });
+  await write(`${BASE}/days/${state.selected}/items`,
+    { method: 'POST',
+      payload: { menu_id: menuId, quantity: 1, is_required: false, sellable_alone: true } },
+    { success: `"${name}" eklendi — adet 1, ürün fiyatı, listenin sonu.`,
+      after: async () => {
+        await refreshItems({ mark: menuId });
+        await reloadCalendar({ quiet: true });
+        // EN SON: takvim tazelemesi odağı almıyor ama sıra garanti olsun.
+        resetQuickSearch();
+      } });
+}
 
-  const handle = drawer(nodes.root, {
-    title: 'Kalem ekle',
-    subtitle: longDate(state.selected),
-    actions: [addButton],
-  });
-  handle.body.append(body);
-  closers.push(handle.close);
+/** Az önce eklenmiş kalemi tek tıkla geri alır — onay penceresi yok. */
+async function undoItem(row) {
+  await write(`${BASE}/days/${state.selected}/items/${row.id}`,
+    { method: 'DELETE', payload: {} },
+    { success: `"${row.name}" kaldırıldı.`,
+      after: async () => {
+        forgetJustAdded(row.id);
+        await refreshItems();
+        await reloadCalendar({ quiet: true });
+        resetQuickSearch();
+      } });
+}
+
+/**
+ * Arama kutusunu temizler ve odağı ona geri verir.
+ *
+ * Seçici sorguyu kendi `input` dinleyicisinden okuyor, yani kutunun değerini
+ * değiştirmek tek başına listeyi süzülmemiş hâline döndürmez; olayı taklit
+ * etmek, kite yazmadan bunu yapmanın tek yolu.
+ *
+ * ODAK HER HÂLDE GERİ VERİLİR: tıklamayla eklendiğinde odak tıklanan satırdaydı
+ * ve seçici o satırı yeniden çizince odak `body`'ye düşer.
+ */
+function resetQuickSearch() {
+  const search = nodes.quickSearch;
+  if (!search) return;
+  if (search.value !== '') {
+    search.value = '';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  search.focus();
 }
 
 function openItemEditor(row) {
@@ -725,17 +1039,18 @@ function openItemEditor(row) {
       for (const [key, value] of Object.entries(patch)) {
         payload[key] = typeof value === 'string' && value.trim() === '' ? null : value;
       }
-      const reason = await askReason({
-        title: 'Kalemi güncelle',
-        description: `${longDate(state.selected)} · ${row.name} · `
-          + `değişen alanlar: ${Object.keys(payload).join(', ')}`,
-        confirmLabel: 'Kaydet',
-      });
-      if (!reason) return;
+      // GEREKÇE SORULMAZ (politika): kalemin adedini ya da etiketini düzeltmek
+      // menüyü kurmanın parçası. Kaydedildiği yine GÖRÜNÜR.
+      //
+      // TEK TIKLIK GERİ ALMA BURADA BİTER: "Geri al" düğmesinin gerekçesi
+      // kalemin üzerinde hiçbir emek olmamasıydı. Kullanıcı etiketini,
+      // fiyatını ya da tavanını yazdıysa o emek var; bundan sonra silmek onay
+      // ister.
+      forgetJustAdded(row.id);
       handle.close();
       await write(`${BASE}/days/${state.selected}/items/${row.id}`,
-        { method: 'PATCH', payload: { reason, ...payload } },
-        { success: 'Kalem güncellendi.',
+        { method: 'PATCH', payload },
+        { success: `"${row.name}" güncellendi (${Object.keys(payload).join(', ')}).`,
           after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
     },
   });
@@ -752,20 +1067,26 @@ function openItemEditor(row) {
   closers.push(handle.close);
 }
 
+/**
+ * Kalem silme — GEREKÇESİZ ama ONAYLI.
+ *
+ * Gerekçe kutusu politikayla birlikte kalktı; onay penceresi kalktı DEĞİL.
+ * "Az önce eklendi" işaretli satırlar bu yoldan geçmez: onların düğmesi
+ * "Geri al"dır ve tek tıkla çalışır (`undoItem`).
+ */
 async function doDeleteItem(row) {
-  const reason = await askReason({
+  const ok = await confirmDestructive({
     title: `"${row.name}" kalemini sil`,
     description: 'GERİ ALINAMAZ: kalemin etiketi, fiyat geçersiz kılması ve tavanı '
       + 'birlikte gider. Bugünün siparişlerinde kullanılmış bir kalemi sunucu ayrıca '
       + 'engeller — geçmiş bozulmaz, ama mutfağın bugün pişirdiği bir kalemi listeden '
       + 'düşürmek istemezsiniz.',
     confirmLabel: 'Kalemi sil',
-    danger: true,
   });
-  if (!reason) return;
+  if (!ok) return;
   await write(`${BASE}/days/${state.selected}/items/${row.id}`,
-    { method: 'DELETE', payload: { reason } },
-    { success: 'Kalem silindi.',
+    { method: 'DELETE', payload: {} },
+    { success: `"${row.name}" silindi.`,
       after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
 }
 
@@ -915,21 +1236,21 @@ function numberInput(value, onChange) {
   return input;
 }
 
+/**
+ * Kuru prova — ONAY PENCERESİ YOK ve olmamalı.
+ *
+ * Eskiden buraya da gerekçe soruluyordu: hiçbir şey yazmayan bir hesap için on
+ * karakterlik metin istemek, gerekçeyi tam da anlamsızlaştıran şeydi. Yazma
+ * kapısı bir sonraki adımda (jetonlu `PUT stock`) duruyor.
+ */
 async function previewStock(draft) {
-  const reason = await askReason({
-    title: 'Tavanları hesapla',
-    description: 'Kuru prova koşulacak: sunucu tavanların kaç siparişin altında '
-      + 'kaldığını hesaplayacak. Hiçbir şey yazılmayacak.',
-    confirmLabel: 'Hesapla',
-  });
-  if (!reason) return;
   const items = Object.entries(draft.items)
     .map(([id, capacity]) => ({ item_id: Number(id), capacity }));
   const result = await write(`${BASE}/days/${state.selected}/stock/preview`,
-    { method: 'POST', payload: { reason, capacity_total: draft.capacity_total, items } },
+    { method: 'POST', payload: { capacity_total: draft.capacity_total, items } },
     { expectDryRun: true });
   if (!result) return;
-  state.preview = { ...result, reason };
+  state.preview = { ...result };
   nodes.previewBox?.replaceChildren(previewPanel(state.preview));
 }
 
@@ -948,7 +1269,8 @@ function previewPanel(preview) {
   }
   box.append(h('p', 'bm-preview-note',
     `Bu tablo ${preview.expires_in_minutes} dakika geçerli. Onaylamadan önce satış `
-    + 'değişirse uygulama reddedilir ve yeniden hesaplarsınız.'));
+    + 'değişirse uygulama reddedilir ve yeniden hesaplarsınız. "Tavanları uygula" '
+    + 'başka bir onay sormaz: gördüğünüz tablo DOĞRUDAN yazılır.'));
 
   const actions = h('div', 'bm-formactions');
   actions.append(button('Tavanları uygula', {
@@ -962,16 +1284,16 @@ function previewPanel(preview) {
   return box;
 }
 
+/**
+ * Tavanları yazar. GEREKÇE SORULMAZ (politika) ve İKİNCİ BİR ONAY DA SORULMAZ:
+ * onay zaten bu akışın kendisidir — kullanıcı önce kuru provayı koşturdu,
+ * uyarıları okudu ve elindeki jeton tam olarak gördüğü tabloyu temsil ediyor.
+ * Üstüne bir "emin misiniz" penceresi koymak, okunan bir onayın üstüne
+ * okunmayan bir onay eklemekti.
+ */
 async function applyStock(preview) {
-  const reason = await askReason({
-    title: 'Tavanları uygula',
-    description: 'Onayladığınız tablo yazılacak. Tablo TAM LİSTEDİR: her kalemin '
-      + 'tavanı gördüğünüz hâliyle geçerli olur.',
-    confirmLabel: 'Uygula',
-  });
-  if (!reason) return;
   await write(`${BASE}/days/${state.selected}/stock`,
-    { method: 'PUT', payload: { reason, token: preview.token } },
+    { method: 'PUT', payload: { token: preview.token } },
     { success: 'Tavanlar yazıldı.',
       after: async () => {
         state.preview = null;
@@ -982,14 +1304,37 @@ async function applyStock(preview) {
 
 // ================================================================ eylemler
 
+/**
+ * NE YAYINLANDIĞININ ÖZETİ — gerekçe kutusunun hemen üstünde durur.
+ *
+ * Gerekçe artık yalnız burada isteniyorsa, kullanıcının gerekçeyi NEYE
+ * yazdığını görmesi gerekir. Dört sayı yeterli ve dördü de yayınla düğmesine
+ * basmadan önce kontrol edilmesi gereken şeyler: kaç kalem gidiyor, paket kaça
+ * satılıyor, günün tavanı ne, sipariş hangi saatte kapanıyor.
+ *
+ * Satır sonları `panel.css` içindeki `white-space: pre-line` ile görünür;
+ * `confirmWithReason` açıklamayı düz metin olarak yazıyor (`innerHTML` yok).
+ */
+function publishSummary(day) {
+  const capacity = day.capacity_total;
+  return [
+    longDate(state.selected),
+    `· ${num(day.item_count)} kalem`,
+    `· Paket fiyatı: ${day.package_price_kurus === null
+      ? 'yok — yalnız kalemler tek tek satılır' : money(day.package_price_kurus)}`,
+    `· Gün tavanı: ${capacity === null || capacity === undefined ? 'sınırsız'
+      : (capacity === 0 ? '0 — bu gün satılmıyor' : `${num(capacity)} porsiyon`)}`,
+    `· Kesim saati: ${day.cutoff_time ? `${day.cutoff_time} (güne özel)`
+      : `${globalCutoff()} (genel ayar)`}`,
+  ].join('\n');
+}
+
 async function doPublish() {
   const day = state.day;
   const reason = await askReason({
-    title: 'Günü yayınla',
-    description: `${longDate(state.selected)} · ${num(day.item_count)} kalem · `
-      + `${day.package_price_kurus === null ? 'paket satılmıyor'
-        : money(day.package_price_kurus)}. Yayınlandığı anda müşteri bu güne sipariş `
-      + 'verebilir. Yeniden yayınlamak satılmış porsiyonları SIFIRLAMAZ.',
+    title: 'Günü yayınla — müşteriye açılıyor',
+    description: `${publishSummary(day)}\n\nYayınlandığı anda müşteri bu güne `
+      + 'sipariş verebilir. Yeniden yayınlamak satılmış porsiyonları SIFIRLAMAZ.',
     confirmLabel: 'Yayınla',
   });
   if (!reason) return;
@@ -1001,11 +1346,11 @@ async function doPublish() {
 
 async function doUnpublish() {
   const reason = await askReason({
-    title: 'Günü yayından çek',
-    description: `${longDate(state.selected)} satış kanalından düşecek ve taslağa `
-      + 'dönecek. Kalemler ve tavanlar YERİNDE KALIR; yeniden yayınlamak tek tıktır. '
-      + 'O güne sipariş girmişse sunucu bunu engeller — satılmış bir günü müşteriden '
-      + 'gizlemek doğru olmazdı.',
+    title: 'Günü yayından çek — müşteriden kalkıyor',
+    description: `${publishSummary(state.day)}\n\nBu gün satış kanalından düşecek ve `
+      + 'taslağa dönecek. Kalemler ve tavanlar YERİNDE KALIR; yeniden yayınlamak tek '
+      + 'tıktır. O güne sipariş girmişse sunucu bunu engeller — satılmış bir günü '
+      + 'müşteriden gizlemek doğru olmazdı.',
     confirmLabel: 'Yayından çek',
   });
   if (!reason) return;
@@ -1033,6 +1378,7 @@ async function doDeleteDay() {
       after: async () => {
         state.day = null;
         state.exists = false;
+        clearJustAdded();
         await reloadCalendar({ quiet: true });
         paintDay();
       } });
@@ -1076,22 +1422,21 @@ function openDayCreator() {
         capacity_total: draft.capacity_total ?? null,
         items: [],
       };
-      const reason = await askReason({
-        title: 'Menü günü kur',
-        description: `${longDate(state.selected)} · gün TASLAK doğar, yayın ayrı bir `
-          + 'eylemdir ve ayrı bir denetim satırı bırakır.',
-        confirmLabel: 'Kur',
-      });
-      if (!reason) return;
+      // GEREKÇE SORULMAZ (politika): taslak kurmak bir taahhüt değil. Gün
+      // `draft` doğuyor, müşteri onu görmüyor; taahhüt yayın anındadır.
       handle.close();
       await write(`${BASE}/days`,
-        { method: 'POST', payload: { reason, date: state.selected, ...payload } },
-        { success: 'Gün kuruldu (taslak). Şimdi kalem ekleyin.',
+        { method: 'POST', payload: { date: state.selected, ...payload } },
+        { success: 'Gün kuruldu (taslak). Kalem kutusu açıldı: yazın, Enter\'a basın.',
           after: async () => {
+            clearJustAdded();
             await reloadCalendar({ quiet: true });
-            await reloadDay({ quiet: true });
+            // Kalem sekmesi ÖNCEDEN seçilir: `reloadDay` sağ panoyu baştan
+            // çiziyor ve sekmeyi sonradan değiştirmek ikinci bir çizim demekti.
             state.tab = 'items';
-            paintTab();
+            await reloadDay({ quiet: true });
+            // Yeni günün ilk işi kalem girmek; odak oraya verilir.
+            resetQuickSearch();
           } });
     },
   });
@@ -1129,7 +1474,6 @@ function openDuplicate({ toHere }) {
     label: toHere ? 'Kaynak gün' : 'Hedef gün',
     onChange: () => { hint.textContent = describe(); },
   });
-  closers.push(() => other.destroy());
 
   const overwrite = h('input', 'kit-check');
   overwrite.type = 'checkbox';
@@ -1167,6 +1511,7 @@ function openDuplicate({ toHere }) {
           after: async () => {
             state.selected = target;
             state.month = monthOf(target);
+            clearJustAdded();
             nodes.calendar.setMonthFrom(target);
             await reloadCalendar({ quiet: true });
             await reloadDay({ quiet: true });
@@ -1174,10 +1519,14 @@ function openDuplicate({ toHere }) {
     },
   });
 
+  // `dateField` GLOBAL DİNLEYİCİ TUTUYOR ve çekmece kapanınca bırakılmalı;
+  // panelin `cleanup`'ına ertelemek, çekmece her açılışta bir dinleyici daha
+  // biriktirmek demekti.
   const handle = drawer(nodes.root, {
     title: 'Günü kopyala',
     subtitle: longDate(state.selected),
     actions: [copyButton],
+    onClose: () => other.destroy(),
   });
   handle.body.append(
     hintBox('Haftalık menü kurarken en büyük zaman kazancı budur. Kopyalananlar: '
@@ -1197,7 +1546,11 @@ function openDuplicate({ toHere }) {
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
   api = ctx.api;
-  state = { ...EMPTY_STATE, month: monthOf(todayIso()), selected: todayIso() };
+  // `justAdded` DİZİSİ TAZE ÜRETİLİR: `{ ...EMPTY_STATE }` sığ kopya yapıyor
+  // ve şablondaki diziyi paylaşmak, kapatılıp yeniden açılan panelde önceki
+  // oturumun "az önce eklendi" izini geri getirirdi.
+  state = { ...EMPTY_STATE, justAdded: [],
+    month: monthOf(todayIso()), selected: todayIso() };
 
   const view = h('div', 'kit-panel bm');   // 'kit-panel' ZORUNLU + kendi önekimiz
   nodes.root = view;
@@ -1225,6 +1578,7 @@ export function mount(root, ctx) {
       state.selected = iso;
       state.tab = 'day';
       state.preview = null;
+      clearJustAdded();          // iz seçili güne aitti, yenisine taşınmaz
       reloadDay();
     },
     onMonth: (monthKey) => {
@@ -1286,10 +1640,14 @@ export function mount(root, ctx) {
     nodes.calendar?.destroy();
     nodes.dayForm?.destroy();       // tarih alanları global dinleyici tutuyor
     nodes.dayForm = null;
+    // Hızlı ekleme kutusunun düğümleri: `createPicker` global dinleyici
+    // tutmuyor (Enter dinleyicisi kendi düğümünde) ama ölü düğümlere işaret
+    // eden `nodes` alanları bırakmak, sonraki mount'ta sessiz bir arıza olurdu.
+    dropItemNodes();
     closers.forEach((fn) => { try { fn(); } catch { /* kapanışta hata yutulur */ } });
     closers.length = 0;
     root.replaceChildren();
-    state = { ...EMPTY_STATE };
+    state = { ...EMPTY_STATE, justAdded: [] };
     busy = false;
   };
 }

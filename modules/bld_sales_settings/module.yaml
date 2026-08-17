@@ -86,10 +86,10 @@ permissions:
     default_roles: [admin, bld_staff]
   - key: bld_sales_settings.manage
     description: >
-      Satış KURALLARINI yazma: sabah kesim saati, ileri gün sınırı, abonelik
-      serbest bırakma saati, minimum sepet tutarı, teslimat ücreti, ödeme
-      yöntemleri, yoğunluk anahtarı ve müşteriye görünen metni, hazırlık /
-      teslimat / yoğunluk dakikaları, günün menüsü rejimi, otomatik fatura
+      Satış KURALLARINI yazma: sabah kesim saati, ileri gün sınırı, minimum
+      sepet tutarı, teslimat ücreti, ödeme yöntemleri, yoğunluk anahtarı ve
+      müşteriye görünen metni, hazırlık / teslimat / yoğunluk dakikaları,
+      günün menüsü rejimi, otomatik fatura
       belgesi ve günün hızlı stok tavanları. Ekran tercihi de burada, çünkü
       tercih tablosu kullanıcı başına değil kurulum başınadır.
     default_roles: [admin, bld_staff]

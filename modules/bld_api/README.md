@@ -102,16 +102,33 @@ imza    = "sha256=" + hmac_sha256(kanonik, sır)
    Yolların defteri `client.py` içinde her alanın metot bloğunun başındaki
    `register_dry_run(...)` çağrılarıdır; kapsamı bir test kanıtlıyor
    (`test_bld_api_dry_run_registry.py`).
-3. **Gerekçe ve aktör zorunlu** — her yazma metodu `reason` ve `actor` alır.
-   İkisi de **gövdeye** konur (sözleşme §3). Sınırlar:
+3. **Aktör her yazmada, gerekçe UÇ BAŞINA** — her yazma metodu `reason` ve
+   `actor` alır; ikisi de **gövdeye** konur (sözleşme §3). `actor` istisnasız
+   zorunludur ve her yerde 1–120 karakterdir. `reason` ise **küresel değil**:
+   kuralı `client.py` içindeki `_REASON_OPTIONAL` kayıt defteri taşır ve
+   **varsayılan "gerekçe İSTER"**dir — defterde olmayan her yol ister. Muaf bir
+   uçta gerekçe verilirse gövdeye konur, verilmezse **alan hiç gönderilmez**.
+   Kapsamı bir test kanıtlıyor (`test_bld_api_reason_policy.py`).
+
+   Bugün defterde **yalnız `control/menu`** var (altı satır); diğer on iki alan
+   değişmedi. Gerekçe istemeyenler: `POST days` · `PATCH days/{date}` ·
+   `POST/PATCH/DELETE items` · `PUT stock`. İsteyenler: `POST publish` ·
+   `POST unpublish` · `DELETE days/{date}` · `POST duplicate`. Ölçüt tek
+   cümledir: işlem müşteriye **görünür hâle geliyor** mu ve **geri alınması
+   zor** mu. Defter fiili de tutar — `PATCH days/{date}` muaf, `DELETE`
+   değil.
+
+   Sınırlar **değişmedi**; yalnız nerede sorulduğu değişti:
 
    | Nerede | `reason` | Kaynak |
    |---|---|---|
    | Sipariş revizyon/durum/iptal (KDS ve panel) | 10–160 | `veykemtu_order_revisions.reason` sütunu |
    | Diğer panel uçları | 10–500 | `00-genel.md` §3 |
    | KDS cihaz/komut uçları | en az 10, üst sınır YOK | K-21 bir sınır söylemiyor; uydurulmaz |
+   | Muaf uçlar (defterdekiler) | alt sınır YOK, üst sınır 500 | isteğe bağlı notu kısa diye reddetmek yazmayı durdururdu |
 
-   `actor` her yerde 1–120 karakter (boş olamaz).
+   `require_reason: false` ayarı bu defterin **üstündeki** küresel şalterdir ve
+   kapsamı değişmedi: kapatıldığında hiçbir uçta gerekçe aranmaz.
 4. **Hata biçimi** — her şey `BldApiError`: `.message` (Türkçe, maskelenmiş) ·
    `.status` · `.code` (`config_missing` · `read_only` · `reason_required` ·
    `actor_required` · `payload` · `unauthorized` · `forbidden` · `not_found` ·
@@ -150,8 +167,10 @@ Hiç görüntü yoksa hata yukarı gider: bayat veri iyi, uydurma veri değil.
 
 ## Yöntem yüzeyi — DONMUŞ TABLO
 
-Panel modülleri bu tabloyu okur. Yazma metotlarında `reason` ve `actor`
-**zorunlu anahtar argümandır**; `dry_run` her çağrıda açıkça verilir.
+Panel modülleri bu tabloyu okur. Yazma metotlarında `actor` **zorunlu anahtar
+argümandır**; `dry_run` her çağrıda açıkça verilir. `reason` da her yazma
+metodunda **durur**, ama Gerekçe sütunu `—` olan satırlarda varsayılanı `""`
+ve verilmezse gövdeye hiç konmaz (bkz. §3).
 
 Yol sütunundaki önek gösterilmez: KDS satırlarında `/api/control/kds`, panel
 satırlarında `/api/control` + alan adı.
@@ -201,16 +220,16 @@ Dönüş şekilleri:
 |---|---|---|---|---|---|
 | `menu_calendar(*, date_from, date_to, location_id=None)` | GET | `/menu/calendar` | — | — | `sayfa` |
 | `menu_day(date, *, location_id=None)` | GET | `/menu/days/{date}` | — | — | `dict` |
-| `create_menu_day(*, date, title, description, internal_note, package_price_kurus, components_sellable, cutoff_time, capacity_total, items, location_id)` | POST | `/menu/days` | ✔ 500 | ✔ | `dict` |
-| `update_menu_day(date, *, title, description, internal_note, package_price_kurus, components_sellable, cutoff_time, capacity_total, image_path, location_id)` | PATCH | `/menu/days/{date}` | ✔ 500 | ✔ | `dict` |
+| `create_menu_day(*, date, title, description, internal_note, package_price_kurus, components_sellable, cutoff_time, capacity_total, items, location_id)` | POST | `/menu/days` | — | ✔ | `dict` |
+| `update_menu_day(date, *, title, description, internal_note, package_price_kurus, components_sellable, cutoff_time, capacity_total, image_path, location_id)` | PATCH | `/menu/days/{date}` | — | ✔ | `dict` |
 | `delete_menu_day(date, *, location_id=None)` | DELETE | `/menu/days/{date}` | ✔ 500 | ✔ | `dict` |
 | `publish_menu_day(date, *, location_id=None)` | POST | `/menu/days/{date}/publish` | ✔ 500 | ✔ | `dict` |
 | `unpublish_menu_day(date, *, location_id=None)` | POST | `/menu/days/{date}/unpublish` | ✔ 500 | ✔ | `dict` |
-| `create_menu_item(date, *, menu_id, quantity, sort_order, label, price_override_kurus, is_required, sellable_alone, capacity, location_id)` | POST | `/menu/days/{date}/items` | ✔ 500 | ✔ | `dict` |
-| `update_menu_item(date, item_id, *, quantity, sort_order, label, price_override_kurus, is_required, sellable_alone, capacity)` | PATCH | `/menu/days/{date}/items/{item}` | ✔ 500 | ✔ | `dict` |
-| `delete_menu_item(date, item_id)` | DELETE | `/menu/days/{date}/items/{item}` | ✔ 500 | ✔ | `dict` |
+| `create_menu_item(date, *, menu_id, quantity, sort_order, label, price_override_kurus, is_required, sellable_alone, capacity, location_id)` | POST | `/menu/days/{date}/items` | — | ✔ | `dict` |
+| `update_menu_item(date, item_id, *, quantity, sort_order, label, price_override_kurus, is_required, sellable_alone, capacity)` | PATCH | `/menu/days/{date}/items/{item}` | — | ✔ | `dict` |
+| `delete_menu_item(date, item_id)` | DELETE | `/menu/days/{date}/items/{item}` | — | ✔ | `dict` |
 | `menu_stock(date, *, location_id=None)` | GET | `/menu/days/{date}/stock` | — | — | `dict` |
-| `set_menu_stock(date, *, capacity_total, items, location_id)` | PUT | `/menu/days/{date}/stock` | ✔ 500 | ✔ | `dict` |
+| `set_menu_stock(date, *, capacity_total, items, location_id)` | PUT | `/menu/days/{date}/stock` | — | ✔ | `dict` |
 | `duplicate_menu_day(date, *, target_date, overwrite=False, location_id)` | POST | `/menu/days/{date}/duplicate` | ✔ 500 | ✔ | `dict` |
 
 ### 3 · `products` — ürün kataloğu

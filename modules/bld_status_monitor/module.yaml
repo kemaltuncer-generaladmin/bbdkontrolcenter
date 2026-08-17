@@ -1,22 +1,71 @@
-# Durum Monitörü modülü — İSKELET
-# Sözleşme burada sabittir; kod henüz yazılmadı, bu yüzden enabled: false.
+# Durum Monitörü — mobil uygulama, site, mutfak kasaları ve sunucu için tek
+# sağlık ekranı. "Bir şey çalışmıyor" şikâyeti geldiğinde bakılacak ilk yer.
+#
+# Bu ekran BLD verisine YALNIZ `bld.api` yeteneğinden bakar (K4); ham httpx ya
+# da doğrudan DB sürücüsü kullanmaz. İmzalı `X-Control-Signature` başlığı, zaman
+# penceresi, nonce hatırlama, oran sınırı ve `dry_run` taşıma geçidin işidir.
+#
+# BU MODÜL UZAK VERİDEN TÜREMİŞ VERİ SAKLAR VE BUNDA HAKLIDIR — on iki kardeş
+# modülün hiçbiri saklamıyor, bu saklıyor. Gerekçe tek cümlelik: gereksinim
+# "en ufak hata bile loglanıp orada kalacak" diyor ve uzak taraf BÖYLE BİR
+# GEÇMİŞ TUTMUYOR. `veykemtu_monitor_events` yalnız BİLEŞENLERİN yazdığı
+# hataları biliyor; geçidin kendi kopması, sunucunun cevap vermemesi, ucun
+# henüz dağıtılmamış olması SUNUCUYA HİÇ ULAŞMAZ ve hiçbir yerde iz bırakmaz.
+# Tam olarak izlenmesi istenen şey de bu. `mod_bld_status_monitor_events`
+# ARAŞTIRMA SONUÇLARINI ve hataları tutar; İŞ VERİSİ (sipariş, müşteri, stok)
+# buraya YAZILMAZ.
+#
+# Sözleşme: `BLD/docs/control/monitor.md` (beş uç) + `00-genel.md`. Uçlar, alan
+# adları ve durum kodları orada sabittir; uydurma alan eklenmez.
+#
+# SUNUCU UÇLARI PARALEL YAZILIYOR. Uç henüz yayında değilse geçit temiz bir
+# `control_endpoint_missing` veriyor ve ekran ZARİFÇE BOZULUR: kutular "uç
+# henüz yayında değil" der, yerel geçmiş ve düzeltme defteri çalışmaya devam
+# eder. Bu beklenen bir durumdur, hata değil.
+#
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
 id: bld_status_monitor
 name: "Durum Monitörü"
-description: "Servis, yoğunluk ve tükenen ürün anahtarlarının izlenmesi."
+description: "Mobil uygulama, site, mutfak kasaları ve sunucu sağlığının izlenmesi; hata kaydı ve düzeltme defteri."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: false
+enabled: true
 
 entrypoint: backend.module:register
 
-depends: []
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur. `bld_api` BLD'nin kontrol uçlarına tek kapıdır (K4).
+depends: [bld_api]
+
 provides: []
-consumes: []
+
+consumes:
+  - capability: bld.api
+    reason: >
+      İzleme olayları, cihaz sağlığı ve özet sayaçları BLD sunucusundadır
+      (`docs/control/monitor.md`) ve oraya yalnız geçitten gidilir (K4).
+      DÜZELTME KOMUTLARI DA aynı kapıdan geçer: kasaya komut göndermenin
+      sözleşmedeki tek yolu `/api/control/kds/devices/{id}/commands` ucudur.
+      Ham `subprocess` ya da doğrudan SSH bu modülde YOKTUR — "hızlıca bir
+      komut çalıştıralım" diyen bir izleme ekranı, imzayı, oran sınırını ve
+      denetim izini birden atlardı.
 
 events:
-  publishes: []
+  publishes:
+    - name: bld_status_monitor.health_changed
+      payload: "{status, previous, reasons, sources, actor}"
+      description: >
+        Sistemin BÜTÜNÜNÜN sağlık hükmü değişti (`ok` ⇄ `degraded` ⇄ `down`).
+        Hükmü sunucu veriyor (`monitor/summary` → `health.status`); bu modül
+        onu yeniden hesaplamaz, YALNIZ değiştiği anı yayınlar. Her yoklamada
+        değil yalnız DEĞİŞİMDE yayınlanır: 60 saniyede bir "hâlâ iyi" diyen
+        bir olay, dinleyicinin gerçek değişimi görmesini zorlaştırırdı.
+    - name: bld_status_monitor.command_sent
+      payload: "{key, action, deviceId, reason, actor, dryRun}"
+      description: >
+        Düzeltme defterinden bir komut kasaya gönderildi. Kuru provada
+        YAYINLANMAZ — BLD'de hiçbir şey değişmedi.
   subscribes: []
 
 http:
@@ -36,20 +85,54 @@ ui:
     requires: [bld_status_monitor.view]
 
 # Katalog ve rol matrisi: docs/permissions.md
-# GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık. Daraltma, o modülün
-# kodlaması başlarken yapılacak.
+#
+# DARALTILDI (kodlama başladı; iskeletteki "tüm rollere açık" geliştirme kuralı
+# artık geçerli değil). Ekran mutfak kasalarının canlı durumunu gösteriyor ve
+# `manage` anahtarı KASAYA KOMUT GÖNDERİYOR: `bbd_staff` mağaza tarafındadır,
+# `org_staff` zil/baskı/rehber ile sınırlıdır, `accountant` mali ekranlara
+# bakar ve mutfağı yeniden başlatmaz.
+#
+# İKİ ANAHTAR, ÜÇ DEĞİL. `bld_orders` üçüncü bir anahtarı PARA yüzünden açtı
+# (iptal iade üretir). Burada para hareketi YOK: en ağır işlem bir kasayı
+# yeniden başlatmak ve o iş zaten `bld_kds.devices` altında ayrıca korunuyor.
+# Üçüncü bir anahtar, aynı kapıyı ikinci kez kilitlemek olurdu.
+#
+# Yıkıcı işlem PIN değil GEREKÇE ister (ADR 0012, `bld_kds` ve `bld_orders` ile
+# aynı ilke): izin anahtarı + gerekçe (10-160 karakter, backend'de de
+# doğrulanır) + iki denetim satırı ("ne denendi" ve "ne oldu"). Bu yüzden
+# hiçbir izin `destructive: true` taşımaz — o bayrak çekirdekte PIN kapısına
+# bağlanacak ve bu ekran PIN istemiyor.
 permissions:
   - key: bld_status_monitor.view
-    description: "Durum Monitörü ekranını görüntüleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Sağlık kutularını, kasa sağlık özetini, sunucudaki hata olaylarını,
+      bu ekranın YEREL araştırma geçmişini, düzeltme defterini ve yerel yazma
+      izini görüntüleme; kendi görüntüleme tercihini kaydetme.
+    default_roles: [admin, bld_staff]
   - key: bld_status_monitor.manage
-    description: "Durum Monitörü kayıtlarını düzenleme."
-    default_roles: [admin, bbd_staff, bld_staff, org_staff, accountant]
+    description: >
+      Sunucudaki hata olayını çözüldü işaretleme, düzeltme defteri kaydı
+      yazma/pasifleştirme ve defterdeki bir düzeltme komutunu kasaya gönderme.
+      Komut `bld.api` geçidinden gider; ham kabuk erişimi YOKTUR.
+    default_roles: [admin, bld_staff]
 
 config:
   defaults: config/default.yaml
   schema: config/schema.json
 
 migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor: HTTP
+# `bld.api` geçidinin işidir, yerel geçmiş çekirdeğin `store`udur.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    BLD erişimi `bld.api` yeteneğinden gelir ve burada TEKRAR EDİLMEZ
+    (consumes bloğunda ilan edilir). `ssh` platform yeteneği İSTENMEDİ:
+    bugün `km_platform/ssh/` boş bir iskelet ve olmayan bir yeteneği
+    `consumes` ile istemek modülü açılışta devre dışı bırakırdı. Kabuk
+    erişimi gerektiren düzeltme adımları deftere YAZILABİLİR ama
+    ÇALIŞTIRILAMAZ; ekran bunu yazıyla söyler (`channel: manual`).
 
 tasks: []

@@ -1,0 +1,32 @@
+# Kontrol Paneli ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
+#
+# KURU PROVA AYARI YOKTUR ve olmayacak: bu ekranda BLD'ye giden tek bir yazma
+# çağrısı yok (`BLD/docs/control/dashboard.md` alanı salt okunurdur). Var
+# olmayan bir yazmanın provası da olmaz; anahtarı buraya koymak, ilerideki bir
+# okuyucuya "demek ki bir yerde yazıyor" dedirtirdi.
+
+# Yoklama aralığı (saniye). SÖZLEŞMENİN DEĞERİ 30 (`dashboard.md` → "Yoklama
+# aralığı 30 saniye"). Bu ekran her yoklamada İKİ geçit çağrısı yapıyor (özet +
+# canlı akış), yani saatte 240 istek; paylaşılan `bld-control-panel` kovası
+# 3000/saat/IP (`00-genel.md` §2). Kısaltmak kovayı hızlandırılmış biçimde
+# yakar ve ikinci bir yöneticinin ekranını 429'a düşürür. Sekme gizliyken
+# yoklama zaten durur (kit `pollLoop`).
+poll_seconds: 30
+
+# İşletme kimliği. `0` bırakmak "sunucunun varsayılanı" demektir ve sorguya
+# `location_id` hiç eklenmez; tek vitrinli kurulumda her isteğe gereksiz bir
+# kimlik iliştirmemek için. İkinci vitrin açılırsa değer burada verilir ve
+# ekranın kodu değişmez.
+location_id: 0
+
+# CANLI SİPARİŞ AKIŞI KUTUSU. Açıkken her yoklamada İKİNCİ bir geçit çağrısı
+# yapılır (`orders.md` → `GET /api/control/orders`), çünkü sözleşmenin gösterge
+# ucu SAYAÇ döndürüyor, SATIR değil — akış kutusunun satırlarını başka yerden
+# almanın yolu yok. Kapatılırsa kutu "akış kapatıldı" der ve ekran tek çağrıyla
+# çalışır; "sipariş yok" DEMEZ, çünkü öyle bir bilgi elde edilmemiştir.
+flow_enabled: true
+
+# Akışta gösterilen satır sayısı. Onu aşmak kutuyu uzatır ve gösterge panelinin
+# altındaki bekleyen işler listesini ekrandan atar; gösterge paneli bir liste
+# ekranı değil, bakışta okunan bir özettir. Ayrıntı Sipariş Yönetimi'nde.
+flow_limit: 10

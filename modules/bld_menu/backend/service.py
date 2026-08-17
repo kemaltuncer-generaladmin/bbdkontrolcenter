@@ -37,9 +37,26 @@ sözlüğünü korur; TEK İSTİSNA gövdedeki `dryRun` alanıdır (panel→Kont
 sınırında camelCase, `store_orders` deseni). Çeviri tek yerde yapılır:
 `dryRun` → geçidin `dry_run` argümanı.
 
+GEREKÇE UÇ BAŞINA İSTENİR, HER YAZMADA DEĞİL. Ölçüt: işlem müşteriye GÖRÜNÜR
+HÂLE GELİYOR mu ve GERİ ALINMASI ZOR mu.
+
+    ister      publish · unpublish · delete_day · duplicate
+    istemez    create_day · update_day · add_item · update_item · delete_item ·
+               preview_stock · apply_stock
+
+Gerekçe İSTEMEYEN metotlar `reason` PARAMETRESİ DE ALMAZ. Alanı imzada bırakıp
+görmezden gelmek daha küçük bir değişiklik olurdu ama sessiz bir tuzak kurardı:
+panel gerekçe göndermeye devam eder, hiçbir yere yazılmadığını kimse fark
+etmezdi. Parametre yoksa yanlış çağrı `TypeError` verir.
+
+`actor` HER metotta durur ve yerel denetim satırı her yazmada açılır; gerekçe
+istenmeyen uçlarda `reason` sütunu boş kalır, SATIR boş kalmaz. "Kim yaptı"
+sorusunun cevabı hiçbir yazmada kaybolmaz.
+
 YAZMA ZİNCİRİ — her yazma ucu bu beş adımı bu sırayla uygular:
 
-    1. gerekçe ve alan denetimi (arayüzde zorunlu göstermek yetmez, K9)
+    1. gerekçe (isteniyorsa) ve alan denetimi — arayüzde zorunlu göstermek
+       yetmez (K9)
     2. TAZE OKUMA (gün aradan yayınlanmış, silinmiş ya da değişmiş olabilir)
     3. yerel iz: `result="denendi"`  ← ağ koparsa geriye YALNIZ bu kalır
     4. geçit çağrısı — `dry_run=` HER ZAMAN AÇIK GEÇİLİR
@@ -170,8 +187,8 @@ class MenuService:
             "product_limit": mn.as_int(stored.get("product_limit"), self._product_limit),
         }
 
-    async def _record(self, *, action: str, reason: str, actor: str, result: str,
-                      target_date: str = "", target_id: int = 0,
+    async def _record(self, *, action: str, actor: str, result: str,
+                      reason: str = "", target_date: str = "", target_id: int = 0,
                       detail: Any = None) -> None:
         """Yerel denetim izi. BLD de `veykemtu_control_audit` tutuyor
         (`00-genel.md` §8); bu satır ONUN YERİNE DEĞİL, ONDAN ÖNCE yazılır.
@@ -179,6 +196,10 @@ class MenuService:
         Ayrım önemli: uzak kayıt yalnız sunucuya ULAŞAN istekleri bilir. Ağ
         koparsa, geçit patlarsa ya da istek yarıda kalırsa "kim neyi denedi"
         sorusunun cevabı yalnız burada kalır.
+
+        `reason` VARSAYILANI BOŞ, `actor` ZORUNLU. Gerekçe istenmeyen uçlarda
+        satır yine açılır ve `reason` sütunu boş kalır (kolon `DEFAULT ''`);
+        satırı hiç açmamak, hızlanma uğruna izin kendisini atmak olurdu.
         """
         try:
             await self._store.execute(
@@ -237,6 +258,11 @@ class MenuService:
         return {"ok": False, "error": cls._message(failure), "code": cls._code(failure)}
 
     def _guard(self, reason: str) -> str:
+        """Gerekçe denetimi — YALNIZ gerekçe İSTEYEN dört uçta çağrılır.
+
+        `publish` · `unpublish` · `delete_day` · `duplicate`. Ötekiler bu
+        yardımcıyı hiç çağırmaz çünkü `reason` parametreleri de yok.
+        """
         return mn.reason_error(reason)
 
     @staticmethod
@@ -323,6 +349,9 @@ class MenuService:
             "not_orderable": [{"code": code, "label": mn.NOT_ORDERABLE_LABELS[code]}
                               for code in mn.NOT_ORDERABLE_REASONS],
             "limits": {
+                # Gerekçe sınırları DEĞİŞMEDİ ama artık yalnız DÖRT uçta
+                # geçerli: publish · unpublish · gün silme · kopyalama.
+                # Ötekiler gerekçe alanını hiç kabul etmiyor (422).
                 "reason_min": mn.MIN_REASON, "reason_max": mn.MAX_REASON,
                 "title": mn.MAX_TITLE, "description": mn.MAX_DESCRIPTION,
                 "internal_note": mn.MAX_INTERNAL_NOTE, "label": mn.MAX_LABEL,
@@ -462,14 +491,15 @@ class MenuService:
     # ================================================================= yazma
 
     async def create_day(self, *, date: str, fields: dict[str, Any],
-                         items: list[dict[str, Any]], reason: str, actor: str,
+                         items: list[dict[str, Any]], actor: str,
                          dry_run: bool) -> dict[str, Any]:
-        """Yeni gün kurar. Gün HER ZAMAN `draft` doğar.
+        """Yeni gün kurar. Gün HER ZAMAN `draft` doğar. GEREKÇE İSTEMEZ.
 
         Yayın ayrı bir eylemdir ve ayrı bir denetim satırı bırakır: yarım
-        girilmiş bir perşembe kaydedildiği anda müşteriye görünmemeli.
+        girilmiş bir perşembe kaydedildiği anda müşteriye görünmemeli. Gerekçe
+        o yayın adımında istenir — taslak kurmak bir taahhüt değildir.
         """
-        problem = self._guard(reason) or mn.past_error(date, self._today())
+        problem = mn.past_error(date, self._today())
         if problem:
             return {"ok": False, "error": problem}
         clean, problem = self._day_fields(fields, allow_image=False)
@@ -481,31 +511,31 @@ class MenuService:
 
         detail = {"date": date, "item_count": len(rows),
                   "package_price_kurus": clean.get("package_price_kurus")}
-        await self._record(action="day.create", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="day.create", actor=actor, result=TRIED,
                            target_date=date, detail={**detail, "dry_run": dry_run})
         try:
             result = await self._api.create_menu_day(
                 date=date, items=rows, location_id=self._location,
-                reason=reason, actor=actor, dry_run=dry_run, **clean)
+                actor=actor, dry_run=dry_run, **clean)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="day.create", reason=reason, actor=actor,
+            await self._record(action="day.create", actor=actor,
                                result=FAILED, target_date=date,
                                detail={**detail, "error": str(failure)})
             return self._write_failure(failure)
 
-        return await self._settle("day.create", result, reason=reason, actor=actor,
+        return await self._settle("day.create", result, actor=actor,
                                   date=date, detail=detail)
 
-    async def update_day(self, date: str, *, fields: dict[str, Any], reason: str,
+    async def update_day(self, date: str, *, fields: dict[str, Any],
                          actor: str, dry_run: bool) -> dict[str, Any]:
-        """Gün başlığı/fiyatı/notu — KISMİ yazar.
+        """Gün başlığı/fiyatı/notu — KISMİ yazar. GEREKÇE İSTEMEZ.
 
         Gönderilmeyen alan değişmez; `null` gönderilen alan temizlenir. İkisi
         ayrı: alanı hiç göndermemek "dokunma", `null` göndermek "boşalt".
         Ayrım uçta `model_fields_set` ile korunur ve geçide yalnız GÖNDERİLEN
         anahtarlar geçer — geçidin `UNSET` nöbetçisi ötekileri gövdeye koymaz.
         """
-        problem = self._guard(reason) or mn.date_error(date)
+        problem = mn.date_error(date)
         if problem:
             return {"ok": False, "error": problem}
         if not fields:
@@ -525,26 +555,26 @@ class MenuService:
         # nedenini cümleyle söylüyoruz (K9 — çift kapı).
         blocked = self._price_lock(current, clean)
         if blocked:
-            await self._record(action="day.update", reason=reason, actor=actor,
+            await self._record(action="day.update", actor=actor,
                                result=BLOCKED, target_date=date, target_id=current["id"],
                                detail={"fields": sorted(clean)})
             return {"ok": False, "error": blocked, "code": "conflict"}
 
         detail = {"date": date, "fields": sorted(clean)}
-        await self._record(action="day.update", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="day.update", actor=actor, result=TRIED,
                            target_date=date, target_id=current["id"],
                            detail={**detail, "dry_run": dry_run})
         try:
             result = await self._api.update_menu_day(
-                date, location_id=self._location, reason=reason, actor=actor,
+                date, location_id=self._location, actor=actor,
                 dry_run=dry_run, **clean)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="day.update", reason=reason, actor=actor,
+            await self._record(action="day.update", actor=actor,
                                result=FAILED, target_date=date, target_id=current["id"],
                                detail={**detail, "error": str(failure)})
             return self._write_failure(failure)
 
-        return await self._settle("day.update", result, reason=reason, actor=actor,
+        return await self._settle("day.update", result, actor=actor,
                                   date=date, day_id=current["id"], detail=detail)
 
     async def delete_day(self, date: str, *, reason: str, actor: str, dry_run: bool,
@@ -675,10 +705,14 @@ class MenuService:
 
     # -------------------------------------------------------------- kalemler
 
-    async def add_item(self, date: str, *, fields: dict[str, Any], reason: str,
+    async def add_item(self, date: str, *, fields: dict[str, Any],
                        actor: str, dry_run: bool) -> dict[str, Any]:
-        """Güne kalem ekler."""
-        problem = self._guard(reason) or mn.date_error(date)
+        """Güne kalem ekler. GEREKÇE İSTEMEZ.
+
+        Şikâyetin çıkış noktası burasıydı: bir güne beş ürün koymak beş kez
+        ürün seçici + form + gerekçe diyaloğu demekti.
+        """
+        problem = mn.date_error(date)
         if problem:
             return {"ok": False, "error": problem}
         clean, problem = self._item_fields(fields, require_menu_id=True)
@@ -691,7 +725,7 @@ class MenuService:
         # AYNI ÜRÜN İKİ KEZ EKLENMEZ (`veykemtu_daily_menu_item_essiz`). Sunucu
         # 409 veriyor; buradaki kapı "Tavuk Sote zaten menüde" cümlesini kurar.
         if any(item["menu_id"] == clean["menu_id"] for item in current["items"]):
-            await self._record(action="item.create", reason=reason, actor=actor,
+            await self._record(action="item.create", actor=actor,
                                result=BLOCKED, target_date=date, target_id=current["id"],
                                detail={"menu_id": clean["menu_id"]})
             return {"ok": False, "code": "conflict",
@@ -699,26 +733,31 @@ class MenuService:
                               "için mevcut kalemi düzenleyin.")}
 
         detail = {"date": date, "menu_id": clean["menu_id"]}
-        await self._record(action="item.create", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="item.create", actor=actor, result=TRIED,
                            target_date=date, target_id=current["id"],
                            detail={**detail, "dry_run": dry_run})
         try:
             result = await self._api.create_menu_item(
-                date, location_id=self._location, reason=reason, actor=actor,
+                date, location_id=self._location, actor=actor,
                 dry_run=dry_run, **clean)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="item.create", reason=reason, actor=actor,
+            await self._record(action="item.create", actor=actor,
                                result=FAILED, target_date=date, target_id=current["id"],
                                detail={**detail, "error": str(failure)})
             return self._write_failure(failure)
 
-        return await self._settle("item.create", result, reason=reason, actor=actor,
+        return await self._settle("item.create", result, actor=actor,
                                   date=date, day_id=current["id"], detail=detail)
 
     async def update_item(self, date: str, item_id: int, *, fields: dict[str, Any],
-                          reason: str, actor: str, dry_run: bool) -> dict[str, Any]:
-        """Kalemi günceller — KISMİ. `menu_id` YAZILAMAZ."""
-        problem = self._guard(reason) or mn.date_error(date)
+                          actor: str, dry_run: bool) -> dict[str, Any]:
+        """Kalemi günceller — KISMİ. `menu_id` YAZILAMAZ. GEREKÇE İSTEMEZ.
+
+        YAYINDAKİ günün kaleminde de istemez; bu bilinçli bir karardır ve
+        politikanın kendi ölçütüyle gerilimlidir (bkz. `api/routes.py` →
+        `ItemPatchBody`).
+        """
+        problem = mn.date_error(date)
         if problem:
             return {"ok": False, "error": problem}
         if not fields:
@@ -735,31 +774,36 @@ class MenuService:
                     "error": "Kalem o günün menüsünde yok; ekran tazelenmiş olabilir."}
 
         detail = {"date": date, "item_id": int(item_id), "fields": sorted(clean)}
-        await self._record(action="item.update", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="item.update", actor=actor, result=TRIED,
                            target_date=date, target_id=current["id"],
                            detail={**detail, "dry_run": dry_run})
         try:
             result = await self._api.update_menu_item(
-                date, int(item_id), reason=reason, actor=actor, dry_run=dry_run, **clean)
+                date, int(item_id), actor=actor, dry_run=dry_run, **clean)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="item.update", reason=reason, actor=actor,
+            await self._record(action="item.update", actor=actor,
                                result=FAILED, target_date=date, target_id=current["id"],
                                detail={**detail, "error": str(failure)})
             return self._write_failure(failure)
 
-        return await self._settle("item.update", result, reason=reason, actor=actor,
+        return await self._settle("item.update", result, actor=actor,
                                   date=date, day_id=current["id"], detail=detail)
 
-    async def delete_item(self, date: str, item_id: int, *, reason: str, actor: str,
+    async def delete_item(self, date: str, item_id: int, *, actor: str,
                           dry_run: bool, allow_remove: bool = False) -> dict[str, Any]:
-        """Kalemi siler. AYRI İZİN İSTER (`bld_menu.remove`) — çift kapı (K9)."""
+        """Kalemi siler. AYRI İZİN İSTER (`bld_menu.remove`) — çift kapı (K9).
+
+        İZİN DURUYOR, GEREKÇE KALKTI. İkisi ayrı sorulardır: "kim silebilir"
+        değişmedi, yalnız "neden" sorusu seyrekleşti. Gün silmenin aksine tek
+        kalem silmek menü kurarken yapılan olağan bir düzeltmedir.
+        """
         if not allow_remove:
-            await self._record(action="item.delete", reason=reason, actor=actor,
+            await self._record(action="item.delete", actor=actor,
                                result=BLOCKED, target_date=date,
                                detail={"item_id": int(item_id),
                                        "missing_permission": "bld_menu.remove"})
             return {"ok": False, "error": "Kalem silmek için `bld_menu.remove` yetkisi gerekli."}
-        problem = self._guard(reason) or mn.date_error(date)
+        problem = mn.date_error(date)
         if problem:
             return {"ok": False, "error": problem}
 
@@ -773,31 +817,32 @@ class MenuService:
 
         detail = {"date": date, "item_id": int(item_id), "menu_id": row["menu_id"],
                   "name": row["name"]}
-        await self._record(action="item.delete", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="item.delete", actor=actor, result=TRIED,
                            target_date=date, target_id=current["id"],
                            detail={**detail, "dry_run": dry_run})
         try:
             result = await self._api.delete_menu_item(
-                date, int(item_id), reason=reason, actor=actor, dry_run=dry_run)
+                date, int(item_id), actor=actor, dry_run=dry_run)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="item.delete", reason=reason, actor=actor,
+            await self._record(action="item.delete", actor=actor,
                                result=FAILED, target_date=date, target_id=current["id"],
                                detail={**detail, "error": str(failure)})
             return self._write_failure(failure)
 
-        return await self._settle("item.delete", result, reason=reason, actor=actor,
+        return await self._settle("item.delete", result, actor=actor,
                                   date=date, day_id=current["id"], detail=detail)
 
     # ------------------------------------------------------------------ stok
 
     async def preview_stock(self, date: str, *, capacity_total: Any,
-                            items: Any, reason: str, actor: str) -> dict[str, Any]:
-        """Tavan tablosunun KURU PROVASI. Jeton ve uyarılar döner.
+                            items: Any, actor: str) -> dict[str, Any]:
+        """Tavan tablosunun KURU PROVASI. Jeton ve uyarılar döner. GEREKÇE İSTEMEZ.
 
         Asıl işi budur: yönetici tavanı yazmadan ÖNCE kaç siparişin altında
         kaldığını görür. Sunucu `warnings` bloğunu kuru provada da hesaplıyor.
+        Emniyet gerekçede değil bu iki adımlı akıştadır.
         """
-        problem = self._guard(reason) or mn.date_error(date) or mn.capacity_error(capacity_total)
+        problem = mn.date_error(date) or mn.capacity_error(capacity_total)
         if problem:
             return {"ok": False, "error": problem}
 
@@ -814,16 +859,16 @@ class MenuService:
         baseline = mn.baseline_of(stock.get("stock") or {})
 
         proposed = {"capacity_total": mn.opt_int(capacity_total), "items": rows}
-        await self._record(action="stock", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="stock", actor=actor, result=TRIED,
                            target_date=date, target_id=current["id"],
                            detail={"date": date, "dry_run": True,
                                    "capacity_total": proposed["capacity_total"]})
         try:
             result = await self._api.set_menu_stock(
                 date, capacity_total=proposed["capacity_total"], items=rows,
-                location_id=self._location, reason=reason, actor=actor, dry_run=True)
+                location_id=self._location, actor=actor, dry_run=True)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="stock", reason=reason, actor=actor, result=FAILED,
+            await self._record(action="stock", actor=actor, result=FAILED,
                                target_date=date, target_id=current["id"],
                                detail={"date": date, "dry_run": True,
                                        "error": str(failure)})
@@ -832,25 +877,26 @@ class MenuService:
         view = mn.stock_result_view(self._record_of(result, "would", "data"))
         token = secrets.token_urlsafe(18)
         await self._save_preview(token, date=date, proposed=proposed, baseline=baseline,
-                                 warnings=view["warnings"], actor=actor, reason=reason)
-        await self._record(action="stock", reason=reason, actor=actor, result=DRY,
+                                 warnings=view["warnings"], actor=actor)
+        await self._record(action="stock", actor=actor, result=DRY,
                            target_date=date, target_id=current["id"],
                            detail={"date": date, "warning_count": len(view["warnings"])})
         return {"ok": True, "dry_run": True, "error": "", "token": token,
                 "expires_in_minutes": self._preview_ttl, "preview": view,
                 "warnings": view["warnings"]}
 
-    async def apply_stock(self, date: str, *, token: str, reason: str,
+    async def apply_stock(self, date: str, *, token: str,
                           actor: str) -> dict[str, Any]:
-        """Önizlenen tavan tablosunu uygular.
+        """Önizlenen tavan tablosunu uygular. GEREKÇE İSTEMEZ.
 
         JETON ZORUNLU. Tavan yazmak tek adımda yapılabilirdi ama yapılmıyor:
         `PUT stock` TAM LİSTE yazar ve gönderilmeyen kalemin tavanı kalkar.
         Yöneticinin onayladığı tablonun UYGULANAN tablo olduğunu kanıtlayan tek
         şey bu satırdır. Temel çizgi de burada doğrulanır — arada satış
-        değiştiyse gördüğü sayılar artık doğru değildir.
+        değiştiyse gördüğü sayılar artık doğru değildir. Jeton + temel çizgi,
+        bir gerekçe metninin veremeyeceği bir güvence verir.
         """
-        problem = self._guard(reason) or mn.date_error(date)
+        problem = mn.date_error(date)
         if problem:
             return {"ok": False, "error": problem}
         row = await self._load_preview(token)
@@ -871,7 +917,7 @@ class MenuService:
             return {"ok": False, "error": stock.get("error") or "Stok durumu okunamadı."}
         drift = mn.baseline_drift(baseline, mn.baseline_of(stock.get("stock") or {}))
         if drift:
-            await self._record(action="stock", reason=reason, actor=actor, result=BLOCKED,
+            await self._record(action="stock", actor=actor, result=BLOCKED,
                                target_date=date, target_id=current["id"],
                                detail={"date": date, "drift": drift})
             return {"ok": False, "code": "conflict",
@@ -886,16 +932,16 @@ class MenuService:
             return {"ok": False, "code": "conflict",
                     "error": f"Önizlenen tablo artık geçerli değil: {problem}"}
 
-        await self._record(action="stock", reason=reason, actor=actor, result=TRIED,
+        await self._record(action="stock", actor=actor, result=TRIED,
                            target_date=date, target_id=current["id"],
                            detail={"date": date, "dry_run": False, "token": token,
                                    "capacity_total": proposed.get("capacity_total")})
         try:
             result = await self._api.set_menu_stock(
                 date, capacity_total=mn.opt_int(proposed.get("capacity_total")), items=rows,
-                location_id=self._location, reason=reason, actor=actor, dry_run=False)
+                location_id=self._location, actor=actor, dry_run=False)
         except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(action="stock", reason=reason, actor=actor, result=FAILED,
+            await self._record(action="stock", actor=actor, result=FAILED,
                                target_date=date, target_id=current["id"],
                                detail={"date": date, "error": str(failure)})
             return self._write_failure(failure)
@@ -904,7 +950,7 @@ class MenuService:
         view = mn.stock_result_view(self._record_of(result, "data", "would"))
         if not was_dry:
             await self._close_preview(token)
-        await self._record(action="stock", reason=reason, actor=actor,
+        await self._record(action="stock", actor=actor,
                            result=DRY if was_dry else DONE, target_date=date,
                            target_id=current["id"],
                            detail={"date": date, "warning_count": len(view["warnings"])})
@@ -963,8 +1009,8 @@ class MenuService:
 
     # ------------------------------------------------------------- iç yardım
 
-    async def _settle(self, action: str, result: Any, *, reason: str, actor: str,
-                      date: str, day_id: int = 0,
+    async def _settle(self, action: str, result: Any, *, actor: str,
+                      date: str, reason: str = "", day_id: int = 0,
                       detail: dict[str, Any] | None = None) -> dict[str, Any]:
         """Yazma yanıtını kapatır: izi düşer, ekran zarfını kurar.
 
@@ -1159,7 +1205,7 @@ class MenuService:
 
     async def _save_preview(self, token: str, *, date: str, proposed: dict[str, Any],
                             baseline: dict[str, Any], warnings: list[dict[str, Any]],
-                            actor: str, reason: str) -> None:
+                            actor: str, reason: str = "") -> None:
         try:
             await self._store.execute(
                 f"INSERT INTO {self._preview} "

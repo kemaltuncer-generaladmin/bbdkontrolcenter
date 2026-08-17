@@ -26,9 +26,12 @@ SALES: dict[str, Any] = {
     "pause_reason": None,
     "is_open": True,
 
+    # `subscription_release_time` BURADA YOKTUR: ayar 17.08.2026'da sunucudan
+    # kaldırıldı ve `toControlData()` artık yayınlamıyor. Sahte gövdeye
+    # bırakmak, testin sözleşmede olmayan bir alana karşı geçmesi olurdu —
+    # tam da panelin kaydedememesine yol açan ayrışmayı görünmez yapardı.
     "order_cutoff": "08:00",
     "max_lookahead_days": 7,
-    "subscription_release_time": "07:00",
 
     "min_order_total_kurus": 15000,
     "delivery_fee_kurus": 2500,
@@ -59,7 +62,6 @@ SALES_META: dict[str, Any] = {
         "prep_minutes": 40,
         "delivery_minutes": 20,
         "busy_extra_minutes": 15,
-        "subscription_release_time": "07:00",
     },
 }
 

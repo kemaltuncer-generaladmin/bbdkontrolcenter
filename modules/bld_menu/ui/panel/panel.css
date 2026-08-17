@@ -146,6 +146,72 @@
   gap: 8px;
 }
 
+/* --------------------------------------------------- taahhüt düğmesi
+ *
+ * Gerekçe artık YALNIZ yayınla / yayından çek / günü sil / kopyala uçlarında
+ * isteniyor. Yayın, o dördün içinde de "müşteriye açma" anıdır ve aynı şeritte
+ * duran "Kopyala" ile "Sil" ile aynı görsel ağırlıkta durursa, kullanıcı
+ * gerekçe kutusunun neden yalnız orada açıldığını anlamaz.
+ *
+ * ÇERÇEVE RENKLE DEĞİL YAZIYLA AYRIŞIR (kit kuralı 7): kenar çizgisi ve zemin
+ * yalnız gözü çeker, ne olacağını altındaki cümle söyler.
+ */
+.bm .bm-commit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--tint);
+}
+
+.bm .bm-commit .kit-btn {
+  font-weight: 700;
+}
+
+.bm .bm-commit-note {
+  font-size: 11px;
+  color: var(--soft);
+}
+
+/* Yayın özeti çok satırlıdır (tarih · kalem · paket · tavan · kesim) ve
+ * `confirmWithReason` açıklamayı DÜZ METİN yazıyor — `innerHTML` yok, olmamalı
+ * da (kit kuralı 11). Satır sonlarını görünür kılmanın doğru yolu budur. */
+.bm .kit-dialog-text {
+  white-space: pre-line;
+}
+
+/* ------------------------------------------------- hızlı kalem ekleme */
+
+.bm .bm-quickadd {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+/* Seçici kendi başına sınırsız uzuyor (`pk-list` esnek). Sınır olmadan liste
+ * bütün ekranı yer ve ASIL İŞ olan kalem tablosu ekranın altına düşer;
+ * kullanıcı eklediği kalemi görmek için kaydırmak zorunda kalırdı. */
+.bm .bm-quickadd .pk-box {
+  max-height: 250px;
+}
+
+.bm .bm-quicknote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.bm .bm-quick-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--soft);
+}
+
 /* --------------------------------------------------------------- özet */
 
 .bm .bm-facts {

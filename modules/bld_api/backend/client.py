@@ -63,12 +63,21 @@ BEŞ POLİTİKA — hepsi geçitte, ekranların iyi niyetine bırakılmadan uygu
    ve "prova" sandığımız istek GERÇEK yazma olurdu. Bilinmeyen uçta istek
    HİÇ GÖNDERİLMEZ; ne gönderileceğini anlatan sentetik yanıt döner.
 
-3. GEREKÇE VE AKTÖR (sözleşme §3). Her POST/PATCH gövdesinde `reason`
-   (en az 10 karakter) ve `actor` ZORUNLUDUR; ikisini de geçit gövdeye
-   koyar. Başlıkla TAŞINMAZ — sözleşme böyle bir başlık tanımlamıyor ve
+3. AKTÖR HER YAZMADA, GEREKÇE UÇ BAŞINA (sözleşme §3). `actor` İSTİSNASIZ
+   zorunludur: "kim yaptı" sorusunun cevabı hiçbir yazmada boş kalmaz.
+   `reason` ise artık KÜRESEL DEĞİL, UÇ BAŞINA istenir — kuralı `_REASON_OPTIONAL`
+   kayıt defteri taşır ve VARSAYILAN "gerekçe İSTER"dir. İkisi de gövdeye
+   konur; başlıkla TAŞINMAZ — sözleşme böyle bir başlık tanımlamıyor ve
    sunucu gerekçeyi gövdeden okuyup `veykemtu_control_audit` tablosuna
    yazıyor. İstek çıkmadan aynı bilgi `mod_bld_api_audit` tablosuna da
-   yazılır: ağ koparsa "ne yapmaya çalıştık" kaydı yerelde kalır.
+   yazılır: ağ koparsa "ne yapmaya çalıştık" kaydı yerelde kalır. Yerel
+   satır GEREKÇEDEN BAĞIMSIZ olarak her yazmada açılır; gerekçe istenmeyen
+   uçta `reason` sütunu boş kalır, satırın kendisi kalmaz değil.
+
+   NEDEN UÇ BAŞINA: taslak kurmak bir taahhüt değil, yayınlamak taahhüttür.
+   Bir güne beş kalem eklerken beş kez on karakter istemek "düzeltme", "ok",
+   "asdasd" üretiyordu — tam da bu dosyanın `MIN_REASON` yanında yazdığı
+   arıza. Az yerde istenen gerekçe, çok yerde istenenden daha değerlidir.
 
 4. YİNELEME. GET üç kez denenir (0.4 · n sn bekleme). YAZMA YİNELENMEZ:
    zaman aşımına uğrayan yazma uzakta uygulanmış olabilir; körlemesine
@@ -165,9 +174,15 @@ AUDIT = f"{CONTROL_ROOT}/audit"
 #: uygulama belirteci değildir.
 SECRET_KEY = "server.bld.control_secret"
 
-#: Yazma gerekçesinin en az uzunluğu (sözleşme §3). "ok", "düzeltme" gibi
-#: metinler denetim izini işe yaramaz kılıyor; ADR 0012 ekranlarda da 10
-#: karakter istiyor. Sunucu da aynı sınırı uyguluyor — çift kapı (K9).
+#: Yazma gerekçesinin en az uzunluğu — GEREKÇE İSTENEN uçlarda (sözleşme §3).
+#: "ok", "düzeltme" gibi metinler denetim izini işe yaramaz kılıyor; ADR 0012
+#: ekranlarda da 10 karakter istiyor. Sunucu da aynı sınırı uyguluyor — çift
+#: kapı (K9).
+#:
+#: SINIR DEĞİŞMEDİ, KAPSAMI DEĞİŞTİ. Gerekçe artık her yazmada değil, uç
+#: başına isteniyor (`_REASON_OPTIONAL`); istendiği yerde hâlâ 10 karakterdir.
+#: Sınırı gevşetmek, gerekçeyi seyrekleştirmenin tersi olurdu: az yerde ama
+#: DOLU dolu istemek, çok yerde ve boş boş istemekten değerli.
 MIN_REASON = 10
 
 #: Sipariş revizyonu ve durum/iptal uçlarında gerekçenin ÜST sınırı
@@ -315,6 +330,41 @@ register_dry_run(
     rf"^{CONTROL}/orders/\d+/revisions$",
     rf"^{CONTROL}/orders/\d+/status$",
 )
+
+#: GEREKÇE İSTEMEYEN yazmalar — KAYIT DEFTERİ. `(FİİL, yol deseni)` çiftleri.
+#:
+#: Gerekçe müşteriye GÖRÜNÜR HÂLE GELEN ve GERİ ALINMASI ZOR olan işlemlerde
+#: istenir. Taslak kurmak bir taahhüt değildir; yayınlamak taahhüttür. Defterde
+#: eşleşen bir yazma gerekçesiz geçer, `actor` yine zorunludur ve denetim satırı
+#: yine açılır — yalnız "neden" sorusu seyrekleşir.
+#:
+#: NEDEN MUAFİYET DEFTERİ, NEDEN "GEREKÇE İSTEYENLER" DEFTERİ DEĞİL: ikisi de
+#: bir defterdir, ama UNUTMANIN BEDELİ farklıdır. "İsteyenler" listesine
+#: eklenmesi unutulan yeni bir uç sessizce gerekçesiz yazar ve denetim izinde
+#: nedeni boş bir satır bırakır — kimse fark etmez. Muafiyet defterine
+#: eklenmesi unutulan uç ise ilk çağrıda `reason_required` ile geri döner:
+#: yanlış, ama GÜRÜLTÜLÜ. Varsayılan bu yüzden "gerekçe İSTER" tarafındadır.
+#:
+#: FİİL DEFTERİN PARÇASIDIR: aynı yol iki ayrı politikada olabiliyor —
+#: `PATCH /menu/days/{date}` gerekçe istemez, `DELETE /menu/days/{date}` ister.
+#: Yalnız yola bakan bir defter ikisini ayıramaz ve gün silmeyi (kalemleriyle
+#: birlikte, geri alınamaz) sessizce gerekçesiz bırakırdı.
+#:
+#: KAYIT, KORUDUĞU METOTLARIN HEMEN ÜSTÜNDE yapılır — kuru prova defteriyle
+#: aynı üslup ve aynı gerekçe: yedi yüz satır uzakta duran bir blok okunmaz.
+_REASON_OPTIONAL: list[tuple[str, re.Pattern[str]]] = []
+
+
+def register_reason_optional(*rules: tuple[str, str]) -> None:
+    """Gerekçe İSTEMEYEN `(fiil, yol deseni)` çiftlerini deftere yazar.
+
+    Desenler `^...$` ile tam eşleşmelidir (`docs/control/00-genel.md` §4).
+    Defterde OLMAYAN her yazma gerekçe ister; bu bir varsayılan değil, bir
+    emniyet kilididir (yukarıdaki gerekçeye bakın).
+    """
+    _REASON_OPTIONAL.extend(
+        (verb.upper(), re.compile(pattern)) for verb, pattern in rules
+    )
 
 
 def canonical_payload(method: str, path: str, timestamp: int | str, nonce: str,
@@ -554,6 +604,17 @@ class BldApi:
         return any(pattern.match(path) for pattern in _DRY_RUN_AWARE)
 
     @staticmethod
+    def _reason_optional(verb: str, path: str) -> bool:
+        """Bu `(fiil, yol)` gerekçe istemiyor mu — defterden okunur.
+
+        Defterde OLMAYAN her yazma gerekçe ister. Kilidin güvenli tarafı bu
+        yöndedir: kaydı unutulan uç 422 değil `reason_required` alır ve hatayı
+        yazan kişi ilk denemede görür.
+        """
+        return any(method == verb and pattern.match(path)
+                   for method, pattern in _REASON_OPTIONAL)
+
+    @staticmethod
     def _csv(value: Any) -> str:
         """Virgüllü süzgeç değeri. Liste de düz metin de kabul edilir.
 
@@ -687,12 +748,20 @@ class BldApi:
         reason = str(reason or "").strip()
         actor = str(actor or "").strip()
 
-        if self._require_reason and len(reason) < MIN_REASON:
+        # Gerekçe UÇ BAŞINA istenir; defterde olmayan her yol ister
+        # (`_REASON_OPTIONAL` başlığındaki gerekçe). `require_reason` ayarı
+        # bunun ÜSTÜNDEKİ küresel şalterdir ve kapatıldığında hiçbir uçta
+        # gerekçe aranmaz.
+        optional = self._reason_optional(verb, path)
+        if self._require_reason and not optional and len(reason) < MIN_REASON:
             raise BldApiError(
-                "Gerekçe zorunlu: BLD sunucusunda yapılan her değişiklik en az "
-                f"{MIN_REASON} karakterlik bir gerekçeyle kayda geçer (sözleşme §3).",
+                "Gerekçe zorunlu: bu işlem müşteriye görünür hâle geliyor ya da geri "
+                f"alınması zor, bu yüzden en az {MIN_REASON} karakterlik bir gerekçeyle "
+                "kayda geçer (sözleşme §3).",
                 code="reason_required",
             )
+        # ÜST SINIR MUAF UÇTA DA GEÇERLİ: gerekçe isteğe bağlı olduğunda bile
+        # sunucunun kolon genişliği değişmiyor ve taşan metin 422 ile dönerdi.
         if reason_max and len(reason) > reason_max:
             raise BldApiError(
                 f"Gerekçe en çok {reason_max} karakter olabilir; {len(reason)} karakter "
@@ -705,6 +774,10 @@ class BldApi:
             # kasadan mı merkezden mi yapıldığı ancak böyle ayrılıyor.
             # Sunucuya boş göndermek 422 ile dönerdi; burada söylemek daha
             # anlaşılır ve hız kovasından pay harcamaz.
+            #
+            # MUAFİYET DEFTERİ AKTÖRÜ KAPSAMAZ: seyrekleşen soru "neden",
+            # "kim" değil. Gerekçesiz bir kalem eklemesi bile kimin yaptığını
+            # kayda geçirir.
             raise BldApiError(
                 "İşlemi yapan kişinin adı (actor) zorunlu: denetim izinde "
                 "kasadan mı merkezden mi yapıldığı buna göre ayrılır (sözleşme §3).",
@@ -722,8 +795,16 @@ class BldApi:
 
         # Gerekçe ve aktör GÖVDEYE konur (sözleşme §3). Başlıkla taşınmaz:
         # sözleşme yalnız üç imza başlığı tanımlıyor, dördüncüsü uydurma olurdu.
+        #
+        # GEREKÇE İSTEMEYEN UÇTA BOŞ GEREKÇE GÖVDEYE HİÇ KONMAZ. `reason: ""`
+        # göndermek "gerekçe verildi ve boştu" der; alanı hiç göndermemek
+        # "bu uçta gerekçe sorulmadı" der. Sunucu ikincisini bekliyor
+        # (`sometimes|nullable`) ve ayrım denetim izinde de görünüyor.
+        # ELLE VERİLEN GEREKÇE KORUNUR: muaf bir uca yine de gerekçe geçen
+        # çağrının notunu sessizce düşürmek, yazılan bilgiyi yok etmek olurdu.
         payload: dict[str, Any] = dict(body or {})
-        payload["reason"] = reason
+        if reason or not optional:
+            payload["reason"] = reason
         payload["actor"] = actor
 
         # DENETİM İZİNE GİDEN GÖVDE, GÖNDERİLENDEN AYRI OLABİLİR. Görsel
@@ -1263,6 +1344,29 @@ class BldApi:
         rf"^{MENU}/days/{_DATE}/items/\d+$",
     )
 
+    # GEREKÇE MUAFİYETİ — yalnız `control/menu` alanında, uç başına.
+    #
+    # Ölçüt: işlem müşteriye GÖRÜNÜR HÂLE GELİYOR mu ve GERİ ALINMASI ZOR mu.
+    # Taslak kurmak ikisi de değildir; yayınlamak ikisi de.
+    #
+    # Muaf (aşağıda):  POST days · PATCH days/{date} · POST/PATCH/DELETE items
+    #                  · PUT stock
+    # Gerekçe ister:   POST publish (müşteriye açar) · POST unpublish (satıştan
+    #                  düşürür) · DELETE days/{date} (gün ve TÜM kalemleri
+    #                  geri alınamaz biçimde gider) · POST duplicate (toplu ve
+    #                  `overwrite` ile bir taslağın üzerine yazabilir).
+    #
+    # `DELETE days/{date}` ile `PATCH days/{date}` AYNI YOLDUR, ayrı fiillerdir:
+    # muafiyet yalnız `PATCH`e verilir. Defter bu yüzden fiili de tutuyor.
+    register_reason_optional(
+        ("POST", rf"^{MENU}/days$"),
+        ("PATCH", rf"^{MENU}/days/{_DATE}$"),
+        ("POST", rf"^{MENU}/days/{_DATE}/items$"),
+        ("PATCH", rf"^{MENU}/days/{_DATE}/items/\d+$"),
+        ("DELETE", rf"^{MENU}/days/{_DATE}/items/\d+$"),
+        ("PUT", rf"^{MENU}/days/{_DATE}/stock$"),
+    )
+
     async def menu_calendar(self, *, date_from: str, date_to: str,
                             location_id: int | None = None) -> dict[str, Any]:
         """Takvim ızgarası — GET /api/control/menu/calendar (`menu.md`).
@@ -1298,14 +1402,17 @@ class BldApi:
         internal_note: str | None = None, package_price_kurus: int | None = None,
         components_sellable: bool = True, cutoff_time: str | None = None,
         capacity_total: int | None = None, items: list[dict[str, Any]] | None = None,
-        location_id: int | None = None, reason: str, actor: str,
+        location_id: int | None = None, reason: str = "", actor: str,
         dry_run: bool | None = None,
     ) -> dict[str, Any]:
-        """Yeni menü günü — POST /menu/days.
+        """Yeni menü günü — POST /menu/days. **Gerekçe İSTEMEZ.**
 
-        Gün HER ZAMAN `draft` doğar; yayın ayrı bir eylemdir ve ayrı bir
-        denetim satırı bırakır. `items` boş bırakılabilir (önce günü kur,
-        kalemleri sonra ekle). Aynı `(location_id, date)` varsa `conflict`.
+        Taslak kurmak bir taahhüt değildir: gün HER ZAMAN `draft` doğar,
+        müşteriye görünmez ve yayın ayrı bir eylemdir. Gerekçe orada istenir;
+        burada verilirse gövdeye konur, verilmezse alan hiç gönderilmez.
+
+        `items` boş bırakılabilir (önce günü kur, kalemleri sonra ekle).
+        Aynı `(location_id, date)` varsa `conflict`.
 
         `package_price_kurus` **kuruştur** ve verilirse sıfırdan büyük
         olmalıdır; `null` "paket satılmıyor" demektir.
@@ -1328,10 +1435,12 @@ class BldApi:
         internal_note: Any = UNSET, package_price_kurus: Any = UNSET,
         components_sellable: Any = UNSET, cutoff_time: Any = UNSET,
         capacity_total: Any = UNSET, image_path: Any = UNSET,
-        location_id: int | None = None, reason: str, actor: str,
+        location_id: int | None = None, reason: str = "", actor: str,
         dry_run: bool | None = None,
     ) -> dict[str, Any]:
         """Gün başlığı/fiyatı/notu — PATCH /menu/days/{date}. **Kısmi.**
+
+        **Gerekçe İSTEMEZ** (`DELETE` aynı yolda ister — defter fiili de tutar).
 
         `date`, `location_id` ve `status` YAZILAMAZ: günü taşımak yeni gün
         kurup eskisini silmektir, durum değişimi kendi uçlarındadır.
@@ -1355,6 +1464,11 @@ class BldApi:
                               dry_run: bool | None = None) -> dict[str, Any]:
         """Günü siler — DELETE /menu/days/{date}. Yalnız **taslak** günler.
 
+        **GEREKÇE İSTER.** Gün kaydı ve TÜM kalemleri (fiyat geçersiz
+        kılmaları, tavanları, etiketleri) birlikte gider ve geri getirmenin
+        yolu hepsini elle yeniden girmektir; taslak bir haftalık menü tek
+        çağrıda yok edilebilir.
+
         Yayınlanmış gün ya da o güne sipariş girmiş gün `conflict` verir.
         Kalemler günle birlikte gider: bağımsız bir varlık değiller.
         """
@@ -1368,6 +1482,10 @@ class BldApi:
                                reason: str, actor: str,
                                dry_run: bool | None = None) -> dict[str, Any]:
         """Günü yayınlar — POST /menu/days/{date}/publish.
+
+        **GEREKÇE İSTER.** Politikanın kalbi bu satırdır: taslak kurmak bir
+        taahhüt değil, yayınlamak taahhüttür — gün bu çağrıyla müşteriye
+        görünür hâle gelir ve sipariş almaya başlar.
 
         Ön denetimler kuru provada da koşar: gün taslak olmalı, en az bir
         kalem bulunmalı, paket fiyatı yoksa bileşen satışı açık olmalı ve
@@ -1384,6 +1502,10 @@ class BldApi:
                                  dry_run: bool | None = None) -> dict[str, Any]:
         """Günü taslağa çeker — POST /menu/days/{date}/unpublish.
 
+        **GEREKÇE İSTER.** Şalter geri alınabilir ama etkisi müşteride anında
+        görünür: yayındaki bir gün satış kanalından düşer. "Neden kapattık"
+        sorusu ertesi gün mutlaka soruluyor.
+
         O güne sipariş girmişse `conflict`: satılmış bir günü gizlemek,
         siparişin bağlandığı menüyü müşteriden kaçırmak olurdu.
         """
@@ -1398,9 +1520,13 @@ class BldApi:
         label: str | None = None, price_override_kurus: int | None = None,
         is_required: bool = False, sellable_alone: bool = False,
         capacity: int | None = None, location_id: int | None = None,
-        reason: str, actor: str, dry_run: bool | None = None,
+        reason: str = "", actor: str, dry_run: bool | None = None,
     ) -> dict[str, Any]:
-        """Güne kalem ekler — POST /menu/days/{date}/items.
+        """Güne kalem ekler — POST /menu/days/{date}/items. **Gerekçe İSTEMEZ.**
+
+        Bir güne beş ürün koymak beş çağrıdır; her birinde on karakter istemek
+        "düzeltme", "ok", "asdasd" üretiyordu ve denetim izini işe yaramaz
+        kılıyordu (bkz. `MIN_REASON`).
 
         `sort_order` VERİLMEZSE GÖVDEYE KONMAZ; sunucu mevcut en büyük + 10
         atar. `null` göndermek bu davranışı tetiklemeyebilir — Laravel'in
@@ -1425,10 +1551,16 @@ class BldApi:
     async def update_menu_item(
         self, date: str, item_id: int, *, quantity: Any = UNSET, sort_order: Any = UNSET,
         label: Any = UNSET, price_override_kurus: Any = UNSET, is_required: Any = UNSET,
-        sellable_alone: Any = UNSET, capacity: Any = UNSET, reason: str, actor: str,
+        sellable_alone: Any = UNSET, capacity: Any = UNSET, reason: str = "", actor: str,
         dry_run: bool | None = None,
     ) -> dict[str, Any]:
         """Kalemi günceller — PATCH /menu/days/{date}/items/{item}. **Kısmi.**
+
+        **Gerekçe İSTEMEZ** — yayınlanmış bir günün kaleminde bile. Bu bilinçli
+        bir karardır (sahip böyle istedi) ve politikanın kendi ölçütüyle
+        gerilimlidir: yayındaki bir günde fiyat ya da etiket değiştirmek
+        müşteriye görünen şeyi değiştirir. Sıkılaştırma ucuzdur — defterdeki
+        `PATCH items` kaydını kaldırmak yeter — ama BUGÜN İSTENMEDİ.
 
         `menu_id` YAZILAMAZ: ürünü değiştirmek kalemi silip yenisini
         eklemektir ve denetim izinde iki ayrı satır olarak görünmelidir.
@@ -1444,9 +1576,15 @@ class BldApi:
             reason_max=MAX_REASON,
         )
 
-    async def delete_menu_item(self, date: str, item_id: int, *, reason: str, actor: str,
+    async def delete_menu_item(self, date: str, item_id: int, *, reason: str = "",
+                               actor: str,
                                dry_run: bool | None = None) -> dict[str, Any]:
         """Kalemi siler — DELETE /menu/days/{date}/items/{item}.
+
+        **Gerekçe İSTEMEZ** — gün silmenin aksine. Ayrım şu: gün silmek gün
+        kaydını ve TÜM kalemlerini birlikte götürür, tek kalem silmek ise
+        menüyü kurarken yapılan olağan bir düzeltmedir ve yeniden eklemenin
+        maliyeti bir seçicidir.
 
         Bugünkü siparişlerde kullanılmış bir kalem `conflict` verir: geçmiş
         bozulmaz (sipariş satırı kendi kopyasını taşır), engel yöneticinin
@@ -1476,10 +1614,15 @@ class BldApi:
 
     async def set_menu_stock(
         self, date: str, *, capacity_total: int | None, items: list[dict[str, Any]],
-        location_id: int | None = None, reason: str, actor: str,
+        location_id: int | None = None, reason: str = "", actor: str,
         dry_run: bool | None = None,
     ) -> dict[str, Any]:
         """Stok tavanlarını yazar — PUT /menu/days/{date}/stock.
+
+        **Gerekçe İSTEMEZ.** Tavan yazmak gün içinde sık tekrarlanan bir
+        ayardır (malzeme bitti, tavanı düşür) ve emniyeti gerekçede değil iki
+        adımlı akıştadır: kuru prova uyarıları hesaplar, uygulama jetonla
+        gelir ve temel çizgiyi doğrular.
 
         **TAM LİSTEDİR, FARK DEĞİL.** Gönderilmeyen kalemin tavanı `null`'a
         düşer; niyet "bugünün tavan tablosu şudur"dur. Fark göndermek, iki
@@ -1513,6 +1656,10 @@ class BldApi:
         dry_run: bool | None = None,
     ) -> dict[str, Any]:
         """Günü başka güne kopyalar — POST /menu/days/{date}/duplicate.
+
+        **GEREKÇE İSTER.** Tek çağrıda bir günün tamamını yazar ve `overwrite`
+        ile mevcut bir taslağın üzerine geçebilir: tek tıkla en çok veri
+        değiştiren menü işlemi budur.
 
         Hedef gün HER ZAMAN `draft` doğar, kaynak yayında olsa bile.
         Görsel ve iç not kopyalanmaz: güne özgüdürler ve kopyalamak yanlış

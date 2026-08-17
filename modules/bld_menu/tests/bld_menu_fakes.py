@@ -222,6 +222,13 @@ class FakeApi:
     için hata ekranda "BLD'ye ulaşılamadı" diye görünür: yanlış metot adı,
     düşmüş bir sunucudan AYIRT EDİLEMEZ.
 
+    `reason` VARSAYILANI GEÇİTTEKİYLE AYNI OLMALIDIR. Gerçek geçitte gerekçe
+    istemeyen menü metotlarında `reason: str = ""`, isteyenlerde varsayılan
+    YOK. Buradaki taklit varsayılanı gereksiz yere zorunlu bırakırsa, servisin
+    gerekçesiz çağrısı testte `TypeError` verir ama canlıda çalışır — ve
+    tersi daha kötüsüdür: taklit gevşek olsaydı, geçidin zorunlu tuttuğu bir
+    alanı atlayan servis testte geçer, canlıda patlardı.
+
     KISMİ YAZMA `UNSET` İLE ÇALIŞIR. Gerçek geçitte gönderilmeyen alanın
     varsayılanı `UNSET` nöbetçisidir ve gövdeye konmaz; burada karşılığı,
     `**kwargs` ile YALNIZ gelen anahtarları kaydetmektir. Böylece "servis
@@ -314,7 +321,7 @@ class FakeApi:
 
     # ------------------------------------------------------------- yazma
 
-    async def create_menu_day(self, *, date: str, reason: str, actor: str,
+    async def create_menu_day(self, *, date: str, actor: str, reason: str = "",
                               dry_run: bool | None = None, **fields: Any) -> dict[str, Any]:
         self._record("create_menu_day", date=date, reason=reason, actor=actor,
                      dry_run=dry_run, **fields)
@@ -322,7 +329,7 @@ class FakeApi:
                "items": fields.get("items") or []}
         return self._envelope(row, dry_run=dry_run)
 
-    async def update_menu_day(self, date: str, *, reason: str, actor: str,
+    async def update_menu_day(self, date: str, *, actor: str, reason: str = "",
                               dry_run: bool | None = None, **fields: Any) -> dict[str, Any]:
         self._record("update_menu_day", date, reason=reason, actor=actor,
                      dry_run=dry_run, **fields)
@@ -351,19 +358,22 @@ class FakeApi:
                      actor=actor, dry_run=dry_run)
         return self._envelope({"date": date, "status": "draft"}, dry_run=dry_run)
 
-    async def create_menu_item(self, date: str, *, menu_id: int, reason: str, actor: str,
+    async def create_menu_item(self, date: str, *, menu_id: int, actor: str,
+                               reason: str = "",
                                dry_run: bool | None = None, **fields: Any) -> dict[str, Any]:
         self._record("create_menu_item", date, menu_id=menu_id, reason=reason,
                      actor=actor, dry_run=dry_run, **fields)
         return self._envelope({"id": 903, "menu_id": menu_id, **fields}, dry_run=dry_run)
 
-    async def update_menu_item(self, date: str, item_id: int, *, reason: str, actor: str,
+    async def update_menu_item(self, date: str, item_id: int, *, actor: str,
+                               reason: str = "",
                                dry_run: bool | None = None, **fields: Any) -> dict[str, Any]:
         self._record("update_menu_item", date, item_id, reason=reason, actor=actor,
                      dry_run=dry_run, **fields)
         return self._envelope({"id": item_id, **fields}, dry_run=dry_run)
 
-    async def delete_menu_item(self, date: str, item_id: int, *, reason: str, actor: str,
+    async def delete_menu_item(self, date: str, item_id: int, *, actor: str,
+                               reason: str = "",
                                dry_run: bool | None = None) -> dict[str, Any]:
         self._record("delete_menu_item", date, item_id, reason=reason, actor=actor,
                      dry_run=dry_run)
@@ -371,7 +381,7 @@ class FakeApi:
 
     async def set_menu_stock(self, date: str, *, capacity_total: int | None,
                              items: list[dict[str, Any]], location_id: int | None = None,
-                             reason: str, actor: str,
+                             actor: str, reason: str = "",
                              dry_run: bool | None = None) -> dict[str, Any]:
         self._record("set_menu_stock", date, capacity_total=capacity_total, items=items,
                      location_id=location_id, reason=reason, actor=actor, dry_run=dry_run)

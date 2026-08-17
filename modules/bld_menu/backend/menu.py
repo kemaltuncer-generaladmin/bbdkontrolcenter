@@ -48,6 +48,11 @@ from typing import Any
 #: Gerekçenin en az uzunluğu (`00-genel.md` §3). BLD tarafı da 10 istiyor;
 #: burada TEKRAR doğrulanır çünkü arayüzde alanı zorunlu göstermek
 #: yetkilendirme değildir (K9) ve istemci gövdeyi elle kurabilir.
+#:
+#: SINIR AYNI, KAPSAM DAR: gerekçe artık her yazmada değil, DÖRT uçta isteniyor
+#: (yayınlama · yayından çekme · gün silme · kopyalama). Ölçüt `api/routes.py`
+#: başlığında. Sınırı gevşetmek yanlış çözüm olurdu — kısa gerekçe sorunu
+#: gerekçenin KENDİSİNDE değil, gereksiz yere sorulmasındaydı.
 MIN_REASON = 10
 
 #: En çok. Panel uçlarının sınırı 500'dür (`00-genel.md` §3); sipariş
@@ -157,7 +162,10 @@ def opt_int(value: Any) -> int | None:
 
 def reason_error(reason: str) -> str:
     """Gerekçe backend'de DE doğrulanır (K9): arayüzde zorunlu göstermek,
-    istemcinin gövdeyi elle kurmasını engellemez."""
+    istemcinin gövdeyi elle kurmasını engellemez.
+
+    YALNIZ GEREKÇE İSTEYEN DÖRT UÇTAN çağrılır (`MenuService._guard`); gerekçe
+    istemeyen uçlar `reason` parametresi bile almıyor."""
     clean = text(reason)
     if len(clean) < MIN_REASON:
         return (f"Gerekçe en az {MIN_REASON} karakter olmalı. Denetim izinde "

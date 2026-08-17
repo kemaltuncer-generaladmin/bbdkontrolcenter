@@ -324,7 +324,7 @@ class SalesSettingsService:
         except Exception as failure:  # noqa: BLE001 — ipuçları olmadan da çalışır (K7)
             self._log.warning("ayar referansı okunamadı", error=str(failure))
 
-        # Taban çizgisi YALNIZ yazılabilir 13 alanı taşır: yarış denetimi
+        # Taban çizgisi YALNIZ yazılabilir 12 alanı taşır: yarış denetimi
         # ancak yazılan bir alan için anlamlıdır. Panelin izlediği "başka biri
         # satışı durdurdu mu" sorusu ayrı bir iştir ve `data`dan okunur.
         token = ""

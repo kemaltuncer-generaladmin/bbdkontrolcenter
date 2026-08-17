@@ -1,11 +1,11 @@
 // Satış Ayarları paneli — satışı açan, kapatan ve kurallarını belirleyen ekran.
 //
 // NE YAPAR: satış şalteri (durdur / aç, süreli ya da süresiz, müşteriye ayrı
-// mesaj); sabah kesim saati, ileri gün sınırı, abonelik serbest bırakma saati;
-// minimum sepet tutarı ve teslimat ücreti; ödeme yöntemleri; yoğunluk anahtarı
-// ve müşteriye görünen metni; hazırlık / teslimat / yoğunluk dakikaları; günün
-// menüsü rejimi ve otomatik fatura belgesi; kapalı günler (takvim + liste);
-// bugünün ve yarının hızlı stok tavanları; bu ekranın yerel denetim izi.
+// mesaj); sabah kesim saati, ileri gün sınırı; minimum sepet tutarı ve teslimat
+// ücreti; ödeme yöntemleri; yoğunluk anahtarı ve müşteriye görünen metni;
+// hazırlık / teslimat / yoğunluk dakikaları; günün menüsü rejimi ve otomatik
+// fatura belgesi; kapalı günler (takvim + liste); bugünün ve yarının hızlı stok
+// tavanları; bu ekranın yerel denetim izi.
 //
 // NE YAPMAZ:
 //  · GÜN BAZLI KESİM SAATİNİ değiştirmez. Buradaki `order_cutoff` GENEL
@@ -30,9 +30,16 @@
 //    taban çizgisinin jetonunu geri yollar; sunucu tarafındaki servis, yazılan
 //    alanların aradan değişip değişmediğine ona bakarak karar verir. Ekran
 //    ayrıca arka planda yokluyor ve mutfak anahtarı çevirdiğinde uyarıyor.
-//  · BOŞ KESİM SAATİ GEÇERLİ, BOŞ SERBEST BIRAKMA SAATİ DEĞİL. İlki "kesim
-//    yok" demektir, ikincisi abonelik siparişlerinin mutfak ekranına hiç
-//    düşmemesi demektir.
+//  · BOŞ KESİM SAATİ GEÇERLİDİR ve "kesim yok" demektir. Sunucu bunu sipariş
+//    alımını hiç kapatmamak diye okur; siparişler de o günün içinde anında
+//    mutfağa düşer.
+//  · SİPARİŞİN MUTFAĞA DÜŞTÜĞÜ AN BİR AYAR DEĞİL, TÜRETİLMİŞ BİLGİDİR.
+//    Eskiden `subscription_release_time` diye ayrı bir kutu vardı; 17.08.2026'da
+//    sunucudan kaldırıldı ve buradan da kalktı. Cevap artık kesim saatinden
+//    okunur ve ekranda kesim saatinin yanındaki ipucu kutusu bunu yazar. Ayrı
+//    bir kutu iki doğruluk kaynağı demekti: kesimi 09:00'a çekip düşme saatini
+//    07:00'de unutan yönetici, mutfağa satış hâlâ açıkken eksik bir listeyi tam
+//    diye gösterirdi.
 //  · `busy` SATIŞI KESMEZ, yalnız müşteriye "hazırlanması uzun sürebilir"
 //    uyarısı gösterir. Satışı kesen şey durdurmadır ve ayrı izin ister.
 //  · STOK YAZMASI TAM LİSTEDİR. Ekrandaki bütün kalemler birlikte gider;
@@ -81,11 +88,16 @@ const FALLBACK_POLL_MS = 60000;
 /** Ödeme yöntemleri — `account` YOKTUR, cari hesap kaldırıldı (iş kararı 1). */
 const PAYMENT_LABELS = { online: 'Online ödeme', cash: 'Kapıda nakit' };
 
-/** Alanların Türkçe adları; değişiklik tablosu ve çakışma cümlesi bunu okur. */
+/**
+ * Alanların Türkçe adları; değişiklik tablosu ve çakışma cümlesi bunu okur.
+ *
+ * `subscription_release_time` BURADA YOKTUR ve olmayacak: ayar 17.08.2026'da
+ * sunucudan kaldırıldı. Etiketi burada bırakmak, bir daha hiç gelmeyecek bir
+ * alanın adını fark tablosunda diri tutardı.
+ */
 const FIELD_LABELS = {
   order_cutoff: 'Sabah kesim saati',
   max_lookahead_days: 'İleri gün sınırı',
-  subscription_release_time: 'Abonelik serbest bırakma saati',
   min_order_total_kurus: 'Minimum sepet tutarı',
   delivery_fee_kurus: 'Teslimat ücreti',
   payment_methods: 'Ödeme yöntemleri',
@@ -112,7 +124,7 @@ const EMPTY_STATE = {
 
   // `sales` = formun ÜSTÜNE YAZDIĞI taban (kullanıcının gördüğü hâl).
   // `live`  = arka plan yoklamasının bildiği en taze hâl.
-  // `baseline` = jetonun işaret ettiği 13 yazılabilir alan; fark buna göre.
+  // `baseline` = jetonun işaret ettiği 12 yazılabilir alan; fark buna göre.
   sales: {},
   live: {},
   baseline: {},
@@ -354,7 +366,7 @@ async function probeSales() {
 }
 
 /**
- * Yoklamanın izlediği alanlar: yazılabilir 13'ü + satış şalteri.
+ * Yoklamanın izlediği alanlar: yazılabilir 12'si + satış şalteri.
  *
  * Şalter bu formdan YAZILAMAZ ama başka bir yönetici onu çevirmiş olabilir ve
  * ekranın tepesindeki "Satış açık" yazısı o an yanlış olur. Yalnız yazılabilir
@@ -427,7 +439,7 @@ async function loadAudit() {
 /**
  * Ayar formu DÖRT BÖLÜMDÜR ve her bölüm kendi `formGrid`'ini taşır.
  *
- * Tek bir dev ızgara da çizilebilirdi ama on üç alanın hangisinin neyi
+ * Tek bir dev ızgara da çizilebilirdi ama on iki alanın hangisinin neyi
  * etkilediği kaybolurdu: kesim saati ile teslimat ücreti aynı kutuda yan yana
  * durunca, "yoğunluk" anahtarının satışı KESMEDİĞİ de görünmez oluyor. Kirli
  * alan takibi bölüm başına yapılır ve kaydederken birleştirilir.
@@ -442,19 +454,21 @@ function buildForms() {
     pay_cash: methods.includes('cash'),
   };
 
-  const timeField = (key, label, { required = false, hint = '' } = {}) => ({
+  // ZORUNLULUK SEÇENEĞİ YOKTUR ve bilerek: bu formdaki tek saat alanı kesim
+  // saatidir ve BOŞ BIRAKILABİLİR ("kesim yok"). `required: true` ile çizilen
+  // bir saat alanı, sunucudan hiç gelmeyen bir anahtara denk düştüğü an bütün
+  // formu doğrulamadan geçmez yapıyordu — tek bir alan değil, ekranın tamamı
+  // kaydedilemez oluyordu (17.08.2026, `subscription_release_time`).
+  const timeField = (key, label, { hint = '' } = {}) => ({
     key,
     label,
     type: 'text',
-    required,
     placeholder: 'ss:dd',
     maxLength: 5,
     hint,
     // `<input type="date">` YASAK ve zaten yanlış araç olurdu: bu bir GÜN
     // değil, gün içi bir SAAT (Europe/Istanbul). `dateField()` de tarih
     // seçtirir; saat için doğru alan denetimli bir metin kutusudur.
-    // Boş alanın "zorunlu" mesajını `formGrid` kendisi üretir; burada yalnız
-    // BİÇİM denetlenir.
     validate: (value) => {
       const text = String(value ?? '').trim();
       if (!text) return null;
@@ -481,11 +495,6 @@ function buildForms() {
         hint: `0–${Number(limits.max_lookahead_days) || 7} gün. Sıfır geçerlidir ve `
           + '“yalnız bugüne sipariş” demektir.',
       },
-      timeField('subscription_release_time', 'Abonelik serbest bırakma saati', {
-        required: true,
-        hint: 'Abonelik siparişleri bu saatte mutfak ekranına düşer. BOŞ BIRAKILAMAZ — '
-          + 'boş bir saat, mutfağın sabah boş ekrana bakması demektir.',
-      }),
     ],
   });
 
@@ -796,8 +805,25 @@ function showSettings() {
 
   // -------------------------------------------------------------- ayar formu
   nodes.forms = buildForms();
+
+  // İpucu kesim saatinin YANINDA, aynı kartın içinde duruyor: "sipariş mutfağa
+  // ne zaman düşer" sorusunun cevabı artık bir AYAR DEĞİL, bu alandan TÜRETİLEN
+  // bilgi. Ayrı bir yere koysaydık yönetici kesim saatini değiştirirken düşme
+  // anını da değiştirdiğini görmezdi.
+  const rulesBox = h('div', 'bss-rules');
+  rulesBox.append(nodes.forms.rules.node, hintBox(
+    'SİPARİŞ MUTFAĞA NE ZAMAN DÜŞER: kesim saatinde. Ayrı bir “serbest bırakma '
+    + 'saati” ayarı YOKTUR — 17.08.2026’da kaldırıldı, çünkü ikinci bir saat iki '
+    + 'doğruluk kaynağı demekti (kesimi 09:00’a çekip düşme saatini 07:00’de '
+    + 'unutan yönetici, satış hâlâ açıkken mutfağa eksik bir listeyi tam diye '
+    + 'gösterirdi). Kural kanaldan bağımsızdır — web, mobil, panel ve abonelik '
+    + 'üretimi aynı yoldan geçer: servis günü BUGÜN ise sipariş ANINDA görünür; '
+    + 'ileri bir güne verilmişse O GÜNÜN kesim anında görünür; kesim saati '
+    + 'tanımsızsa (bu alan boş ve güne özel saat de yoksa) yine anında görünür. '
+    + 'Bir servis gününe özel saat girildiyse (Günlük Menü ekranı) o gün için '
+    + 'geçerli olan odur.'));
   body.append(
-    card('Sipariş kuralları', nodes.forms.rules.node),
+    card('Sipariş kuralları', rulesBox),
     card('Tutarlar ve ödeme', nodes.forms.money.node),
     card('Yoğunluk ve süreler', nodes.forms.busy.node,
       'Yoğunluk uyarısı satışı kesmez.'),
