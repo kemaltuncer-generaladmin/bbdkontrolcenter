@@ -607,6 +607,24 @@ fn update_install(
     app.restart();
 }
 
+/// Kurulum tamamlandıktan sonra uygulamayı yeniden başlatır.
+///
+/// NEDEN GEREKLİ. Modüller çekirdek açılırken yüklenir; cihaz eşlemesiyle gelen
+/// geçit ayarları (BLD/kantin/mağaza adresleri) ise eşleme ANINDA iner. Yani
+/// ilk eşlemede modüller o ayarları göremeden yüklenmiş olur: kantin geçidi
+/// "adres yok" diyerek hiç yüklenmez, BLD geçidi boş adresle ve salt okunur
+/// açılır. Ölçüldü — yeniden başlatınca üçü de doğru bağlanıyor ve 49/49 modül
+/// sorunsuz yükleniyor.
+///
+/// KULLANICIYA BIRAKILMAZ. "Uygulamayı yeniden başlatın" yazan bir cümle,
+/// kurulumu yapan kişinin okumasına bağlı kalırdı; okumazsa ekranlar boş gelir
+/// ve sebebi hiçbir yerde görünmez. Eşleme zaten girişten önce, kimse çalışmaya
+/// başlamadan yapılıyor — kaybolacak iş yok.
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -630,6 +648,7 @@ fn main() {
             update_download,
             update_progress,
             update_install,
+            restart_app,
         ])
         .build(tauri::generate_context!())
         .expect("Kontrol Merkezi kabuğu başlatılamadı")

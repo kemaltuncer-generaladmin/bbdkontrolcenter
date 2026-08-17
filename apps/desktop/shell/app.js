@@ -583,6 +583,33 @@ async function submitPairCode() {
 
   try {
     await api('/api/pairing/pair', { method: 'POST', body: { code } });
+
+    // EŞLEMEDEN SONRA UYGULAMA YENİDEN BAŞLAR — ve bu bir kolaylık değil,
+    // zorunluluk.
+    //
+    // Modüller çekirdek açılırken yükleniyor; eşlemeyle inen geçit ayarları
+    // (BLD, kantin, mağaza adresleri) ise eşleme ANINDA geliyor. Yani ilk
+    // eşlemede modüller o ayarları göremeden yüklenmiş oluyor: kantin geçidi
+    // "adres yok" diyerek hiç yüklenmiyor, BLD geçidi boş adresle ve salt
+    // okunur açılıyor. Ölçüldü — yeniden başlatınca üçü de doğru bağlanıyor
+    // ve 49/49 modül sorunsuz yükleniyor.
+    //
+    // KULLANICIYA "yeniden başlatın" DEMİYORUZ: okumasına bağlı kalırdı,
+    // okumazsa ekranlar boş gelir ve sebebi hiçbir yerde görünmezdi. Eşleme
+    // girişten önce, kimse çalışmaya başlamadan yapılıyor — kaybolacak iş yok.
+    //
+    // TARAYICIDA (Tauri dışında) komut yoktur: orada ekran yalnız kapanır ve
+    // bugünkü davranış sürer.
+    pairHint('Kurulum tamamlandı — uygulama yeniden başlatılıyor…');
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (invoke) {
+      try {
+        await invoke('restart_app');
+        return;
+      } catch (error) {
+        console.error('[kabuk] yeniden başlatılamadı:', error);
+      }
+    }
     pairing.done();
   } catch (error) {
     // MERKEZİN CÜMLESİ OLDUĞU GİBİ GÖSTERİLİR: kod geçersiz mi, merkeze mi
