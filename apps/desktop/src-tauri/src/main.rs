@@ -607,8 +607,19 @@ fn update_install(
     state: tauri::State<'_, Arc<UpdateFlow>>,
 ) -> Result<(), String> {
     if tauri::is_dev() {
-        return Err("Geliştirme kipinde kurulum yapılmaz: ortada paket değil, \
-                    derleme klasörü var."
+        // NE YAPILACAĞI DA SÖYLENİR. "Geliştirme kipinde kurulum yapılmaz"
+        // tek başına doğru ama kullanıcıyı hiçbir yere götürmüyordu: uygulama
+        // masaüstü kısayolundan açıldığında bunu görüyor ve neden görüldüğünü
+        // ya da ne yapması gerektiğini bilmiyordu.
+        //
+        // Sebep: `scripts/launch-desktop.sh` uygulamayı depo klasöründen
+        // `cargo build --release` ile derleyip çalıştırıyor ve o derleme
+        // `cfg(dev)` taşıyor. Yayınlanan paketler `cargo tauri build` ile
+        // üretiliyor ve taşımıyor — onlarda güncelleme çalışır.
+        return Err("Bu bir GELİŞTİRME DERLEMESİ; yerine konacak bir paket yok, \
+                    depo klasöründen çalışıyor.\n\n\
+                    Kendi kendini güncelleyen sürüm için yayınlanan paketi kurun: \
+                    github.com/kemaltuncer-generaladmin/bbdkontrolcenter/releases"
             .into());
     }
 
