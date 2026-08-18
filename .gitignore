@@ -1,6 +1,11 @@
 # --- sırlar (K8) ---
-config/local.yaml
-config/local.*.yaml
+# DESEN GENİŞ TUTULUR. `config/local.yaml` ve `config/local.*.yaml` yeterli
+# değildi: 18.08.2026'da alınan bir yedek `config/local.yaml.yedek-<damga>`
+# adıyla İKİSİNE DE UYMADI ve commit'e girdi. GitHub'ın sır koruması push'u
+# kesti (Google servis hesabı anahtarı) — yani deponun kendi kapısı değil,
+# dışarıdaki bir kapı yakaladı. Artık `local` ile başlayan her şey elenir.
+config/local*
+!config/local.example.yaml
 # Elle bırakılan belirteç/sır notları. Değer config/local.yaml kasasına
 # taşınır; bu dosyalar depoya ASLA girmez.
 *token*.md

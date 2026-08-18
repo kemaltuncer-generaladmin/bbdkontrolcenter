@@ -111,7 +111,21 @@ platform:
     # GELİŞTİRME KURULUMU İÇİN: depodan çalışırken eşleme istemiyorsanız
     # `config/local.yaml` içine `platform.identity_sync.enabled: false` yazın —
     # yerel katman bunu ezer.
-    enabled: true
+    #
+    # ---------------------------------------------------------------------
+    # 18.08.2026 — ADR 0026 İLE KAPATILDI. Değeri `true` yapmayın.
+    #
+    # Bu yetenek, HER KURULUMUN KENDİ VERİTABANI olduğu dünyada anlamlıydı:
+    # merkezdeki kadro yerele yansıtılır, sırlar dağıtılırdı. ADR 0026 ile
+    # veritabanı TEK: backend sunucuda koşuyor ve kadro zaten orada. Yansıtacak
+    # ikinci bir kopya yok.
+    #
+    # Açık bırakılsaydı somut bir arıza üretirdi: `base_url` artık KM
+    # Sunucu'nun KENDİ adresidir; sunucu kendini kimlik servisi sanıp her
+    # girişte `/roster` isteyecek ve 404 alacaktı. Kod silinmedi — geri alma
+    # ekleyerek yapılır — yalnız şalter kapandı.
+    # ---------------------------------------------------------------------
+    enabled: false
     base_url: "https://kontrolmerkezi.bbdstore.com.tr"
     timeout_seconds: 10
     # Kadro önbelleği. İçinde PIN hash'i vardır (çevrimdışı giriş bunun için

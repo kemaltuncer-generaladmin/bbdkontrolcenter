@@ -761,7 +761,20 @@ class BellService:
         # bırakmak, ajanın da onu indirip saklaması demek olurdu.
         stale = present - set(wanted)
         removed = 0
-        if stale:
+        if stale and not wanted:
+            # BOŞ `keep` İLE TEMİZLİK YAPILMAZ. Köprüye "hiçbirini tutma"
+            # demek, oradaki BÜTÜN sesleri sildirmek olurdu — ve buraya
+            # düşmenin normal yolu tam da tehlikeli olanı: sesler henüz
+            # üretilmemiştir (taze kurulum, kalıcı disk yeni bağlanmış,
+            # Vertex sırası daha bitmemiş). O anda silmek, okulun zilini
+            # sessizleştirirdi.
+            #
+            # Köprü zaten reddediyordu (Laravel `required` boş diziyi eksik
+            # sayar, 422) ama bu bir kaza sonucu koruma; niyeti burada yazıp
+            # çağrıyı hiç yapmıyoruz.
+            self._log.info("köprü temizliği atlandı — tutulacak ses listesi boş",
+                           stale=len(stale))
+        elif stale:
             try:
                 result = await self._bridge.prune(sorted(wanted))
                 removed = int(result.get("removed") or 0)
