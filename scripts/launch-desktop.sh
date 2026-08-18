@@ -128,8 +128,19 @@ if [ -d "$ROOT/.git" ] && command -v git >/dev/null 2>&1; then
         log "git: çalışma ağacı kirli, çekme atlandı"
         note "Yerelde kaydedilmemiş değişiklik var — kod güncellenmedi."
     else
+        # DAL AÇIKÇA VERİLİR, TAKİBE GÜVENİLMEZ. Çıplak `git pull` yerel dalın
+        # upstream'inin kurulu olmasını ister. BU MAKİNEDE KURULU DEĞİLDİ:
+        # çekme her açılışta "no tracking information" ile düşüyor, kullanıcı
+        # "kod güncellenemedi" bildirimi görüp eski kodla açıyor ve sebep
+        # ancak günlüğe bakınca anlaşılıyordu. Taze bir klonda ya da başka bir
+        # makinede aynı tuzağın yeniden kurulmaması için dal adı doğrudan
+        # geçilir.
+        DAL="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'HEAD')"
         ONCE="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
-        if timeout 45 git -C "$ROOT" pull --ff-only --quiet >>"$LOG" 2>&1; then
+        if [ "$DAL" = "HEAD" ]; then
+            # Ayrık HEAD: bir dalda değiliz, ileri sarılacak bir şey de yok.
+            log "git: ayrık HEAD, çekme atlandı"
+        elif timeout 45 git -C "$ROOT" pull --ff-only --quiet origin "$DAL" >>"$LOG" 2>&1; then
             SONRA="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
             if [ "$ONCE" != "$SONRA" ]; then
                 ADET="$(git -C "$ROOT" rev-list --count "$ONCE..$SONRA" 2>/dev/null || echo '?')"
