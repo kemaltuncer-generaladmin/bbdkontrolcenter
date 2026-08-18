@@ -1,6 +1,10 @@
 # Zil sistemi modülü
 # Şema: docs/schemas/module.schema.json
 #
+# ZİLDEN SONRA ANONS GEÇMEZ (18.08.2026). Otomatik zil yalnız zil sesidir;
+# "Lütfen derse geçiniz." yolu kaldırıldı ve kapatılabilir bir seçenek de
+# bırakılmadı. Anons yalnız elle basılan GRUP ÇAĞRISINDA duyulur.
+#
 # ZİL GERÇEKTEN ÇALAR. İki hedefi vardır:
 #   1. Okulun zil sistemine bağlı Windows bilgisayarı (asıl hoparlör) —
 #      `store.api` üzerinden bbdstore köprüsüne komut yazılır.
@@ -12,8 +16,8 @@
 
 id: bell
 name: "Zil Sistemi"
-description: "Haftalık zil saatleri, sesli anons ve grup çağrısı."
-version: 0.2.0
+description: "Haftalık zil saatleri ve sesli grup çağrısı."
+version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 

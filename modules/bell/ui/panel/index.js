@@ -119,7 +119,6 @@ function blockers() {
   if ((data.missingVoices || []).length) {
     list.push(`${data.missingVoices.length} grubun sesi hazır değil`);
   }
-  if (data.lessonVoice?.state !== 'ready') list.push('“derse geçiniz” anonsu hazır değil');
   return list;
 }
 
@@ -147,9 +146,9 @@ function renderHeader() {
     : 'Zil ajanı görünmüyor'));
   if (data.agent?.error) agent.title = data.agent.error;
 
-  // Ajanın yerelinde bulunması gereken dosyalar: teneffüs zili + "derse
-  // geçiniz" anonsu + her grup için bir anons.
-  const wanted = 2 + (data.groups || []).length;
+  // Ajanın yerelinde bulunması gereken dosyalar: teneffüs zili + her grup
+  // için bir anons. Zilden sonra anons çalınmıyor, o ses de tutulmuyor.
+  const wanted = 1 + (data.groups || []).length;
   const present = (data.agent?.sounds || []).length;
   const library = h('span', `bl-library${present >= wanted ? ' ok' : ''}`,
     online ? `Ajanda ${present}/${wanted} ses` : '');
@@ -536,12 +535,9 @@ function renderSound() {
   card.append(h('hr', 'bl-rule'));
 
   // --- metinler ---
-  card.append(textRow({
-    key: 'lesson',
-    label: 'Zilden sonra',
-    hint: 'Her zil saatinde, zilin arkasından duyulur.',
-    voice: data.lessonVoice,
-  }));
+  // ZİLDEN SONRA ANONS YOK. Bir zamanlar burada "Zilden sonra" metin alanı
+  // duruyordu; kaldırıldı (bkz. backend/service.py başlığı). Aşağıdaki iki
+  // metin YALNIZ elle basılan çağrıda çalar, zil saatinde değil.
   const grup = (data.groups || []).filter((g) => g.kind !== 'ozel').length;
   const ozel = (data.groups || []).filter((g) => g.kind === 'ozel').length;
 
@@ -550,14 +546,12 @@ function renderSound() {
     label: 'Grup dersi çağrısı',
     hint: 'Çoğul hitap. {grup} yerine grubun adı yazılır. '
       + `Değiştirirsen ${grup} grubun sesi yeniden üretilir.`,
-    voice: null,
   }));
   card.append(textRow({
     key: 'solo',
     label: 'Özel ders çağrısı',
     hint: 'Tekil hitap — tek öğrenciyle yapılan ders. '
       + `Değiştirirsen ${ozel} öğrencinin sesi yeniden üretilir.`,
-    voice: null,
   }));
 
   const tools = h('div', 'bl-tools');
@@ -617,11 +611,10 @@ function volumeRow() {
   return row;
 }
 
-function textRow({ key, label, hint, voice }) {
+function textRow({ key, label, hint }) {
   const wrap = h('div', 'bl-text');
   const head = h('div', 'bl-text-head');
   head.append(h('label', 'bl-label', label));
-  if (voice) head.append(voiceBadge(voice));
   wrap.append(head);
 
   const field = h('textarea', 'kit-textarea');

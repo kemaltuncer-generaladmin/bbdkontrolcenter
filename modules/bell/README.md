@@ -4,18 +4,23 @@ Haftalık zil saatleri, sesli anons ve elle grup çağrısı.
 
 ## Üç iş, üçü de ayrı
 
-1. **Otomasyon** — haftalık zil saatleri. Saati gelince teneffüs zili çalar,
-   arkasından "Lütfen derse geçiniz." anonsu duyulur. Başka karar içermez.
+1. **Otomasyon** — haftalık zil saatleri. Saati gelince yalnız teneffüs zili
+   çalar. Başka karar içermez.
 2. **Grup çağrısı** — elle. Grup seçilir, "Çağır" denir; o grubun anonsu çalar
    ("İlayda, Hüseyin hoca ile dersiniz başlıyor."). Zil çalmaz.
-3. **Elle zil** — yalnız zil sesi, anons yok.
+3. **Elle zil** — yalnız zil sesi.
+
+> **Zilden sonra anons geçmez** (18.08.2026, kullanıcı kararı). Otomatik zil
+> bir zamanlar arkasından "Lütfen derse geçiniz." çalıyordu; o yol tümüyle
+> kaldırıldı — ayarda kapatılabilir bir seçenek de bırakılmadı. Anons yalnız
+> elle basılan grup çağrısında duyulur.
 
 ## Ses nereden geliyor
 
 Anons sesleri **Vertex AI (Gemini TTS)** ile ÖNCEDEN üretilir ve
 `data/sounds/anons-<özet>.wav` olarak saklanır. Çalma anında buluta çıkılmaz.
 Yeni istek yalnız içerik değişince doğar: grup eklendi, adı değişti, metin
-şablonu düzenlendi. Ömür boyu toplam çağrı ≈ *grup sayısı + 1*.
+şablonu düzenlendi. Ömür boyu toplam çağrı ≈ *grup sayısı*.
 
 Servis hesabı kasadan gelir: `bell.vertex_service_account` (K8, depoda durmaz).
 429 disiplini `backend/voices.py` içindedir — tek işçi, çağrı arası bekleme,

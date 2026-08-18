@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 from bell_backend.service import (
     DEFAULT_CALL_TEXT,
-    DEFAULT_LESSON_TEXT,
     DEFAULT_SOLO_TEXT,
     BellService,
     _shift,
@@ -95,8 +94,9 @@ async def test_varsayilan_ayar(store: Any, sounds: Path) -> None:
     service, _ = build(store, sounds)
     settings = await service.settings()
     assert settings["enabled"] is True
-    assert settings["texts"]["lesson"] == DEFAULT_LESSON_TEXT
     assert settings["texts"]["call"] == DEFAULT_CALL_TEXT
+    # Zilden sonra anons YOK: böyle bir metin ayarda hiç durmaz.
+    assert "lesson" not in settings["texts"]
 
 
 async def test_normalize_bozuk_veriyi_toparlar(store: Any, sounds: Path) -> None:
@@ -105,23 +105,28 @@ async def test_normalize_bozuk_veriyi_toparlar(store: Any, sounds: Path) -> None
                                "groups": {"eski": {}}})
     assert clean["volume"] == 100
     assert clean["enabled"] is False
-    assert clean["texts"]["lesson"] == DEFAULT_LESSON_TEXT
     # 0.1'in `groups` bloğu taşınmaz, sessizce düşer.
     assert "groups" not in clean
 
 
-async def test_metin_degisince_ses_yeniden_uretilir(store: Any, sounds: Path) -> None:
-    service, parts = build(store, sounds)
-    await service.add_group("İlayda", actor="test")
-    await drain(parts["voices"])
-    ilk = len(parts["speech"].calls)
+async def test_eski_ders_anonsu_metni_tasinmaz(store: Any, sounds: Path) -> None:
+    """0.2'den kalan `texts.lesson` düşer ve o metin için ses üretilmez.
 
-    await service.save_settings(
-        {"texts": {"lesson": "Ders başlıyor.", "call": DEFAULT_CALL_TEXT}}, actor="test"
+    Kayıtlı ayar sunucuda duruyor; alanı sessizce taşımak, ekranda görünmeyen
+    ama veride yaşayan bir cümle bırakırdı — ve bir sonraki okuyan onun hâlâ
+    çaldığını sanardı.
+    """
+    service, parts = build(store, sounds)
+    result = await service.save_settings(
+        {"texts": {"lesson": "Lütfen derse geçiniz.", "call": DEFAULT_CALL_TEXT,
+                   "solo": DEFAULT_SOLO_TEXT}},
+        actor="test",
     )
     await drain(parts["voices"])
-    assert len(parts["speech"].calls) == ilk + 1
-    assert "Ders başlıyor." in parts["speech"].calls
+
+    assert "lesson" not in result["settings"]["texts"]
+    assert "lesson" not in (await service.settings())["texts"]
+    assert parts["speech"].calls == []       # hiç ses üretilmedi
 
 
 async def test_cagri_sablonu_degisince_her_grup_yeniden_uretilir(
@@ -134,8 +139,7 @@ async def test_cagri_sablonu_degisince_her_grup_yeniden_uretilir(
     parts["speech"].calls.clear()
 
     await service.save_settings(
-        {"texts": {"lesson": DEFAULT_LESSON_TEXT, "call": "{grup}, hadi derse.",
-                   "solo": DEFAULT_SOLO_TEXT}},
+        {"texts": {"call": "{grup}, hadi derse.", "solo": DEFAULT_SOLO_TEXT}},
         actor="test",
     )
     await drain(parts["voices"])
@@ -358,12 +362,16 @@ async def test_ana_salter_kapaliysa_plan_temizlenir(store: Any, sounds: Path) ->
     assert "bell" in scheduler.cleared
 
 
-async def test_tetikleyici_zil_ve_anonsu_tek_komutta_yollar(
-    store: Any, sounds: Path
-) -> None:
+async def test_tetikleyici_yalniz_zil_yollar(store: Any, sounds: Path) -> None:
+    """Otomatik zilin arkasından ANONS GEÇMEZ — komutta tek adım vardır.
+
+    Gruplar ekli ve sesleri hazır olsa bile değişmez: grup anonsu yalnız elle
+    basılan çağrıdan çıkar.
+    """
     scheduler = FakeScheduler()
     bridge = FakeBridge()
     service, parts = build(store, sounds, scheduler=scheduler, bridge=bridge)
+    await service.add_group("İlayda", actor="t")
     await service.bootstrap()
     await drain(parts["voices"])
     await service.save_times({"mon": [{"time": "08:40"}]}, actor="t")
@@ -374,7 +382,7 @@ async def test_tetikleyici_zil_ve_anonsu_tek_komutta_yollar(
 
     assert len(bridge.sent) == 1
     kinds = [item["kind"] for item in bridge.sent[0]["items"]]
-    assert kinds == ["zil", "anons"]       # sıra önemli: önce zil, sonra anons
+    assert kinds == ["zil"]
     # DAMGA OFFSET TAŞIR: `_next_occurrence` `now.astimezone()` kullanır ve
     # `2026-08-16T08:40:00+03:00` üretir. Offset kasıtlıdır — yaz saati
     # geçişinde "08:40" tek başına iki ayrı anı gösterebilir; ajan damgayı
@@ -496,15 +504,16 @@ async def test_eksik_sesler_koprüye_yuklenir(store: Any, sounds: Path) -> None:
 
     result = await service.sync_sounds()
     assert result["ok"] is True
-    # zil + ders anonsu + grup anonsu = 3
-    assert result["total"] == 3
-    assert result["uploaded"] == 3
-    assert len(bridge.uploaded) == 3
+    # zil + grup anonsu = 2. Ders anonsu YOK: zilden sonra anons geçmediği
+    # için o ses ajanın yerelinde de tutulmaz.
+    assert result["total"] == 2
+    assert result["uploaded"] == 2
+    assert len(bridge.uploaded) == 2
 
     # İkinci turda hiçbir şey yüklenmez: içerik adresli, ajanda zaten var.
     again = await service.sync_sounds()
     assert again["uploaded"] == 0
-    assert len(bridge.uploaded) == 3
+    assert len(bridge.uploaded) == 2
 
 
 async def test_ajan_hic_baglanmadiysa_bile_tekrar_yuklenmez(
@@ -524,7 +533,7 @@ async def test_ajan_hic_baglanmadiysa_bile_tekrar_yuklenmez(
     await drain(parts["voices"])
 
     first = await service.sync_sounds()
-    assert first["uploaded"] == 3
+    assert first["uploaded"] == 2
 
     second = await service.sync_sounds()
     assert second["uploaded"] == 0
@@ -539,7 +548,7 @@ async def test_gereksiz_kalan_sesler_kopruden_silinir(store: Any, sounds: Path) 
     await service.bootstrap()
     await drain(parts["voices"])
     await service.sync_sounds()
-    assert len(bridge.uploaded) == 3
+    assert len(bridge.uploaded) == 2
 
     await service.rename_group(added["id"], "İlayda Şişman", actor="t")
     await drain(parts["voices"])
@@ -547,7 +556,7 @@ async def test_gereksiz_kalan_sesler_kopruden_silinir(store: Any, sounds: Path) 
 
     assert result["uploaded"] == 1      # yeni ad için yeni ses
     assert result["removed"] == 1       # eski ad köprüden düştü
-    assert len(bridge.uploaded) == 3
+    assert len(bridge.uploaded) == 2    # zil + yeni ad; eskisi köprüde kalmadı
 
 
 async def test_kopru_durumu_onbellege_alinir(store: Any, sounds: Path) -> None:

@@ -1,12 +1,21 @@
 # 0013 — Anons sesi: Vertex AI, önden üretim
 
-**Durum:** Kabul edildi · 2026-08-14
+**Durum:** Kabul edildi · 2026-08-14 · **kısmen geçersiz** (18.08.2026)
+
+> **Otomatik anons kaldırıldı — 18.08.2026.** Aşağıda anlatılan iki anons
+> türünden **yalnız elle çağrı** yaşıyor. Zilden sonraki "Lütfen derse
+> geçiniz." anonsu kullanıcı kararıyla tümüyle çıkarıldı; ayarda kapatılabilir
+> bir seçenek de bırakılmadı. Kararın kendisi (ses ÖNDEN üretilir, önbellek
+> anahtarı üçlünün özetidir, kuyruk tek işçidir…) grup çağrıları için aynen
+> geçerlidir. Değişen tek şey ömür boyu çağrı sayısıdır: artık *grup sayısı*,
+> *grup sayısı + 1* değil.
 
 ## Bağlam
 
 Zil sistemi artık yalnız zil çalmıyor; arkasından konuşuyor. İki tür anons var:
 
-- **Otomatik** — her zil saatinde: "Lütfen derse geçiniz."
+- **Otomatik** — her zil saatinde: "Lütfen derse geçiniz." *(kaldırıldı, bkz.
+  yukarıdaki not)*
 - **Elle çağrı** — grup seçilip düğmeye basılınca: "İlayda, Hüseyin hoca ile
   dersiniz başlıyor."
 

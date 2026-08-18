@@ -2,12 +2,18 @@
 
 ÜÇ İŞ VARDIR, ÜÇÜ DE BİRBİRİNDEN AYRI:
 
-  1. OTOMASYON — haftalık zil saatleri. Saati gelince teneffüs zili çalar,
-     hemen arkasından "Lütfen derse geçiniz." anonsu duyulur. Başka hiçbir
-     karar içermez: grup yerleştirme, hoca, salon otomasyona GİRMEZ.
+  1. OTOMASYON — haftalık zil saatleri. Saati gelince YALNIZ teneffüs zili
+     çalar. Başka hiçbir karar içermez: grup yerleştirme, hoca, salon
+     otomasyona GİRMEZ.
   2. GRUP ÇAĞRISI — elle. Kullanıcı grubu seçip "Çağır" der; o grubun anonsu
      çalar ("İlayda, Hüseyin hoca ile dersiniz başlıyor."). Zil çalmaz.
-  3. ELLE ZİL — yalnız zil sesi, anons yok.
+  3. ELLE ZİL — yalnız zil sesi.
+
+ZİLDEN SONRA ANONS GEÇMEZ (18.08.2026, kullanıcı kararı). Otomatik zil bir
+zamanlar arkasından "Lütfen derse geçiniz." çalıyordu; o yol tümüyle kaldırıldı.
+Kapatılabilir bir seçenek de BIRAKILMADI: istenen "şimdilik sessiz" değil, hiç
+çalmaması — ekranda duran bir onay kutusu yanlışlıkla geri açılabilirdi.
+Anons yalnız elle basılan grup çağrısında duyulur.
 
 SES ÖNCEDEN ÜRETİLİR. Çalma anında Vertex'e gidilmez; `voices.py` metin
 değiştiğinde üretip diske yazar. Sesi hazır olmayan bir çağrı YAPILMAZ ve
@@ -52,9 +58,6 @@ MIME_BY_SUFFIX = {
 
 DEFAULT_SOUND = "classic_electric"
 DEFAULT_VOLUME = 90
-
-#: Zilden sonra duyulan anons. Ekrandan değiştirilebilir.
-DEFAULT_LESSON_TEXT = "Lütfen derse geçiniz."
 
 #: Grup çağrısı şablonu — TOPLU dersler (Mezun, TYT, AYT, LGS, 7. sınıf).
 #: `{grup}` yerine grubun adı yazılır. Çoğul hitap: "dersiniz", "geçiniz".
@@ -150,13 +153,12 @@ class BellService:
 
     def _defaults(self) -> dict[str, Any]:
         return {
-            "version": 2,
+            "version": 3,
             "enabled": True,
             "bellSound": DEFAULT_SOUND,
             "volume": DEFAULT_VOLUME,
             "playLocally": self._default_play_locally,
             "texts": {
-                "lesson": DEFAULT_LESSON_TEXT,
                 "call": DEFAULT_CALL_TEXT,
                 "solo": DEFAULT_SOLO_TEXT,
             },
@@ -167,6 +169,10 @@ class BellService:
 
         0.1 sürümünün `groups` bloğu (ders takvimi grup kimliklerine bağlıydı)
         sessizce düşer: o kimlikler artık yok, taşınabilecek bir anlamı da yok.
+
+        0.2'nin `texts.lesson` alanı da aynı biçimde düşer — zilden sonra anons
+        çalınmıyor. Kayıtlı metin taşınmaz: taşınsaydı ekranda görünmeyen ama
+        veride duran bir cümle olurdu ve ilk okuyan onun çaldığını sanardı.
         """
         base = self._defaults()
         if not isinstance(state, dict):
@@ -181,13 +187,12 @@ class BellService:
         volume = int(number(state.get("volume"), float(base["volume"])))
 
         return {
-            "version": 2,
+            "version": 3,
             "enabled": state.get("enabled") is not False,
             "bellSound": str(state.get("bellSound") or base["bellSound"])[:120],
             "volume": max(0, min(100, volume)),
             "playLocally": bool(state.get("playLocally", base["playLocally"])),
             "texts": {
-                "lesson": str(texts.get("lesson") or DEFAULT_LESSON_TEXT)[:TEXT_MAX].strip(),
                 "call": str(texts.get("call") or DEFAULT_CALL_TEXT)[:TEXT_MAX].strip(),
                 "solo": str(texts.get("solo") or DEFAULT_SOLO_TEXT)[:TEXT_MAX].strip(),
             },
@@ -217,10 +222,8 @@ class BellService:
             (json.dumps(clean, ensure_ascii=False), _now(), actor),
         )
 
-        # Metin değiştiyse o metnin sesi yeniden üretilmeli. Ders anonsu tek,
-        # çağrı şablonu ise HER GRUP için ayrı ses demektir.
-        if clean["texts"]["lesson"] != before["texts"]["lesson"]:
-            await self._voices.require(clean["texts"]["lesson"])
+        # Metin değiştiyse o metnin sesi yeniden üretilmeli. Çağrı şablonu
+        # HER GRUP için ayrı ses demektir.
         if (clean["texts"]["call"] != before["texts"]["call"]
                 or clean["texts"]["solo"] != before["texts"]["solo"]):
             await self._ensure_group_voices(clean)
@@ -382,7 +385,6 @@ class BellService:
         taranır.
         """
         settings = await self.settings()
-        await self._voices.require(settings["texts"]["lesson"])
         await self._ensure_group_voices(settings)
         return await self._voices.sweep()
 
@@ -400,7 +402,6 @@ class BellService:
         groups = await self.groups()
         entries = await self._voices.entries()
 
-        lesson_text = settings["texts"]["lesson"]
         for group in groups:
             text = call_text(settings, group["name"], group["kind"])
             group["text"] = text
@@ -422,8 +423,6 @@ class BellService:
             "settings": settings,
             "times": times,
             "groups": groups,
-            "lessonVoice": _voice_state(entries, self._voices.key(lesson_text)),
-            "lessonHash": self._voices.key(lesson_text),
             "sounds": [item for item in (self._audio.sounds() if self._audio else [])
                        if not str(item["name"]).startswith("anons-")],
             "audio": audio_state,
@@ -494,26 +493,18 @@ class BellService:
                            result["ok"], f"ajan · {result['detail']}")
 
     async def _bell_items(self, settings: dict[str, Any]) -> list[dict[str, Any]]:
-        """Zil + "derse geçiniz" anonsu — tek komutta, bu sırayla."""
-        items: list[dict[str, Any]] = []
+        """Otomatik zilin çalacağı adımlar — YALNIZ zil sesi.
 
+        Buraya bir zamanlar zilin arkasına "derse geçiniz" anonsu ekleniyordu;
+        artık eklenmiyor. Liste dönmesi korunuyor: köprü komutu her hâlükârda
+        adım dizisi bekliyor ve zil sesi bulunamazsa boş dönmek gerekiyor.
+        """
         bell = self._resolve_sound(settings["bellSound"])
-        if bell is not None:
-            items.append(_item("zil", bell, settings["volume"]))
-        else:
+        if bell is None:
             await self._record("zil", "plan", settings["bellSound"], False,
                                "Zil sesi dosyası bulunamadı.")
-
-        lesson = await self._voices.ready_file(
-            self._voices.key(settings["texts"]["lesson"])
-        )
-        if lesson:
-            path = self._sounds_path() / lesson
-            items.append(_item("anons", path, settings["volume"]))
-        elif settings["texts"]["lesson"]:
-            await self._record("anons", "plan", settings["texts"]["lesson"], False,
-                               "Anons sesi henüz hazır değil.")
-        return items
+            return []
+        return [_item("zil", bell, settings["volume"])]
 
     # ================================================================= çalma
 
@@ -716,9 +707,10 @@ class BellService:
         if bell is not None:
             wanted[content_id(bell.read_bytes())] = bell
 
-        texts = [settings["texts"]["lesson"]]
-        texts += [call_text(settings, group["name"], group["kind"])
-                  for group in await self.groups()]
+        # Yalnız grup çağrılarının anonsu. Zilden sonraki anons kalktığı için
+        # o ses ajanın yerelinde de durmaz; `sync_sounds` onu köprüden siler.
+        texts = [call_text(settings, group["name"], group["kind"])
+                 for group in await self.groups()]
 
         root = self._sounds_path()
         for text in texts:
@@ -797,7 +789,6 @@ class BellService:
         de arka planda dönen bir görevle yarışmak zorunda kalmaz.
         """
         settings = await self.settings()
-        await self._voices.require(settings["texts"]["lesson"])
         await self._ensure_group_voices(settings)
         return await self.reschedule()
 
