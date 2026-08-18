@@ -88,6 +88,26 @@ async def update_student(
     return await service().update_student(kantin_id, payload)
 
 
+@router.post("/students/{kantin_id}/access-code")
+async def reset_access_code(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.access_code"),
+) -> dict[str, Any]:
+    """Tek tuşla yeni 6 haneli giriş kodu. Eski kod geçersizleşir.
+
+    AYRI İZİN (`access_code`), `manage` DEĞİL: kodu sıfırlamak öğrencinin
+    kasaya girişini o an keser ve elindeki/velisindeki kod ölür. Ad ya da
+    telefon düzeltebilen herkesin bunu yapabilmesi gerekmiyor (K9/K10).
+
+    Kod ÜRETİLMEZ, kantinden istenir — "kimsede olmayan" güvencesini yalnız
+    kantinin unique indeksi verebilir.
+    """
+    try:
+        return await service().reset_access_code(kantin_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/students/{kantin_id}/qr")
 async def student_qr(
     kantin_id: str,

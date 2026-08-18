@@ -184,12 +184,44 @@ async function createStudent() {
 async function makeQr() {
   if (!draft) return;
   nodes.qrOut.hidden = true;
+  if (nodes.codeOut) nodes.codeOut.hidden = true;
   try {
     const result = await apiCall(`/api/bbd_students/students/${encodeURIComponent(draft.kantinId)}/qr`);
     nodes.qrText.textContent = result.qrText;
     nodes.qrOut.hidden = false;
   } catch (error) {
     renderErrors([`QR üretilemedi: ${error.message}`]);
+  }
+}
+
+/**
+ * Tek tuşla giriş kodu sıfırlama.
+ *
+ * KOD BURADA ÜRETİLMEZ — kantinden istenir; "kimsede olmayan" güvencesini
+ * yalnız kantinin unique indeksi verebilir (bkz. service.reset_access_code).
+ *
+ * TEYİT İSTENİR: sıfırlama öğrencinin o anki kodunu öldürür ve velinin elindeki
+ * kâğıt geçersizleşir. Tek dokunuşla geri alınamaz bir iş yapılmaz.
+ */
+async function resetAccessCode() {
+  if (!draft) return;
+  const name = fullName(draft) || 'Öğrenci';
+  if (!window.confirm(
+    `${name} için yeni bir giriş kodu üretilecek.\n\n`
+    + 'Öğrencinin şu anki kodu geçersiz olacak. Devam edilsin mi?')) {
+    return;
+  }
+  nodes.codeOut.hidden = true;
+  try {
+    const result = await apiCall(
+      `/api/bbd_students/students/${encodeURIComponent(draft.kantinId)}/access-code`,
+      { method: 'POST' },
+    );
+    nodes.codeText.textContent = result.accessCode;
+    nodes.codeOut.hidden = false;
+    toast('Yeni giriş kodu üretildi.');
+  } catch (error) {
+    renderErrors([`Kod sıfırlanamadı: ${error.message}`]);
   }
 }
 
@@ -428,6 +460,30 @@ function buildDetail() {
   nodes.qrOut.hidden = true;
   card.append(nodes.qrOut);
   body.append(card);
+
+  // Giriş kodu — "tek şifre" kipinde öğrencinin kasada tuşladığı 6 hane.
+  const codeCard = h('section', 'st-card');
+  codeCard.append(h('h4', null, 'Giriş kodu'));
+  codeCard.append(h('p', 'st-hint',
+    'Kantin "tek şifre" kipindeyken öğrenci bu 6 haneli kodu kasada tuşlar. '
+    + 'Kod kantinde üretilir ve kimsede olmayan bir sayı seçilir; '
+    + 'sıfırlandığında öğrencinin eski kodu geçersiz olur.'));
+  const codeButton = h('button', 'st-btn st-btn-primary', 'Yeni kod üret');
+  codeButton.type = 'button';
+  codeButton.addEventListener('click', resetAccessCode);
+  codeCard.append(codeButton);
+
+  nodes.codeOut = h('div', 'st-qr-out');
+  nodes.codeText = h('code', 'st-code-text');
+  const copyCode = h('button', 'st-btn', 'Kopyala');
+  copyCode.type = 'button';
+  copyCode.addEventListener('click',
+    () => navigator.clipboard?.writeText(nodes.codeText.textContent));
+  nodes.codeOut.append(nodes.codeText, copyCode);
+  // Kod YALNIZ üretildiği anda gösterilir; ekran yeniden çizilince kaybolur.
+  nodes.codeOut.hidden = true;
+  codeCard.append(nodes.codeOut);
+  body.append(codeCard);
 
   nodes.errors = h('ul', 'st-errors');
   body.append(nodes.errors);

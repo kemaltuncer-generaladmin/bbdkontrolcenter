@@ -72,6 +72,13 @@ permissions:
   - key: bbd_students.qr
     description: "Öğrencinin kantin kart QR'ını ve toplu kart PDF'ini üretme."
     default_roles: [admin, bbd_staff, org_staff, accountant]
+  # AYRI ANAHTAR: kod sıfırlamak öğrencinin kasaya girişini o an keser ve
+  # velinin elindeki kodu öldürür. `manage` (ad/telefon düzeltme) taşıyan
+  # herkesin bunu yapabilmesi gerekmiyor. `accountant` DIŞARIDA: muhasebenin
+  # öğrenci girişini kesmek gibi bir işi yok.
+  - key: bbd_students.access_code
+    description: "Öğrencinin 6 haneli kantin giriş kodunu sıfırlama."
+    default_roles: [admin, bbd_staff, org_staff]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
 dependencies:

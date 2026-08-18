@@ -207,6 +207,33 @@ class StudentService:
         await self._save_profile(kantin_id, payload)
         return {"kantinId": kantin_id, "canteenFields": sorted(changes)}
 
+    async def reset_access_code(self, kantin_id: str) -> dict[str, Any]:
+        """Öğrenciye tek tuşla yeni giriş kodu verir.
+
+        KOD BURADA ÜRETİLMEZ, kantinden istenir (K4: tek kapı). Sebep tekillik:
+        "kimsede olmayan" güvencesini yalnızca kantinin `access_code_hash` unique
+        indeksi verebilir. Kontrol Merkezi kendi rastgele sayısını üretip
+        gönderseydi, iki yönetici aynı anda aynı sayıyı seçebilir ve kodun hangi
+        öğrenciyi açtığı belirsizleşirdi.
+
+        Düz kod YALNIZ bu yanıtta döner; yerel tabloya YAZILMAZ. Yazılsaydı
+        Kontrol Merkezi'nin veritabanı, kantinin bilerek şifreli tuttuğu bir sırrı
+        düz metin taşıyor olurdu.
+        """
+        result = await self._canteen.issue_student_access_code(kantin_id)
+        code = str(result.get("accessCode") or "")
+        if not code:
+            raise ValueError("Kantin kod döndürmedi.")
+
+        # Denetim izi: KOD YAZILMAZ, yalnız "kim ne zaman sıfırladı" bilgisi.
+        self._log.info("öğrenci giriş kodu sıfırlandı", kantin_id=kantin_id)
+
+        return {
+            "kantinId": kantin_id,
+            "studentName": str(result.get("studentName") or ""),
+            "accessCode": code,
+        }
+
     async def _current_display_name(self, kantin_id: str) -> str:
         for student in await self._canteen.students():
             if student.get("id") == kantin_id:

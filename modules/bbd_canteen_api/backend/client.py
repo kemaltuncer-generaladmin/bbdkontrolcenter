@@ -204,6 +204,23 @@ class CanteenApi:
         )
         return payload.get("data", payload) if isinstance(payload, dict) else payload
 
+    async def issue_student_access_code(self, opaque_id: str) -> dict[str, Any]:
+        """Öğrenciye YENİ 6 haneli giriş kodu verir ve düz hâlini döndürür.
+
+        KOD SUNUCUDA DOĞAR, burada üretilmez. Tekilliği kantinin veritabanı
+        indeksi tutuyor (`students.access_code_hash` unique); Kontrol Merkezi
+        rastgele bir sayı üretip gönderseydi, iki yönetici aynı anda aynı sayıyı
+        seçebilir ve kod kimi açtığı belirsiz bir anahtara dönerdi.
+
+        DÜZ KOD YALNIZ BU YANITTA GÖRÜNÜR. Kantin kodu şifreli saklıyor ve
+        listede de veriyor, ama üretim anındaki bu yanıt "yeni kod budur"
+        diyen tek yerdir; ekran onu bir kez gösterir.
+
+        Eski kod bu çağrıyla GEÇERSİZLEŞİR.
+        """
+        payload = await self._request("POST", f"/api/students/{opaque_id}/access-code")
+        return dict(payload or {})
+
     # ---------------------------------------------------------------- kiosk
     #
     # KIOSK ≠ CİHAZ. Sahadaki tablet `devices` üzerinde, paylaşılan
