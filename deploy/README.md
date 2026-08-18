@@ -71,6 +71,26 @@ Betik hedefte kullanıcı bulursa BAŞLAMAZ (`--force` ile aşılır): tablolar�
 boşaltarak yazdığı için yanlış adrese koşulduğunda çalışan bir kurulumu
 silerdi.
 
+Göç **veritabanı satırlarını** taşır. `config/local.yaml` sırları ve
+`data/sounds` dosyaları ondan AYRI iki adımdır ve ikisi de unutulursa belirti
+sessizdir:
+
+```bash
+# 1) local.yaml sırları → kasa (yoksa zil anonsu üretilemez, geçitler çalışmaz)
+scripts/push-local-secrets.py --dsn "postgresql://km:<parola>@127.0.0.1:55433/kontrolmerkezi"
+
+# 2) zil sesleri → sunucunun kalıcı diski (yoksa ZİL ÇALMAZ)
+C=$(ssh bld 'docker ps -q --filter name=nj56bcgq')
+tar -C data/sounds -czf - $(ls data/sounds | grep -v '^anons-') | ssh bld "
+  TMP=\$(mktemp -d); tar -C \$TMP -xzf -
+  for f in \$TMP/*; do docker cp \$f $C:/data/sounds/\$(basename \$f); done
+  docker exec -u root $C chown -R 10001:10001 /data/sounds; rm -rf \$TMP"
+```
+
+`anons-*` dosyaları taşınmaz: onları sunucu Vertex ile kendisi üretir. Taşınan
+yalnız kullanıcının yüklediği zil sesleridir. `chown` şart — `docker cp` dosyayı
+root sahipliğiyle bırakır, konteyner ise uid 10001 ile koşar.
+
 ### Dağıtım
 
 `main`'e push Coolify'ı tetikler. Coolify tuzağı: **Base Directory `/`** kalmalı;
