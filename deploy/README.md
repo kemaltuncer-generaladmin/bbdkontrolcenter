@@ -1,5 +1,6 @@
 # deploy/
 
+- `server/` — **KM Sunucu** imajı (çekirdek + 49 modül). ADR 0026.
 - `systemd/` — çekirdeği servis olarak çalıştıran unit dosyaları
 - `packaging/` — Ubuntu paketi / Tauri bundle yapılandırması
 
@@ -7,6 +8,81 @@ Tauri kabuğu `webkit2gtk-4.1` bağımlılığını gerektirir; paketlemede kar�
 (ADR 0002).
 
 Paketleme kararı ve gerekçesi: [ADR 0023](../docs/adr/0023-paketleme-ve-veri-dizini.md).
+
+---
+
+## KM Sunucu — üretim kurulumu
+
+**ADR 0026:** veri merkezdedir, masaüstü uygulaması ince kabuktur. Aşağıdakiler
+18.08.2026'da bir kez kuruldu ve burada YAZILI DURUYOR: bir daha kurulması
+gerekirse ya da bir arıza teşhis edilecekse tek kaynak burasıdır.
+
+### Nerede ne var
+
+| Parça | Yer |
+|---|---|
+| Uygulama | Coolify uygulaması `nj56bcgq77a88biz9oj7spgn` (id 2) |
+| Adres | `https://kontrolmerkezi.bbdstore.com.tr` |
+| Derleme | Base Directory `/` · Dockerfile Location `/deploy/server/Dockerfile` |
+| Veritabanı | `km-postgres` konteyneri, `coolify` ağı, **internete port YOK** |
+| Kalıcı disk | uygulama: `/data` · veritabanı: `km-postgres-veri` birimi |
+| DB parolası | sunucuda `/root/km-sirlar/pg-parola` (0600) |
+
+`km-postgres` Coolify'ın yönettiği bir kaynak DEĞİLDİR; elle kuruldu ve
+`--restart unless-stopped` ile ayakta kalır:
+
+```bash
+docker volume create km-postgres-veri
+docker run -d --name km-postgres --restart unless-stopped --network coolify \
+  -e POSTGRES_USER=km -e POSTGRES_DB=kontrolmerkezi \
+  -e "POSTGRES_PASSWORD=$(cat /root/km-sirlar/pg-parola)" \
+  -v km-postgres-veri:/var/lib/postgresql/data postgres:16-alpine
+```
+
+**BLD'nin MySQL'i (`db-wl1c5o…`) ve Coolify'ın kendi Postgres'i (`coolify-db`)
+AYRI KALIR.** Üçü aynı sunucudadır ve karışmamaları motor + ad ayrımıyla
+sağlanır; `KM_CENTRAL_DSN` her zaman `km-postgres` konteynerini gösterir.
+
+### Zorunlu ortam değişkenleri
+
+| Değişken | Değer |
+|---|---|
+| `KM_STORE_ENGINE` | `postgres` |
+| `KM_CENTRAL_DSN` | `postgresql://km:<parola>@km-postgres:5432/kontrolmerkezi` |
+| `KM_SECRET_KEY` | kurulumun `data/secret.key` içeriği |
+
+**`KM_SECRET_KEY` ATLANIRSA HİÇ KİMSE GİRİŞ YAPAMAZ.** Konteynerde `/data`
+ilk açılışta boştur; anahtar bulunmazsa kasa kendine YENİSİNİ üretir ve
+veritabanındaki 18 şifreli sırrın hiçbirini çözemez — `core.pin_pepper` dahil.
+Belirti sebebi hiç ele vermez: kadro dolu görünür, PIN'ler doğrudur, loglar
+temizdir, giriş yoktur.
+
+### Veri göçü (tek seferlik, yapıldı)
+
+Postgres internete kapalı olduğu için göç SSH tüneliyle koşuldu:
+
+```bash
+PGIP=$(ssh bld "docker inspect km-postgres --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'")
+ssh -f -N -L 55433:$PGIP:5432 bld
+scripts/migrate-to-central.py --dsn "postgresql://km:<parola>@127.0.0.1:55433/kontrolmerkezi"
+```
+
+Betik hedefte kullanıcı bulursa BAŞLAMAZ (`--force` ile aşılır): tabloları
+boşaltarak yazdığı için yanlış adrese koşulduğunda çalışan bir kurulumu
+silerdi.
+
+### Dağıtım
+
+`main`'e push Coolify'ı tetikler. Coolify tuzağı: **Base Directory `/`** kalmalı;
+`deploy/server` yapılırsa imaj derlenir ama `km_core` ve `modules` bulunmaz ve
+konteyner `ModuleNotFoundError` ile ölür.
+
+### Kimlik servisi emekli oldu
+
+`services/identity/` kodu depoda DURUYOR ama artık dağıtılmıyor: tek veritabanı
+olunca kadro yansıtması ve sır dağıtımı anlamını yitirdi (ADR 0026 → Kapsam
+değişen kararlar). Eski `/data/identity.sqlite` kalıcı biriminde duruyor ve
+silinmedi.
 
 ---
 
