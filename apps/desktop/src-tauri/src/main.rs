@@ -14,6 +14,8 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod printing;
+
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -709,6 +711,9 @@ fn main() {
             update_progress,
             update_install,
             restart_app,
+            printing::printers,
+            printing::printer_select,
+            printing::printer_print,
         ])
         .build(tauri::generate_context!())
         .expect("Kontrol Merkezi kabuğu başlatılamadı")

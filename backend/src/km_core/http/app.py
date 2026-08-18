@@ -25,6 +25,7 @@ from km_core.config.loader import Config, load_config, nest, with_store_layer
 from km_core.config.settings_store import SettingsStore
 from km_core.files import outputs_log
 from km_core.files.outputs_queue import OutputsQueue
+from km_core.http.documents import create_documents_router
 from km_core.http.settings import create_settings_router
 from km_core.http.users import create_identity_router, user_payload
 from km_core.kernel.kernel import Kernel
@@ -348,6 +349,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     # doğrudan buradan geçer — ama izin denetimi aynıdır: her uç kendi iznini
     # `km_core/http/settings.py` içinde bağımsız olarak sorar (K9).
     app.include_router(create_settings_router(), prefix="/api")
+    # Üretilmiş belgenin baytları — baskı kullanıcının makinesinde yapılıyor
+    # (sunucuda yazıcı yok), kabuğun PDF'i eline alması gerekiyor.
+    app.include_router(create_documents_router(), prefix="/api")
 
     # Eşleme uçları GİRİŞTEN ÖNCE gelir (ADR 0021 §4): eşleşmemiş kurulumda
     # henüz kadro ve dolayısıyla oturum yoktur. Uçlar oturumla değil tek

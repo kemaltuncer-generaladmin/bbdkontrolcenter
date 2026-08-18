@@ -58,3 +58,7 @@ apps/desktop/shell/.panels-eski/
 # İş akışı betiği — geçici, depoya girmez.
 .km-tur.js
 backend/src/km_core/_build_stamp.py
+
+# Windows yazdırma yardımcısı derleme sırasında indirilir, depoda durmaz (K11).
+apps/desktop/src-tauri/yazdirma/*
+!apps/desktop/src-tauri/yazdirma/OKUBENI.md

@@ -1,6 +1,6 @@
 [package]
 name = "kontrol-merkezi"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.77.2"
 description = "Kontrol Merkezi masaüstü kabuğu"
@@ -19,6 +19,8 @@ serde = { version = "1", features = ["derive"] }
 # açıldığı an derleme "cannot find serde_json" diyerek durur — bağımlılık bu
 # yüzden burada ilan edilir (K11), gövdede elle kullanılmasa da.
 serde_json = "1"
+# Yerel yazdırma: PDF baytları kabuğa base64 ile geliyor (bkz. src/printing.rs).
+base64 = "0.22"
 # Kendi kendini güncelleme (GitHub Releases + imzalı paket). Eklentinin npm
 # tarafı KULLANILMAZ: kabukta paketleyici yok, `shell/` düz ES modülü olarak
 # servis ediliyor ve `import` edilecek bir bağımlılık ağacı bulunmuyor. Akış

@@ -44,6 +44,10 @@ import {
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
 import { dataTable } from '../../ui-kit/table.js';
+// YAZICI SEÇİMİ CİHAZDA DURUR. Merkezî ayara yazılmaz: aynı kurulumu kullanan
+// iki makinenin yazıcısı farklıdır ve merkezde tutulan tek bir ad, birinin
+// çıktısını ötekinin odasına düşürürdü.
+import { canPrintLocally, localPrinters, selectLocalPrinter } from '../../ui-kit/printing.js';
 
 /** Çekirdek sekmelerinin kimlikleri. Sunucu da aynı adları kullanır. */
 const TAB_PRINTER = 'core.printer';
@@ -311,7 +315,7 @@ export function mount(root, ctx) {
 
     parts.push(...formCards(tab));
 
-    if (tab.id === TAB_PRINTER) parts.push(printerCard());
+    if (tab.id === TAB_PRINTER) parts.push(localPrinterCard(), printerCard());
     if (tab.id === TAB_UPDATE) parts.push(updateCard());
     if (tab.id === TAB_DIAGNOSTICS) parts.push(...diagnosticsCards());
 
@@ -430,7 +434,97 @@ export function mount(root, ctx) {
     }
   }
 
-  // -------------------------------------------------------------- yazıcı
+  // ------------------------------------------------- bu cihazın yazıcısı
+
+  /**
+   * BU CİHAZIN varsayılan yazıcısı — baskının gerçekten çıkacağı yer.
+   *
+   * Aşağıdaki "Yazıcı durumu" kartı SUNUCUNUN kuyruklarını anlatır ve sunucuda
+   * yazıcı yoktur; tanılama için duruyor. Kâğıdın çıktığı yer burasıdır.
+   *
+   * Seçim yapılmadan yazdırma düğmeleri kapalı kalır ve sebebini söyler —
+   * sessizce hiçbir şey basmayan bir düğmeden iyidir.
+   */
+  function localPrinterCard() {
+    const box = h('div', 'sa-stack');
+    const slot = h('div', 'sa-printer-body');
+    box.append(slot);
+    loadLocalPrinters(slot);
+    return card('Bu cihazın yazıcısı', box,
+      'Bir kez seçilir, bu bilgisayarda kalır. Bütün yazdırma buraya gider ve '
+      + 'her baskıda yazıcı sorulmaz.');
+  }
+
+  async function loadLocalPrinters(slot) {
+    slot.replaceChildren(skeletonRows(2, 2));
+    if (!canPrintLocally()) {
+      slot.replaceChildren(alertBox(
+        'Yazıcı listesi yalnız masaüstü uygulamasında görünür; tarayıcıda '
+        + 'yazdırma yapılamaz.', 'warn'));
+      return;
+    }
+
+    let local;
+    try {
+      local = await localPrinters();
+    } catch (error) {
+      slot.replaceChildren(alertBox(error.message, 'bad'));
+      return;
+    }
+    if (local.error) {
+      slot.replaceChildren(alertBox(
+        `Yazıcılar sorulamadı: ${local.error}`, 'bad'));
+      return;
+    }
+
+    const body = h('div', 'sa-stack');
+    if (!local.printers.length) {
+      body.append(alertBox(
+        'Bu bilgisayarda kurulu yazıcı bulunamadı. Yazıcıyı işletim sisteminin '
+        + 'ayarlarından ekleyin; tarayıcıdan çıktı alabiliyorsanız burada da '
+        + 'görünmesi gerekir.', 'warn'));
+      slot.replaceChildren(body);
+      return;
+    }
+
+    const select = h('select', 'kit-select');
+    const bos = document.createElement('option');
+    bos.value = '';
+    bos.textContent = '— seçilmedi —';
+    select.append(bos);
+    for (const name of local.printers) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name === local.systemDefault
+        ? `${name}  (sistem varsayılanı)` : name;
+      if (name === local.selected) option.selected = true;
+      select.append(option);
+    }
+
+    const durum = h('p', 'sa-hint', local.selected
+      ? `Şu an: ${local.selected}`
+      : 'Seçim yapılmadı — yazdırma düğmeleri kapalı kalır.');
+
+    select.addEventListener('change', async () => {
+      try {
+        await selectLocalPrinter(select.value);
+      } catch (error) {
+        toast(error.message, 'bad');
+        return;
+      }
+      durum.textContent = select.value
+        ? `Şu an: ${select.value}`
+        : 'Seçim kaldırıldı — yazdırma düğmeleri kapalı kalır.';
+      toast(select.value
+        ? `Yazdırma “${select.value}” yazıcısına gidecek.`
+        : 'Yazıcı seçimi kaldırıldı.', 'good');
+    });
+
+    body.append(select, durum);
+    slot.replaceChildren(body);
+  }
+
+  // ------------------------------------------------- sunucu yazıcı tanılaması
 
   function printerCard() {
     // `h(tag, class, text)` ÜÇÜNCÜ ARGÜMANI METİNDİR, çocuk listesi değil.
@@ -447,8 +541,10 @@ export function mount(root, ctx) {
     box.append(slot, actions);
 
     loadPrinter(slot);
-    return card('Yazıcı durumu', box,
-      'Kuyruğun ne dediği ile kâğıdın çıkması ayrı şeylerdir.');
+    return card('Sunucu yazıcı tanılaması', box,
+      'SUNUCUDAKİ kuyrukları gösterir ve sunucuda yazıcı yoktur — baskı sizin '
+      + 'bilgisayarınızda yapılır (yukarıdaki kart). Bu bölüm yalnız tanılama '
+      + 'içindir: kuyruğun ne dediği ile kâğıdın çıkması ayrı şeylerdir.');
   }
 
   async function loadPrinter(slot) {

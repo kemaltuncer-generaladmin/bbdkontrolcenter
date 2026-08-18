@@ -98,6 +98,9 @@ $PbsBase    = "https://github.com/astral-sh/python-build-standalone/releases/dow
 
 function Say([string]$Message) { Write-Host "`n$Message" -ForegroundColor Cyan }
 function Die([string]$Message) { Write-Host "HATA: $Message" -ForegroundColor Red; exit 1 }
+# UYARI PAKETI DUSURMEZ. Eksik bir yardimci yalnizca o ozelligi kapatir;
+# derlemeyi tumuyle durdurmak, calisan her seyi de engellemek olurdu.
+function Warn([string]$Message) { Write-Host "UYARI: $Message" -ForegroundColor Yellow }
 
 Set-Location $Root
 
@@ -250,6 +253,48 @@ if ($LASTEXITCODE -ne 0) { Die "Menu kaydi uretilemedi; manifestlerden biri bozu
 Get-ChildItem -Path (Join-Path $Root "backend\src"), (Join-Path $Root "modules") `
     -Filter "__pycache__" -Recurse -Directory -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- 3b. yazdirma yardimcisi ----------------------------------------------
+#
+# NEDEN INDIRILIYOR: Windows'ta bir PDF'i diyalog acmadan secili yaziciya
+# basacak hazir bir komut yok. `Start-Process -Verb PrintTo` kayitli PDF
+# isleyicisine bagli ve Windows 10/11'in varsayilani Edge bu fiili
+# DESTEKLEMIYOR -- cogu makinede sessizce hicbir sey basilmazdi.
+#
+# NEDEN DEPODA DURMUYOR: K11 ikiliyi depoya koymayi yasakliyor; bagimlilik
+# ILAN EDILIR. Bu yuzden paketleme aninda indirilir ve `bundle.resources`
+# ile kuruluma girer. Zaten varsa yeniden indirilmez.
+Say "3b) Yazdirma yardimcisi hazirlaniyor"
+$YazdirmaDir = Join-Path $Root "apps\desktop\src-tauri\yazdirma"
+$SumatraExe = Join-Path $YazdirmaDir "SumatraPDF.exe"
+if (Test-Path $SumatraExe) {
+    Say "   zaten var, indirilmedi"
+} else {
+    New-Item -ItemType Directory -Force -Path $YazdirmaDir | Out-Null
+    # Surum SABITLENMISTIR: "en son" indirmek, paketin icerigini derleme
+    # gununE baglar ve iki derleme ayni girdiden farkli cikti verir.
+    $SumatraUrl = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64.zip"
+    $Zip = Join-Path $env:TEMP "sumatra.zip"
+    try {
+        Invoke-WebRequest -Uri $SumatraUrl -OutFile $Zip -UseBasicParsing
+        Expand-Archive -Path $Zip -DestinationPath $YazdirmaDir -Force
+        # Arsivdeki ad surum tasiyor; kabuk sabit adi ariyor (printing.rs).
+        $Cikan = Get-ChildItem -Path $YazdirmaDir -Filter "SumatraPDF*.exe" |
+                 Select-Object -First 1
+        if ($null -eq $Cikan) { Die "Yazdirma yardimcisi arsivden cikmadi." }
+        if ($Cikan.FullName -ne $SumatraExe) {
+            Move-Item -Path $Cikan.FullName -Destination $SumatraExe -Force
+        }
+    } catch {
+        # BASKI CALISMAZ AMA PAKET CIKAR. Yardimci olmadan Windows'ta
+        # yazdirma yapilamaz; kabuk bunu acik bir hata ile soyluyor. Paketi
+        # tumuyle dusurmek, yazdirma disindaki her seyi de engellerdi.
+        Warn "Yazdirma yardimcisi indirilemedi: $($_.Exception.Message)"
+        Warn "Windows paketinde YAZDIRMA CALISMAYACAK."
+    } finally {
+        Remove-Item $Zip -ErrorAction SilentlyContinue
+    }
+}
 
 # --- 4. paket -------------------------------------------------------------
 Say "4) Paket uretiliyor"

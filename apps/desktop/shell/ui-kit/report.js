@@ -19,6 +19,8 @@
 // görüntüye çevirir. Ekranda gördüğünüz ile yazıcıdan çıkan aynıdır.
 
 import { button, bytes as formatBytes, h } from './kit.js';
+// BASKI CİHAZDA YAPILIR — gerekçe `printing.js` başlığında.
+import { canPrintLocally, localPrinters, printDocument } from './printing.js';
 
 /**
  * @param {object} spec
@@ -36,8 +38,20 @@ export function reportChain({ api, root, toast, base }) {
   let lastPath = '';
 
   async function printerState() {
+    // Sunucunun yazıcısı SORULMAZ: kâğıt orada çıkmıyor. Tek doğru soru
+    // "bu cihazda hangi yazıcı seçili".
+    if (!canPrintLocally()) {
+      return { ready: false,
+        error: 'Yazdırma yalnız masaüstü uygulamasında çalışır.' };
+    }
     try {
-      return await api(`${base}/printer`);
+      const local = await localPrinters();
+      if (local.error) return { ready: false, error: local.error };
+      if (!local.selected) {
+        return { ready: false,
+          error: 'Bu cihazda yazıcı seçilmemiş — Sistem Ayarları → Yazıcı.' };
+      }
+      return { ready: true, target: { name: local.selected } };
     } catch (error) {
       return { ready: false, error: error.message };
     }
@@ -141,10 +155,11 @@ export function reportChain({ api, root, toast, base }) {
       note.textContent = 'Yazıcıya gönderiliyor…';
       note.classList.remove('bad');
       try {
-        const sent = await api(`${base}/print`, {
-          method: 'POST',
-          body: { path: result.path, copies: 1 },
-        });
+        // `printLocally` iki adımı birlikte yapar: PDF'i sunucudan indirir,
+        // bu cihazın seçili yazıcısına basar. Yazıcı seçme penceresi AÇILMAZ —
+        // hedef bir kez ayarlardan seçildi.
+        const printer = await printDocument(api, result.path, { copies: 1 });
+        const sent = { ok: true, printer };
         if (!sent?.ok) {
           note.textContent = sent?.error || 'Yazdırılamadı.';
           note.classList.add('bad');
