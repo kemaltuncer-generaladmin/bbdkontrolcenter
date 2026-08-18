@@ -846,8 +846,12 @@ async function renderConfig(host) {
     host.append(alertBox(
       `Mağaza ayar ağacı okunamadı — ${payload.error || 'bağlantı yok'}. Hangi anahtarın `
       + 'gerçekten var olduğu doğrulanamadığı için hiçbir alan açılmadı.', 'bad'));
-    host.append(h('div', 'sd-actions',
-      button('Tekrar dene', { variant: 'primary', onClick: () => renderConfig(host) })));
+    // `h(tag, class, text)` ÜÇÜNCÜ ARGÜMANI METİNDİR: düğüm verilince
+    // `[object HTMLButtonElement]` yazılır ve düğme hiç çizilmez — yani
+    // bağlantı koptuğunda "Tekrar dene" tam da gerektiği anda yok olurdu.
+    const retry = h('div', 'sd-actions');
+    retry.append(button('Tekrar dene', { variant: 'primary', onClick: () => renderConfig(host) }));
+    host.append(retry);
     return;
   }
 

@@ -1122,7 +1122,7 @@ function paintList() {
         + 'imzalanana kadar bekleyen olarak durur.',
     }),
     onRow: (row) => openSubscription(row),
-  }));
+  }).node);
   nodes.listPager.update({
     total: Number(state.list.meta.total || 0),
     page: Number(state.list.meta.page || state.list.page),
