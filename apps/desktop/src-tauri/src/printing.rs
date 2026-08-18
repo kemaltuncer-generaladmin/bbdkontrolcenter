@@ -243,9 +243,33 @@ fn spool(file: &Path, printer: &str, helper: Option<PathBuf>) -> Result<(), Stri
     Ok(())
 }
 
+/// Raporların kâğıt boyutu. Çekirdek A4 üretiyor (`platform.printer.media`).
+const MEDIA: &str = "A4";
+
 #[cfg(not(windows))]
 fn spool(file: &Path, printer: &str, _helper: Option<PathBuf>) -> Result<(), String> {
-    run("lp", &["-d", printer, &file.to_string_lossy()]).map(|_| ())
+    // KÂĞIT BOYUTU İKİ ADLA BİRDEN SÖYLENİR — pahalıya mal olmuş bir ders.
+    //
+    // Söylenmezse kullanıcının `~/.cups/lpoptions` dosyasındaki varsayılan
+    // geçerli olur. Bu makinede orada `PageSize=A6` yazıyor: yazıcı A4 belgeyi
+    // A6 sanıp HATA VERİYOR. İş CUPS'a sorunsuz giriyor, hatayı cihaz veriyor —
+    // yani uygulama "gönderildi" derken yazıcı kırmızı yanıyor. Grafik yazdırma
+    // pencereleri o dosyayı okumadığı için normal belgeler düzgün çıkıyor ve
+    // suç uygulamada sanılıyor.
+    //
+    // `media` ile `PageSize` CUPS'ta AYRI iki seçenek: ilki genel IPP adı,
+    // ikincisi PPD'nin kendi anahtarı. Yalnız `media` verilince PPD tabanlı
+    // sürücü (hpcups) lpoptions'daki `PageSize`i kullanmaya devam edebiliyor.
+    // İkisi birden verilir ki hangi yoldan okunursa okunsun aynı boyut çıksın.
+    //
+    // Kural `km_platform/printer/cups.py` içinde yazılıydı; baskı kabuğa
+    // taşınırken buraya GELMEMİŞTİ ve hata aynen geri döndü.
+    run(
+        "lp",
+        &["-d", printer, "-o", &format!("media={MEDIA}"),
+          "-o", &format!("PageSize={MEDIA}"), &file.to_string_lossy()],
+    )
+    .map(|_| ())
 }
 
 /// Windows yardımcısının kurulumdaki yolu. Diğer sistemlerde `None`.
