@@ -22,8 +22,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 #: Gün anahtarları — Ders Takvimi modülüyle aynı sıra (pazartesi=0).
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -35,14 +36,38 @@ DEFAULT_GRACE_SECONDS = 90
 TICK_SECONDS = 5.0
 
 
-def now_local() -> datetime:
-    """MAKİNENİN DUVAR SAATİ, saat dilimi bilgisiyle.
+#: İşin saat dilimi. Ayarla değiştirilebilir (`platform.scheduler.timezone`).
+#:
+#: MAKİNENİN SAATİNE GÜVENİLMEZ — ölçülmüş bir arıza (18.08.2026). Eskiden
+#: `datetime.now().astimezone()` kullanılıyordu, yani konteynerin duvar saati.
+#: Çekirdek artık sunucuda koşuyor (ADR 0026) ve sunucu imajı ne `TZ` ne
+#: `tzdata` taşıyor: konteyner UTC'de koşuyor. İstanbul UTC+3 olduğu için
+#: 08:40'a kurulan zil, konteynerin saati 08:40 olunca — yani İSTANBUL'DA
+#: 11:40'ta — çalıyordu. Belirti "zil çalmıyor"du; elle çalma anlık olduğu
+#: için sorunsuz görünüyor ve arızayı gizliyordu.
+DEFAULT_TIMEZONE = "Europe/Istanbul"
 
-    Zil "pazartesi 09:00"da çalar — bu yerel saattir, UTC değil. Saat dilimi
-    bilgisini iliştiriyoruz ki karşılaştırmalar açık olsun ve yaz saati
+
+def business_zone(name: str = DEFAULT_TIMEZONE) -> tzinfo:
+    """Adı verilen saat dilimi; tanınmazsa makinenin yereli.
+
+    Yedeğe düşmek SESSİZ OLMAZ: çağıran uyarıyı günlüğe yazar. Sessiz bir
+    yedek, tam da kaçtığımız arızayı geri getirirdi.
+    """
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return datetime.now().astimezone().tzinfo or UTC
+
+
+def now_local(zone: tzinfo | None = None) -> datetime:
+    """İŞİN DUVAR SAATİ, saat dilimi bilgisiyle.
+
+    Zil "pazartesi 09:00"da çalar — bu okulun saatidir, sunucunun değil.
+    Saat dilimi bilgisi iliştirilir ki karşılaştırmalar açık olsun ve yaz saati
     geçişinde `weekday()`/`hour` kullanıcının gördüğü saati versin.
     """
-    return datetime.now().astimezone()
+    return datetime.now(zone or business_zone())
 
 
 @dataclass(slots=True)
@@ -77,9 +102,17 @@ class WeeklyScheduler:
         scheduler.clear("bell")
     """
 
-    def __init__(self, log: Any, *, grace_seconds: int = DEFAULT_GRACE_SECONDS) -> None:
+    def __init__(self, log: Any, *, grace_seconds: int = DEFAULT_GRACE_SECONDS,
+                 timezone: str = DEFAULT_TIMEZONE) -> None:
         self._log = log
         self._grace = grace_seconds
+        self._zone_name = str(timezone or DEFAULT_TIMEZONE)
+        self._zone = business_zone(self._zone_name)
+        # TANINMAYAN AD SESSİZ GEÇMEZ: yedeğe düşmek, zilin yanlış saatte
+        # çalması demektir ve bu ekranda okunabilmeli.
+        if str(getattr(self._zone, "key", "")) != self._zone_name:
+            log.warning("zamanlayıcı saat dilimi tanınmadı, makinenin yereli kullanılıyor",
+                        istenen=self._zone_name)
         self._plans: dict[str, tuple[list[Trigger], Callable[[Trigger], Awaitable[None]]]] = {}
         self._fired: dict[str, str] = {}      # tetikleyici anahtarı → 'YYYY-MM-DD HH:MM'
         self._task: asyncio.Task[None] | None = None
@@ -90,7 +123,7 @@ class WeeklyScheduler:
     def start(self) -> None:
         if self._task is not None and not self._task.done():
             return
-        self._started_at = now_local()
+        self._started_at = now_local(self._zone)
         self._task = asyncio.create_task(self._loop(), name="km-scheduler")
         self._log.info("zamanlayıcı başladı", grace=self._grace)
 
@@ -123,19 +156,23 @@ class WeeklyScheduler:
 
     def state(self) -> dict[str, Any]:
         """Ekranın "çalışıyor mu, sırada ne var" sorusuna cevabı."""
-        now = now_local()
+        now = now_local(self._zone)
         upcoming = self.next_triggers(now, limit=5)
         return {
             "running": self._task is not None and not self._task.done(),
             "startedAt": self._started_at.isoformat(timespec="seconds") if self._started_at else None,
             "owners": {owner: len(items) for owner, (items, _) in self._plans.items()},
             "graceSeconds": self._grace,
+            # EKRAN HANGİ SAATE GÖRE ÇALDIĞINI YAZMALI. Saat dilimi sessiz
+            # kaldığında yanlış saatte çalan zil "hiç çalmıyor" gibi okunuyordu.
+            "timezone": self._zone_name,
+            "now": now.isoformat(timespec="seconds"),
             "next": upcoming,
         }
 
     def next_triggers(self, now: datetime | None = None, *, limit: int = 5) -> list[dict[str, Any]]:
         """Sıradaki tetikleyiciler — hafta döngüsünde ileri doğru aranır."""
-        now = now or now_local()
+        now = now or now_local(self._zone)
         found: list[tuple[datetime, str, Trigger]] = []
 
         for owner, (triggers, _) in self._plans.items():
@@ -171,7 +208,7 @@ class WeeklyScheduler:
     async def _loop(self) -> None:
         while True:
             try:
-                await self._tick(now_local())
+                await self._tick(now_local(self._zone))
             except asyncio.CancelledError:
                 raise
             except Exception as failure:  # noqa: BLE001 — döngü ASLA ölmemeli (K7)

@@ -47,7 +47,19 @@ RUN apt-get update \
         fonts-dejavu-core \
         mariadb-client \
         openssh-client \
+        tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# ZİLİN SAATİ. Konteyner varsayılan olarak UTC'de koşar; zamanlayıcı ise
+# "pazartesi 08:40" derken OKULUN saatini kastediyor. `tzdata` olmadan
+# `ZoneInfo("Europe/Istanbul")` bulunamaz ve zamanlayıcı makinenin yereline
+# (UTC) düşer: 08:40'a kurulan zil İstanbul'da 11:40'ta çalıyordu ve belirti
+# "zil çalmıyor"du.
+#
+# `TZ` ikinci bir güvencedir, tek dayanak değil: zamanlayıcı saat dilimini
+# ayrıca `platform.scheduler.timezone` ayarından alıyor. Buradaki değer günlük
+# satırlarının ve `date` çıktısının da ekranda görülen saatle okunmasını sağlar.
+ENV TZ=Europe/Istanbul
 
 # Uygulama. `apps/desktop` KOPYALANMAZ — kabuk kullanıcının makinesinde durur.
 COPY backend /app/backend

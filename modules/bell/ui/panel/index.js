@@ -165,17 +165,52 @@ function renderHeader() {
   return bar;
 }
 
+/**
+ * Zamanlayıcının HANGİ SAATE göre çaldığı — ekranda yazmak zorunda.
+ *
+ * BULUNAN ARIZA (18.08.2026): zamanlayıcı konteynerin duvar saatini kullanıyordu
+ * ve sunucu konteyneri UTC'de koşuyor. 08:40'a kurulan zil İstanbul'da 11:40'ta
+ * çalıyordu; belirti "zil çalmıyor"du ve hiçbir ekranda sebep görünmüyordu.
+ * Elle çalma anlık olduğu için sorunsuz çalışıp arızayı gizliyordu.
+ *
+ * Saat artık ayardan geliyor, ama SESSİZ KALMASIN: yanlış bir dilim yine
+ * yanlış saatte çalar ve o zaman buradan okunur.
+ */
+function clockLine() {
+  const zone = data.scheduler?.timezone;
+  const now = data.scheduler?.now;
+  if (!zone) return null;
+  const line = h('p', 'bl-status');
+  line.append(h('span', 'bl-hint',
+    `Zil saatleri ${zone} saatine göre çalar`
+    + (now ? ` · sunucuda şu an ${now.slice(11, 16)}` : '')));
+  return line;
+}
+
 function renderStatus() {
   const problems = blockers();
+  const wrap = h('div', 'bl-statuswrap');
+
   if (!problems.length) {
     const next = data.scheduler?.next?.[0];
-    return h('p', 'bl-status',
-      next ? `Sıradaki zil: ${next.label} · ${next.at.slice(11)}`
-        : 'Zil etkin. Bugün için sırada zil yok.');
+    wrap.append(h('p', 'bl-status',
+      next ? `Sıradaki zil: ${next.label} · ${next.at.slice(11, 16)}`
+        : 'Zil etkin. Bugün için sırada zil yok.'));
+  } else {
+    const line = h('p', 'bl-status bad');
+    line.append(h('b', null, 'ZİL ÇALMAZ — '), h('span', null, `${problems.join(', ')}.`));
+    // ANA ŞALTER KAPALIYSA ELLE ZİL YİNE ÇALAR ve bu kafa karıştırıyordu:
+    // "manuel çalışıyor, otomatik çalışmıyor" denince sebep şalter sanılmıyordu.
+    if (!data.settings?.enabled) {
+      line.append(h('span', 'bl-hint',
+        ' Elle çalma bu şaltere bakmaz — düğme çalışsa da otomatik zil çalmaz.'));
+    }
+    wrap.append(line);
   }
-  const line = h('p', 'bl-status bad');
-  line.append(h('b', null, 'ZİL ÇALMAZ — '), h('span', null, `${problems.join(', ')}.`));
-  return line;
+
+  const clock = clockLine();
+  if (clock) wrap.append(clock);
+  return wrap;
 }
 
 // ------------------------------------------------------------------ gruplar

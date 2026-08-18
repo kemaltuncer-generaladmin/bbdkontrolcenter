@@ -39,6 +39,9 @@ from km_platform.identity_sync.http import create_pairing_router
 from km_platform.identity_sync.service import IdentitySync
 from km_platform.notify.service import NotifyService
 from km_platform.printer.cups import PrinterService
+from km_platform.scheduler.weekly import (
+    DEFAULT_TIMEZONE as SCHEDULER_TIMEZONE,
+)
 from km_platform.scheduler.weekly import WeeklyScheduler
 from km_platform.secrets.vault import Vault
 
@@ -147,7 +150,14 @@ def create_app(config: Config | None = None) -> FastAPI:
         audio = AudioPlayer(config, log)
         registry.register("audio", audio, provider="platform")
 
-        scheduler = WeeklyScheduler(log)
+        # SAAT DİLİMİ AYARDAN GELİR, makineden DEĞİL. Sunucu konteyneri
+        # UTC'de koşuyor ve zil okulun saatine göre çalmalı; ayrıntı
+        # `km_platform/scheduler/weekly.py` → `DEFAULT_TIMEZONE`.
+        scheduler = WeeklyScheduler(
+            log,
+            timezone=str((config.section("platform.scheduler") or {}).get("timezone")
+                         or SCHEDULER_TIMEZONE),
+        )
         registry.register("scheduler", scheduler, provider="platform")
 
         # Baskı da platform yeteneğidir: modül `lp` çağırmaz, buradan geçer (K4).

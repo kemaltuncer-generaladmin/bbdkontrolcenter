@@ -452,3 +452,6 @@
 /* Zil saatinin türü — ders / teneffüs. Etiketten AYRI bir alandır: hangi
    anonsun çalacağını bu belirler, etiket yalnız insan içindir. */
 .bl-time-kind { min-width: 7.5rem; }
+
+/* Durum şeridi artık iki satır taşıyor: engeller ve zamanlayıcının saati. */
+.bl-statuswrap { display: flex; flex-direction: column; gap: 2px; }

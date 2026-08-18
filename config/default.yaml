@@ -28,6 +28,15 @@ auth:
 
 platform:
 
+  scheduler:
+    # İŞİN SAAT DİLİMİ — MAKİNENİN DEĞİL.
+    #
+    # Zil "pazartesi 08:40"ta çalar ve bu okulun saatidir. Çekirdek sunucuda
+    # koşuyor (ADR 0026); sunucu konteyneri UTC'de. Bu ayar olmadan zamanlayıcı
+    # konteynerin duvar saatini kullanıyor ve 08:40'a kurulan zil İstanbul'da
+    # 11:40'ta çalıyordu — belirti "zil çalmıyor"du.
+    timezone: "Europe/Istanbul"
+
   printer:
     backend: cups
     # HEDEF KUYRUK OTOMATİK BULUNUR — ad sabitlemek kırılgandır.

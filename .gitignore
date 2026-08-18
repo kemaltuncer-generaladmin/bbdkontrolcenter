@@ -62,3 +62,8 @@ backend/src/km_core/_build_stamp.py
 # Windows yazdırma yardımcısı derleme sırasında indirilir, depoda durmaz (K11).
 apps/desktop/src-tauri/yazdirma/*
 !apps/desktop/src-tauri/yazdirma/OKUBENI.md
+
+# Hazır zil sesleri ÜRÜN VARLIĞIDIR ve izlenir — `data/` altındaki kopyaları
+# kullanıcı verisidir, o hariç tutulmaya devam eder. Gerekçe:
+# backend/src/km_platform/audio/sounds/README.md
+!backend/src/km_platform/audio/sounds/*.wav

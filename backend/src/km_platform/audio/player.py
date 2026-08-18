@@ -37,8 +37,21 @@ class AudioPlayer:
         self._device = str(section.get("device") or "default")
         self._volume = int(section.get("volume") or 90)
         self._backend = str(section.get("backend") or "pipewire")
-        # Ses dosyaları depo kökündeki data/sounds altında durur (git dışı).
+        # YAZILABİLİR dizin: kullanıcının yüklediği sesler ve Vertex'in
+        # ürettiği anonslar buraya iner. Git dışıdır ve sunucuda kalıcı diske
+        # bağlanır.
         self._sounds = config.path("platform.audio.sounds_path", "data/sounds")
+        # ÜRÜNLE GELEN hazır sesler — imajın içinde, salt okunur.
+        #
+        # BULUNAN ARIZA (18.08.2026): hazır sesler yalnız `data/sounds` altında
+        # duruyordu. O klasör git dışı ve imaja kopyalanmıyor
+        # (`deploy/server/Dockerfile` yalnız backend/modules/config/docs alıyor),
+        # yani SUNUCUDA HİÇ SES YOKTU. `resolve()` `None` dönüyor,
+        # `BellService._bell_items()` boş liste veriyor ve tetikleyici hiçbir şey
+        # çalmadan dönüyordu — zil sessizce hiç çalmıyordu.
+        #
+        # Gerekçenin tamamı: `sounds/README.md`.
+        self._builtin = Path(__file__).resolve().parent / "sounds"
 
     # ------------------------------------------------------------ durum
 
@@ -54,22 +67,32 @@ class AudioPlayer:
             "device": self._device,
             "volume": self._volume,
             "soundsPath": str(self._sounds),
+            "builtinPath": str(self._builtin),
         }
 
     def sounds(self) -> list[dict[str, Any]]:
-        """`data/sounds` altındaki çalınabilir dosyalar."""
-        if not self._sounds.is_dir():
-            return []
+        """Çalınabilir sesler: yazılabilir dizin + ürünle gelenler.
+
+        AYNI ADDA İKİ DOSYA VARSA YAZILABİLİR DİZİN KAZANIR. Kullanıcı
+        `classic_electric.wav` adıyla kendi kaydını yüklerse onun sesi çalar;
+        ürünle gelen kopya yalnızca "hiç ses yok" durumunu ortadan kaldırır.
+        """
         allowed = {".wav", ".ogg", ".mp3", ".flac", ".oga"}
-        return sorted(
-            (
-                {"name": path.name, "stem": path.stem, "size": path.stat().st_size,
-                 "path": str(path)}
-                for path in self._sounds.iterdir()
-                if path.is_file() and path.suffix.lower() in allowed
-            ),
-            key=lambda item: str(item["name"]),
-        )
+        found: dict[str, dict[str, Any]] = {}
+        # SIRA ÖNEMLİ: hazır sesler ÖNCE konur, kullanıcının dosyası üstüne
+        # yazar. Ters sırada yükleme sessizce etkisiz kalırdı.
+        for root in (self._builtin, self._sounds):
+            if not root.is_dir():
+                continue
+            for path in root.iterdir():
+                if not path.is_file() or path.suffix.lower() not in allowed:
+                    continue
+                found[path.name] = {
+                    "name": path.name, "stem": path.stem,
+                    "size": path.stat().st_size, "path": str(path),
+                    "builtin": root == self._builtin,
+                }
+        return sorted(found.values(), key=lambda item: str(item["name"]))
 
     def resolve(self, name: str) -> Path | None:
         """Ses adını dosyaya çevirir. Klasör dışına çıkılamaz."""
