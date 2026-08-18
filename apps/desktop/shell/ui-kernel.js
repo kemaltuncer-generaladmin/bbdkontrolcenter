@@ -201,7 +201,7 @@ export const CORE_PANELS = [
     icon: 'pulse',
     order: 30,
     requires: ['settings.view'],
-    entry: null,
+    entry: 'core-panels/health/index.js',
   },
   {
     // ADR 0021 §4 — merkeze eşlenmiş makineler. Menüde görünmesi için

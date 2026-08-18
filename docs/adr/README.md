@@ -35,11 +35,12 @@ yanlış yönlendirirdi.
 | 0018 | Sistem Ayarları tek ekrandır; sekmeleri modüller ilan eder | Kabul edildi |
 | 0019 | Çıktı Merkezi: kayıt, dosyayı yazan tek yerde doğar | Kabul edildi |
 | 0020 | Eşzamanlı düzenleme: iyimser kilit zorunlu, danışma kilidi uyarı | Kabul edildi |
-| 0021 | Merkezî kimlik servisi ve cihaz eşlemesi | Kabul edildi · **§6 superseded by 0025** |
+| 0021 | Merkezî kimlik servisi ve cihaz eşlemesi | Kabul edildi · **§6 superseded by 0025 · kadro yansıtması 0026 ile devre dışı** |
 | 0022 | Modül platform kapsamı manifestte ilan edilir | Kabul edildi |
 | 0023 | Paketleme: gömülü Python çalışma zamanı ve platforma göre veri dizini | Kabul edildi |
 | 0024 | macOS kod imzası ve notarization (0023 §5'i genişletir) | Kabul edildi |
-| 0025 | Sırlar ve geçit ayarları kurulumlara dağıtılır (0021 §6'yı tersine çevirir) | Kabul edildi |
+| 0025 | Sırlar ve geçit ayarları kurulumlara dağıtılır (0021 §6'yı tersine çevirir) | Kabul edildi · **kapsamı 0026 ile daraldı** |
+| 0026 | Sunucu merkezli mimari: veri merkezde, kabuk ince | Kabul edildi |
 
 ---
 

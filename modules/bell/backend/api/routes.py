@@ -186,8 +186,15 @@ async def preview(
     """Sesi YALNIZ bu bilgisayarda dinletir — okulun hoparlörüne gitmez.
 
     `bell.view` yeterlidir: bu, zil çalmak değil, ekranda ses denemektir.
+
+    ÇEKİRDEK ÇALMAZ, SESİ VERİR (ADR 0026). Backend sunucuda koşuyor ve orada
+    hoparlör yok; `audio.play` çağrılsaydı ses ekranın başındaki kişiye değil
+    veri merkezine giderdi — yani hiç kimseye. Uç artık indirme adresini
+    döndürür (base64 veri URI'si), sesi kabuk çalar. Üç platformda da aynı
+    yol; `afplay`/`winsound` dalına gerek yok.
     """
-    return await service().preview(body.sound, volume=body.volume)
+    return await service().preview_source(body.sound)
+
 
 
 # ------------------------------------------------------------------- bakım

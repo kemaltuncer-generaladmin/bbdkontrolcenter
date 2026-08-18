@@ -715,16 +715,51 @@ function runPairing() {
 
 // ================================================================ AÇILIŞ
 
+/**
+ * Kabuğun hangi adrese baktığı. Kabuk dışında (tarayıcı denemesi) `null`.
+ *
+ * Adres RUST TARAFINDA belirlenir ve tek yerdedir (`server_base`); arayüz onu
+ * kendi başına hesaplasaydı iki taraf ayrışabilir ve ekran bir adresi
+ * yazarken istek başka bir adrese giderdi.
+ */
+async function serverInfo() {
+  const invoke = window.__TAURI__?.core?.invoke;
+  if (!invoke) return null;
+  try {
+    return await invoke('server_info');
+  } catch {
+    return null;
+  }
+}
+
 async function start() {
   el.login.hidden = false;
   renderSlots();
-  setHint(['Çekirdek başlatılıyor…']);
+
+  // KİPİ ÖNCE SÖYLE. Sunucu kipinde "çekirdek başlatılıyor" cümlesi yanlıştır:
+  // burada başlatılan bir şey yok, uzak bir sunucuya bağlanılıyor (ADR 0026).
+  // Yanlış cümle, arıza anında kullanıcıyı yanlış yere baktırır — makinede
+  // olmayan bir süreci aramaya.
+  const server = await serverInfo();
+  const remote = server && !server.local;
+  setHint([remote ? `${server.base} adresine bağlanılıyor…` : 'Çekirdek başlatılıyor…']);
 
   const ready = await waitForCore();
   if (!ready.ok) {
     // SON HATA OLDUĞU GİBİ YAZILIR ama METİN olarak: içeriği çekirdekten
     // geliyor ve `innerHTML` ile basılırsa yorumlanırdı.
-    setHint([`Çekirdeğe ulaşılamadı — ${ready.error}`]);
+    //
+    // SUNUCU KİPİNDE NE YAPILACAĞI DA YAZILIR. "Ulaşılamadı" tek başına
+    // kullanıcıya hiçbir şey yaptırmaz; internet mi, sunucu mu, adres mi
+    // sorusunun ilk adımı söylenir.
+    setHint(remote
+      ? [
+        'Merkeze ulaşılamıyor — uygulama veriyi merkezden alır.',
+        `Adres: ${server.base}`,
+        `Sebep: ${ready.error}`,
+        'İnternet bağlantınızı denetleyin; sorun sürerse yöneticinize bildirin.',
+      ]
+      : [`Çekirdeğe ulaşılamadı — ${ready.error}`]);
     return;
   }
 

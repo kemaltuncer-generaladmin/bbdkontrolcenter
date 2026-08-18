@@ -458,16 +458,30 @@ async def test_her_iki_hedef_de_dusunce_gunluge_yazilir(store: Any, sounds: Path
     assert rows[0]["ok"] == 0
 
 
-async def test_onizleme_ajana_gitmez(store: Any, sounds: Path) -> None:
-    """Ekranda "dinle" derken okulun hoparlöründen zil çalmamalı."""
+async def test_onizleme_ajana_gitmez_ve_sunucuda_calmaz(store: Any, sounds: Path) -> None:
+    """Ekranda "dinle" derken okulun hoparlöründen zil çalmamalı.
+
+    ÇALMA DA YAPILMAZ (ADR 0026): backend sunucuda koşuyor ve orada hoparlör
+    yok. Uç sesin ADRESİNİ verir, çalma işi kabuğundur. `audio.played` boş
+    kalmalı — dolu olsaydı ses veri merkezinde, yani hiç kimsenin duymadığı
+    bir yerde çalınıyor demekti.
+    """
     bridge = FakeBridge()
     audio = FakeAudio(sounds)
     service, _ = build(store, sounds, bridge=bridge, audio=audio)
 
-    result = await service.preview("classic_electric")
+    result = await service.preview_source("classic_electric")
     assert result["ok"] is True
-    assert audio.played == [("classic_electric", 90)]
+    assert result["name"] == "classic_electric.wav"
+    assert result["dataUri"].startswith("data:audio/wav;base64,")
+    assert audio.played == []
     assert bridge.sent == []
+
+
+async def test_onizleme_bilinmeyen_sesi_reddeder(store: Any, sounds: Path) -> None:
+    """Ad çözülür, birleştirilmez: `../` ile klasör dışına çıkılamaz."""
+    service, _ = build(store, sounds, bridge=FakeBridge(), audio=FakeAudio(sounds))
+    assert (await service.preview_source("../../etc/passwd"))["ok"] is False
 
 
 # --------------------------------------------------------------- ajan senkronu

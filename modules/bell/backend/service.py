@@ -21,6 +21,7 @@ ayarla kapatılabilir. İkisinin sonucu da ayrı ayrı günlüğe yazılır.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import re
@@ -35,6 +36,19 @@ from .voices import VoiceLibrary, number, render
 
 #: Gün anahtarları — `km_platform.scheduler` ile aynı sıra (pazartesi = 0).
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+#: Önizlemede gövdeye gömülebilecek en büyük ses. Zil birkaç saniyedir;
+#: bundan büyüğü yanlış dosyadır ve base64 ile üçte bir daha şişer.
+MAX_PREVIEW_BYTES = 8 * 1024 * 1024
+
+#: Uzantı → MIME. Kabuk `new Audio(dataUri)` derken türü buradan öğrenir.
+MIME_BY_SUFFIX = {
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+}
 
 DEFAULT_SOUND = "classic_electric"
 DEFAULT_VOLUME = 90
@@ -534,22 +548,46 @@ class BellService:
         return await self._dispatch(items, settings, kind="cagri", edge="manuel",
                                     name=group["name"], actor=actor)
 
-    async def preview(self, sound: str, *, volume: int | None = None) -> dict[str, Any]:
-        """Sesi YALNIZ bu bilgisayardan çalar — ajana gitmez.
+    async def preview_source(self, sound: str) -> dict[str, Any]:
+        """Önizleme için sesin ADRESİNİ verir; ÇALMAZ.
 
-        Ekrandaki "dinle" düğmesi budur: kullanıcı sesi denerken okulun
-        hoparlörlerinden zil çalmamalı.
+        Ekrandaki "dinle" düğmesi budur ve okulun hoparlörüne gitmez.
+
+        ÇALMA İŞİ KABUĞA GEÇTİ (ADR 0026). Eskiden burada `audio.play`
+        çağrılıyordu ve bu, backend kullanıcının makinesinde koştuğu sürece
+        doğruydu. Backend sunucuya taşınınca aynı çağrı sesi VERİ MERKEZİNDE
+        çalmaya kalkardı — kimsenin duymadığı bir hoparlörde, üstelik "çaldı"
+        diye başarı dönerek. Uç artık adresi veriyor, sesi kabuk çalıyor.
         """
-        if self._audio is None:
-            return {"ok": False, "detail": "Ses yeteneği yok."}
-        settings = await self.settings()
+        path = self.sound_path(sound)
+        if path is None:
+            return {"ok": False, "detail": "Ses bulunamadı."}
         try:
-            result = await self._audio.play(
-                sound, volume=settings["volume"] if volume is None else int(volume)
-            )
-        except Exception as failure:  # noqa: BLE001 — ses dışarısı
-            return {"ok": False, "detail": str(failure)}
-        return {"ok": True, "detail": f"{result.get('player')} · {result.get('seconds')} sn"}
+            raw = path.read_bytes()
+        except OSError as failure:
+            return {"ok": False, "detail": f"Ses okunamadı: {failure}"}
+        if len(raw) > MAX_PREVIEW_BYTES:
+            return {"ok": False, "detail": "Ses önizleme için fazla büyük."}
+
+        # VERİ URI'Sİ, AYRI BİR İNDİRME UCU DEĞİL. Kabuğun istek katmanı
+        # (`core_request`) gövdeyi METİN olarak taşıyor; ikili veri oradan
+        # sağlam geçmez. Base64 gövdeye gömmek hem tek istek hem de kabukta
+        # `new Audio(dataUri)` ile doğrudan çalınabilir bir sonuç verir —
+        # tarayıcıda ve Tauri'de aynı yol.
+        mime = MIME_BY_SUFFIX.get(path.suffix.lower(), "audio/wav")
+        return {
+            "ok": True,
+            "name": path.name,
+            "dataUri": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
+        }
+
+    def sound_path(self, name: str) -> Path | None:
+        """Ses dosyasının diskteki yolu — yoksa `None`.
+
+        Ad ÇÖZÜLÜR, birleştirilmez: `data/sounds` ile birleştirmek `../` ile
+        klasör dışına çıkmaya izin verirdi.
+        """
+        return self._resolve_sound(name)
 
     async def _dispatch(self, items: list[dict[str, Any]], settings: dict[str, Any],
                         *, kind: str, edge: str, name: str, actor: str) -> dict[str, Any]:

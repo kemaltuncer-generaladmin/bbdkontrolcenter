@@ -245,6 +245,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"status": exc.status_code, "message": detail}},
+            # BAŞLIKLAR TAŞINIR. Zarfa çevirirken düşürülüyordu ve bazı
+            # yanıtın anlamı başlıkta duruyor: 429'un `Retry-After`ı olmadan
+            # istemci ne kadar bekleyeceğini bilemez, 401'in
+            # `WWW-Authenticate`i kaybolur.
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)

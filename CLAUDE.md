@@ -61,6 +61,26 @@ Yıkıcı işlemler izin yeterli olsa bile PIN teyidi ister.
 - BBD = Bagisto çekirdekli · BLD = Laravel tabanlı — adaptörleri
   `km_platform/database/bbd/` ve `.../bld/` altında.
 
+## Mimari — ADR 0026 ile değişti (18.08.2026)
+
+**Backend artık SUNUCUDA koşar; masaüstü uygulaması ince kabuktur.**
+
+- Veri Coolify'daki **PostgreSQL**'dedir. Kurulumların kendi veritabanı YOKTUR.
+- Sunucu imajı: `deploy/server/Dockerfile` (çekirdek + 49 modül).
+- Kabuk adresi Rust tarafında tek yerde (`server_base`); `KM_SERVER_URL` ile
+  aşılır, `local` yazmak eski yerel davranışa döndürür.
+- Sidecar YALNIZ yerel kipte başlar.
+- **İnternet kesilirse uygulama durur** — kullanıcı kararı.
+
+Depo iki motorludur: `Store` (SQLite, yerel/test) ve `PostgresStore` (merkez).
+Şemayı kuran tek yer `km_core/store/bootstrap.py`; lehçe farkını
+`km_core/store/dialect.py` kapatır ve **tanımadığı yapıyı reddeder**.
+
+Motor `KM_STORE_ENGINE` ile seçilir (`sqlite` varsayılan). Sunucuda ayrıca
+`KM_CENTRAL_DSN` ve **`KM_SECRET_KEY` zorunludur** — ikincisi verilmezse kasa
+kendine yeni anahtar üretir, sırların hiçbirini çözemez ve hiç kimse giriş
+yapamaz; belirti sebebi ele vermez.
+
 ## Projenin şu anki durumu
 
 Çekirdek (`km_core`), SDK ve platform yeteneklerinin çoğu (`audio`,

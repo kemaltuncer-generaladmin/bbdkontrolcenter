@@ -1,0 +1,43 @@
+/* Sistem Sağlığı — ekrana özel biçim.
+ *
+ * Ortak bileşenler kitten gelir (ADR 0011); burada yalnız bu ekranın satır
+ * düzeni var. Renk ve boşluk değerleri kabuğun değişkenlerinden okunur, elle
+ * yazılmaz — tema değiştiğinde bu ekran geride kalmasın.
+ */
+
+.sh-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sh-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.06));
+}
+
+.sh-row:last-child {
+  border-bottom: 0;
+}
+
+.sh-label {
+  color: var(--muted, #8b93a7);
+  font-size: 13px;
+}
+
+/* Adres uzun ve kırılamaz bir dizedir; taşmak yerine sarılır. */
+.sh-value {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.sh-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

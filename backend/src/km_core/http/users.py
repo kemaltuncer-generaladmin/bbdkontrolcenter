@@ -59,6 +59,7 @@ from km_core.security.identity import (
     RevisionConflict,
     UserNotFound,
 )
+from km_core.security.rate_limit import RateLimiter
 from km_core.security.roster_projection import project_roster
 
 OrgScope = Literal["bbd", "bld", "org"]
@@ -183,6 +184,38 @@ def _identity(request: Request) -> Identity:
     return identity
 
 
+def _limiter(request: Request) -> RateLimiter:
+    """Giriş hız sınırlayıcısı. Uygulama başına TEK örnek.
+
+    `app.state` üzerinde tutulur ve yoksa burada kurulur: sınırlayıcıyı modül
+    düzeyinde global yapmak, aynı süreçte iki uygulama ayağa kalktığında
+    (testler) sayaçları birbirine karıştırırdı.
+    """
+    limiter: RateLimiter | None = getattr(request.app.state, "login_limiter", None)
+    if limiter is None:
+        limiter = RateLimiter()
+        request.app.state.login_limiter = limiter
+    return limiter
+
+
+def _client_source(request: Request) -> str:
+    """İsteğin geldiği kaynak.
+
+    Ters vekil (Traefik/Coolify) arkasında `request.client.host` konteyner
+    ağının adresidir ve HERKES İÇİN AYNIDIR — sınır o hâliyle tüm kullanıcıları
+    tek kovaya koyar. `X-Forwarded-For`un İLK değeri gerçek istemcidir.
+
+    Başlık istemci tarafından uydurulabilir; burada bu KABUL EDİLEBİLİR bir
+    risktir çünkü uydurmanın tek etkisi saldırganın kendi kovasını bölmesidir
+    ve genel sınır o yolu da kapatır.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    client = request.client
+    return client.host if client else "bilinmeyen"
+
+
 async def _prepare_login(request: Request) -> None:
     """Merkezî kimliğin giriş yoluna bağlandığı TEK kapı (ADR 0021 §2).
 
@@ -297,6 +330,21 @@ def create_identity_router() -> APIRouter:
     @router.post("/auth/login")
     async def login(request: Request, body: LoginRequest) -> dict[str, Any]:
         identity = _identity(request)
+
+        # HIZ SINIRI DOĞRULAMADAN ÖNCE (ADR 0026). Backend artık internete
+        # bakıyor ve giriş 6 haneli PIN'dir — 1.000.000 ihtimal. `failed_attempts`
+        # sayacı bu saldırıyı GÖRMEZ: kullanıcı PIN'in kendisiyle bulunduğu için
+        # yanlış PIN hiçbir satıra denk gelmez ve artırılacak sayaç yoktur.
+        # Ayrıntı: `km_core/security/rate_limit.py`.
+        source = _client_source(request)
+        wait = _limiter(request).check(source)
+        if wait is not None:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Çok fazla giriş denemesi. {int(wait) + 1} saniye sonra deneyin.",
+                headers={"Retry-After": str(int(wait) + 1)},
+            )
+
         # Merkezden gelen kadro DOĞRULAMADAN ÖNCE yansıtılır: merkezde açılan
         # kullanıcı ilk denemesinde girebilmeli (ADR 0021 §2).
         await _prepare_login(request)
@@ -304,6 +352,10 @@ def create_identity_router() -> APIRouter:
         if result is None:
             # TEK TİP MESAJ: sebep ayırt edilmez (kilitli mi, yok mu, yanlış mı).
             raise HTTPException(status_code=401, detail="Giriş yapılamadı.")
+
+        # Doğru PIN'i giren, aynı ofisten başkasının yanlış denemeleri yüzünden
+        # kilitlenmemeli.
+        _limiter(request).reset(source)
 
         # BAŞKA DAL YOK. Doğrulama geçtiyse oturum açılmıştır; "önce sır belirle"
         # ara durumu reddedilmiş ADR 0016'nın kalıntısıydı ve kaldırıldı.

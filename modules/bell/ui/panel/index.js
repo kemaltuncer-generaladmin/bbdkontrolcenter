@@ -497,7 +497,21 @@ function renderSound() {
 
   row.append(button('Dinle', {
     title: 'Yalnız bu bilgisayardan çalar; okula duyulmaz.',
-    onClick: () => run(() => store.preview(select.value), { reload: false }),
+    // SESİ KABUK ÇALAR (ADR 0026). Çekirdek sunucuda koşuyor ve orada
+    // hoparlör yok; uç sesin kendisini base64 veri URI'si olarak veriyor.
+    // `Audio` üç platformda da aynı şekilde çalışır.
+    onClick: () => run(async () => {
+      const result = await store.preview(select.value);
+      if (!result?.ok || !result.dataUri) {
+        return result || { ok: false, detail: 'Ses alınamadı.' };
+      }
+      try {
+        await new Audio(result.dataUri).play();
+      } catch (error) {
+        return { ok: false, detail: `Ses çalınamadı: ${error?.message || error}` };
+      }
+      return { ok: true, detail: `${result.name} çalınıyor` };
+    }, { reload: false }),
   }));
 
   const upload = h('input');

@@ -1,6 +1,6 @@
 [package]
 name = "kontrol-merkezi"
-version = "0.1.0"
+version = "0.1.8"
 edition = "2021"
 rust-version = "1.77.2"
 description = "Kontrol Merkezi masaüstü kabuğu"
@@ -25,6 +25,14 @@ serde_json = "1"
 # bu yüzden `src/main.rs` içinde `#[tauri::command]` olarak durur, arayüz de
 # ona `invoke` ile ulaşır.
 tauri-plugin-updater = "2"
+# KM Sunucu `https://` konuşuyor ve TLS elde yazılmaz. Eski `core_request`
+# ham TCP üzerinden HTTP/1.1 yazıyordu; yerel ve şifresiz bir istek için
+# yeterliydi, uzak sunucu için değil. `reqwest` zaten bağımlılık ağacında —
+# `tauri-plugin-updater` onu getiriyor — burada açıkça ilan edilir (K11).
+#
+# `rustls-tls`: sistemin OpenSSL'ine bağlanmamak için. Windows ve macOS
+# derlemelerinde OpenSSL aramak, CI'da çözülmesi en zahmetli hatalardan biri.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2"] }
 
 [profile.release]
 codegen-units = 1

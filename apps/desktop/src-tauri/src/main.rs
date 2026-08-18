@@ -7,7 +7,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::io::{Read, Write};
+
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -17,9 +17,40 @@ use std::time::Duration;
 use tauri::Manager;
 use tauri_plugin_updater::UpdaterExt;
 
-/// Çekirdeğin dinlediği yerel adres. Ayarla değiştirilirse burası da değişir
-/// (config/default.yaml → server.port).
+/// Çekirdeğin dinlediği YEREL adres. Sunucu kipinde kullanılmaz.
+/// (config/default.yaml → server.port)
 const CORE_ADDR: &str = "127.0.0.1:8787";
+
+/// Yerel kipin taban adresi.
+const LOCAL_BASE: &str = "http://127.0.0.1:8787";
+
+/// KM Sunucu'nun adresi (ADR 0026). Kabuk artık ince bir istemcidir ve
+/// veriyi buradan alır; herkes aynı veritabanını görür.
+const DEFAULT_SERVER_URL: &str = "https://kontrolmerkezi.bbdstore.com.tr";
+
+/// Adresi elle söylemenin yolu — geliştirme, deneme kurulumu ve arıza takibi.
+/// `local` yazmak eski davranışa (yerel sidecar) döndürür.
+const SERVER_URL_ENV: &str = "KM_SERVER_URL";
+
+/// Kabuğun konuşacağı taban adres.
+///
+/// TEK YER. İki farklı kararın (istek nereye gidecek, sidecar başlatılacak mı)
+/// aynı cevaba dayanması gerekiyor; ayrı ayrı hesaplansaydı biri sunucuya
+/// bakarken diğeri yerelde süreç başlatır ve hangisinin cevap verdiği belirsiz
+/// kalırdı.
+fn server_base() -> String {
+    match std::env::var(SERVER_URL_ENV) {
+        Ok(value) if value.trim().eq_ignore_ascii_case("local") => LOCAL_BASE.to_string(),
+        Ok(value) if !value.trim().is_empty() => value.trim().trim_end_matches('/').to_string(),
+        _ => DEFAULT_SERVER_URL.to_string(),
+    }
+}
+
+/// Yerel çekirdeğe mi bakıyoruz? Sidecar YALNIZCA bu durumda başlatılır.
+fn is_local_mode() -> bool {
+    let base = server_base();
+    base.contains("127.0.0.1") || base.contains("localhost")
+}
 
 struct Sidecar(Mutex<Option<Child>>);
 
@@ -246,12 +277,15 @@ struct CoreResponse {
 /// bir köken sayıyor ve oradan `http://127.0.0.1`'e giden isteği KARIŞIK
 /// İÇERİK sayıp kesiyor ("Load failed"). Chromium loopback'i ayrık tutar,
 /// WebKitGTK tutmaz. İsteği kabuk taşıyınca sorun tümüyle ortadan kalkar.
+/// Sunucu kipinde ayrıca CSP'yi tek yerden yönetmiş oluyoruz.
 ///
 /// Kabuk burada yalnızca BORUdur: yol, gövde ve belirteç arayüzden gelir;
 /// hiçbir modül adı ya da iş kuralı bu dosyada geçmez (K1).
 ///
-/// Bağımlılık eklemedik: yerel, TLS'siz, kısa ömürlü bir HTTP/1.1 isteği için
-/// `Connection: close` + sonuna kadar oku yeterli.
+/// ELDE YAZILMIŞ HTTP KALDIRILDI. Eski hâli ham TCP üzerinden HTTP/1.1
+/// yazıyordu; yerel ve TLS'siz bir istek için yeterliydi ama KM Sunucu
+/// `https://` konuşuyor ve TLS elde yazılmaz. `reqwest` zaten bağımlılık
+/// ağacındaydı (`tauri-plugin-updater` onu getiriyor).
 #[tauri::command]
 async fn core_request(
     method: String,
@@ -259,57 +293,47 @@ async fn core_request(
     body: Option<String>,
     token: Option<String>,
 ) -> Result<CoreResponse, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let address = CORE_ADDR.parse().map_err(|_| "geçersiz çekirdek adresi".to_string())?;
-        let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5))
-            .map_err(|error| format!("çekirdeğe bağlanılamadı: {error}"))?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(60)))
-            .map_err(|error| error.to_string())?;
+    let base = server_base();
+    let url = format!("{base}{path}");
+    let verb = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| format!("geçersiz istek yöntemi: {method}"))?;
 
-        let payload = body.unwrap_or_default();
-        let mut request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {CORE_ADDR}\r\nConnection: close\r\nAccept: application/json\r\n"
-        );
-        if let Some(value) = token {
-            request.push_str(&format!("Authorization: Bearer {value}\r\n"));
-        }
-        if !payload.is_empty() {
-            request.push_str("Content-Type: application/json\r\n");
-            request.push_str(&format!("Content-Length: {}\r\n", payload.len()));
-        }
-        request.push_str("\r\n");
-        request.push_str(&payload);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| format!("istemci kurulamadı: {error}"))?;
 
-        stream
-            .write_all(request.as_bytes())
-            .map_err(|error| format!("istek gönderilemedi: {error}"))?;
+    let mut request = client.request(verb, &url).header("Accept", "application/json");
+    if let Some(value) = token {
+        request = request.header("Authorization", format!("Bearer {value}"));
+    }
+    if let Some(payload) = body.filter(|text| !text.is_empty()) {
+        request = request.header("Content-Type", "application/json").body(payload);
+    }
 
-        let mut raw = Vec::new();
-        stream
-            .read_to_end(&mut raw)
-            .map_err(|error| format!("yanıt okunamadı: {error}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("çekirdeğe bağlanılamadı: {error}"))?;
+    let status = response.status().as_u16();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("yanıt okunamadı: {error}"))?;
 
-        let split = raw
-            .windows(4)
-            .position(|window| window == b"\r\n\r\n")
-            .ok_or_else(|| "yanıt bozuk".to_string())?;
+    Ok(CoreResponse { status, body: text })
+}
 
-        let head = String::from_utf8_lossy(&raw[..split]).to_string();
-        let status = head
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .and_then(|code| code.parse::<u16>().ok())
-            .ok_or_else(|| "durum kodu okunamadı".to_string())?;
+/// Kabuğun hangi adrese baktığı — arayüz bunu Sistem Sağlığı ekranında yazar.
+#[tauri::command]
+fn server_info() -> ServerInfo {
+    ServerInfo { base: server_base(), local: is_local_mode() }
+}
 
-        Ok(CoreResponse {
-            status,
-            body: String::from_utf8_lossy(&raw[split + 4..]).to_string(),
-        })
-    })
-    .await
-    .map_err(|error| format!("istek tamamlanamadı: {error}"))?
+#[derive(serde::Serialize)]
+struct ServerInfo {
+    base: String,
+    local: bool,
 }
 
 // --------------------------------------------------------------- güncelleme
@@ -635,14 +659,23 @@ fn main() {
             // uygulamada kaynak klasörünün yerini yalnız Tauri bilir
             // (`resource_dir`) ve o yol ancak uygulama kurulduktan sonra
             // sorulabilir.
-            let child = spawn_core(app.handle());
-            if let Ok(mut guard) = app.state::<Sidecar>().0.lock() {
-                *guard = child;
+            // SİDECAR YALNIZ YEREL KİPTE BAŞLAR (ADR 0026). Sunucu kipinde
+            // veri merkezdedir; burada ikinci bir çekirdek açmak, kullanıcının
+            // BOŞ bir yerel veritabanına bakmasına ve "verilerim gitti"
+            // sanmasına yol açardı.
+            if is_local_mode() {
+                let child = spawn_core(app.handle());
+                if let Ok(mut guard) = app.state::<Sidecar>().0.lock() {
+                    *guard = child;
+                }
+            } else {
+                diag(app.handle(), &format!("sunucu kipi: {}", server_base()));
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             core_request,
+            server_info,
             update_support,
             update_check,
             update_download,

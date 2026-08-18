@@ -61,11 +61,16 @@ export function callGroup(groupId) {
 }
 
 /**
- * Sesi YALNIZ bu bilgisayarda dinletir.
+ * Sesin kendisini getirir; ÇALMAZ. Çalma işi kabuğundur.
+ *
+ * Backend sunucuda koşuyor ve orada hoparlör yok (ADR 0026); `audio.play`
+ * çağrılsaydı ses veri merkezinde, yani hiç kimsenin duymadığı bir yerde
+ * çalınırdı — üstelik "çaldı" diye başarı dönerek.
+ *
  * `ring`/`callGroup` ile karıştırılmamalı: bu okula duyulmaz.
  */
-export function preview(sound, volume) {
-  return need()(`${BASE}/preview`, { method: 'POST', body: { sound, volume } });
+export function preview(sound) {
+  return need()(`${BASE}/preview`, { method: 'POST', body: { sound } });
 }
 
 export function rebuildVoices() {
