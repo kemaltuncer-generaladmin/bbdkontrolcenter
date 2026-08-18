@@ -57,6 +57,14 @@ platform:
     # olarak AÇIKÇA bildiriliyor. Kullanıcının ~/.cups/lpoptions dosyasındaki
     # varsayılana güvenilmez: bu makinede orada A6 yazıyordu.
     media: "A4"
+    # BİR TIKLAMA BİR BASKI. Aynı belge bu süre içinde ikinci kez istenirse
+    # kuyruğa tekrar verilmez; ilk işin sonucu `duplicate: true` ile döner.
+    # Sahada aynı rapor arka arkaya çıkıyordu ve tetikleyici tek bir yer
+    # değildi (üst üste binen önizleme katmanı, çift tıklama, sabırsız
+    # kullanıcı); koruma hepsinin geçtiği tek kapıya kondu.
+    # Kasıtlı ikinci baskı engellenmez: `copies` kullanılır ya da pencere
+    # geçtikten sonra yeniden basılır. 0 yazmak korumayı kapatır.
+    duplicate_window_seconds: 12
     job_timeout_seconds: 120
     keep_job_history_days: 30
 

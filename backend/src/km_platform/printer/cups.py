@@ -39,11 +39,26 @@ from __future__ import annotations
 import asyncio
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
 #: Baskı işi bu kadar sürede kuyruğa verilemezse süreç öldürülür.
 DEFAULT_TIMEOUT = 120.0
+
+#: AYNI BELGE BU SÜRE İÇİNDE İKİNCİ KEZ GÖNDERİLMEZ (saniye).
+#:
+#: "Yazdır"a bir kez basıldığında bir kez basılmalı. Sahada bunun bozulduğu
+#: görüldü: aynı rapor arka arkaya çıkıyordu. Tetikleyici tek bir şey değil —
+#: üst üste binen önizleme katmanları, çift tıklama, ekranın yeniden çizilmesi
+#: ve ağ yavaşken sabırsızlanan kullanıcı aynı sonucu veriyor. Hepsinin ortak
+#: noktası TEK KAPIDAN geçmeleri (K4), o yüzden koruma da burada durur:
+#: yirmi iki modülün her biri ayrı ayrı korunmak zorunda kalmaz.
+#:
+#: SÜRE KISA TUTULDU. Amaç kasıtlı ikinci baskıyı engellemek DEĞİL — o meşru
+#: bir istek ve `copies` ile ya da birkaç saniye sonra tekrar basarak yapılır.
+#: Amaç, kullanıcının TEK eyleminin birden çok işe dönüşmesini engellemek.
+DUPLICATE_WINDOW = 12.0
 
 #: Klasik USB kuyruğu: çekirdek sürücüsü doğrudan USB aygıtına yazar.
 _USB_URI = re.compile(r"^(usb://|hp:/usb/)", re.IGNORECASE)
@@ -156,6 +171,17 @@ class PrinterService:
         # Ürettiğimiz raporlar A4. Kuyruğun varsayılanına güvenilmez; bu
         # makinede varsayılan A6 çıktı ve yazıcı kâğıt uyuşmazlığı verdi.
         self._media = str(section.get("media") or "").strip() or "A4"
+        # Aynı belgenin arka arkaya gönderilmesini engelleyen pencere.
+        # 0 yazılırsa koruma kapanır; ayar bilerek bırakıldı ama varsayılanı
+        # kapatmak için bir sebep yok.
+        window = section.get("duplicate_window_seconds")
+        self._duplicate_window = (
+            DUPLICATE_WINDOW if window is None else max(0.0, float(window))
+        )
+        #: Son gönderilen işler: (kuyruk, dosya, boyut, değişim damgası) →
+        #: (gönderim anı, sonuç). Süreç belleğinde durur ve durması yeterli:
+        #: koruma "kullanıcının tek eylemi" ölçeğinde, saatler ölçeğinde değil.
+        self._recent: dict[tuple[str, str, int, int], tuple[float, dict[str, Any]]] = {}
 
     # ------------------------------------------------------------- keşif
 
@@ -421,13 +447,65 @@ class PrinterService:
 
     # ------------------------------------------------------------- baskı
 
+    def _fingerprint(self, path: Path, queue: str) -> tuple[str, str, int, int] | None:
+        """Belgeyi TANIMLAYAN damga: kuyruk + yol + boyut + değişim anı.
+
+        Yol tek başına yetmez — aynı ada yeniden üretilen bir rapor BAŞKA
+        belgedir ve basılabilmelidir. Boyut ve değişim damgası bunu ayırır:
+        rapor yeniden üretilmişse damga değişir, koruma devreye girmez.
+        """
+        try:
+            info = path.stat()
+        except OSError:
+            return None
+        return (queue, str(path), int(info.st_size), int(info.st_mtime_ns))
+
+    def _recent_job(self, key: tuple[str, str, int, int]) -> dict[str, Any] | None:
+        """Bu belge az önce gönderildi mi. Süresi geçmiş kayıtlar atılır."""
+        if self._duplicate_window <= 0:
+            return None
+        now = time.monotonic()
+        for stale, (moment, _) in list(self._recent.items()):
+            if now - moment > self._duplicate_window:
+                del self._recent[stale]
+        found = self._recent.get(key)
+        if found is None:
+            return None
+        moment, result = found
+        if now - moment > self._duplicate_window:
+            del self._recent[key]
+            return None
+        return result
+
     async def print_file(self, path: Path, *, title: str = "", copies: int = 1) -> dict[str, Any]:
-        """Dosyayı USB'deki LaserJet'e yollar. Onay sorulmaz, doğrudan basılır."""
+        """Dosyayı USB'deki LaserJet'e yollar. Onay sorulmaz, doğrudan basılır.
+
+        BİR EYLEM BİR BASKI. Aynı belge birkaç saniye içinde ikinci kez
+        istenirse İŞ TEKRAR GÖNDERİLMEZ; ilk işin sonucu `duplicate: True` ile
+        geri verilir. Sahada aynı raporun arka arkaya çıktığı görüldü ve
+        tetikleyici tek bir yer değildi — koruma bu yüzden çağıranlarda değil,
+        hepsinin geçtiği bu kapıda duruyor (K4).
+
+        Kopya isteyen `copies` kullanır: o TEK iştir, kuyruğa bir kez girer.
+        """
         if not path.is_file():
             raise PrinterError(f"Basılacak dosya bulunamadı: {path}")
 
         lp, _ = self._tools()
         printer = await self.target()
+
+        # Damga hedef SEÇİLDİKTEN sonra hesaplanır: aynı belgeyi bilerek başka
+        # bir kuyruğa göndermek ikinci baskı değil, farklı bir iştir.
+        key = self._fingerprint(path, str(printer["name"]))
+        if key is not None:
+            previous = self._recent_job(key)
+            if previous is not None:
+                self._log.info("aynı belge yeniden gönderilmedi",
+                               printer=printer["name"], title=title,
+                               window=self._duplicate_window)
+                return {**previous, "duplicate": True,
+                        "note": f"Bu belge {int(self._duplicate_window)} saniye içinde "
+                                "zaten yazıcıya gönderildi; ikinci kez gönderilmedi."}
 
         args = [lp, "-d", printer["name"], "-n", str(max(1, int(copies)))]
 
@@ -466,8 +544,17 @@ class PrinterService:
 
         self._log.info("baskı gönderildi", printer=printer["name"], job=job,
                        title=title, media=self._media)
-        return {"ok": True, "printer": printer["name"], "label": printer["name"],
-                "job": job, "copies": max(1, int(copies)), "media": self._media}
+        result: dict[str, Any] = {
+            "ok": True, "printer": printer["name"], "label": printer["name"],
+            "job": job, "copies": max(1, int(copies)), "media": self._media,
+            "duplicate": False,
+        }
+        # Damga İŞ KUYRUĞA GİRDİKTEN SONRA yazılır: başarısız bir gönderim
+        # tekrar denenebilmeli, yoksa ilk deneme yazıcıyı bulamadığında
+        # kullanıcı pencere boyunca hiç basamazdı.
+        if key is not None:
+            self._recent[key] = (time.monotonic(), dict(result))
+        return result
 
     async def status(self) -> dict[str, Any]:
         """Ekranın gösterebileceği durum — hata fırlatmaz, anlatır.

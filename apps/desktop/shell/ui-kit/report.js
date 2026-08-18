@@ -36,6 +36,15 @@ const REPORT_TIMEOUT = 600;
 
 export function reportChain({ api, root, toast, base }) {
   let lastPath = '';
+  //: AÇIK ÖNİZLEME TEKTİR.
+  //:
+  //: Eskiden her `run()` köke YENİ bir katman ekliyor, öncekini kaldırmıyordu.
+  //: "Üret ve yazdır"a üç kez basan kullanıcının ekranında üst üste üç katman
+  //: birikiyordu ve her birinin kendi "Yazdır" düğmesi CANLIYDI. Üsttekinden
+  //: basıp kapatınca altından aynı raporun bir katmanı daha çıkıyor, o da
+  //: basılıyordu: kullanıcının gördüğü şey "yazıcı aynı raporu basıp
+  //: duruyor"du. Katman tek tutulunca o dizi kökten biter.
+  let openOverlay = null;
 
   async function printerState() {
     // Sunucunun yazıcısı SORULMAZ: kâğıt orada çıkmıyor. Tek doğru soru
@@ -104,8 +113,13 @@ export function reportChain({ api, root, toast, base }) {
     const close = () => {
       document.removeEventListener('keydown', onKey);
       overlay.remove();
+      if (openOverlay === overlay) openOverlay = null;
     };
     const onKey = (event) => { if (event.key === 'Escape') close(); };
+
+    // Önceki katman KAPATILIR: dinleyicisi de gider, düğmesi de. Yalnız
+    // `remove()` demek dinleyiciyi bırakırdı.
+    if (openOverlay) openOverlay.close();
 
     head.append(h('span', 'kit-spacer'), note, printBtn,
       button('Kapat', { variant: 'ghost', onClick: close }));
@@ -132,6 +146,8 @@ export function reportChain({ api, root, toast, base }) {
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
     document.addEventListener('keydown', onKey);
     root.append(overlay);
+    overlay.close = close;
+    openOverlay = overlay;
 
     // Yazıcı durumu ÖNCEDEN okunur: kullanıcı tıklayıp hata almasın.
     printerState().then((status) => {

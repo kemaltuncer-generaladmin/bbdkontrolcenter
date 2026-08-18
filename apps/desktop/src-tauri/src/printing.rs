@@ -19,12 +19,52 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 /// Seçilen yazıcının saklandığı dosya (uygulama veri dizini).
 const PREF_FILE: &str = "yazici.json";
+
+/// Ürettiğimiz raporlar A4'tür ve boyut AÇIKÇA bildirilir.
+///
+/// Söylenmezse kullanıcının `~/.cups/lpoptions` dosyasındaki varsayılan
+/// geçerli olur; sahadaki makinede orada `PageSize=A6` yazıyordu ve yazıcı A4
+/// belgeyi A6 sanıp kâğıt uyuşmazlığı veriyordu. İş CUPS'a sorunsuz giriyor,
+/// hatayı cihaz veriyor — uygulama "gönderildi" derken yazıcı kırmızı yanıyor
+/// ve kuyruğa takılı iş elle temizlenene kadar orada kalıyordu.
+///
+/// Bu bilgi `km_platform/printer/cups.py` içinde acıyla kazanılmıştı; baskı
+/// kabuğa taşınırken buraya taşınmamıştı. `media` ile `PageSize` CUPS'ta AYRI
+/// iki seçenektir (ilki genel IPP adı, ikincisi PPD'nin kendi anahtarı) ve
+/// ikisi birden verilir ki hangi yoldan okunursa okunsun aynı boyut çıksın.
+#[cfg(not(windows))]
+const MEDIA: &str = "A4";
+
+/// AYNI BELGE BU SÜRE İÇİNDE İKİNCİ KEZ KUYRUĞA VERİLMEZ.
+///
+/// Çekirdekteki kapının (`km_platform/printer/cups.py`) aynısı. Yerel baskı o
+/// kapıdan HİÇ geçmiyor — baytlar doğrudan kabuğa gelip `lp`ye veriliyor — bu
+/// yüzden koruma burada ayrıca durmak zorunda; yoksa "bir tıklama bir baskı"
+/// sözü yalnız sunucu yolunda geçerli olurdu.
+const DUPLICATE_WINDOW: Duration = Duration::from_secs(12);
+
+/// Son gönderilen iş: (yazıcı, belge özeti) ve gönderim anı.
+static SON_BASKI: Mutex<Option<(String, u64, Instant)>> = Mutex::new(None);
+
+/// Belge içeriğinin ucuz özeti (FNV-1a). Şifreleme değil, AYIRT ETME içindir:
+/// aynı raporun ikinci kez gönderilmesiyle başka bir raporun gönderilmesini
+/// ayırmaya yeter.
+fn ozet(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PrinterPref {
@@ -169,7 +209,20 @@ fn spool(file: &Path, printer: &str, helper: Option<PathBuf>) -> Result<(), Stri
 
 #[cfg(not(windows))]
 fn spool(file: &Path, printer: &str, _helper: Option<PathBuf>) -> Result<(), String> {
-    run("lp", &["-d", printer, &file.to_string_lossy()]).map(|_| ())
+    // Kâğıt boyutu iki adla birden söylenir — gerekçe `MEDIA` başlığında.
+    run(
+        "lp",
+        &[
+            "-d",
+            printer,
+            "-o",
+            &format!("media={MEDIA}"),
+            "-o",
+            &format!("PageSize={MEDIA}"),
+            &file.to_string_lossy(),
+        ],
+    )
+    .map(|_| ())
 }
 
 /// Windows yardımcısının kurulumdaki yolu. Diğer sistemlerde `None`.
@@ -217,12 +270,37 @@ pub fn printer_print(
         return Err("Belge boş geldi; yazdırma denenmedi.".into());
     }
 
+    // BİR TIKLAMA BİR BASKI. Aynı belge aynı yazıcıya birkaç saniye içinde
+    // ikinci kez gelirse kuyruğa VERİLMEZ. Kasıtlı ikinci baskı engellenmez:
+    // pencere geçtikten sonra ya da `copies` ile alınır.
+    let damga = ozet(&bytes);
+    {
+        let mut son = SON_BASKI.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((onceki, onceki_damga, an)) = son.as_ref() {
+            if *onceki == printer
+                && *onceki_damga == damga
+                && an.elapsed() < DUPLICATE_WINDOW
+            {
+                return Ok(printer);
+            }
+        }
+        // Damga ŞİMDİ yazılır: `lp` saniyeler sürebiliyor ve ikinci tıklama
+        // tam o aralıkta geliyor. Gönderim sonrasına bırakmak, korumanın en
+        // çok gerektiği anda kapalı olması demekti.
+        *son = Some((printer.clone(), damga, Instant::now()));
+    }
+
     let safe = name
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
         .collect::<String>();
     let stem = if safe.is_empty() { "belge.pdf".to_string() } else { safe };
-    let file = std::env::temp_dir().join(format!("km-{}-{}", std::process::id(), stem));
+    // AD BELGEYE ÖZGÜ OLMALI. Eskiden yalnız süreç kimliği ve ad kullanılıyordu;
+    // Türkçe rapor adları ASCII süzgecinden geçince ("Öğrenci Raporu.pdf" →
+    // "renciRaporu.pdf") farklı raporlar aynı geçici dosyaya düşebiliyordu.
+    // Özet eklenince her belge kendi dosyasını alır.
+    let file = std::env::temp_dir()
+        .join(format!("km-{}-{:016x}-{}", std::process::id(), damga, stem));
     std::fs::write(&file, &bytes).map_err(|e| format!("Geçici dosya yazılamadı: {e}"))?;
 
     let helper = helper_path(&app);

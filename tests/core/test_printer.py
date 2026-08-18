@@ -10,6 +10,8 @@ alındı. İki gerçek hata bu testlerle kapandı:
    hatası veriyordu.
 """
 
+import asyncio
+
 import pytest
 
 from km_platform.printer.cups import (
@@ -304,3 +306,153 @@ async def test_cihaz_kimligi_okunamazsa_kimse_tuzak_sayilmaz(monkeypatch) -> Non
     assert printers[KLASIK]["trapped"] is False
     chosen = await service.target()
     assert chosen["name"] == SURUCUSUZ
+
+
+# ---------------------------------------------------------------------------
+# BİR TIKLAMA BİR BASKI
+#
+# Sahada yazıcı "aynı raporu basıp duruyor"du. Tetikleyici tek bir yer değildi:
+# üst üste binen önizleme katmanları, çift tıklama, ağ yavaşken sabırsızlanan
+# kullanıcı — hepsi aynı sonucu veriyor. Ortak noktaları bu kapıdan geçmeleri
+# (K4), koruma da bu yüzden burada duruyor.
+# ---------------------------------------------------------------------------
+
+
+def _yazici_kurulumu(service: PrinterService, monkeypatch, calls: list) -> None:
+    """`lp` çağrılarını toplayan, hedefi sabit bir kurulum."""
+
+    async def fake_run(*args: str):
+        calls.append(args)
+        return 0, f"request id is HP_X-{len(calls)} (1 file(s))", ""
+
+    async def fake_target():
+        return {"name": "HP_X", "uri": "hp:/usb/HP_X", "usb": True,
+                "state": "boşta", "accepting": True, "ready": True}
+
+    monkeypatch.setattr(service, "_tools", lambda: ("/usr/bin/lp", "/usr/bin/lpstat"))
+    monkeypatch.setattr(service, "_run", fake_run)
+    monkeypatch.setattr(service, "target", fake_target)
+
+
+@pytest.mark.asyncio
+async def test_ayni_belge_pencerede_ikinci_kez_gonderilmez(tmp_path, monkeypatch) -> None:
+    service = PrinterService(FakeConfig({}), _Log())
+    pdf = tmp_path / "rapor.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    calls: list = []
+    _yazici_kurulumu(service, monkeypatch, calls)
+
+    ilk = await service.print_file(pdf, title="rapor")
+    ikinci = await service.print_file(pdf, title="rapor")
+
+    assert ilk["duplicate"] is False
+    assert ikinci["duplicate"] is True
+    # ASIL İDDİA: `lp` BİR KEZ çalıştı.
+    assert len(calls) == 1
+    # Kullanıcı ne olduğunu okuyabilmeli; sessizce yutulmaz.
+    assert "ikinci kez gönderilmedi" in ikinci["note"]
+    # İlk işin bilgisi korunur: ekran "hangi yazıcıya gitti" diyebilmeli.
+    assert ikinci["printer"] == ilk["printer"]
+
+
+@pytest.mark.asyncio
+async def test_pencere_gectikten_sonra_yeniden_basilabilir(tmp_path, monkeypatch) -> None:
+    """Koruma kasıtlı ikinci baskıyı ENGELLEMEZ; yalnız tek eylemi tekilleştirir."""
+    service = PrinterService(FakeConfig({"duplicate_window_seconds": 0.01}), _Log())
+    pdf = tmp_path / "rapor.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    calls: list = []
+    _yazici_kurulumu(service, monkeypatch, calls)
+
+    await service.print_file(pdf, title="rapor")
+    await asyncio.sleep(0.05)
+    tekrar = await service.print_file(pdf, title="rapor")
+
+    assert tekrar["duplicate"] is False
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_yeniden_URETILEN_rapor_ayri_belgedir(tmp_path, monkeypatch) -> None:
+    """Aynı ada yeniden üretilen rapor BAŞKA belgedir ve basılabilmelidir.
+
+    Damga yalnız yola bakmıyor; boyut ve değişim damgası da giriyor. Yoksa
+    "raporu yeniden üret, sonra bas" akışı pencere boyunca ölürdü.
+    """
+    service = PrinterService(FakeConfig({}), _Log())
+    pdf = tmp_path / "rapor.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    calls: list = []
+    _yazici_kurulumu(service, monkeypatch, calls)
+
+    await service.print_file(pdf, title="rapor")
+    pdf.write_bytes(b"%PDF-1.4\nyeni icerik uretildi\n")
+    yeni = await service.print_file(pdf, title="rapor")
+
+    assert yeni["duplicate"] is False
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_farkli_belge_engellenmez(tmp_path, monkeypatch) -> None:
+    service = PrinterService(FakeConfig({}), _Log())
+    bir = tmp_path / "bir.pdf"
+    iki = tmp_path / "iki.pdf"
+    bir.write_bytes(b"%PDF-1.4\nbir\n")
+    iki.write_bytes(b"%PDF-1.4\niki\n")
+    calls: list = []
+    _yazici_kurulumu(service, monkeypatch, calls)
+
+    await service.print_file(bir, title="bir")
+    sonuc = await service.print_file(iki, title="iki")
+
+    assert sonuc["duplicate"] is False
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_basarisiz_gonderim_pencereyi_KILITLEMEZ(tmp_path, monkeypatch) -> None:
+    """İlk deneme yazıcıyı bulamazsa kullanıcı hemen tekrar deneyebilmeli.
+
+    Damga iş kuyruğa GİRDİKTEN sonra yazılır. Önce yazılsaydı, yazıcı o an
+    kapalıysa kullanıcı pencere boyunca hiç basamaz ve nedenini anlamazdı.
+    """
+    service = PrinterService(FakeConfig({}), _Log())
+    pdf = tmp_path / "rapor.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    calls: list = []
+
+    async def fake_run(*args: str):
+        calls.append(args)
+        if len(calls) == 1:
+            return 1, "", "lp: yazıcı yok"
+        return 0, "request id is HP_X-2 (1 file(s))", ""
+
+    async def fake_target():
+        return {"name": "HP_X", "uri": "hp:/usb/HP_X", "usb": True,
+                "state": "boşta", "accepting": True, "ready": True}
+
+    monkeypatch.setattr(service, "_tools", lambda: ("/usr/bin/lp", "/usr/bin/lpstat"))
+    monkeypatch.setattr(service, "_run", fake_run)
+    monkeypatch.setattr(service, "target", fake_target)
+
+    with pytest.raises(PrinterError):
+        await service.print_file(pdf, title="rapor")
+    sonuc = await service.print_file(pdf, title="rapor")
+
+    assert sonuc["duplicate"] is False
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_koruma_ayardan_kapatilabilir(tmp_path, monkeypatch) -> None:
+    service = PrinterService(FakeConfig({"duplicate_window_seconds": 0}), _Log())
+    pdf = tmp_path / "rapor.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    calls: list = []
+    _yazici_kurulumu(service, monkeypatch, calls)
+
+    await service.print_file(pdf, title="rapor")
+    await service.print_file(pdf, title="rapor")
+
+    assert len(calls) == 2
