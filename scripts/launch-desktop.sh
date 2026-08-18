@@ -15,10 +15,11 @@
 # Sıra:
 #   1. Ortam denetimi (.venv, cargo)
 #   2. Kabuk zaten açıksa ikincisini açma
-#   3. Menü kaydını üret (modules/*/module.yaml → shell/registry.json)
-#   4. Kaynak ikiliden yeniyse yeniden derle (ilerleme penceresiyle)
-#   5. Artık kabuğa bağlı olmayan çekirdek kalıntısını indir
-#   6. Kabuğu başlat, 127.0.0.1:8787 açılana kadar bekle, açılmazsa söyle
+#   3. `main`'den güncel kodu al (yerel değişiklik varsa DOKUNMAZ)
+#   4. Menü kaydını üret (modules/*/module.yaml → shell/registry.json)
+#   5. Kaynak ikiliden yeniyse yeniden derle (ilerleme penceresiyle)
+#   6. Artık kabuğa bağlı olmayan çekirdek kalıntısını indir
+#   7. Kabuğu başlat, 127.0.0.1:8787 açılana kadar bekle, açılmazsa söyle
 #
 # Çekirdeği kabuk kendi başlatır (src-tauri/src/main.rs); burada elle
 # başlatılmaz — iki çekirdek aynı porta oturmasın.
@@ -104,7 +105,61 @@ if pgrep -x kontrol-merkezi >/dev/null 2>&1; then
     exit 0
 fi
 
-# --- 3. menü kaydı --------------------------------------------------------
+# --- 3. güncel kodu al ----------------------------------------------------
+# UZAKTAN GELİŞTİRME İÇİN. Kod başka bir makinede yazılıp `main`'e
+# gönderilebiliyor; bu makine açılışta onu alsın ve derleme o kodla koşsun.
+# Sıra önemli: çekme, menü kaydından ve derlemeden ÖNCE olmalı — yoksa bu
+# açılış eski kodu derler, yenisi ancak bir sonrakinde görünür.
+#
+# ÜÇ ŞEYİ ASLA YAPMAZ:
+#
+#   1. YEREL DEĞİŞİKLİĞİ EZMEZ. Çalışma ağacı kirliyse çekme HİÇ denenmez.
+#      Burası bir geliştirme kurulumu; yarım kalmış bir işi `git pull` ile
+#      ezmek, kurtarılamayacak tek şeyi kurtarılamaz hâle getirirdi.
+#   2. BİRLEŞTİRME YAPMAZ. Yalnız `--ff-only`. Yerelde push edilmemiş commit
+#      varsa çekme durur ve söyler; arka planda çakışma çözmeye çalışan bir
+#      açılış betiği, sahibinin haberi olmadan geçmişi değiştirirdi.
+#   3. AÇILIŞI ENGELLEMEZ. Ağ yoksa ya da uzak sunucu yanıt vermiyorsa
+#      uygulama YİNE AÇILIR, eldeki kodla. `timeout` şart: `git fetch`
+#      kimlik doğrulama beklerken sonsuza kadar asılı kalabilir ve kullanıcı
+#      tıkladığı simgenin neden açılmadığını anlayamazdı.
+if [ -d "$ROOT/.git" ] && command -v git >/dev/null 2>&1; then
+    if [ -n "$(git -C "$ROOT" status --porcelain 2>/dev/null)" ]; then
+        log "git: çalışma ağacı kirli, çekme atlandı"
+        note "Yerelde kaydedilmemiş değişiklik var — kod güncellenmedi."
+    else
+        ONCE="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+        if timeout 45 git -C "$ROOT" pull --ff-only --quiet >>"$LOG" 2>&1; then
+            SONRA="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
+            if [ "$ONCE" != "$SONRA" ]; then
+                ADET="$(git -C "$ROOT" rev-list --count "$ONCE..$SONRA" 2>/dev/null || echo '?')"
+                log "git: $ONCE → $SONRA ($ADET commit)"
+                note "Güncel kod alındı ($ADET commit) — derleniyor."
+
+                # BAĞIMLILIK DEĞİŞTİYSE SÖYLE. Yeni bir Python paketi gelmişse
+                # `.venv` eskir ve arıza çalışma anında, anlaşılmaz bir import
+                # hatası olarak çıkar. Kurulumu betik KENDİ BAŞINA yapmaz:
+                # dakikalar sürebilir ve tek tıkla açılış beklentisini bozar.
+                if git -C "$ROOT" diff --name-only "$ONCE..$SONRA" 2>/dev/null \
+                     | grep -qE '^(backend/pyproject\.toml|modules/[^/]+/module\.yaml)$'; then
+                    log "git: bağımlılık bildirimleri değişti"
+                    note "Bağımlılıklar değişmiş olabilir — scripts/install-deps.sh çalıştırın."
+                fi
+            else
+                log "git: zaten güncel ($ONCE)"
+            fi
+        else
+            # Sebebi söylenir ama açılış SÜRER: ağ yok, kimlik doğrulama
+            # istendi ya da yerelde push edilmemiş commit var (ff mümkün değil).
+            log "git: çekilemedi, eldeki kodla devam ediliyor"
+            note "Kod güncellenemedi (ağ ya da yerel commit) — mevcut sürümle açılıyor."
+        fi
+    fi
+else
+    log "git: depo değil ya da git yok, çekme atlandı"
+fi
+
+# --- 4. menü kaydı --------------------------------------------------------
 # Modül eklendiyse/açılıp kapandıysa menü buradan güncellenir. Ucuz (~0,3 sn),
 # her açılışta koşulsuz çalışır.
 if ! "$PYTHON" "$ROOT/tools/build-ui-registry.py" >>"$LOG" 2>&1; then
@@ -112,7 +167,7 @@ if ! "$PYTHON" "$ROOT/tools/build-ui-registry.py" >>"$LOG" 2>&1; then
 fi
 log "menü kaydı güncellendi"
 
-# --- 4. gerekiyorsa derle -------------------------------------------------
+# --- 5. gerekiyorsa derle -------------------------------------------------
 # Kabuk arayüzü ikiliye gömülür: shell/ altı değişmişse ikili eskimiştir.
 #
 # Ölçü TARİH DEĞİL İÇERİKtir. Bir üstteki adım `registry.json` ve `panels/`
@@ -176,7 +231,7 @@ else
     log "ikili güncel, derleme atlandı"
 fi
 
-# --- 5. sahipsiz çekirdek --------------------------------------------------
+# --- 6. sahipsiz çekirdek --------------------------------------------------
 # Kabuk kapanınca çekirdeği de indirir; ama kabuk çökerek ölmüşse çekirdek
 # portu tutmaya devam eder ve yeni kabuk ESKİ koda bağlanır. Kabuk çalışmıyor
 # olduğuna yukarıda baktık; buradaki kalıntı gerçekten sahipsizdir.
@@ -190,7 +245,7 @@ if pgrep -f "km_core.main" >/dev/null 2>&1; then
     pgrep -f "km_core.main" >/dev/null 2>&1 && pkill -9 -f "km_core.main"
 fi
 
-# --- 6. başlat ve doğrula --------------------------------------------------
+# --- 7. başlat ve doğrula --------------------------------------------------
 log "kabuk başlatılıyor: $BIN"
 cd "$ROOT" || die "Proje klasörüne girilemedi: $ROOT"
 
