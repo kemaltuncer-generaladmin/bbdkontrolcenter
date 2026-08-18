@@ -44,6 +44,8 @@ import { dataTable } from '../../ui-kit/table.js';
 import {
   alertBox, badge, card, emptyState, hintBox, kpiRow, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
+// EŞLEME FİŞİ CİHAZDA BASILIR — gerekçe `ui-kit/printing.js` başlığında.
+import { printDocument, printerReady } from '../../ui-kit/printing.js';
 
 const BASE = '/api/bbd_canteen_devices';
 
@@ -64,6 +66,10 @@ let api = null;
 let toast = null;
 let busy = false;
 let state = { ...EMPTY_STATE };
+
+//: BU CİHAZ basabiliyor mu. `state.contract.printer_available` SUNUCUNUNKİNİ
+//: söyler ve sunucuda yazıcı yoktur; kâğıdın çıktığı yer burasıdır.
+let device = { ready: false, name: '', error: '' };
 
 const nodes = {};
 
@@ -140,6 +146,9 @@ async function loadAudit() {
 
 async function refresh() {
   await withBusy('Kantinden okunuyor…', async () => {
+    // Yazıcı durumu her tazelemede okunur: kullanıcı ayardan yazıcı seçmiş
+    // olabilir, ekranı kapatıp açması gerekmesin.
+    device = await printerReady();
     await loadKiosks();
     if (state.tab === 'audit') await loadAudit();
     paint();
@@ -150,9 +159,13 @@ async function refresh() {
 
 function paint() {
   // Yazıcı yoksa baskı kutusu HİÇ AÇILMAZ (K7): çalışmayan bir düğme bırakmak
-  // yerine yokluğu görünür olur. Karar sunucudan gelen bayrakla verilir, bu
-  // yüzden çizimde — mount anında bayrak henüz okunmamıştı.
-  nodes.printBox.hidden = !state.contract.printer_available || state.tab !== 'kiosks';
+  // yerine yokluğu görünür olur.
+  //
+  // KARAR BU CİHAZDAN OKUNUR, sunucudan gelen `printer_available` bayrağından
+  // değil: kâğıt kullanıcının masasında çıkıyor ve sunucuda yazıcı hiç yok
+  // (ADR 0026). Bayrağa bakıldığında kutu HERKESTE gizliydi — yazıcısı olan
+  // kullanıcı da eşleme fişini bastıramıyordu.
+  nodes.printBox.hidden = !device.ready || state.tab !== 'kiosks';
   if (state.tab === 'audit') paintAudit();
   else paintKiosks();
   nodes.status?.set(statusText(), !state.link.connected);
@@ -354,15 +367,32 @@ async function makeCode(row) {
   if (!reason) return;
 
   await withBusy('Kod üretiliyor…', async () => {
+    const wantsPaper = nodes.printWanted.checked;
     const result = await call(`${BASE}/kiosks/${row.id}/pairing-code`, {
       method: 'POST',
-      // Baskı, kodun düz göründüğü TEK ANDA yapılabilir: kod hiçbir yere
-      // yazılmıyor, "sonra bas" diye bir uç yok.
-      body: { reason, print: state.contract.printer_available && nodes.printWanted.checked },
+      // Fiş, kodun düz göründüğü TEK ANDA üretilebilir: kod hiçbir yere
+      // yazılmıyor, "sonra üret" diye bir uç yok. Sunucunun yazıcısı SORULMAZ
+      // (`printer_available`) — kâğıt bu cihazdan çıkıyor.
+      body: { reason, print: wantsPaper },
     });
+
+    // KÂĞIDI BURADA ÇIKARIYORUZ: sunucu yalnız PDF'i üretti.
+    let basim = null;
+    if (wantsPaper && result?.print?.path) {
+      try {
+        const printer = await printDocument(api, result.print.path, { copies: 1 });
+        basim = { printed: true, printer };
+      } catch (error) {
+        // Kod ZATEN ÜRETİLDİ ve ekranda; baskının düşmesi akışı durdurmaz (K7).
+        basim = { printed: false, error: error.message };
+      }
+    } else if (wantsPaper && result?.print?.error) {
+      basim = { printed: false, error: result.print.error };
+    }
+
     await loadKiosks();
     paint();
-    showCode(row, result?.pairing, result?.print);
+    showCode(row, result?.pairing, basim);
   });
 }
 
@@ -429,7 +459,7 @@ function showCode(row, pairing, printed) {
   }
   if (printed) {
     box.append(printed.printed
-      ? alertBox('Eşleme fişi yazıcıya gönderildi.', 'good')
+      ? alertBox(`Eşleme fişi ${printed.printer || 'yazıcıya'} gönderildi.`, 'good')
       : alertBox(`Fiş basılamadı: ${printed.error || 'bilinmeyen hata'} — kodu ekrandan okuyun.`,
         'warn'));
   }

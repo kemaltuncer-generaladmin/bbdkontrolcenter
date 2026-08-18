@@ -11,6 +11,14 @@ import { barChart, hourStrip, lineChart, paretoChart } from './charts.js';
 import {
   button, foldText, h, loadStyles, longDate, money, stamp, toaster, todayIso,
 } from './kit.js';
+// BASKI CİHAZDA YAPILIR, SUNUCUDA DEĞİL — gerekçe `ui-kit/printing.js`
+// başlığında. Bu panelin kendi `kit.js` kopyası var ama yazdırmanın ikinci bir
+// kopyası OLMAZ: kâğıdın çıkacağı yeri tek yer bilir.
+//
+// YOL ÇALIŞMA ANINA GÖREDİR: panel `shell/panels/bbd_canteen_reports/` altına
+// kopyalanıyor (`tools/build-ui-registry.py`), oradan `../../ui-kit/` doğru
+// yeri gösterir. Kaynak ağacında bu göreli yol bir dosyaya denk gelmez.
+import { printDocument, printerReady } from '../../ui-kit/printing.js';
 
 loadStyles(import.meta.url);
 
@@ -571,13 +579,15 @@ async function exportFile(kind, extra = {}) {
   openPreview(result);
 }
 
-/** Yazıcının durumunu okur; hata varsa metnini döner. */
+/** Bu CİHAZIN yazıcısını okur; basılamıyorsa sebebini döner.
+ *
+ *  Sunucunun `/printer` ucu SORULMAZ: o sunucudaki kuyrukları anlatıyor ve
+ *  sunucuda yazıcı yok. Kâğıt kullanıcının masasında çıkıyor. */
 async function printerState() {
-  try {
-    return await api('/api/bbd_canteen_reports/printer');
-  } catch (error) {
-    return { ready: false, error: error.message };
-  }
+  const status = await printerReady();
+  return status.ready
+    ? { ready: true, target: { name: status.name } }
+    : { ready: false, error: status.error };
 }
 
 /** Üretilen raporun önizleme penceresi + yazdır düğmesi. */
@@ -617,17 +627,12 @@ function openPreview(result) {
     note.textContent = 'Yazıcıya gönderiliyor…';
     note.classList.remove('bad');
     try {
-      const sent = await api('/api/bbd_canteen_reports/print', {
-        method: 'POST', body: { path: result.path },
-      });
-      if (!sent.ok) {
-        note.textContent = sent.error;
-        note.classList.add('bad');
-        toast(sent.error, 'bad');
-      } else {
-        note.textContent = `${sent.printer} yazıcısına gönderildi.`;
-        toast(`Yazdırılıyor: ${sent.printer}`, 'good');
-      }
+      // Eskiden `/api/bbd_canteen_reports/print` çağrılıyordu: o uç SUNUCUDAKİ
+      // CUPS'a gidiyor, sunucuda CUPS kurulu değil ve düğme her tıklamada
+      // "sistemde CUPS (lp/lpstat) bulunamadı" diyordu.
+      const printer = await printDocument(api, result.path, { copies: 1 });
+      note.textContent = `${printer} yazıcısına gönderildi.`;
+      toast(`Yazdırılıyor: ${printer}`, 'good');
     } catch (error) {
       note.textContent = error.message;
       note.classList.add('bad');
@@ -670,16 +675,11 @@ function openPreview(result) {
       printBtn.disabled = true;
       return;
     }
-    // Kuyruk "hazır" derken cihazda kâğıt bitmiş olabilir; yazıcının KENDİ
-    // bildirdiği durum ve toner seviyesi de gösterilir.
-    const device = status.device || {};
-    const parts = [status.target?.name || 'USB yazıcı'];
-    if (typeof device.tonerPercent === 'number') parts.push(`toner %${device.tonerPercent}`);
-    note.textContent = parts.join(' · ');
-    if (status.warning) {
-      note.textContent = `${note.textContent} — ${status.warning}`;
-      note.classList.add('bad');
-    }
+    // TONER VE CİHAZ UYARISI ARTIK OKUNMUYOR: onları sunucudaki `ipp-usb`
+    // sorgusu üretiyordu ve sunucu yazıcıyı görmüyor. Yazıcının kendi durumu
+    // yerel kuyruktan sorulabilir, ama bu ayrı bir iştir; ekran şimdi yalnız
+    // bildiğini söylüyor — uydurulmuş bir "hazır" rozetinden iyidir.
+    note.textContent = status.target?.name || 'Yazıcı';
   });
 }
 

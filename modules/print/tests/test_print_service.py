@@ -217,6 +217,56 @@ async def test_yazici_yoksa_liste_CALISIR_baski_nedenini_soyler(store: Any,
     assert "Yazıcı yeteneği" in sonuc["error"]
 
 
+async def test_cihaz_bastiysa_sunucu_YALNIZ_sayar(store: Any, rapor: Path) -> None:
+    """`spooled` = "kâğıt çoktan çıktı, sen yalnız kaydet".
+
+    Sunucu kipinde (ADR 0026) tek çalışan yol budur: çekirdek sunucuda koşuyor,
+    sunucuda CUPS yok, yazıcı kullanıcının masasında. Kabuk belgeyi kendi
+    kuyruğuna verip hangi yazıcıya gittiğini söylüyor. Yetenek kayıtlı OLSA da
+    çağrılmaz — çağrılsaydı aynı belge iki kez basılırdı.
+    """
+    printer = FakePrinter()
+    await add_output(store, output_id="a1", path=rapor)
+    service = build(store, printer)
+
+    sonuc = await service.reprint("a1", spooled="Brother_DCP_L2540DW")
+
+    assert sonuc["ok"] is True
+    assert sonuc["printer"] == "Brother_DCP_L2540DW"
+    assert sonuc["mode"] == "device"
+    assert printer.calls == []
+    (satir,) = (await service.outputs())["items"]
+    assert satir["printedCount"] == 1
+
+
+async def test_cihaz_bastiysa_yetenek_GEREKMEZ(store: Any, rapor: Path) -> None:
+    """Sunucuda yazıcı yeteneği hiç kayıtlı değilken de sayaç işler.
+
+    Eskiden bu durumda uç "Yazıcı yeteneği bu kurulumda yok" diyordu; kâğıt
+    kullanıcının yazıcısından çıkmışken sayaç artmıyor, ekran hata gösteriyordu.
+    """
+    await add_output(store, output_id="a1", path=rapor)
+    service = build(store)
+
+    sonuc = await service.reprint("a1", spooled="HP_LaserJet")
+
+    assert sonuc["ok"] is True
+    (satir,) = (await service.outputs())["items"]
+    assert satir["printedCount"] == 1
+
+
+async def test_kayip_dosya_cihaz_bastiysa_da_sayilmaz(store: Any, tmp_path: Path) -> None:
+    # Dosya yoksa kabuk onu basmış olamaz; `spooled` bu kapıyı açmaz.
+    await add_output(store, output_id="a1", path=tmp_path / "yok.pdf")
+    service = build(store)
+
+    sonuc = await service.reprint("a1", spooled="HP_LaserJet")
+
+    assert sonuc["ok"] is False
+    (satir,) = (await service.outputs())["items"]
+    assert satir["printedCount"] == 0
+
+
 async def test_kopya_sayisi_ust_sinira_kirpilir(store: Any, rapor: Path) -> None:
     printer = FakePrinter()
     await add_output(store, output_id="a1", path=rapor)

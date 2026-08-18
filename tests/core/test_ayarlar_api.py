@@ -171,14 +171,58 @@ def test_izinsiz_kullanici_uclara_ulasamaz(
 
 
 def test_izinsiz_kullanici_test_sayfasi_bastiramaz(client: TestClient) -> None:
-    """Kapı gövdeden ÖNCE kapanır: reddedilen istek yazıcıya hiç ulaşmaz.
-
-    Bu uç bilerek yalnız RET yönünden sınanır; başarı yolu gerçek kâğıt
-    harcardı ve testler dış dünyaya çıkmaz.
-    """
+    """Kapı gövdeden ÖNCE kapanır: reddedilen istek belgeyi hiç üretmez."""
     token = personel_token(client, yonetici_token(client))
     cevap = client.post("/api/settings/printer/test-page", headers=basliklar(token))
     assert cevap.status_code == 403, cevap.text
+
+
+def test_test_sayfasi_URETIR_basmaz(client: TestClient) -> None:
+    """Uç artık kâğıt çıkarmıyor: PDF üretip yolunu veriyor, basan taraf kabuk.
+
+    BAŞARI YOLU ARTIK SINANABİLİR. Eskiden bu uç `printer.print_file` çağırdığı
+    için testte denenemiyordu — gerçek kâğıt harcardı — ve o yüzden yalnız ret
+    yönü sınanıyordu. Sunucuda CUPS olmadığı için (ADR 0026) uç zaten hiç
+    çalışmıyordu: düğme "sistemde CUPS (lp/lpstat) bulunamadı" diyordu ve bunu
+    hiçbir test yakalamıyordu.
+    """
+    cevap = client.post("/api/settings/printer/test-page",
+                        headers=basliklar(yonetici_token(client)))
+    assert cevap.status_code == 200, cevap.text
+    govde = cevap.json()
+    assert govde["ok"] is True
+
+    # Dosya GERÇEKTEN yazılır: kabuk onu `/api/outputs/document` ile isteyecek.
+    uretilen = Path(govde["path"])
+    assert uretilen.is_file()
+    assert uretilen.suffix == ".pdf"
+    assert uretilen.read_bytes().startswith(b"%PDF")
+    # Kişisel veri taşımasa da çıktı izniyle yazılır; kural tek.
+    assert oct(uretilen.stat().st_mode)[-3:] == "600"
+
+    # Basıldığını İMA EDEN alan dönmez: "gönderildi" diyen bir gövde, kâğıt
+    # çıkmadığında kullanıcıyı yanlış yere baktırırdı.
+    assert "printer" not in govde and "job" not in govde
+
+
+def test_test_sayfasi_YAZDIRILABILIR_da(client: TestClient) -> None:
+    """Üretilen sayfa baskı kapısından da geçmeli — düğmenin tam yolu budur.
+
+    İKİ UÇ BİRLİKTE SINANIR. Ayrı ayrı doğru olup birlikte çalışmayabiliyorlar:
+    bu ekran `files.output_path` ayarını kullanıyor ve o ayar doluyken üretilen
+    dosya çıktı köklerinin DIŞINA düşüyordu. Sonuç, "Test sayfası bas"ın
+    ürettiği dosyayı yine kendi uygulamasının reddetmesiydi:
+    "Bu dosya çıktı klasörlerinde değil; güvenlik gereği verilmez."
+    """
+    basliklar_ = basliklar(yonetici_token(client))
+    uretim = client.post("/api/settings/printer/test-page", headers=basliklar_)
+    assert uretim.status_code == 200, uretim.text
+
+    # Kabuğun "Yazdır"da yaptığı ikinci adım: baytları iste.
+    cevap = client.post("/api/outputs/document", headers=basliklar_,
+                        json={"path": uretim.json()["path"]})
+    assert cevap.status_code == 200, cevap.text
+    assert cevap.json()["data"]
 
 
 def test_izinsiz_kullanici_yazamaz(client: TestClient) -> None:

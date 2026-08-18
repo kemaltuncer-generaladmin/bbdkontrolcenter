@@ -173,3 +173,70 @@ def test_kullanicinin_kendi_yolu_hiyerarsiyi_ezer(tmp_path: Path) -> None:
     result = outputs.report_dir("Kantin", fallback=tmp_path, configured=str(hedef))
     assert result == hedef
     assert mode(hedef) == 0o700
+
+
+# ------------------------------- çıktı kökleri: yazan yer ile soran yer aynı mı
+
+
+def test_modul_fallbacki_cikti_koku_sayilir(tmp_path: Path, monkeypatch) -> None:
+    """Modüllerin yazdığı yer kapıdan geçmeli.
+
+    GERÇEK ARIZA. Modüller çıktı klasörünü `ctx.module_path.parents[1] /
+    "data" / "exports"` diye kuruyor — KURULUM KÖKÜ altındaki `data/exports`.
+    Çekirdek ise `data_dir(root) / "exports"` soruyordu ve `data_dir`
+    geliştirme dışında SİSTEM veri dizinine gidiyor. Sunucuda masaüstü yok
+    (ADR 0026), iki taraf da fallback'e düşüyor ve adresler ayrışıyordu:
+    uygulamanın kendi yazdığı rapor "rapor klasöründe değil" diye reddediliyor,
+    hiçbir şey yazdırılamıyordu.
+    """
+    from km_core.files import outputs
+
+    monkeypatch.setattr(outputs, "desktop_dir", lambda: None)
+    kurulum = tmp_path / "kurulum"
+    sistem_veri = tmp_path / "sistem" / "exports"      # data_dir(root)/exports
+    modul_yolu = kurulum / "data" / "exports"          # modüllerin yazdığı yer
+    modul_yolu.mkdir(parents=True)
+
+    kokler = outputs.output_roots(kurulum, sistem_veri)
+
+    assert modul_yolu.resolve() in kokler
+    assert sistem_veri.resolve() in kokler
+
+
+def test_masaustu_varsa_rapor_koku_de_listede(tmp_path: Path, monkeypatch) -> None:
+    from km_core.files import outputs
+
+    desktop = tmp_path / "Masaüstü"
+    desktop.mkdir()
+    monkeypatch.setattr(outputs, "desktop_dir", lambda: desktop)
+
+    kokler = outputs.output_roots(tmp_path / "kurulum", tmp_path / "yedek")
+
+    assert (desktop / "Kontrol Merkezi" / "Raporlar").resolve() in kokler
+
+
+def test_ayarlanan_export_path_de_kok_sayilir(tmp_path: Path, monkeypatch) -> None:
+    # Kullanıcı çıktıyı başka klasöre yönlendirdiyse oradan da yazdırabilmeli;
+    # yoksa ayarı değiştirenin baskısı sessizce ölürdü.
+    from km_core.files import outputs
+
+    monkeypatch.setattr(outputs, "desktop_dir", lambda: None)
+    elle = tmp_path / "muhasebe-raporlari"
+
+    kokler = outputs.output_roots(tmp_path / "k", tmp_path / "y", [str(elle), "", "   "])
+
+    assert elle.resolve() in kokler
+    # Boş/boşluklu değerler kök sayılmaz: biri kabul edilseydi liste geçerli
+    # bir yola değil, çözülmüş çalışma dizinine dönerdi.
+    assert Path.cwd().resolve() not in kokler
+
+
+def test_alakasiz_klasor_kok_sayilmaz(tmp_path: Path, monkeypatch) -> None:
+    # Kapı KALDIRILMADI: yalnız doğru yere bakıyor.
+    from km_core.files import outputs
+
+    monkeypatch.setattr(outputs, "desktop_dir", lambda: None)
+    kokler = outputs.output_roots(tmp_path / "kurulum", tmp_path / "veri")
+
+    yabanci = (tmp_path / "gizli").resolve()
+    assert not any(yabanci == kok or yabanci.is_relative_to(kok) for kok in kokler)

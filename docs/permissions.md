@@ -80,6 +80,23 @@ Bunları çekirdek tanımlar; modüller tanımlayamaz.
 | `directory.view_external` | hayır | Dış rehberi görür |
 | `directory.manage` | hayır | Rehber kayıtlarını düzenler |
 
+### Çıktı basma
+| İzin | Kapsamlı | Ne yapar |
+|---|---|---|
+| `outputs.print` | hayır | Üretilmiş bir belgeyi CİHAZIN yazıcısına gönderir |
+
+Baskı kullanıcının makinesinde yapılır (ADR 0026): kabuk belgenin baytlarını
+`POST /api/outputs/document` ucundan alır ve yerel kuyruğa verir. O uç bu izni
+ister. **`print.view` ile karıştırılmaz:** o bir modül izni ve Çıktı
+Merkezi'nde HERKESİN çıktısını görme yetkisidir. "Elimdeki belgeyi bastırabilir
+miyim" ile "bütün çıktı kayıtlarını görebilir miyim" ayrı sorulardır; ikincisi
+birincisinin ön koşulu değildir. Mali Müşavir bu ayrım yapılmadan önce kendi
+ürettiği raporu bastıramıyordu.
+
+Uç nokta eski `print.view` / `settings.view` anahtarlarını da kabul etmeye devam
+eder: izinleri elle düzenlenmiş kurulumlarda yeni anahtar dağıtılana kadar
+baskılar kesilmesin.
+
 ---
 
 ## Modül izinleri
@@ -245,6 +262,7 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `directory.view_external` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `directory.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `outputs.print` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bell.manage` | ✓ | ✗ | ✗ | ✓ | ✗ |
 | `bell.delete` | ✓ | ✗ | ✗ | ✗ | ✗ |

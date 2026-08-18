@@ -206,14 +206,18 @@ def test_PDF_olmayan_govde_etiket_SAYILMAZ() -> None:
 async def test_otomatik_basimda_YALNIZ_etiket_ve_fatura_cikar(tmp_path: Path) -> None:
     # Kullanıcı "fiş yok" dedi: `handover` (kargoya teslim fişi) otomatik
     # akıştan çıkarıldı, kodu duruyor ve elle basılabiliyor.
+    #
+    # BASIMI SUNUCU YAPMAZ (ADR 0026): `autoPrintPaths` "bunları bas" listesidir
+    # ve kâğıdı kabuk çıkarır. Ölçülen şey listenin İÇERİĞİ — yanlış belge
+    # listeye girerse yanlış kâğıt çıkar, hangi katmanın bastığından bağımsız.
     yazici = FakePrinter()
     service, _, _ = _service(tmp_path, printer=yazici)
     result = await service.dispatch(91, actor="Ali")
 
     assert [item["kind"] for item in result["documents"]] == ["label", "invoice"]
-    assert sorted(result["printed"]) == ["invoice", "label"]
-    assert len(yazici.printed) == 2
-    assert all("teslim" not in path.name for path in yazici.printed)
+    assert len(result["autoPrintPaths"]) == 2
+    assert all("teslim" not in Path(path).name for path in result["autoPrintPaths"])
+    assert yazici.printed == []
     _cleanup(result)
 
 
@@ -232,7 +236,8 @@ async def test_fatura_alinamazsa_ETIKET_YINE_BASILIR(tmp_path: Path) -> None:
     result = await service.dispatch(91, actor="Ali")
 
     assert result["ok"] is True
-    assert result["printed"] == ["label"]
+    # Basılacaklar listesinde YALNIZ etiket var: faturanın dosyası hiç yazılmadı.
+    assert result["autoPrintPaths"] == [_doc(result, "label")["path"]]
     fatura = _doc(result, "invoice")
     assert fatura["error"] and fatura["path"] == ""
     _cleanup(result)
@@ -260,26 +265,41 @@ async def test_etiket_gelmediyse_KAGIT_CIKMAZ_ama_sessiz_kalinmaz(tmp_path: Path
 
 # ============================================ 6 · yazıcı yoksa iş durmaz (K7)
 
-async def test_yazici_yoksa_dosyalar_DISKE_yazilir_is_durmaz(tmp_path: Path) -> None:
+async def test_sunucuda_yazici_olmasa_da_kargoya_verilir(tmp_path: Path) -> None:
+    """Sunucuda yazıcı YOKTUR ve bu artık akışı hiç etkilemez.
+
+    Baskı kullanıcının makinesinde yapılıyor (ADR 0026); sunucuda `lp` yok.
+    Eskiden bu durum her gönderide belge satırına CUPS hatası yazıyordu —
+    "yazıcı yeteneği kayıtlı değil" — ve kâğıt hiç çıkmıyordu. Şimdi sunucu
+    basmayı hiç denemiyor: dosyayı yazıyor, "bunu bas" diyor, gerisi kabukta.
+    """
     service, _, _ = _service(tmp_path, printer=None)
     result = await service.dispatch(91, actor="Ali")
 
     assert result["ok"] is True and result["dispatched"] is True
     etiket = _doc(result, "label")
     assert Path(etiket["path"]).exists()
-    assert etiket["printed"] is False
-    assert "Yazıcı yeteneği" in etiket["printError"]
+    # Satırda hata YAZMAZ: sunucu basmayı denemediği için başarısız da olmadı.
+    assert etiket["printError"] == ""
+    assert etiket["path"] in result["autoPrintPaths"]
+    assert result["printSkipped"] == ""
     _cleanup(result)
 
 
-async def test_yazici_hazir_degilse_hata_SATIRDA_yazili_kalir(tmp_path: Path) -> None:
-    yazici = FakePrinter(hazir=False)
+async def test_dispatch_sunucunun_yaziciSINA_HIC_dokunmaz(tmp_path: Path) -> None:
+    """Yetenek kayıtlı olsa BİLE kargoya ver akışı onu kullanmaz.
+
+    Yerel kipte (`KM_SERVER_URL=local`) çekirdek kullanıcının makinesinde koşar
+    ve `printer` yeteneği gerçekten vardır. Akışın oradan basması, aynı belgeyi
+    iki kez bastırmaya açık kapı bırakırdı: bir sunucudan, bir kabuktan.
+    """
+    yazici = FakePrinter()
     service, _, _ = _service(tmp_path, printer=yazici)
     result = await service.dispatch(91, actor="Ali")
 
     assert result["ok"] is True
-    assert result["printed"] == []
-    assert all(item["printError"] for item in result["documents"] if item["path"])
+    assert yazici.printed == []
+    assert len(result["autoPrintPaths"]) == 2
     _cleanup(result)
 
 
@@ -304,16 +324,23 @@ async def test_ayni_gonderi_IKINCI_KEZ_kendiliginden_basilmaz(tmp_path: Path) ->
     ilk = await service.dispatch(91, actor="Ali")
     ikinci = await service.dispatch(91, actor="Ali")
 
-    assert len(ilk["printed"]) == 2
-    assert ikinci["printed"] == []
+    # KAPI SUNUCUDA KALDI: basımı kabuk yapıyor ama "basılsın mı" kararını
+    # çekirdek veriyor. Ekrana bırakılsaydı yinelenen istek ikinci etiketi
+    # bastırırdı; ekran ilk isteğin olduğunu bilmiyor.
+    assert len(ilk["autoPrintPaths"]) == 2
+    assert ikinci["autoPrintPaths"] == []
     assert "daha önce otomatik basıldı" in ikinci["printSkipped"]
-    assert len(yazici.printed) == 2          # toplam, ikinci turda artmadı
     _cleanup(ilk)
     _cleanup(ikinci)
 
 
 async def test_tekrar_yazdir_cift_basim_kapisini_HIC_gormez(tmp_path: Path) -> None:
     # Kasıtlı tekrar ile kazara ikinci basım ayrı şeylerdir.
+    #
+    # `print_report` YEREL KİPTE hâlâ basar (çekirdek kullanıcının makinesinde
+    # koşarken `lp` oradadır); sunucu kipinde ekran aynı işi kabuktan yapıyor.
+    # Ölçülen şey kapının bu yolu HİÇ görmediği: otomatik basımdan sonra
+    # kasıtlı tekrar reddedilmez.
     yazici = FakePrinter()
     service, _, _ = _service(tmp_path, printer=yazici)
     result = await service.dispatch(91, actor="Ali")
@@ -321,7 +348,7 @@ async def test_tekrar_yazdir_cift_basim_kapisini_HIC_gormez(tmp_path: Path) -> N
 
     tekrar = await service.print_report(etiket["path"])
     assert tekrar["ok"] is True
-    assert len(yazici.printed) == 3
+    assert yazici.printed == [Path(etiket["path"])]
     _cleanup(result)
 
 

@@ -13,6 +13,7 @@ kantin düştüğünde ekranın ayakta kalması (K7).
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from bbd_canteen_devices_backend.service import CanteenDeviceService
@@ -316,3 +317,49 @@ async def test_ad_degismiyorsa_kantine_istek_gitmez() -> None:
     assert sonuc["ok"] is True
     assert sonuc["changed"] is False
     assert "rename_kiosk" not in api.writes()
+
+
+# ======================================== 4. EŞLEME FİŞİ: sunucu üretir, cihaz basar
+
+
+async def test_eslesme_fisi_URETILIR_sunucu_basmaz(tmp_path) -> None:
+    """Fiş dosyası üretilir ve yolu döner; kâğıdı ekran çıkarır (ADR 0026).
+
+    Eskiden burada `printer.print_file` çağrılıyordu. Çekirdek sunucuya
+    taşındıktan sonra o çağrı hep düşüyordu — sunucu imajında CUPS yok, yazıcı
+    kullanıcının masasında — ve "Fiş bas" işaretlenmiş olsa bile kâğıt hiç
+    çıkmıyordu. Yetenek YOKKEN de fişin üretilmesi gerekir; sunucuda hiçbir
+    zaman olmayacak.
+    """
+    service, _, _, _ = build()
+    service._fallback_dir = tmp_path / "exports"
+    opened = await open_kiosk(service)
+
+    result = await service.pairing_code(opened["kiosk"]["id"], reason=GEREKCE,
+                                        actor="Ayşe", print_slip=True)
+
+    assert result["ok"] is True
+    slip = result["print"]
+    assert slip["error"] == ""
+    # "Basıldı" DENMEZ: kâğıt henüz çıkmadı, bunu ekran söyleyecek.
+    assert slip["printed"] is False
+
+    uretilen = Path(slip["path"])
+    assert uretilen.is_file()
+    assert uretilen.read_bytes().startswith(b"%PDF")
+    # Fiş tek kullanımlık kodu taşıyor; klasör ve dosya dar izinle açılır.
+    assert oct(uretilen.stat().st_mode)[-3:] == "600"
+
+
+async def test_fis_istenmezse_dosya_URETILMEZ(tmp_path) -> None:
+    # Kod ekrandan okunacaksa diske tek kullanımlık kod yazmanın anlamı yok.
+    service, _, _, _ = build()
+    service._fallback_dir = tmp_path / "exports"
+    opened = await open_kiosk(service)
+
+    result = await service.pairing_code(opened["kiosk"]["id"], reason=GEREKCE,
+                                        actor="Ayşe", print_slip=False)
+
+    assert result["ok"] is True
+    assert result["print"] == {}
+    assert not list(tmp_path.rglob("*.pdf"))

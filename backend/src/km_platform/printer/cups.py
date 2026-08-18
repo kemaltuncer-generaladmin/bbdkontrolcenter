@@ -159,6 +159,18 @@ class PrinterService:
 
     # ------------------------------------------------------------- keşif
 
+    @staticmethod
+    def installed() -> bool:
+        """Bu MAKİNEDE CUPS var mı — "arıza" ile "burada yazıcı yok" ayrımı.
+
+        Çekirdek sunucuda koşarken (ADR 0026) yanıt HER ZAMAN `False`'tır ve bu
+        bir sorun değildir: sunucu imajı CUPS'ı bilerek kurmuyor, baskı
+        kullanıcının makinesinde yapılıyor. Çağıran bunu ayırt edebilsin diye
+        ayrı bir soru: aksi hâlde ekran, olması gerektiği gibi çalışan bir
+        kurulumda kırmızı "Yazıcı bağlantısı hatası" gösteriyordu.
+        """
+        return bool(shutil.which("lp") and shutil.which("lpstat"))
+
     def _tools(self) -> tuple[str, str]:
         """`lp` ve `lpstat` yolları. Yoksa CUPS kurulu değildir."""
         lp = shutil.which("lp")

@@ -47,7 +47,9 @@ import { dataTable } from '../../ui-kit/table.js';
 // YAZICI SEÇİMİ CİHAZDA DURUR. Merkezî ayara yazılmaz: aynı kurulumu kullanan
 // iki makinenin yazıcısı farklıdır ve merkezde tutulan tek bir ad, birinin
 // çıktısını ötekinin odasına düşürürdü.
-import { canPrintLocally, localPrinters, selectLocalPrinter } from '../../ui-kit/printing.js';
+import {
+  canPrintLocally, localPrinters, printDocument, selectLocalPrinter,
+} from '../../ui-kit/printing.js';
 
 /** Çekirdek sekmelerinin kimlikleri. Sunucu da aynı adları kullanır. */
 const TAB_PRINTER = 'core.printer';
@@ -501,9 +503,18 @@ export function mount(root, ctx) {
       select.append(option);
     }
 
-    const durum = h('p', 'sa-hint', local.selected
-      ? `Şu an: ${local.selected}`
-      : 'Seçim yapılmadı — yazdırma düğmeleri kapalı kalır.');
+    // CÜMLE HEP AYNI SORUYU YANITLAR: "şimdi Yazdır'a bassam kâğıt nereden
+    // çıkar". Seçim yapılmadığında "kapalı kalır" demiyor artık, çünkü
+    // kapanmıyor: sistemin varsayılanına basılır (`printing.rs` → `resolve`).
+    const nereye = (state) => {
+      if (state.effective && !state.selected) {
+        return `Seçim yapılmadı — sistemin varsayılanına basılacak: ${state.effective}`;
+      }
+      if (state.effective) return `Şu an: ${state.effective}`;
+      return state.blocked || 'Basılabilecek yazıcı yok.';
+    };
+
+    const durum = h('p', 'sa-hint', nereye(local));
 
     select.addEventListener('change', async () => {
       try {
@@ -512,15 +523,29 @@ export function mount(root, ctx) {
         toast(error.message, 'bad');
         return;
       }
-      durum.textContent = select.value
-        ? `Şu an: ${select.value}`
-        : 'Seçim kaldırıldı — yazdırma düğmeleri kapalı kalır.';
-      toast(select.value
-        ? `Yazdırma “${select.value}” yazıcısına gidecek.`
-        : 'Yazıcı seçimi kaldırıldı.', 'good');
+      // Seçim kaldırıldığında hedef sistemin varsayılanına düşer; hangi ada
+      // düştüğünü TAHMİN ETMEK yerine kabuğa yeniden sorarız — kural orada.
+      let sonra = local;
+      try {
+        sonra = await localPrinters();
+      } catch {
+        sonra = { ...local, selected: select.value, effective: select.value, blocked: '' };
+      }
+      durum.textContent = nereye(sonra);
+      toast(sonra.effective
+        ? `Yazdırma “${sonra.effective}” yazıcısına gidecek.`
+        : (sonra.blocked || 'Yazıcı seçimi kaldırıldı.'),
+      sonra.effective ? 'good' : 'warn');
     });
 
-    body.append(select, durum);
+    // "Gerçekten çıkıyor mu" sorusu seçimin hemen yanında yanıtlanır.
+    const actions = h('div', 'sa-actions');
+    const testButton = state.canManage
+      ? button('Test sayfası bas', { onClick: () => printTestPage(testButton) })
+      : blockedButton('Test sayfası bas', 'Baskı denemek için yetkiniz yok.');
+    actions.append(testButton);
+
+    body.append(select, durum, actions);
     slot.replaceChildren(body);
   }
 
@@ -533,11 +558,12 @@ export function mount(root, ctx) {
     const box = h('div', 'sa-stack');
     const slot = h('div', 'sa-printer-body');
 
+    // TEST DÜĞMESİ BU KARTTA DEĞİL, YUKARIDAKİ "Bu cihazın yazıcısı" KARTINDA:
+    // test sayfası artık bu cihazın yazıcısından çıkıyor ve düğme, denediği
+    // şeyin yanında durmalı. Burada dururken kullanıcı sunucu kuyruklarını
+    // sınadığını sanıyordu.
     const actions = h('div', 'sa-actions');
-    const testButton = state.canManage
-      ? button('Test sayfası bas', { onClick: () => printTestPage(testButton) })
-      : blockedButton('Test sayfası bas', 'Baskı denemek için yetkiniz yok.');
-    actions.append(button('Yenile', { onClick: () => loadPrinter(slot) }), testButton);
+    actions.append(button('Yenile', { onClick: () => loadPrinter(slot) }));
     box.append(slot, actions);
 
     loadPrinter(slot);
@@ -642,12 +668,15 @@ export function mount(root, ctx) {
 
     node.disabled = true;
     try {
+      // İKİ ADIM: sunucu sayfayı üretir, BU CİHAZ basar. Sunucuya "bas" demek,
+      // kâğıdın çıkmayacağı bir yere komut göndermekti.
       const sonuc = await api('/api/settings/printer/test-page', { method: 'POST' });
-      toast(`Baskı gönderildi: ${sonuc.printer || 'yazıcı'}`, 'good');
+      const printer = await printDocument(api, sonuc.path, { copies: 1 });
+      toast(`Baskı gönderildi: ${printer}`, 'good');
       setNotice(alertBox(
-        `Test sayfası “${sonuc.printer}” kuyruğuna gönderildi`
-        + `${sonuc.job ? ` (iş: ${sonuc.job})` : ''}. Kâğıt çıkmadıysa aşağıdaki `
-        + 'kuyruk listesine bakın.', 'info',
+        `Test sayfası “${printer}” yazıcısına gönderildi. Kâğıt çıkmadıysa sorun `
+        + 'uygulamada değil, işletim sisteminin kuyruğundadır: yazıcının açık '
+        + 'olduğunu ve kuyruğun duraklatılmadığını denetleyin.', 'info',
       ));
     } catch (error) {
       setNotice(alertBox(error.message, 'bad'));

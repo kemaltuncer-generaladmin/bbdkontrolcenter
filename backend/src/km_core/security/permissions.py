@@ -41,6 +41,20 @@ CORE_PERMISSIONS: list[dict[str, Any]] = [
     {"key": "directory.view", "default_roles": ["admin", "bld_staff", "bbd_staff", "org_staff", "accountant"]},
     {"key": "directory.view_external", "default_roles": ["admin", "bld_staff", "bbd_staff", "org_staff", "accountant"]},
     {"key": "directory.manage", "default_roles": ["admin"]},
+    # çıktı basma (ADR 0026) — üretilmiş bir belgeyi CİHAZIN yazıcısına vermek.
+    #
+    # NEDEN AYRI BİR İZİN. Baskı kullanıcının makinesinde yapılıyor; kabuk
+    # belgenin baytlarını `/api/outputs/document` ucundan alıyor. O uç
+    # başlangıçta `print.view`/`settings.view` istiyordu ve `print.view` bir
+    # MODÜL izni: Çıktı Merkezi'nde HERKESİN çıktısını görme yetkisi. Mali
+    # Müşavir'de o izin yok (docs/permissions.md rol matrisi), dolayısıyla
+    # kendi ürettiği raporu bile bastıramıyordu — düğme vardı, uç 403 dönüyordu.
+    #
+    # Doğru soru "çıktı listesini görebilir mi" değil, "elindeki belgeyi
+    # yazıcıya verebilir mi"dir. Ayrı anahtar bunu sorar ve Çıktı Merkezi'nin
+    # görünürlüğünü genişletmeden yanıtlar.
+    {"key": "outputs.print",
+     "default_roles": ["admin", "bld_staff", "bbd_staff", "org_staff", "accountant"]},
 ]
 
 CORE_PERMISSION_KEYS = {permission["key"] for permission in CORE_PERMISSIONS}

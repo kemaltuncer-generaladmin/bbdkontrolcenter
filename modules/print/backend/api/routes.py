@@ -41,6 +41,11 @@ class TargetBody(BaseModel):
 
 class ReprintBody(TargetBody):
     copies: int = Field(default=1, ge=1, le=100)
+    #: Kabuk belgeyi KENDİ yazıcısına bastıysa o kuyruğun adı. Doluysa çekirdek
+    #: basmaya çalışmaz, yalnız sayacı ve günlüğü işler — sunucu kipinde kâğıt
+    #: kullanıcının makinesinde çıkıyor (ADR 0026). Ad yalnız kayda geçer,
+    #: hiçbir komuta verilmez.
+    spooled: str = Field(default="", max_length=200)
 
 
 # --------------------------------------------------------------------- okuma
@@ -89,8 +94,12 @@ async def reprint(
     body: ReprintBody,
     user: CurrentUser = requires("print.reprint"),
 ) -> dict[str, Any]:
-    """Kayıtlı dosyayı yeniden yazıcıya gönderir. Sayaç DENEME sayar (ADR 0014)."""
-    return await service().reprint(body.id, copies=body.copies, actor=user.full_name)
+    """Kayıtlı dosyayı yeniden yazıcıya gönderir. Sayaç DENEME sayar (ADR 0014).
+
+    `spooled` geldiyse baskıyı kabuk yaptı; burada yalnız sayaç işlenir.
+    """
+    return await service().reprint(body.id, copies=body.copies, actor=user.full_name,
+                                   spooled=body.spooled)
 
 
 @router.post("/folder")

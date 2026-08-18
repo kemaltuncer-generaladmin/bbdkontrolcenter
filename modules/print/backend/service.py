@@ -271,7 +271,7 @@ class OutputsService:
     # -------------------------------------------------------- yeniden bas
 
     async def reprint(self, output_id: str, *, copies: int = 1,
-                      actor: str = "") -> dict[str, Any]:
+                      actor: str = "", spooled: str = "") -> dict[str, Any]:
         """Kayıtlı dosyayı yazıcıya gönderir ve sayacı işler.
 
         SAYAÇ "DENENDİ" SAYAR (ADR 0014/0019). Linux'ta sessizce basılır;
@@ -282,6 +282,13 @@ class OutputsService:
 
         Basılacak yol İSTEKTEN GELMEZ, kayıttan okunur: serbest yol kabul etmek
         makinedeki herhangi bir dosyayı kâğıda döktürmeye açık kapı bırakırdı.
+
+        `spooled` VERİLDİYSE KÂĞIT ÇOKTAN ÇIKTI: kabuk belgeyi kendi yazıcısına
+        basıp hangi kuyruğa gittiğini söylüyor ve burada yalnız sayaç ile
+        günlük işlenir. Sunucu kipinde (ADR 0026) tek çalışan yol budur —
+        çekirdek sunucuda koşuyor, sunucuda CUPS yok, yazıcı kullanıcının
+        masasında. Aşağıdaki yetenek dalı YEREL KİP İÇİN durur: orada çekirdek
+        kullanıcının makinesinde koşar ve `lp` gerçekten oradadır.
         """
         row = await self._row(output_id)
         if row is None:
@@ -291,20 +298,24 @@ class OutputsService:
         exists, reason = _file_state(path)
         if not exists:
             return {"ok": False, "error": reason}
-        if self._printer is None:
-            return {"ok": False, "error": NO_PRINTER_TEXT}
 
         count = max(1, min(self.max_copies, _int(copies, 1)))
-        try:
-            result = await self._printer.print_file(path, title=path.name, copies=count)
-        except Exception as failure:  # noqa: BLE001 — yazıcı dış dünyadır (K7)
-            self._log.warning("yeniden baskı başarısız", output=output_id,
-                              error=str(failure))
-            return {"ok": False, "error": str(failure) or "Baskı gönderilemedi."}
+        if spooled:
+            payload: dict[str, Any] = {"printer": spooled.strip()[:200], "mode": "device"}
+        else:
+            if self._printer is None:
+                return {"ok": False, "error": NO_PRINTER_TEXT}
+            try:
+                result = await self._printer.print_file(path, title=path.name, copies=count)
+            except Exception as failure:  # noqa: BLE001 — yazıcı dış dünyadır (K7)
+                self._log.warning("yeniden baskı başarısız", output=output_id,
+                                  error=str(failure))
+                return {"ok": False, "error": str(failure) or "Baskı gönderilemedi."}
 
-        payload = dict(result or {})
-        if payload.get("ok") is False:
-            return {"ok": False, "error": str(payload.get("error") or "Baskı gönderilemedi.")}
+            payload = dict(result or {})
+            if payload.get("ok") is False:
+                return {"ok": False,
+                        "error": str(payload.get("error") or "Baskı gönderilemedi.")}
 
         stamp = _now()
         await self._store.execute(

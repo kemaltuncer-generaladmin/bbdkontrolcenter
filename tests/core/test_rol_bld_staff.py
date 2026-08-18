@@ -137,12 +137,15 @@ BLD_STAFF_BEKLENEN = {
     "database.backup:*",
     "directory.view",
     "directory.view_external",
+    # Baskı cihazda yapılır (ADR 0026); rapor üreten her rol bu anahtarı taşır.
+    "outputs.print",
 }
 
 #: Sayı da yazılıdır. 50 satırlık bir kümede tek bir eksilme göze çarpmaz;
 #: kümenin kendisi değişirse bu sayı da elle düzeltilmek zorunda kalır.
 #: 64'ten 50'ye indi — aradaki on dört, alınan BBD anahtarlarıdır.
-BLD_STAFF_SAYISI = 50
+#: Sonra `outputs.print` eklenip 51 oldu.
+BLD_STAFF_SAYISI = 51
 
 #: `bld_staff`tan ALINAN on dört BBD anahtarı — 17.08.2026 kullanıcı kararı.
 #: ELLE yazılıdır ve göçün listesinden (`BLD_STAFF_BBD_REVOKED`) BAĞIMSIZDIR:
@@ -188,6 +191,13 @@ ACCOUNTANT_BEKLENEN = {
     "bbd_students.view",
     "directory.view",
     "directory.view_external",
+    # Rolün ürettiği raporu bastırabilmesi için (ADR 0026 — baskı cihazda
+    # yapılır). Karar `accountant`ı değiştirmiyor: bu anahtar karardan SONRA
+    # eklendi ve rol zaten `store_reports.view` / `bbd_canteen_reports.export`
+    # taşıdığı için ekranda "Yazdır" düğmesi görüyordu; düğme varken uç 403
+    # dönüyordu. `print.view` VERİLMEDİ — o, Çıktı Merkezi'nde herkesin
+    # çıktısını görmek demektir (docs/permissions.md → "Çıktı basma").
+    "outputs.print",
     "store_invoices.legal_no",
     "store_invoices.view",
     "store_refunds.view",
@@ -196,7 +206,7 @@ ACCOUNTANT_BEKLENEN = {
     "store_udit_logs.view",
 }
 
-ACCOUNTANT_SAYISI = 24
+ACCOUNTANT_SAYISI = 25
 
 #: Kararın TEK istisnası. Yeni bir anahtardır; `bld_kds.manage`ten ayrıldı.
 KDS_AYAR = "bld_kds.settings"
@@ -600,12 +610,19 @@ async def test_goc_dokuz_cekirdek_satirini_geri_koyar(depo: Store) -> None:
     # Geri konan satırların hepsi kataloğun bugün önerdiği satırlardır; biri
     # katalogda olmasaydı `grant_defaults` onu bir sonraki açılışta zaten
     # yazmazdı ve göç kataloğa aykırı bir satır bırakmış olurdu.
+    #
+    # KAPSANMA SORULUR, EŞİTLİK SORULMAZ. Göçün listesi DONMUŞTUR: bir olayın
+    # kaydı, katalogdan türetilmez (`migrations.py` → `BLD_STAFF_CORE_RESTORED`
+    # başlığı bunu açıkça söylüyor). Katalog ise büyür — `outputs.print` göçten
+    # sonra eklendi. Eşitlik istemek, çekirdeğe eklenen her yeni `bld_staff`
+    # anahtarını geçmişteki bir göçün listesine yazmaya zorluyordu; tam olarak
+    # o başlığın "yapmayın" dediği şey.
     onerilenler = {
         _entry(permission["key"], bool(permission.get("scoped")))
         for permission in CORE_PERMISSIONS
         if "bld_staff" in permission["default_roles"]
     }
-    assert set(BLD_STAFF_CORE_RESTORED) == onerilenler
+    assert set(BLD_STAFF_CORE_RESTORED) <= onerilenler
 
 
 async def test_goc_hicbir_satir_silmez(depo: Store) -> None:

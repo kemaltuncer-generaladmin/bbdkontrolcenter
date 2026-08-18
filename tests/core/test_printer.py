@@ -304,3 +304,33 @@ async def test_cihaz_kimligi_okunamazsa_kimse_tuzak_sayilmaz(monkeypatch) -> Non
     assert printers[KLASIK]["trapped"] is False
     chosen = await service.target()
     assert chosen["name"] == SURUCUSUZ
+
+
+# ------------------------------------- "CUPS yok" ile "yazıcı arızalı" ayrımı
+
+
+def test_cups_kurulu_degilse_installed_false(monkeypatch) -> None:
+    """Sunucuda CUPS YOKTUR ve bu bir arıza değildir.
+
+    Yetenek sunucuda da kayıtlı (`http/app.py`), yani ekran ona durum
+    sorabiliyor. `status()` o durumda "sistemde CUPS (lp/lpstat) bulunamadı"
+    diye HATA döndürüyor ve Sistem Ayarları'nı açan herkes, baskı düzgün
+    çalışırken kırmızı bir "Yazıcı bağlantısı hatası" görüyordu — kâğıt
+    kullanıcının makinesinden çıkıyor, sunucudan çıkması hiç beklenmiyor.
+    Çağıranın bu iki hâli ayırt edebilmesi için ayrı bir soru var.
+    """
+    monkeypatch.setattr("km_platform.printer.cups.shutil.which", lambda _name: None)
+    assert PrinterService.installed() is False
+
+
+def test_cups_varsa_installed_true(monkeypatch) -> None:
+    monkeypatch.setattr("km_platform.printer.cups.shutil.which",
+                        lambda name: f"/usr/bin/{name}")
+    assert PrinterService.installed() is True
+
+
+def test_tek_arac_eksikse_kurulu_sayilmaz(monkeypatch) -> None:
+    # `lp` var, `lpstat` yok: keşif yapılamayacağı için baskı da yapılamaz.
+    monkeypatch.setattr("km_platform.printer.cups.shutil.which",
+                        lambda name: "/usr/bin/lp" if name == "lp" else None)
+    assert PrinterService.installed() is False

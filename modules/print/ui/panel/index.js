@@ -30,6 +30,8 @@ import {
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
 import { alertBox, badge, emptyState, hintBox, skeletonRows, statusLine } from '../../ui-kit/layout.js';
+// YENİDEN BASMA CİHAZDA OLUR — gerekçe `ui-kit/printing.js` başlığında.
+import { printDocument, printerReady } from '../../ui-kit/printing.js';
 
 const BASE = '/api/print';
 
@@ -44,6 +46,12 @@ let toast = null;
 let state = { ...EMPTY };
 let loaded = false;
 let busy = false;
+
+//: BU CİHAZ basabiliyor mu. `state.printerAvailable` SUNUCUNUN yeteneğini
+//: söyler ve sunucuda yazıcı yoktur; düğmeyi ona göre kapatmak, çalışan
+//: yazıcısı olan kullanıcıya "yazıcı yok" demekti. Kâğıdın çıktığı yer
+//: burasıdır, o yüzden karar buradan okunur.
+let device = { ready: false, name: '', error: '' };
 
 const nodes = {};
 
@@ -84,6 +92,9 @@ function statusText() {
 
 async function refresh() {
   nodes.status.set('Kayıtlar okunuyor…');
+  // Yazıcı durumu her tazelemede yeniden okunur: kullanıcı ayardan yazıcı
+  // seçmiş ya da kabloyu takmış olabilir, ekranı kapatıp açması gerekmesin.
+  device = await printerReady();
   try {
     const result = await call(`${BASE}/outputs?${query()}`);
     state = { ...EMPTY, ...result };
@@ -123,10 +134,15 @@ function fillFacets() {
 
 function renderBanner() {
   nodes.banner.replaceChildren();
-  if (!state.printerAvailable) {
+  // SUNUCUNUN yazıcı yeteneği burada SORULMAZ (`state.printerAvailable`):
+  // baskı bu cihazda yapılıyor. Söylenecek şey "bu bilgisayar basabiliyor mu".
+  if (!device.ready) {
     nodes.banner.append(alertBox(
-      'Yazıcı yeteneği bu kurulumda yok; liste ve önizleme çalışır, yeniden basma kapalıdır.',
+      `${device.error} Liste ve önizleme çalışır, yeniden basma kapalıdır.`,
       'warn'));
+  } else if (device.name) {
+    nodes.banner.append(alertBox(
+      `Yeniden basılan çıktılar “${device.name}” yazıcısına gidecek.`, 'info'));
   }
   if (!state.canReprint) {
     nodes.banner.append(alertBox(
@@ -139,9 +155,7 @@ function reprintButton(row) {
   if (!state.canReprint) {
     return blockedButton('Yeniden bas', 'Bu işlem için print.reprint izni gerekiyor.');
   }
-  if (!state.printerAvailable) {
-    return blockedButton('Yeniden bas', 'Yazıcı yeteneği bu kurulumda yok.');
-  }
+  if (!device.ready) return blockedButton('Yeniden bas', device.error);
   if (!row.exists) return blockedButton('Yeniden bas', row.missingReason);
   if (!row.printable) {
     return blockedButton('Yeniden bas',
@@ -210,17 +224,26 @@ async function withBusy(label, work) {
   }
 }
 
+/**
+ * Yeniden basma: kâğıt BU CİHAZDAN çıkar, sunucu yalnız sayacı işler.
+ *
+ * Eskiden tek adımdı — `${BASE}/reprint` çağrılır, çekirdek basardı. Çekirdek
+ * sunucuya taşındıktan sonra (ADR 0026) o yol "sistemde CUPS (lp/lpstat)
+ * bulunamadı" demeye başladı: sunucuda yazıcı yok. Şimdi sıra tersine döndü —
+ * önce cihazda basılır, sonra sunucuya "şu kuyruğa bastım" denir; sayaç ve
+ * günlük yine tek yerde tutulur.
+ */
 async function reprint(row) {
-  const result = await withBusy(`${row.title} yazıcıya gönderiliyor…`, () => call(
-    `${BASE}/reprint`, { method: 'POST', body: { id: row.id, copies: 1 } }));
+  const result = await withBusy(`${row.title} yazıcıya gönderiliyor…`, async () => {
+    const printer = await printDocument(api, row.path, { copies: 1 });
+    // Sayaç ve denetim izi SUNUCUDA durur; basım başarısızsa buraya hiç
+    // gelinmez ve "denendi" sayısı boşuna artmaz.
+    return call(`${BASE}/reprint`,
+      { method: 'POST', body: { id: row.id, copies: 1, spooled: printer } });
+  });
   if (!result) return;
 
-  // ADR 0014: `system` kipinde kâğıt ÇIKMADI, pencere açıldı.
-  const message = result.mode === 'system'
-    ? 'Sistem yazdırma penceresi açıldı — yazıcıyı ve kâğıdı orada seçin. '
-      + 'Sayaç "denendi" sayar.'
-    : `${result.printer || 'Yazıcı'} kuyruğuna gönderildi.`;
-  toast(message, 'good');
+  toast(`${result.printer || 'Yazıcı'} yazıcısına gönderildi.`, 'good');
   await refresh();
 }
 
