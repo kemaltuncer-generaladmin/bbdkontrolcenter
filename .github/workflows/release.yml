@@ -74,9 +74,16 @@ jobs:
             bundles: nsis
           # macos-latest arm64'tür (Apple Silicon); üretilen .dmg de arm64
           # olur. Intel Mac gerekirse ayrı bir matris satırı (macos-13) açılır.
+          #
+          # `app` HEDEFİ ŞART, YALNIZ `dmg` YETMEZ. Tauri'nin macOS güncelleme
+          # artefaktı `.app.tar.gz` + `.sig` ikilisidir ve onu `app` hedefi
+          # üretir; `dmg` yalnız İLK KURULUM paketidir. v0.1.8'in ilk
+          # yayınında bu fark somut oldu: Linux ve Windows `latest.json`
+          # içindeydi, macOS YOKTU — yani Mac kurulumları "güncelleme yok"
+          # deyip sonsuza kadar eski sürümde kalırdı ve kimse fark etmezdi.
           - os: macos-latest
             platform: macos
-            bundles: dmg
+            bundles: app,dmg
 
     steps:
       - name: Depoyu al

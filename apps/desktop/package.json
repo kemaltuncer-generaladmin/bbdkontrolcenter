@@ -1,6 +1,6 @@
 {
   "name": "kontrol-merkezi-desktop",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "description": "Kontrol Merkezi — Tauri 2 masaüstü kabuğu (ADR 0002)",
   "scripts": {
