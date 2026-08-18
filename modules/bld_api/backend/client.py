@@ -421,15 +421,50 @@ def _encode(body: Any) -> bytes:
 
 
 class _RateBucket:
-    """Kayan pencereli hız kovası: son 60 saniyede en çok `limit` istek.
+    """İKİ PENCERELİ kayan hız kovası: kısa pencere patlamaya, uzun pencere
+    saatlik bütçeye bakar.
+
+    ═════════════════════════════════════════════════════════════════════════
+    TEK DAKİKALIK PENCERE ETKİLEŞİMLİ KULLANIMI CEZALANDIRIYORDU.
+
+    Eski kova yalnız 60 saniyeye bakıyordu ve tavanı 18'di. Gerekçesi doğruydu
+    ama eksikti: sunucunun en dar sınırı `throttle:bld-control` = 1200/saat/IP
+    ve 18 × 60 = 1080 < 1200. Bu hesap SÜREKLİ yükün hesabıdır.
+
+    Panel kullanımı sürekli değil PATLAMALIDIR: bir ekran açılışı 4-6 istek
+    atar, sonra dakikalarca sessizlik. Üç ekranı arka arkaya açan bir yönetici
+    18'i saniyeler içinde doldurur ve 19. istek `60 - yaş` kadar UYUR — yani
+    saniyelerce, en kötü hâlde bir dakikaya yakın. Ekran "çok ağır çalışıyor"
+    görünür. Bu sırada saatlik bütçenin büyük kısmı KULLANILMADAN durur.
+
+    Kova ayrıca TEK ve süreç genelinde paylaşılıyor (`bld.api` tek örnek,
+    backend sunucuda koşuyor — ADR 0026): bütün BLD panelleri, bütün yoklama
+    döngüleri ve bütün bağlı masaüstleri aynı 18'i bölüşüyordu.
+
+    ÇÖZÜM İKİ PENCERE:
+      · kısa (60 sn) — YÜKSEK tavan; etkileşimli patlama anında geçer,
+      · uzun (3600 sn) — SERT tavan; kaçak bir yoklama döngüsü sunucunun
+        saatlik sınırını yine de aşamaz.
+    Kısa pencereyi tek başına yükseltmek ikinci yarıyı kaybetmek olurdu:
+    45/dk × 60 = 2700 istek/saat ve sunucu 1200'de kapıyı kapatır.
+    ═════════════════════════════════════════════════════════════════════════
 
     Kilit uykuyu da kapsar; bekleyenler sıraya girer. Kasıtlıdır: geçidin
     tamamı sıralı davranmalı, aynı anda uyanan on istek sunucuya salkım
     hâlinde gitmemeli.
     """
 
-    def __init__(self, limit: int, sleeper: Callable[[float], Any] = asyncio.sleep) -> None:
+    #: Pencere uzunlukları (saniye). Sabit — ayardan gelen TAVANLARDIR,
+    #: pencerelerin kendisi değil: 90 saniyelik bir "dakika" tanımlamak,
+    #: sunucunun sabit saatlik sınırıyla hesabı tutmaz hâle getirirdi.
+    SHORT_WINDOW = 60.0
+
+    LONG_WINDOW = 3600.0
+
+    def __init__(self, limit: int, hourly: int = 1100,
+                 sleeper: Callable[[float], Any] = asyncio.sleep) -> None:
         self._limit = max(1, int(limit))
+        self._hourly = max(self._limit, int(hourly))
         self._stamps: deque[float] = deque()
         self._lock = asyncio.Lock()
         self._sleep = sleeper
@@ -438,12 +473,38 @@ class _RateBucket:
         async with self._lock:
             while True:
                 now = time.monotonic()
-                while self._stamps and now - self._stamps[0] >= 60:
+
+                # TEK DEFTER, İKİ SAYAÇ. Ayrı iki `deque` tutmak aynı damgayı
+                # iki kez saklamak olurdu; uzun pencere kısa pencereyi zaten
+                # kapsıyor.
+                while self._stamps and now - self._stamps[0] >= self.LONG_WINDOW:
                     self._stamps.popleft()
-                if len(self._stamps) < self._limit:
+
+                recent = 0
+                for stamp in reversed(self._stamps):
+                    if now - stamp >= self.SHORT_WINDOW:
+                        break
+                    recent += 1
+
+                if recent < self._limit and len(self._stamps) < self._hourly:
                     self._stamps.append(now)
                     return
-                await self._sleep(max(0.05, 60 - (now - self._stamps[0])))
+
+                # HANGİ PENCERE DOLDUYSA ONUN AÇILMASI BEKLENİR. İkisi birden
+                # doluysa uzun bekleme kazanır; kısa pencereye göre uyumak
+                # döngüyü hemen ikinci kez uyutur ve gereksiz bir tur atardı.
+                waits = []
+                if recent >= self._limit:
+                    oldest_recent = self._stamps[-self._limit]
+                    waits.append(self.SHORT_WINDOW - (now - oldest_recent))
+                if len(self._stamps) >= self._hourly:
+                    waits.append(self.LONG_WINDOW - (now - self._stamps[0]))
+
+                # PAY: pencerenin TAM sınırında uyanmak, damganın hâlâ pencere
+                # içinde sayılmasına ve döngünün ikinci kez (bu kez 0.05
+                # saniyelik) uyumasına yol açıyor. Bir kirpik payı, bekleyişi
+                # tek uykuya indiriyor.
+                await self._sleep(max(0.05, max(waits) + 0.01))
 
 
 class BldApi:
@@ -476,7 +537,10 @@ class BldApi:
         read_only: bool = True,
         dry_run_default: bool = False,
         require_reason: bool = True,
-        requests_per_minute: int = 18,
+        requests_per_minute: int = 45,
+        #: Saatlik SERT tavan. Sunucunun en dar sınırı 1200/saat/IP; 1100
+        #: kaçak bir döngüyü durdururken elle atılan isteklere pay bırakıyor.
+        requests_per_hour: int = 1100,
         page_size: int = DEFAULT_PER_PAGE,
         reference_ttl: int = 900,
         snapshot_ttl: int = 1800,
@@ -501,7 +565,8 @@ class BldApi:
         self._secret: str | None = None
 
         self._sleep: Callable[[float], Any] = asyncio.sleep
-        self._bucket = _RateBucket(requests_per_minute, sleeper=lambda s: self._sleep(s))
+        self._bucket = _RateBucket(requests_per_minute, hourly=requests_per_hour,
+                                   sleeper=lambda s: self._sleep(s))
         self._audit = AuditTrail(store, log)
         self._reference = ReferenceCache(reference_ttl)
         self._snapshot = SnapshotCache(store, log, snapshot_ttl)
@@ -1955,6 +2020,28 @@ class BldApi:
         return self._object(await self._request(
             "GET", f"{SETTINGS}/sales", params=self._query(location_id=location_id)))
 
+    async def locations(self) -> dict[str, Any]:
+        """Şube (vitrin) listesi — GET /api/control/settings/locations.
+
+        ABONELİK AÇMANIN ÖN ŞARTI. `POST /subscriptions` gövdesinde
+        `location_id` zorunlu ve kimliği ekrana gömmek, kurulumdan kuruluma
+        değişen bir sabiti dondurmak olurdu — yanlış şube, siparişleri başka
+        bir mutfağa yollar.
+
+        `meta.default_location_id` panelin ön seçimidir: bugünkü tek vitrinli
+        kurulumda fazladan bir tıklamayı kaldırıyor.
+
+        **Önbellekli (L1).** Şube listesi bu panelden yazılmıyor ve saatte bir
+        değişmiyor; her abonelik formunda yeniden sormak paylaşılan istek
+        bütçesini boşuna yakardı.
+        """
+        async def load() -> dict[str, Any]:
+            payload = await self._request("GET", f"{SETTINGS}/locations")
+            rows, meta = envelope(payload)
+            return {"items": rows, "meta": meta}
+
+        return await self._cached("settings:locations", load)
+
     async def settings_reference(self, *, location_id: int | None = None) -> dict[str, Any]:
         """Ayarın DEĞİŞMEYEN yüzü — `GET /settings/sales` yanıtının `meta`'sı.
 
@@ -2540,6 +2627,25 @@ class BldApi:
                 "geçerli değer `prepaid_monthly`; istek gönderilmedi.",
                 code="payload",
             )
+        if not location_id:
+            # ═══════════════════════════════════════════════════════════════
+            # ŞUBE ZORUNLU VE EKSİKLİĞİ ARTIK BURADA KESİLİYOR.
+            #
+            # BLD `location_id` alanını `required` tutuyor. Alan `None` iken
+            # gövdeye HİÇ konmuyordu ve istek 422 ile dönüyordu — üstelik
+            # sunucunun ham doğrulama metniyle, yani "hangi alan eksik"
+            # sorusu ancak yanıt kurcalanarak anlaşılıyordu. Sonuç: abonelik
+            # Kontrol Merkezi'nden HİÇ AÇILAMIYORDU.
+            #
+            # Sessizce bir varsayılan koymak daha kötü olurdu: yanlış şube,
+            # siparişleri başka bir mutfağa yollar ve hata teslimatta
+            # anlaşılırdı.
+            # ═══════════════════════════════════════════════════════════════
+            raise BldApiError(
+                "Şube (`location_id`) zorunlu; BLD şubesiz abonelik kabul etmiyor. "
+                "Şube listesi `locations()` ile okunur; istek gönderilmedi.",
+                code="payload",
+            )
         body: dict[str, Any] = {
             "customer_id": int(customer_id), "start_date": self._date(start_date),
             "end_date": self._date(end_date) if end_date else None,
@@ -2888,9 +2994,26 @@ class BldApi:
                                            dry_run: bool | None = None) -> dict[str, Any]:
         """Linki yeniden gönderir — POST /subscriptions/contracts/{c}/resend.
 
-        YENİ TOKEN ÜRETİLMEZ: müşterinin elindeki eski SMS'in çalışmaya devam
-        etmesi, "hangi linke tıklayacağım" sorusunu ortadan kaldırır. İmzalı
-        ya da iptal edilmiş sözleşmede `conflict`.
+        ═══════════════════════════════════════════════════════════════════
+        SÜREYE DOKUNULMAZSA TOKEN DE DEĞİŞMEZ — VE BUNUN ŞARTI
+        `expires_in_days=None` GÖNDERMEKTİR.
+
+        Belirteç `{id}-{bitiş}-{imza}` biçiminde türetiliyor ve imza bitiş
+        anını da kapsıyor; süre tazelendiği anda MÜŞTERİNİN ELİNDEKİ LİNK
+        ÖLÜYOR. Eski belge "yeni token üretilmez" diyordu ama çağıran her
+        seferinde bir gün sayısı gönderiyordu — yani söz veriliyor, tam
+        tersi yapılıyordu ve müşteri elindeki SMS'e tıklayınca geçersiz bir
+        bağlantı buluyordu.
+
+        `expires_in_days` VERİLİRSE yeni bağlantı doğar ve eskisi ölür;
+        çağıran bunu BİLEREK yapar ve ekran kullanıcıya söylemek zorundadır.
+        ═══════════════════════════════════════════════════════════════════
+
+        SÜRESİ DOLMUŞ BAĞLANTI İSTİSNADIR: sunucu onu zaten tazelemek
+        zorunda (ölü bir bağlantıyı yeniden göndermenin anlamı yok) ve
+        yanıttaki `renews_link` bunu söyler.
+
+        İmzalı ya da iptal edilmiş sözleşmede `conflict`.
         """
         return await self._request(
             "POST", f"{SUBSCRIPTIONS}/contracts/{int(contract_id)}/resend",
@@ -3424,6 +3547,7 @@ class BldApi:
         rf"^{SMS}/send-test$",
         rf"^{SMS}/announcement$",
         rf"^{SMS}/announcement/run$",
+        rf"^{SMS}/netgsm$",
     )
 
     async def sms_templates(self) -> dict[str, Any]:
@@ -3518,6 +3642,46 @@ class BldApi:
         return await self._request("POST", f"{SMS}/send-test", body=payload, reason=reason,
                                    actor=actor, dry_run=dry_run, action="sms.send_test",
                                    reason_max=MAX_REASON)
+
+    async def sms_netgsm(self) -> dict[str, Any]:
+        """Netgsm gönderici ayarı — GET /sms/netgsm.
+
+        PAROLA VE KULLANICI ADI BU YANITTA YOKTUR: ikisi de BLD'nin ortam
+        değişkenlerinde yaşıyor ve bir uçtan geri dönmeleri sırrı istemci
+        günlüklerine ve denetim izine yayardı. Panelin bilmesi gereken tek
+        şey "dolu mu" ve o `missing` içinde.
+
+        `source` üç değer alır: `setting` (panelden yazılmış), `env`
+        (Coolify değişkeni) ve `none` (HİÇBİR SMS GİTMEZ). İkisini
+        ayırmadan göstermek, yöneticinin boş ayarı görüp ÇALIŞAN bir
+        yapılandırmayı bozmasına yol açardı.
+
+        ÖNBELLEĞE ALINMAZ: değer buradan yazılıyor ve bayat bir başlık,
+        yöneticinin kaydettiğini sandığı değişikliği görmemesi demekti.
+        """
+        return self._object(await self._request("GET", f"{SMS}/netgsm"))
+
+    async def set_sms_netgsm(self, *, header: str, reason: str, actor: str,
+                             dry_run: bool | None = None) -> dict[str, Any]:
+        """Gönderici başlığını yazar — PUT /sms/netgsm.
+
+        BLD'den giden her SMS bu adla gider (`BLEZZETDNYM`). Ad Netgsm
+        panelinde ONAYLI olmalıdır; onaysızsa sağlayıcı `40` döner ve tek
+        mesaj bile ulaşmaz — hiçbir hata ekranda görünmeden.
+
+        BOŞ DİZE AYARI SİLER ve BLD ortam değişkenine geri döner. Bir "geri
+        al" yolu olmasaydı, panelden bir kez yazılan yanlış başlık oradaki
+        doğru değeri kalıcı olarak gölgelerdi.
+
+        YENİ BAŞLIK BİR SONRAKİ İSTEKTE YÜRÜRLÜĞE GİRER (yanıttaki
+        `warnings`): gönderici BLD tarafında istek başına çözülen bir
+        tekildir. Ekranın bunu söylemesi gerekiyor, aksi hâlde yönetici hemen
+        deneme SMS'i gönderip eski başlıkla `40` alır ve kaydın işlemediğini
+        sanır.
+        """
+        return await self._request("PUT", f"{SMS}/netgsm", body={"header": header},
+                                   reason=reason, actor=actor, dry_run=dry_run,
+                                   action="sms.netgsm.update", reason_max=MAX_REASON)
 
     async def sms_log(self, *, phone: str = "", template_key: str = "", status: str = "",
                       context: str = "", customer_id: int | None = None,

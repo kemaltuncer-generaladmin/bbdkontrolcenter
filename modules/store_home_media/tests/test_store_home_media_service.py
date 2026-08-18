@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from store_home_media_backend import slots
@@ -11,21 +10,23 @@ from store_home_media_fakes import FakeApi, FakeApiError, FakeLog, FakeStore, pn
 
 GEREKCE = "Eylül kampanyası için afiş değişikliği"
 
-SLOTLAR = [
-    {"id": 1, "area": "slider", "title": "Okula dönüş", "alt": "Okula dönüş afişi",
-     "link": "/okula-donus", "status": 1, "sort_order": 2,
-     "image_url": "https://bbdstore.com.tr/1.jpg", "image_width": 1920, "image_height": 640},
-    {"id": 2, "area": "slider", "title": "Yaz indirimi", "alt": "Yaz afişi", "link": "/yaz",
-     "status": 1, "sort_order": 1, "image_url": "https://bbdstore.com.tr/2.jpg",
-     "image_width": 1200, "image_height": 400},
-    {"id": 3, "area": "banner", "title": "Deneme kulübü", "alt": "Deneme kulübü afişi",
-     "link": "/deneme", "status": 0, "sort_order": 1},
+#: Mağaza ucunun GERÇEK yanıt biçimi: camelCase ve `storage/` önekli yol.
+SLAYTLAR = [
+    {"index": 0, "title": "TYT Kaynakları", "link": "/tyt",
+     "image": "storage/theme/1/sliders/tyt.webp",
+     "imageUrl": "https://bbdstore.com.tr/storage/theme/1/sliders/tyt.webp"},
+    {"index": 1, "title": "AYT Matematik", "link": "/ayt",
+     "image": "storage/theme/1/sliders/ayt.webp",
+     "imageUrl": "https://bbdstore.com.tr/storage/theme/1/sliders/ayt.webp"},
+    {"index": 2, "title": "LGS Setleri", "link": "",
+     "image": "storage/theme/1/sliders/lgs.webp",
+     "imageUrl": "https://bbdstore.com.tr/storage/theme/1/sliders/lgs.webp"},
 ]
 
 
-def _service(api: FakeApi | None = None, store: FakeStore | None = None, printer: Any = None,
+def _service(api: FakeApi | None = None, store: FakeStore | None = None,
              **config: Any) -> tuple[HomeMediaService, FakeApi, FakeStore]:
-    api = api or FakeApi([dict(item) for item in SLOTLAR])
+    api = api or FakeApi([dict(item) for item in SLAYTLAR])
     store = store or FakeStore()
     events: list[tuple[str, dict[str, Any]]] = []
 
@@ -35,368 +36,249 @@ def _service(api: FakeApi | None = None, store: FakeStore | None = None, printer
     service = HomeMediaService(
         api=api, store=store, log=FakeLog(),
         config={"channel": "default", "locale": "tr", "recommended_slider": "1920x640",
-                "recommended_banner": "1200x400", "max_image_bytes": 2_000_000, **config},
-        printer=printer, publish=publish, fallback_dir=Path("/tmp/km-test-raporlar"),
+                "max_image_bytes": 2_000_000, **config},
+        publish=publish,
     )
     service.events = events  # type: ignore[attr-defined]
     return service, api, store
 
 
+def _yazilabilir(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ekranın geri göndereceği gövde — satırdan üç alan."""
+    return [{"title": row["title"], "link": row["link"], "image": row["image"]} for row in rows]
+
+
 # ======================================================= K7 — ayakta kalma
 
-async def test_bbd_ucu_yoksa_ekran_tema_kayitlarindan_salt_okunur_doldurulur() -> None:
-    # Uç henüz yayında değil. Boş bir ekran "ana sayfada hiçbir şey yok" gibi
-    # okunur ve yanlıştır; ne olduğunu gösterip yazmayı kapatmak doğrudur.
+async def test_magaza_dusunce_ekran_ayakta_kalir() -> None:
     api = FakeApi([])
-    api.fail.add("bbd_carousel")
-    api.theme_items = [{"id": 7, "type": "image_carousel", "name": "Ana slider",
-                        "sort_order": 1, "status": 1}]
+    api.fail.add("bbd_home_slides")
     service, _, _ = _service(api)
+    result = await service.slides()
 
-    result = await service.overview()
-    assert result["ok"] is True
-    assert result["source"] == "themes"
-    assert result["readOnly"] is True
-    assert result["items"][0]["title"] == "Ana slider"
-    assert "patladı" in result["error"]
-
-
-async def test_ikisi_de_okunamazsa_ekran_bos_ama_ayakta_kalir() -> None:
-    api = FakeApi([])
-    api.fail.update({"bbd_carousel", "themes"})
-    service, _, _ = _service(api)
-
-    result = await service.overview()
     assert result["ok"] is True
     assert result["connected"] is False
     assert result["items"] == []
-    assert result["error"]
+    assert "patladı" in result["error"]
+    # Ekranın ölçü/tavan bilgisi mağaza kapalıyken de gelir: dosya seçme
+    # kutusu bağlantı düzelmeden de doğru sınırı gösterebilsin.
+    assert result["recommended"] == "1920x640"
 
 
-async def test_referans_parcasi_patlarsa_gerisi_yine_dolar() -> None:
-    api = FakeApi([])
-    api.fail.add("category_tree")
-    service, _, _ = _service(api)
+async def test_denetim_izi_okunamazsa_ekran_dusmez() -> None:
+    class KorStore(FakeStore):
+        async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+            raise RuntimeError("depo kilitli")
 
-    result = await service.reference()
+    service, _, _ = _service(store=KorStore())
+    result = await service.audit()
     assert result["ok"] is True
-    assert result["categories"] == []
-    assert result["pages"][0]["title"] == "Mesafeli Satış"
-    assert any("kategoriler" in item for item in result["warnings"])
+    assert result["items"] == []
+    assert "depo kilitli" in result["error"]
 
 
-# ================================================================ okuma
+# ==================================================================== okuma
 
-async def test_onizleme_suzgecten_etkilenmez_liste_etkilenir() -> None:
-    # Filtre koyunca vitrin boşalmış gibi görünmemeli: önizleme ana sayfanın
-    # temsilidir, listenin değil.
-    service, _, _ = _service()
-    result = await service.overview(q="yaz")
-    assert [row["id"] for row in result["items"]] == [2]
-    assert len(result["preview"]["slider"]) == 2
-    assert result["counts"]["banner"] == 1
+async def test_slaytlar_sirali_gelir_ve_camel_case_yanit_okunur() -> None:
+    service, api, _ = _service()
+    result = await service.slides()
+
+    assert result["connected"] is True
+    assert [row["title"] for row in result["items"]] == [
+        "TYT Kaynakları", "AYT Matematik", "LGS Setleri"]
+    # Mağaza yolu ile tarayıcının açacağı adres AYRI: liste yazarken yol gider.
+    assert result["items"][0]["image"] == "storage/theme/1/sliders/tyt.webp"
+    assert result["items"][0]["imageUrl"].startswith("https://")
+    assert len(api.used("bbd_home_slides")) == 1   # liste TEK istekte gelir
 
 
 async def test_kanal_ve_dil_her_istekte_gider() -> None:
     service, api, _ = _service()
-    await service.overview()
-    filters = api.calls[0][1][0]
-    assert filters["channel"] == "default"
-    assert filters["locale"] == "tr"
+    await service.slides()
+    filtreler = [args[0] for name, args, _ in api.calls if name == "bbd_home_slides"]
+    assert filtreler[0] == {"channel": "default", "locale": "tr"}
 
 
-async def test_dusuk_cozunurluklu_slot_listede_uyarisiyla_gelir() -> None:
+async def test_adresi_olmayan_slayt_eksik_olarak_isaretlenir() -> None:
     service, _, _ = _service()
-    result = await service.overview(area="slider")
-    yaz = next(row for row in result["items"] if row["id"] == 2)
-    assert yaz["sizeState"] == slots.SIZE_BLURRY
-    assert yaz["sizeNote"] == ("Bu bölüm 1920x640 piksel ister; seçtiğiniz görsel 1200x400 "
-                               "— küçük kaldığı için telefonda bulanık çıkar.")
+    result = await service.slides()
+    assert result["items"][2]["issues"] == ["tıklayınca gideceği yer yok"]
+    assert result["issues"] == 1
 
 
-async def test_ozet_ve_onerilen_olculer_yanitla_birlikte_gelir() -> None:
+# ============================================================ görsel denetimi
+
+async def test_gorsel_olcusu_sunucuda_olculur() -> None:
     service, _, _ = _service()
-    result = await service.overview()
-    assert result["summary"]["total"] == 3
-    assert result["recommended"]["slider"] == "1920x640"
-    assert result["maxImageBytes"] == 2_000_000
-
-
-# ========================================================= görsel denetimi
-
-async def test_gorsel_denetimi_yazmadan_once_karari_verir_aga_cikmaz() -> None:
-    service, api, _ = _service()
-    verdict = service.check_image(area="slider", data=png_data_url(1200, 400))
-    assert verdict["ok"] is True
-    assert verdict["sizeState"] == slots.SIZE_BLURRY
-    assert verdict["sizeNote"].endswith("telefonda bulanık çıkar.")
-    assert api.calls == []          # denetim tamamen yerel
-
-
-async def test_govdedeki_olcu_beyanina_degil_dosya_basligina_bakilir() -> None:
-    # Panel "1920x640 yükledim" dese de karar dosyanın kendi başlığındandır.
-    service, _, store = _service()
-    result = await service.save(None, patch={"area": "slider", "title": "Yeni",
-                                             "altText": "Yeni afiş", "link": "/yeni",
-                                             "imageWidth": 1920, "imageHeight": 640},
-                                image=png_data_url(600, 200), reason=GEREKCE,
-                                actor="Ayşe", dry_run=False)
+    result = service.check_image(data=png_data_url(1200, 400))
     assert result["ok"] is True
     assert result["sizeState"] == slots.SIZE_BLURRY
-    assert store.assets[0]["width"] == 600
+    assert result["needsConfirm"] is True
+    assert result["previewBox"]["width"] > 0
 
 
-# ================================================================= yazma
+async def test_uygun_olcude_gorsel_onay_istemez() -> None:
+    service, _, _ = _service()
+    result = service.check_image(data=png_data_url(1920, 640))
+    assert result["sizeState"] == slots.SIZE_OK
+    assert result["needsConfirm"] is False
 
-async def test_alt_metni_bos_birakilan_slot_kaydedilmez() -> None:
+
+async def test_denetim_aga_hic_cikmaz() -> None:
     service, api, _ = _service()
-    result = await service.save(1, patch={"altText": ""}, reason=GEREKCE, actor="Ayşe",
-                                dry_run=False)
-    assert result["ok"] is False
-    assert "Görsel açıklaması" in result["error"]
-    assert "Dosya adı değil" in result["error"]          # NE yazılacağı da söylenir
-    assert api.used("bbd_save_carousel_slot") == []      # mağazaya HİÇ gidilmedi
-
-
-async def test_gerekce_kisa_ise_aga_hic_cikilmaz() -> None:
-    service, api, _ = _service()
-    result = await service.save(1, patch={"title": "Yeni"}, reason="ok", actor="Ayşe")
-    assert result["ok"] is False
+    service.check_image(data=png_data_url(1920, 640))
     assert api.calls == []
 
 
-async def test_kaydetme_taze_okur_ve_dokunulmayan_alanlari_geri_gonderir() -> None:
+# ================================================================== yükleme
+
+async def test_onaysiz_uyarili_gorsel_aga_hic_cikmaz() -> None:
+    """K9: panelde onay kutusu göstermek yetkilendirme değil."""
     service, api, _ = _service()
-    result = await service.save(1, patch={"title": "Sonbahar"}, reason=GEREKCE, actor="Ayşe",
-                                dry_run=False)
-    assert result["ok"] is True
-    body = api.used("bbd_save_carousel_slot")[0]["payload"]
-    assert body["title"] == "Sonbahar"
-    assert body["alt"] == "Okula dönüş afişi"       # dokunulmadı, korundu
-    assert body["link"] == "/okula-donus"
-    assert body["channel"] == "default"
-
-
-async def test_kuru_prova_olay_yaymaz_gercek_yazma_yayar() -> None:
-    service, _, _ = _service()
-    await service.save(1, patch={"title": "Sonbahar"}, reason=GEREKCE, actor="Ayşe",
-                       dry_run=True)
-    assert service.events == []                      # type: ignore[attr-defined]
-    await service.save(1, patch={"title": "Sonbahar"}, reason=GEREKCE, actor="Ayşe",
-                       dry_run=False)
-    assert service.events[0][0] == "store_home_media.layout_changed"  # type: ignore[attr-defined]
-
-
-async def test_yazma_denemesi_de_gerekcesiyle_ize_gecer() -> None:
-    # Ağ koparsa "ne yapmaya çalıştık" kaydı yalnız burada kalır.
-    api = FakeApi([dict(item) for item in SLOTLAR])
-    api.fail.add("bbd_save_carousel_slot")
-    service, _, store = _service(api)
-
-    result = await service.save(1, patch={"title": "Sonbahar"}, reason=GEREKCE, actor="Ayşe",
-                                dry_run=False)
-    assert result["ok"] is False
-    assert [row["result"] for row in store.audit] == ["denendi", "hata"]
-    assert store.audit[0]["reason"] == GEREKCE
-
-
-async def test_yeni_slot_taslak_acilir_kaydeder_kaydetmez_vitrine_dusmez() -> None:
-    service, api, _ = _service()
-    result = await service.save(None, patch={"area": "banner", "title": "Yeni",
-                                             "altText": "Yeni afiş", "link": "/yeni"},
-                                reason=GEREKCE, actor="Ayşe", dry_run=False)
-    assert result["ok"] is True
-    assert api.used("bbd_save_carousel_slot")[0]["payload"]["status"] == 0
-
-
-async def test_duzenleme_ucu_yayin_durumunu_degistiremez() -> None:
-    # Yayın ayrı izindir; `manage` yamasıyla taşınsaydı arka kapı olurdu (K9).
-    service, api, _ = _service()
-    await service.save(3, patch={"status": True, "title": "Deneme kulübü"}, reason=GEREKCE,
-                       actor="Ayşe", dry_run=False)
-    assert api.used("bbd_save_carousel_slot")[0]["payload"]["status"] == 0
-
-
-async def test_duyuru_seridine_gorsel_yuklenmez() -> None:
-    service, api, _ = _service()
-    result = await service.save(None, patch={"area": "announcement", "title": "Kargo bedava",
-                                             "link": "/kargo"},
-                                image=png_data_url(100, 40), reason=GEREKCE, actor="Ayşe")
-    assert result["ok"] is False
-    assert "yalnız metin gösterir" in result["error"]
-    assert "Tanıtım görselleri" in result["error"]       # sıradaki adım
-    assert api.used("bbd_save_carousel_slot") == []
-
-
-async def test_salt_okunur_kayit_duzenlenemez_ve_nedeni_soylenir() -> None:
-    api = FakeApi([])
-    api.fail.add("bbd_carousel")
-    api.theme_items = [{"id": 7, "type": "image_carousel", "name": "Ana slider", "status": 1}]
-    service, _, _ = _service(api)
-
-    result = await service.save(7, patch={"title": "Yeni"}, reason=GEREKCE, actor="Ayşe")
-    assert result["ok"] is False
-    # ENGEL İKİ CÜMLEDİR: neden + sıradaki adım (bkz. geliver.py BLOCKER_ACTIONS).
-    assert "yalnız BAKABİLİRSİNİZ" in result["error"]
-    assert "Sıradaki adım" in result["error"]
-
-
-# =========================================================== yayın durumu
-
-async def test_yayindan_kaldirma_silme_degildir_slot_listede_kalir() -> None:
-    service, api, _ = _service()
-    result = await service.set_status(1, published=False, reason=GEREKCE, actor="Ayşe",
-                                      dry_run=False)
-    assert result["ok"] is True
-    body = api.used("bbd_save_carousel_slot")[0]["payload"]
-    assert body["status"] == 0
-    assert body["title"] == "Okula dönüş"        # kayıt duruyor, silinmedi
-
-
-async def test_ayni_duruma_ikinci_kez_yazilmaz() -> None:
-    service, api, _ = _service()
-    result = await service.set_status(3, published=False, reason=GEREKCE, actor="Ayşe")
-    assert result["ok"] is False
-    assert result["error"] == "Bu zaten istediğiniz durumda; değişecek bir şey yok."
-    assert api.used("bbd_save_carousel_slot") == []
-
-
-async def test_olmayan_slot_anlasilir_hata_verir() -> None:
-    service, _, _ = _service()
-    result = await service.set_status(404, published=True, reason=GEREKCE, actor="Ayşe")
-    assert result["ok"] is False
-    assert "artık listede yok" in result["error"]
-    assert "Yenile" in result["error"]                   # sıradaki adım
-
-
-# ================================================================== sıra
-
-async def test_sira_global_listeye_oturtulur() -> None:
-    service, api, _ = _service()
-    result = await service.reorder(area="slider", order=[1, 2], reason=GEREKCE, actor="Ayşe",
-                                   dry_run=False)
-    assert result["ok"] is True
-    # Global sıralı liste: 2(slider), 3(banner), 1(slider) → slider'ın yerleri korunur.
-    assert api.used("bbd_reorder_carousel")[0]["order"] == [1, 3, 2]
-
-
-async def test_bayat_ekrandan_gelen_sira_reddedilir() -> None:
-    service, api, _ = _service()
-    result = await service.reorder(area="slider", order=[1, 2, 99], reason=GEREKCE,
-                                   actor="Ayşe")
-    assert result["ok"] is False
-    assert api.used("bbd_reorder_carousel") == []
-
-
-async def test_salt_okunur_gorunumde_sira_yazilmaz() -> None:
-    api = FakeApi([])
-    api.fail.add("bbd_carousel")
-    api.theme_items = [{"id": 7, "type": "image_carousel", "name": "Ana slider", "status": 1}]
-    service, _, _ = _service(api)
-
-    result = await service.reorder(area="slider", order=[7], reason=GEREKCE, actor="Ayşe")
-    assert result["ok"] is False
-    # İKİ NEDEN AYRI AYRI sayılır ve kullanıcının suçlu olmadığı söylenir.
-    assert "sizden kaynaklanmıyor" in result["error"]
-    assert "Sıradaki adım" in result["error"]
-
-
-# ========================================================= görsel yükleme
-
-async def test_yuklemede_oran_uyarisi_onaylanmadan_aga_cikilmaz() -> None:
-    # ORAN DENETİMİ ZORUNLU (K9): panelde onay kutusu göstermek yetmez, kapı
-    # burada. Onay yoksa dosya mağazaya HİÇ gitmez.
-    service, api, _ = _service()
-    result = await service.upload_image(data=png_data_url(1920, 1080), area="slider",
-                                        reason=GEREKCE, actor="Ayşe", dry_run=False)
+    result = await service.upload_image(data=png_data_url(600, 200), reason=GEREKCE,
+                                        actor="Kemal", dry_run=False)
     assert result["ok"] is False
     assert result["needsConfirm"] is True
-    assert "KESİLECEK" in result["cropNote"]
     assert api.used("upload_media") == []
 
 
-async def test_uyari_onaylanirsa_yuklenir_ve_iz_uyariyi_saklar() -> None:
-    # "Bu banner neden bulanık" sorusunun cevabı yalnız bu satırda kalır.
+async def test_onaylanan_uyarili_gorsel_yuklenir_ve_izi_kalir() -> None:
     service, api, store = _service()
-    result = await service.upload_image(data=png_data_url(1200, 400), area="slider",
-                                        filename="Okula Dönüş.PNG", acknowledged=True,
-                                        slot_id=1, reason=GEREKCE, actor="Ayşe", dry_run=False)
+    result = await service.upload_image(data=png_data_url(600, 200), acknowledged=True,
+                                        reason=GEREKCE, actor="Kemal", dry_run=False)
     assert result["ok"] is True
-    assert api.used("upload_media")[0]["filename"] == "okula-donus.png"
+    assert len(api.used("upload_media")) == 1
+    # "Bu görsel neden bulanık" sorusunun cevabı yalnız burada durur.
     assert store.assets[0]["verdict"] == slots.SIZE_BLURRY
-    assert store.assets[0]["slot_id"] == 1
 
 
-async def test_uygun_gorsel_onay_istemeden_yuklenir() -> None:
+async def test_yukleme_magazanin_verdigi_yolu_dondurur() -> None:
+    """Mağaza liste gövdesinde SERBEST YOL kabul etmiyor: yalnız kendi
+    yüklediği klasördeki dosyayı yazıyor."""
+    service, _, _ = _service()
+    result = await service.upload_image(data=png_data_url(1920, 640), filename="Afiş.png",
+                                        reason=GEREKCE, actor="Kemal", dry_run=False)
+    assert result["image"] == "storage/theme/1/sliders/yeni.webp"
+    assert result["url"].startswith("https://")
+
+
+async def test_dosya_adi_ascii_ye_indirilerek_gonderilir() -> None:
     service, api, _ = _service()
-    result = await service.upload_image(data=png_data_url(1920, 640), area="slider",
-                                        reason=GEREKCE, actor="Ayşe", dry_run=False)
-    assert result["ok"] is True
-    assert result["needsConfirm"] is False
-    assert result["aspect"] == "3:1"
-    assert api.used("upload_media")[0]["slot"] == "slider"
+    await service.upload_image(data=png_data_url(1920, 640), filename="Ekran Görüntüsü.jpg",
+                               reason=GEREKCE, actor="Kemal", dry_run=False)
+    assert api.used("upload_media")[0]["filename"] == "ekran-goruntusu.png"
 
 
-async def test_uc_yayinda_degilse_ekran_hata_degil_bekleniyor_der() -> None:
-    # K7: kullanıcı yanlış bir şey yapmadı; mağaza tarafındaki paket çıkmadı.
-    api = FakeApi([dict(item) for item in SLOTLAR])
-    api.raises["upload_media"] = FakeApiError(
-        "BBD'ye özel uç henüz yayında değil: /api/admin/bbd/home/slides",
-        code="bbd_endpoint_missing", status=404)
-    service, _, store = _service(api)
+async def test_gerekcesiz_yukleme_reddedilir() -> None:
+    service, api, _ = _service()
+    result = await service.upload_image(data=png_data_url(1920, 640), reason="kısa",
+                                        actor="Kemal", dry_run=False)
+    assert result["ok"] is False
+    assert api.used("upload_media") == []
 
-    result = await service.upload_image(data=png_data_url(1920, 640), area="slider",
-                                        reason=GEREKCE, actor="Ayşe", dry_run=False)
+
+async def test_uc_yayinda_degilse_hata_degil_bekleme_denir() -> None:
+    """Uç bir gün geri çekilirse ekran çökmez, durumu anlatır (K7)."""
+    api = FakeApi([dict(item) for item in SLAYTLAR])
+    api.raises["upload_media"] = FakeApiError("Uç henüz yayında değil.",
+                                              code="bbd_endpoint_missing")
+    service, _, _ = _service(api)
+    result = await service.upload_image(data=png_data_url(1920, 640), reason=GEREKCE,
+                                        actor="Kemal", dry_run=False)
     assert result["ok"] is False
     assert result["pending"] is True
-    # "Bu sizin hatanız değil" + "yapacağınız iş değişmiyor": bekleyen bir uç,
-    # kullanıcıya hata gibi gösterilmez (K7).
-    assert "sizin hatanız değil" in result["error"]
-    assert "Kaydet" in result["error"]
-    assert [row["result"] for row in store.audit] == ["denendi", "beklemede"]
 
 
-async def test_gercek_hata_bekleniyor_diye_yutulmaz() -> None:
-    api = FakeApi([dict(item) for item in SLOTLAR])
-    api.raises["upload_media"] = FakeApiError("Mağaza belirteci geçersiz",
-                                              code="unauthorized", status=401)
-    service, _, store = _service(api)
+# ==================================================================== yazma
 
-    result = await service.upload_image(data=png_data_url(1920, 640), area="slider",
-                                        reason=GEREKCE, actor="Ayşe", dry_run=False)
+async def test_liste_tam_olarak_yazilir_sira_dahil() -> None:
+    service, api, _ = _service()
+    okunan = (await service.slides())["items"]
+    tersi = list(reversed(_yazilabilir(okunan)))
+
+    result = await service.save_slides(slides=tersi, reason=GEREKCE, actor="Kemal",
+                                       dry_run=False)
+    assert result["ok"] is True
+    assert result["count"] == 3
+    yazilan = api.used("bbd_save_home_slides")[0]["slides"]
+    assert [item["title"] for item in yazilan] == [
+        "LGS Setleri", "AYT Matematik", "TYT Kaynakları"]
+
+
+async def test_govdeye_yalniz_uc_alan_konur() -> None:
+    service, api, _ = _service()
+    okunan = (await service.slides())["items"]
+    await service.save_slides(slides=okunan, reason=GEREKCE, actor="Kemal", dry_run=False)
+
+    yazilan = api.used("bbd_save_home_slides")[0]["slides"][0]
+    assert sorted(yazilan) == ["image", "link", "title"]
+
+
+async def test_bos_liste_aga_hic_cikmaz() -> None:
+    """Boş liste ana sayfanın en üstünü bomboş bırakır."""
+    service, api, _ = _service()
+    result = await service.save_slides(slides=[], reason=GEREKCE, actor="Kemal", dry_run=False)
     assert result["ok"] is False
-    assert result.get("pending") is not True
-    assert "belirteci" in result["error"]
+    assert "boş kaydedilemez" in result["error"]
+    assert api.used("bbd_save_home_slides") == []
+
+
+async def test_gorselsiz_satir_aga_hic_cikmaz() -> None:
+    service, api, _ = _service()
+    result = await service.save_slides(
+        slides=[{"title": "TYT", "link": "/tyt", "image": ""}],
+        reason=GEREKCE, actor="Kemal", dry_run=False)
+    assert result["ok"] is False
+    assert api.used("bbd_save_home_slides") == []
+
+
+async def test_gerekcesiz_yazma_reddedilir() -> None:
+    service, api, _ = _service()
+    result = await service.save_slides(slides=_yazilabilir((await service.slides())["items"]),
+                                       reason="kısa", actor="Kemal", dry_run=False)
+    assert result["ok"] is False
+    assert api.used("bbd_save_home_slides") == []
+
+
+async def test_yazma_gerekcesiyle_denetim_izine_gecer() -> None:
+    """ADR 0012: gerekçe zorunlu ve yerelde kalır — Bagisto gerekçe tutmuyor."""
+    service, _, store = _service()
+    await service.save_slides(slides=_yazilabilir((await service.slides())["items"]),
+                              reason=GEREKCE, actor="Kemal", dry_run=False)
+    kayitlar = [row for row in store.audit if row["action"] == "save_slides"]
+    assert [row["result"] for row in kayitlar] == ["denendi", "ok"]
+    assert all(row["reason"] == GEREKCE for row in kayitlar)
+    assert all(row["actor"] == "Kemal" for row in kayitlar)
+
+
+async def test_magaza_reddederse_hata_ize_gecer_ve_ekrana_doner() -> None:
+    api = FakeApi([dict(item) for item in SLAYTLAR])
+    api.fail.add("bbd_save_home_slides")
+    service, _, store = _service(api)
+    result = await service.save_slides(
+        slides=[{"title": "TYT", "link": "/tyt", "image": "storage/a.webp"}],
+        reason=GEREKCE, actor="Kemal", dry_run=False)
+
+    assert result["ok"] is False
+    assert "patladı" in result["error"]
     assert store.audit[-1]["result"] == "hata"
 
 
-async def test_yuklemede_gerekce_kisa_ise_dosya_hic_cozulmez() -> None:
-    service, api, _ = _service()
-    result = await service.upload_image(data=png_data_url(1920, 640), area="slider",
-                                        reason="ok", actor="Ayşe")
-    assert result["ok"] is False
-    assert api.calls == []
-
-
-async def test_duyuru_seridine_dosya_yuklenmez() -> None:
-    service, api, _ = _service(recommended_announcement="0x0")
-    result = await service.upload_image(data=png_data_url(600, 200), area="announcement",
-                                        reason=GEREKCE, actor="Ayşe")
-    assert result["ok"] is False
-    assert "yalnız metin gösterir" in result["error"]
-    assert "Tanıtım görselleri" in result["error"]       # sıradaki adım
-    assert api.used("upload_media") == []
-
-
-async def test_onizleme_kutusu_yanitla_birlikte_gelir_panel_gercek_orani_cizsin() -> None:
+async def test_kuru_provada_olay_yayilmaz() -> None:
     service, _, _ = _service()
-    result = service.check_image(area="slider", data=png_data_url(1920, 1080))
-    assert result["previewBox"]["ratio"] == "16:9"
-    assert result["recommendedAspect"] == "3:1"
-    assert result["needsConfirm"] is True
+    await service.save_slides(slides=[{"title": "TYT", "link": "", "image": "storage/a.webp"}],
+                              reason=GEREKCE, actor="Kemal", dry_run=True)
+    assert service.events == []                    # type: ignore[attr-defined]
 
 
-# ================================================================ arama
+async def test_gercek_yazmada_olay_yayilir() -> None:
+    service, _, _ = _service()
+    await service.save_slides(slides=[{"title": "TYT", "link": "", "image": "storage/a.webp"}],
+                              reason=GEREKCE, actor="Kemal", dry_run=False)
+    assert service.events[0][0] == "store_home_media.layout_changed"  # type: ignore[attr-defined]
+
+
+# ============================================================= hedef seçici
 
 async def test_kisa_sorguda_magazaya_hic_gidilmez() -> None:
     service, api, _ = _service()
@@ -405,42 +287,18 @@ async def test_kisa_sorguda_magazaya_hic_gidilmez() -> None:
     assert api.used("product_lookup") == []
 
 
-async def test_urun_aramasi_hedef_baglanti_uretir() -> None:
-    api = FakeApi([])
-    api.lookup_items = [{"id": 5, "name": "Kalem", "sku": "KLM-1", "url_key": "kalem"}]
+async def test_urun_aramasi_adres_uretir() -> None:
+    api = FakeApi([dict(item) for item in SLAYTLAR])
+    api.lookup_items = [{"id": 7, "name": "TYT Deneme", "sku": "TYT-1", "urlKey": "tyt-deneme"}]
     service, _, _ = _service(api)
-    result = await service.link_search(q="kalem")
-    assert result["items"][0]["url"] == "/kalem"
+    result = await service.link_search(q="deneme")
+    assert result["items"][0]["url"] == "/tyt-deneme"
 
 
-# =============================================================== denetim
-
-async def test_denetim_izi_slot_bazinda_okunur() -> None:
-    service, _, store = _service()
-    await service.save(1, patch={"title": "Sonbahar"}, reason=GEREKCE, actor="Ayşe",
-                       dry_run=False)
-    result = await service.audit(slot_id=1)
-    assert result["items"][0]["reason"] == GEREKCE
-    assert result["items"][0]["actor"] == "Ayşe"
-    assert len(store.audit) == 2
-
-
-# ================================================================= rapor
-
-async def test_rapor_yolu_disindaki_dosya_basilmaz() -> None:
-    # Serbest yol kabul etmek, `lp` ile makinedeki herhangi bir dosyayı kâğıda
-    # döktürmeye açık kapı bırakırdı.
-    class Yazici:
-        async def print_file(self, path: Path, **kwargs: Any) -> dict[str, Any]:
-            raise AssertionError("bu dosya basılmamalıydı")
-
-    service, _, _ = _service(printer=Yazici())
-    result = await service.print_report("/etc/passwd")
-    assert result["ok"] is False
-    assert "rapor klasöründe değil" in result["error"]
-
-
-async def test_bilinmeyen_rapor_turu_reddedilir() -> None:
-    service, _, _ = _service()
-    result = await service.build_report("uydurma", {})
-    assert result["ok"] is False
+async def test_urun_aramasi_dusse_de_ekran_ayakta_kalir() -> None:
+    api = FakeApi([dict(item) for item in SLAYTLAR])
+    api.fail.add("product_lookup")
+    service, _, _ = _service(api)
+    result = await service.link_search(q="deneme")
+    assert result["ok"] is True
+    assert result["connected"] is False

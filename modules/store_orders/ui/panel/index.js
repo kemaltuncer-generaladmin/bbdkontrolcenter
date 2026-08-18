@@ -206,7 +206,11 @@ async function refresh({ page = state.page, size = state.size } = {}) {
   nodes.status?.set('Siparişler alınıyor…');
   let payload;
   try {
-    payload = await api(`${BASE}/orders?${queryString({ page, size })}`);
+    // Bu uç, süzgece göre mağazanın TAMAMINI sayfa sayfa tarayabiliyor.
+    // Kabuğun 60 saniyelik varsayılanı taramayı ortasında kesip hatayı
+    // "çekirdeğe bağlanılamadı" diye gösteriyordu; süre açıkça istenir.
+    payload = await api(`${BASE}/orders?${queryString({ page, size })}`,
+      { timeoutSeconds: 300 });
   } catch (error) {
     state = { ...state, connected: false, error: error.message, items: [], total: 0 };
     renderTable();
@@ -242,7 +246,8 @@ async function refresh({ page = state.page, size = state.size } = {}) {
 async function loadOverview() {
   let payload;
   try {
-    payload = await api(`${BASE}/overview?${queryString({ page: '', size: '' })}`);
+    payload = await api(`${BASE}/overview?${queryString({ page: '', size: '' })}`,
+      { timeoutSeconds: 300 });
   } catch {
     return;                    // sayaçsız da çalışır (K7)
   }

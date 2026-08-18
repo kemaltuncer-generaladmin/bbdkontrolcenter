@@ -16,7 +16,7 @@
 // '../../ui-kit/' çözülmez; normaldir.
 
 import {
-  ago, blockedButton, button, confirmSimple, h, loadStyles, toaster,
+  ago, blockedButton, button, confirmSimple, confirmWithPin, h, loadStyles, toaster,
 } from '../../ui-kit/kit.js';
 import * as store from './store.js';
 
@@ -234,16 +234,21 @@ function groupCard(group) {
 
   const drop = h('button', 'bl-icon-btn', '✕');
   drop.type = 'button';
-  drop.title = 'Grubu kaldır';
+  drop.title = 'Grubu kalıcı olarak sil';
   drop.addEventListener('click', async () => {
-    const yes = await confirmSimple(nodes.view, {
-      title: `“${group.name}” kaldırılsın mı?`,
-      description: 'Grup listeden çıkar. Kaydı ve üretilmiş sesi silinmez; '
-        + 'aynı adla yeniden açarsan ses tekrar üretilmez.',
-      confirmLabel: 'Kaldır',
-      danger: true,
+    // METİN ARTIK DOĞRUYU SÖYLÜYOR. Eskiden "kaydı ve sesi silinmez" diyordu
+    // ve bu doğruydu — ama kullanıcı "kaldır" derken bunu istemiyordu:
+    // ses hem diskte hem zil ajanının kitaplığında süresiz kalıyordu.
+    const pin = await confirmWithPin(nodes.view, {
+      title: `“${group.name}” kalıcı olarak silinsin mi?`,
+      description: 'Grup kaydı, üretilmiş anons sesi, ses dosyası ve zil ajanındaki '
+        + 'kopyası birlikte silinir. GERİ ALINAMAZ. Aynı adla yeniden açarsan ses '
+        + 'sıfırdan üretilir.',
     });
-    if (yes) await run(() => store.removeGroup(group.id), { success: 'Grup kaldırıldı.' });
+    if (pin) {
+      await run(() => store.removeGroup(group.id, pin),
+        { success: 'Grup ve sesi kalıcı olarak silindi.' });
+    }
   });
   menu.append(rename, drop);
   card.append(menu, actions);
@@ -256,6 +261,7 @@ function voiceBadge(voice) {
     pending: ['⏳ ses üretiliyor', 'wait'],
     error: ['✕ ses üretilemedi', 'bad'],
     missing: ['⏳ sıraya alınacak', 'wait'],
+    off: ['— anons kapalı', 'dim'],
   };
   const [text, tone] = map[voice.state] || map.missing;
   const badge = h('span', `bl-badge ${tone}`, text);
@@ -386,13 +392,42 @@ function renderTimes() {
   return card;
 }
 
+// Zil saatinin TÜRÜ. Etiketten tahmin edilmez ve edilemez: "mola" yazan bir
+// satır ders de olabilir teneffüs de. Tür, zilin ARKASINDAN hangi anonsun
+// gideceğini belirler — yanlış seçim, teneffüse çıkan öğrenciye "İyi dersler"
+// dedirtir ve kullanıcı bunu ancak sesi duyunca fark eder.
+const TIME_KINDS = [['ders', 'Ders'], ['teneffus', 'Teneffüs']];
+
+function kindSelect(value) {
+  const select = h('select', 'kit-select bl-time-kind');
+  for (const [key, label] of TIME_KINDS) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = label;
+    if (key === value) option.selected = true;
+    select.append(option);
+  }
+  select.title = 'Ders zilinin arkasından "İyi dersler.", teneffüs zilinin '
+    + 'arkasından "İyi teneffüsler." anonsu gider.';
+  return select;
+}
+
 function timeRow(entry) {
   const row = h('div', 'bl-time');
   row.append(h('b', 'bl-time-clock', entry.time));
 
+  const kind = kindSelect(entry.kind || 'ders');
+  kind.addEventListener('change', () => {
+    const next = cloneTimes();
+    const found = next[activeDay].find((item) => item.time === entry.time);
+    if (found) found.kind = kind.value;
+    run(() => store.saveTimes(next), { success: '' });
+  });
+  row.append(kind);
+
   const label = h('input', 'kit-input bl-time-label');
   label.value = entry.label || '';
-  label.placeholder = 'teneffüs';
+  label.placeholder = 'Etiket (isteğe bağlı)';
   label.maxLength = 40;
   label.addEventListener('change', () => {
     const next = cloneTimes();
@@ -418,6 +453,7 @@ function timeForm() {
   const form = h('div', 'bl-time-form');
   const clock = h('input', 'kit-input');
   clock.placeholder = 'Saat (930 → 09:30)';
+  const kind = kindSelect('ders');
   const label = h('input', 'kit-input');
   label.placeholder = 'Etiket (isteğe bağlı)';
   label.maxLength = 40;
@@ -434,7 +470,7 @@ function timeForm() {
       notify(`${parsed} zaten var.`, 'bad');
       return;
     }
-    next[activeDay].push({ time: parsed, label: label.value.trim() });
+    next[activeDay].push({ time: parsed, kind: kind.value, label: label.value.trim() });
     clock.value = '';
     label.value = '';
     run(() => store.saveTimes(next), { success: `${parsed} zili eklendi.` });
@@ -443,7 +479,7 @@ function timeForm() {
   clock.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
   label.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
 
-  form.append(clock, label, button('Saat ekle', { onClick: submit }));
+  form.append(clock, kind, label, button('Saat ekle', { onClick: submit }));
   return form;
 }
 
@@ -554,8 +590,41 @@ function renderSound() {
       + `Değiştirirsen ${ozel} öğrencinin sesi yeniden üretilir.`,
   }));
 
+  // ZİL SONRASI ANONSLAR. Grup çağrılarından ayrı: bunlar OTOMATİK zilin
+  // hemen arkasından, saatin türüne göre çalar.
+  card.append(textRow({
+    key: 'lessonAfter',
+    label: 'Ders zilinden sonra',
+    hint: 'Ders türü işaretli zilin hemen arkasından çalar. '
+      + 'Boş bırakırsan ders zilinden sonra anons gitmez.',
+  }));
+  card.append(textRow({
+    key: 'breakAfter',
+    label: 'Teneffüs zilinden sonra',
+    hint: 'Teneffüs türü işaretli zilin hemen arkasından çalar. '
+      + 'Boş bırakırsan teneffüs zilinden sonra anons gitmez.',
+  }));
+
   const tools = h('div', 'bl-tools');
   tools.append(h('span', 'bl-hint', `Kuyrukta ${data.queue?.queued || 0} ses.`));
+  tools.append(button('Kullanılmayan sesleri sil', {
+    title: 'Hiçbir gruba ve hiçbir anons metnine bağlı olmayan ses dosyalarını '
+      + 'kalıcı siler. Grup adı her değiştiğinde eskisi birikiyordu.',
+    onClick: async () => {
+      const pin = await confirmWithPin(nodes.view, {
+        title: 'Kullanılmayan anons sesleri silinsin mi?',
+        description: 'Şu an hiçbir grubun ve hiçbir zil anonsunun kullanmadığı ses '
+          + 'kayıtları ve dosyaları kalıcı silinir. Kullanımdaki sesler etkilenmez. '
+          + 'GERİ ALINAMAZ.',
+      });
+      if (pin) {
+        await run(() => store.pruneVoices(pin), {
+          success: (r) => (r.removed ? `${r.removed} kullanılmayan ses silindi.`
+            : 'Silinecek ses yoktu.'),
+        });
+      }
+    },
+  }));
   tools.append(button('Sesleri yeniden üret', {
     title: 'Eksik ya da hata almış sesleri yeniden üretim sırasına alır.',
     onClick: () => run(store.rebuildVoices,
@@ -615,6 +684,11 @@ function textRow({ key, label, hint }) {
   const wrap = h('div', 'bl-text');
   const head = h('div', 'bl-text-head');
   head.append(h('label', 'bl-label', label));
+  // Zil sonrası anonsların ses durumu BURADA görünür. Görünmeseydi kullanıcı
+  // zilin arkasından ses gelmediğinde sebebi hiçbir yerde okuyamazdı.
+  const after = data.afterTexts?.[key === 'lessonAfter' ? 'ders'
+    : key === 'breakAfter' ? 'teneffus' : ''];
+  if (after && after.voice.state !== 'off') head.append(voiceBadge(after.voice));
   wrap.append(head);
 
   const field = h('textarea', 'kit-textarea');
@@ -630,6 +704,9 @@ function textRow({ key, label, hint }) {
         notify('Metin değişmedi.');
         return;
       }
+      // BOŞ METİN GEÇERLİDİR ve "bu anonsu istemiyorum" demektir; backend de
+      // öyle okur. Boşu "değişiklik yok" sayıp atlamak, kullanıcının sildiğini
+      // geri koyardı.
       run(() => store.saveSettings({
         ...data.settings,
         texts: { ...data.settings.texts, [key]: text },

@@ -10,6 +10,7 @@ from __future__ import annotations
 from km_sdk import ModuleContext
 
 from .client import DEFAULT_BASE_URL, StoreApi
+from .scan import DEFAULT_TTL, BackgroundScan
 from .upload import DEFAULT_MAX_UPLOAD_MB
 
 
@@ -35,5 +36,14 @@ def register(ctx: ModuleContext) -> None:
     )
 
     ctx.provide("store.api", api)
+
+    # Ağır taramalar isteğin İÇİNDE koşmaz (bkz. `scan.py` başlığı). Burada da
+    # iş yapılmaz: nesne kurulur, ilk tarama bir ekran gerçekten isteyene kadar
+    # başlamaz.
+    ctx.provide("store.scan", BackgroundScan(
+        log=ctx.log,
+        default_ttl=int(config.get("scan_ttl_seconds") or DEFAULT_TTL),
+    ))
+
     ctx.log.info("mağaza geçidi hazır", base_url=api.state()["baseUrl"],
                  read_only=api.state()["readOnly"])

@@ -59,6 +59,32 @@ BODY_MIN, BODY_MAX = 1, 500
 #: Gerekçe sınırları — panel alanları için (00-genel.md §3).
 MIN_REASON, MAX_REASON = 10, 500
 
+#: Netgsm gönderici adının sınırı. Sağlayıcı 11 karakterden uzun başlığı
+#: reddediyor; sınır BBD kantin panelindekiyle (`maxLength = 11`) aynı sayıdır
+#: ve iki ekranın farklı sınır göstermesi, birinde kabul edilen bir başlığın
+#: ötekinde reddedilmesi demekti.
+HEADER_MAX = 11
+
+#: BLD'nin gönderici adı. BBD Kantin ile aynı Netgsm hesabı kullanılıyor; TEK
+#: fark budur ve bu yüzden ekran beklenen değeri yazılı gösterir. Sabit bir
+#: DAYATMA DEĞİL, bir hatırlatmadır: başlık Netgsm panelinde onaylanan addır
+#: ve gün gelip değişirse burayı zorlamak, panelden düzeltmeyi imkânsız
+#: kılardı.
+EXPECTED_HEADER = "BLEZZETDNYM"
+
+#: Netgsm'in "mesaj başlığı sistemde tanımlı değil" kodu. Sağlayıcının en çok
+#: karşılaşılan ve en yanıltıcı hatası: istek 200 döner, kayıt `failed` olur ve
+#: sebep başlığın onaysız olmasıdır. Panel bu kodu diğer hatalardan AYIRIP ne
+#: yapılacağını yazar; Türkçe hata cümlesinin içinde metin aramak, cümle
+#: düzeltildiği gün o kapıyı sessizce kapatırdı.
+HEADER_NOT_DEFINED_CODE = "40"
+
+#: Gönderici adında kabul edilen karakterler. Netgsm yalnız ASCII harf, rakam
+#: ve boşluk kabul ediyor; Türkçe karakterli bir başlık orada zaten
+#: onaylanamaz ve buradan geçmesi "kaydedildi ama hiç gitmiyor" hâlini
+#: üretirdi. Kalıp BLD'nin uç doğrulamasıyla BİREBİR aynıdır.
+HEADER_ALLOWED = re.compile(r"[A-Za-z0-9 ]*")
+
 #: Kitle değerleri. Sıra EKRANDAKİ sıradır ve `all_customers` bilinçli olarak
 #: en sondadır: iki yıl önce bir kez sipariş vermiş birine duyuru göndermek
 #: spam şikâyeti ve numara kaybı demektir.
@@ -91,8 +117,19 @@ def _lira(kurus: int) -> str:
 #: /templates` ile gelir. Buradaki üç alan yalnız ekranın işidir:
 #:   · `group`  — Tetikleyiciler sekmesindeki öbek
 #:   · `about`  — bildirimin ne zaman gittiğini anlatan cümle
+#:   · `sender` — o metni GERÇEKTEN gönderen kod (denetlendi, aşağıya bak)
 #:   · `sample` — yerel önizlemenin örnek değerleri (sunucu kendi örneğini
 #:                üretir; ikisi aynı olmak zorunda değil, ikisi de örnektir)
+#:
+#: `sender` BOŞ İSE O ŞABLON HİÇ GÖNDERİLMİYOR. Bu alan 18.08.2026'da BLD
+#: kaynağı taranarak eklendi ve üç şablonun **hiçbir yerden gönderilmediği**
+#: ortaya çıktı: `order_created`, `order_revised`, `invoice_issued`. Üçü de
+#: sunucunun şablon sözlüğünde duruyor, panelde düzenlenebiliyordu ve
+#: açıklamaları "…gider" diyordu — yani ekran yalan söylüyordu. Yönetici
+#: metni özenle yazıp açıyor, tek bir mesaj çıkmıyordu.
+#:
+#: SATIRLAR SİLİNMEDİ: sunucuda tanımlılar ve bir gün bağlanabilirler. Ekran
+#: artık "şu an gönderilmiyor" diye işaretliyor.
 #:
 #: Anahtarlar SABİTTİR (sözleşme). `otp_login` bu listede YOKTUR ve
 #: olmayacaktır: giriş kodu metni `OtpService` içindedir ve panelden
@@ -101,59 +138,88 @@ def _lira(kurus: int) -> str:
 CATALOG: dict[str, dict[str, Any]] = {
     "order_created": {
         "group": "order",
-        "about": "Müşteri siparişi oluşturduğu anda gider.",
+        "sender": "",
+        "about": "ŞU AN GÖNDERİLMİYOR. Sipariş oluşturma akışında bu şablonu "
+                 "gönderen bir kod yok; sipariş bildirimleri yalnız DURUM "
+                 "değişince (onay, yola çıktı, teslim, iptal) gidiyor.",
         "sample": {"order_no": "BLD-8421", "service_date": "17.08.2026",
                    "total": _lira(18000), "customer_name": "Mehmet Kaya"},
     },
     "order_confirmed": {
         "group": "order",
+        "sender": "OrderStatusTransition",
         "about": "Sipariş onaylandığında gider.",
         "sample": {"order_no": "BLD-8421", "service_date": "17.08.2026"},
     },
     "order_on_the_way": {
         "group": "order",
+        "sender": "OrderStatusTransition",
         "about": "Kurye yola çıktığında gider.",
         "sample": {"order_no": "BLD-8421", "eta": "12:30"},
     },
     "order_delivered": {
         "group": "order",
+        "sender": "OrderStatusTransition",
         "about": "Sipariş teslim edildiğinde gider.",
         "sample": {"order_no": "BLD-8421"},
     },
     "order_cancelled": {
         "group": "order",
+        "sender": "OrderStatusTransition",
         "about": "Sipariş iptal edildiğinde gider.",
         "sample": {"order_no": "BLD-8421", "service_date": "17.08.2026",
                    "reason": "Mutfak kapalı"},
     },
     "order_revised": {
         "group": "order",
-        "about": "Sipariş düzenlendiğinde (revizyon) gider.",
+        "sender": "",
+        "about": "ŞU AN GÖNDERİLMİYOR. Sipariş revizyonu müşteriye SMS "
+                 "üretmiyor; revizyon yalnız sipariş kaydına ve denetim izine "
+                 "yazılıyor.",
         "sample": {"order_no": "BLD-8421", "reason": "Kalem adedi güncellendi"},
     },
     "subscription_contract": {
         "group": "subscription",
+        "sender": "ContractService",
         "about": "Abonelik sözleşmesi imzaya gönderildiğinde gider.",
         "sample": {"customer_name": "Mehmet Kaya",
                    "link": "https://bld.example/s/8f2a", "expires_at": "20.08.2026"},
     },
     "subscription_payment_due": {
         "group": "subscription",
+        "sender": "SubscriptionRenewCommand (her gece 21:45)",
         "about": "Abonelik döneminin borcu yaklaştığında hatırlatma olarak gider.",
         "sample": {"customer_name": "Mehmet Kaya", "period": "Eylül 2026",
                    "amount": _lira(180000), "due_date": "01.09.2026"},
     },
     "invoice_issued": {
         "group": "invoice",
-        "about": "Fatura belgesi kesildiğinde gider.",
+        "sender": "",
+        "about": "ŞU AN GÖNDERİLMİYOR. Fatura kesimi müşteriye SMS üretmiyor; "
+                 "belge yalnız fatura ekranından ve müşteri uygulamasından "
+                 "görülüyor.",
         "sample": {"invoice_no": "BLD2026000148", "total": _lira(180000),
                    "link": "https://bld.example/f/148"},
     },
     "announcement": {
         "group": "announcement",
+        "sender": "elle (Duyuru sekmesi)",
         "about": "TOPLU duyuru. Kendiliğinden gitmez; Tetikleyiciler sekmesinden "
                  "elle çalıştırılır ve kuru prova zorunludur.",
         "sample": {"customer_name": "Mehmet Kaya"},
+    },
+    # ZAMANLANMIŞ İŞ — panelden tetiklenen duyuruyla AYNI ŞEY DEĞİL.
+    # Kataloğa girmemişti ve "Diğer" öbeğine düşüyordu: her sabah kendiliğinden
+    # müşteriye giden bir SMS, ekranda adı bile yazmayan bir satırdı.
+    "dailymenu.announce": {
+        "group": "scheduled",
+        "sender": "MenuAnnounceCommand (her sabah 09:00)",
+        "about": "BİR GÜN ÖNCEDEN gider: pazartesi sabahı SALI'nın menüsü "
+                 "duyurulur. Müşterinin kesim saatinden önce sipariş verecek "
+                 "vakti olsun diye. O günün menüsü YAYINLANMAMIŞSA duyuru "
+                 "hiç gitmez — taslak yetmez.",
+        "sample": {"customer_name": "Mehmet Kaya", "date": "18.08.2026",
+                   "menu": "Mercimek çorbası, Tavuk sote, Pilav, Sütlaç"},
     },
 }
 
@@ -169,6 +235,9 @@ GROUPS: list[dict[str, str]] = [
     {"key": "announcement", "label": "Toplu duyuru",
      "note": "ZAMANLAYICI YOKTUR. Duyuru elle çalıştırılır; şablonun kapalı "
              "olması gönderimi de kapatır."},
+    {"key": "scheduled", "label": "Zamanlanmış işler",
+     "note": "Kimse basmadan, takvime göre kendiliğinden giden bildirimler. "
+             "Kapatmanın tek yolu şablonu kapatmaktır."},
 ]
 
 #: Katalogda olmayan bir anahtar gelirse (sunucuya yeni şablon eklenmiş)

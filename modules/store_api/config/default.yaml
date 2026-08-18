@@ -27,6 +27,11 @@ requests_per_minute: 55
 reference_ttl_seconds: 900     # L1 — kanal/para/dil/vergi listeleri
 snapshot_ttl_seconds: 1800     # L2 — referans anlık görüntüsü (SQLite)
 
+# Ağır taramaların (sipariş toplulaştırması, nüfus taraması) taze sayıldığı
+# süre. Tarama isteğin İÇİNDE koşmaz — bu süre "ne sıklıkla arka planda
+# yenilensin" demektir, "ekran ne kadar bekler" demek değildir (bkz. scan.py).
+scan_ttl_seconds: 300
+
 # Tam tarama üst sınırı (1.419 ürün rahatça sığar). Bozuk sayfalama meta'sında
 # sonsuz döngüyü engeller.
 max_items: 5000

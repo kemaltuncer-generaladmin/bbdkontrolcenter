@@ -64,8 +64,28 @@ platform:
   notify:
     sms:
       provider: netgsm       # resmi SDK: netgsm-sms · ADR 0010
-      enabled: false         # kimlik bilgisi girilmeden açılmaz
-      dry_run: true          # GERÇEK SMS GÖNDERMEZ. Üretimde false yapılır.
+      # `enabled` yalnız "sağlayıcı kurulabilir" demektir, "mesaj gider"
+      # demek değildir; gönderim kararı aşağıdaki `dry_run`dadır.
+      #
+      # Kapalıyken kimlik bilgisi girme ekranı bile çalışmıyordu:
+      # `NotifyService.ready()` "SMS kapalı" diyor, Link ile Ödeme ekranı
+      # kurulumun neresinde eksik olduğunu söyleyemiyordu. Kimlik bilgisi
+      # kasada yoksa `ready()` yine "kimlik bilgisi yok" der.
+      enabled: true
+      # GERÇEK SMS GÖNDERİR (18.08.2026, kullanıcı kararı).
+      #
+      # Buraya yazılmasının sebebi: kurulumların kendi `config/local.yaml`
+      # dosyası SUNUCUYA GİTMİYOR (git dışı, imaja da girmiyor). Backend
+      # sunucuda koştuğu için (ADR 0026) yerel dosyaya yazılan bir açma
+      # kararının sunucuda hiçbir etkisi olmazdı — özellik sessizce kapalı
+      # kalırdı ve kimse sebebini göremezdi.
+      #
+      # BU ŞALTER TEK BAŞINA MESAJ GÖNDERMEZ. Netgsm kullanıcı adı ve parolası
+      # KASADAN geliyor (`notify.netgsm.username` / `.password`, K8); kasa
+      # boşken `ready()` "kimlik bilgisi yok" der ve tek bir istek çıkmaz.
+      # Ayrıca her modülün kendi freni ve isteğin kendi `dryRun` bayrağı da
+      # geçilmek zorunda.
+      dry_run: false
       header: ""             # Netgsm'de tanımlı gönderici başlığı (msgheader)
       appname: "KontrolMerkezi"
       # username / password KASADAN gelir — buraya yazılmaz (K8)

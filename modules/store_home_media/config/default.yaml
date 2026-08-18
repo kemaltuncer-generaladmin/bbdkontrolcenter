@@ -1,16 +1,15 @@
 # Ana Ekran Görselleri ayarları. Düz anahtarlar — iç içe `modules:` bloğu yoktur.
 
-export_path: ""            # boşsa masaüstü hiyerarşisi: Raporlar/Mağaza/Müşteri/<yıl>/<ay>
 channel: "default"         # her istekte gider (kanal başına ayrı ana sayfa olabilir)
 locale: "tr"               # her istekte gider
 
-# Önerilen görsel ölçüleri — alan başına "<en>x<boy>". Tema değişirse burası
-# değişir; ölçü kararı koda gömülmez. "0x0" o alanın görsel istemediğini söyler
-# (duyuru şeridi metindir).
+# Önerilen görsel ölçüsü — "<en>x<boy>". Tema değişirse burası değişir; ölçü
+# kararı koda gömülmez. Vitrin 2.743:1 oranında çiziyor; 1920x640 (3:1) ona en
+# yakın yuvarlak ölçü.
+#
+# Alan başına ayrı ölçü ayarları (banner/collection/announcement) KALDIRILDI:
+# o üç sekme 18.08.2026'da ekrandan çıktı.
 recommended_slider: "1920x640"
-recommended_banner: "1200x400"
-recommended_collection: "800x800"
-recommended_announcement: "0x0"
 
 # Yüklenen görselin çözünürlüğü önerilenin bu oranından küçükse "mobilde
 # bulanık" denir. 1.0 = birebir; 0.9 küçük sapmayı hoş görür.
@@ -25,5 +24,5 @@ aspect_tolerance: 8
 max_image_bytes: 2000000
 allowed_image_types: ["image/png", "image/jpeg", "image/webp"]
 
-# Hedef bağlantı seçicisinde gösterilecek en çok ürün/sayfa sayısı.
+# Hedef seçicideki ürün aramasında gösterilecek en çok kayıt.
 link_search_limit: 20

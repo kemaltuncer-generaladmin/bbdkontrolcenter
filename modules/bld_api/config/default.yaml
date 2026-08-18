@@ -29,15 +29,40 @@ require_reason: true
 
 # HIZ KOVASI — TEK KOVA, ALAN BAŞINA DEĞİL. Sunucu sınırlarının en darı
 # `throttle:bld-control` = 1200/saat/IP (KDS ailesi); panel alanlarının kendi
-# kovası `bld-control-panel` = 3000/saat/IP. Kova dakikalıktır ve 18'de durur
-# — 18 × 60 = 1080 < 1200, yani dakikalık bir patlama en dar saatlik bütçeyi
-# bile tüketemez ve pay elle atılan istekler için kalır.
+# kovası `bld-control-panel` = 3000/saat/IP.
+#
+# ─────────────────────────────────────────────────────────────────────────
+# ESKİ AYAR: `requests_per_minute: 18`, TEK dakikalık pencere.
+#
+# Hesabı doğruydu — 18 × 60 = 1080 < 1200 — ama SÜREKLİ yükün hesabıydı.
+# Panel kullanımı sürekli değil PATLAMALIDIR: bir ekran açılışı 4-6 istek
+# atar, sonra dakikalarca sessizlik. Üç ekranı arka arkaya açan yönetici
+# 18'i saniyeler içinde doldurur ve 19. istek `60 - yaş` kadar UYUR; ekran
+# "çok ağır çalışıyor" görünür. Bu sırada saatlik bütçenin büyük kısmı
+# kullanılmadan durur.
+#
+# Kova ayrıca TEK ve süreç genelinde paylaşılıyor (ADR 0026 — backend
+# sunucuda koşuyor): bütün BLD panelleri, bütün yoklama döngüleri ve bütün
+# bağlı masaüstleri aynı 18'i bölüşüyordu.
+#
+# YENİ: İKİ PENCERE. Kısa pencere patlamaya izin verir, uzun pencere
+# sunucunun saatlik sınırını korur. Kısa pencereyi tek başına yükseltmek
+# ikinci yarıyı kaybetmek olurdu: 45/dk × 60 = 2700 istek/saat ve sunucu
+# 1200'de kapıyı kapatır.
+# ─────────────────────────────────────────────────────────────────────────
 #
 # ALAN BAŞINA AYRI KOVA AÇILMAZ: Kontrol Merkezi tek IP'den çıkıyor ve
 # paylaşılan bir sunucu bütçesi ancak paylaşılan bir istemci kovasıyla
 # onurlandırılır. Yoklama baskısı kovayı büyüterek değil, referans veriyi
 # önbelleğe alarak karşılanır (aşağıya bakın).
-requests_per_minute: 18
+requests_per_minute: 45
+
+# SAATLİK SERT TAVAN — asıl emniyet burası. Sunucunun en dar sınırı 1200;
+# 1100 kaçak bir yoklama döngüsünü durdururken elle atılan isteklere ve
+# yeniden denemelere pay bırakıyor. Bu sayıyı 1200'ün üstüne çıkarmak,
+# sunucunun 429 vermesini beklemek demektir — ve o hata ekranda "bağlantı
+# koptu" diye görünür.
+requests_per_hour: 1100
 
 # SAYFA BOYU. Sunucunun varsayılanı 25, tavanı 100 (`per_page`); üstü sessizce
 # kırpılıyor ve kırpılmış bir sayfayı "hepsi" sanan istemci veri kaybeder,

@@ -20,6 +20,8 @@ BEKLENEN = {
     # --- okuma
     ("GET", "/overview"): {"bld_subscriptions.view"},
     ("GET", "/audit"): {"bld_subscriptions.view"},
+    # Şube listesi bir iş verisi değil, formu çizebilmek için gereken referans.
+    ("GET", "/locations"): {"bld_subscriptions.view"},
     ("GET", "/requests"): {"bld_subscriptions.view"},
     ("GET", "/requests/{request_id}"): {"bld_subscriptions.view"},
     ("GET", "/contracts/{contract_id}"): {"bld_subscriptions.view"},
@@ -34,7 +36,8 @@ BEKLENEN = {
     ("POST", "/requests/{request_id}/convert"): {"bld_subscriptions.manage"},
     ("POST", "/contracts/{contract_id}/resend"): {"bld_subscriptions.manage"},
     ("POST", "/contracts/{contract_id}/cancel"): {"bld_subscriptions.manage"},
-    ("POST", "/payments/{payment_id}/mark-paid"): {"bld_subscriptions.manage"},
+    # YIKICI + PIN: gerçek para hareketi ve geri alma ucu yok.
+    ("POST", "/payments/{payment_id}/mark-paid"): {"bld_subscriptions.cancel"},
     ("POST", "/orders/{order_id}/release"): {"bld_subscriptions.manage"},
     ("POST", "/subscriptions"): {"bld_subscriptions.manage"},
     ("PATCH", "/subscriptions/{subscription_id}"): {"bld_subscriptions.manage"},
@@ -45,7 +48,8 @@ BEKLENEN = {
     # ÜRETMEZ. Üretilmiş siparişleri düşürmek `bld_orders.cancel` iznini ister
     # ve iade orada doğar. Üçüncü bir anahtar, taşıdığı hiçbir ayrıcalık
     # olmadan izin kataloğunu şişirirdi.
-    ("POST", "/subscriptions/{subscription_id}/cancel"): {"bld_subscriptions.manage"},
+    # YIKICI + PIN: iptal edilmiş abonelik geri açılamaz.
+    ("POST", "/subscriptions/{subscription_id}/cancel"): {"bld_subscriptions.cancel"},
     ("POST", "/subscriptions/{subscription_id}/exceptions"): {"bld_subscriptions.manage"},
     ("POST", "/subscriptions/{subscription_id}/exceptions/{service_date}/delete"):
         {"bld_subscriptions.manage"},
@@ -115,7 +119,7 @@ def test_denetleyici_metot_adlari_rota_dosyasinda_SABIT() -> None:
     # adlandırmanın testi düşürmesini sağlar.
     adlar = {route.name for route in routes.router.routes}
     assert adlar == {
-        "overview", "audit", "requests", "request_detail", "update_request",
+        "overview", "audit", "locations", "requests", "request_detail", "update_request",
         "convert_request", "contract_detail", "resend_contract", "cancel_contract",
         "mark_paid", "release_order", "subscriptions", "create_subscription",
         "subscription_detail", "update_subscription", "activate_subscription",

@@ -183,7 +183,11 @@ async function refresh() {
 
   let payload;
   try {
-    payload = await api(`${BASE}/refunds?${query.toString()}`);
+    // Bu uç, süzgece göre mağazanın TAMAMINI sayfa sayfa tarayabiliyor.
+    // Kabuğun 60 saniyelik varsayılanı taramayı ortasında kesip hatayı
+    // "çekirdeğe bağlanılamadı" diye gösteriyordu; süre açıkça istenir.
+    payload = await api(`${BASE}/refunds?${query.toString()}`,
+      { timeoutSeconds: 300 });
   } catch (error) {
     state = { ...state, connected: false, error: error.message, items: [], filtered: [] };
     renderAll();

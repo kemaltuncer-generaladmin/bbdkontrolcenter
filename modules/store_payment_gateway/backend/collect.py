@@ -149,10 +149,54 @@ PLACEHOLDERS = {
 #: Ayrıca KISADIR: tipik bir bağlantı ve talep numarasıyla doldurulduğunda
 #: 160 karakterlik tek parçaya sığar. Uzun bir varsayılan, her gönderimde
 #: sessizce iki kredi harcardı.
+#:
+#: METİN NEDEN "BORCUNUZ" DİYOR. Eski varsayılan ("{tutar} odemenizi su
+#: baglantidan yapabilirsiniz") mesajın NEDEN geldiğini söylemiyordu; müşteri
+#: tutarı görüyor ama neyin karşılığı olduğunu bilmiyordu ve tanımadığı bir
+#: bağlantıya tıklaması isteniyordu. Bu ekranın tek işi BİRİKMİŞ BORCU
+#: tahsil etmek olduğu için varsayılan bunu açıkça yazar.
 DEFAULT_TEMPLATE = (
-    "Sayin {ad}, {tutar} odemenizi su baglantidan yapabilirsiniz: {link} "
+    "Sayin {ad}, {tutar} tutarindaki borcunuz icin odeme baglantisi: {link} "
     "Talep no: {kod} - {kurum}"
 )
+
+#: Şablonda BULUNMASI ZORUNLU yer tutucu. Linksiz bir tahsilat SMS'i müşteriye
+#: hiçbir işe yaramaz: tutarı söyler, ödemenin yolunu söylemez. Bu sabit tek
+#: yerde durur ki hem kaydetme kapısı hem ekranın uyarı metni aynı şeyi
+#: söylesin (kardeş koruma: bbd_payment_request → `{linkUrl}`).
+REQUIRED_PLACEHOLDER = "{link}"
+
+#: Şablon kaydedilirken `{link}` yoksa dönen metin.
+LINK_REQUIRED_ERROR = (
+    "Şablonda {link} yer tutucusu bulunmalı; bağlantısız SMS müşteriye hiçbir "
+    "işe yaramaz."
+)
+
+#: Sağlayıcı hata kodunun EKRANDA açık metin karşılığı.
+#:
+#: NEDEN SADECE 40. Netgsm'in diğer kodları zaten Türkçe açıklamayla geliyor
+#: (`km_platform/notify/providers/netgsm/codes.py`) ve personelin yapacağı bir
+#: şey yok. 40 farklıdır: "Gönderici başlığı sistemde tanımlı değil" cümlesi
+#: teknik doğrudur ama personele NE YAPACAĞINI söylemez — başlık bu ekrandaki
+#: SMS ayarları kartından girilir ve Netgsm panelinde onaylı olmalıdır.
+PROVIDER_CODE_HELP = {
+    "40": (
+        "Netgsm hatası 40 — “Mesaj başlığı sistemde tanımlı değil”. "
+        "Gönderici başlığı Netgsm panelinde onaylanmış olmalı ve buraya "
+        "harfi harfine (en çok 11 karakter) yazılmalıdır. SMS ayarları "
+        "kartındaki “Gönderici başlığı” alanını düzeltin."
+    ),
+}
+
+
+def provider_hint(failure: Exception) -> str:
+    """Sağlayıcı hata kodunun ekrana yazılacak açık metni. Yoksa boş dize.
+
+    Hata sınıfı DEĞİL, `provider_code` alanı okunur: modül `km_platform`'un
+    istisna tiplerini import etmez (K2), yalnız sözleşmedeki alana bakar.
+    """
+    code = text(getattr(failure, "provider_code", ""))
+    return PROVIDER_CODE_HELP.get(code, "")
 
 _PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_]+)\}")
 

@@ -3,21 +3,30 @@
 Her uçta `requires(...)` vardır (K9): arayüzde düğmeyi gizlemek yetkilendirme
 değildir. `module.yaml` → `http.requires` taban izni verir, uçlar onu DARALTIR.
 
-İKİ İZİN, ÜÇ DEĞİL:
+ÜÇ İZİN — ESKİDEN İKİYDİ (I4):
 
     bld_subscriptions.view     okuma — talepler, abonelikler, takvim, üretim
                                defteri, sözleşmeler, ödemeler, yerel iz
-    bld_subscriptions.manage   bütün yazmalar (İPTAL DÂHİL)
+    bld_subscriptions.manage   yazmalar — İPTAL VE TAHSİLAT HARİÇ
+    bld_subscriptions.cancel   YIKICI: abonelik iptali + `mark-paid`
 
-`bld_orders` iptali üçüncü bir anahtara aldı; burada almadık ve fark PARADIR.
-Sipariş iptali ödenmiş bir siparişin İADE KAYDINI üretir. Abonelik iptali para
-üretmez: kuralı durdurur, üretilmiş siparişlere DOKUNMAZ ve onları düşürmek
-zaten `bld_orders.cancel` iznini ister. Üçüncü bir anahtar, taşıdığı hiçbir
-ayrıcalık olmadan izin kataloğunu şişirirdi.
+Üçüncüsü kardeş modüllerdeki `bld_orders.cancel`, `bld_customers.disable` ve
+`bld_invoices.void` ile aynı çizgide. Eski gerekçe "abonelik iptali para
+üretmiyor" diyordu; yarısı doğruydu (iade kaydı çıkmıyor) ama diğer yarısı
+atlanmıştı: İPTAL EDİLMİŞ ABONELİK GERİ AÇILAMAZ — aktifleştirilemez,
+ödemeyle canlandırılamaz ve yeniden başlatmak yeni abonelik açmaktır.
 
-Yıkıcılığın karşılığı burada GEREKÇEDİR (ADR 0012): en az 10 karakter
-(backend'de DE doğrulanır) + iki denetim satırı ("ne denendi", "ne oldu").
-PIN istenmiyor, bu yüzden hiçbir izin `destructive: true` taşımaz.
+`mark-paid` de aynı anahtarda ve o daha ağır: GERÇEK PARA HAREKETİ ve geri
+alma ucu YOK (sözleşme: "para defterinde silme yoktur").
+
+İKİ KAPI ÜST ÜSTE, BİRİ ÖTEKİNİN YERİNE GEÇMİYOR:
+  · GEREKÇE (ADR 0012) — "neden yapıldı" sorusunu cevaplar, denetim izine
+    yazılır, en az 10 karakter ve backend'de DE doğrulanır,
+  · PIN (`confirm_pin`) — "klavyenin başındaki kişi gerçekten o mu" sorusunu
+    cevaplar. Oturum açık bırakılmış bir makinede izin tek başına hiçbir şey
+    kanıtlamıyor.
+Bu yüzden `bld_subscriptions.cancel` `destructive: true` taşıyor; diğer iki
+anahtar TAŞIMIYOR ve taşımamalı.
 
 ROTA SIRASI KIRILGAN — SÖZLEŞMEDEKİ TUZAĞIN AYNISI. Sunucuda sabit parçalı
 yollar (`requests`, `contracts`, `payments`, `orders`) `{subscription}`
@@ -38,7 +47,18 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
+from fastapi import Request
+
+from km_sdk import (
+    APIRouter,
+    BaseModel,
+    CurrentUser,
+    Field,
+    HTTPException,
+    Query,
+    confirm_pin,
+    requires,
+)
 
 from ..service import SubscriptionsService
 from ..subs import (
@@ -53,6 +73,7 @@ from ..subs import (
 #: hatası bir kapıyı sessizce açık bırakamaz.
 VIEW = "bld_subscriptions.view"
 MANAGE = "bld_subscriptions.manage"
+CANCEL = "bld_subscriptions.cancel"
 
 router = APIRouter()
 _service: SubscriptionsService | None = None
@@ -137,6 +158,19 @@ async def overview(
 ) -> dict[str, Any]:
     """Ekranın sözleşmesi ve kullanıcının tercihleri. AĞA ÇIKMAZ (K7)."""
     return await service().overview()
+
+
+@router.get("/locations")
+async def locations(
+    user: CurrentUser = requires(VIEW),
+) -> dict[str, Any]:
+    """Şube listesi — abonelik formundaki seçicinin kaynağı.
+
+    `view` YETER: liste bir iş verisi değil, formu çizebilmek için gereken
+    referans. Yazma yetkisi olmayan personelin de aboneliğin hangi şubeye
+    bağlı olduğunu görmesi gerekiyor.
+    """
+    return await service().locations()
 
 
 @router.get("/audit")
@@ -237,7 +271,13 @@ async def contract_detail(
 
 
 class ResendBody(ReasonBody):
-    #: 0 = tercihteki varsayılan. Sunucu sınırı 1–30 gün.
+    #: SÜREYİ TAZELE. Varsayılan `False` ve bu, "yeni token üretilmez" sözünün
+    #: tek gerçek karşılığı: süre değiştiği anda belirteç yeniden türetiliyor
+    #: ve müşterinin elindeki SMS ölüyor. Alan `True` gönderildiğinde ekran
+    #: kullanıcıya bunu açıkça sormuş olmalıdır.
+    renew: bool = False
+    #: 0 = tercihteki varsayılan. YALNIZ `renew=True` iken bakılır; sunucu
+    #: sınırı 1–30 gün.
     expires_in_days: int = Field(default=0, ge=0, le=MAX_EXPIRES_DAYS)
 
 
@@ -247,9 +287,17 @@ async def resend_contract(
     body: ResendBody,
     user: CurrentUser = requires(MANAGE),
 ) -> dict[str, Any]:
-    """Aynı bağlantıyı yeniden gönderir. YENİ TOKEN ÜRETİLMEZ."""
+    """Aynı bağlantıyı yeniden gönderir.
+
+    VARSAYILAN OLARAK TOKEN KORUNUR (`renew=False`): müşterinin elindeki eski
+    SMS çalışmaya devam eder. `renew=True` yeni bir bağlantı üretir ve
+    ESKİSİNİ ÖLDÜRÜR — yanıttaki `renews_link` bunu doğrular.
+
+    Süresi dolmuş bağlantıda sunucu süreyi ZORUNLU olarak tazeler; ölü bir
+    bağlantıyı yeniden göndermenin anlamı yok.
+    """
     return await service().resend_contract(
-        contract_id, reason=body.reason, actor=user.full_name,
+        contract_id, reason=body.reason, actor=user.full_name, renew=body.renew,
         expires_in_days=body.expires_in_days, dry_run=body.dryRun)
 
 
@@ -279,15 +327,24 @@ class MarkPaidBody(ReasonBody):
     #: `payments/{id}` altında ve gövde bunu taşımazsa olay hangi aboneliğin
     #: borcunun kapandığını söyleyemezdi.
     subscription_id: int = Field(default=0, ge=0)
+    #: PIN GÖVDEDE TAŞINIR — bu bir para hareketi ve geri alma ucu yok.
+    pin: str = Field(default="", min_length=4, max_length=32)
 
 
 @router.post("/payments/{payment_id}/mark-paid")
 async def mark_paid(
     payment_id: int,
     body: MarkPaidBody,
-    user: CurrentUser = requires(MANAGE),
+    request: Request,
+    user: CurrentUser = requires(CANCEL),
 ) -> dict[str, Any]:
-    """Tahsil edildi işaretler. GERİ ALMA UCU YOKTUR — para defterinde silme yok."""
+    """Tahsil edildi işaretler. GERİ ALMA UCU YOKTUR — para defterinde silme yok.
+
+    PIN TEYİDİ ŞART. Bu bir para hareketidir ve yanlış işaretlenen bir tahsilat
+    ancak yeni bir dönem kaydıyla düzeltilebilir; oturumu açık bırakılmış bir
+    makinede tek tıkla yapılabilmesi kabul edilemezdi.
+    """
+    await confirm_pin(request, user, body.pin, action="bld_subscriptions.payment.paid")
     return await service().mark_paid(
         payment_id, method=body.method, reason=body.reason, actor=user.full_name,
         paid_at=body.paid_at, reference=body.reference,
@@ -457,20 +514,26 @@ async def resume_subscription(
 class CancelBody(ReasonBody):
     #: Bugünden geriye alınamaz (sunucu denetler). `end_date` bu güne yazılır.
     effective_date: str = Field(min_length=10, max_length=10)
+    #: PIN GÖVDEDE TAŞINIR, sorgu dizesinde DEĞİL: sorgu dizesi denetim
+    #: kaydına, sunucu günlüğüne ve tarayıcı geçmişine düşer (`bell` deseni).
+    pin: str = Field(default="", min_length=4, max_length=32)
 
 
 @router.post("/subscriptions/{subscription_id}/cancel")
 async def cancel_subscription(
     subscription_id: int,
     body: CancelBody,
-    user: CurrentUser = requires(MANAGE),
+    request: Request,
+    user: CurrentUser = requires(CANCEL),
 ) -> dict[str, Any]:
     """YIKICI: GERİ DÖNÜŞÜ YOK. Üretilmiş siparişleri DÜŞÜRMEZ.
 
-    Ayrı bir izin anahtarı YOK ve bu bilinçli: iptal para hareketi üretmiyor.
-    Sonraki üretilmiş siparişleri düşürmek `bld_orders.cancel` iznini ister ve
-    iade orada doğar. Kapı burada gerekçe + çift denetim satırıdır (ADR 0012).
+    AYRI İZİN + PIN. İptal edilmiş abonelik aktifleştirilemez, ödemeyle geri
+    açılamaz ve yeniden başlatmak yeni abonelik açmaktır — yani bu, abonelik
+    alanındaki tek geri dönüşsüz işlem. Sonraki üretilmiş siparişleri düşürmek
+    ayrıca `bld_orders.cancel` iznini ister ve iade orada doğar.
     """
+    await confirm_pin(request, user, body.pin, action="bld_subscriptions.cancel")
     return await service().cancel(
         subscription_id, effective_date=body.effective_date, reason=body.reason,
         actor=user.full_name, dry_run=body.dryRun)

@@ -271,6 +271,10 @@ struct CoreResponse {
     body: String,
 }
 
+/// Zaman aşımı verilmezse bu kullanılır. Etkileşimli ekranlar için yeterli;
+/// rapor gibi uzun işler kendi süresini ister.
+const DEFAULT_REQUEST_TIMEOUT: u64 = 60;
+
 /// Arayüzün çekirdeğe konuşma yolu.
 ///
 /// NEDEN DOĞRUDAN `fetch` DEĞİL: WebKit, sayfayı `tauri://` şemasıyla güvenli
@@ -286,20 +290,32 @@ struct CoreResponse {
 /// yazıyordu; yerel ve TLS'siz bir istek için yeterliydi ama KM Sunucu
 /// `https://` konuşuyor ve TLS elde yazılmaz. `reqwest` zaten bağımlılık
 /// ağacındaydı (`tauri-plugin-updater` onu getiriyor).
+///
+/// ZAMAN AŞIMI İSTEKLE GELİR. Sabit 60 saniye tek başına bir arızaydı: rapor
+/// ve dışa aktarma uçları mağazayı sayfa sayfa geziyor ve dakikalar sürüyor,
+/// kabuk ise isteği ortasında kesip "çekirdeğe bağlanılamadı" diyordu —
+/// kullanıcı bunu "ekran bozuk" diye okuyordu. Süreyi ARAYÜZ bilir, kabuk
+/// bilmez; burada yalnız makul bir aralığa sıkıştırılır (K1: bu dosyada iş
+/// kuralı yoktur).
 #[tauri::command]
 async fn core_request(
     method: String,
     path: String,
     body: Option<String>,
     token: Option<String>,
+    timeout_seconds: Option<u64>,
 ) -> Result<CoreResponse, String> {
     let base = server_base();
     let url = format!("{base}{path}");
     let verb = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|_| format!("geçersiz istek yöntemi: {method}"))?;
 
+    // Alt sınır çağıranın kendini kilitlemesini, üst sınır kopmuş bir bağlantıda
+    // sonsuza dek beklemeyi engeller.
+    let seconds = timeout_seconds.unwrap_or(DEFAULT_REQUEST_TIMEOUT).clamp(5, 900);
+
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
+        .timeout(Duration::from_secs(seconds))
         .build()
         .map_err(|error| format!("istemci kurulamadı: {error}"))?;
 

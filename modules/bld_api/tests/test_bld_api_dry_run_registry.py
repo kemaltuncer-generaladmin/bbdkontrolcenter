@@ -149,6 +149,10 @@ WRITES: tuple[tuple[str, Cagri], ...] = (
     ("create_subscription",
      lambda api: api.create_subscription(customer_id=312, start_date="2026-09-01",
                                          service_days=[1, 2, 3], default_quantity=20,
+                                         # ŞUBE ZORUNLU: geçit `location_id`
+                                         # olmadan isteği hiç göndermiyor
+                                         # (BLD alanı `required` tutuyor).
+                                         location_id=1,
                                          reason=GEREKCE, actor=AKTOR)),
     ("update_subscription",
      lambda api: api.update_subscription(18, default_quantity=22, reason=GEREKCE,
@@ -253,6 +257,8 @@ WRITES: tuple[tuple[str, Cagri], ...] = (
     ("run_sms_announcement",
      lambda api: api.run_sms_announcement(confirm_recipients=186, reason=GEREKCE,
                                           actor=AKTOR)),
+    ("set_sms_netgsm",
+     lambda api: api.set_sms_netgsm(header="BLEZZETDNYM", reason=GEREKCE, actor=AKTOR)),
 
     # --- notifications ---
     ("create_notification",

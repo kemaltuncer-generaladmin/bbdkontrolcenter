@@ -27,6 +27,11 @@ import { button, bytes as formatBytes, h } from './kit.js';
  * @param {(message:string, tone?:string)=>void} spec.toast
  * @param {string} spec.base — modülün uç öneki, ör. '/api/store_reports'
  */
+//: Rapor üretiminin zaman aşımı (saniye). Mağazanın tam taraması + PDF
+//: üretimi birkaç dakikayı bulabiliyor; etkileşimli ekranların 60 saniyesi
+//: buraya uymuyor.
+const REPORT_TIMEOUT = 600;
+
 export function reportChain({ api, root, toast, base }) {
   let lastPath = '';
 
@@ -45,7 +50,13 @@ export function reportChain({ api, root, toast, base }) {
   async function run(kind, params = {}) {
     let result;
     try {
-      result = await api(`${base}/preview`, { method: 'POST', body: { kind, ...params } });
+      // RAPOR UZUN SÜRER ve bu normaldir: sunucu mağazayı sayfa sayfa gezip
+      // PDF üretiyor. Kabuğun 60 saniyelik varsayılanı bu isteği ortasında
+      // kesiyordu ve hata "çekirdeğe bağlanılamadı" diye görünüyordu — rapor
+      // aslında üretilmeye devam ediyordu. Süre burada açıkça istenir.
+      result = await api(`${base}/preview`, {
+        method: 'POST', body: { kind, ...params }, timeoutSeconds: REPORT_TIMEOUT,
+      });
     } catch (error) {
       toast?.(error.message || 'Rapor üretilemedi.', 'bad');
       return null;

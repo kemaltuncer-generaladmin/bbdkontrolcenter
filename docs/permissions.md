@@ -106,6 +106,7 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 |---|---|---|
 | `bell` | `bell.view` | Haftalık zil saatlerini, grupları ve çalma günlüğünü görür |
 | `bell` | `bell.manage` | Saatleri, grupları, sesleri ve anons metinlerini düzenler |
+| `bell` | `bell.delete` | Grubu, yüklenmiş zil sesini ve kullanılmayan anonsları KALICI siler (geri alınamaz, PIN ister) |
 | `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
@@ -119,6 +120,12 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bld_kds` | `bld_kds.manage` | Kasa açar ve adlandırır, eşleme kodu üretir, zararsız komut gönderir, sipariş revizyonu yazar ve **durum ilerletir** |
 | `bld_kds` | `bld_kds.settings` | Kasanın **yönetilen 24 ayarını** yazar (çalışma, yazıcı, ses, kilit politikası) |
 | `bld_kds` | `bld_kds.devices` | **Yıkıcı.** Kasa iptali ve `restart` · `clear_failed` · `clear_queue` · `update` · `unpair` komutları |
+| `bbd_canteen_devices` | `bbd_canteen_devices.view` | Kantin kiosklarını, eşleme durumlarını ve son görülme zamanlarını görür |
+| `bbd_canteen_devices` | `bbd_canteen_devices.manage` | Kiosk açar ve adlandırır, 8 haneli eşleme kodu üretir |
+| `bbd_canteen_devices` | `bbd_canteen_devices.devices` | **Yıkıcı.** Kiosk eşlemesini iptal eder (token silinir, cihaz satış yapamaz); PIN ister |
+| `bld_subscriptions` | `bld_subscriptions.view` | Abonelikleri, talepleri, sözleşmeleri, dönem ödemelerini ve fiyat geçmişini görür |
+| `bld_subscriptions` | `bld_subscriptions.manage` | Abonelik kurar, kuralını yazar, aktifleştirir/duraklatır, sözleşme gönderir, dönem borcu açar |
+| `bld_subscriptions` | `bld_subscriptions.cancel` | **Yıkıcı.** Aboneliği iptal eder ve tahsilatı "ödendi" işaretler; ikisi de geri alınamaz, PIN ister |
 
 ### KDS cihaz ayarları ayrı anahtardadır
 
@@ -240,6 +247,7 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `directory.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bell.manage` | ✓ | ✗ | ✗ | ✓ | ✗ |
+| `bell.delete` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `bell.ring_now` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_class_schedule.view` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
@@ -253,6 +261,12 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `bld_kds.manage` | ✓ | ✓ | ✗ | ✗ | ✗ |
 | `bld_kds.settings` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `bld_kds.devices` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `bbd_canteen_devices.view` | ✓ | ✗ | ✓ | ✗ | ✗ |
+| `bbd_canteen_devices.manage` | ✓ | ✗ | ✓ | ✗ | ✗ |
+| `bbd_canteen_devices.devices` | ✓ | ✗ | ✓ | ✗ | ✗ |
+| `bld_subscriptions.view` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `bld_subscriptions.manage` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| `bld_subscriptions.cancel` | ✓ | ✗ | ✗ | ✗ | ✗ |
 
 Bilinçli kararlar:
 - **`servers.manage` yalnızca Admin.** Personel sunucuya bağlanır ve iş yapar,
@@ -304,6 +318,7 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Çıktı Merkezi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Antivirüs *(yalnız Linux — ADR 0022)* | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | KDS Yönetimi ³ | `bld_kds.view` | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Kantin Kioskları | `bbd_canteen_devices.view` | ✓ | ✗ | ✓ | ✗ | ✗ |
 | Rehber | `directory.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Profilim | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 

@@ -1,0 +1,40 @@
+-- Zil Sistemi — zil saatinin TÜRÜ ve zilden sonra anonsun geri gelmesi.
+--
+-- İKİ TÜR ZİL VARDIR ve arkalarından farklı cümle gitmelidir:
+--
+--   ders      → zil çalar, hemen arkasından "İyi dersler."
+--   teneffus  → zil çalar, hemen arkasından "İyi teneffüsler."
+--
+-- 002 göçünün yorumu "bir satır = pazartesi 08:40'ta zil çalsın, arkasından
+-- derse geçiniz anonsu" diyordu; sonra 18.08.2026'da zilden sonraki anons
+-- kaldırıldı ve `label` yalnız ekranda görünen serbest bir metne indi. Şimdi
+-- anons geri geliyor — ama bu kez tür TAHMİN EDİLMİYOR, saklanıyor.
+--
+-- NEDEN `label`'DAN TÜRETİLMİYOR. Etiket serbest metindir: "teneffüs", "mola",
+-- "büyük teneffüs", "" hepsi geçerli ve hiçbir kural bunlarla "ders" arasındaki
+-- farkı güvenilir biçimde bilemez. Etiketten tahmin eden bir kural, bir gün
+-- "ders arası" yazan bir satırda sessizce yanlış anonsu çalardı.
+--
+-- VARSAYILAN 'ders': mevcut satırların hiçbiri anlamını kaybetmez ve zil aynı
+-- saatlerde aynı biçimde çalmaya devam eder. Panel türü görünür kılar; hangi
+-- satırın teneffüs olduğu kullanıcı tarafından bir kez işaretlenir.
+--
+-- ANONS ZİLİ SUSTURAMAZ. Anons sesi hazır değilse (Vertex sırası bitmemiş,
+-- kota dolmuş, taze kurulum) zil YİNE ÇALAR ve sebep günlüğe yazılır. Zilin
+-- çalmaması, anonsun eksik olmasından çok daha büyük bir arızadır.
+
+ALTER TABLE mod_bell_time ADD COLUMN kind TEXT NOT NULL DEFAULT 'ders';
+
+-- ---------------------------------------------------------------------------
+-- AYRICA (aynı karar turu): 002 göçünün `mod_bell_group` için yazdığı
+-- "SATIR SİLİNMEZ" kuralı KALDIRILDI. Grup silmek artık satırı, ses kaydını,
+-- `.wav` dosyasını ve zil ajanındaki kopyayı birlikte siler.
+--
+-- Gerekçe: yumuşak silme, kullanıcı ekranda "kaldırdım" görürken sesi diskte
+-- ve ajanın kitaplığında süresiz bırakıyordu; "sildim" ile "gizledim"
+-- arasındaki fark hiçbir yerde yazmıyordu. Bu bir İŞ VERİSİ silme değildir —
+-- anons türetilmiş içeriktir, aynı ad yeniden girilirse yeniden üretilir.
+--
+-- Şema DEĞİŞMEZ: `deleted_at` sütunu yerinde kalır. Bu göçten önce yumuşak
+-- silinmiş satırlar varsa `groups()` onları yine gizler; sütunu düşürmek o
+-- satırları bir anda geri getirirdi.

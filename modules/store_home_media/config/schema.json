@@ -4,10 +4,6 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "export_path": {
-      "type": "string",
-      "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Müşteri/yıl/ay)."
-    },
     "channel": {
       "type": "string",
       "minLength": 1,
@@ -23,22 +19,7 @@
     "recommended_slider": {
       "type": "string",
       "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
-      "description": "Slider için önerilen görsel ölçüsü, ör. 1920x640."
-    },
-    "recommended_banner": {
-      "type": "string",
-      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
-      "description": "Banner alanları için önerilen görsel ölçüsü."
-    },
-    "recommended_collection": {
-      "type": "string",
-      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
-      "description": "Öne çıkan koleksiyon kartı için önerilen görsel ölçüsü."
-    },
-    "recommended_announcement": {
-      "type": "string",
-      "pattern": "^[0-9]{1,5}x[0-9]{1,5}$",
-      "description": "Duyuru şeridi için önerilen ölçü. 0x0 = görsel istemez."
+      "description": "Ana ekran kayan görseli için önerilen ölçü, ör. 1920x640."
     },
     "sharp_ratio": {
       "type": "number",
@@ -68,7 +49,7 @@
       "type": "integer",
       "minimum": 5,
       "maximum": 100,
-      "description": "Hedef bağlantı seçicisinde gösterilecek en çok kayıt."
+      "description": "Hedef seçicideki ürün aramasında gösterilecek en çok kayıt."
     }
   }
 }

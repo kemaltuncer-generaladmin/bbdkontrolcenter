@@ -12,6 +12,7 @@ Hiçbir test ağa çıkmaz — `httpx.MockTransport` ile sahte sunucu kullanıl�
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
@@ -73,6 +74,7 @@ OKUMA_YOLLARI = [
     ("bbd_audit", (), {}, "/api/admin/bbd/audits"),
     ("bbd_bundles", (), {}, "/api/admin/bbd/storefront/sets"),
     ("bbd_carousel", (), {}, "/api/admin/bbd/storefront/carousels"),
+    ("bbd_home_slides", (), {}, "/api/admin/bbd/storefront/home-slides"),
     ("bbd_trial_exams", (), {}, "/api/admin/bbd/deneme-kulubu/overview"),
     ("bbd_trial_members", (), {}, "/api/admin/bbd/deneme-kulubu/registrations"),
     ("bbd_backups", (), {}, "/api/admin/bbd/backups"),
@@ -103,8 +105,11 @@ async def test_okuma_yollari_magazadaki_rotayla_ayni(metot: str, args: tuple[Any
 YAZMA_YOLLARI = [
     ("bbd_send_notification", (), {"payload": {"title": "Duyuru", "body": "Metin"}},
      "POST", "/api/admin/bbd/notifications/send"),
-    ("bbd_save_carousel_slot", (), {"payload": {"status": 1}, "slot_id": 3},
+    ("bbd_update_carousel", (3,), {"payload": {"status": 1}},
      "PATCH", "/api/admin/bbd/storefront/carousels/3"),
+    ("bbd_save_home_slides", (), {"slides": [{"title": "TYT", "link": "/tyt",
+                                             "image": "storage/theme/1/sliders/a.webp"}]},
+     "PUT", "/api/admin/bbd/storefront/home-slides"),
     ("bbd_cancel_payment_link", (12,), {}, "POST", "/api/admin/bbd/payment-links/12/cancel"),
     ("bbd_ai_apply", (UUID,), {"selections": []},
      "POST", f"/api/admin/bbd/ai/drafts/{UUID}/apply"),
@@ -160,10 +165,42 @@ async def test_yazma_yollari_magazadaki_rotayla_ayni(metot: str, args: tuple[Any
 async def test_karusel_guncellemesi_put_degil_patch_gider() -> None:
     """PUT gönderilse yol eşleşir ama metot eşleşmez: 404 değil 405 gelirdi."""
     api, istekler = izle()
-    await api.bbd_save_carousel_slot(payload={"status": 0}, slot_id=7, reason=NEDEN)
+    await api.bbd_update_carousel(7, payload={"status": 0}, reason=NEDEN)
 
     assert istekler[0].method == "PATCH"
     assert istekler[0].method != "PUT"
+
+
+async def test_serit_sirasi_snake_case_gider() -> None:
+    """Uç 18.08.2026'ya kadar yalnız `sortOrder` okuyordu ve geçidin gönderdiği
+    `sort_order` sessizce düşüyordu: sıra yazımı hiç çalışmamıştı."""
+    api, istekler = izle()
+    await api.bbd_update_carousel(7, payload={"sort_order": 2}, reason=NEDEN)
+
+    assert json.loads(istekler[0].content)["sort_order"] == 2
+
+
+async def test_bos_slayt_listesi_aga_hic_cikmaz() -> None:
+    """Boş liste ana sayfanın en üstünü bomboş bırakır; kapı geçitte."""
+    api, istekler = izle()
+    with pytest.raises(StoreApiError) as hata:
+        await api.bbd_save_home_slides(slides=[], reason=NEDEN)
+
+    assert hata.value.code == "payload"
+    assert istekler == []
+
+
+async def test_slayt_govdesi_yalniz_uc_alan_tasir() -> None:
+    """Mağaza dördüncü alanı reddediyor; tanımadığımız bir alanı geri
+    göndermek, orada ne olduğunu bilmediğimiz bir değeri ezmek demektir."""
+    api, istekler = izle()
+    await api.bbd_save_home_slides(
+        slides=[{"title": "TYT", "link": "/tyt", "image": "storage/theme/1/sliders/a.webp",
+                 "index": 0, "imageUrl": "https://ornek/a.webp"}],
+        reason=NEDEN)
+
+    govde = json.loads(istekler[0].content)["slides"][0]
+    assert sorted(govde) == ["image", "link", "title"]
 
 
 # ======================================= katalog sağlığı: tip YOLDA durur
@@ -459,7 +496,8 @@ async def test_yol_var_metot_yoksa_anlasilir_hata_doner() -> None:
     api._transport = httpx.MockTransport(handler)
 
     with pytest.raises(StoreApiError) as hata:
-        await api.bbd_reorder_carousel(order=[1, 2], reason=NEDEN)
+        await api.bbd_save_home_slides(slides=[{"title": "a", "link": "", "image": "b"}],
+                                       reason=NEDEN)
 
     assert hata.value.status == 405
     assert hata.value.code == "bbd_endpoint_missing"

@@ -43,25 +43,60 @@ export function hasToken() {
  *
  * Tauri dışında (tarayıcıda tasarım denemesi) `fetch`e düşer.
  */
+//: Uzun süren uçların SONEKLERİ ve süresi (saniye).
+//:
+//: Modül adı geçmez, geçmemeli (K1). Burada kullanılan şey ADR 0011'in zaten
+//: kurduğu ADLANDIRMA SÖZLEŞMESİdir: rapor üreten her modül `/preview`,
+//: `/print`, `/printer` uçlarını aynı adlarla açar; dışa aktarma `/export`,
+//: uzun iş çalıştırma `/run` adını taşır. Sözleşme zaten tek yerde tanımlı
+//: olduğu için süre de tek yerde tanımlanır — on beş panelin her birine ayrı
+//: ayrı yazılsaydı biri unutulur ve YALNIZ o ekran kesilirdi.
+const LONG_RUNNING = ['/export', '/preview', '/run'];
+const LONG_RUNNING_SECONDS = 600;
+
+function longRunning(path) {
+  const clean = String(path).split('?')[0];
+  return LONG_RUNNING.some((suffix) => clean.endsWith(suffix))
+    ? LONG_RUNNING_SECONDS
+    : undefined;
+}
+
 export async function api(path, options = {}) {
   const method = options.method || 'GET';
   const body = options.body === undefined ? null : JSON.stringify(options.body);
+  // `timeoutSeconds` VERİLMEZSE 60 saniye. Rapor/dışa aktarma gibi uzak
+  // sistemi sayfa sayfa gezen uçlar kendi süresini ister; sabit 60 saniye
+  // onları ortasında kesiyordu ve hata "çekirdeğe bağlanılamadı" diye
+  // okunuyordu — oysa iş sunucuda çalışmaya devam ediyordu.
+  const timeoutSeconds = Number(options.timeoutSeconds) || longRunning(path);
 
   const invoke = window.__TAURI__?.core?.invoke;
   let status;
   let text;
 
   if (invoke) {
-    const response = await invoke('core_request', { method, path, body, token });
+    const response = await invoke('core_request',
+      { method, path, body, token, timeoutSeconds });
     status = response.status;
     text = response.body;
   } else {
     const headers = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
     if (body !== null) headers['Content-Type'] = 'application/json';
-    const response = await fetch(`${BASE}${path}`, { method, headers, body });
-    status = response.status;
-    text = await response.text();
+    // Tarayıcı yolunda süreyi `AbortController` uygular; Rust yolundaki
+    // davranışla aynı kalsın diye burada da elle kesilir.
+    const stopper = timeoutSeconds ? new AbortController() : null;
+    const ticker = stopper
+      ? setTimeout(() => stopper.abort(), timeoutSeconds * 1000)
+      : null;
+    try {
+      const response = await fetch(`${BASE}${path}`,
+        { method, headers, body, signal: stopper?.signal });
+      status = response.status;
+      text = await response.text();
+    } finally {
+      if (ticker) clearTimeout(ticker);
+    }
   }
 
   if (status === 204 || text === '') return null;

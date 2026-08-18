@@ -291,28 +291,29 @@ async def test_bos_ad_reddedilir(store: Any, sounds: Path) -> None:
     assert (await service.add_group("   ", actor="test"))["ok"] is False
 
 
-async def test_kaldirilan_grup_satiri_silinmez_ve_geri_gelir(
+async def test_silinen_grup_geri_gelmez_ses_sifirdan_uretilir(
     store: Any, sounds: Path
 ) -> None:
+    """ADR 0027 eki: silme KALICI. Eskiden `deleted_at` yazılıyordu ve grup
+    "kaldırıldı" görünürken sesi hem diskte hem ajanda duruyordu."""
     service, parts = build(store, sounds)
     added = await service.add_group("İlayda", actor="test")
     await drain(parts["voices"])
     await service.remove_group(added["id"], actor="test")
     assert await service.groups() == []
 
-    # Satır duruyor, yalnız `deleted_at` yazılmış.
-    rows = await store.fetch_all("SELECT id, deleted_at FROM mod_bell_group")
-    assert len(rows) == 1
-    assert rows[0]["deleted_at"] != ""
+    # Satır gerçekten gitti — damga değil.
+    assert await store.fetch_all("SELECT id FROM mod_bell_group") == []
 
-    # Aynı adla geri eklenince ESKİ satır canlanır, ikinci kimlik doğmaz.
+    # Aynı adla yeniden açılırsa yeni kimlik doğar ve ses SIFIRDAN üretilir:
+    # önbellek kaydı da silindiği için "aynı metin, aynı özet" kestirmesi
+    # artık geçerli değildir.
     parts["speech"].calls.clear()
     again = await service.add_group("İlayda", actor="test")
     await drain(parts["voices"])
-    assert again["id"] == added["id"]
     assert len(await store.fetch_all("SELECT id FROM mod_bell_group")) == 1
-    # Metin aynı olduğu için ses de yeniden ÜRETİLMEZ.
-    assert parts["speech"].calls == []
+    assert parts["speech"].calls != []
+    assert again["ok"] is True
 
 
 async def test_ad_degisince_ses_uretilir_eskisi_durur(store: Any, sounds: Path) -> None:
@@ -362,11 +363,12 @@ async def test_ana_salter_kapaliysa_plan_temizlenir(store: Any, sounds: Path) ->
     assert "bell" in scheduler.cleared
 
 
-async def test_tetikleyici_yalniz_zil_yollar(store: Any, sounds: Path) -> None:
-    """Otomatik zilin arkasından ANONS GEÇMEZ — komutta tek adım vardır.
+async def test_tetikleyici_zil_ve_arkasindan_anons_yollar(store: Any,
+                                                          sounds: Path) -> None:
+    """Zilin arkasından anons GEÇER ve sıra bellidir: önce zil, sonra anons.
 
-    Gruplar ekli ve sesleri hazır olsa bile değişmez: grup anonsu yalnız elle
-    basılan çağrıdan çıkar.
+    Grup çağrısı anonsu buna KARIŞMAZ: o yalnız elle basılan çağrıdan çıkar,
+    komutta yeri yoktur.
     """
     scheduler = FakeScheduler()
     bridge = FakeBridge()
@@ -375,6 +377,7 @@ async def test_tetikleyici_yalniz_zil_yollar(store: Any, sounds: Path) -> None:
     await service.bootstrap()
     await drain(parts["voices"])
     await service.save_times({"mon": [{"time": "08:40"}]}, actor="t")
+    await drain(parts["voices"])
 
     index = next(i for i, t in enumerate(scheduler.plans["bell"])
                  if t.payload["phase"] == "dispatch")
@@ -382,7 +385,7 @@ async def test_tetikleyici_yalniz_zil_yollar(store: Any, sounds: Path) -> None:
 
     assert len(bridge.sent) == 1
     kinds = [item["kind"] for item in bridge.sent[0]["items"]]
-    assert kinds == ["zil"]
+    assert kinds == ["zil", "anons"]
     # DAMGA OFFSET TAŞIR: `_next_occurrence` `now.astimezone()` kullanır ve
     # `2026-08-16T08:40:00+03:00` üretir. Offset kasıtlıdır — yaz saati
     # geçişinde "08:40" tek başına iki ayrı anı gösterebilir; ajan damgayı
@@ -504,16 +507,18 @@ async def test_eksik_sesler_koprüye_yuklenir(store: Any, sounds: Path) -> None:
 
     result = await service.sync_sounds()
     assert result["ok"] is True
-    # zil + grup anonsu = 2. Ders anonsu YOK: zilden sonra anons geçmediği
-    # için o ses ajanın yerelinde de tutulmaz.
-    assert result["total"] == 2
-    assert result["uploaded"] == 2
-    assert len(bridge.uploaded) == 2
+    # zil + iki zil-sonrası anons ("İyi dersler." / "İyi teneffüsler.")
+    # + bir grup anonsu = 4. Zil sonrası anonslar ajanın yerelinde DURMALI;
+    # listede olmasalardı `sync_sounds` onları köprüden sildirir ve zil çalıp
+    # arkasından sessizlik gelirdi.
+    assert result["total"] == 4
+    assert result["uploaded"] == 4
+    assert len(bridge.uploaded) == 4
 
     # İkinci turda hiçbir şey yüklenmez: içerik adresli, ajanda zaten var.
     again = await service.sync_sounds()
     assert again["uploaded"] == 0
-    assert len(bridge.uploaded) == 2
+    assert len(bridge.uploaded) == 4
 
 
 async def test_ajan_hic_baglanmadiysa_bile_tekrar_yuklenmez(
@@ -533,7 +538,7 @@ async def test_ajan_hic_baglanmadiysa_bile_tekrar_yuklenmez(
     await drain(parts["voices"])
 
     first = await service.sync_sounds()
-    assert first["uploaded"] == 2
+    assert first["uploaded"] == 4       # zil + iki zil-sonrası anons + grup
 
     second = await service.sync_sounds()
     assert second["uploaded"] == 0
@@ -548,7 +553,7 @@ async def test_gereksiz_kalan_sesler_kopruden_silinir(store: Any, sounds: Path) 
     await service.bootstrap()
     await drain(parts["voices"])
     await service.sync_sounds()
-    assert len(bridge.uploaded) == 2
+    assert len(bridge.uploaded) == 4    # zil + iki zil-sonrası anons + grup
 
     await service.rename_group(added["id"], "İlayda Şişman", actor="t")
     await drain(parts["voices"])
@@ -556,7 +561,8 @@ async def test_gereksiz_kalan_sesler_kopruden_silinir(store: Any, sounds: Path) 
 
     assert result["uploaded"] == 1      # yeni ad için yeni ses
     assert result["removed"] == 1       # eski ad köprüden düştü
-    assert len(bridge.uploaded) == 2    # zil + yeni ad; eskisi köprüde kalmadı
+    # Zil sonrası anonslar YERİNDE: grup adı değişikliği onları silmemeli.
+    assert len(bridge.uploaded) == 4
 
 
 async def test_kopru_durumu_onbellege_alinir(store: Any, sounds: Path) -> None:
@@ -637,3 +643,230 @@ async def test_week_yetenegi_salt_okunur_ozet_verir(store: Any, sounds: Path) ->
     week = await service.week()
     assert week["times"]["mon"][0]["time"] == "08:40"
     assert [item["name"] for item in week["groups"]] == ["İlayda"]
+
+
+# ==================================================== ders / teneffüs ayrımı
+
+
+async def test_zil_saati_turu_saklanir_varsayilan_ders(store: Any, sounds: Path) -> None:
+    # Tür ETİKETTEN tahmin edilmez (004 göçü): "mola" yazan bir satır ders de
+    # olabilir teneffüs de, hiçbir kural bunu güvenilir biçimde bilemez.
+    service, _ = build(store, sounds)
+    await service.save_times({"mon": [
+        {"time": "08:40", "label": "mola"},
+        {"time": "09:30", "label": "", "kind": "teneffus"},
+        {"time": "10:20", "kind": "saçmalık"},
+    ]}, actor="t")
+
+    week = await service.times()
+    kinds = {row["time"]: row["kind"] for row in week["mon"]}
+    assert kinds == {"08:40": "ders", "09:30": "teneffus", "10:20": "ders"}
+
+
+async def test_ders_zilinden_sonra_iyi_dersler_teneffusten_sonra_iyi_teneffusler(
+    store: Any, sounds: Path,
+) -> None:
+    scheduler = FakeScheduler()
+    bridge = FakeBridge()
+    service, parts = build(store, sounds, scheduler=scheduler, bridge=bridge)
+    await service.bootstrap()
+    await service.save_times({"mon": [
+        {"time": "08:40", "kind": "ders"},
+        {"time": "09:30", "kind": "teneffus"},
+    ]}, actor="t")
+    await drain(parts["voices"])
+
+    settings = await service.settings()
+    ders_dosya = await parts["voices"].ready_file(
+        parts["voices"].key(settings["texts"]["lessonAfter"]))
+    teneffus_dosya = await parts["voices"].ready_file(
+        parts["voices"].key(settings["texts"]["breakAfter"]))
+    assert ders_dosya and teneffus_dosya and ders_dosya != teneffus_dosya
+
+    gonderilen = {}
+    for index, trigger in enumerate(scheduler.plans["bell"]):
+        if trigger.payload["phase"] != "dispatch":
+            continue
+        bridge.sent.clear()
+        await scheduler.fire("bell", index)
+        anons = [item["name"] for item in bridge.sent[0]["items"]
+                 if item["kind"] == "anons"]
+        gonderilen[trigger.payload["at"]] = anons[0]
+
+    assert gonderilen["08:40"] == ders_dosya
+    assert gonderilen["09:30"] == teneffus_dosya
+
+
+async def test_anons_hazir_degilse_zil_yine_calar(store: Any, sounds: Path) -> None:
+    """ZİL SUSTURULAMAZ. Anons eksikliği, okulun sessiz kalmasından iyidir."""
+    scheduler = FakeScheduler()
+    bridge = FakeBridge()
+    # Vertex kalıcı hata veriyor: hiçbir anons üretilemiyor.
+    speech = FakeSpeech(script=[RuntimeError("kota doldu")])
+    service, parts = build(store, sounds, scheduler=scheduler, bridge=bridge,
+                           speech=speech)
+    await service.bootstrap()
+    await service.save_times({"mon": [{"time": "08:40", "kind": "ders"}]}, actor="t")
+    await drain(parts["voices"])
+
+    index = next(i for i, t in enumerate(scheduler.plans["bell"])
+                 if t.payload["phase"] == "dispatch")
+    await scheduler.fire("bell", index)
+
+    kinds = [item["kind"] for item in bridge.sent[0]["items"]]
+    assert kinds == ["zil"]                       # zil GİTTİ
+
+    rows = await store.fetch_all(
+        f"SELECT kind, ok, detail FROM {store.table('log')} ORDER BY id")
+    eksik = [row for row in rows if row["kind"] == "anons" and not row["ok"]]
+    assert eksik, "anonsun neden çalmadığı günlüğe yazılmalı"
+
+
+async def test_anons_metni_bosaltilirsa_sessizce_atlanir(store: Any,
+                                                         sounds: Path) -> None:
+    # Kullanıcı anons istemiyorsa metni boşaltır; bu bir HATA değildir ve
+    # günlüğü her zil saatinde kırmızıya boğmamalı.
+    scheduler = FakeScheduler()
+    bridge = FakeBridge()
+    service, parts = build(store, sounds, scheduler=scheduler, bridge=bridge)
+    await service.save_settings({"texts": {"lessonAfter": " "}}, actor="t")
+    await service.save_times({"mon": [{"time": "08:40", "kind": "ders"}]}, actor="t")
+    await drain(parts["voices"])
+
+    index = next(i for i, t in enumerate(scheduler.plans["bell"])
+                 if t.payload["phase"] == "dispatch")
+    await scheduler.fire("bell", index)
+
+    assert [item["kind"] for item in bridge.sent[0]["items"]] == ["zil"]
+    rows = await store.fetch_all(
+        f"SELECT kind, ok FROM {store.table('log')} WHERE kind = 'anons'")
+    assert rows == []                              # sebep yok, kayıt da yok
+
+
+async def test_eski_ders_anonsu_metni_yeni_alanlara_kopyalanmaz(
+    store: Any, sounds: Path,
+) -> None:
+    # 0.2'nin tek `texts.lesson` alanı hangi türe aitti bilinmiyor; birine
+    # kopyalamak, "derse geçiniz" cümlesini teneffüs zilinin arkasına takardı.
+    service, _ = build(store, sounds)
+    await service.save_settings(
+        {"texts": {"lesson": "Derse geçiniz."}}, actor="t")
+    texts = (await service.settings())["texts"]
+    assert "lesson" not in texts
+    assert texts["lessonAfter"] == "İyi dersler."
+    assert texts["breakAfter"] == "İyi teneffüsler."
+
+
+# ================================================== kalıcı silme (ADR 0027 eki)
+
+
+async def test_grup_silinince_satir_ses_ve_dosya_birlikte_gider(
+    store: Any, sounds: Path,
+) -> None:
+    bridge = FakeBridge()
+    service, parts = build(store, sounds, bridge=bridge)
+    added = await service.add_group("İlayda", actor="t")
+    await drain(parts["voices"])
+
+    settings = await service.settings()
+    hash_ = parts["voices"].key(call_text(settings, "İlayda", "grup"))
+    dosya = await parts["voices"].ready_file(hash_)
+    assert dosya and (sounds / dosya).is_file()
+
+    await service.remove_group(added["id"], actor="t")
+
+    # 1) satır gerçekten gitti — `deleted_at` damgası DEĞİL
+    rows = await store.fetch_all(f"SELECT id FROM {store.table('group')}")
+    assert rows == []
+    # 2) ses kaydı gitti
+    assert await parts["voices"].entry(hash_) is None
+    # 3) dosya diskten gitti
+    assert not (sounds / dosya).is_file()
+    # 4) ajandaki kopya da temizlendi
+    assert dosya not in [name for name in bridge.agent_sounds]
+
+
+async def test_ayni_sesi_kullanan_baska_grup_varsa_dosya_silinmez(
+    store: Any, sounds: Path,
+) -> None:
+    """Metin paylaşılıyorsa dosya ORTAKTIR; birini silmek ötekini sessizleştirirdi."""
+    service, parts = build(store, sounds)
+    # Şablonda `{grup}` yoksa bütün grupların cümlesi — ve sesi — aynı olur.
+    await service.save_settings(
+        {"texts": {"call": "Dersiniz başlıyor."}}, actor="t")
+    biri = await service.add_group("TYT", actor="t")
+    await service.add_group("AYT", actor="t")
+    await drain(parts["voices"])
+
+    settings = await service.settings()
+    hash_ = parts["voices"].key(call_text(settings, "TYT", "grup"))
+    dosya = await parts["voices"].ready_file(hash_)
+    assert dosya
+
+    await service.remove_group(biri["id"], actor="t")
+
+    assert await parts["voices"].entry(hash_) is not None
+    assert (sounds / dosya).is_file()
+    assert [g["name"] for g in await service.groups()] == ["AYT"]
+
+
+async def test_zil_sonrasi_anonsun_sesi_grup_silmeyle_gitmez(
+    store: Any, sounds: Path,
+) -> None:
+    service, parts = build(store, sounds)
+    await service.bootstrap()
+    added = await service.add_group("İlayda", actor="t")
+    await drain(parts["voices"])
+
+    settings = await service.settings()
+    ders_hash = parts["voices"].key(settings["texts"]["lessonAfter"])
+    ders_dosya = await parts["voices"].ready_file(ders_hash)
+    assert ders_dosya
+
+    await service.remove_group(added["id"], actor="t")
+
+    assert (sounds / ders_dosya).is_file()
+    assert await parts["voices"].entry(ders_hash) is not None
+
+
+async def test_kullanilmayan_sesler_temizlenir_kullanilanlar_kalir(
+    store: Any, sounds: Path,
+) -> None:
+    service, parts = build(store, sounds)
+    await service.bootstrap()
+    added = await service.add_group("İlayda", actor="t")
+    await drain(parts["voices"])
+
+    settings = await service.settings()
+    eski_hash = parts["voices"].key(call_text(settings, "İlayda", "grup"))
+    eski_dosya = await parts["voices"].ready_file(eski_hash)
+
+    # Ad değişti: eski ses artık hiçbir yere bağlı değil ama diskte duruyor.
+    await service.rename_group(added["id"], "İlayda Şişman", actor="t")
+    await drain(parts["voices"])
+    assert (sounds / eski_dosya).is_file()
+
+    yeni_hash = parts["voices"].key(call_text(settings, "İlayda Şişman", "grup"))
+    yeni_dosya = await parts["voices"].ready_file(yeni_hash)
+
+    result = await service.prune_voices(actor="t")
+
+    assert result["removed"] == 1
+    assert not (sounds / eski_dosya).is_file()
+    assert (sounds / yeni_dosya).is_file()          # kullanımdaki duruyor
+
+
+async def test_kullanimdaki_zil_sesi_silinemez(store: Any, sounds: Path) -> None:
+    service, _ = build(store, sounds)
+    settings = await service.settings()
+    result = await service.delete_sound(settings["bellSound"], actor="t")
+    assert result["ok"] is False
+    assert "Kullanımdaki" in result["detail"]
+
+
+async def test_anons_dosyasi_ses_ucundan_silinemez(store: Any, sounds: Path) -> None:
+    # Dosyayı tek başına silmek, kaydı "hazır" derken dosyası olmayan bir
+    # duruma düşürürdü. Anons temizliği `prune_voices` işidir.
+    service, _ = build(store, sounds)
+    result = await service.delete_sound("anons-abc123.wav", actor="t")
+    assert result["ok"] is False

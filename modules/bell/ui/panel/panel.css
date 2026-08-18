@@ -448,3 +448,7 @@
 }
 
 .bl-group-new .kit-select { width: 100%; }
+
+/* Zil saatinin türü — ders / teneffüs. Etiketten AYRI bir alandır: hangi
+   anonsun çalacağını bu belirler, etiket yalnız insan içindir. */
+.bl-time-kind { min-width: 7.5rem; }

@@ -32,6 +32,10 @@ provides:
 consumes:
   - capability: store.api
     reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: store.scan
+    reason: "Nüfus ve sipariş taraması sayfa sayfa yapılıyor ve dakikalar sürüyor; liste
+      isteğinin içinde koştuğunda kabuğun 60 saniyelik sınırını aşıyor ve ekran hiç
+      açılmıyordu. Tarama arka planda koşar, liste beklemez."
   - capability: printer
     optional: true
     reason: "Müşteri karnesi ve segment raporu kâğıda basılır; yazıcı yoksa ekran çalışmaya

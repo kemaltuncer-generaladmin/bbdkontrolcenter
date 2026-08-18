@@ -6,7 +6,7 @@ doğrulanır ve serviste TEKRAR denetlenir — istemci şemayı atlatabilir.
 
 İzin ayrımı bilinçlidir:
   · `view`    — ekran, liste, rapor
-  · `manage`  — talep açma, SMS şablonu
+  · `manage`  — talep açma, SMS şablonu ve Netgsm ayarları
   · `collect` — PARA HAREKETİ BAŞLATIR: bağlantı üretimi ve SMS
   · `settle`  — havale/nakit beyanı (mağazaya ödeme kaydı yazar)
   · `cancel`  — bağlantı iptali
@@ -242,6 +242,42 @@ async def save_template(
 ) -> dict[str, Any]:
     return await service().save_template(body=body.body, reason=body.reason,
                                          actor=user.full_name)
+
+
+# =========================================================== SMS kurulumu
+
+@router.get("/sms/settings")
+async def sms_settings(
+    user: CurrentUser = requires("store_payment_gateway.view"),
+) -> dict[str, Any]:
+    """Netgsm kurulum durumu. PAROLA DÖNMEZ, yalnız "kayıtlı mı" bilgisi.
+
+    Okuma `view` ile açıktır: kart zaten frenlerin durumunu anlatıyor ve
+    "SMS neden gitmiyor" sorusunun cevabı ekranı görebilen herkese lazım.
+    YAZMA `manage` ister; ayrım budur (K9).
+    """
+    return await service().sms_settings()
+
+
+class SmsSettingsBody(BaseModel):
+    username: str = Field(default="", max_length=64)
+    #: BOŞ = "mevcut parola korunsun". Ekran parolayı geri vermediği için,
+    #: yalnız başlığı düzeltmek isteyen personel parolayı yeniden yazmasın.
+    password: str = Field(default="", max_length=255)
+    #: Netgsm'de onaylı gönderici başlığı; sağlayıcının sınırı 11 karakter.
+    header: str = Field(default="", max_length=11)
+    reason: str = Field(min_length=10, max_length=255)
+
+
+@router.put("/sms/settings")
+async def save_sms_settings(
+    body: SmsSettingsBody,
+    user: CurrentUser = requires("store_payment_gateway.manage"),
+) -> dict[str, Any]:
+    """Netgsm bilgilerini KASAYA yazar (K8) — ayar tablosuna değil."""
+    return await service().save_sms_settings(
+        username=body.username, password=body.password, header=body.header,
+        reason=body.reason, actor=user.full_name)
 
 
 # ================================================================= rapor

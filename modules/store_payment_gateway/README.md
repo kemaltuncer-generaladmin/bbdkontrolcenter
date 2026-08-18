@@ -22,7 +22,7 @@ gördüğü yerde saklanmaması gereken veri saklanırdı.
 | **Yeni Tahsilat** | Form + canlı ön izleme: tutar kırılımı, gidecek SMS'in birebir metni, parça/kredi sayacı, eksikler listesi |
 | **Talepler** | Durum eşlemeli liste, süzgeç, detay çekmecesi (olay zinciri, POS denemeleri, yeniden SMS, iptal) |
 | **Elden Kapatma** | Havale/nakit beyanı: tahsilat karttan geçmeden kapanır, mağazaya ödeme kaydı yazılır |
-| **SMS Şablonu** | Yer tutucu çipleri, canlı parça sayacı, **Sadeleştir** düğmesi |
+| **SMS Ayarları ve Şablon** | Netgsm kullanıcı adı/parola/başlığı (kasaya yazılır), yer tutucu çipleri, canlı parça sayacı, **Sadeleştir** ve **Hazır şablonu geri yükle** düğmeleri |
 
 ## Üç kural (kodun tamamı bunların etrafında)
 
@@ -59,11 +59,34 @@ verirse çıkar:
 Hangi katmanın tuttuğu ekranda **yazılı** görünür; "Gönderildi" yazısı yalnız
 mesaj gerçekten gidince çıkar.
 
+Modül freni **açık bırakılmıştır**: canlıya geçmek bilinçli bir karardır.
+"SMS Ayarları ve Şablon" sekmesi bunu her açılışta, ayarın tam adıyla yazar —
+yoksa kimlik bilgisi girilmiş bir kurulumda ekran "hazır" der ve personel
+mesajın gittiğini sanır.
+
+### Netgsm kimlik bilgileri
+
+Kullanıcı adı, parola ve gönderici başlığı **kasada** durur (K8):
+`notify.netgsm.username` · `notify.netgsm.password` · `notify.netgsm.header`.
+Ayar tablosuna, `default.yaml`'a ya da depoya yazılmaz; parola ekrana geri
+verilmez (yalnız "kayıtlı mı" bilgisi döner).
+
+Hesap **bbdkantin ile ortaktır** — ayrı abonelik açılmadı. Buradan yapılan
+değişiklik kurulumdaki tüm SMS gönderimlerini etkiler.
+
+Netgsm **kod 40** ("Mesaj başlığı sistemde tanımlı değil") ekranda açık
+metinle görünür ve ne yapılacağını söyler: başlık Netgsm panelinde onaylı
+olmalı, en çok 11 karakter, harfi harfine aynı.
+
+`platform.notify.sms.enabled` artık `true` gelir. Bu yalnız "sağlayıcı
+kurulabilir" demektir: `dry_run` açık olduğu sürece tek bir mesaj çıkmaz,
+kimlik bilgisi kasada yoksa katman zaten "kimlik bilgisi yok" der.
+
 ## Uçlar
 
 | Yöntem | Yol | İzin |
 |---|---|---|
-| GET | `/state` · `/reference` · `/requests` · `/requests/{id}` · `/products` · `/template` · `/printer` | `view` |
+| GET | `/state` · `/reference` · `/requests` · `/requests/{id}` · `/products` · `/template` · `/sms/settings` · `/printer` | `view` |
 | | `/reference` süzgecin durum listesini besler; panel ikinci bir kopya tutmaz | |
 | POST | `/quote` (canlı ön izleme, yazmaz) | `view` |
 | POST | `/requests` (taslak kaydet) | `manage` |
@@ -73,6 +96,7 @@ mesaj gerçekten gidince çıkar.
 | POST | `/requests/{id}/cancel` | `cancel` |
 | POST | `/requests/{id}/settle` (havale/nakit) | `settle` |
 | POST | `/template` | `manage` |
+| PUT | `/sms/settings` (Netgsm bilgileri → kasa) | `manage` |
 | POST | `/preview` · `/print` · `/export` | `view` |
 
 Canlı ön izleme `/preview` **değil** `/quote` adındadır: `/preview` panel

@@ -36,6 +36,12 @@
     },
     "reference_ttl_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
     "snapshot_ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "scan_ttl_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 86400,
+      "description": "Arka plan taramasının tazelenme aralığı. Ekranın bekleme süresi DEĞİLDİR."
+    },
     "max_items": { "type": "integer", "minimum": 100, "maximum": 50000 },
     "max_upload_mb": {
       "type": "integer",

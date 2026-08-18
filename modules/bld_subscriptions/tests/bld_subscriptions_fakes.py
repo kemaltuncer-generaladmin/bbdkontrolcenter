@@ -216,9 +216,15 @@ class FakeStore:
             return [{"key": key, "value": value} for key, value in self.prefs.items()]
         if "_audit" in sql:
             rows = list(reversed(self.audit))
-            # Süzgeç SQL'de `WHERE target_type = ? [AND target_id = ?]` biçiminde
-            # ve son parametre daima `LIMIT`; burada aynı sırayı elle uyguluyoruz
-            # ki servisin parametreleri DOĞRU SIRADA dizdiği görülsün.
+            # Süzgeç SQL'de `WHERE target_type IN (?, …) [AND target_id = ?]`
+            # biçiminde ve son parametre daima `LIMIT`; burada aynı sırayı elle
+            # uyguluyoruz ki servisin parametreleri DOĞRU SIRADA dizdiği
+            # görülsün.
+            #
+            # `IN` LİSTESİ SONRADAN GELDİ (I3): fiyat taşıyan yazmalar üç ayrı
+            # hedefe yazılıyor ve kart tek türe bağlı kaldığında fiyat geçmişi
+            # ilk anlaşmayı hiç göstermiyordu. Taklit tek `=` beklemeye devam
+            # etseydi, sorgu düzeldiği hâlde test kırmızı kalırdı.
             #
             # Değerler liste kavrayışının İÇİNDE değil, ÖNCE çözülür. İçeride
             # `values.pop(0)` yazmak onu satır başına bir kez çalıştırır ve
@@ -227,10 +233,14 @@ class FakeStore:
             # yalnız boş bir liste görünürdü.
             values = list(params)
             limit = int(values.pop()) if values else len(rows)
-            wanted_type = values.pop(0) if ("target_type = ?" in sql and values) else None
+            placeholders = sql.count("?", 0, sql.find("AND target_id") if
+                                     "AND target_id" in sql else len(sql))
+            wanted_types: list[str] = []
+            if "target_type IN (" in sql:
+                wanted_types = [str(values.pop(0)) for _ in range(placeholders)]
             wanted_id = values.pop(0) if ("target_id = ?" in sql and values) else None
-            if wanted_type is not None:
-                rows = [row for row in rows if row["target_type"] == wanted_type]
+            if wanted_types:
+                rows = [row for row in rows if row["target_type"] in wanted_types]
             if wanted_id is not None:
                 rows = [row for row in rows if int(row["target_id"]) == int(wanted_id)]
             return rows[:limit]
@@ -405,7 +415,15 @@ class FakeApi:
                                   agreed_unit_price_kurus: int | None = None,
                                   lines: list[dict[str, Any]] | None = None,
                                   delivery_points: list[dict[str, Any]] | None = None,
-                                  location_id: int | None = None, reason: str, actor: str,
+                                  # VARSAYILAN YOK — ŞUBE ZORUNLU.
+                                  #
+                                  # Eskiden `location_id: int | None = None` idi ve
+                                  # bu varsayılan, servisin alanı HİÇ göndermediği
+                                  # gerçeğini testlerden gizliyordu: gövde eksik
+                                  # gidiyor, canlıda her abonelik açma denemesi 422
+                                  # alıyordu. Zorunlu parametre, alanı taşımayan bir
+                                  # çağrıyı testte `TypeError` ile düşürüyor.
+                                  location_id: int, reason: str, actor: str,
                                   dry_run: bool | None = None) -> dict[str, Any]:
         self._record("create_subscription", customer_id=customer_id,
                      start_date=start_date, service_days=service_days,

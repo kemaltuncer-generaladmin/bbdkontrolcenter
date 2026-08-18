@@ -135,3 +135,13 @@
   color: var(--paper-soft, #8792a5);
   line-height: 1.6;
 }
+
+/* Zil türü rozeti — aynada da görünür (salt okunur). */
+.cs-kind {
+  font-size: .72rem;
+  padding: .05rem .4rem;
+  border-radius: .5rem;
+  border: 1px solid var(--kit-border, #d0d5dd);
+  opacity: .85;
+}
+.cs-kind.break { border-style: dashed; }

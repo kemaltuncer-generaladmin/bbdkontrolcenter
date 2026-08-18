@@ -26,6 +26,11 @@ def register(ctx: ModuleContext) -> None:
     # kurulumda tahsilat ekranı hiç yüklenmezdi.
     notify = ctx.try_capability("notify")
     printer = ctx.try_capability("printer")
+    # Netgsm kimlik bilgileri KASADA durur (K8). Kasa da isteğe bağlı alınır:
+    # yokluğunda ekran açılır, yalnız SMS ayarları kartı gerekçesiyle kapalı
+    # görünür — tahsilat ekranının tamamı bir yapılandırma eksiği yüzünden
+    # yüklenmemeliydi (K7).
+    secrets = ctx.try_capability("secrets")
 
     service = PaymentGatewayService(
         api=store_api,
@@ -34,9 +39,11 @@ def register(ctx: ModuleContext) -> None:
         config=ctx.config,
         notify=notify,
         printer=printer,
+        secrets=secrets,
         category=CATEGORY,
         subcategory=SUBCATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
     )
     ctx.add_router(bind(service))
-    ctx.log.info("link ile ödeme hazır", sms=notify is not None, printer=printer is not None)
+    ctx.log.info("link ile ödeme hazır", sms=notify is not None, printer=printer is not None,
+                 vault=secrets is not None)

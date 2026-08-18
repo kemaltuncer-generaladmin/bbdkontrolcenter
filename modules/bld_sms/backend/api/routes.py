@@ -43,7 +43,7 @@ from typing import Any, ClassVar
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
 from ..service import SmsService
-from ..text import BODY_MAX, MAX_REASON, MIN_REASON
+from ..text import BODY_MAX, HEADER_MAX, MAX_REASON, MIN_REASON
 
 #: İzin anahtarları tek yerde durur: uç noktalar ve servis aynı dizeyi okur,
 #: yazım hatası bir kapıyı sessizce açık bırakamaz.
@@ -157,6 +157,51 @@ async def history(
     var ve "istek gitti mi" sorusunun tek cevabı o satırlardır.
     """
     return await service().history(limit=limit)
+
+
+@router.get("/netgsm")
+async def netgsm(
+    user: CurrentUser = requires(VIEW),
+) -> dict[str, Any]:
+    """Netgsm gönderici ayarı — başlık, kaynağı ve EKSİK ALANLAR.
+
+    Okuma `view` ile açık: "SMS neden gitmiyor" sorusunun cevabı burada ve o
+    soruyu soran herkesin ayarı düzeltme yetkisi olmak zorunda değil.
+
+    PAROLA BU YANITTA YOKTUR. BLD onu hiçbir uçtan geri vermiyor; ekranın
+    bilmesi gereken tek şey "dolu mu" ve o `missing` listesinde.
+    """
+    return await service().netgsm()
+
+
+class NetgsmBody(ReasonBody):
+    """Gönderici başlığı. `header` DIŞINDA ALAN YOKTUR ve olmayacak.
+
+    Kullanıcı adı ve parola BLD'nin ortam değişkenlerinde yaşıyor ve oraya
+    bir uçtan yazılamıyor (K8 ile aynı gerekçe): sır her veritabanı yedeğine
+    girerdi. `extra="forbid"` sayesinde `password` göndermeye çalışan bir
+    çağrı sessizce yok sayılmaz, 422 alır.
+    """
+
+    #: BOŞ DİZE AYARI SİLER ve BLD ortam değişkenine döner. `min_length`
+    #: konulsaydı "geri al" yolu kapanır, panelden bir kez yazılan yanlış
+    #: başlık oradaki doğru değeri kalıcı olarak gölgelerdi.
+    header: str = Field(default="", max_length=HEADER_MAX)
+
+
+@router.put("/netgsm")
+async def set_netgsm(
+    body: NetgsmBody,
+    user: CurrentUser = requires(MANAGE),
+) -> dict[str, Any]:
+    """Gönderici başlığını yazar. BLD'DEN GİDEN HER SMS BU ADLA GİDER.
+
+    `announce` DEĞİL `manage` ister: başlığı düzeltmek gönderim yapmaz, para
+    harcamaz ve geri alınabilir. Toplu duyurunun ayrı izne konulma gerekçesi
+    (geri alınamaz, faturalanır) burada yok.
+    """
+    return await service().set_netgsm(header=body.header, reason=body.reason,
+                                      actor=user.full_name, dry_run=body.dryRun)
 
 
 class MeasureBody(BaseModel):

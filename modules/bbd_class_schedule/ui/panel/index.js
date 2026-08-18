@@ -74,6 +74,10 @@ function renderWeek(data) {
       for (const entry of entries) {
         const row = h('div', 'cs-slot');
         row.append(h('b', 'cs-clock', entry.time));
+        // TÜR ETİKETTEN AYRIDIR: hangi anonsun çalacağını tür belirler,
+        // etiket yalnız insan içindir. Aynada ikisini karıştırmamak gerekir.
+        row.append(h('span', `cs-kind ${entry.kind === 'teneffus' ? 'break' : 'lesson'}`,
+          entry.kind === 'teneffus' ? 'teneffüs' : 'ders'));
         if (entry.label) row.append(h('span', 'cs-label', entry.label));
         column.append(row);
       }

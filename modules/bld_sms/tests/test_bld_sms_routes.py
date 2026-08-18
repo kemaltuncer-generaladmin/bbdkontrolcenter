@@ -20,6 +20,9 @@ BEKLENEN = {
     ("GET", "/log"): {"bld_sms.view"},
     ("GET", "/announcement"): {"bld_sms.view"},
     ("GET", "/history"): {"bld_sms.view"},
+    # "SMS neden gitmiyor" sorusunun cevabı burada; soruyu soran herkesin ayarı
+    # düzeltme yetkisi olmak zorunda değil, o yüzden okuma `view` ile açık.
+    ("GET", "/netgsm"): {"bld_sms.view"},
     # YEREL hesap: ağa çıkmaz, denetim satırı yazmaz, gerekçe istemez.
     ("POST", "/measure"): {"bld_sms.view"},
     # SUNUCU önizlemesi: hiçbir SMS göndermez, sözleşme `view` ile verir.
@@ -27,6 +30,9 @@ BEKLENEN = {
     ("PATCH", "/templates/{key}"): {"bld_sms.manage"},
     ("POST", "/send-test"): {"bld_sms.manage"},
     ("PUT", "/announcement"): {"bld_sms.manage"},
+    # Başlığı düzeltmek gönderim yapmaz, para harcamaz ve geri alınabilir —
+    # toplu duyurunun ayrı izne konulma gerekçesi burada yok.
+    ("PUT", "/netgsm"): {"bld_sms.manage"},
     # İKİ İZİN, "en az biri": kuru prova `manage` ile, gerçek gönderim
     # `announce` ile. Ayrım gövdeye bakılarak yapılır ve servis
     # `allow_send` ile ayrıca denetler.

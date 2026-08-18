@@ -11,6 +11,7 @@ kuru prova, tek kullanımlık jeton, alıcı sayısı eşleşmesi, jeton ömrü.
 from __future__ import annotations
 
 import pytest
+from bld_sms_backend import text as txt
 from bld_sms_backend.service import SmsService
 from bld_sms_fakes import (
     TEMPLATE,
@@ -53,7 +54,11 @@ async def test_sablon_listesi_katalogla_zenginlestirilir() -> None:
     # …ekranın kendi kataloğu üstüne binerek gelir.
     assert ilk["group"] == "order"
     assert ilk["sample"]["order_no"] == "BLD-8421"
-    assert cevap["sender"] == {"driver": "netgsm", "configured": True}
+    assert cevap["sender"]["driver"] == "netgsm"
+    assert cevap["sender"]["configured"] is True
+    # Başlık ve eksik alanlar AÇILIŞ okumasında da gelir: `configured: False`
+    # tek başına "bir şey eksik" diyor ama hangisi olduğunu söylemiyordu.
+    assert cevap["sender"]["missing"] == []
 
 
 @pytest.mark.asyncio
@@ -572,3 +577,173 @@ async def test_bekleyen_prova_duyuru_okumasinda_gorunur() -> None:
                                    dry_run=True, token="", allow_send=True)
     cevap = await service.announcement()
     assert cevap["dry_run"]["recipients"] == 186
+
+
+# ========================================================= Netgsm başlığı
+#
+# BLD'den giden HER SMS tek bir gönderici adıyla gider (`BLEZZETDNYM`) ve o ad
+# yanlışsa arıza SESSİZDİR: Netgsm `40` döner, istek 200 kalır, kayıt `failed`
+# olur ve panel "gönderildi" der. Aşağıdaki testler ayarın okunabildiğini,
+# yazılabildiğini ve HATALI bir değerin istek hiç çıkmadan durdurulduğunu
+# sabitler.
+
+@pytest.mark.asyncio
+async def test_netgsm_ayari_okunur_ve_parola_hic_gelmez() -> None:
+    service, _, _, _ = kur()
+    cevap = await service.netgsm()
+
+    assert cevap["connected"] is True
+    assert cevap["data"]["header"] == "BLEZZETDNYM"
+    assert cevap["data"]["source"] == "env"
+    assert cevap["data"]["missing"] == []
+    # PAROLA HİÇBİR ALANDA GEÇMEZ — yalnız "dolu mu" bilgisi taşınır.
+    assert "password" not in cevap["data"]
+    assert cevap["data"]["password_configured"] is True
+    assert cevap["expected_header"] == "BLEZZETDNYM"
+
+
+@pytest.mark.asyncio
+async def test_netgsm_okunamazsa_ekran_ayakta_kalir() -> None:
+    api = FakeApi()
+    api.fail.add("sms_netgsm")
+    service, _, _, _ = kur(api)
+
+    cevap = await service.netgsm()
+    # K7: uç yine 200 verir, ayrımı `connected` taşır.
+    assert cevap["ok"] is True
+    assert cevap["connected"] is False
+    assert cevap["data"] == {}
+
+
+@pytest.mark.asyncio
+async def test_baslik_yazilir_ve_denetim_izi_once_dusar() -> None:
+    service, api, store, _ = kur()
+    cevap = await service.set_netgsm(header="BLEZZETDNYM", reason=GEREKCE, actor=AKTOR,
+                                     dry_run=False)
+
+    assert cevap["ok"] is True
+    assert cevap["dry_run"] is False
+    assert api.used("set_sms_netgsm")[0]["header"] == "BLEZZETDNYM"
+    # İZ GEÇİT ÇAĞRISINDAN ÖNCE DÜŞER: ağ koparsa geriye yalnız o satır kalır.
+    assert store.results("netgsm_update") == ["denendi", "ok"]
+    # Yeni başlık ancak bir sonraki istekte yürürlüğe girer; ekran bunu yazmalı.
+    assert "netgsm_header_applies_next_request" in cevap["warnings"]
+
+
+@pytest.mark.asyncio
+async def test_kuru_provada_baslik_yazilmaz() -> None:
+    service, api, store, _ = kur()
+    cevap = await service.set_netgsm(header="DENEME", reason=GEREKCE, actor=AKTOR,
+                                     dry_run=True)
+
+    assert cevap["dry_run"] is True
+    assert api.used("set_sms_netgsm")[0]["dry_run"] is True
+    # Sunucudaki ayar DEĞİŞMEDİ: prova hiçbir şey yazmaz.
+    assert api.netgsm_payload["stored_header"] == ""
+    assert store.results("netgsm_update") == ["denendi", "dry_run"]
+
+
+@pytest.mark.asyncio
+async def test_uzun_baslik_istek_hic_cikmadan_reddedilir() -> None:
+    service, api, store, _ = kur()
+    cevap = await service.set_netgsm(header="COKUZUNBASLIK", reason=GEREKCE, actor=AKTOR,
+                                     dry_run=False)
+
+    assert cevap["ok"] is False
+    assert "11" in cevap["error"]
+    # İSTEK HİÇ ÇIKMADI: hız kovası yanmaz ve kullanıcı anlaşılır bir cümle görür.
+    assert api.used("set_sms_netgsm") == []
+    assert store.results("netgsm_update") == ["engellendi"]
+
+
+@pytest.mark.asyncio
+async def test_turkce_karakterli_baslik_reddedilir() -> None:
+    # Netgsm Türkçe karakterli gönderici adını zaten onaylamaz; buradan
+    # geçmesi "kaydedildi ama hiç gitmiyor" hâlini üretirdi.
+    service, api, _, _ = kur()
+    cevap = await service.set_netgsm(header="LEZZETİM", reason=GEREKCE, actor=AKTOR,
+                                     dry_run=False)
+
+    assert cevap["ok"] is False
+    assert api.used("set_sms_netgsm") == []
+
+
+@pytest.mark.asyncio
+async def test_bos_baslik_ayari_siler_ve_ortama_doner() -> None:
+    # GERİ ALMA YOLU: bir "boşalt" seçeneği olmasaydı, panelden bir kez yazılan
+    # yanlış başlık ortamdaki doğru değeri kalıcı olarak gölgelerdi.
+    api = FakeApi()
+    api.netgsm_payload = {**api.netgsm_payload, "stored_header": "YANLIS",
+                          "header": "YANLIS", "source": "setting"}
+    service, api, _, _ = kur(api)
+
+    cevap = await service.set_netgsm(header="", reason=GEREKCE, actor=AKTOR,
+                                     dry_run=False)
+    assert cevap["ok"] is True
+    assert api.netgsm_payload["header"] == "BLEZZETDNYM"
+    assert api.netgsm_payload["source"] == "env"
+
+
+@pytest.mark.asyncio
+async def test_gerekce_olmadan_baslik_yazilmaz() -> None:
+    service, api, _, _ = kur()
+    cevap = await service.set_netgsm(header="BLEZZETDNYM", reason="kısa", actor=AKTOR,
+                                     dry_run=False)
+
+    assert cevap["ok"] is False
+    assert api.used("set_sms_netgsm") == []
+
+
+@pytest.mark.asyncio
+async def test_eksik_saglayici_alani_sablon_okumasinda_gorunur() -> None:
+    # "Sağlayıcı kurulu değil" cümlesi tek başına yöneticiyi yanlış yere
+    # yolluyordu: eksik olan parolayken başlığı düzeltmeye çalışıyordu.
+    api = FakeApi()
+    api.templates_meta = {"sender_driver": "log", "sender_configured": False,
+                          "sender_header": "", "sender_header_source": "none",
+                          "sender_missing": ["header"]}
+    service, _, _, _ = kur(api)
+
+    cevap = await service.templates()
+    assert cevap["sender"]["missing"] == ["header"]
+    assert cevap["sender"]["header_source"] == "none"
+
+
+# ============================================ hangi şablon GERÇEKTEN gidiyor
+
+
+def test_katalogdaki_her_sablon_gonderen_kodunu_bildirir() -> None:
+    """`sender` alanı olmayan bir katalog satırı, ekranda "bilinmiyor" olur.
+
+    Alan 18.08.2026'da BLD kaynağı taranarak dolduruldu; yeni bir şablon
+    eklenirken unutulursa bu test onu yakalar ve satır sessizce "canlı"
+    görünmez.
+    """
+    eksik = [key for key, meta in txt.CATALOG.items() if "sender" not in meta]
+    assert eksik == [], f"kataloğa `sender` alanı eklenmemiş: {eksik}"
+
+
+def test_hic_gonderilmeyen_sablonlar_isaretli() -> None:
+    # Üçü de sunucunun sözlüğünde duruyor ve panelde düzenlenebiliyor, ama
+    # BLD'de onları gönderen bir kod YOK. Açıklamaları bir zamanlar "…gider"
+    # diyordu; ekran yalan söylüyordu.
+    olu = {key for key, meta in txt.CATALOG.items() if not meta["sender"]}
+    assert olu == {"order_created", "order_revised", "invoice_issued"}
+    for key in olu:
+        assert "GÖNDERİLMİYOR" in txt.CATALOG[key]["about"]
+
+
+def test_gunun_menusu_duyurusu_katalogda_ve_bir_gun_onceden() -> None:
+    # Kataloğa girmemişti: her sabah kendiliğinden müşteriye giden bir SMS,
+    # ekranda "Diğer" öbeğinde adsız bir satırdı.
+    meta = txt.CATALOG["dailymenu.announce"]
+    assert meta["group"] == "scheduled"
+    assert "BİR GÜN ÖNCEDEN" in meta["about"]
+    assert meta["sender"]
+
+
+def test_zamanlanmis_obek_tanimli() -> None:
+    keys = {group["key"] for group in txt.GROUPS}
+    assert "scheduled" in keys
+    used = {meta["group"] for meta in txt.CATALOG.values()}
+    assert used <= keys, f"kataloğun kullandığı öbek GROUPS'ta yok: {used - keys}"

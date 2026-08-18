@@ -157,6 +157,30 @@ class FakeNotify:
         return self.provider
 
 
+class FakeVault:
+    """`secrets` platform yeteneğinin testlik yüzü.
+
+    DEĞERLERİ AÇIKTA TUTAR ve bu bilinçlidir: testin sınadığı şey şifrelemenin
+    doğruluğu değil (o `km_platform` testlerinin işi), servisin parolayı ekrana
+    GERİ VERMEMESİ ve doğru anahtar adına yazması. Sahte kasa değerleri
+    saklasaydı, "yanlış anahtara yazdım" hatası testte görünmezdi.
+    """
+
+    def __init__(self, values: dict[str, str] | None = None) -> None:
+        self.values: dict[str, str] = dict(values or {})
+        self.fail = False
+
+    async def get(self, key: str) -> str | None:
+        if self.fail:
+            raise RuntimeError("kasa anahtarı çözülemedi")
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str) -> None:
+        if self.fail:
+            raise RuntimeError("kasa yazılamadı")
+        self.values[key] = value
+
+
 class FakeStoreApiError(RuntimeError):
     """`store_api.errors.StoreApiError` yerine geçen taklit.
 

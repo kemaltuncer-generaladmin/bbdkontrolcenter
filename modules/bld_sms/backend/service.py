@@ -333,6 +333,16 @@ class SmsService:
                 # Ekranın kendi kataloğu — sunucuda karşılığı yok.
                 "group": str(catalog.get("group") or txt.OTHER_GROUP["key"]),
                 "about": str(catalog.get("about") or ""),
+                # O METNİ GERÇEKTEN GÖNDEREN KOD. Boşsa şablon sunucuda
+                # tanımlı ama hiçbir yerden gönderilmiyor — ekran bunu
+                # söylemeli, yoksa yönetici çalışmayan bir metni özenle
+                # yazıp açıyor (bkz. `txt.CATALOG` başlığı).
+                "sender_code": str(catalog.get("sender") or ""),
+                # Katalogda YOKSA bilinmiyor demektir; "gönderilmiyor" DEĞİL.
+                # İkisini karıştırmak, sunucuya yeni eklenmiş bir şablonu
+                # haksız yere ölü göstermek olurdu.
+                "dispatch": ("unknown" if "sender" not in catalog
+                             else ("live" if catalog.get("sender") else "dead")),
                 "sample": txt.sample_for(key),
                 # Yerel politika ve temel çizgi.
                 "local": {
@@ -371,6 +381,13 @@ class SmsService:
                 # yazar (`LogSmsSender`). Panel bunu açıkça göstermeli; aksi
                 # hâlde "SMS gitti" diyen bir ekran hiçbir şey göndermemiş olur.
                 "configured": bool(meta.get("sender_configured")),
+                # BAŞLIK VE EKSİK ALANLAR AÇILIŞ OKUMASINDA DA GELİR.
+                # `configured: False` "bir şey eksik" diyor ama HANGİSİ
+                # olduğunu söylemiyordu; yönetici de eksik olan parolayken
+                # başlığı düzeltmeye çalışıyordu.
+                "header": str(meta.get("sender_header") or ""),
+                "header_source": str(meta.get("sender_header_source") or ""),
+                "missing": [str(name) for name in (meta.get("sender_missing") or [])],
             },
             "platform_lane": self._platform_lane(),
             "segment_warn": self._segment_warn,
@@ -488,6 +505,44 @@ class SmsService:
             "dry_run": await self._pending_dry_run(),
             "confirm_threshold": self._confirm_threshold,
             "ttl_minutes": self._dry_run_ttl,
+        }
+
+    async def netgsm(self) -> dict[str, Any]:
+        """Netgsm gönderici ayarı — başlık, kaynağı ve eksik alanlar.
+
+        PAROLA BURAYA HİÇ GELMEZ ve gelmeyecek: BLD onu ortam değişkeninde
+        tutuyor ve hiçbir uçtan geri vermiyor (K8 ile aynı gerekçe — sır
+        yedeklerde ve istemci günlüklerinde dolaşmamalı). Ekranın bilmesi
+        gereken tek şey "dolu mu", o da `missing` listesinde.
+
+        BAŞLIK İSE AÇIK GELİR çünkü düzeltilecek olan odur: Netgsm'in `40`
+        hatası ancak gönderilen ad ile panelde onaylı ad yan yana görülünce
+        anlaşılır.
+        """
+        try:
+            payload = await self._api.sms_netgsm()
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": True, "connected": False, "error": self._fail(failure),
+                    "data": {}, "header_max": txt.HEADER_MAX}
+
+        data = dict(payload) if isinstance(payload, dict) else {}
+        return {
+            "ok": True, "connected": True, "error": "",
+            "data": {
+                "header": str(data.get("header") or ""),
+                # AYRIM ÖNEMLİ: ayar boş ama ortam dolu olabilir. İkisini tek
+                # alana indirmek, yöneticinin "demek ki başlık yok" deyip
+                # ÇALIŞAN bir yapılandırmayı bozmasına yol açardı.
+                "stored_header": str(data.get("stored_header") or ""),
+                "env_header": str(data.get("env_header") or ""),
+                "source": str(data.get("source") or ""),
+                "username_configured": bool(data.get("username_configured")),
+                "password_configured": bool(data.get("password_configured")),
+                "missing": [str(name) for name in (data.get("missing") or [])],
+                "driver": str(data.get("driver") or ""),
+            },
+            "header_max": txt.as_int(data.get("header_max"), txt.HEADER_MAX),
+            "expected_header": txt.EXPECTED_HEADER,
         }
 
     async def history(self, *, limit: int = 50) -> dict[str, Any]:
@@ -733,6 +788,71 @@ class SmsService:
                                    "segments": data.get("segments")})
         return {"ok": True, "dry_run": prova, "audit_id": (payload or {}).get("audit_id"),
                 "data": data}
+
+    async def set_netgsm(self, *, header: str, reason: str, actor: str,
+                         dry_run: bool | None) -> dict[str, Any]:
+        """Netgsm gönderici başlığını yazar.
+
+        BLD'DEN GİDEN HER SMS BU ADLA GİDER. Yanlış bir başlık sessiz bir
+        arızadır: sağlayıcı `40` döner, istek 200 kalır, kayıt `failed` olur ve
+        müşteriye hiçbir şey ulaşmaz. Bu yüzden yazma yolu diğerleriyle aynı
+        beş adımı izler (gerekçe → iz → geçit → iz) ve `dry_run` atlanmaz.
+
+        BOŞ DİZE AYARI SİLER ve BLD ortam değişkenine geri döner. Engellemek
+        yerine geçirmemizin sebebi şu: bir "geri al" yolu olmasaydı, panelden
+        bir kez yazılan yanlış başlık oradaki doğru değeri kalıcı olarak
+        gölgelerdi.
+        """
+        hata = txt.reason_error(reason)
+        temiz = str(header or "").strip()
+
+        if not hata and len(temiz) > txt.HEADER_MAX:
+            hata = (f"Gönderici başlığı en çok {txt.HEADER_MAX} karakter olabilir; "
+                    f"Netgsm daha uzununu reddeder ({len(temiz)} karakter girildi).")
+        # SUNUCU BUNU DA 422 İLE REDDEDER (`regex`). Burada erken kesmek hem
+        # anlaşılır bir cümle verir hem de hız kovasını yakmaz (K9 — çift kapı).
+        if not hata and temiz and not txt.HEADER_ALLOWED.fullmatch(temiz):
+            hata = ("Gönderici başlığı yalnız harf, rakam ve boşluk içerebilir. "
+                    "Türkçe karakterli bir başlık Netgsm'de zaten onaylanamaz ve "
+                    "gönderim `40` hatasıyla düşerdi.")
+
+        if hata:
+            await self._record(action="netgsm_update", reason=reason, actor=actor,
+                               result=BLOCKED, target_type="netgsm",
+                               detail={"error": hata})
+            return {"ok": False, "error": hata}
+
+        istek_dry = self._dry(dry_run)
+        # BAŞLIK BİR SIR DEĞİL — müşterinin telefonunda görünen ad. İzde açık
+        # yazılması, "hangi başlıkla gidiyordu" sorusunun tek cevabıdır.
+        iz = {"header": temiz, "cleared": not temiz}
+        await self._record(action="netgsm_update", reason=reason, actor=actor,
+                           result=TRIED, target_type="netgsm", detail=iz)
+
+        try:
+            payload = await self._api.set_sms_netgsm(header=temiz, reason=reason,
+                                                     actor=actor, dry_run=istek_dry)
+        except Exception as failure:  # noqa: BLE001 — K7
+            message = self._fail(failure)
+            await self._record(action="netgsm_update", reason=reason, actor=actor,
+                               result=FAILED, target_type="netgsm",
+                               detail={**iz, "error": message})
+            return {"ok": False, "error": message}
+
+        prova = self._was_dry(payload, istek_dry)
+        await self._record(action="netgsm_update", reason=reason, actor=actor,
+                           result=DRY if prova else DONE, target_type="netgsm",
+                           detail=iz)
+
+        return {
+            "ok": True, "dry_run": prova, "audit_id": (payload or {}).get("audit_id"),
+            "data": self._record_of(payload, "data", "would"),
+            # YENİ BAŞLIK BİR SONRAKİ İSTEKTE YÜRÜRLÜĞE GİRER: gönderici BLD
+            # tarafında istek başına çözülen bir tekil. Ekranın bunu yazması
+            # gerekiyor, aksi hâlde yönetici hemen deneme SMS'i gönderip eski
+            # başlıkla `40` alır ve kaydın işlemediğini sanır.
+            "warnings": [str(code) for code in ((payload or {}).get("warnings") or [])],
+        }
 
     async def set_announcement(self, *, body: str, audience: str, reason: str, actor: str,
                                dry_run: bool | None) -> dict[str, Any]:

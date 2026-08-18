@@ -16,6 +16,10 @@ import { button, foldText, h } from './kit.js';
  * @param {(ids:string[])=>void} [spec.onChange]
  * @param {number} [spec.limit=400] — çizilecek en çok satır; üstü uyarı ile kırpılır
  */
+//: Arama kutusundaki yazmanın çizime dönüşme gecikmesi (ms). Bkz. `search`
+//: dinleyicisi: çizim ucuz değil, tuş vuruşu sık.
+const SEARCH_DELAY = 90;
+
 export function createPicker({ items = [], groupLabel = 'Grup', placeholder = 'Ara',
   single = false, onChange, limit = 400 } = {}) {
   const node = h('div', 'pk-box');
@@ -32,7 +36,23 @@ export function createPicker({ items = [], groupLabel = 'Grup', placeholder = 'A
   search.type = 'search';
   search.placeholder = placeholder;
   search.setAttribute('aria-label', placeholder);
-  search.addEventListener('input', () => { query = search.value; paint(); });
+
+  // ARAMA ÇİZİMİ GECİKTİRİLİR. `paint()` listeyi baştan kuruyor: her satır bir
+  // düğme ve iki span, ayrıca grup başlıkları. Yüzlerce kayıtlı bir katalogda
+  // bu, HER TUŞ VURUŞUNDA binlerce DOM düğümü demekti ve yazarken gözle
+  // görülür bir takılma üretiyordu (WebKitGTK'da daha da belirgin).
+  //
+  // 90 ms insanın "anında" saydığı sınırın altındadır ama arka arkaya gelen
+  // tuşları tek çizimde toplar: "mercimek" yazmak 8 çizim yerine 1 çizim eder.
+  //
+  // Bekleyen zamanlayıcı `destroy()` ile bırakılır; çağrılmasa da zarar
+  // vermez (kopmuş bir düğümü çizer), ama sızıntı bırakmamak temiz olan.
+  let searchTimer = null;
+  search.addEventListener('input', () => {
+    query = search.value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { searchTimer = null; paint(); }, SEARCH_DELAY);
+  });
 
   const groupSelect = h('select', 'kit-select pk-select');
   groupSelect.setAttribute('aria-label', `${groupLabel} süzgeci`);
@@ -170,5 +190,9 @@ export function createPicker({ items = [], groupLabel = 'Grup', placeholder = 'A
     clear() { selected.clear(); paint(); },
     size: () => selected.size,
     focus() { search.focus(); },
+    /** Bekleyen arama çizimini iptal eder. Panel kapanışında çağrılır. */
+    destroy() {
+      if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+    },
   };
 }

@@ -1,8 +1,11 @@
 """Zil Sistemi — HTTP yüzeyi.
 
 ÇİFT KAPI (K9): router'ın tabanı `bell.view`; düzenleme `bell.manage`, çalma
-`bell.ring_now` ister. Görüntüleyebilen kullanıcı zili çalamaz, çalabilen
-kullanıcı saatleri değiştiremez — üç izin bilerek ayrı.
+`bell.ring_now`, KALICI SİLME `bell.delete` ister. Görüntüleyebilen kullanıcı
+zili çalamaz, çalabilen kullanıcı saatleri değiştiremez — izinler bilerek ayrı.
+
+Silme uçları ayrıca PIN teyidi ister (`confirm_pin`): geri dönüşü yoktur ve
+izin taşımak, o an klavyenin başındaki kişinin o kişi olduğunu kanıtlamaz.
 """
 
 from __future__ import annotations
@@ -11,7 +14,17 @@ import base64
 import binascii
 from typing import Any
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
+from fastapi import Request
+
+from km_sdk import (
+    APIRouter,
+    BaseModel,
+    CurrentUser,
+    Field,
+    HTTPException,
+    confirm_pin,
+    requires,
+)
 
 from ..service import BellService
 
@@ -71,6 +84,16 @@ class SoundBody(BaseModel):
     data: str = Field(default="", description="base64")
 
 
+class DeleteBody(BaseModel):
+    """Geri dönüşü olmayan işlemin gövdesi — PIN zorunlu.
+
+    PIN gövdede taşınır, sorgu dizesinde DEĞİL: sorgu dizesi denetim kaydına,
+    sunucu günlüğüne ve tarayıcı geçmişine düşer.
+    """
+
+    pin: str = Field(default="", min_length=4, max_length=32)
+
+
 # --------------------------------------------------------------------- okuma
 
 
@@ -120,13 +143,43 @@ async def rename_group(
                                         actor=user.full_name)
 
 
-@router.delete("/groups/{group_id}")
+@router.post("/groups/{group_id}/delete")
 async def remove_group(
     group_id: str,
-    user: CurrentUser = requires("bell.manage"),
+    body: DeleteBody,
+    request: Request,
+    user: CurrentUser = requires("bell.delete"),
 ) -> dict[str, Any]:
-    """Grubu listeden kaldırır. Satır silinmez; sesi ve günlüğü yerinde kalır."""
+    """Grubu KALICI siler: satır, ses kaydı, `.wav` ve ajandaki kopya.
+
+    POST'tur, DELETE değil: gövde taşıması gerekiyor (PIN) ve DELETE gövdesi
+    ara katmanlarda güvenilir biçimde taşınmıyor.
+    """
+    await confirm_pin(request, user, body.pin, action="bell.group.delete")
     return await service().remove_group(group_id, actor=user.full_name)
+
+
+@router.post("/sound/{name}/delete")
+async def delete_sound(
+    name: str,
+    body: DeleteBody,
+    request: Request,
+    user: CurrentUser = requires("bell.delete"),
+) -> dict[str, Any]:
+    """Yüklenmiş zil sesini kalıcı siler. `POST /sound`un karşılığı."""
+    await confirm_pin(request, user, body.pin, action="bell.sound.delete")
+    return await service().delete_sound(name, actor=user.full_name)
+
+
+@router.post("/voices/prune")
+async def prune_voices(
+    body: DeleteBody,
+    request: Request,
+    user: CurrentUser = requires("bell.delete"),
+) -> dict[str, Any]:
+    """Hiçbir gruba/metne bağlı olmayan anons seslerini kalıcı siler."""
+    await confirm_pin(request, user, body.pin, action="bell.voices.prune")
+    return await service().prune_voices(actor=user.full_name)
 
 
 @router.post("/voices/rebuild")

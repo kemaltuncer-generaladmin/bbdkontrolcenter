@@ -15,6 +15,7 @@ from store_payment_gateway_fakes import (
     FakeSmsResult,
     FakeStore,
     FakeStoreApiError,
+    FakeVault,
 )
 
 REASON = "Müşteri telefonda kartla ödemek istedi"
@@ -26,14 +27,14 @@ URUN = {"id": 7, "sku": "KTP-1", "name": "Deneme kitabı", "price": "100.0000",
 
 
 def _service(api: FakeApi | None = None, store: FakeStore | None = None,
-             notify: Any = None,
+             notify: Any = None, secrets: Any = None,
              **config: Any) -> tuple[PaymentGatewayService, FakeApi, FakeStore]:
     api = api or FakeApi({7: dict(URUN)})
     api.tax_categories_payload = {"items": [{"id": 3, "code": "Kitap Vergi", "name": "KDV"}]}
     api.tax_rates_payload = {"items": [{"id": 9, "taxCategoryId": 3, "taxRate": 20}]}
     store = store or FakeStore()
     service = PaymentGatewayService(
-        api=api, store=store, log=FakeLog(), notify=notify,
+        api=api, store=store, log=FakeLog(), notify=notify, secrets=secrets,
         config={"sms_dry_run": True, "org_name": "BBD Store", **config},
         fallback_dir=Path("/tmp/km-test-raporlar"),
     )
@@ -980,6 +981,145 @@ async def test_kaydedilen_sablon_gonderimde_kullanilir() -> None:
                         send_sms=False)
     await service.send_sms(created["id"], reason=REASON, actor="Kemal", dry_run=False)
     assert notify.provider.sent[0][1] == "Odeme: https://ode.me/TKN-1 - BBD Store"
+
+
+async def test_hazir_sablon_sunucudan_gelir() -> None:
+    """Panelin "geri yükle" düğmesi varsayılanı SUNUCUDAN okur. Panelde ikinci
+    bir kopya tutulsaydı, varsayılan değişince ekran eskisini yüklerdi."""
+    service, _, _ = _service()
+    result = await service.template()
+    assert result["defaultBody"] == collect.DEFAULT_TEMPLATE
+    assert result["required"] == "{link}"
+
+
+async def test_varsayilan_sablon_borcu_soyler_ve_link_tasir() -> None:
+    """Kullanıcının istediği ifade: mesaj tutarın NEYİN karşılığı olduğunu
+    söylemeli. `{link}` ise her hâlükârda bulunmak zorunda."""
+    assert "{link}" in collect.DEFAULT_TEMPLATE
+    assert "borcunuz" in collect.DEFAULT_TEMPLATE
+
+
+# ========================================================== SMS kurulumu
+
+async def test_netgsm_bilgileri_kasaya_yazilir_ayar_tablosuna_degil() -> None:
+    """K8: parola depoya/ayara düşmez. Anahtar adları `km_platform/notify`
+    ile aynıdır — kantin de aynı hesabı bu adlardan okur."""
+    vault = FakeVault()
+    service, _, store = _service(secrets=vault)
+    result = await service.save_sms_settings(username="8503021234", password="gizli",
+                                             header="BBDUNYAM", reason=REASON, actor="Kemal")
+
+    assert result["ok"] is True
+    assert vault.values["notify.netgsm.username"] == "8503021234"
+    assert vault.values["notify.netgsm.password"] == "gizli"
+    assert vault.values["notify.netgsm.header"] == "BBDUNYAM"
+    assert store.prefs == {}                       # ayar tablosuna hiçbir şey yazılmadı
+
+
+async def test_parola_ekrana_geri_verilmez() -> None:
+    vault = FakeVault({"notify.netgsm.username": "850", "notify.netgsm.password": "gizli",
+                       "notify.netgsm.header": "BBDUNYAM"})
+    service, _, _ = _service(secrets=vault)
+    result = await service.sms_settings()
+
+    assert result["passwordConfigured"] is True
+    assert "gizli" not in str(result)
+    assert result["username"] == "850"
+
+
+async def test_denetim_izine_parola_dusmez() -> None:
+    vault = FakeVault()
+    service, _, store = _service(secrets=vault)
+    await service.save_sms_settings(username="850", password="gizli", header="BBDUNYAM",
+                                    reason=REASON, actor="Kemal")
+    kayit = [row for row in store.events if row["action"] == "sms_settings"]
+    assert len(kayit) == 1
+    assert "gizli" not in kayit[0]["detail"]
+
+
+async def test_ilk_kayitta_parola_zorunludur() -> None:
+    """Yarım kurulum hiç kurulmamış olmaktan kötüdür: ekran "hazır" der,
+    mesaj gitmez."""
+    service, _, _ = _service(secrets=FakeVault())
+    result = await service.save_sms_settings(username="850", password="", header="BBDUNYAM",
+                                             reason=REASON, actor="Kemal")
+    assert result["ok"] is False
+    assert "parola" in result["error"].lower()
+
+
+async def test_kayitli_parola_bos_birakilinca_korunur() -> None:
+    vault = FakeVault({"notify.netgsm.password": "eski"})
+    service, _, _ = _service(secrets=vault)
+    result = await service.save_sms_settings(username="850", password="", header="YENIBASLIK",
+                                             reason=REASON, actor="Kemal")
+    assert result["ok"] is True
+    assert vault.values["notify.netgsm.password"] == "eski"
+    assert vault.values["notify.netgsm.header"] == "YENIBASLIK"
+
+
+async def test_bos_baslik_reddedilir() -> None:
+    """Başlıksız gönderim Netgsm'de kod 40 ile reddedilir; kapıyı burada tut."""
+    service, _, _ = _service(secrets=FakeVault())
+    result = await service.save_sms_settings(username="850", password="gizli", header="",
+                                             reason=REASON, actor="Kemal")
+    assert result["ok"] is False
+    assert "40" in result["error"]
+
+
+async def test_uzun_baslik_reddedilir() -> None:
+    service, _, _ = _service(secrets=FakeVault())
+    result = await service.save_sms_settings(username="850", password="gizli",
+                                             header="ONIKIKARAKTER", reason=REASON,
+                                             actor="Kemal")
+    assert result["ok"] is False
+    assert "11" in result["error"]
+
+
+async def test_gerekcesiz_netgsm_kaydi_reddedilir() -> None:
+    vault = FakeVault()
+    service, _, _ = _service(secrets=vault)
+    result = await service.save_sms_settings(username="850", password="gizli",
+                                             header="BBDUNYAM", reason="kısa", actor="Kemal")
+    assert result["ok"] is False
+    assert vault.values == {}
+
+
+async def test_kasa_yokken_ekran_ayakta_kalir() -> None:
+    """K7: kasa açılmamış bir kurulumda tahsilat ekranının tamamı düşmez;
+    yalnız SMS ayarları kartı gerekçesiyle kapalı görünür."""
+    service, _, _ = _service()
+    result = await service.sms_settings()
+    assert result["ok"] is True
+    assert result["available"] is False
+    assert result["error"]
+
+
+async def test_kuru_prova_acikken_ekranda_acikca_yazar() -> None:
+    """Kimlik bilgisi girilmiş bir kurulumda ekranın "hazır" demesi, mesajın
+    gideceği anlamına gelmiyor: modül freni ayrı bir katman."""
+    service, _, _ = _service(secrets=FakeVault(), sms_dry_run=True)
+    result = await service.sms_settings()
+    assert "sms_dry_run" in result["dryRunNotice"]
+
+    service, _, _ = _service(secrets=FakeVault(), sms_dry_run=False)
+    assert (await service.sms_settings())["dryRunNotice"] == ""
+
+
+async def test_netgsm_40_hatasi_acik_metinle_doner() -> None:
+    """Ham "[40] Gönderici başlığı sistemde tanımlı değil" cümlesi doğrudur ama
+    personele ne yapacağını söylemez."""
+    hata = FakeStoreApiError("[40] Gönderici başlığı sistemde tanımlı değil")
+    hata.provider_code = "40"                      # type: ignore[attr-defined]
+    notify = FakeNotify(dry_run=False)
+    notify.provider.failure = hata
+    service, _, _ = _service(notify=notify, sms_dry_run=False)
+    created = await _create(service)
+    await service.start(created["id"], reason=REASON, actor="Kemal", dry_run=False,
+                        send_sms=False)
+    result = await service.send_sms(created["id"], reason=REASON, actor="Kemal", dry_run=False)
+
+    assert result["ok"] is False
+    assert "Mesaj başlığı sistemde tanımlı değil" in result["hint"]
 
 
 # ================================================================ liste

@@ -231,6 +231,21 @@ def test_taninmayan_yer_tutucu_bildirilir() -> None:
     assert result["unknown"] == ["isim"]
 
 
+def test_saglayici_kodu_40_acik_metne_cevrilir() -> None:
+    """Kod 40'ın Netgsm'deki karşılığı "Mesaj başlığı sistemde tanımlı değil";
+    personelin yapacağı iş başlığı düzeltmektir ve metin bunu söyler."""
+    hata = RuntimeError("[40] Gönderici başlığı sistemde tanımlı değil")
+    hata.provider_code = "40"          # type: ignore[attr-defined]
+    assert "Mesaj başlığı sistemde tanımlı değil" in collect.provider_hint(hata)
+    assert "Netgsm panelinde" in collect.provider_hint(hata)     # ne yapılacağı da yazar
+
+
+def test_kodsuz_hata_bos_metin_dondurur() -> None:
+    # Kodu olmayan hata için uydurma bir açıklama yazmak, personeli yanlış
+    # yere bakmaya iter.
+    assert collect.provider_hint(RuntimeError("ağ kapalı")) == ""
+
+
 def test_varsayilan_sablon_tek_sms_e_sigar() -> None:
     filled = collect.render_template(collect.DEFAULT_TEMPLATE, {
         "ad": "Ayse Yilmaz", "tutar": "1.250,00 TL", "link": "https://ode.me/abc123",

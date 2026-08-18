@@ -82,6 +82,34 @@
 
 /* =============================================================== girdiler */
 
+/* NATİF ÇİZİM KAPATILIR — `type="search"` yüzünden ekran kilitleniyordu.
+ *
+ * BULUNAN HATA: kabuk Linux'ta WebKitGTK kullanıyor (Chromium değil) ve orada
+ * `input[type="search"]` natif "searchfield" olarak çiziliyor. Natif çizim
+ * kendi iç ölçüsünü dayatıyor; `.pk-search { flex: 1 }` ve `min-width: 80px`
+ * kuralları yutuluyor ve kutu KÜÇÜK YUVARLAK BİR PİLLE çöküyordu. Seçicinin
+ * arama kutusu görünmediği için "menüye kalem giremiyorum" belirtisi doğuyordu
+ * — kutu oradaydı, yalnız tıklanabilir bir genişliği yoktu.
+ *
+ * Chromium'da sorun GÖRÜNMEZ; tarayıcıda denenen panel sağlam görünüyordu.
+ *
+ * `.kit-select` BİLEREK DIŞARIDA: ona `appearance: none` vermek açılır okunu
+ * da siler ve seçme kutusu düz bir dikdörtgene döner — çözdüğümüzden büyük bir
+ * sorun açardı. */
+.kit-input,
+.kit-textarea {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.kit-input[type="search"]::-webkit-search-decoration,
+.kit-input[type="search"]::-webkit-search-cancel-button,
+.kit-input[type="search"]::-webkit-search-results-button,
+.kit-input[type="search"]::-webkit-search-results-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
 .kit-input,
 .kit-select,
 .kit-textarea {

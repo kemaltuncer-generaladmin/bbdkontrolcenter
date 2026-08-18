@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from bld_subscriptions_backend import subs as sb
 from bld_subscriptions_fakes import (
     GEREKCE,
     SUBSCRIPTION_ROW,
@@ -235,7 +236,8 @@ async def test_yeni_abonelikte_tele_giden_odeme_kipi_prepaid_monthly() -> None:
     # bu ekranın taahhüdü ise "asla `account` göndermem".
     api = FakeApi()
     service = make_service(api=api)
-    payload = await service.create(customer_id=312, reason=GEREKCE, actor="A",
+    payload = await service.create(customer_id=312, location_id=1, reason=GEREKCE,
+                                   actor="A",
                                    **{key: value for key, value in _block().items()
                                       if key in ("start_date", "service_days",
                                                  "default_quantity", "delivery_type",
@@ -250,12 +252,20 @@ async def test_yeni_abonelik_fiyati_AYRI_SUTUNA_yazilir() -> None:
     # JSON içinden aranan bir alan ne sıralanabilir ne indekslenebilir.
     store = FakeStore()
     service = make_service(store=store)
-    await service.create(customer_id=312, start_date="2026-09-01",
+    await service.create(customer_id=312, location_id=1, start_date="2026-09-01",
                          service_days=[1, 2, 3], default_quantity=20,
                          agreed_unit_price_kurus=PRICE,
                          delivery_points=[{"address_id": 704, "quantity": 20}],
                          reason=GEREKCE, actor="Ayşe Yılmaz")
-    assert store.prices("subscription.create") == [PRICE, PRICE]
+    # ÜÇÜNCÜ SATIR SONRADAN EKLENDİ (I3): ilk iki satır "denendi"/"ok" izidir ve
+    # ikisi de `target_id=0` taşır (abonelik kimliği istek gitmeden bilinmiyor).
+    # Üçüncü satır yanıt gelince, GERÇEK kimlikle yazılıyor — fiyat kartının
+    # ilk anlaşmayı bulabildiği tek satır o.
+    assert store.prices("subscription.create") == [PRICE, PRICE, PRICE]
+    baglanan = [row for row in store.actions("subscription.create")
+                if row["detail"] and "linked" in str(row["detail"])]
+    assert len(baglanan) == 1
+    assert int(baglanan[0]["target_id"]) > 0
 
 
 @pytest.mark.parametrize(("over", "parca"), [
@@ -275,7 +285,8 @@ async def test_yeni_abonelik_on_denetimleri_sozlesmeden(over: dict[str, Any],
     service = make_service(api=api)
     block = _block(**over)
     payload = await service.create(
-        customer_id=312, reason=GEREKCE, actor="A", start_date=block["start_date"],
+        customer_id=312, location_id=1, reason=GEREKCE, actor="A",
+        start_date=block["start_date"],
         service_days=block["service_days"], default_quantity=block["default_quantity"],
         delivery_type=block["delivery_type"], menu_mode=block["menu_mode"],
         end_date=block["end_date"], lines=block["lines"],
@@ -623,14 +634,16 @@ async def test_catisma_hatasi_ne_yapilacagini_soyler() -> None:
 async def test_yerel_iz_hedefe_gore_suzulur_ve_fiyat_sutunu_okunur() -> None:
     store = FakeStore()
     service = make_service(store=store)
-    await service.create(customer_id=312, start_date="2026-09-01", service_days=[1],
-                         default_quantity=20, agreed_unit_price_kurus=PRICE,
+    await service.create(customer_id=312, location_id=1, start_date="2026-09-01",
+                         service_days=[1], default_quantity=20,
+                         agreed_unit_price_kurus=PRICE,
                          delivery_points=[{"address_id": 704}], reason=GEREKCE,
                          actor="Ayşe Yılmaz")
     await service.release_order(8455, reason=GEREKCE, actor="Ayşe Yılmaz")
 
+    # 2 (create: denendi + ok) + 1 (kimliği bilinen bağlama satırı) + 2 (release)
     hepsi = await service.audit()
-    assert len(hepsi["items"]) == 4
+    assert len(hepsi["items"]) == 5
 
     yalniz_siparis = await service.audit(target_type="order", target_id=8455)
     assert {row["action"] for row in yalniz_siparis["items"]} == \
@@ -638,7 +651,7 @@ async def test_yerel_iz_hedefe_gore_suzulur_ve_fiyat_sutunu_okunur() -> None:
 
     fiyatlar = [row["price_kurus"] for row in hepsi["items"]
                 if row["action"] == "subscription.create"]
-    assert fiyatlar == [PRICE, PRICE]
+    assert fiyatlar == [PRICE, PRICE, PRICE]
 
 
 async def test_iz_okunamazsa_ekran_ayakta_kalir() -> None:
@@ -666,3 +679,127 @@ async def test_tercih_yazilir_okunur_ve_taninmayan_anahtar_reddedilir() -> None:
     payload = await service.save_prefs({"poll_seconds": 5}, actor="A")
     assert payload["ok"] is False
     assert "poll_seconds" in payload["error"]
+
+
+# ==================================================== I1 · akışı açan onarımlar
+
+async def test_sube_govdede_gercekten_gonderilir() -> None:
+    """`location_id` BLD'de zorunlu ve uzun süre HİÇ GÖNDERİLMİYORDU.
+
+    Panel sabit sıfır yolluyor, servis sıfırı `None`'a çeviriyor ve geçit
+    `None`'ı gövdeye hiç koymuyordu: HER abonelik açma denemesi 422 alıyordu.
+    Test alanın gerçekten tele gittiğini sabitliyor.
+    """
+    api = FakeApi()
+    service = make_service(api=api)
+    payload = await service.create(customer_id=312, location_id=7,
+                                   start_date="2026-09-01", service_days=[1],
+                                   default_quantity=20,
+                                   delivery_points=[{"address_id": 704}],
+                                   reason=GEREKCE, actor="Ayşe Yılmaz")
+
+    assert payload["ok"] is True
+    assert api.used("create_subscription")[0]["location_id"] == 7
+
+
+async def test_subesiz_abonelik_istek_cikmadan_durur() -> None:
+    api = FakeApi()
+    service = make_service(api=api)
+    payload = await service.create(customer_id=312, location_id=0,
+                                   start_date="2026-09-01", service_days=[1],
+                                   default_quantity=20,
+                                   delivery_points=[{"address_id": 704}],
+                                   reason=GEREKCE, actor="Ayşe Yılmaz")
+
+    assert payload["ok"] is False
+    assert "şube" in payload["error"].lower()
+    # İSTEK HİÇ ÇIKMADI: uydurma bir varsayılan koymak, siparişleri yanlış
+    # mutfağa yollamak olurdu.
+    assert api.names() == []
+
+
+async def test_awaiting_durumlari_sozlukte_ve_suzgecte() -> None:
+    """`awaiting_contract` / `awaiting_payment` GERÇEK DURUMLARDIR.
+
+    BLD'nin sözleşme servisi imza onaylandığında `awaiting_payment` yazıyor;
+    sözlük onu tanımadığı sürece abonelik hiçbir sekmede görünmüyor,
+    `?status=awaiting_payment` 422 alıyor ve `activate()` 409 veriyordu.
+    """
+    assert "awaiting_contract" in sb.STATUS_CODES
+    assert "awaiting_payment" in sb.STATUS_CODES
+    assert sb.STATUS_LABELS["awaiting_payment"] == "Ödeme bekliyor"
+    # Panelin "bekleyenler" sekmesi bu üçlüyü TEK YERDEN okuyor.
+    assert sb.STATUS_BEFORE_ACTIVE == ("pending", "awaiting_contract", "awaiting_payment")
+
+    api = FakeApi()
+    service = make_service(api=api)
+    await service.subscriptions(status="pending,awaiting_contract,awaiting_payment")
+    # Servis kümeyi listeye çeviriyor; geçit `_csv()` ile virgüllüye döndürüyor.
+    # Önemli olan ÜÇÜNÜN DE hayatta kalması — sözlük tanımasaydı ikisi
+    # süzülüp düşerdi ve o abonelikler hiçbir sekmede görünmezdi.
+    assert api.used("subscriptions")[0]["status"] == \
+        ["pending", "awaiting_contract", "awaiting_payment"]
+
+
+# ============================================== I2 · sessiz veri/para hataları
+
+async def test_resend_sure_degismediyse_token_korunur() -> None:
+    """"Yeni token üretilmez" sözü ancak SÜRE GÖNDERİLMEYİNCE tutulur.
+
+    Belirteç `{id}-{bitiş}-{imza}` biçiminde türetiliyor ve imza bitiş anını
+    da kapsıyor: süre tazelendiği an müşterinin elindeki SMS ölüyor. Eski kod
+    her seferinde 7 gün gönderiyordu, yani tam tersini yapıyordu.
+    """
+    api = FakeApi()
+    service = make_service(api=api)
+    payload = await service.resend_contract(41, reason=GEREKCE, actor="A")
+
+    assert payload["ok"] is True
+    assert api.used("resend_subscription_contract")[0]["expires_in_days"] is None
+    assert payload["renews_link"] is False
+
+
+async def test_resend_renew_ile_yeni_baglanti_uretir_ve_bunu_soyler() -> None:
+    api = FakeApi()
+    service = make_service(api=api)
+    payload = await service.resend_contract(41, reason=GEREKCE, actor="A", renew=True,
+                                            expires_in_days=10)
+
+    assert api.used("resend_subscription_contract")[0]["expires_in_days"] == 10
+    # EKRAN BUNU YAZMAK ZORUNDA: müşterinin elindeki eski bağlantı ÖLDÜ.
+    assert payload["renews_link"] is True
+
+
+async def test_uyari_data_icine_gomulse_bile_gorunur() -> None:
+    """`mark-paid` uyarıyı `data` içine gömüyordu ve hiçbir ekrana ulaşmıyordu.
+
+    Sunucu tarafı düzeltildi (uyarı artık üst düzeyde) ama okuyucu ÜÇ YERE
+    birden bakıyor: eski bir BLD sürümüne bakan kurulumda uyarının yine
+    kaybolması, düzeltmenin yarısını hiç yapmamak olurdu.
+    """
+    gomulu = {"ok": True, "data": {"warnings": [{"code": "invoice_not_created"}]}}
+    assert sb.warnings_of(gomulu) == [{"code": "invoice_not_created"}]
+
+    ust = {"ok": True, "warnings": [{"code": "note_not_stored"}]}
+    assert sb.warnings_of(ust) == [{"code": "note_not_stored"}]
+
+    # AYNI KOD İKİ YERDE GEÇERSE BİR KEZ DÖNER: ekran aynı cümleyi iki kez
+    # yazmamalı.
+    ikisi = {"ok": True,
+             "warnings": [{"code": "note_not_stored"}],
+             "data": {"warnings": [{"code": "note_not_stored"}]}}
+    assert sb.warnings_of(ikisi) == [{"code": "note_not_stored"}]
+
+
+async def test_isletme_gunu_UTC_degil_istanbul() -> None:
+    """Gece 00:00–03:00 arasında UTC günü ile panelin günü AYRIŞIYORDU.
+
+    `today_iso()` UTC yazıyordu; panel yerel saati kullanıyor. Aradaki üç
+    saatlik fark, "duraklatma başlangıcı bugünden geriye alınamaz" gibi bir
+    kuralın kullanıcının bugün dediği günü reddetmesi demekti.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    beklenen = datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%Y-%m-%d")
+    assert sb.today_iso() == beklenen

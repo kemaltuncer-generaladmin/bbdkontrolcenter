@@ -339,9 +339,44 @@ async def test_gunun_menusu_kipinde_sabit_liste_gonderilmez() -> None:
 
     await api.create_subscription(customer_id=312, start_date="2026-09-01",
                                   service_days=[1, 2], default_quantity=20,
-                                  lines=[{"menu_id": 27}], reason=GEREKCE, actor=AKTOR)
+                                  location_id=1, lines=[{"menu_id": 27}],
+                                  reason=GEREKCE, actor=AKTOR)
 
     assert "lines" not in json.loads(istekler[0].content)
+
+
+async def test_subesiz_abonelik_istegi_hic_cikmaz() -> None:
+    """`location_id` BLD'de zorunlu; eksikliği istek gitmeden kesilir.
+
+    Bu eksiklik uzun süre 422 üretiyordu ve abonelik Kontrol Merkezi'nden HİÇ
+    açılamıyordu. Sessizce bir varsayılan koymak daha kötü olurdu: yanlış şube,
+    siparişleri başka bir mutfağa yollar.
+    """
+    def handler(_request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("istek gitmemeliydi")
+
+    api, _, _, _ = gateway(handler)
+    with pytest.raises(BldApiError) as hata:
+        await api.create_subscription(customer_id=312, start_date="2026-09-01",
+                                      service_days=[1], default_quantity=20,
+                                      reason=GEREKCE, actor=AKTOR)
+
+    assert hata.value.code == "payload"
+
+
+async def test_sube_listesi_gecitten_okunur() -> None:
+    """Şube seçicinin kaynağı — `GET /settings/locations`."""
+    istekler: list[httpx.Request] = []
+    api, _, _, _ = gateway(kaydeden(istekler, {
+        "data": [{"id": 1, "name": "BLD Merkez Mutfak", "enabled": True}],
+        "meta": {"default_location_id": 1},
+    }))
+
+    cevap = await api.locations()
+
+    assert cevap["items"][0]["id"] == 1
+    assert cevap["meta"]["default_location_id"] == 1
+    assert istekler[0].url.path.endswith("/settings/locations")
 
 
 async def test_atla_ve_adet_birlikte_gonderilemez() -> None:

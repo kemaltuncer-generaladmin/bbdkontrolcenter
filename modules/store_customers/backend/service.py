@@ -40,7 +40,6 @@ import json
 import os
 import shutil
 import tempfile
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -130,7 +129,8 @@ class CustomersService:
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
                  printer: Any = None, publish: Any = None, category: str = "Mağaza",
-                 subcategory: str = "Müşteri", fallback_dir: Path | None = None) -> None:
+                 subcategory: str = "Müşteri", fallback_dir: Path | None = None,
+                 scan: Any = None) -> None:
         self._api = api
         self._store = store
         self._log = log
@@ -145,18 +145,22 @@ class CustomersService:
         self._flags = store.table("review_flags")
         self._consent = store.table("consent")
 
-        #: Nüfus taramasının BELLEKTEKİ kopyası. Diske yazılmaz (KVKK).
-        self._scan: dict[str, Any] = {"rows": [], "at": 0.0, "truncated": False, "error": ""}
-        #: Sipariş toplulaştırması — müşteri kaydında sipariş sayısı, harcama ve
-        #: son sipariş tarihi OLMADIĞI için (canlıda doğrulandı) siparişlerden
-        #: sayılır. O da bellekte durur; tutar ve tarih kişisel veri değildir
-        #: ama diske ikinci bir kopya yazmanın da gereği yok.
-        self._stats: dict[str, Any] = {"map": {}, "at": 0.0, "truncated": False, "error": ""}
-        #: Ekran açılışında liste ve KPI uçları AYNI ANDA istenir; kilit
-        #: olmasaydı ikisi de nüfusu/siparişleri baştan tarar ve mağazanın
-        #: 60 istek/dk sınırı boşuna iki katı yenirdi.
-        self._scan_lock = asyncio.Lock()
-        self._stats_lock = asyncio.Lock()
+        #: Ağır taramaların ARKA PLAN tazeleyicisi (`store.scan`).
+        #:
+        #: BURASI BİR ARIZANIN İZİDİR: nüfus ve sipariş taramaları bir zamanlar
+        #: liste isteğinin İÇİNDE koşuyordu. Tarama sayfa sayfa yapılıyor, geçit
+        #: dakikada 55 isteğe izin veriyor; toplam iki dakikayı buluyordu. Kabuk
+        #: isteği 60 saniyede kestiği için müşteri ekranı HİÇ AÇILMIYORDU — panel
+        #: zaman aşımını yakalayıp boş tablo gösteriyordu. Artık liste taramayı
+        #: beklemez; tarama arka planda koşar, sonucu geldiğinde sütunlar dolar.
+        #:
+        #: Yetenek yoksa (yalıtılmış test) tarama HİÇ yapılmaz: sayılar boş
+        #: kalır, segment "Bilinmiyor" olur. Sıfır uydurulmaz.
+        #:
+        #: Ayrı bir kilit YOK: "aynı anahtarda tek tarama" garantisini artık
+        #: `store.scan` veriyor. Burada ikinci bir kilit tutmak, arka plan
+        #: görevi koşarken gelen istekleri yine bekletirdi — kaçtığımız şey oydu.
+        self._scan_cache = scan
 
     # ------------------------------------------------------------- ayarlar
 
@@ -300,57 +304,95 @@ class CustomersService:
                     or registered_from or registered_to
                     or last_order_from or last_order_to)
 
+    def _invalidate_scan(self) -> None:
+        """Yazma sonrası nüfus taraması bayatlar; bir sonraki okuma yeniler.
+
+        Tarama BURADA yeniden başlatılmaz: yazma isteği, dakikalar süren bir
+        taramanın arkasında bekleyemez — kaçtığımız arıza tam olarak buydu.
+        Sipariş toplulaştırmasına dokunulmaz: müşteri künyesini düzenlemek
+        siparişleri değiştirmez.
+        """
+        if self._scan_cache is None:
+            return
+        self._scan_cache.invalidate("population")
+
+    async def _load_order_stats(self) -> dict[str, Any]:
+        """Sipariş taramasının GÖVDESİ — arka plan görevinde koşar.
+
+        Hata FIRLATIR (yutmaz): `store.scan` onu yakalar, zarfın `error`
+        alanına koyar ve bir dakika boyunca yeniden denemez. Burada yutmak,
+        "boş toplulaştırma" ile "hiç sipariş yok"u karıştırırdı.
+        """
+        payload = await self._api.orders({}, all_pages=True)
+        rows = [analytics.order_row(item) for item in (payload.get("items") or [])
+                if isinstance(item, dict)]
+        return {"map": analytics.order_stats(rows),
+                "truncated": bool(payload.get("truncated"))}
+
     async def _order_stats(self, *, refresh: bool = False) -> dict[str, Any]:
-        """Siparişlerin müşteriye göre toplulaştırılmış hâli — bellekte, kısa ömürlü.
+        """Siparişlerin müşteriye göre toplulaştırılmış hâli — ARKA PLANDA.
 
         CANLIDA DOĞRULANDI: `GET /api/admin/customers` sipariş sayısı, harcama
         ve son sipariş tarihi taşımıyor; detay ucu `totalOrders` ve
         `totalAmountSpent` veriyor ama son sipariş tarihini o da vermiyor.
-        Üçü olmadan RFM segmenti hesaplanamaz. Sipariş ucu üçünü de veriyor,
-        bu yüzden tarama bir kez yapılıp `segment_scan_ttl` boyunca tutulur.
+        Üçü olmadan RFM segmenti hesaplanamaz. Sipariş ucu üçünü de veriyor.
 
-        Başarısız olursa boş sözlük + hata döner; çağıran satırları OLDUĞU GİBİ
-        bırakır ve segment "Bilinmiyor" kalır — sıfır uydurulmaz (K7).
+        BU ÇAĞRI BEKLEMEZ. Sonuç hazırsa döner; değilse tarama arka planda
+        başlatılır ve `ready: False` dönülür. Çağıran satırları OLDUĞU GİBİ
+        bırakır, segment "Bilinmiyor" kalır — sıfır uydurulmaz (K7).
         """
-        async with self._stats_lock:
-            return await self._order_stats_locked(refresh=refresh)
-
-    async def _order_stats_locked(self, *, refresh: bool) -> dict[str, Any]:
-        fresh = (time.monotonic() - self._stats["at"]) < self._scan_ttl
-        if not refresh and fresh and self._stats["map"]:
-            return self._stats
-
-        try:
-            payload = await self._api.orders({}, all_pages=True)
-        except Exception as failure:  # noqa: BLE001 — K7
-            self._log.warning("sipariş toplulaştırması yapılamadı", error=str(failure))
-            if self._stats["map"]:
-                return {**self._stats, "error": self._fail(failure)}
-            return {"map": {}, "at": 0.0, "truncated": False, "error": self._fail(failure)}
-
-        rows = [analytics.order_row(item) for item in (payload.get("items") or [])
-                if isinstance(item, dict)]
-        self._stats = {
-            "map": analytics.order_stats(rows),
-            "at": time.monotonic(),
-            "truncated": bool(payload.get("truncated")),
-            "error": "",
+        if self._scan_cache is None:
+            return {"map": {}, "ready": False, "truncated": False, "error": "",
+                    "state": "empty", "running": False, "at": ""}
+        report = await self._scan_cache.read("order_stats", self._load_order_stats,
+                                             ttl=self._scan_ttl, refresh=refresh)
+        value = report["value"] or {}
+        return {
+            "map": value.get("map") or {},
+            # `ready` = toplulaştırma GERÇEKTEN yapıldı. Boş harita ile hiç
+            # yapılmamış tarama arasındaki farkı yalnız bu alan taşır.
+            "ready": report["state"] == "ready",
+            "truncated": bool(value.get("truncated")),
+            "error": analytics.text(report["error"]),
+            "state": str(report["state"]),
+            "running": bool(report["running"]),
+            "at": analytics.text(report["at"]),
         }
-        return self._stats
 
     def _enrich(self, rows: list[dict[str, Any]], stats: dict[str, Any],
                 *, limits: dict[str, int]) -> None:
         """Satırları sipariş toplulaştırmasıyla tamamlar — tarama EKSİKSİZSE.
 
-        Tarama tavana dayandıysa (`truncated`) toplulaştırma eksiktir: eksik
-        listeyle "bu müşterinin hiç siparişi yok" demek, siparişi olan
-        müşteriyi yanlış segmente düşürür. O durumda satırlara dokunulmaz.
+        Üç durumda satırlara HİÇ DOKUNULMAZ:
+          · tarama henüz bitmedi (`ready` değil) — arka planda koşuyor olabilir;
+          · tarama patladı (`error`);
+          · tarama tavana dayandı (`truncated`) — eksik listeyle "bu müşterinin
+            hiç siparişi yok" demek, siparişi olanı yanlış segmente düşürür.
+
+        `apply_order_stats` BOŞ haritayla çağrılırsa herkese `orders = 0`
+        yazar; yukarıdaki kapı tam olarak bunu engellemek içindir.
         """
-        if stats.get("error") or stats.get("truncated"):
+        if not stats.get("ready") or stats.get("error") or stats.get("truncated"):
             return
         today = _today()
         for row in rows:
             analytics.apply_order_stats(row, stats["map"], today=today, thresholds=limits)
+
+    @staticmethod
+    def _scan_envelope(stats: dict[str, Any], scan: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Ekranın "sayılar neden boş" sorusuna verdiği cevap.
+
+        Panel bu zarfa bakıp durum satırını yazar ve `running` ise taramanın
+        bitmesini beklemek yerine BİR KEZ geri döner. Sessiz boş sütun yok.
+        """
+        parts = [stats] + ([scan] if scan is not None else [])
+        return {
+            "state": next((str(part["state"]) for part in parts
+                           if part.get("state") != "ready"), "ready"),
+            "running": any(bool(part.get("running")) for part in parts),
+            "at": next((analytics.text(part.get("at")) for part in parts
+                        if part.get("at")), ""),
+        }
 
     async def customers(self, *, q: str = "", segment: str = "", group_id: int = 0,
                         status: str = "", city: str = "", newsletter: str = "",
@@ -418,75 +460,94 @@ class CustomersService:
             "size": analytics.as_int(meta.get("perPage"), per_page),
             "pages": analytics.as_int(meta.get("lastPage"), 1),
             "source": "customers",
-            "scannedAt": "",
+            "scannedAt": analytics.text(stats.get("at")),
             "truncated": False,
             "unknownSegments": unknown,
             "thresholds": limits,
             "statsError": analytics.text(stats.get("error")),
             "statsTruncated": bool(stats.get("truncated")),
+            "scan": self._scan_envelope(stats),
         }
 
     @staticmethod
     def _empty_list(page: int, size: int, *, error: str, source: str = "customers",
-                    scanned_at: str = "") -> dict[str, Any]:
+                    scanned_at: str = "", scan: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"ok": True, "connected": False, "error": error, "items": [], "total": 0,
                 "page": page, "size": size, "pages": 0, "source": source,
                 "scannedAt": scanned_at, "truncated": False, "unknownSegments": 0,
                 "thresholds": dict(analytics.DEFAULT_THRESHOLDS),
-                "statsError": "", "statsTruncated": False}
+                "statsError": "", "statsTruncated": False,
+                "scan": scan or {"state": "empty", "running": False, "at": ""}}
 
-    async def _scan_rows(self, *, refresh: bool = False) -> dict[str, Any]:
-        """Nüfusun tamamı — BELLEKTE, kısa ömürlü.
+    async def _load_population(self) -> dict[str, Any]:
+        """Nüfus taramasının GÖVDESİ — arka plan görevinde koşar.
 
-        Bagisto sipariş toplamına göre süzdürmediği için segment/harcama
-        süzgeçleri nüfusu gerektiriyor. Tarama sayfa sayfa ve SIRAYLA yapılır
-        (geçit hız kovasını kendisi tutar); sonuç `segment_scan_ttl` boyunca
-        bellekte kalır ki her süzgeç değişikliği yeni bir tarama başlatmasın.
-        Diske YAZILMAZ: kişisel verinin ikinci kopyası olmasın.
+        Diske YAZILMAZ: kişisel verinin ikinci kopyası olmasın (KVKK). Hata
+        fırlatır; `store.scan` yakalar (bkz. `_load_order_stats`).
         """
-        async with self._scan_lock:
-            return await self._scan_rows_locked(refresh=refresh)
-
-    async def _scan_rows_locked(self, *, refresh: bool) -> dict[str, Any]:
-        fresh = (time.monotonic() - self._scan["at"]) < self._scan_ttl
-        if not refresh and fresh and self._scan["rows"]:
-            return self._scan
-
-        try:
-            payload = await self._api.customers({}, all_pages=True)
-        except Exception as failure:  # noqa: BLE001 — K7
-            self._log.warning("müşteri taraması yapılamadı", error=str(failure))
-            # Bayat tarama HİÇBİR ŞEYDEN iyidir; yaşı ekranda yazar.
-            if self._scan["rows"]:
-                return {**self._scan, "error": self._fail(failure)}
-            return {"rows": [], "at": 0.0, "truncated": False, "error": self._fail(failure)}
-
+        payload = await self._api.customers({}, all_pages=True)
+        raw = payload.get("items") or []
         limits = self._thresholds
         today = _today()
-        raw = payload.get("items") or []
         rows = [analytics.customer_row(item, today=today, thresholds=limits)
                 for item in raw[:self._scan_cap]]
-        # Segment, harcama ve "son sipariş" süzgeçlerinin tamamı siparişlerden
-        # gelen sayılara dayanıyor; tarama onlarsız hiçbir işe yaramaz.
-        stats = await self._order_stats(refresh=refresh)
-        self._enrich(rows, stats, limits=limits)
-        self._scan = {
+        return {
             "rows": rows,
-            "at": time.monotonic(),
-            "stamp": _now(),
             "truncated": bool(payload.get("truncated")) or len(raw) > self._scan_cap,
-            "error": "",
+        }
+
+    async def _scan_rows(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Nüfusun tamamı — ARKA PLANDA taranır, çağıran BEKLEMEZ.
+
+        Bagisto sipariş toplamına göre süzdürmediği için segment/harcama
+        süzgeçleri nüfusu gerektiriyor. Tarama sayfa sayfa ve SIRAYLA yapılıyor
+        (geçit hız kovasını kendisi tutar) — bu yüzden isteğin içinde koşamaz.
+
+        Sipariş toplulaştırması AYRI bir anahtardır: ikisi bağımsız yenilenir,
+        biri patlarsa diğeri kullanılabilir kalır.
+        """
+        if self._scan_cache is None:
+            return {"rows": [], "ready": False, "stamp": "", "truncated": False,
+                    "error": "", "state": "empty", "running": False,
+                    "statsError": "", "statsTruncated": False}
+
+        report = await self._scan_cache.read("population", self._load_population,
+                                             ttl=self._scan_ttl, refresh=refresh)
+        value = report["value"] or {}
+        rows = list(value.get("rows") or [])
+        stats = await self._order_stats(refresh=refresh)
+        # Zenginleştirme HER OKUMADA yeniden yapılır: iki tarama ayrı anahtarda
+        # yaşlandığı için nüfus taze, toplulaştırma yeni gelmiş olabilir.
+        # Satırlar önbellekte ortak nesnedir; kopyalanmadan yazmak, bir sonraki
+        # okumada bayat sayılarla karışırdı.
+        rows = [dict(row) for row in rows]
+        self._enrich(rows, stats, limits=self._thresholds)
+        return {
+            "rows": rows,
+            "ready": report["state"] == "ready",
+            "stamp": analytics.text(report["at"]),
+            "truncated": bool(value.get("truncated")),
+            "error": analytics.text(report["error"]),
+            "state": str(report["state"]),
+            "running": bool(report["running"]),
             "statsError": analytics.text(stats.get("error")),
             "statsTruncated": bool(stats.get("truncated")),
+            "stats": stats,
         }
-        return self._scan
 
     async def _from_scan(self, *, page: int, size: int, refresh: bool,
                          **filters: Any) -> dict[str, Any]:
         scan = await self._scan_rows(refresh=refresh)
+        envelope = self._scan_envelope(scan.get("stats") or {}, scan)
         if not scan["rows"]:
-            return self._empty_list(page, size, error=scan["error"] or "Tarama boş döndü.",
-                                    source="segment")
+            # "Tarama boş döndü" ile "tarama daha bitmedi" AYRI şeylerdir;
+            # ikincisinde kullanıcıya beklemesi gerektiği söylenir.
+            if scan["state"] in ("running", "empty"):
+                message = "Segment taraması sürüyor; bittiğinde liste kendiliğinden dolar."
+            else:
+                message = scan["error"] or "Tarama boş döndü."
+            return self._empty_list(page, size, error=message, source="segment",
+                                    scan=envelope)
 
         matched = [row for row in scan["rows"] if analytics.match_row(row, **filters)]
         start = max(0, (page - 1) * size)
@@ -504,14 +565,23 @@ class CustomersService:
             "thresholds": self._thresholds,
             "statsError": analytics.text(scan.get("statsError")),
             "statsTruncated": bool(scan.get("statsTruncated")),
+            "scan": envelope,
         }
 
     async def overview(self, *, refresh: bool = False) -> dict[str, Any]:
-        """Mini KPI şeridi ve segment sayaçları — tek taramadan."""
+        """Mini KPI şeridi ve segment sayaçları — aynı arka plan taramasından.
+
+        Liste ucuyla AYNI anahtarı okur: ekran açılışında ikisi birden istense
+        bile mağazaya tek tarama gider (eskiden iki ayrı tam tarama başlıyordu).
+        """
         scan = await self._scan_rows(refresh=refresh)
+        envelope = self._scan_envelope(scan.get("stats") or {}, scan)
         if not scan["rows"]:
             return {"ok": True, "connected": False, "error": scan["error"],
-                    "kpi": {}, "segments": {}, "scannedAt": "", "truncated": False}
+                    "kpi": {}, "segments": {}, "scannedAt": "", "truncated": False,
+                    "statsError": analytics.text(scan.get("statsError")),
+                    "statsTruncated": bool(scan.get("statsTruncated")),
+                    "scan": envelope}
         limits = self._thresholds
         return {
             "ok": True, "connected": not scan["error"], "error": scan["error"],
@@ -521,6 +591,7 @@ class CustomersService:
             "truncated": scan["truncated"],
             "statsError": analytics.text(scan.get("statsError")),
             "statsTruncated": bool(scan.get("statsTruncated")),
+            "scan": envelope,
         }
 
     # ================================================================ künye
@@ -843,7 +914,7 @@ class CustomersService:
                                        before=before_news,
                                        after=bool(clean["subscribed_to_news_letter"]),
                                        actor=actor, reason=reason)
-        self._scan["at"] = 0.0        # tarama bayatladı; segment yeniden hesaplansın
+        self._invalidate_scan()       # tarama bayatladı; segment yeniden hesaplansın
         return {"ok": True, "error": "", "fields": sorted(clean),
                 "dryRun": bool(result.get("dryRun", dry_run))}
 
@@ -894,7 +965,7 @@ class CustomersService:
         await self._record(customer_id=ids[0] if len(ids) == 1 else 0, action=action,
                            reason=reason, actor=actor, result="dry_run" if dry_run else "ok",
                            detail={"ids": ids})
-        self._scan["at"] = 0.0
+        self._invalidate_scan()
         return {"ok": True, "error": "", "count": len(ids),
                 "dryRun": bool(result.get("dryRun", dry_run)),
                 "notice": "Pasif müşteri giriş yapamaz; siparişleri ve faturaları durur."}
@@ -1005,7 +1076,7 @@ class CustomersService:
             await self._emit("store.customer.anonymized",
                              {"customerId": int(customer_id), "requestId": request["id"],
                               "actor": actor, "reason": reason})
-        self._scan["at"] = 0.0
+        self._invalidate_scan()
         return {"ok": True, "available": True, "error": "",
                 "dryRun": bool(result.get("dryRun", dry_run)),
                 "requestId": request["id"], "notice": analytics.ANONYMIZE_NOTICE}

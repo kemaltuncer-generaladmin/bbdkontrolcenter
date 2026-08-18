@@ -883,7 +883,14 @@ async function runSms(box, row) {
     const result = await api(`${BASE}/requests/${row.id}/sms`, {
       method: 'POST', body: { reason, dryRun: false },
     });
-    if (!result.ok) { toast(result.error, 'bad'); return null; }
+    if (!result.ok) {
+      // Sağlayıcı kodunun AÇIK METNİ hatanın altına yazılır: "[40] Gönderici
+      // başlığı sistemde tanımlı değil" cümlesi doğrudur ama personelin ne
+      // yapacağını söylemez; `hint` onu söyler ve daha uzun durur.
+      toast(result.error, 'bad');
+      if (result.hint) toast(result.hint, 'warn');
+      return null;
+    }
     toast(result.sent ? `SMS gönderildi (${num(result.parts)} parça).`
       : (result.notice || 'SMS gönderilmedi.'), result.sent ? 'good' : 'warn');
     await refresh();
@@ -1038,6 +1045,116 @@ function openSettle(row) {
   box.body.append(actions);
 }
 
+// ---------------------------------------------------------- SMS ayarları
+//
+// NEDEN BU KART BU EKRANDA. Netgsm hesabı bbdkantin ile ORTAKTIR; ayrı bir
+// hesap açılmadı. Kantin kendi ekranından aynı bilgileri kendi uygulamasına
+// yazıyor, bu ekran ise KM'nin kasasına yazar (`notify.netgsm.*`). İkisi ayrı
+// yerlerde durduğu için, mağaza tarafında SMS'in neden gitmediğini soran
+// personelin gidecek başka bir ekranı yoktu.
+//
+// PAROLA HİÇBİR ZAMAN GERİ GELMEZ: sunucu yalnız "kayıtlı mı" der. Boş
+// bırakılan parola alanı "değiştirme" demektir.
+
+function smsField(label, node, hint) {
+  const wrap = h('label', 'kit-field');
+  wrap.append(h('span', 'kit-field-label', label), node);
+  if (hint) wrap.append(h('span', 'kit-field-hint', hint));
+  return wrap;
+}
+
+async function renderSmsSettings(host) {
+  host.replaceChildren(skeletonRows(3, 2));
+  let payload;
+  try {
+    payload = await call(`${BASE}/sms/settings`);
+  } catch (error) {
+    host.replaceChildren(alertBox(error.message, 'bad'));
+    return;
+  }
+  host.replaceChildren();
+
+  const box = h('div', 'pg-col');
+
+  // SIRA BİLİNÇLİ: önce "mesaj neden gitmiyor", sonra alanlar. Kimlik
+  // bilgisini girip "artık gider" sanan personelin ilk gördüğü şey fren olsun.
+  if (payload.dryRunNotice) box.append(alertBox(payload.dryRunNotice, 'warn'));
+  if (!payload.available) box.append(alertBox(payload.error, 'bad'));
+  else if (payload.error) box.append(alertBox(payload.error, 'bad'));
+
+  const sms = payload.sms || {};
+  if (payload.available && !sms.configured && !payload.error) {
+    box.append(alertBox(
+      'Netgsm kimlik bilgileri eksik — bu hâlde HİÇBİR SMS gönderilemez. '
+      + 'Kullanıcı adı, parola ve gönderici başlığı üçü de dolu olmalı.', 'warn'));
+  }
+
+  const username = h('input', 'kit-input');
+  username.type = 'text';
+  username.maxLength = 64;
+  username.value = payload.username || '';
+
+  const password = h('input', 'kit-input');
+  password.type = 'password';
+  password.maxLength = 255;
+  password.autocomplete = 'new-password';
+  password.placeholder = payload.passwordConfigured
+    ? 'Kayıtlı — boş bırakılırsa değişmez' : 'Parola girilmemiş';
+
+  const header = h('input', 'kit-input');
+  header.type = 'text';
+  header.maxLength = payload.headerMax || 11;
+  header.value = payload.header || '';
+
+  const fields = h('div', 'pg-col');
+  fields.append(
+    smsField('Netgsm kullanıcı adı', username,
+      'bbdkantin ile AYNI hesap; ayrı bir abonelik açılmadı.'),
+    smsField('Netgsm parola', password,
+      'Sunucu parolayı asla geri vermez; boş bırakılırsa mevcut korunur.'),
+    smsField('Gönderici başlığı', header,
+      `Netgsm’de onaylı başlık, en çok ${payload.headerMax || 11} karakter.`),
+  );
+
+  const actions = h('div', 'pg-actions');
+  actions.append(button('Kaydet', {
+    variant: 'primary',
+    onClick: async () => {
+      const reason = await askReason({
+        title: 'Netgsm ayarlarını kaydet',
+        description: 'Bilgiler kasaya yazılır ve kurulumdaki TÜM SMS gönderimlerini '
+          + '(kantin dâhil) etkiler.',
+        confirmLabel: 'Kaydet',
+        danger: false,
+      });
+      if (!reason) return;
+      await withBusy('Netgsm ayarları kaydediliyor…', async () => {
+        const result = await api(`${BASE}/sms/settings`, {
+          method: 'PUT',
+          body: {
+            username: username.value.trim(),
+            password: password.value,
+            header: header.value.trim(),
+            reason,
+          },
+        });
+        if (!result.ok) { toast(result.error, 'bad'); return null; }
+        toast(result.notice || 'Netgsm ayarları kaydedildi.', 'good');
+        await loadState();          // durum satırındaki "SMS yok/kuru prova" tazelensin
+        await renderSmsSettings(host);
+        return result;
+      });
+    },
+  }));
+
+  box.append(fields, actions, hintBox(payload.sharedAccountNotice));
+  for (const item of payload.codeHelp || []) {
+    box.append(hintBox(item.text));
+  }
+  host.append(card('SMS ayarları (Netgsm)', box,
+    'Kasada durur — ayar dosyasına ve depoya yazılmaz'));
+}
+
 // --------------------------------------------------------------- şablon
 
 async function renderTemplate() {
@@ -1129,6 +1246,20 @@ async function renderTemplate() {
       toast('Sadeleştirildi. Anlam değişmediyse kaydedin.', 'good');
     },
   }));
+  // GERİ DÖNÜŞ YOLU. Şablon serbest metindir ve bozulabilir: {link} silinir,
+  // metin uzayıp üç parçaya çıkar, yer tutucu adı yanlış yazılır. Hazır metni
+  // elle yeniden yazmak zorunda kalmamak için tek düğme. Metin SUNUCUDAN
+  // gelir (`defaultBody`); panelde ikinci bir kopya tutulsaydı ikisi er geç
+  // birbirinden ayrılırdı. Kaydetmez — yalnız kutuya yazar, karar kullanıcının.
+  actions.append(button('Hazır şablonu geri yükle', {
+    title: 'Modülün varsayılan metnini kutuya yazar; kaydetmez',
+    onClick: () => {
+      if (!payload.defaultBody) return;
+      area.value = payload.defaultBody;
+      repaint();
+      toast('Hazır şablon yüklendi. Kaydetmek için “Kaydet” deyin.', 'good');
+    },
+  }));
   actions.append(button('Kaydet', {
     variant: 'primary',
     onClick: async () => {
@@ -1150,16 +1281,21 @@ async function renderTemplate() {
     },
   }));
 
+  // Kurulum kartı ŞABLONUN ÜSTÜNDE durur: metni güzelleştirmenin, mesajın
+  // hiç gitmediği bir kurulumda faydası yok.
+  const smsHost = h('div', 'pg-col');
   host.append(
+    smsHost,
     card('Şablon', area, 'Değişiklik yalnız yeni gönderimleri etkiler'),
     chips,
     card('Örnek (Ayşe Yılmaz · 1.250,00 TL)', sample),
     meter,
     actions,
-    hintBox('{link} zorunludur: bağlantısız bir SMS müşteriye hiçbir işe yaramaz. '
-      + 'Sunucu kaydederken bunu denetler.'),
+    hintBox(`${payload.required || '{link}'} zorunludur: bağlantısız bir SMS müşteriye `
+      + 'hiçbir işe yaramaz. Sunucu kaydederken bunu denetler.'),
   );
   repaint();
+  renderSmsSettings(smsHost);
 }
 
 // ------------------------------------------------------------------- CSV
@@ -1207,7 +1343,7 @@ export function mount(root, ctx) {
     { key: 'new', label: 'Yeni Tahsilat' },
     { key: 'list', label: 'Talepler' },
     { key: 'settle', label: 'Elden Kapatma' },
-    { key: 'template', label: 'SMS Şablonu' },
+    { key: 'template', label: 'SMS Ayarları ve Şablon' },
   ], 'new', (key) => showView(key));
 
   nodes.status = statusLine();

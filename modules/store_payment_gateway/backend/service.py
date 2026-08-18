@@ -119,6 +119,46 @@ RATE_UNKNOWN = (
 )
 
 
+#: SMS ayarları kartında, kuru prova açıkken ekrana yazılan metin.
+#:
+#: NEDEN BU KADAR AÇIK. Kimlik bilgisi girilmiş bir kurulumda ekran "SMS
+#: hazır" der ve personel mesajın gittiğini sanır; oysa modülün kendi freni
+#: (`sms_dry_run`) hâlâ açıktır ve tek bir mesaj çıkmaz. Belirti sebebi ele
+#: vermediği için metin ayarın TAM ADINI ve nerede kapatılacağını yazar.
+SMS_DRY_RUN_NOTICE = (
+    "Bu ekrandan GERÇEK SMS GİTMİYOR: modül ayarı "
+    "`modules.store_payment_gateway.sms_dry_run` AÇIK. Mesaj hazırlanır, "
+    "parça sayacı çalışır, denetim izine yazılır — ama sağlayıcıya hiç "
+    "ulaşmaz. Canlıya geçmek bilinçli bir karardır: ayarı `false` yapın ve "
+    "önce `sms_allowlist` içine kendi numaranızı koyup deneyin."
+)
+
+#: Netgsm hesabının kantinle ORTAK olduğunu söyleyen metin.
+#:
+#: Kullanıcı kararı: BBDStore linkle ödeme, bbdkantin ile AYNI Netgsm
+#: hesabını taşır. Ayrı hesap açılmadı, ayrı bakiye izlenmiyor. Ekran bunu
+#: yazar ki başlık ya da parola değiştiren kişi kantinin SMS'lerini de
+#: etkilediğini bilsin.
+SHARED_ACCOUNT_NOTICE = (
+    "Netgsm hesabı bbdkantin ile ORTAKTIR: buradaki kullanıcı adı, parola ve "
+    "başlık kasada `notify.netgsm.*` anahtarlarında durur ve kurulumdaki tüm "
+    "SMS gönderimleri aynı hesabı kullanır. Değiştirmek kantin mesajlarını da "
+    "etkiler."
+)
+
+#: Kasaya yazıldıktan sonra ekrana yazılan uyarı — sessiz bir tuzağın karşılığı.
+#:
+#: `km_platform/notify` sağlayıcıyı İLK kullanımda kurup bellekte tutuyor.
+#: Daha önce SMS göndermiş bir sunucuda yeni parola kasaya yazılsa bile,
+#: süreç yeniden başlayana kadar eski kimlik bilgisi kullanılmaya devam eder.
+#: Bunu söylememek, "parolayı düzelttim ama hâlâ 30 hatası alıyorum" demektir.
+SMS_RELOAD_NOTICE = (
+    "Kaydedildi. SMS katmanı sağlayıcıyı ilk kullanımda kurup bellekte "
+    "tuttuğu için, bu sunucudan daha önce SMS gönderildiyse yeni bilgiler "
+    "ancak uygulama yeniden başlatıldığında geçerli olur."
+)
+
+
 class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
 
@@ -127,14 +167,19 @@ class PaymentGatewayService:
     """Tahsilat ekranının tüm iş kuralları. HTTP hatası FIRLATMAZ."""
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
-                 notify: Any = None, printer: Any = None, category: str = "Mağaza",
-                 subcategory: str = "Finans", fallback_dir: Path | None = None) -> None:
+                 notify: Any = None, printer: Any = None, secrets: Any = None,
+                 category: str = "Mağaza", subcategory: str = "Finans",
+                 fallback_dir: Path | None = None) -> None:
         self._api = api
         self._store = store
         self._log = log
         self._config = config or {}
         self._notify = notify
         self._printer = printer
+        # Netgsm kimlik bilgisi KASADAN okunur ve kasaya yazılır (K8); modülün
+        # `settings` tablosuna asla düşmez. Kasa yoksa ekran çalışır, yalnız
+        # SMS ayarları kartı gerekçesiyle kapalı görünür (K7).
+        self._secrets = secrets
         self._category = category
         self._subcategory = subcategory
         self._fallback = fallback_dir or Path.home() / "km-raporlar"
@@ -361,6 +406,112 @@ class PaymentGatewayService:
         state["error"] = collect.text(ready.get("error"))
         state["live"] = not (state["moduleDryRun"] or state["platformDryRun"])
         return state
+
+    # ========================================================= SMS kurulumu
+    #
+    # Kimlik bilgileri KASADA durur (K8), modülün `settings` tablosunda değil:
+    # ayar tablosu düz metindir ve yedeğe, dışa aktarmaya, log'a düşer.
+    #
+    # ANAHTAR ADLARI `km_platform/notify` İLE AYNI OLMAK ZORUNDA ama oradan
+    # import EDİLEMEZ (K2: modül yalnız `km_sdk` import eder). Bu yüzden
+    # dizeler burada tekrar yazılır; ad değişirse iki yer birden değişir.
+
+    SECRET_USERNAME = "notify.netgsm.username"
+    SECRET_PASSWORD = "notify.netgsm.password"
+    SECRET_HEADER = "notify.netgsm.header"
+
+    #: Netgsm'de onaylı gönderici başlığının azami uzunluğu. Sağlayıcının
+    #: sınırıdır; aşan başlık kod 40 ile reddedilir.
+    HEADER_MAX = 11
+
+    async def sms_settings(self) -> dict[str, Any]:
+        """SMS ayarları kartının okuduğu durum. HATA FIRLATMAZ (K7).
+
+        PAROLA GERİ VERİLMEZ — yalnız "kayıtlı mı" bilgisi döner. Kasadan
+        okunan bir parolayı ekrana taşımak, onu tarayıcı belleğine, ağ
+        günlüğüne ve hata raporuna da taşırdı.
+        """
+        state = await self._sms_state()
+        out: dict[str, Any] = {
+            "ok": True, "error": "",
+            "available": self._secrets is not None,
+            "username": "", "header": "", "passwordConfigured": False,
+            "headerMax": self.HEADER_MAX,
+            "sms": state,
+            "dryRunNotice": SMS_DRY_RUN_NOTICE if self._module_dry_run else "",
+            "sharedAccountNotice": SHARED_ACCOUNT_NOTICE,
+            # Personelin karşılaşacağı ve DÜZELTEBİLECEĞİ sağlayıcı hataları
+            # kartta önden yazılır; hatayı görünce ne yapacağını aramasın.
+            "codeHelp": [{"code": code, "text": help_text}
+                         for code, help_text in collect.PROVIDER_CODE_HELP.items()],
+        }
+        if self._secrets is None:
+            out["error"] = ("Kasa (secrets) bu kurulumda yok; Netgsm bilgileri bu "
+                            "ekrandan girilemez.")
+            return out
+        try:
+            out["username"] = collect.text(await self._secrets.get(self.SECRET_USERNAME))
+            out["passwordConfigured"] = bool(await self._secrets.get(self.SECRET_PASSWORD))
+            out["header"] = collect.text(await self._secrets.get(self.SECRET_HEADER))
+        except Exception as failure:  # noqa: BLE001 — kasa okunamadı, ekran ayakta kalır (K7)
+            out["error"] = f"Kasa okunamadı: {self._fail(failure)}"
+        return out
+
+    async def save_sms_settings(self, *, username: str, password: str, header: str,
+                                reason: str, actor: str) -> dict[str, Any]:
+        """Netgsm kullanıcı adı/parola/başlığını KASAYA yazar.
+
+        Parola BOŞ bırakılırsa mevcut değer korunur: ekran parolayı geri
+        vermediği için, kaydetmek isteyen personel her seferinde parolayı
+        yeniden yazmak zorunda kalmasın. Kayıtlı parola da yokken boş
+        gönderilirse kaydetme REDDEDİLİR — yarım kurulum, hiç kurulmamış
+        olmaktan daha kötüdür: ekran "hazır" der, mesaj gitmez.
+        """
+        problem = collect.reason_error(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+        if self._secrets is None:
+            return {"ok": False,
+                    "error": "Kasa (secrets) bu kurulumda yok; kaydedilemez."}
+
+        user = collect.text(username)
+        head = collect.text(header)
+        secret = str(password or "").strip()
+        if not user:
+            return {"ok": False, "error": "Netgsm kullanıcı adı boş bırakılamaz."}
+        if not head:
+            return {"ok": False,
+                    "error": "Gönderici başlığı boş bırakılamaz; başlıksız gönderim "
+                             "Netgsm tarafında kod 40 ile reddedilir."}
+        if len(head) > self.HEADER_MAX:
+            return {"ok": False,
+                    "error": f"Gönderici başlığı en çok {self.HEADER_MAX} karakter olabilir."}
+
+        try:
+            existing = bool(await self._secrets.get(self.SECRET_PASSWORD))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": f"Kasa okunamadı: {self._fail(failure)}"}
+        if not secret and not existing:
+            return {"ok": False,
+                    "error": "Netgsm parolası kasada yok; ilk kayıtta parola zorunludur."}
+
+        try:
+            await self._secrets.set(self.SECRET_USERNAME, user)
+            if secret:
+                await self._secrets.set(self.SECRET_PASSWORD, secret)
+            await self._secrets.set(self.SECRET_HEADER, head)
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": f"Kasaya yazılamadı: {self._fail(failure)}"}
+
+        # Denetim izine DEĞER DEĞİL, DEĞİŞENİN ADI yazılır (ADR 0012 + K8):
+        # gerekçe ve kimin yazdığı kalır, parola hiçbir yere düşmez.
+        await self._record(request_id=0, action="sms_settings", reason=reason, actor=actor,
+                           result="ok",
+                           detail={"fields": ["username", "header"]
+                                             + (["password"] if secret else []),
+                                   "header": head})
+        settings = await self.sms_settings()
+        return {**settings, "ok": True, "notice": SMS_RELOAD_NOTICE}
 
     # ============================================================== referans
 
@@ -1163,11 +1314,15 @@ class PaymentGatewayService:
             result = await provider.send([SmsMessage(to=phone, text=rendered["text"])],
                                          header=self._sender or None)
         except Exception as failure:  # noqa: BLE001 — SMS katmanı dışarısı (K7)
+            # Sağlayıcı kodunun AÇIK METNİ hata satırının yanına konur. Ham
+            # "[40] Gönderici başlığı sistemde tanımlı değil" cümlesi doğrudur
+            # ama personele ne yapacağını söylemez; `provider_hint` onu söyler.
+            hint = collect.provider_hint(failure)
             await self._update(request_id, sms_state="error", sms_at=collect.now_iso())
             await self._record(request_id=request_id, action="sms", reason=reason, actor=actor,
                                result="hata", detail={"error": str(failure)})
             return {"ok": False, "error": f"SMS gönderilemedi: {self._fail(failure)}",
-                    "plan": plan}
+                    "hint": hint, "plan": plan}
 
         accepted = bool(getattr(result, "accepted", False))
         provider_dry = bool(getattr(result, "dry_run", False))
@@ -1471,6 +1626,12 @@ class PaymentGatewayService:
             "kod": "TAH-20260813-7F3A", "kurum": self._org_name,
         })
         return {"ok": True, "error": "", "body": body,
+                # `defaultBody` EKRANIN GERİ DÖNÜŞ YOLU: personel şablonu
+                # bozduğunda hazır metni elle yeniden yazmak zorunda kalmasın.
+                # Sunucudan gelir, panelde kopyası tutulmaz — iki yerde duran
+                # bir varsayılan er geç birbirinden ayrılır.
+                "defaultBody": collect.DEFAULT_TEMPLATE,
+                "required": collect.REQUIRED_PLACEHOLDER,
                 "placeholders": [{"key": key, "hint": hint}
                                  for key, hint in collect.PLACEHOLDERS.items()],
                 "sample": sample["text"], "unknown": sample["unknown"],
@@ -1483,10 +1644,8 @@ class PaymentGatewayService:
         text_body = collect.text(body)
         if not text_body:
             return {"ok": False, "error": "Şablon boş olamaz."}
-        if "{link}" not in text_body:
-            return {"ok": False,
-                    "error": "Şablonda {link} yer tutucusu bulunmalı; bağlantısız SMS "
-                             "müşteriye hiçbir işe yaramaz."}
+        if collect.REQUIRED_PLACEHOLDER not in text_body:
+            return {"ok": False, "error": collect.LINK_REQUIRED_ERROR}
         check = collect.render_template(text_body, {key: "x" for key in collect.PLACEHOLDERS})
         if check["unknown"]:
             return {"ok": False,

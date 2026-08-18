@@ -24,9 +24,11 @@ Kod İngilizce+ASCII, yorum Türkçe (depo kuralı).
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 # =========================================================== gerekçe sınırı
 
@@ -51,12 +53,27 @@ MAX_REASON = 500
 # ================================================================= sözlükler
 
 #: Abonelik durumları — `subscriptions.md` şema tablosunda AÇIKÇA sayılı.
-#: Sıra iş akışının sırasıdır: talep karşılığı `pending` doğar, sözleşme
-#: imzalanınca `active` olur.
-STATUS_CODES: tuple[str, ...] = ("pending", "active", "paused", "cancelled")
+#: Sıra İŞ AKIŞININ sırasıdır: talep `pending` doğar, sözleşme hazırlanınca
+#: `awaiting_contract`, imzalanınca `awaiting_payment`, ödeme gelince `active`.
+#:
+#: ═══════════════════════════════════════════════════════════════════════════
+#: `awaiting_contract` / `awaiting_payment` SONRADAN EKLENDİ (I1) VE BU BİR
+#: ÖZELLİK DEĞİL, KAYIP BİR SATIRIN GERİ GETİRİLMESİDİR.
+#:
+#: BLD'nin sözleşme servisi imza onaylandığında aboneliği `awaiting_payment`
+#: yapıyordu ama değer hiçbir sözlükte yoktu. Sonuç: imzayı almış, parasını
+#: bekleyen abonelik BU EKRANIN HİÇBİR SEKMESİNDE görünmüyordu — süzgeç
+#: "bilinmeyen durum" diye 422 alıyor, aktifleştirme 409 veriyordu. Yani
+#: akışın en kritik adımındaki abonelikler kayıptı.
+#: ═══════════════════════════════════════════════════════════════════════════
+STATUS_CODES: tuple[str, ...] = (
+    "pending", "awaiting_contract", "awaiting_payment", "active", "paused", "cancelled",
+)
 
 STATUS_LABELS: dict[str, str] = {
     "pending": "Bekliyor",
+    "awaiting_contract": "Sözleşme bekliyor",
+    "awaiting_payment": "Ödeme bekliyor",
     "active": "Aktif",
     "paused": "Duraklatıldı",
     "cancelled": "İptal edildi",
@@ -64,10 +81,21 @@ STATUS_LABELS: dict[str, str] = {
 
 STATUS_TONES: dict[str, str] = {
     "pending": "warn",
+    # İKİSİ DE `warn`: ikisi de "birinin bir şey yapması bekleniyor" demek ve
+    # `info` tonuna almak onları bilgilendirme satırına indirirdi.
+    "awaiting_contract": "warn",
+    "awaiting_payment": "warn",
     "active": "good",
     "paused": "info",
     "cancelled": "dim",
 }
+
+#: Henüz üretime girmemiş durumlar — panelin "bekleyenler" sekmesi ve
+#: aktifleştirme düğmesinin kapısı. TEK YERDE duruyor ki dördüncü bir ara
+#: durum eklendiğinde biri unutulup o abonelikler yine görünmez olmasın.
+STATUS_BEFORE_ACTIVE: tuple[str, ...] = (
+    "pending", "awaiting_contract", "awaiting_payment",
+)
 
 #: Sözleşme durumları. `none` bir sözleşme durumu değil, SÖZLEŞMESİZLİK
 #: durumudur ve yalnız abonelik listesinin `contract_status` alanında görünür.
@@ -218,11 +246,35 @@ def as_bool(value: Any) -> bool | None:
 
 
 def now_iso() -> str:
+    """Denetim izinin zaman damgası — UTC, `Z` sonekli.
+
+    İZ HER ZAMAN UTC'DİR ve öyle kalmalı: satırlar farklı makinelerden
+    yazılıyor ve yerel saatle karışık bir defter sıralanamaz.
+    """
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+#: İşletme günü — BLD ile aynı bölge (`BusinessTime::ZONE`).
+#:
+#: ═══════════════════════════════════════════════════════════════════════════
+#: "BUGÜN" UTC'DEN OKUNAMAZ (I4-16).
+#:
+#: `today_iso()` UTC gününü döndürüyordu; panel ise kullanıcının yerel saatini
+#: kullanıyor. Türkiye UTC+3 olduğu için gece 00:00–03:00 arasında ikisi FARKLI
+#: GÜN söylüyor: ekran "bugün 26 Ağustos" derken sunucu doğrulaması 25 Ağustos'a
+#: bakıyor ve "duraklatma başlangıcı bugünden geriye alınamaz" gibi bir kural,
+#: kullanıcının bugün dediği günü reddediyordu. Gece vardiyası olan bir mutfakta
+#: bu saat aralığı boş değil.
+#:
+#: Bölgeyi burada sabitlemek, ekranın makine saatine güvenmesinden iyidir:
+#: kararı veren taraf BLD ve o Europe/Istanbul'da yaşıyor.
+#: ═══════════════════════════════════════════════════════════════════════════
+BUSINESS_ZONE = ZoneInfo("Europe/Istanbul")
+
+
 def today_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    """İşletme günü (`YYYY-AA-GG`) — Europe/Istanbul, UTC DEĞİL."""
+    return datetime.now(BUSINESS_ZONE).strftime("%Y-%m-%d")
 
 
 # ================================================================== denetim
@@ -789,16 +841,49 @@ def screen_contract() -> dict[str, Any]:
 
 
 def warnings_of(payload: Any) -> list[dict[str, Any]]:
-    """Yanıttaki `warnings` dizisi.
+    """Yanıttaki `warnings` dizisi — ÜÇ YERDE BİRDEN aranır.
 
     UYARI HATA DEĞİLDİR ve yutulmaz: "kural değişti ama üretilmiş siparişler
     etkilenmedi" cümlesini görmeyen bir yönetici, yarının siparişini
     değiştirdiğini sanır. Sözleşme bunları `{code, ...}` sözlükleri olarak
     veriyor; biçim OLDUĞU GİBİ taşınır ve ekran Türkçeleştirir.
+
+    ─────────────────────────────────────────────────────────────────────────
+    NEDEN YALNIZ ÜST DÜZEYE BAKMAK YETMİYOR (I3).
+
+    `mark-paid` ucu uyarıyı uzun süre `data.warnings` içine gömüyordu; burası
+    yalnız üst düzeye baktığı için o uyarı HİÇBİR EKRANDA görünmedi. Kaybolan
+    uyarı da önemsiz değildi: "fatura kesilmedi". Yönetici onay kutusunu
+    işaretliyor, hiçbir şey olmuyor ve kimse fark etmiyordu.
+
+    Sunucu tarafı düzeltildi (uyarı artık üst düzeyde) ama BURASI ÜÇÜNE DE
+    BAKIYOR: eski bir BLD sürümüne bakan bir kurulumda uyarının yine
+    kaybolması, düzeltmenin yarısını hiç yapmamak olurdu. Kuru provada gövde
+    `would` altında geliyor ve orası da taranıyor.
+
+    AYNI KOD İKİ YERDE GEÇERSE BİR KEZ DÖNER: yinelenen bir uyarı satırı,
+    ekranda aynı cümleyi iki kez yazdırırdı.
+    ─────────────────────────────────────────────────────────────────────────
     """
     if not isinstance(payload, dict):
         return []
-    raw = payload.get("warnings")
-    if not isinstance(raw, list):
-        return []
-    return [dict(item) for item in raw if isinstance(item, dict)]
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for scope in (payload, payload.get("data"), payload.get("would")):
+        if not isinstance(scope, dict):
+            continue
+        raw = scope.get("warnings")
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(item))
+
+    return out

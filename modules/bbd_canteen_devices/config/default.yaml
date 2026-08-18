@@ -1,0 +1,23 @@
+# Kantin Cihazları ekranı ayarları. Düz anahtarlar — iç içe `modules:` bloğu yok.
+
+# Kiosk kaç dakika sessiz kalırsa "çevrimdışı" sayılsın.
+#
+# EŞİK BURADA, ÇÜNKÜ KANTİNDE YOK. BLD kasalarında "çevrimiçi mi" kararını
+# sunucu veriyor ve Kontrol Merkezi ona dokunmuyor; kantin böyle bir alan
+# döndürmüyor, yalnız `lastSeenAt` damgası veriyor. Karar bu yüzden burada
+# hesaplanıyor ve BU EKRANIN SAATİNE bağlı: makinenin saati kayarsa bütün
+# kiosklar çevrimdışı görünür. Panel bu yüzden damgayı da yazar — "5 dk önce"
+# yanında gerçek saat durur.
+online_after_minutes: 5
+
+# Üretilen eşleme kodunun ömrü (dakika). Kantin de aynı varsayılanı taşıyor
+# (KioskPairing::DEFAULT_TTL_MINUTES); buradaki değer istekle birlikte
+# gönderilir ve kantin onu uygular.
+#
+# Kısa tutmanın sebebi: kod 8 haneli bir SAYIDIR ve tek savunması deneme hızı
+# (kantinde 5 istek/dk) ile ömrüdür. Yarım saatlik bir kod, kâğıt üstünde
+# unutulduğunda hâlâ çalışan bir kapıdır.
+pairing_ttl_minutes: 10
+
+# Yerel işlem izinde tek seferde gösterilecek satır.
+audit_page_size: 200

@@ -299,7 +299,71 @@ async def test_hiz_kovasi_dakikalik_sinira_ulasinca_bekletir() -> None:
         await api.devices()
 
     assert len(beklemeler) == 1
-    assert 0 < beklemeler[0] <= 60
+    # `+ 0.01` pay: pencerenin TAM sınırında uyanmak ikinci bir kısa uykuya
+    # yol açıyordu (`_RateBucket.take`).
+    assert 0 < beklemeler[0] <= 61
+
+
+# ── İKİ PENCERELİ KOVA ────────────────────────────────────────────────────
+#
+# Tek dakikalık pencere etkileşimli kullanımı cezalandırıyordu: bir panel
+# açılışı 4-6 istek atıyor, 18'lik tavan saniyeler içinde doluyor ve sonraki
+# istek `60 - yaş` kadar UYUYORDU. Aşağıdaki iki test yeni davranışı
+# sabitliyor — patlama geçer, saatlik tavan tutar.
+
+async def test_patlama_kisa_pencerede_beklemeden_gecer() -> None:
+    """Bir panel açılışı kadar istek arka arkaya, HİÇ UYUMADAN gitmeli."""
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"data": []})
+
+    api, _, _, _ = gateway(handler, requests_per_minute=45, requests_per_hour=1100)
+    beklemeler: list[float] = []
+
+    async def kaydeden_uyku(seconds: float) -> None:  # pragma: no cover — çağrılmamalı
+        beklemeler.append(seconds)
+
+    api._sleep = kaydeden_uyku
+    # Üç ekranın açılışı: her biri ~6 istek.
+    for _ in range(18):
+        await api.devices()
+
+    assert beklemeler == [], "etkileşimli patlama uyutulmamalı"
+
+
+async def test_saatlik_tavan_kacak_dongude_tutar() -> None:
+    """Kısa pencere doldukça açılır ama SAATLİK tavan sunucu sınırını korur.
+
+    Kaçak bir yoklama döngüsü dakikalık tavanı defalarca doldurup açabilir;
+    sert tavan olmasaydı saatte binlerce istek çıkar, sunucu 429 verir ve o
+    hata ekranda "bağlantı koptu" diye görünürdü.
+
+    UYKU SAHTE SAATİ İLERLETİYOR: damgalar uyunan süre kadar geriye kaydırılır.
+    Deftere dokunmayan bir taklit, döngüyü sonsuza kadar uyutur; hepsini
+    silen bir taklit ise saatlik sayacı da sıfırlar ve testin sınadığı şeyi
+    ortadan kaldırırdı.
+    """
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response({"data": []})
+
+    # Kısa pencere DAR (3), saatlik tavan da dar (6): kısa pencere iki kez
+    # dolup açılacak, sonra saatlik tavan devreye girecek.
+    api, _, _, _ = gateway(handler, requests_per_minute=3, requests_per_hour=6)
+    beklemeler: list[float] = []
+
+    async def kaydeden_uyku(seconds: float) -> None:
+        beklemeler.append(seconds)
+        kova = api._bucket
+        kova._stamps = type(kova._stamps)(stamp - seconds for stamp in kova._stamps)
+
+    api._sleep = kaydeden_uyku
+    for _ in range(7):
+        await api.devices()
+
+    # İlk bekleme KISA pencere yüzünden (4. istek), ikincisi SAATLİK tavan
+    # yüzünden (7. istek).
+    assert len(beklemeler) == 2
+    assert 0 < beklemeler[0] <= 61
+    assert 60 < beklemeler[1] <= 3601
 
 
 # ------------------------------------------------------------- denetim izi

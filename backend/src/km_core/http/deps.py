@@ -1,4 +1,4 @@
-"""Uç nokta düzeyinde izin kapısı.
+"""Uç nokta düzeyinde izin kapısı ve yıkıcı işlemin PIN teyidi.
 
 Router'ın tamamı `module.yaml` → `http.requires` ile taban izne bağlanır; tek
 tek uç noktalar bunu DARALTIR (genişletemez). Modüller bunu `km_sdk.requires`
@@ -7,10 +7,17 @@ tek uç noktalar bunu DARALTIR (genişletemez). Modüller bunu `km_sdk.requires`
     @router.post("/students")
     async def create(user: CurrentUser = requires("bbd_students.manage")):
         ...
+
+Geri dönüşü olmayan işlemler ayrıca `confirm_pin` çağırır (CLAUDE.md: "Yıkıcı
+işlemler izin yeterli olsa bile PIN teyidi ister"). Bu kapı bugüne kadar YALNIZ
+çekirdeğin eşleme ucunda vardı (`km_platform/identity_sync/http.py`) ve modüllere
+kapalıydı; `store_customers/module.yaml` bunu açıkça bekleyen bir not düşmüştü.
+Üç ayrı yerde aynı doğrulamayı elle yazmak yerine tek yerde durur.
 """
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -63,3 +70,36 @@ def requires(*permissions: str) -> Any:
             yield user
 
     return Depends(dependency)
+
+
+async def confirm_pin(request: Request, actor: CurrentUser, pin: str,
+                      *, action: str) -> None:
+    """YIKICI İŞLEMİN İKİNCİ KAPISI: izin yeterli olsa bile PIN sorulur.
+
+    Doğrulama, kişinin KENDİ satırındaki `secret_lookup` ile yapılır —
+    pepper'lı bir HMAC'tir ve pepper kasadadır (K8). Bu, oturumu açık olan
+    kişinin PIN'i BİLDİĞİNİ kanıtlar; aradığımız tam olarak budur. Oturum
+    çalınmışsa ya da makine başında bırakılmışsa kapı burada kapanır.
+
+    `Identity.login()` KULLANILMAZ, bilerek: o yol ikinci bir oturum açar ve
+    denetim izine "giriş yapıldı" satırı düşürürdü. Teyit bir giriş değildir.
+
+    Karşılaştırma sabit sürelidir. Ret 403'tür, 401 DEĞİL: oturum geçerli,
+    reddedilen şey işlemdir — 401 kabuğu kullanıcıyı giriş ekranına atmaya
+    iterdi ve kullanıcı yaptığı işi kaybederdi.
+
+    `action` denetim kaydına yazılır: hangi yıkıcı işlemde PIN'in yanlış
+    girildiği, izde okunabilmeli.
+    """
+    identity = getattr(request.app.state, "identity", None)
+    if identity is None:  # pragma: no cover — lifespan kurmadan istek gelmez
+        raise HTTPException(status_code=503, detail="Kimlik hazır değil.")
+
+    row = await identity.store.fetch_one(
+        "SELECT secret_lookup FROM users WHERE id = ?", (actor.id,)
+    )
+    stored = str((row or {}).get("secret_lookup") or "")
+    if not stored or not hmac.compare_digest(stored, identity.secret_lookup(pin)):
+        await identity.audit(actor.id, action, result="denied",
+                             detail="PIN teyidi başarısız")
+        raise HTTPException(status_code=403, detail="PIN doğrulanamadı.")

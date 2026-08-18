@@ -18,6 +18,27 @@ Kantine ek yük binmez, kantin kodu değişmez.
 - **Sınıf bazlı** — sınıf cirosu ve öğrenci başına harcama (mevcut farkını düzeltir).
 
 Her sekmede önceki eşit uzunluktaki dönemle **karşılaştırma** yüzdesi gösterilir.
+Karşılaştırma aralığı ikinci kez çektiği için öğrenci dökümü bu yoldan geçmez.
+
+## İşlem dökümü — hesap değildir
+
+Öğrenci çekmecesi ve karne PDF'i, seçilen aralıktaki **tüm hareketleri** satır
+sayısı sınırı olmadan gösterir. Üç tür bir arada durur ve her satır türünü
+damga olarak taşır:
+
+| Tür | Nereden gelir | Özete girer mi |
+|---|---|---|
+| Satış | `GET /api/transactions` | evet |
+| İptal | aynı satır, `reversedAt` damgalı | **hayır** |
+| Tahsilat | `GET /api/reports/collections` (cari CREDIT) | **hayır** |
+
+Ayrım bilinçlidir: ciro, ürün ve sınıf kırılımları `analytics.live()` üzerinden
+gider — iptal edilmiş bir satış ciroya yazılmaz, tahsilat da harcama değildir.
+Döküm ise "o gün ne oldu" sorusunun cevabıdır; hiçbir satırı düşürmez.
+
+Veri eksilebilecek iki nokta artık **sessiz değildir**: aralık 400 günü aşarsa
+ve bir günün işlem sayısı kantinin tek istek sınırını (5000) doldurursa, sebebi
+`meta.warnings` ile ekrana ve karne PDF'ine yazılır.
 
 ## Çıktı
 
@@ -27,11 +48,19 @@ Her sekmede önceki eşit uzunluktaki dönemle **karşılaştırma** yüzdesi g�
 
 Dosyalar `data/exports/` altına yazılır; panel yolu gösterir.
 
-## Önbellek
+## Çekim izi — önbellek DEĞİL
 
-Çekilen her gün modülün kendi tablosuna yazılır: ikinci açılış anında gelir ve
-kantin erişilemese bile geçmiş raporlar okunur. Bugün her zaman tazelenir.
-İptal edilen satışlar hiçbir hesaba dahil edilmez.
+Çekilen her gün modülün kendi tablosuna yazılır (`mod_bbd_canteen_reports_day`),
+ama **rapor üretilirken buradan hiç okunmaz**. Tek işlevi "kantin o gün ne
+demişti" sorusunun cevabını saklamak: anlaşmazlık çıkarsa bakılacak iz.
+
+Önbellek olarak kullanılmıyor ve kullanılmamalı — iptal edilen bir satış ya da
+sonradan girilen bir nakit tahsilat **geçmiş günün rakamını değiştiriyor**;
+saklanan kopyadan okumak sessizce yanlış rapor üretirdi. Her rapor kantinden
+taze çekilir.
+
+İptal edilen satışlar ciroya, ürün ve günlük seriye dahil edilmez — ama işlem
+dökümünde `iptal` damgasıyla görünür (yukarı bakın).
 
 - Sözleşme: `module.yaml` · Giriş noktası: `backend/module.py` → `register(ctx)`
 - Kurallar: [../../CLAUDE.md](../../CLAUDE.md) · Kılavuz: [../../docs/module-guide.md](../../docs/module-guide.md)

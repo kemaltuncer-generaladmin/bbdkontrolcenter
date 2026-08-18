@@ -75,8 +75,11 @@ await api.upload_product_image(
   hız kovası, denetim izi. Denetim izine ham bayt değil dosya özeti
   (`{filename, mime, bytes}`) yazılır.
 
-`upload_media` ana ekran görselleri içindir; ucu (`/api/admin/bbd/home/slides`)
-**henüz yayında değil**, çağrı `bbd_endpoint_missing` ile döner.
+`upload_media` ana ekran kayan görselleri içindir. Ucu **18.08.2026'da yazıldı**
+ve adı `POST /api/admin/bbd/storefront/home-slides/image`. Metot bir dönem
+`POST bbd/home/slides` çağırıyordu; **o uç hiç var olmadı** ve her yükleme 404
+alıyordu. Dönen yol (`storage/theme/{id}/sliders/…`) slayt listesi yazılırken
+`image` alanına konur; mağaza serbest yol kabul etmez.
 
 ## Yöntem yüzeyi (224 metot)
 
@@ -105,7 +108,7 @@ docstring'lerindedir** — imzayı oradan oku, uydurma.
 | BBD POS | `bbd_payment_attempts` · `bbd_payment_attempt` · `bbd_payment_links` · `bbd_create_payment_link` · `bbd_cancel_payment_link` · `bbd_refund_payment` · `bbd_pos_terminals` · `bbd_update_pos_terminal` · `bbd_reconciliation` |
 | BBD BLD | `bbd_bld_jobs` · `bbd_retry_bld_job` · `bbd_reprint_order` · `bbd_bld_test` |
 | BBD Deneme Kulübü | `bbd_trial_exams` · `bbd_trial_members` · `bbd_trial_results` · `bbd_save_trial_exam` · `bbd_upload_trial_results` · `bbd_publish_trial_results` |
-| BBD set/ana ekran | `bbd_bundles` · `bbd_bundle` · `bbd_save_bundle` · `bbd_carousel` · `bbd_save_carousel_slot` · `bbd_reorder_carousel` |
+| BBD set/ana ekran | `bbd_bundles` · `bbd_bundle` · `bbd_save_bundle` · `bbd_carousel` · `bbd_update_carousel` · `bbd_home_slides` · `bbd_save_home_slides` |
 | BBD yedek/sağlık | `bbd_backups` · `bbd_create_backup` · `bbd_verify_backup` · `bbd_download_backup` · `bbd_restore_backup` · `bbd_catalog_health` · `bbd_catalog_issues` · `bbd_reindex_catalog` |
 | BBD AI/bildirim/talep/denetim | `bbd_ai_tools` · `bbd_ai_run` · `bbd_ai_apply` · `bbd_ai_runs` · `bbd_ai_usage` · `bbd_notifications` · `bbd_send_notification` · `bbd_notification_rules` · `bbd_save_notification_rule` · `bbd_mobile_settings` · `bbd_update_mobile_settings` · `bbd_review_requests` · `bbd_send_review_request` · `bbd_return_requests` · `bbd_return_request` · `bbd_update_return_request` · `bbd_audit` · `bbd_audit_entry` |
 
@@ -116,19 +119,22 @@ docstring'lerindedir** — imzayı oradan oku, uydurma.
 değil" varsayarak ekran kapatmak, bugün çalışan bir bölümü kullanıcıya
 "kullanılamıyor" diye göstermek olur.
 
-Bugün yayında **olmayan** dört uç kalmıştır ve hepsi tek tek bilinir:
+Bugün yayında **olmayan** üç uç kalmıştır ve hepsi tek tek bilinir:
 
 | Metot | Uç | Durum |
 |---|---|---|
 | `bbd_ai_tools` | `GET bbd/ai/tools` | 404 — mağazada "araç/bütçe" kavramı yok |
 | `bbd_ai_run` | `POST bbd/ai/tools/{tool}/run` | 404 — model sunucuda çalışmıyor |
 | `bbd_ai_usage` | `GET bbd/ai/usage` | 404 — mağaza jeton/maliyet tutmuyor |
-| `upload_media` | `POST bbd/home/slides` | 404 — vitrin görselleri `storefront/carousels` üzerinden |
+
+Liste bir dönem **dört** satırdı; dördüncüsü `upload_media` idi. O satır
+18.08.2026'da düştü: uç yazıldı ve ayrıca metodun çağırdığı yol baştan yanlıştı
+(`bbd/home/slides` diye bir rota hiç olmadı).
 
 Ayrıca birkaç uç **bilerek** yazılmamıştır (`bbd_refund_payment`,
 `bbd_restore_backup`) ya da mağaza tarafında karşılığı yoktur
-(`bbd_bundle`, `bbd_save_bundle`, `bbd_reorder_carousel`,
-`bbd_save_notification_rule`); ayrıntı ilgili docstring'de.
+(`bbd_bundle`, `bbd_save_bundle`, `bbd_save_notification_rule`); ayrıntı
+ilgili docstring'de.
 
 Bu dallar yine de **durur ve kaldırılmaz**: bir uç geri çekilirse çağrı
 `StoreApiError(code="bbd_endpoint_missing")` ile döner ve ekran o bölümü

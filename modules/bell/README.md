@@ -4,16 +4,33 @@ Haftalık zil saatleri, sesli anons ve elle grup çağrısı.
 
 ## Üç iş, üçü de ayrı
 
-1. **Otomasyon** — haftalık zil saatleri. Saati gelince yalnız teneffüs zili
-   çalar. Başka karar içermez.
+1. **Otomasyon** — haftalık zil saatleri. Saati gelince zil çalar, hemen
+   arkasından türe göre anons gider. Başka karar içermez.
 2. **Grup çağrısı** — elle. Grup seçilir, "Çağır" denir; o grubun anonsu çalar
    ("İlayda, Hüseyin hoca ile dersiniz başlıyor."). Zil çalmaz.
 3. **Elle zil** — yalnız zil sesi.
 
-> **Zilden sonra anons geçmez** (18.08.2026, kullanıcı kararı). Otomatik zil
-> bir zamanlar arkasından "Lütfen derse geçiniz." çalıyordu; o yol tümüyle
-> kaldırıldı — ayarda kapatılabilir bir seçenek de bırakılmadı. Anons yalnız
-> elle basılan grup çağrısında duyulur.
+> **Zilden sonra anons geçer — türe göre** ([ADR 0027](../../docs/adr/0027-zil-sonrasi-anons-ders-teneffus.md)).
+> Her zil saati `ders` ya da `teneffus` türündedir; ders zilinin arkasından
+> "İyi dersler.", teneffüs zilinin arkasından "İyi teneffüsler." gider. Tür
+> etiketten tahmin edilmez, açıkça saklanır — "mola" yazan bir satırın hangisi
+> olduğunu hiçbir kural bilemez.
+>
+> **Anons zili susturamaz:** sesi hazır değilse zil yalnız başına çalar ve
+> sebep günlüğe yazılır. Bir türün metni boşaltılırsa o zilin arkasından anons
+> gitmez; bu geçerli bir seçimdir.
+
+## Silme kalıcıdır
+
+Grubu silmek **geri alınamaz**: satır, anons kaydı, `data/sounds` altındaki
+`.wav` ve zil ajanının kitaplığındaki kopya birlikte gider. `bell.delete` izni
+ve **PIN teyidi** ister.
+
+Aynı ses başka bir canlı grup ya da zil sonrası anons tarafından da
+kullanılıyorsa **dosya silinmez** — önce referans sayılır.
+
+"Kullanılmayan sesleri sil" düğmesi, grup adı değişiklikleriyle biriken ve
+artık hiçbir yere bağlı olmayan `.wav`'ları temizler.
 
 ## Ses nereden geliyor
 

@@ -46,8 +46,27 @@ export function renameGroup(id, name, kind = '') {
     { method: 'PUT', body: { name, kind } });
 }
 
-export function removeGroup(id) {
-  return need()(`${BASE}/groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+/**
+ * Grubu KALICI siler: satır, ses kaydı, `.wav` ve ajandaki kopya.
+ *
+ * POST'tur, DELETE değil: PIN gövdede taşınmalı ve DELETE gövdesi ara
+ * katmanlarda güvenilir biçimde geçmiyor. PIN sorgu dizesine KONMAZ —
+ * orası denetim kaydına, sunucu günlüğüne ve geçmişe düşer.
+ */
+export function removeGroup(id, pin) {
+  return need()(`${BASE}/groups/${encodeURIComponent(id)}/delete`,
+    { method: 'POST', body: { pin } });
+}
+
+/** Yüklenmiş zil sesini kalıcı siler. Kullanımdaki zil silinemez. */
+export function deleteSound(name, pin) {
+  return need()(`${BASE}/sound/${encodeURIComponent(name)}/delete`,
+    { method: 'POST', body: { pin } });
+}
+
+/** Hiçbir gruba/metne bağlı olmayan anons seslerini kalıcı siler. */
+export function pruneVoices(pin) {
+  return need()(`${BASE}/voices/prune`, { method: 'POST', body: { pin } });
 }
 
 /** Zili şimdi çalar — okulun hoparlöründen. */

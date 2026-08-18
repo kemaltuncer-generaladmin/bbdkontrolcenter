@@ -427,6 +427,81 @@ export function confirmWithReason(root, { title, description, confirmLabel = 'On
   });
 }
 
+/**
+ * GERİ DÖNÜŞÜ OLMAYAN işlemin onayı — PIN ister.
+ *
+ * `confirmWithReason`dan AYRI ve bilerek. Gerekçe kapısı (ADR 0012) "bu işi
+ * neden yaptın" sorusunu denetim kaydına yazar; PIN kapısı "klavyenin başındaki
+ * kişi gerçekten sen misin" sorusunu sorar. İkisi farklı riskleri karşılar:
+ * gerekçe hesap verebilirlik, PIN kimlik. Kalıcı silmede ikincisi gerekir —
+ * açık bırakılmış bir oturumda gerekçe yazmak kimseyi durdurmaz.
+ *
+ * Buradaki denetim ARAYÜZ tarafındadır; asıl kapı backend'dedir
+ * (`km_sdk.confirm_pin`, K9). PIN sunucuda kişinin kendi `secret_lookup`'ıyla
+ * sabit sürede karşılaştırılır.
+ *
+ * @returns {Promise<string|null>} PIN, ya da iptal edildiyse null
+ */
+export function confirmWithPin(root, { title, description, confirmLabel = 'Kalıcı olarak sil',
+  placeholder = 'PIN', minLength = 4 } = {}) {
+  return new Promise((resolve) => {
+    const overlay = h('div', 'kit-overlay');
+    const card = h('div', 'kit-dialog');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+
+    card.append(h('h3', 'kit-dialog-title', title));
+    if (description) card.append(h('p', 'kit-dialog-text', description));
+
+    const input = h('input', 'kit-input');
+    // MASKELİ: omuz üstünden okunmasın. `inputMode` sayısal tuş takımı açar.
+    input.type = 'password';
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
+    input.placeholder = placeholder;
+    input.maxLength = 32;
+    card.append(input);
+
+    const error = h('div', 'kit-dialog-error');
+    card.append(error);
+
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      // Alanı boşalt: DOM'dan kopan düğümde PIN kalmasın.
+      input.value = '';
+      overlay.remove();
+      resolve(value);
+    };
+    const submit = () => {
+      const pin = input.value.trim();
+      if (pin.length < minLength) {
+        error.textContent = `PIN en az ${minLength} hane olmalı.`;
+        input.focus();
+        return;
+      }
+      close(pin);
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') close(null);
+      if (event.key === 'Enter') submit();
+    };
+
+    const actions = h('div', 'kit-dialog-actions');
+    actions.append(
+      button('Vazgeç', { onClick: () => close(null) }),
+      button(confirmLabel, { variant: 'danger', onClick: submit }),
+    );
+    card.append(actions);
+    overlay.append(card);
+    overlay.addEventListener('mousedown', (event) => {
+      if (event.target === overlay) close(null);
+    });
+    document.addEventListener('keydown', onKey);
+    root.append(overlay);
+    input.focus();
+  });
+}
+
 /** Gerekçesiz basit onay. `window.confirm` kabuğun stilini taşımıyor. */
 export function confirmSimple(root, { title, description, confirmLabel = 'Evet',
   danger = false } = {}) {

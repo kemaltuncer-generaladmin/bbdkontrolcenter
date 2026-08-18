@@ -490,9 +490,22 @@ secrets:
 ```
 
 Ayar anahtarları: `base_url` · `timeout_seconds` · `read_only` ·
-`dry_run_default` · `require_reason` · `requests_per_minute` · `page_size` ·
-`reference_ttl_seconds` · `snapshot_ttl_seconds` · `max_items` ·
-`max_upload_mb`.
+`dry_run_default` · `require_reason` · `requests_per_minute` ·
+`requests_per_hour` · `page_size` · `reference_ttl_seconds` ·
+`snapshot_ttl_seconds` · `max_items` · `max_upload_mb`.
+
+**Hız kovası iki pencerelidir.** `requests_per_minute` (varsayılan 45) kısa
+pencerenin (60 sn) tavanıdır ve etkileşimli patlamaya izin verir; bir panel
+açılışı 4-6 istek atar ve dakikalarca sessiz kalır. `requests_per_hour`
+(varsayılan 1100) uzun pencerenin (3600 sn) SERT tavanıdır ve asıl emniyettir:
+sunucunun en dar sınırı `throttle:bld-control` = 1200/saat/IP.
+
+Eski ayar tek dakikalık pencereydi ve tavanı 18'di. Hesabı doğruydu
+(18 × 60 = 1080 < 1200) ama SÜREKLİ yükün hesabıydı: üç ekranı arka arkaya
+açan yönetici tavanı saniyeler içinde dolduruyor, sonraki istek `60 - yaş`
+kadar uyuyor ve ekran "çok ağır" görünüyordu — bu sırada saatlik bütçenin
+büyük kısmı kullanılmadan duruyordu. Kova TEK ve süreç genelinde paylaşılıyor
+(ADR 0026), yani bütün BLD panelleri aynı tavanı bölüşüyor.
 
 Sır depoda, ayarda, log'da ve hata metninde bulunmaz. Maskeleme iki
 katmanlıdır: ad tabanlı desen ve **yüklenmiş sır değerinin kendisi**.

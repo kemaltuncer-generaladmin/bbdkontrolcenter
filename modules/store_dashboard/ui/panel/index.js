@@ -275,7 +275,13 @@ async function loadSummary({ fresh = false } = {}) {
 
   let payload;
   try {
-    payload = await api(`${BASE}/summary?${query(freshParam(fresh))}`);
+    // SOĞUK AÇILIŞ UZUNDUR ve bu beklenen bir şeydir: özet, sipariş + iade +
+    // müşteri uçlarını sayfa sayfa geziyor (ölçüm: ~45 istek, geçit dakikada
+    // 55'te tutuyor). İlk açılış kabuğun 60 saniyelik varsayılanına dayanıp
+    // "çekirdeğe bağlanılamadı" hatası üretebiliyordu — oysa hesap sürüyordu
+    // ve bitince rafa yazılıyordu. İkinci açılış zaten raftan gelir.
+    payload = await api(`${BASE}/summary?${query(freshParam(fresh))}`,
+      { timeoutSeconds: 300 });
   } catch (error) {
     state.summary = null;
     failCard(nodes.kpi, error.message, () => loadSummary({ fresh: true }));

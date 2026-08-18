@@ -9,7 +9,7 @@ from typing import Any
 
 from store_customers_backend import analytics
 from store_customers_backend.service import CustomerCard, CustomersService
-from store_customers_fakes import FakeApi, FakeLog, FakeStore
+from store_customers_fakes import FakeApi, FakeLog, FakeScan, FakeStore
 
 # TARİHLER BUGÜNE GÖRE KURULUR. Sabit tarih yazmak testi takvime bağlar:
 # "2026-08-01 siparişi" bugün taze, altı ay sonra uykudadır ve test kimse
@@ -37,6 +37,7 @@ def _service(api: FakeApi | None = None, store: FakeStore | None = None,
         api=api, store=store, log=FakeLog(),
         config={"channel": "default", "locale": "tr", **config},
         fallback_dir=Path("/tmp/km-test-raporlar"),
+        scan=FakeScan(),
     )
     return service, api, store
 
@@ -472,7 +473,8 @@ async def test_anonimlestirme_olayi_yayinlanir_ama_hata_isi_kesmez() -> None:
     api.gdpr_payload = {"items": [{"id": 12, "customer_id": 7, "status": "pending"}],
                         "meta": {}}
     service = CustomersService(api=api, store=FakeStore(), log=FakeLog(), config={},
-                               publish=publish, fallback_dir=Path("/tmp/km-test-raporlar"))
+                               publish=publish, fallback_dir=Path("/tmp/km-test-raporlar"),
+                               scan=FakeScan())
     result = await service.anonymize(7, reason="Müşteri silinme talebi gönderdi", actor="Ali",
                                      dry_run=False)
     assert result["ok"] is True                      # olay hatası işi kesmedi
@@ -703,3 +705,82 @@ async def test_magazanin_toplami_siparis_toplamindan_farkliysa_soylenir() -> Non
     assert result["customer"]["spend"] == 1000          # mağazanınki kazandı
     assert result["customer"]["computed"] is False
     assert any("sipariş listesinin toplamı" in item for item in result["warnings"])
+
+
+# ============================================ tarama isteğin içinde koşmaz
+
+class AskidaTarama:
+    """Tarama BAŞLADI ama bitmedi. Gerçek hayatta dakikalar süren durum.
+
+    Kabuk isteği 60 saniyede kesiyor; liste bu taramayı beklerse müşteri ekranı
+    HİÇ açılmaz — yaşanan arıza buydu. Bu sahte katman yükleyiciyi hiç
+    çağırmaz ve her zaman "sürüyor" der.
+    """
+
+    def __init__(self) -> None:
+        self.istekler: list[str] = []
+
+    def scoped(self, namespace: str) -> AskidaTarama:
+        return self
+
+    def invalidate(self, key: str) -> None:
+        return None
+
+    def peek(self, key: str) -> dict[str, Any]:
+        return {"state": "running", "value": None, "stale": True, "running": True,
+                "at": "", "ageSeconds": 0, "error": ""}
+
+    async def read(self, key: str, loader: Any, *, ttl: int | None = None,
+                   refresh: bool = False, wait: float = 0.0) -> dict[str, Any]:
+        self.istekler.append(key)
+        return self.peek(key)
+
+
+def _askida_servis() -> tuple[CustomersService, FakeApi, AskidaTarama]:
+    api = FakeApi({12: dict(CANLI_MUSTERI)})
+    api.list_payload = {"items": [dict(CANLI_MUSTERI_LISTE)], "meta": {"total": 1}}
+    tarama = AskidaTarama()
+    service = CustomersService(
+        api=api, store=FakeStore(), log=FakeLog(), config={},
+        fallback_dir=Path("/tmp/km-test-raporlar"), scan=tarama)
+    return service, api, tarama
+
+
+async def test_liste_siparis_taramasini_beklemez() -> None:
+    service, _api, tarama = _askida_servis()
+    result = await asyncio.wait_for(service.customers(), timeout=2.0)
+    assert result["ok"] is True and result["connected"] is True
+    assert len(result["items"]) == 1              # liste GELDİ
+    assert "order_stats" in tarama.istekler       # tarama istendi ama beklenmedi
+    assert result["scan"]["state"] == "running"   # ekran nedenini söyleyebilsin
+
+
+async def test_tarama_bitmeden_sifir_uydurulmaz() -> None:
+    # `apply_order_stats` BOŞ haritayla çağrılsaydı herkese "0 sipariş" yazardı
+    # ve siparişi olan müşteri "hiç almamış" segmentine düşerdi.
+    service, _, _ = _askida_servis()
+    row = (await service.customers())["items"][0]
+    assert row["orders"] is None
+    assert row["spend"] is None
+    assert row["segment"] == "unknown"
+
+
+async def test_segment_yolu_tarama_surerken_bekletmez_ve_nedenini_soyler() -> None:
+    service, _, _ = _askida_servis()
+    result = await asyncio.wait_for(service.customers(segment="loyal"), timeout=2.0)
+    assert result["items"] == []
+    assert "sürüyor" in result["error"]           # "boş döndü" DEĞİL
+    assert result["scan"]["running"] is True
+
+
+async def test_yetenek_yoksa_ekran_yine_acilir() -> None:
+    # `store.scan` çözülemezse (yalıtılmış kurulum) tarama hiç yapılmaz ama
+    # liste yine gelir; sayılar boş kalır (K7).
+    api = FakeApi({12: dict(CANLI_MUSTERI)})
+    api.list_payload = {"items": [dict(CANLI_MUSTERI_LISTE)], "meta": {"total": 1}}
+    service = CustomersService(api=api, store=FakeStore(), log=FakeLog(), config={},
+                               fallback_dir=Path("/tmp/km-test-raporlar"), scan=None)
+    result = await service.customers()
+    assert result["ok"] is True and len(result["items"]) == 1
+    assert result["items"][0]["segment"] == "unknown"
+    assert api.used("orders") == []               # tam tarama HİÇ denenmedi

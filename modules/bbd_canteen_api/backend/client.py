@@ -14,6 +14,11 @@ CANLI SİSTEME BAĞLANIR. Üç kural:
 Uç noktalar (kantin `routes/api.php`):
     POST /api/auth/device                   cihaz kaydı → token   (enrollment secret)
     GET  /api/device/qr-key                 kart QR anahtarı (base64)
+    GET  /api/kiosks                        kiosk listesi (kod DÖNMEZ, yalnız `usable`)
+    POST /api/kiosks                        kiosk aç + İLK eşleme kodu
+    PATCH /api/kiosks/{id}                  kiosk adını değiştir
+    POST /api/kiosks/{id}/pairing-code      yeni eşleme kodu (eskisini geçersiz kılar)
+    POST /api/kiosks/{id}/revoke            eşlemeyi iptal et (token silinir)
     GET  /api/status                        kasa üst bilgisi (son yedek zamanı dahil)
     GET  /api/students                      öğrenci listesi + bakiye
     POST /api/students                      öğrenci ekle/güncelle (opaqueId ile idempotent)
@@ -198,6 +203,63 @@ class CanteenApi:
             "POST", "/api/students", json={"opaqueId": opaque_id, **changes}
         )
         return payload.get("data", payload) if isinstance(payload, dict) else payload
+
+    # ---------------------------------------------------------------- kiosk
+    #
+    # KIOSK ≠ CİHAZ. Sahadaki tablet `devices` üzerinde, paylaşılan
+    # `enrollment_secret` ile çalışıyor ve o akış DEĞİŞMEDİ. Kiosk eşlemesi
+    # ayrı bir tabloya (`kiosks`) ve ayrı uçlara oturur: tek kullanımlık,
+    # süreli, hash'lenmiş kod. İkisini tek istemci metoduna toplamak, hangi
+    # akışın çağrıldığını çağıranın gözünden gizlerdi.
+    #
+    # KOD YALNIZ ÜRETİLDİĞİ ANDA DÖNER. `kiosks()` listesi kodu taşımaz;
+    # `pairing.usable` bayrağı vardır. Kantin kodu düz saklamıyor.
+
+    async def kiosks(self) -> list[dict[str, Any]]:
+        """Kiosk kayıtları. Alanlar: id, name, platform, appVersion, paired,
+        pairedAt, lastSeenAt, revokedAt, revokedReason, createdAt, pairing."""
+        payload = await self._request("GET", "/api/kiosks")
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        return list(data or [])
+
+    async def create_kiosk(self, *, name: str) -> dict[str, Any]:
+        """Kiosk kaydı açar ve İLK eşleme kodunu birlikte döndürür.
+
+        Kod ayrı çağrıya bırakılsaydı, kaydı açılıp kodu üretilmemiş
+        ("eşlenmeyi bekliyor" sanılan) kiosklar birikirdi.
+        """
+        payload = await self._request("POST", "/api/kiosks", json={"name": name})
+        return dict(payload or {})
+
+    async def rename_kiosk(self, kiosk_id: int, *, name: str) -> dict[str, Any]:
+        """YALNIZ ad. Eşleme durumu bu uçtan değişmez."""
+        payload = await self._request("PATCH", f"/api/kiosks/{int(kiosk_id)}",
+                                      json={"name": name})
+        return dict(payload or {})
+
+    async def new_kiosk_pairing_code(self, kiosk_id: int, *,
+                                     ttl_minutes: int | None = None) -> dict[str, Any]:
+        """Yeni eşleme kodu üretir; kioskun bekleyen ESKİ kodunu geçersiz kılar.
+
+        İptal edilmiş kioska kod üretilmez — kantin 422 `kiosk_revoked` döner ve
+        `CanteenError.reason` ile çağırana ulaşır.
+        """
+        body: dict[str, Any] = {}
+        if ttl_minutes is not None:
+            body["ttlMinutes"] = int(ttl_minutes)
+        payload = await self._request("POST", f"/api/kiosks/{int(kiosk_id)}/pairing-code",
+                                      json=body)
+        return dict(payload or {})
+
+    async def revoke_kiosk(self, kiosk_id: int, *, reason: str) -> dict[str, Any]:
+        """Eşlemeyi iptal eder: token SİLİNİR, bekleyen kod ölür, satır KALIR.
+
+        Gerekçe kantinde de zorunludur (min 10 karakter); "bu kiosk neden
+        düştü" sorusunun cevabı aylar sonra da okunabilmeli.
+        """
+        payload = await self._request("POST", f"/api/kiosks/{int(kiosk_id)}/revoke",
+                                      json={"reason": reason})
+        return dict(payload or {})
 
     # --------------------------------------------------------------- ürünler
 

@@ -123,10 +123,31 @@ const EMPTY_STATE = {
   day: null,
   exists: false,
   stock: null,
+  //: Stok HANGİ GÜN için okundu. Boş = hiç okunmadı.
+  //:
+  //: STOK ARTIK GÜN AÇILIŞINDA ÇEKİLMİYOR. Her gün seçiminde `/days/{iso}` ile
+  //: BİRLİKTE `/days/{iso}/stock` de isteniyordu; oysa `state.stock` ekranda
+  //: TEK YERDE kullanılıyor: "Stok" sekmesi. Yani kullanıcı Kalemler
+  //: sekmesinde çalışırken her gün değişiminde boşuna ikinci bir istek
+  //: gidiyordu — masaüstü → KM sunucusu → BLD sunucusu, iki atlamalı bir yol.
+  //: Gün açılışı böylece iki istekten bire indi.
+  stockFor: '',
+  stockError: '',
   products: [],
   productsError: '',
   tab: 'day',
   preview: null,
+  //: HENÜZ KAYDEDİLMEMİŞ kalemler. Kutudan seçilen ürün önce buraya düşer,
+  //: tabloda "kaydedilmedi" rozetiyle görünür ve sunucuya YALNIZ "Kalemleri
+  //: kaydet" denince gider.
+  //:
+  //: NEDEN BÖYLE: her seçim anında tek tek POST atılıyordu. Beş kalemlik bir
+  //: menü beş ayrı yazma, beş ayrı gün tazelemesi ve beş ayrı takvim
+  //: tazelemesi demekti; arada biri patlarsa gün yarım kalıyordu ve hangi
+  //: kalemin girdiği ekrandan okunamıyordu. Kullanıcı da istediğini böyle
+  //: tarif etti: "yazıp seçeyim, otomatik aşağıya gitsin, bitince en son
+  //: kaydedilsin."
+  draft: [],
   //: BU OTURUMDA hızlı ekleme kutusundan eklenmiş kalem kimlikleri. Yalnız
   //: onlar tek tıkla geri alınır: yanlış tuşla eklenmiş, üzerinde henüz hiçbir
   //: şey düzenlenmemiş bir kalemi silmek için onay penceresi açmak, hızlı
@@ -393,6 +414,36 @@ async function reloadCalendar({ quiet = false } = {}) {
   }
 }
 
+/**
+ * Takvim hücresini AĞA ÇIKMADAN günceller — YALNIZ kalem sayısı için.
+ *
+ * NEDEN VAR: kalem eklemek/silmek takvimde tek bir günün kalem sayısını
+ * değiştiriyor, ama her yazmadan sonra 42 GÜNLÜK ızgara yeniden çekiliyordu.
+ * Yol kısa değil: masaüstü → KM sunucusu → BLD sunucusu, iki atlama. Beş
+ * kalemlik bir menüde bu beş gereksiz tam takvim isteği demekti ve ekranın
+ * "çok yavaş" hissini büyük ölçüde bu üretiyordu.
+ *
+ * DURUM (yayında/taslak) BURADA UYDURULMAZ. Onu yalnız yayın/yayından çekme
+ * değiştirir ve o akışlar takvimi gerçekten yeniden çeker. Yoklama döngüsü de
+ * kalan her şeyi kendiliğinden düzeltir — yani en kötü ihtimalle bir rozet
+ * bir tur geç tazelenir, yanlış bir şey gösterilmez.
+ */
+function patchCalendarDay() {
+  const iso = state.selected;
+  const row = state.byDate[iso];
+  if (!row || !nodes.calendar) return;
+  // `state.rows` ile `state.byDate` AYNI nesneleri paylaşıyor (`byDate` ondan
+  // türetiliyor); satırı değiştirmek ikisini birden günceller.
+  row.item_count = state.day?.item_count ?? row.item_count;
+
+  const closed = {};
+  for (const item of state.rows) {
+    if (item.closed) closed[item.date] = item.closed_reason || 'Satışa kapalı gün';
+  }
+  nodes.calendar.update({ days: state.byDate, holidays: closed, selected: iso });
+  nodes.status.set(statusText());
+}
+
 function summaryRow() {
   const summary = state.summary || {};
   return kpiRow([
@@ -420,18 +471,49 @@ function summaryRow() {
  * @returns {Promise<boolean>} kullanıcı aradan gün değiştirdiyse `false`
  */
 async function fetchDay(iso) {
-  const [dayResult, stockResult] = await Promise.all([
-    call(`${BASE}/days/${iso}`),
-    call(`${BASE}/days/${iso}/stock`).catch(() => null),
-  ]);
+  const dayResult = await call(`${BASE}/days/${iso}`);
   if (state.selected !== iso) return false;
   state.exists = Boolean(dayResult.exists);
   // BOŞ SÖZLÜK "veri var" DEĞİLDİR. Servis bağlanamadığında ya da gün
   // olmadığında `{}` döndürüyor ve `payload || null` yazmak onu doğru
   // sanardı; ekran da `day.title` okumaya çalışıp çökerdi.
   state.day = state.exists ? (dayResult.day || null) : null;
-  state.stock = stockResult?.stock?.day ? stockResult.stock : null;
+  // Stok bu gün için TAZE DEĞİL: Stok sekmesi açılırsa istenecek.
+  dropStock();
   return true;
+}
+
+/** Stok okumasını geçersiz kılar — gün değişti ya da tavan yazıldı. */
+function dropStock() {
+  state.stock = null;
+  state.stockFor = '';
+  state.stockError = '';
+}
+
+/**
+ * Stok durumunu SEÇİLİ GÜN için okur — yalnız Stok sekmesi açılınca.
+ *
+ * Önbelleğe alınmaz, alınmamalı (geçit de almıyor): `sold` rezerve edilmiş
+ * porsiyondur, abonelikler onu önceden tutar ve bir dakika bayat bir sayı
+ * dolmuş bir günü açık gösterirdi. "Tembel" ile "önbellekli" ayrı şeyler:
+ * burada yalnız İSTENMEDEN çekilmiyor.
+ */
+async function ensureStock() {
+  const iso = state.selected;
+  if (!iso || state.stockFor === iso) return;
+  try {
+    const result = await call(`${BASE}/days/${iso}/stock`);
+    if (state.selected !== iso) return;      // aradan gün değişti
+    state.stock = result?.stock?.day ? result.stock : null;
+    state.stockError = state.stock ? '' : (result?.error || '');
+  } catch (failure) {
+    if (state.selected !== iso) return;
+    state.stock = null;
+    state.stockError = failure.message;
+  }
+  // BAŞARISIZLIKTA DA İŞARETLENİR: aksi hâlde `paintStock` her çizimde
+  // yeniden dener ve düşmüş bir sunucuyu döven bir döngü doğardı.
+  state.stockFor = iso;
 }
 
 async function reloadDay({ quiet = false } = {}) {
@@ -445,7 +527,7 @@ async function reloadDay({ quiet = false } = {}) {
     if (state.selected !== iso) return;
     state.exists = false;
     state.day = null;
-    state.stock = null;
+    dropStock();
     toast(failure.message, 'bad');
   }
   paintDay();
@@ -458,7 +540,7 @@ async function reloadDay({ quiet = false } = {}) {
  * tazelenmiş listede aranır, çünkü seçici menüde ZATEN OLAN ürünleri hiç
  * göstermiyor: bir gün içinde bir `menu_id` en çok bir kez bulunur.
  */
-async function refreshItems({ mark = 0 } = {}) {
+async function refreshItems({ mark = [] } = {}) {
   const iso = state.selected;
   try {
     if (!await fetchDay(iso)) return;
@@ -466,8 +548,10 @@ async function refreshItems({ mark = 0 } = {}) {
     toast(failure.message, 'bad');
     return;
   }
-  if (mark) {
-    const fresh = (state.day?.items || []).find((item) => item.menu_id === mark);
+  // `mark` bir LİSTEDİR: toplu kayıttan sonra girenlerin HEPSİ tek tıkla geri
+  // alınabilmeli. Tek kimlikle sınırlıyken yalnız sonuncusu geri alınabiliyordu.
+  for (const menuId of mark) {
+    const fresh = (state.day?.items || []).find((item) => item.menu_id === menuId);
     if (fresh) markJustAdded(fresh.id);
   }
   redrawItems();
@@ -509,10 +593,14 @@ async function ensureProducts({ force = false } = {}) {
  * odak vermek sessizce hiçbir şey yapmaz — sessiz bir arıza da arızadır.
  */
 function dropItemNodes() {
+  // Seçici bekleyen bir arama çizimi tutuyor olabilir (debounce); düğüm
+  // DOM'dan düşerken o da bırakılmalı.
+  nodes.quickPicker?.destroy?.();
   nodes.quickPicker = null;
   nodes.quickSearch = null;
   nodes.quickNote = null;
   nodes.itemsBox = null;
+  nodes.draftBar = null;
 }
 
 function paintDay() {
@@ -769,7 +857,11 @@ function paintItems() {
 function itemsTable() {
   const table = dataTable({
     columns: [
-      { key: 'sort_order', label: 'Sıra', width: '70px', align: 'num' },
+      { key: 'sort_order', label: 'Sıra', width: '70px', align: 'num',
+        // Taslakta sıra YOK ve uydurulmaz: numarayı sunucu veriyor (mevcut en
+        // büyüğe 10 ekleyerek). Burada tahmin etmek, kaydettikten sonra
+        // değişen bir sayı göstermek olurdu.
+        cell: (row) => (row.draft ? '—' : String(row.sort_order ?? '')) },
       { key: 'name', label: 'Kalem', width: 'minmax(0, 2fr)',
         cell: (row) => {
           const box = h('div', 'bm-itemname');
@@ -777,6 +869,7 @@ function itemsTable() {
           const marks = h('div', 'bm-itemmarks');
           // ROZET, FARKLI DÜĞMENİN AÇIKLAMASIDIR: bu satırda "Sil" yerine
           // "Geri al" duruyor ve nedeni yazılı olmalı (kit kuralı 7).
+          if (row.draft) marks.append(badge('Kaydedilmedi', 'warn'));
           if (isJustAdded(row.id)) marks.append(badge('Az önce eklendi', 'info'));
           if (row.is_required) marks.append(badge('Zorunlu', 'info'));
           if (!row.sellable_alone) marks.append(badge('Yalnız pakette', 'dim'));
@@ -794,6 +887,16 @@ function itemsTable() {
       { key: 'actions', label: '', width: '175px',
         cell: (row) => {
           const box = h('div', 'bm-rowactions');
+          if (row.draft) {
+            // Taslak satırda "Düzenle" YOK: düzenlenecek bir kayıt henüz
+            // sunucuda yok ve boş bir formu açmak yanlış söz verirdi.
+            box.append(button('Çıkar', {
+              variant: 'ghost',
+              title: 'Henüz kaydedilmedi; listeden çıkarılır.',
+              onClick: () => dropDraft(row.menu_id),
+            }));
+            return box;
+          }
           box.append(button('Düzenle', { variant: 'ghost', onClick: () => openItemEditor(row) }));
           box.append(isJustAdded(row.id)
             ? button('Geri al', {
@@ -806,15 +909,55 @@ function itemsTable() {
           return box;
         } },
     ],
-    rows: state.day?.items || [],
+    // TASLAK SATIRLAR SONDA: sunucu yeni kalemi listenin sonuna koyuyor,
+    // tablo da onları orada göstermeli — kaydedince satır YERİNDEN OYNAMASIN.
+    rows: [...(state.day?.items || []), ...draftRows()],
     empty: emptyState({
       title: 'Bu günde kalem yok',
-      text: 'Yukarıdaki kutuya ürün adını yazıp Enter\'a basın. Yayınlamak için en '
-        + 'az bir kalem gerekli: kalemsiz bir gün müşteriye boş bir menü kartı '
-        + 'gösterirdi.',
+      text: 'Yukarıdaki kutuya ürün adını yazıp Enter\'a basın. Kalemler önce '
+        + 'listeye düşer, en sonda "Kalemleri kaydet" ile birlikte yazılır. '
+        + 'Yayınlamak için en az bir kalem gerekli: kalemsiz bir gün müşteriye '
+        + 'boş bir menü kartı gösterirdi.',
     }),
   });
   return table.node;
+}
+
+/** Taslaktaki kalemleri tablo satırı biçimine çevirir. */
+function draftRows() {
+  return state.draft.map((row) => ({
+    ...row,
+    draft: true,
+    id: 0,
+    quantity: 1,
+    price_override_kurus: null,
+    capacity: null,
+    is_required: false,
+    sellable_alone: true,
+  }));
+}
+
+/**
+ * "Kalemleri kaydet" çubuğu — taslak boşken HİÇ ÇİZİLMEZ.
+ *
+ * Boşken sönük bir düğme bırakmak, kullanıcıya basılacak bir şey varmış gibi
+ * gösterirdi; kaydedilecek bir şey yoksa çubuk da yoktur.
+ */
+function draftBar() {
+  if (!state.draft.length) return null;
+  const bar = h('div', 'bm-draftbar');
+  bar.append(h('span', 'bm-draftcount',
+    `${num(state.draft.length)} kalem henüz kaydedilmedi`));
+  bar.append(button('Kalemleri kaydet', {
+    variant: 'primary',
+    onClick: () => saveDraft(),
+  }));
+  bar.append(button('Tümünü çıkar', {
+    variant: 'ghost',
+    title: 'Kaydedilmemiş kalemlerin hepsini listeden çıkarır.',
+    onClick: () => { state.draft = []; redrawItems(); resetQuickSearch(); },
+  }));
+  return bar;
 }
 
 /** Tabloyu, sekme rozetini ve seçicinin kalan ürünlerini birlikte tazeler. */
@@ -823,8 +966,9 @@ function redrawItems() {
   // Gün aradan silinmiş ya da kaybolmuşsa kalem tablosu yeniden çizilemez;
   // tam çizim doğru ekranı ("menü girilmemiş") getirir.
   if (!state.exists || !state.day) { paintDay(); return; }
-  nodes.itemsBox.replaceChildren(itemsTable());
-  nodes.tabs?.badge('items', state.day.item_count || 0);
+  const bar = draftBar();
+  nodes.itemsBox.replaceChildren(...(bar ? [bar, itemsTable()] : [itemsTable()]));
+  nodes.tabs?.badge('items', (state.day.item_count || 0) + state.draft.length);
   fillQuickAdd();
 }
 
@@ -886,8 +1030,9 @@ function quickAddCard() {
   box.append(picker.node, nodes.quickNote);
 
   return card('Hızlı kalem ekleme', box,
-    'Yaz, Enter\'a bas: kalem ADET 1, ÜRÜNÜN KENDİ FİYATIYLA ve listenin sonuna '
-    + 'eklenir. Gerekçe sorulmaz; kutu temizlenir ve odak kutuda kalır.');
+    'Yaz, Enter\'a bas: kalem ADET 1 ve ÜRÜNÜN KENDİ FİYATIYLA listenin sonuna '
+    + 'düşer. Kutu temizlenir, odak kutuda kalır — arka arkaya ekleyebilirsin. '
+    + 'Hiçbiri hemen yazılmaz; hepsi "Kalemleri kaydet" ile birlikte kaydedilir.');
 }
 
 /** Seçicinin listesi = SATIŞTAKİ ürünler eksi bu güne zaten girilmiş olanlar. */
@@ -899,7 +1044,11 @@ function fillQuickAdd() {
   // ölmüş bir kutuyu doldurmak ya da yenisini yarıda kesmek olurdu.
   if (!picker || !note) return;
 
-  const used = new Set((state.day?.items || []).map((item) => item.menu_id));
+  // TASLAKTAKİLER DE ÇIKAR: aynı ürünü ikinci kez seçmek mümkün olmamalı.
+  const used = new Set([
+    ...(state.day?.items || []).map((item) => item.menu_id),
+    ...state.draft.map((item) => item.menu_id),
+  ]);
   const rows = state.products
     .filter((row) => !used.has(row.menu_id))
     .map((row) => ({
@@ -943,26 +1092,90 @@ function fillQuickAdd() {
  *
  * `price_override_kurus` de gönderilmez: ürünün kendi fiyatı geçerli olur.
  */
-async function quickAdd(menuId) {
-  // `write()` eşzamanlı ikinci yazmayı SESSİZCE düşürüyor. Hızlı eklemede bu
-  // en kötü hâl: kullanıcı Enter'a bastı, hiçbir şey olmadı, kalem de yok.
-  if (busy) {
-    toast('Önceki ekleme sürüyor; bir saniye bekleyin.', 'warn');
+function quickAdd(menuId) {
+  // AĞA ÇIKMAZ. Kalem taslağa düşer, tabloda hemen görünür ve kutu boşalır;
+  // yazma "Kalemleri kaydet" denince, hepsi birden yapılır.
+  const product = state.products.find((row) => row.menu_id === menuId);
+  if (!product) {
+    toast('Ürün listede yok; listeyi tazeleyin.', 'warn');
     return;
   }
-  const product = state.products.find((row) => row.menu_id === menuId);
-  const name = product?.name || `#${menuId}`;
+  if (state.draft.some((row) => row.menu_id === menuId)
+      || (state.day?.items || []).some((row) => row.menu_id === menuId)) {
+    toast(`"${product.name}" bu güne zaten girilmiş.`, 'warn');
+    resetQuickSearch();
+    return;
+  }
 
-  await write(`${BASE}/days/${state.selected}/items`,
-    { method: 'POST',
-      payload: { menu_id: menuId, quantity: 1, is_required: false, sellable_alone: true } },
-    { success: `"${name}" eklendi — adet 1, ürün fiyatı, listenin sonu.`,
-      after: async () => {
-        await refreshItems({ mark: menuId });
-        await reloadCalendar({ quiet: true });
-        // EN SON: takvim tazelemesi odağı almıyor ama sıra garanti olsun.
-        resetQuickSearch();
-      } });
+  state.draft.push({
+    menu_id: menuId,
+    name: product.name,
+    unit_price_kurus: product.price_kurus,
+    sold_out: Boolean(product.sold_out),
+  });
+  redrawItems();
+  // Odak SON: `redrawItems` seçiciyi yeniden doldurunca odak `body`'ye düşer.
+  resetQuickSearch();
+}
+
+/** Taslaktan tek kalem çıkarır — henüz kaydedilmediği için onay sorulmaz. */
+function dropDraft(menuId) {
+  state.draft = state.draft.filter((row) => row.menu_id !== menuId);
+  redrawItems();
+  resetQuickSearch();
+}
+
+/**
+ * Taslaktaki kalemlerin TAMAMINI kaydeder.
+ *
+ * Sırayla gider: sunucu `sort_order`'ı mevcut en büyüğe 10 ekleyerek veriyor,
+ * yani ekleme sırası listedeki sırayı belirliyor. Paralel göndermek sırayı
+ * kaybettirirdi.
+ *
+ * YARIM KALMA AÇIKÇA ANLATILIR: biri patlarsa geri kalanlar taslakta DURUR ve
+ * ekran kaçının girdiğini söyler. Sessizce hepsini düşürmek, kullanıcının
+ * yazdığı menüyü kaybetmesi olurdu.
+ */
+async function saveDraft() {
+  if (busy || !state.draft.length) return;
+  busy = true;
+  nodes.status.set(`${state.draft.length} kalem yazılıyor…`);
+
+  const kalan = [];
+  let yazilan = 0;
+  let hata = '';
+  for (const row of state.draft) {
+    try {
+      await call(`${BASE}/days/${state.selected}/items`, {
+        method: 'POST',
+        body: { menu_id: row.menu_id, quantity: 1,
+                is_required: false, sellable_alone: true },
+      });
+      yazilan += 1;
+    } catch (failure) {
+      hata = failure.message;
+      kalan.push(row);
+    }
+  }
+
+  const yeni = state.draft.filter((row) => !kalan.includes(row))
+    .map((row) => row.menu_id);
+  state.draft = kalan;
+  busy = false;
+
+  if (!hata) {
+    toast(`${yazilan} kalem kaydedildi.`, 'good');
+  } else if (yazilan) {
+    toast(`${yazilan} kalem kaydedildi, ${kalan.length} tanesi kaydedilemedi `
+      + `(${hata}). Kaydedilemeyenler listede duruyor.`, 'warn');
+  } else {
+    toast(`Hiçbir kalem kaydedilemedi: ${hata}`, 'bad');
+  }
+
+  await refreshItems({ mark: yeni });
+  patchCalendarDay();
+  nodes.status.set(statusText());
+  resetQuickSearch();
 }
 
 /** Az önce eklenmiş kalemi tek tıkla geri alır — onay penceresi yok. */
@@ -973,7 +1186,7 @@ async function undoItem(row) {
       after: async () => {
         forgetJustAdded(row.id);
         await refreshItems();
-        await reloadCalendar({ quiet: true });
+        patchCalendarDay();
         resetQuickSearch();
       } });
 }
@@ -1051,7 +1264,7 @@ function openItemEditor(row) {
       await write(`${BASE}/days/${state.selected}/items/${row.id}`,
         { method: 'PATCH', payload },
         { success: `"${row.name}" güncellendi (${Object.keys(payload).join(', ')}).`,
-          after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
+          after: async () => { await refreshItems(); patchCalendarDay(); } });
     },
   });
 
@@ -1087,16 +1300,34 @@ async function doDeleteItem(row) {
   await write(`${BASE}/days/${state.selected}/items/${row.id}`,
     { method: 'DELETE', payload: {} },
     { success: `"${row.name}" silindi.`,
-      after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
+      after: async () => { await refreshItems(); patchCalendarDay(); } });
 }
 
 // ------------------------------------------------------------------ stok
 
 function paintStock() {
+  // İLK AÇILIŞTA OKUNUR. Gün açılışında çekilmiyor (bkz. `state.stockFor`);
+  // sekmeye ilk geçişte bir kez istenir, sonra sekme değiştikçe yeniden
+  // istenmez — gün değişene ya da tavan yazılana kadar.
+  if (state.stockFor !== state.selected) {
+    nodes.tabBody.append(skeletonRows(4, 3));
+    ensureStock().then(() => {
+      // Sekme hâlâ açık mı ve gün aynı mı: ikisi de değiştiyse çizim başka
+      // bir ekranın üstüne yazardı.
+      if (state.tab === 'stock' && nodes.tabBody) paintTab();
+    });
+    return;
+  }
+
   const stock = state.stock;
   if (!stock) {
-    nodes.tabBody.append(alertBox('Stok durumu okunamadı. Tavanları yazmadan önce '
-      + 'satılmış porsiyonların görünmesi gerekiyor; ekranı tazeleyin.', 'warn'));
+    nodes.tabBody.append(alertBox('Stok durumu okunamadı'
+      + (state.stockError ? `: ${state.stockError}` : '.')
+      + ' Tavanları yazmadan önce satılmış porsiyonların görünmesi gerekiyor.',
+      'warn'));
+    nodes.tabBody.append(button('Yeniden dene', {
+      onClick: () => { dropStock(); paintTab(); },
+    }));
     return;
   }
 
@@ -1297,6 +1528,7 @@ async function applyStock(preview) {
     { success: 'Tavanlar yazıldı.',
       after: async () => {
         state.preview = null;
+        dropStock();                      // tavan değişti, sayılar yeniden okunmalı
         await reloadDay({ quiet: true });
         await reloadCalendar({ quiet: true });
       } });
@@ -1511,6 +1743,7 @@ function openDuplicate({ toHere }) {
           after: async () => {
             state.selected = target;
             state.month = monthOf(target);
+            state.draft = [];        // taslak kaynak güne aitti
             clearJustAdded();
             nodes.calendar.setMonthFrom(target);
             await reloadCalendar({ quiet: true });
@@ -1549,7 +1782,7 @@ export function mount(root, ctx) {
   // `justAdded` DİZİSİ TAZE ÜRETİLİR: `{ ...EMPTY_STATE }` sığ kopya yapıyor
   // ve şablondaki diziyi paylaşmak, kapatılıp yeniden açılan panelde önceki
   // oturumun "az önce eklendi" izini geri getirirdi.
-  state = { ...EMPTY_STATE, justAdded: [],
+  state = { ...EMPTY_STATE, justAdded: [], draft: [],
     month: monthOf(todayIso()), selected: todayIso() };
 
   const view = h('div', 'kit-panel bm');   // 'kit-panel' ZORUNLU + kendi önekimiz
@@ -1575,8 +1808,22 @@ export function mount(root, ctx) {
       { text: 'rozet yok = menü girilmemiş' },
     ],
     onPick: (iso) => {
+      // KAYDEDİLMEMİŞ KALEM VARSA UYAR. Taslak seçili GÜNE aittir; sessizce
+      // taşımak başka günün menüsüne yabancı kalem koyardı, sessizce atmak da
+      // kullanıcının yazdığını kaybettirirdi.
+      if (state.draft.length && iso !== state.selected) {
+        const kalan = state.draft.length;
+        state.draft = [];
+        toast(`${num(kalan)} kaydedilmemiş kalem düşürüldü — gün değişti.`, 'warn');
+      }
       state.selected = iso;
-      state.tab = 'day';
+      // SEKME KORUNUR. Eskiden her gün seçiminde "Gün bilgileri"ne dönülüyordu:
+      // takvimi dolduran yönetici gün → sekme → gün → sekme diye gidiyor,
+      // her gün için fazladan bir tık atıyordu. Menü girmek arka arkaya
+      // yapılan bir iştir; ekran kullanıcının nerede çalıştığını hatırlamalı.
+      //
+      // "Stok" sekmesi de korunur ve stok o gün için bir kez okunur — gün
+      // açılışında değil (bkz. `ensureStock`).
       state.preview = null;
       clearJustAdded();          // iz seçili güne aitti, yenisine taşınmaz
       reloadDay();

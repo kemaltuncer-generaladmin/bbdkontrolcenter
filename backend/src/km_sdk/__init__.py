@@ -41,7 +41,7 @@ from km_core.files.reports import (
     number,
     percent,
 )
-from km_core.http.deps import requires
+from km_core.http.deps import confirm_pin, requires
 from km_core.security.identity import CurrentUser
 
 # Platform yeteneklerinin VERİ TÜRLERİ de buradan görünür. Modül `scheduler`
@@ -93,6 +93,7 @@ __all__ = [
     "Trigger",
     "__version__",
     "build_pdf",
+    "confirm_pin",
     "csv_bytes",
     "desktop_dir",
     "ensure_private_dir",

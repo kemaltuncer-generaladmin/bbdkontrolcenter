@@ -529,6 +529,44 @@ class SubscriptionsService:
         return {"ok": True, "connected": True, "error": "", "missing_endpoint": False,
                 "request": sb.request_view(raw), "request_id": int(request_id)}
 
+    async def locations(self) -> dict[str, Any]:
+        """Şube (vitrin) listesi — abonelik formundaki seçicinin kaynağı.
+
+        ABONELİK AÇMANIN ÖN ŞARTI. BLD `location_id` alanını zorunlu tutuyor
+        ve panelde seçici olmadığı için alan sabit sıfır gidiyordu; sonuç, HER
+        abonelik açma denemesinin 422 alması ve aboneliğin Kontrol
+        Merkezi'nden HİÇ AÇILAMAMASIYDI.
+
+        Kimliği ekrana gömmek çözüm değil: kurulumdan kuruluma değişir ve
+        yanlış bir sabit siparişleri başka bir mutfağa yollar.
+
+        GEÇİT DÜŞÜKKEN EKRAN AYAKTA KALIR (K7): liste boş döner ve `connected`
+        `False` olur. Panel o hâlde formu açmaz ve sebebini yazar — sessizce
+        sıfır göndermek, eski arızayı geri getirmek olurdu.
+        """
+        try:
+            payload = await self._api.locations()
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": True, "connected": False, "error": self._fail(failure),
+                    "items": [], "default_location_id": 0}
+
+        rows = payload.get("items") if isinstance(payload, dict) else None
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        items = [
+            {
+                "id": sb.as_int(row.get("id")),
+                "name": sb.text(row.get("name")) or f"#{sb.as_int(row.get('id'))}",
+                # KAPALI VİTRİN LİSTEDEN ÇIKARILMAZ, İŞARETLENİR: ona bağlı
+                # var olan abonelikler "bilinmeyen şube" diye görünmemeli.
+                "enabled": bool(row.get("enabled", True)),
+            }
+            for row in (rows or []) if isinstance(row, dict) and sb.as_int(row.get("id"))
+        ]
+        return {
+            "ok": True, "connected": True, "error": "", "items": items,
+            "default_location_id": sb.as_int((meta or {}).get("default_location_id")),
+        }
+
     async def audit(self, *, target_type: str = "", target_id: int = 0,
                     limit: int = 100) -> dict[str, Any]:
         """Bu EKRANDAN yapılan yazma denemelerinin YEREL izi.
@@ -537,13 +575,33 @@ class SubscriptionsService:
         bir modülün işidir. Buradaki satırlar sunucuya HİÇ ULAŞMAMIŞ denemeleri
         de içerir — tam olarak bu yüzden var. `price_kurus` dolu satırlar
         "fiyatı kim, ne zaman, neden anlaştı" sorusunu cevaplar.
+
+        ═════════════════════════════════════════════════════════════════════
+        `target_type` ARTIK VİRGÜLLÜ LİSTE KABUL EDER (I3).
+
+        Fiyat taşıyan yazmalar üç ayrı hedefe yazılıyor: abonelik açma
+        (`subscription`), talep dönüşümü (`quote_request`) ve dönem borcu
+        (`subscription_payment`). Kart yalnız `subscription` sorguladığı için
+        FİYAT GEÇMİŞİ İLK ANLAŞMAYI HİÇ GÖSTERMİYORDU — yani modülün en çok
+        reklam edilen özelliği, cevaplaması gereken ilk soruyu
+        cevaplayamıyordu ("bu fiyat ne zaman konuşuldu").
+
+        Tek türe bağlı kalıp üç kez sorgulamak da olurdu; üç istek yerine bir
+        `IN` yazmak hem daha ucuz hem de sıralamayı doğru tutuyor (üç ayrı
+        liste birleştirilseydi zaman sırası çağıranın işi olurdu).
+        ═════════════════════════════════════════════════════════════════════
         """
         count = max(1, min(500, int(limit) or 100))
         where = ""
         params: list[Any] = []
-        if sb.text(target_type):
-            where = "WHERE target_type = ?"
-            params.append(sb.text(target_type))
+        # Virgüllü liste: "subscription,subscription_payment". Boş parçalar
+        # düşürülür ki sondaki bir virgül sorguyu bozmasın.
+        types = [part for part in
+                 (piece.strip() for piece in sb.text(target_type).split(","))
+                 if part]
+        if types:
+            where = "WHERE target_type IN (" + ", ".join("?" for _ in types) + ")"
+            params.extend(types)
             if int(target_id or 0):
                 where += " AND target_id = ?"
                 params.append(int(target_id))
@@ -723,7 +781,7 @@ class SubscriptionsService:
             customer_id=customer_id, start_date=start_date, service_days=service_days,
             default_quantity=default_quantity, delivery_type=delivery_type,
             menu_mode=menu_mode, end_date=end_date, lines=lines,
-            delivery_points=delivery_points, reason=reason)
+            delivery_points=delivery_points, location_id=location_id, reason=reason)
         if problem:
             return {"ok": False, "error": problem}
 
@@ -748,19 +806,39 @@ class SubscriptionsService:
                 # göndermek yeterli ve güvenli.
                 lines=[dict(line) for line in (lines or [])],
                 delivery_points=[dict(point) for point in (delivery_points or [])],
-                location_id=int(location_id) or None,
+                location_id=int(location_id),
                 reason=sb.text(reason), actor=actor, dry_run=dry))
         if not result["ok"]:
             return result
 
         record = self._record_of(result["raw"], "data", "subscription")
+        # ═══════════════════════════════════════════════════════════════════
+        # FİYAT GEÇMİŞİNİN İLK SATIRI BURADA DOĞAR (I3).
+        #
+        # Yukarıdaki yazma izi `target_id=0` ile düşüyor — abonelik kimliği
+        # istek gitmeden BİLİNMİYOR. Ama fiyat kartı "şu aboneliğin fiyatı ne
+        # zaman konuşuldu" diye soruyor ve `target_id=0` satırı o sorgunun
+        # dışında kalıyordu: modülün en çok reklam edilen özelliği İLK
+        # ANLAŞMAYI hiç göstermiyordu.
+        #
+        # Yanıt geldikten sonra kimliği bilinen ikinci bir satır yazmak, izi
+        # geriye dönük düzeltmekten (UPDATE) daha dürüst: denetim satırı
+        # değişmez, yeni bir olay eklenir.
+        # ═══════════════════════════════════════════════════════════════════
+        new_id = sb.as_int(record.get("id"))
+        if not dry and new_id and price is not None:
+            await self._record(
+                action="subscription.create", reason=reason, actor=actor, result=DONE,
+                target_type="subscription", target_id=new_id, price_kurus=price,
+                detail={"customer_id": int(customer_id), "location_id": int(location_id),
+                        "linked": True})
         return {**{key: value for key, value in result.items() if key != "raw"},
                 "subscription": sb.subscription_view(record) if record and not dry else {}}
 
     def _create_error(self, *, customer_id: int, start_date: str, service_days: Any,
                       default_quantity: int, delivery_type: str, menu_mode: str,
                       end_date: str, lines: Any, delivery_points: Any,
-                      reason: str) -> str:
+                      location_id: int, reason: str) -> str:
         """Yeni abonelik gövdesinin ön denetimi.
 
         Sunucu hepsini TEKRAR denetliyor (K9 — çift kapı); buradaki kapı ağ
@@ -773,6 +851,22 @@ class SubscriptionsService:
         if int(customer_id or 0) <= 0:
             return ("Müşteri kimliği zorunlu. Bu uç müşteri YARATMAZ: hesap açmak parola "
                     "ve e-posta doğrulaması ister ve o iş bu sözleşmenin dışında.")
+        if int(location_id or 0) <= 0:
+            # ═══════════════════════════════════════════════════════════════
+            # ŞUBE ZORUNLU — VE BU KAPI UZUN SÜRE HİÇ YOKTU (I1).
+            #
+            # BLD `location_id` alanını `required` tutuyor. Panelde alan hiç
+            # çizilmiyor, sabit sıfır gönderiliyor, burada sıfır `None`'a
+            # çevriliyor ve geçit `None`'ı gövdeye hiç koymuyordu. Sonuç: her
+            # abonelik açma denemesi 422 ile dönüyor ve ABONELİK KONTROL
+            # MERKEZİ'NDEN HİÇ AÇILAMIYORDU.
+            #
+            # Uydurma bir varsayılan (ör. 1) daha kötü olurdu: yanlış şube
+            # siparişleri başka bir mutfağa yollar ve hata teslimatta
+            # anlaşılır.
+            # ═══════════════════════════════════════════════════════════════
+            return ("Şube seçilmedi. BLD şubesiz abonelik kabul etmiyor; formdaki "
+                    "şube kutusundan bir vitrin seçin.")
         problem = sb.required_date_error(start_date, field="Başlangıç günü")
         if problem:
             return problem
@@ -1110,10 +1204,25 @@ class SubscriptionsService:
         if not result["ok"]:
             return result
 
-        data = self._record_of(result["raw"], "data")
+        # ═══════════════════════════════════════════════════════════════════
+        # KURU PROVA GÖVDEYİ BAŞKA ANAHTARLA DÖNDÜRÜYOR (I3).
+        #
+        # Gerçek yazmada `data.created`, kuru provada `would.would_create`.
+        # Burada yalnız `data` okunuyordu ve provanın sonucu HİÇ
+        # GÖSTERİLMİYORDU: yönetici "prova" düğmesine basıyor, boş bir liste
+        # görüyor ve "demek ki hiçbir şey üretmeyecek" diye düşünüyordu —
+        # oysa sunucu tam olarak neyin üretileceğini söylemişti.
+        #
+        # İki adı da tek alana indiriyoruz (`created`); ekran ikisini ayırt
+        # etmek zorunda değil, çünkü prova bilgisi zaten `dry_run` alanında.
+        # ═══════════════════════════════════════════════════════════════════
+        data = self._record_of(result["raw"], "data", "would")
+        rows = data.get("created")
+        if not isinstance(rows, list) or not rows:
+            rows = data.get("would_create")
         return {**{key: value for key, value in result.items() if key != "raw"},
                 "service_date": sb.text(data.get("service_date")) or sb.text(service_date),
-                "created": [dict(item) for item in data.get("created") or []
+                "created": [dict(item) for item in rows or []
                             if isinstance(item, dict)],
                 # BOŞ `skipped` LİSTESİ SESSİZ KALMAZ: ekran "üretilmedi"
                 # satırlarını da yazar, yoksa "neden sipariş yok" sorusunun
@@ -1204,7 +1313,12 @@ class SubscriptionsService:
             delivery_type=sb.text(block.get("delivery_type")) or "delivery",
             menu_mode=sb.text(block.get("menu_mode")) or "daily_menu",
             end_date=sb.text(block.get("end_date")), lines=block.get("lines"),
-            delivery_points=block.get("delivery_points"), reason=reason)
+            delivery_points=block.get("delivery_points"),
+            # ŞUBE BURADA DA ZORUNLU: talep dönüşümü aynı gövdeyi
+            # `subscription.` öneki altında taşıyor ve sunucu ikisini AYNI
+            # doğrulamadan geçiriyor. Ayrı bir kural yazmak, talepten açılan
+            # aboneliğin elle açılandan farklı kurallara tabi olması demekti.
+            location_id=sb.as_int(block.get("location_id")), reason=reason)
         if problem:
             return {"ok": False, "error": problem}
 
@@ -1228,8 +1342,10 @@ class SubscriptionsService:
         }
         if sb.text(block.get("menu_mode")) == "fixed_list":
             body["lines"] = [dict(line) for line in block.get("lines") or []]
-        if sb.as_int(block.get("location_id")):
-            body["location_id"] = sb.as_int(block.get("location_id"))
+        # ŞUBE KOŞULSUZ GÖNDERİLİR: sunucu alanı `required` tutuyor ve
+        # koşullu bir anahtar, eksikliği 422'ye çeviriyordu. Boş kalması
+        # yukarıdaki ön denetimde zaten kesiliyor.
+        body["location_id"] = sb.as_int(block.get("location_id"))
 
         dry = self._dry(dry_run)
         result = await self._write(
@@ -1243,10 +1359,20 @@ class SubscriptionsService:
             return result
         data = self._record_of(result["raw"], "data")
         created = self._record_of(data, "subscription")
+        # FİYAT GEÇMİŞİ (I3): yukarıdaki iz `quote_request` hedefine yazılıyor
+        # ve fiyat kartı aboneliğe bakıyor. Talepten doğan aboneliğin ilk
+        # anlaşması, bu ikinci satır olmadan hiçbir yerde görünmüyordu.
+        new_id = sb.as_int(created.get("id"))
+        if not dry and new_id and price is not None:
+            await self._record(
+                action="subscription.create", reason=reason, actor=actor, result=DONE,
+                target_type="subscription", target_id=new_id, price_kurus=price,
+                detail={"customer_id": int(customer_id), "request_id": int(request_id),
+                        "linked": True})
         return {**{key: value for key, value in result.items() if key != "raw"},
                 "request_id": sb.as_int(data.get("request_id"), int(request_id)),
                 "request_status": sb.text(data.get("request_status")),
-                "subscription_id": sb.as_int(created.get("id")),
+                "subscription_id": new_id,
                 "subscription_status": sb.text(created.get("status"))}
 
     # ================================================== yazma — sözleşmeler
@@ -1301,26 +1427,47 @@ class SubscriptionsService:
                 "sign_url": sb.text(data.get("sign_url"))}
 
     async def resend_contract(self, contract_id: int, *, reason: str, actor: str,
-                              expires_in_days: int = 0,
+                              expires_in_days: int = 0, renew: bool = False,
                               dry_run: bool | None = None) -> dict[str, Any]:
-        """Aynı sözleşmenin bağlantısını yeniden gönderir ve süresini tazeler.
+        """Aynı sözleşmenin bağlantısını yeniden gönderir.
 
-        YENİ TOKEN ÜRETİLMEZ: müşterinin elindeki eski SMS'in çalışmaya devam
-        etmesi, "hangi linke tıklayacağım" sorusunu ortadan kaldırır (sözleşme).
+        ═══════════════════════════════════════════════════════════════════
+        VARSAYILAN: SÜREYE DOKUNULMAZ, TOKEN KORUNUR (I2).
+
+        Belge yıllardır "yeni token üretilmez" diyordu ama kod HER SEFERİNDE
+        bir gün sayısı gönderiyordu (`expires_in_days or self._expires_in_days`
+        → daima 7). Belirteç `{id}-{bitiş}-{imza}` biçiminde türetiliyor ve
+        imza bitiş anını da kapsıyor: süre tazelendiği anda MÜŞTERİNİN
+        ELİNDEKİ LİNK ÖLÜYORDU. Yani "yeniden gönder" düğmesi, tam da
+        müşterinin eski SMS'e tıkladığı anda o SMS'i geçersiz kılıyordu.
+
+        `renew=False` (varsayılan) → süre hiç gönderilmez, eski bağlantı
+        çalışmaya devam eder. `renew=True` → yeni bağlantı doğar ve ESKİSİ
+        ÖLÜR; ekran bunu kullanıcıya açıkça sormak zorundadır.
+
+        SÜRESİ DOLMUŞ BAĞLANTI İSTİSNADIR ve kararı SUNUCU verir: ölü bir
+        bağlantıyı yeniden göndermenin anlamı yok, o yüzden orada süre
+        zorunlu olarak tazeleniyor. Yanıttaki `renews_link` bunu söyler ve
+        ekran o cümleyi gösterir.
+        ═══════════════════════════════════════════════════════════════════
         """
         problem = sb.reason_error(reason)
         if problem:
             return {"ok": False, "error": problem}
-        days = int(expires_in_days) or self._expires_in_days
-        if days < sb.MIN_EXPIRES_DAYS or days > sb.MAX_EXPIRES_DAYS:
-            return {"ok": False,
-                    "error": f"Bağlantı ömrü {sb.MIN_EXPIRES_DAYS}–{sb.MAX_EXPIRES_DAYS} "
-                             "gün arası olmalı."}
+
+        days: int | None = None
+        if renew:
+            days = int(expires_in_days) or self._expires_in_days
+            if days < sb.MIN_EXPIRES_DAYS or days > sb.MAX_EXPIRES_DAYS:
+                return {"ok": False,
+                        "error": f"Bağlantı ömrü {sb.MIN_EXPIRES_DAYS}–"
+                                 f"{sb.MAX_EXPIRES_DAYS} gün arası olmalı."}
+
         dry = self._dry(dry_run)
         result = await self._write(
             action="subscription.contract.resend", reason=reason, actor=actor, dry=dry,
             target_type="subscription_contract", target_id=int(contract_id),
-            detail={"expires_in_days": days},
+            detail={"expires_in_days": days, "renew": bool(renew)},
             call=lambda: self._api.resend_subscription_contract(
                 int(contract_id), expires_in_days=days, reason=sb.text(reason),
                 actor=actor, dry_run=dry))
@@ -1330,7 +1477,10 @@ class SubscriptionsService:
         return {**{key: value for key, value in result.items() if key != "raw"},
                 "contract_id": sb.as_int(data.get("id"), int(contract_id)),
                 "status": sb.text(data.get("status")),
-                "expires_at": sb.text(data.get("expires_at"))}
+                "expires_at": sb.text(data.get("expires_at")),
+                # EKRAN BUNU YAZMAK ZORUNDA: `True` ise müşterinin elindeki
+                # eski bağlantı ÖLDÜ ve yeni SMS beklenmeli.
+                "renews_link": bool(renew) or bool(data.get("renews_link"))}
 
     async def cancel_contract(self, contract_id: int, *, reason: str, actor: str,
                               dry_run: bool | None = None) -> dict[str, Any]:

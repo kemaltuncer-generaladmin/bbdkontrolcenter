@@ -225,11 +225,27 @@ async def test_ana_ekran_gorseli_ucu_yoksa_anlasilir_hata_doner() -> None:
     api, _, _ = gateway(handler)
     with pytest.raises(StoreApiError) as hata:
         await api.upload_media(content=PNG, filename="afis.png", mime="image/png",
-                               slot="hero", reason="Yeni dönem afişi yüklendi")
+                               reason="Yeni dönem afişi yüklendi")
 
     # Ekran çökmez, durumu anlatır (K7).
     assert hata.value.code == "bbd_endpoint_missing"
     assert "henüz yayında değil" in hata.value.message
+
+
+async def test_ana_ekran_gorseli_dogru_uca_gider() -> None:
+    """Metot bir dönem `POST {BBD}/home/slides` çağırıyordu; O UÇ HİÇ VAR
+    OLMADI ve her yükleme 404 alıyordu. Yolun adı testte sabitlenir."""
+    istekler: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        istekler.append(request)
+        return httpx.Response(201, json={"image": "storage/theme/1/sliders/afis.png"})
+
+    api, _, _ = gateway(handler)
+    await api.upload_media(content=PNG, filename="afis.png", mime="image/png",
+                           reason="Yeni dönem afişi yüklendi")
+
+    assert istekler[0].url.path == "/api/admin/bbd/storefront/home-slides/image"
 
 
 async def test_bbd_ucunda_yuklemede_gerekce_ve_kuru_prova_govdeye_konur() -> None:

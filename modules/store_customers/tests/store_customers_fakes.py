@@ -226,3 +226,59 @@ class FakeApi:
         self._record("update_configuration", slug, values=values, reason=reason, actor=actor,
                      dry_run=dry_run)
         return {"ok": True}
+
+
+class FakeScan:
+    """`store.scan` yeteneğinin testlik yüzü — SIRAYLA koşar, arka planda değil.
+
+    Gerçek `BackgroundScan` yükleyiciyi ayrı bir görevde çalıştırır; test
+    ortamında bu, "tarama bitti mi" sorusunu zamanlamaya bağlar ve testi
+    kırılgan yapar. Burada yükleyici çağrıldığı anda beklenir: sonuç
+    deterministiktir ve testler `state` alanının doğru dolduğunu görebilir.
+
+    Beklemenin gerçek kodda YAPILMADIĞINI ayrıca sınayan test var
+    (`test_liste_siparis_taramasini_beklemez`): orada yükleyici hiç bitmez.
+    """
+
+    def __init__(self) -> None:
+        self.entries: dict[str, dict[str, Any]] = {}
+        self.loads: list[str] = []
+        #: Uçuştaki yükleme. Gerçek katmanda "anahtar başına tek tarama"
+        #: garantisini `entry.running` veriyor; burada da aynı garanti olmalı,
+        #: yoksa eş zamanlı iki istek mağazayı iki kez tarar.
+        self._inflight: dict[str, asyncio.Task[Any]] = {}
+
+    def scoped(self, namespace: str) -> FakeScan:
+        return self
+
+    def _entry(self, key: str) -> dict[str, Any]:
+        return self.entries.setdefault(
+            key, {"state": "empty", "value": None, "stale": True, "running": False,
+                  "at": "", "ageSeconds": 0, "error": ""})
+
+    def peek(self, key: str) -> dict[str, Any]:
+        return dict(self._entry(key))
+
+    def invalidate(self, key: str) -> None:
+        self._entry(key)["stale"] = True
+
+    async def read(self, key: str, loader: Any, *, ttl: int | None = None,
+                   refresh: bool = False, wait: float = 0.0) -> dict[str, Any]:
+        entry = self._entry(key)
+        if entry["state"] == "ready" and not entry["stale"] and not refresh:
+            return dict(entry)
+
+        task = self._inflight.get(key)
+        if task is None or task.done():
+            self.loads.append(key)
+            task = asyncio.ensure_future(loader())
+            self._inflight[key] = task
+        try:
+            value = await asyncio.shield(task)
+        except Exception as failure:  # noqa: BLE001 — gerçek katman da yutar
+            entry.update(state="error", error=str(failure) or "Tarama yapılamadı.",
+                         running=False)
+            return dict(entry)
+        entry.update(state="ready", value=value, stale=False, running=False,
+                     at="2026-08-18T00:00:00+03:00", error="")
+        return dict(entry)

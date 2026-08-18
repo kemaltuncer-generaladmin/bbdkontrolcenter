@@ -32,8 +32,18 @@ settle_payment_methods:
 #   1. bu ayar (`sms_dry_run`)
 #   2. platform ayarı (`platform.notify.sms.dry_run`)
 #   3. isteğin kendi `dryRun` bayrağı
-# Varsayılan AÇIK. Kapatmak bilinçli bir karardır ve ekranda kırmızı yazar.
-sms_dry_run: true
+#
+# FREN AÇILDI (18.08.2026, kullanıcı kararı): müşteriye GERÇEK SMS gider ve
+# her mesajın bir bedeli vardır. Karar bilinçlidir; ekran bunu kırmızı yazar.
+#
+# GERİ ALMAK İÇİN buraya `true` yazmak yeterli — kimlik bilgisini kasadan
+# silmeye gerek yok.
+#
+# İLK CANLI DENEME İÇİN `sms_allowlist` KULLANIN (aşağıda): kendi numaranızı
+# yazıp bir talep gönderin, mesajın geldiğini ve başlığın doğru göründüğünü
+# görün, sonra listeyi boşaltın. Liste doluyken dışarıdaki her numara kuru
+# provaya düşer — yani yanlış bir toplu gönderim müşteriye ulaşmaz.
+sms_dry_run: false
 
 # Gönderici başlığı. Boşsa platformun yapılandırdığı başlık kullanılır.
 sms_header: ""

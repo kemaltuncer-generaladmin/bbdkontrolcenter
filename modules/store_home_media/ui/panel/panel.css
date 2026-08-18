@@ -54,51 +54,18 @@
   background: var(--tint);
 }
 .hm-preview-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.hm-device { display: flex; gap: 4px; }
 
-/* Sahne ana sayfanın ORANLI temsilidir: şeritler gerçek en/boy oranlarında
-   çizilir, böylece "bu görsel burada nasıl durur" sorusu ekranda cevaplanır. */
-.hm-stage {
+/* Şerit, ana ekrandaki SIRANIN temsilidir: görseller önerilen oranlarında ve
+   soldan sağa sırayla çizilir; sıranın doğru olup olmadığı tek bakışta
+   görünür. Kutular dar kalırsa şerit yatay kayar — sarmalamak sırayı
+   okunmaz hâle getirirdi. */
+.hm-band {
   display: flex;
-  flex-direction: column;
   gap: 6px;
-  width: 100%;
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #fff;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
-.hm-stage.mobile { max-width: 360px; }
-
-.hm-band { display: flex; gap: 6px; }
-.hm-band-slider .hm-tile { aspect-ratio: 3 / 1; }
-.hm-band-banner .hm-tile { aspect-ratio: 3 / 1; }
-.hm-band-collection .hm-tile { aspect-ratio: 1 / 1; }
-
-.hm-band-empty {
-  flex: 1;
-  padding: 10px;
-  font-size: 11px;
-  color: var(--soft);
-  text-align: center;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
-}
-
-.hm-strip {
-  flex: 1;
-  padding: 6px 10px;
-  font-size: 11.5px;
-  color: #fff;
-  background: var(--ink);
-  border-radius: 6px;
-  text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.hm-band-slider .hm-tile { flex: 0 0 150px; aspect-ratio: 3 / 1; }
 
 .hm-tile {
   position: relative;
@@ -120,15 +87,6 @@
   border-style: dashed;
 }
 .hm-tile-text { font-size: 10.5px; color: var(--soft); }
-.hm-tile-more {
-  flex: 0 0 54px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  color: var(--soft);
-  cursor: default;
-}
 /* Uyarı bayrağı YAZIDIR; renk yalnız destekler (kit kuralı 7). */
 .hm-tile-flag {
   position: absolute;
@@ -140,10 +98,6 @@
   background: var(--bad);
   border-radius: 4px;
 }
-
-/* -------------------------------------------------------------------- KPI */
-
-.hm-kpi:empty { display: none; }
 
 /* -------------------------------------------------------------- sıra çubuğu */
 
@@ -177,7 +131,6 @@
   background: #fff;
 }
 .hm-slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.hm-slot.passive { background: var(--tint); }
 .hm-slot.dragging { opacity: 0.5; }
 .hm-slot.over { border-color: var(--accent); box-shadow: 0 -2px 0 0 var(--accent) inset; }
 
@@ -185,6 +138,8 @@
 
 .hm-thumb {
   display: flex;
+  padding: 0;
+  cursor: pointer;
   align-items: center;
   justify-content: center;
   width: 56px;
@@ -196,8 +151,9 @@
 }
 .hm-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .hm-thumb.none { color: var(--soft); font-size: 11px; }
+.hm-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.hm-slot-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.hm-slot-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .hm-slot-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-issues { font-size: 11px; color: var(--bad); }
 
@@ -205,8 +161,6 @@
 .hm-slot-tools { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 
 /* --------------------------------------------------------------- görsel */
-
-.hm-image { display: flex; flex-direction: column; gap: 8px; }
 
 .hm-drop {
   display: flex;
@@ -293,25 +247,23 @@
    %25 kırpılacak" ise afişi yeniden kestirecek bilgidir. */
 .hm-crop-text { flex-basis: 100%; font-size: 12px; color: var(--soft); }
 
-/* Yükleme sonucu — uç henüz yayında değilse buraya BİLGİ kutusu düşer,
-   kırmızı hata değil (K7). */
-.hm-upload-note:empty { display: none; }
-.hm-upload-note { display: block; }
-
 /* --------------------------------------------------------------- hedef */
 
-.hm-target { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
-.hm-target-results { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow: auto; }
+/* Satır içinde adres kutusu + "Ürün ara" düğmesi YAN YANA; çekmecede ise
+   arama kutusu ve sonuç listesi ALT ALTA durur. İkisi de aynı sınıfı
+   kullanıyor, fark sarmalamadan çıkıyor. */
+.hm-target { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hm-target .kit-input { flex: 1; min-width: 160px; }
+.hm-target-results {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow: auto;
+}
 
-.hm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-
-/* ------------------------------------------------------------- açıklama */
-
-/* Sekmenin hemen altındaki tek cümle: "burası ne işe yarar". Sekme adı iyi
-   olsa bile müşterinin bunu NEREDE göreceğini söylemiyor; o cümle burada
-   durur ve sekme değişince yenilenir. */
-.hm-areawhat { padding: 2px 4px 8px; font-size: 12px; color: var(--soft); }
-.hm-areawhat:empty { display: none; }
+.hm-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 20px; }
 
 /* ENGEL KUTUSU — neden + sıradaki adım.
    İki satır BİLEREK ayrı: ilk satır "niye olmadı", ikincisi "şimdi ne
@@ -319,4 +271,3 @@
 .hm-blocker { display: block; }
 .hm-blocker-why { font-weight: 600; }
 .hm-blocker-next { margin-top: 4px; }
-.hm-blocker-detail { margin-top: 4px; font-size: 12px; color: var(--soft); }

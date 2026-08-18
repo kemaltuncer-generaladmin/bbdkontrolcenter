@@ -3,8 +3,15 @@
 Girdi her yerde kantinin işlem listesidir:
     {serverId, studentId, studentName, total, createdAt(ms), reversedAt, items:[…]}
 
-İPTALLİ SATIŞ HİÇBİR HESABA GİRMEZ. Kantin `reversedAt` damgasını veriyor;
+İPTALLİ SATIŞ HİÇBİR **HESABA** GİRMEZ. Kantin `reversedAt` damgasını veriyor;
 filtreleme tek noktada, `live()` içinde yapılır ki bir kırılımda unutulmasın.
+
+AMA DÖKÜM HESAP DEĞİLDİR. `overview` / `by_student` / `by_product` / `by_class`
+ciro üretir ve `live()` üzerinden gider — iptal edilmiş bir satışı ciroya
+yazmak rakamı şişirir. `ledger()` ise dönemde NE OLDUĞUNU anlatan ham listedir:
+satış da, iptal de, tahsilat da içindedir; hiçbir satır düşmez, her satır
+`kind` damgası taşır. İki işi karıştırmak, ya ciroyu bozar ya kullanıcının
+aradığı hareketi görünmez kılar.
 
 Tutarlar kuruş (tam sayı) kalır — bölme yalnız sunumda yapılır; ara toplamda
 kayan noktaya geçmek kuruş kaybettirir.
@@ -31,6 +38,103 @@ def local(ms: Any) -> datetime:
 def live(transactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Yalnız geçerli satışlar — iptal edilenler her hesabın dışında kalır."""
     return [item for item in transactions if not item.get("reversedAt")]
+
+
+# --------------------------------------------------------------- işlem dökümü
+
+#: Döküm satırının türü. Ekran, PDF ve testler AYNI damgayı okur; dizgiyi üç
+#: yere ayrı ayrı yazmak, birini değiştirip diğerini unutmaya davettir.
+ENTRY_SALE = "sale"
+ENTRY_REVERSED = "reversed"
+ENTRY_COLLECTION = "collection"
+
+#: Tahsilat ucunun satır listesini taşıyabileceği alan adları. Kantin
+#: `GET /api/reports/collections` yanıtında listeyi hangi adla verirse versin
+#: döküm çalışsın diye birkaç ad denenir — eksik tahsilat, sessizce eksik
+#: döküm demektir.
+_COLLECTION_LIST_KEYS = ("entries", "items", "collections", "rows", "payments")
+
+
+def _first(row: dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
+    """Birden çok olası alan adından ilk DOLU olanı verir."""
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def collection_entries(payload: Any, *,
+                       student_id: str | None = None) -> list[dict[str, Any]]:
+    """Tahsilat ucundan gelen CREDIT satırlarını döküm satırına çevirir.
+
+    TAHSİLAT DA BİR İŞLEMDİR. Kantinde satış `transactions`, tahsilat ise cari
+    defterin CREDIT satırıdır ve ayrı uçtan gelir; ikisini birleştirmeden
+    "öğrencinin tüm işlemleri" gösterilemez — veli "borcumu şu gün ödedim"
+    dediğinde dökümde karşılığı çıkmıyordu.
+
+    Tutar POZİTİF kalır: bu bir alacak kaydıdır, satışla toplanmaz. Ekran ve
+    PDF satırı `kind` damgasından ayırır.
+    """
+    if isinstance(payload, list):
+        raw: list[Any] = payload
+    elif isinstance(payload, dict):
+        raw = next(
+            (list(payload[key]) for key in _COLLECTION_LIST_KEYS
+             if isinstance(payload.get(key), list)),
+            [],
+        )
+    else:
+        raw = []
+
+    rows: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        owner = _first(item, ("studentId", "student_id", "opaqueId"), "")
+        # Uç `studentId` ile süzülerek çağrılıyor ama süzgeci yok sayan bir
+        # sürüme karşı burada da bakılır: başkasının tahsilatı öğrenci
+        # dökümüne SIZAMAZ.
+        if student_id is not None and owner and str(owner) != str(student_id):
+            continue
+        rows.append({
+            "kind": ENTRY_COLLECTION,
+            "studentId": str(owner or (student_id or "")),
+            "studentName": _first(item, ("studentName", "student_name"), ""),
+            "createdAt": int(_first(item, ("createdAt", "created_at", "at", "date"), 0) or 0),
+            "total": int(_first(item, ("amount", "total", "value", "credit"), 0) or 0),
+            "method": str(_first(item, ("method", "source", "type", "channel"), "") or ""),
+            "reference": str(_first(item, ("reference", "localId", "id", "serverId"), "") or ""),
+            "items": [],
+        })
+    return rows
+
+
+def ledger(transactions: list[dict[str, Any]],
+           collections: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """İşlem dökümü — dönemin TAMAMI, yeniden eskiye.
+
+    HAM LİSTEDİR, HESAP DEĞİLDİR. `live()` burada uygulanmaz: iptal edilen
+    satış da o gün yaşanmış bir olaydır ve kullanıcı dökümde tam olarak onu
+    arar. Satır düşürmek yerine `kind` damgası konur; ciro hesapları
+    (`overview`, `by_student`, `by_product`) yine `live()` üzerinden gider,
+    yani iptal hiçbir toplama yazılmaz.
+    """
+    rows: list[dict[str, Any]] = [
+        {**item, "kind": ENTRY_REVERSED if item.get("reversedAt") else ENTRY_SALE}
+        for item in transactions
+    ]
+    rows.extend(collections or [])
+    return sorted(rows, key=lambda item: int(item.get("createdAt") or 0), reverse=True)
+
+
+def entry_counts(entries: list[dict[str, Any]]) -> dict[str, int]:
+    """Dökümdeki satır türlerinin sayımı — başlıkta 'kaç satış, kaç iptal'."""
+    counts = {ENTRY_SALE: 0, ENTRY_REVERSED: 0, ENTRY_COLLECTION: 0}
+    for row in entries:
+        key = str(row.get("kind") or ENTRY_SALE)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _hour(ms: Any) -> int:

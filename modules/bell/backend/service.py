@@ -2,18 +2,23 @@
 
 ÜÇ İŞ VARDIR, ÜÇÜ DE BİRBİRİNDEN AYRI:
 
-  1. OTOMASYON — haftalık zil saatleri. Saati gelince YALNIZ teneffüs zili
-     çalar. Başka hiçbir karar içermez: grup yerleştirme, hoca, salon
-     otomasyona GİRMEZ.
+  1. OTOMASYON — haftalık zil saatleri. Saati gelince zil çalar, hemen
+     arkasından TÜRE GÖRE anons gider. Başka hiçbir karar içermez: grup
+     yerleştirme, hoca, salon otomasyona GİRMEZ.
   2. GRUP ÇAĞRISI — elle. Kullanıcı grubu seçip "Çağır" der; o grubun anonsu
      çalar ("İlayda, Hüseyin hoca ile dersiniz başlıyor."). Zil çalmaz.
   3. ELLE ZİL — yalnız zil sesi.
 
-ZİLDEN SONRA ANONS GEÇMEZ (18.08.2026, kullanıcı kararı). Otomatik zil bir
-zamanlar arkasından "Lütfen derse geçiniz." çalıyordu; o yol tümüyle kaldırıldı.
-Kapatılabilir bir seçenek de BIRAKILMADI: istenen "şimdilik sessiz" değil, hiç
-çalmaması — ekranda duran bir onay kutusu yanlışlıkla geri açılabilirdi.
-Anons yalnız elle basılan grup çağrısında duyulur.
+ZİLDEN SONRA ANONS GEÇER, TÜRE GÖRE (ADR 0027). Ders zilinin arkasından
+"İyi dersler.", teneffüs zilinin arkasından "İyi teneffüsler." gider. Tür zil
+saatinde AÇIKÇA saklanır (`kind`, 004 göçü); etiketten tahmin edilmez, çünkü
+"mola" yazan bir satırın ders mi teneffüs mü olduğunu hiçbir kural güvenilir
+biçimde bilemez.
+
+ANONS ZİLİ SUSTURAMAZ. Sesi hazır değilse zil yalnız başına çalar ve sebep
+günlüğe yazılır; okulu sessiz bırakmak eksik bir cümleden çok daha kötüdür.
+Bir türün metni boşaltılırsa o zilin arkasından anons gitmez — bu geçerli bir
+seçimdir ve ekranda görünür (gizli bir onay kutusu değil).
 
 SES ÖNCEDEN ÜRETİLİR. Çalma anında Vertex'e gidilmez; `voices.py` metin
 değiştiğinde üretip diske yazar. Sesi hazır olmayan bir çağrı YAPILMAZ ve
@@ -75,6 +80,16 @@ DEFAULT_SOLO_TEXT = (
 #: Grup türleri. Ad'dan tahmin edilmez, açıkça saklanır (bkz. 003 göçü).
 KINDS = ("grup", "ozel")
 
+#: Zil saatinin türü. Etiketten tahmin edilmez, açıkça saklanır (004 göçü).
+TIME_KINDS = ("ders", "teneffus")
+DEFAULT_TIME_KIND = "ders"
+
+#: Zilin HEMEN ARKASINDAN çalan anonslar. Ders zilinden sonra derse giriliyor,
+#: teneffüs zilinden sonra teneffüse çıkılıyor; iki durum aynı cümleyle
+#: karşılanamaz.
+DEFAULT_LESSON_AFTER_TEXT = "İyi dersler."
+DEFAULT_BREAK_AFTER_TEXT = "İyi teneffüsler."
+
 TEXT_MAX = 300
 LABEL_MAX = 40
 NAME_MAX = 60
@@ -129,6 +144,41 @@ def call_text(settings: dict[str, Any], name: str, kind: str) -> str:
     return render(settings["texts"][key], name)
 
 
+def _after_setting(texts: dict[str, Any], key: str, fallback: str) -> str:
+    """Zil sonrası anons metni — BOŞ BIRAKMAK GEÇERLİ BİR SEÇİMDİR.
+
+    `call`/`solo` şablonlarından ayrılır ve bilerek: grup çağrısının boş
+    metni anlamsızdır (çağrı yapılamaz), ama zil sonrası anonsun boş metni
+    "bu tür için anons istemiyorum" demektir — kullanıcı yalnız teneffüs
+    zilinin arkasına anons isteyebilir.
+
+    Bu yüzden "anahtar hiç yok" ile "anahtar var ama boş" AYRILIR. Ayrılmasaydı
+    kullanıcı alanı temizleyip kaydeder, ekran varsayılanı geri koyar ve anons
+    çalmaya devam ederdi — kaydettiğini sandığı şey olmazdı.
+    """
+    if key not in texts:
+        return fallback
+    return str(texts[key] or "")[:TEXT_MAX].strip()
+
+
+def time_kind(value: Any) -> str:
+    """Zil saatinin türünü doğrular. Tanınmayan değer 'ders' sayılır."""
+    text = str(value or "").strip().lower()
+    return text if text in TIME_KINDS else DEFAULT_TIME_KIND
+
+
+def after_text(settings: dict[str, Any], kind: str) -> str:
+    """Zilin arkasından çalacak anonsun cümlesi.
+
+    TEK YER: `call_text` grup çağrıları için ne yapıyorsa bu da zil sonrası
+    anonslar için onu yapar. İki ayrı yerde
+    `settings["texts"]["lessonAfter" if ... else "breakAfter"]` yazılsaydı,
+    biri unutulduğunda teneffüse çıkan öğrenciye "İyi dersler" denirdi.
+    """
+    key = "breakAfter" if time_kind(kind) == "teneffus" else "lessonAfter"
+    return str(settings["texts"][key] or "").strip()
+
+
 class BellService:
     def __init__(self, *, store: Any, log: Any, audio: Any, scheduler: Any,
                  voices: VoiceLibrary, bridge: BellBridge, notify: Any = None,
@@ -161,6 +211,8 @@ class BellService:
             "texts": {
                 "call": DEFAULT_CALL_TEXT,
                 "solo": DEFAULT_SOLO_TEXT,
+                "lessonAfter": DEFAULT_LESSON_AFTER_TEXT,
+                "breakAfter": DEFAULT_BREAK_AFTER_TEXT,
             },
         }
 
@@ -170,9 +222,12 @@ class BellService:
         0.1 sürümünün `groups` bloğu (ders takvimi grup kimliklerine bağlıydı)
         sessizce düşer: o kimlikler artık yok, taşınabilecek bir anlamı da yok.
 
-        0.2'nin `texts.lesson` alanı da aynı biçimde düşer — zilden sonra anons
-        çalınmıyor. Kayıtlı metin taşınmaz: taşınsaydı ekranda görünmeyen ama
-        veride duran bir cümle olurdu ve ilk okuyan onun çaldığını sanardı.
+        0.2'nin `texts.lesson` alanı da düşer — ADI TAŞINMAZ. Zilden sonra anons
+        geri geldi (0.4) ama artık TEK bir cümle değil, türe göre iki cümle var
+        (`lessonAfter` / `breakAfter`). Eski tek alanı yeni alanlardan birine
+        kopyalamak, kullanıcının bir zamanlar yazdığı "derse geçiniz" cümlesini
+        teneffüs zilinin arkasına da takma riski taşırdı; kaynağı belirsiz bir
+        metnin hangi türe ait olduğunu bilemeyiz.
         """
         base = self._defaults()
         if not isinstance(state, dict):
@@ -187,7 +242,7 @@ class BellService:
         volume = int(number(state.get("volume"), float(base["volume"])))
 
         return {
-            "version": 3,
+            "version": 4,
             "enabled": state.get("enabled") is not False,
             "bellSound": str(state.get("bellSound") or base["bellSound"])[:120],
             "volume": max(0, min(100, volume)),
@@ -195,6 +250,10 @@ class BellService:
             "texts": {
                 "call": str(texts.get("call") or DEFAULT_CALL_TEXT)[:TEXT_MAX].strip(),
                 "solo": str(texts.get("solo") or DEFAULT_SOLO_TEXT)[:TEXT_MAX].strip(),
+                "lessonAfter": _after_setting(texts, "lessonAfter",
+                                              DEFAULT_LESSON_AFTER_TEXT),
+                "breakAfter": _after_setting(texts, "breakAfter",
+                                             DEFAULT_BREAK_AFTER_TEXT),
             },
         }
 
@@ -228,6 +287,12 @@ class BellService:
                 or clean["texts"]["solo"] != before["texts"]["solo"]):
             await self._ensure_group_voices(clean)
 
+        # Zil sonrası anonslar gruplardan bağımsız: metin değiştiyse yalnız o
+        # iki ses yeniden üretilir, yüzlerce grup sesi boşuna sıraya girmez.
+        if (clean["texts"]["lessonAfter"] != before["texts"]["lessonAfter"]
+                or clean["texts"]["breakAfter"] != before["texts"]["breakAfter"]):
+            await self._ensure_time_voices(clean)
+
         await self.reschedule()
         return {"ok": True, "settings": clean}
 
@@ -242,7 +307,8 @@ class BellService:
             day = str(row["day"])
             if day in week:
                 week[day].append({"id": str(row["id"]), "time": str(row["time"]),
-                                  "label": str(row["label"])})
+                                  "label": str(row["label"]),
+                                  "kind": time_kind(row["kind"])})
         return week
 
     async def save_times(self, week: Any, *, actor: str) -> dict[str, Any]:
@@ -252,7 +318,7 @@ class BellService:
         satır satır fark almak, iki makinede açık panelin birbirini yarım ezmesi
         demek olurdu.
         """
-        clean: list[tuple[str, str, str, str]] = []
+        clean: list[tuple[str, str, str, str, str]] = []
         seen: set[tuple[str, str]] = set()
 
         source = week if isinstance(week, dict) else {}
@@ -268,14 +334,20 @@ class BellService:
                     continue          # geçersiz saat ve tekrar sessizce düşer
                 seen.add((day, value))
                 label = str(entry.get("label") or "")[:LABEL_MAX].strip()
-                clean.append((f"{day}-{value.replace(':', '')}", day, value, label))
+                clean.append((f"{day}-{value.replace(':', '')}", day, value, label,
+                              time_kind(entry.get("kind"))))
 
         await self._store.execute(f"DELETE FROM {self._time_table}")
         for row in clean:
             await self._store.execute(
-                f"INSERT INTO {self._time_table} (id, day, time, label) VALUES (?, ?, ?, ?)",
+                f"INSERT INTO {self._time_table} (id, day, time, label, kind) "
+                f"VALUES (?, ?, ?, ?, ?)",
                 row,
             )
+
+        # Yeni bir tür ilk kez kullanılmış olabilir; o türün anons sesi henüz
+        # hiç istenmemişse burada sıraya girer, zil saatinde eksik kalmasın.
+        await self._ensure_time_voices(await self.settings())
 
         self._log.info("zil saatleri güncellendi", count=len(clean), actor=actor)
         await self.reschedule()
@@ -304,8 +376,10 @@ class BellService:
         if any(fold(item["name"]) == fold(clean) for item in current):
             return {"ok": False, "detail": f"'{clean}' adında bir grup zaten var."}
 
-        # Aynı adla daha önce kaldırılmış bir grup varsa onu geri getiriyoruz:
-        # yeni satır açmak, aynı adın iki kimlikle dolaşması demek olurdu.
+        # ESKİ VERİ İÇİN: silme artık kalıcı (ADR 0027 eki), yani bu dal yalnız
+        # 004 göçünden ÖNCE yumuşak silinmiş satırlara denk gelir. Onları
+        # görmezden gelip yeni satır açmak, aynı adın iki kimlikle dolaşması
+        # demek olurdu.
         revived = await self._store.fetch_one(
             f"SELECT id FROM {self._group_table} "
             f"WHERE deleted_at != '' AND name = ? LIMIT 1", (clean,)
@@ -357,19 +431,117 @@ class BellService:
         return {"ok": True, "groups": await self.groups()}
 
     async def remove_group(self, group_id: str, *, actor: str) -> dict[str, Any]:
-        """Grubu kaldırır. SATIR SİLİNMEZ — `deleted_at` yazılır."""
+        """Grubu KALICI olarak siler: satır, ses kaydı, `.wav` ve ajandaki kopya.
+
+        002 göçünün "SATIR SİLİNMEZ" kuralı BU TABLO İÇİN geçersizdir (ADR 0027
+        eki, kullanıcı kararı). Gerekçe: yumuşak silme, silinen grubun anons
+        `.wav`'ını hem `data/sounds` altında hem zil ajanının kitaplığında
+        süresiz bırakıyordu. Kullanıcı ekranda "kaldırdım" görüyor, ses diskte
+        duruyordu; "sildim" ile "gizledim" arasındaki fark hiçbir yerde
+        yazmıyordu.
+
+        DİKKAT — bu bir iş verisi silme DEĞİLDİR. Satış, cari, öğrenci gibi
+        kayıtlarda silme yasağı yerinde duruyor. Buradaki içerik TÜRETİLMİŞtir:
+        aynı ad yeniden girilirse aynı metinden aynı ses yeniden üretilir.
+
+        SES PAYLAŞILIYORSA SİLİNMEZ. İki grup aynı cümleyi üretebilir (aynı ad
+        farklı türde, ya da şablon `{grup}` taşımıyorsa hepsi aynı metin).
+        Önce referans sayılır; başka canlı bir grup ya da zil sonrası anons o
+        sesi kullanıyorsa dosya yerinde bırakılır.
+        """
         row = await self._store.fetch_one(
-            f"SELECT name FROM {self._group_table} WHERE id = ? AND deleted_at = ''",
+            f"SELECT name, kind FROM {self._group_table} WHERE id = ? AND deleted_at = ''",
             (group_id,),
         )
         if row is None:
             return {"ok": False, "detail": "Grup bulunamadı."}
 
+        settings = await self.settings()
+        name = str(row["name"])
+        doomed = self._voices.key(call_text(settings, name, str(row["kind"] or "grup")))
+
+        # Satır ÖNCE gider: kalan referansları saymadan önce bu grubun kendi
+        # sesini "hâlâ kullanılıyor" saymayalım.
         await self._store.execute(
-            f"UPDATE {self._group_table} SET deleted_at = ? WHERE id = ?", (_now(), group_id)
+            f"DELETE FROM {self._group_table} WHERE id = ?", (group_id,)
         )
-        self._log.info("grup kaldırıldı", group=str(row["name"]), actor=actor)
+
+        if doomed not in await self._live_voice_keys(settings):
+            await self._voices.forget(doomed)
+
+        # Ajandaki kopya da gitmeli: köprü temizliği `needed_sounds()` ile
+        # karşılaştırır ve grup artık listede olmadığı için ses oradan düşer.
+        await self.sync_sounds()
+
+        self._log.info("grup kalıcı olarak silindi", group=name, actor=actor)
         return {"ok": True, "groups": await self.groups()}
+
+    async def _live_voice_keys(self, settings: dict[str, Any]) -> set[str]:
+        """Şu an KULLANILAN bütün anons seslerinin özetleri.
+
+        Zil sonrası anonslar da buraya girer: bir grubun cümlesiyle aynı metne
+        denk gelirlerse o ses silinmemelidir.
+        """
+        texts = [after_text(settings, kind) for kind in TIME_KINDS]
+        texts += [call_text(settings, group["name"], group["kind"])
+                  for group in await self.groups()]
+        return {self._voices.key(text) for text in texts if text}
+
+    async def delete_sound(self, name: str, *, actor: str) -> dict[str, Any]:
+        """Yüklenmiş zil sesini kalıcı siler. `upload_sound`un karşılığı.
+
+        `anons-` önekli dosyalar BU UÇTAN silinemez: onların sahibi
+        `mod_bell_voice` tablosudur ve dosyayı tek başına silmek, kaydı
+        "hazır" derken dosyası olmayan bir duruma düşürürdü. Anons temizliği
+        `prune_voices` üzerinden yapılır. Bu, `upload_sound`daki yasağın
+        aynadaki karşılığıdır.
+        """
+        settings = await self.settings()
+        if name.startswith("anons-"):
+            return {"ok": False, "detail": "Anons sesleri bu uçtan silinemez."}
+        if name == settings["bellSound"] or Path(name).stem == settings["bellSound"]:
+            return {"ok": False, "detail": "Kullanımdaki zil sesi silinemez. "
+                                           "Önce başka bir zil sesi seçin."}
+        path = self._resolve_sound(name)
+        if path is None or not path.is_file():
+            return {"ok": False, "detail": "Ses dosyası bulunamadı."}
+        try:
+            path.unlink()
+        except OSError as failure:
+            return {"ok": False, "detail": f"Dosya silinemedi: {failure}"}
+
+        await self.sync_sounds()
+        self._log.info("zil sesi silindi", file=name, actor=actor)
+        return {"ok": True, "name": name}
+
+    async def prune_voices(self, *, actor: str) -> dict[str, Any]:
+        """Hiçbir canlı gruba/metne bağlı olmayan anons seslerini kalıcı siler.
+
+        Grup adı değiştikçe ve metin şablonu düzenlendikçe eski `.wav`'lar
+        birikiyor. Eskiden hiçbir yerden temizlenmiyorlardı: `VoiceLibrary.forget()`
+        yazılmıştı ama DEPODA HİÇBİR YERDEN ÇAĞRILMIYORDU.
+        """
+        settings = await self.settings()
+        live = await self._live_voice_keys(settings)
+        entries = await self._voices.entries()
+        stale = [hash_ for hash_ in entries if hash_ not in live]
+        for hash_ in stale:
+            await self._voices.forget(hash_)
+        if stale:
+            await self.sync_sounds()
+        self._log.info("kullanılmayan anonslar silindi", count=len(stale), actor=actor)
+        return {"ok": True, "removed": len(stale)}
+
+    async def _ensure_time_voices(self, settings: dict[str, Any]) -> None:
+        """Zil sonrası iki anonsun sesini sıraya alır.
+
+        Gruplardan bağımsızdır: hiç grup olmasa da zil çalar ve arkasından
+        anons gitmesi beklenir.
+        """
+        for kind in TIME_KINDS:
+            text = after_text(settings, kind)
+            if text:
+                await self._voices.require(text)
 
     async def _ensure_group_voices(self, settings: dict[str, Any]) -> None:
         for group in await self.groups():
@@ -385,6 +557,7 @@ class BellService:
         taranır.
         """
         settings = await self.settings()
+        await self._ensure_time_voices(settings)
         await self._ensure_group_voices(settings)
         return await self._voices.sweep()
 
@@ -408,6 +581,21 @@ class BellService:
             group["hash"] = self._voices.key(text)
             group["voice"] = _voice_state(entries, group["hash"])
 
+        # Zil sonrası anonsların durumu da ekranda görünür. Görünmezse
+        # kullanıcı zilin arkasından ses gelmediğinde sebebi hiçbir yerde
+        # okuyamaz — "üretiliyor" beklemek, "hata" müdahale demektir.
+        after: dict[str, Any] = {}
+        for kind in TIME_KINDS:
+            text = after_text(settings, kind)
+            if not text:
+                after[kind] = {"text": "", "hash": "",
+                               "voice": {"state": "off", "detail": "anons istenmiyor",
+                                         "seconds": 0}}
+                continue
+            hash_ = self._voices.key(text)
+            after[kind] = {"text": text, "hash": hash_,
+                           "voice": _voice_state(entries, hash_)}
+
         audio_state = self._audio.available() if self._audio else {"ready": False}
         scheduler_state = self._scheduler.state() if self._scheduler else {"running": False}
         agent = await self._bridge.try_status()
@@ -418,6 +606,11 @@ class BellService:
 
         total_times = sum(len(items) for items in times.values())
         missing = [group["name"] for group in groups if group["voice"]["state"] != "ready"]
+        # Kullanılan türün anonsu hazır değilse ekran bunu da söylemeli.
+        used_kinds = {time_kind(entry.get("kind"))
+                      for day in times.values() for entry in day}
+        missing += [f"zil sonrası ({kind})" for kind in sorted(used_kinds)
+                    if after[kind]["voice"]["state"] not in ("ready", "off")]
 
         return {
             "settings": settings,
@@ -428,6 +621,7 @@ class BellService:
             "audio": audio_state,
             "scheduler": scheduler_state,
             "agent": agent,
+            "afterTexts": after,
             "queue": self._voices.state(),
             "log": [dict(row) for row in rows],
             # Zil çalabilir mi? Ajan, saat ve ana şalter — üçü de gerekli.
@@ -462,15 +656,16 @@ class BellService:
         for day, entries in (await self.times()).items():
             for entry in entries:
                 early_day, early_time = _shift(day, entry["time"], lead)
-                label = f"{entry['label'] or 'zil'} {entry['time']}"
+                kind = time_kind(entry.get("kind"))
+                label = f"{entry['label'] or kind} {entry['time']}"
                 triggers.append(Trigger(
                     day=early_day, time=early_time, label=f"{label} · gönderim",
-                    payload={"phase": "dispatch", "at": entry["time"]},
+                    payload={"phase": "dispatch", "at": entry["time"], "kind": kind},
                 ))
                 if settings["playLocally"]:
                     triggers.append(Trigger(
                         day=day, time=entry["time"], label=f"{label} · yerel",
-                        payload={"phase": "local", "at": entry["time"]},
+                        payload={"phase": "local", "at": entry["time"], "kind": kind},
                     ))
 
         count = self._scheduler.set_plan("bell", triggers, self._on_trigger)
@@ -479,7 +674,8 @@ class BellService:
     async def _on_trigger(self, trigger: Any) -> None:
         payload = getattr(trigger, "payload", {}) or {}
         settings = await self.settings()
-        items = await self._bell_items(settings)
+        kind = time_kind(payload.get("kind"))
+        items = await self._bell_items(settings, kind)
         if not items:
             return
 
@@ -492,19 +688,51 @@ class BellService:
         await self._record("zil", "plan", ", ".join(item["name"] for item in items),
                            result["ok"], f"ajan · {result['detail']}")
 
-    async def _bell_items(self, settings: dict[str, Any]) -> list[dict[str, Any]]:
-        """Otomatik zilin çalacağı adımlar — YALNIZ zil sesi.
+    async def _bell_items(self, settings: dict[str, Any],
+                          kind: str = DEFAULT_TIME_KIND) -> list[dict[str, Any]]:
+        """Otomatik zilin çalacağı adımlar: ZİL, arkasından ANONS.
 
-        Buraya bir zamanlar zilin arkasına "derse geçiniz" anonsu ekleniyordu;
-        artık eklenmiyor. Liste dönmesi korunuyor: köprü komutu her hâlükârda
-        adım dizisi bekliyor ve zil sesi bulunamazsa boş dönmek gerekiyor.
+        Ders zilinin arkasından "İyi dersler.", teneffüs zilinin arkasından
+        "İyi teneffüsler." gider. Adımlar sırayla çalınır — köprü komutu bir
+        DİZİ taşır, ajan onları üst üste bindirmeden çalar ve yerel yol da
+        `await` ile birini bitirmeden ötekine geçmez.
+
+        ANONS ZİLİ SUSTURAMAZ. Sesi henüz üretilmemişse (Vertex sırası
+        bitmemiş, kota dolmuş, taze kurulum) zil YALNIZ BAŞINA çalar ve sebep
+        günlüğe yazılır. Tersi — anons yok diye zili de çalmamak — okulu
+        sessiz bırakırdı ve bu, eksik bir cümleden çok daha büyük bir arıza.
         """
         bell = self._resolve_sound(settings["bellSound"])
         if bell is None:
             await self._record("zil", "plan", settings["bellSound"], False,
                                "Zil sesi dosyası bulunamadı.")
             return []
-        return [_item("zil", bell, settings["volume"])]
+
+        items = [_item("zil", bell, settings["volume"])]
+        announcement, reason = await self._after_item(settings, kind)
+        if announcement is not None:
+            items.append(announcement)
+        elif reason:
+            await self._record("anons", "plan", after_text(settings, kind), False, reason)
+        return items
+
+    async def _after_item(self, settings: dict[str, Any],
+                          kind: str) -> tuple[dict[str, Any] | None, str]:
+        """Zil sonrası anonsun çalma adımı. Hazır değilse `(None, sebep)`."""
+        text = after_text(settings, kind)
+        if not text:
+            return None, ""          # kullanıcı metni boşalttı: anons istemiyor
+        name = await self._voices.ready_file(self._voices.key(text))
+        if not name:
+            entry = await self._voices.entry(self._voices.key(text))
+            detail = str(entry["error"]) if entry and entry["error"] \
+                else "Anons sesi henüz üretilmedi."
+            return None, detail
+        path = self._sounds_path() / name
+        try:
+            return _item("anons", path, settings["volume"]), ""
+        except OSError as failure:
+            return None, f"Anons dosyası okunamadı: {failure}"
 
     # ================================================================= çalma
 
@@ -707,10 +935,13 @@ class BellService:
         if bell is not None:
             wanted[content_id(bell.read_bytes())] = bell
 
-        # Yalnız grup çağrılarının anonsu. Zilden sonraki anons kalktığı için
-        # o ses ajanın yerelinde de durmaz; `sync_sounds` onu köprüden siler.
-        texts = [call_text(settings, group["name"], group["kind"])
-                 for group in await self.groups()]
+        # ZİL SONRASI ANONSLAR DA LİSTEDE. Buraya konmazlarsa `sync_sounds`
+        # onları köprüde "gereksiz" sayıp sildirir; zil çalar, arkasından
+        # sessizlik gelir ve sebebi hiçbir ekranda görünmez.
+        texts = [after_text(settings, kind) for kind in TIME_KINDS]
+        texts += [call_text(settings, group["name"], group["kind"])
+                  for group in await self.groups()]
+        texts = [text for text in texts if text]
 
         root = self._sounds_path()
         for text in texts:
@@ -789,6 +1020,7 @@ class BellService:
         de arka planda dönen bir görevle yarışmak zorunda kalmaz.
         """
         settings = await self.settings()
+        await self._ensure_time_voices(settings)
         await self._ensure_group_voices(settings)
         return await self.reschedule()
 

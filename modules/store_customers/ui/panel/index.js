@@ -79,6 +79,7 @@ const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', source: 'customers', scannedAt: '', truncated: false,
   unknownSegments: 0, statsError: '', statsTruncated: false,
+  scan: { state: 'empty', running: false, at: '' },
   selection: [], segment: null, loaded: false,
   reference: { groups: [], channels: [], segments: [] },
   reviews: {
@@ -93,6 +94,10 @@ let toast = null;
 let report = null;
 let busy = false;
 let state = { ...EMPTY_STATE, reviews: { ...EMPTY_STATE.reviews } };
+//: Tarama sürüyorken ekranın kendini tazeleyeceği an. Tek bir zamanlayıcı
+//: tutulur; kapanışta iptal edilir, yoksa panel kapandıktan sonra istek atar.
+let scanTimer = null;
+const SCAN_POLL_MS = 15_000;
 
 const nodes = {};
 const closers = [];        // cleanup'ta çağrılacak gerçek kaynak bırakıcılar
@@ -142,15 +147,26 @@ function segmentBadge(row) {
   return chip;
 }
 
+// Tarama (nüfus + sipariş toplulaştırması) mağazayı sayfa sayfa gezdiği için
+// dakikalar sürebiliyor ve İSTEĞİN İÇİNDE koşmuyor. Liste hemen gelir, taramaya
+// bağlı sütunlar sonradan dolar. Durum satırı bunu SÖYLER; sessiz boş sütun,
+// kullanıcıya "bu müşteri hiç alışveriş yapmamış" diye okunurdu.
+function scanNote() {
+  const scan = state.scan || {};
+  if (scan.state === 'running') return ' · segment taraması sürüyor';
+  if (scan.state === 'error') return ' · segment taraması yapılamadı';
+  return '';
+}
+
 function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
   const pages = Math.max(1, state.pages);
   if (state.source === 'segment') {
     const when = state.scannedAt ? ago(state.scannedAt) : 'az önce';
     return `Tarama görünümü · ${num(state.total)} müşteri · sayfa ${state.page}/${pages} `
-      + `· tarama ${when}` + (state.truncated ? ' · TAVANA DAYANDI' : '');
+      + `· tarama ${when}` + (state.truncated ? ' · TAVANA DAYANDI' : '') + scanNote();
   }
-  return `Bağlı · ${num(state.total)} müşteri · sayfa ${state.page}/${pages}`;
+  return `Bağlı · ${num(state.total)} müşteri · sayfa ${state.page}/${pages}` + scanNote();
 }
 
 // -------------------------------------------------------------------- veri
@@ -219,12 +235,28 @@ async function refresh({ page = state.page, size = state.size, refreshScan = fal
     unknownSegments: payload.unknownSegments || 0,
     statsError: payload.statsError || '',
     statsTruncated: Boolean(payload.statsTruncated),
+    scan: payload.scan || { state: 'empty', running: false, at: '' },
     selection: [],
     loaded: true,
   };
   renderTable();
   nodes.pager.update({ total: state.total, page: state.page, size: state.size });
   nodes.status?.set(statusText(), !state.connected);
+  scheduleScanFollowUp();
+}
+
+// Tarama bitince ekranı BİR KEZ tazeler. Sürekli yoklamıyoruz: tarama bitmişse
+// ikinci istek zaten hazır sonucu alır, bitmemişse yeni bir tarama başlatmaz —
+// ama süresiz yoklamak mağazanın istek bütçesini boşuna yerdi.
+function scheduleScanFollowUp() {
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  if (!state.scan?.running) return;
+  scanTimer = setTimeout(() => {
+    scanTimer = null;
+    if (!state.loaded) return;          // ekran kapandı
+    refresh();
+    loadOverview();
+  }, SCAN_POLL_MS);
 }
 
 async function loadReference() {
@@ -1646,10 +1678,12 @@ export function mount(root, ctx) {
   nodes.status.set('Müşteriler alınıyor…');
   // Referans listeler ÖNCE gelir: grup açılırı dolmadan liste çekmek,
   // kullanıcının seçtiği grubu kaybettiriyordu.
-  loadReference().then(() => refresh());
-  loadOverview();
+  // Liste ÖNCE gelir, KPI arkasından. İkisi aynı arka plan taramasını okuyor;
+  // eş zamanlı çağırmak mağazaya iki ayrı tam tarama başlatıyordu (arıza).
+  loadReference().then(() => refresh()).then(() => loadOverview());
 
   return () => {
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
     nodes.filters?.destroy();          // arama alanı bekleyen debounce tutar
     nodes.reviewFilters?.destroy();
     settingsForms.forEach((form) => form.destroy());

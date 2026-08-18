@@ -1,0 +1,139 @@
+# Kantin Cihazları — kiosk eşlemesinin yönetim ekranı.
+#
+# NE YÖNETİR: kantindeki KIOSK cihazları. Kiosk kaydı açılır, adlandırılır,
+# tek kullanımlık eşleme kodu üretilir ve eşleme iptal edilir.
+#
+# NE YÖNETMEZ — VE BU EKRANIN EN ÖNEMLİ SINIRIDIR: sahadaki kasa tabletini.
+# O cihaz kantinde `devices` tablosunda duruyor, paylaşılan
+# `canteen.enrollment_secret` ile `POST /api/auth/device` çağırarak token
+# almış durumda ve o akış AYNEN ÇALIŞMAYA DEVAM EDİYOR. Bu ekran o satırı ne
+# okur ne yazar; `devices` tablosuna hiçbir uçtan dokunulmaz. Yeni mantık
+# eskisinin YERİNE değil, YANINA kuruldu.
+#
+# NEDEN YENİ MANTIK: paylaşılan sır bir kez sızdığında sınırsız cihaz kaydeder
+# ve sızdığı ANLAŞILMAZ — yeni kayıt meşru kayıttan ayırt edilemez. Ayrıca
+# kantinde bugün İPTAL UCU HİÇ YOK: kaydolan bir cihazın erişimi hiçbir
+# ekrandan kesilemiyor. Kiosk akışı ikisini de kapatır.
+#
+# Desen BLD KDS ve KM Cihaz Eşle ekranlarıyla aynıdır (8 haneli rakam kod,
+# hash'lenmiş saklama, tek kullanım, atomik yakma, tek tip ret cümlesi) ama
+# KENDİ mantığıdır: kantinin kendi `kiosks` tablosu, kendi uçları, kendi
+# izinleri.
+#
+# Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
+
+id: bbd_canteen_devices
+name: "Kantin Cihazları"
+description: "Kantin kiosk cihazlarının eşlenmesi: kayıt, tek kullanımlık eşleme kodu ve iptal."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre
+# kurulur.
+depends: [bbd_canteen_api]
+
+provides: []
+
+consumes:
+  - capability: canteen.api
+    reason: >
+      Kiosk kaydı, eşleme kodu ve iptal kantin sunucusundadır ve oraya yalnız
+      geçitten gidilir (K4). Cihaz token'ı, yeniden deneme ve hata biçimi tek
+      yerde durur; her ekranın kendi HTTP istemcisini yazması aynı hatayı
+      birden çok yerde tekrarlardı.
+  - capability: printer
+    optional: true
+    reason: >
+      Eşleme kodu kâğıda basılıp kantine götürülebilsin diye. Kod telefonla
+      okunurken yanlış anlaşılıyor ve tek kullanımlık olduğu için yanlış
+      okunan kod ikinci bir üretim demek. Yazıcı yoksa ekran TÜMÜYLE çalışır
+      (K7); yanıt `printer_available: false` döner ve panel baskı düğmesini
+      hiç açmaz.
+
+events:
+  publishes:
+    - name: canteen.device_enrolled
+      payload: "{kioskId, name, platform, appVersion, pairedAt}"
+      description: >
+        Bir kiosk eşleme kodunu kullandı ve kantine kaydoldu. Olay
+        `bbd_canteen_api` manifestinde ilan edilmişti ama HİÇ yayınlanmıyordu:
+        geçit kendi kaydını sessizce yapıyor ve kimseye haber vermiyordu.
+        İlk gerçek yayıncı burasıdır — eşlemeyi Kontrol Merkezi başlatmıyor
+        (kodu cihaz giriyor), bu yüzden olay listeyi okurken FARK EDİLEREK
+        yayınlanır: `paired_at` daha önce boşken dolduysa.
+    - name: canteen.kiosk_revoked
+      payload: "{kioskId, name, reason, actor}"
+      description: >
+        Bir kiosk bu ekrandan iptal edildi; token silindi ve cihaz bir daha
+        bağlanamaz.
+  subscribes: []
+
+http:
+  prefix: /api/bbd_canteen_devices
+  router: backend.api.routes:router
+  tags: ["bbd_canteen_devices"]
+  requires: [bbd_canteen_devices.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Kantin Cihazları"
+    icon: tablet
+    group: "BBD"
+    order: 55
+    requires: [bbd_canteen_devices.view]
+
+# Katalog ve rol matrisi: docs/permissions.md
+#
+# ÜÇ ANAHTAR — `bld_kds` ile aynı ayrım, aynı gerekçe:
+#
+#   .view     okuma
+#   .manage   kiosk açma/adlandırma ve EŞLEME KODU ÜRETME
+#   .devices  YIKICI: eşlemeyi iptal etme
+#
+# Kod üretmek ile iptal etmek neden ayrı: iptal edilen kiosk kantinde satış
+# yapamaz ve düzeltmesi yalnız merkezden gelir. Aynı anahtarda toplansalardı,
+# kod üretebilen herkes kasayı durdurabilirdi.
+#
+# `bld_staff` HİÇBİRİNDE YOK — 17.08.2026 kullanıcı kararı: "BLD personeli BBD
+# ekranlarını da göremesin". `accountant` ve `org_staff` de yok: bu ekran mali
+# bir kayıt tutmuyor ve kurum tarafının işi olan zil/baskı/rehber ile ilgisi
+# yok; kantindeki donanımı yönetiyor.
+permissions:
+  - key: bbd_canteen_devices.view
+    description: "Kiosk listesini, eşleme durumunu ve yerel işlem izini görüntüleme."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_canteen_devices.manage
+    description: >
+      Kiosk kaydı açma, adlandırma ve TEK KULLANIMLIK eşleme kodu üretme.
+      İPTALİ İÇERMEZ — o `bbd_canteen_devices.devices`tedir.
+    default_roles: [admin, bbd_staff]
+  - key: bbd_canteen_devices.devices
+    description: >
+      YIKICI: kiosk eşlemesinin iptali. Bu yetkiyi taşıyan kişi kantindeki bir
+      cihazı satış yapamaz hâle getirir — token silinir, cihaz eşleme ekranına
+      düşer ve sahada yeni kod girilene kadar HİÇ çalışmaz; iptal edilen kiosk
+      yeni kod da alamaz. Kayıt silinmez, karar geri alınamaz.
+    default_roles: [admin, bbd_staff]
+    destructive: true
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+# Bağımlılık ilan edilir, kopyalanmaz (K11). Yeni PyPI paketi gerekmiyor.
+dependencies:
+  python: []
+  system: []
+  capabilities_note: >
+    Kantin erişimi `canteen.api` yeteneğinden, baskı `printer` platform
+    yeteneğinden gelir; ikisi de burada TEKRAR EDİLMEZ (consumes bloğunda
+    ilan edilir).
+
+tasks: []

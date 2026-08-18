@@ -53,8 +53,8 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, blockedButton, confirmWithReason, h, loadStyles, money, num, stampIso,
-  toaster, todayIso,
+  button, blockedButton, confirmWithPin, confirmWithReason, h, loadStyles, money, num,
+  stampIso, toaster, todayIso,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
@@ -76,6 +76,10 @@ const REASON_MAX = 500;
 
 const EMPTY_STATE = {
   tab: 'requests',
+  //: Şube listesi — abonelik formundaki seçicinin kaynağı. BOŞ KALIRSA FORM
+  //: AÇILMAZ: `location_id` sunucuda zorunlu ve sıfır göndermek, panelin uzun
+  //: süre yaptığı ve her denemeyi 422'ye çeviren şeydi.
+  locations: { items: [], defaultId: 0, loaded: false, error: '' },
   // BAĞLANTI: `ok:true` ile gelen `connected:false` (K7). Ayrı tutulur çünkü
   // "kayıt yok" ile "sunucuya ulaşılamıyor" aynı ekranda aynı görünmemeli.
   // `missing` üçüncü bir hâldir: uç sunucuya HENÜZ DAĞITILMADI ve bu arıza
@@ -88,7 +92,7 @@ const EMPTY_STATE = {
   requests: { rows: [], meta: {}, page: 1, loaded: false, error: '' },
   pending: { rows: [], loaded: false },
   list: { rows: [], meta: {}, page: 1, loaded: false, error: '', status: 'active' },
-  picker: { rows: [], loaded: false, selected: null },
+  picker: { rows: [], meta: {}, q: '', page: 1, loaded: false, selected: null },
   contracts: { items: [], openId: 0, signedId: 0, loaded: false, error: '' },
   payments: { items: [], meta: {}, loaded: false, error: '' },
   drawer: null,
@@ -226,8 +230,24 @@ function priceText(kurus) {
 /**
  * Yazma sonucunu bildirir. KURU PROVA "yapıldı" DEMEZ: bir kurulum provayı
  * ayardan geri açarsa ekran yanlış bilgi vermemeli.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * UYARILARI DA BURADAN GÖSTERİYOR — VE BU, KAPININ TEK YERE TAŞINMASIDIR (I3).
+ *
+ * `showWarnings()` ayrı bir çağrıydı ve on üç yazma akışının YALNIZ DÖRDÜNDE
+ * çağrılıyordu. Kalan dokuzunda sunucunun söyledikleri sessizce düşüyordu:
+ * "fatura kesilmedi", "notunuz kaydedilmedi", "iptal sonrasına üretilmiş
+ * siparişler duruyor" gibi cümleler hiç görünmüyordu. Yeni bir yazma akışı
+ * eklendiğinde de listeye eklenmesi gereken ikinci bir çağrıydı — yani
+ * unutulmaya açıktı.
+ *
+ * Artık her yazma sonucu buradan geçiyor ve uyarılar oradan çıkıyor. Uyarılar
+ * KURU PROVADA DA gösteriliyor: prova "bu yazma şu uyarıyı üretecek" demektir
+ * ve tam da o yüzden yapılıyor.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 function announce(result, message) {
+  showWarnings(result);
   if (result?.dry_run) {
     toast('KURU PROVA: sunucu denetimleri koştu ama HİÇBİR ŞEY YAZILMADI.', 'warn');
     return;
@@ -251,6 +271,47 @@ const WARNING_TEXT = {
     + `EDİLMEDİ (${(warning.dates || []).join(', ')} · sipariş `
     + `${(warning.order_ids || []).map((id) => `#${id}`).join(', ')}). `
     + 'Her birine tek tek karar verin; iptalleri Sipariş Yönetimi ekranından yapılır.',
+  /*
+   * ─────────────────────────────────────────────────────────────────────
+   * AŞAĞIDAKİLER SONRADAN EKLENDİ (I3) — SÖZLÜK BEŞ KODU TANIMIYORDU.
+   *
+   * Tanınmayan kod `Sunucu uyarısı: invoice_not_created` diye ham hâliyle
+   * geçiyordu; yani yönetici ne olduğunu ne de ne yapması gerektiğini
+   * öğreniyordu. En pahalısı `invoice_not_created` idi: fatura onay kutusu
+   * işaretlenmiş, belge kesilmemiş ve ekran bunu İNGİLİZCE bir kodla
+   * söylüyordu.
+   * ─────────────────────────────────────────────────────────────────────
+   */
+  generated_orders_after_cancel: (warning) =>
+    'İPTAL TARİHİNDEN SONRAYA ÜRETİLMİŞ siparişler var ve OTOMATİK '
+    + `DÜŞÜRÜLMEDİ (${(warning.dates || []).join(', ')} · sipariş `
+    + `${(warning.order_ids || []).map((id) => `#${id}`).join(', ')}). `
+    + 'Abonelik iptal edildi ama o siparişler duruyor; düşürmek (ve iade) '
+    + 'Sipariş Yönetimi ekranının ayrı yetkisini ister.',
+  period_end_derived: (warning) =>
+    `Yazdığınız dönem bitişi KULLANILMADI; sunucu ${warning.period_end || '—'} `
+    + 'gününü yazdı. Bu, sunucudaki göçün henüz uygulanmadığını gösterir — '
+    + 'dönem uzunluğu şimdilik 30 güne sabitleniyor.',
+  due_date_derived: (warning) =>
+    `Yazdığınız son ödeme günü KULLANILMADI; sunucu ${warning.due_date || '—'} `
+    + '(dönem başı) yazdı. Sunucudaki göç uygulanınca ayrı bir ödeme günü '
+    + 'girilebilecek.',
+  note_not_stored: () =>
+    'Yazdığınız NOT KAYDEDİLMEDİ: sunucudaki göç henüz uygulanmamış. Notu '
+    + 'gerekçe alanına yazarsanız denetim izinde kalır.',
+  invoice_not_created: (warning) =>
+    'FATURA BELGESİ ÜRETİLMEDİ. Tahsilat kaydedildi ama belge kesilemedi'
+    + `${warning.reason ? ` (${warning.reason})` : ''}. Belgeyi Fatura `
+    + 'ekranından elle kesebilirsiniz; tahsilatı tekrar işaretlemeyin.',
+  invoice_already_issued: (warning) =>
+    `Bu dönemin belgesi ZATEN KESİLMİŞ (${warning.invoice_no || `#${warning.invoice_id}`}). `
+    + 'Yenisi üretilmedi; ikinci bir belge aynı hizmeti iki kez faturalardı.',
+  pause_scheduled: (warning) =>
+    `Duraklatma İLERİ TARİHLİ (${warning.starts_on || '—'}): abonelik o güne `
+    + 'kadar ÜRETMEYE DEVAM EDER ve durumu "Aktif" görünür. Aralıktaki günler '
+    + 'yine de üretilmez.',
+  netgsm_header_applies_next_request: () =>
+    'Yeni gönderici başlığı bir sonraki gönderimden itibaren geçerli.',
 };
 
 function showWarnings(result) {
@@ -471,6 +532,35 @@ function paintRequests() {
   nodes.status.set(statusText(), !state.link.connected);
 }
 
+/**
+ * Şube listesi — abonelik formundaki seçicinin kaynağı.
+ *
+ * KİMLİK EKRANA GÖMÜLMEZ: kurulumdan kuruluma değişir ve yanlış bir sabit
+ * siparişleri başka bir mutfağa yollar. Liste okunamazsa form AÇILMAZ ve
+ * sebebi yazılır; sessizce sıfır göndermek, her denemeyi 422'ye çeviren eski
+ * arızayı geri getirmek olurdu.
+ */
+async function loadLocations() {
+  try {
+    const payload = await call(`${BASE}/locations`);
+    state.locations.items = payload?.items || [];
+    state.locations.defaultId = Number(payload?.default_location_id) || 0;
+    state.locations.error = payload?.connected === false ? (payload.error || '') : '';
+  } catch (failure) {
+    state.locations.items = [];
+    state.locations.error = failure.message;
+  }
+  state.locations.loaded = true;
+}
+
+/** Şube seçeneği listesi — kapalı vitrinler işaretli ama LİSTEDE. */
+function locationOptions() {
+  return state.locations.items.map((row) => ({
+    value: String(row.id),
+    label: row.enabled ? row.name : `${row.name} (kapalı)`,
+  }));
+}
+
 async function loadPending() {
   try {
     const payload = await call(`${BASE}/subscriptions?status=pending&per_page=100`);
@@ -676,11 +766,38 @@ function convertCard(record) {
     + 'parola ve e-posta doğrulaması ister. Kimliği TastyIgniter yönetiminden '
     + 'ya da Müşteriler ekranından öğrenip buraya yazın.'));
 
+  /*
+   * ŞUBE LİSTESİ OKUNAMADIYSA FORM HİÇ ÇİZİLMEZ (I1).
+   *
+   * `location_id` sunucuda zorunlu. Seçenek yokken formu açmak, kullanıcıya
+   * dolduracağı ama HER SEFERİNDE 422 alacağı bir form göstermek olurdu —
+   * panelin uzun süre yaptığı tam olarak buydu.
+   */
+  if (!state.locations.items.length) {
+    box.append(alertBox(
+      'Şube listesi okunamadı; abonelik açılamaz. BLD zorunlu olarak bir şube '
+      + `istiyor.${state.locations.error ? ` Sebep: ${state.locations.error}` : ''} `
+      + 'Bağlantı geri geldiğinde [Yenile] ile tazeleyin.', 'bad'));
+    return card('Aboneliğe çevir', box);
+  }
+
   const days = weekdayPicker([1, 2, 3, 4, 5]);
   const form = track(formGrid({
     fields: [
       { key: 'customer_id', label: 'Müşteri kimliği', type: 'number', required: true,
         hint: 'Sayı. Yanlış kimlik başka bir kuruma abonelik açar.' },
+      /*
+       * ŞUBE SEÇİCİ — BU ALAN UZUN SÜRE HİÇ YOKTU (I1).
+       *
+       * Sunucu `location_id` alanını zorunlu tutuyor; panel sabit sıfır
+       * gönderiyor ve alan gövdeye hiç konmuyordu. Sonuç: HER dönüşüm
+       * denemesi 422 alıyor ve abonelik Kontrol Merkezi'nden HİÇ
+       * AÇILAMIYORDU.
+       */
+      { key: 'location_id', label: 'Şube', type: 'select', required: true,
+        options: locationOptions(),
+        hint: 'Siparişler bu şubenin mutfağında üretilir. Yanlış şube, yemeğin '
+          + 'başka bir mutfaktan çıkması demektir.' },
       { key: 'start_date', label: 'Başlangıç günü', type: 'date', required: true },
       { key: 'end_date', label: 'Bitiş günü (boş = süresiz)', type: 'date' },
       { key: 'delivery_type', label: 'Teslimat', type: 'select',
@@ -704,6 +821,10 @@ function convertCard(record) {
     ],
     value: {
       customer_id: null,
+      // Tek vitrinli kurulumda fazladan bir tıklamayı kaldırır; birden çok
+      // şube varsa yönetici yine bilinçli olarak seçer.
+      location_id: state.locations.defaultId
+        ? String(state.locations.defaultId) : '',
       start_date: record.start_date || todayIso(1),
       end_date: '',
       delivery_type: 'delivery',
@@ -743,6 +864,9 @@ function convertCard(record) {
 function subscriptionBlock(form, days) {
   const draft = form.draft();
   const block = {
+    // ŞUBE GÖVDEYE KOŞULSUZ KONUR: sunucu alanı `required` tutuyor ve
+    // koşullu bir anahtar, eksikliği 422'ye çeviriyordu.
+    location_id: Number(draft.location_id) || 0,
     start_date: draft.start_date || '',
     end_date: draft.end_date || '',
     delivery_type: draft.delivery_type || 'delivery',
@@ -754,7 +878,6 @@ function subscriptionBlock(form, days) {
     agreed_unit_price_kurus: draft.agreed_unit_price_kurus ?? null,
     lines: [],
     delivery_points: [],
-    location_id: 0,
   };
   if (draft.address_id) {
     block.delivery_points = [{
@@ -884,6 +1007,41 @@ const SUB_COLUMNS = [
   },
 ];
 
+/**
+ * Sekme açıklamaları — her durum kümesi için bir cümle.
+ *
+ * `waiting` ve `cancelled` SONRADAN EKLENDİ (I1/I3): ilki, sözleşme ya da
+ * ödeme bekleyen abonelikleri hiçbir sekmede göstermeyen boşluğu kapatıyor;
+ * ikincisi, iptal edilmiş aboneliklerin ekranın HİÇBİR YERİNDE
+ * listelenmemesini. İkisi de "veri kayboldu" gibi görünen, aslında yalnız
+ * sorgulanmayan kümelerdi.
+ */
+const LIST_HINTS = {
+  active: 'Aktif abonelikler her gece kendi servis günleri için sipariş üretir ve '
+    + 'siparişler mutfağa 07:00\'de düşer. Satıra tıklayınca kural, takvim, '
+    + 'üretim defteri ve fiyat geçmişi açılır.',
+  paused: 'Duraklatılmış abonelikler aralık boyunca sipariş ÜRETMEZ ama iptal '
+    + 'edilmiş değildir: aralık bitince ya da "Devam ettir" ile aynı fiyatla '
+    + 'sürer. Aralıktaki üretilmiş siparişler otomatik iptal edilmez.',
+  waiting: 'FİYAT, SÖZLEŞME YA DA ÖDEME BEKLEYENLER. Sözleşmesi imzalanmış ama '
+    + 'ilk dönem ödemesi gelmemiş abonelikler de buradadır ve sipariş '
+    + 'ÜRETMEZLER. Bu küme uzun süre hiçbir sekmede görünmüyordu.',
+  cancelled: 'İPTAL EDİLMİŞ abonelikler — SALT OKUNUR. Geri açılamazlar; '
+    + 'yeniden başlatmak yeni bir abonelik açmaktır. Liste, "bu müşteri neden '
+    + 'yemek almıyor" sorusunun cevabı için duruyor.',
+};
+
+/** Sekme → sunucuya gidecek durum süzgeci (virgüllü liste kabul edilir). */
+const LIST_STATUSES = {
+  active: 'active',
+  paused: 'paused',
+  // ÜÇ DURUM TEK SEKMEDE: yönetici için üçü de "henüz üretmiyor, birinin bir
+  // şey yapması bekleniyor" demek. Ayrı sekmeler, çoğu gün boş üç sekme
+  // olurdu.
+  waiting: 'pending,awaiting_contract,awaiting_payment',
+  cancelled: 'cancelled',
+};
+
 function showList(status) {
   state.list.status = status;
   state.list.loaded = false;
@@ -905,13 +1063,7 @@ function showList(status) {
   nodes.listFilters = filters;
   wrap.append(filters.node);
 
-  wrap.append(hintBox(status === 'active'
-    ? 'Aktif abonelikler her gece kendi servis günleri için sipariş üretir ve '
-      + 'siparişler mutfağa 07:00\'de düşer. Satıra tıklayınca kural, takvim, '
-      + 'üretim defteri ve fiyat geçmişi açılır.'
-    : 'Duraklatılmış abonelikler aralık boyunca sipariş ÜRETMEZ ama iptal '
-      + 'edilmiş değildir: aralık bitince ya da "Devam ettir" ile aynı fiyatla '
-      + 'sürer. Aralıktaki üretilmiş siparişler otomatik iptal edilmez.'));
+  wrap.append(hintBox(LIST_HINTS[status] || LIST_HINTS.active));
 
   nodes.listSlot = h('div');
   wrap.append(nodes.listSlot);
@@ -928,7 +1080,7 @@ function showList(status) {
 async function loadList() {
   const values = nodes.listFilters?.values() || {};
   const params = new URLSearchParams();
-  params.set('status', state.list.status);
+  params.set('status', LIST_STATUSES[state.list.status] || state.list.status);
   if (values.q) params.set('q', values.q);
   if (values.service_day) params.set('service_day', values.service_day);
   params.set('page', String(state.list.page));
@@ -1033,7 +1185,13 @@ async function loadSubscription(id) {
   }
   try {
     const payload = await call(
-      `${BASE}/audit?target_type=subscription&target_id=${id}&limit=200`);
+      // ÜÇ HEDEF BİRDEN (I3): fiyat taşıyan yazmalar `subscription`,
+      // `quote_request` ve `subscription_payment` hedeflerine dağılıyor.
+      // Yalnız `subscription` sorgulanınca kart İLK ANLAŞMAYI hiç
+      // göstermiyordu — yani modülün en çok reklam edilen özelliği,
+      // cevaplaması gereken ilk soruyu cevaplayamıyordu.
+      `${BASE}/audit?target_type=subscription,subscription_payment`
+      + `&target_id=${id}&limit=200`);
     state.drawer.audit = payload.items || [];
   } catch {
     state.drawer.audit = [];
@@ -1206,7 +1364,6 @@ async function submitRule(record, form, days) {
       body: { reason, ...changes },
     });
     announce(result, 'Kural güncellendi.');
-    showWarnings(result);
     await refreshDrawer();
   });
 }
@@ -1286,7 +1443,6 @@ async function submitStatus(action, ask) {
       body: { reason },
     });
     announce(result, 'Durum güncellendi.');
-    showWarnings(result);
     await refreshDrawer();
     await reloadActiveTab();
   });
@@ -1305,13 +1461,24 @@ function openPause() {
     fields: [
       { key: 'start_date', label: 'Duraklatma başlangıcı', type: 'date', required: true,
         hint: 'Bugünden geriye alınamaz: geçmiş bir günü duraklatmak üretilmiş '
-          + 'siparişi silmez, yalnız raporu bozar.' },
+          + 'siparişi silmez, yalnız raporu bozar. İLERİ TARİH SEÇİLİRSE '
+          + 'abonelik o güne kadar üretmeye devam eder.' },
       { key: 'end_date', label: 'Duraklatma bitişi', type: 'date', required: true },
       { key: 'pause_reason', label: 'Duraklama etiketi', type: 'text', maxLength: 255,
         placeholder: 'Kurum tatili',
         hint: 'Kaydın kendisine yazılır; denetim gerekçesinden ayrıdır.' },
     ],
-    value: { start_date: todayIso(1), end_date: '', pause_reason: '' },
+    /*
+     * VARSAYILAN ARTIK BUGÜN, YARIN DEĞİL (I2).
+     *
+     * Yarın varsayılanı, en sık yapılan hareketi en pahalı hataya
+     * bağlıyordu: sunucu durumu hemen `paused` yapıyor ve `runsOnDate()`
+     * ilk kontrolü `status !== active` olduğu için BUGÜNÜN üretimi de
+     * sessizce kesiliyordu. Sunucu tarafı düzeltildi (durum yalnız pencere
+     * gerçekten yürürlükteyken değişiyor) ama varsayılanın da "duraklat"
+     * denince akla gelen günü göstermesi gerekiyor: bugün.
+     */
+    value: { start_date: todayIso(), end_date: '', pause_reason: '' },
   }));
   box.append(form.node);
 
@@ -1338,7 +1505,6 @@ function openPause() {
             pause_reason: draft.pause_reason || '' },
         });
         announce(result, 'Abonelik duraklatıldı.');
-        showWarnings(result);
         nodes.pausePanel?.remove();
         await refreshDrawer();
         await reloadActiveTab();
@@ -1383,13 +1549,21 @@ function openCancel(record) {
         confirmLabel: 'İptal et',
       });
       if (!reason) return;
+      // İKİNCİ KAPI: PIN. Bu, abonelik alanındaki tek GERİ DÖNÜŞSÜZ işlem;
+      // iptal edilmiş abonelik aktifleştirilemez, ödemeyle geri açılamaz.
+      const pin = await confirmWithPin(nodes.root, {
+        title: 'PIN ile onayla',
+        description: `${record.customer_label} aboneliği KALICI OLARAK iptal `
+          + 'edilecek. Yeniden başlatmak yeni bir abonelik açmak demektir.',
+        confirmLabel: 'Aboneliği iptal et',
+      });
+      if (!pin) return;
       await withBusy('İptal gönderiliyor…', async () => {
         const result = await call(`${BASE}/subscriptions/${state.drawer.id}/cancel`, {
           method: 'POST',
-          body: { reason, effective_date: draft.effective_date },
+          body: { reason, pin, effective_date: draft.effective_date },
         });
         announce(result, 'Abonelik iptal edildi.');
-        showWarnings(result);
         nodes.cancelPanel?.remove();
         await refreshDrawer();
         await reloadActiveTab();
@@ -1828,21 +2002,67 @@ function showPicker(kind) {
       + 'olduğunu TEK İSTEKLE gösterir. Dönem listesi ve tahsilat için bir '
       + 'satır seçin.'));
 
+  // ARAMA ŞERİDİ: yüzden fazla abonelikte listeyi gözle taramak mümkün değil
+  // ve eski ekran zaten ilk 100'ü gösterip duruyordu.
+  const pickerFilters = track(filterBar({
+    fields: [
+      { kind: 'search', key: 'q', width: '260px', placeholder: 'Kurum, ad, telefon' },
+    ],
+    onChange: (values) => {
+      state.picker.q = values.q || '';
+      state.picker.page = 1;
+      loadPicker().then(() => paintPicker(kind));
+    },
+    actions: [button('Yenile', {
+      onClick: () => loadPicker().then(() => paintPicker(kind)),
+    })],
+  }));
+  wrap.append(pickerFilters.node);
+
   nodes.pickerSlot = h('div');
   nodes.detailSlot = h('div', 'bsu-stack');
   wrap.append(nodes.pickerSlot, nodes.detailSlot);
-  wrap.append(button('Yenile', { onClick: () => loadPicker().then(() => paintPicker(kind)) }));
+  nodes.pickerPager = pager({
+    total: 0, page: 1, size: state.prefs?.page_size || 25,
+    onChange: ({ page }) => {
+      state.picker.page = page;
+      loadPicker().then(() => paintPicker(kind));
+    },
+  });
+  wrap.append(nodes.pickerPager.node);
   nodes.body.append(wrap);
 
   if (state.picker.loaded) paintPicker(kind);
   else loadPicker().then(() => paintPicker(kind));
 }
 
+/**
+ * Sözleşme/ödeme sekmelerinin abonelik seçicisi.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ARAMA VE SAYFALAMA SONRADAN EKLENDİ (I3).
+ *
+ * Sabit `per_page=100` tek sayfaydı: 101. abonelikten sonrası seçilemiyordu
+ * ve ekran bunu SÖYLEMİYORDU — liste sessizce kesiliyor, aranan müşteri
+ * "yok" gibi görünüyordu. Yüz abonelik uzak bir sayı değil; kurumsal
+ * müşterili bir catering şirketinde bir yılın işi.
+ *
+ * İPTAL EDİLMİŞLER SEÇİCİDE YOK ve bu bilinçli: iptal edilmiş bir aboneliğe
+ * sözleşme gönderilemez, borç açılamaz. Onları görmek için "İptal edilmiş"
+ * sekmesi var.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 async function loadPicker() {
+  const params = new URLSearchParams();
+  params.set('status', 'pending,awaiting_contract,awaiting_payment,active,paused');
+  if (state.picker.q) params.set('q', state.picker.q);
+  params.set('page', String(state.picker.page || 1));
+  params.set('per_page', String(state.prefs?.page_size || 25));
   try {
-    const payload = await call(`${BASE}/subscriptions?per_page=100`);
+    const payload = await call(`${BASE}/subscriptions?${params.toString()}`);
     if (!linkOk(payload)) return;
     state.picker.rows = payload.items || [];
+    state.picker.meta = payload.meta || {};
     state.picker.loaded = true;
   } catch {
     state.picker.loaded = false;
@@ -1852,6 +2072,11 @@ async function loadPicker() {
 function paintPicker(kind) {
   if (!nodes.pickerSlot) return;
   nodes.pickerSlot.replaceChildren();
+  nodes.pickerPager?.update({
+    total: Number(state.picker.meta.total || 0),
+    page: Number(state.picker.meta.page || state.picker.page || 1),
+    size: Number(state.picker.meta.per_page || state.prefs?.page_size || 25),
+  });
 
   const warning = linkAlert('Abonelik listesi');
   if (warning) nodes.pickerSlot.append(warning);
@@ -1991,8 +2216,17 @@ function contractsBody(subscription) {
             return box2;
           }
           box2.append(writeButton('Yeniden gönder', {
-            title: 'Aynı bağlantıyı yeniden gönderir; YENİ TOKEN ÜRETİLMEZ',
-            onClick: () => submitResend(row, subscription),
+            title: 'AYNI bağlantıyı yeniden gönderir; süreye dokunmaz, '
+              + 'müşterinin elindeki SMS çalışmaya devam eder',
+            onClick: () => submitResend(row, subscription, false),
+          }));
+          // AYRI DÜĞME, AYRI SONUÇ. Tek düğmede birleştirilseydi "yeniden
+          // gönder"e basan herkes müşterinin elindeki bağlantıyı öldürürdü —
+          // eski ekranın sessizce yaptığı tam olarak buydu.
+          box2.append(writeButton('Yenile + gönder', {
+            variant: 'danger',
+            title: 'YENİ bağlantı üretir; müşterinin elindeki eski SMS geçersiz olur',
+            onClick: () => submitResend(row, subscription, true),
           }));
           box2.append(writeButton('İptal', {
             variant: 'danger',
@@ -2091,22 +2325,55 @@ async function submitContract(form, subscription) {
   });
 }
 
-async function submitResend(row, subscription) {
+/**
+ * Bağlantıyı yeniden gönderir.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `renew` VARSAYILAN OLARAK KAPALI — ESKİ EKRAN TERSİNİ YAPIYORDU (I2).
+ *
+ * Buradaki metin "yeni token ÜRETİLMEZ, eski SMS çalışmaya devam eder"
+ * diyordu ama gövde HER SEFERİNDE bir gün sayısı gönderiyordu. Belirteç bitiş
+ * anını da imzalıyor: süre tazelendiği anda müşterinin elindeki bağlantı
+ * ÖLÜYORDU. Yani ekran tam tersini vaat ediyor, müşteri de eski SMS'e
+ * tıkladığında geçersiz bir sayfa buluyordu.
+ *
+ * Artık iki ayrı düğme var ve ikisi de ne yaptığını yazıyor.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+async function submitResend(row, subscription, renew = false) {
   const reason = await askReason({
-    title: 'Bağlantıyı yeniden gönder',
-    description: 'AYNI bağlantı yeniden gönderilir ve süresi tazelenir; yeni bir '
-      + 'token ÜRETİLMEZ. Müşterinin elindeki eski SMS de çalışmaya devam eder, '
-      + 'yani "hangi linke tıklayacağım" sorusu doğmaz.',
-    confirmLabel: 'Yeniden gönder',
-    danger: false,
+    title: renew ? 'Yeni bağlantı üret ve gönder' : 'Bağlantıyı yeniden gönder',
+    description: renew
+      ? 'YENİ BİR BAĞLANTI ÜRETİLİR VE ESKİSİ ÖLÜR. Müşterinin elindeki SMS '
+        + `artık çalışmayacak; süre ${state.prefs?.expires_in_days || 7} güne `
+        + 'tazelenir. Yalnız eski bağlantı süresi dolduysa ya da sızdığından '
+        + 'şüpheleniyorsanız kullanın.'
+      : 'AYNI bağlantı yeniden gönderilir; süreye DOKUNULMAZ ve yeni bir token '
+        + 'ÜRETİLMEZ. Müşterinin elindeki eski SMS çalışmaya devam eder, yani '
+        + '"hangi linke tıklayacağım" sorusu doğmaz.',
+    confirmLabel: renew ? 'Yenile ve gönder' : 'Yeniden gönder',
+    danger: renew,
   });
   if (!reason) return;
   await withBusy('Yeniden gönderiliyor…', async () => {
     const result = await call(`${BASE}/contracts/${row.id}/resend`, {
       method: 'POST',
-      body: { reason, expires_in_days: state.prefs?.expires_in_days || 0 },
+      body: {
+        reason,
+        renew,
+        // YALNIZ YENİLERKEN ANLAMLI: `renew=false` iken sunucu bu alana hiç
+        // bakmıyor ve süre korunuyor.
+        expires_in_days: renew ? (state.prefs?.expires_in_days || 0) : 0,
+      },
     });
     announce(result, 'Bağlantı yeniden gönderildi.');
+    // SUNUCU CEVAP OKUNUR, İSTEK DEĞİL: süresi dolmuş bir bağlantıda sunucu
+    // süreyi zorunlu olarak tazeliyor ve `renews_link` bunu söylüyor. Ekran
+    // "eski link çalışmaya devam ediyor" derken sunucu onu öldürmüş olabilir.
+    if (result?.renews_link && !result?.dry_run) {
+      toast('YENİ BAĞLANTI ÜRETİLDİ: müşterinin elindeki eski SMS artık '
+        + 'geçersiz. Yeni mesajın ulaştığını doğrulayın.', 'warn');
+    }
     await loadContracts(subscription.id);
     paintContracts(subscription);
   });
@@ -2357,17 +2624,39 @@ function openMarkPaid(row, subscription) {
         confirmLabel: 'İşaretle',
       });
       if (!reason) return;
+      /*
+       * İKİNCİ KAPI: PIN (I4).
+       *
+       * Gerekçe "neden yapıldı" sorusunu denetim kaydına yazar; PIN
+       * "klavyenin başındaki kişi gerçekten o mu" sorusunu sorar. Bu bir
+       * PARA HAREKETİ ve geri alma ucu yok — açık bırakılmış bir oturumda
+       * gerekçe yazmak kimseyi durdurmaz. Asıl kapı sunucudadır
+       * (`confirm_pin`, K9); buradaki yalnız kullanıcıya sorar.
+       */
+      const pin = await confirmWithPin(nodes.root, {
+        title: 'PIN ile onayla',
+        description: `${money(row.amount_kurus)} tutarındaki tahsilat kaydedilecek. `
+          + 'Bu bir para hareketidir ve GERİ ALMA UCU YOKTUR.',
+        confirmLabel: 'Tahsilatı kaydet',
+      });
+      if (!pin) return;
       await withBusy('Tahsilat yazılıyor…', async () => {
         const result = await call(`${BASE}/payments/${row.id}/mark-paid`, {
           method: 'POST',
           body: {
             reason,
+            pin,
             method: draft.method,
             reference: draft.reference || '',
             create_invoice: Boolean(draft.create_invoice),
             subscription_id: subscription.id,
           },
         });
+        // FATURA GERÇEKTEN KESİLDİYSE NUMARASI YAZILIR; kesilmediyse sebebi
+        // `warnings` içinde geliyor ve `announce()` onu ayrı bir satırda
+        // gösteriyor. Eskiden ikisi de görünmüyordu: `invoice_id` daima
+        // `null` dönüyor ve uyarı `data` içine gömülü olduğu için hiçbir
+        // ekrana ulaşmıyordu.
         announce(result, result.invoice_no
           ? `Tahsilat kaydedildi · fatura ${result.invoice_no}`
           : 'Tahsilat kaydedildi.');
@@ -2394,7 +2683,7 @@ function statusText() {
     parts.push(`${num(state.requests.rows.length)} talep sayfada`
       + ` · toplam ${num(state.requests.meta.total || 0)}`);
     parts.push(`${num(state.pending.rows.length)} abonelik fiyat/sözleşme bekliyor`);
-  } else if (state.tab === 'active' || state.tab === 'paused') {
+  } else if (LIST_STATUSES[state.tab]) {
     parts.push(`sayfada ${num(state.list.rows.length)}`
       + ` · toplam ${num(state.list.meta.total || 0)}`);
   }
@@ -2416,8 +2705,10 @@ export function mount(root, ctx) {
   nodes.tabs = tabBar([
     // TALEPLER İLK SEKME: akış orada başlıyor ve kuyruk bekleyen iştir.
     { key: 'requests', label: 'Talepler' },
+    { key: 'waiting', label: 'Bekleyenler' },
     { key: 'active', label: 'Aktif' },
     { key: 'paused', label: 'Duraklatılmış' },
+    { key: 'cancelled', label: 'İptal edilmiş' },
     { key: 'contracts', label: 'Sözleşmeler' },
     { key: 'payments', label: 'Ödemeler' },
   ], 'requests', (key) => showTab(key));
@@ -2439,8 +2730,10 @@ export function mount(root, ctx) {
     ({
       requests: () => { showRequests(); loadRequests().then(paintRequests);
         loadPending().then(paintPending); },
+      waiting: () => showList('waiting'),
       active: () => showList('active'),
       paused: () => showList('paused'),
+      cancelled: () => showList('cancelled'),
       contracts: () => showPicker('contracts'),
       payments: () => showPicker('payments'),
     }[key] || (() => showRequests()))();
@@ -2459,6 +2752,14 @@ export function mount(root, ctx) {
       state.contract = payload.contract;
       state.prefs = payload.prefs;
       state.limits = payload.limits;
+      /*
+       * ŞUBE LİSTESİ AÇILIŞTA OKUNUR VE ÖNBELLEKLİDİR (geçit L1).
+       *
+       * Formun içinden okunsaydı her talep açılışında bir istek daha giderdi;
+       * abonelik açma formu ise kuyruktaki her talebe tıklandığında çiziliyor.
+       * Liste bu panelden yazılmıyor ve saatte bir değişmiyor.
+       */
+      await loadLocations();
     } catch (failure) {
       // Sözleşme ucu ağa çıkmıyor; buraya düşmek çekirdeğin kendisiyle ilgili
       // bir sorundur ve ekranın geri kalanı yine de çizilmeli.

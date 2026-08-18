@@ -67,11 +67,16 @@ async function load() {
     });
     const meta = data.meta || {};
     const snapshotBad = Boolean(meta.snapshotErrors?.length);
+    // Eksik veri SESSİZ KALMAZ: aralık 400 günde kırpıldıysa ya da bir gün
+    // kantinin satır sınırını doldurduysa `meta.warnings` bunu söyler ve
+    // şeride yazılır. Eskiden ikisi de görünmeden oluyordu.
+    const warnings = meta.warnings || [];
     setStatus(
       `${meta.days} gün · tamamı kantinden canlı okundu`
       + (meta.errors?.length ? ` · ${meta.errors.length} gün okunamadı` : '')
-      + (snapshotBad ? ' · öğrenci/ürün listesi okunamadı, bazı kırılımlar eksik' : ''),
-      Boolean(meta.errors?.length) || snapshotBad);
+      + (snapshotBad ? ' · öğrenci/ürün listesi okunamadı, bazı kırılımlar eksik' : '')
+      + (warnings.length ? ` · ${warnings.join(' · ')}` : ''),
+      Boolean(meta.errors?.length) || snapshotBad || warnings.length > 0);
   } catch (error) {
     data = null;
     setStatus(`Rapor alınamadı: ${error.message}`, true);
@@ -452,22 +457,80 @@ async function showStudent(row) {
         label: item.name, value: item.total, display: `${item.qty} adet · ${money(item.total)}`,
       })), { max: 15 })));
 
-    const table = h('div', 'cr-table');
-    table.append(headRow(['Tarih', 'Ürünler', 'Tutar'], 'cr-row-tx'));
-    for (const item of (detail.transactions || []).slice(0, 200)) {
-      const line = h('div', 'cr-row cr-row-tx');
-      line.append(
-        h('span', 'cr-cell', stamp(item.createdAt)),
-        h('span', 'cr-cell',
-          (item.items || []).map((entry) => `${entry.qty}× ${entry.name}`).join(', ')),
-        h('span', 'cr-cell num', money(item.total)),
-      );
-      table.append(line);
+    // Eksik veri uyarısı çekmecede de görünsün: bu döküm "tüm işlemler" diye
+    // okunuyor, eksikse bunu söylemek zorundayız.
+    for (const warning of (detail.meta || {}).warnings || []) {
+      body.append(h('div', 'cr-alert bad', warning));
     }
-    body.append(card(`İşlem dökümü (${(detail.transactions || []).length})`, table));
+
+    const entries = detail.transactions || [];
+    const counts = detail.counts || {};
+    const table = h('div', 'cr-table');
+    table.append(headRow(['Tarih', 'Tür', 'Ürünler / açıklama', 'Tutar'], 'cr-row-tx'));
+
+    const parts = [`${entries.length} satır`];
+    if (counts.sale) parts.push(`${counts.sale} satış`);
+    if (counts.reversed) parts.push(`${counts.reversed} iptal`);
+    if (counts.collection) parts.push(`${counts.collection} tahsilat`);
+    body.append(card(`İşlem dökümü (${parts.join(' · ')})`, table,
+      'Aralıktaki TÜM hareketler: satış, iptal ve tahsilat. Üstteki özet ile ürün '
+      + 'kırılımı yalnız geçerli satışlardan hesaplanır.'));
+    // Tablo DOM'a girdikten SONRA doldurulur: parçalı çizim "hâlâ ekranda mı"
+    // sorusunu `isConnected` ile soruyor, bağlanmadan önce başlarsa ilk
+    // dilimden sonra durur.
+    fillEntries(table, entries);
   } catch (error) {
     body.textContent = `Döküm alınamadı: ${error.message}`;
   }
+}
+
+const ENTRY_LABELS = { sale: 'Satış', reversed: 'İptal', collection: 'Tahsilat' };
+const COLLECTION_METHODS = {
+  cash: 'Nakit tahsilat', link: 'Ödeme linki', online: 'Ödeme linki', card: 'Kart',
+};
+
+/** Döküm satırının açıklama sütunu — türüne göre değişir. */
+function entryText(item) {
+  if (item.kind === 'collection') {
+    return COLLECTION_METHODS[String(item.method || '').toLowerCase()] || 'Tahsilat';
+  }
+  const lines = (item.items || []).map((entry) => `${entry.qty}× ${entry.name}`).join(', ');
+  if (item.kind !== 'reversed') return lines;
+  return item.reversedReason ? `${lines} — iptal gerekçesi: ${item.reversedReason}` : lines;
+}
+
+/**
+ * Dökümü tabloya PARÇA PARÇA çizer.
+ *
+ * SATIR SINIRI YOK: eskiden yalnız ilk 200 satır çiziliyordu ama başlık
+ * toplam sayıyı yazdığı için kullanıcı gerisini boşuna arıyordu. Bir yıllık
+ * aralıkta binlerce satır tek turda eklenince arayüz donuyor; bu yüzden
+ * ilk dilim hemen, kalanı sonraki karelerde eklenir — liste eksiksizdir,
+ * pencere yine de anında açılır.
+ */
+function fillEntries(table, entries, chunk = 150) {
+  let index = 0;
+  const step = () => {
+    const slice = entries.slice(index, index + chunk);
+    const fragment = document.createDocumentFragment();
+    for (const item of slice) {
+      const line = h('div', `cr-row cr-row-tx tx-${item.kind || 'sale'}`);
+      line.append(
+        h('span', 'cr-cell', stamp(item.createdAt)),
+        h('span', `cr-cell cr-kind kind-${item.kind || 'sale'}`,
+          ENTRY_LABELS[item.kind] || 'Satış'),
+        h('span', 'cr-cell', entryText(item)),
+        h('span', 'cr-cell num', money(item.total)),
+      );
+      fragment.append(line);
+    }
+    table.append(fragment);
+    index += chunk;
+    // Tablo DOM'dan koparılmışsa (çekmece kapandı) çizmeye devam etme.
+    if (index < entries.length && table.isConnected) requestAnimationFrame(step);
+  };
+  step();
+  if (entries.length === 0) table.append(h('div', 'cr-empty', 'Bu aralıkta hareket yok.'));
 }
 
 // ------------------------------------------------------------- çıktı

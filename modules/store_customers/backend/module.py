@@ -21,6 +21,10 @@ SUBCATEGORY = "Müşteri"
 def register(ctx: ModuleContext) -> None:
     store_api = ctx.capability("store.api")
     printer = ctx.try_capability("printer")
+    # Ağır taramalar (nüfus, sipariş toplulaştırması) isteğin İÇİNDE koşmaz;
+    # geçidin arka plan tazeleyicisine verilir. Kendi köşesinde çalışır ki
+    # başka bir mağaza ekranının "population" anahtarıyla karışmasın.
+    scan = ctx.capability("store.scan").scoped("store_customers")
 
     service = CustomersService(
         api=store_api,
@@ -28,6 +32,7 @@ def register(ctx: ModuleContext) -> None:
         log=ctx.log,
         config=ctx.config,
         printer=printer,
+        scan=scan,
         publish=ctx.publish,
         category=CATEGORY,
         subcategory=SUBCATEGORY,

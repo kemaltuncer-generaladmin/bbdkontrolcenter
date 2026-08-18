@@ -27,6 +27,11 @@ provides:
   - capability: store.api
     contract: km_sdk.contracts:StoreApi
     description: "Mağaza yönetici API'si: sipariş, ürün, müşteri, fatura, iade, kargo, ayar."
+  - capability: store.scan
+    contract: km_sdk.contracts:BackgroundScan
+    description: "Ağır taramaları isteğin dışında koşturur; çağırana son bilinen değeri hemen
+      verir. Tam sayfa taraması (`all_pages=True`) kabuğun 60 saniyelik sınırını aşıyordu —
+      liste isteği artık taramayı BEKLEMEZ (bkz. backend/scan.py)."
 
 consumes:
   - capability: secrets

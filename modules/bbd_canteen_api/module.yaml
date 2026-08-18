@@ -34,7 +34,13 @@ consumes:
 events:
   publishes:
     - name: canteen.device_enrolled
-      description: "Kontrol Merkezi kantine ikinci cihaz olarak kaydolduğunda."
+      description: >
+        Kantine yeni bir cihaz kaydolduğunda. BU MODÜL HENÜZ YAYINLAMIYOR:
+        geçit kendi kaydını `_ensure_token` içinde sessizce yapıyor ve
+        elinde olay yolu yok. Olayın İLK GERÇEK YAYINCISI
+        `bbd_canteen_devices`tir — kiosk eşlemesini Kontrol Merkezi
+        başlatmadığı için (kodu cihaz giriyor) eşleme, kiosk listesi
+        okunurken fark edilerek duyurulur.
   subscribes: []
 
 # HTTP yüzeyi YOK: bu modül dışarıya uç nokta açmaz, yalnızca yetenek verir.

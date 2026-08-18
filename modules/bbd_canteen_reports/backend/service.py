@@ -35,6 +35,42 @@ class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
 
 
+#: Döküm satırının Türkçe etiketi. Ekran ile PDF aynı sözcüğü kullanmalı;
+#: kâğıtta "İptal", ekranda "Geri alındı" yazan bir rapor tartışma çıkarır.
+ENTRY_LABELS = {
+    analytics.ENTRY_SALE: "Satış",
+    analytics.ENTRY_REVERSED: "İptal",
+    analytics.ENTRY_COLLECTION: "Tahsilat",
+}
+
+#: Tahsilatın kantindeki yöntem kodu → okunur karşılığı.
+COLLECTION_METHODS = {
+    "cash": "Nakit tahsilat",
+    "link": "Ödeme linki",
+    "online": "Ödeme linki",
+    "card": "Kart",
+    "credit": "Tahsilat",
+}
+
+
+def _entry_text(item: dict[str, Any]) -> str:
+    """Döküm satırının açıklama sütunu — türüne göre değişir."""
+    kind = str(item.get("kind") or analytics.ENTRY_SALE)
+    if kind == analytics.ENTRY_COLLECTION:
+        method = str(item.get("method") or "").strip().lower()
+        return COLLECTION_METHODS.get(method, "Tahsilat")
+
+    lines = ", ".join(
+        f'{line.get("qty")}× {line.get("name")}' for line in item.get("items") or []
+    )
+    if kind == analytics.ENTRY_REVERSED:
+        reason = str(item.get("reversedReason") or "").strip()
+        # İptalin gerekçesi satırın en değerli bilgisi: "neden iade edildi"
+        # sorusu dökümde cevaplanmazsa kantine telefon açılıyor.
+        return f"{lines} — iptal gerekçesi: {reason}" if reason else f"{lines} — iptal edildi"
+    return lines
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
@@ -44,13 +80,50 @@ def _bounds_ms(day: str) -> tuple[int, int]:
     return int(start.timestamp() * 1000), int((start + timedelta(days=1)).timestamp() * 1000)
 
 
+#: Tek raporda taranabilecek en uzun aralık (gün farkı). Kantin daha uzununu da
+#: verebilir ama hem istek hem çizim kilitleniyor.
+MAX_SPAN_DAYS = 400
+
+
 def _days_between(start: str, end: str) -> list[str]:
     first, last = date.fromisoformat(start), date.fromisoformat(end)
     if last < first:
         first, last = last, first
-    # Tek istekte çekilebilecek makul üst sınır: 400 gün.
-    span = min((last - first).days, 400)
+    span = min((last - first).days, MAX_SPAN_DAYS)
     return [(first + timedelta(days=offset)).isoformat() for offset in range(span + 1)]
+
+
+def _span_warning(start: str, end: str) -> str:
+    """Aralık kırpıldıysa bunu SÖYLER; kırpılmadıysa boş dizgi.
+
+    Kırpma eskiden sessizdi: kullanıcı üç yıllık aralık seçiyor, ekran ilk 401
+    günü gösterip başlığa "tüm işlemler" yazıyordu. Eksik veriyi eksik olduğunu
+    söylemeden göstermek, hiç göstermemekten kötüdür — rakama güvenilip karar
+    veriliyor.
+    """
+    first, last = sorted((date.fromisoformat(start), date.fromisoformat(end)))
+    total = (last - first).days + 1
+    if total <= MAX_SPAN_DAYS + 1:
+        return ""
+    covered = first + timedelta(days=MAX_SPAN_DAYS)
+    return (
+        f"Seçilen aralık {total} gün; tek raporda en çok {MAX_SPAN_DAYS + 1} gün "
+        f"taranabiliyor. Bu rapor yalnız {_tr_date(first.isoformat())} – "
+        f"{_tr_date(covered.isoformat())} arasını kapsar; kalan "
+        f"{total - MAX_SPAN_DAYS - 1} gün DIŞARIDA kaldı."
+    )
+
+
+def _range_bounds(start: str, end: str) -> tuple[int, int]:
+    """Aralığın epoch-ms sınırları — KIRPILMIŞ günler üzerinden.
+
+    Ham `start`/`end` ile hesaplamak, aralık 400 günde kırpıldığında işlem
+    listesiyle tahsilat listesini farklı dönemlerden okumaya yol açıyordu.
+    """
+    days = _days_between(start, end)
+    from_ms, _ = _bounds_ms(days[0])
+    _, to_ms = _bounds_ms(days[-1])
+    return from_ms, to_ms
 
 
 def _tr_date(iso: str) -> str:
@@ -110,11 +183,19 @@ class ReportService:
         )
 
     async def _fetch_day(self, day: str) -> list[dict[str, Any]]:
-        """Tek günü çeker ve kaydeder."""
+        """Tek günü çeker ve kaydeder.
+
+        Dönen satır sayısı `MAX_ROWS`'a DAYANIRSA gerçek veri kaybı vardır:
+        gün gün çekmek son çaredir, altına bölünecek bir birim kalmamıştır.
+        Çağıran bunu görüp kullanıcıya söylemek zorunda (`_is_capped`).
+        """
         start, end = _bounds_ms(day)
         rows = await self._canteen.transactions(from_ms=start, to_ms=end, limit=self.MAX_ROWS)
         await self._record_day(day, rows)
         return rows
+
+    def _is_capped(self, rows: list[dict[str, Any]]) -> bool:
+        return len(rows) >= self.MAX_ROWS
 
     @staticmethod
     def _day_of(row: dict[str, Any]) -> str:
@@ -141,24 +222,37 @@ class ReportService:
 
         `refresh` parametresi geriye dönük uyumluluk için duruyor; davranışı
         değiştirmez, veri her hâlükârda kaynaktan gelir.
+
+        SESSİZ KAYIP YOK. İki noktada veri eksilebiliyor — aralığın 400 günde
+        kırpılması ve bir GÜNÜN kantin satır sınırını doldurması. İkisi de
+        `meta.warnings` içinde çağırana bildirilir; ekran ve PDF bunu yazar.
         """
         wanted = _days_between(start, end)
+        warnings: list[str] = []
+
+        span_warning = _span_warning(start, end)
+        if span_warning:
+            self._log.warning("aralık kırpıldı", start=start, end=end, limit=MAX_SPAN_DAYS)
+            warnings.append(span_warning)
+
         if not wanted:
             return [], {"days": 0, "fetched": 0, "fromCache": 0, "live": True,
-                        "errors": [], "connected": True}
+                        "errors": [], "warnings": warnings, "truncated": False,
+                        "connected": True}
 
         from_ms, _ = _bounds_ms(wanted[0])
         _, to_ms = _bounds_ms(wanted[-1])
 
         errors: list[str] = []
         transactions: list[dict[str, Any]] = []
+        capped_days: list[str] = []
         truncated = False
 
         try:
             transactions = await self._canteen.transactions(
                 from_ms=from_ms, to_ms=to_ms, limit=self.MAX_ROWS,
             )
-            truncated = len(transactions) >= self.MAX_ROWS
+            truncated = self._is_capped(transactions)
         except Exception as failure:  # noqa: BLE001 — kantin dışarısı
             self._log.warning("aralık çekilemedi", start=start, end=end, error=str(failure))
             errors.append(str(failure))
@@ -171,10 +265,18 @@ class ReportService:
             transactions, errors = [], []
             for day in wanted:
                 try:
-                    transactions.extend(await self._fetch_day(day))
+                    rows = await self._fetch_day(day)
                 except Exception as failure:  # noqa: BLE001
                     self._log.warning("gün çekilemedi", day=day, error=str(failure))
                     errors.append(f"{day}: {failure}")
+                    continue
+                transactions.extend(rows)
+                # TEK GÜN SINIRA DAYANDIYSA daha küçük bir dilim yok: o günün
+                # geri kalan işlemleri gerçekten gelmedi. Eskiden bu durum hiç
+                # fark edilmiyordu; rapor eksik satırla "tamam" görünüyordu.
+                if self._is_capped(rows):
+                    self._log.warning("gün sınıra dayandı", day=day, limit=self.MAX_ROWS)
+                    capped_days.append(day)
         else:
             # İz kaydı: gelen satırları günlerine dağıtıp yaz.
             by_day: dict[str, list[dict[str, Any]]] = {day: [] for day in wanted}
@@ -185,6 +287,16 @@ class ReportService:
             for day, rows in by_day.items():
                 await self._record_day(day, rows)
 
+        if capped_days:
+            shown = ", ".join(_tr_date(day) for day in capped_days[:5])
+            if len(capped_days) > 5:
+                shown = f"{shown} ve {len(capped_days) - 5} gün daha"
+            warnings.append(
+                f"{len(capped_days)} günde işlem sayısı kantinin tek istek sınırını "
+                f"({self.MAX_ROWS}) doldurdu; o günlerin bir kısım işlemi bu raporda "
+                f"YOK ({shown}). Aralığı daraltıp yeniden alın."
+            )
+
         return transactions, {
             "days": len(wanted),
             "fetched": len(wanted) - len(errors),
@@ -192,6 +304,12 @@ class ReportService:
             "live": True,
             "requests": len(wanted) if truncated else 1,
             "errors": errors,
+            # `truncated`: bu raporda GERÇEKTEN eksik satır var mı. Gün gün
+            # çekmeye düşmek tek başına kayıp değildir; kayıp, güne bölünce de
+            # sınırın dolmasıdır.
+            "truncated": bool(capped_days) or bool(span_warning),
+            "cappedDays": capped_days,
+            "warnings": warnings,
             "connected": not errors,
         }
 
@@ -221,13 +339,17 @@ class ReportService:
         product_map = {int(item["id"]): item for item in products}
         span = len(_days_between(start, end))
 
+        # ÖZET VE KIRILIMLAR `live()` ÜZERİNDEN GİDER (analytics içinde). İptal
+        # edilmiş satış ciroya, ürün adedine, sınıf toplamına YAZILMAZ; iptal
+        # edilen bir alışverişi ciro sayan rapor yanlış rapordur. İptaller
+        # yalnız öğrenci dökümünde (`student_detail` → `analytics.ledger`)
+        # damgalı satır olarak görünür; orası hesap değil, olay listesidir.
         student_rows = analytics.by_student(transactions, balances=balances, classes=classes or {})
         product_rows = analytics.by_product(transactions, products=product_map, days=span)
 
         collections: dict[str, Any] = {}
         try:
-            from_ms, _ = _bounds_ms(start)
-            _, to_ms = _bounds_ms(end)
+            from_ms, to_ms = _range_bounds(start, end)
             collections = await self._canteen.collections(from_ms=from_ms, to_ms=to_ms)
         except Exception as failure:  # noqa: BLE001 — tahsilat okunamazsa rapor yine gelir
             self._log.warning("tahsilat okunamadı", error=str(failure))
@@ -260,21 +382,56 @@ class ReportService:
         return payload
 
     async def student_detail(self, kantin_id: str, start: str, end: str) -> dict[str, Any]:
-        """Tek öğrencinin dökümü — karne PDF'inin de kaynağı."""
-        transactions, _ = await self.transactions(start, end)
-        mine = [
-            item for item in analytics.live(transactions)
-            if str(item.get("studentId")) == kantin_id
-        ]
-        rows = analytics.by_student(mine)
-        products = analytics.by_product(mine, days=len(_days_between(start, end)))
+        """Tek öğrencinin dökümü — karne PDF'inin de kaynağı.
+
+        ARALIKTAKİ TÜM İŞLEMLER GELİR, SAYI SINIRI YOKTUR.
+
+        İKİ AYRI HESAP VAR, KARIŞTIRILMAZ:
+
+        * ÖZET ve ÜRÜN kırılımı `analytics.live()` üzerinden gider — iptal
+          edilmiş satış harcamaya yazılmaz, yazılsaydı öğrenci olduğundan çok
+          harcamış görünürdü.
+        * İŞLEM DÖKÜMÜ ham listedir (`analytics.ledger`): satış, iptal ve
+          tahsilat bir arada, hiçbiri düşürülmeden, her satır `kind` damgalı.
+          Kullanıcı burada "şu tarihte ne oldu" sorusunun cevabını arar; iptal
+          de bir olaydır, tahsilat da.
+
+        KARŞILAŞTIRMA DÖNEMİ ÇEKİLMEZ. Bu yol `report()` üzerinden geçmez,
+        dolayısıyla `compare_previous` burada hiç çalışmaz: tek bir öğrencinin
+        dökümü için aralığın bir de önceki dönemi okunmaz. Aralık kantinden
+        yalnız BİR KEZ istenir.
+        """
+        transactions, meta = await self.transactions(start, end)
+        mine = [item for item in transactions if str(item.get("studentId")) == kantin_id]
+        # Hesapların girdisi: yalnız geçerli satışlar.
+        valid = analytics.live(mine)
+
+        warnings: list[str] = list(meta.get("warnings") or [])
+        collections: list[dict[str, Any]] = []
+        try:
+            from_ms, to_ms = _range_bounds(start, end)
+            payload = await self._canteen.collections(
+                from_ms=from_ms, to_ms=to_ms, student_id=kantin_id,
+            )
+            collections = analytics.collection_entries(payload, student_id=kantin_id)
+        except Exception as failure:  # noqa: BLE001 — tahsilat okunamazsa döküm yine gelir
+            self._log.warning("öğrenci tahsilatı okunamadı", student=kantin_id,
+                              error=str(failure))
+            warnings.append(
+                f"Tahsilat satırları okunamadı, döküm yalnız satışları gösteriyor: {failure}"
+            )
+
+        entries = analytics.ledger(mine, collections)
+        rows = analytics.by_student(valid)
+        products = analytics.by_product(valid, days=len(_days_between(start, end)))
         return {
             "kantinId": kantin_id,
             "summary": rows[0] if rows else None,
             "products": products,
-            "transactions": sorted(mine, key=lambda item: int(item.get("createdAt") or 0),
-                                   reverse=True),
-            "byDay": analytics.overview(mine)["byDay"],
+            "transactions": entries,
+            "counts": analytics.entry_counts(entries),
+            "byDay": analytics.overview(valid)["byDay"],
+            "meta": {**meta, "warnings": warnings},
         }
 
     # --------------------------------------------------------- çıktı
@@ -299,7 +456,11 @@ class ReportService:
                 detail = await self.student_detail(str(params["studentId"]), start, end)
                 content = self._student_pdf(detail, start, end)
                 safe = "".join(
-                    char for char in str(detail.get("summary", {}).get("name") or params["studentId"])
+                    # `summary` None OLABİLİR: dönemde yalnız iptal ya da tahsilat
+                    # bulunan öğrencinin geçerli satışı yoktur. `.get("summary", {})`
+                    # bu durumda None döndürüp dosya adını üretirken patlıyordu.
+                    char for char in str((detail.get("summary") or {}).get("name")
+                                         or params["studentId"])
                     if char.isalnum() or char in " -_"
                 ).strip().replace(" ", "-") or "ogrenci"
                 name = f"kantin-karne-{safe}-{start}_{end}-{stamp}.pdf"
@@ -632,24 +793,40 @@ class ReportService:
                          for row in detail["products"]],
             })
 
-        rows = detail["transactions"][:120]
+        # DÖKÜM KIRPILMAZ. Eskiden yalnız son 120 satır basılıyordu; iki aylık
+        # bir karnede öğrencinin işlemlerinin yarısı kâğıda hiç çıkmıyor, üstelik
+        # eksildiği de yazmıyordu. `reportlab` tabloyu sayfalara kendisi böler.
+        rows = detail["transactions"]
+        counts = detail.get("counts") or {}
         if rows:
             sections.append({
-                "kind": "table", "title": f"İşlem dökümü (son {len(rows)})",
-                "headers": ["Tarih", "Ürünler", "Tutar"],
-                "align": "LLR", "widths": [1.6, 5, 1.4],
+                "kind": "table",
+                "title": f"İşlem dökümü ({len(rows)} satır · "
+                         f'{counts.get("sale", 0)} satış, {counts.get("reversed", 0)} iptal, '
+                         f'{counts.get("collection", 0)} tahsilat)',
+                "headers": ["Tarih", "Tür", "Ürünler / açıklama", "Tutar"],
+                "align": "LLLR", "widths": [1.6, 0.9, 4.1, 1.4],
                 "rows": [[
                     analytics.local(item["createdAt"]).strftime("%d.%m.%Y %H:%M")
                     if item.get("createdAt") else "—",
-                    ", ".join(f'{line["qty"]}× {line["name"]}' for line in item.get("items") or []),
+                    ENTRY_LABELS.get(str(item.get("kind")), "Satış"),
+                    _entry_text(item),
                     money(item.get("total")),
                 ] for item in rows],
             })
 
         sections.append({"kind": "note", "text":
-                         "Bu döküm yalnız kantin harcamalarını gösterir. Güncel bakiye "
-                         f"{money(summary.get('balance'))} olup pozitif değer borcu belirtir. "
-                         "İptal edilen işlemler listeye dahil değildir."})
+                         "Döküm dönemin TÜM hareketlerini gösterir: satış, iptal ve tahsilat. "
+                         "Üstteki özet ile ürün kırılımı ise yalnız geçerli satışlardan "
+                         "hesaplanır — iptal edilen satış harcamaya yazılmaz, tahsilat da "
+                         "harcama değildir. Güncel bakiye "
+                         f"{money(summary.get('balance'))} olup pozitif değer borcu belirtir."})
+
+        # Aralık kırpıldıysa ya da bir gün kantinin satır sınırını doldurduysa
+        # KÂĞITTA da yazsın: eksik veriyle basılmış bir karne, eksik olduğunu
+        # söylemezse veliye tam sanılarak verilir.
+        for warning in (detail.get("meta") or {}).get("warnings") or []:
+            sections.append({"kind": "note", "text": f"UYARI: {warning}"})
 
         return build_pdf(
             title=f"Öğrenci Kantin Karnesi — {name}",

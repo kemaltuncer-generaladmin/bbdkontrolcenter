@@ -916,7 +916,10 @@ async function issueDialog() {
 
   let payload;
   try {
-    payload = await api(`${BASE}/uninvoiced?size=100`);
+    // Bu uç, süzgece göre mağazanın TAMAMINI sayfa sayfa tarayabiliyor.
+    // Kabuğun 60 saniyelik varsayılanı taramayı ortasında kesip hatayı
+    // "çekirdeğe bağlanılamadı" diye gösteriyordu; süre açıkça istenir.
+    payload = await api(`${BASE}/uninvoiced?size=100`, { timeoutSeconds: 300 });
   } catch (error) {
     box.body.replaceChildren(alertBox(error.message, 'bad'));
     return;

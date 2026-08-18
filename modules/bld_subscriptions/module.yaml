@@ -100,17 +100,24 @@ ui:
 # `org_staff` zil/baskı/rehber ile sınırlıdır, `accountant` mali ekranlara bakar
 # ama abonelik kuralı yazmaz ve sözleşme göndermez.
 #
-# İKİ ANAHTAR, ÜÇ DEĞİL. `bld_orders` iptali ayrı bir anahtara aldı çünkü orada
-# iptal PARA HAREKETİ (iade) üretiyor. Burada iptal para üretmez: aboneliği
-# durdurur, üretilmiş siparişlere DOKUNMAZ ve onları düşürmek zaten
-# `bld_orders.cancel` iznini ister. Yıkıcılığın karşılığı bu ekranda gerekçe +
-# çift denetim satırıdır (ADR 0012), üçüncü bir anahtar değil.
+# ÜÇ ANAHTAR — ESKİDEN İKİYDİ VE BU BİR EKSİKLİKTİ (I4).
 #
-# Yıkıcı işlem PIN değil GEREKÇE ister (ADR 0012, `bld_kds` ile aynı ilke):
-# en az 10 karakter gerekçe (backend'de de doğrulanır) + iki denetim satırı
-# ("ne denendi" ve "ne oldu"). Bu yüzden hiçbir izin `destructive: true`
-# taşımaz — o bayrak çekirdekte PIN kapısına bağlanacak ve bu ekran PIN
-# istemiyor.
+# Eski gerekçe şuydu: "burada iptal para üretmez, aboneliği durdurur". Yarısı
+# doğru — iade kaydı çıkmıyor. Ama diğer yarısı atlanmıştı: iptal edilmiş
+# abonelik AKTİFLEŞTİRİLEMEZ, ödemeyle geri açılamaz ve yeniden başlatmak yeni
+# bir abonelik açmak demektir. Yani geri dönüşü olmayan tek abonelik işlemi
+# tam da bu ve `bld_orders.cancel` / `bld_customers.disable` /
+# `bld_invoices.void` üçlüsüyle aynı kulvarda olması gerekiyordu.
+#
+# `mark-paid` de aynı anahtara girdi ve o daha ağır: GERÇEK PARA HAREKETİDİR
+# ve geri alma ucu YOKTUR (sözleşme: "para defterinde silme yoktur"). Kuralı
+# düzeltebilen birinin tek tıkla tahsilat kapatabilmesi için sebep yok.
+#
+# GEREKÇE KALDIRILMADI, PIN EKLENDİ. ADR 0012'nin gerekçeli onayı bu ekranda
+# geçerli; `destructive: true` onun YERİNE değil ÜSTÜNE geliyor. Gerekçe "neden
+# yapıldı" sorusunu cevaplıyor, PIN "klavyenin başındaki kişi gerçekten o mu"
+# sorusunu — ikisi ayrı sorular ve geri dönüşü olmayan bir işlemde ikisi de
+# sorulmalı. Diğer iki anahtar bayrağı TAŞIMAZ ve taşımamalı.
 permissions:
   - key: bld_subscriptions.view
     description: >
@@ -122,11 +129,33 @@ permissions:
   - key: bld_subscriptions.manage
     description: >
       Talep durumu ve iç notu yazma, talebi aboneliğe çevirme; abonelik
-      açma/güncelleme, aktifleştirme, duraklatma, devam ettirme ve İPTAL;
-      tek-gün istisnası; elle üretim ve siparişi KDS'e erken düşürme;
-      sözleşme oluşturma/yeniden gönderme/iptal; dönem borcu açma ve tahsil
-      edildi işaretleme.
+      açma/güncelleme, aktifleştirme, duraklatma, devam ettirme; tek-gün
+      istisnası; elle üretim ve siparişi KDS'e erken düşürme; sözleşme
+      oluşturma/yeniden gönderme/iptal; dönem borcu AÇMA.
+      ABONELİK İPTALİ VE TAHSİLAT İŞARETLEME BUNA DÂHİL DEĞİLDİR.
     default_roles: [admin, bld_staff]
+  # ÜÇÜNCÜ ANAHTAR — kardeş modüllerdeki `bld_orders.cancel`,
+  # `bld_customers.disable` ve `bld_invoices.void` ile aynı çizgi. Abonelik
+  # iptalinin GERİ DÖNÜŞÜ YOKTUR: sunucu iptal edilmiş aboneliği ne
+  # aktifleştirir ne ödemeyle geri açar, yeniden başlatmak yeni abonelik
+  # açmaktır. Kuralı değiştirebilen birinin tek tıkla üretimi kalıcı olarak
+  # durdurabilmesi için sebep yok.
+  #
+  # `destructive: true` TAŞIYAN TEK ANAHTAR BU. Kardeş modüller bayrağı
+  # bilerek taşımıyor — orada gerekçeli onay yeterli görülmüştü. Burada
+  # farklı: iptal edilen abonelik bir SÖZLEŞMEYİ ve aylık bir tahsilatı
+  # sonlandırıyor ve geri alma ucu YOK. Bayrak çekirdekteki PIN kapısına
+  # bağlanıyor; uç ayrıca `confirm_pin` çağırıyor (çift kapı, K9).
+  - key: bld_subscriptions.cancel
+    description: >
+      YIKICI: abonelik iptali ve dönem borcunu TAHSİL EDİLDİ işaretleme.
+      İptal geri alınamaz — iptal edilmiş abonelik aktifleştirilemez, ödemeyle
+      geri açılamaz ve yeniden başlatmak yeni abonelik açmak demektir.
+      Tahsilat işaretleme GERÇEK PARA HAREKETİDİR ve geri alma ucu yoktur;
+      yanlış işaretlenen bir tahsilat ancak yeni bir dönem kaydıyla
+      düzeltilir. İkisi de izin yeterli olsa bile PIN teyidi ister.
+    default_roles: [admin]
+    destructive: true
 
 config:
   defaults: config/default.yaml

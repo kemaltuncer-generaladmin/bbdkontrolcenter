@@ -1519,7 +1519,12 @@ async function refreshPerformance() {
   nodes.status?.set('Siparişler taranıyor…');
   let payload;
   try {
-    payload = await api(`${BASE}/performance?start=${range.start || ''}&end=${range.end || ''}`);
+    // Bu uç, süzgece göre mağazanın TAMAMINI sayfa sayfa tarayabiliyor.
+    // Kabuğun 60 saniyelik varsayılanı taramayı ortasında kesip hatayı
+    // "çekirdeğe bağlanılamadı" diye gösteriyordu; süre açıkça istenir.
+    payload = await api(
+      `${BASE}/performance?start=${range.start || ''}&end=${range.end || ''}`,
+      { timeoutSeconds: 300 });
   } catch (error) {
     nodes.perfWrap.replaceChildren(alertBox(error.message, 'bad'));
     return;

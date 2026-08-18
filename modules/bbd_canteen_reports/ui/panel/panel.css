@@ -274,6 +274,21 @@
   color: var(--soft);
 }
 
+/* Eksik veri uyarısı — önizlemede ve öğrenci çekmecesinde kullanılır.
+   Sınıf kodda vardı ama biçimi yoktu: uyarı düz metin gibi akıp gözden
+   kaçıyordu. */
+.cr-alert {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.cr-alert.bad { border-color: #f2c9c9; background: #fef2f2; color: var(--bad); }
+
 /* ================================================================== kart */
 
 .cr-card {
@@ -390,7 +405,27 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
 .cr-row-products { grid-template-columns: minmax(0, 2.6fr) 60px 100px 62px 30px 56px 60px 62px 84px; }
 .cr-row-classes { grid-template-columns: minmax(0, 1.4fr) 70px 60px 60px 110px 120px; }
 .cr-row-dead { grid-template-columns: minmax(0, 3fr) 70px 110px 120px; }
-.cr-row-tx { grid-template-columns: 130px minmax(0, 1fr) 100px; }
+.cr-row-tx { grid-template-columns: 130px 74px minmax(0, 1fr) 100px; }
+
+/* Döküm satırının türü: satış / iptal / tahsilat. Rakam tek başına ayırt
+   ettirmiyor — iptal edilmiş 12 ₺ ile tahsil edilmiş 12 ₺ aynı görünüyordu. */
+.cr-kind {
+  justify-self: start;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+}
+
+.kind-sale { background: #f1f5f9; color: var(--soft); }
+.kind-reversed { background: #fee2e2; color: #b91c1c; }
+.kind-collection { background: #dcfce7; color: #15803d; }
+
+/* İptal satırı listede de sönük dursun: olay yaşanmıştır ama para değişmemiştir. */
+.cr-row-tx.tx-reversed .cr-cell { color: var(--soft); text-decoration-color: var(--soft); }
+.cr-row-tx.tx-reversed .cr-cell.num { text-decoration: line-through; }
+.cr-row-tx.tx-reversed .cr-kind { text-decoration: none; }
 
 .cr-empty { padding: 26px 14px; text-align: center; font-size: 12px; color: var(--soft); }
 

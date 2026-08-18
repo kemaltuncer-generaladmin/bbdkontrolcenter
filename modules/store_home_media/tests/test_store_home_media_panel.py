@@ -1,12 +1,17 @@
-"""Panel dilinin sözleşmesi — ekranda YAZILIM TERİMİ kalmadığını sınar.
+"""Panel dilinin ve yapısının sözleşmesi.
 
 NEDEN BU TEST VAR. Bu ekranı kullanan kişi yazılım bilmiyor. "Slot", "Slider",
-"Banner alanları", "CMS sayfası", "Serbest bağlantı", "Alt metni yok" — hepsi
+"Banner alanları", "CMS sayfası", "Serbest bağlantı", "Alt metni" — hepsi
 doğru terimlerdi ve hiçbiri kullanıcının sözlüğünde yoktu. Terimler iş diline
 çevrildi; bu dosya ÇEVİRİNİN GERİ ALINMASINI yakalar.
 
 Bir terim geri sızarsa buradaki test kırılır. Kırılan test "yazım hatası"
 değil, KARAR İHLALİ demektir: ekranın dili kullanıcının dilidir.
+
+DOSYA 18.08.2026'DA DARALDI. Sekme adlarını, durum rozetlerini ve "bu bölüm ne
+işe yarar" cümlelerini sınayan üç test kaldırıldı: ekranda ne sekme kaldı ne
+durum rozeti. Yerlerine TEK İŞ kuralını koruyan testler geldi — kaldırılan
+sekmeler ve alanlar geri sızarsa bu dosya söyler.
 
 NEDEN PYTHON'DAN. Depoda JS koşucusu yok; panel metni kaynak dosyadan okunup
 sınanır. Kusurlu ama hiç sınamamaktan iyi (bkz. test_store_bundles_panel.py).
@@ -17,17 +22,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from modules.store_home_media.backend import slots
-
 MODULE = Path(__file__).resolve().parents[1]
 PANEL = (MODULE / "ui" / "panel" / "index.js").read_text(encoding="utf-8")
 CSS = (MODULE / "ui" / "panel" / "panel.css").read_text(encoding="utf-8")
+
 
 def _without_comments(source: str) -> str:
     """Yorumları atar.
 
     NEDEN. Yorumda teknik ad GEÇEBİLİR — CLAUDE.md yorumlarda "neden böyle
-    yaptık"ı anlatmayı istiyor ve o açıklama çoğu zaman `slot`, `carousel`
+    yaptık"ı anlatmayı istiyor ve o açıklama çoğu zaman `slide`, `carousel`
     gibi gerçek adları anmak zorunda. Yasak olan, kullanıcının EKRANDA
     okuduğu cümlede geçmesi. Bu yüzden hem `//` satırları hem `/* … */`
     blokları düşürülür.
@@ -57,17 +61,15 @@ VISIBLE = _strings(CODE)
 #: amaçlıdır: test kırıldığında geliştirici "peki ne yazacaktım" diye
 #: aramasın diye burada durur.
 YASAK = {
-    "Slider": "Ana ekran kayan görseller",
-    "Banner alanları": "Tanıtım görselleri",
-    "Öne çıkan koleksiyonlar": "Öne çıkan ürün grupları",
-    "Duyuru şeridi": "Üst duyuru yazısı",
-    "CMS sayfası": "Site içi bilgi sayfası (Hakkımızda, İletişim…)",
-    "Serbest bağlantı": "Adresi ben yazacağım",
+    "Slider": "Ana ekranda dönen görseller",
+    "Banner": "(bu ekranda hiç geçmez)",
+    "Karusel": "(bu ekranda hiç geçmez)",
+    "CMS sayfası": "adresi doğrudan yazın",
+    "Serbest bağlantı": "Tıklayınca nereye gitsin?",
     "Alt metni": "Görselde ne var? (kısa açıklama)",
-    "alt metni yok": "görsel açıklaması yok",
     "Hedef türü": "Tıklayınca nereye gitsin?",
     "Hedef bağlantı": "Gideceği sayfanın adresi",
-    "Yerleşim": "Sayfanın neresinde dursun?",
+    "Yerleşim": "(bu ekranda hiç geçmez)",
     "Öznitelik": "(bu ekranda hiç geçmez)",
     "Salt okunur": "Şu an yalnız bakabilirsiniz",
     "Kuru prova": "Deneme — mağazaya yazılmadı",
@@ -78,8 +80,7 @@ YASAK = {
 
 def test_ekranda_yazilim_terimi_gorunmez() -> None:
     # BÜYÜK/KÜÇÜK HARFE DUYARLI arıyoruz. Yasak olan, kullanıcının okuduğu
-    # ETİKET ("Slider"); koddaki teknik anahtar (`'slider'`) kalmalı ve
-    # mağazaya giden gövdeyi o taşıyor.
+    # ETİKET; koddaki teknik anahtar kalmalı ve mağazaya giden gövdeyi o taşıyor.
     kalan = [terim for terim in YASAK if terim in VISIBLE]
     assert kalan == [], (
         "Bu terimler ekranda görünüyor ve kullanıcının sözlüğünde yok: "
@@ -90,36 +91,59 @@ def test_ekranda_yazilim_terimi_gorunmez() -> None:
 def test_slot_kelimesi_kullaniciya_gosterilmez() -> None:
     """“Slot” bu ekranın en sık geçen yazılım terimiydi.
 
-    Kod içindeki `slotRow`, `slotId`, `/slots` gibi TANIMLAYICILAR kalır
-    (İngilizce ve ASCII olmaları gerekiyor); yasak olan, kullanıcının okuduğu
-    Türkçe cümlede geçmesi.
+    Kod içindeki `slideRow`, `hm-slot` gibi TANIMLAYICILAR kalır (İngilizce ve
+    ASCII olmaları gerekiyor); yasak olan, kullanıcının okuduğu Türkçe cümlede
+    geçmesi.
     """
     kotu = [parca for parca in VISIBLE.splitlines()
-            if re.search(r"\bslot", parca, flags=re.IGNORECASE)
+            if re.search(r"\bslot|\bslayt|\bslide", parca, flags=re.IGNORECASE)
             and re.search(r"[çğıöşüÇĞİÖŞÜ]| ve | için | bir ", parca)]
-    assert kotu == [], "Kullanıcıya gösterilen metinde “slot” geçiyor: " + " | ".join(kotu)
+    assert kotu == [], "Kullanıcıya gösterilen metinde teknik ad geçiyor: " + " | ".join(kotu)
 
 
-# ================================================= sekme adları backend ile aynı
+# ================================================== TEK İŞ — geri sızmasın
 
-def test_sekme_adlari_backend_ile_ayni() -> None:
-    """Panel ve backend AYNI kelimeyi kullanır.
+#: Kaldırılan sekmeler ve alanlar. Biri geri gelirse ekran yeniden dört işli
+#: olur ve kullanıcı kararı sessizce iptal edilmiş olur.
+KALDIRILANLAR = [
+    "tabBar",            # dört sekme
+    "filterBar",         # süzgeçler
+    "reportChain",       # yerleşim raporu
+    "csvBlob",           # CSV
+    "kpiRow",            # durum sayaçları
+    "dateField",         # yayın tarihleri
+    "/reorder",          # sıra ayrı uç değil
+    "/reference",        # kanal/dil/kategori listeleri
+    "/export",
+    "/print",
+]
 
-    İkisi ayrı yerde duruyor (panel sekmeyi mount anında çiziyor, referans
-    isteği sonradan geliyor). Ayrışırlarsa kullanıcı listede bir ad, raporda
-    başka bir ad görür ve ikisinin aynı şey olduğunu anlayamaz.
-    """
-    for key, label in slots.AREA_LABELS.items():
-        assert f"key: '{key}', label: '{label}'" in PANEL, f"{key} → {label}"
-    for key, one in slots.AREA_ONE.items():
-        assert f"one: '{one}'" in PANEL, f"{key} → {one}"
+
+def test_kaldirilan_yuzeyler_geri_gelmemis() -> None:
+    kalan = [parca for parca in KALDIRILANLAR if parca in PANEL]
+    assert kalan == [], (
+        "Bu yüzeyler 18.08.2026'da bilerek kaldırıldı; geri gelmiş: " + ", ".join(kalan))
 
 
-def test_durum_rozetleri_backend_ile_ayni() -> None:
-    for label in slots.STATE_LABELS.values():
-        assert f"'{label}'" in PANEL, label
-    for what in slots.STATE_WHAT.values():
-        assert what in PANEL, what
+def test_panel_yalniz_kendi_uclarini_cagirir() -> None:
+    """Ekranın tek işi var; uç listesi de o kadar olmalı."""
+    cagrilar = set(re.findall(r"\$\{BASE\}(/[a-z/-]+)", PANEL))
+    assert cagrilar == {"/slides", "/image/check", "/image/upload", "/link-search", "/audit"}
+
+
+def test_sira_klavyeyle_de_degistirilebilir() -> None:
+    """Sürükle-bırak TEK YOL OLAMAZ: fare kullanamayan personel için Ctrl+ok
+    tek erişim yolu (ve en hızlısı)."""
+    assert "Ctrl+↑" in PANEL
+    assert "event.ctrlKey" in PANEL
+    assert "ArrowUp" in PANEL and "ArrowDown" in PANEL
+    # Taşıma ekran okuyucuya da duyurulur.
+    assert "aria-live" in PANEL
+
+
+def test_surukle_birak_duruyor() -> None:
+    for olay in ("dragstart", "dragover", "drop"):
+        assert olay in PANEL, olay
 
 
 # ========================================== engel = neden + SIRADAKİ ADIM
@@ -133,7 +157,7 @@ def test_her_engel_hem_neden_hem_siradaki_adim_soyler() -> None:
     """
     blok = PANEL[PANEL.index("const BLOCKERS = {"):PANEL.index("/** Engelin iki cümlesini")]
     anahtarlar = re.findall(r"^  ([A-Z_]+): \{", blok, flags=re.MULTILINE)
-    assert len(anahtarlar) >= 6, anahtarlar
+    assert len(anahtarlar) >= 3, anahtarlar
     assert blok.count("why:") == len(anahtarlar)
     assert blok.count("next:") == len(anahtarlar)
     # Her "sıradaki adım" gerçekten bir ADIM anlatır.
@@ -144,37 +168,30 @@ def test_her_engel_hem_neden_hem_siradaki_adim_soyler() -> None:
 def test_kapali_dugme_nedenini_soyler() -> None:
     """Kapalı düğme sessiz kalmaz (kit README · `blockedButton`).
 
-    Eskiden `save.disabled = true` ve `upload.disabled = …` vardı: düğme
-    soluklaşıyor, kullanıcı tıklıyor, hiçbir şey olmuyordu.
+    Eskiden yalnız `disabled = true` vardı: düğme soluklaşıyor, kullanıcı
+    tıklıyor, hiçbir şey olmuyordu.
     """
     assert "function blockedReason(" in PANEL
-    assert PANEL.count("blockedReason(") >= 5
     assert "aria-label" in PANEL[PANEL.index("function blockedReason("):]
 
 
 # ================================================= alanın yanında ipucu var mı
 
-def test_duzenleyicideki_her_alan_ne_yazilacagini_soyler() -> None:
+def test_her_kutu_ne_yazilacagini_soyler() -> None:
     """“Bu kutuya ne yazarım” sorusu EKRANDA cevaplanır.
 
-    Alan adı ne kadar iyi olursa olsun, örnek vermeden bir kutu boş kalır.
+    Alan adı ne kadar iyi olursa olsun, örnek vermeden bir kutu boş kalır;
+    liste satırındaki iki kutunun da yer tutucu metni var.
     """
-    form = PANEL[PANEL.index("  const form = formGrid({"):PANEL.index("hedef seçici")]
-    alanlar = re.findall(r"\{ key: '(\w+)',", form)
-    ipuclu = re.findall(r"hint:", form)
-    # Kanal alanı `choiceField` üretiyor (tek seçenekte hiç çizilmiyor);
-    # kalan her alanın ipucu olmalı.
-    assert len(ipuclu) >= len(alanlar) - 1, (alanlar, len(ipuclu))
+    assert "Bu görsele ne ad verelim?" in PANEL
+    assert "Tıklayınca nereye gitsin?" in PANEL
+    # Yer tutucu tek başına yetmez: ekran okuyucu için etiket de olmalı.
+    assert PANEL.count("setAttribute('aria-label'") >= 4
 
 
-def test_bolum_ne_ise_yarar_cumlesi_ekranda_durur() -> None:
-    # Sekme adı "Tanıtım görselleri" doğrudur ama müşterinin bunu NEREDE
-    # göreceğini söylemez; o cümle sekmenin altında durur.
-    assert "function areaWhat(" in PANEL
-    assert "nodes.areaWhat" in PANEL
-    for what in slots.AREA_WHAT.values():
-        head = what.split("—")[0].split(".")[0][:40]
-        assert head in PANEL, head
+def test_ekranin_tek_isi_ekranda_yazar() -> None:
+    # Kullanıcının cümlesi ekranın tepesinde durur: "oranın tek bi işlevi olacak".
+    assert "tek işi var" in PANEL
 
 
 # ===================================================== kit kuralları (bozulmasın)

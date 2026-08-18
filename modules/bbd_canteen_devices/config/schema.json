@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "bbd_canteen_devices ayarları",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "online_after_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1440,
+      "description": "Kiosk kaç dakika sessiz kalırsa 'çevrimdışı' sayılsın. Karar Kontrol Merkezi'nin saatine göre verilir; kantin böyle bir alan döndürmüyor."
+    },
+    "pairing_ttl_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120,
+      "description": "Üretilen eşleme kodunun ömrü (dakika). Kantine istekle birlikte gönderilir. Uzun ömür, kâğıt üstünde unutulan bir kodu hâlâ çalışan bir kapı yapar."
+    },
+    "audit_page_size": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 1000,
+      "description": "Yerel işlem izinde tek seferde gösterilecek satır sayısı."
+    }
+  }
+}

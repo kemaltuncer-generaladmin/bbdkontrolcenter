@@ -55,6 +55,11 @@ consumes:
   - capability: printer
     optional: true
     reason: "Tahsilat icmali kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
+  - capability: secrets
+    optional: true
+    reason: "Netgsm kullanıcı adı/parola/başlığı kasada durur (`notify.netgsm.*`); ayar
+      tablosuna yazılamaz (K8). Kasa yoksa ekran çalışır, yalnız SMS ayarları kartı kapalı
+      görünür. Hesap bbdkantin ile ORTAKTIR — anahtar adları aynıdır."
 
 events:
   publishes: []
@@ -85,7 +90,7 @@ permissions:
     description: "Tahsilat ekranını görüntüleme, liste, rapor ve CSV alma."
     default_roles: [admin, bbd_staff]
   - key: store_payment_gateway.manage
-    description: "Tahsilat talebi açma ve SMS şablonunu düzenleme."
+    description: "Tahsilat talebi açma, SMS şablonunu ve Netgsm ayarlarını düzenleme."
     default_roles: [admin, bbd_staff]
   - key: store_payment_gateway.collect
     description: "Ödeme bağlantısı üretme ve SMS gönderme. Para hareketi başlatır."

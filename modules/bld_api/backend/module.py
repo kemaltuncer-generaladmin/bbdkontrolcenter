@@ -32,7 +32,12 @@ def register(ctx: ModuleContext) -> None:
         read_only=bool(config.get("read_only", True)),
         dry_run_default=bool(config.get("dry_run_default", False)),
         require_reason=bool(config.get("require_reason", True)),
-        requests_per_minute=int(config.get("requests_per_minute") or 18),
+        # İKİ PENCERE: kısa pencere etkileşimli patlamaya izin verir, uzun
+        # pencere sunucunun saatlik sınırını korur. Tek dakikalık kova
+        # (eski 18) panel açılışlarını saniyelerce uyutuyor ve saatlik
+        # bütçenin büyük kısmını kullanılmadan bırakıyordu.
+        requests_per_minute=int(config.get("requests_per_minute") or 45),
+        requests_per_hour=int(config.get("requests_per_hour") or 1100),
         # Sayfalama ve önbellek: on üç panel alanının yoklamasını tek hız
         # kovasının altında tutan iki ayar. Önbellek YALNIZCA referans veri
         # içindir (bkz. `cache.py`); değeri sıfırlamak onu kapatır.

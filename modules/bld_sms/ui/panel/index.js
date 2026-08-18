@@ -74,6 +74,38 @@ const BODY_MAX = 500;
 const MEASURE_MS = 220;
 
 /**
+ * Netgsm gönderici adının sınırı — BBD Kantin panelindekiyle AYNI sayı.
+ * İki ekranın farklı sınır göstermesi, birinde kabul edilen bir başlığın
+ * ötekinde reddedilmesi demekti.
+ */
+const HEADER_MAX = 11;
+
+/**
+ * BLD'nin gönderici adı. Netgsm hesabı BBD Kantin ile ORTAKTIR; iki sistemi
+ * ayıran tek ayar budur ve bu yüzden ekran beklenen değeri yazılı gösterir.
+ * Bir DAYATMA değil, bir hatırlatmadır: onaylı ad gün gelip değişirse panelden
+ * yazılabilmeli.
+ */
+const EXPECTED_HEADER = 'BLEZZETDNYM';
+
+/** Netgsm'in "mesaj başlığı sistemde tanımlı değil" kodu. */
+const HEADER_ERROR_CODE = '40';
+
+/** Eksik sağlayıcı alanlarının okunur adları. */
+const MISSING_LABELS = {
+  username: 'Netgsm kullanıcı kodu',
+  password: 'Netgsm parolası',
+  header: 'gönderici başlığı',
+};
+
+/** Başlığın nereden geldiği — yönetici çalışan bir ayarı bozmasın diye ayrı. */
+const HEADER_SOURCES = {
+  setting: 'Bu ekrandan yazılmış ayar',
+  env: 'BLD sunucusunun ortam değişkeni (NETGSM_HEADER)',
+  none: 'Hiçbir yerde tanımlı değil — SMS GİTMEZ',
+};
+
+/**
  * Gönderim kaydının durum sözlüğü. Renk TEK BAŞINA anlam taşımaz: her rozetin
  * içinde yazı var.
  */
@@ -94,7 +126,9 @@ const EMPTY_STATE = {
   templates: [],
   groups: [],
   audiences: [],
-  sender: { driver: '', configured: false },
+  sender: { driver: '', configured: false, header: '', header_source: '', missing: [] },
+  netgsm: null,
+  netgsmLoaded: false,
   platformLane: { available: false, note: '' },
   segmentWarn: 2,
   templatesLoaded: false,
@@ -252,7 +286,8 @@ async function loadTemplates() {
     ...state.templates.map((row) => ({ value: row.key, label: row.title })),
   ]);
   state.audiences = payload.audiences || [];
-  state.sender = payload.sender || { driver: '', configured: false };
+  state.sender = payload.sender
+    || { driver: '', configured: false, header: '', header_source: '', missing: [] };
   state.platformLane = payload.platform_lane || { available: false, note: '' };
   state.segmentWarn = Number(payload.segment_warn) || 2;
 }
@@ -298,6 +333,16 @@ async function loadHistory() {
   state.history = payload?.data || [];
 }
 
+async function loadNetgsm() {
+  const payload = await call(`${BASE}/netgsm`);
+  state.netgsmLoaded = true;
+  if (!linkOk(payload)) {
+    state.netgsm = null;
+    return;
+  }
+  state.netgsm = payload.data || null;
+}
+
 /** YEREL ölçüm — ağa çıkmaz, denetim satırı yazmaz. */
 async function measureText(body, key, sample, allowed) {
   const payload = await call(`${BASE}/measure`, {
@@ -308,18 +353,66 @@ async function measureText(body, key, sample, allowed) {
 
 // ------------------------------------------------------------------ ortak
 
+/**
+ * Netgsm `40` hatasının AÇIK METİNLİ karşılığı.
+ *
+ * Sağlayıcının ham cümlesi ("Mesaj başlığı sistemde tanımlı değil") sorunu
+ * söylüyor ama ÇÖZÜMÜ söylemiyor ve hangi başlığın reddedildiğini de yazmıyor.
+ * Oysa bu hatanın tek sebebi vardır: gönderdiğimiz ad Netgsm panelinde onaylı
+ * değil. Aynı hata sipariş, abonelik ve fatura bildirimlerinde de aynen
+ * tekrarlanır — tek bir yanlış harf bütün SMS trafiğini sessizce düşürür.
+ *
+ * `provider_code` alanına bakar, hata METNİNDE ARAMA YAPMAZ: cümle
+ * düzeltildiği gün metin araması sessizce boşa düşerdi.
+ */
+function headerRejected(data) {
+  if (String(data?.provider_code || '') !== HEADER_ERROR_CODE) return null;
+  const gonderilen = String(data.header || state.sender.header || '').trim();
+  const box = h('div');
+  box.append(alertBox(
+    'BAŞLIK NETGSM\'DE TANIMLI DEĞİL (hata 40). Gönderici adı Netgsm panelinde '
+    + 'onaylanmış olmalı; onaysız bir başlıkla tek mesaj bile ulaşmaz ve aynı '
+    + 'hata sipariş, abonelik ve fatura bildirimlerinde de tekrarlanır.', 'bad'));
+  box.append(hintBox(
+    `Gönderilen başlık: "${gonderilen || '(boş)'}" · Beklenen: "${EXPECTED_HEADER}". `
+    + 'Ya Netgsm panelinden bu adı onaylatın ya da "Netgsm ayarları" '
+    + 'sekmesinden onaylı adı yazın.'));
+  return box;
+}
+
 /** Sağlayıcı şeridi — en üstte durur ve iki ayrı gerçeği ayrı satırda yazar. */
 function senderNotice() {
   const wrap = h('div', 'bs-notice');
   if (!state.sender.configured) {
+    // EKSİK ALANIN ADI YAZILIR. "Sağlayıcı kurulu değil" cümlesi tek başına
+    // yöneticiyi yanlış yere yolluyordu: eksik olan parolayken başlığı
+    // düzeltmeye çalışıyor ve hiçbir şey değişmiyordu.
+    const eksik = (state.sender.missing || []).map((key) => MISSING_LABELS[key] || key);
     wrap.append(alertBox(
       'BLD sunucusunda SMS sağlayıcısı KURULU DEĞİL. Bu ekrandan çıkan mesajlar '
       + 'kimseye gitmez, yalnız sunucunun günlüğüne yazılır. Sırrı tanımlanana '
-      + 'kadar "gönderildi" yazan her satır aslında "yazıldı" demektir.', 'bad'));
+      + 'kadar "gönderildi" yazan her satır aslında "yazıldı" demektir.'
+      + (eksik.length ? ` Eksik olan: ${eksik.join(', ')}.` : ''), 'bad'));
+    if (eksik.length === 1 && (state.sender.missing || [])[0] === 'header') {
+      wrap.append(hintBox(
+        'Yalnız gönderici başlığı eksik ve o BU EKRANDAN yazılabilir: '
+        + '"Netgsm ayarları" sekmesi. Kullanıcı adı ile parola ise BLD\'nin '
+        + 'ortam değişkenlerinde durur ve buradan değiştirilemez.'));
+    }
   } else {
     wrap.append(alertBox(
-      `SMS'i gönderen taraf BLD sunucusudur (sağlayıcı: ${state.sender.driver || 'bilinmiyor'}).`,
+      `SMS'i gönderen taraf BLD sunucusudur (sağlayıcı: ${state.sender.driver || 'bilinmiyor'}).`
+      + ` Gönderici adı: "${state.sender.header || '—'}".`,
       'info'));
+    // BAŞLIK BEKLENENDEN FARKLIYSA SESSİZ KALINMAZ: gönderim yine yapılır ama
+    // müşterinin telefonunda başka bir ad görünür ve Netgsm'de onaylı değilse
+    // hiç ulaşmaz.
+    if (state.sender.header && state.sender.header !== EXPECTED_HEADER) {
+      wrap.append(alertBox(
+        `Gönderici adı "${state.sender.header}" — BLD için beklenen ad `
+        + `"${EXPECTED_HEADER}". Bilerek değiştirildiyse sorun yok; değilse `
+        + 'mesajlar müşteriye tanımadığı bir addan gider ya da hiç ulaşmaz.', 'warn'));
+    }
   }
   // İKİ ŞERİT KARIŞTIRILMASIN. Kontrol Merkezi'nin kendi Netgsm ayarı bu
   // ekrandaki gönderimleri ETKİLEMEZ; ayrı yazılmazsa yanlış ayar düzeltilir.
@@ -435,6 +528,17 @@ function paintTemplates() {
         } },
       { key: 'group', label: 'Öbek', width: '150px',
         cell: (row) => groupLabel(row.group) },
+      { key: 'sender_code', label: 'Nereden gider', width: 'minmax(0, 1.4fr)',
+        title: 'O metni gerçekten gönderen kod. Boşsa şablon sunucuda tanımlı '
+          + 'ama hiçbir yerden gönderilmiyor.',
+        cell: (row) => {
+          // "Düzenlenebilir ama hiç gönderilmiyor" en sinsi hâl: yönetici
+          // metni özenle yazar, açar ve tek bir mesaj çıkmaz. Sütun bunu
+          // satırın kendisinde söyler.
+          if (row.dispatch === 'dead') return badge('şu an gönderilmiyor', 'bad');
+          if (row.dispatch === 'unknown') return h('span', 'bs-dim', 'bilinmiyor');
+          return h('span', 'bs-dim', row.sender_code || '—');
+        } },
       { key: 'enabled', label: 'Durum', width: '150px',
         cell: (row) => {
           const box = h('div', 'bs-cell-row');
@@ -770,9 +874,19 @@ function openTestDialog(row) {
       if (!result?.dry_run) {
         // SAĞLAYICI HATASI İSTEK HATASI DEĞİL: uç `ok:true` döner ve durum
         // gövdededir. İkisini ayırmayan bir ekran "sunucu bozuldu" der.
-        kutu.append(data.status === 'sent'
-          ? alertBox(`Gitti · ${num(data.segments)} segment.`, 'good')
-          : alertBox(`Gitmedi: ${data.error || 'sağlayıcı hata verdi'}.`, 'bad'));
+        if (data.status === 'sent') {
+          kutu.append(alertBox(`Gitti · ${num(data.segments)} segment.`, 'good'));
+        } else {
+          kutu.append(alertBox(`Gitmedi: ${data.error || 'sağlayıcı hata verdi'}.`, 'bad'));
+          // `40` HATASI AÇIK METİNLE ANLATILIR. Sağlayıcının bu kodu tek bir
+          // şey demek: gönderdiğimiz başlık Netgsm panelinde ONAYLI DEĞİL.
+          // Ham cümle ("Mesaj başlığı sistemde tanımlı değil") yöneticiye ne
+          // yapacağını söylemiyor ve hata sipariş/abonelik bildirimlerinde de
+          // aynen tekrarlanıyor — yani tek bir yanlış harf bütün SMS trafiğini
+          // sessizce düşürüyor.
+          const hatali = headerRejected(data);
+          if (hatali) kutu.append(hatali);
+        }
       }
       layer.body.append(kutu);
     });
@@ -782,6 +896,169 @@ function openTestDialog(row) {
   actions.append(button('Gönder', { variant: 'danger', onClick: () => gonder(false) }));
 
   layer.body.append(info, form.node, actions);
+}
+
+// ========================================================= NETGSM AYARLARI
+//
+// BU SEKME BBD KANTİN'İN "Netgsm ayarları" SEKMESİNİN KARDEŞİDİR ama BİR
+// ALANI EKSİKTİR VE BU BİLİNÇLİDİR: kullanıcı kodu ve parola BLD'de ortam
+// değişkeninde yaşıyor ve hiçbir uçtan geri dönmüyor (K8 ile aynı gerekçe —
+// sır her veritabanı yedeğine girerdi). Kantinde ikisi ayar satırında
+// tutuluyor; BLD'de tutulmuyor ve bu ekran onları YAZIYORMUŞ gibi yapmaz.
+// Yapsaydı yönetici parolayı buraya girer, hiçbir yere yazılmaz ve "kaydettim
+// ama çalışmıyor" hâli doğardı.
+//
+// BAŞLIK İSE BURADAN YAZILIR ÇÜNKÜ BİR SIR DEĞİL: müşterinin telefonunda
+// görünen addır ve BLD'de `BLEZZETDNYM` olmalıdır. Yalnız ortam değişkeninde
+// durduğu sürece yanlış bir başlık sessiz bir arızaydı — Netgsm `40` döner,
+// istek 200 kalır, kayıt `failed` olur ve kimse fark etmez.
+
+function paintNetgsm() {
+  const body = nodes.body;
+  disposeTab();
+  body.replaceChildren();
+
+  if (!state.netgsmLoaded) {
+    body.append(skeletonRows(4, 2));
+    return;
+  }
+  if (!state.netgsm) {
+    body.append(alertBox(
+      `Netgsm ayarı okunamadı: ${state.link.error}. Sunucu geri geldiğinde `
+      + '[Yenile] ile tazeleyin.', 'bad'));
+    return;
+  }
+
+  const cfg = state.netgsm;
+  const eksik = (cfg.missing || []).map((key) => MISSING_LABELS[key] || key);
+
+  if (eksik.length) {
+    body.append(alertBox(
+      `Netgsm yapılandırması eksik — HİÇBİR SMS GİTMEZ. Eksik olan: ${eksik.join(', ')}. `
+      + 'Bu hâlde gönderimler yalnız BLD sunucusunun günlüğüne yazılır ve panel '
+      + '"gönderildi" dese bile müşteriye hiçbir şey ulaşmaz.', 'bad'));
+  } else {
+    body.append(alertBox(
+      `Netgsm kurulu · gönderici adı "${cfg.header}" · sağlayıcı `
+      + `${cfg.driver || 'bilinmiyor'}.`, 'good'));
+  }
+
+  // ── Sırlar: okunur ama YAZILAMAZ ────────────────────────────────────────
+  const sirlar = h('div', 'bs-cell');
+  sirlar.append(hintBox(
+    'Netgsm hesabı BBD Kantin ile ORTAKTIR: aynı abonelik, aynı kredi havuzu, '
+    + 'tek fatura. BLD\'yi ayıran tek ayar gönderici adıdır.'));
+  const durum = h('div', 'bs-cell-row');
+  durum.append(badge(
+    cfg.username_configured ? 'Kullanıcı kodu tanımlı' : 'Kullanıcı kodu BOŞ',
+    cfg.username_configured ? 'good' : 'bad'));
+  durum.append(badge(
+    cfg.password_configured ? 'Parola tanımlı' : 'Parola BOŞ',
+    cfg.password_configured ? 'good' : 'bad'));
+  sirlar.append(durum);
+  sirlar.append(hintBox(
+    'Kullanıcı kodu ve parola BURADAN DEĞİŞTİRİLEMEZ ve bu bilinçli: sır '
+    + 'veritabanına yazılsaydı her yedeğe girerdi, yedekler ise sırlardan çok '
+    + 'daha kolay dolaşıyor. Değiştirmek için Coolify\'daki NETGSM_USERNAME / '
+    + 'NETGSM_PASSWORD değişkenleri güncellenir ve uygulama yeniden başlatılır.'));
+  body.append(card('Hesap bilgileri (BLD ortam değişkenleri)', sirlar));
+
+  // ── Başlık: buradan yazılır ─────────────────────────────────────────────
+  const kutu = h('div', 'bs-cell');
+
+  const form = formGrid({
+    fields: [
+      { key: 'header', label: 'Gönderici adı', required: false,
+        maxLength: HEADER_MAX,
+        hint: `En çok ${HEADER_MAX} karakter; yalnız harf, rakam ve boşluk. `
+          + `BLD için beklenen değer "${EXPECTED_HEADER}". Netgsm panelinde `
+          + 'ONAYLI olmalı — onaysız bir başlıkta sağlayıcı 40 döner ve tek '
+          + 'mesaj bile ulaşmaz.' },
+    ],
+    // ORTAMDAN GELEN DEĞER KUTUYA YAZILMAZ. Yazılsaydı "kaydet"e basmak onu
+    // ayara kopyalar ve ortam değişkeni sessizce gölgelenirdi; oysa kullanıcı
+    // hiçbir şey değiştirmediğini sanıyordu.
+    value: { header: cfg.stored_header || '' },
+  });
+  keep(tabClosers, () => form.destroy());
+
+  kutu.append(form.node);
+
+  // KAYNAK AYRI YAZILIR. Ayar kutusu boş ama ortam dolu olabilir; ikisini tek
+  // satıra indirmek, yöneticinin "demek ki başlık yok" deyip ÇALIŞAN bir
+  // yapılandırmayı bozmasına yol açardı.
+  const kaynak = h('div', 'bs-cell');
+  kaynak.append(h('div', undefined,
+    `Yürürlükteki başlık: ${cfg.header ? `"${cfg.header}"` : '(yok)'}`));
+  kaynak.append(h('span', 'bs-dim',
+    `Kaynak: ${HEADER_SOURCES[cfg.source] || cfg.source || '—'}`));
+  if (cfg.env_header) {
+    kaynak.append(h('span', 'bs-dim',
+      `Ortam değişkenindeki değer: "${cfg.env_header}" — yukarıdaki kutu `
+      + 'boşaltılırsa bu değer yeniden yürürlüğe girer.'));
+  }
+  kutu.append(kaynak);
+
+  if (cfg.header && cfg.header !== EXPECTED_HEADER) {
+    kutu.append(alertBox(
+      `Yürürlükteki ad "${cfg.header}" — BLD için beklenen "${EXPECTED_HEADER}". `
+      + 'Bilerek değiştirildiyse sorun yok; değilse mesajlar müşteriye '
+      + 'tanımadığı bir addan gider ya da hiç ulaşmaz.', 'warn'));
+  }
+
+  const eylemler = h('div', 'bs-actions');
+  const yaz = async (dryRun) => {
+    const draft = form.draft();
+    const header = String(draft.header || '').trim();
+    if (!form.valid()) {
+      form.showErrors();
+      toast('Formda eksik var.', 'bad');
+      return;
+    }
+    const bosaltiliyor = header === '' && Boolean(cfg.stored_header);
+    const reason = await confirmWithReason(nodes.root, {
+      title: dryRun ? 'Kuru prova' : 'Gönderici başlığını yaz',
+      description: bosaltiliyor
+        ? 'Ayar SİLİNECEK ve başlık BLD ortam değişkenine geri dönecek '
+          + `("${cfg.env_header || 'tanımsız'}").`
+        : `BLD'den giden HER SMS "${header}" adıyla gidecek. Ad Netgsm `
+          + 'panelinde onaylı değilse tek mesaj bile ulaşmaz.',
+      confirmLabel: dryRun ? 'Prova' : 'Yaz',
+      danger: !dryRun,
+      minLength: REASON_MIN,
+      placeholder: `Gerekçe (en az ${REASON_MIN} karakter)`,
+    });
+    if (!reason) return;
+
+    await withBusy(dryRun ? 'Prova çalıştırılıyor…' : 'Başlık yazılıyor…', async () => {
+      const result = await call(`${BASE}/netgsm`, {
+        method: 'PUT', body: writeBody({ header, reason }, dryRun),
+      });
+      if (!result?.ok) { toast(result?.error || 'Yazılamadı.', 'bad'); return; }
+      if (!announce(result, bosaltiliyor ? 'Ayar silindi.' : 'Gönderici başlığı yazıldı.')) return;
+      // YENİ BAŞLIK BİR SONRAKİ İSTEKTE YÜRÜRLÜĞE GİRER: BLD tarafında
+      // gönderici istek başına çözülen bir tekil. Söylenmezse yönetici hemen
+      // deneme SMS'i gönderip ESKİ başlıkla 40 alır ve kaydın işlemediğini
+      // sanır.
+      if ((result.warnings || []).includes('netgsm_header_applies_next_request')) {
+        toast('Yeni başlık bir sonraki gönderimden itibaren geçerli.', 'warn');
+      }
+      state.templatesLoaded = false;
+      await loadNetgsm();
+      await loadTemplates();
+      paintNetgsm();
+    });
+  };
+
+  eylemler.append(button('Kuru prova', { onClick: () => yaz(true) }));
+  eylemler.append(button('Yaz', { variant: 'danger', onClick: () => yaz(false) }));
+  kutu.append(eylemler);
+  body.append(card('Gönderici başlığı', kutu));
+
+  body.append(hintBox(
+    `Netgsm'in 40 hatası ("Mesaj başlığı sistemde tanımlı değil") tek bir şey `
+    + 'demektir: buradaki ad sağlayıcının panelinde onaylı değil. Deneme SMS\'i '
+    + 'o hatayı alırsa ekran bunu açık metinle yazar.'));
 }
 
 // =========================================================== TETİKLEYİCİLER
@@ -1175,6 +1452,7 @@ function paintCurrentTab() {
   ({
     templates: paintTemplates,
     triggers: paintTriggers,
+    netgsm: paintNetgsm,
     history: paintHistory,
   }[state.tab] || paintTemplates)();
   nodes.status?.set(statusText());
@@ -1190,6 +1468,12 @@ async function showTab(key) {
     // ALICI TAHMİNİ HER AÇILIŞTA TAZELENİR: sayı sürekli değişiyor ve donmuş
     // bir tahmin, yöneticinin sandığından fazla SMS göndermesi demekti.
     if (key === 'triggers') await withBusy('Duyuru taslağı alınıyor…', loadAnnouncement);
+  } else if (key === 'netgsm') {
+    // HER AÇILIŞTA TAZE OKUNUR: başlık BLD'de konsoldan ya da ortam
+    // değişkeninden de değişmiş olabilir ve bayat bir değer, yöneticinin
+    // ekranda gördüğü adla gerçekte gönderilen adın ayrışması demekti.
+    paintCurrentTab();
+    await withBusy('Netgsm ayarı alınıyor…', loadNetgsm);
   } else if (key === 'history') {
     await refreshLog();
     return;
@@ -1209,6 +1493,10 @@ export function mount(root, ctx) {
   nodes.tabs = tabBar([
     { key: 'templates', label: 'Şablonlar' },
     { key: 'triggers', label: 'Tetikleyiciler' },
+    // ŞABLONDAN AYRI BİR SEKME: metni düzeltmekle bütün gönderimlerin görünen
+    // adını değiştirmek aynı iş değil ve ikincisi tek satırda bütün SMS
+    // trafiğini düşürebilir.
+    { key: 'netgsm', label: 'Netgsm ayarları' },
     { key: 'history', label: 'Geçmiş' },
   ], 'templates', (key) => { showTab(key); });
 
@@ -1257,6 +1545,7 @@ export function mount(root, ctx) {
       state.templatesLoaded = false;
       await loadTemplates();
       if (state.tab === 'triggers') await loadAnnouncement();
+      if (state.tab === 'netgsm') await loadNetgsm();
       paintCurrentTab();
     }),
   }));

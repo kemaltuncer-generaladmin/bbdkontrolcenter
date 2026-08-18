@@ -209,7 +209,17 @@ class FakeApi:
         self.fail_after = 0
 
         self.templates_meta: dict[str, Any] = {"sender_driver": "netgsm",
-                                               "sender_configured": True}
+                                               "sender_configured": True,
+                                               "sender_header": "BLEZZETDNYM",
+                                               "sender_header_source": "env",
+                                               "sender_missing": []}
+        #: `GET /sms/netgsm` gövdesi. PAROLA YOKTUR ve olmayacak: BLD onu
+        #: hiçbir uçtan geri vermiyor, ekran yalnız "dolu mu" bilgisini görür.
+        self.netgsm_payload: dict[str, Any] = {
+            "header": "BLEZZETDNYM", "stored_header": "", "env_header": "BLEZZETDNYM",
+            "source": "env", "header_max": 11, "username_configured": True,
+            "password_configured": True, "missing": [], "driver": "netgsm",
+        }
         self.log_rows: list[dict[str, Any]] = [dict(LOG_ROW)]
         self.log_meta: dict[str, Any] = {"page": 1, "per_page": 25, "total": 1,
                                          "last_page": 1, "sent_count": 1,
@@ -244,7 +254,7 @@ class FakeApi:
     def writes(self) -> list[str]:
         """Yazan çağrıların adları."""
         yazan = ("update_sms_template", "preview_sms_template", "send_test_sms",
-                 "set_sms_announcement", "run_sms_announcement")
+                 "set_sms_announcement", "run_sms_announcement", "set_sms_netgsm")
         return [name for name, _, _ in self.calls if name in yazan]
 
     # ------------------------------------------------------------- okuma
@@ -266,6 +276,10 @@ class FakeApi:
     async def sms_announcement(self) -> dict[str, Any]:
         self._record("sms_announcement")
         return dict(self.announcement_payload)
+
+    async def sms_netgsm(self) -> dict[str, Any]:
+        self._record("sms_netgsm")
+        return dict(self.netgsm_payload)
 
     # ------------------------------------------------------------- yazma
 
@@ -320,6 +334,25 @@ class FakeApi:
         anahtar = "would" if dry_run else "data"
         return {"ok": True, "dry_run": bool(dry_run), "audit_id": 2320,
                 anahtar: {"audience": audience, "length": len(body)}}
+
+    async def set_sms_netgsm(self, *, header: str, reason: str, actor: str,
+                             dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("set_sms_netgsm", header=header, reason=reason, actor=actor,
+                     dry_run=dry_run)
+        if not dry_run:
+            self.netgsm_payload = {
+                **self.netgsm_payload,
+                "stored_header": header,
+                # AYAR ÖNCE, ORTAM SONRA: boş dize ayarı siler ve ortam
+                # değişkeni yeniden yürürlüğe girer.
+                "header": header or str(self.netgsm_payload.get("env_header") or ""),
+                "source": "setting" if header else (
+                    "env" if self.netgsm_payload.get("env_header") else "none"),
+            }
+        anahtar = "would" if dry_run else "data"
+        return {"ok": True, "dry_run": bool(dry_run), "audit_id": 2340,
+                anahtar: {"header": header},
+                "warnings": ["netgsm_header_applies_next_request"]}
 
     async def run_sms_announcement(self, *, confirm_recipients: int, reason: str, actor: str,
                                    dry_run: bool | None = None) -> dict[str, Any]:

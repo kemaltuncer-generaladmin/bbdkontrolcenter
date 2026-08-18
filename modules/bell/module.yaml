@@ -1,9 +1,15 @@
 # Zil sistemi modülü
 # Şema: docs/schemas/module.schema.json
 #
-# ZİLDEN SONRA ANONS GEÇMEZ (18.08.2026). Otomatik zil yalnız zil sesidir;
-# "Lütfen derse geçiniz." yolu kaldırıldı ve kapatılabilir bir seçenek de
-# bırakılmadı. Anons yalnız elle basılan GRUP ÇAĞRISINDA duyulur.
+# ZİLDEN SONRA ANONS GEÇER — TÜRE GÖRE (ADR 0027). Otomatik zil iki adımdır:
+# önce zil sesi, hemen arkasından anons. Hangi anons olduğunu zil saatinin
+# TÜRÜ belirler (`ders` → "İyi dersler." · `teneffus` → "İyi teneffüsler.").
+# Tür etiketten tahmin edilmez, açıkça saklanır (004 göçü).
+#
+# Anons sesi hazır değilse ZİL YİNE ÇALAR ve sebep günlüğe yazılır. Bir türün
+# metni boşaltılırsa o zilin arkasından anons gitmez — bu geçerli bir seçimdir.
+#
+# Grup çağrısı bundan AYRIDIR: yalnız elle basılınca duyulur, zil çalmaz.
 #
 # ZİL GERÇEKTEN ÇALAR. İki hedefi vardır:
 #   1. Okulun zil sistemine bağlı Windows bilgisayarı (asıl hoparlör) —
@@ -16,8 +22,8 @@
 
 id: bell
 name: "Zil Sistemi"
-description: "Haftalık zil saatleri ve sesli grup çağrısı."
-version: 0.3.0
+description: "Haftalık zil saatleri (ders/teneffüs), zil sonrası anons ve sesli grup çağrısı."
+version: 0.4.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
@@ -73,6 +79,15 @@ permissions:
   - key: bell.manage
     description: "Zil saatlerini, grupları, sesleri ve anons metinlerini düzenleme."
     default_roles: [admin, org_staff]
+  # SİLME AYRI BİR ANAHTARDIR. `manage` düzenler; `delete` geri dönüşü olmayanı
+  # yapar: grup satırı, anons kaydı, `.wav` dosyası ve ajandaki kopya birlikte
+  # gider. Aynı anahtara bağlanmış olsaydı, saatleri düzenlemesi için yetki
+  # verilen kişi grupları da kalıcı silebilirdi.
+  - key: bell.delete
+    description: "Grubu, yüklenmiş zil sesini ve kullanılmayan anonsları KALICI silme.
+      Geri alınamaz; PIN teyidi ister."
+    destructive: true
+    default_roles: [admin]
   - key: bell.ring_now
     description: "Elle zil çalma ve grup çağırma."
     default_roles: [admin, org_staff, bbd_staff]

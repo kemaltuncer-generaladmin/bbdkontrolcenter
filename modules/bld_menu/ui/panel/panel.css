@@ -398,3 +398,23 @@
     border-top: 1px solid var(--line);
   }
 }
+
+/* Kaydedilmemiş kalemlerin çubuğu — kalem tablosunun ÜSTÜNDE durur.
+ *
+ * Üstte olmasının nedeni hızlı ekleme kutusuyla aynı: liste uzadıkça aşağı
+ * kayan bir "kaydet" düğmesi, on kalem ekleyen yöneticiyi her seferinde
+ * aramaya zorlardı. Çubuk taslak boşken hiç çizilmez. */
+.bm .bm-draftbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--warn, #b26a00) 8%, #fff);
+}
+
+.bm .bm-draftcount {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+}

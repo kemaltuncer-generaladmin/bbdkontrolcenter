@@ -25,8 +25,14 @@
     "requests_per_minute": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 20,
-      "description": "Dakikalık TEK kova (alan başına ayrı kova yoktur). Sunucunun en dar sınırı saatte 1200; 20 × 60 = 1200 tam sınırdır, 18 önerilir."
+      "maximum": 120,
+      "description": "KISA pencere (60 sn) tavanı — etkileşimli patlamaya izin verir. Tek başına saatlik bütçeyi KORUMAZ; sert tavan requests_per_hour'dadır. Eski değer 18'di ve panel açılışlarını saniyelerce uyutuyordu."
+    },
+    "requests_per_hour": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 3000,
+      "description": "UZUN pencere (3600 sn) SERT tavanı — asıl emniyet. Sunucunun en dar sınırı 1200/saat/IP; üstüne çıkmak sunucunun 429 vermesini beklemektir ve o hata ekranda 'bağlantı koptu' diye görünür."
     },
     "page_size": {
       "type": "integer",

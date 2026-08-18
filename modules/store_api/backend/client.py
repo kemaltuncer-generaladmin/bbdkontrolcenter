@@ -9,9 +9,15 @@ canlıda 87 rota sayıyor. Bu dosya bir dönem "BBD uçları yazılmaktadır, he
 yayında değil" diyordu — o cümle 2026-08-14 dağıtımına kadar doğruydu, artık
 DEĞİL. Tek tek hangi ucun yayında olduğu ilgili metodun docstring'inde
 yazılıdır; toptan "yayında değil" varsayımıyla ekran kapatılmaz.
-Yayında OLMAYAN uçlar bugün dört tanedir: `ai/tools`, `ai/tools/{tool}/run`,
-`ai/usage` ve `home/slides` (bkz. `bbd_ai_tools`, `bbd_ai_run`,
-`bbd_ai_usage`, `upload_media`).
+Yayında OLMAYAN uçlar bugün ÜÇ tanedir: `ai/tools`, `ai/tools/{tool}/run` ve
+`ai/usage` (bkz. `bbd_ai_tools`, `bbd_ai_run`, `bbd_ai_usage`).
+
+DÖRDÜNCÜ SIRADAN DÜŞTÜ: görsel yükleme. `POST /api/admin/bbd/home/slides`
+diye bir uç hiç var olmadı ve `upload_media` 404 alıyordu. 18.08.2026'da
+mağaza tarafına gerçek uç yazıldı ve ADI FARKLI:
+`POST /api/admin/bbd/storefront/home-slides/image`. Aynı gün ana ekran
+slaytlarının okuma/yazma uçları da açıldı (`bbd_home_slides`,
+`bbd_save_home_slides`).
 
 KİMLİK
     Authorization: Bearer <id>|<düz metin>   (admin_personal_access_tokens)
@@ -1297,25 +1303,32 @@ class StoreApi:
                                    body={}, reason=reason, actor=actor, dry_run=dry_run,
                                    action="delete_product_image")
 
-    async def upload_media(self, *, content: Any, filename: str, mime: str = "",
-                           slot: str = "", position: int | None = None, reason: str,
+    async def upload_media(self, *, content: Any, filename: str, mime: str = "", reason: str,
                            actor: str = "", dry_run: bool | None = None) -> dict[str, Any]:
-        """Ana ekran görseli yükler — POST /api/admin/bbd/home/slides.
+        """Ana ekran slayt görseli yükler —
+        POST /api/admin/bbd/storefront/home-slides/image.
 
-        DOĞRULANMADI — UÇ HENÜZ YOK: canlıda 404 döndü (2026-08-13, 2026-08-14
-        yeniden ölçüldü). Mağaza rota dosyasında da `home` diye bir önek yok;
-        vitrin görselleri bugün yalnız `storefront/carousels` üzerinden
-        güncelleniyor ve o uç base64 alıyor, multipart almıyor. Geçit 404'ü
-        `bbd_endpoint_missing` koduyla "uç henüz yayında değil" diyen anlaşılır
-        bir hataya çevirir; ekran çökmez, durumu anlatır (K7).
+        YOL DEĞİŞTİ (18.08.2026). Metot bir dönem `POST {BBD}/home/slides`
+        çağırıyordu; o uç HİÇ VAR OLMADI ve her çağrı 404 alıyordu. Mağaza
+        rota dosyasında `home` diye bir önek de yoktu — ad baştan yanlış
+        yazılmıştı. Gerçek uç bugün `storefront/home-slides/image` altında.
+
+        DÖNÜŞ: `{"image": "storage/theme/{id}/sliders/…", "url": …}`. Mağaza
+        slayt listesini yazarken SERBEST YOL KABUL ETMİYOR — yalnız buradan
+        dönen yol kabul ediliyor. Yani "yükle" ile "listeye yaz" iki adımdır
+        ve ikincisi birincinin çıktısını taşır.
+
+        `slot`/`position` ALANLARI KALKTI: uç tek bir şeride (ana ekran kayan
+        görselleri) hizmet ediyor ve sıra, liste yazmasındaki dizinin kendi
+        sırası. Gönderilmeye devam etselerdi Laravel onları sessizce atardı ve
+        okuyan kişi "sıra buradan yazılıyor" sanırdı.
 
         Ürün görselinin 4 MB'lık sunucu sınırı BURADA GEÇERSİZDİR (başka bir
-        işlemci); yalnız ayar sınırı (`max_upload_mb`) uygulanır. Uç yayına
-        girdiğinde gerçek sınır öğrenilip buraya yazılmalıdır.
+        işlemci). Uç kendi tavanını uyguluyor: 3 MB.
         """
         return await self._upload(
-            "POST", f"{BBD}/home/slides", content=content, filename=filename, mime=mime,
-            field="image", data={"slot": slot, "position": position},
+            "POST", f"{BBD}/storefront/home-slides/image", content=content, filename=filename,
+            mime=mime, field="image",
             reason=reason, actor=actor, dry_run=dry_run, action="upload_media",
         )
 
@@ -3245,14 +3258,23 @@ class StoreApi:
                                    actor=actor, dry_run=dry_run, action="bbd_set_membership")
 
     async def bbd_carousel(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Ana ekran şeritleri/slider — GET /api/admin/bbd/storefront/carousels."""
+        """Ana sayfa ŞERİTLERİ — GET /api/admin/bbd/storefront/carousels.
+
+        ŞERİT ≠ SLAYT. Bu uç ana sayfadaki blokların kendisini listeler (kayan
+        görsel şeridi, ürün şeridi, kategori şeridi…): adı, tipi, açık/kapalı
+        olduğu ve sırası. Şeridin İÇİNDEKİ görseller burada değil,
+        `bbd_home_slides` içindedir. İkisi bir dönem karıştırılmıştı ve Ana
+        Ekran Görselleri ekranı slaytları bu uçtan okumaya çalışıyordu — bu
+        yüzden gerçek slider "tanınmayan tip" sayılıp yanlış sekmede
+        görünüyordu.
+        """
         return await self._collection(f"{BBD}/storefront/carousels", filters)
 
-    async def bbd_save_carousel_slot(self, *, payload: dict[str, Any], slot_id: int | None = None,
-                                     reason: str, actor: str = "",
-                                     dry_run: bool | None = None) -> dict[str, Any]:
-        """Slot ekler/günceller —
-        POST | PATCH /api/admin/bbd/storefront/carousels[/{id}].
+    async def bbd_update_carousel(self, carousel_id: int, *, payload: dict[str, Any],
+                                  reason: str, actor: str = "",
+                                  dry_run: bool | None = None) -> dict[str, Any]:
+        """Şeridi açar/kapatır ve sırasını yazar —
+        PATCH /api/admin/bbd/storefront/carousels/{id}.
 
         GÜNCELLEME PUT DEĞİL **PATCH**'tir. Rota
         `Route::patch('carousels/{id}')->whereNumber('id')` olarak yazılmış;
@@ -3260,30 +3282,61 @@ class StoreApi:
         405 olur. 405 "kayıt yok" gibi de "uç yok" gibi de okunmaz — bu
         yüzden `_fail` içinde ayrı bir dalı vardır.
 
-        SLOT EKLEME UCU MAĞAZADA YOK: yalnız mevcut slot güncellenebiliyor.
-        `slot_id=None` dalı bu yüzden 405 alır ve `bbd_endpoint_missing`
-        koduna çevrilir.
+        YAZILABİLİR İKİ ALAN: `status` ve `sort_order`. Uç 18.08.2026'ya kadar
+        yalnız `sortOrder` (camelCase) okuyordu; geçit ise gövdeleri snake_case
+        kuruyor ve Laravel tanımadığı alanı SESSİZCE atıyordu — yani sıra
+        yazımı hiç çalışmıyor, uç "değiştirilecek alan gönderilmedi" diyordu.
+        Mağaza artık iki yazımı da okuyor; geçit kendi kuralına sadık kalıp
+        snake_case gönderir.
 
-        Görsel base64 olarak `image` alanında gider (Tauri'de dosya seçici yok).
+        ŞERİT EKLEME UCU YOK (`POST .../carousels` diye bir rota mağazada
+        tanımlı değil): şeritler temanın parçası, kullanıcı verisi değil.
         """
-        base = f"{BBD}/storefront/carousels"
-        if slot_id is None:
-            return await self._request("POST", base, body=payload, reason=reason, actor=actor,
-                                       dry_run=dry_run, action="bbd_create_carousel_slot")
-        return await self._request("PATCH", f"{base}/{int(slot_id)}", body=payload, reason=reason,
-                                   actor=actor, dry_run=dry_run, action="bbd_update_carousel_slot")
+        return await self._request("PATCH", f"{BBD}/storefront/carousels/{int(carousel_id)}",
+                                   body=payload, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_update_carousel")
 
-    async def bbd_reorder_carousel(self, *, order: list[int], reason: str, actor: str = "",
+    async def bbd_home_slides(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Ana ekran kayan görselleri — GET /api/admin/bbd/storefront/home-slides.
+
+        Siteye ilk girişte dönen slaytlar; her satır `index · title · link ·
+        image · imageUrl` taşır. SIRA, LİSTENİN KENDİ SIRASIDIR: mağaza
+        tarafında slaydın ayrı bir sıra sütunu yok, vitrin diziyi olduğu gibi
+        çiziyor.
+        """
+        return await self._collection(f"{BBD}/storefront/home-slides", filters)
+
+    async def bbd_save_home_slides(self, *, slides: list[dict[str, Any]], reason: str,
+                                   actor: str = "",
                                    dry_run: bool | None = None) -> dict[str, Any]:
-        """Slot sırasını yazar — PUT /api/admin/bbd/storefront/carousels/reorder.
+        """Slayt listesinin TAMAMINI yazar —
+        PUT /api/admin/bbd/storefront/home-slides.
 
-        MAĞAZADA SIRALAMA UCU YOK. `reorder` sayısal olmadığı için PATCH
-        `{id}` kısıtına da düşmez; istek 404 alır ve `bbd_endpoint_missing`
-        koduna çevrilir.
+        KISMİ GÜNCELLEME YOKTUR ve bu bir eksiklik değil. Sıra dizinin kendi
+        sırası olduğu için "yalnız 3. satırı güncelle" diye bir işlem
+        tanımlanamaz; sırayı iki isteğe bölmek de arada vitrini yarım bir
+        listeyle çizerdi.
+
+        HER SLAYT ÜÇ ALAN: `title`, `link`, `image`. Mağaza dördüncü bir alanı
+        reddeder; `image` ise SERBEST YOL OLAMAZ — yalnız `upload_media`
+        çağrısının döndürdüğü klasördeki dosya kabul edilir. Aksi hâlde ana
+        sayfa üçüncü taraf bir adrese işaret eden görsel çizebilirdi.
+
+        BOŞ LİSTE REDDEDİLİR: ana sayfanın en üstünü bomboş bırakmak,
+        "Kaydet"e yanlışlıkla basmanın bedeli olamaz.
         """
-        return await self._request("PUT", f"{BBD}/storefront/carousels/reorder",
-                                   body={"order": [int(i) for i in order]}, reason=reason,
-                                   actor=actor, dry_run=dry_run, action="bbd_reorder_carousel")
+        if not slides:
+            raise StoreApiError(
+                "Ana ekran slayt listesi boş yazılamaz: ana sayfanın en üstü bomboş kalır.",
+                code="payload",
+            )
+        body = [{"title": str(item.get("title") or ""),
+                 "link": str(item.get("link") or ""),
+                 "image": str(item.get("image") or "")}
+                for item in slides]
+        return await self._request("PUT", f"{BBD}/storefront/home-slides",
+                                   body={"slides": body}, reason=reason, actor=actor,
+                                   dry_run=dry_run, action="bbd_save_home_slides")
 
     # ==================================== 17 · BBD ÖZEL — YEDEK · SAĞLIK
 
