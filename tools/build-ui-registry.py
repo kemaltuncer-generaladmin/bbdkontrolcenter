@@ -28,6 +28,7 @@ Kullanım:
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import sys
@@ -103,7 +104,8 @@ def load_schema_validator():
     return jsonschema.Draft202012Validator(schema)
 
 
-def copy_panel(module_dir: pathlib.Path, entry: str | None) -> str | None:
+def copy_panel(module_dir: pathlib.Path, entry: str | None,
+               target_root: pathlib.Path) -> str | None:
     """Modülün panel klasörünü servis köküne kopyalar, giriş yolunu döndürür.
 
     Panel yoksa None döner: ekran menüde görünür, gövdesi boş kalır. Modüller
@@ -117,12 +119,28 @@ def copy_panel(module_dir: pathlib.Path, entry: str | None) -> str | None:
         return None
 
     source_dir = source_file.parent
-    target_dir = PANELS_OUT / module_dir.name
+    target_dir = target_root / module_dir.name
     shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
     return f"panels/{module_dir.name}/{source_file.name}"
 
 
-def collect_panels(validator, platform: str) -> tuple[list[dict], list[str], list[str]]:
+def _entry_path(module_dir: pathlib.Path, entry: str | None) -> str | None:
+    """Kopyalamadan giriş yolunu hesaplar — `--check` bu yolu kullanır.
+
+    `--check` diske DOKUNMAZ (2026-08-15 hatası); ama kayıt defterini yine de
+    üretmesi gerekiyor ki dosyayla karşılaştırabilsin.
+    """
+    if not entry:
+        return None
+    source_file = module_dir / entry
+    if not source_file.is_file():
+        return None
+    return f"panels/{module_dir.name}/{source_file.name}"
+
+
+def collect_panels(validator, platform: str,
+                   target_root: pathlib.Path | None = None,
+                   ) -> tuple[list[dict], list[str], list[str]]:
     panels: list[dict] = []
     problems: list[str] = []
     skipped: list[str] = []
@@ -172,7 +190,10 @@ def collect_panels(validator, platform: str) -> tuple[list[dict], list[str], lis
             "provides": [entry["capability"] for entry in manifest.get("provides") or []],
         }
 
-        entry = copy_panel(manifest_path.parent, (manifest.get("ui") or {}).get("entry"))
+        entry = copy_panel(manifest_path.parent,
+                           (manifest.get("ui") or {}).get("entry"),
+                           target_root) if target_root is not None else _entry_path(
+                               manifest_path.parent, (manifest.get("ui") or {}).get("entry"))
         if entry:
             panel["entry"] = entry
 
@@ -191,6 +212,21 @@ def group_ranks(panels: list[dict]) -> dict[str, int]:
     return ranks
 
 
+def _swap_panels(staging: pathlib.Path) -> None:
+    """Hazırlanan klasörü yerine geçirir. Silinen panelin artığı da gider.
+
+    `os.replace` dizinde yalnız hedef YOKSA çalışır; bu yüzden önce eski
+    klasör kenara alınır, sonra silinir. Kenara alma da rename olduğu için
+    ucuzdur — asıl maliyet kopyalamaydı ve o artık takastan önce bitmiştir.
+    """
+    retired = PANELS_OUT.parent / f".{PANELS_OUT.name}-eski"
+    shutil.rmtree(retired, ignore_errors=True)
+    if PANELS_OUT.exists():
+        os.replace(PANELS_OUT, retired)
+    os.replace(staging, PANELS_OUT)
+    shutil.rmtree(retired, ignore_errors=True)
+
+
 def build(*, copy_panels: bool = True, platform: str | None = None) -> dict:
     """Kayıt defterini üretir. `copy_panels=False` iken DİSKE DOKUNMAZ.
 
@@ -207,12 +243,33 @@ def build(*, copy_panels: bool = True, platform: str | None = None) -> dict:
     makineye bağlı kalmadan sınanabilsin (çekirdekteki `Kernel` ile aynı
     gerekçe, ADR 0022).
     """
+    staging: pathlib.Path | None = None
     if copy_panels:
-        # Silinen/yeniden adlandırılan panel artığı kalmasın.
-        shutil.rmtree(PANELS_OUT, ignore_errors=True)
+        # ÖNCE HAZIRLA, SONRA TAKAS ET — silip yeniden kopyalama YARIŞ ÜRETİYORDU.
+        #
+        # BULUNAN HATA (18.08.2026). Eski sıra `rmtree(PANELS_OUT)` + 47 panelin
+        # tek tek kopyalanmasıydı. Kopyalama saniyeler sürüyor ve o süre boyunca
+        # `shell/panels/` YA HİÇ YOK ya da yarım. O pencerede Tauri derlemesi
+        # koşarsa varlık taraması eksik dosyaya çarpıyor:
+        #
+        #   error: failed to read asset at .../shell/panels/bld_invoices/panel.css
+        #
+        # Hata kafa karıştırıcı: dosya kaynakta duruyor, derleme bittiğinde
+        # kopyada da duruyor — yani sonradan bakan kişi hiçbir eksik bulamıyor.
+        #
+        # Artık her şey geçici bir klasöre kurulur, sonra İKİ RENAME ile
+        # yerine geçer. Pencere saniyelerden milisaniyelere iner ve panel
+        # klasörü hiçbir an "yarım" görünmez.
+        staging = PANELS_OUT.parent / f".{PANELS_OUT.name}-yeni"
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.mkdir(parents=True, exist_ok=True)
 
     validator = load_schema_validator()
-    panels, problems, skipped = collect_panels(validator, platform or current_platform())
+    panels, problems, skipped = collect_panels(
+        validator, platform or current_platform(), staging)
+
+    if staging is not None:
+        _swap_panels(staging)
 
     for problem in problems:
         print(f"  atlandı — {problem}", file=sys.stderr)

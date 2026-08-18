@@ -49,6 +49,11 @@ apps/desktop/**/dist/
 # --- üretilen dosyalar ---
 apps/desktop/shell/registry.json
 apps/desktop/shell/panels/
+# Panel kopyası ATOMİK takas ile yerine geçiyor; bunlar takas anındaki
+# geçici klasörler ve normalde saniyeden kısa yaşarlar (derleme yarıda
+# kesilirse kalabilirler).
+apps/desktop/shell/.panels-yeni/
+apps/desktop/shell/.panels-eski/
 
 # İş akışı betiği — geçici, depoya girmez.
 .km-tur.js
