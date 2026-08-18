@@ -106,8 +106,22 @@ jobs:
       # ve `optional:` girdileri. Koşucuda çalıştırılmıyorlar, yalnız derleniyor.
       - name: Sistem bağımlılıkları (Linux)
         if: matrix.platform == 'linux'
+        # ADIM DÜZEYİNDE SÜRE SINIRI. v0.1.9'un ilk koşusunda `apt-get update`
+        # Ubuntu aynasına takılıp ASILI KALDI ve iş 1 saat 30 dakikalık genel
+        # sınıra kadar bekledi; ardından macOS ve Windows paketleri hazır
+        # olmasına rağmen yayın hiç oluşmadı. Sınır burada olsaydı adım 8
+        # dakikada düşer, hata apt'yi işaret eder ve yeniden koşturmak
+        # 1,5 saat değil birkaç dakika sürerdi.
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
+          # AYNA TAKILMASI TEKRARLANIR: `apt-get update` ağ hatasında sessizce
+          # 0 dönebiliyor ve asılı kalabiliyor. Üç deneme + adım süresi sınırı,
+          # geçici bir ayna arızasının tüm yayını düşürmesini engeller.
+          for deneme in 1 2 3; do
+            if timeout 300 sudo apt-get update; then break; fi
+            echo "apt-get update başarısız (deneme $deneme/3), yeniden denenecek…"
+            sleep 10
+          done
           # Manifesti okuyacak olan bu; koşucu imajında bulunduğu varsayılmaz.
           sudo apt-get install -y --no-install-recommends python3-yaml
 
