@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "kontrol-merkezi"
-version = "0.1.9"
+version = "0.2.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
