@@ -383,7 +383,16 @@ has_key() {
 
 FOUND=0
 for pattern in "${PATTERNS[@]}"; do
-  for file in $BUNDLE_DIR/$pattern; do
+  # KÖK TIRNAKLI, DESEN TIRNAKSIZ. `$BUNDLE_DIR` tırnaksız bırakılınca yol
+  # BOŞLUKTAN bölünüyordu: depo `…/Kontrol Merkezi/…` altında durduğu için
+  # desen `…/Kontrol` ve `Merkezi/…/deb/*.deb` diye iki söze ayrılıyor, ikisi
+  # de hiçbir şeyle eşleşmiyor ve betik "paket üretilmedi" diyerek düşüyordu —
+  # paket ve imzası bundle/ altında dururken. `dist/` bu yüzden hep boştu.
+  #
+  # Tırnak yalnız KÖKE konur; deseni tırnaklamak globu dizgeye çevirir ve
+  # hiçbir dosyayla eşleşmez. Glob sonuçları ayrıca söze bölünmez, o yüzden
+  # dosya adındaki boşluk ("Kontrol Merkezi_0.2.1_amd64.deb") sorun değildir.
+  for file in "$BUNDLE_DIR"/$pattern; do
     [ -e "$file" ] || continue
     cp -f "$file" "$DIST/"
     echo "  $(basename "$file")"

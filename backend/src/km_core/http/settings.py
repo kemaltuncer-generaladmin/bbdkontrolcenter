@@ -360,6 +360,20 @@ def create_settings_router() -> APIRouter:
                 "reason": "Bu kurulumda yazıcı yeteneği kayıtlı değil.",
                 "status": {},
             }
+        # CUPS YOKSA BU ARIZA DEĞİL, BEKLENEN HÂLDİR. Çekirdek sunucuda koşuyor
+        # ve sunucu imajında CUPS yok (ADR 0026); yetenek yine kayıtlı olduğu
+        # için `status()` çağrılırsa "sistemde CUPS bulunamadı" diye KIRMIZI bir
+        # hata dönüyordu ve Sistem Ayarları'nı her açan kullanıcı, baskı düzgün
+        # çalışırken bozuk bir şey olduğunu sanıyordu.
+        if not getattr(printer, "installed", lambda: True)():
+            return {
+                "available": False,
+                "reason": "Bu çekirdek sunucuda koşuyor ve sunucuda yazıcı yok — "
+                          "normaldir. Baskı sizin bilgisayarınızda yapılır; hangi "
+                          "yazıcıya gideceğini yukarıdaki “Bu cihazın yazıcısı” "
+                          "bölümü söyler.",
+                "status": {},
+            }
         try:
             state = await printer.status()
         except Exception as failure:  # noqa: BLE001 — yetenek sınırı (K7)
@@ -372,17 +386,20 @@ def create_settings_router() -> APIRouter:
         request: Request,
         user: CurrentUser = requires(VIEW_PERMISSION),
     ) -> dict[str, Any]:
-        """Test sayfası basar.
+        """Test sayfasını ÜRETİR; basma işini kabuk yapar.
 
-        “Gönderildi” ile “kâğıt çıktı” aynı şey değildir (km_platform/printer
-        başlığındaki ders). Bu yüzden dönen gövde hangi kuyruğa gittiğini ve iş
-        numarasını söyler; kullanıcı kâğıdı göremezse nereye bakacağını bilir.
+        BASMIYOR ARTIK. Eskiden burada `printer.print_file` çağrılıyordu ve
+        çekirdek sunucuya taşındıktan sonra (ADR 0026) düğme yalnızca
+        "sistemde CUPS (lp/lpstat) bulunamadı" üretiyordu: sunucu imajında CUPS
+        yok, yazıcı kullanıcının masasında. Test sayfasının bütün anlamı
+        "kâğıt gerçekten çıkıyor mu" olduğu için, kâğıdın çıkacağı yerden
+        basılması gerekir — dönen `path`i kabuk `/api/outputs/document` ile alıp
+        kendi kuyruğuna verir.
+
+        YAZICI YETENEĞİ ARANMAZ: sayfa üretmek için gerekmiyor ve sunucuda
+        kayıtlı değil. Aranması, çalışan yazıcısı olan kullanıcıya 503
+        döndürmek olurdu.
         """
-        registry = getattr(request.app.state, "registry", None)
-        printer = registry.try_resolve("printer") if registry is not None else None
-        if printer is None:
-            raise HTTPException(status_code=503, detail="Yazıcı yeteneği kayıtlı değil.")
-
         config = _config(request)
         try:
             from km_core.files.reports import ExportError, build_pdf
@@ -424,20 +441,13 @@ def create_settings_router() -> APIRouter:
         target = _output_dir(config) / f"yazici-test-{datetime.now().astimezone():%Y-%m-%d-%H%M%S}.pdf"
         write_private(target, pdf)
 
-        try:
-            result = await printer.print_file(target, title="Yazıcı test sayfası")
-        except Exception as failure:
-            # Yetenek sınırı (K7): yazıcı patlarsa ekran nedenini görür,
-            # çekirdek ayakta kalır. Mesaj olduğu gibi geçer — `PrinterError`
-            # cümleleri (ipp-usb tuzağı, kâğıt uyuşmazlığı) kullanıcıya ne
-            # yapacağını söyleyen en iyi metindir.
-            raise HTTPException(status_code=502, detail=str(failure)) from failure
-
         identity = _identity(request)
         if identity is not None:
+            # İZE "ÜRETİLDİ" YAZILIR, "BASILDI" YAZILMAZ: kâğıdın çıkıp
+            # çıkmadığını bu süreç göremiyor.
             await identity.audit(user.id, "settings.printer_test", result="ok",
-                                 detail=str(result.get("printer") or ""))
-        return {"ok": True, "path": str(target), **result}
+                                 detail=target.name)
+        return {"ok": True, "path": str(target)}
 
     # -------------------------------------------------------- güncelleme
 

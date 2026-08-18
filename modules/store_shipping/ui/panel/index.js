@@ -58,6 +58,8 @@ import { formGrid } from '../../ui-kit/form.js';
 import { barChart, groupedBar, stackedBar } from '../../ui-kit/charts.js';
 import { measureBar, stepper, timeline } from '../../ui-kit/flow.js';
 import { reportChain } from '../../ui-kit/report.js';
+// ETİKET VE FATURA CİHAZDA BASILIR — gerekçe `ui-kit/printing.js` başlığında.
+import { printDocument, printerReady } from '../../ui-kit/printing.js';
 
 const BASE = '/api/store_shipping';
 
@@ -663,6 +665,15 @@ async function dispatchOrder(row, trigger, extra = {}) {
   if (trigger) { trigger.disabled = false; trigger.textContent = label; }
   if (!result) return null;
 
+  // OTOMATİK BASIMI BURADA YAPIYORUZ. Sunucu yalnız KARAR veriyor
+  // (`autoPrintPaths`); kâğıt kullanıcının masasındaki yazıcıdan çıkıyor.
+  // Basım düşse bile gönderi açılmıştır ve akış durmaz (K7): satırlar
+  // "Yazdırılamadı" der, dosya yolu ve "Tekrar yazdır" yerinde kalır.
+  if ((result.autoPrintPaths || []).length) {
+    await withBusy('Etiket ve fatura yazıcıya gönderiliyor…',
+      () => autoPrintDocuments(result));
+  }
+
   const parts = [];
   if (result.trackingNo) parts.push(`takip no ${result.trackingNo}`);
   if (result.printed?.length) parts.push(`${num(result.printed.length)} belge yazdırıldı`);
@@ -675,6 +686,40 @@ async function dispatchOrder(row, trigger, extra = {}) {
   showDispatchResult(row, result);
   loadReady();
   return result;
+}
+
+/**
+ * "Kargoya ver" sonrası etiketi ve faturayı BU CİHAZIN yazıcısına basar.
+ *
+ * Sonucu `result.documents` üzerinde işaretler; çekmece bu işaretlere bakarak
+ * "Yazdırıldı" / "Yazdırılamadı" rozetlerini çiziyor. Yazıcı yoksa akış
+ * DURMAZ, satırda sebep yazar ve dosya yolu görünür kalır — gönderi zaten
+ * açılmıştır, kâğıt sonradan da alınır.
+ */
+async function autoPrintDocuments(result) {
+  const paths = result.autoPrintPaths || [];
+  if (!paths.length) return;
+
+  const ready = await printerReady();
+  if (!ready.ready) {
+    // Sunucu "bas" dedi, cihazda yazıcı yok: sebep TEK yerde söylenir.
+    result.printSkipped = result.printSkipped
+      || `Belgeler basılamadı: ${ready.error}`;
+    return;
+  }
+
+  const printed = [];
+  for (const doc of result.documents || []) {
+    if (!paths.includes(doc.path)) continue;
+    try {
+      await printDocument(api, doc.path, { copies: 1 });
+      doc.printed = true;
+      printed.push(doc.kind);
+    } catch (error) {
+      doc.printError = error.message || 'Yazdırılamadı.';
+    }
+  }
+  result.printed = printed;
 }
 
 /**
@@ -761,10 +806,9 @@ function documentList(result) {
         // ÇİFT BASIM KORUMASI otomatik basımı kapsar, bunu değil: kasıtlı
         // tekrar ile kazara ikinci basım ayrı şeylerdir.
         onClick: async () => {
-          const sent = await withBusy('Yazıcıya gönderiliyor…', () => call(`${BASE}/print`, {
-            method: 'POST', body: { path: doc.path, copies: 1 },
-          }));
-          if (sent) toast(`${sent.printer || 'Yazıcı'} yazıcısına gönderildi.`, 'good');
+          const printer = await withBusy('Yazıcıya gönderiliyor…',
+            () => printDocument(api, doc.path, { copies: 1 }));
+          if (printer) toast(`${printer} yazıcısına gönderildi.`, 'good');
         },
       }));
     }

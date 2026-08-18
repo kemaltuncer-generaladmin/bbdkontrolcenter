@@ -456,3 +456,62 @@ async def test_koruma_ayardan_kapatilabilir(tmp_path, monkeypatch) -> None:
     await service.print_file(pdf, title="rapor")
 
     assert len(calls) == 2
+
+# ------------------------------------- "CUPS yok" ile "yazıcı arızalı" ayrımı
+
+
+def test_cups_kurulu_degilse_installed_false(monkeypatch) -> None:
+    """Sunucuda CUPS YOKTUR ve bu bir arıza değildir.
+
+    Yetenek sunucuda da kayıtlı (`http/app.py`), yani ekran ona durum
+    sorabiliyor. `status()` o durumda "sistemde CUPS (lp/lpstat) bulunamadı"
+    diye HATA döndürüyor ve Sistem Ayarları'nı açan herkes, baskı düzgün
+    çalışırken kırmızı bir "Yazıcı bağlantısı hatası" görüyordu — kâğıt
+    kullanıcının makinesinden çıkıyor, sunucudan çıkması hiç beklenmiyor.
+    Çağıranın bu iki hâli ayırt edebilmesi için ayrı bir soru var.
+    """
+    monkeypatch.setattr("km_platform.printer.cups.shutil.which", lambda _name: None)
+    assert PrinterService.installed() is False
+
+
+def test_cups_varsa_installed_true(monkeypatch) -> None:
+    monkeypatch.setattr("km_platform.printer.cups.shutil.which",
+                        lambda name: f"/usr/bin/{name}")
+    assert PrinterService.installed() is True
+
+
+def test_tek_arac_eksikse_kurulu_sayilmaz(monkeypatch) -> None:
+    # `lp` var, `lpstat` yok: keşif yapılamayacağı için baskı da yapılamaz.
+    monkeypatch.setattr("km_platform.printer.cups.shutil.which",
+                        lambda name: "/usr/bin/lp" if name == "lp" else None)
+    assert PrinterService.installed() is False
+
+
+@pytest.mark.asyncio
+async def test_baski_isinin_omru_baglanir(tmp_path, monkeypatch) -> None:
+    """`job-cancel-after` gider — takılı iş sonsuza dek yeniden denenmesin.
+
+    Uygulama tek iş gönderiyor. Tekrarın kaynağı `lp`den SONRASI olabilir:
+    `ErrorPolicy=retry-job` olan kuyrukta cihazda hata alan iş kuyrukta kalır
+    ve düzenli aralıklarla yeniden denenir. Sahada görülen "bir kez yazdır
+    dedim, yarım saat boyunca bastı" tam olarak bu şekle uyuyor.
+    """
+    service = PrinterService(FakeConfig({}), _Log())
+    pdf = tmp_path / "rapor.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    calls: list = []
+    _yazici_kurulumu(service, monkeypatch, calls)
+
+    await service.print_file(pdf, title="rapor")
+
+    assert "job-cancel-after=180" in calls[0]
+
+
+def test_is_omru_ayardan_kapatilabilir() -> None:
+    service = PrinterService(FakeConfig({"job_lifetime_seconds": 0}), _Log())
+    assert service._job_lifetime == 0
+
+
+def test_is_omru_ayardan_degistirilebilir() -> None:
+    service = PrinterService(FakeConfig({"job_lifetime_seconds": 600}), _Log())
+    assert service._job_lifetime == 600

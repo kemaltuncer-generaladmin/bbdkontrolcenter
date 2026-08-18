@@ -20,7 +20,7 @@
 
 import { button, bytes as formatBytes, h } from './kit.js';
 // BASKI CİHAZDA YAPILIR — gerekçe `printing.js` başlığında.
-import { canPrintLocally, localPrinters, printDocument } from './printing.js';
+import { printDocument, printerReady } from './printing.js';
 
 /**
  * @param {object} spec
@@ -46,24 +46,15 @@ export function reportChain({ api, root, toast, base }) {
   //: duruyor"du. Katman tek tutulunca o dizi kökten biter.
   let openOverlay = null;
 
+  // Sunucunun yazıcısı SORULMAZ: kâğıt orada çıkmıyor. Tek doğru soru "bu
+  // cihazda hangi yazıcıya basacağız" ve onu `printing.js` yanıtlıyor —
+  // buradaki kopya, ayarda seçim yokken sistemin varsayılanına düşmeyi
+  // bilmiyordu ve düğmeyi gereksizce kapatıyordu.
   async function printerState() {
-    // Sunucunun yazıcısı SORULMAZ: kâğıt orada çıkmıyor. Tek doğru soru
-    // "bu cihazda hangi yazıcı seçili".
-    if (!canPrintLocally()) {
-      return { ready: false,
-        error: 'Yazdırma yalnız masaüstü uygulamasında çalışır.' };
-    }
-    try {
-      const local = await localPrinters();
-      if (local.error) return { ready: false, error: local.error };
-      if (!local.selected) {
-        return { ready: false,
-          error: 'Bu cihazda yazıcı seçilmemiş — Sistem Ayarları → Yazıcı.' };
-      }
-      return { ready: true, target: { name: local.selected } };
-    } catch (error) {
-      return { ready: false, error: error.message };
-    }
+    const status = await printerReady();
+    return status.ready
+      ? { ready: true, target: { name: status.name } }
+      : { ready: false, error: status.error };
   }
 
   /**
@@ -171,19 +162,16 @@ export function reportChain({ api, root, toast, base }) {
       note.textContent = 'Yazıcıya gönderiliyor…';
       note.classList.remove('bad');
       try {
-        // `printLocally` iki adımı birlikte yapar: PDF'i sunucudan indirir,
-        // bu cihazın seçili yazıcısına basar. Yazıcı seçme penceresi AÇILMAZ —
-        // hedef bir kez ayarlardan seçildi.
+        // `printDocument` iki adımı birlikte yapar: PDF'i sunucudan indirir,
+        // bu cihazın yazıcısına basar. Yazıcı seçme penceresi AÇILMAZ — hedef
+        // ayarlardan gelir, seçilmemişse sistemin varsayılanıdır.
+        //
+        // BAŞARISIZLIK HATA FIRLATIR, `{ok:false}` DÖNMEZ: gövde çağrısının
+        // sarmalayıcısı yoktur, sonuç doğrudan yazıcı adıdır. Buradaki eski
+        // `{ok:true}` sarmalaması hiç yanlışa düşmeyen bir dal kuruyordu.
         const printer = await printDocument(api, result.path, { copies: 1 });
-        const sent = { ok: true, printer };
-        if (!sent?.ok) {
-          note.textContent = sent?.error || 'Yazdırılamadı.';
-          note.classList.add('bad');
-          toast?.(sent?.error || 'Yazdırılamadı.', 'bad');
-        } else {
-          note.textContent = `${sent.printer} yazıcısına gönderildi.`;
-          toast?.(`${sent.printer} yazıcısına gönderildi.`, 'good');
-        }
+        note.textContent = `${printer} yazıcısına gönderildi.`;
+        toast?.(`${printer} yazıcısına gönderildi.`, 'good');
       } catch (error) {
         note.textContent = error.message;
         note.classList.add('bad');

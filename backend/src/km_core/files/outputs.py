@@ -32,10 +32,16 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from km_core.config.paths import DATA_SEGMENT
 from km_core.files.private import DIR_MODE, ensure_private_dir
 
 APP_FOLDER = "Kontrol Merkezi"
 REPORTS_FOLDER = "Raporlar"
+
+#: Modüllerin fallback'inde geçen klasör adı: `<kurulum kökü>/data/exports`.
+#: Modüller bu yolu `ctx.module_path.parents[1] / "data" / "exports"` diye
+#: kendileri kuruyor; adı burada da yazılı ki kapı aynı yere bakabilsin.
+EXPORTS_SEGMENT = "exports"
 
 _TR_MONTHS = [
     "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
@@ -90,6 +96,61 @@ def reports_root(fallback: Path) -> Path:
     if desktop is None:
         return fallback
     return desktop / APP_FOLDER / REPORTS_FOLDER
+
+
+def output_roots(root: Path, data_root: Path, configured: list[str] | None = None,
+                 ) -> list[Path]:
+    """Çıktının YAZILABİLECEĞİ bütün kökler — "bu dosya bizim mi" sorusunun yeri.
+
+    NEDEN LİSTE. Çıktıyı yazan taraf ile "yazdırılabilir mi" diye soran taraf
+    kökü AYRI AYRI hesaplıyordu ve ikisi kurulu sistemde farklı yer gösteriyordu:
+
+      · Modüller `ctx.module_path.parents[1] / "data" / "exports"` veriyor —
+        yani KURULUM KÖKÜ altındaki `data/exports`, her zaman.
+      · Çekirdek ise `data_dir(root) / "exports"` soruyordu ve `data_dir`
+        geliştirme dışında SİSTEM veri dizinine gidiyor
+        (`~/.local/share/kontrol-merkezi`, `%APPDATA%\\…`).
+
+    Masaüstü bulunan bir makinede ikisi de `Masaüstü/Kontrol Merkezi/Raporlar`a
+    çözülüp fark görünmüyordu. Sunucuda masaüstü YOK (ADR 0026): iki taraf
+    fallback'e düşüyor, adresler ayrışıyor ve her "Yazdır" düğmesi
+    "Bu dosya rapor klasöründe değil; güvenlik gereği verilmez" alıyordu.
+    Dosya tam da uygulamanın kendi yazdığı rapordu.
+
+    KAPI KALDIRILMIYOR, DOĞRU YERE BAKIYOR. Serbest yol kabul etmek oturumu olan
+    herkese sunucudaki her dosyayı okutmak olurdu; kapının işi bu değil,
+    "uygulamanın ürettiği çıktı" ile "rastgele bir dosya" ayrımını yapmak.
+
+    `configured` = kullanıcının ayarladığı `export_path` değerleri. Modül adı
+    okunmaz (K1): çağıran hangi yolları kullandığını söyler, buradaki kod
+    onların nereden geldiğini bilmez.
+    """
+    roots = [
+        # Asıl yer: masaüstü varsa oradaki hiyerarşi, yoksa çekirdeğin fallback'i.
+        reports_root(data_root),
+        # Çekirdeğin fallback'i (masaüstü bulunmuşsa yukarıdaki ondan farklıdır).
+        data_root,
+        # Modüllerin fallback'i. Hepsi aynı ifadeyi kullanıyor, o yüzden tek yol
+        # hepsini kapsar; modül başına liste tutmak gerekmiyor.
+        root / DATA_SEGMENT / EXPORTS_SEGMENT,
+    ]
+    for entry in configured or []:
+        text = str(entry).strip()
+        if text:
+            roots.append(Path(text).expanduser())
+
+    # `resolve()` ŞART: çağıran tarafta karşılaştırma çözülmüş yolla yapılıyor.
+    # Kökü çözmeden bırakmak, sembolik bağ taşıyan bir kurulumda geçerli dosyayı
+    # reddetmek demekti.
+    seen: list[Path] = []
+    for candidate in roots:
+        try:
+            resolved = candidate.resolve()
+        except OSError:  # pragma: no cover — çözülemeyen yol yok sayılır
+            continue
+        if resolved not in seen:
+            seen.append(resolved)
+    return seen
 
 
 def report_dir(category: str, *, fallback: Path, when: datetime | None = None,

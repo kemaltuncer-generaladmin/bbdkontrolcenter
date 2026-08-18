@@ -1198,6 +1198,9 @@ class ShippingService:
             "documents": documents,
             "printed": printed["done"],
             "autoPrint": wanted,
+            # "BUNLARI BAS" — kâğıdı ekran çıkarır (bkz. `_print_documents`).
+            # Boş liste "basma" demektir ve nedeni `printSkipped`te yazar.
+            "autoPrintPaths": printed["spool"],
             "printSkipped": printed["skipped"],
             "sms": sms,
             "warnings": _dispatch_warnings(info),
@@ -1322,43 +1325,51 @@ class ShippingService:
     async def _print_documents(self, documents: list[dict[str, Any]], *, info: dict[str, Any],
                                order_id: int, wanted: bool, actor: str,
                                reason: str) -> dict[str, Any]:
-        """Belgeleri VARSAYILAN yazıcıya gönderir. Sonucu satır satır işaretler.
+        """Otomatik basıma KARAR VERİR; kâğıdı çıkaran taraf ekrandır.
+
+        SUNUCU BASMAYI BIRAKTI. Eskiden burada `print_report` çağrılıyordu ve o
+        yol sunucudaki CUPS'a gidiyordu; sunucu imajı CUPS'ı bilerek kurmuyor
+        ("sunucuda yazıcı ve hoparlör yok" — `deploy/server/Dockerfile`) ve
+        yazıcılar kullanıcının masasında. Sonuç: "kargoya ver" her seferinde
+        etiketi diske yazıp `printError` alanına CUPS hatası koyuyordu, kâğıt
+        hiç çıkmıyordu. Kullanıcı kararı "kargoya ver deyince yazdırsın"dır;
+        basımı yapan yer de kâğıdın çıktığı yer olmalı (ADR 0026).
+
+        KARAR BURADA KALIR, İCRA EKRANDA. Ekran hangi belgeyi basacağını kendi
+        seçmez: çift basım kapısı, ayarın açık/kapalı olması ve kuru prova
+        ayrımı sunucunun bildiği şeylerdir. Dönen `spool` listesi "bunları bas"
+        demektir; boşsa ekran hiçbir şey basmaz.
 
         ÇİFT BASIM KORUMASI: aynı gönderi için daha önce otomatik basım
         yapıldıysa ikinci kez basılmaz. "Kargoya ver" iki kez tıklanırsa ya da
         istek yinelenirse aynı etiket iki kez çıkar ve iki koli hazırlanırdı.
         Elle "tekrar yazdır" bu kapıyı hiç görmez: kasıtlı tekrar başka şeydir.
+        Kapı, ekranın basmayı BAŞARDIĞINI bilmeden kapanır; basım cihazda
+        düşerse kullanıcı "Tekrar yazdır" ile sürdürür — alternatifi, her
+        yinelenen istekte ikinci etiketi göze almaktı.
         """
-        done: list[str] = []
+        bos: list[str] = []
         if not wanted:
-            return {"done": done, "skipped": "Otomatik basım ayardan kapalı."}
+            return {"done": bos, "spool": bos, "skipped": "Otomatik basım ayardan kapalı."}
         if info["dryRun"]:
-            return {"done": done, "skipped": "Kuru prova: belge basılmadı."}
+            return {"done": bos, "spool": bos, "skipped": "Kuru prova: belge basılmadı."}
 
         basilabilir = [item for item in documents if item["path"]]
         if not basilabilir:
-            return {"done": done, "skipped": "Basılacak belge üretilemedi."}
+            return {"done": bos, "spool": bos, "skipped": "Basılacak belge üretilemedi."}
 
         if await self._auto_printed_before(shipment_id=info["shipmentId"], order_id=order_id):
-            return {"done": done,
+            return {"done": bos, "spool": bos,
                     "skipped": "Bu gönderi daha önce otomatik basıldı; ikinci kez "
                                "basılmadı. Gerekiyorsa 'Tekrar yazdır' kullanın."}
 
-        for item in basilabilir:
-            result = await self.print_report(item["path"])
-            if result.get("ok"):
-                item["printed"] = True
-                done.append(item["kind"])
-            else:
-                item["printError"] = shipping.text(result.get("error")) or "Yazdırılamadı."
-
+        spool = [item["path"] for item in basilabilir]
         await self._record(shipment_id=info["shipmentId"], order_id=order_id,
                            action=AUTO_PRINT_ACTION, reason=reason, actor=actor,
-                           result="ok" if done else "hata",
-                           detail={"printed": done,
-                                   "failed": [item["kind"] for item in basilabilir
-                                              if not item["printed"]]})
-        return {"done": done, "skipped": ""}
+                           result="ok",
+                           detail={"spooled": [item["kind"] for item in basilabilir],
+                                   "by": "cihaz"})
+        return {"done": bos, "spool": spool, "skipped": ""}
 
     async def _auto_printed_before(self, *, shipment_id: int, order_id: int) -> bool:
         """Bu gönderi daha önce KENDİLİĞİNDEN basıldı mı.

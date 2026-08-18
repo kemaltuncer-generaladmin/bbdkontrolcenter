@@ -65,6 +65,14 @@ platform:
     # Kasıtlı ikinci baskı engellenmez: `copies` kullanılır ya da pencere
     # geçtikten sonra yeniden basılır. 0 yazmak korumayı kapatır.
     duplicate_window_seconds: 12
+    # BİR İŞ SONSUZA DEK KUYRUKTA KALMAZ.
+    #
+    # `ErrorPolicy` ayarı `retry-job` olan bir CUPS kuyruğunda, cihazda hata
+    # alan iş kuyrukta kalır ve düzenli aralıklarla YENİDEN DENENİR. Kullanıcı
+    # bir kez "Yazdır" der, yarım saat sonra aynı raporun defalarca çıktığını
+    # görür; uygulamada döngü olmadığı için suç uzun süre uygulamada aranır.
+    # `job-cancel-after` işin ömrünü bağlar. 0 = sınırsız (eski davranış).
+    job_lifetime_seconds: 180
     job_timeout_seconds: 120
     keep_job_history_days: 30
 

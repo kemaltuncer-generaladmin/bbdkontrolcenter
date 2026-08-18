@@ -469,22 +469,24 @@ class CanteenDeviceService:
 
     async def _print_slip(self, kiosk: dict[str, Any],
                           pairing: dict[str, Any]) -> dict[str, Any]:
-        """Eşleme kodunu kâğıda basar.
+        """Eşleme kodunun fişini ÜRETİR; kâğıdı ekran çıkarır.
 
         NEDEN AYNI ÇAĞRIDA. Kod tek kullanımlıktır ve hiçbir yere yazılmaz;
         "sonra bas" diyen ayrı bir uç, kodu ya bir tabloda ya da bellekte
-        tutmayı gerektirirdi. Basım, kodun düz görüldüğü TEK ANDA yapılır.
+        tutmayı gerektirirdi. Fiş, kodun düz görüldüğü TEK ANDA üretilir.
+
+        SUNUCU BASMIYOR (ADR 0026). Eskiden burada `print_file` çağrılıyordu ve
+        çekirdek sunucuya taşındıktan sonra o çağrı hep düşüyordu: sunucu
+        imajında CUPS yok, yazıcı kullanıcının masasında. Ekran dönen `path`i
+        `/api/outputs/document` ile alıp kendi kuyruğuna veriyor.
 
         DOSYA ÖZEL KLASÖRE, 0600 İLE yazılır. Kâğıt ya da dosya, kodun ömrü
         yine 10 dakikadır; süre dolduktan sonra fişte yazan sayı hiçbir kapıyı
         açmaz.
 
         HATA İŞİ DURDURMAZ (K7): kod zaten üretildi ve yanıtta dönüyor;
-        yazıcının patlaması yöneticinin kodu ekrandan okumasını engellemez.
+        fişin üretilememesi yöneticinin kodu ekrandan okumasını engellemez.
         """
-        if self._printer is None:
-            return {"printed": False,
-                    "error": "Yazıcı yeteneği bu kurulumda yok; kodu ekrandan okuyun."}
         code = kio.text(pairing.get("code"))
         if not code:
             return {"printed": False, "error": "Basılacak kod yok."}
@@ -510,12 +512,14 @@ class CanteenDeviceService:
                 folder / f"kiosk-eslesme-{kio.as_int(kiosk.get('id'))}-"
                          f"{kio.now_iso().replace(':', '')}.pdf",
                 content)
-            result = await self._printer.print_file(path, title=path.name, copies=1)
-        except Exception as failure:  # noqa: BLE001 — yazıcı ve dosya sistemi dışarısı
-            self._log.warning("eşleme fişi basılamadı", error=str(failure))
+        except Exception as failure:  # noqa: BLE001 — dosya sistemi dışarısı
+            self._log.warning("eşleme fişi üretilemedi", error=str(failure))
             return {"printed": False, "error": str(failure)}
 
-        return {"printed": True, "error": "", **(result if isinstance(result, dict) else {})}
+        # `printed` HENÜZ FALSE: kâğıt çıkmadı, dosya hazır. Ekran basınca
+        # kullanıcıya "gönderildi" diyecek olan da odur. Burada `True` demek,
+        # basılmamış bir fişi basılmış saymaktı.
+        return {"printed": False, "error": "", "path": str(path)}
 
     async def printer_status(self) -> dict[str, Any]:
         """Panelin "kodu bas" düğmesini doğru anlatabilmesi için yazıcı durumu."""

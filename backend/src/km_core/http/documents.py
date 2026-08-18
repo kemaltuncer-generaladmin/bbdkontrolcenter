@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from km_core.config.paths import data_dir
-from km_core.files.outputs import reports_root
+from km_core.files.outputs import EXPORTS_SEGMENT, output_roots
 from km_core.http.deps import requires
 from km_core.security.identity import CurrentUser
 
@@ -42,6 +42,41 @@ class DocumentBody(BaseModel):
     path: str = Field(default="", max_length=4096)
 
 
+def _configured_paths(config: Any) -> list[str]:
+    """Ayarlarda elle verilmiş çıktı klasörleri.
+
+    İKİ YERDEN GELİR ve ikisi de kâğıda çıkabilen dosya üretir:
+      · `files.output_path` — çekirdeğin çıktıları (ör. yazıcı test sayfası)
+      · `modules.<id>.export_path` — o modülün raporları
+
+    Kullanıcı çıktıyı başka bir klasöre yönlendirmişse (`report_dir` →
+    `configured`) oraya yazılan rapor da yazdırılabilmeli; yoksa ayarı
+    değiştiren kullanıcının bütün baskıları sessizce ölürdü.
+
+    MODÜL ADI OKUNMAZ (K1). `modules` bloğunun altındaki HER kayıt gezilir ve
+    yalnız anahtarın adına bakılır; burada hangi modüllerin var olduğu bilgisi
+    yok. Modül silinse de bu kod aynı çalışır.
+    """
+    found: list[str] = []
+
+    core_path = config.get("files.output_path")
+    if isinstance(core_path, str) and core_path.strip():
+        found.append(core_path)
+
+    try:
+        blok = config.section("modules")
+    except Exception:  # noqa: BLE001 — ayar okunamazsa kapı dar kalsın, çökmesin
+        return found
+    if not isinstance(blok, dict):
+        return found
+    for entry in blok.values():
+        if isinstance(entry, dict):
+            value = entry.get("export_path")
+            if isinstance(value, str) and value.strip():
+                found.append(value)
+    return found
+
+
 def create_documents_router() -> APIRouter:
     router = APIRouter(tags=["documents"])
 
@@ -49,7 +84,12 @@ def create_documents_router() -> APIRouter:
     async def document(
         body: DocumentBody,
         request: Request,
-        user: CurrentUser = requires("print.view", "settings.view"),
+        # `outputs.print` = "elindeki belgeyi yazıcıya verebilir" (çekirdek
+        # izni, bkz. `km_core/security/permissions.py`). Eski iki anahtar
+        # LİSTEDE KALIYOR: izinleri elle düzenlenmiş kurulumlarda yalnız onlara
+        # sahip kullanıcılar var ve yeni anahtar dağıtılana kadar baskıları
+        # kesilmesin. Kapı en az birini ister (`requires` "herhangi biri").
+        user: CurrentUser = requires("outputs.print", "print.view", "settings.view"),
     ) -> dict[str, Any]:
         """Rapor kökündeki bir PDF'i base64 olarak döndürür."""
         try:
@@ -57,19 +97,30 @@ def create_documents_router() -> APIRouter:
         except OSError:
             raise HTTPException(status_code=404, detail="Belge bulunamadı.") from None
 
-        # KÖK İSTEK ANINDA ÇÖZÜLÜR. Router kurulurken `app.state.config`
+        # KÖKLER İSTEK ANINDA ÇÖZÜLÜR. Router kurulurken `app.state.config`
         # henüz yok (uygulama yaşam döngüsü onu sonra bağlıyor); kurulumda
         # okumak testlerde `AttributeError` üretiyordu.
+        #
+        # TEK KÖK YETMİYOR: çıktıyı yazan taraf ile burası kökü ayrı ayrı
+        # hesaplıyordu ve kurulu sistemde farklı yer gösteriyorlardı — gerekçe
+        # `km_core/files/outputs.py` → `output_roots`. Belirti, uygulamanın
+        # kendi ürettiği raporda "bu dosya rapor klasöründe değil" demekti.
         config = getattr(request.app.state, "config", None)
-        fallback = (data_dir(config.root) / "exports") if config is not None \
-            else Path.home() / "km-raporlar"
-        root = reports_root(fallback).resolve()
+        if config is not None:
+            roots = output_roots(
+                config.root,
+                data_dir(config.root) / EXPORTS_SEGMENT,
+                _configured_paths(config),
+            )
+        else:
+            roots = [(Path.home() / "km-raporlar").resolve()]
+
         # `is_relative_to` sembolik bağ çözüldükten SONRA uygulanır: kök içine
         # konmuş bir bağ, dışarıyı işaret etse bile buradan geçemez.
-        if not resolved.is_relative_to(root):
+        if not any(resolved.is_relative_to(entry) for entry in roots):
             raise HTTPException(
                 status_code=403,
-                detail="Bu dosya rapor klasöründe değil; güvenlik gereği verilmez.",
+                detail="Bu dosya çıktı klasörlerinde değil; güvenlik gereği verilmez.",
             )
         if resolved.suffix.lower() not in ALLOWED_SUFFIXES:
             raise HTTPException(status_code=415, detail="Yalnız PDF belgeler verilir.")

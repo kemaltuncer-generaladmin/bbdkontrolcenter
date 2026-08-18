@@ -36,6 +36,8 @@ import {
   barChart, groupedBar, hourStrip, lineChart, paretoChart, stackedBar,
 } from '../../ui-kit/charts.js';
 import { reportChain } from '../../ui-kit/report.js';
+// BASKI CİHAZDA YAPILIR — gerekçe `ui-kit/printing.js` başlığında.
+import { printDocument } from '../../ui-kit/printing.js';
 
 const BASE = '/api/store_reports';
 
@@ -620,8 +622,15 @@ async function exportCsv() {
   });
 }
 
-/** [Yazdır]: üret → yolu doğrulat → CUPS'a gönder. Önizleme açılmaz;
- *  önizlemeli akış [PDF] düğmesindedir. */
+/** [Yazdır]: üret → BU CİHAZIN yazıcısına bas. Önizleme açılmaz; önizlemeli
+ *  akış [PDF] düğmesindedir.
+ *
+ *  BASKI SUNUCUDA DEĞİL BURADA YAPILIR. Eskiden `${BASE}/print` çağrılıyordu:
+ *  o uç sunucudaki CUPS'a gidiyor, sunucu imajında CUPS yok ("sunucuda yazıcı
+ *  ve hoparlör yok" — `deploy/server/Dockerfile`) ve düğme her tıklamada
+ *  "sistemde CUPS (lp/lpstat) bulunamadı" diyordu. Önizleme penceresindeki
+ *  Yazdır (`ui-kit/report.js`) çoktan yerel yola geçmişti; bu düğme geride
+ *  kalmıştı ve aynı raporun iki yazdırma yolundan biri çalışıyordu. */
 async function printDirect() {
   if (!state.active) return;
   const pending = leafOf(state.active);
@@ -636,11 +645,9 @@ async function printDirect() {
       method: 'POST', body: { kind: state.active, ...reportParams() },
     });
     nodes.lastFile.set(produced.path);
-    const sent = await call(`${BASE}/print`, {
-      method: 'POST', body: { path: produced.path, copies: 1 },
-    });
-    toast(`${sent.printer} yazıcısına gönderildi.`, 'good');
-    return sent;
+    const printer = await printDocument(api, produced.path, { copies: 1 });
+    toast(`${printer} yazıcısına gönderildi.`, 'good');
+    return { printer };
   });
 }
 

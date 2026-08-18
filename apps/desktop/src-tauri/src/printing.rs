@@ -16,6 +16,13 @@
 //! SEÇİLEN YAZICI CİHAZDA KALIR. Merkezî ayara yazılmaz: aynı kurulumu kullanan
 //! iki makinenin yazıcısı farklıdır ve merkezde tutulan tek bir ad, birinin
 //! çıktısını ötekinin odasına düşürürdü.
+//!
+//! SEÇİM YAPILMADIYSA SİSTEMİN VARSAYILANI KULLANILIR. Önceden seçim şarttı ve
+//! ayar ekranına uğramamış her kurulumda bütün "Yazdır" düğmeleri kapalı
+//! duruyordu; işletim sisteminde çalışan bir varsayılan yazıcı varken uygulama
+//! "yazıcı seçilmemiş" diyordu. Kullanıcının beklentisi bunun tersidir:
+//! ayarlardan seçilmişse ORAYA basar, seçilmemişse sistemin bastığı yere basar.
+//! Hiç yazıcı yoksa ancak o zaman durur — ve sebebini söyler.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,20 +35,6 @@ use tauri::Manager;
 /// Seçilen yazıcının saklandığı dosya (uygulama veri dizini).
 const PREF_FILE: &str = "yazici.json";
 
-/// Ürettiğimiz raporlar A4'tür ve boyut AÇIKÇA bildirilir.
-///
-/// Söylenmezse kullanıcının `~/.cups/lpoptions` dosyasındaki varsayılan
-/// geçerli olur; sahadaki makinede orada `PageSize=A6` yazıyordu ve yazıcı A4
-/// belgeyi A6 sanıp kâğıt uyuşmazlığı veriyordu. İş CUPS'a sorunsuz giriyor,
-/// hatayı cihaz veriyor — uygulama "gönderildi" derken yazıcı kırmızı yanıyor
-/// ve kuyruğa takılı iş elle temizlenene kadar orada kalıyordu.
-///
-/// Bu bilgi `km_platform/printer/cups.py` içinde acıyla kazanılmıştı; baskı
-/// kabuğa taşınırken buraya taşınmamıştı. `media` ile `PageSize` CUPS'ta AYRI
-/// iki seçenektir (ilki genel IPP adı, ikincisi PPD'nin kendi anahtarı) ve
-/// ikisi birden verilir ki hangi yoldan okunursa okunsun aynı boyut çıksın.
-#[cfg(not(windows))]
-const MEDIA: &str = "A4";
 
 /// AYNI BELGE BU SÜRE İÇİNDE İKİNCİ KEZ KUYRUĞA VERİLMEZ.
 ///
@@ -50,6 +43,11 @@ const MEDIA: &str = "A4";
 /// yüzden koruma burada ayrıca durmak zorunda; yoksa "bir tıklama bir baskı"
 /// sözü yalnız sunucu yolunda geçerli olurdu.
 const DUPLICATE_WINDOW: Duration = Duration::from_secs(12);
+
+/// Bir baskı işinin kuyrukta yaşayabileceği en uzun süre (saniye).
+/// Gerekçe `spool` içinde: `ErrorPolicy=retry-job` olan bir kuyrukta
+/// hata alan iş sonsuza dek yeniden denenir.
+const JOB_LIFETIME_SECONDS: u32 = 180;
 
 /// Son gönderilen iş: (yazıcı, belge özeti) ve gönderim anı.
 static SON_BASKI: Mutex<Option<(String, u64, Instant)>> = Mutex::new(None);
@@ -79,8 +77,15 @@ pub struct PrinterList {
     pub printers: Vec<String>,
     /// İşletim sisteminin varsayılanı (varsa) — ilk kurulumda öneri olur.
     pub system_default: String,
-    /// Kullanıcının bu cihazda seçtiği yazıcı.
+    /// Kullanıcının bu cihazda seçtiği yazıcı. Boş = seçim yapılmadı.
     pub selected: String,
+    /// Baskının GERÇEKTEN gideceği kuyruk: seçim varsa o, yoksa sistemin
+    /// varsayılanı. `selected` ile ayrı tutulur çünkü ayar ekranı seçimi
+    /// listede işaretlemek için `selected`e, "nereye basacak" cümlesini
+    /// kurmak için buna bakar. Boşsa basılabilecek yazıcı yoktur.
+    pub effective: String,
+    /// `effective` boşsa nedeni — kullanıcıya gösterilecek cümle.
+    pub blocked: String,
     /// Liste alınamadıysa sebebi. Boş liste ile hata AYRI şeylerdir:
     /// birincisi "yazıcı kurulu değil", ikincisi "sorulamadı".
     pub error: String,
@@ -159,11 +164,73 @@ fn clean(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Bu cihazda kurulu yazıcılar + seçili olan.
+/// Baskının gideceği kuyruğu SEÇER — tek karar yeri.
+///
+/// Sıra: ayardan seçilen → sistemin varsayılanı → hata. `printers` komutu da,
+/// `printer_print` de buradan geçer; ayar ekranının "şuraya basacak" dediği ile
+/// kâğıdın çıktığı yer böylece aynı olur. İki ayrı yerde yazıldığında biri
+/// varsayılana düşerken öteki düşmüyordu ve ekran yanlış söylüyordu.
+fn resolve(chosen: &str, installed: &[String], system_default: &str, error: &str)
+    -> Result<String, String>
+{
+    let known = |name: &str| installed.iter().any(|entry| entry == name);
+
+    // LİSTE VARSA SEÇİM DOĞRULANIR. Silinmiş/adı değişmiş bir yazıcıya
+    // gönderilen iş CUPS'tan ham hata metniyle döner ("The printer or class
+    // does not exist"); kullanıcı bunu ayarındaki adla ilişkilendiremez.
+    if !installed.is_empty() {
+        if !chosen.is_empty() && known(chosen) {
+            return Ok(chosen.to_string());
+        }
+        if !system_default.is_empty() && known(system_default) {
+            return Ok(system_default.to_string());
+        }
+        let kurulu = installed.join(", ");
+        return Err(if chosen.is_empty() {
+            format!(
+                "Bu cihazda yazıcı seçilmemiş ve işletim sisteminin varsayılan \
+                 yazıcısı yok. Sistem Ayarları → “Bu cihazın yazıcısı” bölümünden \
+                 seçin. Kurulu yazıcılar: {kurulu}."
+            )
+        } else {
+            format!(
+                "Ayardaki “{chosen}” yazıcısı bu cihazda artık kurulu değil ve \
+                 işletim sisteminin varsayılan yazıcısı yok. Sistem Ayarları → \
+                 “Bu cihazın yazıcısı” bölümünden yeniden seçin. \
+                 Kurulu yazıcılar: {kurulu}."
+            )
+        });
+    }
+
+    // LİSTE ALINAMADIYSA SEÇİM DOĞRULANMAZ, YOK SAYILMAZ. "Doğrulayamadım" ile
+    // "yanlış" ayrı şeylerdir: `lpstat` bir sebeple susmuşken kullanıcının
+    // bilerek yazdığı adı çöpe atmak, çalışan baskıyı durdurmak olurdu.
+    if !chosen.is_empty() {
+        return Ok(chosen.to_string());
+    }
+    if !system_default.is_empty() {
+        return Ok(system_default.to_string());
+    }
+    Err(if error.is_empty() {
+        "Bu cihazda kurulu yazıcı bulunamadı. Yazıcıyı işletim sisteminin \
+         ayarlarından ekleyin; başka programlardan çıktı alabiliyorsanız burada \
+         da görünmesi gerekir."
+            .to_string()
+    } else {
+        format!("Yazıcı listesi alınamadı: {error}")
+    })
+}
+
+/// Bu cihazda kurulu yazıcılar + seçili olan + baskının gideceği kuyruk.
 #[tauri::command]
 pub fn printers(app: tauri::AppHandle) -> PrinterList {
     let (printers, system_default, error) = discover();
-    PrinterList { printers, system_default, selected: read_pref(&app).name, error }
+    let selected = read_pref(&app).name;
+    let (effective, blocked) = match resolve(&selected, &printers, &system_default, &error) {
+        Ok(name) => (name, String::new()),
+        Err(reason) => (String::new(), reason),
+    };
+    PrinterList { printers, system_default, selected, effective, blocked, error }
 }
 
 /// Yazıcıyı bu CİHAZ için seçer. Boş ad seçimi kaldırır.
@@ -207,20 +274,45 @@ fn spool(file: &Path, printer: &str, helper: Option<PathBuf>) -> Result<(), Stri
     Ok(())
 }
 
+/// Raporların kâğıt boyutu. Çekirdek A4 üretiyor (`platform.printer.media`).
+const MEDIA: &str = "A4";
+
 #[cfg(not(windows))]
 fn spool(file: &Path, printer: &str, _helper: Option<PathBuf>) -> Result<(), String> {
-    // Kâğıt boyutu iki adla birden söylenir — gerekçe `MEDIA` başlığında.
+    // KÂĞIT BOYUTU İKİ ADLA BİRDEN SÖYLENİR — pahalıya mal olmuş bir ders.
+    //
+    // Söylenmezse kullanıcının `~/.cups/lpoptions` dosyasındaki varsayılan
+    // geçerli olur. Bu makinede orada `PageSize=A6` yazıyor: yazıcı A4 belgeyi
+    // A6 sanıp HATA VERİYOR. İş CUPS'a sorunsuz giriyor, hatayı cihaz veriyor —
+    // yani uygulama "gönderildi" derken yazıcı kırmızı yanıyor. Grafik yazdırma
+    // pencereleri o dosyayı okumadığı için normal belgeler düzgün çıkıyor ve
+    // suç uygulamada sanılıyor.
+    //
+    // `media` ile `PageSize` CUPS'ta AYRI iki seçenek: ilki genel IPP adı,
+    // ikincisi PPD'nin kendi anahtarı. Yalnız `media` verilince PPD tabanlı
+    // sürücü (hpcups) lpoptions'daki `PageSize`i kullanmaya devam edebiliyor.
+    // İkisi birden verilir ki hangi yoldan okunursa okunsun aynı boyut çıksın.
+    //
+    // Kural `km_platform/printer/cups.py` içinde yazılıydı; baskı kabuğa
+    // taşınırken buraya GELMEMİŞTİ ve hata aynen geri döndü.
+    // İŞİN ÖMRÜ SINIRLIDIR — "bir tıklama bir baskı"nın ikinci yarısı.
+    //
+    // Uygulama tek iş gönderiyor; tekrarın kaynağı `lp`den SONRASI olabilir.
+    // CUPS kuyruğunun `ErrorPolicy` ayarı `retry-job` olduğunda, cihazda hata
+    // alan bir iş kuyrukta KALIR ve düzenli aralıklarla yeniden denenir.
+    // Kullanıcı bir kez "Yazdır" der, yarım saat sonra gelip aynı raporun
+    // defalarca çıktığını görür — uygulamada hiçbir döngü olmadığı için de
+    // suç uzun süre uygulamada aranır.
+    //
+    // `job-cancel-after` işin toplam ömrünü bağlar: bu süre içinde basılamayan
+    // iş kuyruktan DÜŞER, sonsuza dek yeniden denenmez. Rapor basımı saniyeler
+    // sürer; buradaki süre cömert bir tavandır ve normal baskıya dokunmaz.
     run(
         "lp",
-        &[
-            "-d",
-            printer,
-            "-o",
-            &format!("media={MEDIA}"),
-            "-o",
-            &format!("PageSize={MEDIA}"),
-            &file.to_string_lossy(),
-        ],
+        &["-d", printer, "-o", &format!("media={MEDIA}"),
+          "-o", &format!("PageSize={MEDIA}"),
+          "-o", &format!("job-cancel-after={JOB_LIFETIME_SECONDS}"),
+          &file.to_string_lossy()],
     )
     .map(|_| ())
 }
@@ -252,16 +344,11 @@ pub fn printer_print(
 ) -> Result<String, String> {
     use base64::Engine as _;
 
-    let printer = {
-        let chosen = read_pref(&app).name;
-        if chosen.is_empty() {
-            return Err(
-                "Bu cihazda yazıcı seçilmemiş. Sistem Ayarları → Yazıcı bölümünden seçin."
-                    .into(),
-            );
-        }
-        chosen
-    };
+    // HEDEF `printers` KOMUTUYLA AYNI KURALDAN ÇIKAR (`resolve`): ekranda
+    // "şuraya basacak" yazan ad ile işin gittiği kuyruk ayrı hesaplanırsa
+    // kullanıcı ekrana bakarak hatayı çözemez.
+    let (installed, system_default, error) = discover();
+    let printer = resolve(&read_pref(&app).name, &installed, &system_default, &error)?;
 
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -316,4 +403,69 @@ pub fn printer_print(
     // başarısız saymaz; iş zaten kuyruğa girmiştir.
     let _ = std::fs::remove_file(&file);
     sonuc.map(|_| printer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve;
+
+    fn liste(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn ayardan_secilen_yazici_baglayicidir() {
+        let kurulu = liste(&["Brother_DCP", "HP_LaserJet"]);
+        // Sistemin varsayılanı başka olsa bile kullanıcının seçimi kazanır.
+        let hedef = resolve("Brother_DCP", &kurulu, "HP_LaserJet", "").unwrap();
+        assert_eq!(hedef, "Brother_DCP");
+    }
+
+    #[test]
+    fn secim_yoksa_sistemin_varsayilanina_dusulur() {
+        // KULLANICININ İSTEDİĞİ DAVRANIŞ: ayara hiç uğramamış bir kurulumda
+        // "Yazdır" çalışsın. Eskiden burada hata dönüyordu ve bütün yazdırma
+        // düğmeleri "Bu cihazda yazıcı seçilmemiş" diye kapalı kalıyordu.
+        let kurulu = liste(&["HP_LaserJet"]);
+        assert_eq!(resolve("", &kurulu, "HP_LaserJet", "").unwrap(), "HP_LaserJet");
+    }
+
+    #[test]
+    fn silinmis_yazici_varsayilana_duser() {
+        // Ayarda adı yazan yazıcı kaldırılmış. Ona göndermek CUPS'tan ham
+        // "does not exist" hatası getirirdi; kullanıcı bunu kendi ayarındaki
+        // adla ilişkilendiremez.
+        let kurulu = liste(&["HP_LaserJet"]);
+        assert_eq!(resolve("Eski_Yazici", &kurulu, "HP_LaserJet", "").unwrap(),
+                   "HP_LaserJet");
+    }
+
+    #[test]
+    fn silinmis_yazici_ve_varsayilan_yoksa_neden_soylenir() {
+        let kurulu = liste(&["HP_LaserJet"]);
+        let hata = resolve("Eski_Yazici", &kurulu, "", "").unwrap_err();
+        // Hata KURULU YAZICILARI sayar: kullanıcı hangi adı seçeceğini görür.
+        assert!(hata.contains("Eski_Yazici"), "{hata}");
+        assert!(hata.contains("HP_LaserJet"), "{hata}");
+    }
+
+    #[test]
+    fn hic_yazici_yoksa_kurulum_istenir() {
+        let hata = resolve("", &[], "", "").unwrap_err();
+        assert!(hata.contains("kurulu yazıcı bulunamadı"), "{hata}");
+    }
+
+    #[test]
+    fn liste_alinamadiysa_secim_cope_atilmaz() {
+        // `lpstat` susmuşsa seçim DOĞRULANAMAZ; "doğrulayamadım" ile "yanlış"
+        // ayrı şeylerdir ve çalışan baskıyı durdurmak yanlış olandır.
+        let hedef = resolve("HP_LaserJet", &[], "", "lpstat çalıştırılamadı").unwrap();
+        assert_eq!(hedef, "HP_LaserJet");
+    }
+
+    #[test]
+    fn liste_alinamadi_ve_secim_yoksa_sebep_tasinir() {
+        let hata = resolve("", &[], "", "lpstat çalıştırılamadı").unwrap_err();
+        assert!(hata.contains("lpstat çalıştırılamadı"), "{hata}");
+    }
 }

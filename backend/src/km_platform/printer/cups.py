@@ -174,6 +174,13 @@ class PrinterService:
         # Aynı belgenin arka arkaya gönderilmesini engelleyen pencere.
         # 0 yazılırsa koruma kapanır; ayar bilerek bırakıldı ama varsayılanı
         # kapatmak için bir sebep yok.
+        # Kuyrukta bir işin yaşayabileceği en uzun süre. 0 = sınırsız (eski
+        # davranış). Gerekçe `print_file` içinde.
+        try:
+            lifetime = int(section.get("job_lifetime_seconds", 180))
+        except (TypeError, ValueError):
+            lifetime = 180
+        self._job_lifetime = max(0, lifetime)
         window = section.get("duplicate_window_seconds")
         self._duplicate_window = (
             DUPLICATE_WINDOW if window is None else max(0.0, float(window))
@@ -184,6 +191,18 @@ class PrinterService:
         self._recent: dict[tuple[str, str, int, int], tuple[float, dict[str, Any]]] = {}
 
     # ------------------------------------------------------------- keşif
+
+    @staticmethod
+    def installed() -> bool:
+        """Bu MAKİNEDE CUPS var mı — "arıza" ile "burada yazıcı yok" ayrımı.
+
+        Çekirdek sunucuda koşarken (ADR 0026) yanıt HER ZAMAN `False`'tır ve bu
+        bir sorun değildir: sunucu imajı CUPS'ı bilerek kurmuyor, baskı
+        kullanıcının makinesinde yapılıyor. Çağıran bunu ayırt edebilsin diye
+        ayrı bir soru: aksi hâlde ekran, olması gerektiği gibi çalışan bir
+        kurulumda kırmızı "Yazıcı bağlantısı hatası" gösteriyordu.
+        """
+        return bool(shutil.which("lp") and shutil.which("lpstat"))
 
     def _tools(self) -> tuple[str, str]:
         """`lp` ve `lpstat` yolları. Yoksa CUPS kurulu değildir."""
@@ -525,6 +544,22 @@ class PrinterService:
         # aynı boyut çıksın.
         if self._media:
             args += ["-o", f"media={self._media}", "-o", f"PageSize={self._media}"]
+
+        # İŞİN ÖMRÜ SINIRLIDIR — "bir tıklama bir baskı"nın ikinci yarısı.
+        #
+        # Uygulama tek iş gönderiyor; tekrarın kaynağı `lp`den SONRASI olabilir.
+        # CUPS kuyruğunun `ErrorPolicy` ayarı `retry-job` olduğunda, cihazda
+        # hata alan bir iş kuyrukta KALIR ve düzenli aralıklarla yeniden
+        # denenir. Kullanıcı bir kez "Yazdır" der, yarım saat sonra gelip
+        # aynı raporun defalarca çıktığını görür; uygulama tarafında hiçbir
+        # döngü olmadığı için de suç uzun süre uygulamada aranır.
+        #
+        # `job-cancel-after` işin toplam ömrünü bağlar: bu süre içinde
+        # basılamayan iş kuyruktan DÜŞER, sonsuza dek yeniden denenmez.
+        # Rapor basımı saniyeler sürer; buradaki süre cömert bir tavandır,
+        # normal baskıya dokunmaz.
+        if self._job_lifetime > 0:
+            args += ["-o", f"job-cancel-after={self._job_lifetime}"]
 
         if title:
             args += ["-t", title]
