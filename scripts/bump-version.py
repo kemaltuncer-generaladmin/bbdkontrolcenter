@@ -32,19 +32,42 @@ ROOT = Path(__file__).resolve().parents[1]
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
+#: Kilit dosyasındaki paket adı — `Cargo.lock` içinde YALNIZ bu bloğun
+#: sürümü değişir. Dosyada onlarca `version = "…"` satırı var ve hepsi başka
+#: paketlere ait; kör bir arama-değiştirme bağımlılık ağacını bozardı.
+CARGO_PACKAGE = "kontrol-merkezi"
+
 #: (dosya, okuma deseni, yazma biçimi). Sıra ekranda görünen sıradır.
 TARGETS = (
     ("apps/desktop/src-tauri/tauri.conf.json", "json", "version"),
     ("apps/desktop/src-tauri/Cargo.toml", "toml", "version"),
+    # `Cargo.lock` LİSTEDE OLMALI. Yoksa `cargo` ilk derlemede kendisi
+    # düzeltiyor ve çalışma ağacında sürüm bumpıyla ilgisiz görünen bir
+    # değişiklik bırakıyor; v0.1.9'da tam olarak bu oldu ve commit'e girmedi.
+    ("apps/desktop/src-tauri/Cargo.lock", "cargolock", "version"),
     ("apps/desktop/package.json", "json", "version"),
     ("apps/desktop/package-lock.json", "lock", "version"),
 )
+
+
+def _cargo_lock_pattern() -> re.Pattern[str]:
+    """`Cargo.lock` içinde YALNIZ kendi paketimizin sürüm satırı.
+
+    Ad satırına çapalanır: dosyadaki diğer `version = "…"` satırları
+    bağımlılıklara aittir ve dokunulursa derleme bozulur.
+    """
+    return re.compile(
+        rf'(name\s*=\s*"{re.escape(CARGO_PACKAGE)}"\s*\nversion\s*=\s*)"[^"]+"'
+    )
 
 
 def _read(path: Path, kind: str) -> str | None:
     text = path.read_text(encoding="utf-8")
     if kind in {"json", "lock"}:
         return str(json.loads(text).get("version") or "")
+    if kind == "cargolock":
+        match = _cargo_lock_pattern().search(text)
+        return match.group(0).rsplit('"', 2)[1] if match else None
     match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     return match.group(1) if match else None
 
@@ -60,6 +83,8 @@ def _write(path: Path, kind: str, version: str) -> None:
         # `package-lock.json` sürümü İKİ YERDE taşır: kökte ve `packages[""]`
         # altında. Biri güncellenip diğeri unutulursa `npm` uyarı verir.
         new = re.sub(r'("version"\s*:\s*)"[^"]*"', rf'\1"{version}"', text, count=2)
+    elif kind == "cargolock":
+        new = _cargo_lock_pattern().sub(rf'\1"{version}"', text, count=1)
     else:
         new = re.sub(r'^(version\s*=\s*)"[^"]+"', rf'\1"{version}"', text,
                      count=1, flags=re.MULTILINE)
