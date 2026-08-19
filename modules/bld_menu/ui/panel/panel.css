@@ -89,6 +89,38 @@
   flex: none;
 }
 
+/* "Paket satılamayacak" uyarısının yuvası — BOŞKEN YER KAPLAMAZ.
+ *
+ * Yuva sabit duruyor (kalem tablosu tek başına tazelenirken uyarının da
+ * güncellenmesi için) ama sorunun olmadığı günlerde içi boş. Düz bir kutu
+ * olsaydı `gap: 12px` onu da sayar ve her günde sekmenin üstünde sebepsiz bir
+ * boşluk kalırdı. `display: contents` sarmalayıcıyı kutu olmaktan çıkarır;
+ * içindeki uyarı doğrudan sütunun öğesi olur — bu yüzden ezilmezlik kuralı
+ * da ona ayrıca bağlanıyor (üstteki seçici yalnız DOM'daki doğrudan
+ * çocukları yakalar). */
+.bm .bm-packagealert {
+  display: contents;
+}
+
+.bm .bm-packagealert > * {
+  flex: none;
+}
+
+/* Engeller MADDE MADDE yazılıyor (`\n` ile); tek paragrafa akıtmak, iki ayrı
+ * sorunu tek sorun gibi okuturdu. */
+.bm .bm-packagealert .kit-alert {
+  white-space: pre-line;
+}
+
+.bm .bm-alertactions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  /* Boşluk kutunun metniyle düğme arasında; `pre-line` düğmeyi de satır
+   * akışına sokmasın diye blok. */
+  white-space: normal;
+}
+
 /* `card()` çocuklarına boşluk vermiyor ve `formGrid` kendi boşluğunu taşımıyor
  * (kitin 1.3.0 notu bunu yalnız `timeline`/`stepper`/`measures` için çözdü).
  * Formu kart kenarına yapıştırmamak için sarmalayıcı burada. */

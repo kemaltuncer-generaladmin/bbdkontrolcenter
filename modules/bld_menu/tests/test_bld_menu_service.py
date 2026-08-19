@@ -756,3 +756,193 @@ async def test_her_yazmada_dry_run_acikca_gecilir() -> None:
             assert "dry_run" in kwargs, f"{ad} `dry_run` geçirmemiş"
             assert isinstance(kwargs["dry_run"], bool), \
                 f"{ad} `dry_run=None` geçirmiş — geçidin varsayılanına düşerdi"
+
+
+# ============================================= satışa açma (auto_open_on_price)
+
+
+def _satilamayan_gun() -> dict[str, Any]:
+    """Paket fiyatı girilmiş, kalemleri var, ama HİÇBİRİ zorunlu değil.
+
+    Kontrol Merkezi'nin hızlı ekleme akışının ürettiği gündü: BLD paketi
+    `no_components` diye satışa açmıyor, sitede paket kartı hiç çizilmiyor ve
+    ekranda tek bir işaret yoktu.
+    """
+    return {
+        **DRAFT_DAY,
+        "items": [{**item, "is_required": False} for item in DRAFT_DAY["items"]],
+    }
+
+
+async def test_satisa_acma_eksik_zorunlu_isaretleri_kurar_ve_yayinlar() -> None:
+    service, api, _, bus = _service(day=_satilamayan_gun())
+
+    sonuc = await service.open_sale("2026-08-24", actor=ACTOR, dry_run=False)
+
+    assert sonuc["ok"] is True
+    # İKİ KALEMİN İKİSİ DE zorunlu yapıldı: paketin içi "en az bir tanesi"
+    # değil, o günün yemekleridir.
+    assert sonuc["required_items"] == 2
+    assert sonuc["published"] is True
+    # Kalem kimliği KONUMSAL geçiyor (geçidin imzası öyle), alanlar anahtarlı.
+    assert api.args_of("update_menu_item") == [("2026-08-24", 901), ("2026-08-24", 902)]
+    assert api.used("update_menu_item") == [
+        {"reason": "", "actor": ACTOR, "dry_run": False, "is_required": True},
+        {"reason": "", "actor": ACTOR, "dry_run": False, "is_required": True},
+    ]
+    # Gerekçe AYARIN ADINI taşıyor: denetim izini okuyan kişi, kapatılacak
+    # düğmenin adını da okumuş olur.
+    yayin = api.used("publish_menu_day")[0]
+    assert "auto_open_on_price" in yayin["reason"]
+    assert yayin["actor"] == ACTOR
+    assert bus.events[-1][0] == "bld_menu.day_published"
+
+
+async def test_satisa_acma_zorunlu_kalem_varsa_kalemlere_dokunmaz() -> None:
+    # Gün yalnız taslakta kalmış olabilir; o zaman yapılacak tek iş yayındır.
+    service, api, _, _ = _service(day=dict(DRAFT_DAY))
+
+    sonuc = await service.open_sale("2026-08-24", actor=ACTOR, dry_run=False)
+
+    assert sonuc["required_items"] == 0
+    assert sonuc["published"] is True
+    assert api.used("update_menu_item") == []
+
+
+async def test_satisa_acma_yayindaki_gunu_tekrar_yayinlamaz() -> None:
+    # Yeniden yayınlamak satılmış porsiyonları sıfırlamaz ama denetim izine
+    # anlamsız bir satır yazar ve olayı ikinci kez duyururdu.
+    service, api, _, bus = _service()
+
+    sonuc = await service.open_sale(TARIH, actor=ACTOR, dry_run=False)
+
+    assert sonuc["ok"] is True
+    assert sonuc["already"] is True
+    assert sonuc["published"] is False
+    assert api.used("publish_menu_day") == []
+    assert bus.events == []
+
+
+async def test_satisa_acma_paket_fiyati_olmayan_gune_dokunmaz() -> None:
+    # Paketsiz gün bir arıza değil: kalemleri tek tek satılıyordur. Onu
+    # kendiliğinden yayına itmek, kullanıcının yazmadığı bir kararı yazmak olurdu.
+    service, api, _, _ = _service(day={**DRAFT_DAY, "package_price_kurus": None})
+
+    sonuc = await service.open_sale("2026-08-24", actor=ACTOR, dry_run=False)
+
+    assert sonuc["ok"] is False
+    assert "paket fiyatı" in sonuc["error"].lower()
+    assert api.writes() == []
+
+
+async def test_satisa_acma_kalemsiz_gunu_yayinlamaz() -> None:
+    # Boş bir menü kartı yayınlamak müşteriye hiçbir şey satmaz; cümle
+    # `publish_error()`ten geliyor ve olduğu gibi taşınıyor.
+    service, api, _, _ = _service(day={**DRAFT_DAY, "items": []})
+
+    sonuc = await service.open_sale("2026-08-24", actor=ACTOR, dry_run=False)
+
+    # `ok: True` — hata değil, yarım kalmış bir iş. Neyin eksik olduğunu `note` söyler.
+    assert sonuc["ok"] is True
+    assert sonuc["published"] is False
+    assert "kalem" in sonuc["note"]
+    assert api.used("publish_menu_day") == []
+
+
+async def test_satisa_acma_kuru_provada_hicbir_sey_yazmaz() -> None:
+    service, api, _, bus = _service(day=_satilamayan_gun())
+
+    sonuc = await service.open_sale("2026-08-24", actor=ACTOR, dry_run=True)
+
+    assert sonuc["dry_run"] is True
+    # Kalemlere GERÇEK yazma gitmedi; ne yapılacağı sayıyla söylendi.
+    assert api.used("update_menu_item") == []
+    assert sonuc["required_items"] == 2
+    assert api.used("publish_menu_day")[0]["dry_run"] is True
+    # Kuru provada olay YAYINLANMAZ: BLD'de hiçbir şey değişmedi.
+    assert bus.events == []
+
+
+def test_ayar_varsayilan_acik_ve_sozlesmede_gorunur() -> None:
+    # Panel bu bayrağa bakarak fiyat kaydından sonra ucu kendiliğinden çağırıyor;
+    # bayrağın kopyası panelde tutulmuyor.
+    acik, _, _, _ = _service()
+    assert acik.contract()["auto_open_on_price"] is True
+
+    kapali, _, _, _ = _service(auto_open_on_price=False)
+    assert kapali.contract()["auto_open_on_price"] is False
+
+
+async def test_toplu_satisa_acma_yalniz_uygun_gunlere_dokunur() -> None:
+    """Aday üç şartı BİRDEN taşır: menüsü var, paket fiyatı var, günü geçmemiş.
+
+    Takvimde dördü de yanlış olan satırlar duruyor ve hiçbirine dokunulmamalı:
+    fiyatsız gün kalemlerini tek tek satıyordur, menüsüz gün zaten yoktur ve
+    geçmiş güne yayın kimseye sipariş verdirmez.
+    """
+    yarin = _yarin()
+    obur = (datetime.now(UTC) + timedelta(days=4)).strftime("%Y-%m-%d")
+    dun = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d")
+
+    service, api, _, _ = _service(day=dict(DRAFT_DAY))
+    api.day_rows = {
+        yarin: {**DRAFT_DAY, "date": yarin,
+                "items": [{**item, "is_required": False} for item in DRAFT_DAY["items"]]},
+        obur: {**DRAFT_DAY, "date": obur},
+        dun: {**DRAFT_DAY, "date": dun},
+    }
+    api.calendar_rows = [
+        {"date": yarin, "id": 1, "status": "draft", "package_price_kurus": 25000,
+         "item_count": 2},
+        {"date": obur, "id": 2, "status": "draft", "package_price_kurus": 25000,
+         "item_count": 2},
+        # Fiyatsız: dokunulmaz.
+        {"date": (datetime.now(UTC) + timedelta(days=5)).strftime("%Y-%m-%d"),
+         "id": 3, "status": "draft", "package_price_kurus": None, "item_count": 2},
+        # Menüsüz gün.
+        {"date": (datetime.now(UTC) + timedelta(days=6)).strftime("%Y-%m-%d"),
+         "id": None, "status": None, "package_price_kurus": None, "item_count": 0},
+        # Geçmiş gün: fiyatı olsa bile denenmez.
+        {"date": dun, "id": 4, "status": "draft", "package_price_kurus": 25000,
+         "item_count": 2},
+    ]
+
+    sonuc = await service.open_sale_range(date_from=_yarin(), date_to=_yarin(),
+                                          actor=ACTOR, dry_run=False)
+
+    assert sonuc["ok"] is True
+    assert sonuc["totals"]["candidates"] == 2
+    assert sonuc["totals"]["published"] == 2
+    # Yalnız zorunlu işareti eksik olan günün kalemlerine dokunuldu.
+    assert sonuc["totals"]["required_items"] == 2
+    assert [row["date"] for row in sonuc["days"]] == [yarin, obur]
+    # Geçmiş gün HİÇ OKUNMADI bile: aday listesine girmediği için ona dair tek
+    # bir istek çıkmadı.
+    assert dun not in [args[0] for args in api.args_of("menu_day")]
+    assert [args[0] for args in api.args_of("publish_menu_day")] == [yarin, obur]
+
+
+async def test_toplu_satisa_acma_kuru_provada_hicbir_sey_yazmaz() -> None:
+    yarin = _yarin()
+    service, api, _, _ = _service(day=dict(DRAFT_DAY))
+    api.day_rows = {yarin: {**DRAFT_DAY, "date": yarin}}
+    api.calendar_rows = [{"date": yarin, "id": 1, "status": "draft",
+                          "package_price_kurus": 25000, "item_count": 2}]
+
+    sonuc = await service.open_sale_range(date_from=yarin, date_to=yarin,
+                                          actor=ACTOR, dry_run=True)
+
+    assert sonuc["dry_run"] is True
+    assert sonuc["totals"]["published"] == 1          # ne OLACAĞINI söyler
+    assert api.used("publish_menu_day")[0]["dry_run"] is True
+
+
+async def test_toplu_satisa_acma_araligi_sozlesme_tavaniyla_sinirli() -> None:
+    # Aşan aralığı sunucu 422 ile geri çevirirdi; ekran nedenini cümleyle söyler
+    # (K9 — çift kapı).
+    service, api, _, _ = _service(calendar_max_days=7)
+    sonuc = await service.open_sale_range(date_from="2026-08-01", date_to="2026-09-30",
+                                          actor=ACTOR, dry_run=True)
+    assert sonuc["ok"] is False
+    assert "7 gün" in sonuc["error"]
+    assert api.calls == []

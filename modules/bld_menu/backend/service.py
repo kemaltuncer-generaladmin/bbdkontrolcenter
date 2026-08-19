@@ -168,6 +168,17 @@ class MenuService:
     def _product_limit(self) -> int:
         return max(1, min(2000, mn.as_int(self._config.get("product_limit"), 400)))
 
+    @property
+    def _auto_open(self) -> bool:
+        """Paket fiyatı girilen gün kendiliğinden satışa açılsın mı.
+
+        VARSAYILAN AÇIK ve bu bilinçli bir sahiplik kararıdır: fiyat girmek bu
+        işletmede "bu menü satılacak" demenin kendisi ve ikinci bir yayın adımı
+        yalnızca unutuluyordu. Ayar yine de var — kapatan kurulumda eski akış
+        (elle yayınla, gerekçesiyle) aynen çalışır.
+        """
+        return mn.as_bool(self._config.get("auto_open_on_price", True))
+
     # ------------------------------------------------------ yerel tablolar
 
     async def prefs(self) -> dict[str, Any]:
@@ -360,6 +371,11 @@ class MenuService:
             },
             "refresh_seconds": self._refresh_seconds,
             "location_id": self._location or 0,
+            # Panel bu bayrağa bakarak fiyat kaydından sonra `open-sale`
+            # ucunu KENDİLİĞİNDEN çağırıyor. Ayarın kopyası panelde tutulmuyor:
+            # iki yerde duran bir bayrak, kapatıldığı hâlde çalışmaya devam
+            # eden bir otomatik yayın demek olurdu.
+            "auto_open_on_price": self._auto_open,
         }
 
     async def calendar(self, *, date_from: str, date_to: str) -> dict[str, Any]:
@@ -662,6 +678,189 @@ class MenuService:
                 "date": date, "itemCount": current["item_count"],
                 "packagePriceKurus": current["package_price_kurus"], "actor": actor})
         return settled
+
+    async def open_sale(self, date: str, *, actor: str,
+                        dry_run: bool) -> dict[str, Any]:
+        """Günü SATIŞA AÇAR: eksik zorunlu işaretlerini kurar, sonra yayınlar.
+
+        ## Neden tek bir uç
+
+        "Paket fiyatını girdim, gün neden satılmıyor" sorusunun İKİ ayrı cevabı
+        vardı ve ikisi de ekranda görünmüyordu:
+
+          1. Hiçbir kalem "zorunlu" değil → BLD paketi satışa açmıyor
+             (`DailyMenu::packageBlockReason` → `no_components`), sitede paket
+             kartı hiç çizilmiyor.
+          2. Gün taslakta kalmış → müşteri günü hiç görmüyor.
+
+        İkisini elle çözmek beş kalem için beş form + bir yayın diyaloğu
+        demekti. Bu uç ikisini sırayla yapar ve NE YAPTIĞINI SAYIYLA döner;
+        panel de kullanıcıya onu yazar.
+
+        ## Gerekçe neden sorulmuyor
+
+        Yayın normalde gerekçe ister (taahhüt anı). Burada gerekçeyi AYAR
+        veriyor: `mn.AUTO_OPEN_REASON` denetim izine ayarın adıyla birlikte
+        yazılıyor ve `actor` her zamanki gibi oturumdan geliyor. "Kim" sorusu
+        cevapsız kalmıyor; cevapsız kalan yalnız insanın kendi cümlesi ve onu
+        her fiyat kaydında sormak, tam da seyreltilmek istenen gürültüydü.
+
+        ## Ne YAPMAZ
+
+        · KALEM EKLEMEZ. Kalemsiz bir günü açmaz, `publish_error()`in
+          cümlesini olduğu gibi döner — boş bir menü kartı yayınlamak
+          müşteriye hiçbir şey satmaz.
+        · PAKET FİYATI OLMAYAN GÜNE DOKUNMAZ. O gün yalnız kalemlerini tek tek
+          satıyordur ve bu bir arıza değil, olağan iş akışıdır.
+        · KURU PROVADA HİÇBİR ŞEY YAZMAZ; ne yapacağını `would` alanında söyler.
+        """
+        problem = mn.date_error(date)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        current, failed = await self._fresh_day(date)
+        if current is None:
+            return failed
+
+        summary = {"required_items": 0, "published": False, "already": False, "note": ""}
+
+        if current["package_price_kurus"] is None:
+            summary["note"] = ("Bu güne paket fiyatı girilmemiş; yalnız kalemler tek tek "
+                               "satılır. Paketi açmak için önce fiyatı yazın.")
+            return {"ok": False, "error": summary["note"], **summary}
+
+        # ── 1. eksik zorunlu işaretleri ──────────────────────────────────
+        targets = [item["id"] for item in current["items"]] if mn.needs_required_item(current) else []
+
+        if targets and dry_run:
+            summary["required_items"] = len(targets)
+        elif targets:
+            for item_id in targets:
+                got = await self.update_item(date, item_id, fields={"is_required": True},
+                                             actor=actor, dry_run=False)
+                if got.get("ok") and not got.get("dry_run"):
+                    summary["required_items"] += 1
+            # Yayın kararı TAZE gün üzerinde verilir: az önceki yazmalar
+            # `current`i eskitti ve `publish_error()` eski gövdeye bakarsa
+            # düzelttiğimiz şeyi hâlâ eksik sanabilir.
+            current, failed = await self._fresh_day(date)
+            if current is None:
+                return failed
+
+        # ── 2. yayın ─────────────────────────────────────────────────────
+        if current["status"] == mn.PUBLISHED:
+            summary["already"] = True
+            return {"ok": True, "error": "", "dry_run": dry_run, **summary}
+
+        problem = mn.publish_error(current)
+        if problem:
+            summary["note"] = problem
+            # `ok: True` — zorunlu işaretler GERÇEKTEN yazıldı ve bunu hataya
+            # çevirmek, yapılan işi yapılmamış göstermek olurdu. Eksik kalan
+            # adım `note` ile söyleniyor.
+            return {"ok": True, "error": "", "dry_run": dry_run, **summary}
+
+        published = await self.publish(date, reason=mn.AUTO_OPEN_REASON,
+                                       actor=actor, dry_run=dry_run)
+        if not published.get("ok"):
+            summary["note"] = published.get("error", "")
+            return {"ok": False, "error": summary["note"],
+                    "code": published.get("code", ""), **summary}
+
+        summary["published"] = True
+        return {"ok": True, "error": "", "dry_run": bool(published.get("dry_run")),
+                "audit_id": published.get("audit_id", 0), **summary}
+
+    async def open_sale_range(self, *, date_from: str, date_to: str, actor: str,
+                              dry_run: bool) -> dict[str, Any]:
+        """Bir ARALIKTAKİ bütün uygun günleri satışa açar.
+
+        Tek tek açmanın toplu hâli: geçmişte girilmiş ama satışa hiç açılmamış
+        menüler birikmişti ve her birini elle açmak gün başına bir gün seçimi +
+        bir düğme demekti.
+
+        ## Aday seçimi DAR TUTULDU
+
+        Yalnız şu üç şartı BİRDEN taşıyan gün ele alınır:
+          · menüsü var (`has_menu`),
+          · paket fiyatı girilmiş — fiyat, "bu menü satılacak" demenin kendisi,
+          · günü bugün ya da ileride.
+
+        GEÇMİŞ GÜN HİÇ DENENMEZ: yayınlansa bile kimse sipariş veremez, denetim
+        izine anlamsız satırlar düşer ve sunucu zaten reddeder. Fiyatı olmayan
+        gün de dokunulmaz — o gün kalemlerini tek tek satıyordur ve bu bir arıza
+        değil.
+
+        ## Kuru prova ZORUNLU DEĞİL AMA ANLAMLI
+
+        `dry_run` ile çağrıldığında hiçbir şey yazılmaz ve dönen liste tam
+        olarak neyin değişeceğini söyler. Panel önce provayı çalıştırıp
+        kullanıcıya günleri sayar, onaydan sonra gerçeğini koşar: toplu ve
+        müşteriye görünür bir işlemde "ne olacağını görmeden onayla" demek,
+        onayı biçimsel bir tıklamaya indirirdi.
+        """
+        for value in (date_from, date_to):
+            problem = mn.date_error(value)
+            if problem:
+                return {"ok": False, "error": problem}
+        if mn.text(date_to) < mn.text(date_from):
+            return {"ok": False, "error": "Bitiş günü başlangıçtan önce."}
+        span = self._span(date_from, date_to)
+        if span > self._calendar_max_days:
+            return {"ok": False,
+                    "error": (f"Aralık en çok {self._calendar_max_days} gün olabilir; "
+                              f"{span} gün istendi.")}
+
+        try:
+            payload = await self._api.menu_calendar(date_from=date_from, date_to=date_to,
+                                                    location_id=self._location)
+        except Exception as failure:  # noqa: BLE001 — K7
+            return self._write_failure(failure)
+
+        today = self._today()
+        adaylar = [
+            row["date"] for row in (mn.calendar_row(raw) for raw in self._rows(payload))
+            if row["has_menu"] and row["package_price_kurus"] is not None
+            and row["date"] >= today
+        ]
+
+        await self._record(action="open_sale.range", actor=actor, result=TRIED,
+                           detail={"date_from": date_from, "date_to": date_to,
+                                   "candidates": len(adaylar), "dry_run": dry_run})
+
+        days: list[dict[str, Any]] = []
+        for date in adaylar:
+            got = await self.open_sale(date, actor=actor, dry_run=dry_run)
+            days.append({
+                "date": date,
+                "ok": bool(got.get("ok")),
+                "required_items": mn.as_int(got.get("required_items")),
+                "published": bool(got.get("published")),
+                "already": bool(got.get("already")),
+                # Hata da `note` alanına düşüyor: ekran tek sütun okuyor ve
+                # "engellendi" ile "patladı" ayrımını satırın `ok` alanı taşıyor.
+                "note": mn.text(got.get("note") or got.get("error")),
+            })
+
+        totals = {
+            "candidates": len(adaylar),
+            "published": sum(1 for row in days if row["published"]),
+            "required_items": sum(row["required_items"] for row in days),
+            "already": sum(1 for row in days if row["already"]),
+            # ATLANANLAR SESSİZ KALMAZ: kalemsiz gün, kesim saati geçmiş gün ya
+            # da patlayan çağrı hep buraya düşer ve panel sayıyı yazar. Sessiz
+            # bir "hepsi açıldı", açılmayan günü gizlerdi.
+            "skipped": sum(1 for row in days
+                           if not row["published"] and not row["already"]),
+        }
+
+        await self._record(action="open_sale.range", actor=actor,
+                           result=DRY if dry_run else DONE,
+                           detail={"date_from": date_from, "date_to": date_to,
+                                   **totals})
+
+        return {"ok": True, "error": "", "dry_run": dry_run,
+                "days": days, "totals": totals}
 
     async def unpublish(self, date: str, *, reason: str, actor: str,
                         dry_run: bool) -> dict[str, Any]:

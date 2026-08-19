@@ -317,6 +317,55 @@ async def unpublish(
                                      dry_run=body.dry())
 
 
+@router.post("/days/{date}/open-sale")
+async def open_sale(
+    date: str,
+    body: WriteBody,
+    user: CurrentUser = requires(MANAGE),
+) -> dict[str, Any]:
+    """Günü SATIŞA AÇAR: eksik "zorunlu kalem" işaretlerini kurar, sonra
+    yayınlar. Tek çağrıda iki adım — ayrıntı `MenuService.open_sale`.
+
+    GEREKÇE İSTEMEZ ve bu, yukarıdaki dört uçluk listenin İSTİSNASI DEĞİL
+    GENİŞLEMESİ: gerekçeyi burada AYAR veriyor (`mn.AUTO_OPEN_REASON`) ve
+    denetim izine ayarın adıyla düşüyor. Ölçüt "müşteriye görünür + geri
+    alınması zor" hâlâ geçerli; değişen, cevabı kimin yazdığı. Kullanıcıdan her
+    fiyat kaydında on karakter istemek tam da seyreltilmek istenen gürültüydü
+    ve üreteceği metin ("fiyat girdim") denetim izine hiçbir şey katmazdı.
+
+    YAYINDAN ÇEKMEK BU UÇTAN YAPILMAZ: geri almanın yolu `unpublish` ve ORASI
+    gerekçe ister. Otomatikleşen yalnız açma yönüdür.
+    """
+    return await service().open_sale(date, actor=user.full_name, dry_run=body.dry())
+
+
+class OpenSaleRangeBody(WriteBody):
+    """Toplu satışa açma aralığı. GEREKÇE İSTEMEZ — tek günlük kardeşiyle aynı
+    sebeple (`open_sale`).
+
+    ARALIK ZORUNLU ve varsayılanı YOK: "bugünden ileriye" gibi bir varsayılan,
+    ekranın gösterdiği listeyle sunucunun dokunduğu günlerin ayrışabileceği tek
+    yerdir. Panel hangi günleri saydıysa aynı aralığı yollar."""
+
+    date_from: str
+    date_to: str
+
+
+@router.post("/open-sale")
+async def open_sale_range(
+    body: OpenSaleRangeBody,
+    user: CurrentUser = requires(MANAGE),
+) -> dict[str, Any]:
+    """Aralıktaki bütün uygun günleri satışa açar — ayrıntı
+    `MenuService.open_sale_range`.
+
+    `dryRun: true` ile çağrıldığında hiçbir şey yazmaz ve ne olacağını gün gün
+    döner; panel önce onu koşturup kullanıcıya sayıları gösteriyor."""
+    return await service().open_sale_range(date_from=body.date_from,
+                                           date_to=body.date_to,
+                                           actor=user.full_name, dry_run=body.dry())
+
+
 # ================================================================= kalemler
 
 class ItemCreateBody(WriteBody):

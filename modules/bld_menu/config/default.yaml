@@ -32,3 +32,17 @@ stock_preview_ttl_minutes: 30
 # aşıldığında ekran bunu yazar — sessizce kırpılmış bir liste, aranan ürünün
 # "silinmiş" sanılmasına yol açardı.
 product_limit: 400
+
+# PAKET FİYATI GİRİLEN GÜN KENDİLİĞİNDEN SATIŞA AÇILSIN MI.
+#
+# Açıkken panel, fiyat kaydından ve kalem yazmadan sonra `open-sale` ucunu
+# çağırır: eksik "zorunlu kalem" işaretleri kurulur (yoksa BLD paketi hiç
+# satmıyor) ve gün taslaktaysa yayınlanır. Denetim izine yayın satırı
+# `menu.AUTO_OPEN_REASON` gerekçesiyle, aktörüyle birlikte düşer.
+#
+# KAPATILIRSA eski akış aynen çalışır: gün taslakta kalır, yayın elle ve
+# gerekçesiyle yapılır. Kapatmanın meşru sebebi, menüyü bir ay öncesinden
+# yarım yarım girip son gün gözden geçirmektir.
+#
+# YAYINDAN ÇEKME OTOMATİKLEŞMEZ — bu ayar yalnız AÇMA yönünü etkiler.
+auto_open_on_price: true

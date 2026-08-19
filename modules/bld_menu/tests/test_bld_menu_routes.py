@@ -39,6 +39,13 @@ BEKLENEN: dict[tuple[str, str], tuple[set[str], bool]] = {
     ("DELETE", "/days/{date}"): ({"bld_menu.remove"}, True),
     ("POST", "/days/{date}/publish"): ({"bld_menu.manage"}, True),
     ("POST", "/days/{date}/unpublish"): ({"bld_menu.manage"}, True),
+    # SATIŞA AÇMA GEREKÇE İSTEMEZ ve bu satır o kararın kanıtıdır: yayın
+    # yönündeki gerekçeyi AYAR veriyor (`menu.AUTO_OPEN_REASON`), denetim
+    # izine ayarın adıyla düşüyor ve `actor` yerinde duruyor. Ters yön
+    # (`unpublish`) gerekçe istemeye DEVAM EDİYOR — otomatikleşen yalnız
+    # açma yönü.
+    ("POST", "/days/{date}/open-sale"): ({"bld_menu.manage"}, False),
+    ("POST", "/open-sale"): ({"bld_menu.manage"}, False),
     ("POST", "/days/{date}/items"): ({"bld_menu.manage"}, False),
     ("PATCH", "/days/{date}/items/{item_id}"): ({"bld_menu.manage"}, False),
     ("DELETE", "/days/{date}/items/{item_id}"): ({"bld_menu.remove"}, False),

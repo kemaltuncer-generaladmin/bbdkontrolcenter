@@ -63,6 +63,32 @@ Zincirin dördü de birlikte gevşedi: panel · KM backend (`WriteBody` /
 `reason` göndermek `extra="forbid"` yüzünden **422** verir — panel o alanı hiç
 göndermez.
 
+## Satışa açma (`auto_open_on_price`)
+
+Paket fiyatı girmek bu işletmede **"bu menü satılacak"** demenin kendisidir;
+ayrı bir yayın adımı yalnızca unutuluyordu. Ayar açıkken (varsayılan) panel,
+fiyat kaydından ve kalem yazmadan sonra `POST days/{date}/open-sale` ucunu
+kendiliğinden çağırır. Uç iki iş yapar:
+
+1. **Eksik "zorunlu kalem" işaretlerini kurar.** BLD paketi ancak ürünü
+   çözülebilen en az bir zorunlu kalem varsa satışa açıyor
+   (`DailyMenu::packageBlockReason` → `no_components`); yoksa günün menü
+   ucunda `package` alanı `null` döner ve sitede paket kartı **hiç çizilmez.**
+   Fiyat kaydedilmiş, gün yayında, takvim yeşil — ve müşteri paketi sepete
+   koyamıyor. Sessiz arıza tam olarak buydu.
+2. **Gün taslaktaysa yayınlar.**
+
+`POST open-sale` (tarihsiz) aynı işi bir **aralığa** uygular; panelin takvim
+sütunundaki "Tümünü satışa aç" düğmesi bugünden ileriye koşar ve önce kuru
+prova ile ne olacağını sayar.
+
+**Gerekçeyi ayar veriyor** (`menu.AUTO_OPEN_REASON`) ve denetim izine ayarın
+adıyla, `actor` ile birlikte düşer — "kim" sorusu cevapsız kalmaz. Otomatikleşen
+yalnız **açma** yönüdür: `unpublish` gerekçe istemeye devam eder.
+
+Ayar kapatılırsa eski akış aynen çalışır: gün taslakta kalır, yayın elle ve
+gerekçesiyle yapılır.
+
 ## Kuru prova
 
 Panel `dryRun` alanını **hiç göndermez**; buradan yapılan her yazma gerçektir.
@@ -71,7 +97,15 @@ dışıdır, orada `true` yazabilir ve ayardan okunan bir varsayılan panelden
 yapılan her yazmayı sessiz bir provaya çevirirdi. Servis geçide `dry_run=`
 değerini **her çağrıda açıkça** geçer.
 
-Tek istisna **stok tavanı yazma**: `PUT stock` tam liste yazar ve gönderilmeyen
+**İki istisna var ve ikisi de İSTENEN provadır** — panel bayrağı yalnız
+buralarda, açıkça gönderir.
+
+Birincisi **toplu satışa açma**: `POST open-sale` önce `dryRun: true` ile
+koşar, kaç güne dokunulacağını ve hangilerinin atlanacağını sayar, kullanıcı
+onaylayınca gerçeği koşar. Toplu ve müşteriye görünür bir işlemde "ne olacağını
+görmeden onayla" demek, onayı biçimsel bir tıklamaya indirirdi.
+
+İkincisi **stok tavanı yazma**: `PUT stock` tam liste yazar ve gönderilmeyen
 kalemin tavanı kalkar. Bu yüzden akış iki adımlıdır —
 `POST days/{date}/stock/preview` kuru provayı koşar, uyarıları hesaplar ve bir
 jeton döndürür; `PUT days/{date}/stock` yalnız o jetonla gelir ve **temel

@@ -32,6 +32,10 @@
       "minimum": 1,
       "maximum": 2000,
       "description": "Ürün seçicisinde en çok kaç kayıt çizilsin. Aşıldığında ekran kırpıldığını yazar."
+    },
+    "auto_open_on_price": {
+      "type": "boolean",
+      "description": "Paket fiyatı girilen gün kendiliğinden satışa açılsın mı: eksik 'zorunlu kalem' işaretleri kurulur ve gün taslaktaysa yayınlanır. Kapalıyken yayın elle ve gerekçesiyle yapılır. Yalnız açma yönünü etkiler; yayından çekme her zaman elle ve gerekçelidir."
     }
   }
 }

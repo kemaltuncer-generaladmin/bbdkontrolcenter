@@ -61,6 +61,16 @@ MIN_REASON = 10
 #: reddeder ve kullanıcı nedenini hiçbir yerde okuyamaz.
 MAX_REASON = 500
 
+#: OTOMATİK SATIŞA AÇMANIN denetim izine yazdığı gerekçe.
+#:
+#: Yayın normalde insanın yazdığı bir gerekçe ister ("neden bugün açıldı").
+#: Otomatik yolda yazacak bir insan yok ve gerekçeyi boş bırakmak, denetim
+#: izinde sebepsiz bir yayın satırı bırakırdı. Metin AYARIN ADINI TAŞIYOR:
+#: altı ay sonra "bu gün neden kendiliğinden yayınlandı" sorusunu okuyan
+#: kişi, kapatılacak düğmenin adını da okumuş olur.
+AUTO_OPEN_REASON = ("Paket fiyatı girildi; gün otomatik satışa açıldı "
+                    "(bld_menu ayarı: auto_open_on_price).")
+
 # =================================================================== durumlar
 
 DRAFT = "draft"
@@ -262,6 +272,28 @@ def publish_error(day: dict[str, Any]) -> str:
         return ("Paket fiyatı yok ve kalemler tek tek satılmıyor — bu gün hiçbir "
                 "şey satılamaz. Ya paket fiyatı girin ya da kalem satışını açın.")
     return ""
+
+
+def needs_required_item(day: dict[str, Any]) -> bool:
+    """Paket fiyatı girilmiş ama hiçbir kalem "zorunlu" değil mi?
+
+    BLD paketi ancak ÜRÜNÜ ÇÖZÜLEBİLEN en az bir zorunlu kalem varsa satışa
+    açıyor (`DailyMenu::packageBlockReason` → `no_components`); yoksa günün
+    menü ucunda `package` alanı `null` dönüyor ve sitede paket kartı hiç
+    çizilmiyor. Fiyat kaydedilir, gün yayınlanır, takvim yeşildir — ve müşteri
+    paketi sepete koyamaz.
+
+    KALEMSİZ GÜN `False` DÖNER: orada eksik olan zorunluluk değil kalemin
+    kendisi ve o günün cevabı `publish_error()`ta. İki cümleyi tek bayrağa
+    bindirmek, kalem eklemesi gereken kullanıcıya "zorunlu işaretleyin"
+    dedirtirdi.
+    """
+    if opt_int(day.get("package_price_kurus")) is None:
+        return False
+    items = day.get("items") or []
+    if not items:
+        return False
+    return not any(as_bool(item.get("is_required")) for item in items)
 
 
 def duplicate_error(source: str, target: str, today: str) -> str:

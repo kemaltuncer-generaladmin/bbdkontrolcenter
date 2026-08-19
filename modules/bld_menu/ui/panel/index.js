@@ -5,6 +5,9 @@
 // açıklamasını, iç notunu, paket fiyatını, kesim saatini ve bileşen satışını
 // düzenler; kalem ekler, sırasını ve fiyat geçersiz kılmasını değiştirir,
 // zorunlu/tek satılır işaretlerini kurar; günü yayınlar ve taslağa çeker;
+// PAKET FİYATI GİRİLEN GÜNÜ KENDİLİĞİNDEN SATIŞA AÇAR (modül ayarı
+// `auto_open_on_price`) ve takvim sütunundaki düğmeyle bunu bugünden ileriye
+// toplu uygular;
 // PORSİYON TAVANLARINI (gün toplamı + kalem başına) yazar; bir günü başka güne
 // kopyalar.
 //
@@ -391,7 +394,12 @@ async function reloadCalendar({ quiet = false } = {}) {
     // hatasında da yolluyor. Bu yüzden `??` ile korunur — bir sonraki başarısız
     // tazeleme, elimizdeki sözleşmeyi silmemeli.
     state.contract = result.limits
-      ? { limits: result.limits, refresh_seconds: result.refresh_seconds }
+      ? { limits: result.limits,
+          refresh_seconds: result.refresh_seconds,
+          // Otomatik satışa açma AYARDAN gelir, panelde kopyası tutulmaz:
+          // iki yerde duran bir bayrak, kapatıldığı hâlde çalışmaya devam
+          // eden bir otomatik yayın demek olurdu.
+          auto_open_on_price: result.auto_open_on_price !== false }
       : state.contract;
     state.byDate = Object.fromEntries(state.rows.map((row) => [row.date, row]));
   } catch (failure) {
@@ -601,6 +609,9 @@ function dropItemNodes() {
   nodes.quickNote = null;
   nodes.itemsBox = null;
   nodes.draftBar = null;
+  // Yuva sekmeyle birlikte gidiyor; bırakılmazsa `syncPackageAlert()` DOM'dan
+  // düşmüş bir düğümü doldurmaya devam ederdi.
+  nodes.packageAlert = null;
 }
 
 function paintDay() {
@@ -788,6 +799,11 @@ function paintDayForm() {
   const actions = h('div', 'bm-formactions');
   actions.append(saveButton, button('Vazgeç', { onClick: () => paintTab() }));
 
+  // Uyarı EN ÜSTTE: fiyat alanının hemen üstünde duruyor ki fiyatı yazmaya
+  // gelen kullanıcı, yazdığı fiyatın neden işe yaramadığını aynı ekranda
+  // okusun. Özetin altına konsaydı kaydırma gerektirirdi.
+  nodes.tabBody.append(packageAlertSlot());
+
   nodes.tabBody.append(
     card('Gün bilgileri', padded(form.node),
       'Gönderilmeyen alan değişmez; boşaltılan alan temizlenir.'),
@@ -803,6 +819,93 @@ function fact(label, value) {
   const row = h('div', 'bm-fact');
   row.append(h('span', 'bm-fact-label', label), h('b', 'bm-fact-value', String(value)));
   return row;
+}
+
+/**
+ * "Paket fiyatı girildi ama paket satılamaz" uyarısı — sorun yoksa `null`.
+ *
+ * ## Neden bir uyarı gerekiyor
+ *
+ * BLD paketi ancak ÜRÜNÜ ÇÖZÜLEBİLEN en az bir ZORUNLU kalem varsa satışa
+ * açıyor; yoksa günün menü ucunda `package` alanı `null` dönüyor ve sitede
+ * paket kartı HİÇ ÇİZİLMİYOR (`DailyMenu::packageBlockReason` →
+ * `no_components`). Fiyat kaydedilmiş, gün yayında, takvim yeşil — ama
+ * müşteri paketi sepete koyamıyor. Ekranda tek bir işaret yoktu; yönetici
+ * sorunu ancak müşteri şikâyetinden öğreniyordu.
+ *
+ * UYARI, YAYINI ENGELLEMEZ. Paketsiz ama kalemleri tek tek satılan bir gün
+ * geçerli bir gündür ve o yolu kapatmak, olmayan bir hatayı düzeltmek için
+ * çalışan bir akışı kırmak olurdu. Burada anlatılan şey bir çelişki: fiyat
+ * girilmiş olması paketin satılmasının İSTENDİĞİNİ söylüyor.
+ *
+ * ÜÇÜNCÜ ENGEL (vitrinin "Günün Menüsü" ürünü tanımsız — `no_product`)
+ * BURADAN GÖRÜLEMEZ: o bilgi bu ekranın okuduğu hiçbir uçta yok ve
+ * uydurulamaz. Sunucuda `php artisan veykemtu:setup` bir kez koşturulur;
+ * BLD o hâli kendi günlüğüne yazıyor.
+ */
+function packageBlockedAlert() {
+  const day = state.day;
+  if (!day) return null;
+  // `null` = paket satılmıyor, bu bir arıza değil olağan iş akışı.
+  if (day.package_price_kurus === null || day.package_price_kurus === undefined) return null;
+
+  const items = day.items || [];
+  const missingRequired = items.length > 0 && !items.some((row) => row.is_required);
+  const draft = day.status !== 'published';
+  if (!missingRequired && !draft) return null;
+
+  // İKİ ENGEL AYRI CÜMLE: biri paketin İÇİNİ (zorunlu kalem yok), öteki
+  // günün GÖRÜNÜRLÜĞÜNÜ (taslak) anlatıyor. Tek cümlede birleştirmek,
+  // yalnız birine takılmış bir günde yanlış olanı da söylemek olurdu.
+  const lines = [`Paket fiyatı girilmiş (${money(day.package_price_kurus)}) ama bu gün `
+    + 'satışta değil:'];
+  if (missingRequired) {
+    lines.push('· Hiçbir kalem "zorunlu" işaretli değil — BLD içi boş bir paketi '
+      + 'satışa açmıyor, sitede paket kartı hiç çizilmiyor.');
+  }
+  if (draft) {
+    lines.push('· Gün taslakta — müşteri bu günü hiç görmüyor.');
+  }
+  if (!items.length) {
+    lines.push('· Güne kalem girilmemiş; önce kalemleri ekleyin.');
+  }
+
+  const box = alertBox(lines.join('\n'), 'warn');
+
+  // Kalemsiz günde düğüm çizilmez: basılınca sunucunun "önce kalem ekleyin"
+  // diyeceği bir düğme, çalışmayan bir düğmedir.
+  if (items.length) {
+    const actions = h('div', 'bm-alertactions');
+    actions.append(button('Satışa aç', {
+      variant: 'primary',
+      title: 'Eksik "zorunlu kalem" işaretlerini kurar ve günü yayına alır.',
+      onClick: () => openSale(),
+    }));
+    box.append(actions);
+  }
+  return box;
+}
+
+/**
+ * Uyarının SABİT YUVASI — sekme çizilirken bir kez konur, sonra doldurulur.
+ *
+ * Neden yuva: kalem tablosu tek başına yeniden çiziliyor (`redrawItems`) ve
+ * doğrudan eklenen bir uyarı kutusu o tazelemeyi görmezdi. "Zorunlu" kutusunu
+ * işaretleyen kullanıcı, düzelttiği hâlde ekranda duran uyarıyı okumaya devam
+ * ederdi — düzeltmenin işe yaramadığını söyleyen bir yalan.
+ */
+function packageAlertSlot() {
+  nodes.packageAlert = h('div', 'bm-packagealert');
+  syncPackageAlert();
+  return nodes.packageAlert;
+}
+
+/** Yuvayı günün son hâline göre doldurur ya da boşaltır. */
+function syncPackageAlert() {
+  const slot = nodes.packageAlert;
+  if (!slot) return;
+  const alert = packageBlockedAlert();
+  slot.replaceChildren(...(alert ? [alert] : []));
 }
 
 async function saveDay(form) {
@@ -821,10 +924,29 @@ async function saveDay(form) {
   // kurmanın kendisidir. Kullanıcı yine de kaydedildiğini GÖRÜR — `success`
   // toast'ı bilerek duruyor; sessiz bir yazma, kaydedip kaydetmediğini
   // bilmeyen kullanıcı üretir.
-  await write(`${BASE}/days/${state.selected}`,
+  const saved = await write(`${BASE}/days/${state.selected}`,
     { method: 'PATCH', payload },
     { success: `Gün bilgileri kaydedildi (${Object.keys(payload).length} alan).`,
       after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
+
+  /*
+   * FİYAT GİRİLDİYSE GÜN KENDİLİĞİNDEN SATIŞA AÇILIR (ayar:
+   * `auto_open_on_price`). Bu işletmede fiyat yazmak "bu menü satılacak"
+   * demenin kendisi; ikinci bir yayın adımı yalnızca unutuluyordu ve gün
+   * taslakta kaldığı için müşteri menüyü hiç görmüyordu.
+   *
+   * ÇAĞRI `after` İÇİNDEN YAPILMAZ: `write()` kendi `busy` kilidini ancak
+   * döndükten sonra bırakıyor ve içeriden çağrılan ikinci yazma sessizce
+   * `null` dönerdi — hiçbir hata görünmeden hiçbir şey olmazdı.
+   *
+   * `null` FİYAT TETİKLEMEZ: alanı boşaltmak "paket satılmasın" demek ve o
+   * günü yayına itmek, kullanıcının yaptığının tam tersi olurdu.
+   */
+  if (saved && payload.package_price_kurus !== null
+      && payload.package_price_kurus !== undefined
+      && state.contract?.auto_open_on_price !== false) {
+    await openSale({ auto: true });
+  }
 }
 
 // -------------------------------------------------------------- kalemler
@@ -835,6 +957,11 @@ function paintItems() {
   // aramak zorunda kalırdı — kutunun sabit kalması akışın kendisidir.
   nodes.itemsBox = h('div', 'bm-itemsbox');
   nodes.itemsBox.append(itemsTable());
+
+  // Uyarı BU SEKMEDE DE DURUYOR: düzeltme buradan yapılıyor ("Düzenle" →
+  // "Zorunlu kalem"). Yalnız gün sekmesinde kalsaydı, sorunu okuyan
+  // kullanıcı çözümün olduğu ekrana geçince cümleyi kaybederdi.
+  nodes.tabBody.append(packageAlertSlot());
 
   nodes.tabBody.append(
     quickAddCard(),
@@ -923,7 +1050,13 @@ function itemsTable() {
   return table.node;
 }
 
-/** Taslaktaki kalemleri tablo satırı biçimine çevirir. */
+/**
+ * Taslaktaki kalemleri tablo satırı biçimine çevirir.
+ *
+ * DEĞERLER `saveDraft()` İLE BİREBİR AYNI OLMAK ZORUNDA: bu satırlar
+ * kaydedilmeden önceki hâli gösteriyor ve rozetler ("Zorunlu") buradan
+ * çiziliyor. İkisi ayrışırsa tablo, kaydedilince değişecek bir hâl gösterir.
+ */
 function draftRows() {
   return state.draft.map((row) => ({
     ...row,
@@ -932,7 +1065,7 @@ function draftRows() {
     quantity: 1,
     price_override_kurus: null,
     capacity: null,
-    is_required: false,
+    is_required: true,
     sellable_alone: true,
   }));
 }
@@ -969,6 +1102,8 @@ function redrawItems() {
   const bar = draftBar();
   nodes.itemsBox.replaceChildren(...(bar ? [bar, itemsTable()] : [itemsTable()]));
   nodes.tabs?.badge('items', (state.day.item_count || 0) + state.draft.length);
+  // Kalem listesi değiştiyse "zorunlu kalem yok" cümlesi de değişmiş olabilir.
+  syncPackageAlert();
   fillQuickAdd();
 }
 
@@ -1146,10 +1281,29 @@ async function saveDraft() {
   let hata = '';
   for (const row of state.draft) {
     try {
+      /*
+       * `is_required: true` — HIZLI EKLEMENİN SESSİZ HATASI BURADAYDI.
+       *
+       * Buraya `false` yazılıyordu ve sonucu ekranda görünmüyordu: BLD
+       * paketi ancak ÜRÜNÜ ÇÖZÜLEBİLEN en az bir ZORUNLU kalem varsa
+       * satıyor (`DailyMenu::packageBlockReason` → `no_components`). Bütün
+       * kalemleri hızlı eklemeyle giren bir yönetici, güne 250 TL paket
+       * fiyatı yazıp yayınlıyor, kaydedildi mesajını görüyor ve sitede
+       * paket kartını hiç bulamıyordu — kalemler tek tek satılıyor, paket
+       * `null` dönüyordu.
+       *
+       * `true` HEM SÖZLEŞMENİN HEM DE ÖTEKİ EKRANIN VARSAYILANI: alan hiç
+       * gönderilmediğinde BLD `is_required`i `true` yazıyor, veritabanı
+       * kolonunun varsayılanı `true` ve TastyIgniter gün düzenleyicisinde
+       * yeni satırın kutusu işaretli geliyor. Tek ayrışan bu satırdı.
+       *
+       * İstisna (pakette bulunsun ama tükendiğinde paketi düşürmesin) satır
+       * üstündeki "Düzenle" ile kurulur; olağan hâl zorunluluktur.
+       */
       await call(`${BASE}/days/${state.selected}/items`, {
         method: 'POST',
         body: { menu_id: row.menu_id, quantity: 1,
-                is_required: false, sellable_alone: true },
+                is_required: true, sellable_alone: true },
       });
       yazilan += 1;
     } catch (failure) {
@@ -1176,6 +1330,23 @@ async function saveDraft() {
   patchCalendarDay();
   nodes.status.set(statusText());
   resetQuickSearch();
+
+  /*
+   * KALEMLER YAZILDIKTAN SONRA da satışa açma denenir — ve TAM BURADA, tek
+   * tek her kalemden sonra değil.
+   *
+   * Sıra çoğu zaman "önce fiyat, sonra kalemler": fiyat kaydedildiğinde gün
+   * kalemsizdi ve `publish_error()` haklı olarak yayını engellemişti. Tetik
+   * yalnız fiyatta kalsaydı gün sonsuza kadar taslakta kalırdı.
+   *
+   * Döngünün İÇİNDE çağrılsaydı ilk kalem yazılır yazılmaz gün yayına
+   * çıkardı ve müşteri, geri kalanı yazılırken tek kalemlik bir menü görürdü.
+   */
+  if (yazilan && state.day?.package_price_kurus !== null
+      && state.day?.package_price_kurus !== undefined
+      && state.contract?.auto_open_on_price !== false) {
+    await openSale({ auto: true });
+  }
 }
 
 /** Az önce eklenmiş kalemi tek tıkla geri alır — onay penceresi yok. */
@@ -1576,6 +1747,119 @@ async function doPublish() {
       after: async () => { await reloadDay({ quiet: true }); await reloadCalendar({ quiet: true }); } });
 }
 
+/**
+ * Günü satışa açar — `POST days/{date}/open-sale`.
+ *
+ * İKİ ADIM TEK ÇAĞRIDA: eksik "zorunlu kalem" işaretleri kurulur (yoksa BLD
+ * paketi hiç satmıyor, sitede paket kartı çizilmiyor) ve gün taslaktaysa
+ * yayınlanır. Ayrıntı ve gerekçe kararı `MenuService.open_sale` başlığındadır.
+ *
+ * `auto` KENDİLİĞİNDEN ÇAĞRILDIĞINI söyler ve YALNIZ DİLİ değiştirir: elle
+ * basılan düğme sessiz kalamaz ("bir şey oldu mu?"), kendiliğinden koşan akış
+ * ise yalnız GERÇEKTEN bir şey yaptıysa konuşmalı — her fiyat kaydından sonra
+ * "gün zaten yayında" diye bilgi vermek, okunmayı bırakılan bir bildirim
+ * üretirdi.
+ */
+async function openSale({ auto = false } = {}) {
+  const result = await write(`${BASE}/days/${state.selected}/open-sale`,
+    { method: 'POST', payload: {} },
+    { after: async () => {
+      await reloadDay({ quiet: true });
+      await reloadCalendar({ quiet: true });
+    } });
+  if (!result) return null;
+
+  const parts = [];
+  if (result.required_items) parts.push(`${num(result.required_items)} kalem zorunlu yapıldı`);
+  if (result.published) parts.push('gün yayına alındı');
+
+  if (parts.length) {
+    // Cümle NE OLDUĞUNU sayar, "başarılı" demez: yönetici kaç kaleme
+    // dokunulduğunu bilmeden ekranı kapatmamalı.
+    toast(`Satışa açıldı — ${parts.join(', ')}.`, 'good');
+  } else if (result.note) {
+    // Yarım kalan adım HER ZAMAN söylenir, otomatik yolda bile: "paket fiyatı
+    // girdim ama satılmıyor" sorusunun tekrar doğmasının tek yolu bu cümleyi
+    // yutmaktır.
+    toast(result.note, 'warn');
+  } else if (!auto) {
+    toast(result.already ? 'Gün zaten yayında ve paket satılabilir durumda.'
+      : 'Değişen bir şey yok.', 'warn');
+  }
+  return result;
+}
+
+/** Toplu açmanın aralığı: bugünden ileriye, sözleşmenin izin verdiği kadar. */
+function forwardRange() {
+  const span = Math.max(1, Math.min(92, state.contract?.limits?.calendar_max_days || 92));
+  const start = new Date(`${todayIso()}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(start.getDate() + span - 1);
+  return { from: todayIso(), to: isoOf(end) };
+}
+
+/**
+ * BUGÜNDEN İLERİYE bütün uygun günleri satışa açar — `POST open-sale`.
+ *
+ * İKİ AŞAMALI ve bu bilinçli: önce kuru prova koşuyor, kullanıcı KAÇ GÜNE
+ * dokunulacağını ve hangilerinin atlanacağını görüyor, sonra onaylıyor. Toplu
+ * ve müşteriye görünür bir işlemde "ne olacağını görmeden onayla" demek, onayı
+ * biçimsel bir tıklamaya indirirdi.
+ */
+async function openSaleRange() {
+  const range = forwardRange();
+  const body = { date_from: range.from, date_to: range.to };
+
+  const prova = await write(`${BASE}/open-sale`,
+    { method: 'POST', payload: { ...body, dryRun: true } },
+    { expectDryRun: true });
+  if (!prova) return;
+
+  const t = prova.totals || {};
+  if (!t.candidates) {
+    toast('Bugünden ileriye paket fiyatı girilmiş bir gün yok.', 'warn');
+    return;
+  }
+  if (!t.published && !t.required_items) {
+    toast(`${num(t.candidates)} günün hepsi zaten satışta.`, 'good');
+    return;
+  }
+
+  // Hangi günler DEĞİŞECEK — sayı tek başına "hangi gün" sorusunu
+  // cevaplamıyor ve toplu işlemde asıl merak edilen o.
+  const degisen = (prova.days || []).filter((row) => row.published || row.required_items);
+  const liste = degisen.slice(0, 12).map((row) => `· ${row.date}`).join('\n');
+  const fazlasi = degisen.length > 12 ? `\n· … ve ${num(degisen.length - 12)} gün daha` : '';
+
+  const onay = await confirmSimple(nodes.root, {
+    title: 'Menüleri satışa aç',
+    description: `${range.from} — ${range.to} arası ${num(t.candidates)} günde paket `
+      + `fiyatı girilmiş.\n\n${num(t.published)} gün yayına alınacak, `
+      + `${num(t.required_items)} kalem "zorunlu" yapılacak.`
+      + (t.skipped ? ` ${num(t.skipped)} gün atlanacak (kalemsiz ya da kesim saati geçmiş).`
+        : '')
+      + `\n\n${liste}${fazlasi}\n\nYayınlanan günler müşteriye ANINDA görünür. `
+      + 'Geri almak gün gün "Yayından çek" ile yapılır.',
+    confirmLabel: 'Satışa aç',
+  });
+  if (!onay) return;
+
+  const sonuc = await write(`${BASE}/open-sale`,
+    { method: 'POST', payload: body },
+    { after: async () => {
+      await reloadCalendar({ quiet: true });
+      await reloadDay({ quiet: true });
+    } });
+  if (!sonuc) return;
+
+  const bitti = sonuc.totals || {};
+  const parcalar = [`${num(bitti.published)} gün yayına alındı`];
+  if (bitti.required_items) parcalar.push(`${num(bitti.required_items)} kalem zorunlu yapıldı`);
+  if (bitti.already) parcalar.push(`${num(bitti.already)} gün zaten satıştaydı`);
+  if (bitti.skipped) parcalar.push(`${num(bitti.skipped)} gün atlandı`);
+  toast(parcalar.join(', ') + '.', bitti.skipped ? 'warn' : 'good');
+}
+
 async function doUnpublish() {
   const reason = await askReason({
     title: 'Günü yayından çek — müşteriden kalkıyor',
@@ -1839,7 +2123,17 @@ export function mount(root, ctx) {
 
   const left = h('div', 'bm-left');
   const leftHead = h('div', 'bm-lefthead');
-  leftHead.append(button('Yenile', { onClick: () => reloadCalendar() }), nodes.refreshHint);
+  leftHead.append(
+    button('Yenile', { onClick: () => reloadCalendar() }),
+    // TAKVİMİN YANINDA, gün düzenleyicisinde değil: işlem TEK GÜNE ait değil,
+    // bugünden ileriye bütün takvime ait.
+    button('Tümünü satışa aç', {
+      title: 'Bugünden ileriye paket fiyatı girilmiş bütün günleri satışa açar. '
+        + 'Önce ne olacağını gösterir.',
+      onClick: () => openSaleRange(),
+    }),
+    nodes.refreshHint,
+  );
   left.append(
     nodes.summary,
     card('Menü takvimi', nodes.calendar.node,
