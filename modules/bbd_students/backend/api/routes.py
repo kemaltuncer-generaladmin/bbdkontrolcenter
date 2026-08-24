@@ -108,6 +108,30 @@ async def reset_access_code(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class BulkAccessCodeBody(BaseModel):
+    """Toplu şifre sıfırlama. Tekli uçtan farklı: boş liste = TÜM okul
+    demek olabileceğinden, boş liste burada bilerek REDDEDİLİR."""
+
+    students: list[str] = Field(min_length=1, max_length=5000)
+
+
+@router.post("/students/access-codes")
+async def reset_access_codes(
+    body: BulkAccessCodeBody,
+    user: CurrentUser = requires("bbd_students.access_code"),
+) -> dict[str, Any]:
+    """Seçili öğrencilerin HEPSİNE yeni giriş kodu üretir.
+
+    Tekli uçla (`/students/{kantin_id}/access-code`) AYNI kantin kapısına
+    sırayla bağlanır — burada yeni bir kod üretim yolu açılmaz. Kısmi hata
+    döngüyü durdurmaz; `failed` alanında raporlanır.
+    """
+    try:
+        return await service().reset_access_codes(body.students)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/students/{kantin_id}/qr")
 async def student_qr(
     kantin_id: str,
@@ -136,3 +160,30 @@ async def build_cards(
 @router.get("/status")
 async def canteen_status(user: CurrentUser = requires("bbd_students.view")) -> dict[str, Any]:
     return await service().status()
+
+
+class PreviewBody(BaseModel):
+    """Kart ya da şifre listesi PDF'ini üretir ve önizler.
+
+    `kind` ∈ cards | access-code-list | access-code-reset. Üçü de aynı
+    ortak izni ister (`access_code`) — `/cards` ucu kendi başına hâlâ `qr`
+    izniyle açık kalır, yalnızca bu YENİ önizleme kolaylığı `access_code`
+    sahibi rollerle sınırlıdır.
+
+    YAZDIRMA BU UCA DAHİL DEĞİL: baskı kullanıcının cihazında yapılıyor
+    (ADR 0026), sunucuda CUPS yok. Kabuk `POST /api/outputs/document`
+    (çekirdek, modül-bağımsız) ile bu uçtan dönen `path`i indirip yerel
+    yazıcıya veriyor — modüle özel bir `/print` ucu gerekmiyor.
+    """
+
+    kind: str = Field(pattern=r"^(cards|access-code-list|access-code-reset)$")
+    students: list[str] = Field(default_factory=list, max_length=5000)
+
+
+@router.post("/preview")
+async def preview(
+    body: PreviewBody,
+    user: CurrentUser = requires("bbd_students.access_code"),
+) -> dict[str, Any]:
+    """PDF'i üretir ve dosyanın sayfalarını görüntü olarak döner."""
+    return await service().preview(body.kind, body.model_dump())

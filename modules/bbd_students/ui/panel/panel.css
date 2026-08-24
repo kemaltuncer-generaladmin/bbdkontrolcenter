@@ -336,3 +336,64 @@
   font-weight: 700;
   letter-spacing: 0.18em;
 }
+
+/* ------------------------------------------------------- mod anahtarı */
+
+.st-mode-bar {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.st-mode-btn {
+  padding: 9px 4px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--soft);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 18px;
+}
+
+.st-mode-btn:hover { color: var(--ink); }
+.st-mode-btn.st-mode-active { color: var(--ink); border-bottom-color: var(--accent); }
+
+/* --------------------------------------------------- toplu şifre işlemleri */
+
+.st-bulk {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 20px 28px;
+}
+
+.st-bulk-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  /* .st-split ile aynı sebep: minmax(0,1fr) olmadan satır içerikle büyür ve
+     seçicinin kendi kaydırması hiç devreye girmez. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
+  height: 100%;
+  min-height: 420px;
+}
+
+.st-bulk-layout .pk-box { height: 100%; }
+
+.st-bulk-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.st-bulk-count { font-size: 12px; color: var(--soft); }
+
+.st-bulk-status {
+  min-height: 1.4em;
+  font-size: 12px;
+  color: var(--ink);
+}

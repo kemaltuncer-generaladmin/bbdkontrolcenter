@@ -10,6 +10,11 @@
 import {
   classSortKey, formatMoney, formatPhone, fullName, normalizeClass, normalizePhone, validate,
 } from './student.js';
+// Yol kabuğun KOPYALANMIŞ konumuna göredir: shell/panels/bbd_students/ →
+// shell/ui-kit/. Kaynakta (`modules/bbd_students/ui/panel/`) çözülmez —
+// normaldir (bkz. `tools/build-ui-registry.py`).
+import { createPicker } from '../../ui-kit/picker.js';
+import { reportChain } from '../../ui-kit/report.js';
 
 let apiCall = null;
 let students = [];
@@ -18,6 +23,9 @@ let original = null;      // seçili öğrencinin sunucudan gelen hâli
 let draft = null;         // ekranda düzenlenen hâli
 let connected = false;
 let filters = { text: '', className: '', flag: '' };
+let mode = 'single';      // 'single' | 'bulk'
+let bulkPicker = null;
+let bulkChain = null;
 const nodes = {};
 
 const h = (tag, className, text) => {
@@ -112,6 +120,18 @@ async function refresh({ keepSelection = true } = {}) {
   loadSelection();
   renderList();
   renderDetail();
+  syncBulkPicker();
+}
+
+/** Toplu şifre işlemleri sekmesindeki seçiciyi güncel öğrenci listesiyle besler. */
+function syncBulkPicker() {
+  if (!bulkPicker) return;
+  bulkPicker.setItems(sorted().map((student) => ({
+    id: student.kantinId,
+    name: student.displayName || 'Adsız',
+    group: student.className || 'Sınıf girilmemiş',
+    meta: student.accessCode ? `kod var · ${student.schoolNo || '—'}` : `kod yok · ${student.schoolNo || '—'}`,
+  })));
 }
 
 function loadSelection() {
@@ -223,6 +243,113 @@ async function resetAccessCode() {
   } catch (error) {
     renderErrors([`Kod sıfırlanamadı: ${error.message}`]);
   }
+}
+
+// ------------------------------------------------------- toplu şifre işlemleri
+//
+// Tek öğrencilik akıştan (yukarısı) ayrı: burada birden çok öğrenci seçilip
+// 1) mevcut kodları HİÇBİR ŞEYİ DEĞİŞTİRMEDEN listelenir/yazdırılır, ya da
+// 2) hepsine TEK TIKLA yeni kod üretilip yeni liste yazdırılır. Üretim ve
+// önizleme/yazdırma zinciri `reportChain` (ui-kit/report.js) ile aynı ortak
+// bileşenden geçer — panel kendi önizleme/yazdırma kodunu yazmaz.
+
+/** "Tekli düzenle" / "Toplu şifre işlemleri" sekmesi arasında geçiş. */
+function setMode(next) {
+  mode = next;
+  nodes.split.hidden = mode !== 'single';
+  nodes.bulk.hidden = mode !== 'bulk';
+  nodes.modeSingle.classList.toggle('st-mode-active', mode === 'single');
+  nodes.modeBulk.classList.toggle('st-mode-active', mode === 'bulk');
+  if (mode === 'bulk') syncBulkPicker();
+}
+
+/**
+ * Seçili öğrencilerin ŞU ANKİ kodlarını listeler — HİÇBİR ŞEY DEĞİŞTİRMEZ.
+ * Kodu olmayan öğrenci listede yer almaz (`missing` ile raporlanır); onu
+ * tamamlamanın yolu "sıfırla"dır, bu akış değil.
+ */
+async function runAccessCodeList() {
+  const ids = bulkPicker?.selection() ?? [];
+  if (ids.length === 0) {
+    nodes.bulkStatus.textContent = 'Önce en az bir öğrenci seçin.';
+    return;
+  }
+  const result = await bulkChain.run('access-code-list', { students: ids });
+  if (!result) return; // reportChain zaten hata toast'ını gösterdi
+  const parts = [`${result.count} kod listelendi.`];
+  if (result.missing?.length) {
+    parts.push(`${result.missing.length} öğrencinin kodu yoktu, listede yer almadı.`);
+  }
+  nodes.bulkStatus.textContent = parts.join(' ');
+}
+
+/**
+ * Seçili öğrencilerin HEPSİNE yeni kod üretir. TEYİT İSTENİR — geri
+ * alınamaz: kodu olan öğrencilerin şu anki kodu anında geçersizleşir.
+ */
+async function runAccessCodeReset() {
+  const ids = bulkPicker?.selection() ?? [];
+  if (ids.length === 0) {
+    nodes.bulkStatus.textContent = 'Önce en az bir öğrenci seçin.';
+    return;
+  }
+  if (!window.confirm(
+    `${ids.length} öğrenci için yeni giriş kodu üretilecek.\n\n`
+    + 'Kodu olan öğrencilerin ŞU ANKİ kodu geçersiz olacak. Devam edilsin mi?')) {
+    return;
+  }
+  const result = await bulkChain.run('access-code-reset', { students: ids });
+  if (!result) return;
+  const parts = [`${result.count} yeni kod üretildi.`];
+  if (result.failed?.length) {
+    parts.push(`${result.failed.length} öğrenci sıfırlanamadı — tekrar deneyin.`);
+  }
+  nodes.bulkStatus.textContent = parts.join(' ');
+  await refresh(); // az önce üretilen kodlar `accessCode` alanına yansısın
+}
+
+function buildBulkView() {
+  const view = h('div', 'st-bulk');
+  view.hidden = true;
+
+  const layout = h('div', 'st-bulk-layout');
+  bulkPicker = createPicker({
+    groupLabel: 'Sınıf',
+    placeholder: 'Ad, sınıf, no ara',
+    onChange: (ids) => {
+      nodes.bulkCount.textContent = ids.length === 0 ? 'Seçim yok' : `${ids.length} öğrenci seçili`;
+    },
+  });
+  layout.append(bulkPicker.node);
+
+  const side = h('div', 'st-bulk-side');
+  nodes.bulkCount = h('p', 'st-bulk-count', 'Seçim yok');
+  side.append(nodes.bulkCount);
+
+  const listBtn = h('button', 'st-btn', 'Mevcut kodları listele ve yazdır');
+  listBtn.type = 'button';
+  listBtn.title = 'Hiçbir kodu değiştirmez; kantinde hâlâ geçerli olan kodları gösterir.';
+  listBtn.addEventListener('click', runAccessCodeList);
+  side.append(listBtn);
+
+  const resetBtn = h('button', 'st-btn st-btn-primary', 'Seçilenlerin kodunu sıfırla ve yazdır');
+  resetBtn.type = 'button';
+  resetBtn.title = 'Seçili her öğrenciye yeni kod üretir; eski kodlar geçersiz olur.';
+  resetBtn.addEventListener('click', runAccessCodeReset);
+  side.append(resetBtn);
+
+  nodes.bulkStatus = h('p', 'st-bulk-status', '');
+  side.append(nodes.bulkStatus);
+
+  side.append(h('p', 'st-hint',
+    'Şifreler her zaman kantin tarafından otomatik üretilir; elle şifre '
+    + 'girilmez — iki öğrenciye aynı kodun verilmesi bu yüzden mümkün değildir.'));
+
+  layout.append(side);
+  view.append(layout);
+
+  nodes.bulk = view;
+  return view;
 }
 
 // ----------------------------------------------------------------- çizim
@@ -523,6 +650,18 @@ export function mount(root, ctx) {
   nodes.kpi = h('div', 'st-kpi');
   view.append(nodes.kpi);
 
+  const modeBar = h('div', 'st-mode-bar');
+  nodes.modeSingle = h('button', 'st-mode-btn st-mode-active', 'Tekli düzenle');
+  nodes.modeSingle.type = 'button';
+  nodes.modeSingle.addEventListener('click', () => setMode('single'));
+  nodes.modeBulk = h('button', 'st-mode-btn', 'Toplu şifre işlemleri');
+  nodes.modeBulk.type = 'button';
+  nodes.modeBulk.addEventListener('click', () => setMode('bulk'));
+  modeBar.append(nodes.modeSingle, nodes.modeBulk);
+  view.append(modeBar);
+
+  bulkChain = reportChain({ api: apiCall, root, toast, base: '/api/bbd_students' });
+
   const bar = h('header', 'st-bar');
   nodes.search = h('input', 'st-search');
   nodes.search.type = 'search';
@@ -583,7 +722,9 @@ export function mount(root, ctx) {
   nodes.detailBody = h('div', 'st-detail-body');
   nodes.detail.append(nodes.detailBody);
   split.append(nodes.detail);
+  nodes.split = split;
   view.append(split);
+  view.append(buildBulkView());
 
   nodes.toast = h('div', 'st-toast');
   view.append(nodes.toast);
@@ -594,6 +735,7 @@ export function mount(root, ctx) {
 
   return () => {
     clearTimeout(toast.timer);
+    bulkPicker?.destroy();
     root.replaceChildren();
   };
 }

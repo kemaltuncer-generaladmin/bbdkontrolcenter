@@ -16,8 +16,9 @@ def register(ctx: ModuleContext) -> None:
     # zorunlu ilan edildiği için çekirdek onu bizden önce yüklemiş olur.
     canteen = ctx.capability("canteen.api")
 
-    # Kart PDF'i uygulama geneli hiyerarşiye yazılır:
-    # Masaüstü/Kontrol Merkezi/Raporlar/Öğrenci/<yıl>/<ay>.
+    # Kart PDF'i ve şifre listesi uygulama geneli hiyerarşiye yazılır:
+    # Masaüstü/Kontrol Merkezi/Raporlar/Öğrenci/<yıl>/<ay>. Yazdırma
+    # `printer` (CUPS) yeteneği ÜZERİNDEN GEÇMEZ — bkz. module.yaml notu.
     service = StudentService(
         canteen=canteen, store=ctx.store, log=ctx.log, config=ctx.config,
         category=CATEGORY,

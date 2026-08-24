@@ -29,6 +29,12 @@ provides:
 consumes:
   - capability: canteen.api
     reason: "Öğrenciler kantinde durur; okuma ve yazma tek kapıdan geçer (K4)."
+# NOT: `printer` (CUPS) yeteneği KASITLI OLARAK tüketilmiyor. ADR 0026
+# sonrası sunucuda CUPS yok; baskı artık kullanıcının cihazında, çekirdeğin
+# genel `/api/outputs/document` ucu + Tauri köprüsü üzerinden yapılıyor
+# (bkz. bbd_canteen_reports/ui/panel/index.js — "Eskiden .../print
+# çağrılıyordu... sunucuda CUPS kurulu değil" notu). Bu modül yalnızca
+# `/preview` üretir; yazdırma adımı modüle özel bir uç gerektirmez.
 
 events:
   publishes: []
@@ -76,8 +82,14 @@ permissions:
   # velinin elindeki kodu öldürür. `manage` (ad/telefon düzeltme) taşıyan
   # herkesin bunu yapabilmesi gerekmiyor. `accountant` DIŞARIDA: muhasebenin
   # öğrenci girişini kesmek gibi bir işi yok.
+  #
+  # KAPSAM GENİŞLEDİ (toplu şifre listesi özelliği): aynı anahtar artık
+  # tekli/toplu kod SIFIRLAMANIN yanı sıra mevcut kodları DEĞİŞTİRMEDEN
+  # listeleme/önizleme/yazdırmayı da kapsıyor — ikisi de aynı sırrı (düz
+  # giriş kodunu) açığa çıkarıyor, ayrı bir anahtar yalnızca karmaşıklık
+  # eklerdi.
   - key: bbd_students.access_code
-    description: "Öğrencinin 6 haneli kantin giriş kodunu sıfırlama."
+    description: "Öğrencinin 6 haneli kantin giriş kodunu görüntüleme (liste/PDF) ve sıfırlama."
     default_roles: [admin, bbd_staff, org_staff]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
