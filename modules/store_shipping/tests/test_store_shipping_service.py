@@ -480,15 +480,70 @@ async def test_bildirim_yetenegi_yoksa_uc_sessizce_basari_donmez() -> None:
     assert "store_notifications" in result["error"]
 
 
-async def test_bildirim_yetenegi_varsa_takip_no_ile_gonderilir() -> None:
+async def test_bildirim_yetenegin_GERCEK_imzasiyla_cagrilir() -> None:
+    """CANLIDA KIRIKTI ve testler yeşildi (04.09.2026).
+
+    Çağrı `to=` / `data=` veriyordu, yeteneğin imzası `recipients=` / `values=`.
+    Her tıkta `TypeError` çıkıyor, `except Exception` yutuyor, ekran
+    "gönderilemedi" diyordu. Sahte uydurulmuş imzayı taklit ettiği için test
+    bunu hiç görmedi — bu yüzden bu test alan ADLARINI da doğrular.
+    """
+    notifier = FakeNotifier()
+    service, api, _ = _service(notifier=notifier, notify_template="store:12")
+    api.shipment_by_id = {5: dict(GONDERI)}
+    result = await service.notify_customer(5, template="", reason=GEREKCE,
+                                           actor="Ali", dry_run=True)
+    assert result["ok"] is True
+    gonderilen = notifier.sent[0]
+    assert gonderilen["recipients"] == ["5321234567"]
+    assert gonderilen["values"]["trackingNo"] == "1234567890"
+    # KANAL SMS: varsayılan "email" idi ve telefon numarası e-posta alıcısı
+    # diye gidiyordu.
+    assert gonderilen["channel"] == "sms"
+    assert gonderilen["template"] == "store:12"
+
+
+async def test_sablon_secilmemisse_nereye_yazilacagini_soyler() -> None:
+    # `"shipment_status"` bir şablon KİMLİĞİ değil; yetenek `store:12` bekliyor.
+    # Eski varsayılan çözülemiyordu ve hata "şablon kimliği çözülemedi" diye
+    # kullanıcının hiçbir şey yapamayacağı bir metindi.
     notifier = FakeNotifier()
     service, api, _ = _service(notifier=notifier)
     api.shipment_by_id = {5: dict(GONDERI)}
-    result = await service.notify_customer(5, template="shipment_status", reason=GEREKCE,
-                                           actor="Ali", dry_run=True)
-    assert result["ok"] is True
-    assert notifier.sent[0]["data"]["trackingNo"] == "1234567890"
-    assert notifier.sent[0]["to"] == "5321234567"
+    result = await service.notify_customer(5, template="", reason=GEREKCE, actor="Ali")
+    assert result["ok"] is False
+    assert "Ekran tercihleri" in result["error"]
+    assert notifier.sent == []
+
+
+async def test_telefonu_olmayan_gonderide_sms_denenmez() -> None:
+    notifier = FakeNotifier()
+    service, api, _ = _service(notifier=notifier, notify_template="store:12")
+    api.shipment_by_id = {5: {**GONDERI, "address": {"city": "İstanbul", "district": "Adalar"}}}
+    result = await service.notify_customer(5, template="", reason=GEREKCE, actor="Ali")
+    assert result["ok"] is False
+    assert "telefon" in result["error"]
+    assert notifier.sent == []
+
+
+async def test_tercihteki_sablon_ayari_ezer() -> None:
+    notifier = FakeNotifier()
+    service, api, store = _service(notifier=notifier, notify_template="store:12")
+    store.prefs["notify_template"] = "store:99"
+    api.shipment_by_id = {5: dict(GONDERI)}
+    await service.notify_customer(5, template="", reason=GEREKCE, actor="Ali", dry_run=True)
+    assert notifier.sent[0]["template"] == "store:99"
+
+
+async def test_bildirim_denemesi_istekten_ONCE_deftere_yazilir() -> None:
+    # Zaman aşımına uğrayan bir gönderim uzakta yapılmış olabilir; "ne yapmaya
+    # çalıştık" kaydı yalnız burada kalır.
+    notifier = FakeNotifier()
+    service, api, store = _service(notifier=notifier, notify_template="store:12")
+    api.shipment_by_id = {5: dict(GONDERI)}
+    await service.notify_customer(5, template="", reason=GEREKCE, actor="Ali", dry_run=True)
+    satirlar = [row for row in store.audit if row["action"] == "notify_customer"]
+    assert [row["result"] for row in satirlar] == ["denendi", "dry_run"]
 
 
 # ============================================================== tercihler

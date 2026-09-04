@@ -40,7 +40,7 @@ def register(ctx: ModuleContext) -> None:
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
     )
 
-    # `store.notify.send` — Siparişler, Talepler, İadeler ve Deneme Kulübü
+    # `store.notify.send` — Kargo Yönetimi ve Deneme Kulübü
     # ekranları müşteriye bildirim göndermek için bunu çağırır. Dört ekranın
     # kendi gönderim yolunu kurması, sessiz saat ve limit disiplinini dört kez
     # (ve dört farklı biçimde yanlış) kurmak olurdu (K3).

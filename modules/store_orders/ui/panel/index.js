@@ -997,7 +997,8 @@ function actionBar(payload) {
     // orada koşar. Buradaki Kargo sekmesi o gönderinin DURUMUNU gösterir.
     button('Kargo Yönetimi’nde aç', {
       title: 'Kargoya verme, etiket ve iptal işlemleri Kargo Yönetimi ekranında yapılır',
-      onClick: () => openPanel?.('store_shipping', { orderId: order.id }),
+      onClick: () => openPanel?.('store_shipping',
+        { orderId: order.id, orderNumber: order.orderNo || order.incrementId }),
     }),
     // Ölü düğme bırakılmıyor: kapalı olduğu ve NEDEN kapalı olduğu hem
     // etikette hem de altındaki uyarıda yazılı. İpucu (title) tek başına
@@ -1310,7 +1311,12 @@ function paintShipping(pane, { payload, shipmentCap }) {
     orderId: payload.order.id,
     empty: {
       title: 'Gönderi yok',
-      text: 'Bu sipariş henüz kargoya verilmedi. Özet sekmesinden “Kargoya ver”.',
+      // METİN BAYATLAMIŞTI: "Özet sekmesinden 'Kargoya ver'" diyordu ve o
+      // düğme bu ekrandan kaldırılmıştı (gövde sarmalı yüzünden paket yola
+      // çıkmadan müşteriye SMS tetikliyordu). Var olmayan bir düğmeyi tarif
+      // eden boş durum, kullanıcıyı ekranda olmayan bir şeyi aramaya yollar.
+      text: 'Bu sipariş henüz kargoya verilmedi. Kargoya verme, etiket ve iptal '
+        + 'işlemleri Kargo Yönetimi ekranında yapılır — aşağıdaki düğme oraya götürür.',
     },
   });
 }
@@ -2065,6 +2071,16 @@ export function mount(root, ctx) {
 
   root.replaceChildren(view);
   nodes.status.set('Siparişler alınıyor…');
+
+  // DERİN BAĞLANTI. Kabuk `ctx.payload`'ı geçiriyor ama bu panel okumuyordu:
+  // Kargo ekranındaki "Siparişler'de aç" düğmesi listeyi açıyor, ARANAN
+  // siparişi açmıyordu ve kullanıcı aramayı baştan yapıyordu. Süzgeç alanı
+  // sipariş no, müşteri, e-posta, telefon ve takip no üzerinde çalıştığı için
+  // hangi künye gelirse gelsin tek alan yeter.
+  const hedef = ctx.payload || {};
+  const anahtar = String(hedef.orderNumber || hedef.trackingNo || hedef.orderId || '').trim();
+  if (anahtar) nodes.filters.set('q', anahtar);
+
   // Referans listeler ÖNCE gelir: süzgeç açılırları dolmadan liste çekmek,
   // kullanıcının seçtiği kanalı kaybettiriyordu.
   loadReference().then(() => refresh());

@@ -69,7 +69,7 @@ class PreviewError(RuntimeError):
 class NotifySender:
     """`store.notify.send` yeteneğinin uygulaması.
 
-    Siparişler, Talepler, İadeler ve Deneme Kulübü ekranları müşteriye bildirim
+    Kargo Yönetimi ve Deneme Kulübü ekranları müşteriye bildirim
     göndermek için bunu kullanır. Kendi başına kanal açmaz: her çağrı bu
     modülün sessiz saat, günlük limit ve gerekçe kapılarından geçer — aksi
     hâlde dört ekran aynı disiplini dört kez (ve dört farklı biçimde yanlış)

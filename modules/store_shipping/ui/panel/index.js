@@ -1568,7 +1568,10 @@ async function openShipment(shipmentId) {
     button('Siparişi aç', {
       title: 'Siparişler ekranına geçer',
       disabled: !row.orderId,
-      onClick: () => openPanel?.('store_orders', { orderId: row.orderId }),
+      // NUMARA DA GİDER: karşı panel süzgeci metin arıyor ve iç kimlik
+      // (`orderId`) çoğu kurulumda görünen numaraya eşit değil.
+      onClick: () => openPanel?.('store_orders',
+        { orderId: row.orderId, orderNumber: row.orderNumber }),
     }),
     button('Etiketi yeniden bas', {
       onClick: () => report.run('labels', {
@@ -1614,7 +1617,10 @@ async function openShipment(shipmentId) {
         if (!reason) return;
         const result = await withBusy('Bildirim gönderiliyor…', () => call(
           `${BASE}/shipments/${row.id}/notify`, {
-            method: 'POST', body: { template: 'shipment_status', reason, dryRun: false },
+            // ŞABLON GÖNDERİLMEZ: sunucu ekran tercihinden çözer. Buraya bir
+            // sabit yazmak, tercihi değiştiren kullanıcının değişikliğinin
+            // hiç uygulanmamasına yol açardı.
+            method: 'POST', body: { reason, dryRun: false },
           }));
         if (result) toast('Bildirim gönderildi.', 'good');
       },
@@ -1692,12 +1698,20 @@ function settingsCard(host) {
         type: 'checkbox',
         hint: 'Kapalıyken belgeler yine üretilir, yalnız yazıcıya gönderilmez. '
           + 'Kargoya teslim fişi bu akışa hiç girmez.' },
+      // ŞABLON KİMLİĞİ, ŞABLON ADI DEĞİL. Bir dönem burada hiç alan yoktu ve
+      // "Müşteriye bildir" düğmesi sabit `shipment_status` gönderiyordu;
+      // yetenek o biçimi tanımıyor ve düğme canlıda hiç çalışmıyordu.
+      { key: 'notifyTemplate', label: 'Müşteri bildirim şablonu', type: 'text',
+        maxLength: 64, wide: true,
+        hint: 'Bildirimler ekranındaki şablon kimliği — store:12 ya da local:7. '
+          + 'Boşken "Müşteriye bildir" düğmesi çalışmaz ve nedenini söyler.' },
     ],
     value: {
       defaultCarrier: data.defaultCarrier || '',
       labelFormat: data.labelFormat || 'thermal-100x150',
       idleDays: data.idleDays || 3,
       autoPrint: data.autoPrint !== false,
+      notifyTemplate: data.notifyTemplate || '',
     },
   });
 
@@ -1720,6 +1734,7 @@ function settingsCard(host) {
             labelFormat: draft.labelFormat || '',
             idleDays: Number(draft.idleDays) || null,
             autoPrint: Boolean(draft.autoPrint),
+            notifyTemplate: (draft.notifyTemplate || '').trim(),
             reason },
         }));
       if (!result) return;
@@ -2646,7 +2661,22 @@ export function mount(root, ctx) {
     // Hazırlık ne olursa olsun ekran AÇILIR (K7): taşıyıcı listesi gelmezse
     // sihirbaz kısıtlı çalışır, ama panel boş kalmaz.
     .catch(() => null)
-    .then(() => showTab('ready'));
+    // DERİN BAĞLANTI. Kabuk `ctx.payload`'ı yıllardır geçiriyordu ve iki panel
+    // de okumuyordu: "Kargo Yönetimi'nde aç" ekranı açıyor ama SİPARİŞİ
+    // açmıyordu; kullanıcı aramayı baştan yapıyordu. Sipariş numarasıyla
+    // gelen bir çağrı artık doğru sekmeyi açar ve süzgeci doldurur.
+    .then(() => {
+      const target = ctx.payload || {};
+      const anahtar = String(target.trackingNo || target.orderNumber
+        || target.shipmentId || target.orderId || '').trim();
+      if (!anahtar) { showTab('ready'); return; }
+      // Gönderiler sekmesi: arama alanı takip no, sipariş no, müşteri ve
+      // adres üzerinde çalışıyor (uçtaki `q`), yani hangi künye gelirse
+      // gelsin tek alan yeter.
+      showTab('shipments');
+      nodes.shipFilters.set?.('q', anahtar);
+      loadShipments({ page: 1 });
+    });
 
   return () => {
     // Gerekçe alanı panelin ömrü boyunca korunur ama ötesine TAŞINMAZ: bir
@@ -2750,6 +2780,23 @@ function shipmentCard(row, ctx) {
     }));
   }
   body.append(head);
+
+  // ── TAKİP BAĞLANTISI. Veri hep vardı (`by_order` → `trackingUrl`) ama bu
+  // kart onu hiç okumuyordu: personel numarayı kopyalayıp firmanın sitesini
+  // kendisi buluyordu. Bağlantı YOKSA SESSİZ KALINMAZ — aynı boşluk
+  // "kargoya verildi" SMS'ini de düşürüyor (zorunlu değişken), ve sebebi
+  // ancak müşteri arayınca anlaşılıyordu.
+  if (row.trackingUrl) {
+    const link = h('a', 'sh-cap-link', 'Kargomu taşıyıcının sitesinde takip et');
+    link.href = row.trackingUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    body.append(link);
+  } else if (row.trackingNo) {
+    body.append(h('div', 'sh-cap-nolink',
+      'Taşıyıcı henüz takip bağlantısı vermedi. Bağlantı boşken müşteriye '
+      + '“kargoya verildi” SMS’i de gitmez — mesajın zorunlu değişkenlerinden biri.'));
+  }
 
   // ── mutlu yoldan çıktıysa ÖNCE o söylenir; şerit yanıltıcı olurdu
   const sapma = OFF_TRACK[row.status];

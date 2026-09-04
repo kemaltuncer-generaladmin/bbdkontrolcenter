@@ -366,3 +366,16 @@
 /* Tek eylem satırı: "Kargo Yönetimi'nde aç". Sağa yaslanır ki kartın kendi
    bilgisiyle karışmasın — burada KARGOYA VEREN düğme yoktur, bilerek. */
 .sh-cap-go { display: flex; justify-content: flex-end; }
+
+/* Yetenek kartındaki takip bağlantısı. Bağlantı YOKSA yerine sebebi yazan
+   soluk bir satır gelir — boş bırakmak "bağlantı yok" ile "bakmadık"ı aynı
+   gösterirdi. */
+.sh-cap-link {
+  display: inline-block;
+  margin: 6px 0 2px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.sh-cap-nolink { margin: 6px 0 2px; font-size: 12px; opacity: 0.7; }
+

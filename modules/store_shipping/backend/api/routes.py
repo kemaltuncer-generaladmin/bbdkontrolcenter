@@ -367,7 +367,10 @@ async def sync(
 
 
 class NotifyBody(BaseModel):
-    template: str = Field(default="shipment_status", max_length=64)
+    #: Bildirimler ekranındaki şablon KİMLİĞİ (`store:12`). Boş bırakılırsa
+    #: ekran tercihindeki/ayardaki şablon kullanılır. Eski varsayılan
+    #: `"shipment_status"` bir kimlik DEĞİLDİ ve hiçbir zaman çözülemiyordu.
+    template: str = Field(default="", max_length=64)
     reason: str = Field(min_length=10, max_length=255)
     dryRun: bool = True
 
@@ -472,6 +475,8 @@ class SettingsBody(BaseModel):
     #: "Kargoya ver" sonrası etiket ve fatura kendiliğinden bassın mı.
     #: `None` = dokunma; tercihi silmek için değil, değiştirmemek için.
     autoPrint: bool | None = None
+    #: "Müşteriye bildir" şablon kimliği — `store:12` / `local:7`.
+    notifyTemplate: str = Field(default="", max_length=64)
     reason: str = Field(min_length=10, max_length=255)
 
 

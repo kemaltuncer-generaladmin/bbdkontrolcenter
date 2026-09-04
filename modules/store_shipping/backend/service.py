@@ -21,6 +21,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import tempfile
 from datetime import UTC, date, datetime
@@ -1650,7 +1651,27 @@ class ShippingService:
     async def notify_customer(self, shipment_id: int, *, template: str, reason: str,
                               actor: str, dry_run: bool = True) -> dict[str, Any]:
         """Müşteriye kargo bildirimi. Bildirim modülü kapalıysa uç KAPALIDIR
-        ve bunu söyler; sessizce başarı dönmez."""
+        ve bunu söyler; sessizce başarı dönmez.
+
+        ÜÇ KUSUR BİRDEN DÜZELTİLDİ (04.09.2026) — bu düğme canlıda HİÇ
+        çalışmıyordu ve testler yeşildi:
+
+        1. ÇAĞRI YANLIŞ İMZAYLAYDI. `to=` ve `data=` diye parametre veriliyordu;
+           `store.notify.send` yeteneğinin imzası `recipients=` ve `values=`
+           ({@see store_notifications NotifySender.send}). Sonuç: her tıkta
+           `TypeError`, `except Exception` ile yutuluyor ve ekran "gönderilemedi"
+           diyordu. Test SAHTESİ uydurulmuş imzayı taklit ettiği için testler
+           bunu hiç görmedi — aynı ders store_trial_club'da öğrenilmiş, buraya
+           geçmemişti.
+        2. ŞABLON KİMLİĞİ ÇÖZÜLEMİYORDU. `"shipment_status"` bir şablon kimliği
+           değil; yetenek `store:12` / `local:7` biçimi bekliyor. İmza
+           düzeltilse bile istek "şablon kimliği çözülemedi" ile dönerdi.
+           Kimlik artık tercihten/ayardan okunuyor ve seçilmemişse ekran
+           NEREYE yazılacağını söylüyor.
+        3. KANAL "email"Dİ, ALICI TELEFONDU. Varsayılan kanal e-posta olduğu
+           için telefon numarası e-posta alıcısı diye gidiyordu. Bu ekranın
+           bildirimi SMS'tir.
+        """
         if self._notifier is None:
             return {"ok": False,
                     "error": "Bildirim yeteneği bu kurulumda yok (store_notifications kapalı). "
@@ -1662,20 +1683,53 @@ class ShippingService:
         if not detail.get("ok"):
             return {"ok": False, "error": detail.get("error", "Gönderi okunamadı.")}
         row = detail["shipment"]
-        try:
-            result = await self._notifier.send(
-                template=shipping.text(template) or "shipment_status",
-                to=row["phone"],
-                data={"trackingNo": row["trackingNo"], "carrier": row["carrierLabel"],
-                      "status": row["statusLabel"], "orderId": row["orderId"]},
-                reason=reason, actor=actor, dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"ok": False, "error": self._fail(failure)}
+
+        phone = shipping.text(row.get("phone"))
+        if not phone:
+            return {"ok": False,
+                    "error": "Gönderide müşteri telefonu yok; SMS gönderilemez."}
+
+        template_id = (shipping.text(template)
+                       or await self._pref("notify_template")
+                       or shipping.text(self._config.get("notify_template")))
+        if not template_id:
+            return {"ok": False,
+                    "error": "Bildirim şablonu seçilmemiş. Bildirimler ekranındaki şablon "
+                             "kimliğini (örn. store:12) Kargo Yönetimi → Ekran tercihleri → "
+                             "'Müşteri bildirim şablonu' alanına yazın."}
+
+        # "Denendi" kaydı istekten ÖNCE düşer: yetenek çağrısı patlarsa
+        # (ağ koptu, modül düştü) gönderim uzakta yapılmış olabilir.
+        attempt = {"template": template_id, "channel": "sms"}
         await self._record(shipment_id=shipment_id, order_id=row["orderId"],
                            action="notify_customer", reason=reason, actor=actor,
-                           result="dry_run" if dry_run else "ok",
-                           detail={"template": shipping.text(template)})
+                           result="denendi", detail=attempt)
+        try:
+            result = await self._notifier.send(
+                template=template_id, recipients=[phone], channel="sms",
+                values={"trackingNo": row["trackingNo"], "carrier": row["carrierLabel"],
+                        "status": row["statusLabel"], "orderId": row["orderId"]},
+                reason=reason, actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(shipment_id=shipment_id, order_id=row["orderId"],
+                               action="notify_customer", reason=reason, actor=actor,
+                               result="hata", detail={**attempt, "error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+        if isinstance(result, dict) and result.get("ok") is False:
+            # Yetenek kendi kapılarından (sessiz saat, günlük sınır, şablon)
+            # döndüyse o metin OLDUĞU GİBİ geçer; kendi tahminimizi koymayız.
+            await self._record(shipment_id=shipment_id, order_id=row["orderId"],
+                               action="notify_customer", reason=reason, actor=actor,
+                               result="hata", detail={**attempt, "error": result.get("error")})
+            return {"ok": False, "error": shipping.text(result.get("error"))
+                    or "Bildirim gönderilemedi."}
+        # Şablon ÇÖZÜLMÜŞ hâliyle yazılır: tercihten gelen şablonda `template`
+        # boş gelir ve iz hangi şablonun gittiğini söylemezdi.
+        await self._record(shipment_id=shipment_id, order_id=row["orderId"],
+                           action="notify_customer", reason=reason, actor=actor,
+                           result="dry_run" if dry_run else "ok", detail=attempt)
         return {"ok": True, "error": "", "dryRun": bool(dry_run),
+                "template": template_id, "channel": "sms",
                 "result": result if isinstance(result, dict) else {}}
 
     # ============================================================ performans
@@ -2244,10 +2298,15 @@ class ShippingService:
             # "Kargoya ver" bastığında etiket ve fatura kendiliğinden çıksın mı.
             "autoPrint": await self.auto_print_on(),
             "provider": shipping.fold(self._config.get("provider")) or "geliver",
+            # "Müşteriye bildir" düğmesinin kullanacağı şablon. Bildirimler
+            # ekranındaki KİMLİK (`store:12`), mağaza şablon anahtarı değil.
+            "notifyTemplate": (await self._pref("notify_template")
+                               or shipping.text(self._config.get("notify_template"))),
         }
 
     async def save_settings(self, *, label_format: str = "", default_carrier: str = "",
                             idle_days: int | None = None, auto_print: bool | None = None,
+                            notify_template: str = "",
                             reason: str, actor: str) -> dict[str, Any]:
         problem = self._guard(reason)
         if problem:
@@ -2271,6 +2330,17 @@ class ShippingService:
         if auto_print is not None:
             note("otomatik basım",
                  await self._set_pref("auto_print", "1" if auto_print else "0", actor))
+        if notify_template:
+            # BİÇİM DENETLENİR: yetenek `store:12` / `local:7` bekliyor ve
+            # tanımadığı biçimi "şablon kimliği çözülemedi" diye reddediyor.
+            # Yanlış biçimi tercihe yazmak, hatayı gönderim anına erteler.
+            if not re.fullmatch(r"(store|local):[0-9]{1,10}", notify_template.strip()):
+                return {"ok": False,
+                        "error": "Şablon kimliği 'store:12' ya da 'local:7' biçiminde olmalı; "
+                                 f"'{notify_template}' tanınmadı. Kimliği Bildirimler "
+                                 "ekranındaki şablon listesinden alın."}
+            note("bildirim şablonu",
+                 await self._set_pref("notify_template", notify_template.strip(), actor))
 
         await self._record(action="save_settings", reason=reason, actor=actor,
                            result="hata" if refused else "ok",

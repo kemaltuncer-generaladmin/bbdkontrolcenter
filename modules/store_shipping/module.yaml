@@ -25,7 +25,7 @@ depends: [store_api]
 provides:
   - capability: store.shipment.byOrder
     contract: km_sdk.contracts:ShipmentLookup
-    description: "Bir siparişin gönderileri ve son hareketleri — Siparişler, Talepler ve İadeler okur."
+    description: "Bir siparişin gönderileri, son hareketleri ve takip bağlantısı — Siparişler ekranı okur."
 
 consumes:
   - capability: store.api

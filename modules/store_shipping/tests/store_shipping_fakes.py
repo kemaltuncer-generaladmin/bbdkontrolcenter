@@ -358,15 +358,27 @@ class FakeApi:
 
 
 class FakeNotifier:
-    """`store.notify.send` yeteneğinin testlik yüzü."""
+    """`store.notify.send` yeteneğinin testlik yüzü.
+
+    İMZA UYDURULMAZ — burada bir kez uyduruldu ve bedeli şuydu: sahte
+    `to=` / `data=` alıyordu, gerçek yetenek `recipients=` / `values=`
+    istiyor; "Müşteriye bildir" düğmesi canlıda HER TIKTA `TypeError`
+    veriyordu ve bu modülün testleri yeşildi. Uydurulmuş bir imza, testin
+    koruduğu şeyi test etmemesi demektir.
+
+    Kaynak imza: `store_notifications/backend/service.py` → `NotifySender.send`.
+    Değişirse burası da değişir.
+    """
 
     def __init__(self) -> None:
         self.sent: list[dict[str, Any]] = []
 
-    async def send(self, *, template: str, to: str, data: dict[str, Any], reason: str,
+    async def send(self, *, template: str, recipients: list[str], channel: str = "email",
+                   values: dict[str, Any] | None = None, reason: str = "",
                    actor: str = "", dry_run: bool = True) -> dict[str, Any]:
-        self.sent.append({"template": template, "to": to, "data": data, "reason": reason,
-                          "dryRun": dry_run})
+        self.sent.append({"template": template, "recipients": list(recipients),
+                          "channel": channel, "values": dict(values or {}),
+                          "reason": reason, "actor": actor, "dryRun": dry_run})
         return {"ok": True, "dryRun": dry_run}
 
 
