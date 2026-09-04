@@ -204,6 +204,18 @@ class FakeApi:
         self._record("cancel_order", order_id, reason=reason, actor=actor, dry_run=dry_run)
         return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
 
+    async def bbd_set_order_status(self, order_id: int, *, status: str, reason: str,
+                                   actor: str = "",
+                                   dry_run: bool | None = None) -> dict[str, Any]:
+        """İMZA UYDURULMAZ — kaynak `store_api/backend/client.py`.
+
+        Bu deponun store_shipping modülünde uydurulmuş bir sahte imza yüzünden
+        "Müşteriye bildir" düğmesi canlıda hiç çalışmadı ve testler yeşil kaldı.
+        """
+        self._record("bbd_set_order_status", order_id, status=status, reason=reason,
+                     actor=actor, dry_run=dry_run)
+        return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
+
     async def create_invoice(self, order_id: int, *, items: dict[str, int] | None = None,
                              reason: str, actor: str = "",
                              dry_run: bool | None = None) -> dict[str, Any]:

@@ -2480,6 +2480,31 @@ class StoreApi:
         return await self._collection(f"{BBD}/orders", filters, page=page,
                                       per_page=per_page, all_pages=all_pages)
 
+    async def bbd_set_order_status(self, order_id: int, *, status: str, reason: str,
+                                   actor: str = "",
+                                   dry_run: bool | None = None) -> dict[str, Any]:
+        """Sipariş durumunu ELLE yazar — POST /api/admin/bbd/orders/{orderId}/status.
+
+        BAGISTO ÇEKİRDEĞİNDE BÖYLE BİR UÇ YOKTUR ve bilerek yoktur: durum orada
+        TÜRETİLİR (fatura kesilince `processing`, kargolanınca `completed`).
+        Bu uç BBD tarafında açıldı ve yalnız istisnalar içindir — mağaza dışında
+        halledilmiş bir iş, yanlış kalmış bir kayıt.
+
+        `dryRun` GÖVDEYE AÇIKÇA KONUR: mağaza tarafındaki varsayılan `true` ve
+        alan hiç gitmezse gerçek bir yazma isteği SESSİZCE kuru provaya düşer
+        ve ekran "değişti" derken sipariş yerinde kalır. Aynı ders
+        `bbd_dispatch_order` üzerinde alınmıştı.
+
+        Gerekçe gövdeye KONULMAZ (`reason_in_body=False`): BBD uçları gövdeyi
+        sıkı doğruluyor ve tanımadığı alanı 422 ile reddediyor; gerekçe zaten
+        `X-Bbd-Reason` başlığıyla gidiyor.
+        """
+        body = {"status": str(status or "").strip(),
+                "dryRun": self.effective_dry_run(dry_run)}
+        return await self._request("POST", f"{BBD}/orders/{int(order_id)}/status",
+                                   body=body, reason=reason, actor=actor, dry_run=dry_run,
+                                   action="bbd_set_order_status", reason_in_body=False)
+
     async def bbd_shipments(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                             per_page: int | None = None,
                             all_pages: bool = False) -> dict[str, Any]:

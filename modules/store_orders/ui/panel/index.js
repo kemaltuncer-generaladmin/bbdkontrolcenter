@@ -1000,14 +1000,18 @@ function actionBar(payload) {
       onClick: () => openPanel?.('store_shipping',
         { orderId: order.id, orderNumber: order.orderNo || order.incrementId }),
     }),
-    // Ölü düğme bırakılmıyor: kapalı olduğu ve NEDEN kapalı olduğu hem
-    // etikette hem de altındaki uyarıda yazılı. İpucu (title) tek başına
-    // yetmez — dokunmatikte ve klavyeyle hiç görünmez.
-    button('Durum değiştir (kapalı)', {
-      disabled: true,
-      title: 'Mağazanın admin API\'sinde sipariş durumunu yazan bir uç yok. Durum '
-        + 'fatura/kargo/iptal eylemlerinin sonucu olarak değişir; uç yayınlanınca '
-        + 'bu düğme açılacak.',
+    // AÇILDI (04.09.2026). Bir dönem kapalıydı ve etiketi "kapalı" diyordu:
+    // mağazanın admin API'sinde durumu yazan uç yoktu. BBD tarafında açıldı,
+    // düğme de açıldı. Geçilebilecek durumlar SUNUCUDAN geliyor
+    // (`payload.statusTargets`) — matrisi burada kopyalamak, ikisi
+    // ayrıştığında olmayan bir seçeneği sunup 422 aldırırdı.
+    button('Durum değiştir', {
+      disabled: !(payload.statusTargets || []).length,
+      title: (payload.statusTargets || []).length
+        ? 'Durumu elle çeker. Normalde durum fatura/kargo eylemlerinden türetilir; '
+          + 'bu bir istisnadır ve gerekçe denetim kaydına yazılır.'
+        : `“${order.statusLabel || order.status}” nihai bir durumdur; elle geçiş yok.`,
+      onClick: () => changeStatus(order, payload.statusTargets || []),
     }),
     button('İptal et', {
       variant: 'danger',
@@ -1029,9 +1033,10 @@ function actionBar(payload) {
       order.paymentAttention ? 'warn' : 'info'));
   }
   box.append(alertBox(
-    '“Durum değiştir” HAZIR DEĞİL: mağazanın admin API\'sinde sipariş durumunu '
-    + 'doğrudan yazan bir uç yok. Durum, fatura kesme / kargoya verme / iptal '
-    + 'eylemlerinin sonucu olarak değişir. Uç yayınlandığında düğme açılacak.', 'info'));
+    'Durum normalde TÜRETİLİR: fatura kesilince “Hazırlanıyor”, kargolanınca '
+    + '“Tamamlandı”. “Durum değiştir” bunun üstüne bilinçli bir istisna koyar ve '
+    + 'sonraki bir fatura ya da gönderi o değeri EZEBİLİR — kalıcı mühür değildir. '
+    + 'İptal buradan yapılmaz: ayrı izin ve süre penceresi ister.', 'info'));
   box.append(hintBox(
     'Bu ekran siparişin kendisini yönetir. Etiket satın alma Kargo Yönetimi\'nin, '
     + 'para iadesi İadeler\'in, fatura PDF\'i Fatura ekranının işidir; buradan yalnız '
@@ -1209,6 +1214,80 @@ async function cancelOrder(order) {
     });
     toast(result.dryRun ? 'Kuru prova: istek gönderilmedi.'
       : `${result.orderNo} iptal edildi.`, result.dryRun ? 'warn' : 'good');
+    refresh();
+  });
+}
+
+/**
+ * Durumu elle çekme — TEK PENCERE, iki alan.
+ *
+ * Hedef listesi SUNUCUDAN gelir; burada matris kopyalanmaz. Gerekçe zorunlu
+ * (uçta da en az 10 karakter) çünkü bu, mağazanın kendi türetmesinin üstüne
+ * konan bir istisnadır ve iki ay sonra "bu sipariş neden elle kapatılmış"
+ * sorusunun tek cevabı o metin olacak.
+ */
+async function changeStatus(order, targets) {
+  if (!targets.length) return;
+
+  const secim = await new Promise((resolve) => {
+    const overlay = h('div', 'kit-overlay');
+    const card = h('div', 'kit-dialog');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+
+    const select = h('select', 'kit-input');
+    for (const target of targets) {
+      const option = h('option', undefined, target.label);
+      option.value = target.value;
+      select.append(option);
+    }
+
+    const close = (value) => { overlay.remove(); resolve(value); };
+    card.append(
+      h('h3', 'kit-dialog-title', `Durum değiştir — ${order.orderNo}`),
+      h('p', 'kit-dialog-text',
+        `Şu an: ${order.statusLabel || order.status}. Yeni durum seçin. Sonraki bir `
+        + 'fatura ya da gönderi bu değeri ezebilir; kalıcı mühür değildir.'),
+      select,
+      h('div', 'kit-dialog-actions'),
+    );
+    card.lastChild.append(
+      button('Vazgeç', { onClick: () => close(null) }),
+      button('Devam', { variant: 'primary', onClick: () => close(select.value) }),
+    );
+    overlay.append(card);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close(null);
+    });
+    document.body.append(overlay);
+    select.focus();
+  });
+  if (!secim) return;
+
+  const hedef = targets.find((item) => item.value === secim);
+  const reason = await askReason({
+    title: `Durumu “${hedef?.label || secim}” yap`,
+    description: `${order.orderNo} · ${order.statusLabel || order.status} → `
+      + `${hedef?.label || secim}. Durum normalde fatura ve kargo eylemlerinden `
+      + 'türetilir; bu elle konan bir istisnadır ve gerekçe denetim kaydına yazılır.',
+    confirmLabel: 'Durumu değiştir',
+  });
+  if (!reason) return;
+
+  await withBusy('Durum değiştiriliyor…', async () => {
+    const result = await call(`${BASE}/orders/${order.id}/status`, {
+      method: 'POST', body: { status: secim, reason, dryRun: false },
+    });
+    toast(result.dryRun
+      ? 'Kuru prova: istek gönderilmedi.'
+      : `${result.orderNo} → ${result.statusLabel || secim}`,
+    result.dryRun ? 'warn' : 'good');
+    // EZİLEBİLİRLİK SESSİZ GEÇİLMEZ: kullanıcı "kaydettim ama geri döndü"
+    // ile karşılaşmadan önce nedenini duymalı.
+    if (!result.dryRun && result.mayBeOverwritten) {
+      toast('Bu durum, sonraki bir fatura ya da gönderi kaydında yeniden '
+        + 'hesaplanabilir.', 'warn');
+    }
     refresh();
   });
 }

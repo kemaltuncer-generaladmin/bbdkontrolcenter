@@ -632,6 +632,13 @@ class OrdersService:
             } for item in returns],
             "returnsAvailable": returns_available,
             "cancelBlock": ord_.cancel_block(row, window_hours=prefs["cancelWindowHours"]),
+            # GEÇİŞ LİSTESİ SUNUCUDAN GELİR, ekranda kopyalanmaz: matris tek
+            # yerde durur ve ikisi ayrıştığında ekran olmayan bir seçeneği
+            # sunup 422 aldırırdı.
+            "statusTargets": [
+                {"value": code, "label": ord_.status_label(code, prefs.get("statusNames"))}
+                for code in ord_.STATUS_TRANSITIONS.get(ord_.fold(row.get("status")), ())
+            ],
             "evidence": self._evidence_view(index, rows),
             "prefs": prefs,
         }
@@ -789,6 +796,79 @@ class OrdersService:
                                   "to": "canceled", "reason": reason})
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
                 "orderNo": rows[0]["orderNo"], "announced": applied}
+
+    async def set_status(self, order_id: int, *, status: str, reason: str, actor: str,
+                         dry_run: bool = True) -> dict[str, Any]:
+        """Sipariş durumunu ELLE değiştirir.
+
+        NORMALDE DURUM TÜRETİLİR: fatura kesilince `processing`, kargolanınca
+        `completed`. Bu uç o türetmenin üstüne bilinçli bir istisna koyar ve
+        yalnız istisnalar için vardır — mağaza dışında halledilmiş bir iş,
+        yanlış kalmış bir kayıt, elle kapatılan bir sipariş.
+
+        İKİ ŞEY AÇIKÇA SÖYLENİR ve ekranda da yazar:
+          · Geçiş matrisi (`ord_.status_block`) burada da uygulanır; sunucu
+            aynı denetimi tekrar yapar (K9).
+          · SONRAKİ FATURA/GÖNDERİ BU DEĞERİ EZEBİLİR. Bagisto durumu o
+            olaylarda yeniden hesaplıyor; elle konan değer kalıcı bir mühür
+            değildir. Kullanıcı "kaydettim ama geri döndü" ile karşılaşmasın
+            diye bu, yanıtın kendisinde `mayBeOverwritten` ile taşınır.
+
+        Sipariş yazmadan ÖNCE TAZE OKUNUR: aradan geçen sürede kargolanmış ya
+        da iptal edilmiş olabilir ve o hâlde geçiş artık geçerli değildir.
+        """
+        problem = self._guard(reason)
+        if problem:
+            return {"ok": False, "error": problem}
+
+        hedef = ord_.fold(status)
+        prefs = await self._prefs_view()
+        try:
+            raw = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": self._fail(failure)}
+
+        rows = self._rows([raw], prefs)
+        if not rows:
+            return {"ok": False, "error": "Sipariş okunamadı."}
+        row = rows[0]
+
+        block = ord_.status_block(row, hedef)
+        if block:
+            await self._record(order_id=order_id, action="set_status", reason=reason,
+                               actor=actor, result="engellendi",
+                               detail={"from": row["status"], "to": hedef, "block": block})
+            return {"ok": False, "error": block}
+
+        detail = {"orderNo": row["orderNo"], "from": row["status"], "to": hedef}
+        await self._record(order_id=order_id, action="set_status", reason=reason,
+                           actor=actor, result="denendi", detail=detail)
+        try:
+            result = await self._api.bbd_set_order_status(int(order_id), status=hedef,
+                                                          reason=reason, actor=actor,
+                                                          dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(order_id=order_id, action="set_status", reason=reason,
+                               actor=actor, result="hata",
+                               detail={**detail, "error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+
+        await self._record(order_id=order_id, action="set_status", reason=reason,
+                           actor=actor, result="dry_run" if dry_run else "ok", detail=detail)
+        applied = bool(result.get("sent", not dry_run)) and not dry_run
+        if not dry_run:
+            self._drop_evidence()
+        if applied:
+            # Kuru provada olay YAYINLANMAZ: mağazada hiçbir şey değişmedi.
+            await self._announce({"orderId": int(order_id), "from": row["status"],
+                                  "to": hedef, "reason": reason})
+        return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
+                "orderNo": row["orderNo"], "from": row["status"], "to": hedef,
+                "statusLabel": ord_.status_label(hedef, prefs.get("statusNames")),
+                "announced": applied,
+                # Bagisto durumu fatura/gönderi olaylarında yeniden hesaplıyor;
+                # elle konan değer o olaylarda değişebilir. Ekran bunu yazar.
+                "mayBeOverwritten": hedef not in ("canceled", "closed")}
 
     async def invoice(self, order_id: int, *, items: dict[str, int] | None, reason: str,
                       actor: str, dry_run: bool = True) -> dict[str, Any]:

@@ -600,3 +600,84 @@ async def test_bilinmeyen_rapor_turu_reddedilir() -> None:
     service, _, _ = _service()
     result = await service.build_report("uydurma", {})
     assert result["ok"] is False
+
+
+# ====================================================== elle durum değiştirme
+
+async def test_durum_yazmadan_once_siparisi_taze_okur() -> None:
+    # Aradan geçen sürede kargolanmış ya da iptal edilmiş olabilir; o hâlde
+    # geçiş artık geçerli değildir.
+    service, api, _ = _service()
+    await service.set_status(12, status="completed", reason="Magaza disinda halledildi",
+                             actor="Ali", dry_run=False)
+    assert api.used("order")
+    assert api.used("bbd_set_order_status")
+
+
+async def test_yasak_gecis_magazaya_HIC_cikmaz() -> None:
+    service, api, store = _service(api=FakeApi({12: {**SIPARIS, "status": "canceled"}}))
+    result = await service.set_status(12, status="processing",
+                                      reason="Yanlislikla iptal edilmisti",
+                                      actor="Ali", dry_run=False)
+    assert result["ok"] is False
+    assert api.used("bbd_set_order_status") == []
+    # Engellenen deneme de deftere yazılır: "ne yapmaya çalıştık" kaydı.
+    assert any(row["result"] == "engellendi" and row["action"] == "set_status"
+               for row in store.audit)
+
+
+async def test_iptal_durum_ucundan_yapilamaz() -> None:
+    # İptalin ayrı izin anahtarı ve süre penceresi var; buradan kabul etmek
+    # o kapıyı atlatırdı (K9/K10).
+    service, api, _ = _service()
+    result = await service.set_status(12, status="canceled", reason="Musteri vazgecti",
+                                      actor="Ali", dry_run=False)
+    assert result["ok"] is False
+    assert "İptal et" in result["error"]
+    assert api.used("bbd_set_order_status") == []
+
+
+async def test_gerekcesiz_durum_degisikligi_reddedilir() -> None:
+    service, api, _ = _service()
+    result = await service.set_status(12, status="completed", reason="kisa",
+                                      actor="Ali", dry_run=False)
+    assert result["ok"] is False
+    assert api.used("bbd_set_order_status") == []
+
+
+async def test_kuru_provada_olay_YAYINLANMAZ() -> None:
+    # Mağazada hiçbir şey değişmedi; dinleyicileri uyandırmak yalan olurdu.
+    olaylar: list[tuple[str, dict[str, Any]]] = []
+
+    async def publish(name: str, payload: dict[str, Any]) -> None:
+        olaylar.append((name, payload))
+
+    api, store = FakeApi({12: dict(SIPARIS)}), FakeStore()
+    service = OrdersService(api=api, store=store, log=FakeLog(), publish=publish,
+                            config={"channel": "default", "page_size": 50},
+                            fallback_dir=Path("/tmp/km-test-raporlar"))
+    result = await service.set_status(12, status="completed", reason="Magaza disinda halledildi",
+                                      actor="Ali", dry_run=True)
+    assert result["ok"] is True
+    assert result["dryRun"] is True
+    assert olaylar == []
+
+
+async def test_sonraki_fatura_ezebilir_uyarisi_yanitla_TASINIR() -> None:
+    """Bagisto durumu fatura/gönderi olaylarında yeniden hesaplıyor.
+
+    Kullanıcı "kaydettim ama geri döndü" ile karşılaşmasın diye bilgi
+    yanıtın kendisinde taşınır; ekran onu yazar.
+    """
+    service, _, _ = _service()
+    result = await service.set_status(12, status="completed",
+                                      reason="Magaza disinda halledildi",
+                                      actor="Ali", dry_run=False)
+    assert result["ok"] is True
+    assert result["mayBeOverwritten"] is True
+
+    kapali = await service.set_status(12, status="closed",
+                                      reason="Siparis elle kapatiliyor",
+                                      actor="Ali", dry_run=False)
+    # `closed` nihai: sonraki olaylar onu değiştirmez.
+    assert kapali["mayBeOverwritten"] is False

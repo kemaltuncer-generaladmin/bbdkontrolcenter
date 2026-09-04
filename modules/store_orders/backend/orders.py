@@ -75,6 +75,74 @@ STATUS_LABELS = {
     "fraud": "Sahte şüphesi",
 }
 
+#: ELLE DURUM DEĞİŞTİRME — hangi durumdan hangisine geçilebilir.
+#:
+#: NEDEN MATRİS VAR, NEDEN SERBEST METİN DEĞİL. Bagisto durumu normalde
+#: TÜRETİR (fatura kesilince `processing`, kargolanınca `completed`); elle
+#: yazmak o türetmenin üstüne bir istisna koymaktır. Serbest metin kabul etmek
+#: `completed` yerine `complete` yazan bir kullanıcıyı sessizce hiçbir ekranda
+#: görünmeyen bir duruma düşürürdü.
+#:
+#: NİHAİ DURUMLARDAN DÖNÜŞ YOK. `canceled` ve `closed` para ve stok hareketi
+#: doğurmuş olabilir; onları `processing`e geri çekmek, iade edilmiş bir
+#: siparişi yeniden kargoya hazır göstermek olurdu. Yanlışlıkla iptal edilen
+#: sipariş için doğru yol yeniden sipariş oluşturmaktır (`reorder`).
+#:
+#: `completed` → `processing` DE YOK. Bagisto siparişi kargolandığı için
+#: tamamlanmış saydı; geri çekmek listeyi düzeltmez, yalnız "kargoya hazır"
+#: listesine ikinci kez düşürür ve aynı paket iki kez gönderilir.
+#: İPTAL BU YOLDAN GEÇMEZ. `canceled` hiçbir satırda hedef değildir ve bu
+#: güvenlik kararıdır: iptalin AYRI bir izin anahtarı (`store_orders.cancel`),
+#: ayrı bir süre penceresi denetimi ve ayrı bir mağaza ucu var. Durum yazma
+#: ucu `store_orders.manage` ile açılıyor; `canceled`ı hedef olarak kabul
+#: etmek, iptal iznini olmayan personele durum düğmesinden iptal ettirirdi —
+#: arayüzde iki ayrı düğme, sunucuda tek kapı olurdu (K9/K10).
+STATUS_TRANSITIONS = {
+    "pending": ("pending_payment", "processing", "completed", "closed", "fraud"),
+    "pending_payment": ("pending", "processing", "completed", "closed", "fraud"),
+    "processing": ("completed", "closed", "fraud"),
+    "completed": ("closed", "fraud"),
+    "fraud": ("closed",),
+    "canceled": (),
+    "closed": (),
+}
+
+#: `status_block` bu hedefi ayrı bir cümleyle reddeder: "geçilemez" demek,
+#: kullanıcıyı iptal etmenin hiç mümkün olmadığı sonucuna götürürdü.
+CANCEL_TARGET = "canceled"
+
+
+def status_block(row: dict[str, Any], target: Any) -> str:
+    """Bu geçiş yapılabilir mi — yapılamıyorsa kullanıcıya gösterilecek metin.
+
+    Sunucu aynı denetimi tekrar yapar (K9): arayüzde seçeneği gizlemek
+    yetkilendirme değildir ve istemci şemayı atlatabilir.
+    """
+    hedef = fold(target)
+    if hedef not in STATUS_LABELS:
+        return (f"Bilinmeyen durum: {text(target) or '—'}. "
+                f"Geçerli değerler: {', '.join(sorted(STATUS_LABELS))}.")
+    mevcut = fold(row.get("status"))
+    if not mevcut:
+        return "Siparişin şu anki durumu okunamadı; geçiş denetlenemiyor."
+    if hedef == mevcut:
+        return f"Sipariş zaten “{status_label(mevcut)}” durumunda."
+    if hedef == CANCEL_TARGET:
+        return ("İptal bu düğmeden yapılmaz: ayrı izin ve süre penceresi denetimi "
+                "gerektirir. Sipariş kartındaki “İptal et” düğmesini kullanın.")
+    izinli = STATUS_TRANSITIONS.get(mevcut)
+    if izinli is None:
+        return f"Tanınmayan mevcut durum “{mevcut}”; elle geçiş yapılamıyor."
+    if not izinli:
+        return (f"“{status_label(mevcut)}” nihai bir durumdur ve geri alınamaz. "
+                "Yanlışlıkla buraya düşen sipariş için yeni sipariş oluşturun.")
+    if hedef not in izinli:
+        return (f"“{status_label(mevcut)}” durumundan “{status_label(hedef)}” durumuna "
+                "geçilemez. Geçilebilecekler: "
+                f"{', '.join(status_label(code) for code in izinli)}.")
+    return ""
+
+
 #: Rozet tonu. Renk TEK BAŞINA anlam taşımaz; yanında her zaman yazı durur.
 STATUS_TONES = {
     "pending": "warn",

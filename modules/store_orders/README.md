@@ -267,14 +267,54 @@ yalnız *tetiklenir*, burada *uygulanmaz*:
 | Müşteri kaydı ve adresleri | `store_customers` |
 | Ürün, fiyat, stok | `store_products` |
 
+## Durumu elle değiştirme
+
+`POST /orders/{id}/status` · izin **`store_orders.manage`** · gerekçe en az 10
+karakter · `dryRun` varsayılanı **açık**.
+
+**Durum normalde TÜRETİLİR.** Bagisto fatura kesilince `processing`, gönderi
+açılınca `completed` hesaplıyor (`OrderRepository::updateOrderStatus`). Bu uç
+o türetmenin üstüne bilinçli bir istisna koyar ve yalnız istisnalar içindir:
+mağaza dışında halledilmiş bir iş, yanlış kalmış bir kayıt, elle kapatılan bir
+sipariş. Bagisto çekirdeğinde böyle bir uç yoktur; BBD tarafında açıldı.
+
+**Konan değer kalıcı mühür DEĞİLDİR.** Sonraki bir fatura ya da gönderi
+kaydında Bagisto durumu yeniden hesaplar ve elle konan değeri ezebilir. Yanıt
+bunu `mayBeOverwritten` ile taşır, ekran da uyarı olarak yazar — kullanıcı
+"kaydettim ama geri döndü" ile karşılaşmamalı.
+
+**Geçiş matrisi** (`orders.STATUS_TRANSITIONS`, hem serviste hem mağazada
+denetlenir — K9):
+
+| Mevcut | Geçilebilecekler |
+|---|---|
+| Bekliyor | Ödeme bekliyor · Hazırlanıyor · Tamamlandı · Kapandı · Sahte şüphesi |
+| Ödeme bekliyor | Bekliyor · Hazırlanıyor · Tamamlandı · Kapandı · Sahte şüphesi |
+| Hazırlanıyor | Tamamlandı · Kapandı · Sahte şüphesi |
+| Tamamlandı | Kapandı · Sahte şüphesi |
+| Sahte şüphesi | Kapandı |
+| İptal · Kapandı | **(nihai — geçiş yok)** |
+
+**İPTAL BU UÇTAN YAPILMAZ.** `canceled` hiçbir satırda hedef değildir ve bu bir
+güvenlik kararıdır: iptalin ayrı izin anahtarı (`store_orders.cancel`), ayrı
+süre penceresi denetimi ve ayrı mağaza ucu var. Durum ucu `manage` ile
+açıldığı için `canceled`ı kabul etmek, iptal izni olmayan personele durum
+düğmesinden iptal ettirirdi — arayüzde iki kapı, sunucuda bir kapı olurdu
+(K9/K10). Ekran bunu "geçilemez" demez, **"İptal et düğmesini kullanın"** der.
+
+**Geçilebilecek durumlar sunucudan gelir** (`statusTargets`), ekranda
+kopyalanmaz: matris tek yerde durur ve ikisi ayrıştığında ekran olmayan bir
+seçeneği sunup 422 aldırırdı.
+
+---
+
 ## Bilerek yapılmayanlar
 
-- **Sipariş durumunu serbestçe değiştirme.** Mağazanın admin API'sinde sipariş
-  durumunu yazan bir uç yok; durum fatura/kargo/iptal eylemlerinin *sonucu*
-  olarak değişiyor. Çekmecedeki düğme **"Durum değiştir (kapalı)"** yazar ve
-  hemen altında görünür bir uyarı nedeni anlatır — sahte bir düğme, basan
-  kişiye hiçbir şey olmadığını göstermezdi; sadece `title` ipucu ise
-  dokunmatikte ve klavyeyle hiç görünmez.
+- **Sipariş durumunu SERBESTÇE değiştirme.** Durum elle çekilebilir (aşağıya
+  bakın) ama serbest metinle değil: geçiş matrisi sabittir. Nihai durumlardan
+  (`İptal`, `Kapandı`) dönüş yoktur ve `Tamamlandı` geri çekilemez — geri
+  çekmek kargolanmış siparişi "kargoya hazır" listesine ikinci kez düşürür ve
+  aynı paket iki kez gider.
 - **Toplu etiketi tek PDF'te birleştirme.** Elimizde PDF birleştirici yok;
   sahte bir "birleşik etiket" yazıcıdan bozuk kâğıt çıkarırdı. Her etiket ayrı
   dosyadır.

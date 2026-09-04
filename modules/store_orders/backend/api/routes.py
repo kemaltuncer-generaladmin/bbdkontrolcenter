@@ -302,6 +302,34 @@ async def stage_sms(
     return await service().stage_state()
 
 
+class StatusBody(BaseModel):
+    """Sipariş durumunu ELLE yazar.
+
+    `dryRun` VARSAYILANI `True`: bu bir durum yazma işlemidir ve normalde
+    durum türetilir; kuru prova, hangi geçişin yapılacağını yazmadan önce
+    göstermek içindir.
+
+    `status` uzunluğu geniş bırakılmıştır ama SERBEST DEĞİLDİR: geçerli
+    değerler ve geçiş matrisi serviste (`ord_.status_block`) ve mağazada ayrı
+    ayrı denetlenir (K9 — istemci şemayı atlatabilir).
+    """
+
+    status: str = Field(min_length=1, max_length=32)
+    reason: str = Field(min_length=10, max_length=255)
+    dryRun: bool = True
+
+
+@router.post("/orders/{order_id}/status")
+async def set_status(
+    order_id: int,
+    body: StatusBody,
+    user: CurrentUser = requires("store_orders.manage"),
+) -> dict[str, Any]:
+    """Durumu elle değiştirir. Sonraki fatura/gönderi bu değeri EZEBİLİR."""
+    return await service().set_status(order_id, status=body.status, reason=body.reason,
+                                      actor=user.full_name, dry_run=body.dryRun)
+
+
 class StageSweepBody(BaseModel):
     #: `order_placed` | `delivered`. "Kargoya verildi" TARAMAYLA tetiklenmez:
     #: onun kaynağı kargoya verme eyleminin kendisidir ve iki yerden tetiklemek
