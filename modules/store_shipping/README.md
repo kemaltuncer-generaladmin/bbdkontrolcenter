@@ -14,7 +14,7 @@ Grup: **BBD Store** · CSS öneki: `sh` · Rapor rafı:
 
 | Sekme | İş |
 |---|---|
-| **Kargoya hazır** | Ödemesi alınmış ama kargolanmamış siparişler; satırda **«Kargoya ver»** (tek tık, ara onay yok) · toplu seçim → gönderi sihirbazı |
+| **Kargoya hazır** | Ödemesi alınmış ama kargolanmamış siparişler; satırda **«Kargoya ver»** (tek tık, ara onay yok) · toplu seçim → **hepsini sırayla kargoya ver** ya da sihirbaz |
 | **Gönderiler** | Takip, hareket geçmişi, toplu etiket, manifesto, senkron, iptal/iade |
 | **Taşıyıcılar** | Maskeli API kimlikleri, sözleşme matrisi, `Bağlantıyı sına`, ekran tercihleri |
 | **Ücretlendirme** | Desi kademeleri, ücretsiz kargo eşiği, kapıda ödeme bedeli, teslim vaadi |
@@ -47,11 +47,90 @@ durur ve **boş bırakılabilir**: boşsa denetim defterine otomatik bir metin
 yazılır (`dispatch_reason`), akış durmaz. Koruma izin anahtarındadır —
 `store_shipping.purchase`, etiket satın almayla aynı anahtar.
 
-**Takip numarası elle girilmez.** Gövde PDF olduğu için künye `X-Bbd-*`
+**Zincirin ürettiği takip numarası elle girilmez.** Gövde PDF olduğu için künye `X-Bbd-*`
 başlıklarında gelir; geçit ikisini birden taşıyan bir zarf döndürür
 (`store_api.binary_envelope`). Numara ekranda büyük ve kopyalanabilir durur,
 çünkü siparişe yazılmış olan odur. Yanıtta gelmezse **uydurulmaz**; ekran
 "gelmedi" der.
+
+---
+
+## Sihirbaz — üç düğme
+
+Sihirbaz eskiden dört kartlı bir formdu: sekiz alanlık ölçü/taşıyıcı formu →
+ücret dökümü → «Taslak oluştur» (gerekçe penceresi) → teklif listesi →
+«Etiketi satın al» (yirmi karakterlik ikinci gerekçe penceresi). Sekiz alanın
+yedisi zaten doğru dolu geliyordu ve iki pencere aynı kararı iki kez
+soruyordu. Kullanıcının kararı: *"tık tık tık otomasyonlu çalışsın."*
+
+Kalan üç yol:
+
+| Düğme | Ne olur | Bedeli |
+|---|---|---|
+| 🚚 **Kargoya ver** | Zincirin tamamı: taslak → teklif → etiket satın al → takip no → belgeler basılır | **PARA HARCAR** |
+| 🏷️ **Etiketim var — takip no gir** | Elde olan barkod siparişe yazılır; taşıyıcıya çıkılmaz | Ücretsiz |
+| 🧪 **Test gönderisi** | Bagisto'nun kendi kaydı açılır, takip no `TEST-` önekli | Ücretsiz |
+
+**Ölçü formu duruyor ama KAPALI.** Katlanır `Ayrıntı` bölmesinde; ölçü eksikse
+(`measures.complete === false`) kendiliğinden açılır ve uyarı verir.
+Sadeleştirme yanlış desiyi gizlemek değildir — yanlış desi doğrudan yanlış
+faturadır. Taslak açma ve teklif listesi de oradadır: "önce fiyatları göreyim"
+diyen açar, günlük iş oraya hiç girmez.
+
+**Satırdaki düğme artık soru sormuyor.** Bir dönem her gerçek gönderi
+"Geliver mi, test mi?" penceresinden geçiyordu: günde otuz kez sorulan, cevabı
+hep aynı olan bir soru. Test yolu kaybolmadı, günlük yoldan çıktı.
+
+**Toplu kargoya verme.** Birden çok sipariş seçilince üst şeritte
+«N siparişi kargoya ver» çıkar ve kuyruk **sırayla** işler — paralel gönderim
+geçidin dakikada 55 isteklik kovasını boşaltır ve ortadaki siparişler 429
+alırdı. Bir siparişin patlaması sırayı durdurmaz (K7); sonunda kaç gitti, kaç
+kaldı tek satırda yazılır. **Ölçüsü eksik satırlar kuyruğa alınmaz** ve
+şeritte sayısı yazar: toplu iş, tam olarak bu ekranın kaçındığı şeyi
+yapabilirdi — yanlış desiyi otuz siparişte birden gizlemek.
+
+---
+
+## «Etiketim var» — elle takip girişi
+
+Üçüncü yol, `POST /orders/{id}/manual-shipment`, izin **`store_shipping.manage`**
+(`purchase` değil: taşıyıcıya çıkılmaz, para harcanmaz).
+
+**Neden var.** 04.09.2026'da canlıda oldu: Geliver taslağı açıldı, teklifler
+geldi, etiket satın alınamadı. Personel Geliver'ın kendi panelinden HepsiJET
+etiketi aldı ve elinde gerçek bir barkod kaldı. Kontrol Merkezi'nde o numarayı
+siparişe yazacak yol yoktu; geriye iki kötü seçenek kalıyordu — Bagisto
+paneline elle girmek (denetim defteri boş kalır, ekran siparişi hâlâ "kargoya
+hazır" gösterir) ya da sistemden **ikinci** bir etiket satın almak.
+
+**Numara burada elle girilir** ve bu, "takip numarası sorulmaz" kuralının
+bilinçli istisnasıdır: kural, ZİNCİRİN ÜRETTİĞİ numarayı kullanıcıya
+yazdırmamak içindi. Burada zincir hiç çalışmadı, numara kâğıdın üstünde yazıyor
+ve tek kaynağı odur.
+
+Kapılar:
+
+- En az **6 karakter**. Biçim denetlenmez — her firma kendi düzenini kullanır
+  ve uydurulmuş bir düzen doğru numarayı reddederdi.
+- **`TEST-` önekli numara reddedilir.** O önek "bu deneme" demektir ve müşteri
+  de öyle okur; gerçek gönderiye yazmak, kargolanmış bir paketi günün birinde
+  deneme sanıp aramaya yol açardı.
+- **Mükerrer koruması siparişten okunur**, yerel defterden değil: numara
+  Bagisto paneline elle de girilmiş olabilir ve o kayıt bizim defterimizde
+  yoktur. İkinci kez yazmak tek paketi iki gönderi gösterir ve stoğu ikinci
+  kez düşerdi. Aynı numara gelirse ekran "zaten kayıtlı" der ve hangi
+  gönderide olduğunu yazar — bu bir hata değil, cevaptır.
+- **Taşıyıcı boş bırakılabilir**: siparişteki firma yazılır. Uydurulmuş bir
+  firma adı müşteriyi yanlış şubeye yollar.
+- **Gerekçe sorulmaz**; boşsa servis otomatik metin yazar (`manual_reason`) ve
+  numarayı da metne koyar. Mağazanın yazma kapısı gerekçesiz isteği
+  reddediyor — boşluk ekrana soru sordurarak değil, sunucuda dolduruluyor.
+
+**Durum kendiliğinden güncellenmez.** Bu kayıt Geliver'a bağlı değildir;
+webhook ondan haber almaz ve takip firmanın kendi ekranından izlenir. Ekran
+bunu her kayıtta yazar.
+
+---
 
 **Otomatik basılan iki belge: kargo etiketi ve fatura.** Kargoya teslim fişi
 (`handover`) bu akışa **girmez** — kullanıcının kararı "fiş yok". Fişin kodu
@@ -247,7 +326,7 @@ mağazanın kendi ret gerekçeleriyle birlikte listelenir.
 | Anahtar | Ne açar |
 |---|---|
 | `store_shipping.view` | Listeler, performans, rapor ve etiket alma |
-| `store_shipping.manage` | Taslak açma, senkron, taşıyıcı sınama, bildirim |
+| `store_shipping.manage` | Taslak açma, **elle takip girişi**, senkron, taşıyıcı sınama, bildirim |
 | `store_shipping.purchase` | **Etiket satın alma ve iade etiketi — para harcar** |
 | `store_shipping.cancel` | Satın alınmış gönderiyi iptal etme |
 | `store_shipping.rates` | Desi matrisi, ücretsiz kargo eşiği, bölge tanımları |

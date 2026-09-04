@@ -172,12 +172,33 @@ def draft_reason(order_number: str, provider: str) -> str:
             f"{yol} yolundan açıldı.")
 
 
+def manual_reason(order_number: str, carrier: str, track: str) -> str:
+    """Elle takip girişinde gerekçe boş bırakıldığında yazılacak metin.
+
+    Mağazanın yazma kapısı gerekçesiz isteği reddediyor (`require_reason`);
+    ekran ise bu yolda gerekçe İSTEMİYOR — kullanıcı elindeki barkodu
+    yazıyor ve iş bitiyor. Boşluğu ekrana soru sordurarak değil, buradan
+    doldururuz. Metin numarayı da taşır: iki ay sonra "bu gönderi neden
+    sistemde açılmış" sorusunun cevabı tek satırda okunur.
+    """
+    return (f"Elle takip girişi: {shipping.text(order_number) or '?'} siparişine "
+            f"{shipping.text(carrier) or 'kargo'} etiketi {shipping.text(track)} "
+            "numarasıyla dışarıdan alınmış olarak işlendi; taşıyıcıya çıkılmadı.")
+
+
 class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
 
 
 class ShippingService:
     """Kargo ekranının tüm iş kuralları. HTTP hatası FIRLATMAZ."""
+
+    #: Elle girilen takip numarasının en kısa kabul edilebilir uzunluğu.
+    #: Türkiye'deki taşıyıcıların en kısası 10 hane; 6 eşiği yazım hatasını
+    #: (tek harf, boşluk) eler ama kısa barkodlu bir firmayı dışarıda
+    #: bırakmaz. Numaranın BİÇİMİ denetlenmez: her firma kendi düzenini
+    #: kullanır ve uydurulmuş bir düzen doğru numarayı reddederdi.
+    MIN_TRACK = 6
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
                  printer: Any = None, notifier: Any = None, publish: Any = None,
@@ -1009,6 +1030,114 @@ class ShippingService:
             "sent": bool(result.get("sent", not dry_run)),
             "warnings": [("Bu bir TEST gönderisidir: taşıyıcıya çıkılmadı, "
                           "etiket satın alınmadı, para harcanmadı.")],
+            "body": body,
+        }
+
+    async def manual_shipment(self, order_id: int, *, carrier: str, tracking_no: str,
+                              note: str = "", reason: str = "", actor: str = "",
+                              dry_run: bool = False) -> dict[str, Any]:
+        """ELLE TAKİP GİRİŞİ — etiket BAŞKA YERDEN alınmışken siparişi kapatır.
+
+        Üçüncü yol. `geliver` taşıyıcıdan etiket satın alır, `bagisto` test
+        numarası üretir; bu yol ikisini de yapmaz — etiket zaten alınmıştır
+        (Geliver panelinden, kargo şubesinde ya da firmanın kendi ekranından)
+        ve elde GERÇEK bir barkod vardır. Yapılan tek iş o numarayı siparişe
+        yazmaktır.
+
+        NEDEN VAR: bu yol olmadan elde etiketi olan personelin iki seçeneği
+        kalıyordu — Bagisto paneline elle girmek (Kontrol Merkezi'nin denetim
+        defteri boş kalır, ekran siparişi hâlâ "kargoya hazır" gösterir) ya da
+        sistemden İKİNCİ bir etiket satın almak (ödenmiş bir etiketin üstüne
+        para harcamak). İkisi de canlıda oldu.
+
+        TAKİP NUMARASI BURADA ELLE GİRİLİR ve bu, ekranın "takip numarası
+        sormaz" kuralının BİLİNÇLİ istisnasıdır: kural, ZİNCİRİN ÜRETTİĞİ bir
+        numarayı kullanıcıya yazdırmamak içindi (yazılan numara tahmin olurdu).
+        Burada zincir hiç çalışmadı; numara kullanıcının elindeki kâğıtta
+        yazıyor ve tek kaynağı odur.
+
+        PARA HARCAMAZ: taşıyıcıya çıkılmaz, Geliver'a uğranmaz. Bu yüzden
+        `store_shipping.manage` yeter, `purchase` istenmez.
+        """
+        track = shipping.text(tracking_no)
+        if len(track) < self.MIN_TRACK:
+            return {"ok": False, "error": (
+                f"Takip numarası en az {self.MIN_TRACK} karakter olmalı. "
+                "Etiketin üstündeki barkod numarasını olduğu gibi girin.")}
+        if shipping.is_test_track(track):
+            # `TEST-` öneki "bu deneme" demektir ve müşteriye de öyle görünür.
+            # Gerçek bir gönderiye o öneki yazmak, günün birinde kargolanmış
+            # bir paketi "deneme" sanıp aramaya yol açardı.
+            return {"ok": False, "error": (
+                "TEST- önekli numara elle girilemez; o önek test yoluna aittir. "
+                "Etiketin üstündeki gerçek barkod numarasını girin.")}
+
+        try:
+            order = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            return {"ok": False, "error": self._fail(failure)}
+
+        # MÜKERRER KORUMASI SİPARİŞTEN OKUNUR, yerel defterden değil: numara
+        # Bagisto paneline elle de girilmiş olabilir ve o kayıt bizim
+        # defterimizde yoktur. Aynı numarayı ikinci kez yazmak, tek paketi
+        # iki gönderi gibi gösterir ve stoğu ikinci kez düşer.
+        for existing in (order.get("shipments") or []):
+            if not isinstance(existing, dict):
+                continue
+            if shipping.fold(existing.get("trackNumber")) == shipping.fold(track):
+                return {"ok": False, "error": (
+                    f"Bu takip numarası zaten bu siparişte kayıtlı "
+                    f"(gönderi #{shipping.as_int(existing.get('id'))}). İkinci kez "
+                    "yazılmadı."), "already": True,
+                    "shipmentId": shipping.as_int(existing.get("id")),
+                    "trackNumber": track}
+
+        state = shipping.ready_state(order)
+        if not state["ready"]:
+            return {"ok": False, "error": f"Bu sipariş kargoya hazır değil: {state['blocked']}"}
+
+        # TAŞIYICI ADI ETİKETTEN GELİR. Boş bırakılırsa müşterinin ödediği
+        # firma yazılır; o da yoksa alan uydurulmaz ve "Kargo" denir —
+        # yanlış firma adı, müşteriyi yanlış şubeye yollar.
+        title = (shipping.carrier_label(carrier) if shipping.fold(carrier) else "")             or shipping.text(carrier)             or shipping.text(shipping._first(order, "shipping_title", "shippingTitle"))             or "Kargo"
+        body = shipping.bagisto_body(order, carrier_title=title, track_number=track,
+                                     source_id=self._source_id())
+
+        blocking = shipping.bagisto_problems(body)
+        if blocking:
+            return {"ok": False, "error": " ".join(blocking)}
+
+        await self._record(order_id=order_id, action="create_manual_shipment", reason=reason,
+                           actor=actor, result="denendi", detail=body)
+        try:
+            result = await self._api.create_shipment(int(order_id), payload=body,
+                                                     reason=reason or manual_reason(
+                                                         shipping.text(order.get("incrementId"))
+                                                         or str(order_id), title, track),
+                                                     actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(order_id=order_id, action="create_manual_shipment", reason=reason,
+                               actor=actor, result="hata", detail={"error": str(failure)})
+            return {"ok": False, "error": self._fail(failure)}
+
+        shipment_id = self._extract_id(result)
+        await self._record(shipment_id=shipment_id, order_id=order_id,
+                           action="create_manual_shipment", reason=reason, actor=actor,
+                           result="dry_run" if dry_run else "ok", detail=body)
+        await self._emit("store.shipment.created", {
+            "orderId": int(order_id), "shipmentId": shipment_id,
+            "carrier": title, "provider": "manual", "manual": True,
+            "trackingNo": track, "dryRun": bool(dry_run)})
+        return {
+            "ok": True, "error": "", "provider": "manual", "manual": True,
+            "shipmentId": shipment_id, "trackNumber": track, "trackingNo": track,
+            "carrier": title, "items": body["items"],
+            "note": shipping.text(note)[:255],
+            "dryRun": bool(result.get("dryRun", dry_run)),
+            "sent": bool(result.get("sent", not dry_run)),
+            "warnings": [("Etiket DIŞARIDAN alındı: bu kayıt taşıyıcıya çıkmadı ve "
+                          "durum kendiliğinden güncellenmez — takip firmanın kendi "
+                          "ekranından izlenir.")],
             "body": body,
         }
 

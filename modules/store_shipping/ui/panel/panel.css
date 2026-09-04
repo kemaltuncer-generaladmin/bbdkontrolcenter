@@ -132,6 +132,94 @@
 
 .sh-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* Özet şeridi: formu açmadan görülmesi gereken üç şey (kalem, ölçü, firma) ve
+   tutar. Formun ÜSTÜNDE durur çünkü çoğu gönderi forma hiç girmeden çıkar. */
+.sh-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.sh-summary-total { font-size: 15px; white-space: nowrap; }
+
+/* ÜÇ BÜYÜK DÜĞME — ekranın asıl içeriği. Tek sütun: yan yana dizmek üçünü
+   eşit ağırlıkta gösterirdi, oysa günlük iş birincisidir ve o en üstte. */
+.sh-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.sh-big {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  grid-template-areas: "icon label" "icon note";
+  align-items: center;
+  gap: 0 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--paper-ink);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.sh-big:hover:not(:disabled) { background: var(--tint); }
+.sh-big:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sh-big:disabled { opacity: 0.5; cursor: not-allowed; }
+.sh-big-icon { grid-area: icon; font-size: 22px; line-height: 1; }
+.sh-big-label { grid-area: label; font-weight: 600; font-size: 14.5px; }
+.sh-big-note { grid-area: note; font-size: 12px; opacity: 0.72; }
+
+/* PARA HARCAYAN DÜĞME GÖRSEL OLARAK AYRIŞIR. Üçü aynı görünseydi, sıradaki
+   ücretsiz iki seçenekle aynı ağırlıkta okunur ve yanlış tık gerçek para
+   olurdu. Kenarlık kalınlığı da farklı: renk körlüğünde tek ayırt edici. */
+.sh-big.danger {
+  border-width: 2px;
+  border-color: var(--bad, #b3261e);
+}
+.sh-big.danger .sh-big-label { color: var(--bad, #b3261e); }
+
+/* Elle takip girişi düğmenin ALTINDA açılır — ayrı pencere değil: tek alanlık
+   bir iş, pencere açmakla iki tıka çıkardı. */
+.sh-manual {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+.sh-manual.on { display: flex; }
+.sh-manual-input { flex: 1 1 240px; min-width: 180px; font-family: var(--mono, monospace); }
+.sh-manual-carrier { flex: 0 1 200px; }
+
+/* Ayrıntı bölmesi normalde KAPALI. Ölçü eksikse kod `open` yapıyor
+   (`openWizard`); burada yalnız görünümü var. */
+.sh-details {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px 10px 10px;
+}
+.sh-details-summary {
+  cursor: pointer;
+  padding: 8px 2px;
+  font-weight: 600;
+  list-style: revert;
+}
+.sh-details[open] .sh-details-summary { border-bottom: 1px solid var(--line); }
+.sh-detail-stack { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+
 .sh-quote-lines {
   display: flex;
   flex-direction: column;

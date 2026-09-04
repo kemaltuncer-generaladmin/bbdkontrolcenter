@@ -86,7 +86,7 @@ permissions:
     description: "Gönderi listesi, taşıyıcılar, performans ve rapor/etiket alma."
     default_roles: [admin, bbd_staff]
   - key: store_shipping.manage
-    description: "Gönderi taslağı açma, senkron, adres düzeltme, taşıyıcı sınama."
+    description: "Gönderi taslağı açma, elle takip girişi (dışarıdan alınmış etiket), senkron, adres düzeltme, taşıyıcı sınama."
     default_roles: [admin, bbd_staff]
   - key: store_shipping.purchase
     description: "Taşıyıcıdan etiket SATIN ALMA ve iade etiketi açma. PARA HARCAR; gerekçe en az 20 karakter."

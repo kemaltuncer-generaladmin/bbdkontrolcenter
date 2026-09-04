@@ -214,6 +214,42 @@ async def create_shipment(
                                            provider=body.provider)
 
 
+# ============================================ ELLE TAKİP GİRİŞİ (etiketim var)
+
+class ManualBody(BaseModel):
+    """Etiket BAŞKA YERDEN alınmışken takip numarasını siparişe yazar.
+
+    `purchase` DEĞİL `manage` ister: bu uç taşıyıcıya hiç çıkmaz ve para
+    harcamaz — yalnızca elde olan bir numarayı kaydeder. Para harcayan uçların
+    20 karakterlik gerekçesi de aranmaz; boş gelirse servis otomatik metin
+    yazar (`manual_reason`) ve denetim defteri dolu kalır.
+
+    `trackingNo` ŞEMADA da en az 6 karakterdir, serviste de (K9): istemci
+    şemayı atlatabilir ve tek harflik bir numara siparişe yazılırsa müşteriye
+    gösterilen takip kodu çalışmaz.
+    """
+
+    trackingNo: str = Field(min_length=6, max_length=64)
+    #: Etiketin üstündeki firma. Boşsa müşterinin ödediği firma yazılır.
+    carrier: str = Field(default="", max_length=32)
+    note: str = Field(default="", max_length=255)
+    reason: str = Field(default="", max_length=255)
+    dryRun: bool = False
+
+
+@router.post("/orders/{order_id}/manual-shipment")
+async def manual_shipment(
+    order_id: int,
+    body: ManualBody,
+    user: CurrentUser = requires("store_shipping.manage"),
+) -> dict[str, Any]:
+    """Elde etiket varken siparişi kapatır. PARA HARCAMAZ, taşıyıcıya çıkmaz."""
+    return await service().manual_shipment(order_id, carrier=body.carrier,
+                                           tracking_no=body.trackingNo, note=body.note,
+                                           reason=body.reason, actor=user.full_name,
+                                           dry_run=body.dryRun)
+
+
 # ==================================================== KARGOYA VER (tek tık)
 
 class DispatchBody(BaseModel):

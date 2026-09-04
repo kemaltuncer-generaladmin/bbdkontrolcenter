@@ -1,9 +1,10 @@
 // Kargo paneli — kargoya hazır siparişten teslim edilmiş gönderiye kadar tek ekran.
 //
 // NE YAPAR: altı sekme. `Kargoya hazır` ödemesi alınmış ama kargolanmamış
-// siparişleri toplu seçtirir ve GÖNDERİ SİHİRBAZINI açar (taşıyıcı · desi
-// otomatik+elle · paket · ödeme tipi · kapıda ödeme) → taslak → taşıyıcı
-// teklifleri → ETİKET SATIN AL. `Gönderiler` takip, hareket geçmişi, toplu
+// siparişleri listeler. Satırda TEK TIK «Kargoya ver» durur; seçim yapılırsa
+// üst şeritte TOPLU kargoya verme çıkar; sihirbaz ise ÜÇ BÜYÜK DÜĞMEDİR
+// (kargoya ver · etiketim var · test) ve ölçü formu katlanmış durur.
+// `Gönderiler` takip, hareket geçmişi, toplu
 // etiket PDF'i (A4 4'lü / termal 100×150), teslimat manifestosu ve senkron.
 // `Taşıyıcılar` maskeli kimlikler ve bağlantı sınaması. `Ücretlendirme`
 // desi→ücret matrisi ve ücretsiz kargo eşiği. `Bölgeler` il/ilçe eşlemesi.
@@ -14,18 +15,26 @@
 // Düğme satırda durur; bir tıkla gönderi açılır, teklif alınır, MÜŞTERİNİN
 // ödediği firmadan etiket SATIN ALINIR, takip numarası siparişe yazılır ve iki
 // belge (KARGO ETİKETİ + FATURA) varsayılan yazıcıya gider. Onay penceresi
-// AÇILMAZ; gerekçe alanı listenin üstünde durur, boş bırakılabilir ve akışı
-// durdurmaz. Sihirbaz (adım adım, ölçü düzeltmeli) DURUYOR: ölçüsü şüpheli
-// gönderi oradan geçirilir.
+// AÇILMAZ ve "Geliver mi test mi" diye SORULMAZ (o soru bir dönem vardı ve
+// cevabı hep aynıydı); gerekçe alanı listenin üstünde durur, boş bırakılabilir
+// ve akışı durdurmaz. Sihirbaz DURUYOR: ölçüsü şüpheli gönderi, test denemesi
+// ve dışarıdan alınmış etiket oradan geçer.
 //
 // NE YAPMAZ:
 //  · ETİKET ÇİZMEZ. Barkod taşıyıcının kendi numaralandırmasıdır; kendi
 //    çizdiğimiz barkod şubede okunmazsa gönderi elde kalır. Etiketin kendisi
 //    her zaman taşıyıcıdan gelir, biz yalnız kâğıda yerleştiririz.
-//  · TAKİP NUMARASI SORMAZ. Elle girilen numara zincirin çıktısı değil,
-//    kullanıcının tahminidir; ekranda görünen numara siparişe YAZILMIŞ olandır.
-//  · SİHİRBAZDA TASLAK AÇARKEN PARA HARCAMAZ. "Gönderi oluştur" ile "Etiket
-//    satın al" orada bilerek iki ayrı adımdır: ilki ücretsiz ve düzeltilebilir.
+//  · ZİNCİRİN ÜRETTİĞİ TAKİP NUMARASINI SORMAZ. "Kargoya ver" sonrası ekranda
+//    görünen numara siparişe YAZILMIŞ olandır; kullanıcıya yazdırılsaydı
+//    tahmin olurdu. TEK İSTİSNA `🏷️ Etiketim var`: orada zincir hiç çalışmadı,
+//    numara kullanıcının elindeki etiketin üstünde yazıyor ve tek kaynağı odur.
+//  · SİHİRBAZDA ARA ONAY PENCERESİ AÇMAZ. Üç düğmenin ikisi ücretsiz, biri
+//    para harcıyor ve ayrımı düğmenin kendisi söylüyor. Tek kalan pencere,
+//    teklif satırından etiket satın alırken istenen 20 karakterlik gerekçedir
+//    — o gerekçeyi sunucu da doğruluyor (ADR 0012), kaldırılamaz.
+//  · SİHİRBAZDA TASLAK AÇARKEN PARA HARCAMAZ. "Taslak aç" ile "Etiketi satın
+//    al" orada bilerek iki ayrı adımdır: ilki ücretsiz ve düzeltilebilir.
+//    İkisi de katlanır `Ayrıntı` bölmesindedir; günlük iş oraya girmez.
 //  · TESLİM FİŞİNİ OTOMATİK BASMAZ. Kullanıcı "fiş yok" dedi; düğmesi
 //    sihirbazda duruyor ve elle basılıyor.
 //  · GÖNDERİ SİLMEZ. İptal ve iade vardır; ikisi de gerekçe ister.
@@ -482,18 +491,76 @@ function renderReadyBar(table) {
   const count = state.readySelection.length;
   if (!count) { bar.classList.remove('on'); return; }
   bar.classList.add('on');
-  bar.append(h('b', undefined, `${num(count)} sipariş seçildi`), h('span', 'kit-spacer'));
+
+  const rows = table.selectedRows();
+  // ÖLÇÜSÜ EKSİK SİPARİŞ TOPLU İŞE GİRMEZ. Toplu gönderim tam olarak bu
+  // ekranın kaçındığı şeyi yapabilirdi: yanlış desiyi otuz siparişte birden
+  // gizlemek. Bu yüzden kuyruk yalnız ölçüsü TAM satırları alır; eksikler
+  // ayrılır ve tek tek sihirbazdan geçirilir. Sadeleştirme, körleştirme değil.
+  const hazir = rows.filter((row) => row.measures?.complete);
+  const eksik = rows.filter((row) => !row.measures?.complete);
+
+  bar.append(h('b', undefined, `${num(count)} sipariş seçildi`));
+  if (eksik.length) {
+    bar.append(badge(`${num(eksik.length)} tanesinin ölçüsü eksik — kuyruğa girmez`, 'warn'));
+  }
+  bar.append(h('span', 'kit-spacer'));
+
+  if (hazir.length > 1) {
+    bar.append(button(`🚚 ${num(hazir.length)} siparişi kargoya ver`, {
+      variant: 'danger',
+      title: 'Sıradan geçirilir: her biri için gönderi açılır, ETİKET SATIN ALINIR, '
+        + 'takip numarası yazılır ve belgeler basılır. Onay sorulmaz, PARA HARCAR.',
+      onClick: () => dispatchQueue(hazir, table),
+    }));
+  }
   bar.append(
-    button('Gönderi sihirbazı', {
-      variant: 'primary',
-      title: count > 1 ? 'Seçilen siparişler tek tek geçilir' : '',
-      onClick: () => openWizard(table.selectedRows()),
+    button(hazir.length > 1 ? 'Tek tek geç (sihirbaz)' : 'Sihirbazı aç', {
+      onClick: () => openWizard(rows),
     }),
     button('Seçimi bırak', {
       variant: 'ghost',
       onClick: () => { table.clearSelection(); state.readySelection = []; renderReadyBar(table); },
     }),
   );
+}
+
+/**
+ * TOPLU KARGOYA VERME — sırayla, tek tık.
+ *
+ * NEDEN SIRAYLA, PARALEL DEĞİL: her gönderi taşıyıcıya çıkıyor ve geçidin hız
+ * kovası dakikada 55 istek. Paralel göndermek kovayı boşaltır, ortadaki
+ * siparişler 429 alır ve kullanıcı hangisinin gittiğini bilemez.
+ *
+ * BİR SİPARİŞİN PATLAMASI SIRAYI DURDURMAZ (K7): hata sayılır, sıra devam
+ * eder ve sonunda kaç gitti / kaç kaldı tek satırda yazılır. Durdurmak, otuz
+ * siparişlik bir işi ortasında yarım bırakırdı ve hangisinin gittiği ancak
+ * tek tek bakılarak anlaşılırdı.
+ *
+ * Her adım kendi belgesini kendi basar (`dispatchOrder` içinde); toplu iş
+ * sonunda tek seferde basmak, ilk etiketi son paketin üstüne yapıştırma
+ * riskini getirirdi.
+ */
+async function dispatchQueue(rows, table) {
+  if (busy) return;
+  let gonderilen = 0;
+  const hatalar = [];
+  for (const [index, row] of rows.entries()) {
+    nodes.status?.set(`${index + 1}/${rows.length} · ${row.orderNumber} kargoya veriliyor…`);
+    // `dispatchOrder` kendi `withBusy`'sini kuruyor; kuyruk onun bitmesini
+    // bekler ve sıradakine geçer.
+    const result = await dispatchOrder(row, null);
+    if (result && result.ok !== false) gonderilen += 1;
+    else hatalar.push(row.orderNumber);
+  }
+  toast(hatalar.length
+    ? `${num(gonderilen)} sipariş kargoya verildi · ${num(hatalar.length)} tanesi olmadı: `
+      + hatalar.join(', ')
+    : `${num(gonderilen)} sipariş kargoya verildi.`,
+  hatalar.length ? 'warn' : 'good');
+  table.clearSelection();
+  state.readySelection = [];
+  renderReadyBar(table);
 }
 
 // ------------------------------------------------ KARGOYA VER (tek tık)
@@ -533,80 +600,29 @@ function dispatchReason() {
 }
 
 /**
- * "Geliver mi, test mi?" — düğmeye basınca sorulan tek soru.
+ * Satırdaki tek tık düğmesi. Tıklanınca kendini kilitler (çift istek olmasın).
  *
- * SORU ONAYIN KENDİSİDİR. Geliver'a basmak para harcamaya rızadır; ondan
- * sonra ikinci bir "emin misiniz" adımı YOKTUR. İki seçenek görsel olarak
- * ayrışır ve hangisinin para harcadığı kutunun üstünde yazar — yanlış tıklama
- * gerçek paradır.
+ * ARA SORU YOK. Bir dönem düğme "Geliver mi, test mi?" diye bir pencere
+ * açıyordu ve her gerçek gönderi o pencereden geçiyordu: günde otuz kez
+ * sorulan, cevabı hep aynı olan bir soru. Kullanıcının kararı açıktı —
+ * "sipariş seçince 'kargoya ver' dedik mi o sipariş yola çıkacak zaten. PARA
+ * HARCASIN." Pencere o kararı geri alıyordu.
  *
- * @returns {Promise<'geliver'|'bagisto'|null>} iptal edilirse `null`
+ * TEST YOLU KAYBOLMADI, günlük yoldan çıktı: sihirbazın üç düğmesinden biri
+ * (`🧪 Test gönderisi`). Denemek isteyen sihirbazı açar; kargo çıkaran
+ * personel tek tıkla gönderir.
+ *
+ * Koruma yerinde duruyor ve arayüzde değil: `store_shipping.purchase` izni
+ * (K9 — düğmeyi gizlemek yetkilendirme değildir) ve denetim defteri.
  */
-function askProvider(row) {
-  return new Promise((resolve) => {
-    const overlay = h('div', 'kit-overlay');
-    const card = h('div', 'kit-dialog sh-provider-ask');
-    card.setAttribute('role', 'dialog');
-    card.setAttribute('aria-modal', 'true');
-
-    card.append(
-      h('h3', 'kit-dialog-title', `Sipariş ${row.orderNumber} nasıl gönderilsin?`),
-      h('p', 'kit-dialog-text',
-        `${row.displayName || row.customer || 'Alıcı'} · ${row.carrierTitle || 'firma seçilmemiş'}`),
-    );
-
-    const close = (value) => { overlay.remove(); resolve(value); };
-
-    const gerçek = button('🚚 Geliver — GERÇEK', {
-      variant: 'danger',
-      title: 'Müşterinin seçtiği firmadan etiket SATIN ALINIR. Para harcar.',
-      onClick: () => close('geliver'),
-    });
-    const test = button('🧪 Test — Geliver’e uğramaz', {
-      title: 'Bagisto’nun kendi gönderi kaydı açılır, sipariş tamamlanır. '
-        + 'Taşıyıcıya çıkılmaz, para harcanmaz.',
-      onClick: () => close('bagisto'),
-    });
-    const vazgeç = button('Vazgeç', { onClick: () => close(null) });
-
-    const rows = h('div', 'sh-provider-rows');
-    rows.append(
-      h('div', 'sh-provider-row', gerçek),
-      h('div', 'sh-provider-note',
-        'Etiket satın alınır · takip numarası siparişe yazılır · etiket ve fatura basılır'),
-      h('div', 'sh-provider-row', test),
-      h('div', 'sh-provider-note',
-        'Sipariş “tamamlandı”ya taşınır · takip numarası TEST- önekli · para harcanmaz'),
-    );
-    card.append(rows, h('div', 'kit-dialog-actions', vazgeç));
-
-    overlay.append(card);
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) close(null);
-    });
-    document.body.append(overlay);
-    gerçek.focus();
-  });
-}
-
-/** Satırdaki tek tık düğmesi. Tıklanınca kendini kilitler (çift istek olmasın). */
 function dispatchCell(row) {
   const box = h('span', 'sh-dispatch');
   const go = button('🚚 Kargoya ver', {
-    // DANGER DEĞİL: düğme artık doğrudan para harcamıyor, önce hangi yolun
-    // seçileceğini soruyor. Kırmızı bırakmak "bastım, para gitti" korkusu
-    // yaratır ve personeli gereksiz tereddüde sokar; asıl kırmızı, sorunun
-    // içindeki Geliver seçeneğidir.
-    title: 'Geliver mi test mi diye sorar. Geliver seçilirse müşterinin '
-      + 'firmasından ETİKET SATIN ALINIR (para harcar), takip numarası '
-      + 'siparişe yazılır, etiket ve fatura basılır. Test seçilirse Geliver’e '
-      + 'hiç uğranmaz ve sipariş tamamlanır.',
-    onClick: async () => {
-      const yol = await askProvider(row);
-      if (!yol) return;
-      if (yol === 'bagisto') return testShipOrder(row, go);
-      return dispatchOrder(row, go);
-    },
+    variant: 'danger',
+    title: 'Müşterinin firmasından ETİKET SATIN ALINIR (para harcar), takip '
+      + 'numarası siparişe yazılır, etiket ve fatura basılır. Onay sorulmaz. '
+      + 'Test göndermek ya da etiketi elle girmek için sihirbazı açın.',
+    onClick: () => dispatchOrder(row, go),
   });
   box.append(go);
   return box;
@@ -818,16 +834,66 @@ function documentList(result) {
 }
 
 // ------------------------------------------------------------- sihirbaz
+//
+// ÜÇ DÜĞME, TEK EKRAN. Sihirbaz eskiden dört kartlı bir formdu: ölçü ve
+// taşıyıcı (sekiz alan) → ücret dökümü → "Taslak oluştur" (gerekçe penceresi)
+// → teklif listesi → "Etiketi satın al" (yirmi karakterlik ikinci gerekçe
+// penceresi). Sekiz alanın yedisi zaten doğru dolu geliyordu, iki pencere de
+// aynı kararı iki kez soruyordu. Kullanıcının kararı: "tık tık tık
+// otomasyonlu çalışsın."
+//
+// Kalan üç yol, sorulan tek soru:
+//   🚚 Kargoya ver      zincirin tamamı — PARA HARCAR
+//   🏷️ Etiketim var     elde barkod varken takip numarasını yazar — ücretsiz
+//   🧪 Test             Geliver'a hiç uğramaz — ücretsiz
+//
+// ÖLÇÜ FORMU DURUYOR ama KAPALI. Ölçü eksikse (`measures.complete === false`)
+// kendiliğinden açılır ve uyarı verir — yanlış desi doğrudan yanlış faturadır
+// ve bunu gizlemek sadeleştirme değil, körleştirme olurdu. Ölçü tamsa form
+// katlanmış durur; açan düzeltir, açmayan üç düğmeden birine basar.
+//
+// TEKLİF LİSTESİ DE DURUYOR, aynı katlanır bölmede: "önce fiyatları göreyim"
+// diyen taslak açıp teklifleri okuyabilir. Normal iş akışında görünmez.
+
+/** Formdan gönderi gövdesine — üç yol da aynı düzeltmeleri taşır. */
+function wizardExtra(form) {
+  const draft = form.draft();
+  return {
+    provider: draft.provider || '',
+    carrier: draft.carrier || '',
+    packages: Number(draft.packages) || 1,
+    desi: Number(draft.desi) || 0,
+    weight: Number(draft.weight) || 0,
+    payer: draft.payer || 'sender',
+    cod: Number(draft.cod) || 0,
+    note: draft.note || '',
+  };
+}
 
 /**
- * Gönderi sihirbazı. Üç adım tek çekmecede, sırayla açılır:
- *   1. Ölçü ve taşıyıcı (otomatik değer + elle düzeltme) + ücret dökümü
- *   2. Taslak oluştur  → gönderi kaydı açılır, PARA HARCANMAZ
- *   3. Teklifler       → ETİKET SATIN AL (ayrı izin, 20 karakter gerekçe)
+ * Büyük seçim düğmesi: başlık + altında ne olacağını söyleyen tek satır.
  *
- * Birden çok sipariş seçildiyse sırayla geçilir; her biri kendi ölçüsüyle
- * onaylanır. Toplu "hepsini gönder" düğmesi YOKTUR: yanlış desi doğrudan
- * yanlış faturadır ve toplu iş onu gizler.
+ * Düğmenin ADI ne yapacağını, alt satırı BEDELİNİ söyler. Eski ekranda bu
+ * bilgi `title` özniteliğindeydi ve yalnız fareyi üstünde bekleten görürdü.
+ */
+function bigChoice({ icon, label, note, variant = '', onClick, disabled = false }) {
+  const box = h('button', `sh-big ${variant}`.trim());
+  box.type = 'button';
+  box.disabled = disabled;
+  box.append(
+    h('span', 'sh-big-icon', icon),
+    h('span', 'sh-big-label', label),
+    h('span', 'sh-big-note', note),
+  );
+  if (onClick) box.addEventListener('click', onClick);
+  return box;
+}
+
+/**
+ * Gönderi sihirbazı — tek çekmece, üç düğme.
+ *
+ * Birden çok sipariş seçildiyse sırayla geçilir. Toplu gönderim ayrı düğmede
+ * ve listenin üstündedir ({@see renderReadyBar}); burası tek siparişe bakar.
  */
 function openWizard(rows, index = 0) {
   const row = rows[index];
@@ -839,7 +905,7 @@ function openWizard(rows, index = 0) {
   // görünmesin, hiç yazılmasın.
   const where = [row.city, row.district].filter(Boolean).join(' / ');
   const box = drawer(nodes.root, {
-    title: `Gönderi sihirbazı — ${row.customer || row.orderNumber}`,
+    title: `Kargoya ver — ${row.customer || row.orderNumber}`,
     subtitle: `${index + 1}/${rows.length} · sipariş ${row.orderNumber}`
       + (where ? ` · ${where}` : ''),
     onClose: dropForms,
@@ -896,19 +962,129 @@ function openWizard(rows, index = 0) {
   // `replaceChildren` ile siliyor; yazdırma düğmesi orada dursaydı
   // teklifler gelir gelmez kaybolurdu.
   const docBox = h('div', 'sh-docs');
-  const actions = h('div', 'sh-actions');
 
-  if (!row.measures.complete) {
-    box.body.append(alertBox(
-      `Ürün ölçüleri eksik (${row.measures.missing.join(', ')}); otomatik desi yalnız `
-      + 'ağırlıktan hesaplandı. Kutuyu ölçüp desiyi elle düzeltin — yanlış desi doğrudan '
-      + 'yanlış faturadır.', 'warn'));
-  }
+  // ÖZET ŞERİDİ — formu açmadan görülmesi gereken üç şey: ne kadar mal,
+  // ne kadar ölçü, müşteri hangi firmaya para ödedi.
+  const summary = h('div', 'sh-summary');
+  summary.append(
+    badge(`${num(row.pending)} / ${num(row.ordered)} kalem`, 'dim'),
+    badge(`${num(row.measures.units)} desi`, row.measures.complete ? 'info' : 'warn'),
+    badge(row.measures.complete ? `${num(row.measures.weight, 1)} kg` : 'ölçü eksik',
+      row.measures.complete ? 'dim' : 'warn'),
+    badge(row.carrierTitle || 'firma seçilmemiş', 'info'),
+    h('span', 'kit-spacer'),
+    h('b', 'sh-summary-total', money(row.total)),
+  );
+  box.body.append(summary);
+
   if (!row.delivers) {
     box.body.append(alertBox(
       'Bu bölge "teslimat yapılmıyor" olarak işaretli. Yine de gönderebilirsiniz; '
       + 'işaret bir uyarıdır, engel değil.', 'warn'));
   }
+
+  // ------------------------------------------------------ üç büyük düğme
+
+  const choices = h('div', 'sh-choices');
+
+  const goButton = bigChoice({
+    icon: '🚚',
+    label: 'Kargoya ver',
+    note: 'Etiket SATIN ALINIR · takip numarası siparişe yazılır · etiket ve fatura basılır',
+    variant: 'danger',
+    onClick: async () => {
+      const sent = await dispatchOrder(row, null, wizardExtra(form));
+      if (sent) box.close();
+    },
+  });
+
+  const manualButton = bigChoice({
+    icon: '🏷️',
+    label: 'Etiketim var — takip no gir',
+    note: 'Etiket dışarıdan alındı · para harcanmaz · numara siparişe yazılır',
+    onClick: () => manualPanel.classList.toggle('on'),
+  });
+
+  const testButton = bigChoice({
+    icon: '🧪',
+    label: 'Test gönderisi',
+    note: 'Geliver’e hiç uğranmaz · takip no TEST- önekli · para harcanmaz',
+    onClick: async () => {
+      const sent = await testShipOrder(row, null);
+      if (sent) box.close();
+    },
+  });
+
+  choices.append(goButton, manualButton, testButton);
+
+  // ------------------------------------------- elle takip girişi (katlanır)
+  //
+  // Düğmenin ALTINDA açılır, ayrı bir pencere değil: numara elde bir kâğıtta
+  // duruyor ve tek iş onu yazmak. Pencere açmak, tek alanlık bir işi iki
+  // tıka çıkarırdı.
+
+  const manualPanel = h('div', 'sh-manual');
+  const manualInput = h('input', 'kit-input sh-manual-input');
+  manualInput.type = 'text';
+  manualInput.maxLength = 64;
+  manualInput.placeholder = 'Etiketin üstündeki barkod numarası — örn. GLV31161794989';
+  const manualCarrier = h('select', 'kit-input sh-manual-carrier');
+  // "Etiketteki firma" MÜŞTERİNİN ÖDEDİĞİ firma olmayabilir: elde kalan bir
+  // etiket başka firmadan alınmış olabilir. Boş seçenek "siparişteki firma"
+  // demektir ve sunucu onu yazar.
+  for (const option of [{ value: '', label: `Siparişteki firma (${row.carrierTitle || '—'})` },
+    ...carrierOptions]) {
+    const node = h('option', undefined, option.label);
+    node.value = option.value;
+    manualCarrier.append(node);
+  }
+  const manualSave = button('Kaydet', {
+    variant: 'primary',
+    onClick: () => saveManual(),
+  });
+  // ENTER = KAYDET. Numara elle yazılıyor; yazıp Enter'a basmak, fareyi alıp
+  // düğmeye götürmekten hızlıdır ve akış zaten "tık tık tık" olsun diye
+  // sadeleştirildi.
+  manualInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); saveManual(); }
+  });
+  manualPanel.append(
+    h('span', 'sh-sub', 'Takip numarası'),
+    manualInput, manualCarrier, manualSave,
+  );
+
+  async function saveManual() {
+    const track = manualInput.value.trim();
+    if (!track) { manualInput.focus(); toast('Takip numarası boş.', 'warn'); return; }
+    const result = await withBusy(`${row.orderNumber} · takip numarası yazılıyor…`,
+      () => api(`${BASE}/orders/${row.orderId}/manual-shipment`, {
+        method: 'POST',
+        body: {
+          trackingNo: track,
+          carrier: manualCarrier.value || '',
+          note: form.draft().note || '',
+          reason: dispatchReason(),
+          dryRun: false,
+        },
+      }));
+    if (!result) return;
+    // MÜKERRER AYRI BİR CEVAPTIR, hata değil: numara zaten yazılıysa
+    // kullanıcının yapacak bir şeyi yok ve "hata" demek onu tekrar denemeye
+    // iter. `call` yerine ham `api` çağrılmasının sebebi budur — `ok:false`
+    // burada okunabilir bir sonuçtur.
+    if (result.ok === false) {
+      toast(result.error, result.already ? 'warn' : 'bad');
+      if (result.already) loadReady();
+      return;
+    }
+    toast(`Takip numarası siparişe yazıldı · ${result.trackNumber} · ${result.carrier}`,
+      'good');
+    for (const line of result.warnings || []) toast(line, 'warn');
+    box.close();
+    loadReady();
+  }
+
+  // --------------------------------------------------- ayrıntı (katlanır)
 
   let quoteTimer = null;
   function refreshQuote() {
@@ -937,71 +1113,59 @@ function openWizard(rows, index = 0) {
   }
   closers.push(() => window.clearTimeout(quoteTimer));
 
-  actions.append(
-    button('Taslak oluştur', {
-      variant: 'primary',
-      onClick: async () => {
-        const draft = form.draft();
-        if (!form.valid()) { form.showErrors(); toast('Eksik alan var.', 'warn'); return; }
-        const reason = await askReason({
-          title: 'Gönderi taslağı oluştur',
-          description: `${row.orderNumber} siparişi için ${draft.packages} paket, `
-            + `${num(Number(draft.desi) || 0, 1)} desi. Bu adımda PARA HARCANMAZ; etiket `
-            + 'ayrıca satın alınır.',
-          confirmLabel: 'Taslağı oluştur',
-        });
-        if (!reason) return;
-        const result = await withBusy('Taslak oluşturuluyor…', () => call(
-          `${BASE}/orders/${row.orderId}/shipments`, {
-            method: 'POST',
-            body: {
-              provider: draft.provider || 'geliver',
-              carrier: draft.carrier, packages: Number(draft.packages) || 1,
-              desi: Number(draft.desi) || 0, weight: Number(draft.weight) || 0,
-              payer: draft.payer, cod: Number(draft.cod) || 0, note: draft.note || '',
-              reason, dryRun: false,
-            },
-          }));
-        if (!result) return;
-        toast(result.dryRun ? 'Kuru prova: istek gönderilmedi.' : 'Taslak açıldı.',
-          result.dryRun ? 'warn' : 'good');
-        for (const line of result.warnings || []) toast(line, 'warn');
-        // TEST YOLUNDA TEKLİF YOKTUR — taşıyıcıya çıkılmadı, satın alınacak
-        // etiket de yok. Teklif kutusunu açmak, olmayan bir adımı varmış gibi
-        // gösterirdi. Onun yerine fiş basılır.
-        if (result.test) {
-          docBox.replaceChildren(
-            alertBox(`TEST gönderisi açıldı — takip no ${result.trackNumber}. `
-              + 'Taşıyıcıya çıkılmadı, etiket satın alınmadı, para harcanmadı.', 'good'),
-            button('Kargo fişini yazdır', {
-              onClick: () => report.run('receipt', {
-                orderId: row.orderId, trackNumber: result.trackNumber,
-                carrier: result.carrier,
-              }),
-            }),
-          );
-          return;
-        }
-        // GERÇEK YOL: kullanıcı "fatura + kargoya teslim fişi tek A4 çıksın,
-        // katlayıp kargo cebine koyacağız" dedi. Düğme teklif kutusunun
-        // ÜSTÜNDE durur; etiket satın alınmadan da basılabilmeli, çünkü paket
-        // hazırlanırken fişe ihtiyaç var.
-        docBox.replaceChildren(button('Teslim fişi + fatura yazdır (A4)', {
-          onClick: () => report.run('handover', {
-            orderId: row.orderId,
-            trackNumber: result.trackNumber || '',
-            carrier: draft.carrier || '',
-          }),
+  const draftButton = button('Taslak aç ve teklifleri getir', {
+    title: 'PARA HARCAMAZ: gönderi kaydı açılır ve taşıyıcı fiyatları listelenir. '
+      + 'Etiket ayrıca satın alınır.',
+    onClick: async () => {
+      const draft = form.draft();
+      if (!form.valid()) { form.showErrors(); toast('Eksik alan var.', 'warn'); return; }
+      const result = await withBusy('Taslak açılıyor…', () => call(
+        `${BASE}/orders/${row.orderId}/shipments`, {
+          method: 'POST',
+          body: {
+            provider: draft.provider || 'geliver',
+            carrier: draft.carrier, packages: Number(draft.packages) || 1,
+            desi: Number(draft.desi) || 0, weight: Number(draft.weight) || 0,
+            payer: draft.payer, cod: Number(draft.cod) || 0, note: draft.note || '',
+            // GEREKÇE PENCERESİ KALKTI: taslak açmak PARA HARCAMAZ ve sunucu
+            // boş gerekçeye otomatik metin yazıyor (`draft_reason`). Pencere,
+            // ücretsiz bir adımın önünde duran tek engeldi.
+            reason: dispatchReason(), dryRun: false,
+          },
         }));
-        if (result.shipmentId) await showOffers(result.shipmentId);
-      },
-    }),
-  );
-  if (index + 1 < rows.length) {
-    actions.append(button('Sonraki sipariş →', {
-      onClick: () => { box.close(); openWizard(rows, index + 1); },
-    }));
-  }
+      if (!result) return;
+      toast(result.dryRun ? 'Kuru prova: istek gönderilmedi.' : 'Taslak açıldı.',
+        result.dryRun ? 'warn' : 'good');
+      for (const line of result.warnings || []) toast(line, 'warn');
+      // TEST YOLUNDA TEKLİF YOKTUR — taşıyıcıya çıkılmadı, satın alınacak
+      // etiket de yok. Teklif kutusunu açmak, olmayan bir adımı varmış gibi
+      // gösterirdi. Onun yerine fiş basılır.
+      if (result.test) {
+        docBox.replaceChildren(
+          alertBox(`TEST gönderisi açıldı — takip no ${result.trackNumber}. `
+            + 'Taşıyıcıya çıkılmadı, etiket satın alınmadı, para harcanmadı.', 'good'),
+          button('Kargo fişini yazdır', {
+            onClick: () => report.run('receipt', {
+              orderId: row.orderId, trackNumber: result.trackNumber,
+              carrier: result.carrier,
+            }),
+          }),
+        );
+        return;
+      }
+      // Kullanıcı "fatura + kargoya teslim fişi tek A4 çıksın, katlayıp kargo
+      // cebine koyacağız" dedi. Etiket satın alınmadan da basılabilmeli,
+      // çünkü paket hazırlanırken fişe ihtiyaç var.
+      docBox.replaceChildren(button('Teslim fişi + fatura yazdır (A4)', {
+        onClick: () => report.run('handover', {
+          orderId: row.orderId,
+          trackNumber: result.trackNumber || '',
+          carrier: draft.carrier || '',
+        }),
+      }));
+      if (result.shipmentId) await showOffers(result.shipmentId);
+    },
+  });
 
   async function showOffers(shipmentId) {
     offerBox.replaceChildren(skeletonRows(3, 4));
@@ -1043,6 +1207,10 @@ function openWizard(rows, index = 0) {
   }
 
   async function purchase(shipmentId, offer) {
+    // BU PENCERE KALDI ve kalmalı: ADR 0012'nin üç kapısından biri
+    // (`store_shipping.purchase` + 20 karakter gerekçe + `dryRun`) ve gerekçe
+    // sunucuda da doğrulanıyor — kaldırmak 422 üretirdi, sadeleştirme değil.
+    // "Kargoya ver" bu pencereyi görmüyor çünkü orada gerekçe zorunlu değil.
     const reason = await askPurchaseReason({
       title: 'Etiketi satın al — PARA HARCAR',
       description: `${offer.carrierLabel} · ${money(offer.price)}. Bu işlem taşıyıcıdan `
@@ -1065,42 +1233,45 @@ function openWizard(rows, index = 0) {
     loadReady();
   }
 
-  // TEK TIK ÇEKMECEDE DE DURUR. Ölçüyü düzeltip yine tek düğmeyle
-  // gönderebilmek gerekiyor; aşağıdaki üç adım "önce bakayım" diyen için.
-  const oneClick = h('div', 'sh-actions');
-  oneClick.append(button('🚚 Kargoya ver (tek tık)', {
-    variant: 'danger',
-    title: 'Yukarıdaki ölçülerle gönderi açılır, ETİKET SATIN ALINIR, takip '
-      + 'numarası siparişe yazılır ve etiket + fatura yazdırılır. Onay sorulmaz.',
-    onClick: async () => {
-      const draft = form.draft();
-      const sent = await dispatchOrder(row, null, {
-        provider: draft.provider || '',
-        carrier: draft.carrier || '',
-        packages: Number(draft.packages) || 1,
-        desi: Number(draft.desi) || 0,
-        weight: Number(draft.weight) || 0,
-        payer: draft.payer || 'sender',
-        cod: Number(draft.cod) || 0,
-        note: draft.note || '',
-      });
-      if (sent) box.close();
-    },
-  }));
-
-  box.body.append(
-    card('Kargoya ver', oneClick,
-      'Ara onay yok: gönderi açılır, etiket satın alınır, belgeler basılır'),
-    card('1 · Ölçü ve taşıyıcı', form.node,
-      'Otomatik değerler ürün kaydından gelir, elle düzeltilebilir'),
-    card('2 · Ücret dökümü (tahmin)', quoteBox, 'Kesin tutar taşıyıcı teklifinden gelir'),
-    actions,
-    card('3 · Belgeler', docBox,
-      'Teslim fişi + fatura tek A4; katlanıp kargo cebine konur'),
-    card('4 · Taşıyıcı teklifleri', offerBox, 'Etiket burada satın alınır'),
+  // Ayrıntı bölmesi: ölçü formu, ücret dökümü, taslak/teklif/belgeler.
+  // ÖLÇÜ EKSİKSE KENDİLİĞİNDEN AÇILIR — sadeleştirme, yanlış desiyi gizlemek
+  // değildir; yanlış desi doğrudan yanlış faturadır.
+  const details = h('details', 'sh-details');
+  const summaryNode = h('summary', 'sh-details-summary',
+    'Ölçü, taşıyıcı ve fiyat teklifleri');
+  details.append(summaryNode);
+  if (!row.measures.complete) {
+    details.open = true;
+    details.append(alertBox(
+      `Ürün ölçüleri eksik (${row.measures.missing.join(', ')}); otomatik desi yalnız `
+      + 'ağırlıktan hesaplandı. Kutuyu ölçüp desiyi elle düzeltin — yanlış desi doğrudan '
+      + 'yanlış faturadır.', 'warn'));
+  }
+  details.append(
+    card('Ölçü ve taşıyıcı', form.node,
+      'Otomatik değerler ürün kaydından gelir; üç düğme de bu değerlerle çalışır'),
+    card('Ücret dökümü (tahmin)', quoteBox, 'Kesin tutar taşıyıcı teklifinden gelir'),
+    card('Fiyat teklifleri', (() => {
+      const wrap = h('div', 'sh-detail-stack');
+      wrap.append(draftButton, docBox, offerBox);
+      return wrap;
+    })(), 'Taslak açmak PARA HARCAMAZ; etiket teklif satırından satın alınır'),
   );
+
+  box.body.append(choices, manualPanel, details);
+
+  if (index + 1 < rows.length) {
+    const next = h('div', 'sh-actions');
+    next.append(button('Bu siparişi atla · sonraki →', {
+      onClick: () => { box.close(); openWizard(rows, index + 1); },
+    }));
+    box.body.append(next);
+  }
+
+  goButton.focus();
   refreshQuote();
 }
+
 
 function quoteView(payload) {
   const box = h('div', 'sh-quote-lines');
