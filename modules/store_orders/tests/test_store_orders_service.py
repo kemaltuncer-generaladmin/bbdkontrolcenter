@@ -663,21 +663,31 @@ async def test_kuru_provada_olay_YAYINLANMAZ() -> None:
     assert olaylar == []
 
 
-async def test_sonraki_fatura_ezebilir_uyarisi_yanitla_TASINIR() -> None:
-    """Bagisto durumu fatura/gönderi olaylarında yeniden hesaplıyor.
+async def test_ezilebilirligi_SUNUCU_soyler_biz_tahmin_etmeyiz() -> None:
+    """Cevap koşullu ve ezberlenebilir değil.
 
-    Kullanıcı "kaydettim ama geri döndü" ile karşılaşmasın diye bilgi
-    yanıtın kendisinde taşınır; ekran onu yazar.
+    Kısmen faturalanmış bir siparişte `completed` KALICI; tamamı faturalanmış
+    ama kargolanmamışta ilk fatura/gönderi olayında `processing`e döner.
+    Sunucu bunu vendor'ın kendi türetmesini çalıştırarak buluyor. Burada
+    tahmin etmek kullanıcıya yanlış söz vermek olurdu.
     """
-    service, _, _ = _service()
+    api = FakeApi({12: dict(SIPARIS)})
+    api.status_reverts = True
+    api.status_side_effects = ["Stok hareket etmez.", "Musteriye bildirim gitmez."]
+    service, _, _ = _service(api=api)
+
     result = await service.set_status(12, status="completed",
                                       reason="Magaza disinda halledildi",
                                       actor="Ali", dry_run=False)
     assert result["ok"] is True
     assert result["mayBeOverwritten"] is True
+    assert result["sideEffects"][0].startswith("Stok")
 
-    kapali = await service.set_status(12, status="closed",
-                                      reason="Siparis elle kapatiliyor",
+    # Sunucu "kalıcı" dediğinde ekran da uyarı göstermez.
+    api.status_reverts = False
+    # Fikstür zaten `processing`; başka bir hedef seçilir yoksa "zaten o
+    # durumda" kapısına takılır.
+    kalici = await service.set_status(12, status="pending",
+                                      reason="Durum elle geri alindi",
                                       actor="Ali", dry_run=False)
-    # `closed` nihai: sonraki olaylar onu değiştirmez.
-    assert kapali["mayBeOverwritten"] is False
+    assert kalici["mayBeOverwritten"] is False

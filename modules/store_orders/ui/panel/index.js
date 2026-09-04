@@ -1283,11 +1283,16 @@ async function changeStatus(order, targets) {
       : `${result.orderNo} → ${result.statusLabel || secim}`,
     result.dryRun ? 'warn' : 'good');
     // EZİLEBİLİRLİK SESSİZ GEÇİLMEZ: kullanıcı "kaydettim ama geri döndü"
-    // ile karşılaşmadan önce nedenini duymalı.
+    // ile karşılaşmadan önce nedenini duymalı. Kararı SUNUCU veriyor —
+    // koşullu bir cevap ve burada tahmin etmek yanlış söz vermek olurdu.
     if (!result.dryRun && result.mayBeOverwritten) {
       toast('Bu durum, sonraki bir fatura ya da gönderi kaydında yeniden '
         + 'hesaplanabilir.', 'warn');
     }
+    // YAN ETKİLER SUNUCUNUN CÜMLELERİDİR: stok, müşteri bildirimi, "kargoya
+    // verilmedi" alarmı. Kendi özetimizi yazmak, sunucu kuralı değiştiğinde
+    // ekranı sessizce yanlış yapardı.
+    for (const line of result.sideEffects || []) toast(line, 'info');
     refresh();
   });
 }

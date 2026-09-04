@@ -278,29 +278,34 @@ o türetmenin üstüne bilinçli bir istisna koyar ve yalnız istisnalar içindi
 mağaza dışında halledilmiş bir iş, yanlış kalmış bir kayıt, elle kapatılan bir
 sipariş. Bagisto çekirdeğinde böyle bir uç yoktur; BBD tarafında açıldı.
 
-**Konan değer kalıcı mühür DEĞİLDİR.** Sonraki bir fatura ya da gönderi
-kaydında Bagisto durumu yeniden hesaplar ve elle konan değeri ezebilir. Yanıt
-bunu `mayBeOverwritten` ile taşır, ekran da uyarı olarak yazar — kullanıcı
-"kaydettim ama geri döndü" ile karşılaşmamalı.
+**Konan değer kalıcı mühür DEĞİLDİR** — ama ne zaman ezileceği **koşulludur**
+ve ezberlenemez: kısmen faturalanmış bir siparişte `completed` kalıcıdır,
+tamamı faturalanmış ama kargolanmamışta ilk olayda `processing`e döner. Bu
+yüzden cevabı **sunucu hesaplar** (vendor'ın kendi türetmesini çalıştırarak) ve
+`revertsOnNextInvoiceOrShipment` ile gönderir; ekran onu olduğu gibi yazar.
+Burada tahmin etmek kullanıcıya yanlış söz vermek olurdu. Yan etki cümleleri
+(stok, müşteri bildirimi, alarm, ciro) da sunucudan gelir.
 
-**Geçiş matrisi** (`orders.STATUS_TRANSITIONS`, hem serviste hem mağazada
-denetlenir — K9):
+**Sözleşmenin sahibi mağazadır** (`BBD/ControlApi/.../OrderStatusTransition`);
+buradaki liste onun kopyasıdır ve bir test ikisinin ayrışmasını yakalar. Ekran
+geniş olursa kullanıcıya 409 aldırır, dar olursa yapılabilecek bir işi gizler.
 
-| Mevcut | Geçilebilecekler |
+**Yazılabilir hedefler:** Bekliyor · Ödeme bekliyor · Hazırlanıyor · Tamamlandı.
+`Tamamlandı` ayrıca **en az bir faturası olan ve açık faturası kalmamış**
+siparişte yazılabilir — faturasız `completed` stoğu hiç hareket ettirmez ve
+siparişi "kargoya verilmedi" alarmından kalıcı olarak düşürür.
+
+**Yazılamayan hedefler ve nedenleri:**
+
+| Hedef | Neden |
 |---|---|
-| Bekliyor | Ödeme bekliyor · Hazırlanıyor · Tamamlandı · Kapandı · Sahte şüphesi |
-| Ödeme bekliyor | Bekliyor · Hazırlanıyor · Tamamlandı · Kapandı · Sahte şüphesi |
-| Hazırlanıyor | Tamamlandı · Kapandı · Sahte şüphesi |
-| Tamamlandı | Kapandı · Sahte şüphesi |
-| Sahte şüphesi | Kapandı |
-| İptal · Kapandı | **(nihai — geçiş yok)** |
+| `canceled` | Bu uç yalnız durum sütununa yazar: stok depoya dönmez, `qty_canceled` boş kalır, `sales.order.cancel.after` yayılmaz — **bankaya iptal gitmez**. "İptal edildi" görünen ama parası dönmemiş sipariş kalırdı. İptal, **"İptal et"** düğmesinden yapılır (ayrı izin, ayrı süre penceresi). |
+| `closed` | Bagisto'nun TÜRETTİĞİ durum ("kalemlerin tamamı iade/iptal"). Elle yazılınca `canInvoice`/`canShip`/`canCancel`/`canRefund` **dördü birden** kapanır. |
+| `fraud` | Aynı dört kapıyı kilitler ve ürünü "Çok Satanlar" sayımından düşürür. Kalıcı ticari bir yargıdır. |
 
-**İPTAL BU UÇTAN YAPILMAZ.** `canceled` hiçbir satırda hedef değildir ve bu bir
-güvenlik kararıdır: iptalin ayrı izin anahtarı (`store_orders.cancel`), ayrı
-süre penceresi denetimi ve ayrı mağaza ucu var. Durum ucu `manage` ile
-açıldığı için `canceled`ı kabul etmek, iptal izni olmayan personele durum
-düğmesinden iptal ettirirdi — arayüzde iki kapı, sunucuda bir kapı olurdu
-(K9/K10). Ekran bunu "geçilemez" demez, **"İptal et düğmesini kullanın"** der.
+**Donmuş kaynaklar:** sipariş `İptal`, `Kapandı` ya da `Sahte şüphesi`
+durumundaysa hiçbir geçiş yapılamaz. Bu üçü hem hedef hem kaynak kapalı
+olduğu için tek bir yazım hatası siparişi kalıcı olarak kilitleyemez.
 
 **Geçilebilecek durumlar sunucudan gelir** (`statusTargets`), ekranda
 kopyalanmaz: matris tek yerde durur ve ikisi ayrıştığında ekran olmayan bir

@@ -97,8 +97,9 @@ permissions:
   - key: store_orders.manage
     description: >
       "Fatura kesme, gönderi kaydı açma, not ekleme, toplu işlem, ekran ayarları
-      ve sipariş durumunu ELLE değiştirme. Durum ucundan İPTAL yapılamaz —
-      iptalin ayrı anahtarı (`store_orders.cancel`) ve süre penceresi vardır."
+      ve sipariş durumunu ELLE değiştirme. Durum ucundan İPTAL, KAPATMA ve SAHTE
+      İŞARETİ yazılamaz: ilki ayrı anahtar ve süre penceresi ister
+      (`store_orders.cancel`), diğer ikisi siparişi kalıcı olarak kilitler."
     default_roles: [admin, bbd_staff]
   - key: store_orders.cancel
     description: "Sipariş iptali. Geri alınamaz; gerekçe ve süre penceresi denetlenir."

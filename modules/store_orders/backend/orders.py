@@ -75,71 +75,77 @@ STATUS_LABELS = {
     "fraud": "Sahte şüphesi",
 }
 
-#: ELLE DURUM DEĞİŞTİRME — hangi durumdan hangisine geçilebilir.
+#: ELLE DURUM DEĞİŞTİRME — bu uçtan YAZILABİLEN hedefler.
 #:
-#: NEDEN MATRİS VAR, NEDEN SERBEST METİN DEĞİL. Bagisto durumu normalde
-#: TÜRETİR (fatura kesilince `processing`, kargolanınca `completed`); elle
-#: yazmak o türetmenin üstüne bir istisna koymaktır. Serbest metin kabul etmek
-#: `completed` yerine `complete` yazan bir kullanıcıyı sessizce hiçbir ekranda
-#: görünmeyen bir duruma düşürürdü.
+#: LİSTE MAĞAZADAN KOPYALANDI, uydurulmadı: sözleşmenin sahibi
+#: `BBD/ControlApi/src/Support/OrderStatusTransition::writableTargets()`.
+#: Ekranın matrisi sunucununkinden ayrışırsa iki yönde de zarar verir —
+#: geniş olursa kullanıcıya 409 aldırır, dar olursa yapılabilecek bir işi
+#: gizler. Sunucu aynı denetimi tekrar yapar (K9).
+STATUS_WRITABLE = ("pending", "pending_payment", "processing", "completed")
+
+#: BU UÇTAN HİÇBİR ZAMAN YAZILMAYAN hedefler ve nedenleri.
 #:
-#: NİHAİ DURUMLARDAN DÖNÜŞ YOK. `canceled` ve `closed` para ve stok hareketi
-#: doğurmuş olabilir; onları `processing`e geri çekmek, iade edilmiş bir
-#: siparişi yeniden kargoya hazır göstermek olurdu. Yanlışlıkla iptal edilen
-#: sipariş için doğru yol yeniden sipariş oluşturmaktır (`reorder`).
-#:
-#: `completed` → `processing` DE YOK. Bagisto siparişi kargolandığı için
-#: tamamlanmış saydı; geri çekmek listeyi düzeltmez, yalnız "kargoya hazır"
-#: listesine ikinci kez düşürür ve aynı paket iki kez gönderilir.
-#: İPTAL BU YOLDAN GEÇMEZ. `canceled` hiçbir satırda hedef değildir ve bu
-#: güvenlik kararıdır: iptalin AYRI bir izin anahtarı (`store_orders.cancel`),
-#: ayrı bir süre penceresi denetimi ve ayrı bir mağaza ucu var. Durum yazma
-#: ucu `store_orders.manage` ile açılıyor; `canceled`ı hedef olarak kabul
-#: etmek, iptal iznini olmayan personele durum düğmesinden iptal ettirirdi —
-#: arayüzde iki ayrı düğme, sunucuda tek kapı olurdu (K9/K10).
-STATUS_TRANSITIONS = {
-    "pending": ("pending_payment", "processing", "completed", "closed", "fraud"),
-    "pending_payment": ("pending", "processing", "completed", "closed", "fraud"),
-    "processing": ("completed", "closed", "fraud"),
-    "completed": ("closed", "fraud"),
-    "fraud": ("closed",),
-    "canceled": (),
-    "closed": (),
+#: `canceled`  Bu uç yalnız durum sütununa yazar: stok depoya dönmez,
+#:             `qty_canceled` boş kalır, `sales.order.cancel.after` yayılmaz
+#:             ve bankaya iptal gitmez. "İptal edildi" görünen ama parası
+#:             dönmemiş bir sipariş kalırdı.
+#: `closed`    Bagisto'nun TÜRETTİĞİ durum ("kalemlerin tamamı iade/iptal").
+#:             Elle yazılınca fatura/gönderi/iptal/iade kapılarının dördünü
+#:             birden kilitler.
+#: `fraud`     Kalıcı ticari yargı; aynı dört kapıyı kilitler ve ürünleri
+#:             "Çok Satanlar" sayımından düşürür.
+STATUS_REFUSED = {
+    "canceled": ("İptal bu düğmeden yapılmaz: stoğu geri vermez, bankaya iptal "
+                 "göndermez. Sipariş kartındaki “İptal et” düğmesini kullanın."),
+    "closed": ("“Kapandı” elle yazılmaz: siparişi kilitler — fatura, gönderi, "
+               "iptal ve iade dördü birden kapanır ve geri dönüşü yoktur."),
+    "fraud": ("“Sahte şüphesi” elle yazılmaz: aynı dört kapıyı kilitler ve ürünü "
+              "“Çok Satanlar” sayımından düşürür. Kalıcı ticari bir yargıdır."),
 }
 
-#: `status_block` bu hedefi ayrı bir cümleyle reddeder: "geçilemez" demek,
-#: kullanıcıyı iptal etmenin hiç mümkün olmadığı sonucuna götürürdü.
-CANCEL_TARGET = "canceled"
+#: DONDURULMUŞ KAYNAKLAR — sipariş bu durumdaysa hiçbir geçiş yapılamaz.
+#: İptal/kapanma para ve stok hareketi doğurmuş olabilir; durum sütununu geri
+#: çevirmek onların hiçbirini geri almaz, yalnız kapanmış bir siparişi yeniden
+#: tahsil edilebilir gösterir.
+STATUS_FROZEN = {
+    "canceled": ("İptal edilmiş sipariş geri açılmaz: iptal akışı stoğu iade etmiş "
+                 "ve bankaya iptal göndermiş olabilir. Müşteri yeniden sipariş vermeli."),
+    "closed": ("Kapalı sipariş geri açılmaz: kalemlerin tamamı iade/iptal edilmiş ve "
+               "para müşteriye dönmüştür."),
+    "fraud": ("Dolandırıcılık işareti bu uçtan kaldırılmaz; kaldırılması ticari bir "
+              "karardır."),
+}
+
+
+def status_targets(row: dict[str, Any]) -> tuple[str, ...]:
+    """Bu siparişten geçilebilecek durumlar. Donmuşsa boş döner."""
+    mevcut = fold(row.get("status"))
+    if mevcut in STATUS_FROZEN:
+        return ()
+    return tuple(code for code in STATUS_WRITABLE if code != mevcut)
 
 
 def status_block(row: dict[str, Any], target: Any) -> str:
     """Bu geçiş yapılabilir mi — yapılamıyorsa kullanıcıya gösterilecek metin.
 
     Sunucu aynı denetimi tekrar yapar (K9): arayüzde seçeneği gizlemek
-    yetkilendirme değildir ve istemci şemayı atlatabilir.
+    yetkilendirme değildir ve istemci şemayı atlatabilir. Buradaki denetim
+    ekranın kullanıcıya boş yere gerekçe yazdırmaması içindir.
     """
     hedef = fold(target)
-    if hedef not in STATUS_LABELS:
+    if hedef in STATUS_REFUSED:
+        return STATUS_REFUSED[hedef]
+    if hedef not in STATUS_WRITABLE:
         return (f"Bilinmeyen durum: {text(target) or '—'}. "
-                f"Geçerli değerler: {', '.join(sorted(STATUS_LABELS))}.")
+                f"Yazılabilir durumlar: {', '.join(status_label(c) for c in STATUS_WRITABLE)}.")
     mevcut = fold(row.get("status"))
     if not mevcut:
         return "Siparişin şu anki durumu okunamadı; geçiş denetlenemiyor."
+    if mevcut in STATUS_FROZEN:
+        return STATUS_FROZEN[mevcut]
     if hedef == mevcut:
         return f"Sipariş zaten “{status_label(mevcut)}” durumunda."
-    if hedef == CANCEL_TARGET:
-        return ("İptal bu düğmeden yapılmaz: ayrı izin ve süre penceresi denetimi "
-                "gerektirir. Sipariş kartındaki “İptal et” düğmesini kullanın.")
-    izinli = STATUS_TRANSITIONS.get(mevcut)
-    if izinli is None:
-        return f"Tanınmayan mevcut durum “{mevcut}”; elle geçiş yapılamıyor."
-    if not izinli:
-        return (f"“{status_label(mevcut)}” nihai bir durumdur ve geri alınamaz. "
-                "Yanlışlıkla buraya düşen sipariş için yeni sipariş oluşturun.")
-    if hedef not in izinli:
-        return (f"“{status_label(mevcut)}” durumundan “{status_label(hedef)}” durumuna "
-                "geçilemez. Geçilebilecekler: "
-                f"{', '.join(status_label(code) for code in izinli)}.")
     return ""
 
 

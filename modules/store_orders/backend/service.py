@@ -637,7 +637,7 @@ class OrdersService:
             # sunup 422 aldırırdı.
             "statusTargets": [
                 {"value": code, "label": ord_.status_label(code, prefs.get("statusNames"))}
-                for code in ord_.STATUS_TRANSITIONS.get(ord_.fold(row.get("status")), ())
+                for code in ord_.status_targets(row)
             ],
             "evidence": self._evidence_view(index, rows),
             "prefs": prefs,
@@ -862,13 +862,21 @@ class OrdersService:
             # Kuru provada olay YAYINLANMAZ: mağazada hiçbir şey değişmedi.
             await self._announce({"orderId": int(order_id), "from": row["status"],
                                   "to": hedef, "reason": reason})
+        # EZİLEBİLİRLİĞİ SUNUCU HESAPLAR, BİZ TAHMİN ETMEYİZ. Cevabı vendor'ın
+        # kendi türetmesini çalıştırarak buluyor: kısmen faturalanmış bir
+        # siparişte `completed` KALICI, tamamı faturalanmış ama kargolanmamışta
+        # ilk olayda `processing`e dönüyor. Bu ezberlenebilir bir kural değil;
+        # burada tahmin etmek kullanıcıya yanlış söz vermek olurdu.
+        gövde = result if isinstance(result, dict) else {}
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
                 "orderNo": row["orderNo"], "from": row["status"], "to": hedef,
                 "statusLabel": ord_.status_label(hedef, prefs.get("statusNames")),
                 "announced": applied,
-                # Bagisto durumu fatura/gönderi olaylarında yeniden hesaplıyor;
-                # elle konan değer o olaylarda değişebilir. Ekran bunu yazar.
-                "mayBeOverwritten": hedef not in ("canceled", "closed")}
+                "mayBeOverwritten": bool(gövde.get("revertsOnNextInvoiceOrShipment")),
+                # Sunucunun yazdığı serbest metin cümleler: stok, müşteri
+                # bildirimi, "kargoya verilmedi" alarmı, kalıcılık, ciro.
+                "sideEffects": [ord_.text(line) for line in (gövde.get("sideEffects") or [])
+                                if ord_.text(line)]}
 
     async def invoice(self, order_id: int, *, items: dict[str, int] | None, reason: str,
                       actor: str, dry_run: bool = True) -> dict[str, Any]:

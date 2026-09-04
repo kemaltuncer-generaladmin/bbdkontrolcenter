@@ -30,22 +30,38 @@ def test_gecerli_gecis_engellenmez() -> None:
     assert ord_.status_block(_row("processing"), "completed") == ""
 
 
-def test_nihai_durumdan_donus_yok() -> None:
-    # İptal edilmiş sipariş para ve stok hareketi doğurmuş olabilir; onu
-    # `processing`e çekmek iade edilmiş bir siparişi yeniden kargoya hazır
-    # gösterirdi.
+def test_donmus_kaynaktan_gecis_yok() -> None:
+    # İptal akışı stoğu iade etmiş ve bankaya iptal göndermiş olabilir; durum
+    # sütununu geri çevirmek bunların hiçbirini geri almaz.
     block = ord_.status_block(_row("canceled"), "processing")
-    assert "nihai" in block
-    assert "yeni sipariş" in block
+    assert "geri açılmaz" in block
+    assert ord_.status_targets(_row("canceled")) == ()
 
 
-def test_tamamlanmis_siparis_geri_cekilemez() -> None:
-    # Geri çekmek listeyi düzeltmez, "kargoya hazır"a ikinci kez düşürür.
-    block = ord_.status_block(_row("completed"), "processing")
-    assert "geçilemez" in block
-    # Hangi geçişlerin mümkün olduğu SÖYLENİR: "olmaz" demek tek başına
-    # kullanıcıyı ekranda dolaştırır.
-    assert "Kapandı" in block
+def test_kapali_ve_sahte_supheli_de_donmustur() -> None:
+    for durum in ("closed", "fraud"):
+        assert ord_.status_targets(_row(durum)) == ()
+        assert ord_.status_block(_row(durum), "processing") != ""
+
+
+def test_tamamlanmis_siparis_geri_cekilebilir() -> None:
+    """Mağaza sözleşmesi bunu YAZILABİLİR sayıyor; ekran daraltmaz.
+
+    Bir ara burada "geri çekilemez" kuralı vardı ve gerekçesi "kargoya hazır
+    listesine ikinci kez düşer" idi. Yanlıştı: o liste kalan adede bakıyor,
+    tamamı kargolanmış sipariş zaten süzülüyor. Ekranı sunucudan DAR tutmak,
+    yapılabilecek bir işi gizlemek olurdu.
+    """
+    assert ord_.status_block(_row("completed"), "processing") == ""
+
+
+def test_kilitleyen_hedefler_yazilamaz() -> None:
+    # `closed` ve `fraud` fatura/gönderi/iptal/iade kapılarının dördünü birden
+    # kilitler; tek yazım hatası siparişi kalıcı olarak kilitlerdi.
+    for durum in ("closed", "fraud"):
+        block = ord_.status_block(_row("processing"), durum)
+        assert "kilitler" in block
+        assert durum not in ord_.status_targets(_row("processing"))
 
 
 def test_iptal_bu_uctan_yapilamaz_ve_nedeni_soylenir() -> None:
@@ -60,6 +76,18 @@ def test_bilinmeyen_durum_reddedilir() -> None:
     # görünmeyen bir duruma düşürürdü.
     block = ord_.status_block(_row("processing"), "complete")
     assert "Bilinmeyen durum" in block
+
+
+def test_ekran_matrisi_MAGAZA_sozlesmesiyle_ayni() -> None:
+    """Sözleşmenin sahibi mağaza (`OrderStatusTransition::writableTargets`).
+
+    Ekran geniş olursa kullanıcıya 409 aldırır, dar olursa yapılabilecek bir
+    işi gizler. Bu test iki listenin ayrışmasını yakalar.
+    """
+    assert set(ord_.STATUS_WRITABLE) == {"pending", "pending_payment", "processing",
+                                         "completed"}
+    assert set(ord_.STATUS_REFUSED) == {"canceled", "closed", "fraud"}
+    assert set(ord_.STATUS_FROZEN) == {"canceled", "closed", "fraud"}
 
 
 def test_ayni_duruma_gecis_is_degildir() -> None:

@@ -80,6 +80,9 @@ class FakeApi:
     def __init__(self, orders: dict[int, dict[str, Any]] | None = None,
                  shallow: list[dict[str, Any]] | None = None) -> None:
         self.orders_by_id = orders or {}
+        #: `bbd_set_order_status` yanıtının sunucudan gelen alanları.
+        self.status_reverts: bool = False
+        self.status_side_effects: list[str] = []
         #: Tam taramanın döndüreceği SIĞ satırlar. Canlı `/orders` ucu fatura,
         #: gönderi ve tutar dökümü taşımıyor; verildiğinde tarama bunları
         #: döndürür ve servis detaylandırmak zorunda kalır.
@@ -214,7 +217,13 @@ class FakeApi:
         """
         self._record("bbd_set_order_status", order_id, status=status, reason=reason,
                      actor=actor, dry_run=dry_run)
-        return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run}
+        # Sunucunun GERÇEK alanları: ezilebilirliği ve yan etkileri o hesaplıyor
+        # (vendor'ın kendi türetmesini çalıştırarak). Sahte bunları taşımazsa
+        # ekran "kaydettim ama geri döndü" uyarısını hiç göstermez ve test bunu
+        # görmez.
+        return {"ok": True, "dryRun": bool(dry_run), "sent": not dry_run,
+                "revertsOnNextInvoiceOrShipment": self.status_reverts,
+                "sideEffects": list(self.status_side_effects)}
 
     async def create_invoice(self, order_id: int, *, items: dict[str, int] | None = None,
                              reason: str, actor: str = "",
