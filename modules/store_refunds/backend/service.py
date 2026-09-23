@@ -352,9 +352,22 @@ class RefundsService:
                                                                    per_page=50))
         shipments, shipments_error = await part("gönderiler", lambda: self._api.bbd_shipments(
             {"order_id": int(order_id)}, per_page=50))
+        requests, requests_error = await part("RMA talepleri", lambda: self._api.bbd_return_requests(
+            {"order_id": int(order_id)}, page=1, per_page=50))
 
         history_rows = [item for item in ((history or {}).get("items") or [])
                         if isinstance(item, dict)]
+        request_items = requests.get("items") if isinstance(requests, dict) else None
+        request_meta = requests.get("meta") if isinstance(requests, dict) else None
+        rma_valid = (isinstance(request_items, list)
+                     and isinstance(request_meta, dict)
+                     and calc.as_int(request_meta.get("lastPage")) <= 1
+                     and all(isinstance(item, dict)
+                             and calc.as_int(calc.pick(item, "id", "request_id")) > 0
+                             for item in request_items))
+        if requests is not None and not rma_valid:
+            requests_error = "RMA API yanıtı beklenen biçimde değil; güvenli onay kapalı."
+            warnings.append(f"RMA talepleri: {requests_error}")
         view = calc.order_view(raw, basis=self._basis,
                                shipping_refunded=None if history is None
                                else calc.shipping_refunded_of(history_rows))
@@ -386,6 +399,12 @@ class RefundsService:
                 "items": [self._shipment_row(item)
                           for item in ((shipments or {}).get("items") or [])
                           if isinstance(item, dict)],
+            },
+            "rma": {
+                "available": requests is not None and rma_valid,
+                "error": requests_error,
+                "items": [calc.request_row(item) for item in request_items]
+                         if rma_valid else [],
             },
             "shippingDefault": self._shipping_default,
             "basisNotice": "" if view["invoicedAny"] else (
@@ -512,7 +531,8 @@ class RefundsService:
     # =============================================================== onay
 
     async def approve(self, *, token: str, reason: str, actor: str,
-                      dry_run: bool = True) -> dict[str, Any]:
+                      dry_run: bool = True,
+                      rma_acknowledged_ids: list[int] | None = None) -> dict[str, Any]:
         """Onaylanan hesabı uygular — PARA HAREKETİDİR (ADR 0012).
 
         Hesap YENİDEN HESAPLANMAZ: jetonla saklanan gövde neyse o gider.
@@ -542,8 +562,55 @@ class RefundsService:
         items = {str(key): int(value) for key, value in (body.get("items") or {}).items()}
         adjustments = body.get("adjustments") or {}
 
+        # RMA onayından "Refunded" geçişi mağazada kendiliğinden kredi notu
+        # + Kuveyt Türk iadesi başlatır. Manuel kredi notu yine mümkündür, ancak
+        # talep ilişkisi canlıdan yeniden okunup yetkili açıkça uyarmış olmalıdır.
+        try:
+            rmas = await self._api.bbd_return_requests({"order_id": order_id}, page=1,
+                                                       per_page=50)
+        except Exception as failure:  # noqa: BLE001 — ilişki doğrulanamazsa para çıkmaz
+            await self._record(order_id=order_id, action="create_refund", reason=reason,
+                               actor=actor, result="rma_check_failed",
+                               detail={"error": str(failure), "total": row["total"]})
+            return {"ok": False, "error": "RMA kayıtları doğrulanamadı; iade oluşturulmadı. "
+                    "Bağlantıyı kontrol edip yeniden deneyin."}
+        if (not isinstance(rmas, dict) or not isinstance(rmas.get("items"), list)
+                or not isinstance(rmas.get("meta"), dict)
+                or calc.as_int(rmas["meta"].get("lastPage")) > 1):
+            await self._record(order_id=order_id, action="create_refund", reason=reason,
+                               actor=actor, result="rma_check_invalid",
+                               detail={"total": row["total"]})
+            return {"ok": False, "error": "RMA kontrolü geçersiz yanıt verdi; iade oluşturulmadı."}
+        if any(not isinstance(item, dict)
+               or calc.as_int(calc.pick(item, "id", "request_id")) <= 0
+               for item in rmas["items"]):
+            await self._record(order_id=order_id, action="create_refund", reason=reason,
+                               actor=actor, result="rma_check_invalid",
+                               detail={"total": row["total"]})
+            return {"ok": False, "error": "RMA yanıtında geçersiz talep bulundu; iade oluşturulmadı."}
+        rma_rows = rmas["items"]
+        live_rma_ids = sorted(calc.as_int(calc.pick(item, "id", "request_id"))
+                              for item in rma_rows)
+        acknowledged_ids = sorted({calc.as_int(value) for value in (rma_acknowledged_ids or [])})
+        rma_summary = [{"id": calc.as_int(calc.pick(item, "id", "request_id")),
+                        "status": calc.status_text(calc.pick(item, "status", "statusLabel"))}
+                       for item in rma_rows]
+        if rma_rows and live_rma_ids != acknowledged_ids:
+            await self._record(order_id=order_id, action="create_refund", reason=reason,
+                               actor=actor, result="rma_confirmation_required",
+                               detail={"total": row["total"], "rma": rma_summary,
+                                       "acknowledgedRmaIds": acknowledged_ids})
+            return {"ok": False, "confirmationRequired": True,
+                    "rma": rma_summary,
+                    "error": "Bu siparişte RMA talebi var. RMA ve manuel kredi notu birlikte "
+                             "Kuveyt Türk'e iade gönderebilir. Sipariş çekmecesini yenileyip "
+                             "RMA uyarısını okuyun ve yetkili onayıyla yeniden deneyin."}
+
         await self._record(order_id=order_id, action="create_refund", reason=reason, actor=actor,
-                           result="denendi", detail={"total": row["total"], "items": items})
+                           result="denendi", detail={"total": row["total"], "items": items,
+                                                     "rmaAcknowledged": bool(rma_rows),
+                                                     "acknowledgedRmaIds": acknowledged_ids,
+                                                     "rma": rma_summary})
         try:
             result = await self._api.create_refund(order_id, items=items,
                                                    adjustments=adjustments, reason=reason,
@@ -570,14 +637,20 @@ class RefundsService:
 
         await self._record(order_id=order_id, action="create_refund", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok",
-                           detail={"total": row["total"], "items": items})
+                           detail={"total": row["total"], "items": items,
+                                   "rmaAcknowledged": bool(rma_rows),
+                                   "acknowledgedRmaIds": acknowledged_ids, "rma": rma_summary})
         return {"ok": True, "error": "", "orderId": order_id, "total": int(row["total"]),
                 "dryRun": bool(result.get("dryRun", dry_run)),
                 "sent": bool(result.get("sent", not dry_run)),
                 "warning": warning,
-                "notice": "Kredi notu oluştu. Bu mağazada Bagisto iade olayı Kuveyt Türk "
-                          "POS iadesini otomatik başlatır; ayrıca POS iadesi göndermeyin. "
-                          "Banka sonucunu ödeme/iade kayıtlarından doğrulayın."}
+                "notice": ("Yetkili RMA onayı kaydedildi ("
+                           + ", ".join(f"#{item['id']}" for item in rma_summary)
+                           + "). RMA akışı da iade başlatmış olabilir; olası çifte iadeyi "
+                           "banka kayıtlarından doğrulayın. " if rma_rows else "")
+                + "Kredi notu oluştu. Bu mağazada Bagisto iade olayı Kuveyt Türk "
+                  "POS iadesini otomatik başlatır; ayrıca POS iadesi göndermeyin. "
+                  "Banka sonucunu ödeme/iade kayıtlarından doğrulayın."}
 
     #: AYRI POS İADESİ BU EKRANDAN YAPILMAZ — create_refund zaten mağazada
     #: RefundRepository → sales.refund.save.after → Kuveyt Türk listener yolunu çalıştırır.

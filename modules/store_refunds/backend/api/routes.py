@@ -96,6 +96,7 @@ class ApproveBody(BaseModel):
     token: str = Field(min_length=8, max_length=64)
     reason: str = Field(min_length=10, max_length=255)
     dryRun: bool = True
+    rmaAcknowledgedIds: list[int] = Field(default_factory=list)
 
 
 @router.post("/approve")
@@ -105,7 +106,8 @@ async def approve(
 ) -> dict[str, Any]:
     """Onaylanan hesabı uygular: kredi notu oluşur. PARA HAREKETİDİR."""
     return await service().approve(token=body.token, reason=body.reason,
-                                   actor=user.full_name, dry_run=body.dryRun)
+                                   actor=user.full_name, dry_run=body.dryRun,
+                                   rma_acknowledged_ids=body.rmaAcknowledgedIds)
 
 
 class PosRefundBody(BaseModel):

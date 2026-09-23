@@ -82,6 +82,16 @@ async def test_cekmece_parcasi_patlarsa_gerisi_yine_dolar() -> None:
     assert any("POS denemeleri" in item for item in result["warnings"])
 
 
+async def test_siparis_cekmece_rma_taleplerini_siparis_kimligiyle_yukler() -> None:
+    service, api, _ = _service()
+    api.requests_payload = {"items": [{"id": 73, "order_id": 12, "status": "İşleme Alındı"}],
+                            "meta": {"lastPage": 1}}
+    result = await service.order_card(12)
+    assert result["rma"]["available"] is True
+    assert result["rma"]["items"][0]["requestId"] == 73
+    assert api.args("bbd_return_requests")[0][0] == {"order_id": 12}
+
+
 async def test_satis_okunamazsa_iade_orani_bos_kalir_ve_nedeni_yazilir() -> None:
     service, api, _ = _service()
     api.refunds_payload = _refund_payload()
@@ -190,6 +200,88 @@ async def test_kisa_gerekce_backendde_de_reddedilir() -> None:
     result = await service.approve(token=preview["token"], reason="ok", actor="Ali")
     assert result["ok"] is False
     assert "Gerekçe" in result["error"]
+    assert api.used("create_refund") == []
+
+
+async def test_rma_varsa_backend_acik_yetkili_onayi_olmadan_kredi_notu_yazmaz() -> None:
+    service, api, store = _service()
+    api.requests_payload = {"items": [{"id": 73, "order_id": 12, "status": "İşleme Alındı"}],
+                            "meta": {"lastPage": 1}}
+    preview = await service.calculate(12, quantities={"101": 1})
+    result = await service.approve(token=preview["token"], reason=GEREKCE, actor="Yetkili",
+                                   dry_run=False)
+    assert result["ok"] is False
+    assert result["confirmationRequired"] is True
+    assert result["rma"] == [{"id": 73, "status": "İşleme Alındı"}]
+    assert api.used("create_refund") == []
+    blocked = [entry for entry in store.audit if entry["result"] == "rma_confirmation_required"]
+    assert len(blocked) == 1
+    assert json.loads(blocked[0]["detail"])["rma"][0]["id"] == 73
+
+
+async def test_rma_varsa_acik_onay_kredi_notuna_ve_denetime_islenir() -> None:
+    service, api, store = _service()
+    api.requests_payload = {"items": [{"id": 73, "order_id": 12, "status": "İşleme Alındı"}],
+                            "meta": {"lastPage": 1}}
+    preview = await service.calculate(12, quantities={"101": 1})
+    result = await service.approve(token=preview["token"], reason=GEREKCE, actor="Yetkili",
+                                   dry_run=False, rma_acknowledged_ids=[73])
+    assert result["ok"] is True
+    assert len(api.used("create_refund")) == 1
+    attempt = next(entry for entry in store.audit if entry["result"] == "denendi")
+    assert json.loads(attempt["detail"])["rmaAcknowledged"] is True
+    assert json.loads(attempt["detail"])["acknowledgedRmaIds"] == [73]
+    assert json.loads(attempt["detail"])["rma"][0]["id"] == 73
+
+
+async def test_rma_dogrulanamazsa_kredi_notu_fail_closed() -> None:
+    service, api, store = _service()
+    api.fail.add("bbd_return_requests")
+    preview = await service.calculate(12, quantities={"101": 1})
+    result = await service.approve(token=preview["token"], reason=GEREKCE, actor="Yetkili",
+                                   dry_run=False, rma_acknowledged_ids=[73])
+    assert result["ok"] is False
+    assert "RMA kayıtları doğrulanamadı" in result["error"]
+    assert api.used("create_refund") == []
+    assert any(entry["result"] == "rma_check_failed" for entry in store.audit)
+
+
+async def test_yeni_rma_kaydi_eski_onay_listesine_zimnen_eklenmez() -> None:
+    service, api, _ = _service()
+    api.requests_payload = {"items": [{"id": 73, "order_id": 12, "status": "İşleme Alındı"},
+                                       {"id": 74, "order_id": 12, "status": "Talep Edildi"}],
+                            "meta": {"lastPage": 1}}
+    preview = await service.calculate(12, quantities={"101": 1})
+    result = await service.approve(token=preview["token"], reason=GEREKCE, actor="Yetkili",
+                                   dry_run=False, rma_acknowledged_ids=[73])
+    assert result["ok"] is False
+    assert result["confirmationRequired"] is True
+    assert [item["id"] for item in result["rma"]] == [73, 74]
+    assert api.used("create_refund") == []
+
+
+async def test_bozuk_rma_yaniti_fail_closed() -> None:
+    service, api, store = _service()
+    api.requests_payload = {"items": [{"order_id": 12}], "meta": {}}
+    preview = await service.calculate(12, quantities={"101": 1})
+    result = await service.approve(token=preview["token"], reason=GEREKCE, actor="Yetkili",
+                                   dry_run=False)
+    assert result["ok"] is False
+    assert "geçersiz talep" in result["error"]
+    assert api.used("create_refund") == []
+    assert any(entry["result"] == "rma_check_invalid" for entry in store.audit)
+
+
+async def test_sayfalanmis_rma_listesi_eksik_onaylanmaz() -> None:
+    service, api, _ = _service()
+    api.requests_payload = {"items": [{"id": 73, "order_id": 12}],
+                            "meta": {"lastPage": 2}}
+    card = await service.order_card(12)
+    assert card["rma"]["available"] is False
+    preview = await service.calculate(12, quantities={"101": 1})
+    result = await service.approve(token=preview["token"], reason=GEREKCE, actor="Yetkili",
+                                   dry_run=False, rma_acknowledged_ids=[73])
+    assert result["ok"] is False
     assert api.used("create_refund") == []
 
 

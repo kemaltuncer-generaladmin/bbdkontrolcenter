@@ -488,6 +488,7 @@ async function openRefund(row) {
 
 function refundSection(row, payload, box) {
   const order = payload.order;
+  const rmaRows = payload.rma?.items || [];
   const wanted = new Map();          // kalemId → adet
 
   const rough = h('div', 'rf-rough');
@@ -630,6 +631,18 @@ function refundSection(row, payload, box) {
     const detail = data.calc;
     result.replaceChildren();
 
+    if (payload.rma?.available === false) {
+      result.append(alertBox(
+        'Bu siparişin RMA kayıtları okunamadı. Canlı kredi notu onayı, RMA kontrolü tamamlanana kadar engellenir.',
+        'bad'));
+    } else if (rmaRows.length) {
+      result.append(alertBox(
+        `Bu siparişte ${num(rmaRows.length)} RMA talebi var (${rmaRows.map((rma) =>
+          `#${rma.requestId}${rma.statusLabel ? ` · ${rma.statusLabel}` : ''}`).join(', ')}). `
+        + 'RMA üzerinden iade ve kredi notu birlikte Kuveyt Türk’e para iadesi gönderebilir. '
+        + 'Manuel kredi notu için yetkili onayı gereklidir; ayrı POS iadesi yapmayın.', 'warn'));
+    }
+
     const lines = h('div', 'rf-lines');
     for (const line of detail.lines) {
       lines.append(breakdownRow(
@@ -687,18 +700,32 @@ function refundSection(row, payload, box) {
   }
 
   async function approve(data) {
+    const hasRma = rmaRows.length > 0;
+    if (payload.rma?.available === false) {
+      toast('RMA kayıtları doğrulanmadan kredi notu oluşturulamaz.', 'bad');
+      return;
+    }
     const reason = await askReason({
       title: 'İadeyi onayla',
       description: `${data.order.number || `#${data.orderId}`} · ${money(data.calc.total)} iade `
         + `edilecek (${num(data.calc.unitCount)} adet`
         + `${data.calc.shippingIncluded ? ', kargo dahil' : ', kargo hariç'}). `
+        + (hasRma ? `RMA ${rmaRows.map((rma) => `#${rma.requestId}`).join(', ')} mevcut; `
+          + 'RMA ve bu kredi notu bankaya iki ayrı iade gönderebilir. ' : '')
         + 'Kredi notu oluşur ve geri alınamaz.',
       confirmLabel: 'İadeyi oluştur',
     });
     if (!reason) return;
+    if (hasRma && !window.confirm(
+      `Yetkili onayı: Sipariş ${data.order.number || `#${data.orderId}`} için `
+      + `RMA ${rmaRows.map((rma) => `#${rma.requestId}`).join(', ')} mevcut. `
+      + 'RMA akışı ayrıca Kuveyt Türk’e iade başlatmış olabilir. Çifte iadeyi kontrol ettim '
+      + 've manuel kredi notunu oluşturmayı onaylıyorum.'
+    )) return;
     await withBusy('İade oluşturuluyor…', async () => {
       const done = await call(`${BASE}/approve`, {
-        method: 'POST', body: { token: data.token, reason, dryRun: false },
+        method: 'POST', body: { token: data.token, reason, dryRun: false,
+          rmaAcknowledgedIds: hasRma ? rmaRows.map((rma) => rma.requestId) : [] },
       });
       toast(done.dryRun ? 'Kuru prova: istek gönderilmedi.' : `${money(done.total)} iade oluştu.`,
         done.dryRun ? 'warn' : 'good');
