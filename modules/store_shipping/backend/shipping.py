@@ -220,7 +220,13 @@ def reason_error(value: str, minimum: int = MIN_REASON) -> str:
 
 def carrier_label(code: Any) -> str:
     key = fold(code)
-    return CARRIER_LABELS.get(key, text(code) or "—")
+    # Bagisto's method code can reach shipment responses unchanged, e.g.
+    # `hepsijet_hepsijet`; Geliver service codes can also be compound
+    # (`hepsijet_standart`). Resolve the carrier prefix before falling back
+    # to a raw machine code so operators see the same readable name everywhere.
+    parts = key.split("_")
+    provider = parts[1] if parts[0] == "geliver" and len(parts) > 1 else parts[0]
+    return CARRIER_LABELS.get(key) or CARRIER_LABELS.get(provider) or text(code) or "—"
 
 
 def _first(source: Any, *keys: str) -> Any:
@@ -305,13 +311,15 @@ def billed_units(desi_value: Any, weight_kg: Any) -> int:
 def auto_measures(items: Any, *, divisor: int = 3000) -> dict[str, Any]:
     """Sipariş kalemlerinden desi/ağırlık TAHMİNİ (sihirbazın ilk değeri).
 
-    Ürünün üzerinde ölçü varsa kullanılır; yoksa yalnız ağırlık toplanır ve
-    `complete: False` döner. Ekran o zaman "ölçüleri elle girin" der — eksik
-    veriden tahmini kutu ÜRETMEZ, çünkü yanlış desi doğrudan yanlış ücrettir.
+    Fiziksel en/boy/yükseklik varsa onlardan; yoksa mağazanın sipariş anında
+    sabitlediği `additional.bbd_shipping.unit_desi` değerinden desi çıkarır.
+    Bu ikinci değer gerçek kutu ölçüsü değildir; Geliver'a aynı desiyi veren
+    sentetik ölçüler gönderilir. İkisi de yoksa yalnız ağırlık toplanır.
     """
     weight = 0.0
     volume = 0.0
     missing: list[str] = []
+    physical_missing: list[str] = []
     counted = 0
 
     for item in items if isinstance(items, list) else []:
@@ -329,7 +337,15 @@ def auto_measures(items: Any, *, divisor: int = 3000) -> dict[str, Any]:
         if width > 0 and height > 0 and length > 0:
             volume += width * height * length * qty
         else:
-            missing.append(text(item.get("sku") or item.get("name")) or "?")
+            label = text(item.get("sku") or item.get("name")) or "?"
+            physical_missing.append(label)
+            additional = item.get("additional")
+            shipping = additional.get("bbd_shipping") if isinstance(additional, dict) else None
+            snapshot_desi = as_float(shipping.get("unit_desi")) if isinstance(shipping, dict) else 0.0
+            if snapshot_desi > 0:
+                volume += snapshot_desi * max(1, int(divisor)) * qty
+            else:
+                missing.append(label)
 
     estimate = round(volume / max(1, int(divisor)), 2) if volume else 0.0
     return {
@@ -338,7 +354,9 @@ def auto_measures(items: Any, *, divisor: int = 3000) -> dict[str, Any]:
         "units": billed_units(estimate, weight),
         "pieces": counted,
         "complete": bool(volume) and not missing,
+        "physicalComplete": bool(volume) and not physical_missing,
         "missing": missing[:20],
+        "physicalMissing": physical_missing[:20],
     }
 
 
@@ -908,6 +926,8 @@ def tier_payload(rows: Any) -> list[dict[str, Any]]:
 
 def wizard_body(*, order_id: int, carrier: str, packages: int, desi_value: float,
                 weight: float, payer: str, cod: int, note: str = "",
+                length: float | None = None, width: float | None = None,
+                height: float | None = None,
                 divisor: int = 3000) -> dict[str, Any]:
     """Gönderi sihirbazının ürettiği taslak gövdesi.
 
@@ -918,7 +938,7 @@ def wizard_body(*, order_id: int, carrier: str, packages: int, desi_value: float
     """
     units = billed_units(desi_value, weight)
     payer_code = "receiver" if fold(payer) in ("receiver", "alici") else "sender"
-    return {
+    body = {
         "orderId": int(order_id),
         "carrier": fold(carrier),
         "packages": max(1, int(packages or 1)),
@@ -930,6 +950,10 @@ def wizard_body(*, order_id: int, carrier: str, packages: int, desi_value: float
         "codAmount": from_kurus(max(0, int(cod or 0))),
         "note": text(note)[:255],
     }
+    if all(value is not None and float(value) > 0 for value in (length, width, height)):
+        body.update({"length": round(float(length), 2), "width": round(float(width), 2),
+                     "height": round(float(height), 2), "distanceUnit": "cm"})
+    return body
 
 
 def wizard_problems(*, carrier: str, desi_value: float, weight: float, packages: int,

@@ -156,6 +156,9 @@ class QuoteBody(BaseModel):
     carrier: str = Field(default="", max_length=32)
     desi: float = Field(default=0, ge=0, le=100_000)
     weight: float = Field(default=0, ge=0, le=100_000)
+    length: float | None = Field(default=None, ge=0, le=100_000)
+    width: float | None = Field(default=None, ge=0, le=100_000)
+    height: float | None = Field(default=None, ge=0, le=100_000)
     payer: str = Field(default="sender", max_length=16)
     cod: int = Field(default=0, ge=0)      # kuruş
 
@@ -168,6 +171,7 @@ async def quote(
     """Ücret dökümü ÖNİZLEMESİ. Mağazaya yazmaz, gerekçe istemez."""
     return await service().quote(order_id=body.orderId, carrier=body.carrier,
                                  desi_value=body.desi, weight=body.weight,
+                                 length=body.length, width=body.width, height=body.height,
                                  payer=body.payer, cod=body.cod)
 
 
@@ -182,6 +186,9 @@ class CreateBody(BaseModel):
     packages: int = Field(default=1, ge=1, le=99)
     desi: float = Field(default=0, ge=0, le=100_000)
     weight: float = Field(default=0, ge=0, le=100_000)
+    length: float | None = Field(default=None, ge=0, le=100_000)
+    width: float | None = Field(default=None, ge=0, le=100_000)
+    height: float | None = Field(default=None, ge=0, le=100_000)
     payer: str = Field(default="sender", max_length=16)
     cod: int = Field(default=0, ge=0)      # kuruş
     note: str = Field(default="", max_length=255)
@@ -209,6 +216,7 @@ async def create_shipment(
     return await service().create_shipment(order_id, carrier=body.carrier,
                                            packages=body.packages, desi_value=body.desi,
                                            weight=body.weight, payer=body.payer, cod=body.cod,
+                                           length=body.length, width=body.width, height=body.height,
                                            note=body.note, reason=body.reason,
                                            actor=user.full_name, dry_run=body.dryRun,
                                            provider=body.provider)
@@ -271,6 +279,9 @@ class DispatchBody(BaseModel):
     offerId: str = Field(default="", max_length=120)
     desi: float = Field(default=0, ge=0, le=100_000)
     weight: float = Field(default=0, ge=0, le=100_000)
+    length: float | None = Field(default=None, ge=0, le=100_000)
+    width: float | None = Field(default=None, ge=0, le=100_000)
+    height: float | None = Field(default=None, ge=0, le=100_000)
     packages: int = Field(default=1, ge=1, le=99)
     payer: str = Field(default="sender", max_length=16)
     cod: int = Field(default=0, ge=0)      # kuruş
@@ -287,15 +298,17 @@ async def dispatch(
     body: DispatchBody,
     user: CurrentUser = requires("store_shipping.purchase"),
 ) -> dict[str, Any]:
-    """TEK TIK: gönderi → teklif → etiket SATIN AL → takip no → etiket+fatura bas.
+    """Onaylı özet sonrası: gönderi → teklif → etiket satın al → takip no → yazdır.
 
     PARA HARCAR, bu yüzden etiket satın almayla AYNI izni ister
-    (`store_shipping.purchase`). Ara onay adımı YOKTUR; koruma izin
-    anahtarında ve denetim defterindedir (K9 — arayüzde gizlemek yetmez).
+    (`store_shipping.purchase`). Arayüz satın almadan önce ölçü/ağırlık ve
+    tahmini tutarı gösterip açık onay alır; yetki ve denetim defteri sunucuda
+    ayrıca doğrulanır.
     """
     return await service().dispatch(order_id, carrier=body.carrier, provider=body.provider,
                                     offer_id=body.offerId, desi_value=body.desi,
                                     weight=body.weight, packages=body.packages,
+                                    length=body.length, width=body.width, height=body.height,
                                     payer=body.payer, cod=body.cod, note=body.note,
                                     reason=body.reason, actor=user.full_name,
                                     dry_run=body.dryRun, auto_print=body.autoPrint)

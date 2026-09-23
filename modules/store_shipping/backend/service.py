@@ -131,13 +131,12 @@ def _first_of(source: Any, *keys: str) -> Any:
 def dispatch_reason(order_number: str) -> str:
     """Gerekçe boş bırakıldığında denetim defterine yazılacak metin.
 
-    KULLANICININ KARARI: "kargoya ver" tek tıktır, ara onay adımı YOKTUR.
     Gerekçe alanı ekranda durur ve isteyen doldurur, ama BOŞ BIRAKMAK AKIŞI
-    DURDURMAZ. Denetim defterinin boş kalmaması için otomatik bir cümle
-    yazılır; elle yazılmış gerekçeden bu cümleyle ayırt edilir.
+    DURDURMAZ. Ölçü/ücret özeti UI'da onaylanır; denetim defterinin boş
+    kalmaması için otomatik bir cümle yazılır.
     """
-    return (f"Kargoya ver: {shipping.text(order_number) or '?'} siparişi tek tıkla "
-            "gönderildi, etiket satın alındı.")
+    return (f"Kargoya ver: {shipping.text(order_number) or '?'} siparişi onaylı gönderi "
+            "özetiyle işlendi, etiket satın alındı.")
 
 
 def _dispatch_warnings(info: dict[str, Any]) -> list[str]:
@@ -831,6 +830,8 @@ class ShippingService:
     # ========================================================== sihirbaz
 
     async def quote(self, *, order_id: int, carrier: str, desi_value: float, weight: float,
+                    length: float | None = None, width: float | None = None,
+                    height: float | None = None,
                     payer: str = "sender", cod: int = 0) -> dict[str, Any]:
         """Gönderi ücretinin DÖKÜMÜ — yazmadan önce ekranda gösterilir.
 
@@ -838,7 +839,19 @@ class ShippingService:
         (`offers`) gelir. İkisi ayrı gösterilir: tahmini gerçek fiyat gibi
         sunmak, sonradan gelen faturayı sürpriz yapar.
         """
-        units = shipping.billed_units(desi_value, weight)
+        length, width, height = [round(float(value), 2) if value is not None else None
+                                 for value in (length, width, height)]
+        dimensions = [length, width, height]
+        present_dimensions = [value is not None and value > 0 for value in dimensions]
+        if any(present_dimensions) and not all(present_dimensions):
+            return {"ok": False, "error": "Fiziksel ölçü için en, boy ve yükseklik birlikte girilmelidir."}
+        measured_desi = (shipping.desi(width, height, length, divisor=self._divisor)
+                         if all(present_dimensions) else 0.0)
+        effective_desi = measured_desi if measured_desi > 0 else desi_value
+        if effective_desi <= 0:
+            return {"ok": False,
+                    "error": "Sipariş desisi bulunamadı. Koli ölçülerini girin veya desiyi elle belirtin."}
+        units = shipping.billed_units(effective_desi, weight)
         rate_payload = await self.rates()
         zones = await self._zone_rows()
 
@@ -874,10 +887,16 @@ class ShippingService:
         )
         return {"ok": True, "error": "", "connected": bool(rate_payload.get("connected")),
                 "quote": estimate, "zone": zone, "units": units,
-                "tierCount": len(tiers)}
+                "tierCount": len(tiers), "measuredDesi": measured_desi,
+                "desiSource": "physical" if measured_desi > 0 else "snapshot-or-manual",
+                "desiMismatch": bool(measured_desi > 0 and desi_value > 0
+                                      and shipping.billed_units(measured_desi, 0)
+                                      != shipping.billed_units(desi_value, 0))}
 
     async def create_shipment(self, order_id: int, *, carrier: str, packages: int,
                               desi_value: float, weight: float, payer: str, cod: int,
+                              length: float | None = None, width: float | None = None,
+                              height: float | None = None,
                               note: str, reason: str, actor: str,
                               dry_run: bool = True,
                               provider: str = "") -> dict[str, Any]:
@@ -933,7 +952,19 @@ class ShippingService:
         address = shipping.shipping_address(order)
         zone = shipping.zone_for(address.get("city"),
                                  address.get("district") or address.get("state"), zones)
-        warnings = shipping.wizard_problems(carrier=carrier, desi_value=desi_value,
+        length, width, height = [round(float(value), 2) if value is not None else None
+                                 for value in (length, width, height)]
+        dimensions = [length, width, height]
+        present_dimensions = [value is not None and value > 0 for value in dimensions]
+        if any(present_dimensions) and not all(present_dimensions):
+            return {"ok": False, "error": "Fiziksel ölçü için en, boy ve yükseklik birlikte girilmelidir."}
+        measured_desi = (shipping.desi(width, height, length, divisor=self._divisor)
+                         if all(present_dimensions) else 0.0)
+        effective_desi = measured_desi if measured_desi > 0 else desi_value
+        if effective_desi <= 0 and weight > 0:
+            return {"ok": False,
+                    "error": "Sipariş desisi bulunamadı. Koli ölçülerini girin veya desiyi elle belirtin."}
+        warnings = shipping.wizard_problems(carrier=carrier, desi_value=effective_desi,
                                             weight=weight, packages=packages, payer=payer,
                                             cod=cod, delivers=zone["delivers"])
         blocking = [line for line in warnings if "Taşıyıcı seçilmedi" in line
@@ -942,7 +973,10 @@ class ShippingService:
             return {"ok": False, "error": " ".join(blocking), "warnings": warnings}
 
         body = shipping.wizard_body(order_id=int(order_id), carrier=carrier,
-                                    packages=packages, desi_value=desi_value, weight=weight,
+                                    packages=packages, desi_value=effective_desi, weight=weight,
+                                    length=length if all(present_dimensions) else None,
+                                    width=width if all(present_dimensions) else None,
+                                    height=height if all(present_dimensions) else None,
                                     payer=payer, cod=cod, note=note, divisor=self._divisor)
         await self._record(order_id=order_id, action="create_shipment", reason=reason,
                            actor=actor, result="denendi", detail=body)
@@ -1204,11 +1238,13 @@ class ShippingService:
 
     async def dispatch(self, order_id: int, *, carrier: str = "", offer_id: str = "",
                        desi_value: float = 0.0, weight: float = 0.0, packages: int = 1,
+                       length: float | None = None, width: float | None = None,
+                       height: float | None = None,
                        payer: str = "sender", cod: int = 0, note: str = "",
                        reason: str = "", actor: str = "", dry_run: bool = False,
                        provider: str = "",
                        auto_print: bool | None = None) -> dict[str, Any]:
-        """"KARGOYA VER" — TEK TIK. PARA HARCAR, ARA ONAY SORMAZ.
+        """"KARGOYA VER" — onaylanmış ölçü özetini tek istekte uygular.
 
         KULLANICININ KARARI, AYNEN: "sipariş seçince 'kargoya ver' dedik mi o
         sipariş yola çıkacak zaten. PARA HARCASIN. Testi seçersek Geliver'a
@@ -1221,9 +1257,9 @@ class ShippingService:
 
         DÖRT KURAL:
 
-        1. ARA ONAY YOK. `dry_run` varsayılanı `False` ve gerekçe boş
-           gelebilir; boşsa `dispatch_reason` yazılır. Kuru prova yeteneği
-           kodda DURUR (`dry_run=True`) ama varsayılan akışta kullanılmaz.
+        1. UI, satın alma isteğinden önce özet ve tahmini tutar için onay alır.
+           `dry_run` varsayılanı `False` ve gerekçe boş gelebilir; boşsa
+           `dispatch_reason` yazılır.
         2. TEST YOLU GELİVER'A UĞRAMAZ. `provider="bagisto"` seçilirse istek
            `_test_shipment`e gider ve `bbd_dispatch_order` HİÇ çağrılmaz.
         3. ETİKET ÖNCE VAR OLUR, SONRA BASILIR. Kâğıt yalnız satın alma
@@ -1253,6 +1289,20 @@ class ShippingService:
             "packages": max(1, int(packages or 1)),
             "payer": "receiver" if shipping.fold(payer) in ("receiver", "alici") else "sender",
         }
+        length, width, height = [round(float(value), 2) if value is not None else None
+                                 for value in (length, width, height)]
+        dimensions = [length, width, height]
+        present_dimensions = [value is not None and value > 0 for value in dimensions]
+        if any(present_dimensions) and not all(present_dimensions):
+            return {"ok": False, "error": "Fiziksel ölçü için en, boy ve yükseklik birlikte girilmelidir."}
+        if all(present_dimensions):
+            measured_desi = shipping.desi(width, height, length, divisor=self._divisor)
+            if measured_desi > 0:
+                body["desi"] = measured_desi
+                body["length"] = round(float(length), 2)
+                body["width"] = round(float(width), 2)
+                body["height"] = round(float(height), 2)
+                body["distanceUnit"] = "cm"
         # BOŞ ALAN GÖNDERİLMEZ. Taşıyıcı ve teklif seçilmediğinde uç
         # MÜŞTERİNİN ödediği firmayı kendisi bulur; boş dize göndermek o
         # tercihi "hiçbir firma" diye okutabilirdi.
@@ -1260,7 +1310,7 @@ class ShippingService:
             body["carrier"] = shipping.fold(carrier)
         if shipping.text(offer_id):
             body["offerId"] = shipping.text(offer_id)
-        if desi_value:
+        if desi_value and "desi" not in body:
             body["desi"] = round(max(0.0, float(desi_value)), 2)
         if weight:
             body["weight"] = round(max(0.0, float(weight)), 2)

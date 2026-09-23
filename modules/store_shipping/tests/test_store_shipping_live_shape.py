@@ -259,6 +259,33 @@ async def test_ucretsiz_kargo_esigi_canli_tutar_alaniyla_calisir() -> None:
     assert result["quote"]["total"] == 0
 
 
+async def test_fiziksel_olculer_teklifte_desi_degerini_belirler_uyusmazlik_gosterilir() -> None:
+    service, api, _ = _service()
+    api.order_by_id[19] = CANLI_AYRINTI_SIPARISI
+    result = await service.quote(order_id=19, carrier="yurtici", desi_value=8, weight=0.5,
+                                 length=30, width=20, height=10)
+    assert result["measuredDesi"] == 2.0
+    assert result["units"] == 2
+    assert result["desiMismatch"] is True
+
+
+async def test_iki_ondalik_hacim_quote_ile_gonderi_arasinda_ayni_kalir() -> None:
+    service, api, _ = _service()
+    api.order_by_id[19] = CANLI_AYRINTI_SIPARISI
+    result = await service.quote(order_id=19, carrier="yurtici", desi_value=2, weight=0.1,
+                                 length=18.16, width=18.16, height=18.16)
+    assert result["measuredDesi"] == 2.0
+    assert result["units"] == 2
+
+
+async def test_legacy_sipariste_snapshot_ve_elle_desi_yoksa_teklif_uretmez() -> None:
+    service, api, _ = _service()
+    api.order_by_id[19] = CANLI_AYRINTI_SIPARISI
+    result = await service.quote(order_id=19, carrier="yurtici", desi_value=0, weight=0.5)
+    assert result["ok"] is False
+    assert "desisi bulunamadı" in result["error"]
+
+
 async def test_teslimat_yapilmayan_bolge_uyarisi_canli_adresle_cikar() -> None:
     service, api, store = _service()
     api.order_by_id[19] = CANLI_AYRINTI_SIPARISI

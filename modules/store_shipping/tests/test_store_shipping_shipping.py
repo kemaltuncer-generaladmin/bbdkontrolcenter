@@ -60,6 +60,18 @@ def test_kalemlerden_otomatik_olcu_eksik_urunu_soyler() -> None:
     assert result["missing"] == ["B"]
 
 
+def test_siparis_desi_snapshoti_sihirbazda_okunur_fakat_fiziksel_olcu_sayilmaz() -> None:
+    result = shipping.auto_measures([
+        {"sku": "A", "qty_ordered": 2, "weight": 0.5,
+         "additional": {"bbd_shipping": {"unit_desi": 1.25}}},
+    ])
+    assert result["desi"] == 2.5
+    assert result["complete"] is True
+    assert result["physicalComplete"] is False
+    assert result["missing"] == []
+    assert result["physicalMissing"] == ["A"]
+
+
 # =========================================================== ücretlendirme
 
 
@@ -291,6 +303,15 @@ def test_sihirbaz_govdesi_faturalanacak_desiyi_de_tasir() -> None:
     assert body["codAmount"] == "250.00"
 
 
+def test_sihirbaz_govdesi_fiziksel_olculeri_cm_ile_tasir() -> None:
+    body = shipping.wizard_body(order_id=91, carrier="MNG", packages=1, desi_value=2,
+                                weight=0.4, payer="sender", cod=0,
+                                length=30, width=20, height=10)
+    assert (body["length"], body["width"], body["height"]) == (30, 20, 10)
+    assert body["distanceUnit"] == "cm"
+    assert body["billedDesi"] == 2
+
+
 def test_alici_odemeli_ama_tutarsiz_secim_uyarilir() -> None:
     problems = shipping.wizard_problems(carrier="aras", desi_value=1, weight=0, packages=1,
                                         payer="receiver", cod=0)
@@ -330,6 +351,15 @@ def test_JSON_BOOLEAN_bayragi_taniyor_tasiyicilar_pasif_gorunmuyor() -> None:
     satirlar = [shipping.carrier_row(row) for row in canli]
     assert [row["active"] for row in satirlar] == [True, True, False]
     assert len([row for row in satirlar if row["active"]]) == 2
+
+
+def test_bilesik_bagisto_ve_geliver_firma_kodlari_okunur_adla_gosterilir() -> None:
+    # Sipariş yöntemi `hepsijet_hepsijet`, Geliver taşıyıcı kodu `HEPSIJET`
+    # olabilir. Ham yöntem kodunu seçenek etiketi yapmak operatöre
+    # `hepsijet_hepsijet` gibi bir iç kod gösteriyordu.
+    assert shipping.carrier_label("hepsijet_hepsijet") == "HepsiJET"
+    assert shipping.carrier_label("HEPSIJET_STANDART") == "HepsiJET"
+    assert shipping.carrier_label("geliver_SURAT_STANDART") == "Sürat Kargo"
 
 
 def test_bayrak_uc_bicimde_de_ayni_okunur() -> None:

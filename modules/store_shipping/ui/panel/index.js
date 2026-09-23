@@ -10,15 +10,11 @@
 // desi→ücret matrisi ve ücretsiz kargo eşiği. `Bölgeler` il/ilçe eşlemesi.
 // `Performans` teslim süresi, teslim edilemeyen oranı ve kargo kâr/zararı.
 //
-// «KARGOYA VER» — TEK TIK, ARA ONAY YOK. Kullanıcının kararı: "sipariş seçince
-// 'kargoya ver' dedik mi o sipariş yola çıkacak zaten. PARA HARCASIN."
-// Düğme satırda durur; bir tıkla gönderi açılır, teklif alınır, MÜŞTERİNİN
+// «KARGOYA VER» — tek bir açık onaydan sonra gönderi açılır, teklif alınır, MÜŞTERİNİN
 // ödediği firmadan etiket SATIN ALINIR, takip numarası siparişe yazılır ve iki
-// belge (KARGO ETİKETİ + FATURA) varsayılan yazıcıya gider. Onay penceresi
-// AÇILMAZ ve "Geliver mi test mi" diye SORULMAZ (o soru bir dönem vardı ve
-// cevabı hep aynıydı); gerekçe alanı listenin üstünde durur, boş bırakılabilir
-// ve akışı durdurmaz. Sihirbaz DURUYOR: ölçüsü şüpheli gönderi, test denemesi
-// ve dışarıdan alınmış etiket oradan geçer.
+// belge (KARGO ETİKETİ + FATURA) varsayılan yazıcıya gider. Onay özeti ölçü,
+// ağırlık, faturalanan birim ve mevcut tahmini gösterir; Geliver'ın kesin
+// teklifi taşıyıcı yanıtında belirlenir. Gerekçe boşsa otomatik yazılır.
 //
 // NE YAPMAZ:
 //  · ETİKET ÇİZMEZ. Barkod taşıyıcının kendi numaralandırmasıdır; kendi
@@ -28,10 +24,7 @@
 //    görünen numara siparişe YAZILMIŞ olandır; kullanıcıya yazdırılsaydı
 //    tahmin olurdu. TEK İSTİSNA `🏷️ Etiketim var`: orada zincir hiç çalışmadı,
 //    numara kullanıcının elindeki etiketin üstünde yazıyor ve tek kaynağı odur.
-//  · SİHİRBAZDA ARA ONAY PENCERESİ AÇMAZ. Üç düğmenin ikisi ücretsiz, biri
-//    para harcıyor ve ayrımı düğmenin kendisi söylüyor. Tek kalan pencere,
-//    teklif satırından etiket satın alırken istenen 20 karakterlik gerekçedir
-//    — o gerekçeyi sunucu da doğruluyor (ADR 0012), kaldırılamaz.
+//  · GERÇEK ETİKET SATIN ALIMINDAN ÖNCE AÇIK ÖZET ONAYI ALIR.
 //  · SİHİRBAZDA TASLAK AÇARKEN PARA HARCAMAZ. "Taslak aç" ile "Etiketi satın
 //    al" orada bilerek iki ayrı adımdır: ilki ücretsiz ve düzeltilebilir.
 //    İkisi de katlanır `Ayrıntı` bölmesindedir; günlük iş oraya girmez.
@@ -510,7 +503,7 @@ function renderReadyBar(table) {
     bar.append(button(`🚚 ${num(hazir.length)} siparişi kargoya ver`, {
       variant: 'danger',
       title: 'Sıradan geçirilir: her biri için gönderi açılır, ETİKET SATIN ALINIR, '
-        + 'takip numarası yazılır ve belgeler basılır. Onay sorulmaz, PARA HARCAR.',
+        + 'takip numarası yazılır ve belgeler basılır. Her satın alma öncesi özet onayı alınır.',
       onClick: () => dispatchQueue(hazir, table),
     }));
   }
@@ -543,13 +536,21 @@ function renderReadyBar(table) {
  */
 async function dispatchQueue(rows, table) {
   if (busy) return;
+  const summary = rows.map((row) => {
+    const units = Number(row.measures?.units || row.measures?.desi) || 0;
+    return `${row.orderNumber}: ${units} desi · ${Number(row.measures?.weight) || 0} kg`;
+  }).join('\n');
+  if (!window.confirm(
+    `${rows.length} gönderi için Geliver etiketi satın alınacak; bu işlemler geri alınamaz.\n\n`
+      + `${summary}\n\nKesin taşıyıcı teklifleri Geliver yanıtında belirlenir. Hepsi gönderilsin mi?`,
+  )) return;
   let gonderilen = 0;
   const hatalar = [];
   for (const [index, row] of rows.entries()) {
     nodes.status?.set(`${index + 1}/${rows.length} · ${row.orderNumber} kargoya veriliyor…`);
     // `dispatchOrder` kendi `withBusy`'sini kuruyor; kuyruk onun bitmesini
     // bekler ve sıradakine geçer.
-    const result = await dispatchOrder(row, null);
+    const result = await dispatchOrder(row, null, {}, null, true);
     if (result && result.ok !== false) gonderilen += 1;
     else hatalar.push(row.orderNumber);
   }
@@ -602,11 +603,7 @@ function dispatchReason() {
 /**
  * Satırdaki tek tık düğmesi. Tıklanınca kendini kilitler (çift istek olmasın).
  *
- * ARA SORU YOK. Bir dönem düğme "Geliver mi, test mi?" diye bir pencere
- * açıyordu ve her gerçek gönderi o pencereden geçiyordu: günde otuz kez
- * sorulan, cevabı hep aynı olan bir soru. Kullanıcının kararı açıktı —
- * "sipariş seçince 'kargoya ver' dedik mi o sipariş yola çıkacak zaten. PARA
- * HARCASIN." Pencere o kararı geri alıyordu.
+ * ÖLÇÜ VE AĞIRLIK ÖZETİ ONAYLANMADAN GERÇEK İŞLEM BAŞLAMAZ.
  *
  * TEST YOLU KAYBOLMADI, günlük yoldan çıktı: sihirbazın üç düğmesinden biri
  * (`🧪 Test gönderisi`). Denemek isteyen sihirbazı açar; kargo çıkaran
@@ -620,7 +617,7 @@ function dispatchCell(row) {
   const go = button('🚚 Kargoya ver', {
     variant: 'danger',
     title: 'Müşterinin firmasından ETİKET SATIN ALINIR (para harcar), takip '
-      + 'numarası siparişe yazılır, etiket ve fatura basılır. Onay sorulmaz. '
+      + 'numarası siparişe yazılır, etiket ve fatura basılır. Satın alma öncesi özet gösterilir. '
       + 'Test göndermek ya da etiketi elle girmek için sihirbazı açın.',
     onClick: () => dispatchOrder(row, go),
   });
@@ -668,7 +665,40 @@ async function testShipOrder(row, trigger) {
  * `extra` sihirbazdan gelen ölçü/taşıyıcı düzeltmelerini taşır; satırdan
  * tıklandığında boştur ve sunucu müşterinin ödediği firmayı kendisi bulur.
  */
-async function dispatchOrder(row, trigger, extra = {}) {
+async function dispatchOrder(row, trigger, extra = {}, estimatedTotal = null,
+                             alreadyConfirmed = false) {
+  const length = Math.round((Number(extra.length) || 0) * 100) / 100;
+  const width = Math.round((Number(extra.width) || 0) * 100) / 100;
+  const height = Math.round((Number(extra.height) || 0) * 100) / 100;
+  const weight = Number(extra.weight ?? row.measures?.weight) || 0;
+  const dimensionCount = [length, width, height].filter((value) => value > 0).length;
+  if (dimensionCount > 0 && dimensionCount < 3) {
+    toast('En, boy ve yükseklik alanlarının üçünü de doldurun.', 'warn');
+    return null;
+  }
+  const physical = length > 0 && width > 0 && height > 0;
+  const desi = physical
+    ? Math.ceil((length * width * height) / 3000)
+    : Math.max(0, Number(extra.desi ?? row.measures?.desi) || 0);
+  if (!physical && desi <= 0) {
+    toast('Sipariş desisi yok. Koli ölçülerini girin veya desiyi elle belirtin.', 'warn');
+    return null;
+  }
+  const billedUnits = Math.ceil(Math.max(physical ? (length * width * height) / 3000 : desi,
+    weight));
+  const measure = physical
+    ? `${length} × ${width} × ${height} cm · ${desi} hacimsel desi`
+    : `${desi} desi · fiziksel ölçü yoksa sentetik ölçü kullanılır`;
+  const confirmed = alreadyConfirmed || window.confirm(
+    `Kargo etiketi satın alınacak ve işlem geri alınamaz.\n\n`
+      + `Sipariş: ${row.orderNumber}\nTaşıyıcı: ${extra.carrier || row.carrierTitle || 'müşteri tercihi'}\n`
+      + `Paket: ${Number(extra.packages) || 1}\nÖlçü: ${measure}\nAğırlık: ${weight} kg\n`
+      + `Faturalanacak birim: ${billedUnits} desi (desi ve kg değerinin büyüğü)\n`
+      + `Panel tahmini: ${estimatedTotal == null ? 'hazır değil' : money(estimatedTotal)}\n\n`
+      + 'Geliver nihai teklifi belirler; taşıyıcıya göre gerçek ücret değişebilir. Devam edilsin mi?',
+  );
+  if (!confirmed) return null;
+
   const label = trigger?.textContent;
   if (trigger) { trigger.disabled = true; trigger.textContent = 'Gönderiliyor…'; }
   const result = await withBusy(`${row.orderNumber} kargoya veriliyor…`, () => call(
@@ -847,10 +877,8 @@ function documentList(result) {
 //   🏷️ Etiketim var     elde barkod varken takip numarasını yazar — ücretsiz
 //   🧪 Test             Geliver'a hiç uğramaz — ücretsiz
 //
-// ÖLÇÜ FORMU DURUYOR ama KAPALI. Ölçü eksikse (`measures.complete === false`)
-// kendiliğinden açılır ve uyarı verir — yanlış desi doğrudan yanlış faturadır
-// ve bunu gizlemek sadeleştirme değil, körleştirme olurdu. Ölçü tamsa form
-// katlanmış durur; açan düzeltir, açmayan üç düğmeden birine basar.
+// ÖLÇÜ FORMU DURUYOR ama KAPALI. Sipariş desisi yoksa veya fiziksel ölçü
+// snapshot'ı yoksa uyarı verir; gerçek L/W/H depoda ölçülüp forma girilebilir.
 //
 // TEKLİF LİSTESİ DE DURUYOR, aynı katlanır bölmede: "önce fiyatları göreyim"
 // diyen taslak açıp teklifleri okuyabilir. Normal iş akışında görünmez.
@@ -864,6 +892,9 @@ function wizardExtra(form) {
     packages: Number(draft.packages) || 1,
     desi: Number(draft.desi) || 0,
     weight: Number(draft.weight) || 0,
+    length: Number(draft.length) || 0,
+    width: Number(draft.width) || 0,
+    height: Number(draft.height) || 0,
     payer: draft.payer || 'sender',
     cod: Number(draft.cod) || 0,
     note: draft.note || '',
@@ -933,8 +964,11 @@ function openWizard(rows, index = 0) {
       { key: 'packages', label: 'Paket sayısı', type: 'number', min: 1, max: 99,
         required: true },
       { key: 'desi', label: 'Desi', type: 'number', min: 0, max: 9999,
-        hint: 'Otomatik hesap ürün ölçülerinden gelir; ölçü eksikse elle girin.' },
+        hint: 'Fiziksel ölçüler girilirse onlardan hesaplanır; aksi halde sipariş desisi kullanılır.' },
       { key: 'weight', label: 'Ağırlık (kg)', type: 'number', min: 0, max: 9999 },
+      { key: 'length', label: 'Uzunluk (cm)', type: 'number', min: 0, max: 9999 },
+      { key: 'width', label: 'Genişlik (cm)', type: 'number', min: 0, max: 9999 },
+      { key: 'height', label: 'Yükseklik (cm)', type: 'number', min: 0, max: 9999 },
       { key: 'payer', label: 'Ödeme tipi', type: 'select', options: PAYERS },
       { key: 'cod', label: 'Kapıda tahsil edilecek', type: 'money', min: 0,
         hint: 'Alıcı ödemeli gönderide taşıyıcının tahsil edeceği tutar.' },
@@ -948,6 +982,9 @@ function openWizard(rows, index = 0) {
       packages: 1,
       desi: row.measures.desi || 0,
       weight: row.measures.weight || 0,
+      length: 0,
+      width: 0,
+      height: 0,
       payer: 'sender',
       cod: 0,
       note: '',
@@ -986,6 +1023,7 @@ function openWizard(rows, index = 0) {
   // ------------------------------------------------------ üç büyük düğme
 
   const choices = h('div', 'sh-choices');
+  let latestQuote = null;
 
   const goButton = bigChoice({
     icon: '🚚',
@@ -993,7 +1031,7 @@ function openWizard(rows, index = 0) {
     note: 'Etiket SATIN ALINIR · takip numarası siparişe yazılır · etiket ve fatura basılır',
     variant: 'danger',
     onClick: async () => {
-      const sent = await dispatchOrder(row, null, wizardExtra(form));
+      const sent = await dispatchOrder(row, null, wizardExtra(form), latestQuote?.quote?.total);
       if (sent) box.close();
     },
   });
@@ -1100,6 +1138,9 @@ function openWizard(rows, index = 0) {
             carrier: draft.carrier || '',
             desi: Number(draft.desi) || 0,
             weight: Number(draft.weight) || 0,
+            length: Number(draft.length) || 0,
+            width: Number(draft.width) || 0,
+            height: Number(draft.height) || 0,
             payer: draft.payer || 'sender',
             cod: Number(draft.cod) || 0,
           },
@@ -1108,6 +1149,7 @@ function openWizard(rows, index = 0) {
         quoteBox.replaceChildren(alertBox(`Ücret hesaplanamadı: ${error.message}`, 'warn'));
         return;
       }
+      latestQuote = payload;
       quoteBox.replaceChildren(quoteView(payload));
     }, 220);
   }
@@ -1119,6 +1161,13 @@ function openWizard(rows, index = 0) {
     onClick: async () => {
       const draft = form.draft();
       if (!form.valid()) { form.showErrors(); toast('Eksik alan var.', 'warn'); return; }
+      const dimensionCount = [draft.length, draft.width, draft.height]
+        .filter((value) => Number(value) > 0).length;
+      if ((dimensionCount > 0 && dimensionCount < 3)
+        || (dimensionCount === 0 && Number(draft.desi) <= 0)) {
+        toast('Koli ölçülerinin üçünü girin veya desiyi elle belirtin.', 'warn');
+        return;
+      }
       const result = await withBusy('Taslak açılıyor…', () => call(
         `${BASE}/orders/${row.orderId}/shipments`, {
           method: 'POST',
@@ -1126,6 +1175,8 @@ function openWizard(rows, index = 0) {
             provider: draft.provider || 'geliver',
             carrier: draft.carrier, packages: Number(draft.packages) || 1,
             desi: Number(draft.desi) || 0, weight: Number(draft.weight) || 0,
+            length: Number(draft.length) || 0, width: Number(draft.width) || 0,
+            height: Number(draft.height) || 0,
             payer: draft.payer, cod: Number(draft.cod) || 0, note: draft.note || '',
             // GEREKÇE PENCERESİ KALKTI: taslak açmak PARA HARCAMAZ ve sunucu
             // boş gerekçeye otomatik metin yazıyor (`draft_reason`). Pencere,
@@ -1247,9 +1298,15 @@ function openWizard(rows, index = 0) {
       + 'ağırlıktan hesaplandı. Kutuyu ölçüp desiyi elle düzeltin — yanlış desi doğrudan '
       + 'yanlış faturadır.', 'warn'));
   }
+  if (!row.measures.physicalComplete) {
+    details.append(alertBox(
+      'Sipariş kaydında fiziksel en/boy/yükseklik yok. Koliyi ölçüp aşağıdaki üç alanı '
+      + 'doldurun; ölçüler Geliver isteğine aynen gönderilir. Ölçü girmezseniz desiyi '
+      + 'koruyan sentetik ölçüler kullanılır.', 'warn'));
+  }
   details.append(
     card('Ölçü ve taşıyıcı', form.node,
-      'Otomatik değerler ürün kaydından gelir; üç düğme de bu değerlerle çalışır'),
+      'Fiziksel ölçüler Geliver isteğine aynen yazılır; yoksa sipariş desisi kullanılır'),
     card('Ücret dökümü (tahmin)', quoteBox, 'Kesin tutar taşıyıcı teklifinden gelir'),
     card('Fiyat teklifleri', (() => {
       const wrap = h('div', 'sh-detail-stack');
@@ -1275,6 +1332,7 @@ function openWizard(rows, index = 0) {
 
 function quoteView(payload) {
   const box = h('div', 'sh-quote-lines');
+  if (payload.ok === false) return alertBox(payload.error || 'Ölçü bilgileri geçersiz.', 'warn');
   const quote = payload.quote || {};
   for (const line of quote.lines || []) {
     const row = h('div', 'sh-quote-row');
@@ -1287,6 +1345,14 @@ function quoteView(payload) {
   total.append(h('b', undefined, `Toplam: ${money(quote.total)}`), h('span', 'kit-spacer'),
     badge(`${num(payload.units)} desi`, 'info'), badge(quote.payerLabel || '', 'dim'));
   box.append(total);
+  if (payload.measuredDesi > 0) {
+    const actual = `${num(payload.measuredDesi, 2)} desi`;
+    box.append(alertBox(payload.desiMismatch
+      ? `Girilen fiziksel ölçüler ${actual} hesaplıyor; fiyat teklifi ve gönderi bu ölçüye `
+        + 'göre hazırlanır (ayrı desi alanı göz ardı edilir).'
+      : `Fiyat teklifi fiziksel ölçülerden hesaplanan ${actual} değerini kullanıyor.`,
+    payload.desiMismatch ? 'warn' : 'good'));
+  }
   if (quote.tierFound === false) {
     box.append(alertBox(
       'Bu desi için taşıyıcı sözleşmesinde kademe tanımlı değil; taban ücret 0 sayıldı. '

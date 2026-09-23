@@ -103,6 +103,48 @@ async def test_kisa_gerekce_ile_gonderi_acilmaz() -> None:
     assert api.used("bbd_create_shipment") == []
 
 
+async def test_gonderi_taslagi_fiziksel_olculeri_magaza_ucuna_iletir() -> None:
+    service, api, _ = _service()
+    api.order_by_id = {91: dict(SIPARIS)}
+    result = await service.create_shipment(
+        91, carrier="yurtici", packages=1, desi_value=8, weight=1,
+        length=30, width=20, height=10, payer="sender", cod=0, note="",
+        reason="Koli fiziksel olarak ölçülerek gönderiye hazırlandı", actor="Ali",
+        dry_run=True,
+    )
+    assert result["ok"] is True
+    payload = api.used("bbd_create_shipment")[0]["payload"]
+    assert (payload["length"], payload["width"], payload["height"]) == (30, 20, 10)
+    assert payload["desi"] == 2.0
+    assert payload["billedDesi"] == 2
+
+
+async def test_fiziksel_olcude_bir_veya_iki_kenar_gonderiye_aktarilmaz() -> None:
+    service, api, _ = _service()
+    api.order_by_id = {91: dict(SIPARIS)}
+    result = await service.create_shipment(
+        91, carrier="yurtici", packages=1, desi_value=2, weight=1,
+        length=30, width=20, payer="sender", cod=0, note="",
+        reason="Koli ölçü kontrolü için geçici taslak", actor="Ali", dry_run=True,
+    )
+    assert result["ok"] is False
+    assert "birlikte girilmelidir" in result["error"]
+    assert api.used("bbd_create_shipment") == []
+
+
+async def test_olcusuz_ve_agirliksiz_taslak_wizard_hatasi_verir() -> None:
+    service, api, _ = _service()
+    api.order_by_id = {91: dict(SIPARIS)}
+    result = await service.create_shipment(
+        91, carrier="yurtici", packages=1, desi_value=0, weight=0,
+        payer="sender", cod=0, note="", reason="Legacy sipariş ölçü kontrolü", actor="Ali",
+        dry_run=True,
+    )
+    assert result["ok"] is False
+    assert "Desi ve ağırlık boş" in result["error"]
+    assert api.used("bbd_create_shipment") == []
+
+
 async def test_etiket_satin_almada_on_karakterlik_gerekce_yetmez() -> None:
     # Uçtaki şema 20 istiyor; servis de istiyor — istemci şemayı atlatabilir (K9).
     service, api, _ = _service()
