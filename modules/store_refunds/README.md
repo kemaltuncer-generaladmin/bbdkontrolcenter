@@ -155,10 +155,13 @@ ekranda **kapalı** görünür ve "uç yayına girince açılacak" der. Etkilene
 bölümler: iade talepleri listesi, iade gönderisi, talep süreci. Kredi notları,
 kalem seçimi, iade tutarı hesabı ve raporlar bu uçlar olmadan da çalışır (K7).
 
-**POS iadesi ayrı bir durumdur ve bu listeye girmez:** mağazada BİLEREK yoktur.
-`payments/attempts` grubu salt okunurdur; para hareketi başlatan hiçbir uç
-Kontrol Merkezi'ne açılmamıştır ve geçit isteği hiç göndermeden reddeder. Bu bir
-"henüz yayına girmedi" değil, kalıcı karardır.
+**Kredi notu bu mağazada banka iadesini de başlatır.** Bagisto
+`RefundRepository::create()` `sales.refund.save.after` olayını yayınlar; BBD Pos
+`RefundListener` bu olayı Kuveyt Türk iadesine bağlar. Bu nedenle `approve`
+para hareketidir. Ayrı POS refund çağrısı Kontrol Merkezi'nde sunulmaz; aynı
+iade için panelden ikinci bir banka işlemi başlatmak çifte iade riski taşır.
+Onaydan sonra ödeme/iade kayıtlarında banka sonucunu doğrulayın. İade listener'ı
+ve banka sonucu kodda doğrulanmıştır; canlı banka işlemi bu denetimde yapılmadı.
 
 ## Testler
 

@@ -260,18 +260,21 @@ async def test_magaza_yazmayi_reddederse_hata_ize_duser() -> None:
 
 # =============================================================== POS iadesi
 
-async def test_pos_iadesi_kredi_notundan_ayri_bir_adimdir() -> None:
+async def test_kredi_notu_magazada_otomatik_pos_iadesini_baslatir_ayri_islem_kapali() -> None:
     service, api, _ = _service()
     preview = await service.calculate(12, quantities={"101": 1})
     approved = await service.approve(token=preview["token"], reason=GEREKCE, actor="Ali",
                                      dry_run=False)
-    assert "POS iadesini" in approved["notice"]
+    assert "otomatik başlatır" in approved["notice"]
+    assert "tekrar işlem" not in approved["notice"]
+    assert "tekrar" not in approved["notice"]
     assert api.used("bbd_refund_payment") == []
 
     result = await service.pos_refund(attempt_id=7, amount=11_000, order_id=12, reason=GEREKCE,
                                       actor="Ali", dry_run=False)
-    assert result["ok"] is True
-    assert api.used("bbd_refund_payment")[0]["amount"] == 11_000
+    assert result["ok"] is False
+    assert "kredi notu" in result["error"]
+    assert api.used("bbd_refund_payment") == []
 
 
 async def test_pos_iadesinde_sifir_tutar_reddedilir() -> None:
@@ -286,8 +289,9 @@ async def test_pos_ucu_yoksa_neden_kapali_oldugu_soylenir() -> None:
     api.absent.add("bbd_refund_payment")
     result = await service.pos_refund(attempt_id=7, amount=100, reason=GEREKCE, actor="Ali")
     assert result["ok"] is False
-    assert result["missing"] is True
-    assert "yayına girince" in result["error"]
+    assert result["blocked"] is True
+    assert "çifte para iadesi" in result["error"]
+    assert api.used("bbd_refund_payment") == []
 
 
 # ================================================================== süreç
@@ -551,15 +555,9 @@ async def test_denetim_izi_siparise_gore_suzulur() -> None:
 # ================================= POS iadesi: düğme TIKLANMADAN ÖNCE kapanır
 
 async def test_pos_iadesinin_kapali_oldugu_kart_yanitinda_ilan_edilir() -> None:
-    """Düğme her tıklamada aynı cümleyi tekrar etmesin diye önden kapanır.
-
-    Geçit bu ucu BİLEREK yazmadı (para hareketi) ve istek hiç çıkmıyor. Ekran
-    bunu ancak tıklandıktan sonra öğreniyordu; artık kart yanıtında yazıyor.
-    POS LİSTESİ KALDI: hangi karta ne çekildiği gerçek bir bilgi ve iadeyi
-    panelden yapacak kişinin ihtiyacı tam olarak budur.
-    """
+    """Mağaza listener'ı otomatik banka iadesi başlattığı için ikinci düğme kapalıdır."""
     service, _, _ = _service()
     card = await service.order_card(12)
     assert card["payments"]["refundBlocked"] is True
-    assert "geri alınamaz" in card["payments"]["refundReason"]
+    assert "çifte para iadesi" in card["payments"]["refundReason"]
     assert service.features()["posRefund"]["available"] is False

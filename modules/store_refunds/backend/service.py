@@ -575,20 +575,20 @@ class RefundsService:
                 "dryRun": bool(result.get("dryRun", dry_run)),
                 "sent": bool(result.get("sent", not dry_run)),
                 "warning": warning,
-                "notice": "Kredi notu oluştu. Parayı karta geri vermek AYRI bir adımdır: "
-                          "POS iadesini aşağıdaki bölümden başlatın."}
+                "notice": "Kredi notu oluştu. Bu mağazada Bagisto iade olayı Kuveyt Türk "
+                          "POS iadesini otomatik başlatır; ayrıca POS iadesi göndermeyin. "
+                          "Banka sonucunu ödeme/iade kayıtlarından doğrulayın."}
 
-    #: SANAL POS İADESİ BU EKRANDAN YAPILMAZ — geçit ucu bilerek yazmadı.
+    #: AYRI POS İADESİ BU EKRANDAN YAPILMAZ — create_refund zaten mağazada
+    #: RefundRepository → sales.refund.save.after → Kuveyt Türk listener yolunu çalıştırır.
     #:
-    #: Gerekçe tek cümle: para hareketi. Kredi notu bir muhasebe kaydıdır ve
-    #: geri alınabilir; kartın parasını geri göndermek geri alınamaz ve
-    #: bankanın kendi mutabakatına girer.
+    #: Ayrı bir POS iadesi ikinci kez para çıkarabilir; bu yüzden by-design kapalıdır.
     POS_REFUND_REASON = (
-        "Sanal POS iadesi Kontrol Merkezi'nden yapılmıyor: bu adım parayı MÜŞTERİNİN "
-        "KARTINA geri gönderir ve geri alınamaz. Kredi notu (muhasebe kaydı) buradan "
-        "kesilir; paranın kartа dönüşü Bagisto panelinden ya da sanal POS ekranından "
-        "başlatılır. Ekranda kesilen kredi notu bu adımı BEKLER, kendiliğinden "
-        "tamamlamaz."
+        "Ayrı sanal POS iadesi bu ekrandan başlatılamaz: bu mağazada kredi notu "
+        "oluşturulunca Bagisto refund listener'ı Kuveyt Türk iadesini otomatik "
+        "başlatır. Aynı iade için POS/banka ekranından tekrar işlem göndermek "
+        "çifte para iadesi riski taşır; banka sonucunu ödeme ve iade kayıtlarından "
+        "doğrulayın."
     )
 
     @staticmethod
@@ -612,47 +612,9 @@ class RefundsService:
 
     async def pos_refund(self, *, attempt_id: int, amount: int, order_id: int = 0,
                          reason: str, actor: str, dry_run: bool = True) -> dict[str, Any]:
-        """Sanal POS iadesi — parayı karta geri verir.
-
-        Kredi notundan AYRI tutulur: kredi notu muhasebe kaydıdır, bu ise banka
-        hareketidir. Birini yapıp diğerini yapmamak mümkündür ve ekran ikisini
-        ayrı ayrı gösterir; tek düğmede birleştirmek, POS reddettiğinde "iade
-        edildi" yazan bir kayıt bırakırdı.
-        """
-        problem = self._guard(reason)
-        if problem:
-            return {"ok": False, "error": problem}
-        value = calc.as_int(amount)
-        if value <= 0:
-            return {"ok": False, "error": "İade tutarı sıfırdan büyük olmalı."}
-        if not calc.as_int(attempt_id):
-            return {"ok": False, "error": "POS işlemi seçilmedi."}
-
-        await self._record(order_id=order_id, action="pos_refund", reason=reason, actor=actor,
-                           result="denendi", detail={"attemptId": attempt_id, "amount": value})
-        try:
-            result = await self._api.bbd_refund_payment(int(attempt_id), amount=value,
-                                                        reason=reason, actor=actor,
-                                                        dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
-            await self._record(order_id=order_id, action="pos_refund", reason=reason, actor=actor,
-                               result="hata", detail={"error": str(failure)})
-            # Geçit bu ucu BİLEREK yazmadı ve istek hiç çıkmaz; hata metni onu
-            # zaten söylüyor. `blocked` bayrağı ekranın düğmeyi bir daha
-            # açmamasını sağlar — nedeni okunup kapatılmış bir düğme, her
-            # tıklamada aynı cümleyi gösteren bir düğmeden iyidir.
-            return {"ok": False, "error": self._fail(failure),
-                    "blocked": self._by_design(failure),
-                    "missing": self._missing(failure)}
-
-        await self._record(order_id=order_id, action="pos_refund", reason=reason, actor=actor,
-                           result="dry_run" if dry_run else "ok",
-                           detail={"attemptId": attempt_id, "amount": value})
-        return {"ok": True, "error": "", "amount": value,
-                "dryRun": bool(result.get("dryRun", dry_run)),
-                "bankStatus": calc.text(calc.pick(result, "status", "bank_status")),
-                "bankMessage": calc.text(calc.pick(result, "message", "bank_message")),
-                "reference": calc.text(calc.pick(result, "reference", "bank_reference"))}
+        """Ayrı POS çağrısını engelle; mağaza kredi notu listener'ı zaten tetikler."""
+        del attempt_id, amount, order_id, reason, actor, dry_run
+        return {"ok": False, "blocked": True, "error": self.POS_REFUND_REASON}
 
     # ============================================================== süreç
 

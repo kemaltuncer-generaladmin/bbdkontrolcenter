@@ -4,7 +4,7 @@
 // birleştirir; durum çipleri ve KPI (bekleyen tutar · bu ay iade · iade oranı)
 // üstte durur; satır açılınca çekmecede sipariş kalemleri adet adet seçilir,
 // İADE TUTARI SATIR SATIR gösterilir (ürün + indirim + KDV + kargo), gerekçeyle
-// onaylanır, ardından POS iadesi ayrı bir adım olarak çağrılır.
+// onaylanınca mağazadaki refund listener Kuveyt Türk iadesini otomatik başlatır.
 //
 // NE YAPMAZ:
 //  · Tutarı istemcide hesaplamaz. Hesap tek yerde (backend `calc.py`) durur;
@@ -682,7 +682,8 @@ function refundSection(row, payload, box) {
     }));
     result.append(actions, hintBox(
       'Onay, EKRANDA GÖRDÜĞÜNÜZ hesabı gönderir; tutar yeniden hesaplanmaz. '
-      + 'Parayı karta geri vermek ayrı bir adımdır (POS iadesi bölümü).'));
+      + 'Bu mağazada kredi notu Kuveyt Türk iadesini otomatik başlatır. '
+      + 'Ayrıca POS iadesi göndermeyin; banka sonucunu doğrulayın.'));
   }
 
   async function approve(data) {
@@ -822,7 +823,7 @@ function posSection(row, payload) {
     },
   });
 
-  // PARAYI KARTA GERİ GÖNDERME ADIMI BU EKRANDAN YAPILMIYOR.
+  // AYRI POS REFUND BU EKRANDAN YAPILMIYOR: create_refund listener'ı bankayı çağırır.
   //
   // Düğme daha önce tıklanınca geçitten gelen "bu uç bilerek yok" metnini
   // gösteriyordu — yani her tıklama aynı cümleyi tekrar ediyordu. Şimdi
@@ -832,8 +833,8 @@ function posSection(row, payload) {
   // LİSTE KALDI. Hangi karta ne çekildiği gerçek bir bilgidir ve iadeyi
   // panelden yapacak kişinin ihtiyacı olan tam da budur.
   const blockedReason = pos.refundReason
-    || 'Sanal POS iadesi Kontrol Merkezi\'den yapılmıyor: bu adım parayı müşterinin '
-      + 'kartına geri gönderir ve geri alınamaz.';
+    || 'Kredi notu mağazada Kuveyt Türk iadesini otomatik başlatır. '
+      + 'Ayrı POS işlemi çifte iade riski taşır.';
   amount.disabled = true;
   amount.title = blockedReason;
 
@@ -842,8 +843,7 @@ function posSection(row, payload) {
     blockedButton('POS iadesi yap', blockedReason, { variant: 'danger' }));
 
   body.append(table.node, actions, alertBox(blockedReason, 'warn'), hintBox(
-    'POS iadesi kredi notundan AYRIDIR: biri muhasebe kaydı, diğeri banka hareketi. '
-    + 'Tek düğmede birleştirmek, banka reddettiğinde "iade edildi" yazan bir kayıt bırakırdı.'));
+    'Kredi notunu onayladıktan sonra ödeme/iade kayıtlarından banka sonucunu doğrulayın.'));
   return card('POS iadesi', body);
 }
 
