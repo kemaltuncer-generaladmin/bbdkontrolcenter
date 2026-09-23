@@ -27,6 +27,11 @@ canlı işlem kanıtı gerektirir.
 - [x] İade zinciri doğrulandı: Bagisto kredi notu → `sales.refund.save.after` →
   POS iade dinleyicisi → Kuveyt Türk. Kontrol Merkezi'nin ikinci, ayrı POS
   iadesi çağrısı kapalı ve ekran açıklaması gerçek para hareketini söylüyor.
+- [x] Aynı siparişte RMA varken manuel kredi notu için yetkiliye çifte banka
+  iadesi uyarısı ve ikinci onay eklendi. Onay izni sunucuda denetleniyor; RMA
+  listesi işlemden hemen önce yeniden sorgulanıyor. Görülen RMA kimlikleri
+  canlı listeyle eşleşmezse veya liste eksik/erişilemezse işlem duruyor. RMA
+  kimlikleri, onay ve aktör denetim kaydına yazılıyor.
 - [x] Canlı Geliver ön kontrolü geçti: token/erişim, tek açık Hepsijet fiyatı,
   gönderici adresi ve webhook kaydı. Test modu kapalı. Kuveyt Türk ön kontrolü
   18 geçti, 0 uyarı, 0 hata; iade/iptal dinleyicileri bağlı.
@@ -38,10 +43,11 @@ canlı işlem kanıtı gerektirir.
    Ardından kontrollü bir iadenin banka referansı ve mutabakatını doğrula.
    Bu işlem para harcar ve gerçek müşteri/sipariş etkisi yaratır; test verisi
    ve işlem limiti önceden belirlenmeli.
-2. **P1 · Çift iade niyeti:** Mevcut koruma aynı refund ID'sini tekrar işlemez ve
-   toplam iadeyi tahsilat bakiyesiyle sınırlar. Ayrı RMA ve manuel kredi notu
-   aynı iş niyetini farklı ID'lerle tekrarlayabilir. İki akış için ortak
-   korelasyon/idempotency anahtarı ve banka sonucunun tek yerde gösterimi ekle.
+2. **P1 · Çift iade mutabakatı:** Yetkili onayı RMA ile manuel kredi notu
+   çakışmasını görünür ve denetlenebilir kılar; aynı iş niyetini farklı refund
+   ID'leriyle bankaya gönderme olasılığını otomatik olarak ortadan kaldırmaz.
+   İki akış için ortak korelasyon/idempotency anahtarı ve banka sonucunun tek
+   yerde gösterimi ekle. Canlı örnekte banka mutabakatını doğrula.
 3. **P1 · Eski sipariş desisi:** Snapshot öncesi siparişlerde katalog geri dönüşü
    tarihsel değer değildir. Etiket almadan önce fiziksel ölçü veya doğrulanmış
    desi gir; ileride tarihsel siparişler için güvenilir veri kaynağı varsa toplu
