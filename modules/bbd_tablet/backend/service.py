@@ -182,8 +182,8 @@ class TabletService:
         )
         return (await self.profile(profile_id)) or {}
 
-    async def create_device(self, *, name: str, profile_id: str) -> dict[str, Any]:
-        if not await self.profile(profile_id):
+    async def create_device(self, *, name: str, profile_id: str | None = None) -> dict[str, Any]:
+        if profile_id and not await self.profile(profile_id):
             raise ValueError("Profil bulunamadı.")
         device_id = str(uuid4())
         code = secrets.token_urlsafe(9)

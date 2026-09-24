@@ -156,6 +156,27 @@ export function mount(root, ctx) {
     if (device) {
       detail.append(h('p', 'tb-muted', `${device.manufacturer || ''} ${device.model || ''} · ${device.app_version || 'Sürüm bilgisi yok'}`));
       detail.append(h('p', 'tb-muted', `İlke durumu: ${device.policy_health || 'Henüz bildirilmedi'}`));
+      if (!device.profile_id && state.inventory.some((app) => app.isLaunchable)) {
+        detail.append(h('p', 'tb-muted', 'İlk profil bu tablet eşleştikten sonra yüklü uygulamalardan oluşturulabilir.'));
+        detail.append(button('Uygulamalardan profil oluştur ve ata', async () => {
+          const apps = state.inventory.filter((app) => app.isLaunchable).map((app) => ({
+            packageName: app.packageName, appName: app.appName || app.packageName,
+            allowed: true, unlimited: false, dailyLimitSeconds: 3600,
+          }));
+          try {
+            const profile = await call('/profiles', {
+              method: 'POST',
+              body: { name: `${device.name} başlangıç profili`, timezone: 'Europe/Istanbul', apps },
+            });
+            await call(`/devices/${encodeURIComponent(device.id)}/assign-profile`, {
+              method: 'POST', body: { profileId: profile.id },
+            });
+            state.selectedProfile = profile.id;
+            await refresh();
+            info(`${profile.name} oluşturuldu ve tablete atandı. Uygulamalar varsayılan olarak izinli, günlük 60 dakika.`);
+          } catch (error) { info(error.message, true); }
+        }, true));
+      }
       const picker = profilePicker(device.profile_id);
       detail.append(field('Atanmış profil', picker));
       detail.append(button('Profili ata', async () => {
@@ -174,14 +195,14 @@ export function mount(root, ctx) {
       detail.append(inventory);
     }
     const form = h('div', 'tb-form');
-    form.append(h('h4', null, 'Yeni tablet eşleştirme'));
-    const name = input('', 'text');
-    const picker = profilePicker(state.selectedProfile);
-    form.append(field('Tablet adı', name), field('Profil', picker),
+    form.append(h('h4', null, 'İlk tablet eşleştirme'));
+    const name = input('Tablet', 'text');
+    form.append(h('p', 'tb-muted', 'Profil seçmeden kod oluşturabilirsiniz. Tabletin yüklü uygulama listesini aldıktan sonra başlangıç profilini bu ekrandan oluşturabilirsiniz.'),
+      field('Tablet adı', name),
       button('Eşleme kodu oluştur', async () => {
         try {
           const result = await call('/devices', {
-            method: 'POST', body: { name: name.value.trim(), profileId: picker.value },
+            method: 'POST', body: { name: name.value.trim() || 'Tablet' },
           });
           await refresh();
           const codeOut = h('p', 'tb-code',

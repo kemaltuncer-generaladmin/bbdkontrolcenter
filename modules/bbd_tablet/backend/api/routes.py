@@ -43,7 +43,7 @@ class ProfileBody(BaseModel):
 
 class DeviceBody(BaseModel):
     name: str = Field(min_length=2, max_length=100)
-    profileId: str = Field(min_length=1)
+    profileId: str | None = Field(default=None, min_length=1)
 
 
 class AssignBody(BaseModel):
