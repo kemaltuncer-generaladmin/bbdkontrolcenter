@@ -1,5 +1,6 @@
 # Kantin geçidi varsayılanları.
-# base_url ve device_name makineye özeldir → config/local.yaml (K8).
-base_url: ""
+# Bu kurulumun ortak kantin API adresi; yerel/test ortamı config/local.yaml ile
+# kendi adresini verebilir.
+base_url: "https://kantin.bbdstore.com.tr"
 device_name: "Kontrol Merkezi"
 timeout_seconds: 20
