@@ -194,7 +194,7 @@
   to { opacity: 1; transform: none; }
 }
 .kit-dialog-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-.kit-dialog-text { margin: 8px 0 14px; font-size: 12.5px; color: var(--soft); line-height: 1.55; }
+.kit-dialog-text { margin: 8px 0 14px; font-size: 12.5px; color: var(--soft); line-height: 1.55; white-space: pre-line; }
 .kit-dialog .kit-input { width: 100%; }
 .kit-dialog-error { min-height: 16px; margin-top: 6px; font-size: 11.5px; color: var(--bad); }
 .kit-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }

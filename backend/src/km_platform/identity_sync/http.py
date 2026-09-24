@@ -219,6 +219,15 @@ def create_pairing_router() -> APIRouter:
         with _translated():
             return {"installations": await _sync(request).installations()}
 
+    @router.post("/pairing/refresh")
+    async def refresh(
+        request: Request,
+        _: CurrentUser = requires("installations.view"),
+    ) -> dict[str, Any]:
+        """Eşli kurulumun kadrosunu ve ayar paketini giriş beklemeden tazeler."""
+        with _translated():
+            return await _sync(request).sync()
+
     @router.post("/pairing/pair-code")
     async def pair_code(
         request: Request,

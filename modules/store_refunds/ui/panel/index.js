@@ -38,7 +38,7 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  blockedButton, button, clip, confirmWithReason, csvBlob, h, loadStyles, money, moneyInput,
+  blockedButton, button, clip, confirmSimple, confirmWithReason, csvBlob, h, loadStyles, money, moneyInput,
   num, parseMoney, percent, toaster, todayIso,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
@@ -716,12 +716,14 @@ function refundSection(row, payload, box) {
       confirmLabel: 'İadeyi oluştur',
     });
     if (!reason) return;
-    if (hasRma && !window.confirm(
-      `Yetkili onayı: Sipariş ${data.order.number || `#${data.orderId}`} için `
-      + `RMA ${rmaRows.map((rma) => `#${rma.requestId}`).join(', ')} mevcut. `
-      + 'RMA akışı ayrıca Kuveyt Türk’e iade başlatmış olabilir. Çifte iadeyi kontrol ettim '
-      + 've manuel kredi notunu oluşturmayı onaylıyorum.'
-    )) return;
+    if (hasRma && !await confirmSimple(nodes.root, {
+      title: 'Çifte iade kontrolü',
+      description: `Sipariş ${data.order.number || `#${data.orderId}`} için `
+        + `RMA ${rmaRows.map((rma) => `#${rma.requestId}`).join(', ')} mevcut. `
+        + 'RMA akışı ayrıca Kuveyt Türk’e iade başlatmış olabilir. Çifte iadeyi kontrol ettiyseniz manuel kredi notunu onaylayın.',
+      confirmLabel: 'Kontrol ettim, oluştur',
+      danger: true,
+    })) return;
     await withBusy('İade oluşturuluyor…', async () => {
       const done = await call(`${BASE}/approve`, {
         method: 'POST', body: { token: data.token, reason, dryRun: false,

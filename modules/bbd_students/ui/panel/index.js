@@ -15,6 +15,7 @@ import {
 // normaldir (bkz. `tools/build-ui-registry.py`).
 import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
+import { confirmSimple } from '../../ui-kit/kit.js';
 
 let apiCall = null;
 let students = [];
@@ -226,9 +227,12 @@ async function makeQr() {
 async function resetAccessCode() {
   if (!draft) return;
   const name = fullName(draft) || 'Öğrenci';
-  if (!window.confirm(
-    `${name} için yeni bir giriş kodu üretilecek.\n\n`
-    + 'Öğrencinin şu anki kodu geçersiz olacak. Devam edilsin mi?')) {
+  if (!await confirmSimple(nodes.root, {
+    title: 'Yeni giriş kodu üret',
+    description: `${name} için yeni bir giriş kodu üretilecek. Öğrencinin şu anki kodu geçersiz olacak.`,
+    confirmLabel: 'Yeni kod üret',
+    danger: true,
+  })) {
     return;
   }
   nodes.codeOut.hidden = true;
@@ -293,9 +297,12 @@ async function runAccessCodeReset() {
     nodes.bulkStatus.textContent = 'Önce en az bir öğrenci seçin.';
     return;
   }
-  if (!window.confirm(
-    `${ids.length} öğrenci için yeni giriş kodu üretilecek.\n\n`
-    + 'Kodu olan öğrencilerin ŞU ANKİ kodu geçersiz olacak. Devam edilsin mi?')) {
+  if (!await confirmSimple(nodes.root, {
+    title: 'Toplu giriş kodu üret',
+    description: `${ids.length} öğrenci için yeni giriş kodu üretilecek. Mevcut kodları geçersiz olacak.`,
+    confirmLabel: 'Kodları üret',
+    danger: true,
+  })) {
     return;
   }
   const result = await bulkChain.run('access-code-reset', { students: ids });
@@ -430,8 +437,13 @@ function renderList() {
       item.append(badge);
     }
 
-    item.addEventListener('click', () => {
-      if (dirtyKeys().length > 0 && !window.confirm('Kaydedilmemiş değişiklik var. Bırakılsın mı?')) return;
+    item.addEventListener('click', async () => {
+      if (dirtyKeys().length > 0 && !await confirmSimple(nodes.root, {
+        title: 'Kaydedilmemiş değişiklikler',
+        description: 'Değişiklikler kaydedilmedi. Başka öğrenciye geçilsin mi?',
+        confirmLabel: 'Değişiklikleri bırak',
+        danger: true,
+      })) return;
       selectedId = student.kantinId;
       loadSelection();
       renderList();
@@ -646,6 +658,7 @@ export function mount(root, ctx) {
   }
 
   const view = h('div', 'st');
+  nodes.root = view;
 
   nodes.kpi = h('div', 'st-kpi');
   view.append(nodes.kpi);

@@ -666,6 +666,7 @@ YONETIM_UCLARI = [
     ("POST", "/api/pairing/pair-code", {"note": None}),
     ("POST", "/api/pairing/installations/i-1/revoke", None),
     ("POST", "/api/pairing/unpair", {"password": PERSONEL_PINI}),
+    ("POST", "/api/pairing/refresh", None),
 ]
 
 
@@ -776,6 +777,13 @@ def test_kurulum_listesi_yetkiliye_doner(acik_client: TestClient) -> None:
     kod = _istek(acik_client, "POST", "/api/pairing/pair-code", {"note": None}, token)
     assert kod.status_code == 200, kod.text
     assert kod.json()["expiresAt"]
+
+
+def test_yetkili_kurulumu_elle_tazeleyebilir(client: TestClient) -> None:
+    token = _yonetici_token(client)
+    cevap = _istek(client, "POST", "/api/pairing/refresh", None, token)
+    assert cevap.status_code == 200, cevap.text
+    assert cevap.json() == {"synced": False, "reason": "eşlenmemiş"}
 
 
 def test_merkezin_DURUM_KODU_korunur(acik_client: TestClient) -> None:

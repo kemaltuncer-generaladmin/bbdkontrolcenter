@@ -540,10 +540,12 @@ async function dispatchQueue(rows, table) {
     const units = Number(row.measures?.units || row.measures?.desi) || 0;
     return `${row.orderNumber}: ${units} desi · ${Number(row.measures?.weight) || 0} kg`;
   }).join('\n');
-  if (!window.confirm(
-    `${rows.length} gönderi için Geliver etiketi satın alınacak; bu işlemler geri alınamaz.\n\n`
-      + `${summary}\n\nKesin taşıyıcı teklifleri Geliver yanıtında belirlenir. Hepsi gönderilsin mi?`,
-  )) return;
+  if (!await confirmSimple(nodes.root, {
+    title: `${rows.length} gönderiyi kargoya ver`,
+    description: `Geliver etiketleri satın alınacak; bu işlemler geri alınamaz.\n\n${summary}\n\nKesin taşıyıcı teklifleri Geliver yanıtında belirlenir.`,
+    confirmLabel: 'Hepsini gönder',
+    danger: true,
+  })) return;
   let gonderilen = 0;
   const hatalar = [];
   for (const [index, row] of rows.entries()) {
@@ -689,14 +691,16 @@ async function dispatchOrder(row, trigger, extra = {}, estimatedTotal = null,
   const measure = physical
     ? `${length} × ${width} × ${height} cm · ${desi} hacimsel desi`
     : `${desi} desi · fiziksel ölçü yoksa sentetik ölçü kullanılır`;
-  const confirmed = alreadyConfirmed || window.confirm(
-    `Kargo etiketi satın alınacak ve işlem geri alınamaz.\n\n`
-      + `Sipariş: ${row.orderNumber}\nTaşıyıcı: ${extra.carrier || row.carrierTitle || 'müşteri tercihi'}\n`
+  const confirmed = alreadyConfirmed || await confirmSimple(nodes.root, {
+    title: 'Kargo etiketi satın al',
+    description: `Sipariş: ${row.orderNumber}\nTaşıyıcı: ${extra.carrier || row.carrierTitle || 'müşteri tercihi'}\n`
       + `Paket: ${Number(extra.packages) || 1}\nÖlçü: ${measure}\nAğırlık: ${weight} kg\n`
       + `Faturalanacak birim: ${billedUnits} desi (desi ve kg değerinin büyüğü)\n`
       + `Panel tahmini: ${estimatedTotal == null ? 'hazır değil' : money(estimatedTotal)}\n\n`
-      + 'Geliver nihai teklifi belirler; taşıyıcıya göre gerçek ücret değişebilir. Devam edilsin mi?',
-  );
+      + 'Geliver nihai teklifi belirler; gerçek ücret farklı olabilir. İşlem geri alınamaz.',
+    confirmLabel: 'Etiketi satın al',
+    danger: true,
+  });
   if (!confirmed) return null;
 
   const label = trigger?.textContent;
