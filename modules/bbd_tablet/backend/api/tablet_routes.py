@@ -85,6 +85,13 @@ class InventoryBody(BaseModel):
     apps: list[InventoryApp] = Field(default_factory=list, max_length=2000)
 
 
+class InitialProfileBody(BaseModel):
+    profileId: str | None = Field(default=None, min_length=1)
+    name: str = Field(default="Öğrenci profili", min_length=2, max_length=100)
+    timezone: str = Field(default="Europe/Istanbul", min_length=1, max_length=80)
+    apps: list[dict[str, Any]] = Field(default_factory=list, max_length=1000)
+
+
 class UsageItem(BaseModel):
     packageName: str = Field(min_length=2, max_length=255)
     localDate: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -110,12 +117,28 @@ async def enroll(body: EnrollBody) -> dict[str, Any]:
 
 
 @router.get("/profiles")
-async def profiles(authorization: str = Header(default="")) -> list[dict[str, Any]]:
+async def profiles(authorization: str = Header(default="")) -> dict[str, Any]:
     await device_auth(authorization)
     rows = await current_service().store.fetch_all(
         f"SELECT id FROM {current_service().profiles} WHERE revision > 0 ORDER BY name"
     )
-    return [profile for row in rows if (profile := await current_service().profile(row["id"]))]
+    return {"profiles": [profile for row in rows
+                         if (profile := await current_service().profile(row["id"]))]}
+
+
+@router.post("/devices/{device_id}/initial-profile")
+async def initial_profile(device_id: str, body: InitialProfileBody,
+                          authorization: str = Header(default="")) -> dict[str, Any]:
+    device = await device_auth(authorization)
+    if device["id"] != device_id:
+        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+    try:
+        return await current_service().configure_initial_profile(
+            device_id=device_id, profile_id=body.profileId,
+            name=body.name, timezone=body.timezone, apps=body.apps,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/profiles/{profile_id}")

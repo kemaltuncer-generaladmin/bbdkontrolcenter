@@ -208,6 +208,57 @@ class TabletService:
         )
         return {"deviceId": device_id, "profileId": profile_id}
 
+    async def configure_initial_profile(self, *, device_id: str, profile_id: str | None,
+                                       name: str, timezone: str,
+                                       apps: list[dict[str, Any]]) -> dict[str, Any]:
+        """Let a newly paired tablet select or create its first profile exactly once."""
+        device = await self.store.fetch_one(
+            f"SELECT profile_id FROM {self.devices} WHERE id=? AND revoked_at IS NULL",
+            (device_id,),
+        )
+        if not device:
+            raise ValueError("Tablet bulunamadı.")
+        if device["profile_id"]:
+            raise ValueError("Tablete zaten bir profil atanmış.")
+        if profile_id:
+            if not await self.profile(profile_id):
+                raise ValueError("Profil bulunamadı.")
+            await self.store.execute(
+                f"UPDATE {self.devices} SET profile_id=? WHERE id=? AND profile_id IS NULL "
+                "AND revoked_at IS NULL", (profile_id, device_id),
+            )
+            current = await self.store.fetch_one(
+                f"SELECT profile_id FROM {self.devices} WHERE id=?", (device_id,),
+            )
+            if not current or current["profile_id"] != profile_id:
+                raise ValueError("Tablet profili başka bir işlemde atanmış.")
+            return {"deviceId": device_id, "profileId": profile_id}
+        if not apps:
+            raise ValueError("Yeni profil için en az bir uygulama ekleyin.")
+        packages = [str(app.get("packageName", "")) for app in apps]
+        if len(packages) != len(set(packages)):
+            raise ValueError("Aynı uygulama profilde bir kez bulunabilir.")
+        launchable = await self.store.fetch_all(
+            f"SELECT package_name FROM {self.inventory} WHERE device_id=? AND is_launchable=1",
+            (device_id,),
+        )
+        available = {row["package_name"] for row in launchable}
+        if not set(packages).issubset(available):
+            raise ValueError("Profil yalnızca bu tablette başlatılabilir uygulamaları içerebilir.")
+        profile = await self.save_profile(
+            profile_id=None, name=name, timezone=timezone, apps=apps,
+        )
+        await self.store.execute(
+            f"UPDATE {self.devices} SET profile_id=? WHERE id=? AND profile_id IS NULL "
+            "AND revoked_at IS NULL", (profile["id"], device_id),
+        )
+        current = await self.store.fetch_one(
+            f"SELECT profile_id FROM {self.devices} WHERE id=?", (device_id,),
+        )
+        if not current or current["profile_id"] != profile["id"]:
+            raise ValueError("Tablet profili başka bir işlemde atanmış.")
+        return {"deviceId": device_id, "profileId": profile["id"]}
+
     async def student_usage(self, student_id: str, local_date: str) -> dict[str, Any]:
         usage = await self.store.fetch_all(
             f"SELECT i.package_name, i.local_date, SUM(i.used_seconds) AS used_seconds "
