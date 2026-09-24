@@ -16,8 +16,9 @@ class Store:
     def __init__(self) -> None:
         self.db = sqlite3.connect(":memory:")
         self.db.row_factory = sqlite3.Row
-        migration = Path(__file__).parents[1] / "backend/migrations/001_tablet.sql"
-        self.db.executescript(migration.read_text())
+        migrations = Path(__file__).parents[1] / "backend/migrations"
+        for migration in sorted(migrations.glob("*.sql")):
+            self.db.executescript(migration.read_text())
 
     @staticmethod
     def table(name: str) -> str:
@@ -43,6 +44,53 @@ class Canteen:
 
     async def students(self):
         return [{"id": "opaque-A", "displayName": "Ahmet"}]
+
+
+@pytest.mark.asyncio
+async def test_system_controls_are_allowlisted_and_follow_profile_revisions():
+    service = TabletService(store=Store(), canteen=Canteen(), config={})
+    original_controls = {
+        "usb_file_transfer": True,
+        "unknown_source_installs": False,
+        "wifi_configuration": True,
+    }
+    profile = await service.save_profile(
+        profile_id=None, name="Genel Öğrenci", timezone="Europe/Istanbul",
+        apps=[], system_controls=original_controls,
+    )
+    assert profile["systemControls"] == original_controls
+    pending = await service.create_device(name="Etüt-01", profile_id=profile["id"])
+    enrolled = await service.enroll({"enrollmentCode": pending["enrollmentCode"],
+                                     "deviceUuid": str(uuid4()), "deviceName": "Etüt-01"})
+    device = await service.device_for_token(enrolled["deviceToken"])
+    assert device is not None
+    policy = await service.policy(device=device, revision=0)
+    assert policy["profile"]["systemControls"] == original_controls
+
+    # Old callers that omit the new field preserve the last revision's choices.
+    revised = await service.save_profile(
+        profile_id=profile["id"], name="Genel Öğrenci", timezone="Europe/Istanbul",
+        apps=[],
+    )
+    assert revised["revision"] == profile["revision"] + 1
+    assert revised["systemControls"] == original_controls
+
+    cleared = await service.save_profile(
+        profile_id=profile["id"], name="Genel Öğrenci", timezone="Europe/Istanbul",
+        apps=[], system_controls={},
+    )
+    assert cleared["systemControls"] == {}
+
+    with pytest.raises(ValueError, match="Desteklenmeyen sistem kontrolü"):
+        await service.save_profile(
+            profile_id=None, name="Hatalı", timezone="Europe/Istanbul", apps=[],
+            system_controls={"developer_options_and_adb": False},
+        )
+    with pytest.raises(ValueError, match="true veya false"):
+        await service.save_profile(
+            profile_id=None, name="Hatalı", timezone="Europe/Istanbul", apps=[],
+            system_controls={"usb_file_transfer": 1},
+        )
 
 
 @pytest.mark.asyncio

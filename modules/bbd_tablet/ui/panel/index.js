@@ -38,6 +38,26 @@ function displayDateTime(value) {
   });
 }
 
+// Sunucunun kabul ettiği Android SystemPolicyControl.storageKey() alt kümesi.
+// Boş seçim, tabletteki mevcut varsayılan davranışı korur.
+const SYSTEM_CONTROLS = [
+  ['usb_file_transfer', 'USB dosya aktarımı', 'Tabletin USB üzerinden depolama olarak kullanılmasını engeller.'],
+  ['unknown_source_installs', 'Bilinmeyen kaynaklardan kurulum', 'Mağaza dışı uygulama kurulumunu engeller.'],
+  ['app_stores_and_installers', 'Uygulama mağazaları ve yükleyiciler', 'Uygulama kurulumunu ve tablet uygulamasının güvenli güncellemesini de engelleyebilir.'],
+  ['account_modification', 'Hesap değişiklikleri', 'Cihazda hesap ekleme ve kaldırmayı engeller.'],
+  ['vpn_configuration', 'VPN yapılandırması', 'VPN ayarlarının değiştirilmesini engeller.'],
+  ['network_reset', 'Ağ ayarlarını sıfırlama', 'Ağ ayarlarını sıfırlamayı engeller.'],
+  ['tethering', 'İnternet paylaşımı', 'Hotspot ve bağlantı paylaşımı ayarlarını engeller.'],
+  ['wifi_configuration', 'Wi-Fi yapılandırması', 'Ağ seçimini kısıtlar; yeni bir Wi-Fi ağı veya şifresi tanımlamaz. Cihaz üreticisine göre sonuç değişebilir.'],
+  ['private_dns', 'Özel DNS', 'Özel DNS ayarlarının değiştirilmesini engeller.'],
+  ['date_and_time', 'Tarih ve saat', 'Sistem saati ve saat dilimi değişikliklerini engeller.'],
+  ['safe_boot', 'Güvenli mod', 'Cihazın güvenli modda başlatılmasını engeller.'],
+  ['factory_reset', 'Fabrika ayarlarına sıfırlama', 'Ayarlar üzerinden cihazı sıfırlamayı engeller.'],
+  ['user_and_profile_creation', 'Kullanıcı ve profil oluşturma', 'Yeni kullanıcı/profil oluşturmayı ve kullanıcı değiştirmeyi engeller.'],
+  ['app_uninstall', 'Uygulama kaldırma', 'Uygulamaların kaldırılmasını engeller.'],
+  ['app_control_settings', 'Uygulama kontrol ayarları', 'Uygulamaları durdurma ve verilerini silme ayarlarını engeller.'],
+];
+
 export function mount(root, ctx) {
   const styleHref = new URL('./panel.css', import.meta.url).href;
   if (!document.querySelector(`link[href="${styleHref}"]`)) {
@@ -191,6 +211,24 @@ export function mount(root, ctx) {
     const name = input(profile?.name || '');
     const timezone = input(profile?.timezone || 'Europe/Istanbul');
     detail.append(field('Profil adı', name), field('Saat dilimi', timezone));
+    const controls = h('section', 'tb-controls');
+    controls.append(h('h4', null, 'Uzaktan sistem kontrolleri'),
+      h('p', 'tb-muted', 'Açık: kısıtlamayı uygula · Kapalı: kısıtlamayı kaldır · Cihaz varsayılanı: mevcut davranışı koru. Tablet, desteklemediği kısıtlamayı uygulayamayabilir. Geliştirici seçenekleri ve USB hata ayıklama uzaktan değiştirilemez; kurtarma erişimi korunur.'));
+    const controlChoices = new Map();
+    for (const [key, label, description] of SYSTEM_CONTROLS) {
+      const row = h('div', 'tb-control-row');
+      const descriptionBox = h('div');
+      descriptionBox.append(h('strong', null, label), h('small', null, description));
+      const choice = h('select', 'tb-input');
+      choice.append(option('', 'Cihaz varsayılanı'), option('true', 'Açık'), option('false', 'Kapalı'));
+      if (Object.hasOwn(profile?.systemControls || {}, key)) {
+        choice.value = profile.systemControls[key] ? 'true' : 'false';
+      }
+      controlChoices.set(key, choice);
+      row.append(descriptionBox, choice);
+      controls.append(row);
+    }
+    detail.append(controls);
     const appList = h('div', 'tb-apps');
     const appRows = [];
     function addApp(app = {}) {
@@ -234,10 +272,14 @@ export function mount(root, ctx) {
           allowed: item.allowed.checked, unlimited: item.unlimited.checked,
           dailyLimitSeconds: Number(item.minutes.value) * 60,
         })).filter((app) => app.packageName);
+        const systemControls = {};
+        for (const [key, choice] of controlChoices) {
+          if (choice.value) systemControls[key] = choice.value === 'true';
+        }
         try {
           const result = await call(profile ? `/profiles/${encodeURIComponent(profile.id)}` : '/profiles', {
             method: profile ? 'PUT' : 'POST',
-            body: { name: name.value.trim(), timezone: timezone.value.trim(), apps },
+            body: { name: name.value.trim(), timezone: timezone.value.trim(), apps, systemControls },
           });
           state.selectedProfile = result.id;
           await refresh();

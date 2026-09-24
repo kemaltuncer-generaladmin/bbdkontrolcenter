@@ -11,6 +11,26 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+# Stable storage keys from TabletKontrol's SystemPolicyControl. The debugging
+# restriction is deliberately excluded because it can remove recovery access.
+SYSTEM_CONTROL_KEYS = frozenset({
+    "usb_file_transfer",
+    "unknown_source_installs",
+    "app_stores_and_installers",
+    "account_modification",
+    "vpn_configuration",
+    "network_reset",
+    "tethering",
+    "wifi_configuration",
+    "private_dns",
+    "date_and_time",
+    "safe_boot",
+    "factory_reset",
+    "user_and_profile_creation",
+    "app_uninstall",
+    "app_control_settings",
+})
+
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
@@ -28,6 +48,7 @@ class TabletService:
         self._profile_lock = asyncio.Lock()
         self.profiles = store.table("profiles")
         self.apps = store.table("profile_apps")
+        self.system_controls = store.table("profile_system_controls")
         self.devices = store.table("devices")
         self.inventory = store.table("inventory")
         self.sessions = store.table("sessions")
@@ -48,10 +69,17 @@ class TabletService:
             "ORDER BY sort_order, app_name",
             (profile_id, row["revision"]),
         )
+        control_rows = await self.store.fetch_all(
+            f"SELECT control_key, is_enabled FROM {self.system_controls} "
+            "WHERE profile_id=? AND revision=? ORDER BY control_key",
+            (profile_id, row["revision"]),
+        )
         return {
             "id": row["id"], "name": row["name"], "revision": row["revision"],
             "timezone": row["timezone"], "updatedAt": row["updated_at"],
             "apps": [self._app_view(app) for app in apps],
+            "systemControls": {item["control_key"]: bool(item["is_enabled"])
+                               for item in control_rows},
         }
 
     @staticmethod
@@ -82,13 +110,24 @@ class TabletService:
                 "sessions": [dict(row) for row in sessions]}
 
     async def save_profile(self, *, profile_id: str | None, name: str,
-                           timezone: str, apps: list[dict[str, Any]]) -> dict[str, Any]:
+                           timezone: str, apps: list[dict[str, Any]],
+                           system_controls: dict[str, Any] | None = None) -> dict[str, Any]:
         async with self._profile_lock:
             return await self._save_profile(profile_id=profile_id, name=name,
-                                            timezone=timezone, apps=apps)
+                                            timezone=timezone, apps=apps,
+                                            system_controls=system_controls)
 
     async def _save_profile(self, *, profile_id: str | None, name: str,
-                            timezone: str, apps: list[dict[str, Any]]) -> dict[str, Any]:
+                            timezone: str, apps: list[dict[str, Any]],
+                            system_controls: dict[str, Any] | None) -> dict[str, Any]:
+        if system_controls is not None:
+            if not isinstance(system_controls, dict):
+                raise ValueError("Sistem kontrolleri anahtar-değer haritası olmalı.")
+            unknown = set(system_controls) - SYSTEM_CONTROL_KEYS
+            if unknown:
+                raise ValueError("Desteklenmeyen sistem kontrolü: " + ", ".join(sorted(unknown)))
+            if any(type(value) is not bool for value in system_controls.values()):
+                raise ValueError("Sistem kontrolü değerleri true veya false olmalı.")
         ZoneInfo(timezone)
         packages = [app["packageName"] for app in apps]
         if len(packages) != len(set(packages)):
@@ -98,12 +137,15 @@ class TabletService:
             existing = await self.profile(profile_id)
             if existing is None:
                 raise ValueError("Profil bulunamadı.")
+            controls_to_save = (existing["systemControls"] if system_controls is None
+                                else system_controls)
             revision = int(existing["revision"]) + 1
             await self.store.execute(
                 f"DELETE FROM {self.apps} WHERE profile_id=? AND revision=?",
                 (profile_id, revision),
             )
         else:
+            controls_to_save = system_controls or {}
             profile_id, revision = str(uuid4()), 1
             await self.store.execute(
                 f"INSERT INTO {self.profiles} (id, name, revision, timezone, created_at, updated_at) "
@@ -118,6 +160,12 @@ class TabletService:
                  int(app.get("allowed", False)), int(app.get("unlimited", False)),
                  int(app.get("dailyLimitSeconds", 0)), order),
             )
+        for control_key, is_enabled in controls_to_save.items():
+            await self.store.execute(
+                f"INSERT INTO {self.system_controls} "
+                "(profile_id, revision, control_key, is_enabled) VALUES (?, ?, ?, ?)",
+                (profile_id, revision, control_key, int(is_enabled)),
+            )
         # Yeni satırlar tamamlandıktan sonra tek satırlık revision geçişi;
         # yarıda kesilirse tabletler son tamamlanmış sürümü okumaya devam eder.
         await self.store.execute(
@@ -126,6 +174,10 @@ class TabletService:
         )
         await self.store.execute(
             f"DELETE FROM {self.apps} WHERE profile_id=? AND revision<?",
+            (profile_id, revision),
+        )
+        await self.store.execute(
+            f"DELETE FROM {self.system_controls} WHERE profile_id=? AND revision<?",
             (profile_id, revision),
         )
         return (await self.profile(profile_id)) or {}

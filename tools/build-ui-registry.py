@@ -291,10 +291,31 @@ def build(*, copy_panels: bool = True, platform: str | None = None) -> dict:
     }
 
 
+def verify_tablet_panel_delivery(registry: dict) -> None:
+    """The runtime menu is fetched from /modules, but JS must be bundled locally.
+
+    A server-side module can therefore appear in the installed desktop menu
+    even when an older or incomplete shell has no matching panel asset.
+    Reject that package before Tauri embeds shell/ as frontendDist.
+    """
+    module_dir = MODULES / "bbd_tablet"
+    source = module_dir / "ui" / "panel" / "index.js"
+    packaged = PANELS_OUT / "bbd_tablet" / "index.js"
+    source_css = source.with_name("panel.css")
+    packaged_css = packaged.with_name("panel.css")
+    panel = next((item for item in registry["panels"] if item["id"] == "bbd_tablet"), None)
+    if panel is None or panel.get("entry") != "panels/bbd_tablet/index.js":
+        raise RuntimeError("bbd_tablet paneli kayıt defterinde yok")
+    for original, copied in ((source, packaged), (source_css, packaged_css)):
+        if not original.is_file() or not copied.is_file() or original.read_bytes() != copied.read_bytes():
+            raise RuntimeError(f"bbd_tablet panel varlığı eksik veya eski: {copied}")
+
+
 def main() -> int:
     check_only = "--check" in sys.argv[1:]
     # `--check` DİSKE DOKUNMAZ: panelleri kopyalamaz, klasörü silmez.
     registry = build(copy_panels=not check_only)
+    verify_tablet_panel_delivery(registry)
     payload = json.dumps(registry, ensure_ascii=False, indent=2) + "\n"
 
     if check_only:

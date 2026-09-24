@@ -38,6 +38,7 @@ class ProfileBody(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     timezone: str = Field(default="Europe/Istanbul", min_length=1, max_length=80)
     apps: list[AppPolicyBody] = Field(default_factory=list, max_length=1000)
+    systemControls: dict[str, Any] | None = None
 
 
 class DeviceBody(BaseModel):
@@ -91,6 +92,7 @@ async def create_profile(body: ProfileBody,
         return await current_service().save_profile(
             profile_id=None, name=body.name, timezone=body.timezone,
             apps=[item.model_dump() for item in body.apps],
+            system_controls=body.systemControls,
         )
     except (ValueError, ZoneInfoNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -103,6 +105,7 @@ async def update_profile(profile_id: str, body: ProfileBody,
         return await current_service().save_profile(
             profile_id=profile_id, name=body.name, timezone=body.timezone,
             apps=[item.model_dump() for item in body.apps],
+            system_controls=body.systemControls,
         )
     except (ValueError, ZoneInfoNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
