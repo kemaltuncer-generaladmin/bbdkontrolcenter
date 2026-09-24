@@ -221,6 +221,26 @@ class CanteenApi:
         payload = await self._request("POST", f"/api/students/{opaque_id}/access-code")
         return dict(payload or {})
 
+    async def lookup_student_by_code(self, code: str) -> dict[str, str]:
+        """Resolve a student's canteen access code to a minimal identity.
+
+        The device bearer stays in this server-side client. The canteen's
+        lookup response also contains balance, contact details, and the access
+        code, so only the opaque student id and display name cross this seam.
+        Never log or include the submitted code in an error.
+        """
+        payload = await self._request(
+            "POST", "/api/students/lookup-code", json={"code": code}
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        student_id = data.get("id") if isinstance(data, dict) else None
+        display_name = data.get("displayName") if isinstance(data, dict) else None
+        if not isinstance(student_id, str) or not student_id.strip() \
+                or not isinstance(display_name, str) or not display_name.strip():
+            raise CanteenError("Kantin öğrenci kodu yanıtı geçersiz.")
+
+        return {"id": student_id, "displayName": display_name}
+
     # ---------------------------------------------------------------- kiosk
     #
     # KIOSK ≠ CİHAZ. Sahadaki tablet `devices` üzerinde, paylaşılan

@@ -8,6 +8,7 @@ etmeyen router monte EDİLMEZ** (varsayılan: kapalı).
 
 from __future__ import annotations
 
+import importlib
 import secrets as pysecrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -447,6 +448,14 @@ def _mount_modules(app: FastAPI, kernel: Kernel, identity: Identity) -> None:
                 tags=list(spec.tags or [manifest.id]),
                 dependencies=[Depends(guard)],
             )
+        if manifest.id == "bbd_tablet":
+            # Kurum tabletleri yönetici PIN'i taşımaz. Bu ayrı router'da
+            # enrollment dışındaki HER uç kendi cihaz/öğrenci bearer'ını
+            # doğrular; yönetim router'ı yukarıdaki izin kapısında kalır.
+            tablet_api = importlib.import_module(
+                "km_mod_bbd_tablet.backend.api.tablet_routes"
+            )
+            app.include_router(tablet_api.router, prefix="/api/tablet/v1", tags=["tablet"])
         log.info("router monte edildi", module=manifest.id, prefix=spec.prefix)
 
 

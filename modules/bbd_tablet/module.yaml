@@ -1,0 +1,52 @@
+id: bbd_tablet
+name: "Öğrenci Tablet Yönetimi"
+description: "Kurum tabletleri, ortak uygulama profilleri ve öğrenci bazlı ek süre."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+depends: [bbd_canteen_api]
+provides: []
+consumes:
+  - capability: canteen.api
+    reason: "Öğrenci kimliği ve kiosk giriş kodu kantinde kalır."
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_tablet
+  router: backend.api.routes:router
+  tags: ["bbd_tablet"]
+  requires: [bbd_tablet.view]
+
+ui:
+  entry: ui/panel/index.js
+  locales: ui/locales
+  nav:
+    title: "Öğrenci Tablet Yönetimi"
+    icon: tablet
+    group: "BBD"
+    order: 58
+    requires: [bbd_tablet.view]
+
+permissions:
+  - key: bbd_tablet.view
+    description: "Tabletleri, profilleri, öğrenci kullanımını ve ek süreleri görüntüleme."
+    default_roles: [admin, bbd_staff, org_staff]
+  - key: bbd_tablet.manage
+    description: "Tablet adı, profil ve uygulama kurallarını düzenleme."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_tablet.grant
+    description: "Öğrenciye uygulama bazında günlük ek süre verme."
+    default_roles: [admin, bbd_staff, org_staff]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+migrations: backend/migrations
+dependencies:
+  python: []
+  system: []
+tasks: []

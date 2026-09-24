@@ -1,0 +1,1 @@
+"""Student tablet management module."""
