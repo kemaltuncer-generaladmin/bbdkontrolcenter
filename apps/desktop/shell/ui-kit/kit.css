@@ -80,6 +80,41 @@
 .kit-btn-ghost { border-color: transparent; background: transparent; color: var(--soft); }
 .kit-btn-ghost:hover { background: var(--tint); color: var(--ink); }
 
+/* Menü düğmesi (`menuButton`) — ikincil eylemler tek yerde. */
+.kit-dialog-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.kit-menu { position: relative; display: inline-flex; }
+.kit-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(17, 23, 34, 0.12);
+}
+.kit-menu-list[hidden] { display: none; }
+.kit-menu-list.kit-menu-left { right: auto; left: 0; }
+.kit-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.kit-menu-item:hover { background: var(--tint); }
+.kit-menu-item[disabled] { opacity: 0.45; cursor: default; }
+
 /* =============================================================== girdiler */
 
 /* NATİF ÇİZİM KAPATILIR — `type="search"` yüzünden ekran kilitleniyordu.
@@ -316,6 +351,21 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 12px 20px 9px;
 }
 .kit-filters .kit-input { min-width: 220px; }
+/* `display: flex` `hidden` niteliğini EZİYORDU: sekmesi kapalı panelin
+   süzgeç şeridi başka sekmede görünüyordu. */
+.kit-filters[hidden], .kit-filters-wrap[hidden] { display: none; }
+
+/* Sade kip (`filterBar({compact: true})`): ana satır + katlanan satır. */
+.kit-filters-wrap { display: flex; flex-direction: column; }
+.kit-filters-more {
+  margin: 0 20px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.kit-filters-more[hidden] { display: none; }
+.kit-filters-toggle.on { color: var(--accent); background: rgba(91, 140, 255, 0.1); }
 .kit-filter-label { font-size: 11px; color: var(--soft); margin-right: -2px; }
 
 /* Tek seçenekli alanın sessiz özeti (`choice.js`). Kutu çizilmez ama değerin

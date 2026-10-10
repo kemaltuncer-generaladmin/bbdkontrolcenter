@@ -11,7 +11,7 @@
 // SÜRÜM SÖZLEŞMESİ: yayınlanmış imza geriye dönük uyumsuz değiştirilmez.
 // Yeni davranış yeni parametreyle gelir. Değişiklikler README.md'de.
 
-export const KIT_VERSION = '1.4.0';
+export const KIT_VERSION = '1.5.0';
 
 /** Tek satırda element: h('div', 'sinif', 'metin'). */
 export const h = (tag, className, text) => {
@@ -348,6 +348,64 @@ export function blockedButton(label, reason, { variant = '' } = {}) {
   return node;
 }
 
+/**
+ * MENÜ DÜĞMESİ — ikincil eylemleri tek düğmede toplar ("Dışa aktar ▾").
+ *
+ * Sade ekranın kuralı: ekranda bir ana eylem görünür; CSV, rapor, PDF gibi
+ * ara sıra kullanılanlar yan yana dört düğme olarak dizilmez, buraya girer.
+ * Menü dışarı tıklanınca ya da Esc ile kapanır; öğe seçilince de kapanır.
+ *
+ * @param {string} label
+ * @param {Array<{label:string, onClick:Function, disabled?:boolean, title?:string}|null>} items
+ *   `null` öğe atlanır — koşullu eylemler dizide `cond && {...}` yazılabilsin.
+ */
+export function menuButton(label, items = [], { variant = '', title = '' } = {}) {
+  const wrap = h('div', 'kit-menu');
+  const trigger = button(`${label} ▾`, { variant, title });
+  trigger.setAttribute('aria-haspopup', 'menu');
+  trigger.setAttribute('aria-expanded', 'false');
+  const list = h('div', 'kit-menu-list');
+  list.setAttribute('role', 'menu');
+  list.hidden = true;
+
+  const close = () => {
+    list.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', outside, true);
+    document.removeEventListener('keydown', escape, true);
+  };
+  const outside = (event) => { if (!wrap.contains(event.target)) close(); };
+  const escape = (event) => { if (event.key === 'Escape') close(); };
+
+  for (const item of items) {
+    if (!item) continue;
+    const entry = h('button', 'kit-menu-item', item.label);
+    entry.type = 'button';
+    entry.setAttribute('role', 'menuitem');
+    if (item.title) entry.title = item.title;
+    if (item.disabled) entry.disabled = true;
+    entry.addEventListener('click', () => { close(); item.onClick?.(); });
+    list.append(entry);
+  }
+
+  trigger.addEventListener('click', () => {
+    if (!list.hidden) { close(); return; }
+    list.hidden = false;
+    // Varsayılan hizalama düğmenin SAĞ kenarıdır. Dar pencerede şerit kırılıp
+    // düğme satır başına düşünce liste panelin solundan taşıyordu; taşacaksa
+    // sola hizalanır.
+    list.classList.remove('kit-menu-left');
+    const bounds = (wrap.closest('.kit-panel') || document.body).getBoundingClientRect();
+    if (list.getBoundingClientRect().left < bounds.left + 4) list.classList.add('kit-menu-left');
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape, true);
+  });
+
+  wrap.append(trigger, list);
+  return wrap;
+}
+
 /** Kısa bildirim şeridi. Aynı anda tek tane durur. */
 export function toaster(root) {
   const node = h('div', 'kit-toast');
@@ -373,7 +431,8 @@ export function toaster(root) {
  * @returns {Promise<string|null>} gerekçe, ya da iptal edildiyse null
  */
 export function confirmWithReason(root, { title, description, confirmLabel = 'Onayla',
-  placeholder = 'Gerekçe (en az 3 karakter)', danger = true, minLength = 3 } = {}) {
+  placeholder = 'Gerekçe (en az 3 karakter)', danger = true, minLength = 3,
+  presets = [] } = {}) {
   return new Promise((resolve) => {
     const overlay = h('div', 'kit-overlay');
     const card = h('div', 'kit-dialog');
@@ -385,9 +444,29 @@ export function confirmWithReason(root, { title, description, confirmLabel = 'On
 
     const input = h('input', 'kit-input');
     input.type = 'text';
-    input.placeholder = placeholder;
+    // `minLength: 0` → not İSTEĞE BAĞLIDIR; boş onay `''` döner (iptal `null`).
+    input.placeholder = minLength ? placeholder : 'Not (isteğe bağlı) — kayda yazılır';
     input.maxLength = 255;
     card.append(input);
+
+    // HAZIR GEREKÇE ÇİPLERİ (`presets`) — sade ekran kuralı: sık yazılan
+    // gerekçe tek tıkla dolar. Alan yine düzenlenebilir; uzunluk kuralı aynen
+    // işler (ADR 0012). Çip yalnız metni doldurur, onaylamaz.
+    const chips = (presets || []).filter(Boolean);
+    if (chips.length) {
+      const row = h('div', 'kit-dialog-presets');
+      for (const text of chips) {
+        const chip = h('button', 'kit-chip', text);
+        chip.type = 'button';
+        chip.addEventListener('click', () => {
+          input.value = text;
+          error.textContent = '';
+          input.focus();
+        });
+        row.append(chip);
+      }
+      card.append(row);
+    }
 
     const error = h('div', 'kit-dialog-error');
     card.append(error);
@@ -407,15 +486,19 @@ export function confirmWithReason(root, { title, description, confirmLabel = 'On
       }
       close(reason);
     };
+    const go = button(confirmLabel, { variant: danger ? 'danger' : 'primary', onClick: submit });
+    // Enter yalnız kutuda ya da onay düğmesindeyken onaylar: odak bir çipte ya
+    // da "Vazgeç"teyken Enter'a basmak işi YÜRÜTMEMELİ.
     const onKey = (event) => {
       if (event.key === 'Escape') close(null);
-      if (event.key === 'Enter') submit();
+      if (event.key !== 'Enter') return;
+      if (event.target !== input && event.target !== go
+        && event.target?.tagName === 'BUTTON') return;
+      event.preventDefault();
+      submit();
     };
 
-    actions.append(
-      button('Vazgeç', { onClick: () => close(null) }),
-      button(confirmLabel, { variant: danger ? 'danger' : 'primary', onClick: submit }),
-    );
+    actions.append(button('Vazgeç', { onClick: () => close(null) }), go);
     card.append(actions);
     overlay.append(card);
     overlay.addEventListener('mousedown', (event) => {
@@ -423,7 +506,8 @@ export function confirmWithReason(root, { title, description, confirmLabel = 'On
     });
     document.addEventListener('keydown', onKey);
     root.append(overlay);
-    input.focus();
+    // Not isteğe bağlıysa onay düğmesi odakta: işlem iki tıktır (düğme + Enter).
+    (minLength ? input : go).focus();
   });
 }
 

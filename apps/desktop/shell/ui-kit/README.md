@@ -241,6 +241,20 @@ gerektirir, üstüne herkese açık sitede her sayfayı başka bir yazı tipiyle
 çıkarır. İhtiyaç mevcut blok biçimleriyle karşılanıyor; gerekçe `richtext.js`
 başlığında da yazılı ki sonradan gelen "eksik kalmış" sanmasın.
 
+### 1.5.0 — 2026-10-10
+`filterBar` sade kip kazandı (`compact: true`); `kit.js` `menuButton` kazandı.
+İkisi de İSTEĞE BAĞLI; hiçbir eski çağrı değişmedi.
+
+**Neden.** Kullanıcı mağaza ekranlarını "karışık" buldu: Siparişler'de dört
+sıra süzgeç, yan yana dört dışa aktarma düğmesi. Sade kipte yalnız ana alanlar
+(`primary: true`, yoksa ilk arama kutusu ve ilk tarih aralığı) görünür; gerisi
+"Filtreler" düğmesinin arkasında katlanır. Katlanmış bir süzgeç doluysa düğme
+sayısını yazar (`Filtreler · 2`) — görünmeyen süzgeç listeyi sessizce
+daraltmamalı. `menuButton("Dışa aktar", [...])` ara sıra kullanılan eylemleri
+tek düğmede toplar. `confirmWithReason` `presets` alır: sık yazılan gerekçeler
+çip olarak çizilir, tıklanınca alanı doldurur (onaylamaz; uzunluk kuralı aynen
+işler).
+
 ## Mevcut BBD panelleri
 
 `bbd_*` panelleri bu kite **taşınmadı**; kendi kopyalarıyla çalışıyorlar ve

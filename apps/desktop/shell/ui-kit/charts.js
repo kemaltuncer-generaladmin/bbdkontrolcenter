@@ -335,10 +335,16 @@ export function stackedBar(parts, { height = 34, width = 720 } = {}) {
     const span = (value / total) * width;
     // Tonlar aynı vurgudan türer: ayrım için yeterli, gökkuşağı değil.
     const tone = mix(ACCENT, 1 - (index / Math.max(1, list.length)) * 0.62);
-    svg.append(el('rect', {
+    // `append` HİÇBİR ŞEY döndürmez — zincirlemek (`svg.append(rect).append(…)`)
+    // veri gelir gelmez TypeError fırlatıyor ve grafiği çizen panel o noktada
+    // duruyordu (Dashboard'da üç kart hiç çizilmiyordu). Başlık dikdörtgenin
+    // ÇOCUĞU olarak eklenir.
+    const bar = el('rect', {
       x: cursor, y: 0, width: Math.max(1, span), height,
       fill: tone, rx: index === 0 || index === list.length - 1 ? 4 : 0,
-    })).append(el('title', {}, `${part.label}: ${value}`));
+    });
+    bar.append(el('title', {}, `${part.label}: ${value}`));
+    svg.append(bar);
 
     // Etiket ancak sığıyorsa çubuğun İÇİNE yazılır; sığmazsa altta listelenir.
     if (span > 46) {
