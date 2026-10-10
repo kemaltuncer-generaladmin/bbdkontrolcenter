@@ -7,16 +7,44 @@ details are generic errors on the tablet side.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import Header
+from fastapi import Header, Request, Response
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 
 from km_sdk import APIRouter, BaseModel, Field, HTTPException, Query
 
 from ..service import TabletError
 from .routes import current_service
 
-router = APIRouter()
+
+class CodedErrorRoute(APIRoute):
+    """Coded tablet errors leave this router in the contract shape.
+
+    The core wraps every HTTPException as `{"error": {"status", "message"}}`
+    and replaces a non-text detail with a generic message, which would strip
+    the code the tablet acts on (removed pairing, wrong code, rate limit).
+    Plain-text errors still go through the core envelope.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def coded_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except HTTPException as exc:
+                if isinstance(exc.detail, dict) and "code" in exc.detail:
+                    return JSONResponse(status_code=exc.status_code,
+                                        content={"detail": exc.detail}, headers=exc.headers)
+                raise
+
+        return coded_handler
+
+
+router = APIRouter(route_class=CodedErrorRoute)
 
 
 def coded(error: TabletError) -> HTTPException:

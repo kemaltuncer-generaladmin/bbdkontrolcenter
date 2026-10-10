@@ -154,8 +154,8 @@ class NotFoundError(ValueError):
 class ConflictError(ValueError):
     """Management API: the record exists but its state forbids the action (409).
 
-    With a `code` the API answers `{"detail": {"code", "message", ...extra}}`
-    so the panel can act on it; without one the detail stays plain text.
+    The HTTP answer carries only the message (the core envelope keeps text);
+    `code` and `extra` let callers inside the module tell conflicts apart.
     """
 
     def __init__(self, message: str, *, code: str | None = None, **extra: Any) -> None:

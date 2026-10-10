@@ -56,7 +56,9 @@ async def run[T](call: Awaitable[T]) -> T:
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConflictError as exc:
-        raise HTTPException(status_code=409, detail=exc.detail()) from exc
+        # The core envelope keeps only a text detail, so the panel gets the
+        # message itself; a structured detail would arrive as a generic text.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CanteenUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

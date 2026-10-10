@@ -7,7 +7,8 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from modules.bbd_tablet.backend.api import routes, tablet_routes
 from modules.bbd_tablet.backend.service import TabletService
 
@@ -40,9 +41,24 @@ class Identity:
         return None
 
 
+def core_envelope(app: FastAPI) -> None:
+    """Same HTTPException handler as km_core/http/app.py: non-text detail is lost.
+
+    Without it this test app would pass coded errors that production strips.
+    """
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail if isinstance(exc.detail, str) else "İstek reddedildi."
+        return JSONResponse(status_code=exc.status_code,
+                            content={"error": {"status": exc.status_code, "message": detail}},
+                            headers=exc.headers)
+
+
 @pytest.fixture
 async def client(store: Any, canteen: Any, clock: Any) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
+    core_envelope(app)
     app.state.identity = Identity()
     app.include_router(routes.bind(TabletService(store=store, canteen=canteen, config={},
                                                  clock=clock)), prefix="/api/bbd_tablet")
@@ -148,8 +164,7 @@ async def test_delete_actions_over_http(client: httpx.AsyncClient) -> None:
     in_use = await client.request("DELETE", f"{base}/profiles/{profile['id']}",
                                   headers=ADMIN_AUTH, json={"pin": "482913"})
     assert in_use.status_code == 409
-    detail = in_use.json()["detail"]
-    assert (detail["code"], detail["devices"]) == ("PROFILE_IN_USE", ["Etüt-01"])
+    assert in_use.json()["error"]["message"].startswith("Bu profil 1 tablete atanmış.")
     moved = await client.request("DELETE", f"{base}/profiles/{profile['id']}",
                                  headers=ADMIN_AUTH,
                                  json={"pin": "482913", "replacementProfileId": other["id"]})
