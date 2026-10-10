@@ -18,6 +18,7 @@ from typing import Any
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from km_core.build_info import build_info
@@ -26,6 +27,7 @@ from km_core.config.loader import Config, load_config, nest, with_store_layer
 from km_core.config.settings_store import SettingsStore
 from km_core.files import outputs_log
 from km_core.files.outputs_queue import OutputsQueue
+from km_core.http.deps import resolve_once
 from km_core.http.documents import create_documents_router
 from km_core.http.settings import create_settings_router
 from km_core.http.users import create_identity_router, user_payload
@@ -250,6 +252,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         docs_url=None,       # sidecar; tarayıcı arayüzü sunmaz
         redoc_url=None,
     )
+    # ADR 0026'dan beri yanıtlar internetten geçiyor; sipariş/ürün listeleri
+    # onlarca KB JSON. Sıkıştırma yalnız `Accept-Encoding: gzip` diyen
+    # istemciye uygulanır, küçük yanıtlara dokunulmaz.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
@@ -318,7 +324,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         token = ""
         if authorization and authorization.lower().startswith("bearer "):
             token = authorization[7:].strip()
-        user = await identity.resolve_session(token) if token else None
+        user = await resolve_once(request, identity, token)
         if user is None:
             raise HTTPException(status_code=401, detail="Oturum yok veya süresi doldu.")
 
@@ -391,8 +397,14 @@ def create_app(config: Config | None = None) -> FastAPI:
                 user.has_permission(*_split_permission(item)) for item in requires
             )
 
+        # `enabled: false` BİLİNÇLİ bir karardır: ekran menüde hiç görünmez.
+        # Eskiden kapatılan modül menüde aynen duruyor, tıklanınca paneli
+        # açılıp her isteği 404 alıyordu. ÇÖKEN modül (`failed`) ise görünür
+        # kalır — sebebi ekranda okunmalı (K7).
         report = [
-            {**entry, "source": "module", "visible": visibility((entry.get("ui") or {}).get("nav"))}
+            {**entry, "source": "module",
+             "visible": entry.get("state") != "disabled"
+             and visibility((entry.get("ui") or {}).get("nav"))}
             for entry in kernel.report()
         ]
 

@@ -19,17 +19,36 @@ from __future__ import annotations
 
 import hmac
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends, Header, HTTPException, Request
 
 from km_core.files import outputs_log
-from km_core.security.identity import CurrentUser
+from km_core.security.identity import CurrentUser, Identity
 
 
 def split_permission(entry: str) -> tuple[str, str | None]:
     key, _, scope = entry.partition(":")
     return key, (scope or None)
+
+
+async def resolve_once(request: Request, identity: Identity, token: str) -> CurrentUser | None:
+    """Oturum AYNI İSTEKTE bir kez çözülür.
+
+    Modül uçları iki kapıdan geçer: router'ın taban izni (`app.py` →
+    `current_user`) ve ucun kendi `requires(...)`ı. İkisi de oturumu ayrı ayrı
+    çözüyordu — istek başına iki kez oturum+kullanıcı, rol ve izin sorgusu.
+    Sonuç istek ömrü boyunca `request.state` üzerinde tutulur; belirteç
+    değişmediği sürece ikinci kapı aynı kullanıcıyı görür. İstek bitince
+    kaybolur — istekler arası önbellek DEĞİLDİR, izin değişikliği bir sonraki
+    istekte geçerlidir.
+    """
+    cached = getattr(request.state, "km_session", None)
+    if cached is not None and cached[0] == token:
+        return cast("CurrentUser | None", cached[1])
+    user = await identity.resolve_session(token) if token else None
+    request.state.km_session = (token, user)
+    return user
 
 
 def requires(*permissions: str) -> Any:
@@ -51,7 +70,7 @@ def requires(*permissions: str) -> Any:
             raise HTTPException(status_code=503, detail="Kimlik hazır değil.")
 
         token = authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else ""
-        user = await identity.resolve_session(token) if token else None
+        user = await resolve_once(request, identity, token)
         if user is None:
             raise HTTPException(status_code=401, detail="Oturum yok veya süresi doldu.")
 

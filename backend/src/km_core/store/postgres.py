@@ -35,6 +35,10 @@ POOL_MIN = 1
 POOL_MAX = 10
 
 
+#: Çeviri önbelleğinin üst sınırı; aşılırsa baştan dolar.
+TRANSLATE_CACHE_SIZE = 4096
+
+
 class PostgresStore:
     """`Store` ile aynı yüzeyi sunan PostgreSQL deposu."""
 
@@ -42,6 +46,9 @@ class PostgresStore:
         self.dsn = dsn
         self._pool: asyncpg.Pool[Any] | None = None
         self._primary_keys: dict[str, list[str]] = {}
+        #: Çevrilmiş SQL önbelleği. Sorgular koddan gelir ve sınırlı sayıdadır;
+        #: her çağrıda aynı metni düzenli ifadelerle yeniden çevirmek boşa iş.
+        self._translated: dict[str, str] = {}
 
     # ----------------------------------------------------------- yaşam döngüsü
 
@@ -84,6 +91,9 @@ class PostgresStore:
         for row in rows:
             keys.setdefault(str(row["tablo"]), []).append(str(row["sutun"]))
         self._primary_keys = keys
+        # `INSERT OR REPLACE` çevirisi birincil anahtara bağlı; şema değişince
+        # eski çeviriler düşer.
+        self._translated.clear()
 
     def _pk_of(self, table: str) -> list[str]:
         return self._primary_keys.get(table.lower(), [])
@@ -91,7 +101,14 @@ class PostgresStore:
     # -------------------------------------------------------------------- sorgu
 
     def _translate(self, sql: str) -> str:
-        return to_postgres(sql, pk_of=self._pk_of)
+        hit = self._translated.get(sql)
+        if hit is not None:
+            return hit
+        translated = to_postgres(sql, pk_of=self._pk_of)
+        if len(self._translated) >= TRANSLATE_CACHE_SIZE:
+            self._translated.clear()
+        self._translated[sql] = translated
+        return translated
 
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         rows = await self.pool.fetch(self._translate(sql), *_adapt(params))

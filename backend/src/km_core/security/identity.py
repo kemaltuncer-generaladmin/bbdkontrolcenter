@@ -614,8 +614,8 @@ class Identity:
 
     async def resolve_session(self, token: str) -> CurrentUser | None:
         row = await self.store.fetch_one(
-            "SELECT s.user_id, s.expires_at, u.* FROM sessions s "
-            "JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+            "SELECT s.user_id, s.expires_at, s.last_seen AS session_last_seen, u.* "
+            "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
             (_hash_token(token),),
         )
         if row is None:
@@ -626,12 +626,16 @@ class Identity:
         if row["status"] != "active":
             return None
 
-        # Boşta kalma süresi her istekte tazelenir.
-        expires = datetime.now(UTC) + timedelta(minutes=self.session_idle_minutes)
-        await self.store.execute(
-            "UPDATE sessions SET last_seen = ?, expires_at = ? WHERE token = ?",
-            (now(), expires.isoformat(timespec="seconds"), _hash_token(token)),
-        )
+        # Boşta kalma süresi tazelenir — ama EN ÇOK dakikada bir. Eskiden her
+        # istek bir UPDATE yazıyordu; bir ekranın aynı anda attığı beş istek
+        # aynı oturum satırına beş yazma demekti. Bir dakikalık kayma, saatlerle
+        # ölçülen boşta kalma süresinde fark yaratmaz.
+        if _stale(row.get("session_last_seen"), SESSION_TOUCH_SECONDS):
+            expires = datetime.now(UTC) + timedelta(minutes=self.session_idle_minutes)
+            await self.store.execute(
+                "UPDATE sessions SET last_seen = ?, expires_at = ? WHERE token = ?",
+                (now(), expires.isoformat(timespec="seconds"), _hash_token(token)),
+            )
         return await self._current_user(row)
 
     async def logout(self, token: str) -> None:
@@ -666,6 +670,23 @@ def _verify(stored: str | None, secret: str) -> bool:
         return bool(_hasher.verify(stored or "", secret))
     except (VerificationError, InvalidHashError):
         return False
+
+
+#: Oturumun `last_seen`/`expires_at` alanları en sık bu aralıkla yazılır.
+SESSION_TOUCH_SECONDS = 60
+
+
+def _stale(value: Any, seconds: int) -> bool:
+    """Zaman damgası `seconds`tan eski mi? Okunamayan değer eski sayılır."""
+    if not value:
+        return True
+    try:
+        seen = datetime.fromisoformat(str(value))
+    except ValueError:
+        return True
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - seen).total_seconds() >= seconds
 
 
 def _hash_token(token: str) -> str:
