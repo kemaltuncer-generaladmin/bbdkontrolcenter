@@ -48,12 +48,13 @@ async def products(
     order: str = Query("desc", max_length=4),
     page: int = Query(1, ge=1, le=10_000),
     size: int = Query(0, ge=0, le=200),
+    fresh: bool = Query(False),
     user: CurrentUser = requires("store_products.view"),
 ) -> dict[str, Any]:
     return await service().products(q=q, chip=chip, status=status, kind=kind, family=family,
                                     category_id=categoryId, price_min=priceMin,
                                     price_max=priceMax, sort=sort, order=order,
-                                    page=page, size=size)
+                                    page=page, size=size, fresh=fresh)
 
 
 @router.get("/products/{product_id}")

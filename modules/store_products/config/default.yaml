@@ -34,3 +34,8 @@ image_max_ratio: 1.6
 # kalırsa kataloğun yarısı yeni yarısı eski değerde kalır. Küçük düzeltmeler
 # için yönetici bunu bilerek açabilir; açınca ekranda ne olacağı yazar.
 bulk_direct_limit: 0
+
+# Ürün listesi sayfalarının sunucuda tutulduğu süre (sn). Mağazanın liste ucu
+# sayfa başına 6–7 sn sürüyor; her yazma önbelleği boşaltır, "Yenile" atlar.
+# 0 = önbellek kapalı.
+list_cache_seconds: 60

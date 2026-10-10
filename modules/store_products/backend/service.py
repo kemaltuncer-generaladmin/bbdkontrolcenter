@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -153,6 +154,19 @@ class ProductsService:
         #: Öznitelik ailesi bir kez çözülüp saklanır (`_default_family`).
         self._family_cache = 0
 
+        #: ÜRÜN LİSTESİ SAYFA ÖNBELLEĞİ — `{anahtar: (an, yanıt)}`. Mağazanın
+        #: ürün listesi ucu sayfa başına 6–7 sn sürüyor (ölçüldü 2026-10-10,
+        #: sunucu içinden); sekme değiştirip dönmek her seferinde bunu
+        #: ödetiyordu. Her yazma (`_record`) önbelleği boşaltır, "Yenile"
+        #: (`fresh`) atlar. Aynı sayfayı aynı anda isteyen ikinci çağrı ilkini
+        #: bekler, mağazaya ikinci kez gitmez.
+        self._pages: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._pages_inflight: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        #: HIZLI UÇ (`bbd_catalog_products`) bu ana kadar denenmez: yayında
+        #: değilse (`bbd_endpoint_missing`) vendor ucuna düşülür ve on dakika
+        #: boyunca bir daha sorulmaz.
+        self._fast_off_until = 0.0
+
         #: {aile kimliği: taşıdığı nitelik kodları}. YALNIZ BAŞARILI okumalar
         #: girer; okunamayan aile hiç yazılmaz ve bir dahaki sefere yeniden
         #: denenir (bkz. `_family_codes`).
@@ -219,7 +233,11 @@ class ProductsService:
     async def _record(self, *, product_id: int, action: str, reason: str, actor: str,
                       result: str, detail: Any = None) -> None:
         """Yerel denetim izi. Bagisto denetim tutuyor ama GEREKÇEYİ tutmuyor;
-        ayrıca ağ koparsa "ne yapmaya çalıştık" kaydı burada kalır."""
+        ayrıca ağ koparsa "ne yapmaya çalıştık" kaydı burada kalır.
+
+        Her yazma buradan geçtiği için liste önbelleği de burada düşer.
+        """
+        self._pages.clear()
         try:
             await self._store.execute(
                 f"INSERT INTO {self._audit} "
@@ -435,7 +453,7 @@ class ProductsService:
                        kind: str = "", family: str = "", category_id: int = 0,
                        price_min: int | None = None, price_max: int | None = None,
                        sort: str = "", order: str = "desc", page: int = 1,
-                       size: int = 0) -> dict[str, Any]:
+                       size: int = 0, fresh: bool = False) -> dict[str, Any]:
         """Sayfalanmış ürün listesi. SUNUCU TARAFI — tam liste çekilmez.
 
         `chip` üç bulgu için veri kaynağını değiştirir: tükenen/kritik/görselsiz
@@ -478,7 +496,7 @@ class ProductsService:
             filters["category_id"] = int(category_id)
 
         try:
-            payload = await self._api.products(filters, page=page, per_page=per_page)
+            payload = await self._page(filters, page=page, per_page=per_page, fresh=fresh)
             connected, error = True, ""
         except Exception as failure:  # noqa: BLE001 — ekran ayakta kalmalı (K7)
             self._log.warning("ürün listesi okunamadı", error=str(failure))
@@ -508,6 +526,59 @@ class ProductsService:
             "categoryFilter": honored,
             "source": "products",
         }
+
+    async def _page(self, filters: dict[str, Any], *, page: int, per_page: int,
+                    fresh: bool) -> dict[str, Any]:
+        """Bir liste sayfası — önbellekten ya da mağazadan (bkz. `_pages`)."""
+        key = json.dumps([filters, page, per_page], sort_keys=True, default=str)
+        ttl = max(0, int(self._config.get("list_cache_seconds", 60) or 0))
+        hit = self._pages.get(key)
+        if hit and not fresh and ttl and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        waiting = self._pages_inflight.get(key)
+        if waiting is not None:
+            return await asyncio.shield(waiting)
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self._pages_inflight[key] = future
+        try:
+            payload = await self._fetch_page(filters, page=page, per_page=per_page)
+        except asyncio.CancelledError:
+            future.cancel()
+            raise
+        except Exception as failure:
+            future.set_exception(failure)
+            future.exception()  # bekleyen yoksa "alınmamış istisna" uyarısı çıkmasın
+            raise
+        finally:
+            self._pages_inflight.pop(key, None)
+        if ttl:
+            if len(self._pages) >= 64:
+                self._pages.clear()
+            self._pages[key] = (time.monotonic(), payload)
+        future.set_result(payload)
+        return payload
+
+    async def _fetch_page(self, filters: dict[str, Any], *, page: int,
+                          per_page: int) -> dict[str, Any]:
+        """Önce BBD'nin hızlı ucu (0,2 sn), olmazsa vendor ucu (6–7 sn).
+
+        Hızlı uç `product_flat`tan okur; kanal ve dil kendi varsayılanıdır —
+        `channel`/`locale` ona gönderilmez. Uç yoksa ya da beklenmedik biçimde
+        patlarsa liste YİNE gelir: vendor ucu eskisi gibi denenir (K7).
+        """
+        fast = getattr(self._api, "bbd_catalog_products", None)
+        if fast is not None and time.monotonic() >= self._fast_off_until:
+            query = {key: value for key, value in filters.items()
+                     if key not in ("channel", "locale")}
+            try:
+                return await fast(query, page=page, per_page=per_page)
+            except asyncio.CancelledError:
+                raise
+            except Exception as failure:  # noqa: BLE001 — vendor ucuna düşülür
+                self._fast_off_until = time.monotonic() + 600
+                self._log.warning("hızlı ürün listesi kullanılamadı, vendor ucuna düşülüyor",
+                                  code=getattr(failure, "code", ""), error=str(failure)[:200])
+        return await self._api.products(filters, page=page, per_page=per_page)
 
     async def _issues(self, kind: str, *, page: int, size: int,
                       threshold: int) -> dict[str, Any]:

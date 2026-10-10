@@ -446,3 +446,70 @@ async def test_hic_aile_yoksa_anlasilir_hata_doner_patlamaz() -> None:
 
     assert result["ok"] is False
     assert "aile" in result["error"].lower()
+
+
+async def test_liste_sayfasi_onbellekten_gelir_yazma_ve_yenile_dusurur() -> None:
+    """Mağazanın ürün listesi ucu sayfa başına 6–7 sn; aynı sayfa 60 sn içinde
+    ikinci kez mağazaya gitmez. Yazma da "Yenile" de önbelleği aşar."""
+    import asyncio
+
+    service, api, _ = _service()
+    api.list_payload = {"items": [dict(URUN)], "meta": {"total": 1}}
+
+    await service.products(page=1)
+    await service.products(page=1)
+    assert len(api.used("products")) == 1
+
+    await service.products(page=1, fresh=True)
+    assert len(api.used("products")) == 2
+
+    await service.set_status([5], active=False, reason="Önbellek sınaması için", actor="t",
+                             dry_run=True)
+    await service.products(page=1)
+    assert len(api.used("products")) == 3
+
+    # Aynı anda gelen iki istek mağazaya TEK istek olarak gider.
+    service._pages.clear()
+    await asyncio.gather(service.products(page=2), service.products(page=2))
+    assert len(api.used("products")) == 4
+
+
+async def test_hizli_uc_varsa_liste_ondan_gelir_kanal_dil_gitmez() -> None:
+    service, api, _ = _service()
+    istekler: list[dict[str, Any]] = []
+
+    async def hizli(filters: Any = None, **kw: Any) -> dict[str, Any]:
+        istekler.append({"filters": dict(filters or {}), **kw})
+        return {"items": [{"id": 9, "sku": "BBD-9", "name": "Hızlı", "status": 1,
+                           "price": "120.0000", "quantity": 4,
+                           "categories": [{"id": 3, "name": "Kitap"}]}],
+                "meta": {"total": 1, "currentPage": 1, "lastPage": 1}}
+
+    api.bbd_catalog_products = hizli  # type: ignore[attr-defined]
+    result = await service.products(q="BBD-9")
+
+    assert result["items"][0]["sku"] == "BBD-9"
+    assert result["items"][0]["price"] == 12000
+    assert result["items"][0]["categoryIds"] == [3]
+    assert api.used("products") == []
+    assert "channel" not in istekler[0]["filters"] and "locale" not in istekler[0]["filters"]
+
+
+async def test_hizli_uc_yoksa_vendor_ucuna_duser_ve_bir_daha_sormaz() -> None:
+    service, api, _ = _service()
+    api.list_payload = {"items": [dict(URUN)], "meta": {"total": 1}}
+    deneme = {"n": 0}
+
+    class Yok(Exception):
+        code = "bbd_endpoint_missing"
+
+    async def hizli(*_: Any, **__: Any) -> dict[str, Any]:
+        deneme["n"] += 1
+        raise Yok("uç yayında değil")
+
+    api.bbd_catalog_products = hizli  # type: ignore[attr-defined]
+    await service.products(page=1)
+    await service.products(page=2)
+
+    assert deneme["n"] == 1
+    assert len(api.used("products")) == 2

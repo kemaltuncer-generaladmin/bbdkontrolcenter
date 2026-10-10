@@ -87,9 +87,12 @@ def test_seo_eksik_cipi_sonucu_soyler() -> None:
     """“SEO eksik” bir terimdi; kullanıcı ne yapması gerektiğini bilmiyordu.
 
     Yeni ad hem aynı şeyi söyler hem NEDEN önemli olduğunu anlatır.
+
+    10.10.2026 (docs/tasarim-sade-magaza.md §6): aynı sayıyı tekrarlayan
+    “Google’da zor bulunur” KPI kutusu kalktı; sayı artık çipin kendisinde.
+    Çip adı EKRANDA (yorumda değil) kalmalı.
     """
-    assert "Google’da zor bulunanlar" in PANEL
-    assert "Google’da zor bulunur" in PANEL
+    assert "Google’da zor bulunanlar" in VISIBLE
 
 
 def test_sayfa_adresi_alani_ne_oldugunu_ornekle_anlatir() -> None:
@@ -174,6 +177,67 @@ def test_toplu_islem_once_ne_olacagini_gosterir() -> None:
     assert "Önce ne olacağını göster" in PANEL
     assert "Onaylarsanız" in PANEL              # fark tablosunun sütun başlığı
     assert "Onaylamadan hiçbir şey değişmez" in PANEL
+
+
+# ============================== sade ekran (docs/tasarim-sade-magaza.md, 10.10.2026)
+#
+# Kullanıcı kararı: mağaza ekranları "karışık değil, sade, tık tık tık". Bu
+# testler kuralın GERİ SIZMASINI yakalar — kırılırsa bir düğme/kutu yeniden
+# varsayılan görünüme dönmüş demektir. Özellik silinmedi; yalnız taşındı.
+
+MOUNT = PANEL[PANEL.index("export function mount("):]
+FILTER_BAR = MOUNT[MOUNT.index("nodes.filters = filterBar("):MOUNT.index("nodes.chips = chipRow(")]
+
+
+def test_suzgec_seridi_sade_kipte_ve_en_cok_iki_alan_gorunur() -> None:
+    """§1 — Kategori/Tür/Fiyat "Filtreler" düğmesinin arkasına katlanır."""
+    assert "compact: true" in FILTER_BAR
+    assert 1 <= FILTER_BAR.count("primary: true") <= 2
+
+
+def test_ikincil_eylemler_tek_menude_tek_birincil_dugme() -> None:
+    """§2 — dört dışa aktarma yan yana dizilmez; tek "Dışa aktar" menüsü."""
+    kod = _without_comments(FILTER_BAR)
+    assert "menuButton('Dışa aktar'" in kod
+    assert kod.count("variant: 'primary'") == 1
+    for etiket in ("Ekrandaki ürünler", "Tüm ürünler", "Stok raporu", "Fiyat listesi"):
+        assert etiket in kod, etiket
+    # Menüdekiler hâlâ AYNI işlere bağlı — taşındı, silinmedi.
+    for is_ in ("exportVisible", "exportAll", "report.run('stock'", "report.run('pricelist'"):
+        assert is_ in kod, is_
+
+
+def test_tablo_en_cok_yedi_sutun_ve_satirda_sil_yok() -> None:
+    """§5 — yıkıcı eylem satırda durmaz; seçim kutusu da sütun sayılır."""
+    sutunlar = _without_comments(PANEL[PANEL.index("const COLUMNS = ["):
+                                       PANEL.index("function emptyNode(")])
+    anahtarlar = re.findall(r"key: '(\w+)'", sutunlar)
+    assert len(anahtarlar) + 1 <= 7, anahtarlar          # +1: `selectable` kutusu
+    assert "deleteDialog" not in sutunlar
+    assert "'Sil'" not in sutunlar
+
+
+def test_silme_cekmecede_ve_coklu_secimde_duruyor() -> None:
+    """Satırdan kalkan "Sil" kaybolmadı: çekmecede ve seçim çubuğunda."""
+    genel = PANEL[PANEL.index("function paintGeneral("):PANEL.index("function desiFromPages(")]
+    assert "button('Ürünü sil'" in genel
+    assert "deleteDialog([product.id]" in genel
+    secim = PANEL[PANEL.index("function renderSelectionBar("):PANEL.index("function applyChip(")]
+    assert "deleteDialog(state.selection" in secim
+
+
+def test_kpi_seridi_yok_sayilar_ciplerde() -> None:
+    """§6 — çipte sayısı yazan değer KPI olarak tekrarlanmaz; en çok beş çip."""
+    assert "nodes.kpi" not in PANEL
+    cipler = PANEL[PANEL.index("const CHIPS = ["):PANEL.index("// ENGELLER")]
+    assert len(re.findall(r"\{ key: '", cipler)) <= 5
+    assert "nodes.chips.counts(" in PANEL
+
+
+def test_varsayilan_gorunumde_ve_cekmecede_aciklama_kutusu_yok() -> None:
+    """§3 — `hintBox` yalnız menüde kapalı duran Nitelikler sekmesinde kalabilir."""
+    acik_ekranlar = _without_comments(PANEL[:PANEL.index("const SCHEMA_SCOPES = [")])
+    assert "hintBox(" not in acik_ekranlar
 
 
 # ===================================================== kit kuralları (bozulmasın)

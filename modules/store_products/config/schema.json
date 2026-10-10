@@ -8,6 +8,12 @@
       "type": "string",
       "description": "Boşsa masaüstü hiyerarşisi kullanılır (Raporlar/Mağaza/Ürün/yıl/ay)."
     },
+    "list_cache_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 3600,
+      "description": "Ürün listesi sayfalarının sunucuda tutulduğu süre. 0 = kapalı."
+    },
     "page_size": {
       "type": "integer",
       "minimum": 10,

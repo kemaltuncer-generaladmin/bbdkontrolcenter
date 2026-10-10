@@ -50,10 +50,11 @@ ui:
   entry: ui/panel/index.js
   locales: ui/locales
   nav:
-    title: "Ürünler"
+    title: "Ürün Yönetimi"
     icon: box
-    group: "BBD Store / Katalog"
-    order: 260
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
+    group: "BBD Store"
+    order: 205
     requires: [store_products.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

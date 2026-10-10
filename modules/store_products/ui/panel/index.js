@@ -36,7 +36,7 @@
 
 import {
   button, bytes, clip, confirmSimple, confirmWithReason, csvBlob, debounce, h, loadStyles,
-  money, num, parseMoney, percent, toaster,
+  menuButton, money, num, parseMoney, percent, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
@@ -66,12 +66,23 @@ const STOCK_WHAT = {
 // ÇİP ADLARI SONUCU SÖYLER. "SEO eksik" doğru bir terimdi ve kullanıcının
 // sözlüğünde yoktu; "Google’da zor bulunur" aynı şeyi söyler ama neden
 // önemli olduğunu da anlatır.
+//
+// SAYILAR ÇİPTE DURUR (docs/tasarim-sade-magaza.md §6). Eskiden aynı beş
+// sayı ayrıca altı kutuluk bir KPI şeridinde tekrarlanıyordu; şerit kalktı,
+// sayı katalog özetinden (`/health`) gelip çipe yazılır. `count: ''` sayaç
+// yuvasını açar — `chipRow` yuvayı yalnız kurulurken üretiyor; boş yuva
+// panel CSS'inde gizlenir, özet gelmezse çip sayısız durur.
+//
+// "Google’da zor bulunanlar" SONDA ve KALDI: listesi başka hiçbir yerden
+// açılmıyor; çipten de kalksaydı özellik ekrandan silinmiş olurdu (§ Dokunulmayanlar).
 const CHIPS = [
-  { key: 'out_of_stock', label: 'Tükenenler' },
-  { key: 'low_stock', label: 'Stoğu azalanlar' },
-  { key: 'no_image', label: 'Fotoğrafı olmayanlar' },
-  { key: 'seo_missing', label: 'Google’da zor bulunanlar' },
-  { key: 'passive', label: 'Vitrinde olmayanlar' },
+  { key: 'out_of_stock', label: 'Tükenenler', count: '', tiles: ['out_of_stock', 'outOfStock'] },
+  { key: 'low_stock', label: 'Stoğu azalanlar', count: '', tiles: ['low_stock', 'lowStock'] },
+  { key: 'no_image', label: 'Fotoğrafı olmayanlar', count: '',
+    tiles: ['no_image', 'missing_images'] },
+  { key: 'passive', label: 'Vitrinde olmayanlar', count: '', tiles: ['inactive', 'passive'] },
+  { key: 'seo_missing', label: 'Google’da zor bulunanlar', count: '',
+    tiles: ['seo_missing', 'missing_seo'] },
 ];
 
 // ENGELLER — NEDEN + SIRADAKİ ADIM, tek yerde.
@@ -120,6 +131,18 @@ function blockerBox(key, tone = 'warn') {
   const box = h('div', `kit-alert ${tone} sp-blocker`);
   box.append(h('div', 'sp-blocker-why', item.why));
   box.append(h('div', 'sp-blocker-next', item.next));
+  return box;
+}
+
+/**
+ * Engelin TEK SATIRLIK hâli — liste görünümü için (tasarim-sade-magaza §3).
+ * Görünen kısa cümle ne olduğunu söyler; neden + sıradaki adım ipucunda durur,
+ * bilgi kaybolmaz.
+ */
+function blockerLine(key, text, tone = 'warn') {
+  const item = BLOCKERS[key];
+  const box = alertBox(text, tone);
+  box.title = `${item.why} ${item.next}`;
   return box;
 }
 
@@ -195,9 +218,21 @@ function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
   const pages = Math.max(1, state.pages);
   const scope = state.chip
-    ? ` · yalnız “${CHIPS.find((c) => c.key === state.chip)?.label}” gösteriliyor` : '';
-  return `Mağazaya bağlı · ${num(state.total)} ürün · ${state.page}. sayfa (toplam ${pages} `
-    + `sayfa)${scope}`;
+    ? ` · yalnız “${CHIPS.find((c) => c.key === state.chip)?.label}”` : '';
+  return `Mağazaya bağlı · ${num(state.total)} ürün · sayfa ${state.page}/${pages}${scope}`;
+}
+
+/**
+ * Durum satırını yazar. Çip listesi katalog bulgularından geldiğinde satırlar
+ * eksik alan taşıyabilir; bunu anlatan kutu varsayılan görünümden kalktı
+ * (tasarim-sade-magaza §3), açıklaması durum satırının ipucunda durur.
+ */
+function paintStatus() {
+  if (!nodes.status) return;
+  nodes.status.set(statusText(), !state.connected);
+  const partial = state.connected && state.source !== 'products';
+  nodes.status.node.title = partial
+    ? `${BLOCKERS.PARTIAL_ROWS.why} ${BLOCKERS.PARTIAL_ROWS.next}` : '';
 }
 
 // -------------------------------------------------------------------- veri
@@ -232,17 +267,18 @@ function queryString(extra = {}) {
   return params.toString();
 }
 
-async function refresh({ page = state.page, size = state.size } = {}) {
+async function refresh({ page = state.page, size = state.size, fresh = false } = {}) {
   nodes.tableWrap?.replaceChildren(skeletonRows(8, 8));
   nodes.status?.set('Ürünler okunuyor…');
-  const query = queryString({ page, size, chip: state.chip || '' });
+  // `fresh` sunucunun 60 sn'lik sayfa önbelleğini atlar — yalnız "Yenile".
+  const query = queryString({ page, size, chip: state.chip || '', fresh: fresh ? 1 : '' });
   let payload;
   try {
     payload = await api(`${BASE}/products?${query}`);
   } catch (error) {
     state = { ...state, connected: false, error: error.message, items: [], total: 0 };
     renderTable();
-    nodes.status?.set(statusText(), true);
+    paintStatus();
     return;
   }
   state = {
@@ -262,7 +298,7 @@ async function refresh({ page = state.page, size = state.size } = {}) {
   };
   renderTable();
   nodes.pager.update({ total: state.total, page: state.page, size: state.size });
-  nodes.status?.set(statusText(), !state.connected);
+  paintStatus();
 }
 
 async function loadReference() {
@@ -317,48 +353,31 @@ async function loadReference() {
 
 async function loadHealth() {
   try {
-    renderKpi(await api(`${BASE}/health`));
+    renderCounts(await api(`${BASE}/health`));
   } catch {
-    renderKpi(null);
+    renderCounts(null);
   }
 }
 
 // ------------------------------------------------------------------- çizim
 
-function renderKpi(payload) {
-  if (!nodes.kpi) return;
-  if (!payload || !payload.connected) {
-    nodes.kpi.replaceChildren(hintBox(
-      'Katalog özeti şu an okunamadı — bu sizin hatanız değil. Mağaza yazılımındaki ilgili '
-      + 'bölüm yayınlandığında tükenen, fotoğrafsız ve Google’da zor bulunan ürün sayıları '
-      + 'burada görünecek. Sıradaki adım: “Yenile” deyin; ekranın geri kalanı çalışıyor.',
-    ));
-    return;
-  }
-  const tiles = payload.tiles || {};
-  const pick = (...names) => {
+/**
+ * Katalog özetinin sayılarını ÇİPLERE yazar (eski KPI şeridinin yerine).
+ *
+ * Özet okunamazsa çipler SAYISIZ kalır — açıklama kutusu çizilmez (§3); çipe
+ * basmak listeyi yine getirir, yani ekranın işi aksamaz. Sayı uydurulmaz:
+ * gelmeyen değer boş kalır, sıfır yazılmaz.
+ */
+function renderCounts(payload) {
+  if (!nodes.chips) return;
+  const tiles = payload && payload.connected ? (payload.tiles || {}) : {};
+  const pick = (names) => {
     for (const name of names) {
       if (tiles[name] !== undefined && tiles[name] !== null) return num(tiles[name]);
     }
-    return '—';
+    return null;
   };
-  // KUTU BAŞLIKLARI SORUYU CEVAPLAR, terim saymaz. `title` ipucu da tek
-  // cümleyle NEDEN önemli olduğunu söyler.
-  nodes.kpi.replaceChildren(kpiRow([
-    { label: 'Toplam ürün', value: pick('total', 'products'),
-      title: 'Katalogdaki bütün ürünler.' },
-    { label: 'Vitrinde yok', value: pick('inactive', 'passive'), tone: 'muted',
-      title: 'Müşteri bunları göremiyor; kayıt duruyor.' },
-    { label: 'Tükendi', value: pick('out_of_stock', 'outOfStock'), tone: 'bad',
-      title: 'Stoğu bitmiş; müşteri sipariş veremiyor.' },
-    { label: 'Stoğu azaldı', value: pick('low_stock', 'lowStock'), tone: 'warn',
-      title: 'Belirlediğiniz sınırın altına düşenler.' },
-    { label: 'Fotoğrafsız', value: pick('no_image', 'missing_images'), tone: 'warn',
-      title: 'Fotoğrafsız ürün vitrinde neredeyse hiç tıklanmıyor.' },
-    { label: 'Google’da zor bulunur', value: pick('seo_missing', 'missing_seo'), tone: 'muted',
-      title: 'Google’da görünecek başlık/açıklama yazılmamış; arama sonuçlarında geri '
-        + 'sıralarda çıkar.' },
-  ]));
+  nodes.chips.counts(Object.fromEntries(CHIPS.map((chip) => [chip.key, pick(chip.tiles)])));
 }
 
 function thumb(row) {
@@ -414,6 +433,15 @@ function stockCell(row) {
   return box;
 }
 
+// TABLO DAR: seçim kutusu dahil YEDİ sütun (tasarim-sade-magaza §5).
+//  · "Tür" sütunu kalktı — mağazada her ürün aynı türde (kitap) ve sütun her
+//    satırda aynı kelimeyi yazıyordu. Tür çekmecenin başlığında rozet olarak,
+//    süzgeci de "Filtreler" altında duruyor.
+//  · "Son değişiklik" sütunu kalktı — tarih ürün adının ipucunda; kimin ne
+//    değiştirdiği çekmecedeki "Kim ne değiştirmiş" sekmesinde.
+//  · Satırdaki "Sil" düğmesi kalktı — yıkıcı eylem satırda durmaz. Silme
+//    çekmecede ("Temel bilgiler" → "Ürünü sil") ve çoklu seçimin çubuğunda;
+//    önizleme + gerekçe kapısı aynen.
 const COLUMNS = [
   { key: 'imageUrl', label: '', width: '46px', cell: thumb },
   {
@@ -426,11 +454,13 @@ const COLUMNS = [
       // Uzun ad kesilir ama tamamı `title`'a girer — bilgi kaybolmaz.
       box.append(clip(h('b'), row.name, 46),
         h('span', 'sp-sub', row.categories || 'hiçbir kategoride değil'));
+      if (row.updatedAt) {
+        box.title = `Son değişiklik: ${row.updatedAt.replace('T', ' ').slice(0, 16)}`;
+      }
       return box;
     },
   },
   { key: 'sku', label: 'Stok kodu', width: 'minmax(0, 1fr)', className: 'mono', sortable: true },
-  { key: 'typeLabel', label: 'Tür', width: '92px' },
   { key: 'price', label: 'Fiyat', width: '150px', align: 'num', sortable: true, cell: priceCell },
   { key: 'stock', label: 'Stok', width: '132px', align: 'num', cell: stockCell },
   {
@@ -443,31 +473,6 @@ const COLUMNS = [
         ? 'Müşteri bu ürünü görüyor ve satın alabiliyor.'
         : 'Müşteri bu ürünü göremiyor. Silinmedi; istediğiniz gün geri alırsınız.';
       return chip;
-    },
-  },
-  {
-    key: 'updatedAt',
-    label: 'Son değişiklik',
-    width: '132px',
-    cell: (row) => (row.updatedAt ? row.updatedAt.replace('T', ' ').slice(0, 16) : '—'),
-  },
-  {
-    // Satır tıklaması çekmeceyi açıyor; silme düğmesi o tıklamayı YEMELİ,
-    // yoksa "sil"e basan kullanıcının önce düzenleyicisi açılırdı.
-    key: 'delete',
-    label: '',
-    width: '52px',
-    cell: (row) => {
-      const node = button('Sil', {
-        variant: 'danger',
-        title: `${row.sku} — bu ürünü katalogdan tamamen siler. GERİ ALINAMAZ. `
-          + 'Yalnız vitrinden kaldırmak istiyorsanız ürünü açıp “Vitrinde görünsün” '
-          + 'kutusunun işaretini kaldırın.',
-        onClick: () => deleteDialog([row.id]),
-      });
-      node.classList.add('sp-rowbtn');
-      node.addEventListener('click', (event) => event.stopPropagation());
-      return node;
     },
   },
 ];
@@ -503,8 +508,13 @@ function renderTable() {
   if (!wrap) return;
   wrap.replaceChildren();
 
-  if (state.categoryFilter === false) wrap.append(blockerBox('CATEGORY_NOT_FILTERED'));
-  if (state.source !== 'products') wrap.append(blockerBox('PARTIAL_ROWS', 'info'));
+  // Süzülmemiş listeyi süzülmüş gibi göstermek yanlış veri olur — uyarı
+  // KALIR ama tek satır. "Eksik alanlı satırlar" notu bilgi kutusu değil,
+  // durum satırının ipucudur (bkz. `paintStatus`).
+  if (state.categoryFilter === false) {
+    wrap.append(blockerLine('CATEGORY_NOT_FILTERED',
+      'Kategori süzgeci uygulanamadı; liste süzülmemiş hâlde. “Yenile” deyin.'));
+  }
 
   nodes.table = dataTable({
     columns: COLUMNS,
@@ -531,8 +541,7 @@ function renderSelectionBar() {
     return;
   }
   bar.classList.add('on');
-  bar.append(h('b', undefined, `${num(count)} ürün işaretlendi — aşağıdaki işlemler `
-    + 'yalnız bunlara uygulanır'));
+  bar.append(h('b', undefined, `${num(count)} ürün seçildi`));
   bar.append(h('span', 'kit-spacer'));
   bar.append(
     button('Fiyat değiştir', {
@@ -685,21 +694,18 @@ async function openProduct(productId) {
   const sku = h('code', 'sp-sku', product.sku);
   sku.title = 'Stok kodu (SKU) — ürünün mağazadaki tekil kodu.';
   // "Öznitelik ailesi" kullanıcının sözlüğünde yoktu ve zaten
-  // DEĞİŞTİRİLEMEYEN bir bilgi. Ne olduğu söylenir, sonra bir daha
-  // düşünülmesi gerekmez.
-  const family = h('span', 'sp-sub',
-    `Bilgi alanı grubu: ${product.familyName || '—'} (değiştirilemez)`);
-  family.title = 'Bu ürünün hangi bilgi alanlarını (ISBN, yazar, sayfa sayısı…) '
-    + 'taşıyacağını belirleyen grup. Mağazada bir kez kurulur, sonra dokunulmaz.';
-  head.append(statusChip, badge(product.typeLabel, 'info'), sku, family);
+  // DEĞİŞTİRİLEMEYEN bir bilgi. Başlıkta ayrı satır tutmuyor (sade ekran,
+  // tasarim-sade-magaza §3); tür rozetinin ipucunda durur.
+  const kind = badge(product.typeLabel, 'info');
+  kind.title = `Bilgi alanı grubu: ${product.familyName || '—'} (değiştirilemez)`;
+  head.append(statusChip, kind, sku);
   const pane = h('div', 'sp-pane');
   box.body.append(head, tabs.node, pane);
 
   if (payload.warnings && payload.warnings.length) {
-    box.body.insertBefore(alertBox(
-      'Bu ürünün bazı bilgileri mağazadan okunamadı; aşağıdaki sekmelerde eksik alanlar '
-      + `olabilir. Sıradaki adım: pencereyi kapatıp yeniden açın. (${payload.warnings.join(' · ')})`,
-      'warn'), pane);
+    const warn = alertBox('Bazı bilgiler okunamadı; pencereyi kapatıp yeniden açın.', 'warn');
+    warn.title = payload.warnings.join(' · ');
+    box.body.insertBefore(warn, pane);
   }
 
   function paint(key) {
@@ -745,23 +751,21 @@ function paintGeneral(pane, payload, forms, box) {
         hint: 'Müşterinin vitrinde ve arama sonuçlarında göreceği ad.' },
       // "URL anahtarı" kullanıcının sözlüğünde yoktu. Alan adı artık ne
       // olduğunu söylüyor, ipucu da NEREYE etki ettiğini.
+      // İPUÇLARI TEK SATIR (tasarim-sade-magaza §3). Uzun gerekçe burada,
+      // yorumda: adres değişince paylaşılmış bağlantılar ve Google sonuçları
+      // kırılır; kaydetmeden önce "bu adres boşta mı" diye bakılır.
       { key: 'urlKey', label: 'Sayfa adresi', type: 'text', maxLength: 180,
-        hint: 'Bu ürünün sitedeki adresinin son parçası: bbdstore.com.tr/BURASI. '
-          + 'DEĞİŞTİRİRSENİZ eski adres çalışmaz — paylaşılmış bağlantılar ve Google '
-          + 'sonuçları kırılır. Kaydetmeden önce “bu adres boşta mı” diye bakılır.' },
+        hint: 'bbdstore.com.tr/BURASI — değiştirirseniz eski adres çalışmaz.' },
       { key: 'status', label: 'Vitrinde görünsün', type: 'checkbox',
-        hint: 'İşareti kaldırmak SİLMEK DEĞİLDİR: ürün geçmiş siparişlerde ve raporlarda '
-          + 'kalır, istediğiniz gün geri açarsınız.' },
+        hint: 'İşareti kaldırmak silmek değildir; istediğiniz gün geri açarsınız.' },
       { key: 'shortDescription', label: 'Kısa açıklama', type: 'richtext', wide: true,
         maxLength: 500, placeholder: 'Listede ve ürün kartının üstünde görünen özet.',
-        hint: 'Vitrinde ürün adının hemen altında çıkar. Bir iki cümle yeter; uzun '
-          + 'anlatımı aşağıdaki kutuya yazın.' },
+        hint: 'Ürün adının hemen altında çıkar; bir iki cümle yeter.' },
       { key: 'description', label: 'Uzun açıklama', type: 'richtext', wide: true,
         maxLength: 8000,
         placeholder: 'Ürünün ayrıntılı anlatımı. Başlık, liste, renk ve kalın yazı '
           + 'araç çubuğundan uygulanır.',
-        hint: 'Word gibi yazın: kalın, başlık, madde işareti üstteki araç çubuğundan '
-          + 'verilir. Kod yazmanız gerekmiyor.' },
+        hint: 'Kalın, başlık, madde işareti üstteki araç çubuğundan verilir.' },
     ],
     value: {
       name: product.name,
@@ -836,10 +840,9 @@ function paintGeneral(pane, payload, forms, box) {
     }),
   );
 
-  pane.append(form.node, verdict, actions,
-    hintBox('Kaydederken ürün önce mağazadan TAZE okunur; dokunmadığınız alanlar olduğu '
-      + 'gibi bırakılır. Yani bu ekranda görmediğiniz bir bilgi, siz kaydettiniz diye '
-      + 'silinmez.'));
+  // Kaydederken ürün önce mağazadan TAZE okunur; dokunulmayan alanlar olduğu
+  // gibi kalır. Bunu anlatan kutu kalktı (§3) — davranış aynen sürüyor.
+  pane.append(form.node, verdict, actions);
 }
 
 // --------------------------------------------------------- kitap künyesi
@@ -980,6 +983,9 @@ function paintBook(pane, payload, forms) {
   }
 
   const readout = h('div', 'sp-desi');
+  // Hesabın formülü ayrı bir açıklama kutusundaydı; artık okumanın ipucunda
+  // (tasarim-sade-magaza §3). Katsayılar yine sunucudan gelir.
+  if (rules) readout.title = `Hesap: ${rules.formula}. ${rules.note}`;
 
   const paintDesi = (draft) => {
     readout.replaceChildren();
@@ -1014,10 +1020,6 @@ function paintBook(pane, payload, forms) {
   box.append(readout);
   pane.append(card('Kitap künyesi', box,
     'Sayfa sayısı yazıldıkça desi anında yeniden hesaplanır'));
-
-  if (rules) {
-    pane.append(hintBox(`Hesap: ${rules.formula}. ${rules.note}`));
-  }
 
   if (form) {
     const actions = h('div', 'sp-actions');
@@ -1056,20 +1058,25 @@ function paintBook(pane, payload, forms) {
   }
 }
 
+// İPUÇLARI TEK SATIR (tasarim-sade-magaza §3). Uzun gerekçeleri:
+//  · pageCount — sayı olmayan değer ("Fasikül") hesapta YOK sayılır ve ürün
+//    varsayılan desiye çıkar.
+//  · desi — elle ÖLÇÜMDÜR ve sayfa hesabını EZER: paketi ölçen kişinin kararı
+//    modelden üstündür; boş bırakmak doğru olanıdır.
+//  · publisher — seçenek kimliğiyle saklanır; listede olmayan yayınevi önce
+//    nitelik seçeneği olarak eklenir, elle yazılamaz.
 function bookHint(key, rules) {
   if (key === 'pageCount') {
-    return 'Kargo desisinin ana girdisi. Sayı olmayan değer (örn. “Fasikül”) hesapta YOK '
-      + `sayılır ve ürün varsayılan ${rules ? num(rules.defaultDesi, 1) : '1,0'} desiye çıkar.`;
+    return 'Desi bundan hesaplanır; sayı değilse varsayılan '
+      + `${rules ? num(rules.defaultDesi, 1) : '1,0'} desi.`;
   }
   if (key === 'desi') {
-    return 'Elle ÖLÇÜM. Doldurulursa sayfa sayısından yapılan hesabı EZER — paketi eline '
-      + 'alıp ölçen kişinin kararı modelden üstündür. Boş bırakmak doğru olanıdır.';
+    return 'Elle ölçüm; doldurulursa sayfa hesabının yerine geçer. Boş bırakılabilir.';
   }
   if (key === 'isbn') return '10 ya da 13 hane; tire ve boşluk sayılmaz.';
   if (key === 'publishYear') return 'Dört haneli yıl (örnek: 2024).';
   if (key === 'publisher') {
-    return 'Katalogdaki yayınevi listesinden seçilir. Listede olmayan bir yayınevi '
-      + 'önce Nitelikler sekmesinden seçenek olarak eklenir; buraya elle yazılamaz.';
+    return 'Listeden seçilir; listede olmayan yayınevi elle yazılamaz.';
   }
   if (key === 'author') return 'Serbest metin. Komisyon kitaplarında yayınevi adı yazılabilir.';
   return '';
@@ -1249,8 +1256,7 @@ function imagePicker({ rules, limit = 0 }) {
     grid.replaceChildren();
     if (!picked.length) {
       grid.append(h('div', 'sp-sub',
-        'Henüz fotoğraf seçilmedi. Fotoğrafsız ürün vitrinde neredeyse hiç tıklanmıyor; '
-        + 'en azından bir kapak fotoğrafı ekleyin.'));
+        'Henüz fotoğraf seçilmedi; en az bir kapak fotoğrafı ekleyin.'));
       return;
     }
     picked.forEach((entry, index) => {
@@ -1437,15 +1443,14 @@ async function newProduct(done) {
 
   const form = formGrid({
     fields: [
+      // İPUÇLARI TEK SATIR (tasarim-sade-magaza §3) ama HER ALANDA VAR.
       { key: 'sku', label: 'Stok kodu (SKU)', type: 'text', required: true, maxLength: 64,
-        hint: 'Bu ürünü diğerlerinden ayıran tekil kod — barkod ya da kendi kodunuz. '
-          + 'Sonradan değiştirmek eski bağlantıları kırabilir, baştan doğru yazın.' },
+        hint: 'Barkod ya da kendi kodunuz; sonradan değiştirmek bağlantıları kırabilir.' },
       { key: 'name', label: 'Ürün adı', type: 'text', required: true, maxLength: 180,
         wide: true,
         hint: 'Müşterinin göreceği ad. Sayfa adresi ve Google başlığı bundan üretilir.' },
       { key: 'price', label: 'Satış fiyatı', type: 'money',
-        hint: 'Müşterinin ödeyeceği tutar. BOŞ BIRAKIRSANIZ fiyat hiç yazılmaz; 0 yazmak '
-          + 'ise “bedava” demektir. İkisi aynı şey değil.' },
+        hint: 'Boş bırakırsanız fiyat yazılmaz; 0 “bedava” demektir.' },
       { key: 'stock', label: 'Kaç adet var?', type: 'number', min: 0,
         hint: 'Boş bırakırsanız 0 yazılır ve ürün “tükendi” olarak doğar.' },
       // Depo ve vergi kategorisi YALNIZ birden çok seçenek varken çizilir.
@@ -1453,12 +1458,10 @@ async function newProduct(done) {
       ...choiceField('sourceId', 'Stok hangi depoya yazılsın'),
       ...choiceField('taxCategoryId', 'Vergi grubu'),
       { key: 'urlKey', label: 'Sayfa adresi', type: 'text', maxLength: 180, wide: true,
-        hint: 'Ürünün sitedeki adresinin son parçası: bbdstore.com.tr/BURASI. Boş '
-          + 'bırakın, ürün adından kendiliğinden üretilsin.' },
+        hint: 'bbdstore.com.tr/BURASI — boş bırakın, ürün adından üretilsin.' },
       { key: 'shortDescription', label: 'Kısa açıklama', type: 'richtext', wide: true,
         maxLength: 500, placeholder: 'Listede ve ürün kartının üstünde görünen özet.',
-        hint: 'Bir iki cümle. Google açıklamasını boş bırakırsanız oraya da bu metin '
-          + 'konur.' },
+        hint: 'Bir iki cümle; Google açıklaması boşsa oraya da bu metin konur.' },
       { key: 'metaTitle', label: 'Google’da görünecek başlık', type: 'text', maxLength: 120,
         wide: true,
         hint: 'Boş bırakın, ürün adından üretilsin.' },
@@ -1469,9 +1472,7 @@ async function newProduct(done) {
       // sonra vitrine çıkar. Yarım kalan bir kayıt yanlışlıkla satışa
       // düşmesin.
       { key: 'active', label: 'Ürün hemen satışa çıksın', type: 'checkbox',
-        hint: 'İŞARETLEMEMENİZ ÖNERİLİR. İşaretlemezseniz ürün “vitrinde yok” olarak '
-          + 'açılır; fiyatını, stoğunu ve fotoğrafını kontrol ettikten sonra listeden '
-          + 'vitrine çıkarırsınız.' },
+        hint: 'Önerilmez: önce kontrol edin, sonra listeden vitrine çıkarın.' },
     ],
     // Gizlenen alanın değeri BOŞ gider ve sunucu kendi çözer: panelin
     // gizlediği bir alana değer uydurmak, sunucunun kararını istemciden
@@ -1532,9 +1533,7 @@ async function newProduct(done) {
     bookBox.append(bookForm.node);
   } else {
     bookBox.append(h('div', 'sp-sub',
-      'Mağaza kataloğunda kitap künyesi alanları (ISBN, yazar, yayınevi…) tanımlı değil, '
-      + 'bu yüzden burada gösterilemiyor. Sıradaki adım: ürünü şimdi açın; künye '
-      + 'alanları tanımlandığında ürünü açıp doldurabilirsiniz.'));
+      'Mağazada künye alanları (ISBN, yazar, yayınevi…) tanımlı değil; ürünü şimdi açın.'));
   }
   if (bookGone.length) {
     // ÇÖZÜLEMEYEN ALAN SESSİZCE YOK OLMAZ — düzenleme sekmesindeki kutunun
@@ -1750,19 +1749,16 @@ async function newProduct(done) {
     h('div', 'sp-auto-title', 'Kategoriler'),
     picker.node,
     // GÖRSEL KATLANMAZ: en sık unutulan iş en görünür yerde durur.
-    card('Ürün görselleri', shots.node,
-      'İlk görsel KAPAK olur · ürün açıldıktan sonra sırayla yüklenir'),
+    card('Ürün görselleri', shots.node, 'İlk görsel kapak olur'),
     // KÜNYE KATLANIR VE KAPALI BAŞLAR: dokuz alanı her ürün açılışında
     // göstermek asıl işi gürültüye boğuyordu.
     bookFold.node,
     autoBox, warnBox, actions,
-    hintBox('Ürün İKİ AŞAMADA doğar: mağaza önce yalnız tip/aile/SKU kabul eder, geri kalanı '
-      + 'ürün kimliği belli olunca yazılır. Görsel yükleme ucu da ürün kimliği istediği için '
-      + 'görseller EN SON gider — dosyaları şimdi seçersiniz, ürün açılınca sırayla '
-      + 'yüklenirler. Ekran bu turları sizin yerinize atar; bir adım düşerse hangisinin '
-      + 'düştüğünü söyler ve ürün yarım kalmaz. Seçtiğiniz kategorinin ÜST kategorileri '
-      + 'ağaca göre eklenir — vitrinde üst rafta da görünmesi için gerekir; istemediğinizi '
-      + 'listeden çıkarabilirsiniz.'),
+    // "Ürün İKİ AŞAMADA doğar" açıklama kutusu kalktı (tasarim-sade-magaza §3):
+    // mağaza önce yalnız tip/aile/SKU kabul eder, gerisi ürün kimliği belli
+    // olunca yazılır; görseller EN SON gider. Kullanıcının bilmesi gereken
+    // kısmı onay penceresi söylüyor; eklenen üst kategoriler "Ekranın
+    // doldurduğu alanlar" listesinde nedeniyle yazıyor.
   );
   schedulePlan();
 }
@@ -1811,7 +1807,7 @@ function dropRows(ids) {
   nodes.table?.update({ rows: state.items, empty: emptyNode() });
   nodes.pager.update({ total: state.total, page: state.page, size: state.size });
   renderSelectionBar();
-  nodes.status?.set(statusText(), !state.connected);
+  paintStatus();
 }
 
 /** Satış geçmişi hücresi. ÜÇ HÂL: sayı · bilinmiyor · uç yok. */
@@ -1984,9 +1980,9 @@ function deleteDialog(productIds, { onDone } = {}) {
 
     if (!outcome.dryRun && outcome.deleted && outcome.deleted.length) {
       toast(`${num(outcome.deleted.length)} ürün silindi.`, 'good');
-      // KPI şeridi katalog sayılarını gösteriyor; silme sonrası tazelenmezse
-      // "1.419 ürün" yazmaya devam eder. Liste ZATEN anında düştü, bu yalnız
-      // şeridi düzeltir ve arka planda olur.
+      // Çip sayaçları katalog özetinden geliyor; silme sonrası tazelenmezse
+      // eski sayıyı yazmaya devam eder. Liste ZATEN anında düştü, bu yalnız
+      // sayaçları düzeltir ve arka planda olur.
       loadHealth();
     }
     for (const row of outcome.missing || []) {
@@ -2016,8 +2012,7 @@ function paintPrice(pane, payload, forms) {
         hint: 'Müşterinin normalde ödeyeceği tutar (KDV dâhil).' },
       { key: 'cost', label: 'Alış fiyatı (size kaça mal oldu)', type: 'money',
         readOnly: priceless,
-        hint: 'MÜŞTERİ BUNU GÖRMEZ. Kâr hesabı bundan çıkar; boş bırakırsanız kâr '
-          + 'gösterilemez.' },
+        hint: 'Müşteri görmez; kâr bundan hesaplanır.' },
       { key: 'specialPrice', label: 'İndirimli fiyat', type: 'money', readOnly: priceless,
         hint: 'Kampanya fiyatı. Boş bırakırsanız indirim yok demektir.' },
       { key: 'specialFrom', label: 'İndirim ne zaman başlasın?', type: 'date',
@@ -2042,8 +2037,7 @@ function paintPrice(pane, payload, forms) {
     margin.append(h('span', 'sp-sub', 'Bu üründen kazancınız: '));
     if (!listed || cost === null) {
       margin.append(h('b', undefined, '—'));
-      margin.append(h('span', 'sp-sub',
-        ' — hesaplanamıyor. Sıradaki adım: yukarıdaki “Alış fiyatı” kutusunu doldurun.'));
+      margin.append(h('span', 'sp-sub', ' — hesaplamak için “Alış fiyatı”nı girin.'));
       return;
     }
     const ratio = ((listed - cost) * 100) / listed;
@@ -2065,8 +2059,10 @@ function paintPrice(pane, payload, forms) {
   }[price.specialState];
 
   const groups = h('div', 'sp-group-prices');
-  groups.append(h('div', 'sp-sub',
-    'Belirli müşteri gruplarına özel fiyatlar (örneğin okullara toplu alım fiyatı)'));
+  const groupsHead = h('div', 'sp-sub', 'Müşteri grubu fiyatları');
+  groupsHead.title = 'Belirli müşteri gruplarına özel fiyatlar (örneğin okullara toplu alım '
+    + 'fiyatı)';
+  groups.append(groupsHead);
   if (!price.groupPrices.length) {
     groups.append(h('div', 'sp-sub', 'Özel fiyat tanımlanmamış; herkes aynı fiyatı ödüyor.'));
   } else {
@@ -2095,14 +2091,18 @@ function paintPrice(pane, payload, forms) {
     },
   }));
 
+  // Açıklama kutusu yerine TEK SATIR (§3): asıl bilgi bugünkü tutardır;
+  // "fiyat üç parçadan oluşur" açıklaması satırın ipucunda.
+  const effective = h('div', 'sp-sub', `Vitrinde bugün: ${money(price.effective)}`);
+  effective.title = 'Liste fiyatı, tarih pencereli indirimli fiyat ve müşteri grubu '
+    + 'fiyatları birlikte çalışır; müşterinin bugün gördüğü tutar budur.';
+
   pane.append(
     card('Fiyat', form.node, specialNote),
     margin,
+    effective,
     groups,
     actions,
-    hintBox('Fiyat tek alan değildir: liste fiyatı, tarih pencereli indirimli fiyat ve '
-      + 'müşteri grubu fiyatları birlikte çalışır. Vitrinde müşterinin gördüğü tutar '
-      + `bugün: ${money(price.effective)}.`),
   );
 }
 
@@ -2111,19 +2111,21 @@ function paintStock(pane, payload, forms) {
   const rows = payload.inventories;
   if (!rows.length) {
     pane.append(emptyState({
-      title: 'Envanter kaynağı yok',
-      text: 'Bu ürün hiçbir depoya bağlı değil; stok yazılamaz. Mağazada envanter '
-        + 'kaynağı tanımlanmalı.',
+      title: 'Depo tanımlı değil',
+      text: 'Bu ürün hiçbir depoya bağlı değil; stok yazılamaz.',
     }));
     return;
   }
 
+  // Stok ürünün üzerinde değil depolarda (envanter kaynakları) durur; vitrindeki
+  // "adet" bunlardan TÜRETİLİR ve geç güncellenir — doğru sayı buradadır. Bunu
+  // anlatan açıklama kutusu kalktı (tasarim-sade-magaza §3).
   const fields = rows.map((row) => ({
     key: `src_${row.sourceId}`,
     label: row.sourceName,
     type: 'number',
     min: 0,
-    hint: 'Mutlak adet — fark değil.',
+    hint: 'Yeni adet — eklenmez, yerine yazılır.',
   }));
   const value = {};
   for (const row of rows) value[`src_${row.sourceId}`] = row.quantity;
@@ -2140,7 +2142,7 @@ function paintStock(pane, payload, forms) {
     total.replaceChildren(
       h('span', 'sp-sub', 'Toplam: '),
       h('b', undefined, num(sum)),
-      h('span', 'sp-sub', ` · kritik eşik ${num(payload.threshold)}`),
+      h('span', 'sp-sub', ` · uyarı sınırı ${num(payload.threshold)}`),
     );
   }
   paintTotal();
@@ -2178,8 +2180,6 @@ function paintStock(pane, payload, forms) {
     card('Depo bazlı stok', form.node),
     total,
     actions,
-    hintBox('Stok ürünün üzerinde değil envanter kaynaklarında durur. Vitrindeki '
-      + '“adet” alanı bunlardan TÜRETİLİR ve geç güncellenir; doğru sayı buradadır.'),
   );
 }
 
@@ -2315,10 +2315,10 @@ function paintImages(pane, payload) {
     empty.replaceChildren();
     reorderActions.replaceChildren();
     if (!images.length) {
-      empty.append(alertBox(
-        'Bu ürünün hiç fotoğrafı yok. Fotoğrafsız ürün vitrinde neredeyse hiç tıklanmıyor. '
-        + 'Sıradaki adım: aşağıdan en az bir fotoğraf ekleyin; ilk eklediğiniz kapak olur.',
-        'warn'));
+      const none = alertBox('Fotoğraf yok — aşağıdan ekleyin; ilk eklediğiniz kapak olur.',
+        'warn');
+      none.title = 'Fotoğrafsız ürün vitrinde neredeyse hiç tıklanmıyor.';
+      empty.append(none);
       return;
     }
     order.forEach((id, index) => {
@@ -2524,12 +2524,11 @@ function paintImages(pane, payload) {
   uploader.append(drop, tools, bar, log);
 
   paintList();
+  // Sınır açıklaması kutusu kalktı (§3): sınırlar bırakma alanının altındaki
+  // tek satırda; aşan dosyanın sebebi zaten kendi satırında yazıyor.
   pane.append(
     empty, list, reorderActions,
     card('Görsel ekle', uploader),
-    hintBox('Sunucunun sınırı dosya başına 4 MB\'dır; aşan dosya mağazaya HİÇ gönderilmez, '
-      + 'sebebi burada tek tek yazar. Çözünürlük uyarısı yüklemeyi ENGELLEMEZ — küçük '
-      + 'görsel yüklenir, yalnız listede ve ürün sayfasında bulanık görüneceği söylenir.'),
   );
 }
 
@@ -2556,9 +2555,7 @@ function paintVariants(pane, payload) {
   if (!rows.length) {
     pane.append(emptyState({
       title: 'Bu üründe seçenek yok',
-      text: 'Bu ürün tek çeşit satılıyor — renk, beden gibi seçenekleri yok. Seçenekli '
-        + 'ürünler (aynı kitabın ciltli/karton kapak gibi çeşitleri) mağaza yönetiminden '
-        + 'tanımlanır.',
+      text: 'Bu ürün tek çeşit satılıyor.',
     }));
     return;
   }
@@ -2576,10 +2573,11 @@ function paintVariants(pane, payload) {
     dense: true,
     onRow: (row) => openProduct(row.id),
   });
+  // Ana ürüne fiyat yazmak vitrinde hiç görünmeyen bir değer üretir; bunu
+  // anlatan kutu tek satıra indi (§3).
   pane.append(table.node,
-    hintBox('Bu ürünün fiyatı ve stoğu SEÇENEKLERİNDE tutulur — yukarıdaki satırlara '
-      + 'tıklayıp tek tek düzenlersiniz. Ana ürüne fiyat yazmak, vitrinde hiç '
-      + 'görünmeyen bir değer üretir.'));
+    h('div', 'sp-sub', 'Fiyat ve stok her seçeneğin kendisinde; düzenlemek için satıra '
+      + 'tıklayın.'));
 }
 
 function paintCategories(pane, payload) {
@@ -2622,9 +2620,10 @@ function paintCategories(pane, payload) {
     },
   }));
 
-  pane.append(picker.node, actions,
-    hintBox('Kategori listesi mağazaya TAM gönderilir; kısmi gönderim ürünün mevcut '
-      + 'kategorilerini boşaltıyordu. Seçili olmayan her kategori kaldırılır.'));
+  // Kategori listesi mağazaya TAM gönderilir (kısmi gönderim ürünün mevcut
+  // kategorilerini boşaltıyordu). Kullanıcıya bunu onay penceresi söylüyor:
+  // "seçimden çıkardığınız kategoriden ürün kalkar". Ayrı kutu kalktı (§3).
+  pane.append(picker.node, actions);
 }
 
 // GOOGLE GÖRÜNÜMÜ — eski adı "SEO".
@@ -2639,16 +2638,13 @@ function paintSeo(pane, payload, forms) {
     fields: [
       { key: 'metaTitle', label: 'Google’da görünecek başlık', type: 'text', maxLength: 120,
         wide: true,
-        hint: 'Boş bırakırsanız ürün adı kullanılır. 60 karakteri geçen kısım Google’da '
-          + '“…” ile kesilir.' },
+        hint: 'Boş bırakırsanız ürün adı kullanılır; 60 karakterden sonrası kesilir.' },
       { key: 'metaDescription', label: 'Google’da görünecek açıklama', type: 'textarea',
         maxLength: 320, wide: true,
-        hint: 'Arama sonucunda başlığın altındaki iki satır. Boş bırakırsanız Google '
-          + 'sayfadan rastgele bir parça seçer — genelde kötü görünür.' },
+        hint: 'Arama sonucunda başlığın altındaki iki satır; boşsa Google kendi seçer.' },
       { key: 'metaKeywords', label: 'Müşteri bunu ararken hangi kelimeleri yazar?',
         type: 'text', maxLength: 240, wide: true,
-        hint: 'Virgülle ayırın: “1. sınıf matematik, ilkokul kitabı”. Bugünkü arama '
-          + 'motorları buna pek bakmıyor; boş bırakmanız da sorun değil.' },
+        hint: 'Virgülle ayırın: “1. sınıf matematik, ilkokul kitabı”. Boş bırakılabilir.' },
     ],
     value: seo,
     onChange: () => paintPreview(),
@@ -2666,8 +2662,7 @@ function paintSeo(pane, payload, forms) {
       h('div', 'sp-serp-text', description.slice(0, 160)
         || 'Açıklama boş — Google burada sayfadan rastgele bir parça gösterir.'),
       h('div', 'sp-sub',
-        `Başlık ${title.length}/60 karakter · açıklama ${description.length}/160 karakter. `
-        + 'Sınırı aşan kısım Google’da görünmez.'),
+        `Başlık ${title.length}/60 karakter · açıklama ${description.length}/160 karakter`),
     );
   }
   paintPreview();
@@ -2685,13 +2680,11 @@ function paintSeo(pane, payload, forms) {
     },
   }));
 
+  // Açıklama kutusu kalktı (§3). "Google’a yansıması birkaç gün sürer" bilgisi
+  // kaydetme onayında söyleniyor.
   pane.append(form.node,
-    card('Google’da böyle görünecek', preview,
-      'Müşteri arama yaptığında karşısına çıkacak kutunun temsili'),
-    actions,
-    hintBox('Bu sekme ürünün Google’da bulunmasını kolaylaştırır. Boş bırakırsanız ürün '
-      + 'yine satılır ama arama sonuçlarında geri sıralarda çıkar. Değişikliklerin '
-      + 'Google’a yansıması birkaç gün alabilir.'));
+    card('Google’da böyle görünecek', preview, 'Temsilî önizleme'),
+    actions);
 }
 
 async function paintHistory(pane, payload) {
@@ -2741,9 +2734,9 @@ async function paintHistory(pane, payload) {
     dense: true,
     rowKey: (row) => `${row.createdAt}-${row.action}`,
   });
-  pane.append(table.node,
-    hintBox('Bu iz YERELDİR ve gerekçeyi tutar. Mağazanın kendi denetim kaydı gerekçe '
-      + 'alanı taşımıyor; ağ koparsa “ne yapmaya çalıştık” bilgisi yalnız burada kalır.'));
+  // Bu iz YERELDİR ve gerekçeyi tutar (mağazanın kendi kaydı gerekçe alanı
+  // taşımıyor). İç ayrıntıdır; kullanıcıya anlatan kutu kalktı (§3).
+  pane.append(table.node);
 }
 
 // ============================================================= toplu işlem
@@ -3184,13 +3177,13 @@ async function renderSettings(host) {
   const actions = h('div', 'sp-actions');
   actions.append(save);
 
+  // Ayrı bir "Mağaza Ayarları" ekranı yoktur: her ayar onu kullanan ekranda
+  // durur (stok burada, vergi store_tax'ta, kargo ücreti store_shipping'de).
+  // Bunu modül adlarıyla anlatan kutu kalktı — teknik dil (tasarim-sade-magaza §3).
   host.append(
     card('Bu ekranın tercihi', localForm.node, 'Yalnız Kontrol Merkezi’ni etkiler'),
     card('Mağaza ayarı', storeBox, 'Vitrini doğrudan etkiler'),
     actions,
-    hintBox('Ayrı bir “Mağaza Ayarları” ekranı yoktur: her ayar onu kullanan ekranda '
-      + 'durur. Stokla ilgili olanlar burada, vergi store_tax’ta, kargo ücreti '
-      + 'store_shipping’de.'),
   );
 }
 
@@ -4085,14 +4078,19 @@ export function mount(root, ctx) {
     { key: 'settings', label: 'Ayarlar' },
   ], 'list', (key) => showView(key));
 
+  // SADE KİP (docs/tasarim-sade-magaza.md §1-2): görünür süzgeç yalnız arama
+  // ve Durum; Kategori/Tür/Fiyat "Filtreler" düğmesinin arkasında katlanır
+  // (dolu olanı düğme sayar). Tek birincil düğme "Yeni ürün ekle"; ara sıra
+  // kullanılan dört dışa aktarma tek "Dışa aktar" menüsünde.
   nodes.filters = filterBar({
+    compact: true,
     fields: [
       { kind: 'search', key: 'q', placeholder: 'Ürün adı, stok kodu ya da barkod ara',
-        width: '260px' },
+        width: '260px', primary: true },
       // SÜZGEÇLERDE VARSAYILAN "Hepsi": ekran hiçbir şeyi gizlemeden açılır.
       { kind: 'select', key: 'category', label: 'Kategori',
         options: [{ value: '', label: 'Hepsi — kategori farkı yok' }] },
-      { kind: 'select', key: 'status', label: 'Durum', options: [
+      { kind: 'select', key: 'status', label: 'Durum', primary: true, options: [
         { value: '', label: 'Hepsi' },
         { value: '1', label: 'Satışta olanlar' },
         { value: '0', label: 'Vitrinde olmayanlar' },
@@ -4116,34 +4114,32 @@ export function mount(root, ctx) {
       // tazelese bile o boşluk kalıcı oluyordu. Bir düğme "yenile" diyorsa
       // ekranın okuduğu her şeyi yenilemeli.
       button('Yenile', {
+        variant: 'ghost',
         title: 'Mağazadaki güncel fiyat, stok ve durumları yeniden okur',
-        onClick: () => { loadReference().then(refresh); loadHealth(); },
-      }),
-      button('⤓ Ekrandakiler', {
-        title: 'Şu an ekranda görünen sayfayı Excel dosyası olarak indirir',
-        onClick: exportVisible,
-      }),
-      button('⤓ Hepsi', {
-        title: 'Bütün ürünleri rapor klasörüne yazar; birkaç dakika sürebilir',
-        onClick: exportAll,
+        onClick: () => { loadReference().then(() => refresh({ fresh: true })); loadHealth(); },
       }),
       // TUZAK: `reportChain` gövdeyi `{kind, ...params}` olarak kuruyor.
       // `currentFilters()` içinde de `kind` var (ürün tipi) ve rapor türünü
       // eziyordu; rapor parametreleri açıkça verilir.
-      button('Stok raporu', {
-        title: 'Tükenen ve azalan ürünleri gösteren, yazdırılabilir PDF hazırlar',
-        onClick: () => report.run('stock', reportParams()),
-      }),
-      button('Fiyat listesi', {
-        title: 'Ürün ve fiyatlarını gösteren, yazdırılabilir PDF hazırlar',
-        onClick: () => report.run('pricelist', reportParams()),
-      }),
+      menuButton('Dışa aktar', [
+        { label: 'Ekrandaki ürünler — Excel',
+          title: 'Şu an ekranda görünen sayfayı Excel dosyası olarak indirir',
+          onClick: exportVisible },
+        { label: 'Tüm ürünler — Excel',
+          title: 'Bütün ürünleri rapor klasörüne yazar; birkaç dakika sürebilir',
+          onClick: exportAll },
+        { label: 'Stok raporu — PDF',
+          title: 'Tükenen ve azalan ürünleri gösteren, yazdırılabilir PDF hazırlar',
+          onClick: () => report.run('stock', reportParams()) },
+        { label: 'Fiyat listesi — PDF',
+          title: 'Ürün ve fiyatlarını gösteren, yazdırılabilir PDF hazırlar',
+          onClick: () => report.run('pricelist', reportParams()) },
+      ], { title: 'Excel ya da yazdırılabilir PDF olarak indir' }),
     ],
   });
 
   nodes.chips = chipRow(CHIPS, null, (key) => applyChip(key));
   nodes.status = statusLine();
-  nodes.kpi = h('div', 'sp-kpi');
   nodes.selbar = h('div', 'sp-selbar');
   nodes.tableWrap = h('div', 'sp-table');
   nodes.pager = pager({
@@ -4153,7 +4149,7 @@ export function mount(root, ctx) {
   // Tek gövde kabı; sekme değişince İÇERİĞİ değişir. İki ayrı kap tutup
   // `replaceChild` yapmak, kaydırma konumunu ve düğüm kimliklerini kaybettiriyor.
   nodes.body = h('div', 'sp-body');
-  const listView = [nodes.kpi, nodes.selbar, nodes.tableWrap, nodes.pager.node];
+  const listView = [nodes.selbar, nodes.tableWrap, nodes.pager.node];
   nodes.body.append(...listView);
 
   view.append(tabs.node, nodes.filters.node, nodes.chips.node, nodes.status.node, nodes.body);
