@@ -58,22 +58,18 @@ async def shipments(
     q: str = Query("", max_length=120),
     carrier: str = Query("", max_length=32),
     status: str = Query("", max_length=32),
-    city: str = Query("", max_length=64),
-    dateFrom: str = Query("", max_length=10),
-    dateTo: str = Query("", max_length=10),
-    dateField: str = Query("created", max_length=16),
-    payer: str = Query("", max_length=16),
-    desiMin: int = Query(0, ge=0, le=10_000),
-    desiMax: int = Query(0, ge=0, le=10_000),
     flag: str = Query("", max_length=16),
+    orderId: int = Query(0, ge=0),
     page: int = Query(1, ge=1, le=10_000),
     size: int = Query(0, ge=0, le=200),
     user: CurrentUser = requires("store_shipping.view"),
 ) -> dict[str, Any]:
-    return await service().shipments(q=q, carrier=carrier, status=status, city=city,
-                                     date_from=dateFrom, date_to=dateTo, date_field=dateField,
-                                     payer=payer, desi_min=desiMin, desi_max=desiMax,
-                                     flag=flag, page=page, size=size)
+    """Gönderi listesi. Mağazaya giden TEK süzgeç `orderId`dir; `q`, `carrier`,
+    `status` ve `flag` çekilen sayfanın içinde uygulanır (bkz. servis). Şehir,
+    tarih, ödeme tipi ve desi süzgeçleri KALDIRILDI: mağaza ucu hiçbirini
+    okumuyordu ve ekran süzülmüş sanılan tam listeyi gösteriyordu."""
+    return await service().shipments(q=q, carrier=carrier, status=status, flag=flag,
+                                     order_id=orderId, page=page, size=size)
 
 
 @router.get("/shipments/{shipment_id}")
@@ -128,9 +124,11 @@ async def zones(
 async def performance(
     days: int = Query(0, ge=0, le=365),
     carrier: str = Query("", max_length=32),
+    fresh: bool = Query(False),
     user: CurrentUser = requires("store_shipping.view"),
 ) -> dict[str, Any]:
-    return await service().performance(days=days, carrier=carrier)
+    """`fresh=true` bellekteki hesabı atlar (ekrandaki "Yenile")."""
+    return await service().performance(days=days, carrier=carrier, fresh=fresh)
 
 
 @router.get("/audit")
@@ -312,6 +310,26 @@ async def dispatch(
                                     payer=body.payer, cod=body.cod, note=body.note,
                                     reason=body.reason, actor=user.full_name,
                                     dry_run=body.dryRun, auto_print=body.autoPrint)
+
+
+class EstimateItem(BaseModel):
+    orderId: int = Field(default=0, ge=0)
+    carrier: str = Field(default="", max_length=64)
+    units: int = Field(default=0, ge=0, le=10_000)
+
+
+class EstimateBody(BaseModel):
+    items: list[EstimateItem] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/dispatch/estimate")
+async def dispatch_estimate(
+    body: EstimateBody,
+    user: CurrentUser = requires("store_shipping.view"),
+) -> dict[str, Any]:
+    """"Kargoya ver" onay penceresinin TAHMİNİ tutarı. Yazmaz, gerekçe istemez;
+    desi matrisi bellekten okunur."""
+    return await service().estimate([item.model_dump() for item in body.items])
 
 
 # ================================================== PARA HARCAYAN UÇLAR
@@ -498,9 +516,13 @@ async def save_settings(
     body: SettingsBody,
     user: CurrentUser = requires("store_shipping.manage"),
 ) -> dict[str, Any]:
+    # `notifyTemplate` BİR DÖNEM BURADA DÜŞÜYORDU: şema alanı kabul ediyor,
+    # ekran gönderiyor, ama servise iletilmiyordu — "Müşteri bildirim şablonu"
+    # kaydedildi görünüp hiç yazılmıyordu.
     return await service().save_settings(label_format=body.labelFormat,
                                          default_carrier=body.defaultCarrier,
                                          idle_days=body.idleDays, auto_print=body.autoPrint,
+                                         notify_template=body.notifyTemplate,
                                          reason=body.reason, actor=user.full_name)
 
 
@@ -609,6 +631,10 @@ class PreviewBody(BaseModel):
     #: fişi kargo kaydı açılmadan da basılabilmeli (paket hazırlanırken).
     orderId: int = Field(default=0, ge=0)
     trackNumber: str = Field(default="", max_length=64)
+    #: Manifesto: seçimin yapıldığı liste SAYFASI. Satırlar o sayfadan tek
+    #: istekle okunur; verilmezse her gönderi tek tek okunur.
+    page: int = Field(default=0, ge=0, le=10_000)
+    size: int = Field(default=0, ge=0, le=200)
 
 
 @router.post("/preview")
@@ -621,6 +647,7 @@ async def preview(
         "shipmentIds": body.shipmentIds, "format": body.format, "carrier": body.carrier,
         "driver": body.driver, "days": body.days,
         "orderId": body.orderId, "trackNumber": body.trackNumber,
+        "page": body.page, "size": body.size,
     })
 
 
@@ -645,10 +672,9 @@ async def printer(
 
 
 class ExportBody(BaseModel):
+    q: str = Field(default="", max_length=120)
     carrier: str = Field(default="", max_length=32)
     status: str = Field(default="", max_length=32)
-    dateFrom: str = Field(default="", max_length=10)
-    dateTo: str = Field(default="", max_length=10)
 
 
 @router.post("/export")
@@ -657,14 +683,6 @@ async def export(
     user: CurrentUser = requires("store_shipping.view"),
 ) -> dict[str, Any]:
     """TÜM gönderilerin CSV'si — rapor klasörüne yazılır. Görünen sayfanın
-    CSV'sini panel kendisi üretir (sunucuya hiç gitmez)."""
-    filters: dict[str, Any] = {}
-    if body.carrier:
-        filters["carrier"] = body.carrier
-    if body.status:
-        filters["status"] = body.status
-    if body.dateFrom:
-        filters["date_from"] = body.dateFrom
-    if body.dateTo:
-        filters["date_to"] = body.dateTo
-    return await service().export_csv(filters=filters)
+    CSV'sini panel kendisi üretir (sunucuya hiç gitmez). Süzgeçler tam
+    taramanın üstünde serviste uygulanır; mağaza ucu onları okumuyor."""
+    return await service().export_csv(q=body.q, carrier=body.carrier, status=body.status)

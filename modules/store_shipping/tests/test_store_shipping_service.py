@@ -387,16 +387,51 @@ async def test_turetilmis_bulgu_suzgeci_sayfa_icinde_uygulanir_ve_yazilir() -> N
     assert result["flag"] == "late"
 
 
-async def test_suzgecler_gecide_aktarilir() -> None:
+async def test_magazaya_YALNIZ_siparis_suzgeci_gider() -> None:
+    """Mağazanın gönderi ucu yalnız `orderId`, `status`, `onlyErrors`,
+    `purchased` okur (`ShipmentController::index`). Ekran yıllarca şehir,
+    tarih, ödeme tipi, desi, taşıyıcı ve arama gönderdi; hiçbiri çalışmadı ve
+    kullanıcı süzülmüş sandığı tam listeye baktı. Okunmayan süzgeç
+    GÖNDERİLMEZ."""
     service, api, _ = _service()
-    await service.shipments(carrier="Aras", status="in_transit", city="İstanbul",
-                            date_from="2026-08-01", payer="receiver", desi_min=2)
-    filters = api.args_of("bbd_shipments")[0][0]
-    assert filters["carrier"] == "aras"
-    assert filters["status"] == "in_transit"
-    assert filters["payer"] == "receiver"
-    assert filters["desi_from"] == 2
-    assert filters["channel"] == "default"
+    await service.shipments(q="Ayşe", carrier="Aras", status="in_transit")
+    await service.shipments(order_id=91)
+    assert api.args_of("bbd_shipments")[0][0] is None
+    assert api.args_of("bbd_shipments")[1][0] == {"order_id": 91}
+
+
+async def test_arama_tasiyici_durum_SAYFA_ICINDE_uygulanir_ve_soylenir() -> None:
+    service, api, _ = _service()
+    api.shipments_payload = {
+        "items": [dict(GONDERI),
+                  {**GONDERI, "id": 6, "tracking_number": "999", "carrier": "aras",
+                   "customer_name": "Veli Kaya", "status": "delivered"},
+                  {**GONDERI, "id": 7, "tracking_number": "777", "carrier": "hepsijet_hepsijet",
+                   "customer_name": "Zeynep Ak"}],
+        "meta": {"total": 120, "currentPage": 1, "perPage": 50, "lastPage": 3},
+    }
+    ara = await service.shipments(q="ayse")                 # Türkçe harf farkı gözetilmez
+    assert [row["id"] for row in ara["items"]] == [5]
+    assert ara["pageFiltered"] is True and ara["total"] == 120 and ara["shown"] == 1
+
+    firma = await service.shipments(carrier="hepsijet")
+    assert [row["id"] for row in firma["items"]] == [7]
+
+    durum = await service.shipments(status="delivered")
+    assert [row["id"] for row in durum["items"]] == [6]
+
+    hepsi = await service.shipments()
+    assert hepsi["pageFiltered"] is False and hepsi["shown"] == 3
+
+
+async def test_saglanan_yetenek_siparis_suzgecini_gecide_verir() -> None:
+    # Geçit `order_id`yi mağazanın adına (`orderId`) çevirip satırları
+    # siparişe göre de süzüyor; servis süzgeci DOĞRU anahtarla vermeli.
+    service, api, _ = _service()
+    api.shipments_payload = {"items": [dict(GONDERI)], "meta": {"total": 1}}
+    result = await service.by_order(91)
+    assert api.args_of("bbd_shipments")[0][0] == {"order_id": 91}
+    assert [row["orderId"] for row in result["items"]] == [91]
 
 
 async def test_liste_sunucudan_sayfali_gelir_tam_tarama_yapilmaz() -> None:
@@ -605,3 +640,21 @@ async def test_tercih_yazilinca_ayarlar_yeni_degeri_doner() -> None:
     assert settings["labelFormat"] == "a4-4up"
     assert settings["defaultCarrier"] == "aras"
     assert settings["idleDays"] == 5
+
+
+# ============================================================ ekran tercihi
+
+async def test_bildirim_sablonu_UCTAN_servise_iletilir() -> None:
+    """Şema `notifyTemplate`i kabul ediyor, ekran gönderiyordu; uç servise
+    iletmediği için tercih "kaydedildi" görünüp hiç yazılmıyordu."""
+    from types import SimpleNamespace
+
+    from store_shipping_backend.api import routes
+
+    service, _, store = _service()
+    routes.bind(service)
+    sonuc = await routes.save_settings(
+        routes.SettingsBody(notifyTemplate="store:12", reason="Şablon seçildi, bildirim için"),
+        user=SimpleNamespace(full_name="Ali"))
+    assert sonuc["ok"] is True
+    assert store.prefs["notify_template"] == "store:12"

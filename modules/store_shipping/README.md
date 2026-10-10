@@ -14,12 +14,13 @@ Grup: **BBD Store** · CSS öneki: `sh` · Rapor rafı:
 
 | Sekme | İş |
 |---|---|
-| **Kargoya hazır** | Ödemesi alınmış ama kargolanmamış siparişler; satırda **«Kargoya ver»** (tek tık, ara onay yok) · toplu seçim → **hepsini sırayla kargoya ver** ya da sihirbaz |
-| **Gönderiler** | Takip, hareket geçmişi, toplu etiket, manifesto, senkron, iptal/iade |
-| **Taşıyıcılar** | Maskeli API kimlikleri, sözleşme matrisi, `Bağlantıyı sına`, ekran tercihleri |
-| **Ücretlendirme** | Desi kademeleri, ücretsiz kargo eşiği, kapıda ödeme bedeli, teslim vaadi |
-| **Bölgeler** | İl/ilçe → bölge eşlemesi, bölgesel ek ücret, teslimat yapılmayan bölgeler |
-| **Performans** | Teslim süresi, teslim edilemeyen oranı, gecikme dağılımı, kargo kâr/zararı |
+| **Kargoya hazır** | Ödemesi alınmış ama kargolanmamış siparişler; satırda **«Kargoya ver»** (iki tık: düğme + tek onay penceresi) ve ölçüsü eksik satırda **«📏 Ölçü»** · toplu seçim → **hepsini sırayla kargoya ver** ya da sihirbaz |
+| **Gönderiler** | Takip, hareket geçmişi, «Dışa aktar» menüsünde Excel/etiket PDF/manifesto, senkron, iptal/iade; ikincil görünüm **📊 Performans** (teslim süresi, kargo kâr/zararı) |
+| **Ayarlar** | Dört bölüm: Taşıyıcılar (+ ekran tercihleri) · Ücretlendirme · Bölgeler · Geliver kurulumu |
+
+Ekran `docs/tasarim-sade-magaza.md` kurallarına uyar: en çok üç sekme, katlanır
+süzgeç (arama + durum görünür), ikincil eylemler tek menüde, tablolar en çok
+yedi sütun, KPI en çok dört kutu, varsayılan görünümde bilgi kutusu yok.
 
 **Sağladığı yetenek:** `store.shipment.byOrder` — bir siparişin gönderileri ve
 son hareketleri. Siparişler, Talepler ve İadeler ekranları okur. Yüzey tek
@@ -40,12 +41,37 @@ gönderi aç → teklif al → MÜŞTERİNİN ödediği firmayı yeğle → ETİ
 Kontrol Merkezi tarafındaki iş, dönen etiketi ve siparişin faturasını kâğıda
 dökmektir.
 
-**Ara onay adımı yoktur.** Kullanıcının kararı: *"sipariş seçince 'kargoya ver'
-dedik mi o sipariş yola çıkacak zaten. PARA HARCASIN."* Onay penceresi
-açılmaz, `dryRun` varsayılanı `false`'tur. Gerekçe alanı listenin üstünde
-durur ve **boş bırakılabilir**: boşsa denetim defterine otomatik bir metin
-yazılır (`dispatch_reason`), akış durmaz. Koruma izin anahtarındadır —
-`store_shipping.purchase`, etiket satın almayla aynı anahtar.
+**İki tık: düğme ve TEK onay penceresi.** Kullanıcının kararı: *"sipariş
+seçince 'kargoya ver' dedik mi o sipariş yola çıkacak zaten. PARA HARCASIN."*
+Pencere gerekçe sormaz; ölçünün nereden geldiğini (girilen ölçü ya da
+siparişin mağazadaki desi kaydı), faturalanacak birimi ve desi tarifesinden
+**tahmini** tutarı (`POST /dispatch/estimate`) gösterir; Enter onaylar.
+`dryRun` varsayılanı `false`'tur. Not onay penceresindedir, hazır çiplerle
+gelir ve **boş bırakılabilir**: boşsa denetim defterine otomatik bir metin
+yazılır (`dispatch_reason`). Gerekçe isteyen diğer pencereler de hazır
+gerekçe çipleri sunar; alt sınır (10, para harcayan işte 20 karakter) aynen
+kalır. Koruma izin anahtarındadır — `store_shipping.purchase`,
+etiket satın almayla aynı anahtar. Toplu kargoya verme de **tek** pencere
+açar (sipariş sayısı + tahmini toplam), sonra sırayla yürür ve sonunda her
+siparişin takip numarasını ya da neden gitmediğini tek çekmecede yazar.
+
+**Satırdaki düğme ölçü göndermez.** Mağaza siparişin kendi desisini
+(checkout'ta müşteriye uygulanan; `Parcel::desiForOrder`) kullanır. Sipariş
+LİSTESİ ucu kalem ölçüsü vermediği için panelin kendi tahmini çoğu satırda
+boştur — bu bir engel değildir; eskiden düğme bu yüzden her satırda "Sipariş
+desisi yok" deyip duruyordu. Koliyi ölçmek isteyen «📏 Ölçü» ile sihirbazı
+ölçü alanları açık açar.
+
+**Taslak ölçüsü.** Mağaza aynı sipariş için ikinci taslak açmaz, var olanı
+döndürür (`ShipmentManager::createFor`) ve taslağın ölçüsünü güncelleyen uç
+yoktur. Yeni ölçü girildiğinde etiketi ALINMAMIŞ eski taslak önce ücretsiz
+iptal edilir, zincir yeni ölçüyle yeni taslak açar; hangi taslağın hangi
+ölçüyle açıldığı yerel defterde tutulur ve ölçü aynıysa taslağa dokunulmaz.
+Etiketi alınmış gönderide yeni ölçü **reddedilir** (ikinci etiket alınmaz).
+
+**Etiketin gerçek ücreti** gönderi künyesinden (`amount`) okunur, sonuç
+çekmecesinde yazar ve `store.shipment.purchased` olayına `feeKurus` olarak
+girer; okunamazsa `feeKnown: false` — 0 uydurulmaz.
 
 **Zincirin ürettiği takip numarası elle girilmez.** Gövde PDF olduğu için künye `X-Bbd-*`
 başlıklarında gelir; geçit ikisini birden taşıyan bir zarf döndürür
@@ -63,7 +89,11 @@ Sihirbaz eskiden dört kartlı bir formdu: sekiz alanlık ölçü/taşıyıcı f
 yedisi zaten doğru dolu geliyordu ve iki pencere aynı kararı iki kez
 soruyordu. Kullanıcının kararı: *"tık tık tık otomasyonlu çalışsın."*
 
-Kalan üç yol:
+Kalan üç yol. **"Kargo yolu" seçimi kaldırıldı:** "Bagisto" seçiliyken
+kırmızı «Kargoya ver» düğmesi sessizce test gönderisi açıyordu. Kırmızı düğme
+her zaman gerçek yoldur (yol kurulumun `provider` ayarıdır; test kurulumunda
+düğmenin adı ve onay penceresi bunu söyler). Taşıyıcı varsayılanı
+**siparişteki firmadır** ve gönderilmez — mağaza farklı firmayı reddeder.
 
 | Düğme | Ne olur | Bedeli |
 |---|---|---|
@@ -162,7 +192,8 @@ yine üretilir, yalnız yazıcıya gönderilmez.
 denetim defterindeki `auto_print` satırı buna bakar. Elle **"Tekrar yazdır"**
 bu kapıyı hiç görmez: kasıtlı tekrar ile kazara ikinci basım ayrı şeylerdir.
 
-**Test yolu Geliver'a hiç uğramaz.** `provider: "bagisto"` seçiliyse istek
+**Test yolu Geliver'a hiç uğramaz.** Sihirbazdaki ayrı, kesik kenarlı
+«🧪 Test gönderisi» düğmesi (ya da kurulum ayarı `provider: "bagisto"`) istek
 Bagisto'nun kendi gönderi ucuna gider; `bbd_dispatch_order` çağrılmaz, para
 harcanmaz, takip numarası `TEST-` önekiyle bizim ürettiğimizdir.
 
@@ -209,10 +240,23 @@ ekran bunu söyler.
 
 **Türetilmiş süzgeçler sayfa içinde çalışır.** `Geciken`, `Adres sorunu` ve
 `Tahsil edilmemiş` taşıyıcıda bir alan değil, bizim çıkardığımız bulgudur;
-liste süzülmüş sayfa üzerinde daraltılır ve ekran bunu yazar. Aynı şey
+liste süzülmüş sayfa üzerinde daraltılır ve ekran bunu yazar. Arama, taşıyıcı
+ve durum da sayfa içindedir: mağazanın gönderi listesi ucu yalnız `orderId`,
+`status` (Geliver'ın ham kodu), `onlyErrors` ve `purchased` okur
+(`ShipmentController::index`). Şehir, tarih, ödeme tipi ve desi süzgeçleri bu
+yüzden ekrandan kaldırıldı — mağaza onları sessizce yok sayıyordu. Aynı şey
 "kargoya hazır" için de geçerli: mağaza "gönderisi olmayan sipariş" süzgeci
 sunmuyor, kalan adet kontrolü sayfa içinde yapılıyor — `total` ve `shown`
 ayrı gösterilir.
+
+**Geçidin dakikalık payı korunur.** Dakikada 55 istek bütün ekranlara
+yetmek zorunda. Desi matrisi (120 sn), taşıyıcı listesi (300 sn), ücret
+dökümünün sipariş künyesi (60 sn), satırların kargo firması (120 sn),
+performans taraması (300 sn, «Yenile» atlar) ve satın alınmış etiket PDF'leri
+(30 dk) bellekte tutulur; yazma yapan yol kendi belleğini düşürür. Performans
+taraması pencere başına gelince durur; manifesto satırları seçimin yapıldığı
+sayfadan tek istekle okunur; "kargoya ver" sonrası satır yerelde düşer, liste
+yeniden çekilmez.
 
 **Silme yok.** Gönderi iptal edilir ya da iade gönderisine çevrilir; bölge
 satırı silinmez, "teslimat yapılmıyor" işaretlenir. Böylece "neden bu ilçeye

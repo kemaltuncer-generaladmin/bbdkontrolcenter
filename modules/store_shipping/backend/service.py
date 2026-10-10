@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import tempfile
+import time
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,26 @@ from . import analytics, geliver, labels, shipping
 #: Rapor/CSV için tam tarama tavanı. 30 günde binlerce gönderi olmaz; tavan
 #: bozuk `meta` yüzünden sonsuz sayfalamayı engellemek içindir.
 SCAN_CAP = 4_000
+
+#: Mağazanın sayfa boyu üst sınırı — geçit 50'de kırpıyor.
+STORE_PAGE = 50
+
+#: BELLEKTE TUTULAN OKUMALARIN ÖMRÜ (saniye). Geçit dakikada 55 istek veriyor
+#: ve bu pay BÜTÜN ekranlar arasında paylaşılıyor. Sihirbazın ücret dökümü her
+#: alan değişiminde desi matrisini ve siparişi yeniden okuyordu; performans
+#: sekmesi her açılışta tüm gönderi geçmişini tarıyordu. Yazma yapan her yol
+#: kendi anahtarını düşürür — kaydettikten sonra eski veriyi göstermek
+#: "kaydettim ama değişmedi" yanılgısı üretirdi.
+RATES_TTL = 120            # desi matrisi; kaydetme/tazeleme anında düşer
+CARRIERS_TTL = 300         # taşıyıcı tanımları; bağlantı sınamasında düşer
+QUOTE_ORDER_TTL = 60       # ücret dökümü için sipariş künyesi (YALNIZ dökümde)
+EXTRAS_TTL = 120           # "Kargoya hazır" satırlarının kargo firması / e-posta
+PERFORMANCE_TTL = 300      # performans taraması
+LABEL_TTL = 1800           # satın alınmış etiketin PDF'i — değişmez
+LABEL_CACHE_MAX = 120      # bellekte tutulan en çok etiket (~100 KB/etiket)
+
+#: Taslağın ölçüsünü kaydeden defter eylemleri (bkz. `_known_measures`).
+DRAFT_MEASURE_ACTIONS = ("create_shipment", "draft_measures")
 
 REPORT_KINDS = ("labels", "manifest", "performance", "receipt", "handover")
 
@@ -186,6 +207,47 @@ def manual_reason(order_number: str, carrier: str, track: str) -> str:
             "numarasıyla dışarıdan alınmış olarak işlendi; taşıyıcıya çıkılmadı.")
 
 
+def draft_replace_reason(order_id: int, shipment_id: int) -> str:
+    """Eski ölçülü taslağı iptal ederken denetim defterine yazılacak metin.
+
+    Geçit gerekçesiz yazmayı reddediyor (en az 10 karakter); bu iptal
+    kullanıcının "kargoya ver" kararının PARÇASIDIR, ayrı bir soru sorulmaz.
+    """
+    return (f"Ölçü düzeltmesi: {int(order_id)} numaralı siparişin etiketi alınmamış "
+            f"taslağı (#{int(shipment_id)}) girilen yeni ölçüyle yeniden açılmak üzere "
+            "iptal edildi.")
+
+
+class _Memo:
+    """Süreli bellek kopyası. DİSKE YAZILMAZ; süresi dolan okunmaz.
+
+    Tek amacı geçidin dakikalık payını korumak: aynı okumayı saniyeler içinde
+    ikinci kez mağazaya sormamak. Dolunca EN ESKİ kayıt düşer — etiket PDF'leri
+    gibi büyük kalemler belleği sınırsız büyütmesin.
+    """
+
+    def __init__(self, *, limit: int = 256) -> None:
+        self._rows: dict[str, tuple[float, Any]] = {}
+        self._limit = limit
+
+    def get(self, key: str, seconds: float) -> Any:
+        hit = self._rows.get(key)
+        if hit is None or (time.monotonic() - hit[0]) >= seconds:
+            return None
+        return hit[1]
+
+    def put(self, key: str, value: Any) -> Any:
+        if key not in self._rows and len(self._rows) >= self._limit:
+            oldest = min(self._rows, key=lambda name: self._rows[name][0])
+            self._rows.pop(oldest, None)
+        self._rows[key] = (time.monotonic(), value)
+        return value
+
+    def drop(self, prefix: str) -> None:
+        for key in [name for name in self._rows if name.startswith(prefix)]:
+            self._rows.pop(key, None)
+
+
 class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
 
@@ -229,6 +291,11 @@ class ShippingService:
         #: Ayardaki kanal KODUNUN karşılığı olan kanal kimliği. Bir kez çözülür
         #: ve saklanır; geçit kanal listesini zaten 900 sn önbelleğe alıyor.
         self._channel_id: int | None = None
+
+        #: Süreli okumalar (bkz. `*_TTL`). Etiketler ayrı durur: büyükler ve
+        #: sayıları ayrıca sınırlanır.
+        self._memo = _Memo()
+        self._label_memo = _Memo(limit=LABEL_CACHE_MAX)
 
     # ------------------------------------------------------------- ayarlar
 
@@ -470,7 +537,8 @@ class ShippingService:
         today = shipping.today_iso()
         rows = [shipping.ready_row(item, today=today, divisor=self._divisor, zones=zones)
                 for item in (payload.get("items") or []) if isinstance(item, dict)]
-        shipping.enrich_rows(rows, await self._order_extras())
+        shipping.enrich_rows(rows, await self._order_extras(
+            [shipping.text(row["orderNumber"]) for row in rows]))
         ready_rows = [row for row in rows if row["ready"]]
         meta = payload.get("meta") or {}
         return {
@@ -488,7 +556,7 @@ class ShippingService:
             "divisor": self._divisor,
         }
 
-    async def _order_extras(self) -> dict[str, dict[str, Any]]:
+    async def _order_extras(self, wanted: list[str]) -> dict[str, dict[str, Any]]:
         """Sipariş no → kargo firması ve e-posta. TEK İSTEK.
 
         BULUNAN EKSİK (2026-08-15). "Kargoya hazır" listesi sipariş LİSTESİ
@@ -504,58 +572,45 @@ class ShippingService:
 
         Patlarsa liste AYAKTA kalır ve satırlar zenginleşmeden gösterilir (K7)
         — kargo firması eksik bir liste, hiç açılmayan bir listeden iyidir.
+
+        BELLEKTEN VERİLİR, ama yalnız listedeki HER sipariş içinde varsa: bir
+        siparişin firması sonradan değişmez, yeni gelen sipariş ise bellekte
+        yoktur ve o zaman yeniden okunur. "Kargoya ver" sonrası her yenileme
+        bir istek daha harcıyordu.
         """
+        cached = self._memo.get("extras", EXTRAS_TTL)
+        if cached is not None and all(key in cached for key in wanted if key):
+            return dict(cached)
         try:
             payload = await self._api.bbd_orders(page=1, per_page=self._page_size)
         except Exception as failure:  # noqa: BLE001 — K7
             self._log.warning("sipariş ek bilgileri okunamadı", error=str(failure))
             return {}
-        return shipping.extras_index(payload.get("items") or [])
+        return dict(self._memo.put("extras", shipping.extras_index(payload.get("items") or [])))
 
     # =============================================================== liste
 
-    def _list_filters(self, *, q: str, carrier: str, status: str, city: str,
-                      date_from: str, date_to: str, date_field: str, payer: str,
-                      desi_min: int, desi_max: int) -> dict[str, Any]:
-        filters: dict[str, Any] = {"channel": self._channel}
-        if shipping.text(q):
-            filters["q"] = shipping.text(q)
-        if carrier:
-            filters["carrier"] = shipping.fold(carrier)
-        if status:
-            filters["status"] = status
-        if city:
-            filters["city"] = shipping.text(city)
-        if date_from:
-            filters["date_from"] = date_from
-        if date_to:
-            filters["date_to"] = date_to
-        if date_field in ("created", "delivered"):
-            filters["date_field"] = date_field
-        if payer in ("sender", "receiver"):
-            filters["payer"] = payer
-        if desi_min:
-            filters["desi_from"] = int(desi_min)
-        if desi_max:
-            filters["desi_to"] = int(desi_max)
-        return filters
-
     async def shipments(self, *, q: str = "", carrier: str = "", status: str = "",
-                        city: str = "", date_from: str = "", date_to: str = "",
-                        date_field: str = "created", payer: str = "", desi_min: int = 0,
-                        desi_max: int = 0, flag: str = "", page: int = 1,
+                        flag: str = "", order_id: int = 0, page: int = 1,
                         size: int = 0) -> dict[str, Any]:
         """Sayfalanmış gönderi listesi. SUNUCU TARAFI sayfalama.
 
-        `flag` (geciken / adres sorunu / tahsil edilmemiş) SAYFA İÇİNDE
-        uygulanır: bu üçü taşıyıcıda bir alan değil, bizim türettiğimiz
-        bulgudur. Panel bunu yazar; süzülmüş sayfa tam liste gibi gösterilmez.
+        MAĞAZAYA GİDEN TEK SÜZGEÇ SİPARİŞTİR (`order_id` → `orderId`). Uç
+        başka süzgeç okumuyor (`ShipmentController::index`: `orderId`,
+        `status`, `onlyErrors`, `purchased`); ekran yıllarca arama, taşıyıcı,
+        şehir, tarih, ödeme tipi ve desi gönderdi ve HİÇBİRİ çalışmadı —
+        Laravel tanımadığı parametreyi sessizce yok sayıyor. `status` ucun
+        tanıdığı bir ad ama değeri Geliver'ın ham kodudur; bizim `in_transit`
+        hiçbir satırla eşleşmezdi.
+
+        Arama, taşıyıcı ve durum (`shipping.page_match`) ile `flag` (geciken /
+        adres sorunu / tahsil edilmemiş) bu yüzden SAYFA İÇİNDE uygulanır ve
+        yanıt bunu `pageFiltered` ile söyler; süzülmüş sayfa tam liste gibi
+        gösterilmez.
         """
         per_page = size or self._page_size
-        filters = self._list_filters(q=q, carrier=carrier, status=status, city=city,
-                                     date_from=date_from, date_to=date_to,
-                                     date_field=date_field, payer=payer,
-                                     desi_min=desi_min, desi_max=desi_max)
+        filters = {"order_id": int(order_id)} if order_id else None
+        page_filtered = bool(shipping.text(q) or carrier or status or flag)
         try:
             payload = await self._api.bbd_shipments(filters, page=page, per_page=per_page)
         except Exception as failure:  # noqa: BLE001 — K7
@@ -563,6 +618,7 @@ class ShippingService:
             return {"ok": True, "connected": False, "error": self._fail(failure),
                     "items": [], "total": 0, "shown": 0, "page": page, "size": per_page,
                     "pages": 0, "totals": analytics.totals([]), "flag": flag,
+                    "pageFiltered": page_filtered, "orderId": int(order_id or 0),
                     "idleLimit": self._idle_limit}
 
         zones = await self._zone_rows()
@@ -570,7 +626,9 @@ class ShippingService:
         rows = [shipping.shipment_row(item, today=today, idle_limit=self._idle_limit,
                                       zones=zones)
                 for item in (payload.get("items") or []) if isinstance(item, dict)]
-        shown = [row for row in rows if not flag or flag in row["flags"]]
+        shown = [row for row in rows
+                 if (not flag or flag in row["flags"])
+                 and shipping.page_match(row, q=q, carrier=carrier, status=status)]
         meta = payload.get("meta") or {}
         return {
             "ok": True, "connected": True, "error": "",
@@ -582,6 +640,8 @@ class ShippingService:
             "pages": shipping.as_int(meta.get("lastPage"), 1),
             "totals": analytics.totals(rows),
             "flag": flag,
+            "pageFiltered": page_filtered,
+            "orderId": int(order_id or 0),
             "idleLimit": self._idle_limit,
         }
 
@@ -631,15 +691,23 @@ class ShippingService:
     # ============================================================ taşıyıcı
 
     async def carriers(self) -> dict[str, Any]:
-        """Taşıyıcı tanımları. Kimlik bilgileri iki kez maskelenir (geçit + burada)."""
+        """Taşıyıcı tanımları. Kimlik bilgileri iki kez maskelenir (geçit + burada).
+
+        Panel açılışında okunur ve nadiren değişir; bellekten verilir
+        (`CARRIERS_TTL`). Okunamayan liste bellekte TUTULMAZ.
+        """
+        cached = self._memo.get("carriers", CARRIERS_TTL)
+        if cached is not None:
+            return dict(cached)
         try:
             payload = await self._api.bbd_carriers()
         except Exception as failure:  # noqa: BLE001 — K7
             return {"ok": True, "connected": False, "error": self._fail(failure), "items": []}
         today = shipping.today_iso()
-        return {"ok": True, "connected": True, "error": "",
-                "items": [shipping.carrier_row(item, today=today)
-                          for item in (payload.get("items") or []) if isinstance(item, dict)]}
+        return dict(self._memo.put("carriers", {
+            "ok": True, "connected": True, "error": "",
+            "items": [shipping.carrier_row(item, today=today)
+                      for item in (payload.get("items") or []) if isinstance(item, dict)]}))
 
     async def test_carrier(self, carrier: str, *, reason: str, actor: str,
                            dry_run: bool = True) -> dict[str, Any]:
@@ -660,6 +728,8 @@ class ShippingService:
             return {"ok": False, "error": self._fail(failure)}
         await self._record(action="test_carrier", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail={"carrier": code})
+        # Sınama sonucu taşıyıcı kartında yazıyor; bellekteki liste bayat.
+        self._memo.drop("carriers")
         return {"ok": True, "error": "", "carrier": code,
                 "dryRun": bool(result.get("dryRun", dry_run)),
                 "message": shipping.text(result.get("message")),
@@ -668,7 +738,22 @@ class ShippingService:
     # ======================================================= ücretlendirme
 
     async def rates(self) -> dict[str, Any]:
-        """Desi→ücret matrisi, ücretsiz kargo eşiği ve kapıda ödeme bedeli."""
+        """Desi→ücret matrisi, ücretsiz kargo eşiği ve kapıda ödeme bedeli.
+
+        BELLEKTEN VERİLİR (`RATES_TTL`). Sihirbazın ücret dökümü bu matrisi
+        her alan değişiminde yeniden istiyordu: koli ölçüsünü yazan kişi
+        dakikada onlarca istek harcatıyordu. Kaydetme ve fiyat listesi
+        tazeleme belleği düşürür; okunamayan matris bellekte tutulmaz.
+        """
+        cached = self._memo.get("rates", RATES_TTL)
+        if cached is not None:
+            return dict(cached)
+        result = await self._rates_fresh()
+        if result.get("connected"):
+            self._memo.put("rates", result)
+        return dict(result)
+
+    async def _rates_fresh(self) -> dict[str, Any]:
         try:
             payload = await self._api.bbd_shipping_rates()
         except Exception as failure:  # noqa: BLE001 — K7
@@ -750,6 +835,7 @@ class ShippingService:
 
         await self._record(action="save_rates", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail=body)
+        self._memo.drop("rates")
         return {"ok": True, "error": "", "problems": [],
                 "dryRun": bool(result.get("dryRun", dry_run))}
 
@@ -766,6 +852,7 @@ class ShippingService:
             return {"ok": False, "error": self._fail(failure)}
         await self._record(action="refresh_price_list", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok")
+        self._memo.drop("rates")
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run))}
 
     # ============================================================== bölge
@@ -855,13 +942,22 @@ class ShippingService:
         rate_payload = await self.rates()
         zones = await self._zone_rows()
 
+        # SİPARİŞ BELLEKTEN (`QUOTE_ORDER_TTL`): döküm her alan değişiminde
+        # yeniden istenir ve sepet tutarı/adres o sürede değişmez. Gönderi
+        # açan yollar (taslak, kargoya ver, elle giriş) bu belleği KULLANMAZ —
+        # hazırlık denetimi her zaman taze sipariş okur.
         order: dict[str, Any] = {}
         if order_id:
-            try:
-                order = await self._api.order(int(order_id))
-            except Exception as failure:  # noqa: BLE001 — K7
-                self._log.info("teklif için sipariş okunamadı", orderId=order_id,
-                               error=str(failure))
+            cached = self._memo.get(f"quote-order:{int(order_id)}", QUOTE_ORDER_TTL)
+            if cached is not None:
+                order = cached
+            else:
+                try:
+                    order = self._memo.put(f"quote-order:{int(order_id)}",
+                                           await self._api.order(int(order_id)))
+                except Exception as failure:  # noqa: BLE001 — K7
+                    self._log.info("teklif için sipariş okunamadı", orderId=order_id,
+                                   error=str(failure))
 
         # Teslimat adresi `addresses[]` listesinden ayıklanır (canlı yanıtta
         # `shipping_address` diye bir alan YOK); fatura adresine düşülmez.
@@ -892,6 +988,162 @@ class ShippingService:
                 "desiMismatch": bool(measured_desi > 0 and desi_value > 0
                                       and shipping.billed_units(measured_desi, 0)
                                       != shipping.billed_units(desi_value, 0))}
+
+    # ------------------------------------------------ taslağın ölçüsü
+    #
+    # SORUN (mağaza sözleşmesi, `ShipmentManager::createFor`): aynı sipariş için
+    # iptal edilmemiş bir Geliver kaydı varsa YENİSİ AÇILMAZ, var olan döner.
+    # Mağazada taslağın ölçüsünü güncelleyen bir uç da YOK. Sonuç: sihirbazda
+    # koliyi ölçüp yeni en/boy/yükseklik giren kişi onay penceresinde YENİ
+    # ölçüyü görüyor, etiket ise önceki denemeden kalan taslağın ESKİ
+    # ölçüsüyle satın alınıyordu.
+    #
+    # ÇÖZÜM: etiketi alınmamış eski taslak ücretsiz olarak İPTAL EDİLİR ve
+    # zincir yeni ölçüyle yeni taslak açar (iptal edilen kayıt `createFor`
+    # tarafından artık "açık" sayılmaz). Taslağın ölçüsü mağazadan
+    # OKUNAMIYOR (gönderi künyesi ölçü taşımıyor); bu yüzden hangi taslağın
+    # hangi ölçüyle açıldığı yerel defterde tutulur ve ölçü aynıysa taslağa
+    # dokunulmaz — aksi hâlde her yeniden denemede taslak silinip açılır ve
+    # Geliver'ın teklifleri hiç hazır olamazdı.
+
+    async def _active_draft(self, order_id: int) -> dict[str, Any] | None:
+        """Siparişin iptal edilmemiş, iade olmayan SON Geliver kaydı.
+
+        Okunamazsa istisna YUKARI çıkar: çağıran "bilinmiyor"u "yok" sanıp
+        para harcayan işe devam etmemeli.
+        """
+        payload = await self._api.bbd_shipments({"order_id": int(order_id)}, page=1,
+                                                per_page=25)
+        best: dict[str, Any] | None = None
+        for raw in payload.get("items") or []:
+            if not isinstance(raw, dict):
+                continue
+            owner = shipping.as_int(raw.get("order_id") or raw.get("orderId"))
+            if owner and owner != int(order_id):
+                continue
+            if shipping.flag(raw.get("is_return", raw.get("isReturn"))):
+                continue
+            if shipping.status_of(raw.get("status")) == "cancelled":
+                continue
+            if best is None or shipping.as_int(raw.get("id")) > shipping.as_int(best.get("id")):
+                best = raw
+        return best
+
+    @staticmethod
+    def _draft_paid(raw: dict[str, Any]) -> bool:
+        """Etiketi alınmış (ya da Geliver panelinden dışarıda etiketlenmiş) mi.
+
+        Böyle bir kayda DOKUNULMAZ: iptali ödenmiş bir etiketi yakmak olurdu.
+        Mağazanın kendi ölçütleri okunur (`isPurchased`, `canPurchase`); yoksa
+        işlem numarası, takip numarası ve barkod kanıt sayılır.
+        """
+        if shipping.flag(raw.get("isPurchased")) or shipping.text(
+                raw.get("geliver_transaction_id")):
+            return True
+        if "canPurchase" in raw and not shipping.flag(raw.get("canPurchase")):
+            return True
+        return bool(shipping.text(raw.get("tracking_number")) or shipping.text(raw.get("barcode")))
+
+    async def _known_measures(self, shipment_id: int) -> dict[str, float] | None:
+        """Bu taslak HANGİ ölçüyle açıldı — yerel defterden. Bilinmiyorsa `None`."""
+        try:
+            rows = await self._store.fetch_all(
+                f"SELECT shipment_id, action, result, detail FROM {self._audit} "
+                "WHERE shipment_id = ? ORDER BY id DESC LIMIT 50", (int(shipment_id),))
+        except Exception as failure:  # noqa: BLE001 — bilinmiyor sayılır
+            self._log.warning("taslak ölçüsü defterden okunamadı", error=str(failure))
+            return None
+        for row in rows or []:
+            if shipping.text(row.get("action")) not in DRAFT_MEASURE_ACTIONS:
+                continue
+            if shipping.text(row.get("result")) != "ok":
+                continue
+            try:
+                detail = json.loads(row.get("detail") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if isinstance(detail, dict):
+                return shipping.measure_fields(detail.get("measures", detail))
+        return None
+
+    async def _prepare_draft(self, order_id: int, measures: dict[str, float], *,
+                             actor: str, dry_run: bool) -> dict[str, Any]:
+        """Yeni ölçü gelmişse açık taslağı ölçüyle UYUMLU hâle getirir.
+
+        Dönüş: `{ok, error, warnings, draftId, replaced}`. `draftId` olduğu gibi
+        bırakılan taslaktır, `replaced` iptal edilen. Ölçü gelmediyse ya da
+        kuru provaysa HİÇBİR ŞEY yapılmaz: ölçüsüz istekte mağaza var olan
+        taslağı ya da siparişin kendi desisini kullanır ve onay penceresi bunu
+        öyle söyler.
+        """
+        none: dict[str, Any] = {"ok": True, "error": "", "warnings": [], "draftId": 0,
+                                "replaced": 0}
+        if not measures or dry_run:
+            return none
+        try:
+            draft = await self._active_draft(order_id)
+        except Exception as failure:  # noqa: BLE001 — K7, ama para harcanmaz
+            return {**none, "ok": False,
+                    "error": ("Siparişin açık gönderi kaydı okunamadı; girilen ölçünün "
+                              "uygulanacağı doğrulanamadığı için etiket satın ALINMADI. "
+                              f"Tekrar deneyin. ({self._fail(failure)})")}
+        if draft is None:
+            return none
+        draft_id = shipping.as_int(draft.get("id"))
+        if self._draft_paid(draft):
+            return {**none, "ok": False, "alreadyPurchased": True, "shipmentId": draft_id,
+                    "error": (f"Bu siparişin etiketi zaten alınmış (gönderi #{draft_id}); "
+                              "girilen yeni ölçü uygulanamaz ve ikinci etiket alınmadı. "
+                              "Mevcut etiketi para harcamadan almak için ölçü alanlarını "
+                              "boş bırakıp 'Kargoya ver' deyin ya da Gönderiler sekmesinde "
+                              "'Etiketi yeniden bas'ı kullanın.")}
+        if await self._known_measures(draft_id) == measures:
+            return {**none, "draftId": draft_id}
+
+        gerekce = draft_replace_reason(order_id, draft_id)
+        await self._record(shipment_id=draft_id, order_id=order_id, action="replace_draft",
+                           reason=gerekce, actor=actor, result="denendi",
+                           detail={"measures": measures})
+        try:
+            await self._api.bbd_cancel_shipment(draft_id, reason=gerekce, actor=actor,
+                                                dry_run=False)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await self._record(shipment_id=draft_id, order_id=order_id,
+                               action="replace_draft", reason=gerekce, actor=actor,
+                               result="hata", detail={"error": str(failure)})
+            return {**none, "ok": False,
+                    "error": (f"Bu siparişte başka ölçüyle açılmış bir taslak var "
+                              f"(#{draft_id}) ve iptal edilemedi: {self._fail(failure)} "
+                              "Yeni ölçü uygulanamadığı için etiket satın ALINMADI.")}
+        await self._record(shipment_id=draft_id, order_id=order_id, action="replace_draft",
+                           reason=gerekce, actor=actor, result="ok",
+                           detail={"measures": measures})
+        return {**none, "replaced": draft_id,
+                "warnings": [(f"Önceki taslak #{draft_id} başka ölçüyle açılmıştı; etiketi "
+                              "alınmadığı için ücretsiz iptal edildi ve gönderi girilen "
+                              "ölçüyle yeniden açıldı.")]}
+
+    async def _remember_draft(self, order_id: int, measures: dict[str, float], *,
+                              kept: int) -> None:
+        """Yarım kalan "kargoya ver"in AÇTIĞI taslağın ölçüsünü deftere yazar.
+
+        Zincir taslağı açıp sonra düşebiliyor (en sık: "teklifler henüz hazır
+        değil, birkaç saniye sonra deneyin"). Taslak o ölçüyle mağazada kalır;
+        yazılmazsa ikinci denemede "ölçüsü bilinmiyor" sayılıp iptal edilir,
+        yeniden açılır ve teklifler yine hazır olmazdı.
+        """
+        if not measures:
+            return
+        try:
+            draft = await self._active_draft(order_id)
+        except Exception:  # noqa: BLE001 — yazılamazsa sonraki deneme yeniden açar
+            return
+        if draft is None or self._draft_paid(draft):
+            return
+        draft_id = shipping.as_int(draft.get("id"))
+        if draft_id and draft_id != kept:
+            await self._record(shipment_id=draft_id, order_id=order_id, action="draft_measures",
+                               result="ok", detail={"measures": measures})
 
     async def create_shipment(self, order_id: int, *, carrier: str, packages: int,
                               desi_value: float, weight: float, payer: str, cod: int,
@@ -978,6 +1230,15 @@ class ShippingService:
                                     width=width if all(present_dimensions) else None,
                                     height=height if all(present_dimensions) else None,
                                     payer=payer, cod=cod, note=note, divisor=self._divisor)
+        # TASLAK ÖLÇÜSÜ: mağaza aynı sipariş için ikinci taslak AÇMAZ, var olanı
+        # döndürür. Ölçü düzeltilmişse eski taslak önce kaldırılır; yoksa
+        # teklifler eski ölçüyle gelirdi (bkz. `_prepare_draft`).
+        prep = await self._prepare_draft(int(order_id), shipping.measure_fields(body),
+                                         actor=actor, dry_run=dry_run)
+        if not prep["ok"]:
+            return {"ok": False, "error": prep["error"], "warnings": warnings}
+        warnings = [*warnings, *prep["warnings"]]
+
         await self._record(order_id=order_id, action="create_shipment", reason=reason,
                            actor=actor, result="denendi", detail=body)
         try:
@@ -1234,6 +1495,43 @@ class ShippingService:
         rows.sort(key=lambda row: row["price"])
         return {"ok": True, "connected": True, "error": "", "items": rows}
 
+    async def estimate(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """"Kargoya ver" onay penceresinin TAHMİNİ tutarı — tek ya da toplu.
+
+        Desi→ücret matrisinden okunur (bellekte; çoğu zaman istek ÇIKMAZ).
+        TAHMİNDİR: kesin tutarı Geliver'ın teklifi belirler ve ekran bunu
+        yazar. Faturalanan birimi (desi) bilinmeyen sipariş için tutar
+        UYDURULMAZ; "hesaplanamadı" sayılır ve pencere kaç tane olduğunu söyler.
+
+        Satırın taşıyıcısı boşsa ve matriste TEK taşıyıcı varsa o kullanılır
+        (mağaza tek firmayla çalışıyor); birden çoksa tahmin yapılmaz.
+        """
+        rates = await self.rates()
+        lines: list[dict[str, Any]] = []
+        if not rates.get("connected"):
+            return {"ok": True, "connected": False, "error": rates.get("error", ""),
+                    "total": 0, "known": 0, "unknown": len(items or []), "lines": lines}
+        matrix = {item["code"]: item["tiers"] for item in rates.get("carriers") or []}
+        only = next(iter(matrix.values())) if len(matrix) == 1 else None
+        total = 0
+        for item in (items or [])[:200]:
+            units = shipping.as_int(item.get("units"))
+            key = shipping.carrier_key(item.get("carrier")) if shipping.text(
+                item.get("carrier")) else ""
+            tiers = matrix.get(key) if key else only
+            price: int | None = None
+            if units > 0 and tiers:
+                hit = shipping.rate_for(units, tiers)
+                if hit["found"]:
+                    price = int(hit["price"])
+            if price is not None:
+                total += price
+            lines.append({"orderId": shipping.as_int(item.get("orderId")), "units": units,
+                          "price": price})
+        known = sum(1 for line in lines if line["price"] is not None)
+        return {"ok": True, "connected": True, "error": "", "total": total, "known": known,
+                "unknown": len(lines) - known, "lines": lines}
+
     # ==================================================== KARGOYA VER (tek tık)
 
     async def dispatch(self, order_id: int, *, carrier: str = "", offer_id: str = "",
@@ -1319,6 +1617,18 @@ class ShippingService:
         if shipping.text(note):
             body["note"] = shipping.text(note)[:255]
 
+        # ÖLÇÜ GELDİYSE AÇIK TASLAK ÖNCE ÖLÇÜYE UYDURULUR. Mağaza var olan
+        # taslağı döndürüyor; atlanırsa etiket, onay penceresinde görülen yeni
+        # ölçüyle değil, önceki denemenin ölçüsüyle satın alınırdı.
+        measures = shipping.measure_fields(body)
+        prep = await self._prepare_draft(int(order_id), measures, actor=actor,
+                                         dry_run=dry_run)
+        if not prep["ok"]:
+            return {"ok": False, "error": prep["error"], "orderId": int(order_id),
+                    "documents": [], "printed": [],
+                    "alreadyPurchased": bool(prep.get("alreadyPurchased")),
+                    "shipmentId": shipping.as_int(prep.get("shipmentId"))}
+
         # YAZMA ÖNCESİ İZ: istek zaman aşımına uğrarsa uzakta uygulanmış
         # olabilir ve "ne yapmaya çalıştık" kaydı yerelde kalmalı.
         await self._record(order_id=order_id, action="dispatch", reason=gerekce, actor=actor,
@@ -1330,17 +1640,45 @@ class ShippingService:
         except Exception as failure:  # noqa: BLE001 — K7
             await self._record(order_id=order_id, action="dispatch", reason=gerekce,
                                actor=actor, result="hata", detail={"error": str(failure)})
+            if not dry_run:
+                await self._remember_draft(int(order_id), measures, kept=prep["draftId"])
             return {"ok": False, "error": self._fail(failure), "orderId": int(order_id),
-                    "documents": [], "printed": []}
+                    "documents": [], "printed": [], "warnings": prep["warnings"]}
 
         info = dispatch_info(envelope)
+        if info["label"] and info["shipmentId"]:
+            # Satın alınmış etiket DEĞİŞMEZ: "Etiketi yeniden bas" ve toplu
+            # etiket sayfası onu bir daha mağazadan istemez.
+            self._label_memo.put(str(info["shipmentId"]), info["label"])
+
+        # GÖNDERİ KÜNYESİ BİR KEZ OKUNUR: etiketin GERÇEK ücreti (`amount`,
+        # satın alınan teklifin tutarı) ve müşterinin takip bağlantısı orada.
+        # "Kargoya ver" yanıtı ikisini de taşımıyor (künye `X-Bbd-*`
+        # başlıklarında; ücret ve bağlantı yok). Eskiden olay yoluna
+        # `feeKurus: 0` yazılıyordu — kâr/zarar hesabı her gönderiyi bedava
+        # sayıyordu. Okunamazsa ücret "bilinmiyor" kalır, 0 UYDURULMAZ.
+        kunye: dict[str, Any] = {}
+        if info["purchased"] and not info["dryRun"] and info["shipmentId"]:
+            kunye = await self._shipment_raw(int(info["shipmentId"]))
+        fee = shipping.to_kurus(_first_of(kunye, "amount", "price", "fee"))
+        track_url = shipping.text(_first_of(kunye, "tracking_url", "trackingUrl"))
+        if not info["trackingNo"]:
+            late = shipping.text(_first_of(kunye, "tracking_number", "trackingNumber",
+                                           "barcode"))
+            if late:
+                info["trackingNo"] = late
+                info["warnings"] = [line for line in info["warnings"]
+                                    if not line.startswith("Takip numarası")]
+
         await self._record(shipment_id=info["shipmentId"], order_id=order_id,
                            action="dispatch", reason=gerekce, actor=actor,
                            result="dry_run" if info["dryRun"] else "ok",
                            detail={"trackingNo": info["trackingNo"],
                                    "provider": info["provider"],
                                    "purchased": info["purchased"],
-                                   "labelReady": info["labelReady"]})
+                                   "labelReady": info["labelReady"],
+                                   "fee": fee, "measures": measures,
+                                   "replacedDraft": prep["replaced"]})
         await self._emit("store.shipment.created", {
             "orderId": int(order_id), "shipmentId": info["shipmentId"],
             "carrier": info["provider"], "dryRun": info["dryRun"]})
@@ -1348,10 +1686,14 @@ class ShippingService:
             await self._emit("store.shipment.purchased", {
                 "shipmentId": info["shipmentId"], "orderId": int(order_id),
                 "carrier": info["provider"], "trackingNo": info["trackingNo"],
-                "feeKurus": 0, "dryRun": info["dryRun"]})
+                "feeKurus": fee or 0, "feeKnown": fee is not None,
+                "dryRun": info["dryRun"]})
 
+        # SİPARİŞ BİR KEZ OKUNUR: fatura ve müşteri SMS'i aynı künyeyi
+        # kullanıyor; ikisi ayrı ayrı okuyordu.
+        order = await self._order_or_none(int(order_id))
         wanted = await self.auto_print_on() if auto_print is None else bool(auto_print)
-        documents = await self._dispatch_documents(int(order_id), info)
+        documents = await self._dispatch_documents(int(order_id), info, order=order)
         printed = await self._print_documents(documents, info=info, order_id=int(order_id),
                                               wanted=wanted, actor=actor, reason=gerekce)
 
@@ -1365,16 +1707,21 @@ class ShippingService:
         # çoğu zaman boş kalıyordu — boş takip numarası bildirim tarafındaki
         # zorunlu değişken kapısına (`REQUIRED_VARIABLES["shipped"]`) takılıp
         # mesajı düşürüyordu. Kimse fark etmiyordu çünkü hata üretmiyordu.
-        sms = await self._notify_shipped(int(order_id), info=info, actor=actor)
+        sms = await self._notify_shipped(int(order_id), info=info, actor=actor, order=order,
+                                         track_url=track_url)
         return {
             "ok": True, "error": "", "dispatched": not info["dryRun"],
             "orderId": int(order_id),
             "shipmentId": info["shipmentId"],
             "trackingNo": info["trackingNo"],
+            "trackingUrl": track_url,
             "provider": info["provider"],
             "purchased": info["purchased"],
             "labelReady": info["labelReady"],
             "dryRun": info["dryRun"],
+            # Etiketin GERÇEK ücreti (kuruş). Bilinmiyorsa `None` — 0 değil.
+            "fee": fee,
+            "replacedDraft": prep["replaced"],
             "documents": documents,
             "printed": printed["done"],
             "autoPrint": wanted,
@@ -1383,11 +1730,30 @@ class ShippingService:
             "autoPrintPaths": printed["spool"],
             "printSkipped": printed["skipped"],
             "sms": sms,
-            "warnings": _dispatch_warnings(info),
+            "warnings": [*prep["warnings"], *_dispatch_warnings(info)],
         }
 
+    async def _shipment_raw(self, shipment_id: int) -> dict[str, Any]:
+        """Gönderinin ham künyesi. Okunamazsa BOŞ — "kargoya ver" bunun için düşmez."""
+        try:
+            raw = await self._api.bbd_shipment(int(shipment_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.info("gönderi künyesi okunamadı", shipmentId=shipment_id,
+                           error=str(failure))
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    async def _order_or_none(self, order_id: int) -> dict[str, Any] | None:
+        try:
+            order = await self._api.order(int(order_id))
+        except Exception as failure:  # noqa: BLE001 — K7
+            self._log.info("sipariş künyesi okunamadı", orderId=order_id, error=str(failure))
+            return None
+        return order if isinstance(order, dict) else None
+
     async def _notify_shipped(self, order_id: int, *, info: dict[str, Any],
-                              actor: str) -> dict[str, Any]:
+                              actor: str, order: dict[str, Any] | None = None,
+                              track_url: str = "") -> dict[str, Any]:
         """"Kargoya verildi" aşama SMS'i. İSTİSNA FIRLATMAZ (K7).
 
         KURU PROVADA GÖNDERİLMEZ: mağazada hiçbir şey değişmedi, müşteriye
@@ -1409,19 +1775,21 @@ class ShippingService:
             return {"attempted": False, "sent": False,
                     "note": "Bildirimler ekranı kapalı; müşteriye SMS gönderilemedi."}
 
-        try:
-            order = await self._api.order(int(order_id))
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"attempted": False, "sent": False,
-                    "note": f"Sipariş künyesi okunamadı, SMS gönderilmedi: {self._fail(failure)}"}
+        if order is None:
+            try:
+                order = await self._api.order(int(order_id))
+            except Exception as failure:  # noqa: BLE001 — K7
+                return {"attempted": False, "sent": False,
+                        "note": "Sipariş künyesi okunamadı, SMS gönderilmedi: "
+                                f"{self._fail(failure)}"}
 
         # TAKİP BAĞLANTISI GÖNDERİ KAYDINDADIR, dispatch yanıtında değil:
         # mağaza künyeyi `X-Bbd-*` başlıklarında taşıyor ve orada takip
         # ADRESİ yok (yalnız numara, firma, satın alındı bayrağı). Mesajın
         # şablonu `kargo_takip_linki` değişkenini taşıyor; boş göndermek
-        # müşteriye tıklanmayan bir bağlantı yollamak olurdu.
-        track_url = ""
-        if info["shipmentId"]:
+        # müşteriye tıklanmayan bir bağlantı yollamak olurdu. Künye çağıran
+        # tarafından bir kez okunur (`dispatch`); verilmediyse burada okunur.
+        if not track_url and info["shipmentId"]:
             detail = await self.shipment(int(info["shipmentId"]))
             if detail.get("ok"):
                 track_url = shipping.text(detail["shipment"].get("trackingUrl"))
@@ -1451,7 +1819,8 @@ class ShippingService:
                 "duplicate": bool(result.get("duplicate")),
                 "note": shipping.text(result.get("note")) or shipping.text(result.get("error"))}
 
-    async def _dispatch_documents(self, order_id: int, info: dict[str, Any]) -> list[dict[str, Any]]:
+    async def _dispatch_documents(self, order_id: int, info: dict[str, Any], *,
+                                  order: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         """Basılacak İKİ belge: KARGO ETİKETİ ve FATURA. Fiş YOK.
 
         Etiket ancak SATIN ALINDIKTAN sonra vardır; uç PDF döndürmediyse bu
@@ -1469,7 +1838,7 @@ class ShippingService:
                 # Taşıyıcının PDF'i kendi ölçüsünde gelir; yazıcının kâğıdına
                 # YERLEŞTİRİLİR. `pypdf` yoksa ham PDF olduğu gibi yazılır —
                 # eğri basılmış bir etiket, hiç basılmamış etiketten iyidir.
-                content = labels.compose([etiket], fmt)
+                content = await asyncio.to_thread(labels.compose, [etiket], fmt)
             except labels.LabelError as failure:
                 content = etiket
                 self._log.warning("etiket sayfaya yerleştirilemedi, ham PDF yazılıyor",
@@ -1477,7 +1846,7 @@ class ShippingService:
             name = f"magaza-kargo-etiket-{info['trackingNo'] or order_id}-{stamp}.pdf"
             documents.append(self._write_document("label", "Kargo etiketi", name, content))
 
-        fatura, invoice_error = await self._invoice_pdf(order_id)
+        fatura, invoice_error = await self._invoice_pdf(order_id, order=order)
         if fatura:
             name = f"magaza-kargo-fatura-{order_id}-{stamp}.pdf"
             documents.append(self._write_document("invoice", "Fatura", name, fatura))
@@ -1784,9 +2153,14 @@ class ShippingService:
 
     # ============================================================ performans
 
-    async def _scan(self, filters: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
-        """Rapor/performans için tam tarama — SIRAYLA, tavanlı."""
-        payload = await self._api.bbd_shipments(filters, all_pages=True)
+    async def _scan(self) -> tuple[list[dict[str, Any]], bool]:
+        """CSV için TAM tarama — SIRAYLA, tavanlı.
+
+        Süzgeç GÖNDERİLMEZ: mağazanın gönderi listesi ucu taşıyıcı ve tarih
+        okumuyor (bkz. `shipments`); gönderilen süzgeç sessizce yok sayılıp
+        "süzülmüş" sanılan tam liste dönerdi. Süzme çağıranda yapılır.
+        """
+        payload = await self._api.bbd_shipments(None, all_pages=True)
         zones = await self._zone_rows()
         today = shipping.today_iso()
         raw = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
@@ -1795,24 +2169,67 @@ class ShippingService:
                 for item in raw[:SCAN_CAP]]
         return rows, bool(payload.get("truncated")) or len(raw) > SCAN_CAP
 
-    async def performance(self, *, days: int = 0, carrier: str = "") -> dict[str, Any]:
-        """Taşıyıcı performansı ve kargo kâr/zararı."""
+    async def _scan_since(self, start: str) -> tuple[list[dict[str, Any]], bool]:
+        """Performans penceresi — SAYFA SAYFA geriye tarar, pencere dışında DURUR.
+
+        Eskiden performans sekmesi her açılışta gönderi geçmişinin TAMAMINI
+        tarıyordu (`all_pages`) ve "son 30 gün" süzgecini mağazaya
+        gönderiyordu; uç tarih süzgeci okumadığı için pencere hiç
+        uygulanmıyor, ekran "son 30 gün" yazıp bütün geçmişi sayıyordu.
+
+        Uç kayıtları yeniden eskiye (`id` azalan) verir; pencere başından
+        eski bir kayıt görülen sayfadan sonra tarama biter. Pencere burada,
+        oluşturma tarihine bakılarak uygulanır.
+        """
+        zones = await self._zone_rows()
+        today = shipping.today_iso()
+        rows: list[dict[str, Any]] = []
+        page, last, older = 1, 1, False
+        while len(rows) < SCAN_CAP:
+            payload = await self._api.bbd_shipments(None, page=page, per_page=STORE_PAGE)
+            items = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
+            for item in items:
+                row = shipping.shipment_row(item, today=today, idle_limit=self._idle_limit,
+                                            zones=zones)
+                day = row["createdAt"][:10]
+                if day and day < start:
+                    older = True
+                    continue
+                rows.append(row)
+            last = shipping.as_int((payload.get("meta") or {}).get("lastPage"), page)
+            if older or not items or page >= last:
+                break
+            page += 1
+        truncated = len(rows) >= SCAN_CAP and not older and page < last
+        return rows[:SCAN_CAP], truncated
+
+    async def performance(self, *, days: int = 0, carrier: str = "",
+                          fresh: bool = False) -> dict[str, Any]:
+        """Taşıyıcı performansı ve kargo kâr/zararı.
+
+        BELLEKTEN VERİLİR (`PERFORMANCE_TTL`): sekme her açıldığında tarama
+        tekrarlanıyordu. `fresh` (ekrandaki "Yenile") belleği atlar. Yanıtın
+        `at` alanı hesabın ne zaman yapıldığını söyler.
+        """
         window = max(7, min(365, days or shipping.as_int(
             self._config.get("performance_days"), 30)))
         start = _days_ago(window)
-        filters: dict[str, Any] = {"channel": self._channel, "date_from": start,
-                                   "date_field": "created"}
-        if carrier:
-            filters["carrier"] = shipping.fold(carrier)
+        key = f"performance:{window}:{shipping.fold(carrier)}"
+        if not fresh:
+            cached = self._memo.get(key, PERFORMANCE_TTL)
+            if cached is not None:
+                return {**cached, "cached": True}
 
         try:
-            rows, truncated = await self._scan(filters)
+            rows, truncated = await self._scan_since(start)
         except Exception as failure:  # noqa: BLE001 — K7
             return {"ok": True, "connected": False, "error": self._fail(failure),
                     "days": window, "carriers": [], "delays": [], "money": {}, "late": [],
                     "totals": analytics.totals([]), "truncated": False}
+        if carrier:
+            rows = [row for row in rows if shipping.page_match(row, carrier=carrier)]
 
-        return {
+        return {**self._memo.put(key, {
             "ok": True, "connected": True, "error": "", "days": window, "from": start,
             "carriers": analytics.carrier_performance(rows),
             "delays": analytics.delay_distribution(rows),
@@ -1820,7 +2237,8 @@ class ShippingService:
             "late": analytics.late_rows(rows, limit=25),
             "totals": analytics.totals(rows),
             "truncated": truncated,
-        }
+            "at": shipping.now_iso(),
+        }), "cached": False}
 
     async def audit(self, *, shipment_id: int = 0, limit: int = 50) -> dict[str, Any]:
         """Bu ekrandan yapılan yazmaların YEREL izi (gerekçeleriyle)."""
@@ -1845,13 +2263,19 @@ class ShippingService:
 
     # ================================================================ CSV
 
-    async def export_csv(self, *, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Tüm gönderilerin CSV'si. Görünen sayfanın CSV'sini panel kendi üretir."""
-        base = {"channel": self._channel, **(filters or {})}
+    async def export_csv(self, *, q: str = "", carrier: str = "",
+                         status: str = "") -> dict[str, Any]:
+        """Tüm gönderilerin CSV'si. Görünen sayfanın CSV'sini panel kendi üretir.
+
+        Süzgeçler (arama, taşıyıcı, durum) TAM TARAMANIN üstünde, burada
+        uygulanır — mağaza ucu onları okumuyor (bkz. `shipments`).
+        """
         try:
-            rows, truncated = await self._scan(base)
+            rows, truncated = await self._scan()
         except Exception as failure:  # noqa: BLE001 — K7
             return {"ok": False, "error": self._fail(failure)}
+        rows = [row for row in rows
+                if shipping.page_match(row, q=q, carrier=carrier, status=status)]
 
         headers = ["Takip no", "Sipariş", "Müşteri", "Şehir", "İlçe", "Taşıyıcı", "Desi",
                    "Kg", "Ücret", "Ödeme", "Kapıda ödeme", "Oluşturma", "Son hareket",
@@ -1931,16 +2355,17 @@ class ShippingService:
         siparis_no = shipping.text(order.get("increment_id")
                                    or order.get("incrementId")) or str(order_id)
         try:
-            slip = build_pdf(
-                title="Kargoya teslim fişi",
+            slip = await asyncio.to_thread(
+                build_pdf, title="Kargoya teslim fişi",
                 subtitle=f"Sipariş {siparis_no}" + (f" · {track}" if track else ""),
                 sections=sections, footer="Kontrol Merkezi · Mağaza · Kargo")
         except ExportError as failure:
             return {"ok": False, "error": f"Teslim fişi üretilemedi: {failure}"}
 
-        fatura, invoice_error = await self._invoice_pdf(order_id)
+        fatura, invoice_error = await self._invoice_pdf(order_id, order=order)
         try:
-            content = labels.concat([slip, fatura]) if fatura else slip
+            content = (await asyncio.to_thread(labels.concat, [slip, fatura])
+                       if fatura else slip)
         except labels.LabelError as failure:
             content, invoice_error = slip, f"Fatura eklenemedi: {failure}"
 
@@ -1954,7 +2379,8 @@ class ShippingService:
                 "trackNumber": track, "invoiceIncluded": bool(fatura) and not invoice_error,
                 "invoiceError": invoice_error}
 
-    async def _invoice_pdf(self, order_id: int) -> tuple[bytes, str]:
+    async def _invoice_pdf(self, order_id: int, *,
+                           order: dict[str, Any] | None = None) -> tuple[bytes, str]:
         """Siparişin faturasını PDF olarak getirir. `(içerik, hata)` döner.
 
         FATURA KİMLİĞİ SİPARİŞ KİMLİĞİ DEĞİLDİR — canlıda sipariş 20'nin
@@ -1964,7 +2390,8 @@ class ShippingService:
         """
         siparis_no = str(order_id)
         try:
-            order = await self._api.order(int(order_id))
+            if order is None:
+                order = await self._api.order(int(order_id))
             siparis_no = shipping.text(order.get("increment_id")
                                        or order.get("incrementId")) or siparis_no
             payload = await self._api.invoices({"order_id": int(order_id)}, page=1,
@@ -2055,8 +2482,8 @@ class ShippingService:
         stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
         name = f"magaza-kargo-fis-{track or order_id}-{stamp}.pdf"
         try:
-            content = build_pdf(
-                title="Kargo fişi (TEST)",
+            content = await asyncio.to_thread(
+                build_pdf, title="Kargo fişi (TEST)",
                 subtitle=f"{track or '—'} · Sipariş {siparis_no or order_id}",
                 sections=sections, footer="Kontrol Merkezi · Mağaza · Kargo")
             path = write_private(self._export_dir / name, content)
@@ -2092,14 +2519,14 @@ class ShippingService:
         missing: list[int] = []
         for shipment_id in wanted:
             try:
-                raw = await self._api.bbd_shipment_label(shipment_id)
+                raw = await self._label_pdf(shipment_id)
             except Exception as failure:  # noqa: BLE001 — biri yoksa gerisi sürsün
                 missing.append(shipment_id)
                 self._log.warning("etiket alınamadı", shipmentId=shipment_id,
                                   error=str(failure))
                 continue
             if raw:
-                content.append(bytes(raw))
+                content.append(raw)
             else:
                 missing.append(shipment_id)
 
@@ -2108,8 +2535,10 @@ class ShippingService:
                     "error": "Hiçbir etiket alınamadı. Etiket ancak satın alındıktan sonra "
                              "oluşur; önce teklif seçip etiketi satın alın."}
 
+        # Yerleştirme `pypdf` ile EŞZAMANLI çalışır; altmış etiketlik bir
+        # sayfada olay döngüsünü kilitlemesin diye iş parçacığında yapılır.
         try:
-            merged = labels.compose(content, fmt)
+            merged = await asyncio.to_thread(labels.compose, content, fmt)
         except labels.LabelError as failure:
             return {"ok": False, "error": str(failure), "missing": missing}
 
@@ -2126,6 +2555,64 @@ class ShippingService:
                 "bytes": len(merged), "count": len(content), "missing": missing,
                 "format": fmt, "formatLabel": labels.FORMAT_LABELS[fmt]}
 
+    async def _label_pdf(self, shipment_id: int) -> bytes:
+        """Gönderinin etiket PDF'i — önce bellekten.
+
+        Satın alınmış etiket DEĞİŞMEZ; "Etiketi yeniden bas", toplu etiket
+        sayfası ve önizleme aynı PDF'i defalarca istiyordu. "Kargoya ver"
+        anında gelen etiket de buraya konur (bkz. `dispatch`). Yalnız gerçek
+        PDF saklanır: bozuk gövde bir sonraki denemede yeniden istenir.
+        """
+        cached = self._label_memo.get(str(int(shipment_id)), LABEL_TTL)
+        if cached is not None:
+            return bytes(cached)
+        content = bytes(await self._api.bbd_shipment_label(int(shipment_id)) or b"")
+        if content[:4] == b"%PDF":
+            self._label_memo.put(str(int(shipment_id)), content)
+        return content
+
+    async def _rows_by_id(self, wanted: list[int], *, page: int = 0,
+                          size: int = 0) -> tuple[list[dict[str, Any]], list[int]]:
+        """Seçili gönderilerin satırları — LİSTE SAYFASINDAN, tek tek değil.
+
+        Ekran seçimi baktığı sayfadan yapar ve o sayfanın numarasını
+        gönderir; o sayfa tek istekle okunur. Bulunamayanlar (sayfa o arada
+        kaydıysa) tek tek okunur. Eskiden her gönderi ayrı bir istekti: otuz
+        gönderilik manifesto otuz istek harcıyordu.
+
+        Dönüş `(satırlar, okunamayanlar)`; satır sırası SEÇİM sırasıdır.
+        """
+        zones = await self._zone_rows()
+        today = shipping.today_iso()
+        found: dict[int, dict[str, Any]] = {}
+        if page > 0:
+            try:
+                payload = await self._api.bbd_shipments(
+                    None, page=page, per_page=max(1, min(STORE_PAGE, size or STORE_PAGE)))
+            except Exception as failure:  # noqa: BLE001 — tek tek okumaya düşülür
+                self._log.info("gönderi sayfası okunamadı", page=page, error=str(failure))
+            else:
+                want = set(wanted)
+                for item in payload.get("items") or []:
+                    if isinstance(item, dict) and shipping.as_int(item.get("id")) in want:
+                        found[shipping.as_int(item.get("id"))] = shipping.shipment_row(
+                            item, today=today, idle_limit=self._idle_limit, zones=zones)
+        missing: list[int] = []
+        for shipment_id in wanted:
+            if shipment_id in found:
+                continue
+            try:
+                raw = await self._api.bbd_shipment(shipment_id)
+            except Exception as failure:  # noqa: BLE001 — K7
+                missing.append(shipment_id)
+                self._log.warning("gönderi okunamadı", shipmentId=shipment_id,
+                                  error=str(failure))
+                continue
+            found[shipment_id] = shipping.shipment_row(raw, today=today,
+                                                       idle_limit=self._idle_limit,
+                                                       zones=zones)
+        return [found[item] for item in wanted if item in found], missing
+
     # -------------------------------------------------------- manifesto
 
     async def _build_manifest(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -2139,20 +2626,10 @@ class ShippingService:
         if not wanted:
             return {"ok": False, "error": "Manifestoya girecek gönderi seçilmedi."}
 
-        rows: list[dict[str, Any]] = []
-        missing: list[int] = []
-        zones = await self._zone_rows()
+        rows, missing = await self._rows_by_id(
+            wanted, page=shipping.as_int(params.get("page")),
+            size=shipping.as_int(params.get("size")))
         today = shipping.today_iso()
-        for shipment_id in wanted:
-            try:
-                raw = await self._api.bbd_shipment(shipment_id)
-            except Exception as failure:  # noqa: BLE001 — K7
-                missing.append(shipment_id)
-                self._log.warning("manifesto için gönderi okunamadı", shipmentId=shipment_id,
-                                  error=str(failure))
-                continue
-            rows.append(shipping.shipment_row(raw, today=today, idle_limit=self._idle_limit,
-                                              zones=zones))
         if not rows:
             return {"ok": False, "error": "Seçilen gönderilerin hiçbiri okunamadı."}
 
@@ -2187,9 +2664,10 @@ class ShippingService:
         name = f"magaza-kargo-manifesto-{stamp}.pdf"
         try:
             # `build_pdf` de ExportError fırlatabilir (yazı tipi/uzunluk);
-            # dışarı sızarsa uç 500 verir ve ekran çöker (K7).
-            content = build_pdf(
-                title="Teslimat manifestosu",
+            # dışarı sızarsa uç 500 verir ve ekran çöker (K7). Eşzamanlıdır;
+            # iş parçacığında çalışır ki olay döngüsü kilitlenmesin.
+            content = await asyncio.to_thread(
+                build_pdf, title="Teslimat manifestosu",
                 subtitle=f"{shipping.carrier_label(carrier)} · {len(rows)} gönderi · {today}",
                 sections=sections, footer="Kontrol Merkezi · Mağaza · Kargo")
             path = write_private(self._export_dir / name, content)
@@ -2256,8 +2734,8 @@ class ShippingService:
         stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
         name = f"magaza-kargo-performans-{stamp}.pdf"
         try:
-            content = build_pdf(
-                title="Taşıyıcı performans raporu",
+            content = await asyncio.to_thread(
+                build_pdf, title="Taşıyıcı performans raporu",
                 subtitle=f"Son {payload['days']} gün · {payload['from']} sonrası",
                 sections=sections, footer="Kontrol Merkezi · Mağaza · Kargo")
             path = write_private(self._export_dir / name, content)

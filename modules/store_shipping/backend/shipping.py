@@ -218,15 +218,26 @@ def reason_error(value: str, minimum: int = MIN_REASON) -> str:
     return ""
 
 
+def carrier_key(code: Any) -> str:
+    """Yöntem/servis kodundan TAŞIYICI anahtarı: `hepsijet_hepsijet` → `hepsijet`.
+
+    Bagisto'nun yöntem kodu gönderi yanıtına olduğu gibi gelebiliyor
+    (`hepsijet_hepsijet`); Geliver servis kodu da bileşik olabiliyor
+    (`geliver_SURAT_STANDART`, `HEPSIJET_STANDART`). Firma her zaman ilk
+    parçadır — `geliver_` önekliyse ikinci. Mağaza aynı kuralı uygular
+    (`MethodCode::providerCodeFor`); iki tarafın ayrışması, sihirbazın
+    müşterinin firması yerine başka firmayı seçili göstermesi demekti.
+    """
+    parts = fold(code).split("_")
+    return parts[1] if parts[0] == "geliver" and len(parts) > 1 else parts[0]
+
+
 def carrier_label(code: Any) -> str:
     key = fold(code)
-    # Bagisto's method code can reach shipment responses unchanged, e.g.
-    # `hepsijet_hepsijet`; Geliver service codes can also be compound
-    # (`hepsijet_standart`). Resolve the carrier prefix before falling back
-    # to a raw machine code so operators see the same readable name everywhere.
-    parts = key.split("_")
-    provider = parts[1] if parts[0] == "geliver" and len(parts) > 1 else parts[0]
-    return CARRIER_LABELS.get(key) or CARRIER_LABELS.get(provider) or text(code) or "—"
+    # Ham makine kodu yerine her yerde aynı okunur adı göstermek için önce
+    # firma öneki çözülür (bkz. `carrier_key`).
+    return CARRIER_LABELS.get(key) or CARRIER_LABELS.get(carrier_key(code)) \
+        or text(code) or "—"
 
 
 def _first(source: Any, *keys: str) -> Any:
@@ -576,7 +587,11 @@ def shipment_row(raw: dict[str, Any], *, today: str = "", idle_limit: int = 3,
         "weight": weight,
         "units": units,
         "packages": max(1, as_int(raw.get("packages"), 1)),
-        "fee": to_kurus(raw.get("price", raw.get("fee"))) or 0,
+        # TAŞIYICIYA ÖDENEN ücret. Mağazanın gönderi kaydında alan `amount`
+        # (`recordAcceptedAmount`, satın alınan teklifin tutarı); `price`/`fee`
+        # yalnız eski/yerel biçimler. Okunmazsa her gönderi "0 ₺" görünüyor ve
+        # performans sekmesindeki kargo maliyeti hep sıfır çıkıyordu.
+        "fee": to_kurus(_first(raw, "price", "fee", "amount")) or 0,
         # Müşterinin siparişte ÖDEDİĞİ kargo bedeli — taşıyıcıya ödediğimiz
         # `fee` ile aynı şey değildir, kâr/zarar ikisinin farkıdır.
         # `None` bırakılır (0 değil): "tahsilat yok" ile "tahsilat bilinmiyor"
@@ -635,6 +650,57 @@ FLAG_LABELS = {
     "cod": "Tahsil edilmemiş",
     "unknown": "Bilinmeyen durum",
 }
+
+
+def page_match(row: dict[str, Any], *, q: str = "", carrier: str = "",
+               status: str = "") -> bool:
+    """Gönderi satırı ekrandaki süzgeçlere uyuyor mu — SAYFA İÇİNDE.
+
+    NEDEN BURADA. Mağazanın gönderi listesi ucu yalnız `orderId`, `status`,
+    `onlyErrors` ve `purchased` okur (`ShipmentController::index`). Ekran
+    yıllarca arama, taşıyıcı, şehir, tarih, ödeme tipi ve desi süzgeci
+    gönderdi; Laravel tanımadığı parametreyi SESSİZCE yok saydığı için hiçbiri
+    çalışmadı ve kullanıcı süzülmüş sandığı listeye baktı. `status` ucun
+    tanıdığı bir ad ama oradaki değer Geliver'ın HAM durum kodudur
+    (`CANCELED`…); bizim sözlüğümüzdeki `in_transit` hiçbir satırla eşleşmez.
+
+    Üçü burada, çekilen SAYFANIN üstünde uygulanır ve ekran bunu yazar.
+    Arama takip no, sipariş no, müşteri, şehir/ilçe ve gönderi numarasına
+    bakar; Türkçe harf farkı gözetilmez.
+    """
+    if carrier and row.get("carrier") != fold(carrier) \
+            and carrier_key(row.get("carrier")) != carrier_key(carrier):
+        return False
+    if status and row.get("status") != status:
+        return False
+    needle = fold(q)
+    if needle:
+        hay = " ".join(fold(row.get(key)) for key in (
+            "trackingNo", "orderNumber", "customer", "city", "district"))
+        if needle not in hay and needle != text(row.get("id")):
+            return False
+    return True
+
+
+#: Ölçü alanları — taslağın hangi ölçüyle açıldığını karşılaştırmak için.
+MEASURE_KEYS = ("desi", "weight", "length", "width", "height")
+
+
+def measure_fields(body: Any) -> dict[str, float]:
+    """Gövdedeki ÖLÇÜ alanları; boş ve sıfır olanlar YOKTUR.
+
+    "Ölçü verilmedi" ile "ölçü 0" ayrı şeylerdir: mağaza verilmeyen ölçüde
+    siparişin kendi desisini kullanır (`Parcel::forOrder`), 0'ı ise ölçü
+    sanmaz. Karşılaştırma iki ondalığa yuvarlanmış değerle yapılır — gövde de
+    öyle yuvarlanıyor.
+    """
+    data = body if isinstance(body, dict) else {}
+    out: dict[str, float] = {}
+    for key in MEASURE_KEYS:
+        value = as_float(data.get(key))
+        if value > 0:
+            out[key] = round(value, 2)
+    return out
 
 
 # =========================================================== kargoya hazır
@@ -1157,6 +1223,10 @@ def enrich_rows(rows: Any, extras: dict[str, dict[str, Any]]) -> None:
             or extras.get(text(row.get("orderId"))) or {}
         row["carrierTitle"] = text(extra.get("carrierTitle"))
         row["carrierCode"] = fold(extra.get("carrierCode"))
+        # Sihirbaz taşıyıcı listesini bununla eşler: müşterinin ödediği firma
+        # varsayılan seçili gelir (bkz. `carrier_key`).
+        row["carrierKey"] = carrier_key(extra.get("carrierCode")) \
+            if text(extra.get("carrierCode")) else ""
         row["email"] = text(extra.get("email"))
         row["displayName"] = display_name(row, extra)
 

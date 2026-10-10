@@ -55,18 +55,15 @@
 /* Gerekçe alanı listenin ÜSTÜNDE durur ve akışı durdurmaz: onay penceresi
    yoktur, alan boş bırakılabilir. Bu yüzden görsel olarak da bir kapı gibi
    değil, bir not alanı gibi görünür. */
-.sh-reason {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
-}
-.sh-reason .kit-input { flex: 1 1 260px; min-width: 200px; }
+/* "Kargoya ver" onayındaki hazır not çipleri. Kalıcı gerekçe şeridi
+   (`.sh-reason`) kaldırıldı; not artık onay penceresinde, isteğe bağlı. */
 
-.sh-dispatch { display: inline-flex; }
+/* Hazır olmayan siparişler: tek satırlık katlanır bölme, kart değil. */
+.sh-blocked { margin-top: 10px; }
+.sh-blocked > summary { cursor: pointer; padding: 4px 0; }
+.sh-blocked .sh-list { margin-top: 6px; }
+
+.sh-dispatch { display: inline-flex; gap: 6px; }
 .sh-dispatch .kit-btn { white-space: nowrap; }
 
 .sh-dispatch-head {
@@ -110,7 +107,6 @@
    ve ikisinin de görünmesi gerekir. */
 .sh-status { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
-.sh-desi { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 
 .sh-good { color: var(--good); font-weight: 600; }
 .sh-bad { color: var(--bad); font-weight: 600; }
@@ -187,6 +183,15 @@
   border-color: var(--bad, #b3261e);
 }
 .sh-big.danger .sh-big-label { color: var(--bad, #b3261e); }
+
+/* TEST GÖNDERİSİ İKİNCİLDİR ve öyle görünür: kesik kenarlık, soluk zemin.
+   Gerçek düğmeyle aynı ağırlıkta durursa "test" ile "gerçek" karışır; bir dönem
+   formdaki yol seçimi kırmızı düğmeyi sessizce test yapıyordu. */
+.sh-big.test {
+  border-style: dashed;
+  opacity: 0.85;
+}
+.sh-big.test .sh-big-label { font-weight: 500; }
 
 /* Elle takip girişi düğmenin ALTINDA açılır — ayrı pencere değil: tek alanlık
    bir iş, pencere açmakla iki tıka çıkardı. */

@@ -50,7 +50,7 @@ events:
       payload: "{orderId, shipmentId, carrier, dryRun}"
       description: "Gönderi taslağı bu ekrandan açıldı."
     - name: store.shipment.purchased
-      payload: "{shipmentId, orderId, carrier, trackingNo, feeKurus, dryRun}"
+      payload: "{shipmentId, orderId, carrier, trackingNo, feeKurus, feeKnown, dryRun}"
       description: "Taşıyıcıdan etiket satın alındı — PARA HAREKETİDİR."
     - name: store.shipment.cancelled
       payload: "{shipmentId, orderId, reason, dryRun}"
@@ -69,8 +69,9 @@ ui:
   nav:
     title: "Kargo Yönetimi"
     icon: truck
-    group: "BBD Store / Satış ve Kargo"
-    order: 220
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
+    group: "BBD Store"
+    order: 202
     requires: [store_shipping.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
