@@ -129,6 +129,15 @@ async def assign_profile(device_id: str, body: AssignBody,
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/devices/{device_id}/revoke")
+async def revoke_device(device_id: str,
+                        user: CurrentUser = requires("bbd_tablet.manage")) -> dict[str, Any]:
+    try:
+        return await current_service().revoke_device(device_id=device_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/students/{student_id}/apps/{package_name}/grants")
 async def create_grant(student_id: str, package_name: str, body: GrantBody,
                        user: CurrentUser = requires("bbd_tablet.grant")) -> dict[str, Any]:

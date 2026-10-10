@@ -34,6 +34,15 @@ async def session_auth(authorization: str) -> dict[str, Any]:
     return session
 
 
+async def logout_session_auth(authorization: str) -> dict[str, Any]:
+    # Logout is a terminal, write-only operation. It must remain retryable after
+    # normal session expiry and after the server accepted a response-lost request.
+    session = await current_service().session_for_logout_token(bearer(authorization))
+    if not session:
+        raise HTTPException(status_code=401, detail="Öğrenci oturumu geçersiz.")
+    return session
+
+
 async def usage_batch_session_auth(authorization: str) -> dict[str, Any]:
     session = await current_service().session_for_usage_batch_token(bearer(authorization))
     if not session:
@@ -64,6 +73,7 @@ class LogoutBody(BaseModel):
 class HeartbeatBody(BaseModel):
     appVersion: str = Field(default="", max_length=40)
     profileRevision: int = Field(default=0, ge=0)
+    profileId: str | None = Field(default=None, min_length=1, max_length=100)
     activeStudentId: str | None = None
     sessionId: str | None = None
     lastPolicyAppliedAt: str | None = None
@@ -190,6 +200,25 @@ async def heartbeat(device_id: str, body: HeartbeatBody,
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
+@router.post("/devices/{device_id}/unpair")
+async def unpair(device_id: str, authorization: str = Header(default="")) -> dict[str, Any]:
+    service = current_service()
+    token = bearer(authorization)
+    device = await service.device_for_token(token)
+    if device is None:
+        # An already-revoked token has one remaining capability: retry its own
+        # unpair and retrieve the stable acknowledgement after a lost response.
+        device = await service.revoked_device_for_unpair_token(token)
+    if device is None:
+        raise HTTPException(status_code=401, detail="Cihaz yetkisi geçersiz.")
+    if device["id"] != device_id:
+        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+    try:
+        return await service.revoke_device(device_id=device_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.put("/devices/{device_id}/apps")
 async def inventory(device_id: str, body: InventoryBody,
                     authorization: str = Header(default="")) -> dict[str, Any]:
@@ -223,7 +252,7 @@ async def login(body: LoginBody, authorization: str = Header(default="")) -> dic
 
 @router.post("/auth/logout")
 async def logout(body: LogoutBody, authorization: str = Header(default="")) -> dict[str, Any]:
-    session = await session_auth(authorization)
+    session = await logout_session_auth(authorization)
     if session["id"] != body.sessionId or session["device_id"] != body.deviceId:
         raise HTTPException(status_code=403, detail="Oturum eşleşmiyor.")
     return await current_service().logout(session=session)

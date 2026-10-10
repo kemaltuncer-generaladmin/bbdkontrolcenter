@@ -92,13 +92,16 @@ class TabletService:
         }
 
     async def overview(self) -> dict[str, Any]:
+        await self.expire_stale_sessions()
         profile_rows = await self.store.fetch_all(
             f"SELECT id FROM {self.profiles} WHERE revision > 0 ORDER BY name"
         )
         profiles = [await self.profile(row["id"]) for row in profile_rows]
         devices = await self.store.fetch_all(
             f"SELECT id, uuid, name, profile_id, manufacturer, model, android_version, "
-            f"app_version, last_seen_at, policy_health, revoked_at FROM {self.devices} "
+            f"app_version, applied_profile_id, applied_profile_revision, last_seen_at, "
+            f"policy_health, revoked_at "
+            f"FROM {self.devices} "
             "ORDER BY name"
         )
         sessions = await self.store.fetch_all(
@@ -106,7 +109,36 @@ class TabletService:
             f"last_heartbeat_at, state FROM {self.sessions} "
             "WHERE state = 'active' ORDER BY login_at DESC"
         )
-        return {"profiles": profiles, "devices": [dict(row) for row in devices],
+        profile_revisions = {profile["id"]: profile["revision"]
+                             for profile in profiles if profile}
+        active_by_device = {row["device_id"]: row for row in sessions}
+        current_time = datetime.now(UTC)
+        device_views = []
+        for row in devices:
+            device = dict(row)
+            last_seen = device["last_seen_at"]
+            online = False
+            if last_seen:
+                try:
+                    stamp = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+                    if stamp.tzinfo is None:
+                        stamp = stamp.replace(tzinfo=UTC)
+                    age = current_time - stamp.astimezone(UTC)
+                    online = timedelta(0) <= age <= timedelta(minutes=2)
+                except ValueError:
+                    online = False
+            active = active_by_device.get(device["id"])
+            device.update({
+                "online": online,
+                "profile_revision": profile_revisions.get(device["profile_id"]),
+                "applied_profile_id": device["applied_profile_id"],
+                "applied_profile_revision": device["applied_profile_revision"],
+                "active_student_id": active["student_id"] if active else None,
+                "active_student_name": active["student_name"] if active else None,
+                "active_session_id": active["id"] if active else None,
+            })
+            device_views.append(device)
+        return {"profiles": profiles, "devices": device_views,
                 "sessions": [dict(row) for row in sessions]}
 
     async def save_profile(self, *, profile_id: str | None, name: str,
@@ -197,6 +229,36 @@ class TabletService:
         return {"id": device_id, "name": name, "profileId": profile_id,
                 "enrollmentCode": code, "expiresAt": expiry}
 
+    async def revoke_device(self, *, device_id: str) -> dict[str, Any]:
+        device = await self.store.fetch_one(
+            f"SELECT id, revoked_at FROM {self.devices} WHERE id=?", (device_id,)
+        )
+        if not device:
+            raise ValueError("Tablet bulunamadı.")
+        already_revoked = bool(device["revoked_at"])
+        revoked_at = device["revoked_at"] or now()
+        # Revoke all general device access first. Keep the one-way token hash
+        # only so a response-lost unpair can be retried through that endpoint.
+        await self.store.execute(
+            f"UPDATE {self.devices} SET uuid=?, enrollment_code_hash=NULL, "
+            "enrollment_expires_at=NULL, profile_id=NULL, manufacturer='', model='', "
+            "android_version='', app_version='', applied_profile_id=NULL, "
+            "applied_profile_revision=0, last_seen_at=NULL, "
+            "last_policy_applied_at=NULL, "
+            "policy_health='revoked', revoked_at=? WHERE id=?",
+            (f"pending:{device_id}", revoked_at, device_id),
+        )
+        await self.store.execute(
+            f"UPDATE {self.sessions} SET state='logged_out', ended_at=? "
+            "WHERE device_id=? AND state IN ('active', 'expired')",
+            (revoked_at, device_id),
+        )
+        await self.store.execute(
+            f"DELETE FROM {self.inventory} WHERE device_id=?", (device_id,)
+        )
+        return {"deviceId": device_id, "revoked": True,
+                "alreadyRevoked": already_revoked, "revokedAt": revoked_at}
+
     async def assign_profile(self, *, device_id: str, profile_id: str) -> dict[str, Any]:
         if not await self.profile(profile_id):
             raise ValueError("Profil bulunamadı.")
@@ -204,7 +266,8 @@ class TabletService:
         if not device:
             raise ValueError("Tablet bulunamadı.")
         await self.store.execute(
-            f"UPDATE {self.devices} SET profile_id=? WHERE id=?", (profile_id, device_id)
+            f"UPDATE {self.devices} SET profile_id=?, applied_profile_id=NULL, "
+            "applied_profile_revision=0 WHERE id=?", (profile_id, device_id)
         )
         return {"deviceId": device_id, "profileId": profile_id}
 
@@ -287,13 +350,23 @@ class TabletService:
         student = next((item for item in students if str(item.get("id")) == student_id), None)
         if not student:
             raise ValueError("Öğrenci kantinde bulunamadı.")
-        if not await self.store.fetch_one(
-            f"SELECT 1 FROM {self.apps} a JOIN {self.profiles} p "
-            "ON p.id=a.profile_id AND p.revision=a.revision "
-            "WHERE a.package_name=? AND a.allowed=1",
-            (package_name,),
-        ):
-            raise ValueError("Uygulama hiçbir profilde izinli değil.")
+        await self.expire_stale_sessions()
+        session = await self.store.fetch_one(
+            f"SELECT device_id FROM {self.sessions} WHERE student_id=? AND state='active'",
+            (student_id,),
+        )
+        if not session:
+            raise ValueError("Ek süre vermek için öğrencinin etkin tablet oturumu gerekir.")
+        device = await self.store.fetch_one(
+            f"SELECT profile_id FROM {self.devices} WHERE id=? AND revoked_at IS NULL",
+            (session["device_id"],),
+        )
+        profile = await self.profile(device["profile_id"]) if device and device["profile_id"] else None
+        if not profile:
+            raise ValueError("Öğrencinin etkin tabletinde geçerli bir profil yok.")
+        if not any(app["packageName"] == package_name and app["allowed"]
+                   for app in profile["apps"]):
+            raise ValueError("Uygulama öğrencinin etkin tablet profilinde izinli değil.")
         grant_id = str(uuid4())
         stamp = now()
         await self.store.execute(
@@ -318,6 +391,16 @@ class TabletService:
         )
         return dict(row) if row else None
 
+    async def revoked_device_for_unpair_token(self, bearer: str) -> dict[str, Any] | None:
+        """Allow a revoked bearer to retry only the idempotent unpair operation."""
+        if not bearer:
+            return None
+        row = await self.store.fetch_one(
+            f"SELECT * FROM {self.devices} WHERE token_hash=? AND revoked_at IS NOT NULL",
+            (token_hash(bearer),),
+        )
+        return dict(row) if row else None
+
     async def session_for_token(self, bearer: str) -> dict[str, Any] | None:
         if not bearer:
             return None
@@ -337,11 +420,12 @@ class TabletService:
         return dict(row)
 
     async def session_for_usage_batch_token(self, bearer: str) -> dict[str, Any] | None:
-        """Resolve a session bearer for usage sync, including bounded offline grace.
+        """Resolve a session bearer for usage sync, including offline recovery.
 
-        Expired sessions remain authorized for this write-only endpoint for up to
-        24 hours after their last server heartbeat. Explicit logout clears the
-        token hash, so it cannot use this path. This never reactivates a session.
+        An expired session keeps only this device/student-bound write capability
+        until terminal logout. This lets a durable local outbox recover after a
+        long outage without restoring policy, login, or heartbeat access. Explicit
+        logout and device revoke move the row to logged_out, which this path rejects.
         """
         if not bearer:
             return None
@@ -361,9 +445,17 @@ class TabletService:
             )
             row["state"] = "expired"
             row["ended_at"] = ended
-        if row["state"] == "expired" and current > last_heartbeat + timedelta(hours=24):
-            return None
         return dict(row)
+
+    async def session_for_logout_token(self, bearer: str) -> dict[str, Any] | None:
+        """Resolve only the terminal logout capability, including expired/retried sessions."""
+        if not bearer:
+            return None
+        row = await self.store.fetch_one(
+            f"SELECT * FROM {self.sessions} WHERE token_hash=? "
+            "AND state IN ('active', 'expired', 'logged_out')", (token_hash(bearer),),
+        )
+        return dict(row) if row else None
 
     async def expire_stale_sessions(self) -> None:
         cutoff = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
@@ -510,13 +602,19 @@ class TabletService:
 
     async def heartbeat(self, *, device: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
         stamp = now()
-        await self.store.execute(
-            f"UPDATE {self.devices} SET last_seen_at=?, app_version=?, "
-            "last_policy_applied_at=?, policy_health=? WHERE id=?",
-            (stamp, data.get("appVersion", ""), data.get("lastPolicyAppliedAt"),
-             data.get("policyHealth", ""), device["id"]),
-        )
+        profile = await self.profile(device["profile_id"])
+        applied_profile_id = data.get("profileId")
+        applied_revision = data.get("profileRevision", 0)
+        reported_profile = await self.profile(applied_profile_id) if applied_profile_id else profile
+        if applied_profile_id and not reported_profile:
+            raise ValueError("Tablet bilinmeyen bir profil bildirdi.")
+        current_revision = reported_profile["revision"] if reported_profile else 0
+        if not isinstance(applied_revision, int) or isinstance(applied_revision, bool) or \
+                applied_revision < 0 or applied_revision > current_revision:
+            raise ValueError("Tabletin bildirdiği politika sürümü profil ile uyumlu değil.")
+
         session_id = data.get("sessionId")
+        linked = None
         if session_id:
             linked = await self.store.fetch_one(
                 f"SELECT student_id FROM {self.sessions} "
@@ -526,12 +624,19 @@ class TabletService:
             if not linked or (data.get("activeStudentId") and
                               data["activeStudentId"] != linked["student_id"]):
                 raise ValueError("Oturum bu tablete ait değil.")
+        await self.store.execute(
+            f"UPDATE {self.devices} SET last_seen_at=?, app_version=?, "
+            "applied_profile_id=?, applied_profile_revision=?, last_policy_applied_at=?, "
+            "policy_health=? WHERE id=?",
+            (stamp, data.get("appVersion", ""), applied_profile_id, applied_revision,
+             data.get("lastPolicyAppliedAt"), data.get("policyHealth", ""), device["id"]),
+        )
+        if session_id:
             await self.store.execute(
                 f"UPDATE {self.sessions} SET last_heartbeat_at=? "
                 "WHERE id=? AND device_id=? AND state='active'",
                 (stamp, session_id, device["id"]),
             )
-        profile = await self.profile(device["profile_id"])
         return {"ok": True, "serverTime": stamp,
                 "sessionExpiresAt": (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
                 if session_id else None,
@@ -553,12 +658,16 @@ class TabletService:
         return {"ok": True, "count": len(apps)}
 
     async def logout(self, *, session: dict[str, Any]) -> dict[str, Any]:
-        stamp = now()
-        await self.store.execute(
-            f"UPDATE {self.sessions} SET state='ended', ended_at=?, token_hash='' "
-            "WHERE id=? AND state='active'", (stamp, session["id"]),
-        )
-        return {"ok": True, "endedAt": stamp}
+        already_ended = session["state"] == "logged_out"
+        stamp = session.get("ended_at") or now()
+        if not already_ended:
+            await self.store.execute(
+                f"UPDATE {self.sessions} SET state='logged_out', ended_at=? "
+                "WHERE id=? AND state IN ('active', 'expired')", (stamp, session["id"]),
+            )
+        # Keep only the one-way token hash so a lost logout response can be
+        # acknowledged idempotently. Other endpoints only authorize active rows.
+        return {"ok": True, "endedAt": stamp, "alreadyEnded": already_ended}
 
     async def usage_batch(self, *, session: dict[str, Any],
                           data: dict[str, Any]) -> dict[str, Any]:
@@ -571,29 +680,51 @@ class TabletService:
         profile = await self.profile(profile_row["profile_id"]) if profile_row else None
         if not profile:
             raise ValueError("Tablete profil atanmadı.")
+        allowed_packages = {
+            app["packageName"] for app in profile["apps"] if app["allowed"]
+        }
         started = datetime.fromisoformat(data["startedAt"])
         ended = datetime.fromisoformat(data["endedAt"])
         if started.tzinfo is None or ended.tzinfo is None or ended < started:
             raise ValueError("Kullanım zaman aralığı geçersiz.")
-        if session.get("state") == "expired":
-            last_heartbeat = datetime.fromisoformat(session["last_heartbeat_at"])
-            if datetime.now(UTC) > last_heartbeat + timedelta(hours=24) or \
-                    ended > last_heartbeat + timedelta(hours=24):
-                raise ValueError("Çevrimdışı kullanım eşitleme süresi dolmuş.")
         if started < datetime.fromisoformat(session["login_at"]) or ended > datetime.now(UTC) + timedelta(minutes=2):
             raise ValueError("Kullanım oturum sınırları dışında.")
         allowed_dates = {started.astimezone(ZoneInfo(profile["timezone"])).date().isoformat(),
                          ended.astimezone(ZoneInfo(profile["timezone"])).date().isoformat()}
         total = 0
+        seen_items: set[tuple[str, str]] = set()
         for item in data["usages"]:
+            key = (item["packageName"], item["localDate"])
+            if key in seen_items:
+                raise ValueError("Kullanım paketinde aynı uygulama ve tarih birden fazla kez var.")
+            seen_items.add(key)
+            if item["packageName"] not in allowed_packages:
+                raise ValueError("Kullanım paketi profilinde izinli olmayan bir uygulama içeriyor.")
             if item["localDate"] not in allowed_dates:
                 raise ValueError("Kullanım tarihi profil saat dilimiyle eşleşmiyor.")
             total += int(item["usedSeconds"])
         if total > int((ended - started).total_seconds()) + 5:
             raise ValueError("Kullanım süresi zaman aralığını aşıyor.")
         previous = await self.store.fetch_one(
-            f"SELECT id FROM {self.batches} WHERE id=?", (data["batchId"],)
+            f"SELECT * FROM {self.batches} WHERE id=?", (data["batchId"],)
         )
+        if previous:
+            identity = (previous["device_id"], previous["session_id"], previous["student_id"],
+                        previous["started_at"], previous["ended_at"])
+            incoming_identity = (data["deviceId"], data["sessionId"], data["studentId"],
+                                 data["startedAt"], data["endedAt"])
+            if identity != incoming_identity:
+                raise ValueError("Kullanım paketi kimliği farklı bir kayıtla zaten kullanılmış.")
+            stored_rows = await self.store.fetch_all(
+                f"SELECT package_name, local_date, used_seconds FROM {self.batch_items} "
+                "WHERE batch_id=?", (data["batchId"],),
+            )
+            stored_items = sorted((row["package_name"], row["local_date"],
+                                    int(row["used_seconds"])) for row in stored_rows)
+            incoming_items = sorted((item["packageName"], item["localDate"],
+                                     int(item["usedSeconds"])) for item in data["usages"])
+            if stored_items != incoming_items:
+                raise ValueError("Kullanım paketi kimliği farklı içerikle tekrar kullanılmış.")
         if not previous:
             for item in data["usages"]:
                 await self.store.execute(

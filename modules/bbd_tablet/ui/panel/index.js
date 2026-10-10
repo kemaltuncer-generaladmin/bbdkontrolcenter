@@ -68,7 +68,7 @@ export function mount(root, ctx) {
   }
 
   const state = { profiles: [], devices: [], sessions: [], students: [],
-    selectedProfile: '', selectedDevice: '', selectedStudent: '', inventory: [] };
+    selectedProfile: '', selectedDevice: '', selectedStudent: '', inventory: [], deviceUsage: null };
   const view = h('div', 'tb');
   const heading = h('header', 'tb-heading');
   heading.append(h('div', null, 'Öğrenci tabletleri'));
@@ -87,6 +87,30 @@ export function mount(root, ctx) {
   async function call(path, options) {
     return ctx.api(`/api/bbd_tablet${path}`, options);
   }
+  async function loadSelectedDeviceData() {
+    const device = state.devices.find((item) => item.id === state.selectedDevice);
+    if (!device) {
+      state.inventory = [];
+      state.deviceUsage = null;
+      return;
+    }
+    try { state.inventory = await call(`/devices/${encodeURIComponent(device.id)}/apps`); }
+    catch { state.inventory = []; }
+    const session = state.sessions.find((item) => item.device_id === device.id);
+    if (!session) {
+      state.deviceUsage = null;
+      return;
+    }
+    const profile = state.profiles.find((item) => item.id === device.profile_id);
+    const timezone = profile?.timezone || 'Europe/Istanbul';
+    const localDate = new Date().toLocaleDateString('sv-SE', { timeZone: timezone });
+    try {
+      const result = await call(`/students/${encodeURIComponent(session.student_id)}/usage?localDate=${localDate}`);
+      state.deviceUsage = { studentId: session.student_id, localDate, ...result };
+    } catch (error) {
+      state.deviceUsage = { studentId: session.student_id, localDate, error: error.message };
+    }
+  }
   async function refresh() {
     try {
       const overview = await call('/overview');
@@ -101,10 +125,7 @@ export function mount(root, ctx) {
       if (!state.selectedProfile) state.selectedProfile = state.profiles[0]?.id || '';
       if (!state.selectedDevice) state.selectedDevice = state.devices[0]?.id || '';
       if (!state.selectedStudent) state.selectedStudent = state.students[0]?.id || '';
-      if (state.selectedDevice) {
-        try { state.inventory = await call(`/devices/${encodeURIComponent(state.selectedDevice)}/apps`); }
-        catch { state.inventory = []; }
-      }
+      await loadSelectedDeviceData();
       info(`${state.devices.length} tablet · ${state.profiles.length} profil · ${state.sessions.length} açık öğrenci oturumu${canteenOnline ? '' : ' · Kantin öğrenci listesine ulaşılamadı'}`);
       render();
     } catch (error) {
@@ -144,8 +165,7 @@ export function mount(root, ctx) {
           ? `Son bağlantı: ${displayDateTime(device.last_seen_at)}` : 'Henüz eşlenmedi'));
       row.addEventListener('click', async () => {
         state.selectedDevice = device.id;
-        try { state.inventory = await call(`/devices/${encodeURIComponent(device.id)}/apps`); }
-        catch { state.inventory = []; }
+        await loadSelectedDeviceData();
         render();
       });
       list.append(row);
@@ -154,8 +174,71 @@ export function mount(root, ctx) {
     const device = state.devices.find((item) => item.id === state.selectedDevice);
     detail.append(h('h3', null, device ? device.name : 'Yeni tablet'));
     if (device) {
+      const profile = state.profiles.find((item) => item.id === device.profile_id);
+      const session = state.sessions.find((item) => item.device_id === device.id);
+      detail.append(h('p', device.revoked_at ? 'tb-error' : 'tb-muted',
+        device.revoked_at ? 'Bağlantı iptal edildi' : !device.last_seen_at
+          ? 'Eşleşme bekleniyor' : device.online ? 'Çevrimiçi' : 'Çevrimdışı'));
+      detail.append(h('p', 'tb-muted', device.last_seen_at
+        ? `Son görülme: ${displayDateTime(device.last_seen_at)}` : 'Henüz bağlantı kurulmadı'));
       detail.append(h('p', 'tb-muted', `${device.manufacturer || ''} ${device.model || ''} · ${device.app_version || 'Sürüm bilgisi yok'}`));
       detail.append(h('p', 'tb-muted', `İlke durumu: ${device.policy_health || 'Henüz bildirilmedi'}`));
+      detail.append(h('p', 'tb-muted', `Profil: ${profile ? `${profile.name} · hedef sürüm ${profile.revision}` : 'Atanmamış'}`));
+      const appliedRevision = Number(device.applied_profile_revision || 0);
+      const targetRevision = Number(profile?.revision || 0);
+      const reportedProfileMatches = Boolean(device.profile_id &&
+        device.applied_profile_id === device.profile_id);
+      const appliedIsCurrent = reportedProfileMatches && appliedRevision === targetRevision;
+      const appliedIsBehind = reportedProfileMatches && appliedRevision > 0 && appliedRevision < targetRevision;
+      const appliedIsInconsistent = reportedProfileMatches && appliedRevision > targetRevision;
+      detail.append(h('p', appliedIsCurrent ? 'tb-muted' : 'tb-error',
+        !profile ? 'Tablete profil atanmamış.'
+          : !reportedProfileMatches ? 'Tablet yeni atanmış profili henüz uyguladığını bildirmedi.'
+          : appliedIsCurrent ? `Son canlılık bildiriminde sürüm ${appliedRevision} bildirildi · güncel`
+            : appliedIsBehind ? `Son canlılık bildiriminde sürüm ${appliedRevision} bildirildi · güncel değil`
+              : appliedIsInconsistent ? `Bildirilen sürüm hedefin üzerinde (${appliedRevision} / ${targetRevision}).`
+                  : 'Tablet politika uygulamasını henüz bildirmedi.'));
+      detail.append(h('p', 'tb-muted', session
+        ? `Etkin öğrenci: ${session.student_name || session.student_id} · giriş ${displayDateTime(session.login_at)}`
+        : 'Etkin öğrenci oturumu yok.'));
+      const telemetry = h('section', 'tb-card');
+      telemetry.append(h('h4', null, 'Gerçek kullanım telemetrisi'));
+      if (!session) {
+        telemetry.append(h('p', 'tb-muted', 'Telemetri, tablet üzerinde etkin öğrenci oturumu başladığında görünür.'));
+      } else if (state.deviceUsage?.studentId !== session.student_id) {
+        telemetry.append(h('p', 'tb-muted', 'Kullanım verisi yükleniyor…'));
+      } else if (state.deviceUsage.error) {
+        telemetry.append(h('p', 'tb-error', `Kullanım verisi alınamadı: ${state.deviceUsage.error}`));
+      } else {
+        telemetry.append(h('p', 'tb-muted', `${state.deviceUsage.localDate} · ${session.student_name || session.student_id}`));
+        const entries = new Map();
+        for (const row of state.deviceUsage.usage || []) {
+          entries.set(row.packageName, { usedSeconds: row.usedSeconds, extraSeconds: 0 });
+        }
+        for (const grant of state.deviceUsage.grants || []) {
+          const item = entries.get(grant.packageName) || { usedSeconds: 0, extraSeconds: 0 };
+          item.extraSeconds += grant.extraSeconds;
+          entries.set(grant.packageName, item);
+        }
+        if (!entries.size) telemetry.append(h('p', 'tb-muted', 'Bu tarih için henüz kullanım kaydı yok.'));
+        for (const [packageName, item] of entries) {
+          telemetry.append(h('p', 'tb-usage', `${packageName} · Kullanım ${Math.floor(item.usedSeconds / 60)} dk · Ek süre ${Math.floor(item.extraSeconds / 60)} dk`));
+        }
+      }
+      detail.append(telemetry);
+      if (device.revoked_at) {
+        detail.append(h('p', 'tb-muted', 'Tablet eşlemesi kaldırıldı; aynı donanım yeni bir eşleme koduyla tekrar kaydedilebilir.'));
+      } else {
+        detail.append(button('Tableti eşlemeden çıkar', async () => {
+          const approved = window.confirm(`${device.name} tabletinin eşlemesini kaldırmak ve açık öğrenci oturumunu kapatmak istiyor musunuz? Cihaz kimliği ve erişim anahtarı iptal edilir.`);
+          if (!approved) return;
+          try {
+            await call(`/devices/${encodeURIComponent(device.id)}/revoke`, { method: 'POST' });
+            await refresh();
+            info('Tablet eşlemesi kaldırıldı. Cihazı yeniden kaydetmek için yeni eşleme kodu oluşturun.');
+          } catch (error) { info(error.message, true); }
+        }));
+      }
       if (!device.profile_id && state.inventory.some((app) => app.isLaunchable)) {
         detail.append(h('p', 'tb-muted', 'İlk profil bu tablet eşleştikten sonra yüklü uygulamalardan oluşturulabilir.'));
         detail.append(button('Uygulamalardan profil oluştur ve ata', async () => {
@@ -177,17 +260,19 @@ export function mount(root, ctx) {
           } catch (error) { info(error.message, true); }
         }, true));
       }
-      const picker = profilePicker(device.profile_id);
-      detail.append(field('Atanmış profil', picker));
-      detail.append(button('Profili ata', async () => {
-        try {
-          await call(`/devices/${encodeURIComponent(device.id)}/assign-profile`, {
-            method: 'POST', body: { profileId: picker.value },
-          });
-          await refresh();
-          info('Profil atandı. Tablet yeni profili bir sonraki eşitlemede alacak.');
-        } catch (error) { info(error.message, true); }
-      }, true));
+      if (!device.revoked_at) {
+        const picker = profilePicker(device.profile_id);
+        detail.append(field('Atanmış profil', picker));
+        detail.append(button('Profili ata', async () => {
+          try {
+            await call(`/devices/${encodeURIComponent(device.id)}/assign-profile`, {
+              method: 'POST', body: { profileId: picker.value },
+            });
+            await refresh();
+            info('Profil atandı. Tablet yeni profili bir sonraki eşitlemede alacak.');
+          } catch (error) { info(error.message, true); }
+        }, true));
+      }
       const inventory = h('div', 'tb-inventory');
       inventory.append(h('h4', null, `Yüklü uygulamalar (${state.inventory.length})`));
       for (const app of state.inventory) inventory.append(h('p', null,
@@ -314,6 +399,9 @@ export function mount(root, ctx) {
     try {
       const result = await call(`/students/${encodeURIComponent(studentId)}/usage?localDate=${date}`);
       const student = state.students.find((item) => item.id === studentId);
+      const session = state.sessions.find((item) => item.student_id === studentId);
+      const device = state.devices.find((item) => item.id === session?.device_id);
+      const assignedProfile = state.profiles.find((item) => item.id === device?.profile_id);
       detail.replaceChildren(h('h3', null, student?.name || 'Öğrenci'),
         h('p', 'tb-muted', `${date} · Günlük kullanım ve ek süre`));
       const map = new Map();
@@ -326,28 +414,36 @@ export function mount(root, ctx) {
       if (!map.size) detail.append(h('p', 'tb-muted', 'Bugün için kullanım veya ek süre kaydı yok.'));
       for (const [pkg, value] of map) detail.append(h('p', 'tb-usage',
         `${pkg} · Kullanılan: ${Math.floor(value.used / 60)} dk · Ek süre: ${Math.floor(value.extra / 60)} dk`));
-      const allowedApps = new Map();
-      for (const profile of state.profiles) for (const app of profile.apps) {
-        if (app.allowed) allowedApps.set(app.packageName, app.appName || app.packageName);
+      if (!session || !assignedProfile) {
+        detail.append(h('p', 'tb-muted',
+          'Ek süre vermek için öğrencinin geçerli profili olan bir tablette açık oturumu bulunmalı.'));
+      } else {
+        const allowedApps = assignedProfile.apps.filter((app) => app.allowed);
+        if (!allowedApps.length) {
+          detail.append(h('p', 'tb-muted', 'Öğrencinin etkin tablet profilinde izinli uygulama yok.'));
+        } else {
+          const select = h('select', 'tb-input');
+          for (const app of allowedApps) {
+            select.append(option(app.packageName, `${app.appName || app.packageName} · ${app.packageName}`));
+          }
+          const minutes = input('10', 'number');
+          minutes.min = '1';
+          minutes.max = '1440';
+          const reason = input('');
+          reason.placeholder = 'Gerekçe (isteğe bağlı)';
+          detail.append(field('Uygulama', select), field('Ek süre (dk)', minutes),
+            field('Gerekçe', reason), button('Ek süre ver', async () => {
+              try {
+                await call(`/students/${encodeURIComponent(studentId)}/apps/${encodeURIComponent(select.value)}/grants`, {
+                  method: 'POST', body: { localDate: date, extraSeconds: Number(minutes.value) * 60,
+                    reason: reason.value.trim() },
+                });
+                await renderStudentDetail(detail, studentId, date);
+                info('Ek süre öğrencinin etkin tablet profilindeki uygulamaya eklendi.');
+              } catch (error) { info(error.message, true); }
+            }, true));
+        }
       }
-      const select = h('select', 'tb-input');
-      for (const [pkg, label] of allowedApps) select.append(option(pkg, `${label} · ${pkg}`));
-      const minutes = input('10', 'number');
-      minutes.min = '1';
-      minutes.max = '1440';
-      const reason = input('');
-      reason.placeholder = 'Gerekçe (isteğe bağlı)';
-      detail.append(field('Uygulama', select), field('Ek süre (dk)', minutes),
-        field('Gerekçe', reason), button('Ek süre ver', async () => {
-          try {
-            await call(`/students/${encodeURIComponent(studentId)}/apps/${encodeURIComponent(select.value)}/grants`, {
-              method: 'POST', body: { localDate: date, extraSeconds: Number(minutes.value) * 60,
-                reason: reason.value.trim() },
-            });
-            await renderStudentDetail(detail, studentId, date);
-            info('Ek süre öğrenci hesabına eklendi. Tablet bir sonraki eşitlemede görecek.');
-          } catch (error) { info(error.message, true); }
-        }, true));
     } catch (error) { detail.replaceChildren(h('p', 'tb-error', error.message)); }
   }
   function renderStudents() {
