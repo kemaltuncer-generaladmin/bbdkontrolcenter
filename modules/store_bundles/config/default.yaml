@@ -24,10 +24,18 @@ prices_include_tax: true
 # başka araçlara kapatır. Tavana dayanılırsa ekran söyler, sessiz kalmaz.
 component_fetch_cap: 80
 
-# Bileşen fiyat/stok okumasının bellekteki tazelik süresi (saniye). Süzme ve
-# sıralama bu süre içinde yeniden mağazaya gitmez. DİSKE YAZILMAZ: kalıcı kopya
-# tutmak, mağazadaki değişiklikten sonra yanlış kâr göstermek demektir.
-cache_seconds: 120
+# Ürün fiyat/stok/durum okumasının bellekteki tazelik süresi (saniye). Süzme,
+# sıralama, tek setin açılması ve canlı hesap bu süre içinde yeniden mağazaya
+# gitmez. DİSKE YAZILMAZ: kalıcı kopya tutmak, mağazadaki değişiklikten sonra
+# yanlış kâr göstermek demektir. 0 = her istekte taze (maliyet dâhil).
+cache_seconds: 300
+
+# Ürün MALİYETİNİN (alış fiyatı) tazelik süresi (saniye). Maliyet yalnız ürün
+# detayında gelir — toplu listede yoktur — ve nadiren değişir; fiyatla aynı
+# sıklıkta okumak her yenilemede bileşen başına bir istek demekti. Maliyeti
+# değiştirdikten hemen sonra kârı görmek isteyen "Yenile" yerine bu süreyi
+# bekler ya da süreyi kısaltır.
+cost_cache_seconds: 3600
 
 # Listeye alınacak en çok set. Canlıda 42 numaralı kategori onlarca kalem
 # taşıyor; tavan büyümeye yer bırakır ve bozuk `meta` yüzünden sonsuz taramayı

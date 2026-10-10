@@ -41,10 +41,11 @@ ui:
   entry: ui/panel/index.js
   locales: ui/locales
   nav:
-    title: "Setler"
+    title: "Set Yönetimi"
     icon: layers
-    group: "BBD Store / Katalog"
-    order: 270
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
+    group: "BBD Store"
+    order: 206
     requires: [store_bundles.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

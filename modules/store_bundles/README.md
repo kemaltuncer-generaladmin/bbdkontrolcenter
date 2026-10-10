@@ -89,6 +89,12 @@ gelmeye başlar; ekran hangi kaynağı kullandığını üstteki şeritte söyle
   vitrinden kaldırma vardır (ADR 0012) ve künye korunur.
 - **Carousel düzenlemez.** Ana sayfa yerleşimi `store_home_media` ekranındadır;
   burada yalnız rozet çizilir.
+- **Ürünleri tek tek okumaz.** Fiyat/stok/durum `catalog/products?product_id=…`
+  ile 50'şerli TOPLU okunur (set listesi açılışında 1–2 istek). Maliyet yalnız
+  ürün detayında geldiği için bileşen başına detay okunur, ama bellekte
+  `cost_cache_seconds` (varsayılan 1 saat) tutulur; fiyat/stok
+  `cache_seconds` (varsayılan 5 dk). Tek setin künyesi (`GET /bundles/{id}`)
+  listeyi baştan kurmaz, yalnız kendi bileşenlerine bakar.
 - **Bileşen ürünlerini sınırsız okumaz.** Geçit dakikada 55 istek veriyor;
   `component_fetch_cap` (varsayılan 80) aşılırsa ekran kaç ürünün okunmadığını
   ve hangi ayarın büyütüleceğini **söyler**, sessiz kalmaz.

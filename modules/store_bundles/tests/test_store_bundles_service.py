@@ -61,6 +61,7 @@ async def test_magaza_dusunce_ekran_ayakta_kalir() -> None:
     service, api, store = _service()
     _plan(store)
     api.fail.add("product_lookup")
+    api.fail.add("products")                    # toplu okuma da mağazadadır
     api.fail.add("product")
     result = await service.bundles()
     assert result["ok"] is True                 # uç patlamaz
@@ -88,7 +89,12 @@ async def test_set_listesi_katalogun_tamami_degil_yalniz_o_kategoridir() -> None
     kataloğun ilk sayfası "set listesi" diye ekrana gelirdi."""
     service, api, _ = _service()
     result = await service.bundles()
-    assert api.count("products") == 0                    # süzmeyen uca hiç gidilmez
+    # O uca yalnız KİMLİK LİSTESİYLE gidilir (fiyat/stok toplu okuması);
+    # kategori süzgeciyle hiç sorulmaz.
+    for name, args, _ in api.calls:
+        if name == "products":
+            assert args[0].get("product_id"), args
+            assert "category_id" not in args[0], args
     assert [row["id"] for row in result["items"]] == [100]
 
 
@@ -460,3 +466,100 @@ async def test_carousel_kapaliysa_uc_hic_cagrilmaz() -> None:
     _plan(store)
     await service.bundles()
     assert api.count("bbd_carousel") == 0
+
+
+# ================================================= geçit payı — istek sayısı
+#
+# NEDEN. Geçit dakikada 55 istek veriyor ve bütün ekranlar aynı payı
+# paylaşıyor. Eskiden set listesi her bileşeni ve her seti AYRI bir detay
+# isteğiyle okuyordu (80 bileşen + 60 set ≈ 140 istek), tek setin künyesi de
+# listenin tamamını baştan kuruyordu. Buradaki testler o sayıları kilitler.
+
+
+async def test_fiyat_ve_stok_TOPLU_okunur_set_icin_detay_istenmez() -> None:
+    service, api, store = _service()
+    api.fail.discard("bbd_bundles")
+    # BBD ucu set listesini verir ama görsel/bileşen taşımaz; eskiden her set
+    # bu yüzden ayrı bir detay isteğine dönüşüyordu.
+    api.bbd_bundle_items = [{"id": 100, "name": "9. Sınıf Tam Set", "sku": "SET-9",
+                             "price": "500.00", "status": 1}]
+    _plan(store)
+    row = (await service.bundles())["items"][0]
+
+    assert api.count("products") == 1                  # set + iki bileşen tek istekte
+    sorulan = api.used("products")[0]
+    assert sorulan["per_page"] <= 50
+    detaylar = [args[0] for name, args, _ in api.calls if name == "product"]
+    assert sorted(detaylar) == [11, 12]                # yalnız MALİYET için, set için değil
+    assert row["calc"]["costTotal"] == 24_000          # maliyet yine doğru
+    assert row["components"][0]["stock"] == 8          # stok toplu listeden
+
+
+async def test_ikinci_acilis_magazaya_gitmez() -> None:
+    service, api, store = _service(cache_seconds=300)
+    _plan(store)
+    await service.bundles()
+    once = {name: api.count(name) for name in ("products", "product")}
+    await service.bundles()
+    assert api.count("products") == once["products"]
+    assert api.count("product") == once["product"]
+
+
+async def test_tek_set_listeyi_BASTAN_KURMAZ() -> None:
+    service, api, store = _service(cache_seconds=300)
+    _plan(store)
+    await service.bundles()
+    tarama = api.count("product_lookup") + api.count("bbd_bundles")
+    toplu = api.count("products")
+    detay = api.count("product")
+
+    result = await service.bundle(100)
+
+    assert result["ok"] is True
+    assert result["bundle"]["calc"]["costTotal"] == 24_000
+    assert api.count("product_lookup") + api.count("bbd_bundles") == tarama   # liste kurulmadı
+    assert api.count("products") == toplu                                     # bileşenler bellekte
+    assert api.count("product") == detay + 1           # tek istek: çapraz satış bağları
+
+
+async def test_tek_set_yalniz_KENDI_bilesenlerini_okur() -> None:
+    service, api, store = _service()
+    _plan(store)
+    _plan(store, product_id=200, name="Başka Set", sku="SET-X",
+          components='[{"productId": 300, "qty": 1}]')
+    await service.bundle(100)
+
+    kimlikler: set[int] = set()
+    for name, args, _ in api.calls:
+        if name == "products":
+            kimlikler |= {int(item) for item in str(args[0]["product_id"]).split(",")}
+    assert kimlikler == {100, 11, 12}                  # 200 ve 300 sorulmadı
+    assert api.count("product_lookup") == 0 and api.count("bbd_bundles") == 0
+
+
+async def test_fiyat_bayatlasinca_MALIYET_yeniden_okunmaz(monkeypatch: Any) -> None:
+    from store_bundles_backend import service as service_module
+
+    saat = [1_000.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: saat[0])
+    service, api, store = _service(cache_seconds=300, cost_cache_seconds=3600)
+    _plan(store)
+    await service.bundles()
+    detay = api.count("product")
+
+    saat[0] += 400                                     # fiyat bayat, maliyet taze
+    row = (await service.bundles())["items"][0]
+
+    assert api.count("products") == 2                  # fiyat/stok yeniden okundu
+    assert api.count("product") == detay               # maliyet için istek yok
+    assert row["calc"]["costTotal"] == 24_000
+
+
+async def test_toplu_okuma_patlarsa_tek_tek_okunur() -> None:
+    # K7: toplu uç düşerse ekran boş kalmaz; eski yola (detay) düşülür.
+    service, api, store = _service()
+    api.fail.add("products")
+    _plan(store)
+    row = (await service.bundles())["items"][0]
+    assert row["readable"] is True
+    assert row["calc"]["costTotal"] == 24_000

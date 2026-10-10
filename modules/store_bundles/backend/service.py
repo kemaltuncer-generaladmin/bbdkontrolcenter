@@ -34,9 +34,20 @@ from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir,
 
 from . import bundles
 
-#: Bileşen ürünü okuması bu sürede tazedir (ayarla ezilir). Bellekte durur,
-#: diske YAZILMAZ.
-DEFAULT_CACHE_SECONDS = 120
+#: Ürün FİYAT/STOK/DURUM okuması bu sürede tazedir (ayarla ezilir). Bellekte
+#: durur, diske YAZILMAZ. 120 sn iken sekme her açıldığında aynı ürünler
+#: yeniden okunuyordu; geçit dakikada 55 istek veriyor ve set listesi bunun
+#: büyük kısmını tek başına harcıyordu.
+DEFAULT_CACHE_SECONDS = 300
+
+#: Ürün MALİYETİ (alış fiyatı) bu sürede tazedir. Maliyet yalnız ürün
+#: detayında gelir (toplu listede YOK) ve nadiren değişir; fiyat/stokla aynı
+#: sıklıkta okumak, her yenilemede bileşen başına bir istek demekti.
+DEFAULT_COST_SECONDS = 3600
+
+#: Toplu okumada tek istekte sorulan en çok ürün. Geçit sayfa boyunu 50'de
+#: kırpıyor; daha büyük parça sessizce yarım dönerdi.
+BULK_CHUNK = 50
 
 
 def _now() -> str:
@@ -72,9 +83,20 @@ class BundlesService:
         self._plan_table = store.table("plan")
         self._audit_table = store.table("audit")
 
-        # Bileşen ürünlerinin BELLEKTEKİ tazelik kopyası. Kalıcı olsaydı
-        # mağazadaki fiyat değişikliğinden sonra yanlış kâr gösterirdi.
-        self._cache: dict[int, tuple[float, dict[str, Any]]] = {}
+        # ÜRÜNLERİN BELLEKTEKİ TAZELİK KOPYASI — üç katman, üç ayrı ömür.
+        # Kalıcı olsaydı mağazadaki fiyat değişikliğinden sonra yanlış kâr
+        # gösterirdi; bu yüzden diske yazılmaz.
+        #   `_views`  fiyat/stok/durum/ad (toplu liste ya da detay)
+        #   `_costs`  maliyet — YALNIZ detaydan gelir, daha uzun yaşar
+        #   `_links`  çapraz satış bağları — yalnız detaydan gelir
+        self._views: dict[int, tuple[float, dict[str, Any]]] = {}
+        self._costs: dict[int, tuple[float, Any]] = {}
+        self._links: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+        self._carousel: tuple[float, set[int]] | None = None
+        # Son listenin MAĞAZA tanımları. Tek setin künyesi (`bundle`) bunları
+        # okur; listeyi baştan kurmak, tek set için bütün kategoriyi yeniden
+        # taramak demekti.
+        self._store_definitions: dict[int, dict[str, Any]] = {}
         # Kategori taramasından gelen HAFİF satırlar. Ayrı durur: seçici ucu
         # maliyet döndürmüyor, o satırı fiyat/maliyet önbelleğine koymak aynı
         # ürün bir başka setin bileşeniyse kârı "hesaplanamadı" yapardı.
@@ -117,6 +139,15 @@ class BundlesService:
     def _cache_seconds(self) -> int:
         return max(0, min(3600, bundles.as_int(self._config.get("cache_seconds"),
                                                DEFAULT_CACHE_SECONDS)))
+
+    @property
+    def _cost_seconds(self) -> int:
+        """Maliyetin tazelik süresi. `cache_seconds: 0` ("her istekte taze")
+        maliyeti de kapsar — ayarı kapatan kişi bayat maliyet beklemez."""
+        if not self._cache_seconds:
+            return 0
+        return max(0, min(86_400, bundles.as_int(self._config.get("cost_cache_seconds"),
+                                                 DEFAULT_COST_SECONDS)))
 
     @property
     def _export_dir(self) -> Path:
@@ -198,37 +229,115 @@ class BundlesService:
 
     # ==================================================== mağazadan okuma
 
-    async def _product(self, product_id: int) -> dict[str, Any] | None:
-        """Tek ürün — bellek tazeliğiyle. Okunamazsa `None`, istisna sızmaz."""
-        stamp = self._cache.get(product_id)
-        if stamp and (time.monotonic() - stamp[0]) < self._cache_seconds:
-            return stamp[1]
+    @staticmethod
+    def _fresh(entry: tuple[float, Any] | None, seconds: int) -> bool:
+        if entry is None or seconds <= 0:
+            return False
+        return (time.monotonic() - entry[0]) < seconds
+
+    async def _detail(self, product_id: int) -> dict[str, Any] | None:
+        """Tek ürünün DETAYI — maliyetin ve çapraz satış bağlarının tek kaynağı.
+
+        Okunamazsa `None`, istisna sızmaz (K7). Üç katmanı birden tazeler:
+        detay elimizdeyken fiyatı/stoğu ayrıca toplu okumak boşa istek olurdu.
+        """
         try:
             raw = await self._api.product(int(product_id))
         except Exception as failure:  # noqa: BLE001 — K7
-            self._log.info("bileşen okunamadı", productId=product_id, error=str(failure))
+            self._log.info("ürün okunamadı", productId=product_id, error=str(failure))
             return None
-        # Detay yanıtı kaynak bazlı stoğu da taşıyor; vitrindeki `quantity`
-        # türetilmiş ve geç güncellenen bir alan. Elimizdeyken kesin olanı
+        # Detay yanıtı kaynak bazlı stoğu da taşıyor; elimizdeyken kesin olanı
         # kullanırız (satır `stockExact` ile işaretlenir).
         view = bundles.product_view(raw, inventories=raw.get("inventories"), today=_today())
         view["id"] = view["id"] or int(product_id)
-        self._cache[product_id] = (time.monotonic(), view)
+        stamp = time.monotonic()
+        self._views[int(product_id)] = (stamp, view)
+        self._costs[int(product_id)] = (stamp, view.get("cost"))
+        self._links[int(product_id)] = (stamp, _cross_sell_rows(raw))
         return view
 
-    async def _component_products(self, ids: list[int]) -> tuple[dict[int, dict[str, Any]], int]:
-        """Bileşen ürünlerini SIRAYLA okur. Tavan aşılırsa kalanı okumaz.
+    async def _bulk_views(self, ids: list[int]) -> set[int]:
+        """Fiyat/stok/durum — TOPLU okuma, 50 ürün tek istekte.
 
-        Paralel istek kantin deneyiminde Bagisto tarafında kilit yüzünden 5xx
-        üretmişti; geçidin hız kovası da (dk 55) sıralı davranışı bekliyor.
+        `/api/admin/catalog/products?product_id=1,2,3` virgüllü kimlik
+        listesini `whereIn` ile süzer (Bagisto API'sinin kendi kaynağında
+        doğrulandı: `AdminCatalogProductCollectionProvider::applyFilters`).
+        Eskiden her bileşen ve her set ayrı bir detay isteğiydi: 80 bileşen +
+        60 set, tek yenilemede ~140 istek — geçidin dakikalık payının iki katı.
+
+        BU UÇ MALİYET VERMEZ; maliyet `_detail` ile ayrıca okunur. Stok burada
+        envanter satırlarının ANLIK toplamıdır (`SUM(product_inventories.qty)`),
+        türetilmiş vitrin alanı değil — satır kesin sayılır.
+
+        Patlarsa boş küme döner; çağıran o ürünleri tek tek okumaya düşer (K7).
+        """
+        found: set[int] = set()
+        for start in range(0, len(ids), BULK_CHUNK):
+            chunk = ids[start:start + BULK_CHUNK]
+            try:
+                payload = await self._api.products(
+                    {"product_id": ",".join(str(item) for item in chunk),
+                     "locale": self._locale},
+                    per_page=BULK_CHUNK)
+            except Exception as failure:  # noqa: BLE001 — K7: tek tek okumaya düşülür
+                self._log.info("toplu ürün okuması yapılamadı", count=len(chunk),
+                               error=self._fail(failure))
+                return found
+            stamp = time.monotonic()
+            today = _today()
+            wanted = set(chunk)
+            for raw in payload.get("items") or []:
+                view = bundles.product_view(raw, today=today)
+                if view["id"] not in wanted:
+                    continue
+                view["stockExact"] = True
+                self._views[view["id"]] = (stamp, view)
+                found.add(view["id"])
+        return found
+
+    async def _products(self, ids: list[int], *,
+                        cost_for: set[int] | None = None) -> tuple[dict[int, dict[str, Any]], int]:
+        """Ürünler — önce bellek, sonra TOPLU liste, en son tek tek detay.
+
+        `cost_for` maliyeti gereken ürünlerdir (bileşenler). Set ürününün
+        kendisi için maliyet gerekmez: kâr, setin satış fiyatından
+        BİLEŞENLERİN maliyeti düşülerek bulunur. Verilmezse hepsi için istenir.
+
+        Detay SIRAYLA okunur ve tavanlıdır: paralel istek kantin deneyiminde
+        Bagisto tarafında kilit yüzünden 5xx üretmişti; geçidin hız kovası da
+        (dk 55) sıralı davranışı bekliyor. Tavana takılan ürün sayısı döner ve
+        ekran bunu söyler.
         """
         wanted = list(dict.fromkeys(int(item) for item in ids if int(item or 0) > 0))
-        skipped = max(0, len(wanted) - self._fetch_cap)
-        found: dict[int, dict[str, Any]] = {}
-        for product_id in wanted[:self._fetch_cap]:
-            view = await self._product(product_id)
+        needs_cost = set(wanted) if cost_for is None else {int(item) for item in cost_for}
+        views: dict[int, dict[str, Any]] = {}
+        for product_id in wanted:
+            entry = self._views.get(product_id)
+            if entry is not None and self._fresh(entry, self._cache_seconds):
+                views[product_id] = entry[1]
+
+        stale = [product_id for product_id in wanted if product_id not in views]
+        if stale:
+            for product_id in await self._bulk_views(stale):
+                views[product_id] = self._views[product_id][1]
+
+        detail = [product_id for product_id in wanted
+                  if product_id not in views
+                  or (product_id in needs_cost
+                      and not self._fresh(self._costs.get(product_id), self._cost_seconds))]
+        skipped = max(0, len(detail) - self._fetch_cap)
+        for product_id in detail[:self._fetch_cap]:
+            view = await self._detail(product_id)
             if view is not None:
-                found[product_id] = view
+                views[product_id] = view
+
+        found: dict[int, dict[str, Any]] = {}
+        for product_id, view in views.items():
+            merged = dict(view)
+            cost = self._costs.get(product_id)
+            if cost is not None:
+                merged["cost"] = cost[1]
+            found[product_id] = merged
         return found, skipped
 
     async def _store_sets(self) -> tuple[list[dict[str, Any]], str, str, int]:
@@ -280,10 +389,17 @@ class BundlesService:
 
     async def _carousel_ids(self) -> set[int]:
         """Ana sayfa carousel'indeki ürünler. Ekran yalnız rozet çizmek için okur;
-        düzenleme `store_home_media` ekranının işidir."""
+        düzenleme `store_home_media` ekranının işidir.
+
+        Ürün okumasıyla aynı tazelik süresini kullanır: rozet için her
+        yenilemede ayrı istek atmak, geçidin dakikalık payını boşa harcardı.
+        Okunamazsa bellekte TUTULMAZ — bir sonraki yenileme yeniden dener.
+        """
         slot = bundles.as_int(self._config.get("carousel_id"))
         if not slot:
             return set()
+        if self._fresh(self._carousel, self._cache_seconds):
+            return set(self._carousel[1]) if self._carousel else set()
         try:
             payload = await self._api.bbd_carousel({"id": slot})
         except Exception as failure:  # noqa: BLE001 — uç yoksa rozet çizilmez
@@ -302,6 +418,7 @@ class BundlesService:
                 if slot_product:
                     found.add(slot_product)
                     break
+        self._carousel = (time.monotonic(), set(found))
         return found
 
     # ================================================================ liste
@@ -316,30 +433,28 @@ class BundlesService:
         for item in store_sets:
             if item["productId"]:
                 definitions[item["productId"]] = item
-        # Yerel künye mağazadaki tanımın ÜSTÜNE biner: adet/indirim/zorunluluk
-        # yalnız burada tutuluyor (bkz. migrations/001_bundles.sql). Mağazadan
-        # gelen ad/SKU korunur — orası kaydın sahibidir.
+        if source != "offline":
+            self._store_definitions = dict(definitions)
         for product_id, plan in plans.items():
-            base = definitions.get(product_id) or {}
-            merged = {**base, **plan, "productId": product_id}
-            merged["name"] = base.get("name") or plan["name"]
-            merged["sku"] = base.get("sku") or plan["sku"]
-            merged["components"] = plan["components"] or base.get("components") or []
-            definitions[product_id] = merged
+            definitions[product_id] = _merge_plan(definitions.get(product_id), plan)
 
         component_ids: list[int] = []
         for item in definitions.values():
             component_ids.extend(part["productId"] for part in item.get("components") or [])
-        products, skipped = await self._component_products(component_ids)
+        # TEK TOPLU OKUMA: bileşenler ve kategori taramasında görünmeyen setler
+        # aynı istekte sorulur. Kategori taramasından gelen satır set sütunları
+        # için yeterli (ad, SKU, durum, vitrin fiyatı, görsel); BBD ucundan
+        # gelen satır görsel taşımadığı için o yolda setler de topluya girer.
+        # Maliyet yalnız bileşenler için istenir.
+        set_ids = [product_id for product_id in definitions if product_id not in self._light]
+        products, skipped = await self._products([*component_ids, *set_ids],
+                                                 cost_for=set(component_ids))
 
         carousel = await self._carousel_ids()
         today = _today()
         rows: list[dict[str, Any]] = []
         for product_id, item in definitions.items():
-            # Kategori taramasından gelen satır ekranın set sütunları için
-            # yeterli (ad, SKU, durum, vitrin fiyatı, görsel); yalnız yerel
-            # künyesi olup kategoride görünmeyen setler için ek istek çıkar.
-            set_product = self._light.get(product_id) or await self._product(product_id)
+            set_product = self._light.get(product_id) or products.get(product_id)
             rows.append(self._row(item, set_product, products, carousel, today))
 
         rows.sort(key=bundles.sort_key)
@@ -442,46 +557,56 @@ class BundlesService:
         return base
 
     async def bundle(self, bundle_id: int) -> dict[str, Any]:
-        """Tek setin düzenleyici künyesi (bileşen tablosu + canlı hesap)."""
-        listing = await self.bundles()
-        for row in listing["items"]:
-            if row["id"] == int(bundle_id):
-                return {"ok": True, "connected": listing["connected"], "error": listing["error"],
-                        "bundle": row, "crossSells": await self._cross_sells(bundle_id)}
-        product = await self._product(int(bundle_id))
-        if product is None:
+        """Tek setin düzenleyici künyesi (bileşen tablosu + canlı hesap).
+
+        LİSTEYİ BAŞTAN KURMAZ. Eskiden tek set için bütün liste yeniden
+        kuruluyordu (kategori taraması + tüm setlerin tüm bileşenleri) ve ürün
+        bir de çapraz satış için ayrıca okunuyordu. Şimdi yalnız BU setin
+        ürünü ve KENDİ bileşenleri okunur — liste az önce açıldıysa hepsi
+        bellekten gelir ve tek istek çapraz satış bağları içindir.
+        """
+        product_id = int(bundle_id)
+        plans = await self._plans()
+        base = self._store_definitions.get(product_id)
+        plan = plans.get(product_id)
+        definition = _merge_plan(base, plan) if plan else (base or bundles.definition_row(
+            {"productId": product_id}))
+        component_ids = [part["productId"] for part in definition.get("components") or []]
+        # Son listenin kategori satırı set sütunları için yeterli (bkz. `_rows`);
+        # varsa set ürünü ayrıca sorulmaz.
+        light = self._light.get(product_id)
+        products, _ = await self._products(
+            [*([] if light else [product_id]), *component_ids], cost_for=set(component_ids))
+        set_product = light or products.get(product_id)
+        if set_product is None and not plan:
             return {"ok": False,
                     "error": "Bu set okunamadı. Mağazaya ulaşılamıyor olabilir; “Yenile” "
                              "deyip yeniden deneyin."}
-        empty = bundles.definition_row({"productId": int(bundle_id), "name": product["name"],
-                                        "sku": product["sku"]})
-        return {"ok": True, "connected": True, "error": "",
-                "bundle": self._row(empty, product, {}, set(), _today()),
-                "crossSells": await self._cross_sells(bundle_id)}
+        if set_product is not None:
+            definition = {**definition,
+                          "name": definition.get("name") or set_product["name"],
+                          "sku": definition.get("sku") or set_product["sku"]}
+        row = self._row(definition, set_product, products, await self._carousel_ids(), _today())
+        return {"ok": True, "connected": set_product is not None,
+                "error": "" if set_product is not None else
+                "Setin ürünü mağazadan okunamadı; fiyat ve stok güncel değil.",
+                "bundle": row, "crossSells": await self._cross_sells(product_id)}
 
     async def _cross_sells(self, bundle_id: int) -> list[dict[str, Any]]:
         """Mağazadaki çapraz satış bağları — "bileşen olarak al" düğmesini besler.
 
         Bağ ADET ve İNDİRİM taşımaz; buradan gelen her kalem adet 1, indirim 0
         ve zorunlu olarak eklenir. Ekran bunu söyler.
+
+        Bağlar yalnız ürün DETAYINDA gelir; detay bu set için yakın zamanda
+        okunduysa bellekten verilir.
         """
-        try:
-            raw = await self._api.product(int(bundle_id))
-        except Exception as failure:  # noqa: BLE001 — K7
-            self._log.info("çapraz satış bağları okunamadı", error=str(failure))
+        entry = self._links.get(int(bundle_id))
+        if entry is not None and self._fresh(entry, self._cache_seconds):
+            return list(entry[1])
+        if await self._detail(int(bundle_id)) is None:
             return []
-        out: list[dict[str, Any]] = []
-        for key in ("cross_sells", "crossSells", "cross_sell_products"):
-            items = raw.get(key) if isinstance(raw, dict) else None
-            if not isinstance(items, list):
-                continue
-            for item in items:
-                view = bundles.product_view(item, today=_today()) if isinstance(item, dict) else {}
-                if view.get("id"):
-                    out.append({"productId": view["id"], "sku": view["sku"],
-                                "name": view["name"]})
-            break
-        return out
+        return list(self._links[int(bundle_id)][1])
 
     async def lookup(self, *, q: str = "", limit: int = 40) -> dict[str, Any]:
         """Bileşen seçicisini besleyen hafif ürün araması.
@@ -520,8 +645,7 @@ class BundlesService:
         etmesine kapı açardı.
         """
         definitions = bundles.normalize_components(components)
-        products, skipped = await self._component_products(
-            [item["productId"] for item in definitions])
+        products, skipped = await self._products([item["productId"] for item in definitions])
         rows = [bundles.merge_component(item, products.get(item["productId"]))
                 for item in definitions]
         result = bundles.compute(rows, pricing_mode=pricing_mode,
@@ -649,7 +773,8 @@ class BundlesService:
                                result="hata", detail={"error": str(failure)})
             return {"ok": False, "error": self._fail(failure)}
 
-        self._cache.pop(int(bundle_id), None)
+        # Durum değişti: bellekteki kopya bayat. Maliyet ve bağlar etkilenmez.
+        self._views.pop(int(bundle_id), None)
         await self._record(bundle_id=bundle_id, action=action, reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok")
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
@@ -728,8 +853,13 @@ class BundlesService:
         # `ExportError` atıyor; çağrı `try`'ın DIŞINDAYDI ve istisna uca kadar
         # çıkıp 500 üretiyordu. Ekran o durumda bomboş kalır ve sebebini
         # söyleyemezdi (K7).
+        #
+        # İŞ PARÇACIĞINDA ÜRETİLİR: `build_pdf` eşzamanlıdır ve yüz satırlık
+        # bir raporda olay döngüsünü saniyelerce kilitler — o sırada çekirdeğin
+        # öteki istekleri (başka ekranlar) bekler.
         try:
-            content = self._pdf(rows, only_risk=kind == "risk", notice=listing["notice"])
+            content = await asyncio.to_thread(self._pdf, rows, only_risk=kind == "risk",
+                                              notice=listing["notice"])
         except ExportError as failure:
             return {"ok": False, "error": f"Rapor üretilemedi: {failure}"}
         name = f"magaza-set-{'riskli' if kind == 'risk' else 'listesi'}-{stamp}.pdf"
@@ -829,3 +959,34 @@ class BundlesService:
             return await self._printer.status()
         except Exception as failure:  # noqa: BLE001 — K7
             return {"ready": False, "error": self._fail(failure)}
+
+
+def _merge_plan(base: dict[str, Any] | None, plan: dict[str, Any]) -> dict[str, Any]:
+    """Yerel künye mağazadaki tanımın ÜSTÜNE biner.
+
+    Adet/indirim/zorunluluk yalnız burada tutuluyor (bkz.
+    migrations/001_bundles.sql). Mağazadan gelen ad/SKU korunur — orası kaydın
+    sahibidir. Liste ile tek setin künyesi AYNI kuralı kullanır; iki kopya
+    ayrışsaydı düzenleyici listede görünenden başka bir set gösterirdi.
+    """
+    source = base or {}
+    merged = {**source, **plan, "productId": plan["productId"]}
+    merged["name"] = source.get("name") or plan["name"]
+    merged["sku"] = source.get("sku") or plan["sku"]
+    merged["components"] = plan["components"] or source.get("components") or []
+    return merged
+
+
+def _cross_sell_rows(raw: Any) -> list[dict[str, Any]]:
+    """Ürün detayındaki çapraz satış bağları → `{productId, sku, name}`."""
+    out: list[dict[str, Any]] = []
+    for key in ("cross_sells", "crossSells", "cross_sell_products"):
+        items = raw.get(key) if isinstance(raw, dict) else None
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            view = bundles.product_view(item, today=_today()) if isinstance(item, dict) else {}
+            if view.get("id"):
+                out.append({"productId": view["id"], "sku": view["sku"], "name": view["name"]})
+        break
+    return out

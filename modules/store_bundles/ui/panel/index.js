@@ -20,6 +20,13 @@
 //  · Set SİLMEZ. Satılmış setin bileşen künyesi geçmişi okumak için gerekir;
 //    vitrinden kaldırma vardır (ADR 0012).
 //
+// SADE GÖRÜNÜM (docs/tasarim-sade-magaza.md): süzgeç şeridi katlanır (arama +
+// durum görünür), ekranda tek birincil düğme («Yeni set oluştur»), dışa aktarma
+// ve raporlar tek «Dışa aktar» menüsünde. Bilgi kutusu yoktur: listenin
+// mağazadaki "Setler" kategorisinden kurulduğu, künyenin burada tutulduğu ve
+// kârın KDV ayıklanarak hesaplandığı bu yorumlarda durur. Kalan uyarılar yalnız
+// eyleme dönüşenlerdir ve tek satırdır.
+//
 // TASARIM SAPMASI (bilerek): plan, 340px'lik sol listede yedi sütun istiyordu.
 // O genişlikte yedi sütun okunmuyor; listede karar için gereken dördü durur
 // (set · fiyat · kâr · uyarı+durum), kalanı düzenleyicide ve CSV/PDF'te.
@@ -30,13 +37,14 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, clip, confirmWithReason, csvBlob, debounce, h, loadStyles, money, num,
-  parseMoney, percent, toaster,
+  button, clip, confirmWithReason, csvBlob, debounce, h, loadStyles, menuButton, money, num,
+  parseMoney,
+  percent, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { filterBar, applyFilters } from '../../ui-kit/filters.js';
 import {
-  alertBox, badge, card, emptyState, hintBox, kpiRow, skeletonRows, splitView,
+  alertBox, badge, card, emptyState, kpiRow, skeletonRows, splitView,
   statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
@@ -65,44 +73,47 @@ const VALIDITY = {
 // kullanıcının ŞİMDİ ne yapacağını söyler.
 const BLOCKERS = {
   NO_COMPONENTS: {
-    why: 'Bu sette hiç ürün yok. Bir set, en az bir üründen oluşur; içi boş bir kayıt '
-      + 'zaten sıradan bir üründür.',
-    next: 'Sıradaki adım: “Ürün ekle” deyip setin içine gireceklerini seçin.',
+    why: 'Bu sette hiç ürün yok.',
+    next: 'Sıradaki adım: “Ürün ekle” ile içine girecekleri seçin.',
   },
   NO_SET_PRICE: {
-    why: 'Set fiyatı yazılmadığı için kâr hesaplanamıyor; şu an mağazadaki ürün fiyatı '
-      + 'geçerli.',
-    next: 'Sıradaki adım: “Set fiyatı” kutusuna müşterinin ödeyeceği tutarı yazın.',
+    why: 'Set fiyatı yazılmadığı için kâr hesaplanamıyor.',
+    next: 'Sıradaki adım: “Set fiyatı” kutusuna tutarı yazın.',
   },
   NO_COST: {
-    why: 'İçindeki ürünlerden birinin ALIŞ fiyatı girilmemiş; eksik bilgiyle kâr hesabı '
-      + 'yanıltıcı olurdu, bu yüzden çizgi gösteriyoruz.',
-    next: 'Sıradaki adım: o ürünü Ürünler ekranında açıp “Maliyet” alanını doldurun.',
+    why: 'İçindeki bir ürünün alış fiyatı girilmemiş.',
+    next: 'Sıradaki adım: o ürünün “Maliyet” alanını Ürünler ekranında doldurun.',
   },
   OUT_OF_STOCK: {
-    why: 'Bu set şu an satılamıyor: içindeki ürünlerden birinin stoğu yetmiyor.',
+    why: 'İçindeki bir ürünün stoğu yetmiyor; set şu an satılamaz.',
     next: 'Sıradaki adım: Ürünler ekranından o ürünün stoğunu girin ya da ürünü setten '
       + 'çıkarın.',
   },
   OFFLINE: {
-    why: 'Mağazaya ulaşılamadı; fiyat ve stok bilgisi okunamıyor.',
-    next: 'Sıradaki adım: internet bağlantısını kontrol edip “Tekrar dene” deyin.',
+    why: 'Mağazaya ulaşılamadı.',
+    next: 'Sıradaki adım: bağlantıyı kontrol edip “Tekrar dene” deyin.',
   },
   UNREADABLE: {
-    why: 'Bu setin ürün kaydı mağazadan okunamadı; fiyat ve stok bilgisi eksik.',
-    next: 'Sıradaki adım: “Yenile” deyin. Aşağıdaki set bilgileri burada kayıtlı ve '
-      + 'kaybolmadı.',
+    why: 'Bu setin ürün kaydı mağazadan okunamadı.',
+    next: 'Sıradaki adım: “Yenile” deyin; set bilgileri burada kayıtlı, kaybolmadı.',
   },
 };
 
 /** Engelin iki cümlesini tek kutuda gösterir (neden + sıradaki adım). */
 function blockerBox(key, tone = 'warn') {
   const item = BLOCKERS[key];
+  // TEK SATIR (tasarım §3): neden + sıradaki adım yan yana.
   const box = h('div', `kit-alert ${tone} sb-blocker`);
-  box.append(h('div', 'sb-blocker-why', item.why));
-  box.append(h('div', 'sb-blocker-next', item.next));
+  box.append(h('span', 'sb-blocker-why', `${item.why} `), h('span', 'sb-blocker-next', item.next));
   return box;
 }
+
+/** Hazır gerekçeler — her biri kapının 10 karakterlik alt sınırını geçer. */
+const REASON_CHIPS = {
+  save: ['Okul listesi güncellendi', 'Set içeriği değişti', 'Set fiyatı güncellendi'],
+  deactivate: ['Dönem bitti, set kaldırıldı', 'İçindeki ürün tükendi'],
+  activate: ['Set yeniden satışa açılıyor', 'Yeni dönem başladı'],
+};
 
 const EMPTY_STATE = {
   items: [], connected: false, error: '', notice: '', source: '', skipped: 0,
@@ -153,15 +164,17 @@ async function withBusy(label, work) {
   }
 }
 
-/** Yıkıcı ve para etkileyen her işlem buradan geçer: gerekçe backend'e gider. */
-function askReason({ title, description, confirmLabel }) {
+/**
+ * Yıkıcı ve para etkileyen her işlem buradan geçer: gerekçe backend'e gider.
+ *
+ * Kitin `confirmWithReason`ı: en az 10 karakter, HAZIR GEREKÇE ÇİPLERİ
+ * (docs/tasarim-sade-magaza.md §7). Çiplerin her biri 10 karakteri zaten
+ * geçer; asıl kapı backend'dedir (K9).
+ */
+function askReason({ title, description, confirmLabel, chips = [] }) {
   return confirmWithReason(nodes.root, {
-    title,
-    description,
-    confirmLabel,
-    minLength: 10,
-    placeholder: 'Neden değiştiriyorsunuz? (en az 10 karakter) — "Okul listesi güncellendi" '
-      + 'gibi. Bu not kayda geçer.',
+    title, description, confirmLabel, minLength: 10, presets: chips,
+    placeholder: 'Neden? (en az 10 karakter) — kayda geçer',
   });
 }
 
@@ -169,8 +182,7 @@ function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
   const loss = state.items.filter((row) => row.flags.loss).length;
   const risk = state.items.filter((row) => row.warning).length;
-  return `Mağazaya bağlı · ${num(state.items.length)} set · ${num(loss)} tanesi zararına `
-    + `satılıyor · ${num(risk)} tanesinde dikkat edilecek bir durum var`;
+  return `${num(state.items.length)} set · ${num(loss)} zararına · ${num(risk)} dikkat`;
 }
 
 function selectedRow() {
@@ -222,13 +234,20 @@ async function refresh({ keepSelection = true } = {}) {
 function renderNotice() {
   if (!nodes.notice) return;
   nodes.notice.replaceChildren();
-  if (!state.notice) return;
-  // `missed` = kategoride görünüp listeye GİRMEYEN set sayısı; yani liste
-  // eksik. Sunucu bunu metne yazıyordu ama panel yalnız `skipped`e bakıp
-  // kutuyu mavi (bilgi) çiziyordu: eksik liste sıradan bir açıklama gibi
-  // görünüyordu.
-  const tone = (state.skipped || state.missed) ? 'warn' : 'info';
-  nodes.notice.append(alertBox(state.notice, tone));
+  // BİLGİ KUTUSU YOK (tasarım §3): listenin hangi kaynaktan kurulduğu
+  // ("Setler" kategorisi ya da BBD ucu) kullanıcıya anlatılmaz; sunucunun
+  // `notice` metni bu yüzden ekrana basılmaz. Kalan TEK SATIRLIK uyarı yalnız
+  // eyleme dönüşen durumdur:
+  //  · `missed` — kategoride görünüp listeye GİRMEYEN set var: liste eksik.
+  //    Sıradan bir açıklama gibi (mavi) çizilmez; 'warn'dır.
+  //  · `skipped` — bazı ürünler okunamadı: kâr hesabı eksik, "Yenile".
+  if (state.missed) {
+    nodes.notice.append(alertBox(
+      `Liste eksik: ${num(state.missed)} set daha var ve gösterilemedi.`, 'warn'));
+  } else if (state.skipped) {
+    nodes.notice.append(alertBox(
+      `${num(state.skipped)} ürün okunamadı; kâr hesabı eksik — “Yenile” deyin.`, 'warn'));
+  }
 }
 
 // -------------------------------------------------------------------- liste
@@ -331,25 +350,22 @@ function listEmpty() {
   if (!state.connected && !state.items.length) {
     return emptyState({
       title: 'Mağazaya ulaşılamadı',
-      text: `${BLOCKERS.OFFLINE.why} ${BLOCKERS.OFFLINE.next}`
-        + (state.error ? ` (Mağazanın verdiği cevap: ${state.error})` : ''),
+      text: state.error || BLOCKERS.OFFLINE.why,
       actions: [button('Tekrar dene', { variant: 'primary', onClick: () => refresh() })],
     });
   }
   if (state.items.length) {
     return emptyState({
       title: 'Aramanıza uyan set yok',
-      text: `${num(state.items.length)} setin hiçbiri seçtiğiniz süzgeçlere uymuyor. `
-        + 'Süzgeçleri temizleyip yeniden bakın.',
-      actions: [button('Filtreyi temizle', { onClick: () => nodes.filters.reset() })],
+      actions: [button('Süzgeci temizle', { onClick: () => nodes.filters.reset() })],
     });
   }
+  // TEK CÜMLE + DÜĞME (tasarım §3). "Set nedir" paragrafı kaldırıldı: set,
+  // birkaç ürünü tek paket hâlinde tek fiyata satmaktır ("1. sınıf kırtasiye
+  // seti" — defter, kalem, silgi; müşteri tek fiyat öder).
   return emptyState({
-    title: 'Henüz hiç set yok',
-    text: 'SET NEDİR: birkaç ürünü tek paket hâlinde, tek fiyata satmak. Örnek: '
-      + '“1. sınıf kırtasiye seti” — içinde defter, kalem ve silgi var, müşteri tek '
-      + 'fiyat ödüyor. Buradan setin içine hangi üründen kaç adet gireceğini ve '
-      + 'müşterinin ne kadar kazandığını belirlersiniz.',
+    title: 'Henüz set yok',
+    text: 'Birkaç ürünü tek fiyata satmak için bir set oluşturun.',
     actions: [button('Yeni set oluştur', { variant: 'primary', onClick: newBundle })],
   });
 }
@@ -398,12 +414,8 @@ function renderEditor() {
 
   const row = selectedRow();
   if (!row) {
-    host.append(emptyState({
-      title: 'Soldaki listeden bir set seçin',
-      text: 'Seçtiğiniz setin içinde hangi ürünler olduğu, kaça satıldığı ve o setten '
-        + 'kazanıp kazanmadığınız burada açılır.',
-      actions: [button('Yeni set oluştur', { variant: 'primary', onClick: newBundle })],
-    }));
+    // Tek birincil düğme üst şeritte; burada yönlendirme yeter.
+    host.append(emptyState({ title: 'Soldaki listeden bir set seçin' }));
     return;
   }
 
@@ -464,41 +476,35 @@ function paintEditor(pane, row) {
   if (!row.readable) {
     pane.append(blockerBox('UNREADABLE'));
   }
-  if (!row.hasPlan) {
-    pane.append(hintBox(
-      'Bu setin içinde ne olduğu henüz yazılmadı. Mağaza yalnız “bu ürünle şunlar da '
-      + 'alınıyor” bilgisini tutuyor; hangi üründen KAÇ ADET gireceğini, hangisine '
-      + 'indirim yapılacağını ve hangisinin zorunlu olduğunu buradan siz belirlersiniz.'));
-  }
+  // İçeriği henüz yazılmamış set: mağaza yalnız "bu ürünle şunlar da alınıyor"
+  // bağını tutuyor; adet/indirim/zorunluluk burada belirlenir. Uzun açıklama
+  // yerine boş içerik tablosu ("Setin içi boş" + «Ürün ekle») yönlendirir.
 
   editorForm = formGrid({
     fields: [
       { key: 'name', label: 'Setin adı', type: 'text', maxLength: 180, wide: true,
-        hint: 'Müşterinin vitrinde göreceği ad. Örnek: “1. sınıf kırtasiye seti”.' },
+        hint: 'Müşterinin vitrinde göreceği ad.' },
       // VARSAYILAN “Fiyatı ben yazacağım”: iki seçenek de meşru ama biri
       // kullanıcının kafasında zaten var (“şu kadara satacağım”), öteki
       // hesap gerektiriyor. Karar gereken yerde kolay olan seçili gelir.
       { key: 'pricingMode', label: 'Set fiyatı nasıl belirlensin?', type: 'select', options: [
         { value: 'fixed', label: 'Fiyatı ben yazacağım' },
         { value: 'percent', label: 'İçindekilerin toplamından yüzde indir' },
-      ], hint: '“Fiyatı ben yazacağım” derseniz aşağıdaki kutuya tutarı yazarsınız. '
-        + 'Diğerinde fiyat, içindekilerin toplamından indirim düşülerek kendiliğinden '
-        + 'hesaplanır.' },
+      ], hint: 'Yüzde seçilirse fiyat kendiliğinden hesaplanır.' },
       { key: 'discountPercent', label: 'İçindekilerin toplamından % kaç inelim?',
         type: 'number', min: 0, max: 100,
-        hint: 'Yalnız “yüzde indir” seçtiyseniz kullanılır. 10 yazarsanız müşteri, '
-          + 'ürünleri tek tek almaya göre %10 kazanır.' },
+        hint: 'Yalnız “yüzde indir” seçiliyse kullanılır.' },
       { key: 'setPrice', label: 'Set fiyatı (müşterinin ödeyeceği, KDV dâhil)',
         type: 'money',
         hint: 'Boş bırakırsanız mağazadaki ürün fiyatı geçerli olur.' },
       { key: 'taxRate', label: 'KDV oranı (%)', type: 'number', min: 0, max: 100,
-        hint: 'Kitapta genelde %0 ya da %1. Emin değilseniz olduğu gibi bırakın.' },
+        hint: 'Emin değilseniz olduğu gibi bırakın.' },
       { key: 'validFrom', label: 'Bu fiyat ne zaman başlasın?', type: 'date',
         hint: 'Boş bırakırsanız hemen geçerli olur.' },
       { key: 'validTo', label: 'Ne zaman bitsin?', type: 'date',
         hint: 'Boş bırakırsanız siz değiştirene kadar sürer.' },
       { key: 'note', label: 'Kendinize not', type: 'text', maxLength: 500, wide: true,
-        hint: 'MÜŞTERİ BU NOTU GÖRMEZ. “Okul listesinden geldi” gibi kendi hatırlatmanız.' },
+        hint: 'Müşteri bu notu görmez.' },
     ],
     value: {
       name: draft.name,
@@ -565,11 +571,11 @@ function paintEditor(pane, row) {
     componentActions,
     nodes.calc,
     saveActions,
-    hintBox('KÂR NASIL BULUNUR: setin KDV’siz satış fiyatından, içindeki ürünlerin alış '
-      + 'fiyatları düşülür. Vitrindeki fiyat KDV DÂHİL, mağazadaki “maliyet” alanı KDV '
-      + 'HARİÇ yazılıyor; ikisini doğrudan çıkarmak seti olduğundan kârlı gösterirdi, '
-      + 'bu yüzden hesap KDV ayıklanarak yapılır.'),
   );
+  // KÂR NASIL BULUNUR (ekranda kutu değil, kâr satırının ipucu): setin KDV'siz
+  // satış fiyatından içindeki ürünlerin alış fiyatları düşülür. Vitrin fiyatı
+  // KDV DÂHİL, "maliyet" alanı KDV HARİÇ; ikisini doğrudan çıkarmak seti
+  // olduğundan kârlı gösterirdi.
 
   paintComponents();
   renderCalc(draft.calc, draft.warning);
@@ -582,7 +588,6 @@ function paintComponents() {
   if (!draft.components.length) {
     host.append(emptyState({
       title: 'Setin içi boş',
-      text: `${BLOCKERS.NO_COMPONENTS.why} ${BLOCKERS.NO_COMPONENTS.next}`,
       actions: [button('Ürün ekle', { variant: 'primary', onClick: openPicker })],
     }));
     return;
@@ -762,6 +767,7 @@ function renderCalc(calc, warning) {
   );
 
   const verdict = h('div', `sb-verdict ${calc.state}`);
+  verdict.title = 'Kâr = setin KDV’siz fiyatı − içindeki ürünlerin alış fiyatları';
   verdict.append(h('span', 'sb-verdict-label', calc.stateLabel));
   verdict.append(h('b', 'sb-verdict-value',
     calc.profit === null ? '—' : money(calc.profit)));
@@ -807,10 +813,11 @@ function openPicker({ onPick } = {}) {
   box.setAttribute('aria-modal', 'true');
   box.append(h('h3', 'kit-dialog-title',
     onPick ? 'Hangi ürün set olacak?' : 'Setin içine ürün ekle'));
+  // Mağazada "set" diye ayrı bir ürün türü yok; set de bir üründür. Önce
+  // hangi ürünün set olacağı seçilir, içeriği sonraki adımda belirlenir.
   box.append(h('p', 'kit-dialog-text', onPick
-    ? 'Mağazada “set” diye ayrı bir ürün türü yok; set de bir üründür. Önce hangi ürünün '
-      + 'set olacağını seçin, içine ne gireceğini sonraki adımda belirlersiniz.'
-    : 'Aradığınız ürünün adının bir parçasını yazın; liste mağazadan gelir.'));
+    ? 'Set olacak ürünü seçin; içine ne gireceğini sonra belirlersiniz.'
+    : 'Ürün adının bir parçasını yazın.'));
 
   const search = h('input', 'kit-input');
   search.type = 'search';
@@ -936,15 +943,11 @@ async function saveBundle(bundleId) {
     return;
   }
   const calc = draft.calc || {};
-  const uyari = calc.state === 'loss'
-    ? ' DİKKAT: BU SET ZARARINA SATILIYOR — her satışta para kaybediyorsunuz. Yine de '
-      + 'kaydedebilirsiniz, ama önce fiyatı gözden geçirmenizi öneririz.'
-    : '';
+  const uyari = calc.state === 'loss' ? ' DİKKAT: bu set zararına satılıyor.' : '';
   const reason = await askReason({
+    chips: REASON_CHIPS.save,
     title: 'Set bilgilerini kaydet',
-    description: `“${draft.name}” · içinde ${draft.components.length} ürün var. Hangi üründen `
-      + 'kaç adet gireceği, indirimleri ve zorunlu olup olmadıkları burada saklanır.'
-      + `${uyari}`,
+    description: `“${draft.name}” · içinde ${draft.components.length} ürün.${uyari}`,
     confirmLabel: 'Kaydet',
   });
   if (!reason) return;
@@ -985,12 +988,13 @@ async function saveBundle(bundleId) {
 
 async function changeStatus(row) {
   const reason = await askReason({
+    chips: row.status ? REASON_CHIPS.deactivate : REASON_CHIPS.activate,
     title: row.status ? 'Seti satıştan kaldır' : 'Seti yeniden satışa aç',
+    // SİLİNMEZ: geçmiş siparişlerde ve raporlarda kalır, içindeki ürünlerin
+    // listesi de saklanır; istenen gün tek düğmeyle geri alınır.
     description: row.status
-      ? `“${row.name}” müşteriye görünmez olur. SİLİNMEZ: geçmiş siparişlerde ve `
-        + 'raporlarda kalır, içindeki ürünlerin listesi de saklanır. İstediğiniz gün '
-        + 'tek düğmeyle geri alırsınız.'
-      : `“${row.name}” yeniden satışa açılır; müşteri görmeye başlar.`,
+      ? `“${row.name}” müşteriye görünmez olur; silinmez, geri alınabilir.`
+      : `“${row.name}” yeniden satışa açılır.`,
     confirmLabel: row.status ? 'Satıştan kaldır' : 'Satışa aç',
   });
   if (!reason) return;
@@ -1043,11 +1047,7 @@ async function paintHistory(pane, bundleId) {
   }
   pane.replaceChildren();
   if (!result.items.length) {
-    pane.append(emptyState({
-      title: 'Bu sete bu ekrandan hiç dokunulmamış',
-      text: 'Buradan yapılan her değişiklik; kimin, ne zaman ve neden yaptığıyla birlikte '
-        + 'bu listeye yazılır.',
-    }));
+    pane.append(emptyState({ title: 'Bu sete henüz dokunulmamış' }));
     return;
   }
   const table = dataTable({
@@ -1062,10 +1062,9 @@ async function paintHistory(pane, bundleId) {
     dense: true,
     rowKey: (row) => `${row.createdAt}-${row.action}`,
   });
-  pane.append(table.node,
-    hintBox('Bu liste bu bilgisayarda tutulur ve “neden” notunu da saklar. Mağazanın '
-      + 'kendi kaydında böyle bir not alanı yok; internet koparsa “ne yapmaya çalışmıştık” '
-      + 'bilgisi yalnız burada kalır.'));
+  // Bu liste Kontrol Merkezi'nde tutulur ve "neden" notunu saklar; mağazanın
+  // kendi kaydında not alanı yok. Açıklama kutusu yok (tasarım §3).
+  pane.append(table.node);
 }
 
 // -------------------------------------------------------------------- CSV
@@ -1111,11 +1110,16 @@ export function mount(root, ctx) {
   toast = toaster(view);
   report = reportChain({ api, root: view, toast, base: BASE });
 
+  // SADE SÜZGEÇ (tasarım §1): arama + durum görünür, gerisi "Filtreler"de.
+  // İKİNCİL EYLEMLER TEK MENÜDE (§2); ekranın tek birincil düğmesi
+  // «Yeni set oluştur», «Yenile» hayalet.
   nodes.filters = filterBar({
+    compact: true,
     fields: [
-      { kind: 'search', key: 'q', placeholder: 'Set adı ya da stok kodu ara', width: '220px' },
+      { kind: 'search', key: 'q', placeholder: 'Set adı ya da stok kodu', width: '220px',
+        primary: true },
       // SÜZGEÇLERDE VARSAYILAN "Hepsi": ekran hiçbir şeyi gizlemeden açılır.
-      { kind: 'select', key: 'status', label: 'Durum', options: [
+      { kind: 'select', key: 'status', label: 'Durum', primary: true, options: [
         { value: '', label: 'Hepsi' },
         { value: '1', label: 'Satışta' },
         { value: '0', label: 'Vitrinde yok' },
@@ -1134,26 +1138,19 @@ export function mount(root, ctx) {
     onChange: () => renderList(),
     actions: [
       button('Yenile', {
+        variant: 'ghost',
         title: 'Mağazadaki güncel fiyat ve stokları yeniden okur',
         onClick: () => refresh(),
       }),
+      menuButton('Dışa aktar', [
+        { label: 'Ekrandakiler — Excel', onClick: exportVisible },
+        { label: 'Tümü — Excel', onClick: exportAll },
+        { label: 'Set listesi — PDF', onClick: () => report.run('sets') },
+        { label: 'Sorunlu setler — PDF',
+          title: 'Zararına satılan ya da içindeki ürünü tükenmiş setler',
+          onClick: () => report.run('risk') },
+      ]),
       button('Yeni set oluştur', { variant: 'primary', onClick: newBundle }),
-      button('⤓ Ekrandakiler', {
-        title: 'Şu an listede görünen satırları Excel dosyası olarak indirir',
-        onClick: exportVisible,
-      }),
-      button('⤓ Hepsi', {
-        title: 'Bütün setleri rapor klasörüne yazar',
-        onClick: exportAll,
-      }),
-      button('Set listesi raporu', {
-        title: 'Bütün setleri gösteren, yazdırılabilir PDF hazırlar',
-        onClick: () => report.run('sets'),
-      }),
-      button('Sorunlu setler raporu', {
-        title: 'Zararına satılan ya da içindeki ürünü tükenmiş setleri listeler',
-        onClick: () => report.run('risk'),
-      }),
     ],
   });
 

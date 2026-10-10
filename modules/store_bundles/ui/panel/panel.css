@@ -163,4 +163,7 @@
    yapacağım". Tek paragrafa sıkıştırıldığında ikinci cümle okunmuyordu. */
 .sb-blocker { display: block; }
 .sb-blocker-why { font-weight: 600; }
-.sb-blocker-next { margin-top: 4px; }
+/* Engel TEK SATIRDIR (tasarım §3): neden + sıradaki adım yan yana. */
+.sb-blocker-next { margin-left: 2px; }
+
+/* Gerekçe penceresindeki hazır gerekçe çipleri (tasarım §7). */

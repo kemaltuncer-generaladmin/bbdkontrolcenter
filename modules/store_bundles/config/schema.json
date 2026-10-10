@@ -50,7 +50,13 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 3600,
-      "description": "Bileşen okumasının bellekteki tazelik süresi. 0 = her istekte taze."
+      "description": "Ürün fiyat/stok okumasının bellekteki tazelik süresi. 0 = her istekte taze (maliyet dâhil)."
+    },
+    "cost_cache_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 86400,
+      "description": "Ürün maliyetinin (yalnız detayda gelir) bellekteki tazelik süresi."
     },
     "max_sets": {
       "type": "integer",

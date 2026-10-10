@@ -120,6 +120,26 @@ def light(product_id: int, *, name: str, sku: str, price: float = 100.0,
             "baseImageUrl": "https://bbdstore.com.tr/x.webp", "isSaleable": True}
 
 
+
+def _list_row(detail: dict[str, Any]) -> dict[str, Any]:
+    """Detay sahtesinden `catalog/products` LİSTE satırı türetir.
+
+    Liste satırı maliyet ve `attributes` taşımaz; indirim alanları düz
+    camelCase'tir ve `quantity` envanter satırlarının toplamıdır.
+    """
+    values = {item["code"]: item["value"] for item in detail.get("attributes") or []}
+    stock = sum(int(row.get("qty") or 0) for row in detail.get("inventories") or [])
+    return {
+        "id": detail["id"], "sku": detail["sku"], "name": detail["name"],
+        "type": detail.get("type", "simple"), "status": detail.get("status", 1),
+        "price": detail.get("price"),
+        "specialPrice": values.get("special_price"),
+        "specialPriceFrom": values.get("special_price_from"),
+        "specialPriceTo": values.get("special_price_to"),
+        "quantity": stock, "baseImageUrl": detail.get("baseImageUrl"),
+        "urlKey": detail.get("urlKey"),
+    }
+
 class FakeApi:
     """`store.api` yeteneğinin testlik yüzü. Yalnız kullanılan metotlar var."""
 
@@ -182,15 +202,26 @@ class FakeApi:
 
     async def products(self, filters: Any = None, *, page: int = 1, per_page: int | None = None,
                        all_pages: bool = False) -> dict[str, Any]:
-        """`/api/admin/catalog/products` — KATEGORİ SÜZGECİ TANIMAZ.
+        """`/api/admin/catalog/products` — KATEGORİ SÜZGECİ TANIMAZ, `product_id` TANIR.
 
         Canlıda `category_id=42` gönderildiğinde `meta.total` 1.421 kalıyor:
         Laravel tanımadığı sorgu parametresini sessizce yok sayıyor. Sahte de
         yok sayar; süzgecin uygulandığını varsayan kod burada yakalanır.
+
+        `product_id=11,12` ise GERÇEKTEN süzer (`whereIn`; Bagisto API kaynağı
+        `AdminCatalogProductCollectionProvider::applyFilters`). Satır LİSTE
+        biçimindedir: düz camelCase, `quantity` envanter toplamı, MALİYET YOK —
+        maliyet yalnız detayın `attributes` dizisinde gelir.
         """
         self._record("products", filters, page=page, per_page=per_page, all_pages=all_pages)
         size = max(1, min(50, int(per_page or 50)))
-        rows = list(self.lookup_items)
+        given = filters or {}
+        if given.get("product_id"):
+            ids = [int(item) for item in str(given["product_id"]).split(",") if item.strip()]
+            rows = [_list_row(self.products_by_id[item]) for item in ids
+                    if item in self.products_by_id]
+        else:
+            rows = list(self.lookup_items)
         return {"items": rows[:size], "meta": {"currentPage": 1, "perPage": size,
                                                "lastPage": 1, "total": len(rows)}}
 

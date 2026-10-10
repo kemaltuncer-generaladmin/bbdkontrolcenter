@@ -137,8 +137,16 @@ def test_yikici_islem_pin_degil_gerekce_ister() -> None:
     # PIN istemiyor. Koruma: ayrı izin + gerekçe + dryRun.
     for item in MANIFEST["permissions"]:
         assert "destructive" not in item, item
-    assert "confirmWithReason(" in PANEL
-    assert "minLength: 10" in PANEL
+    # Kitin `confirmWithReason`ıyla AYNI kapı, hazır gerekçe çipleriyle
+    # (docs/tasarim-sade-magaza.md §7): en az 10 karakter, kısa gerekçe
+    # pencereyi kapatmaz.
+    kapi = PANEL[PANEL.index("function askReason("):PANEL.index("function statusText(")]
+    assert "confirmWithReason(nodes.root" in kapi
+    assert "minLength: 10" in kapi
+    assert "presets: chips" in kapi
+    cipler = PANEL[PANEL.index("const REASON_CHIPS = {"):PANEL.index("const EMPTY_STATE")]
+    for metin in re.findall(r"'([^']*)'", cipler):
+        assert len(metin) >= 10, metin
 
 
 def test_her_uc_izin_ilan_eder_ve_gerekce_semada_dogrulanir() -> None:
@@ -298,3 +306,37 @@ def test_hesap_satirlari_nereden_geldigini_soyler() -> None:
                   PANEL.index("  const verdict = h('div',")]
     assert "ürünler tek tek alınsa bu kadar tutardı" in hesap
     assert "MÜŞTERİNİN ÖDEYECEĞİ" in hesap
+
+
+# ============================================= sade ekran (tasarım belgesi)
+#
+# docs/tasarim-sade-magaza.md bağlayıcıdır: süzgeç katlanır, ikincil eylemler
+# tek menüde, ekranda tek birincil düğme, bilgi kutusu yok.
+
+
+def test_suzgec_katlanir_arama_ve_durum_gorunur() -> None:
+    serit = _mount_body()[_mount_body().index("nodes.filters = filterBar({"):
+                          _mount_body().index("closers.push(")]
+    assert "compact: true" in serit
+    assert serit.count("primary: true") == 2
+    assert "key: 'q'" in serit and "key: 'status'" in serit
+
+
+def test_ikincil_eylemler_TEK_menude_tek_birincil_dugme() -> None:
+    serit = _mount_body()[_mount_body().index("nodes.filters = filterBar({"):
+                          _mount_body().index("closers.push(")]
+    menu = serit[serit.index("menuButton('Dışa aktar', ["):]
+    for ad in ("Ekrandakiler — Excel", "Tümü — Excel", "Set listesi — PDF",
+               "Sorunlu setler — PDF"):
+        assert ad in menu, ad
+    assert serit.count("variant: 'primary'") == 1        # «Yeni set oluştur»
+    assert "button('Set listesi raporu'" not in PANEL
+    assert "button('⤓" not in PANEL
+
+
+def test_bilgi_kutusu_ve_uzun_paragraf_yok() -> None:
+    assert "hintBox(" not in PANEL
+    assert "SET NEDİR" not in PANEL
+    assert "KÂR NASIL BULUNUR" not in VISIBLE
+    bos = PANEL[PANEL.index("function listEmpty("):PANEL.index("function renderList(")]
+    assert "Birkaç ürünü tek fiyata satmak için bir set oluşturun." in bos
