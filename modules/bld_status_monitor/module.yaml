@@ -30,7 +30,9 @@ name: "Durum Monitörü"
 description: "Mobil uygulama, site, mutfak kasaları ve sunucu sağlığının izlenmesi; hata kaydı ve düzeltme defteri."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: true
+# 10.10.2026: BLD şu an PASİF (kullanıcı kararı); menüde görünmez, arka ucu
+# yüklenmez. Geri açmak için `true` yazmak yeter — kodu ve verisi duruyor.
+enabled: false
 
 entrypoint: backend.module:register
 

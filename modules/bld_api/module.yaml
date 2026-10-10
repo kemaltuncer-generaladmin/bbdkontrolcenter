@@ -25,7 +25,9 @@ name: "BLD Geçidi"
 description: "BLD kontrol API'sine tek kapı: imzalı kimlik, tek hız kovası, kuru prova defteri, gerekçe taşıma, referans önbelleği."
 version: 0.2.0
 sdk: ">=0.1,<1.0"
-enabled: true
+# 10.10.2026: BLD şu an PASİF (kullanıcı kararı); menüde görünmez, arka ucu
+# yüklenmez. Geri açmak için `true` yazmak yeter — kodu ve verisi duruyor.
+enabled: false
 
 entrypoint: backend.module:register
 

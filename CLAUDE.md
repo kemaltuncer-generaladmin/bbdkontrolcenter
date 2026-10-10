@@ -97,6 +97,9 @@ görünmez. store_notifications, store_invoices ve store_udit_logs menüden
 kaldırıldı ama arka uçları ÇALIŞIR (sipariş SMS'i ve sipariş ekranları onlara
 bağlı). Görsel kurallar: [docs/tasarim-sade-magaza.md](docs/tasarim-sade-magaza.md).
 
+**BLD pasif (10.10.2026, kullanıcı kararı).** 15 `bld_*` modülünün hepsi
+`enabled: false`; menüde görünmez, arka ucu yüklenmez. Kod ve veri duruyor.
+
 `print` (Çıktı Merkezi — ADR 0019) ve `antivirus` (ADR 0009/0022) da yazıldı:
 ikisinin de backend'i, paneli ve testleri var. `antivirus` yalnız Linux'ta
 yüklenir (`platforms: [linux]`).
