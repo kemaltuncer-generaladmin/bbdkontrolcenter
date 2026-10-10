@@ -59,9 +59,15 @@ BEŞ POLİTİKA — hepsi geçitte, ekranların iyi niyetine bırakılmadan uygu
    isteği denetleyiciye HİÇ ulaştırmadan reddeder, yan etkisi yoktur —
    `Retry-After` kadar beklenip bir kez yinelenir.
 
-5. HIZ KOVASI. Sunucu sınırı belirteç başına dakikada 60
-   (`RateLimiter::for('admin-api')`). Kova 55'te tutar: kalan pay, aynı
-   belirteci kullanan başka bir aracın (cron, mobil) sıkışmaması içindir.
+5. HIZ KOVASI + EŞZAMANLILIK SINIRI. Eskiden "sunucu sınırı belirteç başına
+   dakikada 60" varsayılıp kova 55'te tutuluyordu. CANLIDA ÖLÇÜLDÜ
+   (2026-10-10): `RateLimiter::for('admin-api')` sınırı belirtecin KENDİ
+   satırından okur (`rate_limit_per_minute`); KM belirtecinde alan NULL'dır
+   ve sınır `Limit::none()`dır — 70 ardışık istek 27 sn'de 200 döndü. Yani
+   ekranları kuyrukta bekleten fren mağazanın değil bizimdi. Kova artık geniş
+   (240/dk) ve asıl koruma EŞZAMANLILIKTIR: aynı anda en çok
+   `max_concurrency` istek (4) — mağazanın PHP havuzu 20 işçi ve ürün listesi
+   tek başına 6 sn sürüyor; KM onu doldurursa vitrin yavaşlar.
 
 DOSYA YÜKLEME
     Görsel uçları JSON değil **multipart/form-data** ister. Panel dosyayı
@@ -100,7 +106,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -133,6 +139,9 @@ MIN_REASON = 10
 
 GET_ATTEMPTS = 3
 RETRY_AFTER_CAP = 30.0
+
+#: İç yol (`connect_host`) kurulamadığında dış adrese düşülen süre.
+DIRECT_RETRY_SECONDS = 300.0
 
 #: BBD paketinin sayfa boyu parametresi. ÇEKİRDEKTEKİ `per_page` DEĞİL.
 #:
@@ -304,6 +313,51 @@ def _drop_channel(path: str, params: dict[str, Any] | None) -> dict[str, Any] | 
     return {anahtar: deger for anahtar, deger in params.items() if anahtar != "channel"}
 
 
+def _order_scoped(filters: dict[str, Any] | None) -> tuple[dict[str, Any] | None, int | None]:
+    """Sipariş süzgecini mağazanın adıyla (`orderId`) gönderir.
+
+    BULUNAN HATA (2026-10-10). Gönderi ve POS denemesi uçları YALNIZ
+    `orderId` okur (`ShipmentController::index`, `PaymentAttemptController`).
+    Ekranlar `order_id` gönderiyordu; Laravel tanımadığı parametreyi sessizce
+    yok saydığı için TÜM siparişlerin son kayıtları "bu siparişin" diye
+    dönüyordu: iade çekmecesi başka müşterinin kargosunu ve maskeli kartını
+    gösteriyor, toplu etiket indirme her siparişe en yeni etiketi veriyordu.
+    İki ad da kabul edilir, mağazaya tek ad gider.
+    """
+    if not filters:
+        return filters, None
+    query = dict(filters)
+    raw = query.pop("order_id", None)
+    if raw in (None, ""):
+        raw = query.get("orderId")
+    try:
+        order_id = int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        order_id = None
+    if order_id is not None:
+        query["orderId"] = order_id
+    return query, order_id
+
+
+def _keep_order(result: dict[str, Any], order_id: int | None) -> dict[str, Any]:
+    """Güvenlik ağı: süzgeç yine de yok sayılırsa başka siparişin satırı DÖNMEZ."""
+    if order_id is None:
+        return result
+    def _matches(row: Any) -> bool:
+        if not isinstance(row, dict):
+            return False
+        value = row.get("order_id", row.get("orderId"))
+        try:
+            return value is not None and int(value) == order_id
+        except (TypeError, ValueError):
+            return False
+    items = [row for row in result.get("items") or [] if _matches(row)]
+    if len(items) == len(result.get("items") or []):
+        return result
+    meta = {**(result.get("meta") or {}), "total": len(items), "lastPage": 1}
+    return {**result, "items": items, "meta": meta}
+
+
 class StoreApi:
     """`store.api` yeteneğinin uygulaması.
 
@@ -325,12 +379,14 @@ class StoreApi:
         dry_run_default: bool = True,
         require_reason: bool = True,
         page_size: int = 50,
-        requests_per_minute: int = 55,
+        requests_per_minute: int = 240,
+        max_concurrency: int = 4,
         reference_ttl: int = 900,
         snapshot_ttl: int = 1800,
         max_items: int = 5000,
         max_upload_mb: int = DEFAULT_MAX_UPLOAD_MB,
         transport: Any = None,
+        connect_host: str = "",
     ) -> None:
         self._base = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self._secrets = secrets
@@ -344,9 +400,25 @@ class StoreApi:
         self._max_upload = max_upload_bytes(max_upload_mb)
         self._transport = transport
         self._token: str | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._http_loop: asyncio.AbstractEventLoop | None = None
+        self._http_transport: Any = None
+        # İÇ YOL. Mağaza ile KM aynı makinede, aynı vekilin (Traefik)
+        # arkasında. Dış adres Cloudflare'e çıkıp geri dönüyor: ölçüm
+        # (2026-10-10) istek başına 430–780 ms, iç yoldan 110–130 ms.
+        # Konak adı ve sertifika DEĞİŞMEZ: bağlantı `connect_host`a kurulur,
+        # SNI ve `Host` mağazanın adını taşır, sertifika o ada göre doğrulanır.
+        parts = urlsplit(self._base)
+        self._host = parts.netloc
+        self._connect_host = (str(connect_host or "").strip()
+                              if parts.scheme == "https" else "")
+        self._direct_off_until = 0.0
 
         self._sleep: Callable[[float], Any] = asyncio.sleep
         self._bucket = _RateBucket(requests_per_minute, sleeper=lambda s: self._sleep(s))
+        self._concurrency = max(1, int(max_concurrency))
+        self._gate: asyncio.Semaphore | None = None
+        self._gate_loop: asyncio.AbstractEventLoop | None = None
         self._audit = AuditTrail(store, log)
         self._reference = ReferenceCache(reference_ttl)
         self._snapshot = SnapshotCache(store, log, snapshot_ttl)
@@ -357,6 +429,7 @@ class StoreApi:
         """Geçidin o anki kuralları. Ekranlar acil freni bu bilgiyle gösterir."""
         return {
             "baseUrl": self._base,
+            "connectHost": self._connect_host,
             "readOnly": self._read_only,
             "dryRunDefault": self._dry_run_default,
             "pageSize": self._page_size,
@@ -385,6 +458,48 @@ class StoreApi:
         return await self._audit.recent(limit=limit)
 
     # ============================================================= alt yapı
+
+    def _client(self) -> httpx.AsyncClient:
+        """Süreç boyu AÇIK KALAN istemci — bağlantı havuzu.
+
+        Eskiden her istek kendi istemcisini açıp kapatıyordu: her çağrıda
+        yeni TCP + TLS el sıkışması. Bir ekranın beş isteği beş el sıkışması
+        demekti. İstemci olay döngüsüne bağlıdır; döngü değişirse (testler,
+        yeniden başlatma) ya da taşıyıcı değişirse (testler) yenisi kurulur.
+        """
+        loop = asyncio.get_running_loop()
+        if (self._http is None or self._http.is_closed or self._http_loop is not loop
+                or self._http_transport is not self._transport):
+            self._http_transport = self._transport
+            self._http = httpx.AsyncClient(
+                timeout=self._timeout, transport=self._transport, follow_redirects=False,
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=6,
+                                    keepalive_expiry=60),
+            )
+            self._http_loop = loop
+        return self._http
+
+    def _slot(self) -> asyncio.Semaphore:
+        """Aynı anda mağazada en çok `max_concurrency` istek (bkz. politika 5)."""
+        loop = asyncio.get_running_loop()
+        if self._gate is None or self._gate_loop is not loop:
+            self._gate = asyncio.Semaphore(self._concurrency)
+            self._gate_loop = loop
+        return self._gate
+
+    def _route(self, path: str) -> tuple[str, dict[str, str], dict[str, Any]]:
+        """İsteğin gideceği adres: iç yol açıksa vekil, değilse dış adres."""
+        if self._connect_host and time.monotonic() >= self._direct_off_until:
+            return (f"https://{self._connect_host}{path}", {"Host": self._host},
+                    {"sni_hostname": self._host.split(":")[0]})
+        return f"{self._base}{path}", {}, {}
+
+    def _direct_failed(self, failure: Exception) -> bool:
+        """İç yol kurulamadı → beş dakika dış adrese düş. Ekran beklemez (K7)."""
+        self._direct_off_until = time.monotonic() + DIRECT_RETRY_SECONDS
+        self._log.warning("mağazaya iç yoldan ulaşılamadı, dış adres kullanılıyor",
+                          connect_host=self._connect_host, error=str(failure)[:200])
+        return True
 
     async def _bearer(self) -> str:
         if self._token:
@@ -532,11 +647,20 @@ class StoreApi:
                 "message": "Kuru prova: istek gönderilmedi. Uygulamak için dry_run=False verin.",
             }
 
-        if dry:
+        if path.startswith(BBD):
+            # BAYRAK HER ZAMAN AÇIKÇA GİDER — gerçek yazmada da. Eskiden yalnız
+            # provada konuyordu; mağaza alanı hiç görmeyince KENDİ varsayılanını
+            # kullanıyor ve para harcayan uçlarda o varsayılan `true`
+            # (`DryRun::parse`). Sonuç: teklif satın alma, gönderi iptali,
+            # webhook kaydı ve desi tarifesi "gönderildi" deyip hiçbir şey
+            # yapmıyordu. Gövdesiz yazmaya da bayrak için gövde kurulur.
             if files is not None:
-                fields["dryRun"] = "1"     # multipart alanı metin taşır
-            elif isinstance(payload, dict):
-                payload["dryRun"] = True
+                fields["dryRun"] = "1" if dry else "0"     # multipart alanı metin taşır
+            else:
+                if payload is None:
+                    payload = {}
+                if isinstance(payload, dict):
+                    payload["dryRun"] = dry
 
         try:
             result = await self._send(
@@ -577,7 +701,6 @@ class StoreApi:
         }
         request_headers.update(headers or {})
 
-        url = f"{self._base}{path}"
         attempts = GET_ATTEMPTS if verb == "GET" else 1
         rate_retry = 1
         attempt = 0
@@ -585,18 +708,31 @@ class StoreApi:
 
         while True:
             await self._bucket.take()
+            url, route_headers, extensions = self._route(path)
             try:
-                async with httpx.AsyncClient(
-                    timeout=self._timeout, transport=self._transport, follow_redirects=False
-                ) as client:
-                    # `Content-Type` ELLE KURULMAZ: multipart sınırını httpx
-                    # üretir. `files` bayt taşıdığı için 429 sonrası tek
-                    # yineleme aynı gövdeyi bir daha kurabilir.
-                    response = await client.request(
-                        verb, url, headers=request_headers, params=params or None,
+                # `Content-Type` ELLE KURULMAZ: multipart sınırını httpx
+                # üretir. `files` bayt taşıdığı için 429 sonrası tek
+                # yineleme aynı gövdeyi bir daha kurabilir.
+                async with self._slot():
+                    response = await self._client().request(
+                        verb, url, headers={**request_headers, **route_headers},
+                        params=params or None,
                         json=body if body is not None and files is None else None,
-                        files=files or None, data=form or None,
+                        files=files or None, data=form or None, extensions=extensions,
                     )
+            except httpx.ConnectError as failure:
+                if route_headers and self._direct_failed(failure):
+                    # Bağlantı HİÇ KURULAMADI: istek uzağa gitmedi, yazma da
+                    # olsa aynı isteği dış yoldan göndermek çift kayıt üretmez.
+                    continue
+                attempt += 1
+                if verb == "GET" and attempt < attempts:
+                    await self._sleep(0.4 * attempt)
+                    continue
+                raise StoreApiError(
+                    f"{verb} {path} → mağazaya ulaşılamadı: {failure}",
+                    code="transport",
+                ) from failure
             except httpx.TransportError as failure:
                 attempt += 1
                 if verb == "GET" and attempt < attempts:
@@ -797,7 +933,7 @@ class StoreApi:
                                 status=status, code="validation", details=details)
         if status == 429:
             raise StoreApiError(
-                "Mağaza hız sınırı doldu (dakikada 60 istek). Biraz sonra yeniden deneyin.",
+                "Mağaza isteği hız sınırıyla geri çevirdi (429). Biraz sonra yeniden deneyin.",
                 status=status, code="rate_limited",
             )
         if status >= 500:
@@ -2458,6 +2594,43 @@ class StoreApi:
         window = max(1, min(self.OVERVIEW_MAX_DAYS, int(days or 7)))
         return await self._item(f"{BBD}/reporting/overview", {"days": window})
 
+    # ======================================= 11b · BBD ÖZEL — HIZLI LİSTELER
+
+    async def bbd_catalog_products(self, filters: dict[str, Any] | None = None, *,
+                                   page: int = 1, per_page: int | None = None,
+                                   all_pages: bool = False) -> dict[str, Any]:
+        """HIZLI ürün listesi — GET /api/admin/bbd/catalog/products.
+
+        NEDEN. Vendor'ın `/catalog/products` ucu 50 satırlık sayfayı 5,9–6,9
+        sn'de veriyor (sunucu içinden ölçüldü, 2026-10-10): her ürün API
+        Platform'dan tek tek serileştiriliyor. Bu uç `product_flat` üzerinden
+        birkaç sorguyla aynı satırları verir. Alanlar snake_case gelir
+        (`sku, name, url_key, type, status, price, special_price…, quantity,
+        attribute_family_*, categories[{id,name}], base_image_url`); okuyan
+        taraf (`catalog.product_row`) iki biçimi de tanır.
+
+        Uç yayında değilse `bbd_endpoint_missing` döner; çağıran vendor ucuna
+        düşer (K7).
+        """
+        return await self._collection(f"{BBD}/catalog/products", filters, page=page,
+                                      per_page=per_page, all_pages=all_pages)
+
+    async def bbd_customers(self, filters: dict[str, Any] | None = None, *, page: int = 1,
+                            per_page: int | None = None,
+                            all_pages: bool = False) -> dict[str, Any]:
+        """HIZLI müşteri listesi — GET /api/admin/bbd/customers.
+
+        Vendor ucu 50 satırı 0,9–1,5 sn'de veriyor ve sipariş sayısı/harcama
+        taşımıyordu; segment için bütün siparişleri ayrıca taramak gerekiyordu.
+        Bu uç satır başına `orders_count`, `total_spent`, `last_order_date` ve
+        varsayılan adresin `city`sini TEK gruplu sorguyla verir.
+
+        Uç yayında değilse `bbd_endpoint_missing` döner; çağıran vendor ucuna
+        düşer (K7).
+        """
+        return await self._collection(f"{BBD}/customers", filters, page=page,
+                                      per_page=per_page, all_pages=all_pages)
+
     # ============================================ 12 · BBD ÖZEL — KARGO
 
     async def bbd_orders(self, filters: dict[str, Any] | None = None, *, page: int = 1,
@@ -2508,9 +2681,14 @@ class StoreApi:
     async def bbd_shipments(self, filters: dict[str, Any] | None = None, *, page: int = 1,
                             per_page: int | None = None,
                             all_pages: bool = False) -> dict[str, Any]:
-        """Geliver gönderileri — GET /api/admin/bbd/shipments."""
-        return await self._collection(f"{BBD}/shipments", filters, page=page,
-                                      per_page=per_page, all_pages=all_pages)
+        """Geliver gönderileri — GET /api/admin/bbd/shipments.
+
+        Sipariş süzgeci `orderId`dir (bkz. `_order_scoped`).
+        """
+        query, order_id = _order_scoped(filters)
+        result = await self._collection(f"{BBD}/shipments", query, page=page,
+                                        per_page=per_page, all_pages=all_pages)
+        return _keep_order(result, order_id)
 
     async def bbd_shipment(self, shipment_id: int) -> dict[str, Any]:
         """Gönderi + hareket geçmişi — GET /api/admin/bbd/shipments/{id}."""
@@ -2808,9 +2986,12 @@ class StoreApi:
         """Sanal POS işlem denemeleri — GET /api/admin/bbd/payments/attempts.
 
         Kart verisi sunucuda maskelidir; geçit ayrıca maskeleme yapmaz.
+        Sipariş süzgeci `orderId`dir (bkz. `_order_scoped`).
         """
-        return await self._collection(f"{BBD}/payments/attempts", filters, page=page,
-                                      per_page=per_page)
+        query, order_id = _order_scoped(filters)
+        result = await self._collection(f"{BBD}/payments/attempts", query, page=page,
+                                        per_page=per_page)
+        return _keep_order(result, order_id)
 
     async def bbd_payment_attempt(self, attempt_id: int) -> dict[str, Any]:
         """İşlem detayı (3D sonucu, banka yanıtı) —

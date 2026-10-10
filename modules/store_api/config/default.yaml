@@ -2,6 +2,13 @@
 # Belirteç BURAYA YAZILMAZ: kasadan gelir (config/local.yaml → secrets.store.admin_token).
 
 base_url: "https://bbdstore.com.tr"
+
+# İÇ YOL. Doluysa TCP bağlantısı bu konağa kurulur; SNI ve `Host` başlığı yine
+# `base_url`ün adını taşır, sertifika o ada göre doğrulanır. Sunucuda mağaza
+# ile KM aynı Traefik'in arkasında olduğu için `coolify-proxy` yazılır
+# (deploy/server/Dockerfile) ve istek Cloudflare'e çıkıp dönmez:
+# 430–780 ms → 110–130 ms. Kurulamazsa beş dakika dış adrese düşülür.
+connect_host: ""
 timeout_seconds: 30
 
 # ACİL FREN. Açıkken GET dışı hiçbir istek mağazaya gitmez. Varsayılan AÇIK:
@@ -20,9 +27,13 @@ require_reason: true
 # Sunucu `per_page` değerini 50'ye kırpıyor; daha büyüğü istemek işe yaramaz.
 page_size: 50
 
-# Sunucu sınırı belirteç başına dakikada 60. 55'te durulur: kalan pay aynı
-# belirteci kullanan diğer araçlar (cron, mobil) içindir.
-requests_per_minute: 55
+# KM belirtecinde mağaza tarafı sınır YOK (`rate_limit_per_minute` NULL →
+# `Limit::none()`, canlıda ölçüldü 2026-10-10). Eskiden 55'te durulurdu ve
+# ekranları kuyrukta bekleten fren buydu. Kova yalnız kaçak döngüye karşı
+# emniyettir; asıl koruma eşzamanlılık sınırıdır: mağazanın PHP havuzu 20
+# işçi, KM onu doldurursa vitrin yavaşlar.
+requests_per_minute: 240
+max_concurrency: 4
 
 reference_ttl_seconds: 900     # L1 — kanal/para/dil/vergi listeleri
 snapshot_ttl_seconds: 1800     # L2 — referans anlık görüntüsü (SQLite)

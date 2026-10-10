@@ -9,6 +9,11 @@
       "pattern": "^https://",
       "description": "Mağaza kökü. HTTPS zorunlu: belirteç düz metin gider."
     },
+    "connect_host": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.-]*(:[0-9]+)?$",
+      "description": "İç yol: bağlantı bu konağa kurulur, SNI/Host mağazanın adını taşır. Boşsa dış adres kullanılır."
+    },
     "timeout_seconds": { "type": "number", "minimum": 5, "maximum": 120 },
     "read_only": {
       "type": "boolean",
@@ -31,8 +36,14 @@
     "requests_per_minute": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 60,
-      "description": "Sunucu sınırı 60; pay bırakmak için 55 önerilir."
+      "maximum": 600,
+      "description": "Kaçak döngüye karşı emniyet. KM belirtecinde mağaza tarafı sınır yok (ölçüldü 2026-10-10)."
+    },
+    "max_concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16,
+      "description": "Mağazaya aynı anda giden en çok istek. Mağazanın PHP havuzu 20 işçi."
     },
     "reference_ttl_seconds": { "type": "integer", "minimum": 30, "maximum": 86400 },
     "snapshot_ttl_seconds": { "type": "integer", "minimum": 60, "maximum": 86400 },

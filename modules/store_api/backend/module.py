@@ -28,11 +28,13 @@ def register(ctx: ModuleContext) -> None:
         dry_run_default=bool(config.get("dry_run_default", True)),
         require_reason=bool(config.get("require_reason", True)),
         page_size=int(config.get("page_size") or 50),
-        requests_per_minute=int(config.get("requests_per_minute") or 55),
+        requests_per_minute=int(config.get("requests_per_minute") or 240),
+        max_concurrency=int(config.get("max_concurrency") or 4),
         reference_ttl=int(config.get("reference_ttl_seconds") or 900),
         snapshot_ttl=int(config.get("snapshot_ttl_seconds") or 1800),
         max_items=int(config.get("max_items") or 5000),
         max_upload_mb=int(config.get("max_upload_mb") or DEFAULT_MAX_UPLOAD_MB),
+        connect_host=str(config.get("connect_host") or "").strip(),
     )
 
     ctx.provide("store.api", api)

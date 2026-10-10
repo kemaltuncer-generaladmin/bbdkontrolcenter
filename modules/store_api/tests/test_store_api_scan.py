@@ -180,3 +180,20 @@ async def test_iki_modul_ayni_anahtar_adini_kullanabilir() -> None:
     assert biri.peek("orders")["value"] == "müşteri"
     assert oteki.peek("orders")["value"] == "rapor"
     await scan.close()
+
+
+async def test_anahtar_sayisi_sinirli_kalir(monkeypatch: Any) -> None:
+    """Her tarih aralığı ayrı anahtar; sözlük süreç ömrünce büyümemeli."""
+    from store_api_backend import scan as scan_mod
+
+    monkeypatch.setattr(scan_mod, "MAX_ENTRIES", 3)
+    tarama = scan_mod.BackgroundScan()
+
+    async def yukle() -> int:
+        return 1
+
+    for anahtar in ("a", "b", "c", "d", "e"):
+        await tarama.read(anahtar, yukle, wait=1.0)
+
+    assert len(tarama._entries) <= 3
+    assert "e" in tarama._entries

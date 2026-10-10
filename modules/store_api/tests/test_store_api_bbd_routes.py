@@ -989,7 +989,9 @@ async def test_deneme_kunyesinde_vitrin_metni_gonderilmez() -> None:
     assert istekler[0].url.path == "/api/admin/bbd/deneme-kulubu/overview/41"
     assert istekler[0].method == "PUT"
     govde = json.loads(istekler[0].content)
-    assert govde == {"price": "250.00", "isOpen": True}
+    # `dryRun` her BBD yazmasında AÇIKÇA gider; mağaza onu `IGNORED` listesinde
+    # tutar, sıkı doğrulamaya takılmaz.
+    assert govde == {"price": "250.00", "isOpen": True, "dryRun": False}
 
 
 async def test_siki_dogrulayan_uclarda_gerekce_govdeye_konmaz() -> None:
@@ -1134,3 +1136,29 @@ async def test_etiket_ucu_HAM_PDF_ister() -> None:
     assert icerik.startswith(b"%PDF")
     assert istekler[-1].url.path == "/api/admin/bbd/shipments/5/label"
     assert istekler[-1].headers["Accept"] == "application/pdf"
+
+
+async def test_gercek_bbd_yazmasi_dryrun_false_tasir() -> None:
+    """Alan hiç gitmezse mağaza para harcayan uçta `true` varsayar.
+
+    Gönderi iptali gövdesiz yazılıyordu; mağaza bayrağı görmeyince provaya
+    düşüyor, ekran "iptal isteği gönderildi" diyordu.
+    """
+    import json
+
+    api, istekler = izle()
+    await api._request("POST", "/api/admin/bbd/shipments/7/cancel", reason=NEDEN,
+                       dry_run=False, action="test")
+
+    assert json.loads(istekler[0].content)["dryRun"] is False
+
+
+async def test_gonderi_suzgeci_orderId_ile_gider_ve_baska_siparis_donmez() -> None:
+    api, istekler = izle({"data": [{"id": 1, "order_id": 5}, {"id": 2, "order_id": 9}],
+                          "meta": {"page": 1, "limit": 50, "total": 2, "last_page": 1}})
+
+    sonuc = await api.bbd_shipments({"order_id": 5})
+
+    assert istekler[0].url.params.get("orderId") == "5"
+    assert "order_id" not in istekler[0].url.params
+    assert [satir["id"] for satir in sonuc["items"]] == [1]

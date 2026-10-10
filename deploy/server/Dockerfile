@@ -88,6 +88,12 @@ ENV KM_DATA_DIR=/data
 # SQLite'a düşüp herkesin verisini geçici diske yazmaktan iyidir.
 ENV KM_STORE_ENGINE=postgres
 
+# MAĞAZAYA İÇ YOL. bbdstore.com.tr bu sunucuda, aynı Traefik'in arkasında
+# koşuyor; dış adrese giden istek Cloudflare'e çıkıp geri dönüyordu (istek
+# başına 430–780 ms). Bağlantı vekile kurulur, SNI/Host ve sertifika yine
+# bbdstore.com.tr'dir (bkz. modules/store_api/config/default.yaml).
+ENV KM__modules__store_api__connect_host=coolify-proxy
+
 # Kök olarak çalışmaz.
 RUN useradd --system --uid 10001 --create-home kmsunucu \
     && mkdir -p /data && chown -R kmsunucu:kmsunucu /data /app

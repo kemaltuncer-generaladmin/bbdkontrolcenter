@@ -63,6 +63,10 @@ def _now() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
 
 
+#: Bellekte tutulan tarama anahtarı üst sınırı (bkz. `BackgroundScan._evict`).
+MAX_ENTRIES = 64
+
+
 class _Entry:
     """Tek bir tarama anahtarının durumu.
 
@@ -146,6 +150,7 @@ class BackgroundScan:
         """
         entry = self._entries.get(key)
         if entry is None:
+            self._evict()
             entry = _Entry()
             self._entries[key] = entry
 
@@ -167,6 +172,19 @@ class BackgroundScan:
         if wait > 0.0 and task is not None and not task.done():
             await asyncio.wait({task}, timeout=min(float(wait), MAX_WAIT))
         return _report(entry, life)
+
+    def _evict(self) -> None:
+        """Anahtar sayısı sınırı aşmasın — en eski, KOŞMAYAN kayıt düşer.
+
+        Anahtarlar ekrandan gelir: Dashboard her tarih aralığı için ayrı özet
+        tutuyor. Sınırsız sözlük süreç ömrünce büyürdü. Koşan tarama düşürülmez;
+        sonucu yazılacak yer kaybolmasın.
+        """
+        if len(self._entries) < MAX_ENTRIES:
+            return
+        idle = [(entry.at, key) for key, entry in self._entries.items() if not entry.running]
+        for _at, key in sorted(idle)[: len(self._entries) - MAX_ENTRIES + 1]:
+            self._entries.pop(key, None)
 
     def invalidate(self, key: str) -> None:
         """Değeri BAYAT işaretler; silmez.
