@@ -9,23 +9,26 @@ Grup: **BBD Store** · CSS öneki: `so` · Rapor rafı:
 
 ## Neden bu modül sonradan eklendi
 
-Yan menüdeki diğer 19 ekran siparişin *çevresini* yönetiyordu — Kargo, Fatura,
-İadeler, Sanal POS — ama siparişin kendisini yöneten bir yer yoktu. "Bugün
-hangi siparişler geldi, hangileri kargolanmayı bekliyor" sorusunun tek bir
-cevabı olmuyordu. Menüde Kontrol Paneli'nin hemen ardına girer (`order: 15`);
-**mevcut ekranların sırası değişmez.**
+Kargo, Fatura ve İade ekranları siparişin *çevresini* yönetiyordu; siparişin
+kendisini yöneten bir yer yoktu. "Bugün hangi siparişler geldi, hangileri
+kargolanmayı bekliyor" sorusunun tek bir cevabı olmuyordu. (Kontrol
+Merkezi'nde sanal POS / provizyon ekranı yoktur; belirsiz ödemenin kesin
+sonucu ve provizyon iptali mağaza/banka tarafındadır.)
 
 ## Ekran
 
+Sade ekran kuralları bağlayıcıdır: [docs/tasarim-sade-magaza.md](../../docs/tasarim-sade-magaza.md).
+
 | Bölüm | İçerik |
 |---|---|
-| Filtre şeridi | 17 süzgeç: arama · durum · ödeme durumu · kanal · müşteri grubu · **tarih alanı seçici** (sipariş/ödeme/kargo) + aralık · tutar aralığı · ödeme yöntemi · kargo firması · şehir · kupon · `Faturası kesilmemiş` `Kargoya verilmemiş` `Not içeren` `Riskli` `Kısmi iadeli` |
-| Çipler (sayaçlı) | Bekleyen · Hazırlanıyor · Kargoda · Bugün gelen · **Geciken** · İptal |
-| Mini toplam | Sipariş · Ciro · Ortalama sepet · İptal — süzgecin **tamamı** üzerinden |
-| Tablo | Sipariş no+tarih · Müşteri+grup+şehir · Kalem · Ara toplam · Kargo · İndirim · KDV · **Toplam** · Ödeme · Durum · Takip no (kopyala) · Fatura · Kargo durumu |
-| Toplu | **Seçilenleri kargoya ver** · Fatura kes · Etiket indir · Kargo manifestosu · CSV |
-| Çekmece | Özet · Kalemler · Ödeme · *Kargo* · *Fatura* · İade · Notlar · İşlem geçmişi |
-| Ayarlar sekmesi | Durum adları · sipariş no biçimi · iptal süresi · gecikme eşiği · (salt okunur) mağaza sipariş ayarları |
+| Filtre şeridi | Görünür: **arama** + **tarih** (Bugün · 7 gün · 30 gün). "Filtreler" arkasında: durum · ödeme · müşteri grubu · tarih alanı (sipariş/ödeme/kargo) · tutar · ödeme yöntemi · kargo firması · şehir · kupon · `Faturası kesilmemiş` `Kargoya verilmemiş` `Not içeren` `Riskli` `Kısmi iadeli`. Tek kanallı mağazada Kanal kutusu çizilmez. Sağda hayalet **Yenile** ve **Dışa aktar ▾** (Görünen — Excel · Tümü — Excel · Liste raporu — PDF) |
+| Çipler (sayaçlı) | Bekleyen · Hazırlanıyor · Kargoda · Bugün gelen · Geciken · İptal |
+| Durum satırı | Sipariş sayısı · ciro · ortalama sepet · "güncellendi 2 dakika önce" (KPI şeridi yok) |
+| Uyarılar | Yalnız eyleme dönük, tek satır: ödemesi belirsiz sipariş, okunamayan bilgi, çok büyük liste |
+| Tablo (7 sütun) | Sipariş no · Tarih · Müşteri (+şehir) · Tutar · Ödeme · Durum · Kargo (hâl + satırın ana eylemi: **Fatura kes** / **Kargoya ver**) |
+| Toplu (seçimde) | **Kargoya ver** (Kargo Yönetimi'nde) · Fatura kes · Diğer ▾ (Etiket indir · Kargo manifestosu — PDF) |
+| Çekmece | Tepede: Fatura kes · Kargoya ver / Etiket indir · Durum değiştir · Diğer ▾ (fiş PDF, iptal). Sekmeler (en çok 5): Özet · Kalemler · Ödeme ve iade · *Kargo ve fatura* · Notlar ve geçmiş |
+| Ayarlar sekmesi | Durum adları · sipariş no biçimi · iptal süresi · gecikme eşiği · müşteri SMS'i · (salt okunur) mağaza sipariş ayarları |
 
 *İtalik sekmeler yeteneğe bağlıdır — aşağı bakın.*
 
@@ -84,13 +87,35 @@ gönderi, not, ara toplam, KDV ve faturalanan tutar yalnız
 `GET /orders/{id}` detayındadır.
 
 1. **Sunucu sayfalaması** — sadece mağazanın uyguladığı süzgeçler seçiliyse.
-2. **Tavanlı tarama** — ödeme yöntemi, şehir, kupon, kanal adı gibi süzgeçler
-   için (`scan_cap`, varsayılan 2000); süzme bizim kodumuzda yapılır.
-3. **Detaylandırma** — fatura/gönderi/not/ödeme durumuna dayanan süzgeçler,
-   `Kargoda`/`Geciken` çipleri, arama, CSV ve liste raporu için taranan küme
-   sipariş sipariş okunur (`detail_cap`, varsayılan 300). `updatedAt` anahtarlı
-   bellek önbelleği aynı siparişi ikinci kez çekmez. Tavan aşılırsa yanıt
-   `partial: true` döner ve ekran "bazı süzgeçler eksik uygulandı" der.
+2. **Ortak tarama** — çipler, arama, ödeme yöntemi, şehir, kupon, kanal adı,
+   fatura/gönderi/iade/ödeme durumu, ödeme/kargo tarihi, sayaç şeridi, CSV ve
+   liste raporu için. Tarama **isteğin içinde koşmaz**: `store.scan`
+   tazeleyicisinde arka planda yürür ve beş LİSTE okur — sipariş, fatura,
+   gönderi (Bagisto'nun kendi kaydı), iade ve `bbd/orders` (seçilen kargo).
+   **Sipariş başına istek yoktur**: 300 siparişte eskiden ~307 istek (6 sayfa
+   + 300 detay + seçilen kargo) gidiyordu, şimdi ~25 (beş listenin sayfaları). Liste
+   ve sayaç ucu aynı sonucu okur, sayfa/çip/süzgeç değişince yeniden taranmaz
+   (`scan_ttl_seconds`, varsayılan 180; "Yenile" ve bu ekrandan yapılan her
+   yazma beklemeden tazeler). Ekran taramanın yaşını yazar; tarama bitmeden
+   sayaç **sıfır göstermez**, boş bırakır. Süzme bizim kodumuzda yapılır
+   (`scan_cap`, varsayılan 2000; kayıtlar yeniden eskiye istenir, tavan
+   yakalanırsa düşen en eskilerdir).
+3. **Detaylandırma** — YALNIZ not ve müşteri grubu süzgeçleri için (ikisinin
+   liste karşılığı yok) ve CSV'nin tutar dökümü için. Not/grup süzgecinde detay
+   arka planda, istekler arasında 2 sn bekleyerek okunur (geçidin payını tek
+   başına yemesin); CSV'de yalnız süzgece UYAN siparişler okunur
+   (`detail_cap`, varsayılan 300). `updatedAt` anahtarlı bellek önbelleği aynı
+   siparişi ikinci kez çekmez. Okunmamış aday varsa yanıt `partial: true`
+   döner ve ekran "bazı süzgeçler eksik uygulandı" der.
+
+Yan liste okunamazsa (ya da tek bir kaydı bile siparişe bağlanamazsa) o bilgi
+**Bilinmiyor** kalır: "faturası yok" ya da "Kargoda 0" yazılmaz, nedeni şeritte
+görünür. Telefon numarası liste uçlarında yok; arama telefonu yalnız detayı
+okunmuş siparişte bulur.
+
+Toplu önizleme ve kargo manifestosu "şu an"ı ister: seçimin tarih penceresi
+(en eski seçilenin gününden bir gün önce) dört liste isteğiyle taze okunur;
+pencerede kesinleşmeyen sipariş ve küçük seçimler tek tek okunur.
 
 Neden: Laravel tanımadığı sorgu parametresini **sessizce yok sayar**. Süzgeci
 gönderip uygulandığını varsaymak, süzülmemiş listeyi süzülmüş gibi göstermek

@@ -1,10 +1,15 @@
 // Siparişler paneli — mağazanın günlük çalışma ekranı.
 //
-// NE YAPAR: on beş süzgeç ve sayaçlı durum çipleriyle sipariş listesi; süzgecin
-// mini toplamı (adet · ciro · ortalama sepet); satırdan tam yükseklik çekmecede
-// sekmeli sipariş künyesi; toplu kargoya verme / fatura kesme (ÖNCE ATLANANLAR
-// LİSTESİ, sonra gerekçeli onay); etiket indirme; sipariş listesi, sipariş fişi
-// ve kargo manifestosu PDF'i.
+// NE YAPAR: arama + tarih ve sayaçlı durum çipleriyle sipariş listesi (gerisi
+// "Filtreler" arkasında); yedi sütunluk tablo ve satırın ana eylemi ("Kargoya
+// ver" / "Fatura kes"); satırdan çekmecede sipariş künyesi, en sık üç eylem
+// tepede; toplu kargoya verme / fatura kesme (ÖNCE ATLANANLAR LİSTESİ, sonra
+// gerekçeli onay); etiket indirme; "Dışa aktar" menüsünde Excel ve PDF.
+//
+// SADE EKRAN (docs/tasarim-sade-magaza.md — bağlayıcı): görünür süzgeç iki,
+// ikincil eylemler tek menüde, varsayılan görünümde açıklama kutusu yok,
+// uyarılar yalnız eyleme dönük ve tek satır, tablo en çok yedi sütun, teknik
+// dil ("tarama", "uç", "geçit") ekranda geçmez — gerekçesi koddaki yorumdadır.
 //
 // NE YAPMAZ:
 //  · Sipariş DURUMUNU serbestçe değiştirmez. Mağazanın admin API'sinde sipariş
@@ -28,9 +33,12 @@
 //    çekilmiş müşteriden ikinci kez tahsilat istemeye yol açardı.
 //  · Toplu kargoya verme yalnız UYGUN siparişleri alır; uygun olmayanın nedeni
 //    satırda yazılıdır ve önce KURU PROVA çalışır.
-//  · Liste ucu SIĞ satır veriyor: fatura, gönderi, not ve ara toplam yalnız
-//    detayda var. Bunlara dayanan bir süzgeç seçilince sunucu kümeyi
-//    detaylandırır; tavan aşılırsa durum satırı "eksik uygulandı" der.
+//  · Liste ucu SIĞ satır veriyor. Fatura, gönderi ve iade durumu sunucunun
+//    ORTAK TARAMASINDAN gelir (liste uçları, sipariş başına istek yok); tarama
+//    arka planda koşar, durum satırı yaşını yazar ("tarama 2 dakika önce") ve
+//    tarama sürüyorsa ekran bir kez daha sorar. Yalnız not ve müşteri grubu
+//    süzgeci sipariş detayı ister; o okuma da arka planda yürür ve bitmeden
+//    durum satırı "eksik uygulandı" der.
 //  · Sipariş numarası `incrementId`dir; eylemler iç kimlikle gider.
 //  · Kısmi fatura ve kısmi kargo olağandır — rozetler üç durumludur.
 //  · Kargo/Fatura sekmeleri ilgili modülün yeteneğinden beslenir; yetenek yoksa
@@ -42,13 +50,15 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, clip, confirmSimple, confirmWithReason, copyText, csvBlob, h, loadStyles,
-  money, num, stampIso, toaster,
+  ago, button, clip, confirmSimple, confirmWithReason, copyText, csvBlob, h, loadStyles,
+  menuButton, money, num, stampIso, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { applyChoiceFilter } from '../../ui-kit/choice.js';
+import { RANGE_PRESETS } from '../../ui-kit/datefield.js';
 import {
-  alertBox, badge, card, chipRow, drawer, emptyState, hintBox, kpiRow,
+  alertBox, badge, card, chipRow, drawer, emptyState, kpiRow,
   skeletonRows, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
@@ -82,6 +92,14 @@ const STATUS_KEYS = [
 const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', scanned: false, truncated: false, partial: false, scannedCount: 0,
+  // Ortak taramanın durumu: hazır mı, sürüyor mu, ne zamandan. `pending` = not/
+  // müşteri grubu detayı arka planda okunuyor. `warnings` = okunamayan yan liste.
+  ready: true, pending: false, warnings: [],
+  scan: { state: 'empty', running: false, at: '', error: '' },
+  overviewKey: null,
+  // `summary` süzgecin TAMAMINA mı ait (sayaç ucu / taranmış liste), yoksa
+  // yalnız sunucunun verdiği SAYFAYA mı? Ciro yalnız ilkinde yazılır.
+  summaryFull: false,
   summary: { count: 0, liveCount: 0, revenue: 0, average: 0, canceled: 0 },
   reference: {
     statuses: [], paymentStates: [], dateFields: [], channels: [], customerGroups: [],
@@ -104,6 +122,12 @@ let toast = null;
 let report = null;
 let busy = false;
 let state = { ...EMPTY_STATE };
+
+// Tarama sürerken ekranı BİR KEZ daha sorar. Sürekli yoklanmaz: tarama
+// bitmişse ikinci istek hazır sonucu alır; süresiz yoklamak mağazanın istek
+// payını (geçitte dakikada 55, bütün ekranların ortak payı) boşuna yerdi.
+const SCAN_POLL_MS = 15_000;
+let scanTimer = null;
 
 const nodes = {};
 const closers = [];        // cleanup'ta çağrılacak gerçek kaynak bırakıcılar
@@ -143,18 +167,34 @@ function askReason({ title, description, confirmLabel }) {
   });
 }
 
+/**
+ * Verinin ne zamandan olduğu — "güncellendi 2 dakika önce".
+ *
+ * Sayaçlar ve süzgeçli liste sunucunun arka plandaki ORTAK TARAMASINDAN gelir
+ * (bkz. backend/service.py). Kullanıcıya "tarama" denmez; söylenen tek şey
+ * verinin yaşıdır ve tazelenirken bunun söylenmesidir.
+ */
+function freshText() {
+  const scan = state.scan || {};
+  if (!state.ready || scan.running) return 'güncelleniyor…';
+  return scan.at ? `güncellendi ${ago(scan.at)}` : '';
+}
+
 function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
-  const parts = [`Bağlı · ${num(state.total)} sipariş`];
-  parts.push(`sayfa ${state.page}/${Math.max(1, state.pages)}`);
-  if (state.scanned) {
-    // Taranan küme açıkça söylenir: kullanıcı süzgecin mağazada mı yoksa
-    // burada mı uygulandığını bilmeli.
-    parts.push(`${num(state.scannedCount)} kayıt tarandı`);
+  const parts = [`${num(state.total)} sipariş`];
+  // KPI şeridi YOK (docs/tasarim-sade-magaza.md §6): sipariş sayısı, ciro ve
+  // ortalama sepet bu satırda, durum dağılımı çiplerde yazıyor. Ciro süzgecin
+  // TAMAMINA aittir; elde yalnız sayfanın toplamı varsa hiç yazılmaz — 29
+  // sayfalık süzgecin cirosu ilk sayfanınki sanılırdı. İptaller ciroya girmez.
+  const sum = state.summary || EMPTY_STATE.summary;
+  if (state.summaryFull && sum.liveCount) {
+    parts.push(`ciro ${money(sum.revenue)}`, `ort. sepet ${money(sum.average)}`);
   }
-  if (state.partial) {
-    parts.push('detay tavanı aşıldı — bazı süzgeçler eksik uygulandı');
-  }
+  const fresh = freshText();
+  if (fresh) parts.push(fresh);
+  if (state.pending) parts.push('not/grup bilgisi okunuyor');
+  if (state.scan?.error) parts.push('son güncelleme yapılamadı');
   return parts.join(' · ');
 }
 
@@ -201,16 +241,35 @@ function queryString(extra = {}) {
   return params.toString();
 }
 
-async function refresh({ page = state.page, size = state.size } = {}) {
+/**
+ * Listeyi çeker; GEREKİYORSA sayaç şeridini de.
+ *
+ * `paging` — yalnız sayfa/boyut değişti. Sayaçlar ve süzgecin toplamı sayfaya
+ * bağlı DEĞİL; eskiden her sayfa değişiminde `/overview` yeniden istenir ve
+ * sunucu siparişlerin tamamını yeniden tarardı. Artık süzgeç/çip aynıysa
+ * sayaçlar yerinde kalır.
+ * `fresh` — "Yenile": ortak tarama tazelik süresini beklemeden yenilenir.
+ */
+async function refresh({ page = state.page, size = state.size, paging = false,
+  fresh = false } = {}) {
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  // Süzgeç/çip aynı ve yalnız sayfa değiştiyse sayaç şeridine ait alanlar
+  // (süzgecin TAMAMININ toplamı, kanıt şeridi, tavan) yerinde KALIR: sunucu
+  // sayfalı listede o alanlar yalnız SAYFANINKİDİR ve üstüne yazılsaydı
+  // 29 sayfalık süzgecin cirosu ilk sayfanınki gibi görünürdü.
+  const key = queryString({ page: '', size: '' });
+  const keep = paging && key === state.overviewKey;
   nodes.tableWrap?.replaceChildren(skeletonRows(8, 8));
   nodes.status?.set('Siparişler alınıyor…');
   let payload;
   try {
-    // Bu uç, süzgece göre mağazanın TAMAMINI sayfa sayfa tarayabiliyor.
-    // Kabuğun 60 saniyelik varsayılanı taramayı ortasında kesip hatayı
-    // "çekirdeğe bağlanılamadı" diye gösteriyordu; süre açıkça istenir.
-    payload = await api(`${BASE}/orders?${queryString({ page, size })}`,
-      { timeoutSeconds: 300 });
+    // Sunucu taramayı beklemez (en çok birkaç saniye); süre yine de geniş
+    // istenir: geçidin dakikalık payı başka ekranlarca doluysa istek sırada
+    // bekleyebilir ve kabuğun 60 saniyelik varsayılanı onu kesip "çekirdeğe
+    // bağlanılamadı" gösterirdi.
+    payload = await api(`${BASE}/orders?${queryString({
+      page, size, refresh: fresh ? 1 : '',
+    })}`, { timeoutSeconds: 300 });
   } catch (error) {
     state = { ...state, connected: false, error: error.message, items: [], total: 0 };
     renderTable();
@@ -227,11 +286,18 @@ async function refresh({ page = state.page, size = state.size } = {}) {
     connected: Boolean(payload.connected),
     error: payload.error || '',
     scanned: Boolean(payload.scanned),
-    truncated: Boolean(payload.truncated),
-    partial: Boolean(payload.partial),
+    truncated: Boolean(payload.truncated) || (keep && state.truncated),
+    partial: Boolean(payload.partial) || (keep && state.partial),
     scannedCount: payload.scannedCount || 0,
-    summary: payload.summary || EMPTY_STATE.summary,
-    evidence: payload.evidence || EMPTY_STATE.evidence,
+    summary: keep ? state.summary : (payload.summary || EMPTY_STATE.summary),
+    summaryFull: keep ? state.summaryFull : Boolean(payload.scanned),
+    evidence: keep ? state.evidence : (payload.evidence || EMPTY_STATE.evidence),
+    ready: payload.ready !== false,
+    pending: Boolean(payload.pending) || (keep && state.pending),
+    warnings: payload.warnings?.length ? payload.warnings : (keep ? state.warnings : []),
+    // Sunucu sayfalı listede tarama okunmaz; önceki sayaç taramasının
+    // yaşı ekranda kalır.
+    scan: payload.scanned ? (payload.scan || EMPTY_STATE.scan) : state.scan,
     selection: [],
     loaded: true,
   };
@@ -239,28 +305,62 @@ async function refresh({ page = state.page, size = state.size } = {}) {
   renderTotals();
   nodes.pager.update({ total: state.total, page: state.page, size: state.size });
   nodes.status?.set(statusText(), !state.connected);
-  loadOverview();
+  if (!keep) {
+    // Taranmış liste aynı istekte taramayı zaten tazeledi; sayaç ucu ikinci
+    // bir tazeleme başlatmasın.
+    await loadOverview({ fresh: fresh && !state.scanned });
+  }
+  scheduleScanFollowUp();
 }
 
-/** Çip sayaçları ve süzgecin TAMAMININ toplamı ayrı uçtan gelir (tarama ister). */
-async function loadOverview() {
+/**
+ * Çip sayaçları ve süzgecin TAMAMININ toplamı. Sunucu bunları liste ucuyla
+ * AYNI ortak taramadan okur — mağazaya ikinci tarama gitmez.
+ */
+async function loadOverview({ fresh = false } = {}) {
+  const key = queryString({ page: '', size: '' });
   let payload;
   try {
-    payload = await api(`${BASE}/overview?${queryString({ page: '', size: '' })}`,
-      { timeoutSeconds: 300 });
+    payload = await api(`${BASE}/overview?${queryString({
+      page: '', size: '', refresh: fresh ? 1 : '',
+    })}`, { timeoutSeconds: 300 });
   } catch {
     return;                    // sayaçsız da çalışır (K7)
   }
   if (!payload.connected) return;
+  state.scan = payload.scan || state.scan;
+  if (payload.ready === false) {
+    // Tarama bitmeden SIFIR YAZILMAZ: "Bekleyen 0" bekleyen iş yok demektir.
+    nodes.chips.counts({});
+    nodes.status?.set(statusText(), !state.connected);
+    return;
+  }
+  state.overviewKey = key;
+  // `null` sayaç (gönderi listesi okunamadı) boş kalır; sıfır uydurulmaz.
   nodes.chips.counts(payload.counts || {});
   state.summary = payload.summary || state.summary;
+  state.summaryFull = true;
   state.truncated = Boolean(payload.truncated);
   state.partial = state.partial || Boolean(payload.partial);
-  // Sayaç ucu SÜZGECİN TAMAMINI tarar: "kaç sipariş bankaya sorulmalı"
+  state.pending = state.pending || Boolean(payload.pending);
+  state.warnings = payload.warnings?.length ? payload.warnings : state.warnings;
+  // Sayaç ucu SÜZGECİN TAMAMINA bakar: "kaç sipariş bankaya sorulmalı"
   // sorusunun doğru cevabı sayfanın değil, süzgecin tamamınınkidir.
   state.evidence = payload.evidence || state.evidence;
   renderTotals();
   nodes.status?.set(statusText(), !state.connected);
+}
+
+// Tarama ya da detay okuması sürüyorsa ekran BİR KEZ daha sorar (bkz.
+// SCAN_POLL_MS). Bitmemişse sonraki yanıt zamanlayıcıyı yeniden kurar.
+function scheduleScanFollowUp() {
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  if (state.ready && !state.pending && !state.scan?.running) return;
+  scanTimer = setTimeout(() => {
+    scanTimer = null;
+    if (!state.loaded || busy) return;      // ekran kapandı ya da iş sürüyor
+    refresh();
+  }, SCAN_POLL_MS);
 }
 
 async function loadReference() {
@@ -286,10 +386,15 @@ async function loadReference() {
     state.reference.statuses.map((item) => ({ value: item.value, label: item.label }))));
   nodes.filters.options('paymentState', withAll('Tümü — ödeme',
     state.reference.paymentStates.map((item) => ({ value: item.value, label: item.label }))));
-  nodes.filters.options('channel', withAll('Tümü — kanal',
-    state.reference.channels.map((item) => ({ value: item.name, label: item.name }))));
-  nodes.filters.options('customerGroup', withAll('Tümü — müşteri grubu',
-    state.reference.customerGroups.map((item) => ({ value: item.name, label: item.name }))));
+  // TEK SEÇENEKLİ SÜZGEÇ ÇİZİLMEZ (choice.js): mağazada tek kanal var, "Kanal"
+  // kutusu hiçbir satırı elemeyen bir soruydu. Değer kanalın ADIdır — satır
+  // `channel` alanında adı taşır; kod göndermek listeyi boşaltırdı.
+  applyChoiceFilter(nodes.filters, 'channel',
+    state.reference.channels.map((item) => ({ value: item.name, label: item.name })),
+    { allLabel: 'Tümü — kanal' });
+  applyChoiceFilter(nodes.filters, 'customerGroup',
+    state.reference.customerGroups.map((item) => ({ value: item.name, label: item.name })),
+    { allLabel: 'Tümü — müşteri grubu' });
   nodes.filters.options('dateField',
     state.reference.dateFields.map((item) => ({ value: item.value, label: item.label })));
   if (payload.stale) {
@@ -299,65 +404,45 @@ async function loadReference() {
 
 // ------------------------------------------------------------------- çizim
 
+/**
+ * Uyarı şeridi — YALNIZ eyleme dönen durumlar, her biri TEK SATIR
+ * (docs/tasarim-sade-magaza.md §3). Ayrıntı satırın `title`ında durur.
+ *
+ * Bilgi kutuları kalktı: "tarama sürüyor" durum satırında ("güncelleniyor…")
+ * ve boş tabloda yazar; "kanıt tek sayfada bitmedi" satırın ödeme rozetinin
+ * ipucundadır. KPI şeridi de kalktı (bkz. `statusText`).
+ */
 function renderTotals() {
   if (!nodes.totals) return;
-  const sum = state.summary || EMPTY_STATE.summary;
-  nodes.totals.replaceChildren(kpiRow([
-    { label: 'Sipariş', value: num(sum.count) },
-    { label: 'Ciro', value: money(sum.revenue), title: 'İptal ve kapalı siparişler hariç' },
-    { label: 'Ortalama sepet', value: money(sum.average) },
-    { label: 'İptal', value: num(sum.canceled), tone: 'muted' },
-  ]));
-  if (state.truncated) {
-    nodes.totals.append(alertBox(
-      'Tarama tavanına ulaşıldı; sayaçlar ve toplamlar EKSİK olabilir. Süzgeci '
-      + 'daraltın ya da modül ayarındaki tarama tavanını yükseltin.', 'warn'));
-  }
-  if (state.partial) {
-    // Sessiz yanlış liste yok: hangi süzgecin neden eksik uygulandığı yazılır.
-    nodes.totals.append(alertBox(
-      'Fatura, gönderi, not ve ödeme durumu mağazanın liste ucunda YOKTUR; bu '
-      + 'süzgeçler için siparişler tek tek okunur ve detay tavanı aşıldı. Listede '
-      + 'eksik satır olabilir — süzgeci daraltın ya da modül ayarındaki '
-      + '`detail_cap` değerini yükseltin.', 'warn'));
-  }
-  renderEvidence();
-}
-
-/**
- * Ödeme kanıtının durumu.
- *
- * Üç ayrı şey söylenir ve karıştırılmaz:
- *  1. Bankaya sorulması gereken satır SAYISI — para havada, iş var.
- *  2. Kanıt kaynaklarından biri okunamadı — "Ödenmedi" yazan satırlar eksik
- *     bilgiyle yazılmış olabilir.
- *  3. Kanıt tek sayfada bitmedi — eski siparişler "Bilinmiyor" kalır.
- */
-function renderEvidence() {
-  const info = { ...EMPTY_STATE.evidence, ...(state.evidence || {}) };
-  info.warnings = info.warnings || [];
+  nodes.totals.replaceChildren();
   if (!state.connected) return;
+  const line = (text, detail = '') => {
+    const box = alertBox(text, 'warn');
+    if (detail) box.title = detail;
+    nodes.totals.append(box);
+  };
+  const info = { ...EMPTY_STATE.evidence, ...(state.evidence || {}) };
   if (info.uncertain) {
-    nodes.totals.append(alertBox(
-      `${num(info.uncertain)} siparişte ÖDEME BELİRSİZ: bankadan kesin yanıt gelmemiş bir `
-      + 'sanal POS denemesi var (unknown / provisioning). Para çekilmiş OLABİLİR — bu '
-      + 'satırlara “Ödenmedi” yazmak müşteriden ikinci kez tahsilat istemeye yol açardı. '
-      + 'Satırlar ayrı renkte işaretli; mutabakat Sanal POS ekranından yapılır ve bitene '
-      + 'kadar toplu kargo bu siparişleri almaz.', 'warn'));
+    // Para havada: "Ödenmedi" yazmak müşteriden ikinci kez tahsilat istetirdi.
+    // Bu siparişler toplu kargoya da girmez (`shipBlock`).
+    line(`${num(info.uncertain)} siparişte ödeme belirsiz — kargolamadan önce bankadan `
+      + 'teyit edin.', 'Bankadan kesin yanıt gelmemiş bir kart ödemesi var; para çekilmiş '
+      + 'olabilir. Kesin sonuç ve provizyon iptali mağaza/banka tarafındadır.');
   }
   if (!info.invoiceOk || !info.posOk) {
-    const missing = [!info.invoiceOk ? 'fatura listesi' : '',
-      !info.posOk ? 'sanal POS denemeleri' : ''].filter(Boolean).join(' ve ');
-    nodes.totals.append(alertBox(
-      `Ödeme kanıtının bir kaynağı okunamadı (${missing})${info.warnings.length
-        ? ` — ${info.warnings.join(' · ')}` : ''}. Ödeme sütunu eksik bilgiyle çizildi: `
-      + 'okunamayan kaynakta tahsilat kaydı olabilir.', 'warn'));
-  } else if (!info.complete) {
-    nodes.totals.append(alertBox(
-      `Ödeme kanıtı tek sayfada bitmedi (${num(info.invoiceRead)} fatura, `
-      + `${num(info.posRead)} POS denemesi okundu). Kanıt penceresinden eski siparişler `
-      + '“Bilinmiyor” kalır — “Ödenmedi” yazmak tahsil edilmiş siparişi ödenmemiş '
-      + 'göstermek olurdu. Tarih aralığını daraltın.', 'info'));
+    line('Ödeme bilgisinin bir kısmı okunamadı; “Ödeme” sütunu eksik olabilir — Yenile.',
+      (info.warnings || []).join(' · '));
+  }
+  if (state.warnings?.length) {
+    // Yan liste okunamadı: o bilgiye dayanan sayaçlar BOŞ (sıfır değil).
+    line('Kargo/fatura bilgisi tam okunamadı; bazı sayaçlar boş — Yenile.',
+      state.warnings.join(' · '));
+  }
+  if (state.truncated) {
+    line('Liste çok büyük; sayılar eksik olabilir — tarih aralığını daraltın.');
+  }
+  if (state.partial && !state.pending) {
+    line('Not/grup süzgeci bazı siparişlerde uygulanamadı — süzgeci daraltın.');
   }
 }
 
@@ -380,81 +465,51 @@ function trackCell(row) {
   return box;
 }
 
+/** Kargoya verme ekranı (tek ev: Kargo Yönetimi). Panel hedefi bilir (K3). */
+function openShipping(row) {
+  openPanel?.('store_shipping', { orderId: row.id, orderNumber: row.orderNo || row.incrementId });
+}
+
+const SHIP_WORDS = { none: 'Kargolanmadı', partial: 'Kısmen kargolandı', full: 'Kargolandı' };
+
 /**
- * Yalnız DETAYDA bulunan bir tutar.
+ * "Kargo" sütunu: kargo hâli + satırın ANA EYLEMİ (docs/tasarim-sade-magaza.md §5).
  *
- * Mağazanın liste ucu ara toplam, KDV, kargo ve indirim taşımıyor; o satırlar
- * sunucudan 0 gelir. `₺0,00` yazmak "bu siparişte KDV yok" demek olurdu —
- * bilgi yoksa `—` yazılır ve neden yazıldığı ipucunda durur.
+ * Eylem siparişin SIRADAKİ işidir: faturası yoksa "Fatura kes", faturalıysa
+ * "Kargoya ver" (Kargo Yönetimi'nde açılır — kargoya vermenin tek evi orası).
+ * Ödeme belirsiz/iade edilmişse düğme yerine NEDEN yazar; renk tek başına
+ * anlam taşımaz. Hâl bilinmiyorsa "Kargolanmadı" UYDURULMAZ, yalnız eylem
+ * durur — Kargo Yönetimi gönderiyi yine kendisi doğrular.
  */
-/**
- * Para hücresi — DEĞER VARSA GÖSTERİLİR, yoksa nedeni söylenir.
- *
- * ESKİDEN SATIRIN SIĞ OLMASI TEK ÖLÇÜTTÜ ve tüm para sütunları `—` oluyordu.
- * Oysa liste ucu `sub_total` ve `grand_total` alanlarını DOLU gönderiyor
- * (canlıda doğrulandı); yalnız kargo/indirim/KDV `null` geliyor. Sonuç:
- * elimizde olan tutar da gizleniyordu ve tablo bir "—" duvarına dönüyordu.
- *
- * Ölçüt artık DEĞERİN KENDİSİ. `null` bilinmiyordur; `0` ise gerçekten sıfır
- * liradır ve öyle yazılır — ikisini aynı göstermek, indirimi olmayan siparişi
- * "indirimi bilinmiyor" diye okutur.
- */
-function detailMoney(row, value) {
-  if (value === null || value === undefined) {
-    const cell = h('span', 'so-sub', '—');
-    cell.title = 'Bu tutar sipariş listesinde gelmiyor; satıra tıklayın, künyede var.';
-    return cell;
+function shipCell(row) {
+  const box = h('span', 'so-cellstack so-ship');
+  if (['canceled', 'closed'].includes(row.status)) {
+    box.append(h('span', 'so-sub', '—'));
+    return box;
   }
-  return money(value);
-}
+  if (row.shipKnown && row.shipmentState !== 'none') {
+    box.append(badge(SHIP_WORDS[row.shipmentState] || row.shipmentLabel,
+      FULFIL_TONES[row.shipmentState] || ''));
+  }
+  if (row.track) box.append(trackCell(row));
+  else if (row.carrier) box.append(clip(h('span', 'so-sub'), row.carrier, 26));
+  if (row.shipKnown && row.shipmentState === 'full') return box;
 
-/** Sayfadaki HİÇBİR satırda değeri olmayan sütun — çizilmesi yer israfıdır. */
-function columnEmpty(rows, key) {
-  return rows.length > 0
-    && rows.every((row) => row[key] === null || row[key] === undefined);
-}
-
-function fulfilCell(row, key) {
-  const box = h('span', 'so-fulfil');
-  if (!row.detailed) {
-    // Sığ satırda fatura/gönderi bilgisi YOKTUR. "Yok" yazmak, faturası
-    // kesilmiş siparişi kesilmemiş göstermek olurdu.
-    const cell = badge('Bilinmiyor', '');
-    cell.title = 'Fatura ve gönderi kaydı yalnız sipariş detayında var; satıra tıklayın.';
-    box.append(cell);
+  const needsInvoice = row.invoiceKnown
+    ? row.invoiceState === 'none' : row.paymentState === 'unpaid';
+  const stop = (event) => event?.stopPropagation?.();   // satır tıklaması çekmeceyi açmasın
+  if (needsInvoice) {
+    box.append(button('Fatura kes', {
+      title: 'Siparişin tamamını faturalar; gerekçe sorulur',
+      onClick: (event) => { stop(event); invoiceOrder(row, []); },
+    }));
+  } else if (row.shipBlock) {
+    box.append(clip(h('span', 'so-why'), row.shipBlock, 34));
   } else {
-    const label = key === 'invoice' ? row.invoiceLabel : row.shipmentLabel;
-    const value = key === 'invoice' ? row.invoiceState : row.shipmentState;
-    const count = key === 'invoice' ? row.invoiceCount : row.shipmentCount;
-    // Renk tek başına anlam taşımaz: rozetin yanında adet yazar.
-    box.append(badge(label, FULFIL_TONES[value] || ''));
-    if (count) box.append(h('span', 'so-sub', `${num(count)} kayıt`));
-  }
-  // TOPLU KARGO NEDEN ALMIYOR — satırın kendisinde. Bu bilgiyi yalnız toplu
-  // işlem diyaloğunda vermek, seçimi yapan kişiye geç kalmış bir açıklamadır.
-  //
-  // `shipNote` BURADA YAZILMAZ, TABLONUN ÜSTÜNDE BİR KEZ YAZILIR. O metin
-  // satıra özel değil, TÜM sığ satırlar için aynı cümledir ("fatura ve kargo
-  // durumu bu satırda yok; önizleme siparişi tek tek doğrular") ve on sekiz
-  // satırda on sekiz kez tekrarlanınca tablonun en geniş sütununu kaplayıp
-  // asıl bilgiyi — kargo firmasını — ekrandan aşağı itiyordu.
-  //
-  // `shipBlock` satırda KALIR: o satıra özeldir ve "bu siparişi neden
-  // seçemiyorum" sorusunun cevabıdır.
-  if (key === 'ship' && row.shipBlock) box.append(h('span', 'so-why', row.shipBlock));
-
-  // KARGO FİRMASI SATIRDA GÖRÜNÜR. Kargo ekranı bunu gösterip sipariş ekranı
-  // göstermiyordu: aynı soruya iki cevap. `carrier` gönderi varsa gerçek
-  // taşıyıcı, yoksa müşterinin checkout'ta seçtiği firmadır.
-  if (key === 'ship' && row.carrier) {
-    const firma = clip(h('span', 'so-sub'), row.carrier, 22);
-    // Seçilen ile gönderilen ayrıştıysa bu SESSİZ KALMAZ: müşteriye bir firma
-    // denip başkasıyla göndermek hem söz ihlali hem fiyat farkıdır.
-    if (row.carrierChosen && row.carrierChosen !== row.carrier) {
-      firma.title = `Müşteri ${row.carrierChosen} seçmişti, ${row.carrier} ile gönderildi.`;
-      firma.classList.add('so-why');
-    }
-    box.append(firma);
+    box.append(button('Kargoya ver', {
+      title: 'Kargo Yönetimi’nde açılır: teklif, etiket ve takip no orada',
+      onClick: (event) => { stop(event); openShipping(row); },
+    }));
   }
   return box;
 }
@@ -476,64 +531,43 @@ function paymentCell(row) {
   if (why) chip.title = why;
   box.append(chip);
   if (row.paymentAttention) {
-    const call = h('span', 'so-why', 'bankayla mutabakat gerekiyor');
+    const call = h('span', 'so-why', 'bankadan teyit edin');
     call.title = why;
     box.append(call);
   }
   return box;
 }
 
+// YEDİ SÜTUN, SİPARİŞ NO ÖNDE (docs/tasarim-sade-magaza.md §5). Ara toplam,
+// kargo, indirim, KDV, kalem sayısı ve fatura hâli çekmecededir: on dört
+// sütun 1440 px'te bile yatay kayıyordu ve sipariş no ekran dışında kalıyordu.
 const COLUMNS = [
-  {
-    key: 'orderNo',
-    label: 'Sipariş',
-    width: 'minmax(0, 1.3fr)',
-    sortable: true,
-    cell: (row) => {
-      const box = h('span', 'so-cellstack');
-      box.append(h('b', 'so-code', row.orderNo),
-        h('span', 'so-sub', short(row.createdAt)));
-      return box;
-    },
-  },
+  { key: 'orderNo', label: 'Sipariş no', width: '118px', sortable: true,
+    cell: (row) => h('b', 'so-code', row.orderNo) },
+  { key: 'createdAt', label: 'Tarih', width: '124px', sortable: true,
+    cell: (row) => short(row.createdAt) },
   {
     key: 'customer',
     label: 'Müşteri',
-    // MÜŞTERİ EN GENİŞ SÜTUNDUR. Canlıda `customer_first_name` ve
-    // `customer_last_name` alanları NULL geliyor; satır e-postaya düşüyor ve
-    // e-posta 30 karakterde kırpılınca geriye "kemal.tu…" kalıyordu — kimin
-    // siparişi olduğu okunamıyordu. Ölçü büyütüldü ve kırpma sınırı e-posta
-    // boyuna göre ayarlandı.
-    width: 'minmax(240px, 3fr)',
+    // Canlıda ad alanları kimi siparişte boş; satır e-postaya düşer. Kırpma
+    // sınırı e-posta boyuna göre — "kemal.tu…" kimin siparişi olduğunu söylemez.
+    width: 'minmax(200px, 2fr)',
     sortable: true,
     cell: (row) => {
       const box = h('span', 'so-cellstack');
       box.append(clip(h('b'), row.customer, 46));
-      const line = h('span', 'so-sub');
-      line.textContent = row.customerGroup ? `${row.customerGroup} · ` : '';
-      line.append(document.createTextNode(row.city || row.email || ''));
-      box.append(line);
+      box.append(h('span', 'so-sub', row.city || row.email || ''));
       return box;
     },
   },
-  { key: 'itemCount', label: 'Kalem', width: '62px', align: 'num' },
-  { key: 'subTotal', label: 'Ara toplam', width: '104px', align: 'num',
-    cell: (row) => detailMoney(row, row.subTotal) },
-  { key: 'shipping', label: 'Kargo', width: '92px', align: 'num',
-    cell: (row) => detailMoney(row, row.shipping) },
-  { key: 'discount', label: 'İndirim', width: '92px', align: 'num',
-    cell: (row) => (row.detailed && !row.discount ? '—' : detailMoney(row, row.discount)) },
-  { key: 'tax', label: 'KDV', width: '92px', align: 'num',
-    cell: (row) => detailMoney(row, row.tax) },
-  { key: 'grandTotal', label: 'Toplam', width: '110px', align: 'num', sortable: true,
+  { key: 'grandTotal', label: 'Tutar', width: '112px', align: 'num', sortable: true,
     cell: (row) => h('b', 'so-total', money(row.grandTotal)) },
   { key: 'paymentLabel', label: 'Ödeme', width: '150px', className: 'wrap',
-    title: 'Fatura kaydı ve sanal POS denemesinden çözülür; kaynağı satırın ipucunda.',
     cell: paymentCell },
   {
     key: 'statusLabel',
     label: 'Durum',
-    width: '124px',
+    width: '128px',
     cell: (row) => {
       const box = h('span', 'so-cellstack');
       box.append(badge(row.statusLabel, row.statusTone));
@@ -541,12 +575,8 @@ const COLUMNS = [
       return box;
     },
   },
-  { key: 'track', label: 'Takip no', width: '150px', cell: trackCell },
-  { key: 'invoiceState', label: 'Fatura', width: '108px',
-    cell: (row) => fulfilCell(row, 'invoice') },
-  { key: 'shipmentState', label: 'Kargo durumu', width: 'minmax(180px, 1fr)', className: 'wrap',
-    title: 'Kargo kaydı ve toplu kargoya uygunluk. Uygun değilse NEDENİ burada yazar.',
-    cell: (row) => fulfilCell(row, 'ship') },
+  { key: 'shipmentState', label: 'Kargo', width: 'minmax(170px, 1.3fr)', className: 'wrap',
+    cell: shipCell },
 ];
 
 function emptyNode() {
@@ -555,6 +585,13 @@ function emptyNode() {
       title: 'Mağazaya ulaşılamadı',
       text: state.error || 'Bağlantı kurulamadı.',
       actions: [button('Tekrar dene', { variant: 'primary', onClick: () => refresh() })],
+    });
+  }
+  if (!state.ready) {
+    // "Tarama daha bitmedi" ile "süzgece uyan sipariş yok" AYRI şeylerdir.
+    return emptyState({
+      title: 'Siparişler yükleniyor',
+      text: 'Liste birkaç saniye içinde kendiliğinden dolar.',
     });
   }
   if (state.chip) {
@@ -569,7 +606,7 @@ function emptyNode() {
   }
   return emptyState({
     title: 'Filtreye uyan sipariş yok',
-    text: 'Süzgeçleri gevşetin ya da temizleyin; temizlenince tüm siparişler görünür.',
+    text: 'Süzgeçleri gevşetin ya da temizleyin.',
     actions: [button('Filtreyi temizle', { onClick: () => nodes.filters.reset() })],
   });
 }
@@ -579,27 +616,8 @@ function renderTable() {
   if (!wrap) return;
   wrap.replaceChildren();
 
-  // SAYFADA HİÇ DEĞERİ OLMAYAN PARA SÜTUNU ÇİZİLMEZ. Liste ucu kargo,
-  // indirim ve KDV alanlarını göndermiyor; üç sütun boyunca on sekiz satır
-  // `—` yazmak, ekranın üçte birini hiçbir şey söylemeyen bir duvara
-  // çeviriyordu. Sütun KALICI OLARAK silinmiyor: uç bir gün bu alanları
-  // göndermeye başlarsa kendiliğinden geri gelir.
-  const bosOlanlar = ['shipping', 'discount', 'tax']
-    .filter((key) => columnEmpty(state.items, key));
-  const columns = COLUMNS.filter((column) => !bosOlanlar.includes(column.key));
-
-  // Gizlenen sütunun nedeni SÖYLENİR: sessizce kaybolan bir sütun,
-  // "KDV nerede" sorusunu doğurur ve kimse cevabını bulamaz.
-  if (bosOlanlar.length) {
-    const adlar = COLUMNS.filter((column) => bosOlanlar.includes(column.key))
-      .map((column) => column.label).join(' · ');
-    wrap.append(hintBox(
-      `${adlar} sütunları gizlendi: sipariş listesi bu tutarları göndermiyor. `
-      + 'Satıra tıklayınca künyede tam döküm var.'));
-  }
-
   nodes.table = dataTable({
-    columns,
+    columns: COLUMNS,
     rows: state.items,
     selectable: true,
     empty: emptyNode(),
@@ -637,31 +655,29 @@ function renderSelectionBar() {
   bar.classList.add('on');
   bar.append(h('b', undefined, `${num(count)} sipariş seçildi`));
   bar.append(h('span', 'kit-spacer'));
+  // En çok üç düğme + "Diğer" menüsü (docs/tasarim-sade-magaza.md §2).
+  //
+  // TOPLU KARGO BURADA YAPILMAZ, TEK EVE DEVREDİLİR. Eskiden bu düğme mağazaya
+  // doğrudan yazıyor ve tek onayda N siparişi "gönderilmiş" işaretliyordu —
+  // paket yola çıkmıyordu (Bagisto kendi kaydını açıyor, etiket alınmıyordu).
+  // Seçim Kargo Yönetimi sihirbazına aktarılır ve orada sipariş sipariş
+  // yürür: her gönderinin desisi ayrı ölçülür, taşıyıcısı ayrı onaylanır.
   bar.append(
-    // TOPLU KARGO BURADA YAPILMAZ, TEK EVE DEVREDİLİR.
-    //
-    // Eskiden bu düğme mağazaya doğrudan yazıyordu ve tek onayda N siparişi
-    // birden "gönderilmiş" işaretliyordu — ama paket yola çıkmıyordu (Bagisto
-    // kendi kaydını açıyor, etiket satın alınmıyordu). Şimdi seçim Kargo
-    // Yönetimi sihirbazına aktarılır ve orada sipariş sipariş yürür.
-    //
-    // SIRAYLA YÜRÜMESİ BİLİNÇLİ: her gönderinin desisi ayrı ölçülür ve
-    // taşıyıcısı ayrı onaylanır. Yanlış desi doğrudan yanlış faturadır ve
-    // toplu iş onu gizler. Hız kaybı gerçektir; karşılığı, ödemediğiniz bir
-    // kargo bedelinin sonradan faturayla gelmemesidir.
-    button(`Seçilenleri Kargo Yönetimi’nde aç${ready.length === count ? '' : ` (${num(ready.length)})`}`, {
+    button(`Kargoya ver${ready.length === count ? '' : ` (${num(ready.length)})`}`, {
       variant: 'primary',
       disabled: ready.length === 0,
       title: ready.length
-        ? `${num(ready.length)} sipariş kargo sihirbazına aktarılır; her biri ayrı onaylanır.`
-        : 'Seçilenlerin hiçbiri kargoya verilebilir durumda değil — nedenler satırlarda yazılı.',
+        ? `${num(ready.length)} sipariş Kargo Yönetimi’nde sırayla kargoya verilir.`
+        : 'Seçilenlerin hiçbiri kargoya verilebilir durumda değil — nedenler aşağıda.',
       onClick: () => openPanel?.('store_shipping', { orderIds: ready.map((row) => row.id) }),
     }),
     button('Fatura kes', { onClick: () => batchDialog('invoice', rows.map((row) => row.id)) }),
-    button('Etiket indir', { onClick: () => downloadLabels() }),
-    button('Kargo manifestosu', {
-      onClick: () => report.run('manifest', { orderIds: state.selection.map(Number) }),
-    }),
+    menuButton('Diğer', [
+      { label: 'Etiket indir', title: 'Alınmış kargo etiketlerini rapor klasörüne indirir',
+        onClick: () => downloadLabels() },
+      { label: 'Kargo manifestosu — PDF', title: 'Teslim tutanağı: sipariş, şehir, takip no',
+        onClick: () => report.run('manifest', { orderIds: state.selection.map(Number) }) },
+    ]),
     button('Seçimi bırak', {
       variant: 'ghost',
       onClick: () => {
@@ -701,37 +717,37 @@ function exportVisible() {
   ]);
   toast(`${num(csvBlob(headers, rows, `siparisler-sayfa-${state.page}`))} satır indirildi.`,
     'good');
-  if (state.items.some((row) => !row.detailed)) {
-    // Sessiz eksik dosya yok: bu CSV mağazanın liste ucundan geliyor ve o uç
-    // kargo firması ile takip numarası taşımıyor. Ödeme durumu ayrı kaynaktan
-    // çözüldüğü için dolu gelir.
-    toast('Bu dosya ekrandaki sayfadan üretildi: kargo firması ve takip no boş '
-      + '(o alanlar yalnız sipariş detayında var). Tam döküm için “⤓ Tümü”.', 'warn');
+  if (state.items.some((row) => !row.shipKnown)) {
+    // Sessiz eksik dosya yok: bu görünümde gönderi kaydı okunmadı, takip no
+    // boş kalır. Ödeme durumu ayrı kaynaktan çözüldüğü için dolu gelir.
+    toast('Takip no bu dosyada boş olabilir; tam liste için Dışa aktar → Tümü.', 'warn');
   }
 }
 
 async function exportAll() {
   const ok = await confirmSimple(nodes.root, {
     title: 'Tüm kayıtları dışa aktar',
-    description: 'Süzgece uyan siparişler mağazadan sayfa sayfa çekilir ve rapor '
-      + 'klasörüne CSV olarak yazılır.',
+    description: 'Süzgece uyan bütün siparişler rapor klasörüne Excel (CSV) dosyası '
+      + 'olarak yazılır.',
     confirmLabel: 'Başlat',
   });
   if (!ok) return;
-  await withBusy('Siparişler taranıyor…', async () => {
+  await withBusy('Dosya hazırlanıyor…', async () => {
     const result = await call(`${BASE}/export`, {
       method: 'POST', body: { filters: currentFilters() },
     });
     toast(`${num(result.rows)} satır yazıldı: ${result.name}`, 'good');
     nodes.status.set(`Dosya: ${result.path}`);
-    if (result.truncated) toast('Tarama tavanına dayandı; dosya eksik olabilir.', 'warn');
+    if (result.truncated) {
+      toast('Liste çok büyük; dosya eksik olabilir — tarih aralığını daraltın.', 'warn');
+    }
   });
 }
 
-async function downloadLabels() {
+async function downloadLabels(orderIds = state.selection) {
   await withBusy('Etiketler indiriliyor…', async () => {
     const result = await api(`${BASE}/labels`, {
-      method: 'POST', body: { orderIds: state.selection.map(Number) },
+      method: 'POST', body: { orderIds: orderIds.map(Number) },
     });
     const files = result.files || [];
     const good = files.filter((item) => !item.error);
@@ -783,19 +799,19 @@ async function openOrder(orderId) {
   const invoiceCap = capability?.('store.invoice.byOrder') || null;
   const auditCap = capability?.('store.audit.for') || null;
 
+  // EN ÇOK BEŞ SEKME (kullanıcı kararı; tasarim-sade-magaza.md). Akraba
+  // bölümler birleşti: ödeme + iade, kargo + fatura, notlar + işlem geçmişi.
   const tabs = [
     { key: 'summary', label: 'Özet' },
     { key: 'items', label: 'Kalemler' },
-    { key: 'payment', label: 'Ödeme' },
+    { key: 'payment', label: 'Ödeme ve iade' },
   ];
-  if (shipmentCap) tabs.push({ key: 'shipping', label: 'Kargo' });
-  if (invoiceCap) tabs.push({ key: 'invoice', label: 'Fatura' });
-  tabs.push({ key: 'returns', label: 'İade' }, { key: 'notes', label: 'Notlar' },
-    { key: 'history', label: 'İşlem geçmişi' });
+  if (shipmentCap || invoiceCap) tabs.push({ key: 'shipping', label: 'Kargo ve fatura' });
+  tabs.push({ key: 'notes', label: 'Notlar ve geçmiş' });
 
   const bar = tabBar(tabs, 'summary', (key) => paint(key));
   bar.badge('items', payload.items.length || undefined);
-  bar.badge('returns', payload.returns.length || undefined);
+  bar.badge('payment', payload.returns.length || undefined);
 
   const head = h('div', 'so-drawer-head');
   const payChip = badge(order.paymentLabel, order.paymentTone);
@@ -804,15 +820,17 @@ async function openOrder(orderId) {
   head.append(
     badge(order.statusLabel, order.statusTone),
     payChip,
-    h('code', 'so-code', order.orderNo),
-    h('span', 'so-sub', `${short(order.createdAt)} · ${order.channel || 'kanal yok'}`),
+    h('span', 'so-sub', short(order.createdAt)),
   );
   const pane = h('div', 'so-pane');
-  box.body.append(head, bar.node, pane);
+  // EN SIK ÜÇ EYLEM EN ÜSTTE, sekmelerden önce: işi yapan kişi aramadan bulsun.
+  box.body.append(head, actionBar(payload), bar.node, pane);
 
   if (payload.warnings && payload.warnings.length) {
-    box.body.insertBefore(
-      alertBox(`Bazı parçalar okunamadı — ${payload.warnings.join(' · ')}`, 'warn'), pane);
+    // Tek satır; ayrıntı (hangi parça, neden) ipucunda.
+    const warn = alertBox('Bazı bilgiler okunamadı; görünen kısım doğrudur.', 'warn');
+    warn.title = payload.warnings.join(' · ');
+    box.body.insertBefore(warn, bar.node);
   }
 
   const context = { payload, forms, shipmentCap, invoiceCap, auditCap };
@@ -821,12 +839,35 @@ async function openOrder(orderId) {
     dropForms();
     pane.replaceChildren();
     ({
-      summary: paintSummary, items: paintItems, payment: paintPayment,
-      shipping: paintShipping, invoice: paintInvoice, returns: paintReturns,
-      notes: paintNotes, history: paintHistory,
+      summary: paintSummary, items: paintItems, payment: paintPaymentTab,
+      shipping: paintShippingTab, notes: paintNotesTab,
     }[key] || paintSummary)(pane, context);
   }
   paint('summary');
+}
+
+function paintPaymentTab(pane, context) {
+  paintPayment(pane, context);
+  paintReturns(pane, context);
+}
+
+/** Kargo ve Fatura başka modüllerin yeteneğidir (K3); yalnız var olan çizilir. */
+function paintShippingTab(pane, { payload, shipmentCap, invoiceCap }) {
+  if (shipmentCap) {
+    const box = h('div');
+    pane.append(card('Kargo', box));
+    paintShipping(box, { payload, shipmentCap });
+  }
+  if (invoiceCap) {
+    const box = h('div');
+    pane.append(card('Fatura', box));
+    paintInvoice(box, { payload, invoiceCap });
+  }
+}
+
+function paintNotesTab(pane, context) {
+  paintNotes(pane, context);
+  paintHistory(pane, context);
 }
 
 function addressCard(title, address) {
@@ -864,7 +905,6 @@ function paintSummary(pane, { payload, shipmentCap, invoiceCap }) {
     ['E-posta', order.email || '—'],
     ['Telefon', order.phone || '—'],
     ['Müşteri grubu', order.customerGroup || '—'],
-    ['Kanal', order.channel || '—'],
     ['Ödeme yöntemi', order.paymentMethod || '—'],
     ['Kupon', order.coupon || '—'],
     ['Kalem / adet', `${num(order.itemCount)} / ${num(order.quantity)}`],
@@ -885,12 +925,6 @@ function paintSummary(pane, { payload, shipmentCap, invoiceCap }) {
       h('b', undefined, rows.length ? `${num(rows.length)} kayıt` : 'yok'));
     digest.append(line);
   }
-  if (closed.length) {
-    digest.append(hintBox(
-      `${closed.map((item) => item[0]).join(' ve ')} sekmesi kapalı: veriyi veren ekran `
-      + `(${closed.map((item) => item[2]).join(', ')}) bu kurulumda yok. Ekran çalışmaya `
-      + 'devam eder; o ekran açılınca sekme kendiliğinden görünür.'));
-  }
 
   pane.append(
     journeyCard(payload, shipmentCap),
@@ -900,7 +934,6 @@ function paintSummary(pane, { payload, shipmentCap, invoiceCap }) {
     card('Toplam dökümü', totals),
   );
   if (closed.length) pane.append(card('Kargo ve fatura özeti', digest));
-  pane.append(actionBar(payload));
 }
 
 /** İki kayıt kümesinin EN ESKİ zaman damgası. ISO metni takvim sırasında dizilir. */
@@ -958,89 +991,85 @@ function journeyCard(payload, shipmentCap) {
   if (order.invoiceState === 'full') done = 1;
   if (done === 1 && order.shipmentState === 'full') done = 2;
 
+  // İptal/kapalı siparişte kalan adımlar "gerçekleşmedi" yazar; ayrıca bir
+  // uyarı kutusu çizilmez (tasarim-sade-magaza.md §3).
   const box = h('div', 'so-journey');
   box.append(stepper(steps, done));
-  if (durdu) {
-    box.append(alertBox(
-      `Sipariş “${order.statusLabel}” durumunda; kalan adımlar gerçekleşmeyecek.`, 'warn'));
-  }
   // İpucu VAR OLAN bir yeri göstermeli: kargo yeteneği yoksa "Kargo sekmesi"
   // diye olmayan bir sekmeye yollamak, arayan kişiyi boşuna dolaştırır.
   return card('Siparişin yolculuğu', box, shipmentCap
-    ? 'teslim bilgisi taşıyıcıdadır — Kargo sekmesi'
-    : 'teslim bilgisi taşıyıcıdadır; bu kurulumda okunamıyor');
+    ? 'teslim bilgisi: Kargo ve fatura sekmesi'
+    : 'teslim bilgisi bu kurulumda okunamıyor');
 }
 
+/**
+ * Çekmecenin tepesindeki eylemler: Fatura kes · Kargoya ver (ya da Etiket
+ * indir) · Durum değiştir; seyrek olanlar "Diğer" menüsünde. Tek mavi düğme:
+ * siparişin SIRADAKİ işi (faturası yoksa fatura, varsa kargo).
+ *
+ * KARGOYA VERME BURADA YAPILMAZ, Kargo Yönetimi'nde açılır. KULLANICININ
+ * KURALI: "farklı yerde 'kargoya ver' olmasın." Bu ekranın eski kargo düğmeleri
+ * Bagisto'nun kendi gönderi kaydını açıyordu: paket yola ÇIKMIYOR, etiket
+ * alınmıyor, müşteriye mesaj gitmiyordu. Gerçek zincir (gönderi aç → teklif →
+ * etiket SATIN AL → takip no → SMS) yalnız orada koşar.
+ *
+ * Durum değiştirme AÇIK (04.09.2026): geçilebilecek durumlar SUNUCUDAN gelir
+ * (`payload.statusTargets`); matrisi burada kopyalamak, ikisi ayrıştığında
+ * olmayan bir seçeneği sunup 422 aldırırdı. Normalde durum TÜRETİLİR ve sonraki
+ * fatura/gönderi elle konan değeri ezebilir — bu, düğmenin ipucunda ve onay
+ * penceresinde yazar.
+ *
+ * İptal geri alınamaz; ayrı izin, süre penceresi ve gerekçe ister. Yıkıcı
+ * eylem olduğu için ön sırada değil, menüdedir (tasarim-sade-magaza.md §5).
+ */
 function actionBar(payload) {
   const order = payload.order;
+  const targets = payload.statusTargets || [];
+  const closedOrder = ['canceled', 'closed'].includes(order.status);
+  const invoiced = order.invoiceState === 'full';
+  const shipped = order.shipmentState && order.shipmentState !== 'none';
   const row = h('div', 'so-actions');
   row.append(
-    button('Fiş yazdır', { onClick: () => report.run('slip', { orderId: order.id }) }),
     button('Fatura kes', {
-      variant: 'primary',
-      disabled: order.invoiceState === 'full',
-      title: order.invoiceState === 'full' ? 'Siparişin tamamı zaten faturalanmış' : '',
+      variant: invoiced || closedOrder ? '' : 'primary',
+      disabled: invoiced || closedOrder,
+      title: invoiced ? 'Siparişin tamamı zaten faturalanmış'
+        : 'Siparişin tamamını faturalar; kısmi fatura Kalemler sekmesinde',
       onClick: () => invoiceOrder(order, payload.items),
     }),
-    // KARGOYA VERME DÜĞMESİ BURADA YOKTUR — bilerek.
-    //
-    // KULLANICININ KURALI: "her şey — mesela sipariş kargoya mı verilecek —
-    // farklı yerde 'kargoya ver' olmasın." Bu ekranda üç ayrı kargo düğmesi
-    // vardı ve üçü de Bagisto'nun kendi gönderi kaydını açıyordu: paket yola
-    // ÇIKMIYORDU, etiket alınmıyordu, müşteriye mesaj gitmiyordu. Üstelik
-    // gövde `{"shipment": {…}}` sarmalıyla gidiyordu ve mağaza onu
-    // reddediyordu (işlemci `source` ile `items`ı gövdenin KÖKÜNDEN okuyor).
-    //
-    // Kargoya vermenin tek evi Kargo Yönetimi'dir: gerçek zincir (gönderi aç
-    // → teklif al → müşterinin ödediği firmayı yeğle → etiket SATIN AL →
-    // takip numarasını yaz → etiket ve faturayı bas → müşteriye SMS) yalnız
-    // orada koşar. Buradaki Kargo sekmesi o gönderinin DURUMUNU gösterir.
-    button('Kargo Yönetimi’nde aç', {
-      title: 'Kargoya verme, etiket ve iptal işlemleri Kargo Yönetimi ekranında yapılır',
-      onClick: () => openPanel?.('store_shipping',
-        { orderId: order.id, orderNumber: order.orderNo || order.incrementId }),
-    }),
-    // AÇILDI (04.09.2026). Bir dönem kapalıydı ve etiketi "kapalı" diyordu:
-    // mağazanın admin API'sinde durumu yazan uç yoktu. BBD tarafında açıldı,
-    // düğme de açıldı. Geçilebilecek durumlar SUNUCUDAN geliyor
-    // (`payload.statusTargets`) — matrisi burada kopyalamak, ikisi
-    // ayrıştığında olmayan bir seçeneği sunup 422 aldırırdı.
+    shipped
+      ? button('Etiket indir', {
+        title: 'Alınmış kargo etiketini rapor klasörüne indirir',
+        onClick: () => downloadLabels([order.id]),
+      })
+      : button('Kargoya ver', {
+        variant: invoiced && !closedOrder ? 'primary' : '',
+        disabled: closedOrder,
+        title: 'Kargo Yönetimi’nde açılır: teklif, etiket ve takip no orada',
+        onClick: () => openShipping(order),
+      }),
     button('Durum değiştir', {
-      disabled: !(payload.statusTargets || []).length,
-      title: (payload.statusTargets || []).length
-        ? 'Durumu elle çeker. Normalde durum fatura/kargo eylemlerinden türetilir; '
-          + 'bu bir istisnadır ve gerekçe denetim kaydına yazılır.'
-        : `“${order.statusLabel || order.status}” nihai bir durumdur; elle geçiş yok.`,
-      onClick: () => changeStatus(order, payload.statusTargets || []),
+      disabled: !targets.length,
+      title: targets.length
+        ? 'Durumu elle değiştirir; sonraki fatura ya da gönderi bu değeri değiştirebilir'
+        : `“${order.statusLabel || order.status}” son durumdur; değiştirilemez.`,
+      onClick: () => changeStatus(order, targets),
     }),
-    button('İptal et', {
-      variant: 'danger',
-      disabled: Boolean(payload.cancelBlock),
-      title: payload.cancelBlock || 'Geri alınamaz; ayrı izin ve gerekçe ister',
-      onClick: () => cancelOrder(order),
-    }),
+    menuButton('Diğer', [
+      { label: 'Sipariş fişi — PDF', onClick: () => report.run('slip', { orderId: order.id }) },
+      shipped ? { label: 'Kargo Yönetimi’nde aç', onClick: () => openShipping(order) } : null,
+      { label: 'Siparişi iptal et',
+        disabled: Boolean(payload.cancelBlock),
+        title: payload.cancelBlock || 'Geri alınamaz; gerekçe ister',
+        onClick: () => cancelOrder(order) },
+    ]),
   );
   const box = h('div', 'so-actionbox');
   box.append(row);
-  if (payload.cancelBlock) box.append(alertBox(payload.cancelBlock, 'info'));
-  if (order.shipBlock) {
-    // TOPLU kargo bu siparişi almaz; tek sipariş yine kargolanabilir. Kararı
-    // veren kişi burada siparişin tamamını görüyor — düğmeyi kilitlemek yerine
-    // nedeni söylemek doğru olan: "belirsiz ödeme" bazen gerçekten tahsilattır.
-    box.append(alertBox(
-      `Toplu kargoya verme bu siparişi ALMAZ — ${order.shipBlock} Yine de kargoya vermek `
-      + 'buradan mümkündür; kararı siz verirsiniz ve gerekçe denetim kaydına yazılır.',
-      order.paymentAttention ? 'warn' : 'info'));
-  }
-  box.append(alertBox(
-    'Durum normalde TÜRETİLİR: fatura kesilince “Hazırlanıyor”, kargolanınca '
-    + '“Tamamlandı”. “Durum değiştir” bunun üstüne bilinçli bir istisna koyar ve '
-    + 'sonraki bir fatura ya da gönderi o değeri EZEBİLİR — kalıcı mühür değildir. '
-    + 'İptal buradan yapılmaz: ayrı izin ve süre penceresi ister.', 'info'));
-  box.append(hintBox(
-    'Bu ekran siparişin kendisini yönetir. Etiket satın alma Kargo Yönetimi\'nin, '
-    + 'para iadesi İadeler\'in, fatura PDF\'i Fatura ekranının işidir; buradan yalnız '
-    + 'tetiklenir.'));
+  // Toplu kargo bu siparişi ALMAZ — nedeni tek satır (ödeme belirsiz, fatura
+  // yok…). Tek sipariş yine Kargo Yönetimi'nden gönderilebilir: kararı veren
+  // kişi burada siparişin tamamını görüyor.
+  if (order.shipBlock && !closedOrder) box.append(alertBox(order.shipBlock, 'warn'));
   return box;
 }
 
@@ -1080,7 +1109,8 @@ function paintItems(pane, { payload }) {
 
   const partial = h('div', 'so-actions');
   partial.append(
-    button('Seçili kalemleri faturala', {
+    button('Kısmi fatura kes', {
+      title: 'Faturalanacak adetleri siz seçersiniz',
       onClick: () => invoiceOrder(order, rows, { partial: true }),
     }),
     // "Seçili kalemleri kargoya ver" KALDIRILDI ve yerine bir şey konmadı.
@@ -1091,10 +1121,9 @@ function paintItems(pane, { payload }) {
     // Kargo Yönetimi sihirbazının işidir: orada kalan adet hesaplanır,
     // desi ölçülür ve etiket gerçekten satın alınır.
   );
-  pane.append(table.node, partial, hintBox(
-    'Kalem iptali ve kısmi iade İadeler ekranının işidir: para hareketi orada, ayrı '
-    + 'izinle ve ayrı onayla yapılır. Buradan yalnız kısmi FATURA ve kısmi KARGO '
-    + 'yapılabilir.'));
+  // Kalem iptali ve kısmi iade İade Yönetimi'nin işidir (para hareketi, ayrı
+  // izin); burada yalnız kısmi FATURA vardır.
+  pane.append(table.node, partial);
 }
 
 /** Kalem adedi soran küçük diyalog. Kısmi fatura/kargo bunu kullanır. */
@@ -1202,9 +1231,8 @@ async function invoiceOrder(order, items, { partial = false } = {}) {
 async function cancelOrder(order) {
   const reason = await askReason({
     title: 'Siparişi iptal et',
-    description: `${order.orderNo} · ${money(order.grandTotal)}. İPTAL GERİ ALINAMAZ: `
-      + 'stok geri döner, sipariş kapanır ve müşteri bilgilendirilir. Zaten tahsil '
-      + 'edilmiş tutar için ayrıca İadeler ekranından iade açılmalıdır.',
+    description: `${order.orderNo} · ${money(order.grandTotal)}. Geri alınamaz; tahsil `
+      + 'edilmiş para için İade Yönetimi’nden iade açın.',
     confirmLabel: 'Siparişi iptal et',
   });
   if (!reason) return;
@@ -1246,8 +1274,8 @@ async function changeStatus(order, targets) {
     card.append(
       h('h3', 'kit-dialog-title', `Durum değiştir — ${order.orderNo}`),
       h('p', 'kit-dialog-text',
-        `Şu an: ${order.statusLabel || order.status}. Yeni durum seçin. Sonraki bir `
-        + 'fatura ya da gönderi bu değeri ezebilir; kalıcı mühür değildir.'),
+        `Şu an: ${order.statusLabel || order.status}. Sonraki fatura ya da gönderi `
+        + 'bu değeri değiştirebilir.'),
       select,
       h('div', 'kit-dialog-actions'),
     );
@@ -1268,8 +1296,7 @@ async function changeStatus(order, targets) {
   const reason = await askReason({
     title: `Durumu “${hedef?.label || secim}” yap`,
     description: `${order.orderNo} · ${order.statusLabel || order.status} → `
-      + `${hedef?.label || secim}. Durum normalde fatura ve kargo eylemlerinden `
-      + 'türetilir; bu elle konan bir istisnadır ve gerekçe denetim kaydına yazılır.',
+      + `${hedef?.label || secim}. Gerekçe işlem geçmişine yazılır.`,
     confirmLabel: 'Durumu değiştir',
   });
   if (!reason) return;
@@ -1306,7 +1333,7 @@ function paintPayment(pane, { payload }) {
   for (const [label, value] of [
     ['Yöntem', order.paymentMethod || '—'],
     ['Durum', order.paymentLabel],
-    ['Kanıt kaynağı', order.paymentSource || '—'],
+    ['Bilgi kaynağı', order.paymentSource || '—'],
     ['Fatura kaydı', evidence.invoiceCount
       ? `${num(evidence.invoiceCount)} kayıt · ${(evidence.invoiceStates || []).join(', ')}`
       : 'yok'],
@@ -1321,16 +1348,21 @@ function paintPayment(pane, { payload }) {
     line.append(h('span', 'so-sub', label), h('b', undefined, String(value)));
     facts.append(line);
   }
-  pane.append(card('Ödeme', facts));
-  if (order.paymentNote) {
-    pane.append(alertBox(order.paymentNote, order.paymentAttention ? 'warn' : 'info'));
+  // Ödeme durumunun gerekçesi (hangi kayıttan, neden) kartın ipucundadır;
+  // ekranda yalnız eyleme dönen tek satır durur.
+  const paymentCard = card('Ödeme', facts);
+  if (order.paymentNote) paymentCard.title = order.paymentNote;
+  pane.append(paymentCard);
+  if (order.paymentAttention) {
+    const warn = alertBox('Ödeme belirsiz — kargolamadan önce bankadan teyit edin.', 'warn');
+    warn.title = order.paymentNote || '';
+    pane.append(warn);
   }
 
   if (!payload.transactions.length) {
     pane.append(emptyState({
-      title: 'POS işlemi kaydı yok',
-      text: 'Bu sipariş için sanal POS işlemi bulunamadı. Havale/kapıda ödeme '
-        + 'siparişlerinde bu normaldir.',
+      title: 'Kart işlemi yok',
+      text: 'Havale ya da kapıda ödemede bu normaldir.',
     }));
   } else {
     pane.append(dataTable({
@@ -1345,11 +1377,6 @@ function paintPayment(pane, { payload }) {
       dense: true,
     }).node);
   }
-  pane.append(hintBox(
-    'Ödeme durumu Bagisto\'da bir alan DEĞİLDİR. Üç kaynaktan çözülür: siparişin '
-    + 'faturalanan tutarı, fatura kaydının durumu ve sanal POS denemesinin durumu. '
-    + '“Belirsiz” bir başarısızlık değildir: bankadan yanıt gelmemiştir ve para çekilmiş '
-    + 'olabilir. 3D sonucu, taksit ve mutabakat Sanal POS ekranındadır.'));
 }
 
 // ------------------------------------------- yetenekten beslenen sekmeler
@@ -1368,7 +1395,7 @@ async function paintCapability(pane, provider, { orderId, empty }) {
   try {
     result = await provider(orderId);
   } catch (error) {
-    pane.replaceChildren(alertBox(error.message || 'Yetenek yanıt vermedi.', 'bad'));
+    pane.replaceChildren(alertBox(error.message || 'Bilgi alınamadı.', 'bad'));
     return;
   }
   pane.replaceChildren();
@@ -1399,8 +1426,7 @@ function paintShipping(pane, { payload, shipmentCap }) {
       // düğme bu ekrandan kaldırılmıştı (gövde sarmalı yüzünden paket yola
       // çıkmadan müşteriye SMS tetikliyordu). Var olmayan bir düğmeyi tarif
       // eden boş durum, kullanıcıyı ekranda olmayan bir şeyi aramaya yollar.
-      text: 'Bu sipariş henüz kargoya verilmedi. Kargoya verme, etiket ve iptal '
-        + 'işlemleri Kargo Yönetimi ekranında yapılır — aşağıdaki düğme oraya götürür.',
+      text: 'Henüz kargoya verilmedi — üstteki “Kargoya ver” ile başlatın.',
     },
   });
 }
@@ -1410,7 +1436,7 @@ function paintInvoice(pane, { payload, invoiceCap }) {
     orderId: payload.order.id,
     empty: {
       title: 'Fatura yok',
-      text: 'Bu siparişin faturası kesilmemiş. Özet sekmesinden “Fatura kes”.',
+      text: 'Faturası kesilmemiş — üstteki “Fatura kes” ile kesin.',
     },
   });
 }
@@ -1438,10 +1464,7 @@ function paintReturns(pane, { payload }) {
   // künye çökmemeli) ama kullanıcıya "yayınlanmadı" diye yanlış bir gerekçe
   // göstermiyor. Gerçek sebep künyenin uyarı listesinde zaten yazılı.
   if (!payload.returnsAvailable) {
-    pane.append(alertBox(
-      'İade/değişim talepleri (RMA) mağazadaki BBD paketinden gelir; bu talepler '
-      + 'şu anda okunamadı. Siparişin geri kalanı doğrudur — sebep yukarıdaki '
-      + 'uyarılarda yazılıdır.', 'warn'));
+    pane.append(alertBox('İade talepleri şu an okunamadı.', 'warn'));
   } else if (!payload.returns.length) {
     pane.append(emptyState({
       title: 'İade talebi yok',
@@ -1459,10 +1482,8 @@ function paintReturns(pane, { payload }) {
       dense: true,
     }).node));
   }
-
-  pane.append(hintBox(
-    'Para iadesi bu ekrandan YAPILMAZ: iade tutarı hesabı ve para hareketi İadeler '
-    + 'ekranının işidir, ayrı izin ister.'));
+  // Para iadesi bu ekrandan YAPILMAZ: tutar hesabı ve para hareketi İade
+  // Yönetimi'nin işidir, ayrı izin ister.
 }
 
 // -------------------------------------------------------------- notlar
@@ -1477,8 +1498,7 @@ async function paintNotes(pane, { payload, forms }) {
       { key: 'comment', label: 'Not', type: 'textarea', wide: true, maxLength: 2000,
         required: true, placeholder: 'Siparişle ilgili not…' },
       { key: 'notify', label: 'Müşteriye e-posta gönder', type: 'checkbox',
-        hint: 'AÇIKSA müşteriye posta gider ve geri alınamaz. İç not yazıyorsanız kapalı '
-          + 'bırakın.' },
+        hint: 'Açıksa müşteriye e-posta gider (geri alınamaz).' },
     ],
     value: { comment: '', notify: false },
   });
@@ -1548,23 +1568,17 @@ async function paintHistory(pane, { payload, auditCap }) {
   const orderId = payload.order.id;
   const local = h('div');
   local.append(skeletonRows(4, 3));
-  pane.append(card('Kontrol Merkezi işlemleri', local,
-    'Gerekçeleriyle — bu iz yalnız burada tutulur'));
+  pane.append(card('İşlem geçmişi', local, 'gerekçeleriyle'));
 
   // Mağazanın KENDİ denetim kaydı (UDİT) ayrı bir modülün yeteneğidir. Yoksa
   // bu sekme yine çalışır: bizim yerel izimiz her koşulda buradadır.
   if (auditCap) {
     const remote = h('div');
-    pane.append(card('Mağaza denetim kaydı', remote, 'store.audit.for'));
+    pane.append(card('Mağaza kaydı', remote));
     paintCapability(remote, auditCap, {
       orderId,
       empty: { title: 'Mağaza kaydı yok', text: 'Mağaza bu sipariş için kayıt tutmamış.' },
     });
-  } else {
-    pane.append(hintBox(
-      'Mağazanın kendi denetim kaydı (UDİT) burada gösterilmiyor: o veriyi veren ekran '
-      + 'bu kurulumda yok. Aşağıdaki iz Kontrol Merkezi üzerinden yapılan işlemlerin '
-      + 'izidir ve gerekçeyi tutar.'));
   }
 
   let result;
@@ -1577,8 +1591,8 @@ async function paintHistory(pane, { payload, auditCap }) {
   local.replaceChildren();
   if (!result.items.length) {
     local.append(emptyState({
-      title: 'Bu siparişe bu ekrandan dokunulmadı',
-      text: 'Kontrol Merkezi üzerinden yapılan her yazma gerekçesiyle burada listelenir.',
+      title: 'Henüz işlem yok',
+      text: 'Bu ekrandan yapılan her işlem gerekçesiyle burada görünür.',
     }));
     return;
   }
@@ -1641,10 +1655,11 @@ function batchDialog(kind, orderIds) {
 
   const title = kind === 'ship' ? 'Toplu kargoya verme' : 'Toplu fatura kesme';
   dialog.append(h('h3', 'kit-dialog-title', title));
+  // Sıra: önizleme (kim atlanacak, neden) → KURU PROVA (mağazaya hiçbir şey
+  // yazılmaz) → gerekçeli tek onay. Kuru prova görülmeden gerçek işlem
+  // yapılmaz; kural sunucuda da uygulanır (K9).
   dialog.append(h('p', 'kit-dialog-text',
-    `${num(ids.length)} sipariş seçili. Sıra: önizleme (kim atlanacak, neden) → KURU PROVA `
-    + '(mağazaya hiçbir şey yazılmaz, ne olacağı satır satır görünür) → gerekçeli tek onay. '
-    + 'Kuru prova görülmeden gerçek işlem yapılmaz; kural sunucuda da uygulanır.'));
+    `${num(ids.length)} sipariş seçili. Önce önizleme, sonra kuru prova, sonra onay.`));
 
   const close = () => {
     document.removeEventListener('keydown', onKey);
@@ -1695,15 +1710,10 @@ function batchDialog(kind, orderIds) {
         `${preview.missing.length} sipariş okunamadı ve önizlemeye girmedi.`, 'warn'));
     }
     if (kind === 'ship') {
-      result.append(card('Gönderi bilgisi', carrier.node,
-        'Taşıyıcı kuru provada seçilir ve onayda DEĞİŞTİRİLEMEZ'));
       // Desi uydurulmaz: hesabı ürün ölçülerine dayanır ve sahibi Kargo
       // Yönetimi ekranıdır; sipariş gövdesi o ölçüyü taşımaz.
-      result.append(hintBox(
-        'Toplam desi burada GÖSTERİLMEZ: desi ürünün en/boy/yükseklik ölçüsünden hesaplanır, '
-        + 'sipariş kaydı bu ölçüyü taşımaz ve hesabın sahibi Kargo Yönetimi ekranıdır. '
-        + 'Buradaki toplamlar adet ve tutardır. Etiket SATIN ALINMAZ; yalnız mağazada '
-        + 'gönderi kaydı açılır.'));
+      result.append(card('Gönderi bilgisi', carrier.node,
+        'taşıyıcı onayda değiştirilemez'));
     }
 
     actions.replaceChildren(
@@ -1811,9 +1821,8 @@ function batchDialog(kind, orderIds) {
 
     if (dryRun) {
       result.append(alertBox(
-        'KURU PROVA: mağazaya hiçbir şey yazılmadı. Yukarıdaki satırlar gerçek işlemde ne '
-        + `olacağını gösterir${failed ? '; başarısız satırlar gerçek işlemde de atlanır' : ''}. `
-        + 'Onaylarsanız aynı liste, aynı taşıyıcıyla uygulanır.', 'info'));
+        'Kuru prova: henüz hiçbir şey yazılmadı. Onaylarsanız aynı liste uygulanır'
+        + `${failed ? '; başarısız satırlar atlanır' : ''}.`, 'info'));
       actions.replaceChildren(
         button('Vazgeç', { onClick: close }),
         button(`${num(applied)} siparişe gerçekten uygula`, {
@@ -1829,11 +1838,9 @@ function batchDialog(kind, orderIds) {
       + (failed ? ` · ${num(failed)} başarısız (nedenleri listede)` : ''),
     failed ? 'warn' : 'good');
     if (failed) {
+      // Başarılılar yeniden denenmemeli: ikinci gönderi ikinci kargo demektir.
       result.append(alertBox(
-        `${num(applied)} sipariş BAŞARIYLA işlendi, ${num(failed)} sipariş işlenemedi. `
-        + 'Başarılı olanlar yeniden denenmemeli: ikinci gönderi ikinci kargo demektir. '
-        + 'Başarısızları düzelttikten sonra yalnız onları seçip yeni bir toplu iş açın.',
-        'warn'));
+        `${num(failed)} sipariş işlenemedi — yalnız onları seçip yeniden deneyin.`, 'warn'));
     }
     actions.replaceChildren(button('Kapat', { onClick: close }));
     nodes.table?.clearSelection();
@@ -1866,8 +1873,7 @@ async function renderSettings(host) {
         hint: '{no} sipariş numarası · {id} iç kimlik · {year} yıl. Örnek: BBD-{year}-{no}' },
       { key: 'cancelWindowHours', label: 'İptal süresi (saat)', type: 'number', min: 0,
         max: 8760,
-        hint: '0 = sınırsız. Bundan eski sipariş bu ekrandan iptal EDİLEMEZ; kural '
-          + 'sunucuda da uygulanır.' },
+        hint: '0 = sınırsız. Bundan eski sipariş bu ekrandan iptal edilemez.' },
       { key: 'lateDays', label: 'Gecikme eşiği (gün)', type: 'number', min: 1, max: 90,
         hint: 'Bu kadar gündür kargolanmayan sipariş “Geciken” çipine düşer.' },
     ],
@@ -1956,13 +1962,11 @@ async function renderSettings(host) {
     card('Sipariş akışı', generalForm.node, 'Yalnız Kontrol Merkezi\'ni etkiler'),
     card('Durum adları', nameForm.node, 'Boş bırakılan durum varsayılan adıyla görünür'),
     actions,
-    card('Müşteri aşama SMS\'i', await stageSmsBox(), 'Tetikleyici burada, metin Bildirimler\'de'),
-    card('Mağazanın sipariş ayarları', storeBox, 'Salt okunur'),
-    hintBox(
-      'Mağaza ayarları buradan YAZILMAZ: anahtar adları Bagisto sürümüne göre '
-      + 'değişiyor ve bulunmayan bir anahtara yazmak `core_config` içinde etkisiz bir '
-      + 'satır açar — kullanıcı ayarı değiştirdiğini sanır. Ayrı bir “Mağaza Ayarları” '
-      + 'ekranı da yoktur: her ayar onu kullanan ekranda durur.'),
+    card('Müşteri aşama SMS\'i', await stageSmsBox(), 'metin Bildirimler ekranında'),
+    // Mağaza ayarları buradan YAZILMAZ: anahtar adları Bagisto sürümüne göre
+    // değişiyor ve bulunmayan anahtara yazmak `core_config` içinde etkisiz bir
+    // satır açar — kullanıcı ayarı değiştirdiğini sanır.
+    card('Mağazanın sipariş ayarları', storeBox, 'salt okunur'),
   );
 }
 
@@ -1987,7 +1991,7 @@ async function stageSmsBox() {
 
   if (!state_.available) {
     // SESSİZ GEÇİLMEZ: müşteriye neden haber gitmediği ekranda yazar.
-    box.append(alertBox(state_.error || 'Aşama SMS\'i bu kurulumda kapalı.', 'warn'));
+    box.append(alertBox(state_.error || 'Müşteri SMS\'i kapalı.', 'warn'));
     return box;
   }
 
@@ -1995,21 +1999,24 @@ async function stageSmsBox() {
   box.append(h('div', 'so-sub', open.length
     ? `Açık aşamalar: ${open.map((key) => SWEEP_LABELS[key] || key).join(', ')}`
     : 'Hiçbir aşama açık değil. Aşamalar Bildirimler → Müşteri SMS’i sekmesinden açılır.'));
-  box.append(h('div', 'so-sub',
-    `Yeni sipariş taraması penceresi: ${state_.lookbackDays || 0} gün `
-    + '(0 = pencere yok). Pencere olmadan ilk tarama tüm geçmişi “yeni” sayar.'));
+  // Gün penceresi olmadan ilk kontrol tüm geçmişi "yeni" sayardı.
+  box.append(h('div', 'so-sub', state_.lookbackDays
+    ? `“Siparişiniz alındı” SMS'i son ${state_.lookbackDays} günün siparişlerine gider.`
+    : '“Siparişiniz alındı” SMS’inde gün sınırı yok.'));
   if (state_.dryRun) {
-    box.append(alertBox(
-      'KURU PROVA AÇIK (modules.store_orders.stage_sms_dry_run): bu ekrandan gerçek SMS '
-      + 'çıkmaz. Diğer iki fren Bildirimler ve platform ayarındadır.', 'warn'));
+    // Üç frenin bu ekrandaki katmanı: `stage_sms_dry_run` modül ayarı.
+    const warn = alertBox('Deneme kipi açık: bu ekrandan gerçek SMS çıkmaz.', 'warn');
+    warn.title = 'Modül ayarı stage_sms_dry_run. Diğer iki fren Bildirimler ve platform '
+      + 'ayarındadır.';
+    box.append(warn);
   }
 
   const note = h('div', 'so-sub', '');
   const actions = h('div', 'so-actions');
   for (const stage of ['order_placed', 'delivered']) {
-    actions.append(button(`${SWEEP_LABELS[stage]} — şimdi tara`, {
-      title: 'Aynı işi zamanlanmış görev de yapar; tekrar engeli sipariş başına '
-        + 'çalıştığı için ikisi çakışsa da müşteri iki kez rahatsız olmaz.',
+    actions.append(button(`${SWEEP_LABELS[stage]}: SMS'leri şimdi gönder`, {
+      title: 'Aynı işi on dakikada bir otomatik görev de yapar; aynı siparişe ikinci '
+        + 'SMS gitmez.',
       onClick: () => runSweep(stage, note),
     }));
   }
@@ -2018,19 +2025,18 @@ async function stageSmsBox() {
 }
 
 async function runSweep(stage, note) {
-  note.textContent = 'Taranıyor…';
+  note.textContent = 'Gönderiliyor…';
   note.classList.remove('bad');
   const reason = await askReason({
-    title: `${SWEEP_LABELS[stage]} için SMS taraması`,
-    description: 'Tarama, açık aşamalar için müşteriye SMS gönderilmesini ister. '
-      + 'Gerçek gönderim yalnız üç frenin üçü de kapalıysa çıkar.',
-    confirmLabel: 'Tara',
+    title: `${SWEEP_LABELS[stage]}: SMS gönder`,
+    description: 'Açık aşamalar için henüz haber verilmemiş müşterilere SMS gider.',
+    confirmLabel: 'Gönder',
   });
   if (!reason) {
     note.textContent = '';
     return;
   }
-  await withBusy('Aşama SMS\'i taranıyor…', async () => {
+  await withBusy('SMS\'ler gönderiliyor…', async () => {
     // `dryRun: false` = YALNIZ bu ekranın freni açılır. Modül ayarı ve platform
     // ayarı kapanmadan tek bir gerçek SMS çıkmaz; sonuç satırı ne olduğunu yazar.
     const result = await call(`${BASE}/stage-sms/sweep`, {
@@ -2047,7 +2053,7 @@ async function runSweep(stage, note) {
       toast(failed.map((row) => `${row.orderNo || row.orderId}: ${row.note}`).join(' · '),
         'warn');
     }
-    if (result.truncated) toast('Tavan yakalandı; kalanlar sonraki taramada.', 'info');
+    if (result.truncated) toast('Kalanlar bir sonraki turda gönderilecek.', 'info');
   });
 }
 
@@ -2085,23 +2091,31 @@ export function mount(root, ctx) {
     { key: 'settings', label: 'Ayarlar' },
   ], 'list', (key) => showView(key));
 
+  // SADE KİP (docs/tasarim-sade-magaza.md §1-2): görünür süzgeç yalnız arama ve
+  // tarih; Durum (çipler zaten durumu söylüyor), Ödeme, Grup, Tarih alanı,
+  // Tutar, Ödeme yöntemi, Kargo firması, Şehir, Kupon ve beş anahtar
+  // "Filtreler" arkasında katlanır — dolu olanı düğme kendisi sayar. Tek
+  // seçenekli Kanal/Grup kutusu hiç çizilmez (`loadReference`).
   nodes.filters = filterBar({
+    compact: true,
     fields: [
-      { kind: 'search', key: 'q', width: '250px',
-        placeholder: 'Sipariş no, müşteri, e-posta, telefon, takip no' },
+      { kind: 'search', key: 'q', width: '260px', primary: true,
+        placeholder: 'Sipariş no, müşteri, e-posta, takip no' },
+      // Varsayılan aralık BOŞ: hazır bir "son 7 gün" süzgeci, ekranı ilk açan
+      // kişiden eski siparişleri sessizce gizlerdi. Üç hazır aralık yeter.
+      { kind: 'dateRange', key: 'range', label: 'Tarih', start: '', end: '', primary: true,
+        presets: RANGE_PRESETS.filter((preset) => ['today', 'week', 'month']
+          .includes(preset.key)) },
       { kind: 'select', key: 'status', label: 'Durum',
         options: [{ value: '', label: 'Tümü — durum' }] },
       { kind: 'select', key: 'paymentState', label: 'Ödeme',
         options: [{ value: '', label: 'Tümü — ödeme' }] },
-      { kind: 'select', key: 'channel', label: 'Kanal',
+      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true,
         options: [{ value: '', label: 'Tümü — kanal' }] },
-      { kind: 'select', key: 'customerGroup', label: 'Grup',
+      { kind: 'select', key: 'customerGroup', label: 'Grup', hidden: true,
         options: [{ value: '', label: 'Tümü — müşteri grubu' }] },
       { kind: 'select', key: 'dateField', label: 'Tarih alanı',
         options: [{ value: 'created', label: 'Sipariş tarihi' }] },
-      // Varsayılan aralık BOŞ: hazır bir "son 7 gün" süzgeci, ekranı ilk açan
-      // kişiden eski siparişleri sessizce gizlerdi.
-      { kind: 'dateRange', key: 'range', label: 'Aralık', start: '', end: '' },
       { kind: 'numRange', key: 'total', label: 'Tutar', money: true },
       { kind: 'search', key: 'paymentMethod', width: '140px', placeholder: 'Ödeme yöntemi' },
       { kind: 'search', key: 'carrier', width: '130px', placeholder: 'Kargo firması' },
@@ -2115,21 +2129,34 @@ export function mount(root, ctx) {
     ],
     onChange: () => refresh({ page: 1 }),
     actions: [
-      button('Yenile', { onClick: () => refresh() }),
-      button('⤓ Görünen', { title: 'Ekrandaki sayfayı CSV indir', onClick: exportVisible }),
-      button('⤓ Tümü', { title: 'Süzgece uyanları rapor klasörüne yaz', onClick: exportAll }),
-      button('Liste raporu', { onClick: () => report.run('list', { filters: currentFilters() }) }),
+      button('Yenile', {
+        variant: 'ghost',
+        title: 'Listeyi ve sayaçları mağazadan yeniden okur',
+        onClick: () => refresh({ fresh: true }),
+      }),
+      menuButton('Dışa aktar', [
+        { label: 'Görünen — Excel',
+          title: 'Ekrandaki sayfayı Excel ile açılan CSV olarak indirir',
+          onClick: exportVisible },
+        { label: 'Tümü — Excel',
+          title: 'Süzgece uyan bütün siparişleri rapor klasörüne yazar',
+          onClick: exportAll },
+        { label: 'Liste raporu — PDF',
+          title: 'Süzgece uyan siparişlerin yazdırılabilir listesi',
+          onClick: () => report.run('list', { filters: currentFilters() }) },
+      ], { title: 'Excel ya da yazdırılabilir PDF olarak indir' }),
     ],
   });
 
   nodes.chips = chipRow(CHIPS, null, (key) => applyChip(key));
+  nodes.chips.counts({});        // sayaç gelene kadar BOŞ — "0" uydurulmaz
   nodes.status = statusLine();
   nodes.totals = h('div', 'so-totals');
   nodes.selbar = h('div', 'so-selbar');
   nodes.tableWrap = h('div', 'so-table');
   nodes.pager = pager({
     total: 0, page: 1, size: 50,
-    onChange: ({ page, size }) => refresh({ page, size }),
+    onChange: ({ page, size }) => refresh({ page, size, paging: true }),
   });
   // Tek gövde kabı; sekme değişince İÇERİĞİ değişir. İki ayrı kap tutup
   // `replaceChild` yapmak, kaydırma konumunu ve düğüm kimliklerini kaybettiriyor.
@@ -2159,8 +2186,8 @@ export function mount(root, ctx) {
   // DERİN BAĞLANTI. Kabuk `ctx.payload`'ı geçiriyor ama bu panel okumuyordu:
   // Kargo ekranındaki "Siparişler'de aç" düğmesi listeyi açıyor, ARANAN
   // siparişi açmıyordu ve kullanıcı aramayı baştan yapıyordu. Süzgeç alanı
-  // sipariş no, müşteri, e-posta, telefon ve takip no üzerinde çalıştığı için
-  // hangi künye gelirse gelsin tek alan yeter.
+  // sipariş no, müşteri, e-posta ve takip no üzerinde çalıştığı için hangi
+  // künye gelirse gelsin tek alan yeter.
   const hedef = ctx.payload || {};
   const anahtar = String(hedef.orderNumber || hedef.trackingNo || hedef.orderId || '').trim();
   if (anahtar) nodes.filters.set('q', anahtar);
@@ -2170,6 +2197,7 @@ export function mount(root, ctx) {
   loadReference().then(() => refresh());
 
   return () => {
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
     nodes.filters?.destroy();          // arama alanı ve takvim global dinleyici tutar
     settingsForms.forEach((form) => form.destroy());
     settingsForms = [];

@@ -246,8 +246,12 @@ async def test_canli_kanit_iki_liste_isteginde_toplanir() -> None:
     api.attempt_payload = {"items": [dict(POS_DENEMESI)], "meta": {"total": 1}}
     result = await _service(api).orders(filters={"chip": "today", "today": "2026-08-13"})
     assert result["items"][0]["paymentLabel"] == "Ödendi"
-    assert len(api.args_of("invoices")) == 1
+    # KANIT tek sayfadır; ortak tarama ise fatura listesinin TAMAMINI ayrıca
+    # okur (`all_pages`). İkisi ayrı sayılır: kanıt yine TEK istek.
+    kanit = [kw for kw in api.used("invoices") if not kw["all_pages"]]
+    assert len(kanit) == 1
     assert len(api.args_of("bbd_payment_attempts")) == 1
+    assert api.args_of("order") == []              # sipariş başına istek YOK
     # Sıralama İSTENİR ama uygulandığı VERİDEN doğrulanır (Laravel bilinmeyen
     # parametreyi sessizce yok sayar).
     assert api.args_of("invoices")[0][0] == {"sort": "id", "order": "desc"}
@@ -275,14 +279,16 @@ def test_sehir_liste_satirinda_location_alanindan_gelir() -> None:
 
 
 def test_detay_isteyen_suzgecler_bildirilir() -> None:
-    assert ord_.needs_detail({"noInvoice": True}) is True
-    assert ord_.needs_detail({"paymentState": "paid"}) is True
-    assert ord_.needs_detail({"chip": "late"}) is True
-    assert ord_.needs_detail({"dateField": "shipped"}) is True
-    assert ord_.needs_detail({"q": "R"}) is True
-    # Bunlar liste satırıyla karşılanır; boşuna istek atılmaz.
-    assert ord_.needs_detail({"chip": "today"}) is False
-    assert ord_.needs_detail({"city": "Selçuklu"}) is False
+    # YALNIZ not ve müşteri grubu: ikisinin de liste karşılığı yok.
+    assert ord_.needs_detail({"hasNote": True}) is True
+    assert ord_.needs_detail({"customerGroup": "Genel"}) is True
+    # Bunlar liste satırı + yan listelerle (fatura · gönderi · iade) karşılanır;
+    # eskiden her biri taranan kümeyi sipariş sipariş okutuyordu.
+    for suzgec in ({"noInvoice": True}, {"noShipment": True}, {"partialRefund": True},
+                   {"paymentState": "paid"}, {"carrier": "Aras"}, {"chip": "late"},
+                   {"chip": "shipped"}, {"dateField": "shipped"}, {"dateField": "paid"},
+                   {"q": "R"}, {"chip": "today"}, {"city": "Selçuklu"}):
+        assert ord_.needs_detail(suzgec) is False, suzgec
 
 
 # ======================================================= kanal süzgeci (uç)
@@ -321,20 +327,27 @@ def test_iptal_penceresi_saat_dilimsiz_damgayi_yerel_sayar() -> None:
 
 # ============================================================ servis düzeyi
 
-async def test_tarama_gerektiginde_siparisleri_detaylandirir() -> None:
-    # Liste ucu sığ; "faturası kesilmemiş" süzgeci detay olmadan karar veremez.
+async def test_fatura_suzgeci_DETAYSIZ_fatura_listesinden_karar_verir() -> None:
+    # Liste ucu sığ; "faturası kesilmemiş" süzgeci eskiden siparişi tek tek
+    # okuyordu. Aynı bilgi fatura LİSTESİNDE var (bağ `orderIncrementId`).
     api = FakeApi({19: dict(DETAY)}, shallow=[dict(LISTE_SATIRI)])
+    api.invoice_payload = {"items": [dict(FATURA)], "meta": {"total": 1}}
     result = await _service(api).orders(filters={"noInvoice": True})
-    assert api.args_of("order") == [(19,)]         # detay çekildi
+    assert api.args_of("order") == []              # sipariş başına istek YOK
     assert result["partial"] is False
     assert result["items"] == []                   # sipariş tamamen faturalı
+
+    # Fatura listesi boşsa sipariş GERÇEKTEN faturasızdır ve listeye girer.
+    api.invoice_payload = {"items": [], "meta": {"total": 0}}
+    result = await _service(api).orders(filters={"noInvoice": True})
+    assert [row["id"] for row in result["items"]] == [19]
 
 
 async def test_detay_tavani_asilirsa_ekran_soyler() -> None:
     sig = [{**LISTE_SATIRI, "id": index, "incrementId": str(index)}
            for index in (19, 18, 17)]
     api = FakeApi({19: dict(DETAY)}, shallow=sig)
-    result = await _service(api, detail_cap=1).orders(filters={"noShipment": True})
+    result = await _service(api, detail_cap=1).orders(filters={"hasNote": True})
     assert result["partial"] is True
     assert len(api.args_of("order")) == 1          # tavan tuttu
 
@@ -342,15 +355,17 @@ async def test_detay_tavani_asilirsa_ekran_soyler() -> None:
 async def test_detay_onbellegi_ayni_siparisi_iki_kez_cekmez() -> None:
     api = FakeApi({19: dict(DETAY)}, shallow=[dict(LISTE_SATIRI)])
     service = _service(api)
-    await service.orders(filters={"noShipment": True})
-    await service.orders(filters={"noShipment": True})
+    await service.orders(filters={"customerGroup": "Genel"})
+    result = await service.orders(filters={"customerGroup": "Genel"})
     assert len(api.args_of("order")) == 1
+    assert [row["id"] for row in result["items"]] == [19]
 
 
 async def test_detay_okunamazsa_liste_ayakta_kalir() -> None:
     api = FakeApi({19: dict(DETAY)}, shallow=[dict(LISTE_SATIRI)])
     api.fail.add("order")
-    result = await _service(api).orders(filters={"noShipment": True})
+    result = await _service(api).orders(filters={"hasNote": True})
+    assert result["partial"] is True               # sessiz eksik liste yok
     assert result["ok"] is True
     assert result["connected"] is True
     assert result["items"] == []                   # karar verilemeyen satır elenir

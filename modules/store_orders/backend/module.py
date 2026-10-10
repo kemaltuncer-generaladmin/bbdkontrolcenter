@@ -56,6 +56,11 @@ def build_service(ctx: ModuleContext) -> OrdersService:
         # söyler (K7). Metin, fren ve tekrar engeli o modülün içindedir;
         # burada modül IMPORT EDİLMEZ (K3), yalnız yetenek çözülür.
         stage_notify=ctx.try_capability("store.notify.stage"),
+        # Ağır tarama (sipariş + fatura + gönderi + iade listeleri) isteğin
+        # İÇİNDE koşmaz; geçidin arka plan tazeleyicisine verilir. Kendi
+        # köşesinde çalışır ki başka bir mağaza ekranının "orders" anahtarıyla
+        # karışmasın.
+        scan=ctx.capability("store.scan").scoped("store_orders"),
         category=CATEGORY,
         subcategory=SUBCATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",

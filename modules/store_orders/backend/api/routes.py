@@ -79,8 +79,10 @@ async def orders(
     partialRefund: bool = Query(False),
     page: int = Query(1, ge=1, le=10_000),
     size: int = Query(0, ge=0, le=200),
+    refresh: bool = Query(False),
     user: CurrentUser = requires("store_orders.view"),
 ) -> dict[str, Any]:
+    """`refresh` ("Yenile") ortak taramayı tazelik süresini beklemeden yeniler."""
     return await service().orders(
         filters=_filters(q=q, status=status, payment_state=paymentState,
                          payment_method=paymentMethod, carrier=carrier, channel=channel,
@@ -88,7 +90,7 @@ async def orders(
                          date_to=dateTo, total_min=totalMin, total_max=totalMax, city=city,
                          coupon=coupon, chip=chip, no_invoice=noInvoice, no_shipment=noShipment,
                          has_note=hasNote, risky=risky, partial_refund=partialRefund),
-        page=page, size=size)
+        page=page, size=size, refresh=refresh)
 
 
 @router.get("/overview")
@@ -113,16 +115,21 @@ async def overview(
     hasNote: bool = Query(False),
     risky: bool = Query(False),
     partialRefund: bool = Query(False),
+    refresh: bool = Query(False),
     user: CurrentUser = requires("store_orders.view"),
 ) -> dict[str, Any]:
-    """Çip sayaçları + süzgecin TAMAMININ mini toplamı (adet · ciro · ortalama)."""
+    """Çip sayaçları + süzgecin TAMAMININ mini toplamı (adet · ciro · ortalama).
+
+    Liste ucuyla AYNI ortak taramayı okur; sipariş başına istek atmaz.
+    """
     return await service().overview(
         filters=_filters(q=q, status=status, payment_state=paymentState,
                          payment_method=paymentMethod, carrier=carrier, channel=channel,
                          customer_group=customerGroup, date_field=dateField, date_from=dateFrom,
                          date_to=dateTo, total_min=totalMin, total_max=totalMax, city=city,
                          coupon=coupon, chip=chip, no_invoice=noInvoice, no_shipment=noShipment,
-                         has_note=hasNote, risky=risky, partial_refund=partialRefund))
+                         has_note=hasNote, risky=risky, partial_refund=partialRefund),
+        refresh=refresh)
 
 
 @router.get("/orders/{order_id}")

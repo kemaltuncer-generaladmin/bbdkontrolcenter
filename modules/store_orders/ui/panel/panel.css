@@ -76,10 +76,11 @@
 
 /* ------------------------------------------------------------------ tablo */
 
-/* On dört sütun dar pencereye sığmaz. Tablo KENDİ kabında yatay kayar; gövde
-   yatay kaymaz — sayfanın tamamını sağa sola sürüklemek okumayı bozuyordu. */
+/* Yedi sütun (docs/tasarim-sade-magaza.md §5) 1440 px'te kaymadan sığar. Çok
+   dar pencerede tablo KENDİ kabında yatay kayar; gövde kaymaz — sayfanın
+   tamamını sağa sola sürüklemek okumayı bozuyordu. */
 .so-table { min-height: 120px; overflow-x: auto; }
-.so-table > .kit-table { min-width: 1460px; }
+.so-table > .kit-table { min-width: 900px; }
 
 .so-cellstack { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .so-cellstack b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -92,7 +93,10 @@
 .so-track { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .so-track .kit-btn { padding: 1px 6px; font-size: 11px; }
 
-.so-fulfil { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* "Kargo" sütunu: hâl + satırın ana eylemi. Düğme satır yüksekliğini
+   büyütmesin diye küçük; sola yaslı ki sütunda hizalı dursun. */
+.so-ship { align-items: flex-start; gap: 3px; }
+.so-ship > .kit-btn { padding: 2px 10px; font-size: 12px; }
 
 /* ------------------------------------------------------------ ödeme sütunu */
 
@@ -129,8 +133,9 @@
 
 .so-pane { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
 
-.so-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.so-actionbox { display: flex; flex-direction: column; gap: 8px; }
+.so-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Çekmecenin tepesindeki eylemler: sekmelerden önce, altında boşlukla. */
+.so-actionbox { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; }
 
 /* Künye alanları: etiket üstte küçük, değer altta — dar çekmecede iki sütunlu
    tablo kırpılıyordu. */
@@ -166,10 +171,8 @@
 
 /* Aşama şeridinin kabı. İç boşluk YOK: şeridi kitin `.kit-stepper`'ı çiziyor
    ve boşluğunu kendi taşıyor. Buraya ikinci bir `padding` yazmak, aynı ölçüyü
-   iki yerde tutmak olurdu. Altındaki uyarı kutusu şeritle aynı hizada dursun
-   diye yanlardan aynı miktarda içeri alınır. */
+   iki yerde tutmak olurdu. */
 .so-journey { display: flex; flex-direction: column; }
-.so-journey > .kit-alert { margin: 0 14px 12px; }
 
 /* ----------------------------------------------------------------- notlar */
 

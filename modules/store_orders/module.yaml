@@ -4,11 +4,11 @@
 # ya da DB sürücüsü kullanmaz. Bagisto verisinin kopyasını tutmaz: yerel tablolar
 # sadece gerekçe (denetim izi), toplu işlem önizlemesi ve ekran tercihi içindir.
 #
-# NEDEN YENİ BİR EKRAN. Diğer 19 ekran yan menüde zaten kodlanmıştı; sipariş
-# yoktu. Kargo, Fatura, İade ve Sanal POS siparişin ÇEVRESİNİ yönetiyor ama
-# siparişin kendisini yöneten bir yer yoktu — "bugün hangi siparişler geldi"
-# sorusunun tek bir cevabı olmuyordu. Menüde Kontrol Paneli'nin hemen ardına
-# girer (order 15); mevcut ekranların sırası değişmez.
+# NEDEN AYRI BİR EKRAN. Kargo, Fatura ve İade ekranları siparişin ÇEVRESİNİ
+# yönetiyor; siparişin kendisini yöneten bir yer yoktu — "bugün hangi
+# siparişler geldi" sorusunun tek bir cevabı olmuyordu. (Kontrol Merkezi'nde
+# sanal POS / provizyon ekranı YOKTUR; belirsiz ödemenin kesin sonucu ve
+# provizyon iptali mağaza/banka tarafındadır.)
 #
 # Şema: docs/schemas/module.schema.json · Kılavuz: docs/module-guide.md
 
@@ -36,6 +36,14 @@ consumes:
       Sipariş verisi mağazanın admin API'sinden gelir (K4). Ödeme DURUMU
       siparişte yok: fatura listesi (`/invoices`) ve sanal POS denemeleri
       (`/bbd/payments/attempts`) aynı geçitten, tek sayfa isteğiyle okunur.
+  - capability: store.scan
+    reason: >
+      Sayaç şeridi, çipler, arama ve liste raporu siparişlerin TAMAMINA
+      bakıyor. Eskiden bu tarama her yenilemede isteğin içinde koşuyor ve en
+      çok 300 siparişi tek tek okuyordu; geçidin dakikalık payını bütün mağaza
+      ekranlarının elinden alıyordu. Tarama artık arka planda koşar (sipariş,
+      fatura, gönderi, iade listeleri — sipariş başına istek yok), liste ve
+      sayaç aynı sonucu okur, ekran beklemez ve sonucun yaşını yazar.
   - capability: store.shipment.byOrder
     optional: true
     reason: "Sipariş detayındaki kargo sekmesi; Kargo ekranı yoksa sekme hiç açılmaz (K7)."
@@ -76,10 +84,9 @@ ui:
   nav:
     title: "Siparişler"
     icon: cart
-    group: "BBD Store / Satış ve Kargo"
-    # 10 = Kontrol Paneli, 20 = Ürünler. Araya girer; mevcut ekranların
-    # numaraları DEĞİŞMEZ — yan menü düzeni korunur.
-    order: 210
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
+    group: "BBD Store"
+    order: 201
     requires: [store_orders.view]
 
 # Katalog ve rol matrisi: docs/permissions.md

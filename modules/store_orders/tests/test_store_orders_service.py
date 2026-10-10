@@ -153,12 +153,19 @@ async def test_kanal_kimligi_ayarliysa_tamsayi_olarak_gider() -> None:
     assert api.calls[0][1][0]["channel"] == 1
 
 
-async def test_taramada_magaza_suzgecleri_yine_gonderilir() -> None:
-    service, api, _ = _service()
-    await service.orders(filters={"chip": "pending", "status": "pending"})
+async def test_tarama_ORTAKTIR_suzgec_magazaya_gitmez_yerelde_uygulanir() -> None:
+    # Tek tarama her süzgece, her çipe ve iki uca (liste + sayaç) birden yeter:
+    # süzgeç değişince yeniden taranmaz. Durum süzgeci bu yüzden mağazaya
+    # GİTMEZ, taranmış küme üzerinde `matches` ile uygulanır. Kayıtlar yeniden
+    # eskiye istenir: tavan yakalanırsa düşen EN ESKİLER olsun.
+    kayitlar = {12: dict(SIPARIS), 13: {**SIPARIS, "id": 13, "status": "pending"}}
+    service, api, _ = _service(FakeApi(kayitlar))
+    result = await service.orders(filters={"chip": "pending", "status": "pending"})
     sent = api.calls[0][1][0]
     assert "channel" not in sent
-    assert sent["status"] == "pending"
+    assert "status" not in sent
+    assert sent == {"sort": "id", "order": "desc"}
+    assert [row["id"] for row in result["items"]] == [13]
 
 
 async def test_tarama_kipinde_sayfalama_yerel_yapilir() -> None:
@@ -214,8 +221,10 @@ async def test_odeme_durumu_iki_listeden_cozulur_siparis_basina_istek_atilmaz() 
     service, _, _ = _service(api)
 
     result = await service.orders(filters={"chip": "processing"})
-    assert len(api.args_of("invoices")) == 1
+    # Kanıt TEK sayfa; ortak taramanın tam fatura listesi (`all_pages`) ayrı sayılır.
+    assert len([kw for kw in api.used("invoices") if not kw["all_pages"]]) == 1
     assert len(api.args_of("bbd_payment_attempts")) == 1
+    assert api.args_of("order") == []              # sipariş başına istek YOK
 
     durumlar = {row["incrementId"]: row["paymentLabel"] for row in result["items"]}
     assert durumlar["100001"] == "Ödendi"        # fatura kaydından
@@ -245,15 +254,20 @@ async def test_kanit_ayni_ekran_yenilemesinde_iki_kez_cekilmez() -> None:
     # listeyi çekmesi geçidin dakikalık payını boşuna harcardı.
     api = FakeApi({12: dict(SIPARIS)})
     service, _, _ = _service(api)
+
+    def kanit() -> int:
+        # Ortak taramanın tam fatura listesi (`all_pages`) kanıt değildir.
+        return len([kw for kw in api.used("invoices") if not kw["all_pages"]])
+
     await service.orders()
     await service.overview()
-    assert len(api.args_of("invoices")) == 1
+    assert kanit() == 1
 
     # Fatura kesildikten sonra kanıt bayattır: yeniden çekilir.
     await service.invoice(12, items=None, reason="Tahsilat tamamlandı", actor="Ali",
                           dry_run=False)
     await service.orders()
-    assert len(api.args_of("invoices")) == 2
+    assert kanit() == 2
 
 
 async def test_odeme_durumu_suzgeci_kanitla_calisir() -> None:

@@ -209,14 +209,14 @@ _TR_MAP = str.maketrans({
 })
 
 
-#: Liste ucunun (`GET /orders`) TAŞIMADIĞI alanlara dayanan süzgeçler. Bunlardan
-#: biri seçilirse taranan küme sipariş sipariş DETAYLANDIRILIR; detay olmadan
-#: süzmek, "kargoya verilmemiş" diyip kargolanmışları da listelemek olurdu.
-DETAIL_FILTERS = ("paymentState", "carrier", "customerGroup", "noInvoice", "noShipment",
-                  "hasNote", "partialRefund")
-
-#: Detay isteyen çipler: ikisi de gönderi durumuna bakar.
-DETAIL_CHIPS = ("shipped", "late")
+#: YALNIZ sipariş detayında (`GET /orders/{id}`) bulunan alanlara dayanan
+#: süzgeçler: not (`comments`) ve müşteri grubu (`customer.group`). İkisinin de
+#: LİSTE karşılığı yok. Fatura, gönderi, iade, ödeme durumu, kargo firması ve
+#: takip no artık buradan ÇIKTI: onlar yan listelerden (`side_index`) sipariş
+#: başına istek atmadan geliyor. Eskiden bu altı süzgeç ve "Kargoda"/"Geciken"
+#: çipleri taranan kümeyi sipariş sipariş okutuyordu — 300 siparişte 300 istek,
+#: geçidin dakikada 55'lik payını bütün mağaza ekranlarının elinden alıyordu.
+DETAIL_FILTERS = ("customerGroup", "hasNote")
 
 
 # ===================================================================== temel
@@ -435,9 +435,18 @@ def payment_state(raw: dict[str, Any]) -> str:
     refunded_raw = pick(raw, "grand_total_refunded")
     if invoiced_raw is None and refunded_raw is None:
         return "unknown"
-    total = kurus(pick(raw, "grand_total"))
-    invoiced = kurus(invoiced_raw)
-    refunded = kurus(refunded_raw)
+    return amounts_state(kurus(pick(raw, "grand_total")), kurus(invoiced_raw),
+                         kurus(refunded_raw))
+
+
+def amounts_state(total: int, invoiced: int, refunded: int) -> str:
+    """Kuruş tutarlarından ödeme durumu — `payment_state` ile yan listelerin ORTAK kuralı.
+
+    Bagisto `grandTotalInvoiced`ı faturaların, `grandTotalRefunded`ı iadelerin
+    `grandTotal` toplamından türetiyor (`OrderRepository::collectTotals`). Yan
+    listelerden toplanan tutar bu yüzden detaydakiyle AYNI kurala girer; iki
+    ayrı kural yazmak, aynı siparişi iki yolda iki farklı durumda gösterirdi.
+    """
     if refunded and total and refunded >= total:
         return "refunded"
     if invoiced <= 0:
@@ -492,6 +501,7 @@ PAYMENT_SOURCES = {
     "pos": "sanal POS denemesi",
     "both": "fatura + sanal POS",
     "detail": "sipariş detayı (faturalanan tutar)",
+    "lists": "fatura ve iade listesi (faturalanan tutar)",
     "none": "kanıt bulunamadı",
     "missing": "kanıt okunamadı",
 }
@@ -587,9 +597,10 @@ def payment_index(invoices: Any, attempts: Any) -> dict[str, Any]:
             continue
         view = attempt_view(item)
         if not view["orderId"]:
-            # Siparişi olmayan deneme (ör. `void_required`) bu ekranın işi
-            # değildir — Sanal POS ekranı onunla ilgilenir. Sessizce yutulmaz,
-            # sayılır.
+            # Siparişi olmayan deneme (ör. `void_required`) bir siparişe
+            # damga vurdurmaz; provizyonun iptali mağaza/banka tarafının
+            # işidir ve Kontrol Merkezi'nde onu yapan bir ekran YOK. Sessizce
+            # yutulmaz, sayılır.
             unbound_attempts += 1
             continue
         slot = by_order.setdefault(view["orderId"],
@@ -685,17 +696,20 @@ def payment_view(row: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
     current = text(row.get("paymentState")) or "unknown"
     sharper = current in ("paid", "partial", "refunded")
     covered = evidence_covers(row, index)
-    source = "detail" if row.get("detailed") else "none"
+    # Tutar dökümünün KAYNAĞI: detay mı, yan listeler mi (`order_row(sides=…)`).
+    amounts = ("detail" if row.get("detailed")
+               else "lists" if row.get("amountsKnown") else "none")
+    source = amounts
     note = ""
 
     if sharper:
         state = current
-        source = "detail"
+        source = "detail" if amounts == "none" else amounts
         note = "Tutar dökümünden hesaplandı: faturalanan ve iade edilen tutar karşılaştırıldı."
         if evidence["unknown"]:
             note += (" AYRICA bankadan kesin yanıt gelmemiş bir POS denemesi var "
                      f"({', '.join(evidence['attemptStates'])}): bu sipariş için ikinci bir "
-                     "çekim olmuş OLABİLİR, Sanal POS ekranından bakılmalı.")
+                     "çekim olmuş OLABİLİR; mağaza/banka kaydından bakılmalı.")
     elif evidence["invoicePaid"] or evidence["taken"]:
         state = "paid"
         source = ("both" if evidence["invoicePaid"] and evidence["taken"]
@@ -707,7 +721,8 @@ def payment_view(row: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
         note = ("Bankadan kesin yanıt gelmemiş bir POS denemesi var "
                 f"({', '.join(evidence['attemptStates']) or 'durum yok'}). Para çekilmiş "
                 "OLABİLİR; bu satıra “Ödenmedi” yazmak müşteriden ikinci kez tahsilat "
-                "istemeye yol açardı. Mutabakat Sanal POS ekranından yapılır.")
+                "istemeye yol açardı. Kesin sonuç mağaza/banka tarafından alınır; "
+                "provizyon gerekiyorsa orada iptal edilir.")
     elif evidence["returned"]:
         state = "refunded"
         source = "pos"
@@ -963,6 +978,138 @@ def refund_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+# ================================== YAN LİSTELER — fatura · gönderi · iade
+#
+# NEDEN. Liste ucu fatura, gönderi ve iade TAŞIMIYOR. Bunlar için sipariş
+# sipariş `GET /orders/{id}` okumak 300 siparişte 300 istek ediyordu ve geçit
+# dakikada 55 istekte tutuyor: sayaç şeridi açılırken bütün mağaza ekranları
+# sıraya giriyordu. Aynı bilgi üç LİSTE ucunda duruyor — `GET /invoices`,
+# `GET /shipments` (Bagisto'nun KENDİ gönderi kaydı; detaydaki `shipments` ile
+# aynı tablo, Geliver hareketleri değil) ve `GET /refunds`. Üçü 50'şerlik
+# sayfalarla bir kez okunur, burada siparişe göre gruplanır.
+#
+# BAĞ ANAHTARI. Fatura kaydında `orderId` NULL geliyor (CANLIDA DOĞRULANDI) ve
+# bağ `orderIncrementId` üzerinden kuruluyor; kimi liste satırında sipariş
+# kimliği `order.id` altında. Hepsi aranır.
+#
+# BİLİNMİYOR ≠ YOK. Liste okunamadıysa, tavana dayandıysa, tek bir kaydı bile
+# siparişe bağlanamadıysa ya da kayıtta adet yoksa o yan `None` olur ve satır
+# "Bilinmiyor" kalır: eksik listeyle "faturası yok" demek, faturası kesilmiş
+# siparişi yeniden faturalatmak olurdu.
+
+#: Yan listelerin adları — `order_row(sides=…)` bu anahtarları okur.
+SIDES = ("invoices", "shipments", "refunds")
+
+
+def _order_keys(item: dict[str, Any]) -> tuple[str, int]:
+    """Yan kaydın bağlı olduğu sipariş: (artan numara, iç kimlik)."""
+    order = pick(item, "order")
+    order = order if isinstance(order, dict) else {}
+    number = text(pick(item, "order_increment_id")) or text(pick(order, "increment_id"))
+    order_id = as_int(pick(item, "order_id")) or as_int(pick(order, "id"))
+    return number, order_id
+
+
+def side_index(items: Any) -> dict[str, Any]:
+    """Bir yan listeyi siparişe göre gruplar. SİPARİŞ BAŞINA İSTEK YOK.
+
+    `unbound` sıfırdan büyükse çağıran o yanı BİLİNMİYOR saymalıdır: bağlanamayan
+    kayıt hangi siparişinse, o sipariş "kaydı yok" görünürdü.
+    """
+    by_no: dict[str, list[dict[str, Any]]] = {}
+    by_id: dict[int, list[dict[str, Any]]] = {}
+    unbound = 0
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        number, order_id = _order_keys(item)
+        if number:
+            by_no.setdefault(number, []).append(item)
+        elif order_id:
+            by_id.setdefault(order_id, []).append(item)
+        else:
+            unbound += 1
+    return {"byNo": by_no, "byId": by_id, "unbound": unbound}
+
+
+def side_of(raw: Any, index: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    """Bir siparişin yan kayıtları, en eskisi önde. `index` yoksa `None` — BİLİNMİYOR."""
+    if not isinstance(index, dict):
+        return None
+    number = text(pick(raw, "increment_id"))
+    order_id = as_int(pick(raw, "id"))
+    found = list(index["byNo"].get(number, []) if number else [])
+    found += index["byId"].get(order_id, []) if order_id else []
+    # Detaydaki `shipments[0]` ilk gönderidir; liste yeniden eskiye geliyor.
+    # Sıra eşitlenmezse "kargo tarihi" süzgeci son gönderinin gününe bakardı.
+    return sorted(found, key=lambda item: (text(pick(item, "created_at")),
+                                           as_int(pick(item, "id"))))
+
+
+def sides_of(raw: Any, sides: dict[str, Any] | None) -> dict[str, Any]:
+    """`order_row(sides=…)` girdisi: her yan için kayıt listesi ya da `None`."""
+    sides = sides or {}
+    return {name: side_of(raw, sides.get(name)) for name in SIDES}
+
+
+#: Taşıyıcı gönderisinin iptal yazımları. İptal gönderinin etiketi geçersizdir;
+#: onu basmak kargoyu hiç gitmeyecek bir barkodla pakete yapıştırmaktır.
+SHIPMENT_CANCELLED = frozenset({"cancelled", "canceled", "iptal", "void", "voided"})
+
+
+def _flag(value: Any) -> bool:
+    """Bayrak alanı: `"0"`/`"false"` YANLIŞTIR (`bool("0")` doğru sayardı)."""
+    if isinstance(value, bool):
+        return value
+    return fold(value) in ("1", "true", "yes", "evet")
+
+
+def label_shipment(items: Any, order_id: int) -> tuple[dict[str, Any] | None, str]:
+    """Toplu "Etiket indir"in bu sipariş için seçeceği taşıyıcı gönderisi.
+
+    YALNIZ BU SİPARİŞİN gönderisi seçilir — `order_id` satırın KENDİSİNDEN
+    doğrulanır. Geçit süzgeci `orderId` adıyla gönderip satırları da süzüyor;
+    ama bir dönem süzgeç yok sayıldığında "ilk satır" her siparişe mağazanın en
+    yeni etiketini veriyordu: başka müşterinin barkodu pakete yapışırdı.
+
+    Sıra: iptal edilmemiş ve etiketi ALINMIŞ (etiket bağlantısı, `has_label`,
+    takip no ya da satın alma anı dolu) gönderi; o yoksa iptal edilmemiş
+    herhangi biri (uç etiketsizse 409 döner ve neden satırda yazar). Birden
+    çoksa en yenisi. Döner: (gönderi | None, seçilemediyse neden).
+    """
+    wanted = as_int(order_id)
+    own = [item for item in (items or [])
+           if isinstance(item, dict) and wanted and as_int(pick(item, "order_id")) == wanted]
+    if not own:
+        return None, "Bu siparişin kargo kaydı yok."
+    live = [item for item in own if fold(pick(item, "status")) not in SHIPMENT_CANCELLED]
+    if not live:
+        return None, "Bu siparişin kargo kaydı iptal edilmiş; basılacak etiket yok."
+
+    def ready(item: dict[str, Any]) -> bool:
+        return bool(text(pick(item, "label_url")) or _flag(pick(item, "has_label"))
+                    or text(pick(item, "tracking_number", "barcode"))
+                    or text(pick(item, "purchased_at")))
+
+    pool = [item for item in live if ready(item)] or live
+    return max(pool, key=lambda item: as_int(pick(item, "id"))), ""
+
+
+def _with_field(items: list[dict[str, Any]] | None,
+                name: str) -> list[dict[str, Any]] | None:
+    """Alanı OKUNAMAYAN kayıt varsa yan bilinmiyor sayılır.
+
+    Gönderi var ama adedi yoksa toplam 0 çıkar ve kargolanmış sipariş
+    "kargolanmamış" görünürdü; iade var ama tutarı yoksa iade edilmiş sipariş
+    "ödendi" görünürdü — tam olarak kaçındığımız sessiz yanlış.
+    """
+    if items is None:
+        return None
+    if any(pick(item, name) is None for item in items):
+        return None
+    return items
+
+
 def item_rows(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Sipariş kalemleri. Faturalanan/kargolanan adet kalem bazında taşınır:
     kısmi fatura ve kısmi kargo bu ekranın günlük işidir."""
@@ -1008,18 +1155,39 @@ def money_view(raw: dict[str, Any]) -> dict[str, Any]:
 # =============================================================== liste satırı
 
 def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None,
-              no_format: str = "", today: str = "", late_days: int = 3) -> dict[str, Any]:
-    """Ham sipariş kaydı → tablonun beklediği satır. Para her yerde kuruş."""
+              no_format: str = "", today: str = "", late_days: int = 3,
+              sides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Ham sipariş kaydı → tablonun beklediği satır. Para her yerde kuruş.
+
+    `sides` (bkz. `sides_of`) SIĞ liste satırının fatura/gönderi/iade eksiğini
+    yan listelerden tamamlar. Detaylı kayıtta YOK SAYILIR: detay daha keskindir.
+    Her yan ayrı bilinir — `shipKnown`, `invoiceKnown`, `refundKnown` — çünkü
+    biri okunup diğeri okunamamış olabilir ve süzgeç yalnız bildiğine karar verir.
+    """
     day = today or today_iso()
     status = text(pick(raw, "status"))
     items = item_rows(raw)
-    shipments = shipment_rows(raw)
-    invoices = invoice_rows(raw)
     detailed = has_detail(raw)
+    extra = {} if detailed else (sides or {})
+    ship_list = _with_field(extra.get("shipments"), "total_qty")
+    invoice_list = _with_field(extra.get("invoices"), "total_qty")
+    refund_list = _with_field(extra.get("refunds"), "grand_total")
+    # Tutar yalnız HER faturada `grandTotal` varsa toplanır; adet tek başına
+    # fatura DURUMUNU (Yok/Kısmi/Tam) söyler ama ödeme tutarını söylemez.
+    invoice_money = _with_field(invoice_list, "grand_total")
+    shipments = shipment_rows(raw if ship_list is None else {"shipments": ship_list})
+    invoices = invoice_rows(raw if invoice_list is None else {"invoices": invoice_list})
 
     ordered_qty = as_int(pick(raw, "total_qty_ordered")) or sum(row["quantity"] for row in items)
     invoiced_qty = as_int(pick(raw, "total_qty_invoiced")) or sum(row["invoiced"] for row in items)
     shipped_qty = as_int(pick(raw, "total_qty_shipped")) or sum(row["shipped"] for row in items)
+    if ship_list is not None:
+        shipped_qty = sum(row["quantity"] for row in shipments)
+    if invoice_list is not None:
+        invoiced_qty = sum(as_int(pick(item, "total_qty")) for item in invoice_list)
+    ship_known = detailed or ship_list is not None
+    invoice_known = detailed or invoice_list is not None
+    refund_known = detailed or refund_list is not None
 
     billing = address_of(raw, "billing")
     shipping = address_of(raw, "shipping")
@@ -1033,6 +1201,19 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
 
     money = money_view(raw)
     state = payment_state(raw)
+    amounts_known = False
+    if invoice_money is not None:
+        money["invoiced"] = sum(kurus(pick(item, "grand_total")) for item in invoice_money)
+    if refund_list is not None:
+        money["refunded"] = sum(kurus(pick(item, "grand_total")) for item in refund_list)
+    if invoice_money is not None and refund_list is not None:
+        listed = amounts_state(money["grandTotal"], money["invoiced"], money["refunded"])
+        # YALNIZ KESKİN SONUÇ ALINIR. "Faturası yok" → `unpaid` buraya yazılmaz:
+        # POS denemesi parayı çekmiş olabilir; o karar kanıt katmanınındır
+        # (`payment_view`) ve kanıt okunamazsa "Bilinmiyor" der, "Ödenmedi" demez.
+        if listed in ("paid", "partial", "refunded"):
+            state = listed
+            amounts_known = True
     ship_state = fulfilment(shipped_qty, ordered_qty)
     invoice_state = fulfilment(invoiced_qty, ordered_qty)
 
@@ -1061,7 +1242,8 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
         "paymentTone": PAYMENT_TONES[state],
         # Kanıt katmanı (`with_payment`) bu üçünü doldurur; satır kanıtsız
         # çizilirse alanlar VAR ama boştur — ekranın `undefined` okumaması için.
-        "paymentSource": PAYMENT_SOURCES["detail" if detailed else "none"],
+        "paymentSource": PAYMENT_SOURCES["detail" if detailed
+                                         else "lists" if amounts_known else "none"],
         "paymentNote": "",
         "paymentAttention": False,
         "itemCount": as_int(pick(raw, "total_item_count")) or len(items),
@@ -1084,11 +1266,17 @@ def order_row(raw: dict[str, Any], *, status_names: dict[str, str] | None = None
         "noteCount": len(pick(raw, "comments", default=[]) or []),
         "risky": status == "fraud",
         "lateDays": late_of(created, day) if _open_for_shipping(status, ship_state) else 0,
-        "late": (detailed and _open_for_shipping(status, ship_state)
+        "late": (ship_known and _open_for_shipping(status, ship_state)
                  and late_of(created, day) >= late_days),
-        # Sığ liste satırında gönderi/fatura/not bilgisi YOKTUR. Ekran ve
+        # Sığ liste satırında not, müşteri grubu ve tutar dökümü YOKTUR. Ekran ve
         # süzgeçler bunu bilmeli: "kargolanmamış" ile "bilinmiyor" ayrı şeyler.
         "detailed": detailed,
+        # Yan bilgiler AYRI AYRI bilinir: gönderi listesi okunup fatura listesi
+        # okunamamış olabilir. Süzgeç ve çip yalnız bildiğine karar verir.
+        "shipKnown": ship_known,
+        "invoiceKnown": invoice_known,
+        "refundKnown": refund_known,
+        "amountsKnown": detailed or amounts_known,
     }
     # Toplu kargo uygunluğu satırın KENDİSİNDE durur: ekran onay kutusunu buna
     # göre kapatır ve NEDENİ aynı satırda yazar.
@@ -1115,22 +1303,22 @@ def late_of(created_day: str, today: str) -> int:
 # ================================================================= süzgeçler
 
 #: Anahtar süzgeçler (`Faturası kesilmemiş` gibi) → satır üzerinde bir yordam.
-#: `risky` dışındakiler DETAY ister; sığ satırda fatura/gönderi/not bilgisi hiç
-#: yoktur ve `row.get("detailed")` denetimi olmadan "faturası kesilmemiş" diye
-#: her siparişi listelerdik.
+#: Her biri yalnız ilgili bilgi BİLİNİYORSA karar verir (`invoiceKnown`,
+#: `shipKnown`, `refundKnown`, not için `detailed`); bilinmeyen satır dışarıda
+#: kalır. Denetim olmasaydı "faturası kesilmemiş" diye her siparişi listelerdik.
 FLAG_TESTS = {
-    "noInvoice": lambda row: bool(row.get("detailed")) and row["invoiceState"] != "full",
-    "noShipment": lambda row: bool(row.get("detailed")) and row["shipmentState"] != "full",
+    "noInvoice": lambda row: bool(row.get("invoiceKnown")) and row["invoiceState"] != "full",
+    "noShipment": lambda row: bool(row.get("shipKnown")) and row["shipmentState"] != "full",
     "hasNote": lambda row: bool(row.get("detailed")) and row["noteCount"] > 0,
     "risky": lambda row: bool(row["risky"]),
-    "partialRefund": lambda row: (bool(row.get("detailed"))
+    "partialRefund": lambda row: (bool(row.get("refundKnown"))
                                   and 0 < row["refunded"] < row["grandTotal"]),
 }
 
 CHIP_TESTS = {
     "pending": lambda row, today: row["status"] in ("pending", "pending_payment"),
     "processing": lambda row, today: row["status"] == "processing",
-    "shipped": lambda row, today: bool(row.get("detailed")) and row["shipmentState"] != "none"
+    "shipped": lambda row, today: bool(row.get("shipKnown")) and row["shipmentState"] != "none"
     and row["status"] not in ("canceled", "closed"),
     "today": lambda row, today: row["createdDay"] == today,
     "late": lambda row, today: bool(row["late"]),
@@ -1237,23 +1425,24 @@ def needs_scan(filters: dict[str, Any]) -> bool:
 
 
 def needs_detail(filters: dict[str, Any]) -> bool:
-    """Taranan küme sipariş sipariş DETAYLANDIRILMALI mı?
+    """Bu süzgeç sipariş DETAYI olmadan karar verebilir mi?
 
-    Liste ucu fatura, gönderi, not, faturalanan tutar ve müşteri grubu
-    taşımıyor (canlıda doğrulandı). Bunlara dayanan bir süzgeç seçildiğinde
-    sığ satırla karar vermek yanlış liste üretir; detay çekilir. Detay pahalıdır
-    (sipariş başına bir istek), bu yüzden yalnız GEREKİYORSA yapılır.
+    Yalnız not ve müşteri grubu detay ister (`DETAIL_FILTERS`). Fatura, gönderi,
+    iade, ödeme durumu, takip no, "Kargoda"/"Geciken" çipleri ve ödeme/kargo
+    tarihi yan listelerden gelir; arama da detay İSTEMEZ (sipariş no, müşteri,
+    e-posta ve takip no listede var — telefon yalnız detayı okunmuş satırda
+    aranır). Detay pahalıdır (sipariş başına bir istek) ve arka planda okunur.
     """
     for key in DETAIL_FILTERS:
         value = filters.get(key)
         if value is True or text(value):
             return True
-    if text(filters.get("chip")) in DETAIL_CHIPS:
-        return True
-    if text(filters.get("dateField")) in ("paid", "shipped"):
-        return True
-    # Arama takip numarası ve telefonu da kapsıyor; ikisi de yalnız detayda var.
-    return bool(text(filters.get("q")))
+    return False
+
+
+def without_detail(filters: dict[str, Any]) -> dict[str, Any]:
+    """Detay isteyen süzgeçler ÇIKARILMIŞ küme — "detayı okunmalı aday" sorusu için."""
+    return {**filters, "customerGroup": "", "hasNote": False}
 
 
 def store_filters(filters: dict[str, Any]) -> dict[str, Any]:
@@ -1375,7 +1564,7 @@ def ship_block(row: dict[str, Any]) -> str:
         return "Parası iade edilmiş; kargoya verilmez."
     if state == "unpaid":
         return "Ödenmedi: tahsilat kaydı yok, önce fatura kesilmeli."
-    if row.get("detailed") and row.get("invoiceState") == "none":
+    if row.get("invoiceKnown") and row.get("invoiceState") == "none":
         return "Faturası kesilmemiş; önce fatura kesilmeli."
     return ""
 
@@ -1390,7 +1579,7 @@ def ship_note(row: dict[str, Any]) -> str:
     """
     if row.get("shipBlock"):
         return ""
-    if not row.get("detailed"):
+    if not (row.get("shipKnown") and row.get("invoiceKnown")):
         return "Fatura ve kargo durumu bu satırda yok; önizleme siparişi tek tek doğrular."
     return ""
 

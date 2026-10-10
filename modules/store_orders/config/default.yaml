@@ -19,11 +19,17 @@ channel_id: 0
 # olabilir" der; sessiz kırpma yapılmaz.
 scan_cap: 2000
 
-# Liste ucu SIĞ satır veriyor: fatura, gönderi, not, ara toplam ve faturalanan
-# tutar yalnız `/orders/{id}` detayında var. Bunlara dayanan bir süzgeç
-# seçilince taranan küme sipariş sipariş detaylandırılır; her detay bir istek
-# eder ve geçit dakikada 55 istekte tutar. Tavan aşılırsa ekran "bazı süzgeçler
-# eksik uygulandı" der.
+# Ortak taramanın (sipariş + fatura + gönderi + iade listeleri) tazelik süresi,
+# saniye. Liste, sayaç şeridi, CSV ve liste raporu AYNI taramayı okur; ekran
+# yaşını yazar, "Yenile" ve bu ekrandan yapılan her yazma beklemeden tazeler.
+# Kısaltmak yeni siparişi çabuk gösterir ama geçidin dakikalık payından yer.
+scan_ttl_seconds: 180
+
+# Not ve müşteri grubu YALNIZ `/orders/{id}` detayında var. Bu iki süzgeçten
+# biri seçilince detay arka planda, sipariş sipariş okunur; her detay bir
+# istek eder ve geçit dakikada 55 istekte tutar. Tavan aşılırsa ekran "bazı
+# süzgeçler eksik uygulandı" der. (Fatura, gönderi, iade ve ödeme durumu artık
+# detay İSTEMEZ: liste uçlarından gelir.)
 detail_cap: 300
 
 # --- ekran tercihlerinin BAŞLANGIÇ değerleri -------------------------------

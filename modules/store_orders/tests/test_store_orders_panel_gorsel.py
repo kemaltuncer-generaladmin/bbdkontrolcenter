@@ -109,3 +109,68 @@ def test_ipucu_olmayan_sekmeye_yollamaz() -> None:
     govde = _journey()
     assert "shipmentCap" in govde
     assert "bu kurulumda okunamıyor" in govde
+
+
+# ============================================ sade ekran (tasarim-sade-magaza.md)
+
+def _blok(bas: str, son: str) -> str:
+    i = PANEL.index(bas)
+    return PANEL[i:PANEL.index(son, i)]
+
+
+def test_suzgecler_katlanir_gorunen_iki_alan() -> None:
+    serit = _blok("nodes.filters = filterBar({", "nodes.chips = chipRow(")
+    assert "compact: true" in serit
+    assert serit.count("primary: true") == 2          # arama + tarih
+    # Tek kanallı mağazada "Kanal" kutusu çizilmez — karar choice.js'te.
+    assert "applyChoiceFilter(nodes.filters, 'channel'" in PANEL
+
+
+def test_ikincil_eylemler_tek_menude() -> None:
+    serit = _blok("nodes.filters = filterBar({", "nodes.chips = chipRow(")
+    assert "menuButton('Dışa aktar'" in serit
+    for eski in ("'⤓ Görünen'", "'⤓ Tümü'", "button('Liste raporu'"):
+        assert eski not in PANEL
+
+
+def test_aciklama_kutusu_yok() -> None:
+    assert "hintBox" not in PANEL
+    assert "kpiRow([\n    { label: 'Sipariş'" not in PANEL     # KPI şeridi kalktı
+
+
+def test_tablo_en_cok_yedi_sutun_siparis_no_once() -> None:
+    sutunlar = _blok("const COLUMNS = [", "function emptyNode()")
+    anahtarlar = [satir.strip() for satir in sutunlar.splitlines()
+                  if satir.strip().startswith(("{ key: '", "key: '"))]
+    assert len(anahtarlar) <= 7, anahtarlar
+    assert anahtarlar[0].startswith("{ key: 'orderNo'")
+
+
+def test_cekmece_en_cok_bes_sekme_eylemler_tepede() -> None:
+    cekmece = _blok("async function openOrder(", "function paintPaymentTab(")
+    # `tabs` dizisi + `tabs.push(...)` — ikisi de `{ key: '...', label: ... }` yazar.
+    assert cekmece.count("{ key: '") <= 5
+    assert "actionBar(payload), bar.node, pane" in cekmece
+
+
+def test_ekranda_teknik_dil_yok() -> None:
+    """Yorumlar serbest; KULLANICININ GÖRDÜĞÜ metinde "tarama/uç/geçit" geçmez."""
+    import re
+    gorunen: list[str] = []
+    blok = False
+    for satir in PANEL.splitlines():
+        duz = satir.strip()
+        if blok:
+            blok = "*/" not in duz
+            continue
+        if duz.startswith("/*"):
+            blok = "*/" not in duz
+            continue
+        if duz.startswith(("//", "*")):
+            continue
+        kod = re.sub(r"\s//.*$", "", satir)
+        gorunen += [a or b for a, b in re.findall(r"'([^']*)'|`([^`]*)`", kod)]
+    for metin in gorunen:
+        kucuk = metin.lower()
+        for yasak in ("tarama", "taranı", "geçit", "sayfa içinde", "yetenek"):
+            assert yasak not in kucuk, metin

@@ -83,10 +83,20 @@ async def test_liste_secilen_firmayi_TEK_istekle_getirir() -> None:
     api.bbd_order_rows = [
         {"increment_id": "BBD-1", "id": 1, "shipping_title": "Hepsijet - Hepsijet"},
     ]
+    api.list_payload = {"items": [{"id": 1, "incrementId": "BBD-1", "status": "pending",
+                                   "grandTotal": 10, "createdAt": "2026-08-15 10:00:00"}],
+                        "meta": {"total": 1}}
     service = OrdersService(
         api=api, store=FakeStore(), log=FakeLog(),
         config={"channel": "default", "page_size": 50},
         fallback_dir=Path("/tmp/km-test-raporlar"),
     )
-    await service.orders()
+    result = await service.orders()
     assert len(api.used("bbd_orders")) == 1
+    assert result["items"][0]["carrier"] == "Hepsijet - Hepsijet"
+
+    # Boş sayfa için hiç istek atılmaz: eşlenecek satır yok.
+    api.calls.clear()
+    api.list_payload = {"items": [], "meta": {"total": 0}}
+    await service.orders()
+    assert api.used("bbd_orders") == []

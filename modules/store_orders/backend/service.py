@@ -8,19 +8,28 @@ tercihler (durum adları, sipariş no biçimi, iptal süresi).
 
 İKİ OKUMA KİPİ. Mağazanın sipariş listesi ucu yalnız birkaç süzgeç uyguluyor
 (durum, kanal, tarih, tutar). O süzgeçlerle yetiniliyorsa liste SUNUCU
-TARAFINDA sayfalanır. Ödeme yöntemi, kargo firması, şehir, kupon ve anahtar
-süzgeçler için küme TAVANLI olarak taranır ve süzme burada yapılır; ekran kaç
-kayıt tarandığını ve tavan yakalandıysa bunu SÖYLER. Yarım listeyi tam
-göstermek, hiç göstermemekten kötüdür.
+TARAFINDA sayfalanır. Ödeme yöntemi, kargo firması, şehir, kupon, arama, çip
+ve anahtar süzgeçler için ORTAK TARAMA okunur ve süzme burada yapılır; ekran
+kaç kayıt tarandığını, taramanın yaşını ve tavan yakalandıysa bunu SÖYLER.
+Yarım listeyi tam göstermek, hiç göstermemekten kötüdür.
 
-ÜÇÜNCÜ KİP — DETAYLANDIRMA. Liste ucu SIĞ satır veriyor (canlıda doğrulandı):
-fatura, gönderi, not, ara toplam, faturalanan tutar ve müşteri grubu YOK.
-Bunlara dayanan bir süzgeç seçilirse taranan küme sipariş sipariş
-`GET /orders/{id}` ile detaylandırılır. Pahalıdır (kayıt başına bir istek,
-geçit dakikada 55 istekte tutuyor), bu yüzden iki fren vardır: `detail_cap`
-ayarı ve `updatedAt` anahtarlı bellek önbelleği. Tavan yakalanırsa yanıt
-`partial: True` döner ve ekran "bazı süzgeçler eksik uygulandı" der — sessiz
-yanlış liste ÜRETİLMEZ.
+ORTAK TARAMA — İSTEĞİN İÇİNDE KOŞMAZ. Geçit mağazaya dakikada 55 istekte
+tutuyor ve bu pay BÜTÜN mağaza ekranlarının ortak payı. Eskiden sayaç şeridi
+her yenilemede siparişlerin tamamını tarıyor, ardından en çok 300 siparişi
+TEK TEK (`GET /orders/{id}`) okuyordu; sayfa değiştirmek bile taramayı
+tekrarlıyordu ve o sırada öteki ekranlar sırada bekliyordu. Şimdi tarama
+`store.scan` tazeleyicisinde koşar (`_load_scan`): sipariş, fatura, gönderi,
+iade ve seçilen kargo LİSTELERİ — her biri 50'şerlik sayfalarla, sipariş
+başına istek YOK. Liste, sayaç şeridi, CSV ve liste raporu aynı sonucu okur;
+sonuç `scan_ttl_seconds` boyunca tazedir, bu ekrandan yapılan her yazmadan
+sonra bayatlatılır ve ekran yaşını yazar.
+
+DETAY YALNIZ İKİ SÜZGEÇ İÇİN. Not ve müşteri grubunun LİSTE karşılığı yok
+(`ord_.DETAIL_FILTERS`). Bu ikisi seçilirse detay okuması da arka planda,
+istekler arasında `DETAIL_PACE` bekleyerek koşar (geçidin payını tek başına
+yemesin); `detail_cap` ve `updatedAt` anahtarlı bellek önbelleği frendir.
+Detayı henüz okunmamış aday varsa yanıt `partial: True` döner ve ekran
+"bazı süzgeçler eksik uygulandı" der — sessiz yanlış liste ÜRETİLMEZ.
 
 UZAK SİSTEM DÜŞERSE EKRAN AYAKTA KALIR (K7): `connected: False` + `error`
 döner. İstisna dışarı sızmaz.
@@ -36,7 +45,7 @@ import shutil
 import tempfile
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -50,10 +59,37 @@ from . import stages
 #: ekran "liste eksik olabilir" der — sessiz kırpma yapılmaz.
 SCAN_CAP = 2_000
 
-#: Tek taramada en çok kaç sipariş DETAYLANDIRILIR. Her detay bir HTTP isteği
-#: ve geçit dakikada 55 istekte tutuyor; 300 kayıt en kötü durumda beş dakika
-#: sürerdi. Canlıda 17 sipariş var, önbellekle ikinci tarama bedavaya gelir.
+#: Tek taramada en çok kaç sipariş DETAYLANDIRILIR — yalnız not/müşteri grubu
+#: süzgeci ve CSV'nin tutar dökümü için. Her detay bir HTTP isteği ve geçit
+#: dakikada 55 istekte tutuyor; önbellekle ikinci okuma bedavaya gelir.
 DETAIL_CAP = 300
+
+#: Ortak taramanın tazelik süresi (saniye). `scan_ttl_seconds` ayarıyla
+#: değişir. Kısa tutmak yeni siparişi çabuk gösterir ama her tazeleme sipariş,
+#: fatura, gönderi, iade ve seçilen kargo listelerinin tamamını okur.
+SCAN_TTL = 180
+
+#: İstek taramayı en çok bu kadar bekler (saniye). Küçük mağazada tarama bu
+#: sürede biter ve ilk açılış dolu gelir; bitmezse ekran "tarama sürüyor" der
+#: ve bir kez daha sorar. `store.scan` beklemeyi zaten 5 saniyede keser.
+SCAN_WAIT = 5.0
+
+#: `store.scan` içindeki anahtarlar. Modülün kendi köşesinde (`scoped`) durur.
+SCAN_KEY = "orders"
+DETAIL_KEY = "details"
+
+#: Arka plan detay okumasında iki istek arası bekleme (saniye). Geçidin payı
+#: bütün ekranlarındır; detay okuması dakikada ~25 isteği geçmez, kalanı
+#: öteki ekranlara kalır.
+DETAIL_PACE = 2.0
+
+#: Yan listelerin ekranda görünen adları (`_side`).
+SIDE_LABELS = {"invoices": "fatura listesi", "shipments": "gönderi listesi",
+               "refunds": "iade listesi"}
+
+#: Ortak tarama henüz bitmemişken CSV/rapor isteğine verilen cevap. Ekranda
+#: görünür; "tarama" denmez (docs/tasarim-sade-magaza.md §3).
+SCAN_RUNNING = "Siparişler hazırlanıyor; birkaç saniye sonra yeniden deneyin."
 
 # Toplu işlem türleri. "ship" KALDIRILDI: toplu kargoya verme Kargo
 # Yönetimi sihirbazına devredildi ve orada sipariş sipariş yürür. Yanlış desi
@@ -112,7 +148,7 @@ class OrdersService:
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
                  printer: Any = None, publish: Any = None, stage_notify: Any = None,
-                 category: str = "Mağaza", subcategory: str = "Satış",
+                 scan: Any = None, category: str = "Mağaza", subcategory: str = "Satış",
                  fallback_dir: Path | None = None) -> None:
         self._api = api
         self._store = store
@@ -120,6 +156,11 @@ class OrdersService:
         self._config = config or {}
         self._printer = printer
         self._publish = publish
+        # `store.scan` — ağır taramanın arka plan tazeleyicisi (modülün kendi
+        # köşesi). Yoksa (testte servis elle kurulunca) tarama isteğin içinde
+        # ve önbelleksiz koşar: doğru ama yavaş yol.
+        self._scan = scan
+        self._detail_pace = DETAIL_PACE
         # `store.notify.stage` — müşteriye giden aşama SMS'i. İSTEĞE BAĞLI:
         # Bildirimler ekranı kapalıysa sipariş akışı aynen çalışır, yalnız
         # müşteri bilgilendirilmez ve bu ekran nedenini söyler (K7).
@@ -200,6 +241,10 @@ class OrdersService:
         return max(100, min(SCAN_CAP, ord_.as_int(self._config.get("scan_cap"), SCAN_CAP)))
 
     @property
+    def _scan_ttl(self) -> int:
+        return max(30, min(900, ord_.as_int(self._config.get("scan_ttl_seconds"), SCAN_TTL)))
+
+    @property
     def _export_dir(self) -> Path:
         # HER ÇAĞRIDA yeniden çözülür: ay değişince klasör kendiliğinden değişir.
         return report_dir(self._category, subcategory=self._subcategory,
@@ -275,22 +320,38 @@ class OrdersService:
         """Gerekçe backend'de DE doğrulanır (K9): arayüzde gizlemek yetmez."""
         return ord_.reason_error(reason)
 
-    def _rows(self, raw: list[Any], prefs: dict[str, Any]) -> list[dict[str, Any]]:
+    def _rows(self, raw: list[Any], prefs: dict[str, Any],
+              sides: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        """Ham kayıtlar → satırlar. `sides` verilirse sığ satırın fatura/gönderi/
+        iade eksiği yan listelerden tamamlanır (`ord_.sides_of`)."""
         today = ord_.today_iso()
         return [ord_.order_row(item, status_names=prefs["statusNames"],
                                no_format=prefs["orderNoFormat"], today=today,
-                               late_days=prefs["lateDays"])
+                               late_days=prefs["lateDays"],
+                               sides=ord_.sides_of(item, sides) if sides is not None else None)
                 for item in raw if isinstance(item, dict)]
 
-    async def _chosen_carriers(self) -> dict[str, str]:
-        """Sipariş no → müşterinin checkout'ta seçtiği kargo firması. TEK İSTEK.
+    async def _chosen_carriers(self, rows: list[dict[str, Any]]) -> dict[str, str]:
+        """Sipariş no → müşterinin checkout'ta seçtiği kargo firması. EN ÇOK TEK İSTEK.
 
         Sipariş listesi ucu bu alanı VERMİYOR; `bbd/orders` veriyor. Sipariş
         başına detay okumak 50 satırlık sayfada 50 istek ederdi.
 
+        Ortak tarama `bbd/orders`u zaten okuduysa ve sayfadaki her sipariş o
+        okumada GÖRÜLDÜYSE istek atılmaz: checkout'ta seçilen firma sonradan
+        değişmez. Görülmemiş (taramadan yeni) bir sipariş varsa ilk sayfa çekilir.
+
         Patlarsa liste AYAKTA kalır ve taşıyıcı sütunu bugünkü gibi (yalnız
         gönderiden) doldurulur — eksik sütun, açılmayan listeden iyidir (K7).
         """
+        if not rows:
+            return {}
+        if self._scan is not None:
+            value = self._scan.peek(SCAN_KEY).get("value") or {}
+            seen = value.get("carrierSeen") or set()
+            if all(ord_.text(row.get("incrementId")) in seen or ord_.text(row.get("id")) in seen
+                   for row in rows):
+                return dict(value.get("carriers") or {})
         try:
             payload = await self._api.bbd_orders(page=1, per_page=self._page_size)
         except Exception as failure:  # noqa: BLE001 — K7
@@ -337,12 +398,85 @@ class OrdersService:
         self._details[order_id] = (stamp, full)
         return full
 
+    def _cached_detail(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Önbellekte AYNI `updatedAt` ile duran detay; yoksa kaydın kendisi. İSTEK YOK."""
+        if ord_.has_detail(raw):
+            return raw
+        cached = self._details.get(ord_.as_int(ord_.pick(raw, "id")))
+        if cached and cached[0] == ord_.text(ord_.pick(raw, "updated_at")):
+            return cached[1]
+        return raw
+
+    async def _fill_details(self, raws: list[dict[str, Any]], *,
+                            pace: float = 0.0) -> dict[str, int]:
+        """Detayı önbellekte olmayan kayıtları SIRAYLA okur; okunanı önbelleğe yazar.
+
+        `pace` iki istek arasındaki beklemedir: arka plan okuması geçidin
+        payını tek başına yemesin. İstisna fırlatmaz — okunamayan kayıt sığ
+        kalır ve sayılır (K7).
+        """
+        fetched = failed = 0
+        for raw in raws:
+            if self._cached_detail(raw) is not raw:
+                continue
+            if (fetched or failed) and pace > 0:
+                await asyncio.sleep(pace)
+            if await self._detail(raw) is raw:
+                failed += 1
+            else:
+                fetched += 1
+        return {"fetched": fetched, "failed": failed}
+
+    async def _load_details(self) -> dict[str, int]:
+        """Arka plan detay okumasının GÖVDESİ — `store.scan` görevinde koşar.
+
+        Ortak taramanın son değerindeki siparişlerin (yeniden eskiye, en çok
+        `detail_cap`) detayı önbellekte yoksa okunur. Önbellek `updatedAt`
+        anahtarlı olduğu için ikinci koşu yalnız DEĞİŞEN siparişleri okur.
+        """
+        report = self._scan.peek(SCAN_KEY) if self._scan is not None else {}
+        value = report.get("value") or {}
+        raws = [raw for raw in (value.get("orders") or []) if isinstance(raw, dict)]
+        return await self._fill_details(raws[: self._detail_cap], pace=self._detail_pace)
+
+    async def _ensure_details(self, raws: list[dict[str, Any]], *, refresh: bool) -> bool:
+        """Not/müşteri grubu süzgeci için detayları hazırlatır. Döner: hâlâ sürüyor mu.
+
+        `store.scan` varsa okuma ARKA PLANDA koşar ve istek en çok `SCAN_WAIT`
+        bekler; bitmeyen kısım için yanıt `partial` döner, ekran bir kez daha
+        sorar. Yoksa (servis elle kurulmuş) okuma burada, beklemesiz yapılır.
+        """
+        if self._scan is None:
+            await self._fill_details(raws[: self._detail_cap])
+            return False
+        try:
+            report = await self._scan.read(DETAIL_KEY, self._load_details, ttl=self._scan_ttl,
+                                           refresh=refresh, wait=SCAN_WAIT)
+        except Exception as failure:  # noqa: BLE001 — tazeleyici bizi düşürmez (K7)
+            self._log.warning("detay okuması başlatılamadı", error=str(failure))
+            return False
+        return bool(report.get("running"))
+
     # ------------------------------------------------------- ödeme kanıtı
 
     def _drop_evidence(self) -> None:
         """Yazmadan sonra kanıt bayattır: fatura kesildi, POS durumu değişti."""
         self._evidence_index = None
         self._evidence_at = 0.0
+
+    def _after_write(self, *order_ids: int) -> None:
+        """Bu ekrandan GERÇEK bir yazma yapıldı: kanıt, tarama ve detay bayattır.
+
+        Tarama silinmez, BAYAT işaretlenir (`store.scan.invalidate`): ekran eski
+        değeri göstermeye devam eder, yenisi bir sonraki okumada gelir. Yazma
+        isteği yeni taramayı BEKLEMEZ — kaçtığımız arıza tam olarak buydu.
+        """
+        self._drop_evidence()
+        for order_id in order_ids:
+            self._details.pop(ord_.as_int(order_id), None)
+        if self._scan is not None:
+            self._scan.invalidate(SCAN_KEY)
+            self._scan.invalidate(DETAIL_KEY)
 
     @staticmethod
     def _complete(payload: dict[str, Any], items: list[Any]) -> bool:
@@ -376,24 +510,34 @@ class OrdersService:
         invoice_ok = attempt_ok = True
         invoice_complete = attempt_complete = True
 
-        try:
-            payload = await self._api.invoices(dict(EVIDENCE_SORT),
-                                               per_page=EVIDENCE_PAGE)
-            invoices = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
-            invoice_complete = self._complete(payload, invoices)
-        except Exception as failure:  # noqa: BLE001 — kanıt eksik kalır, ekran kalkar (K7)
-            invoice_ok = False
-            warnings.append(f"fatura listesi okunamadı ({self._fail(failure)})")
-            self._log.warning("ödeme kanıtı: fatura listesi okunamadı", error=str(failure))
+        # İKİ LİSTE AYNI ANDA istenir: birbirinden bağımsızlar ve ikisi de tek
+        # sayfa. Sırayla beklemek ekranın açılışına bir istek süresi ekliyordu.
+        invoice_payload, attempt_payload = await asyncio.gather(
+            self._api.invoices(dict(EVIDENCE_SORT), per_page=EVIDENCE_PAGE),
+            self._api.bbd_payment_attempts({}, per_page=EVIDENCE_PAGE),
+            return_exceptions=True)
 
-        try:
-            payload = await self._api.bbd_payment_attempts({}, per_page=EVIDENCE_PAGE)
-            attempts = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
-            attempt_complete = self._complete(payload, attempts)
-        except Exception as failure:  # noqa: BLE001 — POS ucu yayında olmayabilir
+        if isinstance(invoice_payload, Exception):
+            # Kanıt eksik kalır, ekran kalkar (K7).
+            invoice_ok = False
+            warnings.append(f"fatura listesi okunamadı ({self._fail(invoice_payload)})")
+            self._log.warning("ödeme kanıtı: fatura listesi okunamadı",
+                              error=str(invoice_payload))
+        elif isinstance(invoice_payload, dict):
+            invoices = [item for item in (invoice_payload.get("items") or [])
+                        if isinstance(item, dict)]
+            invoice_complete = self._complete(invoice_payload, invoices)
+
+        if isinstance(attempt_payload, Exception):
+            # POS ucu yayında olmayabilir.
             attempt_ok = False
-            warnings.append(f"sanal POS denemeleri okunamadı ({self._fail(failure)})")
-            self._log.info("ödeme kanıtı: POS denemeleri okunamadı", error=str(failure))
+            warnings.append(f"sanal POS denemeleri okunamadı ({self._fail(attempt_payload)})")
+            self._log.info("ödeme kanıtı: POS denemeleri okunamadı",
+                           error=str(attempt_payload))
+        elif isinstance(attempt_payload, dict):
+            attempts = [item for item in (attempt_payload.get("items") or [])
+                        if isinstance(item, dict)]
+            attempt_complete = self._complete(attempt_payload, attempts)
 
         index = ord_.payment_index(invoices, attempts)
         index.update({
@@ -434,41 +578,158 @@ class OrdersService:
             "uncertain": sum(1 for row in rows if row.get("paymentAttention")),
         }
 
-    async def _scan(self, filters: dict[str, Any], prefs: dict[str, Any], *,
-                    detail: bool = False) -> tuple[list[dict[str, Any]], bool, bool,
-                                                   dict[str, Any]]:
-        """Tavanlı tam tarama. Mağazanın uyguladığı süzgeçler ÖNCE gönderilir;
-        taranan küme böylece mümkün olduğunca küçülür.
+    # ======================================================= ortak tarama
 
-        Dönen dörtlü: satırlar · tarama tavanı yakalandı mı · DETAY tavanı
-        yakalandı mı (`partial`) · ödeme kanıtı haritası.
+    def _side(self, name: str, payload: Any) -> tuple[dict[str, Any] | None, str]:
+        """Yan listeyi siparişe göre gruplar — ya da neden BİLİNMİYOR olduğunu söyler."""
+        label = SIDE_LABELS.get(name, name)
+        if isinstance(payload, Exception):
+            self._log.warning("yan liste okunamadı", side=name, error=str(payload))
+            return None, f"{label} okunamadı ({self._fail(payload)})"
+        if not isinstance(payload, dict):
+            return None, f"{label} okunamadı"
+        if payload.get("truncated"):
+            return None, f"{label} tavana dayandı"
+        index = ord_.side_index(payload.get("items") or [])
+        if index["unbound"]:
+            return None, f"{label}: {index['unbound']} kayıt siparişe bağlanamadı"
+        return index, ""
 
-        Ödeme kanıtı taramanın BÜYÜKLÜĞÜNDEN bağımsızdır: iki liste isteği,
-        kaç sipariş taranırsa taransın. Süzme (`matches`) kanıtla çözülmüş
-        satır üzerinde yapılır — yoksa "ödeme durumu" süzgeci sığ satırlarda
-        hep boş dönerdi.
+    async def _load_scan(self) -> dict[str, Any]:
+        """Ortak taramanın GÖVDESİ — `store.scan` arka plan görevinde koşar.
+
+        BEŞ LİSTE, SİPARİŞ BAŞINA İSTEK YOK: sipariş (yeniden eskiye — tavan
+        yakalanırsa düşen EN ESKİLER olsun), fatura, gönderi, iade ve
+        `bbd/orders` (checkout'ta seçilen kargo). Birbirinden bağımsızlar,
+        aynı anda istenir; her biri kendi içinde sayfa sayfa ve sırayla yürür.
+
+        Süzgeç mağazaya GÖNDERİLMEZ (yalnız ayardaki kanal kimliği): tek
+        tarama her süzgece, her çipe ve iki uca birden yeter. Süzme `matches`
+        ile burada yapılır.
+
+        Sipariş listesi okunamazsa HATA FIRLATIR: `store.scan` yakalar, zarfın
+        `error` alanına koyar ve bir dakika yeniden denemez. Yan liste
+        patlarsa tarama yine başarılıdır; o yan `None` kalır, satırların ilgili
+        sütunu "Bilinmiyor" olur ve neden `warnings` içinde yazar (K7).
+
+        Değer yalnız BELLEKTEDİR, diske yazılmaz (kişisel verinin ikinci
+        kopyası olmasın — KVKK). Satırlar burada KURULMAZ: tercih (durum adı,
+        gecikme eşiği) ve "bugün" her okumada değişebilir.
         """
-        payload = await self._api.orders(self._base_filters(filters), all_pages=True)
-        raw = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
-        truncated = bool(payload.get("truncated")) or len(raw) > self._scan_cap
-        raw = raw[: self._scan_cap]
+        query = {**self._base_filters({}), **EVIDENCE_SORT}
+        orders, invoices, shipments, refunds, chosen = await asyncio.gather(
+            self._api.orders(query, all_pages=True),
+            self._api.invoices(dict(EVIDENCE_SORT), all_pages=True),
+            self._api.shipments({}, all_pages=True),
+            self._api.refunds({}, all_pages=True),
+            self._api.bbd_orders({}, all_pages=True),
+            return_exceptions=True)
+        if isinstance(orders, Exception):
+            raise orders
+        if not isinstance(orders, dict):
+            raise TypeError("Sipariş listesi okunamadı: beklenmeyen yanıt biçimi.")
+        raw = [item for item in (orders.get("items") or []) if isinstance(item, dict)]
+        truncated = bool(orders.get("truncated")) or len(raw) > self._scan_cap
 
+        sides: dict[str, Any] = {}
+        warnings: list[str] = []
+        for name, payload in zip(ord_.SIDES, (invoices, shipments, refunds), strict=True):
+            sides[name], problem = self._side(name, payload)
+            if problem:
+                warnings.append(problem)
+
+        carriers: dict[str, str] = {}
+        seen: set[str] = set()
+        if isinstance(chosen, dict):
+            items = [item for item in (chosen.get("items") or []) if isinstance(item, dict)]
+            carriers = ord_.chosen_carriers(items)
+            seen = {ord_.text(key) for item in items
+                    for key in (ord_.pick(item, "increment_id"), item.get("id"))
+                    if ord_.text(key)}
+        elif isinstance(chosen, Exception):
+            self._log.warning("seçilen kargo firmaları okunamadı", error=str(chosen))
+        return {"orders": raw[: self._scan_cap], "truncated": truncated, "sides": sides,
+                "carriers": carriers, "carrierSeen": seen, "warnings": warnings}
+
+    async def _scan_report(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Ortak taramanın zarfı. İstek en çok `SCAN_WAIT` bekler; İSTİSNA FIRLATMAZ."""
+        if self._scan is None:
+            try:
+                value = await self._load_scan()
+            except Exception as failure:  # noqa: BLE001 — K7
+                self._log.warning("sipariş taraması yapılamadı", error=str(failure))
+                return {"state": "error", "value": None, "running": False, "at": "",
+                        "ageSeconds": 0, "stale": True, "error": self._fail(failure)}
+            return {"state": "ready", "value": value, "running": False, "at": _now(),
+                    "ageSeconds": 0, "stale": False, "error": ""}
+        try:
+            return await self._scan.read(SCAN_KEY, self._load_scan, ttl=self._scan_ttl,
+                                         refresh=refresh, wait=SCAN_WAIT)
+        except Exception as failure:  # noqa: BLE001 — tazeleyici bizi düşürmez (K7)
+            self._log.warning("sipariş taraması okunamadı", error=str(failure))
+            return {"state": "error", "value": None, "running": False, "at": "",
+                    "ageSeconds": 0, "stale": True, "error": self._fail(failure)}
+
+    @staticmethod
+    def _scan_view(report: dict[str, Any] | None) -> dict[str, Any]:
+        """Ekranın "bu sayılar ne zamandan" sorusuna verdiği cevap.
+
+        Panel yaşı yazar ("2 dakika önce") ve tarama sürüyorsa BİR KEZ daha
+        sorar. Sessiz bayat sayı yok.
+        """
+        report = report or {}
+        return {"state": ord_.text(report.get("state")) or "empty",
+                "running": bool(report.get("running")),
+                "at": ord_.text(report.get("at")),
+                "ageSeconds": ord_.as_int(report.get("ageSeconds")),
+                "stale": bool(report.get("stale")),
+                "error": ord_.text(report.get("error"))}
+
+    async def _scanned(self, wanted: dict[str, Any], prefs: dict[str, Any], *,
+                       refresh: bool = False) -> dict[str, Any]:
+        """Ortak taramadan, süzgece hazır satırlar — liste, sayaç, CSV ve rapor ORTAK.
+
+        Satırlar her okumada YENİDEN kurulur (tercih ve "bugün" değişebilir) ve
+        ödeme kanıtıyla çözülür: kanıt iki liste isteğidir, kaç sipariş
+        taranırsa taransın. Süzme (`matches`) kanıtla çözülmüş satır üzerinde
+        yapılır — yoksa "ödeme durumu" süzgeci sığ satırlarda hep boş dönerdi.
+
+        Not/müşteri grubu süzgecinde detay arka planda okunur; detayı henüz
+        okunmamış aday varsa `partial` döner (`pending` = okuma sürüyor).
+        """
+        report = await self._scan_report(refresh=refresh)
+        view = self._scan_view(report)
+        value = report.get("value")
+        if not isinstance(value, dict):
+            error = view["error"]
+            return {"ready": False, "connected": not error, "error": error, "scan": view,
+                    "rows": [], "raws": [], "truncated": False, "partial": False,
+                    "pending": False, "index": ord_.empty_index(), "warnings": []}
+
+        raws = [raw for raw in (value.get("orders") or []) if isinstance(raw, dict)]
+        detail = ord_.needs_detail(wanted)
+        pending = await self._ensure_details(raws, refresh=refresh) if detail else False
+        rows = self._rows([self._cached_detail(raw) for raw in raws], prefs,
+                          sides=value.get("sides") or {})
+        rows, index = await self._paid_rows(rows)
+        ord_.apply_chosen_carrier(rows, value.get("carriers") or {})
         partial = False
-        if detail or ord_.needs_detail(filters):
-            cap = self._detail_cap
-            partial = len(raw) > cap
-            # SIRAYLA: geçit zaten dakikada 55 istekte tutuyor, paralel
-            # çekmek kantin deneyiminde 5xx üretmişti.
-            raw = [await self._detail(item) for item in raw[:cap]] + raw[cap:]
-        rows, index = await self._paid_rows(self._rows(raw, prefs))
-        ord_.apply_chosen_carrier(rows, await self._chosen_carriers())
-        return rows, truncated, partial, index
+        if detail:
+            loose = ord_.without_detail(wanted)
+            partial = any(not row["detailed"] and ord_.matches(row, loose) for row in rows)
+        return {"ready": True, "connected": True, "error": "", "scan": view, "rows": rows,
+                "raws": raws, "truncated": bool(value.get("truncated")), "partial": partial,
+                "pending": pending and partial, "index": index,
+                "warnings": list(value.get("warnings") or [])}
 
     # ================================================================ liste
 
     async def orders(self, *, filters: dict[str, Any] | None = None, page: int = 1,
-                     size: int = 0) -> dict[str, Any]:
-        """Sipariş listesi. Süzgeç kümesine göre sunucu sayfalar ya da taranır."""
+                     size: int = 0, refresh: bool = False) -> dict[str, Any]:
+        """Sipariş listesi. Süzgeç kümesine göre sunucu sayfalar ya da ortak tarama okunur.
+
+        `refresh` ("Yenile" düğmesi) taramayı tazelik süresini beklemeden yeniler.
+        """
         prefs = await self._prefs_view()
         wanted = dict(filters or {})
         wanted.setdefault("today", ord_.today_iso())
@@ -477,25 +738,36 @@ class OrdersService:
 
         empty = {"ok": True, "items": [], "total": 0, "page": page, "size": per_page,
                  "pages": 0, "scanned": scanned, "truncated": False, "partial": False,
+                 "pending": False, "ready": True, "warnings": [],
+                 "scan": self._scan_view(None),
                  "summary": ord_.summary([]), "prefs": prefs,
                  "evidence": self._evidence_view(ord_.empty_index(), [])}
 
         try:
             if scanned:
-                rows, truncated, partial, index = await self._scan(wanted, prefs)
+                found = await self._scanned(wanted, prefs, refresh=refresh)
+                if not found["ready"]:
+                    # "Tarama boş döndü" ile "tarama daha bitmedi" AYRI şeylerdir;
+                    # ikincisinde boş liste "sipariş yok" diye okunmamalı.
+                    return {**empty, "connected": found["connected"],
+                            "error": found["error"], "ready": False, "scan": found["scan"],
+                            "scannedCount": 0}
+                rows = found["rows"]
                 hits = [row for row in rows if ord_.matches(row, wanted)]
                 start = max(0, (page - 1) * per_page)
                 window = hits[start:start + per_page]
                 return {**empty, "connected": True, "error": "", "items": window,
                         "total": len(hits), "pages": max(1, -(-len(hits) // per_page)),
-                        "truncated": truncated, "partial": partial, "scannedCount": len(rows),
+                        "truncated": found["truncated"], "partial": found["partial"],
+                        "pending": found["pending"], "scan": found["scan"],
+                        "warnings": found["warnings"], "scannedCount": len(rows),
                         "summary": ord_.summary(hits),
-                        "evidence": self._evidence_view(index, hits)}
+                        "evidence": self._evidence_view(found["index"], hits)}
 
             payload = await self._api.orders(self._base_filters(wanted), page=page,
                                              per_page=per_page)
             rows, index = await self._paid_rows(self._rows(payload.get("items") or [], prefs))
-            ord_.apply_chosen_carrier(rows, await self._chosen_carriers())
+            ord_.apply_chosen_carrier(rows, await self._chosen_carriers(rows))
         except Exception as failure:  # noqa: BLE001 — ekran ayakta kalmalı (K7)
             self._log.warning("sipariş listesi okunamadı", error=str(failure))
             return {**empty, "connected": False, "error": self._fail(failure),
@@ -516,33 +788,46 @@ class OrdersService:
             "summary": ord_.summary(rows),
         }
 
-    async def overview(self, *, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Çip sayaçları + süzgecin TAMAMININ mini toplamı. Tavanlı tarama."""
+    async def overview(self, *, filters: dict[str, Any] | None = None,
+                       refresh: bool = False) -> dict[str, Any]:
+        """Çip sayaçları + süzgecin TAMAMININ mini toplamı — ORTAK taramadan.
+
+        Sipariş başına istek YOK. "Kargoda" ve "Geciken" çipleri gönderi
+        durumuna bakıyor; o bilgi artık gönderi LİSTESİNDEN geliyor (eskiden
+        en çok 300 sipariş tek tek okunuyordu). Liste ucuyla AYNI taramayı okur:
+        ekran ikisini art arda istese de mağazaya tek tarama gider.
+        """
         prefs = await self._prefs_view()
         wanted = dict(filters or {})
         wanted.setdefault("today", ord_.today_iso())
-        # "Kargoda" ve "Geciken" çipleri gönderi durumuna bakıyor; sığ satırla
-        # sayaçlar sıfır çıkardı. Sayaç şeridi bu yüzden HER ZAMAN detay ister.
-        try:
-            rows, truncated, partial, index = await self._scan(wanted, prefs, detail=True)
-        except Exception as failure:  # noqa: BLE001 — K7
-            self._log.warning("sipariş sayaçları okunamadı", error=str(failure))
-            return {"ok": True, "connected": False, "error": self._fail(failure),
-                    "counts": {}, "summary": ord_.summary([]), "truncated": False,
-                    "partial": False, "scannedCount": 0,
+        found = await self._scanned(wanted, prefs, refresh=refresh)
+        if not found["ready"]:
+            # Sayaç UYDURULMAZ: tarama bitmeden "0" yazmak "bekleyen iş yok" demekti.
+            return {"ok": True, "connected": found["connected"], "error": found["error"],
+                    "ready": False, "counts": {}, "summary": ord_.summary([]),
+                    "truncated": False, "partial": False, "pending": False, "warnings": [],
+                    "scannedCount": 0, "scan": found["scan"],
                     "evidence": self._evidence_view(ord_.empty_index(), [])}
 
+        rows = found["rows"]
         # Çip sayaçları çipin KENDİSİ hariç süzgeçlere göre hesaplanır: bir çipe
         # basınca diğer çiplerin sayacının sıfırlanması, kullanıcıyı seçimini
         # kaldırmadan başka çipe geçemez hâle getirirdi.
         without_chip = {**wanted, "chip": ""}
         base = [row for row in rows if ord_.matches(row, without_chip)]
+        counts: dict[str, int | None] = dict(ord_.chip_counts(base, wanted.get("today")))
+        if any(not row.get("shipKnown") for row in base):
+            # Gönderi listesi okunamadıysa "Kargoda 0" bir yalandır: sayaç BOŞ kalır.
+            counts["shipped"] = None
+            counts["late"] = None
         return {
-            "ok": True, "connected": True, "error": "",
-            "counts": ord_.chip_counts(base, wanted.get("today")),
+            "ok": True, "connected": True, "error": "", "ready": True,
+            "counts": counts,
             "summary": ord_.summary([row for row in base if ord_.matches(row, wanted)]),
-            "truncated": truncated, "partial": partial, "scannedCount": len(rows),
-            "evidence": self._evidence_view(index, base),
+            "truncated": found["truncated"], "partial": found["partial"],
+            "pending": found["pending"], "warnings": found["warnings"],
+            "scannedCount": len(rows), "scan": found["scan"],
+            "evidence": self._evidence_view(found["index"], base),
         }
 
     # ================================================================ künye
@@ -554,9 +839,18 @@ class OrdersService:
         ekranları bu yanıtı okur.
         """
         prefs = await self._prefs_view()
-        try:
-            raw = await self._api.order(int(order_id))
-        except Exception as failure:  # noqa: BLE001 — K7
+        oid = int(order_id)
+        # DÖRT BAĞIMSIZ OKUMA AYNI ANDA: sipariş, ödeme işlemleri, iade talepleri
+        # ve ödeme kanıtı (15 sn önbellekli). Sırayla beklemek çekmecenin
+        # açılışına üç istek süresi ekliyordu; istek SAYISI değişmez.
+        raw, tx_payload, rma_payload, _ = await asyncio.gather(
+            self._api.order(oid),
+            self._api.transactions({"order_id": oid}),
+            self._api.bbd_return_requests({"order_id": oid}),
+            self._evidence(),
+            return_exceptions=True)
+        if isinstance(raw, Exception) or not isinstance(raw, dict):
+            failure = raw if isinstance(raw, Exception) else RuntimeError("Sipariş okunamadı.")
             self._log.warning("sipariş okunamadı", orderId=order_id, error=str(failure))
             return {"ok": False, "connected": False, "error": self._fail(failure)}
 
@@ -569,17 +863,16 @@ class OrdersService:
 
         warnings: list[str] = []
         transactions: list[dict[str, Any]] = []
-        try:
-            payload = await self._api.transactions({"order_id": int(order_id)})
-            transactions = [item for item in (payload.get("items") or [])
+        if isinstance(tx_payload, Exception):
+            warnings.append(f"ödeme işlemleri: {self._fail(tx_payload)}")  # parça parça (K7)
+        elif isinstance(tx_payload, dict):
+            transactions = [item for item in (tx_payload.get("items") or [])
                             if isinstance(item, dict)]
-        except Exception as failure:  # noqa: BLE001 — parça parça hata (K7)
-            warnings.append(f"ödeme işlemleri: {self._fail(failure)}")
 
         # CANLIDA DOĞRULANDI (2026-08-16): `GET /api/admin/bbd/return-requests`
         # 200 dönüyor ve gerçek RMA kayıtları geliyor. Bir dönem bu uç yayında
         # değildi ve ekran bölümü "uç yayınlanmadı" diye kapatıyordu; artık öyle
-        # değil. Aşağıdaki `except` dalı YİNE DE DURUYOR (K7): uç bir gün geri
+        # değil. Aşağıdaki hata dalı YİNE DE DURUYOR (K7): uç bir gün geri
         # çekilirse künye ayakta kalmalı, sipariş kartı iade yüzünden çökmemeli.
         #
         # TUZAK — UÇ `order_id` SÜZGECİNİ UYGULAMIYOR. Denetleyici
@@ -591,14 +884,13 @@ class OrdersService:
         # kendiliğinden ucuzlar, yerel süzgeç de zararsız kalır.
         returns: list[dict[str, Any]] = []
         returns_available = True
-        try:
-            payload = await self._api.bbd_return_requests({"order_id": int(order_id)})
-            returns = [item for item in (payload.get("items") or [])
+        if isinstance(rma_payload, Exception):
+            returns_available = False                       # uç geri çekilebilir (K7)
+            warnings.append(f"iade talepleri: {self._fail(rma_payload)}")
+        elif isinstance(rma_payload, dict):
+            returns = [item for item in (rma_payload.get("items") or [])
                        if isinstance(item, dict)
-                       and ord_.as_int(ord_.pick(item, "order_id")) == int(order_id)]
-        except Exception as failure:  # noqa: BLE001 — uç geri çekilebilir (K7)
-            returns_available = False
-            warnings.append(f"iade talepleri: {self._fail(failure)}")
+                       and ord_.as_int(ord_.pick(item, "order_id")) == oid]
 
         return {
             "ok": True, "connected": True, "error": "", "warnings": warnings,
@@ -668,11 +960,14 @@ class OrdersService:
                            for code, label in ord_.DATE_FIELDS.items()],
             "channels": [], "customerGroups": [], "carriers": [], "stale": False,
         }
-        try:
-            snapshot = await self._api.snapshot()
-        except Exception as failure:  # noqa: BLE001 — K7
+        # İki bağımsız okuma AYNI ANDA (ikisi de geçitte önbellekli olabilir).
+        snapshot, carriers = await asyncio.gather(self._api.snapshot(),
+                                                  self._api.bbd_carriers(),
+                                                  return_exceptions=True)
+        if isinstance(snapshot, Exception) or not isinstance(snapshot, dict):  # K7
             out["connected"] = False
-            out["error"] = self._fail(failure)
+            out["error"] = (self._fail(snapshot) if isinstance(snapshot, Exception)
+                            else "Mağazaya ulaşılamadı.")
             return out
 
         parts = snapshot.get("parts") or {}
@@ -686,16 +981,16 @@ class OrdersService:
         out["stale"] = bool(snapshot.get("stale"))
         out["storedAt"] = ord_.text(snapshot.get("storedAt"))
 
-        try:
-            carriers = await self._api.bbd_carriers()
+        if isinstance(carriers, dict):
             out["carriers"] = [{"code": ord_.text(ord_.pick(item, "code")),
                                 "name": ord_.text(ord_.pick(item, "name", "title"))}
                                for item in (carriers.get("items") or [])
                                if isinstance(item, dict)]
-        except Exception as failure:  # noqa: BLE001 — BBD ucu henüz yayında olmayabilir
-            # Taşıyıcı listesi gelmezse kargo firması süzgeci SERBEST METİN
-            # olarak çalışmaya devam eder; ekran boş bir açılır kutu göstermez.
-            self._log.info("taşıyıcı listesi alınamadı", error=str(failure))
+        elif isinstance(carriers, Exception):
+            # BBD ucu henüz yayında olmayabilir. Taşıyıcı listesi gelmezse kargo
+            # firması süzgeci SERBEST METİN olarak çalışmaya devam eder; ekran
+            # boş bir açılır kutu göstermez.
+            self._log.info("taşıyıcı listesi alınamadı", error=str(carriers))
         return out
 
     async def audit(self, *, order_id: int = 0, limit: int = 50) -> dict[str, Any]:
@@ -744,6 +1039,12 @@ class OrdersService:
 
         await self._record(order_id=order_id, action="add_comment", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok", detail={"notify": bool(notify)})
+        if not dry_run:
+            # Not eklemek siparişin `updatedAt`ini değiştirmeyebilir; önbellekteki
+            # detay "not yok" demeye devam etmesin. Kanıt ve tarama etkilenmez.
+            self._details.pop(ord_.as_int(order_id), None)
+            if self._scan is not None:
+                self._scan.invalidate(DETAIL_KEY)
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
                 "notified": bool(notify)}
 
@@ -787,7 +1088,7 @@ class OrdersService:
         await self._record(order_id=order_id, action="cancel", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok")
         if not dry_run:
-            self._drop_evidence()
+            self._after_write(order_id)
         applied = bool(result.get("sent", not dry_run)) and not dry_run
         if applied:
             # Kuru provada olay YAYINLANMAZ: mağazada hiçbir şey değişmedi,
@@ -857,7 +1158,7 @@ class OrdersService:
                            actor=actor, result="dry_run" if dry_run else "ok", detail=detail)
         applied = bool(result.get("sent", not dry_run)) and not dry_run
         if not dry_run:
-            self._drop_evidence()
+            self._after_write(order_id)
         if applied:
             # Kuru provada olay YAYINLANMAZ: mağazada hiçbir şey değişmedi.
             await self._announce({"orderId": int(order_id), "from": row["status"],
@@ -902,7 +1203,7 @@ class OrdersService:
         if not dry_run:
             # Fatura kesildi: ödeme kanıtı bayat. Yenilenen ekran "Ödenmedi"
             # görmeye devam ederse kullanıcı işini yapmadığını sanır.
-            self._drop_evidence()
+            self._after_write(order_id)
         return {"ok": True, "error": "", "dryRun": bool(result.get("dryRun", dry_run)),
                 "partial": bool(clean)}
 
@@ -945,21 +1246,11 @@ class OrdersService:
                     "error": "Tek seferde en çok 200 sipariş. Daha büyük iş için süzgeci daraltın."}
 
         prefs = await self._prefs_view()
-        raws: list[dict[str, Any]] = []
-        missing: list[int] = []
-        for order_id in ids:
-            try:
-                raw = await self._api.order(order_id)
-            except Exception as failure:  # noqa: BLE001 — K7
-                missing.append(order_id)
-                self._log.warning("önizleme için sipariş okunamadı", orderId=order_id,
-                                  error=str(failure))
-                continue
-            raws.append(raw)
+        fresh, missing = await self._selected_rows(ids, prefs)
 
         # Önizleme de kanıtla çözülmüş ödeme durumuna bakar: listede "Belirsiz"
         # diye seçtirilmeyen sipariş, önizlemede sessizce "uygun" görünmemeli.
-        rows, _ = await self._paid_rows(self._rows(raws, prefs))
+        rows, _ = await self._paid_rows(fresh)
         if not rows:
             return {"ok": False, "error": "Seçilen siparişlerin hiçbiri okunamadı."}
 
@@ -1063,7 +1354,7 @@ class OrdersService:
              json.dumps(params, ensure_ascii=False), row["token"]),
         )
         if not dry_run:
-            self._drop_evidence()
+            self._after_write(*(int(item["id"]) for item in targets))
         failed = len(targets) - applied
         await self._record(order_id=0, action=f"batch_{kind}", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok",
@@ -1076,6 +1367,92 @@ class OrdersService:
         return {"ok": applied > 0, "error": "", "applied": applied, "failed": failed,
                 "partial": failed > 0 and applied > 0, "carrier": wanted_carrier,
                 "results": results, "dryRun": dry_run}
+
+    async def _selected_rows(self, ids: list[int], prefs: dict[str, Any]) -> tuple[
+            list[dict[str, Any]], list[int]]:
+        """Seçilen siparişlerin TAZE satırları — mümkünse sipariş başına istek ATMADAN.
+
+        Önizleme ve manifesto "şu an"ı ister: arada fatura kesilmiş, gönderi
+        açılmış olabilir ve ortak tarama bunu henüz bilmeyebilir. Eskiden seçilen
+        her sipariş tek tek okunuyordu: 200 seçim 200 istek, geçitte ~4 dakika.
+
+        Şimdi seçilenlerin EN ESKİSİNİN gününden bir gün önce başlayan bir
+        PENCERE dört liste isteğiyle TAZE okunur (`_window_rows`). Pencerede
+        bulunamayan ya da fatura/gönderi bilgisi kesinleşmeyen sipariş eski
+        yoldan, tek tek okunur. Döner: (seçim sırasıyla satırlar, okunamayanlar).
+        """
+        wanted = list(dict.fromkeys(int(item) for item in ids))
+        found, leftovers = await self._window_rows(wanted, prefs)
+        missing: list[int] = []
+        for order_id in leftovers:
+            try:
+                raw = await self._api.order(order_id)
+            except Exception as failure:  # noqa: BLE001 — K7
+                missing.append(order_id)
+                self._log.warning("seçilen sipariş okunamadı", orderId=order_id,
+                                  error=str(failure))
+                continue
+            built = self._rows([raw], prefs)
+            if built:
+                found[order_id] = built[0]
+        return [found[order_id] for order_id in wanted if order_id in found], missing
+
+    async def _window_rows(self, ids: list[int], prefs: dict[str, Any]) -> tuple[
+            dict[int, dict[str, Any]], list[int]]:
+        """Seçimin tarih PENCERESİNİ dört liste isteğiyle taze okur.
+
+        Fatura, gönderi ve iade siparişten SONRA oluşur; seçilenlerin en eskisinin
+        gününden (saat dilimi payı için bir gün önceden) başlayan pencere hepsini
+        kapsar. Siparişlerin gününü ortak taramanın SON DEĞERİ söyler — yalnız
+        bakılır (`peek`), bunun için yeni tarama başlatılmaz.
+
+        Pencere pahalıysa (tahmini liste isteği ≥ seçim sayısı) hiç açılmaz ve
+        hepsi tek tek okunur: üç siparişi okumak için dört liste çekmek kazanç
+        değildir. Döner: (bulunan satırlar, tek tek okunacaklar).
+        """
+        if self._scan is None or not ids:
+            return {}, list(ids)
+        value = self._scan.peek(SCAN_KEY).get("value") or {}
+        days = {ord_.as_int(ord_.pick(raw, "id")): ord_.day_of(ord_.pick(raw, "created_at"))
+                for raw in (value.get("orders") or []) if isinstance(raw, dict)}
+        known = [days[order_id] for order_id in ids if days.get(order_id)]
+        if not known:
+            return {}, list(ids)
+        try:
+            since = (date.fromisoformat(min(known)) - timedelta(days=1)).isoformat()
+        except ValueError:
+            return {}, list(ids)
+        in_window = sum(1 for day in days.values() if day and day >= since)
+        if 4 * max(1, -(-in_window // EVIDENCE_PAGE)) >= len(ids):
+            return {}, list(ids)
+
+        window = {"date_from": since}
+        orders, invoices, shipments, refunds = await asyncio.gather(
+            self._api.orders({**self._base_filters({}), **window}, all_pages=True),
+            self._api.invoices(dict(window), all_pages=True),
+            self._api.shipments(dict(window), all_pages=True),
+            self._api.refunds(dict(window), all_pages=True),
+            return_exceptions=True)
+        if not isinstance(orders, dict):
+            self._log.warning("seçim penceresi okunamadı", error=str(orders))
+            return {}, list(ids)
+        sides = {name: self._side(name, payload)[0]
+                 for name, payload in zip(ord_.SIDES, (invoices, shipments, refunds),
+                                          strict=True)}
+        raws = {ord_.as_int(ord_.pick(raw, "id")): raw
+                for raw in (orders.get("items") or []) if isinstance(raw, dict)}
+        found: dict[int, dict[str, Any]] = {}
+        leftovers: list[int] = []
+        for order_id in ids:
+            raw = raws.get(order_id)
+            row = self._rows([raw], prefs, sides=sides)[0] if raw else None
+            # Fatura ve gönderi KESİN değilse önizleme "uygun" diyemez: o sipariş
+            # eski yoldan okunur.
+            if row is None or not (row["invoiceKnown"] and row["shipKnown"]):
+                leftovers.append(order_id)
+                continue
+            found[order_id] = row
+        return found, leftovers
 
     @staticmethod
     def _batch_params(row: Any) -> dict[str, Any]:
@@ -1159,25 +1536,6 @@ class OrdersService:
                 "customer": payload["customer"], "result": ord_.text(result.get("result")),
                 "duplicate": bool(result.get("duplicate")),
                 "note": ord_.text(result.get("note")) or ord_.text(result.get("error"))}
-
-    async def _shipment_of(self, order_id: int) -> dict[str, Any]:
-        """Siparişin taşıyıcı kaydı — takip numarası ve bağlantı için.
-
-        TOPLU "KARGOYA VER" TAKİP NUMARASI ÜRETMEZ (her paketin numarası
-        ayrıdır); numara ve takip bağlantısı taşıyıcının kendi kaydındadır.
-        Uç yayında değilse boş künye döner ve mesaj "bilgi eksik" diye durur —
-        uydurma bir takip kodu göndermekten iyidir.
-        """
-        try:
-            payload = await self._api.bbd_shipments({"order_id": int(order_id)})
-        except Exception as failure:  # noqa: BLE001 — BBD ucu yayında olmayabilir (K7)
-            self._log.info("gönderi kaydı okunamadı", orderId=order_id, error=str(failure))
-            return {}
-        for item in (payload.get("items") or []):
-            view = stages.shipment_view(item)
-            if view["track"] or view["trackUrl"]:
-                return view
-        return {}
 
     async def stage_sweep(self, *, stage: str, actor: str = "",
                           dry_run: bool = True) -> dict[str, Any]:
@@ -1330,6 +1688,15 @@ class OrdersService:
         PDF'LER BİRLEŞTİRİLMEZ: elimizde PDF birleştirici yok ve sahte bir
         "birleşik etiket" üretmek, yazıcıdan bozuk kâğıt çıkarırdı. Her etiket
         ayrı dosyadır; ekran hepsini listeler ve tek tek yazdırır.
+
+        GÖNDERİ SİPARİŞİN KENDİSİNDEN DOĞRULANIR (`ord_.label_shipment`). Liste
+        sipariş süzgeciyle istenir ama "ilk satır" kör seçilmez: süzgeç bir
+        dönem sessizce yok sayıldığında her siparişe mağazanın en yeni etiketi
+        iniyordu — başka müşterinin barkodu. İptal gönderi atlanır, etiketi
+        alınmış olan yeğlenir.
+
+        SIRAYLA: etiket başına iki istek (gönderi + PDF) ve geçidin dakikalık
+        payı bütün ekranlarındır; en çok 50 sipariş.
         """
         ids = [int(item) for item in (order_ids or []) if ord_.as_int(item)]
         if not ids:
@@ -1342,11 +1709,10 @@ class OrdersService:
         for order_id in ids:
             try:
                 shipments = await self._api.bbd_shipments({"order_id": order_id})
-                first = next((item for item in (shipments.get("items") or [])
-                              if isinstance(item, dict)), None)
-                if not first:
-                    raise RuntimeError("Bu siparişin kargo kaydı yok.")
-                content = await self._api.bbd_shipment_label(ord_.as_int(ord_.pick(first, "id")))
+                chosen, why = ord_.label_shipment(shipments.get("items") or [], order_id)
+                if chosen is None:
+                    raise RuntimeError(why)
+                content = await self._api.bbd_shipment_label(ord_.as_int(ord_.pick(chosen, "id")))
                 name = f"magaza-kargo-etiketi-{order_id}-{stamp}.pdf"
                 path = write_private(self._export_dir / name, content)
             except Exception as failure:  # noqa: BLE001 — biri patlarsa gerisi sürsün
@@ -1440,21 +1806,40 @@ class OrdersService:
         prefs = await self._prefs_view()
         wanted = dict(filters or {})
         wanted.setdefault("today", ord_.today_iso())
-        try:
-            # CSV mali kayıt yerine geçiyor: ara toplam, KDV, kargo firması ve
-            # takip numarası yalnız DETAYDA var, sığ satırda hepsi sıfır çıkardı.
-            rows, truncated, partial, _ = await self._scan(wanted, prefs, detail=True)
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"ok": False, "error": self._fail(failure)}
-        hits = [row for row in rows if ord_.matches(row, wanted)]
+        found = await self._scanned(wanted, prefs)
+        if not found["ready"]:
+            return {"ok": False, "error": found["error"] or SCAN_RUNNING}
+
+        # CSV mali kayıt yerine geçiyor: ara toplam, KDV, indirim ve kargo
+        # bedeli yalnız DETAYDA var. Detay artık YALNIZ SÜZGECE UYAN siparişler
+        # için okunur (eskiden taranan kümenin tamamı, en çok 300 istek); aynı
+        # `updatedAt` ile önbellekte olan tekrar okunmaz.
+        loose = ord_.without_detail(wanted)
+        candidates = {row["id"] for row in found["rows"]
+                      if not row["detailed"] and ord_.matches(row, loose)}
+        partial = len(candidates) > self._detail_cap
+        if candidates:
+            todo = [raw for raw in found["raws"]
+                    if ord_.as_int(ord_.pick(raw, "id")) in candidates]
+            await self._fill_details(todo[: self._detail_cap])
+            found = await self._scanned(wanted, prefs)
+            if not found["ready"]:
+                return {"ok": False, "error": found["error"] or SCAN_RUNNING}
+        hits = [row for row in found["rows"] if ord_.matches(row, wanted)]
+        partial = partial or found["partial"] or any(not row["detailed"] for row in hits)
+        truncated = found["truncated"]
+
+        def amount(value: Any) -> str:
+            # Detayı okunamayan satırda tutar BİLİNMİYOR: boş hücre, "0,00 ₺" değil.
+            return "" if value is None else money(value)
 
         headers = ["Sipariş no", "Tarih", "Müşteri", "E-posta", "Kanal", "Durum", "Ödeme",
                    "Kalem", "Ara toplam", "Kargo", "İndirim", "KDV", "Toplam", "Kargo firması",
                    "Takip no"]
         table = [[row["orderNo"], row["createdAt"], row["customer"], row["email"], row["channel"],
                   row["statusLabel"], row["paymentLabel"], row["itemCount"],
-                  money(row["subTotal"]), money(row["shipping"]), money(row["discount"]),
-                  money(row["tax"]), money(row["grandTotal"]), row["carrier"], row["track"]]
+                  amount(row["subTotal"]), amount(row["shipping"]), amount(row["discount"]),
+                  amount(row["tax"]), money(row["grandTotal"]), row["carrier"], row["track"]]
                  for row in hits]
 
         stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
@@ -1506,14 +1891,20 @@ class OrdersService:
                 "truncated": produced.get("truncated", False)}
 
     async def _list_pdf(self, filters: dict[str, Any]) -> dict[str, Any]:
+        """Süzgecin liste raporu — ORTAK taramadan, sipariş başına istek YOK.
+
+        Raporun sütunları (no, tarih, müşteri, durum, ödeme, toplam) ve özet
+        kutuları liste satırında zaten var; eskiden yine de taranan kümenin
+        tamamı tek tek detaylandırılıyordu.
+        """
         prefs = await self._prefs_view()
         wanted = dict(filters or {})
         wanted.setdefault("today", ord_.today_iso())
-        try:
-            rows, truncated, partial, _ = await self._scan(wanted, prefs, detail=True)
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"ok": False, "error": self._fail(failure)}
-        hits = [row for row in rows if ord_.matches(row, wanted)]
+        found = await self._scanned(wanted, prefs)
+        if not found["ready"]:
+            return {"ok": False, "error": found["error"] or SCAN_RUNNING}
+        truncated, partial = found["truncated"], found["partial"]
+        hits = [row for row in found["rows"] if ord_.matches(row, wanted)]
         if not hits:
             return {"ok": False, "error": "Bu süzgeçte rapora girecek sipariş yok."}
 
@@ -1536,10 +1927,21 @@ class OrdersService:
             sections.append({"kind": "note",
                              "text": "Liste tavana dayandı; rapor eksik olabilir."})
         return {"ok": True, "rows": len(hits), "truncated": truncated or partial,
-                "content": build_pdf(title="Sipariş listesi",
-                                     subtitle=f"{totals['count']} sipariş · "
-                                              f"ciro {money(totals['revenue'])}",
-                                     sections=sections, footer="Kontrol Merkezi · Mağaza")}
+                "content": await self._pdf(title="Sipariş listesi",
+                                           subtitle=f"{totals['count']} sipariş · "
+                                                    f"ciro {money(totals['revenue'])}",
+                                           sections=sections)}
+
+    @staticmethod
+    async def _pdf(*, title: str, subtitle: str, sections: list[dict[str, Any]]) -> bytes:
+        """PDF'i AYRI İŞ PARÇACIĞINDA üretir.
+
+        Çekirdeğin `build_pdf`i (ReportLab) eşzamanlıdır ve yüzlerce satırlık
+        raporda saniyeler sürer. Olay döngüsünde çağrılırsa tek uvicorn
+        işçisinde o sürece BÜTÜN istekler — başka ekranlarınkiler de — bekler.
+        """
+        return await asyncio.to_thread(build_pdf, title=title, subtitle=subtitle,
+                                       sections=sections, footer="Kontrol Merkezi · Mağaza")
 
     async def _slip_pdf(self, order_id: int) -> dict[str, Any]:
         if not order_id:
@@ -1575,24 +1977,19 @@ class OrdersService:
                      ["Teslimat", card["shipping"]["name"], card["shipping"]["line"]]],
         }]
         return {"ok": True, "rows": len(card["items"]), "truncated": False,
-                "content": build_pdf(title="Sipariş fişi",
-                                     subtitle=f"{row['orderNo']} · {row['customer']}",
-                                     sections=sections, footer="Kontrol Merkezi · Mağaza")}
+                "content": await self._pdf(title="Sipariş fişi",
+                                           subtitle=f"{row['orderNo']} · {row['customer']}",
+                                           sections=sections)}
 
     async def _manifest_pdf(self, order_ids: list[int]) -> dict[str, Any]:
         ids = [item for item in order_ids if item]
         if not ids:
             return {"ok": False, "error": "Sipariş seçilmedi."}
         prefs = await self._prefs_view()
-        rows: list[dict[str, Any]] = []
-        for order_id in ids[:200]:
-            try:
-                raw = await self._api.order(order_id)
-            except Exception as failure:  # noqa: BLE001 — biri patlarsa gerisi sürsün
-                self._log.warning("manifesto için sipariş okunamadı", orderId=order_id,
-                                  error=str(failure))
-                continue
-            rows.extend(self._rows([raw], prefs))
+        # Manifesto basılı teslim belgesidir; takip no TAZE olmalı. Seçim
+        # penceresi taze okunur, yalnız pencerede kesinleşmeyen sipariş tek tek
+        # okunur (eskiden seçilen her sipariş: 200 seçimde 200 istek).
+        rows, _ = await self._selected_rows(ids[:200], prefs)
         if not rows:
             return {"ok": False, "error": "Seçilen siparişlerin hiçbiri okunamadı."}
 
@@ -1608,9 +2005,9 @@ class OrdersService:
             "text": f"{len(rows)} gönderi · teslim alan imzası: ______________________",
         }]
         return {"ok": True, "rows": len(rows), "truncated": len(ids) > 200,
-                "content": build_pdf(title="Kargo manifestosu",
-                                     subtitle=f"{len(rows)} sipariş",
-                                     sections=sections, footer="Kontrol Merkezi · Mağaza")}
+                "content": await self._pdf(title="Kargo manifestosu",
+                                           subtitle=f"{len(rows)} sipariş",
+                                           sections=sections)}
 
     async def _render_pages(self, path: Path, *, max_pages: int = 12,
                             dpi: int = 110) -> list[str]:

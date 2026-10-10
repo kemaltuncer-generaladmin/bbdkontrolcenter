@@ -31,11 +31,17 @@
       "maximum": 2000,
       "description": "Mağazanın süzemediği filtreler için taranacak en çok sipariş."
     },
+    "scan_ttl_seconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 900,
+      "description": "Ortak sipariş taramasının tazelik süresi (saniye). Liste, sayaçlar, CSV ve liste raporu aynı taramayı okur."
+    },
     "detail_cap": {
       "type": "integer",
       "minimum": 0,
       "maximum": 2000,
-      "description": "Taramada en çok kaç sipariş detaylandırılsın. Her detay bir istek eder; tavan aşılırsa ekran 'bazı süzgeçler eksik uygulandı' der."
+      "description": "Not/müşteri grubu süzgeci ve CSV tutar dökümü için en çok kaç sipariş detaylandırılsın. Her detay bir istek eder; tavan aşılırsa ekran 'bazı süzgeçler eksik uygulandı' der."
     },
     "order_no_format": {
       "type": "string",

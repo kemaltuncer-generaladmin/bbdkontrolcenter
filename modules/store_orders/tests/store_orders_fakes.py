@@ -108,6 +108,11 @@ class FakeApi:
         #: ne verilirse verilsin bütün talepleri döndürüyor. Sahte de öyle
         #: davranır: süzgeci yerelde yapan kod yoksa test kırmızı olsun.
         self.return_payload: dict[str, Any] = {"items": [], "meta": {}}
+        #: YAN LİSTELER — Bagisto'nun kendi gönderi kaydı (`GET /shipments`,
+        #: Geliver'inki `shipment_payload`) ve iade listesi (`GET /refunds`).
+        #: Varsayılan BOŞ ve EKSİKSİZ: "bu sipariş için kayıt yok" demektir.
+        self.core_shipment_payload: dict[str, Any] = {"items": [], "meta": {"total": 0}}
+        self.refund_payload: dict[str, Any] = {"items": [], "meta": {"total": 0}}
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.fail and len(self.args_of(name)) >= self.fail_after:
@@ -129,7 +134,7 @@ class FakeApi:
 
         Alanlar CANLIDAKİ gibi snake_case: `shipping_title`.
         """
-        self._record("bbd_orders", filters, page=page, per_page=per_page)
+        self._record("bbd_orders", filters, page=page, per_page=per_page, all_pages=all_pages)
         return {"items": self.bbd_order_rows, "meta": {"total": len(self.bbd_order_rows)}}
 
     async def orders(self, filters: Any = None, *, page: int = 1, per_page: int | None = None,
@@ -169,6 +174,18 @@ class FakeApi:
                                    per_page: int | None = None) -> dict[str, Any]:
         self._record("bbd_payment_attempts", filters, page=page, per_page=per_page)
         return self.attempt_payload
+
+    async def shipments(self, filters: Any = None, *, page: int = 1,
+                        per_page: int | None = None,
+                        all_pages: bool = False) -> dict[str, Any]:
+        self._record("shipments", filters, page=page, per_page=per_page, all_pages=all_pages)
+        return self.core_shipment_payload
+
+    async def refunds(self, filters: Any = None, *, page: int = 1,
+                      per_page: int | None = None,
+                      all_pages: bool = False) -> dict[str, Any]:
+        self._record("refunds", filters, page=page, per_page=per_page, all_pages=all_pages)
+        return self.refund_payload
 
     async def snapshot(self, *, refresh: bool = False) -> dict[str, Any]:
         self._record("snapshot", refresh=refresh)
@@ -284,3 +301,60 @@ class FakeStageNotify:
     async def done(self, *, stage: str, order_ids: list[int]) -> dict[str, Any]:
         return {"ok": True, "ids": [item for item in self.done_ids.get(stage, [])
                                     if item in order_ids]}
+
+
+class FakeScan:
+    """`store.scan` yeteneğinin (modülün `scoped` köşesi) testlik yüzü. ARKA PLAN YOK.
+
+    Gerçeği geçidin içindedir ve buradan IMPORT EDİLMEZ (K3); sözleşme aynıdır:
+    `read(key, loader, ttl=, refresh=, wait=)` · `peek(key)` · `invalidate(key)`.
+    Yükleyici burada satır içinde koşar. `running` kümesindeki anahtar için
+    "tarama sürüyor" taklit edilir: yükleyici ÇAĞRILMAZ, varsa eski değer döner —
+    ekranın "bitmeden sıfır yazmama" kuralı ancak böyle sınanır.
+    """
+
+    STAMP = "2026-10-10T10:00:00+03:00"
+
+    def __init__(self) -> None:
+        self.entries: dict[str, dict[str, Any]] = {}
+        self.loads: list[str] = []
+        self.running: set[str] = set()
+
+    def _report(self, key: str) -> dict[str, Any]:
+        entry = self.entries.get(key)
+        running = key in self.running
+        if entry is None:
+            return {"state": "running" if running else "empty", "value": None, "stale": True,
+                    "running": running, "at": "", "ageSeconds": 0, "error": ""}
+        if entry["value"] is not None:
+            state = "ready"
+        elif running:
+            state = "running"
+        else:
+            state = "error" if entry["error"] else "empty"
+        return {"state": state, "value": entry["value"], "stale": entry["stale"],
+                "running": running, "at": entry["at"], "ageSeconds": 0,
+                "error": entry["error"]}
+
+    async def read(self, key: str, loader: Any, *, ttl: int | None = None,
+                   refresh: bool = False, wait: float = 0.0) -> dict[str, Any]:
+        entry = self.entries.setdefault(key, {"value": None, "stale": True, "error": "",
+                                              "at": ""})
+        if key in self.running:
+            return self._report(key)
+        if entry["stale"] or refresh:
+            self.loads.append(key)
+            try:
+                entry["value"] = await loader()
+            except Exception as failure:  # noqa: BLE001 — gerçeği de yutar, zarfa yazar
+                entry["error"] = str(failure) or "Tarama yapılamadı."
+            else:
+                entry.update(stale=False, error="", at=self.STAMP)
+        return self._report(key)
+
+    def peek(self, key: str) -> dict[str, Any]:
+        return self._report(key)
+
+    def invalidate(self, key: str) -> None:
+        if key in self.entries:
+            self.entries[key]["stale"] = True
