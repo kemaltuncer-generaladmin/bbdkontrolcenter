@@ -61,10 +61,11 @@ ui:
   entry: ui/panel/index.js
   locales: ui/locales
   nav:
-    title: "Müşteriler"
+    title: "Müşteri Listesi"
     icon: users
-    group: "BBD Store / Müşteri ve İletişim"
-    order: 320
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
+    group: "BBD Store"
+    order: 204
     requires: [store_customers.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.

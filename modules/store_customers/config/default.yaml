@@ -7,9 +7,13 @@ locale: "tr"               # her istekte gider
 
 # Nüfus taraması. Segment/harcama/tarih süzgeçleri Bagisto'nun müşteri ucunda
 # YOK; bu süzgeçler seçilince nüfusun tamamı bir kez taranır ve BELLEKTE
-# (diskte değil) `segment_scan_ttl` saniye tutulur.
+# (diskte değil) `segment_scan_ttl` saniye tutulur. Aynı süre sipariş
+# taramasına (liste sütunları + künyenin sipariş dizini) da uygulanır.
+# 300 idi: nüfus ~36 + siparişler ~12 sayfa, beş dakikada bir ~48 istek —
+# geçidin dakikada 55'lik ortak kovasını öteki ekranların elinden alıyordu.
+# Elle "Yenile" süreyi beklemeden tazeler (bir dakikadan sık değil).
 segment_scan_cap: 2000
-segment_scan_ttl: 300
+segment_scan_ttl: 1200
 
 # RFM eşikleri — MUTLAK, nüfusa göre değil. Nüfus dilimleri her ekran
 # açılışında tam tarama isterdi; ayrıca eşik nüfusla kayınca dönemler

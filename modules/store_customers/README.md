@@ -30,7 +30,7 @@ kaydı ve KVKK ayarları buranın Ayarlar sekmesinde durur.
 - **Yorum silmez.** Reddedilen yorum vitrinde görünmez ama kaydı durur.
 - **Nüfus taramasını diske yazmaz.** Taranan satırlar ad, e-posta ve telefon
   taşır; ikinci bir kopya ikinci bir KVKK yüküdür. Tarama kısa ömürlü bellek
-  önbelleğindedir (`segment_scan_ttl`, varsayılan 300 sn).
+  önbelleğindedir (`segment_scan_ttl`, varsayılan 1200 sn).
 - **Elle anonimleştirme yapmaz.** "Ad ve e-postayı üzerine yaz" yolu sipariş ve
   fatura kayıtlarındaki kişisel veriyi yerinde bırakır ve ekran işi bitirdiğini
   sandırır. Anonimleştirme mağazanın **KVKK talebi** üzerinden yürür; açık talep

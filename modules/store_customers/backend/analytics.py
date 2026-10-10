@@ -26,6 +26,9 @@ ON TUZAK — her birinin karşılığı bu dosyada bir fonksiyondur:
                                       yazma gövdeleri snake_case kalır.
 12. Müşteri kaydında son sipariş     → `order_stats` / `apply_order_stats`
     tarihi ve şehir YOK               siparişlerden toplulaştırır.
+13. Sipariş ucu `customer_id`        → `orders_by_customer` aynı arka plan
+    süzgecini UYGULAMIYOR             taramasından müşteri dizini kurar;
+                                      künye isteği mağazayı taramaz.
 """
 
 from __future__ import annotations
@@ -594,6 +597,42 @@ def order_stats(rows: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
         elif not bucket["city"] and row.get("city"):
             bucket["city"] = text(row["city"])
     return out
+
+
+def orders_by_customer(rows: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    """Sipariş satırlarını müşteriye göre DİZİNLER — en yeni sipariş başta.
+
+    NEDEN GEREKLİ. Künye bir zamanlar müşterinin siparişlerini
+    `orders({"customer_id": …}, all_pages=True)` ile istiyordu; mağaza bu
+    süzgeci UYGULAMIYOR (canlıda doğrulandı) ve tek müşteri açmak TÜM
+    siparişleri sayfa sayfa taramak demekti. Arka plan sipariş taraması zaten
+    bütün siparişleri bir kez geziyor; dizin o taramadan çıkar ve künye isteği
+    mağazaya hiç gitmeden "bu müşterinin siparişleri" sorusunu cevaplar.
+
+    `order_stats` ile AYNI kural: misafir siparişi (`customerId` = 0) hiçbir
+    müşteriye yazılmaz. Satırlar kopyalanmaz — dizin salt okunur kullanılır.
+    """
+    out: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        customer_id = as_int(row.get("customerId"))
+        if customer_id:
+            out.setdefault(customer_id, []).append(row)
+    for items in out.values():
+        # Tarih metni hep aynı biçimde gelir ("YYYY-MM-DD HH:MM:SS"); metin
+        # sıralaması takvim sırasıdır. Eşit damgada büyük kimlik yenidir.
+        items.sort(key=lambda item: (text(item.get("createdAt")), as_int(item.get("id"))),
+                   reverse=True)
+    return out
+
+
+def attributable(rows: list[dict[str, Any]]) -> bool:
+    """Siparişlerin kime ait olduğu söylenebiliyor mu?
+
+    Satır var ama HİÇBİRİ müşteri kimliği taşımıyorsa sipariş-müşteri eşleşmesi
+    kurulamaz; o zaman künye liste göstermez (bkz. `filter_honored`). Hiç
+    sipariş yoksa bu bir BİLGİDİR: kimsenin siparişi yoktur.
+    """
+    return not rows or any(as_int(row.get("customerId")) for row in rows)
 
 
 def apply_order_stats(row: dict[str, Any], stats: dict[int, dict[str, Any]], *,

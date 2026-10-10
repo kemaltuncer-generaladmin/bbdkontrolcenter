@@ -280,5 +280,12 @@ class FakeScan:
                          running=False)
             return dict(entry)
         entry.update(state="ready", value=value, stale=False, running=False,
-                     at="2026-08-18T00:00:00+03:00", error="")
+                     at="2026-08-18T00:00:00+03:00", error="", ageSeconds=0)
         return dict(entry)
+
+    def age(self, *keys: str, seconds: int = 3600) -> None:
+        """Taramaları yaşlandırır. Servis bir dakikadan taze taramayı elle
+        "Yenile" ile bile yeniden başlatmıyor; zamanı beklemek yerine yaş
+        doğrudan kurulur."""
+        for key in keys:
+            self._entry(key)["ageSeconds"] = seconds

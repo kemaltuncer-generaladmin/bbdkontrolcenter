@@ -26,8 +26,13 @@
 //    siparişlerden toplulaştırılır. Toplulaştırma yapılamazsa segment
 //    "Bilinmiyor" kalır, rozet ve şerit bunu yazar. Sıfır UYDURULMAZ.
 //  · Mağaza sipariş ucunda `customer_id` süzgecini UYGULAMIYOR (canlıda
-//    doğrulandı); müşterinin siparişleri kimliğe göre burada süzülür ve
-//    çekmece bunu söyler.
+//    doğrulandı). Çekmece müşterinin siparişlerini mağazaya SORMAZ: liste
+//    sütunlarını besleyen arka plan sipariş taramasının müşteri dizininden
+//    okur. Tarama bitmemişse çekmece "hesaplanıyor" der, sıfır göstermez.
+//  · Taramalar 20 dakikada bir tazelenir ve sürerken ekran LİSTEYİ değil
+//    `/scan-status` ucunu yoklar (mağazaya gitmez); bir tarama bittiğinde
+//    liste bir kez yeniden istenir. Geçidin dakikada 55 isteklik kovası bütün
+//    ekranların ortak bütçesidir.
 //  · Mağaza yorum durumları üçtür; SPAM YOKTUR. "Spam" yorumu reddeder ve
 //    burada spam olarak etiketler — karar kaybolmaz, ekran farkı söyler.
 //  · Puan süzgeci çoklu seçilirse mağaza tek puan kabul ettiği için sayfa
@@ -40,16 +45,17 @@
 
 import {
   ago, button, clip, confirmSimple, confirmWithReason, csvBlob, h, loadStyles,
-  money, num, percent, toaster,
+  menuButton, money, num, percent, toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable, pager } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
+import { applyChoiceFilter } from '../../ui-kit/choice.js';
 import {
-  alertBox, badge, card, chipRow, drawer, emptyState, hintBox, kpiRow,
+  alertBox, badge, card, chipRow, drawer, emptyState, kpiRow,
   skeletonRows, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
 import { formGrid } from '../../ui-kit/form.js';
-import { sparkline, stackedBar } from '../../ui-kit/charts.js';
+import { barChart, sparkline } from '../../ui-kit/charts.js';
 import { reportChain } from '../../ui-kit/report.js';
 
 const BASE = '/api/store_customers';
@@ -63,6 +69,11 @@ const SEGMENTS = [
   { key: 'lost', label: 'Kayıp' },
   { key: 'none', label: 'Hiç sipariş vermemiş' },
 ];
+
+//: Çip satırında duran segmentler — EN ÇOK BEŞ (docs/tasarim-sade-magaza.md
+//: §6). Kalan ikisi (Uykuda, Hiç sipariş vermemiş) silinmedi: "Filtreler"
+//: altındaki Segment kutusunda durur. Çip ile kutu AYNI değeri taşır.
+const CHIP_SEGMENTS = ['champion', 'loyal', 'new', 'at_risk', 'lost'];
 
 const SEGMENT_TONES = {
   champion: 'good', loyal: 'good', new: 'info', at_risk: 'warn',
@@ -78,9 +89,10 @@ const REVIEW_LABELS = { pending: 'Bekliyor', approved: 'Onaylı', disapproved: '
 const EMPTY_STATE = {
   items: [], total: 0, page: 1, size: 50, pages: 0,
   connected: false, error: '', source: 'customers', scannedAt: '', truncated: false,
-  unknownSegments: 0, statsError: '', statsTruncated: false,
-  scan: { state: 'empty', running: false, at: '' },
-  selection: [], segment: null, loaded: false,
+  unknownSegments: 0, statsError: '', statsTruncated: false, pending: false,
+  segmentError: '',
+  scan: { state: 'empty', running: false, runningKeys: [], at: '' },
+  selection: [], loaded: false,
   reference: { groups: [], channels: [], segments: [] },
   reviews: {
     items: [], total: 0, page: 1, size: 50, pages: 0, ratings: [], status: '',
@@ -94,10 +106,19 @@ let toast = null;
 let report = null;
 let busy = false;
 let state = { ...EMPTY_STATE, reviews: { ...EMPTY_STATE.reviews } };
-//: Tarama sürüyorken ekranın kendini tazeleyeceği an. Tek bir zamanlayıcı
+//: Tarama sürüyorken durum yoklamasının zamanlayıcısı. Tek bir zamanlayıcı
 //: tutulur; kapanışta iptal edilir, yoksa panel kapandıktan sonra istek atar.
 let scanTimer = null;
-const SCAN_POLL_MS = 15_000;
+//: Sürdüğü görülen tarama anahtarları (`order_stats`, `population`). Biri bu
+//: kümeden düşünce (bitti) liste BİR KEZ yeniden istenir.
+let scanWatch = new Set();
+let scanPolls = 0;
+//: Yoklama aralığı. Yoklama mağazaya GİTMEZ (`/scan-status` bellekten okur);
+//: aralık yine de geniş tutulur — tarama dakikalar sürer, saniyeler değil.
+const SCAN_POLL_MS = 20_000;
+//: Yoklamanın tavanı (~15 dk). Takılı kalmış bir tarama ekranı süresiz
+//: yoklatmasın; kullanıcı "Yenile" ile yeniden başlatabilir.
+const SCAN_POLL_LIMIT = 45;
 
 const nodes = {};
 const closers = [];        // cleanup'ta çağrılacak gerçek kaynak bırakıcılar
@@ -153,20 +174,26 @@ function segmentBadge(row) {
 // kullanıcıya "bu müşteri hiç alışveriş yapmamış" diye okunurdu.
 function scanNote() {
   const scan = state.scan || {};
-  if (scan.state === 'running') return ' · segment taraması sürüyor';
-  if (scan.state === 'error') return ' · segment taraması yapılamadı';
+  if (scan.running) return ' · segmentler hesaplanıyor';
+  if (scan.state === 'error') return ' · segmentler şu an hesaplanamadı';
   return '';
 }
 
+// DURUM SATIRI SADE (docs/tasarim-sade-magaza.md §3): "tarama", "uç", "tavan"
+// gibi iç ayrıntı yazılmaz. "Mağazaya ulaşılamadı" YALNIZ gerçek bağlantı
+// hatasında çıkar; segment listesi hazırlanırken liste yine gelir ve satır
+// "hazırlanıyor" der — hata tonu olmadan.
 function statusText() {
   if (!state.connected) return `Mağazaya ulaşılamadı — ${state.error}`;
   const pages = Math.max(1, state.pages);
-  if (state.source === 'segment') {
-    const when = state.scannedAt ? ago(state.scannedAt) : 'az önce';
-    return `Tarama görünümü · ${num(state.total)} müşteri · sayfa ${state.page}/${pages} `
-      + `· tarama ${when}` + (state.truncated ? ' · TAVANA DAYANDI' : '') + scanNote();
+  const base = `${num(state.total)} müşteri · sayfa ${state.page}/${pages}`;
+  if (state.pending) {
+    return `Liste hazırlanıyor… · ${base} · segment süzgeci birazdan uygulanacak`;
   }
-  return `Bağlı · ${num(state.total)} müşteri · sayfa ${state.page}/${pages}` + scanNote();
+  if (state.segmentError) {
+    return `${base} · segment süzgeci şu an uygulanamadı, tüm müşteriler gösteriliyor`;
+  }
+  return base + scanNote();
 }
 
 // -------------------------------------------------------------------- veri
@@ -183,7 +210,8 @@ function currentFilters() {
     groupId: values.group || 0,
     status: values.status || '',
     newsletter: values.newsletter ? '1' : '',
-    segment: state.segment || '',
+    // TEK KAYNAK: süzgeç şeridindeki Segment kutusu. Çip satırı onu yazar.
+    segment: values.segment || '',
     registeredFrom: registered.start || '',
     registeredTo: registered.end || '',
     lastOrderFrom: lastOrder.start || '',
@@ -235,28 +263,62 @@ async function refresh({ page = state.page, size = state.size, refreshScan = fal
     unknownSegments: payload.unknownSegments || 0,
     statsError: payload.statsError || '',
     statsTruncated: Boolean(payload.statsTruncated),
-    scan: payload.scan || { state: 'empty', running: false, at: '' },
+    pending: Boolean(payload.pending),
+    segmentError: payload.segmentError || '',
+    scan: payload.scan || { state: 'empty', running: false, runningKeys: [], at: '' },
     selection: [],
     loaded: true,
   };
   renderTable();
   nodes.pager.update({ total: state.total, page: state.page, size: state.size });
   nodes.status?.set(statusText(), !state.connected);
+  watchScan(state.scan);
+}
+
+// TARAMA BİTİNCE EKRAN BİR KEZ TAZELENİR — ama bunu anlamak için LİSTE
+// yoklanmaz. Eskiden 15 saniyede bir liste ve KPI yeniden isteniyordu; liste
+// her seferinde mağazaya bir istek atıyordu, hem de tam tarama kovayı
+// tüketirken. Şimdi `/scan-status` yoklanır (bellekten okur, mağazaya
+// gitmez); izlenen bir tarama bittiğinde liste ve KPI bir kez istenir.
+function watchScan(scan) {
+  for (const key of scan?.runningKeys || []) scanWatch.add(key);
   scheduleScanFollowUp();
 }
 
-// Tarama bitince ekranı BİR KEZ tazeler. Sürekli yoklamıyoruz: tarama bitmişse
-// ikinci istek zaten hazır sonucu alır, bitmemişse yeni bir tarama başlatmaz —
-// ama süresiz yoklamak mağazanın istek bütçesini boşuna yerdi.
 function scheduleScanFollowUp() {
-  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
-  if (!state.scan?.running) return;
-  scanTimer = setTimeout(() => {
-    scanTimer = null;
-    if (!state.loaded) return;          // ekran kapandı
+  if (scanTimer || !scanWatch.size || scanPolls >= SCAN_POLL_LIMIT) return;
+  scanTimer = setTimeout(pollScan, SCAN_POLL_MS);
+}
+
+async function pollScan() {
+  scanTimer = null;
+  if (!state.loaded) return;            // ekran kapandı
+  scanPolls += 1;
+  let status;
+  try {
+    status = await api(`${BASE}/scan-status`);
+  } catch {
+    scheduleScanFollowUp();             // yoklama düşerse bir sonrakini dene
+    return;
+  }
+  if (!state.loaded) return;
+  const running = new Set(status?.scan?.runningKeys || []);
+  const finished = [...scanWatch].filter((key) => !running.has(key));
+  scanWatch = running;
+  if (finished.length) {
+    scanPolls = 0;
+    // İkisi de yeniden `watchScan` çağırır; süren tarama varsa yoklama sürer.
     refresh();
     loadOverview();
-  }, SCAN_POLL_MS);
+    return;
+  }
+  scheduleScanFollowUp();
+}
+
+function stopScanWatch() {
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  scanWatch = new Set();
+  scanPolls = 0;
 }
 
 async function loadReference() {
@@ -272,21 +334,24 @@ async function loadReference() {
     channels: payload.channels || [],
     segments: payload.segments || [],
   };
-  nodes.filters.options('group', [
-    { value: '', label: 'Tümü — grup' },
-    ...state.reference.groups.map((item) => ({ value: item.id, label: item.name })),
-  ]);
+  // Tek gruplu mağazada Grup kutusu çizilmez (choice.js: tek cevaplı soru
+  // sorulmaz, değeri de gönderilmez).
+  applyChoiceFilter(nodes.filters, 'group', state.reference.groups, { allLabel: 'Hepsi' });
   if (payload.stale) {
     toast('Referans listeler bayat kopyadan geldi; mağaza yanıt vermedi.', 'warn');
   }
 }
 
 async function loadOverview({ refreshScan = false } = {}) {
+  let payload = null;
   try {
-    renderKpi(await api(`${BASE}/overview${refreshScan ? '?refresh=1' : ''}`));
+    payload = await api(`${BASE}/overview${refreshScan ? '?refresh=1' : ''}`);
   } catch {
-    renderKpi(null);
+    payload = null;
   }
+  renderKpi(payload);
+  // KPI zarfı nüfus taramasını da taşır; liste zarfında o yoktur.
+  if (payload?.scan && state.loaded) watchScan(payload.scan);
 }
 
 // ------------------------------------------------------------------- çizim
@@ -294,11 +359,16 @@ async function loadOverview({ refreshScan = false } = {}) {
 function renderKpi(payload) {
   if (!nodes.kpi) return;
   if (!payload || !payload.connected) {
-    nodes.kpi.replaceChildren(hintBox(
-      'Mini KPI ve segment sayaçları müşteri nüfusunun taranmasını gerektiriyor '
-      + `ve tarama şu an yapılamadı${payload?.error ? ` — ${payload.error}` : ''}. `
-      + 'Liste yine çalışıyor.',
-    ));
+    // AÇIKLAMA KUTUSU YOK (docs/tasarim-sade-magaza.md §3). Sayılar hazır
+    // değilse kutular "—" gösterir; neden hazır olmadığı kutunun ipucunda ve
+    // durum satırında yazar. "Hesaplanıyor" ile "hesaplanamadı" ayrı
+    // cümledir: ilk açılışta "yapılamadı" yazmak olmayan bir arızayı aratırdı.
+    const why = payload?.scan?.running
+      ? 'Segmentler hesaplanıyor; birkaç dakika içinde dolar.'
+      : `Şu an hesaplanamadı${payload?.error ? ` — ${payload.error}` : ''}. `
+        + '“Yenile” ile tekrar deneyin.';
+    nodes.kpi.replaceChildren(kpiRow(['Müşteri', 'Yeni (30g)', 'Tekrar eden', 'Ortalama YBD']
+      .map((label) => ({ label, value: '—', title: why }))));
     nodes.chips.counts({});
     return;
   }
@@ -322,17 +392,25 @@ function renderKpi(payload) {
   ]));
   nodes.chips.counts(payload.segments || {});
   if (payload.truncated) {
+    // Tek satır ve eyleme dönük (§3): ne oldu + ne yapılabilir.
     nodes.kpi.append(alertBox(
-      'Tarama tavana dayandı; KPI ve segment sayıları nüfusun tamamını temsil etmiyor. '
-      + 'Tavan modül ayarından yükseltilebilir (segment_scan_cap).', 'warn'));
+      'Sayılar müşterilerin bir kısmından hesaplandı — modül ayarında '
+      + '“segment_scan_cap” değerini yükseltin.', 'warn'));
   }
 }
 
+// TABLO DAR (docs/tasarim-sade-magaza.md §5): onay kutusuyla birlikte YEDİ
+// sütun. Grup, ortalama sepet, kayıt tarihi ve şehir çekmecede (Özet sekmesi)
+// ve CSV'de durur; silinmedi.
+//
+// AD SÜTUNUNUN ALT SINIRI VAR. Eskiden `minmax(0, …)` idi; sabit genişlikli
+// dokuz sütunun toplamı paneli aşınca esnek sütun SIFIRA iniyor ve müşterinin
+// adı başlıktan da satırdan da kayboluyordu (canlı önizlemede görüldü).
 const COLUMNS = [
   {
     key: 'name',
     label: 'Müşteri',
-    width: 'minmax(0, 2.4fr)',
+    width: 'minmax(220px, 2.4fr)',
     sortable: true,
     cell: (row) => {
       const box = h('span', 'cu-name');
@@ -341,7 +419,6 @@ const COLUMNS = [
       return box;
     },
   },
-  { key: 'groupName', label: 'Grup', width: '110px' },
   {
     key: 'segment',
     label: 'Segment',
@@ -372,14 +449,6 @@ const COLUMNS = [
     },
   },
   {
-    key: 'avgBasket',
-    label: 'Ort. sepet',
-    width: '112px',
-    align: 'num',
-    cell: (row) => (row.avgBasket === null || row.avgBasket === undefined
-      ? '—' : money(row.avgBasket)),
-  },
-  {
     key: 'lastOrderAt',
     label: 'Son sipariş',
     width: '112px',
@@ -393,8 +462,6 @@ const COLUMNS = [
       return box;
     },
   },
-  { key: 'createdAt', label: 'Kayıt', width: '100px' },
-  { key: 'city', label: 'Şehir', width: '110px' },
   {
     key: 'status',
     label: 'Durum',
@@ -416,14 +483,19 @@ function emptyNode() {
       actions: [button('Tekrar dene', { variant: 'primary', onClick: () => refresh() })],
     });
   }
-  if (state.segment) {
+  if (state.pending) {
+    // Bağlantı VAR; segment listesi henüz hazır değil. Hata tonu yok.
+    return emptyState({
+      title: 'Liste hazırlanıyor…',
+      text: 'Müşteriler birkaç dakika içinde burada görünür.',
+    });
+  }
+  const segment = currentFilters().segment;
+  if (segment) {
     return emptyState({
       title: 'Bu segmentte müşteri yok',
-      text: `“${SEGMENT_LABELS[state.segment]}” eşiklerine uyan müşteri bulunamadı. `
-        + 'Eşikler modül ayarından değiştirilebilir.',
-      actions: [button('Segmenti kaldır', {
-        onClick: () => { nodes.chips.set(null); applySegment(null); },
-      })],
+      text: `“${SEGMENT_LABELS[segment]}” grubuna uyan müşteri bulunamadı.`,
+      actions: [button('Segmenti kaldır', { onClick: () => applySegment(null) })],
     });
   }
   return emptyState({
@@ -438,27 +510,17 @@ function renderTable() {
   if (!wrap) return;
   wrap.replaceChildren();
 
-  if (state.source === 'segment') {
-    wrap.append(alertBox(
-      'Segment, harcama ve tarih süzgeçlerini mağazanın müşteri ucu kabul etmiyor; '
-      + 'bu liste nüfusun bir kez taranmış kopyasından süzülüyor. Tarama bellekte tutulur, '
-      + 'diske yazılmaz. Satır açıldığında künye her zaman CANLI okunur.', 'info'));
-  }
+  // AÇIKLAMA KUTUSU YOK (docs/tasarim-sade-magaza.md §3). "Bu liste taranmış
+  // kopyadan süzülüyor" gibi iç ayrıntılar kaldırıldı; kalan iki satır HATA
+  // durumudur ve tek satırdır. "N müşterinin segmenti bilinmiyor" kutusu da
+  // kaldırıldı: tarama sürerken HER satır bilinmiyordur ve kutu bunu arıza
+  // gibi gösteriyordu; "Bilinmiyor" rozetinin ipucu nedenini zaten yazar.
   if (state.statsError) {
-    wrap.append(alertBox(
-      `Sipariş toplamları okunamadı — ${state.statsError}. Mağazanın müşteri kaydında `
-      + 'sipariş sayısı, harcama ve son sipariş tarihi YOKTUR; bu üçü siparişlerden '
-      + 'sayılır. Sayılamadığı için segment, harcama ve “son sipariş” sütunları boş; '
-      + 'sıfır varsayılmadı.', 'warn'));
+    wrap.append(alertBox(`Sipariş toplamları okunamadı (${state.statsError}); sipariş ve `
+      + 'harcama sütunları boş. “Yenile” ile tekrar deneyin.', 'warn'));
   } else if (state.statsTruncated) {
-    wrap.append(alertBox(
-      'Sipariş taraması tavana dayandı; eksik listeyle “bu müşterinin siparişi yok” '
-      + 'demek yanlış olacağından sipariş ve harcama sütunları doldurulmadı.', 'warn'));
-  } else if (state.unknownSegments) {
-    wrap.append(alertBox(
-      `${num(state.unknownSegments)} müşterinin sipariş toplamı okunamadı; segmentleri `
-      + '“Bilinmiyor” gösteriliyor. Sıfır varsayılmadı — varsayılsaydı sipariş vermiş '
-      + 'müşteriler “hiç sipariş vermemiş” listesine düşerdi.', 'warn'));
+    wrap.append(alertBox('Sipariş sayıları eksik okundu; sipariş ve harcama sütunları boş '
+      + 'bırakıldı.', 'warn'));
   }
 
   nodes.table = dataTable({
@@ -524,13 +586,27 @@ async function bulkStatus(active) {
     nodes.table?.clearSelection();
     state.selection = [];
     refresh();
-    loadOverview({ refreshScan: true });
+    // `refresh=1` GÖNDERİLMEZ: sunucu yazmadan sonra nüfus taramasını zaten
+    // bayatlattı, düz okuma onu yeniler. `refresh=1` sipariş taramasını da
+    // baştan başlatırdı — durum değişikliği siparişleri değiştirmez.
+    loadOverview();
   });
 }
 
+/**
+ * Çipten gelen segment seçimi. Değer süzgeç şeridindeki Segment kutusuna
+ * yazılır (tek kaynak); çip yalnız onun görünür kısayoludur.
+ */
 function applySegment(key) {
-  state.segment = key;
+  nodes.filters.set('segment', key || '');
+  syncChips(key || '');
   refresh({ page: 1 });
+}
+
+/** Segment kutusu değişince çip satırı aynı seçimi gösterir. Çipte olmayan
+ *  segment (Uykuda, Hiç sipariş vermemiş) seçildiyse hiçbir çip yanmaz. */
+function syncChips(segment) {
+  nodes.chips?.set(CHIP_SEGMENTS.includes(segment) ? segment : null);
 }
 
 // ------------------------------------------------------------------- CSV
@@ -632,6 +708,9 @@ async function openCustomer(customerId) {
     segmentBadge(customer),
     badge(customer.groupName || 'Grup', 'info'),
     h('code', 'cu-mail', customer.email || '—'),
+    // Tablodan çıkarılan sütunlar (kayıt, şehir) künyede durur (§5).
+    h('span', 'cu-sub', [customer.createdAt && `Kayıt ${customer.createdAt}`,
+      customer.city].filter(Boolean).join(' · ')),
   );
   const pane = h('div', 'cu-pane');
   box.body.append(head, tabs.node, pane);
@@ -677,16 +756,35 @@ function paintSummary(pane, payload, forms, box) {
   ]);
 
   // Sparkline TEK BAŞINA okunmaz; yanında toplam ve aylar yazılı durur.
-  const spark = h('div', 'cu-spark');
+  // Seri BOŞ gelirse (sipariş taraması bitmedi / eksik) eğri ÇİZİLMEZ: altı
+  // ay sıfır çizmek "bu müşteri hiç harcamamış" diye okunurdu.
+  const trend = h('div');
   const values = (payload.spark || []).map((item) => item.total);
-  spark.append(h('span', 'cu-sub', 'Son 6 ay harcaması: '));
-  spark.append(sparkline(values, { width: 180, height: 34 }));
-  spark.append(h('b', undefined, money(values.reduce((acc, value) => acc + value, 0))));
-  const months = h('div', 'cu-months');
-  for (const item of payload.spark || []) {
-    const cell = h('span', 'cu-month');
-    cell.append(h('span', 'cu-sub', item.month), h('b', undefined, money(item.total)));
-    months.append(cell);
+  if (values.length) {
+    const spark = h('div', 'cu-spark');
+    spark.append(h('span', 'cu-sub', 'Son 6 ay harcaması: '));
+    spark.append(sparkline(values, { width: 180, height: 34 }));
+    spark.append(h('b', undefined, money(values.reduce((acc, value) => acc + value, 0))));
+    const months = h('div', 'cu-months');
+    for (const item of payload.spark) {
+      const cell = h('span', 'cu-month');
+      cell.append(h('span', 'cu-sub', item.month), h('b', undefined, money(item.total)));
+      months.append(cell);
+    }
+    trend.append(spark, months);
+  } else {
+    // Kutu değil, tek satır (§3).
+    trend.append(h('div', 'cu-sub', ordersStateNote(payload)
+      || 'Aylık harcama hesaplanamadı.'));
+    if (payload.ordersPending) {
+      // Çekmeceyi yeniden açmak mağazaya yalnız müşteri detayını sorar;
+      // sipariş taraması yeniden BAŞLATILMAZ.
+      const again = h('div', 'cu-actions');
+      again.append(button('Künyeyi yeniden yükle', {
+        onClick: () => { box.close(); openCustomer(customer.id); },
+      }));
+      trend.append(again);
+    }
   }
 
   const form = formGrid({
@@ -755,46 +853,53 @@ function paintSummary(pane, payload, forms, box) {
     button('Müşteri karnesi PDF', {
       onClick: () => report.run('card', { customerId: customer.id }),
     }),
-    button('Şifre sıfırlama bağlantısı — hazır değil', {
-      disabled: true,
-      title: 'Mağaza geçidinde şifre sıfırlama ucu henüz yok; uç hazır olunca açılacak.',
-    }),
   );
-  // KAPALI DÜĞMENİN NEDENİ EKRANDA YAZILI OLMALI: `title` ipucu kapalı
-  // düğmede pek çok tarayıcıda hiç görünmez ve düğme sessiz ölü düğmeye
-  // dönüşür — kullanıcı tıklar, hiçbir şey olmaz, kimse nedenini bilmez.
-  actions.append(h('div', 'cu-sub',
-    'Şifre sıfırlama bağlantısı gönderilemiyor: mağaza geçidinde (store_api) bu uç '
-    + 'yok. Müşteri vitrindeki “şifremi unuttum” akışını kullanmalı.'));
+  // "Şifre sıfırlama bağlantısı — hazır değil" KAPALI DÜĞMESİ KALDIRILDI: kit
+  // kuralı "bir düğme ya çalışır ya hiç çizilmez"; mağaza geçidinde bu iş için
+  // bir yol yok. Segmentin nasıl hesaplandığını ve sayının siparişlerden
+  // sayıldığını anlatan iki açıklama kutusu da kaldırıldı (§3) — ilki segment
+  // rozetinin, ikincisi aşağıdaki tek satırın işi.
 
   pane.append(
     tiles,
-    card('Harcama eğilimi', spark, 'Aylık toplamlar'),
-    months,
+    card('Harcama eğilimi', trend, 'Aylık toplamlar'),
     card('Künye', form.node),
     actions,
-    hintBox('Segment MUTLAK eşiklerle hesaplanır (ayardan değiştirilebilir): son sipariş '
-      + 'kaç gün önce, kaç sipariş, ne kadar harcama. Nüfusa göre değişen dilim '
-      + 'kullanılsaydı aynı müşteri iki dönemde iki farklı segmentte görünürdü.'),
-    payload.customer.computed
-      ? hintBox('Sipariş sayısı ve harcama mağazanın müşteri kaydında yoktu; siparişler '
-        + 'listesinden hesaplandı.')
-      : h('span'),
   );
 }
 
+/** Sipariş dizininin durumu tek cümlede — boşsa söylenecek bir şey yok. */
+function ordersStateNote(payload) {
+  if (payload.ordersPending) {
+    return 'Sipariş geçmişi hazırlanıyor; birkaç dakika içinde görünür.';
+  }
+  if (payload.ordersPartial) {
+    return 'Sipariş geçmişi eksik okundu; aylık harcama gösterilmiyor.';
+  }
+  return '';
+}
+
 function paintOrders(pane, payload) {
+  if (payload.ordersPending) {
+    pane.append(emptyState({
+      title: 'Siparişler hazırlanıyor',
+      text: 'Birkaç dakika sonra çekmeceyi yeniden açın.',
+    }));
+    return;
+  }
   if (payload.ordersUnverifiable) {
     pane.append(alertBox(
       'Sipariş satırlarının hangi müşteriye ait olduğu doğrulanamadı; başkasının '
       + 'siparişini bu müşteriye ait gibi göstermemek için liste boş bırakıldı.', 'bad'));
     return;
   }
-  if (payload.ordersLocalFiltered) {
-    pane.append(alertBox(
-      'Mağaza sipariş süzgecini uygulamıyor (tüm siparişleri döndürüyor); liste bu '
-      + 'müşterinin kimliğine göre burada süzüldü. Sayılar bu süzülmüş listeye göredir.',
-      'info'));
+  if (payload.ordersPartial) {
+    pane.append(alertBox(ordersStateNote(payload), 'warn'));
+  }
+  // "Liste burada süzüldü" bilgi kutusu KALDIRILDI (§3: iç ayrıntı). Listenin
+  // ne kadar taze olduğu tek satırda yazar.
+  if (payload.ordersScannedAt) {
+    pane.append(h('div', 'cu-sub', `Son güncelleme: ${ago(payload.ordersScannedAt)}`));
   }
   if (!payload.orders.length) {
     pane.append(emptyState({
@@ -821,9 +926,7 @@ function paintOrders(pane, payload) {
     dense: true,
     onRow: (row) => openPanel?.('store_orders', { orderId: row.id }),
   });
-  pane.append(table.node,
-    hintBox('Satıra tıklamak Siparişler ekranını o siparişle açar; sipariş ayrıntısı '
-      + 'burada tekrarlanmaz.'));
+  pane.append(table.node);
 }
 
 async function paintAddresses(pane, payload) {
@@ -857,8 +960,7 @@ async function paintAddresses(pane, payload) {
     if (item.vatId) box.append(h('div', 'cu-sub', `VKN/TCKN: ${item.vatId}`));
     list.append(box);
   }
-  pane.append(list, hintBox('Adres düzenleme mağaza tarafındadır: adres siparişe bağlı '
-    + 've düzeltmesi müşterinin onayını gerektirir. Burada salt gösterilir.'));
+  pane.append(list);
 }
 
 async function paintReturns(pane, payload) {
@@ -877,9 +979,7 @@ async function paintReturns(pane, payload) {
   // mağazada olmayan bir eksiklik aramaya gönderiyordu. DAL DURUYOR (K7): uç
   // geri çekilir ya da düşerse sekme boş kalmaz, nedenini söyler.
   if (!result.available) {
-    pane.append(alertBox(
-      `İade/talep listesi okunamadı — ${result.error}. Mağazanın talep ucu şu an `
-      + 'yanıt vermiyor; bağlantı düzelince bu sekme kendiliğinden dolacak.', 'warn'));
+    pane.append(alertBox(`İade talepleri okunamadı — ${result.error}`, 'warn'));
     return;
   }
   if (!result.items.length) {
@@ -899,7 +999,10 @@ async function paintReturns(pane, payload) {
     ],
     rows: result.items,
     dense: true,
-    onRow: (row) => openPanel?.('store_requests', { requestId: row.id }),
+    // "Talepler" ekranı kapatıldı (store_requests `enabled: false`); iade
+    // talepleri İade Yönetimi'nde işlenir. Kapalı ekrana giden satır boş ekran
+    // açardı.
+    onRow: (row) => openPanel?.('store_refunds', { requestId: row.id, orderId: row.orderId }),
   });
   pane.append(table.node);
 }
@@ -980,10 +1083,9 @@ async function paintConsents(pane, payload) {
   // bilinmediği söylenir. DAL DURUYOR (K7).
   if (!result.requestsAvailable) {
     requests.append(alertBox(
-      `KVKK talep listesi okunamadı — ${result.requestsError || 'sebep bildirilmedi'}. `
-      + 'Anonimleştirme talebe bağlı olduğu için o düğme de kapalı kalır.', 'warn'));
+      `KVKK talepleri okunamadı — ${result.requestsError || 'sebep bildirilmedi'}`, 'warn'));
   } else if (!(result.requests || []).length) {
-    requests.append(hintBox('Açık KVKK talebi yok.'));
+    requests.append(h('div', 'cu-sub', 'Açık KVKK talebi yok.'));
   } else {
     requests.append(dataTable({
       columns: [
@@ -1007,24 +1109,16 @@ async function paintConsents(pane, payload) {
       title: 'GERİ ALINAMAZ. Ayrı izin gerektirir (store_customers.anonymize).',
       onClick: () => anonymize(payload.customer),
     }),
-    button('Bülten aboneliğini değiştir — hazır değil', {
-      disabled: true,
-      title: 'Tek tıkla abonelik değişimi için mağaza geçidinde ayrı bir uç yok.',
-    }),
   );
-  actions.append(h('div', 'cu-sub',
-    'Bülten aboneliğinin tek tıkla değiştirilmesi için mağaza geçidinde ayrı bir uç yok. '
-    + 'Değişiklik Özet sekmesindeki “Bülten aboneliği” alanından yapılır; oradan yapılan '
-    + 'değişiklik gerekçesiyle birlikte bu geçmişe düşer.'));
+  // "Bülten aboneliğini değiştir — hazır değil" kapalı düğmesi KALDIRILDI:
+  // abonelik Özet sekmesindeki "Bülten aboneliği" alanından değişir ve
+  // gerekçesiyle bu geçmişe düşer. Çalışmayan düğme çizilmez.
 
   pane.append(
     card('Şu anki izinler', current, 'Kaynak: müşteri kaydı'),
     card('Değişiklik geçmişi', history, 'Yalnız bu ekrandan yapılanlar'),
     card('KVKK talepleri', requests),
     actions,
-    hintBox('Mağaza izin DEĞİŞİKLİĞİ geçmişi tutmuyor, yalnız o anki değeri var. '
-      + '“Ne zaman, kim, hangi gerekçeyle” bilgisi bu modül açıldığı günden itibaren '
-      + 'burada birikir; müşterinin vitrinden kendi yaptığı değişiklikler buraya düşmez.'),
   );
 }
 
@@ -1152,9 +1246,9 @@ async function paintHistory(pane, payload) {
     rows: result.items,
     dense: true,
     rowKey: (row) => `${row.createdAt}-${row.action}`,
-  }).node,
-  hintBox('Bu iz YERELDİR ve gerekçeyi tutar. Mağazanın kendi denetim kaydı gerekçe alanı '
-    + 'taşımıyor; ağ koparsa “ne yapmaya çalıştık” bilgisi yalnız burada kalır.'));
+  }).node);
+  // İz YERELDİR ve gerekçeyi tutar (mağazanın denetim kaydında gerekçe alanı
+  // yok). Bunu anlatan kutu kaldırıldı (§3); kural burada, kodda durur.
 }
 
 // ============================================================ yorum kuyruğu
@@ -1371,18 +1465,18 @@ function renderReviewBody(payload) {
 
   if (summary.breakdown && summary.total) {
     const chart = h('div', 'cu-breakdown');
-    chart.append(h('div', 'cu-sub', 'Puan dağılımı (sayılar çubuğun üstünde)'));
-    chart.append(stackedBar(summary.breakdown, { width: 680 }));
+    // `barChart`, `stackedBar` DEĞİL: kitin `stackedBar`ı veri varken patlıyor
+    // (charts.js: `svg.append(rect).append(title)`) ve yorum listesi hiç
+    // çizilmiyordu. Kit düzelince geri alınabilir.
+    chart.append(barChart(summary.breakdown.map((item) => ({
+      label: item.label, value: item.value, display: num(item.value),
+    }))));
     body.append(card('Puan dağılımı', chart));
   }
 
   if (payload.error) body.append(alertBox(payload.error, 'warn'));
-  if (payload.clientFiltered) {
-    body.append(alertBox(
-      'Mağaza yorum ucu tek puan süzgeci kabul ediyor; çoklu puan, yanıtsız ve metin '
-      + 'araması BU SAYFA üzerinde süzüldü. Sayfa dışındaki yorumlar bu süzgeçten '
-      + 'geçmedi — daraltmak için durum süzgecini ve sayfa boyutunu kullanın.', 'info'));
-  }
+  // "Çoklu puan bu sayfada süzüldü" bilgi kutusu KALDIRILDI (§3: iç ayrıntı).
+  // Davranış aynı; `clientFiltered` yanıtta durmaya devam ediyor.
 
   if (!state.reviews.items.length) {
     body.append(emptyState({
@@ -1423,9 +1517,7 @@ async function renderSettings(host) {
   host.replaceChildren();
 
   if (!payload.storeAvailable) {
-    host.append(alertBox(
-      `Mağaza ayarları okunamadı — ${payload.error}. Ayar yazılamaz; liste ve yorum `
-      + 'sekmeleri çalışmaya devam eder.', 'bad'));
+    host.append(alertBox(`Mağaza ayarları okunamadı — ${payload.error}`, 'bad'));
     return;
   }
 
@@ -1474,14 +1566,13 @@ async function renderSettings(host) {
     });
   }
 
+  // Bulunmayan anahtara yazmak hiçbir şeyi değiştirmez ve "kaydettim"
+  // yanılgısı üretir; o alanlar çizilmez. Uyarı TEK SATIR (§3).
   const missing = Object.keys(store).filter((slot) => !store[slot]?.found);
   if (missing.length) {
     host.append(alertBox(
-      'Şu ayarların anahtarı mağaza yapılandırmasında bulunamadı: '
-      + `${missing.map((slot) => store[slot]?.label || slot).join(', ')}. `
-      + 'Bulunmayan anahtara yazmak hiçbir şeyi değiştirmez ve “kaydettim” yanılgısı '
-      + `üretir; bu yüzden alan hiç gösterilmiyor. Anahtar adları modül ayarından `
-      + `düzeltilebilir (bölüm: ${payload.slug} · ${payload.gdprSlug}).`, 'warn'));
+      `Mağazada bulunamadığı için gösterilmeyen ayar: `
+      + `${missing.map((slot) => store[slot]?.label || slot).join(', ')}.`, 'warn'));
   }
 
   if (!fields.length) {
@@ -1537,9 +1628,6 @@ async function renderSettings(host) {
   host.append(
     card('Müşteri kaydı ve KVKK', form.node, 'Vitrini doğrudan etkiler'),
     actions,
-    hintBox('Ayrı bir “Mağaza Ayarları” ekranı yoktur: her ayar onu kullanan ekranda durur. '
-      + 'Müşteri kaydı ve KVKK burada, vergi store_tax’ta, kargo ücreti store_shipping’de, '
-      + 'yasal metinler store_cms’te.'),
   );
 }
 
@@ -1562,43 +1650,83 @@ export function mount(root, ctx) {
   ], 'list', (key) => showView(key));
 
   // ------------------------------------------------------------ müşteriler
+  // SADE KİP (docs/tasarim-sade-magaza.md §1-2): görünür süzgeç yalnız arama ve
+  // Durum; gerisi "Filtreler" düğmesinin arkasında katlanır (dolu olanı düğme
+  // sayar). Ara sıra kullanılan üç çıktı tek "Dışa aktar" menüsünde.
+  //
+  // TARİH ARALIKLARI BOŞ BAŞLAR. Kitin `dateRange` bileşeni başlangıç
+  // verilmezse "son 7 gün"e kurulur; burada açıkça boş verilmediği için liste
+  // varsayılan olarak "son 7 günde kaydolup son 7 günde sipariş verenler"e
+  // süzülüyordu (canlı önizlemede görüldü) — "Müşteri Listesi" tüm
+  // müşterileri göstermeliydi. Hazır çipler de kaldırıldı: katlanan alanda
+  // her biri tek tıkla listeyi daraltan iki satır kalabalıktı.
   nodes.filters = filterBar({
+    compact: true,
     fields: [
-      { kind: 'search', key: 'q', placeholder: 'Ad, e-posta veya telefon ara', width: '240px' },
-      { kind: 'select', key: 'group', label: 'Grup', options: [{ value: '', label: 'Tümü — grup' }] },
+      { kind: 'search', key: 'q', placeholder: 'Ad, e-posta veya telefon ara', width: '260px',
+        primary: true },
       {
         kind: 'select',
         key: 'status',
         label: 'Durum',
+        primary: true,
         options: [
-          { value: '', label: 'Tümü' },
+          { value: '', label: 'Hepsi' },
           { value: '1', label: 'Aktif' },
           { value: '0', label: 'Pasif' },
           { value: 'unverified', label: 'E-posta doğrulanmamış' },
         ],
       },
-      { kind: 'search', key: 'city', placeholder: 'Şehir', width: '120px' },
-      { kind: 'dateRange', key: 'registered', label: 'Kayıt' },
-      { kind: 'dateRange', key: 'lastOrder', label: 'Son sipariş' },
+      {
+        kind: 'select',
+        key: 'segment',
+        label: 'Segment',
+        options: [{ value: '', label: 'Hepsi' },
+          ...SEGMENTS.map((item) => ({ value: item.key, label: item.label }))],
+      },
+      { kind: 'select', key: 'group', label: 'Grup', options: [{ value: '', label: 'Hepsi' }] },
+      { kind: 'search', key: 'city', placeholder: 'Şehir', width: '140px' },
+      { kind: 'dateRange', key: 'registered', label: 'Kayıt', start: '', end: '', presets: [] },
+      { kind: 'dateRange', key: 'lastOrder', label: 'Son sipariş', start: '', end: '',
+        presets: [] },
       { kind: 'numRange', key: 'orders', label: 'Sipariş' },
       { kind: 'numRange', key: 'spend', label: 'Harcama', money: true },
       { kind: 'toggle', key: 'newsletter', label: 'Bülten aboneleri' },
     ],
-    onChange: () => refresh({ page: 1 }),
+    onChange: (values) => {
+      syncChips(values.segment || '');
+      refresh({ page: 1 });
+    },
     actions: [
       button('Yenile', {
-        onClick: () => { refresh({ refreshScan: true }); loadOverview({ refreshScan: true }); },
+        variant: 'ghost',
+        title: 'Listeyi ve segment sayılarını yeniden okur',
+        // Taramayı süreyi beklemeden tazeler. Sunucu bir dakikadan taze
+        // taramayı yeniden başlatmaz (kova korunur); yoklama sayacı sıfırlanır.
+        onClick: () => {
+          stopScanWatch();
+          refresh({ refreshScan: true });
+          loadOverview({ refreshScan: true });
+        },
       }),
-      button('⤓ Görünen', { title: 'Ekrandaki sayfayı CSV indir', onClick: exportVisible }),
-      button('⤓ Tümü', { title: 'Tüm kayıtları rapor klasörüne yaz', onClick: exportAll }),
-      button('Segment raporu', { onClick: () => report.run('segments', {}) }),
+      menuButton('Dışa aktar', [
+        { label: 'Ekrandaki müşteriler — CSV',
+          title: 'Şu an ekranda görünen sayfayı indirir', onClick: exportVisible },
+        { label: 'Tüm müşteriler — CSV',
+          title: 'Bütün müşterileri rapor klasörüne yazar', onClick: exportAll },
+        { label: 'Segment raporu — PDF',
+          title: 'Segment dağılımını yazdırılabilir PDF olarak hazırlar',
+          onClick: () => report.run('segments', {}) },
+      ], { title: 'CSV ya da yazdırılabilir PDF olarak indir' }),
     ],
   });
 
   // `count: 0` ZORUNLU: chipRow sayaç yuvasını yalnız `count` verilmişse kurar;
   // null geçmek `counts()` çağrısını sessizce etkisiz bırakıyordu.
   nodes.chips = chipRow(
-    SEGMENTS.map((item) => ({ ...item, count: 0 })), null, (key) => applySegment(key));
+    SEGMENTS.filter((item) => CHIP_SEGMENTS.includes(item.key))
+      .map((item) => ({ ...item, count: 0 })),
+    null, (key) => applySegment(key));
   nodes.status = statusLine();
   nodes.kpi = h('div', 'cu-kpi');
   nodes.selbar = h('div', 'cu-selbar');
@@ -1609,13 +1737,19 @@ export function mount(root, ctx) {
   });
 
   // ---------------------------------------------------------------- yorum
+  // Yorumlar sekmesinin KENDİ şeridi — yalnız o sekmede görünür (bkz. panel.css
+  // `[hidden]` kuralı). Sade kip: arama ve Durum görünür, "Yanıtlanmamış"
+  // katlanır; PDF "Dışa aktar" menüsünde.
   nodes.reviewFilters = filterBar({
+    compact: true,
     fields: [
-      { kind: 'search', key: 'q', placeholder: 'Yorum, ürün veya müşteri ara', width: '240px' },
+      { kind: 'search', key: 'q', placeholder: 'Yorum, ürün veya müşteri ara', width: '240px',
+        primary: true },
       {
         kind: 'select',
         key: 'status',
         label: 'Durum',
+        primary: true,
         options: [
           { value: '', label: 'Tümü' },
           { value: 'pending', label: 'Bekleyen' },
@@ -1635,8 +1769,11 @@ export function mount(root, ctx) {
       refreshReviews({ page: 1 });
     },
     actions: [
-      button('Yenile', { onClick: () => refreshReviews() }),
-      button('Yorum özeti PDF', { onClick: () => report.run('reviews', {}) }),
+      button('Yenile', { variant: 'ghost', onClick: () => refreshReviews() }),
+      menuButton('Dışa aktar', [
+        { label: 'Yorum özeti — PDF', title: 'Yorumları yazdırılabilir PDF olarak hazırlar',
+          onClick: () => report.run('reviews', {}) },
+      ]),
     ],
   });
   nodes.reviewStars = renderRatingPicker();
@@ -1683,7 +1820,7 @@ export function mount(root, ctx) {
   loadReference().then(() => refresh()).then(() => loadOverview());
 
   return () => {
-    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+    stopScanWatch();                   // kapanmış panel yoklama atmasın
     nodes.filters?.destroy();          // arama alanı bekleyen debounce tutar
     nodes.reviewFilters?.destroy();
     settingsForms.forEach((form) => form.destroy());

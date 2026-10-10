@@ -25,6 +25,14 @@ siparişler bir kez taranıp müşteriye göre toplulaştırılır (`_order_stat
 Toplulaştırma yapılamazsa ya da eksikse SIFIR UYDURULMAZ: sütun boş kalır,
 segment "Bilinmiyor" olur ve ekran nedenini yazar.
 
+İSTEKTE TARAMA YOK — künye dahil. Aynı arka plan sipariş taraması müşteri
+başına sipariş DİZİNİNİ de kurar; künye (ve `store.customer.card` yeteneği)
+müşterinin siparişlerini oradan okur. Tarama hazır değilse künye beklemez,
+"hesaplanıyor" der. Taramalar 20 dakikada bir tazelenir, birbirini bekler
+(aynı anda iki tarama koşmaz) ve elle "Yenile" bir dakikadan sık tarama
+başlatmaz: geçidin dakikada 55 isteklik kovası BÜTÜN ekranların ortak
+bütçesidir.
+
 Tarama sonucu diske yazılmaz: müşteri adı ve e-postası kişisel veridir, ikinci
 bir kopyası ne kadar az yerde durursa o kadar iyidir (KVKK).
 
@@ -65,6 +73,21 @@ SCAN_CAP = 5_000
 #: Rapora giren en çok satır. Daha uzun tablo hem PDF'i şişiriyor hem de
 #: kimsenin okumadığı 200 sayfa üretiyor.
 REPORT_ROW_CAP = 1_500
+
+#: Nüfus ve sipariş taramalarının taze sayıldığı süre (saniye).
+#:
+#: ESKİDEN 300'DÜ VE PAHALIYDI (2026-10-10): nüfus ~36 sayfa, siparişler
+#: ~12 sayfa; ekran açık durdukça her beş dakikada ~48 istek. Geçidin kovası
+#: dakikada 55 ve BÜTÜN ekranlar paylaşıyor — tarama koşarken diğer ekranlar
+#: sırada bekliyordu. RFM segmenti gün ölçeğinde değişen bir sayıdır; yirmi
+#: dakikalık tazelik kimseye yanlış karar aldırmaz. Yazma sonrası nüfus yine
+#: anında bayatlatılır (`_invalidate_scan`), elle "Yenile" yine çalışır.
+DEFAULT_SCAN_TTL = 1_200
+
+#: Elle "Yenile"nin yeni tarama başlatabilmesi için son başarılı taramanın en
+#: az bu kadar eski olması gerekir (saniye). Düğmeye arka arkaya basmak, az önce
+#: biten 36 sayfalık taramayı yeniden başlatıp kovayı boşa harcıyordu.
+MIN_REFRESH_GAP = 60
 
 REVIEW_ACTIONS = analytics.REVIEW_ACTIONS
 
@@ -157,10 +180,17 @@ class CustomersService:
         #: Yetenek yoksa (yalıtılmış test) tarama HİÇ yapılmaz: sayılar boş
         #: kalır, segment "Bilinmiyor" olur. Sıfır uydurulmaz.
         #:
-        #: Ayrı bir kilit YOK: "aynı anahtarda tek tarama" garantisini artık
-        #: `store.scan` veriyor. Burada ikinci bir kilit tutmak, arka plan
-        #: görevi koşarken gelen istekleri yine bekletirdi — kaçtığımız şey oydu.
+        #: "Aynı anahtarda tek tarama" garantisini `store.scan` veriyor; İSTEK
+        #: yolunda kilit YOK — arka plan görevi koşarken gelen istekleri
+        #: bekletmek, kaçtığımız arızanın ta kendisi olurdu.
         self._scan_cache = scan
+
+        #: FARKLI anahtarlar arasındaki sıra kapısı: nüfus ve sipariş taraması
+        #: AYNI ANDA koşmaz. İkisi birden koştuğunda geçidin kovasını (dk 55,
+        #: bütün ekranların ortak bütçesi) iki kat hızla tüketiyor ve o sırada
+        #: açılan her ekran sıraya giriyordu. Kapı YALNIZ yükleyicilerin
+        #: (arka plan görevleri) içinde tutulur; hiçbir istek onu beklemez.
+        self._scan_gate = asyncio.Lock()
 
     # ------------------------------------------------------------- ayarlar
 
@@ -182,7 +212,8 @@ class CustomersService:
 
     @property
     def _scan_ttl(self) -> int:
-        return max(30, min(3600, analytics.as_int(self._config.get("segment_scan_ttl"), 300)))
+        return max(30, min(3600, analytics.as_int(self._config.get("segment_scan_ttl"),
+                                                  DEFAULT_SCAN_TTL)))
 
     @property
     def _reply_field(self) -> str:
@@ -316,17 +347,43 @@ class CustomersService:
             return
         self._scan_cache.invalidate("population")
 
+    def _refresh_allowed(self, key: str, refresh: bool) -> bool:
+        """Elle "Yenile" bu anahtar için GERÇEKTEN yeni tarama başlatsın mı?
+
+        Son başarılı tarama `MIN_REFRESH_GAP` saniyeden yeniyse ve sonrasında
+        bir yazma onu bayatlatmadıysa HAYIR: az önce biten taramayı yeniden
+        başlatmak aynı rakamları getirir, kovadan onlarca istek yer. Bayatlatılmış
+        (`stale`) değer her zaman yenilenebilir — kullanıcının kendi yazması
+        yeniden okumayı hak eder.
+        """
+        if not refresh or self._scan_cache is None:
+            return refresh
+        try:
+            report = self._scan_cache.peek(key)
+        except Exception:  # noqa: BLE001 — durum okunamadı, isteğe uyulur
+            return True
+        if report.get("state") != "ready" or report.get("stale"):
+            return True
+        return analytics.as_int(report.get("ageSeconds"), 0) >= MIN_REFRESH_GAP
+
     async def _load_order_stats(self) -> dict[str, Any]:
         """Sipariş taramasının GÖVDESİ — arka plan görevinde koşar.
 
         Hata FIRLATIR (yutmaz): `store.scan` onu yakalar, zarfın `error`
         alanına koyar ve bir dakika boyunca yeniden denemez. Burada yutmak,
         "boş toplulaştırma" ile "hiç sipariş yok"u karıştırırdı.
+
+        TEK TARAMA, İKİ ÇIKTI: müşteri başına toplulaştırma (liste sütunları)
+        ve müşteri başına sipariş dizini (künye). Dizin ayrı bir tarama
+        istemez; künye isteği mağazaya hiç gitmeden buradan cevaplanır.
         """
-        payload = await self._api.orders({}, all_pages=True)
+        async with self._scan_gate:
+            payload = await self._api.orders({}, all_pages=True)
         rows = [analytics.order_row(item) for item in (payload.get("items") or [])
                 if isinstance(item, dict)]
         return {"map": analytics.order_stats(rows),
+                "index": analytics.orders_by_customer(rows),
+                "attributable": analytics.attributable(rows),
                 "truncated": bool(payload.get("truncated"))}
 
     async def _order_stats(self, *, refresh: bool = False) -> dict[str, Any]:
@@ -342,13 +399,17 @@ class CustomersService:
         bırakır, segment "Bilinmiyor" kalır — sıfır uydurulmaz (K7).
         """
         if self._scan_cache is None:
-            return {"map": {}, "ready": False, "truncated": False, "error": "",
-                    "state": "empty", "running": False, "at": ""}
-        report = await self._scan_cache.read("order_stats", self._load_order_stats,
-                                             ttl=self._scan_ttl, refresh=refresh)
+            return {"map": {}, "index": {}, "attributable": True, "ready": False,
+                    "truncated": False, "error": "", "state": "empty", "running": False,
+                    "at": ""}
+        report = await self._scan_cache.read(
+            "order_stats", self._load_order_stats, ttl=self._scan_ttl,
+            refresh=self._refresh_allowed("order_stats", refresh))
         value = report["value"] or {}
         return {
             "map": value.get("map") or {},
+            "index": value.get("index") or {},
+            "attributable": bool(value.get("attributable", True)),
             # `ready` = toplulaştırma GERÇEKTEN yapıldı. Boş harita ile hiç
             # yapılmamış tarama arasındaki farkı yalnız bu alan taşır.
             "ready": report["state"] == "ready",
@@ -382,17 +443,41 @@ class CustomersService:
     def _scan_envelope(stats: dict[str, Any], scan: dict[str, Any] | None = None) -> dict[str, Any]:
         """Ekranın "sayılar neden boş" sorusuna verdiği cevap.
 
-        Panel bu zarfa bakıp durum satırını yazar ve `running` ise taramanın
-        bitmesini beklemek yerine BİR KEZ geri döner. Sessiz boş sütun yok.
+        Panel bu zarfa bakıp durum satırını yazar. `runningKeys` hangi
+        taramanın sürdüğünü söyler: panel tazelemek için listeyi değil
+        `/scan-status` ucunu yoklar (mağazaya gitmez) ve yalnız bir tarama
+        BİTTİĞİNDE listeyi bir kez yeniden ister. Sessiz boş sütun yok.
         """
-        parts = [stats] + ([scan] if scan is not None else [])
+        named = [("order_stats", stats)] + ([("population", scan)] if scan is not None else [])
+        parts = [part for _, part in named]
         return {
-            "state": next((str(part["state"]) for part in parts
+            "state": next((str(part.get("state") or "empty") for part in parts
                            if part.get("state") != "ready"), "ready"),
             "running": any(bool(part.get("running")) for part in parts),
+            "runningKeys": [key for key, part in named if part.get("running")],
             "at": next((analytics.text(part.get("at")) for part in parts
                         if part.get("at")), ""),
         }
+
+    def scan_status(self) -> dict[str, Any]:
+        """Taramaların durumu — MAĞAZAYA GİTMEZ, tarama da BAŞLATMAZ.
+
+        Panelin yoklama ucu. Eskiden panel tarama sürerken 15 saniyede bir
+        LİSTEYİ yeniden istiyordu; her yoklama mağazaya bir istek demekti ve
+        tam da tarama kovayı tüketirken geliyordu. Bu uç yalnız bellekteki
+        durumu okur.
+        """
+        if self._scan_cache is None:
+            return {"ok": True, "error": "", "scan": self._scan_envelope(
+                {"state": "empty", "running": False, "at": ""})}
+        try:
+            stats = self._scan_cache.peek("order_stats")
+            population = self._scan_cache.peek("population")
+        except Exception as failure:  # noqa: BLE001 — durum okunamadı, ekran dursun
+            return {"ok": True, "error": self._fail(failure),
+                    "scan": {"state": "error", "running": False, "runningKeys": [],
+                             "at": ""}}
+        return {"ok": True, "error": "", "scan": self._scan_envelope(stats, population)}
 
     async def customers(self, *, q: str = "", segment: str = "", group_id: int = 0,
                         status: str = "", city: str = "", newsletter: str = "",
@@ -418,6 +503,14 @@ class CustomersService:
                 registered_to=registered_to, last_order_from=last_order_from,
                 last_order_to=last_order_to, page=page, size=per_page, refresh=refresh)
 
+        return await self._live_list(q=q, group_id=group_id, status=status, sort=sort,
+                                     order=order, page=page, per_page=per_page)
+
+    async def _live_list(self, *, q: str = "", group_id: int = 0, status: str = "",
+                         sort: str = "", order: str = "desc", page: int = 1,
+                         per_page: int = 50) -> dict[str, Any]:
+        """CANLI yol: mağazanın tek sayfası, yalnız mağazanın uyguladığı
+        süzgeçlerle (ad · e-posta · telefon · grup · durum 0/1). Tek istek."""
         filters: dict[str, Any] = {}
         query = analytics.text(q)
         if query:
@@ -466,6 +559,7 @@ class CustomersService:
             "thresholds": limits,
             "statsError": analytics.text(stats.get("error")),
             "statsTruncated": bool(stats.get("truncated")),
+            "pending": False,
             "scan": self._scan_envelope(stats),
         }
 
@@ -476,16 +570,19 @@ class CustomersService:
                 "page": page, "size": size, "pages": 0, "source": source,
                 "scannedAt": scanned_at, "truncated": False, "unknownSegments": 0,
                 "thresholds": dict(analytics.DEFAULT_THRESHOLDS),
-                "statsError": "", "statsTruncated": False,
-                "scan": scan or {"state": "empty", "running": False, "at": ""}}
+                "statsError": "", "statsTruncated": False, "pending": False,
+                "scan": scan or {"state": "empty", "running": False, "runningKeys": [],
+                                 "at": ""}}
 
     async def _load_population(self) -> dict[str, Any]:
         """Nüfus taramasının GÖVDESİ — arka plan görevinde koşar.
 
         Diske YAZILMAZ: kişisel verinin ikinci kopyası olmasın (KVKK). Hata
-        fırlatır; `store.scan` yakalar (bkz. `_load_order_stats`).
+        fırlatır; `store.scan` yakalar (bkz. `_load_order_stats`). Sipariş
+        taraması koşuyorsa onun bitmesini bekler (`_scan_gate`).
         """
-        payload = await self._api.customers({}, all_pages=True)
+        async with self._scan_gate:
+            payload = await self._population_pages()
         raw = payload.get("items") or []
         limits = self._thresholds
         today = _today()
@@ -496,6 +593,26 @@ class CustomersService:
             "truncated": bool(payload.get("truncated")) or len(raw) > self._scan_cap,
         }
 
+    async def _population_pages(self) -> dict[str, Any]:
+        """Bütün müşteriler — önce BBD'nin hızlı ucu, olmazsa vendor ucu.
+
+        Hızlı uç (`bbd_customers`) satır başına sipariş sayısı, harcama, son
+        sipariş ve şehri TEK gruplu sorguyla verir: segmentler sipariş
+        taraması bitmeden doğru çıkar ve sayfa ~0,2 sn sürer (vendor ucu
+        0,9–1,5 sn, ölçüldü 2026-10-10). Uç yoksa ya da patlarsa tarama vendor
+        ucuyla eskisi gibi sürer (K7).
+        """
+        fast = getattr(self._api, "bbd_customers", None)
+        if fast is not None:
+            try:
+                return dict(await fast({}, all_pages=True))
+            except asyncio.CancelledError:
+                raise
+            except Exception as failure:  # noqa: BLE001 — vendor ucuna düşülür
+                self._log.warning("hızlı müşteri listesi kullanılamadı, vendor ucuna düşülüyor",
+                                  code=getattr(failure, "code", ""), error=str(failure)[:200])
+        return dict(await self._api.customers({}, all_pages=True))
+
     async def _scan_rows(self, *, refresh: bool = False) -> dict[str, Any]:
         """Nüfusun tamamı — ARKA PLANDA taranır, çağıran BEKLEMEZ.
 
@@ -505,17 +622,23 @@ class CustomersService:
 
         Sipariş toplulaştırması AYRI bir anahtardır: ikisi bağımsız yenilenir,
         biri patlarsa diğeri kullanılabilir kalır.
+
+        SIRA BİLEREK: önce sipariş toplulaştırması istenir. İki tarama aynı
+        kapıdan (`_scan_gate`) sırayla geçer ve kapı geliş sırasına uyar; kısa
+        olan (~12 sayfa) önce biter, liste sütunları ve künye dakikalar önce
+        dolar. Nüfus (~36 sayfa) arkasından gelir.
         """
         if self._scan_cache is None:
             return {"rows": [], "ready": False, "stamp": "", "truncated": False,
                     "error": "", "state": "empty", "running": False,
                     "statsError": "", "statsTruncated": False}
 
-        report = await self._scan_cache.read("population", self._load_population,
-                                             ttl=self._scan_ttl, refresh=refresh)
+        stats = await self._order_stats(refresh=refresh)
+        report = await self._scan_cache.read(
+            "population", self._load_population, ttl=self._scan_ttl,
+            refresh=self._refresh_allowed("population", refresh))
         value = report["value"] or {}
         rows = list(value.get("rows") or [])
-        stats = await self._order_stats(refresh=refresh)
         # Zenginleştirme HER OKUMADA yeniden yapılır: iki tarama ayrı anahtarda
         # yaşlandığı için nüfus taze, toplulaştırma yeni gelmiş olabilir.
         # Satırlar önbellekte ortak nesnedir; kopyalanmadan yazmak, bir sonraki
@@ -540,14 +663,30 @@ class CustomersService:
         scan = await self._scan_rows(refresh=refresh)
         envelope = self._scan_envelope(scan.get("stats") or {}, scan)
         if not scan["rows"]:
-            # "Tarama boş döndü" ile "tarama daha bitmedi" AYRI şeylerdir;
-            # ikincisinde kullanıcıya beklemesi gerektiği söylenir.
-            if scan["state"] in ("running", "empty"):
-                message = "Segment taraması sürüyor; bittiğinde liste kendiliğinden dolar."
-            else:
-                message = scan["error"] or "Tarama boş döndü."
-            return self._empty_list(page, size, error=message, source="segment",
-                                    scan=envelope)
+            # TARAMA HENÜZ HAZIR DEĞİL — boş tablo ve "Mağazaya ulaşılamadı"
+            # DEĞİL. Eskiden burası `connected: False` + "tarama sürüyor"
+            # dönüyordu ve ekran ilk açılışta (o zaman varsayılan tarih
+            # süzgeçleri yüzünden HER açılışta) kırmızı bağlantı hatası
+            # gösteriyordu; oysa bağlantıda sorun yoktu. Şimdi mağazanın tek
+            # sayfası, mağazanın uyguladığı süzgeçlerle hemen gösterilir;
+            # segment/tarih/harcama süzgeci tarama bitince uygulanır
+            # (`pending: True`, panel durum satırında söyler ve tarama bitince
+            # listeyi bir kez yeniden ister).
+            #
+            # Tarama PATLADIYSA da önce mağazanın kendisi denenir: o da
+            # yanıt vermezse gerçek bağlantı hatası odur ve öyle söylenir.
+            live = await self._live_list(
+                q=analytics.text(filters.get("q")),
+                group_id=analytics.as_int(filters.get("group_id")),
+                status=analytics.text(filters.get("status")),
+                page=page, per_page=size)
+            if not live.get("connected"):
+                return live
+            pending = scan["state"] in ("running", "empty") or bool(scan.get("running"))
+            return {**live, "pending": pending,
+                    "segmentError": "" if pending else analytics.text(scan["error"])
+                    or "Segment listesi şu an hazırlanamadı.",
+                    "scan": envelope}
 
         matched = [row for row in scan["rows"] if analytics.match_row(row, **filters)]
         start = max(0, (page - 1) * size)
@@ -565,6 +704,7 @@ class CustomersService:
             "thresholds": self._thresholds,
             "statsError": analytics.text(scan.get("statsError")),
             "statsTruncated": bool(scan.get("statsTruncated")),
+            "pending": False,
             "scan": envelope,
         }
 
@@ -599,7 +739,12 @@ class CustomersService:
     async def card(self, customer_id: int) -> dict[str, Any]:
         """Müşteri künyesi: kayıt + segment + altı aylık harcama eğrisi.
 
-        Parça parça hata: sipariş listesi patlarsa künyenin gerisi yine dolar (K7).
+        MAĞAZAYA TEK İSTEK: müşteri detayı. Siparişler arka plan taramasının
+        dizininden gelir (`_customer_orders`); künye hiçbir koşulda tarama
+        BEKLEMEZ. Dizin hazır değilse sipariş bölümü "hesaplanıyor" der ve
+        sayı UYDURULMAZ.
+
+        Parça parça hata: sipariş dizini yoksa künyenin gerisi yine dolar (K7).
         """
         try:
             raw = await self._api.customer(int(customer_id))
@@ -613,11 +758,11 @@ class CustomersService:
         warnings: list[str] = []
 
         orders = await self._customer_orders(int(customer_id), warnings)
-        # `honored is None` = siparişlerin kime ait olduğu doğrulanamadı; o
-        # zaman hiçbir sayı hesaplanmaz. Doğrulandıysa (sunucu süzdü ya da biz
-        # yerelde süzdük) sayı KESİNDİR ve segmentin "bilinmiyor" kalmasını
-        # engeller. Mağazanın kendi verdiği toplam varsa ona dokunulmaz.
-        if orders["honored"] is not None:
+        # `complete` = dizin hazır, hatasız, tavana dayanmamış ve siparişlerin
+        # kime ait olduğu söylenebiliyor. Yalnız o zaman sayı KESİNDİR ve
+        # segmentin "bilinmiyor" kalmasını engeller. Mağazanın kendi verdiği
+        # toplam varsa ona dokunulmaz.
+        if orders["complete"]:
             counted = len(orders["items"])
             total = sum(int(item["total"] or 0) for item in orders["items"])
             partial = any(item["total"] is None for item in orders["items"])
@@ -656,56 +801,79 @@ class CustomersService:
             "ok": True, "connected": True, "error": "", "warnings": warnings,
             "customer": row,
             "segmentLabel": analytics.SEGMENT_LABELS.get(row["segment"], row["segment"]),
-            "spark": analytics.monthly_spend(orders["items"], today=today, months=6),
+            # Dizin eksiksiz değilse eğri BOŞ döner: altı ay sıfır çizmek
+            # "bu müşteri hiç harcamamış" diye okunurdu (ekran "—" yazar).
+            "spark": analytics.monthly_spend(orders["items"], today=today, months=6)
+            if orders["complete"] else [],
             "orders": orders["items"][:20],
             "ordersHonored": orders["honored"],
             "ordersLocalFiltered": orders["localFiltered"],
             "ordersUnverifiable": orders["unverifiable"],
+            "ordersPending": orders["pending"],
+            "ordersPartial": orders["partial"],
+            "ordersScannedAt": orders["scannedAt"],
+            "scan": orders["scan"],
             "consents": analytics.consent_view(raw),
             "thresholds": limits,
         }
 
     async def _customer_orders(self, customer_id: int,
                                warnings: list[str]) -> dict[str, Any]:
-        """Müşterinin siparişleri. SÜZGECİN UYGULANDIĞI DOĞRULANIR.
+        """Müşterinin siparişleri — ARKA PLAN sipariş taramasının dizininden.
 
-        CANLIDA DOĞRULANDI — `GET /api/admin/orders?customer_id=1` süzgeci
-        UYGULAMIYOR: 17 siparişin tamamı, altı ayrı müşterininki karışık
-        geliyor. Laravel tanımadığı sorgu parametresini sessizce yok sayar.
-        Bu yüzden liste HER ZAMAN satırdaki `customerId` ile yerelde süzülür;
-        sunucunun süzgeci tuttuğu doğrulanamıyorsa liste boş bırakılmaz,
-        YERELDE süzülür ve ekran bunu söyler.
+        BURASI BİR ARIZANIN İZİDİR. Künye eskiden
+        `orders({"customer_id": …}, all_pages=True)` çağırıyordu. CANLIDA
+        DOĞRULANDI: mağaza bu süzgeci UYGULAMIYOR (17 siparişin tamamı, altı
+        ayrı müşterininki karışık geliyor; Laravel tanımadığı parametreyi
+        sessizce yok sayar). Yani TEK müşteri açmak TÜM siparişleri sayfa
+        sayfa taramaktı — istek içinde, kovanın tamamını yiyerek. Başka
+        ekranların sorduğu `store.customer.card` da aynı yoldan geçiyordu.
 
-        Satırlarda `customerId` hiç yoksa (`honored is None`) hiçbir satır
-        gösterilmez: kime ait olduğu doğrulanamayan siparişi bir müşteriye
-        yazmak, ekranın yapabileceği en pahalı yalandır.
+        Artık istekte tarama YOK. Liste sütunlarını besleyen arka plan
+        sipariş taraması müşteri başına sipariş dizinini de kurar
+        (`analytics.orders_by_customer`); burada yalnız o okunur. Okuma
+        taramayı BEKLEMEZ: dizin hazır değilse `pending` döner, sayı uydurulmaz.
+
+        Kimlik kuralı aynen sürer: dizin satırdaki `customerId` ile kurulur
+        (mağazanın süzgecine hiç güvenilmez). Satırlarda `customerId` hiç
+        yoksa hiçbir satır gösterilmez — kime ait olduğu doğrulanamayan
+        siparişi bir müşteriye yazmak, ekranın yapabileceği en pahalı yalandır.
         """
-        try:
-            payload = await self._api.orders({"customer_id": int(customer_id)}, all_pages=True)
-        except Exception as failure:  # noqa: BLE001 — K7
-            warnings.append(f"siparişler: {self._fail(failure)}")
-            return {"items": [], "honored": None, "localFiltered": False,
-                    "unverifiable": False}
-        rows = [analytics.order_row(item) for item in (payload.get("items") or [])
-                if isinstance(item, dict)]
-        if not rows:
-            return {"items": [], "honored": None, "localFiltered": False,
-                    "unverifiable": False}
-
-        honored = analytics.filter_honored(rows, "customerId", int(customer_id))
-        if honored is None:
+        stats = await self._order_stats()
+        envelope = self._scan_envelope(stats)
+        out: dict[str, Any] = {
+            "items": [], "honored": None, "localFiltered": False, "unverifiable": False,
+            "pending": False, "partial": False, "complete": False,
+            "scannedAt": analytics.text(stats.get("at")), "scan": envelope,
+        }
+        if stats.get("error"):
+            # Bayat dizin de KULLANILMAZ: liste sütunları (`_enrich`) aynı
+            # durumda boş kalıyor; künye başka rakam gösterirse aynı müşteri
+            # iki ekranda iki farklı sayıyla görünür.
+            warnings.append(f"siparişler: {stats['error']}")
+            return out
+        if not stats.get("ready"):
+            out["pending"] = True
+            return out
+        if not stats.get("attributable", True):
             warnings.append(
                 "Sipariş satırları müşteri kimliği taşımıyor; hangi siparişin bu müşteriye "
                 "ait olduğu doğrulanamadı ve liste gösterilmiyor.")
-            return {"items": [], "honored": None, "localFiltered": False,
-                    "unverifiable": True}
-        mine = [row for row in rows if row["customerId"] == int(customer_id)]
-        if honored is False:
+            out["unverifiable"] = True
+            return out
+
+        mine = list((stats.get("index") or {}).get(int(customer_id)) or [])
+        out.update(items=mine, honored=False, localFiltered=True)
+        if stats.get("truncated"):
+            # Tavana dayanmış taramada eksik olan bu müşterinin siparişi
+            # olabilir: liste gösterilir ama sayı ondan HESAPLANMAZ.
+            out["partial"] = True
             warnings.append(
-                "Mağaza sipariş süzgecini uygulamadı; liste bu müşterinin kimliğine göre "
-                "burada süzüldü.")
-        return {"items": mine, "honored": honored, "localFiltered": honored is False,
-                "unverifiable": False}
+                "Sipariş taraması tavana dayandı; bu müşterinin sipariş listesi eksik "
+                "olabilir ve sayılar listeden hesaplanmadı.")
+            return out
+        out["complete"] = True
+        return out
 
     async def orders(self, customer_id: int) -> dict[str, Any]:
         warnings: list[str] = []
@@ -713,7 +881,9 @@ class CustomersService:
         return {"ok": True, "connected": not warnings, "error": " · ".join(warnings),
                 "items": result["items"], "honored": result["honored"],
                 "localFiltered": result["localFiltered"],
-                "unverifiable": result["unverifiable"]}
+                "unverifiable": result["unverifiable"],
+                "pending": result["pending"], "partial": result["partial"],
+                "scannedAt": result["scannedAt"], "scan": result["scan"]}
 
     async def addresses(self, customer_id: int) -> dict[str, Any]:
         try:
@@ -1573,11 +1743,13 @@ class CustomersService:
                 ("Ortalama sepet",
                  "—" if row["avgBasket"] is None else money(row["avgBasket"])),
             ],
-        }, {
-            "kind": "table", "title": "Son 6 ay",
-            "headers": ["Ay", "Harcama"], "align": "LR", "widths": [2, 1],
-            "rows": [[item["month"], money(item["total"])] for item in card["spark"]],
         }]
+        if card["spark"]:
+            sections.append({
+                "kind": "table", "title": "Son 6 ay",
+                "headers": ["Ay", "Harcama"], "align": "LR", "widths": [2, 1],
+                "rows": [[item["month"], money(item["total"])] for item in card["spark"]],
+            })
         if card["orders"]:
             sections.append({
                 "kind": "table", "title": "Son siparişler",
@@ -1587,6 +1759,11 @@ class CustomersService:
                           item["statusLabel"] or "—", money(item["total"])]
                          for item in card["orders"][:20]],
             })
+        if card.get("ordersPending"):
+            sections.append({"kind": "note", "text":
+                             "Sipariş taraması henüz bitmemişti; sipariş listesi ve aylık "
+                             "harcama bu karnede yer almıyor. Birkaç dakika sonra yeniden "
+                             "üretilebilir."})
         sections.append({"kind": "note", "text":
                          "Bu belge kişisel veri taşır; yalnız iş gereği paylaşılır."})
         return build_pdf(title=f"Müşteri karnesi · {row['name']}",
@@ -1694,7 +1871,14 @@ class CustomerCard:
         return await self._service.card(int(customer_id))
 
     async def summary(self, customer_id: int) -> dict[str, Any]:
-        """Tek satırlık özet — rozet çizmek isteyen ekranlar için."""
+        """Tek satırlık özet — rozet çizmek isteyen ekranlar için.
+
+        MAĞAZAYA TEK İSTEK (müşteri detayı). Eskiden künyenin tamamı gibi bu
+        da müşterinin siparişlerini İSTEĞİN İÇİNDE tarıyordu ve başka bir
+        ekranın sorduğu her rozet, mağazanın bütün siparişlerini sayfa sayfa
+        gezmek demekti. Sipariş sayıları artık arka plan dizininden gelir;
+        dizin hazır değilse `ordersPending: True` döner ve sayı UYDURULMAZ.
+        """
         full = await self._service.card(int(customer_id))
         if not full.get("ok"):
             return {"ok": False, "error": full.get("error", ""), "customerId": int(customer_id)}
@@ -1703,4 +1887,5 @@ class CustomerCard:
                 "email": row["email"], "phone": row["phone"], "groupName": row["groupName"],
                 "segment": row["segment"], "segmentLabel": full["segmentLabel"],
                 "orders": row["orders"], "spend": row["spend"], "status": row["status"],
-                "lastOrderAt": row["lastOrderAt"]}
+                "lastOrderAt": row["lastOrderAt"],
+                "ordersPending": bool(full.get("ordersPending"))}

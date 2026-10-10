@@ -42,6 +42,12 @@ def _service(api: FakeApi | None = None, store: FakeStore | None = None,
     return service, api, store
 
 
+def _tarama(service: CustomersService) -> FakeScan:
+    scan = service._scan_cache
+    assert isinstance(scan, FakeScan)
+    return scan
+
+
 # ============================================================ K7 — ayakta kalma
 
 async def test_magaza_dusunce_ekran_ayakta_kalir() -> None:
@@ -117,14 +123,40 @@ async def test_tarama_yenilenmesi_istenirse_tekrar_cekilir() -> None:
     service, api, _ = _service()
     api.list_payload = {"items": [dict(MUSTERI)], "meta": {}}
     await service.customers(segment="loyal")
+    _tarama(service).age("population", "order_stats")
     await service.customers(segment="loyal", refresh=True)
     assert len(api.used("customers")) == 2
+
+
+async def test_az_once_biten_tarama_yenile_ile_yeniden_baslatilmaz() -> None:
+    # "Yenile"ye arka arkaya basmak, az önce biten ~36 sayfalık nüfus
+    # taramasını yeniden başlatıp geçidin ortak kovasını boşa harcıyordu.
+    service, api, _ = _service()
+    api.list_payload = {"items": [dict(MUSTERI)], "meta": {}}
+    await service.overview()
+    await service.overview(refresh=True)
+    assert len(api.used("customers")) == 1
+    assert len(api.used("orders")) == 1
+
+
+async def test_yazma_sonrasi_yenile_hemen_calisir() -> None:
+    # Bayatlatılmış (yazma sonrası) tarama bir dakikayı beklemez: kullanıcının
+    # kendi değişikliği yeniden okumayı hak eder.
+    service, api, _ = _service()
+    api.list_payload = {"items": [dict(MUSTERI)], "meta": {}}
+    await service.overview()
+    await service.set_status([7], active=False, reason="Müşteri hesabını kapattı",
+                             actor="Ali")
+    await service.overview(refresh=True)
+    assert len(api.used("customers")) == 2
+    assert len(api.used("orders")) == 1        # sipariş taraması bayatlamadı
 
 
 async def test_tarama_patlarsa_bayat_kopya_hatasiyla_birlikte_doner() -> None:
     service, api, _ = _service()
     api.list_payload = {"items": [dict(MUSTERI)], "meta": {}}
     await service.customers(segment="loyal")
+    _tarama(service).age("population", "order_stats")
     api.fail.add("customers")
     result = await service.customers(segment="loyal", refresh=True)
     assert result["items"]                    # eldeki kopya gösterilir
@@ -153,16 +185,19 @@ async def test_mini_kpi_tek_taramadan_hesaplanir() -> None:
 
 # ================================================ müşteri künyesi ve süzgeç
 
-async def test_siparis_suzgeci_uygulanmadiysa_baskasinin_siparisi_gosterilmez() -> None:
+async def test_baskasinin_siparisi_kunyede_gosterilmez() -> None:
     # En kötü hata sınıfı: başka müşterinin siparişini bu müşteriye ait
-    # göstermek. Liste boş bırakılır ve neden boş olduğu yazılır.
+    # göstermek. Mağazanın `customer_id` süzgecine HİÇ güvenilmez; liste arka
+    # plan taramasının dizininden, satırdaki kimliğe göre kurulur.
     service, api, _ = _service()
     api.orders_payload = {"items": [{"id": 1, "customer_id": 99, "grand_total": "10.00"}],
                           "meta": {}}
     result = await service.card(7)
     assert result["orders"] == []
     assert result["ordersHonored"] is False
-    assert any("süzgecini uygulamadı" in item for item in result["warnings"])
+    assert result["ordersLocalFiltered"] is True
+    # Mağazaya `customer_id` süzgeci GÖNDERİLMEDİ: tarama süzgeçsizdir.
+    assert api.args_of("orders") == [({},)]
 
 
 async def test_toplamlar_kayitta_yoksa_siparislerden_hesaplanir() -> None:
@@ -552,7 +587,7 @@ async def test_magaza_musteri_suzgecini_uygulamazsa_liste_yerelde_suzulur() -> N
     api.orders_payload = {"items": [_siparis(1, 12, _gun(5)), _siparis(2, 99, _gun(4)),
                                     _siparis(3, 12, _gun(3))], "meta": {}}
     result = await service.card(12)
-    assert [row["id"] for row in result["orders"]] == [1, 3]
+    assert [row["id"] for row in result["orders"]] == [3, 1]     # en yeni başta
     assert result["ordersHonored"] is False
     assert result["ordersLocalFiltered"] is True
     assert result["customer"]["orders"] == 2          # 3 değil: yabancı sipariş sayılmadı
@@ -765,12 +800,45 @@ async def test_tarama_bitmeden_sifir_uydurulmaz() -> None:
     assert row["segment"] == "unknown"
 
 
-async def test_segment_yolu_tarama_surerken_bekletmez_ve_nedenini_soyler() -> None:
-    service, _, _ = _askida_servis()
-    result = await asyncio.wait_for(service.customers(segment="loyal"), timeout=2.0)
-    assert result["items"] == []
-    assert "sürüyor" in result["error"]           # "boş döndü" DEĞİL
+async def test_segment_yolu_tarama_surerken_duz_listeyi_gosterir() -> None:
+    # CANLI ÖNİZLEMEDE GÖRÜLDÜ: tarama sürerken ekran "Mağazaya ulaşılamadı"
+    # diyordu (`connected: False`); bağlantıda sorun yoktu. Artık mağazanın tek
+    # sayfası hemen gelir, segment süzgeci tarama bitince uygulanır.
+    service, api, _ = _askida_servis()
+    result = await asyncio.wait_for(service.customers(segment="loyal", q="veysel"),
+                                    timeout=2.0)
+    assert result["connected"] is True and result["error"] == ""
+    assert result["pending"] is True
+    assert [row["id"] for row in result["items"]] == [12]
     assert result["scan"]["running"] is True
+    # Mağazaya yalnız uyguladığı süzgeç gider; tek sayfa, tarama değil.
+    assert api.used("customers")[-1]["all_pages"] is False
+    assert api.args_of("customers")[-1][0] == {"name": "veysel"}
+
+
+async def test_tarama_patlarsa_duz_liste_ve_tek_satir_neden_doner() -> None:
+    service, api, _ = _service(FakeApi({12: dict(CANLI_MUSTERI)}))
+    api.list_payload = {"items": [dict(CANLI_MUSTERI_LISTE)], "meta": {"total": 1}}
+    original = api.customers
+
+    async def tam_tarama_patlar(filters: Any = None, **kwargs: Any) -> dict[str, Any]:
+        if kwargs.get("all_pages"):
+            raise RuntimeError("tarama patladı")
+        return await original(filters, **kwargs)
+
+    api.customers = tam_tarama_patlar  # type: ignore[method-assign]
+    result = await service.customers(segment="loyal")
+    assert result["connected"] is True and result["pending"] is False
+    assert result["items"]                             # liste yine geldi
+    assert result["segmentError"]                      # ama neden yazıyor
+
+
+async def test_magaza_da_yanit_vermezse_gercek_baglanti_hatasi_doner() -> None:
+    service, api, _ = _askida_servis()
+    api.fail.add("customers")
+    result = await service.customers(segment="loyal")
+    assert result["connected"] is False
+    assert "patladı" in result["error"]
 
 
 async def test_yetenek_yoksa_ekran_yine_acilir() -> None:
@@ -784,3 +852,183 @@ async def test_yetenek_yoksa_ekran_yine_acilir() -> None:
     assert result["ok"] is True and len(result["items"]) == 1
     assert result["items"][0]["segment"] == "unknown"
     assert api.used("orders") == []               # tam tarama HİÇ denenmedi
+
+
+# ================================ künye ve yetenek mağazada sipariş TARAMAZ
+#
+# BULUNAN ARIZA (2026-10-10): tek bir müşteriyi açmak
+# `orders({"customer_id": …}, all_pages=True)` çağırıyordu; mağaza bu süzgeci
+# uygulamadığı için bu TÜM siparişleri sayfa sayfa taramaktı — istek içinde,
+# geçidin ortak kovasını (dk 55) tüketerek. `store.customer.card` da aynı
+# yoldan geçiyordu. Künye artık arka plan sipariş taramasının dizininden okur.
+
+async def test_kunye_tarama_bitmeden_beklemez_ve_siparis_istemez() -> None:
+    service, api, _ = _askida_servis()
+    result = await asyncio.wait_for(service.card(12), timeout=2.0)
+    assert result["ok"] is True
+    assert result["ordersPending"] is True            # "hesaplanıyor"
+    assert result["orders"] == []
+    assert result["spark"] == []                      # altı ay sıfır ÇİZİLMEZ
+    assert result["customer"]["orders"] is None      # sayı uydurulmadı
+    assert [name for name, _, _ in api.calls] == ["customer"]   # tek istek
+
+
+async def test_kunyeler_ve_liste_tek_siparis_taramasini_paylasir() -> None:
+    service, api, _ = _service(FakeApi({7: dict(MUSTERI), 12: dict(CANLI_MUSTERI)}))
+    api.list_payload = {"items": [dict(CANLI_MUSTERI_LISTE)], "meta": {"total": 1}}
+    api.orders_payload = {"items": [_siparis(1, 12, _gun(5)), _siparis(2, 7, _gun(4))],
+                          "meta": {}}
+    await service.customers()
+    first = await service.card(12)
+    second = await service.card(7)
+    assert [row["id"] for row in first["orders"]] == [1]
+    assert [row["id"] for row in second["orders"]] == [2]
+    assert len(api.used("orders")) == 1               # üç ekran, TEK tarama
+    assert api.used("orders")[0]["all_pages"] is True
+
+
+async def test_yetenek_ozeti_taramayi_beklemez() -> None:
+    # Başka ekranların sorduğu rozet: mağazaya tek istek (müşteri detayı).
+    service, api, _ = _askida_servis()
+    summary = await asyncio.wait_for(CustomerCard(service).summary(12), timeout=2.0)
+    assert summary["ok"] is True
+    assert summary["ordersPending"] is True
+    assert summary["orders"] is None                  # bilinmiyor, sıfır değil
+    assert api.used("orders") == []
+
+
+async def test_tarama_tavana_dayanirsa_kunye_sayi_hesaplamaz() -> None:
+    service, api, _ = _service(FakeApi({12: dict(CANLI_MUSTERI)}))
+    api.orders_payload = {"items": [_siparis(1, 12, _gun(5))], "meta": {},
+                          "truncated": True}
+    result = await service.card(12)
+    assert [row["id"] for row in result["orders"]] == [1]   # liste gösterilir
+    assert result["ordersPartial"] is True
+    assert result["customer"]["orders"] is None             # ama sayı ondan çıkmaz
+    assert result["spark"] == []
+    assert any("tavana dayandı" in item for item in result["warnings"])
+
+
+async def test_siparis_ucu_dogrudan_cagrilsa_da_tarama_yapmaz() -> None:
+    service, api, _ = _askida_servis()
+    result = await service.orders(12)
+    assert result["pending"] is True and result["items"] == []
+    assert api.used("orders") == []
+
+
+# ====================================== taramalar sırayla koşar, yoklama ucuz
+
+class _SayanApi(FakeApi):
+    """Aynı anda kaç tarama koştuğunu sayar."""
+
+    def __init__(self) -> None:
+        super().__init__({12: dict(CANLI_MUSTERI)})
+        self.list_payload = {"items": [dict(CANLI_MUSTERI_LISTE)], "meta": {}}
+        self.active = 0
+        self.peak = 0
+
+    async def _scan(self) -> None:
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        await asyncio.sleep(0.01)
+        self.active -= 1
+
+    async def orders(self, filters: Any = None, **kwargs: Any) -> dict[str, Any]:
+        await self._scan()
+        return await super().orders(filters, **kwargs)
+
+    async def customers(self, filters: Any = None, **kwargs: Any) -> dict[str, Any]:
+        await self._scan()
+        return await super().customers(filters, **kwargs)
+
+
+class _ArkaPlanTarama:
+    """Yükleyiciyi GERÇEKTEN arka plan görevi olarak başlatır, beklemez."""
+
+    def __init__(self) -> None:
+        self.tasks: dict[str, asyncio.Task[Any]] = {}
+
+    def scoped(self, namespace: str) -> _ArkaPlanTarama:
+        return self
+
+    def invalidate(self, key: str) -> None:
+        return None
+
+    def peek(self, key: str) -> dict[str, Any]:
+        task = self.tasks.get(key)
+        running = task is not None and not task.done()
+        return {"state": "running" if running else "empty", "value": None, "stale": True,
+                "running": running, "at": "", "ageSeconds": 0, "error": ""}
+
+    async def read(self, key: str, loader: Any, *, ttl: int | None = None,
+                   refresh: bool = False, wait: float = 0.0) -> dict[str, Any]:
+        if key not in self.tasks:
+            self.tasks[key] = asyncio.ensure_future(loader())
+        return self.peek(key)
+
+
+async def test_nufus_ve_siparis_taramasi_ayni_anda_kosmaz() -> None:
+    # İki tarama aynı anda koştuğunda geçidin kovasını iki kat hızla
+    # tüketiyor, o sırada açılan her ekran sıraya giriyordu.
+    api = _SayanApi()
+    tarama = _ArkaPlanTarama()
+    service = CustomersService(api=api, store=FakeStore(), log=FakeLog(), config={},
+                               fallback_dir=Path("/tmp/km-test-raporlar"), scan=tarama)
+    await service.overview()                          # iki taramayı da başlatır
+    assert set(tarama.tasks) == {"order_stats", "population"}
+    await asyncio.gather(*tarama.tasks.values())
+    assert api.peak == 1                              # hiçbir an ikisi birden koşmadı
+    # Sipariş taraması ÖNCE istendi: kısa olan önce biter, sütunlar erken dolar.
+    assert [name for name, _, _ in api.calls] == ["orders", "customers"]
+
+
+async def test_tarama_durumu_magazaya_gitmez() -> None:
+    service, api, _ = _askida_servis()
+    status = service.scan_status()
+    assert status["scan"]["running"] is True
+    assert status["scan"]["runningKeys"] == ["order_stats", "population"]
+    assert api.calls == []                            # yoklama ücretsiz
+
+
+async def test_tarama_omru_yirmi_dakika() -> None:
+    # 300 sn'de ekran açık durdukça her beş dakikada ~48 istek gidiyordu.
+    service, _, _ = _service()
+    assert service._scan_ttl == 1200
+    default = (Path(__file__).resolve().parents[1] / "config" / "default.yaml").read_text(
+        encoding="utf-8")
+    assert "segment_scan_ttl: 1200" in default
+
+
+async def test_nufus_taramasi_hizli_uctan_gelir_siparis_toplamlariyla() -> None:
+    """Hızlı uç satır başına sipariş sayısı/harcama verir; segment, sipariş
+    taraması bitmeden doğru çıkar. Vendor ucu hiç çağrılmaz."""
+    service, api, _ = _service()
+
+    async def hizli(filters: Any = None, **kw: Any) -> dict[str, Any]:
+        assert kw.get("all_pages") is True
+        return {"items": [{"id": 7, "first_name": "Ayşe", "last_name": "Kaya",
+                           "email": "a@ornek.test", "orders_count": 4,
+                           "total_spent": "1250.00", "last_order_date": "2026-10-01 10:00:00",
+                           "city": "Konya", "created_at": "2026-01-01 10:00:00"}],
+                "meta": {"total": 1}, "truncated": False}
+
+    api.bbd_customers = hizli  # type: ignore[attr-defined]
+    sonuc = await service._load_population()
+
+    satir = sonuc["rows"][0]
+    assert satir["orders"] == 4 and satir["spend"] == 125000 and satir["city"] == "Konya"
+    assert not [c for c in api.calls if c[0] == "customers"]
+
+
+async def test_nufus_taramasi_hizli_uc_yoksa_vendor_ucuna_duser() -> None:
+    service, api, _ = _service()
+
+    class Yok(Exception):
+        code = "bbd_endpoint_missing"
+
+    async def hizli(*_: Any, **__: Any) -> dict[str, Any]:
+        raise Yok("uç yayında değil")
+
+    api.bbd_customers = hizli  # type: ignore[attr-defined]
+    await service._load_population()
+    assert [c for c in api.calls if c[0] == "customers"]

@@ -18,6 +18,17 @@
 
 .cu > * { flex: none; }               /* kartlar ezilmesin */
 
+/* `hidden` GERÇEKTEN gizler. Kitin şerit/çip sınıfları `display: flex`
+   taşıyor ve bu, `hidden` özniteliğinin varsayılan `display: none`unu
+   eziyordu: Yorumlar sekmesinin süzgeç şeridi Müşteriler sekmesinde de
+   görünüyordu (canlı önizlemede görüldü). Kural yalnız bu panelin içinde
+   geçerlidir. */
+.cu [hidden] { display: none !important; }
+
+/* Sayısı henüz gelmemiş çipte (segmentler hesaplanırken) boş gri baloncuk
+   çizilmez. */
+.cu .kit-chip-count:empty { display: none; }
+
 .cu-body {
   flex: 1;
   min-height: 0;

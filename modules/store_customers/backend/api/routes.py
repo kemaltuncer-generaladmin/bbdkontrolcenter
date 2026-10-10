@@ -85,6 +85,15 @@ async def overview(
     return await service().overview(refresh=refresh)
 
 
+@router.get("/scan-status")
+async def scan_status(
+    user: CurrentUser = requires("store_customers.view"),
+) -> dict[str, Any]:
+    """Arka plan taramalarının durumu. MAĞAZAYA GİTMEZ, tarama BAŞLATMAZ —
+    panel tarama sürerken listeyi değil bunu yoklar."""
+    return service().scan_status()
+
+
 @router.get("/reference")
 async def reference(
     user: CurrentUser = requires("store_customers.view"),

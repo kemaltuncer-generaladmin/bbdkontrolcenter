@@ -443,3 +443,25 @@ def test_tutari_okunamayan_siparis_toplama_girmez_ama_isaretlenir() -> None:
     stats = analytics.order_stats(rows)
     assert stats[5]["orders"] == 2 and stats[5]["spend"] == 1000
     assert stats[5]["partial"] is True
+
+
+def test_siparis_dizini_musteriye_gore_kurulur_en_yeni_basta() -> None:
+    # Künye müşterinin siparişlerini mağazaya SORMAZ (süzgeç uygulanmıyor);
+    # arka plan taramasının dizininden okur. "Son siparişler" en yeniyle başlar.
+    rows = [
+        {"id": 1, "customerId": 12, "createdAt": "2026-08-01 09:00:00"},
+        {"id": 2, "customerId": 7, "createdAt": "2026-08-02 09:00:00"},
+        {"id": 3, "customerId": 12, "createdAt": "2026-08-03 09:00:00"},
+        {"id": 4, "customerId": 0, "createdAt": "2026-08-04 09:00:00"},
+    ]
+    index = analytics.orders_by_customer(rows)
+    assert [row["id"] for row in index[12]] == [3, 1]
+    assert [row["id"] for row in index[7]] == [2]
+    assert 0 not in index                       # misafir siparişi kimseye yazılmaz
+
+
+def test_kimliksiz_siparisler_musteriye_baglanamaz() -> None:
+    assert analytics.attributable([{"id": 1, "customerId": 0}]) is False
+    assert analytics.attributable([{"id": 1, "customerId": 12}]) is True
+    # Hiç sipariş yoksa bu bir BİLGİDİR: kimsenin siparişi yok.
+    assert analytics.attributable([]) is True
