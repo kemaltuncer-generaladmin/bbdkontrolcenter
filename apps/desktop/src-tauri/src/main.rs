@@ -11,7 +11,7 @@
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 mod printing;
@@ -316,12 +316,10 @@ async fn core_request(
     // sonsuza dek beklemeyi engeller.
     let seconds = timeout_seconds.unwrap_or(DEFAULT_REQUEST_TIMEOUT).clamp(5, 900);
 
-    let client = reqwest::Client::builder()
+    let mut request = http_client()?
+        .request(verb, &url)
         .timeout(Duration::from_secs(seconds))
-        .build()
-        .map_err(|error| format!("istemci kurulamadı: {error}"))?;
-
-    let mut request = client.request(verb, &url).header("Accept", "application/json");
+        .header("Accept", "application/json");
     if let Some(value) = token {
         request = request.header("Authorization", format!("Bearer {value}"));
     }
@@ -340,6 +338,24 @@ async fn core_request(
         .map_err(|error| format!("yanıt okunamadı: {error}"))?;
 
     Ok(CoreResponse { status, body: text })
+}
+
+/// Süreç boyu TEK HTTP istemcisi — bağlantı havuzu.
+///
+/// Eskiden her `core_request` kendi istemcisini kuruyordu: her istek yeni TCP
+/// + TLS el sıkışması, bir ekranın açılışındaki beş istek beş el sıkışması
+/// demekti. İstemci bağlantıyı açık tutar (keep-alive, HTTP/2). Zaman aşımı
+/// istemciye değil İSTEĞE bağlanır; her çağrı kendi süresini taşır.
+fn http_client() -> Result<&'static reqwest::Client, String> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
+        .pool_idle_timeout(Duration::from_secs(90))
+        .build()
+        .map_err(|error| format!("istemci kurulamadı: {error}"))?;
+    Ok(CLIENT.get_or_init(|| client))
 }
 
 /// Kabuğun hangi adrese baktığı — arayüz bunu Sistem Sağlığı ekranında yazar.

@@ -34,7 +34,10 @@ tauri-plugin-updater = "2"
 #
 # `rustls-tls`: sistemin OpenSSL'ine bağlanmamak için. Windows ve macOS
 # derlemelerinde OpenSSL aramak, CI'da çözülmesi en zahmetli hatalardan biri.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2"] }
+#
+# `gzip`: sunucu büyük JSON yanıtlarını sıkıştırıyor (`GZipMiddleware`); bu
+# özellik olmadan reqwest `Accept-Encoding` göndermez ve yanıt ham gelir.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "gzip"] }
 
 [profile.release]
 codegen-units = 1
