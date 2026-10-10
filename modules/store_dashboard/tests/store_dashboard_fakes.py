@@ -11,6 +11,7 @@ metot adını yakalar.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 
@@ -125,6 +126,9 @@ class FakeApi:
         #: `None` ise varsayılan toplu özet üretilir (bkz.
         #: `bbd_reporting_overview`); doldurulursa aynen döner.
         self.overview_payload: dict[str, Any] | None = None
+        #: `None` ise `dashboard_stats(kind="over-all")` `customer_rows`tan
+        #: kurulur; doldurulursa aynen döner (bozuk biçim dalı için).
+        self.overall_payload: dict[str, Any] | None = None
         self.truncate_orders = False
         #: Tarih süzgecini uygulayıp uygulamadığı — Laravel'in sessizce yok
         #: sayması testlerde açıkça kurulabilsin diye.
@@ -190,12 +194,27 @@ class FakeApi:
 
     async def dashboard_stats(self, *, kind: str = "over-all", start: str = "",
                               end: str = "", channel: str = "") -> dict[str, Any]:
-        """Bagisto panosu. Kritik stok kartının kaynağı.
+        """Bagisto panosu. Kritik stok kartının ve yeni müşteri sayısının kaynağı.
 
         `total_qty` CANLIDA METİN geliyor ("18") — sahte de öyle vermeli,
         yoksa test sayıya çevirmeyi kanıtlayamaz.
+
+        `over-all` Bagisto'nun `getOverAllStats` biçimini taklit eder: yeni
+        müşteri `customer_rows` içinden `created_at` aralığa düşenlerdir.
+        `total_sales` BİLEREK saçma bir sayıdır: pano ciroyu buradan okursa
+        test bunu yakalar.
         """
         self._record("dashboard_stats", kind=kind, start=start, end=end)
+        if kind == "over-all":
+            if self.overall_payload is not None:
+                return self.overall_payload
+            current = len([row for row in self.customer_rows
+                           if start <= str(row.get("created_at"))[:10] <= end])
+            return {"statistics": {
+                "total_customers": {"previous": 999, "current": current, "progress": 0},
+                "total_orders": {"previous": 0, "current": 999, "progress": 0},
+                "total_sales": {"previous": 0, "current": 999999.0, "progress": 0},
+            }, "date_range": f"{start} - {end}"}
         return {"type": kind, "statistics": self.stock_threshold_rows}
 
     # -------------------------------------------------------------- sağlık
@@ -299,3 +318,73 @@ def menu_node(slug: str, fields: list[dict[str, Any]],
                    for field in fields],
         "children": children or [],
     }
+
+
+class FakeScan:
+    """`store.scan` yeteneğinin testlik yüzü — yükleyiciyi ÇAĞRILDIĞI ANDA bekler.
+
+    Gerçek katman yükleyiciyi arka plan görevinde koşturur; burada beklemek
+    sonucu deterministik yapar. Kurallar gerçek katmanla aynıdır: taze değer
+    varken yükleyici çağrılmaz, patlayan yükleme ELDEKİ değeri silmez,
+    aynı anahtarda aynı anda tek yükleme koşar.
+    """
+
+    def __init__(self) -> None:
+        self.entries: dict[str, dict[str, Any]] = {}
+        self.loads: list[str] = []
+        self.waits: list[float] = []
+        self._inflight: dict[str, asyncio.Task[Any]] = {}
+
+    def scoped(self, namespace: str) -> FakeScan:
+        return self
+
+    def _entry(self, key: str) -> dict[str, Any]:
+        return self.entries.setdefault(
+            key, {"state": "empty", "value": None, "stale": True, "running": False,
+                  "at": "", "ageSeconds": 0, "error": ""})
+
+    def peek(self, key: str) -> dict[str, Any]:
+        return dict(self._entry(key))
+
+    def invalidate(self, key: str) -> None:
+        self._entry(key)["stale"] = True
+
+    def age(self, key: str, seconds: int) -> None:
+        """Değeri yaşlandırır ve bayat işaretler (TTL doldu)."""
+        entry = self._entry(key)
+        entry["ageSeconds"] = seconds
+        entry["stale"] = True
+
+    async def read(self, key: str, loader: Any, *, ttl: int | None = None,
+                   refresh: bool = False, wait: float = 0.0) -> dict[str, Any]:
+        self.waits.append(wait)
+        entry = self._entry(key)
+        if entry["value"] is not None and not entry["stale"] and not refresh:
+            return dict(entry)
+        task = self._inflight.get(key)
+        if task is None or task.done():
+            self.loads.append(key)
+            task = asyncio.ensure_future(loader())
+            self._inflight[key] = task
+        try:
+            value = await asyncio.shield(task)
+        except Exception as failure:  # noqa: BLE001 — gerçek katman da yutar
+            entry.update(state="ready" if entry["value"] is not None else "error",
+                         error=str(failure) or "Tarama yapılamadı.", running=False)
+            return dict(entry)
+        entry.update(state="ready", value=value, stale=False, running=False,
+                     at="2026-10-10T09:00:00+03:00", ageSeconds=0, error="")
+        return dict(entry)
+
+
+class HangingScan(FakeScan):
+    """Hesap BAŞLADI ama bitmedi — yükleyici hiç çağrılmaz, hep "sürüyor"."""
+
+    async def read(self, key: str, loader: Any, *, ttl: int | None = None,
+                   refresh: bool = False, wait: float = 0.0) -> dict[str, Any]:
+        self.waits.append(wait)
+        entry = self._entry(key)
+        entry["running"] = True
+        if entry["value"] is None:
+            entry["state"] = "running"
+        return dict(entry)

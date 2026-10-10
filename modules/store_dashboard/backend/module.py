@@ -21,6 +21,10 @@ SUBCATEGORY = "Satış"
 def register(ctx: ModuleContext) -> None:
     store_api = ctx.capability("store.api")
     printer = ctx.try_capability("printer")
+    # Pano özeti dönemin siparişlerini sayfa sayfa geziyor; istekte koşmaz,
+    # geçidin arka plan tazeleyicisine verilir. Kendi köşesinde çalışır ki
+    # başka bir mağaza ekranının anahtarlarıyla karışmasın.
+    scan = ctx.capability("store.scan").scoped("store_dashboard")
 
     service = DashboardService(
         api=store_api,
@@ -28,6 +32,7 @@ def register(ctx: ModuleContext) -> None:
         log=ctx.log,
         config=ctx.config,
         printer=printer,
+        scan=scan,
         category=CATEGORY,
         subcategory=SUBCATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",

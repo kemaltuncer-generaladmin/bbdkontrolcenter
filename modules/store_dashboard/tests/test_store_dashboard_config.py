@@ -345,3 +345,71 @@ async def test_cok_fazla_alan_reddedilir() -> None:
     result = await service.save_config(changes=changes, reason=REASON, actor="Ali")
     assert result["ok"] is False
     assert api.used("configuration_menu") == []   # ağaç bile okunmaz
+
+
+# ================================================ canlıya alma BURADAN yapılmaz
+#
+# BULUNAN AÇIK (2026-10-10): Yapılandırma sekmesi `go_live` anahtarlarını düz
+# `configuration` yazmasıyla açıp kapatabiliyordu. Mağazanın Geliver ayar ucu
+# bu anahtarı açarken ÖN DENETİM yapıyor; düz yazma onu atlıyordu. Canlıya
+# alma kendi akışına aittir — burada değer görünür, yazılmaz.
+
+GELIVER_LIVE = "sales.carriers.geliver.go_live"
+KT_LIVE = "sales.payment_methods.kuveytturk.go_live"
+
+
+def _canli_agac() -> list[dict[str, Any]]:
+    tree = live_tree()
+    sales = tree[0]
+    kuveyt = next(node for node in sales["children"]
+                  if node["key"] == "sales.payment_methods.kuveytturk")
+    kuveyt["fields"].append({"name": "go_live", "code": KT_LIVE, "title": "Canlı",
+                             "type": "boolean", "default": None, "value": "1"})
+    sales["children"].append(menu_node("sales.carriers.geliver", [
+        {"name": "active", "type": "boolean", "title": "Durum", "value": "1"},
+        {"name": "go_live", "type": "boolean", "title": "Canlı", "value": "0"},
+    ]))
+    return tree
+
+
+async def test_canliya_alma_anahtari_gorunur_ama_yazilamaz() -> None:
+    service, api, _ = _service()
+    api.menu_tree = _canli_agac()
+    result = await service.config_view()
+    for code, value in ((GELIVER_LIVE, "0"), (KT_LIVE, "1")):
+        field = field_of(result, code)
+        assert field["found"] is True
+        assert field["value"] == value            # durum GÖSTERİLİR
+        assert field["editable"] is False         # ama düzenlenemez
+        assert field["kind"] == "checkbox"        # ekran "1" değil "Açık" yazar
+        assert "Salt okunur" in field["reason"]
+
+
+async def test_canliya_alma_govdeye_elle_konsa_da_yazilmaz() -> None:
+    # K9: arayüzde salt okunur çizmek yetki değildir; gövdeye elle eklenen
+    # anahtar backend'de de reddedilir.
+    service, api, _ = _service()
+    api.menu_tree = _canli_agac()
+    result = await service.save_config(changes={GELIVER_LIVE: "1", KT_LIVE: "0"},
+                                       reason=REASON, actor="Ali", dry_run=False)
+    assert result["ok"] is False
+    assert api.used("update_configuration") == []
+    assert {item["code"] for item in result["skipped"]} == {GELIVER_LIVE, KT_LIVE}
+
+
+async def test_canliya_alma_yaninda_gelen_diger_alan_yine_yazilir() -> None:
+    service, api, _ = _service()
+    api.menu_tree = _canli_agac()
+    result = await service.save_config(changes={GELIVER_LIVE: "1", KT_TITLE: "Kart"},
+                                       reason=REASON, actor="Ali", dry_run=False)
+    assert result["ok"] is True
+    written = api.used("update_configuration")[0]["values"]
+    assert written == {KT_TITLE: "Kart"}
+    assert [item["code"] for item in result["skipped"]] == [GELIVER_LIVE]
+
+
+def test_canliya_alma_kritik_kapatma_listesinde_degil() -> None:
+    # Yazılamayan alan "kapanacak yöntemler" onay metnine de giremez.
+    assert GELIVER_LIVE not in config_map.CRITICAL_CODES
+    assert KT_LIVE not in config_map.CRITICAL_CODES
+    assert set(config_map.READ_ONLY_CODES) == {GELIVER_LIVE, KT_LIVE}

@@ -84,14 +84,34 @@ FORM_KINDS = {
 #: kaydetmede onay metnini sertleştirir ve hangi yöntemin kararacağını sayar.
 CRITICAL_CODES = frozenset({
     "sales.payment_methods.kuveytturk.active",
-    "sales.payment_methods.kuveytturk.go_live",
     "sales.payment_methods.moneytransfer.active",
     "sales.payment_methods.cashondelivery.active",
     "sales.carriers.free.active",
     "sales.carriers.flatrate.active",
     "sales.carriers.geliver.active",
-    "sales.carriers.geliver.go_live",
 })
+
+#: Bu ekranda DEĞERİ GÖSTERİLEN ama YAZILMAYAN anahtarlar → nedeni.
+#:
+#: BULUNAN AÇIK (2026-10-10). `go_live` iki kapılı bir yöntemin "müşteriye aç"
+#: kapısıdır ve açılmadan önce denetlenmesi gerekir: mağazanın Geliver ayar
+#: ucu bu anahtarı açarken ÖN DENETİM yapıyor ve geçemezse 422 ile nedenlerini
+#: döndürüyor — Kargo Yönetimi ekranı o uçtan yazar ve nedenleri gösterir
+#: (bkz. `store_shipping` → `save_geliver_settings`). Bu ekran ise aynı
+#: anahtarı Bagisto'nun düz `configuration` yazma ucundan yazıyordu; ön
+#: denetim atlanıyor, yarım kurulmuş taşıyıcı ya da sanal POS vitrinde
+#: müşteriye açılabiliyordu. Canlıya alma kendi akışına aittir; burada yalnız
+#: durumu okunur.
+READ_ONLY_CODES: dict[str, str] = {
+    "sales.payment_methods.kuveytturk.go_live": (
+        "Salt okunur: sanal POS'u müşteriye açmak (canlıya almak) bu ekrandan yapılmaz. "
+        "Düz ayar yazması ödeme tarafının kendi denetimlerini atlar; yarım kurulmuş POS "
+        "vitrinde görünebilirdi. Canlıya alma ödeme akışının kendi ekranından yapılır."),
+    "sales.carriers.geliver.go_live": (
+        "Salt okunur: Geliver'i müşteriye açmak (canlıya almak) Kargo Yönetimi ekranından "
+        "yapılır. Orada mağazanın ön denetimi çalışır ve geçemezse nedenleri gösterilir; "
+        "buradan düz ayar yazmak o denetimi atlardı."),
+}
 
 #: Tek kaydetmede kabul edilen en çok alan. Beyaz liste zaten ~30 alan; daha
 #: fazlası ekranın gönderdiği bir gövde değil, biçimi bozuk bir istektir.
@@ -105,9 +125,10 @@ GROUPS: tuple[dict[str, Any], ...] = (
     {
         "key": "identity",
         "title": "Mağaza kimliği",
-        "note": "Kargo etiketinde, faturada ve iletişim sayfasında görünür. Bu kurulumda "
-                "mağaza kimliği `sales.shipping.origin` altındadır — Bagisto 2.4.8'de "
-                "ayrı bir \"mağaza bilgileri\" bölümü yoktur.",
+        # Bu kurulumda mağaza kimliği `sales.shipping.origin` altındadır —
+        # Bagisto 2.4.8'de ayrı bir "mağaza bilgileri" bölümü yoktur. Ekran
+        # notu bunu anlatmaz (docs/tasarim-sade-magaza.md §3: teknik dil yok).
+        "note": "Kargo etiketinde, faturada ve iletişim sayfasında görünür.",
         "fields": (
             ("sales.shipping.origin.store_name", "Mağaza adı",
              "Kargo gönderilerinde gönderici adı olarak kullanılır."),
@@ -129,7 +150,8 @@ GROUPS: tuple[dict[str, Any], ...] = (
             ("sales.payment_methods.kuveytturk.active", "KuveytTürk sanal POS — açık",
              "Kapalıyken kredi kartıyla ödeme alınmaz."),
             ("sales.payment_methods.kuveytturk.go_live", "KuveytTürk — müşteriye açık (canlı)",
-             "İkinci kapı: yöntem açık olsa da bu kapalıyken vitrinde görünmez."),
+             ("İkinci kapı: yöntem açık olsa da bu kapalıyken vitrinde görünmez. Burada "
+              "yalnız durumu gösterilir.")),
             ("sales.payment_methods.kuveytturk.title", "KuveytTürk — ödeme adımı başlığı", ""),
             ("sales.payment_methods.moneytransfer.active", "Havale / EFT — açık", ""),
             ("sales.payment_methods.moneytransfer.title", "Havale / EFT — başlık", ""),
@@ -145,7 +167,8 @@ GROUPS: tuple[dict[str, Any], ...] = (
                 "üstü her sepeti ücretsiz yapar.",
         "fields": (
             ("sales.carriers.geliver.active", "Geliver kargo — entegrasyon kurulu", ""),
-            ("sales.carriers.geliver.go_live", "Geliver kargo — müşteriye açık (canlı)", ""),
+            ("sales.carriers.geliver.go_live", "Geliver kargo — müşteriye açık (canlı)",
+             "Burada yalnız durumu gösterilir; canlıya alma Kargo Yönetimi ekranındadır."),
             ("sales.carriers.geliver.title", "Geliver kargo — ödeme adımı başlığı", ""),
             ("sales.carriers.geliver.free_shipping_threshold", "Ücretsiz kargo eşiği (TL)",
              "Sepet tutarı bu değeri geçerse kargo ücretsizdir."),
@@ -183,8 +206,8 @@ GROUPS: tuple[dict[str, Any], ...] = (
     {
         "key": "email",
         "title": "E-posta",
-        "note": "Sipariş, fatura ve kargo bildirimleri bu adla ve adresle gider. SMTP "
-                "sunucusu ve parolası bu ekranda GÖSTERİLMEZ.",
+        # SMTP sunucusu ve parolası bu ekrana HİÇ gelmez (beyaz listede yok).
+        "note": "Sipariş, fatura ve kargo bildirimleri bu adla ve adresle gider.",
         "fields": (
             ("emails.configure.email_settings.sender_name", "Gönderen adı", ""),
             ("emails.configure.email_settings.sender_email", "Gönderen e-posta adresi",
@@ -294,6 +317,13 @@ def field_view(code: str, label: str, hint: str,
     view["hasDefault"] = declared["default"] is not None
     view["source"] = source_of(declared["value"], declared["default"])
 
+    if code in READ_ONLY_CODES:
+        # Durum GÖSTERİLİR (değer ve kaynak rozeti yerinde), yazma kapalıdır.
+        # Tür yine bildirilir: ekran mantıksal değeri "1" değil "Açık" yazsın.
+        view["kind"] = FORM_KINDS.get(kind, "text")
+        view["reason"] = READ_ONLY_CODES[code]
+        return view
+
     if kind not in EDITABLE_TYPES:
         view["reason"] = (f"Mağaza bu alanı `{kind}` tipiyle ilan etmiş; geçerli "
                           "seçenekleri bilinmeden yazmak bozuk değer üretirdi.")
@@ -354,6 +384,11 @@ def resolve_writes(changes: Any,
                             "reason": "Bu alan Yapılandırma ekranının listesinde yok."})
             continue
         label = spec[1]
+        if code in READ_ONLY_CODES:
+            # Ekran bu alanı salt okunur çiziyor; istemci gövdeye yine de
+            # koyarsa backend'de de reddedilir (K9: gizlemek yetki değildir).
+            skipped.append({"code": code, "label": label, "reason": READ_ONLY_CODES[code]})
+            continue
         field = declared.get(code)
         if field is None:
             skipped.append({"code": code, "label": label, "reason": MISSING_REASON})

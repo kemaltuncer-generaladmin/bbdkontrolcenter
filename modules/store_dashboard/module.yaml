@@ -26,6 +26,10 @@ provides: []
 consumes:
   - capability: store.api
     reason: "Mağaza verisi tek kapıdan geçer (K4)."
+  - capability: store.scan
+    reason: "Pano özeti dönemin siparişlerini sayfa sayfa geziyor; istekte koştuğunda açılış
+      geçidin ortak kovasının boşalmasını bekliyordu. Özet arka planda kurulur, istek son
+      bilinen değeri yaşıyla birlikte hemen döner."
   - capability: printer
     optional: true
     reason: "Günlük özet raporu kâğıda basılır; yazıcı yoksa ekran çalışmaya devam eder."
@@ -44,8 +48,9 @@ ui:
   entry: ui/panel/index.js
   locales: ui/locales
   nav:
-    title: "Kontrol Paneli"
+    title: "Dashboard"
     icon: gauge
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
     group: "BBD Store"
     order: 200
     requires: [store_dashboard.view]

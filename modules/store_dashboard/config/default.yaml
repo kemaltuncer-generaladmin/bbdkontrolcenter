@@ -15,8 +15,12 @@ scan_cap: 2000
 # açmak mağazaya 18 istek attırıyordu; raf bunu sıfıra indirir. Yalnız BU
 # ekranın okumalarını tutar, başka ekranın gördüğü veriye dokunmaz; "Yenile"
 # düğmesi rafı atlar ve ekran verinin kaç saniyelik olduğunu yazar.
-# 0 = raf kapalı (her açılış mağazaya gider).
-cache_seconds: 60
+# 60 idi: pano açık durdukça dakikada bir yeniden kuruluyor ve geçidin
+# dakikada 55'lik ORTAK kovasından pay yiyordu. Özet bu sürenin sonunda arka
+# planda tazelenir; ekran beklemez. Yedek/POS/kargo kartları ayrıca yarım
+# saat rafta durur (günde bir değişirler).
+# 0 = raf kapalı (her açılış mağazaya gider, özet istekte hesaplanır).
+cache_seconds: 300
 
 recent_orders: 10          # son siparişler kartı
 critical_stock: 10         # kritik stok kartı

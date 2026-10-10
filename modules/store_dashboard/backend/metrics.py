@@ -15,6 +15,12 @@ SİPARİŞ LİSTESİNDEN HESAPLANIR. Gerekçe:
     iptalleri nasıl saydığı belgelenmemiş. Burada kural açık ve testli.
   · Aynı veriden hem KPI hem grafik hem tablo çıkıyor; tek tarama yetiyor.
 
+TEK İSTİSNA: "Yeni müşteri". Sipariş listesinde müşteri kayıt tarihi yok;
+sayı eskiden müşteri LİSTESİNİN tamamı taranarak bulunuyordu (tarih süzgeci
+o uçta uygulanmıyor → her kuruluşta ~36 sayfa). Artık mağazanın toplu
+sayımından okunur (`new_customers_of`). Ekranda bu sayının listesi YOK; iki
+kaynağın birbirini tutmaması sorunu bu kutuda doğmaz.
+
 SAYMA KURALLARI (ekranda da yazar, sessiz varsayım yok):
   · İptal ve şüpheli sipariş CİROYA da SİPARİŞ SAYISINA da girmez; durum
     dağılımında ayrıca görünür.
@@ -324,6 +330,37 @@ def refund_total(raw: dict[str, Any]) -> int:
 
 def created_day(raw: dict[str, Any]) -> str:
     return text(pick(raw, "created_at", "createdAt"))[:10]
+
+
+def new_customers_of(payload: Any) -> int | None:
+    """`dashboard/stats?type=over-all` yanıtından dönemin yeni müşteri sayısı.
+
+    Bagisto'nun pano yardımcısı (`getOverAllStats`) bu bölümü
+    `{"total_customers": {"previous", "current", "progress"}}` biçiminde
+    veriyor; REST ucu bunu `statistics` altına koyuyor (kritik stok kartı aynı
+    zarfı `stock-threshold-products` için canlıda okuyor). Zarf ya da alan
+    beklenen biçimde DEĞİLSE `None` döner: sıfır "kimse kaydolmadı" demektir
+    ve bunu bilmiyoruz.
+
+    `previous` OKUNMAZ: Bagisto önceki dönemi `diffInDays` ile kuruyor ve tek
+    günlük aralıkta sıfır uzunlukta bir dönem çıkıyor. Karşılaştırma dönemi
+    kendi aralığıyla ayrıca sorulur.
+    """
+    if not isinstance(payload, dict):
+        return None
+    stats = payload.get("statistics")
+    if not isinstance(stats, dict):
+        stats = payload
+    block = stats.get("total_customers")
+    value = block.get("current") if isinstance(block, dict) else block
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return max(0, value)
+    raw = text(value)
+    if not raw.lstrip("-").isdigit():
+        return None
+    return max(0, int(raw))
 
 
 # ============================================================= toplulaştırma

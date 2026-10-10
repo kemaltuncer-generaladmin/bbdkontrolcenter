@@ -244,3 +244,17 @@ def test_tarihsiz_yedek_en_yeni_sayilmaz() -> None:
     assert newest["name"] == "yeni.tar"
     assert metrics.backup_age_days("2026-08-12 03:00:00", today="2026-08-13") == 1
     assert metrics.backup_age_days("bilinmiyor") is None
+
+
+def test_yeni_musteri_toplu_sayimdan_okunur_bilinmeyen_sifir_degildir() -> None:
+    # Bagisto `getOverAllStats` biçimi; REST ucu onu `statistics` altına koyar.
+    zarf = {"statistics": {"total_customers": {"previous": 7, "current": 3,
+                                               "progress": -57.1}}}
+    assert metrics.new_customers_of(zarf) == 3
+    assert metrics.new_customers_of({"total_customers": {"current": "4"}}) == 4
+    # `previous` OKUNMAZ (tek günlük aralıkta Bagisto onu sıfır uzunlukta kurar).
+    assert metrics.new_customers_of({"statistics": {"total_customers": {"previous": 9}}}) \
+        is None
+    for bozuk in ({}, {"statistics": []}, {"statistics": {"total_customers": "çok"}},
+                  None, [], {"statistics": {"total_customers": {"current": True}}}):
+        assert metrics.new_customers_of(bozuk) is None, bozuk

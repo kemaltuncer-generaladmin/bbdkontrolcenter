@@ -5,8 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from store_dashboard_backend import service as service_module
 from store_dashboard_backend.service import DashboardService
-from store_dashboard_fakes import FakeApi, FakeLog, FakePrinter, FakeStore, order
+from store_dashboard_fakes import (
+    FakeApi,
+    FakeLog,
+    FakePrinter,
+    FakeScan,
+    FakeStore,
+    HangingScan,
+    order,
+)
 
 RANGE = {"start": "2026-08-10", "end": "2026-08-12"}
 
@@ -64,7 +73,7 @@ async def test_bekleyen_isler_satir_satir_hata_verir() -> None:
     rows = {row["key"]: row for row in result["items"]}
     assert rows["reviews"]["count"] is None and rows["reviews"]["error"]
     assert rows["returns"]["count"] == 2
-    assert rows["returns"]["target"] == "store_requests"
+    assert rows["returns"]["target"] == "store_refunds"     # Talepler ekranı kapatıldı
 
 
 # ======================================================== toplu özet (tek uç)
@@ -297,16 +306,18 @@ async def test_kritik_stok_kart_sayisi_kadar_gosterir_toplami_saklar() -> None:
 
 # ================================================================ KPI hesabı
 
-async def test_kpilar_siparis_listesinden_hesaplanir_dashboard_stats_cagrilmaz() -> None:
+async def test_siparis_kpilari_siparis_listesinden_hesaplanir_pano_sayimindan_degil() -> None:
     # Ekranda rakamla birlikte o rakamı üreten siparişler duruyor; iki ayrı
-    # kaynak birbirini tutmazsa kullanıcı ikisine de güvenmez.
+    # kaynak birbirini tutmazsa kullanıcı ikisine de güvenmez. Mağazanın pano
+    # sayımı YALNIZ yeni müşteri için sorulur (sahte orada saçma bir ciro
+    # veriyor; pano onu okusaydı aşağıdaki rakam tutmazdı).
     service, api, _ = _service()
     result = await service.summary(**RANGE)
     tiles = {tile["key"]: tile for tile in result["kpis"]}
     assert tiles["revenue"]["value"] == 15000       # iptal edilen 900 TL hariç
     assert tiles["orders"]["value"] == 2
     assert tiles["basket"]["value"] == 7500
-    assert not any(call == "dashboard_stats" for call, _, _ in api.calls)
+    assert {call["kind"] for call in api.used("dashboard_stats")} == {"over-all"}
 
 
 async def test_bitisik_karsilastirma_donemi_tek_sorguda_gelir() -> None:
@@ -321,7 +332,10 @@ async def test_bitisik_karsilastirma_donemi_tek_sorguda_gelir() -> None:
     assert tiles["revenue"]["delta"]["percent"] == -50.0
     assert len(api.used("orders")) == 1
     assert len(api.used("refunds")) == 1
-    assert len(api.used("customers")) == 1
+    # Müşteri LİSTESİ hiç taranmaz; yeni müşteri her dönem için TEK toplu sayım.
+    assert api.used("customers") == []
+    assert [(call["start"], call["end"]) for call in api.used("dashboard_stats")] == \
+        [("2026-08-11", "2026-08-12"), ("2026-08-09", "2026-08-10")]
     # Sorulan aralık İKİ DÖNEMİ BİRDEN kapsar.
     assert api.args("orders")[0][0]["date_from"] == "2026-08-09"
     assert api.args("orders")[0][0]["date_to"] == "2026-08-12"
@@ -488,12 +502,16 @@ async def test_ayar_bolumleri_slug_basina_bir_kez_okunur() -> None:
 
 # ==================================================================== rapor
 
-async def test_rapor_klasoru_disindaki_dosya_basilmaz() -> None:
+async def test_rapor_klasoru_disindaki_dosya_basilmaz(tmp_path: Path) -> None:
     # Serbest yol kabul etmek, `lp` ile makinedeki herhangi bir dosyayı kâğıda
-    # döktürmeye açık kapı bırakırdı.
+    # döktürmeye açık kapı bırakırdı. Dosya GERÇEKTEN var olmalı: eskiden
+    # `/etc/hostname` kullanılıyordu ve macOS'ta o dosya olmadığı için test
+    # "bulunamadı" dalına düşüp yanlış nedenle kırılıyordu.
+    disari = tmp_path / "disari.txt"
+    disari.write_text("gizli", encoding="utf-8")
     printer = FakePrinter()
     service, _, _ = _service(printer=printer, export_path="/tmp/km-test-raporlar/pano")
-    result = await service.print_report("/etc/hostname")
+    result = await service.print_report(str(disari))
     assert result["ok"] is False
     assert "rapor klasöründe değil" in result["error"]
     assert printer.printed == []
@@ -510,3 +528,187 @@ async def test_yazici_yoksa_basma_ucu_anlasilir_hata_doner() -> None:
 async def test_bilinmeyen_rapor_turu_uretilmez() -> None:
     service, _, _ = _service()
     assert (await service.build_report("yillik", {}))["ok"] is False
+
+
+# ==================================================== yeni müşteri: TEK sayım
+#
+# BULUNAN ARIZA (2026-10-10): "Yeni müşteri" KPI'sı müşteri LİSTESİNİN
+# `created_at_from/to` süzgeciyle `all_pages=True` taranarak bulunuyordu. O
+# süzgeç müşteri ucunda uygulanmıyor; her pano kuruluşu ~36 sayfalık tam
+# müşteri taramasıydı. Sayı artık mağazanın toplu pano sayımından gelir.
+
+async def test_yeni_musteri_toplu_sayimdan_tek_istekle_gelir() -> None:
+    service, api, _ = _service()
+    api.customer_rows = [{"id": 1, "created_at": "2026-08-11 10:00:00"},
+                         {"id": 2, "created_at": "2025-01-01 10:00:00"}]
+    result = await service.summary(**RANGE)
+    tiles = {tile["key"]: tile for tile in result["kpis"]}
+    assert tiles["customers"]["value"] == 1
+    assert api.used("customers") == []                  # liste TARANMADI
+    assert api.used("dashboard_stats") == [
+        {"kind": "over-all", "start": "2026-08-10", "end": "2026-08-12"}]
+
+
+async def test_yeni_musteri_alani_gelmezse_sifir_uydurulmaz() -> None:
+    service, api, _ = _service()
+    api.overall_payload = {"statistics": {"total_orders": {"current": 3}}}
+    result = await service.summary(**RANGE)
+    tiles = {tile["key"]: tile for tile in result["kpis"]}
+    assert tiles["customers"]["value"] is None           # "—", 0 değil
+    assert "total_customers" in tiles["customers"]["note"]
+
+
+async def test_toplu_sayim_patlarsa_yalniz_o_kutu_bos_kalir() -> None:
+    service, api, _ = _service()
+    api.fail.add("dashboard_stats")
+    result = await service.summary(**RANGE)
+    tiles = {tile["key"]: tile for tile in result["kpis"]}
+    assert result["connected"] is True
+    assert tiles["customers"]["value"] is None
+    assert tiles["revenue"]["value"] == 15000
+
+
+# ===================================== özet arka planda kurulur, istek beklemez
+
+def _scan_service(scan: FakeScan, api: FakeApi | None = None,
+                  **config: Any) -> tuple[DashboardService, FakeApi]:
+    api = api or FakeApi([
+        order(1, created="2026-08-10 09:00:00", total="100.00", status="completed"),
+    ])
+    service = DashboardService(
+        api=api, store=FakeStore(), log=FakeLog(),
+        config={"channel": "default", "locale": "tr", "compare": "none",
+                "cache_seconds": 300, **config},
+        fallback_dir=Path("/tmp/km-test-raporlar"), scan=scan)
+    return service, api
+
+
+async def test_ozet_hesap_bitmeden_beklemez_ve_sifir_gostermez() -> None:
+    import asyncio
+    scan = HangingScan()
+    service, api = _scan_service(scan)
+    result = await asyncio.wait_for(service.summary(**RANGE), timeout=2.0)
+    assert result["pending"] is True
+    assert result["connected"] is True                   # "okunamadı" DEĞİL
+    assert result["kpis"] == []                          # sıfır KPI çizilmez
+    assert api.used("orders") == []                      # istek içinde tarama yok
+    assert scan.waits == [service_module.SUMMARY_WAIT]   # bekleme SINIRLI
+
+
+async def test_ozet_son_bilinen_degeri_yasiyla_doner() -> None:
+    scan = FakeScan()
+    service, api = _scan_service(scan)
+    first = await service.summary(**RANGE)
+    calls = len(api.calls)
+    second = await service.summary(**RANGE)
+    assert len(api.calls) == calls                       # mağazaya gitmedi
+    assert second["kpis"] == first["kpis"]
+    assert second["pending"] is False and second["refreshing"] is False
+
+
+async def test_ozet_tazelemesi_patlarsa_eldeki_ozet_kalir_ve_soylenir() -> None:
+    scan = FakeScan()
+    service, api = _scan_service(scan)
+    first = await service.summary(**RANGE)
+    key = next(iter(scan.entries))
+    scan.age(key, 400)
+    api.fail.add("orders")
+    second = await service.summary(**RANGE)
+    assert second["connected"] is True
+    assert second["kpis"] == first["kpis"]               # son iyi özet duruyor
+    assert "patladı" in second["refreshError"]           # ama bayat olduğu yazıyor
+    assert second["ageSeconds"] == 400
+
+
+async def test_hic_ozet_yokken_patlarsa_kart_nedenini_soyler() -> None:
+    scan = FakeScan()
+    service, api = _scan_service(scan)
+    api.fail.add("orders")
+    result = await service.summary(**RANGE)
+    assert result["connected"] is False
+    assert "patladı" in result["error"]
+    assert result["pending"] is False
+
+
+async def test_yenile_ozeti_hesaplatir() -> None:
+    scan = FakeScan()
+    service, api = _scan_service(scan)
+    await service.summary(**RANGE)
+    await service.summary(**RANGE, fresh=True)
+    assert len(api.used("orders")) == 2
+
+
+async def test_rapor_hesaplanmakta_olan_ozetten_uretilmez() -> None:
+    # Boş KPI tablosu basılsaydı "bu dönem satış yok" diye okunurdu.
+    scan = HangingScan()
+    service, _ = _scan_service(scan, export_path="/tmp/km-test-raporlar/pano")
+    result = await service.export_csv(**RANGE)
+    assert result["ok"] is False
+    assert "hesaplanıyor" in result["error"]
+    assert scan.waits == [service_module.REPORT_WAIT]
+
+
+async def test_raf_kapaliysa_ozet_istekte_hesaplanir() -> None:
+    # `cache_seconds: 0` "her açılış mağazaya gider" demektir; arka plan
+    # yolu da kapanır.
+    scan = FakeScan()
+    service, _api = _scan_service(scan, cache_seconds=0)
+    result = await service.summary(**RANGE)
+    assert result["connected"] is True and result["pending"] is False
+    assert scan.loads == []
+
+
+def test_raf_omru_bes_dakika() -> None:
+    assert service_module.DEFAULT_CACHE_SECONDS == 300
+    default = (Path(__file__).resolve().parents[1] / "config" / "default.yaml").read_text(
+        encoding="utf-8")
+    assert "cache_seconds: 300" in default
+
+
+# =========================================== bekleyen işler / sağlık: az istek
+
+async def test_seyrek_degisen_saglik_kartlari_uzun_rafta_durur() -> None:
+    # Yedek, POS ve kargo tanımları günde bir değişir; sağlık kartı yeniden
+    # kurulduğunda bu üçü mağazaya yeniden SORULMAZ.
+    service, api, _ = _service(cache_seconds=60)
+    await service.system_health()
+    shelf = service._shelf
+    stamp, value, life = shelf._values["system"]
+    shelf._values["system"] = (stamp - 120, value, life)    # kart rafı doldu
+    await service.system_health()
+    assert len(api.used("health")) == 2                     # bağlantı yoklaması taze
+    assert len(api.used("bbd_backups")) == 1
+    assert len(api.used("bbd_pos_terminals")) == 1
+    assert len(api.used("bbd_carriers")) == 1
+
+
+async def test_yenile_seyrek_kartlari_da_tazeler() -> None:
+    service, api, _ = _service(cache_seconds=60)
+    await service.system_health()
+    await service.system_health(fresh=True)
+    assert len(api.used("bbd_backups")) == 2
+
+
+async def test_patlayan_seyrek_kart_rafa_konmaz() -> None:
+    service, api, _ = _service(cache_seconds=60)
+    api.fail.add("bbd_backups")
+    first = await service.system_health()
+    assert {card["key"]: card for card in first["items"]}["backup"]["state"] == "unknown"
+    api.fail.discard("bbd_backups")
+    shelf = service._shelf
+    stamp, value, life = shelf._values["system"]
+    shelf._values["system"] = (stamp - 120, value, life)
+    second = await service.system_health()
+    assert {card["key"]: card for card in second["items"]}["backup"]["state"] != "unknown"
+
+
+async def test_hafif_referans_magaza_ayar_bolumunu_okumaz() -> None:
+    # Pano açılışı kanal listesi için `/settings` çağırıyordu; o uç mağazanın
+    # ayar bölümünü de okuyordu — açılış başına gereksiz bir istek.
+    service, api, _ = _service()
+    api.snapshot_payload = {"parts": {"channels": [{"code": "default", "name": "Varsayılan"}]},
+                            "errors": [], "stale": False}
+    result = await service.reference()
+    assert result["channels"] == [{"code": "default", "name": "Varsayılan"}]
+    assert result["local"]["channel"] == "default"
+    assert api.used("configuration") == []

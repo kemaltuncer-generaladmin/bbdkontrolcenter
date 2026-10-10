@@ -13,7 +13,7 @@ Grup: **BBD Store** · CSS öneki: `sd` · Rapor rafı:
 | KPI (8) | Ciro · Sipariş · Ortalama sepet · Yeni müşteri · İade tutarı · Bekleyen sipariş · Kargolanmayan · Tükenen ürün. Karşılaştırma: önceki dönem / geçen yıl aynı dönem / kapalı. |
 | Grafikler | Günlük ciro (`lineChart`) · durum dağılımı (`stackedBar`) · en çok satan 10 (`barChart`) · saat yoğunluğu (`hourStrip`). |
 | Kartlar | Son siparişler (satır → `store_orders`) · kritik stok (satır → `store_products`) · bekleyen işler (satır → ilgili ekran) · sistem sağlığı. |
-| Yapılandırma | Mağazanın `core_config` ayarlarından işletmenin dokunduğu ~30 tanesi: mağaza kimliği · ödeme yöntemleri · kargo yöntemleri · stok · sepet/checkout · e-posta gönderen. Her alanda kaynak rozeti ve `[Varsayılana dön]`; üstte arama, altta sabit `[Kaydet] [Geri al] · N alan değişti` çubuğu. Bakım modu burada **salt okunur**. |
+| Yapılandırma | Mağazanın `core_config` ayarlarından işletmenin dokunduğu ~30 tanesi: mağaza kimliği · ödeme yöntemleri · kargo yöntemleri · stok · sepet/checkout · e-posta gönderen. Her alanda kaynak rozeti ve `[Varsayılana dön]`; üstte arama, altta sabit `[Kaydet] [Geri al] · N alan değişti` çubuğu. Bakım modu ve iki `go_live` anahtarı (Geliver, KuveytTürk) burada **salt okunur**: canlıya alma kendi akışının ön denetiminden geçer, düz ayar yazması onu atlardı. |
 | Ayarlar | Çalışma kanalı/dil · yerelleştirme · karşılaştırma kipi · rapor klasörü. |
 | Çıktı | Günlük özet raporu PDF · KPI + günlük ciro CSV. |
 
@@ -28,6 +28,12 @@ sipariş listesinden hesaplanır.** Gerekçe:
 - Uzak ucun hangi tarih alanını (sipariş mi ödeme mi), hangi kanalı ve
   iptalleri nasıl saydığı belgelenmemiş. Buradaki kural açık ve testli.
 - Aynı taramadan hem sekiz KPI hem dört grafik çıkıyor; tek tarama yetiyor.
+
+**Tek istisna: "Yeni müşteri".** Sipariş listesinde kayıt tarihi yok. Sayı eskiden
+müşteri LİSTESİNİN tamamı taranarak bulunuyordu (o uçta tarih süzgeci uygulanmıyor;
+her pano kuruluşu ~36 sayfa). Artık mağazanın toplu sayımından
+(`dashboard/stats?type=over-all` → `total_customers.current`) tek istekle okunur;
+karşılaştırma dönemi kendi aralığıyla ayrıca sorulur. Alan gelmezse kutu `—` der.
 
 Sayma kuralları — ekranda da yazar:
 
@@ -44,10 +50,17 @@ Sayma kuralları — ekranda da yazar:
 - **Kendi kendine yenilenmez.** Otomatik yenileme, kullanıcı bir sayıyı
   okurken altından veriyi değiştirir. Yenileme elle yapılır ve panonun hangi
   saat itibarıyla dolduğu durum satırında yazar.
-- **Veri kopyalamaz / önbelleğe almaz.** Panonun tek işi doğru rakam
-  göstermek; kopya, mağaza tarafındaki bir değişiklikten sonra sessizce eski
-  rakamı gösterirdi. Referans listeler (kanal/para/dil) geçidin kendi
-  önbelleğinden gelir.
+  Tek istisna: istenen özet arka planda hâlâ kuruluyorsa eldeki özet
+  "tazeleniyor" notuyla görünür ve yenisi gelince bir kez yerine konur.
+- **Veri kopyalamaz; kısa süre bellekte tutar.** Yanıtlar 5 dakika rafta durur
+  (`cache_seconds`), seyrek değişen yedek/POS/kargo kartları yarım saat. Özet
+  `store.scan` ile ARKA PLANDA kurulur: istek son bilinen özeti yaşıyla hemen
+  döner, hiç yoksa birkaç saniye bekler ve yetişmezse "hesaplanıyor" der.
+  "Yenile" rafı her zaman atlar; ekran verinin kaç saniyelik olduğunu yazar.
+  Geçidin dakikada 55 isteklik kovası bütün ekranların ortak bütçesidir.
+- **Kapatılmış ekranlara düğme bırakmaz.** Raporlar, Yedekleme ve UDİT
+  ekranlarına giden `→` düğmeleri kaldırıldı; denetim kartı yalnız "son
+  işlemler" verebilen bir yetenek varsa çizilir.
 - **Sipariş/ürün düzenlemez.** Okur ve yol gösterir; işlem kendi ekranında.
 - **Kanal/para birimi/dil tanımını değiştirmez.** Bunlar mağaza yönetiminde
   yaşar. Ekrandan seçilen kanal ve dil, Kontrol Merkezi'nin hangi kanalı
@@ -192,7 +205,7 @@ ve SEO alanları da bu kurulumda "anahtar bulunamadı" der — kimlik alanların
 
 Okuma: `GET /summary` · `GET /orders/recent` · `GET /stock/critical` ·
 `GET /pending` · `GET /system` · `GET /settings` · `GET /config` ·
-`GET /audit` · `GET /printer`
+`GET /audit` · `GET /printer` · `GET /reference` (süzgeçlerin kanal listesi; mağaza ayar bölümünü okumaz)
 
 Yazma: `POST /settings` · `POST /config` · `POST /settings/maintenance` ·
 `POST /preview` · `POST /print` · `POST /export`

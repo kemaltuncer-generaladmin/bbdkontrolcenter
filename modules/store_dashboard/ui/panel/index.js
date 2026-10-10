@@ -1,20 +1,36 @@
 // Kontrol Paneli — mağazanın canlı özeti ve dağıtılmış mağaza ayarları.
 //
-// NE YAPAR: seçilen aralık için sekiz deltalı KPI; günlük ciro, sipariş durumu
-// dağılımı, en çok satan ürünler ve saat yoğunluğu grafikleri; son siparişler,
-// kritik stok, bekleyen işler ve sistem sağlığı kartları. Her kart başlığındaki
-// `→` ilgili ekrana götürür. Ayarlar sekmesinde mağaza kimliği, çalışma
-// kanalı/dil, yerelleştirme, SEO, rapor klasörü ve BAKIM MODU durur.
-// Yapılandırma sekmesinde mağazanın `core_config` ayarlarından işletmenin
-// gerçekten dokunduğu ~30 tanesi durur: kaynak rozeti, "varsayılana dön",
-// ayar araması ve sabit kaydet çubuğu ile.
+// SADE EKRAN (docs/tasarim-sade-magaza.md — bağlayıcı). İki sekme:
+//
+//  · Pano: tarih aralığı + "Yenile" + "Dışa aktar" menüsü; dört KPI (Ciro,
+//    Sipariş, Bekleyen sipariş, Kargolanmayan — son ikisi Siparişler / Kargo
+//    Yönetimi ekranına kısayol) ve altında sessiz bir satır (sepet, yeni
+//    müşteri, iade); altı kart: günlük ciro, sipariş dağılımı (durum + saat),
+//    en çok satan, son siparişler, kritik stok, bekleyen işler. Her kart
+//    başlığındaki `→` ilgili (YAŞAYAN) ekrana götürür.
+//  · Ayarlar: alt başlıklar — Genel (çalışma kanalı/dil, yerelleştirme, rapor
+//    klasörü; mağazada anahtarı bulunan kimlik/SEO/bakım alanları), "Ödeme,
+//    kargo ve mağaza" (eski Yapılandırma sekmesi: `core_config` beyaz listesi,
+//    kaynak rozeti, "varsayılana dön", arama, sabit kaydet çubuğu) ve Sistem
+//    durumu (eski Pano kartı).
 //
 // NE YAPMAZ:
 //  · Kendi kendine yenilenmez. Otomatik yenileme, kullanıcı bir sayıyı
 //    okurken altından veriyi değiştirir ve "az önce farklı yazıyordu"
 //    şüphesi üretir. Yenileme elle yapılır ve ne zaman yenilendiği yazar.
-//  · Rakamları iki kaynaktan almaz. KPI'lar da grafikler de AYNI sipariş
-//    taramasından çıkar; mağazanın kendi pano ucu ayrıca sorgulanmaz.
+//    TEK İSTİSNA: açılışta/süzgeç değişince istenen özet arka planda hâlâ
+//    kuruluyorsa, eldeki özet "tazeleniyor" notuyla gösterilir ve yenisi
+//    gelince BİR KEZ yerine konur. Periyodik yenileme yoktur.
+//  · Rakamları iki kaynaktan almaz. Sipariş KPI'ları da grafikler de AYNI
+//    sipariş taramasından çıkar. Tek istisna "Yeni müşteri": sipariş
+//    listesinde kayıt tarihi yok; sayı mağazanın toplu sayımından gelir
+//    (eskiden her açılışta ~36 sayfalık tam müşteri taraması demekti).
+//  · Özeti beklemez. Özet arka planda kurulur; ekran son bilinen özeti yaşıyla
+//    gösterir, hiç yoksa "hesaplanıyor" der ve kısa aralıkla yeniden sorar.
+//    Yoklama mağazaya gitmez — süren hesabın sonucunu okur.
+//  · Kapatılmış ekranlara götüren düğme bırakmaz. Raporlar, Yedekleme ve
+//    UDİT ekranları menüden kaldırıldı; onlara giden `→` düğmeleri de
+//    kaldırıldı (tıklanınca hiçbir şey yapmayan düğme kitin kuralına aykırı).
 //  · Sipariş/ürün DÜZENLEMEZ. Pano okur ve yol gösterir; işlem kendi
 //    ekranında yapılır.
 //  · Mağazanın 345 ayarını dökmez (2026-08-16 ölçümü; bir dönem 344'tü —
@@ -45,15 +61,16 @@
 // '../../ui-kit/' dosya sisteminde ÇÖZÜLMEZ — normaldir.
 
 import {
-  button, confirmSimple, confirmWithReason, debounce, foldText, h, loadStyles, money, num,
-  todayIso, toaster,
+  button, confirmSimple, confirmWithReason, debounce, foldText, h, loadStyles, menuButton,
+  money, num, todayIso, toaster,
 } from '../../ui-kit/kit.js';
+import { applyChoiceFilter } from '../../ui-kit/choice.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
 import {
-  alertBox, badge, card, emptyState, hintBox, kpiRow, skeletonRows, statusLine, tabBar,
+  alertBox, badge, card, emptyState, kpiRow, skeletonRows, statusLine, tabBar,
 } from '../../ui-kit/layout.js';
-import { barChart, hourStrip, lineChart, stackedBar } from '../../ui-kit/charts.js';
+import { barChart, hourStrip, lineChart } from '../../ui-kit/charts.js';
 import { fillDays } from '../../ui-kit/util.js';
 import { formGrid } from '../../ui-kit/form.js';
 import { reportChain } from '../../ui-kit/report.js';
@@ -85,7 +102,19 @@ const SOURCE_BADGES = {
     title: 'Ne mağazada bir değer var ne de ilan edilmiş bir varsayılan.' },
 };
 
-const EMPTY_STATE = { summary: null, loadedAt: '', fresh: false };
+const EMPTY_STATE = { summary: null, loadedAt: '', fresh: false, pending: false };
+
+//: Üst şeritteki dört KPI (docs/tasarim-sade-magaza.md §6) ve altındaki sessiz
+//: satır. Sıra ekrandaki sıradır.
+const PRIMARY_KPIS = ['revenue', 'orders', 'pending', 'unshipped'];
+const MINOR_KPIS = ['basket', 'customers', 'refunds'];
+
+//: Kısayol kutuları → işin yapıldığı ekran. YALNIZ yaşayan ekranlar (menüdeki
+//: yedi ekran); kapatılmış ekrana giden kutu boş ekran açardı.
+const KPI_TARGETS = {
+  pending: { panel: 'store_orders', label: 'Siparişler' },
+  unshipped: { panel: 'store_shipping', label: 'Kargo Yönetimi' },
+};
 
 /**
  * Yapılandırma sekmesinin boş durumu — HER ÇAĞRIDA YENİ nesne.
@@ -106,6 +135,16 @@ let busy = false;
 let state = { ...EMPTY_STATE };
 let config = emptyConfig();
 let configFilter = null;
+let mounted = false;
+
+//: Özet arka planda hesaplanırken yoklama zamanlayıcısı. Yoklama mağazaya
+//: GİTMEZ: sunucu süren hesabı yeniden başlatmaz, yalnız sonucunu verir.
+let summaryTimer = null;
+let summaryPolls = 0;
+const SUMMARY_POLL_MS = 5_000;
+//: ~2 dakika. Hesap bundan uzun sürüyorsa kart "Tekrar dene" der; yoklama
+//: süresiz dönmez.
+const SUMMARY_POLL_LIMIT = 24;
 
 const nodes = {};
 const forms = [];
@@ -173,16 +212,14 @@ function panelCard(title, content, { hint = '', target = '', payload = null,
  * ayın son gününde bir gün kaydırırdı.
  */
 function rangePresets() {
-  const now = new Date();
-  const dayOfMonth = now.getDate();
-  const previousMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  // SADE: dört çip (docs/tasarim-sade-magaza.md). "Dün" ve "Geçen ay" tarih
+  // alanlarından yine seçilebilir; çip olarak durmaları şeridi kalabalıklaştırıyordu.
+  const dayOfMonth = new Date().getDate();
   return [
     { key: 'today', label: 'Bugün', days: 1 },
-    { key: 'yesterday', label: 'Dün', days: 1, offset: 1 },
     { key: 'week', label: '7 gün', days: 7 },
     { key: 'month', label: '30 gün', days: 30 },
     { key: 'thisMonth', label: 'Bu ay', days: dayOfMonth },
-    { key: 'lastMonth', label: 'Geçen ay', days: previousMonthDays, offset: dayOfMonth },
   ];
 }
 
@@ -219,8 +256,10 @@ function query(extra = {}) {
 function refreshAll({ fresh = false } = {}) {
   state.fresh = fresh;
   nodes.status?.set(fresh ? 'Pano yenileniyor…' : 'Pano yükleniyor…');
+  // Sistem durumu Pano'da değil (Ayarlar → Sistem durumu): açılış mağazaya o
+  // kartın dört isteğini atmaz.
   return Promise.allSettled([
-    loadSummary(), loadRecent(), loadStock(), loadPending(), loadSystem(),
+    loadSummary(), loadRecent(), loadStock(), loadPending(),
   ]).then(() => {
     state.loadedAt = new Date().toLocaleTimeString('tr-TR',
       { hour: '2-digit', minute: '2-digit' });
@@ -246,7 +285,9 @@ function freshQuery(force = false) {
 function paintStatus() {
   const summary = state.summary;
   if (!summary) {
-    nodes.status?.set(`Veri alınamadı · son deneme ${state.loadedAt}`, true);
+    nodes.status?.set(state.pending
+      ? 'Pano hesaplanıyor — dönemin siparişleri arka planda okunuyor…'
+      : `Veri alınamadı · son deneme ${state.loadedAt}`, !state.pending);
     return;
   }
   const span = summary.range;
@@ -254,56 +295,126 @@ function paintStatus() {
   // `ageSeconds` verinin kaç saniyelik olduğunu söyler. Yazılmasaydı ekran
   // raftan gelen bir sayının yanına "şimdi" saatini basar ve tazeliği
   // hakkında yanlış bilgi verirdi.
+  // SADE (§3): "N sipariş tarandı", "kanal default" gibi iç ayrıntı yazılmaz.
   const age = Number(summary.ageSeconds) || 0;
+  const when = age >= 60 ? `${Math.round(age / 60)} dk önce güncellendi`
+    : age > 0 ? `${age} sn önce güncellendi` : `${state.loadedAt} itibarıyla`;
   nodes.status?.set(
-    `${span.start} – ${span.end} · kanal ${summary.channel} · `
-    + `${num(summary.scanned)} sipariş tarandı`
+    `${span.start} – ${span.end}`
     + (compare ? ` · karşılaştırma: ${compare}` : '')
-    + (age > 0
-      ? ` · ${age} sn önce okundu (Yenile ile tazelenir)`
-      : ` · ${state.loadedAt} itibarıyla`),
-    false,
+    + ` · ${when}`
+    + (summary.refreshing ? ' · tazeleniyor' : '')
+    + (summary.refreshError ? ` · güncellenemedi: ${summary.refreshError}` : ''),
+    Boolean(summary.refreshError),
   );
 }
 
-async function loadSummary({ fresh = false } = {}) {
+function scheduleSummaryPoll() {
+  if (summaryTimer || !mounted) return;
+  if (summaryPolls >= SUMMARY_POLL_LIMIT) {
+    // Süresiz yoklanmaz. Hâlâ değer yoksa kart nedenini söyler ve elle
+    // yeniden denemeyi önerir.
+    if (!state.summary) {
+      state.pending = false;
+      failCard(nodes.kpi, 'Pano özeti iki dakikadır hesaplanıyor; mağaza yoğun olabilir.',
+        () => loadSummary({ fresh: true }));
+      paintStatus();
+    }
+    return;
+  }
+  summaryTimer = setTimeout(() => {
+    summaryTimer = null;
+    if (!mounted) return;
+    summaryPolls += 1;
+    loadSummary({ poll: true });
+  }, SUMMARY_POLL_MS);
+}
+
+function stopSummaryPoll() {
+  if (summaryTimer) { clearTimeout(summaryTimer); summaryTimer = null; }
+  summaryPolls = 0;
+}
+
+function skeletonSummary() {
   nodes.kpi.replaceChildren(skeletonRows(2, 4));
   nodes.notes.replaceChildren();
   for (const key of ['daily', 'statuses', 'top', 'hours']) {
     nodes[key].replaceChildren(skeletonRows(3, 3));
   }
+}
+
+/**
+ * Özet. `poll` YALNIZ yoklamadan gelir: iskelet çizilmez (ekran titremesin),
+ * `fresh` GÖNDERİLMEZ — gönderilseydi her yoklama hesabı baştan başlatırdı.
+ */
+async function loadSummary({ fresh = false, poll = false } = {}) {
+  if (!poll) {
+    stopSummaryPoll();
+    skeletonSummary();
+    // Süzgeç değiştiyse eldeki özet artık BAŞKA bir dönemin özetidir; durum
+    // satırı onu yeni dönemmiş gibi yazmasın.
+    state.summary = null;
+  }
 
   let payload;
   try {
-    // SOĞUK AÇILIŞ UZUNDUR ve bu beklenen bir şeydir: özet, sipariş + iade +
-    // müşteri uçlarını sayfa sayfa geziyor (ölçüm: ~45 istek, geçit dakikada
-    // 55'te tutuyor). İlk açılış kabuğun 60 saniyelik varsayılanına dayanıp
-    // "çekirdeğe bağlanılamadı" hatası üretebiliyordu — oysa hesap sürüyordu
-    // ve bitince rafa yazılıyordu. İkinci açılış zaten raftan gelir.
-    payload = await api(`${BASE}/summary?${query(freshParam(fresh))}`,
+    // Özet artık hesabı BEKLEMEZ: sunucu son bilinen değeri hemen döner ya da
+    // birkaç saniye içinde `pending` der. Uzun süre burada bekleten eski
+    // davranış (sayfa sayfa ~45 istek) geride kaldı; süre sınırı yine geniş
+    // tutulur — `store.scan` olmayan kurulumda özet istekte hesaplanır.
+    payload = await api(`${BASE}/summary?${query(poll ? {} : freshParam(fresh))}`,
       { timeoutSeconds: 300 });
   } catch (error) {
+    if (poll && state.summary) { scheduleSummaryPoll(); return; }
     state.summary = null;
+    state.pending = false;
     failCard(nodes.kpi, error.message, () => loadSummary({ fresh: true }));
     for (const key of ['daily', 'statuses', 'top', 'hours']) nodes[key].replaceChildren();
     return;
   }
 
-  state.summary = payload;
+  if (payload.pending) {
+    // Hiç özet yok, hesap sürüyor. SIFIR KPI ÇİZİLMEZ: "bu dönem satış yok"
+    // diye okunurdu.
+    // İskelet yerinde kalır; ne olduğunu durum satırı söyler (kutu yok, §3).
+    state.pending = true;
+    if (!state.summary) {
+      if (!nodes.kpi.querySelector('.kit-skel')) {
+        nodes.kpi.replaceChildren(skeletonRows(2, 4));
+      }
+      paintStatus();
+    }
+    scheduleSummaryPoll();
+    return;
+  }
+  state.pending = false;
+
   if (!payload.connected) {
+    if (poll && state.summary) return;      // eldeki özet kalır, durum satırı yazar
     state.summary = null;
     failCard(nodes.kpi, payload.error || 'Mağazaya ulaşılamadı.',
       () => loadSummary({ fresh: true }));
     for (const key of ['daily', 'statuses', 'top', 'hours']) nodes[key].replaceChildren();
+    paintStatus();
     return;
   }
 
-  paintKpi(payload);
-  paintNotes(payload);
-  paintDaily(payload);
-  paintStatuses(payload);
-  paintTop(payload);
-  paintHours(payload);
+  // Yoklamada aynı (hâlâ tazelenmekte olan) özet geldiyse grafikler yeniden
+  // çizilmez; yalnız durum satırı güncellenir.
+  const same = poll && state.summary && payload.refreshing
+    && state.summary.ageSeconds <= payload.ageSeconds;
+  state.summary = payload;
+  if (!same) {
+    paintKpi(payload);
+    paintNotes(payload);
+    paintDaily(payload);
+    paintStatuses(payload);
+    paintTop(payload);
+    paintHours(payload);
+  }
+  if (poll) paintStatus();
+  if (payload.refreshing) scheduleSummaryPoll();
+  else stopSummaryPoll();
 }
 
 async function loadRecent({ fresh = false } = {}) {
@@ -454,7 +565,7 @@ function paintKpi(payload) {
   const seri = fillDays(payload.daily, payload.range.start, payload.range.end)
     .map((point) => point.value);
 
-  nodes.kpi.replaceChildren(kpiRow(payload.kpis.map((tile) => {
+  const tileBox = (tile) => {
     const known = tile.value !== null && tile.value !== undefined;
     const shown = known
       ? (tile.kind === 'money' ? money(tile.value) : num(tile.value))
@@ -483,16 +594,60 @@ function paintKpi(payload) {
       box.delta = { percent: tile.delta.percent, title: box.title };
     }
     return box;
-  })));
+  };
+
+  // ÜST ŞERİT EN ÇOK DÖRT KUTU (§6). Kalanlar (sepet, yeni müşteri, iade)
+  // altında sessiz tek satırda durur. "Tükenen ürün" çizilmez: kaynağı yok,
+  // her zaman "—" idi (bkz. service `OUT_OF_STOCK_NOTE`); stok sorusunun
+  // cevabı "Kritik stok" kartıdır.
+  const byKey = new Map(payload.kpis.map((tile) => [tile.key, tile]));
+  const primary = PRIMARY_KPIS.map((key) => byKey.get(key)).filter(Boolean);
+  const row = kpiRow(primary.map(tileBox));
+  // Bekleyen/Kargolanmayan kutuları İŞİN YAPILDIĞI ekrana kısayoldur. Kit
+  // kutusu tıklama almıyor; burada erişilebilir düğmeye dönüştürülür.
+  primary.forEach((tile, index) => {
+    const target = KPI_TARGETS[tile.key];
+    const box = row.children[index];
+    if (!target || !box) return;
+    box.classList.add('sd-kpi-link');
+    box.setAttribute('role', 'button');
+    box.tabIndex = 0;
+    box.title = `${box.title ? `${box.title} · ` : ''}${target.label} ekranında aç`;
+    const go = () => open(target.panel);
+    box.addEventListener('click', go);
+    box.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); go(); }
+    });
+  });
+
+  const minor = h('div', 'sd-kpi-minor');
+  for (const key of MINOR_KPIS) {
+    const tile = byKey.get(key);
+    if (!tile) continue;
+    const box = tileBox(tile);
+    const item = h('span', 'sd-kpi-minor-item');
+    item.append(h('span', 'sd-kpi-minor-label', tile.label), h('b', undefined, box.value));
+    if (box.delta) {
+      const up = Number(box.delta.percent) >= 0;
+      item.append(h('span', `sd-kpi-minor-delta ${up ? 'up' : 'down'}`,
+        `${up ? '▲' : '▼'} %${Math.abs(Number(box.delta.percent)).toLocaleString('tr-TR')}`));
+    }
+    if (box.title) item.title = box.title;
+    minor.append(item);
+  }
+  nodes.kpi.replaceChildren(row, minor);
 }
+
+//: Rakamı DEĞİŞTİRMEYEN, yalnız nasıl hesaplandığını anlatan iç notlar —
+//: ekranda gösterilmez (§3), PDF raporunda durmaya devam eder. Eksik/okunamayan
+//: rakam uyarıları ("EKSİK", "okunamadı") her zaman gösterilir.
+const QUIET_NOTES = ['yerelde süzüldü'];
 
 function paintNotes(payload) {
   nodes.notes.replaceChildren();
-  for (const note of payload.notes || []) nodes.notes.append(alertBox(note, 'warn'));
-  if (payload.topSource === 'report') {
-    nodes.notes.append(alertBox(
-      'Sipariş listesi kalem taşımıyor; "en çok satan" mağazanın kendi ürün raporundan '
-      + 'geliyor ve yukarıdaki ciroyla birebir örtüşmeyebilir.', 'info'));
+  for (const note of payload.notes || []) {
+    if (QUIET_NOTES.some((part) => note.includes(part))) continue;
+    nodes.notes.append(alertBox(note, 'warn'));
   }
 }
 
@@ -503,13 +658,16 @@ function paintDaily(payload) {
 
 function paintStatuses(payload) {
   const box = h('div');
-  box.append(stackedBar(payload.statuses.map((part) => ({
-    label: part.label, value: part.value,
+  // `barChart`, `stackedBar` DEĞİL: kitin `stackedBar`ı veri varken patlıyor
+  // (charts.js: `svg.append(rect).append(title)` — `append` hiçbir şey
+  // döndürmez). İstisna `loadSummary` içinde yükseldiği için bu kartla
+  // birlikte "En çok satan" ve "Saat yoğunluğu" da hiç çizilmiyordu. Kit
+  // düzelince geri alınabilir; yatay çubuk sayıyı yine yanında yazar.
+  box.append(barChart(payload.statuses.map((part) => ({
+    label: part.label, value: part.value, display: num(part.value),
   }))));
   if (payload.cancelled) {
-    box.append(h('div', 'sd-note',
-      `${num(payload.cancelled)} iptal/şüpheli sipariş ciroya ve "Sipariş" sayısına `
-      + 'GİRMEZ; burada görünür.'));
+    box.append(h('div', 'sd-note', `${num(payload.cancelled)} iptal sipariş ciroya dahil değil.`));
   }
   nodes.statuses.replaceChildren(box);
 }
@@ -548,29 +706,24 @@ async function renderSettings(host) {
   }
   host.replaceChildren();
 
+  // Hata kalır ama kısa (§3): ne oldu + ne yapılabilir.
   if (!payload.connected || !payload.storeAvailable) {
-    host.append(alertBox(
-      `Mağaza ayarları okunamadı — ${payload.error || 'bağlantı yok'}. Yerel tercihler `
-      + '(kanal, dil, karşılaştırma, yerelleştirme) yine de kaydedilebilir.', 'warn'));
-  }
-  if (payload.stale) {
-    host.append(alertBox('Kanal/para/dil listeleri bayat kopyadan geldi; mağaza yanıt '
-      + 'vermedi.', 'warn'));
+    host.append(alertBox(`Mağaza ayarları okunamadı — ${payload.error || 'bağlantı yok'}. `
+      + 'Aşağıdaki tercihler yine kaydedilebilir.', 'warn'));
   }
 
+  // TEK SEÇENEKLİ SORU SORULMAZ (choice.js): tek kanallı/tek dilli mağazada
+  // kanal ve dil kutusu çizilmez. Kutu yoksa tercih değişmez; mevcut değer
+  // yerinde kalır.
+  const many = (items) => (items || []).length > 1;
   const localForm = formGrid({
     fields: [
-      { key: 'channel', label: 'Çalışma kanalı', type: 'select',
-        options: (payload.channels.length
-          ? payload.channels
-          : [{ code: payload.local.channel, name: payload.local.channel }])
+      many(payload.channels) && { key: 'channel', label: 'Çalışma kanalı', type: 'select',
+        options: payload.channels
           .map((item) => ({ value: item.code, label: `${item.name} (${item.code})` })),
-        hint: 'Panonun ve raporların hangi kanalı okuduğunu belirler. Kanalın kendisi '
-          + 'mağaza yönetiminden düzenlenir.' },
-      { key: 'locale', label: 'Dil', type: 'select',
-        options: (payload.locales.length
-          ? payload.locales
-          : [{ code: payload.local.locale, name: payload.local.locale }])
+        hint: 'Panonun ve raporların hangi kanalı okuduğunu belirler.' },
+      many(payload.locales) && { key: 'locale', label: 'Dil', type: 'select',
+        options: payload.locales
           .map((item) => ({ value: item.code, label: `${item.name} (${item.code})` })) },
       { key: 'compare', label: 'Karşılaştırma', type: 'select', options: COMPARE_OPTIONS },
       { key: 'timezone', label: 'Saat dilimi', type: 'text', maxLength: 64,
@@ -586,10 +739,7 @@ async function renderSettings(host) {
 
   const currency = (payload.channels.find((item) => item.code === payload.local.channel)
     || payload.channels[0] || {}).currency;
-  const currencyLine = h('div', 'sd-note',
-    `Kanalın para birimi: ${currency || '—'} · tanımlı para birimleri: `
-    + `${payload.currencies.map((item) => item.code).join(', ') || '—'}. Para birimi ve kur `
-    + 'kaynağı mağaza yönetiminde tutulur; buradan değiştirilmez.');
+  const currencyLine = h('div', 'sd-note', `Para birimi: ${currency || '—'}`);
 
   const identityForm = groupForm(payload.identity, [
     ['name', 'text', 180], ['email', 'text', 180], ['phone', 'text', 40],
@@ -636,19 +786,17 @@ async function renderSettings(host) {
   const actions = h('div', 'sd-actions');
   actions.append(save);
 
-  host.append(
-    card('Mağaza kimliği', identityForm.node, 'Vitrini ve belgeleri etkiler'),
-    card('Kanal, para birimi ve dil', wrap(localForm.node, currencyLine),
-      'Kanal seçimi Kontrol Merkezi içindir'),
-    card('SEO', seoForm.node, 'Vitrinin varsayılan meta alanları'),
+  // Anahtarı mağazada BULUNMAYAN bölüm hiç çizilmez (ne form ne uyarı kutusu):
+  // bu kurulumda mağaza kimliği "Ödeme, kargo ve mağaza" alt başlığındadır.
+  host.append(...[
+    identityForm.node && card('Mağaza kimliği', identityForm.node,
+      'Vitrini ve belgeleri etkiler'),
+    card('Kanal, para birimi ve dil', wrap(localForm.node, currencyLine)),
+    seoForm.node && card('SEO', seoForm.node, 'Vitrinin varsayılan meta alanları'),
     actions,
     maintenanceCard(payload, host),
     reportDirCard(payload),
-    hintBox('Ayrı bir "Mağaza Ayarları" ekranı YOKTUR: her ayar onu kullanan ekranda '
-      + 'durur. Vergi store_tax\'ta, kargo ücreti store_shipping\'de, ödeme/sepet '
-      + 'store_payment_gateway\'de, stok store_products\'ta. Buraya yalnız sahibi '
-      + 'başka ekran olmayanlar düştü.'),
-  );
+  ].filter(Boolean));
 }
 
 function wrap(...children) {
@@ -682,11 +830,9 @@ function groupForm(group, spec) {
   }
 
   if (!fields.length) {
-    box.append(alertBox(
-      `Bu bölümün anahtarları mağaza yapılandırmasında bulunamadı (slug: ${group.slug}). `
-      + 'Bulunmayan anahtara yazmak hiçbir şeyi değiştirmez; alanlar açılmadı. Anahtar '
-      + 'adları modül ayarından düzeltilebilir.', 'warn'));
-    return { node: box, form: null };
+    // Bulunmayan anahtara yazmak hiçbir şeyi değiştirmez; bölüm HİÇ çizilmez
+    // (eskiden yerine uzun bir uyarı kutusu çıkıyordu — §3).
+    return { node: null, form: null };
   }
 
   const form = formGrid({ fields, value });
@@ -705,11 +851,10 @@ function maintenanceCard(payload, host) {
   const enabled = payload.maintenance.enabled;
 
   if (!status.found) {
-    box.append(alertBox(
-      `Bakım modu anahtarı mağaza yapılandırmasında bulunamadı (slug: `
-      + `${payload.maintenance.slug}). Yazılsaydı vitrin kapanmaz, yalnız kapattığınızı `
-      + 'sandırırdı; düğme açılmadı.', 'warn'));
-    return card('Bakım modu', box, 'Vitrini kapatır');
+    // Anahtar bu kurulumda yok (bakım modu satış kanalı kaydında tutuluyor);
+    // yazılsaydı vitrin kapanmaz, yalnız kapattığınızı sandırırdı. Kart çizilmez;
+    // durum "Ödeme, kargo ve mağaza" alt başlığında salt okunur görünür.
+    return null;
   }
 
   const line = h('div', 'sd-line');
@@ -789,12 +934,13 @@ function reportDirCard(payload) {
     box.append(h('div', 'sd-note',
       `Diskte ${Math.round(dir.freeBytes / (1024 * 1024 * 1024) * 10) / 10} GB boş yer var.`));
   }
+  // Yol modül ayarındaki `export_path` ile sabitlenir; ekrandan yazılmaz
+  // (çalışırken yazılsaydı sonraki açılışta geri dönen bir "ayar" olurdu).
+  // Bunu anlatan uzun not kısaldı (§3).
   box.append(h('div', 'sd-note',
     dir.configured
-      ? 'Yol modül ayarındaki `export_path` ile sabitlenmiş; ay klasörü açılmaz.'
-      : 'Yol her ay kendiliğinden değişir: Raporlar/Mağaza/Satış/<yıl>/<ay>. Sabitlemek '
-        + 'için modül ayarındaki `export_path` kullanılır — çalışırken değiştirilmez, '
-        + 'yoksa sonraki açılışta geri dönen bir "ayar" olurdu.'));
+      ? 'Raporlar hep bu klasöre yazılır.'
+      : 'Raporlar her ay kendi klasörüne yazılır: Raporlar/Mağaza/Satış/<yıl>/<ay>.'));
   return card('Dışa aktarma ve rapor klasörü', box);
 }
 
@@ -861,18 +1007,11 @@ async function renderConfig(host) {
       'bakım modu vitrin kapalı yayında maintenance kanal'));
 
   if (payload.missing.length) {
-    box.append(alertBox(
-      `Mağazada ilan edilmemiş ${payload.missing.length} alan salt okunur açıldı: `
-      + `${payload.missing.join(', ')}. Bunlara yazmak \`core_config\` içinde hiçbir şeyin `
-      + 'okumadığı bir satır açardı.', 'warn'));
+    box.append(alertBox(`Mağazada bulunamadığı için değiştirilemeyen: `
+      + `${payload.missing.join(', ')}.`, 'warn'));
   }
-
-  box.append(hintBox(
-    `Mağazanın ayar ağacında ${num(payload.declared)} alan var; burada işletmenin `
-    + 'dokunduğu alanlar durur. Kaynak rozeti "değer ilan edilen varsayılandan farklı mı" '
-    + 'sorusunu cevaplar — Bagisto API\'si bir ayarın `core_config` satırı olup olmadığını '
-    + 'ayrıca söylemiyor, bu yüzden ekran bilmediği bir şeyi biliyormuş gibi yapmaz. '
-    + `Değerler ${payload.channel} kanalı ve ${payload.locale} dili içindir.`));
+  // Ağaçtaki alan sayısını ve kaynak rozetinin nasıl okunacağını anlatan
+  // bilgi kutusu kaldırıldı (§3). Rozetin ipucu (`title`) anlamını söyler.
 
   host.append(box, saveBar(host));
   paintConfigCount();
@@ -942,7 +1081,8 @@ function configRow(field) {
   const label = h('label', 'sd-cfg-label');
   label.append(h('span', 'sd-cfg-name', field.label));
   if (field.hint) label.append(h('span', 'sd-cfg-hint', field.hint));
-  label.append(h('code', 'sd-cfg-code', field.code));
+  // Ayar KODU (`sales.carriers…`) ekrana yazılmaz (§3: teknik dil yok); arama
+  // onu yine bulur (`register` → haystack).
 
   const control = h('div', 'sd-cfg-control');
   const meta = h('div', 'sd-cfg-meta');
@@ -955,7 +1095,11 @@ function configRow(field) {
   if (!field.editable) {
     // Salt okunur alan: değeri gösterilir, NEDENİ yazılır. Sessizce gizlemek,
     // "ayarı bulamadım" ile "bu ayarı yazmam tehlikeli" arasındaki farkı siler.
-    control.append(h('div', 'sd-cfg-static', field.value || '—'));
+    // Mantıksal alan "1"/"0" değil, günlük dille yazılır (§7).
+    const shown = field.kind === 'checkbox'
+      ? (normValue(field.value) === '1' ? 'Açık' : 'Kapalı')
+      : (field.value || '—');
+    control.append(h('div', 'sd-cfg-static', shown));
     row.append(label, control, meta);
     row.append(h('div', 'sd-cfg-why', field.reason));
     register(field, row, null);
@@ -1125,7 +1269,6 @@ function maintenanceReadOnly(payload) {
 
   if (!info.available) {
     box.append(alertBox(info.error || 'Bakım modu durumu okunamadı.', 'warn'));
-    box.append(h('div', 'sd-note', info.note || ''));
     return card('Bakım modu', box, 'salt okunur');
   }
 
@@ -1143,8 +1286,10 @@ function maintenanceReadOnly(payload) {
   if (info.allowedIps) {
     box.append(h('div', 'sd-line-detail', `İzinli IP'ler: ${info.allowedIps}`));
   }
-  box.append(alertBox(info.note || '', 'info'));
-  return card('Bakım modu', box, 'salt okunur — vitrini kapatır');
+  // Neden buradan yazılmadığını anlatan uzun teknik not (`MAINTENANCE_NOTE`)
+  // ekrana basılmaz (§3); gerekçe backend'de, kodda durur.
+  box.append(h('div', 'sd-note', 'Bakım modu mağaza yönetiminden açılıp kapatılır.'));
+  return card('Bakım modu', box, 'salt okunur');
 }
 
 // ================================================================== çıktı
@@ -1164,33 +1309,47 @@ export function mount(root, ctx) {
   api = ctx.api;
   open = ctx.open;
   capability = ctx.capability;
+  mounted = true;
 
   const view = h('div', 'kit-panel sd');   // 'kit-panel' ZORUNLU + kendi önekimiz
   nodes.root = view;
   toast = toaster(view);
   report = reportChain({ api, root: view, toast, base: BASE });
 
+  // İKİ SEKME (docs/tasarim-sade-magaza.md §4). Eski "Yapılandırma" sekmesi
+  // teknik bir ayar ekranıydı; "Ayarlar"ın içine alt başlık olarak girdi.
+  // Sistem sağlığı kartı da oraya taşındı: günlük iş için değil, bir şey
+  // ters gittiğinde bakılan bir ekran.
   const tabs = tabBar([
     { key: 'board', label: 'Pano' },
-    { key: 'config', label: 'Yapılandırma' },
     { key: 'settings', label: 'Ayarlar' },
   ], 'board', (key) => showView(key));
 
+  // SADE KİP (§1-2): görünür olan yalnız tarih aralığı ve hazır çipleri.
+  // "Karşılaştır" katlanır; "Kanal" tek kanallı mağazada HİÇ çizilmez
+  // (`applyChoiceFilter`, `loadReference`). İki çıktı tek "Dışa aktar"
+  // menüsünde; "Yenile" hayalet düğme.
   nodes.filters = filterBar({
+    compact: true,
     fields: [
-      { kind: 'dateRange', key: 'range', label: 'Aralık',
+      { kind: 'dateRange', key: 'range', label: 'Aralık', primary: true,
         start: todayIso(-29), end: todayIso(), presets: rangePresets() },
-      { kind: 'select', key: 'channel', label: 'Kanal',
-        options: [{ value: '', label: 'Çalışma kanalı' }] },
+      { kind: 'select', key: 'channel', label: 'Kanal', hidden: true, options: [] },
       { kind: 'select', key: 'compare', label: 'Karşılaştır', options: COMPARE_OPTIONS },
     ],
     onChange: () => refreshAll(),
     actions: [
-      button('Yenile', { title: 'Pano kendiliğinden yenilenmez',
-        onClick: () => refreshAll({ fresh: true }) }),
-      button('⤓ KPI CSV', { title: 'KPI ve günlük ciro rapor klasörüne yazılır',
-        onClick: exportCsv }),
-      button('Günlük özet raporu', { onClick: () => report.run('daily', filters()) }),
+      button('Yenile', {
+        variant: 'ghost',
+        title: 'Pano kendiliğinden yenilenmez; rakamları mağazadan yeniden okur',
+        onClick: () => refreshAll({ fresh: true }),
+      }),
+      menuButton('Dışa aktar', [
+        { label: 'KPI ve günlük ciro — CSV',
+          title: 'Rapor klasörüne CSV olarak yazar', onClick: exportCsv },
+        { label: 'Günlük özet raporu — PDF',
+          title: 'Yazdırılabilir PDF hazırlar', onClick: () => report.run('daily', filters()) },
+      ], { title: 'CSV ya da yazdırılabilir PDF olarak indir' }),
     ],
   });
 
@@ -1205,34 +1364,47 @@ export function mount(root, ctx) {
   nodes.recent = h('div', 'sd-slot');
   nodes.stock = h('div', 'sd-slot');
   nodes.pending = h('div', 'sd-slot');
-  nodes.system = h('div', 'sd-slot');
+  nodes.system = null;               // Ayarlar → Sistem durumu açılınca kurulur
 
+  // ALTI KART (§6 ruhu: ilk görünüşte yalnız günlük işe gereken). Saat
+  // yoğunluğu ayrı kart olmaktan çıkıp durum dağılımının altına girdi.
+  //
+  // KAPATILMIŞ EKRANA `→` YOK. Raporlar, Yedekleme ve UDİT ekranları menüden
+  // kaldırıldı; kabuk panele "şu ekran kayıtlı mı" bilgisini vermiyor, yani
+  // düğmeyi koşula bağlamanın yolu yok. Hedefler yalnız yaşayan ekranlardır.
+  const distribution = h('div', 'sd-stack');
+  distribution.append(nodes.statuses, h('div', 'sd-caption', 'Saat yoğunluğu'), nodes.hours);
   const grid = h('div', 'sd-grid');
   grid.append(
-    panelCard('Günlük ciro', nodes.daily,
-      { hint: 'iptaller hariç', target: 'store_reports', targetLabel: 'Raporlar' }),
-    panelCard('Sipariş durumu dağılımı', nodes.statuses,
+    panelCard('Günlük ciro', nodes.daily, { hint: 'iptaller hariç' }),
+    panelCard('Sipariş dağılımı', distribution,
       { target: 'store_orders', targetLabel: 'Siparişler' }),
     panelCard('En çok satan ürünler', nodes.top,
-      { hint: 'adede göre', target: 'store_products', targetLabel: 'Ürünler' }),
-    panelCard('Saat dağılımı', nodes.hours, { hint: 'mağaza saati' }),
+      { hint: 'adede göre', target: 'store_products', targetLabel: 'Ürün Yönetimi' }),
     panelCard('Son siparişler', nodes.recent,
       { target: 'store_orders', targetLabel: 'Siparişler' }),
     panelCard('Kritik stok', nodes.stock,
-      { target: 'store_products', targetLabel: 'Ürünler' }),
+      { target: 'store_products', targetLabel: 'Ürün Yönetimi' }),
     panelCard('Bekleyen işler', nodes.pending),
-    panelCard('Sistem sağlığı', nodes.system,
-      { target: 'store_backups', targetLabel: 'Yedekleme' }),
   );
 
-  // Denetim izi kartı YALNIZCA UDİT modülü yeteneğini sağlıyorsa çizilir;
-  // sağlamıyorsa kart hiç görünmez (boş bir kutu göstermek yerine).
+  // Denetim izi kartı YALNIZCA "son işlemler" verebilen bir yetenek varsa
+  // çizilir; yoksa kart HİÇ görünmez.
+  //
+  // BULUNAN HATA (2026-10-10): kart `store.audit.for` var mı diye bakıyor ve
+  // `auditFor.recent?.(10)` çağırıyordu. O yetenek DÜZ BİR FONKSİYONDUR —
+  // `(varlık, kayıtNo, seçenekler)` alır, tek kaydın geçmişini verir;
+  // `recent` diye bir alanı yok. Çağrı her seferinde `undefined` → `[]`
+  // dönüyor, kart HER AÇILIŞTA boş tablo gösteriyordu. Ayrıca UDİT ekranı
+  // menüden kaldırıldığı için yeteneğin kendisi de artık yüklenmiyor.
+  // Koşul bu yüzden yeteneğin VARLIĞINA değil, `recent` fonksiyonuna bakar.
   const auditFor = capability('store.audit.for');
-  if (auditFor) {
+  if (typeof auditFor?.recent === 'function') {
     const host = h('div', 'sd-slot');
-    grid.append(panelCard('Son mağaza işlemleri', host,
-      { target: 'store_udit_logs', targetLabel: 'UDİT kayıtları' }));
-    Promise.resolve(auditFor.recent?.(10) ?? [])
+    grid.append(panelCard('Son mağaza işlemleri', host));
+    // "Tekrar dene" GERÇEKTEN yeniden dener; eskiden boş bir fonksiyona
+    // bağlıydı ve tıklanınca hiçbir şey yapmıyordu.
+    const loadAudit = () => Promise.resolve(auditFor.recent(10))
       .then((rows) => {
         host.replaceChildren(dataTable({
           columns: [
@@ -1245,7 +1417,8 @@ export function mount(root, ctx) {
           rowKey: (row) => `${row.createdAt}-${row.action}`,
         }).node);
       })
-      .catch((error) => failCard(host, error.message, () => {}));
+      .catch((error) => failCard(host, error.message, loadAudit));
+    loadAudit();
   }
 
   nodes.body = h('div', 'sd-body');
@@ -1255,6 +1428,19 @@ export function mount(root, ctx) {
   view.append(tabs.node, nodes.filters.node, nodes.status.node, nodes.body);
 
   let current = 'board';
+  let section = 'general';
+
+  /** Kaydedilmemiş yapılandırma değişikliği varsa çıkmadan önce sorar. */
+  async function mayLeaveConfig() {
+    if (section !== 'config' || !configDirty().length) return true;
+    return confirmSimple(nodes.root, {
+      title: 'Kaydedilmemiş değişiklik var',
+      description: `${configDirty().length} alan değişti ve mağazaya yazılmadı. `
+        + 'Çıkarsanız bu değişiklikler kaybolur.',
+      confirmLabel: 'Çık, kaydetme',
+      danger: true,
+    });
+  }
 
   /**
    * Sekme değişimi. `tabBar` seçimi kendisi yapıp SONRA haber veriyor, yani
@@ -1263,18 +1449,9 @@ export function mount(root, ctx) {
    * yazdıkları yerinde kalır.
    */
   async function showView(key) {
-    if (current === 'config' && key !== 'config' && configDirty().length) {
-      const leave = await confirmSimple(nodes.root, {
-        title: 'Kaydedilmemiş değişiklik var',
-        description: `${configDirty().length} alan değişti ve mağazaya yazılmadı. `
-          + 'Sekmeden çıkarsanız bu değişiklikler kaybolur.',
-        confirmLabel: 'Çık, kaydetme',
-        danger: true,
-      });
-      if (!leave) {
-        tabs.select('config', false);
-        return;
-      }
+    if (current === 'settings' && key !== 'settings' && !(await mayLeaveConfig())) {
+      tabs.select('settings', false);
+      return;
     }
     current = key;
     const detached = key !== 'board';
@@ -1283,16 +1460,57 @@ export function mount(root, ctx) {
     dropForms();
     configFilter?.cancel?.();
     if (key === 'settings') {
-      nodes.body.replaceChildren();
-      renderSettings(nodes.body);
-    } else if (key === 'config') {
       config = emptyConfig();
       nodes.body.replaceChildren();
-      renderConfig(nodes.body);
+      renderSettingsArea(nodes.body);
     } else {
+      section = 'general';
+      config = emptyConfig();
       nodes.body.replaceChildren(...boardView);
       if (!state.summary) refreshAll();
     }
+  }
+
+  /**
+   * Ayarlar — ALT BAŞLIKLARLA tek sekme (§4): Genel (kanal, dil, kimlik,
+   * bakım modu, rapor klasörü) · Ödeme, kargo ve mağaza (eski Yapılandırma
+   * sekmesi) · Sistem durumu (eski Pano kartı).
+   */
+  function renderSettingsArea(host) {
+    section = 'general';
+    const area = h('div', 'sd-section');
+    const paint = () => {
+      dropForms();
+      configFilter?.cancel?.();
+      config = emptyConfig();
+      area.replaceChildren();
+      if (section === 'config') {
+        renderConfig(area);
+      } else if (section === 'system') {
+        const slot = h('div', 'sd-slot');
+        area.append(card('Sistem durumu', slot,
+          'Bağlantı, yedek, sanal POS, kargo ve fiş kuyruğu'));
+        nodes.system = slot;
+        loadSystem();
+      } else {
+        renderSettings(area);
+      }
+    };
+    const sub = tabBar([
+      { key: 'general', label: 'Genel' },
+      { key: 'config', label: 'Ödeme, kargo ve mağaza' },
+      { key: 'system', label: 'Sistem durumu' },
+    ], 'general', async (key) => {
+      if (key !== 'config' && !(await mayLeaveConfig())) {
+        sub.select('config', false);
+        return;
+      }
+      section = key;
+      paint();
+    });
+    sub.node.classList.add('sd-subtabs');
+    host.append(sub.node, area);
+    paint();
   }
 
   root.replaceChildren(view);
@@ -1300,6 +1518,8 @@ export function mount(root, ctx) {
   loadReference().then(() => refreshAll());
 
   return () => {
+    mounted = false;
+    stopSummaryPoll();               // kapanmış panel yoklama atmasın
     nodes.filters?.destroy();        // tarih alanları global dinleyici tutar
     configFilter?.cancel?.();        // bekleyen arama çağrısı iptal
     configFilter = null;
@@ -1307,24 +1527,32 @@ export function mount(root, ctx) {
     root.replaceChildren();
     state = { ...EMPTY_STATE };
     config = emptyConfig();
+    nodes.system = null;
     busy = false;
   };
 }
 
-/** Kanal listesi ve varsayılan tercihler — süzgeçler dolmadan veri çekilmez. */
+/**
+ * Kanal listesi ve varsayılan tercihler — süzgeçler dolmadan veri çekilmez.
+ *
+ * `/reference` HAFİF uçtur: eskiden burada `/settings` çağrılıyordu ve o uç
+ * mağazanın ayar bölümünü de okuduğu için her pano açılışı mağazaya fazladan
+ * bir istek atıyordu. Kanal listesi geçidin önbellekli anlık görüntüsünden
+ * gelir.
+ *
+ * TEK KANALLI MAĞAZADA "Kanal" KUTUSU ÇİZİLMEZ (`applyChoiceFilter`): seçecek
+ * bir şey olmayan soru sorulmaz, değeri de gönderilmez — pano çalışma
+ * kanalını (yerel tercih) okur.
+ */
 async function loadReference() {
   let payload;
   try {
-    payload = await api(`${BASE}/settings`);
+    payload = await api(`${BASE}/reference`);
   } catch {
     // Ayarlar okunamazsa süzgeç varsayılanla çalışır; pano yine açılır (K7).
     return;
   }
-  nodes.filters.options('channel', [
-    { value: '', label: `Çalışma kanalı (${payload.local.channel})` },
-    ...(payload.channels || []).map((item) => ({
-      value: item.code, label: `${item.name} (${item.code})`,
-    })),
-  ]);
-  nodes.filters.set('compare', payload.local.compare || 'previous');
+  applyChoiceFilter(nodes.filters, 'channel', payload.channels || [],
+    { allLabel: `Çalışma kanalı (${payload.local.channel})` });
+  nodes.filters.set('compare', payload.local.compare || 'previous', { baseline: true });
 }

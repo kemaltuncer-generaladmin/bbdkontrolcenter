@@ -42,6 +42,10 @@ def service() -> DashboardService:
 #: "Yenile" düğmesi bunu gönderir: yenilemenin raftan cevap vermesi, düğmeyi
 #: hiçbir şey yapmayan bir düğme yapardı. Yanıttaki `ageSeconds` verinin kaç
 #: saniyelik olduğunu söyler — 0 ise bu çağrıda mağazadan geldi.
+#:
+#: Özette `pending: True` = hesap arka planda sürüyor, henüz değer yok;
+#: `refreshing: True` = eldeki (yaşı yazılı) özet gösteriliyor, yenisi arka
+#: planda kuruluyor. Panel ikisinde de kısa aralıkla yeniden sorar.
 FRESH = Query(False, description="Önbelleği atla, mağazadan yeniden oku.")
 
 
@@ -90,6 +94,15 @@ async def system(
     user: CurrentUser = requires("store_dashboard.view"),
 ) -> dict[str, Any]:
     return await service().system_health(fresh=fresh)
+
+
+@router.get("/reference")
+async def reference(
+    user: CurrentUser = requires("store_dashboard.view"),
+) -> dict[str, Any]:
+    """Süzgeçlerin kanal listesi + yerel tercihler. Mağaza ayar bölümünü
+    OKUMAZ — pano açılışı bunun için mağazaya istek atmasın."""
+    return await service().reference()
 
 
 @router.get("/settings")
