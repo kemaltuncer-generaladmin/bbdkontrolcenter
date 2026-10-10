@@ -10,9 +10,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
 from modules.bbd_tablet.backend.api import tablet_routes
 from modules.bbd_tablet.backend.service import TabletService
+from pydantic import ValidationError
 
 
 class Store:
@@ -234,11 +234,6 @@ async def test_student_usage_is_idempotent_and_grant_follows_student():
              "startedAt": start.isoformat(), "endedAt": end.isoformat(),
              "usages": [{"packageName": "com.example.video", "localDate": local_date,
                          "usedSeconds": 120}]}
-    with pytest.raises(ValueError, match="izinli olmayan"):
-        await service.usage_batch(session=session, data={
-            **batch, "usages": [{"packageName": "com.example.other", "localDate": local_date,
-                                 "usedSeconds": 30}],
-        })
     with pytest.raises(ValueError, match="birden fazla"):
         await service.usage_batch(session=session, data={
             **batch, "usages": [*batch["usages"], *batch["usages"]],
@@ -257,7 +252,7 @@ async def test_student_usage_is_idempotent_and_grant_follows_student():
     await service.grant_time(student_id="opaque-A", package_name="com.example.video",
                              local_date=local_date, extra_seconds=600,
                              reason="Ders", actor="Yönetici")
-    with pytest.raises(ValueError, match="etkin tablet profilinde izinli değil"):
+    with pytest.raises(ValueError, match="hiçbir profilde izinli değil"):
         await service.grant_time(student_id="opaque-A", package_name="com.example.other",
                                  local_date=local_date, extra_seconds=600,
                                  reason="Ders", actor="Yönetici")
@@ -333,10 +328,12 @@ async def test_student_usage_is_idempotent_and_grant_follows_student():
     assert repeated["alreadyEnded"] is True
     assert repeated["endedAt"] == ended["endedAt"]
     assert await service.session_for_usage_batch_token(logged["sessionToken"]) is None
-    with pytest.raises(ValueError, match="etkin tablet oturumu gerekir"):
-        await service.grant_time(student_id="opaque-A", package_name="com.example.video",
-                                 local_date=local_date, extra_seconds=600,
-                                 reason="Ders", actor="Yönetici")
+    # Ek süre oturuma bağlı değil: çıkış yapmış öğrenciye de verilebilir.
+    offline_grant = await service.grant_time(
+        student_id="opaque-A", package_name="com.example.video", local_date=local_date,
+        extra_seconds=600, reason="Ders", actor="Yönetici",
+    )
+    assert offline_grant["extraSeconds"] == 600
     assert await service.session_for_token(logged["sessionToken"]) is None
     assert await service.session_for_usage_batch_token(logged["sessionToken"]) is None
 

@@ -1,490 +1,253 @@
-// Öğrenci Tablet Yönetimi — profiller, fiziksel tabletler ve öğrenci ek süresi.
-const h = (tag, className, content) => {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (content !== undefined) node.textContent = content;
-  return node;
-};
+// Öğrenci Tablet Yönetimi — Kontrol Merkezi'nden yönetilen paylaşımlı okul
+// tabletleri.
+//
+// NE YAPAR: tabletleri canlı izler ve uzaktan yönetir (kilit, duyuru, komut,
+// profil, oturum kapatma), profilleri düzenler (uygulama kuralları, kullanım
+// saatleri, sistem kısıtlamaları), öğrenciye ek süre verir ya da tablet
+// kullanımını kısıtlar ve günlük kullanım raporunu gösterir.
+//
+// SUNUCUYU YORMAZ: Kontrol Merkezi bbdstore ile aynı sunucuda koşar. Ekran
+// 30 saniyede bir TEK bir özet isteği (`/overview`) atar ve sekme gizliyken
+// durur (`pollLoop`). Kantin öğrenci listesi yalnız Öğrenciler sekmesi
+// açıldığında ve en çok 5 dakikada bir okunur; tabletin uygulama listesi 5
+// dakika bellekte tutulur. Çekmece ve formlar yoklamada yeniden kurulmaz,
+// yalnız değişen parçası boyanır — yazılan metin kaybolmaz.
+//
+// YETKİ: düğmeler `/auth/me` izinlerine göre çizilir; yetki yoksa gerekçeli
+// kapalı düğme (`blockedButton`). Asıl kapı backend'dedir (K9). İzinler
+// okunamazsa düğmeler açık çizilir ve karar backend'e kalır.
+//
+// Import yolu panelin KOPYALANMIŞ konumuna göredir:
+//   shell/panels/bbd_tablet/index.js  →  shell/ui-kit/
+// Kaynak modules/bbd_tablet/ui/panel/ altındayken '../../ui-kit/' dosya
+// sisteminde ÇÖZÜLMEZ — normaldir (ADR 0011).
 
-function field(label, input) {
-  const box = h('label', 'tb-field');
-  box.append(h('span', null, label), input);
-  return box;
-}
+import { button, h, loadStyles, num, pollLoop, toaster } from '../../ui-kit/kit.js';
+import { emptyState, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
+import { closeAllDialogs, problem } from './common.js';
+import { devicesView } from './devices.js';
+import { profilesView } from './profiles.js';
+import { studentsView } from './students.js';
 
-function input(value = '', type = 'text') {
-  const node = h('input', 'tb-input');
-  node.type = type;
-  node.value = value;
-  return node;
-}
-
-function button(label, onClick, primary = false) {
-  const node = h('button', `tb-button${primary ? ' primary' : ''}`, label);
-  node.type = 'button';
-  node.addEventListener('click', onClick);
-  return node;
-}
-
-function option(value, label) {
-  return new Option(label, value);
-}
-
-function displayDateTime(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('tr-TR', {
-    dateStyle: 'short', timeStyle: 'short',
-  });
-}
-
-// Sunucunun kabul ettiği Android SystemPolicyControl.storageKey() alt kümesi.
-// Boş seçim, tabletteki mevcut varsayılan davranışı korur.
-const SYSTEM_CONTROLS = [
-  ['usb_file_transfer', 'USB dosya aktarımı', 'Tabletin USB üzerinden depolama olarak kullanılmasını engeller.'],
-  ['unknown_source_installs', 'Bilinmeyen kaynaklardan kurulum', 'Mağaza dışı uygulama kurulumunu engeller.'],
-  ['app_stores_and_installers', 'Uygulama mağazaları ve yükleyiciler', 'Uygulama kurulumunu ve tablet uygulamasının güvenli güncellemesini de engelleyebilir.'],
-  ['account_modification', 'Hesap değişiklikleri', 'Cihazda hesap ekleme ve kaldırmayı engeller.'],
-  ['vpn_configuration', 'VPN yapılandırması', 'VPN ayarlarının değiştirilmesini engeller.'],
-  ['network_reset', 'Ağ ayarlarını sıfırlama', 'Ağ ayarlarını sıfırlamayı engeller.'],
-  ['tethering', 'İnternet paylaşımı', 'Hotspot ve bağlantı paylaşımı ayarlarını engeller.'],
-  ['wifi_configuration', 'Wi-Fi yapılandırması', 'Ağ seçimini kısıtlar; yeni bir Wi-Fi ağı veya şifresi tanımlamaz. Cihaz üreticisine göre sonuç değişebilir.'],
-  ['private_dns', 'Özel DNS', 'Özel DNS ayarlarının değiştirilmesini engeller.'],
-  ['date_and_time', 'Tarih ve saat', 'Sistem saati ve saat dilimi değişikliklerini engeller.'],
-  ['safe_boot', 'Güvenli mod', 'Cihazın güvenli modda başlatılmasını engeller.'],
-  ['factory_reset', 'Fabrika ayarlarına sıfırlama', 'Ayarlar üzerinden cihazı sıfırlamayı engeller.'],
-  ['user_and_profile_creation', 'Kullanıcı ve profil oluşturma', 'Yeni kullanıcı/profil oluşturmayı ve kullanıcı değiştirmeyi engeller.'],
-  ['app_uninstall', 'Uygulama kaldırma', 'Uygulamaların kaldırılmasını engeller.'],
-  ['app_control_settings', 'Uygulama kontrol ayarları', 'Uygulamaları durdurma ve verilerini silme ayarlarını engeller.'],
-];
+const BASE = '/api/bbd_tablet';
+const POLL_MS = 30_000;
+const STUDENTS_TTL_MS = 5 * 60_000;
+const INVENTORY_TTL_MS = 5 * 60_000;
 
 export function mount(root, ctx) {
-  const styleHref = new URL('./panel.css', import.meta.url).href;
-  if (!document.querySelector(`link[href="${styleHref}"]`)) {
-    const link = h('link');
-    link.rel = 'stylesheet';
-    link.href = styleHref;
-    document.head.append(link);
-  }
+  loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
 
-  const state = { profiles: [], devices: [], sessions: [], students: [],
-    selectedProfile: '', selectedDevice: '', selectedStudent: '', inventory: [], deviceUsage: null };
-  const view = h('div', 'tb');
-  const heading = h('header', 'tb-heading');
-  heading.append(h('div', null, 'Öğrenci tabletleri'));
-  heading.append(button('Yenile', () => refresh()));
-  const notice = h('p', 'tb-notice', 'Yükleniyor…');
-  const tabs = h('nav', 'tb-tabs');
-  const body = h('div', 'tb-body');
-  view.append(heading, notice, tabs, body);
+  const view = h('div', 'kit-panel tb');   // 'kit-panel' ZORUNLU + kendi önekimiz
+  const toast = toaster(view);
+  const disposers = [];
+  let disposed = false;
+  let permissions = null;               // null = okunamadı, karar backend'de
+  let inflight = null;
+
+  const state = {
+    summary: {}, profiles: [], devices: [], sessions: [],
+    students: null, studentsError: '', studentsAt: 0, studentsWanted: false,
+    loadedAt: 0, loadError: '', skew: 0,
+  };
+  const inventory = new Map();          // deviceId → {at, promise}
+
+  const app = {
+    root: view,
+    state,
+    toast,
+    call: (path, options) => ctx.api(`${BASE}${path}`, options),
+    can(permission) {
+      if (permissions === null) return true;
+      const key = `bbd_tablet.${permission}`;
+      return permissions.has(key) || permissions.has(`${key}:*`);
+    },
+    device: (id) => state.devices.find((item) => item.id === id) || null,
+    profile: (id) => state.profiles.find((item) => item.id === id) || null,
+    sessionOf: (studentId) => state.sessions.find((item) => String(item.student_id) === String(studentId)) || null,
+    /** Sunucu saatine göre şimdi — geri sayım bilgisayarın saati kaysa da doğru kalır. */
+    now: () => Date.now() + state.skew,
+    refresh: (options) => refresh(options),
+    loadStudents: () => loadStudents(),
+    /** Tabletin yüklü uygulamaları; 5 dakika bellekte. */
+    inventory(deviceId, { fresh = false } = {}) {
+      const cached = inventory.get(deviceId);
+      if (!fresh && cached && Date.now() - cached.at < INVENTORY_TTL_MS) return cached.promise;
+      const promise = app.call(`/devices/${encodeURIComponent(deviceId)}/apps`)
+        .then((rows) => (Array.isArray(rows) ? rows : []));
+      promise.catch(() => inventory.delete(deviceId));
+      inventory.set(deviceId, { at: Date.now(), promise });
+      return promise;
+    },
+    forgetInventory: (deviceId) => inventory.delete(deviceId),
+    openDevice: (id) => { tabs.select('devices'); views.devices?.open(id); },
+    openProfile: (id) => { tabs.select('profiles'); views.profiles?.open(id); },
+    showStudent: (id) => { tabs.select('students'); views.students?.open(id); },
+    onDispose: (fn) => disposers.push(fn),
+  };
+
+  // ------------------------------------------------------------- iskelet
+  const head = h('div', 'tb-head');
+  const kpiSlot = h('div', 'tb-kpi');
+  const tools = h('div', 'tb-tools');
+  const updated = h('span', 'tb-updated');
+  updated.setAttribute('aria-live', 'polite');
+  const refreshButton = button('Yenile', {
+    variant: 'ghost',
+    title: 'Tabletlerin son durumunu şimdi oku',
+    onClick: () => refresh({ manual: true }),
+  });
+  tools.append(updated, refreshButton);
+  head.append(kpiSlot, tools);
+
+  const tabs = tabBar([
+    { key: 'devices', label: 'Tabletler' },
+    { key: 'profiles', label: 'Profiller' },
+    { key: 'students', label: 'Öğrenciler' },
+  ], 'devices', (key) => show(key));
+
+  const main = h('div', 'tb-main');
+  main.append(skeletonRows(6, 6));
+  view.append(head, tabs.node, main);
   root.replaceChildren(view);
 
-  let activeTab = 'devices';
-  function info(message, bad = false) {
-    notice.textContent = message;
-    notice.classList.toggle('bad', bad);
+  const views = {};
+
+  function show(key) {
+    if (!views.devices) return;
+    for (const [name, item] of Object.entries(views)) item.node.hidden = name !== key;
+    views[key]?.shown?.();
   }
-  async function call(path, options) {
-    return ctx.api(`/api/bbd_tablet${path}`, options);
-  }
-  async function loadSelectedDeviceData() {
-    const device = state.devices.find((item) => item.id === state.selectedDevice);
-    if (!device) {
-      state.inventory = [];
-      state.deviceUsage = null;
-      return;
-    }
-    try { state.inventory = await call(`/devices/${encodeURIComponent(device.id)}/apps`); }
-    catch { state.inventory = []; }
-    const session = state.sessions.find((item) => item.device_id === device.id);
-    if (!session) {
-      state.deviceUsage = null;
-      return;
-    }
-    const profile = state.profiles.find((item) => item.id === device.profile_id);
-    const timezone = profile?.timezone || 'Europe/Istanbul';
-    const localDate = new Date().toLocaleDateString('sv-SE', { timeZone: timezone });
+
+  // --------------------------------------------------------------- veri
+  async function loadPermissions() {
     try {
-      const result = await call(`/students/${encodeURIComponent(session.student_id)}/usage?localDate=${localDate}`);
-      state.deviceUsage = { studentId: session.student_id, localDate, ...result };
+      const me = await ctx.api('/auth/me');
+      permissions = new Set(Array.isArray(me?.permissions) ? me.permissions : []);
+    } catch {
+      permissions = null;
+    }
+  }
+
+  async function loadStudents() {
+    state.studentsWanted = true;
+    try {
+      const rows = await app.call('/students');
+      state.students = Array.isArray(rows) ? rows : [];
+      state.studentsError = '';
     } catch (error) {
-      state.deviceUsage = { studentId: session.student_id, localDate, error: error.message };
+      state.studentsError = error?.status === 503
+        ? 'Kantin öğrenci listesine şu an ulaşılamıyor.'
+        : problem(error, 'Öğrenci listesi alınamadı.');
     }
+    state.studentsAt = Date.now();
+    if (!disposed) views.students?.update();
   }
-  async function refresh() {
+
+  async function fetchOverview() {
     try {
-      const overview = await call('/overview');
-      let students = [];
-      let canteenOnline = true;
-      try { students = await call('/students'); }
-      catch { canteenOnline = false; }
-      state.profiles = overview.profiles || [];
-      state.devices = overview.devices || [];
-      state.sessions = overview.sessions || [];
-      state.students = students || [];
-      if (!state.selectedProfile) state.selectedProfile = state.profiles[0]?.id || '';
-      if (!state.selectedDevice) state.selectedDevice = state.devices[0]?.id || '';
-      if (!state.selectedStudent) state.selectedStudent = state.students[0]?.id || '';
-      await loadSelectedDeviceData();
-      info(`${state.devices.length} tablet · ${state.profiles.length} profil · ${state.sessions.length} açık öğrenci oturumu${canteenOnline ? '' : ' · Kantin öğrenci listesine ulaşılamadı'}`);
-      render();
+      const data = await app.call('/overview');
+      state.summary = data?.summary || {};
+      state.profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+      state.devices = Array.isArray(data?.devices) ? data.devices : [];
+      state.sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+      const server = Date.parse(String(data?.serverTime || '').replace(/(\.\d{3})\d+/, '$1'));
+      state.skew = Number.isNaN(server) ? 0 : server - Date.now();
+      state.loadedAt = Date.now();
+      state.loadError = '';
     } catch (error) {
-      info(`Veriler alınamadı: ${error.message}`, true);
+      state.loadError = problem(error, 'Tablet bilgileri alınamadı.');
     }
   }
-  function render() {
-    tabs.replaceChildren();
-    for (const [key, label] of [
-      ['devices', 'Tabletler'], ['profiles', 'Profiller'], ['students', 'Kullanım ve ek süre'],
-    ]) {
-      const tab = button(label, () => { activeTab = key; render(); });
-      tab.classList.toggle('active', key === activeTab);
-      tabs.append(tab);
+
+  /**
+   * Özeti okur ve ekranı boyar.
+   *
+   * Yoklama (`poll`) süren bir okumaya ortak olur, ikinci istek atmaz. Bir
+   * değişiklikten sonra çağrılan tazeleme ise süren okumayı BEKLER ve yenisini
+   * başlatır: değişiklikten önce yola çıkmış bir yanıt, az önce kaydedilen
+   * profili eski hâliyle geri çizerdi.
+   */
+  async function refresh({ manual = false, poll = false } = {}) {
+    if (inflight && poll) {
+      await inflight;
+    } else {
+      if (inflight) await inflight;
+      const run = fetchOverview().finally(() => { if (inflight === run) inflight = null; });
+      inflight = run;
+      await run;
     }
-    body.replaceChildren();
-    if (activeTab === 'devices') renderDevices();
-    if (activeTab === 'profiles') renderProfiles();
-    if (activeTab === 'students') renderStudents();
+    if (disposed) return;
+    const studentsDue = state.studentsWanted
+      && (manual || Date.now() - state.studentsAt > STUDENTS_TTL_MS);
+    if (studentsDue) await loadStudents();
+    if (disposed) return;
+    paint();
+    if (manual && state.loadError) toast(state.loadError, 'bad');
   }
-  function profilePicker(value) {
-    const select = h('select', 'tb-input');
-    for (const profile of state.profiles) select.append(option(profile.id, profile.name));
-    select.value = value || '';
-    return select;
+
+  // ------------------------------------------------------------- çizim
+  function paintHead() {
+    const summary = state.summary || {};
+    const behind = Number(summary.behindPolicy || 0);
+    kpiSlot.replaceChildren(kpiRow([
+      { label: 'Çevrimiçi tablet', value: `${num(summary.online || 0)}/${num(summary.tabletsTotal || 0)}` },
+      { label: 'Açık oturum', value: num(summary.activeSessions || 0) },
+      { label: 'Eşleme bekleyen', value: num(summary.pendingPairing || 0) },
+      { label: 'Profili güncel olmayan', value: num(behind), tone: behind ? 'warn' : '',
+        title: 'Profilin son hâlini henüz almamış tablet. Tablet bağlanınca kendiliğinden alır.' },
+    ]));
+    const stamp = state.loadedAt
+      ? new Date(state.loadedAt).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+      : '';
+    updated.classList.toggle('bad', Boolean(state.loadError));
+    updated.textContent = state.loadError
+      ? (stamp ? `Bağlantı sorunu · ${stamp} bilgileri gösteriliyor` : state.loadError)
+      : (stamp ? `Son güncelleme ${stamp}` : '');
   }
-  function renderDevices() {
-    const columns = h('div', 'tb-columns');
-    const list = h('section', 'tb-card');
-    list.append(h('h3', null, 'Kayıtlı tabletler'));
-    if (!state.devices.length) list.append(h('p', 'tb-muted', 'Henüz tablet kaydı yok.'));
-    for (const device of state.devices) {
-      const row = h('button', `tb-list-row${state.selectedDevice === device.id ? ' selected' : ''}`);
-      row.type = 'button';
-      row.append(h('strong', null, device.name),
-        h('small', null, device.last_seen_at
-          ? `Son bağlantı: ${displayDateTime(device.last_seen_at)}` : 'Henüz eşlenmedi'));
-      row.addEventListener('click', async () => {
-        state.selectedDevice = device.id;
-        await loadSelectedDeviceData();
-        render();
-      });
-      list.append(row);
+
+  function paint() {
+    paintHead();
+    if (!views.devices) {
+      // İlk okuma hiç başarılı olmadıysa boş sekmeler yerine sebep yazılır;
+      // yoklama sürer ve bağlantı gelince ekran kendiliğinden kurulur.
+      if (!state.loadedAt) {
+        failed();
+        return;
+      }
+      build();
     }
-    const detail = h('section', 'tb-card');
-    const device = state.devices.find((item) => item.id === state.selectedDevice);
-    detail.append(h('h3', null, device ? device.name : 'Yeni tablet'));
-    if (device) {
-      const profile = state.profiles.find((item) => item.id === device.profile_id);
-      const session = state.sessions.find((item) => item.device_id === device.id);
-      detail.append(h('p', device.revoked_at ? 'tb-error' : 'tb-muted',
-        device.revoked_at ? 'Bağlantı iptal edildi' : !device.last_seen_at
-          ? 'Eşleşme bekleniyor' : device.online ? 'Çevrimiçi' : 'Çevrimdışı'));
-      detail.append(h('p', 'tb-muted', device.last_seen_at
-        ? `Son görülme: ${displayDateTime(device.last_seen_at)}` : 'Henüz bağlantı kurulmadı'));
-      detail.append(h('p', 'tb-muted', `${device.manufacturer || ''} ${device.model || ''} · ${device.app_version || 'Sürüm bilgisi yok'}`));
-      detail.append(h('p', 'tb-muted', `İlke durumu: ${device.policy_health || 'Henüz bildirilmedi'}`));
-      detail.append(h('p', 'tb-muted', `Profil: ${profile ? `${profile.name} · hedef sürüm ${profile.revision}` : 'Atanmamış'}`));
-      const appliedRevision = Number(device.applied_profile_revision || 0);
-      const targetRevision = Number(profile?.revision || 0);
-      const reportedProfileMatches = Boolean(device.profile_id &&
-        device.applied_profile_id === device.profile_id);
-      const appliedIsCurrent = reportedProfileMatches && appliedRevision === targetRevision;
-      const appliedIsBehind = reportedProfileMatches && appliedRevision > 0 && appliedRevision < targetRevision;
-      const appliedIsInconsistent = reportedProfileMatches && appliedRevision > targetRevision;
-      detail.append(h('p', appliedIsCurrent ? 'tb-muted' : 'tb-error',
-        !profile ? 'Tablete profil atanmamış.'
-          : !reportedProfileMatches ? 'Tablet yeni atanmış profili henüz uyguladığını bildirmedi.'
-          : appliedIsCurrent ? `Son canlılık bildiriminde sürüm ${appliedRevision} bildirildi · güncel`
-            : appliedIsBehind ? `Son canlılık bildiriminde sürüm ${appliedRevision} bildirildi · güncel değil`
-              : appliedIsInconsistent ? `Bildirilen sürüm hedefin üzerinde (${appliedRevision} / ${targetRevision}).`
-                  : 'Tablet politika uygulamasını henüz bildirmedi.'));
-      detail.append(h('p', 'tb-muted', session
-        ? `Etkin öğrenci: ${session.student_name || session.student_id} · giriş ${displayDateTime(session.login_at)}`
-        : 'Etkin öğrenci oturumu yok.'));
-      const telemetry = h('section', 'tb-card');
-      telemetry.append(h('h4', null, 'Gerçek kullanım telemetrisi'));
-      if (!session) {
-        telemetry.append(h('p', 'tb-muted', 'Telemetri, tablet üzerinde etkin öğrenci oturumu başladığında görünür.'));
-      } else if (state.deviceUsage?.studentId !== session.student_id) {
-        telemetry.append(h('p', 'tb-muted', 'Kullanım verisi yükleniyor…'));
-      } else if (state.deviceUsage.error) {
-        telemetry.append(h('p', 'tb-error', `Kullanım verisi alınamadı: ${state.deviceUsage.error}`));
-      } else {
-        telemetry.append(h('p', 'tb-muted', `${state.deviceUsage.localDate} · ${session.student_name || session.student_id}`));
-        const entries = new Map();
-        for (const row of state.deviceUsage.usage || []) {
-          entries.set(row.packageName, { usedSeconds: row.usedSeconds, extraSeconds: 0 });
-        }
-        for (const grant of state.deviceUsage.grants || []) {
-          const item = entries.get(grant.packageName) || { usedSeconds: 0, extraSeconds: 0 };
-          item.extraSeconds += grant.extraSeconds;
-          entries.set(grant.packageName, item);
-        }
-        if (!entries.size) telemetry.append(h('p', 'tb-muted', 'Bu tarih için henüz kullanım kaydı yok.'));
-        for (const [packageName, item] of entries) {
-          telemetry.append(h('p', 'tb-usage', `${packageName} · Kullanım ${Math.floor(item.usedSeconds / 60)} dk · Ek süre ${Math.floor(item.extraSeconds / 60)} dk`));
-        }
-      }
-      detail.append(telemetry);
-      if (device.revoked_at) {
-        detail.append(h('p', 'tb-muted', 'Tablet eşlemesi kaldırıldı; aynı donanım yeni bir eşleme koduyla tekrar kaydedilebilir.'));
-      } else {
-        detail.append(button('Tableti eşlemeden çıkar', async () => {
-          const approved = window.confirm(`${device.name} tabletinin eşlemesini kaldırmak ve açık öğrenci oturumunu kapatmak istiyor musunuz? Cihaz kimliği ve erişim anahtarı iptal edilir.`);
-          if (!approved) return;
-          try {
-            await call(`/devices/${encodeURIComponent(device.id)}/revoke`, { method: 'POST' });
-            await refresh();
-            info('Tablet eşlemesi kaldırıldı. Cihazı yeniden kaydetmek için yeni eşleme kodu oluşturun.');
-          } catch (error) { info(error.message, true); }
-        }));
-      }
-      if (!device.profile_id && state.inventory.some((app) => app.isLaunchable)) {
-        detail.append(h('p', 'tb-muted', 'İlk profil bu tablet eşleştikten sonra yüklü uygulamalardan oluşturulabilir.'));
-        detail.append(button('Uygulamalardan profil oluştur ve ata', async () => {
-          const apps = state.inventory.filter((app) => app.isLaunchable).map((app) => ({
-            packageName: app.packageName, appName: app.appName || app.packageName,
-            allowed: true, unlimited: false, dailyLimitSeconds: 3600,
-          }));
-          try {
-            const profile = await call('/profiles', {
-              method: 'POST',
-              body: { name: `${device.name} başlangıç profili`, timezone: 'Europe/Istanbul', apps },
-            });
-            await call(`/devices/${encodeURIComponent(device.id)}/assign-profile`, {
-              method: 'POST', body: { profileId: profile.id },
-            });
-            state.selectedProfile = profile.id;
-            await refresh();
-            info(`${profile.name} oluşturuldu ve tablete atandı. Uygulamalar varsayılan olarak izinli, günlük 60 dakika.`);
-          } catch (error) { info(error.message, true); }
-        }, true));
-      }
-      if (!device.revoked_at) {
-        const picker = profilePicker(device.profile_id);
-        detail.append(field('Atanmış profil', picker));
-        detail.append(button('Profili ata', async () => {
-          try {
-            await call(`/devices/${encodeURIComponent(device.id)}/assign-profile`, {
-              method: 'POST', body: { profileId: picker.value },
-            });
-            await refresh();
-            info('Profil atandı. Tablet yeni profili bir sonraki eşitlemede alacak.');
-          } catch (error) { info(error.message, true); }
-        }, true));
-      }
-      const inventory = h('div', 'tb-inventory');
-      inventory.append(h('h4', null, `Yüklü uygulamalar (${state.inventory.length})`));
-      for (const app of state.inventory) inventory.append(h('p', null,
-        `${app.appName || app.packageName} · ${app.packageName}`));
-      detail.append(inventory);
-    }
-    const form = h('div', 'tb-form');
-    form.append(h('h4', null, 'İlk tablet eşleştirme'));
-    const name = input('Tablet', 'text');
-    form.append(h('p', 'tb-muted', 'Profil seçmeden kod oluşturabilirsiniz. Tabletin yüklü uygulama listesini aldıktan sonra başlangıç profilini bu ekrandan oluşturabilirsiniz.'),
-      field('Tablet adı', name),
-      button('Eşleme kodu oluştur', async () => {
-        try {
-          const result = await call('/devices', {
-            method: 'POST', body: { name: name.value.trim() || 'Tablet' },
-          });
-          await refresh();
-          const codeOut = h('p', 'tb-code',
-            `Tek kullanımlık eşleme kodu: ${result.enrollmentCode} · Geçerlilik sonu: ${displayDateTime(result.expiresAt)}`);
-          body.querySelector('.tb-card:last-child')?.append(codeOut);
-        } catch (error) { info(error.message, true); }
-      }, true));
-    detail.append(form);
-    columns.append(list, detail);
-    body.append(columns);
+    views.devices.update();
+    views.profiles.update();
+    views.students.update();
   }
-  function renderProfiles() {
-    const columns = h('div', 'tb-columns');
-    const list = h('section', 'tb-card');
-    list.append(h('h3', null, 'Ortak profiller'));
-    for (const profile of state.profiles) {
-      const row = h('button', `tb-list-row${state.selectedProfile === profile.id ? ' selected' : ''}`);
-      row.type = 'button';
-      row.append(h('strong', null, profile.name), h('small', null, `Sürüm ${profile.revision} · ${profile.apps.length} uygulama`));
-      row.addEventListener('click', () => { state.selectedProfile = profile.id; render(); });
-      list.append(row);
-    }
-    list.append(button('+ Yeni profil', () => { state.selectedProfile = ''; render(); }));
-    const detail = h('section', 'tb-card');
-    const profile = state.profiles.find((item) => item.id === state.selectedProfile);
-    detail.append(h('h3', null, profile ? `Profil · sürüm ${profile.revision}` : 'Yeni profil'));
-    const name = input(profile?.name || '');
-    const timezone = input(profile?.timezone || 'Europe/Istanbul');
-    detail.append(field('Profil adı', name), field('Saat dilimi', timezone));
-    const controls = h('section', 'tb-controls');
-    controls.append(h('h4', null, 'Uzaktan sistem kontrolleri'),
-      h('p', 'tb-muted', 'Açık: kısıtlamayı uygula · Kapalı: kısıtlamayı kaldır · Cihaz varsayılanı: mevcut davranışı koru. Tablet, desteklemediği kısıtlamayı uygulayamayabilir. Geliştirici seçenekleri ve USB hata ayıklama uzaktan değiştirilemez; kurtarma erişimi korunur.'));
-    const controlChoices = new Map();
-    for (const [key, label, description] of SYSTEM_CONTROLS) {
-      const row = h('div', 'tb-control-row');
-      const descriptionBox = h('div');
-      descriptionBox.append(h('strong', null, label), h('small', null, description));
-      const choice = h('select', 'tb-input');
-      choice.append(option('', 'Cihaz varsayılanı'), option('true', 'Açık'), option('false', 'Kapalı'));
-      if (Object.hasOwn(profile?.systemControls || {}, key)) {
-        choice.value = profile.systemControls[key] ? 'true' : 'false';
-      }
-      controlChoices.set(key, choice);
-      row.append(descriptionBox, choice);
-      controls.append(row);
-    }
-    detail.append(controls);
-    const appList = h('div', 'tb-apps');
-    const appRows = [];
-    function addApp(app = {}) {
-      const row = h('div', 'tb-app-row');
-      const pkg = input(app.packageName || '');
-      pkg.placeholder = 'com.example.app';
-      const label = input(app.appName || '');
-      label.placeholder = 'Uygulama adı';
-      const allowed = input('', 'checkbox');
-      allowed.checked = Boolean(app.allowed);
-      const unlimited = input('', 'checkbox');
-      unlimited.checked = Boolean(app.unlimited);
-      const minutes = input(String(Math.floor((app.dailyLimitSeconds || 0) / 60)), 'number');
-      minutes.min = '0';
-      minutes.max = '1440';
-      row.append(field('Uygulama paketi', pkg), field('Uygulama adı', label), field('İzin ver', allowed),
-        field('Sınırsız', unlimited), field('Günlük süre (dk)', minutes));
-      row.append(button('Kaldır', () => { row.remove(); appRows.splice(appRows.indexOf(item), 1); }));
-      const item = { row, pkg, label, allowed, unlimited, minutes };
-      appRows.push(item);
-      appList.append(row);
-    }
-    for (const app of profile?.apps || []) addApp(app);
-    const inventorySelect = h('select', 'tb-input');
-    for (const app of state.inventory.filter((item) => item.isLaunchable)) {
-      inventorySelect.append(option(app.packageName,
-        `${app.appName || app.packageName} · ${app.packageName}`));
-    }
-    detail.append(h('h4', null, 'Uygulama kuralları'), appList,
-      field('Seçili tabletteki uygulamalar', inventorySelect),
-      button('Tabletten ekle', () => {
-        const app = state.inventory.find((item) => item.packageName === inventorySelect.value);
-        if (app && !appRows.some((item) => item.pkg.value === app.packageName)) {
-          addApp({ ...app, allowed: true, unlimited: false, dailyLimitSeconds: 3600 });
-        }
-      }),
-      button('+ Uygulama ekle', () => addApp()),
-      button('Profili kaydet', async () => {
-        const apps = appRows.map((item) => ({
-          packageName: item.pkg.value.trim(), appName: item.label.value.trim(),
-          allowed: item.allowed.checked, unlimited: item.unlimited.checked,
-          dailyLimitSeconds: Number(item.minutes.value) * 60,
-        })).filter((app) => app.packageName);
-        const systemControls = {};
-        for (const [key, choice] of controlChoices) {
-          if (choice.value) systemControls[key] = choice.value === 'true';
-        }
-        try {
-          const result = await call(profile ? `/profiles/${encodeURIComponent(profile.id)}` : '/profiles', {
-            method: profile ? 'PUT' : 'POST',
-            body: { name: name.value.trim(), timezone: timezone.value.trim(), apps, systemControls },
-          });
-          state.selectedProfile = result.id;
-          await refresh();
-          info(`Profil kaydedildi · sürüm ${result.revision}`);
-        } catch (error) { info(error.message, true); }
-      }, true));
-    columns.append(list, detail);
-    body.append(columns);
+
+  function failed() {
+    main.replaceChildren(emptyState({
+      title: 'Tablet bilgileri alınamadı',
+      text: `${state.loadError} Bağlantı gelince ekran kendiliğinden dolar.`,
+      actions: [button('Tekrar dene', { onClick: () => refresh({ manual: true }) })],
+    }));
   }
-  async function renderStudentDetail(detail, studentId, date) {
-    try {
-      const result = await call(`/students/${encodeURIComponent(studentId)}/usage?localDate=${date}`);
-      const student = state.students.find((item) => item.id === studentId);
-      const session = state.sessions.find((item) => item.student_id === studentId);
-      const device = state.devices.find((item) => item.id === session?.device_id);
-      const assignedProfile = state.profiles.find((item) => item.id === device?.profile_id);
-      detail.replaceChildren(h('h3', null, student?.name || 'Öğrenci'),
-        h('p', 'tb-muted', `${date} · Günlük kullanım ve ek süre`));
-      const map = new Map();
-      for (const row of result.usage || []) map.set(row.packageName, { used: row.usedSeconds, extra: 0 });
-      for (const row of result.grants || []) {
-        const item = map.get(row.packageName) || { used: 0, extra: 0 };
-        item.extra += row.extraSeconds;
-        map.set(row.packageName, item);
-      }
-      if (!map.size) detail.append(h('p', 'tb-muted', 'Bugün için kullanım veya ek süre kaydı yok.'));
-      for (const [pkg, value] of map) detail.append(h('p', 'tb-usage',
-        `${pkg} · Kullanılan: ${Math.floor(value.used / 60)} dk · Ek süre: ${Math.floor(value.extra / 60)} dk`));
-      if (!session || !assignedProfile) {
-        detail.append(h('p', 'tb-muted',
-          'Ek süre vermek için öğrencinin geçerli profili olan bir tablette açık oturumu bulunmalı.'));
-      } else {
-        const allowedApps = assignedProfile.apps.filter((app) => app.allowed);
-        if (!allowedApps.length) {
-          detail.append(h('p', 'tb-muted', 'Öğrencinin etkin tablet profilinde izinli uygulama yok.'));
-        } else {
-          const select = h('select', 'tb-input');
-          for (const app of allowedApps) {
-            select.append(option(app.packageName, `${app.appName || app.packageName} · ${app.packageName}`));
-          }
-          const minutes = input('10', 'number');
-          minutes.min = '1';
-          minutes.max = '1440';
-          const reason = input('');
-          reason.placeholder = 'Gerekçe (isteğe bağlı)';
-          detail.append(field('Uygulama', select), field('Ek süre (dk)', minutes),
-            field('Gerekçe', reason), button('Ek süre ver', async () => {
-              try {
-                await call(`/students/${encodeURIComponent(studentId)}/apps/${encodeURIComponent(select.value)}/grants`, {
-                  method: 'POST', body: { localDate: date, extraSeconds: Number(minutes.value) * 60,
-                    reason: reason.value.trim() },
-                });
-                await renderStudentDetail(detail, studentId, date);
-                info('Ek süre öğrencinin etkin tablet profilindeki uygulamaya eklendi.');
-              } catch (error) { info(error.message, true); }
-            }, true));
-        }
-      }
-    } catch (error) { detail.replaceChildren(h('p', 'tb-error', error.message)); }
+
+  function build() {
+    views.devices = devicesView(app);
+    views.profiles = profilesView(app);
+    views.students = studentsView(app);
+    main.replaceChildren(views.devices.node, views.profiles.node, views.students.node);
+    show(tabs.active);
   }
-  function renderStudents() {
-    const columns = h('div', 'tb-columns');
-    const list = h('section', 'tb-card');
-    list.append(h('h3', null, 'Öğrenciler'), h('p', 'tb-muted',
-      'Öğrenciler tabletlerde, kantin kiosklarında kullandıkları şifreyle giriş yapar.'));
-    const search = input('', 'search');
-    search.placeholder = 'Öğrenci ara';
-    const rows = h('div', 'tb-students');
-    function paintStudents() {
-      rows.replaceChildren();
-      const q = search.value.toLocaleLowerCase('tr');
-      for (const student of state.students.filter((item) => item.name.toLocaleLowerCase('tr').includes(q))) {
-        const row = button(student.name || student.id, () => {
-          state.selectedStudent = student.id;
-          renderStudents();
-        });
-        row.classList.add('tb-list-row');
-        row.classList.toggle('selected', student.id === state.selectedStudent);
-        rows.append(row);
-      }
+
+  const poll = pollLoop({ every: POLL_MS, run: () => refresh({ poll: true }) });
+  loadPermissions().then(() => refresh());
+
+  return () => {
+    disposed = true;
+    poll.stop();
+    closeAllDialogs();
+    for (const item of Object.values(views)) item.destroy?.();
+    for (const fn of disposers.splice(0)) {
+      try { fn(); } catch { /* temizlik bir hatayla yarıda kalmaz */ }
     }
-    search.addEventListener('input', paintStudents);
-    list.append(search, rows);
-    paintStudents();
-    const detail = h('section', 'tb-card');
-    const selected = state.students.find((item) => item.id === state.selectedStudent);
-    const session = state.sessions.find((item) => item.student_id === selected?.id);
-    const device = state.devices.find((item) => item.id === session?.device_id);
-    const profile = state.profiles.find((item) => item.id === device?.profile_id)
-      || state.profiles.find((item) => item.id === state.selectedProfile);
-    const zone = profile?.timezone || 'Europe/Istanbul';
-    const date = new Date().toLocaleDateString('sv-SE', { timeZone: zone });
-    if (selected) {
-      detail.append(h('h3', null, selected.name), h('p', 'tb-muted', `${date} · ${zone}`));
-      renderStudentDetail(detail, selected.id, date);
-    }
-    columns.append(list, detail);
-    body.append(columns);
-  }
-  refresh();
-  return () => root.replaceChildren();
+    root.replaceChildren();
+  };
 }

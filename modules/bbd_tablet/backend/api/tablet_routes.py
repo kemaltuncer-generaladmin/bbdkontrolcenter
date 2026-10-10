@@ -1,4 +1,9 @@
-"""Tablet-only API. Every route checks a scoped device or student bearer."""
+"""Tablet-only API. Every route checks a scoped device or student bearer.
+
+Machine-readable errors use the contract shape
+`{"detail": {"code": "...", "message": "...", ...}}`; the remaining plain-text
+details are generic errors on the tablet side.
+"""
 
 from __future__ import annotations
 
@@ -8,30 +13,46 @@ from fastapi import Header
 
 from km_sdk import APIRouter, BaseModel, Field, HTTPException, Query
 
+from ..service import TabletError
 from .routes import current_service
 
 router = APIRouter()
 
 
-def bearer(authorization: str) -> str:
+def coded(error: TabletError) -> HTTPException:
+    headers = None
+    if "retryAfterSeconds" in error.extra:
+        headers = {"Retry-After": str(error.extra["retryAfterSeconds"])}
+    return HTTPException(status_code=error.status, detail=error.detail(), headers=headers)
+
+
+def fail(code: str, message: str, **extra: Any) -> HTTPException:
+    return coded(TabletError(code, message, **extra))
+
+
+def token(authorization: str) -> str:
     scheme, _, value = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not value:
+    return value.strip() if scheme.lower() == "bearer" else ""
+
+
+def bearer(authorization: str) -> str:
+    value = token(authorization)
+    if not value:
         raise HTTPException(status_code=401, detail="Bearer gerekli.")
     return value
 
 
-async def device_auth(authorization: str) -> dict[str, Any]:
-    device = await current_service().device_for_token(bearer(authorization))
-    if not device:
-        raise HTTPException(status_code=401, detail="Cihaz yetkisi geçersiz.")
+async def device_auth(authorization: str, device_id: str | None = None) -> dict[str, Any]:
+    """Device bearer: unknown → DEVICE_AUTH_INVALID, revoked → DEVICE_REVOKED."""
+    value = token(authorization)
+    device = await current_service().device_by_token(value) if value else None
+    if device is None:
+        raise fail("DEVICE_AUTH_INVALID", "Tablet tanınmadı. Yeniden eşleyin.")
+    if device["revoked_at"]:
+        raise fail("DEVICE_REVOKED", "Bu tabletin eşlemesi kaldırıldı.")
+    if device_id is not None and device["id"] != device_id:
+        raise fail("FORBIDDEN_DEVICE", "Bu işlem bu tablete ait değil.")
     return device
-
-
-async def session_auth(authorization: str) -> dict[str, Any]:
-    session = await current_service().session_for_token(bearer(authorization))
-    if not session:
-        raise HTTPException(status_code=401, detail="Öğrenci oturumu geçersiz.")
-    return session
 
 
 async def logout_session_auth(authorization: str) -> dict[str, Any]:
@@ -78,6 +99,33 @@ class HeartbeatBody(BaseModel):
     sessionId: str | None = None
     lastPolicyAppliedAt: str | None = None
     policyHealth: str = Field(default="", max_length=100)
+
+
+class CommandResult(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    ok: bool = False
+    message: str = Field(default="", max_length=500)
+
+
+class SyncBody(BaseModel):
+    """Every field is optional; unknown fields are ignored for forward compatibility."""
+
+    appVersion: str | None = Field(default=None, max_length=40)
+    profileId: str | None = Field(default=None, max_length=100)
+    profileRevision: int | None = Field(default=None, ge=0)
+    sessionId: str | None = Field(default=None, max_length=100)
+    activeStudentId: str | None = Field(default=None, max_length=100)
+    grantsVersion: str | None = Field(default=None, max_length=200)
+    deviceStateVersion: int | None = Field(default=None, ge=0)
+    policyHealth: str | None = Field(default=None, max_length=100)
+    lastPolicyAppliedAt: str | None = Field(default=None, max_length=64)
+    batteryPercent: int | None = Field(default=None, ge=0, le=100)
+    charging: bool | None = None
+    foregroundPackage: str | None = Field(default=None, max_length=255)
+    pendingUsageBatches: int | None = Field(default=None, ge=0, le=1_000_000)
+    # Generous on purpose: a backlog must never turn every sync into a 422. The
+    # service reads the first 100 and the tablet reports the rest on later syncs.
+    commandResults: list[CommandResult] = Field(default_factory=list, max_length=1000)
 
 
 class InventoryApp(BaseModel):
@@ -129,19 +177,13 @@ async def enroll(body: EnrollBody) -> dict[str, Any]:
 @router.get("/profiles")
 async def profiles(authorization: str = Header(default="")) -> dict[str, Any]:
     await device_auth(authorization)
-    rows = await current_service().store.fetch_all(
-        f"SELECT id FROM {current_service().profiles} WHERE revision > 0 ORDER BY name"
-    )
-    return {"profiles": [profile for row in rows
-                         if (profile := await current_service().profile(row["id"]))]}
+    return {"profiles": await current_service().all_profiles()}
 
 
 @router.post("/devices/{device_id}/initial-profile")
 async def initial_profile(device_id: str, body: InitialProfileBody,
                           authorization: str = Header(default="")) -> dict[str, Any]:
-    device = await device_auth(authorization)
-    if device["id"] != device_id:
-        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+    await device_auth(authorization, device_id)
     try:
         return await current_service().configure_initial_profile(
             device_id=device_id, profile_id=body.profileId,
@@ -160,28 +202,35 @@ async def profile(profile_id: str, authorization: str = Header(default="")) -> d
     return result
 
 
+@router.post("/devices/{device_id}/sync")
+async def sync(device_id: str, body: SyncBody,
+               authorization: str = Header(default="")) -> dict[str, Any]:
+    device = await device_auth(authorization, device_id)
+    return await current_service().sync(device=device, data=body.model_dump())
+
+
 @router.get("/devices/{device_id}/policy")
 async def policy(device_id: str, currentRevision: int = Query(default=0, ge=0),
                  sessionId: str | None = None, authorization: str = Header(default="")) -> dict[str, Any]:
-    device = await device_auth(authorization)
-    if device["id"] != device_id:
-        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
-    await current_service().expire_stale_sessions()
+    """Eski APK'lar için; yeni sürüm `sync` kullanır."""
+    device = await device_auth(authorization, device_id)
+    service = current_service()
+    await service.expire_stale_sessions()
     session = None
     if sessionId:
-        session = await current_service().store.fetch_one(
-            f"SELECT * FROM {current_service().sessions} "
+        session = await service.store.fetch_one(
+            f"SELECT * FROM {service.sessions} "
             "WHERE id=? AND device_id=? AND state='active'", (sessionId, device_id),
         )
         if not session:
-            raise HTTPException(status_code=403, detail="Oturum bu tablete ait değil.")
+            raise fail("FORBIDDEN_DEVICE", "Oturum bu tablete ait değil.")
     else:
-        session = await current_service().store.fetch_one(
-            f"SELECT * FROM {current_service().sessions} "
+        session = await service.store.fetch_one(
+            f"SELECT * FROM {service.sessions} "
             "WHERE device_id=? AND state='active'", (device_id,),
         )
     try:
-        return await current_service().policy(
+        return await service.policy(
             device=device, revision=currentRevision, session=dict(session) if session else None,
         )
     except ValueError as exc:
@@ -191,9 +240,8 @@ async def policy(device_id: str, currentRevision: int = Query(default=0, ge=0),
 @router.post("/devices/{device_id}/heartbeat")
 async def heartbeat(device_id: str, body: HeartbeatBody,
                     authorization: str = Header(default="")) -> dict[str, Any]:
-    device = await device_auth(authorization)
-    if device["id"] != device_id:
-        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+    """Eski APK'lar için; yeni sürüm `sync` kullanır."""
+    device = await device_auth(authorization, device_id)
     try:
         return await current_service().heartbeat(device=device, data=body.model_dump())
     except ValueError as exc:
@@ -203,16 +251,14 @@ async def heartbeat(device_id: str, body: HeartbeatBody,
 @router.post("/devices/{device_id}/unpair")
 async def unpair(device_id: str, authorization: str = Header(default="")) -> dict[str, Any]:
     service = current_service()
-    token = bearer(authorization)
-    device = await service.device_for_token(token)
+    value = token(authorization)
+    # An already-revoked token has one remaining capability: retry its own
+    # unpair and retrieve the stable acknowledgement after a lost response.
+    device = await service.device_by_token(value) if value else None
     if device is None:
-        # An already-revoked token has one remaining capability: retry its own
-        # unpair and retrieve the stable acknowledgement after a lost response.
-        device = await service.revoked_device_for_unpair_token(token)
-    if device is None:
-        raise HTTPException(status_code=401, detail="Cihaz yetkisi geçersiz.")
+        raise fail("DEVICE_AUTH_INVALID", "Tablet tanınmadı. Yeniden eşleyin.")
     if device["id"] != device_id:
-        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+        raise fail("FORBIDDEN_DEVICE", "Bu işlem bu tablete ait değil.")
     try:
         return await service.revoke_device(device_id=device_id)
     except ValueError as exc:
@@ -222,9 +268,7 @@ async def unpair(device_id: str, authorization: str = Header(default="")) -> dic
 @router.put("/devices/{device_id}/apps")
 async def inventory(device_id: str, body: InventoryBody,
                     authorization: str = Header(default="")) -> dict[str, Any]:
-    device = await device_auth(authorization)
-    if device["id"] != device_id:
-        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+    device = await device_auth(authorization, device_id)
     return await current_service().replace_inventory(
         device=device, apps=[item.model_dump() for item in body.apps],
     )
@@ -232,29 +276,18 @@ async def inventory(device_id: str, body: InventoryBody,
 
 @router.post("/auth/login")
 async def login(body: LoginBody, authorization: str = Header(default="")) -> dict[str, Any]:
-    device = await device_auth(authorization)
-    if device["id"] != body.deviceId:
-        raise HTTPException(status_code=403, detail="Bu tablet için yetki yok.")
+    device = await device_auth(authorization, body.deviceId)
     try:
         return await current_service().login(device=device, student_code=body.studentCode)
-    except ValueError as exc:
-        detail = str(exc)
-        status = 429 if "Çok fazla" in detail else 409 if "başka" in detail \
-            else 401 if "şifresi geçersiz" in detail else 400
-        payload: str | dict[str, str] = (
-            {"code": "SESSION_CONFLICT", "message": detail}
-            if status == 409 else detail
-        )
-        raise HTTPException(status_code=status, detail=payload) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TabletError as exc:
+        raise coded(exc) from exc
 
 
 @router.post("/auth/logout")
 async def logout(body: LogoutBody, authorization: str = Header(default="")) -> dict[str, Any]:
     session = await logout_session_auth(authorization)
     if session["id"] != body.sessionId or session["device_id"] != body.deviceId:
-        raise HTTPException(status_code=403, detail="Oturum eşleşmiyor.")
+        raise fail("FORBIDDEN_DEVICE", "Oturum bu tablete ait değil.")
     return await current_service().logout(session=session)
 
 

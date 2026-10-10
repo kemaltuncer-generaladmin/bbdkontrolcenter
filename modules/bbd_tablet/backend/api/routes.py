@@ -1,17 +1,40 @@
-"""Control Center's authenticated tablet management endpoints."""
+"""Control Center's authenticated tablet management endpoints.
+
+ÇİFT KAPI (K9): router tabanı `bbd_tablet.view`; tablet, profil, oturum ve
+komut değişiklikleri `bbd_tablet.manage`, ek süre, öğrenci kısıtlaması ve
+giriş kilidini kaldırma `bbd_tablet.grant` ister. Eşleme iptali, tablet silme
+(tekli ve toplu), profil silme ve öğrenci verisi silme geri alınamaz: izin
+yeterli olsa bile PIN teyidi (`confirm_pin`) ister. PIN gövdede taşınır, sorgu
+dizesinde değil.
+"""
 
 from __future__ import annotations
 
-from datetime import date
-from typing import Any
-from zoneinfo import ZoneInfoNotFoundError
+from collections.abc import Awaitable
+from datetime import date, datetime
+from typing import Any, Literal
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
+from fastapi import Request
 
-from ..service import TabletService
+from km_sdk import (
+    APIRouter,
+    BaseModel,
+    CurrentUser,
+    Field,
+    HTTPException,
+    Query,
+    confirm_pin,
+    requires,
+)
+
+from ..service import CanteenUnavailableError, ConflictError, NotFoundError, TabletService
 
 router = APIRouter()
 _service: TabletService | None = None
+
+VIEW = "bbd_tablet.view"
+MANAGE = "bbd_tablet.manage"
+GRANT = "bbd_tablet.grant"
 
 
 def bind(service: TabletService) -> APIRouter:
@@ -26,6 +49,20 @@ def current_service() -> TabletService:
     return _service
 
 
+async def run[T](call: Awaitable[T]) -> T:
+    """Service errors to HTTP: missing 404, wrong state 409, bad input 400."""
+    try:
+        return await call
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
+    except CanteenUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class AppPolicyBody(BaseModel):
     packageName: str = Field(min_length=2, max_length=255)
     appName: str = Field(default="", max_length=120)
@@ -34,11 +71,37 @@ class AppPolicyBody(BaseModel):
     dailyLimitSeconds: int = Field(default=0, ge=0, le=86400)
 
 
+class UsageWindowBody(BaseModel):
+    days: list[int] = Field(min_length=1, max_length=7)
+    start: str = Field(pattern=r"^\d{2}:\d{2}$")
+    end: str = Field(pattern=r"^\d{2}:\d{2}$")
+
+
 class ProfileBody(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     timezone: str = Field(default="Europe/Istanbul", min_length=1, max_length=80)
     apps: list[AppPolicyBody] = Field(default_factory=list, max_length=1000)
     systemControls: dict[str, Any] | None = None
+    # Omitted keeps the previous revision's hours; [] means always open.
+    usageWindows: list[UsageWindowBody] | None = Field(default=None, max_length=21)
+
+
+class DuplicateBody(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+
+
+class PinBody(BaseModel):
+    """Geri dönüşü olmayan işlemin gövdesi — PIN zorunlu."""
+
+    pin: str = Field(min_length=4, max_length=32)
+
+
+class ProfileDeleteBody(PinBody):
+    """Atanmış tabletler ya `replacementProfileId` profiline taşınır ya da
+    `unassign` ile profilsiz kalır; ikisi de yoksa 409 `PROFILE_IN_USE`."""
+
+    replacementProfileId: str | None = Field(default=None, min_length=1)
+    unassign: bool = False
 
 
 class DeviceBody(BaseModel):
@@ -46,8 +109,41 @@ class DeviceBody(BaseModel):
     profileId: str | None = Field(default=None, min_length=1)
 
 
+class DevicePatchBody(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+    locked: bool | None = None
+    lockMessage: str | None = Field(default=None, max_length=200)
+    offlineMode: Literal["local", "allowed", "denied"] | None = None
+    announcement: str | None = Field(default=None, max_length=500)
+
+
+class EnrollmentCodeBody(BaseModel):
+    profileId: str | None = Field(default=None, min_length=1)
+
+
 class AssignBody(BaseModel):
     profileId: str = Field(min_length=1)
+
+
+class CommandBody(BaseModel):
+    type: Literal["message", "refresh_inventory", "flush_usage", "reboot"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class BulkBody(BaseModel):
+    deviceIds: list[str] = Field(min_length=1, max_length=200)
+    action: Literal["lock", "unlock", "announce", "assign_profile", "command",
+                    "reset_login_lock", "delete"]
+    lockMessage: str = Field(default="", max_length=200)
+    announcement: str = Field(default="", max_length=500)
+    profileId: str | None = None
+    command: CommandBody | None = None
+    # Yalnız `delete` için; o işlemde zorunludur.
+    pin: str | None = Field(default=None, min_length=4, max_length=32)
+
+
+class EndSessionBody(BaseModel):
+    message: str = Field(default="", max_length=200)
 
 
 class GrantBody(BaseModel):
@@ -56,25 +152,52 @@ class GrantBody(BaseModel):
     reason: str = Field(default="", max_length=300)
 
 
+class BlockBody(BaseModel):
+    until: datetime
+    reason: str = Field(default="", max_length=300)
+
+
+# --------------------------------------------------------------- görüntüleme
+
+
 @router.get("/overview")
-async def overview(user: CurrentUser = requires("bbd_tablet.view")) -> dict[str, Any]:
+async def overview(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
     return await current_service().overview()
 
 
 @router.get("/students")
-async def students(user: CurrentUser = requires("bbd_tablet.view")) -> list[dict[str, str]]:
-    return await current_service().students()
+async def students(user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
+    return await run(current_service().students())
 
 
 @router.get("/students/{student_id}/usage")
 async def student_usage(student_id: str, localDate: date,
-                        user: CurrentUser = requires("bbd_tablet.view")) -> dict[str, Any]:
+                        user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
     return await current_service().student_usage(student_id, localDate.isoformat())
+
+
+@router.get("/students/{student_id}/blocks")
+async def student_blocks(student_id: str,
+                         user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
+    return await current_service().list_blocks(student_id=student_id)
+
+
+@router.get("/reports/daily")
+async def daily_report(localDate: date, user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
+    return await current_service().daily_report(localDate.isoformat())
+
+
+@router.get("/sessions")
+async def sessions(limit: int = Query(default=100, ge=1, le=500),
+                   deviceId: str | None = None, studentId: str | None = None,
+                   user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
+    return await current_service().list_sessions(limit=limit, device_id=deviceId,
+                                                  student_id=studentId)
 
 
 @router.get("/devices/{device_id}/apps")
 async def device_apps(device_id: str,
-                      user: CurrentUser = requires("bbd_tablet.view")) -> list[dict[str, Any]]:
+                      user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
     rows = await current_service().store.fetch_all(
         f"SELECT package_name, app_label, is_launchable, is_system_app "
         f"FROM {current_service().inventory} WHERE device_id=? ORDER BY app_label",
@@ -85,67 +208,191 @@ async def device_apps(device_id: str,
              "isSystemApp": bool(row["is_system_app"])} for row in rows]
 
 
+@router.get("/devices/{device_id}/commands")
+async def device_commands(device_id: str, limit: int = Query(default=20, ge=1, le=100),
+                          user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
+    return await current_service().list_commands(device_id=device_id, limit=limit)
+
+
+# ------------------------------------------------------------------- profiller
+
+
 @router.post("/profiles")
 async def create_profile(body: ProfileBody,
-                         user: CurrentUser = requires("bbd_tablet.manage")) -> dict[str, Any]:
-    try:
-        return await current_service().save_profile(
-            profile_id=None, name=body.name, timezone=body.timezone,
-            apps=[item.model_dump() for item in body.apps],
-            system_controls=body.systemControls,
-        )
-    except (ValueError, ZoneInfoNotFoundError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().save_profile(
+        profile_id=None, name=body.name, timezone=body.timezone,
+        apps=[item.model_dump() for item in body.apps],
+        system_controls=body.systemControls,
+        usage_windows=None if body.usageWindows is None
+        else [item.model_dump() for item in body.usageWindows],
+    ))
 
 
 @router.put("/profiles/{profile_id}")
 async def update_profile(profile_id: str, body: ProfileBody,
-                         user: CurrentUser = requires("bbd_tablet.manage")) -> dict[str, Any]:
-    try:
-        return await current_service().save_profile(
-            profile_id=profile_id, name=body.name, timezone=body.timezone,
-            apps=[item.model_dump() for item in body.apps],
-            system_controls=body.systemControls,
-        )
-    except (ValueError, ZoneInfoNotFoundError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().save_profile(
+        profile_id=profile_id, name=body.name, timezone=body.timezone,
+        apps=[item.model_dump() for item in body.apps],
+        system_controls=body.systemControls,
+        usage_windows=None if body.usageWindows is None
+        else [item.model_dump() for item in body.usageWindows],
+    ))
+
+
+@router.post("/profiles/{profile_id}/duplicate")
+async def duplicate_profile(profile_id: str, body: DuplicateBody | None = None,
+                            user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().duplicate_profile(
+        profile_id=profile_id, name=body.name if body else None,
+    ))
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_profile(profile_id: str, body: ProfileDeleteBody, request: Request,
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    await confirm_pin(request, user, body.pin, action="bbd_tablet.profile.delete")
+    return await run(current_service().delete_profile(
+        profile_id=profile_id, replacement_profile_id=body.replacementProfileId,
+        unassign=body.unassign,
+    ))
+
+
+# ------------------------------------------------------------------- tabletler
 
 
 @router.post("/devices")
 async def create_device(body: DeviceBody,
-                        user: CurrentUser = requires("bbd_tablet.manage")) -> dict[str, Any]:
-    try:
-        return await current_service().create_device(name=body.name, profile_id=body.profileId)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                        user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().create_device(name=body.name, profile_id=body.profileId))
+
+
+@router.post("/devices/bulk")
+async def bulk_devices(body: BulkBody, request: Request,
+                       user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    # Like the single reset, lifting login locks needs the grant permission too.
+    if body.action == "reset_login_lock" and not user.has_permission(GRANT):
+        raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
+    if body.action == "delete":
+        if not body.pin:
+            raise HTTPException(status_code=422, detail="Toplu silme için PIN gerekli.")
+        await confirm_pin(request, user, body.pin, action="bbd_tablet.device.delete")
+    return await run(current_service().bulk(
+        device_ids=body.deviceIds, action=body.action, actor=user.full_name,
+        lock_message=body.lockMessage, announcement=body.announcement,
+        profile_id=body.profileId,
+        command=body.command.model_dump() if body.command else None,
+    ))
+
+
+@router.patch("/devices/{device_id}")
+async def update_device(device_id: str, body: DevicePatchBody,
+                        user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    changes = body.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="Değiştirilecek alan yok.")
+    return await run(current_service().update_device(device_id=device_id, changes=changes))
 
 
 @router.post("/devices/{device_id}/assign-profile")
 async def assign_profile(device_id: str, body: AssignBody,
-                         user: CurrentUser = requires("bbd_tablet.manage")) -> dict[str, Any]:
-    try:
-        return await current_service().assign_profile(device_id=device_id, profile_id=body.profileId)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().assign_profile(
+        device_id=device_id, profile_id=body.profileId,
+    ))
+
+
+@router.post("/devices/{device_id}/enrollment-code")
+async def enrollment_code(device_id: str, body: EnrollmentCodeBody | None = None,
+                          user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().issue_enrollment_code(
+        device_id=device_id, profile_id=body.profileId if body else None,
+    ))
 
 
 @router.post("/devices/{device_id}/revoke")
-async def revoke_device(device_id: str,
-                        user: CurrentUser = requires("bbd_tablet.manage")) -> dict[str, Any]:
-    try:
-        return await current_service().revoke_device(device_id=device_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+async def revoke_device(device_id: str, body: PinBody, request: Request,
+                        user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    await confirm_pin(request, user, body.pin, action="bbd_tablet.device.revoke")
+    return await run(current_service().revoke_device(device_id=device_id))
+
+
+@router.delete("/devices/{device_id}")
+async def delete_device(device_id: str, body: PinBody, request: Request,
+                        user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    await confirm_pin(request, user, body.pin, action="bbd_tablet.device.delete")
+    return await run(current_service().delete_device(device_id=device_id))
+
+
+@router.post("/devices/{device_id}/login-lock/reset")
+async def reset_login_lock(device_id: str,
+                           user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
+    return await run(current_service().reset_login_lock(device_id=device_id))
+
+
+@router.post("/devices/{device_id}/commands")
+async def create_command(device_id: str, body: CommandBody,
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().create_command(
+        device_id=device_id, command_type=body.type, payload=body.payload,
+        actor=user.full_name,
+    ))
+
+
+@router.delete("/devices/{device_id}/commands/{command_id}")
+async def cancel_command(device_id: str, command_id: str,
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().cancel_command(
+        device_id=device_id, command_id=command_id, actor=user.full_name,
+    ))
+
+
+@router.delete("/students/{student_id}/history")
+async def delete_student_history(student_id: str, body: PinBody, request: Request,
+                                 user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    await confirm_pin(request, user, body.pin, action="bbd_tablet.student.history.delete")
+    return await run(current_service().delete_student_history(student_id=student_id))
+
+
+@router.post("/sessions/{session_id}/end")
+async def end_session(session_id: str, body: EndSessionBody | None = None,
+                      user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().end_session(
+        session_id=session_id, message=(body.message.strip() if body else ""),
+    ))
+
+
+# ------------------------------------------------- ek süre ve kısıtlama
 
 
 @router.post("/students/{student_id}/apps/{package_name}/grants")
 async def create_grant(student_id: str, package_name: str, body: GrantBody,
-                       user: CurrentUser = requires("bbd_tablet.grant")) -> dict[str, Any]:
-    try:
-        return await current_service().grant_time(
-            student_id=student_id, package_name=package_name,
-            local_date=body.localDate.isoformat(), extra_seconds=body.extraSeconds,
-            reason=body.reason, actor=user.full_name,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+                       user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
+    return await run(current_service().grant_time(
+        student_id=student_id, package_name=package_name,
+        local_date=body.localDate.isoformat(), extra_seconds=body.extraSeconds,
+        reason=body.reason, actor=user.full_name,
+    ))
+
+
+@router.post("/students/{student_id}/grants/{grant_id}/revoke")
+async def revoke_grant(student_id: str, grant_id: str,
+                       user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
+    return await run(current_service().revoke_grant(
+        student_id=student_id, grant_id=grant_id, actor=user.full_name,
+    ))
+
+
+@router.post("/students/{student_id}/block")
+async def block_student(student_id: str, body: BlockBody,
+                        user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
+    return await run(current_service().block_student(
+        student_id=student_id, until=body.until, reason=body.reason, actor=user.full_name,
+    ))
+
+
+@router.post("/students/{student_id}/unblock")
+async def unblock_student(student_id: str,
+                          user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
+    return await current_service().unblock_student(student_id=student_id)

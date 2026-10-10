@@ -1,2 +1,11 @@
 timezone: Europe/Istanbul
 enrollment_code_minutes: 10
+# Tablet bu aralıklarla tek bir `sync` çağrısı yapar. Sunucu yük altındaysa
+# büyütmek bütün tabletleri yavaşlatır; kod değişmez.
+sync_active_seconds: 60
+sync_idle_seconds: 300
+usage_flush_seconds: 300
+session_idle_minutes: 30
+# Bitmiş oturumlar, kullanım paketleri, günlük toplamlar, ek süreler ve eski
+# kısıtlamalar bu kadar günden eskiyse günde en fazla bir kez silinir.
+history_retention_days: 180
