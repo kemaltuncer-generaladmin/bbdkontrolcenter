@@ -42,10 +42,11 @@ ui:
   entry: ui/panel/index.js
   locales: ui/locales
   nav:
-    title: "İadeler"
+    title: "İade Yönetimi"
     icon: rotate
-    group: "BBD Store / Satış ve Kargo"
-    order: 240
+    # 10.10.2026 sadeleştirmesi: BBD Store tek düz liste, yedi ekran.
+    group: "BBD Store"
+    order: 203
     requires: [store_refunds.view]
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
@@ -60,17 +61,17 @@ permissions:
     description: "İadeler ekranını görüntüleme, iade icmali ve CSV alma."
     default_roles: [admin, bbd_staff, accountant]
   - key: store_refunds.manage
-    description: "Talep durumu, iade kargosu, sipariş notu ve müşteri bildirimi."
+    description: "Talep durumu, sipariş notu ve müşteri bildirimi."
     default_roles: [admin, bbd_staff]
   - key: store_refunds.approve
-    description: "İadeyi onaylayıp parayı geri verme (kredi notu + POS iadesi). Para hareketidir."
+    description: "İadeyi onaylayıp parayı geri verme (kredi notu; banka iadesi mağazada otomatik başlar). Para hareketidir."
     default_roles: [admin, bbd_staff]
 
   # Geri gönderim etiketi kargo firmasından SATIN ALINIR ve ücreti mağazaya
   # yansır; ADR 0012 gereği para harcayan iş `manage` içine gizlenmez, kendi
   # anahtarını taşır (`store_shipping.purchase` ile aynı tabiatta).
   - key: store_refunds.ship_return
-    description: "Müşteriden geri alım için iade kargosu açma. Kargo ücreti mağazaya yansır."
+    description: "Müşteriden geri alım için iade kargosu açma ve etiketini satın alma. Kargo ücreti mağazaya yansır."
     default_roles: [admin, bbd_staff]
 
 config:

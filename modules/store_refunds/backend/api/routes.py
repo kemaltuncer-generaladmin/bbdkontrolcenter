@@ -39,19 +39,29 @@ def service() -> RefundsService:
 async def refunds(
     dateFrom: str = Query("", max_length=10),
     dateTo: str = Query("", max_length=10),
+    full: bool = Query(False),
+    fresh: bool = Query(False),
     user: CurrentUser = requires("store_refunds.view"),
 ) -> dict[str, Any]:
-    """Kredi notları + RMA talepleri, tek liste + KPI. Süzme istemcidedir."""
-    return await service().refunds(date_from=dateFrom, date_to=dateTo)
+    """Kredi notları + RMA talepleri, tek liste + KPI. Süzme istemcidedir.
+
+    `full=0` yalnız ilk sayfayı getirir (ekranın açılışı); `full=1` pencerenin
+    tamamını tarar. `fresh=1` ("Yenile") kısa ömürlü önbelleği atlar.
+    """
+    return await service().refunds(date_from=dateFrom, date_to=dateTo, full=full, fresh=fresh)
 
 
 @router.get("/orders/{order_id}")
 async def order_card(
     order_id: int,
+    requestId: int = Query(0, ge=0),
     user: CurrentUser = requires("store_refunds.view"),
 ) -> dict[str, Any]:
-    """Çekmecenin tek isteği: kalemler, kargo, POS denemeleri, geçmiş iadeler."""
-    return await service().order_card(order_id)
+    """Çekmecenin tek isteği: kalemler, kargo, POS denemeleri, geçmiş iadeler.
+
+    `requestId` verilirse o RMA talebinin kalem adetleri öneri olarak döner.
+    """
+    return await service().order_card(order_id, request_id=requestId)
 
 
 @router.get("/audit")
@@ -149,7 +159,10 @@ async def request_status(
 
 
 class ReturnShipmentBody(BaseModel):
-    shipmentId: int = Field(ge=1)
+    #: Giden gönderi (RMA yoksa iade bunun üzerine açılır).
+    shipmentId: int = Field(default=0, ge=0)
+    #: RMA talebi — verilirse iade gönderisi talebe bağlanır.
+    requestId: int = Field(default=0, ge=0)
     reason: str = Field(min_length=10, max_length=255)
     dryRun: bool = True
 
@@ -160,9 +173,10 @@ async def return_shipment(
     body: ReturnShipmentBody,
     user: CurrentUser = requires("store_refunds.ship_return"),
 ) -> dict[str, Any]:
-    """Geri alım etiketi açar. PARA HARCAR (kargo ücreti) — bu yüzden AYRI izin
-    anahtarı ister; `manage` yetmez (ADR 0012)."""
+    """İade gönderisini açar VE etiketini satın alır. PARA HARCAR (kargo ücreti) —
+    bu yüzden AYRI izin anahtarı ister; `manage` yetmez (ADR 0012)."""
     return await service().return_shipment(body.shipmentId, order_id=order_id,
+                                           request_id=body.requestId,
                                            reason=body.reason, actor=user.full_name,
                                            dry_run=body.dryRun)
 

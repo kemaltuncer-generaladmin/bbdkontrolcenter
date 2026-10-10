@@ -32,6 +32,12 @@
       "maximum": 730,
       "description": "Ekran açılırken kaç günlük pencere çekilir."
     },
+    "list_cache_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 300,
+      "description": "Liste yanıtının önbellekte kalma süresi (sn). Yazmadan sonra boşaltılır; 0 kapatır."
+    },
     "scan_cap": {
       "type": "integer",
       "minimum": 100,

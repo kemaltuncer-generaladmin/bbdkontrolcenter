@@ -14,10 +14,14 @@ dalı DURUYOR ve durmalı: uç geri çekilirse ya da mağaza sürümü değişir
 `bbd_endpoint_missing` döner, o bölüm ekranda "uç hazır olunca açılacak" diye
 KAPALI görünür ve ekranın geri kalanı ayakta kalır — sessizce patlamaz (K7).
 
-ÖLÇEK. "Yüzler" mertebesinde kayıt; süzme istemcidedir. Sunucu bir tarih
-penceresini tavanla tarar ve tamamını döner.
+ÖLÇEK. "Yüzler" mertebesinde kayıt; süzme istemcidedir. Ekran açılırken her
+kaynağın YALNIZ İLK SAYFASI (en yeni kayıtlar) çekilir; pencerenin tamamı ancak
+kullanıcı süzgeç kullanınca ya da "Tümünü yükle" deyince taranır. Rapor ve CSV
+her zaman tamamını tarar. Liste yanıtı kısa ömürlü önbellekte durur (TEK UÇUŞ);
+başarılı bir yazmadan sonra önbellek boşaltılır.
 
 PARA. İçeride her yerde KURUŞ (int). Telde ondalık metin gider (`from_kurus`).
+POS denemesi ise tutarı ZATEN kuruş tam sayısı olarak verir (`amount_minor`).
 """
 
 from __future__ import annotations
@@ -28,7 +32,9 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -49,13 +55,94 @@ MISSING_TEXT = ("Bu bölüm mağaza tarafındaki BBD ucu yayına girince açıla
 #: yüzünden sonsuz döngüye girmemek için var.
 REQUEST_PAGE_LIMIT = 60
 
+#: İlk boyamada her kaynaktan istenen satır sayısı. BBD uçları `per_page`
+#: değerini sunucuda 50'ye kırpıyor; daha büyüğünü istemek bir şey kazandırmaz.
+FIRST_PAGE_SIZE = 50
+
+#: Ödeme ağ geçidi kodu → ekranda görünen ad. Bilinmeyen kod OLDUĞU GİBİ yazılır.
+GATEWAY_LABELS = {"kuveytturk": "Kuveyt Türk"}
+
 
 def _now() -> str:
     return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
 
 
+def _flag(value: Any) -> bool | None:
+    """Mağazanın bayrağı: `true`/`1`/`"1"` → True. Alan hiç yoksa `None`."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "evet")
+    return bool(value)
+
+
 class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
+
+
+class _ListCache:
+    """Liste yanıtının kısa ömürlü önbelleği — TEK UÇUŞ (single-flight).
+
+    NEDEN. Mağaza yönetici API'si jeton başına dakikada 60 isteğe izin veriyor,
+    geçit bunu bütün ekranlar için 55'e bölüştürüyor. Ekranı açıp kapatmak,
+    sekme değiştirip dönmek ya da iki kişinin aynı anda açması her seferinde
+    aynı üç-beş isteği yeniden atıyordu.
+
+    TEK UÇUŞ. Aynı anahtar için bir tarama sürerken gelen ikinci istek yeni bir
+    tarama BAŞLATMAZ; ilkinin sonucunu bekler. `shield` yüzünden bekleyenlerden
+    birinin bağlantısı koparsa tarama yarıda kalmaz.
+
+    TAZELİK. `clear()` başarılı her yazmadan sonra çağrılır ve NESİL sayacını
+    artırır: yazmadan ÖNCE başlamış bir tarama bitince önbelleğe yazılmaz —
+    aksi hâlde yeni oluşan iade, süre dolana kadar listede görünmezdi.
+    Eksik ya da hatalı tarama hiç saklanmaz; bir sonraki açılış yeniden sorar.
+    """
+
+    def __init__(self, ttl: Callable[[], float],
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self._ttl = ttl
+        self._clock = clock
+        self._hits: dict[Any, tuple[float, Any]] = {}
+        self._flights: dict[Any, asyncio.Future[Any]] = {}
+        self._generation = 0
+
+    def peek(self, key: Any) -> Any:
+        hit = self._hits.get(key)
+        if hit is not None and hit[0] > self._clock():
+            return hit[1]
+        return None
+
+    async def get(self, key: Any, produce: Callable[[], Awaitable[Any]], *,
+                  keep: Callable[[Any], bool]) -> Any:
+        found = self.peek(key)
+        if found is not None:
+            return found
+        flight = self._flights.get(key)
+        if flight is None:
+            generation = self._generation
+            flight = asyncio.ensure_future(produce())
+            self._flights[key] = flight
+            # Geri çağrı, bekleyenler uyanmadan ÖNCE koşar (kayıt sırası):
+            # ilk yanıt döndüğünde önbellek çoktan dolmuş olur.
+            flight.add_done_callback(
+                lambda done: self._land(key, done, generation, keep))
+        return await asyncio.shield(flight)
+
+    def _land(self, key: Any, done: asyncio.Future[Any], generation: int,
+              keep: Callable[[Any], bool]) -> None:
+        if self._flights.get(key) is done:
+            self._flights.pop(key, None)
+        if done.cancelled() or done.exception() is not None:
+            return
+        ttl = self._ttl()
+        value = done.result()
+        if generation == self._generation and ttl > 0 and keep(value):
+            self._hits[key] = (self._clock() + ttl, value)
+
+    def clear(self) -> None:
+        self._generation += 1
+        self._hits.clear()
+        self._flights.clear()
 
 
 class RefundsService:
@@ -63,7 +150,8 @@ class RefundsService:
 
     def __init__(self, *, api: Any, store: Any, log: Any, config: dict[str, Any],
                  printer: Any = None, category: str = "Mağaza", subcategory: str = "Finans",
-                 fallback_dir: Path | None = None) -> None:
+                 fallback_dir: Path | None = None,
+                 clock: Callable[[], float] | None = None) -> None:
         self._api = api
         self._store = store
         self._log = log
@@ -75,6 +163,7 @@ class RefundsService:
 
         self._audit = store.table("audit")
         self._calc = store.table("calc")
+        self._list_cache = _ListCache(lambda: self._list_ttl, clock or time.monotonic)
 
     # ------------------------------------------------------------- ayarlar
 
@@ -111,6 +200,11 @@ class RefundsService:
         return bool(self._config.get("refund_shipping_default"))
 
     @property
+    def _list_ttl(self) -> int:
+        """Liste önbelleğinin ömrü (sn). 0 önbelleği kapatır."""
+        return max(0, min(300, calc.as_int(self._config.get("list_cache_seconds"), 90)))
+
+    @property
     def _export_dir(self) -> Path:
         # HER ÇAĞRIDA yeniden çözülür: ay değişince klasör kendiliğinden değişir.
         return report_dir(self._category, subcategory=self._subcategory,
@@ -133,6 +227,66 @@ class RefundsService:
     def _guard(self, reason: str) -> str:
         """Gerekçe backend'de DE doğrulanır (K9): arayüzde gizlemek yetmez."""
         return calc.reason_error(reason)
+
+    @staticmethod
+    def _order_of(item: Any) -> int | None:
+        """Satırın sipariş kimliği; alan yoksa ya da çözülemezse `None`."""
+        value = calc.pick(item, "order_id", "orderId")
+        if value in (None, ""):
+            return None
+        found = calc.as_int(value, -1)
+        return found if found > 0 else None
+
+    @classmethod
+    def _belongs(cls, item: Any, order_id: int) -> bool:
+        """Satır KESİNLİKLE bu siparişin mi — kimliği yoksa HAYIR.
+
+        Kart ve kargo satırları için: başka müşterinin maskeli kartını ya da
+        takip numarasını göstermektense satırı göstermemek doğrudur. Geçit de
+        aynı süzmeyi yapıyor (`store_api`); bu ikinci kapı, geçit ya da mağaza
+        süzgeci bir gün yine sessizce yok sayarsa çekmeceyi korur.
+        """
+        return isinstance(item, dict) and cls._order_of(item) == int(order_id)
+
+    @classmethod
+    def _foreign(cls, item: Any, order_id: int) -> bool:
+        """Satır KESİNLİKLE başka siparişin mi — kimliği yoksa HAYIR.
+
+        Para kapısındaki RMA ve kredi notu satırları için: kimliği okunamayan
+        satır atılmaz, hesaba katılır. Atmak, var olan bir RMA'yı ya da daha
+        önce iade edilmiş kargoyu yok saymak olurdu.
+        """
+        found = cls._order_of(item) if isinstance(item, dict) else None
+        return found is not None and found != int(order_id)
+
+    @staticmethod
+    def _order_ref(raw: Any, order_id: int) -> str:
+        """Kredi notu süzgecine gidecek sipariş değeri.
+
+        TUZAK — MAĞAZADA DOĞRULANDI (`AdminRefundCollectionProvider::applyFilters`):
+        `GET /refunds?order_id=X` sipariş KİMLİĞİNE değil, sipariş NUMARASINA
+        bakar ve `increment_id LIKE '%X%'` ile süzer. `order_id=12` 112, 120,
+        312 numaralı siparişlerin kredi notlarını da getirir; numara kimlikten
+        farklıysa bu siparişinkileri HİÇ getirmeyebilir. Geçmiş iadelerden
+        "daha önce iade edilen kargo" toplandığı için ikisi de para hatasıdır:
+        biri kargoyu eksik, diğeri İKİNCİ KEZ iade ettirir. Bu yüzden sipariş
+        numarası gönderilir ve dönen satırlar kimlikle yeniden süzülür.
+        """
+        return calc.text(calc.pick(raw, "increment_id", "incrementId")) or str(int(order_id))
+
+    @classmethod
+    def _history_of(cls, payload: Any, order_id: int) -> tuple[list[dict[str, Any]], bool]:
+        """Kredi notu yanıtından YALNIZ bu siparişin satırları + liste tam mı.
+
+        Süzgeç `LIKE` olduğu için tek sayfa başka siparişlerle dolabilir:
+        `lastPage > 1` ise bu siparişin bir kredi notu ikinci sayfada kalmış
+        olabilir ve liste "tam" sayılmaz.
+        """
+        source = payload if isinstance(payload, dict) else {}
+        rows = [item for item in (source.get("items") or [])
+                if isinstance(item, dict) and not cls._foreign(item, order_id)]
+        meta = source.get("meta") if isinstance(source.get("meta"), dict) else {}
+        return rows, calc.as_int((meta or {}).get("lastPage"), 1) <= 1
 
     def _window(self, date_from: str, date_to: str) -> tuple[str, str, str]:
         """Tarih penceresi + çözülemeyen tarih için uyarı metni.
@@ -172,22 +326,53 @@ class RefundsService:
 
     # ================================================================ liste
 
-    async def refunds(self, *, date_from: str = "", date_to: str = "") -> dict[str, Any]:
+    async def refunds(self, *, date_from: str = "", date_to: str = "", full: bool = False,
+                      fresh: bool = False) -> dict[str, Any]:
         """Kredi notları + RMA talepleri, tek liste + KPI.
 
         Süzme İSTEMCİDEDİR (ölçek "yüzler"); sunucu pencereyi tarar, satırları
         normalleştirir ve özeti hesaplar. İki kaynaktan biri düşerse diğeri
         yine gösterilir — ekran ayakta kalır (K7).
+
+        `full=False` (ekranın ilk açılışı): her kaynağın yalnız İLK SAYFASI
+        (en yeni kayıtlar) gelir ve yanıt `partial` der. Ekran ilk sayfayı
+        gösterir; süzgeç kullanılınca ya da "Tümünü yükle" denince `full=True`
+        ile pencerenin tamamı istenir. Tam tarama önbellekteyse ilk sayfa
+        isteğine de o verilir — elde varken eksiğini göstermenin anlamı yok.
+
+        `fresh=True` ("Yenile") önbelleği boşaltır.
         """
         start, end, window_note = self._window(date_from, date_to)
-        today = calc.today_iso()
-        warnings: list[str] = [window_note] if window_note else []
+        if fresh:
+            self._list_cache.clear()
+        bundle = None if full else self._list_cache.peek((start, end, True))
+        if bundle is None:
+            bundle = await self._list_cache.get(
+                (start, end, bool(full)),
+                lambda: self._load_list(start, end, full=bool(full)),
+                keep=lambda value: bool(value["complete"]))
+        warnings = ([window_note] if window_note else []) + list(bundle["warnings"])
+        return {**bundle["payload"], "warnings": warnings}
 
-        credit_rows, credit_ok, credit_error, truncated = await self._scan_refunds(start, end)
+    async def _load_list(self, start: str, end: str, *, full: bool) -> dict[str, Any]:
+        """Üç bağımsız okuma AYNI ANDA yapılır (kredi notu · RMA · dönem satışı).
+
+        Sıralı yapıldığında bekleme süresi üçünün toplamıydı. İstek SAYISI
+        değişmez; geçidin hız kovası (dakikada 55) istekleri yine kendisi sıraya
+        koyar, eşzamanlılık yalnız boşta bekleme süresini kısaltır.
+        """
+        today = calc.today_iso()
+        credit, requests, sales_part = await asyncio.gather(
+            self._scan_refunds(start, end, full=full),
+            self._scan_requests(start, end, full=full),
+            self._period_sales())
+        sales, sales_error = sales_part
+        credit_ok, credit_error = credit["ok"], credit["error"]
+        requests_ok, request_error = requests["ok"], requests["error"]
+
+        warnings: list[str] = []
         if not credit_ok:
             warnings.append(f"Kredi notları okunamadı: {credit_error}")
-
-        request_rows, requests_ok, request_error = await self._scan_requests(start, end)
         if not requests_ok:
             warnings.append(f"İade talepleri okunamadı: {request_error}")
         elif request_error:
@@ -195,11 +380,10 @@ class RefundsService:
             # Sessiz kalmak, açık talebi olmayan bir gün gibi görünmesine yol açar.
             warnings.append(f"İade talepleri eksik alındı: {request_error}")
 
-        rows = calc.merge_rows(credit_rows, request_rows)
+        rows = calc.merge_rows(credit["rows"], requests["rows"])
         calc.decorate(rows, today=today, free_return_days=self._free_return_days,
                       return_wait_days=self._return_wait_days)
 
-        sales, sales_error = await self._period_sales()
         summary = calc.summarize(rows, today=today, sales_total=sales)
         if sales is None:
             summary["rateNote"] = (
@@ -209,15 +393,24 @@ class RefundsService:
         else:
             summary["rateNote"] = ""
 
-        return {
+        more = {"refunds": bool(credit["more"]), "requests": bool(requests["more"])}
+        partial = more["refunds"] or more["requests"]
+        payload = {
             "ok": True,
             "connected": credit_ok or requests_ok,
             "error": "" if (credit_ok or requests_ok) else (credit_error or request_error),
             "items": rows,
             "summary": summary,
-            "warnings": warnings,
-            "truncated": truncated,
+            "truncated": bool(credit["truncated"]),
+            "full": full,
+            "partial": partial,
+            "more": more,
+            "partialNote": (
+                f"Her kaynağın en yeni {FIRST_PAGE_SIZE} kaydı gösteriliyor; aralığın "
+                "tamamı yüklenmedi. Özet rakamlar da bu kayıtlardan hesaplandı."
+            ) if partial else "",
             "range": {"from": start, "to": end},
+            "loadedAt": _now(),
             "sources": {
                 "refunds": {"available": credit_ok, "error": credit_error},
                 "requests": {"available": requests_ok, "error": request_error,
@@ -230,35 +423,50 @@ class RefundsService:
                 "pageSize": max(10, min(200, calc.as_int(self._config.get("page_size"), 50))),
             },
         }
+        # Yalnız EKSİKSİZ okuma saklanır: kaynaklardan biri düştüyse ya da
+        # tarama ortada koptuysa bir sonraki açılış yeniden sormalı.
+        complete = credit_ok and requests_ok and not request_error
+        return {"payload": payload, "warnings": warnings, "complete": complete}
 
-    async def _scan_refunds(self, start: str, end: str) -> tuple[list[dict[str, Any]], bool,
-                                                                str, bool]:
+    async def _scan_refunds(self, start: str, end: str, *, full: bool = True) -> dict[str, Any]:
         # `date_from`/`date_to` CANLIDA UYGULANIYOR (doğrulandı: 2026-07-26'dan
         # sonrası 0 kayıt döndü). `channel`/`locale` ise SESSİZCE YOK SAYILIYOR
         # — Laravel tanımadığı sorgu parametresini atar. İkisi de gönderiliyor
         # çünkü zararsız ve uç desteklerse çalışır; ama "kanala göre süzüyoruz"
         # SANILMASIN: mağazada tek kanal var ve süzme olmadan da doğru sonuç
         # çıkıyor. Kanal ayrımı gerekirse süzme burada, satır bazında yapılmalı.
+        #
+        # İLK SAYFA EN YENİLERDİR: uç varsayılan olarak `id` azalan sıralar
+        # (`AbstractAdminCollectionProvider::resolveSort`).
         filters = {"channel": self._channel, "locale": self._locale,
                    "date_from": start, "date_to": end}
         try:
-            payload = await self._api.refunds(filters, all_pages=True)
+            if full:
+                payload = await self._api.refunds(filters, all_pages=True)
+            else:
+                payload = await self._api.refunds(filters, page=1, per_page=FIRST_PAGE_SIZE)
         except Exception as failure:  # noqa: BLE001 — ekran ayakta kalmalı (K7)
             self._log.warning("kredi notları okunamadı", error=str(failure))
-            return [], False, self._fail(failure), False
+            return {"rows": [], "ok": False, "error": self._fail(failure),
+                    "truncated": False, "more": False}
         raw = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
         cap = self._scan_cap
-        truncated = bool(payload.get("truncated")) or len(raw) > cap
-        return [calc.refund_row(item) for item in raw[:cap]], True, "", truncated
+        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+        more = not full and self._has_more(meta or {}, len(raw))
+        truncated = full and (bool(payload.get("truncated")) or len(raw) > cap)
+        return {"rows": [calc.refund_row(item) for item in raw[:cap]], "ok": True,
+                "error": "", "truncated": truncated, "more": more}
 
-    async def _scan_requests(self, start: str, end: str) -> tuple[list[dict[str, Any]], bool, str]:
-        """RMA taleplerini sayfa sayfa toplar.
+    async def _scan_requests(self, start: str, end: str, *, full: bool = True) -> dict[str, Any]:
+        """RMA taleplerini sayfa sayfa toplar (`full=False` ise yalnız ilk sayfa).
 
         `bbd_return_requests` toplu tarama parametresi almıyor; sayfalar SIRAYLA
         çekilir. Uç yayında değilse boş liste + açıklama döner, ekran kredi
         notlarıyla çalışmaya devam eder (K7 — uç bugün ayakta, dal yine durur).
+        İlk sayfa en yeni taleplerdir (mağaza `orderByDesc('id')`).
         """
         rows: list[dict[str, Any]] = []
+        more = False
         # TARİH SÜZGECİNİN ADI `from`/`to`. CANLIDA DOĞRULANDI (2026-08-16):
         # `from=2026-08-01&to=2026-08-16` → 0 kayıt, `from=2026-07-01` → 2 kayıt;
         # `date_from`/`date_to` ise HİÇ UYGULANMIYOR (aynı pencerede 2 kayıt
@@ -273,22 +481,37 @@ class RefundsService:
         page = 1
         while page <= REQUEST_PAGE_LIMIT and len(rows) < self._scan_cap:
             try:
-                payload = await self._api.bbd_return_requests(filters, page=page, per_page=50)
+                payload = await self._api.bbd_return_requests(filters, page=page,
+                                                              per_page=FIRST_PAGE_SIZE)
             except Exception as failure:  # noqa: BLE001 — K7
                 if page > 1:
                     # Kısmî liste yalanla dolmaz: elde ne varsa o gösterilir
                     # ve neden eksik olduğu söylenir.
-                    return rows, True, self._fail(failure)
+                    return {"rows": rows, "ok": True, "error": self._fail(failure),
+                            "more": False}
                 self._log.info("iade talepleri okunamadı", error=str(failure))
-                return [], False, self._fail(failure)
+                return {"rows": [], "ok": False, "error": self._fail(failure), "more": False}
             items = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
             rows.extend(calc.request_row(item) for item in items)
             meta = payload.get("meta") or {}
+            if not full:
+                more = bool(items) and self._has_more(meta, len(items))
+                break
             last = calc.as_int(meta.get("lastPage"), page)
             if not items or page >= last:
                 break
             page += 1
-        return rows[:self._scan_cap], True, ""
+        return {"rows": rows[:self._scan_cap], "ok": True, "error": "", "more": more}
+
+    @staticmethod
+    def _has_more(meta: dict[str, Any], count: int) -> bool:
+        """İlk sayfadan sonra kayıt var mı. `meta.lastPage` yoksa DOLU sayfa
+        "devamı olabilir" sayılır — eksik listeyi tam sanmaktansa fazladan bir
+        "Tümünü yükle" göstermek doğrudur."""
+        last = meta.get("lastPage")
+        if last in (None, ""):
+            return count >= FIRST_PAGE_SIZE
+        return calc.as_int(last, 1) > 1
 
     async def _period_sales(self) -> tuple[int | None, str]:
         """Bu ayın satış tutarı — iade oranının paydası."""
@@ -322,22 +545,22 @@ class RefundsService:
 
     # ============================================================== çekmece
 
-    async def order_card(self, order_id: int) -> dict[str, Any]:
+    async def order_card(self, order_id: int, *, request_id: int = 0) -> dict[str, Any]:
         """Çekmecenin tek isteği: sipariş + kalemler + kargo + POS + geçmiş iadeler.
 
-        Parçalar SIRAYLA ve TEK TEK korunarak çekilir: biri patlarsa çekmecenin
-        gerisi yine dolar (K7). Paralel çekmek geçidin dakikada 55 istek
-        kovasını hızla tüketiyor.
-        """
-        try:
-            raw = await self._api.order(int(order_id))
-        except Exception as failure:  # noqa: BLE001 — K7
-            self._log.warning("sipariş okunamadı", orderId=order_id, error=str(failure))
-            return {"ok": False, "connected": False, "error": self._fail(failure)}
+        Parçalar AYNI ANDA ve TEK TEK korunarak çekilir: biri patlarsa
+        çekmecenin gerisi yine dolar (K7). Eskiden sıralıydı ve bekleme beş
+        isteğin toplamıydı; istek sayısı değişmedi, kovayı geçit yönetiyor.
 
+        `request_id` verilirse (açık bir RMA satırından gelindiyse) o talebin
+        kalemleri de okunur ve iade adetleri talepteki adetlerle ÖNERİLİR.
+        Öneri yalnız kutuları doldurur; hesap ve onay yine kullanıcınındır.
+        """
+        order_id = int(order_id)
+        request_id = calc.as_int(request_id)
         warnings: list[str] = []
 
-        async def part(label: str, call: Any) -> tuple[Any, str]:
+        async def part(label: str, call: Callable[[], Awaitable[Any]]) -> tuple[Any, str]:
             try:
                 return await call(), ""
             except Exception as failure:  # noqa: BLE001 — uzak sistem
@@ -345,20 +568,52 @@ class RefundsService:
                 warnings.append(f"{label}: {message}")
                 return None, message
 
-        history, _ = await part("geçmiş iadeler", lambda: self._api.refunds(
-            {"order_id": int(order_id)}, per_page=50))
-        payments, payments_error = await part("POS denemeleri", lambda: self._api.
-                                              bbd_payment_attempts({"order_id": int(order_id)},
-                                                                   per_page=50))
-        shipments, shipments_error = await part("gönderiler", lambda: self._api.bbd_shipments(
-            {"order_id": int(order_id)}, per_page=50))
-        requests, requests_error = await part("RMA talepleri", lambda: self._api.bbd_return_requests(
-            {"order_id": int(order_id)}, page=1, per_page=50))
+        async def fetch_order() -> tuple[Any, Exception | None]:
+            try:
+                return await self._api.order(order_id), None
+            except Exception as failure:  # noqa: BLE001 — K7
+                return None, failure
 
-        history_rows = [item for item in ((history or {}).get("items") or [])
-                        if isinstance(item, dict)]
-        request_items = requests.get("items") if isinstance(requests, dict) else None
-        request_meta = requests.get("meta") if isinstance(requests, dict) else None
+        async def no_detail() -> tuple[Any, str]:
+            return None, ""
+
+        (raw, order_failure), (history, _), (payments, payments_error), \
+            (shipments, shipments_error), (requests, requests_error), (detail, _) = \
+            await asyncio.gather(
+                fetch_order(),
+                # Kimlikle önden sorulur: bu mağazada sipariş numarası kimlikle
+                # aynıdır ve ikinci tur gerekmez. Farklıysa aşağıda numarayla
+                # yeniden sorulur (bkz. `_order_ref`).
+                part("geçmiş iadeler", lambda: self._api.refunds(
+                    {"order_id": order_id}, per_page=50)),
+                part("POS denemeleri", lambda: self._api.bbd_payment_attempts(
+                    {"order_id": order_id}, per_page=50)),
+                part("gönderiler", lambda: self._api.bbd_shipments(
+                    {"order_id": order_id}, per_page=50)),
+                part("RMA talepleri", lambda: self._api.bbd_return_requests(
+                    {"order_id": order_id}, page=1, per_page=50)),
+                part("RMA kalemleri", lambda: self._api.bbd_return_request(request_id))
+                if request_id > 0 else no_detail(),
+            )
+        if order_failure is not None:
+            self._log.warning("sipariş okunamadı", orderId=order_id, error=str(order_failure))
+            return {"ok": False, "connected": False, "error": self._fail(order_failure)}
+
+        reference = self._order_ref(raw, order_id)
+        if history is not None and reference != str(order_id):
+            history, _ = await part("geçmiş iadeler", lambda: self._api.refunds(
+                {"order_id": reference}, per_page=50))
+        history_rows, history_complete = self._history_of(history, order_id)
+        history_known = history is not None and history_complete
+        if history is not None and not history_complete:
+            warnings.append("geçmiş iadeler: liste tek sayfaya sığmadı; bu siparişin bütün "
+                            "kredi notları okunamamış olabilir.")
+
+        request_source = requests if isinstance(requests, dict) else {}
+        request_items = request_source.get("items")
+        request_meta = request_source.get("meta")
+        if isinstance(request_items, list):
+            request_items = [item for item in request_items if not self._foreign(item, order_id)]
         rma_valid = (isinstance(request_items, list)
                      and isinstance(request_meta, dict)
                      and calc.as_int(request_meta.get("lastPage")) <= 1
@@ -369,42 +624,46 @@ class RefundsService:
             requests_error = "RMA API yanıtı beklenen biçimde değil; güvenli onay kapalı."
             warnings.append(f"RMA talepleri: {requests_error}")
         view = calc.order_view(raw, basis=self._basis,
-                               shipping_refunded=None if history is None
-                               else calc.shipping_refunded_of(history_rows))
-        if history is None and view["shippingAvailable"] > 0:
+                               shipping_refunded=calc.shipping_refunded_of(history_rows)
+                               if history_known else None)
+        if not history_known and view["shippingAvailable"] > 0:
             warnings.append(
                 "Geçmiş iadeler okunamadığı için kargo bedelinin daha önce geri verilip "
                 "verilmediği DOĞRULANAMADI; kargo kutusunu işaretlemeden önce kontrol edin.")
 
+        suggested = self._suggested(detail, order_id, view["lines"])
+
         return {
             "ok": True, "connected": True, "error": "", "warnings": warnings,
             "order": view,
-            "shippingVerified": history is not None,
+            "shippingVerified": history_known,
             "history": [calc.refund_row(item) for item in history_rows],
             "payments": {
                 "available": payments is not None,
                 "error": payments_error,
                 "items": [self._payment_row(item)
                           for item in ((payments or {}).get("items") or [])
-                          if isinstance(item, dict)],
-                # POS İADESİ DÜĞMESİ TIKLANMADAN ÖNCE KAPANIR. Liste okunuyor
-                # (hangi karta ne çekildiği gerçek bir bilgi), yalnız parayı
-                # geri gönderme adımı buradan yapılmıyor.
+                          if self._belongs(item, order_id)],
+                # Ayrı POS iadesi YOKTUR: kredi notu bankaya iadeyi kendisi
+                # başlatır. Liste okunur (hangi karta ne çekildi), düğme çizilmez.
                 "refundBlocked": True,
                 "refundReason": self.POS_REFUND_REASON,
+                "note": self.POS_NOTE,
             },
             "shipments": {
                 "available": shipments is not None,
                 "error": shipments_error,
                 "items": [self._shipment_row(item)
                           for item in ((shipments or {}).get("items") or [])
-                          if isinstance(item, dict)],
+                          if self._belongs(item, order_id)],
             },
             "rma": {
                 "available": requests is not None and rma_valid,
                 "error": requests_error,
-                "items": [calc.request_row(item) for item in request_items]
+                "items": [calc.request_row(item) for item in request_items or []]
                          if rma_valid else [],
+                "suggested": suggested,
+                "suggestedFrom": request_id if suggested else 0,
             },
             "shippingDefault": self._shipping_default,
             "basisNotice": "" if view["invoicedAny"] else (
@@ -412,17 +671,77 @@ class RefundsService:
                 "alındı; parası tahsil edilmemiş bir kalemi iade etmediğinizden emin olun."),
         }
 
+    @classmethod
+    def _suggested(cls, detail: Any, order_id: int,
+                   lines: list[dict[str, Any]]) -> dict[str, int]:
+        """RMA'daki kalem adetleri → `{siparişKalemId: adet}` önerisi.
+
+        Talep BAŞKA siparişinse ya da kapanmışsa (iade edildi / reddedildi)
+        öneri yapılmaz. Adet, kalemin iade edilebilir adedini AŞMAZ: talep
+        3 diyorsa ama 1 adet faturalanmışsa kutuya 1 yazılır.
+        """
+        if not isinstance(detail, dict):
+            return {}
+        source = detail.get("data") if isinstance(detail.get("data"), dict) else detail
+        if cls._order_of(source) != int(order_id):
+            return {}
+        status = calc.status_of(calc.pick(source, "status", "state"))
+        if status in (calc.ST_REFUNDED, calc.ST_REJECTED):
+            return {}
+        limits = {int(line["id"]): int(line["refundable"]) for line in lines}
+        wanted: dict[int, int] = {}
+        for item in source.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            nested = item.get("orderItem") if isinstance(item.get("orderItem"), dict) else {}
+            line_id = calc.as_int(calc.pick(item, "order_item_id", "orderItemId")
+                                  or calc.pick(nested, "id"))
+            qty = calc.as_int(calc.pick(item, "quantity", "qty"))
+            if line_id in limits and qty > 0:
+                wanted[line_id] = wanted.get(line_id, 0) + qty
+        return {str(line_id): min(qty, limits[line_id])
+                for line_id, qty in wanted.items() if limits[line_id] > 0}
+
     @staticmethod
-    def _payment_row(raw: dict[str, Any]) -> dict[str, Any]:
-        amount = calc.to_kurus(calc.pick(raw, "amount", "total")) or 0
-        refunded = calc.to_kurus(calc.pick(raw, "refunded_amount", "refundedAmount")) or 0
+    def _minor(raw: Any, *names: str) -> int | None:
+        """KURUŞ TAM SAYISI olarak gelen alan (`amount_minor`). Yoksa `None`.
+
+        `to_kurus` BURADA KULLANILMAZ: o ondalık TL bekler ve 12345 kuruşu
+        1.234.500 kuruşa çevirirdi.
+        """
+        value = calc.pick(raw, *names)
+        if value in (None, ""):
+            return None
+        found = calc.as_int(value, -1)
+        return found if found >= 0 else None
+
+    @classmethod
+    def _payment_row(cls, raw: dict[str, Any]) -> dict[str, Any]:
+        """POS denemesi → çekmece satırı.
+
+        ALAN ADLARI MAĞAZANIN BEYAZ LİSTESİNDEN (`OutputMask::PAYMENT_ATTEMPT`):
+        `amount_minor` · `refunded_minor` (KURUŞ tam sayı) · `masked_number` ·
+        `gateway` · `state` (+ Türkçe `stateLabel`). Eskiden `amount`/
+        `masked_card` aranıyordu; hiçbiri gelmediği için satırlar "0,00 ₺" ve
+        boş kartla çiziliyordu. Eski adlar yine okunur (ondalık TL olarak).
+        """
+        amount = cls._minor(raw, "amount_minor", "amountMinor")
+        if amount is None:
+            amount = calc.to_kurus(calc.pick(raw, "amount", "total")) or 0
+        refunded = cls._minor(raw, "refunded_minor", "refundedMinor")
+        if refunded is None:
+            refunded = calc.to_kurus(calc.pick(raw, "refunded_amount", "refundedAmount")) or 0
+        gateway = calc.text(calc.pick(raw, "gateway", "bank", "provider", "pos"))
         return {
             "id": calc.as_int(calc.pick(raw, "id", "attempt_id")),
+            "orderId": calc.as_int(calc.pick(raw, "order_id", "orderId")),
             "createdAt": calc.text(calc.pick(raw, "created_at", "createdAt"))[:19],
-            "bank": calc.text(calc.pick(raw, "bank", "provider", "pos", "gateway")),
-            "card": calc.text(calc.pick(raw, "masked_card", "card", "card_last4")),
+            "bank": GATEWAY_LABELS.get(gateway.lower(), gateway),
+            "card": calc.text(calc.pick(raw, "masked_number", "maskedNumber", "masked_card",
+                                        "card", "card_last4")),
             "installment": calc.as_int(calc.pick(raw, "installment", "installments")),
-            "status": calc.text(calc.pick(raw, "status", "state")),
+            "status": calc.text(calc.pick(raw, "stateLabel", "state_label", "status", "state")),
+            "state": calc.text(calc.pick(raw, "state", "status")),
             "amount": amount,
             "refunded": refunded,
             "refundable": max(0, amount - refunded),
@@ -430,13 +749,41 @@ class RefundsService:
 
     @staticmethod
     def _shipment_row(raw: dict[str, Any]) -> dict[str, Any]:
+        """Geliver gönderisi → çekmece satırı.
+
+        ALAN ADLARI MAĞAZANIN BEYAZ LİSTESİNDEN (`OutputMask::SHIPMENT` +
+        `ShipmentController::present`): taşıyıcı `providerName` (görünen ad) ya
+        da `provider_code`; iade gönderisi `is_return`, etiket `isPurchased`.
+        Eskiden `carrier` aranıyordu; gelmediği için her satır "Taşıyıcı" diye
+        çiziliyordu.
+        """
+        is_return = _flag(calc.pick(raw, "is_return", "isReturn"))
+        purchased = _flag(calc.pick(raw, "isPurchased", "is_purchased", "labelPurchased"))
+        if purchased is None:
+            purchased = bool(calc.text(calc.pick(raw, "geliver_transaction_id",
+                                                 "geliverTransactionId")))
+        if is_return is None:
+            direction = calc.text(calc.pick(raw, "direction", "kind"))
+            is_return = direction.lower() in ("return", "iade")
         return {
             "id": calc.as_int(calc.pick(raw, "id", "shipment_id")),
-            "carrier": calc.text(calc.pick(raw, "carrier", "carrier_name")),
+            "orderId": calc.as_int(calc.pick(raw, "order_id", "orderId")),
+            "carrier": calc.text(calc.pick(raw, "providerName", "provider_name", "carrier_name",
+                                           "carrierName", "carrier", "provider_code",
+                                           "providerCode")),
+            "providerCode": calc.text(calc.pick(raw, "provider_code", "providerCode")),
             "tracking": calc.text(calc.pick(raw, "tracking_number", "trackingNumber",
-                                            "tracking_no")),
+                                            "tracking_no", "barcode")),
+            "trackingUrl": calc.text(calc.pick(raw, "tracking_url", "trackingUrl")),
             "status": calc.text(calc.pick(raw, "status", "state")),
-            "direction": calc.text(calc.pick(raw, "direction", "kind")),
+            "direction": "return" if is_return else "outbound",
+            "isReturn": bool(is_return),
+            "purchased": bool(purchased),
+            "parentId": calc.as_int(calc.pick(raw, "parent_id", "parentId")),
+            "rmaId": calc.as_int(calc.pick(raw, "rma_id", "rmaId")),
+            "receivedAt": calc.text(calc.pick(raw, "return_received_at",
+                                              "returnReceivedAt"))[:19],
+            "error": calc.text(calc.pick(raw, "last_error", "lastError")),
             "createdAt": calc.text(calc.pick(raw, "created_at", "createdAt"))[:19],
         }
 
@@ -464,10 +811,15 @@ class RefundsService:
         # sorulur: gereksiz istek dakikada 55'lik kovayı tüketir.
         already: int | None = 0
         if refund_shipping:
+            # Süzgeç sipariş NUMARASIYLA ve `LIKE` ile çalışır; dönen satırlar
+            # kimlikle yeniden süzülür (bkz. `_order_ref`).
             try:
-                history = await self._api.refunds({"order_id": int(order_id)}, per_page=50)
-                already = calc.shipping_refunded_of(
-                    [item for item in (history.get("items") or []) if isinstance(item, dict)])
+                history = await self._api.refunds(
+                    {"order_id": self._order_ref(raw, int(order_id))}, per_page=50)
+                rows, complete = self._history_of(history, int(order_id))
+                if not complete:
+                    raise RuntimeError("liste tek sayfaya sığmadı")
+                already = calc.shipping_refunded_of(rows)
             except Exception as failure:  # noqa: BLE001 — K7
                 already = None
                 warnings.append(
@@ -581,14 +933,16 @@ class RefundsService:
                                actor=actor, result="rma_check_invalid",
                                detail={"total": row["total"]})
             return {"ok": False, "error": "RMA kontrolü geçersiz yanıt verdi; iade oluşturulmadı."}
+        # Çekmeceyle AYNI süzme: kesinlikle başka siparişe ait talep atılır,
+        # siparişi okunamayan talep hesaba katılır (bkz. `_foreign`).
+        rma_rows = [item for item in rmas["items"] if not self._foreign(item, order_id)]
         if any(not isinstance(item, dict)
                or calc.as_int(calc.pick(item, "id", "request_id")) <= 0
-               for item in rmas["items"]):
+               for item in rma_rows):
             await self._record(order_id=order_id, action="create_refund", reason=reason,
                                actor=actor, result="rma_check_invalid",
                                detail={"total": row["total"]})
             return {"ok": False, "error": "RMA yanıtında geçersiz talep bulundu; iade oluşturulmadı."}
-        rma_rows = rmas["items"]
         live_rma_ids = sorted(calc.as_int(calc.pick(item, "id", "request_id"))
                               for item in rma_rows)
         acknowledged_ids = sorted({calc.as_int(value) for value in (rma_acknowledged_ids or [])})
@@ -622,6 +976,10 @@ class RefundsService:
 
         # BURADAN SONRASI PARA ÇIKTIKTAN SONRASIDIR. Yerel yazma patlarsa istisna
         # yukarı gitmemeli: kullanıcı "hata" görüp iadeyi ikinci kez denerdi (K7).
+        if not result.get("dryRun", dry_run):
+            # Yeni kredi notu listede HEMEN görünmeli; önbellek süresini beklerse
+            # personel iadenin oluşmadığını sanıp ikinci kez dener.
+            self._list_cache.clear()
         warning = ""
         try:
             await self._store.execute(
@@ -657,12 +1015,12 @@ class RefundsService:
     #:
     #: Ayrı bir POS iadesi ikinci kez para çıkarabilir; bu yüzden by-design kapalıdır.
     POS_REFUND_REASON = (
-        "Ayrı sanal POS iadesi bu ekrandan başlatılamaz: bu mağazada kredi notu "
-        "oluşturulunca Bagisto refund listener'ı Kuveyt Türk iadesini otomatik "
-        "başlatır. Aynı iade için POS/banka ekranından tekrar işlem göndermek "
-        "çifte para iadesi riski taşır; banka sonucunu ödeme ve iade kayıtlarından "
-        "doğrulayın."
+        "Ayrı POS iadesi yapılmaz: kredi notu oluşunca Kuveyt Türk iadesi otomatik "
+        "başlar; ikinci bir banka işlemi çifte para iadesi olur."
     )
+
+    #: Çekmecenin POS bölümündeki TEK satır. Uzun paragraf okunmuyordu.
+    POS_NOTE = "Banka iadesi, iade (kredi notu) oluşturulunca Kuveyt Türk'e otomatik gider."
 
     @staticmethod
     def _by_design(failure: Exception) -> bool:
@@ -719,6 +1077,8 @@ class RefundsService:
             return {"ok": False, "error": self._fail(failure),
                     "missing": self._missing(failure)}
 
+        if not result.get("dryRun", dry_run):
+            self._list_cache.clear()            # durum çipi hemen doğru saymalı
         await self._record(order_id=0, action=f"request_{wanted}", reason=reason, actor=actor,
                            result="dry_run" if dry_run else "ok",
                            detail={"requestId": request_id})
@@ -726,33 +1086,120 @@ class RefundsService:
                 "statusLabel": calc.STATUS_LABELS[wanted],
                 "dryRun": bool(result.get("dryRun", dry_run))}
 
-    async def return_shipment(self, shipment_id: int, *, order_id: int = 0, reason: str,
-                              actor: str, dry_run: bool = True) -> dict[str, Any]:
-        """Müşteriden geri gönderim için iade gönderisi açar (takip no üretir)."""
+    @classmethod
+    def _return_view(cls, payload: Any) -> dict[str, Any]:
+        """İade gönderisi yanıtını tek biçime indirir.
+
+        İki uç iki biçim döner: gönderi ucu gönderinin KENDİSİNİ
+        (`ShipmentController::present`), talep ucu ise talebin kargo özetini
+        (`{labelPurchased, shipment: {...}}` — `ReturnShipmentController::present`).
+        """
+        source = payload if isinstance(payload, dict) else {}
+        if isinstance(source.get("data"), dict):
+            source = source["data"]
+        nested = source.get("shipment")
+        row = cls._shipment_row(nested if isinstance(nested, dict) else source)
+        return {"id": row["id"], "tracking": row["tracking"], "carrier": row["carrier"],
+                "purchased": row["purchased"] or bool(_flag(source.get("labelPurchased")))}
+
+    async def return_shipment(self, shipment_id: int, *, order_id: int = 0, request_id: int = 0,
+                              reason: str, actor: str, dry_run: bool = True) -> dict[str, Any]:
+        """Müşteriden geri alım: iade gönderisini AÇAR ve ETİKETİNİ SATIN ALIR.
+
+        PARA HARCAR (kargo ücreti) — `store_refunds.ship_return` izni + gerekçe
+        (ADR 0012). Kullanıcı TEK onay verir; arkada iki adım koşar:
+
+          1. Gönderiyi aç — para harcamaz, mağazada mükerrer korumalıdır: aynı
+             gönderi/talep için ikinci kayıt açılmaz, var olan döner.
+          2. Etiketi satın al — PARA HARCAR. Etiket zaten alınmışsa bu adım
+             ATLANIR; ikinci etiket alınmaz.
+
+        NEDEN İKİ ADIM. Eskiden yalnız 1. adım çağrılıyordu ve ekran "ücret
+        mağazaya yansır" derken mağazada yalnız bir TASLAK oluşuyordu: etiket
+        yok, takip numarası yok. Gönderi ucunun `purchaseNow` alanı bunu tek
+        istekte yapabilir ama geçidin `bbd_return_shipment` metodu gövdeye alan
+        koymuyor; mağazanın kendi RMA zinciri de aynı iki adımı kullanır
+        (`ReturnShipmentManager::purchaseLabel` → `ShipmentManager::purchase`).
+
+        HANGİ UÇ. RMA talebi varsa (`request_id`) talep zinciri kullanılır: iade
+        gönderisi talebe bağlanır ve "ürün geldi mi" bilgisi talebe düşer. Talep
+        mağazada ONAYLANMIŞ olmalıdır; değilse mağazanın kendi açıklaması
+        gösterilir. Talep yoksa giden gönderinin üzerinden açılır.
+
+        2. adım patlarsa taslak kalır ve bu AÇIKÇA söylenir; yeniden denemek
+        güvenlidir çünkü 1. adım var olan taslağı döndürür.
+        """
         problem = self._guard(reason)
         if problem:
             return {"ok": False, "error": problem}
-        if not calc.as_int(shipment_id):
+        shipment_id, request_id = calc.as_int(shipment_id), calc.as_int(request_id)
+        if shipment_id <= 0 and request_id <= 0:
             return {"ok": False, "error": "Geri gönderim için bir gönderi seçilmedi."}
 
-        await self._record(order_id=order_id, action="return_shipment", reason=reason,
-                           actor=actor, result="denendi", detail={"shipmentId": shipment_id})
-        try:
-            result = await self._api.bbd_return_shipment(int(shipment_id), reason=reason,
-                                                         actor=actor, dry_run=dry_run)
-        except Exception as failure:  # noqa: BLE001 — K7
+        detail: dict[str, Any] = {"shipmentId": shipment_id, "requestId": request_id}
+
+        async def note(result: str, **extra: Any) -> None:
             await self._record(order_id=order_id, action="return_shipment", reason=reason,
-                               actor=actor, result="hata", detail={"error": str(failure)})
+                               actor=actor, result=result, detail={**detail, **extra})
+
+        await note("denendi")
+        try:
+            if request_id > 0:
+                opened = await self._api.bbd_open_return_request_shipment(
+                    request_id, reason=reason, actor=actor, dry_run=dry_run)
+            else:
+                opened = await self._api.bbd_return_shipment(
+                    shipment_id, reason=reason, actor=actor, dry_run=dry_run)
+        except Exception as failure:  # noqa: BLE001 — K7
+            await note("hata", step="open", error=str(failure))
             return {"ok": False, "error": self._fail(failure),
                     "missing": self._missing(failure)}
 
-        await self._record(order_id=order_id, action="return_shipment", reason=reason,
-                           actor=actor, result="dry_run" if dry_run else "ok",
-                           detail={"shipmentId": shipment_id})
-        return {"ok": True, "error": "",
-                "tracking": calc.text(calc.pick(result, "tracking_number", "trackingNumber")),
-                "carrier": calc.text(calc.pick(result, "carrier", "carrier_name")),
-                "dryRun": bool(result.get("dryRun", dry_run))}
+        if (opened or {}).get("dryRun", dry_run):
+            await note("dry_run")
+            return {"ok": True, "error": "", "dryRun": True, "purchased": False,
+                    "tracking": "", "carrier": "",
+                    "message": "Kuru prova: gönderi açılmadı, etiket satın alınmadı."}
+
+        first = self._return_view(opened)
+        if first["purchased"]:
+            await note("ok", alreadyPurchased=True, returnId=first["id"])
+            return {"ok": True, "error": "", "dryRun": False, "purchased": True,
+                    "tracking": first["tracking"], "carrier": first["carrier"],
+                    "message": "Bu gönderinin iade etiketi zaten alınmış; ikinci etiket "
+                               "alınmadı."}
+
+        draft_note = ("İade gönderisi açıldı ama etiket SATIN ALINMADI: {why} Yeniden "
+                      "denerseniz aynı gönderi kullanılır; ikinci gönderi açılmaz.")
+        try:
+            if request_id > 0:
+                bought = await self._api.bbd_purchase_return_request_label(
+                    request_id, reason=reason, actor=actor, dry_run=dry_run)
+            elif first["id"] > 0:
+                bought = await self._api.bbd_purchase_shipment(
+                    first["id"], offer_id="", reason=reason, actor=actor, dry_run=dry_run)
+            else:
+                await note("taslak", error="iade gönderisi numarası yanıtta yok")
+                return {"ok": False, "draft": True,
+                        "error": draft_note.format(why="gönderi numarası okunamadı.")}
+        except Exception as failure:  # noqa: BLE001 — K7; taslak açık kaldı, söylenir
+            await note("taslak", step="purchase", returnId=first["id"], error=str(failure))
+            return {"ok": False, "draft": True,
+                    "error": draft_note.format(why=f"{self._fail(failure)}.")}
+
+        second = self._return_view(bought)
+        sandbox = bool((bought or {}).get("dryRun", dry_run))
+        purchased = second["purchased"] and not sandbox
+        if purchased:
+            self._list_cache.clear()
+        await note("ok" if purchased else "taslak", returnId=second["id"] or first["id"],
+                   tracking=second["tracking"])
+        return {"ok": True, "error": "", "dryRun": sandbox, "purchased": purchased,
+                "tracking": second["tracking"] or first["tracking"],
+                "carrier": second["carrier"] or first["carrier"],
+                "message": "" if purchased else
+                ("İade gönderisi açıldı ama mağaza etiketin satın alındığını doğrulamadı; "
+                 "Kargo ekranından kontrol edin.")}
 
     async def notify_customer(self, order_id: int, *, message: str, reason: str, actor: str,
                               dry_run: bool = True) -> dict[str, Any]:
@@ -800,8 +1247,11 @@ class RefundsService:
                 "Eksik listeyi arşivlemek yanlış rakamla belge bırakır.")
 
     async def export_csv(self, *, date_from: str = "", date_to: str = "") -> dict[str, Any]:
-        """Pencerenin tamamının CSV'si — rapor klasörüne yazılır."""
-        payload = await self.refunds(date_from=date_from, date_to=date_to)
+        """Pencerenin tamamının CSV'si — rapor klasörüne yazılır.
+
+        Her zaman TAM tarama: ekranın ilk sayfası arşive girmez.
+        """
+        payload = await self.refunds(date_from=date_from, date_to=date_to, full=True)
         gap = self._credit_gap(payload)
         if gap:
             return {"ok": False, "error": gap}
@@ -840,7 +1290,7 @@ class RefundsService:
 
         if kind == "summary":
             payload = await self.refunds(date_from=calc.text(params.get("dateFrom")),
-                                         date_to=calc.text(params.get("dateTo")))
+                                         date_to=calc.text(params.get("dateTo")), full=True)
             gap = self._credit_gap(payload)
             if gap:
                 return {"ok": False, "error": gap}

@@ -9,6 +9,12 @@ locale: "tr"
 # "yüzler" ölçeğinde bile açık uçlu sorgu her açılışta onlarca sayfa demek.
 default_range_days: 90
 
+# Liste yanıtının ömrü (saniye). Ekranı açıp kapatmak, sekme değiştirmek ya da
+# iki kişinin aynı anda bakması mağazaya yeniden gitmez; dakikada 55 isteklik
+# ortak kovayı korur. Başarılı her yazmadan sonra ve "Yenile" ile boşaltılır.
+# 0 önbelleği kapatır.
+list_cache_seconds: 90
+
 # Tam tarama tavanı. Bozuk `meta` yüzünden sonsuz sayfa dönmesini engeller;
 # aynı zamanda ekranın istemcide süzülebilir büyüklükte kalmasını garanti eder.
 scan_cap: 1500

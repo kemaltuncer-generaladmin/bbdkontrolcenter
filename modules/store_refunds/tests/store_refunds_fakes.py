@@ -91,6 +91,20 @@ class FakeApi:
         self.stats_payload: dict[str, Any] = {}
         self.payments_payload: dict[str, Any] = {"items": [], "meta": {}}
         self.shipments_payload: dict[str, Any] = {"items": [], "meta": {}}
+        self.request_detail: dict[str, Any] = {}
+        #: İade gönderisi zinciri: açılan taslak ve satın alma yanıtı.
+        self.return_payload: dict[str, Any] = {
+            "id": 31, "order_id": 12, "is_return": True, "parent_id": 21,
+            "provider_code": "YURTICI", "providerName": "Yurtiçi Kargo",
+            "tracking_number": None, "geliver_transaction_id": None,
+            "isPurchased": False, "canPurchase": True,
+        }
+        self.purchase_payload: dict[str, Any] = {
+            "id": 31, "order_id": 12, "is_return": True, "parent_id": 21,
+            "provider_code": "YURTICI", "providerName": "Yurtiçi Kargo",
+            "tracking_number": "IADE-9", "geliver_transaction_id": "tx-1",
+            "isPurchased": True, "canPurchase": False,
+        }
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         if name in self.absent:
@@ -139,6 +153,10 @@ class FakeApi:
         self._record("bbd_shipments", filters, page=page, per_page=per_page)
         return self.shipments_payload
 
+    async def bbd_return_request(self, request_id: int) -> dict[str, Any]:
+        self._record("bbd_return_request", request_id)
+        return self.request_detail
+
     # ------------------------------------------------------------- yazma
 
     async def refund_preview(self, order_id: int, *, items: dict[str, int]) -> dict[str, Any]:
@@ -169,9 +187,41 @@ class FakeApi:
 
     async def bbd_return_shipment(self, shipment_id: int, *, reason: str, actor: str = "",
                                   dry_run: bool | None = None) -> dict[str, Any]:
+        """Mağaza `createReturn` — `purchaseNow` GİTMEZ, yalnız TASLAK açılır."""
         self._record("bbd_return_shipment", shipment_id, reason=reason, actor=actor,
                      dry_run=dry_run)
-        return {"ok": True, "dryRun": bool(dry_run), "tracking_number": "IADE-9"}
+        if dry_run:
+            return {"dryRun": True, "wouldChange": {"action": "shipment.return"}}
+        return {**self.return_payload, "dryRun": False}
+
+    async def bbd_purchase_shipment(self, shipment_id: int, *, offer_id: str, reason: str,
+                                    actor: str = "",
+                                    dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_purchase_shipment", shipment_id, offer_id=offer_id, reason=reason,
+                     actor=actor, dry_run=dry_run)
+        if dry_run:
+            return {"dryRun": True, "wouldChange": {"action": "shipment.purchase"}}
+        return {**self.purchase_payload, "dryRun": False}
+
+    async def bbd_open_return_request_shipment(self, request_id: int, *, reason: str,
+                                               actor: str = "",
+                                               dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_open_return_request_shipment", request_id, reason=reason,
+                     actor=actor, dry_run=dry_run)
+        if dry_run:
+            return {"dryRun": True, "wouldChange": {"action": "returnShipment.create"}}
+        return {"rmaId": request_id, "orderId": 12, "labelPurchased": False,
+                "shipment": dict(self.return_payload, rma_id=request_id), "dryRun": False}
+
+    async def bbd_purchase_return_request_label(self, request_id: int, *, offer_id: str = "",
+                                                reason: str, actor: str = "",
+                                                dry_run: bool | None = None) -> dict[str, Any]:
+        self._record("bbd_purchase_return_request_label", request_id, offer_id=offer_id,
+                     reason=reason, actor=actor, dry_run=dry_run)
+        if dry_run:
+            return {"dryRun": True, "wouldChange": {"action": "returnShipment.purchase"}}
+        return {"rmaId": request_id, "orderId": 12, "labelPurchased": True,
+                "shipment": dict(self.purchase_payload, rma_id=request_id), "dryRun": False}
 
     async def add_order_comment(self, order_id: int, *, comment: str, notify: bool = False,
                                 reason: str, actor: str = "",
@@ -309,6 +359,62 @@ LIVE_RETURN_REQUEST = {
     "orderStatus": "closed",
     "customerName": "veysel kemal TUNCER",
     "isGuest": False,
+}
+
+
+#: MAĞAZA SÖZLEŞMESİ — `GET /api/admin/bbd/payments/attempts` satırı. Alan
+#: adları mağazanın beyaz listesinden (`OutputMask::PAYMENT_ATTEMPT`) ve
+#: `PaymentState::describe` ekinden alınmıştır: tutarlar KURUŞ TAM SAYISI
+#: (`amount_minor`), kart `masked_number`. Değerler örnektir.
+STORE_PAYMENT_ATTEMPT = {
+    "id": 41,
+    "uuid": "9b1c-örnek",
+    "gateway": "kuveytturk",
+    "merchant_order_id": "BBD-12-1",
+    "order_id": 12,
+    "customer_id": 7,
+    "channel": "default",
+    "state": "captured",
+    "amount_minor": 54_000,
+    "refunded_minor": 11_000,
+    "currency": "TRY",
+    "installment": 1,
+    "masked_number": "518896******2544",
+    "created_at": "2026-08-01 10:00:05",
+    "stateLabel": "Tahsil edildi",
+    "moneyTaken": True,
+    "moneyReturned": False,
+    "needsAttention": False,
+}
+
+#: MAĞAZA SÖZLEŞMESİ — `GET /api/admin/bbd/shipments` satırı
+#: (`OutputMask::SHIPMENT` + `ShipmentController::present`). Taşıyıcının adı
+#: `providerName`, kodu `provider_code`; `carrier` diye bir alan YOKTUR.
+STORE_SHIPMENT = {
+    "id": 21,
+    "order_id": 12,
+    "geliver_shipment_id": "gs-21",
+    "geliver_transaction_id": "tx-21",
+    "provider_code": "YURTICI",
+    "provider_service_code": "YURTICI_STANDART",
+    "barcode": "123456",
+    "tracking_number": "YK123456",
+    "tracking_url": "https://kargo.ornek/YK123456",
+    "status": "TRANSIT",
+    "amount": 48.0,
+    "currency": "TRY",
+    "is_return": False,
+    "is_test": False,
+    "parent_id": None,
+    "rma_id": None,
+    "return_received_at": None,
+    "last_error": None,
+    "created_at": "2026-08-01 12:00:00",
+    "providerName": "Yurtiçi Kargo",
+    "isPurchased": True,
+    "canPurchase": False,
+    "canCancel": True,
+    "labelStored": True,
 }
 
 
