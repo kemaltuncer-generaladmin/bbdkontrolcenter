@@ -26,10 +26,16 @@ LEVEL = " / "
 
 
 def _navs() -> list[dict]:
-    """Her modülün `ui.nav` bloğu (menüde görünenler)."""
+    """Her modülün `ui.nav` bloğu (menüde görünenler).
+
+    `enabled: false` modül menüde görünmez (`/modules` → `visible: false`);
+    hiyerarşi sınamasına da girmez.
+    """
     out = []
     for manifest in sorted((ROOT / "modules").glob("*/module.yaml")):
         data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        if data.get("enabled", True) is False:
+            continue
         nav = ((data.get("ui") or {}).get("nav")) or {}
         if not nav:
             continue
@@ -52,16 +58,20 @@ def test_magaza_ekranlari_TEK_ust_baslik_altinda() -> None:
         assert top == "BBD Store", f"{nav['id']} → “{group}” BBD Store altında değil"
 
 
-def test_bolum_adlari_bilinen_kumeden() -> None:
-    """Yeni bölüm açmak serbesttir ama KAZA ESERİ açılmamalı: bir yazım hatası
-    (“Katalog ” / “katalog”) menüde ikinci bir bölüm doğururdu."""
-    beklenen = {"Satış ve Kargo", "Katalog", "Vitrin ve İçerik",
-                "Müşteri ve İletişim", "Mali", "Sistem ve Kayıt"}
-    bulunan = set()
-    for nav in _navs():
-        if nav["group"].startswith("BBD Store" + LEVEL):
-            bulunan.add(nav["group"].split(LEVEL, 1)[1])
-    assert bulunan == beklenen, f"beklenmeyen bölüm(ler): {bulunan ^ beklenen}"
+def test_magaza_menusu_YEDI_ekranlik_duz_liste() -> None:
+    """Kullanıcının kararı (10.10.2026): BBD Store sade olacak — yedi ekran,
+    bölüm yok, her ekran tek tıkla açılır. Diğer mağaza ekranları pasiftir
+    (`enabled: false`) ya da menüden kaldırılmıştır (arka ucu çalışır).
+
+    Sekizinci bir ekran ya da bir alt bölüm KAZA ESERİ geri gelmemeli.
+    """
+    store = sorted((nav for nav in _navs() if nav["id"].startswith("store_")),
+                   key=lambda nav: int(nav.get("order", 1000)))
+    assert [nav["title"] for nav in store] == [
+        "Dashboard", "Siparişler", "Kargo Yönetimi", "İade Yönetimi",
+        "Müşteri Listesi", "Ürün Yönetimi", "Set Yönetimi",
+    ]
+    assert {nav["group"] for nav in store} == {"BBD Store"}
 
 
 def test_grup_bantlari_CAKISMAZ() -> None:

@@ -11,7 +11,9 @@ name: "Raporlar"
 description: "Satış, ürün, müşteri, kargo, mali, pazarlama ve sistem raporları; çoklu rapor tek PDF."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: true
+# 10.10.2026 sadeleştirmesi: BBD Store menüsü yedi ekrana indirildi; bu ekran
+# şimdilik PASİF. Geri açmak için `true` yazmak yeter — kodu ve verisi duruyor.
+enabled: false
 
 entrypoint: backend.module:register
 

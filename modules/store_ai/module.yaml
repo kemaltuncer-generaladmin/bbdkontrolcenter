@@ -24,7 +24,9 @@ name: "Dahili AI Ekranları"
 description: "Kural tabanlı katalog sağlığı denetimi ve onaya bağlı AI öneri araçları."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
-enabled: true
+# 10.10.2026 sadeleştirmesi: BBD Store menüsü yedi ekrana indirildi; bu ekran
+# şimdilik PASİF. Geri açmak için `true` yazmak yeter — kodu ve verisi duruyor.
+enabled: false
 
 entrypoint: backend.module:register
 

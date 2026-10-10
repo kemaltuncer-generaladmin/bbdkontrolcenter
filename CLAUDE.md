@@ -85,8 +85,17 @@ yapamaz; belirti sebebi ele vermez.
 
 Çekirdek (`km_core`), SDK ve platform yeteneklerinin çoğu (`audio`,
 `scheduler`, `secrets`, `notify`, `printer`) yazıldı ve çalışıyor; sidecar
-ayağa kalkıyor, kabuk modülleri dinamik yüklüyor. `modules/` altındaki
-**49 modülün hepsi** `enabled: true`; iskelet olarak kapatılmış modül kalmadı.
+ayağa kalkıyor, kabuk modülleri dinamik yüklüyor.
+
+**BBD Store sadeleştirildi (10.10.2026, kullanıcı kararı).** Menüde yalnız yedi
+mağaza ekranı var: Dashboard, Siparişler, Kargo Yönetimi, İade Yönetimi,
+Müşteri Listesi, Ürün Yönetimi, Set Yönetimi — tek düz grup, bölüm yok.
+On mağaza modülü `enabled: false` (store_ai, store_backups, store_cms,
+store_home_media, store_payment_gateway, store_promotions, store_reports,
+store_requests, store_tax, store_trial_club); kapalı modül menüde hiç
+görünmez. store_notifications, store_invoices ve store_udit_logs menüden
+kaldırıldı ama arka uçları ÇALIŞIR (sipariş SMS'i ve sipariş ekranları onlara
+bağlı). Görsel kurallar: [docs/tasarim-sade-magaza.md](docs/tasarim-sade-magaza.md).
 
 `print` (Çıktı Merkezi — ADR 0019) ve `antivirus` (ADR 0009/0022) da yazıldı:
 ikisinin de backend'i, paneli ve testleri var. `antivirus` yalnız Linux'ta

@@ -43,12 +43,9 @@ http:
 ui:
   entry: ui/panel/index.js
   locales: ui/locales
-  nav:
-    title: "UDİT — İşlem Kayıtları"
-    icon: list
-    group: "BBD Store / Sistem ve Kayıt"
-    order: 370
-    requires: [store_udit_logs.view]
+  # MENÜDEN KALDIRILDI (10.10.2026 sadeleştirmesi). Arka ucu ÇALIŞIR: sipariş
+  # ekranları bu modülün yeteneklerini kullanıyor. Menüye geri almak için
+  # `nav` bloğunu (title/icon/group/order/requires) geri yazmak yeter.
 
 # Katalog ve rol matrisi: docs/permissions.md · Yıkıcı işlem: ADR 0012.
 # `destructive: true` KULLANILMAZ — o bayrak çekirdekte PIN kapısına
