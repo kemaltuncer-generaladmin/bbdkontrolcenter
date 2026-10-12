@@ -14,8 +14,8 @@
 // ANONS ADI ("Hüseyin hoca"): zil sisteminin oturum başı çağrısında öğretmenin
 // okunacağı ad. KM tek kaynaktır (sözleşme km-ogrenci-gruplari-ve-zil.md §1);
 // kural `bell-plan.js` ve backend/staff.py'de (kırpılır, en çok 60 karakter).
-// Akademi sözleşmesine henüz girmediği için `announceNameSync` kapalıyken KM'de
-// saklanır ama itilmez (backend/contract_features.py) — ekran bunu söyler.
+// Sözleşmeye 2d91b96 ile girdi (`announceNameSync` açık); şalter kapatılırsa
+// KM'de saklanır ama itilmez (backend/contract_features.py) — ekran bunu söyler.
 //
 // "Akademi personeli" Akademi'nin bildiği herkestir. `source=km` satırları
 // salt okunurdur ("KM'den itilir"); yerel personel yalnız KM'nin personel

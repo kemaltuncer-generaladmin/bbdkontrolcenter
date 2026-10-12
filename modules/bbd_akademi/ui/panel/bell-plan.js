@@ -8,8 +8,8 @@
 // Ekran dosyaları (staff.js, timetable.js, institution-calendar.js) karar
 // vermez, buradaki işlevleri çağırır.
 //
-// SÖZLEŞME ŞALTERLERİ. Takvim etkinliğinin `bell` alanı ve personelin
-// `announceName`'i Akademi sözleşmesine henüz girmedi; backend'in
+// SÖZLEŞME ŞALTERLERİ. Takvim etkinliğinin `bell` + `cancelLessons` alanları
+// ve personelin `announceName`'i sözleşmeye 2d91b96 ile girdi; backend'in
 // `contract_features.py` şalterleri `/km/status` → `contractFeatures` ile
 // gelir. Şalter kapalıyken gövdeye alan EKLENMEZ (`withBell`).
 
@@ -67,33 +67,40 @@ export function choiceFromBell(bell, kind) {
   return bell.mode === 'off' ? 'off' : 'normal';
 }
 
-/** Seçim + "dersleri iptal et" → sözleşmedeki `bell` nesnesi. */
-export function bellPayload(choice, cancelSessions) {
+/**
+ * Seçim → sözleşmedeki `bell` nesnesi (`InstitutionEventInput.bell`:
+ * `{mode, profileId}`). "Dersleri iptal et" ayrı alandır (`cancelLessons`).
+ */
+export function bellPayload(choice) {
   const text = String(choice || 'normal');
   if (text.startsWith('profile:') && text.length > 'profile:'.length) {
-    return { mode: 'profile', profileId: text.slice('profile:'.length), cancelSessions: Boolean(cancelSessions) };
+    return { mode: 'profile', profileId: text.slice('profile:'.length) };
   }
-  return { mode: text === 'off' ? 'off' : 'normal', profileId: null, cancelSessions: Boolean(cancelSessions) };
+  return { mode: text === 'off' ? 'off' : 'normal', profileId: null };
 }
 
 /**
- * Gövdeye `bell` ekler — YALNIZ şalter açıksa. Kapalıyken gövde aynen döner:
- * sözleşmede olmayan alan Akademi'de 422 olurdu (vekil gövdeyi doğrulamaz).
+ * Gövdeye `bell` ve `cancelLessons` ekler — YALNIZ şalter açıksa. Kapalıyken
+ * gövde aynen döner: sözleşmede olmayan alan Akademi'de 422 olurdu (vekil
+ * gövdeyi doğrulamaz).
  */
-export function withBell(body, { enabled, choice, cancelSessions }) {
+export function withBell(body, { enabled, choice, cancelLessons }) {
   if (!enabled) return body;
-  return { ...body, bell: bellPayload(choice, cancelSessions) };
+  return { ...body, bell: bellPayload(choice), cancelLessons: Boolean(cancelLessons) };
 }
 
-/** Etkinlik ayrıntısında tek satır. `profiles` adları çözmek için. */
-export function bellText(bell, profiles = []) {
+/**
+ * Etkinlik ayrıntısında tek satır. `profiles` adları çözmek için;
+ * `cancelLessons` etkinliğin aynı adlı alanıdır.
+ */
+export function bellText(bell, profiles = [], cancelLessons = false) {
   if (!bell || typeof bell !== 'object' || !bell.mode) return null;
   let text = BELL_MODE_TEXT[bell.mode] || bell.mode;
   if (bell.mode === 'profile') {
     const found = (profiles || []).find((item) => item && item.id === bell.profileId);
     text = `Saat seti: ${found?.name || bell.profileId || '—'}`;
   }
-  return bell.cancelSessions ? `${text} · dersler iptal` : text;
+  return cancelLessons ? `${text} · dersler iptal` : text;
 }
 
 // ------------------------------------------------------- zil planı durumu

@@ -101,14 +101,14 @@ nerede karşılandığını yazar; ekranda bilerek olmayan işlemler gerekçesiy
 bunu bağlar. Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler ayrı
 `PENDING` ("sırada") tablosundadır — aynı kurallarla, gerekçeli.
 
-**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi 030d3e3):** izin listesinde 391
-işlem — 302 `/v1/admin/*` (x-surface `both` 170, `km` 132) + 89 salt okunur
-`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **341**, bilerek yok **7**
+**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi 2d91b96):** izin listesinde 469
+işlem — 372 `/v1/admin/*` (x-surface `both` 224, `km` 148) + 97 salt okunur
+`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **341**, bilerek yok **4**
 (gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde, kantin
-tahsilatı ve kontrolleri Öğrenciler modülünde, çalışma grubu yazma uçları KM
-öğrenci yönetiminde, öğrenci dışa aktarım durumu), sırada **43** (draft.3'ün
-program kurucu, ders oturumları, grup üyelik görünümü ve yoklama paketi
-işlemleri; `PENDING`), eksik **0**. Bölüm başına
+tahsilatı ve kontrolleri Öğrenciler modülünde, öğrenci dışa aktarım durumu;
+çalışma grubu yazma uçları sözleşmeden kalktı), sırada **124** (draft.3'ün
+program kurucu, ders oturumları, grup üyelik görünümü, yoklama, koçluk ve
+mesajlaşma denetimi işlemleri; `PENDING`), eksik **0**. Bölüm başına
 karşılanan işlem (bir işlem birden çok bölümde sayılabilir): Öğrenciler
 (çekmece sekmeleriyle) 100 · Denemeler 30 · Değerlendirmeler 23 · Ayarlar 22 ·
 Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16 · Ders
@@ -135,12 +135,12 @@ izin gelirse test kırılır.
 | `bbd_akademi.books` | admin, bbd_staff | Kitap talepleri |
 | `bbd_akademi.announcements` | admin, bbd_staff | Duyurular |
 | `bbd_akademi.requests` | admin, bbd_staff | İzin, görüşme, etüt talepleri |
-| `bbd_akademi.settings` | admin | Kurum ayarları, kantin kuralları, tema, bayraklar, anahtarlar, anons şablonları, dizin, denetim |
+| `bbd_akademi.settings` | admin | Kurum ayarları, kantin kuralları, tema, bayraklar, anahtarlar, anons şablonları, dizin, denetim; koçluk ayarları; mesaj şikâyet kuyruğu ve yazışma denetimi (`messages.moderate`, `messages.audit`) |
 | `bbd_akademi.staff` | admin | Mobil yönetici erişimi, Akademi personeli ve rolleri |
 | `bbd_akademi.campus` | admin, bbd_staff | Öğrenci çağırma, tablet ek süre/engel/oturum |
 | `bbd_akademi.canteen` | admin | Akademi üzerinden kantin işlemleri (yalnız vekil; asıl ekran Öğrenciler modülü) |
-| `bbd_akademi.learning` | admin, bbd_staff | Günlük koçluk: plan görevi atama ve erteleme, koç notları, erken uyarı eylemleri |
-| `bbd_akademi.learning_setup` | admin | Öğrenme araçları kurulumu: plan şablonları, okuma listeleri ve ligi, desteler, değerlendirme şablon/dönemleri, erken uyarı eşikleri |
+| `bbd_akademi.learning` | admin, bbd_staff | Günlük koçluk: plan görevi atama ve erteleme, koç notları, erken uyarı eylemleri; görev onayı, soru-cevap, check-in, tebrik |
+| `bbd_akademi.learning_setup` | admin | Öğrenme araçları kurulumu: plan şablonları, okuma listeleri ve ligi, desteler, değerlendirme şablon/dönemleri, erken uyarı eşikleri; koç eşlemesi, koç kütüphanesi küratörlüğü, rozetler, koçluk dışa aktarımı |
 | `bbd_akademi.evaluations` | admin, bbd_staff | Değerlendirme formu, yayımlama, karne dışa aktarımı |
 
 ## Vekil, köprü ve PIN teyidi
@@ -165,19 +165,20 @@ izin gelirse test kırılır.
   itilir — değişiklikte, `staff_sync_minutes` aralığıyla ve "Şimdi eşitle" ile.
   Personelin **anons adı** (`announce_name`, göç 002; zil çağrısında "Hüseyin
   hoca") da KM'dedir (sözleşme `km-ogrenci-gruplari-ve-zil.md` §1); yüke
-  `announceName` olarak yalnız şalter açıkken girer (aşağıda).
+  `announceName` olarak girer (şalter açık; aşağıda).
 
 ## Sözleşme şalterleri
 
-Sözleşmeye henüz girmemiş alanlar tek dosyada, kapalı şalterle durur:
+Sözleşmeye sonradan giren alanlar tek dosyada, şalterle durur:
 `backend/contract_features.py` (panel `/km/status` → `contractFeatures` ile
 okur). Vekil gövdeyi doğrulamadan geçirdiği için sözleşmede olmayan alan
-gönderilmez.
+gönderilmez. İki şalter de **açıktır**: alanlar sözleşmeye bbd-akademi
+2d91b96 ile girdi.
 
-| Şalter | Kapalıyken | Açmadan önce |
+| Şalter | Açıkken | Kapalıyken |
 |---|---|---|
-| `STAFF_ANNOUNCE_NAME` | Anons adı KM'de saklanır, ekranda düzenlenir, `admin_syncStaff` yüküne girmez | `StaffSyncRequest.items[]` şemasında `announceName` |
-| `CALENDAR_EVENT_BELL` | Takvim formundaki "Zil" alanı devre dışı ve gerekçeli; gövdeye `bell` eklenmez; KM saat setleri okunmaz | takvim etkinliği gövdesinde `bell` (`{mode, profileId, cancelSessions}` beklenir; ad farklıysa yalnız `ui/panel/bell-plan.js` → `bellPayload`) |
+| `STAFF_ANNOUNCE_NAME` | `admin_syncStaff` yükünde `announceName` (`StaffSyncRequest.items[]`; boşsa `null`) | Anons adı KM'de saklanır, ekranda düzenlenir, yüke girmez |
+| `CALENDAR_EVENT_BELL` | Takvim formundaki "Zil" alanı gövdeye `bell` (`{mode, profileId}`) ve `cancelLessons` olarak girer (`InstitutionEventInput`) | "Zil" alanı devre dışı ve gerekçeli; gövdeye alan eklenmez; KM saat setleri okunmaz |
 
 Şalteri açan commit `allowlist.py`'yi de yeniden üretir;
 `tests/test_akademi_contract_features.py` açık şalterin sözleşmede karşılığı

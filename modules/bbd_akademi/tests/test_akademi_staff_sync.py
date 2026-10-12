@@ -39,7 +39,8 @@ async def test_ekleme_tam_listeyi_iter(client: httpx.AsyncClient, akademi: Akade
     assert sent.headers["x-akademi-on-behalf-of"].startswith("km:user:u-1:")
     body = json.loads(akademi.bodies[-1])
     assert body == {"items": [{"kmUserId": "km-42", "displayName": "Zeynep Arslan",
-                               "phone": "5321234567", "roleKeys": ["admin"], "active": True}]}
+                               "phone": "5321234567", "roleKeys": ["admin"], "active": True,
+                               "announceName": None}]}
 
     await client.post(STAFF, headers=auth(), json={
         "displayName": "Mert Can", "phone": "905551112233", "roles": ["teacher", "admin"]})
@@ -134,7 +135,7 @@ async def test_zamanlanmis_gorev(staff_service: StaffService, akademi: Akademi) 
 # ------------------------------------------------------------- anons adı
 
 
-async def test_anons_adi_saklanir_kirpilir_ve_sozlesme_gelene_dek_itilmez(
+async def test_anons_adi_saklanir_kirpilir_ve_yuke_girer(
         client: httpx.AsyncClient, akademi: Akademi) -> None:
     akademi.reply(_ok())
     created = await client.post(STAFF, headers=auth(), json={
@@ -144,14 +145,14 @@ async def test_anons_adi_saklanir_kirpilir_ve_sozlesme_gelene_dek_itilmez(
     item = created.json()["item"]
     assert item["announceName"] == "Hüseyin hoca"
 
-    # Şalter kapalı: yük sözleşmenin bugünkü şemasıyla birebir — alan YOK.
-    assert contract_features.STAFF_ANNOUNCE_NAME is False
+    # Şalter açık (sözleşme 2d91b96: StaffSyncRequest.items[].announceName).
+    assert contract_features.STAFF_ANNOUNCE_NAME is True
     sent = json.loads(akademi.bodies[-1])["items"][0]
-    assert "announceName" not in sent
-    assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active"}
+    assert sent["announceName"] == "Hüseyin hoca"
+    assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active", "announceName"}
 
     listing = (await client.get(STAFF, headers=auth())).json()
-    assert listing["announceNameSync"] is False
+    assert listing["announceNameSync"] is True
     assert listing["items"][0]["announceName"] == "Hüseyin hoca"
 
     changed = await client.patch(f"{STAFF}/{item['id']}", headers=auth(), json={
@@ -192,6 +193,16 @@ async def test_anons_adi_en_cok_60_karakter(client: httpx.AsyncClient,
     patched = await client.patch(f"{STAFF}/{row['id']}", headers=auth(), json={
         "expectedRevision": 1, "announceName": "b" * 61})
     assert patched.status_code == 422
+
+
+async def test_salter_kapaliyken_anons_adi_yuke_girmez(
+        staff_service: StaffService, monkeypatch: pytest.MonkeyPatch) -> None:
+    await staff_service.create("test", {"displayName": "Zeynep Ak", "phone": "5321112233",
+                                        "roles": ["teacher"], "announceName": "Zeynep hoca"})
+    monkeypatch.setattr(contract_features, "STAFF_ANNOUNCE_NAME", False)
+    sent = (await staff_service.payload())["items"][0]
+    assert "announceName" not in sent
+    assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active"}
 
 
 async def test_salter_acikken_anons_adi_yuke_girer(

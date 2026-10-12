@@ -59,10 +59,10 @@ const out = {
   payloadOff: bp.bellPayload('off', false),
   payloadBad: bp.bellPayload('profile:', false),
   payloadEmpty: bp.bellPayload(undefined, undefined),
-  withOff: bp.withBell(body, { enabled: false, choice: 'off', cancelSessions: true }),
-  withOn: bp.withBell(body, { enabled: true, choice: 'off', cancelSessions: true }),
+  withOff: bp.withBell(body, { enabled: false, choice: 'off', cancelLessons: true }),
+  withOn: bp.withBell(body, { enabled: true, choice: 'off', cancelLessons: true }),
   bodyUntouched: body,
-  textProfile: bp.bellText({ mode: 'profile', profileId: 'y', cancelSessions: true }, [{ id: 'y', name: 'Yarım gün' }]),
+  textProfile: bp.bellText({ mode: 'profile', profileId: 'y' }, [{ id: 'y', name: 'Yarım gün' }], true),
   textOff: bp.bellText({ mode: 'off' }),
   textNone: bp.bellText(null),
   summary: bp.summarizePlanStatus(status, '2026-10-12'),
@@ -131,14 +131,14 @@ def test_zil_secenekleri_ve_varsayilan(result: dict[str, Any]) -> None:
 
 
 def test_govde_salter_kapaliyken_degismez(result: dict[str, Any]) -> None:
-    assert result["payloadProfile"] == {"mode": "profile", "profileId": "yarim-gun",
-                                        "cancelSessions": True}
-    assert result["payloadOff"] == {"mode": "off", "profileId": None, "cancelSessions": False}
+    assert result["payloadProfile"] == {"mode": "profile", "profileId": "yarim-gun"}
+    assert result["payloadOff"] == {"mode": "off", "profileId": None}
     assert result["payloadBad"]["mode"] == "normal"
-    assert result["payloadEmpty"] == {"mode": "normal", "profileId": None, "cancelSessions": False}
+    assert result["payloadEmpty"] == {"mode": "normal", "profileId": None}
     # Sözleşmede alan yokken gövdeye HİÇBİR şey eklenmez.
     assert result["withOff"] == {"kind": "holiday", "title": "Bayram"}
-    assert result["withOn"]["bell"] == {"mode": "off", "profileId": None, "cancelSessions": True}
+    assert result["withOn"]["bell"] == {"mode": "off", "profileId": None}
+    assert result["withOn"]["cancelLessons"] is True
     assert result["bodyUntouched"] == {"kind": "holiday", "title": "Bayram"}
     assert result["textProfile"] == "Saat seti: Yarım gün · dersler iptal"
     assert result["textOff"].startswith("Tatil")

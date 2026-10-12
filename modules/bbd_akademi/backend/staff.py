@@ -22,7 +22,7 @@ sürümle gelir, araya başka bir değişiklik girdiyse 409.
 ANONS ADI (`announce_name`, sözleşme km-ogrenci-gruplari-ve-zil.md §1): zil
 çağrısında öğretmenin okunacağı ad ("Hüseyin hoca"). KM tek kaynaktır; boş =
 yok. Yüke `announceName` olarak YALNIZ `contract_features.STAFF_ANNOUNCE_NAME`
-açıkken girer (sözleşmeye henüz girmedi — o dosyanın başlığı).
+açıkken girer (sözleşmede 2d91b96 ile var; şalter açık — o dosyanın başlığı).
 """
 
 from __future__ import annotations

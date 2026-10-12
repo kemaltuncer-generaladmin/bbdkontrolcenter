@@ -26,7 +26,7 @@
 // türünde varsayılan) ya da KM'de tanımlı adlı bir saat seti; isteğe bağlı
 // "dersleri iptal et". Saat setleri KM Zil Sistemi'nden okunur
 // (`GET /api/bell/state` → `profiles`; yoksa yalnız normal/tatil). Alan
-// Akademi sözleşmesine henüz girmedi: `calendarEventBell` şalteri kapalıyken
+// sözleşmeye 2d91b96 ile girdi (`bell` + `cancelLessons`); `calendarEventBell` şalteri kapalıyken
 // form alanı devre dışı görünür ve gövdeye EKLENMEZ (bell-plan.js → withBell).
 //
 // Derin bağlantı: `{institutionEventId}`, `{date}` (o günün ayı açılır, gün seçilir).
@@ -466,7 +466,7 @@ function eventDrawer(app, id, { ready, bell, onChange }) {
         ['Yer', event.location || '—'],
         ['Hedef kitle', audienceText(event.audience, loaded.names)],
         ['Ulaşılan öğrenci', num(event.studentReach)],
-        event.bell ? ['Zil', bellText(event.bell, bell?.known())] : null,
+        event.bell ? ['Zil', bellText(event.bell, bell?.known(), event.cancelLessons)] : null,
         ['Yoklama', event.affectsAttendance ? 'Bu günlerde yoklama beklenmez' : 'Etkilenmez'],
         ['Çalışma planı', event.affectsPlanning ? 'Plan önerisi ve plan ataması bu günlere görev koymaz' : 'Etkilenmez'],
         ['Hatırlatma', (event.reminders || []).length
@@ -524,7 +524,7 @@ async function editEvent(app, current, { day = todayIst(), ready, bell = null } 
     classGroupIds: audience.classGroupIds || [], studentGroupIds: audience.studentGroupIds || [],
     examId: current.examId || '',
     reminders: (current.reminders || []).map((item) => String(item.minutesBefore)),
-    bell: { choice: choiceFromBell(current.bell, current.kind), cancel: Boolean(current.bell?.cancelSessions),
+    bell: { choice: choiceFromBell(current.bell, current.kind), cancel: Boolean(current.cancelLessons),
       touched: Boolean(current.bell?.mode) },
   } : {
     kind: 'event', title: '', description: '', startDate: day, endDate: '', allDay: true, startTime: '',
@@ -827,7 +827,7 @@ async function editEvent(app, current, { day = todayIst(), ready, bell = null } 
             .map((minutesBefore) => ({ minutesBefore })),
           announce,
           notify: Boolean(draft.notify),
-        }, { enabled: bellEnabled, choice: draft.bell?.choice, cancelSessions: draft.bell?.cancel });
+        }, { enabled: bellEnabled, choice: draft.bell?.choice, cancelLessons: draft.bell?.cancel });
         return current ? app.api.put(`/v1/admin/calendar/events/${current.id}`, body)
           : app.api.post('/v1/admin/calendar/events', body, { key });
       },
