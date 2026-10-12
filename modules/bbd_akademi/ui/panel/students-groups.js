@@ -20,7 +20,7 @@ import {
   EXAM_TARGETS, TRACKS, actionButton, empty, formDialog, gradeText, kv, loader, num,
   openDrawer, searchBox, toolbar,
 } from './common.js';
-import { STUDENT_STATUS, checkbox, openKmStudents, stack } from './students-detail.js';
+import { STUDENT_STATUS, checkbox, stack } from './students-detail.js';
 
 const CLASS_CACHE = '/v1/admin/class-groups';
 const GROUP_CACHE = '/v1/admin/student-groups';
@@ -189,9 +189,11 @@ export function groupsView(app, { openStudent } = {}) {
   const node = h('div', 'ak-stack');
   const hint = h('div', 'kit-hint ak-stu-hint');
   hint.append(h('span', '', 'Çalışma grupları KM öğrenci yönetiminden yönetilir ve Akademi\'ye eşitlenir: '
-    + 'grubu açmak, adını değiştirmek ya da öğrenci eklemek için Öğrenciler modülünü kullanın. '
+    + 'grubu açmak, adını değiştirmek ya da öğrenci eklemek için Öğrenci Yönetimi\'ni kullanın. '
     + 'Burada gruplar atamalarda hedef, öğrenci listesinde süzgeç olarak görünür.'),
-  button('Öğrenciler modülünü aç', { onClick: () => openKmStudents(app, null) }));
+  // `{tab: 'groups'}`: Öğrenciler panelinin Gruplar sekmesi (sözleşme §7.A.6);
+  // sekmeyi tanımayan sürüm yükü yok sayar ve ana listeyi açar.
+  button('Grupları Öğrenci Yönetimi\'nde düzenle', { onClick: () => app.openPanel('bbd_students', { tab: 'groups' }) }));
   node.append(hint);
 
   const grid = dataTable({
