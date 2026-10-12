@@ -168,12 +168,21 @@ class AkademiGateway:
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            # TEK İSTEMCİ, KALICI BAĞLANTI (PERFORMANCE §3.8): her istekte yeni
+            # TLS el sıkışması panelin her tıklamasına ~100 ms eklerdi.
             self._client = httpx.AsyncClient(
                 transport=self._transport,
-                timeout=httpx.Timeout(self.config.timeout_seconds),
+                timeout=self._timeout(self.config.timeout_seconds),
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=20,
+                                    keepalive_expiry=60),
                 follow_redirects=False,
             )
         return self._client
+
+    @staticmethod
+    def _timeout(seconds: float) -> httpx.Timeout:
+        """Katı süre: bağlantı kurma en çok 5 sn, okuma/yazma ayardan."""
+        return httpx.Timeout(seconds, connect=min(5.0, seconds))
 
     async def close(self) -> None:
         if self._client is not None:
@@ -192,7 +201,7 @@ class AkademiGateway:
             url = f"{url}?{query}"
         outgoing = {name: value for name, value in (headers or {}).items() if value}
         outgoing["Authorization"] = f"Bearer {key}"
-        timeout = httpx.Timeout(self.config.upload_timeout_seconds if upload
+        timeout = self._timeout(self.config.upload_timeout_seconds if upload
                                 else self.config.timeout_seconds)
         client = self._http()
         try:
@@ -235,7 +244,7 @@ class AkademiGateway:
                                      details={"host": urlsplit(url).hostname})
         client = self._http()
         try:
-            request = client.build_request("GET", url, timeout=httpx.Timeout(
+            request = client.build_request("GET", url, timeout=self._timeout(
                 self.config.upload_timeout_seconds))
             return await client.send(request, stream=True)
         except httpx.TransportError as failure:
