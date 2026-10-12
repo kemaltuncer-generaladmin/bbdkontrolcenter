@@ -20,7 +20,14 @@ entrypoint: backend.module:register
 
 # Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
 depends: [bbd_canteen_api]
-provides: []
+# ARAYÜZ YETENEĞİ — backend'de karşılığı YOKTUR (bbd_students.list gibi): panel
+# `capabilities()` ile verir (ui/panel/index.js → card.js). Öğrenci Yönetimi
+# ekranı tek öğrencinin tahsilat/talep kartını buradan çizer; akış ve uçlar
+# bu modülde kalır.
+provides:
+  - capability: bbd_payment_request.student_card
+    contract: bbd_payment_request/ui/panel/card.js:mountStudentCard
+    description: "ARAYÜZ: tek öğrencinin kantin nakit tahsilatı ve (serbest tutarlı) ödeme talebi kartı."
 
 consumes:
   - capability: canteen.api

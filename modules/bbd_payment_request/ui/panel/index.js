@@ -3,8 +3,10 @@
 // Veliye borç bildirimi ve ödeme bağlantısı gönderir. Nakit tahsilat da burada:
 // ödeme akışının parçasıdır ve borç kapanınca bekleyen talepler süresi dolmuş olur.
 //
-// TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu kullanır; açık
-// bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır ve aynı ref kalır.
+// TOPLU TALEPTE TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu
+// kullanır; açık bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır
+// ve aynı ref kalır. TEK ÖĞRENCİYE serbest tutarlı talep ve nakit tahsilat
+// öğrenci kartından yapılır (`card.js` — Öğrenci Yönetimi ekranında da çizilir).
 //
 // KANTİNDE ÇİFT GÖNDERİM KORUMASI YOK: aynı öğrenciye arka arkaya talep açmak
 // her seferinde yeni SMS kuyruğa atar. Bu ekran son gönderimi bilir ve yakın
@@ -14,6 +16,7 @@ import {
   balanceText, button, confirmWithReason, foldText, h, loadStyles, money, moneyInput,
   parseMoney, stamp, stampIso, toaster,
 } from './kit.js';
+import { mountStudentCard } from './card.js';
 import { createPicker } from './picker.js';
 
 loadStyles(import.meta.url);
@@ -479,6 +482,11 @@ function renderCollectForm() {
   const debtors = (state.students || [])
     .filter((item) => item.balance > 0)
     .sort((a, b) => b.balance - a.balance);
+  const pre = state.prepayment || {};
+  // Sınırı KANTİN uygular; ekran aynı sınırı önceden söyler: borç (+ ön ödeme
+  // açıksa izinli ön ödeme).
+  const limitFor = (student) => Math.max(0, Number(student.balance || 0))
+    + (pre.allowPrepayment ? Number(pre.maxPrepayment || 0) : 0);
 
   if (!state.connected) {
     box.append(h('div', 'pr-alert bad',
@@ -492,8 +500,11 @@ function renderCollectForm() {
   }
 
   box.append(h('p', 'pr-detail-hint',
-    'Elden alınan parayı buraya yazın. Tutar borçtan fazla olamaz; borç tamamen '
-    + 'kapanırsa o öğrencinin BEKLEYEN ödeme talepleri süresi dolmuş olur.'));
+    'Elden alınan parayı buraya yazın. '
+    + (pre.allowPrepayment
+      ? `Ön ödeme açık: borçtan en çok ${money(pre.maxPrepayment)} fazlası alacak olarak yazılır. `
+      : 'Tutar borçtan fazla olamaz. ')
+    + 'Borç tamamen kapanırsa o öğrencinin BEKLEYEN ödeme talepleri süresi dolmuş olur.'));
 
   const form = h('div', 'pr-collect-form');
 
@@ -538,8 +549,10 @@ function renderCollectForm() {
       if (!selected) { error.textContent = 'Önce bir öğrenci seçin.'; return; }
       const kurus = parseMoney(amount.value);
       if (kurus === null || kurus < 1) { error.textContent = 'Tutarı 120,50 gibi yazın.'; return; }
-      if (kurus > selected.balance) {
-        error.textContent = `Tutar borçtan fazla olamaz (borç ${money(selected.balance)}).`;
+      if (kurus > limitFor(selected)) {
+        error.textContent = pre.allowPrepayment
+          ? `En çok ${money(limitFor(selected))} (borç + izinli ön ödeme).`
+          : `Tutar borçtan fazla olamaz (borç ${money(selected.balance)}).`;
         return;
       }
       const student = selected;
@@ -547,9 +560,11 @@ function renderCollectForm() {
         title: 'Nakit tahsilat',
         description: `${student.displayName} adına ${money(kurus)} elden alındı olarak `
           + `işlenecek. Güncel borç ${money(student.balance)}. `
-          + (kurus >= student.balance
-            ? 'Borç TAMAMEN kapanacak ve bekleyen ödeme talepleri süresi dolacak. '
-            : `Kalan borç ${money(student.balance - kurus)} olacak. `)
+          + (kurus > student.balance
+            ? `Borç kapanacak; fazlası (${money(kurus - student.balance)}) alacak yazılacak. `
+            : kurus === student.balance
+              ? 'Borç TAMAMEN kapanacak ve bekleyen ödeme talepleri süresi dolacak. '
+              : `Kalan borç ${money(student.balance - kurus)} olacak. `)
           + 'Kayıt kantine yazılır ve geri alınamaz.',
         confirmLabel: 'Tahsil et',
         placeholder: 'Gerekçe (teyit içindir)',
@@ -971,6 +986,24 @@ function switchTab(name) {
 }
 
 // ------------------------------------------------------------------ mount
+
+// --------------------------------------------------------------- yetenek
+
+/**
+ * Arayüz yeteneği: başka ekranlar (Öğrenci Yönetimi) tek öğrencinin
+ * "Kantin tahsilatı / Ödeme talebi" kartını buradan çizer (K3). Akış ve uçlar
+ * bu modülde kalır; çağıran yalnız yer ve öğrenci kimliği verir.
+ *
+ *   const draw = ctx.capability('bbd_payment_request.student_card');
+ *   const card = draw?.(container, { studentId, displayName, dialogRoot, onChanged });
+ *   card?.reload(); card?.destroy();
+ */
+export function capabilities(ctx) {
+  return {
+    'bbd_payment_request.student_card': (container, options = {}) =>
+      mountStudentCard(container, { ...options, api: ctx.api }),
+  };
+}
 
 export function mount(root, ctx) {
   api = ctx.api;
