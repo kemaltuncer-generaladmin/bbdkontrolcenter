@@ -28,9 +28,12 @@ provides:
     description: >
       Kantin kasa API'si: öğrenciler, ayarlar, QR anahtarı; veli kantin
       kontrolleri (get_student, update_controls), serbest tutarlı ödeme talebi
-      (create_payment_request(amount)), nakit tahsilat (record_collection),
-      ödeme talebi ve veli bildirim akışları, ön ödeme ayarı
-      (canteen_settings_public). Red `CanteenError.reason` koduyla gelir.
+      (create_payment_request(student_id, amount=None, origin="admin")), nakit
+      tahsilat (record_collection), öğrenci süzgeçli işlem ve talep listesi
+      (transactions(student_id=), payment_requests(student_id=)), ödeme talebi
+      ve veli bildirim akışları ({data, nextSince, hasMore}), ön ödeme ayarı
+      (canteen_settings_public). Red `CanteenError.reason` koduyla gelir;
+      gövde ayrıntısı (ör. balance, maxAmount) `CanteenError.details`.
 
 consumes:
   - capability: secrets

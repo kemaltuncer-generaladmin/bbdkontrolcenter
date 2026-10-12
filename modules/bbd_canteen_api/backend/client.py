@@ -97,7 +97,17 @@ class CanteenError(RuntimeError):
         self.reason = reason
         # Hata gövdesinin kendisi — ör. `exceeds_debt` ile gelen `balance` ve
         # `maxAmount`. Çağıran "en çok ne kadar?" sorusunu buradan yanıtlar.
+        # `message`, `errors`, `exception`, `trace` gövdeden düşmüştür.
         self.payload = dict(payload or {})
+
+    @property
+    def details(self) -> dict[str, Any]:
+        """Gövdenin ayrıntıları (`payload` ile AYNI sözlük).
+
+        Tüketici (mobil geçit) sınıfı import edemez (K3); `{balance, maxAmount}`
+        gibi ayrıntıyı bu adla okur ve kendi yanıtına taşır.
+        """
+        return self.payload
 
 
 #: Kantinin tek batch isteğinde kabul ettiği en çok kalem (`TransactionController`).
@@ -474,12 +484,22 @@ class CanteenApi:
         return result
 
     async def transactions(self, *, from_ms: int | None = None, to_ms: int | None = None,
-                           limit: int | None = None) -> list[dict[str, Any]]:
+                           limit: int | None = None,
+                           student_id: str | None = None) -> list[dict[str, Any]]:
         """İşlem geçmişi, kalem kırılımlı. `to_ms` HARİÇTİR (yarı açık aralık).
 
         Aralık verilmezse son 100 işlem; verilirse en çok 5000 satır döner.
         Her satır: serverId, studentId (opaque), studentName, total, createdAt,
         reversedAt, reversedReason, items[].
+
+        `student_id` verilirse YALNIZ o öğrencinin satırları döner. Kantin
+        `GET /api/transactions` bugün öğrenci süzgeci TANIMAZ (kantin
+        `TransactionController::index` yalnız from/to/limit doğrular; öğrenci
+        başına defter ucu da yoktur). Bu yüzden `studentId` sorguya yine
+        eklenir — kantin süzgeci eklediğinde sunucuda süzülür, bilinmeyen
+        parametre bugün yok sayılır — ve satırlar BURADA da süzülür: başka
+        öğrencinin satırı hiçbir sürümde dışarı çıkmaz. Sınır aynıdır: aralıkta
+        en çok 5000 satır okunur; öğrenci ekranı için aralığı dar tutun.
         """
         params: dict[str, Any] = {}
         if from_ms is not None:
@@ -488,9 +508,16 @@ class CanteenApi:
             params["to"] = int(to_ms)
         if limit is not None:
             params["limit"] = int(limit)
+        wanted = str(student_id or "").strip()
+        if wanted:
+            params["studentId"] = wanted
         payload = await self._request("GET", "/api/transactions", params=params)
         data = payload.get("data") if isinstance(payload, dict) else payload
-        return list(data or [])
+        rows = list(data or [])
+        if wanted:
+            rows = [row for row in rows
+                    if isinstance(row, dict) and str(row.get("studentId") or "") == wanted]
+        return rows
 
     # --------------------------------------------------------------- raporlar
 
@@ -686,18 +713,18 @@ class CanteenApi:
     # kaybolmasın diye. Çağıran `ref` / `id` ile tekilleştirir.
 
     async def payment_requests_feed(self, updated_since: str | None = None,
-                                    limit: int = 200) -> list[dict[str, Any]]:
+                                    limit: int = 200) -> dict[str, Any]:
         """Kurum geneli ödeme talebi akışı (§1.6) — `updated_at` artan sırada.
+
+        Dönüş tek sayfadır: `{"data": [...], "nextSince": iso, "hasMore": bool}`.
+        `nextSince` ve `hasMore` kantinden olduğu gibi geçer (kantin vermezse
+        imleç son satırdan türetilir, `hasMore` False). Sonraki sayfa için
+        `nextSince` aynen geri gönderilir; sınır dahildir, tekrar gelen satır
+        `ref` ile ayıklanır.
 
         Her satır: ref, studentId, amount, status, amountFixed, linkUrl,
         payToken, origin, createdAt, updatedAt, paidAt (zamanlar ISO, +03:00).
-        Sayfa imleci gerekiyorsa `payment_requests_feed_page`.
         """
-        return list((await self.payment_requests_feed_page(updated_since, limit))["items"])
-
-    async def payment_requests_feed_page(self, updated_since: str | None = None,
-                                         limit: int = 200) -> dict[str, Any]:
-        """Akışın tek sayfası: `{"items": [...], "nextSince": iso, "hasMore": bool}`."""
         payload = await self._request("GET", "/api/payment-requests",
                                       params=_feed_params(updated_since, limit))
         rows = payload.get("data") if isinstance(payload, dict) else payload
@@ -705,18 +732,14 @@ class CanteenApi:
         return _feed_page(payload, items, updated_since)
 
     async def parent_notifications_feed(self, updated_since: str | None = None,
-                                        limit: int = 200) -> list[dict[str, Any]]:
-        """Veliye giden kantin SMS olayları (§1.6).
+                                        limit: int = 200) -> dict[str, Any]:
+        """Veliye giden kantin SMS olayları (§1.6) — tek sayfa, imleçli.
 
-        SMS METNİ VE TELEFON DÖNMEZ (A6): satır yalnız `id, studentId, kind,
-        status, amount, ref, createdAt, updatedAt` taşır. Kantin fazlasını
-        döndürse bile burada düşer. Sayfa imleci için `..._page`.
+        Dönüş `{"data": [...], "nextSince": iso, "hasMore": bool}` (bkz.
+        `payment_requests_feed`). SMS METNİ VE TELEFON DÖNMEZ (A6): satır yalnız
+        `id, studentId, kind, status, amount, ref, createdAt, updatedAt` taşır.
+        Kantin fazlasını döndürse bile burada düşer.
         """
-        return list((await self.parent_notifications_feed_page(updated_since, limit))["items"])
-
-    async def parent_notifications_feed_page(self, updated_since: str | None = None,
-                                             limit: int = 200) -> dict[str, Any]:
-        """Akışın tek sayfası: `{"items": [...], "nextSince": iso, "hasMore": bool}`."""
         payload = await self._request("GET", "/api/notifications",
                                       params=_feed_params(updated_since, limit))
         rows: Any = payload
@@ -735,14 +758,28 @@ class CanteenApi:
 
     # ------------------------------------------------------------- ödeme talebi
 
-    async def payment_requests(self) -> list[dict[str, Any]]:
-        """Son 100 ödeme talebi. Kantin ucu süzgeç/sayfalama kabul etmez; süzme ekranda."""
-        payload = await self._request("GET", "/api/payment-requests")
+    async def payment_requests(self, student_id: str | None = None) -> list[dict[str, Any]]:
+        """Son 100 ödeme talebi (akış kipi DEĞİL — `updatedSince` gönderilmez).
+
+        `student_id` verilirse yalnız o öğrencinin talepleri döner. Kantin liste
+        ucu bugün öğrenci süzgeci tanımaz (`PaymentRequestController::index`):
+        `studentId` sorguya yine eklenir (kantin eklediğinde sunucuda süzülür)
+        ve satırlar BURADA da süzülür. Liste kurum genelinde son 100 talebe
+        bakar; öğrencinin daha eski talebi bu listede görünmeyebilir. Açık
+        (PENDING) talep öğrenci başına tektir ve hep en yenilerdendir.
+        """
+        wanted = str(student_id or "").strip()
+        params = {"studentId": wanted} if wanted else None
+        payload = await self._request("GET", "/api/payment-requests", params=params)
         data = payload.get("data") if isinstance(payload, dict) else payload
-        return list(data or [])
+        rows = list(data or [])
+        if wanted:
+            rows = [row for row in rows
+                    if isinstance(row, dict) and str(row.get("studentId") or "") == wanted]
+        return rows
 
     async def create_payment_request(self, student_id: str, amount: int | None = None,
-                                     *, origin: str = "api") -> dict[str, Any]:
+                                     origin: str = "admin") -> dict[str, Any]:
         """Ödeme talebi açar ve veliye kısa linkli SMS'i kuyruğa alır.
 
         `amount` VERİLMEZSE bugünkü davranış: kantin öğrencinin o anki borcunu
@@ -759,10 +796,11 @@ class CanteenApi:
         + `{"queued": false, "reason": …}` olarak döndürür; o biçim de burada
         hataya çevrilir — çağıran iki ayrı yolu ayırt etmek zorunda kalmaz.
 
-        `origin` talebi kimin açtığıdır ve kantin kayda yazar: `api` (mobil
-        geçit / dış uygulama — VARSAYILAN, çünkü bu yöntemi adı geçmeden çağıran
-        tüketici geçittir), `bulk` (KM toplu gönderim), `admin` (personelin tek
-        öğrenciye gönderimi). `exceeds_debt` hatasının `payload`ı `balance` ve
+        `origin` talebi kimin açtığıdır ve kantin kayda yazar: `admin`
+        (personelin tek öğrenciye gönderimi — VARSAYILAN, kantinin de
+        varsayılanı), `bulk` (KM toplu gönderim), `api` (mobil geçit / Akademi;
+        geçit bunu AÇIKÇA gönderir), `threshold` (kantinin kendi eşiği).
+        `exceeds_debt` hatasının `details` (= `payload`) sözlüğü `balance` ve
         `maxAmount` taşır. Öğrenci başına tek açık talep vardır (yeniden
         kullanılır).
 
@@ -973,7 +1011,7 @@ def _feed_page(payload: Any, items: list[dict[str, Any]],
     if not next_since:
         stamps = [item.get("updatedAt") for item in items if item.get("updatedAt")]
         next_since = stamps[-1] if stamps else (updated_since or FEED_START)
-    return {"items": items, "nextSince": _iso(next_since),
+    return {"data": items, "nextSince": _iso(next_since),
             "hasMore": bool(body.get("hasMore", False))}
 
 

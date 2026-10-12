@@ -47,8 +47,8 @@ class Canteen:
                  "createdAt": 1, "amountFixed": False},
                 {"ref": "PR-0", "studentId": "STU-2", "status": "PENDING", "amount": 10}]
 
-    async def create_payment_request(self, student_id: str, amount: int | None = None, *,
-                                     origin: str = "api") -> dict[str, Any]:
+    async def create_payment_request(self, student_id: str, amount: int | None = None,
+                                     origin: str = "admin") -> dict[str, Any]:
         if self.reject is not None:
             raise self.reject
         self.requests.append((student_id, amount, origin))
