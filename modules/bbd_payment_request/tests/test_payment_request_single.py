@@ -34,6 +34,7 @@ class Canteen:
         self.requests: list[tuple[str, int | None, str]] = []
         self.collections: list[tuple[str, int, str]] = []
         self.reject: CanteenError | None = None
+        self.request_filters: list[str | None] = []
 
     async def student(self, opaque_id: str) -> dict[str, Any]:
         return {"id": opaque_id, "displayName": "Elif Kaya", "parentPhone": "5329876543",
@@ -42,7 +43,10 @@ class Canteen:
     async def canteen_settings_public(self) -> dict[str, Any]:
         return dict(self.prepayment)
 
-    async def payment_requests(self) -> list[dict[str, Any]]:
+    async def payment_requests(self, student_id: str | None = None) -> list[dict[str, Any]]:
+        # Gerçek istemci gibi: `student_id` sorguya eklenir; bugünkü kantin süzgeci
+        # tanımadığı için liste süzülmeden döner (istemci ayrıca süzer).
+        self.request_filters.append(student_id)
         return [{"ref": "PR-1", "studentId": "STU-1", "status": "PENDING", "amount": 4250,
                  "createdAt": 1, "amountFixed": False},
                 {"ref": "PR-0", "studentId": "STU-2", "status": "PENDING", "amount": 10}]
