@@ -57,7 +57,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 VERSION = "0.2.0"
@@ -379,7 +379,8 @@ def wait_for(target: datetime | None) -> str:
     if target is None:
         return ""
 
-    now = datetime.now(UTC).astimezone()
+    # Ajan kurumda var olan eski bir Python 3 ile de koşabilir: `datetime.UTC` 3.11+.
+    now = datetime.now(timezone.utc).astimezone()  # noqa: UP017
     delta = target - now
 
     if delta < -LATE_TOLERANCE:
