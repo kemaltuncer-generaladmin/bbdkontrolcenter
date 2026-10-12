@@ -143,6 +143,23 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+#: Rol/izin atamalarının SÜREÇ İÇİ sürümü. Bir kullanıcının rolleri ya da bir
+#: rolün izinleri bu süreçte değiştiğinde artar. İzin kümesini önbellekte tutan
+#: tek yol (servis anahtarı — `service_keys.py`) sürüm değişmişse önbelleği
+#: bırakır; böylece bu süreçteki değişiklik bir sonraki istekte geçerlidir.
+#: Başka süreçten (komut satırı) gelen değişikliği önbelleğin kısa ömrü sınırlar.
+_grants_epoch = 0
+
+
+def grants_epoch() -> int:
+    return _grants_epoch
+
+
+def _grants_changed() -> None:
+    global _grants_epoch
+    _grants_epoch += 1
+
+
 @dataclass(slots=True)
 class CurrentUser:
     id: str
@@ -305,6 +322,7 @@ class Identity:
                 "INSERT OR IGNORE INTO role_permissions (role_id, permission) VALUES (?, ?)",
                 rows,
             )
+            _grants_changed()
 
     async def list_roles(self) -> list[dict[str, Any]]:
         roles = await self.store.fetch_all(
@@ -449,6 +467,29 @@ class Identity:
         )
         return [row["role_id"] for row in rows]
 
+    async def grants_of(self, user_id: str) -> tuple[list[str], set[str]]:
+        """Roller VE izinler TEK sorguda — `roles_of` + `permissions_of`in aynısı.
+
+        Her istekte oturumu çözen yol ikisini ayrı ayrı soruyordu; uzak
+        veritabanında bu, istek başına bir gidiş-dönüş fazlası demekti.
+        İzni olmayan rol de listede kalır (LEFT JOIN).
+        """
+        rows = await self.store.fetch_all(
+            "SELECT ur.role_id, rp.permission FROM user_roles ur "
+            "LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id "
+            "WHERE ur.user_id = ? ORDER BY ur.role_id",
+            (user_id,),
+        )
+        roles: list[str] = []
+        permissions: set[str] = set()
+        for row in rows:
+            role = str(row["role_id"])
+            if not roles or roles[-1] != role:
+                roles.append(role)
+            if row.get("permission") is not None:
+                permissions.add(str(row["permission"]))
+        return roles, permissions
+
     async def update_user(self, user_id: str, *, fields: dict[str, Any],
                           roles: list[str] | None = None,
                           expected_revision: int | None = None,
@@ -492,6 +533,7 @@ class Identity:
                 "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
                 [(user_id, role) for role in roles],
             )
+            _grants_changed()
             await self.audit(actor_id, "roles.manage", result="ok",
                              detail=f"{user_id}: {', '.join(sorted(roles))}")
 
@@ -735,13 +777,16 @@ class Identity:
 
     async def _current_user(self, row: dict[str, Any]) -> CurrentUser:
         user_id = row["id"]
+        # Kişinin izinleri ÖNBELLEĞE ALINMAZ: izin değişikliği bir sonraki
+        # istekte geçerlidir (`deps.resolve_once`). Yalnız iki sorgu teke iner.
+        roles, permissions = await self.grants_of(user_id)
         return CurrentUser(
             id=user_id,
             first_name=row["first_name"],
             last_name=row["last_name"],
             org_scope=row["org_scope"],
-            roles=await self.roles_of(user_id),
-            permissions=await self.permissions_of(user_id),
+            roles=roles,
+            permissions=permissions,
             kind=str(row.get("kind") or PERSON_KIND),
         )
 
