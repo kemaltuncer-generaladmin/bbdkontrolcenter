@@ -25,7 +25,12 @@ depends: []
 provides:
   - capability: canteen.api
     contract: km_sdk.contracts:CanteenApi
-    description: "Kantin kasa API'si: öğrenciler, ayarlar, QR anahtarı."
+    description: >
+      Kantin kasa API'si: öğrenciler, ayarlar, QR anahtarı; veli kantin
+      kontrolleri (get_student, update_controls), serbest tutarlı ödeme talebi
+      (create_payment_request(amount)), nakit tahsilat (record_collection),
+      ödeme talebi ve veli bildirim akışları, ön ödeme ayarı
+      (canteen_settings_public). Red `CanteenError.reason` koduyla gelir.
 
 consumes:
   - capability: secrets

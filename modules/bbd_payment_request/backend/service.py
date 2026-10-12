@@ -267,7 +267,9 @@ class PaymentRequestService:
                     reason = str(result.get("reason") or "bilinmeyen")
                     failed += 1
             except Exception as failure:  # noqa: BLE001 — biri patlarsa diğerleri sürsün
-                reason = str(failure)
+                # Kantin reddi (`no_debt`, `no_phone`…) artık hata olarak gelir ve
+                # kodunu taşır; kayıt eskisi gibi KODU yazsın.
+                reason = str(getattr(failure, "reason", None) or failure)
                 failed += 1
                 self._log.warning("talep gönderilemedi", student=row["kantinId"], error=reason)
 
