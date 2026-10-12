@@ -1,0 +1,367 @@
+"""Yetenek adaptörü — geçidin başka modüllere uzanan TEK dosyası.
+
+Geçit hiçbir modülü import etmez (K3); her şey registry'deki yeteneklerden
+gelir. Bütün yetenek çağrıları BURADA durur ki imza farkları (birleştirme
+anında ortaya çıkabilir) yalnız bu dosyayı değiştirsin.
+
+ÇÖZÜM GECİKMELİDİR. Yetenek `register` anında değil, istek anında çözülür:
+isteğe bağlı bir sağlayıcı (tablet, zil) sonradan yüklense ya da hiç
+yüklenmese bile modül ayakta kalır; eksik yetenek yalnız ilgili ucu
+503 `capability_missing` yapar (K7).
+
+SENKRON / ASENKRON. Mevcut tüketiciler (ör. `bbd_class_schedule`) yeteneğin
+döndürdüğünü `await` edilebilirse bekler; burada da aynısı yapılır.
+
+HATA SINIFLANDIRMA. Başka modülün hata sınıfı import edilemez; hata, taşıdığı
+alanlardan (`status`, `reason`) ve sınıf adından sınıflandırılır ve
+`UpstreamFailure` olarak yukarı çıkar. HTTP koduna çevirmek servisin işidir —
+aynı kantin `reason`ı uca göre farklı durum alır (ör. `no_debt` ödeme
+talebinde 409, tahsilatta 422).
+"""
+
+from __future__ import annotations
+
+import inspect
+from collections.abc import Callable
+from typing import Any
+
+CANTEEN = "canteen.api"
+DIRECTORY = "bbd_students.directory"
+TABLET_READ = "bbd_tablet.read"
+TABLET_CONTROL = "bbd_tablet.control"
+BELL_WEEK = "bell.week"
+BELL_ANNOUNCE = "bell.announce"
+
+#: Kantin tahsilat raporunun liste taşıyabildiği anahtarlar (sürüme göre değişti).
+_LIST_KEYS = ("data", "items", "entries", "collections", "rows", "payments", "notifications")
+
+
+class CapabilityMissing(Exception):
+    """Yetenek (ya da yeteneğin istenen metodu) kayıtlı değil."""
+
+    def __init__(self, capability: str) -> None:
+        super().__init__(capability)
+        self.capability = capability
+
+
+class UpstreamFailure(Exception):
+    """Yetenek çağrısı hata verdi.
+
+    kind: not_found | invalid | conflict | business | unavailable
+    `reason` kantinin iş kuralı kodudur (no_debt, exceeds_debt …).
+    Mesaj BİLEREK taşınmaz: kantin hata metni gönderilen değeri içerebilir.
+    """
+
+    def __init__(self, source: str, kind: str, *, status: int | None = None,
+                 reason: str | None = None) -> None:
+        super().__init__(f"{source}:{kind}:{reason or status or ''}")
+        self.source = source
+        self.kind = kind
+        self.status = status
+        self.reason = reason
+
+
+async def settle(value: Any) -> Any:
+    """Senkron dönen yeteneği de, coroutine döneni de aynı biçimde karşılar."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def accepts(function: Any, parameter: str) -> bool:
+    """Çağrılabilir bu adlı argümanı kabul ediyor mu (ya da **kwargs)?"""
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return True
+    for item in signature.parameters.values():
+        if item.kind is inspect.Parameter.VAR_KEYWORD or item.name == parameter:
+            return True
+    return False
+
+
+def unwrap(payload: Any) -> Any:
+    """Laravel kaynak sarmalayıcısı `{"data": {...}}` açılır."""
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+        return payload["data"]
+    return payload
+
+
+def rows(payload: Any) -> list[dict[str, Any]]:
+    """Liste ya da `{"data"|"items"|…: [...]}` biçimindeki yanıttan satırlar."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in _LIST_KEYS:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def canteen_failure(error: BaseException) -> UpstreamFailure:
+    status = getattr(error, "status", None)
+    status = status if isinstance(status, int) else None
+    reason = getattr(error, "reason", None)
+    reason = reason if isinstance(reason, str) and reason else None
+    if reason == "student_not_found":
+        return UpstreamFailure("canteen", "not_found", status=status, reason=reason)
+    if reason == "validation_error":
+        return UpstreamFailure("canteen", "invalid", status=status, reason=reason)
+    if reason:
+        return UpstreamFailure("canteen", "business", status=status, reason=reason)
+    if status == 404:
+        return UpstreamFailure("canteen", "not_found", status=status)
+    if status in (400, 422):
+        return UpstreamFailure("canteen", "invalid", status=status)
+    if status == 409:
+        return UpstreamFailure("canteen", "conflict", status=status)
+    return UpstreamFailure("canteen", "unavailable", status=status)
+
+
+def module_failure(source: str, error: BaseException) -> UpstreamFailure:
+    """Tablet / zil / dizin hataları — sınıf adından sınıflandırılır."""
+    name = type(error).__name__
+    code = getattr(error, "code", None)
+    code = code if isinstance(code, str) and code else None
+    if "NotFound" in name or isinstance(error, LookupError):
+        return UpstreamFailure(source, "not_found", reason=code)
+    if "Conflict" in name:
+        return UpstreamFailure(source, "conflict", reason=code)
+    if isinstance(error, ValueError):
+        return UpstreamFailure(source, "invalid", reason=code)
+    return UpstreamFailure(source, "unavailable", reason=code)
+
+
+class Capabilities:
+    """Geçidin tükettiği yeteneklerin tipli, hata çevirili yüzü."""
+
+    def __init__(self, resolve: Callable[[str], Any]) -> None:
+        # `ctx.try_capability`: manifestte ilan edilmemiş adı reddeder.
+        self._resolve = resolve
+
+    # ---------------------------------------------------------- çözüm
+
+    def has(self, name: str) -> bool:
+        return self._resolve(name) is not None
+
+    def _get(self, name: str) -> Any:
+        instance = self._resolve(name)
+        if instance is None:
+            raise CapabilityMissing(name)
+        return instance
+
+    def _method(self, capability: str, *names: str) -> Any:
+        """Yeteneğin ilk bulunan metodu. Hiçbiri yoksa `capability.method` eksiktir."""
+        instance = self._get(capability)
+        for name in names:
+            method = getattr(instance, name, None)
+            if callable(method):
+                return method
+        raise CapabilityMissing(f"{capability}.{names[0]}")
+
+    async def _canteen(self, *names: str, args: tuple[Any, ...] = (),
+                       kwargs: dict[str, Any] | None = None) -> Any:
+        method = self._method(CANTEEN, *names)
+        try:
+            return await settle(method(*args, **(kwargs or {})))
+        except CapabilityMissing:
+            raise
+        except Exception as error:  # noqa: BLE001 — kantin dışarısı
+            raise canteen_failure(error) from None
+
+    async def _module(self, source: str, capability: str, name: str | None,
+                      args: tuple[Any, ...] = (), kwargs: dict[str, Any] | None = None) -> Any:
+        target = self._get(capability) if name is None else self._method(capability, name)
+        if name is None and not callable(target):
+            raise CapabilityMissing(capability)
+        try:
+            return await settle(target(*args, **(kwargs or {})))
+        except CapabilityMissing:
+            raise
+        except Exception as error:  # noqa: BLE001 — başka modül (K7)
+            raise module_failure(source, error) from None
+
+    # ---------------------------------------------------- bbd_students.directory
+
+    async def directory_list(self, since: str | None) -> dict[str, Any]:
+        """`list(since=None) -> {"students", "classes", "complete"}` — `since` ISO metin."""
+        result = await self._module("directory", DIRECTORY, "list", kwargs={"since": since})
+        return result if isinstance(result, dict) else {}
+
+    async def directory_get(self, student_id: str) -> dict[str, Any] | None:
+        try:
+            result = await self._module("directory", DIRECTORY, "get", (student_id,))
+        except UpstreamFailure as failure:
+            if failure.kind == "not_found":
+                return None
+            raise
+        return result if isinstance(result, dict) and result else None
+
+    async def card_qr_text(self, student_id: str) -> str | None:
+        try:
+            result = await self._module("directory", DIRECTORY, "card_qr_text", (student_id,))
+        except UpstreamFailure as failure:
+            if failure.kind == "not_found":
+                return None
+            raise
+        return result if isinstance(result, str) and result else None
+
+    # --------------------------------------------------------------- canteen.api
+
+    async def lookup_code(self, code: str) -> str | None:
+        """Kodun sahibi öğrencinin kimliği; kod yoksa None. KOD LOG'A YAZILMAZ."""
+        try:
+            result = await self._canteen("lookup_student_by_code", args=(code,))
+        except UpstreamFailure as failure:
+            if failure.kind in ("not_found", "invalid"):
+                return None
+            raise
+        student_id = result.get("id") if isinstance(result, dict) else None
+        return student_id if isinstance(student_id, str) and student_id else None
+
+    async def canteen_student(self, student_id: str) -> dict[str, Any]:
+        """Tek öğrenci (bakiye, limitler, veli kontrolleri, `spentToday`)."""
+        result = unwrap(await self._canteen("get_student", "student", args=(student_id,)))
+        if not isinstance(result, dict) or not result:
+            raise UpstreamFailure("canteen", "not_found", status=404)
+        return result
+
+    async def canteen_transactions(self, student_id: str, from_ms: int,
+                                   to_ms: int) -> list[dict[str, Any]]:
+        """Öğrencinin işlemleri. İstemci `student_id` süzgeci tanıyorsa kullanılır;
+        tanımıyorsa aralık okunur ve burada süzülür (kantin aralıkta en çok
+        5000 satır verir — bkz. README "Bilinen sınırlar")."""
+        method = self._method(CANTEEN, "transactions")
+        kwargs: dict[str, Any] = {"from_ms": from_ms, "to_ms": to_ms, "limit": 5000}
+        if accepts(method, "student_id"):
+            kwargs["student_id"] = student_id
+        payload = await self._canteen("transactions", kwargs=kwargs)
+        return [item for item in rows(payload)
+                if str(item.get("studentId") or "") == student_id]
+
+    async def canteen_collections(self, student_id: str, from_ms: int,
+                                  to_ms: int) -> list[dict[str, Any]]:
+        payload = await self._canteen("collections", kwargs={
+            "from_ms": from_ms, "to_ms": to_ms, "student_id": student_id,
+        })
+        found = rows(payload)
+        # Süzgeci yok sayan bir kantin sürümüne karşı: başkasının tahsilatı sızmaz.
+        return [item for item in found
+                if str(item.get("studentId") or student_id) == student_id]
+
+    async def payment_requests_for(self, student_id: str) -> list[dict[str, Any]]:
+        """Öğrencinin ödeme talepleri (kantin son 100 talebi verir; burada süzülür)."""
+        payload = await self._canteen("payment_requests")
+        return [item for item in rows(payload)
+                if str(item.get("studentId") or "") == student_id]
+
+    async def create_payment_request(self, student_id: str,
+                                     amount: int | None) -> dict[str, Any]:
+        method = self._method(CANTEEN, "create_payment_request")
+        kwargs: dict[str, Any] = {}
+        if amount is not None:
+            if not accepts(method, "amount"):
+                raise CapabilityMissing(f"{CANTEEN}.create_payment_request(amount)")
+            kwargs["amount"] = amount
+        result = await self._canteen("create_payment_request", args=(student_id,),
+                                     kwargs=kwargs)
+        # Eski istemci başarısızlıkta da 200 döner: {"queued": false, "reason": …}
+        if isinstance(result, dict) and result.get("queued") is False:
+            reason = result.get("reason")
+            raise canteen_failure(_Reason(reason if isinstance(reason, str) else None))
+        data = unwrap(result)
+        return data if isinstance(data, dict) else {}
+
+    async def update_controls(self, student_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        result = unwrap(await self._canteen("update_controls", args=(student_id, patch)))
+        return result if isinstance(result, dict) else {}
+
+    async def record_collection(self, student_id: str, amount: int,
+                                local_id: str) -> dict[str, Any]:
+        result = unwrap(await self._canteen(
+            "record_collection", "collect_cash", args=(student_id,),
+            kwargs={"amount": amount, "local_id": local_id},
+        ))
+        return result if isinstance(result, dict) else {}
+
+    async def products(self) -> list[dict[str, Any]]:
+        return rows(await self._canteen("products"))
+
+    async def payment_requests_feed(self, since: str | None, limit: int) -> list[dict[str, Any]]:
+        return rows(await self._canteen("payment_requests_feed",
+                                        kwargs={"updated_since": since, "limit": limit}))
+
+    async def parent_notifications_feed(self, since: str | None,
+                                        limit: int) -> list[dict[str, Any]]:
+        return rows(await self._canteen("parent_notifications_feed",
+                                        kwargs={"updated_since": since, "limit": limit}))
+
+    async def canteen_settings_public(self) -> dict[str, Any]:
+        result = unwrap(await self._canteen("canteen_settings_public"))
+        return result if isinstance(result, dict) else {}
+
+    async def send_sms(self, phone: str, message: str) -> dict[str, Any]:
+        """Kantinin Netgsm hesabıyla tek SMS. Yanıtın `text` alanı ÇAĞIRANA DÖNMEZ."""
+        result = await self._canteen("send_sms", kwargs={"phone": phone, "message": message})
+        if not isinstance(result, dict):
+            return {"sent": False, "reason": "unknown"}
+        return {"sent": bool(result.get("sent")), "reason": result.get("reason")}
+
+    # ------------------------------------------------------------- bbd_tablet
+
+    async def tablet_board(self) -> dict[str, Any]:
+        result = await self._module("tablet", TABLET_READ, "board")
+        return result if isinstance(result, dict) else {}
+
+    async def tablet_usage(self, student_id: str, date_from: str,
+                           date_to: str) -> dict[str, Any]:
+        result = await self._module("tablet", TABLET_READ, "student_usage", (student_id,),
+                                    {"date_from": date_from, "date_to": date_to})
+        return result if isinstance(result, dict) else {}
+
+    async def tablet_grant(self, student_id: str, *, package_name: str | None,
+                           extra_seconds: int, reason: str, actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "grant", (student_id,), {
+            "package_name": package_name, "extra_seconds": extra_seconds,
+            "reason": reason, "actor": actor,
+        })
+
+    async def tablet_block(self, student_id: str, *, until: Any, reason: str,
+                           actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "block", (student_id,),
+                                  {"until": until, "reason": reason, "actor": actor})
+
+    async def tablet_unblock(self, student_id: str, *, reason: str, actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "unblock", (student_id,),
+                                  {"reason": reason, "actor": actor})
+
+    async def tablet_end_session(self, session_id: str, *, reason: str, actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "end_session", (session_id,),
+                                  {"reason": reason, "actor": actor})
+
+    # ------------------------------------------------------------------- bell
+
+    async def bell_week(self) -> dict[str, Any]:
+        result = await self._module("bell", BELL_WEEK, None)
+        return result if isinstance(result, dict) else {}
+
+    async def bell_page(self, text: str, *, cache_key: str | None, actor: str | None,
+                        request_id: str | None) -> dict[str, Any]:
+        announce = self._get(BELL_ANNOUNCE)
+        name = "page" if callable(getattr(announce, "page", None)) else None
+        if name is None and not callable(announce):
+            raise CapabilityMissing(f"{BELL_ANNOUNCE}.page")
+        result = await self._module("bell", BELL_ANNOUNCE, name, (text,), {
+            "cache_key": cache_key, "actor": actor, "request_id": request_id,
+        })
+        return result if isinstance(result, dict) else {}
+
+
+class _Reason(Exception):
+    """Eski istemcinin `queued: false` yanıtını kodlu hataya çevirmek için."""
+
+    def __init__(self, reason: str | None) -> None:
+        super().__init__(reason or "")
+        self.reason = reason
+        self.status = 422

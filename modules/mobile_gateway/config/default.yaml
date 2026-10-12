@@ -1,0 +1,32 @@
+# Mobil Geçit varsayılanları. Kök ayardaki `modules.mobile_gateway.*` ezer.
+#
+# SIR YOKTUR: Akademi'nin servis anahtarı çekirdeğin kasasındadır (ADR 0028),
+# kantin cihaz token'ı `bbd_canteen_api`nin kasasındadır.
+
+# GET /settings/public
+institution_name: "Benim Başarı Dünyam"
+timezone: Europe/Istanbul
+
+# OTP SMS metni İSTEMCİDEN GELMEZ; buradan üretilir. Böylece servis anahtarı
+# keyfî SMS göndermek için kullanılamaz. `{code}` zorunludur.
+otp_template: "BBD Akademi giriş kodunuz: {code}. Kodu kimseyle paylaşmayın."
+
+# POST /announcements/call — `page` şablonu. Yer tutucular: {ad} {soyad} {sinif}
+call_templates:
+  page: "{ad} {soyad}, lütfen danışmaya gel."
+
+limits:
+  # Öğrenci şifresi: telefon (giriş) ya da öğrenci (doğrulama) başına
+  # `auth_window_seconds` içinde bu kadar yanlış → 423 locked.
+  auth_max_failures: 5
+  auth_window_seconds: 900
+  # Kantinin lookup-code bütçesi dakikada 30 ve tabletlerle paylaşılıyor.
+  lookup_per_minute: 10
+  sms_per_phone_per_hour: 5
+  sms_global_per_minute: 60
+  call_cooldown_seconds: 60
+
+idempotency_hours: 24
+products_cache_seconds: 300
+sms_log_retention_days: 90
+audit_retention_days: 365
