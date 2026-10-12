@@ -93,6 +93,15 @@ export function mount(root, ctx) {
     go: (key, payload = null) => show(key, payload),
     /** KM'nin başka ekranına geç (ör. Öğrenciler modülü). */
     openPanel: (id, payload = null) => ctx.open?.(id, payload),
+    /**
+     * KM'nin başka bir modülünün SALT OKUNUR ucu (ör. Zil Sistemi
+     * `/api/bell/plan/status`). Yalnız GET; o modülün kendi izni geçerlidir
+     * (K9). Modül yoksa ya da uç bu sürümde yoksa 404/403 gelir — çağıran
+     * ekran bunu ham hata olarak göstermez, sebebini yazar.
+     */
+    kmGet: (path) => ctx.api(path),
+    /** Sözleşme şalteri açık mı (`backend/contract_features.py`; okunamadıysa kapalı). */
+    feature: (name) => Boolean(app.status?.contractFeatures?.[name]),
     onDispose: (fn) => disposers.push(fn),
     lookups: null,
   };
