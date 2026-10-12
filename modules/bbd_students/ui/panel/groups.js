@@ -285,7 +285,9 @@ export function mountGroups(host, ctx) {
       const reason = h('input', 'st-input');
       reason.placeholder = 'Gerekçe (geçmiş tarihte zorunlu)';
       reason.maxLength = 200;
-      add.append(h('div', 'gr-tools', h('span', 'st-label', 'Başlangıç günü'), from, reason,
+      const addTools = h('div', 'gr-tools');
+      add.append(addTools);
+      addTools.append(h('span', 'st-label', 'Başlangıç günü'), from, reason,
         button('Seçilenleri ekle', 'primary', async () => {
           const ids = picker.selection();
           if (ids.length === 0) { ctx.toast('Önce öğrenci seçin.'); return; }
@@ -296,7 +298,7 @@ export function mountGroups(host, ctx) {
               ? `${result.added} eklendi · ${result.skipped.length} zaten üyeydi.`
               : `${result.added} öğrenci eklendi.`);
           }
-        })));
+        }));
       body.append(add);
     }
 
@@ -419,7 +421,9 @@ export function mountGroups(host, ctx) {
         error.textContent = failure.message;
       }
     });
-    card.append(h('div', 'kit-dialog-actions', button('Vazgeç', '', close), save));
+    const actions = h('div', 'kit-dialog-actions');
+    actions.append(button('Vazgeç', '', close), save);
+    card.append(actions);
     overlay.append(card);
     ctx.dialogRoot.append(overlay);
     name.focus();
