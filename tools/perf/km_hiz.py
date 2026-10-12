@@ -23,7 +23,13 @@ komutlar ortam değişkenleriyle koşar; `--db` yalnız yardımcı dosyaların
 Seçenekler: `--scale` (hacim çarpanı, 1.0 = §1), `-n` (yol başına çağrı),
 `--kantin-ms` (sahte kantinin istek başına gecikmesi; ağ + kantin işi),
 `--kantin-filtre` (kantin `studentId` süzgecini tanıyormuş gibi davranır),
-`--only` (yalnız adı bu önekle başlayan yollar).
+`--kantin-defter` (kantin §1.7 hesap dökümü ucunu da sunar —
+`GET /api/students/{id}/ledger`; süzgeci de tanır; verilmezse uç gerekçesiz
+404 döner, eski kantin gibi), `--only` (yalnız adı bu önekle başlayan yollar).
+
+Kantin verisi hacimden bağımsızdır: 2.000 öğrencinin son 30 gününde 24.600
+satış + 400 nakit tahsilat; bir "yoğun" öğrencinin (`HEAVY`) ayrıca 450
+satışı vardır (defterde 200'lük üç sayfa).
 
 Hacim (scale=1.0): 2.000 öğrenci / 3.500 veli (kantin), 1.000.000 denetim
 satırı, 100.000 tablet oturumu, 400.000 kullanım paketi + 1.200.000 kalem,
@@ -65,6 +71,9 @@ PIN = "482913"
 STUDENTS = 2000
 NOW = datetime(2026, 10, 12, 9, 30, tzinfo=UTC)
 DAY_MS = 86_400_000
+#: Defterde birden çok sayfası olan öğrencinin sıra numarası ve satış sayısı.
+HEAVY = 1999
+HEAVY_SALES = 450
 
 
 def student_id(index: int) -> str:
@@ -93,11 +102,18 @@ class FakeKantin:
     `GET /api/transactions` aralıkta 5.000'e kadar satır, `GET
     /api/payment-requests` kurum geneli son 100 talebi döner. True ise
     süzgeci sunucuda uygular (kantin-veli dalının yeni sürümü).
+
+    `ledger=True` kantin §1.7'dir: süzgece ek olarak `GET
+    /api/students/{id}/ledger` (öğrencinin defteri, yeniden eskiye, `id`
+    imleçli; ilk sayfa `student` + `pendingPaymentRequest`). False iken bu
+    yol gerekçesiz 404 döner (Laravel "route bulunamadı").
     """
 
-    def __init__(self, *, delay_ms: float, filter_students: bool) -> None:
+    def __init__(self, *, delay_ms: float, filter_students: bool,
+                 ledger: bool = False) -> None:
         self.delay = delay_ms / 1000.0
-        self.filter_students = filter_students
+        self.filter_students = filter_students or ledger
+        self.ledger_enabled = ledger
         self.requests = 0
         self.connections: set[tuple[str, int]] = set()
         rng = random.Random(7)
@@ -128,10 +144,85 @@ class FakeKantin:
                                "studentName": f"Öğrenci {index}",
                                "total": 2500 * len(items), "createdAt": at,
                                "reversedAt": None, "reversedReason": None, "items": items})
-        self.sales.reverse()  # en yeni önce (kantin sırası)
+        heavy = student_id(HEAVY)
+        for number in range(HEAVY_SALES):
+            at = start + int((number + 0.5) * (30 * DAY_MS / HEAVY_SALES))
+            self.sales.append({"serverId": f"tx-h{number}", "localId": f"l-h{number}",
+                               "studentId": heavy, "studentName": f"Öğrenci {HEAVY}",
+                               "total": 2500, "createdAt": at, "reversedAt": None,
+                               "reversedReason": None,
+                               "items": [{"productId": 7, "name": "Tost", "qty": 1,
+                                          "unitPrice": 2500, "lineTotal": 2500}]})
+        self.sales.sort(key=lambda row: int(row["createdAt"]), reverse=True)  # en yeni önce
+        self.cash = [{"studentId": student_id(n % STUDENTS), "amount": 5000,
+                      "createdAt": iso(NOW - timedelta(days=n % 30)), "method": "CASH",
+                      "at": epoch_ms(NOW - timedelta(days=n % 30)), "localId": f"c-{n}"}
+                     for n in range(400)]
+        self.ledger_rows = self._ledger_rows()
         self.products = [{"id": n, "barcode": f"869{n:05d}", "name": f"Ürün {n}",
                           "imageUrl": None, "price": 500 + n * 25, "stock": 40,
                           "isActive": n % 9 != 0, "updatedAt": 1} for n in range(1, 121)]
+
+    def _ledger_rows(self) -> dict[str, list[dict[str, Any]]]:
+        """Öğrenci başına defter satırları, yeniden eskiye — satışlar + nakit.
+
+        Kimlikler bütün kantinde zaman sırasıyla verilir (cari defter
+        `ledger_entries.id`); satır biçimi `StudentLedgerController` ile aynı.
+        """
+        events: list[tuple[int, str, dict[str, Any]]] = []
+        for sale in self.sales:
+            events.append((int(sale["createdAt"]), "sale", sale))
+        for cash in self.cash:
+            events.append((int(cash["at"]), "cash", cash))
+        events.sort(key=lambda event: event[0])
+        by_student: dict[str, list[dict[str, Any]]] = {}
+        for entry_id, (at, kind, row) in enumerate(events, start=1):
+            sale = None
+            if kind == "sale":
+                sale = {key: row[key] for key in ("serverId", "localId", "total", "createdAt",
+                                                  "reversedAt", "reversedReason", "items")}
+            by_student.setdefault(str(row["studentId"]), []).append({
+                "id": entry_id, "at": at, "kind": kind,
+                "direction": "debit" if kind == "sale" else "credit",
+                "amount": int(row["total"] if kind == "sale" else row["amount"]),
+                "balanceAfter": 0, "ref": row["localId"], "sale": sale,
+            })
+        for rows in by_student.values():
+            rows.reverse()
+        return by_student
+
+    def ledger(self, sid: str, q: dict[str, str]) -> tuple[int, Any]:
+        """`GET /api/students/{id}/ledger` (§1.7) — kantinin doğrulama sınırlarıyla."""
+        row = self.by_id.get(sid)
+        if row is None:
+            return 404, {"message": "Öğrenci bulunamadı.", "reason": "student_not_found"}
+        limit = int(q.get("limit", 50))
+        if not 1 <= limit <= 200:
+            return 422, {"message": "limit", "errors": {"limit": ["1–200"]}}
+        cursor = q.get("cursor")
+        rows = self.ledger_rows.get(sid, [])
+        if cursor:
+            rows = [entry for entry in rows if entry["id"] < int(cursor)]
+        if "from" in q:
+            rows = [entry for entry in rows if entry["at"] >= int(q["from"])]
+        if "to" in q:
+            rows = [entry for entry in rows if entry["at"] < int(q["to"])]
+        page = rows[:limit + 1]
+        more = len(page) > limit
+        page = page[:limit]
+        body: dict[str, Any] = {"data": page,
+                                "nextCursor": str(page[-1]["id"]) if more else None,
+                                "hasMore": more}
+        if not cursor:
+            body["student"] = {key: value for key, value in row.items()
+                               if key not in ("accessCode", "parentPhone", "updatedAt")}
+            body["student"]["spentToday"] = 2500
+            pending = [item for item in self.payment_requests(sid)
+                       if item["status"] == "PENDING"]
+            body["pendingPaymentRequest"] = (
+                {key: value for key, value in pending[0].items() if key != "studentName"}
+                if pending else None)
+        return 200, body
 
     def payment_requests(self, wanted: str | None) -> list[dict[str, Any]]:
         def row(number: int, sid: str) -> dict[str, Any]:
@@ -180,6 +271,10 @@ class FakeKantin:
         wanted = q.get("studentId")
         if path == "/api/students" and method == "GET":
             return 200, {"data": self.students}
+        if path.startswith("/api/students/") and path.endswith("/ledger") and method == "GET":
+            if not self.ledger_enabled:
+                return 404, {"message": f"The route {path.lstrip('/')} could not be found."}
+            return self.ledger(path.split("/")[3], q)
         if path.startswith("/api/students/") and method == "GET":
             sid = path.rsplit("/", 1)[-1]
             row = self.by_id.get(sid)
@@ -196,9 +291,8 @@ class FakeKantin:
         if path == "/api/payment-requests" and method == "GET":
             return 200, {"data": self.payment_requests(wanted)}
         if path == "/api/reports/collections":
-            entries = [{"studentId": student_id(n % STUDENTS), "amount": 5000,
-                        "createdAt": iso(NOW - timedelta(days=n % 30)), "method": "CASH"}
-                       for n in range(400)]
+            entries = [{key: row[key] for key in ("studentId", "amount", "createdAt", "method")}
+                       for row in self.cash]
             if wanted:
                 entries = [row for row in entries if row["studentId"] == wanted]
             return 200, {"data": {"entries": entries, "total": 5000 * len(entries)}}
@@ -591,7 +685,8 @@ async def measure(args: argparse.Namespace) -> None:
     db = Path(args.db)
     meta = json.loads(meta_path(db).read_text(encoding="utf-8"))
     work = Path(tempfile.mkdtemp(prefix="km-hiz-"))
-    kantin = FakeKantin(delay_ms=float(args.kantin_ms), filter_students=bool(args.kantin_filtre))
+    kantin = FakeKantin(delay_ms=float(args.kantin_ms), filter_students=bool(args.kantin_filtre),
+                        ledger=bool(args.kantin_defter))
     results: list[dict[str, Any]] = []
 
     with kantin_server(kantin, work) as kantin_url:
@@ -647,7 +742,8 @@ async def measure(args: argparse.Namespace) -> None:
 
     report = {"engine": meta["engine"], "scale": meta["scale"], "counts": meta["counts"],
               "n": int(args.n), "kantinMs": float(args.kantin_ms),
-              "kantinFilter": bool(args.kantin_filtre), "dbRttMs": float(args.db_rtt_ms),
+              "kantinFilter": bool(args.kantin_filtre),
+              "kantinLedger": bool(args.kantin_defter), "dbRttMs": float(args.db_rtt_ms),
               "measuredAt": iso(datetime.now(UTC)),
               "commit": _git_head(), "results": results}
     if args.out:
@@ -799,6 +895,15 @@ def build_scenarios(state: Any, get: Callable[..., Awaitable[Any]], person: dict
         add("gecit.directory.304", gw_dir_304)
         add("gecit.directory.since", gw_since)
         add("gecit.ogrenci.kantin", lambda i: gw(f"/students/{ids[i % len(ids)]}/canteen"))
+        heavy = student_id(HEAVY)
+        add("gecit.ogrenci.kantin.yogun", lambda _: gw(f"/students/{heavy}/canteen"))
+        # İmleçli listeler (kantin §1.7 ile gelen uçlar; eski geçitte 404 → HATA).
+        add("gecit.ogrenci.kantin_islemleri",
+            lambda i: gw(f"/students/{ids[i % len(ids)]}/canteen/transactions"))
+        add("gecit.ogrenci.kantin_islemleri.yogun",
+            lambda _: gw(f"/students/{heavy}/canteen/transactions?limit=100"))
+        add("gecit.ogrenci.kantin_tahsilatlari",
+            lambda i: gw(f"/students/{ids[i % len(ids)]}/canteen/collections"))
         add("gecit.ogrenci.odeme_talepleri",
             lambda i: gw(f"/students/{ids[i % len(ids)]}/payment-requests"))
         add("gecit.ogrenci.kantin_kontrolleri",
@@ -836,6 +941,7 @@ def main() -> None:
     measure_cmd.add_argument("-n", default="200")
     measure_cmd.add_argument("--kantin-ms", default="8")
     measure_cmd.add_argument("--kantin-filtre", action="store_true")
+    measure_cmd.add_argument("--kantin-defter", action="store_true")
     measure_cmd.add_argument("--db-rtt-ms", default="0")
     measure_cmd.add_argument("--only", nargs="*")
     args = parser.parse_args()
