@@ -52,6 +52,8 @@ export const SECTIONS = [
     group: 'Öğrenme araçları' },
   { key: 'decks', label: 'Bilgi kartları', file: './decks.js', requires: ['learning_setup'],
     group: 'Öğrenme araçları' },
+  { key: 'evaluations', label: 'Değerlendirmeler', file: './evaluations.js',
+    requires: ['evaluations', 'learning_setup'], group: 'Öğrenme araçları' },
   { key: 'insights', label: 'Erken uyarı', file: './insights.js', requires: ['view'],
     group: 'Öğrenme araçları' },
   { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'],
