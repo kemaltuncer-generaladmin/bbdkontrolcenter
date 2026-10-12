@@ -9,9 +9,12 @@
 // YOKLAMA LİSTESİ sağda açılır: öğrenci başına geldi / gelmedi / geç / izinli
 // + not. Onaylı izni olan öğrenci Akademi'den kendiliğinden "izinli" gelir
 // (`autoExcused`) ve öyle işaretlenir. "Hepsi geldi" izinli olmayan herkesi
-// "geldi" yapar (yalnız ekranda; "Kaydet" ile gider). Kaydedince "gelmedi"
-// işaretlenenlerin velilerine anında bildirim gider (aynı ders için bir kez) —
-// bu yüzden YENİ "gelmedi" varsa kayıttan önce adlarıyla onay sorulur.
+// "geldi" yapar (yalnız ekranda; "Kaydet" ile gider). YENİ "gelmedi" varsa
+// kayıttan önce adlarıyla onay sorulur.
+//
+// VELİ BİLDİRİMİ ŞİMDİLİK KAPALI (ürün kararı 12.10.2026): veli yoklamayı
+// uygulamada görür, devamsızlık için anlık bildirim gitmez. Ekran bildirim
+// gittiğini söylemez.
 //
 // Sözleşmede geç kalma süresi alanı ve yoklama sürüm kilidi yoktur: süre nota
 // yazılır; geçmiş günün düzeltmesi aynı `PUT` ile yapılır ve kim/ne zaman
@@ -68,7 +71,7 @@ export function section(app) {
   let token = 0;
 
   node.append(sectionHead('Yoklama', {
-    subtitle: 'Günün dersleri ve etütleri. Kaydedince gelmeyen öğrencilerin velilerine bildirim gider.' }));
+    subtitle: 'Günün dersleri ve etütleri. Kaydedilen yoklamayı veliler uygulamada görür.' }));
 
   // ------------------------------------------------------------ araç şeridi
   const day = dateInput(state.date, (iso) => setDate(iso), 'Gün');
@@ -357,7 +360,7 @@ function sheetPanel(app, { onSaved, onSelect }) {
     }
     if (session.taken && si.date && si.date < todayIst()) {
       notes.append(alertBox('Geçmiş günün yoklamasını düzeltiyorsunuz. Kaydedilen değişiklik eskisinin yerine '
-        + 'geçer; yeni “gelmedi” işaretlenen öğrencinin velisine bildirim gider.', 'info'));
+        + 'geçer ve velinin uygulamasındaki yoklama da güncellenir.', 'info'));
     } else if (!session.taken && !hasStarted(session)) {
       notes.append(alertBox('Ders henüz başlamadı; yoklamayı ders başladıktan sonra almanız önerilir.', 'info'));
     }
@@ -516,9 +519,9 @@ function sheetPanel(app, { onSaved, onSelect }) {
         + (fresh.length > 6 ? ` ve ${num(fresh.length - 6)} öğrenci daha` : '');
       const ok = await confirmAction(app, {
         title: session.taken ? 'Düzeltmeyi kaydet' : 'Yoklamayı kaydet',
-        description: `“Gelmedi” işaretli ${num(fresh.length)} öğrenci: ${names}. Velilerine devamsızlık `
-          + 'bildirimi gönderilecek (aynı ders için bir kez).',
-        confirmLabel: 'Kaydet ve bildir',
+        description: `“Gelmedi” işaretli ${num(fresh.length)} öğrenci: ${names}. Devamsızlık kaydedilir; `
+          + 'veliler yoklamayı uygulamada görür.',
+        confirmLabel: 'Kaydet',
       });
       if (!ok) return;
     }
@@ -539,7 +542,7 @@ function sheetPanel(app, { onSaved, onSelect }) {
       apply(next);
       render();
       onSaved?.(next?.session);
-      app.toast(fresh.length ? `Yoklama kaydedildi; ${num(fresh.length)} öğrencinin velisine bildirim gidiyor.`
+      app.toast(fresh.length ? `Yoklama kaydedildi; ${num(fresh.length)} öğrenci gelmedi olarak işlendi.`
         : 'Yoklama kaydedildi.', 'good');
     } catch (failure) {
       saving = false;

@@ -57,6 +57,18 @@ NOT_SURFACED: dict[str, str] = {
         "Tam liste itmesini modülün personel servisi yapar (backend/staff.py: "
         "değişiklikte, zamanlanmış görevde ve panelin 'Şimdi eşitle' düğmesiyle "
         "km/staff/sync üzerinden); panel bu uca doğrudan gitmez.",
+    # --- çalışma grupları KM'nindir (ürün kararı 12.10.2026): grup adı ve
+    # üyeleri KM öğrenci yönetiminde (Öğrenciler modülü) tutulur ve Akademi'ye
+    # eşitlenir; Akademi grup açmaz. Panel grupları salt okunur listeler.
+    "admin_createStudentGroup":
+        "Çalışma grubu KM öğrenci yönetiminde açılır ve Akademi'ye eşitlenir "
+        "(ürün kararı); panelde Akademi tarafı grup oluşturma yok.",
+    "admin_updateStudentGroup":
+        "Grup adı ve üyeleri KM öğrenci yönetiminde düzenlenir, Akademi'ye "
+        "eşitlenir (ürün kararı); panel grubu salt okunur gösterir.",
+    "admin_deleteStudentGroup":
+        "Grup KM öğrenci yönetiminden kaldırılır ve eşitlemeyle Akademi'den "
+        "düşer (ürün kararı); panelde Akademi tarafı silme yok.",
     # --- öğrenci dışa aktarımı: işi BAŞLATAN uç (`students_exportMistakes`)
     # entegrasyon anahtarına açık değil; yoklanacak iş olmadan durum okuması
     # anlamsız. Kurum çıktıları ortak `/v1/admin/exports/{id}` üzerinden iner.

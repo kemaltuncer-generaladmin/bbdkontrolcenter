@@ -57,8 +57,7 @@ export function section(app) {
   const builders = {
     students: () => studentsView(app, { open }),
     classes: () => classesView(app, { openStudent: open }),
-    groups: () => groupsView(app, { openStudent: open,
-      onChange: () => bodies.students?.refreshOptions() }),
+    groups: () => groupsView(app, { openStudent: open }),
     guardians: () => guardiansView(app, { open }),
   };
 

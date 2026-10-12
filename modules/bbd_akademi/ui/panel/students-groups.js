@@ -5,9 +5,9 @@
 // düzenlenir (`admin_patchClassGroup`): görünen ad, dönem, rehber öğretmen,
 // etkinlik.
 //
-// ÇALIŞMA GRUBU AKADEMİ'NİNDİR. Sınıftan bağımsız öğrenci kümesi (ör. "TYT
-// hızlandırma"); atamalarda hedef, listelerde süzgeç olur. Üyeler TAM LİSTE
-// olarak gönderilir (PUT); ekleme öğrenci seçiciyle, çıkarma çipteki × ile.
+// ÇALIŞMA GRUBU DA KM'NİNDİR (ürün kararı 12.10.2026). Sınıftan bağımsız öğrenci
+// kümesi (ör. "TYT hızlandırma") KM öğrenci yönetiminde açılır, Akademi'ye
+// eşitlenir; burada salt okunur listelenir (atamalarda hedef, süzgeç).
 //
 // İki liste de küçük ve seyrek değişir: önbellekli okunur (`getCached`), her
 // yazmadan sonra önbellek düşürülür (`invalidate`) — bölümlerin sınıf/grup
@@ -17,10 +17,10 @@ import { button, foldText, h } from '../../ui-kit/kit.js';
 import { badge, card } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import {
-  EXAM_TARGETS, TRACKS, actionButton, confirmAction, empty, formDialog, gradeText, kv, loader, num,
-  openDrawer, runAction, searchBox, studentPicker, toolbar,
+  EXAM_TARGETS, TRACKS, actionButton, empty, formDialog, gradeText, kv, loader, num,
+  openDrawer, searchBox, toolbar,
 } from './common.js';
-import { STUDENT_STATUS, checkbox, stack } from './students-detail.js';
+import { STUDENT_STATUS, checkbox, openKmStudents, stack } from './students-detail.js';
 
 const CLASS_CACHE = '/v1/admin/class-groups';
 const GROUP_CACHE = '/v1/admin/student-groups';
@@ -178,13 +178,22 @@ async function editClass(app, group, terms) {
 
 // ---------------------------------------------------------- çalışma grupları
 
-export function groupsView(app, { openStudent, onChange } = {}) {
+/**
+ * Çalışma grupları — SALT OKUNUR. Ürün kararı (12.10.2026): gruplar KM'nin
+ * kendi öğrenci yönetiminde (Öğrenciler modülü: grup adı + öğrenci seçimi,
+ * bir öğrenci birden çok grupta) tutulur ve Akademi'ye eşitlenir; Akademi
+ * grup açmaz. Akademi'nin grup yazma uçları bu yüzden panelde yok
+ * (ui_coverage NOT_SURFACED).
+ */
+export function groupsView(app, { openStudent } = {}) {
   const node = h('div', 'ak-stack');
-  node.append(toolbar(h('span', 'ak-muted', 'Sınıftan bağımsız öğrenci kümeleri (ör. “TYT hızlandırma”); '
-    + 'atamalarda hedef, öğrenci listesinde süzgeç olur.'), h('span', 'kit-spacer'),
-  actionButton(app, 'admin_createStudentGroup', 'Yeni grup', { variant: 'primary', onClick: () => edit(null) })));
+  const hint = h('div', 'kit-hint ak-stu-hint');
+  hint.append(h('span', '', 'Çalışma grupları KM öğrenci yönetiminden yönetilir ve Akademi\'ye eşitlenir: '
+    + 'grubu açmak, adını değiştirmek ya da öğrenci eklemek için Öğrenciler modülünü kullanın. '
+    + 'Burada gruplar atamalarda hedef, öğrenci listesinde süzgeç olarak görünür.'),
+  button('Öğrenciler modülünü aç', { onClick: () => openKmStudents(app, null) }));
+  node.append(hint);
 
-  // Satırda düğme olduğu için satırın kendisi tıklanmaz (iç içe düğme olmasın).
   const grid = dataTable({
     columns: [
       { key: 'name', label: 'Grup', width: 'minmax(0, 1.6fr)', cell: (row) => stack(row.name, row.description) },
@@ -194,123 +203,29 @@ export function groupsView(app, { openStudent, onChange } = {}) {
         if (!names.length) return '—';
         return `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` +${num(names.length - 3)}` : ''}`;
       } },
-      { key: 'actions', label: '', width: '230px', cell: (row) => {
-        const actions = h('div', 'ak-row-actions');
-        actions.append(
-          button('Üyeler', { variant: 'ghost', onClick: () => openGroup(row) }),
-          actionButton(app, 'admin_updateStudentGroup', 'Düzenle', { variant: 'ghost', onClick: () => edit(row) }),
-          actionButton(app, 'admin_deleteStudentGroup', 'Sil', { variant: 'ghost', onClick: () => remove(row) }),
-        );
-        return actions;
-      } },
     ],
     rows: [],
-    empty: empty('Çalışma grubu yok', 'Örneğin “TYT hızlandırma” grubunu açıp öğrencileri ekleyin.'),
+    onRow: (row) => openGroup(row),
+    empty: empty('Çalışma grubu yok', 'Gruplar KM Öğrenciler modülünde açılır ve buraya eşitlenir.'),
   });
   const view = loader(() => app.api.getCached(GROUP_CACHE), (data) => {
     grid.update({ rows: [...(data?.items || [])].sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr')) });
     return grid.node;
-  }, { rows: 5, columns: 4 });
+  }, { rows: 5, columns: 3 });
   node.append(view.node);
 
-  function changed() {
-    app.api.invalidate(GROUP_CACHE);
-    view.reload();
-    onChange?.();
-  }
-
   function openGroup(group) {
-    const panel = openDrawer(app, { title: group.name, subtitle: `${num(group.studentCount)} öğrenci` });
+    const panel = openDrawer(app, { title: group.name, subtitle: `${num(group.studentCount)} öğrenci · KM'den eşitlenir` });
     panel.node.classList.add('ak-stu-sub');
     const members = dataTable({
       columns: studentColumns(),
       rows: [...(group.students || [])].sort((a, b) => String(a.displayName).localeCompare(String(b.displayName), 'tr')),
       onRow: (student) => openStudent(student.id),
-      empty: empty('Grupta öğrenci yok', '“Düzenle” ile öğrenci ekleyin.'),
+      empty: empty('Grupta öğrenci yok', 'Üyeler KM Öğrenciler modülünde seçilir.'),
     });
-    panel.body.append(...[toolbar(
-      actionButton(app, 'admin_updateStudentGroup', 'Düzenle', { variant: 'primary',
-        onClick: () => { panel.close(); edit(group); } }),
-      actionButton(app, 'admin_deleteStudentGroup', 'Sil', { variant: 'ghost',
-        onClick: () => { panel.close(); remove(group); } }),
-    ), group.description ? h('p', 'ak-muted', group.description) : null, card('Üyeler', members.node)]
-      .filter(Boolean));
-  }
-
-  async function edit(group) {
-    let picker = null;
-    const saved = await formDialog(app, {
-      title: group ? `“${group.name}” grubunu düzenle` : 'Yeni çalışma grubu',
-      wide: true,
-      value: { name: group?.name || '', description: group?.description || '' },
-      fields: [
-        { key: 'name', label: 'Grup adı', required: true, maxLength: 80, placeholder: 'TYT hızlandırma' },
-        { key: 'description', label: 'Açıklama', type: 'textarea', maxLength: 300, wide: true },
-        { key: 'studentIds', label: 'Üyeler', type: 'custom', render: (draft, set) => {
-          const editor = memberEditor(app, group?.students || [], set);
-          picker = editor.picker;
-          return editor.node;
-        } },
-      ],
-      submitLabel: group ? 'Kaydet' : 'Grubu oluştur',
-      onSubmit: (draft, { key }) => {
-        const body = { name: String(draft.name || '').trim(),
-          description: String(draft.description || '').trim() || null, studentIds: draft.studentIds || [] };
-        return group ? app.api.put(`/v1/admin/student-groups/${group.id}`, body)
-          : app.api.post('/v1/admin/student-groups', body, { key });
-      },
-    });
-    picker?.destroy();
-    if (saved) {
-      app.toast(group ? 'Grup güncellendi.' : 'Grup oluşturuldu.', 'good');
-      changed();
-    }
-  }
-
-  async function remove(group) {
-    const ok = await confirmAction(app, {
-      title: `“${group.name}” grubunu sil`,
-      description: `${num(group.studentCount)} öğrencilik grup kalıcı olarak silinir; öğrencilerin kendisi etkilenmez.`,
-      confirmLabel: 'Grubu sil',
-      danger: true,
-    });
-    if (!ok) return;
-    const done = await runAction(app, () => app.api.del(`/v1/admin/student-groups/${group.id}`).then(() => true),
-      { success: 'Grup silindi.' });
-    if (done) changed();
+    panel.body.append(...[group.description ? h('p', 'ak-muted', group.description) : null,
+      card('Üyeler', members.node)].filter(Boolean));
   }
 
   return { node, reload: () => view.reload() };
-}
-
-/** Üye düzenleyici: öğrenci seçiciyle ekle, çipteki × ile çıkar. */
-function memberEditor(app, initial, set) {
-  const chosen = new Map(initial.map((student) => [student.id, student]));
-  const node = h('div', 'ak-stack');
-  const count = h('span', 'ak-muted');
-  const chips = h('div', 'ak-stu-members');
-  const paint = () => {
-    chips.replaceChildren();
-    for (const student of chosen.values()) {
-      const chip = h('span', 'ak-stu-chip');
-      const remove = h('button', 'ak-stu-chip-x', '×');
-      remove.type = 'button';
-      remove.title = `${student.displayName}: gruptan çıkar`;
-      remove.setAttribute('aria-label', remove.title);
-      remove.addEventListener('click', () => { chosen.delete(student.id); paint(); });
-      chip.append(h('span', '', student.displayName), remove);
-      if (student.classGroup?.name) chip.title = student.classGroup.name;
-      chips.append(chip);
-    }
-    count.textContent = chosen.size ? `${num(chosen.size)} öğrenci`
-      : 'Henüz üye yok — yukarıdan öğrenci arayıp ekleyin.';
-    set([...chosen.keys()]);
-  };
-  const picker = studentPicker(app, { placeholder: 'Öğrenci ekle (ad, okul no)', onPick: (student) => {
-    chosen.set(student.id, student);
-    paint();
-  } });
-  node.append(picker.node, count, chips);
-  paint();
-  return { node, picker };
 }
