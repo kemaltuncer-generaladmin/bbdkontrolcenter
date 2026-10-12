@@ -38,6 +38,14 @@
 }
 .ak-nav-item:hover { background: #eef1f6; }
 .ak-nav-item.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
+/* Grup başlığı. `text-transform: uppercase` YOK: dil bilgisi verilmeyen
+   sayfada "Akademik" → "AKADEMIK" olur (Türkçe İ kaybolur). */
+.ak-nav-group {
+  margin: 12px 10px 4px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--soft);
+}
 
 .ak-main { min-height: 0; overflow: auto; }
 .ak-section { padding: 14px 20px 28px; display: flex; flex-direction: column; gap: 14px; }

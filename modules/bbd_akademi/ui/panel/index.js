@@ -26,24 +26,41 @@ const P = 'bbd_akademi';
 
 /**
  * Bölümler. `requires`: KM izinleri (biri yeterli). `file`: bölüm modülü.
- * Sıra menü sırasıdır.
+ * `group`: menüdeki başlık (aynı gruptakiler art arda yazılır). Sıra menü
+ * sırasıdır. Yeni bölüm = bir dosya + buraya bir satır.
  */
 export const SECTIONS = [
   { key: 'dashboard', label: 'Panel', file: './dashboard.js', requires: ['view'] },
   { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'] },
-  { key: 'curriculum', label: 'Müfredat', file: './curriculum.js', requires: ['view'] },
-  { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'] },
-  { key: 'timetable', label: 'Ders programı', file: './timetable.js', requires: ['view'] },
-  { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'] },
-  { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'] },
-  { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'] },
-  { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'] },
-  { key: 'books', label: 'Kitap talepleri', file: './books.js', requires: ['view'] },
+  { key: 'curriculum', label: 'Müfredat', file: './curriculum.js', requires: ['view'],
+    group: 'Akademik' },
+  { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'],
+    group: 'Akademik' },
+  { key: 'timetable', label: 'Ders programı', file: './timetable.js', requires: ['view'],
+    group: 'Akademik' },
+  { key: 'calendar', label: 'Kurum takvimi', file: './institution-calendar.js',
+    requires: ['view'], group: 'Akademik' },
+  { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'],
+    group: 'Akademik' },
+  { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'],
+    group: 'Akademik' },
+  { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'],
+    group: 'Akademik' },
+  { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'],
+    group: 'Öğrenme araçları' },
+  { key: 'reading', label: 'Okuma', file: './reading.js', requires: ['view'],
+    group: 'Öğrenme araçları' },
+  { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'],
+    group: 'Kurum' },
+  { key: 'books', label: 'Kitap talepleri', file: './books.js', requires: ['view'],
+    group: 'Kurum' },
   { key: 'announcements', label: 'Duyurular', file: './announcements.js',
-    requires: ['announcements'] },
-  { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'] },
-  { key: 'settings', label: 'Ayarlar', file: './settings.js', requires: ['settings'] },
-  { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'] },
+    requires: ['announcements'], group: 'Kurum' },
+  { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'],
+    group: 'Kurum' },
+  { key: 'settings', label: 'Ayarlar', file: './settings.js', requires: ['settings'],
+    group: 'Yönetim' },
+  { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'], group: 'Yönetim' },
 ];
 
 export function mount(root, ctx) {
@@ -97,7 +114,12 @@ export function mount(root, ctx) {
   function paintNav() {
     nav.replaceChildren();
     navButtons.clear();
+    let group = null;
     for (const section of visibleSections()) {
+      if ((section.group || null) !== group) {
+        group = section.group || null;
+        if (group) nav.append(h('div', 'ak-nav-group', group));
+      }
       const item = h('button', 'ak-nav-item', section.label);
       item.type = 'button';
       item.addEventListener('click', () => show(section.key));
