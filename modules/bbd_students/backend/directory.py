@@ -17,6 +17,16 @@ Hepsi `async`tır (kantin çağrısı yapar). Kantine ulaşılamazsa:
 `DirectoryUnavailable` yükseltir (`reason == "canteen_unavailable"`); çağıran
 modül sınıfı import edemez (K3), `getattr(hata, "reason", None)` ile ayırt eder.
 
+HIZ. Kantinin tam listesi `CACHE_SECONDS` boyunca bellekte durur ve aynı anda
+gelen soğuk çağrılar TEK kantin isteğini bekler. Kayıtlar (kantin + profil
+birleşimi), `since` için zaman damgaları ve telefon dizini o listeden BİR KEZ
+kurulur; `list`, `list(since)`, `find_by_phone` ve önbellekte bulunan `get`
+ne kantine ne veritabanına gider. Profil yazıldığında ya da kantine öğrenci
+yazıldığında `invalidate()` çağrılır (Öğrenci Yönetimi servisi çağırır).
+`list` sonucu ayrıca `asOf` taşır: kantin listesinin okunduğu an. Bir sonraki
+`since` için güvenli imleç budur (`generatedAt` "şimdi"dir, liste daha eski
+olabilir).
+
 StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
 (`accessCode` asla):
 
@@ -28,6 +38,7 @@ StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -153,6 +164,45 @@ def _class_key(name: str) -> tuple[int, str]:
     return (int(digits) if digits else 999, name.casefold())
 
 
+class _Snapshot:
+    """Bir kantin listesinden BİR KEZ kurulan dizin: kayıtlar, damgalar, dizinler."""
+
+    __slots__ = ("as_of", "by_id", "by_phone", "classes", "records", "rows", "stamps")
+
+    def __init__(self, rows: Records, profiles: dict[str, dict[str, Any]],
+                 as_of: datetime) -> None:
+        self.rows = rows
+        self.as_of = as_of
+        self.records: Records = [
+            student_record(row, profiles.get(str(row.get("id") or "")))
+            for row in rows
+            if row.get("id")
+        ]
+        self.stamps = [_moment(record["updatedAt"]) for record in self.records]
+        self.by_id = {record["id"]: record for record in self.records}
+        self.by_phone: dict[str, Records] = {}
+        for record in self.records:
+            phones = {record["studentPhone"]} | {g["phone"] for g in record["guardians"]}
+            for number in phones:
+                if number:
+                    self.by_phone.setdefault(number, []).append(record)
+        self.classes = sorted({row["className"] for row in self.records if row["className"]},
+                              key=_class_key)
+
+
+def _copy(record: dict[str, Any]) -> dict[str, Any]:
+    """Önbellekteki kaydın çağırana giden kopyası (iç içe liste/sözlük dahil).
+
+    Tüketici kaydı değiştirirse önbellek bozulmasın. `deepcopy`den hızlı: kayıt
+    biçimi sabit ve sığ (guardians listesi + canteen sözlüğü).
+    """
+    copy = dict(record)
+    copy["guardians"] = [dict(item) for item in record["guardians"]]
+    copy["canteen"] = dict(record["canteen"])
+    copy["phoneIssues"] = list(record["phoneIssues"])
+    return copy
+
+
 class StudentDirectory:
     """Yeteneğin uygulaması. Kantin ve modülün kendi deposu dışında bağı yoktur."""
 
@@ -162,52 +212,85 @@ class StudentDirectory:
         self._log = log
         self._table = store.table("profile")
         self._cache: tuple[float, Records] | None = None
+        #: Kantin listesinin okunduğu duvar saati (`asOf`).
+        self._cache_at: datetime | None = None
+        self._snapshot: _Snapshot | None = None
+        self._lock = asyncio.Lock()
+
+    def invalidate(self, *, canteen: bool = True) -> None:
+        """Önbelleği bırakır. `canteen=False`: yalnız profil değişti, kantin
+        listesi geçerli; kayıtlar bir sonraki çağrıda profilden yeniden kurulur."""
+        self._snapshot = None
+        if canteen:
+            self._cache = None
+            self._cache_at = None
+
+    def _fresh_rows(self) -> Records | None:
+        if self._cache is not None and time.monotonic() - self._cache[0] < CACHE_SECONDS:
+            return self._cache[1]
+        return None
 
     async def _canteen_students(self) -> Records:
-        now = time.monotonic()
-        if self._cache is not None and now - self._cache[0] < CACHE_SECONDS:
-            return self._cache[1]
-        try:
-            rows = list(await self._canteen.students())
-        except Exception as failure:  # kantin dışarısı; sebebi taşınır
-            self._log.warning("dizin: kantin okunamadı", error=str(failure))
-            raise DirectoryUnavailable("Kantine ulaşılamadı.") from failure
-        self._cache = (now, rows)
-        return rows
+        rows = self._fresh_rows()
+        if rows is not None:
+            return rows
+        # Aynı anda gelen soğuk çağrılar kantine TEK istek atar.
+        async with self._lock:
+            rows = self._fresh_rows()
+            if rows is not None:
+                return rows
+            started, wall = time.monotonic(), datetime.now(UTC)
+            try:
+                rows = list(await self._canteen.students())
+            except Exception as failure:  # kantin dışarısı; sebebi taşınır
+                self._log.warning("dizin: kantin okunamadı", error=str(failure))
+                raise DirectoryUnavailable("Kantine ulaşılamadı.") from failure
+            self._cache, self._cache_at = (started, rows), wall
+            return rows
 
     async def _profiles(self) -> dict[str, dict[str, Any]]:
         rows = await self._store.fetch_all(f"SELECT * FROM {self._table}")
         return {str(row["kantin_id"]): row for row in rows}
 
-    async def _records(self) -> Records:
-        students = await self._canteen_students()
+    async def _current(self) -> _Snapshot:
+        rows = await self._canteen_students()
+        snapshot = self._snapshot
+        if snapshot is not None and snapshot.rows is rows:
+            return snapshot
         profiles = await self._profiles()
-        return [
-            student_record(row, profiles.get(str(row.get("id") or "")))
-            for row in students
-            if row.get("id")
-        ]
+        snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC))
+        if self._cache is not None and self._cache[1] is rows:
+            self._snapshot = snapshot
+        return snapshot
 
     async def list(self, since: datetime | None = None) -> dict[str, Any]:
         try:
-            records = await self._records()
+            snapshot = await self._current()
         except DirectoryUnavailable:
             return {"students": [], "classes": [], "complete": False}
 
-        classes = sorted({row["className"] for row in records if row["className"]},
-                         key=_class_key)
-        if since is not None:
+        if since is None:
+            records = [_copy(record) for record in snapshot.records]
+        else:
             threshold = since if since.tzinfo else since.replace(tzinfo=UTC)
             records = [
-                row for row in records
-                if (stamp := _moment(row["updatedAt"])) is not None and stamp > threshold
+                _copy(record) for record, stamp in zip(snapshot.records, snapshot.stamps,
+                                                       strict=True)
+                if stamp is not None and stamp > threshold
             ]
-        return {"students": records, "classes": classes, "complete": True}
+        return {"students": records, "classes": list(snapshot.classes), "complete": True,
+                "asOf": _iso(snapshot.as_of)}
 
     async def get(self, student_id: str) -> dict[str, Any] | None:
         wanted = str(student_id or "").strip()
         if not wanted:
             return None
+        # Taze dizinde varsa kantine gidilmez (dizinle aynı tazelik, ≤ CACHE_SECONDS).
+        snapshot = self._snapshot
+        if snapshot is not None and self._fresh_rows() is snapshot.rows:
+            found = snapshot.by_id.get(wanted)
+            if found is not None:
+                return _copy(found)
         try:
             canteen = await self._canteen.student(wanted)
         except Exception as failure:  # kantin dışarısı; sebebi taşınır
@@ -228,12 +311,8 @@ class StudentDirectory:
         wanted = normalize_phone(phone10)
         if wanted is None:
             return []
-        found = []
-        for record in await self._records():
-            phones = {record["studentPhone"]} | {g["phone"] for g in record["guardians"]}
-            if wanted in phones:
-                found.append(record)
-        return found
+        snapshot = await self._current()
+        return [_copy(record) for record in snapshot.by_phone.get(wanted, [])]
 
     async def card_qr_text(self, student_id: str) -> str:
         """Kartta basılı v1 QR metni. QR anahtarı sunucuda kalır, dışarı çıkmaz."""

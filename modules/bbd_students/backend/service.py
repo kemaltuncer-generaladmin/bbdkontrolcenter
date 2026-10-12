@@ -13,6 +13,7 @@ import secrets
 import shutil
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -67,13 +68,25 @@ class ControlsError(ValueError):
         self.status = status
 
 
+async def _settled(call: Callable[[], Any]) -> Any:
+    """Kantin çağrısının sonucu ya da hatası — yükseltmez (ekran ayakta kalmalı)."""
+    try:
+        return await call()
+    except Exception as failure:  # noqa: BLE001 — kantin dışarısı
+        return failure
+
+
 class StudentService:
     """Kantin öğrencilerini canlı yönetir; kendi profil alanlarını yanına ekler."""
 
     def __init__(self, *, canteen: Any, store: Any, log: Any,
                  config: dict[str, Any] | None = None,
-                 category: str = "Öğrenci", fallback_dir: Path | None = None) -> None:
+                 category: str = "Öğrenci", fallback_dir: Path | None = None,
+                 on_change: Callable[..., None] | None = None) -> None:
         self._config = config or {}
+        # Öğrenci yazıldığında dizin yeteneğinin önbelleğini bırakır
+        # (`StudentDirectory.invalidate`). `canteen=False`: yalnız profil değişti.
+        self._on_change = on_change
         self._category = category
         self._fallback_dir = fallback_dir or Path("data/exports")
         self._canteen = canteen
@@ -92,20 +105,27 @@ class StudentService:
 
     # ------------------------------------------------------------- okuma
 
-    async def list_students(self) -> dict[str, Any]:
-        """Kantin listesi + bizim alanlarımız. Kantine ulaşılamazsa da yanıt döner."""
-        try:
-            students = await self._canteen.students()
-            connected = True
-            error = ""
-        except Exception as failure:  # noqa: BLE001 — kantin dışarısı; ekran ayakta kalmalı
-            students, connected, error = [], False, str(failure)
-            self._log.warning("kantin okunamadı", error=error)
+    def _changed(self, *, canteen: bool) -> None:
+        if self._on_change is not None:
+            self._on_change(canteen=canteen)
 
-        profiles = {
-            row["kantin_id"]: row
-            for row in await self._store.fetch_all(f"SELECT * FROM {self._table}")
-        }
+    async def list_students(self) -> dict[str, Any]:
+        """Kantin listesi + bizim alanlarımız. Kantine ulaşılamazsa da yanıt döner.
+
+        Kantin listesi, kasa panosu ve profil tablosu BİRBİRİNDEN BAĞIMSIZDIR;
+        üçü aynı anda istenir (eskiden sırayla: liste bitmeden pano başlamazdı).
+        """
+        students_call, dashboard_call, profile_rows = await asyncio.gather(
+            _settled(self._canteen.students), _settled(self._canteen.dashboard),
+            self._store.fetch_all(f"SELECT * FROM {self._table}"),
+        )
+        if isinstance(students_call, BaseException):
+            students, connected, error = [], False, str(students_call)
+            self._log.warning("kantin okunamadı", error=error)
+        else:
+            students, connected, error = students_call, True, ""
+
+        profiles = {row["kantin_id"]: row for row in profile_rows}
 
         merged = [self._merge(student, profiles.get(student.get("id", ""))) for student in students]
 
@@ -119,10 +139,11 @@ class StudentService:
             "error": error,
             "students": merged,
             "orphans": orphans if connected else [],
-            "summary": await self._summary(merged, connected),
+            "summary": await self._summary(merged, connected, dashboard=dashboard_call),
         }
 
-    async def _summary(self, students: list[dict[str, Any]], connected: bool) -> dict[str, Any]:
+    async def _summary(self, students: list[dict[str, Any]], connected: bool, *,
+                       dashboard: Any = None) -> dict[str, Any]:
         """Üst şeridin rakamları.
 
         Kasa panosuyla AYNI kaynaktan okunur (`/api/reports/dashboard`) —
@@ -148,10 +169,15 @@ class StudentService:
         if not connected:
             return summary
 
-        try:
-            dashboard = await self._canteen.dashboard()
-        except Exception as failure:  # noqa: BLE001 — pano düşse de liste çalışsın
-            self._log.warning("kasa panosu okunamadı", error=str(failure))
+        if dashboard is None:
+            try:
+                dashboard = await self._canteen.dashboard()
+            except Exception as failure:  # noqa: BLE001 — pano düşse de liste çalışsın
+                dashboard = failure
+        if isinstance(dashboard, BaseException):
+            self._log.warning("kasa panosu okunamadı", error=str(dashboard))
+            return summary
+        if not isinstance(dashboard, dict):
             return summary
 
         summary.update({
@@ -255,6 +281,7 @@ class StudentService:
             if reason == "validation_error":
                 raise ControlsError(f"Kantin reddetti: {failure}", status=422) from failure
             raise ControlsError(f"Kantine ulaşılamadı: {failure}", status=503) from failure
+        self._changed(canteen=True)
         # Denetim: kim, hangi alanları. Değerler kişisel veri değil ama gereksiz
         # de değil — limit değişikliği sonradan sorulur.
         self._log.info("veli kantin kontrolleri değişti", student=kantin_id, actor=actor,
@@ -310,6 +337,7 @@ class StudentService:
                 changes[field] = payload[field]
 
         await self._canteen.upsert_student(kantin_id, changes)
+        self._changed(canteen=True)
         await self._save_profile(kantin_id, payload)
         self._log.info("öğrenci kantine eklendi", kantin_id=kantin_id)
         return {"kantinId": kantin_id}
@@ -353,6 +381,7 @@ class StudentService:
             if "displayName" not in changes:
                 changes["displayName"] = await self._current_display_name(kantin_id)
             await self._canteen.upsert_student(kantin_id, changes)
+            self._changed(canteen=True)
 
         await self._save_profile(kantin_id, payload)
         return {"kantinId": kantin_id, "canteenFields": sorted(changes)}
@@ -515,6 +544,7 @@ class StudentService:
             + ", updated_at = excluded.updated_at",
             (kantin_id, *values, datetime.now(UTC).isoformat(timespec="seconds")),
         )
+        self._changed(canteen=False)
 
     # ------------------------------------------------------------ kartlar
 
