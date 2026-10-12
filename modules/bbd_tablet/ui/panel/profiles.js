@@ -23,6 +23,8 @@ import {
 
 const NEW = '__new__';
 const UNASSIGN = '__unassign__';
+// Uygulama kaynağı: tabletin envanteri yerine panelden dağıtılan uygulamalar.
+const MANAGED = '__managed__';
 const enc = encodeURIComponent;
 
 // Sunucunun kabul ettiği Android SystemPolicyControl.storageKey() alt kümesi.
@@ -580,12 +582,16 @@ export function profilesView(app) {
       const placeholder = h('option', null, devices.length ? 'Tablet seçin' : 'Eşli tablet yok');
       placeholder.value = '';
       source.append(placeholder);
+      // Henüz hiçbir tablete kurulmamış dağıtılan uygulama da profile eklenebilir.
+      const distributed = h('option', null, 'Dağıtılan uygulamalar');
+      distributed.value = MANAGED;
+      source.append(distributed);
       for (const device of devices) {
         const option = h('option', null, device.status === 'online' ? device.name : `${device.name} (çevrimdışı)`);
         option.value = device.id;
         source.append(option);
       }
-      source.value = devices.some((device) => device.id === keep) ? keep : '';
+      source.value = keep === MANAGED || devices.some((device) => device.id === keep) ? keep : '';
       if (!source.value) {
         pickerBox.hidden = true;
         pickerNote.textContent = devices.length ? '' : 'Paket adını aşağıdan elle ekleyebilirsiniz.';
@@ -602,7 +608,12 @@ export function profilesView(app) {
       }
       pickerNote.textContent = 'Uygulamalar yükleniyor…';
       try {
-        const rows = await app.inventory(id);
+        const rows = id === MANAGED
+          ? (await app.managedApps()).filter((item) => item.kind !== 'self').map((item) => ({
+            packageName: item.packageName, appName: item.appName, isLaunchable: true,
+            isSystemApp: false, managed: true,
+          }))
+          : await app.inventory(id);
         if (source.value !== id) return;
         ed.inventory = rows;
         refreshPicker();
@@ -621,13 +632,16 @@ export function profilesView(app) {
           id: item.packageName,
           name: item.appName || item.packageName,
           meta: item.packageName,
-          group: item.isSystemApp ? 'Sistem' : 'Yüklenen',
+          group: item.managed ? 'Dağıtılan uygulama' : (item.isSystemApp ? 'Sistem' : 'Yüklenen'),
         }));
       picker.setItems(items);
       paintAddChosen();
+      const fromManaged = source.value === MANAGED;
       pickerNote.textContent = items.length ? ''
-        : (ed.inventory.length ? 'Bu tabletteki uygulamaların hepsi profilde.'
-          : 'Tablet henüz uygulama listesini göndermedi.');
+        : (ed.inventory.length
+          ? (fromManaged ? 'Dağıtılan uygulamaların hepsi profilde.' : 'Bu tabletteki uygulamaların hepsi profilde.')
+          : (fromManaged ? 'Henüz dağıtılan uygulama yok. Uygulamalar sekmesinden APK yükleyin.'
+            : 'Tablet henüz uygulama listesini göndermedi.'));
     }
 
     const manualPackage = h('input', 'kit-input');

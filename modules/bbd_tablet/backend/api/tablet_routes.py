@@ -7,16 +7,17 @@ details are generic errors on the tablet side.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Header, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.routing import APIRoute
 
 from km_sdk import APIRouter, BaseModel, Field, HTTPException, Query
 
-from ..service import TabletError
+from ..service import NotFoundError, TabletError
 from .routes import current_service
 
 
@@ -135,6 +136,30 @@ class CommandResult(BaseModel):
     message: str = Field(default="", max_length=500)
 
 
+class ActiveInstall(BaseModel):
+    releaseId: str = Field(min_length=1, max_length=100)
+    receivedBytes: int = Field(default=0, ge=0)
+
+
+class InstallResult(BaseModel):
+    releaseId: str = Field(min_length=1, max_length=100)
+    ok: bool = False
+    message: str = Field(default="", max_length=500)
+    versionCode: int | None = Field(default=None, ge=0)
+
+
+ReleaseId = Annotated[str, Field(min_length=1, max_length=100)]
+
+
+class InstallsBody(BaseModel):
+    """Sözleşme v2.1 `installs`; the service reads at most 50 results."""
+
+    wanted: list[ReleaseId] = Field(default_factory=list, max_length=500)
+    priority: str | None = Field(default=None, max_length=100)
+    active: ActiveInstall | None = None
+    results: list[InstallResult] = Field(default_factory=list, max_length=500)
+
+
 class SyncBody(BaseModel):
     """Every field is optional; unknown fields are ignored for forward compatibility."""
 
@@ -154,6 +179,8 @@ class SyncBody(BaseModel):
     # Generous on purpose: a backlog must never turn every sync into a 422. The
     # service reads the first 100 and the tablet reports the rest on later syncs.
     commandResults: list[CommandResult] = Field(default_factory=list, max_length=1000)
+    appsVersion: str | None = Field(default=None, max_length=200)
+    installs: InstallsBody | None = None
 
 
 class InventoryApp(BaseModel):
@@ -230,11 +257,72 @@ async def profile(profile_id: str, authorization: str = Header(default="")) -> d
     return result
 
 
+def public_origin(request: Request) -> str:
+    """Scheme + host the tablet reached us on, for absolute download URLs.
+
+    The `public_base_url` setting wins. Otherwise the request tells: behind
+    Cloudflare `CF-Visitor` carries the visitor's scheme (Traefik may speak
+    plain HTTP to the container and uvicorn does not trust forwarded headers
+    from the proxy network), then `X-Forwarded-Proto`/`-Host`, then `Host`.
+    The answer goes only to the authenticated tablet that asked, so a forged
+    header misleads no one else.
+    """
+    configured = current_service().public_base_url
+    if configured:
+        return configured
+    headers = request.headers
+    scheme = ""
+    try:
+        scheme = str(json.loads(headers.get("cf-visitor") or "{}").get("scheme") or "")
+    except (ValueError, AttributeError):
+        scheme = ""
+    if scheme not in ("http", "https"):
+        scheme = headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    if scheme not in ("http", "https"):
+        scheme = request.url.scheme
+    host = headers.get("x-forwarded-host", "").split(",")[0].strip() \
+        or headers.get("host", "").strip() or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+def api_root(request: Request) -> str:
+    """`https://host/api/tablet/v1` — the router's mount prefix included."""
+    prefix = request.url.path.rsplit("/devices/", 1)[0]
+    return f"{public_origin(request)}{prefix}"
+
+
 @router.post("/devices/{device_id}/sync")
-async def sync(device_id: str, body: SyncBody,
+async def sync(device_id: str, body: SyncBody, request: Request,
                authorization: str = Header(default="")) -> dict[str, Any]:
     device = await device_auth(authorization, device_id)
-    return await current_service().sync(device=device, data=body.model_dump())
+    data = body.model_dump()
+    return await current_service().sync(
+        device=device, data=data,
+        base_url=api_root(request) if data.get("installs") is not None else "",
+    )
+
+
+@router.get("/devices/{device_id}/releases/{release_id}/files/{index}")
+async def release_file(device_id: str, release_id: str, index: int,
+                       authorization: str = Header(default="")) -> FileResponse:
+    """A distributed package file; only the tablet holding the lease may read it.
+
+    `Range: bytes=N-` answers 206. `application/zip` (an APK is a zip) keeps
+    the core's GZip middleware away from full answers too — compressing
+    gigabytes would burn CPU and break `Content-Length` and resuming.
+    `no-store` and the extension-less URL keep Cloudflare from caching.
+    """
+    await device_auth(authorization, device_id)
+    try:
+        path = await current_service().distribution.download_path(
+            device_id=device_id, release_id=release_id, index=index,
+        )
+    except TabletError as exc:
+        raise coded(exc) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="application/zip",
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/devices/{device_id}/policy")

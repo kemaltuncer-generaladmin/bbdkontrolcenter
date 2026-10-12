@@ -6,6 +6,9 @@ giriş kilidini kaldırma `bbd_tablet.grant` ister. Eşleme iptali, tablet silme
 (tekli ve toplu), profil silme ve öğrenci verisi silme geri alınamaz: izin
 yeterli olsa bile PIN teyidi (`confirm_pin`) ister. PIN gövdede taşınır, sorgu
 dizesinde değil.
+
+Uygulama dağıtımı: listeler `view`; yükleme, yayın, öne alma `manage`;
+dağıtımı bitirmek (`DELETE /apps/{package}`) ayrıca PIN ister.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from km_sdk import (
     requires,
 )
 
+from ..distribution import CHUNK_BASE64_MAX
 from ..service import CanteenUnavailableError, ConflictError, NotFoundError, TabletService
 
 router = APIRouter()
@@ -142,6 +146,28 @@ class BulkBody(BaseModel):
     command: CommandBody | None = None
     # Yalnız `delete` için; o işlemde zorunludur.
     pin: str | None = Field(default=None, min_length=4, max_length=32)
+
+
+class UploadBody(BaseModel):
+    fileName: str = Field(min_length=1, max_length=255)
+    sizeBytes: int = Field(ge=1)
+    # Aynı ad + boyut + parmak izi yarım yüklemeyi sürdürür (panel: lastModified).
+    fingerprint: str = Field(default="", max_length=100)
+
+
+class ChunkBody(BaseModel):
+    offset: int = Field(ge=0)
+    data: str = Field(min_length=1, max_length=CHUNK_BASE64_MAX)
+
+
+class PublishBody(BaseModel):
+    appName: str = Field(default="", max_length=120)
+
+
+class AppRemoveBody(PinBody):
+    """Dağıtımı bitir; `uninstall` ise tabletlerden de kaldırılır."""
+
+    uninstall: bool = False
 
 
 class EndSessionBody(BaseModel):
@@ -398,3 +424,90 @@ async def block_student(student_id: str, body: BlockBody,
 async def unblock_student(student_id: str,
                           user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
     return await current_service().unblock_student(student_id=student_id)
+
+
+# ------------------------------------------------------- uygulama dağıtımı
+# Sabit yollar (`/apps/uploads`, `/apps/releases`) `/apps/{package}` yollarından
+# önce tanımlanır.
+
+
+@router.get("/apps")
+async def apps(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
+    return await current_service().distribution.overview()
+
+
+@router.post("/apps/uploads")
+async def start_upload(body: UploadBody,
+                       user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().distribution.start_upload(
+        file_name=body.fileName, size_bytes=body.sizeBytes, fingerprint=body.fingerprint,
+        actor=user.full_name,
+    ))
+
+
+@router.get("/apps/uploads/{upload_id}")
+async def upload_status(upload_id: str,
+                        user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().distribution.upload_status(upload_id))
+
+
+@router.put("/apps/uploads/{upload_id}/chunk")
+async def upload_chunk(upload_id: str, body: ChunkBody,
+                       user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    try:
+        return await current_service().distribution.put_chunk(
+            upload_id=upload_id, offset=body.offset, data=body.data,
+        )
+    except ConflictError as exc:
+        # The envelope keeps only text; the right offset also rides in a header.
+        received = exc.extra.get("receivedBytes")
+        headers = {"X-Received-Bytes": str(received)} if received is not None else None
+        raise HTTPException(status_code=409, detail=str(exc), headers=headers) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/apps/uploads/{upload_id}/finish")
+async def finish_upload(upload_id: str,
+                        user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    """Starts unpacking/hashing in the background and answers `processing` at once."""
+    return await run(current_service().distribution.finish_upload(upload_id=upload_id))
+
+
+@router.post("/apps/releases/{release_id}/publish")
+async def publish_release(release_id: str, body: PublishBody | None = None,
+                          user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().distribution.publish(
+        release_id=release_id, app_name=body.appName if body else "",
+    ))
+
+
+@router.delete("/apps/releases/{release_id}")
+async def delete_release(release_id: str,
+                         user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().distribution.delete_release(release_id=release_id))
+
+
+@router.get("/apps/{package_name}/devices")
+async def app_devices(package_name: str,
+                      user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
+    return await run(current_service().distribution.app_devices(package_name=package_name))
+
+
+@router.post("/apps/{package_name}/devices/{device_id}/prioritize")
+async def prioritize(package_name: str, device_id: str,
+                     user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    return await run(current_service().distribution.prioritize(
+        package_name=package_name, device_id=device_id,
+    ))
+
+
+@router.delete("/apps/{package_name}")
+async def remove_app(package_name: str, body: AppRemoveBody, request: Request,
+                     user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    await confirm_pin(request, user, body.pin, action="bbd_tablet.app.remove")
+    return await run(current_service().distribution.remove_app(
+        package_name=package_name, uninstall=body.uninstall, actor=user.full_name,
+    ))

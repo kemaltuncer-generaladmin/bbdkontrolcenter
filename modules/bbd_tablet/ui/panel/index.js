@@ -4,14 +4,18 @@
 // NE YAPAR: tabletleri canlı izler ve uzaktan yönetir (kilit, duyuru, komut,
 // profil, oturum kapatma), profilleri düzenler (uygulama kuralları, kullanım
 // saatleri, sistem kısıtlamaları), öğrenciye ek süre verir ya da tablet
-// kullanımını kısıtlar ve günlük kullanım raporunu gösterir.
+// kullanımını kısıtlar ve günlük kullanım raporunu gösterir. Uygulamalar
+// sekmesinden APK yüklenir ve tabletlere sırayla dağıtılır (TabletKontrol'ün
+// kendi güncellemesi dahil).
 //
 // SUNUCUYU YORMAZ: Kontrol Merkezi bbdstore ile aynı sunucuda koşar. Ekran
 // 30 saniyede bir TEK bir özet isteği (`/overview`) atar ve sekme gizliyken
 // durur (`pollLoop`). Kantin öğrenci listesi yalnız Öğrenciler sekmesi
 // açıldığında ve en çok 5 dakikada bir okunur; tabletin uygulama listesi 5
-// dakika bellekte tutulur. Çekmece ve formlar yoklamada yeniden kurulmaz,
-// yalnız değişen parçası boyanır — yazılan metin kaybolmaz.
+// dakika bellekte tutulur. Uygulamalar sekmesi yalnız açıkken kendi listesini
+// okur (indiren tablet varsa 15, yoksa 30 saniyede bir). Çekmece ve formlar
+// yoklamada yeniden kurulmaz, yalnız değişen parçası boyanır — yazılan metin
+// kaybolmaz.
 //
 // YETKİ: düğmeler `/auth/me` izinlerine göre çizilir; yetki yoksa gerekçeli
 // kapalı düğme (`blockedButton`). Asıl kapı backend'dedir (K9). İzinler
@@ -24,6 +28,7 @@
 
 import { button, h, loadStyles, num, pollLoop, toaster } from '../../ui-kit/kit.js';
 import { emptyState, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
+import { appsView } from './apps.js';
 import { closeAllDialogs, problem } from './common.js';
 import { devicesView } from './devices.js';
 import { profilesView } from './profiles.js';
@@ -33,6 +38,7 @@ const BASE = '/api/bbd_tablet';
 const POLL_MS = 30_000;
 const STUDENTS_TTL_MS = 5 * 60_000;
 const INVENTORY_TTL_MS = 5 * 60_000;
+const MANAGED_TTL_MS = 60_000;
 
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
@@ -50,6 +56,7 @@ export function mount(root, ctx) {
     loadedAt: 0, loadError: '', skew: 0,
   };
   const inventory = new Map();          // deviceId → {at, promise}
+  let managed = null;                   // {at, promise} — dağıtılan uygulamalar
 
   const app = {
     root: view,
@@ -79,6 +86,15 @@ export function mount(root, ctx) {
       return promise;
     },
     forgetInventory: (deviceId) => inventory.delete(deviceId),
+    /** Dağıtılan uygulamalar (profil düzenleyicisi için); 1 dakika bellekte. */
+    managedApps() {
+      if (managed && Date.now() - managed.at < MANAGED_TTL_MS) return managed.promise;
+      const promise = app.call('/apps').then((data) => (Array.isArray(data?.apps) ? data.apps : []));
+      promise.catch(() => { managed = null; });
+      managed = { at: Date.now(), promise };
+      return promise;
+    },
+    forgetManagedApps: () => { managed = null; },
     openDevice: (id) => { tabs.select('devices'); views.devices?.open(id); },
     openProfile: (id) => { tabs.select('profiles'); views.profiles?.open(id); },
     showStudent: (id) => { tabs.select('students'); views.students?.open(id); },
@@ -103,6 +119,7 @@ export function mount(root, ctx) {
     { key: 'devices', label: 'Tabletler' },
     { key: 'profiles', label: 'Profiller' },
     { key: 'students', label: 'Öğrenciler' },
+    { key: 'apps', label: 'Uygulamalar' },
   ], 'devices', (key) => show(key));
 
   const main = h('div', 'tb-main');
@@ -219,6 +236,7 @@ export function mount(root, ctx) {
     views.devices.update();
     views.profiles.update();
     views.students.update();
+    views.apps.update();
   }
 
   function failed() {
@@ -233,7 +251,9 @@ export function mount(root, ctx) {
     views.devices = devicesView(app);
     views.profiles = profilesView(app);
     views.students = studentsView(app);
-    main.replaceChildren(views.devices.node, views.profiles.node, views.students.node);
+    views.apps = appsView(app);
+    main.replaceChildren(views.devices.node, views.profiles.node, views.students.node,
+      views.apps.node);
     show(tabs.active);
   }
 

@@ -1,7 +1,7 @@
 id: bbd_tablet
 name: "Öğrenci Tablet Yönetimi"
-description: "Paylaşımlı okul tabletleri: profil, kullanım saatleri, uzaktan kilit ve komut, öğrenci ek süresi ve kısıtlaması, silme ve geçmiş saklama."
-version: 0.2.0
+description: "Paylaşımlı okul tabletleri: profil, kullanım saatleri, uzaktan kilit ve komut, öğrenci ek süresi ve kısıtlaması, uygulama dağıtımı ve uzaktan güncelleme, silme ve geçmiş saklama."
+version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
@@ -36,7 +36,7 @@ permissions:
     description: "Tabletleri, profilleri, oturumları, komutları, öğrenci kullanımını, ek süreleri ve kısıtlamaları görüntüleme."
     default_roles: [admin, bbd_staff, org_staff]
   - key: bbd_tablet.manage
-    description: "Tablet, profil ve uygulama kurallarını düzenleme; tablet kilidi, duyuru, komut, oturum kapatma; tablet, profil ve öğrenci tablet verisini silme (PIN ile)."
+    description: "Tablet, profil ve uygulama kurallarını düzenleme; tablet kilidi, duyuru, komut, oturum kapatma; APK yükleme ve dağıtma, indirme sırasını öne alma; tablet, profil, öğrenci tablet verisini silme ve dağıtımı bitirme (PIN ile)."
     default_roles: [admin, bbd_staff]
   - key: bbd_tablet.grant
     description: "Öğrenciye uygulama bazında günlük ek süre verme ve geri alma; öğrenciyi belirli bir zamana kadar tabletten kısıtlama; hatalı şifreyle kilitlenen tablet girişini açma."

@@ -36,6 +36,8 @@ BOOKS = {"packageName": "com.example.books", "appName": "Kitaplık", "allowed": 
 GAME = {"packageName": "com.example.game", "appName": "Oyun", "allowed": False,
         "unlimited": False, "dailyLimitSeconds": 0}
 TODAY = "2026-10-14"
+# Auth fails before the sync route reads its request.
+NO_REQUEST: Any = SimpleNamespace(headers={})
 
 
 @pytest.fixture
@@ -125,7 +127,7 @@ async def test_new_code_after_revoke_never_revives_old_token(
 
     await service.revoke_device(device_id=device["id"])
     with pytest.raises(HTTPException) as revoked:
-        await tablet_routes.sync(device["id"], tablet_routes.SyncBody(),
+        await tablet_routes.sync(device["id"], tablet_routes.SyncBody(), NO_REQUEST,
                                  authorization=f"Bearer {old_token}")
     expect_code(revoked, "DEVICE_REVOKED", 401)
 
@@ -133,7 +135,7 @@ async def test_new_code_after_revoke_never_revives_old_token(
                                                  profile_id=profile["id"])
     assert issued["profileId"] == profile["id"]
     for call in (
-        tablet_routes.sync(device["id"], tablet_routes.SyncBody(),
+        tablet_routes.sync(device["id"], tablet_routes.SyncBody(), NO_REQUEST,
                            authorization=f"Bearer {old_token}"),
         tablet_routes.unpair(device["id"], authorization=f"Bearer {old_token}"),
     ):
@@ -860,7 +862,8 @@ async def test_deleting_a_paired_tablet_revokes_it_and_keeps_history(
 
     auth = f"Bearer {token}"
     for call in (
-        lambda: tablet_routes.sync(device["id"], tablet_routes.SyncBody(), authorization=auth),
+        lambda: tablet_routes.sync(device["id"], tablet_routes.SyncBody(), NO_REQUEST,
+                                   authorization=auth),
         lambda: tablet_routes.unpair(device["id"], authorization=auth),
         lambda: tablet_routes.inventory(device["id"], tablet_routes.InventoryBody(),
                                         authorization=auth),
@@ -1100,14 +1103,15 @@ async def test_tablet_error_codes(service: TabletService, canteen: Any, clock: A
     auth = f"Bearer {token}"
 
     with pytest.raises(HTTPException) as unknown:
-        await tablet_routes.sync(device["id"], tablet_routes.SyncBody(),
+        await tablet_routes.sync(device["id"], tablet_routes.SyncBody(), NO_REQUEST,
                                  authorization="Bearer yanlis")
     expect_code(unknown, "DEVICE_AUTH_INVALID", 401)
     with pytest.raises(HTTPException) as missing:
-        await tablet_routes.sync(device["id"], tablet_routes.SyncBody(), authorization="")
+        await tablet_routes.sync(device["id"], tablet_routes.SyncBody(), NO_REQUEST, authorization="")
     expect_code(missing, "DEVICE_AUTH_INVALID", 401)
     with pytest.raises(HTTPException) as foreign:
-        await tablet_routes.sync(other["id"], tablet_routes.SyncBody(), authorization=auth)
+        await tablet_routes.sync(other["id"], tablet_routes.SyncBody(), NO_REQUEST,
+                                 authorization=auth)
     expect_code(foreign, "FORBIDDEN_DEVICE", 403)
     with pytest.raises(HTTPException) as no_profile:
         await tablet_routes.login(tablet_routes.LoginBody(deviceId=bare["id"],
@@ -1203,6 +1207,16 @@ EXPECTED_PERMISSIONS = {
     ("POST", "/students/{student_id}/grants/{grant_id}/revoke"): {GRANT},
     ("POST", "/students/{student_id}/block"): {GRANT},
     ("POST", "/students/{student_id}/unblock"): {GRANT},
+    ("GET", "/apps"): {VIEW},
+    ("GET", "/apps/{package_name}/devices"): {VIEW},
+    ("POST", "/apps/uploads"): {MANAGE},
+    ("GET", "/apps/uploads/{upload_id}"): {MANAGE},
+    ("PUT", "/apps/uploads/{upload_id}/chunk"): {MANAGE},
+    ("POST", "/apps/uploads/{upload_id}/finish"): {MANAGE},
+    ("POST", "/apps/releases/{release_id}/publish"): {MANAGE},
+    ("DELETE", "/apps/releases/{release_id}"): {MANAGE},
+    ("POST", "/apps/{package_name}/devices/{device_id}/prioritize"): {MANAGE},
+    ("DELETE", "/apps/{package_name}"): {MANAGE},
 }
 
 
@@ -1234,7 +1248,7 @@ def test_destructive_routes_require_pin_in_body() -> None:
     with pytest.raises(ValidationError):
         routes.PinBody()
     for endpoint in (routes.revoke_device, routes.delete_device, routes.delete_profile,
-                     routes.delete_student_history, routes.bulk_devices):
+                     routes.delete_student_history, routes.bulk_devices, routes.remove_app):
         assert "confirm_pin(" in inspect.getsource(endpoint)
         assert "pin" not in inspect.signature(endpoint).parameters
     for endpoint in (routes.create_device, routes.enrollment_code, routes.update_device):

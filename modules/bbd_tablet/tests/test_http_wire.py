@@ -92,7 +92,10 @@ async def test_tablet_wire_format(client: httpx.AsyncClient) -> None:
     body = synced.json()
     assert set(body) == {"serverTime", "nextSyncSeconds", "usageFlushSeconds",
                          "assignedProfileId", "profileRevision", "profile", "deviceState",
-                         "session", "grants", "commands"}
+                         "session", "grants", "commands", "apps", "install"}
+    # No app distributed yet: the empty catalog still has a version to remember.
+    assert body["apps"]["items"] == [] and body["apps"]["remove"] == []
+    assert body["install"] is None
     assert body["profile"]["usageWindows"] == []
 
     wrong = await client.post("/api/tablet/v1/auth/login", headers=auth,
