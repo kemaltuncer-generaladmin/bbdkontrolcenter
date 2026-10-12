@@ -75,6 +75,9 @@ LEDGER_PAGE_MAX = 200
 #: bir öğrencinin 180 günde buna ulaşması pratikte olmaz). Aşılırsa log'a
 #: uyarı düşer — eski yolun kurum geneli 5000 satır kesintisinin yerine.
 SUMMARY_LEDGER_PAGES = 50
+#: İlk defter sayfası aralığı bitiremezse kalan aralık en çok bu kadar zaman
+#: dilimine bölünüp dilimler AYNI ANDA okunur (A14 §3.9: dış çağrılar paralel).
+SUMMARY_LEDGER_SLICES = 4
 #: İmleçli liste ucu bir sayfayı doldurmak için kantine en çok bu kadar gider;
 #: dolmazsa kısa sayfa + geçerli imleç döner.
 PAGE_FILL_CALLS = 5
@@ -713,8 +716,8 @@ class GatewayService:
 
         Defter ucu (kantin §1.7) öğrenciyi, bekleyen talebi ve aralıktaki
         satış/tahsilat satırlarını birlikte verir. Aralık 200 satırı aşarsa
-        imleçle sonraki sayfalar okunur (öğrencinin satırları; kurum geneli
-        5000 satır kesintisi yoktur). Kantin bu ucu tanımıyorsa (eski sürüm)
+        kalan kısım zaman dilimleriyle aynı anda okunur (`_ledger_rest`;
+        öğrencinin satırları, kurum geneli 5000 satır kesintisi yoktur). Kantin bu ucu tanımıyorsa (eski sürüm)
         ya da kantin istemcisi `ledger` bilmiyorsa eski yol: dört bağımsız
         okuma aynı anda. Yanıt biçimi iki yolda da aynıdır (sözleşme v1).
         """
@@ -729,19 +732,9 @@ class GatewayService:
         first = await self.call(self.caps.canteen_ledger(student_id, limit=LEDGER_PAGE_MAX,
                                                          from_ms=start))
         entries: list[dict[str, Any]] = list(first["items"])
-        page, pages = first, 1
-        while page["hasMore"] and page["nextCursor"]:
-            if pages >= SUMMARY_LEDGER_PAGES:
-                self._log.warning("kantin özeti defter sayfa sınırına ulaştı",
-                                  student_id=student_id, pages=pages)
-                break
-            cursor = page["nextCursor"]
-            page = await self.call(self.caps.canteen_ledger(
-                student_id, limit=LEDGER_PAGE_MAX, cursor=cursor, from_ms=start))
-            pages += 1
-            entries.extend(page["items"])
-            if page["nextCursor"] == cursor:   # ilerlemeyen imleç: döngüye girme
-                break
+        if first["hasMore"] and first["nextCursor"] and entries:
+            entries = self._unique_entries(
+                entries + await self._ledger_rest(student_id, start, first))
 
         student = first["student"]
         if student is None:
@@ -754,6 +747,56 @@ class GatewayService:
                        if entry.get("kind") in COLLECTION_KINDS]
         return self.summary_body(student, transactions, collections,
                                  [pending] if pending is not None else [])
+
+    async def _ledger_rest(self, student_id: str, start: int,
+                           first: dict[str, Any]) -> list[dict[str, Any]]:
+        """İlk sayfadan sonra kalan aralık `[start, en eski satır]` — dilimler aynı anda.
+
+        Dilim sayısı ilk sayfanın yoğunluğundan kestirilir (1–`SUMMARY_LEDGER_SLICES`).
+        En yeni dilim kantinin imleciyle (`cursor` = ilk sayfanın `nextCursor`'u,
+        yalnız `from`) okunur, daha eskiler `[from, to)` ile; her dilim kendi
+        içinde imleçle sonuna kadar izlenir. Defter kimliği yazılma sırasıdır,
+        zaman sınırında iki dilime düşen satır kimlikle ayıklanır (kayıp yok:
+        ilk sayfa en yeni 200 kimliği, imleçli dilim ondan küçükleri en eski
+        satırın anından, diğerleri daha öncesini kapsar).
+        """
+        rows = first["items"]
+        oldest = int_or_none(rows[-1].get("at")) or start
+        oldest = max(start, oldest)
+        newest = max(oldest + 1, int_or_none(rows[0].get("at")) or oldest + 1, self.now_ms())
+        expected = len(rows) * (oldest - start) / max(1, newest - oldest)
+        slices = max(1, min(SUMMARY_LEDGER_SLICES, math.ceil(expected / LEDGER_PAGE_MAX)))
+        bounds = [start + (oldest - start) * index // slices for index in range(slices)]
+        budget = max(1, (SUMMARY_LEDGER_PAGES - 1) // slices)
+        walks = [self._ledger_walk(student_id, bounds[-1], None, first["nextCursor"], budget)]
+        walks += [self._ledger_walk(student_id, bounds[index], bounds[index + 1], None, budget)
+                  for index in range(slices - 1)]
+        parts = await self.parallel(*walks)
+        return [row for part in parts for row in part]
+
+    async def _ledger_walk(self, student_id: str, start: int, end: int | None,
+                           cursor: str | None, budget: int) -> list[dict[str, Any]]:
+        """Bir defter diliminin bütün satırları, imleç sonuna kadar (en çok `budget` sayfa)."""
+        found: list[dict[str, Any]] = []
+        for _ in range(budget):
+            page = await self.call(self.caps.canteen_ledger(
+                student_id, limit=LEDGER_PAGE_MAX, cursor=cursor, from_ms=start, to_ms=end))
+            found.extend(page["items"])
+            if not (page["hasMore"] and page["nextCursor"]) or page["nextCursor"] == cursor:
+                return found
+            cursor = page["nextCursor"]
+        self._log.warning("kantin özeti defter sayfa sınırına ulaştı",
+                          student_id=student_id, pages=budget)
+        return found
+
+    @staticmethod
+    def _unique_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Defter satırları kimliğe göre tekil, yeniden eskiye."""
+        unique: dict[Any, dict[str, Any]] = {}
+        for row in rows:
+            unique.setdefault(row.get("id"), row)
+        return sorted(unique.values(), key=lambda row: int_or_none(row.get("id")) or 0,
+                      reverse=True)
 
     async def _summary_legacy(self, student_id: str, start: int, end: int) -> dict[str, Any]:
         """Defter ucu olmayan kantin: dört kantin okuması aynı anda (süre en

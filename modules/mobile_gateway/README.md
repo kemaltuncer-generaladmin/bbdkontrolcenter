@@ -136,8 +136,10 @@ Kantin hataları `CanteenError.reason` ile sınıflanır: `no_debt`, `no_phone`,
 - **Özet** (`/students/{id}/canteen`): ilk defter sayfası öğrenciyi (bakiye,
   kontroller), bekleyen talebi ve satırları birlikte verir — TEK kantin
   isteği (eskiden dört). `from` = şimdi − `days`, `to` gönderilmez (kantin
-  ilk sayfanın bakiyesini ek sorgusuz hesaplar). 200 satırı aşan aralıkta
-  sonraki sayfalar imleçle okunur (en çok 50 sayfa). Satış satırı iptal
+  ilk sayfanın bakiyesini ek sorgusuz hesaplar). 200 satırı aşan aralıkta kalan
+  kısım ilk sayfanın yoğunluğuna göre en çok 4 zaman dilimine bölünür ve
+  dilimler AYNI ANDA okunur (en yeni dilim kantinin imleciyle; satırlar
+  defter kimliğiyle tekilleşir; toplam en çok 50 sayfa). Satış satırı iptal
   edildiyse `reversed: true` olur; iptal kaydı ayrı satır olmaz. Tahsilat =
   defterde `payment` (online, `PAYMENT`) ve `cash` (`CASH`) satırları.
 - **İmleçli listeler** (`/canteen/transactions`, `/canteen/collections`):
@@ -180,7 +182,9 @@ temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün)
 
 - **Tek üst çağrı.** Kantin özeti ve imleçli listeler kantinin hesap dökümü
   ucundan okunur: özet 1 kantin isteği (eskiden 4, biri kurum geneli 5000
-  satırlık işlem aralığı), liste sayfası 1 (seyrek türde en çok 5).
+  satırlık işlem aralığı), liste sayfası 1 (seyrek türde en çok 5). Aralığı
+  tek sayfaya sığmayan öğrencide özet 1 + en çok 4 paralel dilim: süre
+  ~2 kantin turu (sıralı sayfalamada sayfa sayısı kadar tur olurdu).
 - **Paralel okuma.** Eski kantinde özet dört kantin okumasını (öğrenci,
   işlemler, tahsilat, talepler), QR ucu dizin sınaması ile QR metnini AYNI
   ANDA ister; hata önceliği sıralı koddaki gibidir.

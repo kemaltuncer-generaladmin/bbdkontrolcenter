@@ -197,9 +197,44 @@ async def test_kantin_ozeti_tek_istegin_suresi_kadar(client: httpx.AsyncClient,
     assert time.perf_counter() - started < 0.3
 
 
-async def test_kantin_ozeti_buyuk_aralikta_sayfalari_okur(client: httpx.AsyncClient,
-                                                          world: World) -> None:
-    """Kurum geneli 5000 satır kesintisi yok: öğrencinin 450 satışı üç sayfada gelir."""
+def busy_student(canteen: FakeCanteen, count: int, *, span_ms: int) -> None:
+    """ELIF'e `count` satış; deftere yazılma anları `span_ms` boyunca eşit aralıklı."""
+    base = canteen.ledger_rows[1]
+    now = 1791786600000
+    canteen.ledger_rows = [
+        {**base, "id": 10_000 - n, "at": now - 1 - n * span_ms // count,
+         "sale": {**base["sale"], "serverId": f"tx-{n}",
+                  "createdAt": now - 1 - n * span_ms // count}}
+        for n in range(count)
+    ]
+
+
+async def test_kantin_ozeti_buyuk_aralikta_kalan_dilimleri_ayni_anda_okur(
+        client: httpx.AsyncClient, world: World) -> None:
+    """Kurum geneli 5000 satır kesintisi yok: öğrencinin 900 satışının hepsi gelir.
+
+    İlk sayfa (200 satır) aralığın ~%22'sini kapsar; kalan ~700 satır dört
+    zaman dilimine bölünür ve dilimler aynı anda okunur — süre sayfa sayısıyla
+    değil dilimin kendi sayfa sayısıyla büyür.
+    """
+    slow = SlowLedgerCanteen(delay=0.1)
+    world.replace("canteen.api", slow)
+    busy_student(slow, 900, span_ms=29 * 86_400_000)
+    started = time.perf_counter()
+    response = await client.get(f"/students/{ELIF}/canteen", params={"days": 30})
+    elapsed = time.perf_counter() - started
+    assert response.status_code == 200
+    ids = [item["id"] for item in response.json()["transactions"]]
+    assert ids == [f"tx-{n}" for n in range(900)]          # tam, tekrar yok, sıralı
+    calls = [args for name, args in slow.calls if name == "ledger"]
+    assert len(calls) == 5                                   # 1 + 4 dilim
+    assert [args["to_ms"] is None for args in calls].count(True) == 2  # ilk + imleçli dilim
+    assert elapsed < 0.1 * 3.5                               # sıralı olsa 5 × 0,1 sn
+
+
+async def test_kantin_ozeti_ayni_anda_yazilmis_satirlar_kaybolmaz(
+        client: httpx.AsyncClient, world: World) -> None:
+    """Bütün satırlar aynı milisaniyede (dilim kestirimi en kötü durumda)."""
     base = world.canteen.ledger_rows[1]
     world.canteen.ledger_rows = [
         {**base, "id": 10_000 - n, "sale": {**base["sale"], "serverId": f"tx-{n}",
@@ -208,8 +243,15 @@ async def test_kantin_ozeti_buyuk_aralikta_sayfalari_okur(client: httpx.AsyncCli
     ]
     response = await client.get(f"/students/{ELIF}/canteen", params={"days": 30})
     assert response.status_code == 200
-    assert len(response.json()["transactions"]) == 450
-    assert canteen_calls(world.canteen) == ["ledger"] * 3
+    assert [item["id"] for item in response.json()["transactions"]] == \
+        [f"tx-{n}" for n in range(450)]
+
+
+async def test_kantin_ozeti_kucuk_aralikta_tek_sayfa(client: httpx.AsyncClient,
+                                                     world: World) -> None:
+    busy_student(world.canteen, 200, span_ms=29 * 86_400_000)
+    assert (await client.get(f"/students/{ELIF}/canteen")).status_code == 200
+    assert canteen_calls(world.canteen) == ["ledger"]
 
 
 async def test_eski_kantinde_bir_deneme_sonra_dort_okuma(client: httpx.AsyncClient,
