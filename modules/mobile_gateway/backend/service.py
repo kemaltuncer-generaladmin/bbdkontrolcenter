@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, TypeVar
+from urllib.parse import unquote
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -108,8 +109,20 @@ class Reply:
 
 
 def clean_header(value: str | None, limit: int = 200) -> str:
-    """Denetim izine giden başlık: kontrol karakteri ayıklanır, kısaltılır."""
-    return _CONTROL.sub("", str(value or "")).strip()[:limit]
+    """Denetim izine giden başlık: çözülür, kontrol karakteri ayıklanır, kısaltılır.
+
+    HTTP başlığı ASCII'dir; "Ayşe Yılmaz" gibi bir ad ya yüzde kodlu UTF-8
+    (`Ay%C5%9Fe`) gelir ya da ham UTF-8 bayt olarak gelip Starlette'te latin-1
+    diye okunur. İkisi de burada düz metne döner.
+    """
+    text = str(value or "")
+    try:
+        text = text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    if "%" in text:
+        text = unquote(text)
+    return _CONTROL.sub("", text).strip()[:limit]
 
 
 def normalize_phone(value: Any) -> str | None:
