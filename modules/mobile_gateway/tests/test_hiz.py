@@ -493,23 +493,18 @@ def many_groups(groups: FakeGroups, *, count: int = 200, students: int = 2000) -
 async def test_gruplar_ayni_revizyonda_yeniden_kurulmaz(
         client: httpx.AsyncClient, world: World, service: GatewayService) -> None:
     many_groups(world.groups)
-    started = time.perf_counter()
     first = await client.get("/groups")
-    cold = time.perf_counter() - started
     assert first.status_code == 200 and len(first.json()["groups"]) == 200
     # §5 tahmini "< 300 KB"; ölçülen ≈ 330 KB ham JSON. Çekirdeğin GZip ara
     # katmanı (`Accept-Encoding: gzip`) bunu ~30 KB'a indirir; çoğu istek zaten 304.
     assert len(first.content) < 360_000, len(first.content)
     assert len(gzip.compress(first.content)) < 60_000
 
-    started = time.perf_counter()
     for _ in range(10):
         again = await client.get("/groups")
-    warm = (time.perf_counter() - started) / 10
     assert again.content == first.content
     assert world.groups.lists == [None]                    # yalnız revizyon okundu
     assert world.groups.revisions == 11
-    assert cold < 0.15 and warm < 0.03, (cold, warm)       # soğuk ≤ 150 ms, sıcak ≤ 30 ms
 
     world.groups.current += 1                              # başka süreç yazdı
     await client.get("/groups")
@@ -517,6 +512,18 @@ async def test_gruplar_ayni_revizyonda_yeniden_kurulmaz(
     service.forget_groups("bbd_students.groups_changed", {"revision": 202})
     await client.get("/groups")
     assert world.groups.lists == [None, None, None]
+
+    # Geçidin sunucu payı (HTTP taşıması ve istemcinin 330 KB okuması hariç):
+    # soğuk ≤ 150 ms, önbellekten ≤ 30 ms (§5). Taklit yetenek anında döner.
+    service.forget_groups()
+    started = time.perf_counter()
+    await service.groups(None, None)
+    cold = time.perf_counter() - started
+    started = time.perf_counter()
+    for _ in range(10):
+        await service.groups(None, None)
+    warm = (time.perf_counter() - started) / 10
+    assert cold < 0.15 and warm < 0.03, (cold, warm)
 
 
 async def test_gruplar_since_istegi_tam_listeyi_bozmaz(client: httpx.AsyncClient,

@@ -562,7 +562,10 @@ class FakeGroups:
 
     async def list(self, since_revision: int | None = None) -> dict[str, Any]:
         self.lists.append(since_revision)
-        found = [deepcopy(item) for item in self.records
+        # Sığ kopya: `deepcopy` 4.000 üyelikte yüzlerce ms sürer ve hız
+        # ölçümünü taklidin maliyetiyle doldururdu.
+        found = [{**item, "members": [dict(member) for member in item["members"]]}
+                 for item in self.records
                  if since_revision is None or item["revision"] > since_revision]
         return {"revision": self.current, "full": since_revision is None,
                 "groups": found, "complete": self.complete}
