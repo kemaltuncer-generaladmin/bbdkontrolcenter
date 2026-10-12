@@ -42,6 +42,8 @@ TABLET_READ = "bbd_tablet.read"
 TABLET_CONTROL = "bbd_tablet.control"
 BELL_WEEK = "bell.week"
 BELL_ANNOUNCE = "bell.announce"
+BELL_PLAN = "bell.plan"
+GROUPS = "bbd_students.groups"
 SECRETS = "secrets"
 
 #: İdempotensi özetinin HMAC anahtarı (kasada; ilk kullanımda üretilir).
@@ -71,6 +73,38 @@ class LedgerUnavailable(Exception):
     (`reason="ledger_unsupported"`, §1.7 öncesi kantin). Hata DEĞİLDİR;
     servis aynı yanıtı eski dört okumalı yoldan kurar.
     """
+
+
+class Rejected(Exception):
+    """KM içi yetenek isteği KURAL GEREĞİ reddetti (zil planı gövdesi, aralık).
+
+    Yetenek kendi hata sınıfını (`PlanError`) yükseltir; sınıf import edilemez
+    (K3), alanlarından okunur: `status` (4xx), `code`, Türkçe mesaj ve
+    `details` (`{"path": "days[3].calls[0].at"}` gibi — gönderilen değer
+    DEĞİL, yalnız alan yolu). Servis bunu sözleşme zarfına aynen taşır.
+    """
+
+    def __init__(self, source: str, status: int, code: str, message: str,
+                 details: dict[str, Any] | None = None) -> None:
+        super().__init__(f"{source}:{code}")
+        self.source = source
+        self.status = status
+        self.code = code
+        self.message = message
+        self.details = details or {}
+
+
+def rejected(source: str, error: BaseException) -> Rejected | None:
+    """Hata kodlu bir 4xx kural reddi mi? Öyleyse `Rejected`, değilse None."""
+    status = getattr(error, "status", None)
+    code = getattr(error, "code", None)
+    if not (isinstance(status, int) and 400 <= status < 500 and isinstance(code, str) and code):
+        return None
+    raw = getattr(error, "details", None)
+    details = {key: value for key, value in raw.items()
+               if key in ("path", "missing", "profileId")} if isinstance(raw, dict) else {}
+    message = " ".join(str(error).split())[:300] or "İstek reddedildi."
+    return Rejected(source, status, code, message, details)
 
 
 class UpstreamFailure(Exception):
@@ -559,6 +593,52 @@ class Capabilities:
             "cache_key": cache_key, "actor": actor, "request_id": request_id,
         }, write=True)
         return result if isinstance(result, dict) else {}
+
+    async def _plan(self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any] | None = None,
+                    *, write: bool = False) -> dict[str, Any]:
+        """`bell.plan` çağrısı. Kural reddi (`PlanError`) `Rejected` olarak çıkar."""
+        method = self._method(BELL_PLAN, name)
+        try:
+            result = await asyncio.wait_for(settle(method(*args, **(kwargs or {}))),
+                                            self._limit(write))
+        except CapabilityMissing:
+            raise
+        except TimeoutError:
+            raise UpstreamFailure("bell", "unavailable", reason="timeout") from None
+        except Exception as error:  # noqa: BLE001 — başka modül (K7)
+            refusal = rejected("bell", error)
+            if refusal is not None:
+                raise refusal from None
+            raise module_failure("bell", error) from None
+        return result if isinstance(result, dict) else {}
+
+    async def bell_plan_apply(self, body: dict[str, Any], *, actor: str) -> dict[str, Any]:
+        """`apply_days(body, *, actor)` → `{days: [{date, result, revision[, error,
+        details]}], voicesPending, bellEnabled}`. Plan yerel tablolara yazılır."""
+        return await self._plan("apply_days", (body,), {"actor": actor}, write=True)
+
+    async def bell_plan_status(self, date_from: str, date_to: str) -> dict[str, Any]:
+        """`status(from, to)` → `{bellEnabled, sessionCallsEnabled, agent, days}`."""
+        return await self._plan("status", (date_from, date_to))
+
+    # ----------------------------------------------------- bbd_students.groups
+
+    async def groups_list(self, since: int | None) -> dict[str, Any]:
+        """`list(since_revision=None)` → `{revision, full, groups, complete}`."""
+        result = await self._module("groups", GROUPS, "list",
+                                    kwargs={"since_revision": since})
+        return result if isinstance(result, dict) else {}
+
+    async def groups_revision(self) -> int | None:
+        """Kalıcı grup revizyonu — yetenek `revision()` sunmuyorsa None.
+
+        Tam listeyi okumadan önbelleğin hâlâ geçerli olduğunu söyleyen tek
+        satırlık okuma (`mod_bbd_students_group_rev`)."""
+        instance = self._get(GROUPS)
+        if not callable(getattr(instance, "revision", None)):
+            return None
+        result = await self._module("groups", GROUPS, "revision")
+        return result if isinstance(result, int) and not isinstance(result, bool) else None
 
 
 class _Reason(Exception):

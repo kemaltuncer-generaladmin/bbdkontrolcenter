@@ -9,6 +9,7 @@ veritabanı ifadesi sayılır, yavaş yetenekle eşzamanlılık ve süre sınır
 from __future__ import annotations
 
 import asyncio
+import gzip
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -20,8 +21,10 @@ from mobile_gateway_fakes import (
     ELIF,
     FakeCanteen,
     FakeDirectory,
+    FakeGroups,
     PreLedgerCanteen,
     bell_week,
+    group_record,
 )
 from modules.mobile_gateway.backend.service import GatewayService
 
@@ -434,6 +437,8 @@ READ_ENDPOINTS = [
     "/tablets",
     f"/students/{ELIF}/tablet-usage",
     "/schedule/bell-week",
+    "/groups",
+    "/bell/plan/status",
     "/settings/public",
 ]
 
@@ -468,3 +473,101 @@ async def test_yazma_ucunun_sorgu_butcesi(client: httpx.AsyncClient, store: Chec
     await client.patch(f"/students/{ELIF}/canteen/controls", json={"dailyLimit": 200},
                        headers={"Idempotency-Key": "k-1"})
     assert counter.count <= 5                       # oku, ayır, oku, bitir, iz
+
+
+# ------------------------------------------- öğrenci grupları ve zil planı (§5)
+
+
+def many_groups(groups: FakeGroups, *, count: int = 200, students: int = 2000) -> None:
+    """200 grup, 4.000 üyelik satırı (2.000 öğrenci × 2 grup) — sözleşme §5 ölçeği."""
+    groups.records = []
+    for index in range(count):
+        members = [{"studentId": f"STU-{(index * 20 + offset) % students:010d}",
+                    "validFrom": "2026-09-15", "validTo": None if offset % 3 else "2026-10-09"}
+                   for offset in range(20)]
+        groups.records.append(group_record(f"g{index:03d}", f"Grup {index}",
+                                           revision=index + 1, members=members))
+    groups.current = count
+
+
+async def test_gruplar_ayni_revizyonda_yeniden_kurulmaz(
+        client: httpx.AsyncClient, world: World, service: GatewayService) -> None:
+    many_groups(world.groups)
+    started = time.perf_counter()
+    first = await client.get("/groups")
+    cold = time.perf_counter() - started
+    assert first.status_code == 200 and len(first.json()["groups"]) == 200
+    # §5 tahmini "< 300 KB"; ölçülen ≈ 330 KB ham JSON. Çekirdeğin GZip ara
+    # katmanı (`Accept-Encoding: gzip`) bunu ~30 KB'a indirir; çoğu istek zaten 304.
+    assert len(first.content) < 360_000, len(first.content)
+    assert len(gzip.compress(first.content)) < 60_000
+
+    started = time.perf_counter()
+    for _ in range(10):
+        again = await client.get("/groups")
+    warm = (time.perf_counter() - started) / 10
+    assert again.content == first.content
+    assert world.groups.lists == [None]                    # yalnız revizyon okundu
+    assert world.groups.revisions == 11
+    assert cold < 0.15 and warm < 0.03, (cold, warm)       # soğuk ≤ 150 ms, sıcak ≤ 30 ms
+
+    world.groups.current += 1                              # başka süreç yazdı
+    await client.get("/groups")
+    assert world.groups.lists == [None, None]
+    service.forget_groups("bbd_students.groups_changed", {"revision": 202})
+    await client.get("/groups")
+    assert world.groups.lists == [None, None, None]
+
+
+async def test_gruplar_since_istegi_tam_listeyi_bozmaz(client: httpx.AsyncClient,
+                                                       world: World) -> None:
+    full = await client.get("/groups")
+    delta = await client.get("/groups", params={"since": 4181})
+    assert delta.json()["full"] is False
+    again = await client.get("/groups")
+    assert again.content == full.content and world.groups.lists == [None, 4181]
+
+
+async def test_revizyonsuz_grup_yeteneginde_sure_sinirlar(
+        client: httpx.AsyncClient, world: World, clock: Clock) -> None:
+    world.replace("bbd_students.groups", FakeGroups(with_revision=False))
+    groups = world.registry.try_resolve("bbd_students.groups")
+    await client.get("/groups")
+    await client.get("/groups")
+    assert groups.lists == [None]
+    clock.advance(seconds=61)
+    await client.get("/groups")
+    assert groups.lists == [None, None]
+
+
+def busy_plan(days: int = 14, calls_per_day: int = 61) -> dict[str, Any]:
+    """14 gün × ~61 çağrı ≈ 850 satır (§5 `PUT /bell/plan` ölçeği)."""
+    out = []
+    for offset in range(days):
+        day = f"2026-10-{12 + offset:02d}"
+        calls = [{"ref": f"{day}-{index}", "at": f"{9 + index // 8:02d}:{(index % 8) * 5:02d}",
+                  "groupKind": "group", "groupName": f"Grup {index}",
+                  "groupRef": f"km_group:g{index:03d}", "teacherName": "Zeynep hoca",
+                  "room": "B-2", "subject": "Fizik", "kind": "lesson"}
+                 for index in range(calls_per_day)]
+        out.append({"date": day, "mode": "normal", "profileId": None, "reason": None,
+                    "revision": 900 + offset, "planHash": f"h{offset}", "calls": calls})
+    return {"from": out[0]["date"], "to": out[-1]["date"], "days": out}
+
+
+async def test_zil_plani_850_cagri_gecit_payi(client: httpx.AsyncClient, world: World,
+                                              store: CheckedStore,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """Geçidin payı (gövde okuma, idempotensi, iz) 850 çağrıda ≤ 300 ms bütçenin altında;
+    asıl yazma zil modülünde ölçülür (`modules/bell/tests`)."""
+    body = busy_plan()
+    assert sum(len(day["calls"]) for day in body["days"]) >= 850
+    await client.put("/bell/plan", json=busy_plan(1, 1))   # temizlik turu bütçe dışı
+    counter = Counter(store, monkeypatch)
+    started = time.perf_counter()
+    response = await client.put("/bell/plan", json=body)
+    elapsed = time.perf_counter() - started
+    assert response.status_code == 200, response.text
+    assert counter.count == 1                               # yalnız denetim izi
+    assert elapsed < 0.3, elapsed
+    assert {day["result"] for day in response.json()["days"]} <= {"applied", "unchanged"}

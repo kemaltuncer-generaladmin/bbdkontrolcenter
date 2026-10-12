@@ -30,4 +30,6 @@ def register(ctx: ModuleContext) -> None:
     ctx.add_router(bind(service))
     # Zil planı değişince haftalık zil önbelleği hemen bırakılır (olay veri yolu, K3).
     ctx.subscribe("bell.week_changed", service.forget_bell_week)
+    # Öğrenci grupları değişince tam grup listesinin önbelleği bırakılır.
+    ctx.subscribe("bbd_students.groups_changed", service.forget_groups)
     ctx.log.info("mobil geçit hazır", prefix="/api/mobile_gateway/v1")

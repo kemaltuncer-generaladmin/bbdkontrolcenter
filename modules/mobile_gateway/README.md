@@ -6,7 +6,9 @@ Kontrol Merkezi'ne **sunucudan sunucuya** açılan tek kapısı. Ekranı yoktur.
 - Bağlayıcı sözleşme (`bbd-akademi` deposu):
   `docs/integrations/km-mobile-gateway.md` (v1, "Ekler" dahil),
   `docs/integrations/kantin-veli-kontrolleri.md` §2.2,
-  `docs/integrations/odeme-akademi-kaynagi.md` "Ek" (`payToken`).
+  `docs/integrations/odeme-akademi-kaynagi.md` "Ek" (`payToken`),
+  `docs/integrations/km-ogrenci-gruplari-ve-zil.md` §2.4, §3.1, §3.3
+  (öğrenci grupları, saat setleri, zil planı).
 - Önek: `/api/mobile_gateway/v1` · İzin: `mobile_gateway.access`
 - Sözleşme testi: `tests/test_contract_v1.py`
 - Kurallar: [../../CLAUDE.md](../../CLAUDE.md) · Kılavuz: [../../docs/module-guide.md](../../docs/module-guide.md)
@@ -24,7 +26,7 @@ sorar (router tabanı + uç imzası, K9). Rol adı sorulmaz (K10).
 |---|---|
 | `X-KM-On-Behalf-Of` | Uygulamada işlemi başlatan kişi (`akademi:staff:42:Ayşe Yılmaz`). **Yalnız denetim izine** yazılır, yetki vermez. |
 | `X-Request-Id` | Denetim izine ve log'a geçer; anonsta zile aktarılır. |
-| `Idempotency-Key` | Her POST/PATCH'te kabul edilir; 24 saat saklanır. Aynı anahtar + aynı gövde → saklı yanıt (`Idempotent-Replayed: true`); farklı gövde → `409 idempotency_conflict`. Yalnız başarılı yanıt saklanır. |
+| `Idempotency-Key` | Her POST/PATCH/PUT'ta kabul edilir; 24 saat saklanır. Aynı anahtar + aynı gövde → saklı yanıt (`Idempotent-Replayed: true`); farklı gövde → `409 idempotency_conflict`. Yalnız başarılı yanıt saklanır. |
 
 Hata zarfı: `{"error": {"status", "code", "message", …}}` — `message` Türkçe;
 kilit ve hız sınırında `retryAfterSeconds` (ve `Retry-After` başlığı),
@@ -60,7 +62,10 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `POST /students/{id}/tablet/block` · `/unblock` | 200 `{blockedUntil}` | 422, 404, 503 |
 | `POST /tablet-sessions/{id}/end` | 200 `{ended}` | 404 `session_not_found`, 409, 503 |
 | `POST /announcements/call` | 202 `{status, voiceCached, etaSeconds}` | 409 `bell_disabled`, 503 `tts_unavailable`, 429, 404, 503 `capability_missing` |
-| `GET /schedule/bell-week` | 200 — `bbd_class_schedule` `/week` biçimi; zil yoksa `available: false` + `reason`. `ETag`, `If-None-Match` → 304 | — |
+| `GET /schedule/bell-week` | 200 — `bbd_class_schedule` `/week` biçimi + `profiles` (saat setleri `[{id, name, times: [{time, label, kind}]}]`, eski zilde boş); zil yoksa `available: false` + `reason`. `ETag`, `If-None-Match` → 304 | — |
+| `GET /groups?since=<revizyon>` | 200 `{generatedAt, revision, full, complete, groups: [{id, name, callName, kind, archived, archivedAt, updatedAt, revision, members: [{studentId, validFrom, validTo}]}], etag}`; `If-None-Match` → 304. `since` yoksa (ya da KM'nin revizyonundan büyükse) tam liste, `full: true` | 422 (`since` tamsayı değil), 503 `capability_missing` |
+| `PUT /bell/plan` | 200 `{days: [{date, result: applied\|unchanged\|stale\|overridden\|rejected, revision[, error: unknown_profile\|revision_conflict, details: {profileId}]}], voicesPending, bellEnabled}` — günler bağımsız uygulanır; reddedilen gün yanıtı 200 bırakır | 413 `payload_too_large` (> 512 KB), 422 `validation_error` (`fields` + `details.path`, eksik günde `details.missing`), 409 `idempotency_conflict`, 503 `capability_missing` |
+| `GET /bell/plan/status?from=&to=` | 200 `{bellEnabled, sessionCallsEnabled, agent: {online, lastSeenAt}, days: [{date, mode, profileId, reason, source: akademi\|km\|none, revision, planHash, calls, voicesReady, voicesPending, lastDispatchAt, override, lastResult, lastError}]}`; varsayılan bugünden 14 gün, en çok 31; `ETag`, `If-None-Match` → 304 | 422, 503 `capability_missing` |
 | `POST /sms/otp` | 200 `{sent: true}` | 422, 429, 502 `sms_failed`, 503 |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
 
@@ -121,8 +126,14 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | `bbd_students.directory` (zorunlu) | `list(since=<datetime>\|None)`, `get(id)` (yoksa `None`), `card_qr_text(id)` — QR'dan önce `get` ile varlık sınanır |
 | `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün) |
 | `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)` — hata `reason`ı: `validation_error` → 422, `student_not_found`/`session_not_found` → 404, `canteen_unavailable` → 503 |
-| `bell.week` | çağrılabilir: `() -> {"times", "groups"}` |
+| `bell.week` | çağrılabilir: `() -> {"times", "groups"[, "profiles", "days"]}` — `days` geçitten dönmez |
 | `bell.announce` | `page(text, *, cache_key=, actor=, request_id=)` |
+| `bell.plan` | `apply_days(body, *, actor=)`, `status(from, to)` (ISO gün) — kural reddi `PlanError(status, code, details={path})` olarak gelir ve aynı kodla zarfa geçer; `actor` = `KM servis kullanıcısı (X-KM-On-Behalf-Of)`, Akademi `akademi:bell-plan` yazar |
+| `bbd_students.groups` | `list(since_revision=)`, `revision()` (yoksa önbellek süreyle sınırlanır) |
+
+Dinlenen olaylar: `bell.week_changed` (zil haftası önbelleği), `bbd_students.groups_changed`
+(grup listesi önbelleği). İkisi de yalnız önbellek bırakır; olay gelmese de revizyon ya da
+süre sınırı tazeliği korur.
 
 Kantin hataları `CanteenError.reason` ile sınıflanır: `no_debt`, `no_phone`,
 `exceeds_debt`, `invalid_amount`, `validation_error`, `student_not_found`;
@@ -201,6 +212,13 @@ temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün)
   `invalidate()`ı çağrılır. Zil haftası 60 sn (`bell_week_cache_seconds`)
   tutulur ve Zil Sistemi'nin `bell.week_changed` olayıyla hemen bırakılır.
   Ön ödeme ayarı 60 sn (`canteen_settings_cache_seconds`), ürünler 5 dk.
+- **Gruplar** (`GET /groups`): tam liste (200 grup, 4.000 üyelik, ≈ 330 KB ham,
+  gzip ≈ 30 KB) grup revizyonu değişmedikçe yeniden kurulmaz; her istek yalnız
+  yeteneğin `revision()`ını okur (tek satır). Ölçüm: soğuk < 150 ms, sıcak < 30 ms.
+  `since` yanıtı istemciye özgüdür, önbelleğe girmez.
+- **Zil planı**: `PUT /bell/plan` geçitte yalnız gövde okuma + denetim izi (1 ifade);
+  850 çağrılık 14 gün geçit payı < 300 ms. Durum ucu önbelleksiz (zilin yerel
+  tabloları), ETag ile uzlaştırma çoğunlukla 304.
 - **Sorgu bütçesi** (`tests/test_hiz.py`): okuma uçları geçidin kendi
   tablolarına 0 ifade; idempotensi anahtarsız yazma 1 (denetim izi),
   anahtarlı en çok 5. Kantin üst çağrı bütçesi: özet ve liste sayfası 1

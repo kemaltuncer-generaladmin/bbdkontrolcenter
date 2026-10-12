@@ -478,6 +478,12 @@ async def bell_week() -> dict[str, Any]:
                            "internal": 1}],
                   "tue": [], "wed": [], "thu": [], "fri": [], "sat": [], "sun": []},
         "groups": [{"id": "g1", "name": "Ortaokul", "kind": "grup", "sort": 1}],
+        # Saat setleri (§3.1) — `sort` ve `updatedAt` geçitte düşer.
+        "profiles": [{"id": "yarim-gun", "name": "Yarım gün", "sort": 1,
+                      "updatedAt": "2026-10-12T09:00:00+03:00",
+                      "times": [{"time": "08:40", "label": "", "kind": "ders"},
+                                {"time": "09:20", "label": "", "kind": "teneffus"}]}],
+        "days": [{"date": "2026-10-12", "mode": "normal"}],
     }
 
 
@@ -509,3 +515,143 @@ class RecordingLog:
 
     def error(self, event: str, **fields: Any) -> None:
         self._record("error", event, **fields)
+
+
+# ------------------------------------------------- öğrenci grupları ve zil planı
+
+
+def group_record(group_id: str, name: str, *, kind: str = "group", revision: int = 1,
+                 members: list[dict[str, Any]] | None = None, call_name: str = "",
+                 archived_at: str | None = None) -> dict[str, Any]:
+    """`bbd_students.groups` kaydı — gerçek yeteneğin `_record(full=False)` biçimi."""
+    return {
+        "id": group_id, "name": name, "callName": call_name, "kind": kind,
+        "archived": archived_at is not None, "archivedAt": archived_at,
+        "updatedAt": "2026-10-12T09:12:44+03:00", "revision": revision,
+        "members": deepcopy(members or []),
+    }
+
+
+class FakeGroups:
+    """`bbd_students.groups`: `list(since_revision)`, `get`, `revision()`.
+
+    Gerçek yetenek yalnız kendi tablosunu okur; burada liste bellekte durur.
+    `with_revision=False` eski (revizyon okuması sunmayan) yeteneği taklit eder.
+    """
+
+    def __init__(self, *, with_revision: bool = True) -> None:
+        self.current = 4182
+        self.records = [
+            group_record("0b9e", "TYT Hızlandırma", call_name="TYT grubu", revision=4181,
+                         members=[
+                             {"studentId": ELIF, "validFrom": "2026-09-15", "validTo": None,
+                              "id": "m1", "reason": "gizli gerekçe"},
+                             {"studentId": CAN, "validFrom": "2026-09-15",
+                              "validTo": "2026-10-09"},
+                         ]),
+            group_record("77c1", "İlayda", kind="individual", revision=4182,
+                         members=[{"studentId": DENIZ, "validFrom": "2026-09-01",
+                                   "validTo": None}]),
+            group_record("aa01", "Eski LGS", revision=12, archived_at="2026-06-30T18:00:00+03:00"),
+        ]
+        self.lists: list[int | None] = []
+        self.revisions = 0
+        self.complete = True
+        if not with_revision:
+            self.revision = None  # type: ignore[assignment]
+
+    async def list(self, since_revision: int | None = None) -> dict[str, Any]:
+        self.lists.append(since_revision)
+        found = [deepcopy(item) for item in self.records
+                 if since_revision is None or item["revision"] > since_revision]
+        return {"revision": self.current, "full": since_revision is None,
+                "groups": found, "complete": self.complete}
+
+    async def get(self, group_id: str) -> dict[str, Any] | None:
+        return next((deepcopy(item) for item in self.records if item["id"] == group_id), None)
+
+    async def revision(self) -> int:
+        self.revisions += 1
+        return self.current
+
+
+class PlanError(ValueError):
+    """Zil modülünün `PlanError`ı gibi: `status`, `code`, `details` taşır."""
+
+    def __init__(self, message: str, *, status: int = 422, code: str = "validation_error",
+                 details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.details = details or {}
+
+
+class FakeBellPlan:
+    """`bell.plan`: gün bazında karar — `revision` + `planHash` kuralı (§3.3).
+
+    Gerçek kurallar zil modülünün testlerindedir; burada geçidin taşıdığı
+    biçim ve hata çevirisi sınanır.
+    """
+
+    def __init__(self) -> None:
+        self.days: dict[str, dict[str, Any]] = {}
+        self.profiles = {"yarim-gun"}
+        self.applied: list[tuple[dict[str, Any], str]] = []
+        self.status_args: list[tuple[str, str]] = []
+        self.enabled = True
+
+    async def apply_days(self, body: Any, *, actor: str) -> dict[str, Any]:
+        self.applied.append((deepcopy(body), actor))
+        days = body.get("days")
+        if not isinstance(days, list) or not days:
+            raise PlanError("days liste olmalı.", details={"path": "days"})
+        for index, day in enumerate(days):
+            if not isinstance(day.get("revision"), int):
+                raise PlanError(f"days[{index}].revision pozitif tamsayı olmalı.",
+                                details={"path": f"days[{index}].revision"})
+        results: list[dict[str, Any]] = []
+        for day in days:
+            record: dict[str, Any] = {"date": day["date"], "revision": day["revision"]}
+            existing = self.days.get(day["date"])
+            if day.get("mode") == "profile" and day.get("profileId") not in self.profiles:
+                record.update(result="rejected", error="unknown_profile",
+                              details={"profileId": day.get("profileId")})
+            elif existing and existing["planHash"] == day["planHash"]:
+                record["result"] = "unchanged"
+            elif existing and day["revision"] < existing["revision"]:
+                record["result"] = "stale"
+            elif existing and day["revision"] == existing["revision"]:
+                record.update(result="rejected", error="revision_conflict")
+            else:
+                self.days[day["date"]] = deepcopy(day)
+                record["result"] = "applied"
+            results.append(record)
+        return {"days": results, "voicesPending": 7, "bellEnabled": self.enabled}
+
+    async def status(self, from_date: Any, to_date: Any) -> dict[str, Any]:
+        self.status_args.append((str(from_date), str(to_date)))
+        if str(from_date) > str(to_date):
+            raise PlanError("to, from'dan önce olamaz.", details={"path": "to"})
+        out = []
+        for key in sorted(self.days):
+            if not str(from_date) <= key <= str(to_date):
+                continue
+            day = self.days[key]
+            out.append({
+                "date": key, "mode": day["mode"], "source": "akademi",
+                "revision": day["revision"], "planHash": day["planHash"],
+                "profileId": day.get("profileId"), "reason": day.get("reason"),
+                "calls": len(day["calls"]), "voicesReady": max(0, len(day["calls"]) - 1),
+                "voicesPending": min(1, len(day["calls"])),
+                "lastDispatchAt": None, "override": None, "lastResult": "applied",
+                "lastError": None, "receivedAt": "2026-10-12T09:30:00+03:00",
+            })
+        return {"bellEnabled": self.enabled, "sessionCallsEnabled": False,
+                "agent": {"online": True, "lastSeenAt": "2026-10-12T06:29:40+00:00"},
+                "days": out}
+
+    async def override_day(self, day: Any, mode: str = "off", *, actor: str) -> dict[str, Any]:
+        return {"ok": True, "days": []}
+
+    async def clear_override(self, day: Any, *, actor: str) -> dict[str, Any]:
+        return {"ok": True, "days": []}

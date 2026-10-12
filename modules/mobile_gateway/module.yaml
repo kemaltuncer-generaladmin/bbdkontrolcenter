@@ -4,6 +4,8 @@
 #   docs/integrations/km-mobile-gateway.md (v1, "Ekler" dahil)
 #   docs/integrations/kantin-veli-kontrolleri.md §2.2
 #   docs/integrations/odeme-akademi-kaynagi.md "Ek" (payToken aktarımı)
+#   docs/integrations/km-ogrenci-gruplari-ve-zil.md §2.4, §3.1, §3.3
+#     (öğrenci grupları, saat setleri, zil planı)
 #
 # SUNUCUDAN SUNUCUYA: istemci bir insan değil, Akademi API'sidir. Kimlik
 # ADR 0028'in servis anahtarıyla (`Authorization: Bearer kmsk_…`) gelir ve
@@ -19,8 +21,8 @@
 
 id: mobile_gateway
 name: "Mobil Geçit"
-description: "BBD Akademi API'sinin sunucudan sunucuya çağırdığı geçit: öğrenci dizini, kantin, tablet, anons, zil saatleri ve OTP SMS."
-version: 0.1.0
+description: "BBD Akademi API'sinin sunucudan sunucuya çağırdığı geçit: öğrenci dizini ve grupları, kantin, tablet, anons, zil saatleri ve zil planı, OTP SMS."
+version: 0.2.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
@@ -53,6 +55,12 @@ consumes:
   - capability: bell.announce
     optional: true
     reason: "Öğrenci çağırma anonsu Zil Sistemi'nin sesiyle yapılır. Yoksa çağırma ucu 503 capability_missing döner."
+  - capability: bell.plan
+    optional: true
+    reason: "Akademi'nin ittiği zil planı ve durumu Zil Sistemi'nindir. Yoksa PUT /bell/plan ve GET /bell/plan/status 503 capability_missing döner."
+  - capability: bbd_students.groups
+    optional: true
+    reason: "Öğrenci grupları ve tarihli üyelik Öğrenci Yönetimi'nindir (K3, K5). Yoksa GET /groups 503 capability_missing döner."
 
 events:
   publishes: []
@@ -63,6 +71,9 @@ events:
     - name: bell.week_changed
       # Örnek yöntemdir; yükleyici bağlamaz, `register` bağlar (şema `handler` ister).
       handler: "backend.service:GatewayService.forget_bell_week"
+    # Gruplar değişti → `GET /groups` tam liste önbelleği bırakılır.
+    - name: bbd_students.groups_changed
+      handler: "backend.service:GatewayService.forget_groups"
 
 http:
   prefix: /api/mobile_gateway/v1
@@ -75,7 +86,7 @@ http:
 # rolüdür (servis anahtarının kullanıcısı — ADR 0028).
 permissions:
   - key: mobile_gateway.access
-    description: "Mobil geçidin bütün uçları: öğrenci dizini, kantin okuma/yazma, tablet denetimi, anons, zil saatleri, OTP SMS aktarımı. Servis anahtarı içindir."
+    description: "Mobil geçidin bütün uçları: öğrenci dizini ve grupları, kantin okuma/yazma, tablet denetimi, anons, zil saatleri ve zil planı, OTP SMS aktarımı. Servis anahtarı içindir."
     default_roles: [admin, mobile_service]
 
 config:

@@ -31,6 +31,10 @@ products_cache_seconds: 300
 # Seyrek değişen veri için sunucu önbelleği (saniye). Zil haftası, Zil
 # Sistemi'nin `bell.week_changed` olayıyla da hemen bırakılır.
 bell_week_cache_seconds: 60
+# GET /groups tam liste önbelleği — yalnız `revision()` sunmayan eski grup
+# yeteneğinde geçerlidir; sunan yetenekte revizyon değişince yeniden kurulur.
+# `bbd_students.groups_changed` olayı önbelleği hemen bırakır.
+groups_cache_seconds: 60
 canteen_settings_cache_seconds: 60
 
 # Yetenek çağrısı üst süreleri (saniye). Süre dolarsa çağrı iptal edilir ve

@@ -28,6 +28,7 @@
     "idempotency_hours": {"type": "integer", "minimum": 24, "maximum": 168},
     "products_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
     "bell_week_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
+    "groups_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
     "canteen_settings_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
     "timeouts": {
       "type": "object",

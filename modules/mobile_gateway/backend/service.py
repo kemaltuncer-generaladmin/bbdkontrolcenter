@@ -32,12 +32,15 @@ from km_sdk import ModuleStore
 
 from .caps import (
     BELL_ANNOUNCE,
+    BELL_PLAN,
     BELL_WEEK,
     CANTEEN,
+    GROUPS,
     TABLET_READ,
     Capabilities,
     CapabilityMissing,
     LedgerUnavailable,
+    Rejected,
     UpstreamFailure,
 )
 from .errors import (
@@ -86,6 +89,19 @@ PAGE_LIMIT_DEFAULT = 20
 PAGE_LIMIT_MAX = 100
 #: Defter ucu olmayan kantinde `from` verilmezse geriye bakılan gün sayısı.
 FALLBACK_DAYS = 180
+
+#: Zil planı (km-ogrenci-gruplari-ve-zil.md §3.3). Gövde üst sınırı ve aralıklar.
+BELL_PLAN_MAX_BYTES = 512 * 1024
+BELL_PLAN_WINDOW_DAYS = 14
+BELL_STATUS_MAX_DAYS = 31
+#: Gün sonucu ve hata kodları — beyaz liste (zil yeteneğinin döndürdüğü).
+BELL_PLAN_RESULTS = frozenset({"applied", "unchanged", "stale", "overridden", "rejected"})
+BELL_PLAN_ERRORS = frozenset({"revision_conflict", "unknown_profile"})
+#: `GET /bell/plan/status` gün alanları (sözleşme + ekleyici: profileId, reason,
+#: lastResult, lastError — Akademi'nin `BellPlanDay`'i ilk ikisini ister).
+BELL_STATUS_DAY_KEYS = ("date", "mode", "profileId", "reason", "source", "revision",
+                        "planHash", "calls", "voicesReady", "voicesPending",
+                        "lastDispatchAt", "override", "lastResult", "lastError")
 #: Defter satırı türleri → liste ucu.
 SALE_KINDS = frozenset({"sale"})
 COLLECTION_KINDS = frozenset({"payment", "cash"})
@@ -349,6 +365,9 @@ class GatewayService:
         #: Dizin yanıtı — dizin yeteneğinin `revision`ı değişmedikçe yeniden kurulmaz.
         self._directory: _Cached | None = None
         self._bell_week: _Cached | None = None
+        #: Tam grup listesi — grup revizyonu değişmedikçe yeniden kurulmaz.
+        self._groups: _Cached | None = None
+        self.groups_cache_ms = int(config.get("groups_cache_seconds", 60)) * 1000
         self._canteen_settings: tuple[int, dict[str, Any]] | None = None
         self._last_purge = 0
         self._pepper: bytes | None = None
@@ -396,6 +415,11 @@ class GatewayService:
             return await awaitable
         except CapabilityMissing as missing:
             raise capability_missing(missing.capability) from None
+        except Rejected as refusal:
+            path = refusal.details.get("path")
+            raise GatewayError(refusal.status, refusal.code, refusal.message,
+                               fields=[path] if isinstance(path, str) and path else None,
+                               details=refusal.details or None) from None
         except UpstreamFailure as failure:
             raise self.translate(failure, reasons=reasons, not_found=not_found) from None
 
@@ -1449,8 +1473,8 @@ class GatewayService:
 
     async def bell_week(self) -> dict[str, Any]:
         """`bbd_class_schedule` `/week` ile aynı biçim. Kaynak yoksa nedeniyle döner."""
-        empty: dict[str, Any] = {"times": {day: [] for day in DAYS}, "groups": [],
-                                 "available": False, "reason": None}
+        empty: dict[str, Any] = {"times": {day: [] for day in DAYS}, "profiles": [],
+                                 "groups": [], "available": False, "reason": None}
         if not self.caps.has(BELL_WEEK):
             empty["reason"] = "Zil Sistemi Kontrol Merkezi'nde etkin değil."
             return empty
@@ -1463,17 +1487,218 @@ class GatewayService:
         raw_times, raw_groups = payload.get("times"), payload.get("groups")
         times: dict[str, Any] = raw_times if isinstance(raw_times, dict) else {}
         groups: list[Any] = raw_groups if isinstance(raw_groups, list) else []
+        raw_profiles = payload.get("profiles")
+        # Saat setleri (§3.1, ekleyici). Eski zil sürümü vermezse boş liste.
+        profiles: list[Any] = raw_profiles if isinstance(raw_profiles, list) else []
         return {
             "times": {day: [{"id": entry.get("id"), "time": entry.get("time"),
                              "label": entry.get("label"), "kind": entry.get("kind")}
                             for entry in times.get(day) or [] if isinstance(entry, dict)]
                       for day in DAYS},
+            "profiles": [{"id": profile.get("id"), "name": profile.get("name"),
+                          "times": [{"time": entry.get("time"), "label": entry.get("label"),
+                                     "kind": entry.get("kind")}
+                                    for entry in profile.get("times") or []
+                                    if isinstance(entry, dict)]}
+                         for profile in profiles
+                         if isinstance(profile, dict) and profile.get("id")],
             "groups": [{"id": group.get("id"), "name": group.get("name"),
                         "kind": group.get("kind"), "sort": group.get("sort")}
                        for group in groups if isinstance(group, dict)],
             "available": True,
             "reason": None,
         }
+
+    # ================================================= §9 öğrenci grupları
+
+    def forget_groups(self, *_: Any) -> None:
+        """Gruplar değişti (`bbd_students.groups_changed` olayı): önbellek bırakılır."""
+        self._groups = None
+
+    @staticmethod
+    def parse_revision(text: str | None) -> int | None:
+        """`since` grup revizyonudur: negatif olmayan tamsayı (yoksa tam liste)."""
+        if text is None or not text.strip():
+            return None
+        raw = text.strip()
+        if not raw.isdigit() or len(raw) > 18:
+            raise validation("`since` negatif olmayan bir tamsayı (grup revizyonu) olmalı.",
+                             "since")
+        return int(raw)
+
+    @staticmethod
+    def group(record: dict[str, Any]) -> dict[str, Any]:
+        """Grup kaydı → sözleşme §2.4 nesnesi (beyaz liste).
+
+        Öğrenci telefonu ya da kişisel alan TAŞIMAZ — üyelikte yalnız kimlik ve
+        tarih aralığı; grubun notu, oluşturanı, üyelik gerekçesi düşer."""
+        members = [{"studentId": str(item.get("studentId")),
+                    "validFrom": item.get("validFrom"),
+                    "validTo": item.get("validTo") or None}
+                   for item in record.get("members") or []
+                   if isinstance(item, dict) and item.get("studentId")]
+        members.sort(key=lambda item: (item["studentId"], str(item["validFrom"] or "")))
+        return {
+            "id": str(record.get("id")),
+            "name": str(record.get("name") or ""),
+            "callName": str(record.get("callName") or ""),
+            "kind": "individual" if record.get("kind") == "individual" else "group",
+            "archived": bool(record.get("archived")),
+            "archivedAt": record.get("archivedAt") or None,
+            "updatedAt": record.get("updatedAt") or None,
+            "revision": int_or_none(record.get("revision")) or 0,
+            "members": members,
+        }
+
+    def _groups_cached(self, listing: dict[str, Any], *, full: bool) -> _Cached:
+        """Yetenek yanıtından kodlanmış gövde + ETag (`generatedAt` özete girmez)."""
+        groups = sorted((self.group(record) for record in listing.get("groups") or []
+                         if isinstance(record, dict) and record.get("id")),
+                        key=lambda item: (item["revision"], item["id"]))
+        revision = int_or_none(listing.get("revision")) or 0
+        core = {"revision": revision, "full": full,
+                "complete": listing.get("complete") is True, "groups": groups}
+        etag = digest(core)
+        return _Cached(key=revision, etag=etag, at_ms=self.now_ms(),
+                       raw=encode({"generatedAt": self.iso(self.now()), **core, "etag": etag}))
+
+    async def groups(self, since_text: str | None, if_none_match: str | None) -> Reply:
+        """§2.4 grup senkronu — `since` + ETag; tam liste sunucu önbelleğinde.
+
+        Tam liste (≈200 grup, ≈4.000 üyelik) yalnız grup revizyonu değişince
+        yeniden kurulur: her istekte yeteneğin `revision()`ı (tek satır) okunur;
+        aynıysa kodlanmış gövde aynen gider. `revision()` sunmayan yetenekte
+        `groups_cache_seconds` süresi sınırlar. Ayrıca
+        `bbd_students.groups_changed` olayı önbelleği hemen bırakır.
+
+        `since` verilirse `revision > since` olan gruplar TAM üye listesiyle
+        döner (önbelleğe girmez — istemciye özgüdür). `since` KM'nin
+        revizyonundan büyükse (KM yedekten döndü) tam liste döner: istemci
+        `full: true` görünce aynasını baştan kurar.
+        """
+        since = self.parse_revision(since_text)
+        if not self.caps.has(GROUPS):
+            raise capability_missing(GROUPS)
+        cached: _Cached | None = None
+        if since is None:
+            current = await self.call(self.caps.groups_revision())
+            held = self._groups
+            if held is not None and (
+                held.key == current if current is not None
+                else self.now_ms() - held.at_ms < self.groups_cache_ms
+            ):
+                cached = held
+        if cached is None:
+            listing = await self.call(self.caps.groups_list(since))
+            full = since is None
+            if since is not None and (int_or_none(listing.get("revision")) or 0) < since:
+                listing = await self.call(self.caps.groups_list(None))
+                full = True
+            cached = self._groups_cached(listing, full=full)
+            if full and listing.get("complete") is True:
+                self._groups = cached
+        headers = {"ETag": f'"{cached.etag}"', "Cache-Control": "private, no-cache"}
+        if etag_matches(if_none_match, cached.etag):
+            return Reply(304, None, headers)
+        return Reply(200, None, headers, raw=cached.raw)
+
+    # ===================================================== §10 zil planı
+
+    def plan_day_result(self, item: dict[str, Any]) -> dict[str, Any]:
+        result = str(item.get("result") or "")
+        out: dict[str, Any] = {
+            "date": item.get("date"),
+            "result": result if result in BELL_PLAN_RESULTS else "rejected",
+            "revision": int_or_none(item.get("revision")),
+        }
+        error = item.get("error")
+        if isinstance(error, str) and error:
+            out["error"] = error if error in BELL_PLAN_ERRORS else "rejected"
+            details = item.get("details")
+            if isinstance(details, dict) and details.get("profileId"):
+                out["details"] = {"profileId": str(details["profileId"])}
+        return out
+
+    async def put_bell_plan(self, body: dict[str, Any], caller: Caller) -> dict[str, Any]:
+        """§3.3 `PUT /bell/plan` — Akademi'nin 14 günlük planı.
+
+        Gövdenin kuralları (en çok 15 gün, aralıktaki HER gün, alan sınırları)
+        zil yeteneğinde tek yerdedir; red `422 validation_error` + `details.path`.
+        Günler BAĞIMSIZ uygulanır: `unknown_profile` ve `revision_conflict` o
+        günü `rejected` yapar (`error` gün satırında), diğer günler uygulanır —
+        yanıt yine 200'dür. Ses üretimi isteğin dışında kuyruktadır.
+        """
+        if not self.caps.has(BELL_PLAN):
+            raise capability_missing(BELL_PLAN)
+        days = body.get("days")
+        detail = {"from": str(body.get("from") or "")[:10], "to": str(body.get("to") or "")[:10],
+                  "days": len(days) if isinstance(days, list) else 0}
+
+        async def work() -> dict[str, Any]:
+            result = await self.call(self.caps.bell_plan_apply(body, actor=caller.actor))
+            out = [self.plan_day_result(item) for item in result.get("days") or []
+                   if isinstance(item, dict)]
+            counts: dict[str, int] = {}
+            for item in out:
+                counts[item["result"]] = counts.get(item["result"], 0) + 1
+            detail["results"] = counts
+            conflicts = [item["date"] for item in out if item.get("error")]
+            if conflicts:
+                self._log.warning("zil planı günleri reddedildi", dates=conflicts[:15],
+                                  request_id=caller.request_id or None)
+            return {"days": out,
+                    "voicesPending": int_or_none(result.get("voicesPending")) or 0,
+                    "bellEnabled": bool(result.get("bellEnabled"))}
+
+        return await self.audited("bell.plan.put", caller, "", detail, work())
+
+    def status_window(self, date_from: date | None, date_to: date | None) -> tuple[date, date]:
+        """`from` yoksa bugün, `to` yoksa `from` + 13 gün; aralık en çok 31 gün."""
+        start = date_from or self.now().astimezone(self.zone).date()
+        end = date_to or start + timedelta(days=BELL_PLAN_WINDOW_DAYS - 1)
+        if end < start:
+            raise validation("`to`, `from`'dan önce olamaz.", "to")
+        if (end - start).days + 1 > BELL_STATUS_MAX_DAYS:
+            raise validation(f"Aralık en çok {BELL_STATUS_MAX_DAYS} gün olabilir.", "to")
+        return start, end
+
+    def status_day(self, item: dict[str, Any]) -> dict[str, Any]:
+        out = {key: item.get(key) for key in BELL_STATUS_DAY_KEYS}
+        for key in ("calls", "voicesReady", "voicesPending"):
+            out[key] = int_or_none(out[key]) or 0
+        override = item.get("override")
+        out["override"] = ({"mode": override.get("mode"), "by": override.get("by") or None,
+                            "at": override.get("at") or None}
+                           if isinstance(override, dict) else None)
+        return out
+
+    async def bell_plan_status(self, date_from: date | None, date_to: date | None,
+                               if_none_match: str | None) -> Reply:
+        """§3.3 `GET /bell/plan/status` — gün başına kip, kaynak, revizyon, ses durumu.
+
+        Zil modülünün yerel tablolarından okunur (önbellek yok, ≤ 80 ms hedefi);
+        ETag gövdenin özetidir, Akademi'nin 15 dk'lık uzlaştırması çoğunlukla 304 alır.
+        """
+        start, end = self.status_window(date_from, date_to)
+        if not self.caps.has(BELL_PLAN):
+            raise capability_missing(BELL_PLAN)
+        result = await self.call(self.caps.bell_plan_status(start.isoformat(), end.isoformat()))
+        raw_agent = result.get("agent")
+        agent: dict[str, Any] = raw_agent if isinstance(raw_agent, dict) else {}
+        body = {
+            "bellEnabled": bool(result.get("bellEnabled")),
+            "sessionCallsEnabled": bool(result.get("sessionCallsEnabled")),
+            "agent": {"online": bool(agent.get("online")),
+                      "lastSeenAt": self.iso(agent.get("lastSeenAt"))},
+            "days": [self.status_day(item) for item in result.get("days") or []
+                     if isinstance(item, dict)],
+        }
+        raw = encode(body)
+        etag = hashlib.sha256(raw).hexdigest()
+        headers = {"ETag": f'"{etag}"', "Cache-Control": "private, no-cache"}
+        if etag_matches(if_none_match, etag):
+            return Reply(304, None, headers)
+        return Reply(200, None, headers, raw=raw)
 
     # ========================================================== §7 OTP SMS
 

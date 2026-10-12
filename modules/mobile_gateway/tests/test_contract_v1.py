@@ -1,5 +1,6 @@
-"""Sözleşme v1 — `km-mobile-gateway.md` (Ekler dahil) ve
-`kantin-veli-kontrolleri.md` §2.2.
+"""Sözleşme v1 — `km-mobile-gateway.md` (Ekler dahil),
+`kantin-veli-kontrolleri.md` §2.2 ve `km-ogrenci-gruplari-ve-zil.md` §2.4, §3.1, §3.3
+(öğrenci grupları, saat setleri, zil planı).
 
 Her uç için: durum kodu, alan adları, hata kodları; ayrıca kilitler, hız
 sınırları, idempotensi tekrarı/çatışması, 304 etag, eksik yetenek 503 ve
@@ -75,6 +76,9 @@ CONTRACT_ROUTES = {
     ("POST", "/tablet-sessions/{session_id}/end"),
     ("POST", "/announcements/call"),
     ("GET", "/schedule/bell-week"),
+    ("GET", "/groups"),
+    ("PUT", "/bell/plan"),
+    ("GET", "/bell/plan/status"),
     ("POST", "/sms/otp"),
     ("GET", "/settings/public"),
 }
@@ -152,6 +156,7 @@ def test_optional_capabilities_are_declared_optional() -> None:
         "secrets": False, "canteen.api": False, "bbd_students.directory": False,
         "bbd_tablet.read": True, "bbd_tablet.control": True,
         "bell.week": True, "bell.announce": True,
+        "bell.plan": True, "bbd_students.groups": True,
     }
 
 
@@ -872,8 +877,12 @@ async def test_bell_week(client: httpx.AsyncClient, world: World) -> None:
     response = await client.get("/schedule/bell-week")
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"times", "groups", "available", "reason"}
+    assert set(body) == {"times", "profiles", "groups", "available", "reason"}
     assert list(body["times"]) == ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    # Saat setleri (§3.1, ekleyici): gün bağımsız; iç alanlar (`sort`) düşer.
+    assert body["profiles"] == [{"id": "yarim-gun", "name": "Yarım gün", "times": [
+        {"time": "08:40", "label": "", "kind": "ders"},
+        {"time": "09:20", "label": "", "kind": "teneffus"}]}]
     assert body["times"]["mon"] == [{"id": "t1", "time": "08:30", "label": "1. ders",
                                      "kind": "ders"}]
     assert body["groups"] == [{"id": "g1", "name": "Ortaokul", "kind": "grup", "sort": 1}]
@@ -884,6 +893,243 @@ async def test_bell_week(client: httpx.AsyncClient, world: World) -> None:
     missing = (await client.get("/schedule/bell-week")).json()
     assert missing["available"] is False and missing["reason"]
     assert missing["times"]["fri"] == [] and missing["groups"] == []
+    assert missing["profiles"] == []
+
+
+async def test_bell_week_without_profiles_from_older_bell(client: httpx.AsyncClient,
+                                                          world: World) -> None:
+    """Saat seti bilmeyen zil sürümü: `profiles` boş liste, uç yine 200."""
+    async def old_week() -> dict[str, Any]:
+        return {"times": {"mon": []}, "groups": []}
+
+    world.replace("bell.week", old_week)
+    body = (await client.get("/schedule/bell-week")).json()
+    assert body["profiles"] == [] and body["available"] is True
+
+
+# ================================================= §9 öğrenci grupları
+
+GROUP_KEYS = {"id", "name", "callName", "kind", "archived", "archivedAt", "updatedAt",
+              "revision", "members"}
+
+
+async def test_groups_full_listing_shape(client: httpx.AsyncClient, world: World) -> None:
+    response = await client.get("/groups")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["generatedAt", "revision", "full", "complete", "groups", "etag"]
+    assert body["generatedAt"] == "2026-10-12T09:30:00+03:00"
+    assert (body["revision"], body["full"], body["complete"]) == (4182, True, True)
+    assert response.headers["etag"] == f'"{body["etag"]}"'
+    # Revizyon sırası; arşivliler tam listede vardır.
+    assert [group["id"] for group in body["groups"]] == ["aa01", "0b9e", "77c1"]
+    for group in body["groups"]:
+        assert set(group) == GROUP_KEYS
+        for member in group["members"]:
+            assert set(member) == {"studentId", "validFrom", "validTo"}  # telefon/gerekçe yok
+    tyt = body["groups"][1]
+    assert tyt == {
+        "id": "0b9e", "name": "TYT Hızlandırma", "callName": "TYT grubu", "kind": "group",
+        "archived": False, "archivedAt": None, "updatedAt": "2026-10-12T09:12:44+03:00",
+        "revision": 4181,
+        "members": [{"studentId": ELIF, "validFrom": "2026-09-15", "validTo": None},
+                    {"studentId": CAN, "validFrom": "2026-09-15", "validTo": "2026-10-09"}],
+    }
+    assert body["groups"][2]["kind"] == "individual"
+    assert body["groups"][0]["archived"] is True
+    assert "gizli gerekçe" not in response.text
+    assert world.groups.lists == [None]
+
+
+async def test_groups_since_incremental_and_304(client: httpx.AsyncClient,
+                                                world: World) -> None:
+    full = await client.get("/groups")
+    again = await client.get("/groups", headers={"If-None-Match": full.headers["etag"]})
+    assert again.status_code == 304 and again.content == b""
+
+    delta = await client.get("/groups", params={"since": 4181})
+    body = delta.json()
+    assert (body["full"], body["revision"]) == (False, 4182)
+    assert [group["id"] for group in body["groups"]] == ["77c1"]
+    assert body["groups"][0]["members"] == [
+        {"studentId": DENIZ, "validFrom": "2026-09-01", "validTo": None}]
+    assert world.groups.lists[-1] == 4181
+
+    nothing = (await client.get("/groups", params={"since": 4182})).json()
+    assert nothing["groups"] == [] and nothing["full"] is False
+
+    # İstemci KM'den ileride (KM yedekten döndü): tam liste, `full: true`.
+    ahead = (await client.get("/groups", params={"since": 9999})).json()
+    assert ahead["full"] is True and len(ahead["groups"]) == 3
+
+
+@pytest.mark.parametrize("since", ["abc", "-1", "1.5", "1e3"])
+async def test_groups_since_validation(since: str, client: httpx.AsyncClient) -> None:
+    error = expect_error(await client.get("/groups", params={"since": since}),
+                         422, "validation_error")
+    assert error["fields"] == ["since"]
+
+
+async def test_groups_incomplete_and_capability_missing(client: httpx.AsyncClient,
+                                                        world: World) -> None:
+    world.groups.complete = False
+    body = (await client.get("/groups")).json()
+    assert body["complete"] is False
+    world.groups.complete = True
+    assert (await client.get("/groups")).json()["complete"] is True  # yarım liste saklanmadı
+
+    world.remove("bbd_students.groups")
+    missing = expect_error(await client.get("/groups"), 503, "capability_missing")
+    assert missing["capability"] == "bbd_students.groups"
+
+
+# ======================================================== §10 zil planı
+
+
+def plan_day(day: str, *, revision: int = 912, plan_hash: str = "c41e", mode: str = "normal",
+             profile_id: str | None = None, calls: list[dict[str, Any]] | None = None,
+             reason: str | None = None) -> dict[str, Any]:
+    return {"date": day, "mode": mode, "profileId": profile_id, "reason": reason,
+            "revision": revision, "planHash": plan_hash, "calls": calls or []}
+
+
+CALL = {"ref": "6a1f", "at": "09:00", "groupKind": "group", "groupName": "TYT grubu",
+        "groupRef": "km_group:0b9e", "teacherName": "Hüseyin hoca", "room": "B-2",
+        "subject": "Matematik", "kind": "lesson"}
+
+
+def plan_body(*days: dict[str, Any]) -> dict[str, Any]:
+    return {"from": days[0]["date"], "to": days[-1]["date"], "days": list(days)}
+
+
+async def test_put_bell_plan_day_results(client: httpx.AsyncClient, world: World,
+                                         store: Any) -> None:
+    body = plan_body(
+        plan_day("2026-10-12", calls=[CALL]),
+        plan_day("2026-10-13", mode="profile", profile_id="yarim-gun", reason="Deneme günü"),
+        plan_day("2026-10-14", mode="profile", profile_id="bilinmeyen"),
+    )
+    response = await client.put("/bell/plan", json=body,
+                                headers=on_behalf("akademi:bell-plan"))
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert set(result) == {"days", "voicesPending", "bellEnabled"}
+    assert result["days"] == [
+        {"date": "2026-10-12", "result": "applied", "revision": 912},
+        {"date": "2026-10-13", "result": "applied", "revision": 912},
+        {"date": "2026-10-14", "result": "rejected", "revision": 912,
+         "error": "unknown_profile", "details": {"profileId": "bilinmeyen"}},
+    ]
+    assert (result["voicesPending"], result["bellEnabled"]) == (7, True)
+    sent, actor = world.bell_plan.applied[0]
+    assert sent == body and actor == "Akademi Servis (akademi:bell-plan)"
+
+    # Aynı özet → unchanged; küçük revizyon → stale; aynı revizyon farklı özet → çatışma.
+    again = plan_body(plan_day("2026-10-12", calls=[CALL]),
+                      plan_day("2026-10-13", revision=900, plan_hash="eski"))
+    assert [day["result"] for day in (await client.put("/bell/plan", json=again)).json()
+            ["days"]] == ["unchanged", "stale"]
+    conflict = plan_body(plan_day("2026-10-12", plan_hash="farkli"),
+                         plan_day("2026-10-13", revision=913, plan_hash="yeni"))
+    days = (await client.put("/bell/plan", json=conflict)).json()["days"]
+    assert days[0] == {"date": "2026-10-12", "result": "rejected", "revision": 912,
+                       "error": "revision_conflict"}
+    assert days[1]["result"] == "applied"                  # diğer günler uygulanır
+
+    audit = await table(store, "audit")
+    assert [row["action"] for row in audit] == ["bell.plan.put"] * 3
+    detail = json.loads(audit[0]["detail"])
+    assert detail == {"from": "2026-10-12", "to": "2026-10-14", "days": 3,
+                      "results": {"applied": 2, "rejected": 1}}
+    assert audit[0]["on_behalf_of"] == "akademi:bell-plan"
+
+
+async def test_put_bell_plan_validation_from_bell(client: httpx.AsyncClient) -> None:
+    body = plan_body(plan_day("2026-10-12"))
+    body["days"][0]["revision"] = "bir"
+    error = expect_error(await client.put("/bell/plan", json=body), 422, "validation_error")
+    assert error["fields"] == ["days[0].revision"]
+    assert error["details"] == {"path": "days[0].revision"}
+    assert "bir" not in error["message"]
+
+
+@pytest.mark.parametrize("raw", [b"[]", b"{bozuk", b'"metin"'])
+async def test_put_bell_plan_body_must_be_json_object(raw: bytes,
+                                                      client: httpx.AsyncClient) -> None:
+    response = await client.put("/bell/plan", content=raw,
+                                headers={"Content-Type": "application/json"})
+    expect_error(response, 422, "validation_error")
+
+
+async def test_put_bell_plan_size_limit(client: httpx.AsyncClient, world: World) -> None:
+    body = plan_body(plan_day("2026-10-12"))
+    body["pad"] = "x" * (512 * 1024)
+    expect_error(await client.put("/bell/plan", json=body), 413, "payload_too_large")
+    assert world.bell_plan.applied == []
+
+
+async def test_put_bell_plan_idempotency(client: httpx.AsyncClient, world: World) -> None:
+    body = plan_body(plan_day("2026-10-12", calls=[CALL]))
+    headers = {"Idempotency-Key": "plan-c41e"}
+    first = await client.put("/bell/plan", json=body, headers=headers)
+    replay = await client.put("/bell/plan", json=body, headers=headers)
+    assert replay.headers.get("idempotent-replayed") == "true"
+    assert replay.json() == first.json()
+    assert len(world.bell_plan.applied) == 1               # ağ tekrarı ikinci kez uygulanmaz
+    other = plan_body(plan_day("2026-10-12", revision=913, plan_hash="baska"))
+    expect_error(await client.put("/bell/plan", json=other, headers=headers),
+                 409, "idempotency_conflict")
+
+
+async def test_put_bell_plan_capability_missing(client: httpx.AsyncClient,
+                                                world: World) -> None:
+    world.remove("bell.plan")
+    error = expect_error(await client.put("/bell/plan", json=plan_body(plan_day("2026-10-12"))),
+                         503, "capability_missing")
+    assert error["capability"] == "bell.plan"
+    expect_error(await client.get("/bell/plan/status"), 503, "capability_missing")
+
+
+STATUS_DAY_KEYS = {"date", "mode", "profileId", "reason", "source", "revision", "planHash",
+                   "calls", "voicesReady", "voicesPending", "lastDispatchAt", "override",
+                   "lastResult", "lastError"}
+
+
+async def test_bell_plan_status_shape_window_and_304(client: httpx.AsyncClient,
+                                                     world: World) -> None:
+    await client.put("/bell/plan", json=plan_body(plan_day("2026-10-12", calls=[CALL])))
+    response = await client.get("/bell/plan/status")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"bellEnabled", "sessionCallsEnabled", "agent", "days"}
+    assert body["agent"] == {"online": True, "lastSeenAt": "2026-10-12T09:29:40+03:00"}
+    # Varsayılan pencere: bugünden 14 gün (Europe/Istanbul).
+    assert world.bell_plan.status_args[-1] == ("2026-10-12", "2026-10-25")
+    (day,) = body["days"]
+    assert set(day) == STATUS_DAY_KEYS                      # `receivedAt` gibi iç alan düşer
+    assert (day["source"], day["revision"], day["calls"], day["voicesPending"]) == \
+        ("akademi", 912, 1, 1)
+
+    cached = await client.get("/bell/plan/status",
+                              headers={"If-None-Match": response.headers["etag"]})
+    assert cached.status_code == 304 and cached.content == b""
+
+    await client.get("/bell/plan/status", params={"from": "2026-10-01", "to": "2026-10-31"})
+    assert world.bell_plan.status_args[-1] == ("2026-10-01", "2026-10-31")
+
+
+@pytest.mark.parametrize("params,field", [
+    ({"from": "2026-10-01", "to": "2026-11-01"}, "to"),    # 32 gün
+    ({"from": "2026-10-12", "to": "2026-10-11"}, "to"),
+    ({"from": "12.10.2026"}, "from"),
+])
+async def test_bell_plan_status_range_validation(params: dict[str, str], field: str,
+                                                 client: httpx.AsyncClient,
+                                                 world: World) -> None:
+    error = expect_error(await client.get("/bell/plan/status", params=params),
+                         422, "validation_error")
+    assert error["fields"] == [field]
+    assert world.bell_plan.status_args == []
 
 
 # ========================================================== §7 OTP SMS

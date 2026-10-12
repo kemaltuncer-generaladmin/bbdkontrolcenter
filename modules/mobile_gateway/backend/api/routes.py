@@ -8,13 +8,14 @@ Başlıklar:
   `X-KM-On-Behalf-Of` — uygulamadaki asıl kişi; YALNIZ denetim izine gider,
                          yetki vermez.
   `X-Request-Id`       — denetim izine ve log'a geçer.
-  `Idempotency-Key`    — her POST/PATCH'te; 24 saat saklanır.
+  `Idempotency-Key`    — her POST/PATCH/PUT'ta; 24 saat saklanır.
 
 Hatalar `GatewayRoute` ile sözleşme zarfına girer (errors.py).
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
 from typing import Any, Literal
@@ -24,8 +25,8 @@ from fastapi.responses import JSONResponse
 
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
-from ..errors import GatewayRoute, validation
-from ..service import Caller, GatewayService, Reply, clean_header
+from ..errors import GatewayError, GatewayRoute, validation
+from ..service import BELL_PLAN_MAX_BYTES, Caller, GatewayService, Reply, clean_header
 
 ACCESS = "mobile_gateway.access"
 
@@ -69,9 +70,10 @@ def reply(result: Reply) -> Response:
     return JSONResponse(status_code=result.status, content=result.body, headers=result.headers)
 
 
-async def idempotent(request: Request, body: BaseModel | None, status: int,
+async def idempotent(request: Request, body: BaseModel | dict[str, Any] | None, status: int,
                      produce: Callable[[], Awaitable[dict[str, Any]]]) -> Response:
-    payload = body.model_dump(mode="json", exclude_unset=True) if body is not None else None
+    payload = body.model_dump(mode="json", exclude_unset=True) \
+        if isinstance(body, BaseModel) else body
     route = f"{request.method} {request.url.path}"
     result = await current_service().idempotent(
         request.headers.get("Idempotency-Key"), route, payload, status, produce,
@@ -375,6 +377,59 @@ async def announcement_call(body: CallBody, request: Request,
 @router.get("/schedule/bell-week")
 async def bell_week(request: Request, user: CurrentUser = requires(ACCESS)) -> Response:
     return reply(await current_service().bell_week_reply(request.headers.get("If-None-Match")))
+
+
+# ================================================== §9 öğrenci grupları
+
+
+@router.get("/groups")
+async def groups(request: Request, since: str | None = Query(default=None, max_length=32),
+                 user: CurrentUser = requires(ACCESS)) -> Response:
+    """km-ogrenci-gruplari-ve-zil.md §2.4 — `since` grup revizyonu, ETag/304."""
+    return reply(await current_service().groups(since, request.headers.get("If-None-Match")))
+
+
+# ======================================================== §10 zil planı
+
+
+async def json_object(request: Request, limit: int) -> dict[str, Any]:
+    """Ham gövde → JSON nesnesi. Sınır OKUMADAN önce başlıktan, sonra bayttan denetlenir."""
+    declared = request.headers.get("Content-Length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise GatewayError(413, "payload_too_large",
+                           f"Gövde en çok {limit // 1024} KB olabilir.")
+    raw = await request.body()
+    if len(raw) > limit:
+        raise GatewayError(413, "payload_too_large",
+                           f"Gövde en çok {limit // 1024} KB olabilir.")
+    try:
+        body = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise validation("Gövde geçerli JSON olmalı.", "gövde") from None
+    if not isinstance(body, dict):
+        raise validation("Gövde JSON nesnesi olmalı.", "gövde")
+    return body
+
+
+@router.put("/bell/plan")
+async def put_bell_plan(request: Request, user: CurrentUser = requires(ACCESS)) -> Response:
+    """§3.3 — Akademi'nin zil planı (en çok 15 gün). Gün bazında sonuç, 200."""
+    body = await json_object(request, BELL_PLAN_MAX_BYTES)
+    caller = caller_of(request, user)
+    return await idempotent(request, body, 200, lambda: current_service().put_bell_plan(
+        body, caller,
+    ))
+
+
+@router.get("/bell/plan/status")
+async def bell_plan_status(request: Request,
+                           date_from: date | None = FROM_QUERY,
+                           date_to: date | None = TO_QUERY,
+                           user: CurrentUser = requires(ACCESS)) -> Response:
+    """§3.3 — gün başına kip, kaynak, revizyon, ses durumu (en çok 31 gün). ETag/304."""
+    return reply(await current_service().bell_plan_status(
+        date_from, date_to, request.headers.get("If-None-Match"),
+    ))
 
 
 # ========================================================== §7 OTP SMS

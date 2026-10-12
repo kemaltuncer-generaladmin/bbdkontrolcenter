@@ -37,8 +37,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from mobile_gateway_fakes import (
     FakeBellAnnounce,
+    FakeBellPlan,
     FakeCanteen,
     FakeDirectory,
+    FakeGroups,
     FakeTabletControl,
     FakeTabletRead,
     FakeVault,
@@ -129,6 +131,8 @@ class World:
         self.tablet_control = FakeTabletControl()
         self.announce = FakeBellAnnounce()
         self.vault = FakeVault()
+        self.groups = FakeGroups()
+        self.bell_plan = FakeBellPlan()
         self.registry = Registry()
         for name, instance in (
             ("secrets", self.vault), ("canteen.api", self.canteen),
@@ -136,6 +140,7 @@ class World:
             ("bbd_tablet.read", self.tablet_read),
             ("bbd_tablet.control", self.tablet_control),
             ("bell.week", bell_week), ("bell.announce", self.announce),
+            ("bbd_students.groups", self.groups), ("bell.plan", self.bell_plan),
         ):
             self.registry.register(name, instance, provider="test")
 
