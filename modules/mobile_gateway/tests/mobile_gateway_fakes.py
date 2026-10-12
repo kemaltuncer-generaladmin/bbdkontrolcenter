@@ -8,6 +8,7 @@ ya da zile çıkılmaz; gerçek SMS gönderilmez.
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
 
 ELIF = "STU-a1b2c3d4e5"
@@ -80,13 +81,15 @@ def directory_records() -> dict[str, dict[str, Any]]:
 
 
 class CanteenError(RuntimeError):
-    """`bbd_canteen_api.client.CanteenError` ile aynı yüz: status + reason."""
+    """`bbd_canteen_api.client.CanteenError` ile aynı yüz: status + reason
+    (+ kantin red gövdesinin sayısal ayrıntısı, varsa)."""
 
     def __init__(self, message: str, *, status: int | None = None,
-                 reason: str | None = None) -> None:
+                 reason: str | None = None, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.reason = reason
+        self.details = details
 
 
 class FakeCanteen:
@@ -94,6 +97,8 @@ class FakeCanteen:
         self.calls: list[tuple[str, Any]] = []
         self.down = False
         self.fail_reason: str | None = None
+        self.origins: list[str | None] = []
+        self.feed_cursor: dict[str, Any] = {"nextSince": 1791784800250, "hasMore": True}
         self.sms_sent = True
         self.students: dict[str, dict[str, Any]] = {
             ELIF: {"id": ELIF, "displayName": "Elif Kaya", "parentPhone": MOTHER,
@@ -168,13 +173,16 @@ class FakeCanteen:
         self._enter("payment_requests")
         return deepcopy(self.requests)
 
-    async def create_payment_request(self, student_id: str,
-                                     amount: int | None = None) -> dict[str, Any]:
+    async def create_payment_request(self, student_id: str, amount: int | None = None,
+                                     origin: str | None = None) -> dict[str, Any]:
         self._enter("create_payment_request", (student_id, amount))
+        self.origins.append(origin)
         if self.fail_reason:
+            limit = {"balance": 4250, "maxAmount": 4250} \
+                if self.fail_reason == "exceeds_debt" else None
             raise CanteenError("reddedildi", status=422 if self.fail_reason in
-                               ("exceeds_debt", "invalid_amount") else 200,
-                               reason=self.fail_reason)
+                               ("exceeds_debt", "invalid_amount") else 409,
+                               reason=self.fail_reason, details=limit)
         if student_id not in self.students:
             raise CanteenError("404", status=404, reason="student_not_found")
         return {"queued": True, "ref": "PR-01JNEW", "amount": amount or 4250,
@@ -196,7 +204,9 @@ class FakeCanteen:
                                 local_id: str) -> dict[str, Any]:
         self._enter("record_collection", (student_id, amount, local_id))
         if self.fail_reason:
-            raise CanteenError("422", status=422, reason=self.fail_reason)
+            limit = {"balance": 4250, "maxAmount": 4250} \
+                if self.fail_reason == "exceeds_debt" else None
+            raise CanteenError("422", status=422, reason=self.fail_reason, details=limit)
         balance = int(self.students[student_id]["balance"]) - amount
         self.students[student_id]["balance"] = balance
         return {"localId": local_id, "amount": amount, "balance": balance}
@@ -211,7 +221,7 @@ class FakeCanteen:
     async def payment_requests_feed(self, updated_since: str | None = None,
                                     limit: int = 100) -> dict[str, Any]:
         self._enter("payment_requests_feed", (updated_since, limit))
-        return {"data": deepcopy(self.requests[:limit])}
+        return {"data": deepcopy(self.requests[:limit]), **self.feed_cursor}
 
     async def parent_notifications_feed(self, updated_since: str | None = None,
                                         limit: int = 100) -> list[dict[str, Any]]:
@@ -251,13 +261,18 @@ class LegacyCanteen:
         return {"balance": 0}
 
 
+class DirectoryUnavailable(RuntimeError):
+    """`bbd_students` dizini kantine ulaşamadı."""
+
+
 class FakeDirectory:
     def __init__(self) -> None:
         self.records = directory_records()
         self.complete = True
+        self.down = False
         self.since_seen: list[Any] = []
 
-    async def list(self, since: str | None = None) -> dict[str, Any]:
+    async def list(self, since: datetime | None = None) -> dict[str, Any]:
         self.since_seen.append(since)
         students = list(self.records.values())
         if since is not None:
@@ -266,6 +281,8 @@ class FakeDirectory:
                 "complete": self.complete}
 
     async def get(self, student_id: str) -> dict[str, Any] | None:
+        if self.down:
+            raise DirectoryUnavailable("Kantine ulaşılamadı.")
         record = self.records.get(student_id)
         return deepcopy(record) if record else None
 
@@ -278,8 +295,12 @@ class FakeDirectory:
         return "djEuQUJDREVGRw"
 
 
-class NotFoundError(LookupError):
-    pass
+class TabletCapabilityError(Exception):
+    """`bbd_tablet` yeteneğinin hatası: `reason` makine içindir."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class ConflictError(RuntimeError):
@@ -307,7 +328,7 @@ class FakeTabletRead:
                             date_to: str) -> dict[str, Any]:
         self.usage_args.append((student_id, date_from, date_to))
         if student_id not in (ELIF, CAN):
-            raise NotFoundError(student_id)
+            raise TabletCapabilityError("yok", reason="student_not_found")
         return {
             "days": [{"date": "2026-10-11", "totalSeconds": 5400,
                       "apps": [{"package": "com.example.app", "label": "Örnek",
@@ -331,8 +352,10 @@ class FakeTabletControl:
         self.calls.append(("grant", {"student_id": student_id, "package_name": package_name,
                                      "extra_seconds": extra_seconds, "reason": reason,
                                      "actor": actor}))
+        if student_id == DENIZ:
+            raise TabletCapabilityError("kantin", reason="canteen_unavailable")
         if student_id not in (ELIF, CAN):
-            raise NotFoundError(student_id)
+            raise TabletCapabilityError("yok", reason="student_not_found")
         return 55
 
     async def block(self, student_id: str, until: Any, reason: str, actor: str) -> Any:
@@ -348,7 +371,7 @@ class FakeTabletControl:
         self.calls.append(("end_session", {"session_id": session_id, "reason": reason,
                                            "actor": actor}))
         if session_id == "404":
-            raise NotFoundError(session_id)
+            raise TabletCapabilityError("yok", reason="session_not_found")
         if session_id == "busy":
             raise ConflictError(session_id)
         return session_id != "ended"

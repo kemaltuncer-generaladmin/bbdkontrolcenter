@@ -28,7 +28,11 @@ sorar (router tabanı + uç imzası, K9). Rol adı sorulmaz (K10).
 
 Hata zarfı: `{"error": {"status", "code", "message", …}}` — `message` Türkçe;
 kilit ve hız sınırında `retryAfterSeconds` (ve `Retry-After` başlığı),
-doğrulamada `fields`, eksik yetenekte `capability`.
+doğrulamada `fields`, eksik yetenekte `capability`, kantinin tutar
+redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
+
+`X-KM-On-Behalf-Of` HTTP başlığıdır ve ASCII olmak zorundadır: Türkçe ad
+**yüzde kodlu UTF-8** gönderilir (`Ay%C5%9Fe`). Ham UTF-8 bayt da çözülür.
 
 ## Uçlar
 
@@ -43,9 +47,9 @@ doğrulamada `fields`, eksik yetenekte `capability`.
 | `POST /students/{id}/payment-requests` · `POST /students/{id}/canteen/payment-requests` | 201 `{ref, amount, status, linkUrl, amountFixed, payToken}` | 409 `no_debt`/`no_phone`, 422 `exceeds_debt`/`invalid_amount`, 404 |
 | `GET /students/{id}/canteen/controls` | 200 kontroller | 404, 503 |
 | `PATCH /students/{id}/canteen/controls` | 200 kontroller | 422 `validation_error`, 404, 503 |
-| `POST /students/{id}/canteen/collections` | 201 `{amount, balance}` | 422 `no_debt`/`exceeds_debt`/`invalid_amount` |
-| `GET /canteen/payment-requests?since=&limit=` | 200 `{items, nextSince}` | 422, 503 |
-| `GET /canteen/parent-notifications?since=&limit=` | 200 `{items, nextSince}` — SMS metni/telefon YOK | 422, 503 |
+| `POST /students/{id}/canteen/collections` | 201 `{amount, balance}` | 422 `no_debt`/`exceeds_debt`/`invalid_amount`, 404 |
+| `GET /canteen/payment-requests?since=&limit=` | 200 `{items, nextSince, hasMore}` | 422, 503 |
+| `GET /canteen/parent-notifications?since=&limit=` | 200 `{items, nextSince, hasMore}` — SMS metni/telefon YOK | 422, 503 |
 | `GET /canteen/settings/public` | 200 `{allowPrepayment, maxPrepayment}` | 503 |
 | `GET /canteen/products` | 200 `{items}` (5 dk önbellek) | 503 |
 | `GET /tablets` | 200 `{summary, devices}` | 503 `capability_missing`, 502 |
@@ -73,6 +77,12 @@ doğrulamada `fields`, eksik yetenekte `capability`.
   Telefon başına saatte 5, toplam dakikada 60. Kayıt `mod_mobile_gateway_sms_log`
   tablosunda **maskeli** telefonla.
 - Öğrenci çağırma: aynı öğrenci 60 sn içinde ikinci kez çağrılamaz (429).
+- Akışlarda `nextSince` kantinin imlecidir (epoch-ms gelir, ISO +03:00'a
+  çevrilir; vermezse satırlardan hesaplanır). Kantinin `updatedSince` sınırı
+  **dahildir**: aynı satır yeniden gelebilir, istemci `ref`/`id` ile ayıklar.
+  `hasMore` kantinden aynen geçer.
+- Ödeme talebi kantine `origin: "api"` ile açılır; kantin öğrenci başına
+  tek açık talebi yeniden kullanır.
 - Çıktılar beyaz listeyle kurulur: erişim kodu, QR anahtarı, Netgsm bilgisi,
   akışlarda telefon ve SMS metni hiçbir uçtan dönmez.
 
@@ -105,10 +115,10 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | Yetenek | Kullanılan |
 |---|---|
 | `secrets` (zorunlu) | `get(key)`, `set(key, value)` |
-| `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=)` |
-| `bbd_students.directory` (zorunlu) | `list(since=<iso>\|None)`, `get(id)`, `card_qr_text(id)` |
+| `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=)` — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
+| `bbd_students.directory` (zorunlu) | `list(since=<datetime>\|None)`, `get(id)` (yoksa `None`), `card_qr_text(id)` — QR'dan önce `get` ile varlık sınanır |
 | `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün) |
-| `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)` |
+| `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)` — hata `reason`ı: `validation_error` → 422, `student_not_found`/`session_not_found` → 404, `canteen_unavailable` → 503 |
 | `bell.week` | çağrılabilir: `() -> {"times", "groups"}` |
 | `bell.announce` | `page(text, *, cache_key=, actor=, request_id=)` |
 

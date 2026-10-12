@@ -12,6 +12,7 @@ asla dönmeyecek alanlar (erişim kodu, SMS metni, akışlarda telefon).
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -253,7 +254,9 @@ async def test_directory_since_incomplete_and_validation(
     assert delta.status_code == 200
     body = delta.json()
     assert body["full"] is False and body["complete"] is False
-    assert world.directory.since_seen[-1] == "2026-10-12T09:00:00+03:00"
+    # Dizin yeteneği `since`i saat dilimli datetime olarak alır.
+    seen = world.directory.since_seen[-1]
+    assert isinstance(seen, datetime) and seen.isoformat() == "2026-10-12T09:00:00+03:00"
     bad = await client.get("/directory", params={"since": "dün"})
     assert expect_error(bad, 422, "validation_error")["fields"] == ["since"]
     world.remove("bbd_students.directory")
@@ -408,11 +411,13 @@ async def test_canteen_summary_shape(client: httpx.AsyncClient, world: World) ->
     expect_error(await client.get(f"/students/{ELIF}/canteen"), 503, "canteen_unavailable")
 
 
-async def test_canteen_qr(client: httpx.AsyncClient) -> None:
+async def test_canteen_qr(client: httpx.AsyncClient, world: World) -> None:
     response = await client.get(f"/students/{ELIF}/canteen/qr")
     assert response.status_code == 200
     assert response.json() == {"qrText": "djEuQUJDREVGRw", "version": 1}
     expect_error(await client.get("/students/STU-yok/canteen/qr"), 404, "student_not_found")
+    world.directory.down = True  # dizin kantine ulaşamıyor
+    expect_error(await client.get(f"/students/{ELIF}/canteen/qr"), 503, "canteen_unavailable")
 
 
 async def test_student_payment_requests_list(client: httpx.AsyncClient) -> None:
@@ -447,6 +452,7 @@ async def test_create_payment_request(client: httpx.AsyncClient, world: World, s
     assert partial.status_code == 201
     assert partial.json()["amount"] == 5000 and partial.json()["amountFixed"] is True
     assert ("create_payment_request", (ELIF, 5000)) in world.canteen.calls
+    assert set(world.canteen.origins) == {"api"}  # kantin talebin kaynağını tutar
     assert MOTHER not in partial.text
 
     audit = await table(store, "audit")
@@ -454,10 +460,15 @@ async def test_create_payment_request(client: httpx.AsyncClient, world: World, s
     assert audit[-1]["on_behalf_of"] == "akademi:staff:42:Ayşe Yılmaz"
     assert audit[-1]["request_id"] == "req-1" and audit[-1]["result"] == "ok"
 
-    for reason, status in (("no_debt", 409), ("no_phone", 409), ("exceeds_debt", 422)):
+    for reason, status in (("no_debt", 409), ("no_phone", 409), ("exceeds_debt", 422),
+                           ("invalid_amount", 422)):
         world.canteen.fail_reason = reason
-        expect_error(await client.post(url, json={"amount": 999999}), status, reason)
-    assert (await table(store, "audit"))[-1]["result"] == "exceeds_debt"
+        error = expect_error(await client.post(url, json={"amount": 999999}), status, reason)
+        if reason == "exceeds_debt":
+            assert error["details"] == {"balance": 4250, "maxAmount": 4250}
+        else:
+            assert "details" not in error
+    assert (await table(store, "audit"))[-1]["result"] == "invalid_amount"
     world.canteen.fail_reason = None
     expect_error(await client.post(url, json={"amount": 0}), 422, "validation_error")
     expect_error(await client.post(path.format(id="STU-yok")), 404, "student_not_found")
@@ -590,8 +601,10 @@ async def test_canteen_collections(client: httpx.AsyncClient, world: World,
 
     for reason in ("no_debt", "exceeds_debt", "invalid_amount"):
         world.canteen.fail_reason = reason
-        expect_error(await client.post(f"/students/{ELIF}/canteen/collections", json=body),
-                     422, reason)
+        error = expect_error(await client.post(f"/students/{ELIF}/canteen/collections",
+                                               json=body), 422, reason)
+        assert error.get("details") == ({"balance": 4250, "maxAmount": 4250}
+                                        if reason == "exceeds_debt" else None)
     world.canteen.fail_reason = None
     expect_error(await client.post(f"/students/{ELIF}/canteen/collections",
                                    json={"amount": 5}), 422, "validation_error")
@@ -602,23 +615,31 @@ async def test_payment_requests_feed(client: httpx.AsyncClient, world: World) ->
                                 params={"since": "2026-10-01T00:00:00+03:00", "limit": 2})
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"items", "nextSince"}
+    assert set(body) == {"items", "nextSince", "hasMore"}
+    assert body["hasMore"] is True
     assert [item["ref"] for item in body["items"]] == ["PR-01JPENDING", "PR-01JPAID"]
     for item in body["items"]:
         assert set(item) == PR_FEED_KEYS
     assert body["items"][0]["studentId"] == ELIF
     assert body["items"][0]["payToken"] == "tok.pending"
     assert body["items"][0]["origin"] == "admin"
+    # Kantinin imleci epoch-ms gelir; geçit ISO'ya (+03:00, ms hassas) çevirir.
     assert body["nextSince"] == "2026-10-12T09:00:00.250+03:00"
     assert world.canteen.calls[-1] == ("payment_requests_feed",
                                        ("2026-10-01T00:00:00+03:00", 2))
     # Telefon ve SMS metni asla.
     assert MOTHER not in response.text and "Sayın veli" not in response.text
 
+    # Kantin imleç vermezse satırlardan hesaplanır; satır yoksa `since` korunur.
+    world.canteen.feed_cursor = {}
+    computed = (await client.get("/canteen/payment-requests")).json()
+    assert computed["nextSince"] == "2026-10-12T09:00:00.250+03:00"
+    assert computed["hasMore"] is False
     world.canteen.requests = []
     empty = await client.get("/canteen/payment-requests",
                              params={"since": "2026-10-12T09:00:00+03:00"})
-    assert empty.json() == {"items": [], "nextSince": "2026-10-12T09:00:00+03:00"}
+    assert empty.json() == {"items": [], "nextSince": "2026-10-12T09:00:00+03:00",
+                            "hasMore": False}
     for limit in (0, 501):
         expect_error(await client.get("/canteen/payment-requests", params={"limit": limit}),
                      422, "validation_error")
@@ -635,6 +656,7 @@ async def test_parent_notifications_feed(client: httpx.AsyncClient) -> None:
          "createdAt": "2026-10-12T08:00:00+03:00"},
     ]
     assert body["nextSince"] == "2026-10-12T09:00:01.500+03:00"
+    assert body["hasMore"] is False
     assert MOTHER not in response.text and not leaked(response.text)
     assert "Borç eşiği" not in response.text
 
@@ -747,6 +769,9 @@ async def test_tablet_controls(client: httpx.AsyncClient, world: World, store: A
     expect_error(await client.post("/students/STU-yok/tablet/grant",
                                    json={"extraSeconds": 60, "reason": "Deneme"}),
                  404, "student_not_found")
+    expect_error(await client.post(f"/students/{DENIZ}/tablet/grant",
+                                   json={"extraSeconds": 60, "reason": "Deneme"}),
+                 503, "canteen_unavailable")
     actions = [row["action"] for row in await table(store, "audit")]
     assert actions[:5] == ["tablet.grant", "tablet.block", "tablet.block", "tablet.unblock",
                            "tablet.session.end"]

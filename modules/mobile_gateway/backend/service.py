@@ -320,14 +320,17 @@ class GatewayService:
         if failure.kind == "business" and failure.reason:
             status = (reasons or {}).get(failure.reason)
             if status is not None:
+                # exceeds_debt gibi redlerde kantinin sınırı: {balance, maxAmount}.
                 return GatewayError(status, failure.reason,
-                                    REASON_MESSAGES.get(failure.reason, "İstek reddedildi."))
+                                    REASON_MESSAGES.get(failure.reason, "İstek reddedildi."),
+                                    details=failure.details)
             return upstream_error("Bağlı sistem isteği reddetti.", reason=failure.reason)
         if failure.kind == "invalid":
             return validation("Gönderilen veri bağlı sistem tarafından reddedildi.")
         if failure.kind == "conflict":
             return GatewayError(409, "conflict", "İşlem kaydın şu anki durumuyla çelişiyor.")
-        if failure.source == "canteen":
+        # Dizin ve tablet yetenekleri de kantine dayanır; kök neden kantinse öyle söylenir.
+        if failure.source in ("canteen", "directory") or failure.reason == "canteen_unavailable":
             return canteen_unavailable()
         return upstream_error()
 
@@ -663,6 +666,9 @@ class GatewayService:
         }
 
     async def canteen_qr(self, student_id: str) -> dict[str, Any]:
+        # QR üreteci her kimliği kodlar; olmayan öğrenciye kart metni verilmez.
+        if await self.call(self.caps.directory_get(student_id)) is None:
+            raise student_not_found()
         text = await self.call(self.caps.card_qr_text(student_id))
         if not text:
             raise student_not_found()
@@ -745,7 +751,8 @@ class GatewayService:
 
     async def payment_requests_feed(self, since_text: str | None, limit: int) -> dict[str, Any]:
         since = self.parse_since(since_text)
-        rows = await self.call(self.caps.payment_requests_feed(since, limit))
+        page = await self.call(self.caps.payment_requests_feed(since, limit))
+        rows: list[dict[str, Any]] = page["items"]
         items = [{
             "ref": str(row.get("ref") or ""),
             "studentId": str(row.get("studentId") or ""),
@@ -759,12 +766,13 @@ class GatewayService:
             "updatedAt": self.iso(row.get("updatedAt")),
             "paidAt": self.iso(row.get("paidAt")),
         } for row in rows]
-        return {"items": items, "nextSince": self.next_since(rows, since)}
+        return self.feed(items, page, rows, since)
 
     async def parent_notifications_feed(self, since_text: str | None,
                                         limit: int) -> dict[str, Any]:
         since = self.parse_since(since_text)
-        rows = await self.call(self.caps.parent_notifications_feed(since, limit))
+        page = await self.call(self.caps.parent_notifications_feed(since, limit))
+        rows: list[dict[str, Any]] = page["items"]
         # SMS METNİ VE TELEFON DÖNMEZ: yalnız bu beş alan.
         items = [{
             "id": row.get("id"),
@@ -773,7 +781,19 @@ class GatewayService:
             "amount": int_or_none(row.get("amount")),
             "createdAt": self.iso(row.get("createdAt")),
         } for row in rows]
-        return {"items": items, "nextSince": self.next_since(rows, since)}
+        return self.feed(items, page, rows, since)
+
+    def feed(self, items: list[dict[str, Any]], page: dict[str, Any],
+             rows: list[dict[str, Any]], since: str | None) -> dict[str, Any]:
+        """`{items, nextSince, hasMore}`. Kantin imleç verirse o (ISO'ya çevrilmiş)
+        kullanılır, vermezse satırlardan hesaplanır. Sınır DAHİLDİR: aynı satır
+        bir sonraki sayfada yeniden gelebilir, istemci ref/id ile ayıklar."""
+        cursor = page.get("nextSince")
+        next_since = self.iso(cursor, precise=True) if cursor not in (None, "") \
+            else self.next_since(rows, since)
+        more = page.get("hasMore")
+        return {"items": items, "nextSince": next_since,
+                "hasMore": is_truthy(more) if more is not None else False}
 
     def next_since(self, rows: list[dict[str, Any]], since: str | None) -> str | None:
         """Bir sonraki yoklamanın imleci: en yeni `updatedAt` (yoksa `createdAt`)."""

@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 import secrets
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 CANTEEN = "canteen.api"
@@ -58,12 +59,14 @@ class UpstreamFailure(Exception):
     """
 
     def __init__(self, source: str, kind: str, *, status: int | None = None,
-                 reason: str | None = None) -> None:
+                 reason: str | None = None, details: dict[str, int] | None = None) -> None:
         super().__init__(f"{source}:{kind}:{reason or status or ''}")
         self.source = source
         self.kind = kind
         self.status = status
         self.reason = reason
+        # Kantin `exceeds_debt` gibi redlerde sınırı bildirir: {balance, maxAmount}.
+        self.details = details
 
 
 async def settle(value: Any) -> Any:
@@ -104,6 +107,40 @@ def rows(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+#: Kantin red gövdesinden dışarı taşınabilen sayısal ayrıntılar (yalnız bunlar).
+_DETAIL_KEYS = ("balance", "maxAmount")
+
+
+def failure_details(error: BaseException) -> dict[str, int] | None:
+    """Hata nesnesinin taşıdığı gövdeden `{balance, maxAmount}` — varsa.
+
+    İstemci gövdeyi `details`, `body`, `payload` ya da `data` adıyla taşıyabilir
+    (sürüme göre). Yalnız tamsayı alanlar alınır; metin asla.
+    """
+    for attribute in ("details", "body", "payload", "data"):
+        source = getattr(error, attribute, None)
+        if not isinstance(source, dict):
+            continue
+        if isinstance(source.get("details"), dict):
+            source = source["details"]
+        found = {key: int(source[key]) for key in _DETAIL_KEYS
+                 if isinstance(source.get(key), int) and not isinstance(source.get(key), bool)}
+        if found:
+            return found
+    return None
+
+
+def page(payload: Any) -> dict[str, Any]:
+    """Akış yanıtı: satırlar + kantinin imleci (`nextSince`) + `hasMore`.
+
+    Kantinin `updatedSince` sınırı DAHİLDİR; tekrar gelen satır ref/id ile
+    ayıklanır (istemcinin işi). İmleç verilmezse servis satırlardan hesaplar.
+    """
+    meta = payload if isinstance(payload, dict) else {}
+    return {"items": rows(payload), "nextSince": meta.get("nextSince"),
+            "hasMore": meta.get("hasMore")}
+
+
 def canteen_failure(error: BaseException) -> UpstreamFailure:
     status = getattr(error, "status", None)
     status = status if isinstance(status, int) else None
@@ -114,7 +151,8 @@ def canteen_failure(error: BaseException) -> UpstreamFailure:
     if reason == "validation_error":
         return UpstreamFailure("canteen", "invalid", status=status, reason=reason)
     if reason:
-        return UpstreamFailure("canteen", "business", status=status, reason=reason)
+        return UpstreamFailure("canteen", "business", status=status, reason=reason,
+                               details=failure_details(error))
     if status == 404:
         return UpstreamFailure("canteen", "not_found", status=status)
     if status in (400, 422):
@@ -125,10 +163,21 @@ def canteen_failure(error: BaseException) -> UpstreamFailure:
 
 
 def module_failure(source: str, error: BaseException) -> UpstreamFailure:
-    """Tablet / zil / dizin hataları — sınıf adından sınıflandırılır."""
+    """Tablet / zil / dizin hataları — `reason`/`code` alanından, yoksa sınıf adından.
+
+    `bbd_tablet` yeteneği `TabletCapabilityError(reason=…)` fırlatır:
+    validation_error · student_not_found · session_not_found ·
+    canteen_unavailable. Dizin kantine ulaşamazsa `DirectoryUnavailable` verir.
+    """
     name = type(error).__name__
-    code = getattr(error, "code", None)
+    code = getattr(error, "reason", None) or getattr(error, "code", None)
     code = code if isinstance(code, str) and code else None
+    if code is not None and code.endswith("_not_found"):
+        return UpstreamFailure(source, "not_found", reason=code)
+    if code == "validation_error":
+        return UpstreamFailure(source, "invalid", reason=code)
+    if code == "canteen_unavailable" or "Unavailable" in name:
+        return UpstreamFailure(source, "unavailable", reason="canteen_unavailable")
     if "NotFound" in name or isinstance(error, LookupError):
         return UpstreamFailure(source, "not_found", reason=code)
     if "Conflict" in name:
@@ -208,8 +257,9 @@ class Capabilities:
     # ---------------------------------------------------- bbd_students.directory
 
     async def directory_list(self, since: str | None) -> dict[str, Any]:
-        """`list(since=None) -> {"students", "classes", "complete"}` — `since` ISO metin."""
-        result = await self._module("directory", DIRECTORY, "list", kwargs={"since": since})
+        """`list(since: datetime | None) -> {"students", "classes", "complete"}`."""
+        moment = datetime.fromisoformat(since) if since else None
+        result = await self._module("directory", DIRECTORY, "list", kwargs={"since": moment})
         return result if isinstance(result, dict) else {}
 
     async def directory_get(self, student_id: str) -> dict[str, Any] | None:
@@ -287,6 +337,9 @@ class Capabilities:
             if not accepts(method, "amount"):
                 raise CapabilityMissing(f"{CANTEEN}.create_payment_request(amount)")
             kwargs["amount"] = amount
+        # Kantin talebin kaynağını tutar (admin | bulk | threshold | api).
+        if accepts(method, "origin"):
+            kwargs["origin"] = "api"
         result = await self._canteen("create_payment_request", args=(student_id,),
                                      kwargs=kwargs)
         # Eski istemci başarısızlıkta da 200 döner: {"queued": false, "reason": …}
@@ -311,13 +364,13 @@ class Capabilities:
     async def products(self) -> list[dict[str, Any]]:
         return rows(await self._canteen("products"))
 
-    async def payment_requests_feed(self, since: str | None, limit: int) -> list[dict[str, Any]]:
-        return rows(await self._canteen("payment_requests_feed",
+    async def payment_requests_feed(self, since: str | None, limit: int) -> dict[str, Any]:
+        """`{"items", "nextSince", "hasMore"}` — istemci liste de dönebilir."""
+        return page(await self._canteen("payment_requests_feed",
                                         kwargs={"updated_since": since, "limit": limit}))
 
-    async def parent_notifications_feed(self, since: str | None,
-                                        limit: int) -> list[dict[str, Any]]:
-        return rows(await self._canteen("parent_notifications_feed",
+    async def parent_notifications_feed(self, since: str | None, limit: int) -> dict[str, Any]:
+        return page(await self._canteen("parent_notifications_feed",
                                         kwargs={"updated_since": since, "limit": limit}))
 
     async def canteen_settings_public(self) -> dict[str, Any]:
