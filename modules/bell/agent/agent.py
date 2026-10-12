@@ -472,6 +472,15 @@ class Agent:
         notes: list[str] = []
         ok = True
         for item in items:
+            # Oturum çağrıları arasındaki boşluk (`sessionCalls.gapSeconds`).
+            # Eski Kontrol Merkezi bu alanı göndermez; yeni ajan eskisiyle de
+            # çalışır. Üst sınır: bozuk bir değer çalmayı kilitlemesin.
+            try:
+                pause = float(item.get("pauseBefore") or 0)
+            except (TypeError, ValueError):
+                pause = 0.0
+            if 0 < pause <= 30:
+                time.sleep(pause)
             sound_id = str(item.get("hash") or "")
             path = self._library.path(sound_id)
             if path is None:

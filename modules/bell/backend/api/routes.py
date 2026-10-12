@@ -22,10 +22,12 @@ from km_sdk import (
     CurrentUser,
     Field,
     HTTPException,
+    Query,
     confirm_pin,
     requires,
 )
 
+from ..plan import PlanError
 from ..service import BellService
 
 router = APIRouter()
@@ -286,3 +288,114 @@ async def reschedule(user: CurrentUser = requires("bell.manage")) -> dict[str, A
 async def sync(user: CurrentUser = requires("bell.manage")) -> dict[str, Any]:
     """Ajanın ses kitaplığını hemen eşitler (arka plan döngüsünü beklemeden)."""
     return await service().sync_sounds()
+
+
+# ------------------------------------------------- saat setleri ve zil planı
+#
+# Sözleşme: bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md §3.
+# Saat setleri KM'nindir (`bell.manage`); zil planını Akademi mobil geçitten
+# iter (`bell.plan` yeteneği). Buradaki uçlar personel ekranı içindir.
+
+
+class ProfileBody(BaseModel):
+    """Saat seti: ad + gün bağımsız zil saatleri (tür açıkça: ders/teneffus)."""
+
+    name: str = Field(default="", max_length=60)
+    times: list[dict[str, Any]] = Field(default_factory=list, max_length=60)
+
+
+class OverrideBody(BaseModel):
+    """"Bugün zili kapat" — PIN gövdede (sorgu dizesinde değil)."""
+
+    date: str = Field(min_length=10, max_length=10)
+    pin: str = Field(default="", min_length=4, max_length=32)
+
+
+class ClearOverrideBody(BaseModel):
+    date: str = Field(min_length=10, max_length=10)
+
+
+def _plan_error(exc: PlanError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+@router.post("/profiles")
+async def create_profile(
+    body: ProfileBody,
+    user: CurrentUser = requires("bell.manage"),
+) -> dict[str, Any]:
+    return await service().save_profile(None, body.name, body.times, actor=user.full_name)
+
+
+@router.put("/profiles/{profile_id}")
+async def save_profile(
+    profile_id: str,
+    body: ProfileBody,
+    user: CurrentUser = requires("bell.manage"),
+) -> dict[str, Any]:
+    """Saat setini TÜMÜYLE değiştirir (haftalık saatlerle aynı ilke)."""
+    return await service().save_profile(profile_id, body.name, body.times,
+                                        actor=user.full_name)
+
+
+@router.post("/profiles/{profile_id}/delete")
+async def delete_profile(
+    profile_id: str,
+    user: CurrentUser = requires("bell.manage"),
+) -> dict[str, Any]:
+    """Kullanılmayan saat setini kaldırır; önümüzdeki bir gün kullanıyorsa reddeder.
+
+    `bell.delete` İSTEMEZ: saat seti türetilmiş içerik değil düzenlenebilir
+    ayardır ve yeniden girilebilir; ses dosyası silmez."""
+    return await service().delete_profile(profile_id, actor=user.full_name)
+
+
+@router.get("/plan/status")
+async def plan_status(
+    start: str = Query(alias="from", min_length=10, max_length=10),
+    end: str = Query(alias="to", min_length=10, max_length=10),
+    user: CurrentUser = requires("bell.view"),
+) -> dict[str, Any]:
+    """Zil planı durumu (en çok 31 gün) — mobil geçidin `GET /bell/plan/status`'ı
+    ile aynı gövde; KM paneli ve Akademi paneli kartı okur."""
+    try:
+        return await service().plan_status(start, end)
+    except PlanError as exc:
+        raise _plan_error(exc) from exc
+
+
+@router.post("/plan/override")
+async def override_today(
+    body: OverrideBody,
+    request: Request,
+    user: CurrentUser = requires("bell.manage"),
+) -> dict[str, Any]:
+    """ACİL: bugünün zilini, zil sonrası anonsunu ve çağrılarını kapatır.
+
+    Yalnız bugün; Akademi takvimine yazılmaz, durum ucunda `source: km` görünür.
+    Okulu sessiz bırakan bir işlem olduğu için PIN ister."""
+    await confirm_pin(request, user, body.pin, action="bell.plan.override")
+    try:
+        return await service().override_day(body.date, "off", actor=user.full_name)
+    except PlanError as exc:
+        raise _plan_error(exc) from exc
+
+
+@router.post("/plan/override/clear")
+async def clear_override(
+    body: ClearOverrideBody,
+    user: CurrentUser = requires("bell.manage"),
+) -> dict[str, Any]:
+    """Acil kapatmayı kaldırır: gün Akademi planına (ya da haftalık saatlere) döner."""
+    try:
+        return await service().clear_override(body.date, actor=user.full_name)
+    except PlanError as exc:
+        raise _plan_error(exc) from exc
+
+
+@router.post("/groups/migrate")
+async def migrate_groups(user: CurrentUser = requires("bell.manage")) -> dict[str, Any]:
+    """"Grupları taşı" (§6): zil grupları Öğrenci Yönetimi'ndeki gruplara dönüşür.
+
+    İdempotent: ikinci basış yeni grup açmaz. Zil grubu satırları silinmez."""
+    return await service().migrate_groups(actor=user.full_name)
