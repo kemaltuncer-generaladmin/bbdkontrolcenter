@@ -31,6 +31,7 @@ from km_sdk import (
     requires,
 )
 
+from .. import contract_features
 from ..gateway import request_id
 from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions
 from ..proxy import AkademiProxy, ProxyError, decode_upload, error_response
@@ -108,6 +109,8 @@ class StaffBody(BaseModel):
     roles: list[Literal["admin", "teacher"]] = Field(min_length=1, max_length=2)
     kmUserId: str | None = Field(default=None, max_length=80)
     note: str = Field(default="", max_length=200)
+    # Kırpılmış hâli en çok 60 karakter — kural ve Türkçe hata serviste (staff.py).
+    announceName: str = Field(default="", max_length=200)
     active: bool = True
 
 
@@ -119,6 +122,7 @@ class StaffPatchBody(BaseModel):
                                                             max_length=2)
     kmUserId: str | None = Field(default=None, max_length=80)
     note: str | None = Field(default=None, max_length=200)
+    announceName: str | None = Field(default=None, max_length=200)
     active: bool | None = None
 
 
@@ -138,6 +142,8 @@ async def status(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
         "permissions": [key for key in ALL_PERMISSIONS if user.has_permission(key)],
         "user": {"id": user.id, "name": user.full_name},
         "staffSync": await staff().state() if user.has_permission(STAFF) else None,
+        # Sözleşmeye henüz girmemiş alanların şalterleri (contract_features.py).
+        "contractFeatures": contract_features.as_dict(),
     }
 
 
@@ -223,7 +229,9 @@ async def download(request: Request, url: str = Query(min_length=8, max_length=4
 @router.get("/km/staff")
 async def staff_list(user: CurrentUser = requires(STAFF)) -> dict[str, Any]:
     return {"items": await staff().rows(), "sync": await staff().state(),
-            "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()]}
+            "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
+            # Anons adı Akademi'ye itiliyor mu (kapalıyken yalnız KM'de saklanır).
+            "announceNameSync": contract_features.STAFF_ANNOUNCE_NAME}
 
 
 @router.post("/km/staff", status_code=201)

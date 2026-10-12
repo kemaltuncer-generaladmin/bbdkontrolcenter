@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
+import pytest
+from modules.bbd_akademi.backend import contract_features, tasks
 from modules.bbd_akademi.backend import module as module_entry
-from modules.bbd_akademi.backend import tasks
 from modules.bbd_akademi.backend.staff import StaffService
-from modules.bbd_akademi.tests.akademi_fakes import Akademi, auth
+from modules.bbd_akademi.tests.akademi_fakes import MIGRATIONS, Akademi, auth
+
+from km_core.store.db import Store
 
 STAFF = "/api/bbd_akademi/km/staff"
 
@@ -125,3 +129,101 @@ async def test_zamanlanmis_gorev(staff_service: StaffService, akademi: Akademi) 
         assert akademi.last.headers["x-akademi-on-behalf-of"].startswith("km:system:")
     finally:
         module_entry._LIVE.clear()
+
+
+# ------------------------------------------------------------- anons adı
+
+
+async def test_anons_adi_saklanir_kirpilir_ve_sozlesme_gelene_dek_itilmez(
+        client: httpx.AsyncClient, akademi: Akademi) -> None:
+    akademi.reply(_ok())
+    created = await client.post(STAFF, headers=auth(), json={
+        "displayName": "Hüseyin Yılmaz", "phone": "5321234567", "roles": ["teacher"],
+        "announceName": "  Hüseyin   hoca "})
+    assert created.status_code == 201, created.text
+    item = created.json()["item"]
+    assert item["announceName"] == "Hüseyin hoca"
+
+    # Şalter kapalı: yük sözleşmenin bugünkü şemasıyla birebir — alan YOK.
+    assert contract_features.STAFF_ANNOUNCE_NAME is False
+    sent = json.loads(akademi.bodies[-1])["items"][0]
+    assert "announceName" not in sent
+    assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active"}
+
+    listing = (await client.get(STAFF, headers=auth())).json()
+    assert listing["announceNameSync"] is False
+    assert listing["items"][0]["announceName"] == "Hüseyin hoca"
+
+    changed = await client.patch(f"{STAFF}/{item['id']}", headers=auth(), json={
+        "expectedRevision": 1, "announceName": "Hüseyin Bey"})
+    assert changed.status_code == 200
+    assert changed.json()["item"]["announceName"] == "Hüseyin Bey"
+    # Başka alan değişince anons adı korunur.
+    kept = await client.patch(f"{STAFF}/{item['id']}", headers=auth(), json={
+        "expectedRevision": 2, "note": "Matematik"})
+    assert kept.json()["item"]["announceName"] == "Hüseyin Bey"
+    # Boş dize anons adını temizler.
+    cleared = await client.patch(f"{STAFF}/{item['id']}", headers=auth(), json={
+        "expectedRevision": 3, "announceName": "   "})
+    assert cleared.json()["item"]["announceName"] == ""
+
+
+async def test_anons_adi_en_cok_60_karakter(client: httpx.AsyncClient,
+                                            akademi: Akademi) -> None:
+    exact = "a" * 60
+    akademi.reply(_ok())
+    ok = await client.post(STAFF, headers=auth(), json={
+        "displayName": "Ali Veli", "phone": "5321234567", "roles": ["teacher"],
+        "announceName": f"  {exact}  "})
+    assert ok.status_code == 201
+    assert ok.json()["item"]["announceName"] == exact
+
+    calls = len(akademi.calls)
+    long = await client.post(STAFF, headers=auth(), json={
+        "displayName": "Can Kaya", "phone": "5329876543", "roles": ["teacher"],
+        "announceName": "a" * 61})
+    assert long.status_code == 422
+    error = long.json()["error"]
+    assert error["details"][0]["field"] == "announceName"
+    assert "60" in error["message"]
+    assert len(akademi.calls) == calls, "reddedilen kayıt Akademi'ye itilmemeli"
+
+    row = ok.json()["item"]
+    patched = await client.patch(f"{STAFF}/{row['id']}", headers=auth(), json={
+        "expectedRevision": 1, "announceName": "b" * 61})
+    assert patched.status_code == 422
+
+
+async def test_salter_acikken_anons_adi_yuke_girer(
+        staff_service: StaffService, monkeypatch: pytest.MonkeyPatch) -> None:
+    await staff_service.create("test", {"displayName": "Zeynep Ak", "phone": "5321112233",
+                                        "roles": ["teacher"], "announceName": "Zeynep hoca"})
+    await staff_service.create("test", {"displayName": "Mert Can", "phone": "5321112244",
+                                        "roles": ["admin"]})
+    monkeypatch.setattr(contract_features, "STAFF_ANNOUNCE_NAME", True)
+    items = {item["displayName"]: item for item in (await staff_service.payload())["items"]}
+    assert items["Zeynep Ak"]["announceName"] == "Zeynep hoca"
+    # Boş anons adı `null` gider: Akademi çağrıda `teacherName: null` yazar.
+    assert items["Mert Can"]["announceName"] is None
+
+
+async def test_goc_mevcut_satirlari_bos_anons_adiyla_korur(tmp_path: Path) -> None:
+    """002 ekleyicidir: 001 ile yazılmış satır göçten sonra aynen okunur."""
+    database = Store(tmp_path / "eski.sqlite")
+    await database.open()
+    try:
+        first, *rest = sorted(MIGRATIONS.glob("*.sql"))
+        assert first.name.startswith("001_") and rest[0].name == "002_staff_announce_name.sql"
+        await database.apply_migration("bbd_akademi", first.name,
+                                       first.read_text(encoding="utf-8"))
+        await database.execute(
+            "INSERT INTO mod_bbd_akademi_staff (id, display_name, phone, roles, created_at, "
+            "updated_at) VALUES ('s1', 'Eski Kayıt', '5320000000', 'admin', 'x', 'x')")
+        for migration in rest:
+            await database.apply_migration("bbd_akademi", migration.name,
+                                           migration.read_text(encoding="utf-8"))
+        row = await database.fetch_one("SELECT * FROM mod_bbd_akademi_staff WHERE id = 's1'")
+        assert row is not None
+        assert row["announce_name"] == "" and row["display_name"] == "Eski Kayıt"
+    finally:
+        await database.close()

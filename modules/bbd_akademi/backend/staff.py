@@ -18,6 +18,11 @@ olur ve sonraki tur tekrar dener. Akademi'nin satır bazındaki reddi
 
 İYİMSER KİLİT (ADR 0020): her satır `revision` taşır; düzenleme beklenen
 sürümle gelir, araya başka bir değişiklik girdiyse 409.
+
+ANONS ADI (`announce_name`, sözleşme km-ogrenci-gruplari-ve-zil.md §1): zil
+çağrısında öğretmenin okunacağı ad ("Hüseyin hoca"). KM tek kaynaktır; boş =
+yok. Yüke `announceName` olarak YALNIZ `contract_features.STAFF_ANNOUNCE_NAME`
+açıkken girer (sözleşmeye henüz girmedi — o dosyanın başlığı).
 """
 
 from __future__ import annotations
@@ -31,11 +36,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from . import contract_features
 from .gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
 
 ROLES = ("admin", "teacher")
 ROLE_LABELS = {"admin": "Yönetici", "teacher": "Öğretmen"}
 PHONE = re.compile(r"^5\d{9}$")
+ANNOUNCE_NAME_MAX = 60
 SYNC_PATH = "/v1/admin/staff/sync"
 SYSTEM_ACTOR = ("system", "Personel eşitleme")
 
@@ -99,6 +106,7 @@ class StaffService:
             "roles": roles,
             "active": bool(row.get("active")),
             "note": row.get("note") or "",
+            "announceName": row.get("announce_name") or "",
             "revision": int(row.get("revision") or 1),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
@@ -136,8 +144,12 @@ class StaffService:
                              field="roles")
         km_user_id = str(data.get("kmUserId") or "").strip() or None
         note = str(data.get("note") or "").strip()[:200]
+        announce = " ".join(str(data.get("announceName") or "").split())
+        if len(announce) > ANNOUNCE_NAME_MAX:
+            raise StaffError(f"Anons adı en çok {ANNOUNCE_NAME_MAX} karakter olmalı.",
+                             field="announceName")
         return {"display_name": name, "phone": phone, "roles": ",".join(roles),
-                "km_user_id": km_user_id, "note": note}
+                "km_user_id": km_user_id, "note": note, "announce_name": announce}
 
     async def _assert_unique(self, clean: dict[str, Any], own_id: str | None) -> None:
         clash = await self._store.fetch_one(
@@ -158,11 +170,11 @@ class StaffService:
         now = self._clock()
         await self._store.execute(
             f"INSERT INTO {self._table} (id, km_user_id, display_name, phone, roles, active, "
-            "note, revision, created_at, created_by, updated_at, updated_by) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            "note, announce_name, revision, created_at, created_by, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
             (staff_id, clean["km_user_id"], clean["display_name"], clean["phone"],
              clean["roles"], 1 if data.get("active", True) else 0, clean["note"],
-             now, actor, now, actor),
+             clean["announce_name"], now, actor, now, actor),
         )
         return await self.get(staff_id)
 
@@ -177,10 +189,11 @@ class StaffService:
         active = 1 if merged.get("active", True) else 0
         await self._store.execute(
             f"UPDATE {self._table} SET km_user_id = ?, display_name = ?, phone = ?, roles = ?, "
-            "active = ?, note = ?, revision = revision + 1, updated_at = ?, updated_by = ? "
-            "WHERE id = ? AND revision = ?",
+            "active = ?, note = ?, announce_name = ?, revision = revision + 1, updated_at = ?, "
+            "updated_by = ? WHERE id = ? AND revision = ?",
             (clean["km_user_id"], clean["display_name"], clean["phone"], clean["roles"],
-             active, clean["note"], self._clock(), actor, staff_id, int(expected_revision)),
+             active, clean["note"], clean["announce_name"], self._clock(), actor, staff_id,
+             int(expected_revision)),
         )
         fresh = await self.get(staff_id)
         if fresh["revision"] != int(expected_revision) + 1:
@@ -191,15 +204,21 @@ class StaffService:
 
     async def payload(self) -> dict[str, Any]:
         rows = await self._store.fetch_all(f"SELECT * FROM {self._table} ORDER BY id")
+        # Sözleşmede yoksa alan HİÇ gönderilmez (contract_features başlığı).
+        announce = contract_features.STAFF_ANNOUNCE_NAME
         items = []
         for row in rows:
-            items.append({
+            item: dict[str, Any] = {
                 "kmUserId": row.get("km_user_id") or f"staff:{row['id']}",
                 "displayName": row["display_name"],
                 "phone": row["phone"],
                 "roleKeys": [item for item in str(row["roles"]).split(",") if item],
                 "active": bool(row["active"]),
-            })
+            }
+            if announce:
+                # Boş = anons adı yok → Akademi çağrıda `teacherName: null` (§3.2/6).
+                item["announceName"] = row.get("announce_name") or None
+            items.append(item)
         return {"items": items}
 
     async def state(self) -> dict[str, Any]:
