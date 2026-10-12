@@ -82,7 +82,7 @@ class DownloadNotAllowed(AkademiError):
 
 @dataclass(slots=True)
 class GatewayConfig:
-    base_url: str = "https://akademi-api.bbdstore.com.tr"
+    base_url: str = "https://api.benimbasaridunyam.com.tr"
     timeout_seconds: float = 20.0
     upload_timeout_seconds: float = 120.0
     enabled: bool = True

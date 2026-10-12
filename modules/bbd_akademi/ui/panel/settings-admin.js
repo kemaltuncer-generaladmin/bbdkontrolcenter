@@ -320,6 +320,8 @@ export function directoryTab(app) {
     }
     nodes.push(kpiRow([
       { label: 'Etkin öğrenci', value: num(counts.active ?? 0) },
+      { label: 'Pasif öğrenci', value: num(counts.inactive ?? 0),
+        title: 'KM\'de pasifleştirilen öğrenciler (ayrıldı, mezun, durduruldu); Öğrenciler bölümünde “Pasif” süzgeciyle salt okunur görünür.' },
       { label: 'Dizinde görünmeyen', value: num(counts.missing ?? 0), tone: counts.missing ? 'warn' : '',
         title: 'KM dizininde art arda iki tam eşitlemede görünmeyen öğrenciler.' },
       { label: 'Veli', value: num(counts.guardians ?? 0) },

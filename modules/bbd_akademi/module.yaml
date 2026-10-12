@@ -23,10 +23,20 @@ enabled: true
 entrypoint: backend.module:register
 
 depends: []
-provides: []
+provides:
+  - capability: akademi.student_finance
+    contract: backend.finance:StudentFinance
+    description: >
+      async has_institution_debt(student_id: "STU-…") -> bool — öğrencinin
+      Akademi'de kurum cari borcu var mı (km-merkezi-senkron §5.3, kalıcı silme
+      ön koşulu; tüketen bbd_students). Akademi'ye ulaşılamaz ya da yanıt
+      güvenle okunamazsa İSTİSNA fırlatır (silme kapalı kalır), "borç yok" demez.
 consumes:
   - capability: secrets
     reason: "Akademi entegrasyon anahtarı (`bbd_akademi.api_key`) kasada durur (K8)."
+  - capability: mobile_gateway.events
+    optional: true
+    reason: "Ayarlar → Senkron kartı: geçidin Akademi'ye olay iletim durumu, ölü mektuplar ve yeniden gönderme (km-merkezi-senkron §8). Yoksa kart 'geçit sürümü olay iletimini desteklemiyor' der; izin geçidin kendi izinleridir (mobile_gateway.events.view / .manage)."
 events:
   publishes: []
   subscribes: []

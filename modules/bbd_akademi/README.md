@@ -54,7 +54,7 @@ Akademi API  /v1/admin/*
    betikle dağıtılır.
 
 3. **Ayarlar** (`config/default.yaml`, şema `config/schema.json`): `enabled`
-   (ana şalter), `base_url` (varsayılan `https://akademi-api.bbdstore.com.tr`),
+   (ana şalter), `base_url` (varsayılan `https://api.benimbasaridunyam.com.tr`),
    `timeout_seconds`, `upload_timeout_seconds`, `max_upload_mb`,
    `download_hosts` (imzalı indirme bağlantılarının izinli ek alanları),
    `staff_sync_minutes`, `step_up_seconds`.
@@ -75,7 +75,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Bölüm | Dosya | İçerik |
 |---|---|---|
 | Panel | `dashboard.js` | Günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
-| Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler |
+| Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler. KM'de **pasifleştirilen** öğrenci varsayılan listede yoktur, “Durum → Pasif (KM)” süzgeciyle (`status=inactive`) görünür; çekmecesi salt okunurdur (yazma düğmeleri gerekçeli kapalı — kurum cari tahsilatı ve dışa aktarım açık) |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
 | Ders programı | `timetable*.js` | Zil planı durumu kartı (14 gün: kaynak, bugünün kipi, çağrı ve ses, zil ajanı, acil kapatma; "Planı şimdi it"), zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama), etüt ve tek seferlik dersler, zil dilimleri, dönemler |
@@ -92,7 +92,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Kitap talepleri | `books.js` | Kuyruk, siparişi yeniden dene, teslim, sipariş PDF'i |
 | Duyurular | `announcements.js` | Taslak → hedefle → şimdi ya da zamanlı yayımla, okunma oranı |
 | Talepler | `requests.js` | İzin, görüşme ve etüt talepleri |
-| Ayarlar | `settings*.js` | Kurum ve bildirim varsayılanları, kantin kuralları (F-A15), logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme, denetim kaydı |
+| Ayarlar | `settings*.js` | Kurum ve bildirim varsayılanları, kantin kuralları (F-A15), logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme (etkin / pasif sayısı), **Senkron** kartı (`settings-sync.js`, aşağıda), denetim kaydı |
 | Personel | `staff.js` | Mobil yönetici erişimi (modülün kendi listesi ve anons adı "Hüseyin hoca", Akademi'ye itilir), Akademi personeli, roller ve izin kataloğu |
 
 Kapsam ölçümü: `tools/ui_coverage.py` izin listesindeki her işlemin panelde
@@ -166,6 +166,37 @@ izin gelirse test kırılır.
   Personelin **anons adı** (`announce_name`, göç 002; zil çağrısında "Hüseyin
   hoca") da KM'dedir (sözleşme `km-ogrenci-gruplari-ve-zil.md` §1); yüke
   `announceName` olarak girer (şalter açık; aşağıda).
+
+## Merkezi senkron (km-merkezi-senkron)
+
+KM tek merkezdir; öğrenci, veli, kantin kontrolü, tablet ve zil değişiklikleri
+KM'nin kalıcı olay kuyruğundan (`events.outbox`, ADR 0029) geçit
+(`mobile_gateway`) tarafından imzalı webhook ile Akademi'ye itilir. Bu modülün
+payı:
+
+- **Senkron kartı** (Ayarlar → Senkron, `settings-sync.js`; hüküm mantığı
+  import'suz `sync-logic.js`, Node testi): geçidin gönderici durumu
+  (`GET /api/bbd_akademi/km/events` → isteğe bağlı yetenek
+  `mobile_gateway.events`: son olay, iletilen, bekleyen, gecikme, son hata,
+  ölü mektuplar) ile Akademi'nin `admin_getDirectorySyncStatus.events` bloğu
+  (mod, alınan son `seq`, uygulanmamış, p95 gecikme) yan yana. İki uç arası
+  fark > 100 `seq` ya da gecikme > 60 sn → sarı; `stopped` ya da 6 saat
+  ulaşılamıyor → kırmızı; iletim ayardan kapalı (varsayılan) → gri (Akademi
+  2 dk yoklamayla çalışır). Ölü mektupları **yeniden gönder**
+  (`POST /api/bbd_akademi/km/events/retry {seqs}`). Kapı geçidin kendi
+  iznidir: görme `mobile_gateway.events.view`, yeniden gönderme
+  `mobile_gateway.events.manage` (K9; geçit yoksa ya da eski sürümse kart
+  "geçit sürümü olay iletimini desteklemiyor" der). Sekme görünürken 20 sn'de
+  bir tazelenir.
+- **`akademi.student_finance` yeteneği** (`backend/finance.py`):
+  `has_institution_debt("STU-…") -> bool` — `bbd_students` kalıcı silme ön
+  koşulu "Akademi'de kurum cari borcu yok". `admin_listStudents
+  ?externalRef=&status=inactive` (bulunamazsa süzgeçsiz) → Akademi kimliği →
+  `students_getFinanceSummary.openBalanceMinor > 0`. Akademi'de kayıt yoksa ya
+  da özet `404` ise borç yok; özet `403 feature_disabled` ise
+  `admin_getFinanceAccount`'tan okunur (o da kapalıysa kurumda cari yok).
+  Akademi'ye ulaşılamaz ya da yanıt belirsizse istisna fırlar → `bbd_students`
+  `503 akademi_unavailable` döner, silme kapalı kalır.
 
 ## Sözleşme şalterleri
 

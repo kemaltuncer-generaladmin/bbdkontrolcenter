@@ -7,7 +7,7 @@
 # `503 akademi_disabled` döner; panel sebebini yazar.
 enabled: true
 # Akademi API kökü. Hazırlık (staging) ortamı config/local.yaml ile ezilir.
-base_url: "https://akademi-api.bbdstore.com.tr"
+base_url: "https://api.benimbasaridunyam.com.tr"
 # Tek istek için bekleme süresi (sn). Dosya yükleme ve indirme ayrıca:
 timeout_seconds: 20
 upload_timeout_seconds: 120

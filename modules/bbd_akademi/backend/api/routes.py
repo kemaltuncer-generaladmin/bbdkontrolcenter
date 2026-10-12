@@ -6,7 +6,8 @@
 
 Yol düzeni:
 
-    /api/bbd_akademi/km/...          modülün kendi uçları (durum, köprü, PIN, personel)
+    /api/bbd_akademi/km/...          modülün kendi uçları (durum, köprü, PIN, personel,
+                                     geçidin olay iletim durumu — Senkron kartı)
     /api/bbd_akademi/v1/...          ham vekil → Akademi /v1/... (izin listesi)
     /api/bbd_akademi/<başka her şey>  403 operation_not_allowed
 
@@ -15,6 +16,7 @@ Sıra önemlidir: `km/...` uçları vekil yakalayıcısından ÖNCE tanımlanır
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 from fastapi import Request
@@ -40,14 +42,44 @@ from ..staff import ROLE_LABELS, StaffError, StaffService
 router = APIRouter()
 _proxy: AkademiProxy | None = None
 _staff: StaffService | None = None
+_events: Callable[[], Any] | None = None
+
+#: Geçidin (`mobile_gateway`) kendi izinleri — Senkron kartı onları sorar (K9:
+#: gösterilen veri geçidindir, kapısı da geçidin iznidir).
+EVENTS_VIEW = "mobile_gateway.events.view"
+EVENTS_MANAGE = "mobile_gateway.events.manage"
+DEAD_LIST_LIMIT = 50
 
 METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 
-def bind(proxy: AkademiProxy, staff: StaffService) -> APIRouter:
-    global _proxy, _staff
-    _proxy, _staff = proxy, staff
+def bind(proxy: AkademiProxy, staff: StaffService,
+         events: Callable[[], Any] | None = None) -> APIRouter:
+    """`events`: `mobile_gateway.events` yeteneğini her çağrıda çözen işlev
+    (geçit yoksa ya da bu modülden sonra yüklenirse `None` döner)."""
+    global _proxy, _staff, _events
+    _proxy, _staff, _events = proxy, staff, events
     return router
+
+
+def gateway_events() -> Any | None:
+    if _events is None:
+        return None
+    try:
+        return _events()
+    except Exception:  # noqa: BLE001 — yetenek çözülemiyorsa kart "desteklenmiyor" der
+        return None
+
+
+def _events_access(user: CurrentUser) -> dict[str, bool]:
+    return {"supported": gateway_events() is not None,
+            "canView": user.has_permission(EVENTS_VIEW),
+            "canManage": user.has_permission(EVENTS_MANAGE)}
+
+
+def _error(status: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"error": {
+        "code": code, "message": message, "status": status, "details": None, "traceId": None}})
 
 
 def proxy() -> AkademiProxy:
@@ -90,6 +122,10 @@ class CallBody(BaseModel):
     ifNoneMatch: str | None = Field(default=None, max_length=200)
     requestId: str | None = Field(default=None, max_length=128)
     upload: UploadBody | None = None
+
+
+class RetryDeadBody(BaseModel):
+    seqs: list[int] = Field(min_length=1, max_length=500)
 
 
 class StepUpBody(BaseModel):
@@ -144,6 +180,8 @@ async def status(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
         "staffSync": await staff().state() if user.has_permission(STAFF) else None,
         # Sözleşmeye henüz girmemiş alanların şalterleri (contract_features.py).
         "contractFeatures": contract_features.as_dict(),
+        # Senkron kartı: geçit olay iletimini destekliyor mu, kullanıcı görebilir mi.
+        "gatewayEvents": _events_access(user),
     }
 
 
@@ -261,6 +299,47 @@ async def staff_update(staff_id: str, body: StaffPatchBody,
 async def staff_sync(user: CurrentUser = requires(STAFF)) -> dict[str, Any]:
     return {"sync": await staff().push(source="manual", actor=(user.id, user.full_name)),
             "items": await staff().rows()}
+
+
+# ------------------------------------------------- olay iletimi (Senkron kartı)
+
+
+@router.get("/km/events")
+async def events_status(user: CurrentUser = requires(VIEW)) -> Any:
+    """Geçidin Akademi'ye olay iletim durumu + ölü mektuplar (km-merkezi-senkron §8).
+
+    Akademi tarafı (`admin_getDirectorySyncStatus.events`) panelden vekille
+    ayrıca okunur; kart ikisini yan yana çizer. Geçit yoksa `supported: false`,
+    izin yoksa durum verisi DÖNMEZ (yalnız erişim bilgisi).
+    """
+    access = _events_access(user)
+    capability = gateway_events()
+    if capability is None or not access["canView"]:
+        return {**access, "status": None, "dead": []}
+    try:
+        return {**access, "status": await capability.status(),
+                "dead": await capability.dead(DEAD_LIST_LIMIT)}
+    except Exception:  # noqa: BLE001 — geçidin hatası paneli düşürmez (K7)
+        return _error(503, "gateway_events_unavailable",
+                      "Geçidin olay iletim durumu okunamadı.")
+
+
+@router.post("/km/events/retry")
+async def events_retry(body: RetryDeadBody, user: CurrentUser = requires(VIEW)) -> Any:
+    """Ölü mektupları tek tek yeniden gönderir (geçit izni `.manage`)."""
+    capability = gateway_events()
+    if capability is None:
+        return _error(503, "gateway_events_unsupported",
+                      "Bu geçit sürümü olay iletimini desteklemiyor.")
+    if not user.has_permission(EVENTS_MANAGE):
+        return _error(403, "forbidden", "Olayları yeniden göndermek için yetkiniz yok.")
+    try:
+        result = await capability.retry_dead(body.seqs)
+        return {"result": result, "status": await capability.status(),
+                "dead": await capability.dead(DEAD_LIST_LIMIT)}
+    except Exception:  # noqa: BLE001 — K7
+        return _error(503, "gateway_events_unavailable",
+                      "Geçide ulaşılamadı; olaylar yeniden gönderilemedi.")
 
 
 # ---------------------------------------------------------------- ham vekil

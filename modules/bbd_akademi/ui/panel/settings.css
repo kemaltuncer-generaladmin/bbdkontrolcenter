@@ -137,3 +137,7 @@
 .ak-set-th-token { display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 12.5px; }
 .ak-set-th-token code { font-size: 11.5px; }
 .ak-set-th-meta { padding: 0 16px 12px; font-size: 12px; }
+
+/* Senkron kartı — iki uç yan yana, dar ekranda alt alta. */
+.ak-set-sync { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.ak-set-sync > .kit-card { min-width: 0; }

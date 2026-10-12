@@ -31,7 +31,11 @@ import {
 
 // ------------------------------------------------------------- etiketler
 
-export const STUDENT_STATUS = { active: ['Aktif', 'good'], missing: ['KM\'de bulunamadı', 'warn'] };
+export const STUDENT_STATUS = { active: ['Aktif', 'good'], inactive: ['Pasif (KM)', 'dim'],
+  missing: ['KM\'de bulunamadı', 'warn'] };
+/** KM pasifleştirme gerekçesi (sözleşme `StudentStatusReason`). */
+export const STATUS_REASONS = { left: 'Ayrıldı', graduated: 'Mezun', suspended: 'Geçici durduruldu',
+  other: 'Diğer' };
 export const EXAM_TYPES = { lgs: 'LGS', tyt: 'TYT', ayt_say: 'AYT Sayısal', ayt_ea: 'AYT Eşit ağırlık',
   ayt_soz: 'AYT Sözel', ayt_dil: 'AYT Dil', midterm: 'Yazılı', internal: 'Kurum içi' };
 export const ATTENDANCE = { present: ['Geldi', 'good'], absent: ['Gelmedi', 'bad'], late: ['Geç kaldı', 'warn'],
@@ -184,6 +188,13 @@ export function renderHeader(ctx, data) {
     nodes.push(alertBox('Bu öğrenci son iki tam eşitlemede KM öğrenci dizininde görünmedi. Kaydı KM '
       + 'Öğrenciler modülünden kontrol edin.', 'warn'));
   }
+  if (student.status === 'inactive') {
+    const why = STATUS_REASONS[data.statusReason] || '';
+    nodes.push(alertBox(`Pasif öğrenci${why ? ` — ${why}` : ''}${data.statusSince
+      ? ` (${fmtDateTime(data.statusSince)})` : ''}. KM'de pasifleştirildi: öğrenci ve yalnız ona bağlı veli `
+      + 'uygulamaya giremez, veriler saklanır. Bu ekran SALT OKUNURDUR; kurum cari tahsilatı açık kalır. '
+      + 'Yeniden etkinleştirme KM Öğrenciler modülünden yapılır.', 'info'));
+  }
   if ((data.phoneIssues || []).length) {
     nodes.push(alertBox(`KM'de okunamayan telefon: ${data.phoneIssues.map((key) => labelOf(PHONE_FIELDS, key))
       .join(', ')}. Bu numaralara giriş kodu ve bildirim gitmez; KM Öğrenciler modülünde düzeltin.`, 'warn'));
@@ -210,6 +221,7 @@ export function renderHeader(ctx, data) {
     ['Hedef sınav', EXAM_TARGETS[student.examTarget] || '—'],
     ['Öğrenci telefonu', data.studentPhoneMasked],
     ['Durum', statusBadge(STUDENT_STATUS, student.status)],
+    student.status === 'inactive' ? ['Pasifleştirme gerekçesi', STATUS_REASONS[data.statusReason] || '—'] : null,
     ['Çalışma grupları', (data.studentGroups || []).map((group) => group.name).join(', ') || '—'],
     ['Son eşitleme', fmtDateTime(data.syncedAt)],
   ]));

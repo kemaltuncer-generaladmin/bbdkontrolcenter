@@ -1,7 +1,8 @@
 // BBD Akademi — Ayarlar (F-A15, F-A16 ve yalnız KM'den yapılan kurum yönetimi).
 //
 // Sekmeler: Kurum · Kantin kuralları · Tema ve logo · Özellikler · Anons
-// şablonları · Entegrasyon anahtarları · Dizin eşitleme · Denetim kaydı.
+// şablonları · Entegrasyon anahtarları · Dizin eşitleme · Senkron (KM olay
+// iletimi, settings-sync.js) · Denetim kaydı.
 // Sekme, okuma işlemine yetki yoksa hiç çizilmez; yazma düğmeleri
 // `actionButton` ile gerekçeli kapanır (asıl kapı vekildedir, K9).
 //
@@ -28,8 +29,13 @@ import {
 } from './common.js';
 import { brandingTab } from './settings-branding.js';
 import { auditTab, directoryTab, keysTab } from './settings-admin.js';
+import { syncTab } from './settings-sync.js';
 
-/** Sekme kaydı: anahtar → {etiket, okuma işlemi}. Sıra ekrandaki sıradır. */
+/**
+ * Sekme kaydı: anahtar → {etiket, okuma işlemi}. Sıra ekrandaki sıradır.
+ * `visible(app)` verilen sekme okuma işleminden bağımsız açılır (Senkron kartı
+ * geçidin iznini de tanır: Akademi tarafını göremeyen kullanıcı geçidi görebilir).
+ */
 const TABS = [
   { key: 'institution', label: 'Kurum', read: 'admin_getSettings' },
   { key: 'canteen', label: 'Kantin kuralları', read: 'admin_getCanteenSettings' },
@@ -38,6 +44,8 @@ const TABS = [
   { key: 'pa', label: 'Anons şablonları', read: 'admin_listPaTemplates' },
   { key: 'keys', label: 'Entegrasyon anahtarları', read: 'admin_listIntegrationKeys' },
   { key: 'directory', label: 'Dizin eşitleme', read: 'admin_getDirectorySyncStatus' },
+  { key: 'sync', label: 'Senkron', read: 'admin_getDirectorySyncStatus',
+    visible: (app) => Boolean(app.status?.gatewayEvents?.canView) },
   { key: 'audit', label: 'Denetim kaydı', read: 'admin_listAuditLog' },
 ];
 
@@ -47,7 +55,7 @@ export function section(app) {
   node.append(sectionHead('Ayarlar', {
     subtitle: 'Kurum bilgileri, kantin kuralları, tema, özellikler, entegrasyon ve denetim kaydı.' }));
 
-  const visible = TABS.filter((tab) => app.can(tab.read));
+  const visible = TABS.filter((tab) => app.can(tab.read) || tab.visible?.(app));
   if (!visible.length) {
     node.append(empty('Görüntülenecek ayar yok', 'Ayarlar sekmelerinden hiçbirine yetkiniz yok.'));
     return { node, shown() {}, destroy() {} };
@@ -68,6 +76,7 @@ export function section(app) {
     pa: () => paTemplatesTab(app, { goTab }),
     keys: () => keysTab(app),
     directory: () => directoryTab(app),
+    sync: () => syncTab(app),
     audit: () => auditTab(app),
   };
   const tabs = tabBar(visible.map(({ key, label }) => ({ key, label })), visible[0].key,

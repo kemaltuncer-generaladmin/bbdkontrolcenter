@@ -16,6 +16,7 @@ from km_sdk import ModuleContext
 
 from .allowlist import OPERATIONS
 from .api.routes import bind
+from .finance import StudentFinance
 from .gateway import AkademiGateway, GatewayConfig
 from .operations import Allowlist
 from .permission_map import unmapped
@@ -40,7 +41,11 @@ def register(ctx: ModuleContext) -> None:
                          log=ctx.log)
     staff = StaffService(store=ctx.store, gateway=gateway, log=ctx.log)
 
-    ctx.add_router(bind(proxy, staff))
+    # Geçidin olay iletim durumu (Senkron kartı) isteğe bağlıdır ve geçit bu
+    # modülden SONRA yüklenebilir: yetenek her istekte yeniden çözülür.
+    ctx.add_router(bind(proxy, staff,
+                        events=lambda: ctx.try_capability("mobile_gateway.events")))
+    ctx.provide("akademi.student_finance", StudentFinance(gateway=gateway, log=ctx.log))
     _LIVE.update(staff=staff, gateway=gateway)
     staff.start(config.staff_sync_minutes)
     ctx.log.info("akademi paneli hazır", base_url=config.base_url,

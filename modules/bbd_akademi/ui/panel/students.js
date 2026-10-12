@@ -12,6 +12,12 @@
 // Başka bölümler `app.go('students', {studentId, tab?})` ile doğrudan açar;
 // `{classGroupId}` Sınıflar sekmesinde o sınıfı, `{view}` bir sekmeyi açar.
 //
+// PASİF ÖĞRENCİ (km-merkezi-senkron §5.2): KM'de pasifleştirilen öğrenci
+// Akademi listesinde varsayılan olarak görünmez; "Durum → Pasif" süzgeci
+// (`status=inactive`) ile görünür ve çekmecesi SALT OKUNURDUR — yazma düğmeleri
+// gerekçeli kapanır (`readOnlyApp`). İstisna kurum cari (`finance.*`): borç
+// pasifken de tahsil edilebilmeli. Asıl kapı Akademi'dedir.
+//
 // HIZ: listeler imleçlidir (`pagedList`), arama 250 ms bekler, sınıf/grup
 // seçenekleri önbellekli `app.lookups`'tan gelir; satır başına istek atılmaz.
 
@@ -35,6 +41,7 @@ import { goalsPanel } from './students-goals.js';
 import { coachingPanel } from './students-coaching.js';
 
 /** Gömülebilir panel (`fn(app, studentId)` → {node, shown, destroy}) çekmece sekmesi olur. */
+// (`ctx.app` pasif öğrencide salt okunur görünümdür — `readOnlyApp`.)
 const embedded = (fn) => (ctx) => fn(ctx.app, ctx.id);
 
 export function section(app) {
@@ -113,7 +120,9 @@ function studentsView(app, { open }) {
   const trackSelect = selectBox(optionsOf(TRACKS, { empty: 'Tüm alanlar' }), '', (value) => {
     filters.track = value; reload();
   }, { label: 'Alan' });
-  const statusSelect = selectBox(optionsOf(STUDENT_STATUS, { empty: 'Tüm durumlar' }), '', (value) => {
+  // Boş süzgeç Akademi'de "etkin + bulunamayan" demektir; pasifler yalnız
+  // `status=inactive` ile döner (sözleşme `admin_listStudents`).
+  const statusSelect = selectBox(optionsOf(STUDENT_STATUS, { empty: 'Etkin ve bulunamayan' }), '', (value) => {
     filters.status = value; reload();
   }, { label: 'Durum' });
 
@@ -161,6 +170,7 @@ function studentsView(app, { open }) {
         const cell = stack(row.displayName, [row.externalRef, row.schoolNo ? `okul no ${row.schoolNo}` : '']
           .filter(Boolean).join(' · '));
         if (row.status === 'missing') cell.append(badge(STUDENT_STATUS.missing[0], 'warn'));
+        if (row.status === 'inactive') cell.append(badge(STUDENT_STATUS.inactive[0], 'dim'));
         return cell;
       } },
       { key: 'class', label: 'Sınıf', cell: (row) => row.classGroup?.name || '—' },
@@ -175,7 +185,7 @@ function studentsView(app, { open }) {
       } },
       { key: 'seen', label: 'Son görülme', width: '130px', cell: (row) => fmtDateTime(row.lastSeenAt) },
     ],
-    onRow: (row) => open(row.id),
+    onRow: (row) => open(row.id, { status: row.status }),
     empty: { title: 'Bu süzgece uyan öğrenci yok', text: 'Aramayı değiştirin ya da süzgeçleri temizleyin.',
       actions: [button('Süzgeçleri temizle', { onClick: () => clearFilters() })] },
   });
@@ -232,9 +242,15 @@ function guardiansView(app, { open }) {
  * sekmeleri gömülü panellerdir (students-learning/-goals/-coaching/-flashcards.js);
  * `payload` (ör. `{learningTab}`, `{coachingTab}`) sekmenin `shown`'ına geçer.
  */
-export function openStudent(app, studentId, { tab = 'overview', payload = null } = {}) {
+export function openStudent(app, studentId, { tab = 'overview', payload = null, status = null } = {}) {
   const disposers = [];
   let detail = null;
+  // Durum listeden biliniyorsa sekmeler hemen kurulur; bilinmiyorsa (başka
+  // bölümden açılış) başlık gelene kadar beklenir — pasif öğrencide yazma
+  // düğmesi bir an bile açık çizilmesin.
+  let locked = status === 'inactive';
+  const known = Boolean(status);
+  const view = readOnlyApp(app, () => locked);
   const km = button('KM Öğrenciler\'de aç', { variant: 'ghost',
     onClick: () => openKmStudents(app, detail?.student || { id: studentId }) });
   const panel = openDrawer(app, { title: 'Öğrenci', subtitle: 'Yükleniyor…', actions: [km],
@@ -250,7 +266,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null }
   let markReady;
   const ready = new Promise((resolve) => { markReady = resolve; });
   const ctx = {
-    app,
+    app: view,
     id: studentId,
     ready,
     get student() { return detail; },
@@ -272,8 +288,12 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null }
     }
   }, (data) => {
     detail = data;
-    markReady(data);
     const student = data.student || {};
+    const wasLocked = locked;
+    locked = student.status === 'inactive';
+    markReady(data);
+    // Liste ile açılış arasında durum değiştiyse kurulmuş sekmeler yeniden çizilir.
+    if (known && wasLocked !== locked) queueMicrotask(() => resetTabs());
     panel.setTitle(student.displayName || 'Öğrenci');
     if (subtitle) {
       subtitle.textContent = [student.externalRef, student.classGroup?.name,
@@ -308,6 +328,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null }
   // Sekme gövdesi `{node, focus?, shown?, destroy?}`: `shown` her gösterimde,
   // `destroy` çekmece kapanınca çağrılır (gömülebilir panel sözleşmesi).
   function show(key, payload) {
+    current = key;
     let body = bodies[key];
     if (!body) {
       body = specs.find((spec) => spec.key === key).build(ctx);
@@ -320,6 +341,16 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null }
     if (payload) body.focus?.(payload);
   }
 
+  let current = first;
+  function resetTabs() {
+    for (const [name, body] of Object.entries(bodies)) {
+      try { body.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
+      body.node.remove();
+      delete bodies[name];
+    }
+    show(current);
+  }
+
   function select(key, payload) {
     if (!keys.includes(key)) return;
     tabsBar.select(key, false);
@@ -328,6 +359,30 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null }
 
   panel.body.append(head.node, tabsBar.node, slot);
   head.reload();
-  show(first, first === tab ? payload : null);
+  if (known) show(first, first === tab ? payload : null);
+  else ready.then(() => show(first, first === tab ? payload : null));
   return { close: panel.close, select };
+}
+
+// ------------------------------------------------------- pasif: salt okunur
+
+/** Pasif öğrencide de açık kalan yazmalar: kurum cari (borç tahsil edilebilmeli) ve dışa aktarım. */
+const OPEN_WHEN_INACTIVE = /export|report|pdf|statement|receipt/i;
+
+/**
+ * Pasif öğrencinin çekmecesi için uygulama görünümü. `locked()` doğruyken
+ * okuma (GET) ve kurum cari (`finance.*`) dışındaki işlemler gerekçeli kapalı
+ * çizilir (`actionButton` → `app.api.can`). Asıl kapı Akademi'dedir; bu yalnız
+ * kullanıcıya yapamayacağı düğmeyi göstermemek içindir (K9).
+ */
+export function readOnlyApp(app, locked) {
+  const open = (operationId) => {
+    if (!locked()) return true;
+    const operation = app.api.operation(operationId);
+    if (!operation) return true;                 // liste okunamadı → karar Akademi'de
+    if (operation.method === 'GET' || OPEN_WHEN_INACTIVE.test(operationId)) return true;
+    return (operation.akademiPermissions || []).some((key) => String(key).startsWith('finance.'));
+  };
+  const api = { ...app.api, can: (operationId) => app.api.can(operationId) && open(operationId) };
+  return { ...app, api, can: (operationId) => api.can(operationId), readOnly: () => locked() };
 }
