@@ -71,6 +71,7 @@ PERMISSION_MAP: dict[str, str] = {
     "academic.manage": ACADEMIC,
     "timetable.manage": ACADEMIC,
     "timetable.edit": ACADEMIC,
+    "timetable_templates.manage": ACADEMIC,  # program şablonları (yalnız KM yüzeyi)
     "etut.manage": ACADEMIC,
     "homework.manage": ACADEMIC,
     "goals.suggest": ACADEMIC,

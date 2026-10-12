@@ -17,6 +17,10 @@ Ekranda BİLEREK yer almayan işlemler `NOT_SURFACED` tablosundadır ve her
 birinin gerekçesi yazılıdır; tablo boş gerekçe ya da artık ekranda olan bir
 işlem taşırsa test kırılır (`tests/test_akademi_panel_coverage.py`).
 
+`PENDING` ayrı tablodur: sözleşmeye yeni girmiş, ekranı HENÜZ yazılmamış
+işlemler (bilerek değil, sırada). Aynı kurallar geçerlidir — gerekçe yazılı,
+ekrana gelen işlem tablodan çıkarılır; sayı raporda ayrıca görünür.
+
 Kullanım (depo kökünden):
 
     .venv/bin/python modules/bbd_akademi/tools/ui_coverage.py [--all] [--prefix /v1/admin/exams]
@@ -75,6 +79,41 @@ NOT_SURFACED: dict[str, str] = {
     "students_getExport":
         "Hata defteri dışa aktarımını başlatan uç (students_exportMistakes) "
         "entegrasyon anahtarına açık değil; KM'nin başlatabileceği bir iş yok.",
+}
+
+
+_PROGRAM_BUILDER = (
+    "Sözleşme bab7935 (draft.3) ile geldi; ders programı kurucu / oturum ekranı "
+    "ayrı iş paketidir (km-ogrenci-gruplari-ve-zil.md §7.D.3), bu dalda henüz yok.")
+_GROUP_VIEW = (
+    "Sözleşme bab7935 (draft.3) ile geldi; KM gruplarının tarihli üyelik görünümü "
+    "Gruplar ekranının ayrı iş paketidir (§7.D.2), bu dalda henüz yok.")
+
+#: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
+PENDING: dict[str, str] = {
+    "admin_getTimetableGrid": _PROGRAM_BUILDER,
+    "admin_previewTimetable": _PROGRAM_BUILDER,
+    "admin_listTimetableTemplates": _PROGRAM_BUILDER,
+    "admin_createTimetableTemplate": _PROGRAM_BUILDER,
+    "admin_getTimetableTemplate": _PROGRAM_BUILDER,
+    "admin_updateTimetableTemplate": _PROGRAM_BUILDER,
+    "admin_deleteTimetableTemplate": _PROGRAM_BUILDER,
+    "admin_applyTimetableTemplate": _PROGRAM_BUILDER,
+    "admin_listClassSessions": _PROGRAM_BUILDER,
+    "admin_getClassSession": _PROGRAM_BUILDER,
+    "admin_patchClassSession": _PROGRAM_BUILDER,
+    "admin_cancelClassSession": _PROGRAM_BUILDER,
+    "admin_createMakeupSession": _PROGRAM_BUILDER,
+    "admin_restoreClassSession": _PROGRAM_BUILDER,
+    "admin_getTeacherWeek": _PROGRAM_BUILDER,
+    "admin_listGroupMembers": _GROUP_VIEW,
+    "admin_getStudentGroup": _GROUP_VIEW,
+    "admin_listStudentGroupHistory": _GROUP_VIEW,
+    "admin_getBellPlanStatus":
+        "Zil planı durumu kartı (Ders programı) bu işlemi kullanacak; kart ayrı "
+        "commit'te gelir.",
+    "admin_pushBellPlan":
+        "Zil planı durumu kartındaki 'Planı şimdi it' düğmesi; kart ayrı commit'te gelir.",
 }
 
 
@@ -157,7 +196,8 @@ def scan(sources: dict[str, str] | None = None,
 
 def uncovered(hits: list[Hit]) -> list[Hit]:
     return [hit for hit in hits
-            if not hit.covered and hit.operation.operation_id not in NOT_SURFACED]
+            if not hit.covered and hit.operation.operation_id not in NOT_SURFACED
+            and hit.operation.operation_id not in PENDING]
 
 
 def by_section(hits: list[Hit]) -> dict[str, int]:
@@ -183,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
         op = hit.operation
         if op.operation_id in NOT_SURFACED:
             mark = "YOK*"
+        elif op.operation_id in PENDING:
+            mark = "SIRA"
         elif hit.covered:
             mark = "ok  "
         else:
@@ -195,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(f"toplam {len(hits)} işlem ({len(admin)} admin) · ekranda "
           f"{sum(hit.covered for hit in hits)} · bilerek yok {len(NOT_SURFACED)} · "
-          f"EKSİK {len(missing)}")
+          f"sırada {len(PENDING)} · EKSİK {len(missing)}")
     for name, count in by_section(hits).items():
         print(f"  {name:24} {count}")
     return 1 if missing else 0

@@ -59,11 +59,14 @@ def test_her_islem_panelde_ya_da_gerekceli() -> None:
 
 def test_bilerek_yok_tablosu_gecerli() -> None:
     hits = {hit.operation.operation_id: hit for hit in coverage.scan()}
-    for operation_id, reason in coverage.NOT_SURFACED.items():
-        assert operation_id in IDS, f"{operation_id}: izin listesinde yok — tablodan çıkarın"
-        assert len(reason.strip()) >= 30, f"{operation_id}: gerekçe yazılmalı"
-        assert not hits[operation_id].covered, (
-            f"{operation_id} artık panelde var — NOT_SURFACED'dan çıkarın")
+    for name, table in (("NOT_SURFACED", coverage.NOT_SURFACED), ("PENDING", coverage.PENDING)):
+        for operation_id, reason in table.items():
+            assert operation_id in IDS, f"{operation_id}: izin listesinde yok — {name}'den çıkarın"
+            assert len(reason.strip()) >= 30, f"{operation_id}: gerekçe yazılmalı"
+            assert not hits[operation_id].covered, (
+                f"{operation_id} artık panelde var — {name}'den çıkarın")
+    assert not set(coverage.NOT_SURFACED) & set(coverage.PENDING), "işlem iki tabloda birden"
+
 
 
 def test_tarayici_gercekten_ayirt_eder() -> None:
