@@ -12,21 +12,25 @@ aynı anda kasa tabletinden yapılan değişikliğin üstüne geçilmez.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
+from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
 from .. import qr as qr_codec
+from ..groups import GroupError, GroupService, parse_day
 from ..service import ControlsError, StudentService
 
 router = APIRouter()
 
 _service: StudentService | None = None
+_groups: GroupService | None = None
 
 
-def bind(service: StudentService) -> APIRouter:
-    global _service
+def bind(service: StudentService, groups: GroupService | None = None) -> APIRouter:
+    global _service, _groups
     _service = service
+    _groups = groups
     return router
 
 
@@ -34,6 +38,12 @@ def service() -> StudentService:
     if _service is None:  # pragma: no cover - yükleme sırası garanti eder
         raise HTTPException(status_code=503, detail="Modül hazır değil.")
     return _service
+
+
+def groups() -> GroupService:
+    if _groups is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return _groups
 
 
 class ProfileFields(BaseModel):
@@ -268,3 +278,272 @@ async def preview(
 ) -> dict[str, Any]:
     """PDF'i üretir ve dosyanın sayfalarını görüntü olarak döner."""
     return await service().preview(body.kind, body.model_dump())
+
+
+# ------------------------------------------------------- öğrenci grupları
+#
+# Sözleşme: bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md §2, §7.A.
+# OKUMA `bbd_students.view`, YAZMA `bbd_students.groups` — ayrı anahtar: grup
+# ve üyelik Akademi'de yoklama listesini ve zil çağrısını belirler; öğrenci
+# adını düzeltebilen herkesin işi değil. Kural servistedir (`backend/groups.py`).
+
+
+def _group_error(exc: GroupError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+def _optional_day(value: str | None, field: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return parse_day(value, field=field)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+class GroupCreate(BaseModel):
+    """Grup = ad + öğrenci seçimi. Öğrenciler `validFrom`'dan (vars. bugün) üye olur."""
+
+    name: str = Field(min_length=1, max_length=80)
+    kind: str = Field(default="group", pattern=r"^(group|individual)$")
+    callName: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=500)
+    studentIds: list[str] = Field(default_factory=list, max_length=2000)
+    validFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class GroupFromClass(BaseModel):
+    """"Sınıftan grup oluştur": sınıfın şu anki öğrencileri kopyalanır."""
+
+    className: str = Field(min_length=1, max_length=20)
+    name: str | None = Field(default=None, max_length=80)
+    callName: str = Field(default="", max_length=120)
+    validFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class GroupUpdate(BaseModel):
+    """Gönderilmeyen alan değişmez."""
+
+    name: str | None = Field(default=None, max_length=80)
+    kind: str | None = Field(default=None, pattern=r"^(group|individual)$")
+    callName: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class MembersAdd(BaseModel):
+    studentIds: list[str] = Field(min_length=1, max_length=2000)
+    validFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class MembersEnd(BaseModel):
+    studentIds: list[str] = Field(min_length=1, max_length=2000)
+    validTo: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class MembersMove(BaseModel):
+    studentIds: list[str] = Field(min_length=1, max_length=2000)
+    fromGroupId: str = Field(min_length=1, max_length=64)
+    toGroupId: str = Field(min_length=1, max_length=64)
+    effectiveFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class MemberFix(BaseModel):
+    """Geçmiş tarihli düzeltme — gerekçe servis tarafında zorunlu tutulur."""
+
+    validFrom: str | None = Field(default=None, max_length=10)
+    validTo: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+@router.get("/groups")
+async def list_groups(
+    archived: str = Query(default="live", pattern=r"^(live|archived|all)$"),
+    kind: str = Query(default="", pattern=r"^(|group|individual)$"),
+    q: str = Query(default="", max_length=80),
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Gruplar sekmesi: liste + o günün (vars. bugün) üye sayısı."""
+    return await groups().overview(archived=archived, kind=kind, query=q,
+                                   on=_optional_day(on, "date"))
+
+
+@router.post("/groups")
+async def create_group(
+    body: GroupCreate,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().create(body.model_dump(), actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/from-class")
+async def create_group_from_class(
+    body: GroupFromClass,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    payload = body.model_dump(exclude_none=True)
+    class_name = payload.pop("className")
+    try:
+        return await groups().from_class(class_name, payload, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/move")
+async def move_members(
+    body: MembersMove,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """A'da son gün = d-1, B'de başlangıç = d; ikisi birlikte doğrulanıp yazılır."""
+    try:
+        return await groups().move(body.studentIds, from_group=body.fromGroupId,
+                                   to_group=body.toGroupId,
+                                   effective_from=body.effectiveFrom, reason=body.reason,
+                                   actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.get("/groups/memberships")
+async def group_memberships(
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """O gün geçerli bütün üyelikler — öğrenci seçicileri grup süzgeci için."""
+    return await groups().memberships(on=_optional_day(on, "date"))
+
+
+@router.get("/groups/{group_id}")
+async def group_detail(
+    group_id: str,
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    try:
+        return await groups().detail(group_id, on=_optional_day(on, "date"))
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.get("/groups/{group_id}/members")
+async def group_members(
+    group_id: str,
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """`date` verilirse o gün geçerli üyeler (`current`); `members` hep tam geçmiş."""
+    try:
+        record = await groups().detail(group_id, on=_optional_day(on, "date"))
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+    return {"groupId": record["id"], "date": record["date"], "current": record["current"],
+            "members": record["members"]}
+
+
+@router.get("/groups/{group_id}/history")
+async def group_history(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Denetim izi: kim, ne zaman, ne değiştirdi (gerekçesiyle)."""
+    try:
+        return {"items": await groups().history(group_id)}
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.put("/groups/{group_id}")
+async def update_group(
+    group_id: str,
+    body: GroupUpdate,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().update(group_id, body.model_dump(exclude_unset=True),
+                                     actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/archive")
+async def archive_group(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Silme yoktur, arşiv vardır: açık üyelikler bugün kapanır, geçmiş korunur."""
+    try:
+        return await groups().archive(group_id, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/restore")
+async def restore_group(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().restore(group_id, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/members")
+async def add_members(
+    group_id: str,
+    body: MembersAdd,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().add_members(group_id, body.studentIds,
+                                          valid_from=body.validFrom, reason=body.reason,
+                                          actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/members/end")
+async def end_members(
+    group_id: str,
+    body: MembersEnd,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Çıkarma: `validTo` (vars. bugün) son gündür ve dahildir."""
+    try:
+        return await groups().end_members(group_id, body.studentIds, valid_to=body.validTo,
+                                          reason=body.reason, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.patch("/groups/{group_id}/members/{member_id}")
+async def fix_member(
+    group_id: str,
+    member_id: str,
+    body: MemberFix,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Yanlış girilmiş başlangıç/son gün. `validTo: ""` açık uca çevirir."""
+    try:
+        return await groups().patch_member(group_id, member_id,
+                                           body.model_dump(exclude_unset=True),
+                                           actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.get("/students/{kantin_id}/groups")
+async def student_groups(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Öğrenci kartındaki "Gruplar" bölümü — geçmiş dahil bütün üyelikler."""
+    return {"studentId": kantin_id, "items": await groups().for_student(kantin_id)}

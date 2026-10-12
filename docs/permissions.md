@@ -150,6 +150,7 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bell` | `bell.delete` | Grubu, yüklenmiş zil sesini ve kullanılmayan anonsları KALICI siler (geri alınamaz, PIN ister) |
 | `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır, öğrenci çağırma anonsu yapar (`POST /api/bell/page`) |
 | `bbd_students` | `bbd_students.canteen_controls` | Veli kantin kontrollerini düzenler: borç/günlük limit, kurum engeli, veli engelini kaldırma, yasaklı ürünler (admin, bbd_staff, org_staff) |
+| `bbd_students` | `bbd_students.groups` | Öğrenci gruplarını açar, adlandırır, arşivler; tarihli üyelik ekler/bitirir/taşır, geçmiş düzeltir (admin, bbd_staff, org_staff). Okuma `bbd_students.view` ile |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
 | `print` | `print.reprint` | Üretilmiş bir çıktıyı yeniden yazıcıya gönderir |
@@ -293,6 +294,7 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `bell.delete` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `bell.ring_now` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_class_schedule.view` | ✓ | ✗ | ✓ | ✓ | ✓ |
+| `bbd_students.groups` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `print.reprint` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
