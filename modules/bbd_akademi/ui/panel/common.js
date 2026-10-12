@@ -17,7 +17,7 @@ import { alertBox, badge, drawer, emptyState, progress, skeletonRows } from '../
 import { dataTable } from '../../ui-kit/table.js';
 import { formGrid } from '../../ui-kit/form.js';
 import { dateField } from '../../ui-kit/datefield.js';
-import { AkademiError, problem } from './api.js';
+import { AkademiError, openBlob, problem, saveBlob } from './api.js';
 
 export { money, moneyInput, num, parseMoney, percent, problem };
 
@@ -674,6 +674,65 @@ export function studentPicker(app, { onPick, placeholder = 'Öğrenci ara (ad, o
   } });
   node.append(box.node, results);
   return { node, destroy: box.destroy, focus: () => box.node.focus() };
+}
+
+// --------------------------------------------------------------- dışa aktarım
+
+/**
+ * Akademi dışa aktarım işi (`202 {id, status, url}`) → bitince dosyayı indir.
+ * Ortak iş kaydı `GET /v1/admin/exports/{exportId}` ile yoklanır (artan
+ * aralıkla, en çok ~3 dk); `done` olunca kısa ömürlü bağlantı köprüden
+ * indirilir. PDF yeni pencerede açılır (yazdırma), XLSX/CSV/ZIP diske iner.
+ *
+ *   await exportJob(app, () => app.api.post(`/v1/admin/exams/${id}/exports`, body),
+ *     { name: 'deneme-sonuclari' });
+ *
+ * @returns {Promise<object|null>} son iş kaydı ya da hata/vazgeçişte null
+ */
+export async function exportJob(app, start, { name = 'akademi-disa-aktarim',
+  label = 'Dosya hazırlanıyor…' } = {}) {
+  const overlay = h('div', 'kit-overlay');
+  const box = h('div', 'kit-dialog ak-dialog');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  const bar = progress(['Sıraya alındı', 'Hazırlanıyor', 'İndiriliyor']);
+  // "Arka planda bırak" yalnız pencereyi kapatır; yoklama sürer ve dosya
+  // hazır olunca yine iner (bildirimle).
+  const actions = h('div', 'kit-dialog-actions');
+  actions.append(button('Arka planda bırak', { variant: 'ghost', onClick: () => overlay.remove() }));
+  box.append(h('h3', 'kit-dialog-title', label), bar.node, actions);
+  overlay.append(box);
+  app.root.append(overlay);
+  try {
+    let job = await start();
+    bar.step(0);
+    const wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+    let delay = 800;
+    const deadline = Date.now() + 180_000;
+    while (job && ['queued', 'running'].includes(job.status) && Date.now() < deadline) {
+      await wait(delay); // eslint-disable-line no-await-in-loop
+      delay = Math.min(delay * 1.5, 5000);
+      job = await app.api.get(`/v1/admin/exports/${job.id}`); // eslint-disable-line no-await-in-loop
+      bar.step(job?.status === 'running' ? 1 : 0);
+    }
+    if (!job || job.status !== 'done' || !job.url) {
+      throw new AkademiError({ code: 'export_failed', message: job?.error
+        || (job && ['queued', 'running'].includes(job.status)
+          ? 'Dosya hâlâ hazırlanıyor; biraz sonra tekrar deneyin.' : 'Dışa aktarım başarısız.') });
+    }
+    bar.step(2);
+    const ext = job.format || 'xlsx';
+    const file = await app.api.fetchFile(job.url, `${name}.${ext}`);
+    if (ext === 'pdf') openBlob(file); else saveBlob(file);
+    bar.done('İndirildi');
+    app.toast('Dosya hazır.', 'good');
+    return job;
+  } catch (failure) {
+    app.toast(problem(failure, 'Dışa aktarım başarısız.'), 'bad');
+    return null;
+  } finally {
+    overlay.remove();
+  }
 }
 
 /** Para alanı yardımcıları: kuruş ↔ metin. */
