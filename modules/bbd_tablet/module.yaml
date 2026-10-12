@@ -17,7 +17,8 @@ provides:
   - capability: bbd_tablet.control
     contract: bbd_tablet/backend/capabilities.py:TabletControl
     description: >
-      async grant(student_id, package_name, extra_seconds, reason, actor) → grant_id;
+      async grant(student_id, package_name|None, extra_seconds, reason, actor) → grant_id
+      (None = tüm tablet: süre sınırlı her uygulamaya ayrı ek süre satırı);
       block(student_id, until|None, reason, actor) → blocked_until|None;
       unblock(student_id, reason, actor) → None; end_session(session_id, reason,
       actor) → bool. Hata `reason` koduyla (validation_error, student_not_found,

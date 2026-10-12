@@ -149,7 +149,6 @@ async def test_kontrol_ek_sure_kisit_oturum(service: TabletService, clock: Any) 
     assert usage["grants"][0]["createdBy"] == "akademi:staff:42:Ayşe"
 
     for bad in (
-        control.grant("opaque-A", None, 1800, "Ödev için", "x"),
         control.grant("opaque-A", VIDEO["packageName"], 0, "Ödev için", "x"),
         control.grant("opaque-A", VIDEO["packageName"], 60, "x", "x"),
         control.grant("opaque-A", "com.not.allowed", 60, "Ödev için", "x"),
@@ -195,3 +194,47 @@ async def test_kontrol_oturum_kapatir_ve_kantin_dusukse(service: TabletService,
     with pytest.raises(TabletCapabilityError) as error:
         await control.grant("opaque-A", VIDEO["packageName"], 60, "Ödev için", "x")
     assert error.value.reason == "canteen_unavailable"
+
+
+async def test_tum_tablete_ek_sure_sure_sinirli_her_uygulamaya(service: TabletService) -> None:
+    control = TabletControl(service, Log())
+    games = {"packageName": "com.example.games", "appName": "Oyun", "allowed": True,
+             "unlimited": False, "dailyLimitSeconds": 600}
+    books = {"packageName": "com.example.books", "appName": "Kitap", "allowed": True,
+             "unlimited": True, "dailyLimitSeconds": 0}
+    banned = {"packageName": "com.example.banned", "appName": "Yasak", "allowed": False,
+              "unlimited": False, "dailyLimitSeconds": 0}
+    profile = await service.save_profile(profile_id=None, name="Ortaokul",
+                                         timezone="Europe/Istanbul",
+                                         apps=[VIDEO, games, books, banned])
+    other = await service.save_profile(
+        profile_id=None, name="Lise", timezone="Europe/Istanbul",
+        apps=[{**VIDEO, "packageName": "com.example.other"}])
+
+    # Hiç oturum yokken bütün profillerin süre sınırlı uygulamaları kapsanır.
+    assert await service.device_grant_packages("opaque-A") == [
+        "com.example.games", "com.example.other", "com.example.video"]
+
+    _, token = await pair(service, profile["id"], "Tablet 10")
+    await login(service, token)
+    assert other["id"] != profile["id"]
+
+    grant_id = await control.grant("opaque-A", None, 900, "Sınav haftası", "akademi:staff:1")
+    usage = await service.student_usage("opaque-A", TODAY)
+    granted = {item["packageName"]: item for item in usage["grants"]}
+    # Oturumun profili: sınırsız ve yasaklı uygulama ek süre almaz.
+    assert set(granted) == {"com.example.games", "com.example.video"}
+    assert {item["extraSeconds"] for item in granted.values()} == {900}
+    assert grant_id == granted["com.example.games"]["id"]
+    extra = {item["packageName"]: item["extraSeconds"] for item in usage["usage"]}
+    assert extra["com.example.video"] == 900 and extra["com.example.books"] == 0
+
+
+async def test_tum_tablete_ek_sure_sinirli_uygulama_yoksa_reddedilir(
+        service: TabletService) -> None:
+    control = TabletControl(service, Log())
+    await service.save_profile(profile_id=None, name="Serbest", timezone="Europe/Istanbul",
+                               apps=[{**VIDEO, "unlimited": True}])
+    with pytest.raises(TabletCapabilityError) as error:
+        await control.grant("opaque-A", None, 900, "Sınav haftası", "x")
+    assert error.value.reason == "validation_error"

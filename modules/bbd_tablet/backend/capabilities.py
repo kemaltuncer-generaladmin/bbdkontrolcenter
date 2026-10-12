@@ -7,7 +7,7 @@ yönetim panelininkiyle aynıdır.
 
     read.board()                                  → §4 GET /tablets biçimi
     read.student_usage(student_id, date_from, date_to) → §4 tablet-usage biçimi
-    control.grant(student_id, package_name, extra_seconds, reason, actor) → grant_id
+    control.grant(student_id, package_name|None, extra_seconds, reason, actor) → grant_id
     control.block(student_id, until, reason, actor)  → blocked_until | None
     control.unblock(student_id, reason, actor)       → None
     control.end_session(session_id, reason, actor)   → bool
@@ -244,38 +244,49 @@ class TabletControl:
 
     async def grant(self, student_id: str, package_name: str | None, extra_seconds: int,
                     reason: str, actor: str) -> str:
-        """Bugün (Europe/Istanbul) için uygulamaya ek süre; ek sürenin kimliği döner.
+        """Bugün (Europe/Istanbul) için ek süre; ek sürenin kimliği döner.
 
-        KM'de ek süre UYGULAMA BAZINDADIR (profilde süre sınırı uygulama
-        başınadır, tablet geneli bir sınır yoktur). `package_name=None`
-        bu yüzden `validation_error` ile reddedilir.
+        `package_name` verilirse yalnız o uygulamaya. `package_name=None`
+        TÜM TABLETE ek süredir (sözleşme §4). KM'de süre sınırı uygulama
+        başınadır, tablet geneli bir bütçe yoktur; bu yüzden tüm tablet ek
+        süresi, öğrencinin profilindeki (`device_grant_packages`) izinli ve süre
+        sınırlı HER uygulamaya aynı süreyle ayrı bir satır olarak yazılır —
+        tablet uygulaması değişmeden uygular, KM panelinde satırlar ayrı ayrı
+        görünür ve geri alınır. Dönen kimlik ilk satırındır (paket adına göre
+        sıralı). Süre sınırlı uygulama yoksa `validation_error`.
         """
         why = _reason(reason)
         package = str(package_name or "").strip()
-        if not package:
-            raise TabletCapabilityError(
-                "Ek süre uygulama bazındadır; uygulama (packageName) seçilmeli.",
-                reason="validation_error",
-            )
         if isinstance(extra_seconds, bool) or not isinstance(extra_seconds, int) \
                 or not 0 < extra_seconds <= 86400:
             raise TabletCapabilityError("Ek süre 1 saniye ile 24 saat arasında olmalı.",
                                         reason="validation_error")
         await self._student(student_id)
+        packages = [package] if package \
+            else await self._service.device_grant_packages(str(student_id))
+        if not packages:
+            raise TabletCapabilityError(
+                "Öğrencinin profilinde süre sınırlı uygulama yok; ek süre gerekmiyor.",
+                reason="validation_error",
+            )
         local_date = self._service._now().astimezone(
             zone(self._service.default_timezone)).date().isoformat()
-        try:
-            granted = await self._service.grant_time(
-                student_id=str(student_id), package_name=package, local_date=local_date,
-                extra_seconds=extra_seconds, reason=why, actor=_actor(actor),
-            )
-        except CanteenUnavailableError as exc:
-            raise TabletCapabilityError(str(exc), reason="canteen_unavailable") from exc
-        except ValueError as exc:
-            raise TabletCapabilityError(str(exc), reason="validation_error") from exc
-        self._log.info("tablet ek süre (yetenek)", student=student_id, package=package,
+        granted_ids: list[str] = []
+        for name in packages:
+            try:
+                granted = await self._service.grant_time(
+                    student_id=str(student_id), package_name=name, local_date=local_date,
+                    extra_seconds=extra_seconds, reason=why, actor=_actor(actor),
+                )
+            except CanteenUnavailableError as exc:
+                raise TabletCapabilityError(str(exc), reason="canteen_unavailable") from exc
+            except ValueError as exc:
+                raise TabletCapabilityError(str(exc), reason="validation_error") from exc
+            granted_ids.append(str(granted["id"]))
+        self._log.info("tablet ek süre (yetenek)", student=student_id,
+                       package=package or "*", apps=len(granted_ids),
                        seconds=extra_seconds, actor=_actor(actor))
-        return str(granted["id"])
+        return granted_ids[0]
 
     async def block(self, student_id: str, until: datetime | str | None, reason: str,
                     actor: str) -> str | None:
