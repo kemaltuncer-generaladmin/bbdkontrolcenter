@@ -1,0 +1,41 @@
+/* Erken uyarı — önek `ak-in-`. Sayaç, süzgeç, çekmece, eşik tablosu. */
+
+.ak-in-note { font-size: 12.5px; }
+.ak-in-student { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px;
+  border: 1px solid #9db6ff; background: #eef3ff; border-radius: 999px; color: #1d3f9e; }
+.ak-in-student .kit-btn { height: 26px; padding: 0 8px; font-size: 12px; }
+
+/* Çekmece */
+.ak-in-drawer { width: min(760px, calc(100% - 40px)); }
+.ak-in-actions { padding-bottom: 2px; }
+.ak-in-details { margin: 0; padding: 10px 16px 12px 32px; display: flex; flex-direction: column; gap: 4px; }
+
+/* Konu doğruluğu ölçeği — yüzde yazıyla da yanında (renk tek başına anlam taşımaz). */
+.ak-in-meter { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ak-in-meter-bar { flex: 1; min-width: 50px; height: 8px; border-radius: 4px; background: #eef1f6;
+  overflow: hidden; }
+.ak-in-meter-fill { display: block; height: 100%; background: #5b8cff; }
+.ak-in-meter-fill.bad { background: #e5484d; }
+.ak-in-meter-fill.warn { background: #f59e0b; }
+.ak-in-meter-fill.good { background: #22a06b; }
+.ak-in-meter-fill.dim { background: #c3cad6; }
+
+/* Eşik tablosu */
+.ak-in-rules { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px;
+  overflow: hidden; }
+.ak-in-rule { display: grid; align-items: center; gap: 10px; padding: 9px 12px;
+  grid-template-columns: minmax(220px, 1fr) 46px 120px 130px 120px 130px;
+  border-top: 1px solid var(--line); }
+.ak-in-rule:first-child { border-top: 0; }
+.ak-in-rule-head { background: var(--tint); color: var(--soft); font-size: 12px; font-weight: 600; }
+.ak-in-rule.missing { background: #fbfcfe; }
+.ak-in-rule .kit-select { width: 100%; }
+.ak-in-unit { display: inline-flex; align-items: center; gap: 6px; color: var(--soft); }
+.ak-in-num { width: 76px; text-align: right; }
+.ak-in-err { color: var(--bad); }
+.ak-in-err:empty { display: none; }
+.ak-in-notify { gap: 8px; }
+@media (max-width: 1100px) {
+  .ak-in-rule { grid-template-columns: minmax(0, 1fr) 46px 110px; }
+  .ak-in-rule-head span:nth-child(n + 4) { display: none; }
+}
