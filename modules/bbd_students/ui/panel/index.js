@@ -17,8 +17,18 @@ import {
 import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
 import { confirmSimple } from '../../ui-kit/kit.js';
+import { mountControls } from './canteen.js';
+import {
+  EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, describe, fillFromSuggestion, parseChoice,
+  parseGrade, suggestedExam, trackAllowed,
+} from './curriculum.js';
 
 let apiCall = null;
+let capabilityOf = null;  // başka modülün arayüz yeteneği (K3); yoksa null döner
+let permissions = null;   // null = okunamadı; karar backend'de (K9)
+let controlsView = null;  // veli kantin kontrolleri bölümü
+let payCard = null;       // bbd_payment_request.student_card
+let mountedFor = null;    // bölümlerin çizildiği öğrenci
 let students = [];
 let selectedId = null;
 let original = null;      // seçili öğrencinin sunucudan gelen hâli
@@ -38,8 +48,29 @@ const h = (tag, className, text) => {
 };
 
 // Kantin alanları ile bizim alanlarımız — kaydederken ayrışırlar.
-const CANTEEN_KEYS = ['firstName', 'lastName', 'parentPhone', 'spendingLimit', 'isBlocked'];
-const PROFILE_KEYS = ['className', 'schoolNo', 'studentPhone', 'parentName', 'parentName2', 'parentPhone2', 'note'];
+//
+// BORÇ LİMİTİ VE KURUM ENGELİ BURADA DEĞİL: ikisi de veli kantin kontrolleriyle
+// birlikte "Veli kantin kontrolleri" bölümünde, kendi izniyle
+// (`bbd_students.canteen_controls`) düzenlenir. Aynı alanı iki yerden yazmak,
+// hangisinin son sözü söylediğini belirsiz bırakırdı.
+const CANTEEN_KEYS = ['firstName', 'lastName', 'parentPhone'];
+const PROFILE_KEYS = ['className', 'schoolNo', 'studentPhone', 'parentName', 'parentName2',
+  'parentPhone2', 'note', 'gradeLevel', 'track', 'examTarget'];
+
+/** Kullanıcının izni var mı? Okunamadıysa düğme açık kalır, backend karar verir. */
+function can(permission) {
+  if (permissions === null) return true;
+  return permissions.has(permission) || permissions.has(`${permission}:*`);
+}
+
+async function loadPermissions() {
+  try {
+    const me = await apiCall('/auth/me');
+    permissions = new Set(Array.isArray(me?.permissions) ? me.permissions : []);
+  } catch {
+    permissions = null;
+  }
+}
 
 function selected() {
   return draft;
@@ -316,6 +347,102 @@ async function runAccessCodeReset() {
   await refresh(); // az önce üretilen kodlar `accessCode` alanına yansısın
 }
 
+/**
+ * Toplu seviye/alan/hedef sınav ataması. "Değiştirme" seçili alan gönderilmez;
+ * "—" alanı temizler. Kural öğrenci başına backend'de uygulanır: 10. sınıf
+ * altındaki öğrenciye alan yazılmaz ve gerekçesiyle ayrı listelenir.
+ */
+function buildBulkCurriculum() {
+  const box = h('div', 'st-bulk-plan');
+  box.append(h('p', 'st-subhead', 'Seviye / alan ata'));
+  const keep = ['__keep', 'değiştirme'];
+  const select = (label, choices) => {
+    const wrap = h('label', 'st-field');
+    wrap.append(h('span', 'st-label', label));
+    const input = h('select', 'st-input st-select');
+    for (const [value, text] of [keep, ...choices]) input.append(new Option(text, value));
+    wrap.append(input);
+    return { wrap, input };
+  };
+  const grade = select('Seviye', GRADE_CHOICES);
+  const track = select('Alan', TRACK_CHOICES);
+  const exam = select('Hedef sınav', EXAM_CHOICES);
+  box.append(grade.wrap, track.wrap, exam.wrap);
+
+  const status = h('p', 'st-bulk-status', '');
+
+  const send = async (ids, body) => apiCall('/api/bbd_students/students/curriculum', {
+    method: 'POST', body: { students: ids, ...body },
+  });
+
+  const apply = h('button', 'st-btn st-btn-primary', 'Seçilenlere uygula');
+  apply.type = 'button';
+  apply.disabled = !can('bbd_students.manage');
+  apply.addEventListener('click', async () => {
+    const ids = bulkPicker?.selection() ?? [];
+    if (ids.length === 0) { status.textContent = 'Önce en az bir öğrenci seçin.'; return; }
+    const body = {};
+    if (grade.input.value !== '__keep') body.gradeLevel = parseGrade(grade.input.value);
+    if (track.input.value !== '__keep') body.track = parseChoice(track.input.value);
+    if (exam.input.value !== '__keep') body.examTarget = parseChoice(exam.input.value);
+    if (Object.keys(body).length === 0) { status.textContent = 'Değiştirilecek alan seçin.'; return; }
+    try {
+      const result = await send(ids, body);
+      status.textContent = `${result.updated.length} öğrenci güncellendi.`
+        + (result.failed.length ? ` ${result.failed.length} öğrenci atlandı: `
+          + `${result.failed[0].error}` : '');
+      await refresh({ keepSelection: true });
+    } catch (error) {
+      status.textContent = `Uygulanamadı: ${error.message}`;
+    }
+  });
+
+  const suggest = h('button', 'st-btn', 'Sınıf adından öneriyi uygula');
+  suggest.type = 'button';
+  suggest.title = 'Seçilenlerin YALNIZ boş alanlarını sınıf adından gelen öneriyle doldurur.';
+  suggest.disabled = !can('bbd_students.manage');
+  suggest.addEventListener('click', async () => {
+    const ids = new Set(bulkPicker?.selection() ?? []);
+    if (ids.size === 0) { status.textContent = 'Önce en az bir öğrenci seçin.'; return; }
+    // Aynı değişikliği isteyen öğrenciler tek istekte gider.
+    const groups = new Map();
+    for (const student of students.filter((row) => ids.has(row.kantinId))) {
+      const changes = fillFromSuggestion(student);
+      if (Object.keys(changes).length === 0) continue;
+      const key = JSON.stringify(changes);
+      if (!groups.has(key)) groups.set(key, { changes, ids: [] });
+      groups.get(key).ids.push(student.kantinId);
+    }
+    if (groups.size === 0) {
+      status.textContent = 'Seçilenlerde öneriyle doldurulacak boş alan yok.';
+      return;
+    }
+    const total = [...groups.values()].reduce((sum, group) => sum + group.ids.length, 0);
+    if (!await confirmSimple(nodes.root, {
+      title: 'Öneri uygulansın mı?',
+      description: `${total} öğrencinin boş seviye/alan/hedef sınav alanı sınıf adından `
+        + 'gelen öneriyle doldurulacak. Dolu alanlara dokunulmaz.',
+      confirmLabel: 'Uygula',
+    })) return;
+    let updated = 0;
+    let failed = 0;
+    for (const group of groups.values()) {
+      try {
+        const result = await send(group.ids, group.changes);
+        updated += result.updated.length;
+        failed += result.failed.length;
+      } catch {
+        failed += group.ids.length;
+      }
+    }
+    status.textContent = `${updated} öğrenci güncellendi${failed ? `, ${failed} atlandı` : ''}.`;
+    await refresh({ keepSelection: true });
+  });
+
+  box.append(h('div', 'st-bulk-actions', apply, suggest), status);
+  return box;
+}
+
 function buildBulkView() {
   const view = h('div', 'st-bulk');
   view.hidden = true;
@@ -352,6 +479,8 @@ function buildBulkView() {
   side.append(h('p', 'st-hint',
     'Şifreler her zaman kantin tarafından otomatik üretilir; elle şifre '
     + 'girilmez — iki öğrenciye aynı kodun verilmesi bu yüzden mümkün değildir.'));
+
+  side.append(buildBulkCurriculum());
 
   layout.append(side);
   view.append(layout);
@@ -462,6 +591,9 @@ function field(label, key, options = {}) {
   let input;
   if (options.type === 'textarea') {
     input = h('textarea', 'st-input st-textarea');
+  } else if (options.type === 'select') {
+    input = h('select', 'st-input st-select');
+    for (const [value, label] of options.choices || []) input.append(new Option(label, value));
   } else if (options.type === 'checkbox') {
     input = h('input', 'st-check');
     input.type = 'checkbox';
@@ -474,9 +606,11 @@ function field(label, key, options = {}) {
   if (options.readOnly) input.readOnly = true;
 
   const read = () => (options.type === 'checkbox' ? input.checked : input.value);
-  input.addEventListener(options.type === 'checkbox' ? 'change' : 'input', () => {
+  const event = options.type === 'checkbox' || options.type === 'select' ? 'change' : 'input';
+  input.addEventListener(event, () => {
     if (!draft) return;
     draft[key] = options.parse ? options.parse(read()) : read();
+    options.after?.();
     renderDirty();
     renderErrors(validate(draft));
   });
@@ -515,8 +649,83 @@ function renderDetail() {
   ].join(' · ');
 
   nodes.qrOut.hidden = true;
+  syncCurriculum();
   renderDirty();
   renderErrors(validate(student));
+  mountSections(student);
+}
+
+/**
+ * Seviye/alan kuralı ekranda da görünsün: 10. sınıf altında alan seçilemez ve
+ * seviye o aralığa çekilirse alan boşalır (backend aynı kuralı uygular).
+ * Sınıf adından gelen öneri yalnız GÖSTERİLİR; düğmeye basılmadan yazılmaz.
+ */
+function syncCurriculum() {
+  if (!draft || !nodes.fields.track) return;
+  const allowed = trackAllowed(draft.gradeLevel ?? null);
+  nodes.fields.track.input.disabled = !allowed;
+  nodes.fields.track.input.title = allowed ? ''
+    : 'Alan yalnız 10. sınıf ve üstünde ya da mezunda seçilir.';
+  if (!allowed && draft.track) {
+    draft.track = null;
+    nodes.fields.track.input.value = '';
+  }
+
+  const hint = suggestedExam(draft.gradeLevel ?? null);
+  nodes.examHint.textContent = hint && !draft.examTarget ? `Önerilen: ${hint}` : '';
+
+  nodes.suggest.replaceChildren();
+  const changes = fillFromSuggestion(draft);
+  if (Object.keys(changes).length === 0) return;
+  nodes.suggest.append(h('span', null,
+    `Sınıf adından öneri (${draft.className}): ${describe(draft.curriculumSuggestion)}`));
+  const accept = h('button', 'st-btn', 'Öneriyi uygula');
+  accept.type = 'button';
+  accept.title = 'Yalnız boş alanları doldurur; kaydetmek için ayrıca “Kaydet”e basın.';
+  accept.addEventListener('click', () => {
+    Object.assign(draft, fillFromSuggestion(draft));
+    for (const key of ['gradeLevel', 'track', 'examTarget']) {
+      nodes.fields[key].input.value = draft[key] === null || draft[key] === undefined
+        ? '' : String(draft[key]);
+    }
+    syncCurriculum();
+    renderDirty();
+  });
+  nodes.suggest.append(accept);
+}
+
+/**
+ * Kantin kontrolleri ve tahsilat/talep kartı — seçili öğrenci DEĞİŞİNCE kurulur.
+ * Liste her tazelendiğinde yeniden kurulmaz: yazılmakta olan limit silinmesin.
+ */
+function mountSections(student) {
+  if (mountedFor === student.kantinId) return;
+  mountedFor = student.kantinId;
+  controlsView?.destroy();
+  payCard?.destroy();
+
+  controlsView = mountControls(nodes.controls, {
+    api: apiCall,
+    studentId: student.kantinId,
+    canEdit: can('bbd_students.canteen_controls'),
+    dialogRoot: nodes.root,
+    onSaved: () => refresh({ keepSelection: true }),
+  });
+
+  const draw = capabilityOf?.('bbd_payment_request.student_card');
+  if (typeof draw === 'function') {
+    payCard = draw(nodes.payCard, {
+      studentId: student.kantinId,
+      displayName: student.displayName,
+      dialogRoot: nodes.root,
+      onChanged: () => refresh({ keepSelection: true }),
+    });
+  } else {
+    payCard = null;
+    nodes.payCard.replaceChildren(h('p', 'st-hint',
+      'Kantin tahsilatı ve ödeme talebi “Ödeme Talebi” modülünden gelir; '
+      + 'modül kapalı ya da bu ekrana yüklenemedi.'));
+  }
 }
 
 function renderDirty() {
@@ -554,13 +763,9 @@ function buildDetail() {
   kantinGrid.append(field('Veli telefonu', 'parentPhone', {
     placeholder: '0532 …', display: formatPhone, parse: normalizePhone,
   }));
-  kantinGrid.append(field('Harcama limiti (kuruş, boş = sınırsız)', 'spendingLimit', {
-    parse: (value) => (String(value).trim() === '' ? null : Number(String(value).replace(/\D/g, ''))),
-  }));
   kantin.append(kantinGrid);
-  const blocked = field('Kantin alışverişi engelli', 'isBlocked', { type: 'checkbox' });
-  blocked.classList.add('st-field-inline');
-  kantin.append(blocked);
+  kantin.append(h('p', 'st-hint',
+    'Borç limiti, günlük limit ve engeller aşağıdaki “Veli kantin kontrolleri” bölümünde.'));
   body.append(kantin);
 
   const school = h('section', 'st-card');
@@ -579,8 +784,48 @@ function buildDetail() {
     placeholder: '0532 …', display: formatPhone, parse: normalizePhone,
   }));
   school.append(schoolGrid);
+
+  // Seviye / alan / hedef sınav — Akademi müfredatı buradan türer (KM ana kaynak).
+  school.append(h('p', 'st-subhead', 'Müfredat'));
+  const planGrid = h('div', 'st-grid');
+  const display = (value) => (value === null || value === undefined ? '' : String(value));
+  planGrid.append(field('Seviye', 'gradeLevel', {
+    type: 'select', choices: GRADE_CHOICES, parse: parseGrade, display, after: syncCurriculum,
+  }));
+  planGrid.append(field('Alan (10. sınıf ve üstü)', 'track', {
+    type: 'select', choices: TRACK_CHOICES, parse: parseChoice, display, after: syncCurriculum,
+  }));
+  const exam = field('Hedef sınav', 'examTarget', {
+    type: 'select', choices: EXAM_CHOICES, parse: parseChoice, display, after: syncCurriculum,
+  });
+  nodes.examHint = h('span', 'st-hint');
+  exam.append(nodes.examHint);
+  planGrid.append(exam);
+  school.append(planGrid);
+  nodes.suggest = h('div', 'st-suggest');
+  school.append(nodes.suggest);
+
   school.append(field('Not', 'note', { type: 'textarea', maxLength: 500, wide: true }));
   body.append(school);
+
+  // Veli kantin kontrolleri — kantinde durur, satışta orada uygulanır.
+  const controls = h('section', 'st-card');
+  controls.append(h('h4', null, 'Veli kantin kontrolleri'));
+  controls.append(h('p', 'st-hint',
+    'Bu ayarlar kantinde durur ve satış anında kantin uygular. Veli de BBD Akademi '
+    + 'uygulamasından değiştirebilir; burada yapılan değişiklik hemen geçerlidir.'));
+  nodes.controls = h('div', 'st-cc');
+  controls.append(nodes.controls);
+  body.append(controls);
+
+  // Kantin tahsilatı / ödeme talebi — akış Ödeme Talebi modülündedir (K3).
+  const pay = h('section', 'st-card');
+  pay.append(h('h4', null, 'Kantin tahsilatı ve ödeme talebi'));
+  pay.append(h('p', 'st-hint',
+    'Yalnız KANTİN hesabıdır; kurum (Akademi) ödemeleriyle karışmaz.'));
+  nodes.payCard = h('div', 'st-pay');
+  pay.append(nodes.payCard);
+  body.append(pay);
 
   const card = h('section', 'st-card');
   card.append(h('h4', null, 'Kart QR’ı'));
@@ -650,6 +895,8 @@ export function capabilities(ctx) {
 
 export function mount(root, ctx) {
   apiCall = ctx.api;
+  capabilityOf = typeof ctx.capability === 'function' ? ctx.capability : null;
+  mountedFor = null;
 
   const styleHref = new URL('./panel.css', import.meta.url).href;
   if (!document.querySelector(`link[href="${styleHref}"]`)) {
@@ -669,7 +916,7 @@ export function mount(root, ctx) {
   nodes.modeSingle = h('button', 'st-mode-btn st-mode-active', 'Tekli düzenle');
   nodes.modeSingle.type = 'button';
   nodes.modeSingle.addEventListener('click', () => setMode('single'));
-  nodes.modeBulk = h('button', 'st-mode-btn', 'Toplu şifre işlemleri');
+  nodes.modeBulk = h('button', 'st-mode-btn', 'Toplu işlemler');
   nodes.modeBulk.type = 'button';
   nodes.modeBulk.addEventListener('click', () => setMode('bulk'));
   modeBar.append(nodes.modeSingle, nodes.modeBulk);
@@ -746,11 +993,14 @@ export function mount(root, ctx) {
 
   nodes.fields = {};
   root.replaceChildren(view);
-  refresh({ keepSelection: false });
+  // İzinler önce okunur: kontrol bölümü düzenleme düğmesini buna göre kurar.
+  loadPermissions().finally(() => refresh({ keepSelection: false }));
 
   return () => {
     clearTimeout(toast.timer);
     bulkPicker?.destroy();
+    controlsView?.destroy();
+    payCard?.destroy();
     root.replaceChildren();
   };
 }
