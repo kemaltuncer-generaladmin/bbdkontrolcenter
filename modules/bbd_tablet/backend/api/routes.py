@@ -10,7 +10,7 @@ dizesinde değil.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -37,9 +37,18 @@ MANAGE = "bbd_tablet.manage"
 GRANT = "bbd_tablet.grant"
 
 
-def bind(service: TabletService) -> APIRouter:
-    global _service
+#: `events.outbox` çözücüsü (ADR 0029). KM EKRANINDAN yapılan kısıt / ek süre
+#: / profil değişikliği BBD Akademi'ye olay olarak gider (km-merkezi-senkron
+#: §2.2 `tablet.policy_changed`, `tablet.profile_changed`). Geçidin (Akademi)
+#: kendi yazmaları olayı geçitte, `origin: akademi` ile yazar — bu yüzden olay
+#: yeteneklerde değil bu uçlardadır.
+_outbox: Callable[[], Any] | None = None
+
+
+def bind(service: TabletService, outbox: Callable[[], Any] | None = None) -> APIRouter:
+    global _service, _outbox
     _service = service
+    _outbox = outbox
     return router
 
 
@@ -47,6 +56,18 @@ def current_service() -> TabletService:
     if _service is None:
         raise HTTPException(status_code=503, detail="Tablet modülü hazır değil.")
     return _service
+
+
+async def announce(kind: str, subject: tuple[str, str | None], fields: list[str]) -> None:
+    """Yazma BAŞARILI olduktan sonra outbox olayı. Olay yazılamazsa yazma yine
+    tamamdır (K7); Akademi 2 dk yedek yoklamasıyla yetişir."""
+    box = _outbox() if _outbox is not None else None
+    if box is None:
+        return
+    try:
+        await box.emit(kind, subject, fields=fields)
+    except Exception:  # noqa: BLE001 — olay yazmayı geri almaz
+        return
 
 
 async def run[T](call: Awaitable[T]) -> T:
@@ -222,43 +243,51 @@ async def device_commands(device_id: str, limit: int = Query(default=20, ge=1, l
 @router.post("/profiles")
 async def create_profile(body: ProfileBody,
                          user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
-    return await run(current_service().save_profile(
+    result = await run(current_service().save_profile(
         profile_id=None, name=body.name, timezone=body.timezone,
         apps=[item.model_dump() for item in body.apps],
         system_controls=body.systemControls,
         usage_windows=None if body.usageWindows is None
         else [item.model_dump() for item in body.usageWindows],
     ))
+    await announce("tablet.profile_changed", ("tablet_profile", _id_of(result)), [])
+    return result
 
 
 @router.put("/profiles/{profile_id}")
 async def update_profile(profile_id: str, body: ProfileBody,
                          user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
-    return await run(current_service().save_profile(
+    result = await run(current_service().save_profile(
         profile_id=profile_id, name=body.name, timezone=body.timezone,
         apps=[item.model_dump() for item in body.apps],
         system_controls=body.systemControls,
         usage_windows=None if body.usageWindows is None
         else [item.model_dump() for item in body.usageWindows],
     ))
+    await announce("tablet.profile_changed", ("tablet_profile", profile_id), [])
+    return result
 
 
 @router.post("/profiles/{profile_id}/duplicate")
 async def duplicate_profile(profile_id: str, body: DuplicateBody | None = None,
                             user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
-    return await run(current_service().duplicate_profile(
+    result = await run(current_service().duplicate_profile(
         profile_id=profile_id, name=body.name if body else None,
     ))
+    await announce("tablet.profile_changed", ("tablet_profile", _id_of(result)), [])
+    return result
 
 
 @router.delete("/profiles/{profile_id}")
 async def delete_profile(profile_id: str, body: ProfileDeleteBody, request: Request,
                          user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
     await confirm_pin(request, user, body.pin, action="bbd_tablet.profile.delete")
-    return await run(current_service().delete_profile(
+    result = await run(current_service().delete_profile(
         profile_id=profile_id, replacement_profile_id=body.replacementProfileId,
         unassign=body.unassign,
     ))
+    await announce("tablet.profile_changed", ("tablet_profile", profile_id), [])
+    return result
 
 
 # ------------------------------------------------------------------- tabletler
@@ -371,30 +400,48 @@ async def end_session(session_id: str, body: EndSessionBody | None = None,
 @router.post("/students/{student_id}/apps/{package_name}/grants")
 async def create_grant(student_id: str, package_name: str, body: GrantBody,
                        user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
-    return await run(current_service().grant_time(
+    result = await run(current_service().grant_time(
         student_id=student_id, package_name=package_name,
         local_date=body.localDate.isoformat(), extra_seconds=body.extraSeconds,
         reason=body.reason, actor=user.full_name,
     ))
+    await announce("tablet.policy_changed", ("student", student_id), ["grants"])
+    return result
 
 
 @router.post("/students/{student_id}/grants/{grant_id}/revoke")
 async def revoke_grant(student_id: str, grant_id: str,
                        user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
-    return await run(current_service().revoke_grant(
+    result = await run(current_service().revoke_grant(
         student_id=student_id, grant_id=grant_id, actor=user.full_name,
     ))
+    await announce("tablet.policy_changed", ("student", student_id), ["grants"])
+    return result
 
 
 @router.post("/students/{student_id}/block")
 async def block_student(student_id: str, body: BlockBody,
                         user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
-    return await run(current_service().block_student(
+    result = await run(current_service().block_student(
         student_id=student_id, until=body.until, reason=body.reason, actor=user.full_name,
     ))
+    await announce("tablet.policy_changed", ("student", student_id), ["blockedUntil"])
+    return result
 
 
 @router.post("/students/{student_id}/unblock")
 async def unblock_student(student_id: str,
                           user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
-    return await current_service().unblock_student(student_id=student_id)
+    result = await current_service().unblock_student(student_id=student_id)
+    if result.get("lifted"):
+        await announce("tablet.policy_changed", ("student", student_id), ["blockedUntil"])
+    return result
+
+
+def _id_of(result: Any) -> str | None:
+    """Profil yanıtının kimliği (`{"id"}` ya da `{"profile": {"id"}}`)."""
+    if not isinstance(result, dict):
+        return None
+    nested = result.get("profile")
+    value = result.get("id") or (nested.get("id") if isinstance(nested, dict) else None)
+    return str(value) if value else None
