@@ -1,7 +1,9 @@
 """Ders Takvimi — salt okunur ayna.
 
-BU MODÜLÜN VERİSİ YOKTUR. Haftalık zil saatleri ve gruplar Zil Sistemi'nindir;
-buradan yalnız `bell.week` yeteneği üzerinden okunur (K3/K5).
+BU MODÜLÜN VERİSİ YOKTUR. Haftalık zil saatleri, SAAT SETLERİ ve önümüzdeki
+7 günün kipi (Akademi zil planından) Zil Sistemi'nindir; buradan yalnız
+`bell.week` yeteneği üzerinden okunur (K3/K5). Eski zil grupları öğrenci
+gruplarına taşındıktan sonra `groups` boş gelir.
 
 Yazma yolu BİLEREK yoktur. "Şimdilik gizli bir düzenleme ucu dursun" demek,
 iki ekranda iki ayrı doğru kaynak yaratmak demektir — bu modülün 0.1'de
@@ -29,6 +31,8 @@ class ScheduleService:
         """Zil Sistemi'nin haftalık planı. Okunamazsa nedeni yanında gelir."""
         empty: dict[str, Any] = {
             "times": {day: [] for day in DAYS},
+            "profiles": [],
+            "days": [],
             "groups": [],
             "source": "bell",
             "available": False,
@@ -56,9 +60,14 @@ class ScheduleService:
 
         times = payload.get("times") if isinstance(payload.get("times"), dict) else {}
         groups = payload.get("groups") if isinstance(payload.get("groups"), list) else []
+        profiles = payload.get("profiles") if isinstance(payload.get("profiles"), list) else []
+        days = payload.get("days") if isinstance(payload.get("days"), list) else []
 
         return {
             "times": {day: list(times.get(day) or []) for day in DAYS},
+            # Saat setleri ve önümüzdeki 7 gün: eski zil modülü vermezse boş liste.
+            "profiles": [item for item in profiles if isinstance(item, dict)],
+            "days": [item for item in days if isinstance(item, dict)],
             "groups": list(groups),
             "settings": payload.get("settings") or {},
             "source": "bell",
