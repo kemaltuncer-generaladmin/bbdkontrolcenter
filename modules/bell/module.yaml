@@ -35,6 +35,13 @@ provides:
   - capability: bell.week
     contract: backend.service:BellService.week
     description: "Haftalık zil saatleri ve gruplar — salt okunur."
+  # Öğrenci çağırma (mobil geçit sözleşmesi §5). Sözleşme backend/announce.py.
+  - capability: bell.announce
+    contract: backend.announce:BellAnnounce
+    description: >
+      async page(text, *, cache_key=None, actor=None, request_id=None) →
+      {status: queued|disabled|tts_unavailable|failed, voiceCached, etaSeconds}.
+      Hata yükseltmez. Ses önbellekte yoksa Vertex ile anlık üretilir.
 
 consumes:
   - capability: audio
@@ -46,6 +53,11 @@ consumes:
   - capability: notify
     optional: true
     reason: "Zil çalınamadığında uyarı."
+  - capability: bbd_students.directory
+    optional: true
+    reason: >
+      Yalnız gece çağrı sesi hazırlığı (`page.prepare_nightly`, varsayılan
+      kapalı): öğrenci adları buradan okunur, tablo okunmaz (K3/K5).
 
 events:
   publishes:

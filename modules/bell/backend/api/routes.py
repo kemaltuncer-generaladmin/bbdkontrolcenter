@@ -72,6 +72,12 @@ class CallBody(BaseModel):
     groupId: str = Field(default="", max_length=64)
 
 
+class PageBody(BaseModel):
+    """Öğrenci çağırma — serbest cümle (sözleşme §5 ile aynı sınır)."""
+
+    text: str = Field(min_length=1, max_length=160)
+
+
 class PreviewBody(BaseModel):
     """Yalnız bu bilgisayardan dinleme — okulun hoparlörüne gitmez."""
 
@@ -229,6 +235,23 @@ async def call(
 ) -> dict[str, Any]:
     """Grubu çağırır: yalnız anons çalar, zil çalmaz."""
     return await service().call_group(body.groupId, actor=user.full_name)
+
+
+@router.post("/page")
+async def page(
+    body: PageBody,
+    request: Request,
+    user: CurrentUser = requires("bell.ring_now"),
+) -> dict[str, Any]:
+    """Cümleyi okulun hoparlöründen duyurur (öğrenci çağırma).
+
+    Ses önbellekte yoksa Vertex ile anlık üretilir. `X-Request-Id` verilirse
+    aynı istek ikinci kez çalınmaz. Sonuç `status` ile döner, hata yükseltmez.
+    """
+    return await service().page(
+        body.text, actor=user.full_name,
+        request_id=request.headers.get("x-request-id"),
+    )
 
 
 @router.post("/preview")

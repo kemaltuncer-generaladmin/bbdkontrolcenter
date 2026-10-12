@@ -233,7 +233,60 @@ function renderGroups() {
       'Henüz grup yok. Bir grup açtığında anons sesi bir kez üretilir; '
       + 'sonraki çağrılarda buluta çıkılmaz.'));
   }
+  card.append(pageForm());
   return card;
+}
+
+/**
+ * Öğrenci çağırma — serbest cümle. Alan ekran tazelenirken KAYBOLMASIN diye
+ * bir kez kurulur ve her çizimde aynı düğüm yerine konur.
+ */
+function pageForm() {
+  if (!nodes.pageForm) {
+    const form = h('div', 'bl-page');
+    const field = h('input', 'kit-input');
+    field.type = 'text';
+    field.maxLength = 160;
+    field.placeholder = 'Örn. Elif Kaya, lütfen danışmaya gel.';
+    field.setAttribute('aria-label', 'Anons metni');
+    const send = button('Anons yap', {
+      variant: 'primary',
+      onClick: async () => {
+        const text = field.value.trim();
+        if (!text) {
+          notify('Önce anons metnini yaz.', 'bad');
+          return;
+        }
+        const ok = await confirmSimple(nodes.view, {
+          title: 'Anons okulun hoparlöründen çalınsın mı?',
+          description: `“${text}”`,
+          confirmLabel: 'Anons yap',
+        });
+        if (!ok) return;
+        const result = await run(() => store.page(text), { reload: true });
+        if (!result) return;
+        if (result.status === 'queued') {
+          notify(result.voiceCached ? 'Anons kuyruğa alındı.'
+            : 'Ses üretildi, anons kuyruğa alındı.');
+          field.value = '';
+        } else {
+          const reasons = {
+            disabled: 'Zil sistemi kapalı; anons yapılmadı.',
+            tts_unavailable: 'Anons sesi üretilemedi.',
+            failed: 'Anons gönderilemedi.',
+          };
+          notify(`${reasons[result.status] || 'Anons yapılamadı.'} ${result.detail || ''}`.trim(),
+            'bad');
+        }
+      },
+    });
+    form.append(h('label', 'bl-label', 'Öğrenci çağır'), field, send,
+      h('span', 'bl-hint',
+        'Yazdığın cümle okulun hoparlöründen duyurulur. Ses daha önce üretilmediyse '
+        + 'birkaç saniye sürer. Hazır şablon “Metinler” bölümünde.'));
+    nodes.pageForm = form;
+  }
+  return nodes.pageForm;
 }
 
 function groupCard(group) {
@@ -639,6 +692,12 @@ function renderSound() {
     hint: 'Teneffüs türü işaretli zilin hemen arkasından çalar. '
       + 'Boş bırakırsan teneffüs zilinden sonra anons gitmez.',
   }));
+  card.append(textRow({
+    key: 'page',
+    label: 'Öğrenci çağırma şablonu',
+    hint: 'Mobil uygulamadan “Öğrenci çağır” denince kullanılır. {ad}, {soyad} ve '
+      + '{sinif} yerine öğrencinin bilgisi yazılır. Boş bırakılamaz.',
+  }));
 
   const tools = h('div', 'bl-tools');
   tools.append(h('span', 'bl-hint', `Kuyrukta ${data.queue?.queued || 0} ses.`));
@@ -833,6 +892,10 @@ export function mount(root, context) {
     render();
     // Ajan durumu ve ses kuyruğu canlı: ekran açıkken kendini tazeler.
     timer = window.setInterval(() => {
+      // YAZARKEN TAZELENMEZ: yeniden çizim yazılan metni ve imleci silerdi.
+      const active = document.activeElement;
+      if (active && nodes.view.contains(active)
+          && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return;
       refresh().catch(() => { /* geçici ağ hatası ekranı boşaltmasın */ });
     }, REFRESH_MS);
   })().catch((error) => {

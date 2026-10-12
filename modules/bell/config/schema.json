@@ -35,6 +35,16 @@
         "timeout_seconds": { "type": "number", "minimum": 1 },
         "lead_seconds": { "type": "integer", "minimum": 0, "maximum": 300 }
       }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Öğrenci çağırma (bell.announce): anlık ses üretimi ve gece hazırlığı.",
+      "properties": {
+        "tts_timeout_seconds": { "type": "number", "minimum": 1, "maximum": 120 },
+        "prepare_nightly": { "type": "boolean" },
+        "prepare_time": { "type": "string", "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$" }
+      }
     }
   }
 }
