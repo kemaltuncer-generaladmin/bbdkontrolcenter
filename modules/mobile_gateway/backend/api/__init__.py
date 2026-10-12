@@ -1,0 +1,1 @@
+"""Mobil Geçit HTTP yüzeyi."""

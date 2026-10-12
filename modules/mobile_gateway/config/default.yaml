@@ -1,0 +1,47 @@
+# Mobil Geçit varsayılanları. Kök ayardaki `modules.mobile_gateway.*` ezer.
+#
+# SIR YOKTUR: Akademi'nin servis anahtarı çekirdeğin kasasındadır (ADR 0028),
+# kantin cihaz token'ı `bbd_canteen_api`nin kasasındadır.
+
+# GET /settings/public
+institution_name: "Benim Başarı Dünyam"
+timezone: Europe/Istanbul
+
+# OTP SMS metni İSTEMCİDEN GELMEZ; buradan üretilir. Böylece servis anahtarı
+# keyfî SMS göndermek için kullanılamaz. `{code}` zorunludur.
+otp_template: "BBD Akademi giriş kodunuz: {code}. Kodu kimseyle paylaşmayın."
+
+# POST /announcements/call — `page` şablonu. Yer tutucular: {ad} {soyad} {sinif}
+call_templates:
+  page: "{ad} {soyad}, lütfen danışmaya gel."
+
+limits:
+  # Öğrenci şifresi: telefon (giriş) ya da öğrenci (doğrulama) başına
+  # `auth_window_seconds` içinde bu kadar yanlış → 423 locked.
+  auth_max_failures: 5
+  auth_window_seconds: 900
+  # Kantinin lookup-code bütçesi dakikada 30 ve tabletlerle paylaşılıyor.
+  lookup_per_minute: 10
+  sms_per_phone_per_hour: 5
+  sms_global_per_minute: 60
+  call_cooldown_seconds: 60
+
+idempotency_hours: 24
+products_cache_seconds: 300
+# Seyrek değişen veri için sunucu önbelleği (saniye). Zil haftası, Zil
+# Sistemi'nin `bell.week_changed` olayıyla da hemen bırakılır.
+bell_week_cache_seconds: 60
+# GET /groups tam liste önbelleği — yalnız `revision()` sunmayan eski grup
+# yeteneğinde geçerlidir; sunan yetenekte revizyon değişince yeniden kurulur.
+# `bbd_students.groups_changed` olayı önbelleği hemen bırakır.
+groups_cache_seconds: 60
+canteen_settings_cache_seconds: 60
+
+# Yetenek çağrısı üst süreleri (saniye). Süre dolarsa çağrı iptal edilir ve
+# 503 döner (kantin/dizin için `canteen_unavailable`). Yazma bilerek uzun:
+# yarıda kesilen yazma kantinde yine de tamamlanmış olabilir.
+timeouts:
+  read_seconds: 5
+  write_seconds: 20
+sms_log_retention_days: 90
+audit_retention_days: 365
