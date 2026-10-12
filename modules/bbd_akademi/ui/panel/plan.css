@@ -1,0 +1,71 @@
+/* Çalışma planı — önek `ak-plan-`. */
+
+/* --------------------------------------------------------- bağlantı */
+.ak-plan-link {
+  border: 0; background: none; padding: 0; font: inherit; color: #1d4ed8; cursor: pointer;
+  text-align: left; font-weight: 600;
+}
+.ak-plan-link:hover { text-decoration: underline; }
+
+/* --------------------------------------------------------- süzgeç */
+.ak-plan-student-filter { display: flex; align-items: center; }
+.ak-plan-check { font-size: 12.5px; color: var(--soft); cursor: pointer; }
+
+/* --------------------------------------------------------- ilerleme */
+.ak-plan-progress { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12.5px; }
+.ak-plan-bar { display: block; height: 6px; border-radius: 999px; background: #edf0f5; overflow: hidden; }
+.ak-plan-bar-fill { display: block; height: 100%; background: var(--good); border-radius: inherit; }
+
+/* --------------------------------------------- uyum hücresi (sayı + ton) */
+.ak-plan-heat {
+  display: inline-block; min-width: 46px; padding: 2px 6px; border-radius: 6px; text-align: center;
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 18px;
+}
+.ak-plan-heat.good { background: #dcfce7; color: var(--good); }
+.ak-plan-heat.mid { background: #fef3c7; color: var(--warn); }
+.ak-plan-heat.low { background: #fee2e2; color: var(--bad); }
+.ak-plan-heat.none { background: #f1f5f9; color: var(--soft); font-weight: 500; }
+.ak-plan-heat-col { display: flex; justify-content: center; }
+.ak-plan-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--soft); }
+.ak-plan-legend .ak-plan-heat { min-width: 38px; font-size: 11px; line-height: 16px; }
+.ak-plan-legend > span:not(.ak-plan-heat) { margin-right: 8px; }
+.ak-plan-meta { gap: 12px; }
+.ak-plan-foot { font-size: 12px; }
+.ak-plan-subjects { display: flex; gap: 4px; flex-wrap: wrap; }
+.ak-plan-subject {
+  padding: 1px 6px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ak-plan-subject.good { background: #dcfce7; color: var(--good); }
+.ak-plan-subject.mid { background: #fef3c7; color: var(--warn); }
+.ak-plan-subject.low { background: #fee2e2; color: var(--bad); }
+.ak-plan-subject.none { background: #f1f5f9; color: var(--soft); }
+
+/* --------------------------------------------------------- görev listesi */
+.ak-plan-tasks { display: flex; flex-direction: column; gap: 8px; }
+.ak-plan-tasks > .kit-btn { align-self: flex-start; }
+.ak-plan-total { font-size: 12px; color: var(--soft); }
+.ak-plan-editor {
+  border: 1px solid #c9d6f5; background: #f8faff; border-radius: 10px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.ak-plan-editor-head { font-weight: 650; font-size: 13px; }
+.ak-plan-editor-error { min-height: 14px; font-size: 12px; color: var(--bad); }
+.ak-plan-editor-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ak-plan-static { padding: 6px 0; font-weight: 600; }
+.ak-plan-num { width: 88px; }
+.ak-plan-topic { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 900px) { .ak-plan-topic { grid-template-columns: minmax(0, 1fr); } }
+
+/* --------------------------------------------------------- kaynak bölümleri */
+.ak-plan-sections { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow: auto; }
+.ak-plan-sec-group { display: flex; flex-direction: column; gap: 4px; }
+.ak-plan-sec-title { font-size: 11.5px; font-weight: 650; color: var(--soft); }
+
+/* --------------------------------------------------------- hedef */
+.ak-plan-targets { display: flex; flex-direction: column; gap: 10px; }
+.ak-plan-target-block { display: flex; flex-direction: column; gap: 5px; }
+.ak-plan-target-title { font-size: 11.5px; font-weight: 650; color: var(--soft); }
+
+/* --------------------------------------------------------- çekmece */
+.ak-plan-drawer { width: min(860px, calc(100% - 40px)); }

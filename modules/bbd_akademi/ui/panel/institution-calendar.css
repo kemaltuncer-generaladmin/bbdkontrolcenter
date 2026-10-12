@@ -1,0 +1,86 @@
+/* Kurum takvimi — önek `ak-ical-`. */
+
+/* ------------------------------------------------------------ ay görünümü */
+.ak-ical-month {
+  display: grid;
+  grid-template-columns: minmax(320px, 500px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1050px) { .ak-ical-month { grid-template-columns: minmax(0, 1fr); } }
+.ak-ical-cal { padding: 12px 14px; }
+.ak-ical-status { font-size: 12.5px; }
+.ak-ical-day { min-width: 0; }
+.ak-ical-day-title { margin: 0; font-size: 14px; font-weight: 650; }
+
+/* Ay hücresindeki rozetler: kısa ad + sayı (renk tek başına anlam taşımaz). */
+.ak-ical-marks { display: flex; flex-direction: column; align-items: center; gap: 1px; max-width: 100%; }
+.ak-ical-mark {
+  max-width: 100%;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ak-ical-more { background: #f1f5f9; color: var(--soft); }
+
+/* Tür renkleri — hücre rozeti, satır etiketi ve açıklama aynı dili konuşur. */
+.ak-ical-k-holiday { background: #e2e8f0; color: #475569; }
+.ak-ical-k-event { background: #dcfce7; color: var(--good); }
+.ak-ical-k-parent_meeting { background: #dbeafe; color: #1d4ed8; }
+.ak-ical-k-exam_day { background: #fef3c7; color: var(--warn); }
+.ak-ical-k-registration_period { background: #ede9fe; color: #6d28d9; }
+.ak-ical-k-other { background: #f1f5f9; color: var(--soft); }
+.kit-cal-legend-item.ak-ical-t-holiday { color: #475569; }
+.kit-cal-legend-item.ak-ical-t-event { color: var(--good); }
+.kit-cal-legend-item.ak-ical-t-parent_meeting { color: #1d4ed8; }
+.kit-cal-legend-item.ak-ical-t-exam_day { color: var(--warn); }
+.kit-cal-legend-item.ak-ical-t-registration_period { color: #6d28d9; }
+.kit-cal-legend-item.ak-ical-t-other { color: var(--soft); }
+
+.ak-ical-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ gün listesi */
+.ak-ical-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.ak-ical-row:hover { border-color: #cfd6e2; background: var(--tint); }
+.ak-ical-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ak-ical-link {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: #1d4ed8;
+  cursor: pointer;
+}
+.ak-ical-link:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------ ayrıntı / form */
+.ak-ical-desc { padding: 12px 16px; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+.ak-ical-check { font-size: 12.5px; cursor: pointer; }
+.ak-ical-clock { width: 72px; }
