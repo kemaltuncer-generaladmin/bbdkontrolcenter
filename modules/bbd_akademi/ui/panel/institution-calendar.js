@@ -20,6 +20,15 @@
 // değiştirmez ("ayrı düzenlenir"), bu yüzden düzenlemede mevcut ayar olduğu
 // gibi geri gönderilir ve duyuruya Duyurular bölümünden gidilir.
 //
+// ZİL (sözleşme km-ogrenci-gruplari-ve-zil.md §3.5, §8.5): kurum takvimi zil
+// sisteminin geliştirilmiş hâlidir — etkinlik günün zil kipini belirler:
+// `normal` (haftalık saatler), `off` (tatil: zil, anons ve çağrı çalmaz; tatil
+// türünde varsayılan) ya da KM'de tanımlı adlı bir saat seti; isteğe bağlı
+// "dersleri iptal et". Saat setleri KM Zil Sistemi'nden okunur
+// (`GET /api/bell/state` → `profiles`; yoksa yalnız normal/tatil). Alan
+// Akademi sözleşmesine henüz girmedi: `calendarEventBell` şalteri kapalıyken
+// form alanı devre dışı görünür ve gövdeye EKLENMEZ (bell-plan.js → withBell).
+//
 // Derin bağlantı: `{institutionEventId}`, `{date}` (o günün ayı açılır, gün seçilir).
 
 import { h, loadStyles, longDate } from '../../ui-kit/kit.js';
@@ -27,6 +36,7 @@ import { monthCalendar } from '../../ui-kit/calendar.js';
 import { dateField, dateRange } from '../../ui-kit/datefield.js';
 import { alertBox, card, hintBox, tabBar } from '../../ui-kit/layout.js';
 import { AkademiError } from './api.js';
+import { bellChoices, bellText, choiceFromBell, defaultBellChoice, withBell } from './bell-plan.js';
 import {
   actionButton, addDays, errorBox, fmtDate, fmtDateTime, formDialog, istanbulStamp, kv, loader, multiChips,
   num, openDrawer, optionsOf, pagedList, sectionHead, selectBox, studentPicker, todayIst, toolbar,
@@ -50,6 +60,7 @@ const REMINDERS = [[0, 'Başlarken'], [60, '1 saat önce'], [180, '3 saat önce'
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HOLIDAY_RULE = 'Tatil günlerinde yoklama beklenmez; plan önerisi ve plan ataması o günlere görev koymaz, '
   + 'o güne düşen koç görevleri atamanın tatil kuralına göre kayar ya da atlanır.';
+const BELL_PROFILES_TTL = 5 * 60_000;
 
 function reminderText(minutes) {
   const known = REMINDERS.find(([value]) => value === minutes);
@@ -121,6 +132,37 @@ function loadNames(app) {
   }));
 }
 
+/**
+ * Zil alanı bağlamı: şalter + KM saat setleri (form açılınca bir kez, 5 dk
+ * önbellek). Şalter kapalıyken istek atılmaz. Sonuç `null` = Zil Sistemi'ne
+ * ulaşılamadı / izin yok / saat seti desteği yok → yalnız normal/tatil.
+ */
+function bellContext(app) {
+  const enabled = app.feature('calendarEventBell');
+  let request = null;
+  let list = null;
+  let at = 0;
+  return {
+    enabled,
+    /** Son okunan saat setleri (ayrıntıda ad çözmek için; istek atmaz). */
+    known: () => list || [],
+    profiles() {
+      if (!enabled) return Promise.resolve(null);
+      if (request && Date.now() - at < BELL_PROFILES_TTL) return request;
+      at = Date.now();
+      request = app.kmGet('/api/bell/state')
+        .then((data) => (Array.isArray(data?.profiles) ? data.profiles : null))
+        .catch(() => null)
+        .then((found) => {
+          list = found;
+          if (found === null) request = null;   // bir dahaki form yeniden dener
+          return found;
+        });
+      return request;
+    },
+  };
+}
+
 // =================================================================== bölüm
 
 export function section(app) {
@@ -136,6 +178,7 @@ export function section(app) {
     if (!lookup) lookup = loadNames(app);
     return lookup;
   };
+  const bell = bellContext(app);
 
   const add = actionButton(app, 'admin_createCalendarEvent', 'Etkinlik ekle', { variant: 'primary',
     onClick: () => create(selected || todayIst()) });
@@ -339,7 +382,7 @@ export function section(app) {
   }
 
   async function create(day) {
-    const saved = await editEvent(app, null, { day, ready });
+    const saved = await editEvent(app, null, { day, ready, bell });
     if (saved) {
       app.toast(saved.announcementId ? `“${saved.title}” eklendi; bağlı duyuru da oluşturuldu.`
         : `“${saved.title}” takvime eklendi.`, 'good');
@@ -348,7 +391,7 @@ export function section(app) {
   }
 
   function openEvent(id) {
-    eventDrawer(app, id, { ready, onChange: changed });
+    eventDrawer(app, id, { ready, bell, onChange: changed });
   }
 
   return {
@@ -382,7 +425,7 @@ export function section(app) {
 
 // ================================================================ ayrıntı
 
-function eventDrawer(app, id, { ready, onChange }) {
+function eventDrawer(app, id, { ready, bell, onChange }) {
   const panel = openDrawer(app, { title: 'Takvim kaydı', subtitle: 'Kurum takvimi' });
   const view = loader(() => Promise.all([app.api.get(`/v1/admin/calendar/events/${id}`), ready()]),
     ([event, loaded]) => {
@@ -394,7 +437,7 @@ function eventDrawer(app, id, { ready, onChange }) {
       const tools = h('div', 'ak-inline');
       tools.append(
         actionButton(app, 'admin_updateCalendarEvent', 'Düzenle', { variant: 'primary', onClick: async () => {
-          const saved = await editEvent(app, event, { ready });
+          const saved = await editEvent(app, event, { ready, bell });
           if (saved) { app.toast('Takvim kaydı güncellendi.', 'good'); onChange?.(); view.reload(); }
         } }),
         actionButton(app, 'admin_deleteCalendarEvent', 'Sil', { variant: 'ghost', onClick: async () => {
@@ -423,6 +466,7 @@ function eventDrawer(app, id, { ready, onChange }) {
         ['Yer', event.location || '—'],
         ['Hedef kitle', audienceText(event.audience, loaded.names)],
         ['Ulaşılan öğrenci', num(event.studentReach)],
+        event.bell ? ['Zil', bellText(event.bell, bell?.known())] : null,
         ['Yoklama', event.affectsAttendance ? 'Bu günlerde yoklama beklenmez' : 'Etkilenmez'],
         ['Çalışma planı', event.affectsPlanning ? 'Plan önerisi ve plan ataması bu günlere görev koymaz' : 'Etkilenmez'],
         ['Hatırlatma', (event.reminders || []).length
@@ -462,8 +506,9 @@ async function removeEvent(app, event) {
 // ======================================================== oluştur / düzenle
 
 /** Etkinlik penceresi. `current` mevcut kayıt ya da null. Sonuç kaydedilen etkinlik. */
-async function editEvent(app, current, { day = todayIst(), ready } = {}) {
-  const { classes, groups } = await ready();
+async function editEvent(app, current, { day = todayIst(), ready, bell = null } = {}) {
+  const bellEnabled = Boolean(bell?.enabled);
+  const [{ classes, groups }, profiles] = await Promise.all([ready(), bell ? bell.profiles() : null]);
   const audience = current?.audience || { recipients: 'all', scope: 'tenant' };
   const chosenStudents = new Map();
   // Önceki öğrenci hedefinin adları yükte yok (satır başına istek atılmaz): toplu çip.
@@ -479,11 +524,14 @@ async function editEvent(app, current, { day = todayIst(), ready } = {}) {
     classGroupIds: audience.classGroupIds || [], studentGroupIds: audience.studentGroupIds || [],
     examId: current.examId || '',
     reminders: (current.reminders || []).map((item) => String(item.minutesBefore)),
+    bell: { choice: choiceFromBell(current.bell, current.kind), cancel: Boolean(current.bell?.cancelSessions),
+      touched: Boolean(current.bell?.mode) },
   } : {
     kind: 'event', title: '', description: '', startDate: day, endDate: '', allDay: true, startTime: '',
     endTime: '', location: '', recipients: 'all', scope: 'tenant', notify: true, classGroupIds: [],
     studentGroupIds: [], examId: '', reminders: ['1440'],
     announce: { enabled: false, pinned: false, day: '', clock: '09:00' },
+    bell: { choice: defaultBellChoice('event'), cancel: false, touched: false },
   };
 
   const clockRule = (raw, draft) => {
@@ -601,6 +649,61 @@ async function editEvent(app, current, { day = todayIst(), ready } = {}) {
     return chips.node;
   };
 
+  /**
+   * Zil: kip seçimi + "dersleri iptal et". Kullanıcı seçime dokunmadıkça tür
+   * değişince önerilen kip izler (tatil → zil çalmaz). Şalter kapalıyken alan
+   * görünür ama devre dışıdır ve gövdeye eklenmez.
+   */
+  const bellField = (draft, set) => {
+    const state = { ...draft.bell };
+    const wrap = h('div', 'ak-stack');
+    const row = h('div', 'ak-inline');
+    const select = h('select', 'kit-select');
+    select.setAttribute('aria-label', 'Zil');
+    const fill = () => {
+      select.replaceChildren();
+      for (const option of bellChoices(profiles, state.choice.startsWith('profile:') ? state.choice : '')) {
+        const item = h('option', '', option.label);
+        item.value = option.value;
+        select.append(item);
+      }
+      select.value = state.choice;
+    };
+    select.addEventListener('change', () => { state.choice = select.value; state.touched = true; set({ ...state }); });
+    const cancelBox = h('label', 'ak-inline ak-ical-check');
+    const cancel = h('input', 'kit-check');
+    cancel.type = 'checkbox';
+    cancel.checked = Boolean(state.cancel);
+    cancel.addEventListener('change', () => { state.cancel = cancel.checked; set({ ...state }); });
+    cancelBox.append(cancel, h('span', '', 'Dersleri iptal et (o günlerin oturumları toplu iptal)'));
+    row.append(select, cancelBox);
+    wrap.append(row);
+    if (!bellEnabled) {
+      select.disabled = true;
+      cancel.disabled = true;
+      wrap.append(h('span', 'kit-field-hint', 'Akademi bu alanı henüz desteklemiyor; seçim kaydedilmez. '
+        + 'O güne kadar tatil ve özel günlerde zil KM Zil Sistemi\'nden yönetilir.'));
+    } else if (profiles === null) {
+      wrap.append(h('span', 'kit-field-hint', 'KM Zil Sistemi\'nden saat setleri alınamadı; yalnız normal ve tatil '
+        + 'seçilebilir. Saat seti eklemek için Zil Sistemi ekranını kullanın.'));
+    } else {
+      wrap.append(h('span', 'kit-field-hint', 'Tatil: o gün zil, zil sonrası anons ve oturum çağrısı çalmaz. '
+        + 'Saat seti: KM Zil Sistemi\'nde tanımlı adlı saatler çalar.'));
+    }
+    let kind = draft.kind;
+    const update = (next) => {
+      if (next.kind === kind) return;
+      kind = next.kind;
+      if (state.touched) return;
+      state.choice = defaultBellChoice(kind);
+      fill();
+      set({ ...state });
+    };
+    fill();
+    set({ ...state });
+    return { node: wrap, update };
+  };
+
   const announceField = (draft, set) => {
     const wrap = h('div', 'ak-stack');
     if (current) {
@@ -679,6 +782,7 @@ async function editEvent(app, current, { day = todayIst(), ready } = {}) {
         { key: 'examId', label: 'Bağlı deneme', type: 'custom', render: examPicker, wide: true },
         { key: 'reminders', label: 'Hatırlatma', type: 'custom', render: reminderField, wide: true,
           hint: 'Ajanda bildirimi olarak gider; tüm gün kayıtta günün 09:00\'una göre hesaplanır.' },
+        { key: 'bell', label: 'Zil', type: 'custom', render: bellField, wide: true },
         { key: 'announce', label: 'Duyuru', type: 'custom', render: announceField, wide: true },
       ],
       submitLabel: current ? 'Kaydet' : 'Takvime ekle',
@@ -701,7 +805,7 @@ async function editEvent(app, current, { day = todayIst(), ready } = {}) {
           }
           announce = { enabled: Boolean(state.enabled), pinned: Boolean(state.enabled && state.pinned), publishAt };
         }
-        const body = {
+        const body = withBell({
           kind: draft.kind,
           title: String(draft.title || '').trim(),
           description: String(draft.description || '').trim() || null,
@@ -723,7 +827,7 @@ async function editEvent(app, current, { day = todayIst(), ready } = {}) {
             .map((minutesBefore) => ({ minutesBefore })),
           announce,
           notify: Boolean(draft.notify),
-        };
+        }, { enabled: bellEnabled, choice: draft.bell?.choice, cancelSessions: draft.bell?.cancel });
         return current ? app.api.put(`/v1/admin/calendar/events/${current.id}`, body)
           : app.api.post('/v1/admin/calendar/events', body, { key });
       },
