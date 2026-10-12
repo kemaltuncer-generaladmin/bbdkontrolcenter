@@ -37,6 +37,15 @@ izinlerini onu `default_roles` ile öneren modüller verir.
 |---|---|---|
 | `mobile_service` | Mobil Servis | Mobil uygulama sunucusu (BBD Akademi API). İzinleri modül manifestlerinden gelir (ör. mobil geçit modülünün erişim izni). |
 
+**`admin` bütün izinleri taşır — servis rolüne önerilenler dahil.** Bir modül
+bir izni `mobile_service`e öneriyorsa `default_roles` listesine `admin`i de
+yazar (ör. mobil geçit: `mobile_gateway.access` → `[admin, mobile_service]`).
+Bu, "admin tam yetkidir" kuralının sonucudur ve
+`tests/core/test_rol_bld_staff.py` bunu sınar. Yönetici bu izinle kendi
+oturumundan da geçidin uçlarını çağırabilir; dış uygulama ise yalnız servis
+anahtarıyla bağlanır. Servis rolüne başka bir kişi rolünün izni sızdırılmaz:
+`mobile_service` yalnız kendisine açıkça önerilen anahtarları alır.
+
 Servis sorumlusu için izin denetimi kişininkiyle AYNIDIR: `has_permission`.
 Yıkıcı işlemlerin PIN teyidi servis sorumlusunda her zaman reddedilir — PIN'i
 yoktur. `X-KM-On-Behalf-Of` başlığı yetki vermez; yalnız denetim izine yazılır.

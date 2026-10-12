@@ -69,7 +69,8 @@ PIN girişinin kovasıyla karışmaz. `last_used_at` en çok dakikada bir yazıl
 **7. Yeni ön tanımlı rol: `mobile_service`.** Kişi rolü değildir; ayrı listede
 durur (`BUILTIN_SERVICE_ROLES`). Çekirdek rolün yalnız VARLIĞINI garanti eder;
 izinlerini onu `default_roles` ile öneren modüller verir. Çekirdekte modül adı
-geçmez (K1).
+geçmez (K1). `admin` bütün izinleri taşıdığı için böyle bir izin `admin`e de
+önerilir (`default_roles: [admin, mobile_service]`; bkz. docs/permissions.md).
 
 **8. Anahtar yönetimi yalnız komut satırından.** `scripts/service-key.py
 create|list|revoke`. HTTP ucu yoktur: süresiz bir giriş kapısı açmanın yolu
