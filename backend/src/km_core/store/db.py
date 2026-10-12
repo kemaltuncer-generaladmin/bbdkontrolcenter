@@ -246,8 +246,10 @@ class Store:
             return rows
 
     async def _fetch_all(self, sql: str, params: Sequence[Any]) -> list[dict[str, Any]]:
-        async with self.db.execute(sql, params) as cursor:
-            rows = await cursor.fetchall()
+        # TEK İŞ PARÇACIĞI GEÇİŞİ: `execute` + `fetchall` + imleç kapatma üç
+        # ayrı geçişti (her biri olay döngüsünden aiosqlite iş parçacığına gidip
+        # gelir); `execute_fetchall` üçünü bir kerede yapar (ADR 0029 ölçümü).
+        rows = await self.db.execute_fetchall(sql, params)
         return [dict(row) for row in rows]
 
     async def fetch_one(self, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
@@ -261,9 +263,8 @@ class Store:
             return row
 
     async def _fetch_one(self, sql: str, params: Sequence[Any]) -> dict[str, Any] | None:
-        async with self.db.execute(sql, params) as cursor:
-            row = await cursor.fetchone()
-        return dict(row) if row is not None else None
+        rows = list(await self.db.execute_fetchall(sql, params))
+        return dict(rows[0]) if rows else None
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
         if active_for(self) is not None:
