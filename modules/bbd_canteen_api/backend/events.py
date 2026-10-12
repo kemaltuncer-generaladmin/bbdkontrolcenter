@@ -21,8 +21,9 @@ outbox'una karşılığı (köken `canteen`, `causationId = "CNT-<id>"`):
     (bilinmeyen tür)          → kutuya yazılır, yok sayılır (ileri uyum)
 
 YANKI BASTIRMA (§6.2): KM'nin kantine az önce (2 sn) yazdığı öğrenci / kontrol
-alanları kantinden olay olarak dönerse yeni KM olayı üretilmez (`canteen.api`
-istemcisinin yazma belleği). Bakiye yankısı yoktur (KM bakiye yazmaz).
+alanları ve açtığı ödeme talebi (PENDING) kantinden olay olarak dönerse yeni KM
+olayı üretilmez (`canteen.api` istemcisinin yazma belleği) — yazan (KM ekranı
+ya da geçit) olayını zaten yazdı. Bakiye yankısı yoktur (KM bakiye yazmaz).
 
 Öğrenci / kontrol olayında öğrenci dizininin önbelleği HEMEN bırakılır
 (`bbd_students.sync.invalidate`). Kantinden olay gelmesi kantinin ayakta
@@ -161,6 +162,9 @@ class CanteenEvents:
         if kind == "payment_request.changed" and opaque:
             data = {"ref": str(payload.get("ref") or "")[:64],
                     "status": str(payload.get("status") or "").upper()[:16]}
+            if data["status"] == "PENDING" and self._echo(opaque, "payment_request",
+                                                          [data["ref"]]):
+                return await self._mark_only(item)
             return await self._mark_and_emit(item, "canteen.payment_request_changed", opaque,
                                              ["paymentRequests"], data, causation)
 

@@ -240,12 +240,13 @@ async def test_kapanista_tampon_bosalir(rig: Rig) -> None:
 
 async def test_yanki_yeni_olay_uretmez(rig: Rig) -> None:
     events, outbox, students, canteen = rig
-    canteen.recent = {("STU-1", "controls"), ("STU-1", "student")}
+    canteen.recent = {("STU-1", "controls"), ("STU-1", "student"), ("STU-1", "payment_request")}
     result = await events.receive([
         item(30, "student.controls_changed", fields=["isBlocked"]),
         item(31, "student.upserted", fields=["displayName"], created=False),
+        item(32, "payment_request.changed", ref="PR-5", status="PENDING"),
     ])
-    assert result["received"] == 2
+    assert result["received"] == 3
     assert await outbox.read_after(0) == [] and students.upserts == []
 
 
