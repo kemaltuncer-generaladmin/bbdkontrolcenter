@@ -354,6 +354,9 @@ class FakeTabletControl:
                                      "actor": actor}))
         if student_id == DENIZ:
             raise TabletCapabilityError("kantin", reason="canteen_unavailable")
+        if not package_name:  # gerçek yetenek ek süreyi uygulama bazında verir
+            raise TabletCapabilityError("Ek süre uygulama bazındadır; uygulama seçilmeli.",
+                                        reason="validation_error")
         if student_id not in (ELIF, CAN):
             raise TabletCapabilityError("yok", reason="student_not_found")
         return 55

@@ -108,7 +108,7 @@ class Reply:
     headers: dict[str, str] = field(default_factory=dict)
 
 
-def clean_header(value: str | None, limit: int = 200) -> str:
+def clean_header(value: str | None, limit: int = 200, *, decode: bool = True) -> str:
     """Denetim izine giden başlık: çözülür, kontrol karakteri ayıklanır, kısaltılır.
 
     HTTP başlığı ASCII'dir; "Ayşe Yılmaz" gibi bir ad ya yüzde kodlu UTF-8
@@ -116,12 +116,13 @@ def clean_header(value: str | None, limit: int = 200) -> str:
     diye okunur. İkisi de burada düz metne döner.
     """
     text = str(value or "")
-    try:
-        text = text.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-    if "%" in text:
-        text = unquote(text)
+    if decode:
+        try:
+            text = text.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+        if "%" in text:
+            text = unquote(text)
     return _CONTROL.sub("", text).strip()[:limit]
 
 
@@ -326,7 +327,8 @@ class GatewayService:
                                     details=failure.details)
             return upstream_error("Bağlı sistem isteği reddetti.", reason=failure.reason)
         if failure.kind == "invalid":
-            return validation("Gönderilen veri bağlı sistem tarafından reddedildi.")
+            return validation(failure.message
+                              or "Gönderilen veri bağlı sistem tarafından reddedildi.")
         if failure.kind == "conflict":
             return GatewayError(409, "conflict", "İşlem kaydın şu anki durumuyla çelişiyor.")
         # Dizin ve tablet yetenekleri de kantine dayanır; kök neden kantinse öyle söylenir.

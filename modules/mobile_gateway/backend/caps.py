@@ -59,7 +59,8 @@ class UpstreamFailure(Exception):
     """
 
     def __init__(self, source: str, kind: str, *, status: int | None = None,
-                 reason: str | None = None, details: dict[str, int] | None = None) -> None:
+                 reason: str | None = None, details: dict[str, int] | None = None,
+                 message: str | None = None) -> None:
         super().__init__(f"{source}:{kind}:{reason or status or ''}")
         self.source = source
         self.kind = kind
@@ -67,6 +68,9 @@ class UpstreamFailure(Exception):
         self.reason = reason
         # Kantin `exceeds_debt` gibi redlerde sınırı bildirir: {balance, maxAmount}.
         self.details = details
+        # Yalnız KM içi yeteneklerin (tablet) Türkçe doğrulama metni; kantinin
+        # metni taşınmaz (gönderilen değeri içerebilir).
+        self.message = message
 
 
 async def settle(value: Any) -> Any:
@@ -175,7 +179,8 @@ def module_failure(source: str, error: BaseException) -> UpstreamFailure:
     if code is not None and code.endswith("_not_found"):
         return UpstreamFailure(source, "not_found", reason=code)
     if code == "validation_error":
-        return UpstreamFailure(source, "invalid", reason=code)
+        text = " ".join(str(error).split())[:200] or None
+        return UpstreamFailure(source, "invalid", reason=code, message=text)
     if code == "canteen_unavailable" or "Unavailable" in name:
         return UpstreamFailure(source, "unavailable", reason="canteen_unavailable")
     if "NotFound" in name or isinstance(error, LookupError):

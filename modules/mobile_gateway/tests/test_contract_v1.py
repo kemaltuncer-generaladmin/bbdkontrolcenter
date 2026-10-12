@@ -21,7 +21,6 @@ import httpx
 import jsonschema
 import pytest
 import yaml
-from conftest import MANIFEST, MODULE_ROOT, Clock, World
 from mobile_gateway_fakes import (
     CAN,
     CODES,
@@ -34,6 +33,13 @@ from mobile_gateway_fakes import (
     RecordingLog,
 )
 from modules.mobile_gateway.backend.api import routes
+
+# `conftest`ten import EDİLMEZ: başka modüllerin `conftest`i aynı adla
+# yüklüyse yanlış dosya gelir. Gerekenler burada yeniden okunur.
+MODULE_ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = yaml.safe_load((MODULE_ROOT / "module.yaml").read_text(encoding="utf-8"))
+World = Any  # conftest.World — taklitler ve registry
+Clock = Any  # conftest.Clock — oynatılabilir saat
 
 ACCESS = "mobile_gateway.access"
 
@@ -767,10 +773,15 @@ async def test_tablet_controls(client: httpx.AsyncClient, world: World, store: A
     expect_error(await client.post(f"/students/{ELIF}/tablet/unblock", json={}),
                  422, "validation_error")
     expect_error(await client.post("/students/STU-yok/tablet/grant",
-                                   json={"extraSeconds": 60, "reason": "Deneme"}),
+                                   json={"packageName": "com.x", "extraSeconds": 60, "reason": "Deneme"}),
                  404, "student_not_found")
+    package = expect_error(await client.post(f"/students/{ELIF}/tablet/grant",
+                                             json={"packageName": None, "extraSeconds": 60,
+                                                   "reason": "Deneme"}),
+                           422, "validation_error")
+    assert package["message"] == "Ek süre uygulama bazındadır; uygulama seçilmeli."
     expect_error(await client.post(f"/students/{DENIZ}/tablet/grant",
-                                   json={"extraSeconds": 60, "reason": "Deneme"}),
+                                   json={"packageName": "com.x", "extraSeconds": 60, "reason": "Deneme"}),
                  503, "canteen_unavailable")
     actions = [row["action"] for row in await table(store, "audit")]
     assert actions[:5] == ["tablet.grant", "tablet.block", "tablet.block", "tablet.unblock",

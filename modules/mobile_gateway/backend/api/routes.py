@@ -46,12 +46,15 @@ def current_service() -> GatewayService:
 
 
 def caller_of(request: Request, user: CurrentUser) -> Caller:
-    # ADR 0028 CurrentUser'a `on_behalf_of` ekler; yoksa başlık okunur.
-    on_behalf = getattr(user, "on_behalf_of", None) or request.headers.get("X-KM-On-Behalf-Of")
+    # ADR 0028 çekirdeği başlığı çözüp `CurrentUser.on_behalf_of`a koyar; o
+    # varsa yeniden çözülmez. Yoksa (kişi oturumu, eski çekirdek) başlık okunur.
+    decoded = getattr(user, "on_behalf_of", None)
+    on_behalf = clean_header(decoded, decode=False) if decoded \
+        else clean_header(request.headers.get("X-KM-On-Behalf-Of"))
     return Caller(
         user_id=str(user.id),
         name=user.full_name or str(user.id),
-        on_behalf_of=clean_header(on_behalf),
+        on_behalf_of=on_behalf,
         request_id=clean_header(request.headers.get("X-Request-Id"), 100),
     )
 
