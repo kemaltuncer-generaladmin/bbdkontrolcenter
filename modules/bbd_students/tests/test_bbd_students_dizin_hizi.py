@@ -175,3 +175,20 @@ async def test_as_of_kantin_listesinin_okundugu_an(store: CountingStore) -> None
     assert before <= as_of <= datetime.now(UTC)
     # Önbellekten gelen ikinci yanıt aynı anı söyler (liste daha eski olabilir).
     assert (await directory.list())["asOf"] == result["asOf"]
+
+
+async def test_revision_ayni_goruntude_sabit_yeniden_kurulunca_artar(
+        store: CountingStore) -> None:
+    directory = StudentDirectory(canteen=okul(3), store=store, log=FakeLog())
+    first = await directory.list()
+    assert isinstance(first["revision"], int)
+    # Aynı anlık görüntü: aynı sürüm (since'li çağrı da aynı görüntüden).
+    assert (await directory.list())["revision"] == first["revision"]
+    assert (await directory.list(datetime(2020, 1, 1, tzinfo=UTC)))["revision"] \
+        == first["revision"]
+    # Profil yazıldı: kantin listesi geçerli, görüntü yeniden kurulur → yeni sürüm.
+    directory.invalidate(canteen=False)
+    second = await directory.list()
+    assert second["revision"] > first["revision"]
+    directory.invalidate()
+    assert (await directory.list())["revision"] > second["revision"]

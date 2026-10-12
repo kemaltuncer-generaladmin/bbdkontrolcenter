@@ -6,7 +6,8 @@ sınıf, okul no, öğrenci telefonu, veli 2, seviye/alan/hedef sınav) birleşt
 sözleşmenin öğrenci nesnesini (`StudentRecord`) üretir. Başka modüller onu
 registry üzerinden çözer (K3); tabloyu okumazlar (K5).
 
-    list(since=None)      → {"students": [StudentRecord], "classes": [str], "complete": bool}
+    list(since=None)      → {"students": [StudentRecord], "classes": [str], "complete": bool,
+                             "asOf": iso, "revision": int}
     get(student_id)       → StudentRecord | None
     find_by_phone(phone10)→ [StudentRecord]
     card_qr_text(id)      → str   (kartta basılı v1 QR'ın aynısı; anahtar dönmez)
@@ -25,7 +26,10 @@ ne kantine ne veritabanına gider. Profil yazıldığında ya da kantine öğren
 yazıldığında `invalidate()` çağrılır (Öğrenci Yönetimi servisi çağırır).
 `list` sonucu ayrıca `asOf` taşır: kantin listesinin okunduğu an. Bir sonraki
 `since` için güvenli imleç budur (`generatedAt` "şimdi"dir, liste daha eski
-olabilir).
+olabilir). `revision` da taşır: anlık görüntünün süreç içi sürümü. Aynı
+`revision` aynı veridir; görüntü yeniden kurulunca (kantin listesi tazelendi,
+profil yazıldı) artar. Tüketici (mobil geçit) kendi kurduğu yanıtı bu sayı
+değişmedikçe yeniden kurmaz.
 
 StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
 (`accessCode` asla):
@@ -167,12 +171,14 @@ def _class_key(name: str) -> tuple[int, str]:
 class _Snapshot:
     """Bir kantin listesinden BİR KEZ kurulan dizin: kayıtlar, damgalar, dizinler."""
 
-    __slots__ = ("as_of", "by_id", "by_phone", "classes", "records", "rows", "stamps")
+    __slots__ = ("as_of", "by_id", "by_phone", "classes", "records", "revision", "rows",
+                 "stamps")
 
     def __init__(self, rows: Records, profiles: dict[str, dict[str, Any]],
-                 as_of: datetime) -> None:
+                 as_of: datetime, revision: int) -> None:
         self.rows = rows
         self.as_of = as_of
+        self.revision = revision
         self.records: Records = [
             student_record(row, profiles.get(str(row.get("id") or "")))
             for row in rows
@@ -215,6 +221,8 @@ class StudentDirectory:
         #: Kantin listesinin okunduğu duvar saati (`asOf`).
         self._cache_at: datetime | None = None
         self._snapshot: _Snapshot | None = None
+        #: Kurulan son anlık görüntünün sürümü (`list` → `revision`).
+        self._revision = 0
         self._lock = asyncio.Lock()
 
     def invalidate(self, *, canteen: bool = True) -> None:
@@ -258,7 +266,8 @@ class StudentDirectory:
         if snapshot is not None and snapshot.rows is rows:
             return snapshot
         profiles = await self._profiles()
-        snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC))
+        self._revision += 1
+        snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC), self._revision)
         if self._cache is not None and self._cache[1] is rows:
             self._snapshot = snapshot
         return snapshot
@@ -279,7 +288,7 @@ class StudentDirectory:
                 if stamp is not None and stamp > threshold
             ]
         return {"students": records, "classes": list(snapshot.classes), "complete": True,
-                "asOf": _iso(snapshot.as_of)}
+                "asOf": _iso(snapshot.as_of), "revision": snapshot.revision}
 
     async def get(self, student_id: str) -> dict[str, Any] | None:
         wanted = str(student_id or "").strip()
