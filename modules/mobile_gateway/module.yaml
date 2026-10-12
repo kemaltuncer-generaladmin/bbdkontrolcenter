@@ -35,6 +35,8 @@ depends: [bbd_canteen_api, bbd_students]
 provides: []
 
 consumes:
+  - capability: secrets
+    reason: "İdempotensi özetinin HMAC anahtarı kasada durur; gövdedeki şifre/OTP özetten geri bulunamasın (K8)."
   - capability: canteen.api
     reason: "Kantin bakiyesi, işlemler, veli kontrolleri, ödeme talepleri, nakit tahsilat, öğrenci şifresi doğrulama ve OTP SMS gönderimi kantindedir (K3)."
   - capability: bbd_students.directory

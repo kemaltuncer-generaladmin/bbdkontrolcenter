@@ -22,6 +22,7 @@ talebinde 409, tahsilatta 422).
 from __future__ import annotations
 
 import inspect
+import secrets
 from collections.abc import Callable
 from typing import Any
 
@@ -31,6 +32,10 @@ TABLET_READ = "bbd_tablet.read"
 TABLET_CONTROL = "bbd_tablet.control"
 BELL_WEEK = "bell.week"
 BELL_ANNOUNCE = "bell.announce"
+SECRETS = "secrets"
+
+#: İdempotensi özetinin HMAC anahtarı (kasada; ilk kullanımda üretilir).
+PEPPER_KEY = "mobile_gateway.idempotency_pepper"
 
 #: Kantin tahsilat raporunun liste taşıyabildiği anahtarlar (sürüme göre değişti).
 _LIST_KEYS = ("data", "items", "entries", "collections", "rows", "payments", "notifications")
@@ -181,6 +186,24 @@ class Capabilities:
             raise
         except Exception as error:  # noqa: BLE001 — başka modül (K7)
             raise module_failure(source, error) from None
+
+    # ---------------------------------------------------------------- secrets
+
+    async def idempotency_pepper(self) -> str:
+        """İdempotensi özetinin anahtarı. Yoksa üretilip kasaya yazılır.
+
+        Gövde öğrenci şifresi ya da OTP taşıyabilir; 6 haneli bir kodun düz
+        sha256'sı tablodan geri bulunabilirdi. Anahtarlı özet bunu kapatır.
+        """
+        vault = self._get(SECRETS)
+        try:
+            value = await settle(vault.get(PEPPER_KEY))
+            if not value:
+                value = secrets.token_hex(32)
+                await settle(vault.set(PEPPER_KEY, value))
+        except Exception as error:  # noqa: BLE001 — platform yeteneği (K7)
+            raise module_failure("secrets", error) from None
+        return str(value)
 
     # ---------------------------------------------------- bbd_students.directory
 
