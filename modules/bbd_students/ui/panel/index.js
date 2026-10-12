@@ -18,6 +18,7 @@ import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
 import { confirmSimple } from '../../ui-kit/kit.js';
 import { mountControls } from './canteen.js';
+import { mountGroups, mountStudentGroups } from './groups.js';
 import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, describe, fillFromSuggestion, parseChoice,
   parseGrade, suggestedExam, trackAllowed,
@@ -28,6 +29,8 @@ let capabilityOf = null;  // başka modülün arayüz yeteneği (K3); yoksa null
 let permissions = null;   // null = okunamadı; karar backend'de (K9)
 let controlsView = null;  // veli kantin kontrolleri bölümü
 let payCard = null;       // bbd_payment_request.student_card
+let groupsView = null;    // "Gruplar" sekmesi (ilk açılışta kurulur)
+let studentGroups = null; // öğrenci kartındaki "Gruplar" bölümü
 let mountedFor = null;    // bölümlerin çizildiği öğrenci
 let students = [];
 let selectedId = null;
@@ -35,7 +38,7 @@ let original = null;      // seçili öğrencinin sunucudan gelen hâli
 let draft = null;         // ekranda düzenlenen hâli
 let connected = false;
 let filters = { text: '', className: '', flag: '' };
-let mode = 'single';      // 'single' | 'bulk'
+let mode = 'single';      // 'single' | 'bulk' | 'groups'
 let bulkPicker = null;
 let bulkChain = null;
 const nodes = {};
@@ -294,9 +297,22 @@ function setMode(next) {
   mode = next;
   nodes.split.hidden = mode !== 'single';
   nodes.bulk.hidden = mode !== 'bulk';
+  nodes.groups.hidden = mode !== 'groups';
+  nodes.bar.hidden = mode === 'groups';
   nodes.modeSingle.classList.toggle('st-mode-active', mode === 'single');
   nodes.modeBulk.classList.toggle('st-mode-active', mode === 'bulk');
+  nodes.modeGroups.classList.toggle('st-mode-active', mode === 'groups');
   if (mode === 'bulk') syncBulkPicker();
+  if (mode === 'groups') {
+    // Sekme ilk açılışta kurulur; sonra her açılışta listesi tazelenir.
+    if (groupsView === null) {
+      groupsView = mountGroups(nodes.groups, {
+        api: apiCall, can, students: () => students, dialogRoot: nodes.root, toast,
+      });
+    } else {
+      groupsView.reload();
+    }
+  }
 }
 
 /**
@@ -703,6 +719,10 @@ function mountSections(student) {
   mountedFor = student.kantinId;
   controlsView?.destroy();
   payCard?.destroy();
+  studentGroups?.destroy();
+  studentGroups = mountStudentGroups(nodes.studentGroups, {
+    api: apiCall, studentId: student.kantinId,
+  });
 
   controlsView = mountControls(nodes.controls, {
     api: apiCall,
@@ -808,6 +828,16 @@ function buildDetail() {
   school.append(field('Not', 'note', { type: 'textarea', maxLength: 500, wide: true }));
   body.append(school);
 
+  // Gruplar — tarihli üyelik, geçmiş dahil. Düzenleme "Gruplar" sekmesinde.
+  const groupCard = h('section', 'st-card');
+  groupCard.append(h('h4', null, 'Gruplar'));
+  groupCard.append(h('p', 'st-hint',
+    'Öğrencinin bütün grup üyelikleri (geçmiş dahil). Eklemek, çıkarmak ve taşımak '
+    + 'için üstteki “Gruplar” sekmesi.'));
+  nodes.studentGroups = h('div', 'gr-student');
+  groupCard.append(nodes.studentGroups);
+  body.append(groupCard);
+
   // Veli kantin kontrolleri — kantinde durur, satışta orada uygulanır.
   const controls = h('section', 'st-card');
   controls.append(h('h4', null, 'Veli kantin kontrolleri'));
@@ -877,15 +907,28 @@ function buildDetail() {
 
 // --------------------------------------------------------------- yetenek
 
-/** Ders Takvimi grup kurarken bu listeyi okur (K3). */
+/**
+ * Öğrenci seçen paneller bu listeyi okur (K3). Her öğrenci bugün üyesi olduğu
+ * grupları da taşır (`groups`) — seçiciler "TYT grubu" gibi süzebilsin. Grup
+ * listesi okunamazsa öğrenciler yine döner, `groups` boş kalır.
+ */
 export function capabilities(ctx) {
   return {
     'bbd_students.list': async () => {
-      const payload = await ctx.api('/api/bbd_students/students');
+      const [payload, memberships] = await Promise.all([
+        ctx.api('/api/bbd_students/students'),
+        ctx.api('/api/bbd_students/groups/memberships').catch(() => ({ items: [] })),
+      ]);
+      const byStudent = new Map();
+      for (const item of memberships.items || []) {
+        if (!byStudent.has(item.studentId)) byStudent.set(item.studentId, []);
+        byStudent.get(item.studentId).push({ id: item.groupId, name: item.groupName, kind: item.kind });
+      }
       return (payload.students || []).map((student) => ({
         id: student.kantinId,
         name: student.displayName,
         className: student.className,
+        groups: byStudent.get(student.kantinId) || [],
       }));
     },
   };
@@ -919,7 +962,10 @@ export function mount(root, ctx) {
   nodes.modeBulk = h('button', 'st-mode-btn', 'Toplu işlemler');
   nodes.modeBulk.type = 'button';
   nodes.modeBulk.addEventListener('click', () => setMode('bulk'));
-  modeBar.append(nodes.modeSingle, nodes.modeBulk);
+  nodes.modeGroups = h('button', 'st-mode-btn', 'Gruplar');
+  nodes.modeGroups.type = 'button';
+  nodes.modeGroups.addEventListener('click', () => setMode('groups'));
+  modeBar.append(nodes.modeSingle, nodes.modeBulk, nodes.modeGroups);
   view.append(modeBar);
 
   bulkChain = reportChain({ api: apiCall, root, toast, base: '/api/bbd_students' });
@@ -960,6 +1006,7 @@ export function mount(root, ctx) {
 
   bar.append(nodes.search, nodes.classFilter, nodes.flagFilter, nodes.count,
     h('div', 'st-spacer'), reload, add);
+  nodes.bar = bar;
   view.append(bar);
 
   nodes.status = h('p', 'st-status', 'Bağlanıyor…');
@@ -987,6 +1034,9 @@ export function mount(root, ctx) {
   nodes.split = split;
   view.append(split);
   view.append(buildBulkView());
+  nodes.groups = h('div', 'st-groups');
+  nodes.groups.hidden = true;
+  view.append(nodes.groups);
 
   nodes.toast = h('div', 'st-toast');
   view.append(nodes.toast);
@@ -1001,6 +1051,9 @@ export function mount(root, ctx) {
     bulkPicker?.destroy();
     controlsView?.destroy();
     payCard?.destroy();
+    studentGroups?.destroy();
+    groupsView?.destroy();
+    groupsView = null;
     root.replaceChildren();
   };
 }
