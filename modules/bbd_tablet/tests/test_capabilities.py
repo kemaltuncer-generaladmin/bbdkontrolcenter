@@ -186,6 +186,8 @@ async def test_kontrol_oturum_kapatir_ve_kantin_dusukse(service: TabletService,
                                          timezone="Europe/Istanbul", apps=[VIDEO])
     _, token = await pair(service, profile["id"], "Tablet 09")
     logged = await login(service, token)
+    assert await control.session_student(logged["sessionId"]) == "opaque-A"
+    assert await control.session_student("yok") is None
     assert await control.end_session(logged["sessionId"], "Panelden kapatıldı", "x") is True
     assert await control.end_session(logged["sessionId"], "Panelden kapatıldı", "x") is False
 
