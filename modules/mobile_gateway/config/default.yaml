@@ -51,8 +51,9 @@ audit_retention_days: 365
 # girilmeden açılmaz; o zamana kadar Akademi 2 dk yoklamayla çalışır. Sır kasada:
 # `mobile_gateway.webhook_secret` (depoda sır yok — K8).
 events_enabled: false
-# Akademi API kökü (ör. https://api.bbdakademi.com.tr) — istek `{kök}/v1/webhooks/km`.
-akademi_base_url: ""
+# Akademi API kökü (sözleşme `servers:`) — istek `{kök}/v1/webhooks/km`. Staging
+# kurulumu bunu hazırlık sunucusuna çevirir (aşağıdaki "Staging güvenliği").
+akademi_base_url: "https://api.benimbasaridunyam.com.tr"
 # Akademi kiracı kısaltması (`X-KM-Tenant`, ör. "bbd").
 akademi_tenant: ""
 # Paketteki `source.instanceId` (log ve teşhis).
