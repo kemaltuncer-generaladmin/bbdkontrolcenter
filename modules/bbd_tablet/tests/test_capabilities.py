@@ -238,3 +238,49 @@ async def test_tum_tablete_ek_sure_sinirli_uygulama_yoksa_reddedilir(
     with pytest.raises(TabletCapabilityError) as error:
         await control.grant("opaque-A", None, 900, "Sınav haftası", "x")
     assert error.value.reason == "validation_error"
+
+
+async def test_kurum_geneli_gunluk_kullanim(service: TabletService, store: Any,
+                                            clock: Any) -> None:
+    """`daily_usage`: o gün kullanımı olan ya da kısıtı süren öğrenciler, iki sorgu."""
+    usage = store.table("daily_usage")
+    for student, package, day, seconds in (
+        ("opaque-A", "com.example.video", TODAY, 900),
+        ("opaque-A", "com.example.books", TODAY, 300),
+        ("opaque-B", "com.example.video", TODAY, 0),          # sıfır satır sayılmaz
+        ("opaque-C", "com.example.video", "2026-10-13", 600),  # başka gün
+    ):
+        await store.execute(
+            f"INSERT INTO {usage} (student_id, package_name, local_date, used_seconds) "
+            "VALUES (?, ?, ?, ?)", (student, package, day, seconds))
+    control = TabletControl(service, Log())
+    await control.block("opaque-B", clock() + timedelta(days=2), "veli: hafta sonu", "x")
+    await control.block("opaque-A", clock() + timedelta(hours=1), "ders saati", "x")
+    await control.unblock("opaque-A", "kaldırıldı", "x")
+
+    calls: list[str] = []
+    original = store.fetch_all
+
+    async def counted(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        calls.append(sql)
+        return await original(sql, params)
+
+    store.fetch_all = counted
+    report = await TabletRead(service).daily_usage(TODAY)
+    store.fetch_all = original
+    assert len(calls) == 2                                    # N+1 yok
+    assert report == {"date": TODAY, "items": [
+        {"studentId": "opaque-A", "totalSeconds": 1200, "blockedUntil": None},
+        {"studentId": "opaque-B", "totalSeconds": 0,
+         "blockedUntil": "2026-10-16T10:00:00+03:00"},
+    ]}
+    earlier = await TabletRead(service).daily_usage("2026-10-13")
+    assert [item["studentId"] for item in earlier["items"]] == ["opaque-B", "opaque-C"]
+
+    for bad in ("2026-10-15", "2026-08-13", "14.10.2026"):
+        with pytest.raises(TabletCapabilityError) as error:
+            await TabletRead(service).daily_usage(bad)
+        assert error.value.reason == "validation_error"
+    assert (await TabletRead(service).daily_usage("2026-08-14"))["items"] == [
+        {"studentId": "opaque-B", "totalSeconds": 0,
+         "blockedUntil": "2026-10-16T10:00:00+03:00"}]
