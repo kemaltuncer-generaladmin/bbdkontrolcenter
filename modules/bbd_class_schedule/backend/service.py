@@ -58,10 +58,14 @@ class ScheduleService:
             empty["reason"] = "Zil Sistemi beklenmedik bir yanıt verdi."
             return empty
 
-        times = payload.get("times") if isinstance(payload.get("times"), dict) else {}
-        groups = payload.get("groups") if isinstance(payload.get("groups"), list) else []
-        profiles = payload.get("profiles") if isinstance(payload.get("profiles"), list) else []
-        days = payload.get("days") if isinstance(payload.get("days"), list) else []
+        raw_times = payload.get("times")
+        times: dict[str, Any] = raw_times if isinstance(raw_times, dict) else {}
+        raw_groups = payload.get("groups")
+        groups: list[Any] = raw_groups if isinstance(raw_groups, list) else []
+        raw_profiles = payload.get("profiles")
+        profiles: list[Any] = raw_profiles if isinstance(raw_profiles, list) else []
+        raw_days = payload.get("days")
+        days: list[Any] = raw_days if isinstance(raw_days, list) else []
 
         return {
             "times": {day: list(times.get(day) or []) for day in DAYS},

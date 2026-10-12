@@ -57,7 +57,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 VERSION = "0.2.0"
@@ -379,7 +379,7 @@ def wait_for(target: datetime | None) -> str:
     if target is None:
         return ""
 
-    now = datetime.now(timezone.utc).astimezone()
+    now = datetime.now(UTC).astimezone()
     delta = target - now
 
     if delta < -LATE_TOLERANCE:
