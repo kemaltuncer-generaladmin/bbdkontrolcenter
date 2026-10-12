@@ -455,3 +455,39 @@
 .gr-history-row.gr-past { color: var(--soft); }
 .gr-audit .st-hint { margin: 2px 0; }
 .gr-editor { width: min(460px, 92vw); display: flex; flex-direction: column; gap: 8px; }
+
+/* ------------------------------------------- yaşam döngüsü ve senkron (§5, §7) */
+
+.st-btn-danger { color: #b91c1c; border-color: #f3c4c4; }
+.st-btn-danger:hover { background: #fef2f2; border-color: #eba4a4; }
+.st-btn-danger[disabled] { color: var(--soft); }
+
+.st-badge-inactive { background: #e5e7eb; color: #374151; }
+.st-badge-active { background: #dcfce7; color: #15803d; }
+.st-badge-warn { background: #fef3c7; color: #92400e; }
+.st-badge-bad { background: #fee2e2; color: #b91c1c; }
+.st-badge-draft { background: #e0e7ff; color: #3730a3; }
+
+.st-item-inactive .st-item-main b { color: var(--soft); }
+
+.st-lc { display: flex; flex-direction: column; gap: 6px; }
+.st-lc-line { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.st-lc-history { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--soft); }
+.st-lc-history li { padding: 3px 0; border-top: 1px solid var(--line); }
+.st-lc-history li b { color: var(--ink); font-weight: 600; }
+
+.st-lc-warn {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.st-lc-warn.bad { background: #fef2f2; color: #991b1b; }
+.st-lc-warn[hidden] { display: none; }
+
+.st-lc-dialog { max-width: 520px; }
+.st-lc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 6px; }
+.st-lc-dialog .st-textarea { min-height: 64px; width: 100%; }

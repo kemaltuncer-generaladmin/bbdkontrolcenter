@@ -7,3 +7,7 @@ timeout_seconds: 20
 # Bağlantı kurma (TCP + TLS) sınırı. Kantin kapalıysa okuma süresini beklemeden
 # hata verilir; bağlantı havuzda tutulur (keep-alive), her istekte yeniden kurulmaz.
 connect_timeout_seconds: 5
+# Kantin olaylarının çekme yedeği (km-merkezi-senkron §6.1): açılışta ve 30 sn'de
+# bir GET /api/km/events?after=. İtme (kantin → POST /api/bbd_canteen_api/v1/events)
+# bundan bağımsızdır. Kapatmak yalnız teşhis içindir.
+events_pull: true

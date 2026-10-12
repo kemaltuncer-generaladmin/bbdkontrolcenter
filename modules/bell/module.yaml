@@ -62,6 +62,9 @@ consumes:
   - capability: notify
     optional: true
     reason: "Zil çalınamadığında uyarı."
+  - capability: events.outbox
+    optional: true
+    reason: "Haftalık zil değişikliği kalıcı outbox'a `bell.week_changed` olarak yazılır; BBD Akademi zil saatlerini hemen tazeler (ADR 0029)."
   - capability: bbd_students.groups
     optional: true
     reason: >

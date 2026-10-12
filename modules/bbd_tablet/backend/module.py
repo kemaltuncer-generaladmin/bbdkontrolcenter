@@ -35,7 +35,9 @@ def register(ctx: ModuleContext) -> None:
         config=ctx.config,
         storage_dir=storage_dir(ctx),
     )
-    ctx.add_router(bind(service))
+    # KM ekranındaki kısıt / ek süre / profil yazmaları outbox'a olay yazar
+    # (km-merkezi-senkron §2.2, ADR 0029); yetenek çağrı anında çözülür.
+    ctx.add_router(bind(service, outbox=lambda: ctx.try_capability("events.outbox")))
     # Başka modüller (ör. mobil geçit) tabletleri yalnız bu yeteneklerden
     # görür (K3/K5); sözleşme `backend/capabilities.py` başlığında.
     ctx.provide("bbd_tablet.read", TabletRead(service))

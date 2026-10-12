@@ -74,6 +74,7 @@ uygulamanın altyapısıdır. Modüller bunları tüketir.
 | `scheduler/` | Takvim/cron soyutlaması |
 | `secrets/` | Kimlik bilgisi kasası (SSH anahtarı, DB parolası) — düz metin yok |
 | `notify/` | Bildirim kanalları (e-posta, webhook, masaüstü) |
+| `events/` | Kalıcı olay outbox'u (`events.outbox`, ADR 0029): iş yazmasıyla aynı işlemde olay, commit sırasıyla okuma |
 
 **Kural K4 — Tek kapı.** Bir yeteneğe erişim yalnızca kendi platform
 paketinden geçer. Bir modülde ham `paramiko`/`asyncssh` çağrısı ya da
@@ -255,3 +256,4 @@ Modül kendi bağımlılığını kendisi getirir; çekirdeğin listesine dokunu
 | Kimlik dağıtımı | Merkezî servis + cihaz eşlemesi; giriş çevrimdışı çalışır | 0021 |
 | Modül platform kapsamı | `module.yaml` → `platforms`, keşifte elenir | 0022 |
 | Makine kimliği | Servis anahtarı (`kmsk_…`), servis kullanıcısına bağlı; yetki yine rollerden | 0028 |
+| Olay ve işlem | Modül işlemi (`store.transaction()`), kalıcı outbox (`events.outbox`), seq = commit sırası | 0029 |

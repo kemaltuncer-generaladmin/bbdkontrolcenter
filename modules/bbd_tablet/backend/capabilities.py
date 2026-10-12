@@ -342,12 +342,26 @@ class TabletControl:
         return _iso(await self._service._active_block_until(str(student_id),
                                                              self._service._now()))
 
-    async def unblock(self, student_id: str, reason: str, actor: str) -> None:
-        """Süren kısıtları kaldırır. Kısıt yoksa da sessizce başarılıdır."""
+    async def unblock(self, student_id: str, reason: str, actor: str, *,
+                      only_reason: str | None = None) -> None:
+        """Süren kısıtları kaldırır. Kısıt yoksa da sessizce başarılıdır.
+
+        `only_reason`: yalnız bu gerekçeyle konmuş kısıtlar kalkar (gerekçe
+        `block`taki gibi boşlukları sadeleştirilerek karşılaştırılır).
+        """
         why = _reason(reason)
-        result = await self._service.unblock_student(student_id=str(student_id))
+        only = " ".join(str(only_reason).split()) if only_reason is not None else None
+        result = await self._service.unblock_student(student_id=str(student_id),
+                                                     only_reason=only)
         self._log.info("tablet kısıtı kaldırıldı (yetenek)", student=student_id,
                        lifted=result.get("lifted"), actor=_actor(actor), reason=why)
+
+    async def session_student(self, session_id: str) -> str | None:
+        """Oturumun öğrencisi (`STU-…`); oturum yoksa None. Geçit, oturum bitirme
+        olayını (`tablet.policy_changed`) doğru öğrenciye bağlamak için sorar."""
+        row = await self._service.store.fetch_one(
+            f"SELECT student_id FROM {self._service.sessions} WHERE id=?", (str(session_id),))
+        return str(row["student_id"]) if row and row.get("student_id") else None
 
     async def end_session(self, session_id: str, reason: str, actor: str) -> bool:
         """Oturumu `admin` nedeniyle kapatır. Zaten kapalıysa `False`."""

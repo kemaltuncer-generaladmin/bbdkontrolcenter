@@ -23,12 +23,15 @@ provides:
       async grant(student_id, package_name|None, extra_seconds, reason, actor) → grant_id
       (None = tüm tablet: süre sınırlı her uygulamaya ayrı ek süre satırı);
       block(student_id, until|None, reason, actor) → blocked_until|None;
-      unblock(student_id, reason, actor) → None; end_session(session_id, reason,
-      actor) → bool. Hata `reason` koduyla (validation_error, student_not_found,
+      unblock(student_id, reason, actor, *, only_reason=None) → None (only_reason: yalnız o gerekçeli kısıtlar kalkar); end_session(session_id, reason,
+      actor) → bool; session_student(session_id) → student_id | None. Hata `reason` koduyla (validation_error, student_not_found,
       session_not_found, canteen_unavailable).
 consumes:
   - capability: canteen.api
     reason: "Öğrenci kimliği ve kiosk giriş kodu kantinde kalır."
+  - capability: events.outbox
+    optional: true
+    reason: "KM ekranından kısıt, ek süre ve profil değişikliği BBD Akademi'ye olay olarak gider (tablet.policy_changed, tablet.profile_changed — ADR 0029)."
 events:
   publishes: []
   subscribes: []

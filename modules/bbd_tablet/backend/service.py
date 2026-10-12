@@ -1252,17 +1252,21 @@ class TabletService:
         ended = await self._end_active_sessions("student_id", student_id, reason="blocked")
         return {**self._block_view(row, current.isoformat()), "endedSessions": ended}
 
-    async def unblock_student(self, *, student_id: str) -> dict[str, Any]:
+    async def unblock_student(self, *, student_id: str,
+                              only_reason: str | None = None) -> dict[str, Any]:
+        """Süren kısıtları kaldırır. `only_reason` verilirse YALNIZ o gerekçeyle
+        konmuş kısıtlar kalkar (ör. KM yeniden etkinleştirmesi pasifleştirmenin
+        koyduğu kısıtı kaldırır, öğretmenin koyduğu cezaya dokunmaz)."""
         current = self._now().isoformat()
-        active = await self.store.fetch_all(
-            f"SELECT id FROM {self.blocks} WHERE student_id=? AND lifted_at IS NULL "
-            "AND blocked_until>?", (student_id, current),
-        )
+        where = "student_id=? AND lifted_at IS NULL AND blocked_until>?"
+        params: tuple[Any, ...] = (student_id, current)
+        if only_reason is not None:
+            where += " AND reason=?"
+            params = (*params, only_reason)
+        active = await self.store.fetch_all(f"SELECT id FROM {self.blocks} WHERE {where}", params)
         if active:
-            await self.store.execute(
-                f"UPDATE {self.blocks} SET lifted_at=? WHERE student_id=? "
-                "AND lifted_at IS NULL AND blocked_until>?", (current, student_id, current),
-            )
+            await self.store.execute(f"UPDATE {self.blocks} SET lifted_at=? WHERE {where}",
+                                     (current, *params))
         return {"studentId": student_id, "lifted": len(active)}
 
     async def list_blocks(self, *, student_id: str) -> list[dict[str, Any]]:

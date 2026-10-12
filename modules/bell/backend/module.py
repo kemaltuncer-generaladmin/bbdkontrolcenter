@@ -69,7 +69,9 @@ def register(ctx: ModuleContext) -> None:
         page_tts_timeout=number(_section(config, "page").get("tts_timeout_seconds"), 20),
         # Saatler ya da gruplar değişince `bell.week` tüketicileri (mobil geçit
         # önbelleği) hemen haberdar olur (olay veri yolu, K3).
-        on_week_change=lambda: ctx.publish("bell.week_changed", {}),
+        # Ayrıca kalıcı outbox'a `bell.week_changed` (ADR 0029): BBD Akademi
+        # zil saatlerini hemen tazeler. Süreç içi olay KM içi dinleyiciler için kalır.
+        on_week_change=lambda: _week_changed(ctx),
         # Öğrenci grupları (taşıma sonrası elle çağrı listesi, genel çağrı
         # sesleri) ÇAĞRI ANINDA çözülür — isteğe bağlı tüketim (K3).
         student_groups=lambda: ctx.try_capability("bbd_students.groups"),
@@ -136,6 +138,13 @@ async def _bootstrap(service: BellService, log: Any) -> None:
         service.start_sync()
     except Exception as failure:  # noqa: BLE001 — açılış görevi çekirdeği düşürmez (K7)
         log.error("zil açılış görevi patladı", error=str(failure))
+
+
+async def _week_changed(ctx: ModuleContext) -> None:
+    await ctx.publish("bell.week_changed", {})
+    outbox = ctx.try_capability("events.outbox")
+    if outbox is not None:
+        await outbox.emit("bell.week_changed", ("bell", None))
 
 
 def _section(config: dict[str, Any], name: str) -> dict[str, Any]:

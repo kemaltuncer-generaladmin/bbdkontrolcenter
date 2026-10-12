@@ -99,8 +99,9 @@ def okul(count: int = 50) -> Canteen:
 async def test_sicak_dizin_kantine_ve_veritabanina_GITMEZ(store: CountingStore) -> None:
     canteen = okul()
     directory = StudentDirectory(canteen=canteen, store=store, log=FakeLog())
-    assert len((await directory.list())["students"]) == 50     # soğuk: 1 kantin + 1 sorgu
-    assert canteen.list_calls == 1 and store.statements == 1
+    # soğuk: 1 kantin + 2 sorgu (profiller + mezar taşları, km-merkezi-senkron §3.3)
+    assert len((await directory.list())["students"]) == 50
+    assert canteen.list_calls == 1 and store.statements == 2
 
     store_before = store.statements
     await directory.list()
@@ -152,8 +153,9 @@ async def test_kantine_yazilinca_kantin_listesi_de_tazelenir(store: CountingStor
     await directory.list()
     await service.update_student("STU-002", {"parentPhone": "5059998877"})
     assert [row["id"] for row in await directory.find_by_phone("5059998877")] == ["STU-002"]
-    # 1: ilk liste · 2: servisin kantindeki adı okuması · 3: bırakılan dizin tazelenir.
-    assert canteen.list_calls == 3
+    # 1: ilk liste · 2: bırakılan dizin tazelenir. Servisin kantindeki adı
+    # artık tekil okumadır (tam liste çekilmez).
+    assert canteen.list_calls == 2
 
 
 async def test_donen_kayit_kopyadir_onbellek_bozulmaz(store: CountingStore) -> None:

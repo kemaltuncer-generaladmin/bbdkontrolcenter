@@ -8,6 +8,7 @@ etmeyen router monte EDİLMEZ** (varsayılan: kapalı).
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import secrets as pysecrets
 from collections.abc import AsyncIterator
@@ -39,6 +40,7 @@ from km_core.security.service_keys import ServiceKeys
 from km_core.store.bootstrap import build_schema
 from km_core.store.engine import create_store, selected_engine
 from km_platform.audio.player import AudioPlayer
+from km_platform.events.outbox import EventOutbox
 from km_platform.identity_sync.http import create_pairing_router
 from km_platform.identity_sync.service import IdentitySync
 from km_platform.notify.service import NotifyService
@@ -144,6 +146,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         registry = Registry()
         bus = EventBus()
 
+        # ADR 0029 — kalıcı olay outbox'u. Modüller olaylarını İŞ YAZMASIYLA AYNI
+        # İŞLEMDE buraya yazar; dış dünyaya (BBD Akademi) giden yol budur. Süreç
+        # içi olay yolu (`bus`) KM içindeki dinleyiciler için olduğu gibi kalır.
+        outbox = EventOutbox(store)
+        await outbox.open()
+        registry.register("events.outbox", outbox, provider="platform")
+
         # Platform yetenekleri çekirdekle birlikte gelir; kapatılamaz.
         # Bunlar MODÜL DEĞİLDİR: çekirdek burada yalnız altyapıyı kaydeder,
         # hangi modülün kullandığını bilmez (K1 korunur).
@@ -220,6 +229,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         app.state.store = store
         app.state.registry = registry
         app.state.bus = bus
+        app.state.outbox = outbox
         app.state.kernel = kernel
         app.state.identity = identity
         # ADR 0028 — makineden makineye kimlik. Kapı (`deps.resolve_once`)
@@ -247,6 +257,9 @@ def create_app(config: Config | None = None) -> FastAPI:
             if outputs_queue is not None:
                 await outputs_queue.stop()
             await scheduler.stop()
+            # Outbox depo KAPANMADAN boşaltılır: birleştirme tamponundaki
+            # (bakiye) olaylar yazılsın, uzun yoklamada bekleyenler uyansın.
+            await outbox.close()
             await store.close()
 
     app = FastAPI(
@@ -390,6 +403,47 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.get("/auth/me")
     async def me(user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
         return user_payload(user)
+
+    @app.get("/api/events/wait")
+    async def events_wait(
+        request: Request,
+        after: int | None = None,
+        types: str | None = None,
+        timeout: float = 25.0,
+        user: CurrentUser = Depends(current_user),
+    ) -> dict[str, Any]:
+        """KM panelinin açık ekranı için UZUN YOKLAMA (km-merkezi-senkron §8, ADR 0029).
+
+        `after` yoksa beklemeden `{items: [], lastSeq}` döner: istemci başlangıç
+        imlecini öğrenir. Varsa `after`'dan büyük olay commit edilene ya da
+        `timeout` (en çok 25 sn) dolana kadar bekler — VERİTABANI YOKLANMAZ,
+        commit kancası süreç içi olayı tetikler. `types` virgüllü süzgeçtir
+        (`student.*,canteen.*`). Olaylar kişisel veri taşımaz; oturumu olan her
+        panel kullanıcısı dinleyebilir (ekranın kendi verisi yine kendi izniyle
+        okunur). Budanmış bölgedeki `after` → `reset: true` (ekran tam yenilenir).
+        """
+        outbox: EventOutbox = request.app.state.outbox
+        last = await outbox.last_seq()
+        if after is None or after < 0:
+            return {"items": [], "lastSeq": last, "reset": False}
+        if after > last:
+            # Sunucu yeniden kuruldu / imleç ileride: istemci baştan alsın.
+            return {"items": [], "lastSeq": last, "reset": True}
+        if await outbox.expired(after):
+            return {"items": [], "lastSeq": last, "reset": True}
+        wanted = [item for item in (types or "").split(",") if item.strip()]
+        wait = max(0.0, min(float(timeout), 25.0))
+        cursor = after
+        deadline = asyncio.get_running_loop().time() + wait
+        while True:
+            items, scanned = await outbox.scan_after(cursor, 200, wanted or None)
+            cursor = max(cursor, scanned)
+            if items:
+                return {"items": items, "lastSeq": cursor, "reset": False}
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0 or await request.is_disconnected():
+                return {"items": [], "lastSeq": cursor, "reset": False}
+            await outbox.wait_after(cursor, min(remaining, 25.0))
 
     @app.get("/modules")
     async def modules(request: Request, user: CurrentUser = Depends(current_user)) -> dict[str, Any]:

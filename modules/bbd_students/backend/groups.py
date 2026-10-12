@@ -26,18 +26,25 @@ KURALLAR (§2.1) TEK YERDE, BURADA:
 REVİZYON. Her yazma kalıcı sayacı (`mod_bbd_students_group_rev`) +1 artırır ve
 dokunduğu grup ile üyelik satırlarına damgalar; grubun `revision`'ı üyeliği
 değişince de yükselir — artımlı okuma (`since`) bu yüzden tek indeksli sorgudur.
-Yazmalar süreç içi tek kilitle sıralanır: sayaç, doğrulama ve yazma arasına
-başka bir yazma giremez (modül deposunda işlem açılamıyor; KM sunucusu tek
-süreçtir).
 
-OLAY. `bbd_students.groups_changed` (yük `{revision}`) yazmanın HEMEN ardından
-yayınlanır; yayın patlarsa yazma yine tamamdır (K7, `bell.week_changed`
-kalıbı).
+İŞLEM (ADR 0029). Her yazma TEK İŞLEMDİR ve işlemin İLK adımı sayacı
+`revision = revision + 1` ile artırmaktır: sayaç satırının kilidi aynı anda
+gelen grup yazmalarını commit'e kadar sıralar (SQLite'ta depo kilidi), sonraki
+doğrulama okumaları öncekinin commit'ini görür. Böylece sayaç, doğrulama ve
+yazma arasına başka bir yazma giremez — eskiden bunu süreç içi bir kilit
+sağlıyordu ("modül deposunda işlem açılamıyor" notu artık geçersiz). Değişiklik
+yoksa ya da kural reddederse işlem GERİ ALINIR: revizyon harcanmaz, davranış
+eskisiyle aynıdır. Öğrenci pasifleştirme de üyelikleri aynı yoldan, öğrenci
+işleminin İÇİNDE kapatır (`close_student_memberships`).
+
+OLAY. Aynı işlemde outbox'a `group.changed` (`revision` = grup revizyonu,
+km-merkezi-senkron §2.2) yazılır; commit'ten sonra süreç içi
+`bbd_students.groups_changed` (yük `{revision}`) yayınlanır — yayın patlarsa
+yazma yine tamamdır (K7, `bell.week_changed` kalıbı).
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import uuid
@@ -168,22 +175,33 @@ def _clean_reason(value: Any) -> str:
     return " ".join(str(value or "").split())[:REASON_MAX]
 
 
+class _Unchanged(Exception):
+    """Yazma bir şey değiştirmedi: işlem geri alınır (revizyon harcanmaz)."""
+
+    def __init__(self, value: Any = None) -> None:
+        super().__init__("değişiklik yok")
+        self.value = value
+
+
 class GroupService:
     """Grup ve üyelik iş kuralları + `bbd_students.groups` yeteneğinin gövdesi."""
 
     def __init__(self, *, store: Any, log: Any,
                  publish: Callable[[int], Awaitable[None]] | None = None,
-                 today: Callable[[], date] = today_local) -> None:
+                 today: Callable[[], date] = today_local,
+                 outbox: Callable[[], Any] | None = None) -> None:
         self._store = store
         self._log = log
         self._publish = publish
         self._today = today
+        #: `events.outbox` yeteneğini ÇAĞRI ANINDA çözer (yoksa None) — olay
+        #: yazmanın İÇİNDE, aynı işlemde (`group.changed`).
+        self._outbox = outbox or (lambda: None)
         self._groups = store.table("group")
         self._members = store.table("group_member")
         self._rev = store.table("group_rev")
         self._audit = store.table("group_log")
         self._profiles = store.table("profile")
-        self._lock = asyncio.Lock()
 
     # ============================================================== yardım
 
@@ -192,16 +210,22 @@ class GroupService:
         return int(row["revision"]) if row else 0
 
     async def _bump(self) -> int:
-        """Kalıcı sayacı +1 artırır ve yeni değeri döner. KİLİT ALTINDA çağrılır."""
-        current = await self.revision()
-        if current == 0 and await self._store.fetch_one(
-                f"SELECT id FROM {self._rev} WHERE id = 1") is None:
-            await self._store.execute(
-                f"INSERT INTO {self._rev} (id, revision) VALUES (1, 1)")
-            return 1
+        """Kalıcı sayacı +1 artırır ve yeni değeri döner. İŞLEMİN İLK ADIMI.
+
+        `revision = revision + 1`: satır kilidi eşzamanlı yazmaları commit'e kadar
+        sıralar (okuyup yazmak iki işlemde aynı değeri üretebilirdi).
+        """
         await self._store.execute(
-            f"UPDATE {self._rev} SET revision = ? WHERE id = 1", (current + 1,))
-        return current + 1
+            f"INSERT OR IGNORE INTO {self._rev} (id, revision) VALUES (1, 0)")
+        await self._store.execute(
+            f"UPDATE {self._rev} SET revision = revision + 1 WHERE id = 1")
+        return await self.revision()
+
+    async def _emit(self, revision: int) -> None:
+        """Outbox'a `group.changed` — AÇIK İŞLEMİN İÇİNDE (aynı commit)."""
+        outbox = self._outbox()
+        if outbox is not None:
+            await outbox.emit("group.changed", ("groups", None), revision=revision)
 
     async def _changed(self, revision: int) -> None:
         if self._publish is None:
@@ -497,14 +521,14 @@ class GroupService:
                 raise GroupError("Özel ders grubunda yalnız bir öğrenci olabilir.", status=409,
                                  code="individual_single_member")
 
-        async with self._lock:
+        async with self._store.transaction():
+            revision = await self._bump()
             await self._check_name_free(name)
             live = await self._store.fetch_one(
                 f"SELECT COUNT(*) AS n FROM {self._groups} WHERE archived_at = ''")
             if live is not None and int(live["n"]) >= GROUP_MAX:
                 raise GroupError(f"En çok {GROUP_MAX} canlı grup olabilir.", status=409,
                                  code="group_limit")
-            revision = await self._bump()
             group_id = str(uuid.uuid4())
             stamp = _now()
             await self._store.execute(
@@ -522,6 +546,7 @@ class GroupService:
                                     detail={"name": name, "kind": kind,
                                             "students": len(students),
                                             "validFrom": start.isoformat() if students else None})
+            await self._emit(revision)
         await self._changed(revision)
         self._log.info("öğrenci grubu açıldı", group=group_id, kind=kind,
                        students=len(students), actor=actor)
@@ -548,87 +573,109 @@ class GroupService:
     async def update(self, group_id: str, payload: dict[str, Any], *,
                      actor: str) -> dict[str, Any]:
         """Ad, tür, anons adı, not. Gönderilmeyen alan değişmez."""
-        async with self._lock:
-            row = await self._group_row(group_id)
-            changes: dict[str, Any] = {}
-            if "name" in payload:
-                name = _clean_name(payload["name"])
-                if name != row["name"]:
-                    if not row["archived_at"]:
-                        await self._check_name_free(name, except_id=str(group_id))
-                    changes.update({"name": name, "name_fold": fold(name)})
-            if "kind" in payload:
-                kind = _clean_kind(payload["kind"])
-                if kind != row["kind"]:
-                    self._check_members(kind, await self._member_rows([str(group_id)]))
-                    changes["kind"] = kind
-            if "callName" in payload:
-                call_name = " ".join(str(payload["callName"] or "").split())[:CALL_NAME_MAX]
-                if call_name != row["call_name"]:
-                    changes["call_name"] = call_name
-            if "note" in payload:
-                note = str(payload["note"] or "").strip()[:NOTE_MAX]
-                if note != row["note"]:
-                    changes["note"] = note
-            if not changes:
-                return await self.detail(group_id)
-            revision = await self._bump()
-            await self._touch_group(group_id, actor=actor, revision=revision, extra=changes)
-            await self._write_audit(actor=actor, action="update", group_id=str(group_id),
-                                    revision=revision,
-                                    detail={key: value for key, value in changes.items()
-                                            if key != "name_fold"})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                await self._update_in(group_id, payload, actor=actor, revision=revision)
+                await self._emit(revision)
+        except _Unchanged:
+            return await self.detail(group_id)
         await self._changed(revision)
         return await self.detail(group_id)
+
+    async def _update_in(self, group_id: str, payload: dict[str, Any], *, actor: str,
+                         revision: int) -> None:
+        row = await self._group_row(group_id)
+        changes: dict[str, Any] = {}
+        if "name" in payload:
+            name = _clean_name(payload["name"])
+            if name != row["name"]:
+                if not row["archived_at"]:
+                    await self._check_name_free(name, except_id=str(group_id))
+                changes.update({"name": name, "name_fold": fold(name)})
+        if "kind" in payload:
+            kind = _clean_kind(payload["kind"])
+            if kind != row["kind"]:
+                self._check_members(kind, await self._member_rows([str(group_id)]))
+                changes["kind"] = kind
+        if "callName" in payload:
+            call_name = " ".join(str(payload["callName"] or "").split())[:CALL_NAME_MAX]
+            if call_name != row["call_name"]:
+                changes["call_name"] = call_name
+        if "note" in payload:
+            note = str(payload["note"] or "").strip()[:NOTE_MAX]
+            if note != row["note"]:
+                changes["note"] = note
+        if not changes:
+            raise _Unchanged
+        await self._touch_group(group_id, actor=actor, revision=revision, extra=changes)
+        await self._write_audit(actor=actor, action="update", group_id=str(group_id),
+                                revision=revision,
+                                detail={key: value for key, value in changes.items()
+                                        if key != "name_fold"})
 
     async def archive(self, group_id: str, *, actor: str) -> dict[str, Any]:
         """Arşivler. Açık üyelikler arşiv gününde kapanır; henüz başlamamış
         üyelikler (başlangıcı bugünden sonra) hiç yürürlüğe girmediği için
         kaldırılır ve denetim izine yazılır. Geçmiş satırlara dokunulmaz."""
         today = self._today()
-        async with self._lock:
-            row = await self._group_row(group_id)
-            if row["archived_at"]:
-                return await self.detail(group_id)
-            revision = await self._bump()
-            stamp = _now()
-            members = await self._member_rows([str(group_id)])
-            closed, dropped = 0, 0
-            for member in members:
-                start = _day(str(member["valid_from"])) or date.min
-                end = _day(str(member["valid_to"]))
-                if start > today:
-                    await self._store.execute(
-                        f"DELETE FROM {self._members} WHERE id = ?", (str(member["id"]),))
-                    dropped += 1
-                elif end is None or end > today:
-                    await self._store.execute(
-                        f"UPDATE {self._members} SET valid_to = ?, updated_at = ?, "
-                        f"updated_by = ?, revision = ? WHERE id = ?",
-                        (today.isoformat(), stamp, actor, revision, str(member["id"])))
-                    closed += 1
-            await self._touch_group(group_id, actor=actor, revision=revision,
-                                    extra={"archived_at": stamp})
-            await self._write_audit(actor=actor, action="archive", group_id=str(group_id),
-                                    revision=revision,
-                                    detail={"closed": closed, "droppedFuture": dropped,
-                                            "on": today.isoformat()})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                closed = await self._archive_in(group_id, actor=actor, revision=revision,
+                                                today=today)
+                await self._emit(revision)
+        except _Unchanged:
+            return await self.detail(group_id)
         await self._changed(revision)
         self._log.info("öğrenci grubu arşivlendi", group=group_id, closed=closed, actor=actor)
         return await self.detail(group_id)
 
+    async def _archive_in(self, group_id: str, *, actor: str, revision: int,
+                          today: date) -> int:
+        row = await self._group_row(group_id)
+        if row["archived_at"]:
+            raise _Unchanged
+        stamp = _now()
+        members = await self._member_rows([str(group_id)])
+        closed, dropped = 0, 0
+        for member in members:
+            start = _day(str(member["valid_from"])) or date.min
+            end = _day(str(member["valid_to"]))
+            if start > today:
+                await self._store.execute(
+                    f"DELETE FROM {self._members} WHERE id = ?", (str(member["id"]),))
+                dropped += 1
+            elif end is None or end > today:
+                await self._store.execute(
+                    f"UPDATE {self._members} SET valid_to = ?, updated_at = ?, "
+                    f"updated_by = ?, revision = ? WHERE id = ?",
+                    (today.isoformat(), stamp, actor, revision, str(member["id"])))
+                closed += 1
+        await self._touch_group(group_id, actor=actor, revision=revision,
+                                extra={"archived_at": stamp})
+        await self._write_audit(actor=actor, action="archive", group_id=str(group_id),
+                                revision=revision,
+                                detail={"closed": closed, "droppedFuture": dropped,
+                                        "on": today.isoformat()})
+        return closed
+
     async def restore(self, group_id: str, *, actor: str) -> dict[str, Any]:
         """Arşivden geri alır. Üyelikler kendiliğinden açılmaz."""
-        async with self._lock:
-            row = await self._group_row(group_id)
-            if not row["archived_at"]:
-                return await self.detail(group_id)
-            await self._check_name_free(str(row["name"]), except_id=str(group_id))
-            revision = await self._bump()
-            await self._touch_group(group_id, actor=actor, revision=revision,
-                                    extra={"archived_at": ""})
-            await self._write_audit(actor=actor, action="restore", group_id=str(group_id),
-                                    revision=revision, detail={})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                row = await self._group_row(group_id)
+                if not row["archived_at"]:
+                    raise _Unchanged
+                await self._check_name_free(str(row["name"]), except_id=str(group_id))
+                await self._touch_group(group_id, actor=actor, revision=revision,
+                                        extra={"archived_at": ""})
+                await self._write_audit(actor=actor, action="restore", group_id=str(group_id),
+                                        revision=revision, detail={})
+                await self._emit(revision)
+        except _Unchanged:
+            return await self.detail(group_id)
         await self._changed(revision)
         return await self.detail(group_id)
 
@@ -640,35 +687,46 @@ class GroupService:
         start = parse_day(valid_from, field="validFrom") if valid_from else self._today()
         why = _clean_reason(reason)
         self._need_reason([start], why)
-        async with self._lock:
-            row = await self._group_row(group_id)
-            if row["archived_at"]:
-                raise GroupError("Arşivlenmiş gruba üye eklenemez.", status=409,
-                                 code="group_archived")
-            existing = await self._member_rows([str(group_id)])
-            skipped = [student for student in students if any(
-                str(member["kantin_id"]) == student and _overlaps(
-                    start, None, _day(str(member["valid_from"])) or date.min,
-                    _day(str(member["valid_to"])))
-                for member in existing)]
-            fresh = [student for student in students if student not in skipped]
-            if not fresh:
-                return {"added": 0, "skipped": skipped, "group": await self.detail(group_id)}
-            planned = existing + [{"kantin_id": student, "valid_from": start.isoformat(),
-                                   "valid_to": ""} for student in fresh]
-            self._check_members(str(row["kind"]), planned)
-            revision = await self._bump()
-            stamp = _now()
-            for student in fresh:
-                await self._insert_member(str(group_id), student, start, None, reason=why,
-                                          actor=actor, revision=revision, stamp=stamp)
-            await self._touch_group(group_id, actor=actor, revision=revision)
-            await self._write_audit(actor=actor, action="members_add", group_id=str(group_id),
-                                    revision=revision,
-                                    detail={"students": fresh, "validFrom": start.isoformat(),
-                                            "reason": why})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                skipped, fresh = await self._add_in(group_id, students, start=start, why=why,
+                                                    actor=actor, revision=revision)
+                await self._emit(revision)
+        except _Unchanged as unchanged:
+            return {"added": 0, "skipped": unchanged.value,
+                    "group": await self.detail(group_id)}
         await self._changed(revision)
         return {"added": len(fresh), "skipped": skipped, "group": await self.detail(group_id)}
+
+    async def _add_in(self, group_id: str, students: list[str], *, start: date, why: str,
+                      actor: str, revision: int) -> tuple[list[str], list[str]]:
+        row = await self._group_row(group_id)
+        if row["archived_at"]:
+            raise GroupError("Arşivlenmiş gruba üye eklenemez.", status=409,
+                             code="group_archived")
+        existing = await self._member_rows([str(group_id)])
+        skipped = [student for student in students if any(
+            str(member["kantin_id"]) == student and _overlaps(
+                start, None, _day(str(member["valid_from"])) or date.min,
+                _day(str(member["valid_to"])))
+            for member in existing)]
+        fresh = [student for student in students if student not in skipped]
+        if not fresh:
+            raise _Unchanged(skipped)
+        planned = existing + [{"kantin_id": student, "valid_from": start.isoformat(),
+                               "valid_to": ""} for student in fresh]
+        self._check_members(str(row["kind"]), planned)
+        stamp = _now()
+        for student in fresh:
+            await self._insert_member(str(group_id), student, start, None, reason=why,
+                                      actor=actor, revision=revision, stamp=stamp)
+        await self._touch_group(group_id, actor=actor, revision=revision)
+        await self._write_audit(actor=actor, action="members_add", group_id=str(group_id),
+                                revision=revision,
+                                detail={"students": fresh, "validFrom": start.isoformat(),
+                                        "reason": why})
+        return skipped, fresh
 
     async def end_members(self, group_id: str, student_ids: Ids, *,
                           valid_to: Any = None, reason: Any = "",
@@ -681,39 +739,50 @@ class GroupService:
         end = parse_day(valid_to, field="validTo") if valid_to else self._today()
         why = _clean_reason(reason)
         self._need_reason([end], why)
-        async with self._lock:
-            await self._group_row(group_id)
-            existing = await self._member_rows([str(group_id)])
-            targets: list[dict[str, Any]] = []
-            skipped: list[str] = []
-            for student in students:
-                match = next((member for member in existing
-                              if str(member["kantin_id"]) == student
-                              and (_day(str(member["valid_from"])) or date.min) <= end
-                              and (_day(str(member["valid_to"])) is None
-                                   or end < (_day(str(member["valid_to"])) or date.max))),
-                             None)
-                if match is None:
-                    skipped.append(student)
-                else:
-                    targets.append(match)
-            if not targets:
-                return {"ended": 0, "skipped": skipped, "group": await self.detail(group_id)}
-            revision = await self._bump()
-            stamp = _now()
-            for member in targets:
-                await self._store.execute(
-                    f"UPDATE {self._members} SET valid_to = ?, reason = ?, updated_at = ?, "
-                    f"updated_by = ?, revision = ? WHERE id = ?",
-                    (end.isoformat(), why or str(member["reason"] or ""), stamp, actor,
-                     revision, str(member["id"])))
-            await self._touch_group(group_id, actor=actor, revision=revision)
-            await self._write_audit(actor=actor, action="members_end", group_id=str(group_id),
-                                    revision=revision,
-                                    detail={"students": [str(m["kantin_id"]) for m in targets],
-                                            "validTo": end.isoformat(), "reason": why})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                skipped, targets = await self._end_in(group_id, students, end=end, why=why,
+                                                      actor=actor, revision=revision)
+                await self._emit(revision)
+        except _Unchanged as unchanged:
+            return {"ended": 0, "skipped": unchanged.value,
+                    "group": await self.detail(group_id)}
         await self._changed(revision)
         return {"ended": len(targets), "skipped": skipped, "group": await self.detail(group_id)}
+
+    async def _end_in(self, group_id: str, students: list[str], *, end: date, why: str,
+                      actor: str, revision: int) -> tuple[list[str], list[dict[str, Any]]]:
+        await self._group_row(group_id)
+        existing = await self._member_rows([str(group_id)])
+        targets: list[dict[str, Any]] = []
+        skipped: list[str] = []
+        for student in students:
+            match = next((member for member in existing
+                          if str(member["kantin_id"]) == student
+                          and (_day(str(member["valid_from"])) or date.min) <= end
+                          and (_day(str(member["valid_to"])) is None
+                               or end < (_day(str(member["valid_to"])) or date.max))),
+                         None)
+            if match is None:
+                skipped.append(student)
+            else:
+                targets.append(match)
+        if not targets:
+            raise _Unchanged(skipped)
+        stamp = _now()
+        for member in targets:
+            await self._store.execute(
+                f"UPDATE {self._members} SET valid_to = ?, reason = ?, updated_at = ?, "
+                f"updated_by = ?, revision = ? WHERE id = ?",
+                (end.isoformat(), why or str(member["reason"] or ""), stamp, actor,
+                 revision, str(member["id"])))
+        await self._touch_group(group_id, actor=actor, revision=revision)
+        await self._write_audit(actor=actor, action="members_end", group_id=str(group_id),
+                                revision=revision,
+                                detail={"students": [str(m["kantin_id"]) for m in targets],
+                                        "validTo": end.isoformat(), "reason": why})
+        return skipped, targets
 
     async def move(self, student_ids: Ids, *, from_group: str, to_group: str,
                    effective_from: Any = None, reason: Any = "",
@@ -728,7 +797,8 @@ class GroupService:
         last = start - timedelta(days=1)
         why = _clean_reason(reason)
         self._need_reason([last], why)
-        async with self._lock:
+        async with self._store.transaction():
+            revision = await self._bump()
             source = await self._group_row(from_group)
             target = await self._group_row(to_group)
             if target["archived_at"]:
@@ -752,7 +822,6 @@ class GroupService:
             planned = target_rows + [{"kantin_id": student, "valid_from": start.isoformat(),
                                       "valid_to": ""} for student in students]
             self._check_members(str(target["kind"]), planned)
-            revision = await self._bump()
             stamp = _now()
             for member in ending:
                 await self._store.execute(
@@ -771,6 +840,7 @@ class GroupService:
                                     revision=revision, detail=detail)
             await self._write_audit(actor=actor, action="move_in", group_id=str(to_group),
                                     revision=revision, detail=detail)
+            await self._emit(revision)
         await self._changed(revision)
         self._log.info("öğrenciler taşındı", students=len(students), source=source["id"],
                        target=target["id"], actor=actor)
@@ -781,50 +851,110 @@ class GroupService:
                            actor: str) -> dict[str, Any]:
         """Yanlış girilmiş başlangıç/son gün düzeltmesi. Geçmişe dokunan düzeltme
         gerekçe ister. Akademi'nin dondurulmuş yoklama listeleri DEĞİŞMEZ (§2.5)."""
-        async with self._lock:
-            group = await self._group_row(group_id)
-            rows = await self._member_rows([str(group_id)])
-            member = next((row for row in rows if str(row["id"]) == str(member_id)), None)
-            if member is None:
-                raise GroupError("Üyelik bulunamadı.", status=404, code="member_not_found")
-            old_from = _day(str(member["valid_from"]))
-            old_to = _day(str(member["valid_to"]))
-            new_from = (parse_day(payload["validFrom"], field="validFrom")
-                        if payload.get("validFrom") else old_from)
-            if "validTo" in payload:
-                new_to = (parse_day(payload["validTo"], field="validTo")
-                          if payload["validTo"] else None)
-            else:
-                new_to = old_to
-            if new_from == old_from and new_to == old_to:
-                return await self.detail(group_id)
-            why = _clean_reason(payload.get("reason"))
-            touched: list[date | None] = []
-            if new_from != old_from:
-                touched += [old_from, new_from]
-            if new_to != old_to:
-                touched += [old_to, new_to]
-            self._need_reason(touched, why)
-            planned = [row if str(row["id"]) != str(member_id) else {
-                **row, "valid_from": new_from.isoformat() if new_from else "",
-                "valid_to": new_to.isoformat() if new_to else ""} for row in rows]
-            self._check_members(str(group["kind"]), planned)
-            revision = await self._bump()
-            await self._store.execute(
-                f"UPDATE {self._members} SET valid_from = ?, valid_to = ?, reason = ?, "
-                f"updated_at = ?, updated_by = ?, revision = ? WHERE id = ?",
-                (new_from.isoformat() if new_from else "", new_to.isoformat() if new_to else "",
-                 why or str(member["reason"] or ""), _now(), actor, revision, str(member_id)))
-            await self._touch_group(group_id, actor=actor, revision=revision)
-            await self._write_audit(
-                actor=actor, action="member_fix", group_id=str(group_id), revision=revision,
-                detail={"student": str(member["kantin_id"]),
-                        "before": [str(member["valid_from"]), str(member["valid_to"]) or None],
-                        "after": [new_from.isoformat() if new_from else None,
-                                  new_to.isoformat() if new_to else None],
-                        "reason": why})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                await self._patch_in(group_id, member_id, payload, actor=actor,
+                                     revision=revision)
+                await self._emit(revision)
+        except _Unchanged:
+            return await self.detail(group_id)
         await self._changed(revision)
         return await self.detail(group_id)
+
+    async def _patch_in(self, group_id: str, member_id: str, payload: dict[str, Any], *,
+                        actor: str, revision: int) -> None:
+        group = await self._group_row(group_id)
+        rows = await self._member_rows([str(group_id)])
+        member = next((row for row in rows if str(row["id"]) == str(member_id)), None)
+        if member is None:
+            raise GroupError("Üyelik bulunamadı.", status=404, code="member_not_found")
+        old_from = _day(str(member["valid_from"]))
+        old_to = _day(str(member["valid_to"]))
+        new_from = (parse_day(payload["validFrom"], field="validFrom")
+                    if payload.get("validFrom") else old_from)
+        if "validTo" in payload:
+            new_to = (parse_day(payload["validTo"], field="validTo")
+                      if payload["validTo"] else None)
+        else:
+            new_to = old_to
+        if new_from == old_from and new_to == old_to:
+            raise _Unchanged
+        why = _clean_reason(payload.get("reason"))
+        touched: list[date | None] = []
+        if new_from != old_from:
+            touched += [old_from, new_from]
+        if new_to != old_to:
+            touched += [old_to, new_to]
+        self._need_reason(touched, why)
+        planned = [row if str(row["id"]) != str(member_id) else {
+            **row, "valid_from": new_from.isoformat() if new_from else "",
+            "valid_to": new_to.isoformat() if new_to else ""} for row in rows]
+        self._check_members(str(group["kind"]), planned)
+        await self._store.execute(
+            f"UPDATE {self._members} SET valid_from = ?, valid_to = ?, reason = ?, "
+            f"updated_at = ?, updated_by = ?, revision = ? WHERE id = ?",
+            (new_from.isoformat() if new_from else "", new_to.isoformat() if new_to else "",
+             why or str(member["reason"] or ""), _now(), actor, revision, str(member_id)))
+        await self._touch_group(group_id, actor=actor, revision=revision)
+        await self._write_audit(
+            actor=actor, action="member_fix", group_id=str(group_id), revision=revision,
+            detail={"student": str(member["kantin_id"]),
+                    "before": [str(member["valid_from"]), str(member["valid_to"]) or None],
+                    "after": [new_from.isoformat() if new_from else None,
+                              new_to.isoformat() if new_to else None],
+                    "reason": why})
+
+    async def close_student_memberships(self, student_id: str, *, last_day: date,
+                                        actor: str, reason: str) -> int | None:
+        """Öğrencinin açık üyeliklerini `last_day` günü kapatır (pasifleştirme).
+
+        ÇAĞIRANIN İŞLEMİNE KATILIR (km-merkezi-senkron §5.2): öğrenci durumu,
+        öğrenci olayı, üyelik kapanışı ve `group.changed` tek commit'tir.
+        `last_day`den SONRA başlayan üyelikler hiç yürürlüğe girmediği için
+        kaldırılır (arşiv kuralı). Dokunulan bir şey yoksa `None` döner ve
+        revizyon harcanmaz; varsa yeni grup revizyonu döner — çağıran commit'ten
+        sonra `after_commit(revision)` ile süreç içi olayı yayınlar.
+        """
+        student = str(student_id)
+        rows = await self._store.fetch_all(
+            f"SELECT * FROM {self._members} WHERE kantin_id = ?", (student,))
+        targets = []
+        for member in rows:
+            start = _day(str(member["valid_from"])) or date.min
+            end = _day(str(member["valid_to"]))
+            if start > last_day or end is None or end > last_day:
+                targets.append((member, start > last_day))
+        if not targets:
+            return None
+        async with self._store.transaction():
+            revision = await self._bump()
+            stamp = _now()
+            touched: set[str] = set()
+            for member, future in targets:
+                if future:
+                    await self._store.execute(
+                        f"DELETE FROM {self._members} WHERE id = ?", (str(member["id"]),))
+                else:
+                    await self._store.execute(
+                        f"UPDATE {self._members} SET valid_to = ?, reason = ?, updated_at = ?, "
+                        f"updated_by = ?, revision = ? WHERE id = ?",
+                        (last_day.isoformat(), reason[:REASON_MAX], stamp, actor, revision,
+                         str(member["id"])))
+                touched.add(str(member["group_id"]))
+            for group_id in sorted(touched):
+                await self._touch_group(group_id, actor=actor, revision=revision)
+                await self._write_audit(
+                    actor=actor, action="student_deactivated", group_id=group_id,
+                    revision=revision,
+                    detail={"student": student, "validTo": last_day.isoformat(),
+                            "reason": reason[:REASON_MAX]})
+            await self._emit(revision)
+        return revision
+
+    async def after_commit(self, revision: int) -> None:
+        """Dış işlem commit edildikten sonra süreç içi `groups_changed` yayını."""
+        await self._changed(revision)
 
     # ------------------------------------------------------------ iç yazma
 

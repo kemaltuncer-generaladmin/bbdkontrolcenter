@@ -65,3 +65,37 @@ Kantinde durur ve satış anında kantin uygular
 
 Kantin tahsilatı ve ödeme talebi kartı Ödeme Talebi modülünden gelir
 (`bbd_payment_request.student_card` arayüz yeteneği); akış orada kalır.
+
+## Merkezi senkron ve yaşam döngüsü (KM tek merkez)
+
+Sözleşme: bbd-akademi `docs/integrations/km-merkezi-senkron.md`; çekirdek
+desteği ADR 0029 (modül işlemi + `events.outbox`).
+
+- **Önce KM, sonra kantin.** Her öğrenci yazması tek işlemde profil +
+  `revision` (küresel sayaç) + `canteen_sync = pending` + bekleyen kantin
+  gövdesi + outbox olayı yazar, sonra kantine gider. Kantin reddederse (4xx)
+  telafi edilir (yeni kayıt silinir / eski değerler geri yazılır, köken
+  `system`); ulaşılamazsa kayıt `pending` kalır ve uzlaştırma görevi (1 dk,
+  kantinden olay gelince hemen) yineler. Listede "Kantine iletilemedi"
+  rozeti; 24 saati geçen kırmızı. `GET /api/bbd_students/sync` özeti verir.
+- **Olaylar** (`events.outbox`, kişisel veri yok): `student.created|updated`
+  (değişen mantıksal alanlar), `guardian.linked|unlinked|phone_changed`
+  (`data.slot`), `canteen.controls_changed`, `student.deactivated|reactivated|
+  deleted`, `tablet.policy_changed` (pasifleştirmede), `group.changed`.
+- **Yaşam döngüsü:** Pasifleştir (gerekçe ayrıldı/mezun/geçici durdurma/diğer,
+  bugün ya da ileri tarih — o gün 00:00'da uygulanır; toplu seçim),
+  Yeniden etkinleştir (grup üyelikleri kendiliğinden AÇILMAZ), Kalıcı sil
+  (yalnız pasif, ad yazılarak, bakiye tam 0, açık ödeme talebi yok, Akademi
+  kurum cari borcu yok — `akademi.student_finance` yoksa silme kapalı).
+  Uçlar: `POST /students/{id}/deactivate`, `POST /students/deactivate`
+  (toplu), `POST /students/{id}/reactivate`, `DELETE /students/{id}`,
+  `GET /students/{id}/status-history`. İzinler `bbd_students.lifecycle`,
+  `bbd_students.delete` (yalnız admin).
+- **Dizin** öğe başına `status`, `statusReason`, `statusSince`, `revision`,
+  `canteenSync` taşır; kantine henüz yazılamamış kayıt `canteen: null` ile
+  döner; pasif görünür, silinen `since` yanıtında `removed`'da (90 gün).
+  `get_many(ids)`, `balance=False`.
+- **Kasadan eklenen öğrenci** (`bbd_students.sync`, kantin olay alıcısı
+  çağırır): taslak profil + "Kasadan eklendi — bilgileri tamamla" rozeti.
+- **Canlı ekran:** liste, öğrenci kartı ve kantin kontrolleri
+  `GET /api/events/wait` uzun yoklamasıyla kendini yeniler.

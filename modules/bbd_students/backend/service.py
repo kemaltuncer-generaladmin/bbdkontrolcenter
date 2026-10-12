@@ -21,7 +21,18 @@ from typing import Any
 from km_sdk import report_dir, write_private
 
 from . import curriculum
-from .directory import split_name
+from .directory import split_name, student_record
+from .lifecycle import describe_status
+from .phones import normalize_phone
+from .sync import (
+    LOGICAL_FIELDS,
+    STALE_AFTER,
+    Event,
+    StudentSync,
+    guardian_event,
+    iso,
+    pending_upsert,
+)
 
 # Kantin'in kabul ettiği alanlar — başka hiçbir şey oraya gönderilmez.
 CANTEEN_FIELDS = {"displayName", "parentPhone", "spendingLimit", "isBlocked"}
@@ -82,7 +93,8 @@ class StudentService:
     def __init__(self, *, canteen: Any, store: Any, log: Any,
                  config: dict[str, Any] | None = None,
                  category: str = "Öğrenci", fallback_dir: Path | None = None,
-                 on_change: Callable[..., None] | None = None) -> None:
+                 on_change: Callable[..., None] | None = None,
+                 sync: StudentSync | None = None, directory: Any = None) -> None:
         self._config = config or {}
         # Öğrenci yazıldığında dizin yeteneğinin önbelleğini bırakır
         # (`StudentDirectory.invalidate`). `canteen=False`: yalnız profil değişti.
@@ -94,6 +106,12 @@ class StudentService:
         self._log = log
         self._table = store.table("profile")
         self._products_cache: tuple[float, list[dict[str, Any]]] | None = None
+        #: Önce-KM-sonra-kantin yazma yolu (km-merkezi-senkron §7). Testler
+        #: vermezse olaysız yerel bir eşi kurulur.
+        self._sync = sync or StudentSync(store=store, canteen=canteen, log=log,
+                                         on_change=on_change)
+        #: Öğrencinin şu anki kaydı (eski değer karşılaştırması: veli telefonu, ad).
+        self._directory = directory
 
     @property
     def _export_dir(self) -> Path:
@@ -115,9 +133,10 @@ class StudentService:
         Kantin listesi, kasa panosu ve profil tablosu BİRBİRİNDEN BAĞIMSIZDIR;
         üçü aynı anda istenir (eskiden sırayla: liste bitmeden pano başlamazdı).
         """
-        students_call, dashboard_call, profile_rows = await asyncio.gather(
+        students_call, dashboard_call, profile_rows, tomb_rows = await asyncio.gather(
             _settled(self._canteen.students), _settled(self._canteen.dashboard),
             self._store.fetch_all(f"SELECT * FROM {self._table}"),
+            self._store.fetch_all(f"SELECT kantin_id FROM {self._store.table('tombstone')}"),
         )
         if isinstance(students_call, BaseException):
             students, connected, error = [], False, str(students_call)
@@ -126,13 +145,24 @@ class StudentService:
             students, connected, error = students_call, True, ""
 
         profiles = {row["kantin_id"]: row for row in profile_rows}
+        deleted = {str(row["kantin_id"]) for row in tomb_rows}
+        stale_cut = iso(datetime.now(UTC) - STALE_AFTER)
 
-        merged = [self._merge(student, profiles.get(student.get("id", ""))) for student in students]
+        merged = [self._merge(student, profiles.get(student.get("id", "")), stale_cut=stale_cut)
+                  for student in students if str(student.get("id") or "") not in deleted]
+
+        # KM kaydı olup kantine HENÜZ yazılamamış öğrenciler (§7): listede
+        # görünür, kantin alanları bekleyen gövdeden gelir.
+        known = {student.get("id") for student in students}
+        for row in profiles.values():
+            if row["kantin_id"] not in known and row.get("canteen_sync") == "pending":
+                merged.append(self._merge({"id": row["kantin_id"], "balance": 0},
+                                          row, stale_cut=stale_cut, canteen_missing=True))
 
         # Kantinde olmayan ama bizde profili kalmış kayıtlar: öğrenci kasadan
         # silinmiş olabilir. Sessizce yutmuyoruz, işaretliyoruz.
-        known = {student.get("id") for student in students}
-        orphans = [row["kantin_id"] for row in profiles.values() if row["kantin_id"] not in known]
+        orphans = [row["kantin_id"] for row in profiles.values()
+                   if row["kantin_id"] not in known and row.get("canteen_sync") != "pending"]
 
         return {
             "connected": connected,
@@ -190,8 +220,15 @@ class StudentService:
         })
         return summary
 
-    def _merge(self, canteen: dict[str, Any], profile: dict[str, Any] | None) -> dict[str, Any]:
+    def _merge(self, canteen: dict[str, Any], profile: dict[str, Any] | None, *,
+               stale_cut: str = "", canteen_missing: bool = False) -> dict[str, Any]:
+        # Kantine henüz yazılmamış KM değerleri (bekleyen gövde) kantin satırını ezer.
+        overlay = pending_upsert(profile)
+        if overlay:
+            canteen = {**canteen, **overlay}
         display_name = str(canteen.get("displayName") or "")
+        if not display_name and profile:
+            display_name = f"{profile.get('first_name') or ''} {profile.get('last_name') or ''}".strip()
         first, last = _split_name(display_name)
         plan = curriculum.from_row(profile)
         class_name = (profile or {}).get("class_name") or ""
@@ -228,6 +265,16 @@ class StudentService:
             # Kantin veli kontrolleri listede de taşınır (yeni kantin sürümü).
             "dailyLimit": canteen.get("dailyLimit"),
             "guardianBlocked": bool(canteen.get("guardianBlocked")),
+            # Merkezi senkron (km-merkezi-senkron §5, §7).
+            **describe_status(profile),
+            "revision": int((profile or {}).get("revision") or 0),
+            "canteenSync": str((profile or {}).get("canteen_sync") or "ok"),
+            "canteenStale": bool(
+                (profile or {}).get("canteen_sync") == "pending" and stale_cut
+                and str((profile or {}).get("canteen_since") or "") < stale_cut),
+            "canteenError": (profile or {}).get("canteen_error"),
+            "canteenMissing": canteen_missing,
+            "source": str((profile or {}).get("source") or "km"),
         }
 
     # ------------------------------------------------- veli kantin kontrolleri
@@ -258,7 +305,8 @@ class StudentService:
         }
 
     async def update_canteen_controls(self, kantin_id: str, patch: dict[str, Any], *,
-                                      actor: str) -> dict[str, Any]:
+                                      actor: str,
+                                      causation_id: str | None = None) -> dict[str, Any]:
         """Kontrolleri kantine yazar (`canteen.api.update_controls`).
 
         VELİ ENGELİ YALNIZ KALDIRILIR. Kantini kapatmak velinin kararıdır
@@ -282,6 +330,13 @@ class StudentService:
                 raise ControlsError(f"Kantin reddetti: {failure}", status=422) from failure
             raise ControlsError(f"Kantine ulaşılamadı: {failure}", status=503) from failure
         self._changed(canteen=True)
+        # Merkezi senkron: kontroller kantindedir; olay ancak kantin kabul
+        # ettikten sonra yazılır (KM'de aynı işlemde yazılacak satır yok).
+        try:
+            await self._sync.emit(kantin_id, [Event("canteen.controls_changed", sorted(clean))],
+                                  revision=None, causation_id=causation_id)
+        except Exception as failure:  # noqa: BLE001 — olay yazılamasa da kantin yazıldı
+            self._log.warning("kontrol olayı yazılamadı", error=str(failure))
         # Denetim: kim, hangi alanları. Değerler kişisel veri değil ama gereksiz
         # de değil — limit değişikliği sonradan sorulur.
         self._log.info("veli kantin kontrolleri değişti", student=kantin_id, actor=actor,
@@ -323,68 +378,205 @@ class StudentService:
 
     # ------------------------------------------------------------- yazma
 
-    async def create_student(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def create_student(self, payload: dict[str, Any], *,
+                             actor: str = "") -> dict[str, Any]:
+        """Yeni öğrenci — ÖNCE KM, sonra kantin (km-merkezi-senkron §7).
+
+        Profil + revizyon + `student.created` tek işlemde yazılır; kantine
+        sonra gidilir. Kantin reddederse (4xx) profil silinir ve
+        `student.deleted` (köken `system`) yazılır; ulaşılamazsa kayıt
+        `pending` kalır ve uzlaştırma yineler — yarım kayıt kalmaz.
+        """
         kantin_id = _new_opaque_id()
         display = _display_name(payload)
         if not display:
             raise ValueError("Ad ve soyad zorunlu.")
         # Kural ihlali kantine yazılmadan ÖNCE yakalanır.
-        curriculum.resolve({}, _curriculum_patch(payload))
+        columns = self._profile_columns(None, payload)
 
         changes: dict[str, Any] = {"displayName": display}
         for field in ("parentPhone", "spendingLimit", "isBlocked"):
             if field in payload:
                 changes[field] = payload[field]
 
-        await self._canteen.upsert_student(kantin_id, changes)
-        self._changed(canteen=True)
-        await self._save_profile(kantin_id, payload)
-        self._log.info("öğrenci kantine eklendi", kantin_id=kantin_id)
-        return {"kantinId": kantin_id}
+        await self._sync.write(
+            kantin_id, columns={**columns, "source": "km"},
+            canteen_ops={"upsert": changes}, events=[Event("student.created")],
+            log={"action": "created", "actor": actor})
+        outcome = await self._sync.push(kantin_id)
+        if outcome.state == "rejected":
+            await self._compensate_create(kantin_id)
+            raise ValueError(f"Kantin öğrenciyi kabul etmedi: {outcome.error}")
+        self._log.info("öğrenci eklendi", kantin_id=kantin_id, canteen=outcome.state)
+        result: dict[str, Any] = {"kantinId": kantin_id,
+                                  "canteenSync": "ok" if outcome.state == "ok" else "pending"}
+        if outcome.state != "ok":
+            result["warning"] = "Kantine iletilemedi — otomatik yeniden denenecek."
+        return result
 
-    async def update_student(self, kantin_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Yalnızca DOKUNULAN alanları yazar.
+    async def _compensate_create(self, kantin_id: str) -> None:
+        """Kantinin reddettiği yeni kayıt geri alınır (§7 adım 4)."""
+        moment = datetime.now(UTC)
+        async with self._store.transaction():
+            revision = await self._sync.bump()
+            await self._store.execute(f"DELETE FROM {self._table} WHERE kantin_id = ?",
+                                      (kantin_id,))
+            await self._store.execute(
+                f"INSERT OR REPLACE INTO {self._store.table('tombstone')} (kantin_id, deleted_at, "
+                f"canteen_sync, canteen_attempts, canteen_error) VALUES (?, ?, 'ok', 0, NULL)",
+                (kantin_id, iso(moment)))
+            await self._sync.emit(kantin_id, [Event("student.deleted", [], {
+                "erasedAt": moment.astimezone().isoformat(timespec="seconds")})],
+                revision=revision, origin="system")
+        self._changed(canteen=False)
+
+    async def update_student(self, kantin_id: str, payload: dict[str, Any], *,
+                             actor: str = "", causation_id: str | None = None) -> dict[str, Any]:
+        """Yalnızca DOKUNULAN alanları yazar — ÖNCE KM, sonra kantin.
 
         Ad/soyad değiştiyse kantindeki tek alanlık `displayName` yeniden
-        kurulur; değişmediyse kantine hiç gitmez — tabletin yazdığına
-        dokunulmaz.
+        kurulur; kantin alanı değişmediyse kantine hiç gidilmez — tabletin
+        yazdığına dokunulmaz. Olaylar: `student.updated` (değişen mantıksal
+        alanlar), veli telefonu için `guardian.*` (`data.slot`), limit/engel
+        için `canteen.controls_changed`.
         """
+        if await self._sync.tombstone(kantin_id) is not None:
+            raise ValueError("Öğrenci silinmiş.")
+        existing = await self._sync.profile(kantin_id)
+        # Seviye/alan kuralı kantine gitmeden denetlenir (yarım yazma olmasın).
+        columns = self._profile_columns(existing, payload)
+
         changes: dict[str, Any] = {}
         for field in ("parentPhone", "spendingLimit", "isBlocked"):
             if field in payload:
                 changes[field] = payload[field]
 
-        # Seviye/alan kuralı kantine gitmeden denetlenir (yarım yazma olmasın).
-        patch = _curriculum_patch(payload)
-        if patch:
-            existing = await self._store.fetch_one(
-                f"SELECT * FROM {self._table} WHERE kantin_id = ?", (kantin_id,)
-            )
-            curriculum.resolve(curriculum.from_row(existing), patch)
+        record = await self._current_record(kantin_id) \
+            if (changes or {"firstName", "lastName", "displayName"} & set(payload)) else None
+        current_display = self._display_of(record, existing)
 
         if "firstName" in payload or "lastName" in payload or "displayName" in payload:
-            profile = await self._store.fetch_one(
-                f"SELECT * FROM {self._table} WHERE kantin_id = ?", (kantin_id,)
-            )
+            # Profilde ad yoksa (kantinden gelen eski kayıt) görünen ad bölünür:
+            # yalnız ad düzeltilince soyad kaybolmasın.
+            fallback_first, fallback_last = split_name(current_display)
             merged = {
-                "firstName": payload.get("firstName", (profile or {}).get("first_name", "")),
-                "lastName": payload.get("lastName", (profile or {}).get("last_name", "")),
+                "firstName": payload.get("firstName", (existing or {}).get("first_name")
+                                         or fallback_first),
+                "lastName": payload.get("lastName", (existing or {}).get("last_name")
+                                        or fallback_last),
                 "displayName": payload.get("displayName"),
             }
             display = _display_name(merged)
-            if display:
+            if display and display != current_display:
                 changes["displayName"] = display
 
-        if changes:
+        if changes and "displayName" not in changes:
             # Kantin `displayName`i zorunlu tutuyor: yalnız telefon değişse bile
             # mevcut adı birlikte göndermek gerekir.
-            if "displayName" not in changes:
-                changes["displayName"] = await self._current_display_name(kantin_id)
-            await self._canteen.upsert_student(kantin_id, changes)
-            self._changed(canteen=True)
+            if not current_display:
+                raise ValueError(f"Kantinde bulunamadı: {kantin_id}")
+            changes["displayName"] = current_display
 
-        await self._save_profile(kantin_id, payload)
-        return {"kantinId": kantin_id, "canteenFields": sorted(changes)}
+        events = self._update_events(existing, record, columns, changes, payload)
+        if not columns and not changes:
+            return {"kantinId": kantin_id, "canteenFields": [], "canteenSync": "ok"}
+        if (existing or {}).get("source") == "canteen":
+            # Kasadan eklenen taslak KM'de düzenlendi: rozet kalkar.
+            columns["source"] = "km"
+
+        await self._sync.write(kantin_id, columns=columns,
+                               canteen_ops={"upsert": changes} if changes else None,
+                               events=events, causation_id=causation_id)
+        state = "ok"
+        if changes:
+            outcome = await self._sync.push(kantin_id)
+            if outcome.state == "rejected":
+                await self._compensate_update(kantin_id, existing, columns, events)
+                raise ValueError(f"Kantin değişikliği kabul etmedi: {outcome.error}")
+            state = "ok" if outcome.state == "ok" else "pending"
+        return {"kantinId": kantin_id, "canteenFields": sorted(changes), "canteenSync": state}
+
+    def _update_events(self, existing: dict[str, Any] | None, record: dict[str, Any] | None,
+                       columns: dict[str, Any], changes: dict[str, Any],
+                       payload: dict[str, Any]) -> list[Event]:
+        fields: list[str] = []
+        for column, value in columns.items():
+            logical = LOGICAL_FIELDS.get(column)
+            before = (existing or {}).get(column)
+            if logical and (before or "") != (value or "") and logical not in fields:
+                fields.append(logical)
+        if "displayName" in changes and changes["displayName"] != self._display_of(
+                record, existing):
+            fields.append("displayName")
+        events: list[Event] = []
+        if fields:
+            events.append(Event("student.updated", fields))
+        if "parentPhone" in payload:
+            old = _guardian_phone(record, 1)
+            event = guardian_event(1, old if record is not None else None,
+                                   normalize_phone(payload.get("parentPhone"))
+                                   or str(payload.get("parentPhone") or "").strip())
+            if event is not None:
+                events.append(event)
+        if "parent_phone2" in columns:
+            event = guardian_event(
+                2, normalize_phone((existing or {}).get("parent_phone2"))
+                or str((existing or {}).get("parent_phone2") or "").strip(),
+                normalize_phone(columns["parent_phone2"]) or str(columns["parent_phone2"]))
+            if event is not None:
+                events.append(event)
+        controls = [key for key in ("spendingLimit", "isBlocked") if key in changes]
+        if controls:
+            events.append(Event("canteen.controls_changed", controls))
+        return events
+
+    async def _compensate_update(self, kantin_id: str, existing: dict[str, Any] | None,
+                                 columns: dict[str, Any], events: list[Event]) -> None:
+        """Kantin reddetti: önceki değerler geri yazılır + `student.updated` (köken `system`)."""
+        restore = {column: (existing or {}).get(column, "" if column in _TEXT_COLUMNS else None)
+                   for column in columns}
+        fields = sorted({name for event in events for name in event.fields})
+        async with self._store.transaction():
+            await self._sync.write(kantin_id, columns=restore,
+                                   events=[Event("student.updated", fields)], origin="system")
+            await self._sync.clear_pending(kantin_id)
+
+    async def _current_record(self, kantin_id: str) -> dict[str, Any] | None:
+        """Dizindeki güncel kayıt (eski veli telefonu, ad). Kantin yoksa None."""
+        try:
+            if self._directory is None:
+                # Dizinsiz kurulum (testler): kantinin tekil kaydı.
+                row = await self._canteen.student(kantin_id)
+                return student_record(row, None) if isinstance(row, dict) else None
+            found = await self._directory.get(kantin_id)
+        except Exception as failure:  # noqa: BLE001 — kantin dışarısı
+            self._log.warning("öğrenci kaydı okunamadı", student=kantin_id, error=str(failure))
+            return None
+        return dict(found) if isinstance(found, dict) else None
+
+    @staticmethod
+    def _display_of(record: dict[str, Any] | None, existing: dict[str, Any] | None) -> str:
+        pending = pending_upsert(existing).get("displayName")
+        if pending:
+            return str(pending)
+        if record and record.get("displayName"):
+            return str(record["displayName"])
+        return f"{(existing or {}).get('first_name') or ''} " \
+               f"{(existing or {}).get('last_name') or ''}".strip()
+
+    def _profile_columns(self, existing: dict[str, Any] | None,
+                         payload: dict[str, Any]) -> dict[str, Any]:
+        """Gövdedeki profil alanları → sütunlar. Seviye/alan kuralı burada (yükseltir)."""
+        fields = {key: payload[key] for key in PROFILE_COLUMNS if key in payload}
+        plan_patch = _curriculum_patch(payload)
+        plan_columns: dict[str, Any] = {}
+        if plan_patch:
+            plan_columns = curriculum.resolve(curriculum.from_row(existing), plan_patch)
+        # Eski metin sütunları NOT NULL '' tutar; seviye/alan/hedef sınav
+        # sütunları NULL tutar ("girilmemiş" ile "boş metin" ayrı şeyler).
+        columns = {PROFILE_COLUMNS[key]: str(fields[key] or "") for key in fields}
+        columns.update(plan_columns)
+        return columns
 
     async def reset_access_code(self, kantin_id: str) -> dict[str, Any]:
         """Öğrenciye tek tuşla yeni giriş kodu verir.
@@ -482,12 +674,6 @@ class StudentService:
         issued.sort(key=lambda row: str(row.get("studentName") or "").casefold())
         return {"issued": issued, "failed": failed}
 
-    async def _current_display_name(self, kantin_id: str) -> str:
-        for student in await self._canteen.students():
-            if student.get("id") == kantin_id:
-                return str(student.get("displayName") or "")
-        raise ValueError(f"Kantinde bulunamadı: {kantin_id}")
-
     async def set_curriculum(self, kantin_ids: list[str],
                              patch: dict[str, Any]) -> dict[str, Any]:
         """Seçili öğrencilere seviye/alan/hedef sınav yazar (toplu işlem).
@@ -516,35 +702,24 @@ class StudentService:
                 failed.append({"studentId": kantin_id, "error": str(failure)})
                 continue
             updated.append(kantin_id)
+        # Her öğrenci ayrı `student.updated` (km-merkezi-senkron §2.2).
         self._log.info("toplu seviye/alan", updated=len(updated), failed=len(failed))
         return {"updated": updated, "failed": failed}
 
     async def _save_profile(self, kantin_id: str, payload: dict[str, Any]) -> None:
-        fields = {key: payload[key] for key in PROFILE_COLUMNS if key in payload}
-        plan_patch = _curriculum_patch(payload)
-        plan_columns: dict[str, Any] = {}
-        if plan_patch:
-            existing = await self._store.fetch_one(
-                f"SELECT * FROM {self._table} WHERE kantin_id = ?", (kantin_id,)
-            )
-            plan_columns = curriculum.resolve(curriculum.from_row(existing), plan_patch)
-        if not fields and not plan_columns:
+        """Yalnız KM alanları (kantine gidilmez) + `student.updated`, tek işlem."""
+        existing = await self._sync.profile(kantin_id)
+        columns = self._profile_columns(existing, payload)
+        if not columns:
             return
-
-        # Eski metin sütunları NOT NULL '' tutar; seviye/alan/hedef sınav
-        # sütunları NULL tutar ("girilmemiş" ile "boş metin" ayrı şeyler).
-        columns = [PROFILE_COLUMNS[key] for key in fields] + list(plan_columns)
-        values = [str(fields[key] or "") for key in fields] + list(plan_columns.values())
-
-        await self._store.execute(
-            f"INSERT INTO {self._table} (kantin_id, {', '.join(columns)}, updated_at) "
-            f"VALUES (?{', ?' * len(columns)}, ?) "
-            f"ON CONFLICT(kantin_id) DO UPDATE SET "
-            + ", ".join(f"{column} = excluded.{column}" for column in columns)
-            + ", updated_at = excluded.updated_at",
-            (kantin_id, *values, datetime.now(UTC).isoformat(timespec="seconds")),
-        )
-        self._changed(canteen=False)
+        fields: list[str] = []
+        for column, value in columns.items():
+            logical = LOGICAL_FIELDS.get(column)
+            if logical and ((existing or {}).get(column) or "") != (value or "") \
+                    and logical not in fields:
+                fields.append(logical)
+        await self._sync.write(kantin_id, columns=columns,
+                               events=[Event("student.updated", fields)] if fields else [])
 
     # ------------------------------------------------------------ kartlar
 
@@ -761,6 +936,17 @@ class StudentService:
 def _split_name(display_name: str) -> tuple[str, str]:
     """Kantin tek alan tutuyor; profil yoksa son kelimeyi soyad sayarız."""
     return split_name(display_name)
+
+
+#: NOT NULL '' tutan metin sütunları (telafide boş metne döner).
+_TEXT_COLUMNS = frozenset(PROFILE_COLUMNS.values())
+
+
+def _guardian_phone(record: dict[str, Any] | None, slot: int) -> str:
+    for guardian in (record or {}).get("guardians") or []:
+        if int(guardian.get("slot") or 0) == slot:
+            return str(guardian.get("phone") or "")
+    return ""
 
 
 def _controls_view(student: dict[str, Any]) -> dict[str, Any]:

@@ -100,6 +100,10 @@ PAYMENT_ORIGINS = ("admin", "bulk", "threshold", "api")
 #: İmleç yokken akışın başlangıcı. Akış kipi yalnız `updatedSince` ile açılır.
 FEED_START = "1970-01-01T00:00:00Z"
 
+#: Yankı penceresi (sn) ve bellekte tutulan en çok anahtar (§6.2).
+ECHO_WINDOW_SECONDS = 2.0
+ECHO_MAX_KEYS = 2000
+
 #: İşlem listesinin kantin üst sınırı (aralıkta; `TransactionController`).
 TRANSACTIONS_LIMIT_MAX = 5000
 
@@ -176,6 +180,10 @@ class CanteenApi:
         self._token: str | None = None
         self._http: httpx.AsyncClient | None = None
         self._http_loop: asyncio.AbstractEventLoop | None = None
+        #: YANKI PENCERESİ (km-merkezi-senkron §6.2): KM'nin kantine az önce
+        #: yazdığı öğrenci / kontrol alanları. Kantin aynı değişikliği olay olarak
+        #: geri ittiğinde (2 sn içinde) KM yeni olay üretmez. Bellekte, sınırlı.
+        self._recent: dict[tuple[str, str], tuple[float, frozenset[str]]] = {}
         # Defter ucunun yokluğu bu ana (time.monotonic) kadar hatırlanır.
         self._ledger_missing_until = 0.0
 
@@ -254,8 +262,19 @@ class CanteenApi:
         return token
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        response = await self._send(method, path, **kwargs)
+        return response.json() if response.content else None
+
+    async def _send(self, method: str, path: str, *,
+                    headers: dict[str, str] | None = None, **kwargs: Any) -> httpx.Response:
+        """İsteği gönderir; 4xx/5xx'i `CanteenError`a çevirir, yanıtın kendisini döner.
+
+        `_request` gövdeyi çözer; ETag gibi başlık gereken çağrılar (bakiye
+        uzlaştırması) bunu doğrudan kullanır. 304 hata değildir.
+        """
         token = await self._ensure_token()
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json",
+                   **(headers or {})}
 
         # Kantin SQLite üzerinde çalışıyor: eşzamanlı okumalarda kilit yüzünden
         # tek seferlik 5xx görülebiliyor. OKUMA istekleri güvenle yinelenir.
@@ -317,7 +336,7 @@ class CanteenApi:
                          if key not in ("message", "errors", "exception", "trace")},
             )
 
-        return response.json() if response.content else None
+        return response
 
     # ---------------------------------------------------------------- veri
 
@@ -352,6 +371,7 @@ class CanteenApi:
         payload = await self._request(
             "POST", "/api/students", json={"opaqueId": opaque_id, **changes}
         )
+        self.remember_write(opaque_id, "student", changes)
         return payload.get("data", payload) if isinstance(payload, dict) else payload
 
     async def issue_student_access_code(self, opaque_id: str) -> dict[str, Any]:
@@ -766,11 +786,134 @@ class CanteenApi:
             if failure.status == 404:
                 failure.reason = failure.reason or "student_not_found"
             raise
+        self.remember_write(student_id, "controls", body)
         data = (payload or {}).get("data", payload) if isinstance(payload, dict) else None
         if not isinstance(data, dict) or not data.get("id"):
             # Yanıt beklenen biçimde değilse güncel hâli ayrıca okunur.
             return await self.get_student(student_id)
         return _student_with_controls(data)
+
+    # ------------------------------------------- merkezi senkron (§6.4, §1.8)
+
+    async def set_student_status(self, student_id: str, status: str,
+                                 reason: str | None = None,
+                                 at: str | None = None) -> dict[str, Any]:
+        """Yaşam döngüsü aynası — `PATCH /api/students/{id}/status`.
+
+        İdempotent (aynı durum → 200, değişiklik yok). `status`: `active` |
+        `inactive`; `deleted` bu uçtan verilemez. Eski kantinde uç yoksa
+        `CanteenError(reason="not_supported")` — KM çalışmaya devam eder.
+        """
+        if status not in ("active", "inactive"):
+            raise CanteenError("Durum active ya da inactive olmalı.", status=422,
+                               reason="validation_error")
+        body = {"status": status, "reason": reason, "at": at or _now_iso()}
+        try:
+            payload = await self._request(
+                "PATCH", f"/api/students/{student_id}/status", json=body)
+        except CanteenError as failure:
+            _mark_unsupported(failure)
+            raise
+        self.remember_write(student_id, "status", {"status": status})
+        data = (payload or {}).get("data", payload) if isinstance(payload, dict) else None
+        return dict(data) if isinstance(data, dict) else {"id": student_id, "status": status}
+
+    async def delete_student(self, student_id: str) -> dict[str, Any]:
+        """Kalıcı silme — `DELETE /api/students/{id}` (kantin anonimleştirir).
+
+        `409` kodları `CanteenError.reason` ile iletilir: `balance_not_zero`,
+        `open_payment_request`. Öğrenci kantinde yoksa `student_not_found`;
+        uç yoksa (eski kantin) `not_supported`.
+        """
+        try:
+            payload = await self._request("DELETE", f"/api/students/{student_id}")
+        except CanteenError as failure:
+            _mark_unsupported(failure)
+            raise
+        return dict(payload or {}) if isinstance(payload, dict) else {}
+
+    async def balances(self, ids: list[str] | None = None, *,
+                       etag: str | None = None) -> dict[str, Any] | None:
+        """Bakiye uzlaştırması — `GET /api/students/balances?ids=`.
+
+        Dönüş `{"ledgerSeq", "items": [{"opaqueId", "balance", "ledgerSeq"}],
+        "etag"}`; `etag` verildi ve defter değişmediyse `None` (304).
+        """
+        params: dict[str, Any] = {}
+        if ids:
+            params["ids"] = ",".join(str(item) for item in ids)
+        headers = {"If-None-Match": etag} if etag else None
+        try:
+            response = await self._send("GET", "/api/students/balances", params=params,
+                                        headers=headers)
+        except CanteenError as failure:
+            _mark_unsupported(failure)
+            raise
+        if response.status_code == 304:
+            return None
+        payload = response.json() if response.content else {}
+        payload = payload if isinstance(payload, dict) else {}
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        return {
+            "ledgerSeq": int(payload.get("ledgerSeq") or 0),
+            "items": [
+                {"opaqueId": str(item.get("opaqueId") or item.get("studentId") or ""),
+                 "balance": int(item.get("balance") or 0),
+                 "ledgerSeq": int(item.get("ledgerSeq") or 0)}
+                for item in items if isinstance(item, dict)
+            ],
+            "etag": response.headers.get("ETag"),
+        }
+
+    async def events_after(self, after: int, limit: int = 500) -> dict[str, Any]:
+        """Kantin outbox'undan çekme — `GET /api/km/events?after=&limit=` (§6.1 yedek).
+
+        Dönüş `{"items": [{id, type, opaqueId, payload, createdAt}], "lastId",
+        "hasMore"}`. Uç yoksa `not_supported`.
+        """
+        size = max(1, min(int(limit), 500))
+        try:
+            payload = await self._request(
+                "GET", "/api/km/events", params={"after": max(0, int(after)), "limit": size})
+        except CanteenError as failure:
+            _mark_unsupported(failure)
+            raise
+        payload = payload if isinstance(payload, dict) else {}
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        clean = [item for item in items if isinstance(item, dict)]
+        last = payload.get("lastId")
+        return {
+            "items": clean,
+            "lastId": int(last) if last is not None else
+            max([int(item.get("id") or 0) for item in clean] or [int(after)]),
+            "hasMore": bool(payload.get("hasMore")),
+        }
+
+    # -------------------------------------------------------------- yankı
+
+    def remember_write(self, student_id: str, kind: str, fields: Any) -> None:
+        """KM'nin kantine yazdığı alanları kısa süre hatırlar (yankı bastırma)."""
+        now = time.monotonic()
+        if len(self._recent) >= ECHO_MAX_KEYS:
+            self._recent = {key: value for key, value in self._recent.items()
+                            if now - value[0] < ECHO_WINDOW_SECONDS}
+            if len(self._recent) >= ECHO_MAX_KEYS:
+                self._recent.clear()
+        key = (str(student_id), kind)
+        previous = self._recent.get(key)
+        names = frozenset(str(name) for name in (fields or ()))
+        if previous is not None and now - previous[0] < ECHO_WINDOW_SECONDS:
+            names = names | previous[1]
+        self._recent[key] = (now, names)
+
+    def recently_written(self, student_id: str, kind: str, fields: Any,
+                         window: float = ECHO_WINDOW_SECONDS) -> bool:
+        """`fields` KM'nin son `window` saniyede yazdığı alanların alt kümesi mi."""
+        entry = self._recent.get((str(student_id), kind))
+        if entry is None or time.monotonic() - entry[0] > window:
+            return False
+        wanted = frozenset(str(name) for name in (fields or ()))
+        return wanted <= entry[1]
 
     async def canteen_settings_public(self) -> dict[str, Any]:
         """Ön ödeme ayarı — `{"allowPrepayment": bool, "maxPrepayment": int}`.
@@ -1191,6 +1334,17 @@ class CanteenApi:
 
 
 # ------------------------------------------------------------------ yardım
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).astimezone(_ISTANBUL).isoformat(timespec="seconds")
+
+
+def _mark_unsupported(failure: CanteenError) -> None:
+    """Yolun kendisi yoksa (eski kantin, Laravel 404 gövdesi `reason` taşımaz)
+    hata `not_supported` olur; öğrenci yoksa `student_not_found` kalır."""
+    if failure.status in (404, 405) and not failure.reason:
+        failure.reason = "not_supported"
 
 
 def _iso(value: Any) -> Any:

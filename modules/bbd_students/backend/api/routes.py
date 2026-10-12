@@ -15,23 +15,44 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
+from fastapi.responses import JSONResponse
+
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
 from .. import qr as qr_codec
 from ..groups import GroupError, GroupService, parse_day
+from ..lifecycle import Lifecycle
 from ..service import ControlsError, StudentService
+from ..sync import StudentSync, SyncError
 
 router = APIRouter()
 
 _service: StudentService | None = None
 _groups: GroupService | None = None
+_lifecycle: Lifecycle | None = None
+_sync: StudentSync | None = None
 
 
-def bind(service: StudentService, groups: GroupService | None = None) -> APIRouter:
-    global _service, _groups
+def bind(service: StudentService, groups: GroupService | None = None,
+         lifecycle: Lifecycle | None = None, sync: StudentSync | None = None) -> APIRouter:
+    global _service, _groups, _lifecycle, _sync
     _service = service
     _groups = groups
+    _lifecycle = lifecycle
+    _sync = sync
     return router
+
+
+def lifecycle() -> Lifecycle:
+    if _lifecycle is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return _lifecycle
+
+
+def sync_error(exc: SyncError) -> JSONResponse:
+    """Yaşam döngüsü reddi — ortak zarf + makine kodu ve ayrıntı (ekran tutarı gösterir)."""
+    return JSONResponse(status_code=exc.status, content={"error": {
+        "status": exc.status, "message": str(exc), "code": exc.code, "details": exc.details}})
 
 
 def service() -> StudentService:
@@ -90,7 +111,7 @@ async def create_student(
 ) -> dict[str, Any]:
     payload = body.model_dump(exclude_unset=True)
     try:
-        return await service().create_student(payload)
+        return await service().create_student(payload, actor=user.full_name)
     except ValueError as exc:
         # Kural ihlali (ad yok, geçersiz seviye/alan) — 500 değil, cümlesiyle 400.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -105,7 +126,7 @@ async def update_student(
     # exclude_unset: gönderilmeyen alan "değiştirme" demektir, "boşalt" değil.
     payload = body.model_dump(exclude_unset=True)
     try:
-        return await service().update_student(kantin_id, payload)
+        return await service().update_student(kantin_id, payload, actor=user.full_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -177,6 +198,103 @@ async def update_canteen_controls(
         return await service().update_canteen_controls(kantin_id, patch, actor=user.full_name)
     except ControlsError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+# ------------------------------------------------------- yaşam döngüsü (§5)
+
+
+class DeactivateBody(BaseModel):
+    """Pasifleştir. `effectiveAt` boş = şimdi; ileri gün = o gün 00:00'da."""
+
+    reason: str = Field(max_length=16)
+    effectiveAt: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class BulkDeactivateBody(DeactivateBody):
+    students: list[str] = Field(min_length=1, max_length=2000)
+
+
+class DeleteBody(BaseModel):
+    """Kalıcı silme onayı: öğrencinin adı aynen yazılır."""
+
+    confirmName: str = Field(min_length=1, max_length=160)
+
+
+@router.post("/students/deactivate")
+async def bulk_deactivate(
+    body: BulkDeactivateBody,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    """Çoklu seçimle pasifleştirme (yıl sonu mezunlar). Her öğrenci ayrı olay;
+    kantin çağrıları arka planda sıralı."""
+    try:
+        return await lifecycle().bulk_deactivate(
+            body.students, reason=body.reason, effective_at=body.effectiveAt,
+            note=body.note or "", actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.post("/students/{kantin_id}/deactivate")
+async def deactivate_student(
+    kantin_id: str,
+    body: DeactivateBody,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    try:
+        return await lifecycle().deactivate(
+            kantin_id, reason=body.reason, effective_at=body.effectiveAt,
+            note=body.note or "", actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.post("/students/{kantin_id}/reactivate")
+async def reactivate_student(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    """Yeniden etkinleştir (ya da planlı pasifleştirmeyi iptal et). Grup
+    üyelikleri kendiliğinden açılmaz."""
+    try:
+        return await lifecycle().reactivate(kantin_id, actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.delete("/students/{kantin_id}")
+async def delete_student(
+    kantin_id: str,
+    body: DeleteBody,
+    user: CurrentUser = requires("bbd_students.delete"),
+) -> Any:
+    """Kalıcı sil — yalnız pasif öğrenci, bakiye 0, açık talep yok, kurum cari
+    borcu yok. 409 `balance_not_zero` / `open_payment_request` /
+    `institution_debt`, 503 `akademi_unavailable` / `canteen_unavailable`."""
+    try:
+        return await lifecycle().delete(kantin_id, confirm_name=body.confirmName,
+                                        actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.get("/students/{kantin_id}/status-history")
+async def status_history(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    if _sync is None:  # pragma: no cover
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return {"items": await _sync.history(kantin_id)}
+
+
+@router.get("/sync")
+async def sync_status(user: CurrentUser = requires("bbd_students.view")) -> dict[str, Any]:
+    """Kantine iletilemeyen kayıtlar (24 saati geçenler kırmızı) ve bekleyen silmeler."""
+    if _sync is None:  # pragma: no cover
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return await _sync.sync_status()
 
 
 @router.post("/students/{kantin_id}/access-code")
