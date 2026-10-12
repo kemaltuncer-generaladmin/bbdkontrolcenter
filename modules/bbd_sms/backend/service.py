@@ -28,7 +28,7 @@ from . import segments as seg
 PLACEHOLDERS = {
     "{ad}": "Öğrencinin adı",
     "{sinif}": "Sınıfı (Öğrenci Yönetimi'nden)",
-    "{borc}": "Güncel borcu (₺)",
+    "{borc}": "Güncel borcu (₺; alacaklıysa 0)",
     "{okul}": "Kurum adı",
 }
 
@@ -39,6 +39,16 @@ def _now() -> str:
 
 def _money(kurus: Any) -> str:
     return f"{int(kurus or 0) / 100:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _debt(balance: Any) -> str:
+    """`{borc}` yer tutucusu — ASLA EKSİ YAZILMAZ.
+
+    Kantinde negatif bakiye borç değil ALACAKTIR (ödeme sonrası satış iptali,
+    borçtan fazla ödeme). "Borcunuz -50,00 TL" veliye yanlış bilgidir; alacaklı
+    öğrencinin borcu 0'dır.
+    """
+    return _money(max(0, int(balance or 0)))
 
 
 class SmsService:
@@ -184,8 +194,14 @@ class SmsService:
             # önizleme bunu birebir taklit eder ki segment sayısı gerçeği göstersin.
             prefix = []
             if include_debt:
-                prefix.append(f"Sayın veli, {name} güncel borç: "
-                              f"{_money(student.get('balance'))}.")
+                # Kantin alacaklı öğrenci için borç cümlesi YAZMAZ, alacak cümlesi
+                # yazar (kantin SmsController); önizleme birebir aynısını gösterir.
+                balance = int(student.get("balance") or 0)
+                prefix.append(
+                    f"Sayın veli, {name} kantin alacak bakiyesi: {_money(-balance)}."
+                    if balance < 0 else
+                    f"Sayın veli, {name} güncel borç: {_money(balance)}."
+                )
             if include_daily:
                 prefix.append(f"{name} bugün toplam … alışveriş yaptı.")
             full = " ".join([*prefix, text]).strip()
@@ -240,7 +256,7 @@ class SmsService:
         return (body
                 .replace("{ad}", str(student.get("displayName") or ""))
                 .replace("{sinif}", class_name)
-                .replace("{borc}", _money(student.get("balance")))
+                .replace("{borc}", _debt(student.get("balance")))
                 .replace("{okul}", school))
 
     # -------------------------------------------------------------- yazma

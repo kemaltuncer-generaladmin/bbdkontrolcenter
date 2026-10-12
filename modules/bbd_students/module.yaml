@@ -21,10 +21,25 @@ entrypoint: backend.module:register
 
 depends: []
 
+# İKİ AYRI YETENEK, İKİ AYRI KATMAN:
+#   · `bbd_students.list` ARAYÜZ yeteneğidir — panelin `capabilities()`
+#     fonksiyonu verir (ui/panel/index.js); öğrenci seçen paneller (ders
+#     takvimi, öğle yemeği, toplu satış, SMS, raporlar) kullanır. Backend'de
+#     KARŞILIĞI YOKTUR ve bilerek yoktur: o paneller veriyi kabukta ister.
+#   · `bbd_students.directory` BACKEND yeteneğidir — `register()` içinde
+#     `ctx.provide` ile deftere yazılır; sözleşme `backend/directory.py`
+#     başlığında. Mobil geçit gibi sunucu tarafı tüketiciler içindir.
 provides:
   - capability: bbd_students.list
     contract: km_sdk.contracts:StudentDirectory
-    description: "Öğrenci özet listesi — grup kuran modüller için (ders takvimi)."
+    description: "ARAYÜZ: öğrenci özet listesi — grup kuran paneller için (ders takvimi)."
+  - capability: bbd_students.directory
+    contract: bbd_students/backend/directory.py:StudentDirectory
+    description: >
+      BACKEND: öğrenci dizini (mobil geçit sözleşmesi §1). async list(since=None)
+      → {students, classes, complete}; get(student_id) → StudentRecord | None;
+      find_by_phone(phone10) → [StudentRecord]; card_qr_text(student_id) → str.
+      StudentRecord accessCode TAŞIMAZ; seviye/alan/hedef sınav dahildir.
 
 consumes:
   - capability: canteen.api
@@ -90,6 +105,13 @@ permissions:
   # eklerdi.
   - key: bbd_students.access_code
     description: "Öğrencinin 6 haneli kantin giriş kodunu görüntüleme (liste/PDF) ve sıfırlama."
+    default_roles: [admin, bbd_staff, org_staff]
+  # AYRI ANAHTAR: veli kantin kontrolleri (borç/günlük limit, kurum engeli,
+  # veli engelini kaldırma, yasaklı ürünler) öğrencinin kasada alışveriş
+  # yapıp yapamayacağını belirler. `manage` (ad/telefon) taşıyan herkesin işi
+  # değil; `accountant` DIŞARIDA. Görüntülemek `view` ile serbest.
+  - key: bbd_students.canteen_controls
+    description: "Veli kantin kontrollerini (limitler, engeller, yasaklı ürünler) düzenleme."
     default_roles: [admin, bbd_staff, org_staff]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).

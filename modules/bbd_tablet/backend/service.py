@@ -1119,6 +1119,30 @@ class TabletService:
 
     # ----------------------------------------------------------- ek süre
 
+    async def device_grant_packages(self, student_id: str) -> list[str]:
+        """Packages a whole-device extra-time grant covers.
+
+        Limits are per app (there is no device-wide budget), so "extra time on
+        the tablet" means extra time on every allowed, time-limited app: of the
+        profile of the student's latest session (the active one if any), or of
+        every profile's current revision when the student never logged in.
+        Unlimited apps need no grant and are left out.
+        """
+        last = await self.store.fetch_one(
+            f"SELECT profile_id FROM {self.sessions} WHERE student_id=? "
+            "ORDER BY login_at DESC LIMIT 1", (student_id,),
+        )
+        profile = await self.profile(last["profile_id"]) if last else None
+        if profile is not None:
+            return sorted({app["packageName"] for app in profile.get("apps", [])
+                           if app["allowed"] and not app["unlimited"]})
+        rows = await self.store.fetch_all(
+            f"SELECT DISTINCT a.package_name FROM {self.apps} a JOIN {self.profiles} p "
+            "ON p.id = a.profile_id AND p.revision = a.revision "
+            "WHERE a.allowed=1 AND a.unlimited=0 ORDER BY a.package_name",
+        )
+        return [str(row["package_name"]) for row in rows]
+
     async def grant_time(self, *, student_id: str, package_name: str,
                          local_date: str, extra_seconds: int, reason: str,
                          actor: str) -> dict[str, Any]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from km_sdk import ModuleContext
 
 from .api.routes import bind
+from .directory import StudentDirectory
 from .service import StudentService
 
 #: Masaüstündeki hiyerarşide bu modülün rafı.
@@ -25,4 +26,10 @@ def register(ctx: ModuleContext) -> None:
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
     )
     ctx.add_router(bind(service))
+
+    # Öğrenci dizini — başka modüller (ör. mobil geçit) registry'den çözer (K3).
+    # `bbd_students.list` ise ARAYÜZ yeteneğidir: panelin `capabilities()`
+    # fonksiyonu verir (ui/panel/index.js), backend'de karşılığı yoktur.
+    ctx.provide("bbd_students.directory",
+                StudentDirectory(canteen=canteen, store=ctx.store, log=ctx.log))
     ctx.log.info("öğrenci yönetimi hazır", kategori=CATEGORY)

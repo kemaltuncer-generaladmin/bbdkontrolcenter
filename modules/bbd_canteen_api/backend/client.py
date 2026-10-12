@@ -33,26 +33,81 @@ Uç noktalar (kantin `routes/api.php`):
     GET  /api/reports/collections           dönemsel tahsilat
     GET  /api/reports/dashboard             pano rakamları
 
+Veli kantin kontrolleri sözleşmesi (bbd-akademi `docs/integrations/
+kantin-veli-kontrolleri.md` §1.3/1.5/1.6) ile gelenler:
+    GET   /api/students/{id}                tekil öğrenci + spentToday + kontroller
+    PATCH /api/students/{id}/controls       borç/günlük limit, engeller, yasaklı ürünler
+    POST  /api/payment-requests             isteğe bağlı `amount` (serbest tutar)
+    GET   /api/payment-requests?updatedSince=&limit=   ödeme talebi akışı
+    GET   /api/notifications?updatedSince=&limit=      veli SMS olay akışı
+    GET   /api/settings                     allowPrepayment / maxPrepayment
+
 PARA HER YERDE KURUŞ (tam sayı), ZAMAN EPOCH-MİLİSANİYE. Dönüşüm çağıranın işidir.
+Tek istisna yeni uçların `…At` alanlarıdır: sözleşme ISO der, eski kantin
+epoch-ms döner; `_iso` ikisini de ISO'ya çevirir.
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
+
+#: Kurumun saat dilimi — sözleşme zamanları `+03:00` ile yazar.
+_ISTANBUL = ZoneInfo("Europe/Istanbul")
+
+#: `PATCH /api/students/{id}/controls` gövdesinin kabul ettiği alanlar.
+CONTROL_FIELDS = frozenset({
+    "spendingLimit", "dailyLimit", "isBlocked", "guardianBlocked", "restrictedProductIds",
+})
+
+#: Limitlerin kantin doğrulamasındaki aralığı (kuruş).
+LIMIT_MAX = 100_000_000
+
+#: Yasaklı ürün listesinin üst sınırı (kantin doğrulaması).
+RESTRICTED_MAX = 200
+
+#: Akış uçlarının kantin üst sınırı.
+FEED_LIMIT_MAX = 500
+
+#: Veli bildirim akışından dışarı çıkabilecek alanlar. SMS METNİ VE TELEFON
+#: YOKTUR (sözleşme A6) — kantin eski sürümse ve döndürse bile burada düşer.
+_NOTIFICATION_FIELDS = ("id", "studentId", "kind", "status", "amount", "ref",
+                        "createdAt", "updatedAt")
+
+#: Ödeme talebini kimin açtığı (kantin `PaymentRequest::ORIGINS`).
+PAYMENT_ORIGINS = ("admin", "bulk", "threshold", "api")
+
+#: İmleç yokken akışın başlangıcı. Akış kipi yalnız `updatedSince` ile açılır.
+FEED_START = "1970-01-01T00:00:00Z"
 
 
 class CanteenError(RuntimeError):
     """Kantin API'si beklenmedik yanıt verdi."""
 
     def __init__(self, message: str, *, status: int | None = None,
-                 reason: str | None = None) -> None:
+                 reason: str | None = None,
+                 payload: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.status = status
         # Kantinin iş kuralı kodu: blocked / limit / stock / student_not_found ...
         self.reason = reason
+        # Hata gövdesinin kendisi — ör. `exceeds_debt` ile gelen `balance` ve
+        # `maxAmount`. Çağıran "en çok ne kadar?" sorusunu buradan yanıtlar.
+        # `message`, `errors`, `exception`, `trace` gövdeden düşmüştür.
+        self.payload = dict(payload or {})
+
+    @property
+    def details(self) -> dict[str, Any]:
+        """Gövdenin ayrıntıları (`payload` ile AYNI sözlük).
+
+        Tüketici (mobil geçit) sınıfı import edemez (K3); `{balance, maxAmount}`
+        gibi ayrıntıyı bu adla okur ve kendi yanıtına taşır.
+        """
+        return self.payload
 
 
 #: Kantinin tek batch isteğinde kabul ettiği en çok kalem (`TransactionController`).
@@ -63,13 +118,19 @@ class CanteenApi:
     """`canteen.api` yeteneğinin uygulaması."""
 
     def __init__(self, *, base_url: str, device_name: str, secrets: Any, log: Any,
-                 timeout: float = 20.0) -> None:
+                 timeout: float = 20.0,
+                 transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._device_name = device_name
         self._secrets = secrets
         self._log = log
         self._timeout = timeout
+        # Testler `httpx.MockTransport` verir; üretimde None (gerçek ağ).
+        self._transport = transport
         self._token: str | None = None
+
+    def _client(self, timeout: float | None = None) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=timeout or self._timeout, transport=self._transport)
 
     # ------------------------------------------------------------- kimlik
 
@@ -89,7 +150,7 @@ class CanteenApi:
                 "Kantin kayıt sırrı yok. config/local.yaml → secrets.canteen.enrollment_secret"
             )
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with self._client() as client:
             response = await client.post(
                 f"{self._base}/api/auth/device",
                 json={"name": self._device_name, "enrollmentSecret": secret},
@@ -122,7 +183,7 @@ class CanteenApi:
         attempts = 3 if method.upper() == "GET" else 1
         response = None
         for attempt in range(attempts):
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with self._client() as client:
                 try:
                     response = await client.request(
                         method, f"{self._base}{path}", headers=headers, **kwargs
@@ -154,17 +215,26 @@ class CanteenApi:
             # Kantin iş kuralı hatalarını `reason` koduyla döner (422). Kodu ayıklayıp
             # taşıyoruz: çağıran modül "stok yetmedi" ile "limit aşıldı"yı ayırabilsin.
             reason, message = None, response.text[:200]
+            body_dict: dict[str, Any] = {}
             try:
                 body = response.json()
                 if isinstance(body, dict):
+                    body_dict = body
                     reason = body.get("reason")
                     message = str(body.get("message") or message)
+                    # Laravel'in kendi doğrulama hatası (`errors` sözlüğü) iş
+                    # kuralı kodu taşımaz; çağıran onu da ayırt edebilsin.
+                    if reason is None and response.status_code == 422 \
+                            and isinstance(body.get("errors"), dict):
+                        reason = "validation_error"
             except ValueError:
                 pass
             raise CanteenError(
                 f"{method} {path} → {response.status_code}: {message}",
                 status=response.status_code,
                 reason=reason,
+                payload={key: value for key, value in body_dict.items()
+                         if key not in ("message", "errors", "exception", "trace")},
             )
 
         return response.json() if response.content else None
@@ -414,12 +484,22 @@ class CanteenApi:
         return result
 
     async def transactions(self, *, from_ms: int | None = None, to_ms: int | None = None,
-                           limit: int | None = None) -> list[dict[str, Any]]:
+                           limit: int | None = None,
+                           student_id: str | None = None) -> list[dict[str, Any]]:
         """İşlem geçmişi, kalem kırılımlı. `to_ms` HARİÇTİR (yarı açık aralık).
 
         Aralık verilmezse son 100 işlem; verilirse en çok 5000 satır döner.
         Her satır: serverId, studentId (opaque), studentName, total, createdAt,
         reversedAt, reversedReason, items[].
+
+        `student_id` verilirse YALNIZ o öğrencinin satırları döner. Kantin
+        `GET /api/transactions` bugün öğrenci süzgeci TANIMAZ (kantin
+        `TransactionController::index` yalnız from/to/limit doğrular; öğrenci
+        başına defter ucu da yoktur). Bu yüzden `studentId` sorguya yine
+        eklenir — kantin süzgeci eklediğinde sunucuda süzülür, bilinmeyen
+        parametre bugün yok sayılır — ve satırlar BURADA da süzülür: başka
+        öğrencinin satırı hiçbir sürümde dışarı çıkmaz. Sınır aynıdır: aralıkta
+        en çok 5000 satır okunur; öğrenci ekranı için aralığı dar tutun.
         """
         params: dict[str, Any] = {}
         if from_ms is not None:
@@ -428,9 +508,16 @@ class CanteenApi:
             params["to"] = int(to_ms)
         if limit is not None:
             params["limit"] = int(limit)
+        wanted = str(student_id or "").strip()
+        if wanted:
+            params["studentId"] = wanted
         payload = await self._request("GET", "/api/transactions", params=params)
         data = payload.get("data") if isinstance(payload, dict) else payload
-        return list(data or [])
+        rows = list(data or [])
+        if wanted:
+            rows = [row for row in rows
+                    if isinstance(row, dict) and str(row.get("studentId") or "") == wanted]
+        return rows
 
     # --------------------------------------------------------------- raporlar
 
@@ -495,25 +582,264 @@ class CanteenApi:
             json={"localId": local_id, "amount": int(amount)},
         )
 
+    async def record_collection(self, student_id: str, amount: int,
+                                local_id: str) -> dict[str, Any]:
+        """Nakit tahsilat (sözleşme §2.2 "collections") — `collect_cash` ile aynı uç.
+
+        Ön ödeme kantinde açıksa sınır `borç + maxPrepayment` olur (§1.5);
+        kapalıyken tutar borcu aşamaz. Sınırı KANTİN uygular; burada yalnız
+        tutarın biçimi denetlenir.
+
+        `local_id` idempotency anahtarıdır (uuid önerilir): aynı id ikinci kez
+        alacak yazmaz. Dönüş `{localId, amount, balance, smsQueued}`. Red
+        `CanteenError.reason`: `no_debt` · `exceeds_debt` · `invalid_amount` ·
+        `student_not_found` · `validation_error`; 422'nin `payload`ı `balance`
+        ve `maxAmount` taşır.
+        """
+        if isinstance(amount, bool) or not isinstance(amount, int) or amount < 1 \
+                or amount > LIMIT_MAX:
+            raise CanteenError("Tahsilat tutarı geçersiz.", status=422, reason="invalid_amount")
+        key = str(local_id or "").strip()
+        if not key or len(key) > 64:
+            raise CanteenError("Tahsilat kimliği (localId) geçersiz.", status=422,
+                               reason="validation_error")
+        try:
+            payload = await self.collect_cash(student_id, amount=int(amount), local_id=key)
+        except CanteenError as failure:
+            if failure.status == 404 and not failure.reason:
+                failure.reason = "student_not_found"
+            raise
+        data = payload if isinstance(payload, dict) else {}
+        return {
+            **data,
+            "localId": str(data.get("localId") or key),
+            "amount": int(data.get("amount") or amount),
+            "balance": int(data.get("balance") or 0),
+            "smsQueued": bool(data.get("smsQueued")),
+        }
+
+    # ------------------------------------------------------- veli kontrolleri
+
+    async def get_student(self, student_id: str) -> dict[str, Any]:
+        """Tekil öğrenci — bakiye, bugünkü harcama ve veli kontrolleriyle.
+
+        Kantin sözleşmesi §1.3 alanları her zaman dolu döner; kantin henüz eski
+        sürümse varsayılanları yazılır (`dailyLimit=None`, `guardianBlocked=False`,
+        `restrictedProductIds=[]`, `controlsUpdatedAt=None`). `spentToday`
+        kantin bildirmiyorsa `None` kalır — 0 yazmak "bugün harcamadı" demek
+        olurdu, oysa bilmiyoruz.
+
+        `accessCode` BU YANITTA BULUNMAZ: kantin döndürse bile düşürülür.
+        Öğrenci yoksa `CanteenError(reason="student_not_found")`.
+        """
+        try:
+            payload = await self._request("GET", f"/api/students/{student_id}")
+        except CanteenError as failure:
+            if failure.status == 404:
+                failure.reason = failure.reason or "student_not_found"
+            raise
+        data = (payload or {}).get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or not data.get("id"):
+            raise CanteenError("Kantin öğrenci yanıtı geçersiz.", status=404,
+                               reason="student_not_found")
+        return _student_with_controls(data)
+
+    async def update_controls(self, student_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        """Veli kantin kontrollerini yazar — `PATCH /api/students/{id}/controls`.
+
+        YALNIZ GÖNDERİLEN ALAN değişir; `None` gönderilen limit temizlenir
+        (sınırsız). Alanlar: `spendingLimit`, `dailyLimit` (0–100.000.000 kuruş
+        ya da `None`), `isBlocked`, `guardianBlocked` (bool),
+        `restrictedProductIds` (en çok 200 tekil ürün kimliği).
+
+        Biçim burada da denetlenir: kantine gitmeden reddedilebilecek bir yama
+        ağa çıkmaz. Ürünün VARLIĞINI kantin denetler (422 → `validation_error`).
+        Dönüş `get_student` ile aynı biçim (güncel kontroller + spentToday).
+        """
+        body = _validated_controls(patch)
+        try:
+            payload = await self._request(
+                "PATCH", f"/api/students/{student_id}/controls", json=body
+            )
+        except CanteenError as failure:
+            if failure.status == 404:
+                failure.reason = failure.reason or "student_not_found"
+            raise
+        data = (payload or {}).get("data", payload) if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or not data.get("id"):
+            # Yanıt beklenen biçimde değilse güncel hâli ayrıca okunur.
+            return await self.get_student(student_id)
+        return _student_with_controls(data)
+
+    async def canteen_settings_public(self) -> dict[str, Any]:
+        """Ön ödeme ayarı — `{"allowPrepayment": bool, "maxPrepayment": int}`.
+
+        Kantin ayar ucundan YALNIZ bu iki alan dışarı çıkar (Netgsm kimlik
+        durumu, şablonlar burada yoktur). Kantin eski sürümse ön ödeme kapalı
+        sayılır.
+        """
+        data = await self.settings()
+        allow = data.get("allowPrepayment", data.get("allow_prepayment", False))
+        maximum = data.get("maxPrepayment", data.get("max_prepayment", 0))
+        try:
+            maximum_int = max(0, int(maximum or 0))
+        except (TypeError, ValueError):
+            maximum_int = 0
+        return {"allowPrepayment": bool(allow), "maxPrepayment": maximum_int}
+
+    async def payment_request(self, ref: str) -> dict[str, Any]:
+        """Tekil ödeme talebi — akış satırıyla aynı gövde, TAZE `payToken` ile.
+
+        Akıştan alınmış token'ın süresi dolduysa uygulama yenisini buradan alır
+        (talep hâlâ PENDING ise; değilse `payToken` None). Yan etkisi yoktur.
+        Yoksa `CanteenError(reason="not_found")`.
+        """
+        try:
+            payload = await self._request("GET", f"/api/payment-requests/{ref}")
+        except CanteenError as failure:
+            if failure.status == 404:
+                failure.reason = failure.reason or "not_found"
+            raise
+        data = (payload or {}).get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict) or not data.get("ref"):
+            raise CanteenError("Ödeme talebi yanıtı geçersiz.", status=404, reason="not_found")
+        return _payment_request_row(data)
+
+    # ------------------------------------------------------------- akışlar
+    #
+    # AKIŞ KİPİ YALNIZ `updatedSince` İLE AÇILIR; verilmezse kantin eski "son
+    # 100" listesini döner. İlk çekimde imleç yoksa `FEED_START` gönderilir.
+    # Sınır DAHİLDİR (>=): sayfa sınırında aynı saniyede güncellenen satır
+    # kaybolmasın diye. Çağıran `ref` / `id` ile tekilleştirir.
+
+    async def payment_requests_feed(self, updated_since: str | None = None,
+                                    limit: int = 200) -> dict[str, Any]:
+        """Kurum geneli ödeme talebi akışı (§1.6) — `updated_at` artan sırada.
+
+        Dönüş tek sayfadır: `{"data": [...], "nextSince": iso, "hasMore": bool}`.
+        `nextSince` ve `hasMore` kantinden olduğu gibi geçer (kantin vermezse
+        imleç son satırdan türetilir, `hasMore` False). Sonraki sayfa için
+        `nextSince` aynen geri gönderilir; sınır dahildir, tekrar gelen satır
+        `ref` ile ayıklanır.
+
+        Her satır: ref, studentId, amount, status, amountFixed, linkUrl,
+        payToken, origin, createdAt, updatedAt, paidAt (zamanlar ISO, +03:00).
+        """
+        payload = await self._request("GET", "/api/payment-requests",
+                                      params=_feed_params(updated_since, limit))
+        rows = payload.get("data") if isinstance(payload, dict) else payload
+        items = [_payment_request_row(row) for row in rows or [] if isinstance(row, dict)]
+        return _feed_page(payload, items, updated_since)
+
+    async def parent_notifications_feed(self, updated_since: str | None = None,
+                                        limit: int = 200) -> dict[str, Any]:
+        """Veliye giden kantin SMS olayları (§1.6) — tek sayfa, imleçli.
+
+        Dönüş `{"data": [...], "nextSince": iso, "hasMore": bool}` (bkz.
+        `payment_requests_feed`). SMS METNİ VE TELEFON DÖNMEZ (A6): satır yalnız
+        `id, studentId, kind, status, amount, ref, createdAt, updatedAt` taşır.
+        Kantin fazlasını döndürse bile burada düşer.
+        """
+        payload = await self._request("GET", "/api/notifications",
+                                      params=_feed_params(updated_since, limit))
+        rows: Any = payload
+        if isinstance(payload, dict):
+            rows = payload.get("data") or payload.get("notifications") or []
+        items: list[dict[str, Any]] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            item = {key: row.get(key) for key in _NOTIFICATION_FIELDS if key in row}
+            for key in ("createdAt", "updatedAt"):
+                if key in item:
+                    item[key] = _iso(item[key])
+            items.append(item)
+        return _feed_page(payload, items, updated_since)
+
     # ------------------------------------------------------------- ödeme talebi
 
-    async def payment_requests(self) -> list[dict[str, Any]]:
-        """Son 100 ödeme talebi. Kantin ucu süzgeç/sayfalama kabul etmez; süzme ekranda."""
-        payload = await self._request("GET", "/api/payment-requests")
-        data = payload.get("data") if isinstance(payload, dict) else payload
-        return list(data or [])
+    async def payment_requests(self, student_id: str | None = None) -> list[dict[str, Any]]:
+        """Son 100 ödeme talebi (akış kipi DEĞİL — `updatedSince` gönderilmez).
 
-    async def create_payment_request(self, student_id: str) -> dict[str, Any]:
+        `student_id` verilirse yalnız o öğrencinin talepleri döner. Kantin liste
+        ucu bugün öğrenci süzgeci tanımaz (`PaymentRequestController::index`):
+        `studentId` sorguya yine eklenir (kantin eklediğinde sunucuda süzülür)
+        ve satırlar BURADA da süzülür. Liste kurum genelinde son 100 talebe
+        bakar; öğrencinin daha eski talebi bu listede görünmeyebilir. Açık
+        (PENDING) talep öğrenci başına tektir ve hep en yenilerdendir.
+        """
+        wanted = str(student_id or "").strip()
+        params = {"studentId": wanted} if wanted else None
+        payload = await self._request("GET", "/api/payment-requests", params=params)
+        data = payload.get("data") if isinstance(payload, dict) else payload
+        rows = list(data or [])
+        if wanted:
+            rows = [row for row in rows
+                    if isinstance(row, dict) and str(row.get("studentId") or "") == wanted]
+        return rows
+
+    async def create_payment_request(self, student_id: str, amount: int | None = None,
+                                     origin: str = "admin") -> dict[str, Any]:
         """Ödeme talebi açar ve veliye kısa linkli SMS'i kuyruğa alır.
 
-        TUTAR GÖNDERİLEMEZ — kantin her zaman öğrencinin o anki borcunu kullanır.
-        Açık `PENDING` talep varsa YENİSİ AÇILMAZ: mevcut talep güncel borca göre
-        yeniden fiyatlanır ve aynı `ref` döner.
+        `amount` VERİLMEZSE bugünkü davranış: kantin öğrencinin o anki borcunu
+        kullanır; açık `PENDING` talep varsa YENİSİ AÇILMAZ, mevcut talep güncel
+        borca göre yeniden fiyatlanır ve aynı `ref` döner.
 
-        BAŞARISIZLIKTA DA HTTP 200 döner — `queued` alanına bakılır:
-        `{"queued": false, "reason": "student_not_found" | "no_debt" | "no_phone"}`.
+        `amount` (kuruş) VERİLİRSE serbest tutarlı talep açılır (sözleşme §1.5):
+        en az 100, en çok `borç + izinli ön ödeme`. Tutarlı talep yeniden
+        fiyatlanmaz (`amountFixed: true`).
+
+        RED HER ZAMAN `CanteenError` İLE GELİR, `reason` kodu taşır:
+        `no_debt` · `no_phone` · `exceeds_debt` · `invalid_amount` ·
+        `validation_error` · `student_not_found`. Kantin bazı redleri HTTP 200
+        + `{"queued": false, "reason": …}` olarak döndürür; o biçim de burada
+        hataya çevrilir — çağıran iki ayrı yolu ayırt etmek zorunda kalmaz.
+
+        `origin` talebi kimin açtığıdır ve kantin kayda yazar: `admin`
+        (personelin tek öğrenciye gönderimi — VARSAYILAN, kantinin de
+        varsayılanı), `bulk` (KM toplu gönderim), `api` (mobil geçit / Akademi;
+        geçit bunu AÇIKÇA gönderir), `threshold` (kantinin kendi eşiği).
+        `exceeds_debt` hatasının `details` (= `payload`) sözlüğü `balance` ve
+        `maxAmount` taşır. Öğrenci başına tek açık talep vardır (yeniden
+        kullanılır).
+
+        Dönüş: `{queued, ref, amount, status, linkUrl, amountFixed, payToken,
+        origin, …}` (+ kantinin döndürdüğü diğer alanlar; zamanlar ISO). Eski
+        kantin `status`/`linkUrl`/`payToken` döndürmezse `PENDING`/`None`/`None`.
         """
-        return await self._request("POST", "/api/payment-requests", json={"studentId": student_id})
+        if origin not in PAYMENT_ORIGINS:
+            raise CanteenError(f"Bilinmeyen talep kaynağı: {origin}", status=422,
+                               reason="validation_error")
+        body: dict[str, Any] = {"studentId": student_id, "origin": origin}
+        if amount is not None:
+            if isinstance(amount, bool) or not isinstance(amount, int) or amount < 100 \
+                    or amount > LIMIT_MAX:
+                raise CanteenError("Ödeme talebi tutarı en az 1,00 ₺ olmalı.",
+                                   status=422, reason="invalid_amount")
+            body["amount"] = int(amount)
+
+        payload = await self._request("POST", "/api/payment-requests", json=body)
+        data = payload.get("data", payload) if isinstance(payload, dict) else {}
+        if not isinstance(data, dict):
+            raise CanteenError("Ödeme talebi yanıtı geçersiz.")
+        if data.get("queued") is False or not data.get("ref"):
+            reason = str(data.get("reason") or "rejected")
+            raise CanteenError(f"Ödeme talebi açılamadı ({reason}).", status=409, reason=reason,
+                               payload=data)
+        for key in ("createdAt", "updatedAt", "paidAt"):
+            if key in data:
+                data[key] = _iso(data[key])
+        return {
+            **data,
+            "queued": True,
+            "ref": str(data["ref"]),
+            "amount": int(data.get("amount") or 0),
+            "status": str(data.get("status") or "PENDING"),
+            "linkUrl": data.get("linkUrl"),
+            "amountFixed": bool(data.get("amountFixed", amount is not None)),
+            "payToken": data.get("payToken"),
+        }
 
     async def resend_payment_request(self, ref: str) -> dict[str, Any]:
         """Bekleyen talebi güncel borca göre yeniden gönderir. Aynı `ref` korunur.
@@ -609,7 +935,7 @@ class CanteenApi:
         JSON değil ham dosya döndüğü için `_request` kullanılmaz.
         """
         token = await self._ensure_token()
-        async with httpx.AsyncClient(timeout=max(self._timeout, 120.0)) as client:
+        async with self._client(max(self._timeout, 120.0)) as client:
             response = await client.get(
                 f"{self._base}/api/backups/{name}/download",
                 headers={"Authorization": f"Bearer {token}"},
@@ -641,3 +967,126 @@ class CanteenApi:
         if len(raw) != 32:
             raise CanteenError("QR anahtarı 32 bayt değil.")
         return raw
+
+
+# ------------------------------------------------------------------ yardım
+
+
+def _iso(value: Any) -> Any:
+    """Epoch-ms ya da ISO → ISO (Europe/Istanbul). Boş değer olduğu gibi kalır."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        moment = datetime.fromtimestamp(float(value) / 1000.0, tz=UTC)
+        return moment.astimezone(_ISTANBUL).isoformat(timespec="seconds")
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        return text
+    return parsed.astimezone(_ISTANBUL).isoformat(timespec="seconds")
+
+
+def _feed_limit(limit: int) -> int:
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        value = 200
+    return max(1, min(FEED_LIMIT_MAX, value))
+
+
+def _feed_params(updated_since: str | None, limit: int) -> dict[str, Any]:
+    return {"updatedSince": str(updated_since or FEED_START), "limit": _feed_limit(limit)}
+
+
+def _feed_page(payload: Any, items: list[dict[str, Any]],
+               updated_since: str | None) -> dict[str, Any]:
+    """Akış yanıtının imleci. Kantin `nextSince` vermezse son satırdan türetilir."""
+    body = payload if isinstance(payload, dict) else {}
+    next_since = body.get("nextSince")
+    if not next_since:
+        stamps = [item.get("updatedAt") for item in items if item.get("updatedAt")]
+        next_since = stamps[-1] if stamps else (updated_since or FEED_START)
+    return {"data": items, "nextSince": _iso(next_since),
+            "hasMore": bool(body.get("hasMore", False))}
+
+
+def _payment_request_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Talep satırı: zamanlar ISO, `studentName` (yalnız eski liste) düşer."""
+    item = {key: value for key, value in row.items() if key != "studentName"}
+    for key in ("createdAt", "updatedAt", "paidAt"):
+        if key in item:
+            item[key] = _iso(item[key])
+    item["amountFixed"] = bool(item.get("amountFixed", False))
+    return item
+
+
+def _student_with_controls(data: dict[str, Any]) -> dict[str, Any]:
+    """Tekil öğrenci yanıtını sözleşme biçimine getirir; `accessCode` düşer."""
+    student = {
+        key: value for key, value in data.items()
+        if key not in ("accessCode", "accessCodeIssuedAt")
+    }
+    restricted = data.get("restrictedProductIds")
+    spent = data.get("spentToday")
+    student.update({
+        "balance": int(data.get("balance") or 0),
+        "spendingLimit": data.get("spendingLimit"),
+        "isBlocked": bool(data.get("isBlocked")),
+        "dailyLimit": data.get("dailyLimit"),
+        "guardianBlocked": bool(data.get("guardianBlocked")),
+        "restrictedProductIds": sorted({int(item) for item in restricted})
+        if isinstance(restricted, list) else [],
+        "spentToday": int(spent) if isinstance(spent, (int, float)) and not isinstance(spent, bool)
+        else None,
+        "controlsUpdatedAt": _iso(data.get("controlsUpdatedAt")),
+    })
+    return student
+
+
+def _limit_value(name: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= LIMIT_MAX:
+        raise CanteenError(f"{name} 0 ile {LIMIT_MAX} kuruş arasında olmalı.",
+                           status=422, reason="validation_error")
+    return int(value)
+
+
+def _validated_controls(patch: dict[str, Any]) -> dict[str, Any]:
+    """Kontrol yamasını doğrular; yalnız tanınan alanlar geçer."""
+    if not isinstance(patch, dict) or not patch:
+        raise CanteenError("Değiştirilecek kontrol yok.", status=422, reason="validation_error")
+    unknown = set(patch) - CONTROL_FIELDS
+    if unknown:
+        raise CanteenError(f"Kantin kontrolünde olmayan alan: {', '.join(sorted(unknown))}",
+                           status=422, reason="validation_error")
+    body: dict[str, Any] = {}
+    for name in ("spendingLimit", "dailyLimit"):
+        if name in patch:
+            body[name] = _limit_value(name, patch[name])
+    for name in ("isBlocked", "guardianBlocked"):
+        if name in patch:
+            if not isinstance(patch[name], bool):
+                raise CanteenError(f"{name} doğru/yanlış olmalı.", status=422,
+                                   reason="validation_error")
+            body[name] = patch[name]
+    if "restrictedProductIds" in patch:
+        items = patch["restrictedProductIds"]
+        if items is None:
+            items = []
+        if not isinstance(items, list) or any(
+            isinstance(item, bool) or not isinstance(item, int) or item < 1 for item in items
+        ):
+            raise CanteenError("restrictedProductIds pozitif tam sayı listesi olmalı.",
+                               status=422, reason="validation_error")
+        unique = sorted(set(items))
+        if len(unique) > RESTRICTED_MAX:
+            raise CanteenError(f"En çok {RESTRICTED_MAX} ürün kısıtlanabilir.", status=422,
+                               reason="validation_error")
+        body["restrictedProductIds"] = unique
+    return body

@@ -91,7 +91,10 @@ def test_bos_metin_sifir_segment() -> None:
 
 @pytest.mark.asyncio
 async def test_onizleme_yer_tutuculari_cozer_ve_maliyeti_yazar() -> None:
-    service, _, _ = kur()
+    # Kantinde POZİTİF bakiye borçtur. Sabit `STUDENT` alacaklıdır (-4550) ve
+    # bu test eskiden "-45,50 TL"yi "45,50 TL" diye geçiriyordu; borçlu satır
+    # açıkça kurulur. Alacak dalı: `test_borc_yer_tutucusu_alacakta_eksi_yazmaz`.
+    service, _, _ = kur(FakeCanteen([{**STUDENT, "balance": 4550}]))
     cevap = await service.preview(gonderim(body="Sayın veli, {ad} ({okul}) borcu {borc}"))
 
     assert cevap["ok"] is True
@@ -316,3 +319,27 @@ async def test_bos_hazir_mesaj_kaydedilmez() -> None:
     cevap = await service.save_preset("Boş", "   ", actor=AKTOR)
     assert cevap["ok"] is False
     assert store.presets == []
+
+
+# ================================================== alacak (negatif bakiye)
+#
+# Negatif bakiye borç değil ALACAKTIR (ödeme sonrası satış iptali, borçtan
+# fazla ödeme). Veliye "borcunuz -50,00 TL" yazılmaz.
+
+async def test_borc_yer_tutucusu_alacakta_eksi_yazmaz() -> None:
+    alacakli = {**STUDENT, "balance": -5000}
+    service, _, _ = kur(FakeCanteen([alacakli]))
+    sonuc = await service.preview(gonderim(body="Borcunuz {borc}.", includeDebt=True))
+    satir = sonuc["rows"][0]
+    assert "-" not in satir["body"]
+    assert satir["body"] == "Borcunuz 0,00 TL."
+    assert "kantin alacak bakiyesi: 50,00 TL" in satir["text"]
+    assert "güncel borç" not in satir["text"]
+
+
+async def test_borc_yer_tutucusu_borclu_ogrencide_tutari_yazar() -> None:
+    borclu = {**STUDENT, "balance": 4250}
+    service, _, _ = kur(FakeCanteen([borclu]))
+    sonuc = await service.preview(gonderim(body="Borcunuz {borc}.", includeDebt=True))
+    assert sonuc["rows"][0]["body"] == "Borcunuz 42,50 TL."
+    assert "güncel borç: 42,50 TL" in sonuc["rows"][0]["text"]

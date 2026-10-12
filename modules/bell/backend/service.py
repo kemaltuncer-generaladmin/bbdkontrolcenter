@@ -90,6 +90,20 @@ DEFAULT_TIME_KIND = "ders"
 DEFAULT_LESSON_AFTER_TEXT = "İyi dersler."
 DEFAULT_BREAK_AFTER_TEXT = "İyi teneffüsler."
 
+#: Öğrenci çağırma (anons sayfası) şablonu — mobil geçit sözleşmesi §5.
+#: Yer tutucular: `{ad}`, `{soyad}`, `{sinif}`.
+DEFAULT_PAGE_TEXT = "{ad} {soyad}, lütfen danışmaya gel."
+
+#: Sayfa sesinin köprüde kalma süreleri (bkz. 005 göçü başlığı).
+PAGE_RECENT = timedelta(hours=24)
+PAGE_KEEP = timedelta(days=60)
+
+#: Ajan köprüyü 3 saniyede bir sorar: kuyruğa giren anonsun tahmini gecikmesi.
+PAGE_ETA_SECONDS = 3
+
+#: Sayfa sonuçları. Yeteneğin dışarıya döndürdüğü `status` bunlardan biridir.
+PAGE_STATUSES = ("queued", "disabled", "tts_unavailable", "failed")
+
 TEXT_MAX = 300
 LABEL_MAX = 40
 NAME_MAX = 60
@@ -161,6 +175,18 @@ def _after_setting(texts: dict[str, Any], key: str, fallback: str) -> str:
     return str(texts[key] or "")[:TEXT_MAX].strip()
 
 
+def render_page(template: str, *, first_name: str = "", last_name: str = "",
+                class_name: str = "") -> str:
+    """Sayfa şablonunu doldurur: `{ad}`, `{soyad}`, `{sinif}`.
+
+    Boşluklar sadeleşir; boş kalan yer tutucu cümlede çift boşluk bırakmaz.
+    """
+    text = str(template or "")
+    for key, value in (("{ad}", first_name), ("{soyad}", last_name), ("{sinif}", class_name)):
+        text = text.replace(key, " ".join(str(value or "").split())[:NAME_MAX])
+    return " ".join(text.split())[:TEXT_MAX]
+
+
 def time_kind(value: Any) -> str:
     """Zil saatinin türünü doğrular. Tanınmayan değer 'ders' sayılır."""
     text = str(value or "").strip().lower()
@@ -182,7 +208,7 @@ def after_text(settings: dict[str, Any], kind: str) -> str:
 class BellService:
     def __init__(self, *, store: Any, log: Any, audio: Any, scheduler: Any,
                  voices: VoiceLibrary, bridge: BellBridge, notify: Any = None,
-                 play_locally: bool = True) -> None:
+                 play_locally: bool = True, page_tts_timeout: float = 20.0) -> None:
         self._store = store
         self._log = log
         self._audio = audio
@@ -191,11 +217,14 @@ class BellService:
         self._bridge = bridge
         self._notify = notify
         self._default_play_locally = play_locally
+        self._page_tts_timeout = page_tts_timeout
 
         self._settings_table = store.table("settings")
         self._time_table = store.table("time")
         self._group_table = store.table("group")
         self._log_table = store.table("log")
+        self._page_table = store.table("page")
+        self._page_voice_table = store.table("page_voice")
 
         self._sync_task: asyncio.Task[None] | None = None
 
@@ -213,6 +242,7 @@ class BellService:
                 "solo": DEFAULT_SOLO_TEXT,
                 "lessonAfter": DEFAULT_LESSON_AFTER_TEXT,
                 "breakAfter": DEFAULT_BREAK_AFTER_TEXT,
+                "page": DEFAULT_PAGE_TEXT,
             },
         }
 
@@ -254,6 +284,8 @@ class BellService:
                                               DEFAULT_LESSON_AFTER_TEXT),
                 "breakAfter": _after_setting(texts, "breakAfter",
                                              DEFAULT_BREAK_AFTER_TEXT),
+                # Sayfa şablonu boş bırakılamaz: boş bir çağrı anlamsızdır.
+                "page": str(texts.get("page") or DEFAULT_PAGE_TEXT)[:TEXT_MAX].strip(),
             },
         }
 
@@ -485,7 +517,25 @@ class BellService:
         texts = [after_text(settings, kind) for kind in TIME_KINDS]
         texts += [call_text(settings, group["name"], group["kind"])
                   for group in await self.groups()]
-        return {self._voices.key(text) for text in texts if text}
+        keys = {self._voices.key(text) for text in texts if text}
+        # Öğrenci çağırma sesleri de canlıdır (005 göçü): son 24 saatte
+        # çalınanlar ve 60 gün içinde hazırlananlar.
+        return keys | await self._page_voice_keys()
+
+    async def _page_voice_keys(self) -> set[str]:
+        """Köprüde ve diskte TUTULMASI gereken sayfa sesleri."""
+        current = datetime.now(UTC)
+        recent = (current - PAGE_RECENT).isoformat(timespec="seconds")
+        keep = (current - PAGE_KEEP).isoformat(timespec="seconds")
+        rows = await self._store.fetch_all(
+            f"SELECT DISTINCT voice_key FROM {self._page_table} "
+            f"WHERE at >= ? AND voice_key != ''", (recent,),
+        )
+        rows += await self._store.fetch_all(
+            f"SELECT voice_key FROM {self._page_voice_table} "
+            f"WHERE prepared_at >= ? OR last_used_at >= ?", (keep, keep),
+        )
+        return {str(row["voice_key"]) for row in rows if row.get("voice_key")}
 
     async def delete_sound(self, name: str, *, actor: str) -> dict[str, Any]:
         """Yüklenmiş zil sesini kalıcı siler. `upload_sound`un karşılığı.
@@ -566,6 +616,168 @@ class BellService:
     async def week(self) -> dict[str, Any]:
         """`bell.week` — Ders Takvimi ekranının okuduğu salt okunur özet."""
         return {"times": await self.times(), "groups": await self.groups()}
+
+    # ======================================================= öğrenci çağırma
+
+    async def page_template(self) -> str:
+        """Ayardaki sayfa şablonu (`texts.page`)."""
+        return str((await self.settings())["texts"]["page"])
+
+    async def page(self, text: str, *, cache_key: str | None = None,
+                   actor: str | None = None,
+                   request_id: str | None = None) -> dict[str, Any]:
+        """Serbest cümleyi okulun hoparlöründen duyurur (`bell.announce`).
+
+        Ses önbellekte varsa hemen, yoksa Vertex ile ANLIK üretilir (gece
+        kuyruğunun önüne geçer) ve mevcut çağrılarla aynı yoldan köprüye
+        gider (`_dispatch`). HATA YÜKSELTMEZ — sonuç `status` ile döner:
+
+          queued · disabled (ana şalter kapalı) · tts_unavailable (ses
+          üretilemedi / metin boş) · failed (köprü ve yerel çalma reddetti)
+
+        `request_id` tekildir: aynı kimlikle ikinci çağrı anonsu TEKRAR
+        çalmaz, ilk sonucu döner (`replayed: true`).
+        """
+        clean = " ".join(str(text or "").split())[:TEXT_MAX]
+        rid = " ".join(str(request_id or "").split())[:128] or None
+        who = " ".join(str(actor or "").split())[:160]
+        key_label = " ".join(str(cache_key or "").split())[:160]
+
+        if rid is not None:
+            prior = await self._store.fetch_one(
+                f"SELECT result, cached FROM {self._page_table} WHERE request_id = ?", (rid,)
+            )
+            if prior is not None:
+                status = str(prior["result"])
+                return {"status": status, "voiceCached": bool(prior["cached"]),
+                        "etaSeconds": PAGE_ETA_SECONDS if status == "queued" else 0,
+                        "replayed": True}
+
+        settings = await self.settings()
+        if not settings["enabled"]:
+            return await self._page_result("disabled", clean, "", rid, who, key_label,
+                                           cached=False, detail="Zil sistemi kapalı.")
+        if not clean:
+            return await self._page_result("tts_unavailable", clean, "", rid, who, key_label,
+                                           cached=False, detail="Metin boş.")
+
+        voice_key = self._voices.key(clean)
+        name = await self._voices.ready_file(voice_key)
+        cached = bool(name)
+        if not name:
+            name = await self._voices.produce_now(clean, timeout=self._page_tts_timeout)
+        if not name:
+            entry = await self._voices.entry(voice_key)
+            detail = str(entry["error"]) if entry and entry["error"] \
+                else "Anons sesi zamanında üretilemedi."
+            await self._record("cagri", "sayfa", clean, False, detail, actor=who)
+            return await self._page_result("tts_unavailable", clean, voice_key, rid, who,
+                                           key_label, cached=False, detail=detail)
+
+        path = self._sounds_path() / name
+        try:
+            await self._ensure_on_bridge(path)
+            items = [_item("anons", path, settings["volume"])]
+        except OSError as failure:
+            detail = f"Anons dosyası okunamadı: {failure}"
+            await self._record("cagri", "sayfa", clean, False, detail, actor=who)
+            return await self._page_result("tts_unavailable", clean, voice_key, rid, who,
+                                           key_label, cached=cached, detail=detail)
+
+        result = await self._dispatch(items, settings, kind="cagri", edge="sayfa",
+                                      name=clean, actor=who)
+        status = "queued" if result["ok"] else "failed"
+        if key_label:
+            await self._touch_page_voice(voice_key, key_label, prepared=False)
+        return await self._page_result(status, clean, voice_key, rid, who, key_label,
+                                       cached=cached, detail=str(result["detail"]))
+
+    async def prepare_page(self, text: str, *, cache_key: str | None = None) -> dict[str, Any]:
+        """Sayfa sesini ÖNDEN hazırlar (arka plan kuyruğu); 60 gün tutulur.
+
+        Çalmaz. Gece hazırlığı ve "bu öğrenciyi sık çağırıyoruz" durumu için.
+        Dönüş `{"status": "cached" | "queued" | "disabled"}`.
+        """
+        clean = " ".join(str(text or "").split())[:TEXT_MAX]
+        if not clean:
+            return {"status": "disabled", "detail": "Metin boş."}
+        voice_key = self._voices.key(clean)
+        ready = bool(await self._voices.ready_file(voice_key))
+        if not ready:
+            await self._voices.require(clean)
+        await self._touch_page_voice(voice_key, " ".join(str(cache_key or "").split())[:160],
+                                     prepared=True)
+        return {"status": "cached" if ready else "queued"}
+
+    async def prepare_students(self, directory: Any) -> dict[str, Any]:
+        """Dizindeki her öğrencinin çağrı sesini hazırlar (gece görevi).
+
+        `directory` = `bbd_students.directory` yeteneği. Kantine ulaşılamazsa
+        (`complete: false`) hiçbir şey yapılmaz; ses sırası bir sonraki geceye
+        kalır.
+        """
+        listing = await directory.list()
+        if not listing.get("complete"):
+            return {"ok": False, "prepared": 0, "detail": "öğrenci dizini eksik"}
+        template = await self.page_template()
+        queued = 0
+        for student in listing.get("students") or []:
+            text = render_page(template, first_name=student.get("firstName") or "",
+                               last_name=student.get("lastName") or "",
+                               class_name=student.get("className") or "")
+            result = await self.prepare_page(text, cache_key=f"student:{student.get('id')}")
+            queued += 1 if result["status"] == "queued" else 0
+        self._log.info("öğrenci çağrı sesleri hazırlandı",
+                       students=len(listing.get("students") or []), queued=queued)
+        return {"ok": True, "prepared": len(listing.get("students") or []), "queued": queued}
+
+    async def _ensure_on_bridge(self, path: Path) -> None:
+        """Sesi köprüye koyar (yoksa). Ajan komuttaki özeti köprüden indirir.
+
+        Grup sesleri eşitleme döngüsüyle önden gider; anlık üretilen sayfa sesi
+        o döngüyü beklerse ajan bir dakika boyunca "ses yok" der.
+        """
+        data = path.read_bytes()
+        status = await self._bridge.try_status()
+        if status.get("error"):
+            return              # köprü yok: gönderim zaten başarısız olacak, sebebi orada yazar
+        if content_id(data) in set(status.get("bridgeSounds") or []):
+            return
+        try:
+            await self._bridge.upload(path.name, data)
+            self._bridge.forget_status()
+        except Exception as failure:  # noqa: BLE001 — köprü dışarısı
+            self._log.warning("sayfa sesi köprüye yüklenemedi", file=path.name,
+                              error=str(failure))
+
+    async def _touch_page_voice(self, voice_key: str, cache_key: str, *,
+                                prepared: bool) -> None:
+        stamp = _now()
+        await self._store.execute(
+            f"INSERT INTO {self._page_voice_table} "
+            f"(voice_key, cache_key, prepared_at, last_used_at) VALUES (?, ?, ?, ?) "
+            f"ON CONFLICT(voice_key) DO UPDATE SET cache_key = excluded.cache_key, "
+            + ("prepared_at = excluded.prepared_at" if prepared
+               else "last_used_at = excluded.last_used_at"),
+            (voice_key, cache_key, stamp if prepared else "", "" if prepared else stamp),
+        )
+
+    async def _page_result(self, status: str, text: str, voice_key: str, request_id: str | None,
+                           actor: str, cache_key: str, *, cached: bool,
+                           detail: str) -> dict[str, Any]:
+        """Geçmişe yazar ve yeteneğin yanıtını kurar. Metin değil özeti yazılır."""
+        try:
+            await self._store.execute(
+                f"INSERT INTO {self._page_table} (at, text_hash, voice_key, result, actor, "
+                f"request_id, cache_key, cached, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (_now(), hashlib.sha256(text.encode("utf-8")).hexdigest(), voice_key, status,
+                 actor, request_id, cache_key, 1 if cached else 0, detail[:500]),
+            )
+        except Exception as failure:  # noqa: BLE001 — geçmiş yazılamadı diye anons düşmez
+            self._log.warning("sayfa geçmişi yazılamadı", error=str(failure))
+        return {"status": status, "voiceCached": cached,
+                "etaSeconds": PAGE_ETA_SECONDS if status == "queued" else 0,
+                "detail": detail}
 
     # ================================================================ durum
 
@@ -938,14 +1150,12 @@ class BellService:
         # ZİL SONRASI ANONSLAR DA LİSTEDE. Buraya konmazlarsa `sync_sounds`
         # onları köprüde "gereksiz" sayıp sildirir; zil çalar, arkasından
         # sessizlik gelir ve sebebi hiçbir ekranda görünmez.
-        texts = [after_text(settings, kind) for kind in TIME_KINDS]
-        texts += [call_text(settings, group["name"], group["kind"])
-                  for group in await self.groups()]
-        texts = [text for text in texts if text]
-
+        # ÖĞRENCİ ÇAĞIRMA SESLERİ DE LİSTEDE (`_live_voice_keys` → 005 göçü).
+        # Girmeselerdi her sayfa sesi bir dakika içinde köprüden silinir ve
+        # aynı öğrenciyi ikinci çağırış yeniden yükleme beklerdi.
         root = self._sounds_path()
-        for text in texts:
-            name = await self._voices.ready_file(self._voices.key(text))
+        for key in sorted(await self._live_voice_keys(settings)):
+            name = await self._voices.ready_file(key)
             if not name:
                 continue
             path = root / name

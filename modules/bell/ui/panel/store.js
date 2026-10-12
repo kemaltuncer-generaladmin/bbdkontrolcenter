@@ -80,6 +80,14 @@ export function callGroup(groupId) {
 }
 
 /**
+ * Serbest cümleyi duyurur (öğrenci çağırma). Ses yoksa sunucu anlık üretir;
+ * yanıt `{status: queued|disabled|tts_unavailable|failed, detail}`.
+ */
+export function page(text) {
+  return need()(`${BASE}/page`, { method: 'POST', body: { text } });
+}
+
+/**
  * Sesin kendisini getirir; ÇALMAZ. Çalma işi kabuğundur.
  *
  * Backend sunucuda koşuyor ve orada hoparlör yok (ADR 0026); `audio.play`

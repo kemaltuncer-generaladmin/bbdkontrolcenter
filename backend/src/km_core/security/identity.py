@@ -43,6 +43,11 @@ Kullanıcının kendi PIN'ini İSTEYEREK değiştirmesi (mevcut PIN'ini girerek)
 sürer: `set_password_with_secret`. Kaldırılan yalnız ZORLAMAYDI.
 
 K10 — rol adı sorulmaz. Dışarıya açılan tek yetki sorusu `has_permission`.
+
+**SERVİS SORUMLUSU (ADR 0028).** `users.kind = 'service'` olan kayıt bir
+makinedir: PIN'i yoktur (`secret_lookup` boş), giriş yapamaz, oturum açamaz ve
+PIN atanamaz. Kimliği servis anahtarıdır (`km_core/security/service_keys.py`);
+yetkisi yine yalnız rollerinden gelir — izin denetimi kişiyle aynı yoldan geçer.
 """
 
 from __future__ import annotations
@@ -60,6 +65,7 @@ import structlog
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 
+from km_core.security import audit_context
 from km_core.store.base import StoreLike
 
 log = structlog.get_logger("km.security")
@@ -87,6 +93,25 @@ BUILTIN_ROLES = [
     ("org_staff", "Kurum Personeli", "Zil, baskı, rehber."),
     ("accountant", "Mali Müşavir", "Mali ekranlar: fatura, cari, vergilendirme, raporlar."),
 ]
+
+# ADR 0028 — servis sorumlularının (makinelerin) ön tanımlı rolleri. KİŞİ
+# ROLLERİNDEN AYRI LİSTEDİR: "her kişi rolü çıktı basabilir" gibi kişiye dair
+# varsayımlar `BUILTIN_ROLES` üzerinden kurulur ve bir makineyi kapsamamalı.
+# İzinlerini çekirdek değil, onu `default_roles` ile öneren modüller verir;
+# çekirdek rolün yalnız VARLIĞINI garanti eder (K1 — hangi modülün kullandığını
+# bilmez).
+BUILTIN_SERVICE_ROLES = [
+    ("mobile_service", "Mobil Servis",
+     "Servis anahtarıyla bağlanan mobil uygulama sunucusu. Kişiye verilmez."),
+]
+
+#: `users.kind` değerleri (ADR 0028). Sütunu olmayan eski satır kişidir.
+PERSON_KIND = "person"
+SERVICE_KIND = "service"
+
+#: Servis anahtarının işareti. Oturum belirteci bu önekle başlayamaz — kapı
+#: belirteci önekinden ayırt ediyor (`km_core/http/deps.py`).
+SERVICE_TOKEN_MARK = "kmsk_"
 
 # "Son yönetici" kısıtının dayandığı rol (docs/identity-model.md — Kısıtlar).
 #
@@ -126,6 +151,16 @@ class CurrentUser:
     org_scope: str
     roles: list[str]
     permissions: set[str] = field(default_factory=set)
+    #: `person` ya da `service` (ADR 0028). Varsayılanı kişidir: alanı
+    #: bilmeyen her çağıran eskisi gibi çalışır.
+    kind: str = PERSON_KIND
+    #: Yalnız servis sorumlusunda dolar: işlemi dış uygulamada başlatan kişi
+    #: (`X-KM-On-Behalf-Of`). YETKİ VERMEZ, denetim izine yazılır.
+    on_behalf_of: str | None = None
+
+    @property
+    def is_service(self) -> bool:
+        return self.kind == SERVICE_KIND
 
     @property
     def full_name(self) -> str:
@@ -246,7 +281,7 @@ class Identity:
     # --------------------------------------------------------------- roller
 
     async def ensure_builtin_roles(self) -> None:
-        for role_id, name, description in BUILTIN_ROLES:
+        for role_id, name, description in [*BUILTIN_ROLES, *BUILTIN_SERVICE_ROLES]:
             await self.store.execute(
                 "INSERT INTO roles (id, name, description, builtin) VALUES (?, ?, ?, 1) "
                 "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
@@ -338,6 +373,44 @@ class Identity:
             [(user_id, role) for role in roles],
         )
         await self.audit(created_by, "users.create", result="ok", detail=user_id)
+        return user_id
+
+    async def create_service_user(self, *, name: str, roles: list[str],
+                                  created_by: str | None = None,
+                                  note: str | None = None) -> str:
+        """Servis sorumlusu açar (ADR 0028) — PIN'siz, rehberde görünmez.
+
+        `secret_lookup` ve `password_hash` BOŞ kalır: giriş yolu kullanıcıyı
+        sırrıyla bulur, sırrı olmayan satıra hiçbir PIN denk gelemez. Eski PIN
+        sütunları `create_user` ile aynı yer tutucuyla doldurulur. Kimliği
+        servis anahtarıdır (`km_core/security/service_keys.py`).
+        """
+        label = str(name or "").strip()
+        if not label:
+            raise IdentityError("Servis kullanıcısının adı zorunlu.")
+        await self._assert_roles_exist(roles)
+
+        user_id = str(uuid.uuid4())
+        await self.store.execute(
+            "INSERT INTO users (id, first_name, last_name, title, department, org_scope, "
+            "phone_mobile, phone_ext, email, note, directory_visible, status, pin_hash, "
+            "pin_lookup, pin_set_at, password_hash, secret_lookup, password_set_at, "
+            "created_at, updated_at, created_by, kind) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                user_id, label[:120], "", "Servis", None, "org",
+                None, None, None, note, 0, "active",
+                "", f"pin-yok:{user_id}", now(),
+                None, None, None,
+                now(), now(), created_by, SERVICE_KIND,
+            ),
+        )
+        await self.store.execute_many(
+            "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
+            [(user_id, role) for role in roles],
+        )
+        await self.audit(created_by, "users.create", result="ok",
+                         detail=f"{user_id} (servis)")
         return user_id
 
     async def user_count(self) -> int:
@@ -469,8 +542,15 @@ class Identity:
 
         Metot adı ve denetim eylemi (`users.set_password`) izin anahtarıyla aynı
         kalır — anahtar göçle yazıldı, geri çevirmek ikinci bir göç demekti.
+
+        SERVİS KULLANICISINA PIN ATANMAZ (ADR 0028): PIN'i olan bir makine,
+        PIN'le giriş yapabilen bir makine demektir.
         """
-        await self.get_user(user_id)
+        row = await self.get_user(user_id)
+        if _is_service(row):
+            raise IdentityError(
+                "Servis kullanıcısına PIN atanamaz; kimliği servis anahtarıdır."
+            )
         self.validate_pin(password)
         lookup = self.secret_lookup(password)
         await self._assert_password_free(lookup, except_user_id=user_id)
@@ -536,6 +616,14 @@ class Identity:
             await self.audit(None, "auth.login", result="fail", detail="bilinmeyen sır")
             return None
 
+        if _is_service(row):
+            # Servis kaydının sırrı yoktur, buraya düşmesi beklenmez; düşerse
+            # de oturum AÇILMAZ (ADR 0028).
+            self._burn_time(password)
+            await self.audit(row["id"], "auth.login", result="fail",
+                             detail="servis kullanıcısı PIN ile giremez")
+            return None
+
         if self._locked(row):
             await self.audit(row["id"], "auth.login", result="fail", detail="kilitli")
             return None
@@ -584,6 +672,10 @@ class Identity:
 
     async def _open_session(self, row: dict[str, Any]) -> tuple[str, CurrentUser]:
         token = secrets.token_urlsafe(32)
+        # Kapı belirteci önekinden ayırt ediyor: oturum belirteci servis
+        # anahtarı gibi görünmemeli (olasılık ~1e-9, ama sıfır değil).
+        while token.startswith(SERVICE_TOKEN_MARK):
+            token = secrets.token_urlsafe(32)
         expires = datetime.now(UTC) + timedelta(minutes=self.session_idle_minutes)
         await self.store.execute(
             "INSERT INTO sessions (token, user_id, created_at, last_seen, expires_at) "
@@ -623,7 +715,7 @@ class Identity:
         if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
             await self.store.execute("DELETE FROM sessions WHERE token = ?", (_hash_token(token),))
             return None
-        if row["status"] != "active":
+        if row["status"] != "active" or _is_service(row):
             return None
 
         # Boşta kalma süresi tazelenir — ama EN ÇOK dakikada bir. Eskiden her
@@ -650,18 +742,39 @@ class Identity:
             org_scope=row["org_scope"],
             roles=await self.roles_of(user_id),
             permissions=await self.permissions_of(user_id),
+            kind=str(row.get("kind") or PERSON_KIND),
         )
 
     # ------------------------------------------------------------- denetim
 
     async def audit(self, user_id: str | None, action: str, *, result: str,
                     scope: str | None = None, detail: str | None = None) -> None:
-        """Denetim izi. PIN VE SIR DEĞERLERİ BURAYA YAZILMAZ."""
+        """Denetim izi. PIN VE SIR DEĞERLERİ BURAYA YAZILMAZ.
+
+        İstek bağlamı varsa (`X-KM-On-Behalf-Of`, `X-Request-Id` — ADR 0028)
+        satıra o da yazılır. Bağlam YOKSA sorgu eskisinin AYNISIDIR: sütunları
+        `0011_service_keys` göçüyle gelen tabloyu bilmeyen her yol (göç
+        koşturmayan testler, merkezin kendi deposu) bugünkü gibi çalışır.
+        """
+        context = audit_context.current()
+        if context is None or context.empty:
+            await self.store.execute(
+                "INSERT INTO audit_log (at, user_id, action, scope, result, detail) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (now(), user_id, action, scope, result, detail),
+            )
+            return
         await self.store.execute(
-            "INSERT INTO audit_log (at, user_id, action, scope, result, detail) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (now(), user_id, action, scope, result, detail),
+            "INSERT INTO audit_log (at, user_id, action, scope, result, detail, "
+            "on_behalf_of, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (now(), user_id, action, scope, result, detail,
+             context.on_behalf_of, context.request_id),
         )
+
+
+def _is_service(row: dict[str, Any]) -> bool:
+    """Satır bir servis sorumlusu mu? Sütunu olmayan eski satır kişidir."""
+    return str(row.get("kind") or PERSON_KIND) == SERVICE_KIND
 
 
 def _verify(stored: str | None, secret: str) -> bool:

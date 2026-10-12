@@ -7,7 +7,22 @@ enabled: true
 
 entrypoint: backend.module:register
 depends: [bbd_canteen_api]
-provides: []
+provides:
+  - capability: bbd_tablet.read
+    contract: bbd_tablet/backend/capabilities.py:TabletRead
+    description: >
+      async board() → {summary{free,inUse,offline,locked}, devices[…]};
+      async student_usage(student_id, date_from, date_to) → {days, sessions,
+      activeSession, blockedUntil} (en çok 62 gün).
+  - capability: bbd_tablet.control
+    contract: bbd_tablet/backend/capabilities.py:TabletControl
+    description: >
+      async grant(student_id, package_name|None, extra_seconds, reason, actor) → grant_id
+      (None = tüm tablet: süre sınırlı her uygulamaya ayrı ek süre satırı);
+      block(student_id, until|None, reason, actor) → blocked_until|None;
+      unblock(student_id, reason, actor) → None; end_session(session_id, reason,
+      actor) → bool. Hata `reason` koduyla (validation_error, student_not_found,
+      session_not_found, canteen_unavailable).
 consumes:
   - capability: canteen.api
     reason: "Öğrenci kimliği ve kiosk giriş kodu kantinde kalır."

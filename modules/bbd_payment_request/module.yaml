@@ -4,8 +4,10 @@
 # Veliye borç bildirimi ve ödeme bağlantısı. Nakit tahsilat da buradadır:
 # ödeme akışının parçasıdır ve borç kapanınca açık talepleri süresi dolmuş yapar.
 #
-# TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu kullanır; açık
-# bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır.
+# TOPLU TALEPTE TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu
+# kullanır; açık bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır.
+# TEK ÖĞRENCİYE serbest tutarlı talep açılabilir (en az 1,00 ₺, en çok borç
+# + izinli ön ödeme); nakit tahsilat da aynı sınıra uyar (kantin §1.5).
 
 id: bbd_payment_request
 name: "Ödeme Talebi"
@@ -18,7 +20,14 @@ entrypoint: backend.module:register
 
 # Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
 depends: [bbd_canteen_api]
-provides: []
+# ARAYÜZ YETENEĞİ — backend'de karşılığı YOKTUR (bbd_students.list gibi): panel
+# `capabilities()` ile verir (ui/panel/index.js → card.js). Öğrenci Yönetimi
+# ekranı tek öğrencinin tahsilat/talep kartını buradan çizer; akış ve uçlar
+# bu modülde kalır.
+provides:
+  - capability: bbd_payment_request.student_card
+    contract: bbd_payment_request/ui/panel/card.js:mountStudentCard
+    description: "ARAYÜZ: tek öğrencinin kantin nakit tahsilatı ve (serbest tutarlı) ödeme talebi kartı."
 
 consumes:
   - capability: canteen.api

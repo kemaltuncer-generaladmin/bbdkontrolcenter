@@ -26,6 +26,30 @@ Kodda rol adı sorulmaz, izin sorulur. `if role == "admin"` yasaktır.
 
 Bir kullanıcıya hem `bld_staff` hem `bbd_staff` atanırsa her iki kapsamı da alır.
 
+### Servis rolleri (ADR 0028)
+
+Kişiye verilmez; servis anahtarıyla bağlanan makinelerin (`users.kind =
+'service'`) rolleridir. Kaynağı `km_core/security/identity.py` →
+`BUILTIN_SERVICE_ROLES`. Çekirdek rolün yalnız varlığını garanti eder;
+izinlerini onu `default_roles` ile öneren modüller verir.
+
+| id | Ad | Özet |
+|---|---|---|
+| `mobile_service` | Mobil Servis | Mobil uygulama sunucusu (BBD Akademi API). İzinleri modül manifestlerinden gelir (ör. mobil geçit modülünün erişim izni). |
+
+**`admin` bütün izinleri taşır — servis rolüne önerilenler dahil.** Bir modül
+bir izni `mobile_service`e öneriyorsa `default_roles` listesine `admin`i de
+yazar (ör. mobil geçit: `mobile_gateway.access` → `[admin, mobile_service]`).
+Bu, "admin tam yetkidir" kuralının sonucudur ve
+`tests/core/test_rol_bld_staff.py` bunu sınar. Yönetici bu izinle kendi
+oturumundan da geçidin uçlarını çağırabilir; dış uygulama ise yalnız servis
+anahtarıyla bağlanır. Servis rolüne başka bir kişi rolünün izni sızdırılmaz:
+`mobile_service` yalnız kendisine açıkça önerilen anahtarları alır.
+
+Servis sorumlusu için izin denetimi kişininkiyle AYNIDIR: `has_permission`.
+Yıkıcı işlemlerin PIN teyidi servis sorumlusunda her zaman reddedilir — PIN'i
+yoktur. `X-KM-On-Behalf-Of` başlığı yetki vermez; yalnız denetim izine yazılır.
+
 `accountant` kurum dışından da olabilir (serbest çalışan mali müşavir). Bu
 yüzden kapsamı iki tarafı da kapsar ama çekirdek izinlerinin hiçbirini almaz:
 gördüğü şey **kayıt**tır, **sistem** değil.
@@ -124,7 +148,8 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bell` | `bell.view` | Haftalık zil saatlerini, grupları ve çalma günlüğünü görür |
 | `bell` | `bell.manage` | Saatleri, grupları, sesleri ve anons metinlerini düzenler |
 | `bell` | `bell.delete` | Grubu, yüklenmiş zil sesini ve kullanılmayan anonsları KALICI siler (geri alınamaz, PIN ister) |
-| `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır |
+| `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır, öğrenci çağırma anonsu yapar (`POST /api/bell/page`) |
+| `bbd_students` | `bbd_students.canteen_controls` | Veli kantin kontrollerini düzenler: borç/günlük limit, kurum engeli, veli engelini kaldırma, yasaklı ürünler (admin, bbd_staff, org_staff) |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
 | `print` | `print.reprint` | Üretilmiş bir çıktıyı yeniden yazıcıya gönderir |

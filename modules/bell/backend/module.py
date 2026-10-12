@@ -15,11 +15,12 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from km_sdk import ModuleContext
+from km_sdk import ModuleContext, Trigger
 
+from .announce import BellAnnounce
 from .api.routes import bind
 from .bridge import BellBridge
-from .service import BellService
+from .service import DAYS, BellService
 from .speech import VertexSpeech
 from .voices import VoiceLibrary, number
 
@@ -64,14 +65,50 @@ def register(ctx: ModuleContext) -> None:
         bridge=bridge,
         notify=notify,
         play_locally=bool(config.get("play_locally", True)),
+        page_tts_timeout=number(_section(config, "page").get("tts_timeout_seconds"), 20),
     )
 
     ctx.add_router(bind(service))
     # Ders Takvimi ekranı saatleri ve grupları BURADAN okur; kopyalamaz (K3).
     ctx.provide("bell.week", service.week)
+    # Öğrenci çağırma — mobil geçit ve benzeri tüketiciler (sözleşme §5).
+    ctx.provide("bell.announce", BellAnnounce(service))
+
+    _plan_page_preparation(ctx, service, scheduler)
 
     asyncio.get_running_loop().create_task(_bootstrap(service, ctx.log))
     ctx.log.info("zil sistemi hazır")
+
+
+def _plan_page_preparation(ctx: ModuleContext, service: BellService, scheduler: Any) -> None:
+    """Gece: dizindeki öğrencilerin çağrı seslerini önden hazırla (İSTEĞE BAĞLI).
+
+    Varsayılan KAPALIDIR (`page.prepare_nightly: false`): ilk gece okulun
+    bütün öğrencileri için Vertex çağrısı demektir. Açılınca yalnız yeni ya
+    da adı değişen öğrenciler üretilir (önbellek metin özetine bağlı).
+
+    Öğrenci dizini `bbd_students.directory` yeteneğinden, TETİKLEME ANINDA
+    çözülür (isteğe bağlı tüketim): modül yükleme sırası önemli olmasın.
+    """
+    section = _section(ctx.config, "page")
+    if not bool(section.get("prepare_nightly", False)):
+        return
+    at = str(section.get("prepare_time") or "03:15")
+
+    async def handler(_trigger: Any) -> None:
+        directory = ctx.try_capability("bbd_students.directory")
+        if directory is None:
+            ctx.log.info("çağrı sesi hazırlığı atlandı — öğrenci dizini yok")
+            return
+        try:
+            await service.prepare_students(directory)
+        except Exception as failure:  # noqa: BLE001 — gece görevi çekirdeği düşürmez (K7)
+            ctx.log.warning("çağrı sesi hazırlığı patladı", error=str(failure))
+
+    scheduler.set_plan("bell-page", [
+        Trigger(day=day, time=at, label="öğrenci çağrı sesleri", payload={"phase": "page"})
+        for day in DAYS
+    ], handler)
 
 
 async def _bootstrap(service: BellService, log: Any) -> None:

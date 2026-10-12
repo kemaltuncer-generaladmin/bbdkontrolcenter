@@ -8,6 +8,7 @@ from pathlib import Path
 from km_sdk import ModuleContext
 
 from .api.routes import bind
+from .capabilities import TabletControl, TabletRead
 from .service import TabletService
 
 
@@ -35,4 +36,8 @@ def register(ctx: ModuleContext) -> None:
         storage_dir=storage_dir(ctx),
     )
     ctx.add_router(bind(service))
+    # Başka modüller (ör. mobil geçit) tabletleri yalnız bu yeteneklerden
+    # görür (K3/K5); sözleşme `backend/capabilities.py` başlığında.
+    ctx.provide("bbd_tablet.read", TabletRead(service))
+    ctx.provide("bbd_tablet.control", TabletControl(service, ctx.log))
     ctx.log.info("öğrenci tablet yönetimi hazır")

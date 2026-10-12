@@ -455,3 +455,16 @@
 
 /* Durum şeridi artık iki satır taşıyor: engeller ve zamanlayıcının saati. */
 .bl-statuswrap { display: flex; flex-direction: column; gap: 2px; }
+
+/* Öğrenci çağırma — serbest cümle formu (grup kartının altında). */
+.bl-page {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.bl-page > .bl-label,
+.bl-page > .bl-hint { grid-column: 1 / -1; }
