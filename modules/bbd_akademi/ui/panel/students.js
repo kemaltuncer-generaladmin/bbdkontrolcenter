@@ -32,6 +32,7 @@ import { classesView, groupsView } from './students-groups.js';
 import { learningPanel } from './students-learning.js';
 import { flashcardsPanel } from './students-flashcards.js';
 import { goalsPanel } from './students-goals.js';
+import { coachingPanel } from './students-coaching.js';
 
 /** Gömülebilir panel (`fn(app, studentId)` → {node, shown, destroy}) çekmece sekmesi olur. */
 const embedded = (fn) => (ctx) => fn(ctx.app, ctx.id);
@@ -227,10 +228,10 @@ function guardiansView(app, { open }) {
 
 /**
  * Öğrenci çekmecesi. `tab`: overview · schedule · curriculum · resources ·
- * homework · exams · attendance · study · learning · goals · flashcards ·
- * requests · finance · canteen. Öğrenme, hedef ve kart sekmeleri gömülü
- * panellerdir (students-learning/-goals/-flashcards.js); `payload`
- * (ör. `{learningTab}`) sekmenin `shown`'ına geçer.
+ * homework · exams · attendance · study · learning · goals · coaching ·
+ * flashcards · requests · finance · canteen. Öğrenme, hedef, koçluk ve kart
+ * sekmeleri gömülü panellerdir (students-learning/-goals/-coaching/-flashcards.js);
+ * `payload` (ör. `{learningTab}`, `{coachingTab}`) sekmenin `shown`'ına geçer.
  */
 export function openStudent(app, studentId, { tab = 'overview', payload = null } = {}) {
   const disposers = [];
@@ -293,6 +294,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null }
     { key: 'study', label: 'Çalışma', build: studyTab },
     { key: 'learning', label: 'Öğrenme', build: embedded(learningPanel) },
     { key: 'goals', label: 'Hedef & özet', build: embedded(goalsPanel) },
+    { key: 'coaching', label: 'Koçluk', build: embedded(coachingPanel) },
     { key: 'flashcards', label: 'Bilgi kartları', build: embedded(flashcardsPanel) },
     { key: 'requests', label: 'Talepler', build: requestsTab },
     app.has('finance') ? { key: 'finance', label: 'Kurum cari', build: financeTab } : null,
