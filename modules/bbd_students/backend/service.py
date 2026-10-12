@@ -18,6 +18,9 @@ from typing import Any
 
 from km_sdk import report_dir, write_private
 
+from . import curriculum
+from .directory import split_name
+
 # Kantin'in kabul ettiği alanlar — başka hiçbir şey oraya gönderilmez.
 CANTEEN_FIELDS = {"displayName", "parentPhone", "spendingLimit", "isBlocked"}
 
@@ -145,6 +148,8 @@ class StudentService:
     def _merge(self, canteen: dict[str, Any], profile: dict[str, Any] | None) -> dict[str, Any]:
         display_name = str(canteen.get("displayName") or "")
         first, last = _split_name(display_name)
+        plan = curriculum.from_row(profile)
+        class_name = (profile or {}).get("class_name") or ""
 
         return {
             # kantin otoritesinde
@@ -171,6 +176,13 @@ class StudentService:
             "parentPhone2": (profile or {}).get("parent_phone2") or "",
             "note": (profile or {}).get("note") or "",
             "hasProfile": profile is not None,
+            # Seviye / alan / hedef sınav — müfredatın kaynağı (KM ana kayıttır).
+            **plan,
+            # Sınıf adından ÖNERİ — YAZILMAZ; ekran tek tıkla kabul ettirir.
+            "curriculumSuggestion": curriculum.suggest(class_name),
+            # Kantin veli kontrolleri listede de taşınır (yeni kantin sürümü).
+            "dailyLimit": canteen.get("dailyLimit"),
+            "guardianBlocked": bool(canteen.get("guardianBlocked")),
         }
 
     async def status(self) -> dict[str, Any]:
@@ -189,6 +201,8 @@ class StudentService:
         display = _display_name(payload)
         if not display:
             raise ValueError("Ad ve soyad zorunlu.")
+        # Kural ihlali kantine yazılmadan ÖNCE yakalanır.
+        curriculum.resolve({}, _curriculum_patch(payload))
 
         changes: dict[str, Any] = {"displayName": display}
         for field in ("parentPhone", "spendingLimit", "isBlocked"):
@@ -211,6 +225,14 @@ class StudentService:
         for field in ("parentPhone", "spendingLimit", "isBlocked"):
             if field in payload:
                 changes[field] = payload[field]
+
+        # Seviye/alan kuralı kantine gitmeden denetlenir (yarım yazma olmasın).
+        patch = _curriculum_patch(payload)
+        if patch:
+            existing = await self._store.fetch_one(
+                f"SELECT * FROM {self._table} WHERE kantin_id = ?", (kantin_id,)
+            )
+            curriculum.resolve(curriculum.from_row(existing), patch)
 
         if "firstName" in payload or "lastName" in payload or "displayName" in payload:
             profile = await self._store.fetch_one(
@@ -337,13 +359,53 @@ class StudentService:
                 return str(student.get("displayName") or "")
         raise ValueError(f"Kantinde bulunamadı: {kantin_id}")
 
+    async def set_curriculum(self, kantin_ids: list[str],
+                             patch: dict[str, Any]) -> dict[str, Any]:
+        """Seçili öğrencilere seviye/alan/hedef sınav yazar (toplu işlem).
+
+        Yalnız GÖNDERİLEN alan değişir. Kural her öğrenci için ayrı uygulanır:
+        biri reddedilirse (ör. 9. sınıfa alan) diğerleri yazılır, reddedilen
+        `failed` listesinde gerekçesiyle döner. Boş seçim reddedilir.
+        """
+        ids = [str(item).strip() for item in kantin_ids if str(item).strip()]
+        if not ids:
+            raise ValueError("Öğrenci seçilmedi.")
+        clean = _curriculum_patch(patch)
+        if not clean:
+            raise ValueError("Değiştirilecek alan yok.")
+        # Biçim hatası (ör. "13") tüm seçim için aynıdır: baştan reddedilir.
+        curriculum.resolve({}, {key: value for key, value in clean.items() if key != "track"})
+        if "track" in clean:
+            curriculum.parse_track(clean["track"])
+
+        updated: list[str] = []
+        failed: list[dict[str, str]] = []
+        for kantin_id in dict.fromkeys(ids):
+            try:
+                await self._save_profile(kantin_id, clean)
+            except curriculum.CurriculumError as failure:
+                failed.append({"studentId": kantin_id, "error": str(failure)})
+                continue
+            updated.append(kantin_id)
+        self._log.info("toplu seviye/alan", updated=len(updated), failed=len(failed))
+        return {"updated": updated, "failed": failed}
+
     async def _save_profile(self, kantin_id: str, payload: dict[str, Any]) -> None:
         fields = {key: payload[key] for key in PROFILE_COLUMNS if key in payload}
-        if not fields:
+        plan_patch = _curriculum_patch(payload)
+        plan_columns: dict[str, Any] = {}
+        if plan_patch:
+            existing = await self._store.fetch_one(
+                f"SELECT * FROM {self._table} WHERE kantin_id = ?", (kantin_id,)
+            )
+            plan_columns = curriculum.resolve(curriculum.from_row(existing), plan_patch)
+        if not fields and not plan_columns:
             return
 
-        columns = [PROFILE_COLUMNS[key] for key in fields]
-        values = [str(fields[key] or "") for key in fields]
+        # Eski metin sütunları NOT NULL '' tutar; seviye/alan/hedef sınav
+        # sütunları NULL tutar ("girilmemiş" ile "boş metin" ayrı şeyler).
+        columns = [PROFILE_COLUMNS[key] for key in fields] + list(plan_columns)
+        values = [str(fields[key] or "") for key in fields] + list(plan_columns.values())
 
         await self._store.execute(
             f"INSERT INTO {self._table} (kantin_id, {', '.join(columns)}, updated_at) "
@@ -568,10 +630,12 @@ class StudentService:
 
 def _split_name(display_name: str) -> tuple[str, str]:
     """Kantin tek alan tutuyor; profil yoksa son kelimeyi soyad sayarız."""
-    parts = display_name.strip().split()
-    if len(parts) < 2:
-        return display_name.strip(), ""
-    return " ".join(parts[:-1]), parts[-1]
+    return split_name(display_name)
+
+
+def _curriculum_patch(payload: dict[str, Any]) -> dict[str, Any]:
+    """Gövdeden yalnız seviye/alan/hedef sınav anahtarları (gönderilmişse)."""
+    return {key: payload[key] for key in curriculum.CURRICULUM_COLUMNS if key in payload}
 
 
 def _display_name(payload: dict[str, Any]) -> str:

@@ -48,6 +48,11 @@ class ProfileFields(BaseModel):
     parentName2: str | None = Field(default=None, max_length=80)
     parentPhone2: str | None = Field(default=None, max_length=20)
     note: str | None = Field(default=None, max_length=500)
+    # Seviye / alan / hedef sınav — kural `backend/curriculum.py` içinde.
+    # `None` göndermek alanı temizler; göndermemek dokunmaz.
+    gradeLevel: int | str | None = None
+    track: str | None = Field(default=None, max_length=8)
+    examTarget: str | None = Field(default=None, max_length=8)
 
 
 class StudentUpdate(ProfileFields):
@@ -74,7 +79,11 @@ async def create_student(
     user: CurrentUser = requires("bbd_students.manage"),
 ) -> dict[str, Any]:
     payload = body.model_dump(exclude_unset=True)
-    return await service().create_student(payload)
+    try:
+        return await service().create_student(payload)
+    except ValueError as exc:
+        # Kural ihlali (ad yok, geçersiz seviye/alan) — 500 değil, cümlesiyle 400.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.patch("/students/{kantin_id}")
@@ -85,7 +94,35 @@ async def update_student(
 ) -> dict[str, Any]:
     # exclude_unset: gönderilmeyen alan "değiştirme" demektir, "boşalt" değil.
     payload = body.model_dump(exclude_unset=True)
-    return await service().update_student(kantin_id, payload)
+    try:
+        return await service().update_student(kantin_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class CurriculumBulkBody(BaseModel):
+    """Seçili öğrencilere seviye/alan/hedef sınav. Gönderilmeyen alan değişmez;
+    boş seçim reddedilir ("boş = tümü" YOK)."""
+
+    students: list[str] = Field(min_length=1, max_length=5000)
+    gradeLevel: int | str | None = None
+    track: str | None = Field(default=None, max_length=8)
+    examTarget: str | None = Field(default=None, max_length=8)
+
+
+@router.post("/students/curriculum")
+async def set_curriculum(
+    body: CurriculumBulkBody,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> dict[str, Any]:
+    """Toplu seviye/alan ataması. Kural öğrenci başına uygulanır; reddedilen
+    öğrenci `failed` içinde gerekçesiyle döner, diğerleri yazılır."""
+    patch = body.model_dump(exclude_unset=True)
+    students = patch.pop("students")
+    try:
+        return await service().set_curriculum(students, patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/students/{kantin_id}/access-code")
