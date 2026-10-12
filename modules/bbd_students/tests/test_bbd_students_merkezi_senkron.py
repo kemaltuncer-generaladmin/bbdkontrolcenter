@@ -108,12 +108,15 @@ class Canteen:
 class Tablet:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.only_reasons: list[str | None] = []
 
     async def block(self, student_id: str, until: Any, reason: str, actor: str) -> None:
         self.calls.append(("block", student_id))
 
-    async def unblock(self, student_id: str, reason: str, actor: str) -> None:
+    async def unblock(self, student_id: str, reason: str, actor: str, *,
+                      only_reason: str | None = None) -> None:
         self.calls.append(("unblock", student_id))
+        self.only_reasons.append(only_reason)
 
 
 class Finance:
@@ -368,6 +371,8 @@ async def test_yeniden_etkinlestir(world: World) -> None:
     result = await world.lifecycle.reactivate("STU-1", actor="Ayşe")
     assert result["status"] == "active" and result["groupsReopened"] is False
     assert result["tablet"] == "unblocked"
+    # Yalnız pasifleştirmenin koyduğu kısıt kalkar (başka gerekçeli kısıt sürer).
+    assert world.caps["bbd_tablet.control"].only_reasons[-1] == "Öğrenci pasifleştirildi (KM)"
     assert (await world.types())[-2:] == ["student.reactivated", "tablet.policy_changed"]
     assert world.canteen.calls[-1] == ("status", "STU-1", "active")
     with pytest.raises(SyncError, match="zaten etkin"):

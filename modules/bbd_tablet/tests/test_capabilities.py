@@ -171,6 +171,16 @@ async def test_kontrol_ek_sure_kisit_oturum(service: TabletService, clock: Any) 
 
     open_ended = await control.block("opaque-A", None, "veli: süresiz", "akademi:veli:7")
     assert open_ended is not None and open_ended.startswith("2027-10-14")
+    # Gerekçe süzgeçli kaldırma: yalnız o gerekçeli kısıt kalkar (KM yeniden
+    # etkinleştirmesi öğretmenin / velinin kısıtına dokunmaz).
+    await control.block("opaque-A", None, "Öğrenci  pasifleştirildi (KM)", "km")
+    await control.unblock("opaque-A", "yeniden etkin", "km",
+                          only_reason="Öğrenci pasifleştirildi (KM)")
+    still = (await TabletRead(service).student_usage("opaque-A", TODAY, TODAY))["blockedUntil"]
+    assert still is not None and still.startswith("2027-10-14")
+    blocks = await service.list_blocks(student_id="opaque-A")
+    lifted = [row for row in blocks if row.get("reason") == "Öğrenci pasifleştirildi (KM)"]
+    assert lifted and all(row.get("liftedAt") or row.get("lifted_at") for row in lifted)
     await control.unblock("opaque-A", "veli kaldırdı", "akademi:veli:7")
     assert (await TabletRead(service).student_usage("opaque-A", TODAY, TODAY))[
         "blockedUntil"] is None

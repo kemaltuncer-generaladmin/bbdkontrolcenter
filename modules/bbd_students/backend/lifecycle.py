@@ -15,7 +15,8 @@ uygulandığı an yazılır. Toplu pasifleştirmede her öğrenci ayrı olaydır
 çağrıları sıralı ve aralıklıdır (`throttle:120,1`).
 
 YENİDEN ETKİNLEŞTİR (§5.3). Durum `active`; grup üyelikleri KENDİLİĞİNDEN
-AÇILMAZ (ekran uyarır). Pasifleştirmenin koyduğu tablet kısıtı kaldırılır.
+AÇILMAZ (ekran uyarır). YALNIZ pasifleştirmenin koyduğu tablet kısıtı kaldırılır
+(başka gerekçeyle konmuş kısıt sürer).
 
 KALICI SİL (§5.3). Yalnız pasif öğrencide, `bbd_students.delete` izniyle, ad
 yazılarak; kantin bakiyesi TAM 0 (`409 balance_not_zero`), açık ödeme talebi
@@ -51,6 +52,7 @@ NOTE_MAX = 500
 #: Pasifleştirmenin tablet kısıtında kullandığı gerekçe (yeniden etkinleştirme
 #: bu kısıtı kaldırır).
 TABLET_REASON = "Öğrenci pasifleştirildi (KM)"
+REACTIVATE_REASON = "Öğrenci yeniden etkinleştirildi (KM)"
 
 
 def parse_effective(value: Any, *, today: date) -> date:
@@ -375,7 +377,13 @@ class Lifecycle:
             if block:
                 await control.block(kantin_id, None, TABLET_REASON, actor)
             else:
-                await control.unblock(kantin_id, "Öğrenci yeniden etkinleştirildi (KM)", actor)
+                # Yalnız pasifleştirmenin koyduğu kısıt kalkar; başka gerekçeyle
+                # (öğretmen, veli talebi) konmuş kısıt yeniden etkinleştirmede sürer.
+                try:
+                    await control.unblock(kantin_id, REACTIVATE_REASON, actor,
+                                          only_reason=TABLET_REASON)
+                except TypeError:  # `only_reason` bilmeyen eski tablet modülü
+                    await control.unblock(kantin_id, REACTIVATE_REASON, actor)
         except Exception as failure:  # noqa: BLE001 — tablet düşse de durum yazıldı (K7)
             self._log.warning("tablet kısıtı uygulanamadı", student=kantin_id, block=block,
                               error=str(failure))
