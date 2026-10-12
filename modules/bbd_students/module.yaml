@@ -106,6 +106,13 @@ permissions:
   - key: bbd_students.access_code
     description: "Öğrencinin 6 haneli kantin giriş kodunu görüntüleme (liste/PDF) ve sıfırlama."
     default_roles: [admin, bbd_staff, org_staff]
+  # AYRI ANAHTAR: veli kantin kontrolleri (borç/günlük limit, kurum engeli,
+  # veli engelini kaldırma, yasaklı ürünler) öğrencinin kasada alışveriş
+  # yapıp yapamayacağını belirler. `manage` (ad/telefon) taşıyan herkesin işi
+  # değil; `accountant` DIŞARIDA. Görüntülemek `view` ile serbest.
+  - key: bbd_students.canteen_controls
+    description: "Veli kantin kontrollerini (limitler, engeller, yasaklı ürünler) düzenleme."
+    default_roles: [admin, bbd_staff, org_staff]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
 dependencies:

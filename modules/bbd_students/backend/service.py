@@ -12,6 +12,7 @@ import re
 import secrets
 import shutil
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,8 +46,25 @@ OPAQUE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 RESET_DELAY_SECONDS = 0.6
 
 
+#: Kantin ürün listesinin bellekte tutulduğu süre (saniye) — yasaklı ürün
+#: seçicisi her öğrencide listeyi yeniden çekmesin (sözleşme: 5 dk önbellek).
+PRODUCTS_CACHE_SECONDS = 300.0
+
+#: Veli kantin kontrollerinden bu ekranın yazabildikleri.
+CONTROL_KEYS = ("spendingLimit", "dailyLimit", "isBlocked", "guardianBlocked",
+                "restrictedProductIds")
+
+
 class PreviewError(RuntimeError):
     """Önizleme görüntüsü üretilemedi. Dosya yine de kaydedilmiştir."""
+
+
+class ControlsError(ValueError):
+    """Kontrol yaması reddedildi. `status` HTTP karşılığıdır, mesaj Türkçe."""
+
+    def __init__(self, message: str, *, status: int = 400) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 class StudentService:
@@ -62,6 +80,7 @@ class StudentService:
         self._store = store
         self._log = log
         self._table = store.table("profile")
+        self._products_cache: tuple[float, list[dict[str, Any]]] | None = None
 
     @property
     def _export_dir(self) -> Path:
@@ -184,6 +203,87 @@ class StudentService:
             "dailyLimit": canteen.get("dailyLimit"),
             "guardianBlocked": bool(canteen.get("guardianBlocked")),
         }
+
+    # ------------------------------------------------- veli kantin kontrolleri
+
+    async def canteen_controls(self, kantin_id: str) -> dict[str, Any]:
+        """Öğrencinin veli kantin kontrolleri + yasaklı ürün seçicisinin listesi.
+
+        Kontroller KANTİNDE durur ve satış anında orada uygulanır
+        (kantin-veli-kontrolleri sözleşmesi); burada kopyası tutulmaz.
+        Kantine ulaşılamazsa hata yükseltilmez: `available: false` + sebep.
+        """
+        try:
+            student = await self._canteen.get_student(kantin_id)
+        except Exception as failure:  # noqa: BLE001 — kantin dışarısı; ekran ayakta kalmalı
+            reason = getattr(failure, "reason", None)
+            if reason == "student_not_found":
+                return {"available": False, "notFound": True,
+                        "error": "Öğrenci kantinde bulunamadı."}
+            self._log.warning("kantin kontrolleri okunamadı", student=kantin_id,
+                              error=str(failure))
+            return {"available": False, "error": str(failure)}
+        products, products_error = await self._products()
+        return {
+            "available": True,
+            "controls": _controls_view(student),
+            "products": products,
+            "productsError": products_error,
+        }
+
+    async def update_canteen_controls(self, kantin_id: str, patch: dict[str, Any], *,
+                                      actor: str) -> dict[str, Any]:
+        """Kontrolleri kantine yazar (`canteen.api.update_controls`).
+
+        VELİ ENGELİ YALNIZ KALDIRILIR. Kantini kapatmak velinin kararıdır
+        (F-P3.4); personel onu görür ve gerekirse kaldırır, kendisi koymaz —
+        kurumun kendi engeli `isBlocked`tır.
+        """
+        clean = {key: patch[key] for key in CONTROL_KEYS if key in patch}
+        if not clean:
+            raise ControlsError("Değiştirilecek kontrol yok.")
+        if clean.get("guardianBlocked") is True:
+            raise ControlsError("Veli engeli yalnız veli tarafından açılır; burada "
+                                "yalnız kaldırılabilir. Kurum engeli için “Kurum "
+                                "engeli”ni kullanın.")
+        try:
+            student = await self._canteen.update_controls(kantin_id, clean)
+        except Exception as failure:  # kantin dışarısı; sebebi taşınır
+            reason = getattr(failure, "reason", None)
+            if reason == "student_not_found":
+                raise ControlsError("Öğrenci kantinde bulunamadı.", status=404) from failure
+            if reason == "validation_error":
+                raise ControlsError(f"Kantin reddetti: {failure}", status=422) from failure
+            raise ControlsError(f"Kantine ulaşılamadı: {failure}", status=503) from failure
+        # Denetim: kim, hangi alanları. Değerler kişisel veri değil ama gereksiz
+        # de değil — limit değişikliği sonradan sorulur.
+        self._log.info("veli kantin kontrolleri değişti", student=kantin_id, actor=actor,
+                       fields=sorted(clean), values={
+                           key: value for key, value in clean.items()
+                           if key != "restrictedProductIds"},
+                       restricted=len(clean.get("restrictedProductIds") or []))
+        return {"available": True, "controls": _controls_view(student)}
+
+    async def _products(self) -> tuple[list[dict[str, Any]], str]:
+        now = time.monotonic()
+        if self._products_cache is not None and \
+                now - self._products_cache[0] < PRODUCTS_CACHE_SECONDS:
+            return self._products_cache[1], ""
+        try:
+            rows = await self._canteen.products()
+        except Exception as failure:  # noqa: BLE001 — ürünsüz de kontroller düzenlenebilmeli
+            return [], str(failure)
+        products = sorted(
+            (
+                {"id": int(row["id"]), "name": str(row.get("name") or ""),
+                 "price": int(row.get("price") or 0),
+                 "active": bool(row.get("isActive", row.get("active", True)))}
+                for row in rows if isinstance(row, dict) and row.get("id") is not None
+            ),
+            key=lambda item: (not item["active"], item["name"].casefold()),
+        )
+        self._products_cache = (now, products)
+        return products, ""
 
     async def status(self) -> dict[str, Any]:
         try:
@@ -631,6 +731,23 @@ class StudentService:
 def _split_name(display_name: str) -> tuple[str, str]:
     """Kantin tek alan tutuyor; profil yoksa son kelimeyi soyad sayarız."""
     return split_name(display_name)
+
+
+def _controls_view(student: dict[str, Any]) -> dict[str, Any]:
+    """Kantin öğrencisinden yalnız kontrol ekranının alanları (`accessCode` yok)."""
+    restricted = student.get("restrictedProductIds")
+    return {
+        "kantinId": student.get("id"),
+        "balance": int(student.get("balance") or 0),
+        "spendingLimit": student.get("spendingLimit"),
+        "dailyLimit": student.get("dailyLimit"),
+        "isBlocked": bool(student.get("isBlocked")),
+        "guardianBlocked": bool(student.get("guardianBlocked")),
+        "restrictedProductIds": sorted({int(item) for item in restricted})
+        if isinstance(restricted, list) else [],
+        "spentToday": student.get("spentToday"),
+        "controlsUpdatedAt": student.get("controlsUpdatedAt"),
+    }
 
 
 def _curriculum_patch(payload: dict[str, Any]) -> dict[str, Any]:
