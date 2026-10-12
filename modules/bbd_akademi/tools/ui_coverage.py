@@ -57,6 +57,12 @@ NOT_SURFACED: dict[str, str] = {
         "Tam liste itmesini modülün personel servisi yapar (backend/staff.py: "
         "değişiklikte, zamanlanmış görevde ve panelin 'Şimdi eşitle' düğmesiyle "
         "km/staff/sync üzerinden); panel bu uca doğrudan gitmez.",
+    # --- öğrenci dışa aktarımı: işi BAŞLATAN uç (`students_exportMistakes`)
+    # entegrasyon anahtarına açık değil; yoklanacak iş olmadan durum okuması
+    # anlamsız. Kurum çıktıları ortak `/v1/admin/exports/{id}` üzerinden iner.
+    "students_getExport":
+        "Hata defteri dışa aktarımını başlatan uç (students_exportMistakes) "
+        "entegrasyon anahtarına açık değil; KM'nin başlatabileceği bir iş yok.",
 }
 
 
