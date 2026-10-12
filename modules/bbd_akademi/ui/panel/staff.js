@@ -11,6 +11,12 @@
 // İYİMSER KİLİT: düzenleme satırın `revision`'ıyla gider; araya başka bir
 // değişiklik girdiyse 409 döner ve liste tazelenir.
 //
+// ANONS ADI ("Hüseyin hoca"): zil sisteminin oturum başı çağrısında öğretmenin
+// okunacağı ad. KM tek kaynaktır (sözleşme km-ogrenci-gruplari-ve-zil.md §1);
+// kural `bell-plan.js` ve backend/staff.py'de (kırpılır, en çok 60 karakter).
+// Akademi sözleşmesine henüz girmediği için `announceNameSync` kapalıyken KM'de
+// saklanır ama itilmez (backend/contract_features.py) — ekran bunu söyler.
+//
 // "Akademi personeli" Akademi'nin bildiği herkestir. `source=km` satırları
 // salt okunurdur ("KM'den itilir"); yerel personel yalnız KM'nin personel
 // itmediği kurumlarda eklenir (Akademi `staff_managed_by_km` ile de korur).
@@ -24,6 +30,7 @@ import { alertBox, badge, card, hintBox, tabBar } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { formatPhone, normalizePhone } from '../../ui-kit/form.js';
 import { AkademiError } from './api.js';
+import { ANNOUNCE_NAME_MAX, announceNameError, cleanAnnounceName } from './bell-plan.js';
 import {
   actionButton, confirmAction, empty, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
   problem, runAction, searchBox, sectionHead, selectBox, staticList, toolbar,
@@ -115,6 +122,7 @@ function mobileTab(app, { onChanged }) {
   let rows = [];
   let roles = KM_ROLES;
   let sync = null;
+  let announceSync = false;
   let query = '';
   let showInactive = false;
 
@@ -140,6 +148,7 @@ function mobileTab(app, { onChanged }) {
       { key: 'name', label: 'Kişi', width: 'minmax(0, 1.6fr)', cell: (row) => {
         const cell = h('div', 'ak-cell-stack');
         cell.append(h('b', '', row.displayName));
+        if (row.announceName) cell.append(h('small', 'ak-stf-announce', `Anons: ${row.announceName}`));
         if (row.note) cell.append(h('small', '', row.note));
         return cell;
       } },
@@ -183,6 +192,7 @@ function mobileTab(app, { onChanged }) {
     rows = data?.items || [];
     roles = data?.roles?.length ? data.roles : KM_ROLES;
     sync = data?.sync || null;
+    announceSync = Boolean(data?.announceNameSync);
     paintBanner();
     paint();
     return table.node;
@@ -192,7 +202,8 @@ function mobileTab(app, { onChanged }) {
   function paint() {
     const digits = normalizePhone(query);
     const visible = rows.filter((row) => (showInactive || row.active)
-      && (!query || foldText(`${row.displayName} ${row.phone} ${row.note || ''}`).includes(query)
+      && (!query || foldText(`${row.displayName} ${row.announceName || ''} ${row.phone} ${row.note || ''}`)
+        .includes(query)
         || (digits.length >= 3 && row.phone.includes(digits))));
     table.update({ rows: visible });
   }
@@ -249,8 +260,8 @@ function mobileTab(app, { onChanged }) {
     const initialRoles = row ? [...(row.roles || [])] : ['admin'];
     const value = row
       ? { displayName: row.displayName, phone: row.phone, kmUserId: row.kmUserId || '', note: row.note || '',
-        active: row.active }
-      : { displayName: '', phone: '', kmUserId: '', note: '', active: true };
+        announceName: row.announceName || '', active: row.active }
+      : { displayName: '', phone: '', kmUserId: '', note: '', announceName: '', active: true };
     const result = await formDialog(app, {
       title: row ? `${row.displayName} — düzenle` : 'Mobil yönetici erişimi ver',
       description: row ? 'Kaydedince liste Akademi\'ye hemen itilir.'
@@ -262,6 +273,12 @@ function mobileTab(app, { onChanged }) {
           hint: 'Uygulamaya bu numaraya gelen kodla girilir.' },
         { key: 'kmUserId', label: 'KM kullanıcı kimliği', maxLength: 80,
           hint: 'İsteğe bağlı; kişiyi KM kullanıcısıyla eşler.' },
+        { key: 'announceName', label: 'Anons adı (ör. Hüseyin hoca)', maxLength: ANNOUNCE_NAME_MAX,
+          placeholder: 'Hüseyin hoca', validate: (raw) => announceNameError(raw),
+          hint: announceSync
+            ? 'Zil çağrısında öğretmen bu adla okunur: “TYT grubu, Hüseyin hoca ile dersiniz başlıyor.” Boşsa genel çağrı okunur.'
+            : 'Zil çağrısında öğretmen bu adla okunacak. KM\'de saklanır; Akademi bu alanı henüz desteklemiyor, '
+              + 'destek gelince eşitlemeyle kendiliğinden gider.' },
         { key: 'roles', label: 'Akademi rolleri', type: 'custom', required: true,
           render: (_draft, set) => {
             set(initialRoles);
@@ -281,6 +298,7 @@ function mobileTab(app, { onChanged }) {
           roles: [...(draft.roles || [])].sort((a, b) => order.indexOf(a) - order.indexOf(b)),
           kmUserId: String(draft.kmUserId || '').trim(),
           note: String(draft.note || '').trim(),
+          announceName: cleanAnnounceName(draft.announceName),
           active: Boolean(draft.active),
         };
         if (!row) {
@@ -294,6 +312,8 @@ function mobileTab(app, { onChanged }) {
         // Boş dize kimliği temizler (sunucu `null`u "değişmedi" sayar).
         if (clean.kmUserId !== (row.kmUserId || '')) changed.kmUserId = clean.kmUserId;
         if (clean.note !== (row.note || '')) changed.note = clean.note;
+        // Boş dize anons adını temizler.
+        if (clean.announceName !== (row.announceName || '')) changed.announceName = clean.announceName;
         if (clean.active !== row.active) changed.active = clean.active;
         if (!Object.keys(changed).length) return { unchanged: true };
         return app.api.km(`/staff/${row.id}`, { method: 'PATCH',
