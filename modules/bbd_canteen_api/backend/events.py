@@ -21,9 +21,12 @@ outbox'una karşılığı (köken `canteen`, `causationId = "CNT-<id>"`):
     (bilinmeyen tür)          → kutuya yazılır, yok sayılır (ileri uyum)
 
 YANKI BASTIRMA (§6.2): KM'nin kantine az önce (2 sn) yazdığı öğrenci / kontrol
-alanları ve açtığı ödeme talebi (PENDING) kantinden olay olarak dönerse yeni KM
-olayı üretilmez (`canteen.api` istemcisinin yazma belleği) — yazan (KM ekranı
-ya da geçit) olayını zaten yazdı. Bakiye yankısı yoktur (KM bakiye yazmaz).
+alanları kantinden olay olarak dönerse yeni KM olayı üretilmez (`canteen.api`
+istemcisinin yazma belleği; öğrenci ve kontrol yazan her KM yolu olayını kendisi
+yazar). Ödeme talebinde bellek KENDİLİĞİNDEN tutulmaz — talebi açıp olayını
+kendisi yazan (mobil geçit) `remember_write(id, "payment_request", [ref])` ile
+bildirir; KM ekranının açtığı talep kantin olayıyla duyurulur. Bakiye yankısı
+yoktur (KM bakiye yazmaz).
 
 Öğrenci / kontrol olayında öğrenci dizininin önbelleği HEMEN bırakılır
 (`bbd_students.sync.invalidate`). Kantinden olay gelmesi kantinin ayakta

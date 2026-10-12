@@ -1018,9 +1018,6 @@ class CanteenApi:
         for key in ("createdAt", "updatedAt", "paidAt"):
             if key in data:
                 data[key] = _iso(data[key])
-        # Yankı belleği: kantinin bu talep için iteceği `payment_request.changed`
-        # (PENDING) KM'de ikinci bir olay üretmesin (yazan zaten olay yazdı).
-        self.remember_write(student_id, "payment_request", [str(data["ref"])])
         return {
             **data,
             "queued": True,
