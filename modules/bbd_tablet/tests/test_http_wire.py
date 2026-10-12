@@ -93,8 +93,12 @@ async def test_tablet_wire_format(client: httpx.AsyncClient) -> None:
     assert set(body) == {"serverTime", "nextSyncSeconds", "usageFlushSeconds",
                          "assignedProfileId", "profileRevision", "profile", "deviceState",
                          "session", "grants", "commands", "apps", "install"}
-    # No app distributed yet: the empty catalog still has a version to remember.
-    assert body["apps"]["items"] == [] and body["apps"]["remove"] == []
+    # No `appsVersion` key: an APK without app distribution gets no catalog.
+    assert body["apps"] is None
+    # The key with null asks for it; the empty catalog still has a version.
+    catalog = (await client.post(f"/api/tablet/v1/devices/{device_id}/sync", headers=auth,
+                                 json={"appsVersion": None})).json()["apps"]
+    assert catalog["items"] == [] and catalog["remove"] == [] and catalog["version"]
     assert body["install"] is None
     assert body["profile"]["usageWindows"] == []
 

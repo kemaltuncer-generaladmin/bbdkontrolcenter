@@ -2,10 +2,13 @@
 //
 // YÜKLEME PARÇALIDIR: dosya 8 MB'lık parçalar hâlinde (base64, JSON) gider;
 // Cloudflare 100 MB'tan büyük gövdeyi reddeder ve kabuğun köprüsü yalnız JSON
-// taşır. Parça hata alırsa birkaç kez artan beklemeyle yeniden denenir. Aynı
-// dosya (ad + boyut + değiştirilme zamanı) yeniden seçilirse sunucu yarım
-// yüklemeyi bulur ve kaldığı yerden sürer. Bitince sunucu paketi arka planda
-// açar; ekran "işleniyor" durumunu yoklar ve hazır olunca onay penceresini açar.
+// taşır. Parça hata alırsa birkaç kez artan beklemeyle yeniden denenir (disk
+// dolu — 507 — yeniden denenmez). 409 gelince doğru konum sunucudan okunur;
+// konum ilerlemiyorsa birkaç denemeden sonra yükleme Türkçe hatayla durur,
+// sonsuza dek aynı parça gönderilmez. Aynı dosya (ad + boyut + değiştirilme
+// zamanı) yeniden seçilirse sunucu yarım yüklemeyi bulur ve kaldığı yerden
+// sürer. Bitince sunucu paketi arka planda açar; ekran "işleniyor" durumunu
+// yoklar ve hazır olunca onay penceresini açar.
 //
 // SUNUCUYU YORMAZ: sekme açıkken `GET /apps` indiren tablet varsa 15, yoksa 30
 // saniyede bir okunur; sekme gizliyken ya da panel kapanınca durur.
@@ -29,6 +32,9 @@ const FAST_MS = 15_000;
 const SLOW_MS = 30_000;
 const CHUNK_TIMEOUT_SECONDS = 300;
 const RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000];
+// 409 sonrası konum ilerlemezse: bu beklemelerle yeniden denenir, sonra durulur.
+const STALL_DELAYS_MS = [2_000, 5_000];
+const DISK_FULL = 507;
 const PROCESS_POLL_MS = 2_000;
 const ACCEPT = '.apk,.apks,.xapk,.apkm';
 
@@ -44,7 +50,7 @@ const DRAFT_STATE = {
   uploading: ['Yarım yükleme', 'warn'],
   processing: ['İşleniyor', 'info'],
   ready: ['Dağıtıma hazır', 'good'],
-  failed: ['İşlenemedi', 'bad'],
+  failed: ['Başarısız', 'bad'],
 };
 
 /** Tabletin makine koduyla bildirdiği hata → kısa Türkçe cümle. */
@@ -84,6 +90,17 @@ function readBase64(blob) {
 }
 
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/** Sürdürülemeyen yükleme hatası; `problem()` metni olduğu gibi gösterir. */
+function uploadStopped(message) {
+  return Object.assign(new Error(message), { status: 409, stopped: true });
+}
+
+/** Disk dolu (507) iletisi sunucudan Türkçe gelir; diğerleri ortak yoldan. */
+function uploadProblem(error, fallback) {
+  if (Number(error?.status) === DISK_FULL && error?.message) return String(error.message);
+  return problem(error, fallback);
+}
 
 /** Sayaçlar: "Kuruldu 12/40 · İndiriliyor 2 · Sırada 5 · Hata 1 · Haber yok 20". */
 function countBadges(counts) {
@@ -262,10 +279,12 @@ export function appsView(app) {
       if (draft.state === 'ready' && app.can('manage')) {
         tools.append(button('Dağıt', { variant: 'primary', onClick: () => confirmPublish(draft) }));
       }
-      if (draft.state !== 'processing' && app.can('manage')) {
+      // İşlenen taslak da atılabilir: sunucu paketi açmayı durdurur ve siler.
+      if (app.can('manage')) {
         tools.append(button('At', {
           variant: 'ghost',
-          title: 'Taslağı ya da yarım yüklemeyi sil',
+          title: draft.state === 'processing' ? 'Paketi açmayı durdur ve taslağı sil'
+            : 'Taslağı ya da yarım yüklemeyi sil',
           onClick: (event) => busy(event.currentTarget, () => discard(draft)),
         }));
       }
@@ -379,11 +398,14 @@ export function appsView(app) {
       } catch (error) {
         if (error?.status === 409) {
           // Sunucu başka bir yerden sürmek istiyor (ör. önceki parça aslında
-          // yazılmıştı); doğru konumu okuyup oradan devam edilir.
-          return app.call(`/apps/uploads/${enc(up.id)}`);
+          // yazılmıştı) ya da yükleme artık parça kabul etmiyor; durum okunur,
+          // karar `startUpload` döngüsünündür.
+          const status = await app.call(`/apps/uploads/${enc(up.id)}`);
+          return { ...status, conflict: true };
         }
         const status = Number(error?.status) || 0;
-        const retryable = !status || status >= 500 || status === 408 || status === 429;
+        const retryable = !status || (status >= 500 && status !== DISK_FULL)
+          || status === 408 || status === 429;
         if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw error;
         up.note = `Bağlantı sorunu; ${Math.round(RETRY_DELAYS_MS[attempt] / 1000)} sn sonra yeniden denenecek…`;
         paintUpload();
@@ -419,13 +441,32 @@ export function appsView(app) {
       if (started.resumed && up.sent) app.toast(`Yarım yükleme bulundu; ${bytes(up.sent)} sonrasından sürüyor.`, 'info');
       const chunk = Number(started.chunkBytes) || 8 * 1024 * 1024;
       measure(up);
+      let stalls = 0;
       while (!up.cancelled && up.sent < up.size) {
-        const end = Math.min(up.size, up.sent + chunk);
-        const data = await readBase64(file.slice(up.sent, end));
-        const result = await sendChunk(up, up.sent, data);
+        const offset = up.sent;
+        const end = Math.min(up.size, offset + chunk);
+        const data = await readBase64(file.slice(offset, end));
+        const result = await sendChunk(up, offset, data);
         if (!result) break;
+        if (result.state === 'failed') {
+          throw uploadStopped(result.error || 'Yükleme sunucuda durduruldu. Dosyayı yeniden seçip baştan yükleyin.');
+        }
         if (result.state && result.state !== 'uploading') break;
-        up.sent = Number(result.receivedBytes || 0);
+        const received = Number(result.receivedBytes || 0);
+        if (result.conflict && received === offset) {
+          // 409 geldi ama sunucu aynı yerden istiyor: parça yazılmıyor demektir.
+          if (stalls >= STALL_DELAYS_MS.length) {
+            throw uploadStopped('Sunucu yüklemeyi bu noktadan sürdüremiyor. Yarım yüklemeyi “At” ile silip dosyayı yeniden seçin.');
+          }
+          up.note = `Sunucu parçayı kabul etmedi; ${Math.round(STALL_DELAYS_MS[stalls] / 1000)} sn sonra yeniden denenecek…`;
+          paintUpload();
+          await sleep(STALL_DELAYS_MS[stalls]);
+          stalls += 1;
+          up.note = '';
+          continue;
+        }
+        stalls = 0;
+        up.sent = received;
         measure(up);
         paintUpload();
       }
@@ -446,7 +487,22 @@ export function appsView(app) {
     } catch (error) {
       if (st.upload === up) st.upload = null;
       paintUpload();
-      app.toast(`${problem(error, 'Yükleme yapılamadı.')} Aynı dosyayı yeniden seçince kaldığı yerden sürer.`, 'bad');
+      if (up.phase === 'processing' && Number(error?.status) === 404) {
+        app.toast('Taslak atıldı.', 'info');   // işlenirken listeden “At” denmiş
+        load();
+        return;
+      }
+      let hint = ' Aynı dosyayı yeniden seçince kaldığı yerden sürer.';
+      if (up.phase === 'processing') {
+        // Baytların hepsi gitti: paket sunucuda açılıyorsa iş sürer. `finish`
+        // sunucuya hiç ulaşmadıysa kayıt "Yarım yükleme" kalır; yeniden seçmek bitirir.
+        hint = ' Paket sunucuda işleniyorsa iş sürer; durumu “Taslaklar ve yarım yüklemeler” '
+          + 'listesinde görünür. Orada “Yarım yükleme” yazıyorsa aynı dosyayı yeniden seçin.';
+      } else if (error?.stopped) {
+        hint = '';
+      }
+      app.toast(`${uploadProblem(error, up.phase === 'processing'
+        ? 'Paketin durumu okunamadı.' : 'Yükleme yapılamadı.')}${hint}`, 'bad');
       load();
     }
   }

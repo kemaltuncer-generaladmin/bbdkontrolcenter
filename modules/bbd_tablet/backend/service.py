@@ -1684,7 +1684,10 @@ class TabletService:
         next_sync = self.sync_active_seconds if active else self.sync_idle_seconds
         # The catalog lives in memory: without a change `apps` costs no query.
         # The queue table is touched only when the tablet reports `installs`.
-        apps = await self.distribution.apps_payload(data.get("appsVersion"))
+        # Only a tablet that sends the `appsVersion` key (null included) knows
+        # app distribution; older APKs get `apps: null`.
+        apps = (await self.distribution.apps_payload(data["appsVersion"])
+                if "appsVersion" in data else None)
         install = None
         if data.get("installs") is not None:
             install, head = await self.distribution.sync_installs(

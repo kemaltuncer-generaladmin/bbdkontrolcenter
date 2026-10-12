@@ -4,11 +4,15 @@ sıkıştırmasız), dağıtımı bitirme ve temizlik."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import errno
 import hashlib
 import io
 import os
+import re
 import struct
+import threading
 import time
 import zipfile
 from collections.abc import AsyncIterator
@@ -21,15 +25,24 @@ import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from modules.bbd_tablet.backend import distribution as distribution_module
 from modules.bbd_tablet.backend.api import routes, tablet_routes
 from modules.bbd_tablet.backend.apk_meta import ApkFormatError, parse_binary_manifest
 from modules.bbd_tablet.backend.distribution import CHUNK_BYTES, HEAD_SYNC_SECONDS
-from modules.bbd_tablet.backend.packages import SELF_PACKAGE
+from modules.bbd_tablet.backend.packages import (
+    SELF_PACKAGE,
+    ProcessingStopped,
+    prepare_release,
+    split_file_name,
+)
 from modules.bbd_tablet.backend.service import ConflictError, NotFoundError, TabletService
 
 from km_sdk import CurrentUser
 
 GAME = "com.example.game"
+QUIZ = "com.example.quiz"
+# The tablet's rule for a stored file name.
+TABLET_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 # ------------------------------------------------------------ AXML üretici
 
@@ -322,7 +335,9 @@ async def test_publish_refuses_downgrade_and_drops_old_files(service: TabletServ
 async def test_sync_apps_is_null_when_the_version_is_known(
         service: TabletService, store: Any) -> None:
     _, token = await pair(service)
-    empty = await sync(service, token)
+    # An APK without app distribution sends no `appsVersion` key: no catalog.
+    assert (await sync(service, token))["apps"] is None
+    empty = await sync(service, token, appsVersion=None)
     assert empty["apps"]["items"] == [] and empty["install"] is None
     assert (await sync(service, token, appsVersion=empty["apps"]["version"]))["apps"] is None
 
@@ -386,8 +401,10 @@ async def test_queue_order_slots_and_head_sync(service: TabletService, clock: An
     behind = await sync(service, tokens[4], **installs(wanted=[game], priority=game))
     assert behind["install"]["queue"] == [{"releaseId": game, "position": 1}]
     third = await sync(service, tokens[2], **installs(wanted=[own, game]))
+    # Positions count tablets, not rows: only the fifth tablet (pushed) is
+    # ahead of this one for the game.
     assert third["install"]["queue"] == [{"releaseId": own, "position": 1},
-                                         {"releaseId": game, "position": 3}]
+                                         {"releaseId": game, "position": 2}]
 
     # The first tablet finishes; its slot goes to the head of the queue only.
     done = await sync(service, tokens[0], **installs(
@@ -504,7 +521,7 @@ async def test_remove_with_uninstall_reaches_tablets(service: TabletService, sto
                                                     actor="Ayşe")
     assert removed == {"removed": True, "packageName": GAME, "uninstall": True}
     assert not (root / "releases" / game).exists()
-    apps = (await sync(service, token))["apps"]
+    apps = (await sync(service, token, appsVersion=None))["apps"]
     assert apps["remove"] == [GAME]
     assert [item["packageName"] for item in apps["items"]] == [SELF_PACKAGE]
     queue = service.distribution.queue
@@ -512,7 +529,7 @@ async def test_remove_with_uninstall_reaches_tablets(service: TabletService, sto
 
     # Distributing the package again takes it off the remove list.
     await publish(service, apk(GAME, 46))
-    assert (await sync(service, token))["apps"]["remove"] == []
+    assert (await sync(service, token, appsVersion=None))["apps"]["remove"] == []
 
 
 async def test_cleanup_drops_stale_uploads_drafts_and_orphans(
@@ -534,7 +551,7 @@ async def test_cleanup_drops_stale_uploads_drafts_and_orphans(
         os.utime(path, (old, old))
 
     clock.advance(days=1)
-    assert await dist.cleanup() == {"uploads": 0, "orphanFiles": 2}
+    assert await dist.cleanup() == {"uploads": 0, "orphanFiles": 2, "repaired": 0}
     clock.advance(days=1, seconds=1)
     assert await service.purge_history(force=True)
     with pytest.raises(NotFoundError):
@@ -551,7 +568,293 @@ async def test_storage_is_required_for_uploads(store: Any, canteen: Any, clock: 
     with pytest.raises(ConflictError, match="depolama"):
         await bare.distribution.start_upload(file_name="a.apk", size_bytes=10, fingerprint="",
                                              actor="Ayşe")
-    assert (await bare.distribution.cleanup()) == {"uploads": 0, "orphanFiles": 0}
+    assert (await bare.distribution.cleanup()) == {"uploads": 0, "orphanFiles": 0,
+                                                   "repaired": 0}
+
+
+# -------------------------------------------- gözden geçirme düzeltmeleri
+
+
+async def start_and_send(service: TabletService, payload: bytes,
+                         name: str = "oyun.apk") -> str:
+    """An upload with every byte sent but not finished; returns its id."""
+    dist = service.distribution
+    started = await dist.start_upload(file_name=name, size_bytes=len(payload),
+                                      fingerprint="1700000000000", actor="Ayşe")
+    await dist.put_chunk(upload_id=started["uploadId"], offset=0,
+                         data=base64.b64encode(payload).decode())
+    return str(started["uploadId"])
+
+
+async def test_lost_upload_file_fails_the_upload_instead_of_looping(
+        service: TabletService) -> None:
+    dist = service.distribution
+    root = dist.storage_dir
+    assert root is not None
+    payload = apk(filler=30_000)
+    started = await dist.start_upload(file_name="oyun.apk", size_bytes=len(payload),
+                                      fingerprint="7", actor="Ayşe")
+    upload_id = started["uploadId"]
+    await dist.put_chunk(upload_id=upload_id, offset=0,
+                         data=base64.b64encode(payload[:10_000]).decode())
+    (root / "uploads" / f"{upload_id}.part").unlink()
+    with pytest.raises(ConflictError) as lost:
+        await dist.put_chunk(upload_id=upload_id, offset=10_000,
+                             data=base64.b64encode(payload[10_000:]).decode())
+    assert lost.value.code == "UPLOAD_LOST"
+    # The panel re-reads the status after a 409: not `uploading` any more → it stops.
+    status = await dist.upload_status(upload_id)
+    assert status["state"] == "failed" and "baştan" in status["error"]
+    with pytest.raises(ConflictError, match="parça kabul etmiyor"):
+        await dist.put_chunk(upload_id=upload_id, offset=10_000, data="AA==")
+    # Selecting the file again starts a new upload instead of resuming the lost one.
+    again = await dist.start_upload(file_name="oyun.apk", size_bytes=len(payload),
+                                    fingerprint="7", actor="Ayşe")
+    assert again["uploadId"] != upload_id and again["resumed"] is False
+    assert dist._upload_locks == {}
+
+
+async def test_publish_delete_and_cleanup_of_one_draft_do_not_cross(
+        service: TabletService, clock: Any) -> None:
+    dist = service.distribution
+    root = dist.storage_dir
+    assert root is not None
+    draft = await upload(service, apk(GAME, 45))
+    published, refused = await asyncio.gather(
+        dist.publish(release_id=draft["releaseId"], app_name=""),
+        dist.delete_release(release_id=draft["releaseId"]), return_exceptions=True)
+    assert isinstance(published, dict) and published["state"] == "published"
+    assert isinstance(refused, ConflictError)
+    assert (root / "releases" / draft["releaseId"] / "base.apk").is_file()
+
+    other = await upload(service, apk(QUIZ, 3))
+    deleted, missing = await asyncio.gather(
+        dist.delete_release(release_id=other["releaseId"]),
+        dist.publish(release_id=other["releaseId"], app_name=""), return_exceptions=True)
+    assert isinstance(deleted, dict) and deleted["deleted"] is True
+    assert isinstance(missing, NotFoundError)
+    assert QUIZ not in (await dist.catalog())["packages"]
+
+    # A two-day-old draft being published is not deleted by the cleanup.
+    old = await upload(service, apk(QUIZ, 4))
+    clock.advance(days=3)
+    cleaned, done = await asyncio.gather(
+        dist.cleanup(), dist.publish(release_id=old["releaseId"], app_name=""))
+    assert cleaned["uploads"] == 0 and done["state"] == "published"
+    assert (root / "releases" / old["releaseId"] / "base.apk").is_file()
+    assert dist._upload_locks == {}
+
+
+async def test_interrupted_publish_is_finished_never_deleted(
+        service: TabletService, store: Any, clock: Any) -> None:
+    dist = service.distribution
+    root = dist.storage_dir
+    assert root is not None
+    old = await publish(service, apk(GAME, 45))
+    new = await upload(service, apk(GAME, 46))
+    # Crash right after publish's first write: `managed_apps` points to the draft.
+    await store.execute(f"UPDATE {dist.managed} SET release_id=? WHERE package_name=?",
+                        (new["releaseId"], GAME))
+    dist.invalidate()
+    assert (await dist.catalog())["packages"][GAME]["releaseId"] == new["releaseId"]
+    clock.advance(days=3)
+    cleaned = await dist.cleanup()
+    assert cleaned["uploads"] == 0 and cleaned["repaired"] == 2
+    assert (await dist.upload_status(new["releaseId"]))["state"] == "published"
+    assert (await dist.upload_status(old["releaseId"]))["state"] == "superseded"
+    assert (root / "releases" / new["releaseId"] / "base.apk").is_file()
+    assert not (root / "releases" / old["releaseId"]).exists()
+
+    # Publishing the same draft again finishes the job instead of "not newer".
+    first = await publish(service, apk(QUIZ, 3))
+    second = await upload(service, apk(QUIZ, 4))
+    await store.execute(f"UPDATE {dist.managed} SET release_id=? WHERE package_name=?",
+                        (second["releaseId"], QUIZ))
+    with pytest.raises(ConflictError):
+        await dist.delete_release(release_id=second["releaseId"])
+    resumed = await dist.publish(release_id=second["releaseId"], app_name="")
+    assert resumed["state"] == "published"
+    assert (await dist.cleanup())["repaired"] == 1        # the first one is superseded
+    assert (await dist.upload_status(first["releaseId"]))["state"] == "superseded"
+
+    # A managed row whose release vanished does not break the next publish (upsert).
+    stamp = clock().isoformat()
+    await store.execute(
+        f"INSERT INTO {dist.managed} (package_name, app_name, kind, release_id, created_at, "
+        "updated_at) VALUES (?, ?, 'app', 'kayip', ?, ?)", ("com.example.lost", "Kayıp",
+                                                            stamp, stamp))
+    lost = await publish(service, apk("com.example.lost", 1))
+    assert lost["state"] == "published"
+    assert (await dist.catalog())["packages"]["com.example.lost"]["releaseId"] == \
+        lost["releaseId"]
+
+
+async def test_restart_while_processing_is_recovered_by_the_app_list(
+        service: TabletService, store: Any) -> None:
+    dist = service.distribution
+    root = dist.storage_dir
+    assert root is not None
+    payload = apk(GAME, 45, filler=20_000)
+    single = await start_and_send(service, payload)
+    # The process stopped right after the APK was moved to `base.apk`.
+    await store.execute(f"UPDATE {dist.releases} SET state='processing' WHERE id=?", (single,))
+    target = root / "releases" / single
+    target.mkdir(parents=True)
+    os.replace(root / "uploads" / f"{single}.part", target / "base.apk")
+
+    base = apk(QUIZ, 3)
+    split = apk(QUIZ, 3, split="config.tr")
+    packed = await start_and_send(service, bundle({"base.apk": base, "split.apk": split}),
+                                  name="quiz.apks")
+    # Stopped half-way through unpacking: the upload file is still there.
+    await store.execute(f"UPDATE {dist.releases} SET state='processing' WHERE id=?", (packed,))
+    (root / "releases" / packed).mkdir(parents=True)
+    (root / "releases" / packed / "part-0.tmp").write_bytes(b"yarim")
+
+    listing = await dist.overview()      # GET /apps notices and restarts the work
+    assert {item["state"] for item in listing["drafts"]} == {"processing"}
+    await dist.wait_idle()
+    first = await dist.upload_status(single)
+    assert first["state"] == "ready", first["error"]
+    assert first["release"]["files"][0]["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert (target / "base.apk").read_bytes() == payload
+    second = await dist.upload_status(packed)
+    assert second["state"] == "ready", second["error"]
+    assert sorted(path.name for path in (root / "releases" / packed).iterdir()) == \
+        ["base.apk", "split_config.tr.apk"]
+    assert not (root / "uploads" / f"{packed}.part").exists()
+
+
+async def test_processing_draft_can_be_discarded(
+        service: TabletService, monkeypatch: pytest.MonkeyPatch) -> None:
+    dist = service.distribution
+    root = dist.storage_dir
+    assert root is not None
+    running = threading.Event()
+
+    def slow(upload: Path, target: Path, *, reserve_bytes: int, stop: Any) -> Any:
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "part-0.tmp").write_bytes(b"x")
+        running.set()
+        while not stop():
+            time.sleep(0.01)
+        raise ProcessingStopped("Paket işlenirken taslak atıldı.")
+
+    monkeypatch.setattr(distribution_module, "prepare_release", slow)
+    upload_id = await start_and_send(service, apk(GAME, 45))
+    await dist.finish_upload(upload_id=upload_id)
+    assert await asyncio.to_thread(running.wait, 5)
+    assert upload_id in dist._tasks
+    assert (await dist.delete_release(release_id=upload_id))["deleted"] is True
+    await dist.wait_idle()
+    with pytest.raises(NotFoundError):
+        await dist.upload_status(upload_id)
+    assert not (root / "releases" / upload_id).exists()
+    assert not (root / "uploads" / f"{upload_id}.part").exists()
+    assert dist._upload_locks == {} and dist._stops == {}
+
+
+def test_stop_interrupts_unpacking(tmp_path: Path) -> None:
+    for name, payload in (("tek.apk", apk(GAME, 45)),
+                          ("paket.apks", bundle({"base.apk": apk(GAME, 45)}))):
+        source = tmp_path / name
+        source.write_bytes(payload)
+        with pytest.raises(ProcessingStopped):
+            prepare_release(source, tmp_path / f"out-{name}", stop=lambda: True)
+        assert source.is_file()             # nothing was moved
+
+
+async def test_split_file_names_fit_the_tablet_rule(service: TabletService) -> None:
+    long_a = "config." + "a" * 120
+    long_b = "config." + "a" * 119 + "b"
+    for split in (long_a, long_b, "config.arm64_v8a", "../evil name", "-x"):
+        name = split_file_name(split)
+        assert TABLET_FILE_NAME.match(name) and len(name) <= 100, name
+    assert split_file_name(long_a) != split_file_name(long_b)
+    assert split_file_name("config.arm64_v8a") == "split_config.arm64_v8a.apk"
+
+    base = apk(GAME, 50)
+    status = await upload(service, bundle({
+        "base.apk": base, "a.apk": apk(GAME, 50, split=long_a),
+        "b.apk": apk(GAME, 50, split=long_b),
+        "c.apk": apk(GAME, 50, split="feature one"), "d.apk": apk(GAME, 50, split="feature_one"),
+    }), name="uzun.apks")
+    assert status["state"] == "ready", status["error"]
+    names = [item["name"] for item in status["release"]["files"]]
+    assert len(set(names)) == 5
+    assert all(TABLET_FILE_NAME.match(name) for name in names), names
+
+
+async def test_positions_count_tablets_without_a_slot(
+        service: TabletService, clock: Any) -> None:
+    game = (await publish(service, apk(GAME, 45)))["releaseId"]
+    quiz = (await publish(service, apk(QUIZ, 3)))["releaseId"]
+    tokens = [(await pair(service, f"T{index}"))[1] for index in range(5)]
+    # Two slots, both taken by tablets that want a second app as well. The game
+    # is asked for first, so the slot is the game's whatever the release ids are.
+    for token in tokens[:2]:
+        held = await sync(service, token, **installs(wanted=[game]))
+        assert held["install"]["grant"]["releaseId"] == game
+        clock.advance(seconds=1)
+        again = await sync(service, token, **installs(
+            wanted=[quiz], active={"releaseId": game, "receivedBytes": 0}))
+        assert again["install"]["grant"]["releaseId"] == game
+        clock.advance(seconds=1)
+    first = await sync(service, tokens[2], **installs(wanted=[game]))
+    assert first["install"]["queue"] == [{"releaseId": game, "position": 1}]
+    assert first["nextSyncSeconds"] <= HEAD_SYNC_SECONDS
+    clock.advance(seconds=1)
+    second = await sync(service, tokens[3], **installs(wanted=[game]))
+    assert second["install"]["queue"] == [{"releaseId": game, "position": 2}]
+    assert second["nextSyncSeconds"] <= HEAD_SYNC_SECONDS
+    clock.advance(seconds=1)
+    third = await sync(service, tokens[4], **installs(wanted=[game]))
+    assert third["install"]["queue"] == [{"releaseId": game, "position": 3}]
+    assert third["nextSyncSeconds"] > HEAD_SYNC_SECONDS
+    view = await service.distribution.app_devices(package_name=GAME)
+    assert {item["deviceName"]: item["position"] for item in view["devices"]} == \
+        {"T0": None, "T1": None, "T2": 1, "T3": 2, "T4": 3}
+
+    # T0 finishes the game; its quiz was asked for before anyone else's game.
+    next_one = await sync(service, tokens[0], **installs(
+        wanted=[quiz], results=[{"releaseId": game, "ok": True, "versionCode": 45}]))
+    assert next_one["install"]["grant"]["releaseId"] == quiz
+    # T1 finishes and wants nothing more: the first tablet without a slot takes it.
+    await sync(service, tokens[1], **installs(
+        results=[{"releaseId": game, "ok": True, "versionCode": 45}]))
+    taken = await sync(service, tokens[2], **installs(wanted=[game]))
+    assert taken["install"]["grant"]["releaseId"] == game
+
+
+async def test_a_tablet_that_stops_asking_frees_its_slot(
+        service: TabletService, clock: Any) -> None:
+    service.config["download_slots"] = 1
+    game = (await publish(service, apk(GAME, 45)))["releaseId"]
+    quiz = (await publish(service, apk(QUIZ, 3)))["releaseId"]
+    token_a, token_b = [(await pair(service, f"T{index}"))[1] for index in range(2)]
+    assert (await sync(service, token_a, **installs(wanted=[game])))["install"]["grant"]
+    clock.advance(seconds=1)
+    assert (await sync(service, token_b, **installs(wanted=[game])))["install"]["queue"] == \
+        [{"releaseId": game, "position": 1}]
+    # A no longer asks for the game (e.g. no room left) but still wants another app.
+    clock.advance(seconds=1)
+    moved = await sync(service, token_a, **installs(wanted=[quiz]))
+    assert moved["install"] == {"grant": None, "queue": [{"releaseId": quiz, "position": 2}]}
+    assert (await sync(service, token_b, **installs(wanted=[game])))["install"]["grant"][
+        "releaseId"] == game
+
+
+async def test_revoke_frees_the_slot_and_drops_queue_rows(
+        service: TabletService, store: Any) -> None:
+    service.config["download_slots"] = 1
+    game = (await publish(service, apk(GAME, 45)))["releaseId"]
+    (a, token_a), (_, token_b) = [await pair(service, f"T{index}") for index in range(2)]
+    assert (await sync(service, token_a, **installs(wanted=[game])))["install"]["grant"]
+    assert (await sync(service, token_b, **installs(wanted=[game])))["install"]["grant"] is None
+    await service.revoke_device(device_id=a["id"])
+    queue = service.distribution.queue
+    assert await store.fetch_all(f"SELECT * FROM {queue} WHERE device_id=?", (a["id"],)) == []
+    assert (await sync(service, token_b, **installs(wanted=[game])))["install"]["grant"]
 
 
 # --------------------------------------------------------------- tel biçimi
@@ -660,7 +963,7 @@ async def test_wire_upload_publish_download_and_remove(
 
     synced = (await client.post(f"/api/tablet/v1/devices/{device_id}/sync", headers={
         **auth, "CF-Visitor": '{"scheme":"https"}'}, json={
-        "installs": {"wanted": [upload_id]}})).json()
+        "appsVersion": None, "installs": {"wanted": [upload_id]}})).json()
     url = synced["install"]["grant"]["files"][0]["url"]
     assert url == f"https://test{file_path}"
     assert synced["apps"]["items"][0]["releaseId"] == upload_id
@@ -698,3 +1001,57 @@ async def test_wire_upload_publish_download_and_remove(
     after = (await client.post(f"/api/tablet/v1/devices/{device_id}/sync", headers=auth,
                                json={"appsVersion": synced["apps"]["version"]})).json()
     assert after["apps"]["remove"] == [GAME] and after["apps"]["items"] == []
+
+
+async def test_wire_disk_full_is_a_coded_turkish_error(
+        client: httpx.AsyncClient, service: TabletService,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = apk(GAME, 45)
+    started = (await client.post("/api/bbd_tablet/apps/uploads", headers=ADMIN_AUTH, json={
+        "fileName": "oyun.apk", "sizeBytes": len(payload)})).json()
+    path = f"/api/bbd_tablet/apps/uploads/{started['uploadId']}"
+    body = {"offset": 0, "data": base64.b64encode(payload).decode()}
+    failure = {"errno": errno.ENOSPC}
+
+    def broken(*_: Any) -> None:
+        raise OSError(failure["errno"], "disk")
+
+    monkeypatch.setattr(distribution_module, "_write_at", broken)
+    full = await client.put(f"{path}/chunk", headers=ADMIN_AUTH, json=body)
+    assert full.status_code == 507
+    assert "yer kalmadı" in full.json()["error"]["message"]
+    failure["errno"] = errno.EIO
+    other = await client.put(f"{path}/chunk", headers=ADMIN_AUTH, json=body)
+    assert other.status_code == 500 and "yazılamadı" in other.json()["error"]["message"]
+    # Nothing was counted: the same chunk goes again once the disk is fixed.
+    monkeypatch.undo()
+    assert (await client.get(path, headers=ADMIN_AUTH)).json()["receivedBytes"] == 0
+    assert (await client.put(f"{path}/chunk", headers=ADMIN_AUTH, json=body)).status_code == 200
+    assert service.distribution._upload_locks == {}
+
+
+async def test_wire_download_urls_follow_proxy_headers_and_setting(
+        client: httpx.AsyncClient, service: TabletService) -> None:
+    game = (await publish(service, apk(GAME, 45)))["releaseId"]
+    created = (await client.post("/api/bbd_tablet/devices", headers=ADMIN_AUTH,
+                                 json={"name": "Etüt-01"})).json()
+    enrolled = (await client.post("/api/tablet/v1/devices/enroll", json={
+        "enrollmentCode": created["enrollmentCode"], "deviceUuid": "uuid-0000-0002",
+        "deviceName": "Etüt-01"})).json()
+    device_id = enrolled["deviceId"]
+    auth = {"Authorization": f"Bearer {enrolled['deviceToken']}"}
+    path = f"/api/tablet/v1/devices/{device_id}/sync"
+    tail = f"/api/tablet/v1/devices/{device_id}/releases/{game}/files/0"
+
+    async def url(headers: dict[str, str]) -> str:
+        answer = (await client.post(path, headers={**auth, **headers}, json={
+            "installs": {"wanted": [game]}})).json()
+        return str(answer["install"]["grant"]["files"][0]["url"])
+
+    assert await url({}) == f"http://test{tail}"
+    assert await url({"X-Forwarded-Proto": "https, http",
+                      "X-Forwarded-Host": "km.example.org, proxy.local"}) == \
+        f"https://km.example.org{tail}"
+    service.config["public_base_url"] = "https://kontrol.example.org/"
+    assert await url({"X-Forwarded-Host": "baska.example", "CF-Visitor": '{"scheme":"http"}'}) \
+        == f"https://kontrol.example.org{tail}"

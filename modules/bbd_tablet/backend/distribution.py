@@ -19,6 +19,10 @@ Cloudflare zone with bbdstore, which shapes everything here:
   opaque version live in memory and are rebuilt only after a publish or a
   removal (single uvicorn process). A sync without `installs` never touches
   the queue table.
+- **No transactions**: the module store has none, so multi-row changes are
+  ordered so that a crash between two writes leaves a state the daily
+  cleanup repairs (see `publish` and `cleanup`). Changes to one release are
+  serialized by its own lock; the queue lock comes second when both are held.
 """
 
 from __future__ import annotations
@@ -26,13 +30,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import errno
 import hashlib
 import json
 import math
 import os
 import shutil
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -40,13 +48,14 @@ from uuid import uuid4
 
 from km_sdk import ensure_private_dir
 
-from .errors import ConflictError, NotFoundError, TabletError
+from .errors import ConflictError, NotFoundError, StorageError, TabletError
 from .packages import (
     SELF_PACKAGE,
     PackageError,
     PreparedRelease,
     free_bytes,
     prepare_release,
+    recover_single,
 )
 
 CHUNK_BYTES = 8 * 1024 * 1024
@@ -67,6 +76,19 @@ PUBLIC_STATE = {"uploading": "uploading", "processing": "processing", "draft": "
                 "superseded": "superseded", "withdrawn": "withdrawn"}
 OPEN_STATES = ("uploading", "processing", "draft", "failed")
 LIVE_STATES = ("uploading", "processing", "draft", "published")
+# Only these still need their `.part` upload file.
+PART_STATES = ("uploading", "processing")
+# How long discarding a draft waits for its unpacking to notice the stop.
+STOP_WAIT_SECONDS = 30
+DISK_FULL = {errno.ENOSPC, getattr(errno, "EDQUOT", errno.ENOSPC)}
+UPLOAD_LOST = "Yükleme dosyası sunucuda yok. Dosyayı yeniden seçip baştan yükleyin."
+
+
+def _storage_error(exc: OSError, what: str) -> StorageError:
+    if exc.errno in DISK_FULL:
+        return StorageError("Sunucuda yer kalmadı. Yer açılınca aynı dosyayı yeniden seçin; "
+                            "yükleme kaldığı yerden sürer.", status=507)
+    return StorageError(f"{what} sunucuda diske yazılamadı.", status=500)
 
 
 def _marks(count: int) -> str:
@@ -91,10 +113,15 @@ def _remove(path: Path) -> None:
         path.unlink(missing_ok=True)
 
 
-def _remove_orphans(root: Path, live: set[str], older_than: float) -> int:
-    """Delete upload/release files no live record points to (after a grace)."""
+def _remove_orphans(root: Path, parts: set[str], releases: set[str],
+                    older_than: float) -> int:
+    """Delete upload/release files no live record points to (after a grace).
+
+    An upload file is live only while its record is still uploading or
+    processing; a release folder while the record is not finished with.
+    """
     removed = 0
-    for folder, suffix in (("uploads", ".part"), ("releases", "")):
+    for folder, suffix, live in (("uploads", ".part", parts), ("releases", "", releases)):
         base = root / folder
         if not base.is_dir():
             continue
@@ -111,6 +138,12 @@ def _remove_orphans(root: Path, live: set[str], older_than: float) -> int:
             _remove(entry)
             removed += 1
     return removed
+
+
+@dataclass
+class _LockEntry:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    users: int = 0
 
 
 class AppDistribution:
@@ -130,8 +163,10 @@ class AppDistribution:
         self._generation = 0
         self._catalog_lock = asyncio.Lock()
         self._queue_lock = asyncio.Lock()
-        self._upload_locks: dict[str, asyncio.Lock] = {}
+        # Per-release locks; an entry lives only while someone holds or waits.
+        self._upload_locks: dict[str, _LockEntry] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._stops: dict[str, threading.Event] = {}
 
     # ------------------------------------------------------------ ayarlar
 
@@ -318,7 +353,10 @@ class AppDistribution:
             ensure_private_dir(part.parent)
             os.close(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
 
-        await asyncio.to_thread(create)
+        try:
+            await asyncio.to_thread(create)
+        except OSError as exc:
+            raise _storage_error(exc, "Yükleme dosyası") from exc
         stamp = self._now().isoformat()
         await self.store.execute(
             f"INSERT INTO {self.releases} (id, state, file_name, fingerprint, size_bytes, "
@@ -328,11 +366,23 @@ class AppDistribution:
         )
         return {**self._status(await self._row(upload_id)), "resumed": False}
 
-    def _lock(self, upload_id: str) -> asyncio.Lock:
-        return self._upload_locks.setdefault(upload_id, asyncio.Lock())
+    @asynccontextmanager
+    async def _guard(self, release_id: str) -> AsyncIterator[None]:
+        """The release's own lock; the entry is dropped once nobody uses it."""
+        entry = self._upload_locks.get(release_id)
+        if entry is None:
+            entry = self._upload_locks[release_id] = _LockEntry()
+        entry.users += 1
+        try:
+            async with entry.lock:
+                yield
+        finally:
+            entry.users -= 1
+            if entry.users == 0 and self._upload_locks.get(release_id) is entry:
+                del self._upload_locks[release_id]
 
     async def put_chunk(self, *, upload_id: str, offset: int, data: str) -> dict[str, Any]:
-        async with self._lock(upload_id):
+        async with self._guard(upload_id):
             row = await self._row(upload_id)
             if row["state"] != "uploading":
                 raise ConflictError("Bu yükleme artık parça kabul etmiyor.")
@@ -354,8 +404,19 @@ class AppDistribution:
                 raise ValueError("Parça dosya boyutunu aşıyor.")
             part = self._part(upload_id)
             if not await asyncio.to_thread(part.is_file):
-                raise ConflictError("Yükleme dosyası sunucuda yok. Yüklemeyi atıp yeniden başlatın.")
-            await asyncio.to_thread(_write_at, part, received, chunk)
+                # No retry can help: the upload is failed, so the panel stops
+                # and re-selecting the file starts a new one.
+                await self.store.execute(
+                    f"UPDATE {self.releases} SET state='failed', error=?, updated_at=? "
+                    "WHERE id=? AND state='uploading'",
+                    (UPLOAD_LOST, self._now().isoformat(), upload_id),
+                )
+                raise ConflictError(UPLOAD_LOST, code="UPLOAD_LOST")
+            try:
+                await asyncio.to_thread(_write_at, part, received, chunk)
+            except OSError as exc:
+                # `received_bytes` is unchanged: the same chunk may be sent again.
+                raise _storage_error(exc, "Parça") from exc
             await self.store.execute(
                 f"UPDATE {self.releases} SET received_bytes=?, updated_at=? "
                 "WHERE id=? AND received_bytes=?",
@@ -364,7 +425,7 @@ class AppDistribution:
             return self._status(await self._row(upload_id))
 
     async def finish_upload(self, *, upload_id: str) -> dict[str, Any]:
-        async with self._lock(upload_id):
+        async with self._guard(upload_id):
             row = await self._row(upload_id)
             if row["state"] == "uploading":
                 if int(row["received_bytes"]) != int(row["size_bytes"]):
@@ -381,9 +442,23 @@ class AppDistribution:
     def _start_processing(self, upload_id: str) -> None:
         if upload_id in self._tasks:
             return
-        task = asyncio.create_task(self._process(upload_id))
+        stop = self._stops[upload_id] = threading.Event()
+        task = asyncio.create_task(self._process(upload_id, stop))
         self._tasks[upload_id] = task
-        task.add_done_callback(lambda _: self._tasks.pop(upload_id, None))
+
+        def done(_: asyncio.Task[None]) -> None:
+            if self._tasks.get(upload_id) is task:
+                del self._tasks[upload_id]
+            if self._stops.get(upload_id) is stop:
+                del self._stops[upload_id]
+
+        task.add_done_callback(done)
+
+    def resume_processing(self, rows: list[dict[str, Any]]) -> None:
+        """Restart unpacking of `processing` records no task works on (restart)."""
+        for row in rows:
+            if row["state"] == "processing" and row["id"] not in self._tasks:
+                self._start_processing(row["id"])
 
     async def wait_idle(self) -> None:
         """Wait for background package processing (tests, shutdown)."""
@@ -392,16 +467,19 @@ class AppDistribution:
             # Let the done callbacks drop the finished tasks.
             await asyncio.sleep(0)
 
-    async def _process(self, upload_id: str) -> None:
+    async def _process(self, upload_id: str, stop: threading.Event) -> None:
         try:
             row = await self._row(upload_id)
+            if row["state"] != "processing":
+                return
             part, target = self._part(upload_id), self._release_dir(upload_id)
+            # A single APK moved to `base.apk` just before a restart goes back.
+            await asyncio.to_thread(recover_single, part, target)
             if not await asyncio.to_thread(part.is_file):
                 raise PackageError("Yüklenen dosya sunucuda yok. Dosyayı yeniden yükleyin.")
             await asyncio.to_thread(_truncate, part, int(row["size_bytes"]))
             prepared = await asyncio.to_thread(prepare_release, part, target,
-                                               reserve_bytes=RESERVE_BYTES)
-            await asyncio.to_thread(_remove, part)
+                                               reserve_bytes=RESERVE_BYTES, stop=stop.is_set)
             app_name = await self._suggest_name(prepared)
             await self.store.execute(
                 f"UPDATE {self.releases} SET state='draft', package_name=?, app_name=?, kind=?, "
@@ -420,6 +498,10 @@ class AppDistribution:
             if not still or still["state"] != "draft":
                 # Thrown away while unpacking: leave nothing behind.
                 await self._drop_files(upload_id)
+                return
+            # A bundle's upload goes only now: a restart before the draft was
+            # recorded unpacks it again (a single APK was already moved).
+            await asyncio.to_thread(_remove, part)
         except NotFoundError:
             await self._drop_files(upload_id)
         except PackageError as exc:
@@ -452,22 +534,43 @@ class AppDistribution:
             return str(known["app_label"])[:MAX_APP_NAME]
         return prepared.package_name[:MAX_APP_NAME]
 
+    async def _referenced(self, release_id: str) -> bool:
+        return await self.store.fetch_one(
+            f"SELECT package_name FROM {self.managed} WHERE release_id=?", (release_id,)
+        ) is not None
+
     async def delete_release(self, *, release_id: str) -> dict[str, Any]:
-        async with self._lock(release_id):
+        """Throw away an upload or draft; a processing one stops unpacking first."""
+        async with self._guard(release_id):
             row = await self._row(release_id)
-            if row["state"] == "published":
+            if row["state"] == "published" or await self._referenced(release_id):
                 raise ConflictError("Dağıtımdaki sürüm atılamaz. Önce dağıtımı bitirin.")
-            if row["state"] == "processing" and release_id in self._tasks:
-                raise ConflictError("Paket şu an işleniyor. Bitince atabilirsiniz.")
+            task = self._tasks.get(release_id)
+            stop = self._stops.get(release_id)
+            if stop is not None:
+                stop.set()
+            # The record goes first: whatever the task still does finds no
+            # record and removes its own files.
             await self.store.execute(f"DELETE FROM {self.releases} WHERE id=?", (release_id,))
+            if task is not None:
+                await asyncio.wait({task}, timeout=STOP_WAIT_SECONDS)
             await self._drop_files(release_id)
-        self._upload_locks.pop(release_id, None)
         return {"deleted": True, "releaseId": release_id}
 
     # ------------------------------------------------------------ yayın
 
     async def publish(self, *, release_id: str, app_name: str) -> dict[str, Any]:
-        async with self._queue_lock:
+        """Distribute a draft.
+
+        Lock order: the release's own lock (excludes `delete_release` and the
+        cleanup of the same draft), then the queue lock. Write order, without
+        a transaction: `managed_apps` first, then the release's state, then
+        the previous release. A crash after the first write leaves a draft the
+        catalog already serves; cleanup never deletes a release `managed_apps`
+        points to and repairs both halves (see `cleanup`), and publishing the
+        same draft again finishes the job.
+        """
+        async with self._guard(release_id), self._queue_lock:
             row = await self._row(release_id)
             if row["state"] != "draft":
                 raise ConflictError("Yalnız işlenmiş bir taslak dağıtılabilir.")
@@ -477,6 +580,8 @@ class AppDistribution:
                 f"JOIN {self.releases} r ON r.id = m.release_id WHERE m.package_name=?",
                 (package,),
             )
+            if current and current["release_id"] == release_id:
+                current = None          # an interrupted publish of this draft
             if current and int(current["version_code"]) >= int(row["version_code"]):
                 raise ConflictError(
                     f"Bu sürüm ({row['version_code']}) dağıtılan sürümden "
@@ -485,17 +590,14 @@ class AppDistribution:
                 )
             name = str(app_name or "").strip()[:MAX_APP_NAME] or row["app_name"] or package
             stamp = self._now().isoformat()
-            if current:
-                await self.store.execute(
-                    f"UPDATE {self.managed} SET app_name=?, kind=?, release_id=?, updated_at=? "
-                    "WHERE package_name=?", (name, row["kind"], release_id, stamp, package),
-                )
-            else:
-                await self.store.execute(
-                    f"INSERT INTO {self.managed} (package_name, app_name, kind, release_id, "
-                    "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (package, name, row["kind"], release_id, stamp, stamp),
-                )
+            await self.store.execute(
+                f"INSERT INTO {self.managed} (package_name, app_name, kind, release_id, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(package_name) DO UPDATE SET app_name=excluded.app_name, "
+                "kind=excluded.kind, release_id=excluded.release_id, "
+                "updated_at=excluded.updated_at",
+                (package, name, row["kind"], release_id, stamp, stamp),
+            )
             await self.store.execute(
                 f"UPDATE {self.releases} SET state='published', app_name=?, published_at=?, "
                 "updated_at=? WHERE id=?", (name, stamp, stamp, release_id),
@@ -595,7 +697,11 @@ class AppDistribution:
 
     def _ordered(self, rows: list[dict[str, Any]], releases: dict[str, Any],
                  current: datetime) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-        """(device → its valid lease row, waiting rows in queue order)."""
+        """(device → its valid lease row, waiting rows in queue order).
+
+        The waiting rows still include other wanted releases of devices that
+        hold a lease; `_positions` counts devices, not rows.
+        """
         stamp = current.isoformat()
         cutoff = (current - timedelta(seconds=self.queue_stale_seconds)).isoformat()
         leased: dict[str, dict[str, Any]] = {}
@@ -613,6 +719,28 @@ class AppDistribution:
             row["wanted_at"], row["device_id"], row["release_id"],
         ))
         return leased, waiting
+
+    @staticmethod
+    def _positions(leased: dict[str, Any], waiting: list[dict[str, Any]]
+                   ) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
+        """(device → rank among devices without a lease, row → queue position).
+
+        A device without a lease stands in the queue once, at its best row;
+        its rank is its place among those devices (1 = takes the next slot).
+        A row's position is 1 + the number of other such devices standing
+        before it, so a device's best row has its rank and a further wanted
+        release (or one of a device downloading something else) shows how
+        many tablets go first.
+        """
+        ranks: dict[str, int] = {}
+        positions: dict[tuple[str, str], int] = {}
+        for row in waiting:
+            device = row["device_id"]
+            ahead = len(ranks) - (1 if device in ranks else 0)
+            positions[(device, row["release_id"])] = ahead + 1
+            if device not in leased and device not in ranks:
+                ranks[device] = len(ranks) + 1
+        return ranks, positions
 
     async def _waiting_rows(self, current: datetime) -> list[dict[str, Any]]:
         """Every waiting row; expired leases go to the back of the queue first.
@@ -781,13 +909,8 @@ class AppDistribution:
             slots = self.download_slots
             grant_row = leased.get(device_id)
             if grant_row is None and len(leased) < slots:
-                heads: list[str] = []
-                for row in waiting:
-                    if row["device_id"] not in leased and row["device_id"] not in heads:
-                        heads.append(row["device_id"])
-                        if len(heads) >= slots - len(leased):
-                            break
-                if device_id in heads:
+                ranks, _ = self._positions(leased, waiting)
+                if ranks.get(device_id, slots + 1) <= slots - len(leased):
                     grant_row = next(row for row in waiting if row["device_id"] == device_id)
                     await self.store.execute(
                         f"UPDATE {self.queue} SET lease_until=?, updated_at=? "
@@ -796,13 +919,14 @@ class AppDistribution:
                     )
                     grant_row["lease_until"] = renewed
                     waiting.remove(grant_row)
-            queue: list[dict[str, Any]] = []
-            head = False
-            for index, row in enumerate(waiting):
-                if row["device_id"] != device_id:
-                    continue
-                queue.append({"releaseId": row["release_id"], "position": index + 1})
-                head = head or (grant_row is None and index < slots)
+                    leased[device_id] = grant_row
+            ranks, positions = self._positions(leased, waiting)
+            queue = [{"releaseId": row["release_id"],
+                      "position": positions[(device_id, row["release_id"])]}
+                     for row in waiting if row["device_id"] == device_id]
+            # The first `slots` devices without a lease take the next free slots;
+            # they sync often so a slot that frees up does not stay idle.
+            head = grant_row is None and ranks.get(device_id, slots + 1) <= slots
             grant = None
             if grant_row is not None:
                 grant = self._grant(device_id, base_url, grant_row,
@@ -906,6 +1030,9 @@ class AppDistribution:
             f"SELECT * FROM {self.releases} WHERE state IN ({_marks(len(OPEN_STATES))}) "
             "ORDER BY created_at DESC", OPEN_STATES,
         )
+        # After a restart nothing unpacks a `processing` draft; the panel's
+        # list is the natural place to notice (in-memory check, no query).
+        self.resume_processing([dict(row) for row in drafts])
         return {
             "serverTime": stamp, "version": catalog["version"], "apps": apps,
             "drafts": [self._status(dict(row), catalog["packages"].get(row["package_name"]))
@@ -927,8 +1054,7 @@ class AppDistribution:
         releases: dict[str, Any] = catalog["releases"]
         rows = await self._queue_rows(list(releases))
         leased, waiting = self._ordered(rows, releases, current)
-        positions = {(row["device_id"], row["release_id"]): index + 1
-                     for index, row in enumerate(waiting)}
+        _, positions = self._positions(leased, waiting)
         mine = {row["device_id"]: row for row in rows if row["release_id"] == item["releaseId"]}
         codes = await self._installed_codes([package_name])
         result = []
@@ -959,31 +1085,86 @@ class AppDistribution:
 
     # ------------------------------------------------------------ temizlik
 
-    async def cleanup(self) -> dict[str, int]:
-        """Daily: unfinished uploads, unpublished drafts and orphan files.
+    async def _repair(self) -> int:
+        """Finish what a crash in the middle of `publish`/`remove_app` left.
 
-        Records untouched for two days go with their files; files no live
-        record points to go after an hour (a just-started upload is safe).
+        - A draft `managed_apps` points to is served already: it is published.
+        - A published release nothing points to lost its place: it is
+          superseded, its queue rows and files go.
+        Under the queue lock, so a publish in progress is never seen halfway.
         """
+        repaired = 0
+        dropped: list[str] = []
+        async with self._queue_lock:
+            stamp = self._now().isoformat()
+            for row in await self.store.fetch_all(
+                f"SELECT r.id FROM {self.releases} r JOIN {self.managed} m "
+                "ON m.release_id = r.id WHERE r.state='draft'"
+            ):
+                await self.store.execute(
+                    f"UPDATE {self.releases} SET state='published', published_at=?, "
+                    "updated_at=? WHERE id=? AND state='draft'", (stamp, stamp, row["id"]),
+                )
+                repaired += 1
+            for row in await self.store.fetch_all(
+                f"SELECT id FROM {self.releases} WHERE state='published' "
+                f"AND id NOT IN (SELECT release_id FROM {self.managed})"
+            ):
+                await self.store.execute(
+                    f"UPDATE {self.releases} SET state='superseded', updated_at=? "
+                    "WHERE id=? AND state='published'", (stamp, row["id"]),
+                )
+                await self.store.execute(
+                    f"DELETE FROM {self.queue} WHERE release_id=?", (row["id"],)
+                )
+                dropped.append(row["id"])
+                repaired += 1
+            if repaired:
+                self.invalidate()
+        for release_id in dropped:
+            await self._drop_files(release_id)
+        return repaired
+
+    async def cleanup(self) -> dict[str, int]:
+        """Daily: unfinished uploads, unpublished drafts, failed rows, orphan files.
+
+        Records in `uploading`, `processing` (with no task working on it),
+        `draft` (processed but never published) or `failed` state untouched
+        for two days go with their files; a release `managed_apps` points to
+        never does. Each deletion re-checks the record under the release's
+        own lock, so it cannot cross a publish or a discard of the same
+        release. Files no live record points to go after an hour (a
+        just-started upload is safe).
+        """
+        repaired = await self._repair()
         cutoff = (self._now() - STALE_UPLOAD).isoformat()
+        stale_sql = (f"SELECT id FROM {self.releases} WHERE id=? AND "
+                     f"state IN ({_marks(len(OPEN_STATES))}) AND updated_at<? "
+                     f"AND id NOT IN (SELECT release_id FROM {self.managed})")
         stale = await self.store.fetch_all(
             f"SELECT id FROM {self.releases} WHERE state IN ({_marks(len(OPEN_STATES))}) "
-            "AND updated_at<?", (*OPEN_STATES, cutoff),
+            f"AND updated_at<? AND id NOT IN (SELECT release_id FROM {self.managed})",
+            (*OPEN_STATES, cutoff),
         )
         removed = 0
         for row in stale:
-            if row["id"] in self._tasks:
-                continue
-            await self.store.execute(f"DELETE FROM {self.releases} WHERE id=?", (row["id"],))
-            await self._drop_files(row["id"])
-            self._upload_locks.pop(row["id"], None)
+            release_id = row["id"]
+            async with self._guard(release_id):
+                if release_id in self._tasks or not await self.store.fetch_one(
+                        stale_sql, (release_id, *OPEN_STATES, cutoff)):
+                    continue
+                await self.store.execute(f"DELETE FROM {self.releases} WHERE id=?",
+                                         (release_id,))
+                await self._drop_files(release_id)
             removed += 1
         orphans = 0
         if self.storage_dir is not None:
-            live = {row["id"] for row in await self.store.fetch_all(
-                f"SELECT id FROM {self.releases} WHERE state IN ({_marks(len(LIVE_STATES))})",
-                LIVE_STATES,
-            )}
-            orphans = await asyncio.to_thread(_remove_orphans, self.storage_dir, live,
+            states = await self.store.fetch_all(
+                f"SELECT id, state FROM {self.releases} "
+                f"WHERE state IN ({_marks(len(LIVE_STATES))})", LIVE_STATES,
+            )
+            parts = {row["id"] for row in states if row["state"] in PART_STATES}
+            live = {row["id"] for row in states}
+            orphans = await asyncio.to_thread(_remove_orphans, self.storage_dir, parts, live,
                                               time.time() - ORPHAN_GRACE_SECONDS)
-        return {"uploads": removed, "orphanFiles": orphans}
+        return {"uploads": removed, "orphanFiles": orphans, "repaired": repaired}

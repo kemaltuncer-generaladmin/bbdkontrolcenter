@@ -296,6 +296,10 @@ async def sync(device_id: str, body: SyncBody, request: Request,
                authorization: str = Header(default="")) -> dict[str, Any]:
     device = await device_auth(authorization, device_id)
     data = body.model_dump()
+    if "appsVersion" not in body.model_fields_set:
+        # An APK without app distribution does not send the key; it must not
+        # get the whole catalog on every sync. Key present with null → catalog.
+        del data["appsVersion"]
     return await current_service().sync(
         device=device, data=data,
         base_url=api_root(request) if data.get("installs") is not None else "",

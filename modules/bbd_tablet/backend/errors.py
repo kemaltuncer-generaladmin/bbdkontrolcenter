@@ -63,3 +63,14 @@ class ConflictError(ValueError):
 
 class CanteenUnavailableError(RuntimeError):
     """The canteen could not be reached (503)."""
+
+
+class StorageError(RuntimeError):
+    """The storage disk refused a write: 507 when it is full, 500 otherwise.
+
+    The message is Turkish and safe to show; the OS error stays in the cause.
+    """
+
+    def __init__(self, message: str, *, status: int = 500) -> None:
+        super().__init__(message)
+        self.status = status

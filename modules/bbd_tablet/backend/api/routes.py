@@ -31,6 +31,7 @@ from km_sdk import (
 )
 
 from ..distribution import CHUNK_BASE64_MAX
+from ..errors import StorageError
 from ..service import CanteenUnavailableError, ConflictError, NotFoundError, TabletService
 
 router = APIRouter()
@@ -65,6 +66,9 @@ async def run[T](call: Awaitable[T]) -> T:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except CanteenUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except StorageError as exc:
+        # 507 when the disk is full; the panel does not retry it.
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -465,6 +469,8 @@ async def upload_chunk(upload_id: str, body: ChunkBody,
         raise HTTPException(status_code=409, detail=str(exc), headers=headers) from exc
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StorageError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
