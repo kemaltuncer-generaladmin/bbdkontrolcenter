@@ -49,9 +49,9 @@ Akademi API  /v1/admin/*
        bbd_akademi.api_key: "aksk_…"
      ```
 
-   Merkezden dağıtım (ADR 0025) için anahtar adının `scripts/push-secrets.py`
-   → `SECRET_KEYS` listesine eklenmesi gerekir (çekirdek betiği; bu modülün
-   dalında değiştirilmedi — açık iş).
+   Merkezden dağıtım (ADR 0025): anahtar adı `scripts/push-secrets.py` →
+   `SECRET_KEYS` listesindedir; merkez kasasına yazılan anahtar kurulumlara
+   betikle dağıtılır.
 
 3. **Ayarlar** (`config/default.yaml`, şema `config/schema.json`): `enabled`
    (ana şalter), `base_url` (varsayılan `https://akademi-api.bbdstore.com.tr`),
@@ -75,13 +75,19 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Bölüm | Dosya | İçerik |
 |---|---|---|
 | Panel | `dashboard.js` | Günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
-| Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler |
+| Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
 | Ders programı | `timetable*.js` | Zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama), etüt ve tek seferlik dersler, zil dilimleri, dönemler |
+| Kurum takvimi | `institution-calendar.js` | Tatil, etkinlik, veli toplantısı, deneme günü, kayıt dönemi; hedef kitle, bağlı duyuru ve hatırlatma (F-A20) |
 | Yoklama | `attendance.js` | Günün oturumları, yoklama listesi ve düzeltme |
 | Ödevler | `homework.js` | Ödev ver (sınıf/grup/öğrenci), teslim tablosu, hatırlatma |
 | Denemeler | `exams*.js` | Tanımlar, geçmiş deneme, toplu yükleme sihirbazı (yükle → sütunlar → eşleme + yayınevi şablonları → önizleme ve belirsiz eşleşme çözümü → kaydet / geri al), cevap anahtarı ve soru→konu eşlemesi, tekil sonuç, yayımla, analiz, karşılaştırma, dışa aktarım |
+| Çalışma planı | `plan*.js` | Plan görevi atama (öğrenci/grup/sınıf), plan şablonları ve sınıfa uygulama, uyum tablosu, erteleme talepleri (F-A18) |
+| Okuma | `reading*.js` | Kurum okuma listeleri, hazır listeler (tür süzgeci; hazır şablondan oluştur), okuma ligi, öğrenci × ay raporu (F-A19) |
+| Bilgi kartları | `decks.js` | Kurum desteleri (ders/konu, görselli kartlar), sınıf/grup/öğrenci ataması (F-A23) |
+| Değerlendirmeler | `evaluations*.js` | Şablonlar (bölüm, kriter, ölçek, otomatik veri), dönemler ve tamamlama durumu, değerlendirme formu (otomatik veri yan paneli), yayımla / geri al, gelişim karnesi PDF (F-A21) |
+| Erken uyarı | `insights*.js` | Kurallı risk listesi ve eylemler (not, görüşme, veliye bildirim, çöz / yeniden aç), eşikler, en çok hata yapılan konular ve nedenler (F-A22) |
 | Kurum finansı | `finance.js` | Cari hesaplar, peşinatlı taksit planı, kalemler, tahsilat (seçili kalem / serbest tutar FIFO), PIN teyitli iptal, gecikenler + hatırlatma, ekstre ve makbuz — **kantinden tamamen ayrı (A12)** |
 | Kitap talepleri | `books.js` | Kuyruk, siparişi yeniden dene, teslim, sipariş PDF'i |
 | Duyurular | `announcements.js` | Taslak → hedefle → şimdi ya da zamanlı yayımla, okunma oranı |
@@ -93,6 +99,19 @@ Kapsam ölçümü: `tools/ui_coverage.py` izin listesindeki her işlemin panelde
 nerede karşılandığını yazar; ekranda bilerek olmayan işlemler gerekçesiyle
 `NOT_SURFACED` tablosundadır ve test (`tests/test_akademi_panel_coverage.py`)
 bunu bağlar.
+
+**Kapsam (sözleşme 1.0.0-draft.2, bbd-akademi e1ac229):** izin listesinde 346
+işlem — 259 `/v1/admin/*` (x-surface `both` 137, `km` 122) + 87 salt okunur
+`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **339**, bilerek yok **7**
+(gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde, kantin
+tahsilatı ve kontrolleri Öğrenciler modülünde, çalışma grubu yazma uçları KM
+öğrenci yönetiminde, öğrenci dışa aktarım durumu), eksik **0**. Bölüm başına
+karşılanan işlem (bir işlem birden çok bölümde sayılabilir): Öğrenciler
+(çekmece sekmeleriyle) 100 · Denemeler 30 · Değerlendirmeler 23 · Ayarlar 22 ·
+Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16 · Ders
+programı 14 · Okuma 14 · Bilgi kartları 13 · Erken uyarı 13 · Ödevler 11 ·
+Panel 10 · Talepler 10 · Personel 9 · Duyurular 7 · Kurum takvimi 6 · Kitap
+talepleri 5 · Yoklama 3 · ortak arama listeleri (`index.js`, `common.js`) 8.
 
 ## İzinler
 
@@ -117,6 +136,9 @@ izin gelirse test kırılır.
 | `bbd_akademi.staff` | admin | Mobil yönetici erişimi, Akademi personeli ve rolleri |
 | `bbd_akademi.campus` | admin, bbd_staff | Öğrenci çağırma, tablet ek süre/engel/oturum |
 | `bbd_akademi.canteen` | admin | Akademi üzerinden kantin işlemleri (yalnız vekil; asıl ekran Öğrenciler modülü) |
+| `bbd_akademi.learning` | admin, bbd_staff | Günlük koçluk: plan görevi atama ve erteleme, koç notları, erken uyarı eylemleri |
+| `bbd_akademi.learning_setup` | admin | Öğrenme araçları kurulumu: plan şablonları, okuma listeleri ve ligi, desteler, değerlendirme şablon/dönemleri, erken uyarı eşikleri |
+| `bbd_akademi.evaluations` | admin, bbd_staff | Değerlendirme formu, yayımlama, karne dışa aktarımı |
 
 ## Vekil, köprü ve PIN teyidi
 
