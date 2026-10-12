@@ -1,0 +1,139 @@
+/* Ayarlar — önek `ak-set-` (tema sekmesi `ak-set-th-`). Kantin kuralları turuncu
+   çizgiyle (`ak-money-canteen`), kurum finansı ayarları mavi çizgiyle
+   (`ak-money-finance`) ayrılır; ikisi aynı kartta buluşmaz. */
+
+/* `hidden` özniteliği `display: flex` taşıyan sınıfları (ak-stack) yenmez; burada yener. */
+.ak-set [hidden] { display: none !important; }
+
+/* ------------------------------------------------------- ayar formları */
+.ak-set-grid { padding: 12px 16px 14px; }
+.ak-set-savebar {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; box-shadow: 0 1px 0 rgba(17, 23, 34, 0.03);
+}
+.ak-set-savebar.dirty { border-color: #f5c38b; background: #fffaf3; }
+.ak-set-savebar-text { color: var(--soft); font-size: 12.5px; }
+.ak-set-savebar.dirty .ak-set-savebar-text { color: var(--warn); font-weight: 600; }
+.ak-set-canteen { padding-left: 12px; }
+
+/* ---------------------------------------------------------- özellikler */
+.ak-set-flags { display: flex; flex-direction: column; }
+.ak-set-flag {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; align-items: start;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.ak-set-flag:last-child { border-bottom: 0; }
+.ak-set-flag-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ak-set-flag-title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-weight: 600; }
+.ak-set-flag-note { color: var(--warn); font-size: 12.5px; }
+.ak-set-flag-config { color: var(--soft); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ak-set-flag-key { color: var(--soft); font-size: 11.5px; }
+
+/* Anahtar biçimli onay kutusu (açık/kapalı yazısı yanında rozetle de durur). */
+.ak-set-switch {
+  appearance: none; -webkit-appearance: none; margin: 2px 0 0;
+  width: 38px; height: 22px; border-radius: 999px; background: #d4dae4;
+  position: relative; cursor: pointer; transition: background 0.15s;
+}
+.ak-set-switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+.ak-set-switch:checked { background: var(--good); }
+.ak-set-switch:checked::after { transform: translateX(16px); }
+.ak-set-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ak-set-switch:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* ------------------------------------------------------------ ortak küçükler */
+.ak-set-sample { font-style: italic; }
+.ak-set-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.ak-set-toggle { cursor: pointer; user-select: none; }
+.ak-set-perm {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: var(--tint); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
+}
+
+/* ------------------------------------------------- tek seferlik anahtar */
+.ak-set-secret { width: min(620px, calc(100% - 40px)); max-width: none; }
+.ak-set-secret-row { display: flex; gap: 8px; align-items: center; }
+.ak-set-secret-value {
+  flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; background: #fbfcfe;
+}
+
+/* --------------------------------------------------------- denetim kaydı */
+.ak-set-drawer { width: min(860px, calc(100% - 40px)); }
+.ak-set-diff { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
+.ak-set-diff-before { color: #9f1239; }
+.ak-set-diff-after { color: #166534; }
+
+/* ------------------------------------------------------- tema ve logo */
+.ak-set-th-status { display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex-wrap: wrap; }
+.ak-set-th-grid { align-items: start; }
+.ak-set-th-logos { display: flex; gap: 12px; flex-wrap: wrap; }
+.ak-set-th-logo-tile { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.ak-set-th-logo-frame {
+  width: 160px; height: 84px; border: 1px solid var(--line); border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; padding: 10px;
+}
+.ak-set-th-logo-img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+.ak-set-th-group { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; }
+.ak-set-th-group-title { font-weight: 600; font-size: 12.5px; color: var(--soft); }
+.ak-set-th-row {
+  display: grid; grid-template-columns: minmax(120px, 1fr) 24px 110px; gap: 8px; align-items: center;
+}
+.ak-set-th-row-check { grid-template-columns: 24px minmax(0, 1fr); }
+.ak-set-th-row-select { grid-template-columns: minmax(120px, 1fr) 140px; }
+.ak-set-th-row-label { color: var(--ink); }
+.ak-set-th-hex { width: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ak-set-th-swatch {
+  display: inline-block; width: 22px; height: 22px; border-radius: 6px;
+  border: 1px solid rgba(17, 23, 34, 0.15); flex: none;
+  background-image: linear-gradient(45deg, #eef1f6 25%, transparent 25%, transparent 75%, #eef1f6 75%);
+  background-size: 8px 8px;
+}
+
+.ak-set-th-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.ak-set-th-seg-item {
+  border: 0; background: #fff; padding: 6px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+  color: var(--soft); border-right: 1px solid var(--line);
+}
+.ak-set-th-seg-item:last-child { border-right: 0; }
+.ak-set-th-seg-item.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
+
+/* Telefon görünümü: renkler JS'te `style` ile verilir; burada yalnız iskelet. */
+.ak-set-th-preview { display: flex; justify-content: center; padding: 6px 0; }
+.ak-set-th-device {
+  width: 300px; padding: 10px; border-radius: 34px; background: #11161f;
+  box-shadow: 0 12px 30px rgba(17, 23, 34, 0.18);
+}
+.ak-set-th-phone { border-radius: 26px; overflow: hidden; min-height: 520px; font-size: 13px; }
+.ak-set-th-appbar { display: flex; align-items: center; gap: 10px; }
+.ak-set-th-phone-logo { width: 34px; height: 34px; object-fit: contain; border-radius: 8px; background: rgba(255, 255, 255, 0.92); padding: 3px; }
+.ak-set-th-hello { font-size: 15px; }
+.ak-set-th-wave { height: 4px; }
+.ak-set-th-screen { display: flex; flex-direction: column; }
+.ak-set-th-card { display: flex; flex-direction: column; gap: 6px; }
+.ak-set-th-card-title { font-weight: 650; font-size: 14px; }
+.ak-set-th-small { font-size: 12px; }
+.ak-set-th-chip { align-self: flex-start; padding: 3px 9px; font-size: 11.5px; font-weight: 600; }
+.ak-set-th-row-between { display: flex; justify-content: space-between; align-items: baseline; }
+.ak-set-th-track { height: 8px; overflow: hidden; }
+.ak-set-th-fill { height: 100%; }
+.ak-set-th-buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ak-set-th-btn { padding: 8px 14px; font-weight: 600; font-size: 12.5px; }
+.ak-set-th-role { display: inline-flex; align-items: center; gap: 5px; }
+.ak-set-th-dot { width: 10px; height: 10px; border-radius: 50%; }
+.ak-set-th-heat { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.ak-set-th-heat-cell { height: 14px; }
+
+.ak-set-th-tokens {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px;
+}
+.ak-set-th-token { display: flex; gap: 8px; align-items: center; min-width: 0; font-size: 12.5px; }
+.ak-set-th-token code { font-size: 11.5px; }
+.ak-set-th-meta { padding: 0 16px 12px; font-size: 12px; }
