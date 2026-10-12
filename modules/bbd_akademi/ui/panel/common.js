@@ -477,8 +477,13 @@ export function formDialog(app, { title, description = '', fields = [], value = 
     // çağrılır (ör. "kapsam" seçimi değişince hedef seçicisi yeniden çizilir).
     const draft = { ...value };
     const reactive = [];
+    // formGrid kendi taslağını `value`nun TAMAMIYLA kurar ve her değişiklikte
+    // hepsini geri verir; yalnız KENDİ alanları alınır — yoksa `value` içinde
+    // başlangıç değeri verilmiş özel alanlar (seçili sınıflar, öğrenciler…)
+    // her tuş vuruşunda başlangıç değerine dönerdi.
+    const gridKeys = gridFields.map((field) => field.key);
     const grid = formGrid({ fields: gridFields, value, onChange: (next) => {
-      Object.assign(draft, next);
+      for (const fieldKey of gridKeys) if (fieldKey in next) draft[fieldKey] = next[fieldKey];
       for (const control of reactive) control.update?.(draft);
     } });
     card.append(grid.node);
