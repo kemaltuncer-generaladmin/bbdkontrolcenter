@@ -10,6 +10,7 @@ Sıra `km_core/http/app.py` içindeki açılış sırasının aynısıdır:
     1. `CORE_SCHEMA`            — kullanıcı, rol, oturum, denetim, kasa, çıktı
     2. çekirdek göçleri         — sır sütunları, revizyon, kadro yansıtması…
     3. ayar deposu göçü         — `settings`
+    3b. olay outbox'u göçleri   — `km_event_outbox`, `km_event_consumer` (ADR 0029)
     4. modül göçleri            — `modules/*/backend/migrations/*.sql`
 
 Motoru bilmez: `Store` (SQLite) ve `PostgresStore` aynı yüzeyi sunar, lehçe
@@ -64,12 +65,14 @@ async def build_schema(store: StoreLike, modules_dir: Path | None = None) -> lis
     from km_core.config.settings_store import apply_settings_migrations
     from km_core.security.migrations import apply_core_migrations
     from km_core.store.db import CORE_SCHEMA
+    from km_platform.events.schema import apply_event_migrations
 
     await store.execute_script(CORE_SCHEMA)
 
     applied: list[str] = []
     applied += await apply_core_migrations(store)
     applied += await apply_settings_migrations(store)
+    applied += await apply_event_migrations(store)
     if modules_dir is not None:
         applied += await apply_module_migrations(store, modules_dir)
     return applied

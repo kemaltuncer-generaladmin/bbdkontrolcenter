@@ -43,6 +43,7 @@ yanlış yönlendirirdi.
 | 0026 | Sunucu merkezli mimari: veri merkezde, kabuk ince | Kabul edildi |
 | 0027 | Zilden sonra anons geri geldi; tür açıkça saklanıyor | Kabul edildi |
 | 0028 | Servis anahtarları: makineden makineye kimlik | Kabul edildi |
+| 0029 | Olay outbox'u ve modül işlemi | Kabul edildi |
 
 ---
 

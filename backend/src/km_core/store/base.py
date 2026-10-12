@@ -13,7 +13,11 @@ sınıfları import etmek zorunda kalmaz.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any, Protocol, runtime_checkable
+from contextlib import AbstractAsyncContextManager
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:  # pragma: no cover - yalnızca tip denetimi
+    from km_core.store.transaction import Transaction
 
 
 @runtime_checkable
@@ -29,6 +33,11 @@ class StoreLike(Protocol):
     async def fetch_one(self, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None: ...
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> None: ...
     async def execute_many(self, sql: str, rows: Iterable[Sequence[Any]]) -> None: ...
+
+    # ---------------------------------------------------------------- işlem
+    # ADR 0029 — bağlam yöneticisi; iç içe çağrı dış işleme katılır.
+    def transaction(self) -> AbstractAsyncContextManager[Transaction]: ...
+    def current_transaction(self) -> Transaction | None: ...
 
     # ------------------------------------------------------------------ şema
     async def execute_script(self, sql: str) -> None: ...

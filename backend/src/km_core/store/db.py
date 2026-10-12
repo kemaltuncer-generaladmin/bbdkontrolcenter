@@ -11,14 +11,17 @@ açılır ve göç kaydı modül kimliğiyle tutulur.
 
 from __future__ import annotations
 
+import asyncio
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
 
 from km_core.files.private import FILE_MODE, ensure_private_dir
+from km_core.store.transaction import CURRENT, Transaction, active_for
 
 # Modül göçlerinin açabileceği tablo adı deseni — başka modülün alanına
 # taşmayı imkânsız kılar.
@@ -139,6 +142,12 @@ class Store:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._db: aiosqlite.Connection | None = None
+        #: DEPO KİLİDİ (ADR 0029). Tek bağlantı paylaşıldığı için açık bir
+        #: işlem varken başka bir görevin ifadesi o işleme karışır: commit'i
+        #: erken yapar ya da geri almayla birlikte kaybolurdu. İşlem bu kilidi
+        #: tutar; işlem DIŞINDAKİ her çağrı kilidi kısa süre alıp bırakır.
+        #: İşlemin kendi görevi (bağlam değişkeni) kilidi beklemez.
+        self._lock = asyncio.Lock()
 
     async def open(self) -> None:
         # Bu dosya öğrenci adı, veli telefonu ve modül tablolarını taşır.
@@ -179,28 +188,110 @@ class Store:
             raise RuntimeError("Depo açılmadı.")
         return self._db
 
+    # ---------------------------------------------------------------- işlem
+
+    def current_transaction(self) -> Transaction | None:
+        """Bağlamdaki açık işlem (bu depoya aitse)."""
+        return active_for(self)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Transaction]:
+        """`BEGIN IMMEDIATE … COMMIT` — depo kilidi altında (ADR 0029).
+
+        İç içe çağrı dış işleme katılır. Gövde hata verirse `ROLLBACK`.
+        IMMEDIATE: yazma kilidi baştan alınır; aynı dosyaya bakan başka bir
+        bağlantı (çıktı kaydı) işlemin ortasında araya giremez.
+        """
+        joined = active_for(self)
+        if joined is not None:
+            joined.depth += 1
+            try:
+                yield joined
+            finally:
+                joined.depth -= 1
+            return
+
+        transaction = Transaction(self)
+        committed = False
+        try:
+            async with self._lock:
+                token = CURRENT.set(transaction)
+                try:
+                    await self.db.execute("BEGIN IMMEDIATE")
+                    try:
+                        yield transaction
+                        await transaction.run_before_commit()
+                        await self.db.commit()
+                        committed = True
+                    except BaseException:
+                        await self.db.rollback()
+                        raise
+                finally:
+                    transaction.closed = True
+                    CURRENT.reset(token)
+        finally:
+            # Kancalar KİLİT BIRAKILDIKTAN sonra koşar: depoya dokunan bir
+            # commit sonrası kancası kendi kilidini beklerken kilitlenmesin.
+            await transaction.run_after(committed=committed)
+
+    # ---------------------------------------------------------------- sorgu
+
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
+        if active_for(self) is not None:
+            return await self._fetch_all(sql, params)
+        async with self._lock:
+            rows = await self._fetch_all(sql, params)
+            if self.db.in_transaction:  # `… RETURNING` yazması
+                await self.db.commit()
+            return rows
+
+    async def _fetch_all(self, sql: str, params: Sequence[Any]) -> list[dict[str, Any]]:
         async with self.db.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
     async def fetch_one(self, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
+        if active_for(self) is not None:
+            return await self._fetch_one(sql, params)
+        async with self._lock:
+            row = await self._fetch_one(sql, params)
+            # `INSERT … RETURNING` işlem dışında da yazmadır: kalıcı olsun.
+            if self.db.in_transaction:
+                await self.db.commit()
+            return row
+
+    async def _fetch_one(self, sql: str, params: Sequence[Any]) -> dict[str, Any] | None:
         async with self.db.execute(sql, params) as cursor:
             row = await cursor.fetchone()
         return dict(row) if row is not None else None
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
-        await self.db.execute(sql, params)
-        await self.db.commit()
+        if active_for(self) is not None:
+            await self.db.execute(sql, params)
+            return
+        async with self._lock:
+            await self.db.execute(sql, params)
+            await self.db.commit()
 
     async def execute_many(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
-        await self.db.executemany(sql, rows)
-        await self.db.commit()
+        if active_for(self) is not None:
+            await self.db.executemany(sql, rows)
+            return
+        async with self._lock:
+            await self.db.executemany(sql, rows)
+            await self.db.commit()
 
     async def execute_script(self, sql: str) -> None:
-        """Çok ifadeli DDL. `PostgresStore` ile aynı yüzey (bkz. bootstrap)."""
-        await self.db.executescript(sql)
-        await self.db.commit()
+        """Çok ifadeli DDL. `PostgresStore` ile aynı yüzey (bkz. bootstrap).
+
+        İşlem içinde ÇAĞRILAMAZ: `executescript` önce bekleyen işlemi commit
+        eder — işlemin yarısı sessizce kalıcı olurdu.
+        """
+        if active_for(self) is not None:
+            raise RuntimeError("execute_script işlem içinde çağrılamaz (ADR 0029).")
+        async with self._lock:
+            await self.db.executescript(sql)
+            await self.db.commit()
 
     async def table_columns(self, table: str) -> set[str]:
         """Tablonun sütun adları — motora özgü introspeksiyon.
@@ -224,13 +315,14 @@ class Store:
         if owner != "core":
             _assert_module_tables(owner, sql)
 
-        await self.db.executescript(sql)
-        await self.db.execute(
-            "INSERT INTO schema_migrations (owner, name, applied_at) "
-            "VALUES (?, ?, datetime('now'))",
-            (owner, name),
-        )
-        await self.db.commit()
+        async with self._lock:
+            await self.db.executescript(sql)
+            await self.db.execute(
+                "INSERT INTO schema_migrations (owner, name, applied_at) "
+                "VALUES (?, ?, datetime('now'))",
+                (owner, name),
+            )
+            await self.db.commit()
 
 
 _CREATE_TABLE = re.compile(

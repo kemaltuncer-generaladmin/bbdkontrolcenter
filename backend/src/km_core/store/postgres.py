@@ -18,7 +18,8 @@ SQL'i ve parametre tiplerini söyleyerek yükseltir. Sessiz kayıp olmaz.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
@@ -26,6 +27,7 @@ import structlog
 
 from km_core.store.db import _assert_module_tables
 from km_core.store.dialect import concurrent_index_plan, to_postgres, translate_ddl
+from km_core.store.transaction import CURRENT, Transaction, active_for
 
 log = structlog.get_logger("core.store.postgres")
 
@@ -110,18 +112,74 @@ class PostgresStore:
         self._translated[sql] = translated
         return translated
 
+    # -------------------------------------------------------------------- işlem
+
+    def current_transaction(self) -> Transaction | None:
+        """Bağlamdaki açık işlem (bu depoya aitse)."""
+        return active_for(self)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Transaction]:
+        """Havuzdan bir bağlantı + `connection.transaction()` (ADR 0029).
+
+        İşlem bağlantısı bağlam değişkeninde taşınır; blok içindeki
+        `fetch_*` / `execute` o bağlantıya gider. İç içe çağrı dış işleme
+        katılır. Yalıtım düzeyi PostgreSQL varsayılanıdır (READ COMMITTED):
+        aynı satırı yazan iki işlem satır kilidiyle sıralanır; sayaç gibi
+        okuma-değiştirme-yazma adımları `x = x + 1` biçiminde yazılmalıdır.
+        """
+        joined = active_for(self)
+        if joined is not None:
+            joined.depth += 1
+            try:
+                yield joined
+            finally:
+                joined.depth -= 1
+            return
+
+        committed = False
+        transaction: Transaction | None = None
+        token = None
+        try:
+            async with self.pool.acquire() as connection:
+                pg_transaction = connection.transaction()
+                await pg_transaction.start()
+                transaction = Transaction(self, connection)
+                token = CURRENT.set(transaction)
+                try:
+                    yield transaction
+                    await transaction.run_before_commit()
+                    await pg_transaction.commit()
+                    committed = True
+                except BaseException:
+                    await pg_transaction.rollback()
+                    raise
+                finally:
+                    transaction.closed = True
+                    CURRENT.reset(token)
+        finally:
+            if transaction is not None:
+                await transaction.run_after(committed=committed)
+
+    def _target(self) -> Any:
+        """İşlem açıksa işlemin bağlantısı, değilse havuz (her ikisi aynı yüzey)."""
+        transaction = active_for(self)
+        return transaction.connection if transaction is not None else self.pool
+
+    # -------------------------------------------------------------------- sorgu
+
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
-        rows = await self.pool.fetch(self._translate(sql), *_adapt(params))
+        rows = await self._target().fetch(self._translate(sql), *_adapt(params))
         return [dict(row) for row in rows]
 
     async def fetch_one(self, sql: str, params: Sequence[Any] = ()) -> dict[str, Any] | None:
-        row = await self.pool.fetchrow(self._translate(sql), *_adapt(params))
+        row = await self._target().fetchrow(self._translate(sql), *_adapt(params))
         return dict(row) if row is not None else None
 
     async def execute(self, sql: str, params: Sequence[Any] = ()) -> None:
         statement = self._translate(sql)
         try:
-            await self.pool.execute(statement, *_adapt(params))
+            await self._target().execute(statement, *_adapt(params))
         except asyncpg.PostgresError as error:
             raise _explain(error, statement, params) from error
 
@@ -131,12 +189,14 @@ class PostgresStore:
         if not batch:
             return
         try:
-            await self.pool.executemany(statement, batch)
+            await self._target().executemany(statement, batch)
         except asyncpg.PostgresError as error:
             raise _explain(error, statement, batch[0]) from error
 
     async def execute_script(self, sql: str) -> None:
-        """Çok ifadeli DDL. Göç dosyaları buradan geçer."""
+        """Çok ifadeli DDL. Göç dosyaları buradan geçer. İşlem içinde çağrılmaz."""
+        if active_for(self) is not None:
+            raise RuntimeError("execute_script işlem içinde çağrılamaz (ADR 0029).")
         await self.pool.execute(translate_ddl(sql))
 
     async def table_columns(self, table: str) -> set[str]:
