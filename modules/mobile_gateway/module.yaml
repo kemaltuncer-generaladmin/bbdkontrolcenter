@@ -45,7 +45,7 @@ consumes:
     reason: "Öğrenci dizini (ad, sınıf, telefonlar) ve kart QR metni Öğrenci Yönetimi'nindir (K3, K5)."
   - capability: bbd_tablet.read
     optional: true
-    reason: "Tablet panosu ve öğrenci tablet kullanımı. Yoksa tablet uçları 503 capability_missing döner."
+    reason: "Tablet panosu, öğrenci ve kurum geneli günlük tablet kullanımı. Yoksa tablet uçları 503 capability_missing döner."
   - capability: bbd_tablet.control
     optional: true
     reason: "Ek süre, kısıtlama ve oturum kapatma. Yoksa denetim uçları 503 capability_missing döner."

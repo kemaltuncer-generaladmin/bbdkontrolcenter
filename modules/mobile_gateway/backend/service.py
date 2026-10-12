@@ -94,6 +94,8 @@ FALLBACK_DAYS = 180
 BELL_PLAN_MAX_BYTES = 512 * 1024
 BELL_PLAN_WINDOW_DAYS = 14
 BELL_STATUS_MAX_DAYS = 31
+#: `GET /tablets/usage` en çok bu kadar gün geriye bakar (bugün dahil; tabletin sınırı).
+TABLET_USAGE_MAX_DAYS = 62
 #: Gün sonucu ve hata kodları — beyaz liste (zil yeteneğinin döndürdüğü).
 BELL_PLAN_RESULTS = frozenset({"applied", "unchanged", "stale", "overridden", "rejected"})
 BELL_PLAN_ERRORS = frozenset({"revision_conflict", "unknown_profile"})
@@ -1329,6 +1331,31 @@ class GatewayService:
             "activeSession": short_session(usage.get("activeSession")),
             "blockedUntil": self.iso(usage.get("blockedUntil")),
         }
+
+    async def tablets_daily_usage(self, day: date | None) -> dict[str, Any]:
+        """§4 `GET /tablets/usage?date=` — kurum geneli, o günün öğrenci başına süresi.
+
+        Akademi `TabletProvider.daily_usage` (yönetici listesi, gece 23:55 özeti)
+        okur. Satır o gün kullanımı olan ya da kısıtı şu an süren öğrencidir;
+        `blockedUntil` çağrı anının kısıtıdır. Tek yanıt (≈ 2.000 öğrencide
+        < 120 KB), imleç yok. Gün verilmezse bugün; gelecek gün ya da 62 günden
+        eskisi 422.
+        """
+        today = self.now().astimezone(self.zone).date()
+        day = day or today
+        if day > today:
+            raise validation("Gelecek bir gün sorulamaz.", "date")
+        if (today - day).days >= TABLET_USAGE_MAX_DAYS:
+            raise validation(f"En çok {TABLET_USAGE_MAX_DAYS} gün geriye bakılabilir.", "date")
+        usage = await self.call(self.caps.tablet_daily_usage(day.isoformat()))
+        items = []
+        for item in usage.get("items") or []:
+            if not isinstance(item, dict) or not item.get("studentId"):
+                continue
+            items.append({"studentId": str(item["studentId"]),
+                          "totalSeconds": max(0, int_or_none(item.get("totalSeconds")) or 0),
+                          "blockedUntil": self.iso(item.get("blockedUntil"))})
+        return {"date": day.isoformat(), "items": items}
 
     async def tablet_grant(self, student_id: str, *, package_name: str | None,
                            extra_seconds: int, reason: str, caller: Caller) -> dict[str, Any]:

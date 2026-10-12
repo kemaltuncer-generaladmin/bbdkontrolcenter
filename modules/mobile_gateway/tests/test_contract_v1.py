@@ -30,6 +30,7 @@ from mobile_gateway_fakes import (
     ELIF_PHONE,
     FATHER,
     MOTHER,
+    FakeTabletRead,
     LegacyCanteen,
     RecordingLog,
 )
@@ -69,6 +70,7 @@ CONTRACT_ROUTES = {
     ("GET", "/canteen/settings/public"),
     ("GET", "/canteen/products"),
     ("GET", "/tablets"),
+    ("GET", "/tablets/usage"),
     ("GET", "/students/{student_id}/tablet-usage"),
     ("POST", "/students/{student_id}/tablet/grant"),
     ("POST", "/students/{student_id}/tablet/block"),
@@ -745,6 +747,38 @@ async def test_tablet_usage(client: httpx.AsyncClient, world: World) -> None:
     expect_error(await client.get("/students/STU-yok/tablet-usage"), 404, "student_not_found")
 
 
+async def test_tablets_daily_usage(client: httpx.AsyncClient, world: World) -> None:
+    """`GET /tablets/usage?date=` — Akademi `TabletProvider.daily_usage` (kurum geneli)."""
+    response = await client.get("/tablets/usage", params={"date": "2026-10-11"})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"date": "2026-10-11", "items": [
+        {"studentId": ELIF, "totalSeconds": 5400, "blockedUntil": None},
+        {"studentId": CAN, "totalSeconds": 0, "blockedUntil": "2026-10-20T18:00:00+03:00"},
+    ]}
+    assert world.tablet_read.daily_args == ["2026-10-11"]
+
+    today = await client.get("/tablets/usage")              # tarih yoksa bugün (İstanbul)
+    assert today.status_code == 200 and today.json()["date"] == "2026-10-12"
+    oldest = await client.get("/tablets/usage", params={"date": "2026-08-12"})
+    assert oldest.status_code == 200                         # bugün dahil 62. gün
+    for bad in ("2026-10-13", "2026-08-11", "12.10.2026", "2026-02-30"):
+        expect_error(await client.get("/tablets/usage", params={"date": bad}),
+                     422, "validation_error")
+    assert world.tablet_read.daily_args == ["2026-10-11", "2026-10-12", "2026-08-12"]
+
+    world.tablet_read.items = [{"studentId": "", "totalSeconds": 5}, "bozuk",
+                               {"studentId": DENIZ, "totalSeconds": -3}]
+    cleaned = await client.get("/tablets/usage", params={"date": "2026-10-11"})
+    assert cleaned.json()["items"] == [{"studentId": DENIZ, "totalSeconds": 0,
+                                        "blockedUntil": None}]
+
+    # Eski tablet modülü (`daily_usage` yok): yalnız bu uç 503, diğerleri çalışır.
+    world.replace("bbd_tablet.read", FakeTabletRead())
+    missing = expect_error(await client.get("/tablets/usage"), 503, "capability_missing")
+    assert missing["capability"] == "bbd_tablet.read.daily_usage"
+    assert (await client.get("/tablets")).status_code == 200
+
+
 async def test_tablet_controls(client: httpx.AsyncClient, world: World, store: Any) -> None:
     who = on_behalf("akademi:staff:42:Ayşe Yılmaz")
     grant = await client.post(f"/students/{ELIF}/tablet/grant", headers=who,
@@ -799,6 +833,7 @@ async def test_tablet_capability_missing(client: httpx.AsyncClient, world: World
     world.remove("bbd_tablet.read", "bbd_tablet.control")
     for method, url, body in (
         ("GET", "/tablets", None),
+        ("GET", "/tablets/usage", None),
         ("GET", f"/students/{ELIF}/tablet-usage", None),
         ("POST", f"/students/{ELIF}/tablet/grant", {"extraSeconds": 60, "reason": "Ödev"}),
         ("POST", f"/students/{ELIF}/tablet/block", {"until": None, "reason": "Ceza"}),

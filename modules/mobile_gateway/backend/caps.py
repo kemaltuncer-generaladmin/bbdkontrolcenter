@@ -556,6 +556,12 @@ class Capabilities:
                                     {"date_from": date_from, "date_to": date_to})
         return result if isinstance(result, dict) else {}
 
+    async def tablet_daily_usage(self, local_date: str) -> dict[str, Any]:
+        """Kurum geneli günlük kullanım. Eski `bbd_tablet` bu metodu sunmazsa
+        `bbd_tablet.read.daily_usage` eksiktir (503 capability_missing)."""
+        result = await self._module("tablet", TABLET_READ, "daily_usage", (local_date,))
+        return result if isinstance(result, dict) else {}
+
     async def tablet_grant(self, student_id: str, *, package_name: str | None,
                            extra_seconds: int, reason: str, actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "grant", (student_id,), {

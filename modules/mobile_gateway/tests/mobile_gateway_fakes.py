@@ -421,6 +421,23 @@ class FakeTabletRead:
         }
 
 
+class FakeTabletDailyRead(FakeTabletRead):
+    """`daily_usage` sunan `bbd_tablet.read` (yeni tablet modülü)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.daily_args: list[str] = []
+        self.items: list[dict[str, Any]] = [
+            {"studentId": ELIF, "totalSeconds": 5400, "blockedUntil": None},
+            {"studentId": CAN, "totalSeconds": 0, "blockedUntil": "2026-10-20T15:00:00Z"},
+        ]
+
+    async def daily_usage(self, local_date: str) -> dict[str, Any]:
+        self.daily_args.append(local_date)
+        return {"date": local_date,
+                "items": [dict(item) if isinstance(item, dict) else item for item in self.items]}
+
+
 class FakeTabletControl:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []

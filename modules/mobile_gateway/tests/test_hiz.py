@@ -435,6 +435,7 @@ READ_ENDPOINTS = [
     "/canteen/settings/public",
     "/canteen/products",
     "/tablets",
+    "/tablets/usage",
     f"/students/{ELIF}/tablet-usage",
     "/schedule/bell-week",
     "/groups",
@@ -578,3 +579,26 @@ async def test_zil_plani_850_cagri_gecit_payi(client: httpx.AsyncClient, world: 
     assert counter.count == 1                               # yalnız denetim izi
     assert elapsed < 0.3, elapsed
     assert {day["result"] for day in response.json()["days"]} <= {"applied", "unchanged"}
+
+
+async def test_kurum_geneli_tablet_kullanimi_2000_ogrenci(client: httpx.AsyncClient,
+                                                          world: World, store: CheckedStore,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """`GET /tablets/usage`: 2.000 öğrenci satırında geçidin payı ≤ 80 ms, gövde < 150 KB,
+    geçidin kendi deposuna 0 ifade. Asıl okuma tablet modülünde iki indeksli sorgudur
+    (`modules/bbd_tablet/tests/test_capabilities.py`)."""
+    world.tablet_read.items = [
+        {"studentId": f"STU-{index:010d}", "totalSeconds": index * 7,
+         "blockedUntil": "2026-10-20T15:00:00Z" if index % 50 == 0 else None}
+        for index in range(2000)
+    ]
+    await client.get("/tablets/usage")                       # ısınma turu bütçe dışı
+    counter = Counter(store, monkeypatch)
+    started = time.perf_counter()
+    response = await client.get("/tablets/usage", params={"date": "2026-10-11"})
+    elapsed = time.perf_counter() - started
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == 2000
+    assert len(response.content) < 150_000
+    assert counter.count == 0
+    assert elapsed < 0.08, elapsed

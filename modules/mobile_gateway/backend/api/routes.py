@@ -88,6 +88,7 @@ PHONE = r"^5\d{9}$"
 #: `from`/`to` Python'da ayrılmış/çakışan adlar; sorgu takma adıyla okunur.
 FROM_QUERY = Query(default=None, alias="from")
 TO_QUERY = Query(default=None, alias="to")
+DAY_QUERY = Query(default=None, alias="date")
 CODE = r"^\d{6}$"
 
 
@@ -309,6 +310,12 @@ async def canteen_products(user: CurrentUser = requires(ACCESS)) -> dict[str, An
 @router.get("/tablets")
 async def tablets(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
     return await current_service().tablets()
+
+
+@router.get("/tablets/usage")
+async def tablets_daily_usage(day: date | None = DAY_QUERY,
+                              user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    return await current_service().tablets_daily_usage(day)
 
 
 @router.get("/students/{student_id}/tablet-usage")

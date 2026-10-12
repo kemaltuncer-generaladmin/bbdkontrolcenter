@@ -57,6 +57,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /canteen/settings/public` | 200 `{allowPrepayment, maxPrepayment}` (60 sn önbellek) | 503 |
 | `GET /canteen/products` | 200 `{items}` (5 dk önbellek) | 503 |
 | `GET /tablets` | 200 `{summary, devices}` | 503 `capability_missing`, 502 |
+| `GET /tablets/usage?date=YYYY-MM-DD` | 200 `{date, items: [{studentId, totalSeconds, blockedUntil}]}` — kurum geneli; o gün kullanımı ya da şu an süren kısıtı olan öğrenciler; tarih yoksa bugün, en çok 62 gün geriye; tek yanıt, imleç yok | 422 (gelecek gün, 62 günden eski, biçim), 503 `capability_missing` (`bbd_tablet.read.daily_usage` yoksa) |
 | `GET /students/{id}/tablet-usage?from=&to=` | 200 (en çok 62 gün) | 422, 404, 503 |
 | `POST /students/{id}/tablet/grant` | 201 `{grantId}` | 422, 404, 503 |
 | `POST /students/{id}/tablet/block` · `/unblock` | 200 `{blockedUntil}` | 422, 404, 503 |
@@ -124,7 +125,7 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | `secrets` (zorunlu) | `get(key)`, `set(key, value)` |
 | `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `ledger(id, limit=, cursor=, from_ms=, to_ms=)` (yoksa ya da `reason="ledger_unsupported"` verirse eski yol), `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=)` — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
 | `bbd_students.directory` (zorunlu) | `list(since=<datetime>\|None)`, `get(id)` (yoksa `None`), `card_qr_text(id)` — QR'dan önce `get` ile varlık sınanır |
-| `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün) |
+| `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün), `daily_usage(local_date)` (ISO gün; yoksa yalnız `GET /tablets/usage` 503) |
 | `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)` — hata `reason`ı: `validation_error` → 422, `student_not_found`/`session_not_found` → 404, `canteen_unavailable` → 503 |
 | `bell.week` | çağrılabilir: `() -> {"times", "groups"[, "profiles", "days"]}` — `days` geçitten dönmez |
 | `bell.announce` | `page(text, *, cache_key=, actor=, request_id=)` |
