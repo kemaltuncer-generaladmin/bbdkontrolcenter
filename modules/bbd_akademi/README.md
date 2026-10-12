@@ -78,8 +78,8 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
-| Ders programı | `timetable*.js` | Zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama), etüt ve tek seferlik dersler, zil dilimleri, dönemler |
-| Kurum takvimi | `institution-calendar.js` | Tatil, etkinlik, veli toplantısı, deneme günü, kayıt dönemi; hedef kitle, bağlı duyuru ve hatırlatma (F-A20) |
+| Ders programı | `timetable*.js` | Zil planı durumu kartı (14 gün: kaynak, bugünün kipi, çağrı ve ses, zil ajanı, acil kapatma; "Planı şimdi it"), zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama), etüt ve tek seferlik dersler, zil dilimleri, dönemler |
+| Kurum takvimi | `institution-calendar.js` | Tatil, etkinlik, veli toplantısı, deneme günü, kayıt dönemi; hedef kitle, bağlı duyuru ve hatırlatma (F-A20); "Zil" alanı (normal / tatil — zil çalmaz / KM saat seti) ve "dersleri iptal et" — sözleşme şalteri açılana dek devre dışı |
 | Yoklama | `attendance.js` | Günün oturumları, yoklama listesi ve düzeltme |
 | Ödevler | `homework.js` | Ödev ver (sınıf/grup/öğrenci), teslim tablosu, hatırlatma |
 | Denemeler | `exams*.js` | Tanımlar, geçmiş deneme, toplu yükleme sihirbazı (yükle → sütunlar → eşleme + yayınevi şablonları → önizleme ve belirsiz eşleşme çözümü → kaydet / geri al), cevap anahtarı ve soru→konu eşlemesi, tekil sonuç, yayımla, analiz, karşılaştırma, dışa aktarım |
@@ -93,23 +93,26 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Duyurular | `announcements.js` | Taslak → hedefle → şimdi ya da zamanlı yayımla, okunma oranı |
 | Talepler | `requests.js` | İzin, görüşme ve etüt talepleri |
 | Ayarlar | `settings*.js` | Kurum ve bildirim varsayılanları, kantin kuralları (F-A15), logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme, denetim kaydı |
-| Personel | `staff.js` | Mobil yönetici erişimi (modülün kendi listesi, Akademi'ye itilir), Akademi personeli, roller ve izin kataloğu |
+| Personel | `staff.js` | Mobil yönetici erişimi (modülün kendi listesi ve anons adı "Hüseyin hoca", Akademi'ye itilir), Akademi personeli, roller ve izin kataloğu |
 
 Kapsam ölçümü: `tools/ui_coverage.py` izin listesindeki her işlemin panelde
 nerede karşılandığını yazar; ekranda bilerek olmayan işlemler gerekçesiyle
 `NOT_SURFACED` tablosundadır ve test (`tests/test_akademi_panel_coverage.py`)
-bunu bağlar.
+bunu bağlar. Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler ayrı
+`PENDING` ("sırada") tablosundadır — aynı kurallarla, gerekçeli.
 
-**Kapsam (sözleşme 1.0.0-draft.2, bbd-akademi e1ac229):** izin listesinde 346
-işlem — 259 `/v1/admin/*` (x-surface `both` 137, `km` 122) + 87 salt okunur
-`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **339**, bilerek yok **7**
+**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi 030d3e3):** izin listesinde 391
+işlem — 302 `/v1/admin/*` (x-surface `both` 170, `km` 132) + 89 salt okunur
+`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **341**, bilerek yok **7**
 (gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde, kantin
 tahsilatı ve kontrolleri Öğrenciler modülünde, çalışma grubu yazma uçları KM
-öğrenci yönetiminde, öğrenci dışa aktarım durumu), eksik **0**. Bölüm başına
+öğrenci yönetiminde, öğrenci dışa aktarım durumu), sırada **43** (draft.3'ün
+program kurucu, ders oturumları, grup üyelik görünümü ve yoklama paketi
+işlemleri; `PENDING`), eksik **0**. Bölüm başına
 karşılanan işlem (bir işlem birden çok bölümde sayılabilir): Öğrenciler
 (çekmece sekmeleriyle) 100 · Denemeler 30 · Değerlendirmeler 23 · Ayarlar 22 ·
 Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16 · Ders
-programı 14 · Okuma 14 · Bilgi kartları 13 · Erken uyarı 13 · Ödevler 11 ·
+programı 16 · Okuma 14 · Bilgi kartları 13 · Erken uyarı 13 · Ödevler 11 ·
 Panel 10 · Talepler 10 · Personel 9 · Duyurular 7 · Kurum takvimi 6 · Kitap
 talepleri 5 · Yoklama 3 · ortak arama listeleri (`index.js`, `common.js`) 8.
 
@@ -160,6 +163,36 @@ izin gelirse test kırılır.
 - **Personel eşitleme:** mobil yöneticiye kimin gireceği KM'dedir
   (`mod_bbd_akademi_staff`) ve `PUT /v1/admin/staff/sync` ile tam liste olarak
   itilir — değişiklikte, `staff_sync_minutes` aralığıyla ve "Şimdi eşitle" ile.
+  Personelin **anons adı** (`announce_name`, göç 002; zil çağrısında "Hüseyin
+  hoca") da KM'dedir (sözleşme `km-ogrenci-gruplari-ve-zil.md` §1); yüke
+  `announceName` olarak yalnız şalter açıkken girer (aşağıda).
+
+## Sözleşme şalterleri
+
+Sözleşmeye henüz girmemiş alanlar tek dosyada, kapalı şalterle durur:
+`backend/contract_features.py` (panel `/km/status` → `contractFeatures` ile
+okur). Vekil gövdeyi doğrulamadan geçirdiği için sözleşmede olmayan alan
+gönderilmez.
+
+| Şalter | Kapalıyken | Açmadan önce |
+|---|---|---|
+| `STAFF_ANNOUNCE_NAME` | Anons adı KM'de saklanır, ekranda düzenlenir, `admin_syncStaff` yüküne girmez | `StaffSyncRequest.items[]` şemasında `announceName` |
+| `CALENDAR_EVENT_BELL` | Takvim formundaki "Zil" alanı devre dışı ve gerekçeli; gövdeye `bell` eklenmez; KM saat setleri okunmaz | takvim etkinliği gövdesinde `bell` (`{mode, profileId, cancelSessions}` beklenir; ad farklıysa yalnız `ui/panel/bell-plan.js` → `bellPayload`) |
+
+Şalteri açan commit `allowlist.py`'yi de yeniden üretir;
+`tests/test_akademi_contract_features.py` açık şalterin sözleşmede karşılığı
+olduğunu doğrular. Akademi `admin_getBellPlanStatus` şalter istemez: izin
+listesinde olduğu için kart onu kullanır.
+
+**KM Zil Sistemi'nden okunan uçlar** (panel, `app.kmGet`; yalnız GET, izin
+`bell.view`; yoksa 404/403 Türkçe notla karşılanır):
+
+- `GET /api/bell/plan/status?from=YYYY-MM-DD&to=YYYY-MM-DD` — zil planı durumu
+  kartının yedeği: Akademi işlemi sunmuyorsa (404) ya da `bell_plan_sync`
+  kapalıysa (`feature_disabled`) bir kez buraya düşülür (§3.3 biçimi).
+- `GET /api/bell/state` → `profiles: [{id, name, times}]` — takvim formundaki
+  saat setleri (yalnız `CALENDAR_EVENT_BELL` açıkken, form açılınca, 5 dk
+  önbellek).
 
 ## Hız (Akademi A14)
 
