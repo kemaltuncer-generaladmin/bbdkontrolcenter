@@ -1,0 +1,19 @@
+/* Öğrenci detayı — Koçluk sekmesi. Önek `ak-sco-`. */
+.ak-sco-top { display: flex; gap: 12px; align-items: flex-start; }
+.ak-sco-evaluate { flex: none; }
+.ak-sco-warnings { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.ak-sco-warning { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 7px 12px;
+  text-align: left; font: inherit; cursor: pointer; }
+.ak-sco-warning:hover { background: #f5f8fe; }
+.ak-sco-note { font-size: 12.5px; }
+.ak-sco-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-sco-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ak-sco-crit-note { font-style: italic; }
+.ak-sco-spark { display: inline-flex; width: 120px; }
+.ak-sco-list { margin: 0; padding: 10px 16px 12px 32px; display: flex; flex-direction: column; gap: 4px; }
+.ak-sco-week { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; }
+.ak-sco-drawer { width: min(720px, calc(100% - 40px)); }
+.ak-sco-drawer.ak-sco-wide { width: min(940px, calc(100% - 40px)); }
