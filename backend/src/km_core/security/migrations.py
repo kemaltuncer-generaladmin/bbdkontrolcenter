@@ -394,6 +394,49 @@ WHERE role_id = 'bld_staff' AND permission IN ({liste});
 """
 
 
+async def _service_keys(store: StoreLike) -> str:
+    """ADR 0028 — servis anahtarları ve servis sorumlusu.
+
+    Üç şey açılır, hepsi EKLEYİCİDİR; var olan satırın anlamı değişmez:
+
+      · **`users.kind`** — `person` (varsayılan) ya da `service`. Göç koştuğu
+        anda tablodaki herkes kişidir. Servis kaydının PIN'i yoktur
+        (`secret_lookup` boş kalır) ve giriş yolu onu ayrıca reddeder.
+      · **`service_keys`** — anahtarın kendisi değil, ÖZETİ durur
+        (`key_hash` = sha256). `prefix` anahtarı tek indeksli sorguyla bulur;
+        tam anahtar yalnız üretildiği anda bir kez gösterilir.
+        `allowed_cidrs` JSON listesidir; boş liste "her adres" demektir.
+      · **`audit_log.on_behalf_of` / `request_id`** — servis anahtarıyla gelen
+        isteğin dış uygulamadaki sahibi ve iz kimliği. Yetki vermez.
+    """
+    parts: list[str] = []
+    if "kind" not in await table_columns(store, "users"):
+        parts.append("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'person';")
+    audit_columns = await table_columns(store, "audit_log")
+    if "on_behalf_of" not in audit_columns:
+        parts.append("ALTER TABLE audit_log ADD COLUMN on_behalf_of TEXT;")
+    if "request_id" not in audit_columns:
+        parts.append("ALTER TABLE audit_log ADD COLUMN request_id TEXT;")
+    parts.append("""
+CREATE TABLE IF NOT EXISTS service_keys (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    prefix         TEXT NOT NULL,
+    key_hash       TEXT NOT NULL,
+    allowed_cidrs  TEXT NOT NULL DEFAULT '[]',
+    created_at     TEXT NOT NULL,
+    created_by     TEXT,
+    last_used_at   TEXT,
+    revoked_at     TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_service_keys_prefix ON service_keys (prefix);
+CREATE INDEX IF NOT EXISTS idx_service_keys_user ON service_keys (user_id);
+""")
+    return "\n".join(parts)
+
+
 CORE_MIGRATIONS: list[tuple[str, Callable[[StoreLike], Awaitable[str]]]] = [
     ("0001_password_columns", _password_columns),
     ("0002_users_revision", _users_revision),
@@ -407,6 +450,9 @@ CORE_MIGRATIONS: list[tuple[str, Callable[[StoreLike], Awaitable[str]]]] = [
     # `0009` `0008`in AKSİ DEĞİLDİR: `0008` çekirdek satırlarını (sunucu,
     # veritabanı, rehber) geri verir, `0009` BBD ekranlarını alır. Kesişmezler.
     ("0009_bld_staff_bbd_ayrimi", _revoke_bld_staff_bbd),
+    # `0010` numarası ayar deposunun göçünde (`0010_settings_store`, aynı
+    # `core` sahibi) — karışmasın diye servis anahtarları 0011'den başlar.
+    ("0011_service_keys", _service_keys),
 ]
 
 

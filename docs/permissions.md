@@ -26,6 +26,21 @@ Kodda rol adı sorulmaz, izin sorulur. `if role == "admin"` yasaktır.
 
 Bir kullanıcıya hem `bld_staff` hem `bbd_staff` atanırsa her iki kapsamı da alır.
 
+### Servis rolleri (ADR 0028)
+
+Kişiye verilmez; servis anahtarıyla bağlanan makinelerin (`users.kind =
+'service'`) rolleridir. Kaynağı `km_core/security/identity.py` →
+`BUILTIN_SERVICE_ROLES`. Çekirdek rolün yalnız varlığını garanti eder;
+izinlerini onu `default_roles` ile öneren modüller verir.
+
+| id | Ad | Özet |
+|---|---|---|
+| `mobile_service` | Mobil Servis | Mobil uygulama sunucusu (BBD Akademi API). İzinleri modül manifestlerinden gelir (ör. mobil geçit modülünün erişim izni). |
+
+Servis sorumlusu için izin denetimi kişininkiyle AYNIDIR: `has_permission`.
+Yıkıcı işlemlerin PIN teyidi servis sorumlusunda her zaman reddedilir — PIN'i
+yoktur. `X-KM-On-Behalf-Of` başlığı yetki vermez; yalnız denetim izine yazılır.
+
 `accountant` kurum dışından da olabilir (serbest çalışan mali müşavir). Bu
 yüzden kapsamı iki tarafı da kapsar ama çekirdek izinlerinin hiçbirini almaz:
 gördüğü şey **kayıt**tır, **sistem** değil.

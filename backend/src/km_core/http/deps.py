@@ -13,18 +13,40 @@ işlemler izin yeterli olsa bile PIN teyidi ister"). Bu kapı bugüne kadar YALN
 çekirdeğin eşleme ucunda vardı (`km_platform/identity_sync/http.py`) ve modüllere
 kapalıydı; `store_customers/module.yaml` bunu açıkça bekleyen bir not düşmüştü.
 Üç ayrı yerde aynı doğrulamayı elle yazmak yerine tek yerde durur.
+
+**İKİ TÜR BELİRTEÇ (ADR 0028).** `Authorization: Bearer` ya bir kişinin oturum
+belirtecidir ya da `kmsk_` ile başlayan bir servis anahtarı. İkisi de AYNI
+`CurrentUser`a çözülür; izin denetimi ve denetim izi aynı yoldan geçer. Servis
+anahtarı ayrıca:
+
+  · istemci adresini en sağdaki `X-Forwarded-For` değerinden okur (ilk değer
+    istemcinin kendi yazdığıdır, ağ kısıtını atlatmak için uydurulabilir),
+  · kendi hız sınırı kovasında sayılır (PIN girişinin kovasıyla karışmaz),
+  · `X-KM-On-Behalf-Of` başlığını denetim izine taşır. Başlık YETKİ VERMEZ ve
+    kişi oturumunda yok sayılır.
 """
 
 from __future__ import annotations
 
 import hmac
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from typing import Any, cast
 
 from fastapi import Depends, Header, HTTPException, Request
 
 from km_core.files import outputs_log
-from km_core.security.identity import CurrentUser, Identity
+from km_core.security import audit_context
+from km_core.security.identity import SERVICE_TOKEN_MARK, CurrentUser, Identity
+from km_core.security.rate_limit import RateLimiter
+from km_core.security.service_keys import ServiceKeys
+
+#: Servis anahtarı başına dakikadaki istek sınırı. `auth.service_key_requests_per_minute`
+#: ile ezilir. Kişi girişinin kovasından AYRIDIR (ADR 0028).
+SERVICE_REQUESTS_PER_MINUTE = 1200
+
+#: Geçersiz servis anahtarı denemesi — kaynak (IP) başına, dakikada.
+SERVICE_FAILURES_PER_MINUTE = 10
 
 
 def split_permission(entry: str) -> tuple[str, str | None]:
@@ -46,9 +68,134 @@ async def resolve_once(request: Request, identity: Identity, token: str) -> Curr
     cached = getattr(request.state, "km_session", None)
     if cached is not None and cached[0] == token:
         return cast("CurrentUser | None", cached[1])
-    user = await identity.resolve_session(token) if token else None
+    if token.startswith(SERVICE_TOKEN_MARK):
+        user = await _resolve_service_key(request, identity, token)
+    else:
+        user = await identity.resolve_session(token) if token else None
     request.state.km_session = (token, user)
     return user
+
+
+def bearer_token(authorization: str | None) -> str:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
+def client_ip(request: Request) -> str:
+    """İsteğin geldiği adres — servis anahtarının ağ kısıtı için.
+
+    Ters vekil (Traefik/Coolify) gördüğü adresi `X-Forwarded-For` listesinin
+    SONUNA ekler. Listenin başı istemcinin kendi yazdığıdır ve uydurulabilir;
+    ağ kısıtı ona bakarsa herkes izinli adresi yazıp geçerdi. Bu yüzden EN
+    SAĞDAKİ değer alınır. Başlık yoksa bağlantının kendi adresi kullanılır.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    if hops:
+        return hops[-1]
+    client = request.client
+    return client.host if client else ""
+
+
+def _state_limiter(request: Request, name: str, **limits: Any) -> RateLimiter:
+    """Uygulama başına tek sınırlayıcı (bkz. `users._limiter` notu)."""
+    limiter: RateLimiter | None = getattr(request.app.state, name, None)
+    if limiter is None:
+        limiter = RateLimiter(**limits)
+        setattr(request.app.state, name, limiter)
+    return limiter
+
+
+def _service_keys(request: Request, identity: Identity) -> ServiceKeys:
+    keys: ServiceKeys | None = getattr(request.app.state, "service_keys", None)
+    if keys is None or keys.identity is not identity:
+        keys = ServiceKeys(identity)
+        request.app.state.service_keys = keys
+    return keys
+
+
+def _config_int(request: Request, path: str, default: int) -> int:
+    config = getattr(request.app.state, "config", None)
+    try:
+        return int(config.get(path, default)) if config is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _too_many(wait: float) -> HTTPException:
+    seconds = int(wait) + 1
+    return HTTPException(
+        status_code=429,
+        detail=f"Çok fazla istek. {seconds} saniye sonra deneyin.",
+        headers={"Retry-After": str(seconds)},
+    )
+
+
+async def _resolve_service_key(request: Request, identity: Identity,
+                               token: str) -> CurrentUser | None:
+    """Servis anahtarını çözer (ADR 0028). Geçersizse `None` → 401.
+
+    Sıra: önce kaynağın başarısız deneme sayacına bakılır (kaba kuvvet
+    denemesi doğrulamaya ulaşmasın), sonra anahtar doğrulanır, en son
+    anahtarın kendi istek kovası sayılır.
+    """
+    source = client_ip(request) or "bilinmeyen"
+    # Genel sınır BİLEREK fiilen kapalı: başka adreslerden gelen çöp
+    # denemeler, geçerli anahtarı taşıyan istemciyi kilitlememeli. 256 bitlik
+    # sır kaba kuvvetle bulunamaz; bu sayaç yalnız denetim izini ve depoyu
+    # aynı kaynağın yağmurundan korur.
+    failures = _state_limiter(
+        request, "service_key_failures",
+        source_limit=SERVICE_FAILURES_PER_MINUTE, source_window=60.0,
+        global_limit=1_000_000, global_window=60.0,
+    )
+    wait = failures.peek(source)
+    if wait is not None:
+        raise _too_many(wait)
+
+    verdict = await _service_keys(request, identity).verify(token, client_ip=source)
+    if verdict.user is None:
+        await identity.audit(verdict.user_id, "auth.service_key", result="fail",
+                             detail=f"{verdict.prefix or '-'}: {verdict.reason}")
+        wait = failures.check(source)
+        if wait is not None:
+            raise _too_many(wait)
+        return None
+
+    per_minute = _config_int(request, "auth.service_key_requests_per_minute",
+                             SERVICE_REQUESTS_PER_MINUTE)
+    requests_bucket = _state_limiter(
+        request, "service_key_requests",
+        source_limit=max(1, per_minute), source_window=60.0,
+        global_limit=max(1, per_minute) * 4, global_window=60.0,
+    )
+    wait = requests_bucket.check(verdict.prefix or verdict.user.id)
+    if wait is not None:
+        raise _too_many(wait)
+
+    user = verdict.user
+    user.on_behalf_of = audit_context.clean_header(
+        request.headers.get("x-km-on-behalf-of"), audit_context.ON_BEHALF_OF_MAX
+    )
+    return user
+
+
+@contextmanager
+def request_context(request: Request, user: CurrentUser) -> Iterator[None]:
+    """İstek boyunca çıktı kaydının sahibi ve denetim bağlamı.
+
+    `on_behalf_of` YALNIZ servis sorumlusunda taşınır; kişi oturumunda
+    "kimin adına" sorusunun cevabı oturumun sahibidir. `X-Request-Id` iki
+    türde de denetim izine geçer. İki değer de istek bitince geri alınır —
+    sızarsa bir sonraki istek yanlış kişiye yazılır.
+    """
+    on_behalf_of = user.on_behalf_of if user.is_service else None
+    request_id = audit_context.clean_header(
+        request.headers.get("x-request-id"), audit_context.REQUEST_ID_MAX
+    )
+    with outputs_log.use_actor(user.id), audit_context.use(on_behalf_of, request_id):
+        yield
 
 
 def requires(*permissions: str) -> Any:
@@ -69,23 +216,23 @@ def requires(*permissions: str) -> Any:
         if identity is None:
             raise HTTPException(status_code=503, detail="Kimlik hazır değil.")
 
-        token = authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else ""
+        token = bearer_token(authorization)
         user = await resolve_once(request, identity, token)
         if user is None:
             raise HTTPException(status_code=401, detail="Oturum yok veya süresi doldu.")
 
-        if not any(user.has_permission(*split_permission(entry)) for entry in permissions):
-            await identity.audit(
-                user.id, "permission.denied", result="denied", detail=",".join(permissions)
-            )
-            raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
-
-        # Çıktı kaydına üreten kişiyi tanıtır (ADR 0019 §2). Kapı burada da
+        # Çıktı kaydına üreten kişiyi tanıtır (ADR 0019 §2); denetim izine
+        # "kimin adına" ve istek kimliğini taşır (ADR 0028). Kapı burada da
         # kurulur çünkü çekirdeğin kendi router'ları (`settings`, `users`)
         # `app.py` içindeki `current_user`dan GEÇMEZ — destek paketi gibi
         # oradan doğan çıktılar da sahipsiz kalmasın. Değer istek bitince
         # geri alınır; sızarsa bir sonraki istek yanlış kişiye yazılır.
-        with outputs_log.use_actor(user.id):
+        with request_context(request, user):
+            if not any(user.has_permission(*split_permission(entry)) for entry in permissions):
+                await identity.audit(
+                    user.id, "permission.denied", result="denied", detail=",".join(permissions)
+                )
+                raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
             yield user
 
     return Depends(dependency)

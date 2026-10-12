@@ -87,6 +87,24 @@ class RateLimiter:
         self._forget_oldest_if_needed()
         return None
 
+    def peek(self, source: str, *, now: float | None = None) -> float | None:
+        """`check` gibi karar verir ama denemeyi KAYDETMEZ.
+
+        Yalnız BAŞARISIZLIKLARI sayan kapılar içindir (ADR 0028 — servis
+        anahtarı): her istekte `check` çağırmak meşru trafiği de sayardı;
+        kapı önce `peek` ile bakar, yalnız başarısız denemeyi `check` ile yazar.
+        """
+        moment = time.monotonic() if now is None else now
+        _trim(self._all, moment - self._global_window)
+        stamps = self._by_source.get(source)
+        if stamps is not None:
+            _trim(stamps, moment - self._source_window)
+            if len(stamps) >= self._source_limit:
+                return max(0.0, stamps[0] + self._source_window - moment)
+        if len(self._all) >= self._global_limit:
+            return max(0.0, self._all[0] + self._global_window - moment)
+        return None
+
     def reset(self, source: str) -> None:
         """Başarılı girişten sonra kaynağın sayacı temizlenir.
 

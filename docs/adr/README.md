@@ -41,6 +41,8 @@ yanlış yönlendirirdi.
 | 0024 | macOS kod imzası ve notarization (0023 §5'i genişletir) | Kabul edildi |
 | 0025 | Sırlar ve geçit ayarları kurulumlara dağıtılır (0021 §6'yı tersine çevirir) | Kabul edildi · **kapsamı 0026 ile daraldı** |
 | 0026 | Sunucu merkezli mimari: veri merkezde, kabuk ince | Kabul edildi |
+| 0027 | Zilden sonra anons geri geldi; tür açıkça saklanıyor | Kabul edildi |
+| 0028 | Servis anahtarları: makineden makineye kimlik | Kabul edildi |
 
 ---
 
