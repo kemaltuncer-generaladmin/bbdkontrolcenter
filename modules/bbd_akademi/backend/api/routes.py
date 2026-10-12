@@ -222,7 +222,7 @@ async def download(request: Request, url: str = Query(min_length=8, max_length=4
 
 @router.get("/km/staff")
 async def staff_list(user: CurrentUser = requires(STAFF)) -> dict[str, Any]:
-    return {"items": await staff().list(), "sync": await staff().state(),
+    return {"items": await staff().rows(), "sync": await staff().state(),
             "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()]}
 
 
@@ -252,7 +252,7 @@ async def staff_update(staff_id: str, body: StaffPatchBody,
 @router.post("/km/staff/sync")
 async def staff_sync(user: CurrentUser = requires(STAFF)) -> dict[str, Any]:
     return {"sync": await staff().push(source="manual", actor=(user.id, user.full_name)),
-            "items": await staff().list()}
+            "items": await staff().rows()}
 
 
 # ---------------------------------------------------------------- ham vekil

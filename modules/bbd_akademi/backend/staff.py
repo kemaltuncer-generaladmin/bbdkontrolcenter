@@ -107,7 +107,7 @@ class StaffService:
                           if row.get("last_error_code") else None),
         }
 
-    async def list(self) -> list[dict[str, Any]]:
+    async def rows(self) -> list[dict[str, Any]]:
         rows = await self._store.fetch_all(
             f"SELECT * FROM {self._table} ORDER BY active DESC, display_name")
         return [self._row(row) for row in rows]

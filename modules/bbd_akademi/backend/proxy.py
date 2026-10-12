@@ -287,7 +287,7 @@ async def _limited(stream: AsyncIterator[bytes], limit: int) -> AsyncIterator[by
 
 
 def _encode_query(query: Mapping[str, Any] | None, inline: str = "") -> str:
-    pairs: list[tuple[str, str]] = []
+    pairs: list[tuple[str, str | int | float | bool | None]] = []
     for key, value in (query or {}).items():
         if value is None or value == "":
             continue
