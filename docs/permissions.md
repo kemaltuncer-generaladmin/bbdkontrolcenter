@@ -139,7 +139,8 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bell` | `bell.view` | Haftalık zil saatlerini, grupları ve çalma günlüğünü görür |
 | `bell` | `bell.manage` | Saatleri, grupları, sesleri ve anons metinlerini düzenler |
 | `bell` | `bell.delete` | Grubu, yüklenmiş zil sesini ve kullanılmayan anonsları KALICI siler (geri alınamaz, PIN ister) |
-| `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır |
+| `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır, öğrenci çağırma anonsu yapar (`POST /api/bell/page`) |
+| `bbd_students` | `bbd_students.canteen_controls` | Veli kantin kontrollerini düzenler: borç/günlük limit, kurum engeli, veli engelini kaldırma, yasaklı ürünler (admin, bbd_staff, org_staff) |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
 | `print` | `print.reprint` | Üretilmiş bir çıktıyı yeniden yazıcıya gönderir |
