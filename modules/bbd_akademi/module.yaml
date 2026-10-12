@@ -1,0 +1,116 @@
+# BBD Akademi yönetimi — Akademi'nin TAM yönetim konsolu (kullanıcı kararı:
+# KM çekirdektir ve en yetkili uygulamadır; mobil yönetici pratik alt kümedir).
+#
+# İŞ KURALI BURADA DEĞİL, AKADEMİ API'SİNDE. Bu modül Akademi'nin
+# `/v1/admin/*` uçlarını sunucu tarafında, İZİN LİSTESİYLE sınırlı bir vekil
+# üzerinden çağırır (Akademi entegrasyon anahtarı `aksk_…`, kasada). Akademi
+# verisinin kopyası tutulmaz. Sözleşme:
+# bbd-akademi/docs/integrations/km-akademi-paneli.md
+#
+# Modülün KENDİ verisi tek şeydir: mobil yöneticiye kimin erişeceği
+# (personel listesi) — KM otoritedir ve liste Akademi'ye itilir.
+#
+# Kantin parası ile kurum parası ayrıdır (A12): kurum cari bu ekrandadır;
+# kantin veli kontrolleri ve kantin nakit tahsilatı Öğrenciler ekranındadır.
+
+id: bbd_akademi
+name: "BBD Akademi"
+description: "BBD Akademi yönetimi: öğrenci akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme (toplu yükleme), kurum finansı, kitap talepleri, duyurular, talepler, kurum ayarları ve mobil yönetici erişimi."
+version: 0.1.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+depends: []
+provides: []
+consumes:
+  - capability: secrets
+    reason: "Akademi entegrasyon anahtarı (`bbd_akademi.api_key`) kasada durur (K8)."
+events:
+  publishes: []
+  subscribes: []
+
+http:
+  prefix: /api/bbd_akademi
+  router: backend.api.routes:router
+  tags: ["bbd_akademi"]
+  # Taban izin. Vekil uçlarında asıl kapı İŞLEM BAŞINADIR:
+  # backend/permission_map.py (Akademi izni → KM izni, tek tablo).
+  requires: [bbd_akademi.view]
+
+ui:
+  entry: ui/panel/index.js
+  nav:
+    title: "BBD Akademi"
+    icon: book
+    group: "BBD"
+    order: 45
+    requires: [bbd_akademi.view]
+
+# Akademi izinlerinin KM karşılıkları. Eşleme: backend/permission_map.py.
+permissions:
+  - key: bbd_akademi.view
+    description: "Akademi ekranlarını görüntüleme: panel, öğrencilerin akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme sonuçları, kitap talepleri."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.academic
+    description: "Ders programı ve zil dilimleri, etüt ve tek seferlik ders, ödev, dönem, sınıf grubu ve çalışma grubu, hedef önerisi."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.curriculum
+    description: "Müfredat: kuruma özel ünite/konu ekleme, program istisnaları (öğrenci veya sınıf bazında)."
+    default_roles: [admin]
+  - key: bbd_akademi.resources
+    description: "Kaynaklar: kurum kaynağı ekleme, içindekiler ve konu eşlemesi, kaynak paketleri ve otomatik atama, kaynak atama."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.attendance
+    description: "Yoklama alma ve düzeltme."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.exams
+    description: "Deneme tanımı, sonuç girişi ve düzeltme, toplu sonuç yükleme ve geri alma, cevap anahtarı ve soru-konu eşlemesi, yayımlama, dışa aktarım."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.finance
+    description: "Kurum cari hesapları (kantinden ayrı): görüntüleme, taksit planı, borç kalemi, tahsilat kaydı, gecikme hatırlatması, ekstre."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.finance_void
+    description: "Kurum tahsilatını iptal etme. İzin yeterli olsa bile işlemden hemen önce PIN teyidi ister."
+    destructive: true
+    default_roles: [admin]
+  - key: bbd_akademi.books
+    description: "Kitap talepleri: siparişi yeniden deneme, teslim, sipariş PDF'i."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.announcements
+    description: "Duyuru oluşturma, hedefleme, zamanlama, yayımlama ve silme."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.requests
+    description: "İzin (mazeret), görüşme ve etüt taleplerini onaylama, reddetme, zaman verme."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.settings
+    description: "Kurum ayarları: kantin kuralları, bildirim varsayılanları, tema ve logo, özellik bayrakları, entegrasyon anahtarları, anons şablonları, dizin eşitleme, denetim kaydı."
+    default_roles: [admin]
+  - key: bbd_akademi.staff
+    description: "Mobil yönetici erişimi (personel listesi, Akademi'ye itilir) ve Akademi rolleri."
+    default_roles: [admin]
+  - key: bbd_akademi.campus
+    description: "Akademi üzerinden anlık kurum işleri: öğrenci çağırma (anons), tablet ek süre, engel ve oturum bitirme."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.canteen
+    description: "Akademi üzerinden kantin işlemleri (kurum engeli, kantin nakit tahsilatı). Asıl ekranı Öğrenciler modülüdür; bu izin yalnız vekil içindir."
+    default_roles: [admin]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+dependencies:
+  python:
+    - "httpx>=0.28"
+  system: []
+
+tasks:
+  - name: staff_sync
+    handler: backend.tasks:run_staff_sync
+    # Asıl döngü register(ctx) içinde başlar (staff_sync_minutes); bu satır
+    # görevi ilan eder.
+    schedule: "*/30 * * * *"

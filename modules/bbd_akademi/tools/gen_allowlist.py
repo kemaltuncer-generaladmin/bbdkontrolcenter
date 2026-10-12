@@ -1,0 +1,173 @@
+"""Akademi API sözleşmesinden vekil izin listesini üretir.
+
+KAYNAK TEK: `bbd-akademi/docs/api/openapi.yaml` (bağlayıcı sözleşme). Liste
+elle yazılmaz; sözleşme değişince bu betik yeniden koşturulur ve üretilen
+`backend/allowlist.py` commit'lenir. Test (`tests/test_allowlist.py`) sözleşme
+erişilebilirse ikisinin AYNI olduğunu da doğrular.
+
+Listeye girenler (sözleşme `docs/api/README.md` §8):
+
+  · bütün `/v1/admin/*` işlemleri (her biri `x-surface: km | both` taşır)
+  · `/v1/students/{studentId}/*` altındaki, entegrasyon anahtarıyla
+    çağrılabilen (`security` içinde `integrationKey`) GET işlemleri
+  · `/v1/catalog/*` GET işlemleri (ISBN / kütüphane araması)
+
+Kullanım (depo kökünden):
+
+    .venv/bin/python modules/bbd_akademi/tools/gen_allowlist.py \
+        [--spec ../bbd-akademi/docs/api/openapi.yaml] [--check]
+
+`--check`: dosyayı yazmaz; üretilen içerik commit'lenmiş olandan farklıysa
+1 ile çıkar.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+MODULE = Path(__file__).resolve().parents[1]
+TARGET = MODULE / "backend" / "allowlist.py"
+DEFAULT_SPEC = MODULE.parents[3] / "bbd-akademi" / "docs" / "api" / "openapi.yaml"
+
+METHODS = ("get", "post", "put", "patch", "delete")
+PARAM = re.compile(r"\{([A-Za-z][A-Za-z0-9]*)\}")
+
+
+def _permissions(raw: Any) -> tuple[str, ...]:
+    """`x-permission` → kapsamsız anahtarlar.
+
+    `schedule.view:self|children|tenant` → `schedule.view`; liste biçimi
+    (`['audit.export', 'exams.export']`) "birisi yeterli" demektir.
+    """
+    items = raw if isinstance(raw, list) else [raw]
+    keys: list[str] = []
+    for item in items:
+        key = str(item or "").split(":", 1)[0].strip()
+        if key and key not in keys:
+            keys.append(key)
+    return tuple(keys)
+
+
+def _accepts_integration_key(operation: dict[str, Any], spec: dict[str, Any]) -> bool:
+    security = operation.get("security", spec.get("security")) or []
+    return any("integrationKey" in entry for entry in security)
+
+
+def _multipart(operation: dict[str, Any]) -> bool:
+    body = operation.get("requestBody") or {}
+    return "multipart/form-data" in (body.get("content") or {})
+
+
+def collect(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path, item in (spec.get("paths") or {}).items():
+        for method in METHODS:
+            operation = item.get(method)
+            if not operation:
+                continue
+            admin = path.startswith("/v1/admin/")
+            student_read = (path.startswith("/v1/students/{studentId}/") and method == "get"
+                            and _accepts_integration_key(operation, spec))
+            catalog_read = (path.startswith("/v1/catalog/") and method == "get"
+                            and _accepts_integration_key(operation, spec))
+            if not (admin or student_read or catalog_read):
+                continue
+            if admin and not operation.get("x-surface"):
+                raise SystemExit(f"{operation.get('operationId')}: x-surface yok — sözleşme bozuk")
+            rows.append({
+                "method": method.upper(),
+                "path": path,
+                "operation_id": str(operation["operationId"]),
+                "permissions": _permissions(operation.get("x-permission")),
+                "surface": str(operation.get("x-surface") or "read"),
+                "step_up": bool(operation.get("x-step-up")),
+                "money": bool(operation.get("x-money")),
+                "multipart": _multipart(operation),
+                "feature_flag": operation.get("x-feature-flag"),
+                "features": tuple(str(x) for x in operation.get("x-features") or ()),
+            })
+    rows.sort(key=lambda row: (row["path"], METHODS.index(row["method"].lower())))
+    return rows
+
+
+def render(rows: list[dict[str, Any]], version: str) -> str:
+    lines = [
+        '"""ÜRETİLEN DOSYA — elle düzenlenmez.',
+        "",
+        f"Kaynak: bbd-akademi/docs/api/openapi.yaml (info.version {version}).",
+        "Üretici: modules/bbd_akademi/tools/gen_allowlist.py",
+        "",
+        "Vekilin geçirdiği işlemlerin tamamı. Burada olmayan her istek 403'tür.",
+        "Akademi izni → KM izni eşlemesi `permission_map.py` içindedir.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from .operations import Operation",
+        "",
+        f"CONTRACT_VERSION = {version!r}",
+        "",
+        "OPERATIONS: tuple[Operation, ...] = (",
+    ]
+    for row in rows:
+        args = [
+            f"{row['method']!r}",
+            f"{row['path']!r}",
+            f"{row['operation_id']!r}",
+            f"{row['permissions']!r}",
+            f"{row['surface']!r}",
+        ]
+        flags = []
+        if row["step_up"]:
+            flags.append("step_up=True")
+        if row["money"]:
+            flags.append("money=True")
+        if row["multipart"]:
+            flags.append("multipart=True")
+        if row["feature_flag"]:
+            flags.append(f"feature_flag={row['feature_flag']!r}")
+        if row["features"]:
+            flags.append(f"features={row['features']!r}")
+        text = f"    Operation({', '.join(args + flags)}),"
+        if len(text) <= 100:
+            lines.append(text)
+            continue
+        lines.append("    Operation(")
+        for part in args + flags:
+            lines.append(f"        {part},")
+        lines.append("    ),")
+    lines.append(")")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args(argv)
+
+    spec = yaml.safe_load(args.spec.read_text(encoding="utf-8"))
+    rows = collect(spec)
+    text = render(rows, str((spec.get("info") or {}).get("version") or "?"))
+    if args.check:
+        current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
+        if current != text:
+            print("allowlist.py sözleşmeyle uyuşmuyor — betiği yeniden koşturun.", file=sys.stderr)
+            return 1
+        print(f"allowlist.py güncel ({len(rows)} işlem).")
+        return 0
+    TARGET.write_text(text, encoding="utf-8")
+    admin = sum(1 for row in rows if row["path"].startswith("/v1/admin/"))
+    print(f"{TARGET.relative_to(MODULE.parents[1])}: {len(rows)} işlem ({admin} admin)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

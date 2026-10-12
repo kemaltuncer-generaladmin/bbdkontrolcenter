@@ -1,0 +1,155 @@
+"""Akademi izni → KM izni. VEKİLİN YETKİ TABLOSU TEK YERDE.
+
+Vekil bir isteği geçirmeden önce iki kapıdan geçirir (K9):
+
+1. İşlem izin listesinde mi (`allowlist.py`, sözleşmeden üretilir)?
+2. KM kullanıcısı o işlemin Akademi iznine karşılık gelen KM iznini taşıyor mu?
+
+İkinci kapının bütün bilgisi bu dosyadadır; router'da, panelde ya da başka bir
+yerde izin adı yazılmaz. Akademi'ye giden istek entegrasyon anahtarının
+izinleriyle yetkilendirilir (Akademi'de ikinci kez denetlenir); buradaki tablo
+"KM'de bu kişi bu işi yapabilir mi" sorusunun cevabıdır.
+
+Kural: Akademi izni → TEK KM izni. Sözleşmede tek Akademi izni iki ayrı işi
+kapsıyorsa (ör. `etut.manage` hem etüt dersi hem etüt talebi) ayrım işlem
+kimliğiyle `OPERATION_OVERRIDES` içinde yapılır — yine bu dosyada.
+
+Kantin parası ile kurum parası ayrıdır (A12): `canteen.*` hiçbir zaman
+`bbd_akademi.finance`e eşlenmez.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+from .operations import Operation
+
+MODULE = "bbd_akademi"
+
+VIEW = f"{MODULE}.view"
+ACADEMIC = f"{MODULE}.academic"
+CURRICULUM = f"{MODULE}.curriculum"
+RESOURCES = f"{MODULE}.resources"
+ATTENDANCE = f"{MODULE}.attendance"
+EXAMS = f"{MODULE}.exams"
+FINANCE = f"{MODULE}.finance"
+FINANCE_VOID = f"{MODULE}.finance_void"
+BOOKS = f"{MODULE}.books"
+ANNOUNCEMENTS = f"{MODULE}.announcements"
+REQUESTS = f"{MODULE}.requests"
+SETTINGS = f"{MODULE}.settings"
+STAFF = f"{MODULE}.staff"
+CAMPUS = f"{MODULE}.campus"
+CANTEEN = f"{MODULE}.canteen"
+
+#: Akademi izin anahtarı (kapsamsız) → KM izni.
+PERMISSION_MAP: dict[str, str] = {
+    # --- görüntüleme: Akademi ekranlarını açabilen herkes
+    "dashboard.view": VIEW,
+    "students.view": VIEW,
+    "schedule.view": VIEW,
+    "attendance.view": VIEW,
+    "homework.view": VIEW,
+    "exams.view": VIEW,
+    "books.view": VIEW,
+    "curriculum.view": VIEW,
+    "resources.view": VIEW,
+    "tablet.view": VIEW,
+    "canteen.view": VIEW,
+    "progress.view": VIEW,
+    "study.view": VIEW,
+    "goals.view": VIEW,
+    "reports.view": VIEW,
+    # --- akademik işler: program, etüt, ödev, dönem/sınıf/grup, zil dilimi
+    "academic.manage": ACADEMIC,
+    "timetable.manage": ACADEMIC,
+    "timetable.edit": ACADEMIC,
+    "etut.manage": ACADEMIC,
+    "homework.manage": ACADEMIC,
+    "goals.suggest": ACADEMIC,
+    # --- müfredat ve kaynak
+    "curriculum.manage": CURRICULUM,
+    "resources.author": RESOURCES,
+    "resources.manage": RESOURCES,
+    # --- yoklama
+    "attendance.manage": ATTENDANCE,
+    # --- deneme (tanım, sonuç, toplu yükleme, cevap anahtarı, dışa aktarım)
+    "exams.manage": EXAMS,
+    "exams.import": EXAMS,
+    "exams.export": EXAMS,
+    # --- kurum cari (kantinden AYRI — A12). Görüntüleme de hassastır.
+    "finance.view": FINANCE,
+    "finance.manage": FINANCE,
+    "finance.record_payment": FINANCE,
+    "finance.void": FINANCE_VOID,
+    # --- kitap talepleri
+    "books.manage": BOOKS,
+    # --- duyurular
+    "announcements.manage": ANNOUNCEMENTS,
+    # --- talepler (izin, görüşme; etüt talebi aşağıda işlemle ayrılır)
+    "leave.manage": REQUESTS,
+    "meetings.manage": REQUESTS,
+    "meetings.request": REQUESTS,
+    # --- kurum ayarları (yalnız KM yüzeyi)
+    "settings.manage": SETTINGS,
+    "branding.manage": SETTINGS,
+    "integrations.manage": SETTINGS,
+    "canteen.settings": SETTINGS,
+    "pa.manage": SETTINGS,
+    "audit.view": SETTINGS,
+    "audit.export": SETTINGS,
+    "directory.sync": SETTINGS,
+    # --- personel ve Akademi rolleri (mobil yönetici erişimi KM'dedir)
+    "staff.manage": STAFF,
+    "roles.manage": STAFF,
+    # --- kurum içi anlık işler Akademi üzerinden (anons, tablet)
+    "pa.call": CAMPUS,
+    "tablet.control": CAMPUS,
+    # --- kantin işlemleri Akademi üzerinden (asıl ekran: Öğrenciler modülü)
+    "canteen.controls": CANTEEN,
+    "canteen.collect_cash": CANTEEN,
+}
+
+#: İşlem kimliğine göre ayrım. Yalnız aynı Akademi izninin iki ayrı KM işine
+#: düştüğü yerde kullanılır.
+OPERATION_OVERRIDES: dict[str, str] = {
+    # Etüt TALEPLERİ "Talepler" kuyruğundadır (sözleşme §2: izin / görüşme /
+    # etüt talepleri `bbd_akademi.requests`); etüt DERSİ ise akademik iştir.
+    "admin_listEtutRequests": REQUESTS,
+    "admin_scheduleEtut": REQUESTS,
+    "admin_declineEtut": REQUESTS,
+}
+
+
+def km_permissions(operation: Operation) -> tuple[str, ...]:
+    """İşlemi açan KM izinleri — BİRİ yeterli.
+
+    Eşlenmemiş Akademi izni `KeyError` fırlatır: sözleşmeye yeni izin
+    eklendiğinde sessizce açık ya da kapalı kalmak yerine test kırılır.
+    """
+    override = OPERATION_OVERRIDES.get(operation.operation_id)
+    if override:
+        return (override,)
+    keys: list[str] = []
+    for permission in operation.permissions:
+        mapped = PERMISSION_MAP[permission]
+        if mapped not in keys:
+            keys.append(mapped)
+    return tuple(keys)
+
+
+def unmapped(operations: Iterable[Operation]) -> list[str]:
+    """Eşlemesi olmayan Akademi izinleri (test ve açılış denetimi için)."""
+    missing: set[str] = set()
+    for operation in operations:
+        if operation.operation_id in OPERATION_OVERRIDES:
+            continue
+        missing.update(p for p in operation.permissions if p not in PERMISSION_MAP)
+    return sorted(missing)
+
+
+#: Panelin bölüm görünürlüğü de AYNI tablodan okunur (`GET km/capabilities`).
+ALL_PERMISSIONS: tuple[str, ...] = (
+    VIEW, ACADEMIC, CURRICULUM, RESOURCES, ATTENDANCE, EXAMS, FINANCE, FINANCE_VOID,
+    BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN,
+)
