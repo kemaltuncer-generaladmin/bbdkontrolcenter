@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from bell_backend.service import (
@@ -26,6 +27,9 @@ from bell_fakes import (
     FakeSpeech,
 )
 
+MONDAY = date(2026, 10, 12)
+MONDAY_MORNING = datetime(2026, 10, 12, 8, 0, tzinfo=ZoneInfo("Europe/Istanbul"))
+
 
 def build(store: Any, sounds: Path, *, speech: FakeSpeech | None = None,
           bridge: FakeBridge | None = None,
@@ -44,9 +48,12 @@ def build(store: Any, sounds: Path, *, speech: FakeSpeech | None = None,
         store=store, log=log, speech=parts["speech"],
         sounds_path=sounds, config={"min_interval_seconds": 0},
     )
+    # "Bugün" sabittir (pazartesi 12.10.2026): tetikler tarihlidir ve
+    # `fireDate` bugün değilse atlanır — test haftanın gününe bağlı kalmasın.
     service = BellService(
         store=store, log=log, audio=parts["audio"], scheduler=parts["scheduler"],
         voices=parts["voices"], bridge=parts["bridge"], play_locally=play_locally,
+        today=lambda: MONDAY, now=lambda: MONDAY_MORNING,
     )
     return service, parts
 
@@ -386,13 +393,11 @@ async def test_tetikleyici_zil_ve_arkasindan_anons_yollar(store: Any,
     assert len(bridge.sent) == 1
     kinds = [item["kind"] for item in bridge.sent[0]["items"]]
     assert kinds == ["zil", "anons"]
-    # DAMGA OFFSET TAŞIR: `_next_occurrence` `now.astimezone()` kullanır ve
-    # `2026-08-16T08:40:00+03:00` üretir. Offset kasıtlıdır — yaz saati
-    # geçişinde "08:40" tek başına iki ayrı anı gösterebilir; ajan damgayı
-    # `datetime.fromisoformat` ile okuduğu için offseti sorunsuz çözer.
-    # Bu yüzden sonek değil, DUVAR SAATİ sınanır.
+    # DAMGA MUTLAK ANDIR ve Europe/Istanbul'dadır: tetik tarihlidir, damga
+    # o günün o saatinden kurulur (makinenin saat dilimine bakılmaz — sunucu
+    # UTC'de koşar). Ajan damgayı `datetime.fromisoformat` ile okur.
     play_at = bridge.sent[0]["playAt"]
-    assert play_at == "" or datetime.fromisoformat(play_at).strftime("%H:%M:%S") == "08:40:00"
+    assert play_at == "2026-10-12T08:40:00+03:00"
 
 
 # ------------------------------------------------------------------- çalma
@@ -870,3 +875,43 @@ async def test_anons_dosyasi_ses_ucundan_silinemez(store: Any, sounds: Path) -> 
     service, _ = build(store, sounds)
     result = await service.delete_sound("anons-abc123.wav", actor="t")
     assert result["ok"] is False
+
+
+# ------------------------------------------------------ haftalık plan olayı
+
+
+async def test_hafta_degisince_bildirilir_okuma_bildirmez(store: Any, sounds: Path) -> None:
+    """Saat ya da grup yazımı `bell.week_changed` yayınlatır (mobil geçit
+    önbelleği hemen bırakılır); okuma ve başarısız yazma yayınlatmaz."""
+    service, parts = build(store, sounds)
+    calls: list[int] = []
+
+    async def changed() -> None:
+        calls.append(1)
+
+    service._on_week_change = changed
+    await service.week()
+    assert calls == []
+    await service.save_times({"mon": [{"time": "08:40"}]}, actor="t")
+    assert len(calls) == 1
+    added = await service.add_group("LGS", actor="t")
+    assert len(calls) == 2
+    assert (await service.add_group("  ", actor="t"))["ok"] is False
+    assert len(calls) == 2
+    await service.rename_group(added["id"], "LGS A", actor="t")
+    assert len(calls) == 3
+    await service.remove_group(added["id"], actor="t")
+    assert len(calls) == 4
+    await drain(parts["voices"])
+
+
+async def test_hafta_bildirimi_patlasa_da_yazma_surer(store: Any, sounds: Path) -> None:
+    service, parts = build(store, sounds)
+
+    async def broken() -> None:
+        raise RuntimeError("veri yolu yok")
+
+    service._on_week_change = broken
+    result = await service.save_times({"tue": [{"time": "10:00"}]}, actor="t")
+    assert result["ok"] is True and result["times"]["tue"][0]["time"] == "10:00"
+    await drain(parts["voices"])

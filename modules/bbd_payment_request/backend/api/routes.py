@@ -49,6 +49,12 @@ class TemplateBody(BaseModel):
     templates: dict[str, str] = Field(default_factory=dict)
 
 
+class RequestOneBody(BaseModel):
+    """Tek öğrenciye talep. `amount` (kuruş) boşsa borcun tamamı."""
+
+    amount: int | None = Field(default=None, ge=100, le=100_000_000)
+
+
 @router.get("/workspace")
 async def workspace(user: CurrentUser = requires("bbd_payment_request.view")) -> dict[str, Any]:
     """Talepler, öğrenciler, şablonlar, son gönderimler, tahsilat geçmişi."""
@@ -114,8 +120,28 @@ async def collect(
     body: CollectBody,
     user: CurrentUser = requires("bbd_payment_request.collect"),
 ) -> dict[str, Any]:
-    """Elden alınan nakit tahsilat. Tutar borçtan fazla olamaz; localId ile idempotent."""
+    """Elden alınan nakit tahsilat. Tutar borcu (ön ödeme açıksa borç + izinli ön
+    ödemeyi) aşamaz; localId ile idempotent."""
     return await service().collect(body.model_dump(), actor=user.full_name)
+
+
+@router.get("/students/{kantin_id}/state")
+async def student_state(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_payment_request.view"),
+) -> dict[str, Any]:
+    """Öğrenci ekranındaki tahsilat/talep kartının verisi (borç, sınır, açık talep)."""
+    return await service().student_state(kantin_id)
+
+
+@router.post("/students/{kantin_id}/request")
+async def request_one(
+    kantin_id: str,
+    body: RequestOneBody,
+    user: CurrentUser = requires("bbd_payment_request.send"),
+) -> dict[str, Any]:
+    """Tek öğrenciye ödeme talebi — tam borç ya da serbest tutar. Gerçek SMS gider."""
+    return await service().request_one(kantin_id, amount=body.amount, actor=user.full_name)
 
 
 @router.get("/batches")

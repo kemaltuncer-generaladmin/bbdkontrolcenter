@@ -106,7 +106,8 @@ function renderSample() {
 
   const filled = body
     .replaceAll('{ad}', first.displayName || '')
-    .replaceAll('{borc}', money(first.balance))
+    // `{borc}` ASLA EKSİ YAZILMAZ: alacaklı öğrencinin borcu 0'dır (backend aynı).
+    .replaceAll('{borc}', money(Math.max(0, Number(first.balance) || 0)))
     .replaceAll('{sinif}', classMap.get(first.kantinId) || '')
     .replaceAll('{okul}', state.schoolName || '');
 

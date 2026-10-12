@@ -15,11 +15,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from km_sdk import ModuleContext
+from km_sdk import ModuleContext, Trigger
 
+from .announce import BellAnnounce
 from .api.routes import bind
 from .bridge import BellBridge
-from .service import BellService
+from .plan_capability import BellPlan
+from .service import DAYS, BellService
 from .speech import VertexSpeech
 from .voices import VoiceLibrary, number
 
@@ -64,14 +66,68 @@ def register(ctx: ModuleContext) -> None:
         bridge=bridge,
         notify=notify,
         play_locally=bool(config.get("play_locally", True)),
+        page_tts_timeout=number(_section(config, "page").get("tts_timeout_seconds"), 20),
+        # Saatler ya da gruplar değişince `bell.week` tüketicileri (mobil geçit
+        # önbelleği) hemen haberdar olur (olay veri yolu, K3).
+        # Ayrıca kalıcı outbox'a `bell.week_changed` (ADR 0029): BBD Akademi
+        # zil saatlerini hemen tazeler. Süreç içi olay KM içi dinleyiciler için kalır.
+        on_week_change=lambda: _week_changed(ctx),
+        # Öğrenci grupları (taşıma sonrası elle çağrı listesi, genel çağrı
+        # sesleri) ÇAĞRI ANINDA çözülür — isteğe bağlı tüketim (K3).
+        student_groups=lambda: ctx.try_capability("bbd_students.groups"),
     )
 
     ctx.add_router(bind(service))
     # Ders Takvimi ekranı saatleri ve grupları BURADAN okur; kopyalamaz (K3).
     ctx.provide("bell.week", service.week)
+    # Öğrenci çağırma — mobil geçit ve benzeri tüketiciler (sözleşme §5).
+    ctx.provide("bell.announce", BellAnnounce(service))
+    # Akademi'den gelen zil planı (sözleşme §3.3) — mobil geçit çağırır.
+    ctx.provide("bell.plan", BellPlan(service))
+
+    async def on_groups_changed(_event: str, _payload: dict[str, Any]) -> None:
+        try:
+            await service.groups_changed()
+        except Exception as failure:  # noqa: BLE001 — olay işleyici zili düşürmez (K7)
+            ctx.log.warning("grup değişikliği işlenemedi", error=str(failure))
+
+    ctx.subscribe("bbd_students.groups_changed", on_groups_changed)
+
+    _plan_page_preparation(ctx, service, scheduler)
 
     asyncio.get_running_loop().create_task(_bootstrap(service, ctx.log))
     ctx.log.info("zil sistemi hazır")
+
+
+def _plan_page_preparation(ctx: ModuleContext, service: BellService, scheduler: Any) -> None:
+    """Gece: dizindeki öğrencilerin çağrı seslerini önden hazırla (İSTEĞE BAĞLI).
+
+    Varsayılan KAPALIDIR (`page.prepare_nightly: false`): ilk gece okulun
+    bütün öğrencileri için Vertex çağrısı demektir. Açılınca yalnız yeni ya
+    da adı değişen öğrenciler üretilir (önbellek metin özetine bağlı).
+
+    Öğrenci dizini `bbd_students.directory` yeteneğinden, TETİKLEME ANINDA
+    çözülür (isteğe bağlı tüketim): modül yükleme sırası önemli olmasın.
+    """
+    section = _section(ctx.config, "page")
+    if not bool(section.get("prepare_nightly", False)):
+        return
+    at = str(section.get("prepare_time") or "03:15")
+
+    async def handler(_trigger: Any) -> None:
+        directory = ctx.try_capability("bbd_students.directory")
+        if directory is None:
+            ctx.log.info("çağrı sesi hazırlığı atlandı — öğrenci dizini yok")
+            return
+        try:
+            await service.prepare_students(directory)
+        except Exception as failure:  # noqa: BLE001 — gece görevi çekirdeği düşürmez (K7)
+            ctx.log.warning("çağrı sesi hazırlığı patladı", error=str(failure))
+
+    scheduler.set_plan("bell-page", [
+        Trigger(day=day, time=at, label="öğrenci çağrı sesleri", payload={"phase": "page"})
+        for day in DAYS
+    ], handler)
 
 
 async def _bootstrap(service: BellService, log: Any) -> None:
@@ -82,6 +138,13 @@ async def _bootstrap(service: BellService, log: Any) -> None:
         service.start_sync()
     except Exception as failure:  # noqa: BLE001 — açılış görevi çekirdeği düşürmez (K7)
         log.error("zil açılış görevi patladı", error=str(failure))
+
+
+async def _week_changed(ctx: ModuleContext) -> None:
+    await ctx.publish("bell.week_changed", {})
+    outbox = ctx.try_capability("events.outbox")
+    if outbox is not None:
+        await outbox.emit("bell.week_changed", ("bell", None))
 
 
 def _section(config: dict[str, Any], name: str) -> dict[str, Any]:

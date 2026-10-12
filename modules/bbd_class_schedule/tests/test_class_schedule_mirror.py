@@ -96,3 +96,25 @@ async def test_yazma_yuzeyi_yok() -> None:
     """Salt okunurluk sözde değil, yüzeyde olmalı."""
     surface = {name for name in dir(ScheduleService) if not name.startswith("_")}
     assert surface == {"read"}
+
+
+async def test_saat_setleri_ve_yedi_gun_gosterilir() -> None:
+    """Zil 0.5: saat setleri ve Akademi planından önümüzdeki 7 günün kipi."""
+    week = {
+        **WEEK,
+        "profiles": [{"id": "yarim-gun", "name": "Yarım gün",
+                      "times": [{"time": "10:00", "label": "", "kind": "ders"}]}],
+        "days": [{"date": "2026-10-12", "mode": "off", "profileId": None,
+                  "reason": "Cumhuriyet Bayramı", "source": "akademi", "override": None},
+                 "bozuk satır"],
+        "groups": [],
+    }
+    result = await ScheduleService(log=FakeLog(), read_week=lambda: week).read()
+    assert [item["id"] for item in result["profiles"]] == ["yarim-gun"]
+    assert result["days"] == [week["days"][0]]
+    assert result["groups"] == []
+
+
+async def test_eski_zil_modulunde_yeni_alanlar_bos() -> None:
+    result = await ScheduleService(log=FakeLog(), read_week=lambda: WEEK).read()
+    assert result["profiles"] == [] and result["days"] == []

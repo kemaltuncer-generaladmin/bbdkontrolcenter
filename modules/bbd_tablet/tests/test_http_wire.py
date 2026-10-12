@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -209,3 +210,45 @@ async def test_delete_actions_over_http(client: httpx.AsyncClient) -> None:
                              headers=auth)
     assert dead.status_code == 401
     assert dead.json()["detail"]["code"] == "DEVICE_AUTH_INVALID"
+
+
+class RecordingOutbox:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, Any, list[str]]] = []
+
+    async def emit(self, kind: str, subject: Any, *, fields: Any = (), **_: Any) -> str:
+        self.events.append((kind, subject, list(fields)))
+        return "01JA7Q2W3E4R5T6Y7V8W9X0Y1Z"
+
+
+async def test_km_ekrani_yazmalari_olay_yazar(store: Any, canteen: Any, clock: Any) -> None:
+    """KM ekranından kısıt ve profil değişikliği outbox'a gider (km-merkezi-senkron §2.2)."""
+    outbox = RecordingOutbox()
+    app = FastAPI()
+    core_envelope(app)
+    app.state.identity = Identity()
+    app.include_router(routes.bind(TabletService(store=store, canteen=canteen, config={},
+                                                 clock=clock), outbox=lambda: outbox),
+                       prefix="/api/bbd_tablet")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+        profile = await http.post("/api/bbd_tablet/profiles", headers=ADMIN_AUTH, json={
+            "name": "Lise", "apps": [], "usageWindows": []})
+        assert profile.status_code == 200, profile.text
+        until = (clock() + timedelta(days=1)).isoformat()
+        blocked = await http.post("/api/bbd_tablet/students/opaque-A/block",
+                                  headers=ADMIN_AUTH, json={"until": until, "reason": "test"})
+        assert blocked.status_code == 200, blocked.text
+        lifted = await http.post("/api/bbd_tablet/students/opaque-A/unblock", headers=ADMIN_AUTH)
+        assert lifted.status_code == 200
+        # Kısıt yokken kaldırma olay yazmaz.
+        await http.post("/api/bbd_tablet/students/opaque-A/unblock", headers=ADMIN_AUTH)
+    routes._service = None
+    routes._outbox = None
+    assert [(kind, subject[0]) for kind, subject, _ in outbox.events] == [
+        ("tablet.profile_changed", "tablet_profile"),
+        ("tablet.policy_changed", "student"),
+        ("tablet.policy_changed", "student"),
+    ]
+    assert outbox.events[1][1] == ("student", "opaque-A")
+    assert outbox.events[1][2] == ["blockedUntil"]

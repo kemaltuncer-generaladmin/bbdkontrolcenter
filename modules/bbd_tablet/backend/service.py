@@ -1114,6 +1114,32 @@ class TabletService:
                 "blockedUntil": await self._active_block_until(student_id, self._now()),
                 "usage": items, "grants": grants}
 
+    async def daily_usage_totals(self, local_date: str) -> list[dict[str, Any]]:
+        """Kurum geneli bir günün öğrenci başına toplam süresi + şu an süren kısıt.
+
+        İki sorgu, ikisi de indeksli: günün kullanımı `(local_date)` indeksiyle
+        öğrenci başına toplanır; süren kısıtlar `(blocked_until)` indeksiyle
+        (008 göçü) okunur. Listede o gün kullanımı OLAN ya da kısıtı SÜREN
+        öğrenciler vardır; kimlik sırasıyla döner.
+        """
+        totals: dict[str, int] = {}
+        for row in await self.store.fetch_all(
+            f"SELECT student_id, SUM(used_seconds) AS total FROM {self.usage} "
+            "WHERE local_date=? AND used_seconds>0 GROUP BY student_id", (local_date,),
+        ):
+            totals[str(row["student_id"])] = int(row["total"] or 0)
+        blocks: dict[str, str] = {}
+        for row in await self.store.fetch_all(
+            f"SELECT student_id, MAX(blocked_until) AS until FROM {self.blocks} "
+            "WHERE blocked_until>? AND lifted_at IS NULL GROUP BY student_id",
+            (self._now().isoformat(),),
+        ):
+            if row.get("until"):
+                blocks[str(row["student_id"])] = str(row["until"])
+        return [{"studentId": student, "totalSeconds": totals.get(student, 0),
+                 "blockedUntil": blocks.get(student)}
+                for student in sorted(totals.keys() | blocks.keys())]
+
     async def daily_report(self, local_date: str) -> dict[str, Any]:
         rows = await self.store.fetch_all(
             f"SELECT student_id, package_name, used_seconds FROM {self.usage} "
@@ -1151,6 +1177,30 @@ class TabletService:
                 "totalSeconds": sum(item["usedSeconds"] for item in items)}
 
     # ----------------------------------------------------------- ek süre
+
+    async def device_grant_packages(self, student_id: str) -> list[str]:
+        """Packages a whole-device extra-time grant covers.
+
+        Limits are per app (there is no device-wide budget), so "extra time on
+        the tablet" means extra time on every allowed, time-limited app: of the
+        profile of the student's latest session (the active one if any), or of
+        every profile's current revision when the student never logged in.
+        Unlimited apps need no grant and are left out.
+        """
+        last = await self.store.fetch_one(
+            f"SELECT profile_id FROM {self.sessions} WHERE student_id=? "
+            "ORDER BY login_at DESC LIMIT 1", (student_id,),
+        )
+        profile = await self.profile(last["profile_id"]) if last else None
+        if profile is not None:
+            return sorted({app["packageName"] for app in profile.get("apps", [])
+                           if app["allowed"] and not app["unlimited"]})
+        rows = await self.store.fetch_all(
+            f"SELECT DISTINCT a.package_name FROM {self.apps} a JOIN {self.profiles} p "
+            "ON p.id = a.profile_id AND p.revision = a.revision "
+            "WHERE a.allowed=1 AND a.unlimited=0 ORDER BY a.package_name",
+        )
+        return [str(row["package_name"]) for row in rows]
 
     async def grant_time(self, *, student_id: str, package_name: str,
                          local_date: str, extra_seconds: int, reason: str,

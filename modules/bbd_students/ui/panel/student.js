@@ -85,3 +85,13 @@ export function formatMoney(kurus) {
   return `${value.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`;
 }
 
+/**
+ * Kantin bakiyesi işaretiyle: pozitif borç, negatif ALACAK.
+ * `formatBalance(-5000)` → "alacak 50,00 ₺" — "-50,00 ₺ borç" yazılmaz.
+ */
+export function formatBalance(kurus) {
+  if (kurus === null || kurus === undefined || Number.isNaN(Number(kurus))) return '—';
+  const value = Number(kurus);
+  return value < 0 ? `alacak ${formatMoney(-value)}` : formatMoney(value);
+}
+

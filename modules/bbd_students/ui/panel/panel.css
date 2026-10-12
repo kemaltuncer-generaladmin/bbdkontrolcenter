@@ -174,6 +174,7 @@
 
 .st-item-balance { font-size: 11.5px; color: var(--soft); font-variant-numeric: tabular-nums; }
 .st-item-balance.debt { color: #c2410c; font-weight: 600; }
+.st-item-balance.credit { color: #15803d; }
 
 .st-badge {
   font-style: normal;
@@ -397,3 +398,96 @@
   font-size: 12px;
   color: var(--ink);
 }
+
+/* ---------------------------------------------------------------------------
+ * Müfredat (seviye/alan/hedef sınav), veli kantin kontrolleri, toplu atama.
+ * ------------------------------------------------------------------------ */
+.st-subhead { margin: 12px 0 6px; font-size: 11.5px; font-weight: 600; color: var(--soft);
+  text-transform: uppercase; letter-spacing: .03em; }
+.st-suggest { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px;
+  font-size: 12px; color: var(--soft); }
+.st-suggest:empty { display: none; }
+.st-cc { display: flex; flex-direction: column; gap: 10px; }
+.st-cc-facts { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--soft); }
+.st-cc-guardian { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px;
+  border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #7c2d12;
+  font-size: 12.5px; }
+.st-cc-products { display: flex; flex-direction: column; gap: 6px; }
+.st-cc-products-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.st-cc-search { max-width: 220px; }
+.st-cc-product-list { max-height: 220px; overflow: auto; border: 1px solid var(--line);
+  border-radius: 8px; padding: 4px 8px; }
+.st-cc-product { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 12.5px; }
+.st-cc-product.passive { opacity: .65; }
+.st-cc-product .st-hint { margin-left: auto; }
+.st-cc-actions { display: flex; gap: 8px; }
+.st-cc-msg { font-size: 12px; min-height: 1em; color: var(--soft); }
+.st-cc-msg.bad { color: #b91c1c; }
+.st-cc-msg.good { color: #15803d; }
+.st-bulk-plan { display: flex; flex-direction: column; gap: 6px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--line); }
+.st-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ------------------------------------------------------------- gruplar */
+
+/* "Gruplar" sekmesi — liste + grup ayrıntısı; öğrenci kartında geçmiş. */
+.st-groups { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.st-groups[hidden] { display: none; }
+.gr { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.gr > .st-hint { padding: 0 20px 8px; }
+.gr-kind { background: #e0e7ff; color: #3730a3; }
+.gr-kind-individual { background: #fef3c7; color: #92400e; }
+.gr-members { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+.gr-member { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+.gr-member b { font-weight: 600; font-size: 12.5px; }
+.gr-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.gr-tools .st-input { width: auto; min-width: 140px; }
+.gr-day { min-width: 150px; }
+.gr-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.gr-history-row:last-child { border-bottom: none; }
+.gr-history-row.gr-past { color: var(--soft); }
+.gr-audit .st-hint { margin: 2px 0; }
+.gr-editor { width: min(460px, 92vw); display: flex; flex-direction: column; gap: 8px; }
+
+/* ------------------------------------------- yaşam döngüsü ve senkron (§5, §7) */
+
+.st-btn-danger { color: #b91c1c; border-color: #f3c4c4; }
+.st-btn-danger:hover { background: #fef2f2; border-color: #eba4a4; }
+.st-btn-danger[disabled] { color: var(--soft); }
+
+.st-badge-inactive { background: #e5e7eb; color: #374151; }
+.st-badge-active { background: #dcfce7; color: #15803d; }
+.st-badge-warn { background: #fef3c7; color: #92400e; }
+.st-badge-bad { background: #fee2e2; color: #b91c1c; }
+.st-badge-draft { background: #e0e7ff; color: #3730a3; }
+
+.st-item-inactive .st-item-main b { color: var(--soft); }
+
+.st-lc { display: flex; flex-direction: column; gap: 6px; }
+.st-lc-line { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.st-lc-history { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--soft); }
+.st-lc-history li { padding: 3px 0; border-top: 1px solid var(--line); }
+.st-lc-history li b { color: var(--ink); font-weight: 600; }
+
+.st-lc-warn {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.st-lc-warn.bad { background: #fef2f2; color: #991b1b; }
+.st-lc-warn[hidden] { display: none; }
+
+.st-lc-dialog { max-width: 520px; }
+.st-lc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 6px; }
+.st-lc-dialog .st-textarea { min-height: 64px; width: 100%; }

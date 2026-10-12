@@ -1,6 +1,9 @@
 # Ders Takvimi
 
-Haftalık zil saatlerinin ve grupların **salt okunur** görünümü.
+Haftalık zil saatlerinin, saat setlerinin ve önümüzdeki 7 günün zil kipinin
+(Akademi kurum takviminden gelen tatil / özel gün) **salt okunur** görünümü.
+Gruplar Öğrenci Yönetimi'ndedir; eski zil grupları taşındıktan sonra burada
+liste boş görünür.
 
 **Bu ekran hiçbir şeyin sahibi değildir.** Veri Zil Sistemi modülünündür ve
 `bell.week` yeteneği üzerinden okunur (K3). Burada değiştirilebilir tek bir

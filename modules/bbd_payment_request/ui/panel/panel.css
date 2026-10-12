@@ -625,3 +625,28 @@
 .pr-badge.warn { border-color: var(--warn); color: var(--warn); }
 .pr-badge.bad { border-color: var(--bad); color: var(--bad); font-weight: 600; }
 .pr-badge.dim { color: var(--soft); }
+
+/* -------------------------------------------------------------------------
+ * Öğrenci kartı (arayüz yeteneği `bbd_payment_request.student_card`).
+ * Öğrenci Yönetimi ekranının içine çizilir; stiller bu dosyadan gelir.
+ * ---------------------------------------------------------------------- */
+.pr-sc { display: flex; flex-direction: column; gap: 12px; }
+.pr-sc-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pr-sc-balance { font-size: 13.5px; color: var(--ink); }
+.pr-sc-balance.debt { color: var(--bad); }
+.pr-sc-balance.credit { color: var(--good); }
+.pr-sc-block {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+}
+.pr-sc-label { font-size: 11.5px; font-weight: 600; color: var(--soft); text-transform: uppercase;
+  letter-spacing: .03em; }
+.pr-sc-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pr-sc-amount { width: 120px; }
+.pr-sc-note { flex: 1; min-width: 140px; }
+.pr-sc-radio { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--ink); }
+.pr-sc-msg { font-size: 12px; min-height: 1em; color: var(--soft); }
+.pr-sc-msg.bad { color: var(--bad); }
+.pr-sc-msg.good { color: var(--good); }
+.pr-sc-history { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--soft); }
+.pr-sc-history-row.failed { color: var(--bad); }

@@ -53,6 +53,66 @@ komut gelince indirme beklenmez.
 Yerel `audio` yeteneği ikinci hedeftir (`play_locally`) — yedek ve geliştirme
 içindir, kapatılabilir.
 
+## Öğrenci çağırma (`bell.announce`)
+
+Serbest bir cümle okulun hoparlöründen duyurulur: "Elif Kaya, lütfen
+danışmaya gel." Mobil geçit (BBD Akademi) ve personel ekranı
+(`POST /api/bell/page`, `bell.ring_now`) aynı yoldan geçer.
+
+- Ses önbellekte (`mod_bell_voice`, metin özeti) varsa hemen çalınır; yoksa
+  Vertex ile **anlık** üretilir — gece kuyruğunun önüne geçer ama "aynı anda
+  tek çağrı" kuralını delmez. Süre (`page.tts_timeout_seconds`) dolarsa
+  üretim arkada sürer, çağrı `tts_unavailable` döner.
+- Ses köprüde yoksa komuttan önce yüklenir; komut grup çağrısıyla aynı
+  yoldan (`_dispatch`) gider.
+- Sonuç hata değil `status`tur: `queued` · `disabled` · `tts_unavailable` ·
+  `failed`. `X-Request-Id` / `request_id` tekildir; aynı istek ikinci kez
+  çalınmaz.
+- Geçmiş `mod_bell_page` tablosundadır (metin değil özeti). Son 24 saatte
+  çalınan ve 60 gün içinde hazırlanan sayfa sesleri `needed_sounds()` ve
+  `_live_voice_keys()` listesindedir: köprü eşitlemesi ve "kullanılmayan
+  sesleri sil" onları silmez.
+- Şablon `texts.page` (varsayılan "{ad} {soyad}, lütfen danışmaya gel.");
+  metni çağıran kurar (`render`), bell öğrenci kaydını bilmez.
+- Gece hazırlığı isteğe bağlıdır (`page.prepare_nightly: false`):
+  açılırsa `bbd_students.directory` yeteneğinden öğrenci adları okunur ve
+  her öğrencinin çağrı sesi önden üretilir.
+
+## Saat setleri, zil planı ve oturum çağrıları (0.5)
+
+Sözleşme: `bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md` §3, §6.
+
+- **Saat setleri** (`mod_bell_profile*`) — tek güne uygulanan adlı saat
+  listeleri ("Yarım gün"). KM'nindir; `bell.week` → `profiles` ile Akademi'ye
+  gider. Önümüzdeki bir günün planı kullanıyorsa silinemez.
+- **Zil planı** (`mod_bell_day`, `mod_bell_call`) — Akademi kurum takviminden
+  ve ders programından türetip mobil geçitle iter (`bell.plan` yeteneği,
+  `PUT /bell/plan`). Gün kipi `normal` (haftalık), `off` (zil, anons, çağrı
+  yok), `profile` (saat seti) ve oturum başı grup çağrıları. Gün bağımsız
+  uygulanır: aynı özet `unchanged`, eski revizyon `stale`, aynı revizyon farklı
+  özet ya da bilinmeyen saat seti `rejected`. Çalma anında Akademi'ye
+  gidilmez; plan yoksa bugünkü gibi haftalık saatlerle çalar.
+- **Tetikler** önümüzdeki 7 günden tarihli kurulur (her gece 00:05 ve her
+  plan/saat/ayar değişikliğinde yeniden); tetik bugüne ait değilse atlanır.
+  Hiçbir zile denk gelmeyen çağrı saati için yalnız-çağrı tetiği kurulur.
+- **Çalma dizisi** tek köprü komutudur: zil → zil sonrası anons → o dakikanın
+  çağrıları (grup adına göre, `sessionCalls.maxPerSlot`, araya
+  `gapSeconds` — ajan `pauseBefore` alanını okur). Kesin metnin sesi hazır
+  değilse grubun genel çağrısı, o da yoksa çağrı atlanır; zil yine çalar.
+- **Oturum çağrıları varsayılan KAPALI** (`sessionCalls.enabled`): Akademi 14
+  günü itip durum `source: akademi` gösterince açılır. Kapatmak bugünkü
+  davranışa döndürür.
+- **Şablonlar**: `{grup}`, `{hoca}`, `{derslik}`, `{ders}`; öğretmensiz genel
+  şablonlar `callGeneric` / `soloGeneric`. Bugünkü şablondaki sabit
+  "Hüseyin hoca" **kendiliğinden değiştirilmez**; panel uyarır ve tek tıkla
+  "{hoca} ile değiştir" önerir.
+- **Acil kapatma** ("Bugün zili kapat", `bell.manage` + PIN): yalnız bugün;
+  Akademi takvimine yazılmaz, durum ucunda `source: km`.
+- **Grupları taşı** (§6): eski zil grupları `bbd_students.groups` yeteneğiyle
+  öğrenci gruplarına dönüşür (idempotent); sonra grup düzenleme kapanır, elle
+  çağrı listesi Öğrenci Yönetimi'nden gelir. Zil grubu satırları silinmez.
+- Durum: `GET /api/bell/plan/status?from&to` (en çok 31 gün).
+
 ## Yapı
 
 - Sözleşme: [module.yaml](module.yaml) · Giriş: `backend/module.py`

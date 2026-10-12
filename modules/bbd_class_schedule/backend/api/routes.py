@@ -35,5 +35,5 @@ def service() -> ScheduleService:
 async def read_week(
     user: CurrentUser = requires("bbd_class_schedule.view"),
 ) -> dict[str, Any]:
-    """Zil Sistemi'ne girilmiş haftalık saatler ve gruplar."""
+    """Zil Sistemi'nin haftalık saatleri, saat setleri ve önümüzdeki 7 günün kipi."""
     return await service().read()

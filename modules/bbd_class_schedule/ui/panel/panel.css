@@ -145,3 +145,20 @@
   opacity: .85;
 }
 .cs-kind.break { border-style: dashed; }
+
+/* Önümüzdeki 7 gün ve saat setleri (zil 0.5) — salt okunur. */
+.cs-days { display: flex; flex-direction: column; gap: 4px; }
+.cs-plan-day {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid var(--line, #e9ecf2);
+  border-radius: 8px;
+  font-size: 12.5px;
+}
+.cs-plan-day.cs-mode-off { background: #fff5f5; }
+.cs-plan-day.cs-mode-profile { background: #fffbeb; }
+.cs-profile { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; }
+.cs-profile-times { display: flex; flex-wrap: wrap; gap: 6px; }

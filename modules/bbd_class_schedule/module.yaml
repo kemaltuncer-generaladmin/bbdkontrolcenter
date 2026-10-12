@@ -16,7 +16,7 @@
 id: bbd_class_schedule
 name: "Ders Takvimi"
 description: "Zil sistemine girilen haftalık saatlerin ve grupların salt okunur görünümü."
-version: 0.2.0
+version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 

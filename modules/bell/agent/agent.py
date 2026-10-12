@@ -379,7 +379,8 @@ def wait_for(target: datetime | None) -> str:
     if target is None:
         return ""
 
-    now = datetime.now(timezone.utc).astimezone()
+    # Ajan kurumda var olan eski bir Python 3 ile de koşabilir: `datetime.UTC` 3.11+.
+    now = datetime.now(timezone.utc).astimezone()  # noqa: UP017
     delta = target - now
 
     if delta < -LATE_TOLERANCE:
@@ -472,6 +473,15 @@ class Agent:
         notes: list[str] = []
         ok = True
         for item in items:
+            # Oturum çağrıları arasındaki boşluk (`sessionCalls.gapSeconds`).
+            # Eski Kontrol Merkezi bu alanı göndermez; yeni ajan eskisiyle de
+            # çalışır. Üst sınır: bozuk bir değer çalmayı kilitlemesin.
+            try:
+                pause = float(item.get("pauseBefore") or 0)
+            except (TypeError, ValueError):
+                pause = 0.0
+            if 0 < pause <= 30:
+                time.sleep(pause)
             sound_id = str(item.get("hash") or "")
             path = self._library.path(sound_id)
             if path is None:

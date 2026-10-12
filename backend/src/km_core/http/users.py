@@ -144,6 +144,8 @@ def user_payload(user: CurrentUser) -> dict[str, Any]:
         "orgScope": user.org_scope,
         "roles": user.roles,
         "permissions": sorted(user.permissions),
+        # ADR 0028 — `person` ya da `service`. Ek alan; okumayan istemci etkilenmez.
+        "kind": user.kind,
     }
 
 
@@ -169,6 +171,10 @@ def _user_row(row: dict[str, Any]) -> dict[str, Any]:
         # mı olduğu. Yönetici, merkezden gelen bir satırı burada düzenlemeye
         # çalışmadan önce görebilmeli: merkez kaydının yazması merkeze gider.
         "origin": row.get("origin") or "local",
+        # ADR 0028 — servis sorumlusu (makine) mı, kişi mi. Servis satırının
+        # PIN'i yoktur; ekran ona PIN atama düğmesi göstermemeli (uç zaten
+        # reddeder).
+        "kind": row.get("kind") or "person",
         "passwordSetAt": row.get("password_set_at"),
         "lastLoginAt": row.get("last_login_at"),
         "lockedUntil": row.get("locked_until"),
