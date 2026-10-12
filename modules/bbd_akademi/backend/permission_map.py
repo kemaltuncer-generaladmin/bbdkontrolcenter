@@ -100,6 +100,27 @@ PERMISSION_MAP: dict[str, str] = {
     "insights.settings": LEARNING_SETUP,
     "evaluation_templates.manage": LEARNING_SETUP,
     "evaluation_periods.manage": LEARNING_SETUP,
+    # --- koçluk (draft.3, 6bbcd0b): görüntüleme herkese; günlük koçluk işi
+    # (görev onayı, soru-cevap, check-in, tebrik) öğrenme işidir; yapısal
+    # kurulum (koç eşlemesi, kütüphane küratörlüğü, rozet, dışa aktarım) kurulum
+    # iznidir; koçluk ayarları kurum ayarıdır (yalnız KM yüzeyi).
+    "coaching.dashboard": VIEW,
+    "coach_assignments.view": VIEW,
+    "coach_library.view": VIEW,
+    "coaching.review": LEARNING,
+    "coach_questions.answer": LEARNING,
+    "checkins.manage": LEARNING,
+    "kudos.give": LEARNING,
+    "coach_assignments.manage": LEARNING_SETUP,
+    "coach_library.curate": LEARNING_SETUP,
+    "badges.manage": LEARNING_SETUP,
+    "coaching.export": LEARNING_SETUP,
+    "coaching.settings": SETTINGS,
+    # --- mesajlaşma denetimi (draft.3, b973148): başkasının yazışmasını
+    # okumak / şikâyete karar vermek hassastır — denetim kaydı gibi yalnız
+    # kurum ayarı yetkisiyle (varsayılan admin).
+    "messages.moderate": SETTINGS,
+    "messages.audit": SETTINGS,
     # --- öğrenci değerlendirme (formu doldurma, yayımlama, rapor)
     "evaluations.manage": EVALUATIONS,
     "evaluations.export": EVALUATIONS,

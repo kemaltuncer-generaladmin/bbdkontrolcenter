@@ -61,18 +61,9 @@ NOT_SURFACED: dict[str, str] = {
         "Tam liste itmesini modülün personel servisi yapar (backend/staff.py: "
         "değişiklikte, zamanlanmış görevde ve panelin 'Şimdi eşitle' düğmesiyle "
         "km/staff/sync üzerinden); panel bu uca doğrudan gitmez.",
-    # --- çalışma grupları KM'nindir (ürün kararı 12.10.2026): grup adı ve
-    # üyeleri KM öğrenci yönetiminde (Öğrenciler modülü) tutulur ve Akademi'ye
-    # eşitlenir; Akademi grup açmaz. Panel grupları salt okunur listeler.
-    "admin_createStudentGroup":
-        "Çalışma grubu KM öğrenci yönetiminde açılır ve Akademi'ye eşitlenir "
-        "(ürün kararı); panelde Akademi tarafı grup oluşturma yok.",
-    "admin_updateStudentGroup":
-        "Grup adı ve üyeleri KM öğrenci yönetiminde düzenlenir, Akademi'ye "
-        "eşitlenir (ürün kararı); panel grubu salt okunur gösterir.",
-    "admin_deleteStudentGroup":
-        "Grup KM öğrenci yönetiminden kaldırılır ve eşitlemeyle Akademi'den "
-        "düşer (ürün kararı); panelde Akademi tarafı silme yok.",
+    # Çalışma grubu yazma uçları (create/update/delete StudentGroup) sözleşmeden
+    # 2d91b96 ile kalktı: grup KM öğrenci yönetiminde açılır ve Akademi'ye
+    # eşitlenir (ürün kararı 12.10.2026); izin listesinde artık yoklar.
     # --- öğrenci dışa aktarımı: işi BAŞLATAN uç (`students_exportMistakes`)
     # entegrasyon anahtarına açık değil; yoklanacak iş olmadan durum okuması
     # anlamsız. Kurum çıktıları ortak `/v1/admin/exports/{id}` üzerinden iner.
@@ -92,6 +83,15 @@ _GROUP_VIEW = (
 _ATTENDANCE = (
     "Sözleşme 030d3e3 (draft.3 yoklama paketi) ile geldi; yoklama düzeltme, "
     "denetim, rapor ve ayar ekranları ayrı iş paketidir, bu dalda henüz yok.")
+
+_COACHING = (
+    "Sözleşme 6bbcd0b / 2d91b96 (draft.3 koçluk paketi) ile geldi; koç eşlemesi, "
+    "koçluk kartı, haftalık program, soru-cevap, check-in, görüşme, tebrik, "
+    "kütüphane ve video ekranları ayrı iş paketidir, bu dalda henüz yok.")
+_MESSAGING = (
+    "Sözleşme b973148 (draft.3 mesajlaşma) ile geldi; mesaj şikâyet kuyruğu, "
+    "denetim araması, konuşma kilidi ve dışa aktarım ekranı ayrı iş paketidir, "
+    "bu dalda henüz yok.")
 
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
@@ -125,6 +125,39 @@ PENDING: dict[str, str] = {
         "admin_voidAttendance", "admin_getAttendanceSettings", "admin_putAttendanceSettings",
         "admin_syncAttendance", "admin_getTeacherCompliance", "admin_getStudentAttendanceCard",
         "admin_createLeaveRequest", "students_getAttendanceCalendar", "students_getAttendanceDay",
+    )},
+    **{operation_id: _COACHING for operation_id in (
+        "admin_listCoachAssignments", "admin_createCoachAssignment", "admin_bulkAssignCoach",
+        "admin_endCoachAssignment", "admin_listCoachLibrary", "admin_createInstitutionLibraryItem",
+        "admin_listLibraryProposals", "admin_getCoachLibraryItem",
+        "admin_updateInstitutionLibraryItem", "admin_deleteInstitutionLibraryItem",
+        "admin_decideLibraryProposal", "admin_listCoachBadges", "admin_createCoachBadge",
+        "admin_updateCoachBadge", "admin_deleteCoachBadge", "admin_listCelebrationCandidates",
+        "admin_getCheckinQuestionSet", "admin_putCheckinQuestionSet", "admin_listCheckins",
+        "admin_listCoaches", "admin_getCoachMetrics", "admin_getCoachProfile",
+        "admin_putCoachProfile", "admin_exportCoaching", "admin_uploadCoachingFile",
+        "admin_getCoachingJob", "admin_bulkKudos", "admin_listCoachMeetings",
+        "admin_getCoachMeeting", "admin_convertMeetingActionItem", "admin_decideCoachMeeting",
+        "admin_putCoachMeetingNote", "admin_listCoachQuestions", "admin_closeCoachQuestion",
+        "admin_forwardCoachQuestion", "admin_getCoachQueue", "admin_listCoachReviews",
+        "admin_bulkApproveCoachTasks", "admin_reviewCoachTask", "admin_getCoachingSettings",
+        "admin_putCoachingSettings", "admin_listCoachingStudents", "admin_applyTemplateAssignment",
+        "admin_previewTemplateAssignment", "admin_copyCoachWeek",
+        "admin_getStudentCheckinQuestions", "admin_putStudentCheckinQuestions",
+        "admin_commentCheckin", "admin_listStudentCoachHistory", "admin_changeCoach",
+        "admin_createCoachMeeting", "admin_getCoachWeek", "admin_saveCoachWeek",
+        "admin_carryOverCoachWeek", "admin_requestCoachWeekPdf", "admin_publishCoachWeek",
+        "admin_getCoachingCard", "admin_requestCoachingReport", "admin_listGoalProposals",
+        "admin_createGoalProposal", "admin_withdrawGoalProposal", "admin_giveKudos",
+        "admin_getStudentResourceSections", "admin_getTaskBuilderContext", "admin_resolveVideoLink",
+        "admin_resolvePlaylist", "students_listCoachMeetings", "students_getCoachingOverview",
+        "students_listGoalProposals", "students_listKudos", "students_listTopicLibraryItems",
+        "students_getTaskVideo", "students_listQuestions", "students_getQuestion",
+    )},
+    **{operation_id: _MESSAGING for operation_id in (
+        "admin_listMessageReports", "admin_getMessageReport", "admin_decideMessageReport",
+        "admin_searchMessages", "admin_openAuditThread", "admin_exportThread",
+        "admin_lockMessageThread",
     )},
 }
 
