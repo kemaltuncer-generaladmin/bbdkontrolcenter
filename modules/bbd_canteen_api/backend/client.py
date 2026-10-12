@@ -536,14 +536,14 @@ class CanteenApi:
         Her satır: serverId, studentId (opaque), studentName, total, createdAt,
         reversedAt, reversedReason, items[].
 
-        `student_id` verilirse YALNIZ o öğrencinin satırları döner. Kantin
-        `GET /api/transactions` bugün öğrenci süzgeci TANIMAZ (kantin
-        `TransactionController::index` yalnız from/to/limit doğrular; öğrenci
-        başına defter ucu da yoktur). Bu yüzden `studentId` sorguya yine
-        eklenir — kantin süzgeci eklediğinde sunucuda süzülür, bilinmeyen
-        parametre bugün yok sayılır — ve satırlar BURADA da süzülür: başka
-        öğrencinin satırı hiçbir sürümde dışarı çıkmaz. Sınır aynıdır: aralıkta
-        en çok 5000 satır okunur; öğrenci ekranı için aralığı dar tutun.
+        `student_id` verilirse YALNIZ o öğrencinin satırları döner. `studentId`
+        sorguya eklenir: öğrenci süzgecini tanıyan kantin (`GET
+        /api/transactions?studentId=`, kantin-veli dalı) sunucuda `(student_id,
+        id)` indeksiyle süzer; tanımayan eski kantin parametreyi yok sayar.
+        Satırlar HER DURUMDA burada da süzülür: başka öğrencinin satırı hiçbir
+        sürümde dışarı çıkmaz. Sınır aynıdır: aralıkta en çok 5000 satır
+        okunur (eski kantinde kurum geneli, yenisinde öğrencinin); öğrenci
+        ekranı için aralığı dar tutun.
         """
         params: dict[str, Any] = {}
         if from_ms is not None:
@@ -805,11 +805,11 @@ class CanteenApi:
     async def payment_requests(self, student_id: str | None = None) -> list[dict[str, Any]]:
         """Son 100 ödeme talebi (akış kipi DEĞİL — `updatedSince` gönderilmez).
 
-        `student_id` verilirse yalnız o öğrencinin talepleri döner. Kantin liste
-        ucu bugün öğrenci süzgeci tanımaz (`PaymentRequestController::index`):
-        `studentId` sorguya yine eklenir (kantin eklediğinde sunucuda süzülür)
-        ve satırlar BURADA da süzülür. Liste kurum genelinde son 100 talebe
-        bakar; öğrencinin daha eski talebi bu listede görünmeyebilir. Açık
+        `student_id` verilirse yalnız o öğrencinin talepleri döner. `studentId`
+        sorguya eklenir: süzgeci tanıyan kantin (kantin-veli dalı) sunucuda
+        süzer ve öğrencinin son 100 talebini verir; tanımayan eski kantin
+        kurum genelinde son 100 talebi verir, öğrencinin daha eski talebi o
+        listede görünmeyebilir. Satırlar HER DURUMDA burada da süzülür. Açık
         (PENDING) talep öğrenci başına tektir ve hep en yenilerdendir.
         """
         wanted = str(student_id or "").strip()
