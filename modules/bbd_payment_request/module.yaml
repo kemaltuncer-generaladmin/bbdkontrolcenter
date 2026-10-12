@@ -4,8 +4,10 @@
 # Veliye borç bildirimi ve ödeme bağlantısı. Nakit tahsilat da buradadır:
 # ödeme akışının parçasıdır ve borç kapanınca açık talepleri süresi dolmuş yapar.
 #
-# TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu kullanır; açık
-# bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır.
+# TOPLU TALEPTE TUTAR SEÇİLEMEZ. Kantin her talepte öğrencinin O ANKİ borcunu
+# kullanır; açık bir talep varsa yenisi açılmaz, mevcut talep yeniden fiyatlanır.
+# TEK ÖĞRENCİYE serbest tutarlı talep açılabilir (en az 1,00 ₺, en çok borç
+# + izinli ön ödeme); nakit tahsilat da aynı sınıra uyar (kantin §1.5).
 
 id: bbd_payment_request
 name: "Ödeme Talebi"
