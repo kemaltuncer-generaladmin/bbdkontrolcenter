@@ -8,7 +8,8 @@
 // gönderilmeyen alana dokunmaz.
 
 import {
-  classSortKey, formatMoney, formatPhone, fullName, normalizeClass, normalizePhone, validate,
+  classSortKey, formatBalance, formatMoney, formatPhone, fullName, normalizeClass, normalizePhone,
+  validate,
 } from './student.js';
 // Yol kabuğun KOPYALANMIŞ konumuna göredir: shell/panels/bbd_students/ →
 // shell/ui-kit/. Kaynakta (`modules/bbd_students/ui/panel/`) çözülmez —
@@ -428,8 +429,9 @@ function renderList() {
         .filter(Boolean).join(' · ') || '—'));
     item.append(main);
 
-    const balance = h('span', 'st-item-balance', formatMoney(student.balance));
+    const balance = h('span', 'st-item-balance', formatBalance(student.balance));
     balance.classList.toggle('debt', Number(student.balance) > 0);
+    balance.classList.toggle('credit', Number(student.balance) < 0);
     item.append(balance);
 
     if (student.isBlocked) {
@@ -508,7 +510,7 @@ function renderDetail() {
   nodes.title.textContent = student.displayName || 'Adsız öğrenci';
   nodes.subtitle.textContent = [
     student.className || 'sınıf yok',
-    `bakiye ${formatMoney(student.balance)}`,
+    `bakiye ${formatBalance(student.balance)}`,
     student.kantinId,
   ].join(' · ');
 

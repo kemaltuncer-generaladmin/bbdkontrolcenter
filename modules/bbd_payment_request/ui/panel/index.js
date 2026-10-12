@@ -11,7 +11,7 @@
 // zamanda gönderilmiş öğrenciyi varsayılan olarak atlar.
 
 import {
-  button, confirmWithReason, foldText, h, loadStyles, money, moneyInput,
+  balanceText, button, confirmWithReason, foldText, h, loadStyles, money, moneyInput,
   parseMoney, stamp, stampIso, toaster,
 } from './kit.js';
 import { createPicker } from './picker.js';
@@ -563,7 +563,9 @@ function renderCollectForm() {
           body: { kantinId: student.kantinId, amount: kurus, note: note.value.trim() },
         });
         if (!result.ok) { toast(result.error || 'Tahsilat yazılamadı.', 'bad'); return; }
-        toast(`${money(result.amount)} tahsil edildi. Kalan borç ${money(result.balance)}.`
+        toast(`${money(result.amount)} tahsil edildi. `
+          + (Number(result.balance) < 0 ? `Öğrencinin ${balanceText(result.balance)} oldu.`
+            : `Kalan borç ${money(result.balance)}.`)
           + (result.settled ? ' Borç kapandı, bekleyen talepler süresi doldu.' : ''), 'good');
         selected = null;
         amount.value = '';
@@ -644,7 +646,7 @@ function renderCollections() {
     line.append(
       h('span', 'pr-cell strong', row.student_name || row.kantin_id),
       h('span', 'pr-cell num', money(row.amount)),
-      h('span', 'pr-cell num', money(row.balance_after)),
+      h('span', 'pr-cell num', balanceText(row.balance_after)),
       h('span', 'pr-cell', row.note || (row.status === 'ok' ? '' : row.reason)),
       h('span', 'pr-cell', stampIso(row.created_at)),
       h('span', 'pr-cell', row.created_by || ''),
@@ -833,8 +835,8 @@ async function openDetail(ref) {
   if (student.balance !== null && student.balance !== undefined) {
     const drift = data.drift ?? 0;
     const box = detailSection('Güncel borç');
-    box.append(detailRow('Şu anki borç', money(student.balance),
-      student.balance > 0 ? 'debt' : 'good'));
+    box.append(detailRow(student.balance < 0 ? 'Şu anki alacak' : 'Şu anki borç',
+      balanceText(student.balance), student.balance > 0 ? 'debt' : 'good'));
     if (request.status === 'PENDING' && drift !== 0) {
       box.append(h('div', `pr-alert ${drift > 0 ? 'warn' : ''}`,
         drift > 0
@@ -896,7 +898,7 @@ async function openDetail(ref) {
     const box = detailSection('Bu öğrenciden nakit tahsilat');
     for (const row of collections.slice(0, 10)) {
       box.append(detailRow(stampIso(row.created_at),
-        `${money(row.amount)} · kalan ${money(row.balance_after)} · ${row.created_by || ''}`));
+        `${money(row.amount)} · kalan ${balanceText(row.balance_after)} · ${row.created_by || ''}`));
     }
     body.append(box);
   }
