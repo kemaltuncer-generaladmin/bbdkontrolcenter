@@ -165,7 +165,7 @@
         "required": ["key"],
         "additionalProperties": false,
         "properties": {
-          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$", "description": "'<modül_id>.<eylem>' biçiminde, ör. 'bell.manage'. Modül kendi kimliği dışında bir önek kullanamaz." },
+          "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,2}$", "description": "'<modül_id>.<eylem>' ya da '<modül_id>.<konu>.<eylem>' biçiminde, ör. 'bell.manage', 'mobile_gateway.events.view' (ADR 0029 — olay iletimi izinleri). Modül kendi kimliği dışında bir önek kullanamaz." },
           "description": { "type": "string" },
           "scoped": {
             "type": "boolean",
@@ -258,7 +258,7 @@
         "requires": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*(:([a-z][a-z0-9_]*|\\*))?$" },
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,2}(:([a-z][a-z0-9_]*|\\*))?$" },
           "description": "Sekmeyi görmek ve yazmak için gereken izinler. ZORUNLUDUR: izin ilan etmeyen blok reddedilir, varsayılan kapalıdır (K9). Menüde gizlemek yetkilendirme değildir — ayar yazan uç nokta aynı izni bağımsız olarak sorar."
         },
         "groups": {

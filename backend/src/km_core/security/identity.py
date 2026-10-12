@@ -103,6 +103,9 @@ BUILTIN_ROLES = [
 BUILTIN_SERVICE_ROLES = [
     ("mobile_service", "Mobil Servis",
      "Servis anahtarıyla bağlanan mobil uygulama sunucusu. Kişiye verilmez."),
+    # km-merkezi-senkron §6.1 — kantin backend'i KM'ye olay iter.
+    ("canteen_service", "Kantin Servisi",
+     "Servis anahtarıyla olay iten kantin sunucusu. Kişiye verilmez."),
 ]
 
 #: `users.kind` değerleri (ADR 0028). Sütunu olmayan eski satır kişidir.

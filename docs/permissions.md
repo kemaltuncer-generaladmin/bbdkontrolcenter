@@ -36,6 +36,7 @@ izinlerini onu `default_roles` ile öneren modüller verir.
 | id | Ad | Özet |
 |---|---|---|
 | `mobile_service` | Mobil Servis | Mobil uygulama sunucusu (BBD Akademi API). İzinleri modül manifestlerinden gelir (ör. mobil geçit modülünün erişim izni). |
+| `canteen_service` | Kantin Servisi | Kantin backend'i (olay itmesi, km-merkezi-senkron §6.1). Yalnız `bbd_canteen_api.events.push`. Anahtar `scripts/service-key.py create --name "Kantin" --role canteen_service --cidr <kantin sunucusu>`. |
 
 **`admin` bütün izinleri taşır — servis rolüne önerilenler dahil.** Bir modül
 bir izni `mobile_service`e öneriyorsa `default_roles` listesine `admin`i de
@@ -151,6 +152,9 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bell` | `bell.ring_now` | Elle zil çalar, grup çağırır, öğrenci çağırma anonsu yapar (`POST /api/bell/page`) |
 | `bbd_students` | `bbd_students.canteen_controls` | Veli kantin kontrollerini düzenler: borç/günlük limit, kurum engeli, veli engelini kaldırma, yasaklı ürünler (admin, bbd_staff, org_staff) |
 | `bbd_students` | `bbd_students.groups` | Öğrenci gruplarını açar, adlandırır, arşivler; tarihli üyelik ekler/bitirir/taşır, geçmiş düzeltir (admin, bbd_staff, org_staff). Okuma `bbd_students.view` ile |
+| `bbd_students` | `bbd_students.lifecycle` | Öğrenciyi pasifleştirir (gerekçe, ileri tarih, toplu) ve yeniden etkinleştirir — kantin satışı, tablet ve Akademi girişi kapanır/açılır (admin, bbd_staff, org_staff) |
+| `bbd_students` | `bbd_students.delete` | Pasif öğrenciyi KALICI siler (bakiye 0, açık talep ve kurum cari borcu yok, ad yazılarak onay) — yalnız admin |
+| `bbd_canteen_api` | `bbd_canteen_api.events.push` | Kantin backend'inin KM'ye olay itmesi (servis anahtarı; admin, canteen_service) |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
 | `print` | `print.reprint` | Üretilmiş bir çıktıyı yeniden yazıcıya gönderir |
@@ -295,6 +299,8 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `bell.ring_now` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_class_schedule.view` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | `bbd_students.groups` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `bbd_students.lifecycle` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| `bbd_students.delete` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `print.reprint` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
