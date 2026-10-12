@@ -66,6 +66,7 @@ PERMISSION_MAP: dict[str, str] = {
     "learning.view": VIEW,         # öğrenme verisi (plan, hata defteri, soru, okuma, ajanda)
     "reading.view": VIEW,
     "calendar.view": VIEW,
+    "insights.view": VIEW,         # erken uyarı listesi, kurum içgörüleri
     # --- akademik işler: program, etüt, ödev, dönem/sınıf/grup, zil dilimi
     "academic.manage": ACADEMIC,
     "timetable.manage": ACADEMIC,
@@ -86,10 +87,16 @@ PERMISSION_MAP: dict[str, str] = {
     "exams.export": EXAMS,
     # --- öğrenme araçları (F-A18–A24): günlük koçluk işi ve yapısal kurulum ayrı
     "plan.manage": LEARNING,
+    "coach_notes.manage": LEARNING,
+    "insights.manage": LEARNING,   # erken uyarı: not, görüşme, veliye bildir, çöz/yeniden aç
     "plan_templates.manage": LEARNING_SETUP,
     "reading_lists.manage": LEARNING_SETUP,
     "decks.manage": LEARNING_SETUP,
-    # --- öğrenci değerlendirme
+    "insights.settings": LEARNING_SETUP,
+    "evaluation_templates.manage": LEARNING_SETUP,
+    "evaluation_periods.manage": LEARNING_SETUP,
+    # --- öğrenci değerlendirme (formu doldurma, yayımlama, rapor)
+    "evaluations.manage": EVALUATIONS,
     "evaluations.export": EVALUATIONS,
     # --- kurum cari (kantinden AYRI — A12). Görüntüleme de hassastır.
     "finance.view": FINANCE,
