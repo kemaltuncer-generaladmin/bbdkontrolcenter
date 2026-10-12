@@ -1,0 +1,405 @@
+"""İzin listesiyle sınırlı vekil — KM kullanıcısı ile Akademi arasında.
+
+İKİ KAPI (K9), sırası değişmez:
+
+1. **İzin listesi.** Yöntem + yol sözleşmeden üretilmiş listede yoksa
+   `403 operation_not_allowed`. Liste dışı hiçbir Akademi yolu çağrılamaz.
+2. **KM izni.** İşlemin Akademi izni `permission_map.py` ile KM iznine
+   çevrilir; kullanıcı bunu taşımıyorsa `403 forbidden` (`details.permission`).
+   Rol adı sorulmaz (K10) — `CurrentUser.has_permission`.
+
+Step-up isteyen işlemde (sözleşmede `x-step-up`) ayrıca tek kullanımlık PIN
+teyidi belirteci aranır (`stepup.py`); yoksa `403 step_up_required`.
+
+İKİ GİRİŞ, TEK KURAL:
+
+* **Ham vekil** `/api/bbd_akademi/v1/...` — gövde, sorgu, `Idempotency-Key`
+  aynen geçer; çok parçalı yükleme (`multipart/form-data`) ve ikili indirme
+  AKIŞ olarak geçer, belleğe alınmaz. Akademi'nin hata zarfı olduğu gibi döner.
+* **Panel köprüsü** `POST /api/bbd_akademi/km/call` — masaüstü kabuğunun
+  istek kanalı yalnız JSON metin taşıyor ve özel başlık geçiremiyor
+  (`ui-kernel.js` → `api()`); hata yanıtında da yalnız `message` kalıyor.
+  Köprü AYNI kapılardan geçirip Akademi yanıtını `{ok, status, data, error,
+  headers}` zarfında döndürür: panel `error.code`/`details`'i (ör.
+  `timetable_conflict`, `validation_error` alanları) görebilir, dosya base64
+  olarak gider ve gelir.
+
+Akademi'nin 401'i (`invalid_integration_key`) istemciye 502 olarak döner: KM
+API'sinde 401 "KM oturumun yok" demektir; entegrasyon anahtarının reddi
+kullanıcının oturumuyla ilgili değildir. Gövde (Akademi zarfı) değişmez.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+import re
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
+from email.message import Message
+from typing import Any
+
+import httpx
+from fastapi import Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
+
+from km_sdk import CurrentUser
+
+from .gateway import (
+    FORWARD_REQUEST_HEADERS,
+    FORWARD_RESPONSE_HEADERS,
+    AkademiError,
+    AkademiGateway,
+    on_behalf_of,
+    request_id,
+)
+from .operations import Allowlist, Resolved
+from .permission_map import km_permissions
+from .stepup import StepUpStore
+
+STEP_UP_HEADER = "x-km-step-up"
+IDEMPOTENCY = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+
+
+class ProxyError(Exception):
+    def __init__(self, status: int, code: str, message: str, details: Any = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+        self.details = details
+
+
+def envelope(status: int, code: str, message: str, details: Any = None,
+             trace: str | None = None) -> dict[str, Any]:
+    """Akademi zarfıyla AYNI biçim (`{error: {code, message, details, traceId}}`).
+
+    `status` alanı fazladan yazılır: kabuğun çekirdek zarfı da onu taşır.
+    """
+    return {"error": {"code": code, "message": message, "details": details,
+                      "traceId": trace, "status": status}}
+
+
+def error_response(failure: ProxyError | AkademiError, trace: str) -> JSONResponse:
+    if isinstance(failure, ProxyError):
+        status, code, message, details = (failure.status, failure.code, failure.message,
+                                          failure.details)
+    else:
+        status, code, message, details = (failure.status, failure.code, str(failure),
+                                          failure.details)
+    return JSONResponse(status_code=status, content=envelope(status, code, message, details, trace),
+                        headers={"X-Request-Id": trace})
+
+
+@dataclass(slots=True)
+class Upload:
+    field: str
+    filename: str
+    content_type: str
+    data: bytes
+    fields: dict[str, str]
+
+
+class AkademiProxy:
+    def __init__(self, *, gateway: AkademiGateway, allowlist: Allowlist,
+                 step_up: StepUpStore, log: Any) -> None:
+        self.gateway = gateway
+        self.allowlist = allowlist
+        self.step_up = step_up
+        self._log = log
+
+    # ------------------------------------------------------------ kapılar
+
+    def authorize(self, user: CurrentUser, method: str, path: str) -> Resolved:
+        resolved = self.allowlist.resolve(method, path)
+        if resolved is None:
+            raise ProxyError(403, "operation_not_allowed",
+                             "Bu Akademi işlemi Kontrol Merkezi üzerinden açık değil.",
+                             {"method": method.upper(), "path": "/" + path.strip("/")})
+        needed = km_permissions(resolved.operation)
+        if not any(user.has_permission(key) for key in needed):
+            raise ProxyError(403, "forbidden", "Bu işlem için yetkiniz yok.",
+                             {"permission": needed[0], "anyOf": list(needed),
+                              "operationId": resolved.operation.operation_id})
+        return resolved
+
+    async def require_step_up(self, resolved: Resolved, user: CurrentUser,
+                              token: str | None) -> bool:
+        """Step-up işlemi değilse False; işlemse belirteci tüketir ya da reddeder."""
+        if not resolved.operation.step_up:
+            return False
+        if await self.step_up.consume(token, user_id=user.id,
+                                      operation_id=resolved.operation.operation_id):
+            return True
+        raise ProxyError(403, "step_up_required",
+                         "Bu işlem için PIN'inizi yeniden girmeniz gerekiyor.",
+                         {"operationId": resolved.operation.operation_id})
+
+    def headers_for(self, user: CurrentUser, trace: str, *, step_up: bool,
+                    incoming: Mapping[str, str] | None = None,
+                    idempotency_key: str | None = None,
+                    if_none_match: str | None = None) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        for name in FORWARD_REQUEST_HEADERS:
+            value = (incoming or {}).get(name)
+            if value:
+                headers[name] = value
+        if idempotency_key:
+            headers["idempotency-key"] = idempotency_key
+        if if_none_match:
+            headers["if-none-match"] = if_none_match
+        headers.setdefault("accept", "application/json")
+        headers["X-Akademi-On-Behalf-Of"] = on_behalf_of(user.id, user.full_name)
+        headers["X-Request-Id"] = trace
+        if step_up:
+            headers["X-Akademi-Step-Up"] = "km-pin"
+        return headers
+
+    def _log_call(self, user: CurrentUser, resolved: Resolved, status: int, trace: str) -> None:
+        if resolved.operation.is_write or status >= 400:
+            self._log.info("akademi işlemi", operation=resolved.operation.operation_id,
+                           user=user.id, status=status, trace=trace)
+
+    # ------------------------------------------------------------ ham vekil
+
+    async def forward(self, request: Request, user: CurrentUser, path: str) -> Response:
+        trace = request_id(request.headers.get("x-request-id"))
+        try:
+            resolved = self.authorize(user, request.method, path)
+            step_up = await self.require_step_up(resolved, user,
+                                                 request.headers.get(STEP_UP_HEADER))
+            limit = self.gateway.config.max_upload_bytes
+            declared = request.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > limit:
+                raise ProxyError(413, "payload_too_large",
+                                 f"Dosya en çok {self.gateway.config.max_upload_mb} MB olabilir.")
+            headers = self.headers_for(user, trace, step_up=step_up, incoming=request.headers)
+            content: AsyncIterator[bytes] | None = None
+            if request.method not in ("GET", "DELETE") or declared not in (None, "0"):
+                content = _limited(request.stream(), limit)
+            upstream = await self.gateway.send(
+                request.method, resolved.upstream_path, query=request.url.query,
+                headers=headers, content=content, upload=resolved.operation.multipart)
+        except (ProxyError, AkademiError) as failure:
+            return error_response(failure, trace)
+        self._log_call(user, resolved, upstream.status_code, trace)
+        return _stream_back(upstream, trace)
+
+    async def download(self, url: str, trace: str) -> Response:
+        try:
+            upstream = await self.gateway.fetch(url)
+        except AkademiError as failure:
+            return error_response(failure, trace)
+        return _stream_back(upstream, trace)
+
+    # --------------------------------------------------------- panel köprüsü
+
+    async def call(self, user: CurrentUser, *, method: str, path: str,
+                   query: Mapping[str, Any] | None = None, body: Any = None,
+                   idempotency_key: str | None = None, step_up_token: str | None = None,
+                   if_none_match: str | None = None, upload: Upload | None = None,
+                   trace: str | None = None) -> dict[str, Any]:
+        trace = request_id(trace)
+        try:
+            if idempotency_key and not IDEMPOTENCY.match(idempotency_key):
+                raise ProxyError(400, "idempotency_key_invalid",
+                                 "İşlem anahtarı geçersiz (8–128 karakter, harf/rakam/._:-).")
+            path_only, _, inline_query = path.partition("?")
+            resolved = self.authorize(user, method, path_only)
+            step_up = await self.require_step_up(resolved, user, step_up_token)
+            headers = self.headers_for(user, trace, step_up=step_up,
+                                       idempotency_key=idempotency_key,
+                                       if_none_match=if_none_match)
+            query_text = _encode_query(query, inline_query)
+            if upload is not None:
+                if len(upload.data) > self.gateway.config.max_upload_bytes:
+                    raise ProxyError(413, "payload_too_large",
+                                     f"Dosya en çok {self.gateway.config.max_upload_mb} MB "
+                                     "olabilir.")
+                upstream = await self.gateway.send(
+                    method.upper(), resolved.upstream_path, query=query_text, headers=headers,
+                    files={upload.field: (upload.filename, upload.data, upload.content_type)},
+                    data=upload.fields or None, upload=True)
+            else:
+                send_json = body is not None and method.upper() != "GET"
+                if send_json:
+                    headers["content-type"] = "application/json"
+                upstream = await self.gateway.send(
+                    method.upper(), resolved.upstream_path, query=query_text, headers=headers,
+                    content=json.dumps(body, ensure_ascii=False).encode("utf-8")
+                    if send_json else None)
+        except (ProxyError, AkademiError) as failure:
+            if isinstance(failure, ProxyError):
+                status, code, message, details = (failure.status, failure.code,
+                                                  failure.message, failure.details)
+            else:
+                status, code, message, details = (failure.status, failure.code, str(failure),
+                                                  failure.details)
+            return {"ok": False, "status": status, "data": None,
+                    "error": envelope(status, code, message, details, trace)["error"],
+                    "headers": {"requestId": trace}}
+        try:
+            result = await _buffer(upstream, self.gateway.config.max_upload_bytes * 2)
+        except ProxyError as failure:
+            return {"ok": False, "status": failure.status, "data": None,
+                    "error": envelope(failure.status, failure.code, failure.message,
+                                      failure.details, trace)["error"],
+                    "headers": {"requestId": trace}}
+        finally:
+            await upstream.aclose()
+        self._log_call(user, resolved, upstream.status_code, trace)
+        result["headers"].setdefault("requestId", trace)
+        return result
+
+    async def fetch_file(self, url: str) -> dict[str, Any]:
+        trace = request_id(None)
+        try:
+            upstream = await self.gateway.fetch(url)
+        except AkademiError as failure:
+            return {"ok": False, "status": failure.status, "data": None,
+                    "error": envelope(failure.status, failure.code, str(failure),
+                                      failure.details, trace)["error"],
+                    "headers": {"requestId": trace}}
+        try:
+            return await _buffer(upstream, self.gateway.config.max_upload_bytes * 2,
+                                 force_file=True)
+        except ProxyError as failure:
+            return {"ok": False, "status": failure.status, "data": None,
+                    "error": envelope(failure.status, failure.code, failure.message,
+                                      failure.details, trace)["error"],
+                    "headers": {"requestId": trace}}
+        finally:
+            await upstream.aclose()
+
+
+# ----------------------------------------------------------------- yardım
+
+
+async def _limited(stream: AsyncIterator[bytes], limit: int) -> AsyncIterator[bytes]:
+    total = 0
+    async for chunk in stream:
+        total += len(chunk)
+        if total > limit:
+            raise ProxyError(413, "payload_too_large", "Gönderilen dosya izin verilen boyutu aşıyor.")
+        yield chunk
+
+
+def _encode_query(query: Mapping[str, Any] | None, inline: str = "") -> str:
+    pairs: list[tuple[str, str | int | float | bool | None]] = []
+    for key, value in (query or {}).items():
+        if value is None or value == "":
+            continue
+        values = value if isinstance(value, list | tuple) else [value]
+        for item in values:
+            if item is None or item == "":
+                continue
+            if isinstance(item, bool):
+                item = "true" if item else "false"
+            pairs.append((str(key), str(item)))
+    encoded = str(httpx.QueryParams(pairs)) if pairs else ""
+    return "&".join(part for part in (inline, encoded) if part)
+
+
+def _response_headers(upstream: httpx.Response, trace: str) -> dict[str, str]:
+    headers = {name: upstream.headers[name] for name in FORWARD_RESPONSE_HEADERS
+               if name in upstream.headers}
+    headers.setdefault("x-request-id", trace)
+    return headers
+
+
+def _status(upstream: httpx.Response) -> int:
+    return 502 if upstream.status_code == 401 else upstream.status_code
+
+
+def _stream_back(upstream: httpx.Response, trace: str) -> Response:
+    headers = _response_headers(upstream, trace)
+    if upstream.status_code == 401:
+        headers["x-akademi-upstream-status"] = "401"
+    if upstream.status_code in (204, 304):
+        return Response(status_code=upstream.status_code, headers=headers,
+                        background=BackgroundTask(upstream.aclose))
+    return StreamingResponse(upstream.aiter_bytes(), status_code=_status(upstream),
+                             headers=headers, background=BackgroundTask(upstream.aclose))
+
+
+def _filename(disposition: str | None, fallback: str) -> str:
+    if not disposition:
+        return fallback
+    message = Message()
+    message["content-disposition"] = disposition
+    name = message.get_filename()
+    return str(name) if name else fallback
+
+
+async def _buffer(upstream: httpx.Response, limit: int, *, force_file: bool = False
+                  ) -> dict[str, Any]:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in upstream.aiter_bytes():
+        total += len(chunk)
+        if total > limit:
+            raise ProxyError(502, "response_too_large", "Akademi yanıtı çok büyük.")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    status = upstream.status_code
+    headers: dict[str, Any] = {}
+    if "etag" in upstream.headers:
+        headers["etag"] = upstream.headers["etag"]
+    if "retry-after" in upstream.headers:
+        headers["retryAfter"] = upstream.headers["retry-after"]
+    if upstream.headers.get("idempotency-replayed", "").lower() == "true":
+        headers["idempotencyReplayed"] = True
+    if "x-request-id" in upstream.headers:
+        headers["requestId"] = upstream.headers["x-request-id"]
+
+    content_type = upstream.headers.get("content-type", "")
+    is_json = "json" in content_type
+    if force_file and status < 400:
+        is_json = False
+    payload: Any = None
+    if raw and is_json:
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = None
+    ok = 200 <= status < 300 or status == 304
+    result: dict[str, Any] = {"ok": ok, "status": _status(upstream), "data": None,
+                              "error": None, "headers": headers}
+    if not ok:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(error, dict):
+            error = {"code": "akademi_error", "message": f"Akademi isteği reddetti ({status}).",
+                     "details": None, "traceId": headers.get("requestId")}
+        result["error"] = {**error, "status": _status(upstream)}
+        return result
+    if is_json:
+        result["data"] = payload
+    elif raw:
+        result["file"] = {
+            "filename": _filename(upstream.headers.get("content-disposition"), "akademi-dosya"),
+            "contentType": content_type or "application/octet-stream",
+            "size": len(raw),
+            "dataBase64": base64.b64encode(raw).decode("ascii"),
+        }
+    return result
+
+
+def decode_upload(raw: Mapping[str, Any]) -> Upload:
+    """Köprü gövdesindeki dosya (`dataBase64` ya da `data:` URI)."""
+    text = str(raw.get("dataBase64") or "")
+    if text.startswith("data:"):
+        text = text.split(",", 1)[1] if "," in text else ""
+    try:
+        data = base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError) as failure:
+        raise ProxyError(400, "upload_invalid", "Dosya okunamadı (base64 bozuk).") from failure
+    if not data:
+        raise ProxyError(400, "upload_invalid", "Dosya boş.")
+    fields = {str(key): str(value) for key, value in (raw.get("fields") or {}).items()
+              if value is not None}
+    return Upload(field=str(raw.get("field") or "file"),
+                  filename=str(raw.get("filename") or "dosya"),
+                  content_type=str(raw.get("contentType") or "application/octet-stream"),
+                  data=data, fields=fields)

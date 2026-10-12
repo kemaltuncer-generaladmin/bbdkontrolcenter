@@ -1,0 +1,10 @@
+/* Öğrenci detayı — Hedef sekmesi. Önek `ak-sgl-`. */
+.ak-sgl-note { font-size: 12px; }
+.ak-sgl-list { margin: 0; padding: 10px 16px 12px 32px; display: flex; flex-direction: column; gap: 4px; }
+.ak-sgl-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px 90px 150px; gap: 8px;
+  align-items: center; }
+.ak-sgl-headrow { color: var(--soft); font-size: 12.5px; }
+.ak-sgl-input { width: 90px; }
+.ak-sgl-net { text-align: right; }
+.ak-sgl-net.bad { color: var(--bad); }
+.ak-sgl-total { text-align: right; padding-top: 6px; }

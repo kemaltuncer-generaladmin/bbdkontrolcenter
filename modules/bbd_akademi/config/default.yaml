@@ -1,0 +1,23 @@
+# BBD Akademi yönetim paneli — varsayılanlar.
+#
+# Entegrasyon anahtarı BURADA DEĞİL: sır kasasında `bbd_akademi.api_key`
+# adıyla durur (K8). Ayrıntı: modules/bbd_akademi/README.md.
+
+# Akademi bağlantısının ana şalteri. Kapalıyken her vekil isteği
+# `503 akademi_disabled` döner; panel sebebini yazar.
+enabled: true
+# Akademi API kökü. Hazırlık (staging) ortamı config/local.yaml ile ezilir.
+base_url: "https://api.benimbasaridunyam.com.tr"
+# Tek istek için bekleme süresi (sn). Dosya yükleme ve indirme ayrıca:
+timeout_seconds: 20
+upload_timeout_seconds: 120
+# Deneme içe aktarma (XLSX/CSV), logo ve köprüden geçen dosyalar için üst sınır.
+max_upload_mb: 25
+# İmzalı indirme bağlantıları (PDF/XLSX) Akademi'nin kendi kökeninden gelir.
+# Nesne deposu ayrı bir alan adındaysa buraya yazılır; başka adrese gidilmez.
+download_hosts: []
+# Personel listesinin Akademi'ye zamanlanmış itilme aralığı (dk). 0 = kapalı
+# (değişiklikte yine hemen itilir).
+staff_sync_minutes: 30
+# PIN teyidinin (tahsilat iptali gibi) geçerlilik süresi (sn). Tek kullanımlık.
+step_up_seconds: 120

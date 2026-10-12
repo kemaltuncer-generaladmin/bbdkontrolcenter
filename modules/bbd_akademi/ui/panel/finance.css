@@ -1,0 +1,16 @@
+/* Kurum finansı — önek `ak-fin-`. Kurum parası mavi çizgiyle işaretlenir
+   (`ak-money-finance`, panel.css); kantin turuncudur ve bu ekranda yoktur. */
+
+.ak-fin-kpi { padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
+.ak-fin-methods { font-size: 12.5px; }
+.ak-fin-drawer { width: min(1040px, calc(100% - 40px)); }
+.ak-fin-plan { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; }
+.ak-fin-pick { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; }
+.ak-fin-pick-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto 120px;
+  align-items: center; gap: 8px; }
+.ak-fin-pick-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-fin-amount { width: 120px; text-align: right; }
+.ak-fin-pick-total { font-weight: 600; text-align: right; padding-top: 4px; }
+.ak-fin-preview { border: 1px dashed var(--line); border-radius: 9px; padding: 8px; }

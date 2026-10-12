@@ -1,0 +1,140 @@
+/* BBD Akademi paneli — ortak yerleşim. Önek: `ak-`.
+ *
+ * Paylaşılan görsel dil kitte (`kit.css`); burada yalnız bu panelin iskeleti
+ * ve ortak yardımcıların (common.js) stili durur. Bölüme özel kurallar
+ * bölümün kendi dosyasındadır (`<bölüm>.css`, önek `ak-<kısa ad>-`).
+ */
+
+.ak { --ak-nav: 188px; }
+
+/* `hidden` özniteliği HER ZAMAN gizler. Tarayıcının varsayılan `[hidden]`
+   kuralı yazar stilinden zayıftır: `display: flex` taşıyan `.ak-section`,
+   `.ak-stack` gibi kutularda bölüm/sekme değiştirince gizlenmesi gereken
+   bölme görünür kalıyordu. */
+.ak [hidden] { display: none !important; }
+
+.ak-banner:empty { display: none; }
+.ak-banner { padding: 10px 20px 0; }
+
+.ak-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--ak-nav) minmax(0, 1fr);
+}
+
+.ak-nav {
+  border-right: 1px solid var(--line);
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+  background: var(--tint);
+}
+.ak-nav-item {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.ak-nav-item:hover { background: #eef1f6; }
+.ak-nav-item.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
+/* Grup başlığı. `text-transform: uppercase` YOK: dil bilgisi verilmeyen
+   sayfada "Akademik" → "AKADEMIK" olur (Türkçe İ kaybolur). */
+.ak-nav-group {
+  margin: 12px 10px 4px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--soft);
+}
+
+.ak-main { min-height: 0; overflow: auto; }
+.ak-section { padding: 14px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+.ak-section > * { flex: none; }
+
+/* ---------------------------------------------------------- başlık */
+.ak-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.ak-head-text { flex: 1; min-width: 220px; }
+.ak-title { margin: 0; font-size: 18px; font-weight: 650; }
+.ak-sub { color: var(--soft); margin-top: 3px; }
+.ak-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ak-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ak-toolbar .ak-search { min-width: 240px; }
+
+/* ------------------------------------------------------------ liste */
+.ak-list-foot { display: flex; align-items: center; gap: 8px; padding: 8px 2px 0; }
+.ak-list-count { color: var(--soft); font-size: 12.5px; }
+.ak-sentinel { height: 1px; }
+.ak-error { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.ak-row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.ak-row-actions .kit-btn { height: 28px; padding: 0 9px; }
+.ak-muted { color: var(--soft); }
+.ak-num { font-variant-numeric: tabular-nums; }
+.ak-cell-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ak-cell-stack small { color: var(--soft); }
+
+/* Metin gibi görünen düğme (satır içi bağlantı). Bütün bölümler kullanır. */
+.ak-link { border: 0; background: none; padding: 0; color: #1d4ed8; cursor: pointer; font: inherit;
+  text-align: left; }
+.ak-link:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------- anahtar–değer */
+.ak-kv { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 6px 16px; margin: 0; padding: 12px 16px; }
+.ak-kv dt { color: var(--soft); }
+.ak-kv dd { margin: 0; }
+
+/* ------------------------------------------------------------- çip */
+.ak-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.ak-chips .kit-chip.on { background: #e3ebff; border-color: #9db6ff; color: #1d3f9e; }
+
+/* ------------------------------------------------------- dosya alanı */
+.ak-drop {
+  display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: center;
+  border: 1.5px dashed #c5cede; border-radius: 10px; padding: 22px 16px; cursor: pointer;
+  background: #fbfcfe; text-align: center;
+}
+.ak-drop.over { border-color: var(--accent); background: #f0f4ff; }
+.ak-drop-text { font-weight: 600; }
+.ak-drop-hint { color: var(--soft); font-size: 12.5px; }
+.ak-drop-error { color: var(--bad); font-size: 12.5px; }
+
+/* ---------------------------------------------------------- seçici */
+.ak-picker { position: relative; min-width: 260px; }
+.ak-picker .ak-search { width: 100%; }
+.ak-picker-list {
+  position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
+  background: #fff; border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: 0 10px 28px rgba(17, 23, 34, 0.12); max-height: 320px; overflow: auto;
+}
+.ak-picker-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  border: 0; background: transparent; padding: 8px 12px; cursor: pointer; font: inherit;
+}
+.ak-picker-row:hover, .ak-picker-row:focus { background: #f2f5fb; }
+.ak-picker-row span { color: var(--soft); font-size: 12.5px; }
+.ak-picker-empty { padding: 10px 12px; color: var(--soft); }
+
+/* ---------------------------------------------------------- pencere */
+.ak-dialog { max-height: calc(100% - 40px); overflow: auto; }
+.ak-dialog.wide { width: min(860px, calc(100% - 40px)); max-width: none; }
+.ak-clock { width: 72px; }
+
+/* ----------------------------------------------------- iki sütun / ızgara */
+.ak-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.ak-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 1100px) {
+  .ak-grid-2, .ak-grid-3 { grid-template-columns: minmax(0, 1fr); }
+}
+.ak-card-pad { padding: 12px 16px; }
+.ak-stack { display: flex; flex-direction: column; gap: 10px; }
+.ak-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* --------------------------------------------------------- iki ayrı para */
+.ak-money-canteen { border-left: 3px solid #f59e0b; }
+.ak-money-finance { border-left: 3px solid #2563eb; }

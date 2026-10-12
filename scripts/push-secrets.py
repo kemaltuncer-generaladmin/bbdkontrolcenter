@@ -103,6 +103,10 @@ SECRET_KEYS: tuple[str, ...] = (
     # Zil sistemi (ADR 0013) — anons sesi ve köprü
     "bell.vertex_service_account",
     "bell.bridge_token",
+    # BBD Akademi entegrasyon anahtarı (aksk_…) — KM vekili Akademi'ye bununla
+    # gider (modules/bbd_akademi, K8). Akademi'de `create-integration-key
+    # --preset km_panel` ile üretilir.
+    "bbd_akademi.api_key",
     # Sunucu uygulama anahtarları ve webhook sırları
     "server.coolify.app_key",
     "server.kantin.app_key",
