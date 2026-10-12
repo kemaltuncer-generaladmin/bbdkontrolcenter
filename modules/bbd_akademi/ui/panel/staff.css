@@ -1,0 +1,39 @@
+/* Personel — önek `ak-stf-`. İzin listesi (`ak-stf-perm*`) Ayarlar › Entegrasyon
+   anahtarlarında da kullanılır; bu dosyayı `permissionChecklist` kendisi yükler. */
+
+/* `hidden` özniteliği `display: flex` taşıyan sınıfları (ak-stack) yenmez; burada yener. */
+.ak-stf [hidden] { display: none !important; }
+
+.ak-stf-toggle { cursor: pointer; user-select: none; }
+.ak-stf-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--soft); }
+.ak-stf-row-error { color: var(--bad); }
+
+/* ------------------------------------------------------- eşitleme şeridi */
+.ak-stf-sync { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-left-width: 3px; }
+.ak-stf-sync.good { border-left-color: var(--good); }
+.ak-stf-sync.warn { border-left-color: #f59e0b; }
+.ak-stf-sync.bad { border-left-color: var(--bad); background: #fffafa; }
+.ak-stf-sync.dim { border-left-color: var(--line); }
+.ak-stf-sync-error { color: var(--bad); font-size: 12.5px; }
+
+/* ----------------------------------------------------------- izin listesi */
+.ak-stf-perms { display: flex; flex-direction: column; gap: 10px; }
+.ak-stf-perm-groups {
+  display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow: auto;
+  padding-right: 4px;
+}
+.ak-stf-perm-group { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.ak-stf-perm-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
+.ak-stf-perm-head .kit-btn { height: 26px; padding: 0 8px; }
+.ak-stf-perm {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  padding: 5px 2px; border-top: 1px solid var(--tint); cursor: pointer;
+}
+.ak-stf-perm:first-of-type { border-top: 0; }
+.ak-stf-scope { height: 28px; min-width: 120px; }
+.ak-stf-scope-fixed { font-size: 12px; }
+.ak-stf-perm-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  background: var(--tint); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
+}
+.ak-stf-perm-text { min-height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
