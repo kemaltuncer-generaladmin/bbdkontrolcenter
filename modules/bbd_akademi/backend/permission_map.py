@@ -80,8 +80,12 @@ PERMISSION_MAP: dict[str, str] = {
     "curriculum.manage": CURRICULUM,
     "resources.author": RESOURCES,
     "resources.manage": RESOURCES,
-    # --- yoklama
+    # --- yoklama (alma, düzeltme ve denetim kaydı, dışa aktarım); yoklama
+    # ayarları kurum ayarıdır (yalnız KM yüzeyi)
     "attendance.manage": ATTENDANCE,
+    "attendance.correct": ATTENDANCE,
+    "attendance.export": ATTENDANCE,
+    "attendance.settings": SETTINGS,
     # --- deneme (tanım, sonuç, toplu yükleme, cevap anahtarı, dışa aktarım)
     "exams.manage": EXAMS,
     "exams.import": EXAMS,

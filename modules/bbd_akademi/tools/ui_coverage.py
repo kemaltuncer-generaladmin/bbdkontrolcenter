@@ -89,6 +89,10 @@ _GROUP_VIEW = (
     "Sözleşme bab7935 (draft.3) ile geldi; KM gruplarının tarihli üyelik görünümü "
     "Gruplar ekranının ayrı iş paketidir (§7.D.2), bu dalda henüz yok.")
 
+_ATTENDANCE = (
+    "Sözleşme 030d3e3 (draft.3 yoklama paketi) ile geldi; yoklama düzeltme, "
+    "denetim, rapor ve ayar ekranları ayrı iş paketidir, bu dalda henüz yok.")
+
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
     "admin_getTimetableGrid": _PROGRAM_BUILDER,
@@ -109,6 +113,19 @@ PENDING: dict[str, str] = {
     "admin_listGroupMembers": _GROUP_VIEW,
     "admin_getStudentGroup": _GROUP_VIEW,
     "admin_listStudentGroupHistory": _GROUP_VIEW,
+    "admin_previewCalendarImpact":
+        "Sözleşme 030d3e3 ile geldi; takvim kaydının yoklama/oturum etkisini "
+        "önizleme kurum takvimi formunun ayrı iş paketidir, bu dalda henüz yok.",
+    **{operation_id: _ATTENDANCE for operation_id in (
+        "admin_getAttendanceBoard", "admin_listChronicAbsentees", "admin_listEarlyLeaves",
+        "admin_exportAttendance", "admin_listAttendanceInconsistencies", "admin_getLeaveStats",
+        "admin_getAttendanceMatrix", "admin_getAttendanceRates", "admin_listAttendanceReviews",
+        "admin_decideAttendanceReview", "admin_correctAttendance", "admin_listAttendanceHistory",
+        "admin_refreshAttendanceRoster", "admin_remindAttendance", "admin_markStudentLeft",
+        "admin_voidAttendance", "admin_getAttendanceSettings", "admin_putAttendanceSettings",
+        "admin_syncAttendance", "admin_getTeacherCompliance", "admin_getStudentAttendanceCard",
+        "admin_createLeaveRequest", "students_getAttendanceCalendar", "students_getAttendanceDay",
+    )},
 }
 
 
