@@ -154,6 +154,8 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bbd_students` | `bbd_students.groups` | Öğrenci gruplarını açar, adlandırır, arşivler; tarihli üyelik ekler/bitirir/taşır, geçmiş düzeltir (admin, bbd_staff, org_staff). Okuma `bbd_students.view` ile |
 | `bbd_students` | `bbd_students.lifecycle` | Öğrenciyi pasifleştirir (gerekçe, ileri tarih, toplu) ve yeniden etkinleştirir — kantin satışı, tablet ve Akademi girişi kapanır/açılır (admin, bbd_staff, org_staff) |
 | `bbd_students` | `bbd_students.delete` | Pasif öğrenciyi KALICI siler (bakiye 0, açık talep ve kurum cari borcu yok, ad yazılarak onay) — yalnız admin |
+| `mobile_gateway` | `mobile_gateway.events.view` | Akademi'ye olay iletiminin durumunu görür: gecikme, ölü mektup (BBD Akademi → Ayarlar → Senkron; admin, bbd_staff). Servis anahtarına verilmez |
+| `mobile_gateway` | `mobile_gateway.events.manage` | Ölü mektupları Akademi'ye yeniden gönderir, iletimi bir sıradan yeniden başlatır — yalnız admin |
 | `bbd_canteen_api` | `bbd_canteen_api.events.push` | Kantin backend'inin KM'ye olay itmesi (servis anahtarı; admin, canteen_service) |
 | `bbd_class_schedule` | `bbd_class_schedule.view` | Zil saatlerinin salt okunur görünümü |
 | `print` | `print.view` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görür |
@@ -301,6 +303,8 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `bbd_students.groups` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_students.lifecycle` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_students.delete` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `mobile_gateway.events.view` | ✓ | ✗ | ✓ | ✗ | ✗ |
+| `mobile_gateway.events.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `print.reprint` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |

@@ -293,9 +293,9 @@ async def test_dizin_ayni_revizyonda_yeniden_kurulmaz(
     built = {"n": 0}
     original = service.student
 
-    def counting(record: dict[str, Any]) -> dict[str, Any]:
+    def counting(record: dict[str, Any], **options: Any) -> dict[str, Any]:
         built["n"] += 1
-        return original(record)
+        return original(record, **options)
 
     monkeypatch.setattr(service, "student", counting)
 
@@ -326,9 +326,9 @@ async def test_dizin_since_istegi_tam_listeyi_bozmaz(
     built = {"n": 0}
     original = service.student
 
-    def counting(record: dict[str, Any]) -> dict[str, Any]:
+    def counting(record: dict[str, Any], **options: Any) -> dict[str, Any]:
         built["n"] += 1
-        return original(record)
+        return original(record, **options)
 
     monkeypatch.setattr(service, "student", counting)
     full = await client.get("/directory")
@@ -602,3 +602,101 @@ async def test_kurum_geneli_tablet_kullanimi_2000_ogrenci(client: httpx.AsyncCli
     assert len(response.content) < 150_000
     assert counter.count == 0
     assert elapsed < 0.08, elapsed
+
+
+# ============================================ merkezi senkron uçları (§9 bütçeleri)
+
+
+class Okul:
+    """2.000 öğrencilik sahte kantin (öğrenci dizininin tükettiği iki metot)."""
+
+    def __init__(self) -> None:
+        self.rows = [{"id": f"STU-{index:010d}", "displayName": f"Öğrenci {index} Soyad",
+                      "parentPhone": f"532{index:07d}", "balance": index * 5,
+                      "spendingLimit": None, "isBlocked": False,
+                      "updatedAt": 1791786600000} for index in range(2000)]
+        self.by_id = {row["id"]: row for row in self.rows}
+
+    async def students(self) -> list[dict[str, Any]]:
+        await asyncio.sleep(0.005)  # kantin listesinin ağ payı
+        return [dict(row) for row in self.rows]
+
+    async def student(self, opaque_id: str) -> dict[str, Any]:
+        await asyncio.sleep(0.003)
+        return dict(self.by_id[opaque_id])
+
+
+async def gercek_dizin(store: CheckedStore, world: World) -> Any:
+    """Öğrenci Yönetimi'nin GERÇEK dizin yeteneği (aynı depoda kendi göçleriyle)."""
+    from pathlib import Path
+
+    from modules.bbd_students.backend.directory import StudentDirectory
+
+    from km_core.contracts.module import ScopedStore
+
+    migrations = Path(__file__).resolve().parents[2] / "bbd_students" / "backend" / "migrations"
+    for path in sorted(migrations.glob("*.sql")):
+        await store.database.apply_migration("bbd_students", path.name,
+                                             path.read_text(encoding="utf-8"))
+
+    class Log:
+        def warning(self, *_a: Any, **_k: Any) -> None:
+            pass
+
+        info = error = warning
+
+    directory = StudentDirectory(canteen=Okul(), store=ScopedStore(store.database,
+                                                                   "bbd_students"), log=Log())
+    world.replace("bbd_students.directory", directory)
+    return directory
+
+
+def p95(values: list[float]) -> float:
+    ordered = sorted(values)
+    return ordered[max(0, int(len(ordered) * 0.95) - 1)]
+
+
+async def test_tekil_ogrenci_ve_toplu_okuma_butceleri(client: httpx.AsyncClient,
+                                                      world: World,
+                                                      store: CheckedStore) -> None:
+    """§9: `GET /students/{id}` ≤ 30 ms önbellekten, ≤ 80 ms soğuk; `ids` (100) ≤ 80 ms;
+    `since&balance=false` değişiklik yokken ≤ 30 ms ve < 1 KB. 2.000 öğrenci, gerçek dizin."""
+    directory = await gercek_dizin(store, world)
+    warm = await client.get("/directory?balance=false")       # ısınma (bütçe dışı)
+    assert warm.status_code == 200 and len(warm.json()["students"]) == 2000
+
+    cached: list[float] = []
+    for index in range(40):
+        started = time.perf_counter()
+        response = await client.get(f"/students/STU-{index * 37:010d}")
+        cached.append((time.perf_counter() - started) * 1000)
+        assert response.status_code == 200
+    cold: list[float] = []
+    for index in range(10):
+        directory.invalidate()
+        started = time.perf_counter()
+        response = await client.get(f"/students/STU-{index * 101:010d}")
+        cold.append((time.perf_counter() - started) * 1000)
+        assert response.status_code == 200
+    await client.get("/directory?balance=false")
+    ids = ",".join(f"STU-{index * 19:010d}" for index in range(100))
+    many: list[float] = []
+    for _ in range(10):
+        started = time.perf_counter()
+        response = await client.get(f"/directory?ids={ids}")
+        many.append((time.perf_counter() - started) * 1000)
+        assert len(response.json()["students"]) == 100
+    as_of = warm.json()["generatedAt"]
+    quiet: list[float] = []
+    for _ in range(20):
+        started = time.perf_counter()
+        response = await client.get("/directory", params={"since": as_of, "balance": "false"})
+        quiet.append((time.perf_counter() - started) * 1000)
+    assert response.json()["students"] == [] and response.json()["removed"] == []
+    size = len(response.content)
+    print(f"\n[§9] tekil önbellek p95 {p95(cached):.1f} ms · soğuk p95 {p95(cold):.1f} ms · "
+          f"ids(100) p95 {p95(many):.1f} ms · since&balance=false p95 {p95(quiet):.1f} ms, "
+          f"{size} B")
+    assert p95(cached) <= 30 and p95(cold) <= 80
+    assert p95(many) <= 80
+    assert p95(quiet) <= 30 and size < 1024

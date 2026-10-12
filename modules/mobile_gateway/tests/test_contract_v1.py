@@ -53,6 +53,10 @@ def on_behalf(text: str) -> dict[str, str]:
 #: Sözleşmedeki uçların tamamı. Router'da fazlası ya da eksiği olamaz.
 CONTRACT_ROUTES = {
     ("GET", "/directory"),
+    # Merkezi senkron (geçit §9).
+    ("GET", "/students/{student_id}"),
+    ("GET", "/canteen/balances"),
+    ("GET", "/events"),
     ("POST", "/auth/student-code"),
     ("POST", "/students/{student_id}/verify-code"),
     ("GET", "/students/{student_id}/canteen"),
@@ -87,7 +91,9 @@ CONTRACT_ROUTES = {
 
 STUDENT_KEYS = {"id", "firstName", "lastName", "displayName", "className", "schoolNo",
                 "studentPhone", "guardians", "canteen", "gradeLevel", "track", "examTarget",
-                "updatedAt", "phoneIssues"}
+                "updatedAt", "phoneIssues",
+                # Merkezi senkron (geçit §9).
+                "status", "statusReason", "statusSince", "revision", "canteenSync"}
 CONTROLS_KEYS = {"spendingLimit", "dailyLimit", "isBlocked", "guardianBlocked",
                  "restrictedProductIds", "spentToday", "balance", "controlsUpdatedAt"}
 PR_FEED_KEYS = {"ref", "studentId", "amount", "status", "amountFixed", "linkUrl", "payToken",
@@ -158,7 +164,7 @@ def test_optional_capabilities_are_declared_optional() -> None:
         "secrets": False, "canteen.api": False, "bbd_students.directory": False,
         "bbd_tablet.read": True, "bbd_tablet.control": True,
         "bell.week": True, "bell.announce": True,
-        "bell.plan": True, "bbd_students.groups": True,
+        "bell.plan": True, "bbd_students.groups": True, "events.outbox": True,
     }
 
 
@@ -224,6 +230,9 @@ async def test_directory_full_listing_shape(client: httpx.AsyncClient, world: Wo
                     "dailyLimit": 15000, "guardianBlocked": False},
         "gradeLevel": 8, "track": None, "examTarget": "LGS",
         "updatedAt": "2026-10-11T18:02:11+03:00", "phoneIssues": [],
+        # Eski dizin yeteneği bu alanları vermez: varsayılanlar (geçit §9).
+        "status": "active", "statusReason": None, "statusSince": None, "revision": 0,
+        "canteenSync": "ok",
     }
     # Telefonu olmayan veli listelenmez; nedeni phoneIssues'ta kalır.
     can = students[CAN]

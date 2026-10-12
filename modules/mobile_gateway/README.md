@@ -8,7 +8,9 @@ Kontrol Merkezi'ne **sunucudan sunucuya** açılan tek kapısı. Ekranı yoktur.
   `docs/integrations/kantin-veli-kontrolleri.md` §2.2,
   `docs/integrations/odeme-akademi-kaynagi.md` "Ek" (`payToken`),
   `docs/integrations/km-ogrenci-gruplari-ve-zil.md` §2.4, §3.1, §3.3
-  (öğrenci grupları, saat setleri, zil planı).
+  (öğrenci grupları, saat setleri, zil planı),
+  `docs/integrations/km-merkezi-senkron.md` §3 (olay iletimi, yeni uçlar) ve
+  geçit belgesi §9–§10; API sözleşmesi `webhooks_km` / `KmEventBatch`.
 - Önek: `/api/mobile_gateway/v1` · İzin: `mobile_gateway.access`
 - Sözleşme testi: `tests/test_contract_v1.py`
 - Kurallar: [../../CLAUDE.md](../../CLAUDE.md) · Kılavuz: [../../docs/module-guide.md](../../docs/module-guide.md)
@@ -40,7 +42,10 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 
 | Uç | Yanıt | Hata kodları |
 |---|---|---|
-| `GET /directory?since=` | 200 dizin + `etag`, `If-None-Match` → 304 | 422, 503 `capability_missing` |
+| `GET /directory?since=` | 200 dizin + `etag`, `If-None-Match` → 304; öğede `status`, `statusReason`, `statusSince`, `revision`, `canteenSync` (pasif öğrenci görünür; profil-yalnız `pending` satır `canteen: null`); `since` verilirse `removed: [{id, at}]` (90 günlük mezar taşı) | 422 (`since` 90 günden eski → istemci tam liste ister), 503 `capability_missing` |
+| `GET /directory?ids=STU-a,STU-b` | 200 yalnız bu öğrenciler (≤ 100), `full: false`, `classes: []`, bulunamayanlar `missingIds`; ETag'siz | 422 (100'den çok / bozuk kimlik), 503 |
+| `GET /directory?balance=false` | 200 öğrencilerde `canteen.balance` YOK, ETag bakiyesiz (okul saatinde satış ETag'i değiştirmez) | 422 |
+| `GET /students/{id}` | 200 tekil öğrenci (dizin öğesiyle birebir; `balance=false` geçerli) | 404 `student_not_found` (silinmişse de), 503 |
 | `POST /auth/student-code` | 200 `{match, studentId?}` | 422, 423 `locked`, 429 `rate_limited`, 503 `canteen_unavailable` |
 | `POST /students/{id}/verify-code` | 200 `{valid}` | 422, 423, 429, 503 |
 | `GET /students/{id}/canteen?days=` | 200 bakiye, işlemler, tahsilat, bekleyen talep (+ veli kontrolleri) | 404 `student_not_found`, 422, 503 |
@@ -54,6 +59,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `POST /students/{id}/canteen/collections` | 201 `{amount, balance}` | 422 `no_debt`/`exceeds_debt`/`invalid_amount`, 404 |
 | `GET /canteen/payment-requests?since=&limit=` | 200 `{items, nextSince, hasMore}` | 422, 503 |
 | `GET /canteen/parent-notifications?since=&limit=` | 200 `{items, nextSince, hasMore}` — SMS metni/telefon YOK | 422, 503 |
+| `GET /canteen/balances?ids=` | 200 `{ledgerSeq, items: [{studentId, balance, ledgerSeq}]}`; `ids` yoksa bütün öğrenciler; ETag = kantin defterinin son kimliği, `If-None-Match` → 304 | 422, 503 `canteen_unavailable` |
 | `GET /canteen/settings/public` | 200 `{allowPrepayment, maxPrepayment}` (60 sn önbellek) | 503 |
 | `GET /canteen/products` | 200 `{items}` (5 dk önbellek) | 503 |
 | `GET /tablets` | 200 `{summary, devices}` | 503 `capability_missing`, 502 |
@@ -68,7 +74,54 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `PUT /bell/plan` | 200 `{days: [{date, result: applied\|unchanged\|stale\|overridden\|rejected, revision[, error: unknown_profile\|revision_conflict, details: {profileId}]}], voicesPending, bellEnabled}` — günler bağımsız uygulanır; reddedilen gün yanıtı 200 bırakır | 413 `payload_too_large` (> 512 KB), 422 `validation_error` (`fields` + `details.path`, eksik günde `details.missing`), 409 `idempotency_conflict`, 503 `capability_missing` |
 | `GET /bell/plan/status?from=&to=` | 200 `{bellEnabled, sessionCallsEnabled, agent: {online, lastSeenAt}, days: [{date, mode, profileId, reason, source: akademi\|km\|none, revision, planHash, calls, voicesReady, voicesPending, lastDispatchAt, override, lastResult, lastError}]}`; varsayılan bugünden 14 gün, en çok 31; `ETag`, `If-None-Match` → 304 | 422, 503 `capability_missing` |
 | `POST /sms/otp` | 200 `{sent: true}` | 422, 429, 502 `sms_failed`, 503 |
+| `GET /events?after=&limit=` | 200 `{items: [KmEvent], lastSeq, hasMore}` — KM outbox'undan çekme (webhook'un yedeği; zarf webhook ile aynı), `limit` 1–500 | 410 `events_expired` (`after` 14 günlük saklamadan eski → tam uzlaştırma), 422, 503 `capability_missing` (`events.outbox`) |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
+
+## Olay iletimi (KM → Akademi, merkezi senkron)
+
+KM tek merkezdir: öğrenci, veli, kantin kontrolü, ödeme talebi, tablet ve zil
+değişiklikleri iş yazmasıyla aynı işlemde platform outbox'una (`events.outbox`,
+ADR 0029) yazılır. Bu modül iki iş yapar:
+
+1. **Yazma uçlarında olay** (`origin: akademi`, `causationId` = isteğin
+   `Idempotency-Key`'i, yoksa `X-Request-Id`): `PATCH …/canteen/controls` →
+   `canteen.controls_changed` (kantin yankısı bastırılır), ödeme talebi →
+   `canteen.payment_request_changed`, tablet grant / block / unblock ve oturum
+   bitirme → `tablet.policy_changed`. Nakit tahsilatın ayrı geçit olayı YOKTUR:
+   bakiye değişimi kantinin defter olayından `canteen.balance_changed` olarak
+   gelir (belge §8). Anons ve zil planı olay üretmez. Geçidin kurum ayarı
+   (`/settings/public` içeriği) değişince `institution.settings_changed`.
+2. **Gönderici** (`backend/events.py`, modül kaydında `asyncio` görevi):
+   `akademi` imleciyle `wait_after(25 sn)` → ≤ 100 olay → 200 ms pencere →
+   birleştirme (aynı `(type, subject)` → son; yaşam döngüsü birleştirilmez) →
+   `POST {akademi_base_url}/v1/webhooks/km`, başlıklar `X-KM-Tenant` ve
+   `X-KM-Signature: t=<unix>,v1=<hex>` (HMAC-SHA256, imzalanan `"<t>.<ham
+   gövde>"`). 2xx → imleç ilerler; 401/404 → DURUR (5 dk'da bir yoklar, sır
+   düzelince kendiliğinden sürer); 400/422 → tek tek, hâlâ reddedilen ölü
+   mektuba; 429/5xx/ağ → 1→60 sn üstel geri çekilme (±%20, `Retry-After`).
+   6 saat ulaşılamazsa durum `unreachable`; imleç 14 günlük saklamanın dışına
+   düşerse `directory.resync_required`. En çok 10 istek/sn. Zarfta kişisel veri
+   yoktur (telefon, ad, kod gitmez — `fields` yalnız değişen alanların adı).
+
+**Ayarlar** (`config/default.yaml`): `events_enabled` (**varsayılan kapalı** —
+kapalıyken hiç istek atılmaz ve tüketici kaydı silinir, outbox budaması
+beklemez), `akademi_base_url` (varsayılan `https://api.benimbasaridunyam.com.tr`),
+`akademi_tenant` (`X-KM-Tenant`, ör. `bbd`; boşsa açık olsa da gönderilmez),
+`events_instance_id`. **Sır** kasada `mobile_gateway.webhook_secret` (K8;
+Akademi'de kiracının `km` entegrasyonuna girilen sırla aynı).
+
+**Açma sırası** (RELEASE_NOTES_INTEGRATION "Yayın sırası"): Akademi API
+`webhooks_km` ile yayında → Akademi'de webhook sırrı girildi → KM kasasına aynı
+sır `mobile_gateway.webhook_secret` → `akademi_tenant` → `events_enabled: true`.
+Sıra bozulursa hiçbir şey kırılmaz: Akademi 2 dk yoklamayla (`GET /directory
+?since=`, `GET /events`) çalışır, yalnız gecikme artar.
+
+**Durum yeteneği** `mobile_gateway.events` (`status()`, `dead(limit)`,
+`retry_dead(seqs)`, `replay_from(seq)`): KM panelinde *BBD Akademi → Ayarlar →
+Senkron* kartı bunu Akademi'nin `admin_getDirectorySyncStatus.events` bloğuyla
+yan yana gösterir. İzinler: `mobile_gateway.events.view` (admin, bbd_staff),
+`mobile_gateway.events.manage` (admin) — servis anahtarına VERİLMEZ. Metrik:
+`deliveryLagMs` (commit → istek, ölçüm ~200 ms; bütçe 300 ms).
 
 ## Güvenlik kuralları
 
@@ -100,6 +153,8 @@ Varsayılan adresler **canlıyı** gösterir:
 
 - Kantin: `bbd_canteen_api` → `base_url: https://kantin.bbdstore.com.tr`
 - Zil köprüsü: `bell` → `bridge.base_url: https://bbdstore.com.tr`
+- Akademi olay alıcısı: `akademi_base_url: https://api.benimbasaridunyam.com.tr`
+  (yalnız `events_enabled: true` iken kullanılır)
 
 Staging/test KM kurulumu bu geçidi açmadan önce ikisini de ezmelidir, yoksa
 Akademi'nin staging ortamı canlı kantine ödeme talebi açar, canlı velilere
@@ -108,6 +163,7 @@ SMS gönderir ve okulda gerçek anons çalar:
 ```bash
 KM__modules__bbd_canteen_api__base_url=https://<staging-kantin>
 KM__modules__bell__bridge__base_url=https://<staging-köprü>
+KM__modules__mobile_gateway__akademi_base_url=https://<staging-akademi>
 ```
 
 (Ortam değişkeni biçimi `KM__<yol>__<alt_yol>`, bkz. `km_core/config/loader.py`.)
@@ -131,6 +187,7 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | `bell.announce` | `page(text, *, cache_key=, actor=, request_id=)` |
 | `bell.plan` | `apply_days(body, *, actor=)`, `status(from, to)` (ISO gün) — kural reddi `PlanError(status, code, details={path})` olarak gelir ve aynı kodla zarfa geçer; `actor` = `KM servis kullanıcısı (X-KM-On-Behalf-Of)`, Akademi `akademi:bell-plan` yazar |
 | `bbd_students.groups` | `list(since_revision=)`, `revision()` (yoksa önbellek süreyle sınırlanır) |
+| `events.outbox` (platform) | `emit(...)`, `read_after(seq, limit)`, `last_seq()`, `wait_after(seq, timeout)`, `register_consumer(name, start=)`, `unregister_consumer(name)`, `consumer_seq(name, seq)`, `oldest_pending_age(seq)`, `expired(seq)` — yoksa olay yazılmaz, `GET /events` 503, gönderici çalışmaz |
 
 Dinlenen olaylar: `bell.week_changed` (zil haftası önbelleği), `bbd_students.groups_changed`
 (grup listesi önbelleği). İkisi de yalnız önbellek bırakır; olay gelmese de revizyon ya da
@@ -173,7 +230,9 @@ Kantin hataları `CanteenError.reason` ile sınıflanır: `no_debt`, `no_phone`,
 
 `mod_mobile_gateway_idempotency`, `_hits` (kilit ve hız sınırı sayaçları;
 telefon sha256 özetiyle), `_sms_log` (maskeli), `_audit` (denetim izi,
-`on_behalf_of` ve `request_id` ile). Süresi dolan satırlar on dakikada bir
+`on_behalf_of` ve `request_id` ile), `_event_cursor` (gönderici imleci ve
+durumu), `_event_dead` (ölü mektup — zarf kişisel veri taşımaz), `_meta`
+(kurum ayarı özeti; göç 002). Süresi dolan satırlar on dakikada bir
 temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün).
 
 ## Bilinen sınırlar

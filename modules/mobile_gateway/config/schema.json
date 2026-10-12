@@ -39,6 +39,10 @@
       }
     },
     "sms_log_retention_days": {"type": "integer", "minimum": 1, "maximum": 3650},
-    "audit_retention_days": {"type": "integer", "minimum": 30, "maximum": 3650}
+    "audit_retention_days": {"type": "integer", "minimum": 30, "maximum": 3650},
+    "events_enabled": {"type": "boolean"},
+    "akademi_base_url": {"type": "string", "maxLength": 300, "pattern": "^(|https?://\\S+)$"},
+    "akademi_tenant": {"type": "string", "maxLength": 64},
+    "events_instance_id": {"type": "string", "minLength": 1, "maxLength": 64}
   }
 }

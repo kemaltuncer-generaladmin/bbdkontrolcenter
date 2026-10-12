@@ -52,11 +52,15 @@ def caller_of(request: Request, user: CurrentUser) -> Caller:
     decoded = getattr(user, "on_behalf_of", None)
     on_behalf = clean_header(decoded, decode=False) if decoded \
         else clean_header(request.headers.get("X-KM-On-Behalf-Of"))
+    request_id = clean_header(request.headers.get("X-Request-Id"), 100)
     return Caller(
         user_id=str(user.id),
         name=user.full_name or str(user.id),
         on_behalf_of=on_behalf,
-        request_id=clean_header(request.headers.get("X-Request-Id"), 100),
+        request_id=request_id,
+        # Olayın causationId'si (km-merkezi-senkron §8): yankı tanıma ve iz sürme.
+        causation_id=clean_header(request.headers.get("Idempotency-Key"), 200,
+                                  decode=False) or request_id,
     )
 
 
@@ -156,12 +160,35 @@ def reason_of(body: ReasonBody) -> str:
 # ================================================================ §1 dizin
 
 
+def flag(value: str | None, name: str) -> bool:
+    """`true|false|1|0` sorgu bayrağı; yoksa True (eski istemci uyumu)."""
+    if value is None:
+        return True
+    text = value.strip().lower()
+    if text in ("true", "1", "yes"):
+        return True
+    if text in ("false", "0", "no"):
+        return False
+    raise validation(f"`{name}` true ya da false olmalı.", name)
+
+
 @router.get("/directory")
 async def directory(request: Request, since: str | None = None,
+                    ids: str | None = Query(default=None, max_length=8000),
+                    balance: str | None = Query(default=None, max_length=8),
                     user: CurrentUser = requires(ACCESS)) -> Response:
+    """§1 + §9: `since` (→ `removed`), `ids` (≤ 100, `missingIds`), `balance=false`."""
     return reply(await current_service().directory(
-        since, request.headers.get("If-None-Match"),
+        since, request.headers.get("If-None-Match"), ids_text=ids,
+        balance=flag(balance, "balance"),
     ))
+
+
+@router.get("/students/{student_id}")
+async def student(student_id: str, balance: str | None = Query(default=None, max_length=8),
+                  user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """§9 tekil öğrenci — dizin öğesiyle birebir; silinmiş ya da yoksa 404."""
+    return await current_service().student_one(student_id, balance=flag(balance, "balance"))
 
 
 # ======================================================== §2 öğrenci şifresi
@@ -292,6 +319,15 @@ async def parent_notifications_feed(since: str | None = None,
                                     limit: int = Query(default=100, ge=1, le=500),
                                     user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
     return await current_service().parent_notifications_feed(since, limit)
+
+
+@router.get("/canteen/balances")
+async def canteen_balances(request: Request,
+                           ids: str | None = Query(default=None, max_length=40000),
+                           user: CurrentUser = requires(ACCESS)) -> Response:
+    """§9 bakiye uzlaştırması — ETag = kantin defterinin son kimliği, 304."""
+    return reply(await current_service().canteen_balances(
+        ids, request.headers.get("If-None-Match")))
 
 
 @router.get("/canteen/settings/public")
@@ -449,6 +485,16 @@ async def sms_otp(body: OtpBody, request: Request,
     return await idempotent(request, body, 200, lambda: current_service().send_otp(
         body.phone, body.code, body.purpose, caller,
     ))
+
+
+# ================================================= §9 olay çekme (yedek)
+
+
+@router.get("/events")
+async def events(after: int = Query(ge=0), limit: int = Query(default=100, ge=1, le=500),
+                 user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """KM outbox'undan çekme — zarf webhook ile aynı; budanmış `after` → 410."""
+    return await current_service().events_after(after, limit)
 
 
 # ========================================================= §8 genel ayarlar
