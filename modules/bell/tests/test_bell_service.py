@@ -870,3 +870,43 @@ async def test_anons_dosyasi_ses_ucundan_silinemez(store: Any, sounds: Path) -> 
     service, _ = build(store, sounds)
     result = await service.delete_sound("anons-abc123.wav", actor="t")
     assert result["ok"] is False
+
+
+# ------------------------------------------------------ haftalık plan olayı
+
+
+async def test_hafta_degisince_bildirilir_okuma_bildirmez(store: Any, sounds: Path) -> None:
+    """Saat ya da grup yazımı `bell.week_changed` yayınlatır (mobil geçit
+    önbelleği hemen bırakılır); okuma ve başarısız yazma yayınlatmaz."""
+    service, parts = build(store, sounds)
+    calls: list[int] = []
+
+    async def changed() -> None:
+        calls.append(1)
+
+    service._on_week_change = changed
+    await service.week()
+    assert calls == []
+    await service.save_times({"mon": [{"time": "08:40"}]}, actor="t")
+    assert len(calls) == 1
+    added = await service.add_group("LGS", actor="t")
+    assert len(calls) == 2
+    assert (await service.add_group("  ", actor="t"))["ok"] is False
+    assert len(calls) == 2
+    await service.rename_group(added["id"], "LGS A", actor="t")
+    assert len(calls) == 3
+    await service.remove_group(added["id"], actor="t")
+    assert len(calls) == 4
+    await drain(parts["voices"])
+
+
+async def test_hafta_bildirimi_patlasa_da_yazma_surer(store: Any, sounds: Path) -> None:
+    service, parts = build(store, sounds)
+
+    async def broken() -> None:
+        raise RuntimeError("veri yolu yok")
+
+    service._on_week_change = broken
+    result = await service.save_times({"tue": [{"time": "10:00"}]}, actor="t")
+    assert result["ok"] is True and result["times"]["tue"][0]["time"] == "10:00"
+    await drain(parts["voices"])

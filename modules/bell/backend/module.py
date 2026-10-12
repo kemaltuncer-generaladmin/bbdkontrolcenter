@@ -66,6 +66,9 @@ def register(ctx: ModuleContext) -> None:
         notify=notify,
         play_locally=bool(config.get("play_locally", True)),
         page_tts_timeout=number(_section(config, "page").get("tts_timeout_seconds"), 20),
+        # Saatler ya da gruplar değişince `bell.week` tüketicileri (mobil geçit
+        # önbelleği) hemen haberdar olur (olay veri yolu, K3).
+        on_week_change=lambda: ctx.publish("bell.week_changed", {}),
     )
 
     ctx.add_router(bind(service))
