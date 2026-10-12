@@ -181,3 +181,10 @@
 .ak-tt-slot .ak-clock { width: 100%; }
 .ak-tt-slot .kit-select, .ak-tt-slot .kit-input { width: 100%; }
 .ak-tt-slot-empty { padding: 18px 14px; color: var(--soft); text-align: center; }
+
+/* -------------------------------------------------- zil planı durumu */
+.ak-tt-bell { display: flex; flex-direction: column; gap: 8px; }
+.ak-tt-bell .kit-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ak-tt-bell-body { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.ak-tt-bell-flags { flex-wrap: wrap; }
+.ak-tt-bell-today { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }

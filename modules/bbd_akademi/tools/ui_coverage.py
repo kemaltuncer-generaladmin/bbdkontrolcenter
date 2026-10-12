@@ -109,11 +109,6 @@ PENDING: dict[str, str] = {
     "admin_listGroupMembers": _GROUP_VIEW,
     "admin_getStudentGroup": _GROUP_VIEW,
     "admin_listStudentGroupHistory": _GROUP_VIEW,
-    "admin_getBellPlanStatus":
-        "Zil planı durumu kartı (Ders programı) bu işlemi kullanacak; kart ayrı "
-        "commit'te gelir.",
-    "admin_pushBellPlan":
-        "Zil planı durumu kartındaki 'Planı şimdi it' düğmesi; kart ayrı commit'te gelir.",
 }
 
 

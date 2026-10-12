@@ -12,6 +12,10 @@
 // İŞ KURALI AKADEMİ'DE: öğretmen/derslik çakışması, sürüm kilidi, zil saati
 // değişince eşleşmeyen satırlar sunucuda belirlenir; panel sonucu gösterir.
 //
+// Sekmelerin üstünde "Zil planı durumu" kartı (timetable-bell-status.js):
+// Akademi'nin ürettiği 14 günlük zil planının KM Zil Sistemi'ne ulaşıp
+// ulaşmadığı. Ekran ilk açıldığında TEK istekle okunur.
+//
 // Derin bağlantılar: `{classGroupId}` o sınıfın ızgarasını, `{lessonEventId}`
 // etüt çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'}` sekmeyi açar.
 
@@ -21,6 +25,7 @@ import { sectionHead } from './common.js';
 import { weekTab } from './timetable-week.js';
 import { eventsTab, openLessonEvent } from './timetable-events.js';
 import { bellSlotsTab, termsTab } from './timetable-setup.js';
+import { bellPlanCard } from './timetable-bell-status.js';
 
 const TABS = [
   { key: 'week', label: 'Haftalık program' },
@@ -42,9 +47,10 @@ export function section(app) {
     bells: () => bellSlotsTab(app, { onChanged: () => bodies.week?.bellsChanged() }),
     terms: () => termsTab(app),
   };
+  const bellStatus = bellPlanCard(app);
   const tabs = tabBar(TABS, 'week', (key) => show(key));
   const slot = h('div', 'ak-tt-tabbody');
-  node.append(tabs.node, slot);
+  node.append(bellStatus.node, tabs.node, slot);
 
   function show(key) {
     if (!bodies[key]) {
@@ -84,6 +90,7 @@ export function section(app) {
   return {
     node,
     shown(payload) {
+      bellStatus.load();
       const tab = payload?.tab && builders[payload.tab] ? payload.tab : null;
       if (payload?.classGroupId) {
         // Izgara ilk kez açılıyorsa ilk yükleme doğrudan bu sınıfla başlar.
