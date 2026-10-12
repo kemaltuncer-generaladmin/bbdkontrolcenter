@@ -54,7 +54,7 @@ permissions:
     description: "Akademi ekranlarını görüntüleme: panel, öğrencilerin akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme sonuçları, kitap talepleri."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.academic
-    description: "Ders programı ve zil dilimleri, etüt ve tek seferlik ders, ödev, dönem, sınıf grubu ve çalışma grubu, hedef önerisi."
+    description: "Ders programı ve zil dilimleri, etüt ve tek seferlik ders, ödev, dönem, kurum takvimi, sınıf grubu ve çalışma grubu, hedef önerisi."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.curriculum
     description: "Müfredat: kuruma özel ünite/konu ekleme, program istisnaları (öğrenci veya sınıf bazında)."
@@ -96,6 +96,15 @@ permissions:
   - key: bbd_akademi.canteen
     description: "Akademi üzerinden kantin işlemleri (kurum engeli, kantin nakit tahsilatı). Asıl ekranı Öğrenciler modülüdür; bu izin yalnız vekil içindir."
     default_roles: [admin]
+  - key: bbd_akademi.learning
+    description: "Öğrenme araçlarında günlük koçluk: öğrenciye/gruba/sınıfa çalışma planı görevi atama, plan erteleme taleplerini onaylama."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.learning_setup
+    description: "Öğrenme araçları kurulumu (yalnız KM): çalışma planı şablonları, okuma listeleri ve okuma ligi, bilgi kartı desteleri, kurum görselleri."
+    default_roles: [admin]
+  - key: bbd_akademi.evaluations
+    description: "Öğrenci değerlendirme: değerlendirme çıktılarının dışa aktarımı (şablon, dönem ve formlar sözleşmeye eklendikçe aynı izne bağlanır)."
+    default_roles: [admin, bbd_staff]
 
 config:
   defaults: config/default.yaml

@@ -41,6 +41,9 @@ SETTINGS = f"{MODULE}.settings"
 STAFF = f"{MODULE}.staff"
 CAMPUS = f"{MODULE}.campus"
 CANTEEN = f"{MODULE}.canteen"
+LEARNING = f"{MODULE}.learning"
+LEARNING_SETUP = f"{MODULE}.learning_setup"
+EVALUATIONS = f"{MODULE}.evaluations"
 
 #: Akademi izin anahtarı (kapsamsız) → KM izni.
 PERMISSION_MAP: dict[str, str] = {
@@ -60,6 +63,9 @@ PERMISSION_MAP: dict[str, str] = {
     "study.view": VIEW,
     "goals.view": VIEW,
     "reports.view": VIEW,
+    "learning.view": VIEW,         # öğrenme verisi (plan, hata defteri, soru, okuma, ajanda)
+    "reading.view": VIEW,
+    "calendar.view": VIEW,
     # --- akademik işler: program, etüt, ödev, dönem/sınıf/grup, zil dilimi
     "academic.manage": ACADEMIC,
     "timetable.manage": ACADEMIC,
@@ -67,6 +73,7 @@ PERMISSION_MAP: dict[str, str] = {
     "etut.manage": ACADEMIC,
     "homework.manage": ACADEMIC,
     "goals.suggest": ACADEMIC,
+    "calendar.manage": ACADEMIC,   # kurum takvimi (tatil, veli toplantısı, deneme günü)
     # --- müfredat ve kaynak
     "curriculum.manage": CURRICULUM,
     "resources.author": RESOURCES,
@@ -77,6 +84,13 @@ PERMISSION_MAP: dict[str, str] = {
     "exams.manage": EXAMS,
     "exams.import": EXAMS,
     "exams.export": EXAMS,
+    # --- öğrenme araçları (F-A18–A24): günlük koçluk işi ve yapısal kurulum ayrı
+    "plan.manage": LEARNING,
+    "plan_templates.manage": LEARNING_SETUP,
+    "reading_lists.manage": LEARNING_SETUP,
+    "decks.manage": LEARNING_SETUP,
+    # --- öğrenci değerlendirme
+    "evaluations.export": EVALUATIONS,
     # --- kurum cari (kantinden AYRI — A12). Görüntüleme de hassastır.
     "finance.view": FINANCE,
     "finance.manage": FINANCE,
@@ -151,5 +165,6 @@ def unmapped(operations: Iterable[Operation]) -> list[str]:
 #: Panelin bölüm görünürlüğü de AYNI tablodan okunur (`GET km/capabilities`).
 ALL_PERMISSIONS: tuple[str, ...] = (
     VIEW, ACADEMIC, CURRICULUM, RESOURCES, ATTENDANCE, EXAMS, FINANCE, FINANCE_VOID,
-    BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN,
+    BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN, LEARNING, LEARNING_SETUP,
+    EVALUATIONS,
 )
