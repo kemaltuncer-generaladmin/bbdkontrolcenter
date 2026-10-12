@@ -9,7 +9,8 @@ Listeye girenler (sözleşme `docs/api/README.md` §8):
 
   · bütün `/v1/admin/*` işlemleri (her biri `x-surface: km | both` taşır)
   · `/v1/students/{studentId}/*` altındaki, entegrasyon anahtarıyla
-    çağrılabilen (`security` içinde `integrationKey`) GET işlemleri
+    çağrılabilen (`security` içinde `integrationKey`) ve kurum kapsamlı bir
+    izinle açılan GET işlemleri
   · `/v1/catalog/*` GET işlemleri (ISBN / kütüphane araması)
 
 Kullanım (depo kökünden):
@@ -40,15 +41,24 @@ PARAM = re.compile(r"\{([A-Za-z][A-Za-z0-9]*)\}")
 
 
 def _permissions(raw: Any) -> tuple[str, ...]:
-    """`x-permission` → kapsamsız anahtarlar.
+    """`x-permission` → kapsamsız anahtarlar — YALNIZ kurum kapsamında geçerli olanlar.
 
     `schedule.view:self|children|tenant` → `schedule.view`; liste biçimi
     (`['audit.export', 'exams.export']`) "birisi yeterli" demektir.
+
+    Entegrasyon principal'ının kapsamı `tenant`'tır (sözleşme §1). Kapsamı
+    `tenant` içermeyen seçenek (`mistakes.manage:self` — öğrencinin kendisi,
+    `learning.view:children` — veli) anahtarla HİÇBİR ZAMAN karşılanamaz; listeye
+    girmez. Bütün seçenekleri böyle olan öğrenci okuması vekilden geçmez.
+    Kapsamsız yazım kurum geneli demektir (README §3).
     """
     items = raw if isinstance(raw, list) else [raw]
     keys: list[str] = []
     for item in items:
-        key = str(item or "").split(":", 1)[0].strip()
+        key, _, scope = str(item or "").partition(":")
+        key = key.strip()
+        if scope and "tenant" not in scope.split("|"):
+            continue
         if key and key not in keys:
             keys.append(key)
     return tuple(keys)
@@ -80,11 +90,17 @@ def collect(spec: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             if admin and not operation.get("x-surface"):
                 raise SystemExit(f"{operation.get('operationId')}: x-surface yok — sözleşme bozuk")
+            permissions = _permissions(operation.get("x-permission"))
+            if not permissions:
+                if admin:
+                    raise SystemExit(f"{operation.get('operationId')}: kurum kapsamlı izin yok "
+                                     "— sözleşme bozuk")
+                continue    # yalnız öğrenci/veli kapsamlı okuma: anahtar karşılayamaz
             rows.append({
                 "method": method.upper(),
                 "path": path,
                 "operation_id": str(operation["operationId"]),
-                "permissions": _permissions(operation.get("x-permission")),
+                "permissions": permissions,
                 "surface": str(operation.get("x-surface") or "read"),
                 "step_up": bool(operation.get("x-step-up")),
                 "money": bool(operation.get("x-money")),
