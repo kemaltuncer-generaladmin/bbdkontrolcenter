@@ -42,6 +42,20 @@ kantin-veli-kontrolleri.md` §1.3/1.5/1.6) ile gelenler:
     GET   /api/notifications?updatedSince=&limit=      veli SMS olay akışı
     GET   /api/settings                     allowPrepayment / maxPrepayment
 
+Öğrenci süzgeci, imleçli sayfa ve hesap dökümü (aynı sözleşme §1.7):
+    GET   /api/transactions?studentId=&cursor=           {data, nextCursor, hasMore}
+    GET   /api/payment-requests?studentId=&limit=&cursor= {data, nextCursor, hasMore}
+    GET   /api/payment-requests?updatedSince=&studentId= akış kipinde öğrenci süzgeci
+    GET   /api/students/{id}/ledger?limit=&cursor=&from=&to=   öğrencinin hesap dökümü
+
+ESKİ KANTİN UYUMU. §1.7 öncesi kantin `studentId`/`cursor` parametrelerini yok
+sayar, yanıtında `nextCursor` yoktur ve defter ucu 404 (gerekçesiz) döner.
+İstemci bunları yanıttan anlar: satırlar her sürümde burada da süzülür,
+`nextCursor` yoksa sayfa son sayfadır, defter ucu yoksa `ledger()`
+`reason="ledger_unsupported"` ile reddeder (çağıran eski yola döner) ve bu
+bilgi `LEDGER_RETRY_SECONDS` boyunca hatırlanır — eski kantine her istekte
+boşuna bir tur atılmaz.
+
 PARA HER YERDE KURUŞ (tam sayı), ZAMAN EPOCH-MİLİSANİYE. Dönüşüm çağıranın işidir.
 Tek istisna yeni uçların `…At` alanlarıdır: sözleşme ISO der, eski kantin
 epoch-ms döner; `_iso` ikisini de ISO'ya çevirir.
@@ -50,8 +64,10 @@ epoch-ms döner; `_iso` ikisini de ISO'ya çevirir.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -84,6 +100,24 @@ PAYMENT_ORIGINS = ("admin", "bulk", "threshold", "api")
 #: İmleç yokken akışın başlangıcı. Akış kipi yalnız `updatedSince` ile açılır.
 FEED_START = "1970-01-01T00:00:00Z"
 
+#: İşlem listesinin kantin üst sınırı (aralıkta; `TransactionController`).
+TRANSACTIONS_LIMIT_MAX = 5000
+
+#: Ödeme talebi liste kipinin kantin üst sınırı ve varsayılanı.
+PAYMENT_REQUESTS_LIMIT_MAX = 500
+
+#: Hesap dökümünün (`/ledger`) sayfa sınırı ve varsayılanı (kantin doğrulaması).
+LEDGER_LIMIT_MAX = 200
+LEDGER_LIMIT_DEFAULT = 50
+
+#: Defter satırının türleri (kantin `StudentLedgerController::kindOf`).
+LEDGER_KINDS = ("sale", "sale_reversal", "payment", "cash", "adjustment")
+
+#: Kantinin defter ucu olmadığı (eski sürüm) öğrenildikten sonra yeniden
+#: denemeden önce beklenen süre, saniye. Kantin güncellenince en geç bu kadar
+#: sonra yeni uç kendiliğinden kullanılmaya başlar.
+LEDGER_RETRY_SECONDS = 600.0
+
 
 class CanteenError(RuntimeError):
     """Kantin API'si beklenmedik yanıt verdi."""
@@ -113,24 +147,72 @@ class CanteenError(RuntimeError):
 #: Kantinin tek batch isteğinde kabul ettiği en çok kalem (`TransactionController`).
 BATCH_LIMIT = 200
 
+#: Bağlantı kurma (TCP + TLS) için en çok bekleme, saniye. Okuma süresi
+#: ayardan gelir (`timeout_seconds`); bağlantı kurulamıyorsa kantin kapalıdır
+#: ve bunu okuma süresi kadar beklemek gereksizdir.
+CONNECT_TIMEOUT = 5.0
+
+#: Kantin bağlantı havuzu. KM tek süreçtir; eşzamanlı kantin isteği sayısı
+#: panel + mobil geçit trafiğiyle sınırlıdır. Boşta bağlantı 30 sn tutulur
+#: (kantinin önündeki vekil genellikle 60 sn'de kapatır).
+POOL_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10,
+                           keepalive_expiry=30.0)
+
 
 class CanteenApi:
     """`canteen.api` yeteneğinin uygulaması."""
 
     def __init__(self, *, base_url: str, device_name: str, secrets: Any, log: Any,
-                 timeout: float = 20.0,
+                 timeout: float = 20.0, connect_timeout: float = CONNECT_TIMEOUT,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._device_name = device_name
         self._secrets = secrets
         self._log = log
         self._timeout = timeout
+        self._connect_timeout = min(connect_timeout, timeout)
         # Testler `httpx.MockTransport` verir; üretimde None (gerçek ağ).
         self._transport = transport
         self._token: str | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._http_loop: asyncio.AbstractEventLoop | None = None
+        # Defter ucunun yokluğu bu ana (time.monotonic) kadar hatırlanır.
+        self._ledger_missing_until = 0.0
 
-    def _client(self, timeout: float | None = None) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout or self._timeout, transport=self._transport)
+    def _timeouts(self, read: float | None = None) -> httpx.Timeout:
+        """Okuma süresi ayardan (`timeout_seconds`), bağlantı kurma süresi KISA.
+
+        Kantin ulaşılamıyorsa bunu 20 saniyede değil birkaç saniyede bilmek
+        gerekir: öğrenci ekranı ve mobil geçit o süre boyunca bekler.
+        """
+        value = read or self._timeout
+        return httpx.Timeout(value, connect=self._connect_timeout,
+                             pool=self._connect_timeout)
+
+    def _client(self) -> httpx.AsyncClient:
+        """Kantine giden TEK, kalıcı istemci (HTTP keep-alive + bağlantı havuzu).
+
+        Eskiden her istek yeni bir `AsyncClient` açıp kapatıyordu: her çağrı
+        yeni TCP + TLS el sıkışması demekti (kantin uzak sunucuda; istek
+        başına onlarca milisaniye). Havuz bağlantıyı açık tutar.
+
+        İstemci olay döngüsüne bağlıdır; döngü değişirse (testler, yeniden
+        başlatma) yenisi kurulur — eski döngünün bağlantısı başka döngüde
+        kullanılamaz.
+        """
+        loop = asyncio.get_running_loop()
+        client = self._http
+        if client is None or client.is_closed or self._http_loop is not loop:
+            client = httpx.AsyncClient(timeout=self._timeouts(), transport=self._transport,
+                                       limits=POOL_LIMITS)
+            self._http, self._http_loop = client, loop
+        return client
+
+    async def aclose(self) -> None:
+        """Havuzdaki bağlantıları kapatır (kapanışta ya da testte)."""
+        client, self._http, self._http_loop = self._http, None, None
+        if client is not None and not client.is_closed:
+            await client.aclose()
 
     # ------------------------------------------------------------- kimlik
 
@@ -150,11 +232,10 @@ class CanteenApi:
                 "Kantin kayıt sırrı yok. config/local.yaml → secrets.canteen.enrollment_secret"
             )
 
-        async with self._client() as client:
-            response = await client.post(
-                f"{self._base}/api/auth/device",
-                json={"name": self._device_name, "enrollmentSecret": secret},
-            )
+        response = await self._client().post(
+            f"{self._base}/api/auth/device",
+            json={"name": self._device_name, "enrollmentSecret": secret},
+        )
         if response.status_code != 201:
             raise CanteenError(f"Cihaz kaydı reddedildi ({response.status_code}).")
 
@@ -183,16 +264,15 @@ class CanteenApi:
         attempts = 3 if method.upper() == "GET" else 1
         response = None
         for attempt in range(attempts):
-            async with self._client() as client:
-                try:
-                    response = await client.request(
-                        method, f"{self._base}{path}", headers=headers, **kwargs
-                    )
-                except httpx.TransportError as failure:
-                    if attempt + 1 >= attempts:
-                        raise CanteenError(f"{method} {path} → bağlantı hatası: {failure}") from failure
-                    await asyncio.sleep(0.4 * (attempt + 1))
-                    continue
+            try:
+                response = await self._client().request(
+                    method, f"{self._base}{path}", headers=headers, **kwargs
+                )
+            except httpx.TransportError as failure:
+                if attempt + 1 >= attempts:
+                    raise CanteenError(f"{method} {path} → bağlantı hatası: {failure}") from failure
+                await asyncio.sleep(0.4 * (attempt + 1))
+                continue
 
             if response.status_code < 500 or attempt + 1 >= attempts:
                 break
@@ -486,20 +566,43 @@ class CanteenApi:
     async def transactions(self, *, from_ms: int | None = None, to_ms: int | None = None,
                            limit: int | None = None,
                            student_id: str | None = None) -> list[dict[str, Any]]:
-        """İşlem geçmişi, kalem kırılımlı. `to_ms` HARİÇTİR (yarı açık aralık).
+        """İşlem geçmişi, kalem kırılımlı — TEK SAYFA, düz liste (eski biçim).
 
-        Aralık verilmezse son 100 işlem; verilirse en çok 5000 satır döner.
-        Her satır: serverId, studentId (opaque), studentName, total, createdAt,
-        reversedAt, reversedReason, items[].
+        `to_ms` HARİÇTİR (yarı açık aralık). Aralık verilmezse son 100 işlem;
+        verilirse en çok 5000 satır döner. Her satır: serverId, studentId
+        (opaque), studentName, total, createdAt, reversedAt, reversedReason,
+        items[].
 
-        `student_id` verilirse YALNIZ o öğrencinin satırları döner. Kantin
-        `GET /api/transactions` bugün öğrenci süzgeci TANIMAZ (kantin
-        `TransactionController::index` yalnız from/to/limit doğrular; öğrenci
-        başına defter ucu da yoktur). Bu yüzden `studentId` sorguya yine
-        eklenir — kantin süzgeci eklediğinde sunucuda süzülür, bilinmeyen
-        parametre bugün yok sayılır — ve satırlar BURADA da süzülür: başka
-        öğrencinin satırı hiçbir sürümde dışarı çıkmaz. Sınır aynıdır: aralıkta
-        en çok 5000 satır okunur; öğrenci ekranı için aralığı dar tutun.
+        `student_id` verilirse YALNIZ o öğrencinin satırları döner: kantin
+        (§1.7) `studentId` süzgecini sunucuda `(student_id, id)` indeksiyle
+        uygular; satırlar ayrıca burada da süzülür (§1.7 öncesi kantin
+        parametreyi yok sayar — başka öğrencinin satırı hiçbir sürümde dışarı
+        çıkmaz).
+
+        Sonraki sayfa gerekiyorsa `transactions_page` kullanılır: aynı
+        parametreler + `cursor`, dönüş `{data, nextCursor, hasMore}`. Bu metot
+        dönüş biçimi değişmesin diye (raporlar, öğle yemeği) olduğu gibi
+        kalır ve ilk sayfayı verir. Öğrencinin kantin geçmişi için tek uç
+        `ledger()`dır.
+        """
+        page = await self.transactions_page(from_ms=from_ms, to_ms=to_ms, limit=limit,
+                                            student_id=student_id)
+        return list(page["data"])
+
+    async def transactions_page(self, *, from_ms: int | None = None, to_ms: int | None = None,
+                                limit: int | None = None, student_id: str | None = None,
+                                cursor: str | None = None) -> dict[str, Any]:
+        """İşlem geçmişinin bir sayfası — `{data, nextCursor, hasMore}`.
+
+        Parametreler `transactions` ile aynıdır; `cursor` önceki sayfanın
+        `nextCursor`'udur (opak; olduğu gibi geri gönderilir, kantin `id`
+        üzerinde keyset ile ilerler, OFFSET yok). Son sayfada `nextCursor` None.
+
+        Eski kantin (§1.7 öncesi) imleç döndürmez: o zaman `nextCursor` None,
+        `hasMore` False'tur — tek sayfa vardır. İmleçle gelen istek eski
+        kantine düşerse (kantin geri alınmış) kantin imleci yok sayıp İLK
+        sayfayı verirdi; çift satır üretmemek için boş sayfa dönülür.
+        Bozuk imleç kantinde 422 → `CanteenError(reason="validation_error")`.
         """
         params: dict[str, Any] = {}
         if from_ms is not None:
@@ -507,17 +610,15 @@ class CanteenApi:
         if to_ms is not None:
             params["to"] = int(to_ms)
         if limit is not None:
-            params["limit"] = int(limit)
+            params["limit"] = max(1, min(TRANSACTIONS_LIMIT_MAX, int(limit)))
         wanted = str(student_id or "").strip()
         if wanted:
             params["studentId"] = wanted
+        token = str(cursor or "").strip()
+        if token:
+            params["cursor"] = token
         payload = await self._request("GET", "/api/transactions", params=params)
-        data = payload.get("data") if isinstance(payload, dict) else payload
-        rows = list(data or [])
-        if wanted:
-            rows = [row for row in rows
-                    if isinstance(row, dict) and str(row.get("studentId") or "") == wanted]
-        return rows
+        return _cursor_page(payload, wanted, bool(token))
 
     # --------------------------------------------------------------- raporlar
 
@@ -713,8 +814,9 @@ class CanteenApi:
     # kaybolmasın diye. Çağıran `ref` / `id` ile tekilleştirir.
 
     async def payment_requests_feed(self, updated_since: str | None = None,
-                                    limit: int = 200) -> dict[str, Any]:
-        """Kurum geneli ödeme talebi akışı (§1.6) — `updated_at` artan sırada.
+                                    limit: int = 200,
+                                    student_id: str | None = None) -> dict[str, Any]:
+        """Ödeme talebi akışı (§1.6) — `updated_at` artan sırada.
 
         Dönüş tek sayfadır: `{"data": [...], "nextSince": iso, "hasMore": bool}`.
         `nextSince` ve `hasMore` kantinden olduğu gibi geçer (kantin vermezse
@@ -722,13 +824,22 @@ class CanteenApi:
         `nextSince` aynen geri gönderilir; sınır dahildir, tekrar gelen satır
         `ref` ile ayıklanır.
 
+        `student_id` verilirse akış yalnız o öğrencinindir (§1.7: kantin akış
+        kipinde de `studentId` süzer). §1.7 öncesi kantin süzgeci yok sayar;
+        satırlar burada da süzülür, imleç kantinin kurum geneli imlecidir
+        (ilerlemesi doğru kalır, yalnız sayfa seyrek gelir).
+
         Her satır: ref, studentId, amount, status, amountFixed, linkUrl,
         payToken, origin, createdAt, updatedAt, paidAt (zamanlar ISO, +03:00).
         """
-        payload = await self._request("GET", "/api/payment-requests",
-                                      params=_feed_params(updated_since, limit))
+        params = _feed_params(updated_since, limit)
+        wanted = str(student_id or "").strip()
+        if wanted:
+            params["studentId"] = wanted
+        payload = await self._request("GET", "/api/payment-requests", params=params)
         rows = payload.get("data") if isinstance(payload, dict) else payload
-        items = [_payment_request_row(row) for row in rows or [] if isinstance(row, dict)]
+        items = [_payment_request_row(row) for row in rows or [] if isinstance(row, dict)
+                 and (not wanted or str(row.get("studentId") or "") == wanted)]
         return _feed_page(payload, items, updated_since)
 
     async def parent_notifications_feed(self, updated_since: str | None = None,
@@ -759,24 +870,134 @@ class CanteenApi:
     # ------------------------------------------------------------- ödeme talebi
 
     async def payment_requests(self, student_id: str | None = None) -> list[dict[str, Any]]:
-        """Son 100 ödeme talebi (akış kipi DEĞİL — `updatedSince` gönderilmez).
+        """Son 100 ödeme talebi, en yeni önce — düz liste (eski biçim; akış kipi
+        DEĞİL, `updatedSince` gönderilmez).
 
-        `student_id` verilirse yalnız o öğrencinin talepleri döner. Kantin liste
-        ucu bugün öğrenci süzgeci tanımaz (`PaymentRequestController::index`):
-        `studentId` sorguya yine eklenir (kantin eklediğinde sunucuda süzülür)
-        ve satırlar BURADA da süzülür. Liste kurum genelinde son 100 talebe
-        bakar; öğrencinin daha eski talebi bu listede görünmeyebilir. Açık
-        (PENDING) talep öğrenci başına tektir ve hep en yenilerdendir.
+        `student_id` verilirse yalnız o öğrencinin talepleri döner: kantin
+        (§1.7) liste kipinde `studentId` süzgecini sunucuda uygular ve
+        öğrencinin son 100 talebini verir. Satırlar ayrıca burada da süzülür:
+        §1.7 öncesi kantin süzgeci yok sayıp kurum genelinde son 100 talebi
+        verir (öğrencinin daha eski talebi o listede görünmez) ve başka
+        öğrencinin talebi hiçbir sürümde dışarı çıkmaz. Açık (PENDING) talep
+        öğrenci başına tektir ve hep en yenilerdendir.
+
+        Satırlar kantinden geldiği gibidir (zamanlar epoch-ms, `studentName`
+        dahil). Sonraki sayfa için `payment_requests_page`.
+        """
+        page = await self.payment_requests_page(student_id=student_id)
+        return list(page["data"])
+
+    async def payment_requests_page(self, student_id: str | None = None, *,
+                                    limit: int | None = None,
+                                    cursor: str | None = None) -> dict[str, Any]:
+        """Ödeme taleplerinin bir sayfası — `{data, nextCursor, hasMore}`.
+
+        Liste kipi (§1.7): `limit` 1–500 (kantin varsayılanı 100), `cursor`
+        önceki sayfanın `nextCursor`'u (opak). Satırlar `payment_requests` ile
+        aynı biçimdedir. Eski kantin imleç döndürmez: tek sayfa (`nextCursor`
+        None, `hasMore` False); imleçli istek eski kantine düşerse boş sayfa.
+        """
+        params: dict[str, Any] = {}
+        wanted = str(student_id or "").strip()
+        if wanted:
+            params["studentId"] = wanted
+        if limit is not None:
+            params["limit"] = max(1, min(PAYMENT_REQUESTS_LIMIT_MAX, int(limit)))
+        token = str(cursor or "").strip()
+        if token:
+            params["cursor"] = token
+        payload = await self._request("GET", "/api/payment-requests", params=params or None)
+        return _cursor_page(payload, wanted, bool(token))
+
+    # ------------------------------------------------------------ hesap dökümü
+
+    async def ledger(self, student_id: str, limit: int = LEDGER_LIMIT_DEFAULT,
+                     cursor: str | None = None, from_ms: int | None = None,
+                     to_ms: int | None = None) -> dict[str, Any]:
+        """Öğrencinin kantin hesap dökümü (§1.7) — `GET /api/students/{id}/ledger`.
+
+        Satışlar (kalemleriyle), satış iptalleri, online ödemeler ve nakit
+        tahsilatlar cari defter sırasıyla EN YENİ ÖNCE, imleçli. Öğrencinin
+        kantin ekranı tek istekle çizilir (eskiden öğrenci + kurum geneli
+        işlem aralığı + tahsilat raporu + son 100 talep = dört istek).
+
+        Parametreler: `limit` 1–200 (varsayılan 50), `cursor` önceki sayfanın
+        `nextCursor`'u, `from_ms` / `to_ms` epoch-ms, deftere yazılma anı
+        (`to_ms` HARİÇ). `to_ms` verilmezse kantin ilk sayfanın bakiyesini ek
+        sorgusuz hesaplar; yalnız gerçekten gerekiyorsa verin.
+
+        Dönüş: `{"data": [...], "nextCursor": str | None, "hasMore": bool}`.
+        Satır: `id, at (epoch-ms), kind (sale | sale_reversal | payment |
+        cash | adjustment), direction (debit | credit), amount, balanceAfter,
+        ref, sale` — `sale` satış ve iptal satırında `{serverId, localId,
+        total, createdAt, reversedAt, reversedReason, items[]}`, diğerlerinde
+        None. Para kuruş, bakiye pozitif = borç.
+
+        İLK SAYFA (imleçsiz) ayrıca iki anahtar taşır — yalnız kantin
+        döndürdüyse bulunur, sonraki sayfalarda HİÇ yoktur:
+        `student` (`get_student` biçimi: balance, spendingLimit, dailyLimit,
+        spentToday, isBlocked, guardianBlocked, restrictedProductIds,
+        controlsUpdatedAt ISO) ve `pendingPaymentRequest` (akış satırı biçimi,
+        `payToken` dahil; açık talep yoksa None). Erişim kodu ve veli telefonu
+        dönmez; dönse de düşer.
+
+        Red: öğrenci yoksa `CanteenError(status=404, reason="student_not_found")`.
+        Kantin bu ucu TANIMIYORSA (§1.7 öncesi sürüm; gerekçesiz 404)
+        `CanteenError(status=404, reason="ledger_unsupported")` — çağıran eski
+        yoldan (öğrenci + işlemler + tahsilat + talepler) okur. Bu bilgi
+        `LEDGER_RETRY_SECONDS` boyunca hatırlanır; o sürede kantine gidilmeden
+        aynı hata verilir.
         """
         wanted = str(student_id or "").strip()
-        params = {"studentId": wanted} if wanted else None
-        payload = await self._request("GET", "/api/payment-requests", params=params)
-        data = payload.get("data") if isinstance(payload, dict) else payload
-        rows = list(data or [])
-        if wanted:
-            rows = [row for row in rows
-                    if isinstance(row, dict) and str(row.get("studentId") or "") == wanted]
-        return rows
+        if not wanted:
+            raise CanteenError("Öğrenci kimliği boş.", status=404, reason="student_not_found")
+        if time.monotonic() < self._ledger_missing_until:
+            raise _ledger_unsupported()
+
+        try:
+            size = int(limit)
+        except (TypeError, ValueError):
+            size = LEDGER_LIMIT_DEFAULT
+        params: dict[str, Any] = {"limit": max(1, min(LEDGER_LIMIT_MAX, size))}
+        token = str(cursor or "").strip()
+        if token:
+            params["cursor"] = token
+        if from_ms is not None:
+            params["from"] = int(from_ms)
+        if to_ms is not None:
+            params["to"] = int(to_ms)
+
+        try:
+            payload = await self._request(
+                "GET", f"/api/students/{quote(wanted, safe='')}/ledger", params=params
+            )
+        except CanteenError as failure:
+            if failure.status == 404 and failure.reason != "student_not_found":
+                # Gerekçesiz 404 = Laravel'in "route bulunamadı" yanıtı: uç yok.
+                self._ledger_missing_until = time.monotonic() + LEDGER_RETRY_SECONDS
+                self._log.info("kantin hesap dökümü ucunu tanımıyor; eski yol kullanılacak",
+                               retry_seconds=LEDGER_RETRY_SECONDS)
+                raise _ledger_unsupported() from failure
+            raise
+        self._ledger_missing_until = 0.0
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise CanteenError("Kantin hesap dökümü yanıtı geçersiz.")
+        rows = [dict(row) for row in payload["data"] if isinstance(row, dict)]
+        next_cursor = payload.get("nextCursor")
+        page: dict[str, Any] = {
+            "data": rows,
+            "nextCursor": str(next_cursor) if next_cursor else None,
+            "hasMore": bool(payload.get("hasMore")) and bool(next_cursor),
+        }
+        if isinstance(payload.get("student"), dict):
+            page["student"] = _student_with_controls(payload["student"])
+        if "pendingPaymentRequest" in payload:
+            pending = payload.get("pendingPaymentRequest")
+            page["pendingPaymentRequest"] = (
+                _payment_request_row(pending) if isinstance(pending, dict) else None
+            )
+        return page
 
     async def create_payment_request(self, student_id: str, amount: int | None = None,
                                      origin: str = "admin") -> dict[str, Any]:
@@ -935,11 +1156,11 @@ class CanteenApi:
         JSON değil ham dosya döndüğü için `_request` kullanılmaz.
         """
         token = await self._ensure_token()
-        async with self._client(max(self._timeout, 120.0)) as client:
-            response = await client.get(
-                f"{self._base}/api/backups/{name}/download",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        response = await self._client().get(
+            f"{self._base}/api/backups/{name}/download",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=self._timeouts(max(self._timeout, 120.0)),
+        )
         if response.status_code >= 400:
             raise CanteenError(
                 f"Yedek indirilemedi ({response.status_code}): {response.text[:200]}",
@@ -1013,6 +1234,31 @@ def _feed_page(payload: Any, items: list[dict[str, Any]],
         next_since = stamps[-1] if stamps else (updated_since or FEED_START)
     return {"data": items, "nextSince": _iso(next_since),
             "hasMore": bool(body.get("hasMore", False))}
+
+
+def _cursor_page(payload: Any, wanted: str, cursor_sent: bool) -> dict[str, Any]:
+    """İmleçli liste yanıtı → `{data, nextCursor, hasMore}`; öğrenci süzgeci burada da.
+
+    Yanıtta `nextCursor` anahtarı YOKSA kantin imleç tanımıyor (§1.7 öncesi):
+    tek sayfa vardır. O kantine imleçle gelinmişse kantin imleci yok sayıp
+    ilk sayfayı yeniden verirdi — satırlar çift görünmesin diye boş sayfa.
+    """
+    body = payload if isinstance(payload, dict) else {}
+    data = body.get("data") if isinstance(payload, dict) else payload
+    rows = [row for row in (data if isinstance(data, list) else [])
+            if isinstance(row, dict)]
+    if wanted:
+        rows = [row for row in rows if str(row.get("studentId") or "") == wanted]
+    if "nextCursor" not in body:
+        return {"data": [] if cursor_sent else rows, "nextCursor": None, "hasMore": False}
+    next_cursor = body.get("nextCursor")
+    return {"data": rows, "nextCursor": str(next_cursor) if next_cursor else None,
+            "hasMore": bool(body.get("hasMore")) and bool(next_cursor)}
+
+
+def _ledger_unsupported() -> CanteenError:
+    return CanteenError("Kantin hesap dökümü ucunu tanımıyor (eski sürüm).", status=404,
+                        reason="ledger_unsupported")
 
 
 def _payment_request_row(row: dict[str, Any]) -> dict[str, Any]:

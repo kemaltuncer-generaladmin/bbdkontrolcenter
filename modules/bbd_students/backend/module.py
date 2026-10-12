@@ -20,16 +20,18 @@ def register(ctx: ModuleContext) -> None:
     # Kart PDF'i ve şifre listesi uygulama geneli hiyerarşiye yazılır:
     # Masaüstü/Kontrol Merkezi/Raporlar/Öğrenci/<yıl>/<ay>. Yazdırma
     # `printer` (CUPS) yeteneği ÜZERİNDEN GEÇMEZ — bkz. module.yaml notu.
+    # Öğrenci dizini — başka modüller (ör. mobil geçit) registry'den çözer (K3).
+    # `bbd_students.list` ise ARAYÜZ yeteneğidir: panelin `capabilities()`
+    # fonksiyonu verir (ui/panel/index.js), backend'de karşılığı yoktur.
+    directory = StudentDirectory(canteen=canteen, store=ctx.store, log=ctx.log)
+
     service = StudentService(
         canteen=canteen, store=ctx.store, log=ctx.log, config=ctx.config,
         category=CATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
+        # Öğrenci yazılınca dizinin önbelleği bırakılır: geçit eski kaydı görmesin.
+        on_change=directory.invalidate,
     )
     ctx.add_router(bind(service))
-
-    # Öğrenci dizini — başka modüller (ör. mobil geçit) registry'den çözer (K3).
-    # `bbd_students.list` ise ARAYÜZ yeteneğidir: panelin `capabilities()`
-    # fonksiyonu verir (ui/panel/index.js), backend'de karşılığı yoktur.
-    ctx.provide("bbd_students.directory",
-                StudentDirectory(canteen=canteen, store=ctx.store, log=ctx.log))
+    ctx.provide("bbd_students.directory", directory)
     ctx.log.info("öğrenci yönetimi hazır", kategori=CATEGORY)

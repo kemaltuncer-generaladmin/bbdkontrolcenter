@@ -43,6 +43,7 @@ import ipaddress
 import json
 import re
 import secrets
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -56,6 +57,7 @@ from km_core.security.identity import (
     Identity,
     IdentityError,
     UserNotFound,
+    grants_epoch,
     now,
 )
 
@@ -69,6 +71,19 @@ SECRET_BYTES = 32
 #: `last_used_at` en sık bu aralıkla yazılır (saniye). Her istekte yazmak,
 #: yoğun bir istemcinin her çağrısını bir UPDATE'e çevirirdi.
 LAST_USED_TOUCH_SECONDS = 60
+
+#: Servis kullanıcısının rol/izin kümesinin bellekte kaldığı süre (saniye).
+#:
+#: YALNIZ İZİN KÜMESİ önbelleğe girer. Anahtar satırı, iptal damgası, ağ listesi
+#: ve kullanıcının durumu HER İSTEKTE tek sorguyla taze okunur: iptal edilen ya
+#: da pasifleştirilen anahtar O AN çalışmaz (ADR 0028). Bu süreçte yapılan rol
+#: değişikliği önbelleği hemen bırakır (`identity.grants_epoch`); başka
+#: süreçten (komut satırı) gelen değişikliği bu süre sınırlar.
+GRANTS_CACHE_SECONDS = 10.0
+
+#: (roller, izinler). Sınıfın `list` metodu tür adını gölgelemesin diye modül
+#: düzeyinde adlandırılır.
+Grants = tuple[list[str], set[str]]
 
 _TOKEN = re.compile(
     rf"^{re.escape(SERVICE_TOKEN_MARK)}(?P<prefix>[a-z0-9]{{{PREFIX_LENGTH}}})_(?P<secret>[A-Za-z0-9_-]{{32,256}})$"
@@ -191,6 +206,8 @@ class ServiceKeys:
     def __init__(self, identity: Identity) -> None:
         self.identity = identity
         self.store = identity.store
+        #: user_id → (okunduğu an, izin sürümü, roller, izinler)
+        self._grants: dict[str, tuple[float, int, list[str], set[str]]] = {}
 
     # ------------------------------------------------------------- yönetim
 
@@ -296,8 +313,14 @@ class ServiceKeys:
             return Verdict(reason="biçimsiz anahtar")
         prefix, _secret = parsed
 
+        # Anahtar ve bağlı kullanıcı TEK sorguda: iptal, ağ listesi ve durum
+        # her istekte taze okunur. Eskiden iki ayrı okuma + iki izin okumasıydı.
         row = await self.store.fetch_one(
-            "SELECT * FROM service_keys WHERE prefix = ?", (prefix,)
+            "SELECT k.id, k.user_id, k.key_hash, k.allowed_cidrs, k.last_used_at, "
+            "k.revoked_at, u.id AS account_id, u.first_name, u.last_name, u.org_scope, "
+            "u.kind, u.status FROM service_keys k LEFT JOIN users u ON u.id = k.user_id "
+            "WHERE k.prefix = ?",
+            (prefix,),
         )
         if row is None:
             # Kayıt yokken de özet hesaplanır: yanıt süresi "önek var mı"
@@ -316,16 +339,13 @@ class ServiceKeys:
             verdict.reason = f"izinli ağ dışı: {client_ip or 'bilinmeyen'}"
             return verdict
 
-        user = await self.store.fetch_one(
-            "SELECT * FROM users WHERE id = ?", (row["user_id"],)
-        )
-        if user is None:
+        if row.get("account_id") is None:
             verdict.reason = "kullanıcısı yok"
             return verdict
-        if str(user.get("kind") or PERSON_KIND) != SERVICE_KIND:
+        if str(row.get("kind") or PERSON_KIND) != SERVICE_KIND:
             verdict.reason = "kullanıcı servis değil"
             return verdict
-        if user.get("status") != "active":
+        if row.get("status") != "active":
             verdict.reason = "pasif servis kullanıcısı"
             return verdict
 
@@ -334,14 +354,34 @@ class ServiceKeys:
                 "UPDATE service_keys SET last_used_at = ? WHERE id = ?", (now(), row["id"])
             )
 
-        user_id = str(user["id"])
+        user_id = str(row["account_id"])
+        roles, permissions = await self._grants_of(user_id)
         verdict.user = CurrentUser(
             id=user_id,
-            first_name=str(user["first_name"]),
-            last_name=str(user["last_name"] or ""),
-            org_scope=str(user["org_scope"]),
-            roles=await self.identity.roles_of(user_id),
-            permissions=await self.identity.permissions_of(user_id),
+            first_name=str(row["first_name"]),
+            last_name=str(row["last_name"] or ""),
+            org_scope=str(row["org_scope"]),
+            roles=roles,
+            permissions=permissions,
             kind=SERVICE_KIND,
         )
         return verdict
+
+    async def _grants_of(self, user_id: str) -> Grants:
+        """Servis kullanıcısının rolleri ve izinleri — kısa ömürlü önbellekten.
+
+        Bkz. `GRANTS_CACHE_SECONDS`. Dönen liste/küme KOPYADIR: bir isteğin
+        `CurrentUser` nesnesi önbelleği değiştiremez.
+        """
+        current = time.monotonic()
+        epoch = grants_epoch()
+        hit = self._grants.get(user_id)
+        if hit is not None and hit[1] == epoch and current - hit[0] < GRANTS_CACHE_SECONDS:
+            return list(hit[2]), set(hit[3])
+        roles, permissions = await self.identity.grants_of(user_id)
+        self._grants[user_id] = (current, epoch, roles, permissions)
+        return list(roles), set(permissions)
+
+    def forget_grants(self) -> None:
+        """İzin önbelleğini boşaltır (rol değişikliğinden hemen sonra, testler)."""
+        self._grants.clear()

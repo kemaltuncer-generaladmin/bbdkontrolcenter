@@ -23,7 +23,9 @@ gönderilmiş öğrenciyi varsayılan olarak atlar.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,12 +37,24 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+async def _empty() -> dict[str, Any]:
+    return {}
+
+
 def _parse(text: Any) -> datetime | None:
     try:
         value = datetime.fromisoformat(str(text))
     except (TypeError, ValueError):
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+async def _settled(call: Awaitable[Any]) -> Any:
+    """Kantin çağrısının sonucu ya da hatası — yükseltmez (ekran ayakta kalmalı)."""
+    try:
+        return await call
+    except Exception as failure:  # noqa: BLE001 — kantin dışarısı
+        return failure
 
 
 class PaymentRequestService:
@@ -52,28 +66,59 @@ class PaymentRequestService:
         self._batches = store.table("batch")
         self._entries = store.table("entry")
         self._collections = store.table("collection")
+        self._last_sent = store.table("last_sent")
 
     # -------------------------------------------------------------- okuma
 
+    async def _last_sent_rows(self) -> list[dict[str, Any]]:
+        """Öğrenci başına son başarılı gönderim — özet tablodan (bkz. göç 002)."""
+        return await self._store.fetch_all(f"SELECT kantin_id, last_at FROM {self._last_sent}")
+
+    async def _record_entry(self, *, batch_ref: str, kantin_id: str, name: str, phone: str,
+                            amount: int, ref: str, status: str, reason: str) -> None:
+        """Gönderim kaydı; başarılıysa öğrencinin "son gönderim" özeti de güncellenir."""
+        stamp = _now()
+        await self._store.execute(
+            f"INSERT INTO {self._entries} (batch_ref, kantin_id, student_name, phone, "
+            f"amount, ref, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (batch_ref, kantin_id, name, phone, amount, ref, status, reason, stamp),
+        )
+        if status == "queued":
+            await self._store.execute(
+                f"INSERT INTO {self._last_sent} (kantin_id, last_at) VALUES (?, ?) "
+                f"ON CONFLICT(kantin_id) DO UPDATE SET last_at = excluded.last_at "
+                f"WHERE excluded.last_at > {self._last_sent}.last_at",
+                (kantin_id, stamp),
+            )
+
     async def workspace(self) -> dict[str, Any]:
-        """Açılış: talepler, öğrenciler, şablonlar, son gönderimler, tahsilat geçmişi."""
-        try:
-            students = await self._canteen.students()
-            connected, error = True, ""
-        except Exception as failure:  # noqa: BLE001 — kantin dışarısı; ekran ayakta kalmalı
-            students, connected, error = [], False, str(failure)
+        """Açılış: talepler, öğrenciler, şablonlar, son gönderimler, tahsilat geçmişi.
+
+        Dört kantin okuması birbirinden bağımsızdır ve AYNI ANDA istenir
+        (eskiden sırayla: her biri bir öncekini bekliyordu).
+        """
+        students_call, requests_call, settings_call, prepayment_call = await asyncio.gather(
+            _settled(self._canteen.students()),
+            _settled(self._canteen.payment_requests()),
+            _settled(self._canteen.settings()),
+            self._prepayment(),
+        )
+        if isinstance(students_call, BaseException):
+            students, connected, error = [], False, str(students_call)
             self._log.warning("öğrenciler okunamadı", error=error)
+        else:
+            students, connected, error = students_call, True, ""
 
         requests: list[dict[str, Any]] = []
         templates: dict[str, Any] = {}
-        try:
-            requests = await self._canteen.payment_requests()
-        except Exception as failure:  # noqa: BLE001
-            self._log.warning("talepler okunamadı", error=str(failure))
-        try:
-            templates = (await self._canteen.settings()).get("smsTemplates") or {}
-        except Exception as failure:  # noqa: BLE001
-            self._log.warning("şablonlar okunamadı", error=str(failure))
+        if isinstance(requests_call, BaseException):
+            self._log.warning("talepler okunamadı", error=str(requests_call))
+        else:
+            requests = requests_call
+        if isinstance(settings_call, BaseException):
+            self._log.warning("şablonlar okunamadı", error=str(settings_call))
+        else:
+            templates = settings_call.get("smsTemplates") or {}
 
         now = datetime.now(UTC)
         enriched = []
@@ -85,17 +130,13 @@ class PaymentRequestService:
             enriched.append({**item, "ageDays": age_days})
 
         last_sent = {
-            str(row["kantin_id"]): str(row["last_at"])
-            for row in await self._store.fetch_all(
-                f"SELECT kantin_id, MAX(created_at) AS last_at FROM {self._entries} "
-                f"WHERE status = 'queued' GROUP BY kantin_id"
-            )
+            str(row["kantin_id"]): str(row["last_at"]) for row in await self._last_sent_rows()
         }
 
         collections = await self._store.fetch_all(
             f"SELECT * FROM {self._collections} ORDER BY created_at DESC LIMIT 100"
         )
-        prepayment = await self._prepayment() if connected else dict(NO_PREPAYMENT)
+        prepayment = prepayment_call if connected else dict(NO_PREPAYMENT)
 
         debtors = [item for item in students if int(item.get("balance") or 0) > 0]
 
@@ -147,24 +188,30 @@ class PaymentRequestService:
         Güncel borç kantinden TEK öğrenci olarak okunur; açık talep son 100
         talep içinde aranır (kantin ucu süzgeç almıyor).
         """
-        try:
-            student = await self._canteen.student(kantin_id)
-        except Exception as failure:  # noqa: BLE001 — kantin dışarısı; kart ayakta kalmalı
-            return {"ok": False, "error": str(failure)}
+        # Öğrenci, ön ödeme ayarı ve talepler BAĞIMSIZ: aynı anda istenir. Talep
+        # listesi öğrenci süzgeciyle istenir — kantin süzgeci tanıyorsa sunucuda,
+        # tanımıyorsa istemcide süzülür (`canteen.api.payment_requests`).
+        student_call, prepayment, requests_call = await asyncio.gather(
+            _settled(self._canteen.student(kantin_id)),
+            self._prepayment(),
+            _settled(self._canteen.payment_requests(student_id=kantin_id)),
+        )
+        if isinstance(student_call, BaseException):
+            return {"ok": False, "error": str(student_call)}
+        student = student_call
         if not student:
             return {"ok": False, "error": "Öğrenci kantinde bulunamadı."}
-        prepayment = await self._prepayment()
         balance = int(student.get("balance") or 0)
         pending = None
-        try:
-            for item in await self._canteen.payment_requests():
+        if isinstance(requests_call, BaseException):  # talep listesi yoksa kart yine çalışır
+            self._log.warning("talepler okunamadı", error=str(requests_call))
+        else:
+            for item in requests_call:
                 if str(item.get("studentId")) == kantin_id and item.get("status") == "PENDING":
                     pending = {"ref": item.get("ref"), "amount": int(item.get("amount") or 0),
                                "createdAt": item.get("createdAt"),
                                "amountFixed": bool(item.get("amountFixed"))}
                     break
-        except Exception as failure:  # noqa: BLE001 — talep listesi yoksa kart yine çalışır
-            self._log.warning("talepler okunamadı", error=str(failure))
         collections = await self._store.fetch_all(
             f"SELECT * FROM {self._collections} WHERE kantin_id = ? "
             f"ORDER BY created_at DESC LIMIT 5", (kantin_id,),
@@ -218,11 +265,9 @@ class PaymentRequestService:
             (batch_ref, note, sent_amount, _now(), actor,
              1 if status == "queued" else 0, 0 if status == "queued" else 1),
         )
-        await self._store.execute(
-            f"INSERT INTO {self._entries} (batch_ref, kantin_id, student_name, phone, "
-            f"amount, ref, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (batch_ref, kantin_id, name, phone, sent_amount, ref, status, reason, _now()),
-        )
+        await self._record_entry(batch_ref=batch_ref, kantin_id=kantin_id, name=name,
+                                 phone=phone, amount=sent_amount, ref=ref, status=status,
+                                 reason=reason)
         if status != "queued":
             text = self._reason_text(reason)
             if reason == "exceeds_debt" and "maxAmount" in extra:
@@ -276,10 +321,7 @@ class PaymentRequestService:
         threshold = datetime.now(UTC) - timedelta(minutes=cooldown)
 
         recent: dict[str, datetime] = {}
-        for row in await self._store.fetch_all(
-            f"SELECT kantin_id, MAX(created_at) AS last_at FROM {self._entries} "
-            f"WHERE status = 'queued' GROUP BY kantin_id"
-        ):
+        for row in await self._last_sent_rows():
             when = _parse(row["last_at"])
             if when:
                 recent[str(row["kantin_id"])] = when
@@ -400,12 +442,10 @@ class PaymentRequestService:
                 failed += 1
                 self._log.warning("talep gönderilemedi", student=row["kantinId"], error=reason)
 
-            await self._store.execute(
-                f"INSERT INTO {self._entries} (batch_ref, kantin_id, student_name, phone, "
-                f"amount, ref, status, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (batch_ref, row["kantinId"], row["name"], row["phone"],
-                 int(row["amount"]), ref, status, reason, _now()),
-            )
+            await self._record_entry(batch_ref=batch_ref, kantin_id=row["kantinId"],
+                                     name=row["name"], phone=row["phone"],
+                                     amount=int(row["amount"]), ref=ref, status=status,
+                                     reason=reason)
 
         for row in preview["rows"]:
             if row["verdict"] in ("ok", "repeat"):
@@ -486,13 +526,17 @@ class PaymentRequestService:
 
         kantin_id = str(record.get("studentId") or "")
 
-        # Öğrencinin GÜNCEL durumu — talep tutarı donmuştur, borç akar.
+        # Öğrencinin GÜNCEL durumu — talep tutarı donmuştur, borç akar. SMS
+        # kuyruğu öğrenciden bağımsız okunur; ikisi aynı anda istenir.
         student: dict[str, Any] = {}
-        try:
-            if kantin_id:
-                student = await self._canteen.student(kantin_id)
-        except Exception as failure:  # noqa: BLE001
-            self._log.warning("öğrenci okunamadı", student=kantin_id, error=str(failure))
+        student_call, queue_call = await asyncio.gather(
+            _settled(self._canteen.student(kantin_id)) if kantin_id else _settled(_empty()),
+            _settled(self._canteen.notifications(limit=200)),
+        )
+        if isinstance(student_call, BaseException):
+            self._log.warning("öğrenci okunamadı", student=kantin_id, error=str(student_call))
+        else:
+            student = student_call or {}
 
         # Veliye giden SMS'in akıbeti.
         #
@@ -503,7 +547,9 @@ class PaymentRequestService:
         messages: list[dict[str, Any]] = []
         phone = "".join(ch for ch in str(student.get("parentPhone") or "") if ch.isdigit())
         try:
-            payload = await self._canteen.notifications(limit=200)
+            if isinstance(queue_call, BaseException):
+                raise queue_call
+            payload = queue_call
             rows = payload.get("data") or payload.get("notifications") or []
             for item in rows:
                 if phone and self._same_phone(phone, str(item.get("to") or "")):

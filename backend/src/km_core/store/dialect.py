@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Sequence
 
-__all__ = ["UnsupportedDialect", "to_postgres", "translate_ddl"]
+__all__ = ["UnsupportedDialect", "concurrent_index_plan", "to_postgres", "translate_ddl"]
 
 
 class UnsupportedDialect(ValueError):
@@ -377,3 +377,50 @@ def _split_statements(sql: str) -> list[str]:
     if current:
         statements.append("".join(current))
     return statements
+
+
+# İŞLEMSİZ İNDEKS GÖÇÜ. Canlı PostgreSQL'de büyük tabloya indeks
+# `CREATE INDEX CONCURRENTLY` ile açılır: tablo yazmaya kapanmaz. Bu ifade bir
+# işlem (transaction) içinde koşamaz; göç koşturucusu normalde her göçü işlem
+# içinde uygular. Göç dosyası bunu ilk satırlarından birindeki işaretle ister:
+#
+#     -- km: concurrently
+#     CREATE INDEX IF NOT EXISTS mod_x_y ON mod_x (a, b);
+#
+# Dosya SQLite lehçesinde kalır (işaret yorumdur; yerel depo onu düz göç gibi
+# uygular). Böyle bir dosya YALNIZ `CREATE [UNIQUE] INDEX IF NOT EXISTS`
+# içerebilir: tablo açan, veri değiştiren bir ifade işlemsiz koşarsa yarıda
+# kalınca geri alınamaz — çevirmen bunu da reddeder.
+_CONCURRENT_MARK = re.compile(r"^\s*--\s*km:\s*concurrently\b", re.IGNORECASE | re.MULTILINE)
+_CREATE_INDEX_STATEMENT = re.compile(
+    r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+([a-z0-9_]+)\s+(ON\s+.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def concurrent_index_plan(sql: str) -> list[tuple[str, str]] | None:
+    """İşaretli göç → `[(indeks adı, CONCURRENTLY ifadesi), ...]`; işaret yoksa None.
+
+    Her ifade AYRI çalıştırılmalıdır (çok ifadeli metin PostgreSQL'de örtük
+    işleme girer ve CONCURRENTLY reddedilir).
+    """
+    if not _CONCURRENT_MARK.search(sql):
+        return None
+    translate_ddl(sql)  # tanınmayan yapı burada da reddedilsin
+    plan: list[tuple[str, str]] = []
+    for chunk in _split_statements(sql):
+        code = " ".join(_code_only(chunk).split())
+        if not code:
+            continue
+        match = _CREATE_INDEX_STATEMENT.match(code)
+        if match is None:
+            raise UnsupportedDialect(
+                "İşlemsiz (`-- km: concurrently`) göç yalnız `CREATE [UNIQUE] INDEX IF NOT "
+                f"EXISTS` içerebilir: {code[:80]}"
+            )
+        unique, name, rest = match.group(1) or "", match.group(2), match.group(3)
+        plan.append((name, (f"CREATE {unique.upper()}INDEX CONCURRENTLY IF NOT EXISTS "
+                           f"{name} {rest}")))
+    if not plan:
+        raise UnsupportedDialect("İşlemsiz göç boş.")
+    return plan

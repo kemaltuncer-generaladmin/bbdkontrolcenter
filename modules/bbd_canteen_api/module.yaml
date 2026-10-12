@@ -30,9 +30,15 @@ provides:
       kontrolleri (get_student, update_controls), serbest tutarlı ödeme talebi
       (create_payment_request(student_id, amount=None, origin="admin")), nakit
       tahsilat (record_collection), öğrenci süzgeçli işlem ve talep listesi
-      (transactions(student_id=), payment_requests(student_id=)), ödeme talebi
-      ve veli bildirim akışları ({data, nextSince, hasMore}), ön ödeme ayarı
-      (canteen_settings_public). Red `CanteenError.reason` koduyla gelir;
+      (transactions(student_id=), payment_requests(student_id=) — düz liste;
+      imleçli sayfa için transactions_page(..., cursor=) ve
+      payment_requests_page(student_id=, limit=, cursor=) → {data,
+      nextCursor, hasMore}), öğrencinin hesap dökümü (ledger(student_id,
+      limit=50, cursor=None, from_ms=None, to_ms=None) → {data, nextCursor,
+      hasMore} + ilk sayfada student ve pendingPaymentRequest; eski kantinde
+      reason="ledger_unsupported"), ödeme talebi ve veli bildirim akışları
+      ({data, nextSince, hasMore}; talep akışı student_id= süzer), ön ödeme
+      ayarı (canteen_settings_public). Red `CanteenError.reason` koduyla gelir;
       gövde ayrıntısı (ör. balance, maxAmount) `CanteenError.details`.
 
 consumes:

@@ -65,6 +65,8 @@ events:
       description: "Bir zil ya da anons başarıyla çalındığında yayınlanır."
     - name: bell.failed
       description: "Çalınamadığında yayınlanır."
+    - name: bell.week_changed
+      description: "Haftalık zil saatleri ya da gruplar değişti (`bell.week` yanıtı değişti). Yük boş."
   subscribes: []
 
 http:

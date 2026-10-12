@@ -36,6 +36,7 @@ import base64
 import hashlib
 import json
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -208,7 +209,8 @@ def after_text(settings: dict[str, Any], kind: str) -> str:
 class BellService:
     def __init__(self, *, store: Any, log: Any, audio: Any, scheduler: Any,
                  voices: VoiceLibrary, bridge: BellBridge, notify: Any = None,
-                 play_locally: bool = True, page_tts_timeout: float = 20.0) -> None:
+                 play_locally: bool = True, page_tts_timeout: float = 20.0,
+                 on_week_change: Callable[[], Awaitable[None]] | None = None) -> None:
         self._store = store
         self._log = log
         self._audio = audio
@@ -218,6 +220,9 @@ class BellService:
         self._notify = notify
         self._default_play_locally = play_locally
         self._page_tts_timeout = page_tts_timeout
+        #: Haftalık plan (saatler ya da gruplar) değişti — `bell.week_changed`
+        #: olayını yayınlar (`bell.week` tüketicilerinin önbelleği bırakılır).
+        self._on_week_change = on_week_change
 
         self._settings_table = store.table("settings")
         self._time_table = store.table("time")
@@ -328,6 +333,16 @@ class BellService:
         await self.reschedule()
         return {"ok": True, "settings": clean}
 
+    async def _week_changed(self) -> None:
+        """`bell.week` yanıtı değişti. Yazma ANINDA (ses üretiminden önce)
+        bildirilir: sonraki adım patlasa da tüketici eski planı göstermez."""
+        if self._on_week_change is None:
+            return
+        try:
+            await self._on_week_change()
+        except Exception as failure:  # noqa: BLE001 — bildirim yazmayı düşürmez (K7)
+            self._log.warning("zil haftası değişikliği bildirilemedi", error=str(failure))
+
     # ================================================================ saatler
 
     async def times(self) -> dict[str, list[dict[str, Any]]]:
@@ -376,6 +391,7 @@ class BellService:
                 f"VALUES (?, ?, ?, ?, ?)",
                 row,
             )
+        await self._week_changed()
 
         # Yeni bir tür ilk kez kullanılmış olabilir; o türün anons sesi henüz
         # hiç istenmemişse burada sıraya girer, zil saatinde eksik kalmasın.
@@ -429,6 +445,7 @@ class BellService:
                 f"VALUES (?, ?, ?, ?, ?)",
                 (group_id, clean, kind, len(current), _now()),
             )
+        await self._week_changed()
 
         settings = await self.settings()
         await self._voices.require(call_text(settings, clean, kind))
@@ -455,6 +472,7 @@ class BellService:
             f"UPDATE {self._group_table} SET name = ?, kind = ? WHERE id = ?",
             (clean, kind, group_id),
         )
+        await self._week_changed()
         # ESKİ SES SİLİNMEZ: aynı ada dönülürse yeniden üretilmesin. Birkaç yüz
         # kilobayt, gereksiz bir bulut çağrısından ucuzdur.
         settings = await self.settings()
@@ -497,6 +515,7 @@ class BellService:
         await self._store.execute(
             f"DELETE FROM {self._group_table} WHERE id = ?", (group_id,)
         )
+        await self._week_changed()
 
         if doomed not in await self._live_voice_keys(settings):
             await self._voices.forget(doomed)

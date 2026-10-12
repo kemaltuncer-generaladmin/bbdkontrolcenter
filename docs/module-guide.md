@@ -61,3 +61,22 @@ Import etme. İki yol var:
 - [ ] `permissions` tanımlı — yetkilendirme çekirdekte, tanım modülde
 - [ ] `config/schema.json` yazılmış; şemasız ayar kabul edilmez
 - [ ] Göç dizini modülün kendi tablolarını oluşturuyor
+
+## Büyük tabloya indeks (canlı veri)
+
+Göçler sunucuda açılışta, PostgreSQL'de bir işlem (transaction) içinde koşar.
+Dolu bir tabloya indeks açan göç tabloyu yazmaya kapatmamalıdır; bunun için
+indeks AYRI bir göç dosyasına konur ve dosyanın başına işaret yazılır:
+
+```sql
+-- km: concurrently
+-- Geri alma: DROP INDEX CONCURRENTLY IF EXISTS mod_<id>_<ad>;
+CREATE INDEX IF NOT EXISTS mod_<id>_<ad> ON mod_<id>_<tablo> (esitlik_sutunu, sira_sutunu);
+```
+
+Merkez (`PostgresStore`) bu dosyadaki her indeksi işlem dışında
+`CREATE INDEX CONCURRENTLY` ile açar (okuma ve yazma sürer); yarıda kalmış
+geçersiz bir indeks bulursa önce kaldırır. Yerel SQLite dosyayı düz göç gibi
+uygular. Böyle bir dosya yalnız `CREATE [UNIQUE] INDEX IF NOT EXISTS` içerebilir —
+tablo açmak ya da veri değiştirmek normal (işlemli) göçte kalır. Göç sistemi
+ileriye doğrudur; geri alma ifadesi dosyada yorum olarak durur.

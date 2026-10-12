@@ -4,3 +4,6 @@
 base_url: "https://kantin.bbdstore.com.tr"
 device_name: "Kontrol Merkezi"
 timeout_seconds: 20
+# Bağlantı kurma (TCP + TLS) sınırı. Kantin kapalıysa okuma süresini beklemeden
+# hata verilir; bağlantı havuzda tutulur (keep-alive), her istekte yeniden kurulmaz.
+connect_timeout_seconds: 5
