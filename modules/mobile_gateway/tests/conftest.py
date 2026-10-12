@@ -196,7 +196,7 @@ def context(store: CheckedStore, world: World, log: RecordingLog) -> ModuleConte
     return ModuleContext(
         module_id="mobile_gateway", module_path=MODULE_ROOT, config=dict(DEFAULTS),
         store=store.inner, log=log, _registry=world.registry, _bus=EventBus(),
-        _declared_provides=set(),
+        _declared_provides={item["capability"] for item in MANIFEST.get("provides") or []},
         _declared_consumes={item["capability"] for item in MANIFEST["consumes"]},
     )
 

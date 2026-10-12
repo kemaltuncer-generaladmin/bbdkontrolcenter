@@ -96,6 +96,16 @@ BELL_PLAN_WINDOW_DAYS = 14
 BELL_STATUS_MAX_DAYS = 31
 #: `GET /tablets/usage` en çok bu kadar gün geriye bakar (bugün dahil; tabletin sınırı).
 TABLET_USAGE_MAX_DAYS = 62
+
+#: Merkezi senkron uçları (geçit sözleşmesi §9).
+DIRECTORY_IDS_MAX = 100
+#: `since` bundan eskiyse mezar taşı penceresi kaçmıştır → 422, istemci tam liste ister.
+DIRECTORY_SINCE_MAX_DAYS = 90
+BALANCES_IDS_MAX = 500
+EVENTS_LIMIT_DEFAULT = 100
+EVENTS_LIMIT_MAX = 500
+STUDENT_STATUSES = frozenset({"active", "inactive"})
+STATUS_REASONS = frozenset({"left", "graduated", "suspended", "other"})
 #: Gün sonucu ve hata kodları — beyaz liste (zil yeteneğinin döndürdüğü).
 BELL_PLAN_RESULTS = frozenset({"applied", "unchanged", "stale", "overridden", "rejected"})
 BELL_PLAN_ERRORS = frozenset({"revision_conflict", "unknown_profile"})
@@ -136,6 +146,8 @@ class Caller:
     name: str
     on_behalf_of: str = ""
     request_id: str = ""
+    #: Olayın `causationId`'si: `Idempotency-Key`, yoksa `X-Request-Id` (§8).
+    causation_id: str = ""
 
     @property
     def actor(self) -> str:
@@ -365,7 +377,8 @@ class GatewayService:
 
         self._products: tuple[int, dict[str, Any]] | None = None
         #: Dizin yanıtı — dizin yeteneğinin `revision`ı değişmedikçe yeniden kurulmaz.
-        self._directory: _Cached | None = None
+        #: Anahtar `balance` (bakiyeli / bakiyesiz yanıt ayrı saklanır, §9).
+        self._directory: dict[bool, _Cached] = {}
         self._bell_week: _Cached | None = None
         #: Tam grup listesi — grup revizyonu değişmedikçe yeniden kurulmaz.
         self._groups: _Cached | None = None
@@ -568,55 +581,155 @@ class GatewayService:
 
     # ================================================================ §1 dizin
 
-    async def directory(self, since_text: str | None, if_none_match: str | None) -> Reply:
-        """§1 dizin. Yanıt, dizin yeteneğinin `revision`ı değişmedikçe yeniden KURULMAZ.
+    async def directory(self, since_text: str | None, if_none_match: str | None, *,
+                        ids_text: str | None = None, balance: bool = True) -> Reply:
+        """§1 dizin (+ §9: `ids`, `balance=false`, `since` → `removed`).
 
+        Yanıt, dizin yeteneğinin `revision`ı değişmedikçe yeniden KURULMAZ.
         2.000 öğrencilik listeyi beyaz listeden geçirmek, sıralamak, kanonik
         JSON'unu özetlemek ve kodlamak isteğin asıl maliyetiydi. Dizin yeteneği
         verisi değiştiğinde `revision`ını değiştirir (kantin listesi tazelendi
         ya da profil yazıldı); aynı revizyonda veri birebir aynıdır, bu yüzden
-        hesaplanmış ETag ve kodlanmış gövde aynen kullanılır — tazelik dizinin
-        tazeliğidir, ayrıca bekletilmez. Yalnız TAM liste saklanır: `since`
-        yanıtı küçüktür ve her istemcide farklıdır; saklansaydı tam listeyi
-        önbellekten iterdi. `revision` vermeyen (eski) yetenekte her istek
-        baştan kurulur.
+        hesaplanmış ETag ve kodlanmış gövde aynen kullanılır. Yalnız TAM liste
+        saklanır (bakiyeli ve bakiyesiz ayrı). `revision` vermeyen (eski)
+        yetenekte her istek baştan kurulur.
+
+        `balance=False`: öğrencilerde `canteen.balance` YOK ve ETag bakiyesiz
+        hesaplanır — okul saatinde satış ETag'i değiştirmez (§9).
+        `ids`: en çok 100 öğrenci; `full: false`, `classes` boş, bulunamayanlar
+        `missingIds`; ETag'siz. `since`: yanıt `removed` (90 günlük mezar
+        taşı) taşır; 90 günden eski `since` → 422.
 
         `generatedAt`: yetenek `asOf` verirse odur (kantin listesinin okunduğu
         an — bir sonraki `since` için güvenli imleç), vermezse şimdi.
         """
+        if ids_text is not None:
+            return await self._directory_ids(ids_text, balance)
         since = self.parse_since(since_text)
+        if since is not None and datetime.fromisoformat(since) < \
+                self.now() - timedelta(days=DIRECTORY_SINCE_MAX_DAYS):
+            raise validation(f"`since` en çok {DIRECTORY_SINCE_MAX_DAYS} gün geriye gidebilir; "
+                             "tam liste isteyin.", "since")
         listing = await self.call(self.caps.directory_list(since))
         revision = listing.get("revision")
         keep = revision is not None and since is None
-        cached = self._directory if keep else None
+        cached = self._directory.get(balance) if keep else None
         if cached is None or cached.key != revision:
             students = sorted(
-                (self.student(record) for record in listing.get("students") or []
+                (self.student(record, balance=balance)
+                 for record in listing.get("students") or []
                  if isinstance(record, dict) and record.get("id")),
                 key=lambda item: str(item["id"]),
             )
             classes = sorted({str(name) for name in listing.get("classes") or [] if name})
-            core = {
+            core: dict[str, Any] = {
                 "full": since is None,
                 "complete": listing.get("complete") is True,
                 "students": students,
                 "classes": classes,
             }
+            if since is not None:
+                removed = listing.get("removed")
+                if not isinstance(removed, list):
+                    removed = await self.call(self.caps.directory_removed(since))
+                core["removed"] = sorted(
+                    ({"id": str(item["id"]), "at": self.iso(item.get("at"))}
+                     for item in removed if isinstance(item, dict) and item.get("id")),
+                    key=lambda item: str(item["id"]))
             etag = digest(core)
             generated = self.iso(listing.get("asOf")) or self.iso(self.now())
             cached = _Cached(key=revision, etag=etag, at_ms=self.now_ms(),
                              raw=encode({"generatedAt": generated, **core, "etag": etag}))
             if keep:
-                self._directory = cached
+                self._directory[balance] = cached
         headers = {"ETag": f'"{cached.etag}"', "Cache-Control": "private, no-cache"}
         if etag_matches(if_none_match, cached.etag):
             return Reply(304, None, headers)
         return Reply(200, None, headers, raw=cached.raw)
 
-    def student(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Dizin kaydı → sözleşme §1 öğrenci nesnesi (beyaz liste).
+    async def _directory_ids(self, ids_text: str, balance: bool) -> Reply:
+        ids = list(dict.fromkeys(item.strip() for item in ids_text.split(",") if item.strip()))
+        if not ids or len(ids) > DIRECTORY_IDS_MAX:
+            raise validation(f"`ids` 1–{DIRECTORY_IDS_MAX} öğrenci kimliği olmalı.", "ids")
+        result = await self.call(self.caps.directory_many(ids))
+        students = sorted(
+            (self.student(record, balance=balance) for record in result.get("students") or []
+             if isinstance(record, dict) and record.get("id") in ids),
+            key=lambda item: str(item["id"]),
+        )
+        found = {item["id"] for item in students}
+        body = {"generatedAt": self.iso(self.now()), "full": False, "complete": True,
+                "students": students, "classes": [],
+                "missingIds": [item for item in ids if item not in found]}
+        return Reply(200, body, {"Cache-Control": "private, no-cache"})
+
+    async def student_one(self, student_id: str, *, balance: bool = True) -> dict[str, Any]:
+        """§9 `GET /students/{id}` — dizin öğesiyle birebir; silinmiş ya da yoksa 404."""
+        record = await self.call(self.caps.directory_get(student_id))
+        if not record or not record.get("id"):
+            raise student_not_found()
+        return self.student(record, balance=balance)
+
+    async def canteen_balances(self, ids_text: str | None,
+                               if_none_match: str | None) -> Reply:
+        """§9 `GET /canteen/balances` — kantin `GET /api/students/balances` üstünde.
+
+        ETag kantin defterinin son satır kimliğidir; değişmediyse 304.
+        """
+        ids: list[str] | None = None
+        if ids_text is not None:
+            ids = list(dict.fromkeys(item.strip() for item in ids_text.split(",")
+                                     if item.strip()))
+            if not ids or len(ids) > BALANCES_IDS_MAX:
+                raise validation(f"`ids` 1–{BALANCES_IDS_MAX} öğrenci kimliği olmalı.", "ids")
+        try:
+            page = await self.caps.canteen_balances(ids, if_none_match or None)
+        except CapabilityMissing as missing:
+            raise capability_missing(missing.capability) from None
+        except UpstreamFailure as failure:
+            if failure.reason == "not_supported":
+                raise capability_missing("canteen.api.balances") from None
+            raise self.translate(failure) from None
+        if page is None:
+            return Reply(304, None, {"ETag": str(if_none_match),
+                                     "Cache-Control": "private, no-cache"})
+        ledger = int_or_none(page.get("ledgerSeq")) or 0
+        items = [
+            {"studentId": str(item.get("opaqueId") or item.get("studentId") or ""),
+             "balance": int_or_none(item.get("balance")) or 0,
+             "ledgerSeq": int_or_none(item.get("ledgerSeq")) or 0}
+            for item in page.get("items") or [] if isinstance(item, dict)
+        ]
+        items = [item for item in items if item["studentId"]]
+        etag = str(page.get("etag") or f'"{ledger}"')
+        return Reply(200, {"ledgerSeq": ledger, "items": items},
+                     {"ETag": etag, "Cache-Control": "private, no-cache"})
+
+    async def events_after(self, after: int, limit: int) -> dict[str, Any]:
+        """§9 `GET /events?after=&limit=` — KM outbox'undan çekme (itmenin yedeği).
+
+        Zarf webhook ile aynıdır. `after` saklama penceresinden eskiyse
+        `410 events_expired`: istemci tam uzlaştırma yapar.
+        """
+        box = self.caps.outbox()
+        if box is None:
+            raise capability_missing("events.outbox")
+        if after < 0:
+            raise validation("`after` 0 ya da pozitif olmalı.", "after")
+        size = max(1, min(int(limit), EVENTS_LIMIT_MAX))
+        if await box.expired(after):
+            raise GatewayError(410, "events_expired",
+                               "İstenen olaylar saklama süresini aştı; tam uzlaştırma yapın.")
+        items = await box.read_after(after, size)
+        last = int(items[-1]["seq"]) if items else int(after)
+        has_more = len(items) == size and last < int(await box.last_seq())
+        return {"items": items, "lastSeq": last, "hasMore": has_more}
+
+    def student(self, record: dict[str, Any], *, balance: bool = True) -> dict[str, Any]:
+        """Dizin kaydı → sözleşme §1 (+ §9) öğrenci nesnesi (beyaz liste).
 
         Erişim kodu, QR anahtarı ve bilinmeyen her alan burada DÜŞER.
+        `balance=False`: `canteen.balance` anahtarı hiç yazılmaz.
         """
         issues = [str(item) for item in record.get("phoneIssues") or []
                   if isinstance(item, str)]
@@ -656,7 +769,12 @@ class GatewayService:
                 "dailyLimit": int_or_none(canteen.get("dailyLimit")),
                 "guardianBlocked": bool(canteen.get("guardianBlocked")),
             }
+            if not balance:
+                canteen_out.pop("balance")
 
+        status = str(record.get("status") or "active")
+        status = status if status in STUDENT_STATUSES else "active"
+        reason = record.get("statusReason") if status == "inactive" else None
         first = str(record.get("firstName") or "").strip()
         last = str(record.get("lastName") or "").strip()
         display = str(record.get("displayName") or "").strip() or f"{first} {last}".strip()
@@ -676,6 +794,12 @@ class GatewayService:
             "examTarget": choice(record.get("examTarget"), EXAM_TARGETS),
             "updatedAt": self.iso(record.get("updatedAt")),
             "phoneIssues": issues,
+            # Merkezi senkron (§9): yaşam döngüsü, revizyon, kantine yazılma durumu.
+            "status": status,
+            "statusReason": reason if reason in STATUS_REASONS else None,
+            "statusSince": self.iso(record.get("statusSince")),
+            "revision": int_or_none(record.get("revision")) or 0,
+            "canteenSync": "pending" if record.get("canteenSync") == "pending" else "ok",
         }
 
     @staticmethod
@@ -1102,6 +1226,15 @@ class GatewayService:
             result = await self.call(self.caps.create_payment_request(student_id, amount),
                                      reasons=PAYMENT_REQUEST_REASONS)
             fixed = result.get("amountFixed")
+            ref = str(result.get("ref") or "")
+            status = str(result.get("status") or "PENDING").upper()
+            # §8: Akademi'nin açtığı talep → olay (`origin: akademi`); kantinin
+            # aynı talep için iteceği olay yankı belleğiyle bastırılır.
+            self.caps.remember_payment_request(student_id, ref)
+            await self.caps.emit("canteen.payment_request_changed", ("student", student_id),
+                                 fields=["paymentRequests"],
+                                 data={"ref": ref, "status": status},
+                                 causation_id=caller.causation_id)
             return {
                 "ref": str(result.get("ref") or ""),
                 "amount": int_or_none(result.get("amount")) or int(amount or 0),
@@ -1142,6 +1275,8 @@ class GatewayService:
         async def work() -> dict[str, Any]:
             result = await self.call(self.caps.update_controls(student_id, patch))
             self.caps.directory_changed()   # dizindeki kantin alanları değişti
+            await self.caps.emit("canteen.controls_changed", ("student", student_id),
+                                 fields=sorted(patch), causation_id=caller.causation_id)
             if not result:
                 result = await self.call(self.caps.canteen_student(student_id))
             return self.controls_body(result)
@@ -1366,6 +1501,8 @@ class GatewayService:
             ), not_found=self.tablet_failure())
             grant_id = result.get("grantId", result.get("id")) if isinstance(result, dict) \
                 else result
+            await self.caps.emit("tablet.policy_changed", ("student", student_id),
+                                 fields=["grants"], causation_id=caller.causation_id)
             return {"grantId": grant_id}
 
         detail = {"packageName": package_name, "extraSeconds": extra_seconds, "reason": reason}
@@ -1378,6 +1515,8 @@ class GatewayService:
                 student_id, until=until, reason=reason, actor=caller.actor,
             ), not_found=self.tablet_failure())
             value = result.get("blockedUntil") if isinstance(result, dict) else result
+            await self.caps.emit("tablet.policy_changed", ("student", student_id),
+                                 fields=["blockedUntil"], causation_id=caller.causation_id)
             return {"blockedUntil": self.iso(value)}
 
         detail = {"until": until.isoformat() if until else None, "reason": reason}
@@ -1389,6 +1528,8 @@ class GatewayService:
             await self.call(self.caps.tablet_unblock(student_id, reason=reason,
                                                      actor=caller.actor),
                             not_found=self.tablet_failure())
+            await self.caps.emit("tablet.policy_changed", ("student", student_id),
+                                 fields=["blockedUntil"], causation_id=caller.causation_id)
             return {"blockedUntil": None}
 
         return await self.audited("tablet.unblock", caller, student_id, {"reason": reason},
@@ -1397,11 +1538,15 @@ class GatewayService:
     async def tablet_end_session(self, session_id: str, *, reason: str,
                                  caller: Caller) -> dict[str, Any]:
         async def work() -> dict[str, Any]:
+            owner = await self.caps.tablet_session_student(session_id)
             ended = await self.call(self.caps.tablet_end_session(
                 session_id, reason=reason, actor=caller.actor,
             ), not_found=self.tablet_failure(session=True))
             if isinstance(ended, dict):
                 ended = ended.get("ended", True)
+            if ended:
+                await self.caps.emit("tablet.policy_changed", ("student", owner),
+                                     fields=["sessions"], causation_id=caller.causation_id)
             return {"ended": bool(ended)}
 
         return await self.audited("tablet.session.end", caller, "",

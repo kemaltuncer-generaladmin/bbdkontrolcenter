@@ -45,3 +45,15 @@ timeouts:
   write_seconds: 20
 sms_log_retention_days: 90
 audit_retention_days: 365
+
+# KM → BBD Akademi olay iletimi (km-merkezi-senkron §3.2, geçit §10).
+# VARSAYILAN KAPALI: Akademi'de kiracının `km` entegrasyonuna webhook sırrı
+# girilmeden açılmaz; o zamana kadar Akademi 2 dk yoklamayla çalışır. Sır kasada:
+# `mobile_gateway.webhook_secret` (depoda sır yok — K8).
+events_enabled: false
+# Akademi API kökü (ör. https://api.bbdakademi.com.tr) — istek `{kök}/v1/webhooks/km`.
+akademi_base_url: ""
+# Akademi kiracı kısaltması (`X-KM-Tenant`, ör. "bbd").
+akademi_tenant: ""
+# Paketteki `source.instanceId` (log ve teşhis).
+events_instance_id: "bbd-km"

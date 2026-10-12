@@ -45,6 +45,8 @@ BELL_ANNOUNCE = "bell.announce"
 BELL_PLAN = "bell.plan"
 GROUPS = "bbd_students.groups"
 SECRETS = "secrets"
+#: Kalıcı olay outbox'u (platform yeteneği, ADR 0029).
+OUTBOX = "events.outbox"
 
 #: İdempotensi özetinin HMAC anahtarı (kasada; ilk kullanımda üretilir).
 PEPPER_KEY = "mobile_gateway.idempotency_pepper"
@@ -353,6 +355,41 @@ class Capabilities:
             except Exception:  # noqa: BLE001 — önbellek bildirimi işi düşürmez (K7)
                 return
 
+    # ---------------------------------------------------------- events.outbox
+
+    def outbox(self) -> Any:
+        """Kalıcı olay outbox'u; yoksa None (eski çekirdek)."""
+        return self._resolve(OUTBOX)
+
+    async def emit(self, kind: str, subject: tuple[str, str | None], *,
+                   fields: list[str] | None = None, data: dict[str, Any] | None = None,
+                   causation_id: str | None = None) -> None:
+        """Geçitten yapılan (Akademi) yazmanın olayı — `origin: akademi`.
+
+        Yazma tamamlandıktan SONRA çağrılır; olay yazılamazsa yazma yine
+        başarılıdır (K7) — Akademi kendi SSE ipucunu zaten basar (§8), öteki
+        cihazlar 2 dk yoklamayla yetişir.
+        """
+        box = self.outbox()
+        if box is None:
+            return
+        try:
+            await settle(box.emit(kind, subject, fields=list(fields or []), data=data,
+                                  origin="akademi", causation_id=causation_id or None))
+        except Exception:  # noqa: BLE001 — olay yazması yanıtı bozmaz
+            return
+
+    def remember_payment_request(self, student_id: str, ref: str) -> None:
+        """Kantinin bu talep için iteceği olayın KM'de ikinci olay üretmemesi için
+        kantin istemcisinin yankı belleğine yazar (isteğe bağlı metod)."""
+        canteen = self._resolve(CANTEEN)
+        remember = getattr(canteen, "remember_write", None)
+        if callable(remember) and ref:
+            try:
+                remember(student_id, "payment_request", [ref])
+            except Exception:  # noqa: BLE001
+                return
+
     # ---------------------------------------------------- bbd_students.directory
 
     async def directory_list(self, since: str | None) -> dict[str, Any]:
@@ -360,6 +397,31 @@ class Capabilities:
         moment = datetime.fromisoformat(since) if since else None
         result = await self._module("directory", DIRECTORY, "list", kwargs={"since": moment})
         return result if isinstance(result, dict) else {}
+
+    async def directory_removed(self, since: str) -> list[dict[str, Any]]:
+        """Kalıcı silinenler (mezar taşı). Eski dizin yeteneğinde boş liste."""
+        directory = self._get(DIRECTORY)
+        if not callable(getattr(directory, "removed_since", None)):
+            return []
+        result = await self._module("directory", DIRECTORY, "removed_since",
+                                    (datetime.fromisoformat(since),))
+        return [item for item in result or [] if isinstance(item, dict)]
+
+    async def directory_many(self, ids: list[str]) -> dict[str, Any]:
+        """`ids` ile toplu okuma: `get_many` yoksa tekil okumalar (eski yetenek)."""
+        directory = self._get(DIRECTORY)
+        if callable(getattr(directory, "get_many", None)):
+            result = await self._module("directory", DIRECTORY, "get_many", (ids,))
+            return result if isinstance(result, dict) else {"students": [], "missingIds": ids}
+        found: list[dict[str, Any]] = []
+        missing: list[str] = []
+        for student_id in ids:
+            record = await self.directory_get(student_id)
+            if record is None:
+                missing.append(student_id)
+            else:
+                found.append(record)
+        return {"students": found, "missingIds": missing}
 
     async def directory_get(self, student_id: str) -> dict[str, Any] | None:
         try:
@@ -391,6 +453,11 @@ class Capabilities:
             raise
         student_id = result.get("id") if isinstance(result, dict) else None
         return student_id if isinstance(student_id, str) and student_id else None
+
+    async def canteen_balances(self, ids: list[str] | None,
+                               etag: str | None) -> dict[str, Any] | None:
+        """Kantin bakiye uzlaştırması; `etag` tutarsa None (304)."""
+        return await self._canteen("balances", args=(ids or None,), kwargs={"etag": etag})
 
     async def canteen_student(self, student_id: str) -> dict[str, Any]:
         """Tek öğrenci (bakiye, limitler, veli kontrolleri, `spentToday`)."""
@@ -578,6 +645,18 @@ class Capabilities:
     async def tablet_unblock(self, student_id: str, *, reason: str, actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "unblock", (student_id,),
                                   {"reason": reason, "actor": actor}, write=True)
+
+    async def tablet_session_student(self, session_id: str) -> str | None:
+        """Oturumun öğrencisi — eski tablet yeteneğinde None (olay konusu boş kalır)."""
+        control = self._resolve(TABLET_CONTROL)
+        if control is None or not callable(getattr(control, "session_student", None)):
+            return None
+        try:
+            result = await self._module("tablet", TABLET_CONTROL, "session_student",
+                                        (session_id,))
+        except (UpstreamFailure, CapabilityMissing):
+            return None
+        return str(result) if result else None
 
     async def tablet_end_session(self, session_id: str, *, reason: str, actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "end_session", (session_id,),
