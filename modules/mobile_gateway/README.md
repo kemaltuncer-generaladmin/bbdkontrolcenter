@@ -169,6 +169,10 @@ temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün)
 - Defter ucu olan kantinde (§1.7) kurum geneli satır kesintisi YOKTUR:
   öğrencinin satırları kendi `(student_id, id)` indeksinden sayfa sayfa gelir.
   Özetin tek sınırı 50 × 200 = 10.000 defter satırıdır (aşılırsa log uyarısı).
+- Aralığında 200'den çok defter satırı olan öğrencinin özeti iki kantin
+  turu sürer (ilk sayfa, sonra paralel dilimler): ölçümde 40 ms kantin
+  gecikmesiyle 450 satışlı öğrenci p50 93 ms (eski dört paralel okuma 56 ms;
+  bütçe 300 ms). Tipik öğrenci (30 günde ~12 satış) tek turdadır.
 - Yalnız defter ucu OLMAYAN eski kantinde: işlemler ve talepler kantine
   `studentId` süzgeciyle istenir; parametreyi de tanımayan kantinde işlemler
   aralıktaki en çok 5000 satırdan, talepler kurum genelindeki son 100
