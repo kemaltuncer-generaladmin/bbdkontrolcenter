@@ -450,7 +450,9 @@ export function uploadProgress() {
 
 /**
  * Form penceresi. `fields` kitin `formGrid` alanlarıdır; ayrıca
- * `{key, label, type: 'custom', render(draft, set) → Node, wide?}` desteklenir.
+ * `{key, label, type: 'custom', render(draft, set) → Node | {node, update(draft)}, wide?}`
+ * desteklenir. `draft` CANLI nesnedir; `update` verilirse formGrid alanı her
+ * değiştiğinde çağrılır.
  * `onSubmit(draft, {key})` sonucu döndürür; `key` pencere boyunca SABİT
  * Idempotency-Key'dir (yeniden denemede ikinci kayıt açılmaz).
  * Akademi `validation_error` dönerse alan hataları ilgili kutunun altına yazılır.
@@ -470,9 +472,14 @@ export function formDialog(app, { title, description = '', fields = [], value = 
     const live = fields.filter(Boolean);
     const gridFields = live.filter((field) => field.type !== 'custom');
     const customs = live.filter((field) => field.type === 'custom');
-    let draft = { ...value };
+    // TEK, CANLI taslak nesnesi: özel alanlar onu yakalar ve yazar; formGrid
+    // değişiklikleri aynı nesneye işlenir ve özel alanların `update(draft)`'ı
+    // çağrılır (ör. "kapsam" seçimi değişince hedef seçicisi yeniden çizilir).
+    const draft = { ...value };
+    const reactive = [];
     const grid = formGrid({ fields: gridFields, value, onChange: (next) => {
-      draft = { ...draft, ...next };
+      Object.assign(draft, next);
+      for (const control of reactive) control.update?.(draft);
     } });
     card.append(grid.node);
 
@@ -483,6 +490,7 @@ export function formDialog(app, { title, description = '', fields = [], value = 
       if (field.required) label.append(h('span', 'req', '*'));
       const set = (raw) => { draft[field.key] = raw; };
       const control = field.render(draft, set);
+      if (!(control instanceof Node)) reactive.push(control);
       const error = h('span', 'kit-field-error');
       customErrors.set(field.key, error);
       wrap.append(label, control instanceof Node ? control : control.node);
