@@ -1,6 +1,6 @@
 """ÜRETİLEN DOSYA — elle düzenlenmez.
 
-Kaynak: bbd-akademi/docs/api/openapi.yaml (info.version 1.0.0-draft.1).
+Kaynak: bbd-akademi/docs/api/openapi.yaml (info.version 1.0.0-draft.2).
 Üretici: modules/bbd_akademi/tools/gen_allowlist.py
 
 Vekilin geçirdiği işlemlerin tamamı. Burada olmayan her istek 403'tür.
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from .operations import Operation
 
-CONTRACT_VERSION = '1.0.0-draft.1'
+CONTRACT_VERSION = '1.0.0-draft.2'
 
 OPERATIONS: tuple[Operation, ...] = (
     Operation(
