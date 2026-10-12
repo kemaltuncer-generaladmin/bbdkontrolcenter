@@ -25,7 +25,7 @@ import asyncpg
 import structlog
 
 from km_core.store.db import _assert_module_tables
-from km_core.store.dialect import to_postgres, translate_ddl
+from km_core.store.dialect import concurrent_index_plan, to_postgres, translate_ddl
 
 log = structlog.get_logger("core.store.postgres")
 
@@ -165,6 +165,11 @@ class PostgresStore:
         if owner != "core":
             _assert_module_tables(owner, sql)
 
+        plan = concurrent_index_plan(sql)
+        if plan is not None:
+            await self._apply_concurrent(owner, name, plan)
+            return
+
         async with self.pool.acquire() as connection, connection.transaction():
             await connection.execute(translate_ddl(sql))
             await connection.execute(
@@ -175,6 +180,38 @@ class PostgresStore:
             )
         # Yeni tablo açılmış olabilir; `INSERT OR REPLACE` çevirisi anahtarı bilmeli.
         await self._load_primary_keys()
+
+    async def _apply_concurrent(self, owner: str, name: str,
+                                plan: list[tuple[str, str]]) -> None:
+        """İşlemsiz indeks göçü: her indeks `CREATE INDEX CONCURRENTLY` ile.
+
+        CANLI VERİDE GÜVENLİ: CONCURRENTLY tabloyu yazmaya kapatmaz (yalnız
+        SHARE UPDATE EXCLUSIVE kilidi; okuma ve yazma sürer). Bedeli tabloyu iki
+        kez taramaktır. Yarıda kesilen bir derleme GEÇERSİZ bir indeks bırakır
+        ve `IF NOT EXISTS` onu var sanıp atlardı; bu yüzden önce geçersiz kalıntı
+        `DROP INDEX CONCURRENTLY` ile kaldırılır, sonra yeniden açılır. Göç
+        kaydı ancak bütün indeksler bittikten sonra düşer: arada kesilirse göç
+        bir sonraki açılışta baştan (kaldığı yerden, IF NOT EXISTS ile) koşar.
+        """
+        async with self.pool.acquire() as connection:
+            for index, statement in plan:
+                invalid = await connection.fetchval(
+                    "SELECT NOT i.indisvalid FROM pg_class c "
+                    "JOIN pg_index i ON i.indexrelid = c.oid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE c.relname = $1 AND n.nspname = current_schema()",
+                    index,
+                )
+                if invalid:
+                    log.warning("geçersiz indeks kalıntısı kaldırılıyor", index=index)
+                    await connection.execute(f'DROP INDEX CONCURRENTLY IF EXISTS "{index}"')
+                await connection.execute(statement)
+            await connection.execute(
+                "INSERT INTO schema_migrations (owner, name, applied_at) "
+                "VALUES ($1, $2, now()::text)",
+                owner,
+                name,
+            )
 
 
 # Çekirdek şema `db.py`'deki CORE_SCHEMA'dan gelir; burada yalnız göç defteri
