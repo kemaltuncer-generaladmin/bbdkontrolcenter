@@ -19,6 +19,7 @@ import { reportChain } from '../../ui-kit/report.js';
 import { confirmSimple } from '../../ui-kit/kit.js';
 import { mountControls } from './canteen.js';
 import { mountGroups, mountStudentGroups } from './groups.js';
+import { askDeactivate, askDelete, mountStatus, watchEvents } from './lifecycle.js';
 import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, describe, fillFromSuggestion, parseChoice,
   parseGrade, suggestedExam, trackAllowed,
@@ -37,7 +38,11 @@ let selectedId = null;
 let original = null;      // seçili öğrencinin sunucudan gelen hâli
 let draft = null;         // ekranda düzenlenen hâli
 let connected = false;
-let filters = { text: '', className: '', flag: '' };
+// Durum süzgecinin varsayılanı "Etkin" (km-merkezi-senkron §5.2): pasifler ayrı.
+let filters = { text: '', className: '', flag: '', status: 'active' };
+let statusView = null;    // öğrenci kartındaki durum bölümü
+let stopWatch = null;     // canlı yenileme (uzun yoklama) durdurucu
+let refreshTimer = null;
 let mode = 'single';      // 'single' | 'bulk' | 'groups'
 let bulkPicker = null;
 let bulkChain = null;
@@ -153,10 +158,36 @@ async function refresh({ keepSelection = true } = {}) {
   if (!keepSelection || !students.some((student) => student.kantinId === selectedId)) {
     selectedId = students[0]?.kantinId ?? null;
   }
-  loadSelection();
+  if (keepSelection && dirtyKeys().length > 0
+      && students.some((student) => student.kantinId === selectedId)) {
+    // Düzenleme sürerken taslak EZİLMEZ: yalnız sunucu hâli güncellenir.
+    const fresh = students.find((student) => student.kantinId === selectedId);
+    original = { ...fresh, ...Object.fromEntries(dirtyKeys().map((key) => [key, original[key]])) };
+    nodes.dirty.textContent = 'Bu öğrenci başka yerde de değişti — kaydetmeden önce kontrol edin';
+  } else {
+    loadSelection();
+  }
+  mountedFor = mountedFor === selectedId && statusView ? mountedFor : null;
   renderList();
   renderDetail();
   syncBulkPicker();
+}
+
+/** Canlı yenileme: olaylar 300 ms birikip TEK yenilemeye iner. */
+function scheduleRefresh(items) {
+  const mine = items.some((item) => item.subject?.id === selectedId);
+  const controlsTouched = items.some((item) => item.subject?.id === selectedId
+    && (item.type === 'canteen.controls_changed' || item.type === 'canteen.balance_changed'));
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async () => {
+    await refresh({ keepSelection: true });
+    if (mine) {
+      statusView?.destroy();
+      statusView = selected() ? mountStatus(nodes.statusCard, { api: apiCall, student: selected() }) : null;
+    }
+    // Kontrol bölümünde yazılmakta olan limit ezilmesin.
+    if (controlsTouched && !nodes.controls?.contains(document.activeElement)) controlsView?.reload();
+  }, 300);
 }
 
 /** Toplu şifre işlemleri sekmesindeki seçiciyi güncel öğrenci listesiyle besler. */
@@ -459,6 +490,86 @@ function buildBulkCurriculum() {
   return box;
 }
 
+// ------------------------------------------------------- yaşam döngüsü (§5)
+
+async function lifecycleCall(path, options, done) {
+  try {
+    const result = await apiCall(path, options);
+    await refresh({ keepSelection: true });
+    mountedFor = null;
+    renderDetail();
+    done?.(result);
+  } catch (error) {
+    renderErrors([error.message]);
+  }
+}
+
+async function deactivate() {
+  if (!draft) return;
+  const answer = await askDeactivate(nodes.root, { students: [draft] });
+  if (!answer) return;
+  await lifecycleCall(`/api/bbd_students/students/${encodeURIComponent(draft.kantinId)}/deactivate`,
+    { method: 'POST', body: answer }, (result) => {
+      if (result?.scheduledFor) toast(`Pasifleştirme ${result.scheduledFor} için planlandı.`);
+      else if (result?.canteenSync === 'pending') {
+        toast('Pasifleştirildi — kantine iletilemedi, otomatik yeniden denenecek.');
+      } else toast('Pasifleştirildi.');
+    });
+}
+
+async function reactivate() {
+  if (!draft) return;
+  const scheduled = draft.status !== 'inactive';
+  if (!await confirmSimple(nodes.root, {
+    title: scheduled ? 'Planlı pasifleştirme iptal edilsin mi?' : 'Yeniden etkinleştir',
+    description: scheduled ? 'Öğrenci etkin kalır.'
+      : 'Kantin satışı ve BBD Akademi girişi yeniden açılır (kişi yeniden giriş yapar). '
+        + 'GRUP ÜYELİKLERİ KENDİLİĞİNDEN AÇILMAZ — gerekiyorsa “Gruplar” sekmesinden '
+        + 'elle ekleyin.',
+    confirmLabel: scheduled ? 'Planı iptal et' : 'Yeniden etkinleştir',
+  })) return;
+  await lifecycleCall(`/api/bbd_students/students/${encodeURIComponent(draft.kantinId)}/reactivate`,
+    { method: 'POST' }, (result) => toast(result?.scheduleCancelled
+      ? 'Plan iptal edildi.' : 'Yeniden etkinleştirildi — grup üyeliklerini kontrol edin.'));
+}
+
+async function removeStudent() {
+  if (!draft) return;
+  const confirmName = await askDelete(nodes.root, { student: draft });
+  if (!confirmName) return;
+  try {
+    await apiCall(`/api/bbd_students/students/${encodeURIComponent(draft.kantinId)}`,
+      { method: 'DELETE', body: { confirmName } });
+    selectedId = null;
+    await refresh({ keepSelection: false });
+    toast('Öğrenci kalıcı silindi.');
+  } catch (error) {
+    renderErrors([`Silinemedi: ${error.message}`]);
+  }
+}
+
+async function bulkDeactivate() {
+  const ids = bulkPicker?.selection() ?? [];
+  if (ids.length === 0) {
+    nodes.bulkStatus.textContent = 'Önce en az bir öğrenci seçin.';
+    return;
+  }
+  const chosen = students.filter((student) => ids.includes(student.kantinId));
+  const answer = await askDeactivate(nodes.root, { students: chosen });
+  if (!answer) return;
+  try {
+    const result = await apiCall('/api/bbd_students/students/deactivate',
+      { method: 'POST', body: { students: ids, ...answer } });
+    const parts = [`${result.deactivated?.length || 0} pasifleştirildi`];
+    if (result.scheduled?.length) parts.push(`${result.scheduled.length} planlandı`);
+    if (result.failed?.length) parts.push(`${result.failed.length} atlandı`);
+    nodes.bulkStatus.textContent = `${parts.join(' · ')}. Kantin çağrıları sırayla gidiyor.`;
+    await refresh({ keepSelection: true });
+  } catch (error) {
+    nodes.bulkStatus.textContent = `Pasifleştirilemedi: ${error.message}`;
+  }
+}
+
 function buildBulkView() {
   const view = h('div', 'st-bulk');
   view.hidden = true;
@@ -498,6 +609,15 @@ function buildBulkView() {
 
   side.append(buildBulkCurriculum());
 
+  if (can('bbd_students.lifecycle')) {
+    side.append(h('p', 'st-subhead', 'Yaşam döngüsü'));
+    const off = h('button', 'st-btn st-btn-danger', 'Seçilenleri pasifleştir');
+    off.type = 'button';
+    off.title = 'Yıl sonu mezunlar gibi toplu pasifleştirme; her öğrenci ayrı kaydedilir.';
+    off.addEventListener('click', bulkDeactivate);
+    side.append(off);
+  }
+
   layout.append(side);
   view.append(layout);
 
@@ -518,7 +638,10 @@ function sorted() {
 }
 
 function matches(student) {
+  if (filters.status && (student.status || 'active') !== filters.status) return false;
   if (filters.className && student.className !== filters.className) return false;
+  if (filters.flag === 'pending' && student.canteenSync !== 'pending') return false;
+  if (filters.flag === 'draft' && student.source !== 'canteen') return false;
   if (filters.flag === 'blocked' && !student.isBlocked) return false;
   if (filters.flag === 'debt' && Number(student.balance) <= 0) return false;
   if (filters.flag === 'unclassed' && student.className) return false;
@@ -581,6 +704,23 @@ function renderList() {
 
     if (student.isBlocked) {
       const badge = h('i', 'st-badge', 'engelli');
+      item.append(badge);
+    }
+    if (student.status === 'inactive') {
+      item.classList.add('st-item-inactive');
+      item.append(h('i', 'st-badge st-badge-inactive', 'pasif'));
+    } else if (student.scheduledDeactivation) {
+      item.append(h('i', 'st-badge st-badge-warn', `${student.scheduledDeactivation} pasif`));
+    }
+    if (student.canteenSync === 'pending') {
+      const badge = h('i', `st-badge ${student.canteenStale ? 'st-badge-bad' : 'st-badge-warn'}`,
+        student.canteenStale ? 'kantine iletilemedi (24 sa+)' : 'kantine iletilemedi');
+      badge.title = 'Kantine iletilemedi — otomatik yeniden denenecek.';
+      item.append(badge);
+    }
+    if (student.source === 'canteen') {
+      const badge = h('i', 'st-badge st-badge-draft', 'kasadan eklendi');
+      badge.title = 'Kasadan eklendi — bilgileri tamamla.';
       item.append(badge);
     }
 
@@ -658,6 +798,14 @@ function renderDetail() {
   }
 
   nodes.title.textContent = student.displayName || 'Adsız öğrenci';
+  const inactive = student.status === 'inactive';
+  nodes.deactivate.hidden = inactive || !can('bbd_students.lifecycle');
+  nodes.deactivate.textContent = student.scheduledDeactivation ? 'Pasifleştirme planlı' : 'Pasifleştir';
+  nodes.deactivate.disabled = Boolean(student.scheduledDeactivation);
+  nodes.reactivate.hidden = !(inactive || student.scheduledDeactivation) || !can('bbd_students.lifecycle');
+  nodes.reactivate.textContent = inactive ? 'Yeniden etkinleştir' : 'Planı iptal et';
+  nodes.remove.hidden = !inactive || !can('bbd_students.delete');
+  nodes.draftNote.hidden = student.source !== 'canteen';
   nodes.subtitle.textContent = [
     student.className || 'sınıf yok',
     `bakiye ${formatBalance(student.balance)}`,
@@ -717,6 +865,8 @@ function syncCurriculum() {
 function mountSections(student) {
   if (mountedFor === student.kantinId) return;
   mountedFor = student.kantinId;
+  statusView?.destroy();
+  statusView = mountStatus(nodes.statusCard, { api: apiCall, student });
   controlsView?.destroy();
   payCard?.destroy();
   studentGroups?.destroy();
@@ -773,6 +923,16 @@ function buildDetail() {
   nodes.fields = {};
   const body = nodes.detailBody;
   body.replaceChildren();
+
+  // Durum (km-merkezi-senkron §5): etkin / pasif, gerekçe, geçmiş.
+  nodes.draftNote = h('p', 'st-lc-warn', 'Kasadan eklendi — bilgileri tamamlayıp kaydedin '
+    + '(sınıf, veli, seviye). Kaydedince rozet kalkar.');
+  body.append(nodes.draftNote);
+  const statusCard = h('section', 'st-card');
+  statusCard.append(h('h4', null, 'Durum'));
+  nodes.statusCard = h('div', 'st-lc');
+  statusCard.append(nodes.statusCard);
+  body.append(statusCard);
 
   const kantin = h('section', 'st-card');
   kantin.append(h('h4', null, 'Kantin kaydı'));
@@ -986,7 +1146,17 @@ export function mount(root, ctx) {
   });
 
   nodes.flagFilter = h('select', 'st-input st-select');
-  for (const [value, label] of [['', 'Tümü'], ['debt', 'Borçlu'], ['blocked', 'Engelli'], ['unclassed', 'Sınıfsız']]) {
+  nodes.statusFilter = h('select', 'st-input st-select');
+  for (const [value, label] of [['active', 'Etkin'], ['inactive', 'Pasif'], ['', 'Etkin + pasif']]) {
+    nodes.statusFilter.append(new Option(label, value));
+  }
+  nodes.statusFilter.addEventListener('change', () => {
+    filters.status = nodes.statusFilter.value;
+    renderList();
+  });
+
+  for (const [value, label] of [['', 'Tümü'], ['debt', 'Borçlu'], ['blocked', 'Engelli'],
+    ['unclassed', 'Sınıfsız'], ['pending', 'Kantine iletilemeyen'], ['draft', 'Kasadan eklenen']]) {
     nodes.flagFilter.append(new Option(label, value));
   }
   nodes.flagFilter.addEventListener('change', () => {
@@ -1004,7 +1174,7 @@ export function mount(root, ctx) {
   add.type = 'button';
   add.addEventListener('click', createStudent);
 
-  bar.append(nodes.search, nodes.classFilter, nodes.flagFilter, nodes.count,
+  bar.append(nodes.search, nodes.statusFilter, nodes.classFilter, nodes.flagFilter, nodes.count,
     h('div', 'st-spacer'), reload, add);
   nodes.bar = bar;
   view.append(bar);
@@ -1025,7 +1195,20 @@ export function mount(root, ctx) {
   nodes.save.type = 'button';
   nodes.save.disabled = true;
   nodes.save.addEventListener('click', saveChanges);
-  head.append(nodes.title, nodes.subtitle, h('div', 'st-spacer'), nodes.dirty, nodes.save);
+  nodes.deactivate = h('button', 'st-btn st-btn-danger', 'Pasifleştir');
+  nodes.deactivate.type = 'button';
+  nodes.deactivate.hidden = true;
+  nodes.deactivate.addEventListener('click', deactivate);
+  nodes.reactivate = h('button', 'st-btn', 'Yeniden etkinleştir');
+  nodes.reactivate.type = 'button';
+  nodes.reactivate.hidden = true;
+  nodes.reactivate.addEventListener('click', reactivate);
+  nodes.remove = h('button', 'st-btn st-btn-danger', 'Kalıcı sil');
+  nodes.remove.type = 'button';
+  nodes.remove.hidden = true;
+  nodes.remove.addEventListener('click', removeStudent);
+  head.append(nodes.title, nodes.subtitle, h('div', 'st-spacer'), nodes.dirty,
+    nodes.deactivate, nodes.reactivate, nodes.remove, nodes.save);
   nodes.detail.append(head);
 
   nodes.detailBody = h('div', 'st-detail-body');
@@ -1045,8 +1228,20 @@ export function mount(root, ctx) {
   root.replaceChildren(view);
   // İzinler önce okunur: kontrol bölümü düzenleme düğmesini buna göre kurar.
   loadPermissions().finally(() => refresh({ keepSelection: false }));
+  // Canlı yenileme: KM'de, kasada ya da BBD Akademi'de olan değişiklik bu ekrana
+  // 1 sn içinde düşer (km-merkezi-senkron §8). "Yenile" düğmesi yedek olarak kalır.
+  stopWatch = watchEvents({
+    api: apiCall,
+    types: 'student.*,guardian.*,canteen.*,group.changed,tablet.policy_changed',
+    onEvents: (items, { reset }) => scheduleRefresh(reset ? [] : items),
+  });
 
   return () => {
+    stopWatch?.();
+    stopWatch = null;
+    clearTimeout(refreshTimer);
+    statusView?.destroy();
+    statusView = null;
     clearTimeout(toast.timer);
     bulkPicker?.destroy();
     controlsView?.destroy();
