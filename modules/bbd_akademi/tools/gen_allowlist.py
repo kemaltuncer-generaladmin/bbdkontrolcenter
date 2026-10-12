@@ -15,8 +15,10 @@ Listeye girenler (sözleşme `docs/api/README.md` §8):
 
 Kullanım (depo kökünden):
 
-    .venv/bin/python modules/bbd_akademi/tools/gen_allowlist.py \
-        [--spec ../bbd-akademi/docs/api/openapi.yaml] [--check]
+    .venv/bin/python modules/bbd_akademi/tools/gen_allowlist.py [--spec yol] [--check]
+
+Varsayılan kaynak bbd-akademi deposunun `main` dalındaki commit'lenmiş
+sözleşmedir (çalışma ağacı yarım düzenlenmiş olabilir).
 
 `--check`: dosyayı yazmaz; üretilen içerik commit'lenmiş olandan farklıysa
 1 ile çıkar.
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -163,13 +166,39 @@ def render(rows: list[dict[str, Any]], version: str) -> str:
     return "\n".join(lines)
 
 
+def load_spec(path: Path | None = None) -> dict[str, Any]:
+    """Sözleşmeyi okur.
+
+    `path` verilmezse bbd-akademi deposunun `main` dalındaki COMMIT'LENMİŞ
+    sürüm okunur (`git show main:docs/api/openapi.yaml`): çalışma ağacındaki
+    dosya o anda başka biri tarafından düzenleniyor (yarım, ayrıştırılamaz)
+    olabilir ve bağlayıcı sözleşme `main`dekidir. Git ya da depo yoksa dosya
+    okunur.
+    """
+    if path is None:
+        repo = DEFAULT_SPEC.parents[2]
+        try:
+            text = subprocess.run(
+                ["git", "-C", str(repo), "show", "main:docs/api/openapi.yaml"],
+                capture_output=True, text=True, check=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            text = DEFAULT_SPEC.read_text(encoding="utf-8")
+    else:
+        text = path.read_text(encoding="utf-8")
+    loaded = yaml.safe_load(text)
+    if not isinstance(loaded, dict):
+        raise SystemExit("sözleşme okunamadı")
+    return loaded
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
+    parser.add_argument("--spec", type=Path, default=None,
+                        help="sözleşme dosyası (varsayılan: bbd-akademi main dalı)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
 
-    spec = yaml.safe_load(args.spec.read_text(encoding="utf-8"))
+    spec = load_spec(args.spec)
     rows = collect(spec)
     text = render(rows, str((spec.get("info") or {}).get("version") or "?"))
     if args.check:

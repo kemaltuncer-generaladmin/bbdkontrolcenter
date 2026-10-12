@@ -9,7 +9,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-import yaml
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
 from modules.bbd_akademi.backend.operations import Allowlist, Operation
 from modules.bbd_akademi.backend.permission_map import (
@@ -44,14 +43,16 @@ def _generator():  # type: ignore[no-untyped-def]
 
 @pytest.mark.skipif(not SPEC.exists(), reason="Akademi sözleşmesi bu makinede yok")
 def test_her_admin_islemi_listede_ve_uretilen_dosya_guncel() -> None:
-    spec = yaml.safe_load(SPEC.read_text(encoding="utf-8"))
+    generator = _generator()
+    # AKADEMI_OPENAPI verilmezse bbd-akademi main dalındaki commit'lenmiş sözleşme.
+    spec = generator.load_spec(Path(os.environ["AKADEMI_OPENAPI"])
+                               if os.environ.get("AKADEMI_OPENAPI") else None)
     admin = {op["operationId"] for path, item in spec["paths"].items()
              if path.startswith("/v1/admin/")
              for method, op in item.items() if method in ("get", "post", "put", "patch", "delete")}
     listed = {op.operation_id for op in OPERATIONS}
     assert admin <= listed, f"listede olmayan admin işlemleri: {sorted(admin - listed)}"
 
-    generator = _generator()
     rendered = generator.render(generator.collect(spec), str(spec["info"]["version"]))
     committed = (MODULE / "backend" / "allowlist.py").read_text(encoding="utf-8")
     assert rendered == committed, "allowlist.py eski — tools/gen_allowlist.py yeniden koşturun"
