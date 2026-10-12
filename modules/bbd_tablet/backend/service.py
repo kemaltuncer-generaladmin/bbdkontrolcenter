@@ -1081,6 +1081,32 @@ class TabletService:
                 "blockedUntil": await self._active_block_until(student_id, self._now()),
                 "usage": items, "grants": grants}
 
+    async def daily_usage_totals(self, local_date: str) -> list[dict[str, Any]]:
+        """Kurum geneli bir günün öğrenci başına toplam süresi + şu an süren kısıt.
+
+        İki sorgu, ikisi de indeksli: günün kullanımı `(local_date)` indeksiyle
+        öğrenci başına toplanır; süren kısıtlar `(blocked_until)` indeksiyle
+        (008 göçü) okunur. Listede o gün kullanımı OLAN ya da kısıtı SÜREN
+        öğrenciler vardır; kimlik sırasıyla döner.
+        """
+        totals: dict[str, int] = {}
+        for row in await self.store.fetch_all(
+            f"SELECT student_id, SUM(used_seconds) AS total FROM {self.usage} "
+            "WHERE local_date=? AND used_seconds>0 GROUP BY student_id", (local_date,),
+        ):
+            totals[str(row["student_id"])] = int(row["total"] or 0)
+        blocks: dict[str, str] = {}
+        for row in await self.store.fetch_all(
+            f"SELECT student_id, MAX(blocked_until) AS until FROM {self.blocks} "
+            "WHERE blocked_until>? AND lifted_at IS NULL GROUP BY student_id",
+            (self._now().isoformat(),),
+        ):
+            if row.get("until"):
+                blocks[str(row["student_id"])] = str(row["until"])
+        return [{"studentId": student, "totalSeconds": totals.get(student, 0),
+                 "blockedUntil": blocks.get(student)}
+                for student in sorted(totals.keys() | blocks.keys())]
+
     async def daily_report(self, local_date: str) -> dict[str, Any]:
         rows = await self.store.fetch_all(
             f"SELECT student_id, package_name, used_seconds FROM {self.usage} "

@@ -7,6 +7,7 @@ yönetim panelininkiyle aynıdır.
 
     read.board()                                  → §4 GET /tablets biçimi
     read.student_usage(student_id, date_from, date_to) → §4 tablet-usage biçimi
+    read.daily_usage(local_date)                  → §4 GET /tablets/usage biçimi (kurum geneli)
     control.grant(student_id, package_name|None, extra_seconds, reason, actor) → grant_id
     control.block(student_id, until, reason, actor)  → blocked_until | None
     control.unblock(student_id, reason, actor)       → None
@@ -225,6 +226,27 @@ class TabletRead:
             "activeSession": active,
             "blockedUntil": _iso(await service._active_block_until(student_id, service._now())),
         }
+
+    async def daily_usage(self, local_date: Any) -> dict[str, Any]:
+        """§4 `GET /tablets/usage?date=`: kurum geneli, o günün öğrenci başına süresi.
+
+        `{date, items: [{studentId, totalSeconds, blockedUntil}]}` — yalnız o gün
+        kullanımı olan ya da kısıtı ŞU AN süren öğrenciler (kısıt o günün değil,
+        çağrı anının durumudur; `student_usage` ile aynı anlam). Gün bugünden
+        sonra ya da `MAX_USAGE_DAYS` günden eski olamaz (`validation_error`).
+        """
+        day = _day(local_date, "date")
+        service = self._service
+        today = service._now().astimezone(zone(service.default_timezone)).date()
+        if day > today:
+            raise TabletCapabilityError("Gelecek bir gün sorulamaz.", reason="validation_error")
+        if (today - day).days >= MAX_USAGE_DAYS:
+            raise TabletCapabilityError(f"En çok {MAX_USAGE_DAYS} gün geriye bakılabilir.",
+                                        reason="validation_error")
+        items = await service.daily_usage_totals(day.isoformat())
+        for item in items:
+            item["blockedUntil"] = _iso(item["blockedUntil"])
+        return {"date": day.isoformat(), "items": items}
 
 
 class TabletControl:

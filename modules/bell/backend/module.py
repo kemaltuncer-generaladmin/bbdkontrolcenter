@@ -20,6 +20,7 @@ from km_sdk import ModuleContext, Trigger
 from .announce import BellAnnounce
 from .api.routes import bind
 from .bridge import BellBridge
+from .plan_capability import BellPlan
 from .service import DAYS, BellService
 from .speech import VertexSpeech
 from .voices import VoiceLibrary, number
@@ -69,6 +70,9 @@ def register(ctx: ModuleContext) -> None:
         # Saatler ya da gruplar değişince `bell.week` tüketicileri (mobil geçit
         # önbelleği) hemen haberdar olur (olay veri yolu, K3).
         on_week_change=lambda: ctx.publish("bell.week_changed", {}),
+        # Öğrenci grupları (taşıma sonrası elle çağrı listesi, genel çağrı
+        # sesleri) ÇAĞRI ANINDA çözülür — isteğe bağlı tüketim (K3).
+        student_groups=lambda: ctx.try_capability("bbd_students.groups"),
     )
 
     ctx.add_router(bind(service))
@@ -76,6 +80,16 @@ def register(ctx: ModuleContext) -> None:
     ctx.provide("bell.week", service.week)
     # Öğrenci çağırma — mobil geçit ve benzeri tüketiciler (sözleşme §5).
     ctx.provide("bell.announce", BellAnnounce(service))
+    # Akademi'den gelen zil planı (sözleşme §3.3) — mobil geçit çağırır.
+    ctx.provide("bell.plan", BellPlan(service))
+
+    async def on_groups_changed(_event: str, _payload: dict[str, Any]) -> None:
+        try:
+            await service.groups_changed()
+        except Exception as failure:  # noqa: BLE001 — olay işleyici zili düşürmez (K7)
+            ctx.log.warning("grup değişikliği işlenemedi", error=str(failure))
+
+    ctx.subscribe("bbd_students.groups_changed", on_groups_changed)
 
     _plan_page_preparation(ctx, service, scheduler)
 

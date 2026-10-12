@@ -18,6 +18,7 @@
 import {
   ago, blockedButton, button, confirmSimple, confirmWithPin, h, loadStyles, toaster,
 } from '../../ui-kit/kit.js';
+import { migrationBand, renderCalendar, templateWarnings } from './calendar.js';
 import * as store from './store.js';
 
 const DAYS = [
@@ -42,6 +43,7 @@ let activeDay = DAYS[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1].ke
 let notify = () => {};
 let timer = null;
 let disposed = false;
+let view = 'zil';          // 'zil' | 'takvim'
 const nodes = {};
 
 /**
@@ -148,7 +150,7 @@ function renderHeader() {
 
   // Ajanın yerelinde bulunması gereken dosyalar: teneffüs zili + her grup
   // için bir anons. Zilden sonra anons çalınmıyor, o ses de tutulmuyor.
-  const wanted = 1 + (data.groups || []).length;
+  const wanted = 1 + (data.groupsMigrated ? (data.studentGroups || []) : (data.groups || [])).length;
   const present = (data.agent?.sounds || []).length;
   const library = h('span', `bl-library${present >= wanted ? ' ok' : ''}`,
     online ? `Ajanda ${present}/${wanted} ses` : '');
@@ -161,7 +163,16 @@ function renderHeader() {
     onClick: () => run(store.ring, { success: (r) => `Zil çaldı — ${r.detail}` }),
   });
 
-  bar.append(master, agent, library, h('div', 'kit-spacer'), ring);
+  // Sekmeler: günlük iş (zil, çağrı, saatler) ve Akademi'den gelen takvim.
+  const tabs = h('div', 'bl-views');
+  for (const [key, label] of [['zil', 'Zil'], ['takvim', 'Takvim']]) {
+    const tab = h('button', `bl-tab${view === key ? ' active' : ''}`, label);
+    tab.type = 'button';
+    tab.addEventListener('click', () => { view = key; render(); });
+    tabs.append(tab);
+  }
+
+  bar.append(master, agent, library, tabs, h('div', 'kit-spacer'), ring);
   return bar;
 }
 
@@ -223,12 +234,17 @@ function renderGroups() {
     'Seçilen gruba anons geçer. Zil çalmaz.'));
   card.append(head);
 
+  card.append(migrationBand(data, deps()));
+
+  // TAŞIMA SONRASI liste Öğrenci Yönetimi'nden gelir: düzenleme yok, yalnız çağrı.
+  const migrated = Boolean(data.groupsMigrated);
+  const list = migrated ? (data.studentGroups || []) : (data.groups || []);
   const grid = h('div', 'bl-groups');
-  for (const group of data.groups || []) grid.append(groupCard(group));
-  grid.append(newGroupCard());
+  for (const group of list) grid.append(groupCard(group, { readonly: migrated }));
+  if (!migrated) grid.append(newGroupCard());
   card.append(grid);
 
-  if (!(data.groups || []).length) {
+  if (!list.length) {
     card.append(h('p', 'bl-empty',
       'Henüz grup yok. Bir grup açtığında anons sesi bir kez üretilir; '
       + 'sonraki çağrılarda buluta çıkılmaz.'));
@@ -289,7 +305,7 @@ function pageForm() {
   return nodes.pageForm;
 }
 
-function groupCard(group) {
+function groupCard(group, { readonly = false } = {}) {
   const card = h('div', `bl-group bl-voice-${group.voice.state}`);
 
   const name = h('div', 'bl-group-name', group.name);
@@ -297,8 +313,9 @@ function groupCard(group) {
   card.append(name);
 
   const meta = h('div', 'bl-group-meta');
-  meta.append(h('span', `bl-kind bl-kind-${group.kind}`,
-    group.kind === 'ozel' ? 'özel ders' : 'grup'));
+  const solo = group.kind === 'ozel' || group.kind === 'individual';
+  meta.append(h('span', `bl-kind bl-kind-${solo ? 'ozel' : 'grup'}`,
+    solo ? 'özel ders' : 'grup'));
   meta.append(voiceBadge(group.voice));
   card.append(meta);
 
@@ -339,6 +356,10 @@ function groupCard(group) {
     }
   });
   menu.append(rename, drop);
+  if (readonly) {
+    card.append(actions);
+    return card;
+  }
   card.append(menu, actions);
   return card;
 }
@@ -662,8 +683,13 @@ function renderSound() {
   // ZİLDEN SONRA ANONS YOK. Bir zamanlar burada "Zilden sonra" metin alanı
   // duruyordu; kaldırıldı (bkz. backend/service.py başlığı). Aşağıdaki iki
   // metin YALNIZ elle basılan çağrıda çalar, zil saatinde değil.
-  const grup = (data.groups || []).filter((g) => g.kind !== 'ozel').length;
-  const ozel = (data.groups || []).filter((g) => g.kind === 'ozel').length;
+  const pool = data.groupsMigrated ? (data.studentGroups || []) : (data.groups || []);
+  const grup = pool.filter((g) => g.kind !== 'ozel' && g.kind !== 'individual').length;
+  const ozel = pool.filter((g) => g.kind === 'ozel' || g.kind === 'individual').length;
+
+  // Şablonda {hoca} yoksa uyarı + öneri — KENDİLİĞİNDEN değişmez.
+  const warn = templateWarnings(data, deps());
+  if (warn) card.append(warn);
 
   card.append(textRow({
     key: 'call',
@@ -676,6 +702,17 @@ function renderSound() {
     label: 'Özel ders çağrısı',
     hint: 'Tekil hitap — tek öğrenciyle yapılan ders. '
       + `Değiştirirsen ${ozel} öğrencinin sesi yeniden üretilir.`,
+  }));
+  card.append(textRow({
+    key: 'callGeneric',
+    label: 'Genel grup çağrısı (öğretmensiz)',
+    hint: 'Oturumun öğretmeninin anons adı yoksa, kesin metnin sesi henüz hazır değilse ya '
+      + 'da elle çağrıda oturum yoksa okunur. {grup} yerine grubun anons adı yazılır.',
+  }));
+  card.append(textRow({
+    key: 'soloGeneric',
+    label: 'Genel özel ders çağrısı (öğretmensiz)',
+    hint: 'Özel derste aynı amaçla okunur. Boş bırakılamaz.',
   }));
 
   // ZİL SONRASI ANONSLAR. Grup çağrılarından ayrı: bunlar OTOMATİK zilin
@@ -834,7 +871,7 @@ function renderLog() {
   table.append(head);
 
   const body = h('tbody');
-  const kinds = { zil: 'Zil', anons: 'Anons', cagri: 'Çağrı' };
+  const kinds = { zil: 'Zil', anons: 'Anons', cagri: 'Çağrı', 'cagri-plan': 'Oturum çağrısı' };
   for (const row of rows.slice(0, 40)) {
     const line = h('tr', row.ok ? '' : 'bad');
     line.append(h('td', 'bl-time-cell', String(row.at || '').slice(11, 19)));
@@ -857,12 +894,27 @@ function render() {
   // ekranda listenin başa fırlaması, kullanıcıyı okuduğu yerden koparır.
   const scroll = nodes.body.scrollTop;
 
-  const columns = h('div', 'bl-columns');
-  columns.append(renderGroups(), renderTimes());
-
   nodes.head.replaceChildren(renderHeader(), renderStatus());
-  nodes.body.replaceChildren(columns, renderSound(), renderLog());
+  if (view === 'takvim') {
+    nodes.body.replaceChildren(renderCalendar(data, deps()), renderLog());
+  } else {
+    const columns = h('div', 'bl-columns');
+    columns.append(renderGroups(), renderTimes());
+    nodes.body.replaceChildren(columns, renderSound(), renderLog());
+  }
   nodes.body.scrollTop = scroll;
+}
+
+/** Takvim ve bant bileşenlerinin ihtiyaç duyduğu tek yüzey. */
+function deps() {
+  return {
+    api: ctx.api,
+    run,
+    notify: (...args) => notify(...args),
+    root: nodes.view,
+    saveSettings: store.saveSettings,
+    rerender: render,
+  };
 }
 
 export function mount(root, context) {

@@ -23,7 +23,7 @@
 id: bell
 name: "Zil Sistemi"
 description: "Haftalık zil saatleri (ders/teneffüs), zil sonrası anons ve sesli grup çağrısı."
-version: 0.4.0
+version: 0.5.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
@@ -34,7 +34,16 @@ depends: []
 provides:
   - capability: bell.week
     contract: backend.service:BellService.week
-    description: "Haftalık zil saatleri ve gruplar — salt okunur."
+    description: >
+      Salt okunur: {times, profiles (saat setleri), days (önümüzdeki 7 günün
+      etkin kipi), groups (KULLANIMDAN KALKTI — taşıma sonrası boş)}.
+  # Akademi'den gelen zil planı (sözleşme km-ogrenci-gruplari-ve-zil.md §3.3).
+  - capability: bell.plan
+    contract: backend.plan_capability:BellPlan
+    description: >
+      async apply_days(body, *, actor) → {days: [{date, result, revision}],
+      voicesPending, bellEnabled}; status(from, to); override_day(date, mode="off",
+      *, actor) (yalnız bugün); clear_override(date, *, actor).
   # Öğrenci çağırma (mobil geçit sözleşmesi §5). Sözleşme backend/announce.py.
   - capability: bell.announce
     contract: backend.announce:BellAnnounce
@@ -53,6 +62,11 @@ consumes:
   - capability: notify
     optional: true
     reason: "Zil çalınamadığında uyarı."
+  - capability: bbd_students.groups
+    optional: true
+    reason: >
+      Zil gruplarının öğrenci gruplarına taşınması (import_named) ve taşıma
+      sonrası elle çağrı listesi; tablo okunmaz (K3/K5).
   - capability: bbd_students.directory
     optional: true
     reason: >
@@ -66,8 +80,13 @@ events:
     - name: bell.failed
       description: "Çalınamadığında yayınlanır."
     - name: bell.week_changed
-      description: "Haftalık zil saatleri ya da gruplar değişti (`bell.week` yanıtı değişti). Yük boş."
-  subscribes: []
+      description: "Haftalık zil saatleri, saat setleri ya da gruplar değişti (`bell.week` yanıtı değişti). Yük boş."
+  subscribes:
+    # Öğrenci grupları değişti: grup önbelleği bırakılır, genel çağrı sesleri
+    # sıraya girer. Örnek yöntemdir; yükleyici bağlamaz, `register` bağlar
+    # (şema `handler` ister).
+    - name: bbd_students.groups_changed
+      handler: "backend.service:BellService.groups_changed"
 
 http:
   prefix: /api/bell

@@ -36,7 +36,8 @@ function renderNotice(ctx) {
   const text = h('div', 'cs-notice-text');
   text.append(h('b', null, 'Bu ekran salt okunurdur.'));
   text.append(h('span', null,
-    'Saatler ve gruplar Zil Sistemi ekranından girilir; buraya kendiliğinden yansır.'));
+    'Saatler ve saat setleri Zil Sistemi ekranından girilir; günlerin kipi (tatil, özel '
+    + 'gün) Akademi kurum takviminden gelir. Buraya kendiliğinden yansır.'));
   box.append(text);
   box.append(h('div', 'kit-spacer'));
   box.append(button('Zil Sistemi’ne git', {
@@ -88,12 +89,68 @@ function renderWeek(data) {
   return card;
 }
 
+const MODE_LABEL = { normal: 'Normal', off: 'Tatil — zil yok', profile: 'Saat seti' };
+const SOURCE_LABEL = { akademi: 'Akademi planı', km: 'KM acil kapatma', none: 'haftalık saatler' };
+
+/** Önümüzdeki 7 gün: Akademi kurum takviminden gelen gün kipi. */
+function renderDays(data) {
+  const card = h('section', 'cs-card');
+  card.append(h('h4', null, 'Önümüzdeki 7 gün'));
+  const days = data.days || [];
+  if (!days.length) {
+    card.append(h('p', 'cs-empty', 'Zil planı bilgisi yok — zil haftalık saatlerle çalar.'));
+    return card;
+  }
+  const names = Object.fromEntries((data.profiles || []).map((item) => [item.id, item.name]));
+  const list = h('div', 'cs-days');
+  for (const day of days) {
+    const [y, m, d] = String(day.date).split('-').map(Number);
+    const weekday = DAYS[(new Date(y, m - 1, d).getDay() + 6) % 7];
+    const row = h('div', `cs-plan-day cs-mode-${day.override ? 'off' : day.mode}`);
+    row.append(h('b', null, `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')} ${weekday.short}`));
+    const mode = day.override ? 'Acil kapatıldı — zil yok'
+      : day.mode === 'profile' ? `Saat seti: ${names[day.profileId] || day.profileId}`
+        : (MODE_LABEL[day.mode] || day.mode);
+    row.append(h('span', null, mode));
+    row.append(h('span', 'cs-hint', [day.reason, SOURCE_LABEL[day.source] || day.source]
+      .filter(Boolean).join(' · ')));
+    list.append(row);
+  }
+  card.append(list);
+  return card;
+}
+
+/** Saat setleri — özel günlerde haftalık saatlerin yerine çalan adlı listeler. */
+function renderProfiles(data) {
+  const card = h('section', 'cs-card');
+  card.append(h('h4', null, 'Saat setleri'));
+  const profiles = data.profiles || [];
+  if (!profiles.length) {
+    card.append(h('p', 'cs-empty', 'Saat seti yok. Zil Sistemi › Takvim’den eklenir.'));
+    return card;
+  }
+  for (const profile of profiles) {
+    const block = h('div', 'cs-profile');
+    block.append(h('b', null, profile.name));
+    const slots = h('div', 'cs-profile-times');
+    for (const entry of profile.times || []) {
+      const slot = h('span', `cs-kind ${entry.kind === 'teneffus' ? 'break' : 'lesson'}`,
+        `${entry.time} ${entry.kind === 'teneffus' ? 'teneffüs' : 'ders'}`);
+      slots.append(slot);
+    }
+    block.append(slots);
+    card.append(block);
+  }
+  return card;
+}
+
 function renderGroups(data) {
   const card = h('section', 'cs-card');
   card.append(h('h4', null, 'Gruplar'));
 
   if (!(data.groups || []).length) {
-    card.append(h('p', 'cs-empty', 'Henüz grup yok.'));
+    card.append(h('p', 'cs-empty',
+      'Gruplar Öğrenci Yönetimi’nde (Öğrenci Yönetimi › Gruplar) yönetilir.'));
     return card;
   }
 
@@ -137,7 +194,8 @@ export function mount(root, ctx) {
       body.append(renderUnavailable(data.reason, ctx));
       return;
     }
-    body.append(renderNotice(ctx), renderWeek(data), renderGroups(data));
+    body.append(renderNotice(ctx), renderDays(data), renderWeek(data), renderProfiles(data),
+      renderGroups(data));
   })().catch((error) => {
     if (disposed) return;
     const box = h('div', 'cs-empty-state');

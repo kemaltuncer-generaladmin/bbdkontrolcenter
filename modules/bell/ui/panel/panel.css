@@ -468,3 +468,52 @@
 }
 .bl-page > .bl-label,
 .bl-page > .bl-hint { grid-column: 1 / -1; }
+
+/* ---------------------------------------------- takvim (zil planı, 0.5) */
+
+.bl-views { display: inline-flex; gap: 4px; margin-left: 12px; }
+.bl-status.warn { color: var(--warn); }
+.bl-calendar { display: flex; flex-direction: column; gap: 12px; }
+.bl-plan-days { display: flex; flex-direction: column; gap: 4px; }
+.bl-plan-day {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 2px 10px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.bl-plan-day:hover { background: var(--tint); }
+.bl-plan-day.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.bl-plan-day.bl-mode-off { background: #fff5f5; }
+.bl-plan-day.bl-mode-profile { background: #fffbeb; }
+.bl-plan-day .bl-hint { grid-column: 2 / 3; }
+.bl-plan-meta { grid-column: 3; grid-row: 1 / span 2; font-size: 12px; color: var(--soft); }
+.bl-plan-meta em { font-style: normal; }
+.bl-inline { display: inline-flex; align-items: center; gap: 6px; }
+.bl-number { width: 76px; }
+.bl-profile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.bl-warn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid #f5d6a1;
+  border-radius: 8px;
+  background: #fffaf0;
+  font-size: 12.5px;
+}
+.bl-warn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }

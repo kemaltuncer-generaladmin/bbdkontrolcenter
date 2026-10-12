@@ -6,7 +6,8 @@ karşılığı olmayan alanlar (ad/soyad ayrımı, sınıf, okul no, öğrenci t
 ikinci veli, not, seviye/alan/hedef sınav) modülün kendi tablosundadır.
 
 Grup: **BBD** · İzinler: `bbd_students.view`, `bbd_students.manage`,
-`bbd_students.qr`, `bbd_students.access_code`, `bbd_students.canteen_controls`
+`bbd_students.qr`, `bbd_students.access_code`, `bbd_students.canteen_controls`,
+`bbd_students.groups`
 
 ## Yetenekler
 
@@ -16,6 +17,35 @@ Grup: **BBD** · İzinler: `bbd_students.view`, `bbd_students.manage`,
   geçit sözleşmesi §1'in öğrenci nesnesi. `list(since)`, `get(id)`,
   `find_by_phone(phone10)`, `card_qr_text(id)`. Telefonlar `5XXXXXXXXX` ya da
   `null`; `accessCode` asla dönmez; kantine ulaşılamazsa `complete: false`.
+
+- `bbd_students.groups` — BACKEND yeteneği (`backend/groups.py`): öğrenci
+  grupları ve tarihli üyelik. `list(since_revision)`, `get(id)`,
+  `for_student(id)`, `import_named(name, kind=…)` (yalnız zil gruplarının
+  taşınması). Her yazmadan sonra `bbd_students.groups_changed` (`{revision}`).
+
+## Öğrenci grupları
+
+Sözleşme: `bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md` §2.
+**Grubun tek sahibi bu modüldür**; BBD Akademi (mobil geçit `GET /groups`) ve
+zil sistemi (elle çağrı) buradan okur. Grup = ad + öğrenci seçimi; tür
+`group` (toplu ders) ya da `individual` (özel ders, aynı gün tek öğrenci);
+isteğe bağlı anons adı (`callName`).
+
+- Üyelik **tarihlidir**: başlangıç ve son gün Europe/Istanbul yerel günüdür,
+  ikisi de dahildir. Aynı öğrencinin aynı grupta kesişen iki üyeliği olmaz.
+- Ekleme varsayılanı bugünden başlar; "Çıkar" seçilen günü son gün yapar;
+  "Taşı" eski grupta son günü bir önceki güne, yenide başlangıcı seçilen güne
+  yazar (birlikte doğrulanır, birlikte yazılır).
+- Bugünden önceki bir güne dokunan değişiklik **gerekçe** ister; her yazma
+  denetim izine (`mod_bbd_students_group_log`) düşer.
+- **Silme yoktur, arşiv vardır.** Arşivde açık üyelikler arşiv gününde kapanır,
+  başlamamış üyelikler kaldırılır; arşivden geri almak serbesttir.
+- Her yazma kalıcı **grup revizyonunu** +1 artırır (dizinin süreç içi
+  `revision`'ından ayrıdır; senkron imlecidir).
+- Ekran: "Gruplar" sekmesi (liste, bugünkü üye sayısı, tür ve arşiv süzgeci,
+  grup ayrıntısı, çoklu öğrenci seçici, çıkar/taşı, üyelik geçmişi ve
+  düzeltme, "Sınıftan grup oluştur") ve öğrenci kartında "Gruplar" bölümü.
+  Yazma `bbd_students.groups`, okuma `bbd_students.view` ister.
 
 ## Seviye / alan / hedef sınav
 

@@ -427,3 +427,31 @@
 .st-bulk-plan { display: flex; flex-direction: column; gap: 6px; margin-top: 14px;
   padding-top: 12px; border-top: 1px solid var(--line); }
 .st-bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ------------------------------------------------------------- gruplar */
+
+/* "Gruplar" sekmesi — liste + grup ayrıntısı; öğrenci kartında geçmiş. */
+.st-groups { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.st-groups[hidden] { display: none; }
+.gr { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.gr > .st-hint { padding: 0 20px 8px; }
+.gr-kind { background: #e0e7ff; color: #3730a3; }
+.gr-kind-individual { background: #fef3c7; color: #92400e; }
+.gr-members { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+.gr-member { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+.gr-member b { font-weight: 600; font-size: 12.5px; }
+.gr-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.gr-tools .st-input { width: auto; min-width: 140px; }
+.gr-day { min-width: 150px; }
+.gr-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.gr-history-row:last-child { border-bottom: none; }
+.gr-history-row.gr-past { color: var(--soft); }
+.gr-audit .st-hint { margin: 2px 0; }
+.gr-editor { width: min(460px, 92vw); display: flex; flex-direction: column; gap: 8px; }
