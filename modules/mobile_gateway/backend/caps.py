@@ -63,6 +63,16 @@ class CapabilityMissing(Exception):
         self.capability = capability
 
 
+class LedgerUnavailable(Exception):
+    """Kantinin hesap dökümü ucu (`ledger`) kullanılamıyor — eski yola dönülür.
+
+    İki durumda yükselir: kantin istemcisinde `ledger` metodu yoktur (eski
+    çekirdek dalı) ya da istemci kantinin ucu tanımadığını bildirir
+    (`reason="ledger_unsupported"`, §1.7 öncesi kantin). Hata DEĞİLDİR;
+    servis aynı yanıtı eski dört okumalı yoldan kurar.
+    """
+
+
 class UpstreamFailure(Exception):
     """Yetenek çağrısı hata verdi.
 
@@ -357,9 +367,11 @@ class Capabilities:
 
     async def canteen_transactions(self, student_id: str, from_ms: int,
                                    to_ms: int) -> list[dict[str, Any]]:
-        """Öğrencinin işlemleri. İstemci `student_id` süzgeci tanıyorsa kullanılır;
-        tanımıyorsa aralık okunur ve burada süzülür (kantin aralıkta en çok
-        5000 satır verir — bkz. README "Bilinen sınırlar")."""
+        """Öğrencinin işlemleri — YALNIZ defter ucu olmayan kantinde (eski yol).
+
+        İstemci `student_id` süzgeci tanıyorsa kullanılır; tanımıyorsa aralık
+        okunur ve burada süzülür (kantin aralıkta en çok 5000 satır verir —
+        bkz. README "Bilinen sınırlar")."""
         method = self._method(CANTEEN, "transactions")
         kwargs: dict[str, Any] = {"from_ms": from_ms, "to_ms": to_ms, "limit": 5000}
         if accepts(method, "student_id"):
@@ -377,6 +389,52 @@ class Capabilities:
         # Süzgeci yok sayan bir kantin sürümüne karşı: başkasının tahsilatı sızmaz.
         return [item for item in found
                 if str(item.get("studentId") or student_id) == student_id]
+
+    async def canteen_ledger(self, student_id: str, *, limit: int,
+                             cursor: str | None = None, from_ms: int | None = None,
+                             to_ms: int | None = None) -> dict[str, Any]:
+        """Öğrencinin hesap dökümünden bir sayfa (kantin §1.7, tek istek).
+
+        Dönüş: `{"items": [satır], "nextCursor": str | None, "hasMore": bool,
+        "student": dict | None, "pendingPaymentRequest": dict | None,
+        "first": bool}`. `student` ve `pendingPaymentRequest` yalnız ilk
+        (imleçsiz) sayfada gelir; `first` kantinin onları gönderip
+        göndermediğidir. Satır: `id, at, kind, direction, amount,
+        balanceAfter, ref, sale`.
+
+        Uç ya da istemci metodu yoksa `LedgerUnavailable` (servis eski yola
+        döner). Öğrenci yoksa `UpstreamFailure(kind="not_found")`.
+        """
+        instance = self._get(CANTEEN)
+        if not callable(getattr(instance, "ledger", None)):
+            raise LedgerUnavailable()
+        kwargs: dict[str, Any] = {"limit": limit}
+        if cursor:
+            kwargs["cursor"] = cursor
+        if from_ms is not None:
+            kwargs["from_ms"] = from_ms
+        if to_ms is not None:
+            kwargs["to_ms"] = to_ms
+        try:
+            payload = await self._canteen("ledger", args=(student_id,), kwargs=kwargs)
+        except UpstreamFailure as failure:
+            if failure.reason == "ledger_unsupported":
+                raise LedgerUnavailable() from None
+            raise
+        meta = payload if isinstance(payload, dict) else {}
+        if not isinstance(meta.get("data"), list):
+            raise UpstreamFailure("canteen", "unavailable", reason="invalid_response")
+        student = meta.get("student")
+        pending = meta.get("pendingPaymentRequest")
+        next_cursor = meta.get("nextCursor")
+        return {
+            "items": rows(meta),
+            "nextCursor": str(next_cursor) if next_cursor else None,
+            "hasMore": bool(meta.get("hasMore")) and bool(next_cursor),
+            "student": unwrap(student) if isinstance(student, dict) else None,
+            "pendingPaymentRequest": pending if isinstance(pending, dict) else None,
+            "first": "student" in meta,
+        }
 
     async def payment_requests_for(self, student_id: str) -> list[dict[str, Any]]:
         """Öğrencinin ödeme talepleri.

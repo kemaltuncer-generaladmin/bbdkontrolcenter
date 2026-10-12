@@ -15,7 +15,14 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
-from mobile_gateway_fakes import CAN, ELIF, FakeCanteen, FakeDirectory, bell_week
+from mobile_gateway_fakes import (
+    CAN,
+    ELIF,
+    FakeCanteen,
+    FakeDirectory,
+    PreLedgerCanteen,
+    bell_week,
+)
 from modules.mobile_gateway.backend.service import GatewayService
 
 if TYPE_CHECKING:
@@ -48,8 +55,8 @@ class Counter:
         return counted
 
 
-class FilteringCanteen(FakeCanteen):
-    """Yeni kantin istemcisi: `payment_requests(student_id=)` tanır."""
+class FilteringCanteen(PreLedgerCanteen):
+    """Süzgeçli ama defter ucu olmayan kantin istemcisi: `payment_requests(student_id=)`."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -61,8 +68,11 @@ class FilteringCanteen(FakeCanteen):
         return await super().payment_requests()
 
 
-class SlowCanteen(FakeCanteen):
-    """Her okuma `delay` sürer: sıralı mı aynı anda mı, süreden anlaşılır."""
+class SlowCanteen(PreLedgerCanteen):
+    """Her okuma `delay` sürer: sıralı mı aynı anda mı, süreden anlaşılır.
+
+    Defter ucu yoktur — eski (dört okumalı) yolun eşzamanlılığı ölçülür.
+    """
 
     def __init__(self, delay: float) -> None:
         super().__init__()
@@ -122,7 +132,7 @@ async def test_ogrenci_talepleri_kantine_ogrenci_suzgeciyle_gider(
 # ------------------------------------------------------------ eşzamanlılık
 
 
-async def test_kantin_ozeti_dort_okumayi_ayni_anda_yapar(
+async def test_eski_kantinde_ozet_dort_okumayi_ayni_anda_yapar(
         client: httpx.AsyncClient, world: World) -> None:
     world.replace("canteen.api", SlowCanteen(delay=0.15))
     started = time.perf_counter()
@@ -149,6 +159,82 @@ async def test_yavas_kantin_sure_sinirinda_kesilir(client: httpx.AsyncClient, wo
     error_of(await client.get(f"/students/{ELIF}/canteen/controls"), 503,
              "canteen_unavailable")
     assert time.perf_counter() - started < 1.0
+
+
+class SlowLedgerCanteen(FakeCanteen):
+    """Defter ucu `delay` sürer."""
+
+    def __init__(self, delay: float) -> None:
+        super().__init__()
+        self.delay = delay
+
+    async def ledger(self, student_id: str, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
+        await asyncio.sleep(self.delay)
+        return await super().ledger(student_id, **kwargs)
+
+
+def canteen_calls(canteen: FakeCanteen) -> list[str]:
+    return [name for name, _ in canteen.calls]
+
+
+# ------------------------------------------------- kantin üst çağrı bütçesi
+
+
+async def test_kantin_ozeti_tek_kantin_istegi(client: httpx.AsyncClient, world: World) -> None:
+    """Defter ucu olan kantinde §3 özeti TEK kantin isteğidir (eskiden dört)."""
+    response = await client.get(f"/students/{ELIF}/canteen", params={"days": 180})
+    assert response.status_code == 200
+    assert canteen_calls(world.canteen) == ["ledger"]
+    assert world.canteen.calls[0][1]["limit"] == 200          # sayfa en büyük boyda
+    assert world.canteen.calls[0][1]["to_ms"] is None          # kantin bakiyeyi ek sorgusuz verir
+
+
+async def test_kantin_ozeti_tek_istegin_suresi_kadar(client: httpx.AsyncClient,
+                                                     world: World) -> None:
+    world.replace("canteen.api", SlowLedgerCanteen(delay=0.15))
+    started = time.perf_counter()
+    assert (await client.get(f"/students/{ELIF}/canteen")).status_code == 200
+    assert time.perf_counter() - started < 0.3
+
+
+async def test_kantin_ozeti_buyuk_aralikta_sayfalari_okur(client: httpx.AsyncClient,
+                                                          world: World) -> None:
+    """Kurum geneli 5000 satır kesintisi yok: öğrencinin 450 satışı üç sayfada gelir."""
+    base = world.canteen.ledger_rows[1]
+    world.canteen.ledger_rows = [
+        {**base, "id": 10_000 - n, "sale": {**base["sale"], "serverId": f"tx-{n}",
+                                            "createdAt": base["at"] - n * 60_000}}
+        for n in range(450)
+    ]
+    response = await client.get(f"/students/{ELIF}/canteen", params={"days": 30})
+    assert response.status_code == 200
+    assert len(response.json()["transactions"]) == 450
+    assert canteen_calls(world.canteen) == ["ledger"] * 3
+
+
+async def test_eski_kantinde_bir_deneme_sonra_dort_okuma(client: httpx.AsyncClient,
+                                                         world: World) -> None:
+    world.canteen.ledger_mode = "unsupported"
+    assert (await client.get(f"/students/{ELIF}/canteen")).status_code == 200
+    assert sorted(canteen_calls(world.canteen)) == sorted(
+        ["ledger", "get_student", "transactions", "collections", "payment_requests"])
+
+
+async def test_defter_bilmeyen_istemcide_dogrudan_eski_yol(client: httpx.AsyncClient,
+                                                           world: World) -> None:
+    canteen = PreLedgerCanteen()
+    world.replace("canteen.api", canteen)
+    assert (await client.get(f"/students/{ELIF}/canteen")).status_code == 200
+    assert sorted(canteen_calls(canteen)) == sorted(
+        ["get_student", "transactions", "collections", "payment_requests"])
+
+
+@pytest.mark.parametrize("path", ["transactions", "collections"])
+async def test_imlecli_liste_tek_kantin_istegi(path: str, client: httpx.AsyncClient,
+                                               world: World) -> None:
+    response = await client.get(f"/students/{ELIF}/canteen/{path}", params={"limit": 20})
+    assert response.status_code == 200
+    assert canteen_calls(world.canteen) == ["ledger"]
 
 
 # ------------------------------------------------------------- dizin önbelleği
@@ -295,6 +381,8 @@ READ_ENDPOINTS = [
     "/directory",
     f"/students/{ELIF}/canteen",
     f"/students/{ELIF}/canteen/qr",
+    f"/students/{ELIF}/canteen/transactions",
+    f"/students/{ELIF}/canteen/collections",
     f"/students/{ELIF}/payment-requests",
     f"/students/{ELIF}/canteen/controls",
     "/canteen/payment-requests",

@@ -55,6 +55,8 @@ CONTRACT_ROUTES = {
     ("POST", "/students/{student_id}/verify-code"),
     ("GET", "/students/{student_id}/canteen"),
     ("GET", "/students/{student_id}/canteen/qr"),
+    ("GET", "/students/{student_id}/canteen/transactions"),
+    ("GET", "/students/{student_id}/canteen/collections"),
     ("GET", "/students/{student_id}/payment-requests"),
     ("POST", "/students/{student_id}/payment-requests"),
     ("POST", "/students/{student_id}/canteen/payment-requests"),

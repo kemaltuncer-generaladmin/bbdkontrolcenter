@@ -189,6 +189,30 @@ async def canteen(student_id: str, days: int = Query(default=30, ge=1, le=180),
     return await current_service().canteen_summary(student_id, days)
 
 
+@router.get("/students/{student_id}/canteen/transactions")
+async def canteen_transactions(student_id: str,
+                               date_from: date | None = FROM_QUERY,
+                               date_to: date | None = TO_QUERY,
+                               cursor: str | None = Query(default=None, max_length=512),
+                               limit: int = Query(default=20, ge=1, le=100),
+                               user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """Öğrencinin satışları, imleçli (§3 eki) — `{items, nextCursor, hasMore}`."""
+    return await current_service().canteen_transactions_page(student_id, date_from, date_to,
+                                                             cursor, limit)
+
+
+@router.get("/students/{student_id}/canteen/collections")
+async def canteen_collections(student_id: str,
+                              date_from: date | None = FROM_QUERY,
+                              date_to: date | None = TO_QUERY,
+                              cursor: str | None = Query(default=None, max_length=512),
+                              limit: int = Query(default=20, ge=1, le=100),
+                              user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """Öğrencinin tahsilatları, imleçli (§3 eki) — `{items, nextCursor, hasMore}`."""
+    return await current_service().canteen_collections_page(student_id, date_from, date_to,
+                                                            cursor, limit)
+
+
 @router.get("/students/{student_id}/canteen/qr")
 async def canteen_qr(student_id: str, user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
     return await current_service().canteen_qr(student_id)

@@ -37,6 +37,47 @@ PR_PAID = {
 }
 PR_OTHER = {**PR_PAID, "ref": "PR-01JOTHER", "studentId": CAN}
 
+SALE_TOST = {
+    "serverId": "8f0c-1", "localId": "l-1", "total": 3500, "createdAt": 1791722460000,
+    "reversedAt": None, "reversedReason": None,
+    "items": [{"productId": 3, "name": "Tost", "qty": 1, "unitPrice": 2500, "lineTotal": 2500},
+              {"productId": 9, "name": "Ayran", "qty": 2, "unitPrice": 500}],
+}
+SALE_REVERSED = {
+    "serverId": "8f0c-2", "localId": "l-2", "total": 1200, "createdAt": 1791636060000,
+    "reversedAt": 1791636100000, "reversedReason": "yanlış ürün", "items": [],
+}
+
+
+def _ms(text: str) -> int:
+    return int(datetime.fromisoformat(text).timestamp() * 1000)
+
+
+#: Kantin hesap dökümü (§1.7) — `transactions` / `collections` taklitleriyle AYNI
+#: veri: defter yolu ile eski yol aynı §3 yanıtını üretmeli. Yeniden eskiye.
+LEDGER = [
+    {"id": 906, "studentId": CAN, "at": 1791722460000, "kind": "sale", "direction": "debit",
+     "amount": 999, "balanceAfter": 0, "ref": "l-other",
+     "sale": {"serverId": "other", "total": 999, "createdAt": 1791722460000, "items": []}},
+    {"id": 905, "studentId": ELIF, "at": 1791722460000, "kind": "sale", "direction": "debit",
+     "amount": 3500, "balanceAfter": 4250, "ref": "l-1", "sale": SALE_TOST},
+    # CAN'ın nakit tahsilatı (kimlik sırası dışı ama taklit sıralar; LEDGER[1] ve
+    # LEDGER[-1] testlerde ELIF satırı olarak kullanılır).
+    {"id": 900, "studentId": CAN, "at": _ms("2026-10-05T07:00:00+00:00"), "kind": "cash",
+     "direction": "credit", "amount": 1, "balanceAfter": 0, "ref": "col-can", "sale": None},
+    {"id": 904, "studentId": ELIF, "at": 1791636100000, "kind": "sale_reversal",
+     "direction": "credit", "amount": 1200, "balanceAfter": 750, "ref": "l-2",
+     "sale": SALE_REVERSED},
+    {"id": 903, "studentId": ELIF, "at": 1791636060000, "kind": "sale", "direction": "debit",
+     "amount": 1200, "balanceAfter": 1950, "ref": "l-2", "sale": SALE_REVERSED},
+    {"id": 902, "studentId": ELIF, "at": _ms("2026-10-05T07:00:00+00:00"), "kind": "payment",
+     "direction": "credit", "amount": 5000, "balanceAfter": 750, "ref": "PR-01JPAID",
+     "sale": None},
+    {"id": 901, "studentId": ELIF, "at": _ms("2026-10-01T07:00:00+00:00"), "kind": "cash",
+     "direction": "credit", "amount": 10000, "balanceAfter": 5750, "ref": "col-1",
+     "sale": None},
+]
+
 
 def directory_records() -> dict[str, dict[str, Any]]:
     """`bbd_students.directory` StudentRecord'ları (sözleşme §1 + Ekler)."""
@@ -99,6 +140,10 @@ class FakeCanteen:
         self.fail_reason: str | None = None
         self.origins: list[str | None] = []
         self.feed_cursor: dict[str, Any] = {"nextSince": 1791784800250, "hasMore": True}
+        #: Defter ucu: "ok" (kantin §1.7) ya da "unsupported" (eski kantin; istemci
+        #: `reason="ledger_unsupported"` ile reddeder).
+        self.ledger_mode = "ok"
+        self.ledger_rows = deepcopy(LEDGER)
         self.sms_sent = True
         self.students: dict[str, dict[str, Any]] = {
             ELIF: {"id": ELIF, "displayName": "Elif Kaya", "parentPhone": MOTHER,
@@ -156,6 +201,33 @@ class FakeCanteen:
             {"serverId": "other", "studentId": CAN, "total": 999, "createdAt": 1791722460000,
              "items": []},
         ]
+
+    async def ledger(self, student_id: str, limit: int = 50, cursor: str | None = None,
+                     from_ms: int | None = None, to_ms: int | None = None) -> dict[str, Any]:
+        """`bbd_canteen_api` `ledger()` dönüş biçimi (imleç opak: "c<id>")."""
+        self._enter("ledger", {"student_id": student_id, "limit": limit, "cursor": cursor,
+                               "from_ms": from_ms, "to_ms": to_ms})
+        if self.ledger_mode == "unsupported":
+            raise CanteenError("ledger yok", status=404, reason="ledger_unsupported")
+        if student_id not in self.students:
+            raise CanteenError("404", status=404, reason="student_not_found")
+        rows = [row for row in self.ledger_rows if row["studentId"] == student_id
+                and (from_ms is None or row["at"] >= from_ms)
+                and (to_ms is None or row["at"] < to_ms)
+                and (cursor is None or row["id"] < int(cursor[1:]))]
+        rows.sort(key=lambda row: row["id"], reverse=True)
+        chunk = [{key: value for key, value in row.items() if key != "studentId"}
+                 for row in rows[:limit]]
+        more = len(rows) > limit
+        page: dict[str, Any] = {"data": deepcopy(chunk),
+                                "nextCursor": f"c{chunk[-1]['id']}" if more else None,
+                                "hasMore": more}
+        if cursor is None:
+            page["student"] = deepcopy(self.students[student_id])
+            pending = [row for row in self.requests
+                       if row["studentId"] == student_id and row["status"] == "PENDING"]
+            page["pendingPaymentRequest"] = deepcopy(pending[0]) if pending else None
+        return page
 
     async def collections(self, *, from_ms: int, to_ms: int,
                           student_id: str | None = None) -> dict[str, Any]:
@@ -239,6 +311,12 @@ class FakeCanteen:
         if not self.sms_sent:
             return {"sent": False, "reason": "netgsm"}
         return {"sent": True, "text": message}
+
+
+class PreLedgerCanteen(FakeCanteen):
+    """Hesap dökümünü bilmeyen kantin istemcisi (`ledger` metodu yok)."""
+
+    ledger = None  # type: ignore[assignment]
 
 
 class LegacyCanteen:

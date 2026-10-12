@@ -12,6 +12,8 @@ metni hiç dönmez — çıktı her uçta beyaz listeyle kurulur.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -20,7 +22,7 @@ import re
 import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, TypeVar
 from urllib.parse import unquote
 from uuid import uuid4
@@ -35,6 +37,7 @@ from .caps import (
     TABLET_READ,
     Capabilities,
     CapabilityMissing,
+    LedgerUnavailable,
     UpstreamFailure,
 )
 from .errors import (
@@ -65,6 +68,24 @@ DAY_MS = 24 * HOUR_MS
 #: İşlenirken düşen isteğin idempotensi satırı bu kadar sonra devralınabilir.
 STALE_CLAIM_MS = 2 * MINUTE_MS
 PURGE_EVERY_MS = 10 * MINUTE_MS
+
+#: Kantin hesap dökümünün (`ledger`) sayfa üst sınırı (kantin doğrulaması).
+LEDGER_PAGE_MAX = 200
+#: Kantin özeti en çok bu kadar defter sayfası okur (200 × 50 = 10.000 satır;
+#: bir öğrencinin 180 günde buna ulaşması pratikte olmaz). Aşılırsa log'a
+#: uyarı düşer — eski yolun kurum geneli 5000 satır kesintisinin yerine.
+SUMMARY_LEDGER_PAGES = 50
+#: İmleçli liste ucu bir sayfayı doldurmak için kantine en çok bu kadar gider;
+#: dolmazsa kısa sayfa + geçerli imleç döner.
+PAGE_FILL_CALLS = 5
+#: İmleçli liste uçlarının sayfa boyu (Akademi `Limit` parametresiyle aynı).
+PAGE_LIMIT_DEFAULT = 20
+PAGE_LIMIT_MAX = 100
+#: Defter ucu olmayan kantinde `from` verilmezse geriye bakılan gün sayısı.
+FALLBACK_DAYS = 180
+#: Defter satırı türleri → liste ucu.
+SALE_KINDS = frozenset({"sale"})
+COLLECTION_KINDS = frozenset({"payment", "cash"})
 
 #: Kantin `reason` → HTTP durumu, uca göre (sözleşme hata listeleri).
 PAYMENT_REQUEST_REASONS = {"no_debt": 409, "no_phone": 409, "exceeds_debt": 422,
@@ -210,6 +231,42 @@ def to_datetime(value: Any) -> datetime | None:
             return None
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
     return None
+
+
+def encode_cursor(state: dict[str, Any]) -> str:
+    """Geçidin opak sayfa imleci: base64url(JSON). Kişisel veri taşımaz.
+
+    Defter kipinde (`m: "l"`) kantinin imleci (`c`, ilk sayfada yok) ve o
+    kantin sayfasında son verilen defter satırının kimliği (`a`) durur: bir
+    sonraki istek AYNI kantin sayfasını okur ve `a` ile daha yeni satırları
+    atlar (sayfa ortasında kesilen istek tam yerinden sürer; arada eklenen
+    yeni satır sayfayı kaydırmaz). Eski yolda (`m: "o"`) sıra numarası (`o`).
+    """
+    raw = json.dumps(state, separators=(",", ":"), sort_keys=True).encode()
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def decode_cursor(text: str | None) -> dict[str, Any] | None:
+    """`encode_cursor`ın tersi; bozuk imleç 422 `validation_error` (alan `cursor`)."""
+    if text is None or not text.strip():
+        return None
+    raw = text.strip()
+    try:
+        data = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        data = None
+    if not isinstance(data, dict) or data.get("m") not in ("l", "o"):
+        raise validation("Geçersiz sayfa imleci.", "cursor")
+    if data["m"] == "l":
+        kantin, after = data.get("c"), data.get("a")
+        if (kantin is not None and not isinstance(kantin, str)) or \
+                (after is not None and (not isinstance(after, int) or isinstance(after, bool))):
+            raise validation("Geçersiz sayfa imleci.", "cursor")
+    else:
+        offset = data.get("o")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise validation("Geçersiz sayfa imleci.", "cursor")
+    return data
 
 
 def is_truthy(value: Any) -> bool:
@@ -652,17 +709,74 @@ class GatewayService:
         return list(results)
 
     async def canteen_summary(self, student_id: str, days: int) -> dict[str, Any]:
-        """§3 kantin özeti. Dört kantin okuması birbirinden bağımsızdır ve aynı
-        anda istenir: süre en yavaşı kadar (eskiden dördünün toplamıydı)."""
+        """§3 kantin özeti — kantinin hesap dökümünden TEK istekle.
+
+        Defter ucu (kantin §1.7) öğrenciyi, bekleyen talebi ve aralıktaki
+        satış/tahsilat satırlarını birlikte verir. Aralık 200 satırı aşarsa
+        imleçle sonraki sayfalar okunur (öğrencinin satırları; kurum geneli
+        5000 satır kesintisi yoktur). Kantin bu ucu tanımıyorsa (eski sürüm)
+        ya da kantin istemcisi `ledger` bilmiyorsa eski yol: dört bağımsız
+        okuma aynı anda. Yanıt biçimi iki yolda da aynıdır (sözleşme v1).
+        """
         now = self.now_ms()
-        start, end = now - days * DAY_MS, now + MINUTE_MS
+        start = now - days * DAY_MS
+        try:
+            return await self._summary_from_ledger(student_id, start)
+        except LedgerUnavailable:
+            return await self._summary_legacy(student_id, start, now + MINUTE_MS)
+
+    async def _summary_from_ledger(self, student_id: str, start: int) -> dict[str, Any]:
+        first = await self.call(self.caps.canteen_ledger(student_id, limit=LEDGER_PAGE_MAX,
+                                                         from_ms=start))
+        entries: list[dict[str, Any]] = list(first["items"])
+        page, pages = first, 1
+        while page["hasMore"] and page["nextCursor"]:
+            if pages >= SUMMARY_LEDGER_PAGES:
+                self._log.warning("kantin özeti defter sayfa sınırına ulaştı",
+                                  student_id=student_id, pages=pages)
+                break
+            cursor = page["nextCursor"]
+            page = await self.call(self.caps.canteen_ledger(
+                student_id, limit=LEDGER_PAGE_MAX, cursor=cursor, from_ms=start))
+            pages += 1
+            entries.extend(page["items"])
+            if page["nextCursor"] == cursor:   # ilerlemeyen imleç: döngüye girme
+                break
+
+        student = first["student"]
+        if student is None:
+            # Kantin ilk sayfada öğrenciyi vermediyse (beklenmez) ayrıca okunur.
+            student = await self.call(self.caps.canteen_student(student_id))
+        pending = first["pendingPaymentRequest"]
+        transactions = [self.transaction(entry["sale"]) for entry in entries
+                        if entry.get("kind") in SALE_KINDS and isinstance(entry.get("sale"), dict)]
+        collections = [self.ledger_collection(entry) for entry in entries
+                       if entry.get("kind") in COLLECTION_KINDS]
+        return self.summary_body(student, transactions, collections,
+                                 [pending] if pending is not None else [])
+
+    async def _summary_legacy(self, student_id: str, start: int, end: int) -> dict[str, Any]:
+        """Defter ucu olmayan kantin: dört kantin okuması aynı anda (süre en
+        yavaşı kadar). İşlemler aralıkta en çok 5000 satırdır (README)."""
         student, transactions, collections, requests = await self.parallel(
             self.caps.canteen_student(student_id),
             self.caps.canteen_transactions(student_id, start, end),
             self.caps.canteen_collections(student_id, start, end),
             self.caps.payment_requests_for(student_id),
         )
+        return self.summary_body(
+            student, [self.transaction(item) for item in transactions],
+            [self.collection(item) for item in collections], requests,
+        )
 
+    def summary_body(self, student: dict[str, Any], transactions: list[dict[str, Any]],
+                     collections: list[dict[str, Any]],
+                     requests: list[dict[str, Any]]) -> dict[str, Any]:
+        """§3 yanıtı — iki yolun ortak biçimi (sözleşme v1, alan alan aynı).
+
+        `requests` kantinin ham talep satırlarıdır; yalnız durumu açıkça
+        PENDING olan en yenisi `pendingPaymentRequest` olur.
+        """
         pending = [self.payment_request(item) for item in requests
                    if str(item.get("status") or "").upper() == "PENDING"]
         pending.sort(key=lambda item: str(item["createdAt"] or ""), reverse=True)
@@ -675,10 +789,10 @@ class GatewayService:
             "guardianBlocked": controls["guardianBlocked"],
             "restrictedProductIds": controls["restrictedProductIds"],
             "spentToday": controls["spentToday"],
-            "transactions": sorted((self.transaction(item) for item in transactions),
-                                   key=lambda item: str(item["at"] or ""), reverse=True),
-            "collections": sorted((self.collection(item) for item in collections),
-                                  key=lambda item: str(item["at"] or ""), reverse=True),
+            "transactions": sorted(transactions, key=lambda item: str(item["at"] or ""),
+                                   reverse=True),
+            "collections": sorted(collections, key=lambda item: str(item["at"] or ""),
+                                  reverse=True),
             "pendingPaymentRequest": (
                 {key: pending[0][key] for key in
                  ("ref", "amount", "linkUrl", "createdAt", "payToken", "amountFixed")}
@@ -686,7 +800,138 @@ class GatewayService:
             ),
         }
 
-    def transaction(self, item: dict[str, Any]) -> dict[str, Any]:
+    # ------------------------------------------- imleçli liste (defterden)
+
+    def page_window(self, date_from: date | None,
+                    date_to: date | None) -> tuple[int | None, int | None]:
+        """`from`/`to` günleri (dahil, kurum saat dilimi) → epoch-ms `[from, to)`."""
+        if date_from is not None and date_to is not None and date_from > date_to:
+            raise validation("`from` tarihi `to` tarihinden sonra olamaz.", "from", "to")
+
+        def midnight(day: date) -> int:
+            local = datetime(day.year, day.month, day.day, tzinfo=self.zone)
+            return int(local.timestamp() * 1000)
+
+        start = midnight(date_from) if date_from is not None else None
+        end = midnight(date_to + timedelta(days=1)) if date_to is not None else None
+        return start, end
+
+    async def canteen_transactions_page(self, student_id: str, date_from: date | None,
+                                        date_to: date | None, cursor: str | None,
+                                        limit: int) -> dict[str, Any]:
+        """Öğrencinin satışları, yeniden eskiye, imleçli —
+        `{items, nextCursor, hasMore}` (Akademi `CanteenTransactionPage`).
+
+        Satır §3 `transactions` satırıdır; kalemler ayrıca `productId` taşır.
+        İptal edilen satış listede kalır (`reversed: true`); iptal kaydı ayrı
+        satır olmaz.
+        """
+        start, end = self.page_window(date_from, date_to)
+        state = decode_cursor(cursor)
+        try:
+            entries, next_cursor = await self._ledger_page(
+                student_id, SALE_KINDS, start, end, state, limit,
+                fetch=min(LEDGER_PAGE_MAX, limit + 25))
+        except LedgerUnavailable:
+            rows = await self.call(self.caps.canteen_transactions(
+                student_id, *self._fallback_window(start, end)))
+            items = sorted((self.transaction(item, product_ids=True) for item in rows),
+                           key=lambda item: str(item["at"] or ""), reverse=True)
+            return self._offset_page(items, state, limit)
+        items = [self.transaction(entry["sale"], product_ids=True) for entry in entries]
+        return {"items": items, "nextCursor": next_cursor, "hasMore": next_cursor is not None}
+
+    async def canteen_collections_page(self, student_id: str, date_from: date | None,
+                                       date_to: date | None, cursor: str | None,
+                                       limit: int) -> dict[str, Any]:
+        """Öğrencinin tahsilatları (online ödeme + nakit), yeniden eskiye, imleçli —
+        `{items: [{id, at, amount, method, ref}], nextCursor, hasMore}`."""
+        start, end = self.page_window(date_from, date_to)
+        state = decode_cursor(cursor)
+        try:
+            entries, next_cursor = await self._ledger_page(
+                student_id, COLLECTION_KINDS, start, end, state, limit, fetch=LEDGER_PAGE_MAX)
+        except LedgerUnavailable:
+            rows = await self.call(self.caps.canteen_collections(
+                student_id, *self._fallback_window(start, end)))
+            items = sorted((self.collection(item, identified=True) for item in rows),
+                           key=lambda item: str(item["at"] or ""), reverse=True)
+            return self._offset_page(items, state, limit)
+        items = [self.ledger_collection(entry, identified=True) for entry in entries]
+        return {"items": items, "nextCursor": next_cursor, "hasMore": next_cursor is not None}
+
+    async def _ledger_page(self, student_id: str, kinds: frozenset[str], start: int | None,
+                           end: int | None, state: dict[str, Any] | None, limit: int, *,
+                           fetch: int) -> tuple[list[dict[str, Any]], str | None]:
+        """Defterden `kinds` türündeki en çok `limit` satır + geçidin sonraki imleci.
+
+        Kantinin imleci olduğu gibi kullanılır (opak; üretilmez). Sayfa bir
+        kantin sayfasının ortasında dolarsa imleç o kantin sayfasını ve son
+        verilen satırın kimliğini taşır (bkz. `encode_cursor`).
+        """
+        # Eski yolun imleci (`m: "o"`): defter hâlâ yoksa ilk çağrı
+        # `LedgerUnavailable` verir ve çağıran eski yolda sürer (istemci bunu
+        # kantine gitmeden bilir); defter artık varsa kantin bu arada
+        # güncellenmiştir — sıra numarası deftere çevrilemez, istemci baştan başlar.
+        offset_cursor = state is not None and state["m"] != "l"
+        kantin_cursor: str | None = None if offset_cursor or not state else state.get("c")
+        after: int | None = None if offset_cursor or not state else state.get("a")
+        need_sale = bool(kinds & SALE_KINDS)
+
+        def wanted(row: dict[str, Any]) -> bool:
+            return row.get("kind") in kinds and \
+                (not need_sale or isinstance(row.get("sale"), dict))
+
+        found: list[dict[str, Any]] = []
+        for _ in range(PAGE_FILL_CALLS):
+            page = await self.call(self.caps.canteen_ledger(
+                student_id, limit=fetch, cursor=kantin_cursor, from_ms=start, to_ms=end))
+            if offset_cursor:
+                raise validation("Sayfa imlecinin süresi doldu; liste baştan istenmeli.",
+                                 "cursor")
+            rows = [row for row in page["items"]
+                    if after is None or (int_or_none(row.get("id")) or 0) < after]
+            for index, row in enumerate(rows):
+                if not wanted(row):
+                    continue
+                found.append(row)
+                if len(found) == limit:
+                    rest = rows[index + 1:]
+                    if any(wanted(item) for item in rest):
+                        return found, encode_cursor({"m": "l", "c": kantin_cursor,
+                                                     "a": int_or_none(row.get("id"))})
+                    if page["hasMore"] and page["nextCursor"]:
+                        return found, encode_cursor({"m": "l", "c": page["nextCursor"]})
+                    return found, None
+            if not (page["hasMore"] and page["nextCursor"]) or page["nextCursor"] == kantin_cursor:
+                return found, None
+            kantin_cursor, after = page["nextCursor"], None
+        # Sayfa dolmadı ama kantine yeterince gidildi: kısa sayfa, geçerli imleç.
+        return found, encode_cursor({"m": "l", "c": kantin_cursor})
+
+    def _fallback_window(self, start: int | None, end: int | None) -> tuple[int, int]:
+        """Eski yolun aralığı: `from` yoksa son `FALLBACK_DAYS` gün, `to` yoksa şimdi."""
+        now = self.now_ms()
+        return (start if start is not None else now - FALLBACK_DAYS * DAY_MS,
+                end if end is not None else now + MINUTE_MS)
+
+    @staticmethod
+    def _offset_page(items: list[dict[str, Any]], state: dict[str, Any] | None,
+                     limit: int) -> dict[str, Any]:
+        """Eski yolun sayfası: aralık her istekte yeniden okunur, sıra numarasıyla kesilir."""
+        if state is not None and state["m"] != "o":
+            raise validation("Sayfa imlecinin süresi doldu; liste baştan istenmeli.", "cursor")
+        offset = int(state["o"]) if state else 0
+        chunk = items[offset:offset + limit]
+        more = offset + limit < len(items)
+        return {"items": chunk,
+                "nextCursor": encode_cursor({"m": "o", "o": offset + limit}) if more else None,
+                "hasMore": more}
+
+    def transaction(self, item: dict[str, Any], *, product_ids: bool = False) -> dict[str, Any]:
+        """Satış satırı (§3). Kaynak kantinin işlem satırı ya da defter satırının
+        `sale` alanıdır — ikisi aynı alanları taşır. `product_ids` yalnız imleçli
+        liste ucunda kalemlere `productId` ekler (§3 özeti değişmez)."""
         lines = []
         for line in item.get("items") or []:
             if not isinstance(line, dict):
@@ -694,11 +939,16 @@ class GatewayService:
             qty = int_or_none(line.get("qty")) or 0
             unit = int_or_none(line.get("unitPrice")) or 0
             total = int_or_none(line.get("lineTotal"))
-            lines.append({
+            entry: dict[str, Any] = {}
+            if product_ids:
+                product = line.get("productId")
+                entry["productId"] = str(product) if product not in (None, "") else None
+            entry.update({
                 "name": str(line.get("name") or line.get("productName") or ""),
                 "qty": qty, "unitPrice": unit,
                 "lineTotal": total if total is not None else qty * unit,
             })
+            lines.append(entry)
         identifier = item.get("serverId") or item.get("id") or item.get("localId") or ""
         return {
             "id": str(identifier),
@@ -708,18 +958,37 @@ class GatewayService:
             "items": lines,
         }
 
-    def collection(self, item: dict[str, Any]) -> dict[str, Any]:
+    def collection(self, item: dict[str, Any], *, identified: bool = False) -> dict[str, Any]:
+        """Tahsilat satırı — eski yolun (kantin tahsilat raporu) biçiminden."""
         method = str(item.get("method") or item.get("source") or item.get("type")
                      or item.get("channel") or "").upper()
         moment = item.get("createdAt") or item.get("at") or item.get("date")
         amount = item.get("amount")
         if amount is None:
             amount = item.get("total") if item.get("total") is not None else item.get("credit")
-        return {
+        body: dict[str, Any] = {
             "at": self.iso(moment),
             "amount": int_or_none(amount) or 0,
             "method": "CASH" if ("CASH" in method or "NAKIT" in method) else "PAYMENT",
         }
+        if identified:
+            ref = item.get("ref") or item.get("localId")
+            body = {"id": str(item.get("id") or ref or ""), **body,
+                    "ref": str(ref) if ref else None}
+        return body
+
+    def ledger_collection(self, entry: dict[str, Any], *,
+                          identified: bool = False) -> dict[str, Any]:
+        """Tahsilat satırı — defter satırından (`kind`: payment | cash)."""
+        body: dict[str, Any] = {
+            "at": self.iso(entry.get("at")),
+            "amount": int_or_none(entry.get("amount")) or 0,
+            "method": "CASH" if entry.get("kind") == "cash" else "PAYMENT",
+        }
+        if identified:
+            ref = entry.get("ref")
+            body = {"id": str(entry.get("id") or ""), **body, "ref": str(ref) if ref else None}
+        return body
 
     def payment_request(self, item: dict[str, Any]) -> dict[str, Any]:
         """Ödeme talebi satırı (öğrenci listesi ve bekleyen talep)."""

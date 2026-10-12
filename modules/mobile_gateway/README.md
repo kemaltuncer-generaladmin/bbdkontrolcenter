@@ -42,6 +42,8 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `POST /auth/student-code` | 200 `{match, studentId?}` | 422, 423 `locked`, 429 `rate_limited`, 503 `canteen_unavailable` |
 | `POST /students/{id}/verify-code` | 200 `{valid}` | 422, 423, 429, 503 |
 | `GET /students/{id}/canteen?days=` | 200 bakiye, işlemler, tahsilat, bekleyen talep (+ veli kontrolleri) | 404 `student_not_found`, 422, 503 |
+| `GET /students/{id}/canteen/transactions?from=&to=&cursor=&limit=` | 200 `{items, nextCursor, hasMore}` — satışlar yeniden eskiye, kalemlerde `productId` | 404, 422 (`limit` 1–100, `from`>`to`, bozuk/eskimiş `cursor`), 503 |
+| `GET /students/{id}/canteen/collections?from=&to=&cursor=&limit=` | 200 `{items: [{id, at, amount, method, ref}], nextCursor, hasMore}` | 404, 422, 503 |
 | `GET /students/{id}/canteen/qr` | 200 `{qrText, version: 1}` | 404 |
 | `GET /students/{id}/payment-requests` | 200 `{items}` (`payToken`, `amountFixed` dahil) | 503 |
 | `POST /students/{id}/payment-requests` · `POST /students/{id}/canteen/payment-requests` | 201 `{ref, amount, status, linkUrl, amountFixed, payToken}` | 409 `no_debt`/`no_phone`, 422 `exceeds_debt`/`invalid_amount`, 404 |
@@ -115,7 +117,7 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | Yetenek | Kullanılan |
 |---|---|
 | `secrets` (zorunlu) | `get(key)`, `set(key, value)` |
-| `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=)` — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
+| `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `ledger(id, limit=, cursor=, from_ms=, to_ms=)` (yoksa ya da `reason="ledger_unsupported"` verirse eski yol), `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=)` — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
 | `bbd_students.directory` (zorunlu) | `list(since=<datetime>\|None)`, `get(id)` (yoksa `None`), `card_qr_text(id)` — QR'dan önce `get` ile varlık sınanır |
 | `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün) |
 | `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)` — hata `reason`ı: `validation_error` → 422, `student_not_found`/`session_not_found` → 404, `canteen_unavailable` → 503 |
@@ -123,7 +125,35 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | `bell.announce` | `page(text, *, cache_key=, actor=, request_id=)` |
 
 Kantin hataları `CanteenError.reason` ile sınıflanır: `no_debt`, `no_phone`,
-`exceeds_debt`, `invalid_amount`, `validation_error`, `student_not_found`.
+`exceeds_debt`, `invalid_amount`, `validation_error`, `student_not_found`;
+`ledger_unsupported` hata değildir, eski yola dönüş işaretidir.
+
+## Kantin hesap dökümü (kantin §1.7)
+
+Öğrencinin kantin uçları kantinin `GET /api/students/{id}/ledger` ucundan
+(`canteen.api` → `ledger()`) okunur:
+
+- **Özet** (`/students/{id}/canteen`): ilk defter sayfası öğrenciyi (bakiye,
+  kontroller), bekleyen talebi ve satırları birlikte verir — TEK kantin
+  isteği (eskiden dört). `from` = şimdi − `days`, `to` gönderilmez (kantin
+  ilk sayfanın bakiyesini ek sorgusuz hesaplar). 200 satırı aşan aralıkta
+  sonraki sayfalar imleçle okunur (en çok 50 sayfa). Satış satırı iptal
+  edildiyse `reversed: true` olur; iptal kaydı ayrı satır olmaz. Tahsilat =
+  defterde `payment` (online, `PAYMENT`) ve `cash` (`CASH`) satırları.
+- **İmleçli listeler** (`/canteen/transactions`, `/canteen/collections`):
+  `from`/`to` kurum saat diliminde gün (dahil), `limit` 1–100 (varsayılan 20).
+  `nextCursor` geçidin opak imlecidir (base64url JSON, kişisel veri yok):
+  kantinin `nextCursor`'unu OLDUĞU GİBİ taşır, sayfa bir kantin sayfasının
+  ortasında dolduysa son verilen defter satırının kimliğini de. Sayfalar
+  arasında gelen yeni satış sırayı kaydırmaz, satır tekrar etmez. Seyrek
+  türde (çok satış, az tahsilat) bir istek kantine en çok 5 kez gider; dolmazsa
+  kısa sayfa + geçerli imleç döner. Akademi `CanteenTransactionPage` /
+  `CanteenCollectionPage` `cursor`'u bu imleçtir.
+- **Eski kantin** (defter ucu yok; istemci bunu 10 dk hatırlar) ya da `ledger`
+  bilmeyen istemci: özet eski dört okumalı yoldan (aynı yanıt, alan alan);
+  listeler aralığı okuyup sıra numaralı imleçle böler (`from` yoksa son 180
+  gün). Kip değişirse (kantin güncellendi / geri alındı) eski imleç
+  `422 validation_error` (`cursor`) alır; istemci listeyi baştan ister.
 
 ## Kendi tabloları (K5)
 
@@ -134,17 +164,26 @@ temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün)
 
 ## Bilinen sınırlar
 
-- Öğrencinin işlemleri ve ödeme talepleri kantine `studentId` süzgeciyle
-  istenir; süzgeci tanıyan kantin (kantin-veli dalı) sunucuda süzer. Eski
-  kantin parametreyi yok sayar: o zaman işlemler aralıktaki en çok 5000
-  satırdan, talepler kurum genelindeki son 100 talepten geçitte süzülür.
-  Satırlar her sürümde geçitte de süzülür (başkasınınki sızmaz).
+- Defter ucu olan kantinde (§1.7) kurum geneli satır kesintisi YOKTUR:
+  öğrencinin satırları kendi `(student_id, id)` indeksinden sayfa sayfa gelir.
+  Özetin tek sınırı 50 × 200 = 10.000 defter satırıdır (aşılırsa log uyarısı).
+- Yalnız defter ucu OLMAYAN eski kantinde: işlemler ve talepler kantine
+  `studentId` süzgeciyle istenir; parametreyi de tanımayan kantinde işlemler
+  aralıktaki en çok 5000 satırdan, talepler kurum genelindeki son 100
+  talepten geçitte süzülür. Satırlar her sürümde geçitte de süzülür
+  (başkasınınki sızmaz). Bu yolda imleçli listeler bilinmeyen öğrenciye 404
+  değil boş sayfa verir (öğrenci ayrıca sorgulanmaz).
+- Defter `from`/`to`'su deftere yazılma anıdır; satışın cihaz saati
+  (`createdAt`) çevrimdışı kuyruktan geç gelen satışta biraz daha eski olabilir.
 
 ## Hız (PERFORMANCE.md A14)
 
-- **Paralel okuma.** Kantin özeti dört kantin okumasını (öğrenci, işlemler,
-  tahsilat, talepler), QR ucu dizin sınaması ile QR metnini AYNI ANDA ister;
-  hata önceliği sıralı koddaki gibidir.
+- **Tek üst çağrı.** Kantin özeti ve imleçli listeler kantinin hesap dökümü
+  ucundan okunur: özet 1 kantin isteği (eskiden 4, biri kurum geneli 5000
+  satırlık işlem aralığı), liste sayfası 1 (seyrek türde en çok 5).
+- **Paralel okuma.** Eski kantinde özet dört kantin okumasını (öğrenci,
+  işlemler, tahsilat, talepler), QR ucu dizin sınaması ile QR metnini AYNI
+  ANDA ister; hata önceliği sıralı koddaki gibidir.
 - **Süre sınırı.** Her yetenek çağrısı `timeouts.read_seconds` (5) /
   `timeouts.write_seconds` (20) ile sarılır; dolarsa 503 (kantin/dizin için
   `canteen_unavailable`). Kantin istemcisinin yeniden denemeleri geçidi
@@ -156,4 +195,6 @@ temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün)
   Ön ödeme ayarı 60 sn (`canteen_settings_cache_seconds`), ürünler 5 dk.
 - **Sorgu bütçesi** (`tests/test_hiz.py`): okuma uçları geçidin kendi
   tablolarına 0 ifade; idempotensi anahtarsız yazma 1 (denetim izi),
-  anahtarlı en çok 5.
+  anahtarlı en çok 5. Kantin üst çağrı bütçesi: özet ve liste sayfası 1
+  `ledger` isteği; eski kantinde özet 1 deneme + 4 okuma (deneme istemcide
+  10 dk hatırlanır, sonrakiler yalnız 4).
