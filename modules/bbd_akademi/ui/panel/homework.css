@@ -1,0 +1,44 @@
+/* Ödevler — önek `ak-hw-`. Teslim oranı şeridi, hedef / konu / kaynak seçicileri, fotoğraflar. */
+
+.ak-hw-drawer { width: min(1000px, calc(100% - 40px)); }
+
+/* ------------------------------------------------------ teslim oranı */
+.ak-hw-ratio { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ak-hw-ratio-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ak-hw-bar { display: block; height: 5px; border-radius: 3px; background: #e9edf4; overflow: hidden; }
+.ak-hw-fill { display: block; height: 100%; background: var(--good); }
+
+.ak-hw-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+
+/* -------------------------------------------------------------- form */
+.ak-hw-due { gap: 10px; }
+.ak-hw-due .kit-input.ak-clock { width: 84px; }
+.ak-hw-target .kit-tabs { margin-bottom: 4px; }
+.ak-hw-pane { padding: 4px 0; }
+.ak-hw-topics, .ak-hw-toc {
+  max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 9px;
+  padding: 8px 10px;
+}
+.ak-hw-topics:empty { display: none; }
+.ak-hw-unit { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 8px; }
+.ak-hw-unit-title { font-weight: 600; font-size: 12.5px; color: var(--soft); padding-top: 4px; }
+.ak-hw-toc { display: flex; flex-direction: column; gap: 2px; }
+.ak-hw-section {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  padding: 3px 0; cursor: pointer;
+}
+.ak-hw-section-title { min-width: 0; overflow-wrap: anywhere; }
+.ak-hw-pages { gap: 6px; }
+.ak-hw-pages .kit-input.ak-hw-page { width: 96px; }
+
+/* --------------------------------------------------------- fotoğraflar */
+.ak-hw-photos {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px;
+  margin-top: 12px;
+}
+.ak-hw-photo {
+  margin: 0; min-height: 140px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 9px; padding: 6px; background: var(--tint);
+  text-align: center;
+}
+.ak-hw-photo img { max-width: 100%; max-height: 60vh; border-radius: 6px; object-fit: contain; }
