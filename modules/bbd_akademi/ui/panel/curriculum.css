@@ -1,0 +1,50 @@
+/* Müfredat — önek `ak-cur-`. Ünite → konu ağacı, program seçici, kural kalıpları. */
+
+.ak-cur-drawer { width: min(980px, calc(100% - 40px)); }
+
+/* ------------------------------------------------------------ ağaç */
+.ak-cur-tree { display: flex; flex-direction: column; gap: 8px; }
+.ak-cur-unit { border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.ak-cur-unit-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; flex-wrap: wrap; }
+.ak-cur-toggle {
+  display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: none;
+  padding: 4px 0; font: inherit; color: var(--ink); cursor: pointer; text-align: left;
+}
+.ak-cur-toggle:hover .ak-cur-title { text-decoration: underline; }
+.ak-cur-caret { width: 14px; color: var(--soft); flex: none; }
+.ak-cur-order { color: var(--soft); font-variant-numeric: tabular-nums; flex: none; min-width: 28px; }
+.ak-cur-title { min-width: 0; overflow-wrap: anywhere; }
+.ak-cur-meta { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ak-cur-topics { border-top: 1px solid var(--line); padding: 4px 10px 8px 34px; }
+.ak-cur-topic {
+  display: grid; grid-template-columns: 52px minmax(0, 1fr) auto auto; align-items: center;
+  gap: 10px; padding: 5px 0; border-bottom: 1px dashed #eef1f6;
+}
+.ak-cur-topic:last-child { border-bottom: 0; }
+.ak-cur-retired > .ak-cur-unit-head .ak-cur-title,
+.ak-cur-topic.ak-cur-retired .ak-cur-title { text-decoration: line-through; color: var(--soft); }
+.ak-cur-unit.ak-cur-retired { background: var(--tint); }
+.ak-cur-none { padding: 6px 0; }
+.ak-cur-check { gap: 6px; color: var(--soft); cursor: pointer; }
+
+/* ---------------------------------------------------- kural kalıpları */
+.ak-cur-patterns { display: flex; flex-wrap: wrap; gap: 4px; }
+.ak-cur-pattern {
+  display: inline-block; padding: 1px 6px; border-radius: 5px; background: #f2f5fb;
+  border: 1px solid #e3e8f2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; overflow-wrap: anywhere;
+}
+
+/* ----------------------------------------------------- program seçici */
+.ak-cur-pick {
+  display: flex; flex-direction: column; max-height: 260px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 9px;
+}
+.ak-cur-pick-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  text-align: left; border: 0; border-bottom: 1px solid #eef1f6; background: transparent;
+  padding: 7px 12px; cursor: pointer; font: inherit;
+}
+.ak-cur-pick-row:last-child { border-bottom: 0; }
+.ak-cur-pick-row:hover, .ak-cur-pick-row:focus { background: #f2f5fb; }
+.ak-cur-pick .ak-cur-none { padding: 8px 12px; }
