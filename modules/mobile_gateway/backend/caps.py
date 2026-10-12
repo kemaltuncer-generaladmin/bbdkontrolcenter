@@ -17,10 +17,19 @@ alanlardan (`status`, `reason`) ve sınıf adından sınıflandırılır ve
 `UpstreamFailure` olarak yukarı çıkar. HTTP koduna çevirmek servisin işidir —
 aynı kantin `reason`ı uca göre farklı durum alır (ör. `no_debt` ödeme
 talebinde 409, tahsilatta 422).
+
+SÜRE SINIRI. Her yetenek çağrısı bir üst süreyle sarılır: okuma
+`read_timeout`, yazma `write_timeout` saniye. Kantin istemcisinin kendi
+yeniden denemeleri (GET'te üç deneme) geçidi dakikalarca bekletemez; süre
+dolunca çağrı iptal edilir ve `UpstreamFailure(kind="unavailable",
+reason="timeout")` yükselir (kantin/dizin → 503 `canteen_unavailable`).
+Yazma süresi bilerek uzundur: yarıda kesilen bir yazma kantinde yine de
+tamamlanmış olabilir.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import secrets
 from collections.abc import Callable
@@ -40,6 +49,10 @@ PEPPER_KEY = "mobile_gateway.idempotency_pepper"
 
 #: Kantin tahsilat raporunun liste taşıyabildiği anahtarlar (sürüme göre değişti).
 _LIST_KEYS = ("data", "items", "entries", "collections", "rows", "payments", "notifications")
+
+#: Yetenek çağrısı üst süreleri (saniye) — `timeouts` ayarıyla ezilir.
+READ_TIMEOUT = 5.0
+WRITE_TIMEOUT = 20.0
 
 
 class CapabilityMissing(Exception):
@@ -195,9 +208,15 @@ def module_failure(source: str, error: BaseException) -> UpstreamFailure:
 class Capabilities:
     """Geçidin tükettiği yeteneklerin tipli, hata çevirili yüzü."""
 
-    def __init__(self, resolve: Callable[[str], Any]) -> None:
+    def __init__(self, resolve: Callable[[str], Any], *, read_timeout: float = READ_TIMEOUT,
+                 write_timeout: float = WRITE_TIMEOUT) -> None:
         # `ctx.try_capability`: manifestte ilan edilmemiş adı reddeder.
         self._resolve = resolve
+        self.read_timeout = read_timeout
+        self.write_timeout = write_timeout
+
+    def _limit(self, write: bool) -> float:
+        return self.write_timeout if write else self.read_timeout
 
     # ---------------------------------------------------------- çözüm
 
@@ -220,24 +239,31 @@ class Capabilities:
         raise CapabilityMissing(f"{capability}.{names[0]}")
 
     async def _canteen(self, *names: str, args: tuple[Any, ...] = (),
-                       kwargs: dict[str, Any] | None = None) -> Any:
+                       kwargs: dict[str, Any] | None = None, write: bool = False) -> Any:
         method = self._method(CANTEEN, *names)
         try:
-            return await settle(method(*args, **(kwargs or {})))
+            return await asyncio.wait_for(settle(method(*args, **(kwargs or {}))),
+                                          self._limit(write))
         except CapabilityMissing:
             raise
+        except TimeoutError:
+            raise UpstreamFailure("canteen", "unavailable", reason="timeout") from None
         except Exception as error:  # noqa: BLE001 — kantin dışarısı
             raise canteen_failure(error) from None
 
     async def _module(self, source: str, capability: str, name: str | None,
-                      args: tuple[Any, ...] = (), kwargs: dict[str, Any] | None = None) -> Any:
+                      args: tuple[Any, ...] = (), kwargs: dict[str, Any] | None = None,
+                      write: bool = False) -> Any:
         target = self._get(capability) if name is None else self._method(capability, name)
         if name is None and not callable(target):
             raise CapabilityMissing(capability)
         try:
-            return await settle(target(*args, **(kwargs or {})))
+            return await asyncio.wait_for(settle(target(*args, **(kwargs or {}))),
+                                          self._limit(write))
         except CapabilityMissing:
             raise
+        except TimeoutError:
+            raise UpstreamFailure(source, "unavailable", reason="timeout") from None
         except Exception as error:  # noqa: BLE001 — başka modül (K7)
             raise module_failure(source, error) from None
 
@@ -250,14 +276,38 @@ class Capabilities:
         sha256'sı tablodan geri bulunabilirdi. Anahtarlı özet bunu kapatır.
         """
         vault = self._get(SECRETS)
-        try:
+
+        async def read_or_create() -> Any:
             value = await settle(vault.get(PEPPER_KEY))
             if not value:
                 value = secrets.token_hex(32)
                 await settle(vault.set(PEPPER_KEY, value))
+            return value
+
+        try:
+            value = await asyncio.wait_for(read_or_create(), self.write_timeout)
+        except TimeoutError:
+            raise UpstreamFailure("secrets", "unavailable", reason="timeout") from None
         except Exception as error:  # noqa: BLE001 — platform yeteneği (K7)
             raise module_failure("secrets", error) from None
         return str(value)
+
+    # ---------------------------------------------------- önbellek bildirimi
+
+    def directory_changed(self) -> None:
+        """Geçit kantine öğrenci verisi yazdı (kontrol, tahsilat): dizin yeteneğinin
+        önbelleği bırakılsın ki bir sonraki dizin okuması eski bakiyeyi vermesin.
+
+        `invalidate` yeteneğin isteğe bağlı parçasıdır; yoksa (eski sürüm) dizin
+        kendi kısa süresi dolunca tazelenir.
+        """
+        directory = self._resolve(DIRECTORY)
+        forget = getattr(directory, "invalidate", None)
+        if callable(forget):
+            try:
+                forget()
+            except Exception:  # noqa: BLE001 — önbellek bildirimi işi düşürmez (K7)
+                return
 
     # ---------------------------------------------------- bbd_students.directory
 
@@ -329,8 +379,19 @@ class Capabilities:
                 if str(item.get("studentId") or student_id) == student_id]
 
     async def payment_requests_for(self, student_id: str) -> list[dict[str, Any]]:
-        """Öğrencinin ödeme talepleri (kantin son 100 talebi verir; burada süzülür)."""
-        payload = await self._canteen("payment_requests")
+        """Öğrencinin ödeme talepleri.
+
+        İstemci `student_id` süzgecini tanıyorsa öğrenci kantine gönderilir:
+        kantin süzgeci desteklediğinde (kantin-veli dalı, `GET
+        /api/payment-requests?studentId=`) yalnız o öğrencinin talepleri gelir.
+        Desteklemeyen kantin parametreyi yok sayar ve son 100 talebi verir;
+        satırlar HER DURUMDA burada da süzülür — başka öğrencinin talebi sızmaz.
+        """
+        method = self._method(CANTEEN, "payment_requests")
+        kwargs: dict[str, Any] = {}
+        if accepts(method, "student_id"):
+            kwargs["student_id"] = student_id
+        payload = await self._canteen("payment_requests", kwargs=kwargs)
         return [item for item in rows(payload)
                 if str(item.get("studentId") or "") == student_id]
 
@@ -346,7 +407,7 @@ class Capabilities:
         if accepts(method, "origin"):
             kwargs["origin"] = "api"
         result = await self._canteen("create_payment_request", args=(student_id,),
-                                     kwargs=kwargs)
+                                     kwargs=kwargs, write=True)
         # Eski istemci başarısızlıkta da 200 döner: {"queued": false, "reason": …}
         if isinstance(result, dict) and result.get("queued") is False:
             reason = result.get("reason")
@@ -355,14 +416,15 @@ class Capabilities:
         return data if isinstance(data, dict) else {}
 
     async def update_controls(self, student_id: str, patch: dict[str, Any]) -> dict[str, Any]:
-        result = unwrap(await self._canteen("update_controls", args=(student_id, patch)))
+        result = unwrap(await self._canteen("update_controls", args=(student_id, patch),
+                                            write=True))
         return result if isinstance(result, dict) else {}
 
     async def record_collection(self, student_id: str, amount: int,
                                 local_id: str) -> dict[str, Any]:
         result = unwrap(await self._canteen(
             "record_collection", "collect_cash", args=(student_id,),
-            kwargs={"amount": amount, "local_id": local_id},
+            kwargs={"amount": amount, "local_id": local_id}, write=True,
         ))
         return result if isinstance(result, dict) else {}
 
@@ -384,7 +446,8 @@ class Capabilities:
 
     async def send_sms(self, phone: str, message: str) -> dict[str, Any]:
         """Kantinin Netgsm hesabıyla tek SMS. Yanıtın `text` alanı ÇAĞIRANA DÖNMEZ."""
-        result = await self._canteen("send_sms", kwargs={"phone": phone, "message": message})
+        result = await self._canteen("send_sms", kwargs={"phone": phone, "message": message},
+                                     write=True)
         if not isinstance(result, dict):
             return {"sent": False, "reason": "unknown"}
         return {"sent": bool(result.get("sent")), "reason": result.get("reason")}
@@ -406,20 +469,21 @@ class Capabilities:
         return await self._module("tablet", TABLET_CONTROL, "grant", (student_id,), {
             "package_name": package_name, "extra_seconds": extra_seconds,
             "reason": reason, "actor": actor,
-        })
+        }, write=True)
 
     async def tablet_block(self, student_id: str, *, until: Any, reason: str,
                            actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "block", (student_id,),
-                                  {"until": until, "reason": reason, "actor": actor})
+                                  {"until": until, "reason": reason, "actor": actor},
+                                  write=True)
 
     async def tablet_unblock(self, student_id: str, *, reason: str, actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "unblock", (student_id,),
-                                  {"reason": reason, "actor": actor})
+                                  {"reason": reason, "actor": actor}, write=True)
 
     async def tablet_end_session(self, session_id: str, *, reason: str, actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "end_session", (session_id,),
-                                  {"reason": reason, "actor": actor})
+                                  {"reason": reason, "actor": actor}, write=True)
 
     # ------------------------------------------------------------------- bell
 
@@ -435,7 +499,7 @@ class Capabilities:
             raise CapabilityMissing(f"{BELL_ANNOUNCE}.page")
         result = await self._module("bell", BELL_ANNOUNCE, name, (text,), {
             "cache_key": cache_key, "actor": actor, "request_id": request_id,
-        })
+        }, write=True)
         return result if isinstance(result, dict) else {}
 
 

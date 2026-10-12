@@ -50,7 +50,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `POST /students/{id}/canteen/collections` | 201 `{amount, balance}` | 422 `no_debt`/`exceeds_debt`/`invalid_amount`, 404 |
 | `GET /canteen/payment-requests?since=&limit=` | 200 `{items, nextSince, hasMore}` | 422, 503 |
 | `GET /canteen/parent-notifications?since=&limit=` | 200 `{items, nextSince, hasMore}` — SMS metni/telefon YOK | 422, 503 |
-| `GET /canteen/settings/public` | 200 `{allowPrepayment, maxPrepayment}` | 503 |
+| `GET /canteen/settings/public` | 200 `{allowPrepayment, maxPrepayment}` (60 sn önbellek) | 503 |
 | `GET /canteen/products` | 200 `{items}` (5 dk önbellek) | 503 |
 | `GET /tablets` | 200 `{summary, devices}` | 503 `capability_missing`, 502 |
 | `GET /students/{id}/tablet-usage?from=&to=` | 200 (en çok 62 gün) | 422, 404, 503 |
@@ -58,7 +58,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `POST /students/{id}/tablet/block` · `/unblock` | 200 `{blockedUntil}` | 422, 404, 503 |
 | `POST /tablet-sessions/{id}/end` | 200 `{ended}` | 404 `session_not_found`, 409, 503 |
 | `POST /announcements/call` | 202 `{status, voiceCached, etaSeconds}` | 409 `bell_disabled`, 503 `tts_unavailable`, 429, 404, 503 `capability_missing` |
-| `GET /schedule/bell-week` | 200 — `bbd_class_schedule` `/week` biçimi; zil yoksa `available: false` + `reason` | — |
+| `GET /schedule/bell-week` | 200 — `bbd_class_schedule` `/week` biçimi; zil yoksa `available: false` + `reason`. `ETag`, `If-None-Match` → 304 | — |
 | `POST /sms/otp` | 200 `{sent: true}` | 422, 429, 502 `sms_failed`, 503 |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
 
@@ -134,6 +134,26 @@ temizlenir (idempotensi 24 saat, sayaç 1 gün, SMS kaydı 90 gün, iz 365 gün)
 
 ## Bilinen sınırlar
 
-- Öğrencinin işlemleri kantinin aralık ucundan okunur; istemci `student_id`
-  süzgeci tanımıyorsa aralıktaki en çok 5000 satır geçitte süzülür.
-- Öğrenci ödeme talepleri kantinin son 100 talebinden süzülür.
+- Öğrencinin işlemleri ve ödeme talepleri kantine `studentId` süzgeciyle
+  istenir; süzgeci tanıyan kantin (kantin-veli dalı) sunucuda süzer. Eski
+  kantin parametreyi yok sayar: o zaman işlemler aralıktaki en çok 5000
+  satırdan, talepler kurum genelindeki son 100 talepten geçitte süzülür.
+  Satırlar her sürümde geçitte de süzülür (başkasınınki sızmaz).
+
+## Hız (PERFORMANCE.md A14)
+
+- **Paralel okuma.** Kantin özeti dört kantin okumasını (öğrenci, işlemler,
+  tahsilat, talepler), QR ucu dizin sınaması ile QR metnini AYNI ANDA ister;
+  hata önceliği sıralı koddaki gibidir.
+- **Süre sınırı.** Her yetenek çağrısı `timeouts.read_seconds` (5) /
+  `timeouts.write_seconds` (20) ile sarılır; dolarsa 503 (kantin/dizin için
+  `canteen_unavailable`). Kantin istemcisinin yeniden denemeleri geçidi
+  dakikalarca bekletemez.
+- **Önbellek.** Dizin yanıtı (tam liste) dizin yeteneğinin `revision`ı
+  değişmedikçe yeniden kurulmaz; geçit kantine kontrol/tahsilat yazınca dizinin
+  `invalidate()`ı çağrılır. Zil haftası 60 sn (`bell_week_cache_seconds`)
+  tutulur ve Zil Sistemi'nin `bell.week_changed` olayıyla hemen bırakılır.
+  Ön ödeme ayarı 60 sn (`canteen_settings_cache_seconds`), ürünler 5 dk.
+- **Sorgu bütçesi** (`tests/test_hiz.py`): okuma uçları geçidin kendi
+  tablolarına 0 ifade; idempotensi anahtarsız yazma 1 (denetim izi),
+  anahtarlı en çok 5.

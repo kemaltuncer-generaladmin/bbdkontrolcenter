@@ -106,6 +106,24 @@ class Reply:
     status: int
     body: dict[str, Any] | None
     headers: dict[str, str] = field(default_factory=dict)
+    #: Önceden kodlanmış JSON gövdesi (önbellekten). Doluysa `body` yerine gider.
+    raw: bytes | None = None
+
+
+def encode(body: dict[str, Any]) -> bytes:
+    """`JSONResponse` ile AYNI baytlar (Starlette'in `render` ayarları)."""
+    return json.dumps(body, ensure_ascii=False, allow_nan=False, indent=None,
+                      separators=(",", ":")).encode("utf-8")
+
+
+@dataclass(slots=True)
+class _Cached:
+    """Bir uç yanıtının sunucu önbelleği: anahtar, ETag, kodlanmış gövde, damga."""
+
+    key: Any
+    etag: str
+    raw: bytes
+    at_ms: int
 
 
 def clean_header(value: str | None, limit: int = 200, *, decode: bool = True) -> str:
@@ -261,10 +279,17 @@ class GatewayService:
 
         self.idempotency_ms = int(config.get("idempotency_hours", 24)) * HOUR_MS
         self.products_cache_ms = int(config.get("products_cache_seconds", 300)) * 1000
+        self.bell_week_cache_ms = int(config.get("bell_week_cache_seconds", 60)) * 1000
+        self.canteen_settings_cache_ms = \
+            int(config.get("canteen_settings_cache_seconds", 60)) * 1000
         self.sms_retention_ms = int(config.get("sms_log_retention_days", 90)) * DAY_MS
         self.audit_retention_ms = int(config.get("audit_retention_days", 365)) * DAY_MS
 
         self._products: tuple[int, dict[str, Any]] | None = None
+        #: Dizin yanıtı — dizin yeteneğinin `revision`ı değişmedikçe yeniden kurulmaz.
+        self._directory: _Cached | None = None
+        self._bell_week: _Cached | None = None
+        self._canteen_settings: tuple[int, dict[str, Any]] | None = None
         self._last_purge = 0
         self._pepper: bytes | None = None
         self._pepper_lock = asyncio.Lock()
@@ -458,26 +483,49 @@ class GatewayService:
     # ================================================================ §1 dizin
 
     async def directory(self, since_text: str | None, if_none_match: str | None) -> Reply:
+        """§1 dizin. Yanıt, dizin yeteneğinin `revision`ı değişmedikçe yeniden KURULMAZ.
+
+        2.000 öğrencilik listeyi beyaz listeden geçirmek, sıralamak, kanonik
+        JSON'unu özetlemek ve kodlamak isteğin asıl maliyetiydi. Dizin yeteneği
+        verisi değiştiğinde `revision`ını değiştirir (kantin listesi tazelendi
+        ya da profil yazıldı); aynı revizyonda veri birebir aynıdır, bu yüzden
+        hesaplanmış ETag ve kodlanmış gövde aynen kullanılır — tazelik dizinin
+        tazeliğidir, ayrıca bekletilmez. Yalnız TAM liste saklanır: `since`
+        yanıtı küçüktür ve her istemcide farklıdır; saklansaydı tam listeyi
+        önbellekten iterdi. `revision` vermeyen (eski) yetenekte her istek
+        baştan kurulur.
+
+        `generatedAt`: yetenek `asOf` verirse odur (kantin listesinin okunduğu
+        an — bir sonraki `since` için güvenli imleç), vermezse şimdi.
+        """
         since = self.parse_since(since_text)
         listing = await self.call(self.caps.directory_list(since))
-        students = sorted(
-            (self.student(record) for record in listing.get("students") or []
-             if isinstance(record, dict) and record.get("id")),
-            key=lambda item: str(item["id"]),
-        )
-        classes = sorted({str(name) for name in listing.get("classes") or [] if name})
-        core = {
-            "full": since is None,
-            "complete": listing.get("complete") is True,
-            "students": students,
-            "classes": classes,
-        }
-        etag = digest(core)
-        headers = {"ETag": f'"{etag}"'}
-        if etag_matches(if_none_match, etag):
+        revision = listing.get("revision")
+        keep = revision is not None and since is None
+        cached = self._directory if keep else None
+        if cached is None or cached.key != revision:
+            students = sorted(
+                (self.student(record) for record in listing.get("students") or []
+                 if isinstance(record, dict) and record.get("id")),
+                key=lambda item: str(item["id"]),
+            )
+            classes = sorted({str(name) for name in listing.get("classes") or [] if name})
+            core = {
+                "full": since is None,
+                "complete": listing.get("complete") is True,
+                "students": students,
+                "classes": classes,
+            }
+            etag = digest(core)
+            generated = self.iso(listing.get("asOf")) or self.iso(self.now())
+            cached = _Cached(key=revision, etag=etag, at_ms=self.now_ms(),
+                             raw=encode({"generatedAt": generated, **core, "etag": etag}))
+            if keep:
+                self._directory = cached
+        headers = {"ETag": f'"{cached.etag}"', "Cache-Control": "private, no-cache"}
+        if etag_matches(if_none_match, cached.etag):
             return Reply(304, None, headers)
-        body = {"generatedAt": self.iso(self.now()), **core, "etag": etag}
-        return Reply(200, body, headers)
+        return Reply(200, None, headers, raw=cached.raw)
 
     def student(self, record: dict[str, Any]) -> dict[str, Any]:
         """Dizin kaydı → sözleşme §1 öğrenci nesnesi (beyaz liste).
@@ -588,13 +636,32 @@ class GatewayService:
 
     # ================================================================ §3 kantin
 
+    async def parallel(self, *calls: Awaitable[Any]) -> list[Any]:
+        """Bağımsız yetenek çağrılarını AYNI ANDA koşar (`self.call` ile sarılı).
+
+        Hepsi biter (her biri kendi süre sınırıyla), sonra ilk hata VERİLİŞ
+        SIRASIYLA yükseltilir — sıralı koddaki hata önceliği korunur (ör. önce
+        öğrenci yoksa `student_not_found`). Biri patlasa da diğerinin hatası
+        sahipsiz kalmaz.
+        """
+        results = await asyncio.gather(*(self.call(item) for item in calls),
+                                       return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        return list(results)
+
     async def canteen_summary(self, student_id: str, days: int) -> dict[str, Any]:
+        """§3 kantin özeti. Dört kantin okuması birbirinden bağımsızdır ve aynı
+        anda istenir: süre en yavaşı kadar (eskiden dördünün toplamıydı)."""
         now = self.now_ms()
         start, end = now - days * DAY_MS, now + MINUTE_MS
-        student = await self.call(self.caps.canteen_student(student_id))
-        transactions = await self.call(self.caps.canteen_transactions(student_id, start, end))
-        collections = await self.call(self.caps.canteen_collections(student_id, start, end))
-        requests = await self.call(self.caps.payment_requests_for(student_id))
+        student, transactions, collections, requests = await self.parallel(
+            self.caps.canteen_student(student_id),
+            self.caps.canteen_transactions(student_id, start, end),
+            self.caps.canteen_collections(student_id, start, end),
+            self.caps.payment_requests_for(student_id),
+        )
 
         pending = [self.payment_request(item) for item in requests
                    if str(item.get("status") or "").upper() == "PENDING"]
@@ -669,9 +736,18 @@ class GatewayService:
 
     async def canteen_qr(self, student_id: str) -> dict[str, Any]:
         # QR üreteci her kimliği kodlar; olmayan öğrenciye kart metni verilmez.
-        if await self.call(self.caps.directory_get(student_id)) is None:
+        # Varlık sınaması ve metin üretimi bağımsız: aynı anda. Hata önceliği
+        # sıralı koddaki gibi: önce dizin hatası, sonra "öğrenci yok", en son
+        # metin üretiminin hatası (olmayan öğrenciye QR hatası değil 404 döner).
+        record, text = await asyncio.gather(self.call(self.caps.directory_get(student_id)),
+                                            self.call(self.caps.card_qr_text(student_id)),
+                                            return_exceptions=True)
+        if isinstance(record, BaseException):
+            raise record
+        if record is None:
             raise student_not_found()
-        text = await self.call(self.caps.card_qr_text(student_id))
+        if isinstance(text, BaseException):
+            raise text
         if not text:
             raise student_not_found()
         return {"qrText": text, "version": 1}
@@ -727,6 +803,7 @@ class GatewayService:
 
         async def work() -> dict[str, Any]:
             result = await self.call(self.caps.update_controls(student_id, patch))
+            self.caps.directory_changed()   # dizindeki kantin alanları değişti
             if not result:
                 result = await self.call(self.caps.canteen_student(student_id))
             return self.controls_body(result)
@@ -739,6 +816,7 @@ class GatewayService:
         async def work() -> dict[str, Any]:
             result = await self.call(self.caps.record_collection(student_id, amount, local_id),
                                      reasons=COLLECTION_REASONS)
+            self.caps.directory_changed()   # bakiye değişti
             balance = int_or_none(result.get("balance"))
             if balance is None:
                 student = await self.call(self.caps.canteen_student(student_id))
@@ -807,9 +885,19 @@ class GatewayService:
         return self.iso(best, precise=True) if best is not None else since
 
     async def canteen_settings_public(self) -> dict[str, Any]:
+        """Ön ödeme ayarı — `canteen_settings_cache_seconds` (60 sn) önbellekte.
+
+        Seyrek değişir; her istekte kantine gitmek gereksizdi.
+        """
+        now = self.now_ms()
+        cached = self._canteen_settings
+        if cached is not None and now - cached[0] < self.canteen_settings_cache_ms:
+            return dict(cached[1])
         settings = await self.call(self.caps.canteen_settings_public())
-        return {"allowPrepayment": is_truthy(settings.get("allowPrepayment")),
+        body = {"allowPrepayment": is_truthy(settings.get("allowPrepayment")),
                 "maxPrepayment": int_or_none(settings.get("maxPrepayment")) or 0}
+        self._canteen_settings = (now, body)
+        return dict(body)
 
     async def products(self) -> dict[str, Any]:
         """Kantin ürünleri — `products_cache_seconds` (5 dk) önbellekte."""
@@ -1019,6 +1107,33 @@ class GatewayService:
                                   {"template": template}, work())
 
     # ======================================================== §6 zil saatleri
+
+    def forget_bell_week(self, *_: Any) -> None:
+        """Zil haftası değişti (`bell.week_changed` olayı): önbellek bırakılır."""
+        self._bell_week = None
+
+    async def bell_week_reply(self, if_none_match: str | None) -> Reply:
+        """§6 zil haftası — sunucu önbelleği + ETag (`If-None-Match` → 304).
+
+        Haftalık plan seyrek değişir. Yanıt `bell_week_cache_seconds` (60 sn)
+        bellekte durur; Zil Sistemi planı değiştirdiğinde yayınladığı
+        `bell.week_changed` olayı önbelleği HEMEN bırakır (olay yayınlamayan eski
+        zil sürümünde süre sınırlar). Kaynak yoksa ya da okunamazsa yanıt
+        önbelleğe girmez: zil geri geldiğinde ilk istek görür.
+        """
+        now = self.now_ms()
+        cached = self._bell_week
+        if cached is None or now - cached.at_ms >= self.bell_week_cache_ms \
+                or not self.caps.has(BELL_WEEK):
+            body = await self.bell_week()
+            raw = encode(body)
+            cached = _Cached(key=None, etag=hashlib.sha256(raw).hexdigest(), raw=raw, at_ms=now)
+            self._bell_week = cached if body["available"] else None
+        max_age = max(0, (self.bell_week_cache_ms - (now - cached.at_ms)) // 1000)
+        headers = {"ETag": f'"{cached.etag}"', "Cache-Control": f"private, max-age={max_age}"}
+        if etag_matches(if_none_match, cached.etag):
+            return Reply(304, None, headers)
+        return Reply(200, None, headers, raw=cached.raw)
 
     async def bell_week(self) -> dict[str, Any]:
         """`bbd_class_schedule` `/week` ile aynı biçim. Kaynak yoksa nedeniyle döner."""

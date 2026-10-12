@@ -27,6 +27,16 @@
     },
     "idempotency_hours": {"type": "integer", "minimum": 24, "maximum": 168},
     "products_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
+    "bell_week_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
+    "canteen_settings_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "read_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+        "write_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 120}
+      }
+    },
     "sms_log_retention_days": {"type": "integer", "minimum": 1, "maximum": 3650},
     "audit_retention_days": {"type": "integer", "minimum": 30, "maximum": 3650}
   }

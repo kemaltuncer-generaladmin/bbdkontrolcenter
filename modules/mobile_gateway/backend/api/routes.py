@@ -60,6 +60,10 @@ def caller_of(request: Request, user: CurrentUser) -> Caller:
 
 
 def reply(result: Reply) -> Response:
+    if result.raw is not None:
+        # Önbellekten gelen, önceden kodlanmış JSON (dizin, zil haftası).
+        return Response(content=result.raw, status_code=result.status,
+                        headers=result.headers, media_type="application/json")
     if result.body is None:
         return Response(status_code=result.status, headers=result.headers)
     return JSONResponse(status_code=result.status, content=result.body, headers=result.headers)
@@ -345,8 +349,8 @@ async def announcement_call(body: CallBody, request: Request,
 
 
 @router.get("/schedule/bell-week")
-async def bell_week(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
-    return await current_service().bell_week()
+async def bell_week(request: Request, user: CurrentUser = requires(ACCESS)) -> Response:
+    return reply(await current_service().bell_week_reply(request.headers.get("If-None-Match")))
 
 
 # ========================================================== §7 OTP SMS

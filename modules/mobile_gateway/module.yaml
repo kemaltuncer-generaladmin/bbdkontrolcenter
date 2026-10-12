@@ -56,7 +56,13 @@ consumes:
 
 events:
   publishes: []
-  subscribes: []
+  # Zil planı değişti → haftalık zil yanıtının önbelleği bırakılır. Olayı
+  # yayınlamayan zil sürümünde önbellek süresi (`bell_week_cache_seconds`) sınırlar.
+  # Dinleyici `register` içinde `ctx.subscribe` ile bağlanır.
+  subscribes:
+    - name: bell.week_changed
+      # Örnek yöntemdir; yükleyici bağlamaz, `register` bağlar (şema `handler` ister).
+      handler: "backend.service:GatewayService.forget_bell_week"
 
 http:
   prefix: /api/mobile_gateway/v1

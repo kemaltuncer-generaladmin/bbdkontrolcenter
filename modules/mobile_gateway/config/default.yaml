@@ -28,5 +28,16 @@ limits:
 
 idempotency_hours: 24
 products_cache_seconds: 300
+# Seyrek değişen veri için sunucu önbelleği (saniye). Zil haftası, Zil
+# Sistemi'nin `bell.week_changed` olayıyla da hemen bırakılır.
+bell_week_cache_seconds: 60
+canteen_settings_cache_seconds: 60
+
+# Yetenek çağrısı üst süreleri (saniye). Süre dolarsa çağrı iptal edilir ve
+# 503 döner (kantin/dizin için `canteen_unavailable`). Yazma bilerek uzun:
+# yarıda kesilen yazma kantinde yine de tamamlanmış olabilir.
+timeouts:
+  read_seconds: 5
+  write_seconds: 20
 sms_log_retention_days: 90
 audit_retention_days: 365
