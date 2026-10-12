@@ -349,6 +349,13 @@ class TabletControl:
         self._log.info("tablet kısıtı kaldırıldı (yetenek)", student=student_id,
                        lifted=result.get("lifted"), actor=_actor(actor), reason=why)
 
+    async def session_student(self, session_id: str) -> str | None:
+        """Oturumun öğrencisi (`STU-…`); oturum yoksa None. Geçit, oturum bitirme
+        olayını (`tablet.policy_changed`) doğru öğrenciye bağlamak için sorar."""
+        row = await self._service.store.fetch_one(
+            f"SELECT student_id FROM {self._service.sessions} WHERE id=?", (str(session_id),))
+        return str(row["student_id"]) if row and row.get("student_id") else None
+
     async def end_session(self, session_id: str, reason: str, actor: str) -> bool:
         """Oturumu `admin` nedeniyle kapatır. Zaten kapalıysa `False`."""
         why = _reason(reason)
