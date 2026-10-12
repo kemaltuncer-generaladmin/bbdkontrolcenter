@@ -1,0 +1,40 @@
+/* Okuma yönetimi — önek `ak-rd-`. Ortak iskelet panel.css'te. */
+
+.ak-rd-drawer { width: min(980px, calc(100% - 40px)); }
+
+/* ------------------------------------------------------- liste düzenleyici */
+.ak-rd-search { flex: 1; min-width: 320px; }
+.ak-rd-search .ak-picker-row[disabled] { cursor: default; opacity: 0.55; }
+.ak-rd-manual { border: 1px dashed var(--line); border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px; background: var(--tint); }
+.ak-rd-manual-grid { display: grid; gap: 8px 12px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) 110px 160px; }
+@media (max-width: 900px) { .ak-rd-manual-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+.ak-rd-items { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px;
+  max-height: 420px; overflow: auto; }
+.ak-rd-items-empty { padding: 18px 14px; color: var(--soft); text-align: center; }
+.ak-rd-item { display: grid; align-items: center; gap: 10px; padding: 8px 10px;
+  grid-template-columns: 26px minmax(0, 2fr) minmax(160px, 1.3fr) 170px auto;
+  border-bottom: 1px solid var(--line); }
+.ak-rd-item:last-child { border-bottom: 0; }
+.ak-rd-item-no { color: var(--soft); font-variant-numeric: tabular-nums; text-align: right; }
+.ak-rd-note { height: 30px; min-width: 0; width: 100%; }
+.ak-rd-cover { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 0; }
+.ak-rd-cover .kit-btn { height: 26px; padding: 0 8px; }
+.ak-rd-thumb { width: 42px; height: 58px; object-fit: cover; border-radius: 4px;
+  border: 1px solid var(--line); background: #fff; }
+.ak-rd-count { font-size: 12.5px; }
+
+/* --------------------------------------------------------------- lig */
+.ak-rd-line { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 12px; align-items: center; }
+.ak-rd-line small { color: var(--soft); }
+.ak-rd-min { width: 72px; }
+.ak-rd-period { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ak-rd-period > .kit-input { flex: 1; min-width: 200px; }
+
+/* -------------------------------------------------------------- rapor */
+.ak-rd-report { overflow-x: auto; }
+.ak-rd-month span { font-variant-numeric: tabular-nums; }
+.ak-rd-meta { font-size: 12.5px; }
