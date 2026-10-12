@@ -113,24 +113,70 @@ class CanteenError(RuntimeError):
 #: Kantinin tek batch isteğinde kabul ettiği en çok kalem (`TransactionController`).
 BATCH_LIMIT = 200
 
+#: Bağlantı kurma (TCP + TLS) için en çok bekleme, saniye. Okuma süresi
+#: ayardan gelir (`timeout_seconds`); bağlantı kurulamıyorsa kantin kapalıdır
+#: ve bunu okuma süresi kadar beklemek gereksizdir.
+CONNECT_TIMEOUT = 5.0
+
+#: Kantin bağlantı havuzu. KM tek süreçtir; eşzamanlı kantin isteği sayısı
+#: panel + mobil geçit trafiğiyle sınırlıdır. Boşta bağlantı 30 sn tutulur
+#: (kantinin önündeki vekil genellikle 60 sn'de kapatır).
+POOL_LIMITS = httpx.Limits(max_connections=20, max_keepalive_connections=10,
+                           keepalive_expiry=30.0)
+
 
 class CanteenApi:
     """`canteen.api` yeteneğinin uygulaması."""
 
     def __init__(self, *, base_url: str, device_name: str, secrets: Any, log: Any,
-                 timeout: float = 20.0,
+                 timeout: float = 20.0, connect_timeout: float = CONNECT_TIMEOUT,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._device_name = device_name
         self._secrets = secrets
         self._log = log
         self._timeout = timeout
+        self._connect_timeout = min(connect_timeout, timeout)
         # Testler `httpx.MockTransport` verir; üretimde None (gerçek ağ).
         self._transport = transport
         self._token: str | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._http_loop: asyncio.AbstractEventLoop | None = None
 
-    def _client(self, timeout: float | None = None) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout or self._timeout, transport=self._transport)
+    def _timeouts(self, read: float | None = None) -> httpx.Timeout:
+        """Okuma süresi ayardan (`timeout_seconds`), bağlantı kurma süresi KISA.
+
+        Kantin ulaşılamıyorsa bunu 20 saniyede değil birkaç saniyede bilmek
+        gerekir: öğrenci ekranı ve mobil geçit o süre boyunca bekler.
+        """
+        value = read or self._timeout
+        return httpx.Timeout(value, connect=self._connect_timeout,
+                             pool=self._connect_timeout)
+
+    def _client(self) -> httpx.AsyncClient:
+        """Kantine giden TEK, kalıcı istemci (HTTP keep-alive + bağlantı havuzu).
+
+        Eskiden her istek yeni bir `AsyncClient` açıp kapatıyordu: her çağrı
+        yeni TCP + TLS el sıkışması demekti (kantin uzak sunucuda; istek
+        başına onlarca milisaniye). Havuz bağlantıyı açık tutar.
+
+        İstemci olay döngüsüne bağlıdır; döngü değişirse (testler, yeniden
+        başlatma) yenisi kurulur — eski döngünün bağlantısı başka döngüde
+        kullanılamaz.
+        """
+        loop = asyncio.get_running_loop()
+        client = self._http
+        if client is None or client.is_closed or self._http_loop is not loop:
+            client = httpx.AsyncClient(timeout=self._timeouts(), transport=self._transport,
+                                       limits=POOL_LIMITS)
+            self._http, self._http_loop = client, loop
+        return client
+
+    async def aclose(self) -> None:
+        """Havuzdaki bağlantıları kapatır (kapanışta ya da testte)."""
+        client, self._http, self._http_loop = self._http, None, None
+        if client is not None and not client.is_closed:
+            await client.aclose()
 
     # ------------------------------------------------------------- kimlik
 
@@ -150,11 +196,10 @@ class CanteenApi:
                 "Kantin kayıt sırrı yok. config/local.yaml → secrets.canteen.enrollment_secret"
             )
 
-        async with self._client() as client:
-            response = await client.post(
-                f"{self._base}/api/auth/device",
-                json={"name": self._device_name, "enrollmentSecret": secret},
-            )
+        response = await self._client().post(
+            f"{self._base}/api/auth/device",
+            json={"name": self._device_name, "enrollmentSecret": secret},
+        )
         if response.status_code != 201:
             raise CanteenError(f"Cihaz kaydı reddedildi ({response.status_code}).")
 
@@ -183,16 +228,15 @@ class CanteenApi:
         attempts = 3 if method.upper() == "GET" else 1
         response = None
         for attempt in range(attempts):
-            async with self._client() as client:
-                try:
-                    response = await client.request(
-                        method, f"{self._base}{path}", headers=headers, **kwargs
-                    )
-                except httpx.TransportError as failure:
-                    if attempt + 1 >= attempts:
-                        raise CanteenError(f"{method} {path} → bağlantı hatası: {failure}") from failure
-                    await asyncio.sleep(0.4 * (attempt + 1))
-                    continue
+            try:
+                response = await self._client().request(
+                    method, f"{self._base}{path}", headers=headers, **kwargs
+                )
+            except httpx.TransportError as failure:
+                if attempt + 1 >= attempts:
+                    raise CanteenError(f"{method} {path} → bağlantı hatası: {failure}") from failure
+                await asyncio.sleep(0.4 * (attempt + 1))
+                continue
 
             if response.status_code < 500 or attempt + 1 >= attempts:
                 break
@@ -935,11 +979,11 @@ class CanteenApi:
         JSON değil ham dosya döndüğü için `_request` kullanılmaz.
         """
         token = await self._ensure_token()
-        async with self._client(max(self._timeout, 120.0)) as client:
-            response = await client.get(
-                f"{self._base}/api/backups/{name}/download",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        response = await self._client().get(
+            f"{self._base}/api/backups/{name}/download",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=self._timeouts(max(self._timeout, 120.0)),
+        )
         if response.status_code >= 400:
             raise CanteenError(
                 f"Yedek indirilemedi ({response.status_code}): {response.text[:200]}",

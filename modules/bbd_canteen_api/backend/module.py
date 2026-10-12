@@ -25,6 +25,7 @@ def register(ctx: ModuleContext) -> None:
         secrets=ctx.capability("secrets"),
         log=ctx.log,
         timeout=float(ctx.config.get("timeout_seconds") or 20),
+        connect_timeout=float(ctx.config.get("connect_timeout_seconds") or 5),
     )
 
     ctx.provide("canteen.api", api)
