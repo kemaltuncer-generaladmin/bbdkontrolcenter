@@ -6,11 +6,22 @@ sınıf, okul no, öğrenci telefonu, veli 2, seviye/alan/hedef sınav) birleşt
 sözleşmenin öğrenci nesnesini (`StudentRecord`) üretir. Başka modüller onu
 registry üzerinden çözer (K3); tabloyu okumazlar (K5).
 
-    list(since=None)      → {"students": [StudentRecord], "classes": [str], "complete": bool,
-                             "asOf": iso, "revision": int}
-    get(student_id)       → StudentRecord | None
+    list(since=None, *, balance=True)
+                          → {"students": [StudentRecord], "classes": [str], "complete": bool,
+                             "asOf": iso, "revision": int, "removed": [{id, at}] (since ile)}
+    get(student_id, *, balance=True)          → StudentRecord | None
+    get_many(ids, *, balance=True)            → {"students": [StudentRecord], "missingIds": [str]}
+    removed_since(since)                      → [{"id", "at"}]   (mezar taşı, 90 gün)
     find_by_phone(phone10)→ [StudentRecord]
     card_qr_text(id)      → str   (kartta basılı v1 QR'ın aynısı; anahtar dönmez)
+
+MERKEZİ SENKRON (km-merkezi-senkron §3.3, §7). Dizin = kantin listesi ∪ profil
+tablosu: kantine HENÜZ yazılamamış (`canteenSync: pending`) profil-yalnız kayıt
+`canteen: null` ile döner; bekleyen kantin gövdesindeki değerler (ad, veli 1
+telefonu, limit, engel) kantin satırının üstüne yazılır — KM'nin kararı hemen
+görünür. Pasif öğrenci görünür (`status: inactive`); silinen (mezar taşı)
+görünmez, `since` yanıtında `removed` içinde döner. `balance=False` bakiyeyi
+çıkarır (geçit ETag'i bakiyesiz hesaplar).
 
 Hepsi `async`tır (kantin çağrısı yapar). Kantine ulaşılamazsa:
 `list` hata YÜKSELTMEZ, `complete: false` ve boş liste döner — istemci eksik
@@ -36,8 +47,9 @@ StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
 
     id, firstName, lastName, displayName, className, schoolNo, studentPhone,
     guardians[{slot, name, phone}], canteen{balance, spendingLimit, isBlocked,
-    dailyLimit, guardianBlocked}, updatedAt, phoneIssues[],
-    gradeLevel, track, examTarget
+    dailyLimit, guardianBlocked} | null, updatedAt, phoneIssues[],
+    gradeLevel, track, examTarget, status, statusReason, statusSince, revision,
+    canteenSync
 """
 
 from __future__ import annotations
@@ -51,6 +63,7 @@ from zoneinfo import ZoneInfo
 from . import curriculum
 from . import qr as qr_codec
 from .phones import normalize_phone
+from .sync import pending_upsert
 
 _ISTANBUL = ZoneInfo("Europe/Istanbul")
 
@@ -64,7 +77,12 @@ RECORD_KEYS = (
     "id", "firstName", "lastName", "displayName", "className", "schoolNo",
     "studentPhone", "guardians", "canteen", "updatedAt", "phoneIssues",
     "gradeLevel", "track", "examTarget",
+    # Merkezi senkron (geçit sözleşmesi §9).
+    "status", "statusReason", "statusSince", "revision", "canteenSync",
 )
+
+#: `ids` ile toplu okumada en çok kimlik (geçit `GET /directory?ids=`).
+IDS_MAX = 100
 
 
 #: Kayıt listesi. Sınıfın `list` metodu tür adını gölgelemesin diye modül
@@ -103,10 +121,20 @@ def _iso(moment: datetime | None) -> str | None:
     return moment.astimezone(_ISTANBUL).isoformat(timespec="seconds") if moment else None
 
 
-def student_record(canteen: dict[str, Any], profile: dict[str, Any] | None) -> dict[str, Any]:
-    """Kantin satırı + profil satırı → sözleşmenin öğrenci nesnesi."""
+def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | None,
+                   kantin_id: str = "") -> dict[str, Any]:
+    """Kantin satırı + profil satırı → sözleşmenin öğrenci nesnesi.
+
+    `canteen=None`: kantine henüz yazılamamış KM kaydı (`canteen: null`).
+    Bekleyen kantin gövdesi kantin değerlerinin üstüne yazılır.
+    """
     profile = profile or {}
+    missing = canteen is None
+    canteen = {**(canteen or {"id": kantin_id or profile.get("kantin_id")}),
+               **pending_upsert(profile)}
     display_name = str(canteen.get("displayName") or "").strip()
+    if not display_name:
+        display_name = f"{profile.get('first_name') or ''} {profile.get('last_name') or ''}".strip()
     first, last = split_name(display_name)
     issues: list[str] = []
 
@@ -155,7 +183,15 @@ def student_record(canteen: dict[str, Any], profile: dict[str, Any] | None) -> d
         "gradeLevel": plan["gradeLevel"],
         "track": plan["track"],
         "examTarget": plan["examTarget"],
+        "status": "inactive" if profile.get("status") == "inactive" else "active",
+        "statusReason": profile.get("status_reason") if profile.get("status") == "inactive"
+        else None,
+        "statusSince": _iso(_moment(profile.get("status_since"))),
+        "revision": int(profile.get("revision") or 0),
+        "canteenSync": "pending" if profile.get("canteen_sync") == "pending" else "ok",
     }
+    if missing:
+        record["canteen"] = None
     return {key: record[key] for key in RECORD_KEYS}
 
 
@@ -171,18 +207,30 @@ def _class_key(name: str) -> tuple[int, str]:
 class _Snapshot:
     """Bir kantin listesinden BİR KEZ kurulan dizin: kayıtlar, damgalar, dizinler."""
 
-    __slots__ = ("as_of", "by_id", "by_phone", "classes", "records", "revision", "rows",
-                 "stamps")
+    __slots__ = ("as_of", "by_id", "by_phone", "classes", "deleted", "records", "revision",
+                 "rows", "stamps")
 
     def __init__(self, rows: Records, profiles: dict[str, dict[str, Any]],
-                 as_of: datetime, revision: int) -> None:
+                 as_of: datetime, revision: int,
+                 deleted: dict[str, datetime | None] | None = None) -> None:
         self.rows = rows
         self.as_of = as_of
         self.revision = revision
+        #: Mezar taşları (kimlik → silinme anı); `since` yanıtının `removed`ı.
+        self.deleted = dict(deleted or {})
+        gone = set(self.deleted)
         self.records: Records = [
             student_record(row, profiles.get(str(row.get("id") or "")))
             for row in rows
-            if row.get("id")
+            if row.get("id") and str(row.get("id")) not in gone
+        ]
+        known = {str(row.get("id") or "") for row in rows}
+        # Profil-yalnız, kantine henüz yazılamamış kayıtlar (§7 adım 5).
+        self.records += [
+            student_record(None, profile, kantin_id)
+            for kantin_id, profile in profiles.items()
+            if kantin_id not in known and kantin_id not in gone
+            and profile.get("canteen_sync") == "pending"
         ]
         self.stamps = [_moment(record["updatedAt"]) for record in self.records]
         self.by_id = {record["id"]: record for record in self.records}
@@ -196,15 +244,19 @@ class _Snapshot:
                               key=_class_key)
 
 
-def _copy(record: dict[str, Any]) -> dict[str, Any]:
+def _copy(record: dict[str, Any], *, balance: bool = True) -> dict[str, Any]:
     """Önbellekteki kaydın çağırana giden kopyası (iç içe liste/sözlük dahil).
 
     Tüketici kaydı değiştirirse önbellek bozulmasın. `deepcopy`den hızlı: kayıt
-    biçimi sabit ve sığ (guardians listesi + canteen sözlüğü).
+    biçimi sabit ve sığ (guardians listesi + canteen sözlüğü). `balance=False`
+    kantin bakiyesini çıkarır.
     """
     copy = dict(record)
     copy["guardians"] = [dict(item) for item in record["guardians"]]
-    copy["canteen"] = dict(record["canteen"])
+    if record["canteen"] is not None:
+        copy["canteen"] = dict(record["canteen"])
+        if not balance:
+            copy["canteen"].pop("balance", None)
     copy["phoneIssues"] = list(record["phoneIssues"])
     return copy
 
@@ -217,6 +269,7 @@ class StudentDirectory:
         self._store = store
         self._log = log
         self._table = store.table("profile")
+        self._tombstones = store.table("tombstone")
         self._cache: tuple[float, Records] | None = None
         #: Kantin listesinin okunduğu duvar saati (`asOf`).
         self._cache_at: datetime | None = None
@@ -260,60 +313,109 @@ class StudentDirectory:
         rows = await self._store.fetch_all(f"SELECT * FROM {self._table}")
         return {str(row["kantin_id"]): row for row in rows}
 
+    async def _deleted(self) -> dict[str, datetime | None]:
+        rows = await self._store.fetch_all(
+            f"SELECT kantin_id, deleted_at FROM {self._tombstones}")
+        return {str(row["kantin_id"]): _moment(row["deleted_at"]) for row in rows}
+
+    async def removed_since(self, since: datetime) -> list[dict[str, Any]]:
+        """Kalıcı silinen öğrenciler (mezar taşı) — `since`'ten sonra silinenler.
+
+        Anlık görüntüden okunur (silme dizini bırakır): sıcak yol veritabanına gitmez.
+        """
+        threshold = since if since.tzinfo else since.replace(tzinfo=UTC)
+        snapshot = await self._current()
+        gone = sorted(((moment, kantin_id) for kantin_id, moment in snapshot.deleted.items()
+                       if moment is not None and moment > threshold), key=lambda item: item[0])
+        return [{"id": kantin_id, "at": _iso(moment)} for moment, kantin_id in gone]
+
     async def _current(self) -> _Snapshot:
         rows = await self._canteen_students()
         snapshot = self._snapshot
         if snapshot is not None and snapshot.rows is rows:
             return snapshot
         profiles = await self._profiles()
+        deleted = await self._deleted()
         self._revision += 1
-        snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC), self._revision)
+        snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC), self._revision,
+                             deleted)
         if self._cache is not None and self._cache[1] is rows:
             self._snapshot = snapshot
         return snapshot
 
-    async def list(self, since: datetime | None = None) -> dict[str, Any]:
+    async def list(self, since: datetime | None = None, *,
+                   balance: bool = True) -> dict[str, Any]:
         try:
             snapshot = await self._current()
         except DirectoryUnavailable:
             return {"students": [], "classes": [], "complete": False}
 
+        result: dict[str, Any]
         if since is None:
-            records = [_copy(record) for record in snapshot.records]
+            records = [_copy(record, balance=balance) for record in snapshot.records]
         else:
             threshold = since if since.tzinfo else since.replace(tzinfo=UTC)
             records = [
-                _copy(record) for record, stamp in zip(snapshot.records, snapshot.stamps,
-                                                       strict=True)
+                _copy(record, balance=balance)
+                for record, stamp in zip(snapshot.records, snapshot.stamps, strict=True)
                 if stamp is not None and stamp > threshold
             ]
-        return {"students": records, "classes": list(snapshot.classes), "complete": True,
-                "asOf": _iso(snapshot.as_of), "revision": snapshot.revision}
+        result = {"students": records, "classes": list(snapshot.classes), "complete": True,
+                  "asOf": _iso(snapshot.as_of), "revision": snapshot.revision}
+        if since is not None:
+            threshold = since if since.tzinfo else since.replace(tzinfo=UTC)
+            gone = sorted(((moment, kantin_id) for kantin_id, moment in snapshot.deleted.items()
+                           if moment is not None and moment > threshold))
+            result["removed"] = [{"id": kantin_id, "at": _iso(moment)}
+                                 for moment, kantin_id in gone]
+        return result
 
-    async def get(self, student_id: str) -> dict[str, Any] | None:
+    async def get(self, student_id: str, *, balance: bool = True) -> dict[str, Any] | None:
         wanted = str(student_id or "").strip()
         if not wanted:
             return None
         # Taze dizinde varsa kantine gidilmez (dizinle aynı tazelik, ≤ CACHE_SECONDS).
-        snapshot = self._snapshot
-        if snapshot is not None and self._fresh_rows() is snapshot.rows:
+        # Profil yazılınca anlık görüntü düşer ama kantin listesi geçerlidir:
+        # görüntü taze listeden yeniden kurulur (kantine gidilmez).
+        if self._fresh_rows() is not None:
+            snapshot = await self._current()
             found = snapshot.by_id.get(wanted)
             if found is not None:
-                return _copy(found)
+                return _copy(found, balance=balance)
+        if await self._store.fetch_one(
+                f"SELECT kantin_id FROM {self._tombstones} WHERE kantin_id = ?",
+                (wanted,)) is not None:
+            return None
+        profile = await self._store.fetch_one(
+            f"SELECT * FROM {self._table} WHERE kantin_id = ?", (wanted,)
+        )
         try:
             canteen = await self._canteen.student(wanted)
         except Exception as failure:  # kantin dışarısı; sebebi taşınır
             if getattr(failure, "status", None) == 404 \
                     or getattr(failure, "reason", None) == "student_not_found":
-                return None
-            self._log.warning("dizin: öğrenci okunamadı", student=wanted, error=str(failure))
-            raise DirectoryUnavailable("Kantine ulaşılamadı.") from failure
+                canteen = None
+            else:
+                if profile is not None and profile.get("canteen_sync") == "pending":
+                    return _copy(student_record(None, profile, wanted), balance=balance)
+                self._log.warning("dizin: öğrenci okunamadı", student=wanted, error=str(failure))
+                raise DirectoryUnavailable("Kantine ulaşılamadı.") from failure
         if not isinstance(canteen, dict) or str(canteen.get("id") or "") != wanted:
+            if profile is not None and profile.get("canteen_sync") == "pending":
+                return _copy(student_record(None, profile, wanted), balance=balance)
             return None
-        profile = await self._store.fetch_one(
-            f"SELECT * FROM {self._table} WHERE kantin_id = ?", (wanted,)
-        )
-        return student_record(canteen, profile)
+        return _copy(student_record(canteen, profile), balance=balance)
+
+    async def get_many(self, student_ids: list[str], *,
+                       balance: bool = True) -> dict[str, Any]:
+        """`ids` ile toplu okuma (en çok 100). Tek kantin listesi okuması (önbellekli)."""
+        wanted = list(dict.fromkeys(str(item).strip() for item in student_ids
+                                    if str(item).strip()))[:IDS_MAX]
+        snapshot = await self._current()
+        found = [snapshot.by_id[item] for item in wanted if item in snapshot.by_id]
+        missing = [item for item in wanted if item not in snapshot.by_id]
+        return {"students": [_copy(record, balance=balance) for record in found],
+                "missingIds": missing}
 
     async def find_by_phone(self, phone10: str) -> Records:
         """Öğrenci telefonu, veli 1 ya da veli 2 telefonu eşleşen öğrenciler."""

@@ -7,6 +7,8 @@ patlar — kısmi hata testinin dayandığı yer budur.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 
@@ -35,6 +37,8 @@ class FakeStore:
         return f"mod_bbd_students_{name}"
 
     async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        if "_profile" not in sql:
+            return []  # mezar taşı, sayaç vb. — boş
         return list(self.profiles)
 
     async def fetch_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
@@ -43,6 +47,10 @@ class FakeStore:
 
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.written.append((" ".join(sql.split()), params))
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        yield
 
 
 class FakeCanteen:

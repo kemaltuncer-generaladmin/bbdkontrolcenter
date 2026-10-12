@@ -13,7 +13,7 @@
 id: bbd_students
 name: "Öğrenci Yönetimi"
 description: "Kantin öğrencilerinin canlı yönetimi; sınıf ve iletişim bilgileri, kart QR üretimi."
-version: 0.2.0
+version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
@@ -36,10 +36,16 @@ provides:
   - capability: bbd_students.directory
     contract: bbd_students/backend/directory.py:StudentDirectory
     description: >
-      BACKEND: öğrenci dizini (mobil geçit sözleşmesi §1). async list(since=None)
-      → {students, classes, complete}; get(student_id) → StudentRecord | None;
+      BACKEND: öğrenci dizini (mobil geçit sözleşmesi §1, §9). async
+      list(since=None, *, balance=True) → {students, classes, complete, asOf,
+      revision, removed (since ile)}; get(student_id, *, balance=True) →
+      StudentRecord | None; get_many(ids, *, balance=True) → {students,
+      missingIds} (≤ 100); removed_since(since) → [{id, at}];
       find_by_phone(phone10) → [StudentRecord]; card_qr_text(student_id) → str.
-      StudentRecord accessCode TAŞIMAZ; seviye/alan/hedef sınav dahildir.
+      StudentRecord accessCode TAŞIMAZ; seviye/alan/hedef sınav, status,
+      statusReason, statusSince, revision, canteenSync dahildir. Dizin = kantin
+      listesi ∪ kantine henüz yazılamamış profil (canteen: null); pasif görünür,
+      silinen görünmez.
   # Öğrenci grupları ve TARİHLİ üyelik — tek sahibi bu modül (sözleşme
   # bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md §2.3).
   - capability: bbd_students.groups
@@ -51,10 +57,30 @@ provides:
       import_named(name, *, kind, call_name="", actor) → {id, created} (yalnız zil
       gruplarının taşınması; katlanmış ada göre idempotent). GroupRecord members
       bütün üyelik satırlarıdır (geçmiş dahil); tarihler yerel gün, iki uç dahil.
+  # Kantinden gelen öğrenci olaylarının KM karşılığı (km-merkezi-senkron §6.2,
+  # §6.3). Tüketici: Kantin Geçidi'nin olay alıcısı (profil tablosu yalnız bu
+  # modülündür, K5).
+  - capability: bbd_students.sync
+    contract: bbd_students/backend/canteen_events.py:CanteenSync
+    description: >
+      BACKEND: async student_upserted(opaque_id, fields, *, created=False,
+      causation_id=None, within=None) → "student.created" | "student.updated" |
+      None (kasadan eklenen öğrenci → taslak profil; within aynı işlemin ilk
+      adımı, False → tekrar); invalidate() dizin önbelleğini hemen bırakır;
+      wake() uzlaştırmayı hemen koşturur.
 
 consumes:
   - capability: canteen.api
     reason: "Öğrenciler kantinde durur; okuma ve yazma tek kapıdan geçer (K4)."
+  - capability: events.outbox
+    optional: true
+    reason: "Öğrenci, veli, yaşam döngüsü ve grup olayları iş yazmasıyla aynı işlemde kalıcı outbox'a yazılır (ADR 0029). Platform yeteneğidir; yoksa olay yazılmaz, modül çalışır."
+  - capability: bbd_tablet.control
+    optional: true
+    reason: "Pasifleştirmede tablet girişi süresiz kısıtlanır, yeniden etkinleştirmede kaldırılır (km-merkezi-senkron §5.2). Yoksa adım atlanır."
+  - capability: akademi.student_finance
+    optional: true
+    reason: "Kalıcı silme ön koşulu: Akademi kurum cari borcu yok. Yetenek yoksa ya da Akademi'ye ulaşılamazsa silme kapalı kalır (503 akademi_unavailable)."
 # NOT: `printer` (CUPS) yeteneği KASITLI OLARAK tüketilmiyor. ADR 0026
 # sonrası sunucuda CUPS yok; baskı artık kullanıcının cihazında, çekirdeğin
 # genel `/api/outputs/document` ucu + Tauri köprüsü üzerinden yapılıyor
@@ -62,6 +88,10 @@ consumes:
 # çağrılıyordu... sunucuda CUPS kurulu değil" notu). Bu modül yalnızca
 # `/preview` üretir; yazdırma adımı modüle özel bir uç gerektirmez.
 
+# DIŞ OLAYLAR (km-merkezi-senkron §2.2) süreç içi yola değil, `events.outbox`
+# platform yeteneğine yazılır: student.created|updated|deactivated|reactivated|
+# deleted, guardian.linked|unlinked|phone_changed, canteen.controls_changed,
+# tablet.policy_changed (pasifleştirme), group.changed. Aşağıdakiler KM içi.
 events:
   publishes:
     - name: bbd_students.groups_changed
@@ -134,6 +164,17 @@ permissions:
   - key: bbd_students.groups
     description: "Öğrenci gruplarını ve üyelikleri yönetme."
     default_roles: [admin, bbd_staff, org_staff]
+
+  # AYRI ANAHTAR: pasifleştirmek öğrencinin kantinini, tabletini ve BBD Akademi
+  # girişini (ve yalnız ona bağlı velinin girişini) kapatır.
+  - key: bbd_students.lifecycle
+    description: "Öğrenciyi pasifleştirme (gerekçe, ileri tarih, toplu) ve yeniden etkinleştirme."
+    default_roles: [admin, bbd_staff, org_staff]
+  # AYRI ANAHTAR, VARSAYILAN YALNIZ admin: kalıcı silme geri alınamaz
+  # (kantinde anonimleştirme, Akademi'de KVKK silme/anonimleştirme).
+  - key: bbd_students.delete
+    description: "Pasif öğrenciyi kalıcı silme (bakiye 0, açık talep ve kurum cari borcu yok, ad yazılarak onay)."
+    default_roles: [admin]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).
 dependencies:
