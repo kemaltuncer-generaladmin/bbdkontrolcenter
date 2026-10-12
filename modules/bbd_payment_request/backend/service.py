@@ -253,11 +253,16 @@ class PaymentRequestService:
              int(summary["totalAmount"]), _now(), actor),
         )
 
+        # Talebi kimin açtığı kantinde kayda geçer: tek öğrenciye gönderim
+        # personelin tekil işidir (`admin`), birden çoğu toplu gönderimdir.
+        origin = "admin" if len(payload.get("students") or []) == 1 else "bulk"
+
         ok = failed = 0
         for row in targets:
             status, reason, ref = "failed", "", ""
             try:
-                result = await self._canteen.create_payment_request(row["kantinId"])
+                result = await self._canteen.create_payment_request(row["kantinId"],
+                                                                    origin=origin)
                 if result.get("queued"):
                     status, ref = "queued", str(result.get("ref") or "")
                     # Kantin tutarı gönderim anında yeniden hesaplar; kaydımız onu izler.

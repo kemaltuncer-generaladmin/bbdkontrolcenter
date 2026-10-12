@@ -166,7 +166,7 @@ async def test_odeme_talebi_tutarsiz_bugunku_davranis() -> None:
     api = _client(lambda r: httpx.Response(
         200, json={"queued": True, "ref": "PR-01J", "amount": 4250}), calls)
     result = await api.create_payment_request("STU-ABCDEFGHIJ")
-    assert _body(calls[0]) == {"studentId": "STU-ABCDEFGHIJ"}
+    assert _body(calls[0]) == {"studentId": "STU-ABCDEFGHIJ", "origin": "api"}
     assert result["ref"] == "PR-01J"
     assert result["amount"] == 4250
     assert result["status"] == "PENDING"
@@ -180,8 +180,8 @@ async def test_odeme_talebi_serbest_tutar_paytoken() -> None:
         "queued": True, "ref": "PR-02", "amount": 5000, "status": "PENDING",
         "amountFixed": True, "linkUrl": "https://ode.invalid/p/AB", "payToken": "tok",
     }), calls)
-    result = await api.create_payment_request("STU-ABCDEFGHIJ", amount=5000)
-    assert _body(calls[0]) == {"studentId": "STU-ABCDEFGHIJ", "amount": 5000}
+    result = await api.create_payment_request("STU-ABCDEFGHIJ", amount=5000, origin="admin")
+    assert _body(calls[0]) == {"studentId": "STU-ABCDEFGHIJ", "origin": "admin", "amount": 5000}
     assert result["amountFixed"] is True
     assert result["payToken"] == "tok"
     assert result["linkUrl"] == "https://ode.invalid/p/AB"
@@ -263,6 +263,7 @@ async def test_odeme_talebi_akisi_parametreleri_ve_iso() -> None:
     rows = await api.payment_requests_feed("2026-10-12T09:00:00+03:00", limit=10_000)
     params = dict(calls[0].url.params)
     assert params == {"limit": "500", "updatedSince": "2026-10-12T09:00:00+03:00"}
+    assert rows[0]["origin"] == "bulk" and rows[0]["payToken"] == "t"
     assert rows[0]["createdAt"] == "2026-10-12T09:30:00+03:00"
     assert rows[0]["updatedAt"] == "2026-10-12T09:31:00+03:00"
     assert rows[0]["paidAt"] is None
@@ -277,9 +278,10 @@ async def test_veli_bildirim_akisi_metin_ve_telefon_tasimaz() -> None:
         "to": "5329876543", "text": "Sayın veli…", "phone": "5329876543",
     }]}), calls)
     rows = await api.parent_notifications_feed(None, limit=50)
-    assert dict(calls[0].url.params) == {"limit": "50"}
+    # Akış kipi yalnız `updatedSince` ile açılır: imleç yoksa başlangıç gider.
+    assert dict(calls[0].url.params) == {"limit": "50", "updatedSince": "1970-01-01T00:00:00Z"}
     assert rows == [{"id": 7, "studentId": "STU-1", "kind": "payment_request",
-                     "amount": 4250, "status": "SENT",
+                     "status": "SENT", "amount": 4250,
                      "createdAt": "2026-10-12T09:30:00+03:00"}]
 
 
@@ -300,3 +302,55 @@ async def test_urunler_listesi() -> None:
     api = _client(lambda r: httpx.Response(200, json={"data": [
         {"id": 3, "name": "Tost", "price": 2500, "isActive": True}]}))
     assert (await api.products())[0]["name"] == "Tost"
+
+
+async def test_akis_sayfasi_imlec_tasir() -> None:
+    api = _client(lambda r: httpx.Response(200, json={
+        "data": [{"id": 9, "studentId": "STU-1", "kind": "collection", "status": "SENT",
+                  "amount": 1000, "ref": None, "createdAt": 1791786600000,
+                  "updatedAt": 1791786600000}],
+        "nextSince": "2026-10-12T06:30:00+00:00", "hasMore": True}))
+    page = await api.parent_notifications_feed_page("2026-10-12T00:00:00+03:00", 1)
+    assert page["nextSince"] == "2026-10-12T09:30:00+03:00"
+    assert page["hasMore"] is True
+    assert page["items"][0]["updatedAt"] == "2026-10-12T09:30:00+03:00"
+
+
+async def test_tekil_talep_taze_token() -> None:
+    calls: list[httpx.Request] = []
+    api = _client(lambda r: httpx.Response(200, json={"data": {
+        "ref": "PR-9", "studentId": "STU-1", "amount": 4250, "status": "PENDING",
+        "payToken": "taze", "createdAt": 1791786600000}}), calls)
+    row = await api.payment_request("PR-9")
+    assert calls[0].url.path == "/api/payment-requests/PR-9"
+    assert row["payToken"] == "taze"
+    assert row["createdAt"] == "2026-10-12T09:30:00+03:00"
+
+    missing = _client(lambda r: httpx.Response(404, json={"reason": "not_found"}))
+    with pytest.raises(CanteenError) as error:
+        await missing.payment_request("PR-YOK")
+    assert error.value.reason == "not_found"
+
+
+async def test_borc_asimi_azami_tutari_tasir() -> None:
+    api = _client(lambda r: httpx.Response(
+        422, json={"queued": False, "reason": "exceeds_debt", "balance": 4250,
+                   "maxAmount": 4250}))
+    with pytest.raises(CanteenError) as error:
+        await api.create_payment_request("STU-1", amount=9000)
+    assert error.value.reason == "exceeds_debt"
+    assert error.value.payload["maxAmount"] == 4250
+
+    collect = _client(lambda r: httpx.Response(
+        422, json={"reason": "exceeds_debt", "balance": 100, "maxAmount": 100}))
+    with pytest.raises(CanteenError) as error:
+        await collect.record_collection("STU-1", 500, "u-2")
+    assert error.value.payload == {"reason": "exceeds_debt", "balance": 100, "maxAmount": 100}
+
+
+async def test_bilinmeyen_kaynak_aga_cikmaz() -> None:
+    calls: list[httpx.Request] = []
+    api = _client(lambda r: httpx.Response(200, json={}), calls)
+    with pytest.raises(CanteenError) as error:
+        await api.create_payment_request("STU-1", origin="kiosk")
+    assert error.value.reason == "validation_error" and calls == []
