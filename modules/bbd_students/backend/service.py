@@ -21,6 +21,7 @@ from typing import Any
 from km_sdk import report_dir, write_private
 
 from . import curriculum
+from . import guardians as guardian_rules
 from .directory import split_name, student_record
 from .lifecycle import describe_status
 from .phones import normalize_phone
@@ -47,7 +48,15 @@ PROFILE_COLUMNS = {
     "parentName2": "parent_name2",
     "parentPhone2": "parent_phone2",
     "note": "note",
+    # Veli yönetimi (göç 007). `guardiansExtra` gövdeden DEĞİL, yalnız
+    # `set_guardians` üzerinden yazılır (PATCH şeması onu taşımaz).
+    "parentRelation": "parent_relation",
+    "parentRelation2": "parent_relation2",
+    "guardiansExtra": "guardians_extra",
 }
+
+#: Sınıf adı en çok bu kadar karakter (PATCH şemasıyla aynı).
+CLASS_NAME_MAX = 20
 
 OPAQUE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
@@ -256,6 +265,10 @@ class StudentService:
             "parentName": (profile or {}).get("parent_name") or "",
             "parentName2": (profile or {}).get("parent_name2") or "",
             "parentPhone2": (profile or {}).get("parent_phone2") or "",
+            "parentRelation": (profile or {}).get("parent_relation") or "",
+            "parentRelation2": (profile or {}).get("parent_relation2") or "",
+            # Bütün veliler yuva sırasıyla (birincil önce); kantin 1. veli telefonu dahil.
+            "guardians": guardian_rules.view(profile, canteen.get("parentPhone")),
             "note": (profile or {}).get("note") or "",
             "hasProfile": profile is not None,
             # Seviye / alan / hedef sınav — müfredatın kaynağı (KM ana kayıttır).
@@ -568,6 +581,9 @@ class StudentService:
                          payload: dict[str, Any]) -> dict[str, Any]:
         """Gövdedeki profil alanları → sütunlar. Seviye/alan kuralı burada (yükseltir)."""
         fields = {key: payload[key] for key in PROFILE_COLUMNS if key in payload}
+        for key in ("parentRelation", "parentRelation2"):
+            if key in fields:
+                fields[key] = guardian_rules.parse_relation(fields[key])
         plan_patch = _curriculum_patch(payload)
         plan_columns: dict[str, Any] = {}
         if plan_patch:
@@ -577,6 +593,123 @@ class StudentService:
         columns = {PROFILE_COLUMNS[key]: str(fields[key] or "") for key in fields}
         columns.update(plan_columns)
         return columns
+
+    # ------------------------------------------------- tek öğrenci, veliler, sınıf
+
+    async def get_student(self, kantin_id: str) -> dict[str, Any] | None:
+        """Tek öğrencinin birleşik kaydı (liste satırıyla aynı biçim) — öğrenci kartı.
+
+        Silinmişse `None`. Kantine ulaşılamazsa ve kayıt kantine henüz yazılmamışsa
+        profil + bekleyen gövdeyle döner (`canteenMissing`); ikisi de yoksa hata.
+        """
+        if await self._sync.tombstone(kantin_id) is not None:
+            return None
+        profile = await self._sync.profile(kantin_id)
+        try:
+            row = await self._canteen.get_student(kantin_id)
+        except Exception as failure:
+            if getattr(failure, "reason", None) == "student_not_found" and profile is None:
+                return None
+            if profile is not None and profile.get("canteen_sync") == "pending":
+                return self._merge({"id": kantin_id, "balance": 0}, profile,
+                                   stale_cut=iso(datetime.now(UTC) - STALE_AFTER),
+                                   canteen_missing=True)
+            if getattr(failure, "reason", None) == "student_not_found":
+                return None
+            # Kantine şu an ulaşılamıyor: dizinin son görüntüsünden (≤ 20 sn) kurulur;
+            # bakiye bilinmez. O da yoksa hata — "bilmiyorum" boş kayıt değildir.
+            cached = await self._cached_canteen_row(kantin_id)
+            if cached is None:
+                raise
+            merged = self._merge(cached, profile)
+            merged["canteenUnavailable"] = True
+            return merged
+        return self._merge(row if isinstance(row, dict) else {"id": kantin_id}, profile,
+                           stale_cut=iso(datetime.now(UTC) - STALE_AFTER))
+
+    async def _cached_canteen_row(self, kantin_id: str) -> dict[str, Any] | None:
+        cached = getattr(self._directory, "cached_row", None)
+        return cached(kantin_id) if callable(cached) else None
+
+    async def guardians(self, kantin_id: str) -> dict[str, Any]:
+        """Öğrencinin velileri + aynı telefonun velisi olduğu DİĞER öğrenciler (kardeş)."""
+        student = await self.get_student(kantin_id)
+        if student is None:
+            raise LookupError("Öğrenci bulunamadı.")
+        items = [dict(item) for item in student["guardians"]]
+        for item in items:
+            item["siblings"] = await self._siblings(kantin_id, item.get("phone"))
+        return {
+            "studentId": kantin_id,
+            "items": items,
+            "max": guardian_rules.MAX_GUARDIANS,
+            "appSlots": list(guardian_rules.APP_SLOTS),
+            "relations": [{"value": key, "label": label}
+                          for key, label in guardian_rules.RELATIONS.items()],
+        }
+
+    async def _siblings(self, kantin_id: str, phone: Any) -> list[dict[str, str]]:
+        number = str(phone or "")
+        if self._directory is None or len(number) != 10:
+            return []
+        try:
+            found = await self._directory.find_by_phone(number)
+        except Exception:  # noqa: BLE001 — kardeş bilgisi süs; okunamazsa boş
+            return []
+        return [{"id": str(row.get("id") or ""), "displayName": str(row.get("displayName") or ""),
+                 "className": str(row.get("className") or "")}
+                for row in found if str(row.get("id") or "") != kantin_id][:10]
+
+    async def set_guardians(self, kantin_id: str, items: Any, *, actor: str = "",
+                            causation_id: str | None = None) -> dict[str, Any]:
+        """Veli listesini TÜMÜYLE yazar (sıra = öncelik, ilk veli birincil).
+
+        Kural `guardians.py`; yazma `update_student` yolundan geçer (önce KM, sonra
+        kantin; yuva 1 telefonu kantine; olaylar orada). Hiçbir şey değişmediyse
+        yazılmaz ve olay çıkmaz.
+        """
+        clean = guardian_rules.clean_items(items)
+        current = await self.get_student(kantin_id)
+        if current is None:
+            raise LookupError("Öğrenci bulunamadı.")
+        before = [(row["name"], row["phone"], row["relation"]) for row in current["guardians"]]
+        after = [(row["name"], row["phone"], row["relation"]) for row in clean]
+        if before == after:
+            return {"kantinId": kantin_id, "changed": False, "canteenSync": current["canteenSync"],
+                    "guardians": current["guardians"]}
+        payload = guardian_rules.to_payload(clean)
+        # Kantine yalnız 1. veli telefonu DEĞİŞTİYSE gidilir (tabletin yazdığına dokunma).
+        if (normalize_phone(current.get("parentPhone"))
+                or str(current.get("parentPhone") or "")) == payload["parentPhone"]:
+            payload.pop("parentPhone")
+        result = await self.update_student(kantin_id, payload, actor=actor,
+                                           causation_id=causation_id)
+        fresh = await self.get_student(kantin_id)
+        self._log.info("veliler güncellendi", student=kantin_id, count=len(clean), actor=actor)
+        return {**result, "changed": True,
+                "guardians": fresh["guardians"] if fresh else []}
+
+    async def set_class(self, kantin_ids: list[str], class_name: str) -> dict[str, Any]:
+        """Toplu ANA SINIF ataması. Her öğrenci ayrı `student.updated` (`className`).
+
+        Ana sınıf tektir (kantin kartı, Akademi sınıfı ve müfredat önerisi ondan);
+        bir öğrencinin birden çok topluluğa üyeliği GRUPLARLA (tarihli) yapılır.
+        Boş ad sınıfı temizler. Boş seçim reddedilir.
+        """
+        ids = [str(item).strip() for item in kantin_ids if str(item).strip()]
+        if not ids:
+            raise ValueError("Öğrenci seçilmedi.")
+        name = normalize_class(class_name)
+        updated: list[str] = []
+        failed: list[dict[str, str]] = []
+        for kantin_id in dict.fromkeys(ids):
+            if await self._sync.tombstone(kantin_id) is not None:
+                failed.append({"studentId": kantin_id, "error": "Öğrenci silinmiş."})
+                continue
+            await self._save_profile(kantin_id, {"className": name})
+            updated.append(kantin_id)
+        self._log.info("toplu sınıf ataması", updated=len(updated), failed=len(failed))
+        return {"updated": updated, "failed": failed, "className": name}
 
     async def reset_access_code(self, kantin_id: str) -> dict[str, Any]:
         """Öğrenciye tek tuşla yeni giriş kodu verir.
@@ -940,6 +1073,22 @@ def _split_name(display_name: str) -> tuple[str, str]:
 
 #: NOT NULL '' tutan metin sütunları (telafide boş metne döner).
 _TEXT_COLUMNS = frozenset(PROFILE_COLUMNS.values())
+
+
+_CLASS = re.compile(r"^(\d{1,2})\s*[-/.]?\s*([A-ZÇĞİÖŞÜ]?)$")
+
+
+def normalize_class(value: Any) -> str:
+    """"11a" → "11-A", "  9 / b " → "9-B"; tanınmayan ad büyük harfle, kırpılarak
+    kalır (ekrandaki `normalizeClass` ile aynı kural)."""
+    raw = " ".join(str(value or "").split())
+    if not raw:
+        return ""
+    upper = raw.replace("i", "İ").replace("ı", "I").upper()
+    match = _CLASS.match(upper)
+    if not match:
+        return upper[:CLASS_NAME_MAX]
+    return f"{match.group(1)}-{match.group(2)}" if match.group(2) else match.group(1)
 
 
 def _guardian_phone(record: dict[str, Any] | None, slot: int) -> str:

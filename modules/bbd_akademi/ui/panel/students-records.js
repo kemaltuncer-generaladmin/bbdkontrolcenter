@@ -31,7 +31,7 @@ import {
 } from './common.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
-  openKmStudents, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,
+  kmManagedHint, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,
   topicResources,
 } from './students-detail.js';
 
@@ -528,9 +528,13 @@ export function studyTab(ctx) {
   tabletFilters.append(toolbar(tabletRange.node));
   const tabletBox = card('Tablet kullanımı', tabletFilters);
   tabletBox.append(tablet.node);
-  node.append(logBox, tabletBox);
+  node.append(logBox);
   logs.reload();
-  tablet.reload();
+  // Tablet özelliği kurumda kapalıysa kart hiç çizilmez, istek gitmez.
+  if (app.can('students_getTabletUsage')) {
+    node.append(tabletBox);
+    tablet.reload();
+  }
   return { node };
 }
 
@@ -629,17 +633,19 @@ export function requestsTab(ctx) {
     empty: { title: 'Kitap talebi yok' },
   });
   ctx.dispose(() => { etut.destroy(); meetings.destroy(); books.destroy(); });
-  node.append(
+  const showBooks = app.can('requests_listBookRequests');
+  node.append(...[
     h('div', 'ak-muted', 'Onay, ret ve zaman verme Talepler ile Kitap talepleri ekranlarından yapılır. İzin '
       + 'bildirimleri Yoklama sekmesindedir.'),
     panelCard('Etüt talepleri', etut.node, [requestsLink('Talepler ekranı', 'etut')]),
     panelCard('Görüşme talepleri', meetings.node, [requestsLink('Talepler ekranı', 'meeting')]),
-    panelCard('Kitap talepleri', books.node, [button('Kitap talepleri ekranı', { variant: 'ghost',
-      onClick: () => app.go('books') })]),
-  );
+    // Kitap talepleri kurumda kapalıysa kart hiç çizilmez, istek gitmez.
+    showBooks ? panelCard('Kitap talepleri', books.node, [button('Kitap talepleri ekranı', { variant: 'ghost',
+      onClick: () => app.go('books') })]) : null,
+  ].filter(Boolean));
   etut.reload();
   meetings.reload();
-  books.reload();
+  if (showBooks) books.reload();
   return { node };
 }
 
@@ -833,11 +839,10 @@ function statement(ctx) {
 export function canteenTab(ctx) {
   const { app, id } = ctx;
   const node = h('div', 'ak-stack ak-money-canteen ak-stu-money');
-  const hint = h('div', 'kit-hint ak-stu-hint');
-  hint.append(h('span', '', 'Kantin hesabı kurum carisinden tamamen ayrıdır ve burada salt-okunurdur. Kantin '
-    + 'kontrolleri (harcama limiti, engel, ürün kısıtı) ve kantin nakit tahsilatı KM\'nin Öğrenciler modülünden '
-    + 'yönetilir.'), button('Öğrenciler modülünde aç', {
-    onClick: () => openKmStudents(app, ctx.student?.student || { id }, { tab: 'canteen' }) }));
+  // Kantin hesabı kurum carisinden tamamen ayrıdır (A12) ve burada salt okunurdur.
+  const hint = kmManagedHint(ctx, 'Kantin hesabı kurum carisinden ayrıdır, burada yalnız görüntülenir. '
+    + 'Harcama limiti, engel, ürün kısıtı ve kantin tahsilatı', ctx.student?.student || { id },
+  { tab: 'canteen' });
   const summary = loader(() => app.api.get(`/v1/students/${id}/canteen`), renderCanteenSummary, { rows: 4, columns: 3 });
   const controls = loader(() => app.api.get(`/v1/admin/students/${id}/canteen/controls`), renderCanteenControls,
     { rows: 4, columns: 2 });

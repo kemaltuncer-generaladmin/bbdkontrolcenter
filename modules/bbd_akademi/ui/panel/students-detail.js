@@ -172,10 +172,40 @@ function itemText(item) {
     item.teacher?.displayName, item.room].filter(Boolean).join(' · ');
 }
 
-/** KM'nin Öğrenciler modülünü (bbd_students) açar; seviye/alan/hedef ve kantin orada. */
-export function openKmStudents(app, student, extra = {}) {
+/**
+ * Öğrencinin KM kaydına git (seviye/alan/hedef, sınıf, veliler, kantin ayarları).
+ * Öğrenci yönetimi BBD Akademi'de (13.10.2026): kart içindeyse "Kayıt ve veliler"
+ * sekmesi seçilir; kart dışındaysa Öğrenciler → yönetim listesi açılır. Öğrenci
+ * yönetimi yeteneği yoksa (modül kapalı / izin yok) eski davranış: KM Öğrenci
+ * Yönetimi ekranı.
+ */
+export function openKmStudents(app, student, extra = {}, ctx = null) {
+  if (ctx?.recordable) {
+    ctx.select('record');
+    return;
+  }
+  if (app.capability?.('bbd_students.manager')) {
+    if (student?.externalRef) openKmById(app, student.externalRef);
+    else app.go('students', { view: 'km' });
+    return;
+  }
   app.openPanel('bbd_students', student?.id
     ? { studentId: student.id, externalRef: student.externalRef, ...extra } : null);
+}
+
+/** Kart dışından KM kimliğiyle tek kartı aç (`students.js` → `openStudentByRef`). */
+function openKmById(app, kmId) {
+  app.go('students', { kmStudentId: kmId });
+}
+
+/** KM'de yönetilen alanların notu: kart içinde sekmeye, yoksa KM ekranına götürür. */
+export function kmManagedHint(ctx, text, student, extra = {}) {
+  const hint = h('div', 'kit-hint ak-stu-hint');
+  hint.append(h('span', '', ctx.recordable ? `${text} “Kayıt ve veliler” sekmesinde düzenlenir.`
+    : `${text} KM'nin Öğrenci Yönetimi ekranında düzenlenir.`),
+  button(ctx.recordable ? 'Kaydı düzenle' : 'Öğrenci Yönetimi\'nde aç',
+    { onClick: () => openKmStudents(ctx.app, student, extra, ctx) }));
+  return hint;
 }
 
 // ---------------------------------------------------------------- başlık
@@ -225,10 +255,9 @@ export function renderHeader(ctx, data) {
     ['Çalışma grupları', (data.studentGroups || []).map((group) => group.name).join(', ') || '—'],
     ['Son eşitleme', fmtDateTime(data.syncedAt)],
   ]));
-  const readOnly = h('div', 'kit-hint ak-stu-hint');
-  readOnly.append(h('span', '', 'Seviye, alan ve hedef sınav KM\'nin Öğrenciler modülünde tanımlanır; burada '
-    + 'yalnız görüntülenir. Müfredat bu üç bilgiye göre seçilir.'),
-  button('Öğrenciler modülünde aç', { onClick: () => openKmStudents(app, student) }));
+  // KM'de yönetilir: seviye/alan/hedef sınav müfredatın kaynağıdır (A5).
+  const readOnly = kmManagedHint(ctx, 'Seviye, alan ve hedef sınav müfredatı belirler; KM\'de yönetilir —',
+    student);
   const left = h('div', 'ak-stack');
   left.append(identity, readOnly);
   nodes.push(grid2(left, guardianCard(ctx, data)));
@@ -273,7 +302,9 @@ function guardianCard(ctx, data) {
       } },
     ],
     rows,
-    empty: empty('Kayıtlı veli yok', 'Veli bilgisi KM Öğrenciler modülünden girilir.'),
+    empty: empty('Kayıtlı veli yok', ctx.recordable ? 'Veliyi “Kayıt ve veliler” sekmesinden ekleyin.'
+      : 'Veli bilgisi KM Öğrenci Yönetimi ekranından girilir.',
+    ctx.recordable ? [button('Veli ekle', { onClick: () => ctx.select('record') })] : []),
   });
 
   async function toggle(row) {

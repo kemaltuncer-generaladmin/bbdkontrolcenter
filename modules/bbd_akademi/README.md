@@ -79,15 +79,113 @@ Akademi API  /v1/admin/*
    açılışında anahtar yoksa ya da şalter kapalıysa ekranın tepesinde sebep
    yazar; vekil `503 akademi_not_configured` / `akademi_disabled` döner.
 
+## Bilgi mimarisi (0.5.2 — sadeleştirme)
+
+Kullanıcı isteği (13.10.2026): "Uygulama çok karışık olmaya başlamış, sadeleşip
+basitleşsin" ve "öğrenci yönetimini de tamamıyla BBD Akademi kısmına taşıyalım".
+Menü 21 düz bölümden **altı görev odaklı üst bölüme** indi; alt ekranlar yalnız
+seçili üst bölümün altında açılır. Kayıt tek yerde: `ui/panel/sections.js`
+(`AREAS`, `SECTIONS`, `STUDENT_CARD`; import'suz, Node testli —
+`tests/test_akademi_bilgi_mimarisi.py`). Hiçbir ekran kaldırılmadı
+(`ui_coverage.py` eksik 0).
+
+```
+Bugün ─────────────── Özet · Talepler · Duyurular
+Öğrenciler ─────────── Öğrenciler (KM yönetimi) · Toplu işlemler · Gruplar ·
+                       Sınıflar · Veliler ve uygulama · Uygulama kullanımı
+   └ öğrenci kartı ─── Özet · Kayıt ve veliler · Program ve yoklama ·
+                       Ödev ve çalışma · Ölçme ve gelişim · Kurum cari ve kantin
+Dersler ve Program ─── Ders programı ve etüt · Yoklama · Ödevler · Çalışma planı ·
+                       Kurum takvimi
+Ölçme ve Gelişim ───── Denemeler · Değerlendirmeler · Kaynaklar · Müfredat · Okuma ·
+                       Bilgi kartları* · Erken uyarı*
+Kantin ve Finans ───── Kurum finansı* · Kantin* · Kitap talepleri*
+Ayarlar ────────────── Kurum ayarları (ilk sekme Özellikler) · Personel · KVKK talepleri
+                                   * kurum özellik bayrağına bağlı
+```
+
+**Yalnız açık olan görünür.** Kurumda kapalı bir özelliğin ekranı menüde, kartı
+öğrenci kartında, düğmesi listede HİÇ çizilmez; `403 feature_disabled` hata
+kartı görülmez (yine de gelirse sakin bir "kurumda kapalı" notu çıkar, "tekrar
+dene" yok). Bayraklar açılışta `/km/status` → `features` ile gelir: modülün
+sunucusu Akademi `admin_listFeatures`'ı kendi adına (sistem aktörü) okur, 60 sn
+önbellekte tutar, 3 sn'de yanıt yoksa açılışı bekletmez (`backend/features.py`).
+Okunamazsa `null` — panel her şeyi gösterir, karar Akademi'de kalır. Ayarlar →
+Özellikler'de bir bayrak değişince menü hemen yenilenir (`fresh=1`). İşlem
+düzeyinde aynı kural `api.js` → `can()` / `featureOff()` (işlemin
+`featureFlag`'i, `/km/operations`). Bölüm bayrakları: Erken uyarı
+`early_warning`, Bilgi kartları `flashcards`, Kurum finansı `finance`, Kantin
+`canteen`, Kitap talepleri `books`; kart/sekme düzeyinde `tablets`, `pa`,
+`self_review`, `reading_league`, `class_comparison`.
+
+**Hız.** Açılış TEK çağrıdır: `/km/status?operations=1` (bağlantı, izinler,
+bayraklar, işlem listesi `operationList`). "Bugün" tek özet ucunu
+(`admin_getDashboard`) çağırır; tabletler ve öğrenci çağırma katlıdır, açılınca
+yüklenir. Öğrenci kartında yalnız açık bölüm yüklenir.
+
+**Öğrenci yönetimi BBD Akademi'de.** KM Öğrenci Yönetimi'nin (`bbd_students`)
+listesi, toplu işlemleri (sınıfa ata, gruba ekle/çıkar/taşı, seviye-alan,
+giriş kodları, pasifleştir) ve grupları Öğrenciler bölümünde çizilir; satıra
+tıklamak öğrencinin **tek kartını** açar (Akademi verisi + KM kaydı + kantin
+özeti). Kartın "Kayıt ve veliler" sekmesi KM kaydıdır: kimlik, ana sınıf ve
+gruplar, veliler (en çok 4, birincil, yakınlık, +90 5xx doğrulama), kantin
+ayarları ve tahsilat, QR/giriş kodu, durum (pasifleştir / sil). Bağ arayüz
+yetenekleriyle kurulur (K3): `bbd_students.manager`, `bbd_students.record`;
+veri ve uçlar `bbd_students`'ta kalır (A5 — Akademi öğrenci yaratmaz). Yetenek
+yoksa (modül kapalı ya da kullanıcının `bbd_students.view` izni yok) eski
+salt okunur düzen kalır. Menüdeki "Öğrenci Yönetimi" ekranı Akademi'yi
+görebilen kullanıcıyı buraya yönlendirir (`bbd_akademi.students` işaret
+yeteneği; derin bağlantı `{kantinId}` → `{section: 'students', kmStudentId}`).
+
+### Eski → yeni eşleme
+
+| Eski menü / sekme | Yeni yeri |
+|---|---|
+| Panel | Bugün → Özet (rakamlar + "Sizi bekleyenler"; tablet/öğrenci çağırma katlı) |
+| Talepler · Duyurular | Bugün → Talepler · Duyurular |
+| Öğrenciler (Akademi listesi) | Öğrenciler → Uygulama kullanımı (yönetim yoksa "Öğrenciler") |
+| Öğrenciler → Sınıflar · Veliler | Öğrenciler → Sınıflar · Veliler ve uygulama |
+| Öğrenciler → Çalışma grupları (salt okunur) | Öğrenciler → Gruplar (KM, düzenlenebilir) |
+| KM Öğrenci Yönetimi (ayrı menü) | Öğrenciler → Öğrenciler · Toplu işlemler · Gruplar; öğrenci kartı → Kayıt ve veliler |
+| Ders programı · Yoklama · Ödevler · Kurum takvimi | Dersler ve Program → aynı adlarla ("Ders programı ve etüt") |
+| Çalışma planı (Öğrenme araçları) | Dersler ve Program → Çalışma planı |
+| Denemeler · Müfredat · Kaynaklar (Akademik) | Ölçme ve Gelişim |
+| Okuma · Bilgi kartları · Değerlendirmeler · Erken uyarı (Öğrenme araçları) | Ölçme ve Gelişim |
+| Kurum finansı · Kitap talepleri (Kurum) | Kantin ve Finans |
+| Ayarlar → Kantin kuralları | Kantin ve Finans → Kantin (+ KM kantin ekranlarına geçiş) |
+| Ayarlar · Personel · KVKK talepleri (Yönetim) | Ayarlar → Kurum ayarları · Personel · KVKK talepleri |
+| Ayarlar sekme sırası | Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron · Dizin eşitleme · Entegrasyon anahtarları · Denetim kaydı |
+
+| Eski öğrenci kartı sekmesi (15) | Yeni kart sekmesi → bölüm |
+|---|---|
+| Özet · Hedef & özet | Özet → Genel bakış · Hedef ve öğrenme özeti |
+| — (KM Öğrenci Yönetimi ekranı) | Kayıt ve veliler |
+| Program · Yoklama · Talepler | Program ve yoklama |
+| Ödevler · Öğrenme · Çalışma · Bilgi kartları* | Ödev ve çalışma |
+| Denemeler · Müfredat & ilerleme · Kaynaklar · Koçluk | Ölçme ve gelişim |
+| Kurum cari* · Kantin* | Kurum cari ve kantin (Kantin hareketleri) |
+
+Eski sekme anahtarları derin bağlantıda çalışmaya devam eder
+(`app.go('students', {studentId, tab: 'exams'})` → Ölçme ve gelişim → Denemeler
+açık). Bölüm başına bir satır:
+
+- **Bugün** — günün rakamları ve bekleyen işler tek özet çağrısıyla; hızlı düğmeler (yoklama, ödev, tahsilat, duyuru, öğrenci çağır).
+- **Öğrenciler** — öğrenci ekle/düzenle, sınıf ve gruba (toplu) ata, veliler; öğrenciye tıklayınca tek kart.
+- **Dersler ve Program** — haftalık program ve etüt, günün yoklaması, ödev verme ve teslim, koç görevleri, kurum takvimi.
+- **Ölçme ve Gelişim** — denemeler ve sonuç yükleme, değerlendirme karneleri, kaynak ve müfredat, okuma ve (açıksa) kartlar/erken uyarı.
+- **Kantin ve Finans** — kurum carisi ve tahsilat, kantinin kurum kuralları (para ayrı), kitap talepleri.
+- **Ayarlar** — hangi özelliklerin açık olduğu, kurum ayarları, senkron, entegrasyon, personel ve KVKK.
+
 ## Bölümler
 
-Panel bölümleri `ui/panel/index.js` → `SECTIONS` dizisindedir (bölüm = bir
-dosya + bir satır; ilk açılışta yüklenir). Görünürlük KM iznine, her düğme
+Panel bölümleri `ui/panel/sections.js` → `SECTIONS` dizisindedir (bölüm = bir
+dosya + bir satır; ilk açılışta yüklenir; `area` üst bölümü, `feature` kurum
+bayrağını verir). Görünürlük KM iznine, her düğme
 işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 
 | Bölüm | Dosya | İçerik |
 |---|---|---|
-| Panel | `dashboard.js` | Günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
+| Bugün → Özet | `dashboard.js` | Tek özet çağrısı: günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
 | Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler. KM'de **pasifleştirilen** öğrenci varsayılan listede yoktur, “Durum → Pasif (KM)” süzgeciyle (`status=inactive`) görünür; çekmecesi salt okunurdur (yazma düğmeleri gerekçeli kapalı — kurum cari tahsilatı ve dışa aktarım açık) |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
@@ -102,10 +200,11 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Değerlendirmeler | `evaluations*.js` | Şablonlar (bölüm, kriter, ölçek, otomatik veri), dönemler ve tamamlama durumu, değerlendirme formu (otomatik veri yan paneli), yayımla / geri al, gelişim karnesi PDF (F-A21) |
 | Erken uyarı | `insights*.js` | Kurallı risk listesi ve eylemler (not, görüşme, veliye bildirim, çöz / yeniden aç), eşikler, en çok hata yapılan konular ve nedenler (F-A22) |
 | Kurum finansı | `finance.js` | Cari hesaplar, peşinatlı taksit planı, kalemler, tahsilat (seçili kalem / serbest tutar FIFO), PIN teyitli iptal, gecikenler + hatırlatma, ekstre ve makbuz — **kantinden tamamen ayrı (A12)** |
+| Kantin | `canteen.js` | Kantinin kurum kuralları (F-A15; gövdesi `settings.js` → `canteenTab`) ve KM kantin ekranlarına geçiş; kantin parası kurum carisinden ayrı (A12) |
 | Kitap talepleri | `books.js` | Kuyruk, siparişi yeniden dene, teslim, sipariş PDF'i |
 | Duyurular | `announcements.js` | Taslak → hedefle → şimdi ya da zamanlı yayımla, okunma oranı |
 | Talepler | `requests.js` | İzin, görüşme ve etüt talepleri |
-| Ayarlar | `settings*.js` | Kurum ve bildirim varsayılanları, kantin kuralları (F-A15), logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme (etkin / pasif sayısı), **Senkron** kartı (`settings-sync.js`, aşağıda), denetim kaydı |
+| Kurum ayarları | `settings*.js` | Özellikler (ilk sekme; değişince menü yenilenir), kurum ve bildirim varsayılanları, logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme (etkin / pasif sayısı), **Senkron** kartı (`settings-sync.js`, aşağıda), denetim kaydı |
 | Personel | `staff.js` | Mobil yönetici erişimi (modülün kendi listesi ve anons adı "Hüseyin hoca", Akademi'ye itilir), Akademi personeli, roller ve izin kataloğu |
 | KVKK talepleri | `privacy.js` (hüküm mantığı import'suz `privacy-logic.js`, Node testi) | Hesap silme ve veri indirme talep kuyruğu (`/v1/admin/data-requests*`): varsayılan açık talepler (en eski önce), tür süzgeci, son gün ve kalan gün rozeti (7 gün ve altı sarı, süresi geçen kırmızı), ayrıntı çekmecesi; **onayla** (silmede geri dönüşsüz silinenler yazılı, isteğe bağlı not), **reddet** (gerekçe zorunlu, en az 10 karakter, talep sahibine gider), silinmiş hesapta **erişimi yeniden aç**; öğrenci talebinde öğrenci kartına geçiş. Yazmalar `X-Akademi-On-Behalf-Of` ile gider; "Sonuçlandıran" alanında KM kullanıcısı görünür. Anahtar izni eksikse (Akademi 403) yeniden üretme notu |
 

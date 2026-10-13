@@ -151,7 +151,11 @@ export function mountControls(container, options) {
       }
       await save(patch, msg);
     });
-    container.append(h('div', 'st-cc-actions', save_), msg);
+    // `h()` üçüncü argümanı METİNDİR: düğme ayrıca eklenir (eskiden ekranda
+    // "[object HTMLButtonElement]" yazıyordu ve kaydet düğmesi görünmüyordu).
+    const actions = h('div', 'st-cc-actions');
+    actions.append(save_);
+    container.append(actions, msg);
   }
 
   function limitField(label, value) {

@@ -1,3 +1,12 @@
 /* Panel — önek `ak-dash-`. */
 .ak-dash-pa-who { min-width: 220px; }
 .ak-dash-pa-text { min-width: 320px; flex: 1; }
+.ak-dash-waiting { display: flex; flex-direction: column; gap: 2px; padding: 6px 14px 12px; }
+.ak-dash-wait {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 40px 56px;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+.ak-dash-wait > b { text-align: right; }

@@ -46,7 +46,7 @@ StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
 (`accessCode` asla):
 
     id, firstName, lastName, displayName, className, schoolNo, studentPhone,
-    guardians[{slot, name, phone}], canteen{balance, spendingLimit, isBlocked,
+    guardians[{slot, name, phone, relation}], canteen{balance, spendingLimit, isBlocked,
     dailyLimit, guardianBlocked} | null, updatedAt, phoneIssues[],
     gradeLevel, track, examTarget, status, statusReason, statusSince, revision,
     canteenSync
@@ -62,6 +62,7 @@ from zoneinfo import ZoneInfo
 
 from . import curriculum
 from . import qr as qr_codec
+from .guardians import extra_items
 from .phones import normalize_phone
 from .sync import pending_upsert
 
@@ -147,16 +148,24 @@ def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | Non
     student_phone = phone("studentPhone", profile.get("student_phone"))
 
     guardians: list[dict[str, Any]] = []
-    # Veli 1 = kantinin `parentPhone`u + profilin `parent_name`i.
+    # Veli 1 (birincil) = kantinin `parentPhone`u + profilin `parent_name`i.
     raw1 = canteen.get("parentPhone")
     if str(raw1 or "").strip():
         guardians.append({"slot": 1, "name": str(profile.get("parent_name") or "") or None,
-                          "phone": phone("parentPhone", raw1)})
+                          "phone": phone("parentPhone", raw1),
+                          "relation": str(profile.get("parent_relation") or "") or None})
     # Veli 2 = profilin `parent_name2` + `parent_phone2`si.
     raw2 = profile.get("parent_phone2")
     if str(raw2 or "").strip():
         guardians.append({"slot": 2, "name": str(profile.get("parent_name2") or "") or None,
-                          "phone": phone("parentPhone2", raw2)})
+                          "phone": phone("parentPhone2", raw2),
+                          "relation": str(profile.get("parent_relation2") or "") or None})
+    # Veli 3–4 (göç 007): yalnız KM'de; mobil geçit bugün yuva 1–2'yi taşır.
+    for offset, extra in enumerate(extra_items(profile)):
+        slot = 3 + offset
+        guardians.append({"slot": slot, "name": extra["name"] or None,
+                          "phone": phone(f"guardian{slot}Phone", extra["phone"]),
+                          "relation": extra["relation"] or None})
 
     stamps = [m for m in (_moment(canteen.get("updatedAt")), _moment(profile.get("updated_at")))
               if m is not None]
@@ -285,6 +294,20 @@ class StudentDirectory:
         if canteen:
             self._cache = None
             self._cache_at = None
+
+    def cached_row(self, student_id: str) -> dict[str, Any] | None:
+        """Son okunan kantin listesindeki satır (TAZELİĞİNE BAKILMAKSIZIN) ya da None.
+
+        Yalnız kantine o an ulaşılamadığında öğrenci kartının ekranda kalması için
+        (`StudentService.get_student`); kantine gidilmez.
+        """
+        if self._cache is None:
+            return None
+        wanted = str(student_id or "")
+        for row in self._cache[1]:
+            if str(row.get("id") or "") == wanted:
+                return dict(row)
+        return None
 
     def _fresh_rows(self) -> Records | None:
         if self._cache is not None and time.monotonic() - self._cache[0] < CACHE_SECONDS:

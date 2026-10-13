@@ -5,13 +5,22 @@
 // Akademi API'sindedir: panel yalnız `/v1/admin/*` uçlarını modülün izin
 // listeli vekili üzerinden çağırır (bkz. api.js, backend/proxy.py).
 //
-// BÖLÜM KAYDI TEK YERDE: aşağıdaki `SECTIONS` dizisi. Yeni bir yönetim bölümü =
-// bir dosya (`export function section(app) → {node, shown?, destroy?}`) + bu
-// diziye bir satır. Bölüm dosyası ilk açıldığında yüklenir (dinamik import),
-// sonra açık kalır; geri dönüldüğünde yeniden kurulmaz.
+// BİLGİ MİMARİSİ TEK YERDE: `sections.js` → `AREAS` (menüde en fazla altı üst
+// bölüm) ve `SECTIONS` (ekranlar; her biri bir üst bölümün altında). Yeni bir
+// yönetim ekranı = bir dosya (`export function section(app) → {node, shown?,
+// destroy?}`) + `SECTIONS`'a bir satır. Ekran dosyası ilk açıldığında yüklenir
+// (dinamik import), sonra açık kalır; geri dönüldüğünde yeniden kurulmaz.
 //
-// YETKİ: bölümün görünmesi `requires` (KM izinlerinden BİRİ) ile, düğmeler
+// YALNIZ AÇIK OLAN GÖRÜNÜR: kurumda kapalı özelliğin (`feature`) ekranı menüde
+// yoktur; işlem düğmeleri de çizilmez (`api.js` → `featureOff`). Bayraklar
+// açılışta `/km/status` → `features` ile gelir (okunamazsa her şey görünür).
+//
+// YETKİ: ekranın görünmesi `requires` (KM izinlerinden BİRİ) ile, düğmeler
 // `app.api.can(operationId)` ile çizilir; asıl kapı vekildedir (K9).
+//
+// HIZ: açılış TEK çağrıdır (`/km/status?operations=1` — bağlantı, izinler,
+// bayraklar ve işlem listesi birlikte); ilk ekran "Bugün" tek özet ucunu
+// (`admin_getDashboard`) çağırır.
 //
 // Import yolu panelin KOPYALANMIŞ konumuna göredir:
 //   shell/panels/bbd_akademi/index.js  →  shell/ui-kit/
@@ -21,55 +30,20 @@
 import { button, h, loadStyles, toaster } from '../../ui-kit/kit.js';
 import { alertBox, emptyState, skeletonRows } from '../../ui-kit/layout.js';
 import { createClient, problem } from './api.js';
+import { AREAS, SECTIONS, buildNav, featureOn, resolveTarget } from './sections.js';
+
+export { AREAS, SECTIONS };
 
 const P = 'bbd_akademi';
 
 /**
- * Bölümler. `requires`: KM izinleri (biri yeterli). `file`: bölüm modülü.
- * `group`: menüdeki başlık (aynı gruptakiler art arda yazılır). Sıra menü
- * sırasıdır. Yeni bölüm = bir dosya + buraya bir satır.
+ * Arayüz yetenekleri. `bbd_akademi.students` bir İŞARETTİR: çözülebiliyorsa
+ * kullanıcı BBD Akademi'yi görebiliyor demektir ve "Öğrenci Yönetimi" ekranı
+ * (bbd_students) kullanıcıyı buraya — Öğrenciler bölümüne — yönlendirir.
  */
-export const SECTIONS = [
-  { key: 'dashboard', label: 'Panel', file: './dashboard.js', requires: ['view'] },
-  { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'] },
-  { key: 'curriculum', label: 'Müfredat', file: './curriculum.js', requires: ['view'],
-    group: 'Akademik' },
-  { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'],
-    group: 'Akademik' },
-  { key: 'timetable', label: 'Ders programı', file: './timetable.js', requires: ['view'],
-    group: 'Akademik' },
-  { key: 'calendar', label: 'Kurum takvimi', file: './institution-calendar.js',
-    requires: ['view'], group: 'Akademik' },
-  { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'],
-    group: 'Akademik' },
-  { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'],
-    group: 'Akademik' },
-  { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'],
-    group: 'Akademik' },
-  { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'],
-    group: 'Öğrenme araçları' },
-  { key: 'reading', label: 'Okuma', file: './reading.js', requires: ['view'],
-    group: 'Öğrenme araçları' },
-  { key: 'decks', label: 'Bilgi kartları', file: './decks.js', requires: ['learning_setup'],
-    group: 'Öğrenme araçları' },
-  { key: 'evaluations', label: 'Değerlendirmeler', file: './evaluations.js',
-    requires: ['evaluations', 'learning_setup'], group: 'Öğrenme araçları' },
-  { key: 'insights', label: 'Erken uyarı', file: './insights.js', requires: ['view'],
-    group: 'Öğrenme araçları' },
-  { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'],
-    group: 'Kurum' },
-  { key: 'books', label: 'Kitap talepleri', file: './books.js', requires: ['view'],
-    group: 'Kurum' },
-  { key: 'announcements', label: 'Duyurular', file: './announcements.js',
-    requires: ['announcements'], group: 'Kurum' },
-  { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'],
-    group: 'Kurum' },
-  { key: 'settings', label: 'Ayarlar', file: './settings.js', requires: ['settings'],
-    group: 'Yönetim' },
-  { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'], group: 'Yönetim' },
-  { key: 'privacy', label: 'KVKK talepleri', file: './privacy.js', requires: ['privacy'],
-    group: 'Yönetim' },
-];
+export function capabilities() {
+  return { 'bbd_akademi.students': () => ({ section: 'students' }) };
+}
 
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — dosya tepesinde değil, burada
@@ -79,6 +53,7 @@ export function mount(root, ctx) {
   const disposers = [];
   let disposed = false;
   let permissions = null;             // null = okunamadı → karar backend'de
+  let features = null;                // kurum bayrakları; null = okunamadı → her şey görünür
 
   const app = {
     root: view,
@@ -91,10 +66,19 @@ export function mount(root, ctx) {
       return permissions.has(`${P}.${permission}`);
     },
     can: (operationId) => app.api.can(operationId),
-    /** Başka bölüme geç: `app.go('finance', {studentId})`. */
+    /**
+     * Başka ekrana geç: `app.go('finance', {studentId})`. Anahtar ekran
+     * (`finance`), üst bölüm (`money`) ya da eski ad olabilir (`sections.js`).
+     */
     go: (key, payload = null) => show(key, payload),
     /** KM'nin başka ekranına geç (ör. Öğrenciler modülü). */
     openPanel: (id, payload = null) => ctx.open?.(id, payload),
+    /**
+     * Başka modülün ARAYÜZ yeteneği (K3; yoksa null). Öğrenci yönetimi:
+     * `bbd_students.manager` (liste + toplu işlemler + gruplar) ve
+     * `bbd_students.record` (öğrenci kartındaki "Kayıt ve veliler").
+     */
+    capability: (name) => (typeof ctx.capability === 'function' ? ctx.capability(name) : null),
     /**
      * KM'nin başka bir modülünün SALT OKUNUR ucu (ör. Zil Sistemi
      * `/api/bell/plan/status`). Yalnız GET; o modülün kendi izni geçerlidir
@@ -104,6 +88,13 @@ export function mount(root, ctx) {
     kmGet: (path) => ctx.api(path),
     /** Sözleşme şalteri açık mı (`backend/contract_features.py`; okunamadıysa kapalı). */
     feature: (name) => Boolean(app.status?.contractFeatures?.[name]),
+    /** Kurum özellik bayrağı açık mı (Akademi `features`; okunamadıysa AÇIK sayılır). */
+    enabled: (flag) => featureOn(features, flag),
+    /**
+     * Ayarlar → Özellikler'de bir bayrak değişince: bayrakları tazele, menüyü
+     * yeniden çiz (kapanan ekranın menü satırı hemen kalkar, açılanınki gelir).
+     */
+    refreshFeatures: () => refreshFeatures(),
     onDispose: (fn) => disposers.push(fn),
     lookups: null,
   };
@@ -120,55 +111,67 @@ export function mount(root, ctx) {
   main.append(skeletonRows(6, 5));
   root.replaceChildren(view);
 
-  const built = new Map();            // key → {node, shown, destroy}
-  const navButtons = new Map();
-  let current = null;
+  const built = new Map();            // ekran → {node, shown, destroy}
+  let menu = [];                      // görünür üst bölümler (`buildNav`)
+  let current = null;                 // {area, section}
 
-  function visibleSections() {
-    return SECTIONS.filter((section) => section.requires.some((perm) => app.has(perm)));
-  }
+  const navContext = () => ({ has: (permission) => app.has(permission), features });
+  const sectionOf = (key) => SECTIONS.find((item) => item.key === key);
 
   function paintNav() {
+    menu = buildNav(navContext());
     nav.replaceChildren();
-    navButtons.clear();
-    let group = null;
-    for (const section of visibleSections()) {
-      if ((section.group || null) !== group) {
-        group = section.group || null;
-        if (group) nav.append(h('div', 'ak-nav-group', group));
-      }
-      const item = h('button', 'ak-nav-item', section.label);
+    for (const area of menu) {
+      const on = current?.area === area.key;
+      const item = h('button', 'ak-nav-item', area.label);
       item.type = 'button';
-      item.addEventListener('click', () => show(section.key));
-      navButtons.set(section.key, item);
+      item.title = area.hint;
+      item.classList.toggle('on', on);
+      item.setAttribute('aria-current', on && area.sections.length === 1 ? 'page' : 'false');
+      item.setAttribute('aria-expanded', on ? 'true' : 'false');
+      item.addEventListener('click', () => show(area.key));
       nav.append(item);
-    }
-    paintActive();
-  }
-
-  function paintActive() {
-    for (const [key, item] of navButtons) {
-      item.classList.toggle('on', key === current);
-      item.setAttribute('aria-current', key === current ? 'page' : 'false');
+      // Alt ekranlar yalnız seçili üst bölümün altında açılır; tek ekranlı
+      // bölümde (Öğrenciler) alt satır çizilmez.
+      if (on && area.sections.length > 1) {
+        item.classList.add('ak-nav-open');
+        const sub = h('div', 'ak-nav-sub');
+        sub.setAttribute('role', 'group');
+        sub.setAttribute('aria-label', area.label);
+        for (const section of area.sections) {
+          const subOn = current.section === section.key;
+          const entry = h('button', 'ak-nav-subitem', section.label);
+          entry.type = 'button';
+          entry.classList.toggle('on', subOn);
+          entry.setAttribute('aria-current', subOn ? 'page' : 'false');
+          entry.addEventListener('click', () => show(section.key));
+          sub.append(entry);
+        }
+        nav.append(sub);
+      }
     }
   }
 
   async function show(key, payload = null) {
-    const section = visibleSections().find((item) => item.key === key);
-    if (!section) {
-      toast('Bu bölümü açma yetkiniz yok.', 'bad');
+    const target = resolveTarget(menu, key);
+    if (!target) {
+      const section = sectionOf(key);
+      toast(section?.feature && !featureOn(features, section.feature)
+        ? `“${section.label}” kurumda kapalı. Ayarlar → Özellikler'den açılabilir.`
+        : 'Bu bölümü açma yetkiniz yok.', 'bad');
       return;
     }
-    current = key;
-    paintActive();
-    for (const [name, entry] of built) entry.node.hidden = name !== key;
-    let entry = built.get(key);
+    const section = sectionOf(target.section);
+    current = target;
+    paintNav();
+    for (const [name, entry] of built) entry.node.hidden = name !== section.key;
+    let entry = built.get(section.key);
     if (!entry) {
       const slot = h('div', 'ak-section');
       slot.append(skeletonRows(6, 5));
       main.append(slot);
       entry = { node: slot, loading: true };
-      built.set(key, entry);
+      built.set(section.key, entry);
       try {
         const module = await import(section.file);
         if (disposed) return;
@@ -176,12 +179,12 @@ export function mount(root, ctx) {
         slot.replaceChildren(instance.node);
         Object.assign(entry, instance, { node: slot, loading: false });
       } catch (failure) {
-        console.error(`[bbd_akademi] ${key} bölümü açılamadı`, failure);
+        console.error(`[bbd_akademi] ${section.key} bölümü açılamadı`, failure);
         slot.replaceChildren(emptyState({ title: `“${section.label}” açılamadı`,
           text: problem(failure, 'Bölüm yüklenemedi.') }));
         entry.loading = false;
       }
-      for (const [name, item] of built) item.node.hidden = name !== current;
+      for (const [name, item] of built) item.node.hidden = name !== current.section;
     }
     if (!entry.loading) entry.shown?.(payload);
   }
@@ -191,37 +194,64 @@ export function mount(root, ctx) {
     banner.replaceChildren();
     const connection = status?.connection;
     if (!connection) return;
+    // Teknik ayrıntı (ayar adı, kasa anahtarı) modül README'sindedir; burada
+    // kurum yöneticisinin anlayacağı cümle durur.
     if (!connection.enabled) {
-      banner.append(alertBox('Akademi bağlantısı ayarlardan kapatılmış '
-        + '(modules.bbd_akademi.enabled). Ekranlar veri getiremez.', 'warn'));
+      banner.append(alertBox('Akademi bağlantısı kapalı; ekranlar veri getiremez. '
+        + 'Kontrol Merkezi sistem yöneticisine başvurun.', 'warn'));
     } else if (!connection.hasKey) {
-      banner.append(alertBox('Akademi entegrasyon anahtarı tanımlı değil. Anahtar sır kasasına '
-        + '“bbd_akademi.api_key” adıyla yazılmalı (kurulum: modül README).', 'warn'));
+      banner.append(alertBox('Akademi bağlantısı henüz kurulmamış; ekranlar veri getiremez. '
+        + 'Kontrol Merkezi sistem yöneticisine başvurun.', 'warn'));
+    }
+  }
+
+  function applyStatus(status) {
+    app.status = status;
+    permissions = new Set(status?.permissions || []);
+    features = status?.features && typeof status.features === 'object' ? status.features : null;
+    app.api.setFeatures(features);
+  }
+
+  async function refreshFeatures() {
+    try {
+      const status = await ctx.api(`/api/${P}/km/status?fresh=1`);
+      if (disposed) return;
+      applyStatus(status);
+    } catch {
+      return;                          // menü eski haliyle kalır; karar Akademi'de
+    }
+    paintNav();
+    // Açık ekran kapanan bir özelliğe aitse ilk ekrana dönülür.
+    if (current && !resolveTarget(menu, current.section)) {
+      const first = menu[0]?.sections[0];
+      if (first) show(first.key);
     }
   }
 
   async function boot() {
     try {
-      const [status] = await Promise.all([ctx.api(`/api/${P}/km/status`),
-        app.api.loadOperations()]);
-      app.status = status;
-      permissions = new Set(status?.permissions || []);
+      const status = await ctx.api(`/api/${P}/km/status?operations=1`);
+      if (Array.isArray(status?.operationList)) app.api.setOperations(status.operationList);
+      else await app.api.loadOperations();
+      applyStatus(status);
       paintBanner(status);
     } catch (failure) {
       permissions = null;
+      features = null;
       banner.replaceChildren(alertBox(`Akademi durumu okunamadı: ${problem(failure)}`, 'bad'));
     }
     if (disposed) return;
-    paintNav();
+    menu = buildNav(navContext());
     main.replaceChildren();
-    const first = visibleSections()[0];
+    const first = menu[0]?.sections[0];
     if (!first) {
+      paintNav();
       main.append(emptyState({ title: 'Görüntülenecek bölüm yok',
         text: 'Akademi bölümleri için yetkiniz yok.',
         actions: [button('Yenile', { onClick: () => boot() })] }));
       return;
     }
-    const wanted = ctx.payload?.section && visibleSections().some((s) => s.key === ctx.payload.section)
+    const wanted = ctx.payload?.section && resolveTarget(menu, ctx.payload.section)
       ? ctx.payload.section : first.key;
     show(wanted, ctx.payload || null);
   }
