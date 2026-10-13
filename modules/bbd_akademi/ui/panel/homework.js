@@ -676,7 +676,10 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
       studentNames.get(studentId) || 'Öğrenci'])),
   };
   // Ders / konu / kaynak / açıklama alanları ortak (toplu ödev ve şablon formu da kullanır).
-  const pieces = homeworkContent(app, current, subjects);
+  // Program seçicinin seviye önerisi bu formdaki hedeften (sınıf / grup / öğrenci) gelir.
+  const pieces = homeworkContent(app, current, subjects, { target: () => ({
+    classGroupIds: target.classGroupIds, studentGroupIds: target.studentGroupIds,
+    studentIds: [...target.students.keys()] }) });
   disposers.push(() => pieces.dispose());
   const { subjectOptions, topicField, resourceField, descriptionField } = pieces;
 

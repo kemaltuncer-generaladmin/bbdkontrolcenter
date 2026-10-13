@@ -20,6 +20,7 @@
 import { button, h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, badge, card, chipRow } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
+import { programLabel } from './curriculum-picker.js';
 import {
   actionButton, confirmAction, empty, fileDrop, fmtDateTime, formDialog, GRADE_LEVELS,
   gradeText, kv, loader, multiChips, num, openDrawer, pagedList, problem, runAction,
@@ -356,7 +357,7 @@ async function topicOptions(app, subjectId) {
     for (const unit of program.units || []) {
       for (const topic of unit.topics || []) {
         if (topic.retired || seen.has(topic.id)) continue;
-        seen.set(topic.id, { value: topic.id, label: `${topic.title} — ${program.title}` });
+        seen.set(topic.id, { value: topic.id, label: `${topic.title} — ${programLabel(program)}` });
       }
     }
   }

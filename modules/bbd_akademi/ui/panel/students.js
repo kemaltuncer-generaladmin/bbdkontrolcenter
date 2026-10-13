@@ -71,11 +71,15 @@ export function section(app) {
     { key: 'km', label: 'Öğrenciler' },
     { key: 'kmBulk', label: 'Toplu işlemler' },
     { key: 'kmGroups', label: 'Gruplar' },
+    { key: 'kmClasses', label: 'Sınıflar' },
   ] : manager ? [
     { key: 'km', label: 'Öğrenciler' },
     { key: 'kmBulk', label: 'Toplu işlemler' },
     { key: 'kmGroups', label: 'Gruplar' },
-    { key: 'classes', label: 'Sınıflar' },
+    // SINIF SEVİYEYİ TAŞIR (13.10.2026): seviye / alan / hedef sınav KM sınıf tanımında
+    // ("Sınıflar"); Akademi sınıf eşlemesi (dönem, rehber öğretmen) ayrı sekmede.
+    { key: 'kmClasses', label: 'Sınıflar' },
+    { key: 'classes', label: 'Dönem ve rehber' },
     { key: 'guardians', label: 'Veliler ve uygulama' },
     { key: 'students', label: 'Uygulama kullanımı' },
   ] : [
@@ -91,7 +95,7 @@ export function section(app) {
 
   const bodies = {};
   let shared = null;                  // KM yönetimi: üç sekme tek örnek
-  const kmMode = { km: 'list', kmBulk: 'bulk', kmGroups: 'groups' };
+  const kmMode = { km: 'list', kmBulk: 'bulk', kmGroups: 'groups', kmClasses: 'classes' };
   const managed = () => {
     shared = shared || managerView(app, manager, { openRef });
     return shared;
@@ -100,6 +104,7 @@ export function section(app) {
     km: managed,
     kmBulk: managed,
     kmGroups: managed,
+    kmClasses: managed,
     students: () => studentsView(app, { open }),
     classes: () => classesView(app, { openStudent: open }),
     groups: () => groupsView(app, { openStudent: open }),
@@ -124,8 +129,8 @@ export function section(app) {
     shown(payload) {
       // `{view: 'groups'}` (eski Akademi grupları) yönetimde KM "Gruplar"ıdır.
       let wanted = payload?.classGroupId ? 'classes' : (known.has(payload?.view) ? payload.view : null);
-      if (manager && ['groups', 'bulk', 'km', 'list'].includes(payload?.view)) {
-        wanted = { groups: 'kmGroups', bulk: 'kmBulk' }[payload.view] || 'km';
+      if (manager && ['groups', 'bulk', 'km', 'list', 'kmClasses'].includes(payload?.view)) {
+        wanted = { groups: 'kmGroups', bulk: 'kmBulk', kmClasses: 'kmClasses' }[payload.view] || 'km';
       }
       if (!started) {
         started = true;

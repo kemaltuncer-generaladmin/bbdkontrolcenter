@@ -29,6 +29,9 @@ STUDENT = {
     "className": "9-A", "schoolNo": "77", "studentPhone": "", "note": "", "gradeLevel": 9,
     "track": None, "examTarget": "LGS", "status": "active", "balance": 0, "canteenSync": "ok",
     "guardians": [], "curriculumSuggestion": None,
+    # Sınıf seviyeyi taşır (göç 008): seviye sınıftan, öğrenciye özel istisna kapalı.
+    "classLevel": {"gradeLevel": 9, "track": None, "examTarget": "LGS"}, "levelSource": "class",
+    "levelOverride": False, "ownTrack": None, "ownExamTarget": None,
 }
 GUARDIANS = {"items": [{"slot": 1, "name": "Ayşe Kaya", "phone": "5321112233", "relation": "mother",
                         "primary": True, "appAccess": True, "siblings": []}],
@@ -138,11 +141,12 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(30);
   out.limitPatch = calls.slice(mark4).filter((c) => c.method === 'PATCH').map((c) => c.body);
 
-  // 8) Seçim kutusu seçilince kaydeder (tek etkileşim).
-  const exam = input('Hedef sınav');
+  // 8) Seviye sınıftan gelir (salt okunur); öğrenciye özel istisna tek tıkla açılır.
+  out.levelLine = host.querySelector('.st-level-line')?.textContent || '';
+  const override = input('Bu öğrenci için farklı alan / hedef sınav');
   const mark5 = calls.length;
-  exam.value = 'YKS';
-  exam.dispatchEvent(new Event('change', { bubbles: true }));
+  override.checked = true;
+  override.dispatchEvent(new Event('change', { bubbles: true }));
   await sleep(20);
   out.examPatch = calls.slice(mark5).filter((c) => c.method === 'PATCH').map((c) => c.body);
 
@@ -200,7 +204,8 @@ def test_hizli_islemler_veli_telefonu_ve_limit(result: dict[str, Any]) -> None:
     assert result["quickLabels"] == ["Sınıf", "Veli telefonu", "Günlük kantin limiti (₺)"]
     assert result["phonePut"] == [{"items": [{"name": "Ayşe Kaya", "phone": "5054445566", "relation": "mother"}]}]
     assert result["limitPatch"] == [{"dailyLimit": 20000}]
-    assert result["examPatch"] == [{"examTarget": "YKS"}]
+    assert result["examPatch"] == [{"levelOverride": True}]
+    assert result["levelLine"] == "9. sınıf · LGS — 9-A sınıfından"
 
 
 def test_kart_erisilebilirlik_denetimi_temiz(result: dict[str, Any]) -> None:

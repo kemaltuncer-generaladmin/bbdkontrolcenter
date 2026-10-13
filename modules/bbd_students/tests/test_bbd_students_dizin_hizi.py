@@ -99,9 +99,10 @@ def okul(count: int = 50) -> Canteen:
 async def test_sicak_dizin_kantine_ve_veritabanina_GITMEZ(store: CountingStore) -> None:
     canteen = okul()
     directory = StudentDirectory(canteen=canteen, store=store, log=FakeLog())
-    # soğuk: 1 kantin + 2 sorgu (profiller + mezar taşları, km-merkezi-senkron §3.3)
+    # soğuk: 1 kantin + 3 sorgu (profiller + mezar taşları, km-merkezi-senkron §3.3; sınıf
+    # tanımları — sınıf seviyeyi taşır, göç 008). Öğrenci sayısından bağımsız.
     assert len((await directory.list())["students"]) == 50
-    assert canteen.list_calls == 1 and store.statements == 2
+    assert canteen.list_calls == 1 and store.statements == 3
 
     store_before = store.statements
     await directory.list()

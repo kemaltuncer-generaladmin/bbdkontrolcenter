@@ -10,6 +10,7 @@
 import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, card, chipRow, hintBox } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
+import { programLabel } from './curriculum-picker.js';
 import {
   actionButton, empty, errorBox, fileDrop, loader, num, selectBox, toolbar, uploadProgress,
 } from './common.js';
@@ -251,7 +252,7 @@ function topicsCard(app, exam, { onChanged }) {
       }, { label: 'Müfredat programı' });
       app.api.getCached('/v1/admin/curricula/programs', { subject: section.subject?.id }, { ttlMs: 10 * 60_000 })
         .then((data) => picker.options([{ value: '', label: 'Program seçin' },
-          ...(data?.items || []).map((item) => ({ value: item.id, label: `${item.title}${item.exam ? ` · ${item.exam}` : ''}` }))]))
+          ...(data?.items || []).map((item) => ({ value: item.id, label: programLabel(item) }))]))
         .catch(() => picker.options([{ value: '', label: 'Program listesi alınamadı' }]));
       wrap.append(toolbar(picker.node));
       if (!info.units.length) return wrap;

@@ -37,7 +37,7 @@
 import { button, confirmSimple, moneyInput, parseMoney, todayIso } from '../../ui-kit/kit.js';
 import { formatBalance, normalizePhone, formatPhone } from './student.js';
 import {
-  EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, describe, fillFromSuggestion, parseChoice,
+  EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, classDraft, describe, levelLine, parseChoice,
   parseGrade, suggestedExam, trackAllowed,
 } from './curriculum.js';
 import * as G from './guardian-model.js';
@@ -431,9 +431,11 @@ export function mountRecord(host, options) {
         parse: normalizePhone }));
     identity.append(idGrid, field('Not', 'note', { type: 'textarea', maxLength: 500, wide: true }));
 
-    // Sınıf, seviye ve gruplar
-    const school = card('Sınıf ve gruplar', 'Ana sınıf tektir (kantin kartı, Akademi sınıfı ve müfredat '
-      + 'önerisi ondan gelir). Öğrenci aynı anda birden çok gruba üye olabilir (etüt, kurs, özel ders).');
+    // Sınıf, seviye ve gruplar — SINIF SEVİYEYİ TAŞIR (göç 008): seviye / alan / hedef sınav
+    // sınıfın tanımından gelir; burada yalnız öğrenciye özel alan / hedef sınav istisnası girilir.
+    const school = card('Sınıf ve gruplar', 'Ana sınıf tektir: kantin kartı, Akademi sınıfı ve SEVİYE '
+      + '(seviye, alan, hedef sınav → müfredat) ondan gelir. Öğrenci aynı anda birden çok gruba üye '
+      + 'olabilir (etüt, kurs, özel ders); gruplar seviye taşımaz.');
     const classGrid = h('div', 'st-grid');
     const listId = `st-classes-${Math.random().toString(36).slice(2, 8)}`;
     const datalist = h('datalist');
@@ -441,15 +443,7 @@ export function mountRecord(host, options) {
     for (const name of options.classes?.() || []) datalist.append(new Option(name, name));
     classGrid.append(field('Ana sınıf', 'className', { placeholder: '11-A', maxLength: 20, list: listId,
       parse: (value) => value, after: () => syncCurriculum() }), datalist);
-    const display = (value) => (value === null || value === undefined ? '' : String(value));
-    classGrid.append(
-      field('Seviye', 'gradeLevel', { type: 'select', choices: GRADE_CHOICES, parse: parseGrade, display,
-        after: () => syncCurriculum() }),
-      field('Alan (10. sınıf ve üstü)', 'track', { type: 'select', choices: TRACK_CHOICES, parse: parseChoice,
-        display, after: () => syncCurriculum() }),
-      field('Hedef sınav', 'examTarget', { type: 'select', choices: EXAM_CHOICES, parse: parseChoice, display,
-        after: () => syncCurriculum() }));
-    const suggest = h('div', 'st-suggest');
+    const suggest = h('div', 'st-suggest st-level');
     school.append(classGrid, suggest);
     const groupsBox = h('div', 'st-rec-groups');
     school.append(h('p', 'st-subhead', 'Gruplar'), groupsBox);
@@ -697,31 +691,161 @@ export function mountRecord(host, options) {
     on.textContent = inactive ? 'Yeniden etkinleştir' : 'Planı iptal et';
   }
 
+  /**
+   * Seviye kutusu. Sınıf tanımlıysa salt okunur "11. sınıf · SAY · YKS — 11-A sınıfından" +
+   * öğrenciye özel alan / hedef sınav istisnası; tanımsızsa sınıfın seviyesi buradan da girilir
+   * (PUT /classes/{ad} — sınıftaki herkese geçer). Ana sınıf değişince kayıt yeniden okunur.
+   */
   function syncCurriculum(slot) {
-    const suggest = slot || body.querySelector('.st-suggest');
-    if (!draft || !inputs.track) return;
-    const allowed = trackAllowed(draft.gradeLevel ?? null);
-    inputs.track.disabled = !allowed || !can('bbd_students.manage');
-    inputs.track.title = allowed ? '' : 'Alan yalnız 10. sınıf ve üstünde ya da mezunda seçilir.';
-    if (!allowed && draft.track) {
-      draft.track = null;
-      inputs.track.value = '';
+    const box = slot || body.querySelector('.st-level');
+    if (!box || !student) return;
+    if ((draft?.className || '') !== (student.className || '')) return;
+    if (box.dataset.forClass !== undefined && box.dataset.forClass !== (student.className || '')) {
+      // Ana sınıf değişti: yalnız seviye alanları sunucudan tazelenir (kart yeniden çizilmez).
+      box.dataset.forClass = student.className || '';
+      refreshLevel(box);
+      return;
     }
-    if (!suggest) return;
-    suggest.replaceChildren();
-    const hint = suggestedExam(draft.gradeLevel ?? null);
-    if (hint && !draft.examTarget) suggest.append(h('span', 'st-hint', `Önerilen hedef sınav: ${hint}. `));
-    const changes = fillFromSuggestion(draft);
-    if (Object.keys(changes).length === 0 || !can('bbd_students.manage')) return;
-    suggest.append(h('span', null, `Sınıf adından öneri (${draft.className}): ${describe(draft.curriculumSuggestion)} `));
-    suggest.append(button('Öneriyi uygula', { onClick: () => {
-      Object.assign(draft, fillFromSuggestion(draft));
-      for (const key of ['gradeLevel', 'track', 'examTarget']) {
-        inputs[key].value = draft[key] === null || draft[key] === undefined ? '' : String(draft[key]);
+    box.dataset.forClass = student.className || '';
+    box.replaceChildren();
+    const manage = can('bbd_students.manage');
+    const name = student.className || '';
+    if (!name) {
+      box.append(h('p', 'st-hint', 'Önce ana sınıf seçin: seviye, alan ve hedef sınav (müfredat) sınıftan gelir.'));
+      return;
+    }
+    const cls = student.classLevel || null;
+    if (!cls) {
+      const warn = h('p', 'st-lc-warn', `“${name}” sınıfına seviye girilmemiş — müfredat bağlanamıyor.`);
+      box.append(warn);
+      if (student.levelSource === 'student') {
+        box.append(h('p', 'st-hint', `Şimdilik öğrencinin eski kaydı geçerli: ${describe(student)}.`));
       }
-      syncCurriculum();
-      paintDirty();
-    } }));
+      if (manage) box.append(classLevelForm(name));
+      return;
+    }
+    const line = h('p', 'st-level-line');
+    line.append(h('b', null, levelLine(student)), document.createTextNode(` — ${name} sınıfından`));
+    if (student.levelOverride) line.append(h('span', 'st-badge st-badge-warn', 'öğrenciye özel'));
+    box.append(line);
+    const toggleId = `${uid}-override`;
+    const toggle = h('input');
+    toggle.type = 'checkbox';
+    toggle.id = toggleId;
+    toggle.checked = Boolean(student.levelOverride);
+    toggle.disabled = !manage || !can('bbd_students.manage');
+    const toggleLabel = h('label', 'st-check', 'Bu öğrenci için farklı alan / hedef sınav');
+    toggleLabel.htmlFor = toggleId;
+    const toggleRow = h('div', 'st-check-row');
+    toggleRow.append(toggle, toggleLabel);
+    box.append(toggleRow);
+    toggle.addEventListener('change', () => patchLevel({ levelOverride: toggle.checked }));
+    if (!student.levelOverride) return;
+    const grid = h('div', 'st-grid');
+    const own = (label, key, choices, value, allowed = true) => {
+      const wrap = h('div', 'st-field');
+      const id = `${uid}-own-${key}`;
+      const caption = h('label', 'st-label', label);
+      caption.htmlFor = id;
+      const select = h('select', 'st-input st-select');
+      select.id = id;
+      for (const [v, text] of choices) select.append(new Option(text, v));
+      select.value = value === null || value === undefined ? '' : String(value);
+      select.disabled = !manage || !allowed;
+      select.addEventListener('change', () => patchLevel({ [key]: parseChoice(select.value) }));
+      wrap.append(caption, select);
+      return wrap;
+    };
+    grid.append(
+      own('Alan (bu öğrenci)', 'track', TRACK_CHOICES, student.ownTrack, trackAllowed(cls.gradeLevel)),
+      own('Hedef sınav (bu öğrenci)', 'examTarget', EXAM_CHOICES, student.ownExamTarget));
+    box.append(grid, h('p', 'st-hint', 'Boş bırakılan alan sınıftan gelir. Seviye her zaman sınıftandır.'));
+  }
+
+  const LEVEL_KEYS = ['gradeLevel', 'track', 'examTarget', 'classLevel', 'levelSource', 'levelOverride',
+    'ownTrack', 'ownExamTarget', 'curriculumSuggestion'];
+
+  async function refreshLevel(box) {
+    const asked = student.className || '';
+    try {
+      const fresh = await api(`${BASE}/students/${enc(kantinId)}`);
+      if (destroyed || (student.className || '') !== asked || (fresh.className || '') !== asked) return;
+      for (const key of LEVEL_KEYS) { student[key] = fresh[key]; draft[key] = fresh[key]; }
+      syncCurriculum(box);
+      paintHead();
+    } catch {
+      // seviye kutusu eski hâliyle kalır; bir sonraki okumada düzelir
+    }
+  }
+
+  async function patchLevel(body) {
+    const started = Date.now();
+    try {
+      await api(`${BASE}/students/${enc(kantinId)}`, { method: 'PATCH', body });
+      if (destroyed) return;
+      announce('Seviye istisnası kaydedildi.', null, started);
+      await reload();
+      options.onChanged?.(student);
+    } catch (failure) {
+      showErrors([`Kaydedilemedi: ${failure.message}`]);
+    }
+  }
+
+  /** Sınıfa seviye tanımı (seviyesiz sınıf için kartın içinden; sınıftaki herkese geçer). */
+  function classLevelForm(name) {
+    const form = h('div', 'st-class-form');
+    const value = classDraft({ name, suggestion: student.curriculumSuggestion });
+    const pick = (label, key, choices) => {
+      const wrap = h('div', 'st-field');
+      const id = `${uid}-cls-${key}`;
+      const caption = h('label', 'st-label', label);
+      caption.htmlFor = id;
+      const select = h('select', 'st-input st-select');
+      select.id = id;
+      for (const [v, text] of choices) select.append(new Option(text, v));
+      select.value = value[key] === null || value[key] === undefined ? '' : String(value[key]);
+      select.addEventListener('change', () => {
+        value[key] = key === 'gradeLevel' ? parseGrade(select.value) : parseChoice(select.value);
+        if (key === 'gradeLevel') {
+          trackSel.disabled = !trackAllowed(value.gradeLevel);
+          if (trackSel.disabled) { value.track = null; trackSel.value = ''; }
+          if (!value.examTarget && suggestedExam(value.gradeLevel)) {
+            value.examTarget = suggestedExam(value.gradeLevel);
+            examSel.value = value.examTarget;
+          }
+        }
+      });
+      wrap.append(caption, select);
+      return [wrap, select];
+    };
+    const [gradeBox] = pick(`Sınıfın seviyesi (${name})`, 'gradeLevel', GRADE_CHOICES);
+    const [trackBox, trackSel] = pick('Alan', 'track', TRACK_CHOICES);
+    const [examBox, examSel] = pick('Hedef sınav', 'examTarget', EXAM_CHOICES);
+    trackSel.disabled = !trackAllowed(value.gradeLevel ?? null);
+    const grid = h('div', 'st-grid');
+    grid.append(gradeBox, trackBox, examBox);
+    const go = button('Sınıfa kaydet', { variant: 'primary', onClick: async () => {
+      if (value.gradeLevel === null || value.gradeLevel === undefined) {
+        showErrors(['Sınıfın seviyesini seçin.']);
+        return;
+      }
+      go.disabled = true;
+      try {
+        const result = await api(`/api/bbd_students/classes/${enc(name)}`, { method: 'PUT',
+          body: { gradeLevel: value.gradeLevel, track: value.track, examTarget: value.examTarget } });
+        if (destroyed) return;
+        announce(`“${name}” sınıfının seviyesi kaydedildi (${result?.updatedStudents ?? 0} öğrenci).`, null, Date.now());
+        await reload();
+        options.onChanged?.(student);
+      } catch (failure) {
+        showErrors([`Kaydedilemedi: ${failure.message}`]);
+      } finally {
+        go.disabled = false;
+      }
+    } });
+    form.append(grid, h('p', 'st-hint', 'Seviye bu sınıftaki BÜTÜN öğrencilere geçer; Akademi müfredatı '
+      + 'kendiliğinden bağlar.'), go);
+    return form;
   }
 
   // ------------------------------------------------------------ gruplar

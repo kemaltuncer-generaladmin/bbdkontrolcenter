@@ -25,6 +25,7 @@ import {
   pagedList, problem, runAction, searchBox, sectionHead, selectBox, todayIst, toolbar,
 } from './common.js';
 import { bulkTargetField } from './bulk-target.js';
+import { programLabel, sortPrograms } from './curriculum-picker.js';
 import { bulkHomeworkWizard, contentDialog, templateLine } from './homework-bulk.js';
 import { topicsText } from './homework-content.js';
 import { templatesTab as planTemplatesTab } from './plan-templates.js';
@@ -386,9 +387,9 @@ function programPicker(app, subjects, chosen, onChange) {
     if (!subject) return;
     try {
       const data = await app.api.getCached('/v1/admin/curricula/programs', { subject, scope: 'all' });
-      const name = subjects.find((item) => item.id === subject)?.name || subject;
-      programOptions = (data?.items || []).map((item) => ({ value: item.id,
-        label: `${name} — ${item.title}` }));
+      // Seviye sırası ve seviyeli ad ("11. sınıf · Matematik"): aynı adlı programlar ayrışır.
+      programOptions = sortPrograms(data?.items || []).map((item) => ({ value: item.id,
+        label: programLabel(item) }));
       programSelect.options([{ value: '', label: programOptions.length ? 'Program ekle…' : 'Bu derste program yok' },
         ...programOptions]);
     } catch {

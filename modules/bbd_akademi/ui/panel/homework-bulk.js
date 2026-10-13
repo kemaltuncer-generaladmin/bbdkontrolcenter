@@ -69,9 +69,9 @@ function weeklyDates(start, end, weekdays) {
  * @returns {Promise<{draft, content, source}|object|null>}
  */
 export async function contentDialog(app, current, { title = 'Ödev içeriği', submitLabel = 'Ekle',
-  extraFields = [], extraValue = {}, save = null } = {}) {
+  extraFields = [], extraValue = {}, save = null, target = null } = {}) {
   const subjects = await app.lookups.subjects().catch(() => []);
-  const pieces = homeworkContent(app, current, subjects);
+  const pieces = homeworkContent(app, current, subjects, { target });
   try {
     const saved = await formDialog(app, {
       title,
@@ -147,6 +147,12 @@ export async function bulkHomeworkWizard(app, { template = null } = {}) {
   const allTemplates = () => items.length > 0 && items.every((item) => item.templateId && !item.content);
 
   let target = null;
+  // "Kime?" önce seçilip "Ne?"ye dönülürse program seçici o hedefin seviyesini önerir.
+  const contentTarget = () => {
+    if (!target || target.problem()) return null;
+    const { classGroupIds, studentGroupIds, studentIds } = target.value({ bundle: false });
+    return { classGroupIds, studentGroupIds, studentIds };
+  };
 
   // ======================================================= 1. Ne?
   const stepWhat = (ctl) => {
@@ -171,7 +177,8 @@ export async function bulkHomeworkWizard(app, { template = null } = {}) {
         const tools = h('div', 'ak-row-actions');
         if (item.content) {
           tools.append(button('Düzenle', { variant: 'ghost', onClick: async () => {
-            const next = await contentDialog(app, item.source, { title: 'Ödevi düzenle', submitLabel: 'Kaydet' });
+            const next = await contentDialog(app, item.source, { title: 'Ödevi düzenle', submitLabel: 'Kaydet',
+              target: contentTarget });
             if (next) { item.content = next.content; item.source = next.source; paint(); }
           } }));
         }
@@ -230,7 +237,7 @@ export async function bulkHomeworkWizard(app, { template = null } = {}) {
     fromTemplate.setAttribute('aria-expanded', 'false');
     const write = button('Yeni ödev yaz', { variant: 'primary', onClick: async () => {
       if (items.length >= MAX_ITEMS) { app.toast(`En çok ${MAX_ITEMS} ödev satırı eklenebilir.`, 'warn'); return; }
-      const next = await contentDialog(app, null, { title: 'Yeni ödev' });
+      const next = await contentDialog(app, null, { title: 'Yeni ödev', target: contentTarget });
       if (!next) return;
       seqNo += 1;
       items.push({ key: seqNo, templateId: null, content: next.content, source: next.source });

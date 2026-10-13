@@ -19,6 +19,7 @@
 import { blockedButton, button, h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, badge, card, tabBar } from '../../ui-kit/layout.js';
 import { AkademiError } from './api.js';
+import { programLabel, sortPrograms } from './curriculum-picker.js';
 import {
   actionButton, dateInput, fmtDate, fmtDateTime, formDialog, kv, loader, multiChips, num, optionsOf,
   pagedList, sectionHead, selectBox, statusBadge, todayIst, toolbar,
@@ -629,9 +630,9 @@ function sectionsEditor(app, { draft, set, subjects, locked, rows: given = [] })
         const data = await app.api.getCached('/v1/admin/curricula/programs', { subject: row.subjectId },
           { ttlMs: 10 * 60_000 });
         const family = examFamily(draft.type);
-        const items = [...(data?.items || [])].sort((a, b) => Number(b.exam === family) - Number(a.exam === family));
+        const items = sortPrograms(data?.items).sort((a, b) => Number(b.exam === family) - Number(a.exam === family));
         program.options([{ value: '', label: 'Program yok' },
-          ...items.map((item) => ({ value: item.id, label: `${item.title}${item.exam ? ` · ${item.exam}` : ''}` }))]);
+          ...items.map((item) => ({ value: item.id, label: programLabel(item) }))]);
         // Türle aynı sınav programı tekse kendiliğinden seçilir.
         const matching = items.filter((item) => item.kind === 'exam' && item.exam && item.exam === family
           && (!item.subject?.id || item.subject.id === row.subjectId));

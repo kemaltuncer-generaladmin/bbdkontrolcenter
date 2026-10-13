@@ -835,7 +835,7 @@ function renderCurriculum(ctx, data) {
     + `hedef ${EXAM_TARGETS[data.examTarget] || '—'} · çözümlendi ${fmtDateTime(data.resolvedAt)}`));
   const programs = data.programs || [];
   if (!programs.length) {
-    nodes.push(empty('Program yok', 'Seviye, alan ve hedef sınav KM\'de tanımlanınca müfredat kendiliğinden seçilir.'));
+    nodes.push(empty('Program yok', 'Öğrencinin sınıfına seviye girilince (Öğrenciler → Sınıflar) müfredat kendiliğinden bağlanır.'));
   }
   for (const entry of programs) nodes.push(programCard(ctx, entry));
   return nodes;

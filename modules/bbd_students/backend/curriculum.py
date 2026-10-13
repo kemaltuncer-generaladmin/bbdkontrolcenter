@@ -175,3 +175,79 @@ def suggest(class_name: str | None) -> dict[str, Any] | None:
     if grade is None and track is None:
         return None
     return {"gradeLevel": grade, "track": track, "examTarget": exam}
+
+
+# ---------------------------------------------------------------- sınıf seviyeyi taşır
+#
+# Kullanıcı kararı (2026-10-13): seviye / alan / hedef sınav ANA SINIF tanımında
+# girilir (`mod_bbd_students_class`, göç 008). Öğrencinin geçerli değeri:
+#
+#   sınıfın seviyesi tanımlı  → seviye, alan, hedef sınav SINIFTAN;
+#                               `level_override` açıksa öğrencinin DOLU alanı / hedef
+#                               sınavı sınıfınkinin yerine geçer (seviye değil)
+#   sınıfa seviye girilmemiş  → öğrencinin kendi değerleri (göç 002; geriye uyum)
+#
+# `source`: "class" | "override" | "student" | None (hiçbiri yok).
+
+
+def class_from_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Sınıf satırı → `{"gradeLevel", "track", "examTarget"}`; seviyesi yoksa None."""
+    if not row:
+        return None
+    plan = from_row(row)
+    if plan["gradeLevel"] is None:
+        return None
+    if plan["track"] is not None and not track_allowed(plan["gradeLevel"]):
+        plan["track"] = None
+    return plan
+
+
+def resolve_class(current: dict[str, Any] | None, patch: dict[str, Any]) -> dict[str, Any]:
+    """Sınıf tanımı yaması → yazılacak SÜTUNLAR (tam satır). Seviye zorunlu; alan yalnız 10+ / mezun.
+
+    Gönderilmeyen alan mevcut değerini korur; seviye 10'un altına inerse alan temizlenir.
+    """
+    base = from_row(current) if current else {"gradeLevel": None, "track": None, "examTarget": None}
+    columns = resolve(base, patch)
+    grade = parse_grade(patch["gradeLevel"]) if "gradeLevel" in patch else base["gradeLevel"]
+    if grade is None:
+        raise CurriculumError("Sınıfın seviyesini seçin (5–12 ya da mezun).")
+    row = {
+        "grade_level": str(grade),
+        "track": columns.get("track", base["track"]),
+        "exam_target": columns.get("exam_target", base["examTarget"]),
+    }
+    if not track_allowed(grade):
+        row["track"] = None
+    return row
+
+
+def effective(profile: dict[str, Any] | None, class_plan: dict[str, Any] | None) -> dict[str, Any]:
+    """Öğrencinin GEÇERLİ seviyesi (dizin, liste, Akademi bunu görür) + kaynağı."""
+    own = from_row(profile)
+    override = bool(int((profile or {}).get("level_override") or 0))
+    if class_plan is not None:
+        plan = dict(class_plan)
+        source = "class"
+        if override:
+            # Yalnız öğrencide DOLU olan alan sınıfınkinin yerine geçer (boşsa sınıftan).
+            if own["track"] is not None and track_allowed(plan["gradeLevel"]):
+                plan["track"] = own["track"]
+            if own["examTarget"] is not None:
+                plan["examTarget"] = own["examTarget"]
+            source = "override"
+        return {**plan, "levelSource": source}
+    source = "student" if any(own[key] is not None for key in ("gradeLevel", "track", "examTarget")) else None
+    return {**own, "levelSource": source}
+
+
+def class_label(name: str, plan: dict[str, Any] | None) -> str:
+    """"11-A · 11. sınıf · SAY · YKS"; seviyesizse "11-A · seviye seçin"."""
+    if plan is None:
+        return f"{name} · seviye seçin"
+    parts = [name, "Mezun" if plan["gradeLevel"] == GRADUATE else f"{plan['gradeLevel']}. sınıf"]
+    if plan.get("track"):
+        parts.append({"SOZ": "SÖZ", "DIL": "DİL"}.get(plan["track"], plan["track"]))
+    if plan.get("examTarget"):
+        parts.append(plan["examTarget"])
+    return " · ".join(parts)

@@ -187,6 +187,7 @@ async def test_kayit_sozlesme_anahtarlarini_tasir_kod_sizmaz(store: ScopedStore)
         "gradeLevel": 8,
         "track": None,
         "examTarget": "LGS",
+        "classLevel": None,           # sınıfa KM'de seviye girilmemiş (göç 008)
         "status": "active",
         "statusReason": None,
         "statusSince": None,

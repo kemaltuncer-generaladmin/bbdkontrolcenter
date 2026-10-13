@@ -32,10 +32,11 @@ import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
 import { button, confirmSimple, dialogA11y } from '../../ui-kit/kit.js';
 import { mountGroups } from './groups.js';
+import { mountClasses } from './classes.js';
 import { askBulkDelete, askDeactivate, showBulkDeleteResult, watchEvents } from './lifecycle.js';
 import { mountRecord } from './record.js';
 import {
-  EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, fillFromSuggestion, parseChoice, parseGrade,
+  EXAM_CHOICES, TRACK_CHOICES, parseChoice,
 } from './curriculum.js';
 import { cleanPhone } from './guardian-model.js';
 
@@ -134,7 +135,8 @@ function createManager(root, options) {
 
   // ------------------------------------------------------------ sekmeler
   const modeBar = h('div', 'st-mode-bar');
-  const modes = [['list', 'Öğrenciler'], ['bulk', 'Toplu işlemler'], ['groups', 'Gruplar']];
+  // "Sınıflar" (0.5.4): seviye / alan / hedef sınav sınıfta tanımlanır (sınıf seviyeyi taşır).
+  const modes = [['list', 'Öğrenciler'], ['bulk', 'Toplu işlemler'], ['groups', 'Gruplar'], ['classes', 'Sınıflar']];
   const modeButtons = {};
   for (const [key, label] of modes) {
     const item = h('button', 'st-mode-btn', label);
@@ -200,6 +202,10 @@ function createManager(root, options) {
   nodes.groups = h('div', 'st-groups');
   nodes.groups.hidden = true;
   view.append(nodes.groups);
+  nodes.classes = h('div', 'st-classes');
+  nodes.classes.hidden = true;
+  view.append(nodes.classes);
+  let classesView = null;
 
   nodes.toast = h('div', 'st-toast');
   nodes.toast.setAttribute('role', 'status');
@@ -220,13 +226,22 @@ function createManager(root, options) {
     nodes.bulkBar?.paint();
     split.hidden = mode !== 'list';
     nodes.bar.hidden = mode !== 'list';
-    nodes.status.hidden = mode === 'groups';
+    nodes.status.hidden = mode === 'groups' || mode === 'classes';
     nodes.bulk.hidden = mode !== 'bulk';
     nodes.groups.hidden = mode !== 'groups';
+    nodes.classes.hidden = mode !== 'classes';
     for (const [key, item] of Object.entries(modeButtons)) item.classList.toggle('st-mode-active', key === mode);
     if (mode === 'bulk') {
       syncBulkPicker();
       nodes.bulk.prepare?.();   // sınıf önerileri ve grup listesi tazelenir
+    }
+    if (mode === 'classes') {
+      if (classesView === null) {
+        classesView = mountClasses(nodes.classes, { api, can, toast, dialogRoot: view,
+          onChanged: () => refresh(), toBulk: () => setMode('list') });
+      } else {
+        classesView.reload();
+      }
     }
     if (mode === 'groups') {
       if (groupsView === null) {
@@ -445,8 +460,9 @@ function createManager(root, options) {
     const count = h('b', 'st-listbulk-count');
     const fieldSelect = h('select', 'st-input st-select');
     fieldSelect.setAttribute('aria-label', 'Değiştirilecek alan');
-    for (const [value, label] of [['className', 'Ana sınıf'], ['gradeLevel', 'Seviye'], ['track', 'Alan'],
-      ['examTarget', 'Hedef sınav'], ['group', 'Gruba ekle'], ['deactivate', 'Pasifleştir']]) {
+    // Seviye sınıftan gelir (Sınıflar); öğrenciye yalnız alan / hedef sınav İSTİSNASI yazılır.
+    for (const [value, label] of [['className', 'Ana sınıf'], ['track', 'Alan (öğrenciye özel)'],
+      ['examTarget', 'Hedef sınav (öğrenciye özel)'], ['group', 'Gruba ekle'], ['deactivate', 'Pasifleştir']]) {
       fieldSelect.append(new Option(label, value));
     }
     // Kalıcı silme yalnız `bbd_students.delete` taşıyana (varsayılan yalnız admin) görünür;
@@ -499,7 +515,7 @@ function createManager(root, options) {
         }
       } else {
         control = h('select', 'st-input st-select');
-        const choices = { gradeLevel: GRADE_CHOICES, track: TRACK_CHOICES, examTarget: EXAM_CHOICES }[field];
+        const choices = { track: TRACK_CHOICES, examTarget: EXAM_CHOICES }[field];
         for (const [value, label] of choices) control.append(new Option(label, value));
         valueSlot.append(control);
       }
@@ -551,7 +567,7 @@ function createManager(root, options) {
           done = (result.deactivated?.length || 0) + (result.scheduled?.length || 0);
           failed = result.failed?.length || 0;
         } else {
-          const value = field === 'gradeLevel' ? parseGrade(control.value) : parseChoice(control.value);
+          const value = parseChoice(control.value);
           const result = await api(`${BASE}/students/curriculum`, { method: 'POST',
             body: { students: ids, [field]: value } });
           done = result.updated?.length ?? ids.length;
@@ -821,11 +837,15 @@ function createManager(root, options) {
     return box;
   }
 
-  /** Toplu seviye/alan/hedef sınav. "değiştirme" seçili alan gönderilmez. */
+  /**
+   * Seviye SINIFTAN gelir (Sınıflar sekmesi). Burada yalnız öğrenciye özel alan / hedef
+   * sınav istisnası toplu yazılır (sınıfı seviyeli öğrencide istisna açılır).
+   * "değiştirme" seçili alan gönderilmez.
+   */
   function bulkCurriculum() {
-    const box = section('Seviye / alan ata');
+    const box = section('Alan / hedef sınav istisnası', 'Seviye, alan ve hedef sınav sınıftan gelir — '
+      + 'sınıfların seviyesi “Sınıflar” sekmesinde. Burada seçilen öğrencilere ÖZEL alan / hedef sınav yazılır.');
     const keep = ['__keep', 'değiştirme'];
-    const grade = select_('Seviye', [keep, ...GRADE_CHOICES]);
     const track = select_('Alan', [keep, ...TRACK_CHOICES]);
     const exam = select_('Hedef sınav', [keep, ...EXAM_CHOICES]);
     const status = h('p', 'st-bulk-status', '');
@@ -834,7 +854,6 @@ function createManager(root, options) {
       const ids = selection(status);
       if (!ids.length) return;
       const body = {};
-      if (grade.input.value !== '__keep') body.gradeLevel = parseGrade(grade.input.value);
       if (track.input.value !== '__keep') body.track = parseChoice(track.input.value);
       if (exam.input.value !== '__keep') body.examTarget = parseChoice(exam.input.value);
       if (Object.keys(body).length === 0) { status.textContent = 'Değiştirilecek alan seçin.'; return; }
@@ -847,40 +866,9 @@ function createManager(root, options) {
         status.textContent = `Uygulanamadı: ${failure.message}`;
       }
     } });
-    const suggest = button('Sınıf adından öneriyi uygula', { onClick: async () => {
-      const ids = new Set(selection(status));
-      if (!ids.size) return;
-      const groups = new Map();
-      for (const student of students.filter((row) => ids.has(row.kantinId))) {
-        const changes = fillFromSuggestion(student);
-        if (Object.keys(changes).length === 0) continue;
-        const key = JSON.stringify(changes);
-        if (!groups.has(key)) groups.set(key, { changes, ids: [] });
-        groups.get(key).ids.push(student.kantinId);
-      }
-      if (groups.size === 0) { status.textContent = 'Seçilenlerde öneriyle doldurulacak boş alan yok.'; return; }
-      const total = [...groups.values()].reduce((sum, group) => sum + group.ids.length, 0);
-      if (!await confirmSimple(view, { title: 'Öneri uygulansın mı?',
-        description: `${total} öğrencinin boş seviye/alan/hedef sınav alanı sınıf adından gelen öneriyle `
-          + 'doldurulacak. Dolu alanlara dokunulmaz.', confirmLabel: 'Uygula' })) return;
-      let updated = 0;
-      let failed = 0;
-      for (const group of groups.values()) {
-        try {
-          const result = await send(group.ids, group.changes);
-          updated += result.updated.length;
-          failed += result.failed.length;
-        } catch {
-          failed += group.ids.length;
-        }
-      }
-      status.textContent = `${updated} öğrenci güncellendi${failed ? `, ${failed} atlandı` : ''}.`;
-      await refresh();
-    } });
-    suggest.title = 'Seçilenlerin YALNIZ boş alanlarını sınıf adından gelen öneriyle doldurur.';
+    const toClasses = button('Sınıfların seviyesi →', { onClick: () => setMode('classes') });
     apply.disabled = !can('bbd_students.manage');
-    suggest.disabled = !can('bbd_students.manage');
-    box.append(grade.wrap, track.wrap, exam.wrap, actionsRow(apply, suggest), status);
+    box.append(track.wrap, exam.wrap, actionsRow(apply, toClasses), status);
     return box;
   }
 
