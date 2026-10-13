@@ -156,6 +156,93 @@ async def set_curriculum(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+# ------------------------------------------- tek öğrenci, veliler, toplu sınıf
+
+
+@router.get("/students/{kantin_id}")
+async def get_student(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Tek öğrencinin birleşik kaydı — BBD Akademi öğrenci kartındaki "Kayıt" bölümü."""
+    try:
+        student = await service().get_student(kantin_id)
+    except Exception as exc:  # kantin dışarısı
+        raise HTTPException(status_code=503, detail=f"Kantine ulaşılamadı: {exc}") from exc
+    if student is None:
+        raise HTTPException(status_code=404, detail="Öğrenci bulunamadı.")
+    return student
+
+
+class GuardianItem(BaseModel):
+    name: str = Field(default="", max_length=80)
+    phone: str = Field(default="", max_length=32)
+    relation: str = Field(default="", max_length=20)
+
+
+class GuardiansBody(BaseModel):
+    """Velilerin TAM listesi; sıra önceliktir, ilk veli birincildir (yuva 1)."""
+
+    items: list[GuardianItem] = Field(default_factory=list, max_length=10)
+
+
+@router.get("/students/{kantin_id}/guardians")
+async def student_guardians(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    try:
+        return await service().guardians(kantin_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/students/{kantin_id}/guardians")
+async def set_student_guardians(
+    kantin_id: str,
+    body: GuardiansBody,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> Any:
+    """Veli ekle / düzenle / sil / birincil yap — tek uçta, tam liste.
+
+    Telefon `+90 5xx xxx xx xx` (cep) olmalı; aynı öğrencide aynı telefon iki kez
+    olamaz; aynı telefon başka öğrencinin velisi olabilir. Yuva 1 kantine yazılır
+    (önce KM, sonra kantin), değişiklik olay olarak kantine ve Akademi'ye gider.
+    """
+    from ..guardians import GuardianError
+
+    try:
+        return await service().set_guardians(kantin_id, [item.model_dump() for item in body.items],
+                                             actor=user.full_name)
+    except GuardianError as exc:
+        return JSONResponse(status_code=422, content={"error": {
+            "status": 422, "code": "validation_error", "message": str(exc),
+            "details": [{"index": exc.index, "field": exc.field, "message": str(exc)}]}})
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class ClassBulkBody(BaseModel):
+    """Seçili öğrencilere ANA SINIF. Boş ad sınıfı temizler; boş seçim reddedilir."""
+
+    students: list[str] = Field(min_length=1, max_length=5000)
+    className: str = Field(default="", max_length=20)
+
+
+@router.post("/students/class")
+async def set_class(
+    body: ClassBulkBody,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> dict[str, Any]:
+    """Toplu sınıf ataması (çoklu seçim → sınıf). Ek topluluklar için gruplar."""
+    try:
+        return await service().set_class(body.students, body.className)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 # ------------------------------------------------- veli kantin kontrolleri
 
 

@@ -65,6 +65,10 @@ LOGICAL_FIELDS = {
     "student_phone": "studentPhone",
     "parent_name": "guardians",
     "parent_name2": "guardians",
+    # Veli yönetimi (göç 007): yakınlık ve 3.+ veliler de `guardians` alanıdır.
+    "parent_relation": "guardians",
+    "parent_relation2": "guardians",
+    "guardians_extra": "guardians",
     "grade_level": "gradeLevel",
     "track": "track",
     "exam_target": "examTarget",

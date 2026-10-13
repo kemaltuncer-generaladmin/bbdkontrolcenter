@@ -177,8 +177,8 @@ async def test_kayit_sozlesme_anahtarlarini_tasir_kod_sizmaz(store: ScopedStore)
         "schoolNo": "1234",
         "studentPhone": "5321234567",
         "guardians": [
-            {"slot": 1, "name": "Ayşe Kaya", "phone": "5329876543"},
-            {"slot": 2, "name": "Mehmet Kaya", "phone": "5051112233"},
+            {"slot": 1, "name": "Ayşe Kaya", "phone": "5329876543", "relation": None},
+            {"slot": 2, "name": "Mehmet Kaya", "phone": "5051112233", "relation": None},
         ],
         "canteen": {"balance": 4250, "spendingLimit": 20000, "isBlocked": False,
                     "dailyLimit": 15000, "guardianBlocked": False},
