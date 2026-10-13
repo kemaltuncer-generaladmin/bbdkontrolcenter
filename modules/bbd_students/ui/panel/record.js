@@ -878,7 +878,6 @@ export function mountRecord(host, options) {
       }
       target.append(line);
       const info = [];
-      if (index >= 2) info.push('Uygulama girişi şimdilik ilk iki veli için açılır; bu veli Kontrol Merkezi kaydında durur.');
       const siblings = (row.siblings || []).filter(Boolean);
       if (siblings.length && G.cleanPhone(row.phone)) {
         info.push(`Bu telefon ${siblings.map((item) => `${item.displayName}${item.className ? ` (${item.className})` : ''}`)

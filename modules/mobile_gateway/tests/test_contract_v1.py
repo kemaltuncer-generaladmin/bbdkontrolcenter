@@ -23,12 +23,14 @@ import jsonschema
 import pytest
 import yaml
 from mobile_gateway_fakes import (
+    AUNT,
     CAN,
     CODES,
     DENIZ,
     ELIF,
     ELIF_PHONE,
     FATHER,
+    GRANNY,
     MOTHER,
     FakeTabletRead,
     LegacyCanteen,
@@ -224,8 +226,15 @@ async def test_directory_full_listing_shape(client: httpx.AsyncClient, world: Wo
     assert elif_ == {
         "id": ELIF, "firstName": "Elif", "lastName": "Kaya", "displayName": "Elif Kaya",
         "className": "8-A", "schoolNo": "1234", "studentPhone": ELIF_PHONE,
-        "guardians": [{"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER},
-                      {"slot": 2, "name": "Mehmet Kaya", "phone": FATHER}],
+        # Dört yuva + yakınlık + birincil (veli-senkron-4); yuva 5 düşer.
+        "guardians": [
+            {"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER, "relation": "mother",
+             "primary": True},
+            {"slot": 2, "name": "Mehmet Kaya", "phone": FATHER, "relation": "father",
+             "primary": False},
+            {"slot": 3, "name": "Fatma Kaya", "phone": GRANNY, "relation": "grandparent",
+             "primary": False},
+            {"slot": 4, "name": None, "phone": AUNT, "relation": None, "primary": False}],
         "canteen": {"balance": 4250, "spendingLimit": 20000, "isBlocked": False,
                     "dailyLimit": 15000, "guardianBlocked": False},
         "gradeLevel": 8, "track": None, "examTarget": "LGS",
@@ -236,7 +245,11 @@ async def test_directory_full_listing_shape(client: httpx.AsyncClient, world: Wo
     }
     # Telefonu olmayan veli listelenmez; nedeni phoneIssues'ta kalır.
     can = students[CAN]
-    assert can["guardians"] == [{"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER}]
+    # Yakınlık beyaz listededir: büyük harf / boşluk onarılır, bilinmeyen null olur.
+    assert can["guardians"] == [
+        {"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER, "relation": "mother", "primary": True},
+        {"slot": 3, "name": "Komşu", "phone": "5441112233", "relation": None,
+         "primary": False}]
     assert can["phoneIssues"] == ["guardian2Phone"] and can["studentPhone"] is None
     assert (can["gradeLevel"], can["track"], can["examTarget"]) == (12, "SAY", "YKS")
     assert can["canteen"]["isBlocked"] is True and can["canteen"]["guardianBlocked"] is True
@@ -302,12 +315,19 @@ async def test_student_code_matches_student_and_guardian_phones(
     assert sibling.json() == {"match": True, "studentId": CAN}
     own = await client.post("/auth/student-code", json={"phone": ELIF_PHONE, "code": "483920"})
     assert own.json()["studentId"] == ELIF
-    father_for_can = await client.post("/auth/student-code",
-                                       json={"phone": FATHER, "code": "561207"})
-    assert father_for_can.json() == {"match": False}
+    father_for_elif = await client.post("/auth/student-code",
+                                        json={"phone": FATHER, "code": "483920"})
+    assert father_for_elif.json() == {"match": True, "studentId": ELIF}
+    # 3. ve 4. velinin telefonu da eşleşir (veli-senkron-4).
+    for phone in (GRANNY, AUNT):
+        extra = await client.post("/auth/student-code", json={"phone": phone, "code": "483920"})
+        assert extra.json() == {"match": True, "studentId": ELIF}
+    grandma_for_can = await client.post("/auth/student-code",
+                                        json={"phone": GRANNY, "code": "561207"})
+    assert grandma_for_can.json() == {"match": False}
     unknown = await client.post("/auth/student-code", json={"phone": MOTHER, "code": "000000"})
     assert unknown.json() == {"match": False}
-    assert world.canteen.count("lookup_student_by_code") == 5  # istek başına bir kez
+    assert world.canteen.count("lookup_student_by_code") == 8  # istek başına bir kez
 
     for bad in ({"phone": "05329876543", "code": "483920"}, {"phone": MOTHER, "code": "48392"},
                 {"phone": MOTHER}):

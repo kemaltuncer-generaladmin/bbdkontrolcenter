@@ -162,7 +162,7 @@ def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | Non
         guardians.append({"slot": 2, "name": str(profile.get("parent_name2") or "") or None,
                           "phone": phone("parentPhone2", raw2),
                           "relation": str(profile.get("parent_relation2") or "") or None})
-    # Veli 3–4 (göç 007): yalnız KM'de; mobil geçit bugün yuva 1–2'yi taşır.
+    # Veli 3–4 (göç 007): `guardians_extra`; mobil geçit dört yuvayı da Akademi'ye taşır.
     for offset, extra in enumerate(extra_items(profile)):
         slot = 3 + offset
         guardians.append({"slot": slot, "name": extra["name"] or None,

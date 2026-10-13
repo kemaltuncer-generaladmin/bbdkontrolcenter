@@ -77,6 +77,16 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /events?after=&limit=` | 200 `{items: [KmEvent], lastSeq, hasMore}` — KM outbox'undan çekme (webhook'un yedeği; zarf webhook ile aynı), `limit` 1–500 | 410 `events_expired` (`after` 14 günlük saklamadan eski → tam uzlaştırma), 422, 503 `capability_missing` (`events.outbox`) |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
 
+**Veliler (veli-senkron-4).** Öğrenci nesnesinin `guardians[]` öğesi
+`{slot: 1..4, name, phone, relation, primary}`: yuva 1 birincil (telefonu
+kantinde), 2 profil, 3–4 `bbd_students` ek velileri (göç 007). `relation`
+beyaz listeden (`mother | father | guardian | grandparent | sibling | other`,
+yoksa `null`), `primary = slot == 1`. Telefonu olmayan veli listelenmez.
+`POST /auth/student-code` dört velinin telefonuyla da eşleşir. Olaylar:
+yuva 1–4 telefonu `guardian.linked | unlinked | phone_changed` (`data.slot`
+1..4), ad / yakınlık `student.updated` (`["guardians"]`). Eski istemci yeni
+alanları yok sayar (geriye uyumlu).
+
 ## Olay iletimi (KM → Akademi, merkezi senkron)
 
 KM tek merkezdir: öğrenci, veli, kantin kontrolü, ödeme talebi, tablet ve zil

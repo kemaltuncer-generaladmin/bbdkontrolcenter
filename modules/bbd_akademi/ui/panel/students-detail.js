@@ -62,7 +62,13 @@ const SHELF_SOURCE = { assigned: 'Atanan', package: 'Paketten', self: 'Öğrenci
 const SECTION_KIND = { test: 'Test', chapter: 'Bölüm', unit_test: 'Ünite testi', review: 'Tekrar', other: 'Diğer' };
 const SIGNALS = { attendance: 'yoklama', canteen: 'kantin', tablet: 'tablet' };
 const PHONE_FIELDS = { studentPhone: 'öğrenci telefonu', guardian1Phone: '1. veli telefonu',
-  guardian2Phone: '2. veli telefonu' };
+  guardian2Phone: '2. veli telefonu', guardian3Phone: '3. veli telefonu', guardian4Phone: '4. veli telefonu',
+  parentPhone: '1. veli telefonu', parentPhone2: '2. veli telefonu' };
+// Veli yakınlığı (Akademi `GuardianRelation`, KM'den; veli-senkron-4).
+const RELATIONS = { mother: 'Anne', father: 'Baba', guardian: 'Vasi', grandparent: 'Büyükanne / büyükbaba',
+  sibling: 'Kardeş', other: 'Diğer' };
+export const guardianRole = (row) => [RELATIONS[row.relation] || `${row.slot}. veli`,
+  row.primary ? 'birincil' : ''].filter(Boolean).join(' · ');
 
 // ---------------------------------------------------------- küçük yardımcılar
 
@@ -284,7 +290,7 @@ function guardianCard(ctx, data) {
   let rows = [...(data.guardians || [])].sort((a, b) => Number(a.slot) - Number(b.slot));
   const guardians = dataTable({
     columns: [
-      { key: 'name', label: 'Veli', width: 'minmax(0, 1.4fr)', cell: (row) => stack(row.displayName, `${row.slot}. veli`) },
+      { key: 'name', label: 'Veli', width: 'minmax(0, 1.4fr)', cell: (row) => stack(row.displayName, guardianRole(row)) },
       { key: 'phone', label: 'Telefon', cell: (row) => row.phoneMasked || '—' },
       { key: 'app', label: 'Uygulama', cell: (row) => {
         const cell = h('div', 'ak-cell-stack');

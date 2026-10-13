@@ -3,7 +3,8 @@
 * Veli yönetimi (göç 007): birden çok veli (en çok 4), birincil veli = yuva 1
   (telefonu kantinde), yakınlık, telefon doğrulama (+90 5xx), aynı öğrencide
   tekrar eden telefon reddi, aynı telefonun başka öğrencide veli olabilmesi
-  (kardeş), olaylar (yuva 1–2 `guardian.*`, ad/yakınlık/ek veli `student.updated`).
+  (kardeş), olaylar (yuva 1–4 `guardian.*` — veli-senkron-4; ad/yakınlık
+  `student.updated`).
 * Toplu ana sınıf ataması (`set_class`): öğrenci başına `student.updated`
   (`className`), kantine gidilmez.
 * Tek öğrenci kaydı (`get_student`): Akademi öğrenci kartının "Kayıt" bölümü.
@@ -71,14 +72,14 @@ async def test_veliler_yuvalara_yazilir_birincil_kantine_gider(world: World) -> 
 
     view = result["guardians"]
     assert [(row["slot"], row["phone"], row["primary"], row["appAccess"]) for row in view] == [
-        (1, MOTHER, True, True), (2, FATHER, False, True), (3, GRANNY, False, False)]
+        (1, MOTHER, True, True), (2, FATHER, False, True), (3, GRANNY, False, True)]
     assert view[2]["relationLabel"] == "Büyükanne / büyükbaba"
 
     events = await world.events()
     assert [event["type"] for event in events] == [
-        "student.updated", "guardian.linked", "guardian.linked"]
+        "student.updated", "guardian.linked", "guardian.linked", "guardian.linked"]
     assert events[0]["fields"] == ["guardians"]
-    assert events[1]["data"] == {"slot": 1} and events[2]["data"] == {"slot": 2}
+    assert [event["data"] for event in events[1:]] == [{"slot": 1}, {"slot": 2}, {"slot": 3}]
     no_pii(events)
 
     # Dizin (Akademi'ye giden kayıt) yakınlığı ve 3. veliyi taşır.
@@ -123,6 +124,56 @@ async def test_veli_silme_ve_degismeyen_liste(world: World) -> None:
     assert world.canteen.rows["STU-1"]["parentPhone"] == ""
 
 
+async def test_yuva_3_4_telefonu_veli_olayi_ad_yakinlik_student_updated(world: World) -> None:
+    """Yuva 3–4 (göç 007) de `guardian.linked|unlinked|phone_changed` (`data.slot` 3|4) üretir;
+    yalnız telefon değişince `student.updated` çıkmaz, ad / yakınlık değişince çıkar."""
+    aunt, uncle = "5331234567", "5449876543"
+    world.canteen.add("STU-1", "Elif Kaya", parentPhone=MOTHER)
+    base = [{"name": "Ayşe", "phone": MOTHER, "relation": "mother"},
+            {"name": "Mehmet", "phone": FATHER, "relation": "father"}]
+    await world.service.set_guardians("STU-1", base)
+    calls = len(world.canteen.calls)
+
+    def tail(events: list[dict[str, Any]], start: int) -> list[tuple[str, Any]]:
+        return [(event["type"], event["data"]) for event in events[start:]]
+
+    start = len(await world.events())
+    await world.service.set_guardians("STU-1", [*base,
+                                                {"name": "Fatma", "phone": GRANNY, "relation": "grandparent"},
+                                                {"name": "Zehra", "phone": aunt, "relation": "other"}])
+    events = await world.events()
+    assert tail(events, start) == [("student.updated", None), ("guardian.linked", {"slot": 3}),
+                                   ("guardian.linked", {"slot": 4})]
+    assert events[start]["fields"] == ["guardians"]
+    no_pii(events)
+
+    start = len(events)
+    await world.service.set_guardians("STU-1", [*base,
+                                                {"name": "Fatma", "phone": GRANNY, "relation": "grandparent"},
+                                                {"name": "Zehra", "phone": uncle, "relation": "other"}])
+    events = await world.events()
+    assert tail(events, start) == [("guardian.phone_changed", {"slot": 4})], \
+        "yalnız telefon: student.updated çıkmaz"
+
+    start = len(events)
+    await world.service.set_guardians("STU-1", [*base,
+                                                {"name": "Fatma Kaya", "phone": GRANNY, "relation": "grandparent"},
+                                                {"name": "Zehra", "phone": uncle, "relation": "guardian"}])
+    events = await world.events()
+    assert tail(events, start) == [("student.updated", None)]
+    assert events[start]["fields"] == ["guardians"]
+
+    start = len(events)
+    await world.service.set_guardians("STU-1", base)
+    events = await world.events()
+    assert tail(events, start) == [("student.updated", None), ("guardian.unlinked", {"slot": 3}),
+                                   ("guardian.unlinked", {"slot": 4})]
+    assert len(world.canteen.calls) == calls, "1. veli değişmedi: kantine gidilmemeli"
+
+    record = await world.directory.get("STU-1")
+    assert record is not None and [row["slot"] for row in record["guardians"]] == [1, 2]
+
+
 async def test_ayni_telefon_kardeslerde_veli_olabilir(world: World) -> None:
     world.canteen.add("STU-1", "Elif Kaya")
     world.canteen.add("STU-2", "Can Kaya")
@@ -131,7 +182,7 @@ async def test_ayni_telefon_kardeslerde_veli_olabilir(world: World) -> None:
     view = await world.service.guardians("STU-1")
     assert view["items"][0]["siblings"] == [{"id": "STU-2", "displayName": "Can Kaya",
                                              "className": ""}]
-    assert view["max"] == 4 and view["appSlots"] == [1, 2]
+    assert view["max"] == 4 and view["appSlots"] == [1, 2, 3, 4]
     assert {item["value"] for item in view["relations"]} >= {"mother", "father", "guardian"}
 
 
