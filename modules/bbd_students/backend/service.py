@@ -648,6 +648,26 @@ class StudentService:
                           for key, label in guardian_rules.RELATIONS.items()],
         }
 
+    async def search(self, query: str, limit: int = 8) -> dict[str, Any]:
+        """Küresel öğrenci araması (`search.py`). Kart QR metni okutulursa
+        (okuyucu klavye gibi yazar) kasanın anahtarıyla çözülür ve kimlikle aranır;
+        anahtar okunamazsa metin olduğu gibi aranır."""
+        from . import qr as qr_codec
+        from .search import looks_like_card
+
+        if self._directory is None:
+            return {"items": [], "complete": False}
+        text = str(query or "").strip()
+        if looks_like_card(text):
+            try:
+                decoded = qr_codec.decode(text, await self.qr_key())
+            except Exception:  # noqa: BLE001 — anahtar yoksa düz arama
+                decoded = None
+            if decoded and decoded.get("sid"):
+                text = str(decoded["sid"])
+        result: dict[str, Any] = await self._directory.search(text, limit)
+        return result
+
     async def _siblings(self, kantin_id: str, phone: Any) -> list[dict[str, str]]:
         number = str(phone or "")
         if self._directory is None or len(number) != 10:

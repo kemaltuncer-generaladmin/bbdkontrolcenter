@@ -62,7 +62,13 @@ export function section(app) {
   const openRef = (kmId, options) => openStudentByRef(app, kmId, options);
   // Yönetimde KM'nin üç sekmesi (liste, toplu işlemler, gruplar) Akademi'nin
   // şeridine katılır: tek şerit, tek "Öğrenciler".
-  const specs = manager ? [
+  const kmOnly = Boolean(app.kmOnly?.());
+  const specs = manager && kmOnly ? [
+    // Akademi izni yok (0.5.3): yalnız KM kaydı — liste, toplu işlemler, gruplar.
+    { key: 'km', label: 'Öğrenciler' },
+    { key: 'kmBulk', label: 'Toplu işlemler' },
+    { key: 'kmGroups', label: 'Gruplar' },
+  ] : manager ? [
     { key: 'km', label: 'Öğrenciler' },
     { key: 'kmBulk', label: 'Toplu işlemler' },
     { key: 'kmGroups', label: 'Gruplar' },
@@ -560,6 +566,8 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
 export async function openStudentByRef(app, kmId, { tab = 'record', name = '', status = null } = {}) {
   let found = null;
   let note = '';
+  // Akademi izni yok (0.5.3): kart yalnız KM kaydıdır; Akademi'ye istek gitmez.
+  if (app.kmOnly?.()) return openKmOnly(app, kmId, { name, note: '' });
   try {
     for (const filter of [undefined, 'inactive']) {
       const data = await app.api.get('/v1/admin/students', { externalRef: kmId, status: filter, limit: 5 });
@@ -589,7 +597,8 @@ function openKmOnly(app, kmId, { name = '', note = '' } = {}) {
   } });
   info.append(retry);
   const slot = h('div', 'ak-stu-record');
-  panel.body.append(info, slot);
+  if (note) panel.body.append(info);
+  panel.body.append(slot);
   if (typeof drawRecord === 'function') {
     instance = drawRecord(slot, { kantinId: kmId, capability: app.capability, dialogRoot: app.root,
       toast: (text) => app.toast(text, 'good'), onRemoved: () => panel.close(),

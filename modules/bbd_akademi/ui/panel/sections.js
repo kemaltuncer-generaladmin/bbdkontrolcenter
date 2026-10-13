@@ -47,7 +47,10 @@ export const SECTIONS = [
   { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'], area: 'today' },
   { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
     area: 'today' },
-  { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students' },
+  // `kmOnly`: Akademi izni olmayan ama öğrenci yönetimi izni olan kullanıcıya
+  // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
+  { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',
+    kmOnly: true },
   { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],
     area: 'lessons' },
   { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'lessons' },
@@ -94,9 +97,14 @@ export function featureOn(features, flag) {
   return features[flag] !== false;
 }
 
-/** `ctx`: {has(izin) → bool, features}. */
-export function sectionVisible(section, { has = () => true, features = null } = {}) {
+/**
+ * `ctx`: {has(izin) → bool, features, kmOnly}. `kmOnly` (Akademi izni yok,
+ * öğrenci yönetimi izni var — 0.5.3): yalnız `kmOnly` işaretli bölümler görünür,
+ * Akademi izinlerine bakılmaz (o bölüm KM verisiyle çalışır).
+ */
+export function sectionVisible(section, { has = () => true, features = null, kmOnly = false } = {}) {
   if (!section) return false;
+  if (kmOnly) return Boolean(section.kmOnly);
   return (section.requires || []).some((permission) => has(permission)) && featureOn(features, section.feature);
 }
 

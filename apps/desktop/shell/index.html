@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Klavye kullanıcısı menüyü atlayıp doğrudan ekrana geçebilsin (WCAG 2.4.1). -->
+  <a class="skip-link" href="#panel-body">Ekran içeriğine geç</a>
 
   <!-- Giriş. Kullanıcı adı sorulmaz: PIN kimliği belirler
        (docs/identity-model.md — Giriş akışı). Klavyeyle kullanılır.
@@ -52,17 +54,32 @@
       <nav class="nav" id="nav" aria-label="Ekranlar"></nav>
 
       <div class="sidebar-foot">
-        <kbd>↑</kbd><kbd>↓</kbd> gez · <kbd>/</kbd> ara
+        <kbd>↑</kbd><kbd>↓</kbd> gez · <kbd>/</kbd> öğrenci ara
       </div>
     </aside>
 
     <main class="panel">
       <header class="panel-head">
-        <span class="crumb" id="crumb"></span>
-        <h2 class="panel-title" id="panel-title"></h2>
+        <div class="panel-head-text">
+          <span class="crumb" id="crumb"></span>
+          <h2 class="panel-title" id="panel-title"></h2>
+        </div>
+        <!-- KÜRESEL ARAMA (ADR 0031): her ekrandan `/` ile öğrenci, telefon,
+             kantin kartı ya da ekran. Combobox + listbox deseni. -->
+        <div class="gsearch" role="search">
+          <label class="visually-hidden" for="gsearch-input">Öğrenci, veli telefonu, kantin kartı ya da ekran ara</label>
+          <input id="gsearch-input" type="search" role="combobox" aria-autocomplete="list"
+                 aria-expanded="false" aria-controls="gsearch-list" aria-describedby="gsearch-key"
+                 placeholder="Öğrenci, telefon, kart ya da ekran ara" autocomplete="off" spellcheck="false" disabled>
+          <kbd class="gsearch-key" id="gsearch-key" aria-label="Kısayol: eğik çizgi">/</kbd>
+          <div class="gsearch-pop" id="gsearch-pop" hidden>
+            <ul class="gsearch-list" id="gsearch-list" role="listbox" aria-label="Arama sonuçları"></ul>
+            <p class="gsearch-status" id="gsearch-status" role="status" aria-live="polite"></p>
+          </div>
+        </div>
       </header>
       <!-- Panel gövdesi bilinçli olarak boş: modüller aşama aşama gelecek. -->
-      <div class="panel-body" id="panel-body"></div>
+      <div class="panel-body" id="panel-body" tabindex="-1"></div>
     </main>
 
   </div>

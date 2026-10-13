@@ -305,6 +305,11 @@ export async function loadRegistry(user = null) {
       state: entry.state || 'loaded',
       reason: entry.reason || '',
       provides: entry.provides || [],
+      // `ui.nav.replacedBy` (ADR 0031): bu ekranın işi başka bir ekrana
+      // taşındıysa o ekranın ilan ettiği ARAYÜZ YETENEĞİNİN adı. Yetenek
+      // görünür bir panelde çözülüyorsa ekran menüde ÇİZİLMEZ (`menuPanels`)
+      // ama kayıtta kalır: yetenekleri yüklenir, derin bağlantılar açılır.
+      replacedBy: typeof nav.replacedBy === 'string' && nav.replacedBy ? nav.replacedBy : null,
       // Panel dosyası modülün klasöründen kopyalanır; adres kabuk köküne göre.
       entry: entry.ui?.entry ? `panels/${entry.id}/${entry.ui.entry.split('/').pop()}` : null,
     });
@@ -366,6 +371,24 @@ export async function loadRegistry(user = null) {
   }
 
   return { groups, panels };
+}
+
+/**
+ * MENÜDE ÇİZİLECEK ekranlar (ADR 0031 — "tek giriş noktası").
+ *
+ * `replacedBy` taşıyan ekran, o yeteneği KENDİSİ DIŞINDA görünür bir ekran
+ * ilan ediyorsa menüden düşer: işi artık o ekrandadır ve aynı iş için iki menü
+ * satırı kalmaz. Yetenek hiçbir görünür ekranda yoksa (sağlayan modül kapalı
+ * ya da kullanıcı onu göremiyor) ekran menüde KALIR — iş ortada kalmaz (K7).
+ *
+ * Kabuk modül adı bilmez (K1): karar manifestteki iki alandan (`replacedBy`,
+ * `provides`) çıkar. Kayıt (`registry.panels`) değişmez; düşen ekran yine
+ * açılabilir (`ctx.open`) ve yetenekleri yine yüklenir.
+ */
+export function menuPanels(registry) {
+  const panels = registry?.panels || [];
+  return panels.filter((panel) => !panel.replacedBy || !panels.some((other) => other.id !== panel.id
+    && (other.provides || []).includes(panel.replacedBy)));
 }
 
 /** Grup adındaki seviye ayracı: `"BBD Store / Satış ve Kargo"`. */
@@ -434,6 +457,16 @@ const providers = new Map();
 let providersReady = null;
 
 /**
+ * Yetenek kaydını boşaltır — oturum kapanınca çağrılır. Yetenekler görünür
+ * ekranlardan toplanır ve görünürlük kullanıcıya bağlıdır; bir sonraki kişi
+ * öncekinin yeteneklerini (ör. aramasını) devralmasın.
+ */
+export function resetProviders() {
+  providers.clear();
+  providersReady = null;
+}
+
+/**
  * Panellerin ilan ettiği arayüz yetenekleri.
  *
  * K3: modül modülü import etmez. Veriyi veren modülün paneli
@@ -478,6 +511,10 @@ async function ensureProviders(registry) {
         const declared = typeof module.capabilities === 'function'
           ? module.capabilities({
             api,
+            // Yetenek başka bir yeteneğe bakabilir (ör. "kartı aç" yeteneği
+            // kartın nerede durduğunu sorar). Çağrı ANINDA çözülür: kayıt
+            // sırası önemli değildir.
+            capability: (name) => providers.get(name) ?? null,
             open: (id, data = null) => {
               if (!navigate) {
                 console.warn('[ui-kernel] gezinme bağlanmadı; open() yok sayıldı');
@@ -501,6 +538,24 @@ async function ensureProviders(registry) {
   })();
 
   return providersReady;
+}
+
+/**
+ * KÜRESEL ARAMA SAĞLAYICILARI (ADR 0031). Adı `.search` ile biten arayüz
+ * yeteneği üst çubuktaki "Ara" kutusuna sonuç verir. Sözleşme:
+ *
+ *     { label: 'Öğrenciler',
+ *       search: async (metin, {limit}) => [{id, title, detail?, badge?, open()}] }
+ *
+ * Kabuk hangi modülün aradığını bilmez (K1); yalnız adı `.search` ile biten
+ * yetenekleri toplar. Patlayan sağlayıcı ötekileri düşürmez (K7).
+ */
+export async function searchProviders(registry) {
+  await ensureProviders(registry);
+  return [...providers.entries()]
+    .filter(([name, provider]) => name.endsWith('.search') && provider
+      && typeof provider.search === 'function')
+    .map(([name, provider]) => ({ name, label: provider.label || name, search: provider.search }));
 }
 
 /**

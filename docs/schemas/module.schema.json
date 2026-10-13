@@ -150,6 +150,11 @@
               "default": [],
               "items": { "type": "string" },
               "description": "Bu ekranın görünmesi için gereken izinler. Kullanıcı bunlardan EN AZ BİRİNE sahipse menüde görünür; boş liste herkese açık demektir. Menüde gizlemek yetkilendirme değildir — backend ayrıca denetler (K9)."
+            },
+            "replacedBy": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+              "description": "ADR 0031 — tek giriş noktası. Bu ekranın işi başka bir ekrana taşındıysa o ekranın ilan ettiği ARAYÜZ yeteneğinin adı. Yetenek kullanıcıya görünen başka bir ekranda çözülüyorsa bu ekran menüde ÇİZİLMEZ; kayıtta kalır (yetenekleri yüklenir, ctx.open ile açılır). Yetenek yoksa ekran menüde kalır (K7)."
             }
           }
         },

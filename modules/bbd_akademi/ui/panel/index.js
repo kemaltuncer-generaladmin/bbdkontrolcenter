@@ -54,6 +54,10 @@ export function mount(root, ctx) {
   let disposed = false;
   let permissions = null;             // null = okunamadı → karar backend'de
   let features = null;                // kurum bayrakları; null = okunamadı → her şey görünür
+  // YALNIZ ÖĞRENCİ YÖNETİMİ (0.5.3, ADR 0031): Akademi izni yok ama öğrenci
+  // yönetimi izni var (muhasebe, org_staff). Panel yalnız "Öğrenciler"i KM
+  // kaydıyla açar; Akademi'ye hiç istek gitmez.
+  let kmOnly = false;
 
   const app = {
     root: view,
@@ -62,9 +66,12 @@ export function mount(root, ctx) {
     status: null,
     /** KM izni (`finance` → `bbd_akademi.finance`). */
     has(permission) {
+      if (kmOnly) return false;
       if (permissions === null) return true;
       return permissions.has(`${P}.${permission}`);
     },
+    /** Akademi izni yok, yalnız öğrenci yönetimi (KM kaydı) açık mı? */
+    kmOnly: () => kmOnly,
     can: (operationId) => app.api.can(operationId),
     /**
      * Başka ekrana geç: `app.go('finance', {studentId})`. Anahtar ekran
@@ -115,7 +122,7 @@ export function mount(root, ctx) {
   let menu = [];                      // görünür üst bölümler (`buildNav`)
   let current = null;                 // {area, section}
 
-  const navContext = () => ({ has: (permission) => app.has(permission), features });
+  const navContext = () => ({ has: (permission) => app.has(permission), features, kmOnly });
   const sectionOf = (key) => SECTIONS.find((item) => item.key === key);
 
   function paintNav() {
@@ -238,7 +245,14 @@ export function mount(root, ctx) {
     } catch (failure) {
       permissions = null;
       features = null;
-      banner.replaceChildren(alertBox(`Akademi durumu okunamadı: ${problem(failure)}`, 'bad'));
+      if (failure?.status === 403 && typeof app.capability('bbd_students.manager') === 'function') {
+        // Akademi izni yok; öğrenci yönetimi izni var → yalnız Öğrenciler.
+        kmOnly = true;
+        banner.replaceChildren(alertBox('Öğrenci kayıtlarını (kimlik, sınıf, veliler, kantin) '
+          + 'buradan yönetirsiniz. Ders, ödev ve deneme bilgileri için BBD Akademi yetkisi gerekir.', 'info'));
+      } else {
+        banner.replaceChildren(alertBox(`Akademi durumu okunamadı: ${problem(failure)}`, 'bad'));
+      }
     }
     if (disposed) return;
     menu = buildNav(navContext());

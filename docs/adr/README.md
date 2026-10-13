@@ -45,6 +45,7 @@ yanlış yönlendirirdi.
 | 0028 | Servis anahtarları: makineden makineye kimlik | Kabul edildi (§4 → 0030) |
 | 0029 | Olay outbox'u ve modül işlemi | Kabul edildi |
 | 0030 | Gerçek istemci adresi: güvenilir vekil zinciri ve Cloudflare | Kabul edildi |
+| 0031 | Tek giriş noktası (`ui.nav.replacedBy`) ve küresel arama | Kabul edildi |
 
 ---
 

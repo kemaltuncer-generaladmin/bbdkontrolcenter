@@ -64,6 +64,9 @@ const out = {
   locPart: s.locatePart(s.studentCard({ has: all }), 'coaching'),
   locHidden: s.locatePart(s.studentCard({ has: only('view'), features: off }), 'canteen'),
   locEmpty: s.locatePart([], 'overview'),
+  navKmOnly: keys(s.buildNav({ has: () => false, features: off, kmOnly: true })),
+  goKmOnly: s.resolveTarget(s.buildNav({ has: () => false, kmOnly: true }), 'students'),
+  goKmOnlyHidden: s.resolveTarget(s.buildNav({ has: () => false, kmOnly: true }), 'exams'),
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -269,3 +272,13 @@ def test_ayristirici_bicim_disini_reddeder() -> None:
     assert parse(b'[]') is None
     assert parse(json.dumps(FLAGS).encode()) == {"finance": True, "early_warning": False,
                                                   "canteen": False}
+
+
+@needs_node
+def test_yalniz_ogrenci_yonetimi_izni_olan_yalniz_ogrencileri_gorur(result: dict[str, Any]) -> None:
+    """0.5.3 (ADR 0031 — tek giriş noktası): menüdeki eski "Öğrenci Yönetimi"
+    kalktı; Akademi izni olmayan ama `bbd_students.view` taşıyan roller (muhasebe,
+    org_staff) BBD Akademi panelini YALNIZ "Öğrenciler" bölümüyle görür."""
+    assert result["navKmOnly"] == [["students", ["students"]]]
+    assert result["goKmOnly"] == {"area": "students", "section": "students"}
+    assert result["goKmOnlyHidden"] is None

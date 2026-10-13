@@ -183,6 +183,8 @@ def collect_panels(validator, platform: str,
             "group": nav.get("group", "Diğer"),
             "order": nav.get("order", 1000),
             "requires": nav.get("requires", []),
+            # ADR 0031: işi başka ekrana taşınan ekran (menüde çizilmez, kayıtta kalır).
+            **({"replacedBy": nav["replacedBy"]} if nav.get("replacedBy") else {}),
             "source": "module",
             "enabled": bool(manifest.get("enabled", True)),
             # Modülün ilan ettiği yetenekler. Kabuk yalnızca burada yazanı

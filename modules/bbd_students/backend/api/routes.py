@@ -104,6 +104,18 @@ async def list_students(user: CurrentUser = requires("bbd_students.view")) -> di
     return await service().list_students()
 
 
+@router.get("/search")
+async def search_students(
+    q: str = Query(default="", max_length=400),
+    limit: int = Query(default=8, ge=1, le=25),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Küresel arama (kabuğun üst çubuğu, `/`): ad, okul no, veli/öğrenci
+    telefonu (son hanelerle de), kantin kartı (kimlik ya da QR metni). Dizinin
+    anlık görüntüsünden — kantine gitmez. Telefon maskeli döner."""
+    return await service().search(q, limit)
+
+
 @router.post("/students")
 async def create_student(
     body: StudentCreate,

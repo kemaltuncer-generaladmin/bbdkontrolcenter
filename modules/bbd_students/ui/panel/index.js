@@ -795,7 +795,44 @@ function createManager(root, options) {
  * öğrenci yönetiminin BBD Akademi paneline taşınmış hâlidir.
  */
 export function capabilities(ctx) {
+  /**
+   * Öğrencinin TEK KARTINI açar — her ekrandan aynı yer (0.5.3, ADR 0031).
+   * Kart BBD Akademi → Öğrenciler'dedir; Akademi yoksa bu modülün ekranı.
+   * Yetenek çağrı anında çözülür (kayıt sırası önemsiz).
+   */
+  const openStudent = (kantinId, { tab = 'record' } = {}) => {
+    if (!kantinId || typeof ctx.open !== 'function') return;
+    const akademi = typeof ctx.capability === 'function' ? ctx.capability('bbd_akademi.students') : null;
+    if (akademi) {
+      ctx.open('bbd_akademi', { section: 'students', kmStudentId: kantinId, studentTab: tab });
+    } else {
+      ctx.open('bbd_students', { kantinId, standalone: true, tab });
+    }
+  };
+  const MATCH = { name: '', schoolNo: 'okul no', card: 'kantin kartı', guardianPhone: 'veli telefonu',
+    studentPhone: 'öğrenci telefonu', className: 'sınıf' };
   return {
+    'bbd_students.open': openStudent,
+    /**
+     * Küresel arama sağlayıcısı (kabuğun üst çubuğu, `/`). Sonuç tek tıkla
+     * öğrencinin kartını "Kayıt ve veliler" sekmesinde açar.
+     */
+    'bbd_students.search': {
+      label: 'Öğrenciler',
+      async search(query, { limit = 8 } = {}) {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        const payload = await ctx.api(`${BASE}/search?${params}`);
+        return (payload?.items || []).map((item) => ({
+          id: item.id,
+          title: item.displayName,
+          detail: [item.className || 'sınıf yok', item.schoolNo && `No ${item.schoolNo}`,
+            item.guardian?.name, item.guardian?.phone, MATCH[item.match] && `eşleşen: ${MATCH[item.match]}`]
+            .filter(Boolean).join(' · '),
+          badge: item.status === 'inactive' ? 'Pasif' : 'Öğrenci',
+          open: () => openStudent(item.id),
+        }));
+      },
+    },
     'bbd_students.list': async () => {
       const [payload, memberships] = await Promise.all([
         ctx.api(`${BASE}/students`),
@@ -848,7 +885,9 @@ export function capabilities(ctx) {
 export function mount(root, ctx) {
   // Öğrenci yönetimi BBD Akademi'de: Akademi'yi görebilen kullanıcı oraya
   // yönlendirilir (derin bağlantı verisiyle). `standalone: true` yönlendirmeyi
-  // atlar (Akademi'den "bu modülün kendi ekranı" istenirse).
+  // atlar (Akademi yokken `bbd_students.open` bu ekranı böyle açar). 0.5.3'ten
+  // beri bu ekran menüde çizilmez (`ui.nav.replacedBy`, ADR 0031); buraya yalnız
+  // eski derin bağlantılar düşer. Akademi modülü kapalıysa menüye geri döner.
   const akademi = typeof ctx.capability === 'function' ? ctx.capability('bbd_akademi.students') : null;
   if (akademi && !ctx.payload?.standalone && typeof ctx.open === 'function') {
     loadCss();

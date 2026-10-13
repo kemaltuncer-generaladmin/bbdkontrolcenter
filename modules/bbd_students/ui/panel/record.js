@@ -23,9 +23,19 @@
 // alanı yazıyorsa onunki korunur). Veliler tam liste olarak gider (sıra =
 // öncelik, ilk veli birincil).
 //
+// HIZLI GÜNCELLEME (0.5.3 — "adam bir öğrenciyi güncellemek için saatlerce
+// uğraşmasın"): kayıt alanları SATIR İÇİ düzenlenir — tıkla, yaz, Enter (ya da
+// alandan çık): yalnız o alan hemen kaydedilir; "Geri al" eski değeri yazar,
+// Esc değişikliği bırakır. Tepedeki hızlı işlem şeridi sık işleri tek yerde
+// toplar: sınıf, birincil veli telefonu, kantin günlük limiti, tablet kısıtı,
+// pasifleştir. Kısayollar: `e` ilk alanı düzenler, Esc vazgeçer. Kayıttan
+// sonra "Akademi'ye ulaştı ✓" göstergesi geçidin teslim imlecinden okunur
+// (`options.syncProbe`; BBD Akademi verir — Ayarlar → Senkron ile aynı veri).
+// Kural `quick.js`'tedir (Node testli).
+//
 // Yol kabuğun KOPYALANMIŞ konumuna göredir (bkz. index.js).
-import { button, confirmSimple, todayIso } from '../../ui-kit/kit.js';
-import { formatBalance, normalizeClass, normalizePhone, formatPhone, validate } from './student.js';
+import { button, confirmSimple, moneyInput, parseMoney, todayIso } from '../../ui-kit/kit.js';
+import { formatBalance, normalizePhone, formatPhone } from './student.js';
 import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, describe, fillFromSuggestion, parseChoice,
   parseGrade, suggestedExam, trackAllowed,
@@ -34,6 +44,9 @@ import * as G from './guardian-model.js';
 import { mountControls } from './canteen.js';
 import { askDeactivate, askDelete, mountStatus } from './lifecycle.js';
 import { trDay, validOn } from './groups.js';
+import {
+  deliveryState, fieldLabel, inlineValue, patchFor, sameValue, shortcut, undoPatch,
+} from './quick.js';
 
 const BASE = '/api/bbd_students';
 const enc = encodeURIComponent;
@@ -45,9 +58,12 @@ const h = (tag, className, text) => {
   return node;
 };
 
-// Kaydın kendi alanları (PATCH). Veli alanları "Veliler" bölümündedir.
-const FIELDS = ['firstName', 'lastName', 'className', 'schoolNo', 'studentPhone', 'note',
-  'gradeLevel', 'track', 'examTarget'];
+let uidCounter = 0;
+
+/** Yazı alanında mı (kısayollar yazıyı bölmesin)? */
+function typingIn(target) {
+  return Boolean(target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)));
+}
 
 function card(title, hint) {
   const box = h('section', 'st-card');
@@ -71,7 +87,8 @@ function loadCss() {
  * @param {object} options
  *   api, kantinId, can(izin) → bool, capability(ad) | null, dialogRoot,
  *   toast(metin, ton?), onChanged?(öğrenci), onLoaded?(öğrenci), onRemoved?(),
- *   classes?() → [sınıf adı]
+ *   classes?() → [sınıf adı],
+ *   syncProbe?() → Promise<{enabled, deliveredSeq, …}> (Akademi'ye ulaştı göstergesi)
  * @returns {{reload: () => Promise<void>, destroy: () => void, dirty: () => boolean}}
  */
 export function mountRecord(host, options) {
@@ -87,30 +104,49 @@ export function mountRecord(host, options) {
   let guardians = [];          // düzenlenen veli listesi
   let guardianMeta = { max: G.MAX_GUARDIANS };
   const parts = [];            // destroy edilecek alt bileşenler
+  const uid = `r${(uidCounter += 1)}`;
+  const saving = new Set();    // kaydedilmekte olan alanlar
+  const timers = new Set();
+  let probeRun = 0;            // en son "Akademi'ye ulaştı" yoklaması
 
   const root = h('div', 'st st-rec');
   host.replaceChildren(root);
 
   const head = h('header', 'st-rec-head');
   const title = h('h3', 'st-rec-title', 'Öğrenci');
+  title.id = `${uid}-title`;
   const subtitle = h('span', 'st-subtitle');
   const badges = h('span', 'st-rec-badges');
   const dirtyNote = h('span', 'st-dirty');
-  const save = button('Kaydet', { variant: 'primary', onClick: () => saveAll() });
+  const save = button('Velileri kaydet', { variant: 'primary', onClick: () => saveAll() });
   save.disabled = true;
   const off = button('Pasifleştir', { variant: 'danger', onClick: () => deactivate() });
   const on = button('Yeniden etkinleştir', { onClick: () => reactivate() });
   const remove = button('Kalıcı sil', { variant: 'danger', onClick: () => removeStudent() });
   const actions = h('div', 'st-rec-actions');
-  actions.append(dirtyNote, off, on, remove, save);
+  actions.append(dirtyNote, off, on, remove);
   const titleBox = h('div', 'st-rec-name');
   titleBox.append(title, subtitle, badges);
   head.append(titleBox, actions);
 
+  // Hızlı işlemler — sık işler tek yerde, tek etkileşimde (0.5.3).
+  const quick = h('section', 'st-quick');
+  quick.setAttribute('aria-label', 'Hızlı işlemler');
+  // Kayıt sonucu + geri al + Akademi'ye ulaştı göstergesi (ekran okuyucuya söylenir).
+  const saved = h('div', 'st-saved');
+  saved.setAttribute('role', 'status');
+  saved.setAttribute('aria-live', 'polite');
+  const savedText = h('span', 'st-saved-text');
+  const undoBox = h('span', 'st-saved-undo');
+  const syncText = h('span', 'st-sync');
+  saved.append(savedText, undoBox, syncText);
+
   const errors = h('ul', 'st-errors');
+  errors.setAttribute('role', 'alert');
   const body = h('div', 'st-rec-body');
-  root.append(head, errors, body);
+  root.append(head, quick, saved, errors, body);
   body.append(h('p', 'st-hint', 'Kayıt okunuyor…'));
+  root.addEventListener('keydown', onKey);
 
   // ------------------------------------------------------------ yükleme
 
@@ -141,10 +177,22 @@ export function mountRecord(host, options) {
   // -------------------------------------------------------------- çizim
 
   const inputs = {};
+  const fieldErrors = {};
 
+  const shown = (key, value, opts = {}) => (opts.display ? opts.display(value)
+    : (value === null || value === undefined ? '' : String(value)));
+
+  /**
+   * SATIR İÇİ ALAN (0.5.3). Tıkla → yaz → Enter (ya da alandan çık): yalnız bu
+   * alan kaydedilir. Esc vazgeçer. Seçim kutusu seçilince kaydeder. Hata
+   * alanın altında yazılır ve `aria-describedby` ile alana bağlıdır.
+   */
   function field(label, key, opts = {}) {
-    const wrap = h('label', `st-field${opts.wide ? ' st-field-wide' : ''}`);
-    wrap.append(h('span', 'st-label', label));
+    const id = `${uid}-${key}`;
+    const wrap = h('div', `st-field st-inline${opts.wide ? ' st-field-wide' : ''}`);
+    const caption = h('label', 'st-label', label);
+    caption.htmlFor = id;
+    wrap.append(caption);
     let input;
     if (opts.type === 'textarea') input = h('textarea', 'st-input st-textarea');
     else if (opts.type === 'select') {
@@ -155,19 +203,191 @@ export function mountRecord(host, options) {
       input.type = 'text';
       if (opts.placeholder) input.placeholder = opts.placeholder;
       if (opts.list) input.setAttribute('list', opts.list);
+      if (opts.inputMode) input.inputMode = opts.inputMode;
     }
+    input.id = id;
     if (opts.maxLength) input.maxLength = opts.maxLength;
+    const error = h('span', 'st-field-error');
+    error.id = `${id}-err`;
+    const hint = h('span', 'visually-hidden st-field-hint',
+      opts.type === 'select' ? 'Seçince kaydedilir.' : 'Enter ile kaydedilir, Esc ile vazgeçilir.');
+    hint.id = `${id}-hint`;
+    input.setAttribute('aria-describedby', `${hint.id} ${error.id}`);
     input.disabled = !can('bbd_students.manage');
-    const value = draft[key];
-    input.value = opts.display ? opts.display(value) : (value === null || value === undefined ? '' : String(value));
+    input.value = shown(key, draft[key], opts);
+    fieldErrors[key] = { input, error };
+
+    const revert = () => {
+      draft[key] = student[key];
+      input.value = shown(key, student[key], opts);
+      clearFieldError(key);
+      wrap.classList.remove('st-inline-dirty');
+      opts.after?.();
+    };
     input.addEventListener(opts.type === 'select' ? 'change' : 'input', () => {
       draft[key] = opts.parse ? opts.parse(input.value) : input.value;
+      wrap.classList.toggle('st-inline-dirty', !sameValue(draft[key], student[key]));
       opts.after?.();
-      paintDirty();
+      if (opts.type === 'select') commit(key, opts);
     });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (opts.type !== 'textarea' || event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        commit(key, opts);
+      } else if (event.key === 'Escape') {
+        if (!sameValue(draft[key], student[key]) || fieldErrors[key]?.shown) {
+          event.preventDefault();
+          event.stopPropagation();
+          revert();
+        }
+      }
+    });
+    if (opts.type !== 'select') {
+      // Alandan çıkınca da kaydedilir (otomatik kayıt); hatalıysa alan işaretli kalır.
+      input.addEventListener('blur', () => {
+        if (!sameValue(draft[key], student[key])) commit(key, opts);
+      });
+    }
     inputs[key] = input;
-    wrap.append(input);
+    wrap.append(input, hint, error);
     return wrap;
+  }
+
+  function showFieldError(key, message) {
+    const entry = fieldErrors[key];
+    if (!entry) { showErrors([message]); return; }
+    entry.error.textContent = message;
+    entry.input.setAttribute('aria-invalid', 'true');
+    entry.input.classList.add('st-invalid');
+    entry.shown = true;
+  }
+
+  function clearFieldError(key) {
+    const entry = fieldErrors[key];
+    if (!entry) return;
+    entry.error.textContent = '';
+    entry.input.removeAttribute('aria-invalid');
+    entry.input.classList.remove('st-invalid');
+    entry.shown = false;
+  }
+
+  /** Tek alanı kaydeder (PATCH yalnız o alan). */
+  async function commit(key, opts = {}) {
+    const input = inputs[key];
+    if (!input || saving.has(key)) return;
+    const raw = opts.type === 'select' ? input.value : input.value;
+    const parsed = inlineValue(key, raw);
+    if (parsed.error) { showFieldError(key, parsed.error); return; }
+    clearFieldError(key);
+    if (sameValue(parsed.value, student[key])) {
+      input.value = shown(key, student[key], opts);
+      input.closest('.st-inline')?.classList.remove('st-inline-dirty');
+      return;
+    }
+    const before = { ...student };
+    saving.add(key);
+    input.setAttribute('aria-busy', 'true');
+    const started = Date.now();
+    try {
+      const result = await api(`${BASE}/students/${enc(kantinId)}`, { method: 'PATCH',
+        body: patchFor(student, key, parsed.value) });
+      if (destroyed) return;
+      student = { ...student, [key]: parsed.value };
+      draft[key] = parsed.value;
+      if (document.activeElement !== input) input.value = shown(key, parsed.value, opts);
+      else if (key === 'className' || key === 'studentPhone') input.value = shown(key, parsed.value, opts);
+      input.closest('.st-inline')?.classList.remove('st-inline-dirty');
+      paintHead();
+      syncCurriculum();
+      announce(`“${fieldLabel(key)}” kaydedildi${result?.canteenSync === 'pending'
+        ? ' — kantine iletilemedi, otomatik yeniden denenecek' : ''}.`,
+      () => undo(key, before), started);
+      options.onChanged?.(student);
+    } catch (failure) {
+      showFieldError(key, `Kaydedilemedi: ${failure.message}`);
+    } finally {
+      saving.delete(key);
+      input.removeAttribute('aria-busy');
+    }
+  }
+
+  async function undo(key, before) {
+    const started = Date.now();
+    try {
+      await api(`${BASE}/students/${enc(kantinId)}`, { method: 'PATCH', body: undoPatch(before, key) });
+      if (destroyed) return;
+      student = { ...student, [key]: before[key] };
+      draft[key] = before[key];
+      if (inputs[key]) inputs[key].value = before[key] === null || before[key] === undefined ? '' : String(before[key]);
+      if (key === 'studentPhone' && inputs[key]) inputs[key].value = formatPhone(before[key] || '');
+      paintHead();
+      syncCurriculum();
+      announce(`“${fieldLabel(key)}” geri alındı.`, null, started);
+      options.onChanged?.(student);
+    } catch (failure) {
+      showErrors([`Geri alınamadı: ${failure.message}`]);
+    }
+  }
+
+  /** Kayıt sonucu: metin + (varsa) "Geri al" + Akademi'ye ulaşma durumu. */
+  function announce(text, onUndo, started = Date.now()) {
+    savedText.textContent = text;
+    undoBox.replaceChildren();
+    if (onUndo) {
+      const back = button('Geri al', { onClick: () => { undoBox.replaceChildren(); onUndo(); } });
+      back.classList.add('st-undo');
+      undoBox.append(back);
+    }
+    saved.classList.add('show');
+    probeDelivery(started);
+  }
+
+  /**
+   * "Akademi'ye ulaştı ✓": yazmadan hemen sonra outbox'ın son sırası okunur,
+   * geçidin teslim imleci onu geçince gösterilir (en çok 12 sn yoklanır).
+   * Yoklayıcı yoksa (Akademi paneli dışında) ya da izin yoksa sessizce çizilmez.
+   */
+  async function probeDelivery(started) {
+    const run = (probeRun += 1);
+    syncText.textContent = '';
+    syncText.className = 'st-sync';
+    if (typeof options.syncProbe !== 'function') return;
+    let seq = null;
+    try {
+      seq = (await api('/api/events/wait'))?.lastSeq ?? null;
+    } catch {
+      return;
+    }
+    const tick = async () => {
+      if (destroyed || run !== probeRun) return;
+      let status = null;
+      try {
+        status = await options.syncProbe();
+      } catch {
+        status = null;
+      }
+      if (destroyed || run !== probeRun) return;
+      const state = deliveryState({ seq, status, elapsedMs: Date.now() - started });
+      syncText.textContent = state.text;
+      syncText.className = `st-sync st-sync-${state.state}`;
+      if (state.state === 'pending' || (state.state === 'late' && Date.now() - started < 12_000)) {
+        const timer = setTimeout(() => { timers.delete(timer); tick(); }, 300);
+        timers.add(timer);
+      }
+    };
+    tick();
+  }
+
+  function onKey(event) {
+    const action = shortcut(event, typingIn(event.target));
+    if (action === 'edit') {
+      const first = Object.values(inputs).find((input) => !input.disabled);
+      if (first) {
+        event.preventDefault();
+        first.focus();
+        first.select?.();
+      }
+    }
   }
 
   function render() {
@@ -228,19 +448,25 @@ export function mountRecord(host, options) {
     parts.push(mountGroupsPart(groupsBox));
     school.suggest = suggest;
 
-    // Veliler
+    // Veliler — liste düzenlemesi (ekle, sırala, sil) birlikte kaydedilir.
     const people = card('Veliler', 'İlk veli birincildir: telefonu kantin kaydına yazılır. En çok '
       + `${guardianMeta.max || G.MAX_GUARDIANS} veli. Aynı telefon kardeşlerin velisi olarak da kayıtlı olabilir.`);
     const peopleBox = h('div', 'st-rec-guardians');
-    people.append(peopleBox);
+    const peopleActions = h('div', 'st-rec-group-tools');
+    peopleActions.append(dirtyNote, save);
+    save.hidden = !can('bbd_students.manage');
+    people.append(peopleBox, peopleActions);
 
     // Kantin — iki para ayrı (A12): yalnız KANTİN hesabı.
     const canteen = card('Kantin', 'Yalnız kantin hesabıdır; kurum (Akademi) ödemeleriyle karışmaz. '
       + 'Ayarlar kantinde durur ve satış anında orada uygulanır.');
     const controls = h('div', 'st-cc');
     canteen.append(controls);
-    parts.push(mountControls(controls, { api, studentId: kantinId, dialogRoot,
-      canEdit: can('bbd_students.canteen_controls'), onSaved: () => options.onChanged?.(student) }));
+    const controlsPart = mountControls(controls, { api, studentId: kantinId, dialogRoot,
+      canEdit: can('bbd_students.canteen_controls'), onSaved: () => options.onChanged?.(student),
+      onLoaded: (value) => { canteenControls = value; paintQuick(); } });
+    parts.push(controlsPart);
+    reloadControls = () => controlsPart.reload();
     const pay = h('div', 'st-pay');
     canteen.append(h('p', 'st-subhead', 'Tahsilat ve ödeme talebi'), pay);
     const draw = options.capability?.('bbd_payment_request.student_card');
@@ -256,6 +482,187 @@ export function mountRecord(host, options) {
     syncCurriculum(school.suggest);
     paintGuardians(peopleBox);
     paintDirty();
+    paintQuick();
+  }
+
+  // ------------------------------------------------------ hızlı işlemler
+
+  let canteenControls = null;
+  let reloadControls = () => {};
+  let tabletPart = null;
+
+  /** Kısa satır içi giriş: Enter kaydeder, Esc vazgeçer (sınıf, veli tel., limit). */
+  function quickInput(label, { value, placeholder, inputMode, onSave, disabled = false, describe = '' }) {
+    const id = `${uid}-q-${label.replace(/\W+/g, '').toLowerCase() || 'x'}`;
+    const wrap = h('div', 'st-quick-item');
+    const caption = h('label', 'st-quick-label', label);
+    caption.htmlFor = id;
+    const input = h('input', 'st-input st-quick-input');
+    input.id = id;
+    input.type = 'text';
+    input.value = value ?? '';
+    if (placeholder) input.placeholder = placeholder;
+    if (inputMode) input.inputMode = inputMode;
+    input.disabled = disabled;
+    const error = h('span', 'st-field-error');
+    error.id = `${id}-err`;
+    const hint = h('span', 'visually-hidden', describe || 'Enter ile kaydedilir, Esc ile vazgeçilir.');
+    hint.id = `${id}-hint`;
+    input.setAttribute('aria-describedby', `${hint.id} ${error.id}`);
+    let busy = false;
+    const fail = (message) => {
+      error.textContent = message;
+      input.setAttribute('aria-invalid', 'true');
+      input.classList.add('st-invalid');
+    };
+    const clear = () => {
+      error.textContent = '';
+      input.removeAttribute('aria-invalid');
+      input.classList.remove('st-invalid');
+    };
+    const go = async () => {
+      if (busy || String(input.value) === String(value ?? '')) return;
+      busy = true;
+      input.setAttribute('aria-busy', 'true');
+      try {
+        const message = await onSave(input.value);
+        if (message) fail(message);
+        else clear();
+      } finally {
+        busy = false;
+        input.removeAttribute('aria-busy');
+      }
+    };
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') { event.preventDefault(); go(); }
+      if (event.key === 'Escape' && String(input.value) !== String(value ?? '')) {
+        event.preventDefault();
+        event.stopPropagation();
+        input.value = value ?? '';
+        clear();
+      }
+    });
+    wrap.append(caption, input, hint, error);
+    return wrap;
+  }
+
+  function paintQuick() {
+    if (!student || destroyed) return;
+    quick.replaceChildren();
+    const managed = can('bbd_students.manage') && student.status !== 'inactive';
+    quick.append(h('h4', 'st-quick-title', 'Hızlı işlemler'));
+    const row = h('div', 'st-quick-row');
+
+    // Sınıf değiştir — satır içi, Enter.
+    row.append(quickInput('Sınıf', { value: student.className || '', placeholder: '9-A', disabled: !managed,
+      onSave: async (text) => {
+        if (inputs.className) inputs.className.value = text;
+        draft.className = text;
+        await commit('className');
+        if (inputs.className && fieldErrors.className?.shown) return fieldErrors.className.error.textContent;
+        paintQuick();
+        return '';
+      } }));
+
+    // Birincil veli telefonu — veli listesinin 1. yuvası (kantine gider).
+    const primary = guardiansBefore[0] || null;
+    row.append(quickInput('Veli telefonu', { value: primary ? G.showPhone(primary.phone) : '',
+      placeholder: '+90 5xx xxx xx xx', inputMode: 'tel', disabled: !managed || guardiansDirty(),
+      describe: 'Birincil velinin telefonu. Enter ile kaydedilir, Esc ile vazgeçilir.',
+      onSave: (text) => savePrimaryPhone(text) }));
+
+    // Kantin günlük limiti.
+    if (canteenControls && can('bbd_students.canteen_controls')) {
+      row.append(quickInput('Günlük kantin limiti (₺)', {
+        value: canteenControls.dailyLimit === null || canteenControls.dailyLimit === undefined ? ''
+          : moneyInput(canteenControls.dailyLimit),
+        placeholder: 'sınırsız', inputMode: 'decimal', disabled: student.status === 'inactive',
+        describe: 'Boş bırakılırsa sınırsız. Enter ile kaydedilir, Esc ile vazgeçilir.',
+        onSave: (text) => saveDailyLimit(text) }));
+    }
+
+    quick.append(row);
+    const tools = h('div', 'st-quick-row st-quick-tools');
+    // Tablet kısıtı — Öğrenci Tablet Yönetimi'nin arayüz yeteneği (K3; yoksa çizilmez).
+    const tablet = options.capability?.('bbd_tablet.student_quick');
+    tabletPart?.destroy?.();
+    tabletPart = null;
+    if (typeof tablet === 'function') {
+      const slot = h('div', 'st-quick-tablet');
+      tools.append(slot);
+      tabletPart = tablet(slot, { studentId: kantinId, displayName: student.displayName, dialogRoot,
+        toast: (text) => announce(text, null) });
+    }
+    if (!off.hidden) {
+      const offQuick = button(off.textContent, { variant: 'danger', onClick: () => deactivate() });
+      offQuick.disabled = off.disabled;
+      tools.append(offQuick);
+    }
+    tools.append(h('span', 'st-quick-keys', 'Kısayol: e ilk alanı düzenler · Esc vazgeçer'));
+    quick.append(tools);
+  }
+
+  async function savePrimaryPhone(text) {
+    const number = G.cleanPhone(text);
+    if (String(text).trim() && !number) return 'Veli telefonu cep numarası olmalı (+90 5xx xxx xx xx).';
+    if (!String(text).trim()) return 'Birincil velinin telefonu boş bırakılamaz; veliyi “Veliler” bölümünden silin.';
+    const before = guardiansBefore.map((row) => ({ ...row }));
+    const next = before.length ? before.map((row, index) => (index === 0 ? { ...row, phone: number } : row))
+      : [{ name: '', phone: number, relation: '' }];
+    const problems = G.validate(next);
+    if (problems.length) return problems[0].message;
+    const started = Date.now();
+    try {
+      const result = await api(`${BASE}/students/${enc(kantinId)}/guardians`, { method: 'PUT',
+        body: G.toPayload(next) });
+      await reloadGuardians();
+      announce(`Veli telefonu kaydedildi${result?.canteenSync === 'pending'
+        ? ' — kantine iletilemedi, otomatik yeniden denenecek' : ''}.`, async () => {
+        await api(`${BASE}/students/${enc(kantinId)}/guardians`, { method: 'PUT', body: G.toPayload(before) });
+        await reloadGuardians();
+        announce('Veli telefonu geri alındı.', null);
+      }, started);
+      options.onChanged?.(student);
+      return '';
+    } catch (failure) {
+      return `Kaydedilemedi: ${failure.message}`;
+    }
+  }
+
+  async function saveDailyLimit(text) {
+    const raw = String(text ?? '').trim();
+    const value = raw === '' ? null : parseMoney(raw);
+    if (raw !== '' && (value === null || value === undefined || value < 0)) return 'Tutar yazın (ör. 150 ya da 150,50); boş = sınırsız.';
+    const before = canteenControls?.dailyLimit ?? null;
+    const started = Date.now();
+    try {
+      const result = await api(`${BASE}/students/${enc(kantinId)}/canteen/controls`, { method: 'PATCH',
+        body: { dailyLimit: value } });
+      canteenControls = result?.controls || { ...canteenControls, dailyLimit: value };
+      reloadControls();
+      announce('Günlük kantin limiti kaydedildi.', async () => {
+        await api(`${BASE}/students/${enc(kantinId)}/canteen/controls`, { method: 'PATCH',
+          body: { dailyLimit: before } });
+        reloadControls();
+        announce('Günlük kantin limiti geri alındı.', null);
+      }, started);
+      options.onChanged?.(student);
+      return '';
+    } catch (failure) {
+      return `Kaydedilemedi: ${failure.message}`;
+    }
+  }
+
+  /** Veli listesini sunucudan yeniden okur (kartın geri kalanını yeniden çizmeden). */
+  async function reloadGuardians() {
+    const people = await api(`${BASE}/students/${enc(kantinId)}/guardians`).catch(() => null);
+    if (destroyed || !people) return;
+    guardianMeta = people;
+    guardiansBefore = G.fromServer(people.items);
+    guardians = guardiansBefore.map((row) => ({ ...row }));
+    paintGuardians();
+    paintDirty();
+    paintQuick();
   }
 
   function paintHead() {
@@ -278,7 +685,6 @@ export function mountRecord(host, options) {
     on.hidden = !(inactive || student.scheduledDeactivation) || !can('bbd_students.lifecycle');
     on.textContent = inactive ? 'Yeniden etkinleştir' : 'Planı iptal et';
     remove.hidden = !inactive || !can('bbd_students.delete');
-    save.hidden = !can('bbd_students.manage');
   }
 
   function syncCurriculum(slot) {
@@ -439,8 +845,18 @@ export function mountRecord(host, options) {
       name.dataset.k = `${index}:name`;
       relation.dataset.k = `${index}:relation`;
       phone.dataset.k = `${index}:phone`;
+      // Ekran okuyucu için her alan hangi veliye ait olduğunu söyler.
+      const who = index === 0 ? 'Birincil veli' : `${index + 1}. veli`;
+      name.setAttribute('aria-label', `${who} adı soyadı`);
+      relation.setAttribute('aria-label', `${who} yakınlığı`);
+      phone.setAttribute('aria-label', `${who} telefonu`);
       const problem = problems.find((item) => item.index === index);
-      if (problem) phone.classList.add('st-invalid');
+      const noteId = `${uid}-g${index}-note`;
+      if (problem) {
+        phone.classList.add('st-invalid');
+        phone.setAttribute('aria-invalid', 'true');
+        phone.setAttribute('aria-describedby', noteId);
+      }
       line.append(rank, name, relation, phone);
       if (editable) {
         const tools = h('span', 'st-rec-guardian-tools');
@@ -461,7 +877,11 @@ export function mountRecord(host, options) {
           .join(', ')} için de veli.`);
       }
       if (problem) info.push(problem.message);
-      if (info.length) target.append(h('p', `st-hint st-rec-guardian-note${problem ? ' bad' : ''}`, info.join(' ')));
+      if (info.length) {
+        const note = h('p', `st-hint st-rec-guardian-note${problem ? ' bad' : ''}`, info.join(' '));
+        note.id = noteId;
+        target.append(note);
+      }
     });
     const note = G.primaryNote(guardiansBefore, guardians);
     if (note) target.append(h('p', 'st-lc-warn', note));
@@ -477,9 +897,10 @@ export function mountRecord(host, options) {
 
   // ------------------------------------------------------------- kayıt
 
+  /** Satır içi alanlarda kaydedilmemiş (yazılıp henüz Enter'lanmamış) değer. */
   function dirtyFields() {
     if (!student || !draft) return [];
-    return FIELDS.filter((key) => String(student[key] ?? '') !== String(draft[key] ?? ''));
+    return Object.keys(inputs).filter((key) => !sameValue(student[key], draft[key]));
   }
 
   function guardiansDirty() {
@@ -487,13 +908,12 @@ export function mountRecord(host, options) {
   }
 
   function paintDirty(withErrors = true) {
-    const count = dirtyFields().length + (guardiansDirty() ? 1 : 0);
-    save.disabled = count === 0;
-    dirtyNote.textContent = count === 0 ? '' : 'Kaydedilmemiş değişiklik var';
-    dirtyNote.classList.toggle('show', count > 0);
+    const dirty = guardiansDirty();
+    save.disabled = !dirty;
+    dirtyNote.textContent = dirty ? 'Velilerde kaydedilmemiş değişiklik var' : '';
+    dirtyNote.classList.toggle('show', dirty);
     if (withErrors && draft) {
-      showErrors([...validate({ ...draft, parentPhone: '', parentPhone2: '' }),
-        ...(guardiansDirty() ? G.validate(guardians).map((item) => item.message) : [])]);
+      showErrors(dirty ? G.validate(guardians).map((item) => item.message) : []);
     }
   }
 
@@ -502,45 +922,33 @@ export function mountRecord(host, options) {
     errors.classList.toggle('show', list.length > 0);
   }
 
+  /** Veli listesini kaydeder (ekle / sırala / sil birlikte). */
   async function saveAll() {
-    const fields = dirtyFields();
-    const people = guardiansDirty();
-    const problems = [...validate({ ...draft, parentPhone: '', parentPhone2: '' }),
-      ...(people ? G.validate(guardians).map((item) => item.message) : [])];
+    if (!guardiansDirty()) return;
+    const problems = G.validate(guardians).map((item) => item.message);
     if (problems.length) { showErrors(problems); return; }
-    if (people && G.primaryNote(guardiansBefore, guardians) && !await confirmSimple(dialogRoot, {
+    if (G.primaryNote(guardiansBefore, guardians) && !await confirmSimple(dialogRoot, {
       title: 'Birincil veli değişiyor', description: G.primaryNote(guardiansBefore, guardians),
       confirmLabel: 'Kaydet' })) return;
     save.disabled = true;
     save.textContent = 'Kaydediliyor…';
-    let pending = false;
+    const before = guardiansBefore.map((row) => ({ ...row }));
+    const started = Date.now();
     try {
-      if (fields.length) {
-        const payload = {};
-        for (const key of fields) {
-          if (key === 'studentPhone') payload[key] = normalizePhone(draft[key]);
-          else if (key === 'className') payload[key] = normalizeClass(draft[key]);
-          else payload[key] = draft[key];
-        }
-        if (fields.includes('firstName') || fields.includes('lastName')) {
-          payload.firstName = draft.firstName;
-          payload.lastName = draft.lastName;
-        }
-        const result = await api(`${BASE}/students/${enc(kantinId)}`, { method: 'PATCH', body: payload });
-        pending = pending || result?.canteenSync === 'pending';
-      }
-      if (people) {
-        const result = await api(`${BASE}/students/${enc(kantinId)}/guardians`, { method: 'PUT',
-          body: G.toPayload(guardians) });
-        pending = pending || result?.canteenSync === 'pending';
-      }
-      toast(pending ? 'Kaydedildi — kantine iletilemedi, otomatik yeniden denenecek.' : 'Kaydedildi.');
-      await reload();
+      const result = await api(`${BASE}/students/${enc(kantinId)}/guardians`, { method: 'PUT',
+        body: G.toPayload(guardians) });
+      await reloadGuardians();
+      announce(result?.canteenSync === 'pending' ? 'Veliler kaydedildi — kantine iletilemedi, otomatik '
+        + 'yeniden denenecek.' : 'Veliler kaydedildi.', async () => {
+        await api(`${BASE}/students/${enc(kantinId)}/guardians`, { method: 'PUT', body: G.toPayload(before) });
+        await reloadGuardians();
+        announce('Veli değişikliği geri alındı.', null);
+      }, started);
       options.onChanged?.(student);
     } catch (failure) {
       showErrors([`Kaydedilemedi: ${failure.message}`]);
     } finally {
-      save.textContent = 'Kaydet';
+      save.textContent = 'Velileri kaydet';
       paintDirty(false);
     }
   }
@@ -642,6 +1050,10 @@ export function mountRecord(host, options) {
     dirty: () => dirtyFields().length > 0 || guardiansDirty(),
     destroy() {
       destroyed = true;
+      for (const timer of timers) clearTimeout(timer);
+      timers.clear();
+      root.removeEventListener('keydown', onKey);
+      try { tabletPart?.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
       for (const part of parts.splice(0)) {
         try { part?.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
       }

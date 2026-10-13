@@ -64,6 +64,8 @@ from . import curriculum
 from . import qr as qr_codec
 from .guardians import extra_items
 from .phones import normalize_phone
+from .search import DEFAULT_LIMIT
+from .search import search as search_records
 from .sync import pending_upsert
 
 _ISTANBUL = ZoneInfo("Europe/Istanbul")
@@ -392,6 +394,15 @@ class StudentDirectory:
             result["removed"] = [{"id": kantin_id, "at": _iso(moment)}
                                  for moment, kantin_id in gone]
         return result
+
+    async def search(self, query: str, limit: int = DEFAULT_LIMIT) -> dict[str, Any]:
+        """Küresel arama (kabuğun üst çubuğu): anlık görüntüde arar, kantine/
+        veritabanına gitmez (`search.py`). Kantine ulaşılamazsa `complete: false`."""
+        try:
+            snapshot = await self._current()
+        except DirectoryUnavailable:
+            return {"items": [], "complete": False}
+        return {"items": search_records(snapshot.records, query, limit), "complete": True}
 
     async def get(self, student_id: str, *, balance: bool = True) -> dict[str, Any] | None:
         wanted = str(student_id or "").strip()

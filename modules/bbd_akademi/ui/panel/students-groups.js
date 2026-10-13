@@ -193,7 +193,9 @@ export function groupsView(app, { openStudent } = {}) {
     + 'Burada gruplar atamalarda hedef, öğrenci listesinde süzgeç olarak görünür.'),
   // `{tab: 'groups'}`: Öğrenciler panelinin Gruplar sekmesi (sözleşme §7.A.6);
   // sekmeyi tanımayan sürüm yükü yok sayar ve ana listeyi açar.
-  button('Grupları Öğrenci Yönetimi\'nde düzenle', { onClick: () => app.openPanel('bbd_students', { tab: 'groups' }) }));
+  // 0.5.3: gruplar bu panelde (Öğrenciler → Gruplar); yönetim yeteneği yoksa eski ekran.
+  button('Grupları düzenle', { onClick: () => (app.capability?.('bbd_students.manager')
+    ? app.go('students', { view: 'groups' }) : app.openPanel('bbd_students', { tab: 'groups' })) }));
   node.append(hint);
 
   const grid = dataTable({

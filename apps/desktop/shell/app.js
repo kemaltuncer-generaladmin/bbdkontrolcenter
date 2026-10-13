@@ -11,8 +11,10 @@
 
 import { iconSvg } from './icons.js';
 import {
-  api, loadRegistry, login, logout, mountPanel, navTree, setNavigator, waitForCore,
+  api, loadRegistry, login, logout, menuPanels, mountPanel, navTree, resetProviders,
+  searchProviders, setNavigator, waitForCore,
 } from './ui-kernel.js';
+import { createGlobalSearch } from './global-search.js';
 
 const PIN_MIN = 6;
 const PIN_MAX = 12; // yerleşim sınırı; sözleşmede üst sınır yok
@@ -39,7 +41,10 @@ function fold(text) {
 
 const shell = {
   registry: { groups: [], panels: [] },
+  // `panels`: kayıttaki BÜTÜN ekranlar (açılabilir — `ctx.open`, derin bağlantı);
+  // `menu`: menüde ÇİZİLENLER (işi başka ekrana taşınanlar düşer — ADR 0031).
   panels: [],
+  menu: [],
   activeId: null,
   cleanup: null,
   user: null,
@@ -106,14 +111,14 @@ function navButton(panel) {
 function renderNav(query = '') {
   const needle = fold(query.trim());
   const matches = needle
-    ? shell.panels.filter((panel) => fold(panel.title).includes(needle)
+    ? shell.menu.filter((panel) => fold(panel.title).includes(needle)
       || fold(panel.group).includes(needle))
-    : shell.panels;
+    : shell.menu;
 
   el.nav.replaceChildren();
 
   if (matches.length === 0) {
-    el.nav.append(message(shell.panels.length ? 'Eşleşen ekran yok.' : 'Görünür ekran yok.'));
+    el.nav.append(message(shell.menu.length ? 'Eşleşen ekran yok.' : 'Görünür ekran yok.'));
     return;
   }
 
@@ -244,6 +249,7 @@ async function openWorkspace(user) {
   // kendi denetimi vardır (K9).
   shell.registry = await loadRegistry(user);
   shell.panels = shell.registry.panels;
+  shell.menu = menuPanels(shell.registry);
 
   el.foot.replaceChildren();
   const who = document.createElement('span');
@@ -265,7 +271,8 @@ async function openWorkspace(user) {
   setNavigator((id, payload) => select(id, { payload, force: true, scroll: true }));
 
   renderNav();
-  if (shell.panels.length > 0) await select(shell.panels[0].id);
+  search.enable();
+  if (shell.menu.length > 0) await select(shell.menu[0].id);
 
   el.login.hidden = true;
   el.workspace.hidden = false;
@@ -294,6 +301,9 @@ async function signOut() {
   shell.user = null;
   shell.registry = { groups: [], panels: [] };
   shell.panels = [];
+  shell.menu = [];
+  search.reset();
+  resetProviders();
 
   await logout();
 
@@ -502,11 +512,29 @@ window.addEventListener('keydown', (event) => {
 
   if (typing) return;
 
+  // `/` KÜRESEL ARAMAYI açar (öğrenci, telefon, kart, ekran — ADR 0031).
+  // Menü süzgecine ulaşmak için Sekme ya da tıklama yeter.
   if (event.key === '/') {
     event.preventDefault();
-    el.filter.focus();
-    el.filter.select();
+    search.focus();
   }
+});
+
+// ========================================================= KÜRESEL ARAMA
+//
+// Üst çubuktaki "Ara" kutusu (ADR 0031): her ekrandan, tek kutudan öğrenci
+// (ad, okul no, veli telefonu, kantin kartı) ve ekran bulunur; sonuç tek
+// tıkla (ya da Enter ile) açılır. Kabuk kimin aradığını bilmez — adı
+// `.search` ile biten arayüz yetenekleri sonuç verir (K1).
+const search = createGlobalSearch({
+  input: document.getElementById('gsearch-input'),
+  popup: document.getElementById('gsearch-pop'),
+  list: document.getElementById('gsearch-list'),
+  status: document.getElementById('gsearch-status'),
+  fold,
+  screens: () => shell.menu,
+  providers: () => searchProviders(shell.registry),
+  openScreen: (id) => select(id, { scroll: true }),
 });
 
 window.addEventListener('contextmenu', (event) => event.preventDefault());

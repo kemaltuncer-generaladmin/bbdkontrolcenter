@@ -62,7 +62,12 @@ ui:
     icon: book
     group: "BBD"
     order: 45
-    requires: [bbd_akademi.view]
+    # `bbd_students.view` (0.5.3, ADR 0031): öğrenci yönetimi tek yerde, burada.
+    # Akademi izni olmayan ama öğrenci yönetimi izni olan roller (muhasebe,
+    # org_staff) paneli YALNIZ "Öğrenciler" bölümüyle görür (KM kaydı; Akademi
+    # verisi yok). Menü görünürlüğü yetki değildir: Akademi vekili yine
+    # `bbd_akademi.view` ister, öğrenci uçları `bbd_students.*` (K9).
+    requires: [bbd_akademi.view, bbd_students.view]
 
 # Akademi izinlerinin KM karşılıkları. Eşleme: backend/permission_map.py.
 permissions:

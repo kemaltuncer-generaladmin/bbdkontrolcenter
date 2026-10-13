@@ -9,6 +9,9 @@
   --ink-faint: #737f96;
   --accent: #5b8cff;
   --accent-soft: rgba(91, 140, 255, 0.16);
+  /* Açık zeminde (panel) odak/vurgu: beyazda 5,2:1 (koyu zemindeki --accent
+     açık zeminde 3:1'in altında kalıyordu). */
+  --accent-strong: #2f5fd0;
   --danger: #ff6b6b;
 
   /* kenar çubuğu */
@@ -387,14 +390,19 @@ kbd {
   color: var(--paper-ink);
 }
 
+/* `min-height`, sabit yükseklik DEĞİL: %200 yazı büyütmede başlık ve arama
+   kutusu taşmasın, alt satıra insin (WCAG 1.4.4 / 1.4.10). */
 .panel-head {
   display: flex;
-  align-items: baseline;
-  gap: 9px;
-  height: 56px;
-  padding: 0 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 16px;
+  min-height: 56px;
+  padding: 8px 24px;
   border-bottom: 1px solid var(--paper-line);
 }
+
+.panel-head-text { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
 
 .crumb { font-size: 12px; color: var(--paper-soft); }
 .crumb::after { content: " ›"; }
@@ -516,3 +524,128 @@ kbd {
 }
 
 .nav-nested.active::before { left: -1px; }
+
+/* ============================================== KÜRESEL ARAMA (ADR 0031) */
+
+.gsearch {
+  position: relative;
+  margin-left: auto;
+  width: min(420px, 100%);
+}
+
+#gsearch-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 34px 6px 12px;
+  border-radius: 10px;
+  border: 1px solid #c3cad6;
+  background: #f6f8fb;
+  color: var(--paper-ink);
+  font: inherit;
+  font-size: 13.5px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#gsearch-input::placeholder { color: var(--paper-soft); }
+#gsearch-input:focus { border-color: var(--accent-strong); background: #fff; }
+#gsearch-input::-webkit-search-cancel-button { display: none; }
+#gsearch-input:disabled { opacity: 0.6; }
+
+.gsearch-key {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-color: #c3cad6;
+  background: #fff;
+  color: var(--paper-soft);
+  pointer-events: none;
+}
+
+.gsearch-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 50;
+  width: min(520px, 92vw);
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid #c3cad6;
+  background: #fff;
+  box-shadow: 0 18px 40px -18px rgba(15, 23, 42, 0.45);
+}
+
+.gsearch-pop[hidden] { display: none; }
+
+.gsearch-list { list-style: none; }
+
+.gsearch-group {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-soft);
+}
+
+.gsearch-opt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: center;
+  min-height: 40px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.gsearch-opt:hover { background: #eef2f8; }
+.gsearch-opt.on { background: #e3ebff; outline: 2px solid var(--accent-strong); outline-offset: -2px; }
+.gsearch-title { font-size: 13.5px; font-weight: 600; color: var(--paper-ink); }
+.gsearch-detail { grid-column: 1; font-size: 12px; color: var(--paper-soft); }
+.gsearch-badge {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef2f8;
+  color: #3b4558;
+  font-size: 11.5px;
+}
+
+.gsearch-status { padding: 6px 10px 4px; font-size: 12px; color: var(--paper-soft); }
+.gsearch-status:empty { display: none; }
+
+/* ================================================ ERİŞİLEBİLİRLİK (0.5.3)
+
+   WCAG 2.2 AA: görünür odak (2.4.7, 2.4.11), atlama bağlantısı (2.4.1),
+   dokunma hedefi ≥ 24 px (2.5.8). Kabuk kuralı modül panellerini de kapsar:
+   hiçbir panel odağı görünmez bırakamaz. */
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -60px;
+  z-index: 100;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus { top: 12px; outline: 2px solid #fff; outline-offset: 2px; }
+
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.sidebar :where(button, a, input, select, summary, [tabindex]):focus-visible { outline-color: var(--accent); }
+
+.panel :where(button, select, input:not([type="checkbox"]):not([type="radio"])) { min-height: 24px; }

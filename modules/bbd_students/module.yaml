@@ -43,6 +43,18 @@ provides:
   - capability: bbd_students.record
     contract: bbd_students/ui/panel/record.js:mountRecord
     description: "ARAYÜZ: tek öğrencinin KM kaydı — kimlik, ana sınıf ve gruplar, veliler, kantin, durum."
+  # TEK GİRİŞ NOKTASI (0.5.3, ADR 0031). İki ARAYÜZ yeteneği daha:
+  #   · `bbd_students.search` — kabuğun üst çubuğundaki küresel aramaya öğrenci
+  #     sonuçları verir (adı `.search` ile biten yetenek; `GET /search`).
+  #   · `bbd_students.open` — `(kantinId, {tab?})`: öğrencinin TEK KARTINI açar
+  #     (BBD Akademi → Öğrenciler; Akademi yoksa bu modülün ekranı). Tablet,
+  #     ödeme talebi gibi ekranlar öğrenci düzenlemek için bunu çağırır.
+  - capability: bbd_students.search
+    contract: bbd_students/ui/panel/index.js:capabilities
+    description: "ARAYÜZ: küresel arama sağlayıcısı {label, search(metin, {limit})} — ad, okul no, veli telefonu, kantin kartı."
+  - capability: bbd_students.open
+    contract: bbd_students/ui/panel/index.js:capabilities
+    description: "ARAYÜZ: (kantinId, {tab?}) → öğrencinin tek kartını açar (her ekrandan aynı bileşen)."
   - capability: bbd_students.directory
     contract: bbd_students/backend/directory.py:StudentDirectory
     description: >
@@ -125,6 +137,13 @@ ui:
     group: "BBD"
     order: 40
     requires: [bbd_students.view]
+    # TEK GİRİŞ NOKTASI (0.5.3, kullanıcı isteği "iki çekirdek tek yere baksın";
+    # ADR 0031): BBD Akademi paneli `bbd_akademi.students`ı verdiği sürece bu
+    # ekran menüde ÇİZİLMEZ — öğrenci yönetimi BBD Akademi → Öğrenciler'dedir
+    # (Akademi menüsü `bbd_students.view` taşıyana da görünür). Ekran kayıtta
+    # kalır: yetenekleri yüklenir, eski derin bağlantılar Akademi'ye yönlenir.
+    # BBD Akademi modülü kapatılırsa bu ekran menüye geri döner (K7).
+    replacedBy: bbd_akademi.students
 
 # Katalog ve rol matrisi: docs/permissions.md
 # GELİŞTİRME KURALI: ekranlar şimdilik tüm rollere açık — BLD personeli

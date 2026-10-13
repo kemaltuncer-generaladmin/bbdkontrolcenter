@@ -47,7 +47,8 @@ function parseLimit(text) {
 
 /**
  * Bölümü `container` içine çizer. Dönüş `{ reload, destroy }`.
- * `options`: `{ api, studentId, canEdit, dialogRoot, onSaved? }`
+ * `options`: `{ api, studentId, canEdit, dialogRoot, onSaved?, onLoaded?(controls) }` —
+ * `onLoaded` kartın hızlı işlem şeridine (günlük limit) güncel değeri verir.
  */
 export function mountControls(container, options) {
   const { api, studentId, canEdit } = options;
@@ -63,7 +64,10 @@ export function mountControls(container, options) {
     } catch (error) {
       data = { available: false, error: error.message || String(error) };
     }
-    if (!destroyed) render();
+    if (!destroyed) {
+      render();
+      if (data?.available) options.onLoaded?.(data.controls);
+    }
   }
 
   function render() {
@@ -178,6 +182,7 @@ export function mountControls(container, options) {
     const search = h('input', 'st-input st-cc-search');
     search.type = 'search';
     search.placeholder = 'Ürün ara';
+    search.setAttribute('aria-label', 'Yasaklı ürünlerde ara');
     search.value = filter;
     head.append(h('span', 'st-label', 'Yasaklı ürünler'), count, search);
     box.append(head);
@@ -238,6 +243,7 @@ export function mountControls(container, options) {
       data = { ...data, controls: result.controls, available: true };
       if (destroyed) return;
       render();
+      options.onLoaded?.(data.controls);
       const note = container.querySelector('.st-cc-msg');
       if (note) {
         note.textContent = 'Kantin kontrolleri kaydedildi.';
