@@ -146,7 +146,8 @@ export function mountRecord(host, options) {
   const body = h('div', 'st-rec-body');
   root.append(head, quick, saved, errors, body);
   body.append(h('p', 'st-hint', 'Kayıt okunuyor…'));
-  root.addEventListener('keydown', onKey);
+  // Kısayol kartın bulunduğu katmanda (çekmece / panel) her yerden çalışır.
+  document.addEventListener('keydown', onKey);
 
   // ------------------------------------------------------------ yükleme
 
@@ -379,7 +380,14 @@ export function mountRecord(host, options) {
   }
 
   function onKey(event) {
-    const action = shortcut(event, typingIn(event.target));
+    if (destroyed || !host.isConnected) return;
+    const scope = host.closest('[role="dialog"]') || host.closest('.kit-panel, .st') || root;
+    const target = event.target;
+    if (!(scope.contains(target) || target === document.body || target === document.documentElement)) return;
+    // Üstte başka bir pencere (onay) açıksa kısayol çalışmaz.
+    const layers = document.querySelectorAll('.kit-overlay');
+    if (layers.length && !layers[layers.length - 1].contains(host)) return;
+    const action = shortcut(event, typingIn(target));
     if (action === 'edit') {
       const first = Object.values(inputs).find((input) => !input.disabled);
       if (first) {
@@ -1052,7 +1060,7 @@ export function mountRecord(host, options) {
       destroyed = true;
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
-      root.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey);
       try { tabletPart?.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
       for (const part of parts.splice(0)) {
         try { part?.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }

@@ -648,4 +648,9 @@ kbd {
 
 .sidebar :where(button, a, input, select, summary, [tabindex]):focus-visible { outline-color: var(--accent); }
 
+/* Programla odak alan KAPSAYICILAR (diyalog, çekmece, panel gövdesi —
+   tabindex="-1", klavyeyle Sekme sırasına girmez) çizgi almaz: odak
+   göstergesi içindeki denetimlerdedir; kabın tamamını çerçevelemek gürültüdür. */
+:where(.kit-drawer, .kit-dialog, .panel-body)[tabindex="-1"]:focus-visible { outline: none; }
+
 .panel :where(button, select, input:not([type="checkbox"]):not([type="radio"])) { min-height: 24px; }

@@ -551,7 +551,12 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
 
   panel.body.append(head.node, tabsBar.node, slot);
   head.reload();
-  const opening = () => show(start.tab, start.part, start.part === tab ? payload : null);
+  const opening = () => {
+    show(start.tab, start.part, start.part === tab ? payload : null);
+    // Aramadan / listeden "Kayıt ve veliler" ile açılınca düzenleme alanı hemen
+    // görünsün (başlık kartı uzun): sekme şeridi çekmecenin tepesine gelir.
+    if (start.tab === 'record') queueMicrotask(() => tabsBar.node.scrollIntoView?.({ block: 'start' }));
+  };
   if (known) opening();
   else ready.then(opening);
   return { close: panel.close, select };

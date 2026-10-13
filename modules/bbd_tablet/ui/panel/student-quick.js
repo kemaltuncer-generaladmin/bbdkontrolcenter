@@ -13,7 +13,7 @@
 // İzin yoksa (403) düğme gerekçesiyle kapanır — asıl kapı backend'dedir (K9).
 // Import yolu kabuğun KOPYALANMIŞ konumuna göredir (index.js ile aynı).
 
-import { button, confirmSimple, h } from '../../ui-kit/kit.js';
+import { button, confirmSimple, h, loadStyles } from '../../ui-kit/kit.js';
 
 const BASE = '/api/bbd_tablet/students';
 const enc = encodeURIComponent;
@@ -45,6 +45,8 @@ function when(iso) {
 export function mountStudentQuick(root, options) {
   const { api, studentId } = options;
   const toast = options.toast || (() => {});
+  // Başka panelin içinde çizilir: bu modülün stili kendiliğinden yüklenmemiş olabilir.
+  loadStyles(import.meta.url);
   let destroyed = false;
   const box = h('div', 'tb-quick');
   box.setAttribute('role', 'group');
