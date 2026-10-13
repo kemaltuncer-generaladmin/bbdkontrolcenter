@@ -369,6 +369,8 @@ Menüde gizlenmesi yetmez; backend de reddeder (K9 — çift kapı).
 | Uzak Terminal | `ssh.execute` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Veritabanı | `database.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Zil Sistemi | `bell.view` | ✓ | ✗ | ✓ | ✓ | ✗ |
+| BBD Akademi ⁴ | `bbd_akademi.view` · `bbd_students.view` | ✓ | ✗ | ✓ | ✓ ⁴ | ✓ ⁴ |
+| ~~Öğrenci Yönetimi~~ ⁴ | `bbd_students.view` | — | — | — | — | — |
 | Ders Takvimi (salt okunur) | `bbd_class_schedule.view` | ✓ | ✗ | ✓ | ✓ | ✓ |
 | Çıktı Merkezi | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |
 | Antivirüs *(yalnız Linux — ADR 0022)* | `antivirus.view` | ✓ | ✓ | ✓ | ✗ | ✗ |
@@ -396,6 +398,16 @@ Bayrağı sunucu söylüyor (`GET /api/bld_kds/devices` → `can.settings`), ç�
 kabuk panele izin listesi vermiyor. Bu K9'un **arayüz** yarısıdır; kapı
 `PATCH /api/bld_kds/devices/{id}/settings` ucundaki izin denetimidir ve
 arayüz hiç olmasa da o kapı kapalıdır.
+
+⁴ **Öğrenci tek yerde (0.5.3, ADR 0031).** "Öğrenci Yönetimi" menüde çizilmez
+(`ui.nav.replacedBy: bbd_akademi.students`); öğrenci yönetimi BBD Akademi →
+Öğrenciler'dedir. BBD Akademi menüsü `bbd_students.view` taşıyana da görünür:
+Akademi izni (`bbd_akademi.view`) olmayan Kurum Personeli ve Mali Müşavir paneli
+YALNIZ "Öğrenciler" bölümüyle (KM kaydı: liste, toplu işlemler, gruplar,
+öğrencinin "Kayıt ve veliler" kartı) görür; Akademi verisi ve vekil uçları
+kapalıdır (vekil `bbd_akademi.view` ister). İşlem izinleri değişmedi
+(`bbd_students.*`). BBD Akademi modülü kapatılırsa "Öğrenci Yönetimi" menüye
+geri döner.
 
 Kapsamlı ekranlarda (Sunucular, Veritabanı) **ekran açılır, içerik kapsamla
 süzülür.** BLD Personeli yalnızca `bld` kapsamlı sunucu ve veritabanlarını

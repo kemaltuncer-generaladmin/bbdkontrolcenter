@@ -137,6 +137,19 @@ salt okunur düzen kalır. Menüdeki "Öğrenci Yönetimi" ekranı Akademi'yi
 görebilen kullanıcıyı buraya yönlendirir (`bbd_akademi.students` işaret
 yeteneği; derin bağlantı `{kantinId}` → `{section: 'students', kmStudentId}`).
 
+**Tek giriş noktası (0.5.3, ADR 0031).** "Öğrenci Yönetimi" artık menüde hiç
+çizilmez (`ui.nav.replacedBy`); bu panelin menü satırı `bbd_akademi.view` YA DA
+`bbd_students.view` ile görünür. Akademi izni olmayan kullanıcıda
+`/km/status` 403 döner ve panel **yalnız öğrenci yönetimi** kipinde açılır
+(`app.kmOnly()`; `sections.js` → `kmOnly: true`): menüde tek "Öğrenciler",
+sekmeler KM listesi / toplu işlemler / gruplar, öğrenci kartı yalnız KM kaydı —
+Akademi vekiline hiç istek gitmez. Kart "Kayıt ve veliler"de satır içi
+düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
+(`bbd_students` README "Hızlı güncelleme"); yoklayıcı bu panelin
+`/km/events` ucudur (Ayarlar → Senkron ile aynı veri). Erişilebilirlik:
+22 bölüm Node'da axe benzeri denetimden geçer
+(`tests/test_akademi_erisilebilirlik.py`, `tools/a11y`).
+
 ### Eski → yeni eşleme
 
 | Eski menü / sekme | Yeni yeri |

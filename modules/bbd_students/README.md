@@ -23,11 +23,47 @@ uçlarından (önce KM, sonra kantin, outbox olayı). Bağ ARAYÜZ yetenekleriyl
 - `bbd_students.record` `(root, {kantinId, capability, toast, onChanged, onLoaded,
   onRemoved})` → `{reload, dirty, destroy}`: tek öğrencinin kaydı (`record.js`).
 
-Menüdeki "Öğrenci Yönetimi" ekranı, kullanıcı BBD Akademi'yi görebiliyorsa
-(`bbd_akademi.students` işaret yeteneği çözülüyorsa) Akademi → Öğrenciler'e
-yönlendirir (`{kantinId}` → ilgili öğrencinin kartı); göremeyen roller (ör.
-`accountant`, `org_staff`) yönetimi burada aynı bileşenlerle yapar. İzinler
-değişmedi (`bbd_students.*`).
+**Tek giriş noktası (0.5.3, ADR 0031).** "Öğrenci Yönetimi" menüde ÇİZİLMEZ
+(`ui.nav.replacedBy: bbd_akademi.students`); ekran kayıtta kalır — yetenekleri
+yüklenir, eski derin bağlantılar (`{kantinId}`) Akademi → Öğrenciler'e
+yönlenir. BBD Akademi menüsü `bbd_students.view` taşıyana da görünür; Akademi
+izni olmayan roller (`accountant`, `org_staff`) paneli yalnız "Öğrenciler"le
+(KM kaydı) görür. BBD Akademi modülü kapalıysa bu ekran menüye geri döner ve
+yönetim burada aynı bileşenlerle yapılır. İzinler değişmedi (`bbd_students.*`).
+
+### Hızlı güncelleme (0.5.3)
+
+Kullanıcı: "Adam bir öğrenciyi güncellemek için saatlerce uğraşıp durmasın."
+
+- **Küresel arama** (kabuğun üst çubuğu, her ekrandan `/`): ad (Türkçe harfsiz
+  de), okul no, veli / öğrenci telefonu (son hanelerle de), kantin kartı
+  (öğrenci kimliği ya da kartın QR metni — okuyucu klavye gibi yazar). Sonuç
+  Enter / tek tıkla öğrencinin kartını "Kayıt ve veliler"de açar.
+  `GET /search?q=&limit=` (`bbd_students.view`; dizinin anlık görüntüsünden,
+  kantine gitmez; telefon maskeli) — kural `backend/search.py`. Arayüz
+  yeteneği `bbd_students.search`; kartı açan `bbd_students.open` (tablet ve
+  ödeme talebi ekranları da bunu çağırır — öğrenci kaydının kopya düzenleyicisi yok).
+- **Satır içi düzenleme** (`ui/panel/record.js`, kural `quick.js`): tıkla ·
+  yaz · Enter (ya da alandan çık) → yalnız o alan `PATCH` edilir; "Geri al"
+  eski değeri yazar; Esc vazgeçer; seçim kutusu seçilince kaydeder. Hata
+  alanın altında, `aria-describedby` ile bağlı. Veli listesi (ekle / sırala /
+  sil) "Velileri kaydet" ile birlikte gider.
+- **Hızlı işlem şeridi** (kartın tepesi): sınıf, birincil veli telefonu,
+  günlük kantin limiti (Enter), tablet kısıtı (`bbd_tablet.student_quick`),
+  pasifleştir. Kısayollar: `e` ilk alanı düzenler, Esc vazgeçer.
+- **"Akademi'ye ulaştı ✓"**: kayıttan hemen sonra outbox'ın son sırası
+  (`GET /api/events/wait`) okunur, geçidin teslim imleci onu geçince gösterilir
+  (yoklayıcıyı BBD Akademi verir: `/api/bbd_akademi/km/events`, izin
+  `mobile_gateway.events.view`; izin yoksa gösterge çizilmez).
+- **Listede toplu düzenleme**: satırları işaretle (ya da "görünenleri seç") →
+  alan (ana sınıf, seviye, alan, hedef sınav, gruba ekle, pasifleştir) → değer
+  → Enter / Uygula. Mevcut toplu uçlar; öğrenci başına olay.
+
+Etkileşim sayısı (yazma hariç; tek alan): 0.5.2'de menü → BBD Akademi →
+Öğrenciler → arama → satır → "Kayıt ve veliler" → alan → Kaydet = **7**;
+0.5.3'te kart açıkken alan → Enter = **2**, herhangi bir ekrandan `/` → Enter
+→ alan → Enter = **4**. Kayıt → Akademi isteği ölçümü ~0,2 sn
+(`tests/integration/test_ogrenci_senkron_gecikme.py`).
 
 ### Veliler (göç 007)
 
