@@ -16,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 
-from harness import NodeMissing, run  # noqa: E402
+from harness import NodeMissing, run
 
 BASE = "/api/bbd_tablet/students"
 

@@ -31,15 +31,15 @@ for entry in (ROOT / "backend" / "src", ROOT):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
-from modules.bbd_students.backend.directory import StudentDirectory  # noqa: E402
-from modules.bbd_students.backend.service import StudentService  # noqa: E402
-from modules.bbd_students.backend.sync import StudentSync  # noqa: E402
-from modules.mobile_gateway.backend.events import EventSender  # noqa: E402
+from modules.bbd_students.backend.directory import StudentDirectory
+from modules.bbd_students.backend.service import StudentService
+from modules.bbd_students.backend.sync import StudentSync
+from modules.mobile_gateway.backend.events import EventSender
 
-from km_core.contracts.module import ScopedStore  # noqa: E402
-from km_core.store.bootstrap import build_schema  # noqa: E402
-from km_core.store.db import Store  # noqa: E402
-from km_platform.events.outbox import EventOutbox  # noqa: E402
+from km_core.contracts.module import ScopedStore
+from km_core.store.bootstrap import build_schema
+from km_core.store.db import Store
+from km_platform.events.outbox import EventOutbox
 
 BASE = "https://akademi.test"
 TARGET_SECONDS = 3.0

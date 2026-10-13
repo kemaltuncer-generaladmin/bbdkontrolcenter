@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 
-from harness import NodeMissing, run  # noqa: E402
+from harness import NodeMissing, run
 
 FILES = sorted(
     [str(path.relative_to(ROOT)) for path in (ROOT / "modules" / "bbd_akademi" / "ui" / "panel").glob("*.css")]
