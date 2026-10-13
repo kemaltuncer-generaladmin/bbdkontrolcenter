@@ -491,3 +491,43 @@
 .st-lc-dialog { max-width: 520px; }
 .st-lc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 6px; }
 .st-lc-dialog .st-textarea { min-height: 64px; width: 100%; }
+
+/* ------------------------------------------------- BBD Akademi içinde (13.10.2026)
+   Öğrenci yönetimi BBD Akademi → Öğrenciler'de çizilir (`bbd_students.manager`)
+   ve öğrenci kartının "Kayıt ve veliler" sekmesi bu modülün kaydıdır
+   (`bbd_students.record`). Gömülüyken yükseklik içerikle büyür, liste tam
+   genişliktir (kayıt kartta açılır). */
+.st.st-embedded, .st.st-rec { height: auto; min-height: 0; }
+.st-split.st-split-full { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+.st-split.st-split-full .st-list { max-height: none; overflow: visible; border-right: 0; }
+.st-moved { padding: 28px; gap: 12px; align-items: flex-start; height: auto; }
+
+.st-rec { gap: 12px; }
+.st-rec-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.st-rec-name { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 4px; }
+.st-rec-title { margin: 0; font-size: 16px; }
+.st-rec-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.st-rec-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.st-rec-body { display: flex; flex-direction: column; gap: 12px; }
+.st-rec-group-list { display: flex; flex-direction: column; gap: 6px; }
+.st-rec-chip { display: flex; align-items: center; gap: 10px; }
+.st-rec-chip > b { min-width: 140px; }
+.st-rec-group-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.st-rec-past summary, .st-rec-access summary { cursor: pointer; color: var(--soft); margin-top: 6px; }
+.st-rec-guardians { display: flex; flex-direction: column; gap: 8px; }
+.st-rec-guardian {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.st-rec-guardian-tools { display: flex; gap: 6px; }
+.st-rec-rank { font-size: 12px; color: var(--soft); }
+.st-rec-rank.primary { color: #1d3f9e; font-weight: 650; }
+.st-rec-guardian-note { margin: -4px 0 2px 90px; }
+.st-rec-guardian-note.bad { color: #b91c1c; }
+.st-input.st-invalid { border-color: #dc2626; }
+@media (max-width: 760px) {
+  .st-rec-guardian { grid-template-columns: 1fr; }
+  .st-rec-guardian-note { margin-left: 0; }
+}

@@ -31,7 +31,7 @@ import {
 } from './common.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
-  openKmStudents, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,
+  kmManagedHint, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,
   topicResources,
 } from './students-detail.js';
 
@@ -839,11 +839,10 @@ function statement(ctx) {
 export function canteenTab(ctx) {
   const { app, id } = ctx;
   const node = h('div', 'ak-stack ak-money-canteen ak-stu-money');
-  const hint = h('div', 'kit-hint ak-stu-hint');
-  hint.append(h('span', '', 'Kantin hesabı kurum carisinden tamamen ayrıdır ve burada salt-okunurdur. Kantin '
-    + 'kontrolleri (harcama limiti, engel, ürün kısıtı) ve kantin nakit tahsilatı KM\'nin Öğrenciler modülünden '
-    + 'yönetilir.'), button('Öğrenciler modülünde aç', {
-    onClick: () => openKmStudents(app, ctx.student?.student || { id }, { tab: 'canteen' }) }));
+  // Kantin hesabı kurum carisinden tamamen ayrıdır (A12) ve burada salt okunurdur.
+  const hint = kmManagedHint(ctx, 'Kantin hesabı kurum carisinden ayrıdır, burada yalnız görüntülenir. '
+    + 'Harcama limiti, engel, ürün kısıtı ve kantin tahsilatı', ctx.student?.student || { id },
+  { tab: 'canteen' });
   const summary = loader(() => app.api.get(`/v1/students/${id}/canteen`), renderCanteenSummary, { rows: 4, columns: 3 });
   const controls = loader(() => app.api.get(`/v1/admin/students/${id}/canteen/controls`), renderCanteenControls,
     { rows: 4, columns: 2 });

@@ -31,6 +31,12 @@ provides:
       Akademi'de kurum cari borcu var mı (km-merkezi-senkron §5.3, kalıcı silme
       ön koşulu; tüketen bbd_students). Akademi'ye ulaşılamaz ya da yanıt
       güvenle okunamazsa İSTİSNA fırlatır (silme kapalı kalır), "borç yok" demez.
+  # ARAYÜZ yeteneği (backend karşılığı yok; panel `capabilities()` ile verir):
+  # öğrenci yönetimi BBD Akademi → Öğrenciler'de. "Öğrenci Yönetimi" ekranı bu
+  # yetenek çözülebiliyorsa (kullanıcı Akademi'yi görebiliyorsa) buraya yönlendirir.
+  - capability: bbd_akademi.students
+    contract: bbd_akademi/ui/panel/index.js:capabilities
+    description: "ARAYÜZ: öğrenci yönetiminin BBD Akademi'deki yeri (yönlendirme işareti)."
 consumes:
   - capability: secrets
     reason: "Akademi entegrasyon anahtarı (`bbd_akademi.api_key`) kasada durur (K8)."

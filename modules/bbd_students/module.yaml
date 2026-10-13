@@ -33,6 +33,16 @@ provides:
   - capability: bbd_students.list
     contract: km_sdk.contracts:StudentDirectory
     description: "ARAYÜZ: öğrenci özet listesi — grup kuran paneller için (ders takvimi)."
+  # ÖĞRENCİ YÖNETİMİ BBD AKADEMİ'DE (13.10.2026, kullanıcı isteği). İki ARAYÜZ
+  # yeteneği — backend karşılığı yoktur; panel `capabilities()` ile verir. BBD
+  # Akademi paneli Öğrenciler bölümünü ve öğrenci kartının "Kayıt ve veliler"
+  # sekmesini bunlarla çizer (K3). Veri ve uçlar bu modülde kalır.
+  - capability: bbd_students.manager
+    contract: bbd_students/ui/panel/index.js:createManager
+    description: "ARAYÜZ: öğrenci listesi + toplu işlemler (sınıfa / gruba ata, seviye, kod, pasif) + gruplar."
+  - capability: bbd_students.record
+    contract: bbd_students/ui/panel/record.js:mountRecord
+    description: "ARAYÜZ: tek öğrencinin KM kaydı — kimlik, ana sınıf ve gruplar, veliler, kantin, durum."
   - capability: bbd_students.directory
     contract: bbd_students/backend/directory.py:StudentDirectory
     description: >

@@ -36,6 +36,15 @@ export { AREAS, SECTIONS };
 
 const P = 'bbd_akademi';
 
+/**
+ * Arayüz yetenekleri. `bbd_akademi.students` bir İŞARETTİR: çözülebiliyorsa
+ * kullanıcı BBD Akademi'yi görebiliyor demektir ve "Öğrenci Yönetimi" ekranı
+ * (bbd_students) kullanıcıyı buraya — Öğrenciler bölümüne — yönlendirir.
+ */
+export function capabilities() {
+  return { 'bbd_akademi.students': () => ({ section: 'students' }) };
+}
+
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — dosya tepesinde değil, burada
 
@@ -64,6 +73,12 @@ export function mount(root, ctx) {
     go: (key, payload = null) => show(key, payload),
     /** KM'nin başka ekranına geç (ör. Öğrenciler modülü). */
     openPanel: (id, payload = null) => ctx.open?.(id, payload),
+    /**
+     * Başka modülün ARAYÜZ yeteneği (K3; yoksa null). Öğrenci yönetimi:
+     * `bbd_students.manager` (liste + toplu işlemler + gruplar) ve
+     * `bbd_students.record` (öğrenci kartındaki "Kayıt ve veliler").
+     */
+    capability: (name) => (typeof ctx.capability === 'function' ? ctx.capability(name) : null),
     /**
      * KM'nin başka bir modülünün SALT OKUNUR ucu (ör. Zil Sistemi
      * `/api/bell/plan/status`). Yalnız GET; o modülün kendi izni geçerlidir

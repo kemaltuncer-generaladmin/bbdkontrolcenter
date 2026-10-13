@@ -55,10 +55,12 @@ const out = {
   goSettings: s.resolveTarget(navOff, 'settings'),
   goHidden: s.resolveTarget(navOff, 'insights'),
   goUnknown: s.resolveTarget(navOff, 'yok'),
-  cardAll: card(s.studentCard({ has: all, features: null })),
+  cardAll: card(s.studentCard({ has: all, features: null, capabilities: { record: true } })),
+  cardNoRecord: card(s.studentCard({ has: all, features: null })),
   cardOff: card(s.studentCard({ has: only('view'), features: off })),
   cardMoneyNoPerm: card(s.studentCard({ has: only('view'), features: null })),
   locTab: s.locatePart(s.studentCard({ has: all }), 'progress'),
+  locRecord: s.locatePart(s.studentCard({ has: all, capabilities: { record: true } }), 'record'),
   locPart: s.locatePart(s.studentCard({ has: all }), 'coaching'),
   locHidden: s.locatePart(s.studentCard({ has: only('view'), features: off }), 'canteen'),
   locEmpty: s.locatePart([], 'overview'),
@@ -141,13 +143,18 @@ def test_go_hedefi(result: dict[str, Any]) -> None:
 
 
 @needs_node
-def test_ogrenci_karti_bes_sekme(result: dict[str, Any]) -> None:
+def test_ogrenci_karti_en_cok_alti_sekme(result: dict[str, Any]) -> None:
     card = dict(result["cardAll"])
-    assert list(card) == ["summary", "program", "work", "progress", "money"]
+    assert list(card) == ["summary", "record", "program", "work", "progress", "money"]
     old_tabs = {"overview", "schedule", "curriculum", "resources", "homework", "exams", "attendance",
                 "study", "learning", "goals", "coaching", "flashcards", "requests", "finance", "canteen"}
     parts = [key for keys in card.values() for key in keys]
-    assert sorted(parts) == sorted(old_tabs), "eski 15 sekmenin her biri tam bir kez bölüm olmalı"
+    assert sorted(parts) == sorted(old_tabs | {"record"}), (
+        "eski 15 sekmenin her biri tam bir kez bölüm olmalı (+ KM kaydı)")
+    # Öğrenci yönetimi yeteneği yoksa (modül kapalı / izin yok) "Kayıt" sekmesi yok.
+    assert [key for key, _ in result["cardNoRecord"]] == ["summary", "program", "work", "progress",
+                                                         "money"]
+    assert result["locRecord"] == {"tab": "record", "part": "record"}
 
 
 @needs_node

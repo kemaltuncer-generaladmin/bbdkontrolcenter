@@ -24,8 +24,8 @@
 import { button, h, loadStyles } from '../../ui-kit/kit.js';
 import { badge, tabBar } from '../../ui-kit/layout.js';
 import {
-  EXAM_TARGETS, GRADE_LEVELS, TRACKS, fmtDateTime, gradeText, loader, num, openDrawer, optionsOf,
-  pagedList, searchBox, sectionHead, selectBox, toolbar,
+  EXAM_TARGETS, GRADE_LEVELS, TRACKS, empty, fmtDateTime, gradeText, loader, num, openDrawer, optionsOf,
+  pagedList, problem, searchBox, sectionHead, selectBox, toolbar,
 } from './common.js';
 import {
   STUDENT_STATUS, curriculumTab, linkButton, openKmStudents, overviewTab, renderHeader, resourcesTab,
@@ -48,26 +48,43 @@ const embedded = (fn) => (ctx) => fn(ctx.app, ctx.id);
 export function section(app) {
   loadStyles(import.meta.url, 'students.css');
   const node = h('div', 'ak-stack ak-stu');
-  node.append(sectionHead('Öğrenciler', {
-    subtitle: 'KM öğrenci dizininin Akademi aynası: öğrenciler, sınıflar, çalışma grupları ve veliler.' }));
+  // ÖĞRENCİ YÖNETİMİ BURADA (13.10.2026): KM Öğrenci Yönetimi'nin listesi,
+  // toplu işlemleri ve grupları `bbd_students.manager` yeteneğiyle çizilir;
+  // satıra tıklamak öğrencinin TEK KARTINI açar (Akademi + KM kaydı). Yetenek
+  // yoksa (modül kapalı ya da kullanıcının öğrenci yönetimi izni yok) eski
+  // salt okunur Akademi listesi "Öğrenciler" olarak kalır.
+  const manager = app.capability?.('bbd_students.manager') || null;
+  node.append(sectionHead('Öğrenciler', { subtitle: manager
+    ? 'Öğrenci ekleyin, sınıf ve gruplara atayın, velileri yönetin; öğrenciye tıklayınca tek kartı açılır.'
+    : 'Öğrenciler, sınıflar, çalışma grupları ve veliler.' }));
 
   const open = (studentId, options) => openStudent(app, studentId, options);
-  const tabs = tabBar([
+  const openRef = (kmId, options) => openStudentByRef(app, kmId, options);
+  const specs = manager ? [
+    { key: 'km', label: 'Öğrenciler' },
+    { key: 'classes', label: 'Sınıflar' },
+    { key: 'guardians', label: 'Veliler ve uygulama' },
+    { key: 'students', label: 'Uygulama kullanımı' },
+  ] : [
     { key: 'students', label: 'Öğrenciler' },
     { key: 'classes', label: 'Sınıflar' },
     { key: 'groups', label: 'Çalışma grupları' },
     { key: 'guardians', label: 'Veliler' },
-  ], 'students', (key) => show(key));
+  ];
+  const first = specs[0].key;
+  const tabs = tabBar(specs, first, (key) => show(key));
   const slot = h('div');
   node.append(tabs.node, slot);
 
   const bodies = {};
   const builders = {
+    km: () => managerView(app, manager, { openRef }),
     students: () => studentsView(app, { open }),
     classes: () => classesView(app, { openStudent: open }),
     groups: () => groupsView(app, { openStudent: open }),
     guardians: () => guardiansView(app, { open }),
   };
+  const known = new Set(specs.map((spec) => spec.key));
 
   function show(key) {
     if (!bodies[key]) {
@@ -82,21 +99,48 @@ export function section(app) {
   return {
     node,
     shown(payload) {
-      const wanted = payload?.classGroupId ? 'classes' : (builders[payload?.view] ? payload.view : null);
+      // `{view: 'groups'}` (eski Akademi grupları) yönetimde KM "Gruplar"ıdır.
+      let wanted = payload?.classGroupId ? 'classes' : (known.has(payload?.view) ? payload.view : null);
+      if (!wanted && manager && ['groups', 'bulk', 'km'].includes(payload?.view)) wanted = 'km';
       if (!started) {
         started = true;
-        if (!wanted) show('students');
+        if (!wanted) show(first);
       }
       if (wanted) {
         tabs.select(wanted, false);
         show(wanted);
+        if (wanted === 'km' && payload?.view && payload.view !== 'km') bodies.km.mode?.(payload.view);
       }
       if (payload?.classGroupId) bodies.classes.openClass(payload.classGroupId);
       if (payload?.studentId) open(payload.studentId, { tab: payload.tab, payload });
+      else if (payload?.kmStudentId) openRef(payload.kmStudentId, { tab: payload.studentTab || 'record' });
     },
     destroy() {
       for (const body of Object.values(bodies)) body.destroy?.();
     },
+  };
+}
+
+/** KM Öğrenci Yönetimi (liste + toplu işlemler + gruplar) — `bbd_students.manager`. */
+function managerView(app, manager, { openRef }) {
+  const node = h('div', 'ak-stu-km');
+  let cleanup = null;
+  let currentPayload = null;
+  const mountIt = () => {
+    cleanup?.();
+    cleanup = manager(node, {
+      payload: currentPayload,
+      capability: app.capability,
+      openStudent: (student) => openRef(student.kantinId, { tab: 'record', name: student.displayName,
+        status: student.status }),
+    });
+  };
+  return {
+    node,
+    reload() { if (!cleanup) mountIt(); },
+    /** Toplu işlemler / gruplar sekmesiyle aç. */
+    mode(view) { currentPayload = { view }; mountIt(); },
+    destroy() { cleanup?.(); cleanup = null; },
   };
 }
 
@@ -142,10 +186,17 @@ function studentsView(app, { open }) {
     reload();
   }
 
+  // Bu liste Akademi'nin aynasıdır (uygulama hesapları, son görülme). Öğrenci
+  // eklemek / düzeltmek yönetim listesindedir (KM kaydı).
+  const managed = Boolean(app.capability?.('bbd_students.manager'));
   const hint = h('div', 'kit-hint ak-stu-hint');
-  hint.append(h('span', '', 'Seviye, alan ve hedef sınav burada salt-okunurdur: KM\'nin Öğrenciler modülünde '
-    + 'tanımlanır ve Akademi\'ye eşitlenir. Öğrenci eklemek ya da bilgisini düzeltmek için o ekranı kullanın.'),
-  button('Öğrenciler modülünü aç', { onClick: () => openKmStudents(app, null) }));
+  hint.append(h('span', '', managed
+    ? 'Öğrencilerin BBD Akademi uygulamasını kullanma durumu. Öğrenci eklemek, sınıf ya da veli değiştirmek '
+      + 'için “Öğrenciler” sekmesini kullanın.'
+    : 'Seviye, alan ve hedef sınav burada salt-okunurdur: KM\'de yönetilir ve Akademi\'ye eşitlenir. Öğrenci '
+      + 'eklemek ya da bilgisini düzeltmek için Öğrenci Yönetimi ekranını kullanın.'),
+  button(managed ? 'Öğrenciler sekmesine git' : 'Öğrenci Yönetimi\'ni aç',
+    { onClick: () => openKmStudents(app, null) }));
 
   node.append(hint, toolbar(search.node, classSelect.node, groupSelect.node, gradeSelect.node, trackSelect.node,
     statusSelect.node, button('Süzgeçleri temizle', { variant: 'ghost', onClick: () => clearFilters() })));
@@ -247,17 +298,23 @@ function guardiansView(app, { open }) {
  * `payload` (ör. `{learningTab}`, `{coachingTab}`) bölümün `shown`'ına geçer.
  * Kurumda kapalı özelliğin bölümü (bilgi kartları, kurum cari, kantin) çizilmez.
  */
-export function openStudent(app, studentId, { tab = 'overview', payload = null, status = null } = {}) {
+export function openStudent(app, studentId, { tab = 'overview', payload = null, status = null,
+  kmId = null } = {}) {
   const disposers = [];
   let detail = null;
+  const recordable = typeof app.capability?.('bbd_students.record') === 'function';
   // Durum listeden biliniyorsa sekmeler hemen kurulur; bilinmiyorsa (başka
   // bölümden açılış) başlık gelene kadar beklenir — pasif öğrencide yazma
   // düğmesi bir an bile açık çizilmesin.
   let locked = status === 'inactive';
   const known = Boolean(status);
   const view = readOnlyApp(app, () => locked);
-  const km = button('KM Öğrenciler\'de aç', { variant: 'ghost',
-    onClick: () => openKmStudents(app, detail?.student || { id: studentId }) });
+  // KM kaydı bu kartın "Kayıt ve veliler" sekmesidir; yetenek yoksa (modül
+  // kapalı / izin yok) eski davranış: KM Öğrenci Yönetimi ekranı açılır.
+  const km = recordable
+    ? button('Kayıt ve veliler', { variant: 'ghost', onClick: () => select('record') })
+    : button('KM Öğrenciler\'de aç', { variant: 'ghost',
+      onClick: () => openKmStudents(app, detail?.student || { id: studentId }) });
   const panel = openDrawer(app, { title: 'Öğrenci', subtitle: 'Yükleniyor…', actions: [km],
     onClose: () => {
       for (const fn of disposers.splice(0)) {
@@ -278,6 +335,8 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     subjectNames: new Map(),
     dispose: (fn) => disposers.push(fn),
     select: (key, payload) => select(key, payload),
+    /** KM kaydı bu kartta mı (`Kayıt ve veliler` sekmesi)? */
+    recordable,
   };
   // Ders adları (önbellekli) — konu ve deneme satırlarında kimlik yerine ad yazılsın.
   app.lookups.subjects().then((list) => {
@@ -325,10 +384,44 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     coaching: embedded(coachingPanel),
     finance: financeTab,
     canteen: canteenTab,
+    record: () => kmRecordPart(),
   };
+
+  /** "Kayıt ve veliler": KM kaydı (`bbd_students.record`); kantin kimliği başlıktan gelir. */
+  function kmRecordPart() {
+    const node = h('div', 'ak-stu-record');
+    let instance = null;
+    let started = false;
+    const draw = (ref) => {
+      if (!ref) {
+        node.replaceChildren(empty('KM kaydı bulunamadı', 'Bu öğrencinin Kontrol Merkezi kimliği yok; '
+          + 'KM eşitlemesi tamamlanınca burada görünür.'));
+        return;
+      }
+      instance = app.capability('bbd_students.record')(node, {
+        kantinId: ref, capability: app.capability, dialogRoot: app.root,
+        toast: (text) => app.toast(text, 'good'),
+        // Ad, sınıf, durum değişince kartın başlığı da Akademi'den yeniden okunur
+        // (Akademi değişikliği olayla birkaç saniyede alır).
+        onChanged: () => setTimeout(() => head.reload(), 1500),
+        onRemoved: () => panel.close(),
+      });
+    };
+    return {
+      node,
+      shown() {
+        if (started) return;
+        started = true;
+        if (kmId) draw(kmId);
+        else ready.then((data) => draw(data?.student?.externalRef || null));
+      },
+      destroy() { instance?.destroy(); },
+    };
+  }
   const layoutTabs = studentCard({ has: (permission) => app.has(permission),
     features: { flashcards: app.enabled('flashcards'), finance: app.enabled('finance'),
-      canteen: app.enabled('canteen') } });
+      canteen: app.enabled('canteen') },
+    capabilities: { record: recordable } });
   const start = locatePart(layoutTabs, tab);
   const tabsBar = tabBar(layoutTabs.map(({ key, label }) => ({ key, label })), start.tab,
     (key) => show(key));
@@ -373,11 +466,20 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     queueMicrotask(() => entry.node.scrollIntoView?.({ block: 'nearest' }));
   }
 
+  /** Tek bölümlü sekme: katlanmaz, bölüm doğrudan çizilir (her zaman "açık"). */
+  function plainOf(part) {
+    const node = h('div', 'ak-fold-plain');
+    const entry = { node, slot: node, part, body: null, pending: null };
+    Object.defineProperty(node, 'open', { get: () => true, set: () => {} });
+    return entry;
+  }
+
   function groupOf(key) {
     if (!groups[key]) {
       const spec = layoutTabs.find((item) => item.key === key);
       const node = h('div', 'ak-stu-group');
-      const folds = new Map(spec.parts.map((part) => [part.key, foldOf(part)]));
+      const single = spec.parts.length === 1;
+      const folds = new Map(spec.parts.map((part) => [part.key, single ? plainOf(part) : foldOf(part)]));
       node.append(...[...folds.values()].map((entry) => entry.node));
       groups[key] = { node, folds, spec, opened: false };
       slot.append(node);
@@ -433,6 +535,56 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
   if (known) opening();
   else ready.then(opening);
   return { close: panel.close, select };
+}
+
+// ------------------------------------------- KM kimliğiyle açılış (yönetim)
+
+/**
+ * KM öğrenci kimliğiyle (`STU-…`) TEK KARTI açar: Akademi'deki karşılığı
+ * (`admin_listStudents?externalRef=`) bulunursa tam kart, bulunamazsa (yeni
+ * eklendi, eşitleme sürüyor) yalnız KM kaydıyla açılır ve sebebi yazar.
+ * Önce etkin + bulunamayanlar, sonra pasifler aranır.
+ */
+export async function openStudentByRef(app, kmId, { tab = 'record', name = '', status = null } = {}) {
+  let found = null;
+  let note = '';
+  try {
+    for (const filter of [undefined, 'inactive']) {
+      const data = await app.api.get('/v1/admin/students', { externalRef: kmId, status: filter, limit: 5 });
+      found = (data?.items || []).find((row) => row.externalRef === kmId) || null;
+      if (found) break;
+    }
+  } catch (failure) {
+    note = `BBD Akademi bilgileri şu an okunamadı: ${problem(failure)}`;
+  }
+  if (found) return openStudent(app, found.id, { tab, status: found.status || status, kmId });
+  return openKmOnly(app, kmId, { name, note: note || 'Bu öğrenci BBD Akademi\'ye henüz eşitlenmedi; '
+    + 'ders, ödev ve deneme bilgileri eşitleme tamamlanınca (genellikle birkaç saniye) bu kartta görünür.' });
+}
+
+/** Akademi karşılığı olmayan öğrenci: yalnız KM kaydı (kimlik, sınıf, veliler, kantin). */
+function openKmOnly(app, kmId, { name = '', note = '' } = {}) {
+  const drawRecord = app.capability?.('bbd_students.record');
+  let instance = null;
+  const panel = openDrawer(app, { title: name || 'Öğrenci', subtitle: 'Kayıt ve veliler',
+    onClose: () => instance?.destroy() });
+  panel.node.classList.add('ak-stu-drawer');
+  const info = h('div', 'kit-hint ak-stu-hint');
+  info.append(h('span', '', note));
+  const retry = button('Tekrar dene', { variant: 'ghost', onClick: () => {
+    panel.close();
+    openStudentByRef(app, kmId, { name });
+  } });
+  info.append(retry);
+  const slot = h('div', 'ak-stu-record');
+  panel.body.append(info, slot);
+  if (typeof drawRecord === 'function') {
+    instance = drawRecord(slot, { kantinId: kmId, capability: app.capability, dialogRoot: app.root,
+      toast: (text) => app.toast(text, 'good'), onRemoved: () => panel.close() });
+  } else {
+    slot.append(empty('Kayıt gösterilemiyor', 'Öğrenci yönetimi bu kullanıcı için açık değil.'));
+  }
+  return { close: panel.close, select() {} };
 }
 
 // ------------------------------------------------------- pasif: salt okunur

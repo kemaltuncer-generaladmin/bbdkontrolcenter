@@ -7,8 +7,11 @@
 //   · menüde en fazla ALTI üst bölüm (`AREAS`), görev odaklı Türkçe adlarla;
 //     her üst bölümün alt ekranları (`SECTIONS`) yalnız o bölüm seçiliyken
 //     altında açılır;
-//   · öğrenci kartında beş sekme (`STUDENT_CARD`); geri kalanı sekme içinde
-//     katlanır bölüm;
+//   · öğrenci kartında en çok altı sekme (`STUDENT_CARD`); geri kalanı sekme
+//     içinde katlanır bölüm;
+//   · öğrenci YÖNETİMİ de burada (kullanıcı isteği 13.10.2026): "Öğrenciler"
+//     bölümü KM Öğrenci Yönetimi'nin listesini, toplu işlemlerini ve gruplarını
+//     çizer; öğrencinin tek kartında "Kayıt ve veliler" sekmesi KM kaydıdır;
 //   · YALNIZ AÇIK OLAN GÖRÜNÜR: kurumda kapalı bir özelliğe (`feature`) bağlı
 //     ekran menüde hiç yer almaz — `403 feature_disabled` hata kartı olarak
 //     görülmez. Yönetici Ayarlar → Kurum ayarları → Özellikler'den açar.
@@ -124,7 +127,8 @@ export function resolveTarget(nav, key) {
 // ------------------------------------------------------------ öğrenci kartı
 
 /**
- * Öğrenci kartı: 5 sekme, her sekmede katlanır bölümler. Bölüm anahtarları
+ * Öğrenci kartı: en çok 6 sekme, her sekmede katlanır bölümler (tek bölümlü
+ * sekme katlanmadan çizilir). Bölüm anahtarları
  * eski sekme anahtarlarıdır (`app.go('students', {studentId, tab: 'exams'})`
  * çalışmaya devam eder). Sekmenin İLK görünür bölümü açık gelir, diğerleri
  * kapalıdır ve açılınca yüklenir (ilk açılışta tek bölümün istekleri gider).
@@ -134,6 +138,13 @@ export const STUDENT_CARD = [
   { key: 'summary', label: 'Özet', parts: [
     { key: 'overview', label: 'Genel bakış' },
     { key: 'goals', label: 'Hedef ve öğrenme özeti' },
+  ] },
+  // Öğrenci yönetimi BBD Akademi'ye taşındı (13.10.2026): KM kaydı (kimlik, ana
+  // sınıf ve gruplar, veliler, kantin ayarları, durum) bu sekmededir. Bölümü
+  // Öğrenci Yönetimi modülü çizer (`bbd_students.record` arayüz yeteneği);
+  // yetenek yoksa (modül kapalı / izin yok) sekme görünmez.
+  { key: 'record', label: 'Kayıt ve veliler', parts: [
+    { key: 'record', label: 'Kimlik, sınıf, veliler ve kantin', capability: 'record' },
   ] },
   { key: 'program', label: 'Program ve yoklama', parts: [
     { key: 'schedule', label: 'Ders programı' },
@@ -154,16 +165,21 @@ export const STUDENT_CARD = [
   ] },
   { key: 'money', label: 'Kurum cari ve kantin', parts: [
     { key: 'finance', label: 'Kurum cari', requires: 'finance', feature: 'finance' },
-    { key: 'canteen', label: 'Kantin', feature: 'canteen' },
+    { key: 'canteen', label: 'Kantin hareketleri', feature: 'canteen' },
   ] },
 ];
 
-/** Görünür sekmeler ve bölümleri (boş sekme çıkar). */
+/**
+ * Görünür sekmeler ve bölümleri (boş sekme çıkar). `ctx.capabilities`:
+ * {record: bool} — başka modülün çizdiği bölümler (yoksa gizli).
+ */
 export function studentCard(ctx = {}, card = STUDENT_CARD) {
   const has = ctx.has || (() => true);
+  const capabilities = ctx.capabilities || {};
   return card
     .map((tab) => ({ ...tab, parts: tab.parts.filter((part) => (!part.requires || has(part.requires))
-      && featureOn(ctx.features, part.feature)) }))
+      && featureOn(ctx.features, part.feature)
+      && (!part.capability || Boolean(capabilities[part.capability]))) }))
     .filter((tab) => tab.parts.length > 0);
 }
 
