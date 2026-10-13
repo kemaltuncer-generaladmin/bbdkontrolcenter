@@ -135,7 +135,8 @@ Kitap talepleri 5 · KVKK talepleri 5 · Yoklama 3 · ortak arama listeleri
 Birleşim 2'nin getirdiği izin listesi farkı (wp/magaza → main): yeni
 `students_getExternalExam` (tek dış deneme — Öğrenci → Denemeler →
 "Dışarıdaki denemeler" çekmecesi açılışta güncel kaydı bu uçtan okur; öğrenci
-/ veli silmişse sebebi yazar ve listeyi tazeler) ve `admin_getExport`
+/ veli silmişse sebebi yazar ve listeyi tazeler; uç okunamazsa — ör. Akademi
+henüz eski sürümde — liste satırındaki bilgi not ile kalır) ve `admin_getExport`
 izinlerine `attendance.export`, `coaching.export`, `messages.audit`
 (üçü de `permission_map.py`'de eşli). KM olay alıcısı (`POST /v1/webhooks/km`)
 yönetici işlemi değildir — KM'den panelle değil `mobile_gateway` olay

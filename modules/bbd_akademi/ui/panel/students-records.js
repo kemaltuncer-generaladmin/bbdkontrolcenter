@@ -26,8 +26,8 @@ import { BOOK_STATUS } from './books.js';
 import { METHODS } from './finance.js';
 import {
   DAY_LABEL, actionButton, empty, exportJob, fmtDate, fmtDateTime, fmtTime, formDialog, kv, loader,
-  money, net, num, optionsOf, pagedList, percent, personName, runAction, selectBox, statusBadge,
-  todayIst, toolbar,
+  money, net, num, optionsOf, pagedList, percent, personName, problem, runAction, selectBox,
+  statusBadge, todayIst, toolbar,
 } from './common.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
@@ -342,22 +342,25 @@ function examResult(ctx, row) {
 // hemen çizilir; açılışta ayrıntı ucu (`students_getExternalExam`) güncel kaydı
 // getirip yerine koyar — öğrenci / veli kaydı bu arada düzeltmiş ya da silmiş
 // olabilir. Silinmişse (404 `external_exam_not_found`) sebep yazılır ve liste
-// tazelenir.
+// tazelenir; başka bir hatada (ör. Akademi henüz bu ucu sunmuyor) liste
+// satırındaki bilgi kalır, üstte not görünür.
 function externalExam(ctx, row, onGone) {
   const { app, id } = ctx;
   const panel = subDrawer(ctx, { title: row.name || 'Dış deneme',
     subtitle: `${EXAM_TYPES[row.type] || ''} · ${fmtDate(row.date)} · ${row.enteredBy?.displayName || ''}` });
-  const view = loader(() => app.api.get(`/v1/students/${id}/external-exams/${row.id}`).catch((failure) => {
+  const body = h('div', 'ak-stack');
+  body.replaceChildren(...externalExamBody(ctx, row));
+  panel.body.append(body);
+  app.api.get(`/v1/students/${id}/external-exams/${row.id}`).then((exam) => {
+    body.replaceChildren(...externalExamBody(ctx, exam));
+  }, (failure) => {
     if (failure instanceof AkademiError && failure.code === 'external_exam_not_found') {
+      body.replaceChildren(alertBox('Bu dış deneme öğrenci ya da veli tarafından silinmiş.', 'warn'));
       onGone?.();
-      throw new AkademiError({ code: failure.code, status: failure.status,
-        message: 'Bu dış deneme öğrenci ya da veli tarafından silinmiş.' });
+      return;
     }
-    throw failure;
-  }), (exam) => externalExamBody(ctx, exam));
-  view.node.replaceChildren(...externalExamBody(ctx, row));
-  panel.body.append(view.node);
-  view.reload();
+    body.prepend(alertBox(`Güncel kayıt okunamadı (${problem(failure)}); listedeki bilgi gösteriliyor.`, 'warn'));
+  });
 }
 
 function externalExamBody(ctx, exam) {
