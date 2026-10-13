@@ -100,11 +100,14 @@ FONT_CANDIDATES = (
 )
 
 _FONTS: tuple[str, str] | None = None
+#: Yazı tipi "₺" (U+20BA) taşıyor mu? DejaVu taşır; taşımayanda "TL" yazılır
+#: (kâğıtta boş kare çıkmasın).
+_LIRA = True
 
 
 def fonts() -> tuple[str, str]:
     """(normal, kalın) — bir kez kaydedilir. Bulunamazsa Helvetica (Türkçe bozulur)."""
-    global _FONTS
+    global _FONTS, _LIRA
     if _FONTS is not None:
         return _FONTS
     from reportlab.pdfbase import pdfmetrics
@@ -112,12 +115,19 @@ def fonts() -> tuple[str, str]:
 
     for regular, bold in FONT_CANDIDATES:
         if Path(regular).exists():
-            pdfmetrics.registerFont(TTFont("AK-Doc", regular))
+            font = TTFont("AK-Doc", regular)
+            pdfmetrics.registerFont(font)
             pdfmetrics.registerFont(TTFont("AK-Doc-Bold", bold if Path(bold).exists() else regular))
             _FONTS = ("AK-Doc", "AK-Doc-Bold")
+            _LIRA = 0x20BA in getattr(font.face, "charToGlyph", {0x20BA: 1})
             return _FONTS
     _FONTS = ("Helvetica", "Helvetica-Bold")
+    _LIRA = False
     return _FONTS
+
+
+def _printable(text: str) -> str:
+    return text if _LIRA else text.replace("₺", "TL")
 
 
 # ------------------------------------------------------------------ model
@@ -415,7 +425,7 @@ def render(document: Document, letterhead: Letterhead, stamp: Stamp) -> bytes:
 
     def para(text: str, style: str, *, color: Any = None, strong: bool = False,
              align: str = "") -> Any:
-        markup = escape(text).replace("\n", "<br/>")
+        markup = escape(_printable(text)).replace("\n", "<br/>")
         if strong:
             markup = f'<font name="{bold}">{markup}</font>'
         if color is not None:
@@ -467,10 +477,11 @@ def render(document: Document, letterhead: Letterhead, stamp: Stamp) -> bytes:
         canvas.setFont(bold, 12)
         canvas.drawString(text_x, top - 5 * mm, _fit(letterhead.name, bold, 12, name_room))
         if letterhead.detail:
+            # Adres · telefon · e-posta: sığmazsa " · " yerinden iki satıra bölünür.
             canvas.setFillColor(soft)
             canvas.setFont(regular, 7.4)
-            canvas.drawString(text_x, top - 9.5 * mm,
-                              _fit(letterhead.detail, regular, 7.4, name_room))
+            for row, text in enumerate(_wrap_detail(letterhead.detail, regular, 7.4, name_room)):
+                canvas.drawString(text_x, top - (9.5 + row * 3.4) * mm, text)
         # Belge adı + numara + tarih
         canvas.setFillColor(accent)
         canvas.setFont(bold, 10.5)
@@ -752,6 +763,24 @@ def render(document: Document, letterhead: Letterhead, stamp: Stamp) -> bytes:
     doc.addPageTemplates([PageTemplate(id="ak", frames=[frame], onPageEnd=decorate)])
     doc.build(story, canvasmaker=_Canvas)
     return buffer.getvalue()
+
+
+def _wrap_detail(text: str, font: str, size: float, room: float) -> list[str]:
+    """Başlık alt satırı en çok iki satır; parçalar " · " ile ayrılır."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    if stringWidth(text, font, size) <= room:
+        return [text]
+    pieces = [piece.strip() for piece in text.split("·") if piece.strip()]
+    first: list[str] = []
+    while pieces and stringWidth(" · ".join([*first, pieces[0]]), font, size) <= room:
+        first.append(pieces.pop(0))
+    if not first:
+        return [_fit(text, font, size, room)]
+    rows = [" · ".join(first)]
+    if pieces:
+        rows.append(_fit(" · ".join(pieces), font, size, room))
+    return rows
 
 
 def _fit(text: str, font: str, size: float, room: float) -> str:
