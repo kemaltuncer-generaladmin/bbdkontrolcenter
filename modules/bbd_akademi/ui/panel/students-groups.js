@@ -53,7 +53,13 @@ export function classesView(app, { openStudent }) {
     columns: [
       { key: 'name', label: 'Sınıf', width: 'minmax(0, 1.6fr)', cell: (row) => stack(row.name,
         row.kmClassName && row.kmClassName !== row.name ? `KM: ${row.kmClassName}` : '') },
-      { key: 'grade', label: 'Seviye', cell: (row) => gradeText(row.gradeLevel) },
+      // Seviye KM sınıf tanımından (`levelSource: km`); addan tahminse ya da yoksa uyarı —
+      // seviye KM → Öğrenciler → Sınıflar'da girilir (sınıf seviyeyi taşır, 13.10.2026).
+      { key: 'grade', label: 'Seviye', cell: (row) => {
+        if (row.gradeLevel === null || row.gradeLevel === undefined) return badge('Seviye seçin', 'warn');
+        const text = [gradeText(row.gradeLevel), row.examTarget].filter(Boolean).join(' · ');
+        return row.levelSource === 'name' ? stack(text, 'addan tahmin — Sınıflar\'da seçin') : text;
+      } },
       { key: 'track', label: 'Alan', cell: (row) => TRACKS[row.track] || '—' },
       { key: 'term', label: 'Dönem', cell: (row) => (row.termId ? termNames.get(row.termId) || '—'
         : badge('Atanmamış', 'warn')) },

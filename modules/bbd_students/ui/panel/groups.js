@@ -283,7 +283,8 @@ export function mountGroups(host, ctx) {
             id: student.kantinId,
             name: student.displayName || 'Adsız',
             group: student.className || 'Sınıf girilmemiş',
-            meta: [student.gradeLevel && `${student.gradeLevel}. sınıf`, student.track,
+            meta: [student.gradeLevel && (student.gradeLevel === 'graduate' ? 'Mezun' : `${student.gradeLevel}. sınıf`),
+              student.track,
               student.schoolNo && `No ${student.schoolNo}`].filter(Boolean).join(' · '),
           })),
       });

@@ -81,3 +81,36 @@ export function fillFromSuggestion(student) {
   if (!student.examTarget && plan.examTarget) changes.examTarget = plan.examTarget;
   return changes;
 }
+
+// ------------------------------------------------- sınıf seviyeyi taşır (göç 008)
+//
+// Seviye / alan / hedef sınav ANA SINIF tanımında girilir; öğrencinin geçerli
+// değeri sınıftan gelir (backend `curriculum.effective`). Öğrenci kartında yalnız
+// öğrenciye özel alan / hedef sınav istisnası girilir.
+
+/** Geçerli seviyenin tek satırı: "11. sınıf · Sayısal · YKS"; yoksa "seviye yok". */
+export function levelLine(plan) {
+  return describe(plan) || 'seviye yok';
+}
+
+/** Sınıf tanımı taslağı: var olan tanım, yoksa addan gelen öneri, yoksa boş. */
+export function classDraft(item) {
+  const source = item?.defined ? item : (item?.suggestion || {});
+  const grade = source.gradeLevel ?? null;
+  return {
+    gradeLevel: grade,
+    track: trackAllowed(grade) ? source.track ?? null : null,
+    examTarget: source.examTarget ?? suggestedExam(grade),
+  };
+}
+
+/** PUT /classes/{ad} gövdesi; seviye yoksa hata metni. */
+export function classPatch(draft) {
+  const grade = draft?.gradeLevel ?? null;
+  if (grade === null) return { error: 'Sınıfın seviyesini seçin.' };
+  return { body: {
+    gradeLevel: grade,
+    track: trackAllowed(grade) ? draft.track ?? null : null,
+    examTarget: draft.examTarget ?? null,
+  } };
+}

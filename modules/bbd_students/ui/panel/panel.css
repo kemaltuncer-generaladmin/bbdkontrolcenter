@@ -605,3 +605,33 @@
 .st-listbulk-count { font-size: 12.5px; }
 .st-listbulk-value { display: inline-flex; gap: 6px; }
 .st-listbulk-status { font-size: 12px; color: #14532d; }
+
+/* ------------------------------------------- Sınıflar (sınıf seviyeyi taşır, 0.5.4) */
+.cl { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; }
+.cl-table { display: flex; flex-direction: column; gap: 8px; }
+.cl-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) repeat(3, minmax(120px, 1fr)) minmax(200px, 1.4fr);
+  gap: 10px;
+  align-items: end;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.cl-row-missing { border-color: #f59e0b; background: #fffbeb; }
+.cl-row-new { grid-template-columns: minmax(140px, 1.2fr) repeat(3, minmax(120px, 1fr)) auto minmax(160px, 1fr); }
+.cl-name { display: flex; flex-direction: column; gap: 4px; align-self: center; }
+.cl-name .st-badge { align-self: flex-start; }
+.cl-field { margin: 0; }
+.cl-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.cl-status { color: var(--soft); font-size: 0.86rem; }
+.cl-add { display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 900px) {
+  .cl-row, .cl-row-new { grid-template-columns: 1fr 1fr; }
+}
+.st-level { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.st-level-line { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.st-check-row { display: flex; gap: 8px; align-items: center; }
+.st-class-form { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px dashed #f59e0b;
+  border-radius: 10px; }
