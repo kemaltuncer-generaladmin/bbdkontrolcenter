@@ -31,8 +31,13 @@ export function section(app) {
   const links = h('div', 'kit-card-body ak-stack');
   links.append(h('div', 'ak-muted', 'Bakiye yükleme, borç tahsilatı, harcama limiti ve satış gibi günlük işler '
     + 'için Kontrol Merkezi ekranını açın. Kantin parası kurum carisinden ayrı tutulur.'),
-  toolbar(...KM_SCREENS.map(([id, label, payload]) => button(label, { variant: 'ghost',
-    onClick: () => app.openPanel(id, payload) }))));
+  toolbar(...KM_SCREENS.map(([id, label, payload]) => (
+    // Öğrenci yönetimi BBD Akademi'de: öğrencinin bakiyesi, tahsilatı ve veli
+    // kontrolleri tek kartındadır (Öğrenciler → öğrenci → Kayıt ve veliler).
+    id === 'bbd_students' && app.capability?.('bbd_students.manager')
+      ? button('Öğrenciler (bakiye, tahsilat, veli kontrolleri kartta)', { variant: 'ghost',
+        onClick: () => app.go('students', { view: 'km' }) })
+      : button(label, { variant: 'ghost', onClick: () => app.openPanel(id, payload) })))));
   const linkCard = card('Günlük kantin işleri', links);
   linkCard.classList.add('ak-money-canteen');
   node.append(linkCard);

@@ -531,3 +531,5 @@
   .st-rec-guardian { grid-template-columns: 1fr; }
   .st-rec-guardian-note { margin-left: 0; }
 }
+
+.st-embedded .st-bar { flex-wrap: wrap; }

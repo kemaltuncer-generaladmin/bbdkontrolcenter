@@ -126,8 +126,10 @@ function createManager(root, options) {
 
   const view = h('div', `st${embedded ? ' st-embedded' : ''}`);
   nodes.root = view;
+  // Kantin rakamları şeridi yalnız kendi ekranında; BBD Akademi'de kantin
+  // rakamları "Bugün" ve "Kantin ve Finans"tadır (sade görünüm).
   nodes.kpi = h('div', 'st-kpi');
-  view.append(nodes.kpi);
+  if (!embedded) view.append(nodes.kpi);
 
   // ------------------------------------------------------------ sekmeler
   const modeBar = h('div', 'st-mode-bar');
@@ -140,7 +142,8 @@ function createManager(root, options) {
     modeButtons[key] = item;
     modeBar.append(item);
   }
-  view.append(modeBar);
+  // Akademi kendi sekme şeridini çizer (`hideModes`) — iki şerit üst üste olmasın.
+  if (!options.hideModes) view.append(modeBar);
 
   // -------------------------------------------------------------- şerit
   const bar = h('header', 'st-bar');
@@ -533,7 +536,7 @@ function createManager(root, options) {
       const name = normalizeClass(input.value);
       if (!await confirmSimple(view, { title: name ? `${ids.length} öğrenci “${name}” sınıfına atansın mı?`
         : `${ids.length} öğrencinin sınıfı temizlensin mi?`,
-      description: 'Kantin kartındaki sınıf ve BBD Akademi sınıfı da güncellenir.', confirmLabel: 'Ata' })) return;
+      description: 'Basılan kantin kartındaki sınıf ve BBD Akademi sınıfı da güncellenir.', confirmLabel: 'Ata' })) return;
       try {
         const result = await api(`${BASE}/students/class`, { method: 'POST', body: { students: ids, className: name } });
         status.textContent = `${result.updated.length} öğrenci ${name ? `“${name}” sınıfına atandı` : 'sınıfsız bırakıldı'}.`
@@ -769,7 +772,7 @@ function createManager(root, options) {
     onEvents: (items, { reset }) => scheduleRefresh(reset ? [] : items),
   });
 
-  return () => {
+  const cleanup = () => {
     disposed = true;
     stopWatch?.();
     clearTimeout(refreshTimer);
@@ -779,6 +782,9 @@ function createManager(root, options) {
     groupsView?.destroy();
     root.replaceChildren();
   };
+  /** Gömülüyken sekmeyi Akademi seçer: `cleanup.setMode('list'|'bulk'|'groups')`. */
+  cleanup.setMode = (next) => { if (modeButtons[next]) setMode(next); };
+  return cleanup;
 }
 
 // --------------------------------------------------------------- yetenek
@@ -807,10 +813,13 @@ export function capabilities(ctx) {
         groups: byStudent.get(student.kantinId) || [],
       }));
     },
-    /** `(root, {payload, capability, openStudent})` → temizlik işlevi. */
+    /**
+     * `(root, {payload, capability, openStudent, hideModes})` → temizlik işlevi;
+     * işlevin `setMode('list'|'bulk'|'groups')` özelliği sekmeyi değiştirir.
+     */
     'bbd_students.manager': (root, options = {}) => createManager(root, {
       api: ctx.api, payload: options.payload || null, capability: options.capability || null,
-      openStudent: options.openStudent,
+      openStudent: options.openStudent, hideModes: Boolean(options.hideModes),
     }),
     /** `(root, {kantinId, capability, toast, dialogRoot, onChanged, onRemoved})` → {reload, destroy, dirty}. */
     'bbd_students.record': (root, options = {}) => {

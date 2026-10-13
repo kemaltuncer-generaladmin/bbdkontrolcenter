@@ -428,7 +428,8 @@ export function canteenTab(app, { goTab }) {
     },
     saved: 'Kantin kuralları kaydedildi.',
     intro: () => hintBox('Kantin parası kurum finansından tamamen ayrıdır. Burada yalnız kantinin kurum '
-      + 'kuralları durur; öğrenci bazında veli kontrolleri ve kantin tahsilatı KM Öğrenciler ekranındadır.'),
+      + 'kuralları durur; öğrenci bazında veli kontrolleri ve kantin tahsilatı öğrencinin kartındadır '
+      + '(Öğrenciler → öğrenci → Kayıt ve veliler).'),
     extra: (data) => card('Ön ödeme', kv([
       ['Borçtan fazla tahsilat', data.allowPrepayment ? 'İzinli' : 'Kapalı'],
       ['En çok ön ödeme', data.allowPrepayment ? money(data.maxPrepaymentMinor) : '—'],

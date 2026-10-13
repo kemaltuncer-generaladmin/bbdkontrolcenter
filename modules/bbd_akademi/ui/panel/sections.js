@@ -65,7 +65,7 @@ export const SECTIONS = [
     area: 'progress', feature: 'flashcards' },
   { key: 'insights', label: 'Erken uyarı', file: './insights.js', requires: ['view'], area: 'progress',
     feature: 'early_warning' },
-  { key: 'finance', label: 'Kurum cari', file: './finance.js', requires: ['finance'], area: 'money',
+  { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'], area: 'money',
     feature: 'finance' },
   { key: 'canteen', label: 'Kantin', file: './canteen.js', requires: ['view'], area: 'money',
     feature: 'canteen' },

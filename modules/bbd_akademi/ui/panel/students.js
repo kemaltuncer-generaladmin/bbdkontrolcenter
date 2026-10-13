@@ -60,8 +60,12 @@ export function section(app) {
 
   const open = (studentId, options) => openStudent(app, studentId, options);
   const openRef = (kmId, options) => openStudentByRef(app, kmId, options);
+  // Yönetimde KM'nin üç sekmesi (liste, toplu işlemler, gruplar) Akademi'nin
+  // şeridine katılır: tek şerit, tek "Öğrenciler".
   const specs = manager ? [
     { key: 'km', label: 'Öğrenciler' },
+    { key: 'kmBulk', label: 'Toplu işlemler' },
+    { key: 'kmGroups', label: 'Gruplar' },
     { key: 'classes', label: 'Sınıflar' },
     { key: 'guardians', label: 'Veliler ve uygulama' },
     { key: 'students', label: 'Uygulama kullanımı' },
@@ -77,8 +81,16 @@ export function section(app) {
   node.append(tabs.node, slot);
 
   const bodies = {};
+  let shared = null;                  // KM yönetimi: üç sekme tek örnek
+  const kmMode = { km: 'list', kmBulk: 'bulk', kmGroups: 'groups' };
+  const managed = () => {
+    shared = shared || managerView(app, manager, { openRef });
+    return shared;
+  };
   const builders = {
-    km: () => managerView(app, manager, { openRef }),
+    km: managed,
+    kmBulk: managed,
+    kmGroups: managed,
     students: () => studentsView(app, { open }),
     classes: () => classesView(app, { openStudent: open }),
     groups: () => groupsView(app, { openStudent: open }),
@@ -89,10 +101,12 @@ export function section(app) {
   function show(key) {
     if (!bodies[key]) {
       bodies[key] = builders[key]();
-      slot.append(bodies[key].node);
+      if (!bodies[key].node.isConnected) slot.append(bodies[key].node);
       bodies[key].reload();
     }
-    for (const [name, body] of Object.entries(bodies)) body.node.hidden = name !== key;
+    const visible = bodies[key].node;
+    for (const body of Object.values(bodies)) body.node.hidden = body.node !== visible;
+    if (kmMode[key]) bodies[key].mode(kmMode[key]);
   }
 
   let started = false;
@@ -101,7 +115,9 @@ export function section(app) {
     shown(payload) {
       // `{view: 'groups'}` (eski Akademi grupları) yönetimde KM "Gruplar"ıdır.
       let wanted = payload?.classGroupId ? 'classes' : (known.has(payload?.view) ? payload.view : null);
-      if (!wanted && manager && ['groups', 'bulk', 'km'].includes(payload?.view)) wanted = 'km';
+      if (manager && ['groups', 'bulk', 'km', 'list'].includes(payload?.view)) {
+        wanted = { groups: 'kmGroups', bulk: 'kmBulk' }[payload.view] || 'km';
+      }
       if (!started) {
         started = true;
         if (!wanted) show(first);
@@ -109,14 +125,13 @@ export function section(app) {
       if (wanted) {
         tabs.select(wanted, false);
         show(wanted);
-        if (wanted === 'km' && payload?.view && payload.view !== 'km') bodies.km.mode?.(payload.view);
       }
       if (payload?.classGroupId) bodies.classes.openClass(payload.classGroupId);
       if (payload?.studentId) open(payload.studentId, { tab: payload.tab, payload });
       else if (payload?.kmStudentId) openRef(payload.kmStudentId, { tab: payload.studentTab || 'record' });
     },
     destroy() {
-      for (const body of Object.values(bodies)) body.destroy?.();
+      for (const body of new Set(Object.values(bodies))) body.destroy?.();
     },
   };
 }
@@ -125,21 +140,18 @@ export function section(app) {
 function managerView(app, manager, { openRef }) {
   const node = h('div', 'ak-stu-km');
   let cleanup = null;
-  let currentPayload = null;
-  const mountIt = () => {
-    cleanup?.();
-    cleanup = manager(node, {
-      payload: currentPayload,
-      capability: app.capability,
-      openStudent: (student) => openRef(student.kantinId, { tab: 'record', name: student.displayName,
-        status: student.status }),
-    });
-  };
   return {
     node,
-    reload() { if (!cleanup) mountIt(); },
-    /** Toplu işlemler / gruplar sekmesiyle aç. */
-    mode(view) { currentPayload = { view }; mountIt(); },
+    reload() {
+      if (cleanup) return;
+      cleanup = manager(node, {
+        capability: app.capability,
+        hideModes: true,
+        openStudent: (student) => openRef(student.kantinId, { tab: 'record', name: student.displayName,
+          status: student.status }),
+      });
+    },
+    mode(view) { cleanup?.setMode?.(view); },
     destroy() { cleanup?.(); cleanup = null; },
   };
 }
@@ -580,7 +592,8 @@ function openKmOnly(app, kmId, { name = '', note = '' } = {}) {
   panel.body.append(info, slot);
   if (typeof drawRecord === 'function') {
     instance = drawRecord(slot, { kantinId: kmId, capability: app.capability, dialogRoot: app.root,
-      toast: (text) => app.toast(text, 'good'), onRemoved: () => panel.close() });
+      toast: (text) => app.toast(text, 'good'), onRemoved: () => panel.close(),
+      onLoaded: (student) => panel.setTitle(student?.displayName || name || 'Öğrenci') });
   } else {
     slot.append(empty('Kayıt gösterilemiyor', 'Öğrenci yönetimi bu kullanıcı için açık değil.'));
   }

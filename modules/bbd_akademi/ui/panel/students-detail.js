@@ -302,7 +302,9 @@ function guardianCard(ctx, data) {
       } },
     ],
     rows,
-    empty: empty('Kayıtlı veli yok', 'Veli bilgisi KM Öğrenciler modülünden girilir.'),
+    empty: empty('Kayıtlı veli yok', ctx.recordable ? 'Veliyi “Kayıt ve veliler” sekmesinden ekleyin.'
+      : 'Veli bilgisi KM Öğrenci Yönetimi ekranından girilir.',
+    ctx.recordable ? [button('Veli ekle', { onClick: () => ctx.select('record') })] : []),
   });
 
   async function toggle(row) {

@@ -70,7 +70,8 @@ function loadCss() {
  * @param {HTMLElement} host
  * @param {object} options
  *   api, kantinId, can(izin) → bool, capability(ad) | null, dialogRoot,
- *   toast(metin, ton?), onChanged?(öğrenci), onRemoved?(), classes?() → [sınıf adı]
+ *   toast(metin, ton?), onChanged?(öğrenci), onLoaded?(öğrenci), onRemoved?(),
+ *   classes?() → [sınıf adı]
  * @returns {{reload: () => Promise<void>, destroy: () => void, dirty: () => boolean}}
  */
 export function mountRecord(host, options) {
@@ -126,6 +127,7 @@ export function mountRecord(host, options) {
       guardiansBefore = G.fromServer(people ? people.items : fresh.guardians);
       guardians = guardiansBefore.map((row) => ({ ...row }));
       render();
+      options.onLoaded?.(student);
     } catch (failure) {
       if (destroyed) return;
       body.replaceChildren(h('p', 'st-status bad', failure?.status === 404
@@ -395,7 +397,11 @@ export function mountRecord(host, options) {
 
   // ------------------------------------------------------------ veliler
 
-  function paintGuardians(box) {
+  /**
+   * Veli satırlarını çizer. `focusKey` ("2:relation"): yeniden çizimden sonra
+   * odak o alana döner — telefon alanından Sekme ile çıkınca odak kaybolmasın.
+   */
+  function paintGuardians(box, focusKey = null) {
     const target = box || body.querySelector('.st-rec-guardians');
     if (!target) return;
     target.replaceChildren();
@@ -426,10 +432,13 @@ export function mountRecord(host, options) {
       phone.value = G.showPhone(row.phone);
       phone.disabled = !editable;
       phone.addEventListener('input', () => { row.phone = phone.value; paintDirty(false); });
-      phone.addEventListener('blur', () => {
+      phone.addEventListener('blur', (event) => {
         if (G.cleanPhone(phone.value)) phone.value = G.showPhone(phone.value);
-        paintGuardians();
+        paintGuardians(null, event.relatedTarget?.dataset?.k || null);
       });
+      name.dataset.k = `${index}:name`;
+      relation.dataset.k = `${index}:relation`;
+      phone.dataset.k = `${index}:phone`;
       const problem = problems.find((item) => item.index === index);
       if (problem) phone.classList.add('st-invalid');
       line.append(rank, name, relation, phone);
@@ -457,8 +466,13 @@ export function mountRecord(host, options) {
     const note = G.primaryNote(guardiansBefore, guardians);
     if (note) target.append(h('p', 'st-lc-warn', note));
     if (editable && guardians.length < (guardianMeta.max || G.MAX_GUARDIANS)) {
-      target.append(button('+ Veli ekle', { onClick: () => { guardians = G.add(guardians); paintGuardians(); paintDirty(); } }));
+      target.append(button('+ Veli ekle', { onClick: () => {
+        guardians = G.add(guardians);
+        paintGuardians(null, `${guardians.length - 1}:name`);
+        paintDirty();
+      } }));
     }
+    if (focusKey) target.querySelector(`[data-k="${focusKey}"]`)?.focus();
   }
 
   // ------------------------------------------------------------- kayıt
