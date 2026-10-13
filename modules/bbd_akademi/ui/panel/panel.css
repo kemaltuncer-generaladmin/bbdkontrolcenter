@@ -184,3 +184,36 @@
 .ak-fold > summary:hover { background: var(--tint); border-radius: 10px; }
 .ak-fold-body { padding: 4px 14px 14px; }
 .ak-fold-note { font-weight: 400; color: var(--soft); font-size: 12.5px; }
+
+/* ------------------------------------------------- adım adım pencere (wizard.js)
+   Üç kısa adım: üstte sıra ve ad, altta Geri / İleri. Etkin adım koyu, biten
+   adım işaretli; renk tek başına anlam taşımaz (sayı + "aria-current"). */
+.ak-wiz { display: flex; flex-direction: column; gap: 12px; }
+.ak-wiz-steps { list-style: none; display: flex; gap: 6px; margin: 0; padding: 0; flex-wrap: wrap; }
+.ak-wiz-step {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 999px;
+  background: var(--tint); color: var(--soft); border: 1px solid var(--line);
+}
+.ak-wiz-step-no {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 50%; background: #fff; border: 1px solid var(--line); font-weight: 650; font-size: 12px;
+}
+.ak-wiz-step.on { background: #e3ebff; border-color: #9db6ff; color: #1d3f9e; font-weight: 600; }
+.ak-wiz-step.on .ak-wiz-step-no { background: #2f5fd0; border-color: #2f5fd0; color: #fff; }
+.ak-wiz-step.done { color: var(--ink); }
+.ak-wiz-step.done .ak-wiz-step-no { background: #e6f4ea; border-color: #8cc79f; color: #1f6b38; }
+.ak-wiz-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.ak-wiz-body { min-height: 220px; }
+.ak-wiz-pane { display: flex; flex-direction: column; gap: 12px; }
+.ak-wiz-title { margin: 0; font-size: 15px; font-weight: 650; }
+.ak-wiz-title:focus { outline: none; }
+.ak-wiz-title:focus-visible { outline: 2px solid #2f5fd0; outline-offset: 2px; }
+.ak-wiz-note { color: var(--soft); font-size: 12.5px; min-height: 1em; }
+.ak-wiz-error:empty { display: none; }
+
+/* ------------------------------------------------ "Kime?" seçicisi (bulk-target.js) */
+.ak-bt-modes { display: flex; gap: 6px 16px; flex-wrap: wrap; }
+.ak-bt-mode { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.ak-bt-exclude { border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; }
+.ak-bt-exclude[open] { display: flex; flex-direction: column; gap: 8px; }
+.ak-bt-exclude summary { cursor: pointer; color: var(--soft); }

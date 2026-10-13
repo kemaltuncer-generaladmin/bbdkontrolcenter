@@ -10,7 +10,7 @@
 // sisteminde ÇÖZÜLMEZ — normaldir (ADR 0011).
 
 import {
-  blockedButton, button, confirmSimple, confirmWithPin, confirmWithReason, debounce, h,
+  blockedButton, button, confirmSimple, confirmWithPin, confirmWithReason, debounce, dialogA11y, h,
   money, moneyInput, num, parseMoney, percent,
 } from '../../ui-kit/kit.js';
 import { alertBox, badge, drawer, emptyState, progress, skeletonRows } from '../../ui-kit/layout.js';
@@ -516,10 +516,13 @@ export function formDialog(app, { title, description = '', fields = [], value = 
     card.append(error);
     const key = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`).slice(0, 100);
 
+    // Odak tuzağı + başlık bağı + kapanınca odağın açan düğmeye dönüşü (kit, WCAG 2.1.2/2.4.3).
+    let release = () => {};
     const close = (result) => {
       document.removeEventListener('keydown', onKey);
       grid.destroy();
       overlay.remove();
+      release();
       resolve(result);
     };
     const go = button(submitLabel, { variant: danger ? 'danger' : 'primary', onClick: () => submit() });
@@ -567,6 +570,7 @@ export function formDialog(app, { title, description = '', fields = [], value = 
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(null); });
     document.addEventListener('keydown', onKey);
     app.root.append(overlay);
+    release = dialogA11y(card);
     card.querySelector('input, select, textarea')?.focus();
   });
 }

@@ -110,7 +110,8 @@ export function homeworkTab(ctx) {
   });
   ctx.dispose(() => list.destroy());
   node.append(toolbar(statusSelect.node, h('span', 'kit-spacer'),
-    button('Ödev ver', { variant: 'ghost', onClick: () => app.go('homework') })), list.node);
+    button('Ödev ver', { variant: 'ghost', onClick: () => app.go('homework', { compose: true, studentId: id,
+      studentName: ctx.student?.student?.displayName || '' }) })), list.node);
   list.reload();
   return { node };
 }

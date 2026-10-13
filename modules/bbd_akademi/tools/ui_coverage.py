@@ -67,6 +67,12 @@ NOT_SURFACED: dict[str, str] = {
     # --- öğrenci dışa aktarımı: işi BAŞLATAN uç (`students_exportMistakes`)
     # entegrasyon anahtarına açık değil; yoklanacak iş olmadan durum okuması
     # anlamsız. Kurum çıktıları ortak `/v1/admin/exports/{id}` üzerinden iner.
+    # --- tek ödev: "Ödev ver" toplu ödev sihirbazıdır (ne → kime → ne zaman);
+    # tek hedef + tek ödev satırı aynı sonucu verir. İkinci bir "tek ödev"
+    # formu kullanıcıyı ikiye bölerdi (kullanıcı: "karışık olmasın").
+    "admin_createHomework":
+        "Ödev verme panelde tek yoldan: toplu ödev sihirbazı (admin_createHomeworkBulk; tek "
+        "hedef ve tek satır tek ödev demektir). Mevcut ödevin düzenlenmesi admin_updateHomework.",
     "students_getExport":
         "Hata defteri dışa aktarımını başlatan uç (students_exportMistakes) "
         "entegrasyon anahtarına açık değil; KM'nin başlatabileceği bir iş yok.",
@@ -166,11 +172,10 @@ PENDING: dict[str, str] = {
     **{operation_id: _TOPLU for operation_id in (
         "admin_listAssignmentBundles", "admin_createAssignmentBundle", "admin_getAssignmentBundle",
         "admin_updateAssignmentBundle", "admin_deleteAssignmentBundle", "admin_applyAssignmentBundle",
-        "admin_previewAssignmentBundle", "admin_removeAssignmentBundle", "admin_getBulkJob",
-        "admin_bulkProgramOverrides", "admin_listHomeworkTemplates", "admin_createHomeworkTemplate",
+        "admin_previewAssignmentBundle", "admin_removeAssignmentBundle",
+        "admin_bulkProgramOverrides", "admin_createHomeworkTemplate",
         "admin_getHomeworkTemplate", "admin_updateHomeworkTemplate", "admin_deleteHomeworkTemplate",
-        "admin_copyHomeworkTemplate", "admin_createHomeworkBulk", "admin_bulkUpdateHomework",
-        "admin_previewHomeworkBulk", "admin_bulkDeleteResourceAssignments", "admin_listTemplates",
+        "admin_copyHomeworkTemplate", "admin_bulkDeleteResourceAssignments", "admin_listTemplates",
     )},
 }
 

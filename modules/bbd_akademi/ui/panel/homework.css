@@ -42,3 +42,24 @@
   text-align: center;
 }
 .ak-hw-photo img { max-width: 100%; max-height: 60vh; border-radius: 6px; object-fit: contain; }
+
+/* --------------------------------------------- toplu ödev (homework-bulk.js) */
+.ak-hwb-items { display: flex; flex-direction: column; gap: 6px; }
+.ak-hwb-item {
+  display: flex; align-items: center; gap: 10px; justify-content: space-between;
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px;
+}
+.ak-hwb-templates { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 9px;
+  max-height: 260px; overflow: auto; }
+.ak-hwb-templates .ak-muted { padding: 8px 12px; }
+.ak-hwb-preview { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; background: var(--tint);
+  display: flex; flex-direction: column; gap: 8px; }
+.ak-hwb-preview-title { font-weight: 650; }
+.ak-hwb-dates { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+
+/* Seçilen ödevlere toplu işlem şeridi */
+.ak-hw-bulk {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
+  border: 1px solid #9db6ff; background: #f0f4ff; border-radius: 9px;
+}
+.ak-hw-bulk-count { font-weight: 600; margin-right: 6px; }

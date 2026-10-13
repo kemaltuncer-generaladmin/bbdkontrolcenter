@@ -20,22 +20,19 @@ import { blockedButton, button, clip, h, loadStyles } from '../../ui-kit/kit.js'
 import { alertBox, badge, card, chipRow, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import {
-  actionButton, addDays, clockInput, confirmAction, dateInput, empty, errorBox, fmtDate,
-  fmtDateTime, formDialog, gradeText, istanbulStamp, kv, loader, multiChips, num, openDrawer,
-  pagedList, percent, problem, runAction, searchBox, sectionHead, selectBox, statusBadge,
-  studentPicker, todayIst, toolbar, TRACKS, TZ,
+  actionButton, addDays, clockInput, confirmAction, dateInput, empty, fmtDate,
+  fmtDateTime, formDialog, istanbulStamp, kv, loader, multiChips, num, openDrawer,
+  pagedList, percent, problem, runAction, sectionHead, selectBox, statusBadge,
+  studentPicker, todayIst, toolbar, TZ,
 } from './common.js';
+import { homeworkContent, removableChip, stack, topicsText } from './homework-content.js';
+import { bulkHomeworkWizard } from './homework-bulk.js';
 
 const HOMEWORK = '/v1/admin/homework';
-const PROGRAMS = '/v1/admin/curricula/programs';
 
 const SUBMISSION = { done: ['Teslim etti', 'good'], late: ['Geç teslim', 'warn'],
   overdue: ['Teslim etmedi', 'bad'], pending: ['Bekliyor', 'info'] };
 const SUBMISSION_ORDER = { overdue: 0, pending: 1, late: 2, done: 3 };
-const RESOURCE_KINDS = { topic_book: 'Konu anlatımlı', question_bank: 'Soru bankası', fascicle: 'Fasikül',
-  practice_exam: 'Deneme', other: 'Diğer' };
-const SECTION_KINDS = { test: 'Test', chapter: 'Bölüm', unit_test: 'Ünite testi', review: 'Tekrar',
-  other: 'Diğer' };
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // ---------------------------------------------------------------- yardımcılar
@@ -56,41 +53,9 @@ function istanbulParts(stamp) {
   };
 }
 
-/** "TYT · 12. sınıf" — konu seçicideki program etiketi (Müfredat ekranındakiyle aynı dil). */
-function programLevel(program) {
-  const parts = [];
-  if (program?.exam) parts.push(program.exam);
-  if (program?.grade !== null && program?.grade !== undefined && program?.grade !== '') {
-    parts.push(gradeText(program.grade));
-  }
-  if (program?.tracks?.length) parts.push(program.tracks.map((track) => TRACKS[track] || track).join(' / '));
-  return parts.join(' · ') || 'Genel';
-}
-
 function isPast(stamp) {
   const time = new Date(String(stamp || '')).getTime();
   return !Number.isNaN(time) && time < Date.now();
-}
-
-function stack(main, sub) {
-  const cell = h('div', 'ak-cell-stack');
-  cell.append(h('span', '', main || '—'));
-  if (sub) cell.append(h('small', '', sub));
-  return cell;
-}
-
-function removableChip(text, onRemove, title = 'Kaldır') {
-  const chip = h('button', 'kit-chip on', `${text} ✕`);
-  chip.type = 'button';
-  chip.title = title;
-  chip.addEventListener('click', onRemove);
-  return chip;
-}
-
-function topicsText(topics, max = 3) {
-  const list = (topics || []).map((topic) => topic.name).filter(Boolean);
-  if (!list.length) return '';
-  return list.length > max ? `${list.slice(0, max).join(', ')} +${num(list.length - max)}` : list.join(', ');
 }
 
 /**
@@ -144,16 +109,20 @@ export function section(app) {
   loadStyles(import.meta.url, 'homework.css');
   const node = h('div', 'ak-stack ak-hw');
   const names = { classes: new Map(), groups: new Map() };
-  const filters = { state: 'active', classGroupId: '', studentId: '', studentLabel: '' };
+  const filters = { state: 'active', classGroupId: '', studentId: '', studentLabel: '', seriesId: '' };
   let started = false;
+  let selected = [];
 
-  const add = actionButton(app, 'admin_createHomework', 'Ödev ver', { variant: 'primary',
-    onClick: () => editHomework(app, null, { onSaved: (saved) => {
-      list.reload();
-      if (saved?.id) openDetail(saved.id);
-    } }) });
+  // Tek ödev de, onlarca sınıfa haftalık seri de AYNI üç adımdan verilir (ne → kime → ne zaman).
+  const compose = (initial = {}) => bulkHomeworkWizard(app, initial).then((job) => {
+    if (job?.homework?.seriesId) setSeries(job.homework.seriesId);
+    else if (job) list.reload();
+  });
+  const add = actionButton(app, 'admin_createHomeworkBulk', 'Ödev ver', { variant: 'primary',
+    onClick: () => compose() });
   node.append(sectionHead('Ödevler', {
-    subtitle: 'Sınıfa, çalışma grubuna ya da öğrenciye ödev; teslim durumu ve hatırlatma.',
+    subtitle: 'Sınıfa, çalışma grubuna ya da öğrenciye — tek ödev ya da toplu, şablondan ya da yeni; '
+      + 'teslim durumu ve hatırlatma.',
     actions: [add],
   }));
 
@@ -166,21 +135,47 @@ export function section(app) {
     list.reload();
   }, { label: 'Sınıf' });
   const studentSlot = h('span', 'ak-inline');
+  const seriesSlot = h('span', 'ak-inline');
   const picker = studentPicker(app, { placeholder: 'Öğrenciye göre süz',
     onPick: (student) => setStudent(student.id, student.displayName || '') });
-  node.append(toolbar(chips.node, h('span', 'kit-spacer'), classSelect.node, picker.node, studentSlot));
+  node.append(toolbar(chips.node, h('span', 'kit-spacer'), classSelect.node, picker.node, studentSlot, seriesSlot));
+
+  // Seçilenlere toplu işlem (en çok 200 ödev; `admin_bulkUpdateHomework`).
+  const bulkBar = h('div', 'ak-hw-bulk');
+  bulkBar.setAttribute('role', 'region');
+  bulkBar.setAttribute('aria-label', 'Seçilen ödevler');
+  const bulkCount = h('span', 'ak-hw-bulk-count');
+  bulkCount.setAttribute('aria-live', 'polite');
+  const bulkButtons = [
+    actionButton(app, 'admin_bulkUpdateHomework', 'Ertele', { onClick: () => bulkAction('postpone') }),
+    actionButton(app, 'admin_bulkUpdateHomework', 'Teslim tarihini değiştir',
+      { onClick: () => bulkAction('set_due') }),
+    actionButton(app, 'admin_bulkUpdateHomework', 'İptal et', { onClick: () => bulkAction('cancel') }),
+    actionButton(app, 'admin_bulkUpdateHomework', 'Sil', { variant: 'ghost', onClick: () => bulkAction('delete') }),
+  ];
+  bulkBar.append(bulkCount, ...bulkButtons, button('Seçimi temizle', { variant: 'ghost', onClick: () => {
+    list.table.clearSelection();
+    setSelected([]);
+  } }));
+  bulkBar.hidden = true;
+  node.append(bulkBar);
 
   const list = pagedList({
     app,
     path: HOMEWORK,
     query: () => ({ state: filters.state || undefined, classGroupId: filters.classGroupId || undefined,
-      studentId: filters.studentId || undefined }),
+      studentId: filters.studentId || undefined, seriesId: filters.seriesId || undefined }),
     limit: 50,
+    selectable: true,
+    onSelect: (keys) => setSelected(keys),
+    onLoaded: () => setSelected(list.table.selection()),
     columns: [
       { key: 'title', label: 'Ödev', width: 'minmax(0, 2.4fr)', cell: (row) => {
         const cell = h('div', 'ak-cell-stack');
-        cell.append(h('b', '', row.title),
+        const title = h('b', '', row.title);
+        cell.append(title,
           h('small', '', [row.subject?.name, topicsText(row.topics)].filter(Boolean).join(' · ')));
+        if (row.status === 'cancelled') cell.append(badge('İptal edildi', 'dim'));
         return cell;
       } },
       { key: 'target', label: 'Hedef', width: 'minmax(0, 1.6fr)', cell: (row) => targetText(row.target, names) },
@@ -193,10 +188,41 @@ export function section(app) {
     // Boş durum yol gösterir: aynı "Yeni ödev" akışı (sınıfa, gruba ya da öğrenciye toplu).
     empty: { title: 'Henüz ödev yok ya da süzgece uyan yok',
       text: 'Sınıfa, gruba ya da seçtiğiniz öğrencilere tek seferde ödev verebilirsiniz.',
-      actions: [actionButton(app, 'admin_createHomework', 'Ödev ver', { variant: 'primary',
-        onClick: () => add.click() })] },
+      actions: [actionButton(app, 'admin_createHomeworkBulk', 'Ödev ver', { variant: 'primary',
+        onClick: () => compose() })] },
   });
   node.append(list.node);
+
+  function setSelected(keys) {
+    selected = [...keys];
+    bulkBar.hidden = !selected.length;
+    bulkCount.textContent = `${num(selected.length)} ödev seçili`;
+  }
+
+  /** Toplu ödev serisi süzgeci (sihirbazdan sonra ya da çekmecedeki "serinin hepsi"). */
+  function setSeries(seriesId, reload = true) {
+    filters.seriesId = seriesId || '';
+    seriesSlot.replaceChildren();
+    if (filters.seriesId) {
+      // Yeni seri: süresi geçmiş / dolmamış ayrımı olmadan hepsi görünsün.
+      filters.state = '';
+      chips.set(null);
+      seriesSlot.append(removableChip('Bu toplu ödev', () => setSeries(''), 'Seri süzgecini kaldır'));
+    }
+    list.table.clearSelection();
+    setSelected([]);
+    if (reload) list.reload();
+  }
+
+  async function bulkAction(action) {
+    const ids = list.table.selection().slice(0, 200);
+    if (!ids.length) { setSelected([]); return; }
+    const result = await bulkUpdate(app, { homeworkIds: ids }, action, `${num(ids.length)} ödev`);
+    if (!result) return;
+    list.table.clearSelection();
+    setSelected([]);
+    list.reload();
+  }
 
   function setStudent(id, label, reload = true) {
     filters.studentId = id || '';
@@ -210,9 +236,10 @@ export function section(app) {
   }
 
   function openDetail(id) {
-    homeworkDrawer(app, id, { names, onChange: (next, removedId) => {
+    homeworkDrawer(app, id, { names, onSeries: (seriesId) => setSeries(seriesId), onChange: (next, removedId) => {
       if (next) list.replace((row) => row.id === next.id, next);
       else if (removedId) list.remove((row) => row.id === removedId);
+      else list.reload();
     } });
   }
 
@@ -251,6 +278,11 @@ export function section(app) {
       }
       if (!started) { started = true; start(); } else if (changed) list.reload();
       if (payload?.homeworkId) openDetail(payload.homeworkId);
+      // Öğrenci kartındaki "Ödev ver": sihirbaz o öğrenci seçili açılır.
+      if (payload?.compose && app.can('admin_createHomeworkBulk')) {
+        compose(payload.studentId ? { students: [{ id: payload.studentId,
+          displayName: payload.studentName || 'Öğrenci' }] } : {});
+      }
     },
     destroy() { picker.destroy(); list.destroy(); },
   };
@@ -258,7 +290,7 @@ export function section(app) {
 
 // ---------------------------------------------------------------- ayrıntı
 
-function homeworkDrawer(app, id, { names, onChange } = {}) {
+function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
   const panel = openDrawer(app, { title: 'Ödev' });
   panel.node.classList.add('ak-hw-drawer');
   let homework = null;
@@ -302,7 +334,22 @@ function homeworkDrawer(app, id, { names, onChange } = {}) {
       actionButton(app, 'admin_updateHomework', 'Düzenle', { onClick: () => edit() }),
       actionButton(app, 'admin_deleteHomework', 'Sil', { variant: 'ghost', onClick: () => remove() }),
     );
+    if (homework.seriesId) {
+      // Toplu ödevle (aynı seri) verilmiş: hepsini birlikte ertele / iptal et ya da listede gör.
+      tools.append(h('span', 'kit-spacer'),
+        button('Serinin hepsini göster', { variant: 'ghost', onClick: () => {
+          panel.close();
+          onSeries?.(homework.seriesId);
+        } }),
+        actionButton(app, 'admin_bulkUpdateHomework', 'Seriyi ertele', { variant: 'ghost',
+          onClick: () => seriesAction('postpone') }),
+        actionButton(app, 'admin_bulkUpdateHomework', 'Seriyi iptal et', { variant: 'ghost',
+          onClick: () => seriesAction('cancel') }));
+    }
     nodes.push(tools);
+    if (homework.status === 'cancelled') {
+      nodes.push(alertBox('Bu ödev toplu iptal edildi: öğrenci listesinde görünmez, teslimler saklanır.', 'info'));
+    }
     if (isPast(homework.dueAt) && missing) {
       nodes.push(alertBox(`Son teslim geçti; ${num(missing)} öğrenci teslim etmedi.`, 'warn'));
     }
@@ -447,6 +494,13 @@ function homeworkDrawer(app, id, { names, onChange } = {}) {
     }
   }
 
+  async function seriesAction(action) {
+    const result = await bulkUpdate(app, { seriesId: homework.seriesId }, action, 'serideki bütün ödevler');
+    if (!result) return;
+    view.reload();
+    onChange?.(null, null);
+  }
+
   async function remind(studentIds) {
     const count = studentIds.length || missingRows().length;
     const result = await formDialog(app, {
@@ -465,6 +519,68 @@ function homeworkDrawer(app, id, { names, onChange } = {}) {
   }
 
   return panel;
+}
+
+// ----------------------------------------------------------- toplu düzenle
+
+const BULK_ACTIONS = {
+  postpone: { title: 'Ertele', submit: 'Ertele', done: 'ertelendi' },
+  set_due: { title: 'Teslim tarihini değiştir', submit: 'Tarihi kaydet', done: 'yeni tarihe alındı' },
+  cancel: { title: 'İptal et', submit: 'İptal et', done: 'iptal edildi' },
+  delete: { title: 'Sil', submit: 'Kalıcı olarak sil', done: 'silindi' },
+};
+
+/**
+ * Toplu ertele / tarih / iptal / sil (`admin_bulkUpdateHomework`, tek işlem,
+ * en çok 200 ödev). `scope`: {homeworkIds} ya da {seriesId}.
+ * @returns {Promise<object|null>} sonuç ya da vazgeçildiyse null
+ */
+async function bulkUpdate(app, scope, action, what) {
+  const spec = BULK_ACTIONS[action];
+  const fields = [];
+  const value = { notify: true, shiftDays: 1, day: addDays(todayIst(), 7), clock: '23:59' };
+  if (action === 'postpone') {
+    fields.push({ key: 'shiftDays', label: 'Kaç gün kaysın?', type: 'number', min: -30, max: 60, required: true,
+      hint: 'Eksi değer öne alır (en çok 30 gün); en çok 60 gün ertelenir.' });
+  }
+  if (action === 'set_due') {
+    fields.push({ key: 'day', label: 'Yeni son teslim günü', type: 'date', required: true },
+      { key: 'clock', label: 'Saat', maxLength: 5, placeholder: '23:59', required: true,
+        validate: (text) => (CLOCK.test(String(text || '').trim()) ? null : 'Saati 18:30 gibi yazın.') });
+  }
+  if (action !== 'delete' && action !== 'set_due') {
+    fields.push({ key: 'notify', label: 'Öğrencilere tek özet bildirim gönder', type: 'checkbox' });
+  }
+  const description = {
+    postpone: `${what}: teslim tarihi seçtiğiniz gün kadar kayar.`,
+    set_due: `${what}: hepsine aynı son teslim tarihi verilir.`,
+    cancel: `${what}: öğrenci listesinden kalkar; teslimler saklanır.`,
+    delete: `${what} kalıcı olarak silinir; teslim fotoğrafları ayrılır. Geri alma yoktur.`,
+  }[action];
+  const result = await formDialog(app, {
+    title: spec.title,
+    description,
+    value,
+    fields,
+    danger: action === 'delete' || action === 'cancel',
+    submitLabel: spec.submit,
+    onSubmit: (draft, { key }) => {
+      const body = { ...scope, action };
+      if (action === 'postpone') body.shiftDays = Number(draft.shiftDays);
+      if (action === 'set_due') {
+        const stamp = istanbulStamp(draft.day, String(draft.clock || '').trim());
+        if (new Date(stamp).getTime() < Date.now()) throw new Error('Son teslim geçmiş bir zaman olamaz.');
+        body.dueAt = stamp;
+      }
+      if ('notify' in draft && action !== 'delete' && action !== 'set_due') body.notify = Boolean(draft.notify);
+      return app.api.post(`${HOMEWORK}/bulk-actions`, body, { key });
+    },
+  });
+  if (!result || result === true) return null;
+  const skipped = (result.skipped || []).length;
+  app.toast(`${num(result.affectedCount)} ödev ${spec.done}${skipped ? ` · ${num(skipped)} atlandı (bulunamadı ya da `
+    + 'zaten iptal)' : ''}.`, skipped ? 'warn' : 'good');
+  return result;
 }
 
 /** Teslim fotoğrafları: imzalı bağlantı köprüden indirilir, nesne URL'si kapanınca bırakılır. */
@@ -538,18 +654,10 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
     students: new Map((current?.target?.studentIds || []).map((studentId) => [studentId,
       studentNames.get(studentId) || 'Öğrenci'])),
   };
-  const topics = new Map((current?.topics || []).map((topic) => [topic.id, topic.name]));
-  const resource = {
-    id: current?.resourceId || null,
-    sectionIds: new Set(current?.sectionIds || []),
-    pageFrom: current?.pageFrom ?? null,
-    pageTo: current?.pageTo ?? null,
-  };
-  const subjectOptions = [{ value: '', label: 'Ders seçilmedi' },
-    ...subjects.map((item) => ({ value: item.id, label: item.name }))];
-  if (current?.subject && !subjects.some((item) => item.id === current.subject.id)) {
-    subjectOptions.push({ value: current.subject.id, label: current.subject.name });
-  }
+  // Ders / konu / kaynak / açıklama alanları ortak (toplu ödev ve şablon formu da kullanır).
+  const pieces = homeworkContent(app, current, subjects);
+  disposers.push(() => pieces.dispose());
+  const { subjectOptions, topicField, resourceField, descriptionField } = pieces;
 
   // ------------------------------------------------------- son teslim
   const dueField = (draft, set) => {
@@ -638,235 +746,6 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
     return wrap;
   };
 
-  // ------------------------------------------------------------- konular
-  const topicField = (draft) => {
-    const wrap = h('div', 'ak-stack');
-    const picked = h('div', 'ak-chips');
-    const programSelect = selectBox([{ value: '', label: 'Program seçin' }], '', (programId) => loadProgram(programId),
-      { label: 'Program' });
-    const topicSlot = h('div', 'ak-stack ak-hw-topics');
-    let subjectShown;
-    let unitChips = [];
-
-    const refreshChips = () => {
-      for (const { chips, live } of unitChips) chips.set(live.filter((topic) => topics.has(topic.id)).map((topic) => topic.id));
-    };
-    const paintPicked = () => {
-      picked.replaceChildren();
-      for (const [topicId, name] of topics) {
-        picked.append(removableChip(name, () => {
-          topics.delete(topicId);
-          paintPicked();
-          refreshChips();
-        }));
-      }
-      if (!topics.size) picked.append(h('span', 'ak-muted', 'Konu seçilmedi.'));
-    };
-
-    async function loadSubject(subjectId) {
-      if (subjectId === subjectShown) return;
-      subjectShown = subjectId;
-      unitChips = [];
-      topicSlot.replaceChildren();
-      programSelect.node.hidden = !subjectId;
-      if (!subjectId) {
-        topicSlot.append(h('span', 'ak-muted', 'Konu seçmek için önce ders seçin.'));
-        return;
-      }
-      programSelect.options([{ value: '', label: 'Programlar yükleniyor…' }]);
-      try {
-        const data = await app.api.getCached(PROGRAMS, { subject: subjectId });
-        if (subjectShown !== subjectId) return;
-        const programs = data?.items || [];
-        programSelect.options([{ value: '', label: programs.length ? 'Program seçin (seviye / sınav)'
-          : 'Bu derste program yok' },
-        ...programs.map((item) => ({ value: item.id, label: `${programLevel(item)} — ${item.title}` }))]);
-        programSelect.set(programs.length === 1 ? programs[0].id : '');
-        if (programs.length === 1) loadProgram(programs[0].id);
-      } catch (failure) {
-        topicSlot.replaceChildren(errorBox(failure));
-      }
-    }
-
-    async function loadProgram(programId) {
-      unitChips = [];
-      topicSlot.replaceChildren();
-      if (!programId) return;
-      topicSlot.append(skeletonRows(3, 3));
-      try {
-        const program = await app.api.getCached(`/v1/admin/curricula/programs/${programId}`);
-        if (programSelect.value !== programId) return;
-        topicSlot.replaceChildren();
-        const units = [...(program.units || [])].filter((unit) => !unit.retired)
-          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        for (const unit of units) {
-          const live = (unit.topics || []).filter((topic) => !topic.retired)
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-          if (!live.length) continue;
-          const block = h('div', 'ak-hw-unit');
-          const chips = multiChips(live.map((topic) => ({ value: topic.id, label: topic.title })),
-            live.filter((topic) => topics.has(topic.id)).map((topic) => topic.id), (ids) => {
-              const chosen = new Set(ids);
-              for (const topic of live) {
-                if (chosen.has(topic.id)) topics.set(topic.id, topic.title); else topics.delete(topic.id);
-              }
-              paintPicked();
-            });
-          unitChips.push({ chips, live });
-          block.append(h('div', 'ak-hw-unit-title', unit.title), chips.node);
-          topicSlot.append(block);
-        }
-        if (!unitChips.length) topicSlot.append(h('span', 'ak-muted', 'Bu programda konu yok.'));
-      } catch (failure) {
-        topicSlot.replaceChildren(errorBox(failure));
-      }
-    }
-
-    paintPicked();
-    wrap.append(picked, programSelect.node, topicSlot);
-    loadSubject(draft.subjectId || '');
-    return { node: wrap, update: (next) => loadSubject(next.subjectId || '') };
-  };
-
-  // ------------------------------------------------------------- kaynak
-  const resourceField = (draft) => {
-    const wrap = h('div', 'ak-stack');
-    const chosen = h('div', 'ak-stack');
-    const finder = h('div', 'ak-picker');
-    const results = h('div', 'ak-picker-list');
-    results.hidden = true;
-    let token = 0;
-    const box = searchBox({ placeholder: 'Kaynak ara (kitap adı, yayınevi ya da ISBN)', onSearch: async (text) => {
-      const mine = ++token;
-      if (text.length < 2) { results.hidden = true; return; }
-      const digits = text.replace(/[\s-]/g, '');
-      const query = /^\d{10}(\d{3})?$/.test(digits) ? { isbn: digits } : { q: text };
-      try {
-        const data = await app.api.get('/v1/catalog/library', { ...query,
-          subject: draft.subjectId || undefined, limit: 12 });
-        if (mine !== token) return;
-        results.replaceChildren();
-        const items = data?.items || [];
-        if (!items.length) {
-          results.append(h('div', 'ak-picker-empty', draft.subjectId
-            ? 'Bu derste eşleşen kaynak yok. Kaynaklar ekranından eklenebilir.' : 'Eşleşen kaynak yok.'));
-        }
-        for (const item of items) {
-          const row = h('button', 'ak-picker-row');
-          row.type = 'button';
-          row.append(h('b', '', item.title), h('span', '', [item.publisher, RESOURCE_KINDS[item.kind],
-            `${num(item.sectionCount)} bölüm`, item.scope === 'tenant' ? 'kuruma özel' : ''].filter(Boolean).join(' · ')));
-          row.addEventListener('click', () => {
-            results.hidden = true;
-            if (resource.id !== item.id) {
-              resource.id = item.id;
-              resource.sectionIds.clear();
-              resource.pageFrom = null;
-              resource.pageTo = null;
-            }
-            paintChosen();
-          });
-          results.append(row);
-        }
-        results.hidden = false;
-      } catch (failure) {
-        if (mine !== token) return;
-        results.replaceChildren(h('div', 'ak-picker-empty', problem(failure)));
-        results.hidden = false;
-      }
-    } });
-    disposers.push(() => box.destroy());
-    finder.append(box.node, results);
-
-    async function paintChosen() {
-      chosen.replaceChildren();
-      finder.hidden = Boolean(resource.id);
-      if (!resource.id) {
-        chosen.append(h('span', 'ak-muted', 'Kaynak seçilmedi. Hazır kütüphaneden ya da kurumun kaynaklarından '
-          + 'arayın.'));
-        return;
-      }
-      const forId = resource.id;
-      chosen.append(skeletonRows(2, 3));
-      let detail;
-      try {
-        detail = await app.api.getCached(`/v1/catalog/library/${forId}`);
-      } catch (failure) {
-        if (resource.id !== forId) return;
-        chosen.replaceChildren(errorBox(failure, () => paintChosen()), clearButton());
-        return;
-      }
-      if (resource.id !== forId) return;
-      const head = h('div', 'ak-inline');
-      head.append(stack(detail.title, [detail.publisher, RESOURCE_KINDS[detail.kind], detail.isbn]
-        .filter(Boolean).join(' · ')), h('span', 'kit-spacer'), clearButton());
-
-      const toc = h('div', 'ak-hw-toc');
-      for (const unit of [...(detail.toc || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
-        const sections = [...(unit.sections || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        if (!sections.length) continue;
-        toc.append(h('div', 'ak-hw-unit-title', unit.title));
-        for (const item of sections) {
-          const row = h('label', 'ak-hw-section');
-          const check = h('input', 'kit-check');
-          check.type = 'checkbox';
-          check.checked = resource.sectionIds.has(item.id);
-          check.addEventListener('change', () => {
-            if (check.checked) resource.sectionIds.add(item.id); else resource.sectionIds.delete(item.id);
-          });
-          const pages = item.pageFrom || item.pageTo ? `s. ${item.pageFrom ?? '…'}–${item.pageTo ?? '…'}` : '';
-          row.append(check, h('span', 'ak-hw-section-title', item.title),
-            h('small', 'ak-muted', [SECTION_KINDS[item.kind], pages,
-              item.questionCount ? `${num(item.questionCount)} soru` : ''].filter(Boolean).join(' · ')));
-          toc.append(row);
-        }
-      }
-      if (!toc.childElementCount) toc.append(h('span', 'ak-muted', 'Bu kaynağın içindekiler bilgisi yok.'));
-
-      const pageRow = h('div', 'ak-inline ak-hw-pages');
-      const pageInput = (value, onValue, label) => {
-        const input = h('input', 'kit-input ak-hw-page');
-        input.inputMode = 'numeric';
-        input.placeholder = label;
-        input.setAttribute('aria-label', label);
-        input.value = value ?? '';
-        input.addEventListener('input', () => {
-          const parsed = Number.parseInt(input.value, 10);
-          onValue(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
-        });
-        return input;
-      };
-      pageRow.append(h('span', 'ak-muted', 'Sayfa aralığı (isteğe bağlı):'),
-        pageInput(resource.pageFrom, (value) => { resource.pageFrom = value; }, 'ilk sayfa'),
-        h('span', '', '–'),
-        pageInput(resource.pageTo, (value) => { resource.pageTo = value; }, 'son sayfa'));
-      chosen.replaceChildren(head, toc, pageRow);
-    }
-
-    function clearButton() {
-      return button('Kaynağı kaldır', { variant: 'ghost', onClick: () => {
-        resource.id = null;
-        resource.sectionIds.clear();
-        resource.pageFrom = null;
-        resource.pageTo = null;
-        paintChosen();
-      } });
-    }
-
-    paintChosen();
-    wrap.append(chosen, finder);
-    return wrap;
-  };
-
-  // ----------------------------------------------------- açıklama / bildirim
-  const descriptionField = (draft, set) => {
-    const area = h('textarea', 'kit-textarea');
-    area.maxLength = 1000;
-    area.placeholder = 'Ör. “Testleri çözüp yanlışlarınızın fotoğrafını yükleyin.”';
-    area.value = draft.description || '';
-    area.addEventListener('input', () => set(area.value));
-    return area;
-  };
   const notifyField = (draft, set) => {
     const label = h('label', 'ak-inline');
     const check = h('input', 'kit-check');
@@ -896,8 +775,7 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
           ? null : 'En az bir sınıf, grup ya da öğrenci seçin.') },
       { key: 'topicIds', label: 'Müfredat konuları (isteğe bağlı)', type: 'custom', render: topicField },
       { key: 'resource', label: 'Kaynak (isteğe bağlı)', type: 'custom', render: resourceField,
-        validate: () => (resource.id && resource.pageFrom && resource.pageTo && resource.pageFrom > resource.pageTo
-          ? 'İlk sayfa son sayfadan büyük olamaz.' : null) },
+        validate: pieces.resourceValidate },
       { key: 'description', label: 'Açıklama', type: 'custom', render: descriptionField },
       { key: 'notify', label: 'Bildirim', type: 'custom', render: notifyField },
     ],
@@ -905,19 +783,12 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
     onSubmit: (draft, { key }) => {
       const clock = clockControl?.value && CLOCK.test(clockControl.value) ? clockControl.value : due.clock;
       const body = {
-        title: String(draft.title || '').trim(),
-        description: String(draft.description || '').trim() || null,
+        ...pieces.content(draft),
         target: {
           classGroupIds: target.classGroupIds,
           studentGroupIds: target.studentGroupIds,
           studentIds: [...target.students.keys()],
         },
-        subjectId: draft.subjectId || null,
-        resourceId: resource.id || null,
-        sectionIds: resource.id ? [...resource.sectionIds] : [],
-        pageFrom: resource.id ? resource.pageFrom : null,
-        pageTo: resource.id ? resource.pageTo : null,
-        topicIds: [...topics.keys()],
         dueAt: istanbulStamp(due.day, clock),
         notify: Boolean(draft.notify),
       };
