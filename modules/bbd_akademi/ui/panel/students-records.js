@@ -220,7 +220,7 @@ export function examsTab(ctx) {
       { key: 'by', label: 'Giren', cell: (row) => stack(row.enteredBy?.displayName,
         row.enteredBy?.kind === 'guardian' ? 'Veli' : 'Öğrenci') },
     ],
-    onRow: (row) => externalExam(ctx, row),
+    onRow: (row) => externalExam(ctx, row, () => external.reload()),
     empty: { title: 'Dış deneme girilmemiş', text: 'Öğrenci ya da veli uygulamadan dışarıdaki deneme sonuçlarını girebilir.' },
   });
   ctx.dispose(() => { exams.destroy(); external.destroy(); });
@@ -338,16 +338,36 @@ function examResult(ctx, row) {
   view.reload();
 }
 
-function externalExam(ctx, row) {
+// Dış deneme ayrıntısı. Liste satırı (`students_listExternalExams`) çekmeceye
+// hemen çizilir; açılışta ayrıntı ucu (`students_getExternalExam`) güncel kaydı
+// getirip yerine koyar — öğrenci / veli kaydı bu arada düzeltmiş ya da silmiş
+// olabilir. Silinmişse (404 `external_exam_not_found`) sebep yazılır ve liste
+// tazelenir.
+function externalExam(ctx, row, onGone) {
+  const { app, id } = ctx;
   const panel = subDrawer(ctx, { title: row.name || 'Dış deneme',
     subtitle: `${EXAM_TYPES[row.type] || ''} · ${fmtDate(row.date)} · ${row.enteredBy?.displayName || ''}` });
-  panel.body.append(kpiRow([{ label: 'Toplam net', value: net(row.totalNet) },
-    { label: 'Girildi', value: dayOf(row.createdAt) }]), card('Ders kırılımı', table([
+  const view = loader(() => app.api.get(`/v1/students/${id}/external-exams/${row.id}`).catch((failure) => {
+    if (failure instanceof AkademiError && failure.code === 'external_exam_not_found') {
+      onGone?.();
+      throw new AkademiError({ code: failure.code, status: failure.status,
+        message: 'Bu dış deneme öğrenci ya da veli tarafından silinmiş.' });
+    }
+    throw failure;
+  }), (exam) => externalExamBody(ctx, exam));
+  view.node.replaceChildren(...externalExamBody(ctx, row));
+  panel.body.append(view.node);
+  view.reload();
+}
+
+function externalExamBody(ctx, exam) {
+  return [kpiRow([{ label: 'Toplam net', value: net(exam.totalNet) },
+    { label: 'Girildi', value: dayOf(exam.createdAt) }]), card('Ders kırılımı', table([
     { key: 'subject', label: 'Ders', width: 'minmax(0, 2fr)', cell: (item) => stack(subjectLabel(ctx, item.subjectId), item.title) },
     { key: 'q', label: 'Soru', align: 'num', cell: (item) => num(item.questionCount) },
     { key: 'result', label: 'Sonuç', cell: (item) => dqb(item) },
     { key: 'net', label: 'Net', align: 'num', cell: (item) => net(item.net) },
-  ], row.sections, 'Bölüm yok')));
+  ], exam.sections, 'Bölüm yok'))];
 }
 
 async function exportReportCard(ctx, type) {

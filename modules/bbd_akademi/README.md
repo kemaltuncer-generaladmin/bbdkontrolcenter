@@ -115,28 +115,37 @@ nerede karşılandığını yazar; ekranda bilerek olmayan işlemler gerekçesiy
 bunu bağlar. Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler ayrı
 `PENDING` ("sırada") tablosundadır — aynı kurallarla, gerekçeli.
 
-**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi `wp/magaza` 06e348f = main
-9c87c2b + KVKK talep kuyruğu):** izin listesinde 473 işlem — 376
-`/v1/admin/*` (x-surface `both` 228, `km` 148) + 97 salt okunur
-`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **345**, bilerek yok **4**
-(gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde, kantin
-tahsilatı ve kontrolleri Öğrenciler modülünde, öğrenci dışa aktarım durumu;
-çalışma grubu yazma uçları sözleşmeden kalktı), sırada **124** (draft.3'ün
-program kurucu, ders oturumları, grup üyelik görünümü, yoklama, koçluk ve
-mesajlaşma denetimi işlemleri; `PENDING`), eksik **0**. Bölüm başına
-karşılanan işlem (bir işlem birden çok bölümde sayılabilir): Öğrenciler
-(çekmece sekmeleriyle) 100 · Denemeler 30 · Değerlendirmeler 23 · Ayarlar 22 ·
-Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16 · Ders
-programı 16 · Okuma 14 · Bilgi kartları 13 · Erken uyarı 13 · Ödevler 11 ·
-Panel 10 · Talepler 10 · Personel 9 · Duyurular 7 · Kurum takvimi 6 · Kitap
-talepleri 5 · KVKK talepleri 5 · Yoklama 3 · ortak arama listeleri (`index.js`,
-`common.js`) 8.
+**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi `main` 509ae50 — birleşim 2:
+KM olayları, port bağlama, KVKK talep kuyruğu; 660 işlem):** izin listesinde
+474 işlem — 376 `/v1/admin/*` (x-surface `both` 228, `km` 148) + 98 salt
+okunur `/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **346**, bilerek
+yok **4** (gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde,
+kantin tahsilatı ve kontrolleri Öğrenciler modülünde, öğrenci dışa aktarım
+durumu; çalışma grubu yazma uçları sözleşmeden kalktı), sırada **124**
+(draft.3'ün program kurucu, ders oturumları, grup üyelik görünümü, yoklama,
+koçluk ve mesajlaşma denetimi işlemleri; `PENDING`), eksik **0**. Bölüm
+başına karşılanan işlem (bir işlem birden çok bölümde sayılabilir):
+Öğrenciler (çekmece sekmeleriyle) 101 · Denemeler 30 · Değerlendirmeler 23 ·
+Ayarlar 22 · Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16
+· Ders programı 16 · Okuma 14 · Bilgi kartları 13 · Erken uyarı 13 · Ödevler
+11 · Panel 10 · Talepler 10 · Personel 9 · Duyurular 7 · Kurum takvimi 6 ·
+Kitap talepleri 5 · KVKK talepleri 5 · Yoklama 3 · ortak arama listeleri
+(`index.js`, `common.js`) 8.
 
-**Sözleşme kaynağı (geçici):** `tools/gen_allowlist.py` → `CONTRACT_REF =
-"wp/magaza"`. KVKK talep kuyruğu mağaza dalındadır, `main`'e henüz
-birleşmedi; `wp/magaza` `main`'i bütünüyle içerir. Mağaza dalı `main`'e
-alınınca (iş backend-birlesim-2) `CONTRACT_REF` yeniden `"main"` yapılır ve
-`gen_allowlist.py --check` ile doğrulanır (izin listesi değişmemelidir).
+Birleşim 2'nin getirdiği izin listesi farkı (wp/magaza → main): yeni
+`students_getExternalExam` (tek dış deneme — Öğrenci → Denemeler →
+"Dışarıdaki denemeler" çekmecesi açılışta güncel kaydı bu uçtan okur; öğrenci
+/ veli silmişse sebebi yazar ve listeyi tazeler) ve `admin_getExport`
+izinlerine `attendance.export`, `coaching.export`, `messages.audit`
+(üçü de `permission_map.py`'de eşli). KM olay alıcısı (`POST /v1/webhooks/km`)
+yönetici işlemi değildir — KM'den panelle değil `mobile_gateway` olay
+göndericisiyle çağrılır; durumu `admin_getDirectorySyncStatus` → `events`
+bloğuyla Ayarlar → Senkron kartında görünür.
+
+**Sözleşme kaynağı:** `tools/gen_allowlist.py` → `CONTRACT_REF = "main"`
+(bbd-akademi deposunun `main` dalındaki commit'lenmiş `docs/api/openapi.yaml`).
+Sözleşme değişince betik yeniden koşturulur, `--check` ile doğrulanır ve
+`tools/ui_coverage.py` eksik 0 vermelidir.
 
 ## İzinler
 
