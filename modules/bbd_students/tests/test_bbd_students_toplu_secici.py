@@ -63,7 +63,9 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   const caps = sk.capabilities({ api, open: () => {}, capability: () => null });
   const root = document.createElement('div');
   document.body.append(root);
-  const cleanup = caps['bbd_students.manager'](root, { openStudent: () => {}, hideModes: true });
+  const modes = [];
+  const cleanup = caps['bbd_students.manager'](root, { openStudent: () => {}, hideModes: true,
+    onMode: (mode) => modes.push(mode) });
   cleanup.setMode('bulk');
   const out = {};
   const bulk = () => root.querySelector('.st-bulk');
@@ -119,6 +121,13 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(40);
   out.groupPost = calls.filter((c) => c.method === 'POST' && c.path.endsWith('/members')).map((c) => [c.path, c.body]);
   out.violationsEnd = audit(root);
+  // 6) içeriden sekme değişimi (0.5.5): "Sınıfların seviyesi →" Sınıflar'ı açar ve gömene
+  //    `onMode` ile bildirir — Akademi şeridi doğru sekmeyi gösterir.
+  btn(bulk(), 'Sınıfların seviyesi').click();
+  await sleep(20);
+  out.classesShown = !root.querySelector('.st-classes').hidden && bulk().hidden;
+  cleanup.setMode('classes');           // aynı sekme → yeniden bildirilmez
+  out.modes = modes;
   cleanup();
   return out;
 }
@@ -128,6 +137,7 @@ ROUTES: dict[str, Any] = {
     "GET /auth/me": {"permissions": ["bbd_students.view", "bbd_students.manage", "bbd_students.groups"]},
     f"GET {BASE}/groups?archived=live": {"groups": [{"id": "G1", "name": "LGS Etüt", "kind": "group"}]},
     f"GET {BASE}/groups/memberships": {"items": []},
+    f"GET {BASE}/classes": {"items": [], "undefinedCount": 0},
 }
 
 
@@ -177,3 +187,8 @@ def test_gomulu_secici_yuksekligi_goruntu_alanina_bagli() -> None:
     assert re.search(r"\.st-embedded \.st-bulk-layout \{[^}]*height: auto", css)
     assert re.search(r"@media \(max-width: 1000px\) \{\s*\.st-bulk-layout \{ grid-template-columns: minmax\(0, 1fr\)",
                      css)
+
+
+def test_ic_sekme_degisimi_gomene_bildirilir(out: dict[str, Any]) -> None:
+    assert out["classesShown"] is True
+    assert out["modes"] == ["bulk", "classes"]

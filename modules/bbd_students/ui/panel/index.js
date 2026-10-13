@@ -222,7 +222,11 @@ function createManager(root, options) {
 
   let mode = 'list';
   function setMode(next) {
+    const changed = mode !== next;
     mode = next;
+    // Gömülüyken sekme şeridi Akademi'nindir: içeriden sekme değişince (ör. "Sınıfların
+    // seviyesi →", "Öğrencileri sınıfa al →") Akademi şeridi de o sekmeyi göstersin.
+    if (changed) options.onMode?.(next);
     nodes.bulkBar?.paint();
     split.hidden = mode !== 'list';
     nodes.bar.hidden = mode !== 'list';
@@ -1057,12 +1061,13 @@ export function capabilities(ctx) {
       }));
     },
     /**
-     * `(root, {payload, capability, openStudent, hideModes})` → temizlik işlevi;
-     * işlevin `setMode('list'|'bulk'|'groups')` özelliği sekmeyi değiştirir.
+     * `(root, {payload, capability, openStudent, hideModes, onMode})` → temizlik işlevi;
+     * işlevin `setMode('list'|'bulk'|'groups'|'classes')` özelliği sekmeyi değiştirir;
+     * içeriden sekme değişince `onMode(mode)` çağrılır (gömen şeridini eşitler).
      */
     'bbd_students.manager': (root, options = {}) => createManager(root, {
       api: ctx.api, payload: options.payload || null, capability: options.capability || null,
-      openStudent: options.openStudent, hideModes: Boolean(options.hideModes),
+      openStudent: options.openStudent, hideModes: Boolean(options.hideModes), onMode: options.onMode,
     }),
     /** `(root, {kantinId, capability, toast, dialogRoot, onChanged, onRemoved})` → {reload, destroy, dirty}. */
     'bbd_students.record': (root, options = {}) => {

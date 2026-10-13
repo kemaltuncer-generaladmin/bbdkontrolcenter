@@ -96,8 +96,14 @@ export function section(app) {
   const bodies = {};
   let shared = null;                  // KM yönetimi: üç sekme tek örnek
   const kmMode = { km: 'list', kmBulk: 'bulk', kmGroups: 'groups', kmClasses: 'classes' };
+  // KM yöneticisi kendi içinden sekme değiştirirse (ör. "Sınıfların seviyesi →") şerit de
+  // o sekmeyi gösterir (sessiz seçim — show() yeniden çağrılmaz, döngü olmaz).
+  const kmKey = Object.fromEntries(Object.entries(kmMode).map(([key, value]) => [value, key]));
   const managed = () => {
-    shared = shared || managerView(app, manager, { openRef });
+    shared = shared || managerView(app, manager, { openRef, onMode: (mode) => {
+      const key = kmKey[mode];
+      if (key && known.has(key)) tabs.select(key, false);
+    } });
     return shared;
   };
   const builders = {
@@ -151,7 +157,7 @@ export function section(app) {
 }
 
 /** KM Öğrenci Yönetimi (liste + toplu işlemler + gruplar) — `bbd_students.manager`. */
-function managerView(app, manager, { openRef }) {
+function managerView(app, manager, { openRef, onMode }) {
   const node = h('div', 'ak-stu-km');
   let cleanup = null;
   return {
@@ -161,6 +167,7 @@ function managerView(app, manager, { openRef }) {
       cleanup = manager(node, {
         capability: app.capability,
         hideModes: true,
+        onMode,
         openStudent: (student) => openRef(student.kantinId, { tab: 'record', name: student.displayName,
           status: student.status }),
       });
