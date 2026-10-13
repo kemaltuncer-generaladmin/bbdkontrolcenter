@@ -25,6 +25,7 @@ from modules.bbd_akademi.backend.document_pdf import DocumentError, Letterhead, 
 from modules.bbd_akademi.backend.documents import (
     AKADEMI_PDFS,
     KINDS,
+    DocumentDenied,
     DocumentService,
     Letterheads,
     slug,
@@ -42,6 +43,7 @@ from modules.bbd_akademi.tests.akademi_fakes import (
     Log,
     auth,
     core_envelope,
+    user,
 )
 
 IDS = {operation.operation_id for operation in OPERATIONS}
@@ -164,6 +166,17 @@ def test_tur_islemleri_izin_listesinde() -> None:
         for key, kind in table.items():
             for operation_id in kind.operations:
                 assert operation_id in IDS, f"{key}: {operation_id} izin listesinde yok"
+
+
+def test_kalici_silme_belgesi_silme_iznini_ister(gateway: AkademiGateway, log: Log, tmp_path: Path) -> None:
+    """0.5.4: KM verisi taşıyan belge (Akademi işlemi yok) kendi KM iznini ister."""
+    service = DocumentService(gateway=gateway, allowlist=Allowlist(OPERATIONS), log=log, fallback_dir=tmp_path)
+    kind = KINDS["student_deletion"]
+    with pytest.raises(DocumentDenied):
+        service.authorize(user("u-9", "Can", "Demir", "bbd_akademi.view"), kind)
+    service.authorize(user("u-8", "Ayşe", "Yılmaz", "bbd_students.delete"), kind)
+    # Kitap satış belgesi satışı okuyabilen herkese (books.view → bbd_akademi.view).
+    service.authorize(user("u-7", "Ece", "Kaya", "bbd_akademi.view"), KINDS["book_sale"])
 
 
 def test_dosya_adi_ascii() -> None:

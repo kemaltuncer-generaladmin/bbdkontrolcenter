@@ -31,6 +31,8 @@ import { button, h, loadStyles, toaster } from '../../ui-kit/kit.js';
 import { alertBox, emptyState, skeletonRows } from '../../ui-kit/layout.js';
 import { createClient, problem } from './api.js';
 import { AREAS, SECTIONS, buildNav, featureOn, resolveTarget } from './sections.js';
+import { documentButtons } from './documents.js';
+import { studentDeletionDoc } from './documents-logic.js';
 
 export { AREAS, SECTIONS };
 
@@ -41,8 +43,26 @@ const P = 'bbd_akademi';
  * kullanıcı BBD Akademi'yi görebiliyor demektir ve "Öğrenci Yönetimi" ekranı
  * (bbd_students) kullanıcıyı buraya — Öğrenciler bölümüne — yönlendirir.
  */
-export function capabilities() {
-  return { 'bbd_akademi.students': () => ({ section: 'students' }) };
+export function capabilities(ctx = {}) {
+  return {
+    'bbd_akademi.students': () => ({ section: 'students' }),
+    /**
+     * Toplu kalıcı silme sonucunun kurum logolu belgesi (0.5.4): Öğrenci Yönetimi
+     * (bbd_students) sonuç penceresine "Önizle / Yazdır" düğmelerini bu yetenekle
+     * koyar (K3 — modül modülü import etmez). Kapı sunucuda: `bbd_students.delete`.
+     *   (root, {result}) → Node   (işlemi yapan, belge damgasında sunucudan yazılır)
+     */
+    'bbd_akademi.deletionDocument': (root, { result } = {}) => {
+      const docApp = {
+        root,
+        toast: toaster(root),
+        api: { km: (path, options) => ctx.api(`/api/${P}/km${path}`, options) },
+        coreApi: (path, options) => ctx.api(path, options),
+      };
+      return documentButtons(docApp, { title: 'Kalıcı silme sonucu', label: 'Sonuç belgesi',
+        build: async () => studentDeletionDoc(result) });
+    },
+  };
 }
 
 export function mount(root, ctx) {

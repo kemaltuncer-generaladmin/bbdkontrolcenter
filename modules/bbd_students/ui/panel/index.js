@@ -531,7 +531,8 @@ function createManager(root, options) {
           status.textContent = 'Her öğrenci denetleniyor ve siliniyor…';
           const result = await api(`${BASE}/students/delete`, { method: 'POST', timeoutSeconds: 300,
             body: { students: ids, confirmCount: answer.count, pin: answer.pin } });
-          await showBulkDeleteResult(view, result);
+          await showBulkDeleteResult(view, result, {
+            documents: options.capability?.('bbd_akademi.deletionDocument') || null });
           done = result.deleted || 0;
           failed = result.blocked || 0;
           status.textContent = `${done} öğrenci kalıcı silindi${failed ? `, ${failed} silinmedi (nedenleri gösterildi)` : ''}.`;

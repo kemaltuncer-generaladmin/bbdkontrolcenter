@@ -272,6 +272,15 @@ toplu iş izleme `admin_getBulkJob` 1,5 sn) ve "Kime?" seçicisi `bulk-target.js
 (seçerek · süzgeçle · paket kuralı, hariç tutulanlar). `formDialog` kitin
 `dialogA11y`sini kullanır.
 
+Belgeler (0.5.4, akademi-belge bileşeniyle): Kitap satışı ayrıntısında **Satış
+belgesi** (`book_sale` — kitaplar, öğrenci satırları, teslim alan imza sütunu;
+kapı `admin_getBookSale`), satırda bbdstore **sipariş / fatura PDF**'i aynı
+önizleme penceresinde (`book_sale_order`); toplu ödevden sonra liste o seriye
+süzülür ve **Ödev listesi** belgesi seriyi basar; toplu kalıcı silmenin sonuç
+penceresinde **Sonuç belgesi** (`student_deletion`, KM verisi — kapı
+`bbd_students.delete`; Öğrenci Yönetimi bunu `bbd_akademi.deletionDocument`
+arayüz yeteneğiyle çizer, K3).
+
 **Sözleşme kaynağı:** `tools/gen_allowlist.py` → `CONTRACT_REF = "main"`
 (bbd-akademi deposunun `main` dalındaki commit'lenmiş `docs/api/openapi.yaml`).
 Sözleşme değişince betik yeniden koşturulur, `--check` ile doğrulanır ve

@@ -64,6 +64,8 @@ class DocumentKind:
     folder: str                    # Raporlar/Akademi/<folder>/
     label: str                     # dosya adının başı
     operations: tuple[str, ...]    # belgenin taşıdığı veri — kapı bunların iznini ister
+    #: Akademi işlemi olmayan (KM verisi) belgede kapı doğrudan bu KM iznini ister.
+    permissions: tuple[str, ...] = ()
 
 
 #: Belge türleri. Bir tür yalnız buradaysa üretilebilir.
@@ -94,6 +96,12 @@ KINDS: dict[str, DocumentKind] = {
                                       ("admin_getFinanceStatement",)),
     "finance_receipt": DocumentKind("MKB", "Kurum cari", "makbuz", ("admin_getReceipt",)),
     "book_request": DocumentKind("KTP", "Kitap", "kitap-talebi", ("admin_getBookRequest",)),
+    # 0.5.4 (km-toplu-kitap): kitap satışı (satış + öğrenci satırları, teslim imzası).
+    "book_sale": DocumentKind("KSA", "Kitap", "kitap-satisi", ("admin_getBookSale",)),
+    # 0.5.4: toplu kalıcı silmenin öğrenci başına sonucu — KM verisidir (Akademi işlemi
+    # yok); yalnız silme yetkisi olan basar (`bbd_students.delete`, varsayılan admin).
+    "student_deletion": DocumentKind("OGS", "Öğrenci", "kalici-silme-sonucu", (),
+                                     permissions=("bbd_students.delete",)),
     "student_card": DocumentKind("OGK", "Öğrenci", "ogrenci-karti", ("admin_getStudent",)),
     "guardian_list": DocumentKind("VLL", "Öğrenci", "veli-listesi",
                                   ("admin_listStudents", "admin_getStudent")),
@@ -107,6 +115,8 @@ AKADEMI_PDFS: dict[str, DocumentKind] = {
     "finance_statement": DocumentKind("CRE", "Kurum cari", "hesap-ekstresi",
                                       ("admin_getFinanceStatement",)),
     "book_order": DocumentKind("KTS", "Kitap", "kitap-siparis", ("admin_getBookOrderPdf",)),
+    "book_sale_order": DocumentKind("KTS", "Kitap", "kitap-satis-siparis",
+                                    ("admin_getBookSaleOrderPdf",)),
     "evaluation_reports": DocumentKind("KRN", "Karne", "gelisim-karnesi",
                                        ("admin_exportEvaluationReports",)),
 }
@@ -256,6 +266,9 @@ class DocumentService:
 
     # --- kapı ---
     def authorize(self, user: CurrentUser, kind: DocumentKind) -> None:
+        for permission in kind.permissions:
+            if not user.has_permission(permission):
+                raise DocumentDenied(permission, kind.label)
         for operation_id in kind.operations:
             operation = self._allowlist.by_id(operation_id)
             if operation is None:

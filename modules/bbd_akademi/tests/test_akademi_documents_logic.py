@@ -145,6 +145,16 @@ models.book_request = d.bookRequestDoc({ id: 'b', ref: 'KT-0042', student: stu, 
   decision: { decidedAt: '2026-10-02T09:00:00Z', by: { id: 'a', displayName: 'Müdür' }, paymentChoice: 'cari' },
   order: { orderId: 'o', incrementId: '100045', status: 'complete' }, deliveredAt: '2026-10-05T09:00:00Z',
   history: [{ status: 'requested', at: '2026-10-01T09:00:00Z', actorLabel: 'Veli' }, { status: 'delivered', at: '2026-10-05T09:00:00Z', actorLabel: null }] });
+models.book_sale = d.bookSaleDoc({ id: 's', ref: 'KS-2026-0007', paymentMethod: 'cari', studentCount: 2, totalMinor: 100000,
+  note: 'Dönem başı', createdAt: '2026-10-13T09:00:00Z', createdBy: { id: 'u', displayName: 'Müdür' },
+  items: [{ productId: 'p', title: 'TYT Matematik', isbn: '978-1', publisher: 'Yayın', unitPriceMinor: 25000, quantity: 2, totalMinor: 50000 }],
+  counts: { awaitingPayment: 0, processing: 0, ordered: 1, orderFailed: 1, delivered: 0, cancelled: 0 },
+  lines: [{ id: 'l1', ref: 'KS-1', student: stu, status: 'ordered', totalMinor: 50000, order: { incrementId: '100046' } },
+    { id: 'l2', ref: 'KS-2', student: { ...stu, displayName: 'Ali Ak 0532 111 22 67' }, status: 'order_failed', totalMinor: 50000, order: null }] });
+models.student_deletion = d.studentDeletionDoc({ deleted: 1, blocked: 1, results: [
+  { studentId: 'STU-1', displayName: 'Ayşe Yılmaz', deleted: true, message: 'Kalıcı silindi.' },
+  { studentId: 'STU-2', displayName: 'Can Demir', deleted: false, code: 'balance_not_zero',
+    message: 'Kantin bakiyesi 42,50 ₺ borç — önce tahsil edin ve sıfırlayın.' }] }, { at: '2026-10-13T18:00:00Z' });
 models.student_card = d.studentCardDoc({ student: stu, schoolNo: '1234', studentPhoneMasked: '0555 111 22 33',
   guardians: [{ id: 'g2', displayName: 'Baba Yılmaz', phoneMasked: '0*** *** ** 12', slot: 2, canManageCanteen: false, hasAppAccount: false },
     { id: 'g1', displayName: 'Anne Yılmaz', phoneMasked: '0532 *** ** 67', slot: 1, relation: 'mother', primary: true, canManageCanteen: true, hasAppAccount: true }],
@@ -331,3 +341,16 @@ def test_odev_plan_cari_kitap_kart_veli_kantin(result: dict[str, Any]) -> None:
     assert harcama["footer"][2] == "35,00 ₺" and harcama["rows"][1]["tone"] == "muted"
     assert any("KANTİN" in section.get("text", "") for section in canteen)
     assert canteen[1]["text"].startswith("Kantin kullanımı kapalı (veli")
+
+
+def test_kitap_satisi_ve_kalici_silme_belgeleri(result: dict[str, Any]) -> None:
+    """0.5.4: kitap satış belgesi (öğrenci satırı + imza sütunu) ve toplu silme sonucu."""
+    sale = result["models"]["book_sale"]
+    assert sale["kind"] == "book_sale"
+    students = _section(sale, "Öğrenciler")
+    assert [row[0] for row in students["rows"]] == ["Ayşe Yılmaz", "Ali Ak 0*** *** ** 67"]
+    assert students["footer"][4] == "1.000,00 ₺"
+    deletion = result["models"]["student_deletion"]
+    assert deletion["kind"] == "student_deletion"
+    rows = _section(deletion, "Öğrenciler")["rows"]
+    assert rows[0][1]["text"] == "Silindi" and "42,50 ₺" in rows[1][2]

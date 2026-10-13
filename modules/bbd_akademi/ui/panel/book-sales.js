@@ -22,7 +22,8 @@ import { blockedButton, button, copyText, h, loadStyles } from '../../ui-kit/kit
 import { alertBox, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { timeline } from '../../ui-kit/flow.js';
-import { openBlob } from './api.js';
+import { documentButtons, previewAkademiPdf } from './documents.js';
+import { bookSaleDoc } from './documents-logic.js';
 import {
   actionButton, dateInput, empty, errorBox, fmtDate, fmtDateTime, formDialog, kv, loader, money, num,
   openDrawer, pagedList, personName, reasonDialog, runAction, searchBox, sectionHead, statusBadge,
@@ -193,6 +194,10 @@ export function openSale(app, saleId, { onChange } = {}) {
         if (!ids.length) { app.toast('Önce listeden “Sipariş verildi” durumundaki öğrencileri seçin.', 'warn'); return; }
         deliver(ids);
       } }),
+      h('span', 'kit-spacer'),
+      // Kurum logolu A4 satış belgesi: kitaplar + öğrenci satırları + teslim alan imza sütunu.
+      documentButtons(app, { title: 'Kitap satış belgesi', label: 'Satış belgesi',
+        build: async () => bookSaleDoc(await app.api.get(`/v1/admin/book-sales/${saleId}`)) }),
     );
     const failed = lines.filter((line) => line.status === 'order_failed').length;
     const nodes = [tools];
@@ -291,11 +296,14 @@ function openLine(app, saleId, lineId, { onChange } = {}) {
       tools.append(
         actionButton(app, 'admin_refreshBookSaleOrder', 'Mağaza durumunu yenile', { onClick: async () => after(
           await runAction(app, () => app.api.post(`${path}/refresh-order`)), 'Mağaza durumu okundu.') }),
-        actionButton(app, 'admin_getBookSaleOrderPdf', 'Sipariş / fatura PDF', { onClick: () => runAction(app,
-          async () => {
+        actionButton(app, 'admin_getBookSaleOrderPdf', 'Sipariş / fatura PDF', { onClick: (event) => {
+          const opener = event?.currentTarget || null;
+          return runAction(app, async () => {
+            // bbdstore'un kendi belgesi; aynı önizle / yazdır penceresinde açılır.
             const signed = await app.api.get(`${path}/order-pdf`);
-            openBlob(await app.api.fetchFile(signed.url, `${line.ref}.pdf`));
-          }) }),
+            await previewAkademiPdf(app, { kind: 'book_sale_order', url: signed.url, name: line.ref, opener });
+          });
+        } }),
       );
     }
     if (!['cancelled', 'expired'].includes(line.status)) {

@@ -123,7 +123,14 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   const caps = sk.capabilities({ api, open: () => {}, capability: () => null });
   const root = document.createElement('div');
   document.body.append(root);
-  caps['bbd_students.manager'](root, { openStudent: () => {}, hideModes: true });
+  const docCalls = [];
+  const capability = (name) => (name === 'bbd_akademi.deletionDocument' ? (host, spec) => {
+    docCalls.push(spec.result.deleted);
+    const node = document.createElement('button');
+    node.textContent = 'Sonuç belgesi · önizle';
+    return node;
+  } : null);
+  caps['bbd_students.manager'](root, { openStudent: () => {}, hideModes: true, capability });
   await sleep(40);
   const out = {};
   const bar = root.querySelector('.st-listbulk');
@@ -153,6 +160,7 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.post = calls.filter((c) => c.method === 'POST' && c.path.endsWith('/students/delete')).map((c) => c.body);
   out.result = dialog()?.textContent || '';
   out.violationsResult = audit(root);
+  out.docCalls = docCalls;
   dialog().querySelectorAll('button').find((b) => b.textContent === 'Kapat').click();
   await sleep(40);
   out.status = bar.querySelector('.st-listbulk-status').textContent;
@@ -206,6 +214,8 @@ def test_listede_toplu_kalici_silme_ogrenci_basina_sonuc() -> None:
     assert "1 öğrenci silindi · 1 öğrenci silinmedi" in out["result"]
     assert "Can Demir — silinmedi: Öğrenci etkin" in out["result"]
     assert out["violationsResult"] == []
+    # Akademi varsa sonuç penceresinde kurum logolu sonuç belgesi (Önizle / Yazdır).
+    assert "Sonuç belgesi" in out["result"] and out["docCalls"] == [1]
     assert out["status"] == "1 öğrenci kalıcı silindi, 1 silinmedi (nedenleri gösterildi)."
 
 

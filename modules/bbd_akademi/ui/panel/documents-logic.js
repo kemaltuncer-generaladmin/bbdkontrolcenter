@@ -830,6 +830,67 @@ export function bookRequestDoc(request) {
   }], { filename: fileHint('kitap', r.ref, r.student?.displayName) });
 }
 
+const SALE_LINE = { awaiting_payment: 'Ödeme bekliyor', approved: 'Sipariş sırada', ordering: 'Sipariş veriliyor',
+  ordered: 'Sipariş verildi', order_failed: 'Sipariş düştü', delivered: 'Teslim edildi', cancelled: 'İptal',
+  expired: 'Ödeme süresi doldu' };
+const SALE_PAY = { cari: 'Kurum carisine yazıldı', cash: 'Nakit tahsil edildi', card: 'Kartla (POS) tahsil edildi',
+  pay_link: 'Veliye ödeme bağlantısı' };
+const SALE_TONE = { delivered: 'good', ordered: 'good', order_failed: 'bad', awaiting_payment: 'warn',
+  cancelled: 'muted', expired: 'muted' };
+
+/** Kitap satışı belgesi (BookSale, satırlarıyla): kitaplar, öğrenci satırları, teslim imzası (0.5.4). */
+export function bookSaleDoc(sale) {
+  const s = sale || {};
+  const items = s.items || [];
+  const lines = s.lines || [];
+  const perStudent = items.reduce((sum, item) => sum + (Number(item.totalMinor) || 0), 0);
+  return documentOf('book_sale', 'Kitap Satış Belgesi', [{
+    title: 'Kitap Satış Belgesi',
+    subtitle: `Satış ${clean(s.ref)} · ${SALE_PAY[s.paymentMethod] || clean(s.paymentMethod)}`,
+    meta: [['Satış no', clean(s.ref)], ['Tarih', fmtDateTime(s.createdAt)], ['Satan', clean(s.createdBy?.displayName)],
+      ['Öğrenci', num(s.studentCount ?? lines.length)], ['Toplam', money(s.totalMinor)]],
+    sections: [
+      { kind: 'table', title: 'Kitaplar (öğrenci başına)', headers: ['Kitap', 'Yayınevi', 'ISBN', 'Adet', 'Birim fiyat', 'Tutar'],
+        align: 'LLLRRR', widths: [3.4, 1.6, 1.5, 0.7, 1.2, 1.2],
+        rows: items.map((item) => [clean(item.title), clean(item.publisher), clean(item.isbn), num(item.quantity),
+          money(item.unitPriceMinor), money(item.totalMinor)]),
+        footer: ['Öğrenci başına', '', '', '', '', money(perStudent)] },
+      { kind: 'table', title: 'Öğrenciler', headers: ['Öğrenci', 'Sınıf', 'Durum', 'Sipariş', 'Tutar', 'Teslim alan imza'],
+        align: 'LLLLRL', widths: [2.6, 0.9, 1.6, 1.1, 1.1, 2.0], dense: true,
+        rows: lines.map((line) => [studentName(line.student), className(line.student),
+          cell(SALE_LINE[line.status] || clean(line.status), SALE_TONE[line.status] || ''),
+          line.order?.incrementId ? `#${clean(line.order.incrementId)}` : '—', money(line.totalMinor), '']),
+        footer: ['Toplam', '', '', '', money(s.totalMinor), ''], empty: 'Satır yok.' },
+      { kind: 'note', text: 'Bedel yalnız kurum carisindedir; kantin bakiyesinden düşülmez.' },
+      ...(s.note ? [{ kind: 'text', text: clean(s.note) }] : []),
+      { kind: 'signatures', items: ['Teslim eden', 'Kurum yetkilisi'] },
+    ],
+  }], { filename: fileHint('kitap-satisi', s.ref) });
+}
+
+/**
+ * Toplu kalıcı silme sonucu (bbd_students `POST /students/delete` yanıtı): öğrenci
+ * başına "silindi" ya da engelin nedeni (0.5.4). KM verisidir; kişisel veri yalnız ad.
+ */
+export function studentDeletionDoc(result, { at = '' } = {}) {
+  const r = result || {};
+  const rows = r.results || [];
+  return documentOf('student_deletion', 'Kalıcı Silme Sonucu', [{
+    title: 'Öğrenci Kalıcı Silme Sonucu',
+    subtitle: `${num(r.deleted || 0)} öğrenci silindi · ${num(r.blocked || 0)} öğrenci silinmedi`,
+    meta: [['İşlem', fmtDateTime(at || new Date().toISOString())], ['Seçilen', num(rows.length)]],
+    sections: [
+      { kind: 'table', title: 'Öğrenciler', headers: ['Öğrenci', 'Sonuç', 'Neden'], align: 'LLL', widths: [2.4, 1.1, 4.2],
+        rows: rows.map((row) => [clean(row.displayName || row.studentId),
+          cell(row.deleted ? 'Silindi' : 'Silinmedi', row.deleted ? 'good' : 'bad', true),
+          row.deleted ? 'KM kaydı silindi; kantinde anonimleşir; BBD Akademi KVKK planına göre siler.' : clean(row.message)]),
+        empty: 'Sonuç yok.' },
+      { kind: 'note', text: 'Kalıcı silme geri alınamaz. Silinmeyen öğrencilerde engel çözülünce işlem yeniden yapılabilir.' },
+      { kind: 'signatures', items: ['İşlemi yapan', 'Onaylayan'] },
+    ],
+  }], { filename: fileHint('kalici-silme', `${num(r.deleted || 0)}-ogrenci`) });
+}
+
 // ---------------------------------------------------------- 9. öğrenci kartı
 
 const STUDENT_STATUS = { active: 'Aktif', inactive: 'Pasif', missing: 'KM kaydı yok' };

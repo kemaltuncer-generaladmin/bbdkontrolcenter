@@ -351,3 +351,31 @@ def test_secilen_odevleri_toplu_ertele() -> None:
     assert out["body"] == {"homeworkIds": ["h1", "h2"], "action": "postpone", "shiftDays": 3, "notify": True}
     assert ["2 ödev ertelendi.", "good"] in out["toasts"]
     assert out["barHiddenAfter"] is True
+
+
+SILME_BELGESI = r"""
+export default async function ({ document, audit, sleep, api, load, calls }) {
+  globalThis.__apiHook = (method, path) => (path === '/api/bbd_akademi/km/documents/preview'
+    ? { ok: false, error: 'önizleme bu testte yok' } : undefined);
+  const ak = await load('./panels/bbd_akademi/index.js');
+  const caps = ak.capabilities({ api, open: () => {}, capability: () => null });
+  const root = document.createElement('div');
+  document.body.append(root);
+  const node = caps['bbd_akademi.deletionDocument'](root, { result: { deleted: 1, blocked: 0,
+    results: [{ studentId: 'STU-1', displayName: 'Elif Kaya', deleted: true, message: 'Kalıcı silindi.' }] } });
+  root.append(node);
+  const out = { buttons: node.querySelectorAll('button').map((b) => b.textContent), violations: audit(root) };
+  node.querySelectorAll('button')[0].click();
+  await sleep(40);
+  out.sent = calls.filter((c) => c.path === '/api/bbd_akademi/km/documents/preview').map((c) => [c.body.kind,
+    c.body.document.parts[0].sections[0].rows[0][0]]);
+  return out;
+}
+"""
+
+
+def test_kalici_silme_sonuc_belgesi_yetenegi() -> None:
+    out = node_run(SILME_BELGESI)
+    assert out["buttons"] == ["Sonuç belgesi · önizle", "Yazdır"]
+    assert out["violations"] == []
+    assert out["sent"] == [["student_deletion", "Elif Kaya"]]

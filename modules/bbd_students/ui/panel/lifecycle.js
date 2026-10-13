@@ -322,8 +322,12 @@ export function askBulkDelete(root, { students }) {
   });
 }
 
-/** Toplu silme sonucu: öğrenci başına "silindi" ya da engelin nedeni. */
-export function showBulkDeleteResult(root, result) {
+/**
+ * Toplu silme sonucu: öğrenci başına "silindi" ya da engelin nedeni. `documents`
+ * (BBD Akademi yeteneği `bbd_akademi.deletionDocument`; yoksa null) kurum logolu
+ * sonuç belgesinin "Önizle / Yazdır" düğmelerini verir.
+ */
+export function showBulkDeleteResult(root, result, { documents = null } = {}) {
   return new Promise((resolve) => {
     const { overlay, card, release } = dialog(root,
       `${result.deleted} öğrenci silindi · ${result.blocked} öğrenci silinmedi`,
@@ -346,6 +350,10 @@ export function showBulkDeleteResult(root, result) {
     const onKey = (event) => { if (event.key === 'Escape') close(); };
     const actions = h('div', 'kit-dialog-actions');
     const ok = button('Kapat', { variant: 'primary', onClick: close });
+    if (typeof documents === 'function') {
+      const docs = documents(root, { result });
+      if (docs) actions.append(docs);
+    }
     actions.append(ok);
     card.append(actions);
     document.addEventListener('keydown', onKey);
