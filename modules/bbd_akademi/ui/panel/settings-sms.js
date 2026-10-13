@@ -1,4 +1,4 @@
-// BBD Akademi — Ayarlar › SMS (sms-kale, Akademi README §14 madde 56).
+// BBD Akademi — Ayarlar › SMS (sms-kale, Akademi README §14 madde 57).
 //
 // Üç parça, hepsi Akademi `/v1/admin/sms/*` uçlarından (A13; vekil izni
 // `integrations.manage` → `bbd_akademi.settings`):
