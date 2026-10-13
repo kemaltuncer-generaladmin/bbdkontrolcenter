@@ -31,8 +31,8 @@ export const AREAS = [
     + 'toplu), çalışma planı, şablonlar ve kurum takvimi.' },
   { key: 'progress', label: 'Ölçme ve Gelişim', hint: 'Denemeler, değerlendirmeler, kaynaklar, '
     + 'müfredat ve öğrenme araçları.' },
-  { key: 'money', label: 'Kantin ve Finans', hint: 'Kurum cari hesabı, kantin kuralları ve kitap '
-    + 'talepleri — iki para ayrı tutulur.' },
+  { key: 'money', label: 'Kantin ve Finans', hint: 'Kurum cari hesabı, kantin kuralları, kitap satışı ve '
+    + 'kitap talepleri — iki para ayrı tutulur.' },
   { key: 'admin', label: 'Ayarlar', hint: 'Kurum ayarları ve özellikler, personel, KVKK talepleri, '
     + 'senkron ve entegrasyon.' },
 ];
@@ -74,6 +74,9 @@ export const SECTIONS = [
     feature: 'finance' },
   { key: 'canteen', label: 'Kantin', file: './canteen.js', requires: ['view'], area: 'money',
     feature: 'canteen' },
+  // Kitap satışı (0.5.4, F-A27): yönetici öğrencilere kurumdan kitap satar (üç adım).
+  { key: 'bookSales', label: 'Kitap satışı', file: './book-sales.js', requires: ['view'], area: 'money',
+    feature: 'books' },
   { key: 'books', label: 'Kitap talepleri', file: './books.js', requires: ['view'], area: 'money',
     feature: 'books' },
   { key: 'settings', label: 'Kurum ayarları', file: './settings.js', requires: ['settings'], area: 'admin' },
@@ -87,6 +90,7 @@ export const SECTIONS = [
  */
 export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', kvkk: 'privacy',
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
+  'kitap-satisi': 'bookSales', 'book-sales': 'bookSales',
   sablonlar: 'templates', 'assignment-bundles': 'templates' };
 
 /**
@@ -174,9 +178,10 @@ export const STUDENT_CARD = [
     { key: 'resources', label: 'Kaynaklar' },
     { key: 'coaching', label: 'Koç notları ve değerlendirmeler' },
   ] },
-  { key: 'money', label: 'Kurum cari ve kantin', parts: [
+  { key: 'money', label: 'Cari, kantin ve kitap', parts: [
     { key: 'finance', label: 'Kurum cari', requires: 'finance', feature: 'finance' },
     { key: 'canteen', label: 'Kantin hareketleri', feature: 'canteen' },
+    { key: 'books', label: 'Kurumdan alınan kitaplar', feature: 'books' },
   ] },
 ];
 

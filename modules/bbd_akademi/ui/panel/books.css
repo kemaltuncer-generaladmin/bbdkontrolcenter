@@ -1,1 +1,29 @@
-/* Kitap talepleri — önek `ak-book-`. */
+/* Kitap talepleri — önek `ak-book-`. Kitap satışı — önek `ak-bs-`. */
+
+.ak-bs-drawer { width: min(980px, calc(100% - 40px)); }
+.ak-bs-counts { display: flex; gap: 4px; flex-wrap: wrap; }
+.ak-bs-count {
+  font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--tint); color: var(--ink); white-space: nowrap;
+}
+.ak-bs-count.warn { border-color: #f2c46d; background: #fff7e6; color: #7a4b00; }
+.ak-bs-count.bad { border-color: #f0a3a3; background: #fdecec; color: #8f1d1d; }
+.ak-bs-count.good { border-color: #8cc79f; background: #e6f4ea; color: #1f6b38; }
+.ak-bs-count.info { border-color: #9db6ff; background: #eef3ff; color: #1d3f9e; }
+.ak-bs-count.dim { color: var(--soft); }
+
+/* sihirbaz */
+.ak-bs-results { display: flex; flex-direction: column; gap: 4px; max-height: 280px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 9px; padding: 6px 10px; }
+.ak-bs-book, .ak-bs-cart-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+  padding: 4px 0; border-bottom: 1px solid var(--line);
+}
+.ak-bs-book:last-child, .ak-bs-cart-row:last-child { border-bottom: 0; }
+.ak-bs-cart-row { grid-template-columns: minmax(0, 1fr) 96px 100px auto; }
+.ak-bs-cart { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 9px;
+  padding: 6px 10px; }
+.ak-bs-cart-title { margin: 4px 0 0; font-size: 13px; font-weight: 650; }
+.ak-bs-qty { width: 96px; }
+.ak-bs-methods { flex-direction: column; align-items: flex-start; }
+.ak-bs-link { flex: 1; min-width: 260px; }

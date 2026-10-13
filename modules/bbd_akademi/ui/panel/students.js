@@ -35,6 +35,7 @@ import {
   attendanceTab, canteenTab, examsTab, financeTab, homeworkTab, requestsTab, studyTab,
 } from './students-records.js';
 import { classesView, groupsView } from './students-groups.js';
+import { studentBooksPart } from './book-sales.js';
 import { locatePart, studentCard } from './sections.js';
 import { learningPanel } from './students-learning.js';
 import { flashcardsPanel } from './students-flashcards.js';
@@ -307,7 +308,7 @@ function guardiansView(app, { open }) {
 
 /**
  * Öğrenci çekmecesi (kartı). Beş sekme — Özet · Program ve yoklama · Ödev ve
- * çalışma · Ölçme ve gelişim · Kurum cari ve kantin (`sections.js` →
+ * çalışma · Ölçme ve gelişim · Cari, kantin ve kitap (`sections.js` →
  * STUDENT_CARD) — ve her sekmede katlanır bölümler. `tab` sekme anahtarı ya da
  * bölüm (eski sekme) anahtarıdır: overview · goals · schedule · attendance ·
  * requests · homework · learning · study · flashcards · exams · curriculum ·
@@ -402,6 +403,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     coaching: embedded(coachingPanel),
     finance: financeTab,
     canteen: canteenTab,
+    books: studentBooksPart,
     record: () => kmRecordPart(),
   };
 
@@ -440,7 +442,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
   }
   const layoutTabs = studentCard({ has: (permission) => app.has(permission),
     features: { flashcards: app.enabled('flashcards'), finance: app.enabled('finance'),
-      canteen: app.enabled('canteen') },
+      canteen: app.enabled('canteen'), books: app.enabled('books') },
     capabilities: { record: recordable } });
   const start = locatePart(layoutTabs, tab);
   const tabsBar = tabBar(layoutTabs.map(({ key, label }) => ({ key, label })), start.tab,

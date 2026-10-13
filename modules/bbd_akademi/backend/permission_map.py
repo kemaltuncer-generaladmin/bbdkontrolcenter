@@ -130,8 +130,11 @@ PERMISSION_MAP: dict[str, str] = {
     "finance.manage": FINANCE,
     "finance.record_payment": FINANCE,
     "finance.void": FINANCE_VOID,
-    # --- kitap talepleri
+    # --- kitap talepleri ve kitap satışı (F-A27, 0.5.4): satış kurum carisine
+    # kalem / makbuzlu tahsilat / veliye ödeme bağlantısı yazar — para yine
+    # yalnız kurum carisindedir (A12), kantine dokunmaz.
     "books.manage": BOOKS,
+    "books.sell": BOOKS,
     # --- duyurular
     "announcements.manage": ANNOUNCEMENTS,
     # --- talepler (izin, görüşme; etüt talebi aşağıda işlemle ayrılır)

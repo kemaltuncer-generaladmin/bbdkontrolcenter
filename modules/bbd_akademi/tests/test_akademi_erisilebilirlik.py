@@ -137,8 +137,8 @@ def node_run(scenario: str) -> dict[str, Any]:
 
 def test_butun_bolumler_denetimden_gecer() -> None:
     result = node_run(ALL_SECTIONS)
-    # 22 bölüm (0.5.3) + Şablonlar (0.5.4).
-    assert len(result) == 23, sorted(result)
+    # 22 bölüm (0.5.3) + Şablonlar ve Kitap satışı (0.5.4).
+    assert len(result) == 24, sorted(result)
     bad = {name: items for name, items in result.items() if items}
     assert bad == {}, bad
 

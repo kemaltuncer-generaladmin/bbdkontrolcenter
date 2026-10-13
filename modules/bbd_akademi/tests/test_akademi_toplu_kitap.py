@@ -126,6 +126,147 @@ export default async function ({ document, audit, sleep, api, load }) {
 """
 
 
+KITAP_SAT = PRELUDE + r"""
+export default async function ({ document, audit, sleep, api, load }) {
+  globalThis.api = api;
+  routes['GET /v1/catalog/books'] = { page: 1, hasMore: false, items: [
+    { productId: 'P1', title: 'TYT Matematik Soru Bankası', isbn: '9786050000001', author: null,
+      publisher: 'Yayınevi', priceMinor: 25000, inStock: true, coverUrl: null },
+    { productId: 'P2', title: 'Tükenen Kitap', isbn: null, author: null, publisher: null, priceMinor: 1000,
+      inStock: false, coverUrl: null }] };
+  routes['POST /v1/admin/book-sales'] = (body) => ({ id: 'sale-1', ref: 'KS-2026-0001', paymentMethod: body.paymentMethod,
+    items: [], studentCount: 31, totalMinor: 31 * 50000, note: null, createdAt: '2026-10-13T10:00:00Z',
+    createdBy: { id: 'u1', displayName: 'KM' }, counts: { awaitingPayment: 0, processing: 31, ordered: 0,
+      orderFailed: 0, delivered: 0, cancelled: 0 }, lines: [] });
+  const { app, root, toasts } = await makeApp(load, document);
+  const { sellWizard } = await load('./panels/bbd_akademi/book-sales.js');
+  const done = sellWizard(app);
+  await sleep(30);
+  const dialog = () => root.querySelector('.ak-wiz');
+  const out = { steps: dialog().querySelectorAll('.ak-wiz-step').map((n) => n.textContent) };
+  click(byText(dialog(), 'button', 'İleri'));
+  await sleep(20);
+  out.emptyCart = dialog().querySelector('.ak-wiz-error').textContent;
+  const search = dialog().querySelector('input[type="search"]');
+  search.value = 'tyt mat';
+  search.dispatchEvent(new Event('input', { bubbles: true }));
+  await sleep(350);
+  out.outOfStock = dialog().querySelector('.ak-bs-results').textContent.includes('Stokta yok');
+  click(byText(dialog(), 'button', 'Ekle'));
+  const qty = dialog().querySelector('.ak-bs-qty');
+  qty.value = '2';
+  qty.dispatchEvent(new Event('change', { bubbles: true }));
+  out.note = dialog().querySelector('.ak-wiz-note').textContent;
+  out.a11yBooks = audit(dialog());
+  click(byText(dialog(), 'button', 'İleri'));
+  await sleep(20);
+  click(byText(dialog(), 'button', 'İleri'));
+  await sleep(20);
+  out.emptyStudents = dialog().querySelector('.ak-wiz-error').textContent;
+  click(byText(dialog(), '.kit-chip', '9-A'));
+  click(byText(dialog(), 'button', 'İleri'));
+  await sleep(20);
+  click(dialog().querySelector('.ak-wiz-finish'));
+  await sleep(20);
+  out.noMethod = dialog().querySelector('.ak-wiz-error').textContent;
+  click(dialog().querySelectorAll('input[type="radio"]').find((r) => r.value === 'cari'));
+  out.summary = dialog().querySelector('.ak-bs-summary').textContent;
+  out.a11yPay = audit(dialog());
+  click(dialog().querySelector('.ak-wiz-finish'));
+  const sale = await done;
+  out.saleRef = sale?.ref;
+  out.create = sent.filter((c) => c.path === '/v1/admin/book-sales');
+  out.toasts = toasts;
+  return out;
+}
+"""
+
+PAKET_UYGULA = PRELUDE + r"""
+export default async function ({ document, audit, sleep, api, load }) {
+  globalThis.api = api;
+  const bundle = { id: 'b-1', name: '12 SAY dönem başı', description: null, programs: [], resources: [
+    { id: 'r1', title: 'AYT Fizik' }], resourcePackages: [], studyPlanTemplate: null, planStartOffsetDays: 0,
+    rules: [{ gradeLevel: 12, track: 'SAY', examTarget: 'YKS' }], autoApply: true, appliedStudentCount: 0,
+    createdAt: '2026-10-13T10:00:00Z', updatedAt: '2026-10-13T10:00:00Z' };
+  routes['GET /v1/admin/templates'] = { items: [], nextCursor: null };
+  routes['GET /v1/admin/assignment-bundles'] = { items: [bundle], nextCursor: null };
+  routes['POST /v1/admin/assignment-bundles/b-1/preview'] = { studentCount: 420, alreadyAppliedCount: 3,
+    excludedCount: 0, programAdds: 0, resourceAssignments: { created: 417, alreadyAssigned: 3 }, planTaskCount: 0,
+    runsInBackground: true, groups: [] };
+  routes['POST /v1/admin/assignment-bundles/b-1/apply'] = { id: 'job-9', kind: 'bundle_apply', status: 'queued',
+    progress: { doneCount: 0, totalCount: 420 }, homework: null, bundle: null, error: null,
+    createdAt: '2026-10-13T10:00:00Z', finishedAt: null };
+  routes['GET /v1/admin/bulk-jobs/job-9'] = { id: 'job-9', kind: 'bundle_apply', status: 'succeeded',
+    progress: { doneCount: 420, totalCount: 420 }, homework: null, bundle: { studentCount: 417,
+      alreadyAppliedCount: 3, programOverridesCreated: 0, resourceAssignmentsCreated: 417,
+      resourceAssignmentsRemoved: 0, programOverridesRemoved: 0, planAssignmentId: null }, error: null,
+    createdAt: '2026-10-13T10:00:00Z', finishedAt: '2026-10-13T10:00:05Z' };
+  const { app, root, toasts } = await makeApp(load, document);
+  const templates = await load('./panels/bbd_akademi/templates.js');
+  const view = templates.section(app);
+  root.append(view.node);
+  view.shown({ tab: 'bundles' });
+  await sleep(60);
+  const out = { tabs: root.querySelectorAll('[role="tab"]').map((t) => t.textContent),
+    selected: root.querySelector('[role="tab"][aria-selected="true"]').textContent,
+    rows: root.querySelectorAll('.ak-link').map((b) => b.textContent), a11yList: audit(root) };
+  click(byText(root, 'button', 'Uygula'));
+  await sleep(40);
+  const dialog = () => root.querySelector('.kit-dialog');
+  out.modes = dialog().querySelectorAll('input[type="radio"]').map((r) => r.value);
+  click(dialog().querySelectorAll('input[type="radio"]').find((r) => r.value === 'rules'));
+  out.rulesText = dialog().textContent.includes('12. sınıf · Sayısal · YKS hedefi');
+  click(byText(dialog(), 'button', 'Önce say'));
+  await sleep(30);
+  out.preview = dialog().textContent.includes('417');
+  out.a11yDialog = audit(dialog());
+  click(byText(dialog(), 'button', 'Uygula'));
+  await sleep(1800);
+  out.previewBody = sent.find((c) => c.path.endsWith('/preview'))?.body;
+  out.applyBody = sent.find((c) => c.path.endsWith('/apply'))?.body;
+  out.polls = sent.filter((c) => c.path === '/v1/admin/bulk-jobs/job-9').length;
+  out.toasts = toasts;
+  return out;
+}
+"""
+
+TOPLU_ERTELE = PRELUDE + r"""
+export default async function ({ document, audit, sleep, api, load }) {
+  globalThis.api = api;
+  const row = (id, title) => ({ id, title, subject: { id: 'turkce', name: 'Türkçe' }, topics: [],
+    target: { classGroupIds: ['c-9a'], studentGroupIds: [], studentIds: [] }, dueAt: '2026-12-01T20:00:00+03:00',
+    stats: { assignedCount: 30, completedCount: 3, overdueCount: 0 }, createdBy: { displayName: 'KM' },
+    createdAt: '2026-10-13T10:00:00Z', seriesId: 's-1', status: 'published' });
+  routes['GET /v1/admin/homework'] = { items: [row('h1', 'Paragraf 1'), row('h2', 'Paragraf 2')], nextCursor: null };
+  routes['POST /v1/admin/homework/bulk-actions'] = (body) => ({ action: body.action, affectedCount: 2, skipped: [] });
+  const { app, root, toasts } = await makeApp(load, document);
+  const homework = await load('./panels/bbd_akademi/homework.js');
+  const view = homework.section(app);
+  root.append(view.node);
+  view.shown({});
+  await sleep(60);
+  const bar = root.querySelector('.ak-hw-bulk');
+  const out = { barHiddenFirst: bar.hidden };
+  root.querySelectorAll('.kit-row:not(.kit-head) input[type="checkbox"]').forEach((box) => click(box));
+  await sleep(10);
+  out.count = bar.textContent.includes('2 ödev seçili') && !bar.hidden;
+  out.a11y = audit(root);
+  click(byText(bar, 'button', 'Ertele'));
+  await sleep(20);
+  const dialog = root.querySelector('.kit-dialog');
+  const days = dialog.querySelector('input');
+  days.value = '3';
+  days.dispatchEvent(new Event('input', { bubbles: true }));
+  click(byText(dialog, 'button', 'Ertele'));
+  await sleep(40);
+  out.body = sent.find((c) => c.path === '/v1/admin/homework/bulk-actions')?.body;
+  out.toasts = toasts;
+  out.barHiddenAfter = bar.hidden;
+  return out;
+}
+"""
+
+
 def node_run(scenario: str) -> dict[str, Any]:
     try:
         data = run(scenario, panels=("bbd_akademi",), timeout=120)
@@ -164,3 +305,49 @@ def test_toplu_odev_sihirbazi_sablondan_uc_adim() -> None:
     assert out["polls"] == 2 and out["jobStatus"] == "succeeded"
     assert out["open"] is False
     assert ["54 öğrenciye 1 ödev verildi · 54 bildirim.", "good"] in out["toasts"]
+
+
+def test_kitap_satisi_uc_adim() -> None:
+    out = node_run(KITAP_SAT)
+    assert out["steps"] == ["1Kitaplar", "2Öğrenciler", "3Ödeme"]
+    assert "en az bir kitap" in out["emptyCart"]
+    assert out["outOfStock"] is True                      # stokta olmayan sepete eklenemez
+    assert "500" in out["note"] and "1 kitap" in out["note"]   # 2 adet × 250 ₺, öğrenci başına
+    assert out["a11yBooks"] == []
+    assert "En az bir sınıf" in out["emptyStudents"]
+    assert out["noMethod"] == "Ödeme şeklini seçin."
+    assert "Kurum carisine yaz" in out["summary"]
+    assert out["a11yPay"] == []
+    assert out["saleRef"] == "KS-2026-0001"
+    assert len(out["create"]) == 1
+    body = out["create"][0]["body"]
+    assert body == {"items": [{"productId": "P1", "quantity": 2}], "studentIds": [], "groupIds": ["c-9a"],
+                    "paymentMethod": "cari", "dueDate": None, "reference": None, "note": None}
+    assert out["create"][0]["idempotencyKey"].startswith("km-wiz-")
+    assert any("KS-2026-0001" in text for text, _ in out["toasts"])
+
+
+def test_atama_paketi_kuralina_uyanlara_uygula_arka_plan() -> None:
+    out = node_run(PAKET_UYGULA)
+    assert out["tabs"] == ["Ödev şablonları", "Atama paketleri", "Plan şablonları"]
+    assert out["selected"] == "Atama paketleri"
+    assert out["rows"] == ["12 SAY dönem başı"]
+    assert out["a11yList"] == []
+    assert out["modes"] == ["pick", "filter", "rules"]
+    assert out["rulesText"] is True
+    assert out["preview"] is True
+    assert out["a11yDialog"] == []
+    expected = {"target": {"excludeStudentIds": [], "matchRules": True}, "startDate": None, "notify": True}
+    assert out["previewBody"] == expected and out["applyBody"] == expected
+    assert out["polls"] == 1                               # 202 → admin_getBulkJob
+    assert any("417 öğrenciye uygulandı" in text for text, _ in out["toasts"])
+
+
+def test_secilen_odevleri_toplu_ertele() -> None:
+    out = node_run(TOPLU_ERTELE)
+    assert out["barHiddenFirst"] is True
+    assert out["count"] is True
+    assert out["a11y"] == []
+    assert out["body"] == {"homeworkIds": ["h1", "h2"], "action": "postpone", "shiftDays": 3, "notify": True}
+    assert ["2 ödev ertelendi.", "good"] in out["toasts"]
+    assert out["barHiddenAfter"] is True

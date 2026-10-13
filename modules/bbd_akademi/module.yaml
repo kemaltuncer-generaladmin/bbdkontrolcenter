@@ -97,7 +97,7 @@ permissions:
     destructive: true
     default_roles: [admin]
   - key: bbd_akademi.books
-    description: "Kitap talepleri: siparişi yeniden deneme, teslim, sipariş PDF'i."
+    description: "Kitap talepleri (siparişi yeniden deneme, teslim, sipariş PDF'i) ve kitap satışı: öğrencilere kurumdan kitap satma (kurum carisine kalem, nakit / kart tahsilatı ya da veliye ödeme bağlantısı; kantinden ayrı), satır iptali / iadesi, toplu teslim."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.announcements
     description: "Duyuru oluşturma, hedefleme, zamanlama, yayımlama ve silme."
