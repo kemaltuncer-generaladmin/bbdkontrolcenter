@@ -14,9 +14,11 @@
 .kit-panel {
   --line: var(--paper-line, #e9ecf2);
   --ink: var(--paper-ink, #111722);
-  --soft: #667487;
+  --soft: #5f6b7e;   /* 0.5.3: açık gri zeminlerde de ≥ 4,5:1 */
   --tint: #f7f8fb;
-  --accent: #5b8cff;
+  /* 0.5.3 erişilebilirlik: beyaz zeminde metin/düğme karşıtlığı 4,5:1 üstü
+     (eski #5b8cff 3,2:1 idi — beyaz yazılı birincil düğme okunmuyordu). */
+  --accent: #2f5fd0;
   --good: #15803d;
   --warn: #b45309;
   --bad: #b91c1c;
@@ -71,7 +73,7 @@
 .kit-btn[disabled]:hover { background: #fff; border-color: var(--line); }
 
 .kit-btn-primary { background: var(--accent); border-color: transparent; color: #fff; }
-.kit-btn-primary:hover { background: #6f9bff; border-color: transparent; }
+.kit-btn-primary:hover { background: #2852b8; border-color: transparent; }
 .kit-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
 
 .kit-btn-danger { background: #fff; border-color: #f2c9c9; color: var(--bad); }
@@ -1251,4 +1253,4 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-cal-legend-item.warn { color: var(--warn); }
 .kit-cal-legend-item.bad { color: var(--bad); }
 .kit-cal-legend-item.info { color: var(--accent); }
-.kit-cal-legend-item.muted { color: #94a3b8; }
+.kit-cal-legend-item.muted { color: #64748b; }

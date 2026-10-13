@@ -34,7 +34,7 @@ class NodeMissing(RuntimeError):
 
 RUNNER = r"""
 import { install, parseHTML } from './a11y/dom.mjs';
-import { audit, contrast, cssAudit, tokens, accessibleName } from './a11y/audit.mjs';
+import { audit, contrast, cssAudit, cssContrast, tokens, accessibleName } from './a11y/audit.mjs';
 import { readFileSync } from 'node:fs';
 const document = install();
 const routes = JSON.parse(readFileSync(new URL('./routes.json', import.meta.url), 'utf8'));
@@ -43,6 +43,18 @@ async function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   calls.push({ method, path, body: options.body ?? null });
   const clean = String(path);
+  // Senaryo kendi işleyicisini kurabilir (yük içeriğine göre yanıt): undefined → tablo.
+  if (typeof globalThis.__apiHook === 'function') {
+    const hooked = await globalThis.__apiHook(method, clean, options);
+    if (hooked !== undefined) {
+      if (hooked && hooked.__status) {
+        const error = new Error(hooked.message || `İstek başarısız (${hooked.__status}).`);
+        error.status = hooked.__status;
+        throw error;
+      }
+      return JSON.parse(JSON.stringify(hooked));
+    }
+  }
   const keys = [`${method} ${clean}`, `${method} ${clean.split('?')[0]}`];
   for (const key of keys) {
     if (key in routes) {
@@ -66,7 +78,7 @@ async function api(path, options = {}) {
 const sleep = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 const load = (path) => import(new URL(path, import.meta.url).href);
 const scenario = (await import('./scenario.mjs')).default;
-const result = await scenario({ document, parseHTML, audit, contrast, cssAudit, tokens, accessibleName, sleep, api, load, calls,
+const result = await scenario({ document, parseHTML, audit, contrast, cssAudit, cssContrast, tokens, accessibleName, sleep, api, load, calls,
   css: (path) => readFileSync(new URL(path, import.meta.url), 'utf8') });
 const errors = (globalThis.__domErrors || []).map((e) => String(e?.stack || e).split('\n').slice(0, 3).join(' | '));
 process.stdout.write(JSON.stringify({ result, errors }));

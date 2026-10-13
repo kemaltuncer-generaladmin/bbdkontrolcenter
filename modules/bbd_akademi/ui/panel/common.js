@@ -314,10 +314,12 @@ export function staticList(spec) {
 // --------------------------------------------------------------- girişler
 
 /** Debounce'lu arama kutusu (varsayılan 250 ms). */
-export function searchBox({ placeholder = 'Ara', onSearch, delay = 250, value = '' } = {}) {
+export function searchBox({ placeholder = 'Ara', onSearch, delay = 250, value = '', label = '' } = {}) {
   const input = h('input', 'kit-input ak-search');
   input.type = 'search';
   input.placeholder = placeholder;
+  // Yer tutucu etiket değildir (yazınca kaybolur): ekran okuyucu adı ayrıca verilir.
+  input.setAttribute('aria-label', label || placeholder);
   input.value = value;
   const fire = debounce(() => onSearch?.(input.value.trim()), delay);
   input.addEventListener('input', fire);

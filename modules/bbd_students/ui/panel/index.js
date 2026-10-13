@@ -30,7 +30,7 @@ import { classSortKey, formatBalance, formatPhone, fullName, normalizeClass } fr
 // normaldir (bkz. `tools/build-ui-registry.py`).
 import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
-import { button, confirmSimple } from '../../ui-kit/kit.js';
+import { button, confirmSimple, dialogA11y } from '../../ui-kit/kit.js';
 import { mountGroups } from './groups.js';
 import { askDeactivate, watchEvents } from './lifecycle.js';
 import { mountRecord } from './record.js';
@@ -150,15 +150,19 @@ function createManager(root, options) {
   nodes.search = h('input', 'st-search');
   nodes.search.type = 'search';
   nodes.search.placeholder = 'Ad, sınıf, no, veli telefonu ara';
+  nodes.search.setAttribute('aria-label', 'Öğrenci listesinde ara: ad, sınıf, no, veli telefonu');
   nodes.search.addEventListener('input', () => { filters.text = nodes.search.value.trim(); renderList(); });
   nodes.statusFilter = h('select', 'st-input st-select');
+  nodes.statusFilter.setAttribute('aria-label', 'Durum');
   for (const [value, label] of [['active', 'Etkin'], ['inactive', 'Pasif'], ['', 'Etkin + pasif']]) {
     nodes.statusFilter.append(new Option(label, value));
   }
   nodes.statusFilter.addEventListener('change', () => { filters.status = nodes.statusFilter.value; renderList(); });
   nodes.classFilter = h('select', 'st-input st-select');
+  nodes.classFilter.setAttribute('aria-label', 'Sınıf');
   nodes.classFilter.addEventListener('change', () => { filters.className = nodes.classFilter.value; renderList(); });
   nodes.flagFilter = h('select', 'st-input st-select');
+  nodes.flagFilter.setAttribute('aria-label', 'Süzgeç');
   for (const [value, label] of [['', 'Tümü'], ['debt', 'Borçlu'], ['blocked', 'Engelli'],
     ['unclassed', 'Sınıfsız'], ['noguardian', 'Velisi girilmemiş'], ['pending', 'Kantine iletilemeyen'],
     ['draft', 'Kasadan eklenen']]) {
@@ -190,6 +194,8 @@ function createManager(root, options) {
   view.append(nodes.groups);
 
   nodes.toast = h('div', 'st-toast');
+  nodes.toast.setAttribute('role', 'status');
+  nodes.toast.setAttribute('aria-live', 'polite');
   view.append(nodes.toast);
   root.replaceChildren(view);
 
@@ -444,8 +450,10 @@ function createManager(root, options) {
     const grid = h('div', 'st-lc-grid');
     grid.append(first.wrap, last.wrap, klass.wrap, phone.wrap);
     const error = h('div', 'kit-dialog-error');
+    error.setAttribute('role', 'alert');
     card.append(grid, error);
-    const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); };
+    let release = () => {};
+    const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); release(); };
     const submit = async () => {
       const body = { firstName: first.node.value.trim(), lastName: last.node.value.trim() };
       if (!body.firstName || !body.lastName) { error.textContent = 'Ad ve soyad zorunlu.'; return; }
@@ -478,6 +486,7 @@ function createManager(root, options) {
     overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
     document.addEventListener('keydown', onKey);
     view.append(overlay);
+    release = dialogA11y(card);
     first.node.focus();
   }
 

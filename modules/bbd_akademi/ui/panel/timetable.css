@@ -83,7 +83,7 @@
 }
 .ak-tt-subject { font-size: 12.5px; font-weight: 600; }
 .ak-tt-teacher, .ak-tt-room { font-size: 11px; color: var(--soft); }
-.ak-tt-add { font-size: 18px; line-height: 1; color: #c3cad6; }
+.ak-tt-add { font-size: 18px; line-height: 1; color: #5f6b7e; }
 .ak-tt-cell:hover .ak-tt-add { color: var(--accent); }
 .ak-tt-time {
   position: absolute; top: 4px; right: 6px; font-size: 10px; color: var(--soft);

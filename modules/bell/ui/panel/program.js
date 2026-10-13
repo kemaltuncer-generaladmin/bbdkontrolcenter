@@ -402,6 +402,7 @@ export function timeListEditor(entries) {
       label.value = row.label;
       label.maxLength = 40;
       label.placeholder = 'Etiket (isteğe bağlı)';
+      label.setAttribute('aria-label', 'Etiket (isteğe bağlı)');
       label.addEventListener('input', () => { row.label = label.value; });
 
       const drop = h('button', 'bl-icon-btn', '✕');

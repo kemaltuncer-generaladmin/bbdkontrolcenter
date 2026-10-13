@@ -10,9 +10,9 @@
  */
 
 .bl {
-  --bl-ders: #3b6fe0;
+  --bl-ders: #2f5fd0;   /* 0.5.3: açık mavi zeminde ≥ 4,5:1 */
   --bl-ders-bg: #eef3ff;
-  --bl-ten: #b7791f;
+  --bl-ten: #8a5a00;    /* 0.5.3: açık sarı zeminde ≥ 4,5:1 (eski 3,4:1) */
   --bl-ten-bg: #fff6e6;
   --bl-paper: var(--paper, #fff);
   font-size: 13.5px;

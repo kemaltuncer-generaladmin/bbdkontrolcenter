@@ -330,3 +330,47 @@ export function tokens(css, scope = null) {
   }
   return out;
 }
+
+/**
+ * Metin rengi karşıtlığı — CSS kurallarından (yerleşimsiz yaklaşık denetim).
+ * Her `color:` bildirimi, aynı kuralın `background(-color)`ı varsa ona, yoksa
+ * `defaultBg`ye (panel kâğıdı) karşı ölçülür. `var(--x)` jetonları aynı
+ * dosyadan ve `extra` sözlüğünden çözülür; çözülemeyen / `currentColor` /
+ * `inherit` / gradyan atlanır. Yer tutucu (`::placeholder`) da metindir.
+ * `skip`: bilinçli istisna seçicileri (ör. devre dışı düğme — WCAG 1.4.3 muaf).
+ */
+export function cssContrast(css, { defaultBg = '#ffffff', extra = {}, min = 4.5, skip = [] } = {}) {
+  const body = String(css).replace(/\/\*[\s\S]*?\*\//g, '');
+  const vars = { ...tokens(body), ...extra };
+  const resolve = (value, depth = 0) => {
+    const text = String(value || '').trim().replace(/\s*!important$/, '');
+    const m = /^var\((--[\w-]+)(?:\s*,\s*([^)]+))?\)$/.exec(text);
+    if (m) {
+      if (depth > 5) return null;
+      return resolve(vars[m[1]] ?? m[2], depth + 1);
+    }
+    if (/^(#[0-9a-f]{3}|#[0-9a-f]{6}|rgba?\([^)]*\)|white|black)$/i.test(text)) return text;
+    return null;
+  };
+  const out = [];
+  const flat = body.replace(/@media[^{]*\{([\s\S]*?\})\s*\}/g, (all, inner) => (/prefers-color-scheme:\s*dark/.test(all) ? '' : inner));
+  for (const rule of flat.split('}')) {
+    const [selector = '', decl = ''] = rule.split('{');
+    const sel = selector.trim();
+    if (!sel || sel.startsWith('@') || skip.some((item) => sel.includes(item))) continue;
+    const color = /(?:^|;|\s)color\s*:\s*([^;]+)/.exec(decl);
+    if (!color) continue;
+    const fg = resolve(color[1]);
+    if (!fg) continue;
+    const bgMatch = /background(?:-color)?\s*:\s*([^;]+)/.exec(decl);
+    const bg = bgMatch ? resolve(bgMatch[1]) : defaultBg;
+    if (!bg) continue;
+    let bgSolid;
+    try { bgSolid = blend(parseColor(bg), parseColor(defaultBg)); } catch { continue; }
+    const bgHex = `rgb(${bgSolid.slice(0, 3).map((v) => Math.round(v)).join(',')})`;
+    let ratio;
+    try { ratio = contrast(fg, bgHex); } catch { continue; }
+    if (ratio < min) out.push({ selector: sel.replace(/\s+/g, ' '), color: fg, background: bg, ratio: Math.round(ratio * 100) / 100 });
+  }
+  return out;
+}

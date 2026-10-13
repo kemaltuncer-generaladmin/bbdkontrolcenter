@@ -7,7 +7,7 @@
 // soruyu sorar ve cevabı okunur kılar.
 
 // Yol kabuğun KOPYALANMIŞ konumuna göredir (bkz. index.js).
-import { button } from '../../ui-kit/kit.js';
+import { button, dialogA11y } from '../../ui-kit/kit.js';
 
 export const REASONS = [
   ['left', 'Ayrıldı'],
@@ -57,7 +57,8 @@ function dialog(root, title, description) {
   if (description) card.append(h('p', 'kit-dialog-text', description));
   overlay.append(card);
   root.append(overlay);
-  return { overlay, card };
+  // Başlık bağı, odak tuzağı ve kapanınca odağın geri dönüşü (0.5.3).
+  return { overlay, card, release: dialogA11y(card) };
 }
 
 /**
@@ -70,7 +71,7 @@ export function askDeactivate(root, { students }) {
   return new Promise((resolve) => {
     const many = students.length > 1;
     const name = many ? `${students.length} öğrenci` : (students[0]?.displayName || 'Öğrenci');
-    const { overlay, card } = dialog(root, many ? `${name} pasifleştirilecek` : `${name} — pasifleştir`,
+    const { overlay, card, release } = dialog(root, many ? `${name} pasifleştirilecek` : `${name} — pasifleştir`,
       'Kantinde satış kapanır (bakiye ve borç korunur, tahsilat ve ödeme linki çalışır), '
       + 'tablet girişi kısıtlanır, BBD Akademi girişi ve yalnız bu öğrenciye bağlı veli '
       + 'girişi kapanır. Açık grup üyelikleri kapanır. Veriler saklanır; yeniden '
@@ -114,6 +115,7 @@ export function askDeactivate(root, { students }) {
     const close = (value) => {
       document.removeEventListener('keydown', onKey);
       overlay.remove();
+      release();
       resolve(value);
     };
     const submit = () => {
@@ -152,7 +154,7 @@ export function askDeactivate(root, { students }) {
 export function askDelete(root, { student }) {
   return new Promise((resolve) => {
     const name = student.displayName || '';
-    const { overlay, card } = dialog(root, `${name || 'Öğrenci'} — kalıcı sil`,
+    const { overlay, card, release } = dialog(root, `${name || 'Öğrenci'} — kalıcı sil`,
       'GERİ ALINAMAZ. KM profili silinir; kantinde öğrenci anonimleşir (satış ve defter '
       + 'muhasebe için kalır); BBD Akademi kişisel veriyi KVKK planına göre siler. Ön '
       + 'koşullar: öğrenci pasif, kantin bakiyesi tam 0, açık ödeme talebi yok, Akademi '
@@ -171,6 +173,7 @@ export function askDelete(root, { student }) {
     const input = h('input', 'kit-input');
     input.type = 'text';
     input.placeholder = `Onay için öğrencinin adını yazın: ${name}`;
+    input.setAttribute('aria-label', `Onay için öğrencinin adını yazın: ${name}`);
     input.maxLength = 160;
     card.append(input);
     const error = h('div', 'kit-dialog-error');
@@ -179,6 +182,7 @@ export function askDelete(root, { student }) {
     const close = (value) => {
       document.removeEventListener('keydown', onKey);
       overlay.remove();
+      release();
       resolve(value);
     };
     const fold = (text) => String(text || '').trim().toLocaleLowerCase('tr').replace(/\s+/g, ' ');

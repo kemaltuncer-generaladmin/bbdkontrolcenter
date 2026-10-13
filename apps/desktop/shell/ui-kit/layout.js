@@ -4,7 +4,7 @@
 // ve hiçbiri panelin durumunu bilmez.
 
 import { sparkline } from './charts.js';
-import { button, h } from './kit.js';
+import { button, dialogA11y, h } from './kit.js';
 
 /** Başlıklı içerik kutusu. */
 export function card(title, content, hint) {
@@ -191,6 +191,9 @@ export function drawer(root, { title, subtitle, actions = [], onClose } = {}) {
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
   if (title) panel.setAttribute('aria-label', title);
+  // Odak çekmeceye girer (tabindex), Sekme içinde döner, kapanınca açan öğeye
+  // döner; ad başlıktan (`aria-labelledby`) gelir ve `setTitle` ile güncel kalır.
+  panel.setAttribute('tabindex', '-1');
 
   const head = h('div', 'kit-drawer-head');
   const heading = h('div');
@@ -198,12 +201,21 @@ export function drawer(root, { title, subtitle, actions = [], onClose } = {}) {
   if (subtitle) heading.append(h('div', 'kit-drawer-sub', subtitle));
   head.append(heading, h('span', 'kit-spacer'), ...actions);
 
+  let release = () => {};
   const close = () => {
     document.removeEventListener('keydown', onKey);
     overlay.remove();
+    release();
     onClose?.();
   };
-  const onKey = (event) => { if (event.key === 'Escape') close(); };
+  // Üstte bir onay penceresi açıksa Esc önce onu kapatır: yalnız EN ÜSTTEKİ
+  // katman Esc'e yanıt verir.
+  const onKey = (event) => {
+    if (event.key !== 'Escape') return;
+    const layers = document.querySelectorAll('.kit-overlay');
+    if (layers[layers.length - 1] !== overlay) return;
+    close();
+  };
 
   head.append(button('Kapat', { variant: 'ghost', onClick: close }));
   const body = h('div', 'kit-drawer-body');
@@ -212,6 +224,7 @@ export function drawer(root, { title, subtitle, actions = [], onClose } = {}) {
   overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
   document.addEventListener('keydown', onKey);
   root.append(overlay);
+  release = dialogA11y(panel);
   panel.focus?.();
 
   return { node: panel, body, close, setTitle: (text) => { heading.firstChild.textContent = text; } };

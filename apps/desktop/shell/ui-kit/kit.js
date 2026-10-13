@@ -472,15 +472,22 @@ export function confirmWithReason(root, { title, description, confirmLabel = 'On
     card.append(error);
 
     const actions = h('div', 'kit-dialog-actions');
+    input.setAttribute('aria-label', minLength ? placeholder : 'Not (isteğe bağlı)');
+    error.id = `kit-dlg-err-${(dialogSeq += 1)}`;
+    error.setAttribute('role', 'alert');
+    input.setAttribute('aria-describedby', error.id);
+    let release = () => {};
     const close = (value) => {
       document.removeEventListener('keydown', onKey);
       overlay.remove();
+      release();
       resolve(value);
     };
     const submit = () => {
       const reason = input.value.trim();
       if (reason.length < minLength) {
         error.textContent = `Gerekçe en az ${minLength} karakter olmalı.`;
+        input.setAttribute('aria-invalid', 'true');
         input.focus();
         return;
       }
@@ -506,6 +513,7 @@ export function confirmWithReason(root, { title, description, confirmLabel = 'On
     });
     document.addEventListener('keydown', onKey);
     root.append(overlay);
+    release = dialogA11y(card);
     // Not isteğe bağlıysa onay düğmesi odakta: işlem iki tıktır (düğme + Enter).
     (minLength ? input : go).focus();
   });
@@ -548,33 +556,38 @@ export function confirmWithPin(root, { title, description, confirmLabel = 'Kalı
 
     const error = h('div', 'kit-dialog-error');
     card.append(error);
+    input.setAttribute('aria-label', placeholder);
+    error.id = `kit-dlg-err-${(dialogSeq += 1)}`;
+    error.setAttribute('role', 'alert');
+    input.setAttribute('aria-describedby', error.id);
 
+    let release = () => {};
     const close = (value) => {
       document.removeEventListener('keydown', onKey);
       // Alanı boşalt: DOM'dan kopan düğümde PIN kalmasın.
       input.value = '';
       overlay.remove();
+      release();
       resolve(value);
     };
     const submit = () => {
       const pin = input.value.trim();
       if (pin.length < minLength) {
         error.textContent = `PIN en az ${minLength} hane olmalı.`;
+        input.setAttribute('aria-invalid', 'true');
         input.focus();
         return;
       }
       close(pin);
     };
+    const go = button(confirmLabel, { variant: 'danger', onClick: submit });
     const onKey = (event) => {
-      if (event.key === 'Escape') close(null);
-      if (event.key === 'Enter') submit();
+      if (event.key === 'Escape') { event.stopPropagation(); close(null); }
+      if (event.key === 'Enter' && !enterOnOtherButton(event, go)) { event.preventDefault(); submit(); }
     };
 
     const actions = h('div', 'kit-dialog-actions');
-    actions.append(
-      button('Vazgeç', { onClick: () => close(null) }),
-      button(confirmLabel, { variant: 'danger', onClick: submit }),
-    );
+    actions.append(button('Vazgeç', { onClick: () => close(null) }), go);
     card.append(actions);
     overlay.append(card);
     overlay.addEventListener('mousedown', (event) => {
@@ -582,8 +595,71 @@ export function confirmWithPin(root, { title, description, confirmLabel = 'Kalı
     });
     document.addEventListener('keydown', onKey);
     root.append(overlay);
+    release = dialogA11y(card);
     input.focus();
   });
+}
+
+
+// ------------------------------------------------------- diyalog erişimi
+
+let dialogSeq = 0;
+
+/**
+ * DİYALOG ERİŞİLEBİLİRLİĞİ — tek yerde (0.5.3, WCAG 2.1.2 · 2.4.3 · 4.1.2).
+ *
+ * Başlık `aria-labelledby` ile bağlanır (ekran okuyucu diyaloğu adıyla
+ * okur), Sekme / Shift+Sekme diyalog içinde döner (odak arkadaki sayfaya
+ * kaçmaz), kapanınca odak diyaloğu açan öğeye döner. Dönen `release()`
+ * kapanışta çağrılır. Kitin bütün diyalogları ve çekmecesi bunu kullanır;
+ * panelin kendi diyaloğu da kullanmalıdır.
+ */
+export function dialogA11y(card) {
+  const opener = document.activeElement;
+  const title = card.querySelector('.kit-dialog-title, .kit-drawer-title, h2, h3');
+  if (title && !card.getAttribute('aria-labelledby')) {
+    if (!title.id) {
+      dialogSeq += 1;
+      title.id = `kit-dlg-${dialogSeq}`;
+    }
+    card.setAttribute('aria-labelledby', title.id);
+    card.removeAttribute('aria-label');
+  }
+  card.setAttribute('aria-modal', 'true');
+  if (!card.hasAttribute('tabindex')) card.setAttribute('tabindex', '-1');
+  const focusables = () => [...card.querySelectorAll(
+    'button, [href], input, select, textarea, summary, [tabindex]')]
+    .filter((el) => !el.disabled && el.getAttribute('tabindex') !== '-1' && !el.closest('[hidden]'));
+  const onKey = (event) => {
+    if (event.key !== 'Tab') return;
+    const list = focusables();
+    if (!list.length) {
+      event.preventDefault();
+      card.focus();
+      return;
+    }
+    const first = list[0];
+    const last = list[list.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === card)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  card.addEventListener('keydown', onKey);
+  return () => {
+    card.removeEventListener('keydown', onKey);
+    if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+  };
+}
+
+/** Enter bir düğmede basıldıysa (Vazgeç, çip) o düğme kendi işini yapar. */
+function enterOnOtherButton(event, ...allowed) {
+  const target = event.target;
+  return Boolean(target && target.tagName === 'BUTTON' && !allowed.includes(target));
 }
 
 /** Gerekçesiz basit onay. `window.confirm` kabuğun stilini taşımıyor. */
@@ -597,21 +673,22 @@ export function confirmSimple(root, { title, description, confirmLabel = 'Evet',
     card.append(h('h3', 'kit-dialog-title', title));
     if (description) card.append(h('p', 'kit-dialog-text', description));
 
+    let release = () => {};
     const close = (value) => {
       document.removeEventListener('keydown', onKey);
       overlay.remove();
+      release();
       resolve(value);
     };
+    const yes = button(confirmLabel, { variant: danger ? 'danger' : 'primary', onClick: () => close(true) });
     const onKey = (event) => {
-      if (event.key === 'Escape') close(false);
-      if (event.key === 'Enter') close(true);
+      if (event.key === 'Escape') { event.stopPropagation(); close(false); }
+      // Odak "Vazgeç"teyken Enter onaylamaz — düğme kendi işini yapar.
+      if (event.key === 'Enter' && !enterOnOtherButton(event, yes)) { event.preventDefault(); close(true); }
     };
 
     const actions = h('div', 'kit-dialog-actions');
-    actions.append(
-      button('Vazgeç', { onClick: () => close(false) }),
-      button(confirmLabel, { variant: danger ? 'danger' : 'primary', onClick: () => close(true) }),
-    );
+    actions.append(button('Vazgeç', { onClick: () => close(false) }), yes);
     card.append(actions);
     overlay.append(card);
     overlay.addEventListener('mousedown', (event) => {
@@ -619,7 +696,8 @@ export function confirmSimple(root, { title, description, confirmLabel = 'Evet',
     });
     document.addEventListener('keydown', onKey);
     root.append(overlay);
-    card.querySelector('.kit-btn-primary, .kit-btn-danger')?.focus();
+    release = dialogA11y(card);
+    yes.focus();
   });
 }
 

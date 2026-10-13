@@ -182,6 +182,7 @@ function startRename(app, nameNode, group) {
   const field = h('input', 'kit-input');
   field.value = group.name;
   field.maxLength = 60;
+  field.setAttribute('aria-label', 'Grup adı');
   let closed = false;
   const finish = async (save) => {
     if (closed) return;
@@ -208,9 +209,11 @@ function newGroupCard(app) {
   const card = h('div', 'bl-group bl-group-new');
   const field = h('input', 'kit-input');
   field.placeholder = 'Yeni grup adı';
+  field.setAttribute('aria-label', 'Yeni grup adı');
   field.maxLength = 60;
   // TÜR SEÇİMİ GÖRÜNÜR: cümle buna göre kuruluyor ("dersiniz" ↔ "dersin").
   const kind = h('select', 'kit-select');
+  kind.setAttribute('aria-label', 'Ders türü');
   for (const [value, label] of [['grup', 'Grup dersi'], ['ozel', 'Özel ders']]) {
     const option = document.createElement('option');
     option.value = value;

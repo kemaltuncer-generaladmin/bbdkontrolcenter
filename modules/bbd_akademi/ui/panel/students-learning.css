@@ -46,8 +46,8 @@
 .ak-sl-heat-cell.l0 { background: #f1f4f8; color: transparent; }
 .ak-sl-heat-cell.l1 { background: #dbe7fb; }
 .ak-sl-heat-cell.l2 { background: #b4cdf6; }
-.ak-sl-heat-cell.l3 { background: #7fa7ec; color: #fff; }
-.ak-sl-heat-cell.l4 { background: #4b7fdc; color: #fff; }
+.ak-sl-heat-cell.l3 { background: #7fa7ec; color: #0b1f45; }
+.ak-sl-heat-cell.l4 { background: #2f5fd0; color: #fff; }
 .ak-sl-heat-legend { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--soft); }
 .ak-sl-heat-legend .ak-sl-heat-cell { width: 14px; height: 14px; }
 

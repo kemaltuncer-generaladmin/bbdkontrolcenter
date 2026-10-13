@@ -419,6 +419,8 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
       instance = app.capability('bbd_students.record')(node, {
         kantinId: ref, capability: app.capability, dialogRoot: app.root,
         toast: (text) => app.toast(text, 'good'),
+        // "Akademi'ye ulaştı ✓": geçidin teslim imleci (Ayarlar → Senkron ile aynı veri).
+        syncProbe: () => app.api.km('/events'),
         // Ad, sınıf, durum değişince kartın başlığı da Akademi'den yeniden okunur
         // (Akademi değişikliği olayla birkaç saniyede alır).
         onChanged: () => setTimeout(() => head.reload(), 1500),
@@ -602,6 +604,7 @@ function openKmOnly(app, kmId, { name = '', note = '' } = {}) {
   if (typeof drawRecord === 'function') {
     instance = drawRecord(slot, { kantinId: kmId, capability: app.capability, dialogRoot: app.root,
       toast: (text) => app.toast(text, 'good'), onRemoved: () => panel.close(),
+      syncProbe: app.kmOnly?.() ? null : () => app.api.km('/events'),
       onLoaded: (student) => panel.setTitle(student?.displayName || name || 'Öğrenci') });
   } else {
     slot.append(empty('Kayıt gösterilemiyor', 'Öğrenci yönetimi bu kullanıcı için açık değil.'));

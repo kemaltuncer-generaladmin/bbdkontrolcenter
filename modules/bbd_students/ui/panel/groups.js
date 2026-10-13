@@ -20,7 +20,7 @@
 //
 // Yol kabuğun KOPYALANMIŞ konumuna göredir (bkz. index.js).
 import { createPicker } from '../../ui-kit/picker.js';
-import { confirmSimple, todayIso } from '../../ui-kit/kit.js';
+import { confirmSimple, dialogA11y, todayIso } from '../../ui-kit/kit.js';
 
 const BASE = '/api/bbd_students/groups';
 
@@ -46,9 +46,10 @@ export function validOn(member, iso) {
 }
 
 /** Tarih kutusu: `<input type="date">` — değer YYYY-AA-GG. */
-function dayInput(value) {
+function dayInput(value, label = 'Gün') {
   const input = h('input', 'st-input gr-day');
   input.type = 'date';
+  input.setAttribute('aria-label', label);
   input.value = value || todayIso();
   return input;
 }
@@ -78,16 +79,19 @@ export function mountGroups(host, ctx) {
   const search = h('input', 'st-search');
   search.type = 'search';
   search.placeholder = 'Grup ya da anons adı ara';
+  search.setAttribute('aria-label', 'Grup ya da anons adı ara');
   search.addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { state.query = search.value.trim(); load(); }, 200);
   });
   const kindFilter = h('select', 'st-input st-select');
+  kindFilter.setAttribute('aria-label', 'Grup türü');
   for (const [value, label] of [['', 'Tüm türler'], ['group', 'Toplu ders'], ['individual', 'Özel ders']]) {
     kindFilter.append(new Option(label, value));
   }
   kindFilter.addEventListener('change', () => { state.kind = kindFilter.value; load(); });
   const archFilter = h('select', 'st-input st-select');
+  archFilter.setAttribute('aria-label', 'Arşiv durumu');
   for (const [value, label] of [['live', 'Canlı gruplar'], ['archived', 'Arşiv'], ['all', 'Tümü']]) {
     archFilter.append(new Option(label, value));
   }
@@ -214,6 +218,7 @@ export function mountGroups(host, ctx) {
         const row = h('label', 'gr-member');
         const check = h('input', 'st-check');
         check.type = 'checkbox';
+        check.setAttribute('aria-label', `${studentName(member.studentId)} seç`);
         check.disabled = !canEdit;
         checks.set(member.studentId, check);
         row.append(check, h('b', null, studentName(member.studentId)),
@@ -225,11 +230,13 @@ export function mountGroups(host, ctx) {
     }
     if (canEdit && !group.archived && group.current.length > 0) {
       const tools = h('div', 'gr-tools');
-      const endDay = dayInput(todayIso());
+      const endDay = dayInput(todayIso(), 'Seçilenler için gün');
       const reason = h('input', 'st-input');
       reason.placeholder = 'Gerekçe (geçmiş tarihte zorunlu)';
+      reason.setAttribute('aria-label', 'Gerekçe (geçmiş tarihte zorunlu)');
       reason.maxLength = 200;
       const target = h('select', 'st-input st-select');
+      target.setAttribute('aria-label', 'Taşınacak grup');
       target.append(new Option('Taşınacak grup…', ''));
       for (const other of state.groups) {
         if (other.id !== group.id && !other.archived) target.append(new Option(other.name, other.id));
@@ -281,9 +288,10 @@ export function mountGroups(host, ctx) {
           })),
       });
       add.append(picker.node);
-      const from = dayInput(todayIso());
+      const from = dayInput(todayIso(), 'Başlangıç günü');
       const reason = h('input', 'st-input');
       reason.placeholder = 'Gerekçe (geçmiş tarihte zorunlu)';
+      reason.setAttribute('aria-label', 'Gerekçe (geçmiş tarihte zorunlu)');
       reason.maxLength = 200;
       const addTools = h('div', 'gr-tools');
       add.append(addTools);
@@ -406,7 +414,9 @@ export function mountGroups(host, ctx) {
     }
     const error = h('p', 'kit-dialog-error');
     card.append(error);
-    const close = () => overlay.remove();
+    error.setAttribute('role', 'alert');
+    let release = () => {};
+    const close = () => { overlay.remove(); release(); };
     const save = button(group ? 'Kaydet' : 'Grubu aç', 'primary', async () => {
       const body = { name: name.value, callName: callName.value, kind: kind.value, note: note.value };
       try {
@@ -426,6 +436,10 @@ export function mountGroups(host, ctx) {
     card.append(actions);
     overlay.append(card);
     ctx.dialogRoot.append(overlay);
+    release = dialogA11y(card);
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.stopPropagation(); close(); }
+    });
     name.focus();
   }
 

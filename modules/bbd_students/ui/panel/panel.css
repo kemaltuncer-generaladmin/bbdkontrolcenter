@@ -3,10 +3,10 @@
 
 .st {
   --line: var(--paper-line, #e9ecf2);
-  --soft: #667487;
+  --soft: #5f6b7e;   /* 0.5.3: açık gri zeminlerde de ≥ 4,5:1 */
   --ink: var(--paper-ink, #111722);
   --tint: #f7f8fb;
-  --accent: #5b8cff;
+  --accent: #2f5fd0;   /* 0.5.3: beyazda 5,6:1 (eski #5b8cff 3,2:1) */
 
   position: relative;
   display: flex;
@@ -72,7 +72,7 @@
   -webkit-user-select: text;
 }
 
-.st-search::placeholder { color: #9aa4b4; }
+.st-search::placeholder { color: #6b7688; }
 .st-search:focus, .st-input:focus, .st-select:focus {
   outline: none;
   border-color: var(--accent);
@@ -106,7 +106,7 @@
   color: #fff;
 }
 
-.st-btn-primary:hover { background: #6f9bff; border-color: transparent; }
+.st-btn-primary:hover { background: #2852b8; border-color: transparent; }
 .st-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
 
 .st-status {
@@ -272,7 +272,7 @@
   -webkit-user-select: text;
 }
 
-.st-input::placeholder { color: #9aa4b4; }
+.st-input::placeholder { color: #6b7688; }
 .st-input[readonly] { background: var(--tint); color: var(--soft); }
 
 .st-textarea { height: 70px; padding: 8px 10px; resize: vertical; }
@@ -533,3 +533,54 @@
 }
 
 .st-embedded .st-bar { flex-wrap: wrap; }
+
+/* ================================================ HIZLI GÜNCELLEME (0.5.3)
+
+   Satır içi alan: tıkla · yaz · Enter. Kaydedilmemiş alan sarı kenarla, hatalı
+   alan kırmızı kenar + alttaki cümleyle (renk TEK BAŞINA anlam taşımaz).
+   Hızlı işlem şeridi kartın tepesinde; %200 yazı büyütmede alt satıra iner. */
+
+.st-inline .st-input { width: 100%; }
+.st-inline-dirty .st-input { border-color: #b45309; background: #fffbeb; }
+.st-input[aria-busy="true"] { opacity: 0.7; }
+.st-invalid, .st-input[aria-invalid="true"] { border-color: #b91c1c; }
+.st-field-error { min-height: 0; font-size: 12px; color: #b91c1c; }
+.st-field-error:empty { display: none; }
+
+.st-quick {
+  margin: 4px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+}
+.st-quick-title { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--soft); }
+.st-quick-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.st-quick-tools { margin-top: 8px; align-items: center; }
+.st-quick-item { display: flex; flex-direction: column; gap: 3px; min-width: 150px; flex: 1 1 160px; }
+.st-quick-label { font-size: 11.5px; color: #4b5668; }
+.st-quick-input { width: 100%; }
+.st-quick-keys { margin-left: auto; font-size: 11.5px; color: var(--soft); }
+
+.st-saved {
+  display: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0 0 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: #ecfdf3;
+  color: #14532d;
+  font-size: 12.5px;
+}
+.st-saved.show { display: flex; }
+.st-sync { font-weight: 600; }
+.st-sync-delivered { color: #166534; }
+.st-sync-pending { color: #4b5668; }
+.st-sync-late, .st-sync-off { color: #9a3412; }
+
+.st :where(button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #2f5fd0;
+  outline-offset: 2px;
+}

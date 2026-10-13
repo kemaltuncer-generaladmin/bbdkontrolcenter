@@ -31,6 +31,7 @@ function soundCard(app) {
   const card = section('Zil sesi', 'Otomatik ve elle zilde çalan ses.');
   const row = h('div', 'bl-row');
   const select = h('select', 'kit-select');
+  select.setAttribute('aria-label', 'Zil sesi');
   for (const item of data.sounds || []) {
     const option = document.createElement('option');
     option.value = item.stem;
@@ -152,6 +153,7 @@ function textRow(app, { key, label, hint }) {
 
   const line = h('div', 'bl-text-line');
   const field = h('input', 'kit-input');
+  field.setAttribute('aria-label', label);
   field.value = data.settings.texts[key] || '';
   field.maxLength = 300;
   const save = button('Kaydet', {
@@ -237,6 +239,7 @@ function openProfileEditor(app, profile) {
   const name = h('input', 'kit-input bl-profile-name');
   name.maxLength = 40;
   name.placeholder = 'Ad (ör. Yarım gün)';
+  name.setAttribute('aria-label', 'Özel gün adı');
   name.value = profile?.name || '';
   const editor = timeListEditor(profile?.times || []);
 
