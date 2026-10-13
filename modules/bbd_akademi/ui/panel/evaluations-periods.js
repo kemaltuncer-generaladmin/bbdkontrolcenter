@@ -23,6 +23,8 @@ import {
   PERIOD_STATUS, PROGRESS_STATUS, averageText, exportReports, progressCell, removableChip, rowActions,
   shareText, stackCell, studentCell, targetText,
 } from './evaluations-shared.js';
+import { documentButtons } from './documents.js';
+import { mapLimit, reportCardDoc } from './documents-logic.js';
 
 /** Dönemler sekmesi: liste ⇄ dönem ayrıntısı. */
 export function periodsTab(ctx) {
@@ -163,6 +165,8 @@ function periodDetail(ctx, periodId, initial, { onBack, onChanged, onDeleted }) 
     query: () => ({ status: studentStatus || undefined, classGroupId: classGroupId || undefined }),
     limit: 50,
     rowKey: (row) => String(row.student?.id || ''),
+    // Seçim toplu karne içindir: seçilenlerin karneleri tek baskı işi olur.
+    selectable: app.can('admin_getEvaluation'),
     columns: [
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.6fr)', cell: (row) => studentCell(row.student) },
       { key: 'status', label: 'Durum', width: '110px', cell: (row) => statusBadgeOf(row.status) },
@@ -226,6 +230,27 @@ function periodDetail(ctx, periodId, initial, { onBack, onChanged, onDeleted }) 
     refreshSoon();
   });
 
+  /**
+   * Toplu karne: seçili öğrenciler; seçim yoksa süzgeçteki YAYIMLANMIŞ bütün
+   * değerlendirmeler. Akademi'ye aynı anda en çok 4 istek (A14), iptal edilebilir.
+   */
+  async function reportCards(progress, state) {
+    let rows = students.table.selectedRows().filter((row) => row.evaluationId);
+    if (!rows.length) {
+      progress(0, 0, 'Değerlendirmeler listeleniyor…');
+      rows = (await app.api.all(`/v1/admin/evaluation-periods/${periodId}/students`,
+        { status: 'published', classGroupId: classGroupId || undefined }, { limit: 100, max: 1000 }))
+        .filter((row) => row.evaluationId);
+    }
+    if (!rows.length || state.cancelled) return null;
+    const evaluations = await mapLimit(rows, 4, (row) => (state.cancelled ? null
+      : app.api.get(`/v1/admin/evaluations/${row.evaluationId}`)),
+    (done, total) => progress(done, total, `Karneler okunuyor… ${done} / ${total}`));
+    const className = ctx.classList.find((item) => item.id === classGroupId)?.name || '';
+    return reportCardDoc(evaluations.filter(Boolean),
+      { title: [period?.name, className, 'karneleri'].filter(Boolean).join(' · ') });
+  }
+
   // ------------------------------------------------------------- çizim
   function paint() {
     if (!period) return;
@@ -238,6 +263,10 @@ function periodDetail(ctx, periodId, initial, { onBack, onChanged, onDeleted }) 
     }
     actions.push(actionButton(app, 'admin_exportEvaluationReports', 'Gelişim karnesi (PDF)', {
       onClick: () => exportReports(ctx, { periodId, periodName: period.name, classGroupId }) }));
+    if (app.can('admin_getEvaluation')) {
+      actions.push(documentButtons(app, { title: 'Karneler', label: 'Karneler',
+        build: (progress, state) => reportCards(progress, state) }));
+    }
     if (!closed) {
       actions.push(actionButton(app, 'admin_updateEvaluationPeriod', 'Düzenle', { onClick: () => edit() }));
       actions.push(actionButton(app, 'admin_closeEvaluationPeriod', 'Dönemi kapat', {

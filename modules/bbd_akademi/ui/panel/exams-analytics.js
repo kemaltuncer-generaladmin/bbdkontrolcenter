@@ -19,6 +19,8 @@ import {
   empty, fmtDate, loader, num, optionsOf, selectBox, studentPicker, todayIst, toolbar,
 } from './common.js';
 import { EXAM_TYPES, netText, ratioText, sectionLabel, studentCell } from './exams-shared.js';
+import { documentButtons } from './documents.js';
+import { examAnalysisDoc } from './documents-logic.js';
 
 const netFormat = (value) => num(value, 1);
 const shortDate = (iso) => {
@@ -39,8 +41,15 @@ export function analysisTab(app, exam) {
     const list = allowed.size ? groups.filter((item) => allowed.has(item.id)) : groups;
     classSelect.options([{ value: '', label: 'Tüm kurum' }, ...list.map((item) => ({ value: item.id, label: item.name }))]);
   }).catch(() => {});
+  let classNames = new Map();
+  app.lookups.classGroups().then((groups) => { classNames = new Map(groups.map((item) => [item.id, item.name])); })
+    .catch(() => {});
+  const analysisDoc = documentButtons(app, { title: 'Deneme analizi', label: 'Analiz raporu',
+    build: async () => examAnalysisDoc(await app.api.get(`/v1/admin/exams/${exam.id}/analysis`,
+      { classGroupId: classGroupId || undefined }), { classGroupName: classNames.get(classGroupId) || '' }) });
   node.append(toolbar(classSelect.node, h('span', 'kit-spacer'),
-    exam.status !== 'published' ? h('span', 'ak-muted', 'Yayımlanmamış sonuçlar yalnız yöneticilere görünür.') : null));
+    exam.status !== 'published' ? h('span', 'ak-muted', 'Yayımlanmamış sonuçlar yalnız yöneticilere görünür.') : null,
+    analysisDoc));
 
   const view = loader(() => app.api.get(`/v1/admin/exams/${exam.id}/analysis`,
     { classGroupId: classGroupId || undefined }), (data) => render(data), { rows: 6, columns: 4 });

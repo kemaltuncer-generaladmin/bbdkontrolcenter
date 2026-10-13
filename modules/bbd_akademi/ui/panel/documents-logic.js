@@ -142,6 +142,17 @@ function documentOf(kind, title, partList, { orientation = 'portrait', filename 
   return { kind, document: { title, filename: filename || title, orientation, parts: partList } };
 }
 
+/** Aynı türden belgeleri tek baskı işine birleştirir (her biri kendi sayfasından başlar). */
+export function mergeDocs(models, { title = '', filename = '' } = {}) {
+  const list = (models || []).filter((model) => model?.document);
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  return documentOf(list[0].kind, title || list[0].document.title, list.flatMap((model) => model.document.parts), {
+    orientation: list.some((model) => model.document.orientation === 'landscape') ? 'landscape' : 'portrait',
+    filename: filename || `${title || list[0].document.title} ${list.length}`,
+  });
+}
+
 function cell(text, tone = '', bold = false) {
   return tone || bold ? { text: String(text ?? ''), tone, bold } : String(text ?? '');
 }

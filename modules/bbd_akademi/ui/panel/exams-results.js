@@ -16,6 +16,8 @@ import {
 import {
   RESULT_SOURCE, estimateNet, netText, sectionLabel, sortedSections, studentCell,
 } from './exams-shared.js';
+import { documentButtons } from './documents.js';
+import { examResultDoc, examResultsDoc, mapLimit, mergeDocs } from './documents-logic.js';
 
 /** Denemeye katılan sınıflar (tanımda seçilmediyse bütün sınıflar). */
 async function examClassOptions(app, exam, emptyLabel = 'Tüm sınıflar') {
@@ -35,7 +37,11 @@ export function resultsTab(app, exam, { onChanged } = {}) {
   const classSelect = selectBox([{ value: '', label: 'Tüm sınıflar' }], '', (value) => {
     filters.classGroupId = value; list.reload();
   }, { label: 'Sınıf' });
-  examClassOptions(app, exam).then((options) => classSelect.options(options)).catch(() => {});
+  let classNames = new Map();
+  examClassOptions(app, exam).then((options) => {
+    classSelect.options(options);
+    classNames = new Map(options.map((item) => [item.value, item.label]));
+  }).catch(() => {});
   const missing = h('label', 'ak-inline ak-ex-toggle');
   const missingCheck = h('input', 'kit-check');
   missingCheck.type = 'checkbox';
@@ -43,7 +49,27 @@ export function resultsTab(app, exam, { onChanged } = {}) {
   missing.append(missingCheck, h('span', '', 'Yalnız sonucu eksik öğrenciler'));
   const add = actionButton(app, 'admin_putExamResult', 'Sonuç gir', { variant: 'primary',
     onClick: () => edit(null, null) });
-  node.append(toolbar(classSelect.node, missing, h('span', 'kit-spacer'), add));
+  // Belgeler: sınıf sonuç listesi (süzgeçteki bütün sonuçlar, sayfalı okunur) ve
+  // seçili öğrencilerin sonuç belgeleri (tek iş; Akademi'ye aynı anda en çok 4 istek).
+  const scopeName = () => (filters.classGroupId ? classNames.get(filters.classGroupId) || '' : '');
+  const listDoc = documentButtons(app, { title: 'Sonuç listesi', label: 'Sonuç listesi',
+    build: async (progress) => {
+      progress(0, 0, 'Sonuçlar okunuyor…');
+      const rows = await app.api.all(`/v1/admin/exams/${exam.id}/results`,
+        { classGroupId: filters.classGroupId || undefined }, { limit: 100, max: 3000 });
+      return examResultsDoc(exam, rows.filter((row) => row.updatedAt || row.absent), { classGroupName: scopeName() });
+    } });
+  const studentDocs = documentButtons(app, { title: 'Sonuç belgeleri', label: 'Seçilenlerin belgesi',
+    build: async (progress, state) => {
+      const chosen = list.table.selectedRows().filter((row) => row.updatedAt || row.absent);
+      if (!chosen.length) throw new Error('Önce listeden sonucu olan öğrencileri seçin.');
+      const results = await mapLimit(chosen, 4, (row) => (state.cancelled ? null
+        : app.api.get(`/v1/students/${row.student.id}/exams/${exam.id}`)
+          .then((result) => examResultDoc(result, row.student))),
+      (done, total) => progress(done, total, `Sonuç belgeleri okunuyor… ${done} / ${total}`));
+      return mergeDocs(results, { title: `${exam.name} sonuç belgeleri` });
+    } });
+  node.append(toolbar(classSelect.node, missing, h('span', 'kit-spacer'), listDoc, studentDocs, add));
 
   const columns = [
     { key: 'student', label: 'Öğrenci', width: 'minmax(170px, 1.6fr)', cell: (row) => studentCell(row.student) },
@@ -85,6 +111,7 @@ export function resultsTab(app, exam, { onChanged } = {}) {
     columns,
     rowKey: (row) => row.student?.id,
     dense: true,
+    selectable: true,
     empty: { title: 'Bu süzgece uyan sonuç yok',
       text: 'Sonuçları “Toplu yükleme” sekmesinden dosyayla yükleyin ya da “Sonuç gir” ile tek tek girin.' },
   });
