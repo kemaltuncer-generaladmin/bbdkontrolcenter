@@ -13,8 +13,8 @@ takvim değişince tablo yeniden verilir, zamanlayıcı kendini yeniler.
    açılan makinede sabahki zillerin arka arkaya çalması felakettir.
 2. **Saat değişimi / yaz saati.** Uyku sadece `sleep(1)` ile değil, her
    turda duvar saatine bakarak ilerler; kayma kendini bir sonraki turda düzeltir.
-3. **Çift tetikleme.** Her tetikleyicinin son çalışma damgası tutulur; aynı
-   dakika içinde ikinci kez çalışmaz.
+3. **Çift tetikleme.** Her tetikleyicinin son çalıştığı GÜN + SAAT tutulur;
+   gecikme payı bir dakikadan uzun olsa da aynı gün ikinci kez çalışmaz.
 """
 
 from __future__ import annotations
@@ -217,7 +217,6 @@ class WeeklyScheduler:
 
     async def _tick(self, now: datetime) -> None:
         day = DAYS[now.weekday()]
-        stamp = now.strftime("%Y-%m-%d %H:%M")
         now_minutes = now.hour * 60 + now.minute
 
         for owner, (triggers, handler) in list(self._plans.items()):
@@ -233,10 +232,19 @@ class WeeklyScheduler:
                 if late < 0 or late > self._grace:
                     continue
 
+                # DAMGA TETİĞİN KENDİ DAKİKASIDIR, turun dakikası DEĞİL.
+                # BULUNAN ARIZA (13.10.2026, canlı zil günlüğü): damga turun
+                # dakikasıydı ve gecikme payı (90 sn) bir dakikadan uzun.
+                # 08:39'luk tetik 08:39:0x'te çalışıyor, 08:40:0x'te "gecikme
+                # 62 sn ≤ 90, damga 08:40 ≠ 08:39" diye BİR KEZ DAHA çalışıyordu:
+                # her zil köprüye iki komut yazıyordu (#1274 + #1275), ajan
+                # ikincisini "zamanı 26 sn geçmiş" diye atlıyordu — kısa bir zil
+                # sesinde ikinci kez çalardı.
+                occurrence = f"{now.strftime('%Y-%m-%d')} {trigger.time}"
                 key = f"{owner}|{trigger.key()}"
-                if self._fired.get(key) == stamp:
+                if self._fired.get(key) == occurrence:
                     continue
-                self._fired[key] = stamp
+                self._fired[key] = occurrence
 
                 try:
                     await handler(trigger)

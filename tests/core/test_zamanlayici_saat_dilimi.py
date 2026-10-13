@@ -16,7 +16,7 @@ KURAL: kullanıcı 10:40 girdiyse zil TÜRKİYE SAATİYLE 10:40'ta çalar.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -106,3 +106,57 @@ def test_girilen_saat_turkiye_saatiyle_calar() -> None:
     yerel = an.astimezone(ISTANBUL)
     assert (yerel.hour, yerel.minute) == (10, 40)
     assert (yerel - simdi).total_seconds() == 40 * 60
+
+
+# ------------------------------------------------ bir tetik = bir çalışma
+
+
+async def test_tetik_gecikme_payinda_iki_kez_calismaz() -> None:
+    """BULUNAN ARIZA (13.10.2026, canlı zil günlüğü). Gecikme payı (90 sn) bir
+    dakikadan uzun; damga turun dakikasıyken 08:39'luk tetik 08:39:0x'te ve
+    08:40:0x'te İKİ KEZ çalışıyordu — her zil köprüye iki komut yazıyordu.
+
+    Zaman 5 sn'lik turlarla 08:38:55'ten 08:41:30'a sürülür: tetik bir kez."""
+    scheduler = WeeklyScheduler(FakeLog(), timezone="Europe/Istanbul")
+    fired: list[str] = []
+
+    async def kaydet(trigger: Trigger) -> None:
+        fired.append(trigger.label)
+
+    scheduler.set_plan("bell", [Trigger(day="mon", time="08:39", label="gönderim")], kaydet)
+    an = datetime(2026, 10, 12, 8, 38, 55, tzinfo=ISTANBUL)          # pazartesi
+    while an <= datetime(2026, 10, 12, 8, 41, 30, tzinfo=ISTANBUL):
+        await scheduler._tick(an)
+        an += timedelta(seconds=5)
+    assert fired == ["gönderim"]
+
+
+async def test_ayni_tetik_ertesi_hafta_yine_calisir() -> None:
+    scheduler = WeeklyScheduler(FakeLog(), timezone="Europe/Istanbul")
+    fired: list[datetime] = []
+
+    async def kaydet(trigger: Trigger) -> None:
+        fired.append(an)
+
+    scheduler.set_plan("bell", [Trigger(day="mon", time="08:39", label="x")], kaydet)
+    for hafta in (12, 19):
+        an = datetime(2026, 10, hafta, 8, 39, 2, tzinfo=ISTANBUL)
+        await scheduler._tick(an)
+        an = datetime(2026, 10, hafta, 8, 40, 2, tzinfo=ISTANBUL)
+        await scheduler._tick(an)
+    assert [item.day for item in fired] == [12, 19]
+
+
+async def test_gec_uyanista_pay_icinde_bir_kez_disinda_hic() -> None:
+    """Uyku dönüşü: pay içindeki tetik geç de olsa BİR kez, payı aşan hiç çalışmaz."""
+    scheduler = WeeklyScheduler(FakeLog(), timezone="Europe/Istanbul")
+    fired: list[str] = []
+
+    async def kaydet(trigger: Trigger) -> None:
+        fired.append(trigger.time)
+
+    scheduler.set_plan("bell", [Trigger(day="mon", time="08:39"),
+                                Trigger(day="mon", time="08:30")], kaydet)
+    await scheduler._tick(datetime(2026, 10, 12, 8, 40, 20, tzinfo=ISTANBUL))
+    await scheduler._tick(datetime(2026, 10, 12, 8, 40, 25, tzinfo=ISTANBUL))
+    assert fired == ["08:39"]
