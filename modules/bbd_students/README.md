@@ -7,7 +7,59 @@ ikinci veli, not, seviye/alan/hedef sınav) modülün kendi tablosundadır.
 
 Grup: **BBD** · İzinler: `bbd_students.view`, `bbd_students.manage`,
 `bbd_students.qr`, `bbd_students.access_code`, `bbd_students.canteen_controls`,
-`bbd_students.groups`
+`bbd_students.groups`, `bbd_students.lifecycle`, `bbd_students.delete`
+
+## Ekran BBD Akademi'de (13.10.2026)
+
+Kullanıcı isteği: "Öğrenci yönetimini tamamıyla BBD Akademi kısmına taşıyalım."
+Öğrenci listesi, toplu işlemler ve gruplar **BBD Akademi → Öğrenciler**'de;
+öğrencinin tek kartında **"Kayıt ve veliler"** sekmesi bu modülün kaydıdır.
+VERİ SAHİPLİĞİ DEĞİŞMEDİ: kayıt burada, kantin otorite; yazmalar bu modülün
+uçlarından (önce KM, sonra kantin, outbox olayı). Bağ ARAYÜZ yetenekleriyle
+(K3; `ui/panel/index.js` → `capabilities()`):
+
+- `bbd_students.manager` `(root, {capability, openStudent, hideModes})` → temizlik
+  işlevi (`.setMode('list'|'bulk'|'groups')`): liste + toplu işlemler + gruplar.
+- `bbd_students.record` `(root, {kantinId, capability, toast, onChanged, onLoaded,
+  onRemoved})` → `{reload, dirty, destroy}`: tek öğrencinin kaydı (`record.js`).
+
+Menüdeki "Öğrenci Yönetimi" ekranı, kullanıcı BBD Akademi'yi görebiliyorsa
+(`bbd_akademi.students` işaret yeteneği çözülüyorsa) Akademi → Öğrenciler'e
+yönlendirir (`{kantinId}` → ilgili öğrencinin kartı); göremeyen roller (ör.
+`accountant`, `org_staff`) yönetimi burada aynı bileşenlerle yapar. İzinler
+değişmedi (`bbd_students.*`).
+
+### Veliler (göç 007)
+
+En çok **4 veli**; sıra önceliktir, **ilk veli birincildir** (yuva 1: telefonu
+kantinde — kantin kartı ve veli kantin kontrolleri bununla). Yuva 2 profilde
+(`parent_name2`, `parent_phone2`), 3–4 `guardians_extra` (JSON). Her velinin
+yakınlığı (anne, baba, vasi, büyükanne/büyükbaba, kardeş, diğer). Telefon
+zorunlu ve cep olmalı (`+90 5xx xxx xx xx`; yazımda `0`, `+90`, boşluk serbest);
+aynı öğrencide aynı telefon iki kez olamaz; **aynı telefon başka öğrencinin
+velisi olabilir** (kartta "bu telefon X için de veli" notu). Kural tek yerde:
+`backend/guardians.py`; ekranın aynısı `ui/panel/guardian-model.js` (Node testli).
+
+- `GET /students/{id}/guardians` → `{items[{slot, name, phone, relation, primary,
+  appAccess, siblings}], max, appSlots, relations}` (`bbd_students.view`)
+- `PUT /students/{id}/guardians {items:[{name, phone, relation}]}` — tam liste
+  (`bbd_students.manage`; 422 `validation_error` + `details[{index, field}]`).
+  Değişmediyse yazılmaz. Birincil değişince 1. yuva telefonu kantine gider.
+- Olaylar: yuva 1–2 telefonu `guardian.linked|unlinked|phone_changed`
+  (`data.slot`), ad / yakınlık / 3.–4. veli `student.updated` (`["guardians"]`).
+  Dizin `guardians[]` öğesi `relation` ve yuva 3–4'ü taşır; mobil geçit bugün
+  yalnız yuva 1–2'yi Akademi'ye iletir (sözleşme genişletmesi Akademi işinde).
+
+### Sınıf ve gruplar
+
+**Ana sınıf tektir** (`class_name`: kantin kartı, Akademi sınıfı ve müfredat
+önerisi ondan); bir öğrencinin **birden çok topluluğa** üyeliği tarihli
+**gruplarla**dır (aşağıda). Toplu ana sınıf: `POST /students/class
+{students, className}` (`bbd_students.manage`; öğrenci başına
+`student.updated` `["className"]`, kantine gidilmez; boş ad temizler). Toplu
+grup: mevcut `POST /groups/{id}/members`, `/members/end`, `POST /groups/move`
+(çoklu `studentIds`). Tek öğrencinin kaydı: `GET /students/{id}` (kantine o an
+ulaşılamazsa dizinin son görüntüsünden, `canteenUnavailable`).
 
 ## Yetenekler
 
@@ -42,7 +94,7 @@ isteğe bağlı anons adı (`callName`).
   başlamamış üyelikler kaldırılır; arşivden geri almak serbesttir.
 - Her yazma kalıcı **grup revizyonunu** +1 artırır (dizinin süreç içi
   `revision`'ından ayrıdır; senkron imlecidir).
-- Ekran: "Gruplar" sekmesi (liste, bugünkü üye sayısı, tür ve arşiv süzgeci,
+- Ekran: BBD Akademi → Öğrenciler → "Gruplar" sekmesi (liste, bugünkü üye sayısı, tür ve arşiv süzgeci,
   grup ayrıntısı, çoklu öğrenci seçici, çıkar/taşı, üyelik geçmişi ve
   düzeltme, "Sınıftan grup oluştur") ve öğrenci kartında "Gruplar" bölümü.
   Yazma `bbd_students.groups`, okuma `bbd_students.view` ister.
