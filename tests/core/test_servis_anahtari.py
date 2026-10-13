@@ -203,8 +203,15 @@ async def test_servis_kullanicisi_pin_ile_giremez(kimlik: Identity) -> None:
 # ------------------------------------------------------------------ HTTP
 
 
-@pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
+#: Bağlantının geldiği adres — sunucuda Coolify Traefik'i (konteyner ağı).
+#: Başlıklar yalnız güvenilir vekilden gelindiğinde okunur (ADR 0030).
+TRAEFIK = ("10.0.1.5", 50000)
+#: Cloudflare kenar sunucusu (162.158.0.0/15) ve Akademi sunucusunun çıkışı.
+CF_EDGE = "162.158.12.34"
+AKADEMI = "89.252.177.76"
+
+
+def _app_client(tmp_path: Path, peer: tuple[str, int]) -> TestClient:
     data = deepcopy(load_config().as_dict())
     data["core"] = {
         **data.get("core", {}),
@@ -214,7 +221,20 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     }
     data["auth"] = {**data.get("auth", {}), "bootstrap_pin": YONETICI_PINI}
     data["files"] = {"output_path": str(tmp_path / "cikti")}
-    with TestClient(create_app(Config(data, root=ROOT)), raise_server_exceptions=False) as c:
+    return TestClient(create_app(Config(data, root=ROOT)), raise_server_exceptions=False,
+                      client=peer)
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    with _app_client(tmp_path, TRAEFIK) as c:
+        yield c
+
+
+@pytest.fixture
+def dogrudan(tmp_path: Path) -> Iterator[TestClient]:
+    """Vekilsiz, internetten doğrudan gelen bağlantı (güvenilmeyen adres)."""
+    with _app_client(tmp_path, ("203.0.113.50", 40000)) as c:
         yield c
 
 
@@ -326,7 +346,7 @@ def test_gecersiz_anahtar_401_ve_kaynak_basina_429(client: TestClient) -> None:
     assert _audit(client, "auth.service_key")[0]["result"] == "fail"
 
 
-def test_ag_kisiti_en_sagdaki_xff_ile(client: TestClient) -> None:
+def test_ag_kisiti_vekilin_gordugu_adresle(client: TestClient) -> None:
     _, token = _issue(client, cidrs=["203.0.113.0/24"])
     # İlk değer istemcinin uydurduğu; en sağdaki vekilin gördüğü adres.
     uydurma = client.get("/auth/me", headers={
@@ -352,3 +372,72 @@ def test_servis_istek_kovasi_ayri(client: TestClient) -> None:
     assert "Retry-After" in cevap.headers
     # PIN girişinin kovası etkilenmedi.
     assert client.post("/api/auth/login", json={"password": YONETICI_PINI}).status_code == 200
+
+
+# ------------------------------------------------ gerçek istemci adresi (ADR 0030)
+
+
+def test_cloudflare_arkasinda_cf_connecting_ip_esas(client: TestClient) -> None:
+    """Akademi → Cloudflare → Traefik: en sağ durak Cloudflare; anahtar kısıtı geçer."""
+    _, token = _issue(client, cidrs=[f"{AKADEMI}/32"])
+    cevap = client.get("/auth/me", headers={
+        "Authorization": f"Bearer {token}",
+        # Traefik Cloudflare'e güvenmediği için gelen X-Forwarded-For'u siler ve
+        # yalnız gördüğü adresi (Cloudflare kenarı) yazar.
+        "X-Forwarded-For": CF_EDGE,
+        "CF-Connecting-IP": AKADEMI,
+    })
+    assert cevap.status_code == 200, cevap.text
+    # Traefik Cloudflare'e güveniyorsa liste "istemci, kenar" olur — sonuç aynı.
+    cevap = client.get("/auth/me", headers={
+        "Authorization": f"Bearer {token}",
+        "X-Forwarded-For": f"{AKADEMI}, {CF_EDGE}",
+        "CF-Connecting-IP": AKADEMI,
+    })
+    assert cevap.status_code == 200, cevap.text
+
+
+def test_cloudflare_atlanarak_uydurulan_baslik_reddedilir(client: TestClient) -> None:
+    """Doğrudan sunucuya gelen saldırgan CF-Connecting-IP ve X-Forwarded-For uydurur."""
+    _, token = _issue(client, cidrs=[f"{AKADEMI}/32"])
+    for basliklar in (
+        {"X-Forwarded-For": "198.51.100.66", "CF-Connecting-IP": AKADEMI},
+        {"X-Forwarded-For": f"{AKADEMI}, 198.51.100.66", "CF-Connecting-IP": AKADEMI},
+        {"X-Forwarded-For": f"{CF_EDGE}, 198.51.100.66", "CF-Connecting-IP": AKADEMI},
+        {"X-Forwarded-For": "bozuk-deger", "CF-Connecting-IP": AKADEMI},
+    ):
+        cevap = client.get("/auth/me", headers={"Authorization": f"Bearer {token}", **basliklar})
+        assert cevap.status_code == 401, basliklar
+    satir = _audit(client, "auth.service_key")[-1]
+    assert satir["result"] == "fail" and "izinli ağ dışı" in satir["detail"]
+
+
+def test_vekilsiz_baglantida_basliklar_okunmaz(dogrudan: TestClient) -> None:
+    """Bağlantı güvenilir vekilden gelmiyorsa adres bağlantının kendisidir."""
+    _, token = _issue(dogrudan, cidrs=[f"{AKADEMI}/32"])
+    cevap = dogrudan.get("/auth/me", headers={
+        "Authorization": f"Bearer {token}", "X-Forwarded-For": f"{CF_EDGE}",
+        "CF-Connecting-IP": AKADEMI,
+    })
+    assert cevap.status_code == 401
+    _, acik = _issue(dogrudan, cidrs=["203.0.113.0/24"])
+    assert dogrudan.get("/auth/me", headers={"Authorization": f"Bearer {acik}"}).status_code == 200
+
+
+def test_basarisiz_deneme_kovasi_gercek_adrese_gore(client: TestClient) -> None:
+    """Cloudflare arkasında herkes aynı kenar adresinden gelir; kova gerçek adrese göre."""
+    _, token = _issue(client)
+    yanlis = token[:-3] + ("xyz" if not token.endswith("xyz") else "abc")
+    for _ in range(12):
+        client.get("/auth/me", headers={"Authorization": f"Bearer {yanlis}",
+                                         "X-Forwarded-For": CF_EDGE,
+                                         "CF-Connecting-IP": "198.51.100.77"})
+    kilitli = client.get("/auth/me", headers={"Authorization": f"Bearer {yanlis}",
+                                               "X-Forwarded-For": CF_EDGE,
+                                               "CF-Connecting-IP": "198.51.100.77"})
+    assert kilitli.status_code == 429
+    # Aynı Cloudflare kenarından gelen BAŞKA istemci kilitlenmez.
+    cevap = client.get("/auth/me", headers={"Authorization": f"Bearer {token}",
+                                             "X-Forwarded-For": CF_EDGE,
+                                             "CF-Connecting-IP": AKADEMI})
+    assert cevap.status_code == 200

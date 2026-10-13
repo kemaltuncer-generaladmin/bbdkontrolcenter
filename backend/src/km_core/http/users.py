@@ -51,6 +51,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from km_core.http.client_address import client_address
 from km_core.http.deps import requires
 from km_core.security.identity import (
     CurrentUser,
@@ -205,21 +206,16 @@ def _limiter(request: Request) -> RateLimiter:
 
 
 def _client_source(request: Request) -> str:
-    """İsteğin geldiği kaynak.
+    """İsteğin geldiği kaynak — giriş hız sınırının kovası.
 
-    Ters vekil (Traefik/Coolify) arkasında `request.client.host` konteyner
-    ağının adresidir ve HERKES İÇİN AYNIDIR — sınır o hâliyle tüm kullanıcıları
-    tek kovaya koyar. `X-Forwarded-For`un İLK değeri gerçek istemcidir.
-
-    Başlık istemci tarafından uydurulabilir; burada bu KABUL EDİLEBİLİR bir
-    risktir çünkü uydurmanın tek etkisi saldırganın kendi kovasını bölmesidir
-    ve genel sınır o yolu da kapatır.
+    Ters vekil (Traefik/Coolify) ve Cloudflare arkasında `request.client.host`
+    konteyner ağının adresidir ve HERKES İÇİN AYNIDIR; `X-Forwarded-For`un
+    en sağı da bir Cloudflare kenar sunucusudur. Eskiden okunan İLK değer ise
+    istemcinin uydurabildiği değerdi: saldırgan her denemede başka bir değer
+    yazıp kaynak sınırını atlatabiliyordu. Kaynak artık güvenilir vekil
+    zincirinden çözülür (ADR 0030, `client_address.py`).
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    client = request.client
-    return client.host if client else "bilinmeyen"
+    return client_address(request) or "bilinmeyen"
 
 
 async def _prepare_login(request: Request) -> None:

@@ -104,5 +104,11 @@ EXPOSE 8000
 # GÖÇ AÇILIŞTA KOŞAR: `create_app` lifespan'i içinde `build_schema` ve
 # kernel'in modül göçleri çağrılır. Ayrı bir `migrate` adımı yoktur — atlanacak
 # bir adım, yarım şema demektir.
+#
+# `--no-proxy-headers` (ADR 0030): istemci adresini uygulama kendisi çözer
+# (`km_core/http/client_address.py`: güvenilir vekil + Cloudflare). uvicorn
+# başlıkları işlerse — ör. biri FORWARDED_ALLOW_IPS='*' verirse — adresi
+# X-Forwarded-For'un uydurulabilir İLK değeriyle değiştirir ve servis
+# anahtarının ağ kısıtı delinir.
 CMD ["uvicorn", "km_core.http.app:create_app", "--factory", \
-     "--host", "0.0.0.0", "--port", "8000"]
+     "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

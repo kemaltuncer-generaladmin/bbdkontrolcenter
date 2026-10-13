@@ -1,6 +1,6 @@
 # ADR 0028 — Servis anahtarları: makineden makineye kimlik
 
-**Durum:** Kabul edildi · 12.10.2026
+**Durum:** Kabul edildi · 12.10.2026 · §4 (istemci adresi) [ADR 0030](0030-gercek-istemci-adresi.md) ile değişti
 **Etkilediği:** `km_core/security` (`identity.py`, `service_keys.py`,
 `audit_context.py`, `migrations.py` → `0011_service_keys`), `km_core/http/deps.py`,
 `km_core/http/app.py`, `scripts/service-key.py`

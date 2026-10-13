@@ -144,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Yeni servis kullanıcısının rolü (tekrarlanabilir; "
                              f"varsayılan {DEFAULT_ROLE}).")
     create.add_argument("--cidr", action="append", default=[],
-                        help="İzinli ağ (tekrarlanabilir). Verilmezse her adres.")
+                        help="İzinli ağ (tekrarlanabilir). Verilmezse her adres. Adres "
+                             "Cloudflare/Traefik arkasında gerçek istemcidir (ADR 0030); "
+                             "ör. Akademi sunucusu 89.252.177.76/32.")
 
     sub.add_parser("list", help="Anahtarları listele (anahtarın kendisi gösterilmez).")
 
