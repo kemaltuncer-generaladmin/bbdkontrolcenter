@@ -167,7 +167,7 @@ düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
 | Kurum finansı · Kitap talepleri (Kurum) | Kantin ve Finans |
 | Ayarlar → Kantin kuralları | Kantin ve Finans → Kantin (+ KM kantin ekranlarına geçiş) |
 | Ayarlar · Personel · KVKK talepleri (Yönetim) | Ayarlar → Kurum ayarları · Personel · KVKK talepleri |
-| Ayarlar sekme sırası | Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron · Dizin eşitleme · Entegrasyon anahtarları · Denetim kaydı |
+| Ayarlar sekme sırası | Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron · Dizin eşitleme · SMS (0.5.6) · Entegrasyon anahtarları · Denetim kaydı |
 
 | Eski öğrenci kartı sekmesi (15) | Yeni kart sekmesi → bölüm |
 |---|---|
@@ -297,6 +297,15 @@ adlıdır. Öğrenciler'de "Sınıflar" sekmesi (KM sınıf tanımı: seviye / a
 sınav) ile "Dönem ve rehber" (Akademi sınıf eşlemesi) ayrıdır; gömülü KM
 yöneticisi içeriden sekme değiştirince (ör. "Sınıfların seviyesi →") Akademi
 şeridi de o sekmeyi gösterir (`onMode`).
+
+**0.5.6 (sms-kale, Akademi README §14 madde 58):** Ayarlar → **SMS** sekmesi
+(`settings-sms.js`, okuma `admin_getSmsHealth`): son 1 saatin OTP SMS teslim oranı,
+ortalama / en uzun teslim, geciken ve başarısız sayısı, Netgsm SMS paketi; maskeli OTP
+SMS günlüğü (`admin_listOtpSmsLog`, teslim durumuyla) ve bir telefonun saat / gün
+sayaçlarını sıfırlama (`admin_resetSmsLimits` — Akademi + KM geçidi birlikte, denetim
+kaydı `sms.limits_reset`). İzin `integrations.manage`. Geçit tarafı (jobId, hat, teslim
+izi, göç 003, `GET /sms/otp/{jobId}`, `POST /sms/limits/reset`) `mobile_gateway`
+README'sindedir.
 
 Belgeler (0.5.4, akademi-belge bileşeniyle): Kitap satışı ayrıntısında **Satış
 belgesi** (`book_sale` — kitaplar, öğrenci satırları, teslim alan imza sütunu;
