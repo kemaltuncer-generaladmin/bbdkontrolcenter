@@ -278,6 +278,8 @@ export function documentButtons(app, { build, title = 'Belge', label = '', disab
   const previewBtn = button(label ? `${label} · önizle` : 'Önizle', {
     title: disabled || `${title}: kurum logolu belgeyi önizler (PDF kaydet / yazdır).` });
   const printBtn = button('Yazdır', { title: disabled || `${title}: önizlemeden bu cihazın yazıcısına gönderir.` });
+  // Bir ekranda birden çok "Yazdır" olabilir: ekran okuyucu hangisi olduğunu duysun.
+  printBtn.setAttribute('aria-label', `${label || title} — yazdır`);
   for (const item of [previewBtn, printBtn]) item.disabled = Boolean(disabled);
   let running = false;
   const run = async (print, opener) => {
