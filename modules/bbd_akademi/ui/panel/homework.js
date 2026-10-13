@@ -19,15 +19,15 @@
 import { blockedButton, button, clip, h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, badge, card, chipRow, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
+import { programPicker, topicTree } from './curriculum-picker.js';
 import {
   actionButton, addDays, clockInput, confirmAction, dateInput, empty, errorBox, fmtDate,
-  fmtDateTime, formDialog, gradeText, istanbulStamp, kv, loader, multiChips, num, openDrawer,
+  fmtDateTime, formDialog, istanbulStamp, kv, loader, multiChips, num, openDrawer,
   pagedList, percent, problem, runAction, searchBox, sectionHead, selectBox, statusBadge,
-  studentPicker, todayIst, toolbar, TRACKS, TZ,
+  studentPicker, todayIst, toolbar, TZ,
 } from './common.js';
 
 const HOMEWORK = '/v1/admin/homework';
-const PROGRAMS = '/v1/admin/curricula/programs';
 
 const SUBMISSION = { done: ['Teslim etti', 'good'], late: ['Geç teslim', 'warn'],
   overdue: ['Teslim etmedi', 'bad'], pending: ['Bekliyor', 'info'] };
@@ -54,17 +54,6 @@ function istanbulParts(stamp) {
     clock: date.toLocaleTimeString('tr-TR', { timeZone: TZ, hour: '2-digit', minute: '2-digit',
       hourCycle: 'h23' }),
   };
-}
-
-/** "TYT · 12. sınıf" — konu seçicideki program etiketi (Müfredat ekranındakiyle aynı dil). */
-function programLevel(program) {
-  const parts = [];
-  if (program?.exam) parts.push(program.exam);
-  if (program?.grade !== null && program?.grade !== undefined && program?.grade !== '') {
-    parts.push(gradeText(program.grade));
-  }
-  if (program?.tracks?.length) parts.push(program.tracks.map((track) => TRACKS[track] || track).join(' / '));
-  return parts.join(' · ') || 'Genel';
 }
 
 function isPast(stamp) {
@@ -639,93 +628,53 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
   };
 
   // ------------------------------------------------------------- konular
+  // Ders → program (hedefin seviyesine göre önerilen en üstte; seviye çipleri, arama) →
+  // ünite → konu çipleri. Yalnız KONU kimliği gönderilir (curriculum-picker.js).
   const topicField = (draft) => {
     const wrap = h('div', 'ak-stack');
     const picked = h('div', 'ak-chips');
-    const programSelect = selectBox([{ value: '', label: 'Program seçin' }], '', (programId) => loadProgram(programId),
-      { label: 'Program' });
-    const topicSlot = h('div', 'ak-stack ak-hw-topics');
     let subjectShown;
-    let unitChips = [];
-
-    const refreshChips = () => {
-      for (const { chips, live } of unitChips) chips.set(live.filter((topic) => topics.has(topic.id)).map((topic) => topic.id));
-    };
+    let targetShown = '';
     const paintPicked = () => {
       picked.replaceChildren();
       for (const [topicId, name] of topics) {
         picked.append(removableChip(name, () => {
           topics.delete(topicId);
           paintPicked();
-          refreshChips();
+          tree.refresh();
         }));
       }
       if (!topics.size) picked.append(h('span', 'ak-muted', 'Konu seçilmedi.'));
     };
+    const tree = topicTree(app, { selected: topics, onChange: () => paintPicked() });
+    const programs = programPicker(app, { onChange: (programId) => tree.load(programId) });
+    disposers.push(() => { programs.destroy(); tree.destroy(); });
+    const hint = h('span', 'ak-muted', 'Konu seçmek için önce ders seçin.');
+    const targetNow = () => ({ classGroupIds: target.classGroupIds, studentGroupIds: target.studentGroupIds,
+      studentIds: [...target.students.keys()] });
+    const targetKey = () => JSON.stringify(targetNow());
 
-    async function loadSubject(subjectId) {
-      if (subjectId === subjectShown) return;
+    async function loadSubject(subjectId, force = false) {
+      if (subjectId === subjectShown && !force) return;
       subjectShown = subjectId;
-      unitChips = [];
-      topicSlot.replaceChildren();
-      programSelect.node.hidden = !subjectId;
-      if (!subjectId) {
-        topicSlot.append(h('span', 'ak-muted', 'Konu seçmek için önce ders seçin.'));
-        return;
-      }
-      programSelect.options([{ value: '', label: 'Programlar yükleniyor…' }]);
-      try {
-        const data = await app.api.getCached(PROGRAMS, { subject: subjectId });
-        if (subjectShown !== subjectId) return;
-        const programs = data?.items || [];
-        programSelect.options([{ value: '', label: programs.length ? 'Program seçin (seviye / sınav)'
-          : 'Bu derste program yok' },
-        ...programs.map((item) => ({ value: item.id, label: `${programLevel(item)} — ${item.title}` }))]);
-        programSelect.set(programs.length === 1 ? programs[0].id : '');
-        if (programs.length === 1) loadProgram(programs[0].id);
-      } catch (failure) {
-        topicSlot.replaceChildren(errorBox(failure));
-      }
-    }
-
-    async function loadProgram(programId) {
-      unitChips = [];
-      topicSlot.replaceChildren();
-      if (!programId) return;
-      topicSlot.append(skeletonRows(3, 3));
-      try {
-        const program = await app.api.getCached(`/v1/admin/curricula/programs/${programId}`);
-        if (programSelect.value !== programId) return;
-        topicSlot.replaceChildren();
-        const units = [...(program.units || [])].filter((unit) => !unit.retired)
-          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        for (const unit of units) {
-          const live = (unit.topics || []).filter((topic) => !topic.retired)
-            .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-          if (!live.length) continue;
-          const block = h('div', 'ak-hw-unit');
-          const chips = multiChips(live.map((topic) => ({ value: topic.id, label: topic.title })),
-            live.filter((topic) => topics.has(topic.id)).map((topic) => topic.id), (ids) => {
-              const chosen = new Set(ids);
-              for (const topic of live) {
-                if (chosen.has(topic.id)) topics.set(topic.id, topic.title); else topics.delete(topic.id);
-              }
-              paintPicked();
-            });
-          unitChips.push({ chips, live });
-          block.append(h('div', 'ak-hw-unit-title', unit.title), chips.node);
-          topicSlot.append(block);
-        }
-        if (!unitChips.length) topicSlot.append(h('span', 'ak-muted', 'Bu programda konu yok.'));
-      } catch (failure) {
-        topicSlot.replaceChildren(errorBox(failure));
-      }
+      targetShown = targetKey();
+      programs.node.hidden = !subjectId;
+      tree.node.hidden = !subjectId;
+      hint.hidden = Boolean(subjectId);
+      if (!subjectId) return;
+      programs.set('');
+      tree.load('');
+      await programs.load({ subjectId, target: targetNow() });
     }
 
     paintPicked();
-    wrap.append(picked, programSelect.node, topicSlot);
+    wrap.append(picked, hint, programs.node, tree.node);
     loadSubject(draft.subjectId || '');
-    return { node: wrap, update: (next) => loadSubject(next.subjectId || '') };
+    return { node: wrap, update: (next) => {
+      // Ders değişince ya da hedef (sınıf / grup / öğrenci) değişince öneri yeniden hesaplanır.
+      if ((next.subjectId || '') !== subjectShown) loadSubject(next.subjectId || '');
+      else if (subjectShown && targetKey() !== targetShown && !programs.value) loadSubject(subjectShown, true);
+    } };
   };
 
   // ------------------------------------------------------------- kaynak

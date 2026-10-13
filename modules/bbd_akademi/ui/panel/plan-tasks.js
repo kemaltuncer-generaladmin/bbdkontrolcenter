@@ -24,8 +24,9 @@ import { button, h } from '../../ui-kit/kit.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { dateField } from '../../ui-kit/datefield.js';
 import { badge, emptyState } from '../../ui-kit/layout.js';
+import { fillProgramSelect } from './curriculum-picker.js';
 import {
-  WEEKDAYS, addDays, clockInput, fmtDate, gradeText, multiChips, num, problem, searchBox,
+  WEEKDAYS, addDays, clockInput, fmtDate, multiChips, num, problem, searchBox,
   studentPicker, todayIst,
 } from './common.js';
 
@@ -381,13 +382,11 @@ export function topicPicker(app, { subjectId = '', topicId = '', topicName = '' 
       const data = await app.api.getCached('/v1/admin/curricula/programs', { subject: state.subjectId },
         { ttlMs: 10 * 60_000 });
       if (mine !== programToken) return;
-      programSel.replaceChildren();
       const items = data?.items || [];
-      option(programSel, '', items.length ? 'Program seçin (isteğe bağlı)' : 'Bu derste program yok');
-      for (const program of items) {
-        option(programSel, program.id, [program.title, program.grade ? gradeText(program.grade) : '',
-          program.scope === 'tenant' ? 'kurum' : ''].filter(Boolean).join(' · '));
-      }
+      // Seviye gruplu ("11. sınıf · Matematik"): aynı adlı programlar (13 "Matematik") ayrışır, liste
+      // 5. sınıftan değil seviye sırasıyla gelir (curriculum-picker.js).
+      fillProgramSelect(programSel, items, { placeholder: items.length ? 'Program seçin (isteğe bağlı)'
+        : 'Bu derste program yok', recommendedFirst: false });
       programSel.disabled = !items.length;
     } catch (failure) {
       if (mine !== programToken) return;

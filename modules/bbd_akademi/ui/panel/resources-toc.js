@@ -17,6 +17,7 @@ import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, badge, skeletonRows } from '../../ui-kit/layout.js';
 import { createPicker } from '../../ui-kit/picker.js';
 import { AkademiError } from './api.js';
+import { programLabel, sortPrograms } from './curriculum-picker.js';
 import {
   actionButton, confirmAction, empty, errorBox, formDialog, multiChips, num, optionsOf, problem,
   toolbar,
@@ -467,8 +468,10 @@ async function programsFor(app, resource) {
   const fits = (program) => (!subjects.size || subjects.has(program.subject?.id))
     && ((program.grade !== null && program.grade !== undefined && grades.has(String(program.grade)))
       || (program.exam && exams.has(program.exam)) || (!grades.size && !exams.size));
-  const label = (program) => `${program.title}${program.scope === 'tenant' ? ' (kurum)' : ''}`;
-  const sort = (list) => list.sort((a, b) => label(a).localeCompare(label(b), 'tr'));
+  // "11. sınıf · Matematik": 13 ayrı "Matematik" programı seviyesiyle ayrışır; sıra sunucunun seviye
+  // sırası (5→8, LGS, 9→12, TYT, AYT), alfabetik değil (curriculum-picker.js).
+  const label = (program) => programLabel(program);
+  const sort = (list) => sortPrograms(list);
   return {
     fitting: sort(items.filter(fits)),
     others: sort(items.filter((program) => !fits(program))),

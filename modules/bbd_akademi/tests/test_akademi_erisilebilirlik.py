@@ -145,7 +145,8 @@ def test_butun_bolumler_denetimden_gecer() -> None:
 def test_akademi_izni_olmayan_yalniz_ogrencileri_gorur() -> None:
     result = node_run(KM_ONLY)
     assert result["nav"] == ["Öğrenciler"]
-    assert result["tabs"] == ["Öğrenciler", "Toplu işlemler", "Gruplar"]
+    # "Sınıflar" (13.10.2026, sınıf seviyeyi taşır): KM kaydıdır, Akademi izni istemez.
+    assert result["tabs"] == ["Öğrenciler", "Toplu işlemler", "Gruplar", "Sınıflar"]
     assert "Öğrenci kayıtlarını" in result["banner"]
     assert result["violations"] == []
     # Kart yalnız KM kaydıdır: Akademi'ye istek gitmez.
