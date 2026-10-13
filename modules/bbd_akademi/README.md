@@ -371,6 +371,55 @@ listesinde olduğu için kart onu kullanır.
   saat setleri (yalnız `CALENDAR_EVENT_BELL` açıkken, form açılınca, 5 dk
   önbellek).
 
+## Belgeler — önizle / yazdır (kurum logolu A4)
+
+Kantin raporlarıyla aynı zincir: **sunucu PDF üretir** (reportlab,
+`backend/document_pdf.py`), önizleme o PDF'in sayfa görüntüleridir
+(`pdftoppm`), **"Yazdır" PDF'in kendisini bu cihazın yazıcısına verir**
+(`ui-kit/printing.js` → `/api/outputs/document`, kapısı çekirdeğin
+`outputs.print` izni; yazıcı seçme penceresi açılmaz). Masaüstü kabuğu yoksa
+(web) yazıcı düğmesi kapalıdır ve "PDF kaydet" kalır. Kâğıt her zaman beyazdır;
+koyu tema belgeye karışmaz.
+
+- **Başlık:** kurum logosu (Akademi yayımlanmış teması, PNG/JPEG; yoksa
+  monogram), kurum adı + adres/telefon/e-posta (Akademi kurum ayarı), belge
+  adı, belge no (`AK-<tür>-yymmdd-hhmm-xxxx`, toplu işte `-001…`), düzenlenme
+  tarihi. Başlık 10 dk önbellekte; Akademi'ye ulaşılamazsa son bilinen ya da
+  `document_title` ayarındaki adla belge yine çıkar.
+- **Altbilgi:** düzenleyen (KM oturumu), KVKK gizlilik notu, parça içinde
+  "Sayfa x / y". Tablo başlığı her sayfada tekrarlanır; taslak/iptal filigranı.
+- **Uçlar:** `POST /api/bbd_akademi/km/documents/preview` `{kind, document,
+  preview}` · `POST /api/bbd_akademi/km/documents/akademi` `{kind, url, name}`
+  (Akademi'nin kendi makbuz/ekstre/kitap sipariş PDF'i; yalnız izinli kökenden,
+  `%PDF` doğrulanır). Dosya `Raporlar/Akademi/<tür>/yıl/ay/` altına 0600 yazılır.
+- **Kapı (K9):** tür, taşıdığı verinin Akademi işlemlerine bağlıdır
+  (`backend/documents.py` → `KINDS`); kullanıcı o işlemlerin KM iznini taşımalı.
+  Karne `evaluations`, kurum carisi `finance`, kitap sipariş PDF'i `books` ister.
+- **KVKK:** telefon hiçbir belgede açık yazılmaz (panel `maskPhone` + sunucu
+  ikinci kez maskeler); karnede okundu bilgisi yok; veli listesi sınıf seçimi
+  ister. Kantin ve kurum carisi ayrı belgelerdir (A12).
+- **Toplu iş (A14):** seçili öğrencilerin karneleri / sonuç belgeleri tek PDF;
+  Akademi'ye aynı anda en çok 4 istek, ilerleme ve iptal; listeler sayfalı okunur.
+
+| Ekran | Belge (tür) |
+|---|---|
+| Değerlendirme formu · dönem ayrıntısı | Öğrenci gelişim karnesi — tekil / seçilenler / yayımlanmış hepsi (`report_card`) |
+| Denemeler › Sonuçlar | Sonuç listesi (`exam_results`), seçilenlerin sonuç belgesi (`exam_result`) |
+| Denemeler › Analiz | Deneme analiz raporu (`exam_analysis`) |
+| Öğrenci kartı › Denemeler | Öğrencinin deneme sonuç belgesi (`exam_result`) |
+| Yoklama | Günlük tahta (`attendance_day`), ders çizelgesi (`attendance_sheet`), aylık çizelge (`attendance_matrix`), devamsızlık listesi (`absentee_list`) |
+| Ders programı | Sınıf haftalık programı (`timetable_class`), öğretmen programı (`timetable_teacher`) |
+| Ödevler | Ödev listesi (`homework_list`) / öğrenci süzülmüşse öğrencinin ödevleri (`homework_student`) |
+| Öğrenci kartı › Çalışma planı | Haftalık çalışma planı (`study_plan`) |
+| Öğrenci kartı › Kayıt | Özet kartı (`student_card`), ödevler, kantin dökümü (`canteen_statement`), kurum cari ekstresi |
+| Kurum finansı | Hesap ekstresi (`finance_statement`), tahsilat makbuzu (`finance_receipt`) + Akademi PDF'leri |
+| Kitap talepleri | Talep / teslim belgesi (`book_request`) + mağaza sipariş PDF'i |
+| Öğrenciler | Sınıfın veli listesi (`guardian_list`) |
+
+Şablonlar `ui/panel/documents-logic.js` (import'suz, Node testli), bileşen
+`ui/panel/documents.js`. Testler: `test_akademi_documents.py`,
+`test_akademi_documents_logic.py`, `test_akademi_documents_ui.py`.
+
 ## Hız (Akademi A14)
 
 Kalıcı bağlantı havuzu ve katı süreler (vekil); panelde her liste imleçli

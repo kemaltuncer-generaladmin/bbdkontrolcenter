@@ -29,6 +29,8 @@ import {
   money, net, num, optionsOf, pagedList, percent, personName, problem, runAction, selectBox,
   statusBadge, todayIst, toolbar,
 } from './common.js';
+import { documentButtons } from './documents.js';
+import { examResultDoc } from './documents-logic.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
   kmManagedHint, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,
@@ -305,7 +307,9 @@ function examResult(ctx, row) {
   }
   const panel = subDrawer(ctx, { title: row.name || 'Deneme', subtitle: `${EXAM_TYPES[row.type] || ''} · ${fmtDate(row.date)}` });
   const view = loader(() => app.api.get(`/v1/students/${id}/exams/${row.examId}`), (result) => {
-    const nodes = [];
+    const nodes = [toolbar(h('span', 'kit-spacer'), documentButtons(app, { title: 'Deneme sonuç belgesi',
+      label: 'Sonuç belgesi', build: async () => examResultDoc(result,
+        (await app.api.get(`/v1/admin/students/${id}`))?.student) }))];
     if (result.absent) nodes.push(alertBox('Öğrenci bu denemeye girmedi.', 'warn'));
     const score = result.estimatedScore || {};
     nodes.push(kpiRow([
