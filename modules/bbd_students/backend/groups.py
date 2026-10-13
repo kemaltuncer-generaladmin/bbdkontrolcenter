@@ -71,7 +71,12 @@ Records = list[dict[str, Any]]
 Ids = list[Any]
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_STUDENT_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+#: Kantin `opaque_id` (öğrenci kimliği) — harf/rakam (Türkçe dahil), `_`, `-`.
+#: CANLIDA kimliklerin bir kısmı Türkçe harf taşıyor (kullanıcı adından türemiş,
+#: ör. "…yazılım"); eski ASCII kuralı bu öğrencileri gruba eklemeyi 400 "Geçersiz
+#: öğrenci kimliği" ile reddediyor ve TOPLU "Gruba ekle" isteğinin TAMAMI
+#: düşüyordu (13.10.2026). Boşluk, nokta, eğik çizgi hâlâ reddedilir.
+_STUDENT_ID = re.compile(r"^[\w-]{1,64}$")
 
 #: Türkçede noktalı/noktasız i `casefold()` ile eşleşmez ("İlayda" ↔ "ilayda").
 #: Kural zil modülündekinin AYNISIDIR (bell/backend/service.py → `fold`); modül
