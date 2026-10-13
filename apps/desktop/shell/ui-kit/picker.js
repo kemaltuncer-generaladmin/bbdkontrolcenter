@@ -362,8 +362,10 @@ export function createPicker({ items = [], groupLabel = 'Grup', placeholder = 'A
     /** Uzak kip: listeyi baştan yükler. */
     reload() { return load(); },
     selection: () => [...selected.keys()],
+    /** Yerel kipte listedeki sırayla (eski davranış); uzak kipte seçiliş sırasıyla. */
     selectedItems() {
-      return [...selected.values()];
+      if (remote) return [...selected.values()];
+      return all.filter((item) => selected.has(String(item.id)));
     },
     /** `ids` dize ya da `{id, name}` kaydı olabilir (uzak kipte ad bilgisiyle). */
     select(ids) {

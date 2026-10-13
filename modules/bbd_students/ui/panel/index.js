@@ -113,6 +113,7 @@ function createManager(root, options) {
   let recordFor = null;
   let groupsView = null;
   let bulkPicker = null;
+  let loaded = false;                  // öğrenci listesi en az bir kez okundu mu
   let stopWatch = null;
   let refreshTimer = null;
   let toastTimer = null;
@@ -285,6 +286,7 @@ function createManager(root, options) {
     }
     renderList();
     if (!embedded) showRecord();
+    loaded = true;
     // Kantine ulaşılamadıysa ve liste boşsa seçici "Liste boş." demez, sebebi yazar.
     if (!connected && !students.length) bulkPicker?.setError(nodes.status.textContent, () => refresh());
     else syncBulkPicker();
@@ -688,7 +690,8 @@ function createManager(root, options) {
   // ------------------------------------------------------ toplu işlemler
 
   function syncBulkPicker() {
-    if (!bulkPicker) return;
+    // İlk okuma bitmeden boş listeyle çizilmez ("Liste boş." değil "Yükleniyor…").
+    if (!bulkPicker || !loaded) return;
     bulkPicker.setItems(sortStudents(students).map((student) => ({
       id: student.kantinId,
       name: student.displayName || 'Adsız',
