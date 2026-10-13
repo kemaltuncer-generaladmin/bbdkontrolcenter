@@ -42,7 +42,7 @@ import {
 } from './curriculum.js';
 import * as G from './guardian-model.js';
 import { mountControls } from './canteen.js';
-import { askDeactivate, askDelete, mountStatus } from './lifecycle.js';
+import { askDeactivate, askDelete, deleteBlockers, mountStatus } from './lifecycle.js';
 import { trDay, validOn } from './groups.js';
 import {
   deliveryState, fieldLabel, inlineValue, patchFor, sameValue, shortcut, undoPatch,
@@ -122,9 +122,9 @@ export function mountRecord(host, options) {
   save.disabled = true;
   const off = button('Pasifleştir', { variant: 'danger', onClick: () => deactivate() });
   const on = button('Yeniden etkinleştir', { onClick: () => reactivate() });
-  const remove = button('Kalıcı sil', { variant: 'danger', onClick: () => removeStudent() });
+  // Kalıcı silme başlıkta DEĞİL, kartın en altındaki "Tehlikeli işlemler"dedir (0.5.4).
   const actions = h('div', 'st-rec-actions');
-  actions.append(dirtyNote, off, on, remove);
+  actions.append(dirtyNote, off, on);
   const titleBox = h('div', 'st-rec-name');
   titleBox.append(title, subtitle, badges);
   head.append(titleBox, actions);
@@ -487,6 +487,9 @@ export function mountRecord(host, options) {
     canteen.append(accessPart());
 
     body.append(status, identity, school, people, canteen);
+    // Tehlikeli işlemler — EN ALTTA, ayrı (0.5.4): önerilen yol pasifleştirme; kalıcı silme
+    // önce ön kontrol (engeller açık Türkçe + ilgili yere bağlantı), sonra ad + PIN ile onay.
+    if (can('bbd_students.lifecycle') || can('bbd_students.delete')) body.append(dangerPart());
     syncCurriculum(school.suggest);
     paintGuardians(peopleBox);
     paintDirty();
@@ -692,7 +695,6 @@ export function mountRecord(host, options) {
     off.disabled = Boolean(student.scheduledDeactivation);
     on.hidden = !(inactive || student.scheduledDeactivation) || !can('bbd_students.lifecycle');
     on.textContent = inactive ? 'Yeniden etkinleştir' : 'Planı iptal et';
-    remove.hidden = !inactive || !can('bbd_students.delete');
   }
 
   function syncCurriculum(slot) {
@@ -997,16 +999,71 @@ export function mountRecord(host, options) {
         : 'Yeniden etkinleştirildi — grup üyeliklerini kontrol edin.'));
   }
 
-  async function removeStudent() {
-    const confirmName = await askDelete(dialogRoot, { student });
-    if (!confirmName) return;
+  function dangerPart() {
+    const box = card('Tehlikeli işlemler', 'Öğrenci ayrıldıysa önerilen yol PASİFLEŞTİRMEDİR: kantin, '
+      + 'tablet ve BBD Akademi girişi kapanır, veriler korunur ve geri alınabilir. Kalıcı silme geri '
+      + 'alınamaz.');
+    box.classList.add('st-danger');
+    box.setAttribute('aria-label', 'Tehlikeli işlemler');
+    const row = h('div', 'st-danger-actions');
+    const inactive = student.status === 'inactive';
+    if (can('bbd_students.lifecycle') && !inactive && !student.scheduledDeactivation) {
+      row.append(button('Pasifleştir (önerilen)', { onClick: () => deactivate() }));
+    }
+    const result = h('div', 'st-danger-result');
+    result.setAttribute('aria-live', 'polite');
+    if (can('bbd_students.delete')) {
+      const go = button('Kalıcı olarak sil…', { variant: 'danger', onClick: () => removeStudent(go, result) });
+      row.append(go);
+    }
+    box.append(row, result);
+    return box;
+  }
+
+  /** Kalıcı sil: önce ön kontrol (yazma yok), engel varsa göster; yoksa ad + PIN ile onay. */
+  async function removeStudent(control, slot) {
+    control.disabled = true;
+    slot.replaceChildren(h('p', 'st-hint', 'Ön kontrol yapılıyor (kantin bakiyesi, ödeme talebi, kurum carisi)…'));
+    let check;
     try {
-      await api(`${BASE}/students/${enc(kantinId)}`, { method: 'DELETE', body: { confirmName } });
+      check = await api(`${BASE}/students/${enc(kantinId)}/delete-check`);
+    } catch (failure) {
+      slot.replaceChildren(h('p', 'st-status bad', `Ön kontrol yapılamadı: ${failure.message}`));
+      control.disabled = false;
+      return;
+    } finally {
+      control.disabled = false;
+    }
+    if (!check.deletable) {
+      slot.replaceChildren(deleteBlockers(check, {
+        deactivate: can('bbd_students.lifecycle') ? () => deactivate() : null,
+        canteen: () => focusCard('Kantin'),
+        finance: options.openFinance || null,
+      }));
+      slot.querySelector('a, button')?.focus();
+      return;
+    }
+    slot.replaceChildren();
+    const answer = await askDelete(dialogRoot, { student, check });
+    if (!answer) return;
+    try {
+      await api(`${BASE}/students/${enc(kantinId)}`, { method: 'DELETE',
+        body: { confirmName: answer.name, pin: answer.pin } });
       toast('Öğrenci kalıcı silindi.');
       options.onRemoved?.();
     } catch (failure) {
       showErrors([`Silinemedi: ${failure.message}`]);
     }
+  }
+
+  /** Kartın bir bölümüne kaydır ve odakla (ön kontroldeki bağlantılar). */
+  function focusCard(title) {
+    const target = [...body.querySelectorAll('section.st-card')]
+      .find((section) => section.querySelector('h4')?.textContent?.startsWith(title));
+    if (!target) return;
+    target.tabIndex = -1;
+    target.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    target.focus();
   }
 
   // ------------------------------------------------- kart QR ve giriş kodu

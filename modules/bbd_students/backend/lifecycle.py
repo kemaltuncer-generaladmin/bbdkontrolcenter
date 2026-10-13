@@ -25,6 +25,13 @@ yok (`409 open_payment_request`), Akademi kurum cari borcu yok
 yetenek yoksa ya da Akademi'ye ulaşılamazsa silme KAPALI: `503
 akademi_unavailable`). Tek işlemde profil satırı silinir + mezar taşı +
 `student.deleted`; sonra kantin `DELETE` (anonimleştirir), olmazsa uzlaştırma.
+Kurum carisindeki ALACAK (öğrenci lehine) silmeyi ENGELLEMEZ (kullanıcı kararı).
+
+ÖN KONTROL (0.5.4): `delete_check` bütün engelleri birlikte, tutarıyla ve açık
+Türkçe döner (yazma yok) — ekran silme penceresini açmadan gösterir. TOPLU
+SİLME: her öğrenci ayrı denetlenir ve ayrı sonuç döner (silindi / engel); onay
+seçilen sayının yazılmasıdır; kantin çağrıları arka planda sıralı ve aralıklı.
+Rota katmanı her iki silmede de PIN teyidi ister (yıkıcı işlem, K-PIN).
 """
 
 from __future__ import annotations
@@ -47,6 +54,19 @@ from .sync import (
 
 #: Toplu pasifleştirmede tek istekte en çok öğrenci.
 BULK_MAX = 2000
+#: Toplu kalıcı silmede tek istekte en çok öğrenci (her biri canlı kantin +
+#: Akademi denetimi; kantin `throttle:120,1`).
+BULK_DELETE_MAX = 50
+
+#: Kalıcı silmede neyin silindiği — ekran onay penceresinde aynen gösterir.
+WILL_DELETE = [
+    "KM öğrenci kaydı (kimlik, sınıf, gruplar, veliler, kantin ayarları) silinir; yalnız silme kaydı kalır.",
+    ("Kantinde öğrenci anonimleşir: kart ve giriş kapanır; satış ve defter kayıtları muhasebe için "
+     "kimliksiz kalır."),
+    ("BBD Akademi kişisel veriyi KVKK planına göre siler / anonimleştirir (student.deleted olayı); "
+     "öğrencinin uygulama hesabı ve yalnız ona bağlı velinin girişi kapanır."),
+    "Geri alınamaz.",
+]
 NOTE_MAX = 500
 
 #: Pasifleştirmenin tablet kısıtında kullandığı gerekçe (yeniden etkinleştirme
@@ -80,6 +100,13 @@ def _reason(value: Any) -> str:
         raise SyncError("Gerekçe seçin: ayrıldı, mezun, geçici durdurma ya da diğer.",
                         details={"field": "reason"})
     return reason
+
+
+def _lira(kurus: int) -> str:
+    """42 50 → '42,50 ₺' (işaretsiz; yön metinde söylenir)."""
+    value = abs(int(kurus))
+    whole = f"{value // 100:,}".replace(",", ".")
+    return f"{whole},{value % 100:02d} ₺"
 
 
 def _fold(text: str) -> str:
@@ -269,9 +296,13 @@ class Lifecycle:
             raise SyncError("Yalnız pasif öğrenci kalıcı silinebilir.", status=409,
                             code="not_inactive")
         await self._check_name(kantin_id, row, confirm_name)
-        await self._check_canteen(kantin_id)
-        await self._check_institution(kantin_id)
+        blockers, _notes = await self._blockers(kantin_id)
+        if blockers:
+            raise blockers[0]
+        return await self._erase(kantin_id, actor=actor)
 
+    async def _erase(self, kantin_id: str, *, actor: str, push: bool = True) -> dict[str, Any]:
+        """Profil satırı silinir + mezar taşı + `student.deleted` (TEK işlem); sonra kantin."""
         moment = self._sync._clock()
         async with self._sync._store.transaction():
             revision = await self._sync.bump()
@@ -286,11 +317,103 @@ class Lifecycle:
                                                     {"erasedAt": local_iso(moment)})],
                                   revision=revision)
         self._sync.changed(canteen=True)
-        outcome = await self._sync.push_tombstone(kantin_id)
         self._log.info("öğrenci kalıcı silindi", student=kantin_id, actor=actor)
+        if not push:
+            return {"studentId": kantin_id, "deleted": True, "canteenSync": "pending",
+                    "canteenError": None}
+        outcome = await self._sync.push_tombstone(kantin_id)
         return {"studentId": kantin_id, "deleted": True,
                 "canteenSync": "ok" if outcome.state == "ok" else "pending",
                 "canteenError": outcome.error or None}
+
+    async def delete_check(self, kantin_id: str) -> dict[str, Any]:
+        """Silmeden ÖNCE ön kontrol: bütün engeller birlikte, açık Türkçe (yazma yok).
+
+        Ekran bunları silme penceresini açmadan gösterir ("Kantin bakiyesi
+        42,50 ₺ — önce sıfırlayın" + ilgili ekrana bağlantı). Kurum carisindeki
+        ALACAK (öğrenci lehine) silmeyi ENGELLEMEZ (kullanıcı kararı); bilgi
+        notu olarak döner.
+        """
+        row = await self._require(kantin_id)
+        name = f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
+        try:
+            record = await self._directory.get(kantin_id)
+        except Exception:  # noqa: BLE001 — ad profilden
+            record = None
+        if record and record.get("displayName"):
+            name = str(record["displayName"])
+        status = str(row.get("status") or "active")
+        found: list[SyncError] = []
+        if status != "inactive":
+            found.append(SyncError("Öğrenci etkin: kalıcı silmeden önce pasifleştirin (önerilen yol "
+                                   "budur; veriler korunur, yeniden etkinleştirilebilir).",
+                                   status=409, code="not_inactive"))
+        blockers, notes = await self._blockers(kantin_id)
+        found.extend(blockers)
+        return {
+            "studentId": kantin_id,
+            "displayName": name,
+            "status": status,
+            "deletable": not found,
+            "blockers": [{"code": item.code, "message": str(item), "details": item.details or {}}
+                         for item in found],
+            "notes": notes,
+            "willDelete": WILL_DELETE,
+        }
+
+    async def bulk_delete(self, kantin_ids: list[Any], *, confirm_count: Any,
+                          actor: str) -> dict[str, Any]:
+        """Toplu kalıcı silme: her öğrenci AYRI denetlenir ve ayrı sonuç döner
+        (silindi / engel). Onay: seçilen öğrenci sayısı aynen yazılır (ad tek
+        tek yazdırılamaz). Kantin silme çağrıları arka planda sıralı ve aralıklı
+        gider (`throttle:120,1`; uzlaştırma ≤ 1 dk devralır)."""
+        ids = list(dict.fromkeys(str(item).strip() for item in kantin_ids if str(item).strip()))
+        if not ids:
+            raise SyncError("Öğrenci seçilmedi.", details={"field": "students"})
+        if len(ids) > BULK_DELETE_MAX:
+            raise SyncError(f"Tek seferde en çok {BULK_DELETE_MAX} öğrenci kalıcı silinebilir.")
+        if str(confirm_count or "").strip() != str(len(ids)):
+            raise SyncError("Onay için silinecek öğrenci sayısını aynen yazın.", status=422,
+                            code="confirm_count_mismatch", details={"field": "confirmCount"})
+        results: list[dict[str, Any]] = []
+        erased: list[str] = []
+        for index, kantin_id in enumerate(ids):
+            if index:
+                await asyncio.sleep(self._sync._delay)
+            try:
+                check = await self.delete_check(kantin_id)
+            except SyncError as failure:
+                results.append({"studentId": kantin_id, "displayName": "", "deleted": False,
+                                "code": failure.code, "message": str(failure)})
+                continue
+            if not check["deletable"]:
+                first = check["blockers"][0]
+                results.append({"studentId": kantin_id, "displayName": check["displayName"],
+                                "deleted": False, "code": first["code"], "message": first["message"],
+                                "blockers": check["blockers"]})
+                continue
+            await self._erase(kantin_id, actor=actor, push=False)
+            erased.append(kantin_id)
+            results.append({"studentId": kantin_id, "displayName": check["displayName"],
+                            "deleted": True, "code": None, "message": "Kalıcı silindi."})
+        if erased:
+            task = asyncio.get_running_loop().create_task(
+                self._push_tombstones(erased), name="km-bbd-students-bulk-delete")
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+        self._log.info("toplu kalıcı silme", deleted=len(erased), blocked=len(ids) - len(erased),
+                       actor=actor)
+        return {"results": results, "deleted": len(erased), "blocked": len(ids) - len(erased),
+                "canteenPending": len(erased)}
+
+    async def _push_tombstones(self, ids: list[str]) -> None:
+        for index, kantin_id in enumerate(ids):
+            if index:
+                await asyncio.sleep(self._sync._delay)
+            try:
+                await self._sync.push_tombstone(kantin_id)
+            except Exception as failure:  # noqa: BLE001 — uzlaştırma devralır
+                self._log.warning("toplu silme kantin adımı", student=kantin_id, error=str(failure))
 
     async def _check_name(self, kantin_id: str, row: dict[str, Any], confirm: Any) -> None:
         names = {_fold(f"{row.get('first_name') or ''} {row.get('last_name') or ''}")}
@@ -306,44 +429,76 @@ class Lifecycle:
             raise SyncError("Onay için öğrencinin adını aynen yazın.", status=422,
                             code="confirm_name_mismatch", details={"field": "confirmName"})
 
-    async def _check_canteen(self, kantin_id: str) -> None:
+    async def _blockers(self, kantin_id: str) -> tuple[list[SyncError], list[dict[str, Any]]]:
+        """Silmeyi engelleyen durumlar (sırayla: kantin, ödeme talebi, kurum cari) ve
+        engellemeyen bilgi notları. Hepsi toplanır; `delete` ilkini fırlatır."""
+        blockers: list[SyncError] = []
+        notes: list[dict[str, Any]] = []
+        canteen_ok = True
         try:
             student = await self._canteen.get_student(kantin_id)
-        except Exception as failure:
-            if getattr(failure, "reason", None) == "student_not_found":
-                return  # kantinde hiç yok (yazılamamış kayıt): bakiye yok
-            raise SyncError("Kantine ulaşılamadı; bakiye doğrulanamadan silinmez.",
-                            status=503, code="canteen_unavailable") from failure
-        balance = int(student.get("balance") or 0)
-        if balance != 0:
-            raise SyncError(
-                "Kantin bakiyesi sıfır değil: önce tahsil edin ya da iade edin.",
-                status=409, code="balance_not_zero", details={"balance": balance})
-        try:
-            requests = await self._canteen.payment_requests(student_id=kantin_id)
-        except Exception as failure:
-            raise SyncError("Kantine ulaşılamadı; ödeme talepleri doğrulanamadı.",
-                            status=503, code="canteen_unavailable") from failure
-        open_refs = [str(item.get("ref") or "") for item in requests
-                     if str(item.get("status") or "").upper() == "PENDING"]
-        if open_refs:
-            raise SyncError("Açık ödeme talebi var: önce iptal edin ya da ödenmesini bekleyin.",
-                            status=409, code="open_payment_request",
-                            details={"refs": open_refs})
-
-    async def _check_institution(self, kantin_id: str) -> None:
+        except Exception as failure:  # noqa: BLE001 — kantin dışarısı; engel olarak döner
+            student = None
+            if getattr(failure, "reason", None) != "student_not_found":
+                canteen_ok = False
+                blockers.append(SyncError("Kantine ulaşılamadı; bakiye doğrulanamadan silinmez. "
+                                          "Biraz sonra tekrar deneyin.", status=503,
+                                          code="canteen_unavailable"))
+        if student is not None:
+            balance = int(student.get("balance") or 0)
+            if balance > 0:
+                blockers.append(SyncError(
+                    f"Kantin bakiyesi {_lira(balance)} borç — önce tahsil edin (kasada nakit ya da "
+                    "ödeme talebi) ve sıfırlayın.", status=409, code="balance_not_zero",
+                    details={"balance": balance}))
+            elif balance < 0:
+                blockers.append(SyncError(
+                    f"Kantin bakiyesi {_lira(balance)} öğrenci lehine — önce veliye iade edin ve "
+                    "sıfırlayın.", status=409, code="balance_not_zero", details={"balance": balance}))
+            try:
+                requests = await self._canteen.payment_requests(student_id=kantin_id)
+            except Exception:  # noqa: BLE001 — kantin dışarısı
+                requests = None
+                if canteen_ok:
+                    blockers.append(SyncError("Kantine ulaşılamadı; ödeme talepleri doğrulanamadı.",
+                                              status=503, code="canteen_unavailable"))
+            open_refs = [str(item.get("ref") or "") for item in requests or []
+                         if str(item.get("status") or "").upper() == "PENDING"]
+            if open_refs:
+                blockers.append(SyncError(
+                    f"Açık ödeme talebi var ({', '.join(open_refs[:3])}) — önce iptal edin ya da "
+                    "ödenmesini bekleyin.", status=409, code="open_payment_request",
+                    details={"refs": open_refs}))
         finance = self._capability("akademi.student_finance")
         if finance is None:
-            raise SyncError("Akademi kurum cari durumu okunamıyor (yetenek yok); "
-                            "silme kapalı.", status=503, code="akademi_unavailable")
+            blockers.append(SyncError("Akademi kurum cari durumu okunamıyor (BBD Akademi bağlantısı "
+                                      "yok); silme kapalı.", status=503, code="akademi_unavailable"))
+            return blockers, notes
         try:
-            has_debt = await finance.has_institution_debt(kantin_id)
-        except Exception as failure:
-            raise SyncError("Akademi'ye ulaşılamadı; kurum cari borcu doğrulanamadan "
-                            "silinmez.", status=503, code="akademi_unavailable") from failure
+            # Tutarlı yetenek (0.5.4) tek okumada borç + alacak verir; eskisi yalnız evet/hayır.
+            summary = None
+            if hasattr(finance, "institution_balance"):
+                summary = await finance.institution_balance(kantin_id)
+                has_debt = int(summary.get("debtMinor") or 0) > 0
+            else:
+                has_debt = await finance.has_institution_debt(kantin_id)
+        except Exception:  # noqa: BLE001 — Akademi dışarısı
+            blockers.append(SyncError("Akademi'ye ulaşılamadı; kurum cari borcu doğrulanamadan "
+                                      "silinmez. Biraz sonra tekrar deneyin.", status=503,
+                                      code="akademi_unavailable"))
+            return blockers, notes
+        debt = int((summary or {}).get("debtMinor") or 0)
+        credit = int((summary or {}).get("creditMinor") or 0)
         if has_debt:
-            raise SyncError("Akademi'de kurum cari borcu var: önce kapatılmalı.",
-                            status=409, code="institution_debt")
+            blockers.append(SyncError(
+                f"Kurum cari borcu var{f' ({_lira(debt)})' if debt > 0 else ''} — önce Kurum "
+                "finansı'ndan tahsil edin ya da kapatın.", status=409, code="institution_debt",
+                details={"debtMinor": debt} if debt > 0 else {}))
+        if credit > 0:
+            notes.append({"code": "institution_credit", "details": {"creditMinor": credit},
+                          "message": f"Kurum carisinde öğrenci lehine {_lira(credit)} alacak var. "
+                                     "Silmeyi engellemez; iade gerekiyorsa silmeden önce yapın."})
+        return blockers, notes
 
     # ============================================================== yardım
 

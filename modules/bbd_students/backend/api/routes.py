@@ -15,9 +15,19 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
+from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
+from km_sdk import (
+    APIRouter,
+    BaseModel,
+    CurrentUser,
+    Field,
+    HTTPException,
+    Query,
+    confirm_pin,
+    requires,
+)
 
 from .. import qr as qr_codec
 from ..groups import GroupError, GroupService, parse_day
@@ -315,9 +325,27 @@ class BulkDeactivateBody(DeactivateBody):
 
 
 class DeleteBody(BaseModel):
-    """Kalıcı silme onayı: öğrencinin adı aynen yazılır."""
+    """Kalıcı silme onayı: öğrencinin adı aynen yazılır + kendi PIN'i (yıkıcı işlem).
+
+    `pin` 0.5.4'te zorunlu oldu: 0.5.3 kabuğu PIN göndermez → `422 pin_required`
+    ("masaüstünü güncelleyin"); silme yapılmaz (güvenli taraf)."""
 
     confirmName: str = Field(min_length=1, max_length=160)
+    pin: str | None = Field(default=None, max_length=12)
+
+
+class BulkDeleteBody(BaseModel):
+    """Toplu kalıcı silme: öğrenciler + seçilen SAYI aynen yazılarak onay + PIN."""
+
+    students: list[str] = Field(min_length=1, max_length=50)
+    confirmCount: str = Field(min_length=1, max_length=6)
+    pin: str | None = Field(default=None, max_length=12)
+
+
+def pin_required() -> JSONResponse:
+    return JSONResponse(status_code=422, content={"error": {
+        "status": 422, "code": "pin_required", "details": {"field": "pin"},
+        "message": "Kalıcı silme PIN teyidi ister. Masaüstü uygulamasını güncelleyin (0.5.4)."}})
 
 
 @router.post("/students/deactivate")
@@ -362,15 +390,51 @@ async def reactivate_student(
         return sync_error(exc)
 
 
+@router.get("/students/{kantin_id}/delete-check")
+async def delete_check(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.delete"),
+) -> Any:
+    """Kalıcı silme ön kontrolü (yazma yok): `{deletable, blockers[], notes[],
+    willDelete[]}` — engeller tutarıyla, açık Türkçe."""
+    try:
+        return await lifecycle().delete_check(kantin_id)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.post("/students/delete")
+async def bulk_delete_students(
+    request: Request,
+    body: BulkDeleteBody,
+    user: CurrentUser = requires("bbd_students.delete"),
+) -> Any:
+    """Toplu kalıcı silme (en çok 50): her öğrenci ayrı denetlenir, ayrı sonuç
+    (silindi / engel). PIN teyidi + seçilen sayının yazılması."""
+    if not body.pin:
+        return pin_required()
+    await confirm_pin(request, user, body.pin, action="bbd_students.delete:bulk")
+    try:
+        return await lifecycle().bulk_delete(body.students, confirm_count=body.confirmCount,
+                                             actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
 @router.delete("/students/{kantin_id}")
 async def delete_student(
+    request: Request,
     kantin_id: str,
     body: DeleteBody,
     user: CurrentUser = requires("bbd_students.delete"),
 ) -> Any:
     """Kalıcı sil — yalnız pasif öğrenci, bakiye 0, açık talep yok, kurum cari
-    borcu yok. 409 `balance_not_zero` / `open_payment_request` /
-    `institution_debt`, 503 `akademi_unavailable` / `canteen_unavailable`."""
+    borcu yok; ad yazılarak + PIN. 409 `balance_not_zero` / `open_payment_request` /
+    `institution_debt`, 503 `akademi_unavailable` / `canteen_unavailable`,
+    422 `pin_required`, 403 PIN yanlış."""
+    if not body.pin:
+        return pin_required()
+    await confirm_pin(request, user, body.pin, action="bbd_students.delete")
     try:
         return await lifecycle().delete(kantin_id, confirm_name=body.confirmName,
                                         actor=user.full_name)

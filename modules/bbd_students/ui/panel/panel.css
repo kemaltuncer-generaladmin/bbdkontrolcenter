@@ -605,3 +605,15 @@
 .st-listbulk-count { font-size: 12.5px; }
 .st-listbulk-value { display: inline-flex; gap: 6px; }
 .st-listbulk-status { font-size: 12px; color: #14532d; }
+
+/* Tehlikeli işlemler — kartın EN ALTINDA, ayrı (0.5.4). Kırmızı kenar renkle
+   birlikte başlıkla da söylenir (renk tek başına anlam taşımaz). */
+.st-card.st-danger { border-color: #f0a3a3; border-left: 4px solid #b91c1c; }
+.st-danger-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.st-danger-result:empty { display: none; }
+.st-del-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.st-del-list li .kit-btn { margin-left: 6px; }
+.st-del-result li.ok b { color: #1f6b38; }
+.st-del-result li.bad b { color: #991b1b; }
+.st-del-names { max-height: 160px; overflow: auto; }
+.st-pin { width: 160px; letter-spacing: 3px; }

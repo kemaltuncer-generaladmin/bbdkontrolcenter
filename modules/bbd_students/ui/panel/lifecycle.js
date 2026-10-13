@@ -144,39 +144,74 @@ export function askDeactivate(root, { students }) {
   });
 }
 
+const BLOCKER_LINK = {
+  not_inactive: ['deactivate', 'Pasifleştir'],
+  balance_not_zero: ['canteen', 'Kantin bölümüne git'],
+  open_payment_request: ['canteen', 'Ödeme talebine git'],
+  institution_debt: ['finance', 'Kurum carisini aç'],
+};
+
 /**
- * Kalıcı silme penceresi — adı aynen yazdırır. Bakiye sıfır değilse tutarı ve
- * "tahsil et / iade et" yönlendirmesini gösterir; silme düğmesi kapalı kalır
- * (sunucu yine `409 balance_not_zero` der).
- *
- * @returns {Promise<string|null>} yazılan ad
+ * Ön kontrol sonucu: silmeyi engelleyenler, her biri açık Türkçe ve (varsa)
+ * ilgili yere giden düğmeyle. `links`: {deactivate, canteen, finance} → fn | null.
  */
-export function askDelete(root, { student }) {
-  return new Promise((resolve) => {
-    const name = student.displayName || '';
-    const { overlay, card, release } = dialog(root, `${name || 'Öğrenci'} — kalıcı sil`,
-      'GERİ ALINAMAZ. KM profili silinir; kantinde öğrenci anonimleşir (satış ve defter '
-      + 'muhasebe için kalır); BBD Akademi kişisel veriyi KVKK planına göre siler. Ön '
-      + 'koşullar: öğrenci pasif, kantin bakiyesi tam 0, açık ödeme talebi yok, Akademi '
-      + 'kurum cari borcu yok.');
-    const balance = Number(student.balance) || 0;
-    if (balance !== 0) {
-      const warn = h('div', 'st-lc-warn bad');
-      warn.append(h('b', null, balance > 0
-        ? `Kantin borcu var: ${lira(balance)}.`
-        : `Öğrenci lehine bakiye var: ${lira(balance)}.`));
-      warn.append(h('span', null, balance > 0
-        ? ' Önce tahsil edin (kasada nakit ya da ödeme talebi); bakiye sıfırlanınca silinebilir.'
-        : ' Önce veliye iade edin (kasada düzeltme); bakiye sıfırlanınca silinebilir.'));
-      card.append(warn);
+export function deleteBlockers(check, links = {}) {
+  const box = h('div', 'st-lc-warn bad st-del-blockers');
+  box.setAttribute('role', 'alert');
+  box.append(h('b', null, 'Kalıcı silinemez — önce şunlar çözülmeli:'));
+  const list = h('ul', 'st-del-list');
+  for (const item of check.blockers || []) {
+    const row = h('li');
+    row.append(h('span', null, item.message));
+    const [key, label] = BLOCKER_LINK[item.code] || [];
+    if (key && typeof links[key] === 'function') {
+      row.append(' ', button(label, { variant: key === 'deactivate' ? 'primary' : 'ghost', onClick: () => links[key]() }));
     }
+    list.append(row);
+  }
+  box.append(list);
+  for (const note of check.notes || []) box.append(h('p', 'st-hint', note.message));
+  return box;
+}
+
+/**
+ * Kalıcı silme penceresi — ön kontrolden GEÇMİŞ öğrenci için: neyin silineceği,
+ * geri alınamaz uyarısı, adı aynen yazdırır ve kendi PIN'ini ister. Enter yalnız
+ * alanlardayken onaylar ("Vazgeç"te Enter onaylamaz); Esc vazgeçer.
+ *
+ * @returns {Promise<{name: string, pin: string}|null>}
+ */
+export function askDelete(root, { student, check = null }) {
+  return new Promise((resolve) => {
+    const name = check?.displayName || student.displayName || '';
+    const { overlay, card, release } = dialog(root, `${name || 'Öğrenci'} — kalıcı olarak sil`,
+      'GERİ ALINAMAZ. Ön kontrol temiz: öğrenci pasif, kantin bakiyesi 0, açık ödeme talebi ve kurum '
+      + 'cari borcu yok.');
+    const items = check?.willDelete || [];
+    if (items.length) {
+      const what = h('ul', 'st-del-list');
+      for (const text of items) what.append(h('li', null, text));
+      card.append(h('b', null, 'Silinecekler:'), what);
+    }
+    for (const note of check?.notes || []) card.append(h('p', 'st-lc-warn', note.message));
+    const field = (text, input) => {
+      const wrap = h('label', 'st-field');
+      wrap.append(h('span', 'st-label', text), input);
+      return wrap;
+    };
     const input = h('input', 'kit-input');
     input.type = 'text';
-    input.placeholder = `Onay için öğrencinin adını yazın: ${name}`;
-    input.setAttribute('aria-label', `Onay için öğrencinin adını yazın: ${name}`);
+    input.autocomplete = 'off';
     input.maxLength = 160;
-    card.append(input);
+    const pin = h('input', 'kit-input st-pin');
+    pin.type = 'password';
+    pin.inputMode = 'numeric';
+    pin.autocomplete = 'off';
+    pin.maxLength = 12;
+    card.append(field(`Onay için öğrencinin adını aynen yazın: ${name}`, input),
+      field('Kendi PIN’iniz (yıkıcı işlem teyidi)', pin));
     const error = h('div', 'kit-dialog-error');
+    error.setAttribute('role', 'alert');
     card.append(error);
 
     const close = (value) => {
@@ -189,17 +224,22 @@ export function askDelete(root, { student }) {
     const submit = () => {
       if (fold(input.value) !== fold(name)) {
         error.textContent = 'Ad eşleşmiyor.';
+        input.setAttribute('aria-invalid', 'true');
         input.focus();
         return;
       }
-      close(input.value.trim());
+      if (!/^\d{4,12}$/.test(pin.value.trim())) {
+        error.textContent = 'PIN’inizi yazın.';
+        pin.focus();
+        return;
+      }
+      close({ name: input.value.trim(), pin: pin.value.trim() });
     };
     const onKey = (event) => {
       if (event.key === 'Escape') close(null);
-      if (event.key === 'Enter' && event.target === input) submit();
+      if (event.key === 'Enter' && (event.target === input || event.target === pin)) submit();
     };
     const go = button('Kalıcı olarak sil', { variant: 'danger', onClick: submit });
-    go.disabled = balance !== 0;
     const actions = h('div', 'kit-dialog-actions');
     actions.append(button('Vazgeç', { onClick: () => close(null) }), go);
     card.append(actions);
@@ -208,6 +248,108 @@ export function askDelete(root, { student }) {
     });
     document.addEventListener('keydown', onKey);
     input.focus();
+  });
+}
+
+/**
+ * Toplu kalıcı silme onayı: seçilen SAYI aynen yazılır + PIN. Her öğrenci
+ * sunucuda ayrı denetlenir; engelli olan silinmez (sonuç penceresi gösterir).
+ *
+ * @returns {Promise<{count: string, pin: string}|null>}
+ */
+export function askBulkDelete(root, { students }) {
+  return new Promise((resolve) => {
+    const count = students.length;
+    const { overlay, card, release } = dialog(root, `${count} öğrenci — kalıcı olarak sil`,
+      'GERİ ALINAMAZ. Her öğrenci ayrı denetlenir: pasif olmayan, kantin bakiyesi 0 olmayan, açık ödeme '
+      + 'talebi ya da kurum cari borcu olan öğrenci SİLİNMEZ ve sonuçta nedeniyle listelenir. Kurum '
+      + 'carisindeki alacak silmeyi engellemez. Silinen öğrencinin KM kaydı silinir, kantinde '
+      + 'anonimleşir, BBD Akademi kişisel veriyi KVKK planına göre siler; uygulama hesabı kapanır.');
+    const names = h('ul', 'st-del-list st-del-names');
+    for (const student of students.slice(0, 12)) names.append(h('li', null, student.displayName || student.kantinId));
+    if (count > 12) names.append(h('li', 'st-hint', `+${count - 12} öğrenci daha`));
+    card.append(names);
+    const field = (text, input) => {
+      const wrap = h('label', 'st-field');
+      wrap.append(h('span', 'st-label', text), input);
+      return wrap;
+    };
+    const input = h('input', 'kit-input');
+    input.type = 'text';
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
+    input.maxLength = 6;
+    const pin = h('input', 'kit-input st-pin');
+    pin.type = 'password';
+    pin.inputMode = 'numeric';
+    pin.autocomplete = 'off';
+    pin.maxLength = 12;
+    card.append(field(`Onay için silinecek öğrenci sayısını yazın: ${count}`, input),
+      field('Kendi PIN’iniz (yıkıcı işlem teyidi)', pin));
+    const error = h('div', 'kit-dialog-error');
+    error.setAttribute('role', 'alert');
+    card.append(error);
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      release();
+      resolve(value);
+    };
+    const submit = () => {
+      if (input.value.trim() !== String(count)) {
+        error.textContent = 'Sayı eşleşmiyor.';
+        input.focus();
+        return;
+      }
+      if (!/^\d{4,12}$/.test(pin.value.trim())) {
+        error.textContent = 'PIN’inizi yazın.';
+        pin.focus();
+        return;
+      }
+      close({ count: input.value.trim(), pin: pin.value.trim() });
+    };
+    const onKey = (event) => {
+      if (event.key === 'Escape') close(null);
+      if (event.key === 'Enter' && (event.target === input || event.target === pin)) submit();
+    };
+    const actions = h('div', 'kit-dialog-actions');
+    actions.append(button('Vazgeç', { onClick: () => close(null) }),
+      button(`${count} öğrenciyi kalıcı sil`, { variant: 'danger', onClick: submit }));
+    card.append(actions);
+    overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(null); });
+    document.addEventListener('keydown', onKey);
+    input.focus();
+  });
+}
+
+/** Toplu silme sonucu: öğrenci başına "silindi" ya da engelin nedeni. */
+export function showBulkDeleteResult(root, result) {
+  return new Promise((resolve) => {
+    const { overlay, card, release } = dialog(root,
+      `${result.deleted} öğrenci silindi · ${result.blocked} öğrenci silinmedi`,
+      result.blocked ? 'Silinmeyen öğrencilerin nedeni aşağıda; engel çözülünce tek tek ya da yeniden toplu '
+        + 'silinebilir.' : 'Kantin kayıtları arka planda anonimleşiyor (uzlaştırma ≤ 1 dk).');
+    const list = h('ul', 'st-del-list st-del-result');
+    for (const row of result.results || []) {
+      const item = h('li', row.deleted ? 'ok' : 'bad');
+      item.append(h('b', null, row.displayName || row.studentId), h('span', null,
+        ` — ${row.deleted ? 'silindi' : `silinmedi: ${row.message}`}`));
+      list.append(item);
+    }
+    card.append(list);
+    const close = () => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      release();
+      resolve();
+    };
+    const onKey = (event) => { if (event.key === 'Escape') close(); };
+    const actions = h('div', 'kit-dialog-actions');
+    const ok = button('Kapat', { variant: 'primary', onClick: close });
+    actions.append(ok);
+    card.append(actions);
+    document.addEventListener('keydown', onKey);
+    ok.focus();
   });
 }
 

@@ -13,9 +13,11 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from bbd_students_backend.api import routes
 from bbd_students_backend.canteen_events import CanteenSync
 from bbd_students_backend.directory import StudentDirectory
 from bbd_students_backend.groups import GroupService
@@ -23,6 +25,7 @@ from bbd_students_backend.lifecycle import Lifecycle
 from bbd_students_backend.service import StudentService
 from bbd_students_backend.sync import StudentSync, SyncError
 from bbd_students_fakes import FakeLog
+from fastapi import HTTPException
 
 from km_core.contracts.module import ScopedStore
 from km_core.store.bootstrap import build_schema
@@ -468,3 +471,182 @@ async def test_kasadan_eklenen_ogrenci_taslak_profil(world: World) -> None:
     assert listed["students"][0]["source"] == "canteen"
     await world.service.update_student("STU-K", {"className": "5-A"})
     assert (await world.sync.profile("STU-K"))["source"] == "km"  # type: ignore[index]
+
+
+# ===================================================== kalıcı silme ekranları (0.5.4)
+#
+# Kullanıcı: "Kalıcı öğrenci silmeyi de ekleyelim ekranlara." Ön kontrol
+# (`delete_check`) bütün engelleri birlikte, tutarıyla ve açık Türkçe verir ve
+# HİÇBİR ŞEY YAZMAZ; kurum carisindeki ALACAK engellemez (kullanıcı kararı).
+# Toplu silme her öğrenciyi ayrı denetler, ayrı sonuç + ayrı olay. Rota katmanı
+# iki silmede de PIN ister (yıkıcı işlem). Ekran testleri:
+# test_bbd_students_kalici_silme_ekran.py.
+
+
+class AmountFinance:
+    """`akademi.student_finance` sahtesi — 0.5.4 tutarlı yüzey (`institution_balance`)."""
+
+    def __init__(self, debt: int = 0, credit: int = 0) -> None:
+        self.debt, self.credit = debt, credit
+
+    async def has_institution_debt(self, student_id: str) -> bool:
+        return self.debt > 0
+
+    async def institution_balance(self, student_id: str) -> dict[str, int]:
+        return {"debtMinor": self.debt, "creditMinor": self.credit}
+
+
+async def test_on_kontrol_butun_engelleri_birlikte_ve_tutariyla_verir(world: World) -> None:
+    world.canteen.add("STU-1", "Elif Kaya", balance=4250)
+    world.canteen.requests.append({"studentId": "STU-1", "ref": "PR-7", "status": "PENDING"})
+    world.caps["akademi.student_finance"] = AmountFinance(debt=120000)
+    before = await world.types()
+
+    check = await world.lifecycle.delete_check("STU-1")
+
+    assert check["deletable"] is False
+    assert check["displayName"] == "Elif Kaya"
+    codes = [item["code"] for item in check["blockers"]]
+    assert codes == ["not_inactive", "balance_not_zero", "open_payment_request", "institution_debt"]
+    messages = {item["code"]: item["message"] for item in check["blockers"]}
+    assert "pasifleştirin" in messages["not_inactive"]
+    assert "42,50 ₺" in messages["balance_not_zero"] and "tahsil" in messages["balance_not_zero"]
+    assert "PR-7" in messages["open_payment_request"]
+    assert "1.200,00 ₺" in messages["institution_debt"]
+    assert check["willDelete"] and any("KVKK" in line for line in check["willDelete"])
+    # Ön kontrol yazma yapmaz: ne olay ne kantin çağrısı.
+    assert await world.types() == before
+    assert not [call for call in world.canteen.calls if call[0] == "delete"]
+
+
+async def test_ogrenci_lehine_kantin_bakiyesi_engeldir_kurum_alacagi_degildir(world: World) -> None:
+    world.canteen.add("STU-1", "Elif Kaya", balance=-500)
+    await world.lifecycle.deactivate("STU-1", reason="left", actor="Ayşe")
+    world.caps["akademi.student_finance"] = AmountFinance(credit=10000)
+    check = await world.lifecycle.delete_check("STU-1")
+    assert [item["code"] for item in check["blockers"]] == ["balance_not_zero"]
+    assert "öğrenci lehine" in check["blockers"][0]["message"]
+
+    world.canteen.rows["STU-1"]["balance"] = 0
+    check = await world.lifecycle.delete_check("STU-1")
+    assert check["deletable"] is True and check["blockers"] == []
+    assert [note["code"] for note in check["notes"]] == ["institution_credit"]
+    assert "100,00 ₺" in check["notes"][0]["message"]
+    result = await world.lifecycle.delete("STU-1", confirm_name="Elif Kaya", actor="Ayşe")
+    assert result["deleted"] is True
+
+
+async def test_akademiye_ulasilamazsa_on_kontrol_engel_der(world: World) -> None:
+    world.canteen.add("STU-1", "Elif Kaya")
+    await world.lifecycle.deactivate("STU-1", reason="left", actor="Ayşe")
+    check = await world.lifecycle.delete_check("STU-1")       # yetenek yok
+    assert [item["code"] for item in check["blockers"]] == ["akademi_unavailable"]
+
+
+async def test_toplu_silme_karisik_secimde_ogrenci_basina_sonuc(world: World) -> None:
+    world.canteen.add("STU-A", "Ali Uygun")
+    world.canteen.add("STU-B", "Banu Etkin")
+    world.canteen.add("STU-C", "Cem Borclu", balance=900)
+    world.canteen.add("STU-D", "Deniz Uygun")
+    for kantin_id in ("STU-A", "STU-C", "STU-D"):
+        await world.lifecycle.deactivate(kantin_id, reason="graduated", actor="Ayşe")
+    world.caps["akademi.student_finance"] = AmountFinance()
+    ids = ["STU-A", "STU-B", "STU-C", "STU-D"]
+
+    with pytest.raises(SyncError) as error:
+        await world.lifecycle.bulk_delete(ids, confirm_count="3", actor="Ayşe")
+    assert error.value.code == "confirm_count_mismatch"
+    assert "student.deleted" not in await world.types()
+
+    result = await world.lifecycle.bulk_delete(ids, confirm_count="4", actor="Ayşe")
+    assert result["deleted"] == 2 and result["blocked"] == 2
+    rows = {row["studentId"]: row for row in result["results"]}
+    assert rows["STU-A"]["deleted"] is True and rows["STU-D"]["deleted"] is True
+    assert rows["STU-B"]["deleted"] is False and rows["STU-B"]["code"] == "not_inactive"
+    assert rows["STU-C"]["deleted"] is False and rows["STU-C"]["code"] == "balance_not_zero"
+    assert rows["STU-C"]["displayName"] == "Cem Borclu" and "9,00 ₺" in rows["STU-C"]["message"]
+    # Her silinen öğrenci için AYRI olay; engelliler yerinde.
+    events = await world.events()
+    deleted = [event["subject"]["id"] for event in events if event["type"] == "student.deleted"]
+    assert deleted == ["STU-A", "STU-D"]
+    assert await world.sync.profile("STU-A") is None
+    assert await world.sync.profile("STU-C") is not None
+    # Kantin anonimleştirmesi arka planda, sıralı.
+    for _ in range(100):
+        if len([call for call in world.canteen.calls if call[0] == "delete"]) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert [call[1] for call in world.canteen.calls if call[0] == "delete"] == ["STU-A", "STU-D"]
+
+
+async def test_toplu_silme_sinirlari(world: World) -> None:
+    with pytest.raises(SyncError):
+        await world.lifecycle.bulk_delete([], confirm_count="0", actor="Ayşe")
+    with pytest.raises(SyncError, match="en çok 50"):
+        await world.lifecycle.bulk_delete([f"STU-{i}" for i in range(51)], confirm_count="51", actor="Ayşe")
+
+
+# ------------------------------------------------------------------ rota: PIN
+
+
+class Identity:
+    def __init__(self) -> None:
+        self.store = self
+        self.audits: list[tuple[Any, str, str]] = []
+
+    async def fetch_one(self, sql: str, params: tuple[Any, ...]) -> dict[str, str]:
+        return {"secret_lookup": "hmac:246810"}
+
+    def secret_lookup(self, pin: str) -> str:
+        return f"hmac:{pin}"
+
+    async def audit(self, user_id: Any, action: str, *, result: str, detail: str) -> None:
+        self.audits.append((user_id, action, result))
+
+
+def _request() -> Any:
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(identity=Identity())))
+
+
+async def test_silme_rotalari_pin_ister(world: World) -> None:
+    world.canteen.add("STU-1", "Elif Kaya")
+    await world.lifecycle.deactivate("STU-1", reason="left", actor="Ayşe")
+    world.caps["akademi.student_finance"] = AmountFinance()
+    routes._lifecycle = world.lifecycle
+    user = SimpleNamespace(id=7, full_name="Ayşe Yılmaz")
+
+    old_shell = await routes.delete_student(_request(), "STU-1", routes.DeleteBody(confirmName="Elif Kaya"), user)
+    assert old_shell.status_code == 422 and b"pin_required" in old_shell.body
+    request = _request()
+    with pytest.raises(HTTPException) as denied:
+        await routes.delete_student(request, "STU-1",
+                                    routes.DeleteBody(confirmName="Elif Kaya", pin="000000"), user)
+    assert denied.value.status_code == 403
+    assert request.app.state.identity.audits == [(7, "bbd_students.delete", "denied")]
+    assert "student.deleted" not in await world.types()
+
+    done = await routes.delete_student(_request(), "STU-1",
+                                       routes.DeleteBody(confirmName="Elif Kaya", pin="246810"), user)
+    assert done["deleted"] is True
+    assert (await world.types())[-1] == "student.deleted"
+
+    bulk = await routes.bulk_delete_students(_request(), routes.BulkDeleteBody(students=["X"], confirmCount="1"),
+                                             user)
+    assert bulk.status_code == 422 and b"pin_required" in bulk.body
+    check = await routes.delete_check("STU-1", user)
+    assert check.status_code == 404                     # silinmiş öğrenci
+
+
+def test_silme_uclarinin_izni() -> None:
+    wanted = {("GET", "/students/{kantin_id}/delete-check"), ("POST", "/students/delete"),
+              ("DELETE", "/students/{kantin_id}")}
+    found = {(method, route.path): route for route in routes.router.routes for method in route.methods
+             if (method, route.path) in wanted}
+    assert set(found) == wanted
+    for route in found.values():
+        declared: set[str] = set()
+        for param in route.dependant.dependencies:
+            for cell in getattr(param.call, "__closure__", None) or ():
+                if isinstance(cell.cell_contents, tuple):
+                    declared.update(cell.cell_contents)
+        assert declared == {"bbd_students.delete"}

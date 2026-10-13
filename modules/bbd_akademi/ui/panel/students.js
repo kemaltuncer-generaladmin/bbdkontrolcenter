@@ -427,6 +427,8 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
         // (Akademi değişikliği olayla birkaç saniyede alır).
         onChanged: () => setTimeout(() => head.reload(), 1500),
         onRemoved: () => panel.close(),
+        // Kalıcı silme ön kontrolü "kurum cari borcu var" derse: Kurum finansı → bu öğrencinin carisi.
+        openFinance: app.has('finance') ? () => { panel.close(); app.go('finance', { studentId }); } : null,
       });
     };
     return {

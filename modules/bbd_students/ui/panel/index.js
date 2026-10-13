@@ -32,7 +32,7 @@ import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
 import { button, confirmSimple, dialogA11y } from '../../ui-kit/kit.js';
 import { mountGroups } from './groups.js';
-import { askDeactivate, watchEvents } from './lifecycle.js';
+import { askBulkDelete, askDeactivate, showBulkDeleteResult, watchEvents } from './lifecycle.js';
 import { mountRecord } from './record.js';
 import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, fillFromSuggestion, parseChoice, parseGrade,
@@ -444,6 +444,18 @@ function createManager(root, options) {
       ['examTarget', 'Hedef sınav'], ['group', 'Gruba ekle'], ['deactivate', 'Pasifleştir']]) {
       fieldSelect.append(new Option(label, value));
     }
+    // Kalıcı silme yalnız `bbd_students.delete` taşıyana (varsayılan yalnız admin) görünür;
+    // izinler açılıştan sonra geldiği için seçenek her çizimde eklenir / kaldırılır.
+    const deleteOption = new Option('Kalıcı olarak sil (geri alınamaz)', 'delete');
+    function paintDeleteOption() {
+      const allowed = can('bbd_students.delete');
+      if (allowed && !deleteOption.parentNode) fieldSelect.append(deleteOption);
+      if (!allowed && deleteOption.parentNode) {
+        const wasSelected = fieldSelect.value === 'delete';
+        deleteOption.remove();
+        if (wasSelected) { fieldSelect.value = 'className'; paintValue(); }
+      }
+    }
     const valueSlot = h('span', 'st-listbulk-value');
     const status = h('span', 'st-listbulk-status');
     status.setAttribute('role', 'status');
@@ -456,6 +468,11 @@ function createManager(root, options) {
       valueSlot.replaceChildren();
       control = null;
       if (field === 'deactivate') return;
+      if (field === 'delete') {
+        valueSlot.append(h('span', 'st-hint', 'Önerilen: önce pasifleştirin. Yalnız pasif, bakiyesi 0, açık '
+          + 'talebi ve kurum borcu olmayan öğrenci silinir; diğerleri nedeniyle listelenir.'));
+        return;
+      }
       if (field === 'className') {
         control = h('input', 'st-input');
         control.placeholder = '9-A';
@@ -506,6 +523,21 @@ function createManager(root, options) {
             { method: 'POST', body: { studentIds: ids } });
           failed = result?.skipped?.length || 0;
           done = ids.length - failed;
+        } else if (field === 'delete') {
+          if (ids.length > 50) { status.textContent = 'Tek seferde en çok 50 öğrenci kalıcı silinebilir.'; return; }
+          const chosenRows = students.filter((row) => chosen.has(row.kantinId));
+          const answer = await askBulkDelete(view, { students: chosenRows });
+          if (!answer) { status.textContent = ''; return; }
+          status.textContent = 'Her öğrenci denetleniyor ve siliniyor…';
+          const result = await api(`${BASE}/students/delete`, { method: 'POST', timeoutSeconds: 300,
+            body: { students: ids, confirmCount: answer.count, pin: answer.pin } });
+          await showBulkDeleteResult(view, result);
+          done = result.deleted || 0;
+          failed = result.blocked || 0;
+          status.textContent = `${done} öğrenci kalıcı silindi${failed ? `, ${failed} silinmedi (nedenleri gösterildi)` : ''}.`;
+          chosen.clear();
+          await refresh();
+          return;
         } else if (field === 'deactivate') {
           const answer = await askDeactivate(view, { students: students.filter((row) => chosen.has(row.kantinId)) });
           if (!answer) { status.textContent = ''; return; }
@@ -540,6 +572,7 @@ function createManager(root, options) {
         for (const id of [...chosen]) if (!known.has(id)) chosen.delete(id);
         node.hidden = chosen.size === 0 || mode !== 'list';
         count.textContent = `${chosen.size} öğrenci seçili`;
+        paintDeleteOption();
       },
     };
   }

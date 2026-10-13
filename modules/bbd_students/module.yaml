@@ -202,7 +202,8 @@ permissions:
   # AYRI ANAHTAR, VARSAYILAN YALNIZ admin: kalıcı silme geri alınamaz
   # (kantinde anonimleştirme, Akademi'de KVKK silme/anonimleştirme).
   - key: bbd_students.delete
-    description: "Pasif öğrenciyi kalıcı silme (bakiye 0, açık talep ve kurum cari borcu yok, ad yazılarak onay)."
+    description: "Pasif öğrenciyi kalıcı silme — tek tek ya da toplu (bakiye 0, açık talep ve kurum cari borcu yok; ad ya da sayı yazılarak onay ve PIN teyidi). Kurum carisindeki alacak engellemez."
+    destructive: true
     default_roles: [admin]
 
 # Bağımlılık ilan edilir, depoya kopyalanmaz (K11 — ADR 0008).

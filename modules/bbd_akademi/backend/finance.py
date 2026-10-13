@@ -1,4 +1,5 @@
-"""`akademi.student_finance` yeteneği — "bu öğrencinin kurum cari borcu var mı".
+"""`akademi.student_finance` yeteneği — "bu öğrencinin kurum cari borcu var mı"
+(ve ön kontrol ekranı için tutarlar: `institution_balance`).
 
 Tüketen: `bbd_students` kalıcı silme ön koşulu (km-merkezi-senkron §5.3).
 Öğrenci yalnız `inactive` iken, kantin bakiyesi 0 ve açık ödeme talebi yokken
@@ -66,6 +67,27 @@ class StudentFinance:
         except (TypeError, ValueError) as failure:
             raise FinanceCheckFailed("Akademi kurum cari özeti okunamadı.") from failure
         return open_minor > 0
+
+    async def institution_balance(self, student_id: str) -> dict[str, int]:
+        """Silme ön kontrolünün ekranda tutarı yazabilmesi için: `{debtMinor, creditMinor}`.
+
+        Borç (`openBalanceMinor > 0`) silmeyi engeller; ALACAK (`creditMinor`,
+        öğrenci lehine) engellemez — kullanıcı kararı, ekranda bilgi notudur.
+        Akademi'de öğrenci / cari yoksa ikisi de 0. Okunamazsa istisna (güvenli taraf).
+        """
+        ref = str(student_id or "").strip()
+        if not ref:
+            raise FinanceCheckFailed("Öğrenci kimliği boş.")
+        akademi_id = await self._akademi_id(ref)
+        summary = await self._summary(akademi_id) if akademi_id else None
+        if not summary:
+            return {"debtMinor": 0, "creditMinor": 0}
+        try:
+            open_minor = int(summary.get("openBalanceMinor") or 0)
+            credit_minor = int(summary.get("creditMinor") or 0)
+        except (TypeError, ValueError) as failure:
+            raise FinanceCheckFailed("Akademi kurum cari özeti okunamadı.") from failure
+        return {"debtMinor": max(open_minor, 0), "creditMinor": max(credit_minor, 0)}
 
     # ------------------------------------------------------------ adımlar
 
