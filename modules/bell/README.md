@@ -113,12 +113,43 @@ Sözleşme: `bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md` §3, �
   çağrı listesi Öğrenci Yönetimi'nden gelir. Zil grubu satırları silinmez.
 - Durum: `GET /api/bell/plan/status?from&to` (en çok 31 gün).
 
+## Ekran (0.5.x — 13.10.2026 yeniden tasarım)
+
+Üç sekme: **Program · Çağrı · Ayarlar**. Üst bantta SIRADAKİ ZİL (saat, tür,
+kaç dakika sonra) ya da kırmızı "Zil çalmaz — sebep"; zil bilgisayarı bağlı
+mı, son komutu çaldı mı, sesler n/n; Otomatik zil anahtarı, Şimdi zil çal,
+Diğer › Bugün zili kapat.
+
+- **Program**: hafta yedi sütun (gün × saat). Gün çekmecede TOPLU düzenlenir
+  (ekle, sil, Ders/Teneffüs, etiket, hepsini kaydır, başka günden / saat
+  setinden al, başka günlere uygula) ve tek `PUT /times` ile kaydedilir.
+  Önümüzdeki 7 gün Akademi tatil/özel gününü gösterir. Son çalmalar
+  İstanbul saatiyle ve zil bilgisayarının cevabıyla.
+- "Sıradaki zil" ve 7 gün `state.schedule`'dan gelir (`schedule_view`):
+  tetik tablosuyla AYNI kural (`_effective_row`). Zamanlayıcının iç gönderim
+  tetiği (bir dakika erken) ekrana çıkmaz.
+- **Zil bilgisayarının cevabı**: köprü komut numarası günlüğe yazılır
+  (`mod_bell_log.command_id`, 008); ajanın son `ack`'i köprü durumunda
+  görünür ve servis onu o satıra işler (`agent_ok`, `agent_detail`). Ekran
+  "Çaldı" ya da ajanın sebebini ("zamanı … geçmiş, atlandı") gösterir.
+- "Bu bilgisayardan da çal" yalnız bu makinede ses çalıcı varsa
+  (`state.localAvailable`; masaüstü yerel kip). Sunucuda (ADR 0026)
+  hoparlör yoktur: seçenek çizilmez, yerel tetik kurulmaz, ajan arızasını
+  "hazır" diye gizlemez.
+
+**Çift komut arızası (13.10.2026, canlıda kanıtlı):** platform zamanlayıcısı
+gecikme payı (90 sn) içinde aynı tetiği iki kez çalıştırıyordu; her zil
+köprüye iki komut yazıyordu. Düzeltme `km_platform/scheduler/weekly.py`
+(damga tetiğin gün + saati). Uçtan uca test: `tests/test_bell_uctan_uca.py`
+(ekran ucu → zamanlayıcı → köprü → gerçek ajan kodu → ack, simüle saat).
+
 ## Yapı
 
 - Sözleşme: [module.yaml](module.yaml) · Giriş: `backend/module.py`
 - `backend/speech.py` Vertex istemcisi · `backend/voices.py` önbellek + kuyruk
 - `backend/bridge.py` köprü istemcisi · `backend/service.py` iş kuralları
-- `agent/` Windows zil ajanı (arayüzsüz `.exe`)
+- `agent/` Windows zil ajanı (arayüzsüz `.exe`, 0.2.1)
+- Arayüz: `ui/panel/` — `index.js` (bant + sekmeler), `program.js`, `calls.js`, `settings.js`
 - Testler: `tests/` — ağa çıkmaz, Vertex ve köprü taklit edilir
 
 Haftalık saatler ve gruplar bu modülündür; Ders Takvimi ekranı onları
