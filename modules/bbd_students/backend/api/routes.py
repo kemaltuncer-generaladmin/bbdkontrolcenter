@@ -84,6 +84,9 @@ class ProfileFields(BaseModel):
     gradeLevel: int | str | None = None
     track: str | None = Field(default=None, max_length=8)
     examTarget: str | None = Field(default=None, max_length=8)
+    # Sınıf seviyeyi taşır (göç 008): açıkken öğrencinin kendi alan / hedef sınavı
+    # sınıfınkinin yerine geçer (seviye her zaman sınıftan).
+    levelOverride: bool | None = None
 
 
 class StudentUpdate(ProfileFields):
@@ -253,6 +256,51 @@ async def set_class(
         return await service().set_class(body.students, body.className)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ------------------------------------------------- sınıflar (sınıf seviyeyi taşır)
+
+
+class ClassLevelBody(BaseModel):
+    """Sınıfın seviyesi (zorunlu), alanı (10+ / mezun) ve hedef sınavı. Gönderilmeyen alan
+    mevcut değerini korur."""
+
+    gradeLevel: int | str | None = None
+    track: str | None = Field(default=None, max_length=8)
+    examTarget: str | None = Field(default=None, max_length=8)
+
+
+@router.get("/classes")
+async def list_classes(user: CurrentUser = requires("bbd_students.view")) -> dict[str, Any]:
+    """Sınıflar: tanımlı sınıflar ∪ öğrencilerin sınıf adları; seviyesiz olanlar
+    `defined: false` + addan öneri ("seviye seçin")."""
+    return await service().list_classes()
+
+
+@router.put("/classes/{class_name}")
+async def set_class_level(
+    class_name: str,
+    body: ClassLevelBody,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> dict[str, Any]:
+    """Sınıfın seviyesi; sınıftaki öğrencilerin geçerli değeri değişirse öğrenci başına
+    `student.updated` (Akademi müfredatı kendiliğinden yeniden çözer)."""
+    try:
+        return await service().set_class_level(class_name, body.model_dump(exclude_unset=True),
+                                               actor=user.full_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/classes/{class_name}")
+async def clear_class_level(
+    class_name: str,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> dict[str, Any]:
+    try:
+        return await service().clear_class_level(class_name)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 # ------------------------------------------------- veli kantin kontrolleri

@@ -48,8 +48,13 @@ StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
     id, firstName, lastName, displayName, className, schoolNo, studentPhone,
     guardians[{slot, name, phone, relation}], canteen{balance, spendingLimit, isBlocked,
     dailyLimit, guardianBlocked} | null, updatedAt, phoneIssues[],
-    gradeLevel, track, examTarget, status, statusReason, statusSince, revision,
+    gradeLevel, track, examTarget, classLevel, status, statusReason, statusSince, revision,
     canteenSync
+
+SINIF SEVİYEYİ TAŞIR (göç 008): `gradeLevel/track/examTarget` öğrencinin GEÇERLİ
+değeridir — ana sınıfının KM tanımından (öğrenciye özel alan / hedef sınav istisnası
+varsa onunki); sınıfa seviye girilmemişse öğrencinin kendi (eski) alanları.
+`classLevel` = sınıfın tanımı `{gradeLevel, track, examTarget}` ya da `null`.
 """
 
 from __future__ import annotations
@@ -80,6 +85,8 @@ RECORD_KEYS = (
     "id", "firstName", "lastName", "displayName", "className", "schoolNo",
     "studentPhone", "guardians", "canteen", "updatedAt", "phoneIssues",
     "gradeLevel", "track", "examTarget",
+    # Sınıf seviyeyi taşır (göç 008): ana sınıfın KM tanımı ya da null (seviye girilmemiş).
+    "classLevel",
     # Merkezi senkron (geçit sözleşmesi §9).
     "status", "statusReason", "statusSince", "revision", "canteenSync",
 )
@@ -125,7 +132,7 @@ def _iso(moment: datetime | None) -> str | None:
 
 
 def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | None,
-                   kantin_id: str = "") -> dict[str, Any]:
+                   kantin_id: str = "", class_plan: dict[str, Any] | None = None) -> dict[str, Any]:
     """Kantin satırı + profil satırı → sözleşmenin öğrenci nesnesi.
 
     `canteen=None`: kantine henüz yazılamamış KM kaydı (`canteen: null`).
@@ -171,7 +178,9 @@ def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | Non
 
     stamps = [m for m in (_moment(canteen.get("updatedAt")), _moment(profile.get("updated_at")))
               if m is not None]
-    plan = curriculum.from_row(profile)
+    # Geçerli seviye: sınıftan (istisna varsa öğrencinin alan / hedef sınavı); sınıfa seviye
+    # girilmemişse öğrencinin kendi (eski) değerleri.
+    plan = curriculum.effective(profile, class_plan)
 
     record = {
         "id": str(canteen.get("id") or ""),
@@ -194,6 +203,7 @@ def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | Non
         "gradeLevel": plan["gradeLevel"],
         "track": plan["track"],
         "examTarget": plan["examTarget"],
+        "classLevel": dict(class_plan) if class_plan else None,
         "status": "inactive" if profile.get("status") == "inactive" else "active",
         "statusReason": profile.get("status_reason") if profile.get("status") == "inactive"
         else None,
@@ -223,22 +233,30 @@ class _Snapshot:
 
     def __init__(self, rows: Records, profiles: dict[str, dict[str, Any]],
                  as_of: datetime, revision: int,
-                 deleted: dict[str, datetime | None] | None = None) -> None:
+                 deleted: dict[str, datetime | None] | None = None,
+                 plans: dict[str, dict[str, Any] | None] | None = None) -> None:
         self.rows = rows
         self.as_of = as_of
         self.revision = revision
         #: Mezar taşları (kimlik → silinme anı); `since` yanıtının `removed`ı.
         self.deleted = dict(deleted or {})
         gone = set(self.deleted)
+        plans = plans or {}
+
+        def plan_of(profile: dict[str, Any] | None) -> dict[str, Any] | None:
+            name = str((profile or {}).get("class_name") or "")
+            return plans.get(name) if name else None
+
         self.records: Records = [
-            student_record(row, profiles.get(str(row.get("id") or "")))
+            student_record(row, profiles.get(str(row.get("id") or "")),
+                           class_plan=plan_of(profiles.get(str(row.get("id") or ""))))
             for row in rows
             if row.get("id") and str(row.get("id")) not in gone
         ]
         known = {str(row.get("id") or "") for row in rows}
         # Profil-yalnız, kantine henüz yazılamamış kayıtlar (§7 adım 5).
         self.records += [
-            student_record(None, profile, kantin_id)
+            student_record(None, profile, kantin_id, class_plan=plan_of(profile))
             for kantin_id, profile in profiles.items()
             if kantin_id not in known and kantin_id not in gone
             and profile.get("canteen_sync") == "pending"
@@ -269,6 +287,8 @@ def _copy(record: dict[str, Any], *, balance: bool = True) -> dict[str, Any]:
         if not balance:
             copy["canteen"].pop("balance", None)
     copy["phoneIssues"] = list(record["phoneIssues"])
+    if record.get("classLevel") is not None:
+        copy["classLevel"] = dict(record["classLevel"])
     return copy
 
 
@@ -281,6 +301,7 @@ class StudentDirectory:
         self._log = log
         self._table = store.table("profile")
         self._tombstones = store.table("tombstone")
+        self._classes = store.table("class")
         self._cache: tuple[float, Records] | None = None
         #: Kantin listesinin okunduğu duvar saati (`asOf`).
         self._cache_at: datetime | None = None
@@ -338,6 +359,14 @@ class StudentDirectory:
         rows = await self._store.fetch_all(f"SELECT * FROM {self._table}")
         return {str(row["kantin_id"]): row for row in rows}
 
+    async def _class_plans(self, name: str | None = None) -> dict[str, dict[str, Any] | None]:
+        if name is None:
+            rows = await self._store.fetch_all(f"SELECT * FROM {self._classes}")
+        else:
+            rows = await self._store.fetch_all(
+                f"SELECT * FROM {self._classes} WHERE name = ?", (name,))
+        return {str(row["name"]): curriculum.class_from_row(row) for row in rows}
+
     async def _deleted(self) -> dict[str, datetime | None]:
         rows = await self._store.fetch_all(
             f"SELECT kantin_id, deleted_at FROM {self._tombstones}")
@@ -361,9 +390,10 @@ class StudentDirectory:
             return snapshot
         profiles = await self._profiles()
         deleted = await self._deleted()
+        plans = await self._class_plans()
         self._revision += 1
         snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC), self._revision,
-                             deleted)
+                             deleted, plans)
         if self._cache is not None and self._cache[1] is rows:
             self._snapshot = snapshot
         return snapshot
@@ -423,6 +453,8 @@ class StudentDirectory:
         profile = await self._store.fetch_one(
             f"SELECT * FROM {self._table} WHERE kantin_id = ?", (wanted,)
         )
+        name = str((profile or {}).get("class_name") or "")
+        plan = (await self._class_plans(name)).get(name) if name else None
         try:
             canteen = await self._canteen.student(wanted)
         except Exception as failure:  # kantin dışarısı; sebebi taşınır
@@ -431,14 +463,14 @@ class StudentDirectory:
                 canteen = None
             else:
                 if profile is not None and profile.get("canteen_sync") == "pending":
-                    return _copy(student_record(None, profile, wanted), balance=balance)
+                    return _copy(student_record(None, profile, wanted, plan), balance=balance)
                 self._log.warning("dizin: öğrenci okunamadı", student=wanted, error=str(failure))
                 raise DirectoryUnavailable("Kantine ulaşılamadı.") from failure
         if not isinstance(canteen, dict) or str(canteen.get("id") or "") != wanted:
             if profile is not None and profile.get("canteen_sync") == "pending":
-                return _copy(student_record(None, profile, wanted), balance=balance)
+                return _copy(student_record(None, profile, wanted, plan), balance=balance)
             return None
-        return _copy(student_record(canteen, profile), balance=balance)
+        return _copy(student_record(canteen, profile, class_plan=plan), balance=balance)
 
     async def get_many(self, student_ids: list[str], *,
                        balance: bool = True) -> dict[str, Any]:

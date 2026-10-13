@@ -787,7 +787,7 @@ class GatewayService:
         last = str(record.get("lastName") or "").strip()
         display = str(record.get("displayName") or "").strip() or f"{first} {last}".strip()
         school_no = record.get("schoolNo")
-        return {
+        out = {
             "id": str(record["id"]),
             "firstName": first,
             "lastName": last,
@@ -809,6 +809,16 @@ class GatewayService:
             "revision": int_or_none(record.get("revision")) or 0,
             "canteenSync": "pending" if record.get("canteenSync") == "pending" else "ok",
         }
+        if "classLevel" in record:
+            # Sınıf seviyeyi taşır (bbd_students göç 008): ana sınıfın tanımı ya da null.
+            # Eski öğrenci modülünde anahtar hiç yoktur; Akademi o zaman addan tahmin eder.
+            level = record.get("classLevel")
+            out["classLevel"] = {
+                "gradeLevel": grade_level(level.get("gradeLevel")),
+                "track": choice(level.get("track"), TRACKS),
+                "examTarget": choice(level.get("examTarget"), EXAM_TARGETS),
+            } if isinstance(level, dict) and grade_level(level.get("gradeLevel")) is not None else None
+        return out
 
     @staticmethod
     def phones(record: dict[str, Any]) -> set[str]:
