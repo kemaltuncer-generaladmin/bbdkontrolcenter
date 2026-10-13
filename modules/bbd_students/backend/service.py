@@ -516,6 +516,11 @@ class StudentService:
         for column, value in columns.items():
             logical = LOGICAL_FIELDS.get(column)
             before = (existing or {}).get(column)
+            # 3.–4. veli: telefon değişikliği yuva olayıdır (aşağıda); `guardians` alanı
+            # yalnız ad / yakınlık değişince ya da veli yuva değiştirince.
+            if column == "guardians_extra" and \
+                    _extra_people(existing) == _extra_people({column: value}):
+                continue
             if logical and (before or "") != (value or "") and logical not in fields:
                 fields.append(logical)
         if "displayName" in changes and changes["displayName"] != self._display_of(
@@ -538,6 +543,14 @@ class StudentService:
                 normalize_phone(columns["parent_phone2"]) or str(columns["parent_phone2"]))
             if event is not None:
                 events.append(event)
+        if "guardians_extra" in columns:
+            # Yuva 3–4 (göç 007) — yuva 1–2 ile aynı olaylar (`data.slot` 3|4; sözleşme §2).
+            before_extra = _extra_phones(existing)
+            after_extra = _extra_phones({"guardians_extra": columns["guardians_extra"]})
+            for offset in range(guardian_rules.MAX_GUARDIANS - 2):
+                event = guardian_event(3 + offset, before_extra[offset], after_extra[offset])
+                if event is not None:
+                    events.append(event)
         controls = [key for key in ("spendingLimit", "isBlocked") if key in changes]
         if controls:
             events.append(Event("canteen.controls_changed", controls))
@@ -1089,6 +1102,18 @@ def normalize_class(value: Any) -> str:
     if not match:
         return upper[:CLASS_NAME_MAX]
     return f"{match.group(1)}-{match.group(2)}" if match.group(2) else match.group(1)
+
+
+def _extra_phones(profile: dict[str, Any] | None) -> list[str]:
+    """Yuva 3.. telefonları (normalize; boş yuva ''), `MAX_GUARDIANS - 2` uzunlukta."""
+    phones = [normalize_phone(item["phone"]) or item["phone"].strip()
+              for item in guardian_rules.extra_items(profile)]
+    return (phones + [""] * guardian_rules.MAX_GUARDIANS)[: guardian_rules.MAX_GUARDIANS - 2]
+
+
+def _extra_people(profile: dict[str, Any] | None) -> list[tuple[str, str]]:
+    """Yuva 3.. ad + yakınlık (telefonsuz karşılaştırma: `student.updated` `guardians` için)."""
+    return [(item["name"], item["relation"]) for item in guardian_rules.extra_items(profile)]
 
 
 def _guardian_phone(record: dict[str, Any] | None, slot: int) -> str:

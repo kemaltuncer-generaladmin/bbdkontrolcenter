@@ -13,9 +13,9 @@ Telefon ZORUNLUDUR ve Türkiye cep numarası olmalıdır (`5XXXXXXXXX`; yazımda
 telefon iki kez olamaz; AYNI TELEFON BİRDEN ÇOK ÖĞRENCİNİN VELİSİ OLABİLİR
 (kardeşler) — engellenmez, ekranda bilgi olarak gösterilir.
 
-Olaylar servisin olağan yolundan çıkar (`service.update_student`): yuva 1–2
-telefonu `guardian.linked|unlinked|phone_changed` (`data.slot`), ad / yakınlık /
-ek veli değişikliği `student.updated` (`fields: ["guardians"]`). Kişisel veri
+Olaylar servisin olağan yolundan çıkar (`service.update_student`): yuva 1–4
+telefonu `guardian.linked|unlinked|phone_changed` (`data.slot` 1..4), ad /
+yakınlık değişikliği `student.updated` (`fields: ["guardians"]`). Kişisel veri
 olaya yazılmaz.
 """
 
@@ -27,8 +27,9 @@ from typing import Any
 from .phones import normalize_phone
 
 MAX_GUARDIANS = 4
-#: Mobil geçit sözleşmesinin bugün taşıdığı yuvalar (uygulama girişi bunlarla).
-APP_SLOTS = (1, 2)
+#: Mobil geçidin Akademi'ye taşıdığı yuvalar (uygulama girişi bunlarla) — dördü de
+#: (veli-senkron-4; sözleşme km-mobile-gateway §1, km-merkezi-senkron §2).
+APP_SLOTS = (1, 2, 3, 4)
 NAME_MAX = 80
 
 RELATIONS: dict[str, str] = {

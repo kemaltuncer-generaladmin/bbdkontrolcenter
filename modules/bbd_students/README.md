@@ -45,10 +45,12 @@ velisi olabilir** (kartta "bu telefon X için de veli" notu). Kural tek yerde:
 - `PUT /students/{id}/guardians {items:[{name, phone, relation}]}` — tam liste
   (`bbd_students.manage`; 422 `validation_error` + `details[{index, field}]`).
   Değişmediyse yazılmaz. Birincil değişince 1. yuva telefonu kantine gider.
-- Olaylar: yuva 1–2 telefonu `guardian.linked|unlinked|phone_changed`
-  (`data.slot`), ad / yakınlık / 3.–4. veli `student.updated` (`["guardians"]`).
-  Dizin `guardians[]` öğesi `relation` ve yuva 3–4'ü taşır; mobil geçit bugün
-  yalnız yuva 1–2'yi Akademi'ye iletir (sözleşme genişletmesi Akademi işinde).
+- Olaylar: yuva 1–4 telefonu `guardian.linked|unlinked|phone_changed`
+  (`data.slot` 1..4), ad / yakınlık (ve velinin yuva değiştirmesi) `student.updated`
+  (`["guardians"]`). Dizin `guardians[]` öğesi `relation` ve yuva 3–4'ü taşır;
+  mobil geçit dört yuvayı da `relation` + `primary` ile Akademi'ye iletir — dört
+  velinin de uygulama girişi açılır (`appSlots: [1, 2, 3, 4]`; sözleşme
+  km-mobile-gateway §1, km-merkezi-senkron §2).
 
 ### Sınıf ve gruplar
 

@@ -20,6 +20,9 @@ CODES = {"483920": ELIF, "561207": CAN, "774411": DENIZ}
 
 MOTHER = "5329876543"
 FATHER = "5051112233"
+#: Yuva 3–4 velileri (bbd_students göç 007 `guardians_extra`; veli-senkron-4).
+GRANNY = "5427778899"
+AUNT = "5331234567"
 ELIF_PHONE = "5321234567"
 
 PR_PENDING = {
@@ -85,9 +88,14 @@ def directory_records() -> dict[str, dict[str, Any]]:
         ELIF: {
             "id": ELIF, "firstName": "Elif", "lastName": "Kaya", "displayName": "Elif Kaya",
             "className": "8-A", "schoolNo": "1234", "studentPhone": ELIF_PHONE,
+            # `bbd_students.directory.student_record` biçimi: yuva 1–4, yakınlık (boşsa None).
             "guardians": [
-                {"slot": 2, "name": "Mehmet Kaya", "phone": FATHER},
-                {"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER},
+                {"slot": 2, "name": "Mehmet Kaya", "phone": FATHER, "relation": "father"},
+                {"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER, "relation": "mother"},
+                {"slot": 3, "name": "Fatma Kaya", "phone": GRANNY, "relation": "grandparent"},
+                {"slot": 4, "name": None, "phone": AUNT, "relation": None},
+                # Sözleşme dışı yuva ve bilinmeyen yakınlık düşer.
+                {"slot": 5, "name": "Fazla", "phone": "5440000000", "relation": "other"},
             ],
             "canteen": {"balance": 4250, "spendingLimit": 20000, "isBlocked": False,
                         "dailyLimit": 15000, "guardianBlocked": False},
@@ -100,8 +108,9 @@ def directory_records() -> dict[str, dict[str, Any]]:
             "id": CAN, "firstName": "Can", "lastName": "Kaya", "displayName": "Can Kaya",
             "className": "12-SAY", "schoolNo": "998", "studentPhone": None,
             "guardians": [
-                {"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER},
-                {"slot": 2, "name": "Ev", "phone": None},
+                {"slot": 1, "name": "Ayşe Kaya", "phone": MOTHER, "relation": "Mother "},
+                {"slot": 2, "name": "Ev", "phone": None, "relation": "father"},
+                {"slot": 3, "name": "Komşu", "phone": "5441112233", "relation": "kuzen"},
             ],
             "canteen": {"balance": 0, "spendingLimit": None, "isBlocked": True,
                         "dailyLimit": None, "guardianBlocked": True},
