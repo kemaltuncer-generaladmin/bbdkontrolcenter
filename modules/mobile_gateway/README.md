@@ -73,7 +73,10 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /groups?since=<revizyon>` | 200 `{generatedAt, revision, full, complete, groups: [{id, name, callName, kind, archived, archivedAt, updatedAt, revision, members: [{studentId, validFrom, validTo}]}], etag}`; `If-None-Match` → 304. `since` yoksa (ya da KM'nin revizyonundan büyükse) tam liste, `full: true` | 422 (`since` tamsayı değil), 503 `capability_missing` |
 | `PUT /bell/plan` | 200 `{days: [{date, result: applied\|unchanged\|stale\|overridden\|rejected, revision[, error: unknown_profile\|revision_conflict, details: {profileId}]}], voicesPending, bellEnabled}` — günler bağımsız uygulanır; reddedilen gün yanıtı 200 bırakır | 413 `payload_too_large` (> 512 KB), 422 `validation_error` (`fields` + `details.path`, eksik günde `details.missing`), 409 `idempotency_conflict`, 503 `capability_missing` |
 | `GET /bell/plan/status?from=&to=` | 200 `{bellEnabled, sessionCallsEnabled, agent: {online, lastSeenAt}, days: [{date, mode, profileId, reason, source: akademi\|km\|none, revision, planHash, calls, voicesReady, voicesPending, lastDispatchAt, override, lastResult, lastError}]}`; varsayılan bugünden 14 gün, en çok 31; `ETag`, `If-None-Match` → 304 | 422, 503 `capability_missing` |
-| `POST /sms/otp` | 200 `{sent: true}` | 422, 429, 502 `sms_failed`, 503 |
+| `POST /sms/otp` | 200 `{sent: true, jobId?, channel?}` | 422, 429, 502 `sms_failed`, 503 |
+| `GET /sms/otp/{jobId}` | 200 `{jobId, status: pending\|delivered\|failed, channel, sentAt, deliveredAt, deliverySeconds, checkedAt}` | 404 `sms_not_found`, 422 |
+| `GET /sms/health` | 200 son 1 saat `{sent, delivered, deliveryFailed, pending, sendFailed, rateLimited, avgDeliverySeconds, maxDeliverySeconds, balance: {ok, smsCount}}` | — |
+| `POST /sms/limits/reset` | 200 `{reset, clearedHour, clearedDay}` (denetimli) | 422 |
 | `GET /events?after=&limit=` | 200 `{items: [KmEvent], lastSeq, hasMore}` — KM outbox'undan çekme (webhook'un yedeği; zarf webhook ile aynı), `limit` 1–500 | 410 `events_expired` (`after` 14 günlük saklamadan eski → tam uzlaştırma), 422, 503 `capability_missing` (`events.outbox`) |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
 
@@ -144,9 +147,14 @@ yan yana gösterir. İzinler: `mobile_gateway.events.view` (admin, bbd_staff),
   başına 15 dakikada 5 yanlış → 423. Geçit kantine dakikada en çok 10
   `lookup-code` gönderir (kantinin 30/dk bütçesi tabletlerle ortak) → 429.
 - `/verify-code`: öğrenci başına aynı kilit; kod başkasınınsa yalnız `valid: false`.
-- `/sms/otp`: metin `otp_template` ayarından üretilir, istemci metin yazamaz.
-  Telefon başına saatte 5, toplam dakikada 60. Kayıt `mod_mobile_gateway_sms_log`
-  tablosunda **maskeli** telefonla.
+- `/sms/otp`: metin `otp_template` ayarından üretilir, istemci metin yazamaz; metin ASCII'ye
+  indirilir (Netgsm OTP hattı Türkçe karakter almaz). Kantine `purpose="otp"` gider: kantin önce
+  Netgsm OTP SMS hattını (öncelikli, 7/24) dener, kapalıysa olağan hatta düşer. Telefon başına
+  saatte 5 ve günde 10, toplam dakikada 60. Kayıt `mod_mobile_gateway_sms_log` (maskeli) — sms-kale
+  ile `job_id`, `channel`, `delivery` (pending/delivered/failed), `delivered_at`, `checked_at`
+  (göç 003). `GET /sms/otp/{jobId}` kantinin Netgsm raporunu jobId başına en çok 55 sn'de bir sorar
+  ve kesin sonucu saklar; `POST /sms/limits/reset` telefon sayaçlarını sıfırlar (Akademi
+  `admin_resetSmsLimits`).
 - Öğrenci çağırma: aynı öğrenci 60 sn içinde ikinci kez çağrılamaz (429).
 - Akışlarda `nextSince` kantinin imlecidir (epoch-ms gelir, ISO +03:00'a
   çevrilir; vermezse satırlardan hesaplanır). Kantinin `updatedSince` sınırı
@@ -189,7 +197,7 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | Yetenek | Kullanılan |
 |---|---|
 | `secrets` (zorunlu) | `get(key)`, `set(key, value)` |
-| `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `ledger(id, limit=, cursor=, from_ms=, to_ms=)` (yoksa ya da `reason="ledger_unsupported"` verirse eski yol), `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=)` — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
+| `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `ledger(id, limit=, cursor=, from_ms=, to_ms=)` (yoksa ya da `reason="ledger_unsupported"` verirse eski yol), `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=[, purpose="otp"])` (tanıyorsa `purpose` gönderilir), `sms_report(job_id)`, `sms_balance()` (sms-kale; yoksa teslim `pending`, paket `ok: false`) — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
 | `bbd_students.directory` (zorunlu) | `list(since=<datetime>\|None)`, `get(id)` (yoksa `None`), `card_qr_text(id)` — QR'dan önce `get` ile varlık sınanır |
 | `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün), `daily_usage(local_date)` (ISO gün; yoksa yalnız `GET /tablets/usage` 503) |
 | `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)` — hata `reason`ı: `validation_error` → 422, `student_not_found`/`session_not_found` → 404, `canteen_unavailable` → 503 |
