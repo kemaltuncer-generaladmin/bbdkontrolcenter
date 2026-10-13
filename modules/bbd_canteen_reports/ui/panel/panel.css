@@ -25,7 +25,11 @@
 
 /* =============================================================== ortak öğe */
 
-.kit-btn {
+/* KAPSAM (13.10.2026): bu panelin kit / seçici / tarih kopyası (`kit-*`, `pk-*`, `df-*`)
+   `:where(.cr)` ile YALNIZ bu panele uygulanır — özgüllük değişmez. Kapsamsız hâli
+   kabuğun ortak kitine sızıyordu (`.pk-box` 15 px → Akademi "Toplu işlemler" seçicisi
+   görünmüyordu). Kural: tests/integration/test_panel_css_kapsam.py */
+:where(.cr) .kit-btn {
   height: 32px;
   padding: 0 13px;
   border: 1px solid var(--line);
@@ -39,22 +43,22 @@
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
-.kit-btn:hover { background: var(--tint); border-color: #cfd6e2; }
-.kit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.kit-btn[disabled] { opacity: 0.45; cursor: default; }
-.kit-btn[disabled]:hover { background: #fff; border-color: var(--line); }
+:where(.cr) .kit-btn:hover { background: var(--tint); border-color: #cfd6e2; }
+:where(.cr) .kit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:where(.cr) .kit-btn[disabled] { opacity: 0.45; cursor: default; }
+:where(.cr) .kit-btn[disabled]:hover { background: #fff; border-color: var(--line); }
 
-.kit-btn-primary { background: var(--accent); border-color: transparent; color: #fff; }
-.kit-btn-primary:hover { background: #6f9bff; border-color: transparent; }
-.kit-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
+:where(.cr) .kit-btn-primary { background: var(--accent); border-color: transparent; color: #fff; }
+:where(.cr) .kit-btn-primary:hover { background: #6f9bff; border-color: transparent; }
+:where(.cr) .kit-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
 
-.kit-btn-danger { background: #fff; border-color: #f2c9c9; color: var(--bad); }
-.kit-btn-danger:hover { background: #fff5f5; border-color: #e8a9a9; }
+:where(.cr) .kit-btn-danger { background: #fff; border-color: #f2c9c9; color: var(--bad); }
+:where(.cr) .kit-btn-danger:hover { background: #fff5f5; border-color: #e8a9a9; }
 
-.kit-btn-ghost { border-color: transparent; background: transparent; color: var(--soft); }
-.kit-btn-ghost:hover { background: var(--tint); color: var(--ink); }
+:where(.cr) .kit-btn-ghost { border-color: transparent; background: transparent; color: var(--soft); }
+:where(.cr) .kit-btn-ghost:hover { background: var(--tint); color: var(--ink); }
 
-.cr-input, .kit-input {
+.cr-input, :where(.cr) .kit-input {
   height: 32px;
   padding: 0 11px;
   border: 1px solid var(--line);
@@ -67,7 +71,7 @@
   -webkit-user-select: text;
 }
 
-.cr-input:focus, .kit-input:focus {
+.cr-input:focus, :where(.cr) .kit-input:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
@@ -76,7 +80,7 @@
 .cr-input[disabled] { background: var(--tint); color: var(--soft); }
 
 /* bildirim şeridi */
-.kit-toast {
+:where(.cr) .kit-toast {
   position: absolute;
   left: 50%;
   bottom: 22px;
@@ -95,13 +99,13 @@
   transition: opacity 180ms, transform 180ms;
 }
 
-.kit-toast.show { opacity: 1; transform: translate(-50%, 0); }
-.kit-toast.good { background: #14532d; border-color: #14532d; }
-.kit-toast.warn { background: #7c2d12; border-color: #7c2d12; }
-.kit-toast.bad { background: #7f1d1d; border-color: #7f1d1d; }
+:where(.cr) .kit-toast.show { opacity: 1; transform: translate(-50%, 0); }
+:where(.cr) .kit-toast.good { background: #14532d; border-color: #14532d; }
+:where(.cr) .kit-toast.warn { background: #7c2d12; border-color: #7c2d12; }
+:where(.cr) .kit-toast.bad { background: #7f1d1d; border-color: #7f1d1d; }
 
 /* onay penceresi */
-.kit-overlay {
+:where(.cr) .kit-overlay {
   position: absolute;
   inset: 0;
   z-index: 50;
@@ -112,7 +116,7 @@
   backdrop-filter: blur(2px);
 }
 
-.kit-dialog {
+:where(.cr) .kit-dialog {
   width: min(460px, 100%);
   padding: 22px;
   border-radius: 14px;
@@ -127,11 +131,11 @@
   to { opacity: 1; transform: none; }
 }
 
-.kit-dialog-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-.kit-dialog-text { margin: 8px 0 14px; font-size: 12.5px; color: var(--soft); line-height: 1.55; }
-.kit-dialog .kit-input { width: 100%; }
-.kit-dialog-error { min-height: 16px; margin-top: 6px; font-size: 11.5px; color: var(--bad); }
-.kit-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+:where(.cr) .kit-dialog-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+:where(.cr) .kit-dialog-text { margin: 8px 0 14px; font-size: 12.5px; color: var(--soft); line-height: 1.55; }
+:where(.cr) .kit-dialog .kit-input { width: 100%; }
+:where(.cr) .kit-dialog-error { min-height: 16px; margin-top: 6px; font-size: 11.5px; color: var(--bad); }
+:where(.cr) .kit-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
 
 /* ================================================================ üst şerit */
@@ -482,7 +486,7 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
 
 .df { position: relative; display: inline-flex; align-items: center; }
 
-.df-input {
+:where(.cr) .df-input {
   width: 118px;
   height: 30px;
   padding: 0 30px 0 10px;
@@ -494,10 +498,10 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   font-size: 12.5px;
 }
 
-.df-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.df-input.bad { border-color: var(--bad); background: #fff5f5; }
+:where(.cr) .df-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+:where(.cr) .df-input.bad { border-color: var(--bad); background: #fff5f5; }
 
-.df-toggle {
+:where(.cr) .df-toggle {
   position: absolute;
   right: 2px;
   width: 26px;
@@ -510,9 +514,9 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   line-height: 1;
 }
 
-.df-toggle:hover { background: var(--tint); }
+:where(.cr) .df-toggle:hover { background: var(--tint); }
 
-.df-pop {
+:where(.cr) .df-pop {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
@@ -525,10 +529,10 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   box-shadow: 0 12px 30px rgb(17 23 34 / 14%);
 }
 
-.df-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.df-title { flex: 1; text-align: center; font-size: 12.5px; font-weight: 600; }
+:where(.cr) .df-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+:where(.cr) .df-title { flex: 1; text-align: center; font-size: 12.5px; font-weight: 600; }
 
-.df-nav {
+:where(.cr) .df-nav {
   width: 26px;
   height: 26px;
   border: 1px solid var(--line);
@@ -540,11 +544,11 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   line-height: 1;
 }
 
-.df-nav:hover { background: var(--tint); color: var(--ink); }
+:where(.cr) .df-nav:hover { background: var(--tint); color: var(--ink); }
 
-.df-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+:where(.cr) .df-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 
-.df-dow {
+:where(.cr) .df-dow {
   height: 22px;
   display: grid;
   place-items: center;
@@ -552,9 +556,9 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   color: var(--soft);
 }
 
-.df-empty { height: 28px; }
+:where(.cr) .df-empty { height: 28px; }
 
-.df-day {
+:where(.cr) .df-day {
   height: 28px;
   border: 0;
   border-radius: 6px;
@@ -565,14 +569,14 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   font-size: 12px;
 }
 
-.df-day:hover { background: var(--tint); }
-.df-day.today { box-shadow: inset 0 0 0 1px var(--accent); }
-.df-day.on { background: var(--accent); color: #fff; font-weight: 600; }
+:where(.cr) .df-day:hover { background: var(--tint); }
+:where(.cr) .df-day.today { box-shadow: inset 0 0 0 1px var(--accent); }
+:where(.cr) .df-day.on { background: var(--accent); color: #fff; font-weight: 600; }
 
-.df-foot { display: flex; align-items: center; margin-top: 8px; }
-.df-spacer { flex: 1; }
+:where(.cr) .df-foot { display: flex; align-items: center; margin-top: 8px; }
+:where(.cr) .df-spacer { flex: 1; }
 
-.df-quick {
+:where(.cr) .df-quick {
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -584,7 +588,7 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   font-size: 11.5px;
 }
 
-.df-quick:hover { background: var(--tint); color: var(--ink); }
+:where(.cr) .df-quick:hover { background: var(--tint); color: var(--ink); }
 
 /* ------------------------------------------------- rapor önizleme penceresi
 

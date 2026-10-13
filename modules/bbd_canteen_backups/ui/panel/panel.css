@@ -21,7 +21,11 @@
 
 /* =============================================================== ortak öğe */
 
-.kit-btn {
+/* KAPSAM (13.10.2026): bu panelin kit / seçici / tarih kopyası (`kit-*`, `pk-*`, `df-*`)
+   `:where(.bk)` ile YALNIZ bu panele uygulanır — özgüllük değişmez. Kapsamsız hâli
+   kabuğun ortak kitine sızıyordu (`.pk-box` 15 px → Akademi "Toplu işlemler" seçicisi
+   görünmüyordu). Kural: tests/integration/test_panel_css_kapsam.py */
+:where(.bk) .kit-btn {
   height: 32px;
   padding: 0 13px;
   border: 1px solid var(--line);
@@ -35,22 +39,22 @@
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
-.kit-btn:hover { background: var(--tint); border-color: #cfd6e2; }
-.kit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.kit-btn[disabled] { opacity: 0.45; cursor: default; }
-.kit-btn[disabled]:hover { background: #fff; border-color: var(--line); }
+:where(.bk) .kit-btn:hover { background: var(--tint); border-color: #cfd6e2; }
+:where(.bk) .kit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:where(.bk) .kit-btn[disabled] { opacity: 0.45; cursor: default; }
+:where(.bk) .kit-btn[disabled]:hover { background: #fff; border-color: var(--line); }
 
-.kit-btn-primary { background: var(--accent); border-color: transparent; color: #fff; }
-.kit-btn-primary:hover { background: #6f9bff; border-color: transparent; }
-.kit-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
+:where(.bk) .kit-btn-primary { background: var(--accent); border-color: transparent; color: #fff; }
+:where(.bk) .kit-btn-primary:hover { background: #6f9bff; border-color: transparent; }
+:where(.bk) .kit-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
 
-.kit-btn-danger { background: #fff; border-color: #f2c9c9; color: var(--bad); }
-.kit-btn-danger:hover { background: #fff5f5; border-color: #e8a9a9; }
+:where(.bk) .kit-btn-danger { background: #fff; border-color: #f2c9c9; color: var(--bad); }
+:where(.bk) .kit-btn-danger:hover { background: #fff5f5; border-color: #e8a9a9; }
 
-.kit-btn-ghost { border-color: transparent; background: transparent; color: var(--soft); }
-.kit-btn-ghost:hover { background: var(--tint); color: var(--ink); }
+:where(.bk) .kit-btn-ghost { border-color: transparent; background: transparent; color: var(--soft); }
+:where(.bk) .kit-btn-ghost:hover { background: var(--tint); color: var(--ink); }
 
-.bk-input, .kit-input {
+.bk-input, :where(.bk) .kit-input {
   height: 32px;
   padding: 0 11px;
   border: 1px solid var(--line);
@@ -63,7 +67,7 @@
   -webkit-user-select: text;
 }
 
-.bk-input:focus, .kit-input:focus {
+.bk-input:focus, :where(.bk) .kit-input:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
@@ -72,7 +76,7 @@
 .bk-input[disabled] { background: var(--tint); color: var(--soft); }
 
 /* bildirim şeridi */
-.kit-toast {
+:where(.bk) .kit-toast {
   position: absolute;
   left: 50%;
   bottom: 22px;
@@ -91,13 +95,13 @@
   transition: opacity 180ms, transform 180ms;
 }
 
-.kit-toast.show { opacity: 1; transform: translate(-50%, 0); }
-.kit-toast.good { background: #14532d; border-color: #14532d; }
-.kit-toast.warn { background: #7c2d12; border-color: #7c2d12; }
-.kit-toast.bad { background: #7f1d1d; border-color: #7f1d1d; }
+:where(.bk) .kit-toast.show { opacity: 1; transform: translate(-50%, 0); }
+:where(.bk) .kit-toast.good { background: #14532d; border-color: #14532d; }
+:where(.bk) .kit-toast.warn { background: #7c2d12; border-color: #7c2d12; }
+:where(.bk) .kit-toast.bad { background: #7f1d1d; border-color: #7f1d1d; }
 
 /* onay penceresi */
-.kit-overlay {
+:where(.bk) .kit-overlay {
   position: absolute;
   inset: 0;
   z-index: 50;
@@ -108,7 +112,7 @@
   backdrop-filter: blur(2px);
 }
 
-.kit-dialog {
+:where(.bk) .kit-dialog {
   width: min(460px, 100%);
   padding: 22px;
   border-radius: 14px;
@@ -123,11 +127,11 @@
   to { opacity: 1; transform: none; }
 }
 
-.kit-dialog-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-.kit-dialog-text { margin: 8px 0 14px; font-size: 12.5px; color: var(--soft); line-height: 1.55; }
-.kit-dialog .kit-input { width: 100%; }
-.kit-dialog-error { min-height: 16px; margin-top: 6px; font-size: 11.5px; color: var(--bad); }
-.kit-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+:where(.bk) .kit-dialog-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+:where(.bk) .kit-dialog-text { margin: 8px 0 14px; font-size: 12.5px; color: var(--soft); line-height: 1.55; }
+:where(.bk) .kit-dialog .kit-input { width: 100%; }
+:where(.bk) .kit-dialog-error { min-height: 16px; margin-top: 6px; font-size: 11.5px; color: var(--bad); }
+:where(.bk) .kit-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
 
 /* ================================================================ üst şerit */
