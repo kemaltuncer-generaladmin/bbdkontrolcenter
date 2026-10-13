@@ -10,6 +10,7 @@ Personel eşitleme döngüsü çalışan olay döngüsüne görev olarak bırak�
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from km_sdk import ModuleContext
@@ -45,9 +46,11 @@ def register(ctx: ModuleContext) -> None:
     staff = StaffService(store=ctx.store, gateway=gateway, log=ctx.log)
     # Belgeler (önizle/yazdır): PDF rapor köküne yazılır; masaüstü yoksa
     # kurulum kökündeki data/exports (çekirdeğin `output_roots` ile aynı yer).
+    module_path = getattr(ctx, "module_path", None)
+    install_root = Path(module_path).parents[1] if module_path else Path.cwd()
     documents = DocumentService(
         gateway=gateway, allowlist=allowlist, log=ctx.log,
-        fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
+        fallback_dir=install_root / "data" / "exports",
         letterheads=Letterheads(gateway=gateway, log=ctx.log,
                                 fallback_name=str((ctx.config or {}).get("document_title") or "")))
 
