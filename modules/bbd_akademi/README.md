@@ -39,6 +39,19 @@ Akademi API  /v1/admin/*
    (yenileme, başka entegrasyonlar) bu panelin Ayarlar → Entegrasyon
    anahtarları sekmesinden oluşturulup iptal edilebilir.
 
+   > **Anahtarın izinleri oluşturulduğu an dondurulur.** Akademi `km_panel`
+   > kümesini anahtar oluşturulurken kopyalar; kümeye sonradan giren izin eski
+   > anahtarda YOKTUR. **KVKK talepleri** (`privacy.requests`, mağaza işi,
+   > sözleşme README §14 madde 41) bu durumdadır: bu sürümden önce üretilmiş
+   > KM panel anahtarı **privacy.requests için yeniden üretilmelidir** — aksi
+   > halde KVKK talepleri bölümü Akademi'den `403 forbidden` alır (bölüm bunu
+   > görür ve ne yapılacağını yazar). Sıra: Ayarlar → Entegrasyon anahtarları →
+   > "Yeni anahtar" (izin kümesi "KM paneli") ya da yukarıdaki CLI komutu →
+   > yeni anahtarı kasaya `bbd_akademi.api_key` olarak yaz (merkezden:
+   > `scripts/push-secrets.py`) → panelin açıldığını gör → eski anahtarı iptal
+   > et. Akademi tarafında dağıtımdan sonra `sync-roles` koşturulmuş olmalıdır
+   > (yönetici rolüne `privacy.requests` girer).
+
 2. **Anahtarı KM sır kasasına yazın** — adı `bbd_akademi.api_key` (K8; depoda,
    ayarda, logda değer yoktur). İki geçerli yol:
    - kasanın kendisi (`km_platform/secrets`, `Vault.set`), ya da
@@ -94,6 +107,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Talepler | `requests.js` | İzin, görüşme ve etüt talepleri |
 | Ayarlar | `settings*.js` | Kurum ve bildirim varsayılanları, kantin kuralları (F-A15), logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme (etkin / pasif sayısı), **Senkron** kartı (`settings-sync.js`, aşağıda), denetim kaydı |
 | Personel | `staff.js` | Mobil yönetici erişimi (modülün kendi listesi ve anons adı "Hüseyin hoca", Akademi'ye itilir), Akademi personeli, roller ve izin kataloğu |
+| KVKK talepleri | `privacy.js` (hüküm mantığı import'suz `privacy-logic.js`, Node testi) | Hesap silme ve veri indirme talep kuyruğu (`/v1/admin/data-requests*`): varsayılan açık talepler (en eski önce), tür süzgeci, son gün ve kalan gün rozeti (7 gün ve altı sarı, süresi geçen kırmızı), ayrıntı çekmecesi; **onayla** (silmede geri dönüşsüz silinenler yazılı, isteğe bağlı not), **reddet** (gerekçe zorunlu, en az 10 karakter, talep sahibine gider), silinmiş hesapta **erişimi yeniden aç**; öğrenci talebinde öğrenci kartına geçiş. Yazmalar `X-Akademi-On-Behalf-Of` ile gider; "Sonuçlandıran" alanında KM kullanıcısı görünür. Anahtar izni eksikse (Akademi 403) yeniden üretme notu |
 
 Kapsam ölçümü: `tools/ui_coverage.py` izin listesindeki her işlemin panelde
 nerede karşılandığını yazar; ekranda bilerek olmayan işlemler gerekçesiyle
@@ -101,9 +115,10 @@ nerede karşılandığını yazar; ekranda bilerek olmayan işlemler gerekçesiy
 bunu bağlar. Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler ayrı
 `PENDING` ("sırada") tablosundadır — aynı kurallarla, gerekçeli.
 
-**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi 2d91b96):** izin listesinde 469
-işlem — 372 `/v1/admin/*` (x-surface `both` 224, `km` 148) + 97 salt okunur
-`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **341**, bilerek yok **4**
+**Kapsam (sözleşme 1.0.0-draft.3, bbd-akademi `wp/magaza` 06e348f = main
+9c87c2b + KVKK talep kuyruğu):** izin listesinde 473 işlem — 376
+`/v1/admin/*` (x-surface `both` 228, `km` 148) + 97 salt okunur
+`/v1/students/{id}/*` ve `/v1/catalog/*`. Ekranda **345**, bilerek yok **4**
 (gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde, kantin
 tahsilatı ve kontrolleri Öğrenciler modülünde, öğrenci dışa aktarım durumu;
 çalışma grubu yazma uçları sözleşmeden kalktı), sırada **124** (draft.3'ün
@@ -114,7 +129,14 @@ karşılanan işlem (bir işlem birden çok bölümde sayılabilir): Öğrencile
 Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16 · Ders
 programı 16 · Okuma 14 · Bilgi kartları 13 · Erken uyarı 13 · Ödevler 11 ·
 Panel 10 · Talepler 10 · Personel 9 · Duyurular 7 · Kurum takvimi 6 · Kitap
-talepleri 5 · Yoklama 3 · ortak arama listeleri (`index.js`, `common.js`) 8.
+talepleri 5 · KVKK talepleri 5 · Yoklama 3 · ortak arama listeleri (`index.js`,
+`common.js`) 8.
+
+**Sözleşme kaynağı (geçici):** `tools/gen_allowlist.py` → `CONTRACT_REF =
+"wp/magaza"`. KVKK talep kuyruğu mağaza dalındadır, `main`'e henüz
+birleşmedi; `wp/magaza` `main`'i bütünüyle içerir. Mağaza dalı `main`'e
+alınınca (iş backend-birlesim-2) `CONTRACT_REF` yeniden `"main"` yapılır ve
+`gen_allowlist.py --check` ile doğrulanır (izin listesi değişmemelidir).
 
 ## İzinler
 
@@ -142,6 +164,7 @@ izin gelirse test kırılır.
 | `bbd_akademi.learning` | admin, bbd_staff | Günlük koçluk: plan görevi atama ve erteleme, koç notları, erken uyarı eylemleri; görev onayı, soru-cevap, check-in, tebrik |
 | `bbd_akademi.learning_setup` | admin | Öğrenme araçları kurulumu: plan şablonları, okuma listeleri ve ligi, desteler, değerlendirme şablon/dönemleri, erken uyarı eşikleri; koç eşlemesi, koç kütüphanesi küratörlüğü, rozetler, koçluk dışa aktarımı |
 | `bbd_akademi.evaluations` | admin, bbd_staff | Değerlendirme formu, yayımlama, karne dışa aktarımı |
+| `bbd_akademi.privacy` | admin | KVKK talepleri: hesap silme / veri indirme taleplerine karar, silinmiş hesabın erişimini yeniden açma (Akademi `privacy.requests`). Yıkıcı: silme onayı kişisel veriyi geri dönüşsüz siler |
 
 ## Vekil, köprü ve PIN teyidi
 

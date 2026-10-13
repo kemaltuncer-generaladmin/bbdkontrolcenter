@@ -44,7 +44,7 @@ def _generator():  # type: ignore[no-untyped-def]
 @pytest.mark.skipif(not SPEC.exists(), reason="Akademi sözleşmesi bu makinede yok")
 def test_her_admin_islemi_listede_ve_uretilen_dosya_guncel() -> None:
     generator = _generator()
-    # AKADEMI_OPENAPI verilmezse bbd-akademi main dalındaki commit'lenmiş sözleşme.
+    # AKADEMI_OPENAPI verilmezse bbd-akademi CONTRACT_REF dalındaki commit'lenmiş sözleşme.
     spec = generator.load_spec(Path(os.environ["AKADEMI_OPENAPI"])
                                if os.environ.get("AKADEMI_OPENAPI") else None)
     admin = {op["operationId"] for path, item in spec["paths"].items()

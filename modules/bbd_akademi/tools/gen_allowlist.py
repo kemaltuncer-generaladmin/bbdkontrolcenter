@@ -17,8 +17,9 @@ Kullanım (depo kökünden):
 
     .venv/bin/python modules/bbd_akademi/tools/gen_allowlist.py [--spec yol] [--check]
 
-Varsayılan kaynak bbd-akademi deposunun `main` dalındaki commit'lenmiş
-sözleşmedir (çalışma ağacı yarım düzenlenmiş olabilir).
+Varsayılan kaynak bbd-akademi deposunun `CONTRACT_REF` dalındaki
+commit'lenmiş sözleşmedir (çalışma ağacı yarım düzenlenmiş olabilir).
+`CONTRACT_REF` normalde `main`'dir; geçici istisna aşağıda.
 
 `--check`: dosyayı yazmaz; üretilen içerik commit'lenmiş olandan farklıysa
 1 ile çıkar.
@@ -38,6 +39,13 @@ import yaml
 MODULE = Path(__file__).resolve().parents[1]
 TARGET = MODULE / "backend" / "allowlist.py"
 DEFAULT_SPEC = MODULE.parents[3] / "bbd-akademi" / "docs" / "api" / "openapi.yaml"
+
+#: Sözleşmenin okunduğu git dalı. GEÇİCİ: `wp/magaza` — mağaza işinin KVKK
+#: talep kuyruğu (`/v1/admin/data-requests*`, izin `privacy.requests`, README
+#: §14 madde 41) bu dalda; `wp/magaza` `main`'i bütünüyle içerir (main + 4
+#: işlem). Mağaza dalı `main`'e birleşince (iş backend-birlesim-2) burası
+#: yeniden `"main"` yapılır ve betik `--check` ile doğrulanır.
+CONTRACT_REF = "wp/magaza"
 
 METHODS = ("get", "post", "put", "patch", "delete")
 PARAM = re.compile(r"\{([A-Za-z][A-Za-z0-9]*)\}")
@@ -169,17 +177,17 @@ def render(rows: list[dict[str, Any]], version: str) -> str:
 def load_spec(path: Path | None = None) -> dict[str, Any]:
     """Sözleşmeyi okur.
 
-    `path` verilmezse bbd-akademi deposunun `main` dalındaki COMMIT'LENMİŞ
-    sürüm okunur (`git show main:docs/api/openapi.yaml`): çalışma ağacındaki
-    dosya o anda başka biri tarafından düzenleniyor (yarım, ayrıştırılamaz)
-    olabilir ve bağlayıcı sözleşme `main`dekidir. Git ya da depo yoksa dosya
-    okunur.
+    `path` verilmezse bbd-akademi deposunun `CONTRACT_REF` dalındaki
+    COMMIT'LENMİŞ sürüm okunur (`git show <dal>:docs/api/openapi.yaml`):
+    çalışma ağacındaki dosya o anda başka biri tarafından düzenleniyor (yarım,
+    ayrıştırılamaz) olabilir ve bağlayıcı sözleşme commit'lenmiş olandır. Git,
+    depo ya da dal yoksa dosya okunur.
     """
     if path is None:
         repo = DEFAULT_SPEC.parents[2]
         try:
             text = subprocess.run(
-                ["git", "-C", str(repo), "show", "main:docs/api/openapi.yaml"],
+                ["git", "-C", str(repo), "show", f"{CONTRACT_REF}:docs/api/openapi.yaml"],
                 capture_output=True, text=True, check=True, timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
             text = DEFAULT_SPEC.read_text(encoding="utf-8")
@@ -194,7 +202,7 @@ def load_spec(path: Path | None = None) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--spec", type=Path, default=None,
-                        help="sözleşme dosyası (varsayılan: bbd-akademi main dalı)")
+                        help=f"sözleşme dosyası (varsayılan: bbd-akademi {CONTRACT_REF} dalı)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
 
