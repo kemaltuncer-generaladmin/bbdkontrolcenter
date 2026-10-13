@@ -316,6 +316,12 @@ class BellService:
         self._page_voice_table = store.table("page_voice")
 
         self._sync_task: asyncio.Task[None] | None = None
+        #: Ajanın kitaplığında bulunması gereken ses kimlikleri — eşitleme
+        #: döngüsünün son turundan. Ekran "zil bilgisayarında 21/21 ses" der;
+        #: her ekran tazelemesinde bütün dosyaları yeniden özetlemek pahalı.
+        self._wanted_ids: set[str] | None = None
+        #: Günlüğe en son işlenen ajan cevabı (`lastAck.id`).
+        self._acked_id = 0
 
     # ================================================================= ayar
 
@@ -1370,6 +1376,9 @@ class BellService:
         audio_state = self._audio.available() if self._audio else {"ready": False}
         scheduler_state = self._scheduler.state() if self._scheduler else {"running": False}
         agent = await self._bridge.try_status()
+        # Zil bilgisayarının son cevabı günlüğe işlenir (ÖNCE: aşağıdaki
+        # günlük okuması onu da görsün).
+        await self.note_ack(agent)
 
         rows = await self._store.fetch_all(
             f"SELECT * FROM {self._log_table} ORDER BY id DESC LIMIT 60"
@@ -1406,9 +1415,17 @@ class BellService:
             "queue": self._voices.state(),
             "log": [dict(row) for row in rows],
             # Zil çalabilir mi? Ajan, saat ve ana şalter — üçü de gerekli.
-            # Yerel çalma açıksa ajan olmadan da ses çıkar, o da sayılır.
+            # Yerel çalma YALNIZ bu makinede çalıcı varsa sayılır: sunucuda
+            # (ADR 0026) hoparlör yok ve "yerel" ayarı ajan arızasını
+            # gizliyordu — ekran "zil hazır" derken hiçbir yerden ses çıkmazdı.
             "ready": bool(settings["enabled"]) and total_times > 0
-            and (bool(agent.get("online")) or bool(settings["playLocally"])),
+            and (bool(agent.get("online")) or self._plays_locally(settings)),
+            # Bu makinede ses çalıcı var mı (masaüstü yerel kip)? Sunucuda yok;
+            # ekran "bu bilgisayardan da çal" seçeneğini o zaman hiç çizmez.
+            "localAvailable": self._local_ready(),
+            "library": self._library_state(agent),
+            "agentAck": _ack_view(agent.get("lastAck")),
+            "schedule": await self.schedule_view(settings),
             "missingVoices": missing,
             # --- zil planı ve öğrenci grupları (0.5) ---
             "profiles": await self._plan.profiles(),
@@ -1418,6 +1435,119 @@ class BellService:
             "studentGroups": callable_groups,
             "studentGroupsAvailable": self._groups_capability() is not None,
         }
+
+    async def schedule_view(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Ekranın "Program" özeti — bugün ve önümüzdeki 7 günün ETKİN zilleri.
+
+        Tetik tablosuyla AYNI kuraldan (`_effective_row`) üretilir: ekranda
+        görünen saat, zil bilgisayarına giden saattir. Eskiden ekran sıradaki
+        zili zamanlayıcının iç tetiğinden okuyordu ("… · gönderim", bir dakika
+        erken) ve Akademi'nin tatil günlerini, saat setlerini hiç göstermiyordu.
+        """
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=planning.ISTANBUL)
+        now = now.astimezone(planning.ISTANBUL)
+        today = self._today()
+        last = today + timedelta(days=planning.SCHEDULE_DAYS - 1)
+        weekly = await self.times()
+        profile_list = await self._plan.profiles()
+        profiles = {item["id"]: item["times"] for item in profile_list}
+        names = {item["id"]: item["name"] for item in profile_list}
+        rows = await self._plan.days(today, last)
+        clock_now = now.strftime("%H:%M")
+
+        days: list[dict[str, Any]] = []
+        upcoming: list[dict[str, Any]] = []
+        for offset in range(planning.SCHEDULE_DAYS):
+            day = today + timedelta(days=offset)
+            row = rows.get(day.isoformat())
+            mode, times, _calls = await self._effective_row(day, row, settings,
+                                                             profiles, weekly)
+            has_plan = bool(row and row["source"] == "akademi")
+            override = bool(row and row["override_mode"])
+            bells: list[dict[str, Any]] = []
+            for entry in sorted(times, key=lambda item: str(item["time"])):
+                at = str(entry["time"])
+                past = offset == 0 and at <= clock_now
+                bell = {"time": at, "kind": time_kind(entry.get("kind")),
+                        "label": str(entry.get("label") or "")}
+                bells.append({**bell, "past": past})
+                if not past and settings["enabled"] and len(upcoming) < 3:
+                    hour, minute = (int(part) for part in at.split(":"))
+                    moment = datetime(day.year, day.month, day.day, hour, minute,
+                                      tzinfo=planning.ISTANBUL)
+                    upcoming.append({**bell, "date": day.isoformat(),
+                                     "inMinutes": max(0, int((moment - now)
+                                                             .total_seconds() // 60))})
+            profile_id = str(row["profile_id"]) if has_plan and row else ""
+            days.append({
+                "date": day.isoformat(),
+                "weekday": DAYS[day.weekday()],
+                "mode": mode,
+                "profileName": names.get(profile_id) if mode == "profile" else None,
+                "reason": (str(row["reason"]) or None) if has_plan and row else None,
+                "source": "km" if override else ("akademi" if has_plan else "none"),
+                "override": override,
+                "bells": bells,
+            })
+        return {"today": today.isoformat(), "now": now.isoformat(timespec="seconds"),
+                "next": upcoming, "days": days}
+
+    async def note_ack(self, agent: Any) -> None:
+        """Zil bilgisayarının son cevabını (`lastAck`) günlükteki komuta işler.
+
+        Köprü yalnız SON cevabı tutar; durum her okunduğunda (ekran 10 sn,
+        eşitleme döngüsü 60 sn) bakılır. Zil komutları dakikalar arayla
+        gittiği için her cevap yakalanır. Satır henüz yazılmadıysa (elle
+        çalmada ajan çok hızlı cevap verdi) işaretlenmez, bir sonraki turda
+        yeniden denenir.
+        """
+        ack = agent.get("lastAck") if isinstance(agent, dict) else None
+        if not isinstance(ack, dict):
+            return
+        try:
+            command_id = int(ack.get("id") or 0)
+        except (TypeError, ValueError):
+            return
+        if command_id <= 0 or command_id == self._acked_id:
+            return
+        try:
+            row = await self._store.fetch_one(
+                f"SELECT id FROM {self._log_table} WHERE command_id = ? LIMIT 1",
+                (command_id,))
+            if row is None:
+                return
+            await self._store.execute(
+                f"UPDATE {self._log_table} SET agent_ok = ?, agent_detail = ? "
+                f"WHERE command_id = ? AND agent_ok = -1",
+                (1 if ack.get("ok") is True else 0,
+                 " ".join(str(ack.get("detail") or "").split())[:300], command_id))
+        except Exception as failure:  # noqa: BLE001 — günlük notu ekranı düşürmez (K7)
+            self._log.warning("ajan cevabı günlüğe yazılamadı", error=str(failure))
+            return
+        self._acked_id = command_id
+
+    def _library_state(self, agent: dict[str, Any]) -> dict[str, int] | None:
+        """Zil bilgisayarında olması gereken seslerden kaçı orada."""
+        if self._wanted_ids is None or agent.get("error"):
+            return None
+        present = {str(item) for item in agent.get("sounds") or []}
+        return {"wanted": len(self._wanted_ids),
+                "present": len(self._wanted_ids & present)}
+
+    def _local_ready(self) -> bool:
+        """Bu makinede ses çalıcı var mı? Sunucu imajında yok (ADR 0026)."""
+        if self._audio is None:
+            return False
+        try:
+            return bool(self._audio.available().get("ready"))
+        except Exception:  # noqa: BLE001 — platform yeteneği dışarısı
+            return False
+
+    def _plays_locally(self, settings: dict[str, Any]) -> bool:
+        """"Bu bilgisayardan da çal" GERÇEKTEN çalabilir mi: ayar açık VE çalıcı var."""
+        return bool(settings["playLocally"]) and self._local_ready()
 
     async def _plan_summary(self, settings: dict[str, Any],
                             entries: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -1513,7 +1643,7 @@ class BellService:
                     payload={**base, "phase": "dispatch",
                              "fireDate": fire.date().isoformat()},
                 ))
-                if settings["playLocally"]:
+                if self._plays_locally(settings):
                     triggers.append(Trigger(
                         day=DAYS[day.weekday()], time=at, label=f"{label} · yerel",
                         payload={**base, "phase": "local", "fireDate": day.isoformat()},
@@ -1583,12 +1713,14 @@ class BellService:
         offset = 0 if items else int(self._session_calls(settings)["offsetSeconds"])
         moment = self._play_at(target, at, offset)
         result = await self._bridge.try_send(items + call_items, play_at=moment)
+        command_id = int(result.get("id") or 0)
         if items:
             await self._record("zil", "plan", ", ".join(item["name"] for item in items),
-                               result["ok"], f"ajan · {result['detail']}")
+                               result["ok"], f"ajan · {result['detail']}",
+                               command_id=command_id)
         if outcomes:
             await self._finish_calls(target, outcomes, ok=bool(result["ok"]),
-                                     detail=str(result["detail"]))
+                                     detail=str(result["detail"]), command_id=command_id)
         await self._plan.mark_dispatch(target)
 
     def _play_at(self, day: date, at: str, offset: int = 0) -> str:
@@ -1645,7 +1777,7 @@ class BellService:
         return items, outcomes
 
     async def _finish_calls(self, day: date, outcomes: list[tuple[str, str, str]], *,
-                            ok: bool, detail: str) -> None:
+                            ok: bool, detail: str, command_id: int = 0) -> None:
         """Çağrı sonuçlarını `mod_bell_call.state`'e işler ve günlüğe ÖZET yazar."""
         sent = 0
         for call_id, state, note in outcomes:
@@ -1657,7 +1789,8 @@ class BellService:
         await self._record("cagri-plan", "plan", day.isoformat(),
                            skipped == 0 and bool(outcomes),
                            f"{sent} çağrı gönderildi · {skipped} atlandı/başarısız"
-                           + (f" · ajan · {detail}" if detail else ""))
+                           + (f" · ajan · {detail}" if detail else ""),
+                           command_id=command_id)
 
     async def _bell_items(self, settings: dict[str, Any],
                           kind: str = DEFAULT_TIME_KIND) -> list[dict[str, Any]]:
@@ -1830,7 +1963,7 @@ class BellService:
         result = await self._bridge.try_send(items, play_at="")
         detail = f"ajan · {result['detail']}"
 
-        if settings["playLocally"]:
+        if self._plays_locally(settings):
             local = await self._play_locally(items, settings, kind=kind, edge=edge,
                                              record=False)
             detail = f"{detail} · yerel · {local['detail']}"
@@ -1838,7 +1971,8 @@ class BellService:
         else:
             ok = result["ok"]
 
-        await self._record(kind, edge, name, ok, detail, actor=actor)
+        await self._record(kind, edge, name, ok, detail, actor=actor,
+                           command_id=int(result.get("id") or 0))
         return {"ok": ok, "detail": detail}
 
     async def _play_locally(self, items: list[dict[str, Any]], settings: dict[str, Any],
@@ -1868,12 +2002,13 @@ class BellService:
         return {"ok": False, "detail": detail}
 
     async def _record(self, kind: str, edge: str, name: str, ok: bool,
-                      detail: str, *, actor: str = "") -> None:
+                      detail: str, *, actor: str = "", command_id: int = 0) -> None:
         await self._store.execute(
             f"INSERT INTO {self._log_table} "
-            f"(at, group_id, group_name, edge, sound, ok, detail, kind) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (_now(), actor, name, edge, name, 1 if ok else 0, detail[:500], kind),
+            f"(at, group_id, group_name, edge, sound, ok, detail, kind, command_id) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), actor, name, edge, name, 1 if ok else 0, detail[:500], kind,
+             int(command_id or 0)),
         )
         if not ok:
             self._log.warning("zil çalınamadı", kind=kind, detail=detail[:200])
@@ -1978,9 +2113,12 @@ class BellService:
         ilk kez bağlanana dek her turda bütün sesler yeniden yüklenir.
         """
         wanted = await self.needed_sounds()
+        self._wanted_ids = set(wanted)
         status = await self._bridge.try_status()
         if status.get("error"):
             return {"ok": False, "detail": status["error"]}
+        # Ekran kapalıyken de zil bilgisayarının cevabı günlüğe işlensin.
+        await self.note_ack(status)
 
         present = set(status.get("bridgeSounds") or [])
         missing = [(key, path) for key, path in wanted.items() if key not in present]
@@ -2048,6 +2186,15 @@ def _item(kind: str, path: Path, volume: int) -> dict[str, Any]:
     data = path.read_bytes()
     return {"kind": kind, "hash": content_id(data), "name": path.name,
             "volume": int(volume)}
+
+
+def _ack_view(ack: Any) -> dict[str, Any] | None:
+    """Köprüdeki son ajan cevabı → ekran: hangi komut, çaldı mı, ne dedi, ne zaman."""
+    if not isinstance(ack, dict) or not ack.get("id"):
+        return None
+    return {"id": ack.get("id"), "ok": ack.get("ok") is True,
+            "detail": " ".join(str(ack.get("detail") or "").split())[:300],
+            "at": str(ack.get("at") or "")}
 
 
 def _voice_state(entries: dict[str, dict[str, Any]], hash_: str) -> dict[str, Any]:

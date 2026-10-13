@@ -117,6 +117,7 @@ class FakeBridge:
         self.sent: list[dict[str, Any]] = []
         self.uploaded: dict[str, bytes] = {}      # köprüdekiler
         self.agent_sounds: list[str] = []         # ajanın yerelindekiler
+        self.last_ack: dict[str, Any] = {}        # ajanın son cevabı (köprüde)
         self.error = ""
 
     async def try_send(self, items: list[dict[str, Any]], *,
@@ -124,7 +125,8 @@ class FakeBridge:
         if self.error:
             return {"ok": False, "detail": self.error}
         self.sent.append({"items": items, "playAt": play_at})
-        return {"ok": True, "detail": f"köprü kuyruğu #{len(self.sent)}"}
+        return {"ok": True, "detail": f"köprü kuyruğu #{len(self.sent)}",
+                "id": len(self.sent)}
 
     async def try_status(self) -> dict[str, Any]:
         if self.error:
@@ -133,7 +135,7 @@ class FakeBridge:
         return {
             "online": self.online,
             "lastSeen": "2026-08-14T10:00:00+03:00",
-            "lastAck": {},
+            "lastAck": dict(self.last_ack),
             # Ajanın yerelindekiler ile köprüdekiler AYRI: gerçekte de öyle.
             "sounds": sorted(self.agent_sounds),
             "bridgeSounds": sorted(self.uploaded),

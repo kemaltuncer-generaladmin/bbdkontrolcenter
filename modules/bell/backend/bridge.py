@@ -170,7 +170,14 @@ class BellBridge:
             result = await self.send(items, play_at=play_at)
         except BridgeError as failure:
             return {"ok": False, "detail": str(failure)}
-        return {"ok": True, "detail": f"köprü kuyruğu #{result.get('id', '?')}"}
+        # Komut numarası günlüğe yazılır: ajanın cevabı (`lastAck.id`) bu
+        # numarayla eşlenir ve ekran "zil bilgisayarı çaldı / atladı" der.
+        try:
+            command_id = int(result.get("id") or 0)
+        except (TypeError, ValueError):
+            command_id = 0
+        return {"ok": True, "detail": f"köprü kuyruğu #{result.get('id', '?')}",
+                "id": command_id}
 
     async def try_status(self) -> dict[str, Any]:
         """Ajan durumu. İKİ AYRI ses listesi döner, karıştırılmamalı:

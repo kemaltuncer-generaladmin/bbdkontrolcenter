@@ -60,7 +60,7 @@ import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 #: Özet biçimi — Kontrol Merkezi ve köprü ile aynı.
 HASH = re.compile(r"^[0-9a-f]{16}$")
@@ -357,8 +357,12 @@ class Player:
                 target.writeframes(samples.tobytes())
             staging.replace(cached)
             return cached
-        except (wave.Error, OSError, ValueError) as failure:
+        except Exception as failure:  # noqa: BLE001
             # Ölçekleme başarısızsa TAM SESLE çalmak, hiç çalmamaktan iyidir.
+            # GENİŞ YAKALAMA BİLEREK: standart dışı bir WAV `wave` modülünde
+            # yalın `RuntimeError` (parça atlama) ya da `EOFError` (kesik
+            # dosya) fırlatıyor; yalnız `wave.Error` yakalanınca zil HİÇ
+            # çalmıyor, ack "çalınamadı: " (boş sebep) diyordu.
             log.warning("ses düzeyi uygulanamadı (%s): %s", path.name, failure)
             return path
 
