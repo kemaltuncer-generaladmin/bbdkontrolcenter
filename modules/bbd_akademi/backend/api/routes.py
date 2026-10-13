@@ -34,6 +34,7 @@ from km_sdk import (
 )
 
 from .. import contract_features
+from ..documents import DocumentDenied, DocumentService
 from ..features import TenantFeatures
 from ..gateway import request_id
 from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions
@@ -45,6 +46,7 @@ _proxy: AkademiProxy | None = None
 _staff: StaffService | None = None
 _events: Callable[[], Any] | None = None
 _features: TenantFeatures | None = None
+_documents: DocumentService | None = None
 
 #: Geçidin (`mobile_gateway`) kendi izinleri — Senkron kartı onları sorar (K9:
 #: gösterilen veri geçidindir, kapısı da geçidin iznidir).
@@ -57,12 +59,14 @@ METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 def bind(proxy: AkademiProxy, staff: StaffService,
          events: Callable[[], Any] | None = None,
-         features: TenantFeatures | None = None) -> APIRouter:
+         features: TenantFeatures | None = None,
+         documents: DocumentService | None = None) -> APIRouter:
     """`events`: `mobile_gateway.events` yeteneğini her çağrıda çözen işlev
     (geçit yoksa ya da bu modülden sonra yüklenirse `None` döner).
-    `features`: kurum özellik bayrakları özeti (verilmezse vekilin geçidiyle kurulur)."""
-    global _proxy, _staff, _events, _features
-    _proxy, _staff, _events = proxy, staff, events
+    `features`: kurum özellik bayrakları özeti (verilmezse vekilin geçidiyle kurulur).
+    `documents`: belge üretimi (önizle/yazdır); verilmezse belge uçları 503 döner."""
+    global _proxy, _staff, _events, _features, _documents
+    _proxy, _staff, _events, _documents = proxy, staff, events, documents
     _features = features or TenantFeatures(gateway=proxy.gateway, log=proxy.log)
     return router
 
@@ -142,6 +146,24 @@ class StepUpBody(BaseModel):
 
 class FetchBody(BaseModel):
     url: str = Field(min_length=8, max_length=4000)
+
+
+class DocumentBody(BaseModel):
+    """Panelin kurduğu belge modeli (`documents-logic.js`). Biçim ve sınırlar
+    `document_pdf.parse` içinde denetlenir; burada yalnız zarf."""
+
+    kind: str = Field(min_length=3, max_length=40, pattern=r"^[a-z_]+$")
+    document: dict[str, Any]
+    preview: bool = True
+
+
+class AkademiPdfBody(BaseModel):
+    """Akademi'nin kendi PDF'i (makbuz, ekstre, sipariş belgesi) — imzalı bağlantı."""
+
+    kind: str = Field(min_length=3, max_length=40, pattern=r"^[a-z_]+$")
+    url: str = Field(min_length=8, max_length=4000)
+    name: str = Field(default="", max_length=160)
+    preview: bool = True
 
 
 class StaffBody(BaseModel):
@@ -283,6 +305,44 @@ async def download(request: Request, url: str = Query(min_length=8, max_length=4
                    user: CurrentUser = requires(VIEW)) -> Response:
     """İmzalı indirme bağlantısını AKIŞ olarak geçirir (tarayıcı/araç istemcileri)."""
     return await proxy().download(url, request_id(request.headers.get("x-request-id")))
+
+
+# -------------------------------------------------------------------- belge
+
+
+def documents() -> DocumentService:
+    if _documents is None:
+        raise HTTPException(status_code=503, detail="Belge üretimi bu kurulumda hazır değil.")
+    return _documents
+
+
+def _denied(failure: DocumentDenied) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"error": {
+        "code": "forbidden", "message": str(failure), "status": 403,
+        "details": {"permission": failure.permission, "operationId": failure.operation},
+        "traceId": None}})
+
+
+@router.post("/km/documents/preview")
+async def document_preview(body: DocumentBody, user: CurrentUser = requires(VIEW)) -> Any:
+    """Belgeyi kurum logolu PDF olarak üretir; sayfaların önizlemesini döner.
+
+    Kapı türe göredir (K9): belgenin taşıdığı verinin Akademi işlemlerine
+    karşılık gelen KM izni aranır (`documents.KINDS`)."""
+    try:
+        return await documents().produce(user, body.kind, body.document, preview=body.preview)
+    except DocumentDenied as failure:
+        return _denied(failure)
+
+
+@router.post("/km/documents/akademi")
+async def document_from_akademi(body: AkademiPdfBody, user: CurrentUser = requires(VIEW)) -> Any:
+    """Akademi'nin ürettiği PDF'i rapor köküne alır ve önizler (yazdırılabilir olur)."""
+    try:
+        return await documents().import_pdf(user, body.kind, body.url, body.name,
+                                            preview=body.preview)
+    except DocumentDenied as failure:
+        return _denied(failure)
 
 
 # ------------------------------------------------------------------ personel

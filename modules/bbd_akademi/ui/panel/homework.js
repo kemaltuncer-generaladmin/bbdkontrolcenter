@@ -27,6 +27,8 @@ import {
 } from './common.js';
 import { homeworkContent, removableChip, stack, topicsText } from './homework-content.js';
 import { bulkHomeworkWizard } from './homework-bulk.js';
+import { documentButtons } from './documents.js';
+import { homeworkListDoc, studentHomeworkDoc } from './documents-logic.js';
 
 const HOMEWORK = '/v1/admin/homework';
 
@@ -138,7 +140,26 @@ export function section(app) {
   const seriesSlot = h('span', 'ak-inline');
   const picker = studentPicker(app, { placeholder: 'Öğrenciye göre süz',
     onPick: (student) => setStudent(student.id, student.displayName || '') });
-  node.append(toolbar(chips.node, h('span', 'kit-spacer'), classSelect.node, picker.node, studentSlot, seriesSlot));
+  // Belge: öğrenci süzülmüşse o öğrencinin ödevleri (durum + sonuç), yoksa süzgeçteki
+  // ödev listesi (sınıf / süre). Liste sayfalı okunur (A14).
+  const homeworkDoc = documentButtons(app, { title: 'Ödev listesi', label: 'Ödev listesi',
+    build: async (progress) => {
+      progress(0, 0, 'Ödevler okunuyor…');
+      if (filters.studentId) {
+        const [detail, items] = await Promise.all([
+          app.api.get(`/v1/admin/students/${filters.studentId}`),
+          app.api.all(`/v1/students/${filters.studentId}/homework`, {}, { limit: 100, max: 1000 })]);
+        return studentHomeworkDoc(detail?.student || { displayName: filters.studentLabel }, items);
+      }
+      const rows = await app.api.all(HOMEWORK, { state: filters.state || undefined,
+        classGroupId: filters.classGroupId || undefined, seriesId: filters.seriesId || undefined },
+      { limit: 100, max: 2000 });
+      return homeworkListDoc(rows, { scope: filters.classGroupId ? names.classes.get(filters.classGroupId)
+        || classSelect.node.selectedOptions?.[0]?.textContent || '' : '',
+      state: filters.state === 'active' ? 'Süresi dolmamış' : filters.state === 'past' ? 'Süresi geçmiş' : '' });
+    } });
+  node.append(toolbar(chips.node, h('span', 'kit-spacer'), classSelect.node, picker.node, studentSlot,
+    seriesSlot, homeworkDoc));
 
   // Seçilenlere toplu işlem (en çok 200 ödev; `admin_bulkUpdateHomework`).
   const bulkBar = h('div', 'ak-hw-bulk');

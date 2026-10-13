@@ -101,7 +101,6 @@ _MESSAGING = (
 
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
-    "admin_getTimetableGrid": _PROGRAM_BUILDER,
     "admin_previewTimetable": _PROGRAM_BUILDER,
     "admin_listTimetableTemplates": _PROGRAM_BUILDER,
     "admin_createTimetableTemplate": _PROGRAM_BUILDER,
@@ -123,9 +122,9 @@ PENDING: dict[str, str] = {
         "Sözleşme 030d3e3 ile geldi; takvim kaydının yoklama/oturum etkisini "
         "önizleme kurum takvimi formunun ayrı iş paketidir, bu dalda henüz yok.",
     **{operation_id: _ATTENDANCE for operation_id in (
-        "admin_getAttendanceBoard", "admin_listChronicAbsentees", "admin_listEarlyLeaves",
+        "admin_getAttendanceBoard", "admin_listEarlyLeaves",
         "admin_exportAttendance", "admin_listAttendanceInconsistencies", "admin_getLeaveStats",
-        "admin_getAttendanceMatrix", "admin_getAttendanceRates", "admin_listAttendanceReviews",
+        "admin_getAttendanceRates", "admin_listAttendanceReviews",
         "admin_decideAttendanceReview", "admin_correctAttendance", "admin_listAttendanceHistory",
         "admin_refreshAttendanceRoster", "admin_remindAttendance", "admin_markStudentLeft",
         "admin_voidAttendance", "admin_getAttendanceSettings", "admin_putAttendanceSettings",

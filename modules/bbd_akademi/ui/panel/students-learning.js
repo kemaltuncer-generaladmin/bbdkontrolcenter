@@ -40,6 +40,8 @@ import {
 import {
   accuracyTone, box, dayMonth, imageBag, minutes, periodRange, questionsTab, readingTab, stack,
 } from './students-learning-stats.js';
+import { documentButtons } from './documents.js';
+import { studyPlanDoc } from './documents-logic.js';
 
 /** İç sekmeler: anahtar → {etiket, okuma işlemi}. Okuma yetkisi yoksa çizilmez. */
 const SUBTABS = [
@@ -163,6 +165,13 @@ function planTab(app, studentId) {
     button('Bu hafta', { variant: 'ghost', onClick: () => go(weekStart(todayIst())) }),
     button('Sonraki hafta ›', { variant: 'ghost', onClick: () => go(addDays(week, 7)) }),
     label,
+    h('span', 'kit-spacer'),
+    documentButtons(app, { title: 'Haftalık çalışma planı', label: 'Plan',
+      build: async () => {
+        const [detail, data] = await Promise.all([app.api.get(`/v1/admin/students/${studentId}`),
+          app.api.get(`/v1/students/${studentId}/plan`, { week })]);
+        return studyPlanDoc(detail?.student, data);
+      } }),
   ));
 
   const weekView = loader(() => app.api.get(`/v1/students/${studentId}/plan`, { week }),

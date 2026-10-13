@@ -140,7 +140,14 @@ migrations: backend/migrations
 dependencies:
   python:
     - "httpx>=0.28"
-  system: []
+    # Belgeler (karne, yoklama, ekstre …) kurum logolu A4 PDF olarak üretilir.
+    - "reportlab>=4.2"
+  system:
+    # PDF'te Türkçe karakterler için gömülü TTF.
+    - "fonts-dejavu-core"
+    # Önizleme basılacak PDF'in kendisidir: sayfalar pdftoppm ile görüntüye
+    # çevrilir. Yoksa belge yine üretilir ve basılır, yalnız önizleme çıkmaz.
+    - "poppler-utils"
 
 tasks:
   - name: staff_sync

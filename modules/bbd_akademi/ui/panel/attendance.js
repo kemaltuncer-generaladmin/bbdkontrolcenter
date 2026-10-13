@@ -29,6 +29,8 @@ import {
   DAY_LABEL, actionButton, addDays, confirmAction, dateInput, empty, errorBox, fmtDate,
   fmtDateTime, fmtTime, num, personName, problem, sectionHead, selectBox, todayIst, toolbar,
 } from './common.js';
+import { documentButtons } from './documents.js';
+import { absenteeListDoc, attendanceDayDoc, attendanceMatrixDoc, attendanceSheetDoc } from './documents-logic.js';
 
 /** [anahtar, etiket, ton] — Akademi `AttendanceStatus`. */
 export const MARKS = [
@@ -95,6 +97,33 @@ export function section(app) {
   }, { label: 'Öğretmen' });
   node.append(toolbar(nav, classSelect.node, teacherSelect.node, h('span', 'kit-spacer'),
     button('Yenile', { variant: 'ghost', onClick: () => load() })));
+
+  // ------------------------------------------------------------- belgeler
+  // Günlük tahta ekrandaki listeden (ek istek yok); aylık çizelge seçili sınıfın
+  // gösterilen ayı; devamsızlık listesi gösterilen günden geriye 30 gün.
+  const className = () => (state.classGroupId ? classSelect.node.selectedOptions?.[0]?.textContent || '' : '');
+  const needClass = 'Aylık çizelge için önce sınıf seçin.';
+  const docs = h('div', 'ak-toolbar ak-att-docs');
+  docs.append(
+    h('span', 'ak-muted', 'Belgeler:'),
+    documentButtons(app, { title: 'Günlük yoklama tahtası', label: 'Günlük tahta',
+      build: async () => attendanceDayDoc(state.date, state.items, { classGroupName: className() }) }),
+    app.can('admin_getAttendanceMatrix') ? documentButtons(app, { title: 'Aylık yoklama çizelgesi', label: 'Aylık çizelge',
+      build: async () => {
+        if (!state.classGroupId) throw new Error(needClass);
+        return attendanceMatrixDoc(await app.api.get('/v1/admin/attendance/matrix',
+          { classGroupId: state.classGroupId, month: state.date.slice(0, 7) }));
+      } }) : null,
+    app.can('admin_listChronicAbsentees') ? documentButtons(app, { title: 'Devamsızlık listesi', label: 'Devamsızlık',
+      build: async (progress) => {
+        progress(0, 0, 'Devamsızlık listesi okunuyor…');
+        const from = addDays(state.date, -30);
+        const items = await app.api.all('/v1/admin/attendance/chronic',
+          { from, to: state.date, groupId: state.classGroupId || undefined }, { limit: 100, max: 2000 });
+        return absenteeListDoc(items, { from, to: state.date, groupName: className() });
+      } }) : null,
+  );
+  node.append(docs);
 
   const kpis = h('div', 'ak-att-kpis');
   const chips = chipRow([
@@ -376,6 +405,10 @@ function sheetPanel(app, { onSaved, onSelect }) {
     const tools = h('div', 'ak-att-tools');
     tools.append(counters, h('span', 'kit-spacer'));
     if (allPresent) tools.append(allPresent);
+    // Çizelge KAYITLI yoklamayı basar (ekrandaki kaydedilmemiş işaretler girmez).
+    const sessionId = session.id;
+    tools.append(documentButtons(app, { title: 'Yoklama çizelgesi', label: 'Çizelge',
+      build: async () => attendanceSheetDoc(await app.api.get(`/v1/admin/attendance/sessions/${sessionId}`)) }));
 
     const list = h('div', 'ak-att-rows');
     const rowRefs = new Map();

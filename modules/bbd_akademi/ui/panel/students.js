@@ -27,6 +27,8 @@ import {
   EXAM_TARGETS, GRADE_LEVELS, TRACKS, empty, fmtDateTime, gradeText, loader, num, openDrawer, optionsOf,
   pagedList, problem, searchBox, sectionHead, selectBox, toolbar,
 } from './common.js';
+import { documentButtons } from './documents.js';
+import { guardianListDoc, guardiansFromDetails, mapLimit } from './documents-logic.js';
 import {
   STUDENT_STATUS, curriculumTab, linkButton, openKmStudents, overviewTab, renderHeader, resourcesTab,
   scheduleTab, stack,
@@ -217,8 +219,23 @@ function studentsView(app, { open }) {
   button(managed ? 'Öğrenciler sekmesine git' : 'Öğrenci Yönetimi\'ni aç',
     { onClick: () => openKmStudents(app, null) }));
 
+  // Veli listesi (sınıf): sınıfın öğrencileri + her birinin veli kaydı (yakınlık, maskeli
+  // telefon). Akademi'ye aynı anda en çok 4 istek (A14); KVKK gereği sınıf seçimi şart.
+  const guardianDoc = app.can('admin_getStudent') ? documentButtons(app, { title: 'Veli listesi',
+    label: 'Veli listesi', build: async (progress, state) => {
+      if (!filters.classGroupId) throw new Error('Veli listesi için önce sınıf seçin.');
+      progress(0, 0, 'Sınıf listesi okunuyor…');
+      const students = await app.api.all('/v1/admin/students', { classGroupId: filters.classGroupId },
+        { limit: 100, max: 500 });
+      const details = await mapLimit(students, 4, (student) => (state.cancelled ? null
+        : app.api.get(`/v1/admin/students/${student.id}`)),
+      (done, total) => progress(done, total, `Veli kayıtları okunuyor… ${done} / ${total}`));
+      return guardianListDoc(guardiansFromDetails(details.filter(Boolean)), { classGroupId: filters.classGroupId,
+        classGroupName: classSelect.node.selectedOptions?.[0]?.textContent || '' });
+    } }) : null;
   node.append(hint, toolbar(search.node, classSelect.node, groupSelect.node, gradeSelect.node, trackSelect.node,
-    statusSelect.node, button('Süzgeçleri temizle', { variant: 'ghost', onClick: () => clearFilters() })));
+    statusSelect.node, button('Süzgeçleri temizle', { variant: 'ghost', onClick: () => clearFilters() }),
+    guardianDoc));
 
   const list = pagedList({
     app,

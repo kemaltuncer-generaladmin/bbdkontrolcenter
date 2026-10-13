@@ -21,6 +21,8 @@ import {
   actionButton, addDays, confirmAction, dateInput, fmtDate, fmtDateTime, formDialog, gradeText, kv, net, num,
   openDrawer, percent, problem, runAction, statusBadge, studentPicker, todayIst,
 } from './common.js';
+import { documentButtons } from './documents.js';
+import { reportCardDoc } from './documents-logic.js';
 import {
   CHANGE_MARK, EVALUATION_STATUS, MISTAKE_REASONS, READ_KIND, averageText, checkLine, detailOf, exportReports,
   iconButton, shareText,
@@ -505,6 +507,10 @@ export function openEvaluation(ctx, evaluationId, { initial = null } = {}) {
         onClick: () => exportReports(ctx, { periodId: evaluation.period?.id || '', periodName: evaluation.period?.name,
           studentIds: [evaluation.student?.id], studentName: evaluation.student?.displayName }) }));
     }
+    // Karne: KAYITLI hâl basılır (kaydedilmemiş değişiklik belgeye girmez); taslak filigranlı.
+    actionsBar.append(documentButtons(app, { title: 'Karne', label: 'Karne',
+      disabled: dirty ? 'Önce değişiklikleri kaydedin; belge kayıtlı hâli basar.' : '',
+      build: async () => reportCardDoc([await app.api.get(`/v1/admin/evaluations/${evaluation.id}`)]) }));
     actionsBar.append(h('span', 'kit-spacer'));
     if (evaluation.student?.id) {
       actionsBar.append(button('Öğrenci kartı', { variant: 'ghost', onClick: () => {
