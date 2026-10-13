@@ -93,6 +93,12 @@ export function mount(root, ctx) {
      * ekran bunu ham hata olarak göstermez, sebebini yazar.
      */
     kmGet: (path) => ctx.api(path),
+    /**
+     * Çekirdeğin istek kanalı — YALNIZ belge baskısı için (`documents.js`:
+     * `ui-kit/printing.js` üretilmiş PDF'i `/api/outputs/document` ile alır;
+     * kapısı çekirdeğin `outputs.print` iznidir).
+     */
+    coreApi: (path, options) => ctx.api(path, options),
     /** Sözleşme şalteri açık mı (`backend/contract_features.py`; okunamadıysa kapalı). */
     feature: (name) => Boolean(app.status?.contractFeatures?.[name]),
     /** Kurum özellik bayrağı açık mı (Akademi `features`; okunamadıysa AÇIK sayılır). */
