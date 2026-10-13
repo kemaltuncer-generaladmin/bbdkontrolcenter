@@ -19,7 +19,7 @@ Kullanım (depo kökünden):
 
 Varsayılan kaynak bbd-akademi deposunun `CONTRACT_REF` dalındaki
 commit'lenmiş sözleşmedir (çalışma ağacı yarım düzenlenmiş olabilir).
-`CONTRACT_REF` normalde `main`'dir; geçici istisna aşağıda.
+`CONTRACT_REF` `main`'dir.
 
 `--check`: dosyayı yazmaz; üretilen içerik commit'lenmiş olandan farklıysa
 1 ile çıkar.
@@ -40,12 +40,10 @@ MODULE = Path(__file__).resolve().parents[1]
 TARGET = MODULE / "backend" / "allowlist.py"
 DEFAULT_SPEC = MODULE.parents[3] / "bbd-akademi" / "docs" / "api" / "openapi.yaml"
 
-#: Sözleşmenin okunduğu git dalı. GEÇİCİ: `wp/magaza` — mağaza işinin KVKK
-#: talep kuyruğu (`/v1/admin/data-requests*`, izin `privacy.requests`, README
-#: §14 madde 41) bu dalda; `wp/magaza` `main`'i bütünüyle içerir (main + 4
-#: işlem). Mağaza dalı `main`'e birleşince (iş backend-birlesim-2) burası
-#: yeniden `"main"` yapılır ve betik `--check` ile doğrulanır.
-CONTRACT_REF = "wp/magaza"
+#: Sözleşmenin okunduğu git dalı: bağlayıcı sözleşme `main`'dedir. (13.10.2026'ya
+#: dek geçici olarak `wp/magaza` okunuyordu — KVKK talep kuyruğu oradaydı;
+#: backend-birlesim-2 / 509ae50 ile `main`'e girdi.)
+CONTRACT_REF = "main"
 
 METHODS = ("get", "post", "put", "patch", "delete")
 PARAM = re.compile(r"\{([A-Za-z][A-Za-z0-9]*)\}")

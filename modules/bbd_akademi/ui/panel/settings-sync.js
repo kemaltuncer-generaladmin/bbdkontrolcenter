@@ -20,7 +20,7 @@
 // gizlenince ya da pencere arka plandayken durur.
 
 import { blockedButton, button, h } from '../../ui-kit/kit.js';
-import { alertBox, card, kpiRow } from '../../ui-kit/layout.js';
+import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { confirmAction, empty, fmtDateTime, kv, loader, num, problem, statusBadge, toolbar } from './common.js';
 import {
@@ -138,6 +138,8 @@ export function syncTab(app) {
       ['Uygulama gecikmesi (p95, 1 sa)', lagText(ev.lagSecondsP95)],
       ['Son hata', errorText(ev.lastErrorCode)],
       ['Etkin / pasif öğrenci', `${num(counts.active ?? 0)} / ${num(counts.inactive ?? 0)}`],
+      // `missing`: KM dizininde 2 tam senkronda görünmedi — eşleşme sorunu (sözleşme StudentStatus).
+      counts.missing ? ['KM\'de bulunamayan', badge(num(counts.missing), 'warn')] : null,
     ]));
   }
 
