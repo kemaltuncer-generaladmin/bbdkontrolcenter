@@ -135,7 +135,7 @@ function createManager(root, options) {
 
   // ------------------------------------------------------------ sekmeler
   const modeBar = h('div', 'st-mode-bar');
-  // "Sınıflar" (0.5.4): seviye / alan / hedef sınav sınıfta tanımlanır (sınıf seviyeyi taşır).
+  // "Sınıflar" (0.5.5): seviye / alan / hedef sınav sınıfta tanımlanır (sınıf seviyeyi taşır).
   const modes = [['list', 'Öğrenciler'], ['bulk', 'Toplu işlemler'], ['groups', 'Gruplar'], ['classes', 'Sınıflar']];
   const modeButtons = {};
   for (const [key, label] of modes) {

@@ -139,7 +139,7 @@ isteğe bağlı anons adı (`callName`).
   düzeltme, "Sınıftan grup oluştur") ve öğrenci kartında "Gruplar" bölümü.
   Yazma `bbd_students.groups`, okuma `bbd_students.view` ister.
 
-## Seviye / alan / hedef sınav — SINIF taşır (göç 008, 13.10.2026)
+## Seviye / alan / hedef sınav — SINIF taşır (göç 008, 0.5.5, 13.10.2026)
 
 Kullanıcı kararı: "Sınıf ve seviye farkı garip, teke indirelim." Seviye
 (5–12 / `graduate`), alan (`track` SAY/EA/SOZ/DIL; 10. sınıf ve üstü / mezun)
@@ -170,12 +170,15 @@ değerlerden manifest kuralıyla kendiliğinden bağlanır.
    hazır gelir; doğruysa yalnız **Seviyeyi kaydet**. Yeni sınıf: alttaki
    "Yeni sınıf tanımla".
 2. **Öğrencileri sınıflara alın**: Öğrenciler listesinde işaretle → "Ana
-   sınıf" → sınıf adı → Uygula (aynı adı yazmak yeterli; var olan ad korunur).
+   sınıf" → sınıf adı → Uygula (aynı adı yazmak yeterli; var olan ad korunur);
+   çok öğrencide **Toplu işlemler** → ortak seçicide süz / "Görünenleri seç" →
+   "Sınıfa ata".
 3. İstisna gereken öğrenci (ör. 11'de YKS yerine yalnız okul): öğrenci kartı →
    "Bu öğrenci için farklı alan / hedef sınav".
 4. Kontrol: Akademi'de ödev / plan verirken program seçicisi sınıfın
    seviyesini gösterir ("Hedefin seviyesi: 11. sınıf · SAY · YKS") ve uygun
-   programı kendiliğinden seçer; "sınıfına seviye girilmemiş" uyarısı 1.
+   programı kendiliğinden seçer (toplu ödevde "Kime?" seçildikten sonra
+   "Ne?"ye dönüp ödevi düzenleyince); "sınıfına seviye girilmemiş" uyarısı 1.
    adımda eksik kalan sınıfı söyler.
 
 ## Veli kantin kontrolleri
@@ -232,7 +235,7 @@ desteği ADR 0029 (modül işlemi + `events.outbox`).
   sıralı. İki silme ucu da PIN teyidi ister (`confirm_pin`; yanlış PIN denetim
   izine düşer; PIN göndermeyen 0.5.3 kabuğu `422 pin_required` alır, silme
   olmaz). Durum geçmişine "Kalıcı silindi" + yapan yazılır.
-- **Toplu işlemler seçicisi (0.5.5 adayı, kullanıcı: "toplu işlemlerde öğrenci
+- **Toplu işlemler seçicisi (0.5.5, kullanıcı: "toplu işlemlerde öğrenci
   seçilemiyor, UI görünmüyor").** Sekme kitin ortak seçicisini (`ui-kit/picker.js`)
   kullanır — BBD Akademi'nin bütün "Kime?" seçicileriyle AYNI bileşen: satırda onay
   kutusu, arama (Türkçe katlamalı), sınıf süzgeci, "Görünenleri seç", "Yalnız

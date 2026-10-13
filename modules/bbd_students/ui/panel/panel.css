@@ -633,7 +633,7 @@
 .st-del-names { max-height: 160px; overflow: auto; }
 .st-pin { width: 160px; letter-spacing: 3px; }
 
-/* ------------------------------------------- Sınıflar (sınıf seviyeyi taşır, 0.5.4) */
+/* ------------------------------------------- Sınıflar (sınıf seviyeyi taşır, 0.5.5) */
 .cl { display: flex; flex-direction: column; gap: 12px; padding: 4px 0; }
 .cl-table { display: flex; flex-direction: column; gap: 8px; }
 .cl-row {

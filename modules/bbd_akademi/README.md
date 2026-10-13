@@ -273,7 +273,7 @@ toplu iş izleme `admin_getBulkJob` 1,5 sn) ve "Kime?" seçicisi `bulk-target.js
 (seçerek · süzgeçle · paket kuralı, hariç tutulanlar). `formDialog` kitin
 `dialogA11y`sini kullanır.
 
-**0.5.5 adayı (km-toplu-secim):** "Kime?" seçicisinin öğrenci bloğu ve "Hariç
+**0.5.5 (km-toplu-secim):** "Kime?" seçicisinin öğrenci bloğu ve "Hariç
 tut" artık KM'nin ortak seçicisidir (`common.js` → `studentSelect`, `ui-kit/picker.js`
 uzak kip): liste açılışta gelir (`admin_listStudents`, sayfa 50, imleçli "Daha
 fazla yükle"), arama ve sınıf süzgeci sunucuda (`q`, `classGroupId`; 250 ms
@@ -285,6 +285,18 @@ bölümü açılana dek istek atmaz. Sihirbaz gövdesi pencereye sığmazsa kend
 kayar (not ve düğmeler yerinde). Kullananlar: toplu ödev, atama paketi uygula /
 kaldır, toplu program, toplu kaynak ataması, toplu kitap satışı, plan / plan
 şablonu, kaynak paketi hedefleri.
+
+**0.5.5 (mufredat-duzeltme, birleşim km-055):** program / konu seçicisi seviyelidir
+(`curriculum-picker.js`; "11. sınıf · Matematik", seviye sırası, seviye çipleri,
+arama, yalnız KONU kimliği). Ödev içerik alanları ortak `homework-content.js`'tedir;
+seviye önerisinin hedefi `homeworkContent(..., {target})` ile verilir: tek ödev
+formunda formdaki Hedef, toplu ödevde "Kime?" seçimi (adım 1'e dönülüp ödev
+düzenlenince öneri o hedefin seviyesinden gelir), ödev şablonunda hedef yok
+(seviye çipleri). Atama paketinin program listesi de seviye sıralı ve seviyeli
+adlıdır. Öğrenciler'de "Sınıflar" sekmesi (KM sınıf tanımı: seviye / alan / hedef
+sınav) ile "Dönem ve rehber" (Akademi sınıf eşlemesi) ayrıdır; gömülü KM
+yöneticisi içeriden sekme değiştirince (ör. "Sınıfların seviyesi →") Akademi
+şeridi de o sekmeyi gösterir (`onMode`).
 
 Belgeler (0.5.4, akademi-belge bileşeniyle): Kitap satışı ayrıntısında **Satış
 belgesi** (`book_sale` — kitaplar, öğrenci satırları, teslim alan imza sütunu;
