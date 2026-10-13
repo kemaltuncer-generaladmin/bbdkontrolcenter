@@ -9,7 +9,7 @@
 import { dateField } from './datefield.js';
 import { barChart, hourStrip, lineChart, paretoChart } from './charts.js';
 import {
-  button, foldText, h, loadStyles, longDate, money, stamp, toaster, todayIso,
+  balanceText, button, foldText, h, loadStyles, longDate, money, stamp, toaster, todayIso,
 } from './kit.js';
 // BASKI CİHAZDA YAPILIR, SUNUCUDA DEĞİL — gerekçe `ui-kit/printing.js`
 // başlığında. Bu panelin kendi `kit.js` kopyası var ama yazdırmanın ikinci bir
@@ -266,7 +266,7 @@ function renderStudents() {
       h('span', 'cr-cell num', String(row.units)),
       h('span', 'cr-cell num', money(row.total)),
       h('span', 'cr-cell num', money(row.average)),
-      h('span', `cr-cell num${row.balance > 0 ? ' debt' : ''}`, money(row.balance)),
+      h('span', `cr-cell num${row.balance > 0 ? ' debt' : ''}`, balanceText(row.balance)),
       h('span', 'cr-cell', `${row.favourite} (${row.favouriteQty})`),
       h('span', 'cr-cell', stamp(row.last)),
     );
@@ -451,7 +451,7 @@ async function showStudent(row) {
       mini('Toplam harcama', money(row.total)),
       mini('İşlem', String(row.count)),
       mini('Ortalama sepet', money(row.average)),
-      mini('Güncel bakiye', money(row.balance), row.balance > 0 ? 'debt' : ''),
+      mini('Güncel bakiye', balanceText(row.balance), row.balance > 0 ? 'debt' : ''),
     );
     body.append(tiles);
 

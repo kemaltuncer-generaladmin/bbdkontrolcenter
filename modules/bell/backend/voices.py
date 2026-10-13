@@ -110,6 +110,13 @@ class VoiceLibrary:
         self._pending: set[str] = set()
         self._worker: asyncio.Task[None] | None = None
         self._last_call: float = 0.0
+        # Anlık üretim (`produce_now`) kuyruğun ÖNÜNE geçer ama "aynı anda tek
+        # çağrı" kuralını delmez: her Vertex çağrısı bu kilidi tutar.
+        self._call_lock = asyncio.Lock()
+        # Anlık üretilmiş özetler: kuyrukta da bekliyorlarsa işçi onları
+        # ikinci kez üretmesin (boşa kota).
+        self._done_now: set[str] = set()
+        self._inflight: dict[str, asyncio.Task[None]] = {}
         # Test edilebilirlik: kuyruk gerçek zamanı beklemesin diye değiştirilebilir.
         self._sleep = asyncio.sleep
 
@@ -197,6 +204,50 @@ class VoiceLibrary:
         self._enqueue(hash_)
         return hash_
 
+    async def produce_now(self, text: str, *, timeout: float) -> str:
+        """Metnin sesini HEMEN üretir; çalınabilir dosya adını döner, olmazsa "".
+
+        Öğrenci çağırma (`bell.announce`) içindir: çağrı beklemez, gece
+        hazırlığı yüzlerce adla kuyruktaysa sıranın arkasına düşmemeli. Aynı
+        429 disiplini geçerlidir (tek çağrı kilidi, aralık, geri çekilme).
+
+        Süre dolarsa üretim ARKADA SÜRER (iptal edilmez) ve ses önbelleğe
+        girer; bir sonraki çağrı onu hazır bulur.
+        """
+        clean = " ".join(str(text or "").split())
+        if not clean:
+            return ""
+        hash_ = digest(clean, self._speech.model, self._speech.voice)
+        ready = await self.ready_file(hash_)
+        if ready:
+            return ready
+
+        task = self._inflight.get(hash_)
+        if task is None or task.done():
+            await self._store.execute(
+                f"INSERT INTO {self._table} (hash, text, model, voice, created_at) "
+                f"VALUES (?, ?, ?, ?, ?) "
+                f"ON CONFLICT(hash) DO UPDATE SET text = excluded.text, error = ''",
+                (hash_, clean, self._speech.model, self._speech.voice, now()),
+            )
+            task = asyncio.create_task(self._produce_once(hash_), name="km-bell-voice-now")
+            self._inflight[hash_] = task
+            task.add_done_callback(lambda _done, key=hash_: self._inflight.pop(key, None))
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=max(0.1, timeout))
+        except TimeoutError:
+            self._log.warning("anlık ses üretimi süreyi aştı; arkada sürüyor", hash=hash_)
+            return ""
+        except Exception as failure:  # noqa: BLE001 — üretim dışarısı; sonuç "" döner
+            self._log.error("anlık ses üretimi patladı", hash=hash_, error=str(failure))
+            return ""
+        return await self.ready_file(hash_)
+
+    async def _produce_once(self, hash_: str) -> None:
+        await self._produce(hash_)
+        if hash_ in self._pending:
+            self._done_now.add(hash_)
+
     def _enqueue(self, hash_: str) -> None:
         if hash_ in self._pending:
             return
@@ -236,6 +287,10 @@ class VoiceLibrary:
         while True:
             hash_ = await self._queue.get()
             try:
+                if hash_ in self._done_now:
+                    # `produce_now` bu sesi zaten üretti; ikinci çağrı boşa kota.
+                    self._done_now.discard(hash_)
+                    continue
                 await self._produce(hash_)
             except asyncio.CancelledError:
                 self._pending.discard(hash_)
@@ -256,9 +311,10 @@ class VoiceLibrary:
         last = ""
 
         for attempt in range(1, self._max_attempts + 1):
-            await self._throttle()
             try:
-                speech = await self._speech.synthesize(text)
+                async with self._call_lock:
+                    await self._throttle()
+                    speech = await self._speech.synthesize(text)
             except SpeechError as failure:
                 last = str(failure)
                 if not failure.retryable or attempt == self._max_attempts:

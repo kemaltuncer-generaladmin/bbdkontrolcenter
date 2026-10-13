@@ -20,10 +20,18 @@ import secrets
 import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
-from typing import Any, ClassVar, NoReturn
+from pathlib import Path
+from typing import Any, NoReturn
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .distribution import HEAD_SYNC_SECONDS, AppDistribution
+from .errors import (
+    CanteenUnavailableError,
+    ConflictError,
+    NotFoundError,
+    TabletError,
+)
 from .rules import (
     OFFLINE_MODES,
     display_enrollment_code,
@@ -119,63 +127,10 @@ def _chunks(items: list[Any], size: int) -> Iterable[list[Any]]:
         yield items[start:start + size]
 
 
-class TabletError(Exception):
-    """Machine-readable tablet error: `{"detail": {"code", "message", ...}}`."""
-
-    STATUS: ClassVar[dict[str, int]] = {
-        "DEVICE_REVOKED": 401,
-        "DEVICE_AUTH_INVALID": 401,
-        "FORBIDDEN_DEVICE": 403,
-        "INVALID_STUDENT_CODE": 401,
-        "LOGIN_RATE_LIMITED": 429,
-        "SESSION_CONFLICT": 409,
-        "STUDENT_BLOCKED": 403,
-        "OUTSIDE_USAGE_HOURS": 403,
-        "DEVICE_LOCKED": 423,
-        "NO_PROFILE": 409,
-        "CANTEEN_UNAVAILABLE": 503,
-    }
-
-    def __init__(self, code: str, message: str, **extra: Any) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.status = self.STATUS[code]
-        self.extra = extra
-
-    def detail(self) -> dict[str, Any]:
-        return {"code": self.code, "message": self.message, **self.extra}
-
-
-class NotFoundError(ValueError):
-    """Management API: the addressed record does not exist (404)."""
-
-
-class ConflictError(ValueError):
-    """Management API: the record exists but its state forbids the action (409).
-
-    The HTTP answer carries only the message (the core envelope keeps text);
-    `code` and `extra` let callers inside the module tell conflicts apart.
-    """
-
-    def __init__(self, message: str, *, code: str | None = None, **extra: Any) -> None:
-        super().__init__(message)
-        self.code = code
-        self.extra = extra
-
-    def detail(self) -> str | dict[str, Any]:
-        if not self.code:
-            return str(self)
-        return {"code": self.code, "message": str(self), **self.extra}
-
-
-class CanteenUnavailableError(RuntimeError):
-    """The canteen could not be reached (503)."""
-
-
 class TabletService:
     def __init__(self, *, store: Any, canteen: Any, config: dict[str, Any],
-                 clock: Callable[[], datetime] | None = None) -> None:
+                 clock: Callable[[], datetime] | None = None,
+                 storage_dir: Path | None = None) -> None:
         self.store = store
         self.canteen = canteen
         self.config = config or {}
@@ -198,6 +153,10 @@ class TabletService:
         self.grants = store.table("grants")
         self.commands = store.table("commands")
         self.blocks = store.table("student_blocks")
+        # App distribution keeps its files under `storage_dir`; without one
+        # (tests, a misconfigured install) uploads are refused, sync still works.
+        self.distribution = AppDistribution(store=store, config=self.config, clock=self._now,
+                                            storage_dir=storage_dir)
 
     # ------------------------------------------------------------ ayarlar
 
@@ -232,6 +191,11 @@ class TabletService:
     @property
     def history_retention_days(self) -> int:
         return self._int_setting("history_retention_days", 180, 7, 3650)
+
+    @property
+    def public_base_url(self) -> str:
+        """Fixed origin for download URLs; empty means "read it from the request"."""
+        return str(self.config.get("public_base_url") or "").strip().rstrip("/")
 
     @property
     def default_timezone(self) -> str:
@@ -587,6 +551,8 @@ class TabletService:
         await self.store.execute(
             f"DELETE FROM {self.commands} WHERE device_id=? AND acked_at IS NULL", (device_id,)
         )
+        # Its download queue rows and lease go too: a slot must not wait for it.
+        await self.distribution.forget_device(device_id)
         return {"deviceId": device_id, "revoked": True,
                 "alreadyRevoked": already_revoked, "revokedAt": revoked_at}
 
@@ -610,6 +576,7 @@ class TabletService:
         await self.store.execute(f"DELETE FROM {self.devices} WHERE id=?", (device_id,))
         for table in (self.inventory, self.commands, self.login_failures):
             await self.store.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
+        await self.distribution.forget_device(device_id)
         return {"deleted": True, "deviceId": device_id, "revoked": paired}
 
     async def _bump_state_version(self, device_id: str) -> None:
@@ -1114,6 +1081,32 @@ class TabletService:
                 "blockedUntil": await self._active_block_until(student_id, self._now()),
                 "usage": items, "grants": grants}
 
+    async def daily_usage_totals(self, local_date: str) -> list[dict[str, Any]]:
+        """Kurum geneli bir günün öğrenci başına toplam süresi + şu an süren kısıt.
+
+        İki sorgu, ikisi de indeksli: günün kullanımı `(local_date)` indeksiyle
+        öğrenci başına toplanır; süren kısıtlar `(blocked_until)` indeksiyle
+        (008 göçü) okunur. Listede o gün kullanımı OLAN ya da kısıtı SÜREN
+        öğrenciler vardır; kimlik sırasıyla döner.
+        """
+        totals: dict[str, int] = {}
+        for row in await self.store.fetch_all(
+            f"SELECT student_id, SUM(used_seconds) AS total FROM {self.usage} "
+            "WHERE local_date=? AND used_seconds>0 GROUP BY student_id", (local_date,),
+        ):
+            totals[str(row["student_id"])] = int(row["total"] or 0)
+        blocks: dict[str, str] = {}
+        for row in await self.store.fetch_all(
+            f"SELECT student_id, MAX(blocked_until) AS until FROM {self.blocks} "
+            "WHERE blocked_until>? AND lifted_at IS NULL GROUP BY student_id",
+            (self._now().isoformat(),),
+        ):
+            if row.get("until"):
+                blocks[str(row["student_id"])] = str(row["until"])
+        return [{"studentId": student, "totalSeconds": totals.get(student, 0),
+                 "blockedUntil": blocks.get(student)}
+                for student in sorted(totals.keys() | blocks.keys())]
+
     async def daily_report(self, local_date: str) -> dict[str, Any]:
         rows = await self.store.fetch_all(
             f"SELECT student_id, package_name, used_seconds FROM {self.usage} "
@@ -1151,6 +1144,30 @@ class TabletService:
                 "totalSeconds": sum(item["usedSeconds"] for item in items)}
 
     # ----------------------------------------------------------- ek süre
+
+    async def device_grant_packages(self, student_id: str) -> list[str]:
+        """Packages a whole-device extra-time grant covers.
+
+        Limits are per app (there is no device-wide budget), so "extra time on
+        the tablet" means extra time on every allowed, time-limited app: of the
+        profile of the student's latest session (the active one if any), or of
+        every profile's current revision when the student never logged in.
+        Unlimited apps need no grant and are left out.
+        """
+        last = await self.store.fetch_one(
+            f"SELECT profile_id FROM {self.sessions} WHERE student_id=? "
+            "ORDER BY login_at DESC LIMIT 1", (student_id,),
+        )
+        profile = await self.profile(last["profile_id"]) if last else None
+        if profile is not None:
+            return sorted({app["packageName"] for app in profile.get("apps", [])
+                           if app["allowed"] and not app["unlimited"]})
+        rows = await self.store.fetch_all(
+            f"SELECT DISTINCT a.package_name FROM {self.apps} a JOIN {self.profiles} p "
+            "ON p.id = a.profile_id AND p.revision = a.revision "
+            "WHERE a.allowed=1 AND a.unlimited=0 ORDER BY a.package_name",
+        )
+        return [str(row["package_name"]) for row in rows]
 
     async def grant_time(self, *, student_id: str, package_name: str,
                          local_date: str, extra_seconds: int, reason: str,
@@ -1235,17 +1252,21 @@ class TabletService:
         ended = await self._end_active_sessions("student_id", student_id, reason="blocked")
         return {**self._block_view(row, current.isoformat()), "endedSessions": ended}
 
-    async def unblock_student(self, *, student_id: str) -> dict[str, Any]:
+    async def unblock_student(self, *, student_id: str,
+                              only_reason: str | None = None) -> dict[str, Any]:
+        """Süren kısıtları kaldırır. `only_reason` verilirse YALNIZ o gerekçeyle
+        konmuş kısıtlar kalkar (ör. KM yeniden etkinleştirmesi pasifleştirmenin
+        koyduğu kısıtı kaldırır, öğretmenin koyduğu cezaya dokunmaz)."""
         current = self._now().isoformat()
-        active = await self.store.fetch_all(
-            f"SELECT id FROM {self.blocks} WHERE student_id=? AND lifted_at IS NULL "
-            "AND blocked_until>?", (student_id, current),
-        )
+        where = "student_id=? AND lifted_at IS NULL AND blocked_until>?"
+        params: tuple[Any, ...] = (student_id, current)
+        if only_reason is not None:
+            where += " AND reason=?"
+            params = (*params, only_reason)
+        active = await self.store.fetch_all(f"SELECT id FROM {self.blocks} WHERE {where}", params)
         if active:
-            await self.store.execute(
-                f"UPDATE {self.blocks} SET lifted_at=? WHERE student_id=? "
-                "AND lifted_at IS NULL AND blocked_until>?", (current, student_id, current),
-            )
+            await self.store.execute(f"UPDATE {self.blocks} SET lifted_at=? WHERE {where}",
+                                     (current, *params))
         return {"studentId": student_id, "lifted": len(active)}
 
     async def list_blocks(self, *, student_id: str) -> list[dict[str, Any]]:
@@ -1323,6 +1344,8 @@ class TabletService:
             f"DELETE FROM {self.commands} WHERE expires_at<?",
             ((current - COMMAND_RETENTION).isoformat(),),
         )
+        # Uploads untouched for two days, drafts never published, orphan files.
+        await self.distribution.cleanup()
         return True
 
     # ------------------------------------------------------------- özet
@@ -1688,8 +1711,13 @@ class TabletService:
             raise self._rate_limited(blocked, current)
         raise TabletError("INVALID_STUDENT_CODE", "Şifre hatalı.")
 
-    async def sync(self, *, device: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
-        """The single periodic tablet call. Unchanged data is answered with nulls."""
+    async def sync(self, *, device: dict[str, Any], data: dict[str, Any],
+                   base_url: str = "") -> dict[str, Any]:
+        """The single periodic tablet call. Unchanged data is answered with nulls.
+
+        `base_url` is the public tablet API root (scheme, host and the
+        `/api/tablet/v1` prefix); download grants are absolute URLs under it.
+        """
         current = self._now()
         stamp = current.isoformat()
         await self.expire_stale_sessions()
@@ -1708,6 +1736,19 @@ class TabletService:
             )
         session, active = await self._sync_session(device, data, profile, current, local_now)
         next_sync = self.sync_active_seconds if active else self.sync_idle_seconds
+        # The catalog lives in memory: without a change `apps` costs no query.
+        # The queue table is touched only when the tablet reports `installs`.
+        # Only a tablet that sends the `appsVersion` key (null included) knows
+        # app distribution; older APKs get `apps: null`.
+        apps = (await self.distribution.apps_payload(data["appsVersion"])
+                if "appsVersion" in data else None)
+        install = None
+        if data.get("installs") is not None:
+            install, head = await self.distribution.sync_installs(
+                device_id=device["id"], installs=data["installs"], base_url=base_url,
+            )
+            if head:
+                next_sync = min(next_sync, HEAD_SYNC_SECONDS)
         applied_id, applied_revision = await self._applied_profile(data, profile)
         await self.store.execute(
             f"UPDATE {self.devices} SET last_seen_at=?, next_sync_seconds=?, "
@@ -1745,7 +1786,8 @@ class TabletService:
                 "profile": profile if changed_profile else None,
                 "deviceState": state,
                 "session": session, "grants": grants,
-                "commands": await self._pending_commands(device["id"], stamp)}
+                "commands": await self._pending_commands(device["id"], stamp),
+                "apps": apps, "install": install}
 
     async def _applied_profile(self, data: dict[str, Any],
                                assigned: dict[str, Any] | None) -> tuple[str | None, int]:

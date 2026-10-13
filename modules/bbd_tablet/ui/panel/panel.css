@@ -137,6 +137,9 @@
 /* ------------------------------------------------------------ pencereler */
 
 .tb-dialog-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+/* Uygulama dağıtım onayı: bilgi listesi ile açıklamalar arasında nefes payı. */
+.tb-dialog > .tb-facts { margin: 4px 0 10px; }
+.tb-dialog > .tb-muted { margin: 8px 0 0; }
 .tb-dialog-fields .kit-select,
 .tb-dialog-fields .kit-textarea { width: 100%; }
 

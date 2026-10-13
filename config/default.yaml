@@ -11,6 +11,18 @@ app:
 server:
   host: 127.0.0.1        # masaüstü kabuğunun sidecar'ı — dışarı açılmaz
   port: 8787
+  # ADR 0030 — gerçek istemci adresi (servis anahtarı ağ kısıtı, hız sınırları).
+  # Başlıklar (X-Forwarded-For, CF-Connecting-IP) YALNIZ bu vekillerden
+  # gelindiğinde okunur. Varsayılan: geri döngü + özel ağlar (Coolify Traefik'i
+  # konteyner ağından bağlanır). Boş liste yazmak hiçbir yerel vekile
+  # güvenmemek demektir. Değişiklik yeniden başlatmayla geçerli olur.
+  trusted_proxies: [127.0.0.0/8, "::1/128", 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, "fc00::/7"]
+  cloudflare:
+    # KM Cloudflare arkasında: Cloudflare durağında CF-Connecting-IP esas alınır.
+    trusted: true
+    # Boş = yerleşik liste (km_core/http/client_address.py → CLOUDFLARE_RANGES,
+    # cloudflare.com/ips 2026-10). Cloudflare listeyi değiştirirse buraya yazılır.
+    ranges: []
 
 auth:
   # ADR 0007 — kullanıcı adsız, 6 haneli PIN ile giriş.

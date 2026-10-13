@@ -1,16 +1,37 @@
 id: bbd_tablet
 name: "Öğrenci Tablet Yönetimi"
-description: "Paylaşımlı okul tabletleri: profil, kullanım saatleri, uzaktan kilit ve komut, öğrenci ek süresi ve kısıtlaması, silme ve geçmiş saklama."
-version: 0.2.0
+description: "Paylaşımlı okul tabletleri: profil, kullanım saatleri, uzaktan kilit ve komut, öğrenci ek süresi ve kısıtlaması, uygulama dağıtımı ve uzaktan güncelleme, silme ve geçmiş saklama."
+version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
 entrypoint: backend.module:register
 depends: [bbd_canteen_api]
-provides: []
+provides:
+  - capability: bbd_tablet.read
+    contract: bbd_tablet/backend/capabilities.py:TabletRead
+    description: >
+      async board() → {summary{free,inUse,offline,locked}, devices[…]};
+      async student_usage(student_id, date_from, date_to) → {days, sessions,
+      activeSession, blockedUntil} (en çok 62 gün).
+      async daily_usage(local_date) → {date, items: [{studentId, totalSeconds,
+      blockedUntil}]} (kurum geneli; o gün kullanımı ya da süren kısıtı olanlar;
+      en çok 62 gün geriye).
+  - capability: bbd_tablet.control
+    contract: bbd_tablet/backend/capabilities.py:TabletControl
+    description: >
+      async grant(student_id, package_name|None, extra_seconds, reason, actor) → grant_id
+      (None = tüm tablet: süre sınırlı her uygulamaya ayrı ek süre satırı);
+      block(student_id, until|None, reason, actor) → blocked_until|None;
+      unblock(student_id, reason, actor, *, only_reason=None) → None (only_reason: yalnız o gerekçeli kısıtlar kalkar); end_session(session_id, reason,
+      actor) → bool; session_student(session_id) → student_id | None. Hata `reason` koduyla (validation_error, student_not_found,
+      session_not_found, canteen_unavailable).
 consumes:
   - capability: canteen.api
     reason: "Öğrenci kimliği ve kiosk giriş kodu kantinde kalır."
+  - capability: events.outbox
+    optional: true
+    reason: "KM ekranından kısıt, ek süre ve profil değişikliği BBD Akademi'ye olay olarak gider (tablet.policy_changed, tablet.profile_changed — ADR 0029)."
 events:
   publishes: []
   subscribes: []
@@ -36,7 +57,7 @@ permissions:
     description: "Tabletleri, profilleri, oturumları, komutları, öğrenci kullanımını, ek süreleri ve kısıtlamaları görüntüleme."
     default_roles: [admin, bbd_staff, org_staff]
   - key: bbd_tablet.manage
-    description: "Tablet, profil ve uygulama kurallarını düzenleme; tablet kilidi, duyuru, komut, oturum kapatma; tablet, profil ve öğrenci tablet verisini silme (PIN ile)."
+    description: "Tablet, profil ve uygulama kurallarını düzenleme; tablet kilidi, duyuru, komut, oturum kapatma; APK yükleme ve dağıtma, indirme sırasını öne alma; tablet, profil, öğrenci tablet verisini silme ve dağıtımı bitirme (PIN ile)."
     default_roles: [admin, bbd_staff]
   - key: bbd_tablet.grant
     description: "Öğrenciye uygulama bazında günlük ek süre verme ve geri alma; öğrenciyi belirli bir zamana kadar tabletten kısıtlama; hatalı şifreyle kilitlenen tablet girişini açma."

@@ -51,9 +51,20 @@ Katalog ve rol → ekran matrisi: [docs/permissions.md](docs/permissions.md)
 · Gerekçe: [ADR 0007](docs/adr/0007-kimlik-ve-yetkilendirme.md)
 
 Ön tanımlı roller: `admin`, `bld_staff`, `bbd_staff`, `org_staff`, `accountant`
-(`km_core/security/identity.py` → `BUILTIN_ROLES`).
+(`km_core/security/identity.py` → `BUILTIN_ROLES`). Servis rolü (kişiye
+verilmez): `mobile_service` (`BUILTIN_SERVICE_ROLES`).
 Modül izinlerini `module.yaml` içinde ilan eder; çekirdek yalnızca uygular.
 Yıkıcı işlemler izin yeterli olsa bile PIN teyidi ister.
+
+**Makine kimliği (ADR 0028).** `Authorization: Bearer` ya kişinin oturum
+belirtecidir ya da `kmsk_<önek>_<sır>` servis anahtarı. Anahtar bir servis
+kullanıcısına (`users.kind = 'service'`, PIN'siz, giriş yapamaz) bağlıdır ve
+AYNI `CurrentUser`a çözülür — bütün izin kapıları değişmeden uygulanır.
+Ağ kısıtı ve hız sınırları gerçek istemci adresine bakar (ADR 0030: başlıklar
+yalnız güvenilir vekilden — Traefik, Cloudflare — okunur; Cloudflare durağında
+`CF-Connecting-IP`; `km_core/http/client_address.py`); `X-KM-On-Behalf-Of` ve
+`X-Request-Id` denetim izine yazılır, yetki vermez. Anahtar yalnız komut
+satırından üretilir: `scripts/service-key.py create|list|revoke`.
 
 ## Teknoloji
 

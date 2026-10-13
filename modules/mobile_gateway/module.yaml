@@ -1,0 +1,131 @@
+# Mobil Geçit — BBD Akademi API'sinin Kontrol Merkezi'ne açılan TEK kapısı.
+#
+# Bağlayıcı sözleşme: bbd-akademi deposu
+#   docs/integrations/km-mobile-gateway.md (v1, "Ekler" dahil)
+#   docs/integrations/kantin-veli-kontrolleri.md §2.2
+#   docs/integrations/odeme-akademi-kaynagi.md "Ek" (payToken aktarımı)
+#   docs/integrations/km-ogrenci-gruplari-ve-zil.md §2.4, §3.1, §3.3
+#     (öğrenci grupları, saat setleri, zil planı)
+#   docs/integrations/km-merkezi-senkron.md §3.2, §3.3, §8 ve geçit §9–10
+#     (merkezi senkron uçları, yazmalarda olay, KM → Akademi webhook iletimi)
+#
+# SUNUCUDAN SUNUCUYA: istemci bir insan değil, Akademi API'sidir. Kimlik
+# ADR 0028'in servis anahtarıyla (`Authorization: Bearer kmsk_…`) gelir ve
+# anahtarın bağlı olduğu KM kullanıcısının rollerinden izin alır. Bu modülün
+# HER ucu `mobile_gateway.access` ister (K9); rol adı sorulmaz (K10).
+#
+# EKRANI YOKTUR: `ui` bloğu yok, menüde görünmez.
+#
+# VERİNİN SAHİBİ DEĞİLDİR. Öğrenci, kantin, tablet ve zil verisi kendi
+# modüllerindedir; buradan yalnız yetenek üzerinden okunur/yazılır (K3, K5).
+# Kendi tabloları yalnız şunlardır: idempotensi, hız sınırı/kilit sayaçları,
+# OTP SMS kaydı (maskeli), denetim izi ve olay iletimi (imleç, ölü mektup).
+#
+# OLAY İLETİMİ (ADR 0029): platform outbox'unu (`events.outbox`) okuyup imzalı
+# `POST {akademi_base_url}/v1/webhooks/km` ile iter. `events_enabled` VARSAYILAN
+# KAPALI; sır kasada `mobile_gateway.webhook_secret`.
+
+id: mobile_gateway
+name: "Mobil Geçit"
+description: "BBD Akademi API'sinin sunucudan sunucuya çağırdığı geçit: öğrenci dizini ve grupları, kantin, tablet, anons, zil saatleri ve zil planı, OTP SMS."
+version: 0.3.0
+sdk: ">=0.1,<1.0"
+enabled: true
+
+entrypoint: backend.module:register
+
+# Zorunlu yeteneklerin sağlayıcıları bizden ÖNCE yüklenmeli: çekirdek zorunlu
+# yeteneği yükleme anında arar (ARCHITECTURE §5/4). İsteğe bağlı yetenekler
+# (tablet, zil) BİLEREK burada yok — onlar istek anında çözülür; sağlayıcısı
+# düşse bile bu modül ayakta kalır ve ilgili uç 503 `capability_missing` döner.
+depends: [bbd_canteen_api, bbd_students]
+
+provides:
+  # Olay iletiminin durumu — KM paneli (Akademi bölümü, Senkron kartı) okur.
+  - capability: mobile_gateway.events
+    contract: mobile_gateway/backend/events.py:GatewayEvents
+    description: >
+      async status() → {enabled, lastSeq, deliveredSeq, lagSeconds, lastSuccessAt,
+      lastError, deadCount, state: live|retrying|stopped, unreachable,
+      deliveryLagMs, tenant}; dead(limit) → [{seq, eventId, type, errorCode,
+      attempts, lastAttemptAt}]; retry_dead(seqs) → {delivered, failed};
+      replay_from(seq) → {replayed, deliveredSeq|reason}. Çağıran izni kendisi
+      denetler: okuma mobile_gateway.events.view, yeniden gönderme
+      mobile_gateway.events.manage.
+
+consumes:
+  - capability: secrets
+    reason: "İdempotensi özetinin HMAC anahtarı kasada durur; gövdedeki şifre/OTP özetten geri bulunamasın (K8)."
+  - capability: canteen.api
+    reason: "Kantin bakiyesi, işlemler, veli kontrolleri, ödeme talepleri, nakit tahsilat, öğrenci şifresi doğrulama ve OTP SMS gönderimi kantindedir (K3)."
+  - capability: bbd_students.directory
+    reason: "Öğrenci dizini (ad, sınıf, telefonlar) ve kart QR metni Öğrenci Yönetimi'nindir (K3, K5)."
+  - capability: bbd_tablet.read
+    optional: true
+    reason: "Tablet panosu, öğrenci ve kurum geneli günlük tablet kullanımı. Yoksa tablet uçları 503 capability_missing döner."
+  - capability: bbd_tablet.control
+    optional: true
+    reason: "Ek süre, kısıtlama ve oturum kapatma. Yoksa denetim uçları 503 capability_missing döner."
+  - capability: bell.week
+    optional: true
+    reason: "Haftalık zil saatleri Zil Sistemi'nindir. Yoksa yanıt available=false ile nedenini söyler."
+  - capability: bell.announce
+    optional: true
+    reason: "Öğrenci çağırma anonsu Zil Sistemi'nin sesiyle yapılır. Yoksa çağırma ucu 503 capability_missing döner."
+  - capability: bell.plan
+    optional: true
+    reason: "Akademi'nin ittiği zil planı ve durumu Zil Sistemi'nindir. Yoksa PUT /bell/plan ve GET /bell/plan/status 503 capability_missing döner."
+  - capability: events.outbox
+    optional: true
+    reason: "Geçitten yapılan yazmaların olayı (origin akademi), GET /events çekme ucu ve Akademi'ye webhook iletimi platform outbox'undandır (ADR 0029). Yoksa olay yazılmaz, GET /events 503."
+  - capability: bbd_students.groups
+    optional: true
+    reason: "Öğrenci grupları ve tarihli üyelik Öğrenci Yönetimi'nindir (K3, K5). Yoksa GET /groups 503 capability_missing döner."
+
+events:
+  publishes: []
+  # Zil planı değişti → haftalık zil yanıtının önbelleği bırakılır. Olayı
+  # yayınlamayan zil sürümünde önbellek süresi (`bell_week_cache_seconds`) sınırlar.
+  # Dinleyici `register` içinde `ctx.subscribe` ile bağlanır.
+  subscribes:
+    - name: bell.week_changed
+      # Örnek yöntemdir; yükleyici bağlamaz, `register` bağlar (şema `handler` ister).
+      handler: "backend.service:GatewayService.forget_bell_week"
+    # Gruplar değişti → `GET /groups` tam liste önbelleği bırakılır.
+    - name: bbd_students.groups_changed
+      handler: "backend.service:GatewayService.forget_groups"
+
+http:
+  prefix: /api/mobile_gateway/v1
+  router: backend.api.routes:router
+  tags: ["mobile_gateway"]
+  requires: [mobile_gateway.access]
+
+# `admin` da taşır: çekirdekte `admin` her ilan edilen izne sahiptir ve bunu
+# `tests/core/test_rol_bld_staff.py` sınar. Asıl sahibi `mobile_service`
+# rolüdür (servis anahtarının kullanıcısı — ADR 0028).
+permissions:
+  - key: mobile_gateway.access
+    description: "Mobil geçidin bütün uçları: öğrenci dizini ve grupları, kantin okuma/yazma, tablet denetimi, anons, zil saatleri ve zil planı, OTP SMS aktarımı. Servis anahtarı içindir."
+    default_roles: [admin, mobile_service]
+  # Olay iletimi durumu (KM paneli Senkron kartı). Servis anahtarına VERİLMEZ.
+  - key: mobile_gateway.events.view
+    description: "Akademi'ye olay iletiminin durumunu (gecikme, ölü mektup) görme."
+    default_roles: [admin, bbd_staff]
+  - key: mobile_gateway.events.manage
+    description: "Ölü mektupları yeniden gönderme ve iletimi bir sıradan yeniden başlatma."
+    default_roles: [admin]
+
+config:
+  defaults: config/default.yaml
+  schema: config/schema.json
+
+migrations: backend/migrations
+
+dependencies:
+  python:
+    - "httpx>=0.28"       # Akademi webhook iletimi
+  system: []
+  capabilities_note: "Kantin, öğrenci dizini, tablet ve zil erişimi consumes bloğundaki yeteneklerden geçer."
+
+tasks: []

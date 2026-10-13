@@ -74,6 +74,7 @@ uygulamanın altyapısıdır. Modüller bunları tüketir.
 | `scheduler/` | Takvim/cron soyutlaması |
 | `secrets/` | Kimlik bilgisi kasası (SSH anahtarı, DB parolası) — düz metin yok |
 | `notify/` | Bildirim kanalları (e-posta, webhook, masaüstü) |
+| `events/` | Kalıcı olay outbox'u (`events.outbox`, ADR 0029): iş yazmasıyla aynı işlemde olay, commit sırasıyla okuma |
 
 **Kural K4 — Tek kapı.** Bir yeteneğe erişim yalnızca kendi platform
 paketinden geçer. Bir modülde ham `paramiko`/`asyncssh` çağrısı ya da
@@ -195,6 +196,13 @@ görünürlüğü `module.yaml` içindeki `ui.nav.requires` ile belirlenir; ayn�
 backend'de de izin denetiminden geçer. İzin ilan etmeyen uç nokta reddedilir
 (varsayılan: kapalı).
 
+**Servis sorumlusu (ADR 0028).** Başka bir sunucu KM'ye kişi gibi değil,
+servis anahtarıyla (`Authorization: Bearer kmsk_…`) bağlanır. Anahtar bir
+servis kullanıcısına (`users.kind = 'service'`) bağlıdır; o kullanıcının PIN'i
+yoktur, giriş yapamaz. Yetki yine YALNIZ rollerden gelir ve aynı
+`has_permission` kapısından geçer. `X-KM-On-Behalf-Of` yalnız denetim izine
+yazılır, yetki vermez.
+
 **Kural K10 — Rol adı sorulmaz.** Kodda `if role == "admin"` biçiminde dal
 yazılamaz; her yerde `has_permission(key, scope)` sorulur. Modüller izinlerini
 `module.yaml` içinde ilan eder, çekirdek yalnızca uygular.
@@ -247,3 +255,5 @@ Modül kendi bağımlılığını kendisi getirir; çekirdeğin listesine dokunu
 | Eşzamanlılık | İyimser kilit (`revision` + 409) zorunlu | 0020 |
 | Kimlik dağıtımı | Merkezî servis + cihaz eşlemesi; giriş çevrimdışı çalışır | 0021 |
 | Modül platform kapsamı | `module.yaml` → `platforms`, keşifte elenir | 0022 |
+| Makine kimliği | Servis anahtarı (`kmsk_…`), servis kullanıcısına bağlı; yetki yine rollerden | 0028 |
+| Olay ve işlem | Modül işlemi (`store.transaction()`), kalıcı outbox (`events.outbox`), seq = commit sırası | 0029 |

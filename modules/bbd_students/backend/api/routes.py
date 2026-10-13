@@ -12,28 +12,59 @@ aynı anda kasa tabletinden yapılan değişikliğin üstüne geçilmez.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
-from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
+from fastapi.responses import JSONResponse
+
+from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, Query, requires
 
 from .. import qr as qr_codec
-from ..service import StudentService
+from ..groups import GroupError, GroupService, parse_day
+from ..lifecycle import Lifecycle
+from ..service import ControlsError, StudentService
+from ..sync import StudentSync, SyncError
 
 router = APIRouter()
 
 _service: StudentService | None = None
+_groups: GroupService | None = None
+_lifecycle: Lifecycle | None = None
+_sync: StudentSync | None = None
 
 
-def bind(service: StudentService) -> APIRouter:
-    global _service
+def bind(service: StudentService, groups: GroupService | None = None,
+         lifecycle: Lifecycle | None = None, sync: StudentSync | None = None) -> APIRouter:
+    global _service, _groups, _lifecycle, _sync
     _service = service
+    _groups = groups
+    _lifecycle = lifecycle
+    _sync = sync
     return router
+
+
+def lifecycle() -> Lifecycle:
+    if _lifecycle is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return _lifecycle
+
+
+def sync_error(exc: SyncError) -> JSONResponse:
+    """Yaşam döngüsü reddi — ortak zarf + makine kodu ve ayrıntı (ekran tutarı gösterir)."""
+    return JSONResponse(status_code=exc.status, content={"error": {
+        "status": exc.status, "message": str(exc), "code": exc.code, "details": exc.details}})
 
 
 def service() -> StudentService:
     if _service is None:  # pragma: no cover - yükleme sırası garanti eder
         raise HTTPException(status_code=503, detail="Modül hazır değil.")
     return _service
+
+
+def groups() -> GroupService:
+    if _groups is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return _groups
 
 
 class ProfileFields(BaseModel):
@@ -48,6 +79,11 @@ class ProfileFields(BaseModel):
     parentName2: str | None = Field(default=None, max_length=80)
     parentPhone2: str | None = Field(default=None, max_length=20)
     note: str | None = Field(default=None, max_length=500)
+    # Seviye / alan / hedef sınav — kural `backend/curriculum.py` içinde.
+    # `None` göndermek alanı temizler; göndermemek dokunmaz.
+    gradeLevel: int | str | None = None
+    track: str | None = Field(default=None, max_length=8)
+    examTarget: str | None = Field(default=None, max_length=8)
 
 
 class StudentUpdate(ProfileFields):
@@ -74,7 +110,11 @@ async def create_student(
     user: CurrentUser = requires("bbd_students.manage"),
 ) -> dict[str, Any]:
     payload = body.model_dump(exclude_unset=True)
-    return await service().create_student(payload)
+    try:
+        return await service().create_student(payload, actor=user.full_name)
+    except ValueError as exc:
+        # Kural ihlali (ad yok, geçersiz seviye/alan) — 500 değil, cümlesiyle 400.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.patch("/students/{kantin_id}")
@@ -85,7 +125,176 @@ async def update_student(
 ) -> dict[str, Any]:
     # exclude_unset: gönderilmeyen alan "değiştirme" demektir, "boşalt" değil.
     payload = body.model_dump(exclude_unset=True)
-    return await service().update_student(kantin_id, payload)
+    try:
+        return await service().update_student(kantin_id, payload, actor=user.full_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class CurriculumBulkBody(BaseModel):
+    """Seçili öğrencilere seviye/alan/hedef sınav. Gönderilmeyen alan değişmez;
+    boş seçim reddedilir ("boş = tümü" YOK)."""
+
+    students: list[str] = Field(min_length=1, max_length=5000)
+    gradeLevel: int | str | None = None
+    track: str | None = Field(default=None, max_length=8)
+    examTarget: str | None = Field(default=None, max_length=8)
+
+
+@router.post("/students/curriculum")
+async def set_curriculum(
+    body: CurriculumBulkBody,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> dict[str, Any]:
+    """Toplu seviye/alan ataması. Kural öğrenci başına uygulanır; reddedilen
+    öğrenci `failed` içinde gerekçesiyle döner, diğerleri yazılır."""
+    patch = body.model_dump(exclude_unset=True)
+    students = patch.pop("students")
+    try:
+        return await service().set_curriculum(students, patch)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ------------------------------------------------- veli kantin kontrolleri
+
+
+class ControlsPatch(BaseModel):
+    """Veli kantin kontrolleri — gönderilmeyen alan değişmez, `null` limit temizler.
+
+    Tutarlar KURUŞ. `guardianBlocked` yalnız `false` olabilir (veli engeli
+    burada konmaz, yalnız kaldırılır — servis reddeder).
+    """
+
+    spendingLimit: int | None = Field(default=None, ge=0, le=100_000_000)
+    dailyLimit: int | None = Field(default=None, ge=0, le=100_000_000)
+    isBlocked: bool | None = None
+    guardianBlocked: bool | None = None
+    restrictedProductIds: list[int] | None = Field(default=None, max_length=200)
+
+
+@router.get("/students/{kantin_id}/canteen")
+async def canteen_controls(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Kontroller + yasaklı ürün seçicisinin ürün listesi. Kantin düşse de 200."""
+    return await service().canteen_controls(kantin_id)
+
+
+@router.patch("/students/{kantin_id}/canteen/controls")
+async def update_canteen_controls(
+    kantin_id: str,
+    body: ControlsPatch,
+    user: CurrentUser = requires("bbd_students.canteen_controls"),
+) -> dict[str, Any]:
+    """Kontrolleri kantine yazar. AYRI İZİN: limit ve engel öğrencinin kasada
+    alışveriş yapıp yapamayacağını belirler; ad düzeltebilen herkesin işi değil."""
+    patch = body.model_dump(exclude_unset=True)
+    for key in ("isBlocked", "guardianBlocked", "restrictedProductIds"):
+        if key in patch and patch[key] is None:
+            raise HTTPException(status_code=422, detail=f"“{key}” boş olamaz.")
+    try:
+        return await service().update_canteen_controls(kantin_id, patch, actor=user.full_name)
+    except ControlsError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+# ------------------------------------------------------- yaşam döngüsü (§5)
+
+
+class DeactivateBody(BaseModel):
+    """Pasifleştir. `effectiveAt` boş = şimdi; ileri gün = o gün 00:00'da."""
+
+    reason: str = Field(max_length=16)
+    effectiveAt: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class BulkDeactivateBody(DeactivateBody):
+    students: list[str] = Field(min_length=1, max_length=2000)
+
+
+class DeleteBody(BaseModel):
+    """Kalıcı silme onayı: öğrencinin adı aynen yazılır."""
+
+    confirmName: str = Field(min_length=1, max_length=160)
+
+
+@router.post("/students/deactivate")
+async def bulk_deactivate(
+    body: BulkDeactivateBody,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    """Çoklu seçimle pasifleştirme (yıl sonu mezunlar). Her öğrenci ayrı olay;
+    kantin çağrıları arka planda sıralı."""
+    try:
+        return await lifecycle().bulk_deactivate(
+            body.students, reason=body.reason, effective_at=body.effectiveAt,
+            note=body.note or "", actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.post("/students/{kantin_id}/deactivate")
+async def deactivate_student(
+    kantin_id: str,
+    body: DeactivateBody,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    try:
+        return await lifecycle().deactivate(
+            kantin_id, reason=body.reason, effective_at=body.effectiveAt,
+            note=body.note or "", actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.post("/students/{kantin_id}/reactivate")
+async def reactivate_student(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    """Yeniden etkinleştir (ya da planlı pasifleştirmeyi iptal et). Grup
+    üyelikleri kendiliğinden açılmaz."""
+    try:
+        return await lifecycle().reactivate(kantin_id, actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.delete("/students/{kantin_id}")
+async def delete_student(
+    kantin_id: str,
+    body: DeleteBody,
+    user: CurrentUser = requires("bbd_students.delete"),
+) -> Any:
+    """Kalıcı sil — yalnız pasif öğrenci, bakiye 0, açık talep yok, kurum cari
+    borcu yok. 409 `balance_not_zero` / `open_payment_request` /
+    `institution_debt`, 503 `akademi_unavailable` / `canteen_unavailable`."""
+    try:
+        return await lifecycle().delete(kantin_id, confirm_name=body.confirmName,
+                                        actor=user.full_name)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
+@router.get("/students/{kantin_id}/status-history")
+async def status_history(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    if _sync is None:  # pragma: no cover
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return {"items": await _sync.history(kantin_id)}
+
+
+@router.get("/sync")
+async def sync_status(user: CurrentUser = requires("bbd_students.view")) -> dict[str, Any]:
+    """Kantine iletilemeyen kayıtlar (24 saati geçenler kırmızı) ve bekleyen silmeler."""
+    if _sync is None:  # pragma: no cover
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return await _sync.sync_status()
 
 
 @router.post("/students/{kantin_id}/access-code")
@@ -187,3 +396,272 @@ async def preview(
 ) -> dict[str, Any]:
     """PDF'i üretir ve dosyanın sayfalarını görüntü olarak döner."""
     return await service().preview(body.kind, body.model_dump())
+
+
+# ------------------------------------------------------- öğrenci grupları
+#
+# Sözleşme: bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md §2, §7.A.
+# OKUMA `bbd_students.view`, YAZMA `bbd_students.groups` — ayrı anahtar: grup
+# ve üyelik Akademi'de yoklama listesini ve zil çağrısını belirler; öğrenci
+# adını düzeltebilen herkesin işi değil. Kural servistedir (`backend/groups.py`).
+
+
+def _group_error(exc: GroupError) -> HTTPException:
+    return HTTPException(status_code=exc.status, detail=str(exc))
+
+
+def _optional_day(value: str | None, field: str) -> date | None:
+    if not value:
+        return None
+    try:
+        return parse_day(value, field=field)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+class GroupCreate(BaseModel):
+    """Grup = ad + öğrenci seçimi. Öğrenciler `validFrom`'dan (vars. bugün) üye olur."""
+
+    name: str = Field(min_length=1, max_length=80)
+    kind: str = Field(default="group", pattern=r"^(group|individual)$")
+    callName: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=500)
+    studentIds: list[str] = Field(default_factory=list, max_length=2000)
+    validFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class GroupFromClass(BaseModel):
+    """"Sınıftan grup oluştur": sınıfın şu anki öğrencileri kopyalanır."""
+
+    className: str = Field(min_length=1, max_length=20)
+    name: str | None = Field(default=None, max_length=80)
+    callName: str = Field(default="", max_length=120)
+    validFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class GroupUpdate(BaseModel):
+    """Gönderilmeyen alan değişmez."""
+
+    name: str | None = Field(default=None, max_length=80)
+    kind: str | None = Field(default=None, pattern=r"^(group|individual)$")
+    callName: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class MembersAdd(BaseModel):
+    studentIds: list[str] = Field(min_length=1, max_length=2000)
+    validFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class MembersEnd(BaseModel):
+    studentIds: list[str] = Field(min_length=1, max_length=2000)
+    validTo: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class MembersMove(BaseModel):
+    studentIds: list[str] = Field(min_length=1, max_length=2000)
+    fromGroupId: str = Field(min_length=1, max_length=64)
+    toGroupId: str = Field(min_length=1, max_length=64)
+    effectiveFrom: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+class MemberFix(BaseModel):
+    """Geçmiş tarihli düzeltme — gerekçe servis tarafında zorunlu tutulur."""
+
+    validFrom: str | None = Field(default=None, max_length=10)
+    validTo: str | None = Field(default=None, max_length=10)
+    reason: str = Field(default="", max_length=200)
+
+
+@router.get("/groups")
+async def list_groups(
+    archived: str = Query(default="live", pattern=r"^(live|archived|all)$"),
+    kind: str = Query(default="", pattern=r"^(|group|individual)$"),
+    q: str = Query(default="", max_length=80),
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Gruplar sekmesi: liste + o günün (vars. bugün) üye sayısı."""
+    return await groups().overview(archived=archived, kind=kind, query=q,
+                                   on=_optional_day(on, "date"))
+
+
+@router.post("/groups")
+async def create_group(
+    body: GroupCreate,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().create(body.model_dump(), actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/from-class")
+async def create_group_from_class(
+    body: GroupFromClass,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    payload = body.model_dump(exclude_none=True)
+    class_name = payload.pop("className")
+    try:
+        return await groups().from_class(class_name, payload, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/move")
+async def move_members(
+    body: MembersMove,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """A'da son gün = d-1, B'de başlangıç = d; ikisi birlikte doğrulanıp yazılır."""
+    try:
+        return await groups().move(body.studentIds, from_group=body.fromGroupId,
+                                   to_group=body.toGroupId,
+                                   effective_from=body.effectiveFrom, reason=body.reason,
+                                   actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.get("/groups/memberships")
+async def group_memberships(
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """O gün geçerli bütün üyelikler — öğrenci seçicileri grup süzgeci için."""
+    return await groups().memberships(on=_optional_day(on, "date"))
+
+
+@router.get("/groups/{group_id}")
+async def group_detail(
+    group_id: str,
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    try:
+        return await groups().detail(group_id, on=_optional_day(on, "date"))
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.get("/groups/{group_id}/members")
+async def group_members(
+    group_id: str,
+    on: str | None = Query(default=None, alias="date", max_length=10),
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """`date` verilirse o gün geçerli üyeler (`current`); `members` hep tam geçmiş."""
+    try:
+        record = await groups().detail(group_id, on=_optional_day(on, "date"))
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+    return {"groupId": record["id"], "date": record["date"], "current": record["current"],
+            "members": record["members"]}
+
+
+@router.get("/groups/{group_id}/history")
+async def group_history(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Denetim izi: kim, ne zaman, ne değiştirdi (gerekçesiyle)."""
+    try:
+        return {"items": await groups().history(group_id)}
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.put("/groups/{group_id}")
+async def update_group(
+    group_id: str,
+    body: GroupUpdate,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().update(group_id, body.model_dump(exclude_unset=True),
+                                     actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/archive")
+async def archive_group(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Silme yoktur, arşiv vardır: açık üyelikler bugün kapanır, geçmiş korunur."""
+    try:
+        return await groups().archive(group_id, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/restore")
+async def restore_group(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().restore(group_id, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/members")
+async def add_members(
+    group_id: str,
+    body: MembersAdd,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    try:
+        return await groups().add_members(group_id, body.studentIds,
+                                          valid_from=body.validFrom, reason=body.reason,
+                                          actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/{group_id}/members/end")
+async def end_members(
+    group_id: str,
+    body: MembersEnd,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Çıkarma: `validTo` (vars. bugün) son gündür ve dahildir."""
+    try:
+        return await groups().end_members(group_id, body.studentIds, valid_to=body.validTo,
+                                          reason=body.reason, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.patch("/groups/{group_id}/members/{member_id}")
+async def fix_member(
+    group_id: str,
+    member_id: str,
+    body: MemberFix,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Yanlış girilmiş başlangıç/son gün. `validTo: ""` açık uca çevirir."""
+    try:
+        return await groups().patch_member(group_id, member_id,
+                                           body.model_dump(exclude_unset=True),
+                                           actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.get("/students/{kantin_id}/groups")
+async def student_groups(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Öğrenci kartındaki "Gruplar" bölümü — geçmiş dahil bütün üyelikler."""
+    return {"studentId": kantin_id, "items": await groups().for_student(kantin_id)}

@@ -9,3 +9,17 @@ session_idle_minutes: 30
 # Bitmiş oturumlar, kullanım paketleri, günlük toplamlar, ek süreler ve eski
 # kısıtlamalar bu kadar günden eskiyse günde en fazla bir kez silinir.
 history_retention_days: 180
+# Uygulama dağıtımı (sözleşme v2.1). Aynı anda en fazla bu kadar tablet paket
+# indirir; sıra sunucudadır. Yuva her `active` bildirimiyle uzar, bildirim
+# gelmezse süresi dolar ve sıradaki tablete geçer.
+download_slots: 2
+download_lease_seconds: 900
+# Bu süre içinde sync yapmamış tablet sırada sayılmaz; kapalı tablet sırayı tıkamaz.
+queue_stale_seconds: 900
+max_upload_mb: 6144
+# Boşsa $KM_DATA_DIR/bbd_tablet/apps (sunucuda kalıcı disk /data), o da yoksa
+# depo kökünde data/bbd_tablet/apps.
+storage_dir: ""
+# İndirme adreslerinin kökü (ör. https://kontrolmerkezi.bbdstore.com.tr). Boşsa
+# isteğin kendisinden okunur: CF-Visitor / X-Forwarded-Proto / Host.
+public_base_url: ""

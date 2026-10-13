@@ -7,7 +7,8 @@ kendi ayarı, kendi tabloları ve kendi router'ı.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -27,6 +28,7 @@ class ModuleStore(Protocol):
     async def fetch_all(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]: ...
     async def fetch_one(self, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None: ...
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None: ...
+    def transaction(self) -> AbstractAsyncContextManager[None]: ...
 
 
 @dataclass(slots=True)
@@ -47,6 +49,18 @@ class ScopedStore:
 
     async def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         await self._store.execute(sql, params)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        """Modül işlemi (ADR 0029): blok içindeki bütün okuma/yazmalar tek
+        işlemdir; blok hata verirse hepsi geri alınır. İç içe çağrı dış işleme
+        katılır. Gövdede ağ çağrısı yapılmaz (kantin yazması işlemden SONRA).
+
+        Platform yetenekleri (ör. `events.outbox.emit`) aynı işleme kendiliğinden
+        katılır: işlem bağlamda taşınır, nesne olarak verilmez.
+        """
+        async with self._store.transaction():
+            yield
 
 
 @dataclass(slots=True)

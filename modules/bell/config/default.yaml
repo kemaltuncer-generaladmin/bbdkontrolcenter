@@ -33,3 +33,13 @@ bridge:
 # Yerel hoparlörden de çalınsın mı? Asıl hedef Windows ajanıdır; bu yalnızca
 # geliştirme ve köprü çöktüğünde duyulabilir bir yedek içindir.
 play_locally: true
+
+# --- öğrenci çağırma (bell.announce · mobil geçit §5) -----------------------
+page:
+  # Ses önbellekte yoksa Vertex'ten anlık üretim için en çok bu kadar beklenir;
+  # süre dolarsa üretim arkada sürer, çağrı `tts_unavailable` döner.
+  tts_timeout_seconds: 20
+  # Gece dizindeki her öğrencinin çağrı sesini önden üret. İlk gece okulun
+  # tamamı kadar Vertex çağrısı demektir; bu yüzden varsayılan KAPALI.
+  prepare_nightly: false
+  prepare_time: "03:15"

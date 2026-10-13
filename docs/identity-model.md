@@ -44,6 +44,7 @@ geldiğinde veri modeli değişmez.
 | `last_login_at` | zaman | | |
 | `created_at` / `updated_at` | zaman | ✓ | |
 | `created_by` | UUID | | Kaydı ekleyen yönetici |
+| `kind` | sabit liste | ✓ | `person` (varsayılan) · `service` — ADR 0028. Servis kaydının PIN'i yoktur |
 
 Kısıtlar:
 - `secret_lookup` **benzersizdir.** Aynı PIN ikinci kullanıcıya atanamaz;
@@ -118,13 +119,52 @@ Modüller `km_sdk` üzerinden erişir. Doğrudan kullanıcı tablosu okumak yasa
 
 **Kural:** Modül `has_permission` sorar, rol adı sormaz.
 
+## Servis sorumlusu ve servis anahtarı (ADR 0028)
+
+Başka bir sunucu KM'ye kişi gibi değil, **servis anahtarıyla** bağlanır.
+
+- Servis kullanıcısı `kind = 'service'` olan bir kullanıcı kaydıdır: PIN'i
+  yoktur, giriş yapamaz, oturum açamaz, ona PIN atanamaz, rehberde görünmez.
+  Yetkisi yalnız rollerinden gelir (ör. `mobile_service`).
+- Anahtar biçimi `kmsk_<önek 8>_<sır ≥32 bayt>`. `Authorization: Bearer` ile
+  gönderilir ve kapı onu aynı `CurrentUser`a çözer (`kind = 'service'`).
+- `service_keys` tablosu:
+
+| Alan | Not |
+|---|---|
+| `id` | UUID |
+| `user_id` | Bağlı servis kullanıcısı |
+| `name` | Anahtarın adı |
+| `prefix` | 8 karakter, düz; tekil indeks. Listede ve denetimde anahtarı anar |
+| `key_hash` | Tam anahtarın sha256 özeti. Anahtarın kendisi saklanmaz |
+| `allowed_cidrs` | JSON liste; boş = her adres. İstemci adresi güvenilir vekil zincirinden çözülür (ADR 0030; Cloudflare arkasında `CF-Connecting-IP`) |
+| `created_at` / `created_by` | |
+| `last_used_at` | En çok dakikada bir yazılır |
+| `revoked_at` | İptal; satır silinmez |
+
+- Yönetim yalnız komut satırından: `scripts/service-key.py create|list|revoke`.
+  Tam anahtar yalnız `create` çıktısında bir kez yazılır.
+- `X-KM-On-Behalf-Of` (≤160 karakter, Türkçe ad yüzde kodlanır) ve
+  `X-Request-Id` denetim izinin `on_behalf_of` / `request_id` sütunlarına
+  yazılır. Yetki vermez; kişi oturumunda `on_behalf_of` yok sayılır.
+- Hız sınırı PIN girişinden ayrıdır: anahtar başına dakikada
+  `auth.service_key_requests_per_minute` (varsayılan 1200), geçersiz anahtar
+  denemesi kaynak başına dakikada 10.
+- **Kaynak = gerçek istemci adresi (ADR 0030).** Ağ kısıtı, geçersiz anahtar
+  kovası ve PIN girişinin hız sınırı aynı çözücüyü kullanır
+  (`km_core/http/client_address.py`): `X-Forwarded-For` / `CF-Connecting-IP`
+  yalnız güvenilir vekilden (`server.trusted_proxies`, Cloudflare aralıkları)
+  gelindiğinde okunur; uydurulan başlık adresi değiştirmez.
+
 ## Denetim izi
 
 Şunlar her durumda yazılır: giriş başarısı ve başarısızlığı, kilitlenme, PIN
 atama/sıfırlama/değiştirme, kullanıcı ekleme/düzenleme/pasifleştirme, rol ve
 izin değişikliği, yetki reddi, yıkıcı işlemler.
 
-Kayıtta kim, ne zaman, hangi işlem, hangi kapsam ve sonuç bulunur.
+Kayıtta kim, ne zaman, hangi işlem, hangi kapsam ve sonuç bulunur. Servis
+anahtarıyla gelen istekte ayrıca "kimin adına" (`on_behalf_of`) ve istek
+kimliği (`request_id`) bulunur (ADR 0028).
 **PIN ve sır değerleri denetim iziyle birlikte yazılmaz.**
 
 ## Rehber — ileriye dönük not

@@ -11,6 +11,7 @@ yeteneğidir ve `backend/src/km_platform/` altındadır (ADR 0006).
 |---|---|
 | `bell/` — Zil Sistemi | **Çalışıyor.** Haftalık saatler, Vertex anonsu, Windows zil ajanı (ADR 0013) |
 | `bbd_class_schedule/` — Ders Takvimi | **Çalışıyor.** `bell.week` yeteneğinin salt okunur aynası |
+| `mobile_gateway/` — Mobil Geçit | BBD Akademi API'sinin sunucudan sunucuya kapısı (`/api/mobile_gateway/v1`, ekransız) |
 | `print/` — Baskı Yönetimi | iskelet (`enabled: false`) |
 | `antivirus/` — Antivirüs (ClamAV) | iskelet (`enabled: false`) |
 

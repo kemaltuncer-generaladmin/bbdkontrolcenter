@@ -571,7 +571,10 @@ def test_reddedilen_goc_artik_kosmuyor() -> None:
     adlar = [name for name, _ in CORE_MIGRATIONS]
     assert "0007_narrow_bld_staff_core" not in adlar
     assert not [name for name in adlar if name.startswith("0007")]
-    assert adlar[-2:] == ["0008_restore_bld_staff_core", "0009_bld_staff_bbd_ayrimi"]
+    # Sonraki göçler (0011 — ADR 0028) listeye eklenebilir; burada sınanan,
+    # `0008` ile `0009`un yan yana ve bu sırada durmasıdır.
+    sekiz = adlar.index("0008_restore_bld_staff_core")
+    assert adlar[sekiz:sekiz + 2] == ["0008_restore_bld_staff_core", "0009_bld_staff_bbd_ayrimi"]
 
 
 def test_bbd_ayrimi_gocu_sirada_sonuncu() -> None:

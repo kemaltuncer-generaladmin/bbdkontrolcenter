@@ -19,6 +19,19 @@ export function money(kurus) {
   })} ₺`;
 }
 
+/**
+ * Kantin bakiyesini İŞARETİYLE anlatır: pozitif = borç, negatif = ALACAK.
+ *
+ * Negatif bakiye bugün de oluşabiliyor (ödeme sonrası satış iptali, borçtan
+ * fazla ödeme). "-50,00 ₺" yazmak ve onu "borç" başlığıyla göstermek veliyi
+ * de personeli de yanıltır: `balanceText(-5000)` → "alacak 50,00 ₺".
+ */
+export function balanceText(kurus) {
+  if (kurus === null || kurus === undefined || Number.isNaN(Number(kurus))) return '—';
+  const value = Number(kurus);
+  return value < 0 ? `alacak ${money(-value)}` : money(value);
+}
+
 /** Kuruşu giriş alanı için sade sayıya çevirir: 20000 → "200,00". */
 export function moneyInput(kurus) {
   return (Number(kurus || 0) / 100).toFixed(2).replace('.', ',');
