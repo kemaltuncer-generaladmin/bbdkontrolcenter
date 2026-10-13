@@ -50,7 +50,9 @@ export function section(app) {
       { key: 'by', label: 'Yazan', cell: (row) => row.createdBy || '—' },
     ],
     onRow: (row) => open(row.id),
-    empty: { title: 'Duyuru yok', text: 'İlk duyuruyu yazın.' },
+    empty: { title: 'Henüz duyuru yok', text: 'Velilere ve öğrencilere uygulama içi duyuru gönderin.',
+      actions: [actionButton(app, 'admin_createAnnouncement', 'Duyuru yaz', { variant: 'primary',
+        onClick: () => add.click() })] },
   });
   node.append(list.node);
 

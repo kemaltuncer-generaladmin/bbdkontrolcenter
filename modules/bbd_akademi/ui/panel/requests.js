@@ -102,7 +102,7 @@ function leaveView(app, tabs) {
         return actions;
       } },
     ],
-    empty: { title: 'Bekleyen izin talebi yok' },
+    empty: { title: 'Bekleyen izin talebi yok', text: 'Veliler uygulamadan izin istediğinde burada görünür.' },
   });
   node.append(list.node);
 
@@ -177,7 +177,7 @@ function meetingView(app, tabs) {
         return actions;
       } },
     ],
-    empty: { title: 'Bekleyen görüşme talebi yok' },
+    empty: { title: 'Bekleyen görüşme talebi yok', text: 'Veli görüşme istediğinde burada görünür.' },
   });
   node.append(list.node);
 
@@ -246,7 +246,7 @@ function etutView(app, tabs) {
       onSchedule: (row) => etutScheduleDialog(app, row).then((next) => next && list.replace((item) => item.id === row.id, next)),
       onDecline: (row) => etutDecline(app, row).then((next) => next && list.replace((item) => item.id === row.id, next)),
     }),
-    empty: { title: 'Bekleyen etüt talebi yok' },
+    empty: { title: 'Bekleyen etüt talebi yok', text: 'Öğrenci etüt istediğinde burada görünür.' },
   });
   node.append(list.node);
   return { node, reload: () => list.reload(), destroy: () => list.destroy() };

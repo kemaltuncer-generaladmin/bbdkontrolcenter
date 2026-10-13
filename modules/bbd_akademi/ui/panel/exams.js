@@ -117,8 +117,10 @@ export function section(app) {
       { key: 'status', label: 'Durum', cell: (row) => statusBadge(EXAM_STATUS, row.status) },
     ],
     onRow: (row) => openExam(row.id),
-    empty: { title: 'Bu süzgece uyan deneme yok',
-      text: 'Süzgeçleri temizleyin ya da “Deneme ekle” / “Geçmiş deneme ekle” ile tanımlayın.' },
+    empty: { title: 'Henüz deneme yok ya da süzgece uyan yok',
+      text: 'Süzgeçleri temizleyin ya da yeni deneme tanımlayın; sonuçları toplu yükleyebilirsiniz.',
+      actions: [actionButton(app, 'admin_createExam', 'Deneme ekle', { variant: 'primary',
+        onClick: () => add.click() })] },
   });
   listView.append(list.node);
   views.exams = { node: listView, reload: () => list.reload(), destroy: () => {

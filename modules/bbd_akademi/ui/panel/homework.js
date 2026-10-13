@@ -147,7 +147,7 @@ export function section(app) {
   const filters = { state: 'active', classGroupId: '', studentId: '', studentLabel: '' };
   let started = false;
 
-  const add = actionButton(app, 'admin_createHomework', 'Yeni ödev', { variant: 'primary',
+  const add = actionButton(app, 'admin_createHomework', 'Ödev ver', { variant: 'primary',
     onClick: () => editHomework(app, null, { onSaved: (saved) => {
       list.reload();
       if (saved?.id) openDetail(saved.id);
@@ -190,7 +190,11 @@ export function section(app) {
         cell: (row) => stack(row.createdBy?.displayName, fmtDate(row.createdAt)) },
     ],
     onRow: (row) => openDetail(row.id),
-    empty: { title: 'Bu süzgece uyan ödev yok', text: 'Durum süzgecini kaldırın ya da yeni ödev verin.' },
+    // Boş durum yol gösterir: aynı "Yeni ödev" akışı (sınıfa, gruba ya da öğrenciye toplu).
+    empty: { title: 'Henüz ödev yok ya da süzgece uyan yok',
+      text: 'Sınıfa, gruba ya da seçtiğiniz öğrencilere tek seferde ödev verebilirsiniz.',
+      actions: [actionButton(app, 'admin_createHomework', 'Ödev ver', { variant: 'primary',
+        onClick: () => add.click() })] },
   });
   node.append(list.node);
 
