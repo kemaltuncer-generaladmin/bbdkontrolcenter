@@ -150,6 +150,10 @@ class OtpBody(BaseModel):
     purpose: Literal["login"]
 
 
+class SmsLimitResetBody(ReasonBody):
+    phone: str = Field(pattern=PHONE)
+
+
 def reason_of(body: ReasonBody) -> str:
     reason = " ".join(body.reason.split())
     if len(reason) < 3:
@@ -484,6 +488,30 @@ async def sms_otp(body: OtpBody, request: Request,
     caller = caller_of(request, user)
     return await idempotent(request, body, 200, lambda: current_service().send_otp(
         body.phone, body.code, body.purpose, caller,
+    ))
+
+
+@router.get("/sms/otp/{job_id}")
+async def sms_otp_status(job_id: str,
+                         user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """sms-kale: gönderilmiş OTP'nin teslim durumu (Netgsm raporu, dakikada bir tazelenir)."""
+    return await current_service().otp_status(job_id)
+
+
+@router.get("/sms/health")
+async def sms_health(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """sms-kale: son 1 saatin OTP teslim özeti + Netgsm SMS paketi (izleme/alarm)."""
+    return await current_service().sms_health()
+
+
+@router.post("/sms/limits/reset")
+async def sms_limits_reset(body: SmsLimitResetBody, request: Request,
+                           user: CurrentUser = requires(ACCESS)) -> Response:
+    """sms-kale: bir telefonun OTP sayaçlarını sıfırlar (Akademi yönetici ucu çağırır; denetimli)."""
+    caller = caller_of(request, user)
+    reason = reason_of(body)
+    return await idempotent(request, body, 200, lambda: current_service().reset_sms_limits(
+        body.phone, reason, caller,
     ))
 
 

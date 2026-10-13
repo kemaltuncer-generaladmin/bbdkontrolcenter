@@ -154,6 +154,11 @@ class FakeCanteen:
         self.ledger_mode = "ok"
         self.ledger_rows = deepcopy(LEDGER)
         self.sms_sent = True
+        self.sms_purposes: list[str | None] = []
+        self.sms_job_seq = 0
+        self.sms_channel = "otp"
+        self.sms_reports: dict[str, dict[str, Any]] = {}
+        self.sms_balance_count = 6515
         self.students: dict[str, dict[str, Any]] = {
             ELIF: {"id": ELIF, "displayName": "Elif Kaya", "parentPhone": MOTHER,
                    "balance": 4250, "spendingLimit": 20000, "isBlocked": False,
@@ -315,11 +320,24 @@ class FakeCanteen:
 
     async def send_sms(self, *, student_id: str | None = None, phone: str | None = None,
                        include_debt: bool = False, include_daily: bool = False,
-                       message: str | None = None) -> dict[str, Any]:
+                       message: str | None = None,
+                       purpose: str | None = None) -> dict[str, Any]:
         self._enter("send_sms", {"phone": phone, "message": message})
+        self.sms_purposes.append(purpose)
         if not self.sms_sent:
-            return {"sent": False, "reason": "netgsm"}
-        return {"sent": True, "text": message}
+            return {"sent": False, "reason": "netgsm", "channel": "otp", "netgsmCode": "30"}
+        self.sms_job_seq += 1
+        return {"sent": True, "text": message, "jobId": f"1791{self.sms_job_seq:06d}",
+                "channel": self.sms_channel, "netgsmCode": "00"}
+
+    async def sms_report(self, job_id: str) -> dict[str, Any]:
+        self._enter("sms_report", job_id)
+        return dict(self.sms_reports.get(job_id) or {"jobId": job_id, "status": "pending"})
+
+    async def sms_balance(self) -> dict[str, Any]:
+        self._enter("sms_balance")
+        return {"ok": True, "smsCount": self.sms_balance_count, "credit": "0,000",
+                "packages": [{"name": "Adet SMS", "amount": str(self.sms_balance_count)}]}
 
 
 class PreLedgerCanteen(FakeCanteen):

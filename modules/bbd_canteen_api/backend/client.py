@@ -1220,7 +1220,8 @@ class CanteenApi:
 
     async def send_sms(self, *, student_id: str | None = None, phone: str | None = None,
                        include_debt: bool = False, include_daily: bool = False,
-                       message: str | None = None) -> dict[str, Any]:
+                       message: str | None = None,
+                       purpose: str | None = None) -> dict[str, Any]:
         """Elle SMS — EŞ ZAMANLI (kuyruğa girmez, Netgsm sonucu anında döner).
 
         ALICI DAİMA VELİDİR: `student_id` verildiğinde kantin serbest telefonu yok
@@ -1230,6 +1231,11 @@ class CanteenApi:
         `include_debt`/`include_daily` cümlelerini SUNUCU ekler; metnin başına gelir.
         BAŞARISIZLIKTA DA HTTP 200: `{"sent": false, "reason": "no_phone"|"empty"|"netgsm"}`.
         Başarılıysa gönderilen tam metin `text` alanında döner.
+
+        sms-kale (kantin `ozellik/sms-kale`, geriye uyumlu): yanıtta `jobId` (Netgsm
+        görev kimliği), `channel` (`otp` | `normal`) ve `netgsmCode` de gelir.
+        `purpose="otp"`: metin ek cümlesiz, Netgsm OTP hattından gider (kapalıysa
+        olağan hat). Eski kantin `purpose`u yok sayar ve olağan hattan gönderir.
         """
         body: dict[str, Any] = {
             # Kantin bu ikisini `boolean` kuralıyla doğruluyor; None göndermek 422 verir.
@@ -1242,7 +1248,25 @@ class CanteenApi:
             body["phone"] = phone
         if message:
             body["message"] = message
+        if purpose:
+            body["purpose"] = purpose
         return await self._request("POST", "/api/sms/send", json=body)
+
+    async def sms_report(self, job_id: str) -> dict[str, Any]:
+        """Netgsm teslim raporu (salt okuma, sms-kale). Kantin jobId başına dakikada
+        en çok bir kez Netgsm'e sorar (önbellek). Dönüş `{jobId, status:
+        pending|delivered|failed|unknown, netgsmStatus, errorCode, operator,
+        deliveredAt, checkedAt}`. Eski kantinde uç yoktur (404 → CanteenError)."""
+        payload = await self._request("GET", f"/api/sms/report/{quote(job_id, safe='')}")
+        data = (payload or {}).get("data") if isinstance(payload, dict) else None
+        return dict(data) if isinstance(data, dict) else {}
+
+    async def sms_balance(self) -> dict[str, Any]:
+        """Netgsm paket/kredi (salt okuma, 5 dk önbellek): `{ok, smsCount, credit,
+        packages[{name, amount}], code}`. Kimlik bilgisi dönmez."""
+        payload = await self._request("GET", "/api/sms/balance")
+        data = (payload or {}).get("data") if isinstance(payload, dict) else None
+        return dict(data) if isinstance(data, dict) else {}
 
     async def notifications(self, *, state: str | None = None,
                             limit: int = 100) -> dict[str, Any]:

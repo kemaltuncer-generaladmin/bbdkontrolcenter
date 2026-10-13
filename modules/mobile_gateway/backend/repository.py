@@ -112,12 +112,72 @@ class Repository:
     # ------------------------------------------------------------------- iz
 
     async def log_sms(self, *, at: int, phone_masked: str, purpose: str, status: str,
-                      reason: str, user_id: str, on_behalf_of: str, request_id: str) -> None:
+                      reason: str, user_id: str, on_behalf_of: str, request_id: str,
+                      job_id: str = "", channel: str = "") -> None:
         await self._store.execute(
             f"INSERT INTO {self.sms_log} (created_at, phone_masked, purpose, status, reason, "
-            f"user_id, on_behalf_of, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (at, phone_masked, purpose, status, reason, user_id, on_behalf_of, request_id),
+            f"user_id, on_behalf_of, request_id, job_id, channel, delivery) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (at, phone_masked, purpose, status, reason, user_id, on_behalf_of, request_id,
+             job_id, channel, "pending" if job_id else ""),
         )
+
+    async def sms_by_job(self, job_id: str) -> dict[str, Any] | None:
+        """Gönderilmiş (status=sent) OTP kaydı — jobId indeksiyle (003)."""
+        row = await self._store.fetch_one(
+            f"SELECT id, created_at, channel, delivery, delivered_at, checked_at "
+            f"FROM {self.sms_log} WHERE job_id = ? AND status = 'sent' "
+            f"ORDER BY id DESC LIMIT 1", (job_id,),
+        )
+        return dict(row) if row is not None else None
+
+    async def sms_delivery(self, row_id: int, *, delivery: str, delivered_at: int | None,
+                           checked_at: int, reason: str | None = None) -> None:
+        if reason is None:
+            await self._store.execute(
+                f"UPDATE {self.sms_log} SET delivery = ?, delivered_at = ?, checked_at = ? "
+                f"WHERE id = ?", (delivery, delivered_at, checked_at, row_id),
+            )
+            return
+        await self._store.execute(
+            f"UPDATE {self.sms_log} SET delivery = ?, delivered_at = ?, checked_at = ?, "
+            f"reason = ? WHERE id = ?",
+            (delivery, delivered_at, checked_at, reason[:60], row_id),
+        )
+
+    async def sms_stats(self, since: int) -> dict[str, Any]:
+        """Penceredeki OTP özeti (created_at indeksiyle; satır sayısı saatte en çok yüzler)."""
+        rows = await self._store.fetch_all(
+            f"SELECT status, delivery, created_at, delivered_at FROM {self.sms_log} "
+            f"WHERE created_at > ?", (since,),
+        )
+        sent = delivered = failed = pending = limited = send_failed = 0
+        durations: list[int] = []
+        for row in rows:
+            status = str(row.get("status") or "")
+            if status == "rate_limited":
+                limited += 1
+                continue
+            if status != "sent":
+                send_failed += 1
+                continue
+            sent += 1
+            delivery = str(row.get("delivery") or "")
+            if delivery == "delivered":
+                delivered += 1
+                if row.get("delivered_at"):
+                    durations.append(int(row["delivered_at"]) - int(row["created_at"]))
+            elif delivery == "failed":
+                failed += 1
+            else:
+                pending += 1
+        return {
+            "sent": sent, "delivered": delivered, "deliveryFailed": failed,
+            "pending": pending, "sendFailed": send_failed, "rateLimited": limited,
+            "avgDeliverySeconds": (round(sum(durations) / len(durations) / 1000, 1)
+                                   if durations else None),
+            "maxDeliverySeconds": (round(max(durations) / 1000, 1) if durations else None),
+        }
 
     async def audit(self, *, at: int, action: str, student_id: str, user_id: str,
                     on_behalf_of: str, request_id: str, result: str,

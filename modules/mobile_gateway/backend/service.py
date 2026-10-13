@@ -57,7 +57,21 @@ from .repository import Repository
 
 T = TypeVar("T")
 
-DEFAULT_OTP_TEMPLATE = "BBD Akademi giriş kodunuz: {code}. Kodu kimseyle paylaşmayın."
+#: OTP metni ASCII (sms-kale): Netgsm OTP SMS hattı Türkçe karakter kabul etmez ve
+#: tek boydur (başlıklı SMS 155 karakter). Ayardaki şablon da ASCII'ye indirilir.
+DEFAULT_OTP_TEMPLATE = "BBD Akademi giris kodunuz: {code}. Kodu kimseyle paylasmayin."
+#: Teslim raporu Netgsm'de jobId başına dakikada bir sorulabilir; geçit en sık bu
+#: aralıkla kantine sorar (kantin de ayrıca önbellekler).
+SMS_REPORT_EVERY_MS = 55_000
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_APP_HASH_RE = re.compile(r"^[A-Za-z0-9+/]{11}$")
+_ASCII_FOLD = str.maketrans("çÇğĞıİöÖşŞüÜâÂîÎûÛ", "cCgGiIoOsSuUaAiIuU")
+
+
+def ascii_sms(text: str) -> str:
+    """Türkçe harfleri ASCII karşılığına indirir, kalan ASCII dışını atar."""
+    folded = text.translate(_ASCII_FOLD)
+    return " ".join("".join(ch for ch in folded if ch.isspace() or 32 <= ord(ch) < 127).split())
 DEFAULT_PAGE_TEMPLATE = "{ad} {soyad}, lütfen danışmaya gel."
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 CALL_PLACEHOLDERS = {"ad", "soyad", "sinif"}
@@ -358,7 +372,11 @@ class GatewayService:
         self.timezone = str(config.get("timezone") or "Europe/Istanbul")
         self.zone = ZoneInfo(self.timezone)
 
-        self.otp_template = str(config.get("otp_template") or DEFAULT_OTP_TEMPLATE)
+        self.otp_template = ascii_sms(str(config.get("otp_template") or DEFAULT_OTP_TEMPLATE))
+        # Android SMS Retriever (otomatik doldurma): metin 11 karakterlik uygulama karmasını İÇERMELİ
+        # (konumu serbest; Google). Satır sonu yerine boşlukla eklenir — Netgsm OTP hattı tek boy ASCII.
+        self.otp_app_hashes = [h for h in (config.get("otp_app_hashes") or [])
+                               if isinstance(h, str) and _APP_HASH_RE.match(h)][:2]
         if "{code}" not in self.otp_template:
             raise ValueError("mobile_gateway.otp_template `{code}` yer tutucusunu içermeli.")
         templates = config.get("call_templates") or {}
@@ -369,6 +387,7 @@ class GatewayService:
         self.auth_window_ms = int(limits.get("auth_window_seconds", 900)) * 1000
         self.lookup_per_minute = int(limits.get("lookup_per_minute", 10))
         self.sms_per_phone_per_hour = int(limits.get("sms_per_phone_per_hour", 5))
+        self.sms_per_phone_per_day = int(limits.get("sms_per_phone_per_day", 10))
         self.sms_global_per_minute = int(limits.get("sms_global_per_minute", 60))
         self.call_cooldown_ms = int(limits.get("call_cooldown_seconds", 60)) * 1000
 
@@ -1894,7 +1913,13 @@ class GatewayService:
 
     async def send_otp(self, phone: str, code: str, purpose: str,
                        caller: Caller) -> dict[str, Any]:
-        """Metin modül ayarındaki şablondan üretilir; istemci metin yazamaz."""
+        """Metin modül ayarındaki şablondan üretilir; istemci metin yazamaz.
+
+        sms-kale: kantine `purpose="otp"` (Netgsm OTP hattı) gider; yanıt
+        `{sent, jobId?, channel?}` — jobId ile `GET /sms/otp/{jobId}` teslim durumu.
+        Sınırlar: telefon başına saatte `sms_per_phone_per_hour`, günde
+        `sms_per_phone_per_day`; hepsinde toplam dakikada `sms_global_per_minute`.
+        """
         normalized = normalize_phone(phone)
         if normalized is None:
             raise validation("Telefon 5XXXXXXXXX biçiminde olmalı.", "phone")
@@ -1903,11 +1928,13 @@ class GatewayService:
         masked = mask_phone(normalized)
         subject = phone_subject(normalized)
 
-        async def log(status: str, reason: str = "") -> None:
+        async def log(status: str, reason: str = "", job_id: str = "",
+                      channel: str = "") -> None:
             await self.repo.log_sms(at=self.now_ms(), phone_masked=masked, purpose=purpose,
                                     status=status, reason=reason, user_id=caller.user_id,
                                     on_behalf_of=caller.on_behalf_of,
-                                    request_id=caller.request_id)
+                                    request_id=caller.request_id, job_id=job_id,
+                                    channel=channel)
 
         overall = await self.repo.window("sms_global", "*", now - MINUTE_MS)
         if overall.count >= self.sms_global_per_minute and overall.oldest is not None:
@@ -1918,12 +1945,20 @@ class GatewayService:
             await log("rate_limited", "phone")
             raise rate_limited(math.ceil((mine.oldest + HOUR_MS - now) / 1000),
                                "Bu numaraya çok fazla kod gönderildi. Daha sonra deneyin.")
+        daily = await self.repo.window("sms_phone_day", subject, now - DAY_MS)
+        if daily.count >= self.sms_per_phone_per_day and daily.oldest is not None:
+            await log("rate_limited", "phone_day")
+            raise rate_limited(math.ceil((daily.oldest + DAY_MS - now) / 1000),
+                               "Bu numaraya bugün çok fazla kod gönderildi. Daha sonra deneyin.")
         await self.repo.hit("sms_global", "*", now)
         await self.repo.hit("sms_phone", subject, now)
+        await self.repo.hit("sms_phone_day", subject, now)
 
         text = self.otp_template.replace("{code}", code)
+        if self.otp_app_hashes:
+            text = f"{text} {' '.join(self.otp_app_hashes)}"
         try:
-            result = await self.caps.send_sms(normalized, text)
+            result = await self.caps.send_sms(normalized, text, purpose="otp")
         except CapabilityMissing as missing:
             await log("failed", "capability_missing")
             raise capability_missing(missing.capability) from None
@@ -1933,10 +1968,102 @@ class GatewayService:
                 raise canteen_unavailable() from None
             raise GatewayError(502, "sms_failed", "SMS gönderilemedi.") from None
         if not result.get("sent"):
-            await log("failed", str(result.get("reason") or "unknown")[:60])
+            await log("failed", str(result.get("reason") or "unknown")[:60],
+                      channel=str(result.get("channel") or ""))
             raise GatewayError(502, "sms_failed", "SMS gönderilemedi.")
-        await log("sent")
-        return {"sent": True}
+        job_id = str(result.get("jobId") or "")
+        channel = str(result.get("channel") or "")
+        await log("sent", job_id=job_id, channel=channel)
+        reply: dict[str, Any] = {"sent": True}
+        if job_id:
+            reply["jobId"] = job_id
+        if channel:
+            reply["channel"] = channel
+        return reply
+
+    async def otp_status(self, job_id: str) -> dict[str, Any]:
+        """Bu geçitten gönderilmiş bir OTP'nin teslim durumu (sms-kale).
+
+        Yalnız `sms_log`'da kaydı olan jobId sorulabilir (servis anahtarı keyfî
+        Netgsm görevi sorgulayamaz). Kesin sonuç (delivered/failed) saklanır;
+        bekleyen sonuç kantine en çok `SMS_REPORT_EVERY_MS`de bir sorulur.
+        """
+        if not _JOB_ID_RE.match(job_id):
+            raise validation("Görev kimliği geçersiz.", "jobId")
+        row = await self.repo.sms_by_job(job_id)
+        if row is None:
+            raise GatewayError(404, "sms_not_found", "Bu görev kimliğiyle gönderilmiş kod yok.")
+        now = self.now_ms()
+        delivery = str(row.get("delivery") or "") or "pending"
+        checked_at = int(row.get("checked_at") or 0)
+        delivered_at = row.get("delivered_at")
+        if delivery not in ("delivered", "failed") and now - checked_at >= SMS_REPORT_EVERY_MS:
+            try:
+                report = await self.caps.sms_report(job_id)
+            except (CapabilityMissing, UpstreamFailure):
+                report = {}
+            status = report.get("status")
+            if status in ("pending", "delivered", "failed"):
+                delivery = str(status)
+            moment = to_datetime(report.get("deliveredAt")) if delivery == "delivered" else None
+            delivered_at = int(moment.timestamp() * 1000) if moment is not None else delivered_at
+            checked_at = now
+            error_code = report.get("errorCode")
+            await self.repo.sms_delivery(
+                int(row["id"]), delivery=delivery, delivered_at=delivered_at,
+                checked_at=checked_at,
+                reason=(f"netgsm_{report.get('netgsmStatus')}:{error_code}"
+                        if delivery == "failed" else None),
+            )
+        created_at = int(row.get("created_at") or 0)
+        return {
+            "jobId": job_id,
+            "status": delivery,
+            "channel": str(row.get("channel") or "") or None,
+            "sentAt": self.iso(created_at),
+            "deliveredAt": self.iso(delivered_at) if delivered_at else None,
+            "deliverySeconds": (round((int(delivered_at) - created_at) / 1000, 1)
+                                if delivered_at else None),
+            "checkedAt": self.iso(checked_at) if checked_at else None,
+        }
+
+    async def reset_sms_limits(self, phone: str, reason: str,
+                               caller: Caller) -> dict[str, Any]:
+        """Bir telefonun OTP sayaçlarını (saatlik + günlük) sıfırlar; denetim izine yazar.
+        Akademi yönetici ucu (`POST /v1/admin/sms/limits/reset`) bunu çağırır."""
+        normalized = normalize_phone(phone)
+        if normalized is None:
+            raise validation("Telefon 5XXXXXXXXX biçiminde olmalı.", "phone")
+        subject = phone_subject(normalized)
+        now = self.now_ms()
+        hour = await self.repo.window("sms_phone", subject, now - HOUR_MS)
+        day = await self.repo.window("sms_phone_day", subject, now - DAY_MS)
+        await self.repo.clear("sms_phone", subject)
+        await self.repo.clear("sms_phone_day", subject)
+        await self.audit("sms_limits_reset", caller, detail={
+            "phoneMasked": mask_phone(normalized), "reason": reason[:200],
+            "clearedHour": hour.count, "clearedDay": day.count,
+        })
+        return {"reset": True, "clearedHour": hour.count, "clearedDay": day.count}
+
+    async def sms_health(self) -> dict[str, Any]:
+        """Son 1 saatin OTP özeti + Netgsm paket/kredi (izleme/alarm için, kişisel veri yok)."""
+        now = self.now_ms()
+        stats = await self.repo.sms_stats(now - HOUR_MS)
+        balance: dict[str, Any] = {}
+        try:
+            balance = await self.caps.sms_balance()
+        except (CapabilityMissing, UpstreamFailure):
+            balance = {}
+        sms_count = balance.get("smsCount")
+        return {
+            "windowSeconds": 3600,
+            **stats,
+            "balance": {
+                "ok": bool(balance.get("ok")),
+                "smsCount": sms_count if isinstance(sms_count, int) else None,
+            },
+        }
 
     # ========================================================= §8 genel ayarlar
 
