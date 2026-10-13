@@ -50,7 +50,11 @@ provides:
       hasMore}; eski kantinde uç yoksa reason=not_supported. Yankı belleği:
       remember_write / recently_written(id, kind, fields). Red
       `CanteenError.reason` koduyla gelir; gövde ayrıntısı (ör. balance,
-      maxAmount) `CanteenError.details`.
+      maxAmount) `CanteenError.details`. SMS (sms-kale): send_sms(...,
+      purpose="otp") → {sent, jobId?, channel?, netgsmCode?}, sms_report(job_id)
+      → {jobId, status: pending|delivered|failed|unknown, deliveredAt, …},
+      sms_balance() → {ok, smsCount, credit, packages}; salt okuma, eski
+      kantinde uç yoksa CanteenError.
 
 consumes:
   - capability: secrets

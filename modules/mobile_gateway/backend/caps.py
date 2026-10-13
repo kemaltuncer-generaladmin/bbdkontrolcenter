@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 import secrets
 from collections.abc import Callable
 from datetime import datetime
@@ -107,6 +108,10 @@ def rejected(source: str, error: BaseException) -> Rejected | None:
                if key in ("path", "missing", "profileId")} if isinstance(raw, dict) else {}
     message = " ".join(str(error).split())[:300] or "İstek reddedildi."
     return Rejected(source, status, code, message, details)
+
+
+#: Netgsm görev kimliği biçimi (kantin de aynı kuralla doğrular).
+_JOB_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 
 
 class UpstreamFailure(Exception):
@@ -603,13 +608,39 @@ class Capabilities:
         result = unwrap(await self._canteen("canteen_settings_public"))
         return result if isinstance(result, dict) else {}
 
-    async def send_sms(self, phone: str, message: str) -> dict[str, Any]:
-        """Kantinin Netgsm hesabıyla tek SMS. Yanıtın `text` alanı ÇAĞIRANA DÖNMEZ."""
-        result = await self._canteen("send_sms", kwargs={"phone": phone, "message": message},
-                                     write=True)
+    async def send_sms(self, phone: str, message: str,
+                       purpose: str | None = None) -> dict[str, Any]:
+        """Kantinin Netgsm hesabıyla tek SMS. Yanıtın `text` alanı ÇAĞIRANA DÖNMEZ.
+
+        `purpose="otp"` kantine iletilir (Netgsm OTP hattı); kantin istemcisi bu
+        argümanı tanımıyorsa (eski sürüm) gönderilmez ve SMS olağan hattan gider.
+        Dönüş: `{sent, reason, jobId, channel}` — jobId/channel eski kantinde None.
+        """
+        method = self._method(CANTEEN, "send_sms")
+        kwargs: dict[str, Any] = {"phone": phone, "message": message}
+        if purpose and accepts(method, "purpose"):
+            kwargs["purpose"] = purpose
+        result = await self._canteen("send_sms", kwargs=kwargs, write=True)
         if not isinstance(result, dict):
-            return {"sent": False, "reason": "unknown"}
-        return {"sent": bool(result.get("sent")), "reason": result.get("reason")}
+            return {"sent": False, "reason": "unknown", "jobId": None, "channel": None}
+        job_id = result.get("jobId")
+        channel = result.get("channel")
+        return {
+            "sent": bool(result.get("sent")), "reason": result.get("reason"),
+            "jobId": job_id if isinstance(job_id, str) and _JOB_ID.match(job_id) else None,
+            "channel": channel if channel in ("otp", "normal") else None,
+        }
+
+    async def sms_report(self, job_id: str) -> dict[str, Any]:
+        """Netgsm teslim raporu (kantin `GET /api/sms/report/{jobId}`). Eski kantin →
+        `CapabilityMissing` (istemcide metot yok) ya da `UpstreamFailure`."""
+        result = await self._canteen("sms_report", args=(job_id,))
+        return result if isinstance(result, dict) else {}
+
+    async def sms_balance(self) -> dict[str, Any]:
+        """Netgsm paket/kredi (kantin `GET /api/sms/balance`)."""
+        result = await self._canteen("sms_balance")
+        return result if isinstance(result, dict) else {}
 
     # ------------------------------------------------------------- bbd_tablet
 

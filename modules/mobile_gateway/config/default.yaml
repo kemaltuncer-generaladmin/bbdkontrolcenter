@@ -9,7 +9,9 @@ timezone: Europe/Istanbul
 
 # OTP SMS metni İSTEMCİDEN GELMEZ; buradan üretilir. Böylece servis anahtarı
 # keyfî SMS göndermek için kullanılamaz. `{code}` zorunludur.
-otp_template: "BBD Akademi giriş kodunuz: {code}. Kodu kimseyle paylaşmayın."
+# sms-kale: ASCII ve tek boy — Netgsm OTP SMS hattı (öncelikli, 7/24) Türkçe karakter
+# kabul etmez; Türkçe harf yazılsa da gönderimde ASCII'ye indirilir.
+otp_template: "BBD Akademi giris kodunuz: {code}. Kodu kimseyle paylasmayin."
 
 # POST /announcements/call — `page` şablonu. Yer tutucular: {ad} {soyad} {sinif}
 call_templates:
@@ -23,6 +25,9 @@ limits:
   # Kantinin lookup-code bütçesi dakikada 30 ve tabletlerle paylaşılıyor.
   lookup_per_minute: 10
   sms_per_phone_per_hour: 5
+  # Akademi ile aynı (telefon başına saatte 5, günde 10). Yönetici sıfırlayabilir:
+  # POST /sms/limits/reset (Akademi `POST /v1/admin/sms/limits/reset` çağırır).
+  sms_per_phone_per_day: 10
   sms_global_per_minute: 60
   call_cooldown_seconds: 60
 

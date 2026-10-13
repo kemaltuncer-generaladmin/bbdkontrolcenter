@@ -88,6 +88,10 @@ CONTRACT_ROUTES = {
     ("PUT", "/bell/plan"),
     ("GET", "/bell/plan/status"),
     ("POST", "/sms/otp"),
+    # sms-kale (geçit §7 ek): teslim durumu, izleme özeti, yönetici sayaç sıfırlama.
+    ("GET", "/sms/otp/{job_id}"),
+    ("GET", "/sms/health"),
+    ("POST", "/sms/limits/reset"),
     ("GET", "/settings/public"),
 }
 
@@ -175,7 +179,7 @@ def test_default_config_matches_schema_and_contract_texts() -> None:
     defaults = yaml.safe_load((MODULE_ROOT / "config" / "default.yaml").read_text("utf-8"))
     jsonschema.validate(defaults, schema)
     assert defaults["otp_template"] == \
-        "BBD Akademi giriş kodunuz: {code}. Kodu kimseyle paylaşmayın."
+        "BBD Akademi giris kodunuz: {code}. Kodu kimseyle paylasmayin."
     assert defaults["call_templates"]["page"] == "{ad} {soyad}, lütfen danışmaya gel."
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**defaults, "otp_template": "Kodunuz geldi."}, schema)
@@ -1204,10 +1208,12 @@ async def test_sms_otp(client: httpx.AsyncClient, world: World, store: Any,
     sent = await client.post("/sms/otp", json={"phone": MOTHER, "code": "583012",
                                                "purpose": "login"},
                              headers={"X-Request-Id": "otp-1"})
-    assert sent.status_code == 200 and sent.json() == {"sent": True}
+    assert sent.status_code == 200
+    assert sent.json() == {"sent": True, "jobId": "1791000001", "channel": "otp"}
     assert world.canteen.calls[-1] == ("send_sms", {
         "phone": MOTHER,
-        "message": "BBD Akademi giriş kodunuz: 583012. Kodu kimseyle paylaşmayın."})
+        "message": "BBD Akademi giris kodunuz: 583012. Kodu kimseyle paylasmayin."})
+    assert world.canteen.sms_purposes[-1] == "otp"
     rows = await table(store, "sms_log")
     assert rows[-1]["phone_masked"] == "532****543" and rows[-1]["status"] == "sent"
     assert rows[-1]["request_id"] == "otp-1"
@@ -1265,7 +1271,8 @@ async def test_sms_otp_idempotent_replay_does_not_resend(client: httpx.AsyncClie
     key = {"Idempotency-Key": "otp-key-1"}
     assert (await client.post("/sms/otp", json=body, headers=key)).status_code == 200
     replay = await client.post("/sms/otp", json=body, headers=key)
-    assert replay.json() == {"sent": True} and replay.headers["idempotent-replayed"] == "true"
+    assert replay.json() == {"sent": True, "jobId": "1791000001", "channel": "otp"}
+    assert replay.headers["idempotent-replayed"] == "true"
     assert world.canteen.count("send_sms") == 1
     expect_error(await client.post("/sms/otp", json={**body, "code": "000001"}, headers=key),
                  409, "idempotency_conflict")
