@@ -181,6 +181,24 @@ desteği ADR 0029 (modül işlemi + `events.outbox`).
   (toplu), `POST /students/{id}/reactivate`, `DELETE /students/{id}`,
   `GET /students/{id}/status-history`. İzinler `bbd_students.lifecycle`,
   `bbd_students.delete` (yalnız admin).
+- **Kalıcı silme ekranları (0.5.4, kullanıcı isteği):** öğrenci kartının EN
+  ALTINDA ayrı "Tehlikeli işlemler" — önerilen yol "Pasifleştir" yanında;
+  "Kalıcı olarak sil…" önce ön kontrol yapar (`GET /students/{id}/delete-check`,
+  yazma yok): engellerin hepsi tutarıyla ve açık Türkçe ("Kantin bakiyesi
+  42,50 ₺ borç — önce tahsil edin", "Açık ödeme talebi var (PR-…)", "Kurum cari
+  borcu var (1.200,00 ₺)", "Öğrenci etkin: önce pasifleştirin", Akademi'ye /
+  kantine ulaşılamıyor) + ilgili bölüme / Kurum carisine götüren düğme. Kurum
+  carisindeki ALACAK engellemez (kullanıcı kararı; onay penceresinde not).
+  Engel yoksa onay penceresi neyin silineceğini yazar (KM kaydı; kantinde
+  anonimleşme; Akademi'de KVKK silme / anonimleştirme, uygulama hesabı kapanır;
+  geri alınamaz), adı aynen yazdırır ve **PIN** ister; Enter yalnız alanlarda
+  onaylar, Esc vazgeçer. Listede çoklu seçim → "Kalıcı olarak sil" (en çok 50,
+  `POST /students/delete`, seçilen sayı + PIN): her öğrenci ayrı denetlenir,
+  sonuç penceresi öğrenci başına "silindi" ya da engelin nedenini gösterir;
+  her silinen öğrenci ayrı `student.deleted`; kantin çağrıları arka planda
+  sıralı. İki silme ucu da PIN teyidi ister (`confirm_pin`; yanlış PIN denetim
+  izine düşer; PIN göndermeyen 0.5.3 kabuğu `422 pin_required` alır, silme
+  olmaz). Durum geçmişine "Kalıcı silindi" + yapan yazılır.
 - **Dizin** öğe başına `status`, `statusReason`, `statusSince`, `revision`,
   `canteenSync` taşır; kantine henüz yazılamamış kayıt `canteen: null` ile
   döner; pasif görünür, silinen `since` yanıtında `removed`'da (90 gün).

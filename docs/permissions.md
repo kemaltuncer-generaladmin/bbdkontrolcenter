@@ -153,7 +153,7 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bbd_students` | `bbd_students.canteen_controls` | Veli kantin kontrollerini düzenler: borç/günlük limit, kurum engeli, veli engelini kaldırma, yasaklı ürünler (admin, bbd_staff, org_staff) |
 | `bbd_students` | `bbd_students.groups` | Öğrenci gruplarını açar, adlandırır, arşivler; tarihli üyelik ekler/bitirir/taşır, geçmiş düzeltir (admin, bbd_staff, org_staff). Okuma `bbd_students.view` ile |
 | `bbd_students` | `bbd_students.lifecycle` | Öğrenciyi pasifleştirir (gerekçe, ileri tarih, toplu) ve yeniden etkinleştirir — kantin satışı, tablet ve Akademi girişi kapanır/açılır (admin, bbd_staff, org_staff) |
-| `bbd_students` | `bbd_students.delete` | Pasif öğrenciyi KALICI siler (bakiye 0, açık talep ve kurum cari borcu yok, ad yazılarak onay) — yalnız admin |
+| `bbd_students` | `bbd_students.delete` | Pasif öğrenciyi KALICI siler — tek tek (kart → Tehlikeli işlemler; ad yazılarak) ya da toplu (liste, en çok 50; sayı yazılarak); önce ön kontrol, PIN teyidi (yıkıcı). Engeller: etkin öğrenci, kantin bakiyesi ≠ 0, açık ödeme talebi, kurum cari borcu, Akademi'ye ulaşılamıyor; kurum alacağı engellemez — yalnız admin |
 | `mobile_gateway` | `mobile_gateway.events.view` | Akademi'ye olay iletiminin durumunu görür: gecikme, ölü mektup (BBD Akademi → Ayarlar → Senkron; admin, bbd_staff). Servis anahtarına verilmez |
 | `mobile_gateway` | `mobile_gateway.events.manage` | Ölü mektupları Akademi'ye yeniden gönderir, iletimi bir sıradan yeniden başlatır — yalnız admin |
 | `bbd_canteen_api` | `bbd_canteen_api.events.push` | Kantin backend'inin KM'ye olay itmesi (servis anahtarı; admin, canteen_service) |

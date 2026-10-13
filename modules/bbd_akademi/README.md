@@ -94,12 +94,12 @@ Bugün ─────────────── Özet · Talepler · Duyuru
 Öğrenciler ─────────── Öğrenciler (KM yönetimi) · Toplu işlemler · Gruplar ·
                        Sınıflar · Veliler ve uygulama · Uygulama kullanımı
    └ öğrenci kartı ─── Özet · Kayıt ve veliler · Program ve yoklama ·
-                       Ödev ve çalışma · Ölçme ve gelişim · Kurum cari ve kantin
+                       Ödev ve çalışma · Ölçme ve gelişim · Cari, kantin ve kitap
 Dersler ve Program ─── Ders programı ve etüt · Yoklama · Ödevler · Çalışma planı ·
-                       Kurum takvimi
+                       Şablonlar · Kurum takvimi
 Ölçme ve Gelişim ───── Denemeler · Değerlendirmeler · Kaynaklar · Müfredat · Okuma ·
                        Bilgi kartları* · Erken uyarı*
-Kantin ve Finans ───── Kurum finansı* · Kantin* · Kitap talepleri*
+Kantin ve Finans ───── Kurum finansı* · Kantin* · Kitap satışı* · Kitap talepleri*
 Ayarlar ────────────── Kurum ayarları (ilk sekme Özellikler) · Personel · KVKK talepleri
                                    * kurum özellik bayrağına bağlı
 ```
@@ -115,7 +115,7 @@ Okunamazsa `null` — panel her şeyi gösterir, karar Akademi'de kalır. Ayarla
 düzeyinde aynı kural `api.js` → `can()` / `featureOff()` (işlemin
 `featureFlag`'i, `/km/operations`). Bölüm bayrakları: Erken uyarı
 `early_warning`, Bilgi kartları `flashcards`, Kurum finansı `finance`, Kantin
-`canteen`, Kitap talepleri `books`; kart/sekme düzeyinde `tablets`, `pa`,
+`canteen`, Kitap satışı ve Kitap talepleri `books`; kart/sekme düzeyinde `tablets`, `pa`,
 `self_review`, `reading_league`, `class_comparison`.
 
 **Hız.** Açılış TEK çağrıdır: `/km/status?operations=1` (bağlantı, izinler,
@@ -176,7 +176,7 @@ düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
 | Program · Yoklama · Talepler | Program ve yoklama |
 | Ödevler · Öğrenme · Çalışma · Bilgi kartları* | Ödev ve çalışma |
 | Denemeler · Müfredat & ilerleme · Kaynaklar · Koçluk | Ölçme ve gelişim |
-| Kurum cari* · Kantin* | Kurum cari ve kantin (Kantin hareketleri) |
+| Kurum cari* · Kantin* | Cari, kantin ve kitap (Kantin hareketleri; 0.5.4: + Kurumdan alınan kitaplar*) |
 
 Eski sekme anahtarları derin bağlantıda çalışmaya devam eder
 (`app.go('students', {studentId, tab: 'exams'})` → Ölçme ve gelişim → Denemeler
@@ -184,9 +184,9 @@ açık). Bölüm başına bir satır:
 
 - **Bugün** — günün rakamları ve bekleyen işler tek özet çağrısıyla; hızlı düğmeler (yoklama, ödev, tahsilat, duyuru, öğrenci çağır).
 - **Öğrenciler** — öğrenci ekle/düzenle, sınıf ve gruba (toplu) ata, veliler; öğrenciye tıklayınca tek kart.
-- **Dersler ve Program** — haftalık program ve etüt, günün yoklaması, ödev verme ve teslim, koç görevleri, kurum takvimi.
+- **Dersler ve Program** — haftalık program ve etüt, günün yoklaması, ödev verme (tek ya da toplu, üç adım) ve teslim, koç görevleri, şablonlar (ödev, atama paketi, plan), kurum takvimi.
 - **Ölçme ve Gelişim** — denemeler ve sonuç yükleme, değerlendirme karneleri, kaynak ve müfredat, okuma ve (açıksa) kartlar/erken uyarı.
-- **Kantin ve Finans** — kurum carisi ve tahsilat, kantinin kurum kuralları (para ayrı), kitap talepleri.
+- **Kantin ve Finans** — kurum carisi ve tahsilat, kantinin kurum kuralları (para ayrı), kitap satışı (üç adım) ve kitap talepleri.
 - **Ayarlar** — hangi özelliklerin açık olduğu, kurum ayarları, senkron, entegrasyon, personel ve KVKK.
 
 ## Bölümler
@@ -205,7 +205,8 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Ders programı | `timetable*.js` | Zil planı durumu kartı (14 gün: kaynak, bugünün kipi, çağrı ve ses, zil ajanı, acil kapatma; "Planı şimdi it"), zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama), etüt ve tek seferlik dersler, zil dilimleri, dönemler |
 | Kurum takvimi | `institution-calendar.js` | Tatil, etkinlik, veli toplantısı, deneme günü, kayıt dönemi; hedef kitle, bağlı duyuru ve hatırlatma (F-A20); "Zil" alanı (normal / tatil — zil çalmaz / KM saat seti) ve "dersleri iptal et" — sözleşme şalteri açılana dek devre dışı |
 | Yoklama | `attendance.js` | Günün oturumları, yoklama listesi ve düzeltme |
-| Ödevler | `homework.js` | Ödev ver (sınıf/grup/öğrenci), teslim tablosu, hatırlatma |
+| Ödevler | `homework.js`, `homework-bulk.js`, `homework-content.js` | "Ödev ver" = üç adımlı sihirbaz (ne → kime → ne zaman; şablondan ya da yeni, birden çok ödev, tek / birkaç tarih / her hafta / şablon süresi, otomatik önizleme ve çakışmalar, büyük iş arka planda); seçilenlere toplu ertele / tarih / iptal / sil; toplu seri süzgeci; teslim tablosu, hatırlatma |
+| Şablonlar | `templates.js` (+ `bulk-target.js`, `wizard.js`) | Ödev şablonları (kurum şablonu; yeni / düzenle / kopyala / sil / "bu şablonla ödev ver"), atama paketleri (yalnız KM tanımlar: program + kaynak + kaynak paketi + plan şablonu + kural + otomatik; uygula / kaldır — seçerek · süzgeçle · kuralına uyan herkes, hariç tutulanlar, önce say, 300+ öğrencide arka plan işi), plan şablonları |
 | Denemeler | `exams*.js` | Tanımlar, geçmiş deneme, toplu yükleme sihirbazı (yükle → sütunlar → eşleme + yayınevi şablonları → önizleme ve belirsiz eşleşme çözümü → kaydet / geri al), cevap anahtarı ve soru→konu eşlemesi, tekil sonuç, yayımla, analiz, karşılaştırma, dışa aktarım |
 | Çalışma planı | `plan*.js` | Plan görevi atama (öğrenci/grup/sınıf), plan şablonları ve sınıfa uygulama, uyum tablosu, erteleme talepleri (F-A18) |
 | Okuma | `reading*.js` | Kurum okuma listeleri, hazır listeler (tür süzgeci; hazır şablondan oluştur), okuma ligi, öğrenci × ay raporu (F-A19) |
@@ -214,6 +215,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Erken uyarı | `insights*.js` | Kurallı risk listesi ve eylemler (not, görüşme, veliye bildirim, çöz / yeniden aç), eşikler, en çok hata yapılan konular ve nedenler (F-A22) |
 | Kurum finansı | `finance.js` | Cari hesaplar, peşinatlı taksit planı, kalemler, tahsilat (seçili kalem / serbest tutar FIFO), PIN teyitli iptal, gecikenler + hatırlatma, ekstre ve makbuz — **kantinden tamamen ayrı (A12)** |
 | Kantin | `canteen.js` | Kantinin kurum kuralları (F-A15; gövdesi `settings.js` → `canteenTab`) ve KM kantin ekranlarına geçiş; kantin parası kurum carisinden ayrı (A12) |
+| Kitap satışı | `book-sales.js` | "Kitap sat" üç adım (kitaplar → öğrenciler → ödeme: cari / nakit / kart POS / veliye ödeme bağlantısı), satış listesi (açık / tümü, öğrenci süzgeci), ayrıntı (öğrenci satırları, seçilenleri / hepsini teslim et), satır: siparişi yeniden dene, mağaza durumunu yenile, ödeme bağlantısını yeniden gönder + kopyala, sipariş/fatura PDF, gerekçeli iptal / iade, geçmiş; öğrenci kartında kurumdan alınan kitaplar — **para yalnız kurum carisinde (A12)** |
 | Kitap talepleri | `books.js` | Kuyruk, siparişi yeniden dene, teslim, sipariş PDF'i |
 | Duyurular | `announcements.js` | Taslak → hedefle → şimdi ya da zamanlı yayımla, okunma oranı |
 | Talepler | `requests.js` | İzin, görüşme ve etüt talepleri |
@@ -255,6 +257,21 @@ yönetici işlemi değildir — KM'den panelle değil `mobile_gateway` olay
 göndericisiyle çağrılır; durumu `admin_getDirectorySyncStatus` → `events`
 bloğuyla Ayarlar → Senkron kartında görünür.
 
+**0.5.4 (km-toplu-kitap):** izin listesine toplu ödev / ödev şablonu / atama
+paketi / toplu müfredat / toplu kaynak ataması kaldırma (F-A25/F-A26, 21 işlem,
+bbd-akademi main 86e6ddf) ve kitap satışı (F-A27, 10 `admin_*BookSale*` +
+`students_listBookPurchases` / `students_getBookPurchase`, birleşim 3) girdi;
+hepsi ekranda (`admin_createHomework` bilerek yok: tek ödev de sihirbazdan
+verilir). `books.sell` → `bbd_akademi.books`. Müfredat → Program istisnaları
+"Toplu program" (ekle / çıkar / kurala dön, süzgeç, önce say), Kaynaklar →
+Atamalar çoklu seçim + "Toplu kaldır", Kurum ayarları → "Atama paketlerini yeni
+öğrencilere kendiliğinden uygula" (`assignments.autoApplyBundlesToNewStudents`,
+varsayılan kapalı). Ortak adım adım pencere `wizard.js` (adım listesi
+`aria-current="step"`, odak adım başlığında, canlı bölge, Geri / İleri, Esc;
+toplu iş izleme `admin_getBulkJob` 1,5 sn) ve "Kime?" seçicisi `bulk-target.js`
+(seçerek · süzgeçle · paket kuralı, hariç tutulanlar). `formDialog` kitin
+`dialogA11y`sini kullanır.
+
 **Sözleşme kaynağı:** `tools/gen_allowlist.py` → `CONTRACT_REF = "main"`
 (bbd-akademi deposunun `main` dalındaki commit'lenmiş `docs/api/openapi.yaml`).
 Sözleşme değişince betik yeniden koşturulur, `--check` ile doğrulanır ve
@@ -276,7 +293,7 @@ izin gelirse test kırılır.
 | `bbd_akademi.exams` | admin, bbd_staff | Deneme tanımı, sonuç, toplu yükleme, cevap anahtarı, yayımlama, dışa aktarım |
 | `bbd_akademi.finance` | admin, bbd_staff | Kurum carisi (görüntüleme dahil) |
 | `bbd_akademi.finance_void` | admin | Tahsilat iptali — ayrıca PIN teyidi |
-| `bbd_akademi.books` | admin, bbd_staff | Kitap talepleri |
+| `bbd_akademi.books` | admin, bbd_staff | Kitap talepleri ve kitap satışı (`books.manage`, `books.sell`; satış kurum carisine yazar, kantinden ayrı) |
 | `bbd_akademi.announcements` | admin, bbd_staff | Duyurular |
 | `bbd_akademi.requests` | admin, bbd_staff | İzin, görüşme, etüt talepleri |
 | `bbd_akademi.settings` | admin | Kurum ayarları, kantin kuralları, tema, bayraklar, anahtarlar, anons şablonları, dizin, denetim; koçluk ayarları; mesaj şikâyet kuyruğu ve yazışma denetimi (`messages.moderate`, `messages.audit`) |
