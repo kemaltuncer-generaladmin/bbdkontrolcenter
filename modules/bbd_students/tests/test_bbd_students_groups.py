@@ -118,6 +118,24 @@ async def test_grup_ad_ve_ogrenci_secimiyle_acilir(store: ScopedStore) -> None:
     assert published.revisions == [1]
 
 
+async def test_turkce_harfli_kantin_kimligi_gruba_eklenir(store: ScopedStore) -> None:
+    """Canlıda kantin kimliklerinin bir kısmı Türkçe harf taşır ("…yazılım").
+
+    Eski ASCII kuralı bunları 400 "Geçersiz öğrenci kimliği" ile reddediyordu;
+    toplu "Gruba ekle" isteğinde TEK böyle öğrenci bütün isteği düşürüyordu.
+    """
+    service, _ = build(store)
+    group = await make(service, "Etüt")
+    result = await service.add_members(group["id"], ["STU-A", "veliyazılım", "öğrenci_ş-ğü"],
+                                       actor="Ayşe")
+    assert result["added"] == 3
+    assert {m["studentId"] for m in result["group"]["current"]} == {
+        "STU-A", "veliyazılım", "öğrenci_ş-ğü"}
+    for bad in ["a b", "a.b", "a/b", "", "x" * 65]:
+        with pytest.raises(GroupError):
+            await service.add_members(group["id"], [bad], actor="Ayşe")
+
+
 async def test_ayni_ogrenci_kesisen_iki_uyelik_tasiyamaz(store: ScopedStore) -> None:
     service, _ = build(store)
     group = await make(service, "TYT", ["STU-A"])

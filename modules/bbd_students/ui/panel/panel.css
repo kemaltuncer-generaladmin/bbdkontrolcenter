@@ -392,6 +392,21 @@
 }
 
 .st-bulk-count { font-size: 12px; color: var(--soft); }
+.st-bulk-count.on { font-size: 13px; font-weight: 600; color: var(--ink); }
+
+/* BBD Akademi içinde (`.st-embedded`) kök yüksekliği içerikle büyür (`height: auto`):
+   `height: 100%` belirsizleşir, ızgara satırı içeriğe göre uzar ve seçici BÜTÜN listeyi
+   alt alta dizerdi (340 öğrencide ~9.000 px; arama kutusu ve eylemler ekrandan çıkar).
+   Seçicinin yüksekliği görüntü alanına bağlanır, liste kendi içinde kayar ve sağdaki
+   işlemler kaydırılırken seçici yapışık kalır. */
+.st-embedded .st-bulk { overflow: visible; padding-left: 0; padding-right: 0; }
+.st-embedded .st-bulk-layout { height: auto; min-height: 0; grid-template-rows: auto; align-items: start; }
+.st-embedded .st-bulk-layout .pk-box { position: sticky; top: 0;
+  height: clamp(360px, calc(100vh - 240px), 760px); }
+@media (max-width: 1000px) {
+  .st-bulk-layout { grid-template-columns: minmax(0, 1fr); }
+  .st-embedded .st-bulk-layout .pk-box { position: static; height: clamp(320px, 60vh, 560px); }
+}
 
 .st-bulk-status {
   min-height: 1.4em;

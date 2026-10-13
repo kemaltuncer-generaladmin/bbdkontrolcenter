@@ -19,7 +19,12 @@ import {
 import { mountStudentCard } from './card.js';
 import { createPicker } from './picker.js';
 
-loadStyles(import.meta.url);
+// STİL `mount()` İÇİNDE YÜKLENİR (ui-kit/kit.js kuralı). Bu dosya kabuğun
+// açılışında yetenek çözümü için (`bbd_payment_request.student_card`) HER
+// oturumda import edilir; tepede yüklenen `panel.css` o an bütün ekranlara
+// sızıyordu — kitin seçicisi (`.pk-box`) 15 piksele iniyor, BBD Akademi →
+// Öğrenciler → "Toplu işlemler" öğrenci listesi görünmüyordu (13.10.2026).
+// Kartın kendi stilini `card.js` yükler.
 
 let api = null;
 let capability = null;
@@ -1013,6 +1018,7 @@ export function capabilities(ctx) {
 }
 
 export function mount(root, ctx) {
+  loadStyles(import.meta.url);
   api = ctx.api;
   capability = ctx.capability;
 

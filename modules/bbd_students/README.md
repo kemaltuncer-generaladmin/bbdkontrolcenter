@@ -199,6 +199,17 @@ desteği ADR 0029 (modül işlemi + `events.outbox`).
   sıralı. İki silme ucu da PIN teyidi ister (`confirm_pin`; yanlış PIN denetim
   izine düşer; PIN göndermeyen 0.5.3 kabuğu `422 pin_required` alır, silme
   olmaz). Durum geçmişine "Kalıcı silindi" + yapan yazılır.
+- **Toplu işlemler seçicisi (0.5.5 adayı, kullanıcı: "toplu işlemlerde öğrenci
+  seçilemiyor, UI görünmüyor").** Sekme kitin ortak seçicisini (`ui-kit/picker.js`)
+  kullanır — BBD Akademi'nin bütün "Kime?" seçicileriyle AYNI bileşen: satırda onay
+  kutusu, arama (Türkçe katlamalı), sınıf süzgeci, "Görünenleri seç", "Yalnız
+  seçilenler", seçili sayısı (ekran okuyucuya duyurulur), "Daha fazla göster",
+  klavye (aramada ↓, satırlarda ↑/↓/Home/End, Boşluk), ilk okumada "Yükleniyor…",
+  kantine ulaşılamazsa sebep + "Tekrar dene". Akademi içinde (`.st-embedded`)
+  seçici görüntü alanı yüksekliğindedir, liste kendi içinde kayar ve sağdaki
+  işlemler kaydırılırken yapışık kalır; 1000 px altında tek sütun. Grup üyeliği
+  Türkçe harfli kantin kimliklerini (ör. "…yazılım") kabul eder — eski ASCII
+  kuralı toplu "Gruba ekle"nin tamamını 400 ile düşürüyordu.
 - **Dizin** öğe başına `status`, `statusReason`, `statusSince`, `revision`,
   `canteenSync` taşır; kantine henüz yazılamamış kayıt `canteen: null` ile
   döner; pasif görünür, silinen `since` yanıtında `removed`'da (90 gün).

@@ -17,6 +17,7 @@ import { alertBox, badge, drawer, emptyState, progress, skeletonRows } from '../
 import { dataTable } from '../../ui-kit/table.js';
 import { formGrid } from '../../ui-kit/form.js';
 import { dateField } from '../../ui-kit/datefield.js';
+import { createPicker } from '../../ui-kit/picker.js';
 import { AkademiError, openBlob, problem, saveBlob } from './api.js';
 
 export { money, moneyInput, num, parseMoney, percent, problem };
@@ -697,6 +698,64 @@ export function studentPicker(app, { onPick, placeholder = 'Öğrenci ara (ad, o
   } });
   node.append(box.node, results);
   return { node, destroy: box.destroy, focus: () => box.node.focus() };
+}
+
+/** Akademi öğrencisi → ortak seçicinin satırı (`{id, name, meta}`). */
+export function studentItem(student) {
+  const grade = gradeText(student.gradeLevel);
+  return {
+    id: student.id,
+    name: student.displayName || student.fullName || student.name || student.id,
+    meta: [student.classGroup?.name, grade && grade !== '—' ? grade : '',
+      student.schoolNo ? `no ${student.schoolNo}` : ''].filter(Boolean).join(' · '),
+  };
+}
+
+/**
+ * TOPLU İŞLEMLERİN ÖĞRENCİ SEÇİCİSİ (13.10.2026 — "toplu işlemlerde öğrenci
+ * seçilemiyor"). Eski "yaz · tek tek seç" açılır kutusu (`studentPicker`) toplu
+ * işte yetmiyordu: en az 2 harf istiyor, sınıf süzgeci / tümünü seç / sayı
+ * yoktu ve pencerenin içinde kesiliyordu. Bu seçici KM'nin ortak kitindeki
+ * seçicidir (`ui-kit/picker.js`, KM Öğrenci Yönetimi → Toplu işlemler ile AYNI):
+ * liste hemen gelir; arama ve sınıf süzgeci SUNUCUDA (`admin_listStudents`,
+ * `q` / `classGroupId`, sayfa 50, imleçli "Daha fazla yükle"); görünenleri seç,
+ * yalnız seçilenler, seçili sayısı, klavye (↑/↓, Boşluk), yükleniyor / hata /
+ * boş. Seçim sayfalar ve aramalar arasında korunur.
+ *
+ * @param {object} app
+ * @param {object} options
+ *   classes: [{id, name}] — sınıf süzgeci
+ *   value: başlangıç seçimi [{id, displayName}]
+ *   onChange(students[{id, displayName}])
+ *   placeholder, label
+ * @returns {{node, value(): string[], items(): object[], size(): number, destroy()}}
+ */
+export function studentSelect(app, { classes = [], value = [], onChange, label = 'Öğrenciler',
+  placeholder = 'Öğrenci ara (ad, okul no)', query = {} } = {}) {
+  const toStudent = (item) => ({ id: item.id, displayName: item.name });
+  const picker = createPicker({
+    placeholder,
+    label,
+    groupLabel: 'Sınıf',
+    groups: classes.map((item) => ({ value: item.id, label: item.name })),
+    limit: 50,
+    source: async ({ query: text, group, cursor }) => {
+      const data = await app.api.get('/v1/admin/students', { ...query, q: text || undefined,
+        classGroupId: group || undefined, cursor: cursor || undefined, limit: 50 });
+      return { items: (data?.items || []).map(studentItem), next: data?.nextCursor || null };
+    },
+    onChange: () => onChange?.(picker.selectedItems().map(toStudent)),
+  });
+  picker.select((value || []).map((item) => ({ id: item.id, name: item.displayName || item.fullName || item.id })));
+  picker.node.classList.add('ak-stu-select');
+  return {
+    node: picker.node,
+    value: () => picker.selection(),
+    items: () => picker.selectedItems().map(toStudent),
+    size: () => picker.size(),
+    focus: () => picker.focus(),
+    destroy: () => picker.destroy(),
+  };
 }
 
 // --------------------------------------------------------------- dışa aktarım

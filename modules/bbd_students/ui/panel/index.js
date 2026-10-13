@@ -113,6 +113,7 @@ function createManager(root, options) {
   let recordFor = null;
   let groupsView = null;
   let bulkPicker = null;
+  let loaded = false;                  // öğrenci listesi en az bir kez okundu mu
   let stopWatch = null;
   let refreshTimer = null;
   let toastTimer = null;
@@ -262,6 +263,7 @@ function createManager(root, options) {
 
   async function refresh() {
     nodes.status.textContent = 'Kantinden okunuyor…';
+    if (!students.length) bulkPicker?.setLoading(true);
     try {
       const payload = await api(`${BASE}/students`);
       if (disposed) return;
@@ -284,7 +286,10 @@ function createManager(root, options) {
     }
     renderList();
     if (!embedded) showRecord();
-    syncBulkPicker();
+    loaded = true;
+    // Kantine ulaşılamadıysa ve liste boşsa seçici "Liste boş." demez, sebebi yazar.
+    if (!connected && !students.length) bulkPicker?.setError(nodes.status.textContent, () => refresh());
+    else syncBulkPicker();
   }
 
   /** Canlı yenileme: olaylar 300 ms birikip TEK yenilemeye iner. */
@@ -685,7 +690,8 @@ function createManager(root, options) {
   // ------------------------------------------------------ toplu işlemler
 
   function syncBulkPicker() {
-    if (!bulkPicker) return;
+    // İlk okuma bitmeden boş listeyle çizilmez ("Liste boş." değil "Yükleniyor…").
+    if (!bulkPicker || !loaded) return;
     bulkPicker.setItems(sortStudents(students).map((student) => ({
       id: student.kantinId,
       name: student.displayName || 'Adsız',
@@ -940,12 +946,23 @@ function createManager(root, options) {
     const bulk = h('div', 'st-bulk');
     bulk.hidden = true;
     const layout = h('div', 'st-bulk-layout');
-    nodes.bulkCount = h('p', 'st-bulk-count', 'Seçim yok');
+    // SEÇİCİ ORTAK KİTTİR (`ui-kit/picker.js`): BBD Akademi'nin toplu ödev / paket /
+    // kitap "Kime?" seçicisiyle AYNI bileşen — arama, sınıf süzgeci, görünenleri seç,
+    // yalnız seçilenler, sayfalama, klavye (↑/↓, Boşluk), yükleniyor / hata / boş.
+    const idle = 'Seçim yok — soldan öğrenci seçin (↑/↓ ve Boşluk ile de seçilir).';
+    nodes.bulkCount = h('p', 'st-bulk-count', idle);
+    nodes.bulkCount.setAttribute('role', 'status');
+    nodes.bulkCount.setAttribute('aria-live', 'polite');
     bulkPicker = createPicker({
       groupLabel: 'Sınıf',
-      placeholder: 'Ad, sınıf, no ara',
-      onChange: (ids) => { nodes.bulkCount.textContent = ids.length === 0 ? 'Seçim yok' : `${ids.length} öğrenci seçili`; },
+      placeholder: 'Ad, sınıf, okul no ara',
+      label: 'Öğrenciler',
+      onChange: (ids) => {
+        nodes.bulkCount.textContent = ids.length === 0 ? idle : `${ids.length} öğrenci seçili`;
+        nodes.bulkCount.classList.toggle('on', ids.length > 0);
+      },
     });
+    bulkPicker.setLoading(true);       // ilk okuma bitene dek "Liste boş." yazmaz
     layout.append(bulkPicker.node);
     const side = h('div', 'st-bulk-side');
     const chain = reportChain({ api, root: view, toast, base: BASE });

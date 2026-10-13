@@ -49,7 +49,7 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
 | `datefield.js` | `dateField` · `dateRange` · ISO/TR dönüşümleri |
 | `calendar.js` | `monthCalendar` — ay ızgarası, gün başına rozet, tatil işaretleme |
 | `imagefield.js` | `imageField` — dosya seç/sürükle-bırak, ön denetim, önizleme · `inspectFile` · `measureImage` · `readAsDataUrl` |
-| `picker.js` | `createPicker` — gruplanmış, aranabilir çoklu/tekli seçici |
+| `picker.js` | `createPicker` — gruplanmış, aranabilir çoklu/tekli seçici. Yerel (`items`/`setItems`) ya da UZAK (`source({query, group, cursor}) → {items, next}`) kip; onay kutulu satır, gezici tabindex + ↑/↓/Home/End/Boşluk, görünenleri seç, yalnız seçilenler, seçili sayısı (`role=status`), daha fazla göster / yükle, `setLoading` · `setError(mesaj, tekrarDene)`. KM ve Akademi toplu işlemlerinin TEK öğrenci seçicisi |
 | `report.js` | `reportChain` — üret → önizle → yazdır (CUPS) |
 | `util.js` | `groupBy` · `sum` · `average` · `sortBy` · `uniqueBy` · `topN` · `compare` · `fillDays` · `abcClassify` |
 
@@ -74,7 +74,14 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
 8. **Silme yok, pasifleştirme var.** Yıkıcı işlem `confirmWithReason` ile;
    gerekçe backend'e gider ve denetim kaydına yazılır (ADR 0012).
 9. **CSS öneki benzersiz seç.** Panel CSS'i `document.head`'e eklenir ve hiç
-   kaldırılmaz; çakışan önek başka panelin görünümünü bozar.
+   kaldırılmaz; çakışan önek başka panelin görünümünü bozar. Kitin sınıfları
+   (`kit-*`, `pk-*`, `df-*`) panel CSS'inde YALNIZ panel köküyle kapsanarak
+   yazılır (`:where(.pr) .kit-btn`) ve yetenek sağlayan panel stilini dosya
+   tepesinde değil `mount()` içinde yükler — kabuk o dosyayı her açılışta
+   import eder. 13.10.2026: Ödeme Talebi'nin kapsamsız `.pk-box { width: 15px }`
+   kuralı bütün oturumda kitin seçicisini 15 px'e indiriyordu (Akademi "Toplu
+   işlemler" öğrenci listesi görünmüyordu). Kapı:
+   `tests/integration/test_panel_css_kapsam.py`.
 10. **HTML'i kendi elinle temizleme.** Mağaza içeriği (ürün açıklaması, CMS
     sayfası) `richtext.js` içindeki beyaz listeden geçer. Panelde ikinci bir
     liste tutma: `store_cms` bunu denedi ve iki liste sessizce ayrıştı.

@@ -272,6 +272,19 @@ toplu iş izleme `admin_getBulkJob` 1,5 sn) ve "Kime?" seçicisi `bulk-target.js
 (seçerek · süzgeçle · paket kuralı, hariç tutulanlar). `formDialog` kitin
 `dialogA11y`sini kullanır.
 
+**0.5.5 adayı (km-toplu-secim):** "Kime?" seçicisinin öğrenci bloğu ve "Hariç
+tut" artık KM'nin ortak seçicisidir (`common.js` → `studentSelect`, `ui-kit/picker.js`
+uzak kip): liste açılışta gelir (`admin_listStudents`, sayfa 50, imleçli "Daha
+fazla yükle"), arama ve sınıf süzgeci sunucuda (`q`, `classGroupId`; 250 ms
+gecikme, tuş başına istek yok), görünenleri seç / yalnız seçilenler / seçili
+sayısı, klavye, yükleniyor / hata ("Tekrar dene") / boş. Eski "en az 2 harf ·
+açılır kutudan tek tek" (`studentPicker`, `position: absolute`) pencerede
+kesiliyordu; tek öğrenci arayan ekranlarda (süzgeç, kart) kalır. "Hariç tut"
+bölümü açılana dek istek atmaz. Sihirbaz gövdesi pencereye sığmazsa kendi içinde
+kayar (not ve düğmeler yerinde). Kullananlar: toplu ödev, atama paketi uygula /
+kaldır, toplu program, toplu kaynak ataması, toplu kitap satışı, plan / plan
+şablonu, kaynak paketi hedefleri.
+
 Belgeler (0.5.4, akademi-belge bileşeniyle): Kitap satışı ayrıntısında **Satış
 belgesi** (`book_sale` — kitaplar, öğrenci satırları, teslim alan imza sütunu;
 kapı `admin_getBookSale`), satırda bbdstore **sipariş / fatura PDF**'i aynı
