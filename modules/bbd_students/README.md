@@ -56,8 +56,9 @@ Kullanıcı: "Adam bir öğrenciyi güncellemek için saatlerce uğraşıp durma
   (yoklayıcıyı BBD Akademi verir: `/api/bbd_akademi/km/events`, izin
   `mobile_gateway.events.view`; izin yoksa gösterge çizilmez).
 - **Listede toplu düzenleme**: satırları işaretle (ya da "görünenleri seç") →
-  alan (ana sınıf, seviye, alan, hedef sınav, gruba ekle, pasifleştir) → değer
-  → Enter / Uygula. Mevcut toplu uçlar; öğrenci başına olay.
+  alan (ana sınıf, alan / hedef sınav — öğrenciye özel istisna, gruba ekle,
+  pasifleştir) → değer → Enter / Uygula. Mevcut toplu uçlar; öğrenci başına
+  olay. Seviye toplu düzenlemede yoktur: sınıftan gelir (aşağıda).
 
 Etkileşim sayısı (yazma hariç; tek alan): 0.5.2'de menü → BBD Akademi →
 Öğrenciler → arama → satır → "Kayıt ve veliler" → alan → Kaydet = **7**;
@@ -96,7 +97,8 @@ velisi olabilir** (kartta "bu telefon X için de veli" notu). Kural tek yerde:
 {students, className}` (`bbd_students.manage`; öğrenci başına
 `student.updated` `["className"]`, kantine gidilmez; boş ad temizler). Toplu
 grup: mevcut `POST /groups/{id}/members`, `/members/end`, `POST /groups/move`
-(çoklu `studentIds`). Tek öğrencinin kaydı: `GET /students/{id}` (kantine o an
+(çoklu `studentIds`). Seviye / alan / hedef sınav sınıfın tanımındadır
+("Sınıflar" sekmesi, aşağıda). Tek öğrencinin kaydı: `GET /students/{id}` (kantine o an
 ulaşılamazsa dizinin son görüntüsünden, `canteenUnavailable`).
 
 ## Yetenekler
@@ -137,13 +139,44 @@ isteğe bağlı anons adı (`callName`).
   düzeltme, "Sınıftan grup oluştur") ve öğrenci kartında "Gruplar" bölümü.
   Yazma `bbd_students.groups`, okuma `bbd_students.view` ister.
 
-## Seviye / alan / hedef sınav
+## Seviye / alan / hedef sınav — SINIF taşır (göç 008, 13.10.2026)
 
-KM ana kaynaktır; Akademi müfredatı buradan türetir. `gradeLevel` 5–12 ya da
-`graduate`, `track` SAY/EA/SOZ/DIL (yalnız 10. sınıf ve üstü / mezun),
-`examTarget` LGS/YKS. Kural `backend/curriculum.py`. Sınıf adından ("12-SAY")
-yalnız ÖNERİ üretilir; ekranda tek tıkla kabul edilir, kendiliğinden yazılmaz.
-Toplu atama: "Toplu işlemler" → "Seviye / alan ata".
+Kullanıcı kararı: "Sınıf ve seviye farkı garip, teke indirelim." Seviye
+(5–12 / `graduate`), alan (`track` SAY/EA/SOZ/DIL; 10. sınıf ve üstü / mezun)
+ve hedef sınav (`examTarget` LGS/YKS) **ana sınıfın tanımındadır**
+(`mod_bbd_students_class`); öğrenci yalnız sınıfa atanır, değerleri sınıftan
+türer (`backend/curriculum.py`). Akademi müfredatı (hangi programlar) bu
+değerlerden manifest kuralıyla kendiliğinden bağlanır.
+
+- **Geçerli değer**: sınıfa seviye girilmişse sınıfınki; öğrenci kartında
+  "Bu öğrenci için farklı alan / hedef sınav" istisnası (`level_override`,
+  varsayılan kapalı, rozetle görünür) açıksa öğrencinin kendi alan / hedef
+  sınavı (seviye her zaman sınıftan). Sınıfa seviye girilmemişse öğrencinin
+  eski alanları (geriye uyum). Öğrenciye seviye yazılmaz (400).
+- **Uçlar**: `GET /classes` (tanımlı ∪ kullanılan sınıflar; seviyesiz sınıf
+  `defined: false` + addan öneri — "12-SAY" → 12 · SAY · YKS; öneri yazılmaz),
+  `PUT /classes/{ad}` ve `DELETE /classes/{ad}` (`bbd_students.manage`).
+  Sınıftaki her öğrencinin geçerli değeri değişirse öğrenci başına
+  `student.updated` → Akademi müfredatı 1–3 sn'de yeniden çözer.
+- **Dizin / geçit**: öğrenci nesnesi türetilmiş `gradeLevel/track/examTarget`
+  ve `classLevel` (sınıf tanımı ya da `null` = seviye girilmemiş) taşır
+  (km-mobile-gateway "Ekler"). Etüt / çalışma grupları seviye taşımaz.
+
+### Kurulum rehberi (kurum yöneticisi, bir kez)
+
+1. **Akademi → Öğrenciler → Sınıflar**: her sınıfa seviye seçin
+   (ör. "11-A → 11. sınıf · SAY · YKS", "Mezun → Mezun · EA · YKS",
+   "8-B → 8. sınıf · LGS"). "Seviye seçin" rozetli satırlarda addan öneri
+   hazır gelir; doğruysa yalnız **Seviyeyi kaydet**. Yeni sınıf: alttaki
+   "Yeni sınıf tanımla".
+2. **Öğrencileri sınıflara alın**: Öğrenciler listesinde işaretle → "Ana
+   sınıf" → sınıf adı → Uygula (aynı adı yazmak yeterli; var olan ad korunur).
+3. İstisna gereken öğrenci (ör. 11'de YKS yerine yalnız okul): öğrenci kartı →
+   "Bu öğrenci için farklı alan / hedef sınav".
+4. Kontrol: Akademi'de ödev / plan verirken program seçicisi sınıfın
+   seviyesini gösterir ("Hedefin seviyesi: 11. sınıf · SAY · YKS") ve uygun
+   programı kendiliğinden seçer; "sınıfına seviye girilmemiş" uyarısı 1.
+   adımda eksik kalan sınıfı söyler.
 
 ## Veli kantin kontrolleri
 
