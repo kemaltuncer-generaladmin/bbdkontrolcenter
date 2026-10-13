@@ -147,13 +147,17 @@ models.book_request = d.bookRequestDoc({ id: 'b', ref: 'KT-0042', student: stu, 
   history: [{ status: 'requested', at: '2026-10-01T09:00:00Z', actorLabel: 'Veli' }, { status: 'delivered', at: '2026-10-05T09:00:00Z', actorLabel: null }] });
 models.student_card = d.studentCardDoc({ student: stu, schoolNo: '1234', studentPhoneMasked: '0555 111 22 33',
   guardians: [{ id: 'g2', displayName: 'Baba Yılmaz', phoneMasked: '0*** *** ** 12', slot: 2, canManageCanteen: false, hasAppAccount: false },
-    { id: 'g1', displayName: 'Anne Yılmaz', phoneMasked: '0532 *** ** 67', slot: 1, canManageCanteen: true, hasAppAccount: true }],
+    { id: 'g1', displayName: 'Anne Yılmaz', phoneMasked: '0532 *** ** 67', slot: 1, relation: 'mother', primary: true, canManageCanteen: true, hasAppAccount: true }],
   programs: [{ id: 'pr', subject: { name: 'Matematik' }, title: 'LGS Matematik', unitCount: 8, topicCount: 64 }],
   studentGroups: [{ id: 'sg', name: 'Etüt A' }], syncedAt: '2026-10-13T05:00:00Z' });
 models.guardian_list = d.guardianListDoc([
   { id: 'g1', displayName: 'Anne Yılmaz', phoneMasked: '0532 123 45 67', hasAppAccount: true, students: [stu, { ...stu2, classGroup: { id: 'c8b', name: '8-B' } }] },
   { id: 'g3', displayName: 'Veli Demir', phoneMasked: '0*** *** ** 99', hasAppAccount: false, students: [{ ...stu2 }] }],
   { classGroupId: 'c8a', classGroupName: '8-A' });
+models.guardian_list_details = d.guardianListDoc(d.guardiansFromDetails([
+  { student: stu2, guardians: [{ id: 'x', displayName: 'Baba Demir', phoneMasked: '0*** *** ** 12', slot: 2, relation: 'father', hasAppAccount: false },
+    { id: 'y', displayName: 'Anne Demir', phoneMasked: '0505 123 45 67', slot: 1, relation: null, primary: true, hasAppAccount: true }] },
+  { student: stu, guardians: [] }, null]), { classGroupId: 'c8a', classGroupName: '8-A' });
 models.canteen_statement = d.canteenDoc(stu, { balanceMinor: 15000, debtMinor: 0, dailyLimitMinor: null, isBlocked: false, guardianBlocked: true },
   [{ id: 't2', at: '2026-10-12T10:00:00Z', totalMinor: 2500, reversed: true, items: [{ name: 'Tost', qty: 1 }] },
    { id: 't1', at: '2026-10-11T10:00:00Z', totalMinor: 3500, reversed: false, items: [{ name: 'Su', qty: 2 }, { name: 'Simit', qty: 1 }] }],
@@ -314,10 +318,14 @@ def test_odev_plan_cari_kitap_kart_veli_kantin(result: dict[str, Any]) -> None:
     card = models["student_card"]["document"]["parts"][0]
     guardians = _section(models["student_card"], "Veliler")["rows"]
     assert [row[0] for row in guardians] == ["Anne Yılmaz", "Baba Yılmaz"]  # yuva sırası
+    assert [row[1] for row in guardians] == ["Anne · birincil", "2. veli"]
     assert card["sections"][0]["items"][4]["value"] == "0*** *** ** 33"
     veli = models["guardian_list"]["document"]["parts"][0]
     assert [row[0] for row in veli["sections"][0]["rows"]] == ["Ayşe Yılmaz", "Can Demir"]
     assert ["Öğrenci", "2"] in veli["meta"]
+    detail_rows = models["guardian_list_details"]["document"]["parts"][0]["sections"][0]["rows"]
+    assert [(row[2], row[3], row[4]) for row in detail_rows] == [
+        ("Anne Demir", "1. veli · birincil", "0*** *** ** 67"), ("Baba Demir", "Baba", "0*** *** ** 12")]
     canteen = models["canteen_statement"]["document"]["parts"][0]["sections"]
     harcama = next(section for section in canteen if section.get("title") == "Harcamalar")
     assert harcama["footer"][2] == "35,00 ₺" and harcama["rows"][1]["tone"] == "muted"

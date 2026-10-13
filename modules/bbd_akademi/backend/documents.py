@@ -95,7 +95,8 @@ KINDS: dict[str, DocumentKind] = {
     "finance_receipt": DocumentKind("MKB", "Kurum cari", "makbuz", ("admin_getReceipt",)),
     "book_request": DocumentKind("KTP", "Kitap", "kitap-talebi", ("admin_getBookRequest",)),
     "student_card": DocumentKind("OGK", "Öğrenci", "ogrenci-karti", ("admin_getStudent",)),
-    "guardian_list": DocumentKind("VLL", "Öğrenci", "veli-listesi", ("admin_listGuardians",)),
+    "guardian_list": DocumentKind("VLL", "Öğrenci", "veli-listesi",
+                                  ("admin_listStudents", "admin_getStudent")),
     "canteen_statement": DocumentKind("KNT", "Kantin", "kantin-dokumu",
                                       ("students_getCanteen", "students_listCanteenTransactions")),
 }

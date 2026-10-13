@@ -8,11 +8,12 @@
 import { h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, card, chipRow } from '../../ui-kit/layout.js';
 import { timeline } from '../../ui-kit/flow.js';
-import { openBlob } from './api.js';
 import {
   actionButton, fmtDateTime, formDialog, kv, loader, money, num, openDrawer, pagedList,
   personName, runAction, sectionHead, statusBadge, todayIst,
 } from './common.js';
+import { documentButtons, previewAkademiPdf } from './documents.js';
+import { bookRequestDoc } from './documents-logic.js';
 
 export const BOOK_STATUS = {
   requested: ['Veli onayı bekliyor', 'info'],
@@ -110,6 +111,9 @@ export function openRequest(app, id, onChange) {
       ['Teslim', fmtDateTime(request.deliveredAt)],
     ])));
     const tools = h('div', 'ak-inline');
+    // Kurum logolu talep / teslim belgesi (teslimde imza alanlı).
+    tools.append(documentButtons(app, { title: 'Kitap talep belgesi', label: 'Talep belgesi',
+      build: async () => bookRequestDoc(await app.api.get(`/v1/admin/book-requests/${id}`)) }));
     if (request.status === 'order_failed') {
       tools.append(actionButton(app, 'admin_retryBookOrder', 'Siparişi yeniden dene', { variant: 'primary',
         onClick: async () => {
@@ -123,11 +127,11 @@ export function openRequest(app, id, onChange) {
         onClick: () => deliver(request) }));
     }
     if (['ordered', 'delivered', 'ordering'].includes(request.status) || request.order?.orderId) {
-      tools.append(actionButton(app, 'admin_getBookOrderPdf', 'Sipariş PDF', { onClick: async () => {
-        await runAction(app, async () => {
-          const signed = await app.api.get(`/v1/admin/book-requests/${id}/order-pdf`);
-          openBlob(await app.api.fetchFile(signed.url, `${request.ref}.pdf`));
-        });
+      // Mağazanın sipariş belgesi (bbdstore PDF'i) önizleme penceresinde açılır, bu cihazdan basılır.
+      tools.append(actionButton(app, 'admin_getBookOrderPdf', 'Sipariş PDF', { onClick: async (event) => {
+        const opener = event.currentTarget;
+        const signed = await runAction(app, () => app.api.get(`/v1/admin/book-requests/${id}/order-pdf`));
+        if (signed?.url) previewAkademiPdf(app, { kind: 'book_order', url: signed.url, name: request.ref, opener });
       } }));
     }
     if (tools.childElementCount) nodes.push(tools);

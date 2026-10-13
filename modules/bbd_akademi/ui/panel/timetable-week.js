@@ -28,6 +28,8 @@ import {
   cellKey, conflictText, slotLayout, slotTime, subjectHue, subjectIndex, subjectSelect,
   teacherOptions,
 } from './timetable-shared.js';
+import { documentButtons } from './documents.js';
+import { classTimetableDoc, teacherTimetableDoc } from './documents-logic.js';
 
 /** Etiketli küçük alan (araç şeridi için). */
 function field(label, control) {
@@ -88,6 +90,32 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     onClick: () => copyWeek() });
   node.append(toolbar(field('Sınıf', classSelect.node), field('Gösterilen gün', viewDate.node),
     h('span', 'kit-spacer'), copyButton));
+
+  // Belgeler: sınıfın KAYITLI programı (ekrandaki taslak değil) ve seçilen
+  // öğretmenin bütün sınıflardaki haftası (tek istek: program ızgarası).
+  const teacherSelect = selectBox([{ value: '', label: 'Öğretmen seçin' }], '', () => {},
+    { label: 'Öğretmen programı' });
+  const classDoc = documentButtons(app, { title: 'Sınıf ders programı', label: 'Sınıf programı',
+    build: async () => {
+      if (!s.classGroupId) throw new Error('Önce sınıf seçin.');
+      const [data, bells] = await Promise.all([
+        app.api.get(`/v1/admin/class-groups/${s.classGroupId}/timetable`, { date: s.viewDate }),
+        app.lookups.bellSlots()]);
+      return classTimetableDoc({ classGroup: data?.classGroup
+        || s.classGroups.find((item) => item.id === s.classGroupId), bellSlots: bells?.slots || [],
+      entries: data?.entries || [], validFrom: data?.validFrom, validTo: data?.validTo });
+    } });
+  const teacherDoc = app.can('admin_getTimetableGrid') ? documentButtons(app, {
+    title: 'Öğretmen ders programı', label: 'Öğretmen programı',
+    build: async () => {
+      const teacher = s.teachers.find((item) => item.id === teacherSelect.value);
+      if (!teacher) throw new Error('Önce öğretmen seçin.');
+      const grid = await app.api.get('/v1/admin/timetable/grid', { date: s.viewDate });
+      return teacherTimetableDoc({ teacher: { id: teacher.id, displayName: teacher.displayName },
+        bellSlots: grid?.bellSlots || [], groups: grid?.groups || [], date: s.viewDate });
+    } }) : null;
+  node.append(toolbar(h('span', 'ak-muted', 'Belgeler:'), classDoc,
+    teacherDoc ? field('Öğretmen', teacherSelect.node) : null, teacherDoc));
 
   // ------------------------------------------------------- kayıt şeridi
   const bar = h('div', 'ak-tt-bar');
@@ -160,6 +188,8 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       s.subjects = subjects;
       s.subjectsById = subjectIndex(subjects);
       s.teachers = teachers;
+      teacherSelect.options([{ value: '', label: 'Öğretmen seçin' },
+        ...(teachers || []).map((item) => ({ value: item.id, label: item.displayName || item.id }))]);
     } catch (failure) {
       s.started = false;
       content.replaceChildren(errorBox(failure, () => start()));

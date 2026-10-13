@@ -21,6 +21,8 @@
 export const TZ = 'Europe/Istanbul';
 
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const RELATIONS = { mother: 'Anne', father: 'Baba', guardian: 'Vasi', grandparent: 'Büyükanne / büyükbaba',
+  sibling: 'Kardeş', other: 'Diğer' };
 export const DAY_LABEL = {
   mon: 'Pazartesi', tue: 'Salı', wed: 'Çarşamba', thu: 'Perşembe', fri: 'Cuma',
   sat: 'Cumartesi', sun: 'Pazar',
@@ -852,9 +854,10 @@ export function studentCardDoc(detail) {
         { label: 'Öğrenci telefonu', value: clean(d.studentPhoneMasked) },
         { label: 'Gruplar', value: (d.studentGroups || []).map((item) => clean(item.name)).join(', ') || '—' },
       ] },
-      { kind: 'table', title: 'Veliler', headers: ['Veli', 'Sıra', 'Telefon', 'Uygulama hesabı', 'Kantin yönetimi'],
-        align: 'LCLCC', widths: [2.6, 0.7, 1.8, 1.3, 1.3], keep: true,
-        rows: guardians.map((item) => [clean(item.displayName), `${num(item.slot)}. veli`, maskPhone(item.phoneMasked) || '—',
+      { kind: 'table', title: 'Veliler', headers: ['Veli', 'Yakınlık', 'Telefon', 'Uygulama hesabı', 'Kantin yönetimi'],
+        align: 'LLLCC', widths: [2.4, 1.6, 1.8, 1.2, 1.2], keep: true,
+        rows: guardians.map((item) => [clean(item.displayName), [RELATIONS[item.relation] || `${num(item.slot)}. veli`,
+          item.primary ? 'birincil' : ''].filter(Boolean).join(' · '), maskPhone(item.phoneMasked) || '—',
           item.hasAppAccount ? 'Var' : 'Yok', item.canManageCanteen ? 'Evet' : 'Hayır']),
         empty: 'Kayıtlı veli yok.' },
       { kind: 'table', title: 'Programlar', headers: ['Ders', 'Program', 'Ünite', 'Konu'], align: 'LLRR',
@@ -868,27 +871,42 @@ export function studentCardDoc(detail) {
 
 // ---------------------------------------------------------- 10. veli listesi
 
-/** Sınıfın veli listesi — GuardianListItem[] içinden sınıfın öğrencileri süzülür. */
+/** Öğrenci ayrıntıları (AdminStudentDetail[]) → veli kayıtları (guardianListDoc girdisi). */
+export function guardiansFromDetails(details) {
+  const items = [];
+  for (const detail of details || []) {
+    for (const guardian of detail?.guardians || []) {
+      items.push({ ...guardian, students: [detail.student] });
+    }
+  }
+  return items;
+}
+
+/** Sınıfın veli listesi — veli kayıtlarından sınıfın öğrencileri süzülür. */
 export function guardianListDoc(guardians, { classGroupId = '', classGroupName = '' } = {}) {
   const rows = [];
   for (const guardian of guardians || []) {
     for (const student of guardian.students || []) {
-      if (classGroupId && student.classGroup?.id !== classGroupId) continue;
+      if (!student || (classGroupId && student.classGroup?.id !== classGroupId)) continue;
       rows.push({ student, guardian });
     }
   }
   rows.sort((a, b) => studentName(a.student).localeCompare(studentName(b.student), 'tr')
+    || Number(a.guardian.slot || 9) - Number(b.guardian.slot || 9)
     || clean(a.guardian.displayName).localeCompare(clean(b.guardian.displayName), 'tr'));
   const students = new Set(rows.map((row) => row.student.id));
+  const relation = (guardian) => [RELATIONS[guardian.relation] || (guardian.slot ? `${num(guardian.slot)}. veli` : 'Veli'),
+    guardian.primary ? 'birincil' : ''].filter(Boolean).join(' · ');
   return documentOf('guardian_list', 'Veli Listesi', [{
     title: 'Veli Listesi',
     subtitle: clean(classGroupName, 'Bütün sınıflar'),
     meta: [['Sınıf', clean(classGroupName, 'Bütün sınıflar')], ['Öğrenci', num(students.size)], ['Veli kaydı', num(rows.length)]],
     sections: [
-      { kind: 'table', headers: ['Öğrenci', 'No', 'Sınıf', 'Veli', 'Telefon', 'Uygulama'], align: 'LLLLLC',
-        widths: [2.6, 1.1, 0.9, 2.6, 1.8, 0.9],
-        rows: rows.map(({ student, guardian }) => [studentName(student), clean(student.externalRef), className(student),
-          clean(guardian.displayName), maskPhone(guardian.phoneMasked) || '—', guardian.hasAppAccount ? 'Var' : 'Yok']),
+      { kind: 'table', headers: ['Öğrenci', 'No', 'Veli', 'Yakınlık', 'Telefon', 'Uygulama'], align: 'LLLLLC',
+        widths: [2.5, 1.1, 2.5, 1.5, 1.8, 0.9],
+        rows: rows.map(({ student, guardian }) => [studentName(student), clean(student.externalRef),
+          clean(guardian.displayName), relation(guardian), maskPhone(guardian.phoneMasked) || '—',
+          guardian.hasAppAccount ? 'Var' : 'Yok']),
         empty: 'Bu sınıfta velisi kayıtlı öğrenci yok.' },
       { kind: 'note', text: 'Telefon numaraları KVKK gereği maskelidir; tam numara yalnız Kontrol Merkezi öğrenci kaydında görülür.' },
     ],

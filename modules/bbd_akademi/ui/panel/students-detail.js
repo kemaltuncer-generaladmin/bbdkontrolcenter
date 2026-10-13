@@ -28,6 +28,8 @@ import {
   optionsOf, pagedList, percent, personName, runAction, selectBox, statusBadge, todayIst, toolbar,
   weekStart,
 } from './common.js';
+import { documentButtons } from './documents.js';
+import { canteenDoc, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
 
 // ------------------------------------------------------------- etiketler
 
@@ -267,6 +269,7 @@ export function renderHeader(ctx, data) {
   const left = h('div', 'ak-stack');
   left.append(identity, readOnly);
   nodes.push(grid2(left, guardianCard(ctx, data)));
+  nodes.push(studentDocuments(ctx, data));
 
   const programs = dataTable({
     dense: true,
@@ -283,6 +286,44 @@ export function renderHeader(ctx, data) {
   });
   nodes.push(card('Programlar', programs.node, 'Satıra tıklayınca konu ilerlemesi açılır'));
   return nodes;
+}
+
+/**
+ * Öğrencinin belgeleri: özet kartı (ekrandaki veriden, ek istek yok), ödevler,
+ * kantin dökümü (son 30 gün) ve kurum cari ekstresi (eğitim yılı başından;
+ * yalnız finans izniyle). Kantin ile kurum carisi AYRI belgelerdir (A12).
+ */
+function studentDocuments(ctx, data) {
+  const { app, id } = ctx;
+  const student = data.student || {};
+  const today = todayIst();
+  const year = Number(today.slice(0, 4)) - (Number(today.slice(5, 7)) < 9 ? 1 : 0);
+  const items = [documentButtons(app, { title: 'Öğrenci özet kartı', label: 'Özet kartı',
+    build: async () => studentCardDoc(data) })];
+  if (app.can('students_listHomework')) {
+    items.push(documentButtons(app, { title: 'Öğrenci ödev listesi', label: 'Ödevler',
+      build: async () => studentHomeworkDoc(student,
+        await app.api.all(`/v1/students/${id}/homework`, {}, { limit: 100, max: 1000 })) }));
+  }
+  if (app.can('students_listCanteenTransactions') && app.enabled('canteen')) {
+    items.push(documentButtons(app, { title: 'Kantin hesap dökümü', label: 'Kantin dökümü',
+      build: async () => {
+        const from = addDays(today, -30);
+        const [summary, rows] = await Promise.all([app.api.get(`/v1/students/${id}/canteen`),
+          app.api.all(`/v1/students/${id}/canteen/transactions`, { from, to: today }, { limit: 100, max: 3000 })]);
+        return canteenDoc(student, summary, rows, { from, to: today });
+      } }));
+  }
+  if (app.can('admin_getFinanceStatement') && app.enabled('finance')) {
+    items.push(documentButtons(app, { title: 'Kurum cari hesap ekstresi', label: 'Hesap ekstresi',
+      build: async () => {
+        const from = `${year}-09-01`;
+        return statementDoc(student, await app.api.get(`/v1/admin/finance/accounts/${id}/statement`,
+          { from, to: today }));
+      } }));
+  }
+  const row = toolbar(...items);
+  return card('Belgeler', row, 'Kurum logolu A4 belge: önizleyin, yazdırın ya da PDF kaydedin');
 }
 
 function guardianCard(ctx, data) {
