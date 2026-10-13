@@ -1,8 +1,13 @@
 // BBD Akademi — Ayarlar (F-A15, F-A16 ve yalnız KM'den yapılan kurum yönetimi).
 //
-// Sekmeler: Kurum · Kantin kuralları · Tema ve logo · Özellikler · Anons
-// şablonları · Entegrasyon anahtarları · Dizin eşitleme · Senkron (KM olay
-// iletimi, settings-sync.js) · Denetim kaydı.
+// Sekmeler: Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron
+// (KM olay iletimi, settings-sync.js) · Dizin eşitleme · Entegrasyon
+// anahtarları · Denetim kaydı. "Kantin kuralları" sekmesi Kantin ve Finans →
+// Kantin ekranındadır (`canteen.js`; gövdesi burada, `canteenTab`).
+//
+// ÖZELLİKLER İLK SEKME: panelin menüsü kurumda AÇIK özelliklere göre çizilir
+// (`sections.js`); bir bayrak değişince `app.refreshFeatures()` menüyü hemen
+// yeniden çizer.
 // Sekme, okuma işlemine yetki yoksa hiç çizilmez; yazma düğmeleri
 // `actionButton` ile gerekçeli kapanır (asıl kapı vekildedir, K9).
 //
@@ -37,23 +42,22 @@ import { syncTab } from './settings-sync.js';
  * geçidin iznini de tanır: Akademi tarafını göremeyen kullanıcı geçidi görebilir).
  */
 const TABS = [
-  { key: 'institution', label: 'Kurum', read: 'admin_getSettings' },
-  { key: 'canteen', label: 'Kantin kuralları', read: 'admin_getCanteenSettings' },
-  { key: 'branding', label: 'Tema ve logo', read: 'admin_getBranding' },
   { key: 'features', label: 'Özellikler', read: 'admin_listFeatures' },
+  { key: 'institution', label: 'Kurum', read: 'admin_getSettings' },
+  { key: 'branding', label: 'Tema ve logo', read: 'admin_getBranding' },
   { key: 'pa', label: 'Anons şablonları', read: 'admin_listPaTemplates' },
-  { key: 'keys', label: 'Entegrasyon anahtarları', read: 'admin_listIntegrationKeys' },
-  { key: 'directory', label: 'Dizin eşitleme', read: 'admin_getDirectorySyncStatus' },
   { key: 'sync', label: 'Senkron', read: 'admin_getDirectorySyncStatus',
     visible: (app) => Boolean(app.status?.gatewayEvents?.canView) },
+  { key: 'directory', label: 'Dizin eşitleme', read: 'admin_getDirectorySyncStatus' },
+  { key: 'keys', label: 'Entegrasyon anahtarları', read: 'admin_listIntegrationKeys' },
   { key: 'audit', label: 'Denetim kaydı', read: 'admin_listAuditLog' },
 ];
 
 export function section(app) {
   loadStyles(import.meta.url, 'settings.css');
   const node = h('div', 'ak-stack ak-set');
-  node.append(sectionHead('Ayarlar', {
-    subtitle: 'Kurum bilgileri, kantin kuralları, tema, özellikler, entegrasyon ve denetim kaydı.' }));
+  node.append(sectionHead('Kurum ayarları', {
+    subtitle: 'Hangi özelliklerin açık olduğu, kurum bilgileri, tema, senkron, entegrasyon ve denetim kaydı.' }));
 
   const visible = TABS.filter((tab) => app.can(tab.read) || tab.visible?.(app));
   if (!visible.length) {
@@ -70,7 +74,6 @@ export function section(app) {
   };
   const builders = {
     institution: () => institutionTab(app),
-    canteen: () => canteenTab(app, { goTab }),
     branding: () => brandingTab(app),
     features: () => featuresTab(app),
     pa: () => paTemplatesTab(app, { goTab }),
@@ -411,7 +414,8 @@ const CANTEEN_GROUPS = [
   ] },
 ];
 
-function canteenTab(app, { goTab }) {
+/** Kantin kuralları — Kantin ve Finans → Kantin ekranında çizilir (`canteen.js`). */
+export function canteenTab(app, { goTab }) {
   return settingsTab(app, {
     opId: 'admin_patchCanteenSettings',
     className: 'ak-money-canteen ak-set-canteen',
@@ -430,7 +434,7 @@ function canteenTab(app, { goTab }) {
       ['En çok ön ödeme', data.allowPrepayment ? money(data.maxPrepaymentMinor) : '—'],
     ]), 'Bilgi içindir; bu ekrandan değiştirilmez.'),
     off: () => empty('Kantin özelliği kapalı',
-      'Kantin bayrağı kapalıyken kantin kuralları okunamaz ve değiştirilemez.',
+      'Kantin özelliği kapalıyken kantin kuralları kullanılamaz.',
       [button('Özelliklere git', { onClick: () => goTab('features') })]),
   });
 }
@@ -442,11 +446,11 @@ const FEATURES = {
   canteen: ['Kantin', 'Bakiye, limit ve veli kantin kontrolleri (kantin defteri KM\'dedir).'],
   tablets: ['Öğrenci tabletleri', 'Tablet yönetimi ve ders modu.'],
   pa: ['Anons sistemi', 'Sınıflara sesli anons ve öğrenci çağırma.'],
-  books: ['Kitap talepleri', 'bbdstore üzerinden kitap talebi, veli onayı ve sipariş.'],
+  books: ['Kitap talepleri', 'Mağaza üzerinden kitap talebi, veli onayı ve sipariş.'],
   finance: ['Kurum finansı', 'Cari hesap, taksit planı ve tahsilat.'],
   'finance.card': ['Uygulamadan kartla ödeme', 'Velinin kurum borcunu uygulamadan kartla ödemesi.'],
   'teacher.portal': ['Öğretmen portalı', 'Öğretmen girişi (altyapı hazır; uygulamada yer tutucu ekran).'],
-  'directory.source': ['KM dizin kaynağı', 'Öğrenci ve veli dizini KM\'den eşitlenir.'],
+  'directory.source': ['Öğrenci dizini KM\'den', 'Öğrenci ve veli dizini Kontrol Merkezi\'nden eşitlenir.'],
   reading_league: ['Okuma ligi', 'Öğrenciler arası okuma sıralaması.'],
   class_comparison: ['Anonim sınıf kıyası', 'Öğrenci kendi sonucunu sınıf ortalamasıyla kıyaslar.'],
   flashcards: ['Bilgi kartları', 'Aralıklı tekrar kartları.'],
@@ -454,6 +458,16 @@ const FEATURES = {
   early_warning: ['Erken uyarı', 'Düşüş gösteren öğrenciler için uyarı listesi.'],
   guardian_mistake_images: ['Velinin hata defteri görselleri',
     'Öğrenci paylaşırsa veli hata defterindeki görselleri görür.'],
+  attendance_notifications: ['Veliye yoklama bildirimi', 'Gelmedi / geç kaldı bildirimi veliye gider (SMS yok).'],
+  attendance_signals: ['Varlık ipuçları', 'Kantin ve tablet hareketlerinden "kurumda" ipucu (canlı tarama).'],
+  bell_plan_sync: ['Zil planı eşitleme', 'Ders programından üretilen zil planı Kontrol Merkezi\'ne itilir.'],
+  coaching: ['Koçluk', 'Koç eşlemesi, haftalık program ve koçluk kartı.'],
+  video_tasks: ['Video görevleri', 'Plana YouTube video görevi eklenebilir.'],
+  coach_questions: ['Koça soru', 'Öğrenci koçuna soru sorar, koç yanıtlar.'],
+  coach_messaging: ['Koç ↔ öğrenci mesajı', 'Koç ile öğrenci arasında yazışma.'],
+  guardian_coach_messaging: ['Veli ↔ koç mesajı', 'Veli ile koç arasında yazışma.'],
+  coach_meetings: ['Koç randevusu', 'Öğrenci ve veli koçtan görüşme randevusu alır.'],
+  leave_request_notifications: ['İzin talebi bildirimi', 'İzin talebi onaylanınca ya da reddedilince veliye bildirim.'],
 };
 /** Bayrak → çalışması için açık olması gereken bayraklar. */
 const REQUIRES = { 'finance.card': ['finance'] };
@@ -461,8 +475,9 @@ const featureName = (key) => FEATURES[key]?.[0] || key;
 
 function featuresTab(app) {
   const node = h('div', 'ak-stack');
-  node.append(hintBox('Kapalı özelliğin ekranları uygulamalarda gizlenir ve uçları Akademi\'de kapanır. '
-    + '“Platform kilitli” bayraklar buradan değiştirilemez.'));
+  node.append(hintBox('Kapalı özelliğin ekranları öğrenci, veli ve yönetici uygulamalarında ve bu panelin '
+    + 'menüsünde görünmez; açınca hemen gelir, kayıtlı veri silinmez. “Platform kilitli” olanlar buradan '
+    + 'değiştirilemez.'));
   let items = [];
   const canPatch = app.can('admin_patchFeature');
   const view = loader(() => app.api.getCached('/v1/admin/features'), (data) => {
@@ -480,7 +495,7 @@ function featuresTab(app) {
       const item = byKey.get(key);
       if (item) list.append(flagRow(item, byKey));
     }
-    if (!list.childElementCount) return empty('Özellik bayrağı yok');
+    if (!list.childElementCount) return empty('Özellik listesi boş', 'Akademi bu kurum için özellik listesi döndürmedi.');
     return list;
   }
 
@@ -509,13 +524,11 @@ function featuresTab(app) {
       text.append(h('div', 'ak-set-flag-note',
         `Çalışması için “${needs.map(featureName).join('”, “')}” de açık olmalı.`));
     }
+    // Teknik ayrıntı (bayrak anahtarı, yapılandırma) ekranda yazmaz; destek için
+    // satırın ipucunda durur.
     const config = item.config && typeof item.config === 'object' ? Object.entries(item.config) : [];
-    if (config.length) {
-      text.append(h('div', 'ak-set-flag-config', config
-        .map(([name, value]) => `${name}: ${typeof value === 'object' ? JSON.stringify(value) : value}`)
-        .join(' · ')));
-    }
-    text.append(h('code', 'ak-set-flag-key', item.key));
+    row.title = [item.key, ...config.map(([name, value]) => `${name}: ${typeof value === 'object'
+      ? JSON.stringify(value) : value}`)].join(' · ');
     row.append(toggle, text);
     return row;
   }
@@ -542,6 +555,7 @@ function featuresTab(app) {
     app.api.invalidate('/v1/admin/features');
     if (updated) {
       items = items.map((other) => (other.key === item.key ? { ...other, ...updated } : other));
+      app.refreshFeatures?.();        // menü: kapanan ekran kalkar, açılan gelir
     } else {
       toggle.checked = !next;
     }
@@ -574,7 +588,7 @@ function paTemplatesTab(app, { goTab }) {
     },
     onLoaded: (_rows, data) => {
       list.table.update({ empty: data?.off ? empty('Anons özelliği kapalı',
-        'Anons bayrağı kapalıyken şablonlar kullanılamaz.',
+        'Anons özelliği kapalıyken şablonlar kullanılamaz.',
         [button('Özelliklere git', { onClick: () => goTab('features') })])
         : empty('Şablon yok', 'Sık yapılan anonsları şablon olarak ekleyin.') });
     },

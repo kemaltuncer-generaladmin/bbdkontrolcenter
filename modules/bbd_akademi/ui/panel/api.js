@@ -82,7 +82,8 @@ function queryKey(path, query) {
 export function createClient(ctx) {
   const etags = new Map();      // anahtar → {etag, data, at}
   const inflight = new Map();   // anahtar → Promise
-  let operations = null;        // operationId → {allowed, stepUp, …}
+  let operations = null;        // operationId → {allowed, stepUp, featureFlag, …}
+  let features = null;          // özellik bayrağı → açık mı (null = bilinmiyor)
 
   async function raw(payload) {
     let envelope;
@@ -236,14 +237,39 @@ export function createClient(ctx) {
   async function loadOperations() {
     try {
       const result = await ctx.api(`${BASE}/km/operations`);
-      operations = new Map((result?.items || []).map((item) => [item.operationId, item]));
+      setOperations(result?.items);
     } catch {
       operations = null;
     }
     return operations;
   }
 
+  /** Açılış yanıtındaki (`/km/status?operations=1`) işlem listesi — ikinci istek gitmez. */
+  function setOperations(items) {
+    operations = Array.isArray(items)
+      ? new Map(items.map((item) => [item.operationId, item])) : null;
+  }
+
+  /**
+   * Kurumun özellik bayrakları `{anahtar: açık mı}` (`/km/status` → `features`).
+   * `null` = okunamadı: hiçbir işlem bayrak yüzünden gizlenmez, karar Akademi'de.
+   */
+  function setFeatures(map) {
+    features = map && typeof map === 'object' ? map : null;
+  }
+
+  /** İşlem kurumda KAPALI bir özelliğe mi bağlı? (Bilinmiyorsa hayır.) */
+  function featureOff(operationId) {
+    const flag = operations?.get(operationId)?.featureFlag;
+    return Boolean(flag && features && features[flag] === false);
+  }
+
+  /**
+   * Yapabilir mi: KM izni VAR ve işlemin özelliği kurumda KAPALI DEĞİL. Kapalı
+   * özelliğin sekme/düğmesi hiç çizilmez (403 `feature_disabled` görülmez).
+   */
   function can(operationId) {
+    if (featureOff(operationId)) return false;
     if (!operations) return true;
     return Boolean(operations.get(operationId)?.allowed);
   }
@@ -266,6 +292,9 @@ export function createClient(ctx) {
     stepUp,
     fetchFile,
     loadOperations,
+    setOperations,
+    setFeatures,
+    featureOff,
     can,
     operation,
     /** Modülün kendi uçları (`/api/bbd_akademi/km/...`) — kabuk kanalıyla. */

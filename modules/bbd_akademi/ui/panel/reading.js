@@ -81,7 +81,9 @@ export function section(app) {
   node.append(sectionHead('Okuma', {
     subtitle: 'Kurum okuma listeleri, hazır katalog listeleri, okuma ligi ve öğrenci × ay okuma raporu.' }));
 
-  const visible = TABS.filter((tab) => app.can(tab.read));
+  // Okuma ligi kurumda kapalıysa sekmesi hiç çizilmez (Ayarlar → Özellikler).
+  const visible = TABS.filter((tab) => app.can(tab.read)
+    && (tab.key !== 'league' || app.enabled('reading_league')));
   if (!visible.length) {
     node.append(empty('Görüntülenecek okuma ekranı yok', 'Okuma sekmelerinden hiçbirine yetkiniz yok.'));
     return { node, shown() {}, destroy() {} };
@@ -417,7 +419,7 @@ function leagueTab(app) {
   }, (settings) => {
     cleanup();
     if (settings.featureOff) {
-      return featureOffBox(app, 'Okuma ligi kurum için kapalı (özellik: reading_league). '
+      return featureOffBox(app, 'Okuma ligi kurumda kapalı. '
         + 'Özellik açılınca kapsam ve dönemler buradan tanımlanır.');
     }
     return leagueForm(settings);
@@ -435,7 +437,7 @@ function leagueTab(app) {
     if (settings.enabled) {
       nodes.push(alertBox('Okuma ligi açık: öğrenciler seçilen kapsamda dönemlik sayfa sıralamasını görür.', 'good'));
     } else {
-      nodes.push(featureOffBox(app, 'Okuma ligi şu an kapalı (özellik: reading_league). Ayarları şimdiden '
+      nodes.push(featureOffBox(app, 'Okuma ligi şu an kapalı. Ayarları şimdiden '
         + 'hazırlayabilirsiniz; öğrenciler sıralamayı özellik açılınca görür.'));
     }
 

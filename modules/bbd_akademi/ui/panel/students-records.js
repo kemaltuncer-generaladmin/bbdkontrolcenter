@@ -528,9 +528,13 @@ export function studyTab(ctx) {
   tabletFilters.append(toolbar(tabletRange.node));
   const tabletBox = card('Tablet kullanımı', tabletFilters);
   tabletBox.append(tablet.node);
-  node.append(logBox, tabletBox);
+  node.append(logBox);
   logs.reload();
-  tablet.reload();
+  // Tablet özelliği kurumda kapalıysa kart hiç çizilmez, istek gitmez.
+  if (app.can('students_getTabletUsage')) {
+    node.append(tabletBox);
+    tablet.reload();
+  }
   return { node };
 }
 
@@ -629,17 +633,19 @@ export function requestsTab(ctx) {
     empty: { title: 'Kitap talebi yok' },
   });
   ctx.dispose(() => { etut.destroy(); meetings.destroy(); books.destroy(); });
-  node.append(
+  const showBooks = app.can('requests_listBookRequests');
+  node.append(...[
     h('div', 'ak-muted', 'Onay, ret ve zaman verme Talepler ile Kitap talepleri ekranlarından yapılır. İzin '
       + 'bildirimleri Yoklama sekmesindedir.'),
     panelCard('Etüt talepleri', etut.node, [requestsLink('Talepler ekranı', 'etut')]),
     panelCard('Görüşme talepleri', meetings.node, [requestsLink('Talepler ekranı', 'meeting')]),
-    panelCard('Kitap talepleri', books.node, [button('Kitap talepleri ekranı', { variant: 'ghost',
-      onClick: () => app.go('books') })]),
-  );
+    // Kitap talepleri kurumda kapalıysa kart hiç çizilmez, istek gitmez.
+    showBooks ? panelCard('Kitap talepleri', books.node, [button('Kitap talepleri ekranı', { variant: 'ghost',
+      onClick: () => app.go('books') })]) : null,
+  ].filter(Boolean));
   etut.reload();
   meetings.reload();
-  books.reload();
+  if (showBooks) books.reload();
   return { node };
 }
 

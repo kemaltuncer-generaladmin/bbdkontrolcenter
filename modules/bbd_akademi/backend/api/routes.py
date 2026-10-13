@@ -34,6 +34,7 @@ from km_sdk import (
 )
 
 from .. import contract_features
+from ..features import TenantFeatures
 from ..gateway import request_id
 from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions
 from ..proxy import AkademiProxy, ProxyError, decode_upload, error_response
@@ -43,6 +44,7 @@ router = APIRouter()
 _proxy: AkademiProxy | None = None
 _staff: StaffService | None = None
 _events: Callable[[], Any] | None = None
+_features: TenantFeatures | None = None
 
 #: Geçidin (`mobile_gateway`) kendi izinleri — Senkron kartı onları sorar (K9:
 #: gösterilen veri geçidindir, kapısı da geçidin iznidir).
@@ -54,11 +56,14 @@ METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 
 def bind(proxy: AkademiProxy, staff: StaffService,
-         events: Callable[[], Any] | None = None) -> APIRouter:
+         events: Callable[[], Any] | None = None,
+         features: TenantFeatures | None = None) -> APIRouter:
     """`events`: `mobile_gateway.events` yeteneğini her çağrıda çözen işlev
-    (geçit yoksa ya da bu modülden sonra yüklenirse `None` döner)."""
-    global _proxy, _staff, _events
+    (geçit yoksa ya da bu modülden sonra yüklenirse `None` döner).
+    `features`: kurum özellik bayrakları özeti (verilmezse vekilin geçidiyle kurulur)."""
+    global _proxy, _staff, _events, _features
     _proxy, _staff, _events = proxy, staff, events
+    _features = features or TenantFeatures(gateway=proxy.gateway, log=proxy.log)
     return router
 
 
@@ -166,11 +171,23 @@ class StaffPatchBody(BaseModel):
 
 
 @router.get("/km/status")
-async def status(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
-    """Panelin açılış bilgisi: bağlantı, sözleşme sürümü, kullanıcının KM izinleri."""
+async def status(user: CurrentUser = requires(VIEW),
+                 fresh: bool = Query(default=False),
+                 with_operations: bool = Query(default=False, alias="operations"),
+                 ) -> dict[str, Any]:
+    """Panelin açılış bilgisi: bağlantı, sözleşme sürümü, kullanıcının KM izinleri,
+    kurumun özellik bayrakları (menü yalnız açık olanı çizer).
+
+    `operations=1`: işlem listesi (`/km/operations` ile aynı) `operationList` alanında döner —
+    panel açılışı TEK çağrıdır. `fresh=1`: bayrak önbelleği atlanır (Ayarlar →
+    Özellikler'de bir bayrak değişince).
+    """
     from ..allowlist import CONTRACT_VERSION
 
     gateway = proxy().gateway
+    extra: dict[str, Any] = {}
+    if with_operations:
+        extra["operationList"] = _operation_items(user)
     return {
         "connection": await gateway.configured(),
         "contractVersion": CONTRACT_VERSION,
@@ -182,6 +199,9 @@ async def status(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
         "contractFeatures": contract_features.as_dict(),
         # Senkron kartı: geçit olay iletimini destekliyor mu, kullanıcı görebilir mi.
         "gatewayEvents": _events_access(user),
+        # Kurum özellik bayrakları `{anahtar: açık mı}`; okunamazsa null (her bölüm görünür).
+        "features": await _features.snapshot(fresh=fresh) if _features is not None else None,
+        **extra,
     }
 
 
@@ -192,6 +212,10 @@ async def operations(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
     Panel düğmelerini buna göre çizer (`operationId` → izinli mi). Karar yine
     vekilde verilir; bu yalnız arayüzün gerekçeli kapalı düğme çizebilmesi için.
     """
+    return {"items": _operation_items(user)}
+
+
+def _operation_items(user: CurrentUser) -> list[dict[str, Any]]:
     items = []
     for operation in proxy().allowlist.operations:
         needed = km_permissions(operation)
@@ -208,7 +232,7 @@ async def operations(user: CurrentUser = requires(VIEW)) -> dict[str, Any]:
             "featureFlag": operation.feature_flag,
             "allowed": any(user.has_permission(key) for key in needed),
         })
-    return {"items": items}
+    return items
 
 
 # -------------------------------------------------------------- köprü / PIN

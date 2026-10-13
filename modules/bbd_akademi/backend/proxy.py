@@ -110,6 +110,10 @@ class AkademiProxy:
         self.step_up = step_up
         self._log = log
 
+    @property
+    def log(self) -> Any:
+        return self._log
+
     # ------------------------------------------------------------ kapılar
 
     def authorize(self, user: CurrentUser, method: str, path: str) -> Resolved:

@@ -16,6 +16,7 @@ from km_sdk import ModuleContext
 
 from .allowlist import OPERATIONS
 from .api.routes import bind
+from .features import TenantFeatures
 from .finance import StudentFinance
 from .gateway import AkademiGateway, GatewayConfig
 from .operations import Allowlist
@@ -44,7 +45,8 @@ def register(ctx: ModuleContext) -> None:
     # Geçidin olay iletim durumu (Senkron kartı) isteğe bağlıdır ve geçit bu
     # modülden SONRA yüklenebilir: yetenek her istekte yeniden çözülür.
     ctx.add_router(bind(proxy, staff,
-                        events=lambda: ctx.try_capability("mobile_gateway.events")))
+                        events=lambda: ctx.try_capability("mobile_gateway.events"),
+                        features=TenantFeatures(gateway=gateway, log=ctx.log)))
     ctx.provide("akademi.student_finance", StudentFinance(gateway=gateway, log=ctx.log))
     _LIVE.update(staff=staff, gateway=gateway)
     staff.start(config.staff_sync_minutes)

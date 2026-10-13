@@ -186,12 +186,14 @@ export function questionsTab(app, studentId) {
     button('›', { variant: 'ghost', title: 'Sonraki yıl', onClick: () => stepYear(1) }));
   node.append(stats.node,
     card('Yıllık soru takvimi', box(heatTools, heat.node)),
-    card('Konu bazlı doğruluk', box(toolbar(sortSelect.node, minSelect.node), topics.node)),
-    card('Sınıf ortalamasıyla kıyas (anonim)', comparison.node));
+    card('Konu bazlı doğruluk', box(toolbar(sortSelect.node, minSelect.node), topics.node)));
+  // Anonim sınıf kıyası kurum bayrağıdır; kapalıysa kart hiç çizilmez, istek gitmez.
+  const showComparison = app.enabled('class_comparison');
+  if (showComparison) node.append(card('Sınıf ortalamasıyla kıyas (anonim)', comparison.node));
 
   function reloadPeriod() {
     const year = Number(state.date.slice(0, 4));
-    const tasks = [stats.reload(), topics.reload(), comparison.reload()];
+    const tasks = [stats.reload(), topics.reload(), showComparison ? comparison.reload() : null];
     if (year !== state.year) { state.year = year; yearLabel.textContent = String(year); tasks.push(heat.reload()); }
     return Promise.all(tasks);
   }
@@ -285,7 +287,7 @@ export function questionsTab(app, studentId) {
 
   function renderComparison(data) {
     if (data.featureOff) {
-      return alertBox('Sınıf kıyası kurum için kapalı (özellik: class_comparison). Açıldığında öğrencinin dönemlik soru '
+      return alertBox('Sınıf kıyası kurumda kapalı. Açıldığında öğrencinin dönemlik soru '
         + 'sayısı ve doğruluğu sınıf ve kurum ortalamasıyla anonim olarak kıyaslanır.', 'info');
     }
     if (data.hiddenReason === 'too_few_participants') {
@@ -317,7 +319,8 @@ export function questionsTab(app, studentId) {
 
   return {
     node,
-    reload: () => Promise.all([stats.reload(), heat.reload(), topics.reload(), comparison.reload()]),
+    reload: () => Promise.all([stats.reload(), heat.reload(), topics.reload(),
+      showComparison ? comparison.reload() : null]),
     destroy() { topics.destroy(); dayField.destroy(); },
   };
 }
@@ -389,7 +392,10 @@ export function readingTab(app, studentId) {
   }, (data) => renderLeague(data), { rows: 5, columns: 3 });
 
   const lower = h('div', 'ak-grid-2');
-  lower.append(card('Okuma oturumları', sessions.node), card('Okuma ligi', box(toolbar(scopeSelect.node), league.node)));
+  // Okuma ligi kurum bayrağıdır; kapalıysa kart hiç çizilmez, istek gitmez.
+  const showLeague = app.enabled('reading_league');
+  lower.append(card('Okuma oturumları', sessions.node));
+  if (showLeague) lower.append(card('Okuma ligi', box(toolbar(scopeSelect.node), league.node)));
   node.append(stats.node, card('Kitap rafı', box(chips.node, shelf.node)), lower);
 
   function renderStats(data) {
@@ -415,7 +421,7 @@ export function readingTab(app, studentId) {
   }
 
   function renderLeague(data) {
-    if (data.featureOff) return alertBox('Okuma ligi kurum için kapalı (özellik: reading_league).', 'info');
+    if (data.featureOff) return alertBox('Okuma ligi kurumda kapalı.', 'info');
     const table = dataTable({
       columns: [
         { key: 'rank', label: 'Sıra', align: 'num', width: '60px', cell: (row) => num(row.rank) },
@@ -441,7 +447,8 @@ export function readingTab(app, studentId) {
 
   return {
     node,
-    reload: () => Promise.all([stats.reload(), shelf.reload(), sessions.reload(), league.reload()]),
+    reload: () => Promise.all([stats.reload(), shelf.reload(), sessions.reload(),
+      showLeague ? league.reload() : null]),
     destroy() { shelf.destroy(); sessions.destroy(); },
   };
 }

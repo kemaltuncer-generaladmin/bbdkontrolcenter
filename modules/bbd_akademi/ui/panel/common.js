@@ -154,6 +154,12 @@ export function kv(rows) {
 
 /** Hata kutusu + "Tekrar dene". */
 export function errorBox(error, retry) {
+  if (error?.code === 'feature_disabled') {
+    // Kapalı özellik bir HATA değildir: sakin bir not, "tekrar dene" yok.
+    const off = h('div', 'ak-off');
+    off.append(alertBox('Bu özellik kurumda kapalı. Yönetici Ayarlar → Özellikler\'den açabilir.', 'info'));
+    return off;
+  }
   const node = h('div', 'ak-error');
   node.append(alertBox(problem(error, 'Bilgiler alınamadı.'), 'bad'));
   if (retry) node.append(button('Tekrar dene', { variant: 'ghost', onClick: retry }));
@@ -613,6 +619,12 @@ export function openDrawer(app, { title, subtitle = '', actions = [], onClose } 
  * Asıl kapı vekildedir; bu yalnız arayüzün dürüst olması içindir.
  */
 export function actionButton(app, operationId, label, { variant = '', onClick, title = '' } = {}) {
+  if (app.api.featureOff?.(operationId)) {
+    // Kurumda kapalı özellik: düğme hiç görünmez (yönetici Ayarlar → Özellikler'den açar).
+    const hidden = button(label, { variant, disabled: true });
+    hidden.hidden = true;
+    return hidden;
+  }
   if (!app.api.can(operationId)) {
     return blockedButton(label, 'Bu işlem için yetkiniz yok (yöneticinizden izin isteyin).',
       { variant });

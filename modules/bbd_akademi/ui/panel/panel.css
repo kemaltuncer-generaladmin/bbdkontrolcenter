@@ -138,3 +138,49 @@
 /* --------------------------------------------------------- iki ayrı para */
 .ak-money-canteen { border-left: 3px solid #f59e0b; }
 .ak-money-finance { border-left: 3px solid #2563eb; }
+
+/* ------------------------------------------- alt ekranlar (seçili üst bölüm)
+   Üst bölüm altı tanedir; alt ekranları yalnız o bölüm seçiliyken, girintili
+   ve ince bir çizgiyle görünür. */
+.ak-nav-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 8px 12px;
+  padding-left: 8px;
+  border-left: 2px solid #d9e2f5;
+}
+.ak-nav-subitem {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--soft);
+  cursor: pointer;
+}
+.ak-nav-subitem:hover { background: #eef1f6; color: var(--ink); }
+.ak-nav-subitem.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
+/* Alt ekranı açık üst bölüm: vurgu alt satırda, üst satır yalnız kalın. */
+.ak-nav-item.on.ak-nav-open { background: transparent; }
+
+/* --------------------------------------- katlanır bölüm (öğrenci kartı, Bugün) */
+.ak-fold { border: 1px solid var(--line); border-radius: 10px; background: var(--paper, #fff); }
+.ak-fold + .ak-fold { margin-top: 10px; }
+.ak-fold > summary {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ak-fold > summary::-webkit-details-marker { display: none; }
+.ak-fold > summary::before { content: '▸'; color: var(--soft); transition: transform .15s; }
+.ak-fold[open] > summary::before { transform: rotate(90deg); }
+.ak-fold > summary:hover { background: var(--tint); border-radius: 10px; }
+.ak-fold-body { padding: 4px 14px 14px; }
+.ak-fold-note { font-weight: 400; color: var(--soft); font-size: 12.5px; }

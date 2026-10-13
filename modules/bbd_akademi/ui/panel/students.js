@@ -35,6 +35,7 @@ import {
   attendanceTab, canteenTab, examsTab, financeTab, homeworkTab, requestsTab, studyTab,
 } from './students-records.js';
 import { classesView, groupsView } from './students-groups.js';
+import { locatePart, studentCard } from './sections.js';
 import { learningPanel } from './students-learning.js';
 import { flashcardsPanel } from './students-flashcards.js';
 import { goalsPanel } from './students-goals.js';
@@ -236,11 +237,15 @@ function guardiansView(app, { open }) {
 // ---------------------------------------------------------- öğrenci çekmecesi
 
 /**
- * Öğrenci çekmecesi. `tab`: overview · schedule · curriculum · resources ·
- * homework · exams · attendance · study · learning · goals · coaching ·
- * flashcards · requests · finance · canteen. Öğrenme, hedef, koçluk ve kart
- * sekmeleri gömülü panellerdir (students-learning/-goals/-coaching/-flashcards.js);
- * `payload` (ör. `{learningTab}`, `{coachingTab}`) sekmenin `shown`'ına geçer.
+ * Öğrenci çekmecesi (kartı). Beş sekme — Özet · Program ve yoklama · Ödev ve
+ * çalışma · Ölçme ve gelişim · Kurum cari ve kantin (`sections.js` →
+ * STUDENT_CARD) — ve her sekmede katlanır bölümler. `tab` sekme anahtarı ya da
+ * bölüm (eski sekme) anahtarıdır: overview · goals · schedule · attendance ·
+ * requests · homework · learning · study · flashcards · exams · curriculum ·
+ * resources · coaching · finance · canteen. Öğrenme, hedef, koçluk ve kart
+ * bölümleri gömülü panellerdir (students-learning/-goals/-coaching/-flashcards.js);
+ * `payload` (ör. `{learningTab}`, `{coachingTab}`) bölümün `shown`'ına geçer.
+ * Kurumda kapalı özelliğin bölümü (bilgi kartları, kurum cari, kantin) çizilmez.
  */
 export function openStudent(app, studentId, { tab = 'overview', payload = null, status = null } = {}) {
   const disposers = [];
@@ -302,65 +307,131 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     return renderHeader(ctx, data);
   }, { rows: 4, columns: 4 });
 
-  const specs = [
-    { key: 'overview', label: 'Özet', build: overviewTab },
-    { key: 'schedule', label: 'Program', build: scheduleTab },
-    { key: 'curriculum', label: 'Müfredat & ilerleme', build: curriculumTab },
-    { key: 'resources', label: 'Kaynaklar', build: resourcesTab },
-    { key: 'homework', label: 'Ödevler', build: homeworkTab },
-    { key: 'exams', label: 'Denemeler', build: examsTab },
-    { key: 'attendance', label: 'Yoklama', build: attendanceTab },
-    { key: 'study', label: 'Çalışma', build: studyTab },
-    { key: 'learning', label: 'Öğrenme', build: embedded(learningPanel) },
-    { key: 'goals', label: 'Hedef & özet', build: embedded(goalsPanel) },
-    { key: 'coaching', label: 'Koçluk', build: embedded(coachingPanel) },
-    { key: 'flashcards', label: 'Bilgi kartları', build: embedded(flashcardsPanel) },
-    { key: 'requests', label: 'Talepler', build: requestsTab },
-    app.has('finance') ? { key: 'finance', label: 'Kurum cari', build: financeTab } : null,
-    { key: 'canteen', label: 'Kantin', build: canteenTab },
-  ].filter(Boolean);
-  const keys = specs.map((spec) => spec.key);
-  const first = keys.includes(tab) ? tab : 'overview';
-  const tabsBar = tabBar(specs.map(({ key, label }) => ({ key, label })), first, (key) => show(key));
+  // Kart: 5 sekme (`sections.js` → STUDENT_CARD), sekme içinde katlanır
+  // bölümler. Bölüm anahtarları eski sekme anahtarlarıdır; gövde kurucuları aynı.
+  const builders = {
+    overview: overviewTab,
+    goals: embedded(goalsPanel),
+    schedule: scheduleTab,
+    attendance: attendanceTab,
+    requests: requestsTab,
+    homework: homeworkTab,
+    learning: embedded(learningPanel),
+    study: studyTab,
+    flashcards: embedded(flashcardsPanel),
+    exams: examsTab,
+    curriculum: curriculumTab,
+    resources: resourcesTab,
+    coaching: embedded(coachingPanel),
+    finance: financeTab,
+    canteen: canteenTab,
+  };
+  const layoutTabs = studentCard({ has: (permission) => app.has(permission),
+    features: { flashcards: app.enabled('flashcards'), finance: app.enabled('finance'),
+      canteen: app.enabled('canteen') } });
+  const start = locatePart(layoutTabs, tab);
+  const tabsBar = tabBar(layoutTabs.map(({ key, label }) => ({ key, label })), start.tab,
+    (key) => show(key));
   const slot = h('div', 'ak-stu-tabbody');
-  const bodies = {};
+  const groups = {};                  // sekme → {node, folds: Map(bölüm → kat)}
 
-  // Sekme gövdesi `{node, focus?, shown?, destroy?}`: `shown` her gösterimde,
-  // `destroy` çekmece kapanınca çağrılır (gömülebilir panel sözleşmesi).
-  function show(key, payload) {
-    current = key;
-    let body = bodies[key];
-    if (!body) {
-      body = specs.find((spec) => spec.key === key).build(ctx);
-      bodies[key] = body;
-      slot.append(body.node);
-      if (body.destroy) disposers.push(() => body.destroy());
-    }
-    for (const [name, item] of Object.entries(bodies)) item.node.hidden = name !== key;
-    body.shown?.(payload);
-    if (payload) body.focus?.(payload);
+  // Bölüm gövdesi `{node, focus?, shown?, destroy?}`: kat ilk açıldığında
+  // kurulur (ağ o an başlar), `shown` her açılışta, `destroy` çekmece kapanınca.
+  function foldOf(part) {
+    const node = h('details', 'ak-fold');
+    const slotNode = h('div', 'ak-fold-body');
+    node.append(h('summary', '', part.label), slotNode);
+    const entry = { node, slot: slotNode, part, body: null, pending: null };
+    node.addEventListener('toggle', () => {
+      if (!node.open) return;
+      const payload = entry.pending;
+      entry.pending = null;
+      openPart(entry, payload);
+    });
+    return entry;
   }
 
-  let current = first;
+  function openPart(entry, payload) {
+    if (!entry.body) {
+      const body = builders[entry.part.key](ctx);
+      entry.body = body;
+      entry.slot.append(body.node);
+      if (body.destroy) disposers.push(() => body.destroy());
+    }
+    entry.body.shown?.(payload);
+    if (payload) entry.body.focus?.(payload);
+  }
+
+  /** Katı aç (kapalıysa `toggle` olayı kurar) ve görünür kıl. */
+  function openFold(entry, payload) {
+    if (entry.node.open) {
+      openPart(entry, payload);
+    } else {
+      entry.pending = payload;
+      entry.node.open = true;
+    }
+    queueMicrotask(() => entry.node.scrollIntoView?.({ block: 'nearest' }));
+  }
+
+  function groupOf(key) {
+    if (!groups[key]) {
+      const spec = layoutTabs.find((item) => item.key === key);
+      const node = h('div', 'ak-stu-group');
+      const folds = new Map(spec.parts.map((part) => [part.key, foldOf(part)]));
+      node.append(...[...folds.values()].map((entry) => entry.node));
+      groups[key] = { node, folds, spec, opened: false };
+      slot.append(node);
+    }
+    return groups[key];
+  }
+
+  /** Sekmeyi göster; `part` verilirse o bölümü aç. */
+  function show(key, part = null, payload = null) {
+    current = key;
+    const group = groupOf(key);
+    for (const [name, item] of Object.entries(groups)) item.node.hidden = name !== key;
+    const target = part && group.folds.has(part) ? part : null;
+    if (!group.opened) {
+      // İlk gösterim: hedef bölüm ya da sekmenin ilk bölümü açık gelir.
+      group.opened = true;
+      openFold(group.folds.get(target || group.spec.parts[0].key), target ? payload : null);
+    } else if (target) {
+      openFold(group.folds.get(target), payload);
+    } else {
+      // Sekmeye geri dönüldü: açık bölümler `shown` alır (kendi tazeleme kuralları).
+      for (const entry of group.folds.values()) {
+        if (entry.node.open && entry.body) entry.body.shown?.(null);
+      }
+    }
+  }
+
+  let current = start.tab;
   function resetTabs() {
-    for (const [name, body] of Object.entries(bodies)) {
-      try { body.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
-      body.node.remove();
-      delete bodies[name];
+    for (const [name, group] of Object.entries(groups)) {
+      for (const entry of group.folds.values()) {
+        try { entry.body?.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
+      }
+      group.node.remove();
+      delete groups[name];
     }
     show(current);
   }
 
+  /** Kart içi geçiş: sekme ya da bölüm (eski sekme adı) anahtarı. */
   function select(key, payload) {
-    if (!keys.includes(key)) return;
-    tabsBar.select(key, false);
-    show(key, payload);
+    const known = layoutTabs.some((item) => item.key === key
+      || item.parts.some((part) => part.key === key));
+    if (!known) return;
+    const place = locatePart(layoutTabs, key);
+    tabsBar.select(place.tab, false);
+    show(place.tab, place.tab === key ? null : place.part, payload);
   }
 
   panel.body.append(head.node, tabsBar.node, slot);
   head.reload();
-  if (known) show(first, first === tab ? payload : null);
-  else ready.then(() => show(first, first === tab ? payload : null));
+  const opening = () => show(start.tab, start.part, start.part === tab ? payload : null);
+  if (known) opening();
+  else ready.then(opening);
   return { close: panel.close, select };
 }
 

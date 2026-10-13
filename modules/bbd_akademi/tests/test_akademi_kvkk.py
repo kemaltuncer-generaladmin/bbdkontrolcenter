@@ -67,7 +67,7 @@ def test_kvkk_izni_yalniz_yoneticide_ve_yikici() -> None:
 
 
 def test_bolum_kaydi_kvkk_izniyle() -> None:
-    index = (PANEL / "index.js").read_text(encoding="utf-8")
+    index = (PANEL / "sections.js").read_text(encoding="utf-8")
     assert "{ key: 'privacy', label: 'KVKK talepleri', file: './privacy.js', requires: ['privacy']" in index
 
 

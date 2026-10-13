@@ -1,8 +1,13 @@
-// BBD Akademi — Panel (F-A1) ve kurum içi anlık işler (F-A3 öğrenci çağır, F-A4 tabletler).
+// BBD Akademi — "Bugün" (F-A1 panel) ve kurum içi anlık işler (F-A3 öğrenci
+// çağır, F-A4 tabletler).
 //
-// TEK İSTEK: pano rakamlarının hepsi `admin_getDashboard` yükünden gelir;
-// kutu başına ayrı istek atılmaz. Ekran açıkken 60 sn'de bir tazelenir ve
-// sekme gizliyken durur (`pollLoop`).
+// TEK İSTEK: ekranın bütün rakamları ve "Sizi bekleyenler" kartı
+// `admin_getDashboard` yükünden gelir; kutu başına ayrı istek atılmaz. Tablet
+// ve öğrenci çağırma bölümü katlı gelir, yalnız açılınca yüklenir. Ekran
+// açıkken 60 sn'de bir tazelenir ve sekme gizliyken durur (`pollLoop`).
+//
+// YALNIZ AÇIK OLAN: kurumda kapalı özelliğin bölümü Akademi'den `null` gelir
+// (kantin, tablet, kitap, kurum cari) ve kartı çizilmez.
 //
 // İKİ PARA AYRI (A12): kurum carisi (mavi) ile kantin (turuncu) ayrı kartlarda
 // durur, hiçbir yerde toplanmaz.
@@ -38,18 +43,29 @@ export function section(app) {
   const node = h('div', 'ak-stack ak-dash');
   const stamp = h('span', 'ak-muted');
   const refresh = button('Yenile', { variant: 'ghost', onClick: () => load() });
-  node.append(sectionHead('Panel', { subtitle: 'Bugün kurumda olan biten.', actions: [stamp, refresh] }));
+  node.append(sectionHead('Bugün', { subtitle: 'Kurumda bugün olan biten ve sizi bekleyen işler.',
+    actions: [stamp, refresh] }));
+
+  // Kurum içi anlık işler (tablet, öğrenci çağırma) — kurumda açık olanlar.
+  const liveTabs = [
+    app.can('admin_getTabletBoard') ? { key: 'tablets', label: 'Tabletler' } : null,
+    app.can('admin_listPaCalls') ? { key: 'pa', label: 'Öğrenci çağır' } : null,
+  ].filter(Boolean);
 
   const quick = toolbar(
     button('Yoklama al', { onClick: () => app.go('attendance') }),
-    app.has('finance') ? button('Tahsilat al', { onClick: () => app.go('finance') }) : null,
+    button('Ödev ver', { onClick: () => app.go('homework') }),
+    app.has('finance') && app.enabled('finance')
+      ? button('Tahsilat al', { onClick: () => app.go('finance') }) : null,
     app.has('announcements') ? button('Duyuru yaz', { onClick: () => app.go('announcements') }) : null,
-    app.has('campus') ? button('Öğrenci çağır', { onClick: () => { tabs.select('pa'); } }) : null,
+    app.has('campus') && liveTabs.some((item) => item.key === 'pa')
+      ? button('Öğrenci çağır', { onClick: () => openLive('pa') }) : null,
     button('Öğrenci bul', { onClick: () => app.go('students') }),
   );
   const top = h('div', 'ak-stack');
   node.append(quick, top);
 
+  // TEK ÖZET ÇAĞRISI: ekranın bütün rakamları `admin_getDashboard` yükünden.
   const view = loader(() => app.api.get('/v1/admin/dashboard'), (data) => {
     stamp.textContent = `Son güncelleme ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
     return render(data);
@@ -61,6 +77,7 @@ export function section(app) {
     const attendance = data.attendance || {};
     const pending = data.pendingRequests || {};
     const pendingTotal = (pending.leave || 0) + (pending.meeting || 0) + (pending.etut || 0);
+    const books = data.pendingBookRequests;
     nodes.push(kpiRow([
       { label: 'Bugünkü ders', value: `${num(data.lessons?.ongoing || 0)} sürüyor / ${num(data.lessons?.scheduled || 0)}` },
       { label: 'Yoklama', value: `${num(attendance.sessionsTaken || 0)}/${num(attendance.sessionsTotal || 0)}`,
@@ -70,13 +87,15 @@ export function section(app) {
         title: 'Bugün kantin harcaması ya da tablet oturumu olan öğrenciler.' },
       { label: 'Bekleyen talep', value: num(pendingTotal), tone: pendingTotal ? 'warn' : '',
         title: `İzin ${pending.leave || 0} · Görüşme ${pending.meeting || 0} · Etüt ${pending.etut || 0}` },
-      { label: 'Kitap talebi', value: data.pendingBookRequests === null || data.pendingBookRequests === undefined
-        ? '—' : num(data.pendingBookRequests) },
-    ]));
+      // Kitap talepleri kurumda kapalıysa Akademi `null` döner: kutu çizilmez.
+      books === null || books === undefined ? null : { label: 'Kitap talebi', value: num(books) },
+    ].filter(Boolean)));
+
+    nodes.push(waitingCard(pending, pendingTotal, books));
 
     const money2 = h('div', 'ak-grid-2');
-    if (app.has('finance')) {
-      const finance = data.institutionFinance || {};
+    if (app.has('finance') && data.institutionFinance) {
+      const finance = data.institutionFinance;
       const box = card('Kurum carisi', kpiRow([
         { label: 'Gecikmiş', value: money(finance.overdueMinor || 0), tone: finance.overdueMinor ? 'bad' : '',
           title: `${num(finance.overdueStudentCount || 0)} öğrenci` },
@@ -86,20 +105,26 @@ export function section(app) {
       box.append(toolbar(button('Gecikenler', { variant: 'ghost', onClick: () => app.go('finance', { tab: 'overdue' }) })));
       money2.append(box);
     }
-    const canteen = data.canteen || {};
-    const canteenBox = card('Kantin', kpiRow([
-      { label: 'Bugün harcanan', value: money(canteen.spentTodayMinor || 0) },
-      { label: 'Toplam kantin borcu', value: money(canteen.totalDebtMinor || 0) },
-      { label: 'Bekleyen ödeme talebi', value: num(canteen.pendingPaymentRequestCount || 0) },
-    ]), 'Kurum carisinden ayrıdır');
-    canteenBox.classList.add('ak-money-canteen');
-    money2.append(canteenBox);
-    nodes.push(money2);
+    // Kantin kurumda kapalıysa `canteen` null gelir: kart çizilmez (A12: kurum
+    // carisiyle hiçbir yerde toplanmaz).
+    if (data.canteen) {
+      const canteen = data.canteen;
+      const canteenBox = card('Kantin', kpiRow([
+        { label: 'Bugün harcanan', value: money(canteen.spentTodayMinor || 0) },
+        { label: 'Toplam kantin borcu', value: money(canteen.totalDebtMinor || 0) },
+        { label: 'Bekleyen ödeme talebi', value: num(canteen.pendingPaymentRequestCount || 0) },
+      ]), 'Kurum carisinden ayrıdır');
+      canteenBox.classList.add('ak-money-canteen');
+      money2.append(canteenBox);
+    }
+    if (money2.childElementCount) nodes.push(money2);
 
-    const tablets = data.tablets || {};
-    nodes.push(h('div', 'ak-muted',
-      `Tabletler: ${num(tablets.free || 0)} boş · ${num(tablets.inUse || 0)} kullanımda · `
-      + `${num(tablets.offline || 0)} çevrimdışı · ${num(tablets.locked || 0)} kilitli`));
+    if (data.tablets) {
+      const tablets = data.tablets;
+      nodes.push(h('div', 'ak-muted',
+        `Tabletler: ${num(tablets.free || 0)} boş · ${num(tablets.inUse || 0)} kullanımda · `
+        + `${num(tablets.offline || 0)} çevrimdışı · ${num(tablets.locked || 0)} kilitli`));
+    }
 
     const lessons = dataTable({
       columns: [
@@ -118,24 +143,61 @@ export function section(app) {
       ],
       rows: data.lessons?.items || [],
       onRow: () => app.go('attendance', { date: data.date }),
-      empty: empty('Bugün ders yok', 'Ders programı boş ya da bugün tatil.'),
+      empty: empty('Bugün ders yok', 'Ders programı boş ya da bugün tatil.',
+        [button('Ders programını aç', { variant: 'ghost', onClick: () => app.go('timetable') })]),
     });
     nodes.push(card('Bugünkü dersler', lessons.node, attendance.pendingSessionIds?.length
       ? `${num(attendance.pendingSessionIds.length)} dersin yoklaması bekliyor` : ''));
     return nodes;
   }
 
+  /** "Sizi bekleyenler" — özet yükündeki sayılarla; ek istek yok. */
+  function waitingCard(pending, pendingTotal, books) {
+    const rows = h('div', 'ak-dash-waiting');
+    const line = (label, count, action) => {
+      const row = h('div', 'ak-dash-wait');
+      row.append(h('span', '', label), h('b', '', num(count || 0)));
+      if (action && count) row.append(action);
+      rows.append(row);
+    };
+    const toRequests = (kind) => (app.has('requests')
+      ? button('Aç', { variant: 'ghost', onClick: () => app.go('requests', { tab: kind }) }) : null);
+    line('İzin talebi', pending.leave, toRequests('leave'));
+    line('Görüşme talebi', pending.meeting, toRequests('meeting'));
+    line('Etüt talebi', pending.etut, toRequests('etut'));
+    if (books !== null && books !== undefined) {
+      line('Kitap talebi', books, button('Aç', { variant: 'ghost', onClick: () => app.go('books') }));
+    }
+    const box = card('Sizi bekleyenler', pendingTotal || books ? rows
+      : empty('Bekleyen iş yok', 'Yeni izin, görüşme, etüt ya da kitap talebi geldiğinde burada görünür.'));
+    return box;
+  }
+
   // ------------------------------------------------- kurum içi anlık işler
-  const live = h('div', 'ak-stack');
-  const tabs = tabBar([
-    { key: 'tablets', label: 'Tabletler' },
-    { key: 'pa', label: 'Öğrenci çağır' },
-  ], 'tablets', (key) => showLive(key));
-  live.append(tabs.node);
+  // Katlı gelir ve AÇILINCA yüklenir: "Bugün" ilk açılışta tek özet çağrısı yapar.
+  const live = h('details', 'ak-fold');
+  const liveBody = h('div', 'ak-fold-body ak-stack');
+  live.append(h('summary', '', 'Kurum içi: tabletler ve öğrenci çağırma'), liveBody);
   const liveBodies = {};
   const liveSlot = h('div');
-  live.append(liveSlot);
-  if (app.can('admin_getTabletBoard') || app.can('admin_listPaCalls')) node.append(card('Kurum içi', live));
+  let tabs = null;
+  if (liveTabs.length) {
+    tabs = tabBar(liveTabs, liveTabs[0].key, (key) => showLive(key));
+    if (liveTabs.length > 1) liveBody.append(tabs.node);
+    liveBody.append(liveSlot);
+    live.querySelector('summary').textContent = liveTabs.length > 1 ? 'Kurum içi: tabletler ve öğrenci çağırma'
+      : `Kurum içi: ${liveTabs[0].label.toLocaleLowerCase('tr-TR')}`;
+    live.addEventListener('toggle', () => { if (live.open) showLive(tabs.active); });
+    node.append(live);
+  }
+
+  function openLive(key) {
+    if (!tabs) return;
+    tabs.select(key, false);
+    if (live.open) showLive(key);
+    else live.open = true;
+    queueMicrotask(() => live.scrollIntoView?.({ block: 'nearest' }));
+  }
 
   function showLive(key) {
     if (!liveBodies[key]) {
@@ -156,7 +218,6 @@ export function section(app) {
       if (!started) {
         started = true;
         load();
-        showLive(tabs.active);
         poll = pollLoop({ every: 60_000, run: () => (node.isConnected && !node.closest('[hidden]') ? load() : null) });
       }
     },
