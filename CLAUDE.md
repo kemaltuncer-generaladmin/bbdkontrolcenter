@@ -60,7 +60,9 @@ Yıkıcı işlemler izin yeterli olsa bile PIN teyidi ister.
 belirtecidir ya da `kmsk_<önek>_<sır>` servis anahtarı. Anahtar bir servis
 kullanıcısına (`users.kind = 'service'`, PIN'siz, giriş yapamaz) bağlıdır ve
 AYNI `CurrentUser`a çözülür — bütün izin kapıları değişmeden uygulanır.
-Ağ kısıtı en sağdaki `X-Forwarded-For` değerine bakar; `X-KM-On-Behalf-Of` ve
+Ağ kısıtı ve hız sınırları gerçek istemci adresine bakar (ADR 0030: başlıklar
+yalnız güvenilir vekilden — Traefik, Cloudflare — okunur; Cloudflare durağında
+`CF-Connecting-IP`; `km_core/http/client_address.py`); `X-KM-On-Behalf-Of` ve
 `X-Request-Id` denetim izine yazılır, yetki vermez. Anahtar yalnız komut
 satırından üretilir: `scripts/service-key.py create|list|revoke`.
 

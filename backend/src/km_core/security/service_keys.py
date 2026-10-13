@@ -31,7 +31,7 @@ sürelidir. Tam anahtar yalnız üretildiği anda BİR KEZ gösterilir.
 
 `allowed_cidrs` boşsa anahtar her adresten kullanılabilir. Doluysa istemci
 adresi listedeki ağlardan birinde olmalıdır. İstemci adresinin nasıl
-belirlendiği (en sağdaki `X-Forwarded-For`) HTTP katmanının işidir; burada
+belirlendiği (güvenilir vekil zinciri, ADR 0030) HTTP katmanının işidir; burada
 yalnız karar verilir.
 """
 

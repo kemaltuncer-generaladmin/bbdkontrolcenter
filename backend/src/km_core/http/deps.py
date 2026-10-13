@@ -19,8 +19,9 @@ belirtecidir ya da `kmsk_` ile başlayan bir servis anahtarı. İkisi de AYNI
 `CurrentUser`a çözülür; izin denetimi ve denetim izi aynı yoldan geçer. Servis
 anahtarı ayrıca:
 
-  · istemci adresini en sağdaki `X-Forwarded-For` değerinden okur (ilk değer
-    istemcinin kendi yazdığıdır, ağ kısıtını atlatmak için uydurulabilir),
+  · istemci adresini güvenilir vekil zincirinden okur (`client_address`,
+    ADR 0030: Traefik + Cloudflare arkasında `CF-Connecting-IP`; başlıklar
+    yalnız güvenilir vekilden gelindiğinde okunur, uydurulamaz),
   · kendi hız sınırı kovasında sayılır (PIN girişinin kovasıyla karışmaz),
   · `X-KM-On-Behalf-Of` başlığını denetim izine taşır. Başlık YETKİ VERMEZ ve
     kişi oturumunda yok sayılır.
@@ -36,6 +37,7 @@ from typing import Any, cast
 from fastapi import Depends, Header, HTTPException, Request
 
 from km_core.files import outputs_log
+from km_core.http.client_address import client_address
 from km_core.security import audit_context
 from km_core.security.identity import SERVICE_TOKEN_MARK, CurrentUser, Identity
 from km_core.security.rate_limit import RateLimiter
@@ -83,19 +85,14 @@ def bearer_token(authorization: str | None) -> str:
 
 
 def client_ip(request: Request) -> str:
-    """İsteğin geldiği adres — servis anahtarının ağ kısıtı için.
+    """İsteğin geldiği GERÇEK adres — servis anahtarının ağ kısıtı ve hız sınırları.
 
-    Ters vekil (Traefik/Coolify) gördüğü adresi `X-Forwarded-For` listesinin
-    SONUNA ekler. Listenin başı istemcinin kendi yazdığıdır ve uydurulabilir;
-    ağ kısıtı ona bakarsa herkes izinli adresi yazıp geçerdi. Bu yüzden EN
-    SAĞDAKİ değer alınır. Başlık yoksa bağlantının kendi adresi kullanılır.
+    ADR 0030 (ADR 0028 §4'ü değiştirir): başlıklara yalnız güvenilir vekilden
+    (yerel Traefik ya da Cloudflare) gelindiğinde bakılır; Cloudflare durağında
+    `CF-Connecting-IP`, değilse `X-Forwarded-For` sağdan sola ilk güvenilmeyen
+    durak. Ayrıntı ve sahteleme gerekçesi: `client_address.py`.
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
-    if hops:
-        return hops[-1]
-    client = request.client
-    return client.host if client else ""
+    return client_address(request)
 
 
 def _state_limiter(request: Request, name: str, **limits: Any) -> RateLimiter:

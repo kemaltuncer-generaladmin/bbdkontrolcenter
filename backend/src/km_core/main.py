@@ -136,6 +136,8 @@ def main() -> None:
         port=int(config.get("server.port", 8787)),
         log_config=None,
         access_log=False,
+        # İstemci adresini uygulama çözer (ADR 0030, `http/client_address.py`).
+        proxy_headers=False,
     )
 
 

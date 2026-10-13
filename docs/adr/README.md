@@ -42,8 +42,9 @@ yanlış yönlendirirdi.
 | 0025 | Sırlar ve geçit ayarları kurulumlara dağıtılır (0021 §6'yı tersine çevirir) | Kabul edildi · **kapsamı 0026 ile daraldı** |
 | 0026 | Sunucu merkezli mimari: veri merkezde, kabuk ince | Kabul edildi |
 | 0027 | Zilden sonra anons geri geldi; tür açıkça saklanıyor | Kabul edildi |
-| 0028 | Servis anahtarları: makineden makineye kimlik | Kabul edildi |
+| 0028 | Servis anahtarları: makineden makineye kimlik | Kabul edildi (§4 → 0030) |
 | 0029 | Olay outbox'u ve modül işlemi | Kabul edildi |
+| 0030 | Gerçek istemci adresi: güvenilir vekil zinciri ve Cloudflare | Kabul edildi |
 
 ---
 
