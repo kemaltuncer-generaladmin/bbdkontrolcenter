@@ -27,8 +27,8 @@ export const AREAS = [
   { key: 'today', label: 'Bugün', hint: 'Günün özeti, bekleyen talepler ve duyurular.' },
   { key: 'students', label: 'Öğrenciler', hint: 'Öğrenci listesi, sınıflar, gruplar ve veliler; '
     + 'öğrenci kartı.' },
-  { key: 'lessons', label: 'Dersler ve Program', hint: 'Ders programı ve etüt, yoklama, ödev, '
-    + 'çalışma planı ve kurum takvimi.' },
+  { key: 'lessons', label: 'Dersler ve Program', hint: 'Ders programı ve etüt, yoklama, ödev (tek ya da '
+    + 'toplu), çalışma planı, şablonlar ve kurum takvimi.' },
   { key: 'progress', label: 'Ölçme ve Gelişim', hint: 'Denemeler, değerlendirmeler, kaynaklar, '
     + 'müfredat ve öğrenme araçları.' },
   { key: 'money', label: 'Kantin ve Finans', hint: 'Kurum cari hesabı, kantin kuralları ve kitap '
@@ -56,6 +56,8 @@ export const SECTIONS = [
   { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'lessons' },
   { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'], area: 'lessons' },
   { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'], area: 'lessons' },
+  // Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde (F-A25/F-A26).
+  { key: 'templates', label: 'Şablonlar', file: './templates.js', requires: ['view'], area: 'lessons' },
   { key: 'calendar', label: 'Kurum takvimi', file: './institution-calendar.js', requires: ['view'],
     area: 'lessons' },
   { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'], area: 'progress' },
@@ -84,7 +86,8 @@ export const SECTIONS = [
  * (`app.go('panel')`, `ctx.payload.section` …) kırılmasın.
  */
 export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', kvkk: 'privacy',
-  ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen' };
+  ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
+  sablonlar: 'templates', 'assignment-bundles': 'templates' };
 
 /**
  * Özellik açık mı. `features` null (okunamadı) ya da bayrak listede yoksa

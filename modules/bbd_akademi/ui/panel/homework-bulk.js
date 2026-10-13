@@ -65,10 +65,11 @@ function weeklyDates(start, end, weekdays) {
 /**
  * Ödev içeriği penceresi (yeni ödev satırı ya da düzenleme). `current`
  * içerik biçimindedir (title, description, subject, topics, resourceId …).
- * @returns {Promise<{content, source}|null>}
+ * `save({draft, content}, {key})` verilirse sonucu döner (şablon formu).
+ * @returns {Promise<{draft, content, source}|object|null>}
  */
 export async function contentDialog(app, current, { title = 'Ödev içeriği', submitLabel = 'Ekle',
-  extraFields = [], extraValue = {} } = {}) {
+  extraFields = [], extraValue = {}, save = null } = {}) {
   const subjects = await app.lookups.subjects().catch(() => []);
   const pieces = homeworkContent(app, current, subjects);
   try {
@@ -89,9 +90,11 @@ export async function contentDialog(app, current, { title = 'Ödev içeriği', s
         ...extraFields.filter((field) => !field.first),
       ],
       submitLabel,
-      onSubmit: async (draft) => {
+      onSubmit: async (draft, { key }) => {
         const content = pieces.content(draft);
         const subject = pieces.subjectOptions.find((option) => option.value === draft.subjectId);
+        // `save` verilirse kayıt pencere içinde yapılır: hata (ör. ad çakışması) formda görünür.
+        if (save) return save({ draft, content }, { key });
         return {
           draft,
           content,

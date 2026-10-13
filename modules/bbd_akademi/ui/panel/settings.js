@@ -333,6 +333,13 @@ const INSTITUTION_GROUPS = [
     { key: 'bookMax', path: ['books', 'maxQuantity'], label: 'Talep başına en çok adet', type: 'number',
       min: 1, max: 50, required: true, to: intOrNull },
   ] },
+  { title: 'Atama paketleri', hint: 'Şablonlar → Atama paketleri. Paket tek tek de “otomatik” işaretli olmalı.',
+    fields: [
+      { key: 'autoBundles', path: ['assignments', 'autoApplyBundlesToNewStudents'], type: 'checkbox', to: Boolean,
+        label: 'Atama paketlerini yeni öğrencilere kendiliğinden uygula',
+        hint: 'KM\'den yeni öğrenci gelince kuralı uyan ve “otomatik” işaretli paketler (program, kaynak, plan) '
+          + 'hemen verilir. Varsayılan kapalı.' },
+    ] },
   { title: 'Kurum finansı', className: 'ak-money-finance',
     hint: 'Yalnız kurum carisi; kantin hesabını etkilemez.', fields: [
       { key: 'receiptPrefix', path: ['finance', 'receiptPrefix'], label: 'Makbuz öneki', maxLength: 12,

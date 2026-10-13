@@ -96,7 +96,8 @@ def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
     assert list(nav) == result["areas"]
     assert nav["today"] == ["dashboard", "requests", "announcements"]
     assert nav["students"] == ["students"]
-    assert nav["lessons"] == ["timetable", "attendance", "homework", "plan", "calendar"]
+    # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
+    assert nav["lessons"] == ["timetable", "attendance", "homework", "plan", "templates", "calendar"]
     assert nav["money"] == ["finance", "canteen", "books"]
     assert nav["admin"] == ["settings", "staff", "privacy"]
 

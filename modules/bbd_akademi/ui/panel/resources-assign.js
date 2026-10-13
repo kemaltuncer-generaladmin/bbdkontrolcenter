@@ -16,6 +16,7 @@ import {
   actionButton, empty, errorBox, fmtDate, fmtDateTime, formDialog, num, pagedList, selectBox,
   studentPicker, toolbar,
 } from './common.js';
+import { bulkTargetField } from './bulk-target.js';
 import {
   KINDS, TARGET_KINDS, clean, loadPackages, loadTargets, resourceCell, resourceListField, resourcePicker,
   stackCell, targetsField,
@@ -45,14 +46,23 @@ export function assignmentsTab(app, ctx) {
   fillSelects(app, { classSelect, groupSelect });
   const add = actionButton(app, 'admin_createResourceAssignments', 'Yeni atama', { variant: 'primary',
     onClick: () => ctx.assign({}) });
+  // Toplu kaldırma (0.5.4): seçili atamalar ya da kaynak(lar) × hedef; tek işlem, önce sayılır.
+  const removeSelected = actionButton(app, 'admin_bulkDeleteResourceAssignments', 'Seçilenleri kaldır', {
+    onClick: () => bulkRemove({ assignmentIds: list.table.selection() }) });
+  removeSelected.hidden = true;
+  const bulk = actionButton(app, 'admin_bulkDeleteResourceAssignments', 'Toplu kaldır', {
+    onClick: () => bulkRemove({}) });
   node.append(toolbar(resourceFilter.node, packageSelect.node, classSelect.node, groupSelect.node,
-    studentFilter.node, h('span', 'kit-spacer'), add));
+    studentFilter.node, h('span', 'kit-spacer'), removeSelected, bulk, add));
 
   let list;
   list = pagedList({
     app,
     path: '/v1/admin/resource-assignments',
     query: () => clean(filters),
+    selectable: true,
+    onSelect: (keys) => paintSelected(keys),
+    onLoaded: () => paintSelected(list.table.selection()),
     columns: [
       { key: 'resource', label: 'Kaynak', width: 'minmax(0, 2.2fr)', cell: (row) => {
         const cell = resourceCell(row.resource, (resource) => ctx.openResource(resource.id));
@@ -97,6 +107,21 @@ export function assignmentsTab(app, ctx) {
     ctx.changed('assignment-removed');
   }
 
+  function paintSelected(keys) {
+    removeSelected.hidden = !keys.length;
+    removeSelected.textContent = keys.length ? `Seçilenleri kaldır (${num(keys.length)})` : 'Seçilenleri kaldır';
+  }
+
+  async function bulkRemove(scope) {
+    const done = await bulkRemoveDialog(app, scope);
+    if (!done) return;
+    list.table.clearSelection();
+    paintSelected([]);
+    list.reload();
+    app.api.invalidate('/v1/admin/resource-packages');
+    ctx.changed('assignment-removed');
+  }
+
   async function refreshPackages() {
     const packages = await loadPackages(app).catch(() => []);
     packageSelect.options([{ value: '', label: 'Tüm paketler' },
@@ -123,6 +148,78 @@ export function assignmentsTab(app, ctx) {
     },
     destroy() { list.destroy(); resourceFilter.destroy(); studentFilter.destroy(); },
   };
+}
+
+/**
+ * Toplu kaynak ataması kaldırma (`admin_bulkDeleteResourceAssignments`, tek
+ * işlem). `scope.assignmentIds` verilirse yalnız o atamalar; yoksa seçilen
+ * kaynak(lar) × hedef (sınıf / grup / öğrenci ya da süzgeç). Öğrencinin kendi
+ * rafına eklediği kaynaklara dokunulmaz. "Önce say" `dryRun` ile sayar.
+ * @returns {Promise<object|null>}
+ */
+async function bulkRemoveDialog(app, scope = {}) {
+  const byIds = Array.isArray(scope.assignmentIds) && scope.assignmentIds.length > 0;
+  const [classes, groups] = byIds ? [[], []] : await loadTargets(app);
+  let resources = [];
+  let target = null;
+  let picker = null;
+  const previewSlot = h('div', 'ak-stack');
+  previewSlot.setAttribute('aria-live', 'polite');
+  previewSlot.append(h('div', 'ak-muted', '“Önce say” hiçbir şey silmeden kaç atamanın kalkacağını gösterir.'));
+  const body = (dryRun) => (byIds ? { assignmentIds: scope.assignmentIds.slice(0, 500), dryRun }
+    : { resourceIds: resources.map((item) => item.id), target: target.value({ bundle: true }), dryRun });
+  const missing = () => {
+    if (byIds) return null;
+    if (!resources.length) return 'En az bir kaynak seçin.';
+    return target?.problem() || null;
+  };
+  const result = await formDialog(app, {
+    title: byIds ? `${num(scope.assignmentIds.length)} atamayı kaldır` : 'Toplu kaynak ataması kaldır',
+    description: 'Kaynak, seçilen öğrencilerin atanmış listesinden çıkar. Öğrencinin kendi rafına eklediği '
+      + 'kaynaklara dokunulmaz.',
+    wide: true,
+    danger: true,
+    fields: [
+      byIds ? null : { key: 'resources', label: 'Kaldırılacak kaynaklar', type: 'custom', render: () => {
+        picker = resourceListField(app, { onChange: (list) => { resources = list; } });
+        return picker.node;
+      }, validate: () => (resources.length ? null : 'En az bir kaynak seçin.') },
+      byIds ? null : { key: 'target', label: 'Kimden', type: 'custom', render: () => {
+        target = bulkTargetField(app, { classes, groups, modes: ['pick', 'filter'], onChange: () => {} });
+        return target.node;
+      }, validate: () => target?.problem() || null },
+      { key: 'preview', label: 'Önizleme', type: 'custom', render: () => {
+        const wrap = h('div', 'ak-stack');
+        const go = button('Önce say', { onClick: async () => {
+          const reason = missing();
+          if (reason) { previewSlot.replaceChildren(h('div', 'ak-muted', reason)); return; }
+          go.disabled = true;
+          try {
+            const counts = await app.api.post('/v1/admin/resource-assignments/bulk-delete', body(true));
+            previewSlot.replaceChildren(h('div', '', `Önizleme: ${num(counts.removedCount)} atama kalkacak `
+              + '(henüz bir şey silinmedi).'));
+          } catch (failure) {
+            previewSlot.replaceChildren(errorBox(failure));
+          } finally {
+            go.disabled = false;
+          }
+        } });
+        wrap.append(go, previewSlot);
+        return wrap;
+      } },
+    ].filter(Boolean),
+    submitLabel: 'Kaldır',
+    onSubmit: (_draft, { key }) => {
+      const reason = missing();
+      if (reason) throw new Error(reason);
+      return app.api.post('/v1/admin/resource-assignments/bulk-delete', body(false), { key });
+    },
+  });
+  picker?.destroy?.();
+  target?.destroy();
+  if (!result || result === true) return null;
+  app.toast(`${num(result.removedCount)} kaynak ataması kaldırıldı.`, 'good');
+  return result;
 }
 
 /** Sınıf ve grup açılırlarını önbellekli listelerden doldurur. */

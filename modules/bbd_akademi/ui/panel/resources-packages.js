@@ -180,7 +180,7 @@ async function deletePackage(app, item, ctx) {
  * Kural satırları: seviye / alan / hedef sınav (boş = koşul yok). `rules`
  * çağıranın dizisidir ve yerinde düzenlenir; `onChange` her değişiklikte çağrılır.
  */
-function rulesField(rules, onChange) {
+export function rulesField(rules, onChange) {
   const wrap = h('div', 'ak-stack');
   const list = h('div', 'ak-res-rules');
   const publish = () => onChange(rules.map((rule) => ({ ...rule })));

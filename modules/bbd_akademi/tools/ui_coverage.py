@@ -99,10 +99,6 @@ _MESSAGING = (
     "denetim araması, konuşma kilidi ve dışa aktarım ekranı ayrı iş paketidir, "
     "bu dalda henüz yok.")
 
-_TOPLU = (
-    "Sözleşme 86e6ddf (toplu ödev, şablonlar, atama paketleri — F-A25/F-A26) ile geldi; "
-    "ekranları km-toplu-kitap dalında yazılıyor.")
-
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
     "admin_getTimetableGrid": _PROGRAM_BUILDER,
@@ -168,14 +164,6 @@ PENDING: dict[str, str] = {
         "admin_listMessageReports", "admin_getMessageReport", "admin_decideMessageReport",
         "admin_searchMessages", "admin_openAuditThread", "admin_exportThread",
         "admin_lockMessageThread",
-    )},
-    **{operation_id: _TOPLU for operation_id in (
-        "admin_listAssignmentBundles", "admin_createAssignmentBundle", "admin_getAssignmentBundle",
-        "admin_updateAssignmentBundle", "admin_deleteAssignmentBundle", "admin_applyAssignmentBundle",
-        "admin_previewAssignmentBundle", "admin_removeAssignmentBundle",
-        "admin_bulkProgramOverrides", "admin_createHomeworkTemplate",
-        "admin_getHomeworkTemplate", "admin_updateHomeworkTemplate", "admin_deleteHomeworkTemplate",
-        "admin_copyHomeworkTemplate", "admin_bulkDeleteResourceAssignments", "admin_listTemplates",
     )},
 }
 

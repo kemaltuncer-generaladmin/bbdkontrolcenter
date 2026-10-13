@@ -26,6 +26,8 @@ import {
   runAction, searchBox, sectionHead, selectBox, staticList, statusBadge, studentPicker, toolbar,
   TRACKS,
 } from './common.js';
+import { bulkTargetField } from './bulk-target.js';
+import { loadTargets } from './resources-common.js';
 
 const PROGRAMS = '/v1/admin/curricula/programs';
 const VERSIONS = '/v1/admin/curricula/versions';
@@ -630,10 +632,13 @@ function overridesTab(app, { openProgram, showResolve, addOverride }, init) {
     onClick: () => addOverride(filters.studentId
       ? { student: { id: filters.studentId, displayName: filters.studentLabel || 'Seçili öğrenci' } }
       : (filters.classGroupId ? { classGroupId: filters.classGroupId } : {})) });
+  // Toplu (0.5.4, F-A26): sınıflara / gruplara / süzgece uyan herkese tek işlemde ekle · çıkar · kurala döndür.
+  const bulk = actionButton(app, 'admin_bulkProgramOverrides', 'Toplu program', {
+    onClick: () => bulkOverrideDialog(app, () => list.reload()) });
   node.append(
     h('div', 'ak-muted', 'İstisna, atama kuralının sonucunu bir öğrenci ya da sınıf için değiştirir: '
       + 'kuralın vermediği bir programı ekler ya da verdiği bir programı çıkarır.'),
-    toolbar(classSelect.node, picker.node, studentSlot, h('span', 'kit-spacer'), add),
+    toolbar(classSelect.node, picker.node, studentSlot, h('span', 'kit-spacer'), bulk, add),
   );
 
   const list = staticList({
@@ -698,6 +703,166 @@ function pickFilter(init) {
     classGroupId: init.classGroupId || '' };
 }
 
+/**
+ * Program arama alanı (formDialog özel alanı): ad / ders / seviye ile arar,
+ * seçileni gösterir. İstisna penceresi ve toplu program penceresi ortak.
+ * `state.program` seçili programdır (çağıran okur).
+ */
+function programSearchField(programs, disposers, state, { placeholder } = {}) {
+  let program = state.program || null;
+  return (draft, set) => {
+    const wrap = h('div', 'ak-stack');
+    const chosen = h('div', 'ak-inline');
+    const results = h('div', 'ak-cur-pick');
+    results.hidden = true;
+    const box = searchBox({ placeholder: placeholder || 'Program ara: ad, ders, “TYT”, “9. sınıf”…',
+      onSearch: (text) => paintResults(text) });
+    disposers.push(() => box.destroy());
+    const paintChosen = () => {
+      chosen.replaceChildren();
+      if (!program) {
+        chosen.append(h('span', 'ak-muted', programs === null ? 'Program listesi alınamadı.'
+          : `Program seçilmedi · ${num(programs.length)} program içinde arayın.`));
+        box.node.hidden = programs === null;
+        return;
+      }
+      chosen.append(programCell(program), button('Değiştir', { variant: 'ghost', onClick: () => {
+        program = null;
+        state.program = null;
+        set('');
+        paintChosen();
+        box.node.focus();
+      } }));
+      box.node.hidden = true;
+      results.hidden = true;
+    };
+    function paintResults(text) {
+      const tokens = foldText(text).split(/\s+/).filter(Boolean);
+      results.replaceChildren();
+      if (!tokens.length || !programs) { results.hidden = true; return; }
+      const hits = programs.filter((item) => {
+        const hay = foldText(`${item.title} ${item.subject?.name || ''} ${programLevel(item)} ${item.id}`);
+        return tokens.every((token) => hay.includes(token));
+      });
+      for (const item of hits.slice(0, 30)) {
+        const row = h('button', 'ak-cur-pick-row');
+        row.type = 'button';
+        row.append(programCell(item), statusBadge(SCOPE, item.scope));
+        row.addEventListener('click', () => {
+          program = item;
+          state.program = item;
+          set(item.id);
+          paintChosen();
+        });
+        results.append(row);
+      }
+      if (!hits.length) results.append(h('div', 'ak-muted ak-cur-none', 'Eşleşen program yok.'));
+      else if (hits.length > 30) results.append(h('div', 'ak-muted ak-cur-none',
+        `${num(hits.length)} sonuçtan ilk 30'u gösteriliyor; aramayı daraltın.`));
+      results.hidden = false;
+    }
+    set(program?.id || '');
+    paintChosen();
+    wrap.append(chosen, box.node, results);
+    return wrap;
+  };
+
+}
+
+const BULK_ACTIONS = {
+  add: 'Programı ekle (kuralın vermediği programı ver)',
+  remove: 'Programı çıkar (kuralın verdiği programı kaldır)',
+  clear: 'Bu programdaki istisnaları sil (kurala dön)',
+};
+
+/**
+ * Toplu program istisnası (`admin_bulkProgramOverrides`, tek işlem, en çok
+ * 2.000 öğrenci): seçilen sınıf / grup / öğrencilere ya da süzgece uyan
+ * herkese programı ekler, çıkarır ya da istisnayı silip kurala döndürür.
+ * "Önce say" aynı isteği `dryRun` ile gönderir (yazma yok).
+ */
+async function bulkOverrideDialog(app, onDone) {
+  const [[classes, groups], programs] = await Promise.all([
+    loadTargets(app),
+    app.api.getCached(PROGRAMS).then((data) => data?.items || []).catch(() => null),
+  ]);
+  const disposers = [];
+  const main = { program: null };
+  const replaced = { program: null };
+  let target = null;
+  const previewSlot = h('div', 'ak-stack');
+  previewSlot.setAttribute('aria-live', 'polite');
+  previewSlot.append(h('div', 'ak-muted', '“Önce say” hiçbir şey yazmadan kaç öğrencinin etkileneceğini gösterir.'));
+
+  const body = (draft, dryRun) => ({
+    programId: main.program?.id,
+    action: draft.action || 'add',
+    replacesProgramId: draft.action === 'add' ? replaced.program?.id || null : null,
+    target: target.value({ bundle: true }),
+    note: String(draft.note || '').trim() || null,
+    dryRun,
+  });
+  const missing = () => (!main.program ? 'Program seçin.' : target?.problem() || null);
+
+  const result = await formDialog(app, {
+    title: 'Toplu program',
+    description: 'Seçtiğiniz öğrencilerin müfredat programını tek işlemde değiştirir; programları hemen yeniden '
+      + 'hesaplanır (öğrenci uygulamasına anında yansır).',
+    wide: true,
+    value: { action: 'add' },
+    fields: [
+      { key: 'action', label: 'İşlem', type: 'select', options: optionsOf(BULK_ACTIONS) },
+      { key: 'programId', label: 'Program', type: 'custom', render: programSearchField(programs, disposers, main),
+        validate: (raw) => (raw ? null : 'Program seçin.') },
+      { key: 'replaces', label: 'Yerine geçtiği program (isteğe bağlı)', type: 'custom', render: (draft, set) => {
+        const wrap = h('div', 'ak-stack');
+        wrap.append(h('div', 'ak-muted', 'Ör. TYT Matematik yerine AYT Matematik: eskisi çıkar, yenisi eklenir.'),
+          programSearchField(programs, disposers, replaced, { placeholder: 'Çıkacak programı ara (isteğe bağlı)' })(
+            draft, set));
+        const paint = (next) => { wrap.hidden = (next.action || 'add') !== 'add'; };
+        paint(draft);
+        return { node: wrap, update: paint };
+      } },
+      { key: 'target', label: 'Kime', type: 'custom', render: () => {
+        target = bulkTargetField(app, { classes, groups, modes: ['pick', 'filter'], onChange: () => {} });
+        disposers.push(() => target.destroy());
+        return target.node;
+      }, validate: () => target?.problem() || null },
+      { key: 'note', label: 'Not (isteğe bağlı)', maxLength: 200, placeholder: 'Ör. Dönem başı AYT geçişi' },
+      { key: 'preview', label: 'Önizleme', type: 'custom', render: (draft) => {
+        const wrap = h('div', 'ak-stack');
+        const go = button('Önce say', { onClick: async () => {
+          const reason = missing();
+          if (reason) { previewSlot.replaceChildren(alertBox(reason, 'warn')); return; }
+          go.disabled = true;
+          try {
+            const counts = await app.api.post('/v1/admin/curricula/overrides/bulk', body(draft, true));
+            previewSlot.replaceChildren(h('div', 'ak-muted', 'Önizleme — henüz bir şey yazılmadı:'), kpiRow([
+              { label: 'Öğrenci', value: num(counts.studentCount) },
+              { label: 'Eklenecek istisna', value: num(counts.created) },
+              { label: 'Kalkacak istisna', value: num(counts.removed) },
+              { label: 'Değişmeyen', value: num(counts.unchanged) },
+            ]));
+          } catch (failure) {
+            previewSlot.replaceChildren(errorBox(failure));
+          } finally {
+            go.disabled = false;
+          }
+        } });
+        wrap.append(go, previewSlot);
+        return wrap;
+      } },
+    ],
+    submitLabel: 'Uygula',
+    onSubmit: (draft, { key }) => app.api.post('/v1/admin/curricula/overrides/bulk', body(draft, false), { key }),
+  });
+  for (const fn of disposers) fn();
+  if (!result || result === true) return;
+  app.toast(`${num(result.studentCount)} öğrenci · ${num(result.created)} istisna eklendi, ${num(result.removed)} `
+    + `kaldırıldı, ${num(result.unchanged)} değişmedi.`, 'good');
+  onDone?.(result);
+}
+
 /** İstisna ekle: hedef (öğrenci / sınıf) + program + ekle/çıkar + not. */
 async function overrideDialog(app, prefill = {}, onDone) {
   const [classes, programs] = await Promise.all([
@@ -706,7 +871,7 @@ async function overrideDialog(app, prefill = {}, onDone) {
   ]);
   const disposers = [];
   let student = prefill.student || null;
-  let program = prefill.program || null;
+  const state = { program: prefill.program || null };
 
   const targetField = (draft, set) => {
     const wrap = h('div', 'ak-stack');
@@ -747,60 +912,7 @@ async function overrideDialog(app, prefill = {}, onDone) {
     return { node: wrap, update: paint };
   };
 
-  const programField = (draft, set) => {
-    const wrap = h('div', 'ak-stack');
-    const chosen = h('div', 'ak-inline');
-    const results = h('div', 'ak-cur-pick');
-    results.hidden = true;
-    const box = searchBox({ placeholder: 'Program ara: ad, ders, “TYT”, “9. sınıf”…',
-      onSearch: (text) => paintResults(text) });
-    disposers.push(() => box.destroy());
-    const paintChosen = () => {
-      chosen.replaceChildren();
-      if (!program) {
-        chosen.append(h('span', 'ak-muted', programs === null ? 'Program listesi alınamadı.'
-          : `Program seçilmedi · ${num(programs.length)} program içinde arayın.`));
-        box.node.hidden = programs === null;
-        return;
-      }
-      chosen.append(programCell(program), button('Değiştir', { variant: 'ghost', onClick: () => {
-        program = null;
-        set('');
-        paintChosen();
-        box.node.focus();
-      } }));
-      box.node.hidden = true;
-      results.hidden = true;
-    };
-    function paintResults(text) {
-      const tokens = foldText(text).split(/\s+/).filter(Boolean);
-      results.replaceChildren();
-      if (!tokens.length || !programs) { results.hidden = true; return; }
-      const hits = programs.filter((item) => {
-        const hay = foldText(`${item.title} ${item.subject?.name || ''} ${programLevel(item)} ${item.id}`);
-        return tokens.every((token) => hay.includes(token));
-      });
-      for (const item of hits.slice(0, 30)) {
-        const row = h('button', 'ak-cur-pick-row');
-        row.type = 'button';
-        row.append(programCell(item), statusBadge(SCOPE, item.scope));
-        row.addEventListener('click', () => {
-          program = item;
-          set(item.id);
-          paintChosen();
-        });
-        results.append(row);
-      }
-      if (!hits.length) results.append(h('div', 'ak-muted ak-cur-none', 'Eşleşen program yok.'));
-      else if (hits.length > 30) results.append(h('div', 'ak-muted ak-cur-none',
-        `${num(hits.length)} sonuçtan ilk 30'u gösteriliyor; aramayı daraltın.`));
-      results.hidden = false;
-    }
-    set(program?.id || '');
-    paintChosen();
-    wrap.append(chosen, box.node, results);
-    return wrap;
-  };
+  const programField = programSearchField(programs, disposers, state);
 
   const noteField = (draft, set) => {
     const area = h('textarea', 'kit-textarea');
