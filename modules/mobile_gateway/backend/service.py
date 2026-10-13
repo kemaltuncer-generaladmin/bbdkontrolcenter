@@ -105,6 +105,11 @@ BALANCES_IDS_MAX = 500
 EVENTS_LIMIT_DEFAULT = 100
 EVENTS_LIMIT_MAX = 500
 STUDENT_STATUSES = frozenset({"active", "inactive"})
+#: Veli yuvaları (sözleşme §1): 1 birincil (telefonu kantinde), 2 profil, 3–4 ek veliler
+#: (`bbd_students` göç 007). Dört yuvanın velisi de uygulamaya girer.
+GUARDIAN_SLOTS = (1, 2, 3, 4)
+#: Velinin öğrenciye yakınlığı — beyaz liste (`bbd_students/backend/guardians.py`).
+GUARDIAN_RELATIONS = frozenset({"mother", "father", "guardian", "grandparent", "sibling", "other"})
 STATUS_REASONS = frozenset({"left", "graduated", "suspended", "other"})
 #: Gün sonucu ve hata kodları — beyaz liste (zil yeteneğinin döndürdüğü).
 BELL_PLAN_RESULTS = frozenset({"applied", "unchanged", "stale", "overridden", "rejected"})
@@ -748,7 +753,7 @@ class GatewayService:
             if not isinstance(guardian, dict):
                 continue
             slot = int_or_none(guardian.get("slot"))
-            if slot not in (1, 2):
+            if slot not in GUARDIAN_SLOTS:
                 continue
             phone = normalize_phone(guardian.get("phone"))
             if phone is None:
@@ -756,7 +761,10 @@ class GatewayService:
                     note(f"guardian{slot}Phone")
                 continue
             name = str(guardian.get("name") or "").strip() or None
-            guardians.append({"slot": slot, "name": name, "phone": phone})
+            relation = str(guardian.get("relation") or "").strip().lower()
+            guardians.append({"slot": slot, "name": name, "phone": phone,
+                              "relation": relation if relation in GUARDIAN_RELATIONS else None,
+                              "primary": slot == 1})
         guardians.sort(key=lambda item: int(item["slot"]))
 
         canteen = record.get("canteen")
@@ -804,10 +812,10 @@ class GatewayService:
 
     @staticmethod
     def phones(record: dict[str, Any]) -> set[str]:
-        """Öğrencinin kendi ve iki velisinin normalize telefonları."""
+        """Öğrencinin kendi ve (en çok dört) velisinin normalize telefonları."""
         found = {normalize_phone(record.get("studentPhone"))}
         for guardian in record.get("guardians") or []:
-            if isinstance(guardian, dict) and int_or_none(guardian.get("slot")) in (1, 2):
+            if isinstance(guardian, dict) and int_or_none(guardian.get("slot")) in GUARDIAN_SLOTS:
                 found.add(normalize_phone(guardian.get("phone")))
         return {phone for phone in found if phone}
 
