@@ -10,7 +10,7 @@ import { badge } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import {
   CURRICULUM_EXAMS, EXAM_TARGETS, GRADE_LEVELS, TRACKS, empty, gradeText, multiChips, num, problem,
-  searchBox, studentPicker,
+  searchBox, studentSelect,
 } from './common.js';
 
 export const KINDS = { topic_book: 'Konu anlatımlı', question_bank: 'Soru bankası',
@@ -224,26 +224,16 @@ export function targetsField(app, { classes = [], groups = [], value = {}, onCha
       (list) => { state.studentGroupIds = list; fire(); }).node
     : h('span', 'ak-muted', 'Çalışma grubu yok.');
 
-  const picked = h('div', 'ak-chips');
-  const paintPicked = () => {
-    picked.replaceChildren();
-    for (const [id, name] of students) {
-      const chip = h('button', 'kit-chip on', `${name} ✕`);
-      chip.type = 'button';
-      chip.title = 'Listeden çıkar';
-      chip.addEventListener('click', () => { students.delete(id); paintPicked(); fire(); });
-      picked.append(chip);
-    }
-    if (!students.size) picked.append(h('span', 'ak-muted', 'Öğrenci seçilmedi.'));
-  };
-  const picker = studentPicker(app, { onPick: (student) => {
-    students.set(student.id, student.displayName || student.fullName || student.id);
-    paintPicked();
+  // Öğrenciler: ortak toplu seçici (liste + sınıf süzgeci + tümünü seç + sayı; `studentSelect`).
+  // Kurulumu yalnız "Öğrenciler" bloğu istenince yapılır (istek ekonomisi, A14).
+  const picker = kinds.includes('students') ? studentSelect(app, { classes, value: [...students]
+    .map(([id, displayName]) => ({ id, displayName })), onChange: (list) => {
+    students.clear();
+    for (const item of list) students.set(item.id, item.displayName);
     fire();
-  } });
-  paintPicked();
+  } }) : null;
   const studentBox = h('div', 'ak-stack');
-  studentBox.append(picker.node, picked);
+  if (picker) studentBox.append(picker.node);
 
   if (kinds.includes('classes')) node.append(block('Sınıflar', classChips));
   if (kinds.includes('groups')) node.append(block('Çalışma grupları', groupChips));
@@ -252,7 +242,9 @@ export function targetsField(app, { classes = [], groups = [], value = {}, onCha
     node,
     value: () => ({ ...state, studentIds: [...students.keys()] }),
     count: () => state.classGroupIds.length + state.studentGroupIds.length + students.size,
-    destroy: picker.destroy,
+    /** Seçili öğrenciler `{id, displayName}` (özet / belge için). */
+    students: () => [...students].map(([id, displayName]) => ({ id, displayName })),
+    destroy: () => picker?.destroy(),
   };
 }
 

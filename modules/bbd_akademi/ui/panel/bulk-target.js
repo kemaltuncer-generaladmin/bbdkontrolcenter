@@ -15,9 +15,8 @@
 
 import { h } from '../../ui-kit/kit.js';
 import {
-  EXAM_TARGETS, GRADE_LEVELS, TRACKS, gradeText, multiChips, num, studentPicker,
+  EXAM_TARGETS, GRADE_LEVELS, TRACKS, gradeText, multiChips, num, studentSelect,
 } from './common.js';
-import { removableChip } from './homework-content.js';
 import { targetsField } from './resources-common.js';
 
 const MODES = {
@@ -113,24 +112,28 @@ export function bulkTargetField(app, { classes = [], groups = [], modes = ['pick
   for (const key of modes) node.append(panes[key]);
 
   // ------------------------------------------------------- hariç tut
+  // Hariç tutulacaklar da AYNI ortak seçiciyle seçilir (`studentSelect`); seçici
+  // bölüm ilk açıldığında kurulur — açılmayan bölüm Akademi'ye istek atmaz (A14).
   const exclusion = h('details', 'ak-bt-exclude');
   const summary = h('summary', '', 'Hariç tutulacak öğrenciler (isteğe bağlı)');
-  const chips = h('div', 'ak-chips');
   const paintExcluded = () => {
-    chips.replaceChildren();
-    for (const [id, name] of excluded) {
-      chips.append(removableChip(name, () => { excluded.delete(id); paintExcluded(); fire(); }, 'Hariçten çıkar'));
-    }
-    if (!excluded.size) chips.append(h('span', 'ak-muted', 'Hariç tutulan öğrenci yok.'));
     summary.textContent = excluded.size
       ? `Hariç tutulan öğrenciler (${num(excluded.size)})` : 'Hariç tutulacak öğrenciler (isteğe bağlı)';
   };
-  const excludePicker = studentPicker(app, { placeholder: 'Hariç tutulacak öğrenciyi ara', onPick: (student) => {
-    excluded.set(student.id, student.displayName || student.fullName || student.id);
-    paintExcluded();
-    fire();
-  } });
-  exclusion.append(summary, excludePicker.node, chips);
+  let excludePicker = null;
+  exclusion.addEventListener('toggle', () => {
+    if (!exclusion.open || excludePicker) return;
+    excludePicker = studentSelect(app, { classes, label: 'Hariç tutulacak öğrenciler',
+      placeholder: 'Hariç tutulacak öğrenciyi ara', onChange: (list) => {
+        excluded.clear();
+        for (const item of list) excluded.set(item.id, item.displayName);
+        paintExcluded();
+        fire();
+      } });
+    excludePicker.node.classList.add('ak-bt-exclude-pick');
+    exclusion.append(excludePicker.node);
+  });
+  exclusion.append(summary);
   paintExcluded();
   node.append(exclusion);
 
@@ -186,6 +189,6 @@ export function bulkTargetField(app, { classes = [], groups = [], modes = ['pick
       if (excluded.size) parts.push(`${num(excluded.size)} hariç`);
       return parts.join(' · ') || '—';
     },
-    destroy() { pick.destroy?.(); excludePicker.destroy?.(); },
+    destroy() { pick.destroy?.(); excludePicker?.destroy(); },
   };
 }

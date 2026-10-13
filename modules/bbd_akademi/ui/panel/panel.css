@@ -204,6 +204,10 @@
 .ak-wiz-step.done .ak-wiz-step-no { background: #e6f4ea; border-color: #8cc79f; color: #1f6b38; }
 .ak-wiz-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .ak-wiz-body { min-height: 220px; }
+/* Pencere ekrana sığmadığında GÖVDE kayar; başlık, adımlar, not ve düğmeler yerinde
+   kalır (önceden gövde küçülüp içeriği "Hedef:" notunun ve düğmelerin üstüne taşıyordu). */
+.ak-wiz > * { flex: none; }
+.ak-wiz > .ak-wiz-body { flex: 1 1 auto; min-height: 160px; overflow: auto; }
 .ak-wiz-pane { display: flex; flex-direction: column; gap: 12px; }
 .ak-wiz-title { margin: 0; font-size: 15px; font-weight: 650; }
 .ak-wiz-title:focus { outline: none; }
@@ -217,3 +221,8 @@
 .ak-bt-exclude { border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; }
 .ak-bt-exclude[open] { display: flex; flex-direction: column; gap: 8px; }
 .ak-bt-exclude summary { cursor: pointer; color: var(--soft); }
+/* Ortak toplu öğrenci seçicisi (`studentSelect` → ui-kit/picker.js): pencerede de
+   kesilmez — yüksekliği sınırlı, liste kendi içinde kayar (eski açılır kutu
+   `position: absolute` idi ve pencerenin altında kayboluyordu). */
+.ak-stu-select { height: clamp(260px, 42vh, 380px); }
+.ak-stu-select.ak-bt-exclude-pick { height: clamp(220px, 34vh, 300px); }

@@ -762,24 +762,39 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
           border-bottom: 1px solid var(--line); background: var(--tint); }
 .pk-search { flex: 1; min-width: 80px; }
 .pk-select { max-width: 150px; }
-.pk-actions { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.pk-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.pk-actions .kit-btn.on { background: color-mix(in srgb, var(--accent) 12%, #fff); color: var(--ink); }
 .pk-count { padding: 6px 10px; font-size: 11px; color: var(--soft); }
 .pk-list { flex: 1; min-height: 0; overflow: auto; }
+.pk-list[aria-busy="true"] { opacity: 0.7; }
 .pk-group { padding: 5px 10px 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
             text-transform: uppercase; color: var(--soft); background: #fbfcfe;
-            position: sticky; top: 0; display: flex; gap: 6px; }
+            position: sticky; top: 0; z-index: 1; display: flex; gap: 6px; }
 .pk-group-name { flex: 1; }
 .pk-group-count { font-weight: 600; }
-.pk-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 10px;
+.pk-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px;
           border: 0; border-top: 1px solid #f4f6fa; background: transparent; text-align: left;
           font: inherit; font-size: 12px; color: inherit; cursor: pointer; }
 .pk-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
 .pk-row.on { background: color-mix(in srgb, var(--accent) 12%, #fff); }
-.pk-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pk-meta { font-size: 11px; color: var(--soft); }
+.pk-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Seçim yalnız renkle anlatılmaz: her satırda onay kutusu çizilir (WCAG 1.4.1). */
+.pk-check { flex: none; width: 15px; height: 15px; border: 1.5px solid #8a96a8; border-radius: 4px;
+            background: #fff; display: inline-grid; place-items: center; }
+.pk-check.pk-radio { border-radius: 50%; }
+.pk-row.on .pk-check { background: var(--accent, #2f5fd0); border-color: var(--accent, #2f5fd0); }
+.pk-row.on .pk-check::after { content: ''; width: 4px; height: 8px; margin-top: -2px;
+            border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.pk-row.on .pk-check.pk-radio::after { width: 6px; height: 6px; margin: 0; border: 0;
+            border-radius: 50%; background: #fff; transform: none; }
+.pk-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-meta { flex: none; font-size: 11px; color: var(--soft); }
 .pk-chip { padding: 1px 7px; border-radius: 999px; background: var(--tint);
            border: 1px solid var(--line); font-size: 10.5px; color: var(--soft); }
-.pk-empty { padding: 22px 12px; text-align: center; font-size: 12px; color: var(--soft); }
+.pk-empty { padding: 22px 12px; text-align: center; font-size: 12px; color: var(--soft);
+            display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pk-empty.pk-error { color: var(--bad, #b91c1c); }
+.pk-more { display: flex; justify-content: center; padding: 8px; border-top: 1px solid #f4f6fa; }
 
 /* =========================================================== erişilebilirlik */
 
