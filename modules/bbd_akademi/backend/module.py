@@ -16,6 +16,7 @@ from km_sdk import ModuleContext
 
 from .allowlist import OPERATIONS
 from .api.routes import bind
+from .documents import DocumentService, Letterheads
 from .features import TenantFeatures
 from .finance import StudentFinance
 from .gateway import AkademiGateway, GatewayConfig
@@ -37,16 +38,25 @@ def register(ctx: ModuleContext) -> None:
 
     config = GatewayConfig.from_mapping(ctx.config)
     gateway = AkademiGateway(config=config, secrets=ctx.capability("secrets"), log=ctx.log)
-    proxy = AkademiProxy(gateway=gateway, allowlist=Allowlist(OPERATIONS),
+    allowlist = Allowlist(OPERATIONS)
+    proxy = AkademiProxy(gateway=gateway, allowlist=allowlist,
                          step_up=StepUpStore(ctx.store, ttl_seconds=config.step_up_seconds),
                          log=ctx.log)
     staff = StaffService(store=ctx.store, gateway=gateway, log=ctx.log)
+    # Belgeler (önizle/yazdır): PDF rapor köküne yazılır; masaüstü yoksa
+    # kurulum kökündeki data/exports (çekirdeğin `output_roots` ile aynı yer).
+    documents = DocumentService(
+        gateway=gateway, allowlist=allowlist, log=ctx.log,
+        fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
+        letterheads=Letterheads(gateway=gateway, log=ctx.log,
+                                fallback_name=str((ctx.config or {}).get("document_title") or "")))
 
     # Geçidin olay iletim durumu (Senkron kartı) isteğe bağlıdır ve geçit bu
     # modülden SONRA yüklenebilir: yetenek her istekte yeniden çözülür.
     ctx.add_router(bind(proxy, staff,
                         events=lambda: ctx.try_capability("mobile_gateway.events"),
-                        features=TenantFeatures(gateway=gateway, log=ctx.log)))
+                        features=TenantFeatures(gateway=gateway, log=ctx.log),
+                        documents=documents))
     ctx.provide("akademi.student_finance", StudentFinance(gateway=gateway, log=ctx.log))
     _LIVE.update(staff=staff, gateway=gateway)
     staff.start(config.staff_sync_minutes)
