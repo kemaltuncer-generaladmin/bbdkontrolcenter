@@ -115,6 +115,10 @@ permissions:
   - key: bbd_akademi.evaluations
     description: "Öğrenci değerlendirme: dönem formlarını doldurma, yayımlama ve geri alma, değerlendirme raporlarının dışa aktarımı."
     default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.privacy
+    description: "KVKK talepleri: uygulama kullanıcılarının hesap silme ve veri indirme taleplerini görme, onaylama ya da reddetme, silinmiş hesabın erişimini yeniden açma. Silme onayı kişisel veriyi geri dönüşsüz siler."
+    destructive: true
+    default_roles: [admin]
 
 config:
   defaults: config/default.yaml

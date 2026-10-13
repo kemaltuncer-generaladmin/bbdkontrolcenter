@@ -44,6 +44,7 @@ CANTEEN = f"{MODULE}.canteen"
 LEARNING = f"{MODULE}.learning"
 LEARNING_SETUP = f"{MODULE}.learning_setup"
 EVALUATIONS = f"{MODULE}.evaluations"
+PRIVACY = f"{MODULE}.privacy"
 
 #: Akademi izin anahtarı (kapsamsız) → KM izni.
 PERMISSION_MAP: dict[str, str] = {
@@ -149,6 +150,10 @@ PERMISSION_MAP: dict[str, str] = {
     # --- personel ve Akademi rolleri (mobil yönetici erişimi KM'dedir)
     "staff.manage": STAFF,
     "roles.manage": STAFF,
+    # --- KVKK talep kuyruğu (mağaza, sözleşme §14 madde 41): hesap silme ve
+    # veri indirme taleplerine karar — silme onayı kişisel veriyi geri
+    # dönüşsüz siler; ayrı ve yalnız yöneticide duran izin.
+    "privacy.requests": PRIVACY,
     # --- kurum içi anlık işler Akademi üzerinden (anons, tablet)
     "pa.call": CAMPUS,
     "tablet.control": CAMPUS,
@@ -199,5 +204,5 @@ def unmapped(operations: Iterable[Operation]) -> list[str]:
 ALL_PERMISSIONS: tuple[str, ...] = (
     VIEW, ACADEMIC, CURRICULUM, RESOURCES, ATTENDANCE, EXAMS, FINANCE, FINANCE_VOID,
     BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN, LEARNING, LEARNING_SETUP,
-    EVALUATIONS,
+    EVALUATIONS, PRIVACY,
 )

@@ -67,6 +67,8 @@ export const SECTIONS = [
   { key: 'settings', label: 'Ayarlar', file: './settings.js', requires: ['settings'],
     group: 'Yönetim' },
   { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'], group: 'Yönetim' },
+  { key: 'privacy', label: 'KVKK talepleri', file: './privacy.js', requires: ['privacy'],
+    group: 'Yönetim' },
 ];
 
 export function mount(root, ctx) {
