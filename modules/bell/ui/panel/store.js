@@ -119,3 +119,37 @@ export async function uploadSound(file) {
   });
   return need()(`${BASE}/sound`, { method: 'POST', body: { name: file.name, data } });
 }
+
+// ------------------------------------------------- saat setleri ve zil planı
+
+/** Saat seti kurar (`id` boş) ya da TÜMÜYLE değiştirir. */
+export function saveProfile(id, name, times) {
+  return id
+    ? need()(`${BASE}/profiles/${encodeURIComponent(id)}`,
+      { method: 'PUT', body: { name, times } })
+    : need()(`${BASE}/profiles`, { method: 'POST', body: { name, times } });
+}
+
+/** Kullanılmayan saat setini kaldırır; plandaki bir gün kullanıyorsa reddedilir. */
+export function deleteProfile(id) {
+  return need()(`${BASE}/profiles/${encodeURIComponent(id)}/delete`, { method: 'POST' });
+}
+
+/** ACİL: bugünün zilini kapatır (yalnız bugün, PIN). */
+export function overrideToday(date, pin) {
+  return need()(`${BASE}/plan/override`, { method: 'POST', body: { date, pin } });
+}
+
+export function clearOverride(date) {
+  return need()(`${BASE}/plan/override/clear`, { method: 'POST', body: { date } });
+}
+
+/** Zil gruplarını Öğrenci Yönetimi'ne taşır (idempotent). */
+export function migrateGroups() {
+  return need()(`${BASE}/groups/migrate`, { method: 'POST' });
+}
+
+/** Tetik tablosunu yeniden kurar. */
+export function reschedule() {
+  return need()(`${BASE}/reschedule`, { method: 'POST' });
+}
