@@ -30,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 KIT = re.compile(r"^\.(?:kit-[\w-]+|pk-[\w-]+|pk|df-[\w-]+)(?![\w-])")
 CLASS = re.compile(r"\.([A-Za-z_][\w-]*)")
-COMMENT = re.compile(r"/\*.*?\*/", re.S)
+COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 HEADER = re.compile(r"([^{};]+)\{|[{};]")
 
 

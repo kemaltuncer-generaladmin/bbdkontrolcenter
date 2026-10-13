@@ -27,7 +27,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 
-from harness import NodeMissing, run  # noqa: E402
+from harness import NodeMissing, run
 
 PANEL = Path(__file__).resolve().parents[1] / "ui" / "panel"
 CLASSES = [{"id": "11111111-1111-4111-8111-111111111111", "name": "9-A"},
