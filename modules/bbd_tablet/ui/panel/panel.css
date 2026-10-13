@@ -432,3 +432,9 @@ div.tb-item { cursor: default; }
   .tb-warnline { padding-left: 14px; padding-right: 14px; }
   .tb-code { font-size: 26px; }
 }
+
+/* Öğrenci kartındaki tablet hızlı işlemi (0.5.3, `bbd_tablet.student_quick`). */
+.tb-quick { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12.5px; }
+.tb-quick-label { color: #4b5668; }
+.tb-quick-state { font-weight: 600; color: #14532d; }
+.tb-quick-state.bad { color: #b91c1c; }

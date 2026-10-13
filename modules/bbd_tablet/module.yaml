@@ -26,6 +26,10 @@ provides:
       unblock(student_id, reason, actor, *, only_reason=None) → None (only_reason: yalnız o gerekçeli kısıtlar kalkar); end_session(session_id, reason,
       actor) → bool; session_student(session_id) → student_id | None. Hata `reason` koduyla (validation_error, student_not_found,
       session_not_found, canteen_unavailable).
+  # ARAYÜZ yeteneği (0.5.3): öğrencinin tek kartında tablet kısıtı (K3).
+  - capability: bbd_tablet.student_quick
+    contract: bbd_tablet/ui/panel/student-quick.js:mountStudentQuick
+    description: "ARAYÜZ: (root, {studentId, displayName, dialogRoot, toast}) → {reload, destroy}; tablet durumu + bugün sonuna kadar kısıtla / kaldır."
 consumes:
   - capability: canteen.api
     reason: "Öğrenci kimliği ve kiosk giriş kodu kantinde kalır."

@@ -33,12 +33,24 @@ import { closeAllDialogs, problem } from './common.js';
 import { devicesView } from './devices.js';
 import { profilesView } from './profiles.js';
 import { studentsView } from './students.js';
+import { mountStudentQuick } from './student-quick.js';
 
 const BASE = '/api/bbd_tablet';
 const POLL_MS = 30_000;
 const STUDENTS_TTL_MS = 5 * 60_000;
 const INVENTORY_TTL_MS = 5 * 60_000;
 const MANAGED_TTL_MS = 60_000;
+
+/**
+ * Arayüz yetenekleri (K3). `bbd_tablet.student_quick` — öğrencinin tek kartında
+ * (BBD Akademi → Öğrenciler) tablet kısıtı: durum + tek tıkla kısıtla / kaldır.
+ * `(root, {studentId, displayName, dialogRoot, toast})` → `{reload, destroy}`.
+ */
+export function capabilities(ctx) {
+  return {
+    'bbd_tablet.student_quick': (root, options = {}) => mountStudentQuick(root, { ...options, api: ctx.api }),
+  };
+}
 
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
@@ -63,6 +75,13 @@ export function mount(root, ctx) {
     state,
     toast,
     call: (path, options) => ctx.api(`${BASE}${path}`, options),
+    /**
+     * Öğrencinin TEK KARTINI açar (0.5.3 — öğrenci kaydı tek yerde: BBD
+     * Akademi → Öğrenciler). `bbd_students.open` arayüz yeteneği yoksa null.
+     */
+    openStudentCard: typeof ctx.capability === 'function' && typeof ctx.capability('bbd_students.open') === 'function'
+      ? (studentId) => ctx.capability('bbd_students.open')(studentId)
+      : null,
     can(permission) {
       if (permissions === null) return true;
       const key = `bbd_tablet.${permission}`;

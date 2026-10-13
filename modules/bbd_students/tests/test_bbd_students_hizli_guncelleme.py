@@ -252,3 +252,91 @@ def test_kural_dosyasi() -> None:
     assert states == ["delivered", "pending", "late", "off", "unknown"]
     assert r["delivery"][0]["text"] == "Akademi'ye ulaştı ✓ (0,8 sn)"
     assert r["keys"] == ["edit", None, "escape", None]
+
+
+LIST_ROUTES: dict[str, Any] = {
+    "GET /auth/me": {"permissions": ["bbd_students.view", "bbd_students.manage", "bbd_students.groups",
+                                     "bbd_students.lifecycle"]},
+    f"GET {BASE}/students": {"connected": True, "summary": {}, "students": [
+        {"kantinId": "STU-1", "displayName": "Elif Kaya", "className": "9-A", "status": "active", "balance": 0,
+         "guardians": []},
+        {"kantinId": "STU-2", "displayName": "Can Demir", "className": "9-A", "status": "active", "balance": 0,
+         "guardians": []},
+        {"kantinId": "STU-3", "displayName": "Ali Ak", "className": "10-B", "status": "active", "balance": 0,
+         "guardians": []}]},
+    f"GET {BASE}/groups?archived=live": {"groups": [{"id": "G1", "name": "Etüt"}]},
+    f"POST {BASE}/students/class": {"updated": ["STU-1", "STU-2"], "failed": []},
+    f"POST {BASE}/students/curriculum": {"updated": ["STU-1", "STU-2", "STU-3"], "failed": []},
+    f"POST {BASE}/groups/G1/members": {"skipped": []},
+    "GET /api/events/wait": {"items": [], "lastSeq": 1},
+}
+
+LIST = r"""
+export default async function ({ document, audit, sleep, api, load, calls }) {
+  globalThis.__apiHook = (method, path) => (path.startsWith('/api/events/wait?after') ? new Promise(() => {}) : undefined);
+  const sk = await load('./panels/bbd_students/index.js');
+  const opened = [];
+  const caps = sk.capabilities({ api, open: () => {}, capability: () => null });
+  const root = document.createElement('div');
+  document.body.append(root);
+  const cleanup = caps['bbd_students.manager'](root, { openStudent: (s) => opened.push(s.kantinId), hideModes: true });
+  await sleep(40);
+  const out = {};
+  const bar = root.querySelector('.st-listbulk');
+  out.hiddenAtStart = bar.hidden;
+  const checks = root.querySelectorAll('.st-row-check');
+  checks[0].click();
+  checks[1].click();
+  out.count = root.querySelector('.st-listbulk-count').textContent;
+  out.visible = !bar.hidden;
+  out.violations = audit(root);
+  // Ana sınıf: yaz · Enter
+  const value = bar.querySelector('.st-listbulk-value input');
+  value.value = '11a';
+  const mark = calls.length;
+  value.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  await sleep(40);
+  out.classPost = calls.slice(mark).filter((c) => c.method === 'POST').map((c) => [c.path, c.body]);
+  out.status = bar.querySelector('.st-listbulk-status').textContent;
+  out.clearedAfter = bar.hidden;
+  // Tümünü seç → hedef sınav
+  const all = root.querySelector('.st-select-all input');
+  all.click();
+  out.allCount = root.querySelector('.st-listbulk-count').textContent;
+  const field = bar.querySelector('select');
+  field.value = 'examTarget';
+  field.dispatchEvent(new Event('change'));
+  await sleep(10);
+  const select = bar.querySelector('.st-listbulk-value select');
+  select.value = 'YKS';
+  const mark2 = calls.length;
+  bar.querySelectorAll('button').find((b) => b.textContent === 'Uygula').click();
+  await sleep(40);
+  out.examPost = calls.slice(mark2).filter((c) => c.method === 'POST').map((c) => [c.path, c.body]);
+  // Satıra tıklamak kartı açar (seçim kutusu ayrı).
+  root.querySelectorAll('.st-item')[2].click();
+  out.opened = opened;
+  cleanup();
+  return out;
+}
+"""
+
+
+def test_listede_coklu_secim_ve_alan_ile_toplu_duzenleme() -> None:
+    try:
+        data = run(LIST, panels=("bbd_students",), routes=LIST_ROUTES)
+    except NodeMissing:
+        pytest.skip("node kurulu değil")
+    assert data["errors"] == [], data["errors"]
+    r = data["result"]
+    assert r["hiddenAtStart"] is True and r["visible"] is True
+    assert r["count"] == "2 öğrenci seçili"
+    assert r["violations"] == []
+    assert r["classPost"] == [[f"{BASE}/students/class", {"students": ["STU-1", "STU-2"], "className": "11-A"}]]
+    assert r["status"] == "2 öğrenci güncellendi."
+    assert r["clearedAfter"] is True
+    assert r["allCount"] == "3 öğrenci seçili"
+    assert r["examPost"][0][0] == f"{BASE}/students/curriculum"
+    assert sorted(r["examPost"][0][1]["students"]) == ["STU-1", "STU-2", "STU-3"]
+    assert r["examPost"][0][1]["examTarget"] == "YKS"
+    assert len(r["opened"]) == 1

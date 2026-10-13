@@ -179,8 +179,15 @@ function createManager(root, options) {
   nodes.status = h('p', 'st-status', 'Bağlanıyor…');
   view.append(nodes.status);
 
+  // TOPLU DÜZENLEME LİSTEDE (0.5.3): satırları işaretle → alan seç → değer →
+  // Uygula. Ayrı "Toplu işlemler" sekmesine gitmeden çoklu seçim + alan.
+  const chosen = new Set();
+  nodes.bulkBar = buildListBulkBar();
+  view.append(nodes.bulkBar.node);
+
   const split = h('div', `st-split${embedded ? ' st-split-full' : ''}`);
   nodes.list = h('nav', 'st-list');
+  nodes.list.setAttribute('aria-label', 'Öğrenciler');
   split.append(nodes.list);
   nodes.detail = h('section', 'st-detail');
   if (!embedded) split.append(nodes.detail);
@@ -209,6 +216,7 @@ function createManager(root, options) {
   let mode = 'list';
   function setMode(next) {
     mode = next;
+    nodes.bulkBar?.paint();
     split.hidden = mode !== 'list';
     nodes.bar.hidden = mode !== 'list';
     nodes.status.hidden = mode === 'groups';
@@ -342,11 +350,44 @@ function createManager(root, options) {
       return;
     }
 
+    // Tümünü seç (görünenler) — çoklu seçimin tek tık kısayolu.
+    if (can('bbd_students.manage')) {
+      const allBox = h('label', 'st-select-all');
+      const all = h('input', 'st-check');
+      all.type = 'checkbox';
+      const ids = shown.map((student) => student.kantinId);
+      all.checked = ids.length > 0 && ids.every((id) => chosen.has(id));
+      all.indeterminate = !all.checked && ids.some((id) => chosen.has(id));
+      all.addEventListener('change', () => {
+        for (const id of ids) {
+          if (all.checked) chosen.add(id);
+          else chosen.delete(id);
+        }
+        renderList();
+      });
+      allBox.append(all, h('span', null, `Görünen ${ids.length} öğrenciyi seç`));
+      nodes.list.append(allBox);
+    }
+    nodes.bulkBar.paint();
+
     let lastClass = null;
     for (const student of shown) {
       if (student.className !== lastClass) {
         lastClass = student.className;
         nodes.list.append(h('p', 'st-list-group', student.className || 'Sınıf girilmemiş'));
+      }
+      const line = h('div', 'st-row');
+      if (can('bbd_students.manage')) {
+        const check = h('input', 'st-check st-row-check');
+        check.type = 'checkbox';
+        check.checked = chosen.has(student.kantinId);
+        check.setAttribute('aria-label', `${student.displayName || 'Adsız'} seç`);
+        check.addEventListener('change', () => {
+          if (check.checked) chosen.add(student.kantinId);
+          else chosen.delete(student.kantinId);
+          nodes.bulkBar.paint();
+        });
+        line.append(check);
       }
       const item = h('button', 'st-item');
       item.type = 'button';
@@ -382,8 +423,125 @@ function createManager(root, options) {
         item.append(badge);
       }
       item.addEventListener('click', () => select(student));
-      nodes.list.append(item);
+      line.append(item);
+      nodes.list.append(line);
     }
+  }
+
+  /**
+   * Listenin üstündeki toplu düzenleme şeridi: N seçili · Alan · Değer · Uygula.
+   * Alanlar mevcut toplu uçlara gider (öğrenci başına olay, kantin/Akademi
+   * senkronu aynı): ana sınıf, seviye, alan, hedef sınav, gruba ekle, pasifleştir.
+   */
+  function buildListBulkBar() {
+    const node = h('section', 'st-listbulk');
+    node.setAttribute('aria-label', 'Seçilen öğrencilere toplu düzenleme');
+    node.hidden = true;
+    const count = h('b', 'st-listbulk-count');
+    const fieldSelect = h('select', 'st-input st-select');
+    fieldSelect.setAttribute('aria-label', 'Değiştirilecek alan');
+    for (const [value, label] of [['className', 'Ana sınıf'], ['gradeLevel', 'Seviye'], ['track', 'Alan'],
+      ['examTarget', 'Hedef sınav'], ['group', 'Gruba ekle'], ['deactivate', 'Pasifleştir']]) {
+      fieldSelect.append(new Option(label, value));
+    }
+    const valueSlot = h('span', 'st-listbulk-value');
+    const status = h('span', 'st-listbulk-status');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    let control = null;
+    let groupsCache = null;
+
+    async function paintValue() {
+      const field = fieldSelect.value;
+      valueSlot.replaceChildren();
+      control = null;
+      if (field === 'deactivate') return;
+      if (field === 'className') {
+        control = h('input', 'st-input');
+        control.placeholder = '9-A';
+        control.maxLength = 20;
+        control.setAttribute('list', 'st-listbulk-classes');
+        const datalist = h('datalist');
+        datalist.id = 'st-listbulk-classes';
+        datalist.append(...classes().map((name) => new Option(name, name)));
+        valueSlot.append(control, datalist);
+      } else if (field === 'group') {
+        control = h('select', 'st-input st-select');
+        control.append(new Option('Grup seçin', ''));
+        valueSlot.append(control);
+        try {
+          groupsCache = groupsCache || (await api(`${BASE}/groups?archived=live`)).groups || [];
+          control.append(...groupsCache.map((group) => new Option(group.name, group.id)));
+        } catch (failure) {
+          status.textContent = `Gruplar okunamadı: ${failure.message}`;
+        }
+      } else {
+        control = h('select', 'st-input st-select');
+        const choices = { gradeLevel: GRADE_CHOICES, track: TRACK_CHOICES, examTarget: EXAM_CHOICES }[field];
+        for (const [value, label] of choices) control.append(new Option(label, value));
+        valueSlot.append(control);
+      }
+      control.setAttribute('aria-label', `Yeni ${fieldSelect.selectedOptions[0]?.textContent || 'değer'}`);
+      control.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); apply(); } });
+    }
+    fieldSelect.addEventListener('change', () => paintValue());
+
+    async function apply() {
+      const ids = [...chosen];
+      if (!ids.length) return;
+      const field = fieldSelect.value;
+      go.disabled = true;
+      status.textContent = 'Uygulanıyor…';
+      try {
+        let done = ids.length;
+        let failed = 0;
+        if (field === 'className') {
+          const result = await api(`${BASE}/students/class`, { method: 'POST',
+            body: { students: ids, className: normalizeClass(control.value) } });
+          done = result.updated?.length ?? ids.length;
+          failed = result.failed?.length || 0;
+        } else if (field === 'group') {
+          if (!control.value) { status.textContent = 'Grup seçin.'; return; }
+          const result = await api(`${BASE}/groups/${encodeURIComponent(control.value)}/members`,
+            { method: 'POST', body: { studentIds: ids } });
+          failed = result?.skipped?.length || 0;
+          done = ids.length - failed;
+        } else if (field === 'deactivate') {
+          const answer = await askDeactivate(view, { students: students.filter((row) => chosen.has(row.kantinId)) });
+          if (!answer) { status.textContent = ''; return; }
+          const result = await api(`${BASE}/students/deactivate`, { method: 'POST', body: { students: ids, ...answer } });
+          done = (result.deactivated?.length || 0) + (result.scheduled?.length || 0);
+          failed = result.failed?.length || 0;
+        } else {
+          const value = field === 'gradeLevel' ? parseGrade(control.value) : parseChoice(control.value);
+          const result = await api(`${BASE}/students/curriculum`, { method: 'POST',
+            body: { students: ids, [field]: value } });
+          done = result.updated?.length ?? ids.length;
+          failed = result.failed?.length || 0;
+        }
+        status.textContent = `${done} öğrenci güncellendi${failed ? `, ${failed} atlandı` : ''}.`;
+        chosen.clear();
+        await refresh();
+      } catch (failure) {
+        status.textContent = `Uygulanamadı: ${failure.message}`;
+      } finally {
+        go.disabled = false;
+      }
+    }
+    const go = button('Uygula', { variant: 'primary', onClick: () => apply() });
+    const clear = button('Seçimi temizle', { onClick: () => { chosen.clear(); renderList(); } });
+    node.append(count, h('span', 'st-label', 'Alan'), fieldSelect, valueSlot, go, clear, status);
+    paintValue();
+    return {
+      node,
+      paint() {
+        // Silinen / artık listede olmayan seçimler düşer.
+        const known = new Set(students.map((row) => row.kantinId));
+        for (const id of [...chosen]) if (!known.has(id)) chosen.delete(id);
+        node.hidden = chosen.size === 0 || mode !== 'list';
+        count.textContent = `${chosen.size} öğrenci seçili`;
+      },
+    };
   }
 
   async function select(student) {

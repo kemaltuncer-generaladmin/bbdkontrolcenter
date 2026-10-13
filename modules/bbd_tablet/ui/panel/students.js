@@ -292,6 +292,10 @@ export function studentsView(app) {
           `${session.device_name || 'Tablet'} · giriş ${clockOf(session.login_at)}`)
         : h('span', 'tb-sub', 'Şu an tablette değil'));
     const actions = h('div', 'tb-actions');
+    // Öğrenci kaydı (ad, sınıf, veli, kantin) tek kartta düzenlenir (0.5.3).
+    if (app.openStudentCard) {
+      actions.append(button('Öğrenci kartı', { variant: 'ghost', onClick: () => app.openStudentCard(st.id) }));
+    }
     if (session) {
       actions.append(
         permButton(app, 'Oturumu kapat', 'manage', {

@@ -843,6 +843,13 @@ async function openDetail(ref) {
       ? '—' : `${request.ageDays} gün`),
   );
   body.append(head);
+  // Veli telefonu ya da öğrenci bilgisi yanlışsa: öğrencinin TEK KARTI (0.5.3 —
+  // öğrenci kaydı tek yerde düzenlenir; burada kopya düzenleyici yok).
+  const openCard = typeof capability === 'function' ? capability('bbd_students.open') : null;
+  const studentId = student.id || student.kantinId || request.studentId;
+  if (typeof openCard === 'function' && studentId) {
+    actions.prepend(button('Öğrenci kartını aç', { onClick: () => { close(); openCard(studentId); } }));
+  }
 
   // --- borç kayması --------------------------------------------------
   // Talep tutarı DONMUŞTUR; borç akmaya devam eder. Aradaki fark, "veliye
