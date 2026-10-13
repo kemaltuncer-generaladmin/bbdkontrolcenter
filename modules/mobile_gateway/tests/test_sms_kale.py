@@ -145,3 +145,21 @@ async def test_health_summarises_last_hour_and_balance(client: httpx.AsyncClient
 
     world.canteen.down = True
     assert (await client.get("/sms/health")).json()["balance"] == {"ok": False, "smsCount": None}
+
+
+async def test_otp_text_carries_app_hash_and_fits_sms_retriever(client: httpx.AsyncClient,
+                                                                world: World) -> None:
+    await send(client)
+    message = world.canteen.calls[-1][1]["message"]
+    # Android SMS Retriever: 11 karakterlik karma metinde, ≤ 140 bayt; OTP hattı: ASCII, tek boy.
+    assert message.endswith(" 4uZ+1CsiIp1")
+    assert message.isascii() and len(message.encode()) <= 140
+
+
+def test_app_hashes_are_validated(service: Any) -> None:
+    from modules.mobile_gateway.backend.service import GatewayService
+
+    cfg = {"otp_app_hashes": ["4uZ+1CsiIp1", "kötü", "AbCdEfGhIjK", "ZZZZZZZZZZZ"]}
+    built = GatewayService(store=service.repo._store, caps=service.caps, config=cfg, log=service._log)
+    assert built.otp_app_hashes == ["4uZ+1CsiIp1", "AbCdEfGhIjK"]
+

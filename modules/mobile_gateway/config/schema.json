@@ -6,6 +6,7 @@
     "institution_name": {"type": "string", "minLength": 1, "maxLength": 120},
     "timezone": {"type": "string", "minLength": 1},
     "otp_template": {"type": "string", "minLength": 8, "maxLength": 300, "pattern": "\\{code\\}"},
+    "otp_app_hashes": {"type": "array", "maxItems": 2, "items": {"type": "string", "pattern": "^[A-Za-z0-9+/]{11}$"}},
     "call_templates": {
       "type": "object",
       "additionalProperties": false,

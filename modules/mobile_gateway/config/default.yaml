@@ -12,6 +12,10 @@ timezone: Europe/Istanbul
 # sms-kale: ASCII ve tek boy — Netgsm OTP SMS hattı (öncelikli, 7/24) Türkçe karakter
 # kabul etmez; Türkçe harf yazılsa da gönderimde ASCII'ye indirilir.
 otp_template: "BBD Akademi giris kodunuz: {code}. Kodu kimseyle paylasmayin."
+# Android SMS otomatik doldurma (SMS Retriever) — uygulamanın 11 karakterlik karması metne (boşlukla, sona)
+# eklenir; en çok 2 (ör. elle kurulan APK'nın upload anahtarı + Play App Signing). Sır değildir.
+# bbd-akademi mobile/docs/native-setup.md §3.8. Play karması ilk AAB'den sonra eklenecek.
+otp_app_hashes: ["4uZ+1CsiIp1"]
 
 # POST /announcements/call — `page` şablonu. Yer tutucular: {ad} {soyad} {sinif}
 call_templates:

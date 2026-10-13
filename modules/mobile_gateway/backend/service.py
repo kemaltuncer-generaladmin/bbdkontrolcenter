@@ -64,6 +64,7 @@ DEFAULT_OTP_TEMPLATE = "BBD Akademi giris kodunuz: {code}. Kodu kimseyle paylasm
 #: aralıkla kantine sorar (kantin de ayrıca önbellekler).
 SMS_REPORT_EVERY_MS = 55_000
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+_APP_HASH_RE = re.compile(r"^[A-Za-z0-9+/]{11}$")
 _ASCII_FOLD = str.maketrans("çÇğĞıİöÖşŞüÜâÂîÎûÛ", "cCgGiIoOsSuUaAiIuU")
 
 
@@ -372,6 +373,10 @@ class GatewayService:
         self.zone = ZoneInfo(self.timezone)
 
         self.otp_template = ascii_sms(str(config.get("otp_template") or DEFAULT_OTP_TEMPLATE))
+        # Android SMS Retriever (otomatik doldurma): metin 11 karakterlik uygulama karmasını İÇERMELİ
+        # (konumu serbest; Google). Satır sonu yerine boşlukla eklenir — Netgsm OTP hattı tek boy ASCII.
+        self.otp_app_hashes = [h for h in (config.get("otp_app_hashes") or [])
+                               if isinstance(h, str) and _APP_HASH_RE.match(h)][:2]
         if "{code}" not in self.otp_template:
             raise ValueError("mobile_gateway.otp_template `{code}` yer tutucusunu içermeli.")
         templates = config.get("call_templates") or {}
@@ -1940,6 +1945,8 @@ class GatewayService:
         await self.repo.hit("sms_phone_day", subject, now)
 
         text = self.otp_template.replace("{code}", code)
+        if self.otp_app_hashes:
+            text = f"{text} {' '.join(self.otp_app_hashes)}"
         try:
             result = await self.caps.send_sms(normalized, text, purpose="otp")
         except CapabilityMissing as missing:
