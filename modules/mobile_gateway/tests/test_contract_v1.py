@@ -94,6 +94,8 @@ CONTRACT_ROUTES = {
     ("GET", "/sms/otp/{job_id}"),
     ("GET", "/sms/health"),
     ("POST", "/sms/limits/reset"),
+    # Duyuru SMS'i (bbd-akademi README §14 madde 81).
+    ("POST", "/sms/send"),
     ("GET", "/settings/public"),
 }
 

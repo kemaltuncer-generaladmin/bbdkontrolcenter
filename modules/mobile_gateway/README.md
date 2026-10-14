@@ -78,6 +78,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /sms/otp/{jobId}` | 200 `{jobId, status: pending\|delivered\|failed, channel, sentAt, deliveredAt, deliverySeconds, checkedAt}` | 404 `sms_not_found`, 422 |
 | `GET /sms/health` | 200 son 1 saat `{sent, delivered, deliveryFailed, pending, sendFailed, rateLimited, avgDeliverySeconds, maxDeliverySeconds, balance: {ok, smsCount}}` | — |
 | `POST /sms/limits/reset` | 200 `{reset, clearedHour, clearedDay}` (denetimli) | 422 |
+| `POST /sms/send` | 200 `{sent: true, segments, jobId?, channel?}` — duyuru SMS'i (`purpose: "announcement"`) | 403 `sms_disabled`, 422, 429 `rate_limited` / `sms_phone_limit` / `sms_budget_exceeded`, 502 `sms_failed`, 503 |
 | `GET /events?after=&limit=` | 200 `{items: [KmEvent], lastSeq, hasMore}` — KM outbox'undan çekme (webhook'un yedeği; zarf webhook ile aynı), `limit` 1–500 | 410 `events_expired` (`after` 14 günlük saklamadan eski → tam uzlaştırma), 422, 503 `capability_missing` (`events.outbox`) |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
 
@@ -163,6 +164,14 @@ yan yana gösterir. İzinler: `mobile_gateway.events.view` (admin, bbd_staff),
   (göç 003). `GET /sms/otp/{jobId}` kantinin Netgsm raporunu jobId başına en çok 55 sn'de bir sorar
   ve kesin sonucu saklar; `POST /sms/limits/reset` telefon sayaçlarını sıfırlar (Akademi
   `admin_resetSmsLimits`).
+- `/sms/send` (bbd-akademi README §14 madde 81, duyuruda "SMS olarak da gönder"): veli telefonuna
+  serbest metin, kantinin Netgsm hesabıyla **olağan hat** (`purpose` kantine gitmez). Metin ASCII'ye
+  indirilir (Türkçe harf parçayı 160'tan 70'e düşürür), en çok 459 birim (3 SMS). KM'nin duyuru SMS
+  bütçesi `announcement_sms`: son 24 saatte toplam `daily_budget` (2000) SMS parçası → 429
+  `sms_budget_exceeded`; telefon başına günde `per_phone_per_day` (5) → 429 `sms_phone_limit`; dakikada
+  `per_minute` (120) → 429 `rate_limited` (Akademi kuyruğu bekleyip yeniden dener); `enabled: false` →
+  403 `sms_disabled`. `Idempotency-Key` (Akademi: alıcı satırı) aynı SMS'in ikinci kez gitmesini önler.
+  Kayıt `sms_log`'a `purpose=announcement` (maskeli, metin yazılmaz); `/sms/health` OTP özeti bunları saymaz.
 - Öğrenci çağırma: aynı öğrenci 60 sn içinde ikinci kez çağrılamaz (429).
 - Akışlarda `nextSince` kantinin imlecidir (epoch-ms gelir, ISO +03:00'a
   çevrilir; vermezse satırlardan hesaplanır). Kantinin `updatedSince` sınırı

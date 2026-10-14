@@ -153,6 +153,14 @@ class OtpBody(BaseModel):
     purpose: Literal["login"]
 
 
+class TextSmsBody(BaseModel):
+    """Duyuru SMS'i (bbd-akademi README §14 madde 81). Metin KM'de ASCII'ye indirilir."""
+
+    phone: str = Field(pattern=PHONE)
+    text: str = Field(min_length=1, max_length=1000)
+    purpose: Literal["announcement"]
+
+
 class SmsLimitResetBody(ReasonBody):
     phone: str = Field(pattern=PHONE)
 
@@ -503,6 +511,16 @@ async def sms_otp(body: OtpBody, request: Request,
     caller = caller_of(request, user)
     return await idempotent(request, body, 200, lambda: current_service().send_otp(
         body.phone, body.code, body.purpose, caller,
+    ))
+
+
+@router.post("/sms/send")
+async def sms_send(body: TextSmsBody, request: Request,
+                   user: CurrentUser = requires(ACCESS)) -> Response:
+    """Duyuru SMS'i: veli telefonuna serbest metin, olağan hat; KM'nin duyuru SMS bütçesi uygulanır."""
+    caller = caller_of(request, user)
+    return await idempotent(request, body, 200, lambda: current_service().send_text(
+        body.phone, body.text, body.purpose, caller,
     ))
 
 

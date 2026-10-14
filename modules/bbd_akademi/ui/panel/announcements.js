@@ -4,8 +4,12 @@
 // grubu / öğrenci) → şimdi ya da zamanlı yayımla → okunma oranı. Taslak
 // düzenlenebilir; yayımlanmış duyuru da düzeltilebilir (Akademi kuralı).
 // Metin Markdown'dır ve olduğu gibi gönderilir; panel HTML üretmez.
+//
+// "SMS olarak da gönder" (bbd-akademi README §14 madde 81): yalnız velilere, varsayılan
+// kapalı; karakter sayacı, "yalnız uygulamayı kullanmayan velilere", alıcı ve SMS adedi
+// önizlemesi (`admin_previewAnnouncementSms`). Metin SMS'te ASCII'ye indirilir.
 
-import { h, loadStyles, percent } from '../../ui-kit/kit.js';
+import { button, h, loadStyles, percent } from '../../ui-kit/kit.js';
 import { badge, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
@@ -17,6 +21,50 @@ const STATUS = { draft: ['Taslak', 'dim'], scheduled: ['Zamanlandı', 'info'],
 const RECIPIENTS = { all: 'Veliler ve öğrenciler', guardians: 'Yalnız veliler', students: 'Yalnız öğrenciler' };
 const SCOPES = { tenant: 'Bütün kurum', class_groups: 'Sınıflar', student_groups: 'Çalışma grupları',
   students: 'Seçili öğrenciler' };
+
+// ------------------------------------------------------------------ SMS (README §14 madde 81)
+// Akademi `announcements/sms.py` ile aynı kural: Türkçe harf → Latin, ASCII dışı atılır, boşluk
+// tekleşir; GSM-7 birimi (genişletme karakterleri 2), tek SMS 160, çok parçalı 153; en çok 459.
+export const SMS_MAX = 459;
+const SMS_FOLD = { 'ç': 'c', 'Ç': 'C', 'ğ': 'g', 'Ğ': 'G', 'ı': 'i', 'İ': 'I', 'ö': 'o', 'Ö': 'O', 'ş': 's',
+  'Ş': 'S', 'ü': 'u', 'Ü': 'U', 'â': 'a', 'Â': 'A', 'î': 'i', 'Î': 'I', 'û': 'u', 'Û': 'U', '‘': "'", '’': "'",
+  '`': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...', '•': '-', '€': 'EUR', '₺': 'TL' };
+const SMS_EXT = new Set(['^', '{', '}', '\\', '[', '~', ']', '|']);
+
+export function smsFold(text) {
+  const mapped = [...String(text || '')].map((ch) => SMS_FOLD[ch] ?? ch).join('');
+  const kept = [...mapped].filter((ch) => /\s/.test(ch) || (ch >= ' ' && ch <= '~')).join('');
+  return kept.split(/\s+/).filter(Boolean).join(' ');
+}
+
+export function smsUnits(folded) {
+  let units = 0;
+  for (const ch of folded) units += SMS_EXT.has(ch) ? 2 : 1;
+  return units;
+}
+
+export function smsSegments(folded) {
+  const units = smsUnits(folded);
+  if (!units) return 0;
+  return units <= 160 ? 1 : Math.ceil(units / 153);
+}
+
+/** Duyurudan SMS metni: "Başlık: düz metin" (Markdown işaretleri atılır), en çok 459 birim. */
+export function smsFromAnnouncement(title, bodyMarkdown) {
+  const plain = String(bodyMarkdown || '').replace(/[*_`#>\[\]()~|]+/g, ' ');
+  let text = smsFold(`${String(title || '').trim()}: ${plain}`);
+  while (smsUnits(text) > SMS_MAX) text = text.slice(0, -1);
+  return text.trim();
+}
+
+function smsDeliveryText(delivery) {
+  if (!delivery) return '—';
+  const parts = [`${num(delivery.sent)} gönderildi`];
+  if (delivery.queued) parts.push(`${num(delivery.queued)} bekliyor`);
+  if (delivery.failed) parts.push(`${num(delivery.failed)} başarısız`);
+  if (delivery.skipped) parts.push(`${num(delivery.skipped)} atlandı`);
+  return `${parts.join(' · ')} (${num(delivery.recipients)} veli)`;
+}
 
 export function section(app) {
   loadStyles(import.meta.url, 'announcements.css');
@@ -45,6 +93,7 @@ export function section(app) {
       } },
       { key: 'status', label: 'Durum', cell: (row) => statusBadge(STATUS, row.status) },
       { key: 'when', label: 'Yayın', width: '140px', cell: (row) => fmtDateTime(row.publishedAt || row.scheduledAt) },
+      { key: 'sms', label: 'SMS', width: '70px', cell: (row) => (row.sms?.enabled ? badge('SMS', 'info') : '') },
       { key: 'read', label: 'Okunma', align: 'num', cell: (row) => (row.readRatePercent === null
         || row.readRatePercent === undefined ? '—' : percent(row.readRatePercent, 0)) },
       { key: 'by', label: 'Yazan', cell: (row) => row.createdBy || '—' },
@@ -90,7 +139,106 @@ async function edit(app, current, onDone) {
     recipients: current.audience?.recipients || 'all', scope: current.audience?.scope || 'tenant',
     classGroupIds: current.audience?.classGroupIds || [], studentGroupIds: current.audience?.studentGroupIds || [],
     expiresDay: current.expiresAt ? current.expiresAt.slice(0, 10) : '',
-  } : { recipients: 'all', scope: 'tenant', pinned: false, classGroupIds: [], studentGroupIds: [] };
+    sms: { enabled: Boolean(current.sms?.enabled), text: current.sms?.text || '',
+      nonAppOnly: Boolean(current.sms?.nonAppOnly) },
+  } : { recipients: 'all', scope: 'tenant', pinned: false, classGroupIds: [], studentGroupIds: [],
+    sms: { enabled: false, text: '', nonAppOnly: false } };
+
+  const audienceOf = (draft) => ({
+    recipients: draft.recipients || 'all',
+    scope: draft.scope || 'tenant',
+    classGroupIds: draft.scope === 'class_groups' ? draft.classGroupIds || [] : [],
+    studentGroupIds: draft.scope === 'student_groups' ? draft.studentGroupIds || [] : [],
+    studentIds: draft.scope === 'students' ? [...chosenStudents.keys()] : [],
+  });
+
+  // "SMS olarak da gönder": anahtar, metin + sayaç, yalnız uygulamasızlar, önizleme.
+  const smsPanel = (draft, set) => {
+    const sms = { ...(draft.sms || { enabled: false, text: '', nonAppOnly: false }) };
+    const push = () => { draft.sms = { ...sms }; set(draft.sms); };
+    const wrap = h('div', 'ak-stack ak-ann-sms');
+    const toggle = h('label', 'ak-inline');
+    const box = h('input');
+    box.type = 'checkbox';
+    box.checked = sms.enabled;
+    toggle.append(box, h('span', '', 'SMS olarak da gönder'));
+    const hint = h('span', 'ak-muted', 'Yalnız velilere gider; SMS ücretlidir.');
+    const body = h('div', 'ak-stack');
+    const area = h('textarea', 'kit-input ak-ann-sms-text');
+    area.rows = 3;
+    area.maxLength = 1000;
+    area.setAttribute('aria-label', 'SMS metni');
+    area.value = sms.text;
+    const counter = h('span', 'ak-ann-sms-count');
+    const fill = button('Duyurudan doldur', { variant: 'ghost' });
+    const note = h('span', 'ak-muted', 'Türkçe harfler SMS\'te Latin harfe çevrilir (ş → s, ı → i).');
+    const onlyLabel = h('label', 'ak-inline');
+    const only = h('input');
+    only.type = 'checkbox';
+    only.checked = sms.nonAppOnly;
+    onlyLabel.append(only, h('span', '', 'Yalnız uygulamayı kullanmayan velilere'));
+    const preview = h('div', 'ak-ann-sms-preview');
+    const refresh = actionButton(app, 'admin_previewAnnouncementSms', 'Alıcıları yenile', { variant: 'ghost',
+      onClick: () => load() });
+    const counterRow = h('div', 'ak-inline');
+    counterRow.append(counter, fill);
+    body.append(h('span', 'kit-field-label', 'SMS metni'), area, counterRow, note, onlyLabel, preview, refresh);
+    wrap.append(toggle, hint, body);
+
+    let timer = null;
+    let seq = 0;
+    const paintCounter = () => {
+      const folded = smsFold(area.value);
+      const units = smsUnits(folded);
+      counter.textContent = `${num(units)}/${num(SMS_MAX)} karakter · ${num(smsSegments(folded))} SMS`;
+      counter.classList.toggle('over', units > SMS_MAX);
+    };
+    const load = async () => {
+      if (!sms.enabled) return;
+      if ((draft.recipients || 'all') === 'students') {
+        preview.replaceChildren(h('span', 'ak-muted', 'SMS yalnız velilere gider; alıcılara veliler dahil olmalı.'));
+        return;
+      }
+      const mine = ++seq;
+      preview.replaceChildren(h('span', 'ak-muted', 'Alıcılar hesaplanıyor…'));
+      try {
+        const out = await app.api.post('/v1/admin/announcements/sms-preview',
+          { audience: audienceOf(draft), text: area.value, nonAppOnly: sms.nonAppOnly });
+        if (mine !== seq) return;
+        const lines = [
+          h('strong', '', `${num(out.recipients)} veliye SMS gidecek · toplam ${num(out.totalSegments)} SMS`),
+          h('span', 'ak-muted', `Hedefteki veli: ${num(out.guardians)} · uygulamayı kullanan: ${num(out.appUsers)}`),
+        ];
+        if (out.smsRemaining !== null && out.smsRemaining !== undefined) {
+          lines.push(h('span', 'ak-muted', `Netgsm paketinde kalan: ${num(out.smsRemaining)} SMS`));
+        }
+        if (out.deferredUntil) {
+          const at = new Date(out.deferredUntil).toLocaleTimeString('tr-TR',
+            { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' });
+          lines.push(h('span', 'ak-muted', `Sessiz saat: SMS'ler ${at}'de gönderilir.`));
+        }
+        preview.replaceChildren(...lines);
+      } catch {
+        if (mine === seq) preview.replaceChildren(h('span', 'ak-muted', 'Alıcı sayısı alınamadı.'));
+      }
+    };
+    const later = () => { clearTimeout(timer); timer = setTimeout(load, 400); };
+    const paint = () => { body.hidden = !sms.enabled; paintCounter(); };
+    box.addEventListener('change', () => { sms.enabled = box.checked; push(); paint(); load(); });
+    area.addEventListener('input', () => { sms.text = area.value; push(); paintCounter(); later(); });
+    only.addEventListener('change', () => { sms.nonAppOnly = only.checked; push(); load(); });
+    fill.addEventListener('click', () => {
+      area.value = smsFromAnnouncement(draft.title, draft.bodyMarkdown);
+      sms.text = area.value;
+      push();
+      paintCounter();
+      later();
+    });
+    push();
+    paint();
+    load();
+    return { node: wrap, update: () => later() };
+  };
 
   // Hedef seçici: "Kapsam" değişince (formDialog `update`) yeniden çizilir.
   const targetPicker = (draft, set) => {
@@ -161,21 +309,26 @@ async function edit(app, current, onDone) {
         } },
       { key: 'pinned', label: 'Sabitle (listenin üstünde dursun)', type: 'checkbox' },
       { key: 'expiresDay', label: 'Bitiş günü (isteğe bağlı)', type: 'date' },
+      { key: 'sms', label: 'SMS', type: 'custom', render: smsPanel, wide: true,
+        validate: (raw, draft) => {
+          if (!raw?.enabled) return null;
+          if ((draft.recipients || 'all') === 'students') return 'SMS yalnız velilere gider; alıcılara veliler dahil olmalı.';
+          const folded = smsFold(raw.text);
+          if (!folded) return 'SMS metni boş olamaz.';
+          if (smsUnits(folded) > SMS_MAX) return `SMS metni en çok ${SMS_MAX} karakter (3 SMS) olabilir.`;
+          return null;
+        } },
     ],
     submitLabel: current ? 'Kaydet' : 'Taslak olarak kaydet',
     onSubmit: (draft, { key }) => {
       const body = {
         title: String(draft.title || '').trim(),
         bodyMarkdown: String(draft.bodyMarkdown || ''),
-        audience: {
-          recipients: draft.recipients || 'all',
-          scope: draft.scope || 'tenant',
-          classGroupIds: draft.scope === 'class_groups' ? draft.classGroupIds || [] : [],
-          studentGroupIds: draft.scope === 'student_groups' ? draft.studentGroupIds || [] : [],
-          studentIds: draft.scope === 'students' ? [...chosenStudents.keys()] : [],
-        },
+        audience: audienceOf(draft),
         pinned: Boolean(draft.pinned),
         expiresAt: draft.expiresDay ? `${draft.expiresDay}T23:59:00+03:00` : null,
+        sms: { enabled: Boolean(draft.sms?.enabled), text: draft.sms?.text || null,
+          nonAppOnly: Boolean(draft.sms?.nonAppOnly) },
       };
       return current ? app.api.put(`/v1/admin/announcements/${current.id}`, body)
         : app.api.post('/v1/admin/announcements', body, { key });
@@ -221,6 +374,15 @@ function detail(app, id, { onChange } = {}) {
     ])));
     const body = h('pre', 'ak-ann-body', item.bodyMarkdown || '');
     nodes.push(card('Metin', body));
+    if (item.sms?.enabled) {
+      const delivery = stats?.sms || item.sms.delivery;
+      nodes.push(card('SMS', kv([
+        ['Metin', h('pre', 'ak-ann-body', smsFold(item.sms.text))],
+        ['Alıcı', item.sms.nonAppOnly ? 'Yalnız uygulamayı kullanmayan veliler' : 'Hedefteki bütün veliler'],
+        ['Veli başına', `${num(item.sms.segmentsPerMessage)} SMS`],
+        ['Gönderim', delivery ? smsDeliveryText(delivery) : 'Yayımlanınca gönderilir.'],
+      ])));
+    }
     if (stats) {
       nodes.push(card('Okunma', kpiRow([
         { label: 'Alıcı', value: num(stats.recipients) },
@@ -240,7 +402,8 @@ function detail(app, id, { onChange } = {}) {
   async function publish(item) {
     const result = await formDialog(app, {
       title: `“${item.title}” yayımlansın`,
-      description: 'Boş bırakırsanız hemen yayımlanır. Bildirim seçiliyse alıcılara uygulama bildirimi gider.',
+      description: 'Boş bırakırsanız hemen yayımlanır. Bildirim seçiliyse alıcılara uygulama bildirimi gider.'
+        + (item.sms?.enabled ? ' SMS de gönderilecek (yalnız velilere; sessiz saatte sabahı bekler).' : ''),
       value: { notify: true, day: '', clock: '09:00' },
       fields: [
         { key: 'day', label: 'Zamanlı yayın günü (isteğe bağlı)', type: 'date' },

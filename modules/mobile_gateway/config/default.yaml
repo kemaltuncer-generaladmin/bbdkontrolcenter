@@ -35,6 +35,16 @@ limits:
   sms_global_per_minute: 60
   call_cooldown_seconds: 60
 
+# Duyuru SMS'i (POST /sms/send) — Akademi duyurusunda "SMS olarak da gönder" (bbd-akademi README §14
+# madde 81). Kantinin Netgsm hesabından olağan hatla velilere gider; metin ASCII, en çok 3 SMS.
+# KM'nin SMS bütçesi: son 24 saatte toplam `daily_budget` SMS (parça), telefon başına günde
+# `per_phone_per_day`, dakikada `per_minute`. `enabled: false` → 403 sms_disabled.
+announcement_sms:
+  enabled: true
+  daily_budget: 2000
+  per_phone_per_day: 5
+  per_minute: 120
+
 idempotency_hours: 24
 products_cache_seconds: 300
 # Seyrek değişen veri için sunucu önbelleği (saniye). Zil haftası, Zil

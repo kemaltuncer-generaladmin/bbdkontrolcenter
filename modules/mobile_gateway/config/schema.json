@@ -27,6 +27,16 @@
         "call_cooldown_seconds": {"type": "integer", "minimum": 0, "maximum": 3600}
       }
     },
+    "announcement_sms": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "daily_budget": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "per_phone_per_day": {"type": "integer", "minimum": 1, "maximum": 50},
+        "per_minute": {"type": "integer", "minimum": 1, "maximum": 600}
+      }
+    },
     "idempotency_hours": {"type": "integer", "minimum": 24, "maximum": 168},
     "products_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},
     "bell_week_cache_seconds": {"type": "integer", "minimum": 0, "maximum": 3600},

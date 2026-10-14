@@ -72,6 +72,23 @@ def ascii_sms(text: str) -> str:
     """Türkçe harfleri ASCII karşılığına indirir, kalan ASCII dışını atar."""
     folded = text.translate(_ASCII_FOLD)
     return " ".join("".join(ch for ch in folded if ch.isspace() or 32 <= ord(ch) < 127).split())
+
+
+#: Duyuru SMS'i (POST /sms/send): en çok 3 SMS (GSM-7 çok parçalı 3 × 153 birim).
+TEXT_SMS_MAX_UNITS = 459
+_GSM7_EXTENDED = frozenset("^{}\\[~]|")
+
+
+def sms_units(text: str) -> int:
+    """GSM-7 birimi: genişletme karakterleri (``^ { } [ ] ~ | \\``) iki birim."""
+    return sum(2 if ch in _GSM7_EXTENDED else 1 for ch in text)
+
+
+def sms_segments(text: str) -> int:
+    units = sms_units(text)
+    if units == 0:
+        return 0
+    return 1 if units <= 160 else math.ceil(units / 153)
 DEFAULT_PAGE_TEMPLATE = "{ad} {soyad}, lütfen danışmaya gel."
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 CALL_PLACEHOLDERS = {"ad", "soyad", "sinif"}
@@ -389,6 +406,12 @@ class GatewayService:
         self.sms_per_phone_per_hour = int(limits.get("sms_per_phone_per_hour", 5))
         self.sms_per_phone_per_day = int(limits.get("sms_per_phone_per_day", 10))
         self.sms_global_per_minute = int(limits.get("sms_global_per_minute", 60))
+        # Duyuru SMS'i (POST /sms/send; bbd-akademi README §14 madde 81): KM'nin SMS bütçesi.
+        text_sms = config.get("announcement_sms") or {}
+        self.text_sms_enabled = bool(text_sms.get("enabled", True))
+        self.text_sms_daily_budget = int(text_sms.get("daily_budget", 2000))
+        self.text_sms_per_phone_per_day = int(text_sms.get("per_phone_per_day", 5))
+        self.text_sms_per_minute = int(text_sms.get("per_minute", 120))
         self.call_cooldown_ms = int(limits.get("call_cooldown_seconds", 60)) * 1000
 
         self.idempotency_ms = int(config.get("idempotency_hours", 24)) * HOUR_MS
@@ -2067,6 +2090,86 @@ class GatewayService:
         channel = str(result.get("channel") or "")
         await log("sent", job_id=job_id, channel=channel)
         reply: dict[str, Any] = {"sent": True}
+        if job_id:
+            reply["jobId"] = job_id
+        if channel:
+            reply["channel"] = channel
+        return reply
+
+    async def send_text(self, phone: str, text: str, purpose: str,
+                        caller: Caller) -> dict[str, Any]:
+        """Duyuru SMS'i (bbd-akademi README §14 madde 81): serbest metin, veli telefonuna, olağan hat.
+
+        Metin ASCII'ye indirilir (Netgsm olağan hattında Türkçe harf parçayı 160'tan 70'e düşürür), en çok
+        `TEXT_SMS_MAX_UNITS` birim. KM'nin SMS bütçesi (`announcement_sms`): son 24 saatte toplam
+        `daily_budget` SMS (parça) → `429 sms_budget_exceeded`; telefon başına günde `per_phone_per_day`
+        → `429 sms_phone_limit`; dakikada `per_minute` → `429 rate_limited` (geçici). Kapalıysa
+        `403 sms_disabled`. Her gönderim `sms_log`a `purpose=announcement` ile yazılır (telefon maskeli,
+        metin yazılmaz); OTP sağlık özeti bunları saymaz.
+        """
+        if not self.text_sms_enabled:
+            raise GatewayError(403, "sms_disabled", "Duyuru SMS'i Kontrol Merkezi'nde kapalı.")
+        normalized = normalize_phone(phone)
+        if normalized is None:
+            raise validation("Telefon 5XXXXXXXXX biçiminde olmalı.", "phone")
+        message = ascii_sms(text)
+        if not message:
+            raise validation("SMS metni boş olamaz.", "text")
+        if sms_units(message) > TEXT_SMS_MAX_UNITS:
+            raise validation(f"SMS metni en çok {TEXT_SMS_MAX_UNITS} karakter olabilir.", "text")
+        parts = sms_segments(message)
+        await self.tick()
+        now = self.now_ms()
+        masked = mask_phone(normalized)
+        subject = phone_subject(normalized)
+
+        async def log(status: str, reason: str = "", job_id: str = "", channel: str = "") -> None:
+            await self.repo.log_sms(at=self.now_ms(), phone_masked=masked, purpose=purpose,
+                                    status=status, reason=reason, user_id=caller.user_id,
+                                    on_behalf_of=caller.on_behalf_of,
+                                    request_id=caller.request_id, job_id=job_id,
+                                    channel=channel)
+
+        minute = await self.repo.window("text_sms_minute", "*", now - MINUTE_MS)
+        if minute.count >= self.text_sms_per_minute and minute.oldest is not None:
+            await log("rate_limited", "global")
+            raise rate_limited(math.ceil((minute.oldest + MINUTE_MS - now) / 1000))
+        budget = await self.repo.window("text_sms_budget", "*", now - DAY_MS)
+        if budget.count + parts > self.text_sms_daily_budget:
+            await log("rate_limited", "budget")
+            retry = math.ceil(((budget.oldest or now) + DAY_MS - now) / 1000)
+            raise GatewayError(429, "sms_budget_exceeded",
+                               "Kontrol Merkezi'nin günlük duyuru SMS bütçesi doldu.",
+                               retryAfterSeconds=max(1, retry))
+        daily = await self.repo.window("text_sms_phone_day", subject, now - DAY_MS)
+        if daily.count >= self.text_sms_per_phone_per_day and daily.oldest is not None:
+            await log("rate_limited", "phone_day")
+            raise GatewayError(429, "sms_phone_limit",
+                               "Bu numaraya bugün çok fazla duyuru SMS'i gönderildi.",
+                               retryAfterSeconds=max(1, math.ceil((daily.oldest + DAY_MS - now) / 1000)))
+        await self.repo.hit("text_sms_minute", "*", now)
+        await self.repo.hit("text_sms_phone_day", subject, now)
+        for _ in range(parts):
+            await self.repo.hit("text_sms_budget", "*", now)
+
+        try:
+            result = await self.caps.send_sms(normalized, message)
+        except CapabilityMissing as missing:
+            await log("failed", "capability_missing")
+            raise capability_missing(missing.capability) from None
+        except UpstreamFailure as failure:
+            await log("failed", failure.reason or failure.kind)
+            if failure.kind == "unavailable":
+                raise canteen_unavailable() from None
+            raise GatewayError(502, "sms_failed", "SMS gönderilemedi.") from None
+        if not result.get("sent"):
+            await log("failed", str(result.get("reason") or "unknown")[:60],
+                      channel=str(result.get("channel") or ""))
+            raise GatewayError(502, "sms_failed", "SMS gönderilemedi.")
+        job_id = str(result.get("jobId") or "")
+        channel = str(result.get("channel") or "")
+        await log("sent", job_id=job_id, channel=channel)
+        reply: dict[str, Any] = {"sent": True, "segments": parts}
         if job_id:
             reply["jobId"] = job_id
         if channel:
