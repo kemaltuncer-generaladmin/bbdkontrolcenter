@@ -26,7 +26,7 @@ import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, badge, emptyState, hintBox, kpiRow, skeletonRows } from '../../ui-kit/layout.js';
 import { AkademiError, problem } from './api.js';
 import {
-  DAY_LABEL, actionButton, confirmAction, errorBox, fileDrop, fmtDate, formDialog, multiChips, openDrawer, optionsOf,
+  DAY_LABEL, WEEKDAYS, actionButton, confirmAction, errorBox, fileDrop, fmtDate, formDialog, multiChips, openDrawer, optionsOf,
   runAction, selectBox, staticList, statusBadge, studentPicker, todayIst, toolbar, weekStart,
 } from './common.js';
 import { loadTargets, targetsField, topicPicker } from './plan-tasks.js';
@@ -39,6 +39,7 @@ import { videoCard, videoDialog } from './coaching-video.js';
 
 const STATUS = { planned: ['Planlandı', 'dim'], done: ['Bitti', 'good'], partial: ['Kısmen', 'warn'],
   skipped: ['Yapılmadı', 'bad'], moved: ['Taşındı', 'dim'] };
+const SHORT_DAY = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]));
 const LESSON_KIND = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek seferlik', break: 'Ara' };
 
 export function tab(app) {
@@ -181,7 +182,7 @@ export function tab(app) {
     card.append(flags);
     if (coach && app.can('admin_saveCoachWeek')) {
       const tools = h('div', 'ak-row-actions');
-      const days = (state.data?.days || []).map((day) => ({ value: day.date, label: `${DAY_LABEL[day.dayOfWeek]?.slice(0, 3) || ''} ${fmtDate(day.date).slice(0, 5)}` }));
+      const days = (state.data?.days || []).map((day) => ({ value: day.date, label: `${SHORT_DAY[day.dayOfWeek] || ''} ${fmtDate(day.date).slice(0, 5)}` }));
       const mover = selectBox(days, task.date, (value) => {
         if (value && value !== task.date) save([{ op: 'move', clientKey: `mv-${task.id}`, taskId: task.id, date: value }], 'Görev taşındı.');
       }, { label: 'Güne taşı' });
