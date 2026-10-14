@@ -6,6 +6,14 @@
 // sayfa aralığı) + son teslim (Europe/Istanbul) + açıklama. Teslim tablosu ve
 // "Teslim etmeyenlere hatırlat" ayrıntı çekmecesindedir.
 //
+// ÖĞRETMEN KONTROLÜ (U20, Akademi README §14 madde 77): teslim satırında
+// "Kontrol edildi / Eksik / Yapmadı" + kısa not (öğrenci ve veli görür);
+// öğrencinin beyanından ayrıdır, teslim etmemiş öğrenci de işaretlenir.
+// Satırdan tek tek (`admin_reviewHomeworkSubmission`, geri al
+// `admin_clearHomeworkSubmissionReview`), seçilenlere ya da "Teslim edenler
+// kontrol edildi" ile toplu (`admin_reviewHomeworkSubmissions`). Metinler
+// uygulama (Flutter + React) ile aynı.
+//
 // HIZ: liste imleçlidir; teslim oranı liste yükündeki `stats`tan, hedef adları
 // önbellekli sınıf / grup listelerinden gelir (satır başına istek yok). Konu
 // ve kaynak seçicileri program / kaynak ayrıntısını yalnız seçildiğinde ve
@@ -35,6 +43,9 @@ const HOMEWORK = '/v1/admin/homework';
 const SUBMISSION = { done: ['Teslim etti', 'good'], late: ['Geç teslim', 'warn'],
   overdue: ['Teslim etmedi', 'bad'], pending: ['Bekliyor', 'info'] };
 const SUBMISSION_ORDER = { overdue: 0, pending: 1, late: 2, done: 3 };
+const REVIEW = { checked: ['Kontrol edildi', 'good'], incomplete: ['Eksik', 'warn'],
+  not_done: ['Yapmadı', 'bad'], none: ['Kontrol bekliyor', 'info'] };
+const REVIEW_KEYS = ['checked', 'incomplete', 'not_done'];
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 // ---------------------------------------------------------------- yardımcılar
@@ -88,7 +99,7 @@ function dueCell(dueAt) {
   return cell;
 }
 
-function ratioCell(stats) {
+function ratioCell(stats, dueAt) {
   const assigned = stats?.assignedCount || 0;
   const done = stats?.completedCount || 0;
   const share = assigned ? Math.min(1, done / assigned) : 0;
@@ -97,6 +108,9 @@ function ratioCell(stats) {
   line.append(h('span', 'ak-num', assigned ? `${num(done)}/${num(assigned)}` : '—'));
   if (assigned) line.append(h('span', 'ak-muted', percent(share * 100, 0)));
   if (stats?.overdueCount) line.append(badge(`${num(stats.overdueCount)} gecikmiş`, 'bad'));
+  // Öğretmen kontrolü: süresi geçmiş ödevde kontrol bekleyen satır (eski Akademi alanı göndermezse yok).
+  const toReview = assigned - (stats?.reviewedCount ?? assigned);
+  if (isPast(dueAt) && toReview > 0) line.append(badge(`${num(toReview)} kontrol bekliyor`, 'info'));
   const bar = h('span', 'ak-hw-bar');
   const fill = h('span', 'ak-hw-fill');
   fill.style.width = `${Math.round(share * 100)}%`;
@@ -201,7 +215,7 @@ export function section(app) {
       } },
       { key: 'target', label: 'Hedef', width: 'minmax(0, 1.6fr)', cell: (row) => targetText(row.target, names) },
       { key: 'due', label: 'Son teslim', width: '150px', cell: (row) => dueCell(row.dueAt) },
-      { key: 'ratio', label: 'Teslim', width: '190px', cell: (row) => ratioCell(row.stats) },
+      { key: 'ratio', label: 'Teslim', width: '190px', cell: (row) => ratioCell(row.stats, row.dueAt) },
       { key: 'by', label: 'Veren', width: 'minmax(0, 1fr)',
         cell: (row) => stack(row.createdBy?.displayName, fmtDate(row.createdAt)) },
     ],
@@ -338,6 +352,7 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
     return out;
   };
   const missingRows = () => submissions.filter((row) => row.status !== 'completed');
+  const uncheckedDone = () => submissions.filter((row) => row.status === 'completed' && !row.review);
 
   function render() {
     const tally = counts();
@@ -355,6 +370,12 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
       actionButton(app, 'admin_updateHomework', 'Düzenle', { onClick: () => edit() }),
       actionButton(app, 'admin_deleteHomework', 'Sil', { variant: 'ghost', onClick: () => remove() }),
     );
+    if (uncheckedDone().length) {
+      // Öğretmen kontrolü: teslim edip henüz işaretlenmemişlerin hepsi "Kontrol edildi" (tek istek).
+      tools.prepend(actionButton(app, 'admin_reviewHomeworkSubmissions',
+        `Teslim edenler kontrol edildi (${num(uncheckedDone().length)})`, {
+          onClick: () => reviewMany(uncheckedDone().map((row) => row.student.id), 'checked') }));
+    }
     if (homework.seriesId) {
       // Toplu ödevle (aynı seri) verilmiş: hepsini birlikte ertele / iptal et ya da listede gör.
       tools.append(h('span', 'kit-spacer'),
@@ -374,6 +395,7 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
     if (isPast(homework.dueAt) && missing) {
       nodes.push(alertBox(`Son teslim geçti; ${num(missing)} öğrenci teslim etmedi.`, 'warn'));
     }
+    const reviewed = submissions.filter((row) => row.review).length;
     nodes.push(kpiRow([
       { label: 'Atanan', value: num(assigned) },
       { label: 'Teslim eden', value: num(submitted), tone: submitted && submitted === assigned ? 'good' : '' },
@@ -381,6 +403,8 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
       { label: 'Teslim etmeyen', value: num(missing), tone: tally.overdue ? 'bad' : '',
         title: `${num(tally.overdue)} süresi geçmiş · ${num(tally.pending)} bekliyor` },
       { label: 'Teslim oranı', value: assigned ? percent((submitted / assigned) * 100, 0) : '—' },
+      { label: 'Kontrol edilen', value: assigned ? `${num(reviewed)}/${num(assigned)}` : '—',
+        tone: assigned && reviewed === assigned ? 'good' : '' },
     ]));
 
     const resourceSlot = h('div', 'ak-cell-stack');
@@ -400,7 +424,14 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
       { key: 'submitted', label: 'Teslim eden', count: submitted },
       { key: 'late', label: 'Geç teslim', count: tally.late },
       { key: 'missing', label: 'Teslim etmeyen', count: missing },
+      { key: 'unreviewed', label: 'Kontrol bekleyen', count: submissions.filter((row) => !row.review).length },
     ], filter, (key) => { filter = key; paintTable(); });
+    const reviewSelected = REVIEW_KEYS.map((status) => actionButton(app, 'admin_reviewHomeworkSubmissions',
+      `Seçilenler: ${REVIEW[status][0]}`, { variant: 'ghost', onClick: () => {
+        const ids = table?.selection() || [];
+        if (!ids.length) { app.toast('Önce listeden öğrenci seçin.', 'warn'); return; }
+        reviewMany(ids, status);
+      } }));
     const remindSelected = actionButton(app, 'admin_remindHomework', 'Seçilenlere hatırlat', {
       onClick: () => {
         const chosen = new Set(table?.selection() || []);
@@ -419,6 +450,7 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
           ? `${num(row.completion.correct)} / ${num(row.completion.wrong)} / ${num(row.completion.blank)}` : '—') },
         { key: 'note', label: 'Not', width: 'minmax(0, 1.4fr)', cell: (row) => (row.completion?.note
           ? clip(h('span'), row.completion.note, 60) : '—') },
+        { key: 'review', label: 'Kontrol', width: 'minmax(0, 1.4fr)', cell: (row) => reviewCell(row) },
         { key: 'photos', label: '', width: '120px', cell: (row) => {
           const images = row.completion?.images || [];
           if (!images.length) return '';
@@ -433,8 +465,10 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
     });
     paintTable();
     const box = h('div', 'ak-stack ak-card-pad');
-    box.append(toolbar(chips.node, h('span', 'kit-spacer'), remindSelected), table.node);
-    nodes.push(card('Teslim durumu', box, 'D / Y / B: doğru, yanlış, boş'));
+    box.append(toolbar(chips.node, h('span', 'kit-spacer'), remindSelected),
+      toolbar(h('span', 'ak-muted', 'Teslimi derste kontrol et: kontrol edildi, eksik ya da yapmadı. '
+        + 'Öğrenci ve veli görür.'), h('span', 'kit-spacer'), ...reviewSelected), table.node);
+    nodes.push(card('Teslim durumu', box, 'D / Y / B: doğru, yanlış, boş · Kontrol: öğretmenin işareti'));
     return nodes;
   }
 
@@ -445,6 +479,7 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
       if (filter === 'submitted') return state === 'done' || state === 'late';
       if (filter === 'late') return state === 'late';
       if (filter === 'missing') return state === 'overdue' || state === 'pending';
+      if (filter === 'unreviewed') return !row.review;
       return true;
     }).sort((a, b) => (SUBMISSION_ORDER[submissionState(a)] - SUBMISSION_ORDER[submissionState(b)])
       || String(a.student?.displayName || '').localeCompare(String(b.student?.displayName || ''), 'tr'));
@@ -474,6 +509,57 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
       slot.replaceChildren(h('span', 'ak-muted', `Kaynak bilgisi alınamadı (${problem(failure)})`));
       if (pages) slot.append(h('small', '', pages));
     }
+  }
+
+  /** Kontrol hücresi: rozet + not; tıklayınca işaret penceresi (yetki yoksa yalnız rozet). */
+  function reviewCell(row) {
+    const review = row.review;
+    const cell = h('div', 'ak-cell-stack');
+    cell.append(statusBadge(REVIEW, review?.status || 'none'));
+    if (review?.note) cell.append(clip(h('small'), review.note, 60));
+    if (review) cell.append(h('small', 'ak-muted', `${review.reviewedBy?.displayName || '—'} · ${fmtDateTime(review.reviewedAt)}`));
+    cell.append(actionButton(app, 'admin_reviewHomeworkSubmission', review ? 'Değiştir' : 'Kontrol et', {
+      variant: 'ghost', onClick: () => reviewOne(row) }));
+    return cell;
+  }
+
+  async function reviewOne(row) {
+    const current = row.review;
+    const result = await formDialog(app, {
+      title: `Kontrol · ${row.student?.displayName || 'Öğrenci'}`,
+      description: 'Öğrencinin beyanından ayrıdır; öğrenci her işarette, velisi eksik / yapmadı işaretinde bildirim alır.',
+      value: { status: current?.status || 'checked', note: current?.note || '', clear: false },
+      fields: [
+        { key: 'status', label: 'Kontrol', type: 'select', required: true,
+          options: REVIEW_KEYS.map((key) => ({ value: key, label: REVIEW[key][0] })) },
+        { key: 'note', label: 'Öğretmen notu (isteğe bağlı)', type: 'textarea', maxLength: 300, wide: true,
+          hint: 'Öğrenci ve veli görür.' },
+        current && app.api.can('admin_clearHomeworkSubmissionReview')
+          ? { key: 'clear', label: 'İşareti kaldır', type: 'checkbox' } : null,
+      ],
+      submitLabel: 'Kaydet',
+      onSubmit: (draft) => {
+        const path = `/v1/admin/homework/${id}/submissions/${row.student.id}/review`;
+        if (draft.clear) return app.api.del(path);
+        return app.api.put(path, { status: draft.status, note: String(draft.note || '').trim() || null });
+      },
+    });
+    if (!result) return;
+    app.toast(result.review ? `${REVIEW[result.review.status][0]} olarak işaretlendi.` : 'İşaret kaldırıldı.', 'good');
+    await afterReview();
+  }
+
+  async function reviewMany(studentIds, status) {
+    const result = await runAction(app, () => app.api.post(`/v1/admin/homework/${id}/submissions/review`,
+      { studentIds, status }, { key: `km-${globalThis.crypto?.randomUUID?.() || Date.now()}` }));
+    if (!result) return;
+    app.toast(`${num(result.items?.length ?? studentIds.length)} öğrenci işaretlendi.`, 'good');
+    await afterReview();
+  }
+
+  async function afterReview() {
+    view.reload();
+    onChange?.(null, null);
   }
 
   async function refreshSubmissions() {
