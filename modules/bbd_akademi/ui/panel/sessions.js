@@ -5,9 +5,13 @@
 //   · yerine öğretmen, derslik, saat kaydırma, zil çağrısı (`admin_patchClassSession`),
 //   · gerekçeli iptali (`admin_cancelClassSession`) ve geri alınması (`admin_restoreClassSession`),
 //   · iptal edilen derse telafi (`admin_createMakeupSession`)
-// buradan yapılır. İki sekme:
+// buradan yapılır. Üç sekme:
 //   · Oturum takvimi — süzgeçli, imleçli liste (`admin_listClassSessions`; aralık en çok 31 gün),
-//   · Öğretmen haftası — bir öğretmenin haftası ve ders yükü (`admin_getTeacherWeek`).
+//   · Öğretmen haftası — bir öğretmenin haftası ve ders yükü (`admin_getTeacherWeek`),
+//   · Aylık ders dökümü (puantaj) — öğretmen × ay programdaki / gerçekleşen / iptal / telafi / yerine
+//     girdiği ders ve etüt (`admin_getTeacherMonthlyLoad`, Akademi README §14 madde 79; yalnız
+//     personel yönetimi izni) + Excel uyumlu CSV: özet ve ders ders döküm (`admin_listClassSessions`).
+//     Gerçekleşen = yoklaması alınmış, iptal / tatil olmayan ders; dersi VEREN öğretmene yazılır.
 //
 // ZİL: iptal sınıf çağrısını zil planından düşürür, saat kaydırma ve telafi kendi saatinde çağrı
 // üretir — planı Akademi yeniden üretir, KM Zil Sistemi her zamanki eşitlemesiyle alır (Ders
@@ -16,12 +20,14 @@
 // ÇOKLU SINIF (sınıf = grup, README §14 madde 70): oturumun bütün sınıfları `groups`'tadır
 // ("8-A + 8-B"); eski Akademi yalnız `group` verir.
 //
-// Derin bağlantılar: `{classSessionId}` oturum çekmecesini, `{tab: 'calendar'|'teacher'}` sekmeyi,
-// `{staffId}` öğretmen haftasını açar.
+// Derin bağlantılar: `{classSessionId}` oturum çekmecesini, `{tab: 'calendar'|'teacher'|'load'}` sekmeyi,
+// `{staffId}` öğretmen haftasını, `{tab: 'load', month: 'YYYY-MM'}` o ayın dökümünü açar.
 
 import { button, h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, badge, card, kpiRow, tabBar } from '../../ui-kit/layout.js';
 import { dateRange } from '../../ui-kit/datefield.js';
+import { dataTable } from '../../ui-kit/table.js';
+import { saveBlob } from './api.js';
 import {
   DAY_LABEL, actionButton, addDays, clockInput, confirmAction, dateInput, empty, fmtDate, fmtDateTime, fmtTime,
   formDialog, istanbulStamp, kv, loader, num, openDrawer, optionsOf, pagedList, personName, problem, runAction,
@@ -33,7 +39,8 @@ export const SESSION_KIND = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek sefer
 export const SESSION_STATUS = { scheduled: ['Planlı', 'good'], cancelled: ['İptal', 'bad'], holiday: ['Tatil', 'dim'],
   orphaned: ['Programdan kalktı', 'warn'] };
 const TAKEN = { '': 'Yoklama: tümü', true: 'Yoklaması alınan', false: 'Yoklaması alınmayan' };
-const TABS = [{ key: 'calendar', label: 'Oturum takvimi' }, { key: 'teacher', label: 'Öğretmen haftası' }];
+const TABS = [{ key: 'calendar', label: 'Oturum takvimi' }, { key: 'teacher', label: 'Öğretmen haftası' },
+  { key: 'load', label: 'Aylık ders dökümü' }];
 const BELL_NOTE = 'Zil: iptal sınıf çağrısını zil planından düşürür; saat değişikliği ve telafi kendi saatinde çağrı '
   + 'üretir. Planı Akademi yeniden üretir, KM Zil Sistemi bir sonraki eşitlemede alır.';
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -96,12 +103,13 @@ export function section(app) {
   loadStyles(import.meta.url, 'timetable.css');
   const node = h('div', 'ak-stack ak-ses');
   node.append(sectionHead('Ders oturumları', {
-    subtitle: 'Tek tek dersler: yerine öğretmen, derslik ve saat değişikliği, iptal, telafi ve öğretmen haftası. '
-      + 'Haftalık program değişmez.' }));
+    subtitle: 'Tek tek dersler: yerine öğretmen, derslik ve saat değişikliği, iptal, telafi, öğretmen haftası ve aylık '
+      + 'ders dökümü (puantaj). Haftalık program değişmez.' }));
   const bodies = {};
   const builders = {
     calendar: () => calendarTab(app),
     teacher: () => teacherTab(app),
+    load: () => loadTab(app, { openSessions: (filter) => go('calendar').apply(filter) }),
   };
   const tabs = tabBar(TABS, 'calendar', (key) => show(key));
   const slot = h('div', 'ak-stack');
@@ -125,6 +133,7 @@ export function section(app) {
     node,
     shown(payload) {
       if (payload?.staffId) go('teacher').open(payload.staffId, payload.week);
+      else if (payload?.tab === 'load' && payload.month) go('load').open(payload.month);
       else if (payload?.tab && builders[payload.tab]) go(payload.tab);
       else if (!bodies[tabs.active]) go(tabs.active);
       if (payload?.classSessionId) {
@@ -143,7 +152,7 @@ function calendarTab(app) {
   const node = h('div', 'ak-stack');
   if (!app.can('admin_listClassSessions')) {
     node.append(alertBox('Ders oturumlarını görmek için yetkiniz yok.', 'info'));
-    return { node, reload() {}, destroy() {} };
+    return { node, reload() {}, apply() {}, destroy() {} };
   }
   const start = weekStart();
   const filters = { from: start, to: addDays(start, 6), groupId: '', teacherId: '', status: '', kind: '', taken: '' };
@@ -219,6 +228,7 @@ function calendarTab(app) {
     if (teachers) {
       teacherSelect.options([{ value: '', label: 'Tüm öğretmenler' },
         ...teachers.map((item) => ({ value: item.id, label: item.displayName || item.id }))]);
+      teacherSelect.set(filters.teacherId);
     }
   });
 
@@ -229,7 +239,15 @@ function calendarTab(app) {
     warn.replaceChildren(message ? alertBox(message, 'warn') : '');
     if (!message) list.reload();
   }
-  return { node, reload, destroy() { list.destroy(); range.destroy(); } };
+  /** Dışarıdan süzgeç (aylık dökümden "bu öğretmenin dersleri"): aralık + öğretmen, diğerleri sıfırlanır. */
+  function apply({ from, to, teacherId = '' }) {
+    Object.assign(filters, { from, to, teacherId, groupId: '', status: '', kind: '', taken: '' });
+    range.set({ start: from, end: to });
+    teacherSelect.set(teacherId);
+    for (const control of [classSelect, statusSelect, kindSelect, takenSelect]) control.set('');
+    reload();
+  }
+  return { node, reload, apply, destroy() { list.destroy(); range.destroy(); } };
 }
 
 // -------------------------------------------------------- öğretmen haftası
@@ -307,6 +325,210 @@ function teacherTab(app) {
     },
     destroy() { weekField.destroy(); },
   };
+}
+
+// ------------------------------------------------- aylık ders dökümü (puantaj)
+
+const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim',
+  'Kasım', 'Aralık'];
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+export const LOAD_RULE = 'Gerçekleşen ders: yoklaması alınmış, iptal ya da tatil olmayan ders. Yerine girilen ders '
+  + 'dersi verene yazılır; programdaki öğretmende “Yerine başkası girdi” olarak görünür. Yoklaması alınmamış geçmiş '
+  + 'ders sayılmaz; yoklama tamamlanınca kendiliğinden girer.';
+
+/** Ders oturumunun puantaj karşılığı (Akademi kuralıyla aynı; README §14 madde 79). */
+export const LOAD_STATE = {
+  delivered: 'Gerçekleşti', pending: 'Yoklama bekliyor', upcoming: 'Gelecek', cancelled: 'İptal', holiday: 'Tatil',
+  orphaned: 'Programdan kalktı', unassigned: 'Öğretmen atanmadı',
+};
+
+export function thisMonth() {
+  return todayIst().slice(0, 7);
+}
+
+export function shiftMonth(month, delta) {
+  const [year, value] = month.split('-').map(Number);
+  const index = year * 12 + (value - 1) + delta;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+}
+
+export function monthLabel(month) {
+  const [year, value] = String(month || '').split('-').map(Number);
+  return year && value ? `${MONTH_NAMES[value - 1]} ${year}` : String(month || '');
+}
+
+export function monthRange(month) {
+  const [year, value] = month.split('-').map(Number);
+  const last = new Date(Date.UTC(year, value, 0)).getUTCDate();
+  return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+}
+
+/** "12 sa 40 dk" yerine CSV için ondalık saat: 760 dk → "12,67". */
+function hoursDecimal(minutes) {
+  return (Math.round((Number(minutes || 0) / 60) * 100) / 100).toFixed(2).replace('.', ',');
+}
+
+/** Excel (Türkçe) uyumlu CSV: UTF-8 BOM, `;` ayraç, CRLF; formül gibi başlayan metin `'` ile etkisizleşir. */
+export function csvText(header, rows) {
+  const cell = (value) => {
+    if (value === null || value === undefined) return '';
+    let text = String(value);
+    if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return /[";\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return `\uFEFF${[header, ...rows].map((row) => row.map(cell).join(';')).join('\r\n')}\r\n`;
+}
+
+const LOAD_COLUMNS = [
+  ['plannedCount', 'Programdaki'], ['deliveredCount', 'Gerçekleşen'], ['lessonCount', 'Ders'],
+  ['makeupCount', 'Telafi'], ['etutCount', 'Etüt'], ['substituteCount', 'Yerine girdiği'],
+  ['cancelledCount', 'İptal'], ['coveredByOthersCount', 'Yerine başkası girdi'], ['pendingCount', 'Yoklama bekleyen'],
+  ['upcomingCount', 'Gelecek'],
+];
+
+/** Özet CSV (öğretmen başına bir satır + TOPLAM). */
+export function loadCsv(data) {
+  const header = ['Ay', 'Öğretmen', ...LOAD_COLUMNS.map(([, label]) => label), 'Gerçekleşen süre (dk)',
+    'Gerçekleşen süre (saat)', 'Yerine girdiği süre (dk)'];
+  const line = (name, counts) => [data.month, name, ...LOAD_COLUMNS.map(([key]) => Number(counts?.[key] || 0)),
+    Number(counts?.deliveredMinutes || 0), hoursDecimal(counts?.deliveredMinutes), Number(counts?.substituteMinutes || 0)];
+  return csvText(header, [...(data.rows || []).map((row) => line(personName(row.teacher), row)),
+    line('TOPLAM', data.totals || {})]);
+}
+
+/** Bir oturumun puantaj durumu: kime yazılır ve neden. `now` ms. */
+export function loadState(session, now = Date.now()) {
+  if (session.status === 'holiday') return 'holiday';
+  if (session.status === 'cancelled') return 'cancelled';
+  const taken = Boolean(session.attendance?.taken);
+  if (session.status === 'orphaned' && !taken) return 'orphaned';
+  if (!session.effectiveTeacher) return 'unassigned';
+  if (taken) return 'delivered';
+  return Date.parse(session.startsAt) <= now ? 'pending' : 'upcoming';
+}
+
+/** Ders ders döküm CSV'si (`admin_listClassSessions` öğeleri). */
+export function sessionsCsv(items, now = Date.now()) {
+  const header = ['Tarih', 'Gün', 'Başlangıç', 'Bitiş', 'Süre (dk)', 'Tür', 'Ders', 'Sınıf', 'Programdaki öğretmen',
+    'Dersi veren', 'Yerine', 'Durum', 'Yoklama', 'Puantaj', 'Puantaja yazılan', 'Gerekçe / not'];
+  const rows = [...items].sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt))).map((session) => {
+    const state = loadState(session, now);
+    const minutes = Math.max(0, Math.round((Date.parse(session.endsAt) - Date.parse(session.startsAt)) / 60000));
+    const counts = session.attendance?.counts || {};
+    return [session.date, DAY_LABEL[dayKeyOf(session.date)] || '', clockOf(session.startsAt), clockOf(session.endsAt),
+      minutes, SESSION_KIND[session.kind] || session.kind, sessionTitle(session), sessionGroups(session),
+      session.scheduledTeacher ? personName(session.scheduledTeacher) : '',
+      session.effectiveTeacher ? personName(session.effectiveTeacher) : '', session.isSubstitute ? 'Evet' : '',
+      (SESSION_STATUS[session.status] || [session.status])[0],
+      session.attendance?.taken ? `${(counts.present || 0) + (counts.late || 0)}/${counts.enrolled || 0} geldi` : 'Alınmadı',
+      LOAD_STATE[state], state === 'delivered' ? personName(session.effectiveTeacher) : '',
+      session.statusReason || session.note || ''];
+  });
+  return csvText(header, rows);
+}
+
+function saveCsv(name, text) {
+  saveBlob({ filename: name, blob: new Blob([text], { type: 'text/csv;charset=utf-8' }) });
+}
+
+function loadTab(app, { openSessions } = {}) {
+  const node = h('div', 'ak-stack');
+  if (!app.can('admin_getTeacherMonthlyLoad')) {
+    node.append(alertBox('Aylık ders dökümü ücret verisi taşıdığı için yalnız personel yönetimi yetkisi olanlara '
+      + 'açıktır.', 'info'));
+    return { node, reload() {}, open() {}, destroy() {} };
+  }
+  const state = { month: thisMonth(), data: null };
+  const label = h('b', 'ak-ses-month', monthLabel(state.month));
+  label.setAttribute('aria-live', 'polite');
+  const csvButton = button('CSV indir', { variant: 'ghost', title: 'Öğretmen başına özet (Excel uyumlu)',
+    onClick: () => downloadSummary() });
+  const detailButton = button('Ders ders döküm (CSV)', { variant: 'ghost',
+    title: 'Ayın bütün dersleri: kim verdi, yoklama, puantaja yazılıp yazılmadığı', onClick: () => downloadDetail() });
+  node.append(toolbar(
+    button('‹', { variant: 'ghost', title: 'Önceki ay', onClick: () => go(shiftMonth(state.month, -1)) }), label,
+    button('›', { variant: 'ghost', title: 'Sonraki ay', onClick: () => go(shiftMonth(state.month, 1)) }),
+    button('Bu ay', { variant: 'ghost', onClick: () => go(thisMonth()) }),
+    h('span', 'kit-spacer'), csvButton, detailButton,
+  ), alertBox(LOAD_RULE, 'info'));
+
+  const table = dataTable({
+    columns: [
+      { key: 'teacher', label: 'Öğretmen', width: 'minmax(0, 1.6fr)', cell: (row) => (row.total
+        ? h('b', '', 'Toplam') : personName(row.teacher)) },
+      ...LOAD_COLUMNS.map(([key, title]) => ({ key, label: title, align: 'num', cell: (row) => {
+        const value = num(row[key] || 0);
+        if (key === 'pendingCount' && row[key]) return badge(value, 'warn');
+        return row.total ? h('b', '', value) : value;
+      } })),
+      { key: 'deliveredMinutes', label: 'Süre', width: '110px', align: 'num',
+        cell: (row) => (row.total ? h('b', '', minutesText(row.deliveredMinutes)) : minutesText(row.deliveredMinutes)) },
+    ],
+    rows: [],
+    rowKey: (row) => (row.total ? 'toplam' : String(row.teacher?.id || '')),
+    onRow: (row) => {
+      if (row.total || !openSessions) return;
+      openSessions({ ...monthRange(state.month), teacherId: row.teacher.id });
+    },
+    empty: empty('Bu ayda ders yok', 'Seçilen ayda öğretmene yazılmış ya da planlanmış ders bulunmuyor.'),
+  });
+
+  const view = loader(() => app.api.get('/v1/admin/teacher-load', { month: state.month }), (data) => {
+    state.data = data;
+    const totals = data.totals || {};
+    const rows = data.rows || [];
+    table.update({ rows: rows.length ? [...rows, { ...totals, total: true }] : [] });
+    const notes = [];
+    if (totals.pendingCount) {
+      notes.push(alertBox(`${num(totals.pendingCount)} dersin saati geçti ama yoklaması alınmadı; yoklama alınana kadar `
+        + 'puantaja girmez.', 'warn'));
+    }
+    if (data.unassignedCount) {
+      notes.push(alertBox(`${num(data.unassignedCount)} derste öğretmen atanmamış; bu dersler kimseye yazılmaz.`, 'warn'));
+    }
+    return [kpiRow([
+      { label: 'Gerçekleşen ders', value: num(totals.deliveredCount || 0) },
+      { label: 'Ders süresi', value: minutesText(totals.deliveredMinutes) },
+      { label: 'Yerine girilen', value: num(totals.substituteCount || 0), tone: totals.substituteCount ? 'info' : '' },
+      { label: 'İptal', value: num(totals.cancelledCount || 0) },
+      { label: 'Yoklama bekleyen', value: num(totals.pendingCount || 0), tone: totals.pendingCount ? 'warn' : '' },
+    ]), ...notes, h('small', 'ak-muted', `${monthLabel(data.month)} · ${fmtDate(data.from)} – ${fmtDate(data.to)} · `
+      + `hesap ${fmtDateTime(data.asOf)}. Satıra tıklayınca öğretmenin o ayki dersleri açılır.`), table.node];
+  }, { rows: 6, columns: 8 });
+  node.append(view.node);
+
+  function go(month) {
+    if (!MONTH_RE.test(String(month || ''))) return;
+    state.month = month;
+    state.data = null;
+    label.textContent = monthLabel(month);
+    view.reload();
+  }
+
+  function downloadSummary() {
+    if (!state.data || state.data.month !== state.month) {
+      app.toast('Döküm henüz yüklenmedi.', 'warn');
+      return;
+    }
+    saveCsv(`ogretmen-ders-dokumu-${state.month}.csv`, loadCsv(state.data));
+  }
+
+  async function downloadDetail() {
+    const month = state.month;
+    const { from, to } = monthRange(month);
+    detailButton.disabled = true;
+    try {
+      const items = await app.api.all('/v1/admin/sessions', { from, to }, { limit: 100, max: 20000 });
+      saveCsv(`ders-ders-dokum-${month}.csv`, sessionsCsv(items));
+      app.toast(`${num(items.length)} ders indirildi.`, 'good');
+    } catch (failure) {
+      app.toast(problem(failure, 'Ders listesi alınamadı.'), 'bad');
+    } finally {
+      detailButton.disabled = false;
+    }
+  }
+
+  return { node, reload: () => view.reload(), open: (month) => go(month), destroy() {} };
 }
 
 // ---------------------------------------------------------- oturum çekmecesi

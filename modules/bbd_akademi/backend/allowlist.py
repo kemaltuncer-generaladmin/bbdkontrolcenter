@@ -3432,6 +3432,14 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/admin/teacher-load',
+        'admin_getTeacherMonthlyLoad',
+        ('staff.manage',),
+        'km',
+        features=('F-Y2', 'F-Y3'),
+    ),
+    Operation(
+        'GET',
         '/v1/admin/templates',
         'admin_listTemplates',
         ('homework.manage', 'resources.view', 'plan.manage'),
