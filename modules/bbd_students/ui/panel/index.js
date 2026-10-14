@@ -1068,12 +1068,14 @@ export function capabilities(ctx) {
         if (!byStudent.has(item.studentId)) byStudent.set(item.studentId, []);
         byStudent.get(item.studentId).push({ id: item.groupId, name: item.groupName, kind: item.kind });
       }
-      // Sınıf = grup (iş 23): `className` GÖRÜNEN ad (sınıflar virgülle), `classNames` tek tek;
-      // `groups` bugünkü üyelikler [{id, name, kind}] (çoklu sınıf süzgeci bunlarla çalışır).
+      // Sınıf = grup (iş 23). Tüketenler (SMS {sinif}, öğle yemeği, toplu satış, ödeme isteği,
+      // kantin raporlarının sınıf kırılımı) TEK değer bekler: `className` = okul sınıfı (eski
+      // `className`'den dönüşen sınıf — `legacyClassName`), yoksa sınıflar virgülle. Tek tek
+      // `classNames`; `groups` bugünkü üyelikler [{id, name, kind}] (çoklu süzgeç bunlarla).
       return (payload.students || []).map((student) => ({
         id: student.kantinId,
         name: student.displayName,
-        className: student.className,
+        className: student.legacyClassName || student.className,
         classNames: classNamesOf(student),
         groups: byStudent.get(student.kantinId) || [],
       }));

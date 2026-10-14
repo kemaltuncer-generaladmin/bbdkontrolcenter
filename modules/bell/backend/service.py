@@ -1119,7 +1119,14 @@ class BellService:
         if capability is None:
             return []
         try:
-            listing = await capability.list()
+            # Sınıf = grup (bbd_students göç 009): eski `className`'den dönüşen sınıflar yalnız
+            # `view="classes"` görünümünde gelir; Akademi zil planı onları da `km_group:<id>`
+            # ile çağırır (§2.6) — elle çağrı listesi BÜTÜN sınıflardır. Görünüm bilmeyen
+            # eski öğrenci modülünde parametresiz çağrılır.
+            try:
+                listing = await capability.list(view="classes")
+            except TypeError:
+                listing = await capability.list()
         except Exception as failure:  # noqa: BLE001 — başka modül; zil ayakta kalır (K7)
             self._log.warning("öğrenci grupları okunamadı", error=str(failure))
             return []
