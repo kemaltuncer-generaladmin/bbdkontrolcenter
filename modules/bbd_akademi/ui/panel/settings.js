@@ -344,6 +344,27 @@ const INSTITUTION_GROUPS = [
         hint: 'KM\'den yeni öğrenci gelince kuralı uyan ve “otomatik” işaretli paketler (program, kaynak, plan) '
           + 'hemen verilir. Varsayılan kapalı.' },
     ] },
+  { title: 'Hata defteri saklama',
+    hint: 'Disk ve depolama şişmesin, defter sade kalsın. Süre boş bırakılırsa o kural kapalıdır. Öğrencinin “Sakla” '
+      + 'dediği hataya dokunulmaz; özet ve analizler silinen hataları saymaya devam eder.',
+    fields: [
+      { key: 'mistakeRetention', path: ['mistakes', 'retentionEnabled'], type: 'checkbox', to: Boolean, wide: true,
+        label: 'Eski hata kayıtlarını kendiliğinden temizle',
+        hint: 'Kapalıyken hiçbir hata kaydı ya da fotoğrafı silinmez; gönderilmiş uyarılar geri çekilir.' },
+      { key: 'mistakeImageDays', path: ['mistakes', 'learnedImageDays'], label: '“Öğrenildi” fotoğrafları (gün)',
+        type: 'number', min: 1, max: 3650, to: intOrNull, placeholder: 'Silinmez',
+        hint: 'Öğrenildi arşivine geçen hatanın fotoğrafları bu kadar gün sonra silinir; metin ve konu kalır. '
+          + 'Önerilen 30.' },
+      { key: 'mistakeRecordDays', path: ['mistakes', 'learnedRecordDays'], label: '“Öğrenildi” kaydı (gün)',
+        type: 'number', min: 60, max: 3650, to: intOrNull, placeholder: 'Silinmez',
+        hint: 'Arşivdeki kaydın kendisi bu kadar gün sonra silinir (en az 60). Önerilen 180.' },
+      { key: 'mistakeStaleDays', path: ['mistakes', 'staleRecordDays'], label: 'Dokunulmayan eski hata (gün)',
+        type: 'number', min: 30, max: 3650, to: intOrNull, placeholder: 'Silinmez',
+        hint: 'Hiç tekrar edilmeyen / düzenlenmeyen aktif hata bu kadar gün sonra silinir. Önerilen 365.' },
+      { key: 'mistakeWarnDays', path: ['mistakes', 'staleWarningDays'], label: 'Öğrenciye önceden uyarı (gün)',
+        type: 'number', min: 1, max: 30, required: true, to: intOrNull,
+        hint: 'Eski hata silinmeden bu kadar gün önce öğrenciye “eski hataların temizlenecek” bildirimi gider.' },
+    ] },
   { title: 'Kurum finansı', className: 'ak-money-finance',
     hint: 'Yalnız kurum carisi; kantin hesabını etkilemez.', fields: [
       { key: 'receiptPrefix', path: ['finance', 'receiptPrefix'], label: 'Makbuz öneki', maxLength: 12,

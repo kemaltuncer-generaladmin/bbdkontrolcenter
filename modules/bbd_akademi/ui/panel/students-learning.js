@@ -484,7 +484,8 @@ function mistakesTab(app, studentId) {
   });
 
   const statusSelect = selectBox([{ value: 'active', label: 'Etkin hatalar' }, { value: 'learned', label: 'Öğrenilenler' },
-    { value: 'all', label: 'Tümü' }], 'active', (value) => { filters.status = value; list.reload(); }, { label: 'Durum' });
+    { value: 'all', label: 'Tümü' }, { value: 'expiring', label: 'Yakında silinecekler' }], 'active',
+  (value) => { filters.status = value; list.reload(); }, { label: 'Durum' });
   const reasonSelect = selectBox(optionsOf(REASONS, { empty: 'Tüm nedenler' }), '', (value) => {
     filters.reason = value; list.reload();
   }, { label: 'Neden' });
@@ -494,8 +495,10 @@ function mistakesTab(app, studentId) {
   const list = pagedList({
     app,
     path: `/v1/students/${studentId}/mistakes`,
-    query: () => ({ status: filters.status, reason: filters.reason || undefined, subject: filters.subject || undefined,
-      origin: filters.origin || undefined }),
+    // "Yakında silinecekler": saklama uyarısı gönderilmiş eski hatalar (Akademi README §14 madde 64)
+    query: () => ({ status: filters.status === 'expiring' ? 'all' : filters.status,
+      expiring: filters.status === 'expiring' ? true : undefined, reason: filters.reason || undefined,
+      subject: filters.subject || undefined, origin: filters.origin || undefined }),
     limit: 20,
     columns: mistakeColumns(),
     onRow: open,
@@ -519,8 +522,11 @@ function mistakesTab(app, studentId) {
     const dominant = data.dominantReason?.reason
       ? ` · hataların ${percent(data.dominantReason.percent, 0)}'i “${REASONS[data.dominantReason.reason] || data.dominantReason.reason}”`
       : '';
+    // saklama süresiyle temizlenenler toplamda sayılır; uyarısı gönderilenler yakında silinecek
+    const cleaned = data.expiredCount ? ` · ${num(data.expiredCount)} eski hata temizlendi` : '';
+    const expiring = data.expiringCount ? ` · ${num(data.expiringCount)} hata yakında silinecek` : '';
     nodes.push(h('div', 'ak-muted ak-sl-note',
-      `${fmtDate(data.from)} – ${fmtDate(data.to)} · toplam ${num(data.totalCount)} hata${dominant} · özet ${fmtDateTime(data.computedAt)}`));
+      `${fmtDate(data.from)} – ${fmtDate(data.to)} · toplam ${num(data.totalCount)} hata${dominant}${cleaned}${expiring} · özet ${fmtDateTime(data.computedAt)}`));
     const reasons = barChart((data.byReason || []).map((row) => ({ label: reasonText(row.reason),
       value: row.count, display: `${num(row.count)} · ${percent(row.percent, 0)}` })), { max: 7 });
     const topics = dataTable({
@@ -561,6 +567,9 @@ function mistakeDrawer(app, studentId, mistakeId) {
     }
     if ((mistake.images || []).length) nodes.push(gallery);
     else if (mistake.imagesHidden) nodes.push(alertBox('Bu hatanın görselleri gösterilemiyor.', 'info'));
+    else if (mistake.imagesExpiredAt) {
+      nodes.push(alertBox(`Fotoğraf saklama süresi doldu (${fmtDate(mistake.imagesExpiredAt)}); metin ve konu duruyor.`, 'info'));
+    }
     const review = mistake.review || {};
     nodes.push(card('', kv([
       ['Ders / konu', [mistake.subject?.name, mistake.topic?.name].filter(Boolean).join(' · ') || '—'],
@@ -579,6 +588,8 @@ function mistakeDrawer(app, studentId, mistakeId) {
       ['Son tekrar', review.lastReviewedAt ? `${fmtDateTime(review.lastReviewedAt)} · ${REVIEW_RESULT[review.lastResult] || '—'}` : '—'],
       ['Veliyle paylaşım', mistake.sharedWithGuardian ? 'Öğrenci paylaşmak için işaretledi' : 'İşaretlenmedi'],
       mistake.learnedAt ? ['Öğrenildi', fmtDateTime(mistake.learnedAt)] : null,
+      ['Saklama', mistake.keep ? 'Öğrenci “Sakla” dedi — kendiliğinden silinmez'
+        : mistake.scheduledDeletionOn ? `${fmtDate(mistake.scheduledDeletionOn)} tarihinde kendiliğinden silinecek` : '—'],
       ['Eklendi', fmtDateTime(mistake.createdAt)],
     ])));
     return nodes;
