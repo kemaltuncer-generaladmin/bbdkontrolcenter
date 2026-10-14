@@ -1,4 +1,4 @@
-"""Öğretmen portalı tam açık (iş 18-ogretmen-portali; README §14 madde 63) — KM kurum ayarları ekranı.
+"""Öğretmen portalı tam açık (iş 18-ogretmen-portali; README §14 madde 65) — KM kurum ayarları ekranı.
 
 Kullanıcı: "Öğretmen yetkisini de full açalım." · "Yönetici de tüm rollerin yapabildiği şeyleri yapabilsin."
 
