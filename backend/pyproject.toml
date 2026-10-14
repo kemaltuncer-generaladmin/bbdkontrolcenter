@@ -98,6 +98,10 @@ dev = [
     # patlar; ilan edilmezlerse kapı yalnız bu makinede yeşil olur (K11).
     "types-PyYAML>=6.0",
     "types-jsonschema>=4.23",
+    # Modül testleri (store_shipping toplu etiket, belge PDF denetimleri) pypdf ile PDF okur. Çalışma zamanında
+    # store_shipping modülünün kendi bağımlılığıdır; geliştirme ortamı `dev` ile kurulduğunda da gelsin diye burada
+    # (yoksa ~165 test toplanamıyor / atlanıyordu).
+    "pypdf>=5.1",
 ]
 
 # Tüm çalışma zamanı yetenekleri
@@ -116,7 +120,7 @@ strict = true
 # içinde import eder ve yokluğunda anlaşılır hata döner (K7). Katı kip
 # yalnız bu dış paket için gevşetilir; kendi kodumuz `Any` sınırında durur.
 [[tool.mypy.overrides]]
-module = ["reportlab.*"]
+module = ["reportlab.*", "svglib.*"]
 ignore_missing_imports = true
 
 # `asyncpg` ve `netgsm` py.typed taşımıyor ve resmi stub'ları yok. İkisi de
