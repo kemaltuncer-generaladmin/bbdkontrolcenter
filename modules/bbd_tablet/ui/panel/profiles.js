@@ -45,6 +45,7 @@ const SYSTEM_CONTROLS = [
   ['user_and_profile_creation', 'Kullanıcı ve profil oluşturma', 'Yeni kullanıcı/profil oluşturmayı ve kullanıcı değiştirmeyi engeller.'],
   ['app_uninstall', 'Uygulama kaldırma', 'Uygulamaların kaldırılmasını engeller.'],
   ['app_control_settings', 'Uygulama kontrol ayarları', 'Uygulamaları durdurma ve verilerini silme ayarlarını engeller.'],
+  ['student_escape_hatches', 'Öğrenci kaçış yolları', 'Çökme penceresindeki "Uygulama bilgisi" düğmesini, sistem dilini, Bluetooth dosya paylaşımını, SD kartı ve mobil ağ ayarlarını kapatır.'],
 ];
 
 const CONTROL_CHOICES = [['', 'Tablet varsayılanı'], ['block', 'Engelle'], ['allow', 'İzin ver']];
