@@ -79,49 +79,9 @@ NOT_SURFACED: dict[str, str] = {
 }
 
 
-_COACHING = (
-    "Sözleşme 6bbcd0b / 2d91b96 (draft.3 koçluk paketi) ile geldi; koç eşlemesi, "
-    "koçluk kartı, haftalık program, soru-cevap, check-in, görüşme, tebrik, "
-    "kütüphane ve video ekranları ayrı iş paketidir, bu dalda henüz yok.")
-_MESSAGING = (
-    "Sözleşme b973148 (draft.3 mesajlaşma) ile geldi; mesaj şikâyet kuyruğu, "
-    "denetim araması, konuşma kilidi ve dışa aktarım ekranı ayrı iş paketidir, "
-    "bu dalda henüz yok.")
-
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
-PENDING: dict[str, str] = {
-    **{operation_id: _COACHING for operation_id in (
-        "admin_bulkAssignCoach",
-        "admin_listCoachLibrary", "admin_createInstitutionLibraryItem",
-        "admin_listLibraryProposals", "admin_getCoachLibraryItem",
-        "admin_updateInstitutionLibraryItem", "admin_deleteInstitutionLibraryItem",
-        "admin_decideLibraryProposal", "admin_listCoachBadges", "admin_createCoachBadge",
-        "admin_updateCoachBadge", "admin_deleteCoachBadge", "admin_listCelebrationCandidates",
-        "admin_getCheckinQuestionSet", "admin_putCheckinQuestionSet", "admin_listCheckins",
-        "admin_getCoachMetrics", "admin_getCoachProfile",
-        "admin_putCoachProfile", "admin_exportCoaching", "admin_uploadCoachingFile",
-        "admin_getCoachingJob", "admin_bulkKudos", "admin_listCoachMeetings",
-        "admin_getCoachMeeting", "admin_convertMeetingActionItem", "admin_decideCoachMeeting",
-        "admin_putCoachMeetingNote", "admin_getCoachQueue", "admin_listCoachReviews",
-        "admin_bulkApproveCoachTasks", "admin_reviewCoachTask", "admin_listCoachingStudents",
-        "admin_applyTemplateAssignment",
-        "admin_previewTemplateAssignment", "admin_copyCoachWeek",
-        "admin_getStudentCheckinQuestions", "admin_putStudentCheckinQuestions",
-        "admin_commentCheckin", "admin_createCoachMeeting", "admin_getCoachWeek", "admin_saveCoachWeek",
-        "admin_carryOverCoachWeek", "admin_requestCoachWeekPdf", "admin_publishCoachWeek",
-        "admin_getCoachingCard", "admin_requestCoachingReport", "admin_listGoalProposals",
-        "admin_createGoalProposal", "admin_withdrawGoalProposal", "admin_giveKudos",
-        "admin_getStudentResourceSections", "admin_getTaskBuilderContext", "admin_resolveVideoLink",
-        "admin_resolvePlaylist", "students_listCoachMeetings", "students_getCoachingOverview",
-        "students_listGoalProposals", "students_listKudos", "students_listTopicLibraryItems",
-        "students_getTaskVideo", "students_listQuestions", "students_getQuestion",
-    )},
-    **{operation_id: _MESSAGING for operation_id in (
-        "admin_listMessageReports", "admin_getMessageReport", "admin_decideMessageReport",
-        "admin_searchMessages", "admin_openAuditThread", "admin_exportThread",
-        "admin_lockMessageThread",
-    )},
-}
+#: (km-0513: yoklama/program ve koçluk/mesaj paketleri yazıldı; boş.)
+PENDING: dict[str, str] = {}
 
 
 @dataclass(frozen=True)

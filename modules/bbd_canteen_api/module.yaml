@@ -29,7 +29,7 @@ depends: []
 
 provides:
   - capability: canteen.api
-    contract: km_sdk.contracts:CanteenApi
+    contract: backend.client:CanteenApi
     description: >
       Kantin kasa API'si: öğrenciler, ayarlar, QR anahtarı; veli kantin
       kontrolleri (get_student, update_controls), serbest tutarlı ödeme talebi

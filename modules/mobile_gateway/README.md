@@ -52,7 +52,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /students/{id}/canteen/transactions?from=&to=&cursor=&limit=` | 200 `{items, nextCursor, hasMore}` — satışlar yeniden eskiye, kalemlerde `productId` | 404, 422 (`limit` 1–100, `from`>`to`, bozuk/eskimiş `cursor`), 503 |
 | `GET /students/{id}/canteen/collections?from=&to=&cursor=&limit=` | 200 `{items: [{id, at, amount, method, ref}], nextCursor, hasMore}` | 404, 422, 503 |
 | `GET /students/{id}/canteen/qr` | 200 `{qrText, version: 1}` | 404 |
-| `GET /students/{id}/payment-requests` | 200 `{items}` (`payToken`, `amountFixed` dahil) | 503 |
+| `GET /students/{id}/payment-requests` (`?ret=` isteğe bağlı) | 200 `{items}` (`payToken`, `amountFixed` dahil) | 503 |
 | `POST /students/{id}/payment-requests` · `POST /students/{id}/canteen/payment-requests` | 201 `{ref, amount, status, linkUrl, amountFixed, payToken}` | 409 `no_debt`/`no_phone`, 422 `exceeds_debt`/`invalid_amount`, 404 |
 | `GET /students/{id}/canteen/controls` | 200 kontroller | 404, 503 |
 | `PATCH /students/{id}/canteen/controls` | 200 kontroller | 422 `validation_error`, 404, 503 |
@@ -80,6 +80,13 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `POST /sms/limits/reset` | 200 `{reset, clearedHour, clearedDay}` (denetimli) | 422 |
 | `GET /events?after=&limit=` | 200 `{items: [KmEvent], lastSeq, hasMore}` — KM outbox'undan çekme (webhook'un yedeği; zarf webhook ile aynı), `limit` 1–500 | 410 `events_expired` (`after` 14 günlük saklamadan eski → tam uzlaştırma), 422, 503 `capability_missing` (`events.outbox`) |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
+
+**Ödeme dönüşü (`ret`).** Gövdede (`POST`) ya da sorguda (`GET … ?ret=`) gelen web dönüş adresi
+(Akademi web istemcisinin kökeni + `/payment-result`, en çok 512 karakter) kantinin ödeme talebi
+isteğine iletilir; kantin onu `payToken`'a yalnız `PAYMENT_APP_RETURN_URLS` listesindekiyle birebir
+aynıysa koyar, değilse listenin ilkini (kantin `ozellik/odeme-donus`). KM yalnız biçimi süzer
+(`https://`, boşluksuz); SMS linki `ret` taşımaz. `ret` gönderilmezse davranış değişmez.
+
 
 **Veliler (veli-senkron-4).** Öğrenci nesnesinin `guardians[]` öğesi
 `{slot: 1..4, name, phone, relation, primary}`: yuva 1 birincil (telefonu

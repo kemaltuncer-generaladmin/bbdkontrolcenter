@@ -542,7 +542,8 @@ class Capabilities:
             "first": "student" in meta,
         }
 
-    async def payment_requests_for(self, student_id: str) -> list[dict[str, Any]]:
+    async def payment_requests_for(self, student_id: str,
+                                   ret: str | None = None) -> list[dict[str, Any]]:
         """Öğrencinin ödeme talepleri.
 
         İstemci `student_id` süzgecini tanıyorsa öğrenci kantine gönderilir:
@@ -550,19 +551,27 @@ class Capabilities:
         /api/payment-requests?studentId=`) yalnız o öğrencinin talepleri gelir.
         Desteklemeyen kantin parametreyi yok sayar ve son 100 talebi verir;
         satırlar HER DURUMDA burada da süzülür — başka öğrencinin talebi sızmaz.
+        `ret` (Akademi'nin ilettiği web dönüş adresi) `payToken`'a girsin diye
+        kantine iletilir; eski istemci parametreyi tanımıyorsa düşer.
         """
         method = self._method(CANTEEN, "payment_requests")
         kwargs: dict[str, Any] = {}
         if accepts(method, "student_id"):
             kwargs["student_id"] = student_id
+        if ret and accepts(method, "ret"):
+            kwargs["ret"] = ret
         payload = await self._canteen("payment_requests", kwargs=kwargs)
         return [item for item in rows(payload)
                 if str(item.get("studentId") or "") == student_id]
 
-    async def create_payment_request(self, student_id: str,
-                                     amount: int | None) -> dict[str, Any]:
+    async def create_payment_request(self, student_id: str, amount: int | None,
+                                     ret: str | None = None) -> dict[str, Any]:
         method = self._method(CANTEEN, "create_payment_request")
         kwargs: dict[str, Any] = {}
+        # Uygulama içi ödemenin web dönüşü (`payToken` içindeki `ret`); eski
+        # kantin istemcisi tanımıyorsa düşer (dönüş kantinin varsayılanı olur).
+        if ret and accepts(method, "ret"):
+            kwargs["ret"] = ret
         if amount is not None:
             if not accepts(method, "amount"):
                 raise CapabilityMissing(f"{CANTEEN}.create_payment_request(amount)")
