@@ -334,6 +334,12 @@ async def canteen_balances(request: Request,
         ids, request.headers.get("If-None-Match")))
 
 
+@router.get("/canteen/totals")
+async def canteen_totals(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    """Kurum geneli kantin borç toplamı ve bugünkü satış (30 sn önbellek)."""
+    return await current_service().canteen_totals()
+
+
 @router.get("/canteen/settings/public")
 async def canteen_settings_public(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
     return await current_service().canteen_settings_public()

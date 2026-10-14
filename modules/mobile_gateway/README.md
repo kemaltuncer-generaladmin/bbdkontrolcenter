@@ -60,6 +60,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /canteen/payment-requests?since=&limit=` | 200 `{items, nextSince, hasMore}` | 422, 503 |
 | `GET /canteen/parent-notifications?since=&limit=` | 200 `{items, nextSince, hasMore}` — SMS metni/telefon YOK | 422, 503 |
 | `GET /canteen/balances?ids=` | 200 `{ledgerSeq, items: [{studentId, balance, ledgerSeq}]}`; `ids` yoksa bütün öğrenciler; ETag = kantin defterinin son kimliği, `If-None-Match` → 304 | 422, 503 `canteen_unavailable` |
+| `GET /canteen/totals` | 200 `{totalDebt, spentToday, pendingPaymentRequests, blockedStudents, totalStudents, generatedAt}` — kurum geneli kantin sayıları (kuruş; açık alacak = pozitif bakiyeler toplamı, bugünkü satış iptaller hariç); kantin `GET /api/reports/dashboard` üstünde, 30 sn önbellek; yalnız kantin parası (kurum carisiyle toplanmaz) | 503 `canteen_unavailable` / `capability_missing` |
 | `GET /canteen/settings/public` | 200 `{allowPrepayment, maxPrepayment}` (60 sn önbellek) | 503 |
 | `GET /canteen/products` | 200 `{items}` (5 dk önbellek) | 503 |
 | `GET /tablets` | 200 `{summary, devices}` | 503 `capability_missing`, 502 |

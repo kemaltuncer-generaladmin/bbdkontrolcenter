@@ -608,6 +608,13 @@ class Capabilities:
         result = unwrap(await self._canteen("canteen_settings_public"))
         return result if isinstance(result, dict) else {}
 
+    async def canteen_dashboard(self) -> dict[str, Any]:
+        """Kantin yönetim panosu sayıları (`GET /api/reports/dashboard`, kuruş):
+        `todaySales`, `openReceivables`, `pendingRequests`, `blockedStudents`,
+        `totalStudents`."""
+        result = unwrap(await self._canteen("dashboard"))
+        return result if isinstance(result, dict) else {}
+
     async def send_sms(self, phone: str, message: str,
                        purpose: str | None = None) -> dict[str, Any]:
         """Kantinin Netgsm hesabıyla tek SMS. Yanıtın `text` alanı ÇAĞIRANA DÖNMEZ.

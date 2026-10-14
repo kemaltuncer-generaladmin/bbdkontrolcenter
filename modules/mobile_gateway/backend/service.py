@@ -408,6 +408,9 @@ class GatewayService:
         self._groups: _Cached | None = None
         self.groups_cache_ms = int(config.get("groups_cache_seconds", 60)) * 1000
         self._canteen_settings: tuple[int, dict[str, Any]] | None = None
+        self.canteen_totals_cache_ms = \
+            int(config.get("canteen_totals_cache_seconds", 30)) * 1000
+        self._canteen_totals: tuple[int, dict[str, Any]] | None = None
         self._last_purge = 0
         self._pepper: bytes | None = None
         self._pepper_lock = asyncio.Lock()
@@ -1407,6 +1410,32 @@ class GatewayService:
         body = {"allowPrepayment": is_truthy(settings.get("allowPrepayment")),
                 "maxPrepayment": int_or_none(settings.get("maxPrepayment")) or 0}
         self._canteen_settings = (now, body)
+        return dict(body)
+
+    async def canteen_totals(self) -> dict[str, Any]:
+        """`GET /canteen/totals` — kurum geneli kantin sayıları (Akademi yönetici paneli).
+
+        Kantinin yönetim panosu (`GET /api/reports/dashboard`) üstündedir: açık
+        alacak = pozitif bakiyelerin toplamı (kantin öğrenci başına kontrol
+        noktasından tek sorguyla hesaplar, defter taranmaz), bugünkü satış
+        (iptaller hariç, kantin sunucu günü), bekleyen ödeme talebi, engelli ve
+        toplam öğrenci. Yalnız kantin parasıdır; kurum carisiyle toplanmaz.
+        `canteen_totals_cache_seconds` (30 sn) önbellekte.
+        """
+        now = self.now_ms()
+        cached = self._canteen_totals
+        if cached is not None and now - cached[0] < self.canteen_totals_cache_ms:
+            return dict(cached[1])
+        stats = await self.call(self.caps.canteen_dashboard())
+        body = {
+            "totalDebt": max(0, int_or_none(stats.get("openReceivables")) or 0),
+            "spentToday": max(0, int_or_none(stats.get("todaySales")) or 0),
+            "pendingPaymentRequests": max(0, int_or_none(stats.get("pendingRequests")) or 0),
+            "blockedStudents": max(0, int_or_none(stats.get("blockedStudents")) or 0),
+            "totalStudents": max(0, int_or_none(stats.get("totalStudents")) or 0),
+            "generatedAt": self.iso(self.now()),
+        }
+        self._canteen_totals = (now, body)
         return dict(body)
 
     async def products(self) -> dict[str, Any]:

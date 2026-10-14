@@ -73,6 +73,8 @@ CONTRACT_ROUTES = {
     ("POST", "/students/{student_id}/canteen/collections"),
     ("GET", "/canteen/payment-requests"),
     ("GET", "/canteen/parent-notifications"),
+    # kucuk-aciklar (geçit §3 ek): kurum geneli kantin borç toplamı (Akademi yönetici paneli).
+    ("GET", "/canteen/totals"),
     ("GET", "/canteen/settings/public"),
     ("GET", "/canteen/products"),
     ("GET", "/tablets"),
@@ -707,6 +709,27 @@ async def test_parent_notifications_feed(client: httpx.AsyncClient) -> None:
     assert body["hasMore"] is False
     assert MOTHER not in response.text and not leaked(response.text)
     assert "Borç eşiği" not in response.text
+
+
+async def test_canteen_totals_cached_and_errors(client: httpx.AsyncClient, world: World,
+                                               clock: Clock) -> None:
+    response = await client.get("/canteen/totals")
+    assert response.status_code == 200
+    body = response.json()
+    assert body.pop("generatedAt")
+    assert body == {"totalDebt": 4250, "spentToday": 18750, "pendingPaymentRequests": 2,
+                    "blockedStudents": 1, "totalStudents": 2}
+    assert not leaked(response.text)
+    await client.get("/canteen/totals")
+    clock.advance(seconds=29)
+    await client.get("/canteen/totals")
+    assert world.canteen.count("dashboard") == 1  # 30 sn önbellek
+    clock.advance(seconds=2)
+    world.canteen.down = True
+    expect_error(await client.get("/canteen/totals"), 503, "canteen_unavailable")
+    world.canteen.down = False
+    world.remove("canteen.api")
+    expect_error(await client.get("/canteen/totals"), 503, "capability_missing")
 
 
 async def test_canteen_settings_public_and_products(client: httpx.AsyncClient, world: World,
