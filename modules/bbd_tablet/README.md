@@ -1,6 +1,6 @@
 # Öğrenci Tablet Yönetimi
 
-Paylaşımlı okul tabletleri için profil, kullanım saatleri, cihaz, öğrenci oturumu, kullanım, ek süre, öğrenci kısıtlaması, uzaktan komutları ve uygulama dağıtımını (TabletKontrol'ün kendi güncellemesi dahil) tutar. Bağlayıcı sözleşme TabletKontrol deposundaki `docs/CONTROL_CENTER_INTEGRATION.md` (v2.1) dosyasıdır.
+Paylaşımlı okul tabletleri için profil, kullanım saatleri, cihaz, öğrenci oturumu, kullanım, ek süre, öğrenci kısıtlaması, uzaktan komutları ve uygulama dağıtımını (TabletKontrol'ün kendi güncellemesi dahil) tutar. Bağlayıcı sözleşme TabletKontrol deposundaki `docs/CONTROL_CENTER_INTEGRATION.md` (v2.2) dosyasıdır.
 
 Öğrenci kimliği ve 6 haneli giriş kodu kantinde kalır. Tablet girişinde sunucu `canteen.api.lookup_student_by_code` çağırır; kantin cihaz token'ı tablete verilmez, öğrenci şifresi saklanmaz. Cihaz ve oturum token'ları yalnız SHA-256 özetiyle tutulur.
 
@@ -29,6 +29,8 @@ Geçmiş saklama: `history_retention_days` günden eski bitmiş oturumlar, kulla
 | `POST /devices/{id}/initial-profile` | Cihaz | İlk profili bir kez seç/oluştur |
 | `PUT /devices/{id}/apps` | Cihaz | Uygulama envanteri |
 | `GET /devices/{id}/releases/{releaseId}/files/{index}` | Cihaz + indirme yuvası | Dağıtılan paket dosyası (`Range`) |
+| `GET /devices/{id}/self-update/{releaseId}` | Cihaz | Yayındaki TabletKontrol sürümünün `base.apk`'sı (`Range`, yuva yok; v2.2) |
+| `POST /devices/{id}/diagnostics` | Cihaz | Tanı raporu yükle (en fazla 262144 karakter, fazlası 413; v2.2) |
 | `POST /devices/{id}/sync` | Cihaz | Tek periyodik çağrı: profil, cihaz durumu, oturum, ek süre, komutlar, dağıtılan uygulamalar ve indirme yuvası |
 | `POST /auth/login` | Cihaz | Öğrenci girişi |
 | `POST /auth/logout` | Öğrenci oturumu | Çıkış (tekrarlanabilir) |
@@ -54,7 +56,8 @@ Kullanım paketi profil kuralına göre denetlenmez: oturum sırasında bir uygu
 | --- | --- |
 | `GET /overview`, `GET /students`, `GET /students/{id}/usage?localDate=`, `GET /students/{id}/blocks` | view |
 | `GET /reports/daily?localDate=`, `GET /sessions?limit=&deviceId=&studentId=` | view |
-| `GET /devices/{id}/apps`, `GET /devices/{id}/commands` | view |
+| `GET /devices/{id}/apps`, `GET /devices/{id}/commands`, `GET /devices/{id}/diagnostics` | view |
+| `GET /devices/{id}/diagnostics/{diagnosticsId}` (raporun metni) | manage |
 | `POST /profiles`, `PUT /profiles/{id}`, `POST /profiles/{id}/duplicate`, `DELETE /profiles/{id}` | manage |
 | `POST /devices`, `PATCH /devices/{id}`, `POST /devices/{id}/assign-profile`, `POST /devices/{id}/enrollment-code` | manage |
 | `POST /devices/{id}/revoke`, `DELETE /devices/{id}`, `POST /devices/{id}/commands`, `DELETE /devices/{id}/commands/{commandId}`, `POST /devices/bulk` | manage (toplu `reset_login_lock` ayrıca grant) |
@@ -97,10 +100,22 @@ Neden böyle (sunucu bbdstore ile paylaşılıyor ve Cloudflare arkasında):
 
 Panel: dördüncü sekme **Uygulamalar** — "APK yükle" (ilerleme, hız, iptal, hata alınca artan beklemeyle yeniden deneme, yarım yüklemeyi sürdürme), hazır olunca onay penceresi (paket, sürüm, boyut, parça sayısı, mevcut sürüm, düzenlenebilir ad), en üstte "Tablet uygulaması sürümü" kartı, dağıtılan uygulamalar tablosu ve sayaçları, tablet başına durum çekmecesi ("Öne al", PIN'li "Dağıtımı bitir" ve tabletlerden kaldırma seçimi), taslaklar ("Dağıt", "At"). Profil düzenleyicisinde uygulama kaynağı olarak "Dağıtılan uygulamalar" seçilebilir; henüz hiçbir tablete kurulmamış uygulama da profile eklenir.
 
+## Kendini güncelleme ve tanılama (v2.2)
+
+v2.2 tablet TabletKontrol'ün kendi yeni sürümünü dağıtım sırasından **ayrı** alır: yayın yine Uygulamalar sekmesinden yüklenir (`kind: "self"`), ama tablet yuva istemez, sırada beklemez.
+
+- **Sync.** Tablet her istekte `appVersionCode`, `selfUpdate` (durumu: `idle`, `downloading`, `ready`, `installing`, `failed`, `installed`; hata kodu, `detail` en fazla 300, `error` en fazla 200 karakter) ve politika sağlıklı değilken `policyDetail` (en fazla 300) yazar. Sunucu bunları cihaz satırına (`app_version_code`, `self_update` sıkıştırılmış JSON, `policy_detail`) yalnız değer değişince yazar: karşılaştırma kimlik doğrulamanın zaten okuduğu satırla yapılır ve değişen sütunlar sync'in tek cihaz güncellemesine eklenir, yani "değişiklik yok" yoluna sorgu eklenmez. Bilinmeyen `state` sync'i düşürmez; bildirim yok sayılır. Yanıttaki `selfUpdate` (`releaseId`, `versionCode`, `versionName`, `sizeBytes`, `sha256`, `url`) yalnız istek `selfUpdate` anahtarını taşıyorsa, yayında tek dosyalı bir `self` yayını varsa ve onun `versionCode`'u `appVersionCode`'dan büyükse dolar, yoksa `null`; karar bellekteki katalogdan verilir. Anahtarı göndermeyen eski APK'lar (0.7.0/0.7.1) yanıtta `selfUpdate` alanını hiç görmez.
+- **Dosya ucu.** `GET /api/tablet/v1/devices/{id}/self-update/{releaseId}` cihaz bearer'ı ister, yuva istemez; dağıtım dosya ucuyla aynı kurallar (`Range` → 206, `application/zip`, `no-store`, uzantısız adres). Yayındaki `self` yayını değilse `410 RELEASE_GONE`, hiç `self` yayını yoksa 404.
+- **Komutlar.** `self_update` (bekleme sürelerini atla; açık oturumu kapatıp hemen kur) ve `diagnostics` (tanı raporunu yükle); ikisinin de yükü `{}`, tekli ve toplu komut uçlarından gider.
+- **Tanı raporu.** `POST /devices/{id}/diagnostics` gövdesi `{commandId, appVersion, appVersionCode, text}`; gövde sınırlı okunur (2 MiB), `text` 262144 karakteri aşarsa 413. Tablet başına en yeni 5 rapor kalır (eskiler aynı istekte silinir); 30 günden eskiler `GET /overview` yolundaki günlük temizlikte silinir. Liste `view`, raporun metni `manage` ister.
+- **Panel özeti.** `GET /overview` her tablet için `app_version_code`, `self_update` (son bildirilen nesne ya da `null`), `policy_detail` ve en üstte yayındaki `selfRelease`'i verir. Uygulamalar sekmesinin "Tablet uygulaması sürümü" kartı ve tablet durumları v2.2 tabletleri bildirimden (kurulu `versionCode` yayınınkine eşit ya da büyükse kuruldu; `downloading`/`installing` indiriliyor kovasında, `ready` sırada kovasında ama satırda "Kurulmayı bekliyor"/"Kuruluyor"; `failed` hata ve Türkçe neden), eskileri dağıtım sırasından okur.
+
+Panel: tablet çekmecesinde **Tablet uygulaması** kartı — sürüm, yayındaki sürüm, güncelleme durumu (Güncel / İndiriliyor %x / Kurulmayı bekliyor / Kuruluyor / Hata: neden — sonraki deneme / Kuruldu), "Şimdi güncelle" (açık oturumun kapanacağını söyleyen onayla), "Tanılama iste" ve tanı raporları ("Görüntüle": metin ve "Kopyala"). Durum kartında politika sağlıklı değilken "Kısıtlama ayrıntısı". Toplu işlemlerde "Tablet uygulamasını şimdi güncelle" ve "Tanılama iste".
+
 ## Silme
 
 - **Eşlemeyi iptal et** (`POST /devices/{id}/revoke`): kayıt kalır, tablet yeni kodla yeniden bağlanabilir.
-- **Tableti sil** (`DELETE /devices/{id}`): her durumda çalışır. Eşli tablet aynı işlemde önce iptal edilir (açık oturum `revoked` ile kapanır, cihaz tokenı ölür); sonra kayıt, yüklü uygulamalar, komutlar, indirme sırası satırları ve giriş kilidi silinir. Eski token her uçta 401 `DEVICE_AUTH_INVALID` alır, `unpair` tekrarı da. Oturum, kullanım ve ek süre geçmişi öğrenci verisi olarak kalır; geçmiş görünümlerinde tablet adı "Silinmiş tablet" olur (`deviceDeleted: true`). Toplu silmede (`POST /devices/bulk`, `action: "delete"`) sonuç tablet başınadır.
+- **Tableti sil** (`DELETE /devices/{id}`): her durumda çalışır. Eşli tablet aynı işlemde önce iptal edilir (açık oturum `revoked` ile kapanır, cihaz tokenı ölür); sonra kayıt, yüklü uygulamalar, komutlar, indirme sırası satırları, tanı raporları ve giriş kilidi silinir. Eski token her uçta 401 `DEVICE_AUTH_INVALID` alır, `unpair` tekrarı da. Oturum, kullanım ve ek süre geçmişi öğrenci verisi olarak kalır; geçmiş görünümlerinde tablet adı "Silinmiş tablet" olur (`deviceDeleted: true`). Toplu silmede (`POST /devices/bulk`, `action: "delete"`) sonuç tablet başınadır.
 - **Komut iptali** (`DELETE /devices/{id}/commands/{commandId}`): tabletin onaylamadığı komut (iletilmiş olsa da) `cancelled` olur, sync'te bir daha gitmez. Tablet komutu aldığı anda çalıştırdığı için iletilmiş komutun sonradan gelen sonucu yine yazılır ve durum "Tamamlandı/Başarısız" olur. Onaylanmış komut 409.
 - **Profil silme** (`DELETE /profiles/{id}`): atanmış (iptal edilmemiş) tablet varsa gövdede `replacementProfileId` (tabletler o profile atanır) ya da `"unassign": true` (tabletler profilsiz kalır; öğrenci girişi `NO_PROFILE`) gerekir; ikisi de yoksa 409 ve kaç tablete atandığını söyleyen Türkçe açıklama (yönetim uçlarındaki 409'lar çekirdek zarfında metin olarak döner). Profil, uygulama kuralları ve sistem kontrolleri silinir; açık oturumlar kapanmaz.
 - **Öğrenci verisi silme** (`DELETE /students/{id}/history`): bitmiş oturumlar, kullanım paketleri ve satırları, günlük toplamlar, ek süreler ve kısıtlamalar (süren kısıtlama da) silinir; sayıları döner. Açık oturum varken 409; uzun süredir sessiz oturum önce kapatılır. Kantin hesabına dokunulmaz.

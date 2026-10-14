@@ -162,6 +162,25 @@
 .tb-timer { font-size: 12.5px; color: var(--soft); font-variant-numeric: tabular-nums; }
 .tb-steps { margin: 14px 0 4px; padding-left: 20px; font-size: 12.5px; line-height: 1.65; }
 
+/* Tanı raporu: uzun, satır yapılı metin; pencere ekranı aşmaz, metin kayar. */
+.tb-diag-dialog { width: min(900px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.tb-diag-text {
+  flex: 1 1 auto;
+  min-height: 160px;
+  max-height: 60vh;
+  margin: 8px 0 12px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--tint);
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* ------------------------------------------------- liste + düzenleyici */
 
 .tb-side { display: flex; flex-direction: column; }

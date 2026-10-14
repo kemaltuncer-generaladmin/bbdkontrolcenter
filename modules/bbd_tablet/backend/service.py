@@ -41,6 +41,8 @@ from .rules import (
     normalize_app_rules,
     normalize_command,
     normalize_enrollment_code,
+    normalize_policy_detail,
+    normalize_self_update,
     normalize_usage_windows,
     session_view,
 )
@@ -88,6 +90,10 @@ INSERT_CHUNK = 200
 IN_CHUNK = 500
 # Shown in history views for sessions whose tablet record was deleted.
 DELETED_DEVICE_NAME = "Silinmiş tablet"
+# Sözleşme v2.2 diagnostics: text limit, reports kept per tablet, retention.
+MAX_DIAGNOSTICS_TEXT = 262_144
+DIAGNOSTICS_KEEP = 5
+DIAGNOSTICS_RETENTION = timedelta(days=30)
 
 
 def _utcnow() -> datetime:
@@ -154,6 +160,7 @@ class TabletService:
         self.grants = store.table("grants")
         self.commands = store.table("commands")
         self.blocks = store.table("student_blocks")
+        self.diagnostics = store.table("diagnostics")
         # App distribution keeps its files under `storage_dir`; without one
         # (tests, a misconfigured install) uploads are refused, sync still works.
         self.distribution = AppDistribution(store=store, config=self.config, clock=self._now,
@@ -537,7 +544,8 @@ class TabletService:
             "applied_profile_revision=0, last_seen_at=NULL, "
             "last_policy_applied_at=NULL, battery_percent=NULL, charging=NULL, "
             "foreground_package=NULL, pending_usage_batches=0, next_sync_seconds=NULL, "
-            "inventory_hash=NULL, policy_health='revoked', revoked_at=? WHERE id=?",
+            "inventory_hash=NULL, app_version_code=NULL, self_update=NULL, "
+            "policy_detail=NULL, policy_health='revoked', revoked_at=? WHERE id=?",
             (f"pending:{device_id}", revoked_at, device_id),
         )
         await self.store.execute(
@@ -575,7 +583,7 @@ class TabletService:
         if paired:
             await self.revoke_device(device_id=device_id)
         await self.store.execute(f"DELETE FROM {self.devices} WHERE id=?", (device_id,))
-        for table in (self.inventory, self.commands, self.login_failures):
+        for table in (self.inventory, self.commands, self.login_failures, self.diagnostics):
             await self.store.execute(f"DELETE FROM {table} WHERE device_id=?", (device_id,))
         await self.distribution.forget_device(device_id)
         return {"deleted": True, "deviceId": device_id, "revoked": paired}
@@ -816,6 +824,65 @@ class TabletService:
         )
         current = self._now().isoformat()
         return [self._command_view(row, current) for row in rows]
+
+    # ------------------------------------------------------------ tanılama
+
+    @staticmethod
+    def _diagnostics_view(row: dict[str, Any], *, with_text: bool = False) -> dict[str, Any]:
+        view = {"id": row["id"], "deviceId": row["device_id"],
+                "commandId": row.get("command_id"), "createdAt": row["created_at"],
+                "appVersion": row.get("app_version") or "",
+                "appVersionCode": row.get("app_version_code"),
+                "sizeBytes": int(row.get("size_bytes") or 0)}
+        if with_text:
+            view["text"] = row.get("text") or ""
+        return view
+
+    async def store_diagnostics(self, *, device: dict[str, Any], command_id: str | None,
+                                app_version: str | None, app_version_code: int | None,
+                                text: str) -> dict[str, Any]:
+        """Keep a tablet's diagnostics report; only its newest DIAGNOSTICS_KEEP stay.
+
+        The new report always survives: the older ones are trimmed by their
+        own order before it is written, so equal timestamps cannot drop it.
+        """
+        if len(text) > MAX_DIAGNOSTICS_TEXT:
+            raise ValueError(f"Tanı raporu en fazla {MAX_DIAGNOSTICS_TEXT} karakter olabilir.")
+        stamp = self._now().isoformat()
+        older = await self.store.fetch_all(
+            f"SELECT id FROM {self.diagnostics} WHERE device_id=? ORDER BY created_at DESC",
+            (device["id"],),
+        )
+        stale = [row["id"] for row in older[DIAGNOSTICS_KEEP - 1:]]
+        for part in _chunks(stale, IN_CHUNK):
+            await self.store.execute(
+                f"DELETE FROM {self.diagnostics} WHERE id IN ({_marks(len(part))})", tuple(part),
+            )
+        report_id = str(uuid4())
+        await self.store.execute(
+            f"INSERT INTO {self.diagnostics} (id, device_id, command_id, created_at, "
+            "app_version, app_version_code, size_bytes, text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (report_id, device["id"], command_id or None, stamp, (app_version or "").strip(),
+             app_version_code, len(text.encode("utf-8")), text),
+        )
+        return {"id": report_id, "receivedAt": stamp}
+
+    async def list_diagnostics(self, *, device_id: str) -> list[dict[str, Any]]:
+        rows = await self.store.fetch_all(
+            f"SELECT id, device_id, command_id, created_at, app_version, app_version_code, "
+            f"size_bytes FROM {self.diagnostics} WHERE device_id=? ORDER BY created_at DESC",
+            (device_id,),
+        )
+        return [self._diagnostics_view(dict(row)) for row in rows]
+
+    async def get_diagnostics(self, *, device_id: str, diagnostics_id: str) -> dict[str, Any]:
+        row = await self.store.fetch_one(
+            f"SELECT * FROM {self.diagnostics} WHERE id=? AND device_id=?",
+            (diagnostics_id, device_id),
+        )
+        if not row:
+            raise NotFoundError("Tanı raporu bulunamadı.")
+        return self._diagnostics_view(dict(row), with_text=True)
 
     async def bulk(self, *, device_ids: list[str], action: str, actor: str,
                    lock_message: str = "", announcement: str = "",
@@ -1345,6 +1412,10 @@ class TabletService:
             f"DELETE FROM {self.commands} WHERE expires_at<?",
             ((current - COMMAND_RETENTION).isoformat(),),
         )
+        await self.store.execute(
+            f"DELETE FROM {self.diagnostics} WHERE created_at<?",
+            ((current - DIAGNOSTICS_RETENTION).isoformat(),),
+        )
         # Uploads untouched for two days, drafts never published, orphan files.
         await self.distribution.cleanup()
         return True
@@ -1380,7 +1451,8 @@ class TabletService:
             f"last_policy_applied_at, policy_health, revoked_at, created_at, "
             f"enrollment_expires_at, locked, lock_message, offline_mode, announcement, "
             f"state_version, battery_percent, charging, foreground_package, "
-            f"pending_usage_batches, next_sync_seconds, "
+            f"pending_usage_batches, next_sync_seconds, app_version_code, self_update, "
+            f"policy_detail, "
             f"CASE WHEN token_hash IS NULL THEN 0 ELSE 1 END AS paired "
             f"FROM {self.devices} ORDER BY name"
         )
@@ -1467,6 +1539,7 @@ class TabletService:
                 "active_student_id": active["student_id"] if active else None,
                 "active_student_name": active["student_name"] if active else None,
                 "active_session_id": active["id"] if active else None,
+                "self_update": self.distribution.self_report(device),
             })
             device_views.append(device)
         live = [item for item in device_views if item["status"] != "revoked"]
@@ -1481,8 +1554,14 @@ class TabletService:
             "loginLocked": sum(1 for item in live if item["login_locked_until"]),
             "revoked": len(device_views) - len(live),
         }
+        # The published TabletKontrol release (in-memory catalog): the panel
+        # shows a v2.2 tablet's self-update download as a percentage of it.
+        own = self.distribution.self_item(await self.distribution.catalog())
         return {
             "serverTime": stamp, "summary": summary,
+            "selfRelease": None if own is None else {
+                "releaseId": own["releaseId"], "versionCode": own["versionCode"],
+                "versionName": own["versionName"], "totalBytes": own["totalBytes"]},
             "profiles": [{**profile, "deviceCount": assigned_counts.get(profile["id"], 0)}
                          for profile in profiles],
             "devices": device_views,
@@ -1717,7 +1796,14 @@ class TabletService:
         """The single periodic tablet call. Unchanged data is answered with nulls.
 
         `base_url` is the public tablet API root (scheme, host and the
-        `/api/tablet/v1` prefix); download grants are absolute URLs under it.
+        `/api/tablet/v1` prefix); download grants and the self-update offer
+        are absolute URLs under it.
+
+        Sözleşme v2.2: `appVersionCode`, `selfUpdate` and `policyDetail` are
+        written only when they differ from the row the auth already loaded,
+        as extra columns of the sync's one device update. The `selfUpdate`
+        answer key exists only for a tablet that sent the `selfUpdate` key,
+        so older APKs get the same answer as before.
         """
         current = self._now()
         stamp = current.isoformat()
@@ -1751,18 +1837,20 @@ class TabletService:
             if head:
                 next_sync = min(next_sync, HEAD_SYNC_SECONDS)
         applied_id, applied_revision = await self._applied_profile(data, profile)
+        reported = self._reported_columns(device, data)
         await self.store.execute(
             f"UPDATE {self.devices} SET last_seen_at=?, next_sync_seconds=?, "
             "app_version=COALESCE(?, app_version), policy_health=COALESCE(?, policy_health), "
             "last_policy_applied_at=COALESCE(?, last_policy_applied_at), "
             "applied_profile_id=?, applied_profile_revision=?, battery_percent=?, charging=?, "
-            "foreground_package=?, pending_usage_batches=? WHERE id=?",
+            "foreground_package=?, pending_usage_batches=?"
+            + "".join(f", {column}=?" for column in reported) + " WHERE id=?",
             (stamp, next_sync, data.get("appVersion"), data.get("policyHealth"),
              data.get("lastPolicyAppliedAt"), applied_id, applied_revision,
              data.get("batteryPercent"),
              None if data.get("charging") is None else int(bool(data["charging"])),
              data.get("foregroundPackage") if active else None,
-             int(data.get("pendingUsageBatches") or 0), device["id"]),
+             int(data.get("pendingUsageBatches") or 0), *reported.values(), device["id"]),
         )
         grants = None
         if active:
@@ -1780,15 +1868,45 @@ class TabletService:
         if data.get("deviceStateVersion") != int(device.get("state_version") or 1):
             state = self._device_state(device,
                                        await self._login_locked_until(device["id"], current))
-        return {"serverTime": stamp, "nextSyncSeconds": next_sync,
-                "usageFlushSeconds": self.usage_flush_seconds,
-                "assignedProfileId": profile["id"] if profile else None,
-                "profileRevision": profile["revision"] if profile else 0,
-                "profile": profile if changed_profile else None,
-                "deviceState": state,
-                "session": session, "grants": grants,
-                "commands": await self._pending_commands(device["id"], stamp),
-                "apps": apps, "install": install}
+        answer = {"serverTime": stamp, "nextSyncSeconds": next_sync,
+                  "usageFlushSeconds": self.usage_flush_seconds,
+                  "assignedProfileId": profile["id"] if profile else None,
+                  "profileRevision": profile["revision"] if profile else 0,
+                  "profile": profile if changed_profile else None,
+                  "deviceState": state,
+                  "session": session, "grants": grants,
+                  "commands": await self._pending_commands(device["id"], stamp),
+                  "apps": apps, "install": install}
+        if "selfUpdate" in data:
+            # In-memory catalog and one comparison; no query (sözleşme v2.2).
+            answer["selfUpdate"] = await self.distribution.self_update_offer(
+                device_id=device["id"], app_version_code=data.get("appVersionCode"),
+                base_url=base_url,
+            )
+        return answer
+
+    @staticmethod
+    def _reported_columns(device: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+        """v2.2 report fields that differ from the stored row: column → new value.
+
+        Only keys the tablet sent count. A v2.2 tablet (it sends `selfUpdate`)
+        omits `policyDetail` while its policy is healthy, which clears it.
+        """
+        changes: dict[str, Any] = {}
+        code = data.get("appVersionCode")
+        if code is not None and code != device.get("app_version_code"):
+            changes["app_version_code"] = code
+        if "selfUpdate" in data:
+            report = normalize_self_update(data["selfUpdate"])
+            text = None if report is None else json.dumps(
+                report, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            if text != device.get("self_update"):
+                changes["self_update"] = text
+        if "selfUpdate" in data or "policyDetail" in data:
+            detail = normalize_policy_detail(data.get("policyDetail"))
+            if detail != device.get("policy_detail"):
+                changes["policy_detail"] = detail
+        return changes
 
     async def _applied_profile(self, data: dict[str, Any],
                                assigned: dict[str, Any] | None) -> tuple[str | None, int]:

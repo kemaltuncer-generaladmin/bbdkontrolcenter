@@ -1187,6 +1187,8 @@ EXPECTED_PERMISSIONS = {
     ("GET", "/sessions"): {VIEW},
     ("GET", "/devices/{device_id}/apps"): {VIEW},
     ("GET", "/devices/{device_id}/commands"): {VIEW},
+    ("GET", "/devices/{device_id}/diagnostics"): {VIEW},
+    ("GET", "/devices/{device_id}/diagnostics/{diagnostics_id}"): {MANAGE},
     ("POST", "/profiles"): {MANAGE},
     ("PUT", "/profiles/{profile_id}"): {MANAGE},
     ("POST", "/profiles/{profile_id}/duplicate"): {MANAGE},

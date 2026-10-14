@@ -8,7 +8,8 @@ yeterli olsa bile PIN teyidi (`confirm_pin`) ister. PIN gövdede taşınır, sor
 dizesinde değil.
 
 Uygulama dağıtımı: listeler `view`; yükleme, yayın, öne alma `manage`;
-dağıtımı bitirmek (`DELETE /apps/{package}`) ayrıca PIN ister.
+dağıtımı bitirmek (`DELETE /apps/{package}`) ayrıca PIN ister. Tanı raporu
+listesi `view`, raporun metni `manage` ister.
 """
 
 from __future__ import annotations
@@ -157,7 +158,8 @@ class AssignBody(BaseModel):
 
 
 class CommandBody(BaseModel):
-    type: Literal["message", "refresh_inventory", "flush_usage", "reboot"]
+    type: Literal["message", "refresh_inventory", "flush_usage", "reboot",
+                  "self_update", "diagnostics"]
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -265,6 +267,22 @@ async def device_apps(device_id: str,
 async def device_commands(device_id: str, limit: int = Query(default=20, ge=1, le=100),
                           user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
     return await current_service().list_commands(device_id=device_id, limit=limit)
+
+
+@router.get("/devices/{device_id}/diagnostics")
+async def device_diagnostics(device_id: str,
+                             user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
+    """Tabletin son tanı raporları, metinsiz (sözleşme v2.2)."""
+    return await current_service().list_diagnostics(device_id=device_id)
+
+
+@router.get("/devices/{device_id}/diagnostics/{diagnostics_id}")
+async def device_diagnostics_text(device_id: str, diagnostics_id: str,
+                                  user: CurrentUser = requires(MANAGE)) -> dict[str, Any]:
+    """Raporun metni: kurulum ve politika ayrıntısı taşır, `manage` ister."""
+    return await run(current_service().get_diagnostics(
+        device_id=device_id, diagnostics_id=diagnostics_id,
+    ))
 
 
 # ------------------------------------------------------------------- profiller

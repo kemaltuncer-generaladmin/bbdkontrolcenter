@@ -63,7 +63,7 @@ export function mount(root, ctx) {
   let inflight = null;
 
   const state = {
-    summary: {}, profiles: [], devices: [], sessions: [],
+    summary: {}, profiles: [], devices: [], sessions: [], selfRelease: null,
     students: null, studentsError: '', studentsAt: 0, studentsWanted: false,
     loadedAt: 0, loadError: '', skew: 0,
   };
@@ -186,6 +186,7 @@ export function mount(root, ctx) {
       state.profiles = Array.isArray(data?.profiles) ? data.profiles : [];
       state.devices = Array.isArray(data?.devices) ? data.devices : [];
       state.sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+      state.selfRelease = data?.selfRelease || null;
       const server = Date.parse(String(data?.serverTime || '').replace(/(\.\d{3})\d+/, '$1'));
       state.skew = Number.isNaN(server) ? 0 : server - Date.now();
       state.loadedAt = Date.now();
