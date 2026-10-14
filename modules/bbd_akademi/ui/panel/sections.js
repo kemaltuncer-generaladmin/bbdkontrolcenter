@@ -50,6 +50,9 @@ export const SECTIONS = [
   // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
   { key: 'questions', label: 'Hoca soruları', file: './questions.js', requires: ['learning'], area: 'today',
     feature: 'coach_questions' },
+  // Mesaj denetimi (F-K15 moderasyon + F-K21 denetim): şikâyet kuyruğu, karar, kilit, gerekçeli arama.
+  { key: 'messages', label: 'Mesaj denetimi', file: './messages.js', requires: ['settings'], area: 'today',
+    feature: 'coaching' },
   // `kmOnly`: Akademi izni olmayan ama öğrenci yönetimi izni olan kullanıcıya
   // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
   { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',
@@ -94,7 +97,8 @@ export const SECTIONS = [
 export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', kvkk: 'privacy',
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
   'kitap-satisi': 'bookSales', 'book-sales': 'bookSales',
-  sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions' };
+  sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions',
+  'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages' };
 
 /**
  * Özellik açık mı. `features` null (okunamadı) ya da bayrak listede yoksa

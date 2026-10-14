@@ -94,10 +94,6 @@ _COACHING = (
     "Sözleşme 6bbcd0b / 2d91b96 (draft.3 koçluk paketi) ile geldi; koç eşlemesi, "
     "koçluk kartı, haftalık program, soru-cevap, check-in, görüşme, tebrik, "
     "kütüphane ve video ekranları ayrı iş paketidir, bu dalda henüz yok.")
-_MESSAGING = (
-    "Sözleşme b973148 (draft.3 mesajlaşma) ile geldi; mesaj şikâyet kuyruğu, "
-    "denetim araması, konuşma kilidi ve dışa aktarım ekranı ayrı iş paketidir, "
-    "bu dalda henüz yok.")
 
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
@@ -156,11 +152,6 @@ PENDING: dict[str, str] = {
         "admin_resolvePlaylist", "students_listCoachMeetings", "students_getCoachingOverview",
         "students_listGoalProposals", "students_listKudos", "students_listTopicLibraryItems",
         "students_getTaskVideo", "students_listQuestions", "students_getQuestion",
-    )},
-    **{operation_id: _MESSAGING for operation_id in (
-        "admin_listMessageReports", "admin_getMessageReport", "admin_decideMessageReport",
-        "admin_searchMessages", "admin_openAuditThread", "admin_exportThread",
-        "admin_lockMessageThread",
     )},
 }
 
