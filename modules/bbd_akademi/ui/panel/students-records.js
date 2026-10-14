@@ -59,7 +59,8 @@ const CHARGE_STATUS = { open: ['Açık', 'info'], partially_paid: ['Kısmi öden
   overdue: ['Gecikmiş', 'bad'], cancelled: ['İptal', 'dim'] };
 const PAYMENT_STATUS = { completed: ['Tamamlandı', 'good'], voided: ['İptal edildi', 'dim'] };
 const STATEMENT_KIND = { charge: 'Borç', charge_cancelled: 'Borç iptali', payment: 'Tahsilat',
-  payment_voided: 'Tahsilat iptali', credit_applied: 'Alacak mahsubu' };
+  payment_voided: 'Tahsilat iptali', credit_applied: 'Alacak mahsubu', discount: 'İndirim / burs', refund: 'İade',
+  refund_voided: 'İade iptali', withdrawal: 'Ayrılma / dondurma' };
 const CANTEEN_METHOD = { cash: 'Nakit', card: 'Kart' };
 const PR_STATUS = { pending: ['Bekliyor', 'warn'], paid: ['Ödendi', 'good'], expired: ['Süresi doldu', 'dim'],
   failed: ['Başarısız', 'bad'] };
