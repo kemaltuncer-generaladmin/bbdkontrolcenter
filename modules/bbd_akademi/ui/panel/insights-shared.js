@@ -35,7 +35,7 @@ export const RESOLVE_REASONS = { contacted: 'Öğrenci / veliyle görüşüldü'
   false_alarm: 'Yanlış alarm', other: 'Diğer' };
 export const MISTAKE_REASONS = { knowledge_gap: 'Bilgi eksiği', misconception: 'Kavram yanılgısı',
   calculation_error: 'İşlem hatası', careless: 'Dikkatsizlik', misread_question: 'Soruyu yanlış okuma',
-  time_shortage: 'Süre yetmedi', guess: 'Tahmin' };
+  time_shortage: 'Süre yetmedi', guess: 'Tahmin', unspecified: 'Belirtilmemiş' };
 
 export const ruleName = (rule) => RULES[rule]?.[0] || rule || '—';
 
