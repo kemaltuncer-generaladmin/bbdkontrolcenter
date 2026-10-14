@@ -1254,16 +1254,17 @@ class GatewayService:
             raise student_not_found()
         return {"qrText": text, "version": 1}
 
-    async def student_payment_requests(self, student_id: str) -> dict[str, Any]:
-        rows = await self.call(self.caps.payment_requests_for(student_id))
+    async def student_payment_requests(self, student_id: str,
+                                       ret: str | None = None) -> dict[str, Any]:
+        rows = await self.call(self.caps.payment_requests_for(student_id, ret))
         items = [self.payment_request(item) for item in rows]
         items.sort(key=lambda item: str(item["createdAt"] or ""), reverse=True)
         return {"items": items}
 
     async def create_payment_request(self, student_id: str, amount: int | None,
-                                     caller: Caller) -> dict[str, Any]:
+                                     caller: Caller, ret: str | None = None) -> dict[str, Any]:
         async def work() -> dict[str, Any]:
-            result = await self.call(self.caps.create_payment_request(student_id, amount),
+            result = await self.call(self.caps.create_payment_request(student_id, amount, ret),
                                      reasons=PAYMENT_REQUEST_REASONS)
             fixed = result.get("amountFixed")
             ref = str(result.get("ref") or "")

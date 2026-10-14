@@ -931,15 +931,17 @@ class CanteenApi:
             maximum_int = 0
         return {"allowPrepayment": bool(allow), "maxPrepayment": maximum_int}
 
-    async def payment_request(self, ref: str) -> dict[str, Any]:
+    async def payment_request(self, ref: str, *, ret: str | None = None) -> dict[str, Any]:
         """Tekil ödeme talebi — akış satırıyla aynı gövde, TAZE `payToken` ile.
 
         Akıştan alınmış token'ın süresi dolduysa uygulama yenisini buradan alır
         (talep hâlâ PENDING ise; değilse `payToken` None). Yan etkisi yoktur.
-        Yoksa `CanteenError(reason="not_found")`.
+        Yoksa `CanteenError(reason="not_found")`. `ret`: bkz. `return_url`.
         """
+        back = return_url(ret)
         try:
-            payload = await self._request("GET", f"/api/payment-requests/{ref}")
+            payload = await self._request("GET", f"/api/payment-requests/{ref}",
+                                          params={"ret": back} if back else None)
         except CanteenError as failure:
             if failure.status == 404:
                 failure.reason = failure.reason or "not_found"
@@ -1012,7 +1014,8 @@ class CanteenApi:
 
     # ------------------------------------------------------------- ödeme talebi
 
-    async def payment_requests(self, student_id: str | None = None) -> list[dict[str, Any]]:
+    async def payment_requests(self, student_id: str | None = None, *,
+                               ret: str | None = None) -> list[dict[str, Any]]:
         """Son 100 ödeme talebi, en yeni önce — düz liste (eski biçim; akış kipi
         DEĞİL, `updatedSince` gönderilmez).
 
@@ -1026,13 +1029,17 @@ class CanteenApi:
 
         Satırlar kantinden geldiği gibidir (zamanlar epoch-ms, `studentName`
         dahil). Sonraki sayfa için `payment_requests_page`.
+
+        `ret`: uygulama içi ödemenin web dönüş adresi (`payToken` içine girer);
+        bkz. `return_url`.
         """
-        page = await self.payment_requests_page(student_id=student_id)
+        page = await self.payment_requests_page(student_id=student_id, ret=ret)
         return list(page["data"])
 
     async def payment_requests_page(self, student_id: str | None = None, *,
                                     limit: int | None = None,
-                                    cursor: str | None = None) -> dict[str, Any]:
+                                    cursor: str | None = None,
+                                    ret: str | None = None) -> dict[str, Any]:
         """Ödeme taleplerinin bir sayfası — `{data, nextCursor, hasMore}`.
 
         Liste kipi (§1.7): `limit` 1–500 (kantin varsayılanı 100), `cursor`
@@ -1049,6 +1056,9 @@ class CanteenApi:
         token = str(cursor or "").strip()
         if token:
             params["cursor"] = token
+        back = return_url(ret)
+        if back:
+            params["ret"] = back
         payload = await self._request("GET", "/api/payment-requests", params=params or None)
         return _cursor_page(payload, wanted, bool(token))
 
@@ -1143,7 +1153,8 @@ class CanteenApi:
         return page
 
     async def create_payment_request(self, student_id: str, amount: int | None = None,
-                                     origin: str = "admin") -> dict[str, Any]:
+                                     origin: str = "admin",
+                                     ret: str | None = None) -> dict[str, Any]:
         """Ödeme talebi açar ve veliye kısa linkli SMS'i kuyruğa alır.
 
         `amount` VERİLMEZSE bugünkü davranış: kantin öğrencinin o anki borcunu
@@ -1168,6 +1179,11 @@ class CanteenApi:
         `maxAmount` taşır. Öğrenci başına tek açık talep vardır (yeniden
         kullanılır).
 
+        `ret`: uygulama içi ödemenin web dönüş adresi ("Uygulamaya dön"; Akademi
+        web istemcisinin kökeni + `/payment-result`). Kantin onu `payToken`'a
+        yalnız `PAYMENT_APP_RETURN_URLS` listesindekiyle birebir aynıysa koyar,
+        değilse listenin ilkini; SMS linki `ret` taşımaz. Bkz. `return_url`.
+
         Dönüş: `{queued, ref, amount, status, linkUrl, amountFixed, payToken,
         origin, …}` (+ kantinin döndürdüğü diğer alanlar; zamanlar ISO). Eski
         kantin `status`/`linkUrl`/`payToken` döndürmezse `PENDING`/`None`/`None`.
@@ -1182,6 +1198,9 @@ class CanteenApi:
                 raise CanteenError("Ödeme talebi tutarı en az 1,00 ₺ olmalı.",
                                    status=422, reason="invalid_amount")
             body["amount"] = int(amount)
+        back = return_url(ret)
+        if back:
+            body["ret"] = back
 
         payload = await self._request("POST", "/api/payment-requests", json=body)
         data = payload.get("data", payload) if isinstance(payload, dict) else {}
@@ -1437,6 +1456,26 @@ def _cursor_page(payload: Any, wanted: str, cursor_sent: bool) -> dict[str, Any]
 def _ledger_unsupported() -> CanteenError:
     return CanteenError("Kantin hesap dökümü ucunu tanımıyor (eski sürüm).", status=404,
                         reason="ledger_unsupported")
+
+
+#: Kantinin `ret` alanı sınırı (`PaymentRequestController@store`: `max:512`).
+RETURN_URL_MAX = 512
+
+
+def return_url(value: str | None) -> str | None:
+    """Ödeme dönüş adresini (`ret`) kantine iletilecek biçime getirir.
+
+    Yalnız `https://` ile başlayan, boşluksuz ve en çok 512 karakterlik adres
+    iletilir; gerisi sessizce düşer (kantin zaten izin listesiyle birebir
+    karşılaştırır ve tanımadığında varsayılanı kullanır — burada açık
+    yönlendirme ya da çöp değer kantine taşınmaz).
+    """
+    text = str(value or "").strip()
+    if not text or len(text) > RETURN_URL_MAX or not text.startswith("https://"):
+        return None
+    if any(ch.isspace() for ch in text):
+        return None
+    return text
 
 
 def _payment_request_row(row: dict[str, Any]) -> dict[str, Any]:

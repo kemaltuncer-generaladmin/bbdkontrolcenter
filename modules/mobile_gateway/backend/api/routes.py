@@ -107,6 +107,9 @@ class VerifyCodeBody(BaseModel):
 
 class PaymentRequestBody(BaseModel):
     amount: int | None = Field(default=None, ge=1, le=100_000_000)
+    # Uygulama içi ödemenin web dönüşü (Akademi web kökeni + `/payment-result`);
+    # kantine iletilir, kantin izin listesiyle birebir karşılaştırır.
+    ret: str | None = Field(default=None, max_length=512)
 
 
 class ControlsBody(BaseModel):
@@ -254,16 +257,19 @@ async def canteen_qr(student_id: str, user: CurrentUser = requires(ACCESS)) -> d
 
 @router.get("/students/{student_id}/payment-requests")
 async def student_payment_requests(student_id: str,
+                                   ret: str | None = Query(default=None, max_length=512),
                                    user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
-    return await current_service().student_payment_requests(student_id)
+    """`ret`: satırlardaki `payToken`'a girecek web dönüş adresi (kantine iletilir)."""
+    return await current_service().student_payment_requests(student_id, ret)
 
 
 async def _create_payment_request(student_id: str, body: PaymentRequestBody | None,
                                   request: Request, user: CurrentUser) -> Response:
     caller = caller_of(request, user)
     amount = body.amount if body is not None else None
+    ret = body.ret if body is not None else None
     return await idempotent(request, body, 201, lambda: current_service().create_payment_request(
-        student_id, amount, caller,
+        student_id, amount, caller, ret,
     ))
 
 

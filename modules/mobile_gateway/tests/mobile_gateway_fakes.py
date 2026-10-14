@@ -148,6 +148,8 @@ class FakeCanteen:
         self.down = False
         self.fail_reason: str | None = None
         self.origins: list[str | None] = []
+        # Uygulama içi ödemenin web dönüşü (`ret`) — kantine iletilen değerler.
+        self.rets: list[tuple[str, str | None]] = []
         self.feed_cursor: dict[str, Any] = {"nextSince": 1791784800250, "hasMore": True}
         #: Defter ucu: "ok" (kantin §1.7) ya da "unsupported" (eski kantin; istemci
         #: `reason="ledger_unsupported"` ile reddeder).
@@ -255,14 +257,17 @@ class FakeCanteen:
              "method": "CASH"},
         ]}
 
-    async def payment_requests(self) -> list[dict[str, Any]]:
+    async def payment_requests(self, *, ret: str | None = None) -> list[dict[str, Any]]:
         self._enter("payment_requests")
+        self.rets.append(("list", ret))
         return deepcopy(self.requests)
 
     async def create_payment_request(self, student_id: str, amount: int | None = None,
-                                     origin: str | None = None) -> dict[str, Any]:
+                                     origin: str | None = None,
+                                     ret: str | None = None) -> dict[str, Any]:
         self._enter("create_payment_request", (student_id, amount))
         self.origins.append(origin)
+        self.rets.append(("create", ret))
         if self.fail_reason:
             limit = {"balance": 4250, "maxAmount": 4250} \
                 if self.fail_reason == "exceeds_debt" else None
