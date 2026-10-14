@@ -7,6 +7,10 @@
 // sorumlu öğretmen, etkinlik) ve SINIF MÜFREDATI atanır (`admin_changeClassGroupCurricula` — ör.
 // Hüseyin Hoca'nın TYT sınıfına "TYT Matematik"; üyelerin etkin setine eklenir).
 //
+// DÖNEM (iş 30): "Dönem" = sınıfın akademik yılı ("2026-2027", KM'nin; Akademi `ClassGroup.academicYear`).
+// Akademi alanı henüz yoksa (eski Akademi) KM Sınıflar listesinden ad eşlemesiyle okunur. Akademi'nin
+// kendi `termId`'si (yarıyıl, "2026-2027 Güz") "Yarıyıl" sütunudur. Liste varsayılan güncel dönemle süzülür.
+//
 // Liste küçük ve seyrek değişir: önbellekli okunur (`getCached`), her yazmadan sonra önbellek
 // düşürülür (`invalidate`) — bölümlerin sınıf seçicileri (`app.lookups`) aynı önbelleği paylaşır.
 
@@ -15,13 +19,36 @@ import { badge, card } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import {
   EXAM_TARGETS, TRACKS, actionButton, empty, formDialog, gradeText, kv, loader, num,
-  openDrawer, searchBox, toolbar,
+  openDrawer, searchBox, selectBox, toolbar,
 } from './common.js';
 import { STUDENT_STATUS, checkbox, stack } from './students-detail.js';
-import { classCurriculumSet, curriculaChips } from './curriculum-set.js';
+import { academicYearOf, classCurriculumSet, curriculaChips } from './curriculum-set.js';
 import { classMembersCard } from './students-class-history.js';
 
 const CLASS_CACHE = '/v1/admin/class-groups';
+
+/** KM Sınıflar (dönem yedeği): katlanmış ad → dönem. Okunamazsa boş (sütun "—"). */
+async function kmYears(app) {
+  if (typeof app.kmGet !== 'function') return new Map();
+  try {
+    const data = await app.kmGet('/api/bbd_students/groups?archived=all');
+    const out = new Map();
+    for (const group of data?.groups || []) {
+      if (!group.academicYear) continue;
+      out.set(foldText(group.name), group.academicYear);
+      if (group.legacyClassName) out.set(foldText(group.legacyClassName), group.academicYear);
+    }
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
+/** Satırın dönemi: Akademi alanı, yoksa KM listesinden (görünen ad ya da KM adı). */
+export function classYear(row, fallback = new Map()) {
+  return row?.academicYear || fallback.get(foldText(row?.kmClassName || '')) || fallback.get(foldText(row?.name || ''))
+    || null;
+}
 
 function studentColumns() {
   return [
@@ -44,11 +71,22 @@ export function classesView(app, { openStudent }) {
   let filter = '';
   let rows = [];
   let termNames = new Map();
+  let fallbackYears = new Map();
+  const current = academicYearOf(new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Istanbul' }));
+  let year = current;
+  const yearOptions = (extra = []) => {
+    const start = Number(current.slice(0, 4));
+    const found = new Set([...[-2, -1, 0, 1].map((step) => `${start + step}-${start + step + 1}`),
+      ...extra.filter(Boolean)]);
+    return [{ value: '', label: 'Tüm dönemler' }, ...[...found].sort().reverse()
+      .map((value) => ({ value, label: value === current ? `${value} (güncel)` : value }))];
+  };
+  const yearSelect = selectBox(yearOptions(), year, (value) => { year = value; paint(); }, { label: 'Dönem' });
   const search = searchBox({ placeholder: 'Sınıf ara', onSearch: (q) => { filter = foldText(q); paint(); } });
-  node.append(toolbar(search.node, checkbox('Pasif sınıfları da göster', (on) => { showInactive = on; view.reload(); }),
+  node.append(toolbar(search.node, yearSelect.node, checkbox('Pasif sınıfları da göster', (on) => { showInactive = on; view.reload(); }),
     checkbox('Arşivdekileri de göster', (on) => { showArchived = on; view.reload(); }),
-    h('span', 'kit-spacer'), h('span', 'ak-muted', 'Sınıflar KM\'de açılır (ad, üyeler, arşiv); burada dönem, '
-      + 'sorumlu öğretmen ve sınıf müfredatı eşlenir.')));
+    h('span', 'kit-spacer'), h('span', 'ak-muted', 'Sınıflar KM\'de açılır (ad, dönem, üyeler, arşiv); burada '
+      + 'yarıyıl, sorumlu öğretmen ve sınıf müfredatı eşlenir.')));
 
   const grid = dataTable({
     columns: [
@@ -67,7 +105,8 @@ export function classesView(app, { openStudent }) {
         return row.levelSource === 'name' ? stack(text, 'addan tahmin — Sınıflar\'da seçin') : text;
       } },
       { key: 'track', label: 'Alan', cell: (row) => TRACKS[row.track] || '—' },
-      { key: 'term', label: 'Dönem', cell: (row) => (row.termId ? termNames.get(row.termId) || '—'
+      { key: 'year', label: 'Dönem', cell: (row) => classYear(row, fallbackYears) || '—' },
+      { key: 'term', label: 'Yarıyıl', cell: (row) => (row.termId ? termNames.get(row.termId) || '—'
         : badge('Atanmamış', 'warn')) },
       { key: 'teacher', label: 'Sorumlu öğretmen', width: 'minmax(0, 1.4fr)',
         cell: (row) => row.homeroomTeacher?.displayName || '—' },
@@ -87,7 +126,11 @@ export function classesView(app, { openStudent }) {
       app.lookups.terms().catch(() => []),
     ]);
     termNames = new Map(terms.map((term) => [term.id, term.name]));
-    return data?.items || [];
+    const items = data?.items || [];
+    // Eski Akademi `academicYear` taşımıyorsa dönem KM listesinden.
+    fallbackYears = items.some((row) => !row.academicYear) ? await kmYears(app) : new Map();
+    yearSelect.options(yearOptions(items.map((row) => classYear(row, fallbackYears))), year);
+    return items;
   }, (items) => {
     rows = [...items].sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'));
     paint();
@@ -96,8 +139,10 @@ export function classesView(app, { openStudent }) {
   node.append(view.node);
 
   function paint() {
-    grid.update({ rows: filter
-      ? rows.filter((row) => foldText(`${row.name} ${row.kmClassName}`).includes(filter)) : rows });
+    // Hiçbir satırın dönemi bilinmiyorsa (eski Akademi + KM okunamadı) süzgeç listeyi boşaltmaz.
+    const known = rows.some((row) => classYear(row, fallbackYears));
+    grid.update({ rows: rows.filter((row) => (!year || !known || classYear(row, fallbackYears) === year)
+      && (!filter || foldText(`${row.name} ${row.kmClassName}`).includes(filter))) });
   }
 
   function openClass(classGroupId) {
@@ -134,7 +179,8 @@ export function classesView(app, { openStudent }) {
           ['Anons adı', group.callName || '—'],
           ['Seviye', gradeText(group.gradeLevel)],
           ['Alan', TRACKS[group.track] || '—'],
-          ['Dönem', term ? `${term.name}${term.current ? ' (güncel)' : ''}` : 'Atanmamış'],
+          ['Dönem', classYear(group, fallbackYears) || '—'],
+          ['Yarıyıl', term ? `${term.name}${term.current ? ' (güncel)' : ''}` : 'Atanmamış'],
           ['Sorumlu öğretmen', group.homeroomTeacher?.displayName || 'Atanmamış'],
           ['Öğrenci', num(group.studentCount)],
           ['Durum', group.archived ? badge('Arşiv (KM)', 'dim')
@@ -186,7 +232,7 @@ async function editClass(app, group, terms) {
   if (current && !teachers.some((teacher) => teacher.id === current.id)) {
     teacherOptions.push({ value: current.id, label: current.displayName });
   }
-  const termOptions = [{ value: '', label: 'Dönem atanmamış' },
+  const termOptions = [{ value: '', label: 'Yarıyıl atanmamış' },
     ...terms.map((term) => ({ value: term.id, label: `${term.name}${term.current ? ' (güncel)' : ''}` }))];
   return formDialog(app, {
     title: `${group.name}: Akademi eşlemesi`,
@@ -201,7 +247,7 @@ async function editClass(app, group, terms) {
     fields: [
       { key: 'displayName', label: 'Görünen ad', maxLength: 60, placeholder: group.kmClassName,
         hint: 'Boş bırakılırsa KM\'deki sınıf adı kullanılır.' },
-      { key: 'termId', label: 'Dönem', type: 'select', options: termOptions },
+      { key: 'termId', label: 'Yarıyıl', type: 'select', options: termOptions },
       { key: 'homeroomTeacherId', label: 'Sorumlu öğretmen', type: 'select', options: teacherOptions },
       { key: 'active', label: 'Aktif (seçicilerde ve listelerde görünür)', type: 'checkbox' },
     ],

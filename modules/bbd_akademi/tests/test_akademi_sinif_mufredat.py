@@ -107,12 +107,24 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   // "Geri ekle" — onaysız, {add:[fizik]}
   rows().find((row) => row.textContent.includes('Fizik')).querySelector('button').click();
   await sleep(20);
-  // Seviyenin tümü: 11. sınıf → zaten sette olan matematik atlanır
-  const levelSelect = host.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Seviyenin tümü');
-  out.levelOptions = levelSelect.querySelectorAll('option').map((o) => o.textContent);
-  levelSelect.value = 'lise-11';
-  levelSelect.dispatchEvent(new Event('change'));
-  host.querySelectorAll('button').find((b) => b.textContent === 'Seviyenin tümünü ekle').click();
+  // ÇOKLU seçici (iş 30): seviye grupları; "Seviyenin tümü" 11. sınıf → sette olan matematik atlanır
+  out.levelOptions = host.querySelectorAll('.ak-prog-multi-head b').map((b) => b.textContent);
+  out.ownedDisabled = host.querySelectorAll('.ak-prog-multi-item input')
+    .filter((box) => box.disabled).map((box) => box.value);
+  host.querySelectorAll('button').find((b) => b.getAttribute('aria-label') === '11. sınıf: seviyenin tümü').click();
+  // + TYT Türkçe tek tek; çipten bırakılıp yeniden işaretlenir (seçim sırası korunur)
+  const tick = (id) => {
+    const box = host.querySelectorAll('.ak-prog-multi-item input').find((b) => b.value === id);
+    box.checked = !box.checked;
+    box.dispatchEvent(new Event('change'));
+  };
+  tick('tyt-turkce');
+  out.chips = host.querySelectorAll('.ak-prog-chosen button').map((b) => b.textContent);
+  host.querySelectorAll('.ak-prog-chosen button').find((b) => b.textContent.includes('TYT Türkçe')).click();
+  out.chipsAfter = host.querySelectorAll('.ak-prog-chosen button').length;
+  tick('tyt-turkce');
+  out.multiViolations = audit(host);
+  host.querySelectorAll('button').find((b) => b.textContent === 'Seçilenleri ekle').click();
   await sleep(20);
   out.studentPosts = calls.filter((c) => c.method === 'POST' && c.path.endsWith('/curricula')).map((c) => c.body);
   // geçmiş dönem: salt okunur
@@ -132,10 +144,12 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(20);
   out.classText = host2.textContent;
   out.classViolations = audit(host2);
-  const picker = host2.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Eklenecek müfredat');
-  picker.value = 'tyt-turkce';
-  picker.dispatchEvent(new Event('change'));
-  host2.querySelectorAll('button').find((b) => b.textContent === 'Ekle').click();
+  for (const id of ['tyt-turkce', 'lise-11-fizik']) {
+    const box = host2.querySelectorAll('.ak-prog-multi-item input').find((b) => b.value === id);
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+  }
+  host2.querySelectorAll('button').find((b) => b.textContent === 'Seçilenleri ekle').click();
   await sleep(20);
   out.classPosts = calls.filter((c) => c.method === 'POST' && c.path.includes('/class-groups/')).map((c) => c.body);
   // arşivli sınıf: salt okunur
@@ -196,8 +210,14 @@ def test_ogrenci_seti_kaynaklar_ve_cikarilamayan_sinif_ogesi(result: dict[str, A
 
 
 def test_ogrenci_seti_ekleme_govdeleri(result: dict[str, Any]) -> None:
-    assert result["levelOptions"][1:] == ["11. sınıf (2 ders)", "TYT (2 ders)"]
-    assert result["studentPosts"] == [{"add": ["lise-11-fizik"]}, {"add": ["lise-11-fizik"]}]
+    assert result["levelOptions"] == ["11. sınıf (2)", "TYT (2)"]
+    # Sette olan (matematik, sınıftan TYT Matematik) seçilemez.
+    assert sorted(result["ownedDisabled"]) == ["lise-11-matematik", "tyt-matematik"]
+    assert result["chips"] == ["11. sınıf · Fizik ×", "TYT · TYT Türkçe ×"]
+    assert result["chipsAfter"] == 1
+    # "Geri ekle" + çoklu seçim TEK istekte.
+    assert result["studentPosts"] == [{"add": ["lise-11-fizik"]}, {"add": ["lise-11-fizik", "tyt-turkce"]}]
+    assert result["multiViolations"] == []
 
 
 def test_gecmis_donem_salt_okunur(result: dict[str, Any]) -> None:
@@ -210,7 +230,7 @@ def test_sinif_mufredati_atama_ve_arsiv(result: dict[str, Any]) -> None:
     assert "Bugün 14 öğrenci etkilenir" in result["classText"]
     assert "EKLENİR, yerine geçmez" in result["classText"]
     assert "Kemal Bey" in result["classText"]
-    assert result["classPosts"] == [{"add": ["tyt-turkce"]}]
+    assert result["classPosts"] == [{"add": ["tyt-turkce", "lise-11-fizik"]}]
     assert result["classViolations"] == []
     assert "Sınıf arşivde" in result["archivedText"]
     assert result["archivedButtons"] == 0

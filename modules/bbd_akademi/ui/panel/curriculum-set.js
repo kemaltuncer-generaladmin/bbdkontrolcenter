@@ -18,7 +18,7 @@
 import { h } from '../../ui-kit/kit.js';
 import { alertBox, badge } from '../../ui-kit/layout.js';
 import { actionButton, confirmAction, empty, fmtDateTime, gradeText, loader, problem, selectBox, TRACKS } from './common.js';
-import { fetchPrograms, programGroups, programLabel, programPicker } from './curriculum-picker.js';
+import { programGroups, programLabel, programMultiPicker } from './curriculum-picker.js';
 
 const MAX_CHANGE = 60;                // CurriculumSetChange.add / remove üst sınırı
 
@@ -68,36 +68,23 @@ function todayIso() {
 }
 
 /**
- * Ekleme satırı: tek program (seviye çipli seçici) + "seviyenin tümü".
- * `onAdd(ids)` — eklenecek program kimlikleri.
+ * Ekleme satırı (iş 30): ÇOKLU seçici — seviye grupları, arama, "Seviyenin tümü", seçilenler çip.
+ * Seçilenler TEK istekte eklenir: `onAdd(ids, control)`.
  */
 function addRow(app, { operationId, have, onAdd }) {
   const node = h('div', 'ak-stack ak-curset-add');
-  const picker = programPicker(app, { label: 'Eklenecek müfredat', placeholder: 'Müfredat seçin (seviye / sınav)' });
-  const addOne = actionButton(app, operationId, 'Ekle', { variant: 'primary', onClick: async () => {
-    if (!picker.value) { app.toast('Önce müfredat seçin.', 'warn'); return; }
-    if (have().has(picker.value)) { app.toast('Bu müfredat zaten sette.', 'warn'); return; }
-    await onAdd([picker.value], addOne);
+  const count = h('span', 'ak-muted', '0 seçili');
+  const picker = programMultiPicker(app, { label: 'Eklenecek müfredatlar', max: MAX_CHANGE, have,
+    onChange: (ids) => { count.textContent = `${ids.length} seçili`; } });
+  const add = actionButton(app, operationId, 'Seçilenleri ekle', { variant: 'primary', onClick: async () => {
+    const ids = picker.selection().filter((id) => !have().has(id));
+    if (!ids.length) { app.toast('Önce müfredat seçin.', 'warn'); return; }
+    await onAdd(ids, add);
   } });
-  const levelSelect = selectBox([{ value: '', label: 'Seviye seçin' }], '', () => {}, { label: 'Seviyenin tümü' });
-  let programs = [];
-  const addLevel = actionButton(app, operationId, 'Seviyenin tümünü ekle', { onClick: async () => {
-    if (!levelSelect.value) { app.toast('Önce seviye seçin.', 'warn'); return; }
-    const ids = levelProgramIds(programs, levelSelect.value, have());
-    if (!ids.length) { app.toast('Bu seviyenin bütün dersleri zaten sette.', 'warn'); return; }
-    await onAdd(ids, addLevel);
-  } });
-  const one = h('div', 'ak-inline ak-curset-line');
-  one.append(picker.node, addOne);
-  const all = h('div', 'ak-inline ak-curset-line');
-  all.append(h('span', 'ak-muted', 'ya da bir seviyenin bütün dersleri:'), levelSelect.node, addLevel);
-  node.append(one, all);
-  picker.load({});
-  fetchPrograms(app).then(({ items }) => {
-    programs = items;
-    levelSelect.options([{ value: '', label: 'Seviye seçin' }, ...programGroups(items)
-      .map((group) => ({ value: group.key, label: `${group.label} (${group.items.length} ders)` }))]);
-  }).catch(() => {});
+  const line = h('div', 'ak-inline ak-curset-line');
+  line.append(add, count);
+  node.append(picker.node, line);
+  picker.load();
   return { node, destroy: () => picker.destroy() };
 }
 

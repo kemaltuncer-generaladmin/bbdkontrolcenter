@@ -17,10 +17,12 @@
 //   programLabel(program)       → "11. sınıf · Matematik", "TYT · Matematik"
 //   fillProgramSelect(select, items, {placeholder}) → optgroup'lu <select>
 //   programPicker(app, {...})   → seviye çipleri + arama + gruplu seçim + hedef özeti
+//   programMultiPicker(app, {...}) → ÇOKLU kip (iş 30): seviye çipleri + arama + seviye gruplarında
+//                                 onay kutuları + "Seviyenin tümü" + seçilenler çip; tek istekte `add`
 //   topicTree(app, {...})       → program → ünite → konu çipleri (aramalı), boş durum yol gösterir
 //   targetQuery(target)         → `admin_listPrograms` hedef süzgeci
 
-import { foldText, h } from '../../ui-kit/kit.js';
+import { button, foldText, h } from '../../ui-kit/kit.js';
 import { errorBox, multiChips, problem, searchBox, TRACKS } from './common.js';
 
 export const PROGRAMS = '/v1/admin/curricula/programs';
@@ -304,6 +306,136 @@ export function topicTree(app, { selected, onChange }) {
     refresh() {
       for (const { group, live } of chips) group.set(live.filter((topic) => selected.has(topic.id)).map((topic) => topic.id));
     },
+    destroy: () => search.destroy(),
+  };
+}
+
+
+/**
+ * ÇOKLU program seçici (iş 30, kullanıcı: "sınıf/gruplara birden fazla müfredat seçilip atanabilsin").
+ * Seviye çipleri (süzgeç) + arama + seviye gruplarında onay kutuları + grup başına "Seviyenin tümü" +
+ * seçilenler çip olarak (çipe tıklayınca seçimden çıkar). Sette zaten olan program (`have()`) seçilemez.
+ * En çok `max` program (sözleşme `add` üst sınırı 60). `selection()` seçim sırasıyla kimlikler.
+ */
+export function programMultiPicker(app, { label = 'Eklenecek müfredatlar', max = 60, have = () => new Set(),
+  onChange } = {}) {
+  const node = h('div', 'ak-stack ak-prog-multi');
+  const levels = h('div', 'ak-chips ak-prog-levels');
+  levels.setAttribute('role', 'group');
+  levels.setAttribute('aria-label', 'Seviye');
+  const list = h('div', 'ak-stack ak-prog-multi-list');
+  list.setAttribute('role', 'group');
+  list.setAttribute('aria-label', label);
+  const chosenRow = h('div', 'ak-chips ak-prog-chosen');
+  chosenRow.setAttribute('aria-label', 'Seçilen müfredatlar');
+  const chosen = new Map();
+  let all = [];
+  let level = '';
+  let needle = '';
+  const search = searchBox({ placeholder: 'Müfredat ara (ör. TYT, 11, fizik)', label: 'Müfredat ara',
+    delay: 150, onSearch: (text) => { needle = foldText(text); paint(); } });
+  node.append(levels, search.node, list, chosenRow);
+
+  const changed = () => { paintChosen(); onChange?.([...chosen.keys()]); };
+  const toggle = (program, on) => {
+    if (on && !chosen.has(program.id)) {
+      if (chosen.size >= max) { app.toast?.(`Tek seferde en çok ${max} müfredat.`, 'warn'); return false; }
+      chosen.set(program.id, program);
+    } else if (!on) chosen.delete(program.id);
+    return true;
+  };
+
+  function paintLevels() {
+    levels.replaceChildren();
+    const groups = programGroups(all);
+    levels.hidden = groups.length < 2;
+    const chip = (key, text) => {
+      const item = h('button', `kit-chip${level === key ? ' on' : ''}`, text);
+      item.type = 'button';
+      item.setAttribute('aria-pressed', level === key ? 'true' : 'false');
+      item.addEventListener('click', () => { level = level === key ? '' : key; paintLevels(); paint(); });
+      levels.append(item);
+    };
+    chip('', 'Tüm seviyeler');
+    for (const group of groups) chip(group.key, group.label);
+  }
+
+  function paint() {
+    list.replaceChildren();
+    const owned = have();
+    const visible = all.filter((program) => (!level || levelOf(program).key === level)
+      && (!needle || foldText(`${programLabel(program)} ${program.subject?.name || ''}`).includes(needle)));
+    for (const group of programGroups(visible)) {
+      const block = h('div', 'ak-prog-multi-group');
+      const head = h('div', 'ak-inline ak-prog-multi-head');
+      const free = group.items.filter((program) => !owned.has(program.id));
+      const allOn = free.length > 0 && free.every((program) => chosen.has(program.id));
+      const every = button('Seviyenin tümü', { variant: 'ghost', disabled: free.length === 0, onClick: () => {
+        for (const program of free) if (!toggle(program, !allOn)) break;
+        paint();
+        changed();
+      } });
+      every.setAttribute('aria-label', `${group.label}: seviyenin tümü`);
+      every.setAttribute('aria-pressed', allOn ? 'true' : 'false');
+      head.append(h('b', '', `${group.label} (${group.items.length})`), every);
+      block.append(head);
+      for (const program of group.items) {
+        const row = h('label', 'ak-prog-multi-item');
+        const box = h('input');
+        box.type = 'checkbox';
+        box.value = program.id;
+        box.checked = chosen.has(program.id) || owned.has(program.id);
+        box.disabled = owned.has(program.id);
+        box.addEventListener('change', () => {
+          if (!toggle(program, box.checked)) box.checked = false;
+          paint();
+          changed();
+        });
+        row.append(box, h('span', '', programLabel(program)));
+        if (owned.has(program.id)) row.append(h('span', 'ak-muted', 'sette'));
+        block.append(row);
+      }
+      list.append(block);
+    }
+    if (!list.children.length) {
+      list.append(h('span', 'ak-muted', all.length ? 'Aramaya uyan müfredat yok.' : 'Müfredat yok.'));
+    }
+    search.node.hidden = all.length < 6;
+  }
+
+  function paintChosen() {
+    chosenRow.replaceChildren();
+    if (!chosen.size) {
+      chosenRow.append(h('span', 'ak-muted', 'Seçilen yok — listeden işaretleyin.'));
+      return;
+    }
+    for (const program of chosen.values()) {
+      const chip = h('button', 'kit-chip on', `${programLabel(program)} ×`);
+      chip.type = 'button';
+      chip.setAttribute('aria-label', `${programLabel(program)} seçimden çıkar`);
+      chip.addEventListener('click', () => { chosen.delete(program.id); paint(); changed(); });
+      chosenRow.append(chip);
+    }
+  }
+
+  async function load() {
+    list.replaceChildren(h('span', 'ak-muted', 'Müfredatlar yükleniyor…'));
+    try {
+      all = (await fetchPrograms(app)).items;
+      paintLevels();
+      paint();
+      paintChosen();
+    } catch (failure) {
+      all = [];
+      list.replaceChildren(h('span', 'ak-muted', problem(failure, 'Müfredatlar alınamadı.')));
+    }
+  }
+
+  return {
+    node,
+    load,
+    selection: () => [...chosen.keys()],
+    clear() { chosen.clear(); paint(); changed(); },
     destroy: () => search.destroy(),
   };
 }

@@ -95,3 +95,8 @@
 .ak-curset-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .ak-curset-sub { margin: 6px 0 0; font-weight: 600; font-size: 13px; }
 .ak-curset-line { gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Çoklu müfredat seçici (iş 30): seviye grupları + onay kutuları, uzun listede kaydırma. */
+.ak-prog-multi-list { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; gap: 8px; }
+.ak-prog-multi-head { gap: 8px; align-items: center; justify-content: space-between; }
+.ak-prog-multi-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; font-size: 13px; }
+.ak-prog-chosen { min-height: 24px; }
