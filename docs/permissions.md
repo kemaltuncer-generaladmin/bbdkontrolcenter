@@ -154,6 +154,7 @@ manifesti bilinçli olarak daraltılmış modüllerin ilan ettikleridir.
 | `bbd_students` | `bbd_students.groups` | Öğrenci gruplarını açar, adlandırır, arşivler; tarihli üyelik ekler/bitirir/taşır, geçmiş düzeltir (admin, bbd_staff, org_staff). Okuma `bbd_students.view` ile |
 | `bbd_students` | `bbd_students.lifecycle` | Öğrenciyi pasifleştirir (gerekçe, ileri tarih, toplu) ve yeniden etkinleştirir — kantin satışı, tablet ve Akademi girişi kapanır/açılır (admin, bbd_staff, org_staff) |
 | `bbd_students` | `bbd_students.delete` | Pasif öğrenciyi KALICI siler — tek tek (kart → Tehlikeli işlemler; ad yazılarak) ya da toplu (liste, en çok 50; sayı yazılarak); önce ön kontrol, PIN teyidi (yıkıcı). Engeller: etkin öğrenci, kantin bakiyesi ≠ 0, açık ödeme talebi, kurum cari borcu, Akademi'ye ulaşılamıyor; kurum alacağı engellemez — yalnız admin |
+| `bbd_students` | `bbd_students.groups_delete` | Arşivdeki sınıfı KALICI siler (Sınıflar → Arşiv → Sil; sınıfın adı yazılarak + gerekçe + PIN teyidi, yıkıcı). Üyelikleri gider, Akademi'de listelerden kalkar (geçmiş korunur), zil çağrıları iptal olur — yalnız admin |
 | `mobile_gateway` | `mobile_gateway.events.view` | Akademi'ye olay iletiminin durumunu görür: gecikme, ölü mektup (BBD Akademi → Ayarlar → Senkron; admin, bbd_staff). Servis anahtarına verilmez |
 | `mobile_gateway` | `mobile_gateway.events.manage` | Ölü mektupları Akademi'ye yeniden gönderir, iletimi bir sıradan yeniden başlatır — yalnız admin |
 | `bbd_canteen_api` | `bbd_canteen_api.events.push` | Kantin backend'inin KM'ye olay itmesi (servis anahtarı; admin, canteen_service) |
@@ -303,6 +304,7 @@ ve sildiği her satırı denetim izine `roles.manage` olarak yazar. Bkz.
 | `bbd_students.groups` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_students.lifecycle` | ✓ | ✗ | ✓ | ✓ | ✗ |
 | `bbd_students.delete` | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `bbd_students.groups_delete` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `mobile_gateway.events.view` | ✓ | ✗ | ✓ | ✗ | ✗ |
 | `mobile_gateway.events.manage` | ✓ | ✗ | ✗ | ✗ | ✗ |
 | `print.view` | ✓ | ✓ | ✓ | ✓ | ✗ |

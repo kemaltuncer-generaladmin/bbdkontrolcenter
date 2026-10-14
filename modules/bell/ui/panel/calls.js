@@ -268,6 +268,7 @@ function migrationBand(app) {
 
 const STATE_LABEL = {
   planned: 'bekliyor', dispatched: 'gönderildi', skipped: 'atlandı', failed: 'çalmadı',
+  cancelled: 'iptal (sınıf silindi)',
 };
 let planDay = null;
 

@@ -614,9 +614,11 @@ class FakeGroups:
             {**group_record("c8a", "8-A", revision=4100,
                             members=[{"studentId": ELIF, "validFrom": "2026-09-01",
                                       "validTo": None}]),
-             "legacyClassName": "8-A", "origin": "class",
+             "legacyClassName": "8-A", "origin": "class", "academicYear": "2026-2027",
              "classLevel": {"gradeLevel": 8, "track": None, "examTarget": "LGS"}},
         ]
+        #: Kalıcı silinen sınıflar (iş 30) — yalnız `view="classes"` + `since` akışında.
+        self.tombstones: list[dict[str, Any]] = []
         self.lists: list[int | None] = []
         self.views: list[str] = []
         self.revisions = 0
@@ -639,7 +641,11 @@ class FakeGroups:
             for item in found:
                 item.setdefault("legacyClassName", None)
                 item.setdefault("classLevel", None)
+                item.setdefault("academicYear", None)
                 item.setdefault("origin", "group")
+            if since_revision is not None:
+                found += [dict(item) for item in self.tombstones
+                          if item["revision"] > since_revision]
         return {"revision": self.current, "full": since_revision is None, "view": view,
                 "groups": found, "complete": self.complete}
 

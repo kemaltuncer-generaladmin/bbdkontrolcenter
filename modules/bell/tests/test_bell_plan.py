@@ -660,3 +660,20 @@ def test_yeni_uclar_izin_ilan_eder_acil_kapatma_pin_ister() -> None:
     for key, route in found.items():
         assert _declared(route), f"{key} izin ilan etmiyor (K9)"
     assert "confirm_pin(" in inspect.getsource(routes.override_today)
+
+
+async def test_silinen_sinifin_planli_cagrilari_iptal(store: Any, sounds: Path) -> None:
+    # İş 30: Öğrenci Yönetimi arşivdeki sınıfı kalıcı sildi → o sınıfın bugün ve sonrasındaki
+    # planlı çağrıları `cancelled` (çalınmaz, satır kalır), diğer sınıfınkiler sürer.
+    service, parts = build(store, sounds)
+    await mondays_bells(service)
+    await service.apply_days(push(day(TODAY, calls=[
+        call("r1", "08:20", "TYT", group_ref="km_group:g-sil"),
+        call("r2", "08:20", "LGS", group_ref="km_group:g-kal")])), actor="ak")
+    assert await service.group_deleted("g-sil") == 1
+    rows = {row["ref"]: row for row in await service._plan.calls(TODAY, TODAY)}
+    assert rows["r1"]["state"] == "cancelled" and "silindi" in rows["r1"]["detail"]
+    assert rows["r2"]["state"] == "planned"
+    assert [row["ref"] for row in await service._plan.calls_at(TODAY, "08:20")] == ["r2"]
+    assert await service.group_deleted("g-sil") == 0
+    del parts

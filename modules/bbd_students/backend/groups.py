@@ -35,7 +35,11 @@ KURALLAR (§2.1) TEK YERDE, BURADA:
   · `individual` grupta herhangi bir günde en çok bir geçerli üye olur;
   · geçmiş tarihli değişiklik (bugünden önceki bir gün) gerekçe ister ve
     denetim izine yazılır;
-  · silme yoktur, arşiv vardır; arşivde açık üyelikler arşiv gününde kapanır.
+  · arşivde açık üyelikler arşiv gününde kapanır; KALICI SİLME yalnız arşivdeki
+    sınıfta, ad yazılarak + gerekçe + PIN (uçta) — satır ve üyelikleri gider,
+    kimliği mezar taşında kalır (artımlı akış `deleted: true`), denetim izi kalır;
+  · her sınıfın DÖNEMİ ("2026-2027") vardır (göç 011); yeni sınıfta varsayılan
+    güncel dönem, boş bırakılamaz.
 
 REVİZYON. Her yazma kalıcı sayacı (`mod_bbd_students_group_rev`) +1 artırır ve
 dokunduğu grup ile üyelik satırlarına damgalar; grubun `revision`'ı üyeliği
@@ -68,6 +72,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import curriculum
+from .academic_year import current_year, parse_year, year_choices
 
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 
@@ -196,6 +201,14 @@ def parse_level(value: Any) -> dict[str, Any]:
         raise GroupError(str(failure), details={"field": "level"}) from None
 
 
+def clean_year(value: Any) -> str:
+    """Sınıfın dönemi ("2026-2027"). Kural `academic_year.parse_year`'dadır."""
+    try:
+        return parse_year(value)
+    except ValueError as failure:
+        raise GroupError(str(failure), details={"field": "academicYear"}) from None
+
+
 def _clean_kind(value: Any) -> str:
     kind = str(value or "group").strip()
     if kind not in KINDS:
@@ -248,7 +261,8 @@ class GroupService:
                  outbox: Callable[[], Any] | None = None,
                  students_changed: Callable[..., Awaitable[Any]] | None = None,
                  apply_level: Callable[[list[str], dict[str, Any]], Awaitable[int]]
-                 | None = None) -> None:
+                 | None = None,
+                 deleted: Callable[[str, int], Awaitable[None]] | None = None) -> None:
         self._store = store
         self._log = log
         self._publish = publish
@@ -260,6 +274,9 @@ class GroupService:
         #: Sınıfın seviyesini öğrencilere yazar (commit'ten SONRA;
         #: `classes.ClassLink.apply_level`). Yoksa seviye uygulanmaz.
         self._apply_level = apply_level
+        #: Kalıcı silmeden sonra (commit'ten SONRA) süreç içi `bbd_students.group_deleted`
+        #: — zil o sınıfın planlı çağrılarını iptal eder. Yoksa (testler) atlanır.
+        self._deleted = deleted
         #: `events.outbox` yeteneğini ÇAĞRI ANINDA çözer (yoksa None) — olay
         #: yazmanın İÇİNDE, aynı işlemde (`group.changed`).
         self._outbox = outbox or (lambda: None)
@@ -268,6 +285,7 @@ class GroupService:
         self._rev = store.table("group_rev")
         self._audit = store.table("group_log")
         self._profiles = store.table("profile")
+        self._tombstones = store.table("group_tombstone")
 
     # ============================================================== yardım
 
@@ -428,6 +446,8 @@ class GroupService:
             "origin": str(row.get("origin") or ORIGIN_GROUP),
             "legacyClassName": str(row.get("legacy_class_name") or "") or None,
             "classLevel": level_of(row),
+            # Dönem (göç 011). Eski görünüm bu alanı da DÜŞÜRÜR (`_shape`).
+            "academicYear": str(row.get("academic_year") or "") or None,
         }
         if full:
             record["note"] = str(row["note"] or "")
@@ -463,7 +483,10 @@ class GroupService:
         `view="legacy"` (varsayılan; eski Akademi): `class_name`'den dönüşen
         sınıflar ve dönüşümün eklediği üyelikler YOK, kayıtta yeni alanlar
         (`origin`, `legacyClassName`, `classLevel`) yok — biçim birebir eskisidir.
-        `view="classes"`: hepsi, yeni alanlarla.
+        `view="classes"`: hepsi, yeni alanlarla (`academicYear` dahil). `since` ile
+        KALICI SİLİNEN sınıflar mezar taşı olarak gelir: `{id, deleted: true,
+        deletedAt, revision}` (yalnız bu görünümde — eski Akademi bilmez; tam
+        listede silinen sınıf yoktur, istemci aynasını tam listeyle kurar).
         """
         view = _clean_view(view)
         revision = await self.revision()
@@ -476,9 +499,19 @@ class GroupService:
         rows = await self._store.fetch_all(
             f"SELECT * FROM {self._groups} WHERE revision > ? ORDER BY revision, id",
             (int(since_revision),))
-        groups = await self._records(self._visible(rows, view))
+        groups = self._shape(await self._records(self._visible(rows, view)), view)
+        if view == "classes":
+            groups += await self._tombstones_since(int(since_revision))
         return {"revision": revision, "full": False, "view": view,
-                "groups": self._shape(groups, view), "complete": True}
+                "groups": groups, "complete": True}
+
+    async def _tombstones_since(self, since_revision: int) -> list[dict[str, Any]]:
+        rows = await self._store.fetch_all(
+            f"SELECT id, deleted_at, revision FROM {self._tombstones} WHERE revision > ? "
+            f"ORDER BY revision, id", (since_revision,))
+        return [{"id": str(row["id"]), "deleted": True,
+                 "deletedAt": _local_iso(str(row["deleted_at"])),
+                 "revision": int(row["revision"] or 0)} for row in rows]
 
     @staticmethod
     def _visible(rows: list[dict[str, Any]], view: str) -> list[dict[str, Any]]:
@@ -498,7 +531,8 @@ class GroupService:
             members = [member for member, origin in zip(group["members"], origins, strict=True)
                        if origin != ORIGIN_CLASS]
             out.append({key: value for key, value in group.items()
-                        if key not in ("origin", "legacyClassName", "classLevel")}
+                        if key not in ("origin", "legacyClassName", "classLevel",
+                                       "academicYear")}
                        | {"members": members})
         return out
 
@@ -558,15 +592,24 @@ class GroupService:
     # ======================================================== ekran (okuma)
 
     async def overview(self, *, archived: str = "live", kind: str = "", query: str = "",
-                       on: date | None = None) -> dict[str, Any]:
-        """Gruplar sekmesinin listesi: bugünkü üye sayısıyla. İki sorgu."""
+                       on: date | None = None, year: str = "") -> dict[str, Any]:
+        """Sınıflar ekranının listesi: bugünkü üye sayısıyla. İki sorgu.
+
+        `year`: '' = bütün dönemler, "none" = dönemi girilmemiş, "YYYY-YYYY" = o dönem.
+        Yanıtta `currentYear` (bugünün dönemi) ve `years` (verideki dönemler ∪ seçici
+        dönemleri — süzgeç ve form seçicisi) da gelir.
+        """
         day = on or self._today()
         rows = await self._store.fetch_all(
             f"SELECT * FROM {self._groups} ORDER BY name_fold, id")
         needle = fold(query)
+        wanted_year = str(year or "").strip()
         chosen = [dict(row) for row in rows
                   if (archived == "all" or (archived == "archived") == bool(row["archived_at"]))
                   and (not kind or str(row["kind"]) == kind)
+                  and (not wanted_year
+                       or (wanted_year == "none" and not row.get("academic_year"))
+                       or str(row.get("academic_year") or "") == wanted_year)
                   and (not needle or needle in str(row["name_fold"])
                        or needle in fold(str(row["call_name"] or "")))]
         members = await self._member_rows([str(row["id"]) for row in chosen])
@@ -589,10 +632,14 @@ class GroupService:
                 "origin": str(row.get("origin") or ORIGIN_GROUP),
                 "legacyClassName": str(row.get("legacy_class_name") or "") or None,
                 "classLevel": level_of(row),
+                "academicYear": str(row.get("academic_year") or "") or None,
                 "label": curriculum.class_label(str(row["name"]), level_of(row))
                 if level_of(row) else str(row["name"]),
             })
-        return {"date": day.isoformat(), "revision": await self.revision(), "groups": groups}
+        return {"date": day.isoformat(), "revision": await self.revision(), "groups": groups,
+                "currentYear": current_year(self._today()),
+                "years": year_choices(self._today(), extra=[
+                    str(row.get("academic_year") or "") for row in rows])}
 
     async def memberships(self, *, on: date | None = None) -> dict[str, Any]:
         """O gün (vars. bugün) geçerli bütün üyelikler, canlı gruplarda. İki sorgu.
@@ -656,6 +703,9 @@ class GroupService:
         level = parse_level(payload.get("level")) if payload.get("level") is not None else None
         call_name = " ".join(str(payload.get("callName") or "").split())[:CALL_NAME_MAX]
         note = str(payload.get("note") or "").strip()[:NOTE_MAX]
+        # Dönem: verilmezse bugünün dönemi (1 Eylül'de döner).
+        year = (clean_year(payload["academicYear"]) if payload.get("academicYear")
+                else current_year(self._today()))
         students = list(payload.get("studentIds") or [])
         start = (parse_day(payload["validFrom"], field="validFrom")
                  if payload.get("validFrom") else self._today())
@@ -681,11 +731,11 @@ class GroupService:
             await self._store.execute(
                 f"INSERT INTO {self._groups} (id, name, name_fold, call_name, kind, note, "
                 f"archived_at, created_at, created_by, updated_at, updated_by, revision, "
-                f"grade_level, track, exam_target) "
-                f"VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)",
+                f"grade_level, track, exam_target, academic_year) "
+                f"VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (group_id, name, fold(name), call_name, kind, note, stamp, actor, stamp,
                  actor, revision, level_columns["grade_level"], level_columns["track"],
-                 level_columns["exam_target"]),
+                 level_columns["exam_target"], year),
             )
             for student in students:
                 await self._insert_member(group_id, student, start, None, reason=reason,
@@ -693,7 +743,7 @@ class GroupService:
             await self._touched_students(students)
             await self._write_audit(actor=actor, action=action, group_id=group_id,
                                     revision=revision,
-                                    detail={"name": name, "kind": kind,
+                                    detail={"name": name, "kind": kind, "academicYear": year,
                                             "students": len(students),
                                             "validFrom": start.isoformat() if students else None})
             await self._emit(revision)
@@ -739,7 +789,7 @@ class GroupService:
 
     async def update(self, group_id: str, payload: dict[str, Any], *,
                      actor: str) -> dict[str, Any]:
-        """Ad, tür, anons adı, not, seviye. Gönderilmeyen alan değişmez.
+        """Ad, tür, anons adı, not, seviye, dönem. Gönderilmeyen alan değişmez.
 
         `level` değişip `applyLevel` (varsayılan açık) ise sınıfın BUGÜNKÜ üyelerinin
         seviyesi yazılır (eski "sınıfın seviyesi öğrencilere geçer" davranışı).
@@ -809,6 +859,10 @@ class GroupService:
             level = parse_level(payload["level"])
             if any((row.get(column) or None) != level[column] for column in level):
                 changes.update(level)
+        if "academicYear" in payload:
+            year = clean_year(payload["academicYear"])
+            if year != (row.get("academic_year") or ""):
+                changes["academic_year"] = year
         if not changes:
             raise _Unchanged
         await self._touch_group(group_id, actor=actor, revision=revision, extra=changes)
@@ -884,6 +938,118 @@ class GroupService:
             return await self.detail(group_id)
         await self._changed(revision)
         return await self.detail(group_id)
+
+    async def set_year(self, group_ids: Ids, year: Any, *, actor: str) -> dict[str, Any]:
+        """Toplu "dönem ata": seçili sınıflara (arşivliler dahil) aynı dönem — TEK işlem.
+
+        Zaten o dönemde olan sınıf `skipped` içinde döner; hiçbiri değişmezse
+        revizyon harcanmaz.
+        """
+        clean = clean_year(year)
+        ids: list[str] = []
+        for value in group_ids:
+            text = str(value or "").strip()
+            if text and text not in ids:
+                ids.append(text)
+        if not ids:
+            raise GroupError("En az bir sınıf seçin.", details={"field": "groupIds"})
+        if len(ids) > GROUP_MAX:
+            raise GroupError(f"Tek seferde en çok {GROUP_MAX} sınıf.",
+                             details={"field": "groupIds"})
+        try:
+            async with self._store.transaction():
+                revision = await self._bump()
+                rows = {str(row["id"]): dict(row) for row in await self._store.fetch_all(
+                    f"SELECT id, academic_year FROM {self._groups} "
+                    f"WHERE id IN ({', '.join('?' for _ in ids)})", tuple(ids))}
+                missing = [group_id for group_id in ids if group_id not in rows]
+                if missing:
+                    raise GroupError("Sınıf bulunamadı.", status=404, code="group_not_found",
+                                     details={"groupIds": missing[:20]})
+                changed = [group_id for group_id in ids
+                           if str(rows[group_id].get("academic_year") or "") != clean]
+                if not changed:
+                    raise _Unchanged
+                for group_id in changed:
+                    await self._touch_group(group_id, actor=actor, revision=revision,
+                                            extra={"academic_year": clean})
+                    await self._write_audit(
+                        actor=actor, action="year_set", group_id=group_id, revision=revision,
+                        detail={"academicYear": clean,
+                                "before": rows[group_id].get("academic_year") or None})
+                await self._emit(revision)
+        except _Unchanged:
+            return {"updated": 0, "skipped": ids, "academicYear": clean}
+        await self._changed(revision)
+        self._log.info("sınıflara dönem atandı", donem=clean, sinif=len(changed), actor=actor)
+        return {"updated": len(changed),
+                "skipped": [group_id for group_id in ids if group_id not in changed],
+                "academicYear": clean}
+
+    async def delete(self, group_id: str, *, confirm_name: Any, reason: Any,
+                     actor: str) -> dict[str, Any]:
+        """ARŞİVDEKİ sınıfı KALICI siler (geri alınamaz).
+
+        Ön koşul: sınıf arşivde (409 `group_not_archived`); onay için sınıfın adı
+        Türkçe katlamayla aynen yazılır (422 `confirm_mismatch`); gerekçe zorunlu
+        (422 `reason_required`). PIN teyidi uçtadır.
+
+        TEK işlem: üyelik satırları ve sınıf satırı silinir, kimlik mezar taşına
+        (`group_tombstone`) yazılır — artımlı akış `{id, deleted: true}` verir;
+        denetim izine `delete` (ad, gerekçe, silinen satır sayısı) yazılır; geçmiş
+        denetim satırları KALIR. Üyeleri olan öğrencilerin türetilmiş alanları
+        (`class_ids`) aynı işlemde yenilenir; `group.changed` (outbox). Commit'ten
+        sonra `groups_changed` ve `group_deleted` (zil o sınıfın planlı çağrılarını
+        iptal eder). Akademi'de geçmiş (yoklama, oturum, program, müfredat) silinmez.
+        """
+        why = " ".join(str(reason or "").split())[:REASON_MAX]
+        if len(why) < 3:
+            raise GroupError("Silme gerekçesini yazın.", status=422, code="reason_required",
+                             details={"field": "reason"})
+        async with self._store.transaction():
+            revision = await self._bump()
+            row = await self._group_row(group_id)
+            if not row["archived_at"]:
+                raise GroupError("Yalnız arşivdeki sınıf kalıcı silinir; önce arşivleyin.",
+                                 status=409, code="group_not_archived")
+            if fold(str(confirm_name or "")) != fold(str(row["name"])):
+                raise GroupError("Onay için sınıfın adını aynen yazın.", status=422,
+                                 code="confirm_mismatch", details={"field": "confirmName"})
+            students = await self._group_students(group_id)
+            counted = await self._store.fetch_one(
+                f"SELECT COUNT(*) AS n FROM {self._members} WHERE group_id = ?",
+                (str(group_id),))
+            member_rows = int((counted or {}).get("n") or 0)
+            stamp = _now()
+            await self._store.execute(
+                f"DELETE FROM {self._members} WHERE group_id = ?", (str(group_id),))
+            await self._store.execute(
+                f"DELETE FROM {self._groups} WHERE id = ?", (str(group_id),))
+            await self._store.execute(
+                f"INSERT INTO {self._tombstones} (id, name, deleted_at, deleted_by, reason, "
+                f"member_rows, revision) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (str(group_id), str(row["name"]), stamp, actor[:160], why, member_rows,
+                 revision))
+            await self._write_audit(
+                actor=actor, action="delete", group_id=str(group_id), revision=revision,
+                detail={"name": str(row["name"]), "reason": why, "memberRows": member_rows,
+                        "students": len(students),
+                        "legacyClassName": str(row.get("legacy_class_name") or "") or None,
+                        "academicYear": str(row.get("academic_year") or "") or None})
+            await self._touched_students(students)
+            await self._emit(revision)
+        await self._changed(revision)
+        if self._deleted is not None:
+            try:
+                await self._deleted(str(group_id), revision)
+            except Exception as failure:  # noqa: BLE001 — silme tamam; bağlı kayıt ayrı adım (K7)
+                self._log.warning("sınıf silme olayı yayınlanamadı", group=group_id,
+                                  error=str(failure))
+        self._log.warning("sınıf kalıcı silindi", group=group_id, name=str(row["name"]),
+                          rows=member_rows, actor=actor)
+        return {"deleted": True, "id": str(group_id), "name": str(row["name"]),
+                "removedMemberships": member_rows, "students": len(students),
+                "revision": revision}
 
     async def add_members(self, group_id: str, student_ids: Ids, *,
                           valid_from: Any = None, reason: Any = "",

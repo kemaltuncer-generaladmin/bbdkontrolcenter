@@ -1085,9 +1085,10 @@ async def test_groups_include_classes_single_class_model(client: httpx.AsyncClie
     assert body["classesIncluded"] is True
     assert [group["id"] for group in body["groups"]] == ["aa01", "c8a", "0b9e", "77c1"]
     for group in body["groups"]:
-        assert set(group) == GROUP_KEYS | {"legacyClassName", "classLevel"}
+        assert set(group) == GROUP_KEYS | {"legacyClassName", "classLevel", "academicYear"}
     eight = body["groups"][1]
     assert eight["legacyClassName"] == "8-A"
+    assert eight["academicYear"] == "2026-2027" and body["groups"][2]["academicYear"] is None
     assert eight["classLevel"] == {"gradeLevel": 8, "track": None, "examTarget": "LGS"}
     assert body["groups"][2]["legacyClassName"] is None and body["groups"][2]["classLevel"] is None
     assert "origin" not in response.text
@@ -1123,6 +1124,26 @@ async def test_groups_include_classes_old_student_module(client: httpx.AsyncClie
     assert "classesIncluded" not in body
     assert [group["id"] for group in body["groups"]] == ["aa01", "0b9e", "77c1"]
     assert all("legacyClassName" not in group for group in body["groups"])
+
+
+async def test_groups_include_classes_tombstone_and_year(client: httpx.AsyncClient,
+                                                        world: World) -> None:
+    """İş 30: kalıcı silinen sınıf `since` akışında mezar taşı; eski görünümde yok;
+    bozuk dönem null'a düşer (beyaz liste)."""
+    world.groups.tombstones.append({"id": "dd01", "deleted": True,
+                                    "deletedAt": "2026-10-14T22:40:00+03:00", "revision": 4183,
+                                    "name": "gizli ad", "reason": "gizli gerekçe"})
+    world.groups.classes[0]["academicYear"] = "2026-2028"
+    world.groups.current = 4183
+    delta = (await client.get("/groups", params={"since": 4181, "include": "classes"})).json()
+    assert [g["id"] for g in delta["groups"]] == ["77c1", "dd01"]
+    assert delta["groups"][1] == {"id": "dd01", "deleted": True,
+                                  "deletedAt": "2026-10-14T22:40:00+03:00", "revision": 4183}
+    old = (await client.get("/groups", params={"since": 4181})).json()
+    assert [g["id"] for g in old["groups"]] == ["77c1"]
+    full = (await client.get("/groups", params={"include": "classes"})).json()
+    assert "dd01" not in [g["id"] for g in full["groups"]]
+    assert next(g for g in full["groups"] if g["id"] == "c8a")["academicYear"] is None
 
 
 @pytest.mark.parametrize("since", ["abc", "-1", "1.5", "1e3"])

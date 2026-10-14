@@ -1138,6 +1138,22 @@ class BellService:
         self._group_cache = groups
         return groups
 
+    async def group_deleted(self, group_id: str) -> int:
+        """Öğrenci Yönetimi bir sınıfı KALICI sildi (`bbd_students.group_deleted`).
+
+        O sınıfın bugün ve sonrasındaki planlı oturum çağrıları iptal edilir
+        (çalınmaz; satır durum ekranında "iptal" görünür), elle çağrı listesi
+        önbelleği bırakılır, tetikler yeniden kurulur. Dokunulan çağrı sayısı döner.
+        """
+        self.forget_groups()
+        cancelled = await self._plan.cancel_group_calls(
+            f"km_group:{group_id}", self._today(), "sınıf silindi (Öğrenci Yönetimi)")
+        if cancelled:
+            self._log.info("silinen sınıfın planlı çağrıları iptal edildi", group=group_id,
+                           calls=cancelled)
+            await self.reschedule()
+        return cancelled
+
     async def groups_changed(self) -> None:
         """Öğrenci grupları değişti: önbellek bırakılır, yeni/adı değişen grubun
         genel çağrı sesi sıraya girer."""
@@ -1624,6 +1640,8 @@ class BellService:
         rows = await self._plan.days(today, last)
         calls_by_day: dict[str, set[str]] = {}
         for call in await self._plan.calls(today, last):
+            if str(call.get("state")) == "cancelled":
+                continue                      # silinen sınıfın çağrısı — tetik kurulmaz
             calls_by_day.setdefault(str(call["date"]), set()).add(str(call["at"]))
 
         triggers: list[Trigger] = []

@@ -90,6 +90,10 @@ events:
     # (şema `handler` ister).
     - name: bbd_students.groups_changed
       handler: "backend.service:BellService.groups_changed"
+    # Arşivdeki sınıf KALICI silindi: o sınıfın planlı oturum çağrıları iptal
+    # (`mod_bell_call.state = cancelled`), tetikler yeniden kurulur.
+    - name: bbd_students.group_deleted
+      handler: "backend.service:BellService.group_deleted"
 
 http:
   prefix: /api/bell

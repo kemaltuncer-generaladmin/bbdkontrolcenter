@@ -120,6 +120,10 @@ events:
       description: >
         Öğrenci grupları ya da üyelikleri değişti. Yük {revision}: kalıcı grup
         revizyonu. Yazmanın hemen ardından yayınlanır; yayın patlarsa yazma tamamdır.
+    - name: bbd_students.group_deleted
+      description: >
+        Arşivdeki bir sınıf KALICI silindi (göç 011). Yük {id, revision}. Zil o
+        sınıfın planlı oturum çağrılarını iptal eder. `groups_changed` ayrıca yayınlanır.
   subscribes: []
 
 http:
@@ -193,6 +197,14 @@ permissions:
   - key: bbd_students.groups
     description: "Öğrenci gruplarını ve üyelikleri yönetme."
     default_roles: [admin, bbd_staff, org_staff]
+  # AYRI ANAHTAR, VARSAYILAN YALNIZ admin (iş 30): arşivdeki sınıfı KALICI silmek
+  # geri alınamaz — üyelikleri gider, Akademi'de sınıf listelerden kalkar (geçmiş
+  # yoklama/oturum korunur), zil çağrıları iptal olur. Sınıfı arşivleyebilen
+  # (`groups`) herkesin işi değil; ad yazılarak + gerekçe + PIN teyidi.
+  - key: bbd_students.groups_delete
+    description: "Arşivdeki sınıfı kalıcı silme (sınıfın adı yazılarak, gerekçe ve PIN teyidiyle; geri alınamaz)."
+    destructive: true
+    default_roles: [admin]
 
   # AYRI ANAHTAR: pasifleştirmek öğrencinin kantinini, tabletini ve BBD Akademi
   # girişini (ve yalnız ona bağlı velinin girişini) kapatır.

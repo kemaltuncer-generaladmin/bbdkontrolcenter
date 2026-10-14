@@ -328,10 +328,12 @@ async def test_grup_kaydi_sozlesme_alanlari(store: ScopedStore) -> None:
     group = await make(service, "TYT", ["STU-A"], callName="TYT grubu", note="iç not")
     record = await StudentGroups(service).get(group["id"])
     assert record is not None
-    # Sınıf = grup (göç 009): `get` tek "Sınıf" modelini verir (+ köken, eski ad, seviye).
+    # Sınıf = grup (göç 009): `get` tek "Sınıf" modelini verir (+ köken, eski ad, seviye,
+    # dönem — göç 011; verilmezse bugünün dönemi).
     assert set(record) == {"id", "name", "callName", "kind", "archived", "archivedAt",
                            "updatedAt", "revision", "members", "origin", "legacyClassName",
-                           "classLevel"}
+                           "classLevel", "academicYear"}
+    assert record["academicYear"] == "2026-2027"
     assert record["archivedAt"] is None
     assert record["updatedAt"].endswith("+03:00")
     assert record["members"] == [

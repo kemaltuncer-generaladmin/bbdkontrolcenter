@@ -7,6 +7,7 @@ from typing import Any
 
 from km_sdk import ModuleContext
 
+from .academic_year import YearBackfill
 from .api.routes import bind
 from .canteen_events import CanteenSync
 from .classes import ClassLink
@@ -63,21 +64,36 @@ def register(ctx: ModuleContext) -> None:
     # (`class_ids`, eski `class_name`) + `student.updated`, grup yazmasının
     # İŞLEMİNDE; sınıfın seviyesi öğrenciye ŞABLON olarak yazılır.
     link = ClassLink(store=ctx.store, sync=sync, log=ctx.log)
+
+    # Arşivdeki sınıf KALICI silindi (göç 011): zil o sınıfın planlı oturum
+    # çağrılarını iptal eder (kendi tablosu, K5). Yük {id, revision}.
+    async def group_deleted(group_id: str, revision: int) -> None:
+        await ctx.publish("bbd_students.group_deleted", {"id": group_id, "revision": revision})
+
     groups = GroupService(store=ctx.store, log=ctx.log, publish=groups_changed, outbox=outbox,
-                          students_changed=link.refresh, apply_level=link.apply_level)
+                          students_changed=link.refresh, apply_level=link.apply_level,
+                          deleted=group_deleted)
     merge = ClassMerge(store=ctx.store, groups=groups, log=ctx.log)
+    # Mevcut BÜTÜN sınıflara dönem 2026-2027 (göç 011 verisi; yalnız dönemi boş satırlar).
+    years = YearBackfill(store=ctx.store, groups=groups, log=ctx.log)
     upkeep_lock = asyncio.Lock()
+    years_done = False
 
     async def class_upkeep() -> None:
-        """Açılışta sınıf birleştirmesi (bir kez; idempotent) + günlük üyelik uzlaştırması.
+        """Açılışta sınıf birleştirmesi (bir kez; idempotent) + sınıf dönemi ataması (bir
+        kez; idempotent) + günlük üyelik uzlaştırması.
 
         Uzlaştırma turunun kancasıdır: patlaması kantin itmesini durdurmaz (K7).
         """
+        nonlocal years_done
         try:
             async with upkeep_lock:
                 status = await merge.status()
                 if status["state"] == "":
                     await merge.run()
+                if not years_done:
+                    await years.run()
+                    years_done = True
                 await link.reconcile_all()
         except Exception as failure:  # noqa: BLE001 — bir sonraki turda yeniden denenir
             ctx.log.warning("sınıf birleştirme / uzlaştırma patladı", error=str(failure))

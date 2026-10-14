@@ -93,6 +93,16 @@ def register(ctx: ModuleContext) -> None:
 
     ctx.subscribe("bbd_students.groups_changed", on_groups_changed)
 
+    async def on_group_deleted(_event: str, payload: dict[str, Any]) -> None:
+        try:
+            if payload.get("id"):
+                await service.group_deleted(str(payload["id"]))
+        except Exception as failure:  # noqa: BLE001 — olay işleyici zili düşürmez (K7)
+            ctx.log.warning("silinen sınıf zilde işlenemedi", error=str(failure))
+
+    # Arşivdeki sınıf kalıcı silindi: o sınıfın planlı oturum çağrıları iptal.
+    ctx.subscribe("bbd_students.group_deleted", on_group_deleted)
+
     _plan_page_preparation(ctx, service, scheduler)
 
     asyncio.get_running_loop().create_task(_bootstrap(service, ctx.log))

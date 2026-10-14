@@ -1791,12 +1791,26 @@ class GatewayService:
                 "examTarget": choice(level.get("examTarget"), EXAM_TARGETS)}
 
     @staticmethod
+    def academic_year(value: Any) -> str | None:
+        """Sınıfın dönemi "YYYY-YYYY" (ikinci yıl = birinci + 1); değilse null."""
+        text = str(value or "").strip()
+        if len(text) != 9 or text[4] != "-" or not (text[:4] + text[5:]).isdigit():
+            return None
+        return text if int(text[5:]) == int(text[:4]) + 1 else None
+
+    @staticmethod
     def group(record: dict[str, Any], *, classes: bool = False) -> dict[str, Any]:
         """Grup kaydı → sözleşme §2.4 nesnesi (beyaz liste).
 
         Öğrenci telefonu ya da kişisel alan TAŞIMAZ — üyelikte yalnız kimlik ve
         tarih aralığı; grubun notu, oluşturanı, üyelik gerekçesi düşer.
-        `classes` (§2.6): ek `legacyClassName` ve `classLevel`."""
+        `classes` (§2.6): ek `legacyClassName`, `classLevel` ve `academicYear`
+        (dönem, iş 30). KALICI SİLİNEN sınıf (yalnız `classes`, `since` akışı):
+        mezar taşı `{id, deleted: true, deletedAt, revision}`."""
+        if classes and record.get("deleted") is True:
+            return {"id": str(record.get("id")), "deleted": True,
+                    "deletedAt": record.get("deletedAt") or None,
+                    "revision": int_or_none(record.get("revision")) or 0}
         members = [{"studentId": str(item.get("studentId")),
                     "validFrom": item.get("validFrom"),
                     "validTo": item.get("validTo") or None}
@@ -1816,6 +1830,7 @@ class GatewayService:
         } | ({
             "legacyClassName": str(record.get("legacyClassName") or "").strip() or None,
             "classLevel": GatewayService.class_level(record.get("classLevel")),
+            "academicYear": GatewayService.academic_year(record.get("academicYear")),
         } if classes else {})
 
     def _groups_cached(self, listing: dict[str, Any], *, full: bool,
@@ -1854,8 +1869,9 @@ class GatewayService:
         `full: true` görünce aynasını baştan kurar.
 
         `include=classes` (§2.6, yeni Akademi): tek "Sınıf" modeli — eski
-        sınıflar dahil bütün sınıflar, `legacyClassName` + `classLevel`, tepede
-        `classesIncluded: true`. Parametresiz yanıt BİREBİR eskisidir (eski
+        sınıflar dahil bütün sınıflar, `legacyClassName` + `classLevel` +
+        `academicYear`, tepede `classesIncluded: true`; `since` ile kalıcı silinen
+        sınıf mezar taşı olarak gelir (`{id, deleted: true, deletedAt, revision}`). Parametresiz yanıt BİREBİR eskisidir (eski
         Akademi). İki görünümün önbelleği ve ETag'i ayrıdır.
         """
         since = self.parse_revision(since_text)

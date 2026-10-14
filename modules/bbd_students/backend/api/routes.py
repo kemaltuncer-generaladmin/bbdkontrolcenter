@@ -725,6 +725,8 @@ class GroupCreate(BaseModel):
     reason: str = Field(default="", max_length=200)
     level: LevelBody | None = None
     applyLevel: bool = True
+    #: Dönem ("2026-2027"); verilmezse bugünün dönemi (1 Eylül'de döner).
+    academicYear: str | None = Field(default=None, pattern=r"^\d{4}-\d{4}$")
 
 
 class GroupFromClass(BaseModel):
@@ -748,6 +750,23 @@ class GroupUpdate(BaseModel):
     level: LevelBody | None = None
     #: Seviye değişince bugünkü üyelere yaz (vars. açık).
     applyLevel: bool = True
+    #: Dönem ("2026-2027"); boş bırakılamaz.
+    academicYear: str | None = Field(default=None, pattern=r"^\d{4}-\d{4}$")
+
+
+class GroupsYear(BaseModel):
+    """Toplu "dönem ata": seçili sınıflara aynı dönem (tek işlem)."""
+
+    groupIds: list[str] = Field(min_length=1, max_length=1000)
+    academicYear: str = Field(pattern=r"^\d{4}-\d{4}$")
+
+
+class GroupDelete(BaseModel):
+    """Arşivdeki sınıfı KALICI silme onayı: sınıfın adı aynen + gerekçe + kendi PIN'i."""
+
+    confirmName: str = Field(min_length=1, max_length=80)
+    reason: str = Field(min_length=1, max_length=200)
+    pin: str | None = Field(default=None, max_length=12)
 
 
 class MembersAdd(BaseModel):
@@ -787,11 +806,13 @@ async def list_groups(
     kind: str = Query(default="", pattern=r"^(|group|individual)$"),
     q: str = Query(default="", max_length=80),
     on: str | None = Query(default=None, alias="date", max_length=10),
+    year: str = Query(default="", pattern=r"^(|none|\d{4}-\d{4})$", max_length=9),
     user: CurrentUser = requires("bbd_students.view"),
 ) -> dict[str, Any]:
-    """Gruplar sekmesi: liste + o günün (vars. bugün) üye sayısı."""
+    """Sınıflar ekranı: liste + o günün (vars. bugün) üye sayısı. `year` dönem süzgeci
+    ('' tümü, `none` dönemsiz, `2026-2027`)."""
     return await groups().overview(archived=archived, kind=kind, query=q,
-                                   on=_optional_day(on, "date"))
+                                   on=_optional_day(on, "date"), year=year)
 
 
 @router.post("/groups")
@@ -814,6 +835,18 @@ async def create_group_from_class(
     class_name = payload.pop("className")
     try:
         return await groups().from_class(class_name, payload, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.post("/groups/academic-year")
+async def set_groups_year(
+    body: GroupsYear,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Toplu "dönem ata": seçili sınıflar (arşivliler dahil) aynı döneme — tek işlem."""
+    try:
+        return await groups().set_year(body.groupIds, body.academicYear, actor=user.full_name)
     except GroupError as exc:
         raise _group_error(exc) from exc
 
@@ -926,6 +959,27 @@ async def restore_group(
 ) -> dict[str, Any]:
     try:
         return await groups().restore(group_id, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
+@router.delete("/groups/{group_id}")
+async def delete_group(
+    request: Request,
+    group_id: str,
+    body: GroupDelete,
+    user: CurrentUser = requires("bbd_students.groups_delete"),
+) -> Any:
+    """ARŞİVDEKİ sınıfı KALICI siler — geri alınamaz. Sınıfın adı aynen + gerekçe +
+    PIN (yıkıcı işlem). Üyelikler silinir, kimlik mezar taşında kalır (Akademi'ye
+    `deleted: true`), denetim izi kalır. 409 `group_not_archived`, 422
+    `confirm_mismatch` / `reason_required` / `pin_required`, 403 PIN yanlış."""
+    if not body.pin:
+        return pin_required()
+    await confirm_pin(request, user, body.pin, action="bbd_students.groups_delete")
+    try:
+        return await groups().delete(group_id, confirm_name=body.confirmName,
+                                     reason=body.reason, actor=user.full_name)
     except GroupError as exc:
         raise _group_error(exc) from exc
 

@@ -351,10 +351,28 @@ class PlanBook:
         return [dict(row) for row in rows]
 
     async def calls_at(self, day: date, at: str) -> list[dict[str, Any]]:
+        """O dakikanın çalınacak çağrıları — iptal edilenler (`cancelled`) hariç."""
         rows = await self._store.fetch_all(
-            f"SELECT * FROM {self.call_table} WHERE date = ? AND at = ? ORDER BY group_name",
-            (day.isoformat(), at))
+            f"SELECT * FROM {self.call_table} WHERE date = ? AND at = ? "
+            f"AND state != 'cancelled' ORDER BY group_name", (day.isoformat(), at))
         return [dict(row) for row in rows]
+
+    async def cancel_group_calls(self, group_ref: str, since: date, detail: str) -> int:
+        """`group_ref` sınıfının `since` ve sonrasındaki PLANLI çağrıları `cancelled`.
+
+        Satır silinmez (Akademi planının kopyası; plan özeti değişmez) — durum
+        ekranında "iptal" görünür, çalınmaz. Akademi yeni planı gönderince gün
+        satırları zaten yeniden yazılır. Dokunulan satır sayısını döner.
+        """
+        rows = await self._store.fetch_all(
+            f"SELECT id FROM {self.call_table} WHERE group_ref = ? AND date >= ? "
+            f"AND state = 'planned'", (group_ref, since.isoformat()))
+        stamp = _now()
+        for row in rows:
+            await self._store.execute(
+                f"UPDATE {self.call_table} SET state = 'cancelled', detail = ?, updated_at = ? "
+                f"WHERE id = ?", (detail[:300], stamp, str(row["id"])))
+        return len(rows)
 
     async def write_day(self, entry: dict[str, Any], *, calls: list[dict[str, Any]],
                         existing: dict[str, Any] | None, result: str = "applied") -> None:

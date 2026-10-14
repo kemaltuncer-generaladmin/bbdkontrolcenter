@@ -43,6 +43,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from . import curriculum
+from .academic_year import current_year
 from .groups import ORIGIN_CLASS, fold, today_local
 
 VERSION = 1
@@ -87,6 +88,7 @@ class ClassMerge:
         self._classes = store.table("class")
         self._backup = store.table("level_backup")
         self._audit = store.table("group_log")
+        self._tombstones = store.table("group_tombstone")
 
     async def status(self) -> dict[str, Any]:
         row = await self._store.fetch_one(f"SELECT * FROM {self._state} WHERE id = 1")
@@ -159,8 +161,13 @@ class ClassMerge:
             by_legacy = {str(row["legacy_class_name"]): row for row in rows
                          if row.get("legacy_class_name")}
             live_folds = {str(row["name_fold"]) for row in rows if not row["archived_at"]}
+            # Kalıcı silinmiş sınıf (göç 011) `force` koşusunda yeniden açılmaz.
+            buried = {str(row["id"]) for row in await self._store.fetch_all(
+                f"SELECT id FROM {self._tombstones}")}
             target: dict[str, str] = {}
             for name in names:
+                if name not in by_legacy and class_id(name) in buried:
+                    continue
                 plan = plans.get(name)
                 level = {"grade_level": None if plan is None else str(plan["gradeLevel"]),
                          "track": None if plan is None else plan["track"],
@@ -190,11 +197,12 @@ class ClassMerge:
                 await self._store.execute(
                     f"INSERT INTO {self._groups} (id, name, name_fold, call_name, kind, note, "
                     f"archived_at, created_at, created_by, updated_at, updated_by, revision, "
-                    f"origin, legacy_class_name, grade_level, track, exam_target) "
-                    f"VALUES (?, ?, ?, '', 'group', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    f"origin, legacy_class_name, grade_level, track, exam_target, "
+                    f"academic_year) "
+                    f"VALUES (?, ?, ?, '', 'group', '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (group_id, display, fold(display), stamp, actor, stamp, actor, revision,
                      ORIGIN_CLASS, name, level["grade_level"], level["track"],
-                     level["exam_target"]))
+                     level["exam_target"], current_year(today)))
                 live_folds.add(fold(display))
                 target[name] = group_id
                 summary["classes"] += 1
