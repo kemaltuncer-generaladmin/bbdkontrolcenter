@@ -174,7 +174,7 @@ def test_ogrenci_karti_kapali_ozellik_ve_yetki(result: dict[str, Any]) -> None:
 
 @needs_node
 def test_ogrenci_karti_derin_baglanti(result: dict[str, Any]) -> None:
-    assert result["locTab"] == {"tab": "progress", "part": "exams"}
+    assert result["locTab"] == {"tab": "progress", "part": "curriculum"}  # iş 23: müfredat seti önce
     assert result["locPart"] == {"tab": "progress", "part": "coaching"}
     assert result["locHidden"] == {"tab": "summary", "part": "overview"}
     assert result["locEmpty"] is None

@@ -114,7 +114,11 @@ function clean(value, fallback = '—') {
 }
 
 function studentName(ref) { return clean(ref?.displayName); }
-function className(ref) { return clean(ref?.classGroup?.name || ref?.name, '—'); }
+// Çoklu sınıflı derste (README §14 madde 68) `classGroups` bütün sınıfları taşır: "8-A + 8-B".
+function className(ref) {
+  const many = (ref?.classGroups || []).map((group) => group?.name).filter(Boolean);
+  return clean(many.length ? many.join(' + ') : (ref?.classGroup?.name || ref?.name), '—');
+}
 
 /** Dosya adı parçası (sunucu yine ASCII'ye çevirir). */
 export function fileHint(...pieces) {
@@ -403,7 +407,7 @@ const ATT_TONE = { present: '', absent: 'bad', late: 'warn', excused: 'info' };
 
 function sessionTitle(item) {
   const s = item?.scheduleItem || {};
-  return [s.classGroup?.name, s.subject?.name].filter(Boolean).join(' · ') || 'Ders';
+  return [className(s) === '—' ? '' : className(s), s.subject?.name].filter(Boolean).join(' · ') || 'Ders';
 }
 
 /** Günlük yoklama tahtası (AttendanceSessionSummary[]). */
@@ -417,7 +421,7 @@ export function attendanceDayDoc(date, sessions, { classGroupName = '' } = {}) {
     const s = item.scheduleItem || {};
     const state = cancelled(item) ? cell('İptal', 'muted') : item.taken ? cell('Alındı', 'good')
       : cell('Bekliyor', 'warn', true);
-    return [`${fmtTime(s.startsAt)}–${fmtTime(s.endsAt)}`, clean(s.classGroup?.name), clean(s.subject?.name),
+    return [`${fmtTime(s.startsAt)}–${fmtTime(s.endsAt)}`, className(s), clean(s.subject?.name),
       clean(s.teacher?.displayName), state, num(item.counts?.enrolled), num(item.counts?.present),
       item.counts?.absent ? cell(num(item.counts.absent), 'bad', true) : '0',
       num(item.counts?.late), num(item.counts?.excused)];
@@ -453,7 +457,7 @@ export function attendanceSheetDoc(sheet) {
   return documentOf('attendance_sheet', 'Yoklama Çizelgesi', [{
     title: 'Yoklama Çizelgesi',
     subtitle: `${sessionTitle(session)} · ${fmtDate(s.date || s.startsAt)} ${fmtTime(s.startsAt)}–${fmtTime(s.endsAt)}`,
-    meta: [['Sınıf', clean(s.classGroup?.name)], ['Ders', clean(s.subject?.name)], ['Öğretmen', clean(s.teacher?.displayName)],
+    meta: [['Sınıf', className(s)], ['Ders', clean(s.subject?.name)], ['Öğretmen', clean(s.teacher?.displayName)],
       ['Yoklama', session.taken ? `${fmtDateTime(session.takenAt)} · ${clean(session.takenBy?.displayName)}` : 'Alınmadı']],
     watermark: session.taken ? '' : 'Alınmadı',
     sections: [

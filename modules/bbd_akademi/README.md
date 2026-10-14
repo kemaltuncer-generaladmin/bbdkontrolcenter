@@ -91,10 +91,10 @@ seçili üst bölümün altında açılır. Kayıt tek yerde: `ui/panel/sections
 
 ```
 Bugün ─────────────── Özet · Talepler · Duyurular · Hoca soruları
-Öğrenciler ─────────── Öğrenciler (KM yönetimi) · Toplu işlemler · Gruplar ·
-                       Sınıflar · Veliler ve uygulama · Uygulama kullanımı
+Öğrenciler ─────────── Öğrenciler (KM yönetimi) · Toplu işlemler · Sınıflar (KM) ·
+                       Dönem, öğretmen ve müfredat · Veliler ve uygulama · Uygulama kullanımı
    └ öğrenci kartı ─── Özet · Kayıt ve veliler · Program ve yoklama ·
-                       Ödev ve çalışma · Ölçme ve gelişim · Cari, kantin ve kitap
+                       Ödev ve çalışma · Müfredat ve gelişim · Cari, kantin ve kitap
 Dersler ve Program ─── Ders programı ve etüt · Yoklama · Ödevler · Çalışma planı ·
                        Şablonlar · Kurum takvimi
 Ölçme ve Gelişim ───── Denemeler · Değerlendirmeler · Kaynaklar · Müfredat · Okuma ·
@@ -158,8 +158,8 @@ düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
 | Talepler · Duyurular | Bugün → Talepler · Duyurular |
 | Öğrenciler (Akademi listesi) | Öğrenciler → Uygulama kullanımı (yönetim yoksa "Öğrenciler") |
 | Öğrenciler → Sınıflar · Veliler | Öğrenciler → Sınıflar · Veliler ve uygulama |
-| Öğrenciler → Çalışma grupları (salt okunur) | Öğrenciler → Gruplar (KM, düzenlenebilir) |
-| KM Öğrenci Yönetimi (ayrı menü) | Öğrenciler → Öğrenciler · Toplu işlemler · Gruplar; öğrenci kartı → Kayıt ve veliler |
+| Öğrenciler → Çalışma grupları / Gruplar | Öğrenciler → Sınıflar (sınıf = grup, iş 23: tek liste) |
+| KM Öğrenci Yönetimi (ayrı menü) | Öğrenciler → Öğrenciler · Toplu işlemler · Sınıflar; öğrenci kartı → Kayıt ve veliler |
 | Ders programı · Yoklama · Ödevler · Kurum takvimi | Dersler ve Program → aynı adlarla ("Ders programı ve etüt") |
 | Çalışma planı (Öğrenme araçları) | Dersler ve Program → Çalışma planı |
 | Denemeler · Müfredat · Kaynaklar (Akademik) | Ölçme ve Gelişim |
@@ -345,8 +345,8 @@ izin gelirse test kırılır.
 | KM izni | Varsayılan roller | Kapsam |
 |---|---|---|
 | `bbd_akademi.view` | admin, bbd_staff | Bütün okuma ekranları |
-| `bbd_akademi.academic` | admin, bbd_staff | Program, zil, etüt, ödev, dönem, sınıf/çalışma grubu, hedef önerisi |
-| `bbd_akademi.curriculum` | admin | Kuruma özel müfredat, program istisnaları |
+| `bbd_akademi.academic` | admin, bbd_staff | Program (çoklu sınıflı ders, isteğe bağlı müfredat), zil, etüt, ödev, dönem, sınıf eşlemesi, hedef önerisi |
+| `bbd_akademi.curriculum` | admin | Kuruma özel müfredat, program istisnaları; öğrencinin müfredat seti ve sınıf müfredatı (`curriculum.assign` — öğrenci kartı → Müfredat ve gelişim, Öğrenciler → Dönem, öğretmen ve müfredat) |
 | `bbd_akademi.resources` | admin, bbd_staff | Kurum kaynağı, içindekiler, paketler, atamalar |
 | `bbd_akademi.attendance` | admin, bbd_staff | Yoklama |
 | `bbd_akademi.exams` | admin, bbd_staff | Deneme tanımı, sonuç, toplu yükleme, cevap anahtarı, yayımlama, dışa aktarım |

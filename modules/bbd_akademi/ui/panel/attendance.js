@@ -60,6 +60,16 @@ function sessionState(item) {
   return hasStarted(item) ? 'missing' : 'upcoming';
 }
 
+/**
+ * Oturumun sınıf adları (sınıf = grup, README §14 madde 68): çoklu sınıflı derste
+ * `classGroups` hepsini taşır ("8-A + 8-B"); eski Akademi yalnız `classGroup` verir.
+ */
+export function classNames(scheduleItem) {
+  const list = (scheduleItem?.classGroups || []).map((group) => group?.name).filter(Boolean);
+  if (list.length) return list.join(' + ');
+  return scheduleItem?.classGroup?.name || '';
+}
+
 function sessionTitle(scheduleItem) {
   return scheduleItem?.subject?.name || KIND[scheduleItem?.kind] || 'Ders';
 }
@@ -162,7 +172,7 @@ export function section(app) {
       state.items = (data?.items || [])
         .filter((item) => item.scheduleItem?.kind !== 'break')
         .sort((a, b) => String(a.scheduleItem?.startsAt).localeCompare(String(b.scheduleItem?.startsAt))
-          || String(a.scheduleItem?.classGroup?.name || '').localeCompare(String(b.scheduleItem?.classGroup?.name || ''), 'tr'));
+          || classNames(a.scheduleItem).localeCompare(classNames(b.scheduleItem), 'tr'));
       paintKpis();
       paintList();
     } catch (failure) {
@@ -240,7 +250,7 @@ export function section(app) {
     const title = h('div', 'ak-att-title');
     title.append(h('b', '', sessionTitle(si)));
     if (si.kind && si.kind !== 'lesson') title.append(badge(KIND[si.kind] || si.kind, 'info'));
-    main.append(title, h('small', '', [si.classGroup?.name, personName(si.teacher) !== '—' ? personName(si.teacher) : null,
+    main.append(title, h('small', '', [classNames(si), personName(si.teacher) !== '—' ? personName(si.teacher) : null,
       si.room].filter(Boolean).join(' · ') || '—'));
     if (si.status === 'changed') main.append(h('small', 'ak-att-change', `Değişti${si.changeNote ? `: ${si.changeNote}` : ''}`));
     const side = h('div', 'ak-att-state');
@@ -254,7 +264,7 @@ export function section(app) {
       side.append(h('small', '', `${num(counts.enrolled || 0)} öğrenci`));
     }
     row.append(time, main, side);
-    row.setAttribute('aria-label', `${fmtTime(si.startsAt)} ${sessionTitle(si)} ${si.classGroup?.name || ''}: ${label}`);
+    row.setAttribute('aria-label', `${fmtTime(si.startsAt)} ${sessionTitle(si)} ${classNames(si)}: ${label}`);
     row.addEventListener('click', () => sheet.open(item.id));
     return row;
   }
@@ -372,7 +382,7 @@ function sheetPanel(app, { onSaved, onSelect }) {
     const rows = sheet?.rows || [];
     const head = h('div', 'ak-att-sheet-head');
     const titleLine = h('div', 'ak-att-sheet-title');
-    titleLine.append(h('span', '', `${sessionTitle(si)}${si.classGroup?.name ? ` · ${si.classGroup.name}` : ''}`));
+    titleLine.append(h('span', '', `${sessionTitle(si)}${classNames(si) ? ` · ${classNames(si)}` : ''}`));
     if (si.kind && si.kind !== 'lesson') titleLine.append(badge(KIND[si.kind] || si.kind, 'info'));
     head.append(titleLine,
       h('div', 'ak-att-sheet-sub', [`${fmtDate(si.date)} ${dayName(si.date)}`, `${fmtTime(si.startsAt)}–${fmtTime(si.endsAt)}`,
@@ -446,8 +456,12 @@ function sheetPanel(app, { onSaved, onSelect }) {
     name.append(h('span', '', row.student.displayName || '—'));
     if (row.autoExcused) name.append(badge('Onaylı izin', 'info'));
     if (row.student.status === 'missing') name.append(badge('KM dizininde yok', 'warn'));
-    const otherClass = row.student.classGroup?.name && row.student.classGroup.name !== si.classGroup?.name
-      ? row.student.classGroup.name : null;
+    // Öğrencinin sınıfı oturumun sınıflarından biri değilse yazılır (çoklu sınıflı derste
+    // hangi sınıftan geldiği görünür).
+    const sessionClasses = new Set([si.classGroup?.name, ...(si.classGroups || []).map((group) => group?.name)]
+      .filter(Boolean));
+    const ownClass = row.student.classGroup?.name;
+    const otherClass = ownClass && (!sessionClasses.has(ownClass) || sessionClasses.size > 1) ? ownClass : null;
     who.append(name, h('small', '', [otherClass, row.student.externalRef].filter(Boolean).join(' · ')));
 
     const group = h('div', 'ak-att-marks');

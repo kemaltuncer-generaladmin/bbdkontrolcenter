@@ -175,9 +175,10 @@ export const STUDENT_CARD = [
     { key: 'study', label: 'Çalışma kayıtları' },
     { key: 'flashcards', label: 'Bilgi kartları', feature: 'flashcards' },
   ] },
-  { key: 'progress', label: 'Ölçme ve gelişim', parts: [
+  // "Müfredat" (iş 23): öğrencinin müfredat seti (varsayılan / elle / sınıftan) + ilerleme.
+  { key: 'progress', label: 'Müfredat ve gelişim', parts: [
+    { key: 'curriculum', label: 'Müfredat seti ve ilerleme' },
     { key: 'exams', label: 'Denemeler' },
-    { key: 'curriculum', label: 'Müfredat ve ilerleme' },
     { key: 'resources', label: 'Kaynaklar' },
     { key: 'coaching', label: 'Koç notları ve değerlendirmeler' },
   ] },

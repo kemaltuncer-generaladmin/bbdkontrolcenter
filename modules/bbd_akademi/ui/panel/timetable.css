@@ -188,3 +188,11 @@
 .ak-tt-bell-body { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .ak-tt-bell-flags { flex-wrap: wrap; }
 .ak-tt-bell-today { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+
+/* ------------------------------------------- çoklu sınıflı ders (sınıf = grup) */
+.ak-tt-classes { font-size: 11px; color: var(--soft); font-style: italic; }
+.ak-tt-classpick .ak-chips { flex-wrap: wrap; gap: 4px; }
+.ak-tt-classchip { display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; }
+.ak-tt-classchip-x { border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit;
+  padding: 0 4px; border-radius: 999px; }
+.ak-tt-classchip-x:hover { background: rgba(0, 0, 0, .08); }
