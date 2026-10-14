@@ -211,3 +211,61 @@ export function auditBody(message) {
     editedAt: edit.editedAt }));
   return { text, deleted, edits };
 }
+
+// ---------------------------------------------------------------- yazışma saklama süresi
+//
+// Akademi README §14 madde 84: koç yazışmaları (ekleri, sesli notlar, "Hocaya
+// sor" soruları) ilişkinin / öğrenimin bitişinden `messageRetentionYears` yıl
+// sonra gece işiyle silinir. Ayar `CoachingSettings` içindedir (1–10, vars. 2);
+// yazma `admin_putCoachingSettings` (iyimser kilit `expectedVersion`).
+
+export const RETENTION_MIN = 1;
+export const RETENTION_MAX = 10;
+export const RETENTION_DEFAULT = 2;
+
+/** Seçenekler: 1 yıl … 10 yıl (değer metin; `select` ile uyumlu). */
+export function retentionOptions() {
+  const out = [];
+  for (let year = RETENTION_MIN; year <= RETENTION_MAX; year += 1) {
+    out.push({ value: String(year), label: year === RETENTION_DEFAULT ? `${year} yıl (varsayılan)` : `${year} yıl` });
+  }
+  return out;
+}
+
+/** Geçerli yıl sayısı ya da `null` (tam sayı, 1–10). */
+export function retentionYears(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return null;
+  const year = Number(text);
+  return year >= RETENTION_MIN && year <= RETENTION_MAX ? year : null;
+}
+
+/** Ekrandaki özet: "2 yıl". Ayar okunamadıysa varsayılan. */
+export function retentionText(settings) {
+  return `${retentionYears(settings?.messageRetentionYears) ?? RETENTION_DEFAULT} yıl`;
+}
+
+/**
+ * `admin_putCoachingSettings` gövdesi: okunan ayarlar + yeni süre; salt okunur
+ * alanlar düşer, `expectedVersion` eklenir. Geçersiz süre → hata.
+ */
+export function retentionPutBody(current, years) {
+  const year = retentionYears(years);
+  if (year === null) throw new Error(`Saklama süresi ${RETENTION_MIN}–${RETENTION_MAX} yıl olmalı.`);
+  const body = { ...(current || {}), messageRetentionYears: year };
+  delete body.messageEditWindowMinutes;
+  delete body.updatedAt;
+  const version = Number(body.version) || 1;
+  delete body.version;
+  body.expectedVersion = version;
+  if (!Array.isArray(body.questionPoolStaffIds)) body.questionPoolStaffIds = [];
+  body.questionAnswerNotifyGuardian = Boolean(body.questionAnswerNotifyGuardian);
+  return body;
+}
+
+/** Diyalog açıklaması (yasal metinle aynı dil). */
+export const RETENTION_DESCRIPTION = 'Koç yazışmaları, ekleri, sesli notlar ve “Hocaya sor” soru ve yanıtları, koçluk '
+  + 'ilişkisinin (koç değişti ya da eşleme bitti) ya da öğrenimin (öğrenci pasif / mezun) bitişinden bu kadar yıl '
+  + 'sonra her gece kendiliğinden silinir; ekler dosya deposundan da kaldırılır. Kayıt dondurma bitiş sayılmaz. Açık '
+  + 'şikâyeti olan konuşma şikâyet karara bağlanana kadar silinmez. KVKK aydınlatma metni varsayılan 2 yılı söyler; '
+  + 'süreyi değiştirirseniz metni de güncelleyin.';

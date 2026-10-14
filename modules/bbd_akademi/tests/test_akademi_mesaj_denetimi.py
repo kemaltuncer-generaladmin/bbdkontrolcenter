@@ -9,7 +9,9 @@ kuyruğu yalnız burada işlenir.
 - `messages.js` (DOM taklidiyle): kuyruk → ayrıntı (bağlam, şikâyet edilen mesaj
   işaretli) → karar; gerekçesiz arama gitmez; arama → konuşmayı denetimde aç
   (özgün içerik, düzenleme geçmişi) → kilitle;
-- vekil: yedi işlem izin listesinde, KM izni `settings`, menüde "Bugün" altında.
+- vekil: yedi işlem izin listesinde, KM izni `settings`, menüde "Bugün" altında;
+- yazışma saklama süresi (Akademi README §14 madde 84): başlıktaki "Saklama süresi"
+  düğmesi `admin_putCoachingSettings` ile 1–10 yıl yazar (iyimser kilit).
 """
 
 from __future__ import annotations
@@ -52,6 +54,14 @@ const out = {
     m.auditBody({ body: 'son', edits: [{ previousBody: 'ilk', editedAt: 't' }] })],
   participant: m.participantText({ displayName: 'Ayşe Kaya', role: 'guardian' }),
   locked: m.LOCKED_TEXT,
+  retention: {
+    options: m.retentionOptions().map((o) => [o.value, o.label]),
+    years: [m.retentionYears('3'), m.retentionYears(0), m.retentionYears('11'), m.retentionYears('2.5'), m.retentionYears(null)],
+    text: [m.retentionText({ messageRetentionYears: 5 }), m.retentionText(null)],
+    body: m.retentionPutBody({ readReceipts: true, version: 4, updatedAt: 'x', messageEditWindowMinutes: 5,
+      messageRetentionYears: 2, questionPoolStaffIds: ['t1'], questionAnswerNotifyGuardian: true }, '3'),
+    bad: tryIt(() => m.retentionPutBody({}, '0')),
+  },
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -94,6 +104,14 @@ def test_saf_mantik(tmp_path: Path) -> None:
     assert out["audit"][1] == {"text": "son", "deleted": False, "edits": [{"previousBody": "ilk", "editedAt": "t"}]}
     assert out["participant"] == "Ayşe Kaya (Veli)"
     assert out["locked"] == "Bu konuşma kurum tarafından kilitlendi."
+    ret = out["retention"]
+    assert ret["options"][0] == ["1", "1 yıl"] and ret["options"][1] == ["2", "2 yıl (varsayılan)"]
+    assert len(ret["options"]) == 10 and ret["options"][-1] == ["10", "10 yıl"]
+    assert ret["years"] == [3, None, None, None, None]
+    assert ret["text"] == ["5 yıl", "2 yıl"]
+    assert ret["body"] == {"readReceipts": True, "messageRetentionYears": 3, "questionPoolStaffIds": ["t1"],
+                           "questionAnswerNotifyGuardian": True, "expectedVersion": 4}
+    assert ret["bad"] == "HATA: Saklama süresi 1–10 yıl olmalı."
 
 
 def test_vekil_izin_listesi_ve_km_izni() -> None:
@@ -273,3 +291,60 @@ def test_sikayet_karar_ve_denetim() -> None:
     assert "Bana WhatsApp yaz 0532 000 00 00" in out["auditText"] and "Önceki sürümler (1)" in out["auditText"]
     assert out["lock"] == [{"locked": True, "reason": "İletişim bilgisi paylaşımı"}]
     assert out["lockedShown"] is True
+
+
+RETENTION_UI = PRELUDE + r"""
+export default async function ({ document, audit, sleep, api, load }) {
+  const current = { quietHours: { start: '22:00', end: '07:30' }, readReceipts: true, contactInfoPolicy: 'warn',
+    questionSlaBusinessHours: 24, dailyQuestionQuota: 10, videoCompletionPercent: 90, maxStudentsPerCoach: null,
+    messageRetentionYears: 2, guardianDigestDefault: 'weekly', meetingReminderMinutes: [60],
+    questionPoolStaffIds: [], questionAnswerNotifyGuardian: false, messageEditWindowMinutes: 5, version: 7,
+    updatedAt: '2026-10-14T08:00:00Z' };
+  routes['GET /v1/admin/messages/reports'] = { items: [], nextCursor: null };
+  routes['GET /v1/admin/coaching/settings'] = current;
+  routes['PUT /v1/admin/coaching/settings'] = (body) => ({ ...current, ...body, version: 8 });
+  const { createClient } = await load('./panels/bbd_akademi/api.js');
+  const root = document.createElement('div');
+  root.className = 'kit-panel ak';
+  document.body.append(root);
+  const client = createClient({ api: (path, options) => api(path, options) });
+  const toasts = [];
+  const app = { root, api: client, status: null, toast: (text, tone) => { toasts.push([text, tone]); },
+    has: () => true, can: (id) => client.can(id), go: () => {}, openPanel: () => {}, capability: () => null,
+    feature: () => false, enabled: () => true, onDispose: () => {},
+    lookups: { staff: async () => [], async options() { return []; } } };
+  const { section } = await load('./panels/bbd_akademi/messages.js');
+  const view = section(app);
+  root.append(view.node);
+  view.shown();
+  await sleep(40);
+  const out = {};
+  click(byText(root, 'button', 'Saklama süresi'));
+  await sleep(40);
+  const dialog = root.querySelector('.kit-dialog');
+  out.dialogText = dialog?.textContent || '';
+  out.selected = dialog.querySelector('select').value;
+  out.a11y = audit(dialog);
+  choose(dialog.querySelector('select'), '3');
+  click(byText(dialog, 'button', 'Kaydet'));
+  await sleep(60);
+  out.put = sent.filter((c) => c.method === 'PUT' && c.path === '/v1/admin/coaching/settings').map((c) => c.body);
+  out.closed = !root.querySelector('.kit-dialog');
+  out.toasts = toasts;
+  return out;
+}
+"""
+
+
+def test_yazisma_saklama_suresi() -> None:
+    out = node_run(RETENTION_UI)
+    assert "Yazışma saklama süresi" in out["dialogText"] and "Hocaya sor" in out["dialogText"]
+    assert "Şu an: 2 yıl" in out["dialogText"] and out["selected"] == "2"
+    assert out["a11y"] == []
+    (body,) = out["put"]
+    assert body["messageRetentionYears"] == 3 and body["expectedVersion"] == 7
+    assert "version" not in body and "updatedAt" not in body and "messageEditWindowMinutes" not in body
+    assert body["questionPoolStaffIds"] == [] and body["questionAnswerNotifyGuardian"] is False
+    assert out["closed"] is True
+    assert out["toasts"] == [["Yazışma saklama süresi 3 yıl olarak kaydedildi.", "good"]]
+
