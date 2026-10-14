@@ -58,11 +58,6 @@ export function smsTab(app) {
       parts.push(alertBox('Netgsm SMS paketi azaldı. Netgsm panelinden paket yükleyin; paket biterse '
         + 'giriş kodları gitmez.', 'warn'));
     }
-    if ((data.sent ?? 0) > 0 && (data.otpChannel ?? 0) === 0) {
-      parts.push(alertBox('Kodlar Netgsm OTP hattı yerine olağan (toplu) hattan gidiyor — bu hat yoğunlukta '
-        + 'kuyruklanabilir. Netgsm hesabına "OTP SMS paketi" tanımlatın; tanımlanınca kendiliğinden OTP hattına '
-        + 'geçilir.', 'warn'));
-    }
     return parts;
   }, { rows: 1, columns: 7 });
   node.append(health.node);
