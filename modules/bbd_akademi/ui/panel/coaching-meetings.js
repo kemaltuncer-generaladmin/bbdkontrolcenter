@@ -17,8 +17,8 @@ import {
   optionsOf, pagedList, selectBox, statusBadge, studentPicker, todayIst, toolbar,
 } from './common.js';
 import {
-  GOAL_KINDS, MEETING_DECISIONS, MEETING_MODES, MEETING_PARTICIPANTS, MEETING_STATUS, NOTE_VISIBILITY, REQUESTED_BY,
-  TASK_TYPES, goalBody, meetingDecisionBody,
+  GOAL_EXAM_TYPES, GOAL_KINDS, MEETING_DECISIONS, MEETING_MODES, MEETING_PARTICIPANTS, MEETING_STATUS,
+  NOTE_VISIBILITY, REQUESTED_BY, TASK_TYPES, goalBody, meetingDecisionBody,
 } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
 import { meetingDialog } from './coaching-students.js';
@@ -229,10 +229,12 @@ export async function openMeeting(app, row, onChange) {
         { key: 'kind', label: 'Hedef', type: 'select',
           options: Object.entries(GOAL_KINDS).map(([value, [label, unit]]) => ({ value, label: `${label} (${unit})` })) },
         { key: 'targetValue', label: 'Hedef değer', type: 'number', required: true, min: 0 },
+        { key: 'examType', label: 'Deneme türü (deneme neti için)', type: 'select',
+          options: Object.entries(GOAL_EXAM_TYPES).map(([value, label]) => ({ value, label })) },
         { key: 'dueDate', label: 'Son tarih', type: 'date' },
       ],
       value: isTask ? { date: todayIst(1), type: 'free', estimatedMinutes: 30 }
-        : { kind: 'weekly_questions', targetValue: '', dueDate: '' },
+        : { kind: 'weekly_questions', targetValue: '', examType: 'lgs', dueDate: '' },
       submitLabel: 'Dönüştür',
       onSubmit: (draft, { key }) => {
         let body;
