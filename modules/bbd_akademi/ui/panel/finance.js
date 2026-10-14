@@ -6,7 +6,8 @@
 // hiçbir toplam kantinle toplanmaz. Renk dili de ayrıdır (mavi çizgi).
 //
 // İŞ KURALI AKADEMİ'DE: FIFO dağıtım, artan alacak, makbuz numarası, taksit
-// takvimi sunucuda hesaplanır. Panel yalnız niyeti gönderir ve sunucunun
+// takvimi, indirim dağıtımı, ayrılma / iade hesabı sunucuda yapılır (indirim,
+// ayrılma, iade, aylık özet ve dışa aktarım: `finance-closing.js`). Panel yalnız niyeti gönderir ve sunucunun
 // sonucunu gösterir; ekrandaki "önizleme" yalnız yol gösterir.
 //
 // PARA İŞLEMLERİ İDEMPOTENTTİR: tahsilat, iptal, plan ve kalem pencereleri
@@ -27,6 +28,10 @@ import {
 } from './common.js';
 import { documentButtons, previewAkademiPdf } from './documents.js';
 import { receiptDoc, statementDoc } from './documents-logic.js';
+import {
+  STATEMENT_KINDS, applyPlanDiscount, closingCards, closingNote, discountBody, discountFields, discountLine,
+  exportButton, monthlyTab, recordRefund, withdrawAccount,
+} from './finance-closing.js';
 
 export const METHODS = { cash: 'Nakit', transfer: 'Havale / EFT', card: 'Kart (POS)', other: 'Diğer',
   online_card: 'Uygulamadan kart' };
@@ -62,7 +67,7 @@ export function section(app) {
   const kpiSlot = h('div', 'ak-money-finance ak-fin-kpi');
   node.append(sectionHead('Kurum finansı', {
     subtitle: 'Kurum cari hesapları: taksit, kalem ve tahsilat. Kantin hesabı bu ekranda yer almaz.',
-    actions: [range.node],
+    actions: [range.node, exportButton(app, range)],
   }), kpiSlot);
 
   async function loadSummary() {
@@ -91,6 +96,7 @@ export function section(app) {
     { key: 'accounts', label: 'Cari hesaplar' },
     { key: 'payments', label: 'Tahsilatlar' },
     { key: 'overdue', label: 'Gecikenler' },
+    { key: 'monthly', label: 'Aylık rapor' },
     { key: 'templates', label: 'Plan şablonları' },
   ], 'accounts', (key) => showTab(key));
   const tabSlot = h('div');
@@ -100,6 +106,7 @@ export function section(app) {
     accounts: () => accountsTab(app, { openAccount }),
     payments: () => paymentsTab(app, { openAccount }),
     overdue: () => overdueTab(app, { openAccount }),
+    monthly: () => monthlyTab(app),
     templates: () => templatesTab(app),
   };
 
@@ -479,6 +486,12 @@ function accountDrawer(app, studentId, { onChange } = {}) {
         onClick: () => createPlan(app, data, changed) }),
       actionButton(app, 'admin_createCharge', 'Borç kalemi', { onClick: () => editCharge(app, data, null, changed) }),
       button('Ekstre', { onClick: () => statementDrawer(app, studentId, student.displayName) }),
+      h('span', 'kit-spacer'),
+      actionButton(app, 'admin_recordRefund', 'İade kaydı', { onClick: () => recordRefund(app, data, changed),
+        title: 'Hesaptaki alacağın aileye elle geri verildiğini kaydeder.' }),
+      actionButton(app, 'admin_withdrawFinanceAccount', 'Ayrılma / dondurma', {
+        onClick: () => withdrawAccount(app, data, changed),
+        title: 'Etkin tarihten sonraki taksitleri kapatır, iade edilebilir tutarı hesaplar.' }),
     );
 
     const kpis = kpiRow([
@@ -500,7 +513,7 @@ function accountDrawer(app, studentId, { onChange } = {}) {
     if (!(data.plans || []).length) plans.append(h('div', 'ak-muted', 'Taksit planı yok.'));
 
     return [actions, kpis, head, card('Açık kalemler', charges.node),
-      card('Taksit planları', plans), card('Tahsilat geçmişi', payments.node)];
+      card('Taksit planları', plans), ...closingCards(app, data, changed), card('Tahsilat geçmişi', payments.node)];
   }
 
   // Tahsilat listesi çekmece açılınca ilk sayfayı getirir.
@@ -543,6 +556,10 @@ function planCard(app, plan, account, changed) {
     h('span', 'ak-muted', `${money(plan.totalMinor)} · ${num(plan.installmentCount)} taksit · `
       + `${INTERVALS[plan.interval] || plan.interval}${plan.downPaymentMinor ? ` · peşinat ${money(plan.downPaymentMinor)}` : ''}`),
     h('span', 'kit-spacer'));
+  if (plan.status === 'active' && !plan.discount) {
+    head.append(actionButton(app, 'admin_applyPlanDiscount', 'İndirim / burs', { variant: 'ghost',
+      onClick: () => applyPlanDiscount(app, plan, changed) }));
+  }
   if (plan.status === 'active') {
     head.append(actionButton(app, 'admin_cancelInstallmentPlan', 'Planı iptal et', { variant: 'ghost',
       onClick: async () => {
@@ -557,7 +574,11 @@ function planCard(app, plan, account, changed) {
       } }));
   }
   const table = dataTable({ columns: chargeColumns(app, account, changed), rows: plan.charges || [], dense: true });
-  box.append(head, table.node);
+  box.append(head);
+  const discount = discountLine(plan);
+  if (discount) box.append(discount);
+  if (plan.status === 'cancelled' && plan.cancelReason) box.append(h('div', 'ak-muted', plan.cancelReason));
+  box.append(table.node);
   return box;
 }
 
@@ -681,7 +702,8 @@ async function createPlan(app, account, changed) {
         { value: '', label: 'Şablonsuz' }, ...templates.map((item) => ({ value: item.id, label: item.name }))],
       hint: 'Şablon seçince alanlar dolar; değiştirebilirsiniz.' } : null,
       { key: 'title', label: 'Plan adı', required: true, maxLength: 80, placeholder: '2026–2027 eğitim ücreti' },
-      { key: 'totalMinor', label: 'Toplam tutar (peşinat dahil)', type: 'money', required: true, min: 100 },
+      { key: 'totalMinor', label: 'Toplam tutar (peşinat dahil; indirim varsa liste fiyatı)', type: 'money',
+        required: true, min: 100 },
       { key: 'downPaymentMinor', label: 'Peşinat', type: 'money', min: 0 },
       { key: 'downPaymentDueDate', label: 'Peşinat vadesi', type: 'date' },
       { key: 'installmentCount', label: 'Taksit sayısı', type: 'number', required: true, min: 1, max: 36 },
@@ -689,6 +711,8 @@ async function createPlan(app, account, changed) {
       { key: 'interval', label: 'Aralık', type: 'select', options: optionsOf(INTERVALS) },
       { key: 'roundingMinor', label: 'Yuvarlama', type: 'select', options: [
         { value: '1', label: 'Kuruşa' }, { value: '100', label: '1 ₺' }, { value: '1000', label: '10 ₺' }] },
+      // İndirim / burs: toplam tutar LİSTE fiyatıdır; indirim düşülüp kalan taksitlere bölünür.
+      ...discountFields(),
       { key: 'preview', label: 'Önizleme', type: 'custom', render: (draft) => {
         const wrap = h('div', 'ak-stack');
         const go = button('Önizle', { onClick: async () => {
@@ -736,6 +760,7 @@ function planBody(draft, templates) {
     interval: draft.interval || template?.interval || 'monthly',
     roundingMinor: Number(draft.roundingMinor || 100),
     templateId: template?.id || null,
+    discount: discountBody(draft),
   };
 }
 
@@ -751,7 +776,8 @@ function previewTable(plan) {
   });
   const wrap = h('div', 'ak-stack');
   const sum = (plan.charges || []).reduce((acc, row) => acc + row.amountMinor, 0);
-  wrap.append(table.node, h('div', 'ak-muted', `Toplam ${money(sum)} · ${num((plan.charges || []).length)} kalem`));
+  const discount = plan.discount ? ` · indirim ${money(plan.discount.amountMinor)} (liste ${money(plan.discount.listPriceMinor)})` : '';
+  wrap.append(table.node, h('div', 'ak-muted', `Toplam ${money(sum)} · ${num((plan.charges || []).length)} kalem${discount}`));
   return wrap;
 }
 
@@ -869,8 +895,7 @@ function statementDrawer(app, studentId, name) {
         app.api.get(`/v1/admin/finance/accounts/${studentId}/statement`, { from: state.from, to: state.to })]);
       return statementDoc(detail?.student || { displayName: name }, statement);
     } });
-  const KINDS = { charge: 'Borç', charge_cancelled: 'Borç iptali', payment: 'Tahsilat',
-    payment_voided: 'Tahsilat iptali', credit_applied: 'Alacak mahsubu' };
+  const KINDS = STATEMENT_KINDS;
   const view = loader(() => app.api.get(`/v1/admin/finance/accounts/${studentId}/statement`,
     { from: state.from, to: state.to }), (statement) => {
     pdfUrl = statement.pdfUrl || null;
@@ -891,7 +916,7 @@ function statementDrawer(app, studentId, name) {
       { label: 'Dönem başı', value: money(statement.openingBalanceMinor) },
       { label: 'Dönem sonu', value: money(statement.closingBalanceMinor) },
       { label: 'Alacak', value: money(statement.creditMinor) },
-    ]), table.node];
+    ]), closingNote(statement), table.node].filter(Boolean);
   });
   panel.body.append(toolbar(range.node, h('span', 'kit-spacer'), branded, pdf), view.node);
   view.reload();

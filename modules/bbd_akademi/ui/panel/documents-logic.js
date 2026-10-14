@@ -721,7 +721,8 @@ export function studyPlanDoc(student, week) {
 // ---------------------------------------------------------- 7. kurum cari
 
 const LINE_KIND = { charge: 'Borç', charge_cancelled: 'Borç iptali', payment: 'Tahsilat', payment_voided: 'Tahsilat iptali',
-  credit_applied: 'Alacak mahsubu' };
+  credit_applied: 'Alacak mahsubu', discount: 'İndirim / burs', refund: 'İade', refund_voided: 'İade iptali',
+  withdrawal: 'Ayrılma / dondurma' };
 export const PAYMENT_METHOD = { cash: 'Nakit', transfer: 'Havale/EFT', card: 'Kart', other: 'Diğer', online_card: 'Çevrimiçi kart' };
 const A12 = 'Bu belge KURUM CARİ hesabına aittir; kantin bakiyesi ve kantin harcamaları bu belgede yer almaz.';
 
@@ -746,7 +747,7 @@ export function statementDoc(student, statement) {
       { kind: 'table', headers: ['Tarih', 'İşlem', 'Açıklama', 'Borç', 'Tahsilat', 'Bakiye', 'Belge'],
         align: 'CLLRRRL', widths: [1.1, 1.3, 3.4, 1.3, 1.3, 1.4, 1.3],
         rows: lines.map((line) => {
-          const voided = line.kind === 'charge_cancelled' || line.kind === 'payment_voided';
+          const voided = line.kind === 'charge_cancelled' || line.kind === 'payment_voided' || line.kind === 'refund_voided';
           return { cells: [fmtDate(line.date), LINE_KIND[line.kind] || clean(line.kind), clean(line.description),
             line.chargeMinor ? money(line.chargeMinor) : '', line.paymentMinor ? money(line.paymentMinor) : '',
             money(line.balanceMinor), clean(line.refId, '')], tone: voided ? 'muted' : '' };
