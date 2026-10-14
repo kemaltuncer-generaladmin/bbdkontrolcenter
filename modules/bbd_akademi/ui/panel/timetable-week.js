@@ -23,6 +23,11 @@
 // dahildir; eski Akademi alanı tanımaz). Başka sınıfın programında kayıtlı ortak ders
 // (`sharedEntries`) burada salt okunur listelenir — sahibinin programından düzenlenir.
 // İsteğe bağlı müfredat (`programId`) işlenen konu seçimi içindir; ders değişince düşer.
+//
+// ÖNİZLEME (KM-3, `admin_previewTimetable`): "Çakışmaları denetle" taslağı KAYDETMEDEN aynı gövdeyle
+// denetletir — öğretmen/derslik çakışması (hücreler kırmızı), öğrenci çakışması (aynı öğrenci aynı
+// saatte iki sınıfta), öğretmeni atanmamış satırlar ve kaydedilirse öğretmen başına haftalık yük.
+// Taslak değişince önizleme düşer (eski sonuç yanıltmasın).
 
 import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, skeletonRows } from '../../ui-kit/layout.js';
@@ -83,6 +88,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     conflicts: new Map(),     // hücre anahtarı → [TimetableConflict]
     conflictList: [],         // [{key, item}]
     versionConflict: false,
+    preview: null,            // {result: TimetablePreview, keys} — taslak değişince düşer
     selected: null,
     saving: false,
   };
@@ -164,7 +170,9 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   const revertButton = button('Vazgeç', { variant: 'ghost', onClick: () => revert() });
   const saveButton = actionButton(app, 'admin_putTimetable', 'Kaydet', { variant: 'primary',
     onClick: () => save() });
-  bar.append(validity, meta, h('span', 'kit-spacer'), dirtyText, revertButton, saveButton);
+  const previewButton = actionButton(app, 'admin_previewTimetable', 'Çakışmaları denetle', { variant: 'ghost',
+    title: 'Kaydetmeden öğretmen, derslik ve öğrenci çakışmalarını denetler', onClick: () => preview() });
+  bar.append(validity, meta, h('span', 'kit-spacer'), dirtyText, revertButton, previewButton, saveButton);
 
   const alerts = h('div', 'ak-stack ak-tt-alerts');
   const gridWrap = h('div', 'ak-tt-gridwrap');
@@ -295,6 +303,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     s.conflicts = new Map();
     s.conflictList = [];
     s.versionConflict = false;
+    s.preview = null;
     if (s.selected && !placeOf(s.selected)) s.selected = null;
     fromField.set(s.validFrom);
     toField.set(s.validTo || '');
@@ -722,6 +731,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     }
     if (!next.subjectId) s.draft.delete(key);
     else s.draft.set(key, next);
+    s.preview = null;
     if (sideRefs?.teacher && patch.subjectId !== undefined && next.subjectId) {
       sideRefs.teacher.set(next.teacherId || '');
       sideRefs.room.value = next.room || '';
@@ -738,6 +748,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   function clearCell(key) {
     if (!s.draft.has(key)) return;
     s.draft.delete(key);
+    s.preview = null;
     clearConflict(key);
     paintAll();
     focusCell(key);
@@ -796,6 +807,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     alerts.replaceChildren();
     if (s.versionConflict) alerts.append(versionBox());
     if (s.conflictList.length) alerts.append(conflictBox());
+    if (s.preview) alerts.append(previewBox());
     if (s.orphans.length) alerts.append(orphanBox());
     if (s.shared?.length) alerts.append(sharedBox());
     if (s.bells?.source === 'km' && s.bells.available === false) {
@@ -958,31 +970,11 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       app.toast('Geçerlilik bitişi başlangıçtan önce olamaz.', 'bad');
       return;
     }
-    const list = [...s.draft.entries()];
-    const keys = list.map(([key]) => key);
-    const entries = list.map(([, entry]) => {
-      const row = {
-        id: entry.id || null,
-        dayOfWeek: entry.dayOfWeek,
-        bellSlotId: entry.bellSlotId,
-        subjectId: entry.subjectId,
-        teacherId: entry.teacherId || null,
-        room: String(entry.room || '').trim() || null,
-      };
-      // Yalnız kullanılınca gönderilir (eski Akademi bilinmeyen alanı 422 ile reddeder).
-      if (entry.classGroupIds?.length) row.classGroupIds = [s.classGroupId, ...entry.classGroupIds];
-      if (entry.programId) row.programId = entry.programId;
-      return row;
-    });
+    const { keys, body } = requestBody();
     s.saving = true;
     paintBar();
     try {
-      const next = await app.api.put(`/v1/admin/class-groups/${s.classGroupId}/timetable`, {
-        validFrom: s.validFrom,
-        validTo: s.validTo || null,
-        expectedVersion: s.version,
-        entries,
-      });
+      const next = await app.api.put(`/v1/admin/class-groups/${s.classGroupId}/timetable`, body);
       apply(next);
       s.saving = false;
       paintAll();
@@ -1002,6 +994,89 @@ export function weekTab(app, { openEvent, openBells } = {}) {
         app.toast(problem(failure, 'Program kaydedilemedi.'), 'bad');
       }
     }
+  }
+
+  /** Kayıt ve önizleme için AYNI gövde (`TimetablePut`); `keys[i]` = `entries[i]`'nin hücresi. */
+  function requestBody() {
+    const list = [...s.draft.entries()];
+    const keys = list.map(([key]) => key);
+    const entries = list.map(([, entry]) => {
+      const row = {
+        id: entry.id || null,
+        dayOfWeek: entry.dayOfWeek,
+        bellSlotId: entry.bellSlotId,
+        subjectId: entry.subjectId,
+        teacherId: entry.teacherId || null,
+        room: String(entry.room || '').trim() || null,
+      };
+      // Yalnız kullanılınca gönderilir (eski Akademi bilinmeyen alanı 422 ile reddeder).
+      if (entry.classGroupIds?.length) row.classGroupIds = [s.classGroupId, ...entry.classGroupIds];
+      if (entry.programId) row.programId = entry.programId;
+      return row;
+    });
+    return { keys, body: { validFrom: s.validFrom, validTo: s.validTo || null, expectedVersion: s.version, entries } };
+  }
+
+  async function preview() {
+    if (!s.loaded || s.saving) return;
+    const { keys, body } = requestBody();
+    previewButton.disabled = true;
+    try {
+      const result = await app.api.post(`/v1/admin/class-groups/${s.classGroupId}/timetable/preview`, body);
+      s.conflicts = new Map();
+      s.conflictList = [];
+      if (result?.conflicts?.length) markConflicts(result.conflicts, keys);
+      s.preview = { result: result || {}, keys };
+      paintAll();
+    } catch (failure) {
+      app.toast(problem(failure, 'Program denetlenemedi.'), 'bad');
+    } finally {
+      previewButton.disabled = false;
+    }
+  }
+
+  function previewBox() {
+    const { result, keys } = s.preview;
+    const conflicts = (result.conflicts || []).length;
+    const students = result.studentConflicts || [];
+    const unassigned = (result.unassignedTeacherEntryIndexes || []).map((index) => keys[index]).filter(Boolean);
+    const clean = !conflicts && !students.length && !unassigned.length;
+    const box = h('div', `ak-tt-notice ${clean ? '' : 'warn'} ak-tt-preview`);
+    box.append(h('b', '', clean ? 'Denetim: çakışma yok — kaydedilebilir.'
+      : `Denetim: ${num(conflicts)} öğretmen/derslik çakışması · ${num(students.length)} öğrenci çakışması · `
+        + `${num(unassigned.length)} satırda öğretmen yok.`), h('span', '', 'Bu bir önizlemedir; hiçbir şey kaydedilmedi.'));
+    if (students.length) {
+      const list = h('ul', 'ak-tt-issues');
+      for (const item of students.slice(0, 30)) {
+        list.append(h('li', '', `${item.student?.displayName || 'Öğrenci'}: ${DAY_LABEL[item.dayOfWeek] || item.dayOfWeek} `
+          + `${s.layout.place(item.dayOfWeek, item.bellSlotId)?.row?.label || ''} aynı saatte `
+          + `${item.conflictingGroup?.name || 'başka bir sınıfta'} dersinde.`));
+      }
+      if (students.length > 30) list.append(h('li', 'ak-muted', `ve ${num(students.length - 30)} öğrenci daha`));
+      box.append(list);
+    }
+    if (unassigned.length) {
+      const list = h('ul', 'ak-tt-issues');
+      for (const key of unassigned) {
+        const line = h('li');
+        const place = placeOf(key);
+        line.append(h('span', '', `${place ? `${DAY_LABEL[place.day] || place.day} ${place.row.label}` : key}: `
+          + `${subjectName(s.draft.get(key) || {})} — öğretmen atanmadı`));
+        if (place) {
+          const tools = h('span', 'ak-tt-issue-tools');
+          tools.append(button('Hücreye git', { variant: 'ghost', onClick: () => select(key) }));
+          line.append(tools);
+        }
+        list.append(line);
+      }
+      box.append(list);
+    }
+    const load = result.teacherMinutes || [];
+    if (load.length) {
+      box.append(h('span', '', `Kaydedilirse haftalık ders yükü: ${load.map((item) => `${personName(item.teacher)} `
+        + `${num(Math.round((item.minutes || 0) / 6) / 10, 1)} sa`).join(' · ')}`));
+    }
+    return box;
   }
 
   function markConflicts(details, keys) {

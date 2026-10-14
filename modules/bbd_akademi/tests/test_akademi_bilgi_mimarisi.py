@@ -98,7 +98,9 @@ def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
     assert nav["today"] == ["dashboard", "requests", "announcements", "questions"]
     assert nav["students"] == ["students"]
     # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
-    assert nav["lessons"] == ["timetable", "attendance", "homework", "plan", "templates", "calendar"]
+    # Ders oturumları (KM-3): tek dersin iptali / telafisi / yerine öğretmen, öğretmen haftası.
+    assert nav["lessons"] == ["timetable", "sessions", "attendance", "homework", "plan", "templates",
+                              "calendar"]
     assert nav["money"] == ["finance", "canteen", "bookSales", "books"]   # kitap satışı 0.5.4
     assert nav["admin"] == ["settings", "staff", "privacy"]
 

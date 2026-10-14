@@ -280,7 +280,7 @@ export function reportsTab(app) {
         kv(kinds)];
     }, { rows: 3, columns: 3 });
 
-  node.append(
+  node.append(...[
     app.can('admin_getAttendanceRates') ? card('Devam oranı', (() => {
       const wrap = h('div', 'ak-stack');
       wrap.append(chips.node, rates.node);
@@ -289,7 +289,7 @@ export function reportsTab(app) {
     app.can('admin_getTeacherCompliance') ? card('Öğretmen uyumu', compliance.node,
       '“Ders yapıldı” kanıtı: yoklamanın zamanında alınması') : null,
     app.can('admin_getLeaveStats') ? card('İzin nedenleri', leaves.node) : null,
-  );
+  ].filter(Boolean));
 
   function reload() {
     const message = rangeProblem(range.from, range.to);

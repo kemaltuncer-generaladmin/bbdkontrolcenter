@@ -8,6 +8,10 @@
 //   · Zil dilimleri      — KM aynası (salt okunur + "şimdi çek") ya da yerel
 //                          düzenleyici (timetable-setup.js)
 //   · Dönemler           — ad + tarih aralığı (timetable-setup.js)
+//   · Program şablonları — oluştur / düzenle / sil / sınıflara uygula (timetable-templates.js;
+//                          yalnız KM yüzeyi, KM-3)
+//
+// Tek tek derslerin iptali, telafisi ve yerine öğretmen "Ders oturumları" bölümündedir (sessions.js).
 //
 // İŞ KURALI AKADEMİ'DE: öğretmen/derslik çakışması, sürüm kilidi, zil saati
 // değişince eşleşmeyen satırlar sunucuda belirlenir; panel sonucu gösterir.
@@ -17,7 +21,7 @@
 // ulaşmadığı. Ekran ilk açıldığında TEK istekle okunur.
 //
 // Derin bağlantılar: `{classGroupId}` o sınıfın ızgarasını, `{lessonEventId}`
-// etüt çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'}` sekmeyi açar.
+// etüt çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'|'templates'}` sekmeyi açar.
 
 import { h, loadStyles } from '../../ui-kit/kit.js';
 import { tabBar } from '../../ui-kit/layout.js';
@@ -26,12 +30,14 @@ import { weekTab } from './timetable-week.js';
 import { eventsTab, openLessonEvent } from './timetable-events.js';
 import { bellSlotsTab, termsTab } from './timetable-setup.js';
 import { bellPlanCard } from './timetable-bell-status.js';
+import { templatesTab } from './timetable-templates.js';
 
 const TABS = [
   { key: 'week', label: 'Haftalık program' },
   { key: 'events', label: 'Etüt ve tek seferlik dersler' },
   { key: 'bells', label: 'Zil dilimleri' },
   { key: 'terms', label: 'Dönemler' },
+  { key: 'templates', label: 'Program şablonları' },
 ];
 
 export function section(app) {
@@ -46,6 +52,7 @@ export function section(app) {
     events: () => eventsTab(app),
     bells: () => bellSlotsTab(app, { onChanged: () => bodies.week?.bellsChanged() }),
     terms: () => termsTab(app),
+    templates: () => templatesTab(app),
   };
   const bellStatus = bellPlanCard(app);
   const tabs = tabBar(TABS, 'week', (key) => show(key));

@@ -19,6 +19,7 @@ import {
 } from './common.js';
 import { STUDENT_STATUS, checkbox, stack } from './students-detail.js';
 import { classCurriculumSet, curriculaChips } from './curriculum-set.js';
+import { classMembersCard } from './students-class-history.js';
 
 const CLASS_CACHE = '/v1/admin/class-groups';
 
@@ -100,7 +101,9 @@ export function classesView(app, { openStudent }) {
   }
 
   function openClass(classGroupId) {
-    const panel = openDrawer(app, { title: 'Sınıf', subtitle: 'Akademi eşlemesi ve sınıf müfredatı' });
+    let members = null;
+    const panel = openDrawer(app, { title: 'Sınıf', subtitle: 'Akademi eşlemesi, sınıf müfredatı ve üyelik geçmişi',
+      onClose: () => members?.destroy() });
     let curricula = null;
     panel.node.classList.add('ak-stu-sub');
     const detail = loader(async () => {
@@ -139,10 +142,18 @@ export function classesView(app, { openStudent }) {
         ])),
         curriculaCard(group),
         card(`Öğrenciler (${num((group.students || []).length)})`, students.node, 'Satıra tıklayınca öğrenci detayı açılır'),
+        membersCard(group),
       ].filter(Boolean);
     }, { rows: 6, columns: 4 });
     panel.body.append(detail.node);
     detail.reload();
+
+    /** Tarihli üyelikler (F14): kim, hangi günden hangi güne bu sınıftaydı. */
+    function membersCard(group) {
+      members?.destroy();
+      members = classMembersCard(app, group.id, { openStudent });
+      return members.node;
+    }
 
     /** Sınıf müfredatı (F-C7): üyelerin etkin setine eklenir. Eski Akademi'de işlem yoksa gizli. */
     function curriculaCard(group) {
