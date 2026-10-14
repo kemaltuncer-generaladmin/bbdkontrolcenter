@@ -28,6 +28,7 @@ import {
   optionsOf, pagedList, percent, personName, runAction, selectBox, statusBadge, todayIst, toolbar,
   weekStart,
 } from './common.js';
+import { goalDialog } from './coaching-students.js';
 import { documentButtons } from './documents.js';
 import { studentCurriculumSet } from './curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';
@@ -394,8 +395,15 @@ export function overviewTab(ctx) {
     goalsData = data;
     return renderGoals(data);
   }, { rows: 4, columns: 2 });
-  const suggest = actionButton(app, 'admin_putGoalSuggestion', 'Hedef öner', { variant: 'ghost',
-    onClick: () => suggestGoals(ctx, goalsData, () => goals.reload()) });
+  // Tek hedef akışı (Akademi sözleşme README §14 madde 80): koçluk açık kurumda öneri → kabul (F-K18;
+  // öğrenci kabul edince hedeflerine yazılır). Koçluk kapalı kurumda eski "kurum önerisi" (kullanımdan kalktı).
+  const suggest = app.can('admin_createGoalProposal')
+    ? actionButton(app, 'admin_createGoalProposal', 'Hedef öner', { variant: 'ghost',
+      onClick: async () => {
+        if (await goalDialog(app, id, { examTarget: ctx.student?.student?.examTarget })) goals.reload();
+      } })
+    : actionButton(app, 'admin_putGoalSuggestion', 'Hedef öner', { variant: 'ghost',
+      onClick: () => suggestGoals(ctx, goalsData, () => goals.reload()) });
 
   let period = 'week';
   const periodSelect = selectBox([{ value: 'day', label: 'Bugün' }, { value: 'week', label: 'Bu hafta' },

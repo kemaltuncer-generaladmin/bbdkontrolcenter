@@ -83,14 +83,27 @@ export const COPY_STATUS = { copied: ['Kopyalandı', 'good'], would_copy: ['Kopy
 export const BULK_ACTIONS = { assign: ['Koç atanacak', 'good'], change: ['Koç değişecek', 'warn'],
   skip: ['Atlandı (koçu var)', 'dim'] };
 
-/** `GoalProposalKind` → [metin, birim]. */
+/**
+ * `GoalProposalKind` → [metin, birim]. Kurumun tek hedef önerme akışı (Akademi sözleşme README §14 madde 80):
+ * günlük soru / günlük süre / deneme neti eski "kurum önerisi"nin (`admin_putGoalSuggestion`) alanlarıdır.
+ */
 export const GOAL_KINDS = {
   weekly_questions: ['Haftalık soru sayısı', 'soru'],
   weekly_minutes: ['Haftalık çalışma süresi', 'dk'],
+  daily_questions: ['Günlük soru sayısı', 'soru'],
+  daily_minutes: ['Günlük çalışma süresi', 'dk'],
   subject_net: ['Ders neti', 'net'],
+  exam_net: ['Deneme neti', 'net'],
   resource_finish: ['Kaynağı bitirme', '%'],
   reading: ['Okuma', 'sayfa'],
 };
+
+/** `GoalExamType` (deneme neti hedefinin deneme türü). */
+export const GOAL_EXAM_TYPES = { lgs: 'LGS', tyt: 'TYT', ayt_say: 'AYT SAY', ayt_ea: 'AYT EA', ayt_soz: 'AYT SÖZ',
+  ayt_dil: 'AYT DİL' };
+
+/** Hedef değerinin üst sınırı (Akademi `MAX_TARGET`). */
+export const GOAL_MAX = { daily_questions: 2000, daily_minutes: 960, exam_net: 500 };
 
 export const GOAL_UNITS = { questions: 'soru', minutes: 'dk', net: 'net', percent: '%', pages: 'sayfa' };
 
@@ -264,10 +277,10 @@ export function hoursText(value) {
 /** Hedef önerisi: "Haftalık soru sayısı · 600 soru (Matematik)". */
 export function goalText(goal) {
   if (!goal) return '—';
-  const [label, fallbackUnit] = GOAL_KINDS[goal.kind] || [goal.kind, ''];
+  const [label, fallbackUnit] = GOAL_KINDS[goal.kind] || ['Hedef', ''];
   const unit = GOAL_UNITS[goal.unit] || fallbackUnit;
   const target = goal.targetValue === null || goal.targetValue === undefined ? '' : ` · ${goal.targetValue} ${unit}`.trimEnd();
-  const extra = goal.subject?.name || goal.resource?.title;
+  const extra = goal.subject?.name || goal.resource?.title || GOAL_EXAM_TYPES[goal.examType];
   return `${label}${target}${extra ? ` (${extra})` : ''}`;
 }
 
@@ -538,9 +551,13 @@ export function goalBody(form) {
   }
   if (form.kind === 'subject_net' && !form.subjectId) return { error: 'Ders seçin.' };
   if (form.kind === 'resource_finish' && !form.resourceId) return { error: 'Kaynak seçin.' };
+  if (form.kind === 'exam_net' && !GOAL_EXAM_TYPES[form.examType]) return { error: 'Deneme türünü seçin.' };
+  const max = GOAL_MAX[form.kind];
+  if (max !== undefined && value > max) return { error: `Hedef değer en çok ${max} olabilir.` };
   const body = { kind: form.kind, targetValue: value };
-  if (form.subjectId) body.subjectId = form.subjectId;
-  if (form.resourceId) body.resourceId = form.resourceId;
+  if (form.subjectId && form.kind === 'subject_net') body.subjectId = form.subjectId;
+  if (form.resourceId && form.kind === 'resource_finish') body.resourceId = form.resourceId;
+  if (form.kind === 'exam_net') body.examType = form.examType;
   if (form.dueDate) body.dueDate = form.dueDate;
   const note = String(form.note || '').trim();
   if (note) body.note = note.slice(0, 500);
