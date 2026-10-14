@@ -604,20 +604,38 @@ class FakeGroups:
                                    "validTo": None}]),
             group_record("aa01", "Eski LGS", revision=12, archived_at="2026-06-30T18:00:00+03:00"),
         ]
+        #: `className`'den dönüşen sınıflar — yalnız `view="classes"` görünümünde (§2.6).
+        self.classes = [
+            {**group_record("c8a", "8-A", revision=4100,
+                            members=[{"studentId": ELIF, "validFrom": "2026-09-01",
+                                      "validTo": None}]),
+             "legacyClassName": "8-A", "origin": "class",
+             "classLevel": {"gradeLevel": 8, "track": None, "examTarget": "LGS"}},
+        ]
         self.lists: list[int | None] = []
+        self.views: list[str] = []
         self.revisions = 0
         self.complete = True
         if not with_revision:
             self.revision = None  # type: ignore[assignment]
 
-    async def list(self, since_revision: int | None = None) -> dict[str, Any]:
+    async def list(self, since_revision: int | None = None, *,
+                   view: str = "legacy") -> dict[str, Any]:
+        """Sınıf = grup (§2.6): `view="classes"` dönüşen sınıfları (`classes`) da verir."""
         self.lists.append(since_revision)
+        self.views.append(view)
+        pool = self.records + (self.classes if view == "classes" else [])
         # Sığ kopya: `deepcopy` 4.000 üyelikte yüzlerce ms sürer ve hız
         # ölçümünü taklidin maliyetiyle doldururdu.
         found = [{**item, "members": [dict(member) for member in item["members"]]}
-                 for item in self.records
+                 for item in pool
                  if since_revision is None or item["revision"] > since_revision]
-        return {"revision": self.current, "full": since_revision is None,
+        if view == "classes":
+            for item in found:
+                item.setdefault("legacyClassName", None)
+                item.setdefault("classLevel", None)
+                item.setdefault("origin", "group")
+        return {"revision": self.current, "full": since_revision is None, "view": view,
                 "groups": found, "complete": self.complete}
 
     async def get(self, group_id: str) -> dict[str, Any] | None:

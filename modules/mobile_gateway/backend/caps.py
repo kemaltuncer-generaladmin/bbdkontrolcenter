@@ -746,11 +746,27 @@ class Capabilities:
 
     # ----------------------------------------------------- bbd_students.groups
 
-    async def groups_list(self, since: int | None) -> dict[str, Any]:
-        """`list(since_revision=None)` → `{revision, full, groups, complete}`."""
-        result = await self._module("groups", GROUPS, "list",
-                                    kwargs={"since_revision": since})
+    async def groups_list(self, since: int | None, *,
+                          classes: bool = False) -> dict[str, Any]:
+        """`list(since_revision=None, *, view=…)` → `{revision, full, groups, complete[, view]}`.
+
+        `classes=True` tek "Sınıf" modelini ister (`view="classes"`, km-ogrenci-gruplari-ve-zil
+        §2.6). Eski öğrenci modülü `view` almaz: o zaman eski görünüm döner ve yanıtta
+        `view` YOKTUR — geçit `classesIncluded` yazmaz (istemci eski davranışta kalır).
+        """
+        kwargs: dict[str, Any] = {"since_revision": since}
+        if classes and self._accepts(GROUPS, "list", "view"):
+            kwargs["view"] = "classes"
+        result = await self._module("groups", GROUPS, "list", kwargs=kwargs)
         return result if isinstance(result, dict) else {}
+
+    def _accepts(self, capability: str, name: str, parameter: str) -> bool:
+        """Yeteneğin yöntemi bu adlı parametreyi alıyor mu (eski modül sürümü)?"""
+        try:
+            method = self._method(capability, name)
+            return parameter in inspect.signature(method).parameters
+        except (CapabilityMissing, TypeError, ValueError):
+            return False
 
     async def groups_revision(self) -> int | None:
         """Kalıcı grup revizyonu — yetenek `revision()` sunmuyorsa None.

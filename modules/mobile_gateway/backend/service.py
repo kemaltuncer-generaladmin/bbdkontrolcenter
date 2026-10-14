@@ -404,8 +404,9 @@ class GatewayService:
         #: Anahtar `balance` (bakiyeli / bakiyesiz yanıt ayrı saklanır, §9).
         self._directory: dict[bool, _Cached] = {}
         self._bell_week: _Cached | None = None
-        #: Tam grup listesi — grup revizyonu değişmedikçe yeniden kurulmaz.
-        self._groups: _Cached | None = None
+        #: Tam grup listesi — grup revizyonu değişmedikçe yeniden kurulmaz. Anahtar
+        #: görünüm: eski (`False`) ya da tek "Sınıf" modeli (`True`, `include=classes`).
+        self._groups: dict[bool, _Cached] = {}
         self.groups_cache_ms = int(config.get("groups_cache_seconds", 60)) * 1000
         self._canteen_settings: tuple[int, dict[str, Any]] | None = None
         self.canteen_totals_cache_ms = \
@@ -831,6 +832,12 @@ class GatewayService:
             "revision": int_or_none(record.get("revision")) or 0,
             "canteenSync": "pending" if record.get("canteenSync") == "pending" else "ok",
         }
+        if isinstance(record.get("classes"), list):
+            # Sınıf = grup (bbd_students göç 009, §2.6): bugün geçerli sınıflar [{id, name}].
+            # Eski öğrenci modülünde anahtar yoktur; o zaman alan hiç yazılmaz.
+            out["classes"] = [{"id": str(item.get("id")), "name": str(item.get("name") or "")}
+                              for item in record["classes"]
+                              if isinstance(item, dict) and item.get("id")]
         if "classLevel" in record:
             # Sınıf seviyeyi taşır (bbd_students göç 008): ana sınıfın tanımı ya da null.
             # Eski öğrenci modülünde anahtar hiç yoktur; Akademi o zaman addan tahmin eder.
@@ -1751,7 +1758,7 @@ class GatewayService:
 
     def forget_groups(self, *_: Any) -> None:
         """Gruplar değişti (`bbd_students.groups_changed` olayı): önbellek bırakılır."""
-        self._groups = None
+        self._groups = {}
 
     @staticmethod
     def parse_revision(text: str | None) -> int | None:
@@ -1765,11 +1772,30 @@ class GatewayService:
         return int(raw)
 
     @staticmethod
-    def group(record: dict[str, Any]) -> dict[str, Any]:
+    def parse_include(text: str | None) -> bool:
+        """`include=classes` (§2.6) → tek "Sınıf" modeli. Başka değer 422."""
+        if text is None or not text.strip():
+            return False
+        if text.strip() != "classes":
+            raise validation("`include` yalnız “classes” olabilir.", "include")
+        return True
+
+    @staticmethod
+    def class_level(level: Any) -> dict[str, Any] | None:
+        """Sınıf seviyesi — dizindeki `classLevel` ile aynı biçim; seviyesizse null."""
+        if not isinstance(level, dict) or grade_level(level.get("gradeLevel")) is None:
+            return None
+        return {"gradeLevel": grade_level(level.get("gradeLevel")),
+                "track": choice(level.get("track"), TRACKS),
+                "examTarget": choice(level.get("examTarget"), EXAM_TARGETS)}
+
+    @staticmethod
+    def group(record: dict[str, Any], *, classes: bool = False) -> dict[str, Any]:
         """Grup kaydı → sözleşme §2.4 nesnesi (beyaz liste).
 
         Öğrenci telefonu ya da kişisel alan TAŞIMAZ — üyelikte yalnız kimlik ve
-        tarih aralığı; grubun notu, oluşturanı, üyelik gerekçesi düşer."""
+        tarih aralığı; grubun notu, oluşturanı, üyelik gerekçesi düşer.
+        `classes` (§2.6): ek `legacyClassName` ve `classLevel`."""
         members = [{"studentId": str(item.get("studentId")),
                     "validFrom": item.get("validFrom"),
                     "validTo": item.get("validTo") or None}
@@ -1786,21 +1812,33 @@ class GatewayService:
             "updatedAt": record.get("updatedAt") or None,
             "revision": int_or_none(record.get("revision")) or 0,
             "members": members,
-        }
+        } | ({
+            "legacyClassName": str(record.get("legacyClassName") or "").strip() or None,
+            "classLevel": GatewayService.class_level(record.get("classLevel")),
+        } if classes else {})
 
-    def _groups_cached(self, listing: dict[str, Any], *, full: bool) -> _Cached:
-        """Yetenek yanıtından kodlanmış gövde + ETag (`generatedAt` özete girmez)."""
-        groups = sorted((self.group(record) for record in listing.get("groups") or []
+    def _groups_cached(self, listing: dict[str, Any], *, full: bool,
+                       classes: bool = False) -> _Cached:
+        """Yetenek yanıtından kodlanmış gövde + ETag (`generatedAt` özete girmez).
+
+        `classes`: öğrenci modülü tek "Sınıf" görünümünü verdi (§2.6) — gövdenin
+        tepesinde `classesIncluded: true` ve kayıtta ek alanlar."""
+        groups = sorted((self.group(record, classes=classes)
+                         for record in listing.get("groups") or []
                          if isinstance(record, dict) and record.get("id")),
                         key=lambda item: (item["revision"], item["id"]))
         revision = int_or_none(listing.get("revision")) or 0
-        core = {"revision": revision, "full": full,
-                "complete": listing.get("complete") is True, "groups": groups}
+        core: dict[str, Any] = {"revision": revision, "full": full,
+                                "complete": listing.get("complete") is True}
+        if classes:
+            core["classesIncluded"] = True
+        core["groups"] = groups
         etag = digest(core)
         return _Cached(key=revision, etag=etag, at_ms=self.now_ms(),
                        raw=encode({"generatedAt": self.iso(self.now()), **core, "etag": etag}))
 
-    async def groups(self, since_text: str | None, if_none_match: str | None) -> Reply:
+    async def groups(self, since_text: str | None, if_none_match: str | None,
+                     include: str | None = None) -> Reply:
         """§2.4 grup senkronu — `since` + ETag; tam liste sunucu önbelleğinde.
 
         Tam liste (≈200 grup, ≈4.000 üyelik) yalnız grup revizyonu değişince
@@ -1813,28 +1851,36 @@ class GatewayService:
         döner (önbelleğe girmez — istemciye özgüdür). `since` KM'nin
         revizyonundan büyükse (KM yedekten döndü) tam liste döner: istemci
         `full: true` görünce aynasını baştan kurar.
+
+        `include=classes` (§2.6, yeni Akademi): tek "Sınıf" modeli — eski
+        sınıflar dahil bütün sınıflar, `legacyClassName` + `classLevel`, tepede
+        `classesIncluded: true`. Parametresiz yanıt BİREBİR eskisidir (eski
+        Akademi). İki görünümün önbelleği ve ETag'i ayrıdır.
         """
         since = self.parse_revision(since_text)
+        wants = self.parse_include(include)
         if not self.caps.has(GROUPS):
             raise capability_missing(GROUPS)
         cached: _Cached | None = None
         if since is None:
             current = await self.call(self.caps.groups_revision())
-            held = self._groups
+            held = self._groups.get(wants)
             if held is not None and (
                 held.key == current if current is not None
                 else self.now_ms() - held.at_ms < self.groups_cache_ms
             ):
                 cached = held
         if cached is None:
-            listing = await self.call(self.caps.groups_list(since))
+            listing = await self.call(self.caps.groups_list(since, classes=wants))
             full = since is None
             if since is not None and (int_or_none(listing.get("revision")) or 0) < since:
-                listing = await self.call(self.caps.groups_list(None))
+                listing = await self.call(self.caps.groups_list(None, classes=wants))
                 full = True
-            cached = self._groups_cached(listing, full=full)
+            # Eski öğrenci modülü `view` bilmez: `classesIncluded` YAZILMAZ (§2.6).
+            included = wants and listing.get("view") == "classes"
+            cached = self._groups_cached(listing, full=full, classes=included)
             if full and listing.get("complete") is True:
-                self._groups = cached
+                self._groups[wants] = cached
         headers = {"ETag": f'"{cached.etag}"', "Cache-Control": "private, no-cache"}
         if etag_matches(if_none_match, cached.etag):
             return Reply(304, None, headers)

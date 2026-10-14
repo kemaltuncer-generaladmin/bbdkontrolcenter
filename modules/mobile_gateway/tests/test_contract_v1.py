@@ -271,6 +271,22 @@ async def test_directory_full_listing_shape(client: httpx.AsyncClient, world: Wo
     assert "accessCode" not in response.text and not leaked(response.text)
 
 
+async def test_directory_student_classes_additive(client: httpx.AsyncClient,
+                                                  world: World) -> None:
+    """Sınıf = grup (§2.6): yeni öğrenci modülü `classes[{id, name}]` verirse geçer (beyaz
+    listeli); `className` eski tekil değer olarak kalır. Eski modülde alan hiç yoktur."""
+    world.directory.records[ELIF]["classes"] = [
+        {"id": "c8a", "name": "8-A", "secret": "x"}, {"id": "0b9e", "name": "TYT Hızlandırma"},
+        {"name": "kimliksiz"}]
+    body = (await client.get("/directory")).json()
+    students = {item["id"]: item for item in body["students"]}
+    assert students[ELIF]["classes"] == [{"id": "c8a", "name": "8-A"},
+                                         {"id": "0b9e", "name": "TYT Hızlandırma"}]
+    assert students[ELIF]["className"] == "8-A"
+    assert "classes" not in students[CAN]
+    assert "secret" not in json.dumps(body)
+
+
 async def test_directory_etag_304_and_change(client: httpx.AsyncClient, world: World) -> None:
     first = await client.get("/directory")
     etag = first.headers["etag"]
@@ -1052,6 +1068,61 @@ async def test_groups_since_incremental_and_304(client: httpx.AsyncClient,
     # İstemci KM'den ileride (KM yedekten döndü): tam liste, `full: true`.
     ahead = (await client.get("/groups", params={"since": 9999})).json()
     assert ahead["full"] is True and len(ahead["groups"]) == 3
+
+
+async def test_groups_include_classes_single_class_model(client: httpx.AsyncClient,
+                                                        world: World) -> None:
+    """§2.6: `include=classes` → bütün sınıflar + `legacyClassName`/`classLevel`; eski yanıt aynı."""
+    old = (await client.get("/groups")).json()
+    assert "classesIncluded" not in old
+    assert [group["id"] for group in old["groups"]] == ["aa01", "0b9e", "77c1"]
+
+    response = await client.get("/groups", params={"include": "classes"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert list(body) == ["generatedAt", "revision", "full", "complete", "classesIncluded",
+                          "groups", "etag"]
+    assert body["classesIncluded"] is True
+    assert [group["id"] for group in body["groups"]] == ["aa01", "c8a", "0b9e", "77c1"]
+    for group in body["groups"]:
+        assert set(group) == GROUP_KEYS | {"legacyClassName", "classLevel"}
+    eight = body["groups"][1]
+    assert eight["legacyClassName"] == "8-A"
+    assert eight["classLevel"] == {"gradeLevel": 8, "track": None, "examTarget": "LGS"}
+    assert body["groups"][2]["legacyClassName"] is None and body["groups"][2]["classLevel"] is None
+    assert "origin" not in response.text
+    # Görünümlerin ETag'i ve önbelleği ayrı.
+    assert body["etag"] != old["etag"]
+    again = await client.get("/groups", params={"include": "classes"},
+                             headers={"If-None-Match": response.headers["etag"]})
+    assert again.status_code == 304
+    cross = await client.get("/groups", headers={"If-None-Match": response.headers["etag"]})
+    assert cross.status_code == 200 and "classesIncluded" not in cross.json()
+    assert world.groups.views == ["legacy", "classes"]
+
+    delta = (await client.get("/groups", params={"since": 4181, "include": "classes"})).json()
+    assert delta["classesIncluded"] is True and [g["id"] for g in delta["groups"]] == ["77c1"]
+
+    bad = expect_error(await client.get("/groups", params={"include": "hepsi"}),
+                       422, "validation_error")
+    assert bad["fields"] == ["include"]
+
+
+async def test_groups_include_classes_old_student_module(client: httpx.AsyncClient,
+                                                         world: World) -> None:
+    """Eski öğrenci modülü `view` almaz: eski yanıt, `classesIncluded` YOK (Akademi eski kipte)."""
+    legacy_list = world.groups.list
+
+    async def old_list(since_revision: int | None = None) -> dict[str, Any]:
+        result = await legacy_list(since_revision)
+        result.pop("view", None)
+        return result
+
+    world.groups.list = old_list  # type: ignore[method-assign]
+    body = (await client.get("/groups", params={"include": "classes"})).json()
+    assert "classesIncluded" not in body
+    assert [group["id"] for group in body["groups"]] == ["aa01", "0b9e", "77c1"]
+    assert all("legacyClassName" not in group for group in body["groups"])
 
 
 @pytest.mark.parametrize("since", ["abc", "-1", "1.5", "1e3"])
