@@ -95,8 +95,8 @@ Bugün ─────────────── Özet · Talepler · Duyuru
                        Dönem, öğretmen ve müfredat · Veliler ve uygulama · Uygulama kullanımı
    └ öğrenci kartı ─── Özet · Kayıt ve veliler · Program ve yoklama ·
                        Ödev ve çalışma · Müfredat ve gelişim · Cari, kantin ve kitap
-Dersler ve Program ─── Ders programı ve etüt · Yoklama · Ödevler · Çalışma planı ·
-                       Şablonlar · Kurum takvimi
+Dersler ve Program ─── Ders programı ve etüt · Ders oturumları · Yoklama · Ödevler ·
+                       Çalışma planı · Şablonlar · Kurum takvimi
 Ölçme ve Gelişim ───── Denemeler · Değerlendirmeler · Kaynaklar · Müfredat · Okuma ·
                        Bilgi kartları* · Erken uyarı*
 Kantin ve Finans ───── Kurum finansı* · Kantin* · Kitap satışı* · Kitap talepleri*
@@ -203,9 +203,10 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | (ortak) | `curriculum-picker.js` | Program / konu seçicisi (ödev, plan görevi, deneme, deste, kaynak içindekiler): etiket seviyeyi taşır ("11. sınıf · Matematik"), seviye sırası (5→8, LGS, 9→12, TYT, AYT), ödevde hedefin (sınıf / grup / öğrenci) seviyesinden önerilen program kendiliğinden seçilir (ortak ödev içerik alanları `homework-content.js` üzerinden: tek ödevde formdaki hedef, toplu ödevde "Kime?" seçildikten sonra; şablonda hedef yok → seviye çipleri); atama paketinin program listesi de seviyeli; seviye sınıftan gelir (Öğrenciler → Sınıflar). Konu ağacı yalnız konu kimliği seçtirir |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
-| Ders programı | `timetable*.js` | Zil planı durumu kartı (14 gün: kaynak, bugünün kipi, çağrı ve ses, zil ajanı, acil kapatma; "Planı şimdi it"), zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama), etüt ve tek seferlik dersler, zil dilimleri, dönemler |
-| Kurum takvimi | `institution-calendar.js` | Tatil, etkinlik, veli toplantısı, deneme günü, kayıt dönemi; hedef kitle, bağlı duyuru ve hatırlatma (F-A20); "Zil" alanı (normal / tatil — zil çalmaz / KM saat seti) ve "dersleri iptal et" — sözleşme şalteri açılana dek devre dışı |
-| Yoklama | `attendance.js` | Günün oturumları, yoklama listesi ve düzeltme |
+| Ders programı | `timetable*.js` | Zil planı durumu kartı (14 gün: kaynak, bugünün kipi, çağrı ve ses, zil ajanı, acil kapatma; "Planı şimdi it"), zil dilimine hizalı haftalık ızgara (çakışma gösterimi, kopyalama, **"Çakışmaları denetle"** — kaydetmeden öğretmen/derslik/öğrenci çakışması, öğretmensiz satır, öğretmen yükü), etüt ve tek seferlik dersler, zil dilimleri, dönemler, **program şablonları** (`timetable-templates.js`: oluştur — boş ya da bir sınıfın programından —, düzenle, sil, sınıflara uygula + ön denetim; yalnız KM) |
+| Ders oturumları | `sessions.js` | Tek tek dersler (KM-3): oturum takvimi (sınıf, öğretmen, durum, tür, yoklama süzgeci; 31 gün), oturum çekmecesi — yerine öğretmen, derslik, saat, zil çağrısı, gerekçeli iptal (yoklaması alınmış derste önce yoklamayı silmeye yönlendirir), telafi, iptali geri al —, öğretmen haftası ve ders yükü. Çoklu sınıflı derste "8-A + 8-B". Zil modülüne yazmaz: planı Akademi yeniden üretir, KM Zil Sistemi her zamanki eşitlemesiyle alır |
+| Kurum takvimi | `institution-calendar.js` | Tatil, etkinlik, veli toplantısı, deneme günü, kayıt dönemi; hedef kitle, bağlı duyuru ve hatırlatma (F-A20); "Zil" alanı (normal / tatil — zil çalmaz / KM saat seti) ve "dersleri iptal et" — sözleşme şalteri açılana dek devre dışı; **"Etkisini önizle"** (kaç ders tatil/iptal olur, yoklaması alınmış dersler, zil planı değişen günler) |
+| Yoklama | `attendance*.js` | Beş sekme (KM-2): **Günlük yoklama** (günün oturumları, yoklama listesi; listede geçmiş, listeyi yenile, gerekçeli "yoklamayı sil", öğrenci "çıktı", öğretmene hatırlat; düzeltme penceresi kapandıysa gerekçeli düzeltme; KM sunucusuna ulaşılamazsa yoklama bu bilgisayarda bekler ve `admin_syncAttendance` ile gönderilir), **Pano** (günün tahtası, alınmamış dersler + hatırlat, erken çıkışlar, varlık ipucu tutarsızlıkları — `attendance_signals` kapalıysa açık not), **Raporlar** (devam oranı ders/öğretmen/sınıf, öğretmen uyumu, izin nedenleri, dışa aktarım), **Düzeltme kuyruğu** (geç senkron onay/ret), **Ayarlar** (okuma + KM'ye özel kaydetme). Öğrenci kartında devam takvimi + gün ayrıntısı, dönem karnesi, veli adına izin (`students-attendance.js`); sınıf çekmecesinde ve öğrenci kartında tarihli sınıf üyelikleri (`students-class-history.js`) |
 | Ödevler | `homework.js`, `homework-bulk.js`, `homework-content.js` | "Ödev ver" = üç adımlı sihirbaz (ne → kime → ne zaman; şablondan ya da yeni, birden çok ödev, tek / birkaç tarih / her hafta / şablon süresi, otomatik önizleme ve çakışmalar, büyük iş arka planda); seçilenlere toplu ertele / tarih / iptal / sil; toplu seri süzgeci; teslim tablosu, hatırlatma |
 | Şablonlar | `templates.js` (+ `bulk-target.js`, `wizard.js`) | Ödev şablonları (kurum şablonu; yeni / düzenle / kopyala / sil / "bu şablonla ödev ver"), atama paketleri (yalnız KM tanımlar: program + kaynak + kaynak paketi + plan şablonu + kural + otomatik; uygula / kaldır — seçerek · süzgeçle · kuralına uyan herkes, hariç tutulanlar, önce say, 300+ öğrencide arka plan işi), plan şablonları |
 | Denemeler | `exams*.js` | Tanımlar, geçmiş deneme, toplu yükleme sihirbazı (yükle → sütunlar → eşleme + yayınevi şablonları → önizleme ve belirsiz eşleşme çözümü → kaydet / geri al), cevap anahtarı ve soru→konu eşlemesi, tekil sonuç, yayımla, analiz, karşılaştırma, dışa aktarım |
@@ -239,7 +240,10 @@ yok **4** (gerekçeleri `NOT_SURFACED`'da: personel itmesi modül servisinde,
 kantin tahsilatı ve kontrolleri Öğrenciler modülünde, öğrenci dışa aktarım
 durumu; çalışma grubu yazma uçları sözleşmeden kalktı), sırada **124**
 (draft.3'ün program kurucu, ders oturumları, grup üyelik görünümü, yoklama,
-koçluk ve mesajlaşma denetimi işlemleri; `PENDING`), eksik **0**. Bölüm
+koçluk ve mesajlaşma denetimi işlemleri; `PENDING`), eksik **0**.
+**KM-2/KM-3 (dal `ozellik/km-yoklama-program`):** yoklama (22), program kurucu ve
+oturumlar (14), tarihli üyelik (3) ve takvim etkisi (1) — 40 işlem `PENDING`'den
+çıktı; sırada kalan yalnız koçluk ve mesajlaşma denetimi (70, `km-koclik` işi). Bölüm
 başına karşılanan işlem (bir işlem birden çok bölümde sayılabilir):
 Öğrenciler (çekmece sekmeleriyle) 101 · Denemeler 30 · Değerlendirmeler 23 ·
 Ayarlar 22 · Çalışma planı 22 · Kaynaklar 22 · Kurum finansı 20 · Müfredat 16
