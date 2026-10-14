@@ -22,7 +22,8 @@ from km_sdk import report_dir, write_private
 
 from . import curriculum
 from . import guardians as guardian_rules
-from .directory import split_name, student_record
+from .directory import split_name, student_classes, student_record
+from .groups import fold
 from .lifecycle import describe_status
 from .phones import normalize_phone
 from .sync import (
@@ -114,8 +115,14 @@ class StudentService:
         self._store = store
         self._log = log
         self._table = store.table("profile")
-        #: Sınıf tanımları (göç 008): sınıf seviyeyi taşır.
+        #: Sınıf tanımları (göç 008) — birleştirmeden (göç 009) sonra yalnız tarihçe.
         self._classes = store.table("class")
+        #: Sınıflar (= eski gruplar, göç 009) ve birleştirmenin durumu.
+        self._groups = store.table("group")
+        self._merge_state = store.table("class_merge")
+        #: Toplu "sınıfa ekle" / eski `className` yazması üyelik yoluna gider
+        #: (`GroupService`; modül kurulurken `attach_groups` ile bağlanır).
+        self._group_service: Any = None
         self._products_cache: tuple[float, list[dict[str, Any]]] | None = None
         #: Önce-KM-sonra-kantin yazma yolu (km-merkezi-senkron §7). Testler
         #: vermezse olaysız yerel bir eşi kurulur.
@@ -138,17 +145,34 @@ class StudentService:
         if self._on_change is not None:
             self._on_change(canteen=canteen)
 
+    def attach_groups(self, groups: Any) -> None:
+        """Sınıf servisi (`GroupService`) — toplu sınıf ataması üyelikten yürür."""
+        self._group_service = groups
+
+    async def own_level(self) -> bool:
+        """Sınıf birleştirmesi bitti mi? Bittiyse seviye öğrencinin KENDİSİNDEDİR."""
+        row = await self._store.fetch_one(
+            f"SELECT state FROM {self._merge_state} WHERE id = 1")
+        return row is not None and str(row["state"] or "") == "done"
+
+    async def class_names(self) -> dict[str, str]:
+        """Canlı sınıf kimliği → ad (öğrencinin `classes[]`'i için)."""
+        rows = await self._store.fetch_all(
+            f"SELECT id, name FROM {self._groups} WHERE archived_at = ''")
+        return {str(row["id"]): str(row["name"]) for row in rows}
+
     async def list_students(self) -> dict[str, Any]:
         """Kantin listesi + bizim alanlarımız. Kantine ulaşılamazsa da yanıt döner.
 
         Kantin listesi, kasa panosu ve profil tablosu BİRBİRİNDEN BAĞIMSIZDIR;
         üçü aynı anda istenir (eskiden sırayla: liste bitmeden pano başlamazdı).
         """
-        students_call, dashboard_call, profile_rows, tomb_rows, plans = await asyncio.gather(
+        (students_call, dashboard_call, profile_rows, tomb_rows, plans, names,
+         own) = await asyncio.gather(
             _settled(self._canteen.students), _settled(self._canteen.dashboard),
             self._store.fetch_all(f"SELECT * FROM {self._table}"),
             self._store.fetch_all(f"SELECT kantin_id FROM {self._store.table('tombstone')}"),
-            self.class_plans(),
+            self.class_plans(), self.class_names(), self.own_level(),
         )
         if isinstance(students_call, BaseException):
             students, connected, error = [], False, str(students_call)
@@ -161,7 +185,7 @@ class StudentService:
         stale_cut = iso(datetime.now(UTC) - STALE_AFTER)
 
         merged = [self._merge(student, profiles.get(student.get("id", "")), stale_cut=stale_cut,
-                              plans=plans)
+                              plans=plans, names=names, own=own)
                   for student in students if str(student.get("id") or "") not in deleted]
 
         # KM kaydı olup kantine HENÜZ yazılamamış öğrenciler (§7): listede
@@ -171,7 +195,7 @@ class StudentService:
             if row["kantin_id"] not in known and row.get("canteen_sync") == "pending":
                 merged.append(self._merge({"id": row["kantin_id"], "balance": 0},
                                           row, stale_cut=stale_cut, canteen_missing=True,
-                                          plans=plans))
+                                          plans=plans, names=names, own=own))
 
         # Kantinde olmayan ama bizde profili kalmış kayıtlar: öğrenci kasadan
         # silinmiş olabilir. Sessizce yutmuyoruz, işaretliyoruz.
@@ -236,7 +260,8 @@ class StudentService:
 
     def _merge(self, canteen: dict[str, Any], profile: dict[str, Any] | None, *,
                stale_cut: str = "", canteen_missing: bool = False,
-               plans: dict[str, dict[str, Any] | None] | None = None) -> dict[str, Any]:
+               plans: dict[str, dict[str, Any] | None] | None = None,
+               names: dict[str, str] | None = None, own: bool = False) -> dict[str, Any]:
         # Kantine henüz yazılmamış KM değerleri (bekleyen gövde) kantin satırını ezer.
         overlay = pending_upsert(profile)
         if overlay:
@@ -247,9 +272,12 @@ class StudentService:
         first, last = _split_name(display_name)
         class_name = (profile or {}).get("class_name") or ""
         # Sınıf seviyeyi taşır (göç 008): geçerli değer sınıftan; istisna / eski kayıt öğrenciden.
+        # Birleştirmeden (göç 009) sonra seviye ÖĞRENCİDEDİR (`own`).
         class_plan = (plans or {}).get(class_name) if class_name else None
-        plan = curriculum.effective(profile, class_plan)
-        own = curriculum.from_row(profile)
+        plan = curriculum.effective(profile, None if own else class_plan)
+        own_plan = curriculum.from_row(profile)
+        classes = student_classes(profile, names) if own else (
+            [{"id": "", "name": class_name}] if class_name else [])
 
         return {
             # kantin otoritesinde
@@ -268,7 +296,13 @@ class StudentService:
             # bizim kaydımızda
             "firstName": (profile or {}).get("first_name") or first,
             "lastName": (profile or {}).get("last_name") or last,
-            "className": (profile or {}).get("class_name") or "",
+            # SINIF = GRUP (göç 009): öğrenci birden çok sınıfa eşit üye. `className`
+            # ekranlar için GÖRÜNEN ad (sınıflar virgülle); tek tek `classes` /
+            # `classNames`. Eski tekil ad (eski Akademi uyumu) `legacyClassName`.
+            "className": ", ".join(item["name"] for item in classes),
+            "classes": classes,
+            "classNames": [item["name"] for item in classes],
+            "legacyClassName": class_name,
             "schoolNo": (profile or {}).get("school_no") or "",
             "studentPhone": (profile or {}).get("student_phone") or "",
             "parentName": (profile or {}).get("parent_name") or "",
@@ -289,10 +323,13 @@ class StudentService:
             "classLevel": class_plan,
             "levelOverride": bool(int((profile or {}).get("level_override") or 0)),
             # Öğrencinin kendi (istisna) alanı ve hedef sınavı — yalnız `levelOverride` açıkken geçerli.
-            "ownTrack": own["track"],
-            "ownExamTarget": own["examTarget"],
+            "ownTrack": own_plan["track"],
+            "ownExamTarget": own_plan["examTarget"],
+            # Seviye öğrencide mi (birleştirme bitti) — ekran seviye alanını açar.
+            "levelOnStudent": own,
             # Sınıf adından ÖNERİ — YAZILMAZ; ekran tek tıkla kabul ettirir.
-            "curriculumSuggestion": curriculum.suggest(class_name),
+            "curriculumSuggestion": curriculum.suggest(
+                class_name or (classes[0]["name"] if classes else "")),
             # Kantin veli kontrolleri listede de taşınır (yeni kantin sürümü).
             "dailyLimit": canteen.get("dailyLimit"),
             "guardianBlocked": bool(canteen.get("guardianBlocked")),
@@ -641,6 +678,7 @@ class StudentService:
             return None
         profile = await self._sync.profile(kantin_id)
         plans = await self.class_plans((profile or {}).get("class_name") or None)
+        names, own = await self.class_names(), await self.own_level()
         try:
             row = await self._canteen.get_student(kantin_id)
         except Exception as failure:
@@ -649,7 +687,7 @@ class StudentService:
             if profile is not None and profile.get("canteen_sync") == "pending":
                 return self._merge({"id": kantin_id, "balance": 0}, profile,
                                    stale_cut=iso(datetime.now(UTC) - STALE_AFTER),
-                                   canteen_missing=True, plans=plans)
+                                   canteen_missing=True, plans=plans, names=names, own=own)
             if getattr(failure, "reason", None) == "student_not_found":
                 return None
             # Kantine şu an ulaşılamıyor: dizinin son görüntüsünden (≤ 20 sn) kurulur;
@@ -657,11 +695,12 @@ class StudentService:
             cached = await self._cached_canteen_row(kantin_id)
             if cached is None:
                 raise
-            merged = self._merge(cached, profile, plans=plans)
+            merged = self._merge(cached, profile, plans=plans, names=names, own=own)
             merged["canteenUnavailable"] = True
             return merged
         return self._merge(row if isinstance(row, dict) else {"id": kantin_id}, profile,
-                           stale_cut=iso(datetime.now(UTC) - STALE_AFTER), plans=plans)
+                           stale_cut=iso(datetime.now(UTC) - STALE_AFTER), plans=plans,
+                           names=names, own=own)
 
     async def _cached_canteen_row(self, kantin_id: str) -> dict[str, Any] | None:
         cached = getattr(self._directory, "cached_row", None)
@@ -745,16 +784,22 @@ class StudentService:
         return {**result, "changed": True,
                 "guardians": fresh["guardians"] if fresh else []}
 
-    async def set_class(self, kantin_ids: list[str], class_name: str) -> dict[str, Any]:
-        """Toplu ANA SINIF ataması. Her öğrenci ayrı `student.updated` (`className`).
+    async def set_class(self, kantin_ids: list[str], class_name: str, *,
+                        actor: str = "") -> dict[str, Any]:
+        """Toplu sınıf ataması (eski "Ana sınıf").
 
-        Ana sınıf tektir (kantin kartı, Akademi sınıfı ve müfredat önerisi ondan);
-        bir öğrencinin birden çok topluluğa üyeliği GRUPLARLA (tarihli) yapılır.
-        Boş ad sınıfı temizler. Boş seçim reddedilir.
+        SINIF = GRUP (göç 009): birleştirmeden sonra bu yol "SINIFA EKLE"dir —
+        öğrenciler adı verilen sınıfa bugünden üye olur (yoksa sınıf açılır);
+        başka sınıflarındaki üyelikleri SÜRER (ana sınıf yok). Boş ad reddedilir
+        (sınıftan çıkarmak sınıfın üyelik ekranındandır). Birleştirme öncesi
+        (ya da geri alındıysa) eski davranış: tek ana sınıf, her öğrenci ayrı
+        `student.updated` (`className`); boş ad temizler.
         """
         ids = [str(item).strip() for item in kantin_ids if str(item).strip()]
         if not ids:
             raise ValueError("Öğrenci seçilmedi.")
+        if self._group_service is not None and await self.own_level():
+            return await self._join_class(ids, class_name, actor=actor or "Öğrenci Yönetimi")
         # Var olan sınıf adı olduğu gibi (ör. canlıdaki "Mezun"), yenisi normalize.
         name = await self._class_key(class_name)
         updated: list[str] = []
@@ -767,6 +812,37 @@ class StudentService:
             updated.append(kantin_id)
         self._log.info("toplu sınıf ataması", updated=len(updated), failed=len(failed))
         return {"updated": updated, "failed": failed, "className": name}
+
+    async def _join_class(self, ids: list[str], class_name: str, *,
+                          actor: str) -> dict[str, Any]:
+        """Öğrencileri adı verilen CANLI sınıfa bugünden ekler; sınıf yoksa açar."""
+        trimmed = " ".join(str(class_name or "").split())
+        if not trimmed:
+            raise ValueError("Sınıf adı boş olamaz.")
+        row = await self._store.fetch_one(
+            f"SELECT id, name FROM {self._groups} WHERE name_fold = ? AND archived_at = '' "
+            f"ORDER BY created_at LIMIT 1", (fold(trimmed),))
+        failed: list[dict[str, str]] = []
+        live: list[str] = []
+        for kantin_id in dict.fromkeys(ids):
+            if await self._sync.tombstone(kantin_id) is not None:
+                failed.append({"studentId": kantin_id, "error": "Öğrenci silinmiş."})
+            else:
+                live.append(kantin_id)
+        if not live:
+            return {"updated": [], "failed": failed, "className": trimmed}
+        if row is None:
+            record = await self._group_service.create(
+                {"name": normalize_class(trimmed) if _CLASS.match(trimmed.upper()) else trimmed,
+                 "studentIds": live}, actor=actor)
+            name, added = str(record["name"]), live
+        else:
+            result = await self._group_service.add_members(str(row["id"]), live, actor=actor)
+            name = str(row["name"])
+            added = [student for student in live if student not in result["skipped"]]
+        self._log.info("toplu sınıfa ekleme", sinif=name, added=len(added), failed=len(failed))
+        return {"updated": added, "failed": failed, "className": name,
+                "skipped": [student for student in live if student not in added]}
 
     async def reset_access_code(self, kantin_id: str) -> dict[str, Any]:
         """Öğrenciye tek tuşla yeni giriş kodu verir.
@@ -886,11 +962,13 @@ class StudentService:
         updated: list[str] = []
         failed: list[dict[str, str]] = []
         plans = await self.class_plans()
+        own = await self.own_level()
         for kantin_id in dict.fromkeys(ids):
             body = dict(clean)
             profile = await self._sync.profile(kantin_id)
             name = (profile or {}).get("class_name") or ""
-            if name and plans.get(name) is not None and ({"track", "examTarget"} & set(body)):
+            if not own and name and plans.get(name) is not None \
+                    and ({"track", "examTarget"} & set(body)):
                 # Sınıfı seviyeli öğrencide alan / hedef sınav öğrenciye özel İSTİSNA olur.
                 body["levelOverride"] = True
             try:
@@ -923,18 +1001,31 @@ class StudentService:
     # ------------------------------------------------- sınıf seviyeyi taşır (göç 008)
 
     async def class_plans(self, name: str | None = None) -> dict[str, dict[str, Any] | None]:
-        """Sınıf adı → seviye planı (seviyesiz tanım → None). `name` verilirse yalnız o sınıf."""
+        """ESKİ sınıf adı → seviye planı (seviyesiz → None). `name` verilirse yalnız o sınıf.
+
+        Birleştirmeden sonra kaynak sınıf kaydıdır (`legacy_class_name`); göç 008
+        tanımı yalnız kaydı olmayan adlar için.
+        """
         if name is None:
             rows = await self._store.fetch_all(f"SELECT * FROM {self._classes}")
+            legacy = await self._store.fetch_all(
+                f"SELECT * FROM {self._groups} WHERE legacy_class_name != ''")
         else:
             rows = await self._store.fetch_all(f"SELECT * FROM {self._classes} WHERE name = ?",
                                                (name,))
-        return {str(row["name"]): curriculum.class_from_row(row) for row in rows}
+            legacy = await self._store.fetch_all(
+                f"SELECT * FROM {self._groups} WHERE legacy_class_name = ?", (name,))
+        plans = {str(row["name"]): curriculum.class_from_row(row) for row in rows}
+        if legacy and await self.own_level():
+            for row in sorted(legacy, key=lambda item: bool(item["archived_at"]), reverse=True):
+                plans[str(row["legacy_class_name"])] = curriculum.class_from_row(row)
+        return plans
 
     async def _guard_level(self, existing: dict[str, Any] | None, columns: dict[str, Any],
                            payload: dict[str, Any]) -> None:
         """Sınıfının seviyesi tanımlı öğrencide seviye öğrenciye yazılmaz (sınıftan gelir)."""
-        if "gradeLevel" not in payload:
+        if "gradeLevel" not in payload or await self.own_level():
+            # Birleştirmeden sonra seviye ÖĞRENCİDEDİR: kartta doğrudan yazılır.
             return
         name = columns.get("class_name", (existing or {}).get("class_name") or "")
         if name and (await self.class_plans(name)).get(name) is not None:
@@ -951,8 +1042,9 @@ class StudentService:
         if before_name == after_name and not level_columns & set(columns):
             return events
         plans: dict[str, dict[str, Any] | None] = {}
-        for name in {before_name, after_name} - {""}:
-            plans.update(await self.class_plans(name))
+        if not await self.own_level():
+            for name in {before_name, after_name} - {""}:
+                plans.update(await self.class_plans(name))
         before = curriculum.effective(existing, plans.get(before_name) if before_name else None)
         after = curriculum.effective({**(existing or {}), **columns},
                                      plans.get(after_name) if after_name else None)
@@ -973,7 +1065,30 @@ class StudentService:
         return out
 
     async def list_classes(self) -> dict[str, Any]:
-        """Sınıflar ekranı: tanımlı sınıflar ∪ öğrencilerde kullanılan sınıf adları."""
+        """Sınıflar ekranı: tanımlı sınıflar ∪ öğrencilerde kullanılan sınıf adları.
+
+        Birleştirmeden (göç 009) sonra kaynak CANLI sınıf kayıtlarıdır (eski
+        gruplar dahil, tek liste); öğrenci sayısı bugünkü üyelerdir.
+        """
+        if self._group_service is not None and await self.own_level():
+            overview = await self._group_service.overview()
+            merged_items = []
+            for group in overview["groups"]:
+                plan = group.get("classLevel")
+                merged_items.append({
+                    "id": group["id"], "name": group["name"],
+                    "gradeLevel": plan["gradeLevel"] if plan else None,
+                    "track": plan["track"] if plan else None,
+                    "examTarget": plan["examTarget"] if plan else None,
+                    "defined": plan is not None, "studentCount": group["memberCount"],
+                    "label": curriculum.class_label(group["name"], plan),
+                    "suggestion": None if plan else curriculum.suggest(group["name"]),
+                    "updatedAt": group["updatedAt"],
+                })
+            merged_items.sort(key=lambda item: _class_sort_key(item["name"]))
+            return {"items": merged_items,
+                    "undefinedCount": sum(1 for item in merged_items
+                                          if not item["defined"] and item["studentCount"])}
         rows, counts = await asyncio.gather(
             self._store.fetch_all(f"SELECT * FROM {self._classes}"),
             self._store.fetch_all(
@@ -1003,7 +1118,24 @@ class StudentService:
     async def set_class_level(self, class_name: str, patch: dict[str, Any], *,
                               actor: str = "") -> dict[str, Any]:
         """Sınıfın seviyesi / alanı / hedef sınavı. Sınıftaki her öğrencinin GEÇERLİ değeri
-        değiştiyse öğrenci başına `student.updated` (Akademi müfredatı yeniden çözer)."""
+        değiştiyse öğrenci başına `student.updated` (Akademi müfredatı yeniden çözer).
+
+        Birleştirmeden sonra: adı verilen canlı sınıfın seviyesi yazılır ve
+        bugünkü üyelerin KENDİ seviyesine uygulanır (`GroupService.update`).
+        """
+        if self._group_service is not None and await self.own_level():
+            group_id = await self._live_class_id(class_name)
+            current = await self._group_service.detail(group_id)
+            level = dict(current.get("classLevel") or {})
+            level.update({key: patch[key] for key in ("gradeLevel", "track", "examTarget")
+                          if key in patch})
+            before = len(await self._group_service.current_students(group_id))
+            record = await self._group_service.update(group_id, {"level": level},
+                                                      actor=actor or "Öğrenci Yönetimi")
+            plan = record.get("classLevel")
+            return {"name": record["name"], **(plan or {}),
+                    "label": curriculum.class_label(record["name"], plan),
+                    "updatedStudents": before}
         name = await self._class_key(class_name)
         if not name:
             raise ValueError("Sınıf adı boş olamaz.")
@@ -1030,7 +1162,16 @@ class StudentService:
                 "updatedStudents": updated}
 
     async def clear_class_level(self, class_name: str) -> dict[str, Any]:
-        """Sınıf tanımını kaldırır: öğrenciler kendi (eski) değerlerine döner."""
+        """Sınıf tanımını kaldırır: öğrenciler kendi (eski) değerlerine döner.
+
+        Birleştirmeden sonra yalnız sınıfın seviyesi (şablon) kalkar; öğrencinin
+        kendi seviyesi değişmez.
+        """
+        if self._group_service is not None and await self.own_level():
+            group_id = await self._live_class_id(class_name)
+            record = await self._group_service.update(group_id, {"level": None},
+                                                      actor="Öğrenci Yönetimi")
+            return {"name": record["name"], "updatedStudents": 0}
         name = await self._class_key(class_name)
         rows = await self._store.fetch_all(f"SELECT * FROM {self._classes} WHERE name = ?", (name,))
         if not rows:
@@ -1039,6 +1180,15 @@ class StudentService:
         updated = await self._announce_class(name, curriculum.class_from_row(rows[0]), None)
         self._changed(canteen=False)
         return {"name": name, "updatedStudents": updated}
+
+    async def _live_class_id(self, class_name: str) -> str:
+        trimmed = " ".join(str(class_name or "").split())
+        row = await self._store.fetch_one(
+            f"SELECT id FROM {self._groups} WHERE (name_fold = ? OR legacy_class_name = ?) "
+            f"AND archived_at = '' ORDER BY created_at LIMIT 1", (fold(trimmed), trimmed))
+        if row is None:
+            raise LookupError("Sınıf bulunamadı.")
+        return str(row["id"])
 
     async def _class_key(self, class_name: str) -> str:
         """Var olan sınıf adı olduğu gibi (canlıdaki "Mezun" gibi elle yazılmış adlar), yenisi

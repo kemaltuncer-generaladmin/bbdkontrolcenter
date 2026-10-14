@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from km_sdk import ModuleContext
 
 from .api.routes import bind
 from .canteen_events import CanteenSync
+from .classes import ClassLink
+from .classes_merge import ClassMerge
 from .directory import StudentDirectory
 from .groups import GroupService, StudentGroups
 from .lifecycle import Lifecycle
@@ -52,16 +55,41 @@ def register(ctx: ModuleContext) -> None:
     # süreç içi `bbd_students.groups_changed` yayınlanır (mobil geçit
     # önbelleği, zil). Yayın patlarsa yazma yine tamamdır (K7).
     async def groups_changed(revision: int) -> None:
+        # Dizin `classes[].name`'i sınıf tablosundan okur: görüntü yeniden kurulsun.
+        directory.invalidate(canteen=False)
         await ctx.publish("bbd_students.groups_changed", {"revision": revision})
 
-    groups = GroupService(store=ctx.store, log=ctx.log, publish=groups_changed, outbox=outbox)
+    # SINIF = GRUP (göç 009): üyelik değişince öğrencinin türetilmiş alanları
+    # (`class_ids`, eski `class_name`) + `student.updated`, grup yazmasının
+    # İŞLEMİNDE; sınıfın seviyesi öğrenciye ŞABLON olarak yazılır.
+    link = ClassLink(store=ctx.store, sync=sync, log=ctx.log)
+    groups = GroupService(store=ctx.store, log=ctx.log, publish=groups_changed, outbox=outbox,
+                          students_changed=link.refresh, apply_level=link.apply_level)
+    merge = ClassMerge(store=ctx.store, groups=groups, log=ctx.log)
+    upkeep_lock = asyncio.Lock()
+
+    async def class_upkeep() -> None:
+        """Açılışta sınıf birleştirmesi (bir kez; idempotent) + günlük üyelik uzlaştırması.
+
+        Uzlaştırma turunun kancasıdır: patlaması kantin itmesini durdurmaz (K7).
+        """
+        try:
+            async with upkeep_lock:
+                status = await merge.status()
+                if status["state"] == "":
+                    await merge.run()
+                await link.reconcile_all()
+        except Exception as failure:  # noqa: BLE001 — bir sonraki turda yeniden denenir
+            ctx.log.warning("sınıf birleştirme / uzlaştırma patladı", error=str(failure))
+
+    sync.due_hooks.append(class_upkeep)
 
     # Yaşam döngüsü (pasif / yeniden etkin / kalıcı sil). Tablet kısıtı ve
     # Akademi kurum cari borcu isteğe bağlı yeteneklerdir, çağrı anında çözülür.
     lifecycle = Lifecycle(sync=sync, groups=groups, canteen=canteen, log=ctx.log,
                           directory=directory, capability=ctx.try_capability)
 
-    ctx.add_router(bind(service, groups, lifecycle, sync))
+    ctx.add_router(bind(service, groups, lifecycle, sync, merge=merge, link=link))
     ctx.provide("bbd_students.directory", directory)
     ctx.provide("bbd_students.groups", StudentGroups(groups))
     # Kantin olay alıcısı (bbd_canteen_api) kasadaki öğrenci değişikliğini
@@ -70,4 +98,9 @@ def register(ctx: ModuleContext) -> None:
                 CanteenSync(sync=sync, directory=directory, canteen=canteen, log=ctx.log))
     # Uzlaştırma görevi: 1 dk + kantin geri gelince; planlı pasifleştirmeler.
     sync.start()
+    # Birleştirme uzlaştırma turunu (60 sn) beklemesin: açılışta hemen bir kez.
+    try:
+        asyncio.get_running_loop().create_task(class_upkeep(), name="km-bbd-students-classes")
+    except RuntimeError:  # pragma: no cover — döngü yoksa (araçlar) ilk turda koşar
+        pass
     ctx.log.info("öğrenci yönetimi hazır", kategori=CATEGORY)
