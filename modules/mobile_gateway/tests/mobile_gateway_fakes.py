@@ -314,6 +314,12 @@ class FakeCanteen:
         self._enter("parent_notifications_feed", (updated_since, limit))
         return deepcopy(self.notifications[:limit])
 
+    async def dashboard(self) -> dict[str, Any]:
+        """Kantin `GET /api/reports/dashboard` (düz JSON, kuruş)."""
+        self._enter("dashboard")
+        return {"todaySales": 18750, "openReceivables": 4250, "pendingRequests": 2,
+                "blockedStudents": 1, "totalStudents": 2}
+
     async def canteen_settings_public(self) -> dict[str, Any]:
         self._enter("canteen_settings_public")
         return {"allowPrepayment": True, "maxPrepayment": 50000, "netgsmPassword": "x"}

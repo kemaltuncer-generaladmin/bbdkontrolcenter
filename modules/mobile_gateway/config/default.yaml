@@ -45,6 +45,9 @@ bell_week_cache_seconds: 60
 # `bbd_students.groups_changed` olayı önbelleği hemen bırakır.
 groups_cache_seconds: 60
 canteen_settings_cache_seconds: 60
+# GET /canteen/totals (kurum geneli kantin borç toplamı, bugünkü satış) önbelleği.
+# Kantin bu sayıları tek sorguyla verir; Akademi yönetici paneli 60 sn önbellekte tutar.
+canteen_totals_cache_seconds: 30
 
 # Yetenek çağrısı üst süreleri (saniye). Süre dolarsa çağrı iptal edilir ve
 # 503 döner (kantin/dizin için `canteen_unavailable`). Yazma bilerek uzun:
