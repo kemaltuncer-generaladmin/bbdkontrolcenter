@@ -142,6 +142,9 @@ dependencies:
     - "httpx>=0.28"
     # Belgeler (karne, yoklama, ekstre …) kurum logolu A4 PDF olarak üretilir.
     - "reportlab>=4.2"
+    # Kurum logosu SVG ise belge başlığına vektör olarak çizilir (saf Python + lxml).
+    # İçe aktarma TEMBELDİR: paket yoksa başlık monogramla çıkar (K7).
+    - "svglib>=1.5"
   system:
     # PDF'te Türkçe karakterler için gömülü TTF.
     - "fonts-dejavu-core"

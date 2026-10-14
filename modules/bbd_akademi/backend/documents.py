@@ -202,9 +202,10 @@ class Letterheads:
                     await response.aclose()
             except (AkademiError, ValueError):
                 continue
-            # reportlab SVG çizemez; PNG/JPEG değilse sonraki aday (kare amblem).
-            if response.status_code == 200 and raw[:8] == b"\x89PNG\r\n\x1a\n" \
-                    or response.status_code == 200 and raw[:3] == b"\xff\xd8\xff":
+            # PNG/JPEG ya da SVG (svglib ile vektör çizilir; çizilemezse başlık monogramla çıkar);
+            # başka biçimse sonraki aday (kare amblem).
+            if response.status_code == 200 and (raw[:8] == b"\x89PNG\r\n\x1a\n" or raw[:3] == b"\xff\xd8\xff"
+                                                or document_pdf.is_svg(raw)):
                 return raw
         return None
 

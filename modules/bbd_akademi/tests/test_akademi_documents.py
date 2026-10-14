@@ -161,6 +161,47 @@ def test_yatay_sayfa_ve_logosuz_baslik(tmp_path: Path) -> None:
         assert "841.89 x 595.276" in info
 
 
+SVG_LOGO = (b'<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" '
+            b'viewBox="0 0 120 40"><rect width="120" height="40" rx="6" fill="#0891B2"/>'
+            b'<circle cx="20" cy="20" r="12" fill="#ffffff"/></svg>')
+
+
+def test_svg_logo_vektor_cizilir(tmp_path: Path) -> None:
+    """SVG kurum logosu başlığa vektör olarak çizilir (eskiden monograma düşüyordu); PNG yolu aynı."""
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.lib.utils import ImageReader
+
+    assert document_pdf.is_svg(SVG_LOGO) and not document_pdf.is_svg(LOGO)
+    assert isinstance(document_pdf.logo_drawable(SVG_LOGO), Drawing)
+    assert isinstance(document_pdf.logo_drawable(LOGO), ImageReader)
+    assert document_pdf.logo_drawable(b"bozuk") is None
+    content = document_pdf.render(document_pdf.parse(model()),
+                                  Letterhead(name="BBD Akademi Kadıköy", logo=SVG_LOGO),
+                                  Stamp(number="N", issued="x", author="y"))
+    assert content.startswith(b"%PDF")
+    text = pdf_text(content, tmp_path)
+    if text is not None:
+        assert "BBD Akademi Kadıköy" in text and "\nBA\n" not in text   # monogram (baş harfler) yok
+
+
+def test_svg_logo_dis_kaynak_ve_varlik_okumaz(tmp_path: Path) -> None:
+    """Güvenlik: DOCTYPE/varlık taşıyan SVG ayrıştırılmaz; dış dosyaya bağlanan <image> çözülmez."""
+    secret = tmp_path / "gizli.png"
+    secret.write_bytes(LOGO)
+    xxe = (b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+           b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>&x;</text></svg>')
+    assert document_pdf.logo_drawable(xxe) is None
+    external = (b'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+                b'width="40" height="40"><image xlink:href="' + str(secret).encode() + b'" width="40" '
+                b'height="40"/></svg>')
+    drawing = document_pdf.logo_drawable(external)
+    content = document_pdf.render(document_pdf.parse(model()), Letterhead(logo=external),
+                                  Stamp(number="N", issued="x", author="y"))
+    assert content.startswith(b"%PDF")
+    assert drawing is None or not drawing.contents or all(
+        type(item).__name__ != "Image" for item in drawing.getContents())
+
+
 def test_tur_islemleri_izin_listesinde() -> None:
     for table in (KINDS, AKADEMI_PDFS):
         for key, kind in table.items():

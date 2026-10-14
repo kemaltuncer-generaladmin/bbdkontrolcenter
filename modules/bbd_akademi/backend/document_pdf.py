@@ -132,13 +132,52 @@ def _printable(text: str) -> str:
 
 # ------------------------------------------------------------------ model
 
+def is_svg(data: bytes) -> bool:
+    """SVG mi: (BOM / XML bildirimi / yorumdan sonra) ilk 2 KB'ta ``<svg`` kökü."""
+    head = data[:2048].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    return head.startswith((b"<svg", b"<?xml", b"<!--")) and b"<svg" in head
+
+
+def logo_drawable(data: bytes | None) -> Any:
+    """Başlık logosu → reportlab ``ImageReader`` (PNG/JPEG) ya da ``Drawing`` (SVG); çizilemezse ``None``
+    (başlık monogramla çizilir, K7).
+
+    SVG ``svglib`` ile vektör olarak çizilir (module.yaml bağımlılığı; yoksa monogram). Güvenlik: kaynak bellekte
+    (``BytesIO``) olduğu için svglib dış ``<image>`` / ``<use>`` yollarını çözmez, XML varlıkları çözülmez
+    (``resolve_entities=False``); ``<!DOCTYPE`` taşıyan dosya hiç ayrıştırılmaz."""
+    if not data:
+        return None
+    if is_svg(data):
+        if b"<!doctype" in data[:4096].lower():
+            return None
+        try:
+            from svglib.svglib import svg2rlg
+        except ImportError:
+            return None
+        try:
+            drawing = svg2rlg(io.BytesIO(data), resolve_entities=False)
+        except Exception:  # noqa: BLE001 — bozuk SVG: monogram
+            return None
+        if drawing is None or not drawing.width or not drawing.height:
+            return None
+        return drawing
+    from reportlab.lib.utils import ImageReader
+
+    try:
+        image = ImageReader(io.BytesIO(data))
+        image.getSize()
+    except Exception:  # noqa: BLE001 — bozuk görsel: başlık monogramla çizilir
+        return None
+    return image
+
+
 @dataclass(slots=True)
 class Letterhead:
     """Belge başlığının kurum bilgisi (Akademi kurum ayarı + tema)."""
 
     name: str = "BBD Akademi"
     detail: str = ""               # adres · telefon · e-posta (tek satır)
-    logo: bytes | None = None      # PNG/JPEG baytları
+    logo: bytes | None = None      # PNG/JPEG ya da SVG baytları
     accent: str = "#2F5BD3"        # tema ana rengi
 
 
@@ -436,13 +475,7 @@ def render(document: Document, letterhead: Letterhead, stamp: Stamp) -> bytes:
                                   alignment={"R": 2, "C": 1}.get(align, 0))
         return Paragraph(markup or "&nbsp;", base)
 
-    logo = None
-    if letterhead.logo:
-        try:
-            logo = ImageReader(io.BytesIO(letterhead.logo))
-            logo.getSize()
-        except Exception:  # noqa: BLE001 — bozuk görsel: başlık monogramla çizilir
-            logo = None
+    logo = logo_drawable(letterhead.logo)
 
     parts = document.parts
 
@@ -456,11 +489,21 @@ def render(document: Document, letterhead: Letterhead, stamp: Stamp) -> bytes:
         box_h = 14 * mm
         text_x = margin
         if logo is not None:
-            raw_w, raw_h = logo.getSize()
+            vector = not isinstance(logo, ImageReader)
+            raw_w, raw_h = (float(logo.width), float(logo.height)) if vector else logo.getSize()
             scale = min(36 * mm / raw_w, box_h / raw_h)
             draw_w, draw_h = raw_w * scale, raw_h * scale
-            canvas.drawImage(logo, margin, top - box_h + (box_h - draw_h) / 2, draw_w, draw_h,
-                             mask="auto", preserveAspectRatio=True)
+            y = top - box_h + (box_h - draw_h) / 2
+            if vector:
+                from reportlab.graphics import renderPDF
+
+                canvas.saveState()
+                canvas.translate(margin, y)
+                canvas.scale(scale, scale)
+                renderPDF.draw(logo, canvas, 0, 0)
+                canvas.restoreState()
+            else:
+                canvas.drawImage(logo, margin, y, draw_w, draw_h, mask="auto", preserveAspectRatio=True)
             text_x = margin + draw_w + 4 * mm
         else:
             canvas.setFillColor(accent)
