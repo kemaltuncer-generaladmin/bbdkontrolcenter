@@ -74,7 +74,7 @@ export function askDeactivate(root, { students }) {
     const { overlay, card, release } = dialog(root, many ? `${name} pasifleştirilecek` : `${name} — pasifleştir`,
       'Kantinde satış kapanır (bakiye ve borç korunur, tahsilat ve ödeme linki çalışır), '
       + 'tablet girişi kısıtlanır, BBD Akademi girişi ve yalnız bu öğrenciye bağlı veli '
-      + 'girişi kapanır. Açık grup üyelikleri kapanır. Veriler saklanır; yeniden '
+      + 'girişi kapanır. Açık sınıf üyelikleri kapanır. Veriler saklanır; yeniden '
       + 'etkinleştirilebilir.');
 
     const reason = h('select', 'kit-input st-input st-select');

@@ -188,3 +188,30 @@
 .ak-tt-bell-body { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .ak-tt-bell-flags { flex-wrap: wrap; }
 .ak-tt-bell-today { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+
+/* ------------------------------------------- çoklu sınıflı ders (sınıf = grup) */
+.ak-tt-classes { font-size: 11px; color: var(--soft); font-style: italic; }
+.ak-tt-classpick .ak-chips { flex-wrap: wrap; gap: 4px; }
+.ak-tt-classchip { display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; }
+.ak-tt-classchip-x { border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit;
+  padding: 0 4px; border-radius: 999px; }
+.ak-tt-classchip-x:hover { background: rgba(0, 0, 0, .08); }
+
+/* ------------------------------------------ ders oturumları (sessions.js) */
+.ak-ses-day { gap: 6px; }
+.ak-ses-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.ak-ses-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
+.ak-ses-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ak-ses-row.ak-ses-is-cancelled b { text-decoration: line-through; color: var(--soft); }
+
+/* --------------------------------- program şablonları ve önizleme (KM-3) */
+.ak-tt-preview { display: flex; flex-direction: column; gap: 8px; }
+.ak-tt-tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.ak-tt-tpl-row {
+  display: grid; grid-template-columns: 110px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 80px auto;
+  gap: 6px; align-items: center;
+}

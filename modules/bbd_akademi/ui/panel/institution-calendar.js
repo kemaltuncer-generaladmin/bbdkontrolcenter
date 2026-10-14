@@ -31,14 +31,14 @@
 //
 // Derin bağlantı: `{institutionEventId}`, `{date}` (o günün ayı açılır, gün seçilir).
 
-import { h, loadStyles, longDate } from '../../ui-kit/kit.js';
+import { button, h, loadStyles, longDate } from '../../ui-kit/kit.js';
 import { monthCalendar } from '../../ui-kit/calendar.js';
 import { dateField, dateRange } from '../../ui-kit/datefield.js';
 import { alertBox, card, hintBox, tabBar } from '../../ui-kit/layout.js';
 import { AkademiError } from './api.js';
 import { bellChoices, bellText, choiceFromBell, defaultBellChoice, withBell } from './bell-plan.js';
 import {
-  actionButton, addDays, errorBox, fmtDate, fmtDateTime, formDialog, istanbulStamp, kv, loader, multiChips,
+  actionButton, addDays, errorBox, fmtDate, fmtDateTime, fmtTime, formDialog, istanbulStamp, kv, loader, multiChips,
   num, openDrawer, optionsOf, pagedList, sectionHead, selectBox, studentPicker, todayIst, toolbar,
 } from './common.js';
 
@@ -506,6 +506,32 @@ async function removeEvent(app, event) {
 // ======================================================== oluştur / düzenle
 
 /** Etkinlik penceresi. `current` mevcut kayıt ya da null. Sonuç kaydedilen etkinlik. */
+/** `CalendarImpact` → okunur özet (yoklaması alınmış dersler adlarıyla). */
+function impactSummary(impact) {
+  const node = h('div', 'ak-stack');
+  const affected = Number(impact?.sessionsAffected || 0);
+  const taken = impact?.sessionsWithAttendance || [];
+  const bellDays = impact?.bellDaysAffected || [];
+  if (!affected && !bellDays.length) {
+    node.append(alertBox('Bu kayıt hiçbir dersi ve zil planını etkilemiyor.', 'info'));
+    return node;
+  }
+  node.append(alertBox(`${num(affected)} ders tatil ya da iptal olur${impact.makeupSuggested
+    ? `; ${num(impact.makeupSuggested)} ders için telafi önerilir` : ''}.${bellDays.length
+    ? ` Zil planı değişen günler: ${bellDays.map((iso) => fmtDate(iso)).join(', ')}.` : ''}`, 'warn'));
+  if (taken.length) {
+    const list = h('ul', 'ak-tt-issues');
+    for (const session of taken.slice(0, 20)) {
+      const groups = (session.groups || []).map((group) => group?.name).filter(Boolean).join(' + ') || session.group?.name || '';
+      list.append(h('li', '', `${fmtDate(session.date)} ${fmtTime(session.startsAt)} · ${session.subject?.name || 'Ders'}`
+        + `${groups ? ` · ${groups}` : ''}`));
+    }
+    if (taken.length > 20) list.append(h('li', 'ak-muted', `ve ${num(taken.length - 20)} ders daha`));
+    node.append(h('b', '', `Yoklaması alınmış ${num(taken.length)} ders (yoklama silinmez):`), list);
+  }
+  return node;
+}
+
 async function editEvent(app, current, { day = todayIst(), ready, bell = null } = {}) {
   const bellEnabled = Boolean(bell?.enabled);
   const [{ classes, groups }, profiles] = await Promise.all([ready(), bell ? bell.profiles() : null]);
@@ -704,6 +730,46 @@ async function editEvent(app, current, { day = todayIst(), ready, bell = null } 
     return { node: wrap, update };
   };
 
+  /**
+   * Etki önizlemesi (KM-3, `admin_previewCalendarImpact`): kaydetmeden kaç dersin tatil / iptal
+   * olacağı, hangilerinin yoklaması alınmış (silinmez), hangi günlerin zil planı değişeceği.
+   */
+  const impactField = (draft) => {
+    const wrap = h('div', 'ak-stack');
+    const out = h('div', 'ak-stack');
+    const go = button('Etkisini önizle', { variant: 'ghost', onClick: async () => {
+      if (!draft.startDate) {
+        out.replaceChildren(alertBox('Önce başlangıç gününü seçin.', 'info'));
+        return;
+      }
+      const scope = draft.scope || 'tenant';
+      go.disabled = true;
+      try {
+        const impact = await app.api.post('/v1/admin/calendar/events/impact', {
+          startDate: draft.startDate,
+          endDate: draft.endDate && draft.endDate !== draft.startDate ? draft.endDate : null,
+          kind: draft.kind,
+          audience: {
+            recipients: draft.recipients || 'all', scope,
+            classGroupIds: scope === 'class_groups' ? draft.classGroupIds || [] : [],
+            studentGroupIds: scope === 'student_groups' ? draft.studentGroupIds || [] : [],
+            studentIds: scope === 'students' ? [...new Set([...keptStudents, ...chosenStudents.keys()])] : [],
+          },
+          cancelLessons: Boolean(bellEnabled && draft.bell?.cancel),
+          excludeEventId: current?.id || null,
+        });
+        out.replaceChildren(impactSummary(impact));
+      } catch (failure) {
+        out.replaceChildren(errorBox(failure));
+      } finally {
+        go.disabled = false;
+      }
+    } });
+    wrap.append(h('span', 'ak-muted', 'Kaydetmeden: kaç ders tatil ya da iptal olur, alınmış yoklamalar (silinmez) ve '
+      + 'zil planı değişecek günler.'), go, out);
+    return wrap;
+  };
+
   const announceField = (draft, set) => {
     const wrap = h('div', 'ak-stack');
     if (current) {
@@ -783,6 +849,8 @@ async function editEvent(app, current, { day = todayIst(), ready, bell = null } 
         { key: 'reminders', label: 'Hatırlatma', type: 'custom', render: reminderField, wide: true,
           hint: 'Ajanda bildirimi olarak gider; tüm gün kayıtta günün 09:00\'una göre hesaplanır.' },
         { key: 'bell', label: 'Zil', type: 'custom', render: bellField, wide: true },
+        app.can('admin_previewCalendarImpact')
+          ? { key: 'impact', label: 'Ders ve zil etkisi', type: 'custom', render: impactField, wide: true } : null,
         { key: 'announce', label: 'Duyuru', type: 'custom', render: announceField, wide: true },
       ],
       submitLabel: current ? 'Kaydet' : 'Takvime ekle',

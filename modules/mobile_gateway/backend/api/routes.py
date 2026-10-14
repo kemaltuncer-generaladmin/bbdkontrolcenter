@@ -437,9 +437,12 @@ async def bell_week(request: Request, user: CurrentUser = requires(ACCESS)) -> R
 
 @router.get("/groups")
 async def groups(request: Request, since: str | None = Query(default=None, max_length=32),
+                 include: str | None = Query(default=None, max_length=16),
                  user: CurrentUser = requires(ACCESS)) -> Response:
-    """km-ogrenci-gruplari-ve-zil.md §2.4 — `since` grup revizyonu, ETag/304."""
-    return reply(await current_service().groups(since, request.headers.get("If-None-Match")))
+    """km-ogrenci-gruplari-ve-zil.md §2.4 — `since` grup revizyonu, ETag/304.
+    §2.6: `include=classes` tek "Sınıf" modeli (`classesIncluded: true`)."""
+    return reply(await current_service().groups(since, request.headers.get("If-None-Match"),
+                                                include))
 
 
 # ======================================================== §10 zil planı

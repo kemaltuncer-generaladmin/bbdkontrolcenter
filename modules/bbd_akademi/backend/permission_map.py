@@ -79,6 +79,8 @@ PERMISSION_MAP: dict[str, str] = {
     "calendar.manage": ACADEMIC,   # kurum takvimi (tatil, veli toplantısı, deneme günü)
     # --- müfredat ve kaynak
     "curriculum.manage": CURRICULUM,
+    # öğrencinin müfredat seti + sınıf müfredatı (sınıf = grup, iş 23 — README §14 madde 68)
+    "curriculum.assign": CURRICULUM,
     "resources.author": RESOURCES,
     "resources.manage": RESOURCES,
     # --- yoklama (alma, düzeltme ve denetim kaydı, dışa aktarım); yoklama

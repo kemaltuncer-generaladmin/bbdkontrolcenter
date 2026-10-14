@@ -30,6 +30,8 @@ from km_sdk import (
 )
 
 from .. import qr as qr_codec
+from ..classes import ClassLink
+from ..classes_merge import ClassMerge
 from ..groups import GroupError, GroupService, parse_day
 from ..lifecycle import Lifecycle
 from ..service import ControlsError, StudentService
@@ -41,16 +43,29 @@ _service: StudentService | None = None
 _groups: GroupService | None = None
 _lifecycle: Lifecycle | None = None
 _sync: StudentSync | None = None
+_merge: ClassMerge | None = None
+_link: ClassLink | None = None
 
 
 def bind(service: StudentService, groups: GroupService | None = None,
-         lifecycle: Lifecycle | None = None, sync: StudentSync | None = None) -> APIRouter:
-    global _service, _groups, _lifecycle, _sync
+         lifecycle: Lifecycle | None = None, sync: StudentSync | None = None, *,
+         merge: ClassMerge | None = None, link: ClassLink | None = None) -> APIRouter:
+    global _service, _groups, _lifecycle, _sync, _merge, _link
     _service = service
     _groups = groups
     _lifecycle = lifecycle
     _sync = sync
+    _merge = merge
+    _link = link
+    if groups is not None:
+        service.attach_groups(groups)
     return router
+
+
+def merge() -> ClassMerge:
+    if _merge is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return _merge
 
 
 def lifecycle() -> Lifecycle:
@@ -259,11 +274,14 @@ class ClassBulkBody(BaseModel):
 @router.post("/students/class")
 async def set_class(
     body: ClassBulkBody,
-    user: CurrentUser = requires("bbd_students.manage"),
+    user: CurrentUser = requires("bbd_students.groups"),
 ) -> dict[str, Any]:
-    """Toplu sınıf ataması (çoklu seçim → sınıf). Ek topluluklar için gruplar."""
+    """Toplu "sınıfa ekle" (çoklu seçim → sınıf). Sınıf = grup (göç 009): üyelik
+    yazdığı için `bbd_students.groups` ister; sınıf yoksa açılır."""
     try:
-        return await service().set_class(body.students, body.className)
+        return await service().set_class(body.students, body.className, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -298,6 +316,10 @@ async def set_class_level(
     try:
         return await service().set_class_level(class_name, body.model_dump(exclude_unset=True),
                                                actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -309,8 +331,60 @@ async def clear_class_level(
 ) -> dict[str, Any]:
     try:
         return await service().clear_class_level(class_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ------------------------------------------------- sınıf = grup birleştirmesi (göç 009)
+
+
+class MergeRun(BaseModel):
+    """`force`: tamamlanmış dönüşümde EKSİK sınıf / üyelikleri yeniden tarar."""
+
+    force: bool = False
+
+
+class MergeRollback(BaseModel):
+    """Geri alma yıkıcıdır (dönüşümün açtığı sınıflar ve üyelikleri silinir): "GERİ AL"
+    yazılarak + PIN."""
+
+    confirm: str = Field(min_length=1, max_length=16)
+    pin: str | None = Field(default=None, max_length=12)
+
+
+@router.get("/classes/merge")
+async def merge_status(user: CurrentUser = requires("bbd_students.view")) -> dict[str, Any]:
+    """Sınıf birleştirmesinin durumu: `{state: ''|done|rolled_back, version, summary}`."""
+    return await merge().status()
+
+
+@router.post("/classes/merge")
+async def merge_run(
+    body: MergeRun,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """Birleştirmeyi elle koşturur (açılışta zaten bir kez koşar; idempotent)."""
+    return await merge().run(actor=user.full_name, force=body.force)
+
+
+@router.post("/classes/merge/rollback")
+async def merge_rollback(
+    request: Request,
+    body: MergeRollback,
+    user: CurrentUser = requires("bbd_students.delete"),
+) -> Any:
+    """Birleştirmeyi geri alır (yalnız yayından hemen sonra; admin + PIN)."""
+    if body.confirm.strip().upper() != "GERİ AL":
+        raise HTTPException(status_code=400, detail="Onay için “GERİ AL” yazın.")
+    if not body.pin:
+        return pin_required()
+    await confirm_pin(request, user, body.pin, action="bbd_students.classes_merge:rollback")
+    result = await merge().rollback(actor=user.full_name)
+    if _link is not None:
+        await _link.reconcile_all(force_day=True)
+    return result
 
 
 # ------------------------------------------------- veli kantin kontrolleri
@@ -630,8 +704,17 @@ def _optional_day(value: str | None, field: str) -> date | None:
         raise _group_error(exc) from exc
 
 
+class LevelBody(BaseModel):
+    """Sınıfın seviyesi (şablon): seviye zorunlu, alan 10+ / mezun, hedef sınav."""
+
+    gradeLevel: int | str | None = None
+    track: str | None = Field(default=None, max_length=8)
+    examTarget: str | None = Field(default=None, max_length=8)
+
+
 class GroupCreate(BaseModel):
-    """Grup = ad + öğrenci seçimi. Öğrenciler `validFrom`'dan (vars. bugün) üye olur."""
+    """Sınıf = ad + öğrenci seçimi. Öğrenciler `validFrom`'dan (vars. bugün) üye olur.
+    `level` verilirse `applyLevel` (vars. açık) üyelerin seviyesine yazar."""
 
     name: str = Field(min_length=1, max_length=80)
     kind: str = Field(default="group", pattern=r"^(group|individual)$")
@@ -640,6 +723,8 @@ class GroupCreate(BaseModel):
     studentIds: list[str] = Field(default_factory=list, max_length=2000)
     validFrom: str | None = Field(default=None, max_length=10)
     reason: str = Field(default="", max_length=200)
+    level: LevelBody | None = None
+    applyLevel: bool = True
 
 
 class GroupFromClass(BaseModel):
@@ -659,12 +744,18 @@ class GroupUpdate(BaseModel):
     kind: str | None = Field(default=None, pattern=r"^(group|individual)$")
     callName: str | None = Field(default=None, max_length=120)
     note: str | None = Field(default=None, max_length=500)
+    #: `null` seviyeyi (şablonu) kaldırır; öğrencilerin kendi seviyesi değişmez.
+    level: LevelBody | None = None
+    #: Seviye değişince bugünkü üyelere yaz (vars. açık).
+    applyLevel: bool = True
 
 
 class MembersAdd(BaseModel):
     studentIds: list[str] = Field(min_length=1, max_length=2000)
     validFrom: str | None = Field(default=None, max_length=10)
     reason: str = Field(default="", max_length=200)
+    #: Sınıfın seviyesi varsa eklenenlere yaz (vars. açık).
+    applyLevel: bool = True
 
 
 class MembersEnd(BaseModel):
@@ -679,6 +770,7 @@ class MembersMove(BaseModel):
     toGroupId: str = Field(min_length=1, max_length=64)
     effectiveFrom: str | None = Field(default=None, max_length=10)
     reason: str = Field(default="", max_length=200)
+    applyLevel: bool = True
 
 
 class MemberFix(BaseModel):
@@ -736,7 +828,7 @@ async def move_members(
         return await groups().move(body.studentIds, from_group=body.fromGroupId,
                                    to_group=body.toGroupId,
                                    effective_from=body.effectiveFrom, reason=body.reason,
-                                   actor=user.full_name)
+                                   actor=user.full_name, apply_level=body.applyLevel)
     except GroupError as exc:
         raise _group_error(exc) from exc
 
@@ -802,6 +894,19 @@ async def update_group(
         raise _group_error(exc) from exc
 
 
+@router.post("/groups/{group_id}/apply-level")
+async def apply_group_level(
+    group_id: str,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> dict[str, Any]:
+    """"Seviyeyi üyelere uygula": sınıfın seviyesini bugünkü üyelerin kendi seviyesine
+    yazar (değişen öğrenci başına `student.updated`)."""
+    try:
+        return await groups().apply_level_now(group_id, actor=user.full_name)
+    except GroupError as exc:
+        raise _group_error(exc) from exc
+
+
 @router.post("/groups/{group_id}/archive")
 async def archive_group(
     group_id: str,
@@ -834,7 +939,7 @@ async def add_members(
     try:
         return await groups().add_members(group_id, body.studentIds,
                                           valid_from=body.validFrom, reason=body.reason,
-                                          actor=user.full_name)
+                                          actor=user.full_name, apply_level=body.applyLevel)
     except GroupError as exc:
         raise _group_error(exc) from exc
 

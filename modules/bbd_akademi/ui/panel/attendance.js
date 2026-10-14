@@ -24,13 +24,18 @@
 // `{date}` günü seçer.
 
 import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, chipRow, kpiRow, skeletonRows } from '../../ui-kit/layout.js';
+import { alertBox, badge, chipRow, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
 import {
-  DAY_LABEL, actionButton, addDays, confirmAction, dateInput, empty, errorBox, fmtDate,
-  fmtDateTime, fmtTime, num, personName, problem, sectionHead, selectBox, todayIst, toolbar,
+  DAY_LABEL, actionButton, addDays, clockInput, confirmAction, dateInput, empty, errorBox, fmtDate,
+  fmtDateTime, fmtTime, formDialog, istanbulStamp, num, personName, problem, reasonDialog, sectionHead,
+  selectBox, todayIst, toolbar,
 } from './common.js';
 import { documentButtons } from './documents.js';
 import { absenteeListDoc, attendanceDayDoc, attendanceMatrixDoc, attendanceSheetDoc } from './documents-logic.js';
+import {
+  boardTab, openHistory, remindTeacher, reportsTab, reviewsTab, settingsTab,
+} from './attendance-manage.js';
+import { enqueue, syncBanner } from './attendance-sync.js';
 
 /** [anahtar, etiket, ton] — Akademi `AttendanceStatus`. */
 export const MARKS = [
@@ -60,20 +65,90 @@ function sessionState(item) {
   return hasStarted(item) ? 'missing' : 'upcoming';
 }
 
+/**
+ * Oturumun sınıf adları (sınıf = grup, README §14 madde 68): çoklu sınıflı derste
+ * `classGroups` hepsini taşır ("8-A + 8-B"); eski Akademi yalnız `classGroup` verir.
+ */
+export function classNames(scheduleItem) {
+  const list = (scheduleItem?.classGroups || []).map((group) => group?.name).filter(Boolean);
+  if (list.length) return list.join(' + ');
+  return scheduleItem?.classGroup?.name || '';
+}
+
 function sessionTitle(scheduleItem) {
   return scheduleItem?.subject?.name || KIND[scheduleItem?.kind] || 'Ders';
 }
 
+/**
+ * Yoklama bölümü: beş sekme (ilk açıldığında kurulur). "Günlük yoklama" günün dersleri ve
+ * yoklama listesi; diğerleri yoklama yönetimidir (attendance-manage.js).
+ * Derin bağlantı: `{tab: 'day'|'board'|'reports'|'reviews'|'settings'}`, `{attendanceSessionId, date}`.
+ */
+const TABS = [
+  { key: 'day', label: 'Günlük yoklama' },
+  { key: 'board', label: 'Pano' },
+  { key: 'reports', label: 'Raporlar' },
+  { key: 'reviews', label: 'Düzeltme kuyruğu' },
+  { key: 'settings', label: 'Ayarlar' },
+];
+
 export function section(app) {
   loadStyles(import.meta.url, 'attendance.css');
   const node = h('div', 'ak-stack ak-att');
+  node.append(sectionHead('Yoklama', {
+    subtitle: 'Günün dersleri ve etütleri, pano, raporlar, düzeltme kuyruğu ve ayarlar. Kaydedilen yoklamayı '
+      + 'veliler uygulamada görür.' }));
+  const bodies = {};
+  let day = null;
+  const openSession = (attendanceSessionId, date) => go('day', { attendanceSessionId, date });
+  const builders = {
+    day: () => (day = dayView(app)),
+    board: () => boardTab(app, { openSession }),
+    reports: () => reportsTab(app),
+    reviews: () => reviewsTab(app, { openSession, onCount: (count) => tabs.badge('reviews', count) }),
+    settings: () => settingsTab(app),
+  };
+  const tabs = tabBar(TABS, 'day', (key) => show(key));
+  const slot = h('div', 'ak-att-tabbody');
+  node.append(tabs.node, slot);
+
+  function show(key, payload = null) {
+    if (!bodies[key]) {
+      bodies[key] = builders[key]();
+      slot.append(bodies[key].node);
+      if (key !== 'day') bodies[key].reload();
+    }
+    for (const [name, body] of Object.entries(bodies)) body.node.hidden = name !== key;
+    if (key === 'day') day.shown(payload || {});
+    return bodies[key];
+  }
+  function go(key, payload = null) {
+    tabs.select(key, false);
+    return show(key, payload);
+  }
+
+  return {
+    node,
+    shown(payload) {
+      if (payload?.attendanceSessionId || payload?.date) go('day', payload);
+      else if (payload?.tab && builders[payload.tab]) go(payload.tab);
+      else if (!bodies[tabs.active]) go(tabs.active);
+    },
+    destroy() {
+      for (const body of Object.values(bodies)) body.destroy?.();
+    },
+  };
+}
+
+/** "Günlük yoklama" sekmesi: günün oturumları + sağda yoklama listesi. */
+function dayView(app) {
+  const node = h('div', 'ak-stack');
   const state = { date: todayIst(), classGroupId: '', teacherId: '', show: 'all', items: [] };
   const disposers = [];
   let started = false;
   let token = 0;
-
-  node.append(sectionHead('Yoklama', {
-    subtitle: 'Günün dersleri ve etütleri. Kaydedilen yoklamayı veliler uygulamada görür.' }));
+  const offline = syncBanner(app, { onSynced: () => load() });
+  node.append(offline.node);
 
   // ------------------------------------------------------------ araç şeridi
   const day = dateInput(state.date, (iso) => setDate(iso), 'Gün');
@@ -139,6 +214,7 @@ export function section(app) {
   const sheet = sheetPanel(app, {
     onSaved: (session) => replaceSession(session),
     onSelect: () => paintList(),
+    onQueued: () => offline.refresh(),
   });
   const left = h('div', 'ak-stack ak-att-left');
   left.append(chips.node, listNode);
@@ -162,7 +238,7 @@ export function section(app) {
       state.items = (data?.items || [])
         .filter((item) => item.scheduleItem?.kind !== 'break')
         .sort((a, b) => String(a.scheduleItem?.startsAt).localeCompare(String(b.scheduleItem?.startsAt))
-          || String(a.scheduleItem?.classGroup?.name || '').localeCompare(String(b.scheduleItem?.classGroup?.name || ''), 'tr'));
+          || classNames(a.scheduleItem).localeCompare(classNames(b.scheduleItem), 'tr'));
       paintKpis();
       paintList();
     } catch (failure) {
@@ -240,7 +316,7 @@ export function section(app) {
     const title = h('div', 'ak-att-title');
     title.append(h('b', '', sessionTitle(si)));
     if (si.kind && si.kind !== 'lesson') title.append(badge(KIND[si.kind] || si.kind, 'info'));
-    main.append(title, h('small', '', [si.classGroup?.name, personName(si.teacher) !== '—' ? personName(si.teacher) : null,
+    main.append(title, h('small', '', [classNames(si), personName(si.teacher) !== '—' ? personName(si.teacher) : null,
       si.room].filter(Boolean).join(' · ') || '—'));
     if (si.status === 'changed') main.append(h('small', 'ak-att-change', `Değişti${si.changeNote ? `: ${si.changeNote}` : ''}`));
     const side = h('div', 'ak-att-state');
@@ -254,7 +330,7 @@ export function section(app) {
       side.append(h('small', '', `${num(counts.enrolled || 0)} öğrenci`));
     }
     row.append(time, main, side);
-    row.setAttribute('aria-label', `${fmtTime(si.startsAt)} ${sessionTitle(si)} ${si.classGroup?.name || ''}: ${label}`);
+    row.setAttribute('aria-label', `${fmtTime(si.startsAt)} ${sessionTitle(si)} ${classNames(si)}: ${label}`);
     row.addEventListener('click', () => sheet.open(item.id));
     return row;
   }
@@ -284,6 +360,7 @@ export function section(app) {
         started = true;
         loadFilters();
         load();
+        offline.refresh();
       }
       if (payload?.attendanceSessionId) {
         const data = await sheet.open(String(payload.attendanceSessionId));
@@ -300,9 +377,10 @@ export function section(app) {
 
 // ------------------------------------------------------------- yoklama listesi
 
-function sheetPanel(app, { onSaved, onSelect }) {
+function sheetPanel(app, { onSaved, onSelect, onQueued }) {
   const node = h('section', 'ak-att-sheet');
-  const editable = app.can('admin_putAttendanceSheet');
+  // Pencere kapandıysa (`locked`) değişiklik yalnız gerekçeli düzeltmedir (`admin_correctAttendance`).
+  let editable = app.can('admin_putAttendanceSheet');
   let sheet = null;
   let currentId = null;
   let marks = new Map();       // studentId → {status, note}
@@ -318,6 +396,7 @@ function sheetPanel(app, { onSaved, onSelect }) {
 
   function apply(data) {
     sheet = data;
+    editable = data?.locked ? app.can('admin_correctAttendance') : app.can('admin_putAttendanceSheet');
     original = new Map((data?.rows || []).map((row) => [row.student.id,
       { status: row.status || 'present', note: row.note || '' }]));
     marks = new Map([...original].map(([id, value]) => [id, { ...value }]));
@@ -372,7 +451,7 @@ function sheetPanel(app, { onSaved, onSelect }) {
     const rows = sheet?.rows || [];
     const head = h('div', 'ak-att-sheet-head');
     const titleLine = h('div', 'ak-att-sheet-title');
-    titleLine.append(h('span', '', `${sessionTitle(si)}${si.classGroup?.name ? ` · ${si.classGroup.name}` : ''}`));
+    titleLine.append(h('span', '', `${sessionTitle(si)}${classNames(si) ? ` · ${classNames(si)}` : ''}`));
     if (si.kind && si.kind !== 'lesson') titleLine.append(badge(KIND[si.kind] || si.kind, 'info'));
     head.append(titleLine,
       h('div', 'ak-att-sheet-sub', [`${fmtDate(si.date)} ${dayName(si.date)}`, `${fmtTime(si.startsAt)}–${fmtTime(si.endsAt)}`,
@@ -393,6 +472,11 @@ function sheetPanel(app, { onSaved, onSelect }) {
     } else if (!session.taken && !hasStarted(session)) {
       notes.append(alertBox('Ders henüz başlamadı; yoklamayı ders başladıktan sonra almanız önerilir.', 'info'));
     }
+    if (sheet?.locked) {
+      notes.append(alertBox(`Öğretmenin düzeltme penceresi kapandı${sheet.editableUntil
+        ? ` (${fmtDateTime(sheet.editableUntil)})` : ''}. Değişiklik gerekçeyle “düzeltme” olarak kaydedilir ve `
+        + 'denetim kaydına yazılır.', 'info'));
+    }
     const autoCount = rows.filter((row) => row.autoExcused).length;
     if (autoCount) {
       notes.append(h('div', 'ak-muted ak-att-hint', `${num(autoCount)} öğrencinin onaylı izni var; `
@@ -409,6 +493,21 @@ function sheetPanel(app, { onSaved, onSelect }) {
     const sessionId = session.id;
     tools.append(documentButtons(app, { title: 'Yoklama çizelgesi', label: 'Çizelge',
       build: async () => attendanceSheetDoc(await app.api.get(`/v1/admin/attendance/sessions/${sessionId}`)) }));
+    const actions = h('div', 'ak-att-actions');
+    if (session.taken) {
+      if (app.can('admin_listAttendanceHistory')) {
+        actions.append(button('Geçmiş', { variant: 'ghost', title: 'Kim, ne zaman, hangi kanaldan değiştirdi',
+          onClick: () => openHistory(app, sessionId, `Yoklama geçmişi · ${sessionTitle(si)}`) }));
+      }
+      actions.append(actionButton(app, 'admin_refreshAttendanceRoster', 'Listeyi yenile', { variant: 'ghost',
+        title: 'Sonradan sınıfa eklenen öğrencileri listeye ekler', onClick: () => refreshRoster() }));
+      actions.append(actionButton(app, 'admin_voidAttendance', 'Yoklamayı sil', { variant: 'ghost',
+        title: 'Yanlış derse alınmış yoklamayı gerekçeyle siler', onClick: () => voidSheet() }));
+    } else if (hasStarted(session) && si.status !== 'cancelled') {
+      const remind = actionButton(app, 'admin_remindAttendance', 'Öğretmene hatırlat', { variant: 'ghost',
+        onClick: () => remindTeacher(app, sessionId, remind).then((result) => { if (result === 'taken') reopen(); }) });
+      actions.append(remind);
+    }
 
     const list = h('div', 'ak-att-rows');
     const rowRefs = new Map();
@@ -431,7 +530,7 @@ function sheetPanel(app, { onSaved, onSelect }) {
       { variant: 'primary', onClick: () => submit() });
     foot.append(dirtyText, h('span', 'kit-spacer'), revert, save);
 
-    node.replaceChildren(head, notes, tools, list, foot);
+    node.replaceChildren(head, notes, tools, actions, list, foot);
     refs = { counters, rowRefs, dirtyText, revert, save };
     paintCounts();
     paintFoot();
@@ -446,8 +545,13 @@ function sheetPanel(app, { onSaved, onSelect }) {
     name.append(h('span', '', row.student.displayName || '—'));
     if (row.autoExcused) name.append(badge('Onaylı izin', 'info'));
     if (row.student.status === 'missing') name.append(badge('KM dizininde yok', 'warn'));
-    const otherClass = row.student.classGroup?.name && row.student.classGroup.name !== si.classGroup?.name
-      ? row.student.classGroup.name : null;
+    if (row.leftEarlyAt) name.append(badge(`Çıktı ${fmtTime(row.leftEarlyAt)}`, 'warn'));
+    // Öğrencinin sınıfı oturumun sınıflarından biri değilse yazılır (çoklu sınıflı derste
+    // hangi sınıftan geldiği görünür).
+    const sessionClasses = new Set([si.classGroup?.name, ...(si.classGroups || []).map((group) => group?.name)]
+      .filter(Boolean));
+    const ownClass = row.student.classGroup?.name;
+    const otherClass = ownClass && (!sessionClasses.has(ownClass) || sessionClasses.size > 1) ? ownClass : null;
     who.append(name, h('small', '', [otherClass, row.student.externalRef].filter(Boolean).join(' · ')));
 
     const group = h('div', 'ak-att-marks');
@@ -475,6 +579,13 @@ function sheetPanel(app, { onSaved, onSelect }) {
     });
     const warn = h('small', 'ak-att-warn');
     who.append(warn);
+    if (sheet?.session?.taken && !row.leftEarlyAt && ['present', 'late'].includes(row.status)
+      && app.can('admin_markStudentLeft')) {
+      const left = button('Çıktı', { variant: 'ghost', title: 'Öğrenci dersten erken çıktı',
+        onClick: () => markLeft(row) });
+      left.classList.add('ak-att-left');
+      who.append(left);
+    }
     line.append(h('span', 'ak-att-no', String(index + 1)), who, group, note);
     const rowRef = { line, buttons, note, warn, autoExcused: Boolean(row.autoExcused) };
     paintRow(id, rowRef);
@@ -558,18 +669,31 @@ function sheetPanel(app, { onSaved, onSelect }) {
       });
       if (!ok) return;
     }
+    const rowOf = (row) => {
+      const value = marks.get(row.student.id);
+      return { studentId: row.student.id, status: value.status, note: String(value.note || '').trim() || null };
+    };
+    let reason = null;
+    if (sheet.locked) {
+      reason = await reasonDialog(app, { title: 'Gerekçeli düzeltme', confirmLabel: 'Düzeltmeyi kaydet', danger: false,
+        description: 'Düzeltme penceresi kapandı. Gerekçe değişmez yoklama geçmişine eski ve yeni değerle yazılır.',
+        presets: ['Öğretmen yanlış işaretlemiş', 'Veli izin belgesi getirdi', 'Öğrenci derse geç katıldı'] });
+      if (!reason) return;
+    }
     const body = {
       markAllPresent: false,
-      rows: rows.map((row) => {
-        const value = marks.get(row.student.id);
-        return { studentId: row.student.id, status: value.status, note: String(value.note || '').trim() || null };
-      }),
+      rows: rows.map(rowOf),
     };
     saving = true;
     paintFoot();
     const id = currentId;
     try {
-      const next = await app.api.put(`/v1/admin/attendance/sessions/${id}`, body);
+      const changed = new Set(changedIds());
+      const next = sheet.locked
+        ? await app.api.post(`/v1/admin/attendance/sessions/${id}/corrections`, { reason,
+          rows: rows.filter((row) => changed.has(row.student.id)).map(rowOf),
+          ...(Number.isInteger(sheet.version) ? { expectedVersion: sheet.version } : {}) })
+        : await app.api.put(`/v1/admin/attendance/sessions/${id}`, body);
       saving = false;
       if (id !== currentId) return;
       apply(next);
@@ -582,10 +706,83 @@ function sheetPanel(app, { onSaved, onSelect }) {
       paintFoot();
       if (failure?.code === 'student_not_in_session') {
         app.toast(`${problem(failure)} Liste değişmiş olabilir; yenileyip tekrar deneyin.`, 'bad');
+      } else if (failure?.code === 'km_unavailable' && !sheet.locked && app.can('admin_syncAttendance')) {
+        // Sunucuya ulaşılamadı: işaretler bu bilgisayarda bekler, bağlantı gelince gönderilir.
+        const si = session.scheduleItem || {};
+        enqueue({ sessionId: id, baseVersion: sheet.version || 0, rows: body.rows,
+          label: `${sessionTitle(si)}${classNames(si) ? ` · ${classNames(si)}` : ''}, ${fmtDate(si.date)} ${fmtTime(si.startsAt)}` });
+        app.toast('Sunucuya ulaşılamadı; yoklama bu bilgisayarda bekletiliyor, bağlantı gelince gönderilecek.', 'warn');
+        onQueued?.();
+      } else if (failure?.code === 'version_conflict') {
+        app.toast('Yoklama bu arada başka biri tarafından güncellendi. Listeyi yenileyip tekrar deneyin.', 'warn');
       } else {
         app.toast(problem(failure, 'Yoklama kaydedilemedi.'), 'bad');
       }
     }
+  }
+
+  /** Açık listeyi sunucudan yeniden okur (yazma işleminden sonra). */
+  async function reopen() {
+    const id = currentId;
+    currentId = null;
+    sheet = null;
+    return open(id);
+  }
+
+  function took(next, message) {
+    if (!next) return;
+    apply(next);
+    render();
+    onSaved?.(next.session);
+    if (message) app.toast(message, 'good');
+  }
+
+  async function refreshRoster() {
+    const before = (sheet?.rows || []).length;
+    try {
+      const next = await app.api.post(`/v1/admin/attendance/sessions/${currentId}/refresh-roster`, {});
+      const added = (next?.rows || []).length - before;
+      took(next, added > 0 ? `${num(added)} öğrenci listeye eklendi; işaretleyip kaydedin.` : 'Liste güncel; yeni öğrenci yok.');
+    } catch (failure) {
+      app.toast(problem(failure, 'Liste yenilenemedi.'), 'bad');
+    }
+  }
+
+  async function voidSheet() {
+    const reason = await reasonDialog(app, { title: 'Yoklamayı sil', confirmLabel: 'Yoklamayı sil',
+      description: 'Yanlış derse alınmış yoklama içindir. Satırlar silinmez, geçmişe “silindi” olarak yazılır ve ders '
+        + 'yeniden “yoklama bekliyor” olur. Dersin iptali ancak bundan sonra yapılabilir.',
+      presets: ['Yanlış derse alındı', 'Ders yapılmadı'] });
+    if (!reason) return;
+    try {
+      took(await app.api.post(`/v1/admin/attendance/sessions/${currentId}/void`, { reason }), 'Yoklama silindi.');
+    } catch (failure) {
+      app.toast(problem(failure, 'Yoklama silinemedi.'), 'bad');
+    }
+  }
+
+  async function markLeft(row) {
+    const now = new Date().toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit' });
+    const date = sheet?.session?.scheduleItem?.date || todayIst();
+    const result = await formDialog(app, {
+      title: `${row.student.displayName}: dersten çıktı`,
+      description: 'Onaylı erken çıkış bildirimi varsa günün sonraki dersleri kendiliğinden “izinli” olur. '
+        + 'Habersiz çıkışta yalnız bu dersin kaydına yazılır.',
+      value: { clock: now, note: '' },
+      fields: [
+        { key: 'clock', label: 'Çıkış saati', type: 'custom', required: true,
+          render: (draft, set) => clockInput(draft.clock, (value) => set(value), 'Çıkış saati').node,
+          validate: (raw) => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(raw || '')) ? null : 'Saati 14:20 gibi yazın.') },
+        { key: 'note', label: 'Not (isteğe bağlı)', maxLength: 200 },
+      ],
+      submitLabel: 'Kaydet',
+      onSubmit: (draft) => app.api.post(`/v1/admin/attendance/sessions/${currentId}/students/${row.student.id}/left`,
+        { leftAt: istanbulStamp(date, draft.clock), note: String(draft.note || '').trim() || null }),
+    });
+    if (!result) return;
+    const excused = (result.excusedSessionIds || []).length;
+    took(result.sheet, excused ? `Çıkış kaydedildi; günün sonraki ${num(excused)} dersi “izinli” oldu.`
+      : 'Çıkış kaydedildi.');
   }
 
   return {

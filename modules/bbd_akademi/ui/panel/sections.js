@@ -27,8 +27,8 @@ export const AREAS = [
   { key: 'today', label: 'Bugün', hint: 'Günün özeti, bekleyen talepler ve duyurular.' },
   { key: 'students', label: 'Öğrenciler', hint: 'Öğrenci listesi, sınıflar, gruplar ve veliler; '
     + 'öğrenci kartı.' },
-  { key: 'lessons', label: 'Dersler ve Program', hint: 'Ders programı ve etüt, yoklama, ödev (tek ya da '
-    + 'toplu), çalışma planı, şablonlar ve kurum takvimi.' },
+  { key: 'lessons', label: 'Dersler ve Program', hint: 'Ders programı ve etüt, ders oturumları, yoklama, ödev '
+    + '(tek ya da toplu), çalışma planı, şablonlar ve kurum takvimi.' },
   { key: 'progress', label: 'Ölçme ve Gelişim', hint: 'Denemeler, değerlendirmeler, kaynaklar, '
     + 'müfredat ve öğrenme araçları.' },
   { key: 'money', label: 'Kantin ve Finans', hint: 'Kurum cari hesabı, kantin kuralları, kitap satışı ve '
@@ -56,6 +56,8 @@ export const SECTIONS = [
     kmOnly: true },
   { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],
     area: 'lessons' },
+  // Ders oturumları (KM-3): tek dersin iptali, telafisi, yerine öğretmen; öğretmen haftası.
+  { key: 'sessions', label: 'Ders oturumları', file: './sessions.js', requires: ['view'], area: 'lessons' },
   { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'lessons' },
   { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'], area: 'lessons' },
   { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'], area: 'lessons' },
@@ -94,7 +96,8 @@ export const SECTIONS = [
 export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', kvkk: 'privacy',
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
   'kitap-satisi': 'bookSales', 'book-sales': 'bookSales',
-  sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions' };
+  sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions',
+  oturumlar: 'sessions', 'ders-oturumlari': 'sessions' };
 
 /**
  * Özellik açık mı. `features` null (okunamadı) ya da bayrak listede yoksa
@@ -175,9 +178,10 @@ export const STUDENT_CARD = [
     { key: 'study', label: 'Çalışma kayıtları' },
     { key: 'flashcards', label: 'Bilgi kartları', feature: 'flashcards' },
   ] },
-  { key: 'progress', label: 'Ölçme ve gelişim', parts: [
+  // "Müfredat" (iş 23): öğrencinin müfredat seti (varsayılan / elle / sınıftan) + ilerleme.
+  { key: 'progress', label: 'Müfredat ve gelişim', parts: [
+    { key: 'curriculum', label: 'Müfredat seti ve ilerleme' },
     { key: 'exams', label: 'Denemeler' },
-    { key: 'curriculum', label: 'Müfredat ve ilerleme' },
     { key: 'resources', label: 'Kaynaklar' },
     { key: 'coaching', label: 'Koç notları ve değerlendirmeler' },
   ] },

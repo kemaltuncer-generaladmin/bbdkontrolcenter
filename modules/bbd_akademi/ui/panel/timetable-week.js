@@ -16,12 +16,24 @@
 // Dilimi hâlâ duruyorsa satır hücresinde uyarıyla görünür; dilimi artık yoksa
 // ızgaranın üstünde listelenir ve kaydetmeden önce yerleştirilmesi ya da
 // kaldırılması gerekir (aksi hâlde Akademi `unknown_bell_slot` der).
+//
+// ÇOKLU SINIF (sınıf = grup, README §14 madde 68 — kullanıcı: "ders eklerken sınıfı yani grubu da
+// seçebilelim"): bir derse bir ya da birden çok sınıf seçilir (ör. 8-A + 8-B birlikte Matematik).
+// Satırda `classGroupIds` YALNIZ ek sınıf varken gönderilir (programın sınıfı yoldadır ve hep
+// dahildir; eski Akademi alanı tanımaz). Başka sınıfın programında kayıtlı ortak ders
+// (`sharedEntries`) burada salt okunur listelenir — sahibinin programından düzenlenir.
+// İsteğe bağlı müfredat (`programId`) işlenen konu seçimi içindir; ders değişince düşer.
+//
+// ÖNİZLEME (KM-3, `admin_previewTimetable`): "Çakışmaları denetle" taslağı KAYDETMEDEN aynı gövdeyle
+// denetletir — öğretmen/derslik çakışması (hücreler kırmızı), öğrenci çakışması (aynı öğrenci aynı
+// saatte iki sınıfta), öğretmeni atanmamış satırlar ve kaydedilirse öğretmen başına haftalık yük.
+// Taslak değişince önizleme düşer (eski sonuç yanıltmasın).
 
 import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, skeletonRows } from '../../ui-kit/layout.js';
 import {
   DAY_LABEL, actionButton, confirmAction, dateInput, empty, errorBox, fmtDate, fmtDateTime,
-  formDialog, kv, num, problem, selectBox, todayIst, toolbar,
+  formDialog, kv, num, personName, problem, selectBox, todayIst, toolbar,
 } from './common.js';
 import { copyWeekDialog } from './timetable-copy.js';
 import {
@@ -30,6 +42,7 @@ import {
 } from './timetable-shared.js';
 import { documentButtons } from './documents.js';
 import { classTimetableDoc, teacherTimetableDoc } from './documents-logic.js';
+import { fetchPrograms, fillProgramSelect } from './curriculum-picker.js';
 
 /** Etiketli küçük alan (araç şeridi için). */
 function field(label, control) {
@@ -75,6 +88,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     conflicts: new Map(),     // hücre anahtarı → [TimetableConflict]
     conflictList: [],         // [{key, item}]
     versionConflict: false,
+    preview: null,            // {result: TimetablePreview, keys} — taslak değişince düşer
     selected: null,
     saving: false,
   };
@@ -156,7 +170,9 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   const revertButton = button('Vazgeç', { variant: 'ghost', onClick: () => revert() });
   const saveButton = actionButton(app, 'admin_putTimetable', 'Kaydet', { variant: 'primary',
     onClick: () => save() });
-  bar.append(validity, meta, h('span', 'kit-spacer'), dirtyText, revertButton, saveButton);
+  const previewButton = actionButton(app, 'admin_previewTimetable', 'Çakışmaları denetle', { variant: 'ghost',
+    title: 'Kaydetmeden öğretmen, derslik ve öğrenci çakışmalarını denetler', onClick: () => preview() });
+  bar.append(validity, meta, h('span', 'kit-spacer'), dirtyText, revertButton, previewButton, saveButton);
 
   const alerts = h('div', 'ak-stack ak-tt-alerts');
   const gridWrap = h('div', 'ak-tt-gridwrap');
@@ -251,6 +267,12 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       teacher: entry.teacher || null,
       room: entry.room || '',
       status: entry.status || 'active',
+      // Ek sınıflar (programın sınıfı hariç) ve adları; isteğe bağlı müfredat.
+      classGroupIds: (entry.classGroups || []).map((group) => group?.id)
+        .filter((id) => id && id !== s.classGroupId),
+      classRefs: entry.classGroups || [],
+      programId: entry.program?.id || '',
+      program: entry.program || null,
     };
   }
 
@@ -264,6 +286,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     s.original = new Map();
     s.draft = new Map();
     s.orphans = [];
+    s.shared = data?.sharedEntries || [];
     for (const entry of data?.entries || []) {
       const item = fromServer(entry);
       const key = cellKey(item.dayOfWeek, item.bellSlotId);
@@ -280,6 +303,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     s.conflicts = new Map();
     s.conflictList = [];
     s.versionConflict = false;
+    s.preview = null;
     if (s.selected && !placeOf(s.selected)) s.selected = null;
     fromField.set(s.validFrom);
     toField.set(s.validTo || '');
@@ -299,7 +323,8 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   }
 
   // ------------------------------------------------------------- durum
-  const sig = (entry) => (entry ? `${entry.subjectId}|${entry.teacherId || ''}|${String(entry.room || '').trim()}` : '');
+  const sig = (entry) => (entry ? `${entry.subjectId}|${entry.teacherId || ''}|${String(entry.room || '').trim()}`
+    + `|${[...(entry.classGroupIds || [])].sort().join(',')}|${entry.programId || ''}` : '');
 
   function dirtyKeys() {
     const keys = new Set([...s.original.keys(), ...s.draft.keys()]);
@@ -404,6 +429,8 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       const teacher = teacherName(entry);
       if (teacher) cell.append(h('span', 'ak-tt-teacher', teacher));
       if (entry.room) cell.append(h('span', 'ak-tt-room', entry.room));
+      const extra = otherClassNames(entry);
+      if (extra.length) cell.append(h('span', 'ak-tt-classes', `+ ${extra.join(', ')}`));
     } else if (editable) {
       cell.append(h('span', 'ak-tt-add', '+'));
     }
@@ -511,6 +538,8 @@ export function weekTab(app, { openEvent, openBells } = {}) {
         ['Ders', entry ? subjectName(entry) : 'Boş'],
         ['Öğretmen', teacherName(entry) || '—'],
         ['Derslik', entry?.room || '—'],
+        ['Sınıflar', entry ? [className(), ...otherClassNames(entry)].join(', ') : '—'],
+        ['Müfredat', entry?.program?.title || '—'],
       ]), info);
       sideRefs = { conflictSlot, info };
       paintSideState();
@@ -531,13 +560,103 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     room.setAttribute('aria-label', 'Derslik');
     room.addEventListener('input', () => update({ room: room.value }));
     const clear = button('Hücreyi boşalt', { variant: 'ghost', onClick: () => clearCell(key) });
+    const classes = classPicker(entry);
+    const program = h('select', 'kit-select');
+    program.setAttribute('aria-label', 'Müfredat (isteğe bağlı)');
+    program.addEventListener('change', () => {
+      const chosen = programCache.find((item) => item.id === program.value) || null;
+      update({ programId: program.value, program: chosen });
+    });
     const form = h('div', 'ak-tt-side-form');
-    form.append(field('Ders', subject), field('Öğretmen', teacher.node), field('Derslik', room));
+    form.append(field('Ders', subject), field('Öğretmen', teacher.node), field('Derslik', room),
+      field('Sınıflar', classes.node), field('Müfredat (isteğe bağlı)', program));
     const actions = h('div', 'ak-inline');
     actions.append(clear);
     side.append(form, actions, info);
-    sideRefs = { conflictSlot, info, subject, teacher, room, clear };
+    sideRefs = { conflictSlot, info, subject, teacher, room, clear, classes, program };
+    loadPrograms(entry);
     paintSideState();
+  }
+
+  /** Programın sınıfı dışındaki sınıfların adları (hücre ve ayrıntı için). */
+  function otherClassNames(entry) {
+    const names = new Map([...s.classGroups, ...(entry?.classRefs || [])].map((item) => [item.id, item.name]));
+    return (entry?.classGroupIds || []).map((id) => names.get(id) || 'Sınıf');
+  }
+
+  /**
+   * Dersin sınıfları: programın sınıfı sabit çip; ek sınıflar "Sınıf seç" ile eklenir, × ile çıkar
+   * (en çok 12 — sözleşme `classGroupIds.maxItems`).
+   */
+  function classPicker(entry) {
+    const node = h('div', 'ak-stack ak-tt-classpick');
+    const chips = h('div', 'ak-chips');
+    const select = h('select', 'kit-select');
+    select.setAttribute('aria-label', 'Sınıf seç');
+    node.append(chips, select);
+    const paint = (current) => {
+      const chosen = current?.classGroupIds || [];
+      chips.replaceChildren(h('span', 'kit-chip on', className()));
+      const names = otherClassNames(current);
+      chosen.forEach((id, index) => {
+        const chip = h('span', 'kit-chip on ak-tt-classchip');
+        const remove = h('button', 'ak-tt-classchip-x', '×');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', `${names[index]} sınıfını dersten çıkar`);
+        remove.addEventListener('click', () => update({ classGroupIds: chosen.filter((item) => item !== id) }));
+        chip.append(h('span', '', names[index]), remove);
+        chips.append(chip);
+      });
+      select.replaceChildren();
+      const blank = h('option', '', chosen.length >= 11 ? 'En çok 12 sınıf' : '+ Sınıf seç (birlikte ders)');
+      blank.value = '';
+      select.append(blank);
+      for (const item of s.classGroups) {
+        if (item.id === s.classGroupId || chosen.includes(item.id)) continue;
+        const option = h('option', '', item.name);
+        option.value = item.id;
+        select.append(option);
+      }
+      select.value = '';
+      select.disabled = !current || chosen.length >= 11;
+    };
+    select.addEventListener('change', () => {
+      const current = s.draft.get(s.selected);
+      if (!select.value || !current) return;
+      update({ classGroupIds: [...(current.classGroupIds || []), select.value] });
+    });
+    paint(entry);
+    return { node, paint };
+  }
+
+  let programCache = [];
+  let programToken = 0;
+  /** Müfredat seçeneği: seçili dersin programları (önbellekli); ders yoksa boş. */
+  async function loadPrograms(entry) {
+    const select = sideRefs?.program;
+    if (!select) return;
+    const mine = ++programToken;
+    const keep = entry?.programId || '';
+    if (!entry?.subjectId) {
+      programCache = [];
+      fillProgramSelect(select, [], { placeholder: 'Önce ders seçin' });
+      select.disabled = true;
+      return;
+    }
+    try {
+      const { items } = await fetchPrograms(app, { subjectId: entry.subjectId });
+      if (mine !== programToken || sideRefs?.program !== select) return;
+      programCache = [...items];
+      if (entry.program && !programCache.some((item) => item.id === entry.program.id)) programCache.push(entry.program);
+      fillProgramSelect(select, programCache, { placeholder: 'Müfredat yok', recommendedFirst: false });
+      select.value = keep;
+      select.disabled = false;
+    } catch {
+      if (mine !== programToken) return;
+      programCache = entry.program ? [entry.program] : [];
+      fillProgramSelect(select, programCache, { placeholder: 'Müfredat listesi alınamadı' });
+      select.value = keep;
+    }
   }
 
   /** Düzenleyicinin seçimden bağımsız parçaları: çakışma kutusu, bilgi, kapalı alanlar. */
@@ -558,6 +677,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       sideRefs.teacher.node.disabled = !entry;
       sideRefs.room.disabled = !entry;
       sideRefs.clear.disabled = !entry;
+      sideRefs.classes.paint(entry);
       if (!entry) {
         sideRefs.teacher.set('');
         sideRefs.room.value = '';
@@ -588,6 +708,11 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     if (patch.subjectId !== undefined) {
       next.subject = s.subjectsById.get(patch.subjectId) || (current.subject?.id === patch.subjectId
         ? current.subject : null);
+      // Müfredat derse bağlıdır: ders değişince eski bağlantı düşer.
+      if (patch.subjectId !== current.subjectId) {
+        next.programId = '';
+        next.program = null;
+      }
       // Boş hücreye ders seçilince: bu sınıfta aynı dersi veren öğretmen ve
       // derslik varsa önerilir (çoğu zaman aynı öğretmendir).
       if (patch.subjectId && !before) {
@@ -606,10 +731,12 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     }
     if (!next.subjectId) s.draft.delete(key);
     else s.draft.set(key, next);
+    s.preview = null;
     if (sideRefs?.teacher && patch.subjectId !== undefined && next.subjectId) {
       sideRefs.teacher.set(next.teacherId || '');
       sideRefs.room.value = next.room || '';
     }
+    if (sideRefs?.program && patch.subjectId !== undefined) loadPrograms(s.draft.get(key));
     clearConflict(key);
     paintGrid();
     paintSideState();
@@ -621,6 +748,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   function clearCell(key) {
     if (!s.draft.has(key)) return;
     s.draft.delete(key);
+    s.preview = null;
     clearConflict(key);
     paintAll();
     focusCell(key);
@@ -679,12 +807,39 @@ export function weekTab(app, { openEvent, openBells } = {}) {
     alerts.replaceChildren();
     if (s.versionConflict) alerts.append(versionBox());
     if (s.conflictList.length) alerts.append(conflictBox());
+    if (s.preview) alerts.append(previewBox());
     if (s.orphans.length) alerts.append(orphanBox());
+    if (s.shared?.length) alerts.append(sharedBox());
     if (s.bells?.source === 'km' && s.bells.available === false) {
       alerts.append(alertBox('KM Zil Sistemi\'ne şu an ulaşılamıyor; son eşitlenen zil saatleri '
         + `kullanılıyor${s.bells.syncedAt ? ` (${fmtDateTime(s.bells.syncedAt)})` : ''}.`, 'warn'));
     }
     alerts.hidden = !alerts.childElementCount;
+  }
+
+  /** Başka sınıfın programındaki ortak dersler (salt okunur; sahibinin programından düzenlenir). */
+  function sharedBox() {
+    const box = h('div', 'ak-tt-notice');
+    box.append(h('b', '', `Ortak dersler (${num(s.shared.length)}) — bu sınıf da katılıyor`),
+      h('span', '', 'Başka sınıfın programında kayıtlıdır; o sınıfın programından düzenlenir.'));
+    const list = h('ul', 'ak-tt-issues');
+    for (const entry of s.shared) {
+      const place = s.layout.place(entry.dayOfWeek, entry.bellSlotId);
+      const line = h('li');
+      const names = (entry.classGroups || []).map((item) => item.name).join(' + ');
+      line.append(h('span', '', [DAY_LABEL[entry.dayOfWeek] || entry.dayOfWeek, place?.row?.label,
+        entry.subject?.name, personName(entry.teacher) !== '—' ? personName(entry.teacher) : null, names]
+        .filter(Boolean).join(' · ')));
+      const owner = entry.ownerClassGroup;
+      if (owner?.id) {
+        const tools = h('span', 'ak-tt-issue-tools');
+        tools.append(button(`${owner.name} programını aç`, { variant: 'ghost', onClick: () => pickClass(owner.id) }));
+        line.append(tools);
+      }
+      list.append(line);
+    }
+    box.append(list);
+    return box;
   }
 
   function versionBox() {
@@ -815,25 +970,11 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       app.toast('Geçerlilik bitişi başlangıçtan önce olamaz.', 'bad');
       return;
     }
-    const list = [...s.draft.entries()];
-    const keys = list.map(([key]) => key);
-    const entries = list.map(([, entry]) => ({
-      id: entry.id || null,
-      dayOfWeek: entry.dayOfWeek,
-      bellSlotId: entry.bellSlotId,
-      subjectId: entry.subjectId,
-      teacherId: entry.teacherId || null,
-      room: String(entry.room || '').trim() || null,
-    }));
+    const { keys, body } = requestBody();
     s.saving = true;
     paintBar();
     try {
-      const next = await app.api.put(`/v1/admin/class-groups/${s.classGroupId}/timetable`, {
-        validFrom: s.validFrom,
-        validTo: s.validTo || null,
-        expectedVersion: s.version,
-        entries,
-      });
+      const next = await app.api.put(`/v1/admin/class-groups/${s.classGroupId}/timetable`, body);
       apply(next);
       s.saving = false;
       paintAll();
@@ -853,6 +994,89 @@ export function weekTab(app, { openEvent, openBells } = {}) {
         app.toast(problem(failure, 'Program kaydedilemedi.'), 'bad');
       }
     }
+  }
+
+  /** Kayıt ve önizleme için AYNI gövde (`TimetablePut`); `keys[i]` = `entries[i]`'nin hücresi. */
+  function requestBody() {
+    const list = [...s.draft.entries()];
+    const keys = list.map(([key]) => key);
+    const entries = list.map(([, entry]) => {
+      const row = {
+        id: entry.id || null,
+        dayOfWeek: entry.dayOfWeek,
+        bellSlotId: entry.bellSlotId,
+        subjectId: entry.subjectId,
+        teacherId: entry.teacherId || null,
+        room: String(entry.room || '').trim() || null,
+      };
+      // Yalnız kullanılınca gönderilir (eski Akademi bilinmeyen alanı 422 ile reddeder).
+      if (entry.classGroupIds?.length) row.classGroupIds = [s.classGroupId, ...entry.classGroupIds];
+      if (entry.programId) row.programId = entry.programId;
+      return row;
+    });
+    return { keys, body: { validFrom: s.validFrom, validTo: s.validTo || null, expectedVersion: s.version, entries } };
+  }
+
+  async function preview() {
+    if (!s.loaded || s.saving) return;
+    const { keys, body } = requestBody();
+    previewButton.disabled = true;
+    try {
+      const result = await app.api.post(`/v1/admin/class-groups/${s.classGroupId}/timetable/preview`, body);
+      s.conflicts = new Map();
+      s.conflictList = [];
+      if (result?.conflicts?.length) markConflicts(result.conflicts, keys);
+      s.preview = { result: result || {}, keys };
+      paintAll();
+    } catch (failure) {
+      app.toast(problem(failure, 'Program denetlenemedi.'), 'bad');
+    } finally {
+      previewButton.disabled = false;
+    }
+  }
+
+  function previewBox() {
+    const { result, keys } = s.preview;
+    const conflicts = (result.conflicts || []).length;
+    const students = result.studentConflicts || [];
+    const unassigned = (result.unassignedTeacherEntryIndexes || []).map((index) => keys[index]).filter(Boolean);
+    const clean = !conflicts && !students.length && !unassigned.length;
+    const box = h('div', `ak-tt-notice ${clean ? '' : 'warn'} ak-tt-preview`);
+    box.append(h('b', '', clean ? 'Denetim: çakışma yok — kaydedilebilir.'
+      : `Denetim: ${num(conflicts)} öğretmen/derslik çakışması · ${num(students.length)} öğrenci çakışması · `
+        + `${num(unassigned.length)} satırda öğretmen yok.`), h('span', '', 'Bu bir önizlemedir; hiçbir şey kaydedilmedi.'));
+    if (students.length) {
+      const list = h('ul', 'ak-tt-issues');
+      for (const item of students.slice(0, 30)) {
+        list.append(h('li', '', `${item.student?.displayName || 'Öğrenci'}: ${DAY_LABEL[item.dayOfWeek] || item.dayOfWeek} `
+          + `${s.layout.place(item.dayOfWeek, item.bellSlotId)?.row?.label || ''} aynı saatte `
+          + `${item.conflictingGroup?.name || 'başka bir sınıfta'} dersinde.`));
+      }
+      if (students.length > 30) list.append(h('li', 'ak-muted', `ve ${num(students.length - 30)} öğrenci daha`));
+      box.append(list);
+    }
+    if (unassigned.length) {
+      const list = h('ul', 'ak-tt-issues');
+      for (const key of unassigned) {
+        const line = h('li');
+        const place = placeOf(key);
+        line.append(h('span', '', `${place ? `${DAY_LABEL[place.day] || place.day} ${place.row.label}` : key}: `
+          + `${subjectName(s.draft.get(key) || {})} — öğretmen atanmadı`));
+        if (place) {
+          const tools = h('span', 'ak-tt-issue-tools');
+          tools.append(button('Hücreye git', { variant: 'ghost', onClick: () => select(key) }));
+          line.append(tools);
+        }
+        list.append(line);
+      }
+      box.append(list);
+    }
+    const load = result.teacherMinutes || [];
+    if (load.length) {
+      box.append(h('span', '', `Kaydedilirse haftalık ders yükü: ${load.map((item) => `${personName(item.teacher)} `
+        + `${num(Math.round((item.minutes || 0) / 6) / 10, 1)} sa`).join(' · ')}`));
+    }
+    return box;
   }
 
   function markConflicts(details, keys) {

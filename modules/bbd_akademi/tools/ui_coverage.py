@@ -79,17 +79,6 @@ NOT_SURFACED: dict[str, str] = {
 }
 
 
-_PROGRAM_BUILDER = (
-    "Sözleşme bab7935 (draft.3) ile geldi; ders programı kurucu / oturum ekranı "
-    "ayrı iş paketidir (km-ogrenci-gruplari-ve-zil.md §7.D.3), bu dalda henüz yok.")
-_GROUP_VIEW = (
-    "Sözleşme bab7935 (draft.3) ile geldi; KM gruplarının tarihli üyelik görünümü "
-    "Gruplar ekranının ayrı iş paketidir (§7.D.2), bu dalda henüz yok.")
-
-_ATTENDANCE = (
-    "Sözleşme 030d3e3 (draft.3 yoklama paketi) ile geldi; yoklama düzeltme, "
-    "denetim, rapor ve ayar ekranları ayrı iş paketidir, bu dalda henüz yok.")
-
 _COACHING = (
     "Sözleşme 6bbcd0b / 2d91b96 (draft.3 koçluk paketi) ile geldi; koç eşlemesi, "
     "koçluk kartı, haftalık program, soru-cevap, check-in, görüşme, tebrik, "
@@ -101,36 +90,6 @@ _MESSAGING = (
 
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
-    "admin_previewTimetable": _PROGRAM_BUILDER,
-    "admin_listTimetableTemplates": _PROGRAM_BUILDER,
-    "admin_createTimetableTemplate": _PROGRAM_BUILDER,
-    "admin_getTimetableTemplate": _PROGRAM_BUILDER,
-    "admin_updateTimetableTemplate": _PROGRAM_BUILDER,
-    "admin_deleteTimetableTemplate": _PROGRAM_BUILDER,
-    "admin_applyTimetableTemplate": _PROGRAM_BUILDER,
-    "admin_listClassSessions": _PROGRAM_BUILDER,
-    "admin_getClassSession": _PROGRAM_BUILDER,
-    "admin_patchClassSession": _PROGRAM_BUILDER,
-    "admin_cancelClassSession": _PROGRAM_BUILDER,
-    "admin_createMakeupSession": _PROGRAM_BUILDER,
-    "admin_restoreClassSession": _PROGRAM_BUILDER,
-    "admin_getTeacherWeek": _PROGRAM_BUILDER,
-    "admin_listGroupMembers": _GROUP_VIEW,
-    "admin_getStudentGroup": _GROUP_VIEW,
-    "admin_listStudentGroupHistory": _GROUP_VIEW,
-    "admin_previewCalendarImpact":
-        "Sözleşme 030d3e3 ile geldi; takvim kaydının yoklama/oturum etkisini "
-        "önizleme kurum takvimi formunun ayrı iş paketidir, bu dalda henüz yok.",
-    **{operation_id: _ATTENDANCE for operation_id in (
-        "admin_getAttendanceBoard", "admin_listEarlyLeaves",
-        "admin_exportAttendance", "admin_listAttendanceInconsistencies", "admin_getLeaveStats",
-        "admin_getAttendanceRates", "admin_listAttendanceReviews",
-        "admin_decideAttendanceReview", "admin_correctAttendance", "admin_listAttendanceHistory",
-        "admin_refreshAttendanceRoster", "admin_remindAttendance", "admin_markStudentLeft",
-        "admin_voidAttendance", "admin_getAttendanceSettings", "admin_putAttendanceSettings",
-        "admin_syncAttendance", "admin_getTeacherCompliance", "admin_getStudentAttendanceCard",
-        "admin_createLeaveRequest", "students_getAttendanceCalendar", "students_getAttendanceDay",
-    )},
     **{operation_id: _COACHING for operation_id in (
         "admin_bulkAssignCoach",
         "admin_listCoachLibrary", "admin_createInstitutionLibraryItem",

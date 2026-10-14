@@ -29,6 +29,8 @@ import {
   weekStart,
 } from './common.js';
 import { documentButtons } from './documents.js';
+import { studentCurriculumSet } from './curriculum-set.js';
+import { classHistoryCard } from './students-class-history.js';
 import { canteenDoc, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
 
 // ------------------------------------------------------------- etiketler
@@ -420,6 +422,7 @@ export function overviewTab(ctx) {
 
   node.append(
     card('Bugün', overview.node),
+    ...[classHistoryCard(ctx)].filter(Boolean),
     grid2(card('Şimdi', today.node), panelCard('Hedefler', goals.node, [suggest])),
     panelCard('Çalışma', stats.node, [periodSelect.node]),
     grid2(card('Seri', streak.node), card('Çalışan zamanlayıcı', timer.node)),
@@ -821,8 +824,15 @@ export function curriculumTab(ctx) {
     if (firstUnit && !firstUnit.open) firstUnit.open = true;
   }
 
-  node.append(toolbar(checkbox('Geçmiş programları da göster', (on) => { historical = on; view.reload(); })),
-    view.node, panelCard('Tekrar kuyruğu', queue.node, [scopeSelect.node]));
+  // Müfredat SETİ (F-C7, README §14 madde 68): varsayılan / elle / sınıftan; ekle, çıkar, varsayılana
+  // döndür. Değişince aşağıdaki ilerleme ağacı yeniden okunur (etkin müfredat değişti).
+  const set = app.can('admin_getStudentCurricula')
+    ? studentCurriculumSet(app, id, { onChanged: () => view.reload() }) : null;
+  if (set) ctx.dispose(() => set.destroy());
+  node.append(...[set ? panelCard('Müfredat seti', set.node) : null,
+    toolbar(checkbox('Geçmiş programları da göster', (on) => { historical = on; view.reload(); })),
+    view.node, panelCard('Tekrar kuyruğu', queue.node, [scopeSelect.node])].filter(Boolean));
+  set?.reload();
   view.reload();
   queue.reload();
   return { node, focus({ programId } = {}) { focusId = programId || null; applyFocus(); } };

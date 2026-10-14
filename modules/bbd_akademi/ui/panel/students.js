@@ -1,10 +1,10 @@
-// BBD Akademi — Öğrenciler (F-A2): öğrenci, sınıf, çalışma grubu ve veli.
+// BBD Akademi — Öğrenciler (F-A2): öğrenci, sınıf ve veli (sınıf = grup, README §14 madde 68).
 //
 // VERİ KM'DE (A5). Öğrenci, sınıf ve veli KM'nin Öğrenciler modülünden
 // (`bbd_students`) Akademi'ye eşitlenir; seviye, alan ve hedef sınav burada
 // SALT-OKUNURDUR ve düğme o ekranı açar. Akademi'de düzenlenen yalnız
-// Akademi'ye ait eşlemelerdir: sınıfın dönemi ve rehber öğretmeni, çalışma
-// grupları, velinin kantin yetkisi, hedef önerisi.
+// Akademi'ye ait eşlemelerdir: sınıfın dönemi, sorumlu öğretmeni ve sınıf
+// müfredatı, öğrencinin müfredat seti, velinin kantin yetkisi, hedef önerisi.
 //
 // ÖĞRENCİ ÇEKMECESİ. `openStudent` çekmecenin kabuğudur: başlık
 // (`admin_getStudent`) + iç sekmeler (students-detail.js, students-records.js).
@@ -36,7 +36,7 @@ import {
 import {
   attendanceTab, canteenTab, examsTab, financeTab, homeworkTab, requestsTab, studyTab,
 } from './students-records.js';
-import { classesView, groupsView } from './students-groups.js';
+import { classesView } from './students-groups.js';
 import { studentBooksPart } from './book-sales.js';
 import { locatePart, studentCard } from './sections.js';
 import { learningPanel } from './students-learning.js';
@@ -58,34 +58,32 @@ export function section(app) {
   // salt okunur Akademi listesi "Öğrenciler" olarak kalır.
   const manager = app.capability?.('bbd_students.manager') || null;
   node.append(sectionHead('Öğrenciler', { subtitle: manager
-    ? 'Öğrenci ekleyin, sınıf ve gruplara atayın, velileri yönetin; öğrenciye tıklayınca tek kartı açılır.'
-    : 'Öğrenciler, sınıflar, çalışma grupları ve veliler.' }));
+    ? 'Öğrenci ekleyin, sınıflara atayın, velileri yönetin; öğrenciye tıklayınca tek kartı açılır.'
+    : 'Öğrenciler, sınıflar ve veliler.' }));
 
   const open = (studentId, options) => openStudent(app, studentId, options);
   const openRef = (kmId, options) => openStudentByRef(app, kmId, options);
   // Yönetimde KM'nin üç sekmesi (liste, toplu işlemler, gruplar) Akademi'nin
   // şeridine katılır: tek şerit, tek "Öğrenciler".
   const kmOnly = Boolean(app.kmOnly?.());
+  // SINIF = GRUP (iş 23, 14.10.2026): eski "Gruplar" sekmesi kalktı — KM'nin TEK "Sınıflar"
+  // ekranı (ad, anons adı, üyeler, arşiv); Akademi eşlemesi (dönem, sorumlu öğretmen, sınıf
+  // müfredatı) ayrı sekmede. Eski `{view: 'groups'}` bağlantıları Sınıflar'a yönlenir.
   const specs = manager && kmOnly ? [
-    // Akademi izni yok (0.5.3): yalnız KM kaydı — liste, toplu işlemler, gruplar.
+    // Akademi izni yok (0.5.3): yalnız KM kaydı — liste, toplu işlemler, sınıflar.
     { key: 'km', label: 'Öğrenciler' },
     { key: 'kmBulk', label: 'Toplu işlemler' },
-    { key: 'kmGroups', label: 'Gruplar' },
     { key: 'kmClasses', label: 'Sınıflar' },
   ] : manager ? [
     { key: 'km', label: 'Öğrenciler' },
     { key: 'kmBulk', label: 'Toplu işlemler' },
-    { key: 'kmGroups', label: 'Gruplar' },
-    // SINIF SEVİYEYİ TAŞIR (13.10.2026): seviye / alan / hedef sınav KM sınıf tanımında
-    // ("Sınıflar"); Akademi sınıf eşlemesi (dönem, rehber öğretmen) ayrı sekmede.
     { key: 'kmClasses', label: 'Sınıflar' },
-    { key: 'classes', label: 'Dönem ve rehber' },
+    { key: 'classes', label: 'Dönem, öğretmen ve müfredat' },
     { key: 'guardians', label: 'Veliler ve uygulama' },
     { key: 'students', label: 'Uygulama kullanımı' },
   ] : [
     { key: 'students', label: 'Öğrenciler' },
     { key: 'classes', label: 'Sınıflar' },
-    { key: 'groups', label: 'Çalışma grupları' },
     { key: 'guardians', label: 'Veliler' },
   ];
   const first = specs[0].key;
@@ -95,7 +93,7 @@ export function section(app) {
 
   const bodies = {};
   let shared = null;                  // KM yönetimi: üç sekme tek örnek
-  const kmMode = { km: 'list', kmBulk: 'bulk', kmGroups: 'groups', kmClasses: 'classes' };
+  const kmMode = { km: 'list', kmBulk: 'bulk', kmClasses: 'classes' };
   // KM yöneticisi kendi içinden sekme değiştirirse (ör. "Sınıfların seviyesi →") şerit de
   // o sekmeyi gösterir (sessiz seçim — show() yeniden çağrılmaz, döngü olmaz).
   const kmKey = Object.fromEntries(Object.entries(kmMode).map(([key, value]) => [value, key]));
@@ -109,11 +107,9 @@ export function section(app) {
   const builders = {
     km: managed,
     kmBulk: managed,
-    kmGroups: managed,
     kmClasses: managed,
     students: () => studentsView(app, { open }),
     classes: () => classesView(app, { openStudent: open }),
-    groups: () => groupsView(app, { openStudent: open }),
     guardians: () => guardiansView(app, { open }),
   };
   const known = new Set(specs.map((spec) => spec.key));
@@ -133,10 +129,12 @@ export function section(app) {
   return {
     node,
     shown(payload) {
-      // `{view: 'groups'}` (eski Akademi grupları) yönetimde KM "Gruplar"ıdır.
+      // `{view: 'groups'}` (eski "Gruplar") yönetimde KM "Sınıflar"ıdır; yönetimsiz Akademi "Sınıflar".
       let wanted = payload?.classGroupId ? 'classes' : (known.has(payload?.view) ? payload.view : null);
-      if (manager && ['groups', 'bulk', 'km', 'list', 'kmClasses'].includes(payload?.view)) {
-        wanted = { groups: 'kmGroups', bulk: 'kmBulk', kmClasses: 'kmClasses' }[payload.view] || 'km';
+      if (!manager && payload?.view === 'groups') wanted = 'classes';
+      if (manager && ['groups', 'bulk', 'km', 'list', 'kmClasses', 'kmGroups'].includes(payload?.view)) {
+        wanted = { groups: 'kmClasses', kmGroups: 'kmClasses', bulk: 'kmBulk', kmClasses: 'kmClasses' }[payload.view]
+          || 'km';
       }
       if (!started) {
         started = true;
@@ -156,7 +154,7 @@ export function section(app) {
   };
 }
 
-/** KM Öğrenci Yönetimi (liste + toplu işlemler + gruplar) — `bbd_students.manager`. */
+/** KM Öğrenci Yönetimi (liste + toplu işlemler + sınıflar) — `bbd_students.manager`. */
 function managerView(app, manager, { openRef, onMode }) {
   const node = h('div', 'ak-stu-km');
   let cleanup = null;
@@ -181,16 +179,15 @@ function managerView(app, manager, { openRef, onMode }) {
 
 function studentsView(app, { open }) {
   const node = h('div', 'ak-stack');
-  const filters = { q: '', classGroupId: '', studentGroupId: '', gradeLevel: '', track: '', status: '' };
+  // Sınıf süzgeci çoklu üyeliği bilir (Akademi: o sınıfın bugünkü üyeleri); eski "çalışma grubu"
+  // süzgeci kalktı — gruplar artık sınıf listesinde (README §14 madde 68).
+  const filters = { q: '', classGroupId: '', gradeLevel: '', track: '', status: '' };
   const search = searchBox({ placeholder: 'Ad, soyad, okul no ya da STU-…', onSearch: (q) => {
     filters.q = q; reload();
   } });
   const classSelect = selectBox([{ value: '', label: 'Tüm sınıflar' }], '', (value) => {
     filters.classGroupId = value; reload();
   }, { label: 'Sınıf' });
-  const groupSelect = selectBox([{ value: '', label: 'Tüm çalışma grupları' }], '', (value) => {
-    filters.studentGroupId = value; reload();
-  }, { label: 'Çalışma grubu' });
   const gradeSelect = selectBox([{ value: '', label: 'Tüm seviyeler' },
     ...GRADE_LEVELS.map((level) => ({ value: String(level), label: gradeText(level) }))], '', (value) => {
     filters.gradeLevel = value; reload();
@@ -207,15 +204,13 @@ function studentsView(app, { open }) {
   function refreshOptions() {
     app.lookups.options('classGroups', { empty: 'Tüm sınıflar' })
       .then((options) => classSelect.options(options)).catch(() => {});
-    app.lookups.options('studentGroups', { empty: 'Tüm çalışma grupları' })
-      .then((options) => groupSelect.options(options)).catch(() => {});
   }
   refreshOptions();
 
   function clearFilters() {
     Object.keys(filters).forEach((key) => { filters[key] = ''; });
     search.node.value = '';
-    for (const select of [classSelect, groupSelect, gradeSelect, trackSelect, statusSelect]) select.set('');
+    for (const select of [classSelect, gradeSelect, trackSelect, statusSelect]) select.set('');
     reload();
   }
 
@@ -245,7 +240,7 @@ function studentsView(app, { open }) {
       return guardianListDoc(guardiansFromDetails(details.filter(Boolean)), { classGroupId: filters.classGroupId,
         classGroupName: classSelect.node.selectedOptions?.[0]?.textContent || '' });
     } }) : null;
-  node.append(hint, toolbar(search.node, classSelect.node, groupSelect.node, gradeSelect.node, trackSelect.node,
+  node.append(hint, toolbar(search.node, classSelect.node, gradeSelect.node, trackSelect.node,
     statusSelect.node, button('Süzgeçleri temizle', { variant: 'ghost', onClick: () => clearFilters() }),
     guardianDoc));
 
@@ -259,7 +254,6 @@ function studentsView(app, { open }) {
         q: exactRef ? undefined : filters.q || undefined,
         externalRef: exactRef ? filters.q.toUpperCase() : undefined,
         classGroupId: filters.classGroupId || undefined,
-        studentGroupId: filters.studentGroupId || undefined,
         gradeLevel: filters.gradeLevel || undefined,
         track: filters.track || undefined,
         status: filters.status || undefined,

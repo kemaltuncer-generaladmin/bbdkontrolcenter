@@ -581,6 +581,37 @@ async def test_tasima_sonrasi_elle_cagri(store: Any, sounds: Path) -> None:
     assert parts["bridge"].sent[-1]["items"][0]["name"] == exact
 
 
+class ClassViewGroups(FakeGroups):
+    """Sınıf = grup sonrası `bbd_students.groups`: eski `className`'den dönüşen sınıf yalnız
+    `view="classes"` görünümünde gelir."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.views: list[str] = []
+
+    async def list(self, since_revision: int | None = None, *,  # type: ignore[override]
+                   view: str = "legacy") -> dict[str, Any]:
+        self.views.append(view)
+        listing = await super().list(since_revision)
+        if view == "classes":
+            listing["groups"].append({"id": "c11a", "name": "11-A", "callName": "", "kind": "group",
+                                      "archived": False, "members": [], "legacyClassName": "11-A"})
+        return listing
+
+
+async def test_tasima_sonrasi_elle_cagri_butun_siniflar(store: Any, sounds: Path) -> None:
+    # Sınıf = grup (iş 23): elle çağrı listesi dönüşen sınıfları da içerir (Akademi planı onları
+    # `km_group:<id>` ile çağırır).
+    groups = ClassViewGroups()
+    service, parts = build(store, sounds, groups=groups)
+    await service.add_group("TYT", actor="t")
+    await service.migrate_groups(actor="Ayşe")
+    state = await service.state()
+    assert [g["name"] for g in state["studentGroups"]] == ["11-A", "TYT"]
+    assert "classes" in groups.views
+    del parts
+
+
 async def test_plan_yetenegi_sozlesme_yuzu(store: Any, sounds: Path) -> None:
     service, _ = build(store, sounds)
     capability = BellPlan(service)

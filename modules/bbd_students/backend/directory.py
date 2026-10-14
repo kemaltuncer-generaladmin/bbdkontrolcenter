@@ -49,12 +49,16 @@ StudentRecord YALNIZ şu anahtarları taşır — başka hiçbir şey sızmaz
     guardians[{slot, name, phone, relation}], canteen{balance, spendingLimit, isBlocked,
     dailyLimit, guardianBlocked} | null, updatedAt, phoneIssues[],
     gradeLevel, track, examTarget, classLevel, status, statusReason, statusSince, revision,
-    canteenSync
+    canteenSync, classes[{id, name}]
 
-SINIF SEVİYEYİ TAŞIR (göç 008): `gradeLevel/track/examTarget` öğrencinin GEÇERLİ
-değeridir — ana sınıfının KM tanımından (öğrenciye özel alan / hedef sınav istisnası
-varsa onunki); sınıfa seviye girilmemişse öğrencinin kendi (eski) alanları.
-`classLevel` = sınıfın tanımı `{gradeLevel, track, examTarget}` ya da `null`.
+SINIF = GRUP (göç 009, iş 23). Öğrenci birden çok sınıfa eşit üyedir:
+`classes` = BUGÜN geçerli üyelikleri (arşivsiz sınıflar, ada göre). `className`
+yalnız geriye uyumdur (eski Akademi): bugün geçerli, eski sınıftan dönüşmüş
+üyeliklerin ad sırasıyla ilki (`classes.ClassLink`). SEVİYE ÖĞRENCİDE:
+`gradeLevel/track/examTarget` öğrencinin kendi değeridir (dönüşüm, eski geçerli
+değeri öğrenciye yazdı); `classLevel` = `className` sınıfının seviyesi ya da `null`.
+Dönüşüm BİTMEDEN (ya da geri alındıysa) eski kural sürer: seviye ana sınıfın
+KM tanımından (göç 008), istisna varsa öğrencinin alan / hedef sınavı.
 """
 
 from __future__ import annotations
@@ -89,6 +93,8 @@ RECORD_KEYS = (
     "classLevel",
     # Merkezi senkron (geçit sözleşmesi §9).
     "status", "statusReason", "statusSince", "revision", "canteenSync",
+    # Sınıf = grup (göç 009): bugün geçerli sınıflar [{id, name}].
+    "classes",
 )
 
 #: `ids` ile toplu okumada en çok kimlik (geçit `GET /directory?ids=`).
@@ -131,12 +137,26 @@ def _iso(moment: datetime | None) -> str | None:
     return moment.astimezone(_ISTANBUL).isoformat(timespec="seconds") if moment else None
 
 
+def student_classes(profile: dict[str, Any] | None,
+                    names: dict[str, str] | None) -> list[dict[str, str]]:
+    """`class_ids` (türetilmiş kopya) → [{id, name}] — yalnız canlı sınıflar, ada göre."""
+    found = [part for part in str((profile or {}).get("class_ids") or "").split(",") if part]
+    names = names or {}
+    items = [{"id": key, "name": names[key]} for key in found if key in names]
+    return sorted(items, key=lambda item: (item["name"].casefold(), item["id"]))
+
+
 def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | None,
-                   kantin_id: str = "", class_plan: dict[str, Any] | None = None) -> dict[str, Any]:
+                   kantin_id: str = "", class_plan: dict[str, Any] | None = None, *,
+                   class_names: dict[str, str] | None = None,
+                   own_level: bool = False) -> dict[str, Any]:
     """Kantin satırı + profil satırı → sözleşmenin öğrenci nesnesi.
 
     `canteen=None`: kantine henüz yazılamamış KM kaydı (`canteen: null`).
     Bekleyen kantin gövdesi kantin değerlerinin üstüne yazılır.
+    `class_plan`: `className` sınıfının seviyesi (`classLevel`). `own_level`
+    (sınıf birleştirmesi bitti): seviye öğrencinin kendisinden; değilse eski
+    kural (sınıftan, istisnayla).
     """
     profile = profile or {}
     missing = canteen is None
@@ -180,7 +200,7 @@ def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | Non
               if m is not None]
     # Geçerli seviye: sınıftan (istisna varsa öğrencinin alan / hedef sınavı); sınıfa seviye
     # girilmemişse öğrencinin kendi (eski) değerleri.
-    plan = curriculum.effective(profile, class_plan)
+    plan = curriculum.effective(profile, None if own_level else class_plan)
 
     record = {
         "id": str(canteen.get("id") or ""),
@@ -210,6 +230,7 @@ def student_record(canteen: dict[str, Any] | None, profile: dict[str, Any] | Non
         "statusSince": _iso(_moment(profile.get("status_since"))),
         "revision": int(profile.get("revision") or 0),
         "canteenSync": "pending" if profile.get("canteen_sync") == "pending" else "ok",
+        "classes": student_classes(profile, class_names),
     }
     if missing:
         record["canteen"] = None
@@ -234,7 +255,9 @@ class _Snapshot:
     def __init__(self, rows: Records, profiles: dict[str, dict[str, Any]],
                  as_of: datetime, revision: int,
                  deleted: dict[str, datetime | None] | None = None,
-                 plans: dict[str, dict[str, Any] | None] | None = None) -> None:
+                 plans: dict[str, dict[str, Any] | None] | None = None,
+                 class_names: dict[str, str] | None = None,
+                 own_level: bool = False) -> None:
         self.rows = rows
         self.as_of = as_of
         self.revision = revision
@@ -249,14 +272,16 @@ class _Snapshot:
 
         self.records: Records = [
             student_record(row, profiles.get(str(row.get("id") or "")),
-                           class_plan=plan_of(profiles.get(str(row.get("id") or ""))))
+                           class_plan=plan_of(profiles.get(str(row.get("id") or ""))),
+                           class_names=class_names, own_level=own_level)
             for row in rows
             if row.get("id") and str(row.get("id")) not in gone
         ]
         known = {str(row.get("id") or "") for row in rows}
         # Profil-yalnız, kantine henüz yazılamamış kayıtlar (§7 adım 5).
         self.records += [
-            student_record(None, profile, kantin_id, class_plan=plan_of(profile))
+            student_record(None, profile, kantin_id, class_plan=plan_of(profile),
+                           class_names=class_names, own_level=own_level)
             for kantin_id, profile in profiles.items()
             if kantin_id not in known and kantin_id not in gone
             and profile.get("canteen_sync") == "pending"
@@ -289,6 +314,7 @@ def _copy(record: dict[str, Any], *, balance: bool = True) -> dict[str, Any]:
     copy["phoneIssues"] = list(record["phoneIssues"])
     if record.get("classLevel") is not None:
         copy["classLevel"] = dict(record["classLevel"])
+    copy["classes"] = [dict(item) for item in record.get("classes") or []]
     return copy
 
 
@@ -302,6 +328,8 @@ class StudentDirectory:
         self._table = store.table("profile")
         self._tombstones = store.table("tombstone")
         self._classes = store.table("class")
+        self._groups = store.table("group")
+        self._merge = store.table("class_merge")
         self._cache: tuple[float, Records] | None = None
         #: Kantin listesinin okunduğu duvar saati (`asOf`).
         self._cache_at: datetime | None = None
@@ -359,13 +387,32 @@ class StudentDirectory:
         rows = await self._store.fetch_all(f"SELECT * FROM {self._table}")
         return {str(row["kantin_id"]): row for row in rows}
 
-    async def _class_plans(self, name: str | None = None) -> dict[str, dict[str, Any] | None]:
+    async def _class_context(self, name: str | None = None) -> tuple[
+            dict[str, dict[str, Any] | None], dict[str, str], bool]:
+        """(eski sınıf adı → seviye, canlı sınıf kimliği → ad, seviye öğrencide mi).
+
+        ÜÇ SABİT SORGU (öğrenci sayısından bağımsız): göç 008 tanımları, sınıf
+        kayıtları, birleştirme durumu. Birleştirmeden sonra eski adın seviyesi
+        sınıf kaydından (`legacy_class_name`), yoksa göç 008 tanımından.
+        """
         if name is None:
             rows = await self._store.fetch_all(f"SELECT * FROM {self._classes}")
         else:
             rows = await self._store.fetch_all(
                 f"SELECT * FROM {self._classes} WHERE name = ?", (name,))
-        return {str(row["name"]): curriculum.class_from_row(row) for row in rows}
+        groups = await self._store.fetch_all(
+            f"SELECT id, name, archived_at, legacy_class_name, grade_level, track, exam_target "
+            f"FROM {self._groups}")
+        state = await self._store.fetch_one(f"SELECT state FROM {self._merge} WHERE id = 1")
+        own = state is not None and str(state["state"] or "") == "done"
+        plans = {str(row["name"]): curriculum.class_from_row(row) for row in rows}
+        if own:
+            for row in sorted(groups, key=lambda item: bool(item["archived_at"]), reverse=True):
+                legacy = str(row["legacy_class_name"] or "")
+                if legacy and (name is None or legacy == name):
+                    plans[legacy] = curriculum.class_from_row(row)
+        names = {str(row["id"]): str(row["name"]) for row in groups if not row["archived_at"]}
+        return plans, names, own
 
     async def _deleted(self) -> dict[str, datetime | None]:
         rows = await self._store.fetch_all(
@@ -390,10 +437,10 @@ class StudentDirectory:
             return snapshot
         profiles = await self._profiles()
         deleted = await self._deleted()
-        plans = await self._class_plans()
+        plans, names, own = await self._class_context()
         self._revision += 1
         snapshot = _Snapshot(rows, profiles, self._cache_at or datetime.now(UTC), self._revision,
-                             deleted, plans)
+                             deleted, plans, names, own)
         if self._cache is not None and self._cache[1] is rows:
             self._snapshot = snapshot
         return snapshot
@@ -454,7 +501,8 @@ class StudentDirectory:
             f"SELECT * FROM {self._table} WHERE kantin_id = ?", (wanted,)
         )
         name = str((profile or {}).get("class_name") or "")
-        plan = (await self._class_plans(name)).get(name) if name else None
+        plans, names, own = await self._class_context(name or None)
+        plan = plans.get(name) if name else None
         try:
             canteen = await self._canteen.student(wanted)
         except Exception as failure:  # kantin dışarısı; sebebi taşınır
@@ -463,14 +511,19 @@ class StudentDirectory:
                 canteen = None
             else:
                 if profile is not None and profile.get("canteen_sync") == "pending":
-                    return _copy(student_record(None, profile, wanted, plan), balance=balance)
+                    return _copy(student_record(None, profile, wanted, plan, class_names=names,
+                                                own_level=own),
+                                 balance=balance)
                 self._log.warning("dizin: öğrenci okunamadı", student=wanted, error=str(failure))
                 raise DirectoryUnavailable("Kantine ulaşılamadı.") from failure
         if not isinstance(canteen, dict) or str(canteen.get("id") or "") != wanted:
             if profile is not None and profile.get("canteen_sync") == "pending":
-                return _copy(student_record(None, profile, wanted, plan), balance=balance)
+                return _copy(student_record(None, profile, wanted, plan, class_names=names,
+                                                own_level=own),
+                             balance=balance)
             return None
-        return _copy(student_record(canteen, profile, class_plan=plan), balance=balance)
+        return _copy(student_record(canteen, profile, class_plan=plan, class_names=names,
+                                    own_level=own), balance=balance)
 
     async def get_many(self, student_ids: list[str], *,
                        balance: bool = True) -> dict[str, Any]:

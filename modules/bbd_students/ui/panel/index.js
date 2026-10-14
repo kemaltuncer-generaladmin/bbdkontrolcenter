@@ -31,12 +31,11 @@ import { classSortKey, formatBalance, formatPhone, fullName, normalizeClass } fr
 import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
 import { button, confirmSimple, dialogA11y } from '../../ui-kit/kit.js';
-import { mountGroups } from './groups.js';
-import { mountClasses } from './classes.js';
+import { mountGroups, pickerItem } from './groups.js';
 import { askBulkDelete, askDeactivate, showBulkDeleteResult, watchEvents } from './lifecycle.js';
 import { mountRecord } from './record.js';
 import {
-  EXAM_CHOICES, TRACK_CHOICES, parseChoice,
+  EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, parseChoice,
 } from './curriculum.js';
 import { cleanPhone } from './guardian-model.js';
 
@@ -96,7 +95,7 @@ async function loadPermissions(api) {
 // ================================================================ yönetici
 
 /**
- * Öğrenci yönetimi: liste + toplu işlemler + gruplar.
+ * Öğrenci yönetimi: liste + toplu işlemler + sınıflar.
  *
  * `options.openStudent(öğrenci)` verilirse (BBD Akademi içinde) satıra
  * tıklamak öğrencinin TEK KARTINI açar ve liste tam genişlik çizilir; verilmezse
@@ -135,8 +134,9 @@ function createManager(root, options) {
 
   // ------------------------------------------------------------ sekmeler
   const modeBar = h('div', 'st-mode-bar');
-  // "Sınıflar" (0.5.5): seviye / alan / hedef sınav sınıfta tanımlanır (sınıf seviyeyi taşır).
-  const modes = [['list', 'Öğrenciler'], ['bulk', 'Toplu işlemler'], ['groups', 'Gruplar'], ['classes', 'Sınıflar']];
+  // SINIF = GRUP (iş 23, 2026-10-14): eski "Gruplar" ve "Sınıflar" sekmeleri TEK "Sınıflar"dır
+  // (`mountGroups`). Eski derin bağlantılar (`groups`) buraya yönlenir.
+  const modes = [['list', 'Öğrenciler'], ['bulk', 'Toplu işlemler'], ['classes', 'Sınıflar']];
   const modeButtons = {};
   for (const [key, label] of modes) {
     const item = h('button', 'st-mode-btn', label);
@@ -202,10 +202,6 @@ function createManager(root, options) {
   nodes.groups = h('div', 'st-groups');
   nodes.groups.hidden = true;
   view.append(nodes.groups);
-  nodes.classes = h('div', 'st-classes');
-  nodes.classes.hidden = true;
-  view.append(nodes.classes);
-  let classesView = null;
 
   nodes.toast = h('div', 'st-toast');
   nodes.toast.setAttribute('role', 'status');
@@ -221,7 +217,9 @@ function createManager(root, options) {
   }
 
   let mode = 'list';
-  function setMode(next) {
+  function setMode(wanted) {
+    // Eski "Gruplar" sekmesi ve derin bağlantısı tek "Sınıflar"a yönlenir.
+    const next = wanted === 'groups' ? 'classes' : wanted;
     const changed = mode !== next;
     mode = next;
     // Gömülüyken sekme şeridi Akademi'nindir: içeriden sekme değişince (ör. "Sınıfların
@@ -230,24 +228,15 @@ function createManager(root, options) {
     nodes.bulkBar?.paint();
     split.hidden = mode !== 'list';
     nodes.bar.hidden = mode !== 'list';
-    nodes.status.hidden = mode === 'groups' || mode === 'classes';
+    nodes.status.hidden = mode === 'classes';
     nodes.bulk.hidden = mode !== 'bulk';
-    nodes.groups.hidden = mode !== 'groups';
-    nodes.classes.hidden = mode !== 'classes';
+    nodes.groups.hidden = mode !== 'classes';
     for (const [key, item] of Object.entries(modeButtons)) item.classList.toggle('st-mode-active', key === mode);
     if (mode === 'bulk') {
       syncBulkPicker();
       nodes.bulk.prepare?.();   // sınıf önerileri ve grup listesi tazelenir
     }
     if (mode === 'classes') {
-      if (classesView === null) {
-        classesView = mountClasses(nodes.classes, { api, can, toast, dialogRoot: view,
-          onChanged: () => refresh(), toBulk: () => setMode('list') });
-      } else {
-        classesView.reload();
-      }
-    }
-    if (mode === 'groups') {
       if (groupsView === null) {
         groupsView = mountGroups(nodes.groups, { api, can, students: () => students, dialogRoot: view, toast });
       } else {
@@ -324,12 +313,13 @@ function createManager(root, options) {
 
   function matches(student) {
     if (filters.status && (student.status || 'active') !== filters.status) return false;
-    if (filters.className && student.className !== filters.className) return false;
+    // Çoklu üyelik: öğrencinin sınıflarından BİRİ seçilen sınıfsa görünür.
+    if (filters.className && !classNamesOf(student).includes(filters.className)) return false;
     if (filters.flag === 'pending' && student.canteenSync !== 'pending') return false;
     if (filters.flag === 'draft' && student.source !== 'canteen') return false;
     if (filters.flag === 'blocked' && !student.isBlocked) return false;
     if (filters.flag === 'debt' && Number(student.balance) <= 0) return false;
-    if (filters.flag === 'unclassed' && student.className) return false;
+    if (filters.flag === 'unclassed' && classNamesOf(student).length) return false;
     if (filters.flag === 'noguardian' && (student.guardians || []).some((row) => cleanPhone(row.phone))) return false;
     if (filters.text) {
       const needle = filters.text.toLocaleLowerCase('tr');
@@ -343,7 +333,7 @@ function createManager(root, options) {
   }
 
   function classes() {
-    return [...new Set(students.map((student) => student.className).filter(Boolean))]
+    return [...new Set(students.flatMap(classNamesOf))]
       .sort((a, b) => {
         const [an, al] = classSortKey(a);
         const [bn, bl] = classSortKey(b);
@@ -396,9 +386,12 @@ function createManager(root, options) {
 
     let lastClass = null;
     for (const student of shown) {
-      if (student.className !== lastClass) {
-        lastClass = student.className;
-        nodes.list.append(h('p', 'st-list-group', student.className || 'Sınıf girilmemiş'));
+      // Başlık: seçili sınıf süzgeci varsa o, yoksa öğrencinin ilk sınıfı (çoklu üyelikte
+      // öbür sınıflar satırda yazar).
+      const heading = filters.className || classNamesOf(student)[0] || '';
+      if (heading !== lastClass) {
+        lastClass = heading;
+        nodes.list.append(h('p', 'st-list-group', heading || 'Sınıfsız'));
       }
       const line = h('div', 'st-row');
       if (can('bbd_students.manage')) {
@@ -464,9 +457,11 @@ function createManager(root, options) {
     const count = h('b', 'st-listbulk-count');
     const fieldSelect = h('select', 'st-input st-select');
     fieldSelect.setAttribute('aria-label', 'Değiştirilecek alan');
-    // Seviye sınıftan gelir (Sınıflar); öğrenciye yalnız alan / hedef sınav İSTİSNASI yazılır.
-    for (const [value, label] of [['className', 'Ana sınıf'], ['track', 'Alan (öğrenciye özel)'],
-      ['examTarget', 'Hedef sınav (öğrenciye özel)'], ['group', 'Gruba ekle'], ['deactivate', 'Pasifleştir']]) {
+    // Sınıf = grup (iş 23): "Sınıfa ekle" (yoksa açılır; ana sınıf yok — öbür sınıflar sürer),
+    // "Sınıftan çıkar". Seviye / alan / hedef sınav öğrencinindir (sınıfın seviyesi eklerken yazılır).
+    for (const [value, label] of [['className', 'Sınıfa ekle'], ['leave', 'Sınıftan çıkar'],
+      ['gradeLevel', 'Seviye'], ['track', 'Alan'], ['examTarget', 'Hedef sınav'],
+      ['deactivate', 'Pasifleştir']]) {
       fieldSelect.append(new Option(label, value));
     }
     // Kalıcı silme yalnız `bbd_students.delete` taşıyana (varsayılan yalnız admin) görünür;
@@ -507,19 +502,19 @@ function createManager(root, options) {
         datalist.id = 'st-listbulk-classes';
         datalist.append(...classes().map((name) => new Option(name, name)));
         valueSlot.append(control, datalist);
-      } else if (field === 'group') {
+      } else if (field === 'leave') {
         control = h('select', 'st-input st-select');
-        control.append(new Option('Grup seçin', ''));
+        control.append(new Option('Sınıf seçin', ''));
         valueSlot.append(control);
         try {
           groupsCache = groupsCache || (await api(`${BASE}/groups?archived=live`)).groups || [];
           control.append(...groupsCache.map((group) => new Option(group.name, group.id)));
         } catch (failure) {
-          status.textContent = `Gruplar okunamadı: ${failure.message}`;
+          status.textContent = `Sınıflar okunamadı: ${failure.message}`;
         }
       } else {
         control = h('select', 'st-input st-select');
-        const choices = { track: TRACK_CHOICES, examTarget: EXAM_CHOICES }[field];
+        const choices = { gradeLevel: GRADE_CHOICES, track: TRACK_CHOICES, examTarget: EXAM_CHOICES }[field];
         for (const [value, label] of choices) control.append(new Option(label, value));
         valueSlot.append(control);
       }
@@ -538,13 +533,15 @@ function createManager(root, options) {
         let done = ids.length;
         let failed = 0;
         if (field === 'className') {
+          if (!control.value.trim()) { status.textContent = 'Sınıf adı yazın.'; return; }
           const result = await api(`${BASE}/students/class`, { method: 'POST',
-            body: { students: ids, className: normalizeClass(control.value) } });
+            body: { students: ids, className: classInput(control.value) } });
           done = result.updated?.length ?? ids.length;
-          failed = result.failed?.length || 0;
-        } else if (field === 'group') {
-          if (!control.value) { status.textContent = 'Grup seçin.'; return; }
-          const result = await api(`${BASE}/groups/${encodeURIComponent(control.value)}/members`,
+          failed = (result.failed?.length || 0) + (result.skipped?.length || 0);
+          groupsCache = null;
+        } else if (field === 'leave') {
+          if (!control.value) { status.textContent = 'Sınıf seçin.'; return; }
+          const result = await api(`${BASE}/groups/${encodeURIComponent(control.value)}/members/end`,
             { method: 'POST', body: { studentIds: ids } });
           failed = result?.skipped?.length || 0;
           done = ids.length - failed;
@@ -674,7 +671,7 @@ function createManager(root, options) {
     const submit = async () => {
       const body = { firstName: first.node.value.trim(), lastName: last.node.value.trim() };
       if (!body.firstName || !body.lastName) { error.textContent = 'Ad ve soyad zorunlu.'; return; }
-      if (klass.node.value.trim()) body.className = normalizeClass(klass.node.value);
+      if (klass.node.value.trim()) body.className = classInput(klass.node.value);
       if (phone.node.value.trim()) {
         const number = cleanPhone(phone.node.value);
         if (!number) { error.textContent = 'Veli telefonu cep numarası olmalı (+90 5xx xxx xx xx).'; return; }
@@ -713,10 +710,9 @@ function createManager(root, options) {
     // İlk okuma bitmeden boş listeyle çizilmez ("Liste boş." değil "Yükleniyor…").
     if (!bulkPicker || !loaded) return;
     bulkPicker.setItems(sortStudents(students).map((student) => ({
-      id: student.kantinId,
-      name: student.displayName || 'Adsız',
-      group: student.className || 'Sınıf girilmemiş',
-      meta: [student.schoolNo || '—', student.status === 'inactive' ? 'pasif' : '',
+      ...pickerItem(student),
+      meta: [classNamesOf(student).length > 1 && classNamesOf(student).join(', '),
+        student.schoolNo || '—', student.status === 'inactive' ? 'pasif' : '',
         student.accessCode ? 'kod var' : 'kod yok'].filter(Boolean).join(' · '),
     })));
   }
@@ -743,10 +739,10 @@ function createManager(root, options) {
     return { wrap, input };
   }
 
-  /** Sınıfa ata — çoklu seçim → ana sınıf (öğrenci başına olay). */
+  /** Sınıfa ekle (adla) — çoklu seçim → sınıf; yoksa açılır. Ana sınıf yok: öbür sınıflar sürer. */
   function bulkClass() {
-    const box = section('Sınıfa ata', 'Seçilenlerin ANA sınıfı değişir. Bir öğrenciyi ek bir topluluğa '
-      + '(etüt, kurs) almak için aşağıdaki “Gruba ekle”yi kullanın.');
+    const box = section('Sınıfa ekle (adla)', 'Seçilenler bugünden bu sınıfa da üye olur; sınıf yoksa '
+      + 'açılır. Öğrencinin öbür sınıfları sürer (ana sınıf yok). Sınıfın seviyesi varsa öğrencilere yazılır.');
     const wrap = h('label', 'st-field');
     const input = h('input', 'st-input');
     input.placeholder = '9-A';
@@ -757,23 +753,26 @@ function createManager(root, options) {
     datalist.id = listId;
     wrap.append(h('span', 'st-label', 'Sınıf'), input, datalist);
     const status = h('p', 'st-bulk-status', '');
-    const apply = button('Seçilenleri bu sınıfa ata', { variant: 'primary', onClick: async () => {
+    const apply = button('Seçilenleri bu sınıfa ekle', { variant: 'primary', onClick: async () => {
       const ids = selection(status);
       if (!ids.length) return;
-      const name = normalizeClass(input.value);
-      if (!await confirmSimple(view, { title: name ? `${ids.length} öğrenci “${name}” sınıfına atansın mı?`
-        : `${ids.length} öğrencinin sınıfı temizlensin mi?`,
-      description: 'Basılan kantin kartındaki sınıf ve BBD Akademi sınıfı da güncellenir.', confirmLabel: 'Ata' })) return;
+      const name = classInput(input.value);
+      if (!name) { status.textContent = 'Sınıf adı yazın.'; return; }
+      if (!await confirmSimple(view, { title: `${ids.length} öğrenci “${name}” sınıfına eklensin mi?`,
+        description: 'Üyelik bugünden başlar; öğrencinin öbür sınıfları sürer. BBD Akademi 1–3 sn içinde '
+          + 'görür.', confirmLabel: 'Ekle' })) return;
       try {
         const result = await api(`${BASE}/students/class`, { method: 'POST', body: { students: ids, className: name } });
-        status.textContent = `${result.updated.length} öğrenci ${name ? `“${name}” sınıfına atandı` : 'sınıfsız bırakıldı'}.`
+        status.textContent = `${result.updated.length} öğrenci “${result.className || name}” sınıfına eklendi.`
+          + (result.skipped?.length ? ` ${result.skipped.length} zaten üyeydi.` : '')
           + (result.failed.length ? ` ${result.failed.length} atlandı.` : '');
         await refresh();
+        groupsView?.reload();
       } catch (failure) {
-        status.textContent = `Atanamadı: ${failure.message}`;
+        status.textContent = `Eklenemedi: ${failure.message}`;
       }
     } });
-    apply.disabled = !can('bbd_students.manage');
+    apply.disabled = !can('bbd_students.groups');
     box.append(wrap, actionsRow(apply), status);
     box.refreshClasses = () => {
       datalist.replaceChildren(...classes().map((name) => new Option(name, name)));
@@ -783,15 +782,15 @@ function createManager(root, options) {
 
   /** Gruba ekle / çıkar / taşı — çoklu seçim, tarihli üyelik (bugünden). */
   function bulkGroups() {
-    const box = section('Gruba ekle, çıkar ya da taşı', 'Öğrenci aynı anda birden çok grupta olabilir. '
-      + 'Ekleme bugünden başlar; çıkarma bugünü son gün yapar; taşıma eski grubu dünle kapatır.');
-    const action = select_('İşlem', [['add', 'Gruba ekle'], ['end', 'Gruptan çıkar'], ['move', 'Gruptan gruba taşı']]);
-    const from = select_('Grup', [['', 'Grup seçin']]);
-    const to = select_('Hedef grup', [['', 'Grup seçin']]);
+    const box = section('Sınıfa ekle, çıkar ya da taşı', 'Öğrenci aynı anda birden çok sınıfta olabilir. '
+      + 'Ekleme bugünden başlar; çıkarma bugünü son gün yapar; taşıma eski sınıfı dünle kapatır.');
+    const action = select_('İşlem', [['add', 'Sınıfa ekle'], ['end', 'Sınıftan çıkar'], ['move', 'Sınıftan sınıfa taşı']]);
+    const from = select_('Sınıf', [['', 'Sınıf seçin']]);
+    const to = select_('Hedef sınıf', [['', 'Sınıf seçin']]);
     to.wrap.hidden = true;
     action.input.addEventListener('change', () => {
       to.wrap.hidden = action.input.value !== 'move';
-      from.wrap.querySelector('.st-label').textContent = action.input.value === 'move' ? 'Kaynak grup' : 'Grup';
+      from.wrap.querySelector('.st-label').textContent = action.input.value === 'move' ? 'Kaynak sınıf' : 'Sınıf';
     });
     const status = h('p', 'st-bulk-status', '');
     let groups = [];
@@ -801,19 +800,19 @@ function createManager(root, options) {
         groups = payload.groups || [];
         for (const select of [from.input, to.input]) {
           const value = select.value;
-          select.replaceChildren(new Option('Grup seçin', ''), ...groups.map((group) => new Option(group.name, group.id)));
+          select.replaceChildren(new Option('Sınıf seçin', ''), ...groups.map((group) => new Option(group.name, group.id)));
           select.value = value;
         }
-        if (!groups.length) status.textContent = 'Henüz grup yok — “Gruplar” sekmesinden açın.';
+        if (!groups.length) status.textContent = 'Henüz sınıf yok — “Sınıflar” sekmesinden açın.';
       } catch (failure) {
-        status.textContent = `Gruplar okunamadı: ${failure.message}`;
+        status.textContent = `Sınıflar okunamadı: ${failure.message}`;
       }
     }
     const apply = button('Uygula', { variant: 'primary', onClick: async () => {
       const ids = selection(status);
       if (!ids.length) return;
       if (!from.input.value || (action.input.value === 'move' && !to.input.value)) {
-        status.textContent = 'Grup seçin.';
+        status.textContent = 'Sınıf seçin.';
         return;
       }
       try {
@@ -831,6 +830,7 @@ function createManager(root, options) {
         const skipped = result?.skipped?.length || 0;
         status.textContent = `${ids.length - skipped} öğrenci için yapıldı.${skipped ? ` ${skipped} öğrenci zaten uygundu, atlandı.` : ''}`;
         groupsView?.reload();
+        await refresh();
       } catch (failure) {
         status.textContent = `Yapılamadı: ${failure.message}`;
       }
@@ -842,14 +842,14 @@ function createManager(root, options) {
   }
 
   /**
-   * Seviye SINIFTAN gelir (Sınıflar sekmesi). Burada yalnız öğrenciye özel alan / hedef
-   * sınav istisnası toplu yazılır (sınıfı seviyeli öğrencide istisna açılır).
-   * "değiştirme" seçili alan gönderilmez.
+   * Seviye / alan / hedef sınav ÖĞRENCİNİNDİR (sınıf = grup, iş 23): seçilenlere toplu yazılır
+   * (Akademi varsayılan müfredatı yeniden türetir). "değiştirme" seçili alan gönderilmez.
    */
   function bulkCurriculum() {
-    const box = section('Alan / hedef sınav istisnası', 'Seviye, alan ve hedef sınav sınıftan gelir — '
-      + 'sınıfların seviyesi “Sınıflar” sekmesinde. Burada seçilen öğrencilere ÖZEL alan / hedef sınav yazılır.');
+    const box = section('Seviye / alan / hedef sınav', 'Öğrencinin kendi seviyesidir; BBD Akademi varsayılan '
+      + 'müfredatı bundan türetir. Sınıfın seviyesi varsa “Sınıflar” sekmesinden üyelere toplu uygulanabilir.');
     const keep = ['__keep', 'değiştirme'];
+    const grade = select_('Seviye', [keep, ...GRADE_CHOICES]);
     const track = select_('Alan', [keep, ...TRACK_CHOICES]);
     const exam = select_('Hedef sınav', [keep, ...EXAM_CHOICES]);
     const status = h('p', 'st-bulk-status', '');
@@ -858,6 +858,7 @@ function createManager(root, options) {
       const ids = selection(status);
       if (!ids.length) return;
       const body = {};
+      if (grade.input.value !== '__keep') body.gradeLevel = parseChoice(grade.input.value);
       if (track.input.value !== '__keep') body.track = parseChoice(track.input.value);
       if (exam.input.value !== '__keep') body.examTarget = parseChoice(exam.input.value);
       if (Object.keys(body).length === 0) { status.textContent = 'Değiştirilecek alan seçin.'; return; }
@@ -870,9 +871,9 @@ function createManager(root, options) {
         status.textContent = `Uygulanamadı: ${failure.message}`;
       }
     } });
-    const toClasses = button('Sınıfların seviyesi →', { onClick: () => setMode('classes') });
+    const toClasses = button('Sınıflar →', { onClick: () => setMode('classes') });
     apply.disabled = !can('bbd_students.manage');
-    box.append(track.wrap, exam.wrap, actionsRow(apply, toClasses), status);
+    box.append(grade.wrap, track.wrap, exam.wrap, actionsRow(apply, toClasses), status);
     return box;
   }
 
@@ -997,6 +998,20 @@ function createManager(root, options) {
   return cleanup;
 }
 
+// ------------------------------------------------------------- sınıflar
+
+/** Öğrencinin sınıf adları (sınıf = grup: birden çok); eski kayıtta tekil `className`. */
+export function classNamesOf(student) {
+  if (Array.isArray(student?.classNames)) return student.classNames.filter(Boolean);
+  return student?.className ? [student.className] : [];
+}
+
+/** Sınıf adı girişi: "11a" → "11-A" gibi sınıf kodu düzeltilir; serbest ad ("TYT Mat") korunur. */
+export function classInput(value) {
+  const raw = String(value || '').trim().replace(/\s+/g, ' ');
+  return /^\d{1,2}\s*[-/.]?\s*[a-zçğıöşüA-ZÇĞİÖŞÜ]?$/u.test(raw) ? normalizeClass(raw) : raw;
+}
+
 // --------------------------------------------------------------- yetenek
 
 /**
@@ -1053,10 +1068,15 @@ export function capabilities(ctx) {
         if (!byStudent.has(item.studentId)) byStudent.set(item.studentId, []);
         byStudent.get(item.studentId).push({ id: item.groupId, name: item.groupName, kind: item.kind });
       }
+      // Sınıf = grup (iş 23). Tüketenler (SMS {sinif}, öğle yemeği, toplu satış, ödeme isteği,
+      // kantin raporlarının sınıf kırılımı) TEK değer bekler: `className` = okul sınıfı (eski
+      // `className`'den dönüşen sınıf — `legacyClassName`), yoksa sınıflar virgülle. Tek tek
+      // `classNames`; `groups` bugünkü üyelikler [{id, name, kind}] (çoklu süzgeç bunlarla).
       return (payload.students || []).map((student) => ({
         id: student.kantinId,
         name: student.displayName,
-        className: student.className,
+        className: student.legacyClassName || student.className,
+        classNames: classNamesOf(student),
         groups: byStudent.get(student.kantinId) || [],
       }));
     },
@@ -1104,7 +1124,7 @@ export function mount(root, ctx) {
     loadCss();
     const note = h('div', 'st st-moved');
     note.append(h('h3', null, 'Öğrenci yönetimi BBD Akademi’de'),
-      h('p', 'st-hint', 'Öğrenci ekleme, sınıf ve grup atama, veliler ve kantin ayarları artık '
+      h('p', 'st-hint', 'Öğrenci ekleme, sınıf atama, veliler ve kantin ayarları artık '
         + 'BBD Akademi → Öğrenciler bölümünde, öğrencinin tek kartında.'),
       button('BBD Akademi → Öğrenciler', { variant: 'primary', onClick: () => go() }));
     root.replaceChildren(note);

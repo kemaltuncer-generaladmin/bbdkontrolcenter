@@ -98,7 +98,9 @@ def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
     assert nav["today"] == ["dashboard", "requests", "announcements", "questions"]
     assert nav["students"] == ["students"]
     # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
-    assert nav["lessons"] == ["timetable", "attendance", "homework", "plan", "templates", "calendar"]
+    # Ders oturumları (KM-3): tek dersin iptali / telafisi / yerine öğretmen, öğretmen haftası.
+    assert nav["lessons"] == ["timetable", "sessions", "attendance", "homework", "plan", "templates",
+                              "calendar"]
     assert nav["money"] == ["finance", "canteen", "bookSales", "books"]   # kitap satışı 0.5.4
     assert nav["admin"] == ["settings", "staff", "privacy"]
 
@@ -174,7 +176,7 @@ def test_ogrenci_karti_kapali_ozellik_ve_yetki(result: dict[str, Any]) -> None:
 
 @needs_node
 def test_ogrenci_karti_derin_baglanti(result: dict[str, Any]) -> None:
-    assert result["locTab"] == {"tab": "progress", "part": "exams"}
+    assert result["locTab"] == {"tab": "progress", "part": "curriculum"}  # iş 23: müfredat seti önce
     assert result["locPart"] == {"tab": "progress", "part": "coaching"}
     assert result["locHidden"] == {"tab": "summary", "part": "overview"}
     assert result["locEmpty"] is None

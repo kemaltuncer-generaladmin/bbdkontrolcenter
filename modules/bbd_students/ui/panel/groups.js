@@ -1,9 +1,16 @@
-// Öğrenci grupları — "Gruplar" sekmesi ve öğrenci kartındaki "Gruplar" bölümü.
+// SINIFLAR — tek liste (SINIF = GRUP, iş 23, 2026-10-14) ve öğrenci kartındaki
+// "Sınıfları" bölümü.
 //
-// GRUBUN TEK SAHİBİ BU MODÜLDÜR (sözleşme km-ogrenci-gruplari-ve-zil.md §2).
-// BBD Akademi grubu buradan çeker; zil sistemi elle çağrı listesini buradan
-// okur. Grup = ad + öğrenci seçimi; üyelik TARİHLİDİR (başlangıç ve son gün
-// dahil). Kural backend'dedir (`backend/groups.py`); ekran yalnız gösterir.
+// Kullanıcı: "sınıf=grup bak öğrenci yönetiminde burası çok karışıyor." Eski
+// "Gruplar" ve "Sınıflar" sekmeleri TEK "Sınıflar" ekranıdır; bir öğrenci birden
+// çok sınıfa EŞİT üye olabilir (ana sınıf yok). Öğrencinin eski `className`'i
+// birleştirmeyle sınıf kaydına dönüştü (göç 009). Sınıfın TEK SAHİBİ BU
+// MODÜLDÜR (sözleşme km-ogrenci-gruplari-ve-zil.md §2, §2.6): BBD Akademi
+// buradan çeker, zil elle çağrı listesini buradan okur. Üyelik TARİHLİDİR
+// (başlangıç ve son gün dahil). Sınıfın seviyesi (isteğe bağlı) ŞABLONDUR:
+// öğrenci eklenince ve "Seviyeyi üyelere uygula" ile öğrencinin kendi
+// seviyesine yazılır. Kural backend'dedir (`backend/groups.py`); ekran yalnız
+// gösterir. Kod/yol adları ("groups") kaldı; arayüzde "grup" kelimesi yoktur.
 //
 //   GET   /api/bbd_students/groups?archived=&kind=&q=          bbd_students.view
 //   GET   /api/bbd_students/groups/{id}?date=                  bbd_students.view
@@ -16,11 +23,16 @@
 //   POST  /api/bbd_students/groups/{id}/members/end            bbd_students.groups
 //   POST  /api/bbd_students/groups/move                        bbd_students.groups
 //   PATCH /api/bbd_students/groups/{id}/members/{memberId}     bbd_students.groups
+//   POST  /api/bbd_students/groups/{id}/apply-level            bbd_students.groups
 //   GET   /api/bbd_students/students/{id}/groups               bbd_students.view
 //
 // Yol kabuğun KOPYALANMIŞ konumuna göredir (bkz. index.js).
 import { createPicker } from '../../ui-kit/picker.js';
 import { confirmSimple, dialogA11y, todayIso } from '../../ui-kit/kit.js';
+import {
+  EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, gradeLabel, parseChoice, parseGrade,
+  suggestedExam, trackAllowed,
+} from './curriculum.js';
 
 const BASE = '/api/bbd_students/groups';
 
@@ -31,7 +43,31 @@ const h = (tag, className, text) => {
   return node;
 };
 
-const KIND_LABEL = { group: 'Toplu ders', individual: 'Özel ders' };
+const KIND_LABEL = { group: 'Sınıf', individual: 'Özel ders' };
+
+/** Sınıfın seviyesi kısa yazı: "11. sınıf · SAY · YKS"; seviyesizse ''. */
+export function levelText(level) {
+  if (!level || level.gradeLevel === null || level.gradeLevel === undefined) return '';
+  return [gradeLabel(level.gradeLevel), level.track === 'SOZ' ? 'SÖZ' : level.track === 'DIL' ? 'DİL'
+    : level.track, level.examTarget].filter(Boolean).join(' · ');
+}
+
+/** Öğrenci satırı → seçici kaydı: başlık ilk sınıf, süzgeç BÜTÜN sınıfları (çoklu üyelik). */
+export function pickerItem(student) {
+  const classes = Array.isArray(student.classNames) && student.classNames.length
+    ? student.classNames : (student.className ? [student.className] : []);
+  return {
+    id: student.kantinId,
+    name: student.displayName || 'Adsız',
+    group: classes[0] || 'Sınıfsız',
+    groups: classes.length ? classes : ['Sınıfsız'],
+    meta: [classes.length > 1 && classes.join(', '),
+      student.gradeLevel && gradeLabel(student.gradeLevel), student.track,
+      student.schoolNo && `No ${student.schoolNo}`].filter(Boolean).join(' · '),
+    gradeLevel: student.gradeLevel ?? null,
+    track: student.track ?? null,
+  };
+}
 
 /** 2026-10-12 → 12.10.2026; boş → "açık". */
 export function trDay(iso, open = 'açık') {
@@ -62,7 +98,7 @@ function button(label, variant, onClick) {
 }
 
 /**
- * "Gruplar" sekmesi.
+ * "Sınıflar" sekmesi (tek liste).
  * @param {HTMLElement} host
  * @param {{api, can:(p:string)=>boolean, students:()=>Array, dialogRoot, toast}} ctx
  */
@@ -78,36 +114,36 @@ export function mountGroups(host, ctx) {
   const bar = h('header', 'st-bar');
   const search = h('input', 'st-search');
   search.type = 'search';
-  search.placeholder = 'Grup ya da anons adı ara';
-  search.setAttribute('aria-label', 'Grup ya da anons adı ara');
+  search.placeholder = 'Sınıf ya da anons adı ara';
+  search.setAttribute('aria-label', 'Sınıf ya da anons adı ara');
   search.addEventListener('input', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { state.query = search.value.trim(); load(); }, 200);
   });
   const kindFilter = h('select', 'st-input st-select');
-  kindFilter.setAttribute('aria-label', 'Grup türü');
-  for (const [value, label] of [['', 'Tüm türler'], ['group', 'Toplu ders'], ['individual', 'Özel ders']]) {
+  kindFilter.setAttribute('aria-label', 'Sınıf türü');
+  for (const [value, label] of [['', 'Tüm sınıflar'], ['group', 'Toplu sınıflar'], ['individual', 'Özel ders']]) {
     kindFilter.append(new Option(label, value));
   }
   kindFilter.addEventListener('change', () => { state.kind = kindFilter.value; load(); });
   const archFilter = h('select', 'st-input st-select');
   archFilter.setAttribute('aria-label', 'Arşiv durumu');
-  for (const [value, label] of [['live', 'Canlı gruplar'], ['archived', 'Arşiv'], ['all', 'Tümü']]) {
+  for (const [value, label] of [['live', 'Canlı sınıflar'], ['archived', 'Arşiv'], ['all', 'Tümü']]) {
     archFilter.append(new Option(label, value));
   }
   archFilter.addEventListener('change', () => { state.archived = archFilter.value; load(); });
   const count = h('span', 'st-count');
   bar.append(search, kindFilter, archFilter, count, h('div', 'st-spacer'));
   if (canEdit) {
-    bar.append(button('Sınıftan grup oluştur', '', fromClass));
-    bar.append(button('+ Yeni grup', 'primary', () => openEditor(null)));
+    bar.append(button('+ Yeni sınıf', 'primary', () => openEditor(null)));
   }
   view.append(bar);
 
   view.append(h('p', 'st-hint',
-    'Gruplar Kontrol Merkezi’nde yönetilir; BBD Akademi ders programı ve yoklama, zil '
-    + 'sistemi grup çağrısı buradan okur. Üyelik tarihlidir: son gün dahildir. '
-    + 'Silme yoktur, arşiv vardır — geçmiş yoklama korunur.'));
+    'Sınıflar tek listedir: 11-A da, “TYT Matematik” de bir sınıftır; bir öğrenci birden çok '
+    + 'sınıfa üye olabilir. BBD Akademi ders programı, yoklama ve sınıf müfredatı, zil sistemi '
+    + 'çağrısı buradan okur. Üyelik tarihlidir (son gün dahil). Silme yoktur, arşiv vardır — '
+    + 'geçmiş yoklama korunur.'));
 
   const split = h('div', 'st-split');
   const list = h('nav', 'st-list gr-list');
@@ -124,7 +160,7 @@ export function mountGroups(host, ctx) {
       const payload = await ctx.api(`${BASE}?${params}`);
       state.groups = payload.groups || [];
     } catch (error) {
-      list.replaceChildren(h('p', 'st-empty', `Gruplar okunamadı: ${error.message}`));
+      list.replaceChildren(h('p', 'st-empty', `Sınıflar okunamadı: ${error.message}`));
       return;
     }
     renderList();
@@ -132,10 +168,10 @@ export function mountGroups(host, ctx) {
   }
 
   function renderList() {
-    count.textContent = `${state.groups.length} grup`;
+    count.textContent = `${state.groups.length} sınıf`;
     list.replaceChildren();
     if (state.groups.length === 0) {
-      list.append(h('p', 'st-empty', 'Grup yok. “+ Yeni grup” ile ad ve öğrenci seçerek açın.'));
+      list.append(h('p', 'st-empty', 'Sınıf yok. “+ Yeni sınıf” ile ad ve öğrenci seçerek açın.'));
       return;
     }
     for (const group of state.groups) {
@@ -145,10 +181,12 @@ export function mountGroups(host, ctx) {
       const main = h('span', 'st-item-main');
       main.append(h('b', null, group.name));
       main.append(h('span', 'st-item-meta',
-        [group.callName && `anons: ${group.callName}`, `${group.memberCount} üye bugün`]
-          .filter(Boolean).join(' · ')));
+        [levelText(group.classLevel), group.callName && `anons: ${group.callName}`,
+          `${group.memberCount} öğrenci bugün`].filter(Boolean).join(' · ')));
       item.append(main);
-      item.append(h('i', `st-badge gr-kind gr-kind-${group.kind}`, KIND_LABEL[group.kind] || group.kind));
+      if (group.kind === 'individual') {
+        item.append(h('i', 'st-badge gr-kind gr-kind-individual', KIND_LABEL.individual));
+      }
       if (group.archived) item.append(h('i', 'st-badge', 'arşiv'));
       item.addEventListener('click', () => select(group.id));
       list.append(item);
@@ -162,7 +200,7 @@ export function mountGroups(host, ctx) {
     try {
       state.detail = await ctx.api(`${BASE}/${encodeURIComponent(id)}`);
     } catch (error) {
-      detail.replaceChildren(h('p', 'st-empty', `Grup okunamadı: ${error.message}`));
+      detail.replaceChildren(h('p', 'st-empty', `Sınıf okunamadı: ${error.message}`));
       return;
     }
     renderDetail();
@@ -173,8 +211,11 @@ export function mountGroups(host, ctx) {
     return student ? (student.displayName || id) : id;
   }
 
-  function studentClass(id) {
-    return ctx.students().find((row) => row.kantinId === id)?.className || '';
+  /** Öğrencinin BU SINIF DIŞINDAKİ sınıfları (çoklu üyelik bilgisi). */
+  function studentClass(id, except = '') {
+    const row = ctx.students().find((item) => item.kantinId === id);
+    const names = row?.classNames || (row?.className ? [row.className] : []);
+    return names.filter((name) => name !== except).join(', ');
   }
 
   function renderDetail() {
@@ -183,20 +224,24 @@ export function mountGroups(host, ctx) {
     const group = state.detail;
     detail.replaceChildren();
     if (!group) {
-      detail.append(h('p', 'st-empty', 'Soldan bir grup seçin.'));
+      detail.append(h('p', 'st-empty', 'Soldan bir sınıf seçin.'));
       return;
     }
 
     const head = h('header', 'st-detail-head');
     head.append(h('h3', null, group.name));
     head.append(h('span', 'st-subtitle', [
-      KIND_LABEL[group.kind] || group.kind,
+      levelText(group.classLevel) || 'seviye yok',
+      group.kind === 'individual' ? 'özel ders (tek öğrenci)' : null,
       group.callName ? `anons adı: ${group.callName}` : 'anons adı yok (ad okunur)',
       group.archived ? `arşiv · ${(group.archivedAt || '').slice(0, 10)}` : 'canlı',
-    ].join(' · ')));
+    ].filter(Boolean).join(' · ')));
     head.append(h('div', 'st-spacer'));
     if (canEdit) {
       head.append(button('Düzenle', '', () => openEditor(group)));
+      if (group.classLevel && !group.archived && group.current.length) {
+        head.append(button('Seviyeyi üyelere uygula', '', applyLevel));
+      }
       head.append(group.archived
         ? button('Arşivden al', '', () => post(`${encodeURIComponent(group.id)}/restore`, {}, 'Arşivden alındı.'))
         : button('Arşivle', 'danger', archive));
@@ -221,8 +266,9 @@ export function mountGroups(host, ctx) {
         check.setAttribute('aria-label', `${studentName(member.studentId)} seç`);
         check.disabled = !canEdit;
         checks.set(member.studentId, check);
+        const others = studentClass(member.studentId, group.name);
         row.append(check, h('b', null, studentName(member.studentId)),
-          h('span', 'st-item-meta', [studentClass(member.studentId),
+          h('span', 'st-item-meta', [others && `diğer: ${others}`,
             `${trDay(member.validFrom)} → ${trDay(member.validTo)}`].filter(Boolean).join(' · ')));
         table.append(row);
       }
@@ -236,8 +282,8 @@ export function mountGroups(host, ctx) {
       reason.setAttribute('aria-label', 'Gerekçe (geçmiş tarihte zorunlu)');
       reason.maxLength = 200;
       const target = h('select', 'st-input st-select');
-      target.setAttribute('aria-label', 'Taşınacak grup');
-      target.append(new Option('Taşınacak grup…', ''));
+      target.setAttribute('aria-label', 'Taşınacak sınıf');
+      target.append(new Option('Taşınacak sınıf…', ''));
       for (const other of state.groups) {
         if (other.id !== group.id && !other.archived) target.append(new Option(other.name, other.id));
       }
@@ -253,16 +299,16 @@ export function mountGroups(host, ctx) {
         target,
         button('Taşı (bu günden)', '', async () => {
           const ids = chosen();
-          if (ids.length === 0 || !target.value) { ctx.toast('Öğrenci ve hedef grup seçin.'); return; }
+          if (ids.length === 0 || !target.value) { ctx.toast('Öğrenci ve hedef sınıf seçin.'); return; }
           await call('/move', {
             studentIds: ids, fromGroupId: group.id, toGroupId: target.value,
             effectiveFrom: endDay.value, reason: reason.value,
-          }, `${ids.length} öğrenci taşındı: önceki grupta son gün ${trDay(dayBefore(endDay.value))}.`);
+          }, `${ids.length} öğrenci taşındı: önceki sınıfta son gün ${trDay(dayBefore(endDay.value))}.`);
         }));
       current.append(tools);
       current.append(h('p', 'st-hint',
-        '“Çıkar”: seçilen gün öğrencinin bu gruptaki SON günüdür (dahil). '
-        + '“Taşı”: bu gruptaki son gün bir önceki gün olur, yeni grupta seçilen gün başlar.'));
+        '“Çıkar”: seçilen gün öğrencinin bu sınıftaki SON günüdür (dahil); diğer sınıfları sürer. '
+        + '“Taşı”: bu sınıftaki son gün bir önceki gün olur, yeni sınıfta seçilen gün başlar.'));
     }
     body.append(current);
 
@@ -271,24 +317,36 @@ export function mountGroups(host, ctx) {
       const add = h('section', 'st-card');
       add.append(h('h4', null, 'Öğrenci ekle'));
       if (group.kind === 'individual') {
-        add.append(h('p', 'st-hint', 'Özel ders grubunda aynı gün yalnız bir öğrenci olur.'));
+        add.append(h('p', 'st-hint', 'Özel ders sınıfında aynı gün yalnız bir öğrenci olur.'));
       }
+      // Çoklu seçici: sınıf (öğrencinin BÜTÜN sınıfları) / seviye / alan / ara.
+      const pool = ctx.students()
+        .filter((student) => student.status !== 'inactive')
+        .filter((student) => !group.current.some((m) => m.studentId === student.kantinId))
+        .map(pickerItem);
+      const extra = h('div', 'gr-tools gr-filters');
+      const gradeFilter = h('select', 'st-input st-select');
+      gradeFilter.setAttribute('aria-label', 'Seviye süzgeci');
+      gradeFilter.append(new Option('Tüm seviyeler', ''));
+      for (const [value, label] of GRADE_CHOICES) if (value) gradeFilter.append(new Option(label, value));
+      const trackFilter = h('select', 'st-input st-select');
+      trackFilter.setAttribute('aria-label', 'Alan süzgeci');
+      trackFilter.append(new Option('Tüm alanlar', ''));
+      for (const [value, label] of TRACK_CHOICES) if (value) trackFilter.append(new Option(label, value));
+      extra.append(gradeFilter, trackFilter);
       picker = createPicker({
         groupLabel: 'Sınıf',
         placeholder: 'Ad, sınıf, no ara',
+        label: 'Eklenecek öğrenciler',
         single: group.kind === 'individual',
-        items: ctx.students()
-          .filter((student) => !group.current.some((m) => m.studentId === student.kantinId))
-          .map((student) => ({
-            id: student.kantinId,
-            name: student.displayName || 'Adsız',
-            group: student.className || 'Sınıf girilmemiş',
-            meta: [student.gradeLevel && (student.gradeLevel === 'graduate' ? 'Mezun' : `${student.gradeLevel}. sınıf`),
-              student.track,
-              student.schoolNo && `No ${student.schoolNo}`].filter(Boolean).join(' · '),
-          })),
+        items: pool,
       });
-      add.append(picker.node);
+      const refilter = () => picker.setItems(pool.filter((item) =>
+        (!gradeFilter.value || String(item.gradeLevel ?? '') === gradeFilter.value)
+        && (!trackFilter.value || item.track === trackFilter.value)));
+      gradeFilter.addEventListener('change', refilter);
+      trackFilter.addEventListener('change', refilter);
+      add.append(extra, picker.node);
       const from = dayInput(todayIso(), 'Başlangıç günü');
       const reason = h('input', 'st-input');
       reason.placeholder = 'Gerekçe (geçmiş tarihte zorunlu)';
@@ -296,16 +354,32 @@ export function mountGroups(host, ctx) {
       reason.maxLength = 200;
       const addTools = h('div', 'gr-tools');
       add.append(addTools);
+      let applyBox = null;
+      if (group.classLevel) {
+        applyBox = h('input', 'st-check');
+        applyBox.type = 'checkbox';
+        applyBox.checked = true;
+        applyBox.id = `gr-apply-${Math.random().toString(36).slice(2, 8)}`;
+        const applyLabel = h('label', 'st-check',
+          `Sınıfın seviyesini (${levelText(group.classLevel)}) eklenenlere yaz`);
+        applyLabel.htmlFor = applyBox.id;
+        const applyRow = h('div', 'st-check-row');
+        applyRow.append(applyBox, applyLabel);
+        add.append(applyRow);
+      }
       addTools.append(h('span', 'st-label', 'Başlangıç günü'), from, reason,
         button('Seçilenleri ekle', 'primary', async () => {
           const ids = picker.selection();
           if (ids.length === 0) { ctx.toast('Önce öğrenci seçin.'); return; }
           const result = await post(`${encodeURIComponent(group.id)}/members`,
-            { studentIds: ids, validFrom: from.value, reason: reason.value }, null);
+            { studentIds: ids, validFrom: from.value, reason: reason.value,
+              applyLevel: applyBox ? applyBox.checked : true }, null);
           if (result) {
-            ctx.toast(result.skipped?.length
+            ctx.toast([result.skipped?.length
               ? `${result.added} eklendi · ${result.skipped.length} zaten üyeydi.`
-              : `${result.added} öğrenci eklendi.`);
+              : `${result.added} öğrenci eklendi.`,
+            result.levelUpdated ? `${result.levelUpdated} öğrencinin seviyesi güncellendi.` : '']
+              .filter(Boolean).join(' '));
           }
         }));
       body.append(add);
@@ -364,13 +438,26 @@ export function mountGroups(host, ctx) {
   async function archive() {
     const group = state.detail;
     if (!await confirmSimple(ctx.dialogRoot, {
-      title: `“${group.name}” arşivlensin mi?`,
+      title: `“${group.name}” sınıfı arşivlensin mi?`,
       description: 'Açık üyelikler bugün kapanır; henüz başlamamış üyelikler kaldırılır. '
         + 'Geçmiş yoklama ve raporlar korunur. Arşivden geri alınabilir.',
       confirmLabel: 'Arşivle',
       danger: true,
     })) return;
-    await post(`${encodeURIComponent(group.id)}/archive`, {}, 'Grup arşivlendi.');
+    await post(`${encodeURIComponent(group.id)}/archive`, {}, 'Sınıf arşivlendi.');
+  }
+
+  async function applyLevel() {
+    const group = state.detail;
+    if (!await confirmSimple(ctx.dialogRoot, {
+      title: `Seviye ${group.current.length} öğrenciye yazılsın mı?`,
+      description: `“${group.name}” sınıfının seviyesi (${levelText(group.classLevel)}) bugünkü `
+        + 'üyelerin kendi seviyesine yazılır; Akademi varsayılan müfredatı buna göre güncellenir. '
+        + '“Alanını ve hedef sınavını koru” işaretli öğrencide yalnız seviye değişir.',
+      confirmLabel: 'Uygula',
+    })) return;
+    const result = await call(`/${encodeURIComponent(group.id)}/apply-level`, {}, null);
+    if (result) ctx.toast(`${result.updatedStudents} öğrencinin seviyesi güncellendi.`);
   }
 
   async function fixMember(group, member) {
@@ -387,7 +474,7 @@ export function mountGroups(host, ctx) {
     const overlay = h('div', 'kit-overlay');
     const card = h('div', 'kit-dialog gr-editor');
     card.setAttribute('role', 'dialog');
-    card.append(h('h3', 'kit-dialog-title', group ? 'Grubu düzenle' : 'Yeni grup'));
+    card.append(h('h3', 'kit-dialog-title', group ? 'Sınıfı düzenle' : 'Yeni sınıf'));
     const field = (label, input) => {
       const wrap = h('label', 'st-field');
       wrap.append(h('span', 'st-label', label), input);
@@ -400,33 +487,76 @@ export function mountGroups(host, ctx) {
     callName.maxLength = 80;
     callName.placeholder = 'ör. On iki sayısal grubu — boşsa ad okunur';
     callName.value = group?.callName || '';
-    const kind = h('select', 'st-input st-select');
-    kind.append(new Option('Toplu ders (çoğul hitap)', 'group'),
-      new Option('Özel ders — tek öğrenci (tekil hitap)', 'individual'));
-    kind.value = group?.kind || 'group';
+    const kind = h('input', 'st-check');
+    kind.type = 'checkbox';
+    kind.id = `gr-kind-${Math.random().toString(36).slice(2, 8)}`;
+    kind.checked = group?.kind === 'individual';
+    const kindLabel = h('label', 'st-check', 'Özel ders — tek öğrenci (anons tekil hitap eder)');
+    kindLabel.htmlFor = kind.id;
+    const kindRow = h('div', 'st-check-row');
+    kindRow.append(kind, kindLabel);
     const note = h('textarea', 'st-input st-textarea');
     note.maxLength = 500;
     note.value = group?.note || '';
-    card.append(field('Grup adı', name), field('Anons adı (TTS için)', callName),
-      field('Tür', kind), field('Not', note));
+    // Seviye (isteğe bağlı şablon): öğrenci eklenince ona da yazılır.
+    const level = group?.classLevel || null;
+    const choose = (choices, value, labelText) => {
+      const select = h('select', 'st-input st-select');
+      select.setAttribute('aria-label', labelText);
+      for (const [v, text] of choices) select.append(new Option(text, v));
+      select.value = value === null || value === undefined ? '' : String(value);
+      return select;
+    };
+    const grade = choose(GRADE_CHOICES, level?.gradeLevel, 'Seviye');
+    const track = choose(TRACK_CHOICES, level?.track, 'Alan');
+    const exam = choose(EXAM_CHOICES, level?.examTarget, 'Hedef sınav');
+    const syncTrack = () => {
+      const allowed = trackAllowed(parseGrade(grade.value));
+      track.disabled = !allowed || !grade.value;
+      if (track.disabled) track.value = '';
+      exam.disabled = !grade.value;
+      if (!grade.value) exam.value = '';
+    };
+    grade.addEventListener('change', () => {
+      if (!exam.value && suggestedExam(parseGrade(grade.value))) exam.value = suggestedExam(parseGrade(grade.value));
+      syncTrack();
+    });
+    syncTrack();
+    const levelGrid = h('div', 'st-grid');
+    levelGrid.append(field('Seviye (isteğe bağlı)', grade), field('Alan', track), field('Hedef sınav', exam));
+    const applyBox = h('input', 'st-check');
+    applyBox.type = 'checkbox';
+    applyBox.checked = true;
+    applyBox.id = `gr-lvl-${Math.random().toString(36).slice(2, 8)}`;
+    const applyLabel = h('label', 'st-check', 'Seviye değişirse bugünkü üyelere de yaz');
+    applyLabel.htmlFor = applyBox.id;
+    const applyRow = h('div', 'st-check-row');
+    applyRow.append(applyBox, applyLabel);
+    card.append(field('Sınıf adı', name), field('Anons adı (TTS için)', callName), kindRow,
+      levelGrid, ...(group ? [applyRow] : []), field('Not', note));
     if (!group) {
       card.append(h('p', 'st-hint',
-        'Öğrencileri grubu açtıktan sonra “Öğrenci ekle” bölümünden seçin.'));
+        'Öğrencileri sınıfı açtıktan sonra “Öğrenci ekle” bölümünden seçin.'));
     }
     const error = h('p', 'kit-dialog-error');
     card.append(error);
     error.setAttribute('role', 'alert');
     let release = () => {};
     const close = () => { overlay.remove(); release(); };
-    const save = button(group ? 'Kaydet' : 'Grubu aç', 'primary', async () => {
-      const body = { name: name.value, callName: callName.value, kind: kind.value, note: note.value };
+    const save = button(group ? 'Kaydet' : 'Sınıfı aç', 'primary', async () => {
+      const body = { name: name.value, callName: callName.value,
+        kind: kind.checked ? 'individual' : 'group', note: note.value };
+      const nextLevel = grade.value ? { gradeLevel: parseGrade(grade.value),
+        track: parseChoice(track.value), examTarget: parseChoice(exam.value) } : null;
+      if (group || nextLevel) body.level = nextLevel;
+      if (group) body.applyLevel = applyBox.checked;
       try {
         const result = group
           ? await ctx.api(`${BASE}/${encodeURIComponent(group.id)}`, { method: 'PUT', body })
           : await ctx.api(BASE, { method: 'POST', body });
         close();
         state.selected = result.id;
-        ctx.toast(group ? 'Grup kaydedildi.' : 'Grup açıldı.');
+        ctx.toast(group ? 'Sınıf kaydedildi.' : 'Sınıf açıldı.');
         await load();
       } catch (failure) {
         error.textContent = failure.message;
@@ -444,17 +574,6 @@ export function mountGroups(host, ctx) {
     name.focus();
   }
 
-  async function fromClass() {
-    const classes = [...new Set(ctx.students().map((s) => s.className).filter(Boolean))].sort();
-    const className = window.prompt(`Sınıf adı (${classes.slice(0, 12).join(', ')}${classes.length > 12 ? '…' : ''}):`);
-    if (!className) return;
-    const name = window.prompt('Grup adı:', className.trim());
-    if (!name) return;
-    const result = await call('/from-class', { className: className.trim(), name: name.trim() },
-      'Sınıfın bugünkü öğrencileri yeni gruba eklendi (kopya; sonra bağımsızdır).');
-    if (result) { state.selected = result.id; await load(); }
-  }
-
   load();
   return {
     reload: load,
@@ -468,25 +587,27 @@ export function mountGroups(host, ctx) {
 
 function actionLabel(action) {
   return {
-    create: 'grup açıldı', import: 'zil grubundan taşındı', from_class: 'sınıftan oluşturuldu',
+    create: 'sınıf açıldı', import: 'zil sisteminden taşındı', from_class: 'başka sınıftan kopyalandı',
     update: 'düzenlendi', archive: 'arşivlendi', restore: 'arşivden alındı',
-    members_add: 'üye eklendi', members_end: 'üyelik bitirildi', move_out: 'başka gruba taşındı',
-    move_in: 'başka gruptan taşındı', member_fix: 'üyelik düzeltildi',
+    members_add: 'öğrenci eklendi', members_end: 'üyelik bitirildi', move_out: 'başka sınıfa taşındı',
+    move_in: 'başka sınıftan taşındı', member_fix: 'üyelik düzeltildi',
+    student_deactivated: 'öğrenci pasifleşti', class_merge: 'eski sınıf adlarından birleştirildi',
+    class_merge_rollback: 'birleştirme geri alındı',
   }[action] || action;
 }
 
 /**
- * Öğrenci kartındaki "Gruplar" bölümü — geçmişle.
+ * Öğrenci kartındaki "Sınıfları" bölümü — geçmişle.
  * @returns {{destroy}}
  */
 export function mountStudentGroups(host, { api, studentId }) {
   let alive = true;
-  host.replaceChildren(h('p', 'st-hint', 'Gruplar okunuyor…'));
+  host.replaceChildren(h('p', 'st-hint', 'Sınıflar okunuyor…'));
   api(`/api/bbd_students/students/${encodeURIComponent(studentId)}/groups`).then((payload) => {
     if (!alive) return;
     const items = payload.items || [];
     if (items.length === 0) {
-      host.replaceChildren(h('p', 'st-hint', 'Öğrenci hiçbir grupta değil. Gruplar sekmesinden eklenir.'));
+      host.replaceChildren(h('p', 'st-hint', 'Öğrenci hiçbir sınıfta değil. Sınıflar sekmesinden eklenir.'));
       return;
     }
     const today = todayIso();
@@ -494,14 +615,15 @@ export function mountStudentGroups(host, { api, studentId }) {
       const row = h('div', 'gr-history-row');
       row.classList.toggle('gr-past', !validOn(item, today));
       row.append(h('b', null, item.group.name),
-        h('i', `st-badge gr-kind gr-kind-${item.group.kind}`, KIND_LABEL[item.group.kind] || item.group.kind),
+        ...(item.group.kind === 'individual'
+          ? [h('i', 'st-badge gr-kind gr-kind-individual', KIND_LABEL.individual)] : []),
         h('span', null, `${trDay(item.validFrom)} → ${trDay(item.validTo)}`),
         h('span', 'st-item-meta', [item.group.archived && 'arşiv', item.reason].filter(Boolean).join(' · ')));
       return row;
     });
     host.replaceChildren(...rows);
   }).catch((error) => {
-    if (alive) host.replaceChildren(h('p', 'st-hint', `Gruplar okunamadı: ${error.message}`));
+    if (alive) host.replaceChildren(h('p', 'st-hint', `Sınıflar okunamadı: ${error.message}`));
   });
   return { destroy() { alive = false; } };
 }

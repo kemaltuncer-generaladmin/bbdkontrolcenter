@@ -193,6 +193,7 @@ async def test_kayit_sozlesme_anahtarlarini_tasir_kod_sizmaz(store: ScopedStore)
         "statusSince": None,
         "revision": 0,
         "canteenSync": "ok",
+        "classes": [],                # sınıf = grup (göç 009): bugünkü sınıflar (üyelik yok)
     }
 
 

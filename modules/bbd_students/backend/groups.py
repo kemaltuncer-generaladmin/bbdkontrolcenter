@@ -1,17 +1,31 @@
-"""Öğrenci grupları ve TARİHLİ üyelik — `bbd_students.groups` yeteneği.
+"""Sınıflar (eski adıyla öğrenci grupları) ve TARİHLİ üyelik — `bbd_students.groups` yeteneği.
+
+SINIF = GRUP (kullanıcı kararı 2026-10-14, iş 23; göç 009). Tek kavram "Sınıf":
+bu tablo hem eski grupları hem öğrencinin `class_name`'inden dönüşen sınıfları
+tutar (`origin`: 'group' | 'class'); bir öğrenci birden çok sınıfa EŞİT üye
+olabilir. Kod ve şema adları ("group") kaldı; arayüz "Sınıf" der. Sınıfın
+isteğe bağlı seviyesi (`level`) ŞABLONDUR: öğrenci eklenirken / "üyelere
+uygula" ile öğrencinin kendi seviyesine yazılır (`apply_level` kancası).
+
+İKİ GÖRÜNÜM (`list(view=…)`): `classes` her şeyi verir (yeni Akademi,
+`legacyClassName` + `classLevel` ile); `legacy` (varsayılan, eski Akademi) dönüşen
+sınıfları ve dönüşümün eklediği üyelikleri GİZLER — eski Akademi onları
+dizindeki `className`'den `km_class` olarak zaten görüyor, çift kayıt olmasın.
 
 Sözleşme: bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md §2.
 GRUBUN TEK SAHİBİ BURASIDIR. BBD Akademi grubu buradan çeker (mobil geçit
 `GET /groups`), zil sistemi elle çağrı listesini buradan okur — ikisi de
 yetenek üzerinden (K3), tabloya bakmadan (K5).
 
-    list(since_revision=None) → {"revision", "full", "groups": [GroupRecord], "complete"}
+    list(since_revision=None, *, view="legacy"|"classes")
+                              → {"revision", "full", "view", "groups": [GroupRecord], "complete"}
     get(group_id)             → GroupRecord | None
     for_student(student_id)   → [{"group": GroupSummary, "validFrom", "validTo"}]
     import_named(name, *, kind, call_name="", actor) → {"id", "created"}
 
 `GroupRecord` = {id, name, callName, kind, archived, archivedAt, updatedAt,
-revision, members: [{studentId, validFrom, validTo}]} — `members` grubun
+revision, members: [{studentId, validFrom, validTo}]} (+ `classes` görünümünde
+`origin`, `legacyClassName`, `classLevel`) — `members` grubun
 BÜTÜN üyelik satırlarıdır (geçmiş dahil). Tarihler Europe/Istanbul yerel
 GÜNÜDÜR; iki uç da dahildir; `validTo: null` açık uç.
 
@@ -53,9 +67,15 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from . import curriculum
+
 ISTANBUL = ZoneInfo("Europe/Istanbul")
 
 KINDS = ("group", "individual")
+#: `list(view=…)`: eski Akademi (`legacy`) ya da tek "Sınıf" modeli (`classes`).
+VIEWS = ("legacy", "classes")
+#: Satırın kökeni: eski grup / ekrandan açılan sınıf ya da `class_name`'den dönüşen sınıf.
+ORIGIN_GROUP, ORIGIN_CLASS = "group", "class"
 NAME_MAX = 60
 CALL_NAME_MAX = 80
 NOTE_MAX = 500
@@ -145,11 +165,35 @@ def _overlaps(a_from: date, a_to: date | None, b_from: date, b_to: date | None) 
 def _clean_name(value: Any) -> str:
     name = " ".join(str(value or "").split())
     if not name:
-        raise GroupError("Grup adı boş olamaz.", details={"field": "name"})
+        raise GroupError("Sınıf adı boş olamaz.", details={"field": "name"})
     if len(name) > NAME_MAX:
-        raise GroupError(f"Grup adı en çok {NAME_MAX} karakter olabilir.",
+        raise GroupError(f"Sınıf adı en çok {NAME_MAX} karakter olabilir.",
                          details={"field": "name"})
     return name
+
+
+def level_of(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Sınıf satırının seviyesi `{gradeLevel, track, examTarget}` ya da None (girilmemiş)."""
+    return curriculum.class_from_row(row) if row else None
+
+
+def parse_level(value: Any) -> dict[str, Any]:
+    """Gövdedeki `level` → yazılacak sütunlar. `None` seviyeyi kaldırır.
+
+    Kural göç 008'in sınıf tanımıyla AYNIDIR (`curriculum.resolve_class`): seviye
+    zorunlu, alan yalnız 10. sınıf ve üstünde / mezunda.
+    """
+    if value is None:
+        return {"grade_level": None, "track": None, "exam_target": None}
+    if not isinstance(value, dict):
+        raise GroupError("Seviye {gradeLevel, track, examTarget} olmalı.",
+                         details={"field": "level"})
+    patch = {key: value.get(key) for key in ("gradeLevel", "track", "examTarget")
+             if key in value}
+    try:
+        return curriculum.resolve_class(None, patch)
+    except curriculum.CurriculumError as failure:
+        raise GroupError(str(failure), details={"field": "level"}) from None
 
 
 def _clean_kind(value: Any) -> str:
@@ -158,6 +202,13 @@ def _clean_kind(value: Any) -> str:
         raise GroupError("Tür “group” (toplu ders) ya da “individual” (özel ders) olmalı.",
                          details={"field": "kind"})
     return kind
+
+
+def _clean_view(value: Any) -> str:
+    view = str(value or "legacy").strip()
+    if view not in VIEWS:
+        raise GroupError("Görünüm “legacy” ya da “classes” olmalı.", details={"field": "view"})
+    return view
 
 
 def _clean_students(values: Iterable[Any]) -> list[str]:
@@ -194,11 +245,21 @@ class GroupService:
     def __init__(self, *, store: Any, log: Any,
                  publish: Callable[[int], Awaitable[None]] | None = None,
                  today: Callable[[], date] = today_local,
-                 outbox: Callable[[], Any] | None = None) -> None:
+                 outbox: Callable[[], Any] | None = None,
+                 students_changed: Callable[..., Awaitable[Any]] | None = None,
+                 apply_level: Callable[[list[str], dict[str, Any]], Awaitable[int]]
+                 | None = None) -> None:
         self._store = store
         self._log = log
         self._publish = publish
         self._today = today
+        #: Üyelik değişince öğrencinin türetilmiş alanları (`class_ids`, eski
+        #: `class_name`) + `student.updated` — AÇIK İŞLEMİN İÇİNDE çağrılır
+        #: (`classes.ClassLink.refresh`). Yoksa (testler) atlanır.
+        self._students_changed = students_changed
+        #: Sınıfın seviyesini öğrencilere yazar (commit'ten SONRA;
+        #: `classes.ClassLink.apply_level`). Yoksa seviye uygulanmaz.
+        self._apply_level = apply_level
         #: `events.outbox` yeteneğini ÇAĞRI ANINDA çözer (yoksa None) — olay
         #: yazmanın İÇİNDE, aynı işlemde (`group.changed`).
         self._outbox = outbox or (lambda: None)
@@ -240,6 +301,32 @@ class GroupService:
         except Exception as failure:  # noqa: BLE001 — yayın yazmayı düşürmez (K7)
             self._log.warning("grup değişikliği yayınlanamadı", error=str(failure))
 
+    async def _touched_students(self, students: Iterable[str], *, force: bool = False) -> None:
+        """Üyeliği değişen öğrenciler — açık işlemin içinde kancaya bildirilir."""
+        wanted = sorted({str(student) for student in students if student})
+        if wanted and self._students_changed is not None:
+            await self._students_changed(wanted, force=force)
+
+    async def _group_students(self, group_id: str) -> list[str]:
+        rows = await self._store.fetch_all(
+            f"SELECT DISTINCT kantin_id FROM {self._members} WHERE group_id = ?",
+            (str(group_id),))
+        return [str(row["kantin_id"]) for row in rows]
+
+    async def _level_to(self, group_id: str, students: list[str]) -> int:
+        """Sınıfın seviyesini (varsa) öğrencilere yazar — commit'ten SONRA."""
+        if not students or self._apply_level is None:
+            return 0
+        plan = level_of(await self._group_row(group_id))
+        if plan is None:
+            return 0
+        try:
+            return await self._apply_level(students, plan)
+        except Exception as failure:  # noqa: BLE001 — üyelik yazıldı; seviye ayrı adım
+            self._log.warning("sınıf seviyesi öğrencilere yazılamadı", group=group_id,
+                              error=str(failure))
+            return 0
+
     async def _write_audit(self, *, actor: str, action: str, group_id: str, revision: int,
                            detail: dict[str, Any]) -> None:
         await self._store.execute(
@@ -253,7 +340,7 @@ class GroupService:
         row = await self._store.fetch_one(
             f"SELECT * FROM {self._groups} WHERE id = ?", (str(group_id),))
         if row is None:
-            raise GroupError("Grup bulunamadı.", status=404, code="group_not_found")
+            raise GroupError("Sınıf bulunamadı.", status=404, code="group_not_found")
         return dict(row)
 
     async def _member_rows(self, group_ids: list[str] | None = None) -> list[dict[str, Any]]:
@@ -294,11 +381,11 @@ class GroupService:
                 if not _overlaps(start, end, other_start, other_end):
                     continue
                 if other == student:
-                    raise GroupError("Öğrencinin bu grupta aynı tarihlere düşen başka bir "
+                    raise GroupError("Öğrencinin bu sınıfta aynı tarihlere düşen başka bir "
                                      "üyeliği var.", status=409, code="membership_overlap",
                                      details={"studentId": student})
                 if kind == "individual":
-                    raise GroupError("Özel ders grubunda aynı gün yalnız bir öğrenci "
+                    raise GroupError("Özel ders sınıfında aynı gün yalnız bir öğrenci "
                                      "olabilir.", status=409, code="individual_single_member",
                                      details={"studentId": other})
 
@@ -307,7 +394,7 @@ class GroupService:
             f"SELECT id FROM {self._groups} WHERE name_fold = ? AND archived_at = ''",
             (fold(name),))
         if any(str(row["id"]) != except_id for row in rows):
-            raise GroupError(f"“{name}” adında bir grup zaten var.", status=409,
+            raise GroupError(f"“{name}” adında bir sınıf zaten var.", status=409,
                              code="group_name_taken", details={"field": "name"})
 
     # ============================================================== kayıt
@@ -337,6 +424,10 @@ class GroupService:
             "updatedAt": _local_iso(str(row["updated_at"])),
             "revision": int(row["revision"] or 0),
             "members": [self._member_view(member, full=full) for member in members],
+            # Sınıf = grup (göç 009). Eski görünüm bu üç alanı DÜŞÜRÜR (`list`).
+            "origin": str(row.get("origin") or ORIGIN_GROUP),
+            "legacyClassName": str(row.get("legacy_class_name") or "") or None,
+            "classLevel": level_of(row),
         }
         if full:
             record["note"] = str(row["note"] or "")
@@ -350,34 +441,73 @@ class GroupService:
         by_group: dict[str, list[dict[str, Any]]] = {}
         for member in members:
             by_group.setdefault(str(member["group_id"]), []).append(member)
-        return [self._record(row, by_group.get(str(row["id"]), []), full=full) for row in rows]
+        out = []
+        for row in rows:
+            members_of = by_group.get(str(row["id"]), [])
+            record = self._record(row, members_of, full=full)
+            # Üyeliğin kökeni yalnız eski görünüm süzgeci içindir (`_shape` düşürür).
+            record["_origins"] = [str(member.get("origin") or ORIGIN_GROUP)
+                                  for member in members_of]
+            out.append(record)
+        return out
 
     # ======================================================== yetenek (okuma)
 
-    async def list(self, since_revision: int | None = None) -> dict[str, Any]:
-        """`bbd_students.groups.list` — tam ya da `revision > since` olan gruplar.
+    async def list(self, since_revision: int | None = None, *,
+                   view: str = "legacy") -> dict[str, Any]:
+        """`bbd_students.groups.list` — tam ya da `revision > since` olan sınıflar.
 
-        Her grup TAM üye listesiyle döner (istemci grubu bütün olarak değiştirir).
+        Her kayıt TAM üye listesiyle döner (istemci kaydı bütün olarak değiştirir).
         Kaynak yerel tablodur; okuma yarıda kalmaz, `complete` her zaman doğrudur.
+
+        `view="legacy"` (varsayılan; eski Akademi): `class_name`'den dönüşen
+        sınıflar ve dönüşümün eklediği üyelikler YOK, kayıtta yeni alanlar
+        (`origin`, `legacyClassName`, `classLevel`) yok — biçim birebir eskisidir.
+        `view="classes"`: hepsi, yeni alanlarla.
         """
+        view = _clean_view(view)
         revision = await self.revision()
         if since_revision is None:
             rows = await self._store.fetch_all(
                 f"SELECT * FROM {self._groups} ORDER BY name_fold, id")
-            groups = await self._records(rows, all_members=True)
-            return {"revision": revision, "full": True, "groups": groups, "complete": True}
+            groups = await self._records(self._visible(rows, view), all_members=True)
+            return {"revision": revision, "full": True, "view": view,
+                    "groups": self._shape(groups, view), "complete": True}
         rows = await self._store.fetch_all(
             f"SELECT * FROM {self._groups} WHERE revision > ? ORDER BY revision, id",
             (int(since_revision),))
-        groups = await self._records(rows)
-        return {"revision": revision, "full": False, "groups": groups, "complete": True}
+        groups = await self._records(self._visible(rows, view))
+        return {"revision": revision, "full": False, "view": view,
+                "groups": self._shape(groups, view), "complete": True}
+
+    @staticmethod
+    def _visible(rows: list[dict[str, Any]], view: str) -> list[dict[str, Any]]:
+        if view == "classes":
+            return [dict(row) for row in rows]
+        return [dict(row) for row in rows if str(row.get("origin") or ORIGIN_GROUP) != ORIGIN_CLASS]
+
+    @staticmethod
+    def _shape(groups: list[dict[str, Any]], view: str) -> list[dict[str, Any]]:
+        if view == "classes":
+            for group in groups:
+                group.pop("_origins", None)
+            return groups
+        out = []
+        for group in groups:
+            origins = group.pop("_origins", [])
+            members = [member for member, origin in zip(group["members"], origins, strict=True)
+                       if origin != ORIGIN_CLASS]
+            out.append({key: value for key, value in group.items()
+                        if key not in ("origin", "legacyClassName", "classLevel")}
+                       | {"members": members})
+        return out
 
     async def get(self, group_id: str) -> dict[str, Any] | None:
         row = await self._store.fetch_one(
             f"SELECT * FROM {self._groups} WHERE id = ?", (str(group_id),))
         if row is None:
             return None
-        return (await self._records([dict(row)]))[0]
+        return self._shape(await self._records([dict(row)]), "classes")[0]
 
     async def for_student(self, student_id: str) -> Records:
         """Öğrencinin bütün üyelikleri (geçmiş dahil), en yeni başlangıç önce."""
@@ -399,7 +529,8 @@ class GroupService:
                 "group": {"id": str(group["id"]), "name": str(group["name"]),
                           "callName": str(group["call_name"] or ""),
                           "kind": str(group["kind"] or "group"),
-                          "archived": bool(group["archived_at"])},
+                          "archived": bool(group["archived_at"]),
+                          "classLevel": level_of(dict(group))},
                 "validFrom": str(member["valid_from"]),
                 "validTo": str(member["valid_to"]) or None,
                 "memberId": str(member["id"]),
@@ -455,6 +586,11 @@ class GroupService:
                 "updatedAt": _local_iso(str(row["updated_at"])),
                 "revision": int(row["revision"] or 0),
                 "memberCount": current.get(str(row["id"]), 0),
+                "origin": str(row.get("origin") or ORIGIN_GROUP),
+                "legacyClassName": str(row.get("legacy_class_name") or "") or None,
+                "classLevel": level_of(row),
+                "label": curriculum.class_label(str(row["name"]), level_of(row))
+                if level_of(row) else str(row["name"]),
             })
         return {"date": day.isoformat(), "revision": await self.revision(), "groups": groups}
 
@@ -480,7 +616,7 @@ class GroupService:
     async def detail(self, group_id: str, *, on: date | None = None) -> dict[str, Any]:
         """Grup çekmecesi: kayıt + bütün satırlar (kimlikleriyle) + o günün üyeleri."""
         row = await self._group_row(group_id)
-        record = (await self._records([row], full=True))[0]
+        record = self._shape(await self._records([row], full=True), "classes")[0]
         day = on or self._today()
         record["date"] = day.isoformat()
         record["current"] = [
@@ -510,9 +646,14 @@ class GroupService:
 
     async def create(self, payload: dict[str, Any], *, actor: str,
                      action: str = "create") -> dict[str, Any]:
-        """Grup = ad + öğrenci seçimi. `studentIds` verilirse `validFrom`'dan üye olur."""
+        """Sınıf = ad + öğrenci seçimi. `studentIds` verilirse `validFrom`'dan üye olur.
+
+        `level` (isteğe bağlı) sınıfın seviyesidir; `applyLevel` (varsayılan açık)
+        üyelerin kendi seviyesine yazılır.
+        """
         name = _clean_name(payload.get("name"))
         kind = _clean_kind(payload.get("kind"))
+        level = parse_level(payload.get("level")) if payload.get("level") is not None else None
         call_name = " ".join(str(payload.get("callName") or "").split())[:CALL_NAME_MAX]
         note = str(payload.get("note") or "").strip()[:NOTE_MAX]
         students = list(payload.get("studentIds") or [])
@@ -536,16 +677,20 @@ class GroupService:
                                  code="group_limit")
             group_id = str(uuid.uuid4())
             stamp = _now()
+            level_columns = level or {"grade_level": None, "track": None, "exam_target": None}
             await self._store.execute(
                 f"INSERT INTO {self._groups} (id, name, name_fold, call_name, kind, note, "
-                f"archived_at, created_at, created_by, updated_at, updated_by, revision) "
-                f"VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
+                f"archived_at, created_at, created_by, updated_at, updated_by, revision, "
+                f"grade_level, track, exam_target) "
+                f"VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (group_id, name, fold(name), call_name, kind, note, stamp, actor, stamp,
-                 actor, revision),
+                 actor, revision, level_columns["grade_level"], level_columns["track"],
+                 level_columns["exam_target"]),
             )
             for student in students:
                 await self._insert_member(group_id, student, start, None, reason=reason,
                                           actor=actor, revision=revision, stamp=stamp)
+            await self._touched_students(students)
             await self._write_audit(actor=actor, action=action, group_id=group_id,
                                     revision=revision,
                                     detail={"name": name, "kind": kind,
@@ -553,43 +698,92 @@ class GroupService:
                                             "validFrom": start.isoformat() if students else None})
             await self._emit(revision)
         await self._changed(revision)
-        self._log.info("öğrenci grubu açıldı", group=group_id, kind=kind,
+        if level is not None and payload.get("applyLevel", True) is not False:
+            await self._level_to(group_id, students)
+        self._log.info("sınıf açıldı", group=group_id, kind=kind,
                        students=len(students), actor=actor)
         return await self.detail(group_id)
 
     async def from_class(self, class_name: str, payload: dict[str, Any], *,
                          actor: str) -> dict[str, Any]:
-        """"Sınıftan grup oluştur": sınıfın o anki öğrencileri yeni gruba KOPYALANIR."""
+        """"Sınıftan yeni sınıf": kaynak sınıfın BUGÜNKÜ üyeleri yeni sınıfa KOPYALANIR.
+
+        Kaynak, adı (Türkçe katlamayla) eşleşen canlı sınıftır; yoksa (dönüşüm
+        öncesi) öğrencinin eski `class_name`'i.
+        """
         clean = " ".join(str(class_name or "").split())
         if not clean:
             raise GroupError("Sınıf seçin.", details={"field": "className"})
-        rows = await self._store.fetch_all(
-            f"SELECT kantin_id FROM {self._profiles} WHERE class_name = ? ORDER BY kantin_id",
-            (clean,))
+        source = await self._store.fetch_one(
+            f"SELECT id FROM {self._groups} WHERE name_fold = ? AND archived_at = '' "
+            f"ORDER BY created_at LIMIT 1", (fold(clean),))
+        if source is not None:
+            day = self._today().isoformat()
+            rows = await self._store.fetch_all(
+                f"SELECT DISTINCT kantin_id FROM {self._members} WHERE group_id = ? "
+                f"AND valid_from <= ? AND (valid_to = '' OR valid_to >= ?) ORDER BY kantin_id",
+                (str(source["id"]), day, day))
+        else:
+            rows = await self._store.fetch_all(
+                f"SELECT kantin_id FROM {self._profiles} WHERE class_name = ? "
+                f"ORDER BY kantin_id", (clean,))
         students = [str(row["kantin_id"]) for row in rows]
         if not students:
             raise GroupError(f"“{clean}” sınıfında öğrenci yok.", status=404,
                              code="class_empty")
         body = {**payload, "studentIds": students}
-        body.setdefault("name", clean)
+        if not body.get("name"):
+            body["name"] = clean
         body["kind"] = "group"
         return await self.create(body, actor=actor, action="from_class")
 
     async def update(self, group_id: str, payload: dict[str, Any], *,
                      actor: str) -> dict[str, Any]:
-        """Ad, tür, anons adı, not. Gönderilmeyen alan değişmez."""
+        """Ad, tür, anons adı, not, seviye. Gönderilmeyen alan değişmez.
+
+        `level` değişip `applyLevel` (varsayılan açık) ise sınıfın BUGÜNKÜ üyelerinin
+        seviyesi yazılır (eski "sınıfın seviyesi öğrencilere geçer" davranışı).
+        """
         try:
             async with self._store.transaction():
                 revision = await self._bump()
-                await self._update_in(group_id, payload, actor=actor, revision=revision)
+                changes = await self._update_in(group_id, payload, actor=actor,
+                                                revision=revision)
+                if "name" in changes:
+                    # Ad değişti: dizindeki `classes[].name` değişir → üyeler `since`'te görünsün.
+                    await self._touched_students(await self._group_students(group_id),
+                                                 force=True)
                 await self._emit(revision)
         except _Unchanged:
-            return await self.detail(group_id)
-        await self._changed(revision)
+            changes = {}
+        else:
+            await self._changed(revision)
+        if "grade_level" in changes and payload.get("applyLevel", True) is not False:
+            await self._level_to(group_id, await self.current_students(group_id))
         return await self.detail(group_id)
 
+    async def current_students(self, group_id: str, *, on: date | None = None) -> list[str]:
+        """Sınıfın o gün (vars. bugün) geçerli üyeleri — tek indeksli sorgu."""
+        day = (on or self._today()).isoformat()
+        rows = await self._store.fetch_all(
+            f"SELECT DISTINCT kantin_id FROM {self._members} WHERE group_id = ? "
+            f"AND valid_from <= ? AND (valid_to = '' OR valid_to >= ?) ORDER BY kantin_id",
+            (str(group_id), day, day))
+        return [str(row["kantin_id"]) for row in rows]
+
+    async def apply_level_now(self, group_id: str, *, actor: str) -> dict[str, Any]:
+        """"Seviyeyi üyelere uygula": sınıfın seviyesini bugünkü üyelere yazar."""
+        row = await self._group_row(group_id)
+        if level_of(row) is None:
+            raise GroupError("Bu sınıfa seviye girilmemiş.", code="level_missing",
+                             details={"field": "level"})
+        updated = await self._level_to(group_id, await self.current_students(group_id))
+        self._log.info("sınıf seviyesi üyelere uygulandı", group=group_id, updated=updated,
+                       actor=actor)
+        return {"updatedStudents": updated, "group": await self.detail(group_id)}
+
     async def _update_in(self, group_id: str, payload: dict[str, Any], *, actor: str,
-                         revision: int) -> None:
+                         revision: int) -> dict[str, Any]:
         row = await self._group_row(group_id)
         changes: dict[str, Any] = {}
         if "name" in payload:
@@ -611,6 +805,10 @@ class GroupService:
             note = str(payload["note"] or "").strip()[:NOTE_MAX]
             if note != row["note"]:
                 changes["note"] = note
+        if "level" in payload:
+            level = parse_level(payload["level"])
+            if any((row.get(column) or None) != level[column] for column in level):
+                changes.update(level)
         if not changes:
             raise _Unchanged
         await self._touch_group(group_id, actor=actor, revision=revision, extra=changes)
@@ -618,6 +816,7 @@ class GroupService:
                                 revision=revision,
                                 detail={key: value for key, value in changes.items()
                                         if key != "name_fold"})
+        return changes
 
     async def archive(self, group_id: str, *, actor: str) -> dict[str, Any]:
         """Arşivler. Açık üyelikler arşiv gününde kapanır; henüz başlamamış
@@ -629,11 +828,12 @@ class GroupService:
                 revision = await self._bump()
                 closed = await self._archive_in(group_id, actor=actor, revision=revision,
                                                 today=today)
+                await self._touched_students(await self._group_students(group_id))
                 await self._emit(revision)
         except _Unchanged:
             return await self.detail(group_id)
         await self._changed(revision)
-        self._log.info("öğrenci grubu arşivlendi", group=group_id, closed=closed, actor=actor)
+        self._log.info("sınıf arşivlendi", group=group_id, closed=closed, actor=actor)
         return await self.detail(group_id)
 
     async def _archive_in(self, group_id: str, *, actor: str, revision: int,
@@ -678,6 +878,7 @@ class GroupService:
                                         extra={"archived_at": ""})
                 await self._write_audit(actor=actor, action="restore", group_id=str(group_id),
                                         revision=revision, detail={})
+                await self._touched_students(await self._group_students(group_id))
                 await self._emit(revision)
         except _Unchanged:
             return await self.detail(group_id)
@@ -686,8 +887,11 @@ class GroupService:
 
     async def add_members(self, group_id: str, student_ids: Ids, *,
                           valid_from: Any = None, reason: Any = "",
-                          actor: str) -> dict[str, Any]:
-        """Çoklu ekleme. Zaten o tarihte üye olan öğrenci `skipped` içinde döner."""
+                          actor: str, apply_level: bool = True) -> dict[str, Any]:
+        """Çoklu ekleme. Zaten o tarihte üye olan öğrenci `skipped` içinde döner.
+
+        Sınıfın seviyesi varsa ve `apply_level` açıksa eklenenlerin seviyesi yazılır.
+        """
         students = _clean_students(student_ids)
         start = parse_day(valid_from, field="validFrom") if valid_from else self._today()
         why = _clean_reason(reason)
@@ -697,18 +901,21 @@ class GroupService:
                 revision = await self._bump()
                 skipped, fresh = await self._add_in(group_id, students, start=start, why=why,
                                                     actor=actor, revision=revision)
+                await self._touched_students(fresh)
                 await self._emit(revision)
         except _Unchanged as unchanged:
             return {"added": 0, "skipped": unchanged.value,
                     "group": await self.detail(group_id)}
         await self._changed(revision)
-        return {"added": len(fresh), "skipped": skipped, "group": await self.detail(group_id)}
+        leveled = await self._level_to(group_id, fresh) if apply_level else 0
+        return {"added": len(fresh), "skipped": skipped, "levelUpdated": leveled,
+                "group": await self.detail(group_id)}
 
     async def _add_in(self, group_id: str, students: list[str], *, start: date, why: str,
                       actor: str, revision: int) -> tuple[list[str], list[str]]:
         row = await self._group_row(group_id)
         if row["archived_at"]:
-            raise GroupError("Arşivlenmiş gruba üye eklenemez.", status=409,
+            raise GroupError("Arşivlenmiş sınıfa öğrenci eklenemez.", status=409,
                              code="group_archived")
         existing = await self._member_rows([str(group_id)])
         skipped = [student for student in students if any(
@@ -749,6 +956,7 @@ class GroupService:
                 revision = await self._bump()
                 skipped, targets = await self._end_in(group_id, students, end=end, why=why,
                                                       actor=actor, revision=revision)
+                await self._touched_students(str(member["kantin_id"]) for member in targets)
                 await self._emit(revision)
         except _Unchanged as unchanged:
             return {"ended": 0, "skipped": unchanged.value,
@@ -791,12 +999,12 @@ class GroupService:
 
     async def move(self, student_ids: Ids, *, from_group: str, to_group: str,
                    effective_from: Any = None, reason: Any = "",
-                   actor: str) -> dict[str, Any]:
+                   actor: str, apply_level: bool = True) -> dict[str, Any]:
         """"Taşı" — A'da `validTo = d-1`, B'de `validFrom = d`. Tek işlem: önce
         iki tarafın kuralı birlikte doğrulanır, sonra ikisi birden yazılır."""
         students = _clean_students(student_ids)
         if str(from_group) == str(to_group):
-            raise GroupError("Kaynak ve hedef grup aynı olamaz.")
+            raise GroupError("Kaynak ve hedef sınıf aynı olamaz.")
         start = (parse_day(effective_from, field="effectiveFrom") if effective_from
                  else self._today())
         last = start - timedelta(days=1)
@@ -807,7 +1015,7 @@ class GroupService:
             source = await self._group_row(from_group)
             target = await self._group_row(to_group)
             if target["archived_at"]:
-                raise GroupError("Arşivlenmiş gruba taşınamaz.", status=409,
+                raise GroupError("Arşivlenmiş sınıfa taşınamaz.", status=409,
                                  code="group_archived")
             source_rows = await self._member_rows([str(from_group)])
             ending: list[dict[str, Any]] = []
@@ -819,7 +1027,7 @@ class GroupService:
                                    or last < (_day(str(member["valid_to"])) or date.max))),
                              None)
                 if match is None:
-                    raise GroupError("Öğrencinin kaynak grupta taşıma gününden önce başlayan "
+                    raise GroupError("Öğrencinin kaynak sınıfta taşıma gününden önce başlayan "
                                      "açık üyeliği yok.", status=409, code="not_a_member",
                                      details={"studentId": student})
                 ending.append(match)
@@ -845,8 +1053,11 @@ class GroupService:
                                     revision=revision, detail=detail)
             await self._write_audit(actor=actor, action="move_in", group_id=str(to_group),
                                     revision=revision, detail=detail)
+            await self._touched_students(students)
             await self._emit(revision)
         await self._changed(revision)
+        if apply_level and start <= self._today():
+            await self._level_to(str(to_group), students)
         self._log.info("öğrenciler taşındı", students=len(students), source=source["id"],
                        target=target["id"], actor=actor)
         return {"moved": len(students), "from": await self.detail(from_group),
@@ -859,8 +1070,9 @@ class GroupService:
         try:
             async with self._store.transaction():
                 revision = await self._bump()
-                await self._patch_in(group_id, member_id, payload, actor=actor,
-                                     revision=revision)
+                student = await self._patch_in(group_id, member_id, payload, actor=actor,
+                                               revision=revision)
+                await self._touched_students([student])
                 await self._emit(revision)
         except _Unchanged:
             return await self.detail(group_id)
@@ -868,7 +1080,7 @@ class GroupService:
         return await self.detail(group_id)
 
     async def _patch_in(self, group_id: str, member_id: str, payload: dict[str, Any], *,
-                        actor: str, revision: int) -> None:
+                        actor: str, revision: int) -> str:
         group = await self._group_row(group_id)
         rows = await self._member_rows([str(group_id)])
         member = next((row for row in rows if str(row["id"]) == str(member_id)), None)
@@ -909,6 +1121,7 @@ class GroupService:
                     "after": [new_from.isoformat() if new_from else None,
                               new_to.isoformat() if new_to else None],
                     "reason": why})
+        return str(member["kantin_id"])
 
     async def close_student_memberships(self, student_id: str, *, last_day: date,
                                         actor: str, reason: str) -> int | None:
@@ -964,13 +1177,15 @@ class GroupService:
     # ------------------------------------------------------------ iç yazma
 
     async def _insert_member(self, group_id: str, student: str, start: date, end: date | None,
-                             *, reason: str, actor: str, revision: int, stamp: str) -> None:
+                             *, reason: str, actor: str, revision: int, stamp: str,
+                             origin: str = ORIGIN_GROUP) -> None:
         await self._store.execute(
             f"INSERT INTO {self._members} (id, group_id, kantin_id, valid_from, valid_to, "
-            f"reason, created_at, created_by, updated_at, updated_by, revision) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            f"reason, created_at, created_by, updated_at, updated_by, revision, origin) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (str(uuid.uuid4()), group_id, student, start.isoformat(),
-             end.isoformat() if end else "", reason, stamp, actor, stamp, actor, revision),
+             end.isoformat() if end else "", reason, stamp, actor, stamp, actor, revision,
+             origin),
         )
 
     async def _touch_group(self, group_id: str, *, actor: str, revision: int,
@@ -994,8 +1209,10 @@ class StudentGroups:
     def __init__(self, service: GroupService) -> None:
         self._service = service
 
-    async def list(self, since_revision: int | None = None) -> dict[str, Any]:
-        return await self._service.list(since_revision)
+    async def list(self, since_revision: int | None = None, *,
+                   view: str = "legacy") -> dict[str, Any]:
+        """`view="classes"`: tek "Sınıf" modeli (yeni Akademi); varsayılan eski görünüm."""
+        return await self._service.list(since_revision, view=view)
 
     async def get(self, group_id: str) -> dict[str, Any] | None:
         return await self._service.get(group_id)

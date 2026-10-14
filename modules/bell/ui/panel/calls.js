@@ -82,31 +82,33 @@ function pageCard(app, nodes) {
 function groupsCard(app) {
   const { data } = app;
   const card = h('section', 'bl-card');
+  // TAŞIMA SONRASI liste Öğrenci Yönetimi'nden gelir: düzenleme yok, yalnız çağrı. Sınıf = grup
+  // (iş 23): orada tek kavram "Sınıf" — liste bütün sınıflardır, metinlerde "sınıf" geçer.
+  const migrated = Boolean(data.groupsMigrated);
   const head = h('div', 'bl-card-head');
-  head.append(h('h4', null, 'Grup çağır'));
-  head.append(h('span', 'bl-hint', 'Seçilen gruba anons geçer; zil çalmaz.'));
+  head.append(h('h4', null, migrated ? 'Sınıf çağır' : 'Grup çağır'));
+  head.append(h('span', 'bl-hint', migrated ? 'Seçilen sınıfa anons geçer; zil çalmaz.'
+    : 'Seçilen gruba anons geçer; zil çalmaz.'));
   card.append(head);
 
   const band = migrationBand(app);
   if (band) card.append(band);
 
-  // TAŞIMA SONRASI liste Öğrenci Yönetimi'nden gelir: düzenleme yok, yalnız çağrı.
-  const migrated = Boolean(data.groupsMigrated);
   const list = migrated ? (data.studentGroups || []) : (data.groups || []);
   const grid = h('div', 'bl-groups');
-  for (const group of list) grid.append(groupCard(app, group, { readonly: migrated }));
+  for (const group of list) grid.append(groupCard(app, group, { readonly: migrated, unit: migrated ? 'sınıf' : 'grup' }));
   if (!migrated) grid.append(newGroupCard(app));
   card.append(grid);
 
   if (!list.length) {
     card.append(h('p', 'bl-empty', migrated
-      ? 'Öğrenci Yönetimi’nde henüz grup yok.'
+      ? 'Öğrenci Yönetimi’nde henüz sınıf yok.'
       : 'Henüz grup yok. Bir grup açtığınızda anons sesi bir kez üretilir.'));
   }
   return card;
 }
 
-function groupCard(app, group, { readonly = false } = {}) {
+function groupCard(app, group, { readonly = false, unit = 'grup' } = {}) {
   const card = h('div', `bl-group bl-voice-${group.voice.state}`);
   const name = h('div', 'bl-group-name', group.name);
   name.title = group.text;
@@ -114,7 +116,7 @@ function groupCard(app, group, { readonly = false } = {}) {
 
   const meta = h('div', 'bl-group-meta');
   const solo = group.kind === 'ozel' || group.kind === 'individual';
-  meta.append(h('span', `bl-kind bl-kind-${solo ? 'ozel' : 'grup'}`, solo ? 'özel ders' : 'grup'));
+  meta.append(h('span', `bl-kind bl-kind-${solo ? 'ozel' : 'grup'}`, solo ? 'özel ders' : unit));
   meta.append(voiceBadge(group.voice));
   card.append(meta);
 
@@ -237,18 +239,18 @@ function migrationBand(app) {
   const { data } = app;
   if (data.groupsMigrated) {
     return h('p', 'bl-hint bl-pad',
-      'Gruplar Öğrenci Yönetimi › Gruplar’da düzenlenir; bu liste oradan okunur.');
+      'Sınıflar Öğrenci Yönetimi › Sınıflar’da düzenlenir (anons adı dahil); bu liste oradan okunur.');
   }
   if (!data.studentGroupsAvailable) return null;
   const band = h('div', 'bl-band');
-  band.append(h('span', null, 'Gruplar artık Öğrenci Yönetimi’nde de tutulabilir.'));
+  band.append(h('span', null, 'Zil grupları Öğrenci Yönetimi’nde sınıf olarak tutulabilir.'));
   band.append(button('Grupları taşı', {
-    title: 'Her zil grubu için aynı adlı öğrenci grubu açılır. İkinci basış yeni grup açmaz.',
+    title: 'Her zil grubu için aynı adlı sınıf açılır. İkinci basış yeni sınıf açmaz.',
     onClick: async () => {
       const yes = await confirmSimple(app.root, {
         title: 'Zil grupları Öğrenci Yönetimi’ne taşınsın mı?',
-        description: 'Her grup için aynı adlı (öğrencisiz) öğrenci grubu açılır; öğrencileri '
-          + 'Öğrenci Yönetimi › Gruplar’da seçersiniz. Sonra grup düzenleme buradan kapanır, '
+        description: 'Her zil grubu için aynı adlı (öğrencisiz) sınıf açılır; öğrencileri '
+          + 'Öğrenci Yönetimi › Sınıflar’da seçersiniz. Sonra düzenleme buradan kapanır, '
           + 'çağrı listesi oradan gelir. Zil grubu kayıtları silinmez.',
         confirmLabel: 'Taşı',
       });
