@@ -92,3 +92,44 @@ def test_personel_ipucu_ogretmen_kapsamina_yonlendirir() -> None:
     settings_js = (PANEL / "settings.js").read_text(encoding="utf-8")
     assert "path: ['teacher', 'scope']" in settings_js
     assert "yer tutucu ekran" not in settings_js
+
+
+# --------------------------------------------------------------------------- öğrenci adına kayıt etiketi
+# Kullanıcı: "Onları da yapabilsin." — yönetici öğrenci / veli ADINA yazar; kayıt `actedBy` "Yönetici tarafından"
+# taşır (Akademi README §14 madde 65). KM öğrenci kartı listelerinde etiket görünür.
+
+ACTED_BY = PRELUDE + r"""
+export default async function ({ document, audit, sleep, api, load }) {
+  globalThis.api = api;
+  const log = (id, actedBy) => ({ id, clientUuid: id, mode: 'manual', source: 'quick_entry', planTaskId: null,
+    startedAt: '2026-10-14T08:00:00Z', endedAt: '2026-10-14T08:30:00Z', durationSeconds: 1800,
+    subject: { id: 'matematik', name: 'Matematik' }, topic: null, resourceId: null, sectionId: null,
+    correct: 7, wrong: 1, blank: 0, note: null, createdAt: '2026-10-14T08:30:00Z', updatedAt: null, actedBy });
+  routes['GET /v1/students/stu-1/study-logs'] = { items: [log('l-1', 'Yönetici tarafından'), log('l-2', null)],
+    nextCursor: null };
+  const { app, root } = await makeApp(load, document);
+  app.can = () => false;  // tablet kartı yok
+  const { studyTab } = await load('./panels/bbd_akademi/students-records.js');
+  const ctx = { app, id: 'stu-1', dispose: () => {}, subjectNames: new Map() };
+  const tab = studyTab(ctx);
+  root.append(tab.node);
+  await sleep(60);
+  const rows = root.querySelectorAll('.kit-row');
+  return {
+    rows: rows.length,
+    labelled: rows.filter((row) => row.textContent.includes('Yönetici tarafından')).length,
+    a11y: audit(tab.node),
+  };
+}
+"""
+
+
+def test_ogrenci_adina_kayit_etiketi_listede() -> None:
+    out: dict[str, Any] = node_run(ACTED_BY)
+    assert out["rows"] >= 2
+    assert out["labelled"] == 1
+    assert out["a11y"] == []
+    learning = (PANEL / "students-learning.js").read_text(encoding="utf-8")
+    assert "row.actedBy" in learning and "mistake.actedBy" in learning  # hata defteri listesi + çekmece
+    records = (PANEL / "students-records.js").read_text(encoding="utf-8")
+    assert records.count("row.actedBy") == 2  # dış deneme "Giren" + çalışma kaydı "Kayıt"
