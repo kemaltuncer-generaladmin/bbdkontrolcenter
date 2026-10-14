@@ -9,6 +9,10 @@
 //
 // Şablon değişikliği uygulanmış programları DEĞİŞTİRMEZ (kopyadır). Yeni şablon boş başlar ya da
 // bir sınıfın o gün geçerli programından alınır (`admin_getTimetable`).
+//
+// Çoklu sınıf ve müfredat (README §14 madde 72): satır isteğe bağlı `classGroupIds` (derse ORTAK
+// katılan sınıflar, en çok 12; hedef sınıf her zaman dahildir) ve `programId` taşır; yanıtta adlarıyla
+// `classGroups` / `program` gelir. Uygulamada her hedef sınıfta satırın sınıfları = hedef ∪ classGroupIds.
 
 import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, card } from '../../ui-kit/layout.js';
@@ -18,10 +22,13 @@ import {
   DAY_LABEL, actionButton, confirmAction, empty, errorBox, fmtDate, fmtDateTime, formDialog, kv, loader, multiChips,
   num, openDrawer, problem, selectBox, staticList, todayIst, toolbar,
 } from './common.js';
+import { fetchPrograms, fillProgramSelect } from './curriculum-picker.js';
 import { copyResultsTable } from './timetable-copy.js';
 import { DAY_KEYS, slotLayout, slotName, slotTime, subjectSelect } from './timetable-shared.js';
 
 const LIST = '/v1/admin/timetable-templates';
+/** Sözleşme `TimetableTemplateEntry.classGroupIds.maxItems`. */
+export const MAX_SHARED_CLASSES = 12;
 
 /** Şablon satırları denetimi: zorunlu alanlar ve aynı hücreye iki ders. */
 export function templateProblem(entries) {
@@ -32,22 +39,42 @@ export function templateProblem(entries) {
     const key = `${row.dayOfWeek}|${row.bellSlotId}`;
     if (seen.has(key)) return `${index + 1}. satır başka bir satırla aynı gün ve ders saatinde.`;
     seen.add(key);
+    if ((row.classGroupIds || []).length > MAX_SHARED_CLASSES) {
+      return `${index + 1}. satırda en çok ${MAX_SHARED_CLASSES} ortak sınıf seçilebilir.`;
+    }
   }
   return null;
 }
 
-/** Ekrandaki satır → `TimetableTemplateEntry`. */
+/** Ekrandaki satır → `TimetableTemplateEntry` (yanıt alanları `classGroups` / `program` gönderilmez). */
 export function templateEntries(rows) {
   return rows.map((row) => ({ dayOfWeek: row.dayOfWeek, bellSlotId: row.bellSlotId, subjectId: row.subjectId,
-    teacherId: row.teacherId || null, room: String(row.room || '').trim() || null }));
+    teacherId: row.teacherId || null, room: String(row.room || '').trim() || null,
+    classGroupIds: [...new Set(row.classGroupIds || [])], programId: row.programId || null }));
 }
 
-/** Sınıfın programı (`Timetable.entries`) → şablon satırları (öğretmen ve derslik dahil). */
-export function entriesFromTimetable(timetable) {
+/** Yanıttaki şablon satırı → ekran satırı (ortak sınıflar ve müfredat adlarıyla). */
+export function rowFromTemplateEntry(entry) {
+  const refs = entry.classGroups || [];
+  return { dayOfWeek: entry.dayOfWeek, bellSlotId: entry.bellSlotId, subjectId: entry.subjectId || '',
+    teacherId: entry.teacherId || '', room: entry.room || '',
+    classGroupIds: entry.classGroupIds || refs.map((item) => item.id),
+    classRefs: refs, programId: entry.programId || entry.program?.id || '', program: entry.program || null };
+}
+
+/**
+ * Sınıfın programı (`Timetable.entries`) → şablon satırları (öğretmen ve derslik dahil). README §14 madde
+ * 72: `classGroupIds` = satırın `classGroups`'u eksi kaynak sınıf, `programId` = `program.id`.
+ */
+export function entriesFromTimetable(timetable, sourceClassGroupId = null) {
   return (timetable?.entries || []).filter((entry) => entry.status !== 'orphaned')
-    .map((entry) => ({ dayOfWeek: entry.dayOfWeek, bellSlotId: entry.bellSlotId,
-      subjectId: entry.subject?.id || entry.subjectId || '', teacherId: entry.teacher?.id || entry.teacherId || '',
-      room: entry.room || '' }));
+    .map((entry) => {
+      const refs = (entry.classGroups || []).filter((item) => item?.id && item.id !== sourceClassGroupId);
+      return { dayOfWeek: entry.dayOfWeek, bellSlotId: entry.bellSlotId,
+        subjectId: entry.subject?.id || entry.subjectId || '', teacherId: entry.teacher?.id || entry.teacherId || '',
+        room: entry.room || '', classGroupIds: refs.map((item) => item.id), classRefs: refs,
+        programId: entry.program?.id || entry.programId || '', program: entry.program || null };
+    });
 }
 
 export function templatesTab(app) {
@@ -125,6 +152,9 @@ export function openTemplate(app, id, { onChange } = {}) {
       { key: 'subject', label: 'Ders', cell: (row) => subjectName.get(row.subjectId) || row.subjectId },
       { key: 'teacher', label: 'Öğretmen', cell: (row) => (row.teacherId ? teacherName.get(row.teacherId) || 'Pasif öğretmen' : '—') },
       { key: 'room', label: 'Derslik', cell: (row) => row.room || '—' },
+      { key: 'classes', label: 'Ortak sınıflar', cell: (row) => (row.classGroups || []).map((item) => item.name).join(', ')
+        || '—' },
+      { key: 'program', label: 'Müfredat', cell: (row) => row.program?.title || '—' },
     ], empty: empty('Satır yok') });
     return [
       toolbar(
@@ -181,7 +211,8 @@ function errorText(failure) {
 export async function editTemplate(app, current, loaded = null) {
   const { layout, subjects, teachers, classes } = loaded || await lookups(app);
   const days = layout.days.length ? layout.days : DAY_KEYS.slice(0, 5);
-  const rows = (current?.entries || []).map((row) => ({ ...row }));
+  const rows = (current?.entries || []).map(rowFromTemplateEntry);
+  const classNames = new Map(classes.map((item) => [item.id, item.name]));
   const listNode = h('div', 'ak-stack');
 
   const teacherOpts = [{ value: '', label: 'Öğretmen yok' },
@@ -202,8 +233,12 @@ export async function editTemplate(app, current, loaded = null) {
       if (!row.dayOfWeek) row.dayOfWeek = days[0];
       const slot = selectBox(slotOptions(row.dayOfWeek), row.bellSlotId || '', (value) => { row.bellSlotId = value; },
         { label: `${index + 1}. satır ders saati` });
-      const subject = subjectSelect(subjects, row.subjectId || '', { onChange: (value) => { row.subjectId = value; },
-        label: `${index + 1}. satır ders` });
+      const subject = subjectSelect(subjects, row.subjectId || '', { onChange: (value) => {
+        // Müfredat derse bağlıdır: ders değişince eski bağlantı düşer.
+        if (value !== row.subjectId) { row.programId = ''; row.program = null; }
+        row.subjectId = value;
+        paint();
+      }, label: `${index + 1}. satır ders` });
       const teacher = selectBox(teacherOpts, row.teacherId || '', (value) => { row.teacherId = value; },
         { label: `${index + 1}. satır öğretmen` });
       const room = h('input', 'kit-input');
@@ -215,8 +250,62 @@ export async function editTemplate(app, current, loaded = null) {
       room.addEventListener('input', () => { row.room = room.value; });
       const drop = button('Kaldır', { variant: 'ghost', onClick: () => { rows.splice(index, 1); paint(); } });
       line.append(day.node, slot.node, subject, teacher.node, room, drop);
-      listNode.append(line);
+      listNode.append(line, extraLine(row, index));
     });
+  }
+
+  /** Satırın ikinci çizgisi: ortak sınıflar (çip + seç) ve isteğe bağlı müfredat. */
+  function extraLine(row, index) {
+    const line = h('div', 'ak-tt-tpl-extra ak-inline');
+    const chips = h('div', 'ak-chips');
+    const chosen = row.classGroupIds || [];
+    const refName = new Map((row.classRefs || []).map((item) => [item.id, item.name]));
+    for (const id of chosen) {
+      const name = classNames.get(id) || refName.get(id) || 'Sınıf';
+      const chip = h('span', 'kit-chip on ak-tt-classchip');
+      const remove = h('button', 'ak-tt-classchip-x', '×');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `${index + 1}. satır: ${name} sınıfını çıkar`);
+      remove.addEventListener('click', () => { row.classGroupIds = chosen.filter((item) => item !== id); paint(); });
+      chip.append(h('span', '', name), remove);
+      chips.append(chip);
+    }
+    const full = chosen.length >= MAX_SHARED_CLASSES;
+    const pick = selectBox([{ value: '', label: full ? `En çok ${MAX_SHARED_CLASSES} sınıf` : '+ Ortak sınıf (birlikte ders)' },
+      ...classes.filter((item) => !chosen.includes(item.id)).map((item) => ({ value: item.id, label: item.name }))], '',
+    (value) => {
+      if (!value) return;
+      row.classGroupIds = [...chosen, value];
+      paint();
+    }, { label: `${index + 1}. satır ortak sınıf ekle` });
+    pick.node.disabled = full;
+    const program = h('select', 'kit-select');
+    program.setAttribute('aria-label', `${index + 1}. satır müfredat (isteğe bağlı)`);
+    loadPrograms(row, program);
+    program.addEventListener('change', () => { row.programId = program.value; });
+    line.append(h('span', 'ak-muted', 'Uygulanan sınıf hep dahil.'), chips, pick.node, program);
+    return line;
+  }
+
+  /** Müfredat seçenekleri: satırın dersinin programları (önbellekli); ders yoksa kapalı. */
+  async function loadPrograms(row, select) {
+    const keep = row.programId || '';
+    if (!row.subjectId) {
+      fillProgramSelect(select, [], { placeholder: 'Müfredat: önce ders seçin' });
+      select.disabled = true;
+      return;
+    }
+    fillProgramSelect(select, row.program ? [row.program] : [], { placeholder: 'Müfredat yok' });
+    select.value = keep;
+    try {
+      const { items } = await fetchPrograms(app, { subjectId: row.subjectId });
+      const list = [...items];
+      if (row.program && !list.some((item) => item.id === row.program.id)) list.push(row.program);
+      fillProgramSelect(select, list, { placeholder: 'Müfredat yok', recommendedFirst: false });
+      select.value = row.programId || '';
+    } catch {
+      // Liste alınamazsa mevcut seçim korunur.
+    }
   }
 
   const fromClass = !current && classes.length ? selectBox([{ value: '', label: 'Bir sınıfın programından al…' },
@@ -224,7 +313,7 @@ export async function editTemplate(app, current, loaded = null) {
     if (!value) return;
     try {
       const timetable = await app.api.get(`/v1/admin/class-groups/${value}/timetable`, { date: todayIst() });
-      rows.splice(0, rows.length, ...entriesFromTimetable(timetable));
+      rows.splice(0, rows.length, ...entriesFromTimetable(timetable, value));
       paint();
       app.toast(`${num(rows.length)} ders saati alındı; düzenleyip kaydedin.`, 'good');
     } catch (failure) {
@@ -243,7 +332,8 @@ export async function editTemplate(app, current, loaded = null) {
       { key: 'entries', label: 'Ders saatleri', type: 'custom', wide: true, render: () => {
         const wrap = h('div', 'ak-stack');
         const add = button('+ Satır ekle', { variant: 'ghost', onClick: () => {
-          rows.push({ dayOfWeek: rows.at(-1)?.dayOfWeek || days[0], bellSlotId: '', subjectId: '', teacherId: '', room: '' });
+          rows.push({ dayOfWeek: rows.at(-1)?.dayOfWeek || days[0], bellSlotId: '', subjectId: '', teacherId: '', room: '',
+            classGroupIds: [], classRefs: [], programId: '', program: null });
           paint();
         } });
         if (!layout.rows.length) wrap.append(alertBox('Zil dilimi tanımlı değil; önce Zil dilimleri sekmesinden ders saatlerini kurun.', 'warn'));
@@ -284,7 +374,8 @@ export async function applyDialog(app, template, { classes, layout }) {
   const result = await formDialog(app, {
     title: `“${template.name}” şablonunu uygula`,
     description: 'Her sınıf ayrı işlenir: çakışan sınıfa yazılmaz, diğerlerine yazılır. Seçilen aralıkta sınıfın programı '
-      + 'bununla değişir ve zil planı yeniden üretilir.',
+      + 'bununla değişir ve zil planı yeniden üretilir. Satırların ortak sınıfları ve müfredatı da programa taşınır; '
+      + 'ortak sınıfların öğrencileri öğrenci çakışması denetimine girer.',
     wide: true,
     value: { classGroupIds: [], validFrom: today, validTo: '', openEnded: true, keepTeachers: true,
       allowStudentConflicts: false, overrideReason: '' },

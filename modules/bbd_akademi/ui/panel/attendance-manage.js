@@ -336,6 +336,24 @@ export async function exportDialog(app, range, { studentIds = null } = {}) {
 
 // ========================================================= DÜZELTME KUYRUĞU
 
+/** Onay kuyruğu satırları: öğrenci adına göre sıralı; dizinde olmayanlar sonda. */
+export function reviewRows(review) {
+  return [...(review?.rows || [])].sort((a, b) => (a.student ? 0 : 1) - (b.student ? 0 : 1)
+    || String(a.student?.displayName || a.studentId).localeCompare(String(b.student?.displayName || b.studentId), 'tr'));
+}
+
+/** Öğrenci hücresi: ad + sınıf; `student: null` → "Dizinde yok" + kimlik. */
+export function reviewStudentCell(row) {
+  const cell = h('div', 'ak-cell-stack');
+  if (row.student) {
+    cell.append(h('span', '', row.student.displayName || `${row.student.firstName || ''} ${row.student.lastName || ''}`.trim()),
+      row.student.classGroup?.name ? h('small', '', row.student.classGroup.name) : '');
+  } else {
+    cell.append(h('span', '', 'Dizinde yok'), h('small', '', row.studentId || '—'));
+  }
+  return cell;
+}
+
 export function reviewsTab(app, { onCount, openSession } = {}) {
   const node = h('div', 'ak-stack');
   if (!app.can('admin_listAttendanceReviews')) {
@@ -372,19 +390,13 @@ export function reviewsTab(app, { onCount, openSession } = {}) {
 
   function openReview(review) {
     const panel = openDrawer(app, { title: 'Geç senkron yoklaması', subtitle: `${summaryTitle(review.session)} · ${sessionWhen(review.session)}` });
-    const view = loader(async () => {
-      // Satırlar yalnız öğrenci kimliği taşır; adlar ve şu anki işaretler oturumun listesinden (tek istek).
-      const sheet = await app.api.get(`/v1/admin/attendance/sessions/${review.session.id}`).catch(() => null);
-      return { sheet };
-    }, ({ sheet }) => {
-      const current = new Map((sheet?.rows || []).map((row) => [row.student.id, row]));
-      const rows = (review.rows || []).map((row) => ({ ...row, current: current.get(row.studentId) }));
-      const changed = rows.filter((row) => row.current?.status !== row.status).length;
+    // Satır öğrencinin kısa görünümünü taşır (`AttendanceReviewRow.student`, README §14 madde 72):
+    // adlar buradan; oturum listesi ayrıca okunmaz. `student: null` = kimlik dizinde yok → kimlik gösterilir.
+    const view = loader(async () => ({}), () => {
+      const rows = reviewRows(review);
       const table = dataTable({ dense: true, rows, rowKey: (row) => row.studentId, columns: [
-        { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.6fr)', cell: (row) => row.current?.student?.displayName
-          || 'Listede olmayan öğrenci' },
+        { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.6fr)', cell: (row) => reviewStudentCell(row) },
         { key: 'sent', label: 'Gönderilen', cell: (row) => markText(row) },
-        { key: 'now', label: 'Şu anki', cell: (row) => (row.current ? markText(row.current) : '—') },
       ] });
       const tools = toolbar(
         review.status === 'pending' ? actionButton(app, 'admin_decideAttendanceReview', 'Onayla ve yaz',
@@ -401,7 +413,8 @@ export function reviewsTab(app, { onCount, openSession } = {}) {
         kv([['Gönderen', personName(review.submittedBy)], ['Cihazda işaretlendi', fmtDateTime(review.markedAt)],
           ['Akademi\'ye ulaştı', fmtDateTime(review.receivedAt)], ['Durum', statusBadge(REVIEW_STATUS, review.status)],
           review.decidedAt ? ['Karar', `${personName(review.decidedBy)} · ${fmtDateTime(review.decidedAt)}`] : null]),
-        h('div', 'ak-muted', `${num(changed)} öğrencide mevcut yoklamadan farklı.`),
+        h('div', 'ak-muted', `${num(rows.length)} öğrenci işareti. Şu anki yoklamayı görmek için `
+          + '“Yoklama listesini aç”.'),
         tools, table.node,
       ];
     }, { rows: 6, columns: 3 });

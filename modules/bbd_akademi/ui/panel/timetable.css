@@ -215,3 +215,7 @@
   display: grid; grid-template-columns: 110px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) 80px auto;
   gap: 6px; align-items: center;
 }
+/* Satırın ortak sınıfları + müfredatı (README §14 madde 72) */
+.ak-tt-tpl-extra { flex-wrap: wrap; gap: 6px; padding: 0 0 8px 116px; border-bottom: 1px solid var(--line); }
+.ak-tt-tpl-extra .ak-chips { flex-wrap: wrap; gap: 4px; }
+.ak-tt-tpl-extra .kit-select { max-width: 260px; }

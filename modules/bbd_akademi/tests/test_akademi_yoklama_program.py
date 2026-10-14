@@ -115,6 +115,18 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
   out.tplFromTimetable = tpl.entriesFromTimetable({ entries: [
     { dayOfWeek: 'mon', bellSlotId: 'mon1', subject: { id: 'matematik' }, teacher: { id: 't1' }, room: '204', status: 'active' },
     { dayOfWeek: 'tue', bellSlotId: 'x', subject: { id: 'fen' }, status: 'orphaned' }] });
+  // README §14 madde 72: "sınıfın programından al" — classGroups eksi kaynak sınıf, program.id.
+  const shared = tpl.entriesFromTimetable({ entries: [{ dayOfWeek: 'mon', bellSlotId: 'mon1', subject: { id: 'matematik' },
+    status: 'active', classGroups: [{ id: 'c1', name: '8-A' }, { id: 'c2', name: '8-B' }],
+    program: { id: 'p1', title: 'LGS Matematik' } }] }, 'c1');
+  out.tplShared = tpl.templateEntries(shared);
+  out.tplRow = tpl.rowFromTemplateEntry({ dayOfWeek: 'mon', bellSlotId: 'mon1', subjectId: 'matematik',
+    classGroups: [{ id: 'c2', name: '8-B' }], program: { id: 'p1', title: 'LGS Matematik' } });
+  out.tplTooMany = tpl.templateProblem([{ dayOfWeek: 'mon', bellSlotId: 'mon1', subjectId: 'm',
+    classGroupIds: Array.from({ length: 13 }, (_, i) => `g${i}`) }]);
+  out.reviewOrder = manage.reviewRows({ rows: [{ studentId: 'x9', student: null },
+    { studentId: 'u2', student: { displayName: 'Zeynep Ak' } }, { studentId: 'u1', student: { displayName: 'Ali Kaya' } }] })
+    .map((row) => row.studentId);
 
   // --------------------------------------------------------------------- pano
   {
@@ -253,6 +265,48 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
     out.previewPuts = calls.filter((c) => c.method === 'PUT' && c.path.endsWith('/timetable')).length;
     root.remove();
   }
+  // ------------------------------------- düzeltme kuyruğu: adlar satırdan (madde 72)
+  {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const app = makeApp(root, api);
+    const tab = manage.reviewsTab(app, {});
+    root.append(tab.node);
+    tab.reload?.();
+    await sleep(40);
+    const before = calls.length;
+    root.querySelector('button.kit-row').click();
+    await sleep(40);
+    const drawer = root.querySelector('.kit-drawer') || document.querySelector('.kit-drawer');
+    out.reviewText = text(drawer);
+    out.reviewSheetReads = calls.slice(before).filter((c) => c.path.includes('/attendance/sessions/')).length;
+    out.a11y.review = audit(drawer);
+    drawer?.remove();
+    root.remove();
+  }
+
+  // ------------------------------- şablon editörü: ortak sınıf + müfredat (madde 72)
+  {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const app = makeApp(root, api);
+    const current = { id: 'tp1', name: 'Ortaokul', entries: [{ dayOfWeek: 'mon', bellSlotId: 'mon1',
+      subjectId: 'matematik', teacherId: null, room: null, classGroupIds: ['c2'],
+      classGroups: [{ id: 'c2', name: '8-B' }], programId: 'p1', program: { id: 'p1', title: 'LGS Matematik' } }] };
+    const pending = tpl.editTemplate(app, current);
+    await sleep(40);
+    const box = dialog(root) || dialog(document);
+    out.tplEditorText = text(box?.querySelector('.ak-tt-tpl-extra'));
+    box.querySelector('.ak-tt-classchip-x').click();
+    await sleep(10);
+    buttons(box, 'Kaydet')[0].click();
+    await sleep(40);
+    out.tplPut = calls.filter((c) => c.method === 'PUT' && c.path === '/v1/admin/timetable-templates/tp1')
+      .map((c) => c.body).at(-1);
+    await Promise.race([pending, sleep(20)]);
+    root.remove();
+  }
+
   return out;
 }
 """
@@ -312,6 +366,16 @@ PREVIEW = {"conflicts": [], "unassignedTeacherEntryIndexes": [0],
            "teacherMinutes": [{"teacher": {"id": "t1", "displayName": "Hüseyin Hoca"}, "minutes": 80}]}
 
 
+REVIEW = {"id": "r1", "status": "pending", "session": {"id": "as1", "title": "Matematik"},
+          "submittedBy": {"displayName": "Hüseyin Hoca"}, "markedAt": "2026-10-13T09:00:00+03:00",
+          "receivedAt": "2026-10-14T09:00:00+03:00",
+          "rows": [{"studentId": "u1", "status": "absent",
+                    "student": {"id": "u1", "displayName": "Ali Kaya", "firstName": "Ali", "lastName": "Kaya",
+                                "externalRef": "S1", "classGroup": {"id": "c1", "name": "8-A"},
+                                "status": "active"}},
+                   {"studentId": "u404", "status": "present", "student": None}]}
+
+
 @pytest.fixture(scope="module")
 def result() -> dict[str, Any]:
     cancelled = {**_session("s1", taken=False), "status": "cancelled", "statusReason": "Öğretmen hasta"}
@@ -328,7 +392,11 @@ def result() -> dict[str, Any]:
         "POST /v1/admin/sessions/s1/cancel": cancelled,
         "GET /v1/admin/class-groups/c1/timetable*": TIMETABLE,
         "POST /v1/admin/class-groups/c1/timetable/preview": PREVIEW,
-        "GET /v1/admin/curricula/programs*": {"items": []},
+        "GET /v1/admin/curricula/programs*": {"items": [{"id": "p1", "title": "LGS Matematik", "kind": "school",
+                                                         "subject": "matematik", "levelKey": "8",
+                                                         "levelLabel": "8. sınıf"}]},
+        "GET /v1/admin/attendance/reviews*": {"items": [REVIEW], "nextCursor": None},
+        "PUT /v1/admin/timetable-templates/tp1": {"id": "tp1", "name": "Ortaokul", "entries": []},
         "POST /v1/admin/students/u1/leave-requests": {"id": "l1", "status": "approved"},
     }
     scenario = (f"const SID = {json.dumps(SID)};\nconst SID2 = {json.dumps(SID2)};\n" + APP + SCENARIO)
@@ -365,7 +433,29 @@ def test_aralik_ve_senkron_ve_sablon(result: dict[str, Any]) -> None:
     problems = result["tplProblems"]
     assert "En az bir" in problems[0] and "aynı gün" in problems[1] and problems[2] is None
     assert result["tplFromTimetable"] == [{"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": "matematik",
-                                           "teacherId": "t1", "room": "204"}]
+                                           "teacherId": "t1", "room": "204", "classGroupIds": [], "classRefs": [],
+                                           "programId": "", "program": None}]
+
+
+def test_sablon_ortak_sinif_ve_mufredat(result: dict[str, Any]) -> None:
+    # README §14 madde 72: kaynak sınıf düşer, müfredat kimliği taşınır; yanıt alanları gövdeye girmez.
+    assert result["tplShared"] == [{"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": "matematik",
+                                    "teacherId": None, "room": None, "classGroupIds": ["c2"], "programId": "p1"}]
+    assert result["tplRow"]["classGroupIds"] == ["c2"] and result["tplRow"]["programId"] == "p1"
+    assert "en çok 12" in result["tplTooMany"]
+    assert "8-B" in result["tplEditorText"]
+    body = result["tplPut"]
+    assert body["entries"] == [{"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": "matematik", "teacherId": None,
+                                "room": None, "classGroupIds": [], "programId": "p1"}]
+
+
+def test_duzeltme_kuyrugu_adlari_satirdan(result: dict[str, Any]) -> None:
+    assert result["reviewOrder"] == ["u1", "u2", "x9"]
+    text = result["reviewText"]
+    assert "Ali Kaya" in text and "8-A" in text
+    assert "Dizinde yok" in text and "u404" in text
+    assert result["reviewSheetReads"] == 0               # oturum listesi ayrıca okunmaz
+    assert result["a11y"]["review"] == []
 
 
 def test_pano_hatirlat_ve_kapali_ipucu(result: dict[str, Any]) -> None:
@@ -418,7 +508,7 @@ def test_izgara_onizlemesi_kaydetmez(result: dict[str, Any]) -> None:
 
 
 def test_erisilebilirlik(result: dict[str, Any]) -> None:
-    assert result["a11y"] == {"board": [], "day": [], "session": [], "preview": []}
+    assert result["a11y"] == {"board": [], "day": [], "session": [], "preview": [], "review": []}
 
 
 def test_veli_adina_izin(result: dict[str, Any]) -> None:
