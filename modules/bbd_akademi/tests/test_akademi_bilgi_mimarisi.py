@@ -37,7 +37,7 @@ const only = (...keys) => (permission) => keys.includes(permission);
 const keys = (nav) => nav.map((area) => [area.key, area.sections.map((x) => x.key)]);
 const card = (tabs) => tabs.map((tab) => [tab.key, tab.parts.map((p) => p.key)]);
 const off = { early_warning: false, flashcards: false, finance: false, canteen: false, books: false,
-  coaching: false, self_review: false };
+  coaching: false, self_review: false, coach_questions: false };
 const navOff = s.buildNav({ has: all, features: off });
 const out = {
   areas: s.AREAS.map((a) => a.key),
@@ -94,7 +94,8 @@ def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
     assert result["areas"] == ["today", "students", "lessons", "progress", "money", "admin"]
     nav = dict(result["navAll"])
     assert list(nav) == result["areas"]
-    assert nav["today"] == ["dashboard", "requests", "announcements"]
+    # Hoca soruları (Akademi §14 madde 63): öğrencinin hocaya sorusu, yanıt metin + görsel + ses.
+    assert nav["today"] == ["dashboard", "requests", "announcements", "questions"]
     assert nav["students"] == ["students"]
     # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
     assert nav["lessons"] == ["timetable", "attendance", "homework", "plan", "templates", "calendar"]
@@ -117,6 +118,7 @@ def test_hicbir_ekran_kaybolmadi(result: dict[str, Any]) -> None:
 def test_kapali_ozellik_menude_yok(result: dict[str, Any]) -> None:
     nav = dict(result["navOff"])
     assert "insights" not in nav["progress"] and "decks" not in nav["progress"]
+    assert "questions" not in nav["today"]             # soru-cevap kapalı kurumda menüde yok
     # Kantin ve Finans'ın üç ekranı da kapalı → üst bölüm hiç görünmez.
     assert "money" not in nav
     # Bilinmeyen / listede olmayan bayrak bir şey gizlemez.

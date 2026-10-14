@@ -47,6 +47,9 @@ export const SECTIONS = [
   { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'], area: 'today' },
   { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
     area: 'today' },
+  // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
+  { key: 'questions', label: 'Hoca soruları', file: './questions.js', requires: ['learning'], area: 'today',
+    feature: 'coach_questions' },
   // `kmOnly`: Akademi izni olmayan ama öğrenci yönetimi izni olan kullanıcıya
   // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
   { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',
@@ -91,7 +94,7 @@ export const SECTIONS = [
 export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', kvkk: 'privacy',
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
   'kitap-satisi': 'bookSales', 'book-sales': 'bookSales',
-  sablonlar: 'templates', 'assignment-bundles': 'templates' };
+  sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions' };
 
 /**
  * Özellik açık mı. `features` null (okunamadı) ya da bayrak listede yoksa

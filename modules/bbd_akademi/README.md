@@ -90,7 +90,7 @@ seçili üst bölümün altında açılır. Kayıt tek yerde: `ui/panel/sections
 (`ui_coverage.py` eksik 0).
 
 ```
-Bugün ─────────────── Özet · Talepler · Duyurular
+Bugün ─────────────── Özet · Talepler · Duyurular · Hoca soruları
 Öğrenciler ─────────── Öğrenciler (KM yönetimi) · Toplu işlemler · Gruplar ·
                        Sınıflar · Veliler ve uygulama · Uygulama kullanımı
    └ öğrenci kartı ─── Özet · Kayıt ve veliler · Program ve yoklama ·
@@ -220,6 +220,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Kitap talepleri | `books.js` | Kuyruk, siparişi yeniden dene, teslim, sipariş PDF'i |
 | Duyurular | `announcements.js` | Taslak → hedefle → şimdi ya da zamanlı yayımla, okunma oranı |
 | Talepler | `requests.js` | İzin, görüşme ve etüt talepleri |
+| Hoca soruları | `questions.js` (saf mantık import'suz `questions-logic.js`, Node testi) | Öğrencinin hocaya sorusu (Akademi §14 madde 63; koçu yoksa dersin öğretmenine / öğretmen havuzuna gider): süzgeç (bekleyen, geciken, yanıtlanan, kapalı, tümü) + öğretmen, SLA rozeti (geciken kırmızı, 4 saatten az sarı), ayrıntı çekmecesi (soru, görseller, önceki yanıtlar — sesli not oynatıcısı 1x / 1.5x / 2x); **yanıt yaz**: yanıtlayan öğretmen (varsayılan sorumlu hoca; KM öğretmen ADINA yazar, denetimde KM kullanıcısı kalır), metin, görsel / PDF / m4a ekleri ya da tarayıcıdan m4a kayıt (MediaRecorder `audio/mp4`; desteklemeyen tarayıcıda kapalı), iletişim bilgisi uyarısında "yine de gönder"; yönlendir, kapat; **Soru ayarları**: öğretmen havuzu ve veliye bildirim (`admin_putCoachingSettings`, iyimser kilit). Bayrak `coach_questions` kapalıysa menüde yok |
 | Kurum ayarları | `settings*.js` | Özellikler (ilk sekme; değişince menü yenilenir), kurum ve bildirim varsayılanları, logodan tema + önizleme + yayımla (F-A16), özellik bayrakları, anons şablonları, entegrasyon anahtarları, dizin eşitleme (etkin / pasif sayısı), **Senkron** kartı (`settings-sync.js`, aşağıda), denetim kaydı |
 | Personel | `staff.js` | Mobil yönetici erişimi (modülün kendi listesi ve anons adı "Hüseyin hoca", Akademi'ye itilir), Akademi personeli, roller ve izin kataloğu |
 | KVKK talepleri | `privacy.js` (hüküm mantığı import'suz `privacy-logic.js`, Node testi) | Hesap silme ve veri indirme talep kuyruğu (`/v1/admin/data-requests*`): varsayılan açık talepler (en eski önce), tür süzgeci, son gün ve kalan gün rozeti (7 gün ve altı sarı, süresi geçen kırmızı), ayrıntı çekmecesi; **onayla** (silmede geri dönüşsüz silinenler yazılı, isteğe bağlı not), **reddet** (gerekçe zorunlu, en az 10 karakter, talep sahibine gider), silinmiş hesapta **erişimi yeniden aç**; öğrenci talebinde öğrenci kartına geçiş. Yazmalar `X-Akademi-On-Behalf-Of` ile gider; "Sonuçlandıran" alanında KM kullanıcısı görünür. Anahtar izni eksikse (Akademi 403) yeniden üretme notu |
