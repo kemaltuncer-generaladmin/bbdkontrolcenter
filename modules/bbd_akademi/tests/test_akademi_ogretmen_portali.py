@@ -31,6 +31,9 @@ export default async function ({ document, audit, sleep, api, load }) {
     attendance: { notifyGuardiansOnAbsence: true, lateAfterMinutes: 10 },
     reports: { weeklyReportEnabled: true, weeklyReportDay: 'sun', weeklyReportTime: '19:00' },
     assignments: { autoApplyBundlesToNewStudents: false },
+    // birleşik sözleşmede (README §14 madde 64) ayar yanıtı hata defteri saklama grubunu da taşır
+    mistakes: { retentionEnabled: true, learnedImageDays: 30, learnedRecordDays: 180, staleRecordDays: 365,
+      staleWarningDays: 7 },
     teacher: { scope: 'related' } };
   routes['GET /v1/admin/settings'] = () => settings;
   routes['PATCH /v1/admin/settings'] = (body) => { settings = { ...settings, ...body }; return settings; };
