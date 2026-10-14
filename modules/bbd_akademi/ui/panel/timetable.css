@@ -199,6 +199,7 @@
 
 /* ------------------------------------------ ders oturumları (sessions.js) */
 .ak-ses-day { gap: 6px; }
+.ak-ses-month { min-width: 120px; text-align: center; font-variant-numeric: tabular-nums; }
 .ak-ses-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
