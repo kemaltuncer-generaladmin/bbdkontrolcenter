@@ -61,25 +61,20 @@ export function examFamily(type) {
 }
 
 /**
- * Türe göre hazır bölüm düzeni (ÖSYM / MEB yayımlanmış soru sayıları).
- * Ders anahtarları CURRICULUM §4'tendir; kurumda tanımlı olmayan ders atlanır.
+ * Türe göre hazır bölüm düzeni — TEK KAYNAK Akademi `catalog_listExamTemplates`
+ * (`/v1/catalog/exam-templates`, README §14 madde 75). Panelde elle kopya
+ * TUTULMAZ: ders anahtarları müfredat kataloğundandır (LGS İnkılap
+ * `tc-inkilap-tarihi`, TYT alt testleri ayrı, AYT `tarih-1` …); uygulama
+ * (Flutter + web) aynı listeyi okur. Şablon sürümlü platform verisidir: ETag'li
+ * önbellek, bir saat taze.
  */
-export const SECTION_PRESETS = {
-  lgs: [['turkce', 'Türkçe', 20], ['tc-inkilap-tarihi', 'T.C. İnkılap Tarihi', 10],
-    ['din-kulturu', 'Din Kültürü', 10], ['ingilizce', 'İngilizce', 10],
-    ['matematik', 'Matematik', 20], ['fen-bilimleri', 'Fen Bilimleri', 20]],
-  tyt: [['turkce', 'Türkçe', 40], ['tarih', 'Tarih', 5], ['cografya', 'Coğrafya', 5],
-    ['felsefe', 'Felsefe', 5], ['din-kulturu', 'Din Kültürü', 5], ['matematik', 'Matematik', 30],
-    ['geometri', 'Geometri', 10], ['fizik', 'Fizik', 7], ['kimya', 'Kimya', 7], ['biyoloji', 'Biyoloji', 6]],
-  ayt_say: [['matematik', 'Matematik', 30], ['geometri', 'Geometri', 10], ['fizik', 'Fizik', 14],
-    ['kimya', 'Kimya', 13], ['biyoloji', 'Biyoloji', 13]],
-  ayt_ea: [['matematik', 'Matematik', 30], ['geometri', 'Geometri', 10],
-    ['edebiyat', 'Türk Dili ve Edebiyatı', 24], ['tarih-1', 'Tarih-1', 10], ['cografya-1', 'Coğrafya-1', 6]],
-  ayt_soz: [['edebiyat', 'Türk Dili ve Edebiyatı', 24], ['tarih-1', 'Tarih-1', 10],
-    ['cografya-1', 'Coğrafya-1', 6], ['tarih-2', 'Tarih-2', 11], ['cografya-2', 'Coğrafya-2', 11],
-    ['felsefe-grubu', 'Felsefe Grubu', 12], ['din-kulturu', 'Din Kültürü', 6]],
-  ayt_dil: [['yabanci-dil', 'Yabancı Dil', 80]],
-};
+export const EXAM_TEMPLATES_PATH = '/v1/catalog/exam-templates';
+
+/** Türün şablonu (`{type, name, scoring, scoringEditable, sections[], subjects[]}`) ya da `null`. */
+export async function examTemplate(app, type) {
+  const data = await app.api.getCached(EXAM_TEMPLATES_PATH, {}, { ttlMs: 60 * 60_000 });
+  return (data?.items || []).find((item) => item.type === type) || null;
+}
 
 /** Yanlış kaç doğruyu götürür: 3, 4, n ya da null (götürmez). */
 export function wrongsPerCorrect(exam) {
