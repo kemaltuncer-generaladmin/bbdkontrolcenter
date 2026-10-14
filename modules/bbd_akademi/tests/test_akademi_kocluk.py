@@ -173,7 +173,7 @@ def test_vekil_izin_listesi_ve_km_izni() -> None:
     ops = {op.operation_id: op for op in OPERATIONS}
     expected = {
         "admin_getCoachQueue": VIEW, "admin_listCoachingStudents": VIEW, "admin_getCoachingCard": VIEW,
-        "admin_listCoaches": VIEW, "admin_getCoachMetrics": VIEW,
+        "admin_listCoaches": VIEW, "admin_getCoachMetrics": VIEW, "admin_listCoachRoster": VIEW,
         "admin_listCoachReviews": LEARNING, "admin_bulkApproveCoachTasks": LEARNING, "admin_saveCoachWeek": LEARNING,
         "admin_publishCoachWeek": LEARNING, "admin_bulkKudos": LEARNING,
         "admin_bulkAssignCoach": LEARNING_SETUP, "admin_createInstitutionLibraryItem": LEARNING_SETUP,
@@ -188,7 +188,7 @@ def test_vekil_izin_listesi_ve_km_izni() -> None:
     assert ops["admin_resolveVideoLink"].feature_flag == "video_tasks"
     assert ops["admin_listCheckins"].feature_flag == "self_review"
     # Yalnız KM yüzeyindeki yönetim işleri (mobil yönetici ekranında yok).
-    for op_id in ("admin_bulkAssignCoach", "admin_putCoachProfile", "admin_createCoachBadge",
+    for op_id in ("admin_putCoachProfile", "admin_createCoachBadge",
                   "admin_createInstitutionLibraryItem", "admin_exportCoaching"):
         assert ops[op_id].surface == "km", op_id
 

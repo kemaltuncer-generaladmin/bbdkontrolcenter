@@ -18,28 +18,48 @@
 // haftalık programlar — ortak dışa aktarım işi olarak iner.
 
 import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, hintBox, kpiRow, tabBar } from '../../ui-kit/layout.js';
+import { alertBox, badge, chipRow, hintBox, kpiRow, tabBar } from '../../ui-kit/layout.js';
 import {
   GRADE_LEVELS, actionButton, dateInput, errorBox, exportJob, fmtDate, fmtDateTime, formDialog, gradeText, kv,
-  loader, multiChips, openDrawer, optionsOf, selectBox, staticList, statusBadge, todayIst, toolbar,
+  loader, multiChips, openDrawer, optionsOf, pagedList, searchBox, selectBox, staticList, statusBadge, todayIst, toolbar,
 } from './common.js';
 import { loadTargets, targetsField } from './plan-tasks.js';
 import {
   BULK_ACTIONS, EXPORT_FORMATS, EXPORT_KINDS, SUBMISSION_DIGEST, bulkAssignBody, exportBody, hoursText, pct,
   profilePut,
 } from './coaching-logic.js';
-import { COACHES, coachOptions, studentCell } from './coaching-shared.js';
+import { COACHES, coachOptions, setEnabled, studentCell } from './coaching-shared.js';
 
 const SORTS = { name: 'Ada göre', load: 'Yük (öğrenci sayısı)', pending_reviews: 'Bekleyen kontrol',
   response_time: 'Yanıt süresi' };
 
 export function tab(app, ctx) {
   const node = h('div', 'ak-stack');
+  const views = [{ key: 'coaches', label: 'Koçlar' },
+    app.can('admin_listCoachRoster') && { key: 'roster', label: 'Eşleme tablosu' }].filter(Boolean);
+  let view = 'coaches';
+  const coachesView = h('div', 'ak-stack');
+  let roster = null;
+  const chips = chipRow(views, view, (key) => {
+    view = key || view;
+    chips.set(view);
+    coachesView.hidden = view !== 'coaches';
+    if (view === 'roster') {
+      roster = roster || rosterView(app, ctx);
+      if (!roster.node.parentNode) node.append(roster.node);
+      roster.node.hidden = false;
+      roster.start();
+    } else if (roster) {
+      roster.node.hidden = true;
+    }
+  });
+  if (views.length > 1) node.append(chips.node);
+  node.append(coachesView);
   let sort = 'name';
   const sortBox = selectBox(optionsOf(SORTS), sort, (value) => { sort = value || 'name'; list.reload(); }, { label: 'Sıra' });
   const assign = actionButton(app, 'admin_bulkAssignCoach', 'Toplu koç ata', { variant: 'primary',
     onClick: async () => { if (await bulkAssignDialog(app)) refresh(); } });
-  node.append(toolbar(sortBox.node, h('span', 'kit-spacer'), assign),
+  coachesView.append(toolbar(sortBox.node, h('span', 'kit-spacer'), assign),
     hintBox('Öğretmen = koç: Öğretmen / Koç rolündeki bütün etkin personel burada listelenir. Tek öğrencinin koçu '
       + 'öğrenci kartındaki Koçluk sekmesinden değiştirilir.'));
 
@@ -63,10 +83,61 @@ export function tab(app, ctx) {
     ],
     empty: { title: 'Koç yok', text: 'Personel ekranında öğretmenlere "Öğretmen / Koç" rolü verildiğinde burada görünür.' },
   });
-  node.append(list.node);
-  const refresh = () => { app.api.invalidate(COACHES); list.reload(); };
+  coachesView.append(list.node);
+  const refresh = () => { app.api.invalidate(COACHES); list.reload(); roster?.reload(); };
   let started = false;
-  return { node, shown() { if (!started) { started = true; list.reload(); } } };
+  return { node, shown() { if (!started) { started = true; list.reload(); } }, destroy() { roster?.destroy(); } };
+}
+
+// ------------------------------------------------------------ eşleme tablosu
+
+const ROSTER_STATUS = { scheduled: ['Başlayacak', 'info'], active: ['Etkin', 'good'], ended: ['Bitti', 'dim'] };
+
+/** Öğrenci × koç eşleme tablosu (`admin_listCoachRoster`): koçsuzları bulup toplu atamaya götürür. */
+function rosterView(app, ctx) {
+  const node = h('div', 'ak-stack');
+  const filter = { q: '', classGroupId: '', coachId: '', coach: '' };
+  const search = searchBox({ placeholder: 'Öğrenci ara (ad, okul no)', label: 'Öğrenci ara',
+    onSearch: (text) => { filter.q = text; list.reload(); } });
+  const classSlot = h('div');
+  const coachSlot = h('div');
+  const state = selectBox([{ value: '', label: 'Hepsi' }, { value: 'assigned', label: 'Koçu olanlar' },
+    { value: 'none', label: 'Koçu olmayanlar' }], '', (value) => { filter.coach = value; list.reload(); }, { label: 'Koç durumu' });
+  const assign = actionButton(app, 'admin_bulkAssignCoach', 'Seçilenlere koç ata', { variant: 'primary', onClick: async () => {
+    const students = list.table.selectedRows().map((row) => row.student).filter(Boolean);
+    if (await bulkAssignDialog(app, { students })) { app.api.invalidate(COACHES); list.reload(); }
+  } });
+  setEnabled(assign, false);
+  node.append(toolbar(search.node, classSlot, coachSlot, state.node, h('span', 'kit-spacer'), assign));
+  app.lookups.options('classGroups', { empty: 'Bütün sınıflar' }).then((options) => {
+    classSlot.append(selectBox(options, '', (value) => { filter.classGroupId = value; list.reload(); }, { label: 'Sınıf' }).node);
+  }).catch(() => {});
+  coachOptions(app, { empty: 'Bütün koçlar' }).then((options) => {
+    coachSlot.append(selectBox(options, '', (value) => { filter.coachId = value; list.reload(); }, { label: 'Koç' }).node);
+  });
+  const list = pagedList({
+    app,
+    path: '/v1/admin/coach-assignments/roster',
+    query: () => Object.fromEntries(Object.entries(filter).filter(([, value]) => value)),
+    limit: 50,
+    selectable: true,
+    rowKey: (row) => row.student?.id,
+    onSelect: (keys) => setEnabled(assign, keys.length > 0),
+    onRow: (row) => ctx.openStudent?.(row.student),
+    columns: [
+      { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.4fr)', cell: (row) => studentCell(row.student) },
+      { key: 'coach', label: 'Koç', width: 'minmax(0, 1fr)', cell: (row) => (row.assignment?.coach?.displayName
+        || badge('Koçu yok', 'warn')) },
+      { key: 'since', label: 'Başlangıç', width: '120px', cell: (row) => (row.assignment ? fmtDate(row.assignment.startsOn) : '—') },
+      { key: 'status', label: 'Durum', width: '120px', cell: (row) => (row.assignment
+        ? statusBadge(ROSTER_STATUS, row.assignment.status) : '—') },
+    ],
+    empty: { title: 'Eşleşen öğrenci yok', text: 'Süzgeci değiştirin.' },
+  });
+  node.append(list.node);
+  let started = false;
+  return { node, start() { if (!started) { started = true; list.reload(); } }, reload: () => started && list.reload(),
+    destroy() { list.destroy(); search.destroy(); } };
 }
 
 /** Öğrenci / kapasite rozeti (aşan kırmızı). */
@@ -210,13 +281,13 @@ function metricsPane(app, staffId) {
 // ----------------------------------------------------------- toplu koç atama
 
 /** Toplu koç atama: form → önizleme (dryRun) → uygula. Dönüş: uygulanan sonuç | null. */
-export async function bulkAssignDialog(app) {
+export async function bulkAssignDialog(app, { students = [] } = {}) {
   const [coaches, [classes, groups]] = await Promise.all([coachOptions(app), loadTargets(app)]);
   if (!coaches.length) {
     app.toast('Koç yok: önce personele "Öğretmen / Koç" rolü verin.', 'bad');
     return null;
   }
-  let target = { classGroupIds: [], studentGroupIds: [], studentIds: [] };
+  let target = { classGroupIds: [], studentGroupIds: [], studentIds: students.map((student) => student.id) };
   const form = await formDialog(app, {
     title: 'Toplu koç ata',
     description: 'Seçilen sınıf, grup, seviye ve öğrencilere aynı koç atanır. Önce önizleme gösterilir; kayıt '
@@ -225,7 +296,7 @@ export async function bulkAssignDialog(app) {
     fields: [
       { key: 'coachId', label: 'Koç', type: 'select', required: true, options: [{ value: '', label: 'Koç seçin' }, ...coaches] },
       { key: 'target', label: 'Kime', type: 'custom', render: () => {
-        const field = targetsField(app, { classes, groups, onChange: (value) => { target = value; } });
+        const field = targetsField(app, { classes, groups, value: { students }, onChange: (value) => { target = value; } });
         return field.node;
       } },
       { key: 'gradeLevels', label: 'Seviye (isteğe bağlı)', type: 'custom', render: (draft, set) => multiChips(
