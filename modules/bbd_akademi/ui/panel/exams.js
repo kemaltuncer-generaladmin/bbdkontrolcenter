@@ -25,7 +25,7 @@ import {
   pagedList, sectionHead, selectBox, statusBadge, todayIst, toolbar,
 } from './common.js';
 import {
-  EXAM_STATUS, EXAM_TYPES, FILL_STATUS, SCORING_RULES, SECTION_PRESETS, examFamily, examTitleCell,
+  EXAM_STATUS, EXAM_TYPES, FILL_STATUS, SCORING_RULES, examFamily, examTemplate, examTitleCell,
   scoringText, sectionLabel, sortedSections, totalQuestions,
 } from './exams-shared.js';
 import { exportTab, resultsTab } from './exams-results.js';
@@ -567,20 +567,28 @@ function sectionsEditor(app, { draft, set, subjects, locked, rows: given = [] })
   const total = h('span', 'ak-muted');
   foot.append(
     button('Bölüm ekle', { onClick: () => { rows.push({ subjectId: '', title: '', questionCount: 20, programId: '' }); paint(); } }),
-    button('Türe göre doldur', { onClick: () => preset() }),
+    button('Türe göre doldur', { onClick: () => { preset(); } }),
     h('span', 'kit-spacer'), total);
   node.append(listNode, foot);
 
   const subjectOptions = [{ value: '', label: 'Ders seçin' },
     ...subjects.map((item) => ({ value: item.id, label: item.name }))];
 
-  function preset() {
-    const layout = SECTION_PRESETS[draft.type];
-    if (!layout) { app.toast('Bu tür için hazır düzen yok; bölümleri elle ekleyin.', 'warn'); return; }
+  // Şablon Akademi'den (`catalog_listExamTemplates`; elle kopya yok — README §14 madde 75).
+  async function preset() {
+    let template;
+    try {
+      template = await examTemplate(app, draft.type);
+    } catch (failure) {
+      app.toast(`Deneme şablonu alınamadı: ${errorText(failure)}`, 'bad');
+      return;
+    }
+    const layout = template?.sections || [];
+    if (!layout.length) { app.toast('Bu tür için hazır düzen yok; bölümleri elle ekleyin.', 'warn'); return; }
     const known = new Set(subjects.map((item) => item.id));
-    const missing = layout.filter(([id]) => !known.has(id)).map(([, title]) => title);
-    rows = layout.filter(([id]) => known.has(id))
-      .map(([subjectId, title, questionCount]) => ({ subjectId, title, questionCount, programId: '' }));
+    const missing = layout.filter((item) => !known.has(item.subjectId)).map((item) => item.title);
+    rows = layout.filter((item) => known.has(item.subjectId))
+      .map((item) => ({ subjectId: item.subjectId, title: item.title, questionCount: item.questionCount, programId: '' }));
     if (missing.length) app.toast(`Kurumda tanımlı olmayan dersler atlandı: ${missing.join(', ')}`, 'warn');
     paint();
   }

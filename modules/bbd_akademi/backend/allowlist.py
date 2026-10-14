@@ -3540,6 +3540,14 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/catalog/exam-templates',
+        'catalog_listExamTemplates',
+        ('exams.view',),
+        'read',
+        features=('F-E1', 'F-S10b'),
+    ),
+    Operation(
+        'GET',
         '/v1/catalog/library',
         'catalog_searchLibrary',
         ('resources.view', 'coach_library.view'),
