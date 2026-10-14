@@ -1,6 +1,11 @@
 // BBD Akademi — öğrenci detayı: Koçluk sekmesi (F-A21 koç notları, F-S21, F-A22).
 //
-// Dört iç sekme:
+// Beş iç sekme:
+//  · Koç — öğrencinin koçu ve eşleme geçmişi; koç ata / değiştir / eşlemeyi bitir
+//    (`admin_listStudentCoachHistory`, `admin_createCoachAssignment`, `admin_changeCoach`,
+//    `admin_endCoachAssignment`). ÖĞRETMEN = KOÇ: seçici `admin_listCoaches`'tır ve
+//    "Öğretmen / Koç" rolündeki bütün etkin personeli listeler (yönetici + öğretmen olan
+//    da); ayrı koç tanımı / koç profili adımı yoktur (profil ilk düzenlemede oluşur).
 //  · Koç notları — kurumun görüşme notları (özel ya da paylaşılan); ekle,
 //    düzenle, sil (`/v1/admin/students/{id}/coach-notes`, `/v1/admin/coach-notes/{id}`).
 //  · Öğrencinin gördüğü notlar — öğrenci/veli uygulamasındaki paylaşılan
@@ -18,10 +23,10 @@
 // atar. Listeler imleçlidir; satır başına ek istek atılmaz (öz değerlendirme
 // ayrıntısı liste yükünden çizilir).
 //
-// DERİN BAĞLANTI: `shown({coachingTab})` — notes · shared · evaluations · selfReviews.
+// DERİN BAĞLANTI: `shown({coachingTab})` — coach · notes · shared · evaluations · selfReviews.
 
 import { button, clip, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, card, hintBox, kpiRow, tabBar } from '../../ui-kit/layout.js';
+import { alertBox, badge, card, hintBox, kpiRow, tabBar } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { groupedBar, lineChart, sparkline } from '../../ui-kit/charts.js';
 import {
@@ -31,6 +36,7 @@ import {
 import { featureNotice, ruleName, ruleValue, severityBadge, statusBadgeOf } from './insights-shared.js';
 
 const SUBTABS = [
+  { key: 'coach', label: 'Koç', read: 'admin_listStudentCoachHistory' },
   { key: 'notes', label: 'Koç notları', read: 'admin_listCoachNotes' },
   { key: 'shared', label: 'Öğrencinin gördüğü notlar', read: 'students_listSharedCoachNotes' },
   { key: 'evaluations', label: 'Değerlendirmeler', read: 'students_listEvaluations' },
@@ -74,6 +80,7 @@ export function coachingPanel(app, studentId) {
 
   const bodies = {};
   const builders = {
+    coach: () => coachTab(app, studentId),
     notes: () => notesTab(app, studentId),
     shared: () => sharedTab(app, studentId),
     evaluations: () => evaluationsTab(app, studentId),
@@ -115,6 +122,169 @@ export function coachingPanel(app, studentId) {
       }
     },
   };
+}
+
+// ============================================================ koç (eşleme)
+
+const ASSIGNMENT_STATUS = { active: ['Etkin', 'good'], scheduled: ['Başlayacak', 'info'], ended: ['Bitti', 'dim'] };
+
+/** Koç seçeneği: "Ad · 12/20 öğrenci" (kapasite kurum ya da koç sınırı). */
+function coachOption(row) {
+  const load = row.maxStudents ? `${row.studentCount}/${row.maxStudents}` : String(row.studentCount);
+  return { value: row.coach.id, label: `${row.coach.displayName} · ${load} öğrenci` };
+}
+
+/** `km:user:<id>:<ad>` (vekil etiketi) → "Ad (KM)"; kişi adı olduğu gibi. */
+function assignerText(by) {
+  if (!by) return '—';
+  const parts = String(by).split(':');
+  if (parts[0] !== 'km') return by;
+  if (parts.length < 4) return 'Kontrol Merkezi';
+  try {
+    return `${decodeURIComponent(parts.slice(3).join(':'))} (KM)`;
+  } catch {
+    return 'Kontrol Merkezi';
+  }
+}
+
+function coachTab(app, studentId) {
+  const node = h('div', 'ak-stack');
+  const canPick = app.can('admin_listCoaches');
+
+  const view = loader(async () => {
+    const [history, coaches] = await Promise.all([
+      app.api.get(`/v1/admin/students/${studentId}/coach-assignments`),
+      canPick ? app.api.get('/v1/admin/coaching/coaches', { sort: 'name' }) : Promise.resolve(null),
+    ]);
+    return { items: history?.items || [], coaches: coaches?.items || null };
+  }, ({ items, coaches }) => {
+    // Açık eşleme: bitişi olmayan (etkin ya da ileri tarihli) — Akademi'de en çok bir tane.
+    const open = items.find((row) => row.status !== 'ended' && !row.endsOn) || null;
+    const nodes = [hintBox('Öğretmen = koç: "Öğretmen / Koç" rolündeki her etkin personel (yönetici + öğretmen '
+      + 'olanlar dahil) ayrıca tanımlanmadan koç seçilebilir. Rol, Personel → Mobil yönetici erişimi\'nden verilir.')];
+    const actions = h('div', 'ak-inline');
+    const options = (coaches || []).map(coachOption);
+    if (!open) {
+      actions.append(actionButton(app, 'admin_createCoachAssignment', 'Koç ata', { variant: 'primary',
+        onClick: () => assign(options) }));
+    } else {
+      actions.append(
+        actionButton(app, 'admin_changeCoach', 'Koçu değiştir', { variant: 'primary',
+          onClick: () => change(open, options) }),
+        actionButton(app, 'admin_endCoachAssignment', 'Eşlemeyi bitir', { variant: 'ghost',
+          onClick: () => end(open) }),
+      );
+    }
+    const body = h('div', 'ak-card-pad ak-stack');
+    body.append(open
+      ? kv([
+        ['Koç', open.coach?.displayName || '—'],
+        ['Durum', statusBadge(ASSIGNMENT_STATUS, open.status)],
+        ['Başlangıç', fmtDate(open.startsOn)],
+        ['Atayan', assignerText(open.assignedBy)],
+      ])
+      : h('span', 'ak-muted', 'Öğrencinin koçu yok. "Koç ata" ile Öğretmen / Koç rolündeki birini seçin.'),
+    actions);
+    nodes.push(card(open ? 'Koçu' : 'Koç atanmamış', body));
+    if (coaches && !coaches.length) {
+      nodes.push(alertBox('Koç seçilecek kimse yok: Personel → Mobil yönetici erişimi\'nde birine '
+        + '"Öğretmen / Koç" rolü verin.', 'warn'));
+    }
+    const table = dataTable({
+      columns: [
+        { key: 'coach', label: 'Koç', width: 'minmax(0, 1.4fr)', cell: (row) => row.coach?.displayName || '—' },
+        { key: 'status', label: 'Durum', width: '120px', cell: (row) => statusBadge(ASSIGNMENT_STATUS, row.status) },
+        { key: 'from', label: 'Başlangıç', width: '120px', cell: (row) => fmtDate(row.startsOn) },
+        { key: 'to', label: 'Bitiş', width: '120px', cell: (row) => (row.endsOn ? fmtDate(row.endsOn) : '—') },
+        { key: 'reason', label: 'Bitiş gerekçesi', width: 'minmax(0, 1.4fr)', cell: (row) => row.endReason || '—' },
+      ],
+      rows: items,
+      empty: empty('Eşleme geçmişi yok', 'Öğrenciye henüz koç atanmadı.'),
+    });
+    nodes.push(card('Eşleme geçmişi', table.node));
+    return nodes;
+  });
+  node.append(view.node);
+
+  const coachField = (options, label = 'Koç') => ({ key: 'coachId', label, type: 'select', required: true,
+    options: [{ value: '', label: options.length ? 'Öğretmen / Koç seçin' : 'Seçilecek öğretmen / koç yok' }, ...options],
+    hint: 'Öğretmen / Koç rolündeki etkin personel; yanında üstlendiği öğrenci sayısı.' });
+  const reasonCheck = (value) => (String(value || '').trim().length < 3 ? 'En az 3 karakter yazın.' : null);
+  const capacityToast = (capacity) => {
+    if (capacity?.exceeded) {
+      app.toast(`${capacity.coach?.displayName || 'Koç'} kapasiteyi aştı (${capacity.studentCount}/`
+        + `${capacity.maxStudents}); atama yine yapıldı.`, 'warn');
+    }
+  };
+
+  async function assign(options) {
+    const result = await formDialog(app, {
+      title: 'Koç ata',
+      description: 'Öğrenci ve veliye "koçunuz" bildirimi gider; koç bu öğrencinin koçluk ekranlarını görür.',
+      value: { coachId: '', startsOn: todayIst() },
+      fields: [coachField(options), { key: 'startsOn', label: 'Başlangıç', type: 'date', required: true }],
+      submitLabel: 'Ata',
+      onSubmit: (draft, { key }) => {
+        if (!draft.coachId) throw new Error('Koç seçin.');
+        return app.api.post('/v1/admin/coach-assignments',
+          { studentId, coachId: draft.coachId, startsOn: draft.startsOn || undefined }, { key });
+      },
+    });
+    if (!result) return;
+    app.toast(`${result.assignment?.coach?.displayName || 'Koç'} atandı.`, 'good');
+    capacityToast(result.capacity);
+    view.reload();
+  }
+
+  async function change(current, options) {
+    const result = await formDialog(app, {
+      title: 'Koçu değiştir',
+      description: `Şu anki koç: ${current.coach?.displayName || '—'}. Açık koç görevleri ve yazışmalar yeni koça `
+        + 'devredilir; devir notu yeni koça görünür.',
+      value: { coachId: '', effectiveOn: todayIst(), reason: '', handoverNote: '' },
+      fields: [
+        coachField(options.filter((option) => option.value !== current.coach?.id), 'Yeni koç'),
+        { key: 'effectiveOn', label: 'Geçerlilik', type: 'date', required: true },
+        { key: 'reason', label: 'Gerekçe', type: 'text', required: true, maxLength: 300, wide: true,
+          validate: reasonCheck },
+        { key: 'handoverNote', label: 'Devir notu', type: 'textarea', required: true, maxLength: 2000, wide: true,
+          validate: reasonCheck },
+      ],
+      submitLabel: 'Değiştir',
+      onSubmit: (draft, { key }) => {
+        if (!draft.coachId) throw new Error('Yeni koçu seçin.');
+        return app.api.post(`/v1/admin/students/${studentId}/coach-change`, {
+          newCoachId: draft.coachId, effectiveOn: draft.effectiveOn || undefined,
+          reason: String(draft.reason).trim(), handoverNote: String(draft.handoverNote).trim(),
+        }, { key });
+      },
+    });
+    if (!result) return;
+    app.toast(`Koç değişti: ${result.created?.coach?.displayName || ''}.`, 'good');
+    capacityToast(result.capacity);
+    view.reload();
+  }
+
+  async function end(current) {
+    const result = await formDialog(app, {
+      title: 'Eşlemeyi bitir',
+      description: `${current.coach?.displayName || 'Koç'} ile eşleme biter; öğrenci koçsuz kalır.`,
+      value: { endsOn: todayIst(), reason: '' },
+      fields: [
+        { key: 'endsOn', label: 'Bitiş', type: 'date', required: true },
+        { key: 'reason', label: 'Gerekçe', type: 'text', required: true, maxLength: 300, wide: true,
+          validate: reasonCheck },
+      ],
+      submitLabel: 'Bitir',
+      onSubmit: (draft, { key }) => app.api.post(`/v1/admin/coach-assignments/${current.id}/end`,
+        { endsOn: draft.endsOn || undefined, reason: String(draft.reason).trim() }, { key }),
+    });
+    if (!result) return;
+    app.toast('Eşleme bitti.', 'good');
+    view.reload();
+  }
+
+  return { node, reload: () => view.reload(), destroy() {} };
 }
 
 // ============================================================ erken uyarı

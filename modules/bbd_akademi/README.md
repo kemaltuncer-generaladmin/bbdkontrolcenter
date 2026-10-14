@@ -199,7 +199,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Bölüm | Dosya | İçerik |
 |---|---|---|
 | Bugün → Özet | `dashboard.js` | Tek özet çağrısı: günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
-| Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler. KM'de **pasifleştirilen** öğrenci varsayılan listede yoktur, “Durum → Pasif (KM)” süzgeciyle (`status=inactive`) görünür; çekmecesi salt okunurdur (yazma düğmeleri gerekçeli kapalı — kurum cari tahsilatı ve dışa aktarım açık) |
+| Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç — eşleme, koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler. KM'de **pasifleştirilen** öğrenci varsayılan listede yoktur, “Durum → Pasif (KM)” süzgeciyle (`status=inactive`) görünür; çekmecesi salt okunurdur (yazma düğmeleri gerekçeli kapalı — kurum cari tahsilatı ve dışa aktarım açık) |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | (ortak) | `curriculum-picker.js` | Program / konu seçicisi (ödev, plan görevi, deneme, deste, kaynak içindekiler): etiket seviyeyi taşır ("11. sınıf · Matematik"), seviye sırası (5→8, LGS, 9→12, TYT, AYT), ödevde hedefin (sınıf / grup / öğrenci) seviyesinden önerilen program kendiliğinden seçilir (ortak ödev içerik alanları `homework-content.js` üzerinden: tek ödevde formdaki hedef, toplu ödevde "Kime?" seçildikten sonra; şablonda hedef yok → seviye çipleri); atama paketinin program listesi de seviyeli; seviye sınıftan gelir (Öğrenciler → Sınıflar). Konu ağacı yalnız konu kimliği seçtirir |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
@@ -306,6 +306,20 @@ sayaçlarını sıfırlama (`admin_resetSmsLimits` — Akademi + KM geçidi birl
 kaydı `sms.limits_reset`). İzin `integrations.manage`. Geçit tarafı (jobId, hat, teslim
 izi, göç 003, `GET /sms/otp/{jobId}`, `POST /sms/limits/reset`) `mobile_gateway`
 README'sindedir.
+
+**0.5.8 (ogretmen-koc-tek, kullanıcı kararı 14.10.2026 "Koç = öğretmen"):** öğretmen ve koç
+TEK kavramdır — Akademi rolü `teacher` ("Öğretmen / Koç"); ayrı koç rolü, listesi ya da koç
+tanımı adımı yoktur. Personel → Mobil yönetici erişimi rolleri **Yönetici**, **Öğretmen / Koç**
+(çoklu seçim: bir kişi hem yönetici hem öğretmen / koç olabilir; uygulamada rolünü seçerek
+geçer). Öğrenci detayı → Koçluk → **Koç** iç sekmesi (`students-coaching.js`): öğrencinin
+koçu ve eşleme geçmişi (`admin_listStudentCoachHistory`), **Koç ata**
+(`admin_createCoachAssignment`), **Koçu değiştir** (`admin_changeCoach`, gerekçe + devir
+notu), **Eşlemeyi bitir** (`admin_endCoachAssignment`); seçici `admin_listCoaches` = Öğretmen /
+Koç rolündeki bütün etkin personel (yönetici + öğretmen olan dahil), yanında üstlendiği öğrenci
+sayısı; kapasite aşımı uyarılır, engellenmez. Rehber öğretmen bir rol değil sınıf eşlemesidir
+(Sınıflar → Dönem ve rehber; seçici öğretmenler). Akademi tarafı: aynı telefondaki **yerel**
+personel (kurulumda CLI ile açılan ilk yönetici) KM itmesinde artık sahiplenilir
+(`phone_conflict` yerine `source=km`, denetim `staff.adopt`) — `backend/staff.py` başlığı.
 
 Belgeler (0.5.4, akademi-belge bileşeniyle): Kitap satışı ayrıntısında **Satış
 belgesi** (`book_sale` — kitaplar, öğrenci satırları, teslim alan imza sütunu;

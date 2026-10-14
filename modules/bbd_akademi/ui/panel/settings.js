@@ -461,7 +461,7 @@ const FEATURES = {
   books: ['Kitap talepleri', 'Mağaza üzerinden kitap talebi, veli onayı ve sipariş.'],
   finance: ['Kurum finansı', 'Cari hesap, taksit planı ve tahsilat.'],
   'finance.card': ['Uygulamadan kartla ödeme', 'Velinin kurum borcunu uygulamadan kartla ödemesi.'],
-  'teacher.portal': ['Öğretmen portalı', 'Öğretmen girişi (altyapı hazır; uygulamada yer tutucu ekran).'],
+  'teacher.portal': ['Öğretmen / koç portalı', 'Öğretmen / koç girişi (altyapı hazır; uygulamada yer tutucu ekran).'],
   'directory.source': ['Öğrenci dizini KM\'den', 'Öğrenci ve veli dizini Kontrol Merkezi\'nden eşitlenir.'],
   reading_league: ['Okuma ligi', 'Öğrenciler arası okuma sıralaması.'],
   class_comparison: ['Anonim sınıf kıyası', 'Öğrenci kendi sonucunu sınıf ortalamasıyla kıyaslar.'],

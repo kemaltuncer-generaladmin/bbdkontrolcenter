@@ -12,6 +12,11 @@ burada, KM'de tutulur ve Akademi'ye TAM LİSTE olarak itilir
    kapalıyken yapılan değişiklik de böylece kendiliğinden yerine ulaşır.
 3. Panelden "Şimdi eşitle".
 
+AYNI TELEFON AKADEMİ'DE YEREL PERSONELSE (ör. kurulumda akademi-cli ile açılan ilk
+yönetici) Akademi o kaydı sahiplenir: KM'nin olur, roller KM'den gelir, çift kayıt
+açılmaz (Akademi `staff.adopt`; `phone_conflict` yalnız aynı listede aynı telefon
+iki kez gelirse).
+
 Akademi ulaşılamazsa KM'deki kayıt YİNE YAZILIR; eşitleme durumu "başarısız"
 olur ve sonraki tur tekrar dener. Akademi'nin satır bazındaki reddi
 (`invalid_phone`, `unknown_role`, `phone_conflict`) satırın üstüne yazılır.
@@ -40,7 +45,9 @@ from . import contract_features
 from .gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
 
 ROLES = ("admin", "teacher")
-ROLE_LABELS = {"admin": "Yönetici", "teacher": "Öğretmen"}
+#: Öğretmen = koç (tek kavram, tek Akademi rolü ``teacher``; Akademi rol adı "Öğretmen / Koç").
+#: Bir kişi birden çok rol taşır (ör. yönetici + öğretmen / koç); her rol uygulamada ayrı seçilir.
+ROLE_LABELS = {"admin": "Yönetici", "teacher": "Öğretmen / Koç"}
 PHONE = re.compile(r"^5\d{9}$")
 ANNOUNCE_NAME_MAX = 60
 SYNC_PATH = "/v1/admin/staff/sync"
@@ -140,7 +147,7 @@ class StaffService:
         roles = [str(item) for item in data.get("roles") or []]
         roles = [item for item in ROLES if item in roles]
         if not roles or len(roles) != len(set(data.get("roles") or [])):
-            raise StaffError("En az bir Akademi rolü seçin (Yönetici / Öğretmen).",
+            raise StaffError("En az bir Akademi rolü seçin (Yönetici, Öğretmen / Koç).",
                              field="roles")
         km_user_id = str(data.get("kmUserId") or "").strip() or None
         note = str(data.get("note") or "").strip()[:200]

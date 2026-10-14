@@ -36,12 +36,13 @@ import {
   problem, runAction, searchBox, sectionHead, selectBox, staticList, toolbar,
 } from './common.js';
 
-const KM_ROLES = [{ key: 'admin', label: 'Yönetici' }, { key: 'teacher', label: 'Öğretmen' }];
+// Öğretmen = koç: tek rol (`teacher`). Bir kişi birden çok rol taşır (ör. Yönetici + Öğretmen / Koç).
+const KM_ROLES = [{ key: 'admin', label: 'Yönetici' }, { key: 'teacher', label: 'Öğretmen / Koç' }];
 const SYNC_STATE = { never: ['Henüz eşitlenmedi', 'warn'], ok: ['Eşitlendi', 'good'],
   partial: ['Kısmen eşitlendi', 'warn'], failed: ['Eşitlenemedi', 'bad'] };
 const SYNC_SOURCE = { change: 'değişiklik sonrası', schedule: 'zamanlanmış görev', manual: 'elle eşitleme' };
 const ROW_ERRORS = { invalid_phone: 'Akademi telefonu geçersiz buldu', unknown_role: 'Rol Akademi\'de tanımlı değil',
-  phone_conflict: 'Telefon Akademi\'de başka bir kişide' };
+  phone_conflict: 'Telefon başka bir personel kaydında da var' };
 
 export function section(app) {
   loadStyles(import.meta.url, 'staff.css');
@@ -138,9 +139,11 @@ function mobileTab(app, { onChanged }) {
   inactiveToggle.append(inactiveCheck, h('span', '', 'Erişimi kapalı olanları da göster'));
   const syncButton = button('Şimdi eşitle', { onClick: () => syncNow() });
   const add = button('Erişim ver', { variant: 'primary', onClick: () => edit(null) });
-  node.append(hintBox('Akademi mobil uygulamasına yönetici ya da öğretmen olarak kimin gireceğini Kontrol '
-    + 'Merkezi belirler. Liste her değişiklikte, zamanlanmış görevde ve “Şimdi eşitle” ile Akademi\'ye tam '
-    + 'olarak itilir; Akademi bu kayıtları değiştiremez.'), banner,
+  node.append(hintBox('Akademi mobil uygulamasına yönetici ya da öğretmen / koç olarak kimin gireceğini Kontrol '
+    + 'Merkezi belirler. Bir kişi birden çok rol taşıyabilir (ör. Yönetici + Öğretmen / Koç); uygulamada rolünü '
+    + 'seçerek geçer. Öğretmen / Koç rolündeki herkes ayrıca tanımlanmadan koç olarak atanabilir. Liste her '
+    + 'değişiklikte, zamanlanmış görevde ve “Şimdi eşitle” ile Akademi\'ye tam olarak itilir; Akademi bu '
+    + 'kayıtları değiştiremez.'), banner,
   toolbar(search.node, inactiveToggle, h('span', 'kit-spacer'), syncButton, add));
 
   const table = dataTable({
@@ -185,7 +188,7 @@ function mobileTab(app, { onChanged }) {
     ],
     rows: [],
     empty: empty('Mobil yönetici erişimi olan kimse yok',
-      'Akademi mobil uygulamasına girecek yönetici ve öğretmenleri ekleyin.'),
+      'Akademi mobil uygulamasına girecek yönetici ve öğretmen / koçları ekleyin.'),
   });
 
   const view = loader(() => app.api.km('/staff'), (data) => {
@@ -280,6 +283,7 @@ function mobileTab(app, { onChanged }) {
             : 'Zil çağrısında öğretmen bu adla okunacak. KM\'de saklanır; Akademi bu alanı henüz desteklemiyor, '
               + 'destek gelince eşitlemeyle kendiliğinden gider.' },
         { key: 'roles', label: 'Akademi rolleri', type: 'custom', required: true,
+          hint: 'Birden çok rol seçilebilir (ör. Yönetici + Öğretmen / Koç). Öğretmen / Koç rolündeki kişi koç olarak da atanır.',
           render: (_draft, set) => {
             set(initialRoles);
             return multiChips(roles.map((role) => ({ value: role.key, label: role.label })),
@@ -669,10 +673,11 @@ const AREAS = {
   finance: 'Kurum finansı', canteen: 'Kantin', books: 'Kitap', announcements: 'Duyurular',
   requests: 'Talepler', pa: 'Anons', tablet: 'Tablet', staff: 'Personel', roles: 'Roller',
   audit: 'Denetim', settings: 'Ayarlar', branding: 'Tema', directory: 'Dizin',
-  integrations: 'Entegrasyon', dashboard: 'Panel', teacher: 'Öğretmen', notifications: 'Bildirimler',
+  integrations: 'Entegrasyon', dashboard: 'Panel', teacher: 'Öğretmen / koç', notifications: 'Bildirimler',
   agenda: 'Ajanda', evaluations: 'Değerlendirme', learning: 'Öğrenme araçları',
 };
-const SCOPES = { tenant: 'Kurum', children: 'Kendi çocukları', self: 'Kendisi' };
+const SCOPES = { tenant: 'Kurum', children: 'Kendi çocukları', self: 'Kendisi',
+  taught: 'Ders verdiği öğrenciler', coached: 'Koçluk öğrencileri' };
 
 const defaultScope = (permission) => {
   const scopes = permission?.scopes || [];
