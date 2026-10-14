@@ -337,6 +337,20 @@ const INSTITUTION_GROUPS = [
     { key: 'bookMax', path: ['books', 'maxQuantity'], label: 'Talep başına en çok adet', type: 'number',
       min: 1, max: 50, required: true, to: intOrNull },
   ] },
+  { title: 'Öğretmen / koç',
+    hint: 'Öğretmen / koç uygulamasında hangi öğrencilerle çalışılır. Kurum finansı, kantin parası, personel, '
+      + 'ayarlar, KVKK ve dışa aktarımlar her durumda yalnız yöneticide kalır. Uygulama girişi: Özellikler → '
+      + '“Öğretmen / koç portalı”; kimin gireceği: Personel → Akademi rolleri.',
+    fields: [
+      { key: 'teacherScope', path: ['teacher', 'scope'], label: 'Öğretmen kapsamı', type: 'select', wide: true,
+        options: [
+          { value: 'related', label: 'Yalnız ders verdiği ve koçu olduğu öğrenciler' },
+          { value: 'all', label: 'Kurumdaki bütün öğrenciler' },
+        ],
+        from: (value) => value || 'related',
+        hint: 'Bütün öğrenciler: öğretmen her öğrencide koçluk, ödev, plan, hata defteri, deneme, değerlendirme ve '
+          + 'yoklama işlerini yapar. Değişiklik birkaç dakika içinde açık oturumlara da yansır.' },
+    ] },
   { title: 'Atama paketleri', hint: 'Şablonlar → Atama paketleri. Paket tek tek de “otomatik” işaretli olmalı.',
     fields: [
       { key: 'autoBundles', path: ['assignments', 'autoApplyBundlesToNewStudents'], type: 'checkbox', to: Boolean,
@@ -482,7 +496,9 @@ const FEATURES = {
   books: ['Kitap talepleri', 'Mağaza üzerinden kitap talebi, veli onayı ve sipariş.'],
   finance: ['Kurum finansı', 'Cari hesap, taksit planı ve tahsilat.'],
   'finance.card': ['Uygulamadan kartla ödeme', 'Velinin kurum borcunu uygulamadan kartla ödemesi.'],
-  'teacher.portal': ['Öğretmen / koç portalı', 'Öğretmen / koç girişi (altyapı hazır; uygulamada yer tutucu ekran).'],
+  'teacher.portal': ['Öğretmen / koç portalı',
+    'Öğretmen / koç uygulaması: Bugün (dersler, yoklama), Öğrencilerim, Gelen kutusu (sorular, kontrol, mesajlar), '
+    + 'Kütüphane, Profil. Öğrenci kapsamı Kurum → Öğretmen / koç ayarındadır.'],
   'directory.source': ['Öğrenci dizini KM\'den', 'Öğrenci ve veli dizini Kontrol Merkezi\'nden eşitlenir.'],
   reading_league: ['Okuma ligi', 'Öğrenciler arası okuma sıralaması.'],
   class_comparison: ['Anonim sınıf kıyası', 'Öğrenci kendi sonucunu sınıf ortalamasıyla kıyaslar.'],

@@ -141,7 +141,9 @@ function mobileTab(app, { onChanged }) {
   const add = button('Erişim ver', { variant: 'primary', onClick: () => edit(null) });
   node.append(hintBox('Akademi mobil uygulamasına yönetici ya da öğretmen / koç olarak kimin gireceğini Kontrol '
     + 'Merkezi belirler. Bir kişi birden çok rol taşıyabilir (ör. Yönetici + Öğretmen / Koç); uygulamada rolünü '
-    + 'seçerek geçer. Öğretmen / Koç rolündeki herkes ayrıca tanımlanmadan koç olarak atanabilir. Liste her '
+    + 'seçerek geçer. Öğretmen / Koç rolündeki herkes ayrıca tanımlanmadan koç olarak atanabilir; yönetici de öğretmen '
+    + 'işlerini (öğretmen portalı, soru yanıtlama, koçluk) yapar. Öğretmenin hangi öğrencileri göreceği Ayarlar → '
+    + 'Kurum → Öğretmen / koç\'tadır. Liste her '
     + 'değişiklikte, zamanlanmış görevde ve “Şimdi eşitle” ile Akademi\'ye tam olarak itilir; Akademi bu '
     + 'kayıtları değiştiremez.'), banner,
   toolbar(search.node, inactiveToggle, h('span', 'kit-spacer'), syncButton, add));

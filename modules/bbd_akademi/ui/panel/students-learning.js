@@ -454,7 +454,8 @@ function mistakeColumns() {
     { key: 'due', label: 'Sonraki tekrar', width: '110px', cell: (row) => fmtDate(row.review?.dueDate) },
     { key: 'images', label: 'Görsel', width: '80px', cell: (row) => ((row.images || []).length
       ? num(row.images.length) : row.imagesHidden ? 'Gizli' : '—') },
-    { key: 'at', label: 'Eklendi', width: '96px', cell: (row) => fmtDate(row.createdAt) },
+    { key: 'at', label: 'Eklendi', width: '96px', cell: (row) => (row.actedBy
+      ? stack(fmtDate(row.createdAt), row.actedBy) : fmtDate(row.createdAt)) },
   ];
 }
 
@@ -591,6 +592,7 @@ function mistakeDrawer(app, studentId, mistakeId) {
       ['Saklama', mistake.keep ? 'Öğrenci “Sakla” dedi — kendiliğinden silinmez'
         : mistake.scheduledDeletionOn ? `${fmtDate(mistake.scheduledDeletionOn)} tarihinde kendiliğinden silinecek` : '—'],
       ['Eklendi', fmtDateTime(mistake.createdAt)],
+      mistake.actedBy ? ['Giren', `${mistake.actedBy} (öğrenci adına)`] : null,
     ])));
     return nodes;
   }, { rows: 6, columns: 2 });
