@@ -15,6 +15,10 @@
 //     denetimde açar (silinen ve düzenlenen özgün içerik dahil) ve PDF olarak
 //     dışa aktarır. Uçlar: `admin_searchMessages`, `admin_openAuditThread`,
 //     `admin_exportThread`.
+//   · Saklama süresi — başlıktaki düğme: yazışmaların ilişki / öğrenim
+//     bitişinden kaç yıl sonra silineceği (1–10, vars. 2; Akademi gece işi
+//     `messaging_retention`). Uçlar: `admin_getCoachingSettings`,
+//     `admin_putCoachingSettings`.
 //
 // GİZLİLİK (PLATFORM §5 kural 6): yönetici yazışmayı yalnız şikâyet üzerinden
 // ya da gerekçeli denetimle görür; her erişim Akademi denetim kaydına yazılır.
@@ -33,9 +37,9 @@ import {
 } from './common.js';
 import {
   AUDIT_REASON_MIN, DECISIONS, DECISION_DONE, FLAGS, LOCKED_TEXT, REPORT_FILTERS, REPORT_REASONS,
-  REPORT_STATUS, THREAD_KINDS, THREAD_STATUS, attachmentText, auditBody, auditReason, decisionBody,
-  isReported, lockBody, messagePreview, participantText, participantsText, reasonProblem, searchBody,
-  searchProblem,
+  REPORT_STATUS, RETENTION_DESCRIPTION, THREAD_KINDS, THREAD_STATUS, attachmentText, auditBody, auditReason,
+  decisionBody, isReported, lockBody, messagePreview, participantText, participantsText, reasonProblem,
+  retentionOptions, retentionPutBody, retentionText, searchBody, searchProblem,
 } from './messages-logic.js';
 
 const REPORTS = '/v1/admin/messages/reports';
@@ -55,9 +59,14 @@ function flagBadges(flags) {
 export function section(app) {
   loadStyles(import.meta.url, 'messages.css');
   const node = h('div', 'ak-stack');
+  const retentionButton = app.can('admin_getCoachingSettings')
+    ? actionButton(app, 'admin_putCoachingSettings', 'Saklama süresi',
+      { variant: 'ghost', onClick: () => retentionDialog(app) })
+    : null;
   node.append(sectionHead('Mesaj denetimi', {
     subtitle: 'Öğrenci ve velilerin şikâyet ettiği mesajlar ve gerekçeli mesaj denetimi. Her erişim ve karar '
       + 'Akademi denetim kaydına yazılır.',
+    actions: retentionButton ? [retentionButton] : [],
   }));
 
   const tabs = [
@@ -519,4 +528,34 @@ function auditCard(message) {
     card.append(history);
   }
   return card;
+}
+
+// ---------------------------------------------------------------- saklama süresi
+
+async function retentionDialog(app) {
+  let current;
+  let body = null;
+  try {
+    current = await app.api.get('/v1/admin/coaching/settings');
+  } catch (failure) {
+    app.toast(problem(failure, 'Ayarlar okunamadı.'), 'bad');
+    return;
+  }
+  const saved = await formDialog(app, {
+    title: 'Yazışma saklama süresi',
+    description: RETENTION_DESCRIPTION,
+    value: { years: String(current.messageRetentionYears ?? 2) },
+    fields: [
+      { key: 'years', label: 'Bitişten sonra saklama', type: 'select', required: true, options: retentionOptions(),
+        hint: `Şu an: ${retentionText(current)}. En az 1 yıl.` },
+    ],
+    onSubmit: (draft, { key }) => {
+      body = retentionPutBody(current, draft.years);
+      return app.api.put('/v1/admin/coaching/settings', body, { key });
+    },
+  });
+  if (saved) {
+    app.api.invalidate?.('/v1/admin/coaching/settings');
+    app.toast(`Yazışma saklama süresi ${retentionText(body)} olarak kaydedildi.`, 'good');
+  }
 }
