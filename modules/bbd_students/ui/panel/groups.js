@@ -24,6 +24,12 @@
 //   POST  /api/bbd_students/groups/move                        bbd_students.groups
 //   PATCH /api/bbd_students/groups/{id}/members/{memberId}     bbd_students.groups
 //   POST  /api/bbd_students/groups/{id}/apply-level            bbd_students.groups
+//   POST  /api/bbd_students/groups/academic-year               bbd_students.groups
+//   DELETE /api/bbd_students/groups/{id} (arşivdeki; ad+gerekçe+PIN) bbd_students.groups_delete
+//
+// DÖNEM (iş 30, göç 011): her sınıfın dönemi ("2026-2027", 1 Eylül'de döner) vardır;
+// liste varsayılan güncel dönemle süzülür ("Tüm dönemler" seçilebilir); seçili sınıflara
+// toplu "Dönem ata". ARŞİVDEN KALICI SİL: yalnız arşivdeki sınıf, geri alınamaz.
 //   GET   /api/bbd_students/students/{id}/groups               bbd_students.view
 //
 // Yol kabuğun KOPYALANMIŞ konumuna göredir (bkz. index.js).
@@ -44,6 +50,21 @@ const h = (tag, className, text) => {
 };
 
 const KIND_LABEL = { group: 'Sınıf', individual: 'Özel ders' };
+
+/** Gün → dönem ("2026-2027"); 1 Eylül ve sonrası yeni dönem (backend `current_year` ile aynı). */
+export function academicYearOf(iso) {
+  const [year, month] = String(iso || '').slice(0, 10).split('-').map(Number);
+  if (!year || !month) return '';
+  return month >= 9 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+}
+
+/** Seçici dönemleri: önceki iki, güncel, sonraki + verideki diğerleri; yeniden eskiye. */
+export function yearOptions(current, extra = []) {
+  const start = Number(String(current).slice(0, 4));
+  const found = new Set([-2, -1, 0, 1].map((step) => `${start + step}-${start + step + 1}`));
+  for (const value of extra) if (/^\d{4}-\d{4}$/.test(String(value || ''))) found.add(value);
+  return [...found].sort().reverse();
+}
 
 /** Sınıfın seviyesi kısa yazı: "11. sınıf · SAY · YKS"; seviyesizse ''. */
 export function levelText(level) {
@@ -103,10 +124,13 @@ function button(label, variant, onClick) {
  * @param {{api, can:(p:string)=>boolean, students:()=>Array, dialogRoot, toast}} ctx
  */
 export function mountGroups(host, ctx) {
+  const currentYear = academicYearOf(todayIso());
   const state = {
     archived: 'live', kind: '', query: '', groups: [], selected: null, detail: null,
+    year: currentYear, years: yearOptions(currentYear), picked: new Set(),
   };
   const canEdit = ctx.can('bbd_students.groups');
+  const canDelete = ctx.can('bbd_students.groups_delete');
   let picker = null;
   let searchTimer = null;
 
@@ -132,8 +156,17 @@ export function mountGroups(host, ctx) {
     archFilter.append(new Option(label, value));
   }
   archFilter.addEventListener('change', () => { state.archived = archFilter.value; load(); });
+  const yearFilter = h('select', 'st-input st-select');
+  yearFilter.setAttribute('aria-label', 'Dönem');
+  const fillYears = () => {
+    yearFilter.replaceChildren(new Option('Tüm dönemler', ''),
+      ...state.years.map((year) => new Option(year === currentYear ? `${year} (güncel)` : year, year)));
+    yearFilter.value = state.year;
+  };
+  fillYears();
+  yearFilter.addEventListener('change', () => { state.year = yearFilter.value; load(); });
   const count = h('span', 'st-count');
-  bar.append(search, kindFilter, archFilter, count, h('div', 'st-spacer'));
+  bar.append(search, yearFilter, kindFilter, archFilter, count, h('div', 'st-spacer'));
   if (canEdit) {
     bar.append(button('+ Yeni sınıf', 'primary', () => openEditor(null)));
   }
@@ -145,6 +178,34 @@ export function mountGroups(host, ctx) {
     + 'çağrısı buradan okur. Üyelik tarihlidir (son gün dahil). Silme yoktur, arşiv vardır — '
     + 'geçmiş yoklama korunur.'));
 
+  // Toplu "dönem ata": listede işaretlenen sınıflar.
+  const bulk = h('div', 'st-listbulk gr-bulk');
+  bulk.hidden = true;
+  const bulkCount = h('span', 'st-label');
+  const bulkYear = h('select', 'st-input st-select');
+  bulkYear.setAttribute('aria-label', 'Atanacak dönem');
+  bulk.append(bulkCount, bulkYear,
+    button('Dönem ata', 'primary', async () => {
+      const ids = [...state.picked];
+      if (!ids.length) return;
+      const result = await call('/academic-year', { groupIds: ids, academicYear: bulkYear.value }, null);
+      if (result) {
+        state.picked.clear();
+        ctx.toast(`${result.updated} sınıf ${result.academicYear} dönemine atandı`
+          + `${result.skipped?.length ? ` · ${result.skipped.length} zaten bu dönemdeydi` : ''}.`);
+      }
+    }),
+    button('Seçimi bırak', 'ghost', () => { state.picked.clear(); renderList(); }));
+  if (canEdit) view.append(bulk);
+
+  function paintBulk() {
+    bulk.hidden = !canEdit || state.picked.size === 0;
+    bulkCount.textContent = `${state.picked.size} sınıf seçili`;
+    const keep = bulkYear.value || currentYear;
+    bulkYear.replaceChildren(...state.years.map((year) => new Option(year, year)));
+    bulkYear.value = keep;
+  }
+
   const split = h('div', 'st-split');
   const list = h('nav', 'st-list gr-list');
   const detail = h('section', 'st-detail gr-detail');
@@ -154,11 +215,16 @@ export function mountGroups(host, ctx) {
 
   async function load() {
     const params = new URLSearchParams({ archived: state.archived });
+    if (state.year) params.set('year', state.year);
     if (state.kind) params.set('kind', state.kind);
     if (state.query) params.set('q', state.query);
     try {
       const payload = await ctx.api(`${BASE}?${params}`);
       state.groups = payload.groups || [];
+      if (Array.isArray(payload.years) && payload.years.length) {
+        state.years = yearOptions(currentYear, payload.years);
+        fillYears();
+      }
     } catch (error) {
       list.replaceChildren(h('p', 'st-empty', `Sınıflar okunamadı: ${error.message}`));
       return;
@@ -169,9 +235,14 @@ export function mountGroups(host, ctx) {
 
   function renderList() {
     count.textContent = `${state.groups.length} sınıf`;
+    const visible = new Set(state.groups.map((group) => group.id));
+    for (const id of [...state.picked]) if (!visible.has(id)) state.picked.delete(id);
+    paintBulk();
     list.replaceChildren();
     if (state.groups.length === 0) {
-      list.append(h('p', 'st-empty', 'Sınıf yok. “+ Yeni sınıf” ile ad ve öğrenci seçerek açın.'));
+      list.append(h('p', 'st-empty', state.year
+        ? `${state.year} döneminde sınıf yok. Dönem süzgecinden “Tüm dönemler”i seçin ya da “+ Yeni sınıf” ile açın.`
+        : 'Sınıf yok. “+ Yeni sınıf” ile ad ve öğrenci seçerek açın.'));
       return;
     }
     for (const group of state.groups) {
@@ -181,7 +252,8 @@ export function mountGroups(host, ctx) {
       const main = h('span', 'st-item-main');
       main.append(h('b', null, group.name));
       main.append(h('span', 'st-item-meta',
-        [levelText(group.classLevel), group.callName && `anons: ${group.callName}`,
+        [group.academicYear || 'dönem yok', levelText(group.classLevel),
+          group.callName && `anons: ${group.callName}`,
           `${group.memberCount} öğrenci bugün`].filter(Boolean).join(' · ')));
       item.append(main);
       if (group.kind === 'individual') {
@@ -189,7 +261,29 @@ export function mountGroups(host, ctx) {
       }
       if (group.archived) item.append(h('i', 'st-badge', 'arşiv'));
       item.addEventListener('click', () => select(group.id));
-      list.append(item);
+      if (!canEdit && !(canDelete && group.archived)) {
+        list.append(item);
+        continue;
+      }
+      const row = h('div', 'st-row');
+      if (canEdit) {
+        const check = h('input', 'st-check st-row-check');
+        check.type = 'checkbox';
+        check.checked = state.picked.has(group.id);
+        check.setAttribute('aria-label', `${group.name} seç (toplu dönem ata)`);
+        check.addEventListener('change', () => {
+          if (check.checked) state.picked.add(group.id); else state.picked.delete(group.id);
+          paintBulk();
+        });
+        row.append(check);
+      }
+      row.append(item);
+      if (canDelete && group.archived) {
+        const remove = button('Sil', 'danger', () => removeClass(group));
+        remove.setAttribute('aria-label', `${group.name} sınıfını kalıcı sil`);
+        row.append(remove);
+      }
+      list.append(row);
     }
   }
 
@@ -231,6 +325,7 @@ export function mountGroups(host, ctx) {
     const head = h('header', 'st-detail-head');
     head.append(h('h3', null, group.name));
     head.append(h('span', 'st-subtitle', [
+      group.academicYear ? `${group.academicYear} dönemi` : 'dönem yok',
       levelText(group.classLevel) || 'seviye yok',
       group.kind === 'individual' ? 'özel ders (tek öğrenci)' : null,
       group.callName ? `anons adı: ${group.callName}` : 'anons adı yok (ad okunur)',
@@ -246,6 +341,7 @@ export function mountGroups(host, ctx) {
         ? button('Arşivden al', '', () => post(`${encodeURIComponent(group.id)}/restore`, {}, 'Arşivden alındı.'))
         : button('Arşivle', 'danger', archive));
     }
+    if (canDelete && group.archived) head.append(button('Kalıcı sil', 'danger', () => removeClass(group)));
     detail.append(head);
 
     const body = h('div', 'st-detail-body');
@@ -447,6 +543,22 @@ export function mountGroups(host, ctx) {
     await post(`${encodeURIComponent(group.id)}/archive`, {}, 'Sınıf arşivlendi.');
   }
 
+  /** Arşivdeki sınıfı KALICI siler: ad aynen + gerekçe + PIN (geri alınamaz). */
+  async function removeClass(group) {
+    const answer = await askClassDelete(ctx.dialogRoot, group);
+    if (!answer) return;
+    try {
+      const result = await ctx.api(`${BASE}/${encodeURIComponent(group.id)}`, { method: 'DELETE',
+        body: { confirmName: answer.name, reason: answer.reason, pin: answer.pin } });
+      if (state.selected === group.id) { state.selected = null; state.detail = null; renderDetail(); }
+      state.picked.delete(group.id);
+      ctx.toast(`“${result.name}” kalıcı silindi · ${result.removedMemberships} üyelik satırı kaldırıldı.`);
+      await load();
+    } catch (error) {
+      ctx.toast(`Silinemedi: ${error.message}`);
+    }
+  }
+
   async function applyLevel() {
     const group = state.detail;
     if (!await confirmSimple(ctx.dialogRoot, {
@@ -498,6 +610,14 @@ export function mountGroups(host, ctx) {
     const note = h('textarea', 'st-input st-textarea');
     note.maxLength = 500;
     note.value = group?.note || '';
+    // Dönem: yeni sınıfta güncel dönem; düzenlemede sınıfın dönemi (boş bırakılamaz).
+    const year = h('select', 'st-input st-select');
+    year.setAttribute('aria-label', 'Dönem');
+    const yearValue = group?.academicYear || currentYear;
+    for (const value of yearOptions(currentYear, [...state.years, yearValue])) {
+      year.append(new Option(value === currentYear ? `${value} (güncel)` : value, value));
+    }
+    year.value = yearValue;
     // Seviye (isteğe bağlı şablon): öğrenci eklenince ona da yazılır.
     const level = group?.classLevel || null;
     const choose = (choices, value, labelText) => {
@@ -532,7 +652,7 @@ export function mountGroups(host, ctx) {
     applyLabel.htmlFor = applyBox.id;
     const applyRow = h('div', 'st-check-row');
     applyRow.append(applyBox, applyLabel);
-    card.append(field('Sınıf adı', name), field('Anons adı (TTS için)', callName), kindRow,
+    card.append(field('Sınıf adı', name), field('Dönem', year), field('Anons adı (TTS için)', callName), kindRow,
       levelGrid, ...(group ? [applyRow] : []), field('Not', note));
     if (!group) {
       card.append(h('p', 'st-hint',
@@ -544,7 +664,7 @@ export function mountGroups(host, ctx) {
     let release = () => {};
     const close = () => { overlay.remove(); release(); };
     const save = button(group ? 'Kaydet' : 'Sınıfı aç', 'primary', async () => {
-      const body = { name: name.value, callName: callName.value,
+      const body = { name: name.value, academicYear: year.value, callName: callName.value,
         kind: kind.checked ? 'individual' : 'group', note: note.value };
       const nextLevel = grade.value ? { gradeLevel: parseGrade(grade.value),
         track: parseChoice(track.value), examTarget: parseChoice(exam.value) } : null;
@@ -592,8 +712,73 @@ function actionLabel(action) {
     members_add: 'öğrenci eklendi', members_end: 'üyelik bitirildi', move_out: 'başka sınıfa taşındı',
     move_in: 'başka sınıftan taşındı', member_fix: 'üyelik düzeltildi',
     student_deactivated: 'öğrenci pasifleşti', class_merge: 'eski sınıf adlarından birleştirildi',
-    class_merge_rollback: 'birleştirme geri alındı',
+    class_merge_rollback: 'birleştirme geri alındı', year_set: 'dönemi değiştirildi',
+    year_backfill: 'mevcut sınıflara dönem atandı', delete: 'kalıcı silindi',
   }[action] || action;
+}
+
+/**
+ * Arşivdeki sınıfı kalıcı silme penceresi: geri alınamaz uyarısı, sınıfın adı aynen,
+ * gerekçe ve kendi PIN'i. Esc / "Vazgeç" null döner.
+ * @returns {Promise<{name: string, reason: string, pin: string}|null>}
+ */
+export function askClassDelete(root, group) {
+  return new Promise((resolve) => {
+    const overlay = h('div', 'kit-overlay');
+    const card = h('div', 'kit-dialog gr-editor');
+    card.setAttribute('role', 'dialog');
+    card.append(h('h3', 'kit-dialog-title', `“${group.name}” sınıfı kalıcı olarak silinsin mi?`));
+    card.append(h('p', 'st-lc-warn',
+      'GERİ ALINAMAZ. Sınıf ve bütün üyelik satırları KM’den silinir; BBD Akademi’de sınıf listelerden '
+      + 've seçicilerden kalkar (geçmiş yoklama, oturum ve müfredat geçmişi korunur), zilde bu sınıfın '
+      + 'planlı çağrıları iptal olur. Silme denetim kaydına yazılır.'));
+    const field = (text, input) => {
+      const wrap = h('label', 'st-field');
+      wrap.append(h('span', 'st-label', text), input);
+      return wrap;
+    };
+    const name = h('input', 'kit-input');
+    name.autocomplete = 'off';
+    name.maxLength = 80;
+    const reason = h('input', 'kit-input');
+    reason.maxLength = 200;
+    reason.placeholder = 'ör. yanlış açılmıştı';
+    const pin = h('input', 'kit-input st-pin');
+    pin.type = 'password';
+    pin.inputMode = 'numeric';
+    pin.autocomplete = 'off';
+    pin.maxLength = 12;
+    card.append(field(`Onay için sınıfın adını aynen yazın: ${group.name}`, name),
+      field('Gerekçe', reason), field('Kendi PIN’iniz (yıkıcı işlem teyidi)', pin));
+    const error = h('p', 'kit-dialog-error');
+    error.setAttribute('role', 'alert');
+    card.append(error);
+    let release = () => {};
+    const close = (value) => { overlay.remove(); release(); resolve(value); };
+    const fold = (text) => String(text || '').trim().toLocaleLowerCase('tr').replace(/\s+/g, ' ');
+    const submit = () => {
+      if (fold(name.value) !== fold(group.name)) {
+        error.textContent = 'Ad eşleşmiyor.';
+        name.setAttribute('aria-invalid', 'true');
+        name.focus();
+        return;
+      }
+      if (reason.value.trim().length < 3) { error.textContent = 'Gerekçeyi yazın.'; reason.focus(); return; }
+      if (!/^\d{4,12}$/.test(pin.value.trim())) { error.textContent = 'PIN’inizi yazın.'; pin.focus(); return; }
+      close({ name: name.value.trim(), reason: reason.value.trim(), pin: pin.value.trim() });
+    };
+    const actions = h('div', 'kit-dialog-actions');
+    actions.append(button('Vazgeç', '', () => close(null)), button('Kalıcı olarak sil', 'danger', submit));
+    card.append(actions);
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.stopPropagation(); close(null); }
+      if (event.key === 'Enter' && event.target.tagName === 'INPUT') submit();
+    });
+    overlay.append(card);
+    root.append(overlay);
+    release = dialogA11y(card);
+    name.focus();
+  });
 }
 
 /**

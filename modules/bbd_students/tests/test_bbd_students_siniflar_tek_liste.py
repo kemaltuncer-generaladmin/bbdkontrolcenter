@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,10 @@ sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 from harness import NodeMissing, run
 
 BASE = "/api/bbd_students/groups"
+_TODAY = date.today()
+#: Ekranın varsayılan dönem süzgeci: bugünün dönemi (1 Eylül'de döner).
+YEAR = (f"{_TODAY.year}-{_TODAY.year + 1}" if _TODAY.month >= 9
+        else f"{_TODAY.year - 1}-{_TODAY.year}")
 LEVEL = {"gradeLevel": 11, "track": "SAY", "examTarget": "YKS"}
 
 
@@ -45,7 +50,7 @@ DETAIL = {"id": "C1", "name": "11-A", "callName": "", "kind": "group", "note": "
                        "reason": ""}]}
 
 ROUTES: dict[str, Any] = {
-    f"GET {BASE}?archived=live": {"groups": [
+    f"GET {BASE}?archived=live&year={YEAR}": {"years": [YEAR, "2019-2020"], "groups": [
         {"id": "C1", "name": "11-A", "callName": "", "kind": "group", "memberCount": 1,
          "archived": False, "classLevel": LEVEL},
         {"id": "C2", "name": "TYT Matematik", "callName": "Tey te ye matematik", "kind": "group",
@@ -61,6 +66,7 @@ ROUTES: dict[str, Any] = {
     f"GET {BASE}/C9/history": {"items": []},
     f"POST {BASE}/C1/members": {"added": 1, "skipped": [], "levelUpdated": 1, "group": DETAIL},
     f"POST {BASE}": {**DETAIL, "id": "C9", "name": "LGS Fen"},
+    f"POST {BASE}/academic-year": {"updated": 2, "skipped": [], "academicYear": "2019-2020"},
 }
 
 SCENARIO = r"""
@@ -75,6 +81,20 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   const out = {};
   const items = () => host.querySelectorAll('.st-item');
   out.count = host.querySelector('.st-count').textContent;
+  const yearSelect = host.querySelector('select[aria-label="Dönem"]');
+  out.yearValue = yearSelect.value;
+  out.yearOptions = yearSelect.querySelectorAll('option').map((o) => o.value);
+  // Toplu dönem ata: iki sınıf işaretlenir → çubuk görünür → POST academic-year.
+  const checks = host.querySelectorAll('.st-row-check');
+  checks[0].checked = true; checks[0].dispatchEvent(new Event('change'));
+  checks[1].checked = true; checks[1].dispatchEvent(new Event('change'));
+  const bulk = host.querySelector('.gr-bulk');
+  out.bulkHidden = bulk.hidden;
+  out.bulkText = bulk.querySelector('.st-label').textContent;
+  bulk.querySelector('select').value = '2019-2020';
+  bulk.querySelectorAll('button').find((b) => b.textContent === 'Dönem ata').click();
+  await sleep(30);
+  out.yearPost = calls.filter((c) => c.path.endsWith('/academic-year')).map((c) => c.body);
   out.items = items().map((node) => node.textContent);
   out.badges = items().map((node) => node.querySelectorAll('.st-badge').map((b) => b.textContent));
   items()[0].click();
@@ -112,10 +132,10 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.dialogTitle = dialog.querySelector('.kit-dialog-title').textContent;
   out.dialogLabels = dialog.querySelectorAll('.st-label').map((l) => l.textContent);
   dialog.querySelector('input').value = 'LGS Fen';
-  const selects = dialog.querySelectorAll('select');
-  selects[0].value = '8';
-  selects[0].dispatchEvent(new Event('change'));
-  out.trackDisabled = selects[1].disabled;
+  const selects = dialog.querySelectorAll('select');   // [Dönem, Seviye, Alan, Hedef]
+  selects[1].value = '8';
+  selects[1].dispatchEvent(new Event('change'));
+  out.trackDisabled = selects[2].disabled;
   out.dialogViolations = audit(dialog);
   dialog.querySelectorAll('button').find((b) => b.textContent === 'Sınıfı aç').click();
   await sleep(40);
@@ -168,8 +188,86 @@ def test_coklu_secici_sinif_seviye_suzgeci_ve_seviye_uygulama(out: dict[str, Any
 
 def test_yeni_sinif_ad_ozel_ders_ve_seviye(out: dict[str, Any]) -> None:
     assert out["dialogTitle"] == "Yeni sınıf"
-    assert out["dialogLabels"][:2] == ["Sınıf adı", "Anons adı (TTS için)"]
+    assert out["dialogLabels"][:3] == ["Sınıf adı", "Dönem", "Anons adı (TTS için)"]
     assert out["trackDisabled"] is True            # 8. sınıfta alan yok
-    assert out["createPost"] == [{"name": "LGS Fen", "callName": "", "kind": "group", "note": "",
+    assert out["createPost"] == [{"name": "LGS Fen", "academicYear": YEAR, "callName": "",
+                                  "kind": "group", "note": "",
                                   "level": {"gradeLevel": 8, "track": None, "examTarget": "LGS"}}]
     assert out["dialogViolations"] == []
+
+
+def test_donem_suzgeci_varsayilan_guncel_ve_toplu_donem_ata(out: dict[str, Any]) -> None:
+    # İş 30: liste varsayılan güncel dönemle süzülür; "Tüm dönemler" + verideki dönemler.
+    assert out["yearValue"] == YEAR
+    assert out["yearOptions"][0] == "" and YEAR in out["yearOptions"]
+    assert "2019-2020" in out["yearOptions"]
+    assert out["bulkHidden"] is False and out["bulkText"] == "2 sınıf seçili"
+    assert out["yearPost"] == [{"groupIds": ["C1", "C2"], "academicYear": "2019-2020"}]
+
+
+ARCHIVED = {"id": "A1", "name": "Eski 9-A", "callName": "", "kind": "group", "note": "",
+            "archived": True, "archivedAt": "2026-06-30T18:00:00+03:00", "classLevel": None,
+            "academicYear": "2025-2026", "current": [], "members": []}
+
+DELETE_ROUTES: dict[str, Any] = {
+    f"GET {BASE}?archived=archived": {"groups": [{**ARCHIVED, "memberCount": 0}]},
+    f"GET {BASE}/A1": ARCHIVED,
+    f"GET {BASE}/A1/history": {"items": []},
+    f"DELETE {BASE}/A1": {"deleted": True, "id": "A1", "name": "Eski 9-A",
+                          "removedMemberships": 24, "students": 24, "revision": 9},
+}
+
+DELETE_SCENARIO = r"""
+export default async function ({ document, audit, sleep, api, load, calls }) {
+  const { mountGroups } = await load('./panels/bbd_students/groups.js');
+  const host = document.createElement('div');
+  document.body.append(host);
+  const toasts = [];
+  mountGroups(host, { api, can: (p) => p !== '__DENY__', students: () => [],
+    toast: (t) => toasts.push(t), dialogRoot: host });
+  await sleep(20);
+  const out = {};
+  const years = host.querySelector('select[aria-label="Dönem"]');
+  years.value = ''; years.dispatchEvent(new Event('change'));
+  const arch = host.querySelector('select[aria-label="Arşiv durumu"]');
+  arch.value = 'archived'; arch.dispatchEvent(new Event('change'));
+  await sleep(20);
+  out.rowButtons = host.querySelector('.st-row').querySelectorAll('button').map((b) => b.textContent);
+  host.querySelector('.st-row').querySelectorAll('button').find((b) => b.textContent === 'Sil').click();
+  await sleep(10);
+  const dialog = host.querySelector('.gr-editor');
+  out.title = dialog.querySelector('.kit-dialog-title').textContent;
+  out.violations = audit(dialog);
+  const inputs = dialog.querySelectorAll('input');
+  const go = () => dialog.querySelectorAll('button').find((b) => b.textContent === 'Kalıcı olarak sil').click();
+  inputs[0].value = 'Eski'; go();
+  out.mismatch = dialog.querySelector('.kit-dialog-error').textContent;
+  inputs[0].value = 'eski 9-a'; inputs[1].value = 'yanlış açılmıştı'; inputs[2].value = '123456';
+  go();
+  await sleep(30);
+  out.deletes = calls.filter((c) => c.method === 'DELETE').map((c) => ({ path: c.path, body: c.body }));
+  out.toasts = toasts;
+  return out;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def deleted() -> dict[str, Any]:
+    try:
+        data = run(DELETE_SCENARIO, panels=("bbd_students",), routes=DELETE_ROUTES)
+    except NodeMissing:
+        pytest.skip("node kurulu değil")
+    assert data["errors"] == [], data["errors"]
+    result: dict[str, Any] = data["result"]
+    return result
+
+
+def test_arsivden_kalici_sil_ad_gerekce_pin(deleted: dict[str, Any]) -> None:
+    assert "Sil" in deleted["rowButtons"]
+    assert deleted["title"] == "“Eski 9-A” sınıfı kalıcı olarak silinsin mi?"
+    assert deleted["mismatch"] == "Ad eşleşmiyor."
+    assert deleted["deletes"] == [{"path": f"{BASE}/A1", "body": {
+        "confirmName": "eski 9-a", "reason": "yanlış açılmıştı", "pin": "123456"}}]
+    assert any("kalıcı silindi" in toast for toast in deleted["toasts"])
+    assert deleted["violations"] == []

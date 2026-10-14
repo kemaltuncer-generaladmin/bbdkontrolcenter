@@ -80,6 +80,7 @@ ROUTES = {
     {"kantinId": "STU-2", "displayName": "Can Demir", "className": "10-B", "schoolNo": "78", "balance": 1200, "status": "active", "guardians": [], "parentPhone": "", "canteenSync": "pending"}], "summary": {}},
   "GET /api/events/wait": {"items": [], "lastSeq": 3, "reset": False},
   "GET /api/bbd_students/groups?archived=live": {"groups": [], "items": []},
+  "GET /api/bbd_students/groups?archived=live&year=*": {"groups": [], "items": [], "years": []},
   "GET /api/bbd_students/groups": {"groups": [], "items": [], "revision": 1},
   "GET /api/bbd_students/groups/memberships": {"items": []},
   "GET /api/bbd_students/students/STU-1": {"kantinId": "STU-1", "displayName": "Elif Kaya", "firstName": "Elif", "lastName": "Kaya", "className": "9-A", "schoolNo": "77", "status": "active", "balance": 0, "canteenSync": "ok", "guardians": []},
