@@ -10,16 +10,16 @@
 // sisteminde ÇÖZÜLMEZ — normaldir (ADR 0011).
 
 import {
-  button, confirmSimple, confirmWithPin, copyText, foldText, h, menuButton, num, pollLoop,
+  button, bytes, confirmSimple, confirmWithPin, copyText, foldText, h, menuButton, num, pollLoop,
 } from '../../ui-kit/kit.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
 import { badge, card, drawer, emptyState } from '../../ui-kit/layout.js';
 import {
   COMMAND_LABELS, COMMAND_STATUS, DEFAULT_TZ, END_REASONS, OWN_PACKAGE, POLICY_HEALTH, REASONS,
-  batteryText, busy, clockOf, commandResult, dur, facts, formDialog, inline, loginLockBadge,
-  loginLockMinutes, matchesText, modal, msOf, muted, nameCell, permButton, problem, since,
-  statusBadge, syncBadge, todayIn, usageList, when, windowsSummary,
+  appVersionText, batteryText, busy, clockOf, commandResult, dur, facts, formDialog, inline,
+  loginLockBadge, loginLockMinutes, matchesText, modal, msOf, muted, nameCell, permButton, problem,
+  selfUpdateState, since, statusBadge, syncBadge, todayIn, usageList, when, windowsSummary,
 } from './common.js';
 
 const NARROW = '(max-width: 900px)';
@@ -46,6 +46,10 @@ const OFFLINE_MODES = [
 ];
 
 const LOCK_PRESETS = ['Ders saati — tabletler kilitli.', 'Tabletleri teslim edin.'];
+
+const SELF_UPDATE_WARNING = 'Tablet, Uygulamalar sekmesinde yayında olan TabletKontrol sürümünü '
+  + 'bekleme süresi olmadan indirir ve kurar. Açık öğrenci oturumu varsa kullanımı gönderilip '
+  + 'kapatılır; öğrenci yeniden giriş yapar. Tablet zaten güncelse bir şey olmaz.';
 
 function deviceLine(device) {
   const model = [device.manufacturer, device.model].filter(Boolean).join(' ');
@@ -267,6 +271,10 @@ export function devicesView(app) {
         { label: 'Duyuruyu kaldır',
           onClick: () => runBulk('announce', { announcement: '' }, 'tabletten duyuru kaldırıldı.') },
         { label: 'Profil ata', onClick: bulkAssign },
+        { label: 'Tablet uygulamasını şimdi güncelle', onClick: bulkSelfUpdate },
+        { label: 'Tanılama iste',
+          onClick: () => runBulk('command', { command: { type: 'diagnostics', payload: {} } },
+            'tabletten tanı raporu istendi.') },
         // Tekli kaldırma gibi ek süre yetkisi (grant) ister.
         ...(app.can('grant') ? [{ label: 'Giriş kilidini kaldır',
           onClick: () => runBulk('reset_login_lock', {}, 'tabletin giriş kilidi kaldırıldı.') }] : []),
@@ -316,6 +324,19 @@ export function devicesView(app) {
       confirmLabel: 'Kilitle',
     });
     if (answer) await runBulk('lock', { lockMessage: answer.message }, 'tablet kilitlendi.');
+  }
+
+  async function bulkSelfUpdate() {
+    const count = table.selection().length;
+    const yes = await confirmSimple(app.root, {
+      title: `${num(count)} tablet şimdi güncellensin mi?`,
+      description: SELF_UPDATE_WARNING,
+      confirmLabel: 'Şimdi güncelle',
+      danger: true,
+    });
+    if (!yes) return;
+    await runBulk('command', { command: { type: 'self_update', payload: {} } },
+      'tablete güncelleme komutu gönderildi.');
   }
 
   async function bulkMessage() {
@@ -558,6 +579,9 @@ export function devicesView(app) {
       slots: {},
       usageBox: h('div'),
       commandList: h('div', 'tb-cmds'),
+      diagnostics: null,
+      diagList: h('div', 'tb-cmds'),
+      doneDiagnostics: null,
       historyBox: h('div'),
       appsList: h('div', 'tb-apps'),
       appsCount: h('span', 'tb-sub'),
@@ -570,7 +594,8 @@ export function devicesView(app) {
     });
     ctl.drawer.node.classList.add('tb-drawer');
     ctl.subtitle = ctl.drawer.node.querySelector('.kit-drawer-sub');
-    for (const key of ['status', 'session', 'control', 'profile', 'commands', 'apps', 'history', 'record']) {
+    for (const key of ['status', 'session', 'control', 'profile', 'software', 'commands', 'apps',
+      'history', 'record']) {
       ctl.slots[key] = h('div', 'tb-slot');
       ctl.drawer.body.append(ctl.slots[key]);
     }
@@ -608,8 +633,8 @@ export function devicesView(app) {
     step('status', signature(device, [
       'status', 'locked', 'last_seen_at', 'active_student_name', 'foreground_app_name',
       'battery_percent', 'charging', 'policy_health', 'pending_usage_batches', 'pending_commands',
-      'manufacturer', 'model', 'android_version', 'app_version', 'enrollment_expires_at',
-      'enrollment_code_expired', 'revoked_at',
+      'manufacturer', 'model', 'android_version', 'enrollment_expires_at',
+      'enrollment_code_expired', 'revoked_at', 'policy_detail',
     ]) + minute, paintStatus);
     step('session', String(device.active_session_id || ''), paintSession);
     // Giriş kilidi sürerken kalan dakika her dakika tazelenir.
@@ -622,6 +647,8 @@ export function devicesView(app) {
       step('profile', signature(device, ['status', 'paired', 'profile_id', 'sync_state']) + profiles,
         paintProfile);
     }
+    step('software', signature(device, ['status', 'paired', 'app_version', 'app_version_code',
+      'self_update']) + JSON.stringify(app.state.selfRelease) + minute, paintSoftware);
     step('commands', signature(device, ['status', 'paired']), paintCommands);
     step('apps', signature(device, ['status', 'paired', 'profile_id', 'profile_revision']), paintApps);
     step('record', signature(device, ['status', 'paired', 'name']), paintRecord);
@@ -654,11 +681,14 @@ export function devicesView(app) {
       ['Açık uygulama', device.active_session_id ? device.foreground_app_name : null],
       ['Pil', device.battery_percent === null || device.battery_percent === undefined ? null : batteryText(device)],
       ['Kısıtlamalar', policy && live ? badge(policy[0], policy[1]) : null],
+      // Tabletin son politika uygulamasındaki hatanın özeti (v2.2); teknik
+      // metindir, destek için olduğu gibi gösterilir.
+      ['Kısıtlama ayrıntısı', live && device.policy_health !== 'ok' && device.policy_detail
+        ? device.policy_detail : null],
       ['Gönderilmemiş kullanım', device.pending_usage_batches
         ? `${num(device.pending_usage_batches)} kayıt tabletten gelmeyi bekliyor` : null],
       ['Bekleyen komut', device.pending_commands ? num(device.pending_commands) : null],
       ['Cihaz', deviceLine(device) || null],
-      ['Uygulama sürümü', device.app_version || null],
       ['Eklendi', device.created_at ? when(device.created_at) : null],
       ['Eşleme iptali', device.revoked_at ? when(device.revoked_at) : null],
     ];
@@ -832,6 +862,139 @@ export function devicesView(app) {
     slot.replaceChildren(card('Profil', body(...parts)));
   }
 
+  /**
+   * Tablet uygulaması: sürüm, kendini güncelleme durumu (v2.2), "Şimdi
+   * güncelle", "Tanılama iste" ve tanı raporları. Eski tablet kendini
+   * güncelleme durumunu bildirmez; onun güncellemesi Uygulamalar sekmesindeki
+   * dağıtım sırasından izlenir.
+   */
+  function paintSoftware(ctl, device) {
+    const slot = ctl.slots.software;
+    if (!device.paired || device.status === 'revoked') {
+      slot.replaceChildren();
+      return;
+    }
+    const own = app.state.selfRelease;
+    const report = device.self_update;
+    const state = selfUpdateState(report, own?.totalBytes || 0);
+    let stateNode = null;
+    if (state) {
+      stateNode = badge(state[0], state[1]);
+      if (state[2]) stateNode.title = state[2];
+    }
+    const parts = [facts([
+      ['Uygulama sürümü', appVersionText(device)],
+      ['Yayındaki sürüm', own ? `${own.versionName ? `${own.versionName} ` : ''}(${num(own.versionCode)})` : null],
+      ['Güncelleme', stateNode],
+    ])];
+    if (!report) {
+      parts.push(muted('Tabletteki uygulama sürümü güncelleme durumunu bildirmiyor ve tanı raporu '
+        + 'gönderemez. Yeni sürümü Uygulamalar sekmesinden dağıtınca tablet onu sırayla kurar.'));
+      slot.replaceChildren(card('Tablet uygulaması', body(...parts)));
+      return;
+    }
+    const actions = h('div', 'tb-actions');
+    actions.append(
+      permButton(app, 'Şimdi güncelle', 'manage', {
+        title: 'Bekleme süresini atla; gerekirse açık oturumu kapatıp hemen kur',
+        onClick: (event) => busy(event.currentTarget, () => selfUpdateNow(ctl)),
+      }),
+      permButton(app, 'Tanılama iste', 'manage', {
+        title: 'Tablet tanı raporunu toplayıp sunucuya gönderir',
+        onClick: (event) => busy(event.currentTarget, () => sendCommand(ctl, 'diagnostics')),
+      }),
+    );
+    const head = h('div', 'tb-actions');
+    head.append(h('b', null, 'Tanılama raporları'), h('span', 'kit-spacer'), button('Yenile', {
+      variant: 'ghost',
+      onClick: (event) => busy(event.currentTarget, () => loadDiagnostics(ctl)),
+    }));
+    parts.push(actions, head, ctl.diagList);
+    slot.replaceChildren(card('Tablet uygulaması', body(...parts)));
+    if (ctl.diagnostics === null) {
+      ctl.diagnostics = [];
+      ctl.diagList.replaceChildren(muted('Yükleniyor…'));
+      loadDiagnostics(ctl);
+    }
+  }
+
+  function paintDiagnostics(ctl) {
+    const list = ctl.diagList;
+    list.replaceChildren();
+    if (!ctl.diagnostics.length) {
+      list.append(muted('Henüz tanı raporu yok. “Tanılama iste” ile isteyebilirsiniz.'));
+      return;
+    }
+    for (const item of ctl.diagnostics) {
+      const row = h('div', 'tb-cmd');
+      const version = [item.appVersion, item.appVersionCode !== null && item.appVersionCode !== undefined
+        ? `(${item.appVersionCode})` : ''].filter(Boolean).join(' ');
+      row.append(nameCell(`${when(item.createdAt)} · ${since(item.createdAt)}`,
+        [version ? `Sürüm ${version}` : '', bytes(item.sizeBytes)].filter(Boolean).join(' · ')));
+      const tools = h('div', 'tb-cmd-tools');
+      tools.append(permButton(app, 'Görüntüle', 'manage', {
+        variant: 'ghost',
+        onClick: (event) => busy(event.currentTarget, () => showDiagnostics(ctl, item)),
+      }));
+      row.append(tools);
+      list.append(row);
+    }
+  }
+
+  async function loadDiagnostics(ctl) {
+    try {
+      const rows = await app.call(`/devices/${enc(ctl.id)}/diagnostics`);
+      if (current !== ctl) return;
+      ctl.diagnostics = Array.isArray(rows) ? rows : [];
+      paintDiagnostics(ctl);
+    } catch (error) {
+      if (current !== ctl) return;
+      ctl.diagList.replaceChildren(muted(problem(error, 'Tanı raporları alınamadı.')));
+    }
+  }
+
+  async function showDiagnostics(ctl, item) {
+    let report;
+    try {
+      report = await app.call(`/devices/${enc(ctl.id)}/diagnostics/${enc(item.id)}`);
+    } catch (error) {
+      app.toast(error?.status === 404 ? 'Bu rapor artık yok; daha yenileri geldiği için silinmiş olabilir.'
+        : problem(error, 'Tanı raporu açılamadı. Tekrar deneyin.'), 'bad');
+      if (error?.status === 404) loadDiagnostics(ctl);
+      return;
+    }
+    const text = String(report?.text || '');
+    const { card: box, close } = modal(app.root, {
+      title: `Tanı raporu · ${when(item.createdAt)}`, className: 'tb-diag-dialog', closeOnOverlay: true,
+    });
+    const pre = h('pre', 'tb-diag-text', text || '(boş rapor)');
+    pre.tabIndex = 0;
+    const actions = h('div', 'kit-dialog-actions');
+    actions.append(
+      button('Kopyala', {
+        onClick: async () => {
+          const copied = await copyText(text);
+          app.toast(copied ? 'Rapor panoya kopyalandı.' : 'Kopyalanamadı; metni seçip elle kopyalayın.',
+            copied ? 'good' : 'warn');
+        },
+      }),
+      button('Kapat', { variant: 'primary', onClick: () => close(null) }),
+    );
+    box.append(h('p', 'kit-dialog-text', [item.appVersion ? `Sürüm ${item.appVersion}` : '',
+      bytes(item.sizeBytes)].filter(Boolean).join(' · ')), pre, actions);
+    actions.lastChild?.focus();
+  }
+
+  async function selfUpdateNow(ctl) {
+    const yes = await confirmSimple(app.root, {
+      title: 'Tablet uygulaması şimdi güncellensin mi?',
+      description: SELF_UPDATE_WARNING,
+      confirmLabel: 'Şimdi güncelle',
+      danger: true,
+    });
+    if (yes) await sendCommand(ctl, 'self_update');
+  }
+
   function paintCommands(ctl, device) {
     const slot = ctl.slots.commands;
     if (!device.paired || device.status === 'revoked') {
@@ -901,6 +1064,13 @@ export function devicesView(app) {
       if (current !== ctl) return;
       ctl.commands = Array.isArray(rows) ? rows : [];
       paintCommandList(ctl);
+      // Tanılama komutu tamamlanınca rapor gelmiştir: liste yeniden okunur.
+      const done = ctl.commands.filter((item) => item.type === 'diagnostics' && item.status === 'done')
+        .map((item) => item.id).sort().join();
+      if (ctl.doneDiagnostics !== null && done !== ctl.doneDiagnostics && ctl.diagnostics !== null) {
+        loadDiagnostics(ctl);
+      }
+      ctl.doneDiagnostics = done;
     } catch (error) {
       if (current !== ctl) return;
       ctl.commandList.replaceChildren(muted(problem(error, 'Komut listesi alınamadı.')));
@@ -1194,6 +1364,8 @@ export function devicesView(app) {
     refresh_inventory: 'İstek gönderildi. Uygulama listesi tablet bağlanınca yenilenir.',
     flush_usage: 'İstek gönderildi. Kullanım tablet bağlanınca gelir.',
     reboot: 'Yeniden başlatma isteği gönderildi.',
+    self_update: 'Güncelleme komutu gönderildi. Tablet bağlanınca güncellemeyi hemen kurar.',
+    diagnostics: 'İstek gönderildi. Tanı raporu tablet bağlanınca aşağıdaki listeye gelir.',
   };
 
   async function sendCommand(ctl, type, payload = {}) {

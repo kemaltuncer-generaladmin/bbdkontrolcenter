@@ -17,8 +17,12 @@ from fastapi.routing import APIRoute
 
 from km_sdk import APIRouter, BaseModel, Field, HTTPException, Query
 
-from ..service import NotFoundError, TabletError
+from ..service import MAX_DIAGNOSTICS_TEXT, NotFoundError, TabletError
 from .routes import current_service
+
+# A diagnostics body: 256 K characters, JSON-escaped at worst 6 bytes each.
+MAX_DIAGNOSTICS_BODY = 2 * 1024 * 1024
+TOO_LARGE = "Tanı raporu çok büyük; en fazla 262144 karakter gönderilebilir."
 
 
 class CodedErrorRoute(APIRoute):
@@ -181,6 +185,20 @@ class SyncBody(BaseModel):
     commandResults: list[CommandResult] = Field(default_factory=list, max_length=1000)
     appsVersion: str | None = Field(default=None, max_length=200)
     installs: InstallsBody | None = None
+    # Sözleşme v2.2. `selfUpdate` is checked leniently by the service
+    # (`normalize_self_update`): a bad report must not fail the sync.
+    appVersionCode: int | None = Field(default=None, ge=0)
+    selfUpdate: dict[str, Any] | None = None
+    policyDetail: str | None = None
+
+
+class DiagnosticsBody(BaseModel):
+    """Sözleşme v2.2 diagnostics upload; `text` is limited by the route (413)."""
+
+    commandId: str | None = Field(default=None, max_length=100)
+    appVersion: str | None = Field(default=None, max_length=40)
+    appVersionCode: int | None = Field(default=None, ge=0)
+    text: str
 
 
 class InventoryApp(BaseModel):
@@ -296,13 +314,15 @@ async def sync(device_id: str, body: SyncBody, request: Request,
                authorization: str = Header(default="")) -> dict[str, Any]:
     device = await device_auth(authorization, device_id)
     data = body.model_dump()
-    if "appsVersion" not in body.model_fields_set:
-        # An APK without app distribution does not send the key; it must not
-        # get the whole catalog on every sync. Key present with null → catalog.
-        del data["appsVersion"]
+    # An APK without app distribution does not send `appsVersion`; it must not
+    # get the whole catalog on every sync. Key present with null → catalog.
+    # Likewise only a v2.2 tablet sends `selfUpdate` and gets the answer key.
+    for key in ("appsVersion", "selfUpdate", "policyDetail"):
+        if key not in body.model_fields_set:
+            del data[key]
+    wants_urls = data.get("installs") is not None or "selfUpdate" in data
     return await current_service().sync(
-        device=device, data=data,
-        base_url=api_root(request) if data.get("installs") is not None else "",
+        device=device, data=data, base_url=api_root(request) if wants_urls else "",
     )
 
 
@@ -327,6 +347,54 @@ async def release_file(device_id: str, release_id: str, index: int,
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path, media_type="application/zip",
                         headers={"Cache-Control": "no-store"})
+
+
+@router.get("/devices/{device_id}/self-update/{release_id}")
+async def self_update_file(device_id: str, release_id: str,
+                           authorization: str = Header(default="")) -> FileResponse:
+    """The current TabletKontrol release's `base.apk` (sözleşme v2.2); no lease.
+
+    Same delivery rules as `release_file`: `Range` → 206, `application/zip`
+    keeps GZip away, `no-store` and no extension keep Cloudflare out.
+    """
+    await device_auth(authorization, device_id)
+    try:
+        path = await current_service().distribution.self_update_path(release_id=release_id)
+    except TabletError as exc:
+        raise coded(exc) from exc
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="application/zip",
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/devices/{device_id}/diagnostics")
+async def diagnostics(device_id: str, request: Request,
+                      authorization: str = Header(default="")) -> dict[str, Any]:
+    """Store a diagnostics report (sözleşme v2.2); the newest 5 per tablet stay.
+
+    The body is read with a cap before parsing, so an oversized upload is
+    refused with 413 without being held in memory whole.
+    """
+    device = await device_auth(authorization, device_id)
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_DIAGNOSTICS_BODY:
+        raise HTTPException(status_code=413, detail=TOO_LARGE)
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > MAX_DIAGNOSTICS_BODY:
+            raise HTTPException(status_code=413, detail=TOO_LARGE)
+    try:
+        body = DiagnosticsBody.model_validate_json(bytes(raw))
+    except ValueError as exc:  # pydantic's ValidationError, bad JSON included
+        raise HTTPException(status_code=422, detail="Tanı raporu gövdesi geçersiz.") from exc
+    if len(body.text) > MAX_DIAGNOSTICS_TEXT:
+        raise HTTPException(status_code=413, detail=TOO_LARGE)
+    return await current_service().store_diagnostics(
+        device=device, command_id=body.commandId, app_version=body.appVersion,
+        app_version_code=body.appVersionCode, text=body.text,
+    )
 
 
 @router.get("/devices/{device_id}/policy")

@@ -279,6 +279,83 @@ class AppDistribution:
         return {"version": catalog["version"], "items": catalog["items"],
                 "remove": catalog["remove"]}
 
+    # ------------------------------------------------- kendini güncelleme
+
+    @staticmethod
+    def self_item(catalog: dict[str, Any]) -> dict[str, Any] | None:
+        """The published TabletKontrol release, if any (sözleşme v2.2)."""
+        item = catalog["packages"].get(SELF_PACKAGE)
+        return item if item is not None and item["kind"] == "self" else None
+
+    async def self_update_offer(self, *, device_id: str, app_version_code: Any,
+                                base_url: str) -> dict[str, Any] | None:
+        """Sync `selfUpdate`: the current single-file self release when it is newer.
+
+        In-memory catalog and one comparison, so an up-to-date tablet costs no
+        query. A split self release is never offered: the self path installs a
+        single `base.apk`.
+        """
+        item = self.self_item(await self.catalog())
+        if item is None or len(item["files"]) != 1:
+            return None
+        if not isinstance(app_version_code, int) or isinstance(app_version_code, bool) \
+                or item["versionCode"] <= app_version_code:
+            return None
+        file = item["files"][0]
+        return {"releaseId": item["releaseId"], "versionCode": item["versionCode"],
+                "versionName": item["versionName"], "sizeBytes": file["sizeBytes"],
+                "sha256": file["sha256"],
+                "url": f"{base_url}/devices/{device_id}/self-update/{item['releaseId']}"}
+
+    async def self_update_path(self, *, release_id: str) -> Path:
+        """File behind a `selfUpdate.url`; no lease, only the current self release."""
+        item = self.self_item(await self.catalog())
+        if item is None:
+            raise NotFoundError("Yayında tablet uygulaması sürümü yok.")
+        if item["releaseId"] != release_id:
+            raise TabletError("RELEASE_GONE", "Bu sürüm artık dağıtılmıyor.")
+        if len(item["files"]) != 1:
+            raise NotFoundError("Dosya bulunamadı.")
+        path = self._release_dir(release_id) / item["files"][0]["name"]
+        if not await asyncio.to_thread(path.is_file):
+            raise TabletError("RELEASE_GONE", "Bu sürümün dosyası artık sunucuda yok.")
+        return path
+
+    @staticmethod
+    def self_report(device: dict[str, Any]) -> dict[str, Any] | None:
+        """The tablet's last `selfUpdate` report stored on its row (v2.2+)."""
+        try:
+            report = json.loads(device.get("self_update") or "null")
+        except ValueError:
+            return None
+        return report if isinstance(report, dict) else None
+
+    @classmethod
+    def _self_status(cls, device: dict[str, Any],
+                     release: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+        """Panel status of the self release from a v2.2 report; None for older tablets.
+
+        The buckets are the queue's: `ready` (waits for the student session to
+        end) counts as waiting, `installing` as downloading; `selfState` tells
+        the panel which one it really is.
+        """
+        report = cls.self_report(device)
+        if report is None:
+            return None
+        code = device.get("app_version_code")
+        state = report.get("state")
+        if isinstance(code, int) and code >= release["versionCode"]:
+            status = "installed"
+        elif state in ("downloading", "installing"):
+            status = "downloading"
+        elif state == "failed":
+            status = "failed"
+        else:
+            # idle, ready, or an older update reported as installed: the
+            # tablet takes this one on its next sync or after the session.
+            status = "waiting"
+        return status, report
+
     # --------------------------------------------------------- yüklemeler
 
     def _status(self, row: dict[str, Any],
@@ -977,7 +1054,8 @@ class AppDistribution:
 
     async def _paired_devices(self) -> list[dict[str, Any]]:
         return [dict(row) for row in await self.store.fetch_all(
-            f"SELECT id, name FROM {self.devices} WHERE token_hash IS NOT NULL "
+            f"SELECT id, name, app_version_code, self_update FROM {self.devices} "
+            "WHERE token_hash IS NOT NULL "
             "AND revoked_at IS NULL ORDER BY name"
         )]
 
@@ -1019,7 +1097,8 @@ class AppDistribution:
         for item in catalog["items"]:
             counts = {"installed": 0, "downloading": 0, "waiting": 0, "failed": 0, "unknown": 0}
             for device in devices:
-                status = self._device_status(
+                reported = self._self_status(device, item) if item["kind"] == "self" else None
+                status = reported[0] if reported else self._device_status(
                     by_key.get((device["id"], item["releaseId"])),
                     codes.get((device["id"], item["packageName"])), item, stamp,
                 )
@@ -1059,6 +1138,11 @@ class AppDistribution:
         codes = await self._installed_codes([package_name])
         result = []
         for device in await self._paired_devices():
+            reported = self._self_status(device, item) if item["kind"] == "self" else None
+            if reported is not None:
+                # v2.2 tablets update themselves outside the queue (sözleşme v2.2).
+                result.append(self._self_row(device, item, *reported))
+                continue
             row = mine.get(device["id"])
             status = self._device_status(row, codes.get((device["id"], package_name)), item,
                                          stamp)
@@ -1078,10 +1162,31 @@ class AppDistribution:
                 or codes.get((device["id"], package_name)),
                 "seenAt": (row or {}).get("seen_at"),
                 "leaseUntil": (row or {}).get("lease_until") if status == "downloading" else None,
+                "selfState": None, "nextRetryAt": None,
             })
         return {"serverTime": stamp, "app": item,
                 "slots": {"total": self.download_slots, "used": len(leased)},
                 "devices": result}
+
+    @staticmethod
+    def _self_row(device: dict[str, Any], item: dict[str, Any], status: str,
+                  report: dict[str, Any]) -> dict[str, Any]:
+        received = report.get("receivedBytes") or 0
+        total = item["totalBytes"]
+        downloading = report.get("state") == "downloading" and status == "downloading"
+        return {
+            "deviceId": device["id"], "deviceName": device["name"], "status": status,
+            "position": None, "receivedBytes": received,
+            "progressPercent": (min(100, math.floor(received * 100 / total))
+                                if downloading and total else None),
+            "priority": False,
+            "lastError": (report.get("error") or "") if status == "failed" else "",
+            "errorAt": report.get("at") if status == "failed" else None,
+            "installedVersionCode": device.get("app_version_code"),
+            "seenAt": report.get("at"), "leaseUntil": None,
+            "selfState": report.get("state"),
+            "nextRetryAt": report.get("nextRetryAt") if status == "failed" else None,
+        }
 
     # ------------------------------------------------------------ temizlik
 

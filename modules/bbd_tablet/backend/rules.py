@@ -15,13 +15,21 @@ ENROLLMENT_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 ENROLLMENT_CODE_LENGTH = 8
 
 OFFLINE_MODES = ("local", "allowed", "denied")
-COMMAND_TYPES = ("message", "refresh_inventory", "flush_usage", "reboot")
+COMMAND_TYPES = ("message", "refresh_inventory", "flush_usage", "reboot",
+                 "self_update", "diagnostics")
 END_REASONS = ("admin", "expired", "logout", "revoked", "blocked", "outside_hours")
 
 MAX_USAGE_WINDOWS = 21
 MIN_DAILY_LIMIT_SECONDS = 60
 MAX_DAILY_LIMIT_SECONDS = 86400
 MAX_MESSAGE_LENGTH = 500
+
+# Sözleşme v2.2: the tablet's `selfUpdate` report and `policyDetail`.
+SELF_UPDATE_STATES = ("idle", "downloading", "ready", "installing", "failed", "installed")
+MAX_POLICY_DETAIL = 300
+_SELF_UPDATE_TEXT = {"releaseId": 100, "error": 200, "detail": 300, "nextRetryAt": 64,
+                     "at": 64}
+_SELF_UPDATE_NUMBERS = ("versionCode", "receivedBytes", "attempt")
 
 _HHMM = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _CODE_SEPARATORS = re.compile(r"[\s-]+")
@@ -142,6 +150,32 @@ def normalize_command(command_type: str, payload: Any) -> dict[str, Any]:
     if len(text) > MAX_MESSAGE_LENGTH:
         raise ValueError(f"Mesaj en fazla {MAX_MESSAGE_LENGTH} karakter olabilir.")
     return {"text": text}
+
+
+def normalize_self_update(raw: Any) -> dict[str, Any] | None:
+    """The stored form of a sync `selfUpdate` report, or None when unusable.
+
+    Lenient on purpose: a malformed report must never turn the tablet's only
+    periodic call into a 422, so overlong text is cut, unknown keys and
+    non-numeric numbers are dropped, and an unknown `state` drops the report.
+    """
+    if not isinstance(raw, dict) or raw.get("state") not in SELF_UPDATE_STATES:
+        return None
+    report: dict[str, Any] = {"state": raw["state"]}
+    for key, limit in _SELF_UPDATE_TEXT.items():
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            report[key] = value.strip()[:limit]
+    for key in _SELF_UPDATE_NUMBERS:
+        value = raw.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            report[key] = value
+    return report
+
+
+def normalize_policy_detail(raw: Any) -> str | None:
+    text = raw.strip()[:MAX_POLICY_DETAIL] if isinstance(raw, str) else ""
+    return text or None
 
 
 def session_view(row: dict[str, Any], *, expires_at: str | None) -> dict[str, Any]:

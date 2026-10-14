@@ -23,8 +23,8 @@ import { dataTable } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
 import { badge, card, drawer, emptyState, progress } from '../../ui-kit/layout.js';
 import {
-  busy, facts, formDialog, inline, matchesText, modal, muted, nameCell, permButton, problem,
-  since, when,
+  busy, clockOf, facts, formDialog, inline, matchesText, modal, muted, nameCell, permButton, problem,
+  selfUpdateError, since, when,
 } from './common.js';
 
 const enc = encodeURIComponent;
@@ -45,6 +45,29 @@ const STATUS = {
   failed: ['Hata', 'bad'],
   unknown: ['Haber yok', 'dim'],
 };
+
+// v2.2 tablet kendini sırasız günceller; durum tabletin bildiriminden gelir
+// (`selfState`). Sayaç kovaları sıranınkilerdir, satırda gerçek durum yazar.
+const SELF_STATE = {
+  downloading: ['İndiriliyor', 'info'],
+  installing: ['Kuruluyor', 'info'],
+  ready: ['Kurulmayı bekliyor', 'info'],
+};
+
+function statusLabel(row) {
+  if (row.selfState && row.status !== 'installed' && row.status !== 'failed') {
+    if (SELF_STATE[row.selfState]) return SELF_STATE[row.selfState];
+    return ['Bekliyor', 'dim'];
+  }
+  return STATUS[row.status] || ['Bilinmiyor', 'dim'];
+}
+
+/** Satırın son hatası: v2.2 kendini güncelleme kodları ayrı sözlükten çevrilir. */
+function rowError(row) {
+  if (!row.selfState) return installError(row.lastError);
+  const retry = row.nextRetryAt ? ` — sonraki deneme ${clockOf(row.nextRetryAt)}` : '';
+  return `${selfUpdateError(row.lastError)}${retry}`;
+}
 
 const DRAFT_STATE = {
   uploading: ['Yarım yükleme', 'warn'],
@@ -241,7 +264,8 @@ export function appsView(app) {
     const body = h('div', 'kit-card-body tb-stack');
     if (!own) {
       body.append(muted('TabletKontrol’ün yeni sürümünü (com.veykemtu.tabletkontrol) “APK yükle” ile '
-        + 'yükleyip dağıtınca tabletler kendini sırayla günceller. Güncelleme her zaman sıranın önündedir.'));
+        + 'yükleyip dağıtınca tabletler kendini günceller. Yeni sürümdeki tabletler sıra beklemeden, '
+        + 'öğrenci oturumu yokken kurar; eski sürümdekiler dağıtım sırasında her zaman öndedir.'));
     } else {
       body.append(facts([
         ['Sürüm', versionText(own)],
@@ -617,7 +641,7 @@ export function appsView(app) {
         { key: 'status', label: 'Durum', width: '130px', sortable: true,
           sortValue: (row) => Object.keys(STATUS).indexOf(row.status),
           cell: (row) => {
-            const [text, tone] = STATUS[row.status] || ['Bilinmiyor', 'dim'];
+            const [text, tone] = statusLabel(row);
             return inline(badge(text, tone), row.priority && row.status !== 'installed' ? badge('Öne alındı', 'info') : null);
           } },
         { key: 'position', label: 'Sıra', width: '60px', sortable: true,
@@ -627,12 +651,14 @@ export function appsView(app) {
         { key: 'lastError', label: 'Son hata', width: 'minmax(0, 1.4fr)',
           cell: (row) => {
             if (!row.lastError || row.status === 'installed') return '—';
-            const text = h('span', null, installError(row.lastError));
+            const text = h('span', null, rowError(row));
             text.title = `${row.lastError}${row.errorAt ? ` · ${when(row.errorAt)}` : ''}`;
             return text;
           } },
         { key: 'actions', label: '', width: '90px',
-          cell: (row) => (['waiting', 'failed', 'unknown'].includes(row.status) && app.can('manage')
+          // v2.2 tabletin kendi güncellemesi sırada değildir; öne alınacak bir şey yok.
+          cell: (row) => (['waiting', 'failed', 'unknown'].includes(row.status) && !row.selfState
+            && app.can('manage')
             ? button('Öne al', {
               variant: 'ghost',
               title: 'Bu tableti bu uygulama için sıranın önüne al',

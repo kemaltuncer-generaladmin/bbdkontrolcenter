@@ -179,6 +179,8 @@ export const COMMAND_LABELS = {
   refresh_inventory: 'Uygulama listesini yenile',
   flush_usage: 'Kullanımı şimdi gönder',
   reboot: 'Yeniden başlat',
+  self_update: 'Şimdi güncelle',
+  diagnostics: 'Tanılama iste',
 };
 
 export const COMMAND_STATUS = {
@@ -195,7 +197,99 @@ export function commandResult(command) {
   if (command?.status !== 'failed') return '';
   if (command.resultMessage === 'unsupported') return 'Tabletteki uygulama bu komutu tanımıyor; uygulamayı güncelleyin.';
   if (command.resultMessage === 'empty') return 'Mesaj boş olduğu için gösterilmedi.';
+  if (command.type === 'self_update' && command.resultMessage === 'no_update') {
+    return 'Tablete sunulan güncelleme yok: tablet zaten güncel ya da yayında daha yeni sürüm yok.';
+  }
+  if (command.type === 'diagnostics') return 'Tablet tanı raporunu gönderemedi.';
   return 'Tablet komutu uygulayamadı.';
+}
+
+// ------------------------------------------------- kendini güncelleme
+
+// Tabletin kendini güncellemede bildirdiği makine kodları (sözleşme v2.2).
+const SELF_UPDATE_ERRORS = {
+  size_mismatch: 'İnen dosyanın boyutu beklenenden farklı',
+  hash_mismatch: 'İnen dosya bozuk çıktı (SHA-256 tutmuyor)',
+  unparseable_apk: 'İnen dosya geçerli bir APK değil',
+  package_mismatch: 'Yüklenen APK TabletKontrol’e ait değil (paket adı farklı)',
+  version_mismatch: 'APK’nın sürümü sunulan sürümle uyuşmuyor ya da kurulu sürümden büyük değil',
+  incompatible_signature: 'İmza uyuşmuyor: yeni APK tabletteki sürümle aynı anahtarla imzalanmamış',
+  min_sdk: 'Bu sürüm tabletin Android sürümünü desteklemiyor',
+  insufficient_storage: 'Tablette yer yok',
+  not_device_owner: 'Tablet tam yönetimde değil (Device Owner yok); kendini güncelleyemez',
+  install_no_result: 'Android kurulumdan sonuç döndürmedi; yarım kurulum atıldı',
+  install_lost: 'Kurulum yarıda kaldı (tablet yeniden başladı ya da kurulum kayboldu)',
+  release_gone: 'Bu sürüm sunucuda artık yok (yenisi yüklendi)',
+};
+
+// Yeni yayın ya da "Şimdi güncelle" gelene kadar yeniden denenmeyen hatalar.
+const PERMANENT_ERRORS = new Set(['incompatible_signature', 'package_mismatch', 'version_mismatch', 'min_sdk']);
+
+/** Kendini güncelleme hata kodu → kısa Türkçe cümle; tanınmayan kod genel cümleye düşer. */
+export function selfUpdateError(code) {
+  const text = String(code || '');
+  if (!text) return '';
+  if (SELF_UPDATE_ERRORS[text]) return SELF_UPDATE_ERRORS[text];
+  if (text.startsWith('download_failed')) {
+    const reason = text.split(':').slice(1).join(':').trim();
+    if (/^\d{3}$/.test(reason)) return `İndirme başarısız (sunucu yanıtı ${reason})`;
+    return 'İndirme yarıda kaldı (bağlantı sorunu)';
+  }
+  if (text.startsWith('install_failed')) {
+    // install_failed:<durum>:<ileti> — Android'in kendi kodu; ham hâli ipucunda durur.
+    const [, status = '', ...rest] = text.split(':');
+    const detail = [status, rest.join(':')].map((part) => part.trim()).filter(Boolean).join(' · ');
+    return detail ? `Android kurulumu reddetti: ${detail}` : 'Android kurulumu reddetti';
+  }
+  return 'Güncellenemedi';
+}
+
+/** Tabletin sürümü: "0.7.2 (22)". */
+export function appVersionText(device) {
+  const name = device?.app_version || '';
+  const code = device?.app_version_code;
+  if (code === null || code === undefined) return name || null;
+  return `${name ? `${name} ` : ''}(${code})`;
+}
+
+/** Zaman damgası bugünse saat, değilse tarih + saat. */
+function soonText(text) {
+  const ms = msOf(text);
+  if (Number.isNaN(ms)) return '';
+  return new Date(ms).toDateString() === new Date().toDateString() ? clockOf(text) : when(text);
+}
+
+/**
+ * Tabletin son `selfUpdate` bildirimi → [Türkçe durum, rozet tonu, ipucu].
+ * Bildirim yoksa (v2.2 öncesi tablet) null.
+ */
+export function selfUpdateState(report, totalBytes = 0) {
+  if (!report || typeof report !== 'object') return null;
+  const hint = [report.error, report.detail].filter(Boolean).join(' · ');
+  switch (report.state) {
+    case 'idle':
+      return ['Güncel', 'good', ''];
+    case 'installed':
+      return ['Kuruldu', 'good', ''];
+    case 'downloading': {
+      const received = Number(report.receivedBytes || 0);
+      const share = totalBytes && received ? Math.min(100, Math.floor((received * 100) / totalBytes)) : null;
+      return [share === null ? 'İndiriliyor' : `İndiriliyor %${share}`, 'info', ''];
+    }
+    case 'ready':
+      return ['Kurulmayı bekliyor (öğrenci oturumu bitince)', 'info', ''];
+    case 'installing':
+      return ['Kuruluyor', 'info', hint];
+    case 'failed': {
+      const reason = selfUpdateError(report.error);
+      const retry = report.nextRetryAt ? ` — sonraki deneme ${soonText(report.nextRetryAt)}`
+        : (PERMANENT_ERRORS.has(report.error)
+          ? ' — yeni sürüm yüklenene ya da “Şimdi güncelle” denene kadar denenmez' : '');
+      return [`Hata: ${reason}${retry}`, 'bad', hint];
+    }
+    default:
+      return null;
+  }
 }
 
 /**
