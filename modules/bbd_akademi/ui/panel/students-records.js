@@ -30,6 +30,7 @@ import {
   statusBadge, todayIst, toolbar,
 } from './common.js';
 import { documentButtons } from './documents.js';
+import { attendanceExtras } from './students-attendance.js';
 import { examResultDoc } from './documents-logic.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
@@ -423,7 +424,13 @@ export function attendanceTab(ctx) {
     }
     paintLabel();
     view.reload();
+    extras.calendar?.setMonth(month);
   };
+  const extras = attendanceExtras(ctx, { onLeaveSaved: () => {
+    view.reload();
+    leaves.reload();
+    extras.calendar?.reload();
+  } });
   const paintLabel = () => {
     const [year, value] = month.split('-').map(Number);
     label.textContent = `${monthName(value - 1)} ${year}`;
@@ -433,6 +440,7 @@ export function attendanceTab(ctx) {
     button('Sonraki ay ›', { variant: 'ghost', onClick: () => shift(1) }),
     button('Bu ay', { variant: 'ghost', onClick: () => shift(0) }),
     h('span', 'kit-spacer'),
+    extras.leave,
     app.has('requests') ? button('İzin taleplerini yönet', { variant: 'ghost',
       onClick: () => app.go('requests', { tab: 'leave' }) }) : null,
   ));
@@ -455,9 +463,11 @@ export function attendanceTab(ctx) {
     empty: { title: 'İzin bildirimi yok' },
   });
   ctx.dispose(() => leaves.destroy());
-  node.append(card('Aylık yoklama', view.node), card('İzin (mazeret) bildirimleri', leaves.node));
+  node.append(...extras.cards, card('Aylık yoklama', view.node), card('İzin (mazeret) bildirimleri', leaves.node));
+  if (extras.note) node.append(extras.note);
   paintLabel();
   view.reload();
+  extras.calendar?.reload();
   leaves.reload();
   return { node };
 }

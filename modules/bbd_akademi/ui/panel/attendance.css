@@ -110,3 +110,34 @@
   .ak-att-row { grid-template-columns: 22px minmax(0, 1fr); }
   .ak-att-marks, .ak-att-note { grid-column: 2; }
 }
+
+/* ---------------------------------------------- yoklama yönetimi (KM-2) */
+.ak-att-tabbody { display: flex; flex-direction: column; gap: 14px; }
+.ak-att-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ak-att-actions:empty { display: none; }
+.ak-att-left.kit-btn-ghost { align-self: flex-start; height: 22px; padding: 0 8px; font-size: 11.5px; }
+.ak-att-offline { display: flex; flex-direction: column; gap: 6px; }
+.ak-att-offline-row {
+  padding: 9px 12px; border: 1px solid #fcd34d; border-radius: 10px; background: #fffbeb;
+}
+.ak-att-pending {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+.ak-att-calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.ak-att-calendar-head { color: var(--soft); font-size: 11px; text-align: center; }
+.ak-att-day {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 46px; padding: 4px;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; font: inherit; color: inherit;
+  cursor: pointer;
+}
+.ak-att-day:disabled { cursor: default; opacity: 0.55; }
+.ak-att-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ak-att-day b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ak-att-day small { font-size: 10.5px; color: var(--soft); }
+.ak-att-day.ak-att-is-present { background: #f0fdf4; border-color: #bbf7d0; }
+.ak-att-day.ak-att-is-partial { background: #fffbeb; border-color: #fde68a; }
+.ak-att-day.ak-att-is-absent { background: #fef2f2; border-color: #fecaca; }
+.ak-att-day.ak-att-is-excused { background: #eff6ff; border-color: #bfdbfe; }
+.ak-att-day.on { box-shadow: 0 0 0 2px var(--accent); }
