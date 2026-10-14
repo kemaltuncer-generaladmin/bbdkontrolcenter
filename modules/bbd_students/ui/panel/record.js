@@ -1210,8 +1210,11 @@ export function mountRecord(host, options) {
     if (!await confirmSimple(dialogRoot, {
       title: scheduled ? 'Planlı pasifleştirme iptal edilsin mi?' : 'Yeniden etkinleştir',
       description: scheduled ? 'Öğrenci etkin kalır.'
-        : 'Kantin satışı ve BBD Akademi girişi yeniden açılır. Grup üyelikleri kendiliğinden açılmaz — '
-          + 'gerekiyorsa “Sınıf ve gruplar” bölümünden ekleyin.',
+        : (student.levelOnStudent
+          ? 'Kantin satışı ve BBD Akademi girişi yeniden açılır. Sınıf üyelikleri kendiliğinden açılmaz — '
+            + 'gerekiyorsa “Sınıflar ve seviye” bölümünden ekleyin.'
+          : 'Kantin satışı ve BBD Akademi girişi yeniden açılır. Grup üyelikleri kendiliğinden açılmaz — '
+            + 'gerekiyorsa “Sınıf ve gruplar” bölümünden ekleyin.'),
       confirmLabel: scheduled ? 'Planı iptal et' : 'Yeniden etkinleştir',
     })) return;
     await lifecycle(`${BASE}/students/${enc(kantinId)}/reactivate`, { method: 'POST' },
