@@ -459,6 +459,13 @@ class StudentService:
         display = _display_name(payload)
         if not display:
             raise ValueError("Ad ve soyad zorunlu.")
+        # Sınıf = grup (göç 009): birleştirmeden sonra sınıf, ÜYELİKTİR — öğrenci kaydı
+        # yazıldıktan sonra o sınıfa eklenir (yoksa açılır); `class_name` türetilir.
+        join_class = ""
+        if "className" in payload and self._group_service is not None \
+                and await self.own_level():
+            payload = dict(payload)
+            join_class = " ".join(str(payload.pop("className") or "").split())
         # Kural ihlali kantine yazılmadan ÖNCE yakalanır.
         columns = self._profile_columns(None, payload)
 
@@ -476,6 +483,8 @@ class StudentService:
             await self._compensate_create(kantin_id)
             raise ValueError(f"Kantin öğrenciyi kabul etmedi: {outcome.error}")
         self._log.info("öğrenci eklendi", kantin_id=kantin_id, canteen=outcome.state)
+        if join_class:
+            await self._join_class([kantin_id], join_class, actor=actor or "Öğrenci Yönetimi")
         result: dict[str, Any] = {"kantinId": kantin_id,
                                   "canteenSync": "ok" if outcome.state == "ok" else "pending"}
         if outcome.state != "ok":
@@ -510,6 +519,16 @@ class StudentService:
         """
         if await self._sync.tombstone(kantin_id) is not None:
             raise ValueError("Öğrenci silinmiş.")
+        if "className" in payload and self._group_service is not None \
+                and await self.own_level():
+            # Sınıf = grup (göç 009): `className` yazmak "o sınıfa da ekle"dir (ana sınıf yok;
+            # boş ad bir şey yapmaz — sınıftan çıkarmak üyelik ekranındandır).
+            payload = dict(payload)
+            name = " ".join(str(payload.pop("className") or "").split())
+            if name:
+                await self._join_class([kantin_id], name, actor=actor or "Öğrenci Yönetimi")
+            if not payload:
+                return {"kantinId": kantin_id, "canteenFields": [], "canteenSync": "ok"}
         existing = await self._sync.profile(kantin_id)
         # Seviye/alan kuralı kantine gitmeden denetlenir (yarım yazma olmasın).
         columns = self._profile_columns(existing, payload)

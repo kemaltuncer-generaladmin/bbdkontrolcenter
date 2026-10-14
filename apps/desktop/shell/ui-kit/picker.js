@@ -25,7 +25,9 @@ import { button, foldText, h } from './kit.js';
 
 /**
  * @param {object} spec
- * @param {Array<{id, name, group?, meta?}>} [spec.items]
+ * @param {Array<{id, name, group?, groups?, meta?}>} [spec.items] — `groups` (isteğe bağlı):
+ *   kaydın ÜYESİ olduğu bütün gruplar (ör. öğrencinin sınıfları — sınıf = grup, bir öğrenci
+ *   birden çok sınıfta). Süzgeç bunlardan herhangi biriyle eşleşir; çizimde başlık `group`'tur.
  * @param {string} [spec.groupLabel='Grup']  — grup süzgecinin etiketi
  * @param {string} [spec.placeholder]
  * @param {string} [spec.label]  — listenin erişilebilir adı (ör. 'Öğrenciler')
@@ -168,10 +170,12 @@ export function createPicker({ items = [], groupLabel = 'Grup', placeholder = 'A
   // --------------------------------------------------------------- çizim
   function matches(item) {
     if (remote) return true;           // uzak kipte süzgeç sunucuda
-    if (group && String(item.group ?? '') !== group) return false;
+    if (group && String(item.group ?? '') !== group
+      && !(Array.isArray(item.groups) && item.groups.some((name) => String(name) === group))) return false;
     const needle = foldText(query.trim());
     if (!needle) return true;
-    return foldText(`${item.name} ${item.meta ?? ''} ${item.group ?? ''}`).includes(needle);
+    const extra = Array.isArray(item.groups) ? item.groups.join(' ') : '';
+    return foldText(`${item.name} ${item.meta ?? ''} ${item.group ?? ''} ${extra}`).includes(needle);
   }
 
   function visible() {
@@ -182,7 +186,8 @@ export function createPicker({ items = [], groupLabel = 'Grup', placeholder = 'A
   function paintGroups() {
     const names = remote
       ? (remoteGroups || []).map((item) => ({ value: String(item.value), label: item.label }))
-      : [...new Set(all.map((item) => String(item.group ?? '')).filter(Boolean))]
+      : [...new Set(all.flatMap((item) => [String(item.group ?? ''),
+        ...(Array.isArray(item.groups) ? item.groups.map(String) : [])]).filter(Boolean))]
         .sort((a, b) => a.localeCompare(b, 'tr')).map((name) => ({ value: name, label: name }));
     groupSelect.replaceChildren();
     const any = h('option', undefined, `Tüm ${groupLabel.toLocaleLowerCase('tr')}lar`);

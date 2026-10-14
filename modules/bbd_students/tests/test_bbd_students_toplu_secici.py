@@ -101,18 +101,19 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
   document.activeElement.click();
   out.afterKey = bulk().querySelector('.st-bulk-count').textContent;
-  // 4) "Sınıfa ata" seçilen ÜÇ öğrenciyi gönderir (Türkçe harfli kimlik dahil)
+  // 4) "Sınıfa ekle (adla)" seçilen ÜÇ öğrenciyi gönderir (Türkçe harfli kimlik dahil);
+  //    sınıf kodu düzeltilir ("11a" → "11-A").
   const classBox = bulk().querySelectorAll('.st-bulk-plan')[0];
   const input = classBox.querySelector('input');
-  input.value = '11-A';
-  btn(classBox, 'Seçilenleri bu sınıfa ata').click();
+  input.value = '11a';
+  btn(classBox, 'Seçilenleri bu sınıfa ekle').click();
   await sleep(10);
-  const ok = root.querySelectorAll('button').find((b) => b.textContent === 'Ata');
+  const ok = root.querySelectorAll('button').find((b) => b.textContent === 'Ekle');
   ok?.click();
   await sleep(40);
   out.classPost = calls.filter((c) => c.method === 'POST' && c.path.endsWith('/students/class')).map((c) => c.body);
   out.classStatus = classBox.querySelector('.st-bulk-status').textContent;
-  // 5) "Gruba ekle" de aynı seçimi gönderir
+  // 5) "Sınıfa ekle, çıkar ya da taşı" da aynı seçimi gönderir
   const groupBox = bulk().querySelectorAll('.st-bulk-plan')[1];
   const selects = groupBox.querySelectorAll('select');
   await sleep(10);
@@ -121,12 +122,14 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(40);
   out.groupPost = calls.filter((c) => c.method === 'POST' && c.path.endsWith('/members')).map((c) => [c.path, c.body]);
   out.violationsEnd = audit(root);
-  // 6) içeriden sekme değişimi (0.5.5): "Sınıfların seviyesi →" Sınıflar'ı açar ve gömene
-  //    `onMode` ile bildirir — Akademi şeridi doğru sekmeyi gösterir.
-  btn(bulk(), 'Sınıfların seviyesi').click();
+  // 6) içeriden sekme değişimi: "Sınıflar →" TEK Sınıflar ekranını açar ve gömene
+  //    `onMode` ile bildirir — Akademi şeridi doğru sekmeyi gösterir. Eski "groups"
+  //    derin bağlantısı da aynı ekrana yönlenir (bildirilmez: aynı sekme).
+  btn(bulk(), 'Sınıflar').click();
   await sleep(20);
-  out.classesShown = !root.querySelector('.st-classes').hidden && bulk().hidden;
+  out.classesShown = !root.querySelector('.st-groups').hidden && bulk().hidden;
   cleanup.setMode('classes');           // aynı sekme → yeniden bildirilmez
+  cleanup.setMode('groups');            // eski ad → aynı sekme
   out.modes = modes;
   cleanup();
   return out;
@@ -164,7 +167,7 @@ def test_gomulu_ve_ilk_okumada_bos_liste_demez(out: dict[str, Any]) -> None:
 def test_liste_sinif_suzgeci_ve_sayi(out: dict[str, Any]) -> None:
     # Sıra: sınıf (9-A, 10-B, sınıfsız), sınıf içinde ad (KM listesiyle aynı).
     assert out["rows"] == ["Can Demir", "Elif Kaya", "Ece Çelik", "Veli Yazılım", "Ömer Ak"]
-    assert out["groups"] == ["Tüm sınıflar", "10-B", "9-A", "Sınıf girilmemiş"]
+    assert out["groups"] == ["Tüm sınıflar", "10-B", "9-A", "Sınıfsız"]
     assert out["idle"].startswith("Seçim yok") and out["countRole"] == "status"
     assert out["violations"] == []
     assert out["count"] == "2 öğrenci seçili"
@@ -173,7 +176,7 @@ def test_liste_sinif_suzgeci_ve_sayi(out: dict[str, Any]) -> None:
 
 def test_secim_toplu_islemlere_gider(out: dict[str, Any]) -> None:
     assert out["classPost"] == [{"students": ["STU-4", "veliyazılım", "STU-1"], "className": "11-A"}]
-    assert out["classStatus"].startswith("3 öğrenci “11-A” sınıfına atandı")
+    assert out["classStatus"].startswith("3 öğrenci “11-A” sınıfına eklendi")
     assert out["groupPost"] == [[f"{BASE}/groups/G1/members",
                                  {"studentIds": ["STU-4", "veliyazılım", "STU-1"]}]]
     assert out["violationsEnd"] == []

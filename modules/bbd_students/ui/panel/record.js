@@ -431,22 +431,34 @@ export function mountRecord(host, options) {
         parse: normalizePhone }));
     identity.append(idGrid, field('Not', 'note', { type: 'textarea', maxLength: 500, wide: true }));
 
-    // Sınıf, seviye ve gruplar — SINIF SEVİYEYİ TAŞIR (göç 008): seviye / alan / hedef sınav
-    // sınıfın tanımından gelir; burada yalnız öğrenciye özel alan / hedef sınav istisnası girilir.
-    const school = card('Sınıf ve gruplar', 'Ana sınıf tektir: kantin kartı, Akademi sınıfı ve SEVİYE '
-      + '(seviye, alan, hedef sınav → müfredat) ondan gelir. Öğrenci aynı anda birden çok gruba üye '
-      + 'olabilir (etüt, kurs, özel ders); gruplar seviye taşımaz.');
-    const classGrid = h('div', 'st-grid');
-    const listId = `st-classes-${Math.random().toString(36).slice(2, 8)}`;
-    const datalist = h('datalist');
-    datalist.id = listId;
-    for (const name of options.classes?.() || []) datalist.append(new Option(name, name));
-    classGrid.append(field('Ana sınıf', 'className', { placeholder: '11-A', maxLength: 20, list: listId,
-      parse: (value) => value, after: () => syncCurriculum() }), datalist);
+    // SINIF = GRUP (göç 009, iş 23): öğrenci birden çok sınıfa EŞİT üyedir ("ana sınıf" yok);
+    // seviye / alan / hedef sınav ÖĞRENCİNİNDİR (Akademi varsayılan müfredatı bunlardan türetir).
+    // Birleştirme bitmeden (`levelOnStudent` yok) eski düzen: ana sınıf + sınıftan seviye.
+    const merged = Boolean(student.levelOnStudent);
+    const school = merged
+      ? card('Sınıflar ve seviye', 'Öğrenci birden çok sınıfa eşit üye olabilir (ör. 11-A ve TYT '
+        + 'Matematik). Seviye, alan ve hedef sınav öğrencinindir: Akademi varsayılan müfredatı '
+        + 'bunlardan türetir; sınıfın seviyesi varsa öğrenci eklenince ona da yazılır.')
+      : card('Sınıf ve gruplar', 'Ana sınıf tektir: kantin kartı, Akademi sınıfı ve SEVİYE '
+        + '(seviye, alan, hedef sınav → müfredat) ondan gelir. Öğrenci aynı anda birden çok gruba üye '
+        + 'olabilir (etüt, kurs, özel ders); gruplar seviye taşımaz.');
+    if (!merged) {
+      const classGrid = h('div', 'st-grid');
+      const listId = `st-classes-${Math.random().toString(36).slice(2, 8)}`;
+      const datalist = h('datalist');
+      datalist.id = listId;
+      for (const name of options.classes?.() || []) datalist.append(new Option(name, name));
+      classGrid.append(field('Ana sınıf', 'className', { placeholder: '11-A', maxLength: 20, list: listId,
+        parse: (value) => value, after: () => syncCurriculum() }), datalist);
+      school.append(classGrid);
+    }
     const suggest = h('div', 'st-suggest st-level');
-    school.append(classGrid, suggest);
     const groupsBox = h('div', 'st-rec-groups');
-    school.append(h('p', 'st-subhead', 'Gruplar'), groupsBox);
+    if (merged) {
+      school.append(h('p', 'st-subhead', 'Sınıfları'), groupsBox, h('p', 'st-subhead', 'Seviye'), suggest);
+    } else {
+      school.append(suggest, h('p', 'st-subhead', 'Gruplar'), groupsBox);
+    }
     parts.push(mountGroupsPart(groupsBox));
     school.suggest = suggest;
 
@@ -558,8 +570,27 @@ export function mountRecord(host, options) {
     quick.append(h('h4', 'st-quick-title', 'Hızlı işlemler'));
     const row = h('div', 'st-quick-row');
 
-    // Sınıf değiştir — satır içi, Enter.
-    row.append(quickInput('Sınıf', { value: student.className || '', placeholder: '9-A', disabled: !managed,
+    // Sınıf — satır içi, Enter. Sınıf = grup (göç 009): "sınıfa ekle" (ana sınıf yok; yoksa açılır).
+    if (student.levelOnStudent) {
+      row.append(quickInput('Sınıfa ekle', { value: '', placeholder: '9-A',
+        disabled: !can('bbd_students.groups') || student.status === 'inactive',
+        describe: 'Sınıf adı yazıp Enter: öğrenci bugünden o sınıfa da üye olur (diğer sınıfları sürer).',
+        onSave: async (text) => {
+          const name = String(text || '').trim();
+          if (!name) return 'Sınıf adı yazın.';
+          try {
+            const result = await api(`${BASE}/students/class`, { method: 'POST',
+              body: { students: [kantinId], className: name } });
+            toast(result?.skipped?.length ? `Zaten “${result.className}” sınıfında.`
+              : `“${result?.className || name}” sınıfına eklendi.`);
+            await reload();
+            options.onChanged?.(student);
+            return '';
+          } catch (failure) {
+            return failure.message;
+          }
+        } }));
+    } else row.append(quickInput('Sınıf', { value: student.className || '', placeholder: '9-A', disabled: !managed,
       onSave: async (text) => {
         if (inputs.className) inputs.className.value = text;
         draft.className = text;
@@ -699,6 +730,10 @@ export function mountRecord(host, options) {
   function syncCurriculum(slot) {
     const box = slot || body.querySelector('.st-level');
     if (!box || !student) return;
+    if (student.levelOnStudent) {
+      ownLevel(box);
+      return;
+    }
     if ((draft?.className || '') !== (student.className || '')) return;
     if (box.dataset.forClass !== undefined && box.dataset.forClass !== (student.className || '')) {
       // Ana sınıf değişti: yalnız seviye alanları sunucudan tazelenir (kart yeniden çizilmez).
@@ -762,6 +797,62 @@ export function mountRecord(host, options) {
     box.append(grid, h('p', 'st-hint', 'Boş bırakılan alan sınıftan gelir. Seviye her zaman sınıftandır.'));
   }
 
+  /**
+   * Seviye ÖĞRENCİDE (göç 009): seviye / alan / hedef sınav doğrudan öğrenciye yazılır
+   * (değişince Akademi varsayılan müfredatı yeniden türetir). "Sınıf seviyesi uygulanırken
+   * alanımı ve hedef sınavımı koru" kutusu eski "öğrenciye özel" istisnasıdır.
+   */
+  function ownLevel(box) {
+    box.replaceChildren();
+    const manage = can('bbd_students.manage') && student.status !== 'inactive';
+    const grid = h('div', 'st-grid');
+    const pick = (label, key, choices, value, allowed = true) => {
+      const wrap = h('div', 'st-field');
+      const id = `${uid}-lvl-${key}`;
+      const caption = h('label', 'st-label', label);
+      caption.htmlFor = id;
+      const select = h('select', 'st-input st-select');
+      select.id = id;
+      for (const [v, text] of choices) select.append(new Option(text, v));
+      select.value = value === null || value === undefined ? '' : String(value);
+      select.disabled = !manage || !allowed;
+      select.addEventListener('change', () => {
+        const next = key === 'gradeLevel' ? parseGrade(select.value) : parseChoice(select.value);
+        const body = { [key]: next };
+        if (key === 'gradeLevel' && !trackAllowed(next) && student.track) body.track = null;
+        if (key === 'gradeLevel' && !student.examTarget && suggestedExam(next)) {
+          body.examTarget = suggestedExam(next);
+        }
+        patchLevel(body, 'Seviye kaydedildi.');
+      });
+      wrap.append(caption, select);
+      return wrap;
+    };
+    grid.append(
+      pick('Seviye', 'gradeLevel', GRADE_CHOICES, student.gradeLevel),
+      pick('Alan', 'track', TRACK_CHOICES, student.track, trackAllowed(student.gradeLevel ?? null)),
+      pick('Hedef sınav', 'examTarget', EXAM_CHOICES, student.examTarget));
+    box.append(grid);
+    if (student.gradeLevel === null || student.gradeLevel === undefined) {
+      box.append(h('p', 'st-lc-warn', 'Seviye girilmemiş — Akademi varsayılan müfredatı bağlayamaz.'));
+    }
+    const toggleId = `${uid}-keep`;
+    const toggle = h('input');
+    toggle.type = 'checkbox';
+    toggle.id = toggleId;
+    toggle.checked = Boolean(student.levelOverride);
+    toggle.disabled = !manage;
+    const toggleLabel = h('label', 'st-check',
+      'Sınıf seviyesi uygulanırken bu öğrencinin alanını ve hedef sınavını koru');
+    toggleLabel.htmlFor = toggleId;
+    const toggleRow = h('div', 'st-check-row');
+    toggleRow.append(toggle, toggleLabel);
+    toggle.addEventListener('change', () => patchLevel({ levelOverride: toggle.checked },
+      'Kaydedildi.'));
+    box.append(toggleRow, h('p', 'st-hint', 'Müfredat seti (varsayılan / elle / sınıftan) BBD Akademi '
+      + '→ öğrenci kartı → Müfredat sekmesindedir.'));
+  }
+
   const LEVEL_KEYS = ['gradeLevel', 'track', 'examTarget', 'classLevel', 'levelSource', 'levelOverride',
     'ownTrack', 'ownExamTarget', 'curriculumSuggestion'];
 
@@ -778,12 +869,12 @@ export function mountRecord(host, options) {
     }
   }
 
-  async function patchLevel(body) {
+  async function patchLevel(body, message = 'Seviye istisnası kaydedildi.') {
     const started = Date.now();
     try {
       await api(`${BASE}/students/${enc(kantinId)}`, { method: 'PATCH', body });
       if (destroyed) return;
-      announce('Seviye istisnası kaydedildi.', null, started);
+      announce(message, null, started);
       await reload();
       options.onChanged?.(student);
     } catch (failure) {
@@ -856,9 +947,10 @@ export function mountRecord(host, options) {
     const tools = h('div', 'st-rec-group-tools');
     box.append(list, tools);
     const editable = can('bbd_students.groups');
+    const merged = Boolean(student?.levelOnStudent);
 
     async function load() {
-      list.replaceChildren(h('p', 'st-hint', 'Gruplar okunuyor…'));
+      list.replaceChildren(h('p', 'st-hint', merged ? 'Sınıflar okunuyor…' : 'Gruplar okunuyor…'));
       try {
         const [mine, all] = await Promise.all([
           api(`${BASE}/students/${enc(kantinId)}/groups`),
@@ -867,7 +959,7 @@ export function mountRecord(host, options) {
         if (!alive) return;
         paint(mine.items || [], all.items || all.groups || []);
       } catch (failure) {
-        if (alive) list.replaceChildren(h('p', 'st-hint', `Gruplar okunamadı: ${failure.message}`));
+        if (alive) list.replaceChildren(h('p', 'st-hint', `${merged ? 'Sınıflar' : 'Gruplar'} okunamadı: ${failure.message}`));
       }
     }
 
@@ -876,10 +968,14 @@ export function mountRecord(host, options) {
       const current = items.filter((item) => validOn(item, today));
       const past = items.filter((item) => !validOn(item, today));
       list.replaceChildren();
-      if (!current.length) list.append(h('p', 'st-hint', 'Öğrenci şu an hiçbir grupta değil.'));
+      if (!current.length) {
+        list.append(h('p', 'st-hint', merged ? 'Öğrenci şu an hiçbir sınıfta değil.'
+          : 'Öğrenci şu an hiçbir grupta değil.'));
+      }
       for (const item of current) {
         const row = h('div', 'st-rec-chip');
         row.append(h('b', null, item.group.name), h('span', 'st-item-meta', `${trDay(item.validFrom)} →`));
+        if (item.group.kind === 'individual') row.append(h('i', 'st-badge', 'özel ders'));
         if (editable && !item.group.archived) {
           row.append(button('Çıkar', { onClick: () => leave(item) }));
         }
@@ -900,7 +996,7 @@ export function mountRecord(host, options) {
       const choices = groups.filter((group) => !inside.has(group.id) && !group.archived);
       if (!choices.length) return;
       const select = h('select', 'st-input st-select');
-      select.append(new Option('Gruba ekle…', ''));
+      select.append(new Option(merged ? 'Sınıfa ekle…' : 'Gruba ekle…', ''));
       for (const group of choices) select.append(new Option(group.name, group.id));
       const add = button('Ekle', { onClick: () => join(select.value) });
       tools.append(select, add);
@@ -911,23 +1007,24 @@ export function mountRecord(host, options) {
       try {
         await api(`${BASE}/groups/${enc(groupId)}/members`, { method: 'POST',
           body: { studentIds: [kantinId] } });
-        toast('Gruba eklendi.');
+        toast(merged ? 'Sınıfa eklendi.' : 'Gruba eklendi.');
         load();
       } catch (failure) {
-        showErrors([`Gruba eklenemedi: ${failure.message}`]);
+        showErrors([`${merged ? 'Sınıfa' : 'Gruba'} eklenemedi: ${failure.message}`]);
       }
     }
 
     async function leave(item) {
-      if (!await confirmSimple(dialogRoot, { title: `“${item.group.name}” grubundan çıkarılsın mı?`,
+      if (!await confirmSimple(dialogRoot, { title: merged ? `“${item.group.name}” sınıfından çıkarılsın mı?`
+        : `“${item.group.name}” grubundan çıkarılsın mı?`,
         description: 'Üyelik bugün biter (geçmiş korunur).', confirmLabel: 'Çıkar' })) return;
       try {
         await api(`${BASE}/groups/${enc(item.group.id)}/members/end`, { method: 'POST',
           body: { studentIds: [kantinId] } });
-        toast('Gruptan çıkarıldı.');
+        toast(merged ? 'Sınıftan çıkarıldı.' : 'Gruptan çıkarıldı.');
         load();
       } catch (failure) {
-        showErrors([`Gruptan çıkarılamadı: ${failure.message}`]);
+        showErrors([`${merged ? 'Sınıftan' : 'Gruptan'} çıkarılamadı: ${failure.message}`]);
       }
     }
 
