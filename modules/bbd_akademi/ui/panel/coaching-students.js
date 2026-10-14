@@ -18,7 +18,7 @@ import {
   kv, loader, openDrawer, optionsOf, pagedList, runAction, searchBox, selectBox, statusBadge, todayIst, toolbar,
 } from './common.js';
 import {
-  EXAM_TREND, GOAL_KINDS, GOAL_STATUS, MEETING_DURATIONS, MEETING_MODES, MEETING_PARTICIPANTS, MEETING_STATUS,
+  EXAM_TREND, GOAL_EXAM_TYPES, GOAL_KINDS, GOAL_STATUS, MEETING_DURATIONS, MEETING_MODES, MEETING_PARTICIPANTS, MEETING_STATUS,
   REACTIONS, RISK, TERM_RESULT, badgeText, goalBody, goalText, pct,
 } from './coaching-logic.js';
 import { coachOptions, coachingJob, riskBadge, studentCell } from './coaching-shared.js';
@@ -170,7 +170,7 @@ function summary(app, card, { studentId, ctx, view, refresh }) {
       ctx.go?.('week', { student });
     } })] : []),
     actionButton(app, 'admin_createGoalProposal', 'Hedef öner', { variant: 'ghost',
-      onClick: async () => { if (await goalDialog(app, studentId)) refresh(); } }),
+      onClick: async () => { if (await goalDialog(app, studentId, { examTarget: student.examTarget })) refresh(); } }),
     actionButton(app, 'admin_giveKudos', 'Tebrik / rozet ver', { variant: 'ghost',
       onClick: () => kudosDialog(app, student) }),
     actionButton(app, 'admin_putStudentCheckinQuestions', 'Check-in soruları', { variant: 'ghost',
@@ -187,7 +187,9 @@ function summary(app, card, { studentId, ctx, view, refresh }) {
 // -------------------------------------------------------------- pencereler
 
 /** Hedef önerisi penceresi. Dönüş: oluşan öneri | null. */
-export async function goalDialog(app, studentId) {
+export async function goalDialog(app, studentId, { examTarget } = {}) {
+  // Deneme neti hedefinde varsayılan deneme türü öğrencinin hedef sınavından (YKS → TYT, değilse LGS).
+  const examTypeDefault = examTarget === 'YKS' ? 'tyt' : 'lgs';
   const [subjects, shelf] = await Promise.all([
     app.lookups.options('subjects', { empty: 'Ders seçin (ders neti için)' }).catch(() => []),
     app.can('admin_getTaskBuilderContext')
@@ -202,13 +204,16 @@ export async function goalDialog(app, studentId) {
         options: Object.entries(GOAL_KINDS).map(([value, [label, unit]]) => ({ value, label: `${label} (${unit})` })) },
       { key: 'targetValue', label: 'Hedef değer', type: 'number', required: true, min: 0 },
       { key: 'subjectId', label: 'Ders', type: 'select', options: subjects },
+      { key: 'examType', label: 'Deneme türü (deneme neti için)', type: 'select',
+        options: Object.entries(GOAL_EXAM_TYPES).map(([value, label]) => ({ value, label })) },
       { key: 'resourceId', label: 'Kaynak (kaynağı bitirme için)', type: 'select',
         options: [{ value: '', label: shelf.length ? 'Kaynak seçin' : 'Rafta kaynak yok' },
           ...shelf.map((item) => ({ value: item.resourceId, label: item.title }))] },
       { key: 'dueDate', label: 'Son tarih', type: 'date' },
       { key: 'note', label: 'Not (öğrenci görür)', type: 'textarea', maxLength: 500, wide: true },
     ],
-    value: { kind: 'weekly_questions', targetValue: '', subjectId: '', resourceId: '', dueDate: '', note: '' },
+    value: { kind: 'weekly_questions', targetValue: '', subjectId: '', resourceId: '', examType: examTypeDefault,
+      dueDate: '', note: '' },
     submitLabel: 'Öner',
     onSubmit: (draft, { key }) => {
       const built = goalBody(draft);

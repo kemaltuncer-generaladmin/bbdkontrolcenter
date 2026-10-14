@@ -88,6 +88,12 @@ const out = {
   week: [m.weekLabel('2026-10-12'), m.weekLabel('2026-10-26'), m.mondayOf('2026-10-15')],
   badge: [m.badgeText({ name: 'İstikrar', icon: 'medal' }), m.badgeText({ name: 'Yeni', icon: 'bilinmeyen' })],
   labels: [m.QUEUE_KINDS.review, m.SAVE_WARNINGS.over_capacity, m.MEETING_STATUS.no_show[0]],
+  goal: [m.goalBody({ kind: 'exam_net', targetValue: '95' }).error,
+    m.goalBody({ kind: 'exam_net', targetValue: '95.5', examType: 'tyt', subjectId: 'MAT', resourceId: '' }).body,
+    m.goalBody({ kind: 'daily_minutes', targetValue: '2000' }).error,
+    m.goalBody({ kind: 'daily_questions', targetValue: '120', examType: 'tyt' }).body,
+    m.goalText({ kind: 'exam_net', unit: 'net', targetValue: 95, examType: 'tyt' }),
+    m.goalText({ kind: 'gelecek_tur', unit: 'net', targetValue: 1 })],
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -107,6 +113,15 @@ def _node_logic(folder: Path) -> dict[str, Any]:
 
 def test_saf_mantik(tmp_path: Path) -> None:
     out = _node_logic(tmp_path)
+    # Tek hedef akışı (Akademi README §14 madde 80): günlük soru / süre / deneme neti F-K18 türleri.
+    assert out["goal"] == [
+        "Deneme türünü seçin.",
+        {"kind": "exam_net", "targetValue": 95.5, "examType": "tyt"},
+        "Hedef değer en çok 960 olabilir.",
+        {"kind": "daily_questions", "targetValue": 120},
+        "Deneme neti · 95 net (TYT)",
+        "Hedef · 1 net",
+    ]
     task = out["task"]["task"]
     assert task["title"] == "Türev testi" and task["estimatedMinutes"] == 40
     assert task["pageFrom"] == 12 and task["pageTo"] == 20 and "targetQuestions" not in task
