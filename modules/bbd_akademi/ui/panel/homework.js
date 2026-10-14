@@ -517,7 +517,10 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
     const cell = h('div', 'ak-cell-stack');
     cell.append(statusBadge(REVIEW, review?.status || 'none'));
     if (review?.note) cell.append(clip(h('small'), review.note, 60));
-    if (review) cell.append(h('small', 'ak-muted', `${review.reviewedBy?.displayName || '—'} · ${fmtDateTime(review.reviewedAt)}`));
+    if (review) {
+      cell.append(h('small', 'ak-muted',
+        `${review.reviewedBy?.displayName || '—'} · ${fmtDateTime(review.reviewedAt)}`));
+    }
     cell.append(actionButton(app, 'admin_reviewHomeworkSubmission', review ? 'Değiştir' : 'Kontrol et', {
       variant: 'ghost', onClick: () => reviewOne(row) }));
     return cell;
@@ -527,7 +530,8 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
     const current = row.review;
     const result = await formDialog(app, {
       title: `Kontrol · ${row.student?.displayName || 'Öğrenci'}`,
-      description: 'Öğrencinin beyanından ayrıdır; öğrenci her işarette, velisi eksik / yapmadı işaretinde bildirim alır.',
+      description: 'Öğrencinin beyanından ayrıdır; öğrenci her işarette, velisi eksik / yapmadı '
+        + 'işaretinde bildirim alır.',
       value: { status: current?.status || 'checked', note: current?.note || '', clear: false },
       fields: [
         { key: 'status', label: 'Kontrol', type: 'select', required: true,
@@ -545,7 +549,8 @@ function homeworkDrawer(app, id, { names, onChange, onSeries } = {}) {
       },
     });
     if (!result) return;
-    app.toast(result.review ? `${REVIEW[result.review.status][0]} olarak işaretlendi.` : 'İşaret kaldırıldı.', 'good');
+    app.toast(result.review ? `${REVIEW[result.review.status][0]} olarak işaretlendi.` : 'İşaret kaldırıldı.',
+      'good');
     await afterReview();
   }
 
