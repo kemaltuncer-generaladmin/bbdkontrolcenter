@@ -696,7 +696,7 @@ async function createPlan(app, account, changed) {
     title: `Taksit planı — ${account.student?.displayName || ''}`,
     wide: true,
     value: { interval: 'monthly', downPaymentMinor: 0, firstDueDate: addDays(todayIst(), 30),
-      installmentCount: 10, roundingMinor: '100' },
+      installmentCount: 10, roundingMinor: '100', discountKind: '', discountReason: 'scholarship' },
     fields: [
       templates.length ? { key: 'templateId', label: 'Şablon', type: 'select', options: [
         { value: '', label: 'Şablonsuz' }, ...templates.map((item) => ({ value: item.id, label: item.name }))],
