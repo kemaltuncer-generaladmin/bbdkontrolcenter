@@ -90,11 +90,6 @@ _ATTENDANCE = (
     "Sözleşme 030d3e3 (draft.3 yoklama paketi) ile geldi; yoklama düzeltme, "
     "denetim, rapor ve ayar ekranları ayrı iş paketidir, bu dalda henüz yok.")
 
-_COACHING = (
-    "Sözleşme 6bbcd0b / 2d91b96 (draft.3 koçluk paketi) ile geldi; koç eşlemesi, "
-    "koçluk kartı, haftalık program, soru-cevap, check-in, görüşme, tebrik, "
-    "kütüphane ve video ekranları ayrı iş paketidir, bu dalda henüz yok.")
-
 #: Sözleşmeye yeni girmiş, ekranı henüz yazılmamış işlemler → gerekçe.
 PENDING: dict[str, str] = {
     "admin_previewTimetable": _PROGRAM_BUILDER,
@@ -126,32 +121,6 @@ PENDING: dict[str, str] = {
         "admin_voidAttendance", "admin_getAttendanceSettings", "admin_putAttendanceSettings",
         "admin_syncAttendance", "admin_getTeacherCompliance", "admin_getStudentAttendanceCard",
         "admin_createLeaveRequest", "students_getAttendanceCalendar", "students_getAttendanceDay",
-    )},
-    **{operation_id: _COACHING for operation_id in (
-        "admin_bulkAssignCoach",
-        "admin_listCoachLibrary", "admin_createInstitutionLibraryItem",
-        "admin_listLibraryProposals", "admin_getCoachLibraryItem",
-        "admin_updateInstitutionLibraryItem", "admin_deleteInstitutionLibraryItem",
-        "admin_decideLibraryProposal", "admin_listCoachBadges", "admin_createCoachBadge",
-        "admin_updateCoachBadge", "admin_deleteCoachBadge", "admin_listCelebrationCandidates",
-        "admin_getCheckinQuestionSet", "admin_putCheckinQuestionSet", "admin_listCheckins",
-        "admin_getCoachMetrics", "admin_getCoachProfile",
-        "admin_putCoachProfile", "admin_exportCoaching", "admin_uploadCoachingFile",
-        "admin_getCoachingJob", "admin_bulkKudos", "admin_listCoachMeetings",
-        "admin_getCoachMeeting", "admin_convertMeetingActionItem", "admin_decideCoachMeeting",
-        "admin_putCoachMeetingNote", "admin_getCoachQueue", "admin_listCoachReviews",
-        "admin_bulkApproveCoachTasks", "admin_reviewCoachTask", "admin_listCoachingStudents",
-        "admin_applyTemplateAssignment",
-        "admin_previewTemplateAssignment", "admin_copyCoachWeek",
-        "admin_getStudentCheckinQuestions", "admin_putStudentCheckinQuestions",
-        "admin_commentCheckin", "admin_createCoachMeeting", "admin_getCoachWeek", "admin_saveCoachWeek",
-        "admin_carryOverCoachWeek", "admin_requestCoachWeekPdf", "admin_publishCoachWeek",
-        "admin_getCoachingCard", "admin_requestCoachingReport", "admin_listGoalProposals",
-        "admin_createGoalProposal", "admin_withdrawGoalProposal", "admin_giveKudos",
-        "admin_getStudentResourceSections", "admin_getTaskBuilderContext", "admin_resolveVideoLink",
-        "admin_resolvePlaylist", "students_listCoachMeetings", "students_getCoachingOverview",
-        "students_listGoalProposals", "students_listKudos", "students_listTopicLibraryItems",
-        "students_getTaskVideo", "students_listQuestions", "students_getQuestion",
     )},
 }
 

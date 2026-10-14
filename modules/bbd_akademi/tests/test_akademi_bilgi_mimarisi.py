@@ -96,7 +96,8 @@ def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
     assert list(nav) == result["areas"]
     # Hoca soruları (Akademi §14 madde 63): öğrencinin hocaya sorusu, yanıt metin + görsel + ses.
     assert nav["today"] == ["dashboard", "requests", "announcements", "questions", "messages"]
-    assert nav["students"] == ["students"]
+    # Koçluk (KM-4): öğretmen = koç; kuyruk, kart, haftalık program, koçlar, kütüphane, görüşmeler.
+    assert nav["students"] == ["students", "coaching"]
     # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
     assert nav["lessons"] == ["timetable", "attendance", "homework", "plan", "templates", "calendar"]
     assert nav["money"] == ["finance", "canteen", "bookSales", "books"]   # kitap satışı 0.5.4
@@ -120,6 +121,7 @@ def test_kapali_ozellik_menude_yok(result: dict[str, Any]) -> None:
     assert "insights" not in nav["progress"] and "decks" not in nav["progress"]
     assert "questions" not in nav["today"]             # soru-cevap kapalı kurumda menüde yok
     assert "messages" not in nav["today"]              # koçluk kapalı: mesaj denetimi menüde yok
+    assert "coaching" not in nav["students"]           # koçluk kapalı: Koçluk ekranı menüde yok
     # Kantin ve Finans'ın üç ekranı da kapalı → üst bölüm hiç görünmez.
     assert "money" not in nav
     # Bilinmeyen / listede olmayan bayrak bir şey gizlemez.

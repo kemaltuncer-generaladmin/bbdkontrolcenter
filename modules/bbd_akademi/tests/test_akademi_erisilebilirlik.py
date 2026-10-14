@@ -138,10 +138,11 @@ def node_run(scenario: str) -> dict[str, Any]:
 def test_butun_bolumler_denetimden_gecer() -> None:
     result = node_run(ALL_SECTIONS)
     # 22 bölüm (0.5.3) + Şablonlar ve Kitap satışı (0.5.4) + Hoca soruları (Akademi §14 madde 63)
-    # + Mesaj denetimi (KM-1).
-    assert len(result) == 26, sorted(result)
+    # + Mesaj denetimi (KM-1) + Koçluk (KM-4).
+    assert len(result) == 27, sorted(result)
     assert result["Bugün / Hoca soruları"] == []
     assert result["Bugün / Mesaj denetimi"] == []
+    assert result["Öğrenciler / Koçluk"] == []
     bad = {name: items for name, items in result.items() if items}
     assert bad == {}, bad
 

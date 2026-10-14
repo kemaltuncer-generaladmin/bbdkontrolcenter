@@ -57,6 +57,10 @@ export const SECTIONS = [
   // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
   { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',
     kmOnly: true },
+  // Koçluk (KM-4; öğretmen = koç): kuyruk ve kontrol, koçluk kartı, haftalık program, koçlar ve toplu
+  // atama, kütüphane, tebrik ve rozetler, check-in, görüşmeler (F-K17).
+  { key: 'coaching', label: 'Koçluk', file: './coaching.js', requires: ['view'], area: 'students',
+    feature: 'coaching' },
   { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],
     area: 'lessons' },
   { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'lessons' },
@@ -98,7 +102,8 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
   'kitap-satisi': 'bookSales', 'book-sales': 'bookSales',
   sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions',
-  'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages' };
+  'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages',
+  kocluk: 'coaching', 'koc-gorusmeleri': 'coaching', 'kontrol-kuyrugu': 'coaching' };
 
 /**
  * Özellik açık mı. `features` null (okunamadı) ya da bayrak listede yoksa

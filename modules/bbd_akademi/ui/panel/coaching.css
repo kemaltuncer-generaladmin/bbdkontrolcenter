@@ -1,0 +1,59 @@
+/* Koçluk yönetimi — önek `ak-coach-`. */
+.ak-coach-body { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.ak-coach-pane { display: flex; flex-direction: column; gap: 12px; }
+.ak-coach-sub { margin: 14px 0 6px; font-size: 14px; }
+.ak-coach-h { margin: 8px 0 4px; font-size: 15px; }
+.ak-coach-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ak-coach-flags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.ak-coach-error { color: var(--bad); font-size: 12.5px; min-height: 1em; }
+.ak-coach-warn { color: var(--warn, #9a6700); font-size: 12.5px; }
+.ak-coach-num { width: 110px; }
+.ak-coach-weeklabel { min-width: 120px; text-align: center; }
+.ak-coach-who { display: flex; gap: 6px; align-items: center; }
+
+/* Kontrol kararı, video, eylem satırları */
+.ak-coach-decide { display: flex; flex-direction: column; gap: 8px; }
+.ak-coach-decide .kit-textarea { min-height: 72px; }
+.ak-coach-video, .ak-coach-action { display: flex; gap: 10px; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.ak-coach-videocard { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ak-coach-segment { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; background: var(--tint); }
+.ak-coach-segment .kit-textarea { min-height: 54px; }
+
+/* Check-in soru düzenleyici */
+.ak-coach-qlist { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.ak-coach-q { display: flex; flex-direction: column; gap: 2px; }
+.ak-coach-qedit { display: grid; grid-template-columns: auto minmax(0, 2fr) minmax(120px, 1fr) minmax(0, 1.4fr) auto;
+  gap: 8px; align-items: start; }
+.ak-coach-qextra { display: flex; gap: 6px; align-items: center; }
+.ak-coach-qextra .kit-textarea { min-height: 54px; width: 100%; }
+
+/* Koçluk kartı */
+.ak-coach-card { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.ak-coach-shelf { display: flex; flex-direction: column; gap: 6px; }
+.ak-coach-shelf-row { display: grid; grid-template-columns: minmax(0, 1fr) 120px auto; gap: 10px; align-items: center; }
+.ak-coach-meter { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.ak-coach-meter-fill { display: block; height: 100%; background: var(--accent, #2f5bd3); }
+
+/* Haftalık program — öğrenci × hafta geniş ızgara */
+.ak-coach-week { display: grid; grid-template-columns: repeat(7, minmax(170px, 1fr)); gap: 8px; overflow-x: auto;
+  padding-bottom: 6px; }
+.ak-coach-day { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px; background: #fff; min-width: 0; }
+.ak-coach-day.holiday { background: var(--tint); }
+.ak-coach-day.over { border-color: var(--bad); }
+.ak-coach-day-head { display: flex; flex-direction: column; gap: 3px; }
+.ak-coach-day-head small { color: var(--soft); }
+.ak-coach-shadow { display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--line);
+  padding-left: 6px; color: var(--soft); font-size: 12px; }
+.ak-coach-lesson.cancelled { text-decoration: line-through; }
+.ak-coach-tasks { display: flex; flex-direction: column; gap: 6px; }
+.ak-coach-task { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 8px; font-size: 12.5px; }
+.ak-coach-task small { color: var(--soft); overflow-wrap: anywhere; }
+.ak-coach-task.coach { box-shadow: inset 3px 0 0 var(--accent, #2f5bd3); }
+.ak-coach-task.self { background: var(--tint); }
+.ak-coach-task.draft { border-style: dashed; }
+.ak-coach-task .ak-row-actions { justify-content: flex-start; }
+.ak-coach-task .kit-select { height: 28px; max-width: 100%; }
