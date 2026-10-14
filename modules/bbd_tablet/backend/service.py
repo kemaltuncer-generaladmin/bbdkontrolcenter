@@ -63,6 +63,7 @@ SYSTEM_CONTROL_KEYS = frozenset({
     "user_and_profile_creation",
     "app_uninstall",
     "app_control_settings",
+    "student_escape_hatches",
 })
 
 PROFILE_CACHE_SIZE = 256
