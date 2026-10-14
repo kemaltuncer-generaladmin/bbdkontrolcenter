@@ -70,7 +70,7 @@ export function attendanceCalendar(ctx) {
       grid.append(cell);
     }
     const today = data.today ? h('div', 'ak-muted', `Bugün: ${num(data.today.sessionCount ?? 0)} dersin `
-      + `${num(data.today.attendedCount ?? 0)}'ine katıldı${data.today.late ? ` · ${num(data.today.late)} geç` : ''}`) : null;
+      + `${num(data.today.attendedCount ?? 0)}'ine katıldı${data.today.lateCount ? ` · ${num(data.today.lateCount)} geç` : ''}`) : null;
     return [kpiRow([
       { label: 'Devam', value: pct(summary.ratePercent) },
       { label: 'Geldi', value: num(summary.present) },
