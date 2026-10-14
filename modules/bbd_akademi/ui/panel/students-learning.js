@@ -70,8 +70,11 @@ const SUGGESTION_REASONS = { weak_topic: 'Zayıf konu', review_due: 'Tekrar zama
   balance: 'Denge' };
 const TREND = { up: '▲ yükseliyor', down: '▼ düşüyor', flat: '→ yatay' };
 
+// `unspecified`: öğrenci nedeni seçmedi (hızlı kayıt — Akademi README §14 madde 59; süzgeç ve kırılımda da geçerli).
 const REASONS = { knowledge_gap: 'Bilgi eksiği', misconception: 'Kavram yanılgısı', calculation_error: 'İşlem hatası',
-  careless: 'Dikkatsizlik', misread_question: 'Soruyu yanlış okuma', time_shortage: 'Süre yetmedi', guess: 'Tahmin' };
+  careless: 'Dikkatsizlik', misread_question: 'Soruyu yanlış okuma', time_shortage: 'Süre yetmedi', guess: 'Tahmin',
+  unspecified: 'Belirtilmemiş' };
+const reasonText = (reason) => REASONS[reason || 'unspecified'] || reason;
 const MISTAKE_STATUS = { active: ['Etkin', 'info'], learned: ['Öğrenildi', 'good'] };
 const ORIGINS = { manual: 'Öğrenci ekledi', exam_suggestion: 'Deneme önerisinden' };
 const IMAGE_ROLES = { question: 'Soru', solution: 'Çözüm', note: 'Not' };
@@ -441,7 +444,7 @@ function mistakeColumns() {
   return [
     { key: 'subject', label: 'Ders / konu', width: 'minmax(0, 1.6fr)', cell: (row) => stack(row.subject?.name, row.topic?.name) },
     { key: 'source', label: 'Kaynak', width: 'minmax(0, 1.5fr)', cell: (row) => sourceText(row.source) },
-    { key: 'reason', label: 'Neden', width: 'minmax(0, 1fr)', cell: (row) => REASONS[row.reason] || row.reason },
+    { key: 'reason', label: 'Neden', width: 'minmax(0, 1fr)', cell: (row) => reasonText(row.reason) },
     { key: 'status', label: 'Durum', width: '150px', cell: (row) => {
       const cell = h('div', 'ak-cell-stack');
       cell.append(statusBadge(MISTAKE_STATUS, row.status));
@@ -518,7 +521,7 @@ function mistakesTab(app, studentId) {
       : '';
     nodes.push(h('div', 'ak-muted ak-sl-note',
       `${fmtDate(data.from)} – ${fmtDate(data.to)} · toplam ${num(data.totalCount)} hata${dominant} · özet ${fmtDateTime(data.computedAt)}`));
-    const reasons = barChart((data.byReason || []).map((row) => ({ label: REASONS[row.reason] || row.reason,
+    const reasons = barChart((data.byReason || []).map((row) => ({ label: reasonText(row.reason),
       value: row.count, display: `${num(row.count)} · ${percent(row.percent, 0)}` })), { max: 7 });
     const topics = dataTable({
       columns: [
@@ -566,7 +569,7 @@ function mistakeDrawer(app, studentId, mistakeId) {
       ['Öğrencinin cevabı', mistake.studentAnswer || '—'],
       ['Çözüm notu', mistake.solutionNote || '—'],
       ['Etiketler', (mistake.tags || []).join(', ') || '—'],
-      ['Hata nedeni', REASONS[mistake.reason] || mistake.reason],
+      ['Hata nedeni', reasonText(mistake.reason)],
       ['Kayıt', ORIGINS[mistake.origin] || mistake.origin],
       ['Durum', statusBadge(MISTAKE_STATUS, mistake.status)],
       ['Tekrar aşaması', review.stage ? `${review.stage}/5 · ${review.intervalDays} günlük aralık${review.checkup ? ' · kontrol tekrarı' : ''}` : '—'],
