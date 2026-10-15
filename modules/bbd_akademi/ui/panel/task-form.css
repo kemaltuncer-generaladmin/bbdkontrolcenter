@@ -5,8 +5,10 @@
  * içerik solup gelir (opaklık), altındaki "Daha fazla seçenek" yerinden oynamaz.
  * Arama sonuçları açılır katmandır (akışı itmez). */
 
-.ak-tf-dialog { display: flex; flex-direction: column; width: min(900px, calc(100% - 32px)); max-height: calc(100% - 32px);
-  padding: 0; overflow: hidden; }
+.ak-tf-dialog { display: flex; flex-direction: column; width: min(900px, calc(100% - 32px));
+  /* SABİT yükseklik: tür ya da içerik değişince pencere büyüyüp küçülmez (ortalanmış pencere zıplamaz);
+     fazlası gövdede kayar. */
+  height: min(780px, calc(100% - 32px)); max-height: none; padding: 0; overflow: hidden; }
 .ak-tf-dialog .ak-tf-head { padding: 18px 22px 0; }
 .ak-tf-dialog .ak-tf-head .kit-dialog-text { margin: 4px 0 10px; }
 .ak-tf-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 22px 12px; }
@@ -68,12 +70,15 @@
 
 /* Türün alanı — sabit yer */
 .ak-tf-area { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(200px, 1fr); gap: 12px 18px; align-items: start;
-  min-height: 150px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  min-height: 184px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
 .ak-tf-area.one { grid-template-columns: minmax(0, 1fr); }
 .ak-tf-area.swap > .ak-tf-col { animation: ak-tf-fade 160ms ease-out both; }
 @keyframes ak-tf-fade { from { opacity: 0.25; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .ak-tf-area.swap > .ak-tf-col { animation: none; } }
 .ak-tf-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ak-tf-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.ak-tf-pair .ak-inline { flex-wrap: nowrap; gap: 4px; }
+.ak-tf-pair .ak-tf-num { width: 52px; }
 
 /* Ders + konu */
 .ak-tf-subject { display: flex; flex-direction: column; gap: 6px; }

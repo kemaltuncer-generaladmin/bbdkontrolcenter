@@ -27,7 +27,7 @@ import { button, h, loadStyles } from '../../ui-kit/kit.js';
 import { badge } from '../../ui-kit/layout.js';
 import { dateField } from '../../ui-kit/datefield.js';
 import { problem } from './api.js';
-import { DAY_LABEL, clockInput, fileDrop, fmtDate, num, todayIst } from './common.js';
+import { DAY_LABEL, WEEKDAYS, clockInput, fileDrop, fmtDate, num, todayIst } from './common.js';
 import { programLabel, sortPrograms } from './curriculum-picker.js';
 import { PRIORITY, PROOF_PHOTO, clockText, pct } from './coaching-logic.js';
 import { videoCard, videoDialog } from './coaching-video.js';
@@ -37,6 +37,7 @@ import {
 } from './task-form-logic.js';
 
 const MINUTE_CHIPS = [20, 30, 40, 60, 90];
+const SHORT_DAY = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]));
 const SUBJECT_TYPES = new Set(['question_solving', 'topic_study', 'video', 'review', 'mistake_review']);
 let seq = 0;
 
@@ -224,7 +225,8 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
         chip.setAttribute('role', 'radio');
         chip.setAttribute('aria-checked', form.date === day.date ? 'true' : 'false');
         chip.classList.toggle('on', form.date === day.date);
-        chip.append(h('b', '', (DAY_LABEL[day.dayOfWeek] || '').slice(0, 3)), h('span', '', fmtDate(day.date).slice(0, 5)));
+        chip.append(h('b', '', SHORT_DAY[day.dayOfWeek] || ''), h('span', '', fmtDate(day.date).slice(0, 5)));
+        chip.setAttribute('aria-label', `${DAY_LABEL[day.dayOfWeek] || ''} ${fmtDate(day.date)}${day.holiday ? ' (tatil)' : ''}`);
         chip.title = [day.holiday ? `Tatil: ${day.holiday}` : '', day.overCapacity ? 'Kapasite aşıldı' : '',
           day.plannedMinutes ? `Planlı ${day.plannedMinutes} dk` : ''].filter(Boolean).join(' · ');
         chip.addEventListener('click', () => { form.date = day.date; touched.add('date'); paintDays(); changed(); });
@@ -285,6 +287,7 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
   area.setAttribute('aria-live', 'off');
   const left = h('div', 'ak-tf-col ak-tf-main');
   const right = h('div', 'ak-tf-col ak-tf-side');
+  const pair = h('div', 'ak-tf-pair');
   area.append(left, right);
   if (!patch) node.append(area);
 
@@ -422,7 +425,14 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
       if (index > 0) { leftKeys.splice(index, 1); leftKeys.push('subject'); }
     }
     left.replaceChildren(...leftKeys.map((key) => fields[key].wrap));
-    right.replaceChildren(...rightKeys.map((key) => fields[key].wrap));
+    // Sayfa ve soru aralığı yan yana (kaynak türünde alan yüksekliği diğer türlerle aynı kalsın).
+    const pairKeys = rightKeys.filter((key) => key === 'pageFrom' || key === 'questionFrom');
+    const sideNodes = rightKeys.filter((key) => !pairKeys.includes(key)).map((key) => fields[key].wrap);
+    if (pairKeys.length) {
+      pair.replaceChildren(...pairKeys.map((key) => fields[key].wrap));
+      sideNodes.push(pair);
+    }
+    right.replaceChildren(...sideNodes);
     right.hidden = !rightKeys.length;
     area.classList.toggle('one', !rightKeys.length);
     area.dataset.type = form.type;
@@ -568,18 +578,24 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
     // Hedef soru önerisi: dokunulmadıysa öneri yazılır (tek tıkla kaydedilebilsin).
     const suggested = suggestQuestions(form.estimatedMinutes, form.sectionQuestions);
     const wantsQuestions = rulesFor(form.type, ruleMode).show.includes('questions');
-    if (!patch && wantsQuestions && !form.questionsTouched && suggested && form.type === 'question_solving') {
+    // Soru çözümünde süreden, kaynakta yalnız seçili bölümlerin soru sayısından.
+    const autoFill = form.type === 'question_solving' || (form.type === 'resource_section' && form.sectionQuestions);
+    if (!patch && wantsQuestions && !form.questionsTouched && suggested && autoFill) {
       form.targetQuestions = String(suggested);
       questionsInput.value = form.targetQuestions;
       questionsInput.classList.add('auto');
+    } else if (!patch && !form.questionsTouched && wantsQuestions && !autoFill && form.targetQuestions) {
+      form.targetQuestions = '';                       // başka türden kalan otomatik öneri taşınmaz
+      questionsInput.value = '';
     } else if (form.questionsTouched) {
       questionsInput.classList.remove('auto');
     }
     suggestion.hidden = !suggested || String(suggested) === String(form.targetQuestions).trim() || patch;
     suggestion.textContent = suggested ? `Öneri: ${suggested}` : '';
     suggestion.title = form.sectionQuestions ? 'Seçili bölümlerin soru sayısı' : 'Süreye göre (≈1,5 dk/soru)';
-    setHint('questions', !form.questionsTouched && form.type === 'question_solving' && suggested
-      ? `Süreye göre önerildi (≈1,5 dk/soru); değiştirebilirsiniz.` : '');
+    setHint('questions', form.questionsTouched || !suggested || !autoFill ? ''
+      : form.sectionQuestions && form.type === 'resource_section' ? 'Seçili bölümlerin soru sayısı; değiştirebilirsiniz.'
+        : 'Süreye göre önerildi (≈1,5 dk/soru); değiştirebilirsiniz.');
     paintMore();
   }
 

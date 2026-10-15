@@ -140,6 +140,7 @@ function studentFilter(app, { value = null, onChange } = {}) {
 
 export function section(app) {
   loadStyles(import.meta.url, 'plan.css');
+  loadStyles(import.meta.url, 'task-form.css');   // görev düzenleyicisi ilk açılışta stilsiz görünmesin
   const node = h('div', 'ak-stack ak-plan');
   let started = false;
   let student = null;
