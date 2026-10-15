@@ -242,6 +242,9 @@ def module_failure(source: str, error: BaseException) -> UpstreamFailure:
     code = code if isinstance(code, str) and code else None
     if code is not None and code.endswith("_not_found"):
         return UpstreamFailure(source, "not_found", reason=code)
+    if code is not None and code.endswith("_conflict"):
+        # ör. `profile_conflict`: tablet profili bu arada değişti (revizyon denetimi).
+        return UpstreamFailure(source, "conflict", reason=code)
     if code == "validation_error":
         text = " ".join(str(error).split())[:200] or None
         return UpstreamFailure(source, "invalid", reason=code, message=text)
@@ -707,6 +710,29 @@ class Capabilities:
 
     async def tablet_end_session(self, session_id: str, *, reason: str, actor: str) -> Any:
         return await self._module("tablet", TABLET_CONTROL, "end_session", (session_id,),
+                                  {"reason": reason, "actor": actor}, write=True)
+
+    async def tablet_limits(self, student_id: str) -> dict[str, Any]:
+        """Öğrencinin bugünkü sınırları (tablet-sinir). Eski tablet modülünde
+        `bbd_tablet.read.student_limits` eksiktir (503 capability_missing)."""
+        result = await self._module("tablet", TABLET_READ, "student_limits", (student_id,))
+        return result if isinstance(result, dict) else {}
+
+    async def tablet_update_profile_limits(self, profile_id: str, *, expected_revision: int,
+                                           apps: list[dict[str, Any]] | None,
+                                           usage_windows: list[dict[str, Any]] | None,
+                                           reason: str, actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "update_profile_limits",
+                                  (profile_id,), {
+                                      "expected_revision": expected_revision, "apps": apps,
+                                      "usage_windows": usage_windows, "reason": reason,
+                                      "actor": actor,
+                                  }, write=True)
+
+    async def tablet_revoke_grant(self, student_id: str, grant_id: str, *, reason: str,
+                                  actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "revoke_grant",
+                                  (student_id, grant_id),
                                   {"reason": reason, "actor": actor}, write=True)
 
     # ------------------------------------------------------------------- bell

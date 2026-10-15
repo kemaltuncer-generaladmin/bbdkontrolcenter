@@ -42,7 +42,7 @@ from mobile_gateway_fakes import (
     FakeDirectory,
     FakeGroups,
     FakeTabletControl,
-    FakeTabletDailyRead,
+    FakeTabletLimitsRead,
     FakeVault,
     RecordingLog,
     bell_week,
@@ -127,7 +127,7 @@ class World:
     def __init__(self) -> None:
         self.canteen = FakeCanteen()
         self.directory = FakeDirectory()
-        self.tablet_read = FakeTabletDailyRead()
+        self.tablet_read = FakeTabletLimitsRead()
         self.tablet_control = FakeTabletControl()
         self.announce = FakeBellAnnounce()
         self.vault = FakeVault()

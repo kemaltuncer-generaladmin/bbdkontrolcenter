@@ -72,6 +72,24 @@ Kullanım paketi profil kuralına göre denetlenmez: oturum sırasında bir uygu
 
 Profilde uygulama üç kipten birindedir: yasak, sınırsız ya da günlük süreli (60–86400 sn). Adı boş bırakılan uygulama paket adıyla kaydedilir; profil adı kırpılır ve 2–100 karakter olmalıdır (`006_profile_names.sql` eski kayıtları düzeltir). `usageWindows` ISO hafta günleri (1 = Pazartesi) ve profil saat diliminde `HH:MM` başlangıç (dahil) – bitiş (hariç) taşır; boş liste her zaman açık demektir.
 
+## Akademi'den uzaktan sınır düzenleme (tablet-sinir)
+
+BBD Akademi yöneticisi (izin `tablets.manage`) öğrenci kartındaki "Tablet sınırları" ekranından mobil geçit
+üzerinden (`GET /students/{id}/tablet/limits`, `PUT /tablet-profiles/{id}/limits`,
+`POST /students/{id}/tablet/grants/{grantId}/revoke`) yetenekleri çağırır; KM tek gerçek kaynaktır, tablet
+uygulaması ve sözleşme değişmez.
+
+- **Sınır profile bağlıdır.** Öğrencinin sınırları son oturumunun profilidir (`read.student_limits`); profili
+  düzenlemek o profili kullanan BÜTÜN tabletleri etkiler (`deviceCount` ekranda uyarı olarak gösterilir).
+  Öğrenciye özel olanlar günün ek süreleri ve kısıttır.
+- **Düzenlenebilenler:** profilde olan uygulamanın kipi (yasak / sınırsız / günlük süreli 60–86400 sn) ve
+  kullanım saatleri. Uygulama eklemek / çıkarmak, sistem kontrolleri ve profil atama KM ekranında kalır.
+- **Yarış:** `update_profile_limits` beklenen revizyonu profil kilidi altında denetler; farklıysa
+  `profile_conflict` (geçit 409). Ek süre geri alma `revoke_grant` (yalnız o öğrencinin satırı).
+- **Tablete iniş:** profil yeni revizyonla sonraki sync'te (oturum açıkken en geç `sync_active_seconds`,
+  boştayken `sync_idle_seconds`); ek süre / geri alma `grantsVersion` değiştiği için açık oturumda sonraki
+  sync'te, yoksa sonraki girişte. Olaylar geçitten `tablet.profile_changed` / `tablet.policy_changed`.
+
 ## Uygulama dağıtımı (v2.1)
 
 Yönetici panelin **Uygulamalar** sekmesinden APK ya da bölünmüş paket (`.apks`, `.xapk`, `.apkm`; türü uzantıdan değil içerikten anlaşılır) yükler; eşli tabletler onu sunucunun belirlediği sırayla indirip Device Owner yetkisiyle sessizce kurar. TabletKontrol'ün kendi yeni sürümü (`com.veykemtu.tabletkontrol`) aynı yoldan gider (`kind: "self"`) ve sırada her zaman öndedir.

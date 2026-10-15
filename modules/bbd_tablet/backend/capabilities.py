@@ -12,10 +12,14 @@ yönetim panelininkiyle aynıdır.
     control.block(student_id, until, reason, actor)  → blocked_until | None
     control.unblock(student_id, reason, actor)       → None
     control.end_session(session_id, reason, actor)   → bool
+    read.student_limits(student_id)               → öğrencinin bugünkü sınırları (tablet-sinir)
+    control.update_profile_limits(profile_id, expected_revision, apps, usage_windows, reason, actor)
+                                                  → yeni profil revizyonu (tablet-sinir)
+    control.revoke_grant(student_id, grant_id, reason, actor) → {id, revoked, alreadyRevoked}
 
 Hepsi `async`tır. Hata `TabletCapabilityError` ile gelir ve makine kodu taşır
 (`reason`): `validation_error` · `student_not_found` · `session_not_found` ·
-`canteen_unavailable`. Çağıran modül sınıfı import edemez (K3); kodu
+`canteen_unavailable` · `profile_not_found` · `grant_not_found` · `profile_conflict`. Çağıran modül sınıfı import edemez (K3); kodu
 `getattr(hata, "reason", None)` ile okur.
 
 **Kimlikler KM'nin kendi kimlikleridir** (UUID metni). Sözleşme örneğindeki
@@ -30,7 +34,12 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .rules import inside_usage_window
+from .rules import (
+    MAX_DAILY_LIMIT_SECONDS,
+    MIN_DAILY_LIMIT_SECONDS,
+    inside_usage_window,
+    normalize_usage_windows,
+)
 from .service import (
     CanteenUnavailableError,
     NotFoundError,
@@ -46,6 +55,9 @@ MAX_USAGE_DAYS = 62
 
 #: Gerekçe sınırları (sözleşme §4: zorunlu, 3–200 karakter).
 REASON_MIN, REASON_MAX = 3, 200
+
+#: Uygulama kipleri (Akademi "Tablet sınırları" ekranı): yasak · sınırsız · günlük süreli.
+APP_MODES = ("blocked", "unlimited", "limited")
 
 #: `until` verilmeyen kısıtlama "aksi söylenene kadar"dır; servis en çok bir
 #: yıl kabul eder, o yüzden bir yıl yazılır.
@@ -248,6 +260,85 @@ class TabletRead:
             item["blockedUntil"] = _iso(item["blockedUntil"])
         return {"date": day.isoformat(), "items": items}
 
+    async def student_limits(self, student_id: str) -> dict[str, Any]:
+        """Öğrencinin BUGÜNKÜ tablet sınırları (Akademi "Tablet sınırları" ekranı).
+
+        KM'de süre sınırı öğrenciye değil PROFİLE bağlıdır: profil tablete atanır, o
+        tablette giriş yapan her öğrenci aynı kuralları görür. Öğrencinin profili son
+        oturumunun (sürüyorsa açık oturumun) profilidir; hiç giriş yapmadıysa `None`.
+        Öğrenciye özel olanlar o günün ek süreleri ve kısıtlamadır.
+
+        `apps` profilin kuralları (sırasıyla) + profilde olmayıp bugün kullanılan
+        uygulamalar (`inProfile: false`). `remainingSeconds` yalnız süreli uygulamada
+        doludur (sınır + ek süre − kullanım, en az 0). `sync` değişikliğin tablete en geç
+        ne kadar sürede indiğini söyler (oturum açıkken / boştayken sync aralığı).
+        """
+        service = self._service
+        timezone = zone(service.default_timezone)
+        local_date = service._now().astimezone(timezone).date().isoformat()
+        last = await service.store.fetch_one(
+            f"SELECT profile_id FROM {service.sessions} WHERE student_id=? "
+            "ORDER BY login_at DESC LIMIT 1", (str(student_id),),
+        )
+        profile = await service.profile(last["profile_id"]) if last else None
+        used = {row["packageName"]: row["usedSeconds"]
+                for row in await service._usage_rows(str(student_id), [local_date])}
+        grants = await service._grant_items(str(student_id), local_date)
+        extra: dict[str, int] = {}
+        for grant in grants:
+            extra[grant["packageName"]] = extra.get(grant["packageName"], 0) + grant["extraSeconds"]
+        rules = list((profile or {}).get("apps") or [])
+        known = {app["packageName"] for app in rules}
+        names = await service._app_names(set(used) | set(extra) | known)
+
+        def item(package: str, rule: dict[str, Any] | None) -> dict[str, Any]:
+            allowed = bool(rule and rule["allowed"])
+            unlimited = bool(rule and rule["unlimited"])
+            mode = "blocked" if not allowed else ("unlimited" if unlimited else "limited")
+            limit = int(rule["dailyLimitSeconds"]) if rule and mode == "limited" else None
+            spent, bonus = int(used.get(package, 0)), int(extra.get(package, 0))
+            label = (rule or {}).get("appName") or names.get(package) or package
+            return {
+                "packageName": package, "appName": label, "mode": mode,
+                "dailyLimitSeconds": limit, "usedSeconds": spent, "extraSeconds": bonus,
+                "remainingSeconds": None if limit is None else max(0, limit + bonus - spent),
+                "inProfile": rule is not None,
+            }
+
+        apps = [item(rule["packageName"], rule) for rule in rules]
+        apps += [item(package, None)
+                 for package in sorted(set(used) - known, key=lambda name: -used[name])
+                 if used[package] > 0]
+        devices = 0
+        if profile is not None:
+            row = await service.store.fetch_one(
+                f"SELECT COUNT(*) AS n FROM {service.devices} "
+                "WHERE profile_id=? AND revoked_at IS NULL", (profile["id"],),
+            )
+            devices = int((row or {}).get("n") or 0)
+        return {
+            "studentId": str(student_id),
+            "localDate": local_date,
+            "profile": None if profile is None else {
+                "id": profile["id"], "name": profile["name"],
+                "revision": int(profile["revision"]), "timezone": profile["timezone"],
+                "updatedAt": _iso(profile.get("updatedAt")),
+                "usageWindows": [dict(window) for window in profile.get("usageWindows") or []],
+                "deviceCount": devices,
+            },
+            "apps": apps,
+            "grants": [{
+                "id": grant["id"], "packageName": grant["packageName"],
+                "appName": names.get(grant["packageName"]) or grant["packageName"],
+                "extraSeconds": int(grant["extraSeconds"]), "reason": grant["reason"],
+                "createdAt": _iso(grant["createdAt"]), "createdBy": grant["createdBy"],
+            } for grant in grants],
+            "blockedUntil": _iso(await service._active_block_until(str(student_id),
+                                                                     service._now())),
+            "sync": {"activeSeconds": service.sync_active_seconds,
+                     "idleSeconds": service.sync_idle_seconds},
+        }
+
 
 class TabletControl:
     """`bbd_tablet.control` — ek süre, kısıtlama, oturum kapatma."""
@@ -373,3 +464,105 @@ class TabletControl:
         self._log.info("tablet oturumu kapatıldı (yetenek)", session=session_id,
                        ended=result.get("ended"), actor=_actor(actor))
         return bool(result.get("ended"))
+
+    async def update_profile_limits(self, profile_id: str, expected_revision: int,
+                                    apps: list[dict[str, Any]] | None,
+                                    usage_windows: list[dict[str, Any]] | None,
+                                    reason: str, actor: str) -> dict[str, Any]:
+        """Profilin uygulama sınırlarını ve kullanım saatlerini düzenler (yeni revizyon).
+
+        Yalnız profilde ZATEN olan uygulamaların kipi/süresi değişir (`apps`:
+        `[{packageName, mode: blocked|unlimited|limited, dailyLimitSeconds}]`); ad,
+        sıra, sistem kontrolleri ve anılmayan uygulamalar korunur. Yeni uygulama
+        eklemek / çıkarmak KM ekranındadır. `usage_windows=None` saatleri değiştirmez,
+        liste verilirse tamamen yerine geçer (boş liste = her zaman açık).
+
+        `expected_revision` profilin şu anki revizyonu değilse `profile_conflict`
+        (bu arada KM'de ya da başka yöneticice değiştirilmiş). Okuma ve yazma
+        profil kilidi altında yapılır. Tablet değişikliği sonraki sync'inde alır
+        (profil revizyonu farklı → tam profil).
+        """
+        why = _reason(reason)
+        service = self._service
+        if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
+            raise TabletCapabilityError("Beklenen revizyon tamsayı olmalı.",
+                                        reason="validation_error")
+        changes: dict[str, dict[str, Any]] = {}
+        for raw in apps or []:
+            entry = raw if isinstance(raw, dict) else {}
+            package = str(entry.get("packageName") or "").strip()
+            mode = entry.get("mode")
+            if not package or mode not in APP_MODES:
+                raise TabletCapabilityError("Uygulama kuralı geçersiz (paket adı ve kip gerekli).",
+                                            reason="validation_error")
+            if package in changes:
+                raise TabletCapabilityError("Aynı uygulama bir kez gönderilebilir.",
+                                            reason="validation_error")
+            limit = entry.get("dailyLimitSeconds")
+            if mode == "limited" and (isinstance(limit, bool) or not isinstance(limit, int)
+                                      or not MIN_DAILY_LIMIT_SECONDS <= limit
+                                      <= MAX_DAILY_LIMIT_SECONDS):
+                raise TabletCapabilityError(
+                    "Günlük süre 1 dakika ile 24 saat arasında olmalı.", reason="validation_error")
+            changes[package] = {"mode": mode, "limit": limit if mode == "limited" else 0}
+        try:
+            windows = None if usage_windows is None else normalize_usage_windows(usage_windows)
+        except ValueError as exc:
+            raise TabletCapabilityError(str(exc), reason="validation_error") from exc
+        if not changes and windows is None:
+            raise TabletCapabilityError("Değişiklik yok.", reason="validation_error")
+
+        async with service._profile_lock:
+            current = await service.profile(str(profile_id))
+            if current is None:
+                raise TabletCapabilityError("Profil bulunamadı.", reason="profile_not_found")
+            if int(current["revision"]) != expected_revision:
+                raise TabletCapabilityError(
+                    "Profil bu arada değişti; sınırları yeniden yükleyin.",
+                    reason="profile_conflict")
+            unknown = sorted(set(changes) - {app["packageName"] for app in current["apps"]})
+            if unknown:
+                raise TabletCapabilityError(
+                    "Profilde olmayan uygulama: " + ", ".join(unknown[:3]),
+                    reason="validation_error")
+            rules = []
+            for app in current["apps"]:
+                rule = {"packageName": app["packageName"], "appName": app["appName"],
+                        "allowed": app["allowed"], "unlimited": app["unlimited"],
+                        "dailyLimitSeconds": app["dailyLimitSeconds"]}
+                change = changes.get(app["packageName"])
+                if change is not None:
+                    rule["allowed"] = change["mode"] != "blocked"
+                    rule["unlimited"] = change["mode"] == "unlimited"
+                    rule["dailyLimitSeconds"] = change["limit"]
+                rules.append(rule)
+            try:
+                saved = await service._save_profile(
+                    profile_id=current["id"], name=current["name"],
+                    timezone=current["timezone"], apps=rules, system_controls=None,
+                    usage_windows=windows,
+                )
+            except ValueError as exc:
+                raise TabletCapabilityError(str(exc), reason="validation_error") from exc
+        self._log.info("tablet profil sınırları (yetenek)", profile=profile_id,
+                       revision=saved.get("revision"), apps=len(changes),
+                       windows=windows is not None, actor=_actor(actor), reason=why)
+        return {"id": saved["id"], "name": saved["name"], "revision": int(saved["revision"]),
+                "updatedAt": _iso(saved.get("updatedAt"))}
+
+    async def revoke_grant(self, student_id: str, grant_id: str, reason: str,
+                           actor: str) -> dict[str, Any]:
+        """Ek süreyi geri alır (yalnız o öğrencinin). Zaten geri alınmışsa
+        `alreadyRevoked: true`; yoksa `grant_not_found`. Açık oturumdaki tablet
+        `grantsVersion` değiştiği için sonraki sync'te listeyi yeniler."""
+        why = _reason(reason)
+        try:
+            result = await self._service.revoke_grant(student_id=str(student_id),
+                                                      grant_id=str(grant_id),
+                                                      actor=_actor(actor))
+        except NotFoundError as exc:
+            raise TabletCapabilityError(str(exc), reason="grant_not_found") from exc
+        self._log.info("tablet ek süresi geri alındı (yetenek)", student=student_id,
+                       grant=grant_id, actor=_actor(actor), reason=why)
+        return {"id": str(result["id"]), "revoked": True,
+                "alreadyRevoked": bool(result.get("alreadyRevoked"))}

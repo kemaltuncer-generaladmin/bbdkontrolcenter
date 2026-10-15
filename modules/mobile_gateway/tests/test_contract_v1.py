@@ -84,6 +84,10 @@ CONTRACT_ROUTES = {
     ("POST", "/students/{student_id}/tablet/block"),
     ("POST", "/students/{student_id}/tablet/unblock"),
     ("POST", "/tablet-sessions/{session_id}/end"),
+    # tablet-sinir: Akademi yöneticisinin uzaktan tablet sınırları.
+    ("GET", "/students/{student_id}/tablet/limits"),
+    ("PUT", "/tablet-profiles/{profile_id}/limits"),
+    ("POST", "/students/{student_id}/tablet/grants/{grant_id}/revoke"),
     ("POST", "/announcements/call"),
     ("GET", "/schedule/bell-week"),
     ("GET", "/groups"),

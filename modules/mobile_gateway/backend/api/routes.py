@@ -141,6 +141,27 @@ class BlockBody(ReasonBody):
     until: datetime | None = None
 
 
+class UsageWindowBody(BaseModel):
+    days: list[int] = Field(min_length=1, max_length=7)
+    start: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+
+class AppLimitBody(BaseModel):
+    packageName: str = Field(min_length=2, max_length=255)
+    mode: Literal["blocked", "unlimited", "limited"]
+    dailyLimitSeconds: int | None = Field(default=None, ge=60, le=86_400)
+
+
+class ProfileLimitsBody(ReasonBody):
+    """tablet-sinir: yalnız profilde olan uygulamaların kipi/süresi; `usageWindows`
+    gönderilmezse (ya da `null`) saatler değişmez, boş liste = her zaman açık."""
+
+    expectedRevision: int = Field(ge=0)
+    apps: list[AppLimitBody] | None = Field(default=None, max_length=200)
+    usageWindows: list[UsageWindowBody] | None = Field(default=None, max_length=21)
+
+
 class CallBody(BaseModel):
     studentId: str = Field(min_length=1, max_length=64)
     template: Literal["page", "custom"] = "page"
@@ -415,6 +436,40 @@ async def tablet_unblock(student_id: str, body: ReasonBody, request: Request,
     caller, reason = caller_of(request, user), reason_of(body)
     return await idempotent(request, body, 200, lambda: current_service().tablet_unblock(
         student_id, reason=reason, caller=caller,
+    ))
+
+
+@router.get("/students/{student_id}/tablet/limits")
+async def tablet_limits(student_id: str, user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    return await current_service().tablet_limits(student_id)
+
+
+@router.put("/tablet-profiles/{profile_id}/limits")
+async def tablet_profile_limits(profile_id: str, body: ProfileLimitsBody, request: Request,
+                                user: CurrentUser = requires(ACCESS)) -> Response:
+    caller, reason = caller_of(request, user), reason_of(body)
+    if body.apps is None and body.usageWindows is None:
+        raise validation("Değiştirilecek bir alan gönderin (`apps` ya da `usageWindows`).",
+                         "apps", "usageWindows")
+    for item in body.apps or []:
+        if item.mode == "limited" and item.dailyLimitSeconds is None:
+            raise validation("Süreli uygulamada `dailyLimitSeconds` zorunlu.", "apps")
+    apps = [item.model_dump() for item in body.apps] if body.apps is not None else None
+    windows = [item.model_dump() for item in body.usageWindows] \
+        if body.usageWindows is not None else None
+    return await idempotent(request, body, 200, lambda: current_service()
+                            .tablet_update_profile_limits(
+                                profile_id, expected_revision=body.expectedRevision, apps=apps,
+                                usage_windows=windows, reason=reason, caller=caller))
+
+
+@router.post("/students/{student_id}/tablet/grants/{grant_id}/revoke")
+async def tablet_grant_revoke(student_id: str, grant_id: str, body: ReasonBody,
+                              request: Request,
+                              user: CurrentUser = requires(ACCESS)) -> Response:
+    caller, reason = caller_of(request, user), reason_of(body)
+    return await idempotent(request, body, 200, lambda: current_service().tablet_revoke_grant(
+        student_id, grant_id, reason=reason, caller=caller,
     ))
 
 

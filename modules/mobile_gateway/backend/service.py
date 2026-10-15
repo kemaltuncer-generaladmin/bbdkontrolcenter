@@ -125,6 +125,9 @@ FALLBACK_DAYS = 180
 BELL_PLAN_MAX_BYTES = 512 * 1024
 BELL_PLAN_WINDOW_DAYS = 14
 BELL_STATUS_MAX_DAYS = 31
+#: Tablet uygulama kipleri (tablet-sinir): yasak · sınırsız · günlük süreli.
+TABLET_APP_MODES = ("blocked", "unlimited", "limited")
+
 #: `GET /tablets/usage` en çok bu kadar gün geriye bakar (bugün dahil; tabletin sınırı).
 TABLET_USAGE_MAX_DAYS = 62
 
@@ -1648,6 +1651,107 @@ class GatewayService:
 
         return await self.audited("tablet.session.end", caller, "",
                                   {"sessionId": session_id, "reason": reason}, work())
+
+    # ------------------------------------------------- tablet sınırları (tablet-sinir)
+
+    async def tablet_limits(self, student_id: str) -> dict[str, Any]:
+        """Öğrencinin BUGÜNKÜ tablet sınırları — Akademi "Tablet sınırları" ekranı.
+
+        Süre sınırı KM'de profile bağlıdır (öğrencinin son oturumunun profili;
+        `deviceCount` aynı profili kullanan tablet sayısı — düzenleme hepsini etkiler);
+        öğrenciye özel olanlar günün ek süreleri ve kısıttır. KM tek gerçek kaynaktır
+        (A5); geçit önbelleğe almaz.
+        """
+        raw = await self.call(self.caps.tablet_limits(student_id),
+                              not_found=self.tablet_failure())
+        profile = raw.get("profile")
+        windows = profile.get("usageWindows") if isinstance(profile, dict) else None
+        sync = raw.get("sync") if isinstance(raw.get("sync"), dict) else {}
+        return {
+            "localDate": str(raw.get("localDate") or ""),
+            "profile": {
+                "id": str(profile.get("id") or ""),
+                "name": str(profile.get("name") or ""),
+                "revision": int_or_none(profile.get("revision")) or 0,
+                "updatedAt": self.iso(profile.get("updatedAt")),
+                "usageWindows": [{
+                    "days": [int(day) for day in window.get("days") or []
+                             if isinstance(day, int) and not isinstance(day, bool)],
+                    "start": str(window.get("start") or ""),
+                    "end": str(window.get("end") or ""),
+                } for window in windows or [] if isinstance(window, dict)],
+                "deviceCount": max(0, int_or_none(profile.get("deviceCount")) or 0),
+            } if isinstance(profile, dict) and profile.get("id") else None,
+            "apps": [{
+                "packageName": str(app.get("packageName") or ""),
+                "appName": str(app.get("appName") or app.get("packageName") or ""),
+                "mode": app.get("mode") if app.get("mode") in TABLET_APP_MODES else "blocked",
+                "dailyLimitSeconds": int_or_none(app.get("dailyLimitSeconds")),
+                "usedSeconds": max(0, int_or_none(app.get("usedSeconds")) or 0),
+                "extraSeconds": max(0, int_or_none(app.get("extraSeconds")) or 0),
+                "remainingSeconds": int_or_none(app.get("remainingSeconds")),
+                "inProfile": bool(app.get("inProfile", True)),
+            } for app in raw.get("apps") or []
+                if isinstance(app, dict) and app.get("packageName")],
+            "grants": [{
+                "id": str(grant.get("id") or ""),
+                "packageName": str(grant.get("packageName") or ""),
+                "appName": str(grant.get("appName") or grant.get("packageName") or ""),
+                "extraSeconds": max(0, int_or_none(grant.get("extraSeconds")) or 0),
+                "reason": str(grant.get("reason") or ""),
+                "createdAt": self.iso(grant.get("createdAt")),
+                "createdBy": str(grant.get("createdBy") or ""),
+            } for grant in raw.get("grants") or [] if isinstance(grant, dict) and grant.get("id")],
+            "blockedUntil": self.iso(raw.get("blockedUntil")),
+            "sync": {"activeSeconds": int_or_none(sync.get("activeSeconds")) or 60,
+                     "idleSeconds": int_or_none(sync.get("idleSeconds")) or 300},
+        }
+
+    async def tablet_update_profile_limits(self, profile_id: str, *, expected_revision: int,
+                                           apps: list[dict[str, Any]] | None,
+                                           usage_windows: list[dict[str, Any]] | None,
+                                           reason: str, caller: Caller) -> dict[str, Any]:
+        """Profil kuralını düzenler; tablet sonraki sync'inde yeni revizyonu alır."""
+        async def work() -> dict[str, Any]:
+            try:
+                saved = await self.call(self.caps.tablet_update_profile_limits(
+                    profile_id, expected_revision=expected_revision, apps=apps,
+                    usage_windows=usage_windows, reason=reason, actor=caller.actor,
+                ), not_found=GatewayError(404, "profile_not_found", "Tablet profili bulunamadı."))
+            except GatewayError as error:
+                if error.code == "conflict":
+                    raise GatewayError(409, "profile_conflict",
+                                       "Tablet profili bu arada değişti; sınırları yeniden "
+                                       "yükleyin.") from None
+                raise
+            await self.caps.emit("tablet.profile_changed", ("tablet_profile", profile_id),
+                                 fields=["apps", "usageWindows"],
+                                 causation_id=caller.causation_id)
+            saved = saved if isinstance(saved, dict) else {}
+            return {"id": str(saved.get("id") or profile_id),
+                    "name": str(saved.get("name") or ""),
+                    "revision": int_or_none(saved.get("revision")) or 0,
+                    "updatedAt": self.iso(saved.get("updatedAt"))}
+
+        detail = {"profileId": profile_id, "expectedRevision": expected_revision,
+                  "apps": apps, "usageWindows": usage_windows, "reason": reason}
+        return await self.audited("tablet.profile.limits", caller, "", detail, work())
+
+    async def tablet_revoke_grant(self, student_id: str, grant_id: str, *, reason: str,
+                                  caller: Caller) -> dict[str, Any]:
+        async def work() -> dict[str, Any]:
+            result = await self.call(
+                self.caps.tablet_revoke_grant(student_id, grant_id, reason=reason,
+                                              actor=caller.actor),
+                not_found=GatewayError(404, "grant_not_found", "Ek süre bulunamadı."))
+            await self.caps.emit("tablet.policy_changed", ("student", student_id),
+                                 fields=["grants"], causation_id=caller.causation_id)
+            result = result if isinstance(result, dict) else {}
+            return {"grantId": grant_id, "revoked": True,
+                    "alreadyRevoked": bool(result.get("alreadyRevoked"))}
+
+        return await self.audited("tablet.grant.revoke", caller, student_id,
+                                  {"grantId": grant_id, "reason": reason}, work())
 
     # ============================================================== §5 anons
 

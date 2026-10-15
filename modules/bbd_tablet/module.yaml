@@ -17,6 +17,10 @@ provides:
       async daily_usage(local_date) → {date, items: [{studentId, totalSeconds,
       blockedUntil}]} (kurum geneli; o gün kullanımı ya da süren kısıtı olanlar;
       en çok 62 gün geriye).
+      async student_limits(student_id) → {localDate, profile{…, deviceCount}|None,
+      apps[{packageName, appName, mode, dailyLimitSeconds, usedSeconds, extraSeconds,
+      remainingSeconds, inProfile}], grants, blockedUntil, sync} (bugün; Akademi
+      "Tablet sınırları").
   - capability: bbd_tablet.control
     contract: bbd_tablet/backend/capabilities.py:TabletControl
     description: >
@@ -24,8 +28,13 @@ provides:
       (None = tüm tablet: süre sınırlı her uygulamaya ayrı ek süre satırı);
       block(student_id, until|None, reason, actor) → blocked_until|None;
       unblock(student_id, reason, actor, *, only_reason=None) → None (only_reason: yalnız o gerekçeli kısıtlar kalkar); end_session(session_id, reason,
-      actor) → bool; session_student(session_id) → student_id | None. Hata `reason` koduyla (validation_error, student_not_found,
-      session_not_found, canteen_unavailable).
+      actor) → bool; session_student(session_id) → student_id | None. update_profile_limits(profile_id,
+      expected_revision, apps, usage_windows, reason, actor) → {id, name, revision,
+      updatedAt} (yalnız profilde olan uygulamaların kipi/süresi + kullanım saatleri;
+      revizyon farkı profile_conflict); revoke_grant(student_id, grant_id, reason, actor)
+      → {id, revoked, alreadyRevoked}. Hata `reason` koduyla (validation_error, student_not_found,
+      session_not_found, canteen_unavailable, profile_not_found, grant_not_found,
+      profile_conflict).
   # ARAYÜZ yeteneği (0.5.3): öğrencinin tek kartında tablet kısıtı (K3).
   - capability: bbd_tablet.student_quick
     contract: bbd_tablet/ui/panel/student-quick.js:mountStudentQuick
