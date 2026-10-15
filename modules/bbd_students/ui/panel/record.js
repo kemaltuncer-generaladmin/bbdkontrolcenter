@@ -17,7 +17,7 @@
 //   PUT   /api/bbd_students/students/{id}/guardians       bbd_students.manage
 //   GET   /api/bbd_students/students/{id}/groups          bbd_students.view
 //   POST  /api/bbd_students/groups/{gid}/members(/end)    bbd_students.groups
-//   …/deactivate · /reactivate · DELETE                   bbd_students.lifecycle / .delete
+//   …/deactivate · /reactivate {restoreClasses} · DELETE   bbd_students.lifecycle / .delete
 //
 // ÇAKIŞMAMA: yalnız DEĞİŞEN alanlar gönderilir (kasa tableti aynı anda başka
 // alanı yazıyorsa onunki korunur). Veliler tam liste olarak gider (sıra =
@@ -42,7 +42,9 @@ import {
 } from './curriculum.js';
 import * as G from './guardian-model.js';
 import { mountControls } from './canteen.js';
-import { askDeactivate, askDelete, deleteBlockers, mountStatus } from './lifecycle.js';
+import {
+  askDeactivate, askDelete, askReactivate, deleteBlockers, mountStatus, reactivatedMessage,
+} from './lifecycle.js';
 import { trDay, validOn } from './groups.js';
 import {
   deliveryState, fieldLabel, inlineValue, patchFor, sameValue, shortcut, undoPatch,
@@ -121,7 +123,7 @@ export function mountRecord(host, options) {
   const save = button('Velileri kaydet', { variant: 'primary', onClick: () => saveAll() });
   save.disabled = true;
   const off = button('Pasifleştir', { variant: 'danger', onClick: () => deactivate() });
-  const on = button('Yeniden etkinleştir', { onClick: () => reactivate() });
+  const on = button('Aktifleştir', { variant: 'primary', onClick: () => reactivate() });
   // Kalıcı silme başlıkta DEĞİL, kartın en altındaki "Tehlikeli işlemler"dedir (0.5.4).
   const actions = h('div', 'st-rec-actions');
   actions.append(dirtyNote, off, on);
@@ -719,7 +721,7 @@ export function mountRecord(host, options) {
     off.textContent = student.scheduledDeactivation ? 'Pasifleştirme planlı' : 'Pasifleştir';
     off.disabled = Boolean(student.scheduledDeactivation);
     on.hidden = !(inactive || student.scheduledDeactivation) || !can('bbd_students.lifecycle');
-    on.textContent = inactive ? 'Yeniden etkinleştir' : 'Planı iptal et';
+    on.textContent = inactive ? 'Aktifleştir' : 'Planı iptal et';
   }
 
   /**
@@ -1207,19 +1209,17 @@ export function mountRecord(host, options) {
 
   async function reactivate() {
     const scheduled = student.status !== 'inactive';
-    if (!await confirmSimple(dialogRoot, {
-      title: scheduled ? 'Planlı pasifleştirme iptal edilsin mi?' : 'Yeniden etkinleştir',
-      description: scheduled ? 'Öğrenci etkin kalır.'
-        : (student.levelOnStudent
-          ? 'Kantin satışı ve BBD Akademi girişi yeniden açılır. Sınıf üyelikleri kendiliğinden açılmaz — '
-            + 'gerekiyorsa “Sınıflar ve seviye” bölümünden ekleyin.'
-          : 'Kantin satışı ve BBD Akademi girişi yeniden açılır. Grup üyelikleri kendiliğinden açılmaz — '
-            + 'gerekiyorsa “Sınıf ve gruplar” bölümünden ekleyin.'),
-      confirmLabel: scheduled ? 'Planı iptal et' : 'Yeniden etkinleştir',
-    })) return;
-    await lifecycle(`${BASE}/students/${enc(kantinId)}/reactivate`, { method: 'POST' },
-      (result) => toast(result?.scheduleCancelled ? 'Plan iptal edildi.'
-        : 'Yeniden etkinleştirildi — grup üyeliklerini kontrol edin.'));
+    let body = { restoreClasses: false };
+    if (scheduled) {
+      if (!await confirmSimple(dialogRoot, { title: 'Planlı pasifleştirme iptal edilsin mi?',
+        description: 'Öğrenci etkin kalır.', confirmLabel: 'Planı iptal et' })) return;
+    } else {
+      // 16.10.2026 kullanıcı: "KM de pasife alınan öğrenci aktifleştirilebilsin" — sınıflar dahil.
+      body = await askReactivate(dialogRoot, { students: [student] });
+      if (!body) return;
+    }
+    await lifecycle(`${BASE}/students/${enc(kantinId)}/reactivate`, { method: 'POST', body },
+      (result) => toast(reactivatedMessage(result)));
   }
 
   function dangerPart() {

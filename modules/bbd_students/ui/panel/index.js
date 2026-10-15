@@ -32,7 +32,9 @@ import { createPicker } from '../../ui-kit/picker.js';
 import { reportChain } from '../../ui-kit/report.js';
 import { button, confirmSimple, dialogA11y } from '../../ui-kit/kit.js';
 import { mountGroups, pickerItem } from './groups.js';
-import { askBulkDelete, askDeactivate, showBulkDeleteResult, watchEvents } from './lifecycle.js';
+import {
+  askBulkDelete, askDeactivate, askReactivate, reactivatedMessage, showBulkDeleteResult, watchEvents,
+} from './lifecycle.js';
 import { mountRecord } from './record.js';
 import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, parseChoice,
@@ -160,7 +162,12 @@ function createManager(root, options) {
   for (const [value, label] of [['active', 'Etkin'], ['inactive', 'Pasif'], ['', 'Etkin + pasif']]) {
     nodes.statusFilter.append(new Option(label, value));
   }
-  nodes.statusFilter.addEventListener('change', () => { filters.status = nodes.statusFilter.value; renderList(); });
+  nodes.statusFilter.addEventListener('change', () => {
+    filters.status = nodes.statusFilter.value;
+    // Pasifler listelenince toplu işlemin varsayılanı "Aktifleştir" (16.10.2026).
+    nodes.bulkBar.prefer(filters.status === 'inactive' ? 'reactivate' : null);
+    renderList();
+  });
   nodes.classFilter = h('select', 'st-input st-select');
   nodes.classFilter.setAttribute('aria-label', 'Sınıf');
   nodes.classFilter.addEventListener('change', () => { filters.className = nodes.classFilter.value; renderList(); });
@@ -350,6 +357,10 @@ function createManager(root, options) {
     const all = sortStudents(students);
     const shown = all.filter(matches);
     nodes.count.textContent = all.length === shown.length ? `${all.length} öğrenci` : `${shown.length} / ${all.length}`;
+    // Durum seçeneklerinde sayılar: pasif öğrenci olduğu listeden görünsün ("Pasif (3)").
+    const inactiveCount = all.filter((student) => student.status === 'inactive').length;
+    nodes.statusFilter.options[0].textContent = `Etkin (${all.length - inactiveCount})`;
+    nodes.statusFilter.options[1].textContent = `Pasif (${inactiveCount})`;
     const known = classes();
     const previous = nodes.classFilter.value;
     nodes.classFilter.replaceChildren(new Option('Tüm sınıflar', ''));
@@ -361,7 +372,9 @@ function createManager(root, options) {
     if (shown.length === 0) {
       const box = h('div', 'st-empty');
       box.append(h('p', null, !connected ? 'Kantine bağlanılamadı; liste boş.'
-        : students.length ? 'Bu süzgece uyan öğrenci yok.' : 'Henüz öğrenci yok.'));
+        : filters.status === 'inactive' && !filters.text && !filters.className && !filters.flag
+          ? 'Pasif öğrenci yok.'
+          : students.length ? 'Bu süzgece uyan öğrenci yok.' : 'Henüz öğrenci yok.'));
       if (connected && !students.length && can('bbd_students.manage')) {
         box.append(button('Öğrenci ekle', { variant: 'primary', onClick: () => createStudent() }));
       }
@@ -446,6 +459,13 @@ function createManager(root, options) {
       }
       item.addEventListener('click', () => select(student));
       line.append(item);
+      if (student.status === 'inactive' && can('bbd_students.lifecycle')) {
+        // Satırdan tek tık: pasif öğrenciyi aktifleştir (kart açmadan; 16.10.2026).
+        const on = button('Aktifleştir', { onClick: () => reactivateOne(student, on) });
+        on.classList.add('st-row-action');
+        on.setAttribute('aria-label', `${student.displayName || 'Öğrenci'} aktifleştir`);
+        line.append(on);
+      }
       nodes.list.append(line);
     }
   }
@@ -466,7 +486,7 @@ function createManager(root, options) {
     // "Sınıftan çıkar". Seviye / alan / hedef sınav öğrencinindir (sınıfın seviyesi eklerken yazılır).
     for (const [value, label] of [['className', 'Sınıfa ekle'], ['leave', 'Sınıftan çıkar'],
       ['gradeLevel', 'Seviye'], ['track', 'Alan'], ['examTarget', 'Hedef sınav'],
-      ['deactivate', 'Pasifleştir']]) {
+      ['deactivate', 'Pasifleştir'], ['reactivate', 'Aktifleştir (pasifler)']]) {
       fieldSelect.append(new Option(label, value));
     }
     // Kalıcı silme yalnız `bbd_students.delete` taşıyana (varsayılan yalnız admin) görünür;
@@ -493,6 +513,11 @@ function createManager(root, options) {
       valueSlot.replaceChildren();
       control = null;
       if (field === 'deactivate') return;
+      if (field === 'reactivate') {
+        valueSlot.append(h('span', 'st-hint', 'Seçilenlerden yalnız pasif olanlar aktifleşir; sınıflarına geri '
+          + 'eklenmeleri onay penceresinde seçilir.'));
+        return;
+      }
       if (field === 'delete') {
         valueSlot.append(h('span', 'st-hint', 'Önerilen: önce pasifleştirin. Yalnız pasif, bakiyesi 0, açık '
           + 'talebi ve kurum borcu olmayan öğrenci silinir; diğerleri nedeniyle listelenir.'));
@@ -566,6 +591,17 @@ function createManager(root, options) {
           chosen.clear();
           await refresh();
           return;
+        } else if (field === 'reactivate') {
+          const rows = students.filter((row) => chosen.has(row.kantinId) && row.status === 'inactive');
+          if (!rows.length) { status.textContent = 'Seçilenler arasında pasif öğrenci yok.'; return; }
+          const answer = await askReactivate(view, { students: rows });
+          if (!answer) { status.textContent = ''; return; }
+          const result = await api(`${BASE}/students/reactivate`, { method: 'POST',
+            body: { students: rows.map((row) => row.kantinId), ...answer } });
+          status.textContent = reactivatedMessage(result);
+          chosen.clear();
+          await refresh();
+          return;
         } else if (field === 'deactivate') {
           const answer = await askDeactivate(view, { students: students.filter((row) => chosen.has(row.kantinId)) });
           if (!answer) { status.textContent = ''; return; }
@@ -594,6 +630,11 @@ function createManager(root, options) {
     paintValue();
     return {
       node,
+      /** Durum süzgecine göre varsayılan alan ("Pasif" → "Aktifleştir"); `null` = eskiye dön. */
+      prefer(field) {
+        if (field && fieldSelect.value !== field) { fieldSelect.value = field; paintValue(); }
+        if (!field && fieldSelect.value === 'reactivate') { fieldSelect.value = 'className'; paintValue(); }
+      },
       paint() {
         // Silinen / artık listede olmayan seçimler düşer.
         const known = new Set(students.map((row) => row.kantinId));
@@ -603,6 +644,22 @@ function createManager(root, options) {
         paintDeleteOption();
       },
     };
+  }
+
+  /** Satırdaki "Aktifleştir": onay (sınıflara geri ekle) → uç → liste yenilenir. */
+  async function reactivateOne(student, control) {
+    const answer = await askReactivate(view, { students: [student] });
+    if (!answer) return;
+    control.disabled = true;
+    try {
+      const result = await api(`${BASE}/students/${encodeURIComponent(student.kantinId)}/reactivate`,
+        { method: 'POST', body: answer });
+      toast(reactivatedMessage(result));
+      await refresh();
+    } catch (failure) {
+      toast(`Aktifleştirilemedi: ${failure.message}`);
+      control.disabled = false;
+    }
   }
 
   async function select(student) {
@@ -1095,6 +1152,24 @@ export function capabilities(ctx) {
       api: ctx.api, payload: options.payload || null, capability: options.capability || null,
       openStudent: options.openStudent, hideModes: Boolean(options.hideModes), onMode: options.onMode,
     }),
+    /**
+     * Pasif öğrenciyi aktifleştir — BBD Akademi'deki öğrenci kartının başlığı kullanır (16.10.2026).
+     * `allowed()` → izin (`bbd_students.lifecycle`); `run(kantinId, {dialogRoot, name})` onay
+     * penceresini açar, ucu çağırır; vazgeçilirse `null`, yoksa sonuç + `message`.
+     */
+    'bbd_students.reactivate': {
+      async allowed() {
+        const set = await loadPermissions(ctx.api);
+        return set === null || set.has('bbd_students.lifecycle') || set.has('bbd_students.lifecycle:*');
+      },
+      async run(kantinId, { dialogRoot = null, name = '' } = {}) {
+        const answer = await askReactivate(dialogRoot || document.body, { students: [{ displayName: name }] });
+        if (!answer) return null;
+        const result = await ctx.api(`${BASE}/students/${encodeURIComponent(kantinId)}/reactivate`,
+          { method: 'POST', body: answer });
+        return { ...result, message: reactivatedMessage(result) };
+      },
+    },
     /** `(root, {kantinId, capability, toast, dialogRoot, onChanged, onRemoved})` → {reload, destroy, dirty}. */
     'bbd_students.record': (root, options = {}) => {
       let permissions = null;

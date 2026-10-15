@@ -1,4 +1,4 @@
-// Öğrenci yaşam döngüsü ekranları — pasifleştir, yeniden etkinleştir, kalıcı sil
+// Öğrenci yaşam döngüsü ekranları — pasifleştir, aktifleştir, kalıcı sil
 // (bbd-akademi docs/integrations/km-merkezi-senkron.md §5).
 //
 // KARAR BACKEND'DEDİR (K9): düğmeler izne göre gizlenir ama her uç kendi iznini
@@ -24,7 +24,8 @@ const ACTION_LABEL = {
   scheduled: 'Pasifleştirme planlandı',
   schedule_cancelled: 'Plan iptal edildi',
   deactivated: 'Pasifleştirildi',
-  reactivated: 'Yeniden etkinleştirildi',
+  reactivated: 'Aktifleştirildi',
+  classes_restored: 'Sınıflara geri eklendi',
   deleted: 'Kalıcı silindi',
 };
 
@@ -74,8 +75,8 @@ export function askDeactivate(root, { students }) {
     const { overlay, card, release } = dialog(root, many ? `${name} pasifleştirilecek` : `${name} — pasifleştir`,
       'Kantinde satış kapanır (bakiye ve borç korunur, tahsilat ve ödeme linki çalışır), '
       + 'tablet girişi kısıtlanır, BBD Akademi girişi ve yalnız bu öğrenciye bağlı veli '
-      + 'girişi kapanır. Açık sınıf üyelikleri kapanır. Veriler saklanır; yeniden '
-      + 'etkinleştirilebilir.');
+      + 'girişi kapanır. Açık sınıf üyelikleri kapanır. Veriler saklanır; “Aktifleştir” ile '
+      + 'geri açılır (sınıflar dahil).');
 
     const reason = h('select', 'kit-input st-input st-select');
     for (const [value, label] of REASONS) reason.append(new Option(label, value));
@@ -142,6 +143,68 @@ export function askDeactivate(root, { students }) {
     document.addEventListener('keydown', onKey);
     reason.focus();
   });
+}
+
+/**
+ * Aktifleştir penceresi (16.10.2026 kullanıcı: "KM de pasife alınan öğrenci aktifleştirilebilsin").
+ * Bir ya da çok öğrenci. "Sınıflarına geri ekle" varsayılan açık: pasifleştirmenin kapattığı
+ * sınıf üyelikleri bugünden geri açılır (arşivlenmiş sınıf atlanır). Enter onaylar, Esc vazgeçer.
+ *
+ * @returns {Promise<{restoreClasses: boolean}|null>}
+ */
+export function askReactivate(root, { students }) {
+  return new Promise((resolve) => {
+    const many = students.length > 1;
+    const name = many ? `${students.length} öğrenci` : (students[0]?.displayName || 'Öğrenci');
+    const { overlay, card, release } = dialog(root, many ? `${name} aktifleştirilecek` : `${name} — aktifleştir`,
+      'Kantin satışı ve tablet girişi açılır; BBD Akademi’de öğrenci ve velilerinin girişi, öğretmen ve koç '
+      + 'listeleri birkaç saniyede geri gelir. Veriler (ödev, deneme, hata defteri, cari) olduğu gibi durur.');
+    const restore = h('input', 'st-check');
+    restore.type = 'checkbox';
+    restore.checked = true;
+    restore.id = `st-restore-${Date.now().toString(36)}`;
+    const restoreLabel = h('label', 'st-check', 'Pasifleştirmede kapanan sınıflarına bugünden geri ekle');
+    restoreLabel.htmlFor = restore.id;
+    const row = h('div', 'st-check-row');
+    row.append(restore, restoreLabel);
+    card.append(row);
+    const close = (value) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      release();
+      resolve(value);
+    };
+    const submit = () => close({ restoreClasses: restore.checked });
+    const onKey = (event) => {
+      if (event.key === 'Escape') close(null);
+      if (event.key === 'Enter' && event.target?.tagName !== 'BUTTON') { event.preventDefault(); submit(); }
+    };
+    const actions = h('div', 'kit-dialog-actions');
+    const yes = button(many ? `${name} aktifleştir` : 'Aktifleştir', { variant: 'primary', onClick: submit });
+    actions.append(button('Vazgeç', { onClick: () => close(null) }), yes);
+    card.append(actions);
+    overlay.addEventListener('mousedown', (event) => {
+      if (event.target === overlay) close(null);
+    });
+    document.addEventListener('keydown', onKey);
+    yes.focus();
+  });
+}
+
+/** Aktifleştirme sonucu tek cümle (tek öğrenci ya da toplu). */
+export function reactivatedMessage(result) {
+  if (result?.scheduleCancelled) return 'Planlı pasifleştirme iptal edildi; öğrenci etkin kalır.';
+  if (Array.isArray(result?.reactivated)) {
+    const done = result.reactivated.length;
+    const failed = (result.failed || []).length;
+    return `${done} öğrenci aktifleştirildi`
+      + (result.classesRestored ? `, ${result.classesRestored} sınıf üyeliği geri açıldı` : '')
+      + (failed ? `; ${failed} öğrenci atlandı (zaten etkin ya da bulunamadı)` : '') + '.';
+  }
+  const classes = result?.classesRestored || [];
+  const pending = result?.canteenSync === 'pending' ? ' Kantine iletilemedi, otomatik yeniden denenecek.' : '';
+  return (classes.length ? `Aktifleştirildi — ${classes.join(', ')} sınıfına geri eklendi.`
+    : 'Aktifleştirildi. Sınıf üyeliği açılmadı; gerekiyorsa “Sınıf ve gruplar”dan ekleyin.') + pending;
 }
 
 const BLOCKER_LINK = {

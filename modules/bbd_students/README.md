@@ -237,13 +237,30 @@ desteği ADR 0029 (modül işlemi + `events.outbox`).
   deleted`, `tablet.policy_changed` (pasifleştirmede), `group.changed`.
 - **Yaşam döngüsü:** Pasifleştir (gerekçe ayrıldı/mezun/geçici durdurma/diğer,
   bugün ya da ileri tarih — o gün 00:00'da uygulanır; toplu seçim),
-  Yeniden etkinleştir (grup üyelikleri kendiliğinden AÇILMAZ), Kalıcı sil
+  **Aktifleştir** (aşağıda), Kalıcı sil
   (yalnız pasif, ad yazılarak, bakiye tam 0, açık ödeme talebi yok, Akademi
   kurum cari borcu yok — `akademi.student_finance` yoksa silme kapalı).
   Uçlar: `POST /students/{id}/deactivate`, `POST /students/deactivate`
-  (toplu), `POST /students/{id}/reactivate`, `DELETE /students/{id}`,
+  (toplu), `POST /students/{id}/reactivate {restoreClasses}`, `POST /students/reactivate`
+  (toplu, `{students, restoreClasses}`), `DELETE /students/{id}`,
   `GET /students/{id}/status-history`. İzinler `bbd_students.lifecycle`,
   `bbd_students.delete` (yalnız admin).
+- **Aktifleştir (16.10.2026, kullanıcı: "KM de pasife alınan öğrenci aktifleştirilebilsin").**
+  Eskiden düğme yalnız "Kayıt ve veliler" sekmesindeydi ve pasifleştirmenin kapattığı sınıf
+  üyelikleri geri açılmıyordu (öğrenci Akademi'de sınıfsız kalıyor, öğretmen listesine, sınıf
+  müfredatına dönmüyordu). Şimdi: liste durum seçeneklerinde sayılar ("Pasif (3)"); pasif satırda
+  tek tık **Aktifleştir**; "Pasif" süzgecinde toplu işlemin varsayılanı **Aktifleştir (pasifler)**;
+  kartın başlığında **Aktifleştir**; BBD Akademi öğrenci kartının pasif uyarısında **Aktifleştir**
+  (arayüz yeteneği `bbd_students.reactivate` → `{allowed(), run(kantinId, {dialogRoot, name})}`).
+  Onay penceresi "Pasifleştirmede kapanan sınıflarına bugünden geri ekle" (varsayılan açık) sorar.
+  Tek işlemde: profil `active` + `student.reactivated` + (seçiliyse) son pasifleştirmenin kapattığı
+  üyelikler geri açılır (`group.changed`; aynı gün / ertesi gün geri alındıysa satırın sonu silinir —
+  kesintisiz, değilse bugünden yeni üyelik; arşivli sınıf ve çakışan özel ders atlanır), durum
+  geçmişine "Aktifleştirildi" + "Sınıflara geri eklendi: 8-A" (yapan kişiyle). Sonra kantin `PATCH
+  status` (toplu: arka planda sıralı) ve pasifleştirmenin koyduğu tablet kısıtı kalkar. Akademi
+  olayları sırayla alır (önce öğrenci + veli girişi, sonra sınıf) — 1–3 sn. İzin
+  `bbd_students.lifecycle`. Dönem geçişini geri alma sınıfları kendisi döndürdüğü için
+  `restore_classes=False` çağırır.
 - **Kalıcı silme ekranları (0.5.4, kullanıcı isteği):** öğrenci kartının EN
   ALTINDA ayrı "Tehlikeli işlemler" — önerilen yol "Pasifleştir" yanında;
   "Kalıcı olarak sil…" önce ön kontrol yapar (`GET /students/{id}/delete-check`,

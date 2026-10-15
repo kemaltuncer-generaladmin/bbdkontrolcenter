@@ -220,6 +220,47 @@ export function kmManagedHint(ctx, text, student, extra = {}) {
   return hint;
 }
 
+// ---------------------------------------------------------------- pasif öğrenci
+
+/**
+ * Pasif öğrencinin başlık uyarısı + "Aktifleştir" (16.10.2026 kullanıcı: "KM de pasife alınan
+ * öğrenci aktifleştirilebilsin"). Eylem KM Öğrenci Yönetimi'nindir (`bbd_students.reactivate`
+ * yeteneği; izin `bbd_students.lifecycle`, onay penceresi, durum geçmişi): öğrenci, veli girişi,
+ * kantin ve sınıf üyelikleri birlikte açılır; Akademi olayla 1–3 sn'de alır, kart kendini tazeler.
+ */
+function inactiveNotice(ctx, data) {
+  const student = data.student || {};
+  const why = STATUS_REASONS[data.statusReason] || '';
+  const box = alertBox(`Pasif öğrenci${why ? ` — ${why}` : ''}${data.statusSince
+    ? ` (${fmtDateTime(data.statusSince)})` : ''}. Öğrenci ve yalnız ona bağlı veli uygulamaya giremez, `
+    + 'veriler saklanır. Bu ekran SALT OKUNURDUR; kurum cari tahsilatı açık kalır.', 'info');
+  box.classList.add('ak-stu-inactive');
+  const reactivate = ctx.app.capability?.('bbd_students.reactivate');
+  if (!reactivate || !student.externalRef) {
+    box.append(h('span', '', ' Aktifleştirmek için KM Öğrenci Yönetimi yetkisi gerekir.'));
+    return box;
+  }
+  const action = button('Aktifleştir', { variant: 'primary', onClick: async () => {
+    action.disabled = true;
+    try {
+      const result = await reactivate.run(student.externalRef,
+        { dialogRoot: ctx.app.root, name: student.displayName || '' });
+      if (result) {
+        ctx.app.toast(result.message || 'Aktifleştirildi.', 'good');
+        ctx.refreshSoon?.();
+      }
+    } catch (failure) {
+      ctx.app.toast(`Aktifleştirilemedi: ${failure?.message || failure}`, 'bad');
+    } finally {
+      action.disabled = false;
+    }
+  } });
+  action.hidden = true;
+  reactivate.allowed().then((ok) => { action.hidden = !ok; }).catch(() => {});
+  box.append(' ', action);
+  return box;
+}
+
 // ---------------------------------------------------------------- başlık
 
 export function renderHeader(ctx, data) {
@@ -230,13 +271,7 @@ export function renderHeader(ctx, data) {
     nodes.push(alertBox('Bu öğrenci son iki tam eşitlemede KM öğrenci dizininde görünmedi. Kaydı KM '
       + 'Öğrenciler modülünden kontrol edin.', 'warn'));
   }
-  if (student.status === 'inactive') {
-    const why = STATUS_REASONS[data.statusReason] || '';
-    nodes.push(alertBox(`Pasif öğrenci${why ? ` — ${why}` : ''}${data.statusSince
-      ? ` (${fmtDateTime(data.statusSince)})` : ''}. KM'de pasifleştirildi: öğrenci ve yalnız ona bağlı veli `
-      + 'uygulamaya giremez, veriler saklanır. Bu ekran SALT OKUNURDUR; kurum cari tahsilatı açık kalır. '
-      + 'Yeniden etkinleştirme KM Öğrenciler modülünden yapılır.', 'info'));
-  }
+  if (student.status === 'inactive') nodes.push(inactiveNotice(ctx, data));
   if ((data.phoneIssues || []).length) {
     nodes.push(alertBox(`KM'de okunamayan telefon: ${data.phoneIssues.map((key) => labelOf(PHONE_FIELDS, key))
       .join(', ')}. Bu numaralara giriş kodu ve bildirim gitmez; KM Öğrenciler modülünde düzeltin.`, 'warn'));
