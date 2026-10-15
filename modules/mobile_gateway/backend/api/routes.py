@@ -153,9 +153,24 @@ class AppLimitBody(BaseModel):
     dailyLimitSeconds: int | None = Field(default=None, ge=60, le=86_400)
 
 
-class ProfileLimitsBody(ReasonBody):
+#: tablet-sinir (kullanıcı kararı): yönetici sınırları gerekçe yazmadan düzeltir; denetim izine
+#: kim / ne zaman / eski → yeni değer yine yazılır, gerekçe yoksa bu metin.
+DEFAULT_LIMIT_REASON = "Akademi yöneticisi düzeltti"
+
+
+class OptionalReasonBody(BaseModel):
+    reason: str | None = Field(default=None, max_length=200)
+
+
+def optional_reason(body: OptionalReasonBody) -> str:
+    reason = " ".join((body.reason or "").split())
+    return reason if len(reason) >= 3 else DEFAULT_LIMIT_REASON
+
+
+class ProfileLimitsBody(OptionalReasonBody):
     """tablet-sinir: yalnız profilde olan uygulamaların kipi/süresi; `usageWindows`
-    gönderilmezse (ya da `null`) saatler değişmez, boş liste = her zaman açık."""
+    gönderilmezse (ya da `null`) saatler değişmez, boş liste = her zaman açık.
+    `reason` isteğe bağlıdır."""
 
     expectedRevision: int = Field(ge=0)
     apps: list[AppLimitBody] | None = Field(default=None, max_length=200)
@@ -439,6 +454,31 @@ async def tablet_unblock(student_id: str, body: ReasonBody, request: Request,
     ))
 
 
+@router.get("/tablet-profiles")
+async def tablet_profiles(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
+    return await current_service().tablet_profiles()
+
+
+class StudentAppLimitBody(OptionalReasonBody):
+    """`dailyLimitSeconds: null` = genele döndür (öğrenciye özel süre silinir)."""
+
+    dailyLimitSeconds: int | None = Field(ge=60, le=86_400)
+
+
+@router.put("/students/{student_id}/tablet/app-limits/{package_name}")
+async def tablet_student_app_limit(student_id: str, package_name: str,
+                                   body: StudentAppLimitBody, request: Request,
+                                   user: CurrentUser = requires(ACCESS)) -> Response:
+    caller, reason = caller_of(request, user), optional_reason(body)
+    if not 2 <= len(package_name) <= 255:
+        raise validation("Uygulama paket adı geçersiz.", "packageName")
+    return await idempotent(request, body, 200, lambda: current_service()
+                            .tablet_set_student_app_limit(
+                                student_id, package_name,
+                                daily_limit_seconds=body.dailyLimitSeconds, reason=reason,
+                                caller=caller))
+
+
 @router.get("/students/{student_id}/tablet/limits")
 async def tablet_limits(student_id: str, user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
     return await current_service().tablet_limits(student_id)
@@ -447,7 +487,7 @@ async def tablet_limits(student_id: str, user: CurrentUser = requires(ACCESS)) -
 @router.put("/tablet-profiles/{profile_id}/limits")
 async def tablet_profile_limits(profile_id: str, body: ProfileLimitsBody, request: Request,
                                 user: CurrentUser = requires(ACCESS)) -> Response:
-    caller, reason = caller_of(request, user), reason_of(body)
+    caller, reason = caller_of(request, user), optional_reason(body)
     if body.apps is None and body.usageWindows is None:
         raise validation("Değiştirilecek bir alan gönderin (`apps` ya da `usageWindows`).",
                          "apps", "usageWindows")
@@ -464,10 +504,10 @@ async def tablet_profile_limits(profile_id: str, body: ProfileLimitsBody, reques
 
 
 @router.post("/students/{student_id}/tablet/grants/{grant_id}/revoke")
-async def tablet_grant_revoke(student_id: str, grant_id: str, body: ReasonBody,
+async def tablet_grant_revoke(student_id: str, grant_id: str, body: OptionalReasonBody,
                               request: Request,
                               user: CurrentUser = requires(ACCESS)) -> Response:
-    caller, reason = caller_of(request, user), reason_of(body)
+    caller, reason = caller_of(request, user), optional_reason(body)
     return await idempotent(request, body, 200, lambda: current_service().tablet_revoke_grant(
         student_id, grant_id, reason=reason, caller=caller,
     ))

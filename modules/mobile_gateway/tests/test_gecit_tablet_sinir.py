@@ -25,8 +25,11 @@ async def test_ogrencinin_sinirlari(client: httpx.AsyncClient) -> None:
         "deviceCount": 12}
     assert body["apps"][0] == {
         "packageName": "com.example.video", "appName": "Video", "mode": "limited",
-        "dailyLimitSeconds": 1800, "usedSeconds": 600, "extraSeconds": 300,
-        "remainingSeconds": 1500, "inProfile": True}
+        "dailyLimitSeconds": 2700, "generalLimitSeconds": 1800, "studentLimitSeconds": 2700,
+        "source": "student", "usedSeconds": 600, "extraSeconds": 300,
+        "remainingSeconds": 2400, "inProfile": True}
+    assert body["apps"][1]["source"] == "general"
+    assert body["apps"][1]["generalLimitSeconds"] is None
     assert body["grants"][0]["createdAt"] == "2026-10-12T09:00:00+03:00"
     assert body["sync"] == {"activeSeconds": 60, "idleSeconds": 300}
 
@@ -69,16 +72,20 @@ async def test_profil_sinirlarini_duzenleme(client: httpx.AsyncClient, world: An
     expect_error(await client.put("/tablet-profiles/yok/limits",
                                   json={**body, "expectedRevision": 5}), 404,
                  "profile_not_found")
-    for bad in ({"expectedRevision": 5, "reason": "Boş"},
-                {"expectedRevision": 5, "reason": "ab", "usageWindows": []},
-                {"expectedRevision": 5, "reason": "Süre yok",
+    # Gerekçe isteğe bağlı (kullanıcı kararı): verilmezse varsayılan metin denetim izine gider.
+    plain = await client.put("/tablet-profiles/p-1/limits",
+                             json={"expectedRevision": 5, "usageWindows": []})
+    assert plain.status_code == 200 and plain.json()["revision"] == 6
+    assert world.tablet_control.calls[-1][1]["reason"] == "Akademi yöneticisi düzeltti"
+    for bad in ({"expectedRevision": 6, "reason": "Boş"},
+                {"expectedRevision": 6, "reason": "Süre yok",
                  "apps": [{"packageName": "com.example.video", "mode": "limited"}]},
-                {"expectedRevision": 5, "reason": "Kısa",
+                {"expectedRevision": 6, "reason": "Kısa",
                  "apps": [{"packageName": "com.example.video", "mode": "limited",
                            "dailyLimitSeconds": 30}]},
-                {"expectedRevision": 5, "reason": "Saat",
+                {"expectedRevision": 6, "reason": "Saat",
                  "usageWindows": [{"days": [1], "start": "8:00", "end": "17:00"}]},
-                {"expectedRevision": 5, "reason": "Yabancı",
+                {"expectedRevision": 6, "reason": "Yabancı",
                  "apps": [{"packageName": "com.not.in.profile", "mode": "blocked"}]}):
         expect_error(await client.put("/tablet-profiles/p-1/limits", json=bad), 422,
                      "validation_error")
@@ -95,8 +102,8 @@ async def test_ek_sure_geri_alma(client: httpx.AsyncClient, world: Any, store: A
     assert world.tablet_control.calls[-1][1]["grant_id"] == "g-1"
     expect_error(await client.post(f"/students/{ELIF}/tablet/grants/g-x/revoke",
                                    json={"reason": "Yok"}), 404, "grant_not_found")
-    expect_error(await client.post(f"/students/{ELIF}/tablet/grants/g-1/revoke",
-                                   json={"reason": "a"}), 422, "validation_error")
+    plain = await client.post(f"/students/{ELIF}/tablet/grants/g-1/revoke", json={})
+    assert plain.status_code == 200
     actions = [row["action"] for row in await table(store, "audit")]
     assert "tablet.grant.revoke" in actions
 
@@ -108,3 +115,33 @@ async def test_eski_tablet_modulunde_503(client: httpx.AsyncClient, world: Any) 
     error = expect_error(await client.get(f"/students/{ELIF}/tablet/limits"), 503,
                          "capability_missing")
     assert error["capability"] == "bbd_tablet.read.student_limits"
+
+
+async def test_genel_ayarlar(client: httpx.AsyncClient) -> None:
+    response = await client.get("/tablet-profiles")
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["deviceCount"] == 12 and items[0]["updatedAt"] == "2026-10-12T08:00:00+03:00"
+    assert items[0]["apps"][1] == {"packageName": "com.example.game", "appName": "Oyun",
+                                   "mode": "blocked", "dailyLimitSeconds": None}
+
+
+async def test_ogrenciye_ozel_sure(client: httpx.AsyncClient, world: Any, store: Any) -> None:
+    done = await client.put(f"/students/{ELIF}/tablet/app-limits/com.example.video",
+                            json={"dailyLimitSeconds": 2700})
+    assert done.status_code == 200, done.text
+    assert done.json() == {"packageName": "com.example.video", "studentLimitSeconds": 2700,
+                           "previousSeconds": None}
+    back = await client.put(f"/students/{ELIF}/tablet/app-limits/com.example.video",
+                            json={"dailyLimitSeconds": None})
+    assert back.json()["studentLimitSeconds"] is None
+    assert world.tablet_control.calls[-1][1]["daily_limit_seconds"] is None
+    expect_error(await client.put(f"/students/{ELIF}/tablet/app-limits/com.example.video",
+                                  json={"dailyLimitSeconds": 1200}), 422, "validation_error")
+    expect_error(await client.put(f"/students/{ELIF}/tablet/app-limits/com.example.video",
+                                  json={}), 422, "validation_error")
+    expect_error(await client.put("/students/STU-yok/tablet/app-limits/com.example.video",
+                                  json={"dailyLimitSeconds": 2700}), 404, "student_not_found")
+    actions = [row["action"] for row in await table(store, "audit")]
+    assert actions.count("tablet.student_limit") >= 2

@@ -718,6 +718,19 @@ class Capabilities:
         result = await self._module("tablet", TABLET_READ, "student_limits", (student_id,))
         return result if isinstance(result, dict) else {}
 
+    async def tablet_profiles(self) -> list[dict[str, Any]]:
+        result = await self._module("tablet", TABLET_READ, "profiles")
+        return [item for item in result if isinstance(item, dict)] if isinstance(result, list) else []
+
+    async def tablet_set_student_app_limit(self, student_id: str, package_name: str, *,
+                                           daily_limit_seconds: int | None, reason: str,
+                                           actor: str) -> Any:
+        return await self._module("tablet", TABLET_CONTROL, "set_student_app_limit",
+                                  (student_id, package_name), {
+                                      "daily_limit_seconds": daily_limit_seconds,
+                                      "actor": actor, "reason": reason,
+                                  }, write=True)
+
     async def tablet_update_profile_limits(self, profile_id: str, *, expected_revision: int,
                                            apps: list[dict[str, Any]] | None,
                                            usage_windows: list[dict[str, Any]] | None,

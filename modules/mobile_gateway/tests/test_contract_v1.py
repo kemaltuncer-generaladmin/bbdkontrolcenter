@@ -88,6 +88,8 @@ CONTRACT_ROUTES = {
     ("GET", "/students/{student_id}/tablet/limits"),
     ("PUT", "/tablet-profiles/{profile_id}/limits"),
     ("POST", "/students/{student_id}/tablet/grants/{grant_id}/revoke"),
+    ("GET", "/tablet-profiles"),
+    ("PUT", "/students/{student_id}/tablet/app-limits/{package_name}"),
     ("POST", "/announcements/call"),
     ("GET", "/schedule/bell-week"),
     ("GET", "/groups"),

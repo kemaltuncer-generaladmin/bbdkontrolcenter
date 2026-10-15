@@ -68,7 +68,8 @@ async def test_ogrencinin_bugunku_sinirlari(service: TabletService, clock: Any) 
     apps = {app["packageName"]: app for app in limits["apps"]}
     assert apps[VIDEO["packageName"]] == {
         "packageName": VIDEO["packageName"], "appName": "Video", "mode": "limited",
-        "dailyLimitSeconds": 1800, "usedSeconds": 600, "extraSeconds": 300,
+        "dailyLimitSeconds": 1800, "generalLimitSeconds": 1800, "studentLimitSeconds": None,
+        "source": "general", "usedSeconds": 600, "extraSeconds": 300,
         "remainingSeconds": 1500, "inProfile": True}
     assert apps[GAME["packageName"]]["mode"] == "blocked"
     assert apps[GAME["packageName"]]["remainingSeconds"] is None
@@ -159,3 +160,93 @@ async def test_ek_sure_geri_alinir_ve_tablete_iner(service: TabletService, clock
     with pytest.raises(TabletCapabilityError) as error:
         await control.revoke_grant("opaque-B", grant_id, "Başkasının", "Ayşe")
     assert error.value.reason == "grant_not_found"
+
+
+async def test_gerekce_istege_bagli(service: TabletService, clock: Any) -> None:
+    profile, _ = await _setup(service, clock)
+    log = Log()
+    saved = await TabletControl(service, log).update_profile_limits(
+        profile["id"], 1, [{"packageName": GAME["packageName"], "mode": "unlimited"}], None,
+        None, "Ayşe")
+    assert saved["revision"] == 2
+    assert log.records[-1][1]["reason"] == "Akademi yöneticisi düzeltti"
+
+
+async def test_genel_ayarlar_profiller(service: TabletService, clock: Any) -> None:
+    profile, _ = await _setup(service, clock)
+    await service.save_profile(profile_id=None, name="Lise", timezone="Europe/Istanbul",
+                               apps=[VIDEO])
+    profiles = {item["name"]: item for item in await TabletRead(service).profiles()}
+    assert profiles["Ortaokul"]["id"] == profile["id"]
+    assert profiles["Ortaokul"]["deviceCount"] == 2
+    assert profiles["Lise"]["deviceCount"] == 0
+    modes = {app["packageName"]: (app["mode"], app["dailyLimitSeconds"])
+             for app in profiles["Ortaokul"]["apps"]}
+    assert modes == {VIDEO["packageName"]: ("limited", 1800),
+                     GAME["packageName"]: ("blocked", None),
+                     BOOK["packageName"]: ("unlimited", None)}
+
+
+async def test_ogrenciye_ozel_sure_tablete_ek_sure_olarak_iner(service: TabletService,
+                                                              clock: Any) -> None:
+    _, device_id = await _setup(service, clock)
+    control = TabletControl(service, Log())
+    device = await service.store.fetch_one(
+        f"SELECT * FROM {service.devices} WHERE id=?", (device_id,))
+    assert device is not None
+    session = await service.store.fetch_one(
+        f"SELECT id FROM {service.sessions} WHERE device_id=? AND state='active'", (device_id,))
+    assert session is not None
+    first = await service.sync(device=device, data={"sessionId": session["id"]})
+    version = first["grants"]["version"]
+    assert first["grants"]["items"] == []
+
+    result = await control.set_student_app_limit("opaque-A", VIDEO["packageName"], 2700, "Ayşe")
+    assert result == {"packageName": VIDEO["packageName"], "studentLimitSeconds": 2700,
+                      "previousSeconds": None}
+    synced = await service.sync(device=device, data={"sessionId": session["id"],
+                                                     "grantsVersion": version})
+    assert synced["grants"]["items"] == [{
+        "id": f"ovr:{VIDEO['packageName']}", "packageName": VIDEO["packageName"],
+        "localDate": TODAY, "extraSeconds": 900}]
+    # Değişiklik yoksa liste yeniden gitmez.
+    again = await service.sync(device=device, data={"sessionId": session["id"],
+                                                    "grantsVersion": synced["grants"]["version"]})
+    assert again["grants"] is None
+
+    limits = {app["packageName"]: app
+              for app in (await TabletRead(service).student_limits("opaque-A"))["apps"]}
+    video = limits[VIDEO["packageName"]]
+    assert (video["source"], video["generalLimitSeconds"], video["studentLimitSeconds"],
+            video["dailyLimitSeconds"], video["remainingSeconds"]) == (
+        "student", 1800, 2700, 2700, 2100)
+
+    # Genelden kısa, yasak ya da profilde olmayan uygulamaya özel süre verilemez.
+    for package, seconds in ((VIDEO["packageName"], 1200), (GAME["packageName"], 1200),
+                             ("com.not.in.profile", 1200), (VIDEO["packageName"], 30)):
+        with pytest.raises(TabletCapabilityError) as error:
+            await control.set_student_app_limit("opaque-A", package, seconds, "Ayşe")
+        assert error.value.reason == "validation_error"
+
+    # Genele döndür: satır silinir, tablete boş liste iner.
+    back = await control.set_student_app_limit("opaque-A", VIDEO["packageName"], None, "Ayşe")
+    assert back["previousSeconds"] == 2700
+    reset = await service.sync(device=device, data={"sessionId": session["id"],
+                                                    "grantsVersion": synced["grants"]["version"]})
+    assert reset["grants"]["items"] == []
+    assert (await TabletRead(service).student_limits("opaque-A"))["apps"][0]["source"] == "general"
+
+
+async def test_ozel_sure_girisle_gelir(service: TabletService, clock: Any) -> None:
+    _, device_id = await _setup(service, clock)
+    await TabletControl(service, Log()).set_student_app_limit(
+        "opaque-A", VIDEO["packageName"], 3600, "Ayşe")
+    sessions = await service.list_sessions(limit=5, student_id="opaque-A")
+    await service.end_session(session_id=sessions[0]["id"])
+    device = await service.store.fetch_one(
+        f"SELECT * FROM {service.devices} WHERE id=?", (device_id,))
+    assert device is not None
+    logged = await service.login(device=device, student_code="123456")
+    assert {"id": f"ovr:{VIDEO['packageName']}", "packageName": VIDEO["packageName"],
+            "localDate": TODAY, "extraSeconds": 1800} in logged["extraGrants"]
+    assert ":o1:" in logged["grantsVersion"]

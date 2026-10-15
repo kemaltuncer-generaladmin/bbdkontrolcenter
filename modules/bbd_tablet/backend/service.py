@@ -86,6 +86,8 @@ ONLINE_FACTOR = 2.5
 LOGIN_MAX_FAILURES = 5
 LOGIN_WINDOW = timedelta(minutes=5)
 MAX_BLOCK = timedelta(days=366)
+#: Bellekteki öğrenci özel süre kayıtlarının üst sınırı (dolunca temizlenir).
+STUDENT_LIMIT_CACHE_SIZE = 5000
 INSERT_CHUNK = 200
 IN_CHUNK = 500
 # Shown in history views for sessions whose tablet record was deleted.
@@ -144,6 +146,9 @@ class TabletService:
         self._clock = clock or _utcnow
         self._profile_lock = asyncio.Lock()
         self._profile_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        # Öğrenciye özel süreler (tablet-sinir): sync'in "değişiklik yok" yolu sorgu eklemesin
+        # diye bellekte; tek yazıcı bu servistir (tek uvicorn süreci, katalog önbelleği gibi).
+        self._student_limit_cache: dict[str, dict[str, dict[str, Any]]] = {}
         self._students_cache: tuple[float, list[dict[str, Any]]] | None = None
         self._last_stale_scan = float("-inf")
         self._last_purge = float("-inf")
@@ -160,6 +165,7 @@ class TabletService:
         self.grants = store.table("grants")
         self.commands = store.table("commands")
         self.blocks = store.table("student_blocks")
+        self.student_limits = store.table("student_app_limits")
         self.diagnostics = store.table("diagnostics")
         # App distribution keeps its files under `storage_dir`; without one
         # (tests, a misconfigured install) uploads are refused, sync still works.
@@ -1107,6 +1113,87 @@ class TabletService:
                      default="-")
         return f"{local_date}:{int(row.get('active') or 0)}:{latest}"
 
+    # ------------------------------------------- öğrenciye özel süre (tablet-sinir)
+
+    async def student_app_limits(self, student_id: str) -> dict[str, dict[str, Any]]:
+        """Öğrencinin özel uygulama süreleri: paket → {seconds, updatedAt, updatedBy}.
+
+        Bellekte tutulur (ilk okumada PK önekli tek sorgu); yazma önbelleği bırakır."""
+        cached = self._student_limit_cache.get(student_id)
+        if cached is not None:
+            return cached
+        rows = await self.store.fetch_all(
+            f"SELECT package_name, daily_limit_seconds, updated_at, updated_by "
+            f"FROM {self.student_limits} WHERE student_id=?", (student_id,),
+        )
+        found = {str(row["package_name"]): {"seconds": int(row["daily_limit_seconds"]),
+                                             "updatedAt": row["updated_at"],
+                                             "updatedBy": row["updated_by"]} for row in rows}
+        if len(self._student_limit_cache) >= STUDENT_LIMIT_CACHE_SIZE:
+            self._student_limit_cache.clear()
+        self._student_limit_cache[student_id] = found
+        return found
+
+    @staticmethod
+    def override_grants(overrides: dict[str, dict[str, Any]], profile: dict[str, Any] | None,
+                        local_date: str) -> list[dict[str, Any]]:
+        """Öğrenci süresinin genel (profil) süresini aştığı kısım, o günün ek süresi olarak.
+
+        Yalnız profilde izinli ve süreli uygulamada ve öğrenci süresi genelden büyükse
+        satır üretilir; tablet ek süreyi sınıra ekler (sözleşme v2 `grants`)."""
+        if not overrides or not profile:
+            return []
+        items = []
+        for app in profile.get("apps") or []:
+            override = overrides.get(app["packageName"])
+            if override is None or not app["allowed"] or app["unlimited"]:
+                continue
+            extra = int(override["seconds"]) - int(app["dailyLimitSeconds"])
+            if extra > 0:
+                items.append({"id": f"ovr:{app['packageName']}", "packageName": app["packageName"],
+                              "localDate": local_date, "extraSeconds": extra})
+        return items
+
+    async def session_grants(self, student_id: str, local_date: str,
+                             profile: dict[str, Any] | None) -> tuple[str, list[dict[str, Any]]]:
+        """Tablete giden ek süre listesi ve sürümü: verilen ek süreler + öğrenciye özel süre farkı.
+
+        Özel süre yoksa sürüm eskisiyle aynıdır (değişmeyen tabletlere liste gitmez)."""
+        version = await self.grants_version(student_id, local_date)
+        overrides = await self.student_app_limits(student_id)
+        virtual = self.override_grants(overrides, profile, local_date)
+        if virtual:
+            stamp = max(str(item["updatedAt"]) for item in overrides.values())
+            version += f":o{len(virtual)}:{stamp}:{(profile or {}).get('revision')}"
+        return version, virtual
+
+    async def set_student_app_limit(self, *, student_id: str, package_name: str,
+                                    daily_limit_seconds: int | None,
+                                    actor: str) -> dict[str, Any] | None:
+        """Öğrenciye özel günlük süreyi yazar; `None` siler (genele döner). Önceki değeri döner."""
+        current = (await self.student_app_limits(student_id)).get(package_name)
+        self._student_limit_cache.pop(student_id, None)
+        if daily_limit_seconds is None:
+            await self.store.execute(
+                f"DELETE FROM {self.student_limits} WHERE student_id=? AND package_name=?",
+                (student_id, package_name),
+            )
+            return current
+        stamp = self._now().isoformat()
+        if current is None:
+            await self.store.execute(
+                f"INSERT INTO {self.student_limits} (student_id, package_name, daily_limit_seconds, "
+                "updated_at, updated_by) VALUES (?, ?, ?, ?, ?)",
+                (student_id, package_name, daily_limit_seconds, stamp, actor),
+            )
+        else:
+            await self.store.execute(
+                f"UPDATE {self.student_limits} SET daily_limit_seconds=?, updated_at=?, updated_by=? "
+                "WHERE student_id=? AND package_name=?",
+                (daily_limit_seconds, stamp, actor, student_id, package_name),
+            )
+        return current
+
     async def _student_totals(self, student_id: str, local_date: str) -> dict[str, Any]:
         return {"usage": await self._usage_rows(student_id, [local_date]),
                 "grants": await self._grant_items(student_id, local_date)}
@@ -1739,6 +1826,7 @@ class TabletService:
                                   "Hesabın ya da bu tablet başka bir oturumda açık.") from exc
             raise
         local_date = local_now.date().isoformat()
+        grants_version, virtual = await self.session_grants(student_id, local_date, profile)
         return {"sessionId": session_id, "sessionToken": session_token,
                 "sessionExpiresAt": (current + timedelta(
                     seconds=self.session_idle_seconds)).isoformat(),
@@ -1747,8 +1835,8 @@ class TabletService:
                 "student": {"id": student_id, "name": student_name},
                 "profile": profile, "policyRevision": profile["revision"],
                 "usage": await self._usage_rows(student_id, [local_date]),
-                "extraGrants": await self._grant_items(student_id, local_date),
-                "grantsVersion": await self.grants_version(student_id, local_date),
+                "extraGrants": [*await self._grant_items(student_id, local_date), *virtual],
+                "grantsVersion": grants_version,
                 # A successful login means no login lock is running.
                 "deviceState": self._device_state(device, None)}
 
@@ -1855,10 +1943,12 @@ class TabletService:
         grants = None
         if active:
             local_date = local_now.date().isoformat()
-            version = await self.grants_version(active["student_id"], local_date)
+            version, virtual = await self.session_grants(active["student_id"], local_date,
+                                                         profile)
             if version != data.get("grantsVersion"):
                 grants = {"version": version,
-                          "items": await self._grant_items(active["student_id"], local_date)}
+                          "items": [*await self._grant_items(active["student_id"], local_date),
+                                    *virtual]}
         changed_profile = profile is not None and (
             data.get("profileId") != profile["id"]
             or data.get("profileRevision") != profile["revision"])

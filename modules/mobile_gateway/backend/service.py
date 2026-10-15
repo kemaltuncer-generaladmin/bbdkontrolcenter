@@ -1687,6 +1687,10 @@ class GatewayService:
                 "appName": str(app.get("appName") or app.get("packageName") or ""),
                 "mode": app.get("mode") if app.get("mode") in TABLET_APP_MODES else "blocked",
                 "dailyLimitSeconds": int_or_none(app.get("dailyLimitSeconds")),
+                "generalLimitSeconds": int_or_none(app.get("generalLimitSeconds",
+                                                           app.get("dailyLimitSeconds"))),
+                "studentLimitSeconds": int_or_none(app.get("studentLimitSeconds")),
+                "source": "student" if app.get("source") == "student" else "general",
                 "usedSeconds": max(0, int_or_none(app.get("usedSeconds")) or 0),
                 "extraSeconds": max(0, int_or_none(app.get("extraSeconds")) or 0),
                 "remainingSeconds": int_or_none(app.get("remainingSeconds")),
@@ -1706,6 +1710,52 @@ class GatewayService:
             "sync": {"activeSeconds": int_or_none(sync.get("activeSeconds")) or 60,
                      "idleSeconds": int_or_none(sync.get("idleSeconds")) or 300},
         }
+
+    def _profile_out(self, profile: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": str(profile.get("id") or ""),
+            "name": str(profile.get("name") or ""),
+            "revision": int_or_none(profile.get("revision")) or 0,
+            "updatedAt": self.iso(profile.get("updatedAt")),
+            "usageWindows": [{
+                "days": [int(day) for day in window.get("days") or []
+                         if isinstance(day, int) and not isinstance(day, bool)],
+                "start": str(window.get("start") or ""),
+                "end": str(window.get("end") or ""),
+            } for window in profile.get("usageWindows") or [] if isinstance(window, dict)],
+            "deviceCount": max(0, int_or_none(profile.get("deviceCount")) or 0),
+            "apps": [{
+                "packageName": str(app.get("packageName") or ""),
+                "appName": str(app.get("appName") or app.get("packageName") or ""),
+                "mode": app.get("mode") if app.get("mode") in TABLET_APP_MODES else "blocked",
+                "dailyLimitSeconds": int_or_none(app.get("dailyLimitSeconds")),
+            } for app in profile.get("apps") or [] if isinstance(app, dict) and app.get("packageName")],
+        }
+
+    async def tablet_profiles(self) -> dict[str, Any]:
+        """GENEL süre ayarları: KM'deki bütün tablet profilleri (Akademi "Tablet ayarları")."""
+        items = await self.call(self.caps.tablet_profiles())
+        return {"items": [self._profile_out(item) for item in items if item.get("id")]}
+
+    async def tablet_set_student_app_limit(self, student_id: str, package_name: str, *,
+                                           daily_limit_seconds: int | None, reason: str,
+                                           caller: Caller) -> dict[str, Any]:
+        """Öğrenciye özel günlük uygulama süresi (`None` = genele döndür)."""
+        async def work() -> dict[str, Any]:
+            result = await self.call(self.caps.tablet_set_student_app_limit(
+                student_id, package_name, daily_limit_seconds=daily_limit_seconds,
+                reason=reason, actor=caller.actor,
+            ), not_found=self.tablet_failure())
+            await self.caps.emit("tablet.policy_changed", ("student", student_id),
+                                 fields=["limits"], causation_id=caller.causation_id)
+            result = result if isinstance(result, dict) else {}
+            return {"packageName": package_name,
+                    "studentLimitSeconds": int_or_none(result.get("studentLimitSeconds")),
+                    "previousSeconds": int_or_none(result.get("previousSeconds"))}
+
+        detail = {"packageName": package_name, "dailyLimitSeconds": daily_limit_seconds,
+                  "reason": reason}
+        return await self.audited("tablet.student_limit", caller, student_id, detail, work())
 
     async def tablet_update_profile_limits(self, profile_id: str, *, expected_revision: int,
                                            apps: list[dict[str, Any]] | None,

@@ -16,6 +16,8 @@ yönetim panelininkiyle aynıdır.
     control.update_profile_limits(profile_id, expected_revision, apps, usage_windows, reason, actor)
                                                   → yeni profil revizyonu (tablet-sinir)
     control.revoke_grant(student_id, grant_id, reason, actor) → {id, revoked, alreadyRevoked}
+    control.set_student_app_limit(student_id, package, seconds|None, actor) → öğrenciye özel süre
+    read.profiles()                               → genel süre ayarları (bütün profiller)
 
 Hepsi `async`tır. Hata `TabletCapabilityError` ile gelir ve makine kodu taşır
 (`reason`): `validation_error` · `student_not_found` · `session_not_found` ·
@@ -58,6 +60,10 @@ REASON_MIN, REASON_MAX = 3, 200
 
 #: Uygulama kipleri (Akademi "Tablet sınırları" ekranı): yasak · sınırsız · günlük süreli.
 APP_MODES = ("blocked", "unlimited", "limited")
+
+#: tablet-sinir (kullanıcı kararı): Akademi yöneticisi sınırları gerekçe yazmadan düzeltir;
+#: gerekçe verilmezse kayda bu metin yazılır (kim / ne zaman / eski → yeni yine loglanır).
+DEFAULT_LIMIT_REASON = "Akademi yöneticisi düzeltti"
 
 #: `until` verilmeyen kısıtlama "aksi söylenene kadar"dır; servis en çok bir
 #: yıl kabul eder, o yüzden bir yıl yazılır.
@@ -291,16 +297,26 @@ class TabletRead:
         known = {app["packageName"] for app in rules}
         names = await service._app_names(set(used) | set(extra) | known)
 
+        overrides = await service.student_app_limits(str(student_id))
+
         def item(package: str, rule: dict[str, Any] | None) -> dict[str, Any]:
             allowed = bool(rule and rule["allowed"])
             unlimited = bool(rule and rule["unlimited"])
             mode = "blocked" if not allowed else ("unlimited" if unlimited else "limited")
-            limit = int(rule["dailyLimitSeconds"]) if rule and mode == "limited" else None
+            general = int(rule["dailyLimitSeconds"]) if rule and mode == "limited" else None
+            own = overrides.get(package)
+            student = int(own["seconds"]) if own else None
+            # Tablet öğrenci süresini ek süre olarak uygular: yalnız genelden büyükse etkili.
+            limit = max(general, student) if general is not None and student is not None \
+                else general
             spent, bonus = int(used.get(package, 0)), int(extra.get(package, 0))
             label = (rule or {}).get("appName") or names.get(package) or package
             return {
                 "packageName": package, "appName": label, "mode": mode,
-                "dailyLimitSeconds": limit, "usedSeconds": spent, "extraSeconds": bonus,
+                "dailyLimitSeconds": limit, "generalLimitSeconds": general,
+                "studentLimitSeconds": student,
+                "source": "student" if student is not None else "general",
+                "usedSeconds": spent, "extraSeconds": bonus,
                 "remainingSeconds": None if limit is None else max(0, limit + bonus - spent),
                 "inProfile": rule is not None,
             }
@@ -309,6 +325,10 @@ class TabletRead:
         apps += [item(package, None)
                  for package in sorted(set(used) - known, key=lambda name: -used[name])
                  if used[package] > 0]
+        # Profilde artık olmayan (ya da başka profildeki) uygulamanın özel süresi de görünsün ki
+        # "genele döndür" ile kaldırılabilsin.
+        listed = {app["packageName"] for app in apps}
+        apps += [item(package, None) for package in sorted(set(overrides) - listed)]
         devices = 0
         if profile is not None:
             row = await service.store.fetch_one(
@@ -338,6 +358,37 @@ class TabletRead:
             "sync": {"activeSeconds": service.sync_active_seconds,
                      "idleSeconds": service.sync_idle_seconds},
         }
+
+    async def profiles(self) -> list[dict[str, Any]]:
+        """Kurum geneli tablet profilleri (GENEL süre ayarları; Akademi "Tablet ayarları").
+
+        Her profil: kimlik, ad, revizyon, kullanım saatleri, uygulama kuralları
+        (`mode`: blocked|unlimited|limited) ve bu profili kullanan tablet sayısı."""
+        service = self._service
+        counts = {
+            str(row["profile_id"]): int(row["n"] or 0)
+            for row in await service.store.fetch_all(
+                f"SELECT profile_id, COUNT(*) AS n FROM {service.devices} "
+                "WHERE profile_id IS NOT NULL AND revoked_at IS NULL GROUP BY profile_id")
+        }
+        out = []
+        for profile in await service.all_profiles():
+            out.append({
+                "id": profile["id"], "name": profile["name"],
+                "revision": int(profile["revision"]), "timezone": profile["timezone"],
+                "updatedAt": _iso(profile.get("updatedAt")),
+                "usageWindows": [dict(window) for window in profile.get("usageWindows") or []],
+                "deviceCount": counts.get(profile["id"], 0),
+                "apps": [{
+                    "packageName": app["packageName"], "appName": app["appName"],
+                    "mode": "blocked" if not app["allowed"]
+                    else ("unlimited" if app["unlimited"] else "limited"),
+                    "dailyLimitSeconds": int(app["dailyLimitSeconds"])
+                    if app["allowed"] and not app["unlimited"] else None,
+                } for app in profile.get("apps") or []],
+            })
+        return out
+
 
 
 class TabletControl:
@@ -468,7 +519,7 @@ class TabletControl:
     async def update_profile_limits(self, profile_id: str, expected_revision: int,
                                     apps: list[dict[str, Any]] | None,
                                     usage_windows: list[dict[str, Any]] | None,
-                                    reason: str, actor: str) -> dict[str, Any]:
+                                    reason: str | None, actor: str) -> dict[str, Any]:
         """Profilin uygulama sınırlarını ve kullanım saatlerini düzenler (yeni revizyon).
 
         Yalnız profilde ZATEN olan uygulamaların kipi/süresi değişir (`apps`:
@@ -480,9 +531,9 @@ class TabletControl:
         `expected_revision` profilin şu anki revizyonu değilse `profile_conflict`
         (bu arada KM'de ya da başka yöneticice değiştirilmiş). Okuma ve yazma
         profil kilidi altında yapılır. Tablet değişikliği sonraki sync'inde alır
-        (profil revizyonu farklı → tam profil).
+        (profil revizyonu farklı → tam profil). Gerekçe isteğe bağlıdır.
         """
-        why = _reason(reason)
+        why = _reason(reason or DEFAULT_LIMIT_REASON)
         service = self._service
         if isinstance(expected_revision, bool) or not isinstance(expected_revision, int):
             raise TabletCapabilityError("Beklenen revizyon tamsayı olmalı.",
@@ -550,7 +601,7 @@ class TabletControl:
         return {"id": saved["id"], "name": saved["name"], "revision": int(saved["revision"]),
                 "updatedAt": _iso(saved.get("updatedAt"))}
 
-    async def revoke_grant(self, student_id: str, grant_id: str, reason: str,
+    async def revoke_grant(self, student_id: str, grant_id: str, reason: str | None,
                            actor: str) -> dict[str, Any]:
         """Ek süreyi geri alır (yalnız o öğrencinin). Zaten geri alınmışsa
         `alreadyRevoked: true`; yoksa `grant_not_found`. Açık oturumdaki tablet
@@ -566,3 +617,52 @@ class TabletControl:
                        grant=grant_id, actor=_actor(actor), reason=why)
         return {"id": str(result["id"]), "revoked": True,
                 "alreadyRevoked": bool(result.get("alreadyRevoked"))}
+
+    async def set_student_app_limit(self, student_id: str, package_name: str,
+                                    daily_limit_seconds: int | None, actor: str,
+                                    reason: str | None = None) -> dict[str, Any]:
+        """Öğrenciye özel günlük uygulama süresi; `None` = genele döndür (satır silinir).
+
+        Süre profilin (genel) süresinin ÜSTÜNDE olmalıdır: tablet farkı her gün ek süre
+        olarak alır (sözleşme v2 `grants`, uygulama değişmez); genelden düşük öğrenci
+        süresi protokolde yoktur → `validation_error`. Uygulama öğrencinin profilinde
+        izinli ve süreli olmalıdır (yasak uygulama ek süreyle açılmaz). Dönen
+        `{packageName, studentLimitSeconds, previousSeconds}`; tablet açık oturumda
+        sonraki sync'te, değilse sonraki girişte alır.
+        """
+        why = _reason(reason or DEFAULT_LIMIT_REASON)
+        service = self._service
+        package = str(package_name or "").strip()
+        if not 2 <= len(package) <= 255:
+            raise TabletCapabilityError("Uygulama paket adı geçersiz.", reason="validation_error")
+        await self._student(student_id)
+        if daily_limit_seconds is not None:
+            if isinstance(daily_limit_seconds, bool) or not isinstance(daily_limit_seconds, int) \
+                    or not MIN_DAILY_LIMIT_SECONDS <= daily_limit_seconds <= MAX_DAILY_LIMIT_SECONDS:
+                raise TabletCapabilityError("Günlük süre 1 dakika ile 24 saat arasında olmalı.",
+                                            reason="validation_error")
+            last = await service.store.fetch_one(
+                f"SELECT profile_id FROM {service.sessions} WHERE student_id=? "
+                "ORDER BY login_at DESC LIMIT 1", (str(student_id),),
+            )
+            profile = await service.profile(last["profile_id"]) if last else None
+            rule = next((app for app in (profile or {}).get("apps") or []
+                         if app["packageName"] == package), None)
+            if rule is None or not rule["allowed"] or rule["unlimited"]:
+                raise TabletCapabilityError(
+                    "Öğrenciye özel süre yalnız öğrencinin profilinde süreli uygulamaya verilir.",
+                    reason="validation_error")
+            if daily_limit_seconds <= int(rule["dailyLimitSeconds"]):
+                raise TabletCapabilityError(
+                    "Öğrenciye özel süre genel süreden uzun olmalı (tablet daha kısa öğrenci "
+                    "süresini uygulayamaz; genel süreyi düşürün ya da tableti kısıtlayın).",
+                    reason="validation_error")
+        previous = await service.set_student_app_limit(
+            student_id=str(student_id), package_name=package,
+            daily_limit_seconds=daily_limit_seconds, actor=_actor(actor))
+        self._log.info("tablet öğrenci süresi (yetenek)", student=student_id, package=package,
+                       seconds=daily_limit_seconds,
+                       previous=previous["seconds"] if previous else None,
+                       actor=_actor(actor), reason=why)
+        return {"packageName": package, "studentLimitSeconds": daily_limit_seconds,
+                "previousSeconds": previous["seconds"] if previous else None}

@@ -479,6 +479,17 @@ class FakeTabletDailyRead(FakeTabletRead):
 class FakeTabletLimitsRead(FakeTabletDailyRead):
     """`student_limits` sunan `bbd_tablet.read` (tablet-sinir)."""
 
+    async def profiles(self) -> list[dict[str, Any]]:
+        return [{"id": "p-1", "name": "Ortaokul", "revision": 4, "timezone": "Europe/Istanbul",
+                 "updatedAt": "2026-10-12T05:00:00Z",
+                 "usageWindows": [{"days": [1, 2, 3, 4, 5], "start": "08:00", "end": "18:00"}],
+                 "deviceCount": 12,
+                 "apps": [{"packageName": "com.example.video", "appName": "Video",
+                           "mode": "limited", "dailyLimitSeconds": 1800},
+                          {"packageName": "com.example.game", "appName": "Oyun",
+                           "mode": "blocked", "dailyLimitSeconds": None}]},
+                "bozuk"]
+
     async def student_limits(self, student_id: str) -> dict[str, Any]:
         if student_id not in (ELIF, CAN):
             raise TabletCapabilityError("yok", reason="student_not_found")
@@ -494,8 +505,10 @@ class FakeTabletLimitsRead(FakeTabletDailyRead):
                                           "end": "18:00"}],
                         "deviceCount": 12},
             "apps": [{"packageName": "com.example.video", "appName": "Video", "mode": "limited",
-                      "dailyLimitSeconds": 1800, "usedSeconds": 600, "extraSeconds": 300,
-                      "remainingSeconds": 1500, "inProfile": True},
+                      "dailyLimitSeconds": 2700, "generalLimitSeconds": 1800,
+                      "studentLimitSeconds": 2700, "source": "student",
+                      "usedSeconds": 600, "extraSeconds": 300,
+                      "remainingSeconds": 2400, "inProfile": True},
                      {"packageName": "com.example.game", "appName": "Oyun", "mode": "blocked",
                       "dailyLimitSeconds": None, "usedSeconds": 0, "extraSeconds": 0,
                       "remainingSeconds": None, "inProfile": True}],
@@ -528,6 +541,20 @@ class FakeTabletControl:
         self.profile_revision += 1
         return {"id": profile_id, "name": "Ortaokul", "revision": self.profile_revision,
                 "updatedAt": "2026-10-12T07:00:00Z"}
+
+    async def set_student_app_limit(self, student_id: str, package_name: str,
+                                    daily_limit_seconds: int | None, actor: str,
+                                    reason: str | None = None) -> dict[str, Any]:
+        self.calls.append(("set_student_app_limit", {
+            "student_id": student_id, "package_name": package_name,
+            "daily_limit_seconds": daily_limit_seconds, "actor": actor, "reason": reason}))
+        if student_id not in (ELIF, CAN):
+            raise TabletCapabilityError("yok", reason="student_not_found")
+        if daily_limit_seconds is not None and daily_limit_seconds <= 1800:
+            raise TabletCapabilityError("Öğrenciye özel süre genel süreden uzun olmalı.",
+                                        reason="validation_error")
+        return {"packageName": package_name, "studentLimitSeconds": daily_limit_seconds,
+                "previousSeconds": None}
 
     async def revoke_grant(self, student_id: str, grant_id: str, reason: str,
                            actor: str) -> dict[str, Any]:

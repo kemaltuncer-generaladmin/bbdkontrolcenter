@@ -82,8 +82,17 @@ uygulaması ve sözleşme değişmez.
 - **Sınır profile bağlıdır.** Öğrencinin sınırları son oturumunun profilidir (`read.student_limits`); profili
   düzenlemek o profili kullanan BÜTÜN tabletleri etkiler (`deviceCount` ekranda uyarı olarak gösterilir).
   Öğrenciye özel olanlar günün ek süreleri ve kısıttır.
-- **Düzenlenebilenler:** profilde olan uygulamanın kipi (yasak / sınırsız / günlük süreli 60–86400 sn) ve
-  kullanım saatleri. Uygulama eklemek / çıkarmak, sistem kontrolleri ve profil atama KM ekranında kalır.
+- **İki düzey.** GENEL: profilde olan uygulamanın kipi (yasak / sınırsız / günlük süreli 60–86400 sn) ve
+  kullanım saatleri (`read.profiles`, `control.update_profile_limits`); uygulama eklemek / çıkarmak, sistem
+  kontrolleri ve profil atama KM ekranında kalır. ÖĞRENCİYE ÖZEL: bir uygulamanın günlük süresi
+  (`control.set_student_app_limit`, tablo `student_app_limits`, 011 göçü). Tablet protokolü değişmediği için
+  özel süre **genelden uzun** olmak zorundadır: fark her gün oturumun ek süre listesine kendiliğinden eklenir
+  (`id` `ovr:<paket>`, `grantsVersion` sonuna `:o<n>:<son değişiklik>:<profil revizyonu>`; özel süre yoksa
+  sürüm eskisiyle aynı). Genelden kısa öğrenci süresi ve yasak uygulamayı öğrenciye açmak protokolde yoktur
+  (ek süre negatif olamaz, yasak uygulama ek süreyle açılmaz) → `validation_error`. Kayıtlar bellekte tutulur
+  (tek yazıcı bu servis), sync'in değişiklik yok yoluna sorgu eklenmez. `null` = genele döndür.
+- **Gerekçe isteğe bağlı** (kullanıcı kararı): verilmezse günlüğe "Akademi yöneticisi düzeltti" yazılır;
+  geçidin denetim izi kim / ne zaman / eski → yeni değeri tutar.
 - **Yarış:** `update_profile_limits` beklenen revizyonu profil kilidi altında denetler; farklıysa
   `profile_conflict` (geçit 409). Ek süre geri alma `revoke_grant` (yalnız o öğrencinin satırı).
 - **Tablete iniş:** profil yeni revizyonla sonraki sync'te (oturum açıkken en geç `sync_active_seconds`,
