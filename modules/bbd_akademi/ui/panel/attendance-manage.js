@@ -48,6 +48,91 @@ const SIGNAL_SOURCE = { tablet: 'Tablet', canteen: 'Kantin' };
 
 const pct = (value) => (value === null || value === undefined ? '—' : `%${num(value, 1)}`);
 
+// ------------------------------------------------- izin türü (V4, U12)
+// Talepler listesi, öğrenci kartındaki izin listesi ve onay penceresi aynı
+// metinleri kullanır. Onayın yoklamaya etkisi Akademi kuralıdır
+// (`program/requests_service.py`): tam gün = aralığın bütün dersleri;
+// saat aralığı = yalnız saatle kesişen dersler; erken çıkış = onay yoklamayı
+// değiştirmez, öğrencinin çıkışı işaretlenince günün sonraki dersleri; mazeret =
+// yalnız seçilen "Gelmedi" dersleri. Metinler React yönetici talep ekranıyla
+// (`AdminLeaveRequestScreen`) aynı anlamda.
+
+export const LEAVE_KIND_TONE = { full_day: 'info', partial: 'info', early_leave: 'warn', retro_excuse: 'dim' };
+
+const leaveRange = (row) => (row.from === row.to || !row.to ? fmtDate(row.from)
+  : `${fmtDate(row.from)} – ${fmtDate(row.to)}`);
+
+/** Talebin etkilediği ders sayısı (`affectedSessionIds`; erken çıkışta yok). */
+export function leaveSessionCount(row) {
+  return Array.isArray(row?.affectedSessionIds) ? row.affectedSessionIds.length : 0;
+}
+
+/**
+ * Tür + ayrıntı: "Saat aralığı · 10:00–12:00", "Erken çıkış · 14:30 · Teslim: Ayşe",
+ * "Mazeret · 2 ders". Eski kayıtta tür yoksa tam gün sayılır (sözleşme varsayılanı).
+ */
+export function leaveKindDetail(row) {
+  const kind = row?.kind || 'full_day';
+  const label = LEAVE_KINDS[kind] || kind;
+  const parts = [];
+  if (kind === 'partial' && row.startTime && row.endTime) parts.push(`${fmtTime(row.startTime)}–${fmtTime(row.endTime)}`);
+  if (kind === 'early_leave') {
+    if (row.leaveAt) parts.push(fmtTime(row.leaveAt));
+    if (row.pickupPersonName) parts.push(`Teslim: ${row.pickupPersonName}`);
+  }
+  if (kind === 'retro_excuse' || kind === 'partial') {
+    const count = leaveSessionCount(row);
+    if (count) parts.push(`${num(count)} ders`);
+  }
+  return { kind, label, tone: LEAVE_KIND_TONE[kind] || 'dim', detail: parts.join(' · ') };
+}
+
+/**
+ * Mazeret / saat aralığı talebinin dersleri, öğrencinin o günkü yoklamasından
+ * (`students_getAttendanceDay`) çözülür: "09:20 Matematik". Mazerette yalnız
+ * "Gelmedi" olanlar değişir — `willChange` onu söyler.
+ */
+export function leaveLessons(row, day) {
+  const keys = new Set(row?.affectedSessionIds || []);
+  return (day?.sessions || [])
+    .filter((item) => keys.has(item.occurrenceKey) || keys.has(item.sessionId))
+    .sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)))
+    .map((item) => ({
+      key: item.occurrenceKey,
+      text: `${fmtTime(item.startsAt)} ${item.subject?.name || 'Ders'}`,
+      status: item.status || null,
+      willChange: row.kind === 'retro_excuse' ? item.status === 'absent' : item.status !== 'present' && item.status !== 'late',
+    }));
+}
+
+/**
+ * Onay penceresinin açıklaması — türe göre DOĞRU etki. `lessons`: `leaveLessons`
+ * sonucu (mazerette çözülebildiyse), yoksa yalnız sayı yazılır.
+ */
+export function leaveApproveText(row, lessons = null) {
+  const kind = row?.kind || 'full_day';
+  const count = leaveSessionCount(row);
+  if (kind === 'partial') {
+    const span = row.startTime && row.endTime ? ` ${fmtTime(row.startTime)}–${fmtTime(row.endTime)}` : '';
+    return `${fmtDate(row.from)}${span}. Yalnız bu saatlerle kesişen `
+      + `${count ? `${num(count)} dersin` : 'derslerin'} yoklamasında öğrenci "İzinli" görünür; günün diğer dersleri değişmez.`;
+  }
+  if (kind === 'early_leave') {
+    return `${fmtDate(row.from)}${row.leaveAt ? ` ${fmtTime(row.leaveAt)}` : ''} erken çıkış`
+      + `${row.pickupPersonName ? ` (teslim alacak: ${row.pickupPersonName})` : ''}. Onay yoklamayı hemen değiştirmez: `
+      + 'öğrencinin çıkışı yoklamada işaretlenince günün sonraki dersleri "İzinli" olur.';
+  }
+  if (kind === 'retro_excuse') {
+    const absent = Array.isArray(lessons) ? lessons.filter((item) => item.willChange) : null;
+    const list = absent && absent.length ? `: ${absent.map((item) => item.text).join(', ')}` : '';
+    const n = absent ? absent.length : count;
+    return `${fmtDate(row.from)} mazereti. Onaylanınca seçilen `
+      + `${n ? `${num(n)} "Gelmedi" dersi${list}` : 'günün "Gelmedi" dersleri'} "İzinli (mazeret)" olur; `
+      + 'başka ders değişmez.';
+  }
+  return `${leaveRange(row)}. Bu günlerin bütün derslerinin yoklamasında öğrenci "İzinli" görünür.`;
+}
+
 /** Erişimi olmayan sekmenin gövdesi (gizlenmez — kullanıcı neden boş olduğunu görür). */
 export function noAccess(text = 'Bu bölüm için yetkiniz yok (yöneticinizden izin isteyin).') {
   const node = h('div', 'ak-off');

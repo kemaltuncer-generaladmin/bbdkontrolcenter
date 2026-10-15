@@ -2,7 +2,10 @@
 //
 // Üç kuyruk tek ekranda. Onay/ret gerekçesi veliye/öğrenciye bildirimle gider
 // ve Akademi denetim kaydına yazılır. İzin onaylanınca yoklamada "izinli"
-// kendiliğinden işaretlenir (Akademi kuralı).
+// kendiliğinden işaretlenir (Akademi kuralı) — NE kadarının işaretlendiği türe
+// bağlıdır (tam gün / saat aralığı / erken çıkış / mazeret; V4): listede tür
+// rozeti, mazerette etkilenen dersler ("09:20 Matematik"), onay penceresinde
+// türe göre doğru etki metni (`attendance-manage.js` → `leaveApproveText`).
 //
 // `etutScheduleDialog` Ders programı bölümünün etüt kuyruğunda da kullanılır.
 
@@ -12,8 +15,9 @@ import {
   DAY_LABEL, actionButton, fmtDate, fmtDateTime, formDialog, pagedList, personName,
   reasonDialog, runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar,
 } from './common.js';
+import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from './attendance-manage.js';
 
-const LEAVE_REASONS = { illness: 'Hastalık', family: 'Aile', travel: 'Seyahat', official: 'Resmî', other: 'Diğer' };
+const CHANNEL = { phone: 'telefonla', in_person: 'yüz yüze' };
 const STATUS = { requested: ['Bekliyor', 'warn'], approved: ['Onaylandı', 'good'], scheduled: ['Zaman verildi', 'good'],
   declined: ['Reddedildi', 'dim'], cancelled: ['İptal', 'dim'], done: ['Tamamlandı', 'good'] };
 const MODES = { in_person: 'Yüz yüze', phone: 'Telefon', online: 'Çevrim içi' };
@@ -73,21 +77,38 @@ function leaveView(app, tabs) {
   const node = h('div', 'ak-stack');
   const status = statusFilter(() => list.reload());
   node.append(toolbar(status.node));
+  // Öğrencinin o günkü yoklaması (mazeret / saat aralığı dersleri) — yalnız
+  // istenince ve öğrenci+gün başına bir kez.
+  const days = new Map();
+  const dayOf = (row) => {
+    const key = `${row.student?.id}|${row.from}`;
+    if (!days.has(key)) {
+      days.set(key, app.api.get(`/v1/students/${row.student.id}/attendance/days/${row.from}`)
+        .catch((failure) => { days.delete(key); throw failure; }));
+    }
+    return days.get(key);
+  };
   const list = pagedList({
     app,
     path: '/v1/admin/leave-requests',
     query: () => ({ status: status.value || undefined }),
     onLoaded: pendingBadge(tabs, 'leave', status),
     columns: [
-      { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.4fr)', cell: studentCell },
+      { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.3fr)', cell: studentCell },
+      { key: 'kind', label: 'Tür', width: 'minmax(150px, 1.1fr)', cell: (row) => kindCell(row) },
       { key: 'range', label: 'Tarih', width: '170px', cell: (row) => (row.from === row.to ? fmtDate(row.from)
         : `${fmtDate(row.from)} – ${fmtDate(row.to)}`) },
-      { key: 'reason', label: 'Gerekçe', width: 'minmax(0, 1.6fr)', cell: (row) => {
+      { key: 'reason', label: 'Gerekçe', width: 'minmax(0, 1.4fr)', cell: (row) => {
         const cell = h('div', 'ak-cell-stack');
         cell.append(h('span', '', LEAVE_REASONS[row.reason] || row.reason), h('small', '', row.description || ''));
         return cell;
       } },
-      { key: 'by', label: 'Bildiren', cell: (row) => `${personName(row.createdBy)} · ${fmtDateTime(row.createdAt)}` },
+      { key: 'by', label: 'Bildiren', cell: (row) => {
+        const cell = h('div', 'ak-cell-stack');
+        cell.append(h('span', '', personName(row.createdBy)),
+          h('small', '', [fmtDateTime(row.createdAt), CHANNEL[row.channel]].filter(Boolean).join(' · ')));
+        return cell;
+      } },
       { key: 'status', label: 'Durum', cell: (row) => statusBadge(STATUS, row.status) },
       { key: 'actions', label: '', width: '170px', cell: (row) => {
         const actions = h('div', 'ak-row-actions');
@@ -102,27 +123,62 @@ function leaveView(app, tabs) {
         return actions;
       } },
     ],
-    empty: { title: 'Bekleyen izin talebi yok', text: 'Veliler uygulamadan izin istediğinde burada görünür.' },
+    empty: { title: 'Bu süzgeçte izin talebi yok', text: 'Veliler uygulamadan izin ya da mazeret bildirdiğinde burada görünür.' },
   });
   node.append(list.node);
 
+  /** Tür rozeti + ayrıntı; mazerette "Dersler" düğmesi etkilenen dersleri yazar. */
+  function kindCell(row) {
+    const info = leaveKindDetail(row);
+    const cell = h('div', 'ak-cell-stack ak-req-kind');
+    cell.append(badge(info.label, info.tone));
+    if (info.detail) cell.append(h('small', '', info.detail));
+    const canResolve = (info.kind === 'retro_excuse' || info.kind === 'partial') && row.student?.id
+      && (row.affectedSessionIds || []).length && app.can('students_getAttendanceDay');
+    if (canResolve) {
+      const more = h('button', 'ak-link ak-req-lessons', 'Dersleri göster');
+      more.type = 'button';
+      more.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        more.disabled = true;
+        more.textContent = 'Yükleniyor…';
+        try {
+          const lessons = leaveLessons(row, await dayOf(row));
+          const text = lessons.length ? lessons.map((item) => item.text).join(', ') : 'Ders bulunamadı';
+          more.replaceWith(h('small', 'ak-req-lesson-list', text));
+        } catch {
+          more.disabled = false;
+          more.textContent = 'Dersler yüklenemedi · yeniden dene';
+        }
+      });
+      cell.append(more);
+    }
+    return cell;
+  }
+
   async function approve(row) {
-    const note = await reasonDialog(app, { title: `${row.student?.displayName}: izni onayla`,
-      description: `${fmtDate(row.from)}${row.to !== row.from ? ` – ${fmtDate(row.to)}` : ''}. `
-        + 'Bu günlerin yoklamasında öğrenci "izinli" görünür.',
-      confirmLabel: 'Onayla', minLength: 0, danger: false });
+    let lessons = null;
+    if (row.kind === 'retro_excuse' && row.student?.id && app.can('students_getAttendanceDay')) {
+      lessons = await dayOf(row).then((day) => leaveLessons(row, day)).catch(() => null);
+    }
+    const note = await reasonDialog(app, { title: `${row.student?.displayName}: ${row.kind === 'retro_excuse'
+      ? 'mazereti onayla' : 'izni onayla'}`,
+    description: leaveApproveText(row, lessons),
+    confirmLabel: 'Onayla', minLength: 0, danger: false });
     if (note === null) return;
     const next = await runAction(app, () => app.api.post(`/v1/admin/leave-requests/${row.id}/approve`,
-      { note: note || null }, { key: `leave-ok-${row.id}` }), { success: 'İzin onaylandı.' });
+      { note: note || null }, { key: `leave-ok-${row.id}` }), { success: row.kind === 'retro_excuse'
+      ? 'Mazeret onaylandı.' : 'İzin onaylandı.' });
     if (next) list.replace((item) => item.id === row.id, next);
   }
 
   async function decline(row) {
-    const reason = await reasonDialog(app, { title: `${row.student?.displayName}: izni reddet`,
-      description: 'Gerekçe veliye bildirilir.', confirmLabel: 'Reddet' });
+    const reason = await reasonDialog(app, { title: `${row.student?.displayName}: ${row.kind === 'retro_excuse'
+      ? 'mazereti reddet' : 'izni reddet'}`,
+    description: 'Gerekçe veliye bildirilir.', confirmLabel: 'Reddet' });
     if (!reason) return;
     const next = await runAction(app, () => app.api.post(`/v1/admin/leave-requests/${row.id}/decline`,
-      { reason }, { key: `leave-no-${row.id}` }), { success: 'İzin reddedildi.' });
+      { reason }, { key: `leave-no-${row.id}` }), { success: 'Talep reddedildi.' });
     if (next) list.replace((item) => item.id === row.id, next);
   }
 

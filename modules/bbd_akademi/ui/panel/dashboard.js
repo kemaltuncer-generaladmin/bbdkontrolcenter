@@ -2,9 +2,18 @@
 // çağır, F-A4 tabletler).
 //
 // TEK İSTEK: ekranın bütün rakamları ve "Sizi bekleyenler" kartı
-// `admin_getDashboard` yükünden gelir; kutu başına ayrı istek atılmaz. Tablet
-// ve öğrenci çağırma bölümü katlı gelir, yalnız açılınca yüklenir. Ekran
-// açıkken 60 sn'de bir tazelenir ve sekme gizliyken durur (`pollLoop`).
+// `admin_getDashboard` yükünden gelir; kutu başına ayrı istek atılmaz. Tek
+// istisna açık mesaj şikâyeti sayısıdır: özet yükünde yok, yalnız şikâyet
+// kuyruğunu görme yetkisi (`admin_listMessageReports`) ve koçluk açıkken
+// kuyruğun ilk sayfası (en çok 100) AYNI anda okunur; okunamazsa satır çizilmez,
+// ekran yine açılır. Tablet ve öğrenci çağırma bölümü katlı gelir, yalnız
+// açılınca yüklenir. Ekran açıkken 60 sn'de bir tazelenir ve sekme gizliyken
+// durur (`pollLoop`).
+//
+// UYGULAMAYLA AYNI (V3): erken uyarı (`earlyWarnings`: açık + önem kırılımı) ve
+// koçluk (`coaching`: cevapsız hoca sorusu, kontrol bekleyen teslim) kutuları
+// React/Flutter yönetici panosuyla aynı yükten; kurumda kapalıysa ya da yetki
+// yoksa Akademi `null` döner ve kutu çizilmez.
 //
 // YALNIZ AÇIK OLAN: kurumda kapalı özelliğin bölümü Akademi'den `null` gelir
 // (kantin, tablet, kitap, kurum cari) ve kartı çizilmez.
@@ -32,6 +41,15 @@ const KIND = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek seferlik', break: 'T
 const TABLET_STATE = { free: ['Boş', 'good'], in_use: ['Kullanımda', 'info'], offline: ['Çevrimdışı', 'warn'],
   locked: ['Kilitli', 'bad'], pending: ['Eşleme bekliyor', 'dim'], revoked: ['Eşlemesi iptal', 'dim'] };
 const PA_STATUS = { queued: ['Sırada', 'info'], played: ['Okundu', 'good'], failed: ['Okunamadı', 'bad'] };
+/** Şikâyet sayısı için okunan en çok kayıt (tek sayfa; fazlası "100+"). */
+const REPORT_PEEK = 100;
+
+/** Erken uyarı kırılımı: "2 yüksek · 3 orta" (React `earlyWarningsBreakdown` ile aynı). */
+export function warningBreakdown(warnings) {
+  if (!warnings) return '';
+  return [[warnings.high, 'yüksek'], [warnings.medium, 'orta'], [warnings.low, 'düşük']]
+    .filter(([count]) => Number(count) > 0).map(([count, label]) => `${num(count)} ${label}`).join(' · ');
+}
 
 const duration = (seconds) => {
   const minutes = Math.round((Number(seconds) || 0) / 60);
@@ -66,7 +84,17 @@ export function section(app) {
   node.append(quick, top);
 
   // TEK ÖZET ÇAĞRISI: ekranın bütün rakamları `admin_getDashboard` yükünden.
-  const view = loader(() => app.api.get('/v1/admin/dashboard'), (data) => {
+  const canReports = () => app.has('settings') && app.enabled('coaching') && app.can('admin_listMessageReports');
+  const view = loader(async () => {
+    const [data, reports] = await Promise.all([
+      app.api.get('/v1/admin/dashboard'),
+      canReports()
+        ? app.api.get('/v1/admin/messages/reports', { status: 'open', limit: REPORT_PEEK }).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+    return { ...data, openReports: reports ? { count: (reports.items || []).length, more: Boolean(reports.nextCursor) }
+      : null };
+  }, (data) => {
     stamp.textContent = `Son güncelleme ${new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
     return render(data);
   }, { rows: 4, columns: 4 });
@@ -78,6 +106,8 @@ export function section(app) {
     const pending = data.pendingRequests || {};
     const pendingTotal = (pending.leave || 0) + (pending.meeting || 0) + (pending.etut || 0);
     const books = data.pendingBookRequests;
+    const warnings = data.earlyWarnings || null;
+    const coaching = data.coaching || null;
     nodes.push(kpiRow([
       { label: 'Bugünkü ders', value: `${num(data.lessons?.ongoing || 0)} sürüyor / ${num(data.lessons?.scheduled || 0)}` },
       { label: 'Yoklama', value: `${num(attendance.sessionsTaken || 0)}/${num(attendance.sessionsTotal || 0)}`,
@@ -89,9 +119,17 @@ export function section(app) {
         title: `İzin ${pending.leave || 0} · Görüşme ${pending.meeting || 0} · Etüt ${pending.etut || 0}` },
       // Kitap talepleri kurumda kapalıysa Akademi `null` döner: kutu çizilmez.
       books === null || books === undefined ? null : { label: 'Kitap talebi', value: num(books) },
+      // Erken uyarı / koçluk kurumda kapalıysa ya da yetki yoksa `null`: kutu çizilmez.
+      warnings ? { label: 'Erken uyarı', value: `${num(warnings.open || 0)}${warnings.high
+        ? ` (${num(warnings.high)} yüksek)` : ''}`,
+      tone: warnings.high ? 'bad' : (warnings.open ? 'warn' : ''),
+      title: warnings.open ? `Açık uyarı: ${warningBreakdown(warnings)}` : 'Açık uyarı yok' } : null,
+      coaching ? { label: 'Koçluk', value: `${num(coaching.openQuestions || 0)} soru · ${num(coaching.pendingReviews || 0)} kontrol`,
+        tone: coaching.openQuestions || coaching.pendingReviews ? 'warn' : '',
+        title: 'Cevapsız hoca sorusu · koçun kontrolünü bekleyen teslim' } : null,
     ].filter(Boolean)));
 
-    nodes.push(waitingCard(pending, pendingTotal, books));
+    nodes.push(waitingCard(pending, books, { warnings, coaching, reports: data.openReports }));
 
     const money2 = h('div', 'ak-grid-2');
     if (app.has('finance') && data.institutionFinance) {
@@ -151,26 +189,47 @@ export function section(app) {
     return nodes;
   }
 
-  /** "Sizi bekleyenler" — özet yükündeki sayılarla; ek istek yok. */
-  function waitingCard(pending, pendingTotal, books) {
+  /**
+   * "Sizi bekleyenler" — özet yükündeki sayılarla (+ şikâyet kuyruğunun ilk
+   * sayfası). Kurumda kapalı / yetkisiz bölümün satırı hiç çizilmez; "Aç"
+   * yalnız ekran açılabiliyorsa.
+   */
+  function waitingCard(pending, books, { warnings, coaching, reports }) {
     const rows = h('div', 'ak-dash-waiting');
-    const line = (label, count, action) => {
+    let waiting = 0;
+    const line = (label, count, action, display = null) => {
       const row = h('div', 'ak-dash-wait');
-      row.append(h('span', '', label), h('b', '', num(count || 0)));
+      row.append(h('span', '', label), h('b', '', display || num(count || 0)));
       if (action && count) row.append(action);
       rows.append(row);
+      waiting += Number(count) || 0;
     };
-    const toRequests = (kind) => (app.has('requests')
-      ? button('Aç', { variant: 'ghost', onClick: () => app.go('requests', { tab: kind }) }) : null);
+    const open = (label, key, payload = null) => button('Aç', { variant: 'ghost', onClick: () => app.go(key, payload),
+      title: label });
+    const toRequests = (kind) => (app.has('requests') ? open('Talepler', 'requests', { tab: kind }) : null);
     line('İzin talebi', pending.leave, toRequests('leave'));
     line('Görüşme talebi', pending.meeting, toRequests('meeting'));
     line('Etüt talebi', pending.etut, toRequests('etut'));
     if (books !== null && books !== undefined) {
-      line('Kitap talebi', books, button('Aç', { variant: 'ghost', onClick: () => app.go('books') }));
+      line('Kitap talebi', books, open('Kitap talepleri', 'books'));
     }
-    const box = card('Sizi bekleyenler', pendingTotal || books ? rows
-      : empty('Bekleyen iş yok', 'Yeni izin, görüşme, etüt ya da kitap talebi geldiğinde burada görünür.'));
-    return box;
+    if (coaching) {
+      line('Cevapsız hoca sorusu', coaching.openQuestions,
+        app.has('learning') && app.enabled('coach_questions') ? open('Hoca soruları', 'questions') : null);
+      line('Kontrol bekleyen koç görevi', coaching.pendingReviews,
+        app.enabled('coaching') ? open('Koçluk kontrol kuyruğu', 'coaching', { coachingTab: 'queue' }) : null);
+    }
+    if (reports) {
+      line('Açık mesaj şikâyeti', reports.count, open('Mesaj denetimi', 'messages', { messagesTab: 'reports' }),
+        reports.more ? `${num(reports.count)}+` : null);
+    }
+    if (warnings && warnings.high) {
+      line('Yüksek önemli erken uyarı', warnings.high,
+        app.enabled('early_warning') ? open('Erken uyarı', 'insights', { tab: 'warnings' }) : null);
+    }
+    return card('Sizi bekleyenler', waiting ? rows
+      : empty('Bekleyen iş yok', 'Yeni izin, görüşme, etüt, kitap talebi, hoca sorusu ya da mesaj şikâyeti '
+        + 'geldiğinde burada görünür.'));
   }
 
   // ------------------------------------------------- kurum içi anlık işler
