@@ -1,4 +1,4 @@
-// BBD Akademi — Kantin ve Finans → Kantin.
+// BBD Akademi — Finans ve Kantin → Kantin.
 //
 // Kantinin GÜNLÜK işleri (bakiye, tahsilat, veli kontrolleri, satış, rapor)
 // Kontrol Merkezi'nin kendi kantin ekranlarındadır; Akademi'de kantinin yalnız

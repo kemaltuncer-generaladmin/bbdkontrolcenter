@@ -468,7 +468,7 @@ const CANTEEN_GROUPS = [
   ] },
 ];
 
-/** Kantin kuralları — Kantin ve Finans → Kantin ekranında çizilir (`canteen.js`). */
+/** Kantin kuralları — Finans ve Kantin → Kantin ekranında çizilir (`canteen.js`). */
 export function canteenTab(app, { goTab }) {
   return settingsTab(app, {
     opId: 'admin_patchCanteenSettings',
