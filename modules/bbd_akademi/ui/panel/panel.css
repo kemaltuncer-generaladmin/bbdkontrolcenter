@@ -16,6 +16,17 @@
 .ak-banner:empty { display: none; }
 .ak-banner { padding: 10px 20px 0; }
 
+/* Akademi güncellenirken (dağıtım anı) üstte çıkan bant — updating.js */
+.ak-updating[hidden] { display: none; }
+.ak-updating {
+  margin: 10px 20px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ak-updating-text { flex: 1; min-width: 0; }
+.ak-updating-action { flex: none; }
+
 .ak-layout {
   flex: 1;
   min-height: 0;

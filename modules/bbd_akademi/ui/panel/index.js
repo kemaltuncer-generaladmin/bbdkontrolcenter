@@ -22,6 +22,12 @@
 // bayraklar ve işlem listesi birlikte); ilk ekran "Bugün" tek özet ucunu
 // (`admin_getDashboard`) çağırır.
 //
+// GÜNCELLENİYOR BANDI: Akademi dağıtılırken bir okuma "güncelleniyor" hatasıyla
+// biterse (köprü sunucuda ≤ 20 sn yeniden denedi) üstte bant çıkar, geri sayımla
+// son okumayı yeniden dener; Akademi dönünce bant kalkar ve açık ekran yeniden
+// kurulur (pencere/çekmece açıksa kullanıcının girdisi kaybolmasın diye yalnız
+// "Yenile" önerilir).
+//
 // Import yolu panelin KOPYALANMIŞ konumuna göredir:
 //   shell/panels/bbd_akademi/index.js  →  shell/ui-kit/
 // Kaynak modules/bbd_akademi/ui/panel/ altındayken '../../ui-kit/' dosya
@@ -30,6 +36,7 @@
 import { button, h, loadStyles, toaster } from '../../ui-kit/kit.js';
 import { alertBox, emptyState, skeletonRows } from '../../ui-kit/layout.js';
 import { createClient, problem } from './api.js';
+import { updatingBand } from './updating.js';
 import { AREAS, SECTIONS, buildNav, featureOn, resolveTarget } from './sections.js';
 import { documentButtons } from './documents.js';
 import { studentDeletionDoc } from './documents-logic.js';
@@ -79,10 +86,15 @@ export function mount(root, ctx) {
   // kaydıyla açar; Akademi'ye hiç istek gitmez.
   let kmOnly = false;
 
+  // Bant aşağıda (iskelet) kurulur; istemci kancaları ona geç bağlanır.
+  let band = null;
   const app = {
     root: view,
     toast,
-    api: createClient(ctx),
+    api: createClient(ctx, {
+      onUnavailable: () => band?.show(),
+      onAvailable: () => band?.recovered(),
+    }),
     status: null,
     /** KM izni (`finance` → `bbd_akademi.finance`). */
     has(permission) {
@@ -139,8 +151,14 @@ export function mount(root, ctx) {
   const banner = h('div', 'ak-banner');
   const main = h('div', 'ak-main');
   const layout = h('div', 'ak-layout');
+  band = updatingBand({
+    probe: () => app.api.probe(),
+    reload: () => reloadCurrent(),
+    busy: () => Boolean(view.querySelector('.kit-overlay, .kit-drawer')),
+  });
+  disposers.push(() => band.dispose());
   layout.append(nav, main);
-  view.append(banner, layout);
+  view.append(band.node, banner, layout);
   main.append(skeletonRows(6, 5));
   root.replaceChildren(view);
 
@@ -185,6 +203,19 @@ export function mount(root, ctx) {
     }
   }
 
+  /** Açık ekranı baştan kurar (Akademi güncellemesinden sonra verisi tazelensin). */
+  function reloadCurrent() {
+    if (!current || disposed) return;
+    const key = current.section;
+    const entry = built.get(key);
+    if (entry && !entry.loading) {
+      try { entry.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
+      entry.node.remove();
+      built.delete(key);
+    }
+    show(key, current.payload || null);
+  }
+
   async function show(key, payload = null) {
     const target = resolveTarget(menu, key);
     if (!target) {
@@ -195,7 +226,7 @@ export function mount(root, ctx) {
       return;
     }
     const section = sectionOf(target.section);
-    current = target;
+    current = { ...target, payload };
     paintNav();
     for (const [name, entry] of built) entry.node.hidden = name !== section.key;
     let entry = built.get(section.key);

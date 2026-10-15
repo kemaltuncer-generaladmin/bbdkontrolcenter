@@ -21,6 +21,11 @@ download_hosts: []
 staff_sync_minutes: 30
 # PIN teyidinin (tahsilat iptali gibi) geçerlilik süresi (sn). Tek kullanımlık.
 step_up_seconds: 120
+# Akademi güncellenirken (dağıtım anı) ağ geçidi kısa süre 502/503 verir. Panelin
+# OKUMA istekleri bu süre (sn) içinde kısa aralıklarla yeniden denenir; yine
+# olmazsa panel "Akademi şu an güncelleniyor" bandını gösterip kendisi yeniler.
+# Yazma işlemleri (kaydet, tahsilat …) yeniden DENENMEZ. 0 = kapalı.
+read_retry_seconds: 20
 # Belgelerin (karne, yoklama, ekstre …) başlığındaki kurum adı, logo ve renk
 # Akademi'nin kurum ayarından ve yayımlanmış temasından okunur. Akademi'ye o an
 # ulaşılamazsa başlıkta bu ad yazar (boşsa "BBD Akademi").

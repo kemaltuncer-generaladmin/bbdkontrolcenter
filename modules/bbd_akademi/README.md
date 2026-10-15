@@ -70,7 +70,8 @@ Akademi API  /v1/admin/*
    (ana şalter), `base_url` (varsayılan `https://api.benimbasaridunyam.com.tr`),
    `timeout_seconds`, `upload_timeout_seconds`, `max_upload_mb`,
    `download_hosts` (imzalı indirme bağlantılarının izinli ek alanları),
-   `staff_sync_minutes`, `step_up_seconds`.
+   `staff_sync_minutes`, `step_up_seconds`, `read_retry_seconds` (Akademi
+   güncellenirken okumaların yeniden deneme bütçesi, varsayılan 20; 0 = kapalı).
 
 4. **Hazırlık (staging) ortamı:** `config/local.yaml` içinde
    `modules.bbd_akademi.base_url` hazırlık sunucusuna çevrilir ve hazırlık
@@ -385,6 +386,18 @@ izin gelirse test kırılır.
 - **Panel köprüsü** `POST /api/bbd_akademi/km/call`: kabuğun istek kanalı yalnız
   JSON taşıdığı için panel buradan konuşur (aynı kapılar; `{ok, status, data,
   error, headers, file?}` zarfı).
+- **Akademi güncellenirken** (dağıtım anı; ağ geçidi JSON'suz 502/503/504 ya
+  da bağlantı yok): köprü OKUMALARI kısa geri çekilmeyle (0,5 → 1 → 2 → 3 → 4 → 5
+  sn) toplam `read_retry_seconds` içinde yeniden dener; olmazsa `503
+  akademi_unavailable` + `details.retryable: true`. Panel bunu görünce üstte
+  "Akademi şu an güncelleniyor, birkaç saniye sonra otomatik yeniden
+  denenecek." bandını gösterir (`ui/panel/updating.js`), son okumayı geri
+  sayımla (5, 10, 15 … 30 sn) yeniden dener; Akademi dönünce bant kalkar ve açık
+  ekran yeniden kurulur (pencere/çekmece açıksa yalnız "Yenile" önerilir).
+  **Yazmalar yeniden denenmez** (`details.retryable: false`, "kaydedilmemiş
+  olabilir"); form açıkken aynı `Idempotency-Key` ile elle tekrar göndermek
+  güvenlidir (Akademi ilk sonucu döndürür). Akademi'nin kendi JSON hata zarfı
+  (bakım 503'ü dahil) yeniden denenmez; zaman aşımı da denenmez.
 - **PIN teyidi** (`x-step-up` işlemler, ör. tahsilat iptali): panel
   `POST /api/bbd_akademi/km/step-up {pin, operationId}` ile çekirdeğin
   `confirm_pin` kapısından tek kullanımlık belirteç alır; vekil belirteci

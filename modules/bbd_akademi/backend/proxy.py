@@ -27,15 +27,27 @@ teyidi belirteci aranır (`stepup.py`); yoksa `403 step_up_required`.
 Akademi'nin 401'i (`invalid_integration_key`) istemciye 502 olarak döner: KM
 API'sinde 401 "KM oturumun yok" demektir; entegrasyon anahtarının reddi
 kullanıcının oturumuyla ilgili değildir. Gövde (Akademi zarfı) değişmez.
+
+AKADEMİ GÜNCELLENİRKEN (dağıtım anı, 2026-10-15): ağ geçidi (Traefik/Cloudflare)
+kısa süre JSON olmayan 502/503/504 verir ya da bağlantı kurulamaz. Panel
+köprüsünde OKUMA (GET) istekleri bu durumda kısa geri çekilmeyle yeniden denenir
+(toplam `read_retry_seconds`, varsayılan 20 sn); yine olmazsa `503
+akademi_unavailable` + `details.retryable` döner ve panel "güncelleniyor"
+bandını gösterip kendisi yeniler. YAZMALAR YENİDEN DENENMEZ (ikinci kayıt
+riski); panel aynı `Idempotency-Key` ile elle tekrar gönderirse Akademi ilk
+sonucu döndürür (A9) — güvenli olan yol budur. Akademi'nin KENDİ hata zarfı
+(JSON 503 dahil) yeniden denenmez.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
 import re
-from collections.abc import AsyncIterator, Mapping
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from email.message import Message
 from typing import Any
@@ -52,6 +64,7 @@ from .gateway import (
     FORWARD_RESPONSE_HEADERS,
     AkademiError,
     AkademiGateway,
+    AkademiUnavailable,
     on_behalf_of,
     request_id,
 )
@@ -102,13 +115,70 @@ class Upload:
     fields: dict[str, str]
 
 
+#: Ağ geçidinin geçici yanıtları: Traefik "no available server" (503), kapanmakta olan arka uç (502), ağ geçidi
+#: zaman aşımı (504), Cloudflare kaynak hataları (520–523). JSON gövdeli olanlar Akademi'nin kendi yanıtıdır.
+TRANSIENT_STATUS = frozenset({502, 503, 504, 520, 521, 522, 523})
+#: Yeniden denemeler arası bekleme (sn); toplam `read_retry_seconds` ile sınırlı.
+RETRY_DELAYS = (0.5, 1.0, 2.0, 3.0, 4.0, 5.0)
+UPDATING_MESSAGE = ("Akademi şu an güncelleniyor ya da yeniden başlıyor; birkaç saniye sonra "
+                    "otomatik olarak yeniden denenecek.")
+UPDATING_WRITE_MESSAGE = ("Akademi şu an güncelleniyor; işlem kaydedilmemiş olabilir. Birkaç saniye "
+                          "sonra listeyi yenileyip tekrar deneyin.")
+
+
+def transient(upstream: httpx.Response) -> bool:
+    """Ağ geçidinin geçici hatası mı (Akademi'nin kendi JSON hata zarfı değil)?"""
+    return (upstream.status_code in TRANSIENT_STATUS
+            and "json" not in upstream.headers.get("content-type", ""))
+
+
 class AkademiProxy:
     def __init__(self, *, gateway: AkademiGateway, allowlist: Allowlist,
-                 step_up: StepUpStore, log: Any) -> None:
+                 step_up: StepUpStore, log: Any,
+                 sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.gateway = gateway
         self.allowlist = allowlist
         self.step_up = step_up
         self._log = log
+        self._sleep = sleep
+        self._clock = clock
+
+    async def _read_with_retry(self, send: Callable[[], Awaitable[httpx.Response]], *,
+                               operation_id: str, trace: str) -> httpx.Response:
+        """OKUMA isteği: bağlantı hatası ya da ağ geçidinin geçici 5xx'inde kısa geri çekilmeyle
+        yeniden dener (toplam `read_retry_seconds`). Bütçe biterse `AkademiUnavailable`
+        (`details.retryable`)."""
+        budget = max(float(self.gateway.config.read_retry_seconds), 0.0)
+        deadline = self._clock() + budget
+        attempt = 0
+        while True:
+            attempt += 1
+            upstream: httpx.Response | None = None
+            reason = "connect"
+            try:
+                upstream = await send()
+            except AkademiUnavailable as failure:
+                # Zaman aşımı yeniden denenmez: istek zaten `timeout_seconds` bekledi.
+                if (failure.details or {}).get("reason") != "connect":
+                    raise
+            else:
+                if not transient(upstream):
+                    if attempt > 1:
+                        self._log.info("akademi yeniden denemede yanıt verdi", operation=operation_id,
+                                       attempts=attempt, trace=trace)
+                    return upstream
+                reason = f"gateway_{upstream.status_code}"
+                await upstream.aclose()
+            delay = RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)]
+            if self._clock() + delay > deadline:
+                self._log.warning("akademi güncelleniyor/erişilemiyor", operation=operation_id,
+                                  attempts=attempt, reason=reason, trace=trace)
+                raise AkademiUnavailable(UPDATING_MESSAGE, details={
+                    "reason": "updating" if upstream is not None else "connect",
+                    "upstreamStatus": upstream.status_code if upstream is not None else None,
+                    "retryable": True, "attempts": attempt})
+            await self._sleep(delay)
 
     @property
     def log(self) -> Any:
@@ -230,10 +300,25 @@ class AkademiProxy:
                 send_json = body is not None and method.upper() != "GET"
                 if send_json:
                     headers["content-type"] = "application/json"
-                upstream = await self.gateway.send(
-                    method.upper(), resolved.upstream_path, query=query_text, headers=headers,
-                    content=json.dumps(body, ensure_ascii=False).encode("utf-8")
-                    if send_json else None)
+
+                def send() -> Awaitable[httpx.Response]:
+                    return self.gateway.send(
+                        method.upper(), resolved.upstream_path, query=query_text, headers=headers,
+                        content=json.dumps(body, ensure_ascii=False).encode("utf-8")
+                        if send_json else None)
+
+                if resolved.operation.is_write:
+                    upstream = await send()
+                else:
+                    upstream = await self._read_with_retry(
+                        send, operation_id=resolved.operation.operation_id, trace=trace)
+            if transient(upstream):
+                # Yazma (yeniden denenmez) ya da yükleme: ağ geçidi hatası Akademi'nin zarfı gibi değil,
+                # "güncelleniyor" olarak döner; panel aynı Idempotency-Key ile güvenle tekrar gönderebilir.
+                status_code = upstream.status_code
+                await upstream.aclose()
+                raise AkademiUnavailable(UPDATING_WRITE_MESSAGE, details={
+                    "reason": "updating", "upstreamStatus": status_code, "retryable": False})
         except (ProxyError, AkademiError) as failure:
             if isinstance(failure, ProxyError):
                 status, code, message, details = (failure.status, failure.code,

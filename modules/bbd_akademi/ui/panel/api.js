@@ -13,6 +13,12 @@
 //   · aynı GET aynı anda iki kez istenirse tek istek gider (uçuştaki istek paylaşılır)
 //   · liste uçları imleçlidir (`pages()`), satır başına ek istek atılmaz
 //
+// AKADEMİ GÜNCELLENİRKEN (dağıtım anı): köprü OKUMALARI sunucuda ≤ 20 sn
+// yeniden dener; yine olmazsa `akademi_unavailable` + `details.retryable`
+// gelir. İstemci bunu `hooks.onUnavailable` ile bildirir (panel "güncelleniyor"
+// bandını gösterir ve `probe()` ile kendisi yeniler); ilk başarılı yanıtta
+// `hooks.onAvailable`. Yazmalar yeniden DENENMEZ (aynı anahtarla elle tekrar güvenli).
+//
 // Hata: `AkademiError` — {code, message, details, status, traceId}. `message`
 // Akademi'den Türkçe ve kullanıcıya gösterilebilir gelir; bilinen kodlar için
 // `problem()` daha açıklayıcı bir cümle kurar.
@@ -47,9 +53,24 @@ const CODE_TEXT = {
   invalid_integration_key: 'Akademi entegrasyon anahtarını reddetti (iptal edilmiş olabilir).',
 };
 
+/**
+ * Akademi şu an güncelleniyor / yeniden başlıyor mu (geçici; birazdan düzelir)?
+ * Köprünün bütçesi biten okuma hatası ya da ağ geçidinin JSON'suz 502/503/504'ü.
+ */
+export function isUpdating(error) {
+  if (!(error instanceof AkademiError)) return false;
+  if (error.code === 'akademi_unavailable' && error.details?.retryable === true) return true;
+  return error.code === 'akademi_error' && [502, 503, 504].includes(error.status);
+}
+
 export function problem(error, fallback = 'İşlem tamamlanamadı.') {
   if (!error) return fallback;
   if (error instanceof AkademiError) {
+    // "Güncelleniyor" iletisi köprüden hazır gelir (okumada "otomatik yeniden denenecek",
+    // yazmada "kaydedilmemiş olabilir"); genel "ulaşılamıyor" cümlesiyle ezilmez.
+    if (error.code === 'akademi_unavailable' && error.details?.reason === 'updating') {
+      return error.message;
+    }
     if (error.code === 'validation_error' && Array.isArray(error.details) && error.details.length) {
       return error.details.map((item) => item?.message || item?.field).filter(Boolean).join(' · ')
         || error.message;
@@ -78,14 +99,46 @@ function queryKey(path, query) {
 
 /**
  * @param {object} ctx — panelin `mount(root, ctx)` bağlamı
+ * @param {object} hooks — `onUnavailable(error)`: bir OKUMA "güncelleniyor" hatasıyla
+ *   bitti; `onAvailable()`: Akademi'den başarılı yanıt geldi (bant kalkar).
  */
-export function createClient(ctx) {
+export function createClient(ctx, hooks = {}) {
   const etags = new Map();      // anahtar → {etag, data, at}
   const inflight = new Map();   // anahtar → Promise
   let operations = null;        // operationId → {allowed, stepUp, featureFlag, …}
   let features = null;          // özellik bayrağı → açık mı (null = bilinmiyor)
+  let lastFailedRead = null;    // "güncelleniyor" ile biten son okuma (probe yeniden dener)
 
   async function raw(payload) {
+    try {
+      const envelope = await rawOnce(payload);
+      if (lastFailedRead && payload.method === 'GET') lastFailedRead = null;
+      hooks.onAvailable?.();
+      return envelope;
+    } catch (failure) {
+      if (payload.method === 'GET' && isUpdating(failure)) {
+        lastFailedRead = { method: 'GET', path: payload.path, query: payload.query };
+        hooks.onUnavailable?.(failure);
+      }
+      throw failure;
+    }
+  }
+
+  /**
+   * "Güncelleniyor" bandının denemesi: son başarısız okumayı tekrarlar (aynı
+   * yetkiyle, aynı uç). Başarılıysa true (bant `onAvailable` ile kalkar).
+   */
+  async function probe() {
+    if (!lastFailedRead) return true;
+    try {
+      await raw(lastFailedRead);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function rawOnce(payload) {
     let envelope;
     try {
       envelope = await ctx.api(`${BASE}/km/call`, { method: 'POST', body: payload,
@@ -280,6 +333,7 @@ export function createClient(ctx) {
 
   return {
     call,
+    probe,
     get,
     getCached,
     invalidate,

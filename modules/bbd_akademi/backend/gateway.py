@@ -90,6 +90,9 @@ class GatewayConfig:
     download_hosts: list[str] = field(default_factory=list)
     staff_sync_minutes: int = 30
     step_up_seconds: int = 120
+    #: Panel köprüsünde OKUMA (GET) isteklerinin geçici ağ geçidi hatasında (Akademi dağıtımı: 502/503) toplam
+    #: yeniden deneme bütçesi (sn). 0 = kapalı. Yazmalar hiç yeniden denenmez.
+    read_retry_seconds: float = 20.0
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> GatewayConfig:
@@ -106,6 +109,8 @@ class GatewayConfig:
             download_hosts=[str(item).lower() for item in raw.get("download_hosts") or []],
             staff_sync_minutes=int(raw.get("staff_sync_minutes", base.staff_sync_minutes)),
             step_up_seconds=int(raw.get("step_up_seconds") or base.step_up_seconds),
+            # 0 geçerli (kapalı); `or` ile yazılsaydı varsayılana dönerdi.
+            read_retry_seconds=float(raw.get("read_retry_seconds", base.read_retry_seconds)),
         )
 
     @property

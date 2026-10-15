@@ -68,7 +68,9 @@ def log() -> Log:
 
 @pytest.fixture
 def config() -> GatewayConfig:
-    return GatewayConfig(base_url=BASE, max_upload_mb=1, staff_sync_minutes=0)
+    # Yeniden deneme (Akademi dağıtım anı) kapalı: kapalı Akademi testleri 20 sn beklemesin;
+    # davranışın kendisi test_akademi_guncelleniyor.py'de sahte saatle sınanır.
+    return GatewayConfig(base_url=BASE, max_upload_mb=1, staff_sync_minutes=0, read_retry_seconds=0)
 
 
 @pytest.fixture
