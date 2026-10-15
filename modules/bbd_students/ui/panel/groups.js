@@ -32,6 +32,9 @@
 // toplu "Dönem ata". ARŞİVDEN KALICI SİL: yalnız arşivdeki sınıf, geri alınamaz.
 //   GET   /api/bbd_students/students/{id}/groups               bbd_students.view
 //
+// DÖNEM GEÇİŞİ (iş 37 / İ4): şeritteki “Dönem geçişi” düğmesi yıl sonu sihirbazını bu
+// sekmenin yerinde açar (`year-rollover.js`); “← Sınıflara dön” listeye geri getirir.
+//
 // Yol kabuğun KOPYALANMIŞ konumuna göredir (bkz. index.js).
 import { createPicker } from '../../ui-kit/picker.js';
 import { confirmSimple, dialogA11y, todayIso } from '../../ui-kit/kit.js';
@@ -39,6 +42,7 @@ import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, gradeLabel, parseChoice, parseGrade,
   suggestedExam, trackAllowed,
 } from './curriculum.js';
+import { mountYearRollover } from './year-rollover.js';
 
 const BASE = '/api/bbd_students/groups';
 
@@ -123,7 +127,7 @@ function button(label, variant, onClick) {
  * @param {HTMLElement} host
  * @param {{api, can:(p:string)=>boolean, students:()=>Array, dialogRoot, toast}} ctx
  */
-export function mountGroups(host, ctx) {
+export function mountGroups(host, ctx, { rollover = false } = {}) {
   const currentYear = academicYearOf(todayIso());
   const state = {
     archived: 'live', kind: '', query: '', groups: [], selected: null, detail: null,
@@ -168,7 +172,9 @@ export function mountGroups(host, ctx) {
   const count = h('span', 'st-count');
   bar.append(search, yearFilter, kindFilter, archFilter, count, h('div', 'st-spacer'));
   if (canEdit) {
-    bar.append(button('+ Yeni sınıf', 'primary', () => openEditor(null)));
+    const yearly = button('Dönem geçişi', '', () => openRollover());
+    yearly.title = 'Yıl sonu: sınıfları yeni döneme taşı, seviye +1, mezun et (önizlemeli, geri alınabilir)';
+    bar.append(yearly, button('+ Yeni sınıf', 'primary', () => openEditor(null)));
   }
   view.append(bar);
 
@@ -694,12 +700,28 @@ export function mountGroups(host, ctx) {
     name.focus();
   }
 
-  load();
+  // Dönem geçişi sihirbazı sekmenin yerinde açılır; kapanınca liste tazelenir.
+  let rolloverView = null;
+  function openRollover() {
+    picker?.destroy?.();
+    picker = null;
+    rolloverView = mountYearRollover(host, ctx, { onClose: closeRollover });
+  }
+  function closeRollover() {
+    rolloverView?.destroy();
+    rolloverView = null;
+    host.replaceChildren(view);
+    load();
+  }
+
+  if (rollover && canEdit) openRollover(); else load();
   return {
-    reload: load,
+    reload: () => (rolloverView ? rolloverView.reload() : load()),
+    openRollover,
     destroy() {
       clearTimeout(searchTimer);
       picker?.destroy?.();
+      rolloverView?.destroy();
       host.replaceChildren();
     },
   };
@@ -714,6 +736,8 @@ function actionLabel(action) {
     student_deactivated: 'öğrenci pasifleşti', class_merge: 'eski sınıf adlarından birleştirildi',
     class_merge_rollback: 'birleştirme geri alındı', year_set: 'dönemi değiştirildi',
     year_backfill: 'mevcut sınıflara dönem atandı', delete: 'kalıcı silindi',
+    rollover: 'dönem geçişiyle arşivlendi', rollover_create: 'dönem geçişiyle açıldı',
+    rollover_join: 'dönem geçişiyle öğrenci eklendi', rollover_undo: 'dönem geçişi geri alındı',
   }[action] || action;
 }
 

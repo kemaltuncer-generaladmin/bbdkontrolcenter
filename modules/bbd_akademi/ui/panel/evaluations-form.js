@@ -22,7 +22,7 @@ import {
   openDrawer, percent, problem, runAction, statusBadge, studentPicker, todayIst,
 } from './common.js';
 import { documentButtons } from './documents.js';
-import { reportCardDoc } from './documents-logic.js';
+import { homeworkTally, reportCardDoc } from './documents-logic.js';
 import {
   CHANGE_MARK, EVALUATION_STATUS, MISTAKE_REASONS, READ_KIND, averageText, checkLine, detailOf, exportReports,
   iconButton, shareText,
@@ -753,8 +753,8 @@ function metricsPanel(app, studentId, initial) {
       `${num(attendance.present ?? 0)} geldi · ${num(attendance.absent ?? 0)} gelmedi · `
       + `${num(attendance.late ?? 0)} geç · ${num(attendance.excused ?? 0)} izinli`));
     const homework = data.homework || {};
-    tiles.push(tile('Ödev tamamlama', pct(homework.completionRatePercent),
-      `${num(homework.completed ?? 0)}/${num(homework.assigned ?? 0)} ödev`));
+    // Akademi README §14 madde 85: öğretmen kontrolü sayılır (eksik 0,5, yapmadı 0).
+    tiles.push(tile('Ödev tamamlama', pct(homework.completionRatePercent), homeworkTally(homework)));
     const reading = data.reading || {};
     tiles.push(tile('Okuma', `${num(reading.pages ?? 0)} sayfa`, `${num(reading.books ?? 0)} kitap`));
     const mistakes = data.mistakes || {};
