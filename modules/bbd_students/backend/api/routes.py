@@ -30,6 +30,7 @@ from km_sdk import (
 )
 
 from .. import qr as qr_codec
+from ..academic_year import YearRollover
 from ..classes import ClassLink
 from ..classes_merge import ClassMerge
 from ..groups import GroupError, GroupService, parse_day
@@ -45,21 +46,33 @@ _lifecycle: Lifecycle | None = None
 _sync: StudentSync | None = None
 _merge: ClassMerge | None = None
 _link: ClassLink | None = None
+_rollover: YearRollover | None = None
 
 
 def bind(service: StudentService, groups: GroupService | None = None,
          lifecycle: Lifecycle | None = None, sync: StudentSync | None = None, *,
          merge: ClassMerge | None = None, link: ClassLink | None = None) -> APIRouter:
-    global _service, _groups, _lifecycle, _sync, _merge, _link
+    global _service, _groups, _lifecycle, _sync, _merge, _link, _rollover
     _service = service
     _groups = groups
     _lifecycle = lifecycle
     _sync = sync
     _merge = merge
     _link = link
+    _rollover = None
     if groups is not None:
         service.attach_groups(groups)
+        # Dönem geçişi (iş 37 / İ4): sınıf servisi + seviye yazması (önce KM) + mezunların
+        # pasifleşmesi. Kurallar `academic_year.YearRollover`'da; yeni bağımlılık yok.
+        _rollover = YearRollover(store=groups._store, groups=groups, log=groups._log,
+                                 sync=sync, lifecycle=lifecycle)
     return router
+
+
+def rollover() -> YearRollover:
+    if _rollover is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Modül hazır değil.")
+    return _rollover
 
 
 def merge() -> ClassMerge:
@@ -769,6 +782,34 @@ class GroupDelete(BaseModel):
     pin: str | None = Field(default=None, max_length=12)
 
 
+class RolloverItem(BaseModel):
+    """Dönem geçişinde bir sınıfın işlemi; `name` yalnız taşı/kopyala için yeni ad."""
+
+    groupId: str = Field(min_length=1, max_length=64)
+    action: str = Field(pattern=r"^(promote|copy|graduate|archive|keep)$")
+    name: str | None = Field(default=None, max_length=80)
+
+
+class RolloverPlan(BaseModel):
+    """Dönem geçişi önizlemesi/uygulaması. Gönderilmeyen sınıf varsayılan işlemini alır."""
+
+    fromYear: str | None = Field(default=None, pattern=r"^\d{4}-\d{4}$")
+    toYear: str | None = Field(default=None, pattern=r"^\d{4}-\d{4}$")
+    effectiveFrom: str | None = Field(default=None, max_length=10)
+    items: list[RolloverItem] = Field(default_factory=list, max_length=1000)
+    keepStudentIds: list[str] = Field(default_factory=list, max_length=5000)
+    bumpOthers: bool = True
+    expectedRevision: int | None = None
+
+
+class RolloverApply(RolloverPlan):
+    pin: str | None = Field(default=None, max_length=12)
+
+
+class RolloverUndo(BaseModel):
+    pin: str | None = Field(default=None, max_length=12)
+
+
 class MembersAdd(BaseModel):
     studentIds: list[str] = Field(min_length=1, max_length=2000)
     validFrom: str | None = Field(default=None, max_length=10)
@@ -864,6 +905,118 @@ async def move_members(
                                    actor=user.full_name, apply_level=body.applyLevel)
     except GroupError as exc:
         raise _group_error(exc) from exc
+
+
+# ---------------------------------------------------------------- dönem geçişi
+#
+# Yıl sonu sihirbazı (iş 37 / İ4). `/groups/{group_id}` uçlarından ÖNCE ilan edilir
+# (yol eşleşmesi sırayla). Uygulama ve geri alma yıkıcıdır: PIN teyidi; mezun
+# pasifleştiren plan ayrıca `bbd_students.lifecycle` ister (K9).
+
+
+def _rollover_error(exc: GroupError) -> JSONResponse:
+    """Dönem geçişi reddi — ortak zarf + makine kodu (ekran sorun listesini gösterir)."""
+    return JSONResponse(status_code=exc.status, content={"error": {
+        "status": exc.status, "message": str(exc), "code": exc.code, "details": exc.details}})
+
+
+def _rollover_pin() -> JSONResponse:
+    return JSONResponse(status_code=422, content={"error": {
+        "status": 422, "code": "pin_required", "details": {"field": "pin"},
+        "message": "Dönem geçişi PIN teyidi ister."}})
+
+
+def _needs_lifecycle(user: CurrentUser) -> JSONResponse | None:
+    if user.has_permission("bbd_students.lifecycle"):
+        return None
+    return JSONResponse(status_code=403, content={"error": {
+        "status": 403, "code": "forbidden", "details": {"permission": "bbd_students.lifecycle"},
+        "message": "Mezunları pasifleştirmek için öğrenci pasifleştirme yetkisi gerekir; "
+                   "o sınıfları “Yalnız arşivle”ye alın."}})
+
+
+@router.get("/groups/rollover")
+async def rollover_overview(
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Sihirbazın açılışı: kaynak/hedef dönem ve geçiş günü önerisi, pencere, dönemler,
+    son geçiş (geri alınabilir mi) ve geçmiş. Akademi "Dönem geçişi kopyası" eşlemeyi
+    (`latest.pairs`) buradan okur."""
+    return await rollover().overview()
+
+
+@router.post("/groups/rollover/preview")
+async def rollover_preview(
+    body: RolloverPlan,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> Any:
+    """Yazmadan plan: sınıf işlemleri, yeni ad/seviye, taşınan, mezun, seviyesi değişen,
+    sorunlar ve uygulamayı engelleyen sebep (`blocked`)."""
+    try:
+        return await rollover().preview(body.model_dump())
+    except GroupError as exc:
+        return _rollover_error(exc)
+
+
+@router.post("/groups/rollover")
+async def rollover_apply(
+    request: Request,
+    body: RolloverApply,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> Any:
+    """Planı uygular (PIN). 409 `rollover_blocked` (sorun/pencere), `rollover_stale`
+    (önizlemeden sonra sınıflar değişti), 403 mezun var ama pasifleştirme yetkisi yok."""
+    if not body.pin:
+        return _rollover_pin()
+    payload = body.model_dump(exclude={"pin"})
+    try:
+        plan = await rollover().preview(payload)
+    except GroupError as exc:
+        return _rollover_error(exc)
+    if plan["graduates"] and (denied := _needs_lifecycle(user)) is not None:
+        return denied
+    await confirm_pin(request, user, body.pin, action="bbd_students.year_rollover")
+    try:
+        return await rollover().apply(payload, actor=user.full_name)
+    except GroupError as exc:
+        return _rollover_error(exc)
+
+
+@router.get("/groups/rollover/{rollover_id}")
+async def rollover_detail(
+    rollover_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> Any:
+    try:
+        return await rollover().get(rollover_id)
+    except GroupError as exc:
+        return _rollover_error(exc)
+
+
+@router.post("/groups/rollover/{rollover_id}/undo")
+async def rollover_undo(
+    request: Request,
+    rollover_id: str,
+    body: RolloverUndo,
+    user: CurrentUser = requires("bbd_students.groups"),
+) -> Any:
+    """SON geçişi geri alır (PIN). Geçişin açtığı sınıflar kalıcı silinir, eski sınıflar ve
+    üyelikler döner, seviyeler geri yazılır, geçişin pasifleştirdiği mezunlar etkinleşir."""
+    if not body.pin:
+        return _rollover_pin()
+    try:
+        record = await rollover().get(rollover_id)
+    except GroupError as exc:
+        return _rollover_error(exc)
+    graduation = record.get("graduation") or {}
+    if (graduation.get("deactivated") or graduation.get("scheduled")) \
+            and (denied := _needs_lifecycle(user)) is not None:
+        return denied
+    await confirm_pin(request, user, body.pin, action="bbd_students.year_rollover_undo")
+    try:
+        return await rollover().undo(rollover_id, actor=user.full_name)
+    except GroupError as exc:
+        return _rollover_error(exc)
 
 
 @router.get("/groups/memberships")
