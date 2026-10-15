@@ -4267,6 +4267,14 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/students/{studentId}/parental-controls',
+        'students_getParentalControls',
+        ('students.view',),
+        'read',
+        features=('F-K15', 'F-K14'),
+    ),
+    Operation(
+        'GET',
         '/v1/students/{studentId}/plan',
         'students_getPlanWeek',
         ('learning.view',),

@@ -799,6 +799,25 @@ function privacyTab(app, studentId) {
     return box(...nodes);
   }, { rows: 4, columns: 2 });
 
+  // Ebeveyn kontrolü (Akademi README §14 madde 91, Play Families F9): velinin koç / öğretmen yazışma izni — salt okuma.
+  const canParental = app.can('students_getParentalControls');
+  const parental = loader(() => app.api.get(`/v1/students/${studentId}/parental-controls`), (data) => {
+    const nodes = [];
+    if (!data.coachMessaging) {
+      nodes.push(alertBox('Veli koç / öğretmen yazışmasını kapattı: öğrenci yeni mesaj ve “Hocaya sor” sorusu '
+        + 'gönderemez, önceki yazışmaları okur. Koç ve öğretmenler öğrenciye yazabilir.', 'warn'));
+    }
+    nodes.push(kv([
+      ['Koç / öğretmen yazışması', data.coachMessaging ? 'İzinli — öğrenci yazabilir' : 'Kapalı — öğrenci yazamaz'],
+      ['Son değişiklik', data.updatedAt
+        ? `${fmtDateTime(data.updatedAt)}${data.updatedBy ? ` · ${data.updatedBy}` : ''}`
+        : 'Değiştirilmedi (varsayılan: izinli)'],
+    ]));
+    nodes.push(hintBox('Bu karar velinindir (Akademi veli uygulaması → Daha → Ebeveyn kontrolü); panelden '
+      + 'değiştirilmez. Her değişiklik denetim kaydına yazılır ve öğrencinin koçuna bildirim gider.'));
+    return box(...nodes);
+  }, { rows: 2, columns: 2 });
+
   const canStorage = app.can('students_getStorageUsage');
   const storage = loader(() => app.api.get(`/v1/students/${studentId}/storage`), (data) => {
     const ratio = data.quotaBytes ? (data.usedBytes / data.quotaBytes) * 100 : 0;
@@ -823,9 +842,11 @@ function privacyTab(app, studentId) {
   }, { rows: 4, columns: 3 });
 
   node.append(...[card('Veliyle paylaşım tercihleri', privacy.node),
+    canParental ? card('Ebeveyn kontrolü', parental.node) : null,
     canStorage ? card('Dosya kotası', storage.node) : null].filter(Boolean));
   return {
     node,
-    reload: () => Promise.all([privacy.reload(), canStorage ? storage.reload() : null]),
+    reload: () => Promise.all([privacy.reload(), canParental ? parental.reload() : null,
+      canStorage ? storage.reload() : null]),
   };
 }
