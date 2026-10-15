@@ -4,7 +4,7 @@ Kullanıcı (14.10.2026, iş 23): "her öğrenciye ayrı müfredat istediğimiz 
 biz değiştirebilelim" · "hüseyin hocanın TYT sınıfına bağımsız müfredat (TYT mat) atayabilmeliyiz".
 Bu test:
 
-* dönem hesabını (1 Eylül'de döner) ve kaynak etiketlerini ("Varsayılan", "Elle", "Sınıftan: 8-A"),
+* dönem hesabını (1 Eylül'de döner) ve kaynak etiketlerini ("Otomatik", "Elle", "Sınıftan: 8-A"),
 * öğrenci setinde yalnız sınıftan gelen öğenin çıkarılamadığını, "Geri ekle" / "Ekle" / "Seviyenin
   tümünü ekle"nin doğru `{add}` gövdesini gönderdiğini, elle değiştirilmiş sette "Varsayılana döndür"ün
   göründüğünü, geçmiş dönemin salt okunur olduğunu,
@@ -194,13 +194,13 @@ def result() -> dict[str, Any]:
 def test_donem_ve_kaynak_etiketi(result: dict[str, Any]) -> None:
     assert result["years"] == ["2026-2027", "2025-2026", "2026-2027"]
     assert result["choices"] == ["2026-2027", "2025-2026", "2024-2025"]
-    assert result["sources"] == ["Varsayılan", "Elle · 2025-2026 döneminden", "Sınıftan: 8-A"]
+    assert result["sources"] == ["Otomatik", "Elle · 2025-2026 döneminden", "Sınıftan: 8-A"]
     assert result["levelIds"] == ["lise-11-fizik"]
 
 
 def test_ogrenci_seti_kaynaklar_ve_cikarilamayan_sinif_ogesi(result: dict[str, Any]) -> None:
     rows = result["rows"]
-    assert "11. sınıf · Matematik" in rows[0] and "Varsayılan" in rows[0]
+    assert "11. sınıf · Matematik" in rows[0] and "Otomatik" in rows[0]
     assert "TYT · TYT Matematik" in rows[1] and "Sınıftan: TYT Hüseyin" in rows[1]
     assert result["removeButtons"][0] == ["Çıkar"]
     assert result["removeButtons"][1] == []              # yalnız sınıftan gelen → çıkarılamaz

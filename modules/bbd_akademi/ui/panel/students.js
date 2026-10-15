@@ -350,6 +350,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
   // düğmesi bir an bile açık çizilmesin.
   let locked = status === 'inactive';
   const known = Boolean(status);
+  let opened = false;                 // sekmeler kuruldu mu (durum değişince yeniden çizilir)
   const view = readOnlyApp(app, () => locked);
   // KM kaydı bu kartın "Kayıt ve veliler" sekmesidir; yetenek yoksa (modül
   // kapalı / izin yok) eski davranış: KM Öğrenci Yönetimi ekranı açılır.
@@ -379,7 +380,14 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     select: (key, payload) => select(key, payload),
     /** KM kaydı bu kartta mı (`Kayıt ve veliler` sekmesi)? */
     recordable,
+    /** KM'deki durum değişikliği (aktifleştirme) Akademi'ye olayla 1–3 sn'de ulaşır: başlık iki kez tazelenir. */
+    refreshSoon: () => refreshSoon(),
   };
+  function refreshSoon() {
+    const first = setTimeout(() => head.reload(), 1500);
+    const second = setTimeout(() => { if (locked) head.reload(); }, 4500);
+    disposers.push(() => { clearTimeout(first); clearTimeout(second); });
+  }
   // Ders adları (önbellekli) — konu ve deneme satırlarında kimlik yerine ad yazılsın.
   app.lookups.subjects().then((list) => {
     for (const subject of list) ctx.subjectNames.set(subject.id, subject.name);
@@ -398,8 +406,9 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     const wasLocked = locked;
     locked = student.status === 'inactive';
     markReady(data);
-    // Liste ile açılış arasında durum değiştiyse kurulmuş sekmeler yeniden çizilir.
-    if (known && wasLocked !== locked) queueMicrotask(() => resetTabs());
+    // Durum değiştiyse (liste ile açılış arası ya da kartta aktifleştirme) kurulmuş sekmeler yeniden
+    // çizilir: pasifken kapalı yazma düğmeleri açılır.
+    if (opened && wasLocked !== locked) queueMicrotask(() => resetTabs());
     panel.setTitle(student.displayName || 'Öğrenci');
     if (subtitle) {
       subtitle.textContent = [student.externalRef, student.classGroup?.name,
@@ -448,7 +457,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
         syncProbe: () => app.api.km('/events'),
         // Ad, sınıf, durum değişince kartın başlığı da Akademi'den yeniden okunur
         // (Akademi değişikliği olayla birkaç saniyede alır).
-        onChanged: () => setTimeout(() => head.reload(), 1500),
+        onChanged: () => refreshSoon(),
         onRemoved: () => panel.close(),
         // Kalıcı silme ön kontrolü "kurum cari borcu var" derse: Kurum finansı → bu öğrencinin carisi.
         openFinance: app.has('finance') ? () => { panel.close(); app.go('finance', { studentId }); } : null,
@@ -579,6 +588,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
   panel.body.append(head.node, tabsBar.node, slot);
   head.reload();
   const opening = () => {
+    opened = true;
     show(start.tab, start.part, start.part === tab ? payload : null);
     // Aramadan / listeden "Kayıt ve veliler" ile açılınca düzenleme alanı hemen
     // görünsün (başlık kartı uzun): sekme şeridi çekmecenin tepesine gelir.

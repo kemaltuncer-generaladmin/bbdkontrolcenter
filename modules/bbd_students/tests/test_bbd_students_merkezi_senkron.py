@@ -382,6 +382,87 @@ async def test_yeniden_etkinlestir(world: World) -> None:
         await world.lifecycle.reactivate("STU-1", actor="Ayşe")
 
 
+async def _members(world: World, student: str) -> list[dict[str, Any]]:
+    return [dict(row) for row in await world.store.fetch_all(
+        "SELECT * FROM mod_bbd_students_group_member WHERE kantin_id = ? ORDER BY valid_from",
+        (student,))]
+
+
+async def test_aktiflestir_siniflari_ayni_gun_kesintisiz_geri_acar(world: World) -> None:
+    """16.10.2026 kullanıcı: "KM de pasife alınan öğrenci aktifleştirilebilsin" — sınıf
+    üyelikleri, durum ve olaylar tek işlemde; Akademi önce öğrenciyi sonra sınıfı görür."""
+    world.canteen.add("STU-1", "Elif Kaya")
+    group = await world.groups.create({"name": "8-A", "studentIds": ["STU-1"],
+                                       "validFrom": "2026-10-01", "reason": "geçmiş"},
+                                      actor="Ayşe")
+    await world.lifecycle.deactivate("STU-1", reason="left", actor="Ayşe")
+    [closed] = await _members(world, "STU-1")
+    assert closed["valid_to"] == "2026-10-12"
+    before = len(await world.types())
+    result = await world.lifecycle.reactivate("STU-1", actor="Ayşe", restore_classes=True)
+    assert result["status"] == "active" and result["groupsReopened"] is True
+    assert result["classesRestored"] == ["8-A"] and result["canteenSync"] == "ok"
+    # Aynı gün geri alındı: aynı satır kesintisiz sürer (yeni satır açılmaz).
+    [member] = await _members(world, "STU-1")
+    assert member["id"] == closed["id"] and member["valid_to"] == ""
+    assert member["valid_from"] == "2026-10-01" and member["reason"] == "Öğrenci aktifleştirildi"
+    assert (await world.types())[before:] == ["student.reactivated", "group.changed",
+                                              "tablet.policy_changed"]
+    no_pii(await world.events())
+    assert "STU-1" in await world.groups.current_students(group["id"])
+    history = await world.sync.history("STU-1")
+    assert [row["action"] for row in history[:2]] == ["classes_restored", "reactivated"]
+    assert "8-A" in history[0]["note"]
+    record = await world.directory.get("STU-1")
+    assert record is not None and record["status"] == "active"
+
+
+async def test_aktiflestir_gunler_sonra_yeni_uyelik_arsivli_sinif_atlanir(world: World) -> None:
+    world.canteen.add("STU-1", "Elif Kaya")
+    kept = await world.groups.create({"name": "8-A", "studentIds": ["STU-1"],
+                                      "validFrom": "2026-10-01", "reason": "geçmiş"}, actor="Ayşe")
+    gone = await world.groups.create({"name": "Etüt", "studentIds": ["STU-1"],
+                                      "validFrom": "2026-10-01", "reason": "geçmiş"}, actor="Ayşe")
+    await world.lifecycle.deactivate("STU-1", reason="suspended", actor="Ayşe")
+    await world.groups.archive(gone["id"], actor="Ayşe")
+    world.clock[0] = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
+    result = await world.lifecycle.reactivate("STU-1", actor="Ayşe", restore_classes=True)
+    assert result["classesRestored"] == ["8-A"]
+    rows = [row for row in await _members(world, "STU-1") if row["group_id"] == kept["id"]]
+    # Pasif kalınan günler (13–19 Ekim) sınıf listesine girmez: eski satır kapalı kalır.
+    assert [(row["valid_from"], row["valid_to"]) for row in rows] == [
+        ("2026-10-01", "2026-10-12"), ("2026-10-20", "")]
+    assert await world.groups.current_students(gone["id"]) == []
+    # Sınıf açmadan aktifleştirme (dönem geçişi geri alması) üyeliğe dokunmaz.
+    await world.lifecycle.deactivate("STU-1", reason="left", actor="Ayşe")
+    plain = await world.lifecycle.reactivate("STU-1", actor="Ayşe")
+    assert plain["groupsReopened"] is False and plain["classesRestored"] == []
+    latest = [row for row in await _members(world, "STU-1") if row["group_id"] == kept["id"]][-1]
+    assert latest["valid_to"] == "2026-10-20" and latest["reason"] == "Öğrenci pasifleştirildi"
+
+
+async def test_toplu_aktiflestir(world: World) -> None:
+    for kantin_id, name in (("STU-1", "Elif Kaya"), ("STU-2", "Can Kaya"), ("STU-3", "Ali Ak")):
+        world.canteen.add(kantin_id, name)
+    await world.groups.create({"name": "8-A", "studentIds": ["STU-1", "STU-2"],
+                               "validFrom": "2026-10-01", "reason": "geçmiş"}, actor="Ayşe")
+    await world.lifecycle.bulk_deactivate(["STU-1", "STU-2"], reason="left", actor="Ayşe")
+    await asyncio.sleep(0.05)
+    result = await world.lifecycle.bulk_reactivate(["STU-1", "STU-2", "STU-3", "STU-1"],
+                                                   actor="Ayşe")
+    assert result["reactivated"] == ["STU-1", "STU-2"] and result["classesRestored"] == 2
+    assert [row["code"] for row in result["failed"]] == ["already_active"]
+    for _ in range(50):
+        if ("status", "STU-2", "active") in world.canteen.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert ("status", "STU-1", "active") in world.canteen.calls
+    assert ("status", "STU-2", "active") in world.canteen.calls
+    assert (await world.types()).count("student.reactivated") == 2
+    with pytest.raises(SyncError):
+        await world.lifecycle.bulk_reactivate([], actor="Ayşe")
+
+
 async def test_kalici_silme_on_kosullari_ve_mezar_tasi(world: World) -> None:
     world.canteen.add("STU-1", "Elif Kaya", balance=250)
     with pytest.raises(SyncError) as error:

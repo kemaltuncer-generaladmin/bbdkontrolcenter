@@ -14,9 +14,15 @@ kısıtlanır (`bbd_tablet.control`, isteğe bağlı yetenek → `tablet.policy_
 uygulandığı an yazılır. Toplu pasifleştirmede her öğrenci ayrı olaydır, kantin
 çağrıları sıralı ve aralıklıdır (`throttle:120,1`).
 
-YENİDEN ETKİNLEŞTİR (§5.3). Durum `active`; grup üyelikleri KENDİLİĞİNDEN
-AÇILMAZ (ekran uyarır). YALNIZ pasifleştirmenin koyduğu tablet kısıtı kaldırılır
-(başka gerekçeyle konmuş kısıt sürer).
+AKTİFLEŞTİR / YENİDEN ETKİNLEŞTİR (§5.3; 16.10.2026 kullanıcı: "KM de pasife
+alınan öğrenci aktifleştirilebilsin"). Durum `active` + `student.reactivated`;
+`restore_classes` (ekran ve uç varsayılanı AÇIK) ile pasifleştirmenin kapattığı
+sınıf üyelikleri AYNI İŞLEMDE bugünden geri açılır (`group.changed`; arşivlenmiş
+sınıf atlanır) — Akademi öğrenci, veli girişi, sınıf (öğretmen kapsamı, müfredat)
+olaylarla 1–3 sn'de döner. Dönem geçişi geri alması sınıfları kendisi döndürdüğü
+için açmaz (`restore_classes=False`). YALNIZ pasifleştirmenin koyduğu tablet
+kısıtı kaldırılır (başka gerekçeyle konmuş kısıt sürer). Toplu aktifleştirmede
+kantin ve tablet çağrıları arka planda sıralıdır (pasifleştirmeyle aynı).
 
 KALICI SİL (§5.3). Yalnız pasif öğrencide, `bbd_students.delete` izniyle, ad
 yazılarak; kantin bakiyesi TAM 0 (`409 balance_not_zero`), açık ödeme talebi
@@ -73,6 +79,10 @@ NOTE_MAX = 500
 #: bu kısıtı kaldırır).
 TABLET_REASON = "Öğrenci pasifleştirildi (KM)"
 REACTIVATE_REASON = "Öğrenci yeniden etkinleştirildi (KM)"
+#: Pasifleştirmenin kapattığı sınıf üyeliğine yazılan gerekçe; aktifleştirme bu
+#: satırları bulup geri açar.
+GROUPS_CLOSED_REASON = "Öğrenci pasifleştirildi"
+GROUPS_REOPENED_REASON = "Öğrenci aktifleştirildi"
 
 
 def parse_effective(value: Any, *, today: date) -> date:
@@ -175,7 +185,7 @@ class Lifecycle:
                      "effective_at": effective, "note": note})
             group_revision = await self._groups.close_student_memberships(
                 kantin_id, last_day=last_day, actor=actor,
-                reason="Öğrenci pasifleştirildi")
+                reason=GROUPS_CLOSED_REASON)
         if group_revision is not None:
             await self._groups.after_commit(group_revision)
         self._log.info("öğrenci pasifleştirildi", student=kantin_id, reason=reason, actor=actor)
@@ -259,7 +269,12 @@ class Lifecycle:
 
     # ===================================================== yeniden etkinleştir
 
-    async def reactivate(self, kantin_id: str, *, actor: str) -> dict[str, Any]:
+    async def reactivate(self, kantin_id: str, *, actor: str, restore_classes: bool = False,
+                         push: bool = True) -> dict[str, Any]:
+        """Pasif öğrenciyi aktifleştirir (ya da planlı pasifleştirmeyi iptal eder).
+
+        `restore_classes`: pasifleştirmenin kapattığı sınıf üyelikleri bugünden geri açılır
+        (aynı işlem). `push=False` (toplu): kantin / tablet çağrısını çağıran yapar."""
         row = await self._require(kantin_id)
         if str(row.get("status") or "active") != "inactive":
             if row.get("status_effective_at"):
@@ -271,22 +286,83 @@ class Lifecycle:
                 return {"studentId": kantin_id, "status": "active", "scheduleCancelled": True}
             raise SyncError("Öğrenci zaten etkin.", status=409, code="already_active")
         moment = self._sync._clock()
-        await self._sync.write(
-            kantin_id,
-            columns={"status": "active", "status_reason": None, "status_since": iso(moment),
-                     "status_note": "", "status_effective_at": None},
-            canteen_ops={"status": {"status": "active", "reason": None,
-                                    "at": local_iso(moment)}},
-            events=[Event("student.reactivated", ["status"], {"status": "active"})],
-            log={"action": "reactivated", "actor": actor})
-        outcome = await self._sync.push(kantin_id)
-        tablet = await self._tablet(kantin_id, block=False, actor=actor)
-        self._log.info("öğrenci yeniden etkinleştirildi", student=kantin_id, actor=actor)
-        return {"studentId": kantin_id, "status": "active",
-                "canteenSync": "ok" if outcome.state == "ok" else "pending",
-                "tablet": tablet,
-                # Grup üyelikleri kendiliğinden açılmaz (§5.3) — ekran uyarır.
-                "groupsReopened": False}
+        group_revision: int | None = None
+        classes: list[str] = []
+        async with self._sync._store.transaction():
+            await self._sync.write(
+                kantin_id,
+                columns={"status": "active", "status_reason": None, "status_since": iso(moment),
+                         "status_note": "", "status_effective_at": None},
+                canteen_ops={"status": {"status": "active", "reason": None,
+                                        "at": local_iso(moment)}},
+                events=[Event("student.reactivated", ["status"], {"status": "active"})],
+                log={"action": "reactivated", "actor": actor})
+            if restore_classes:
+                group_revision, classes = await self._groups.reopen_student_memberships(
+                    kantin_id, start=self._sync._today(), actor=actor,
+                    closed_reason=GROUPS_CLOSED_REASON, reason=GROUPS_REOPENED_REASON)
+                if classes:
+                    # Durum geçmişinde (denetim) hangi sınıflara dönüldüğü görünsün.
+                    await self._sync.write_log(
+                        kantin_id, action="classes_restored", actor=actor,
+                        note="Sınıflara geri eklendi: " + ", ".join(classes))
+        if group_revision is not None:
+            await self._groups.after_commit(group_revision)
+        result: dict[str, Any] = {"studentId": kantin_id, "status": "active",
+                                  "groupsReopened": bool(classes), "classesRestored": classes}
+        if push:
+            outcome = await self._sync.push(kantin_id)
+            result["canteenSync"] = "ok" if outcome.state == "ok" else "pending"
+            result["tablet"] = await self._tablet(kantin_id, block=False, actor=actor)
+        else:
+            result["canteenSync"] = "pending"
+        self._log.info("öğrenci aktifleştirildi", student=kantin_id, actor=actor,
+                       classes=len(classes))
+        return result
+
+    async def bulk_reactivate(self, kantin_ids: list[Any], *, actor: str,
+                              restore_classes: bool = True) -> dict[str, Any]:
+        """Çoklu seçim: KM tarafı hemen (her öğrenci ayrı olay), kantin ve tablet arka
+        planda sıralı (pasifleştirmeyle aynı). Etkin öğrenci `failed` içinde döner."""
+        ids = list(dict.fromkeys(str(item).strip() for item in kantin_ids if str(item).strip()))
+        if not ids:
+            raise SyncError("Öğrenci seçilmedi.", details={"field": "students"})
+        if len(ids) > BULK_MAX:
+            raise SyncError(f"Tek seferde en çok {BULK_MAX} öğrenci.")
+        done: list[str] = []
+        failed: list[dict[str, str]] = []
+        restored = 0
+        for kantin_id in ids:
+            try:
+                result = await self.reactivate(kantin_id, actor=actor,
+                                               restore_classes=restore_classes, push=False)
+            except SyncError as failure:
+                failed.append({"studentId": kantin_id, "error": str(failure),
+                               "code": failure.code})
+                continue
+            if result.get("scheduleCancelled"):
+                continue
+            done.append(kantin_id)
+            restored += len(result.get("classesRestored") or [])
+        if done:
+            task = asyncio.get_running_loop().create_task(
+                self._push_many_reactivated(done, actor=actor), name="km-bbd-students-bulk-on")
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
+        self._log.info("toplu aktifleştirme", done=len(done), failed=len(failed), actor=actor)
+        return {"reactivated": done, "failed": failed, "classesRestored": restored,
+                "canteenPending": len(done)}
+
+    async def _push_many_reactivated(self, ids: list[str], *, actor: str) -> None:
+        for index, kantin_id in enumerate(ids):
+            if index:
+                await asyncio.sleep(self._sync._delay)
+            try:
+                await self._sync.push(kantin_id)
+                await self._tablet(kantin_id, block=False, actor=actor)
+            except Exception as failure:  # noqa: BLE001 — uzlaştırma devralır
+                self._log.warning("toplu aktifleştirme kantin adımı", student=kantin_id,
+                                  error=str(failure))
 
     # ============================================================ kalıcı sil
 

@@ -106,7 +106,7 @@ def test_saf_mantik(tmp_path: Path) -> None:
     assert out["responder"] == ["c", "f", ""]
     s = out["settings"]
     assert s["expectedVersion"] == 3 and "version" not in s and "updatedAt" not in s
-    assert "messageEditWindowMinutes" not in s
+    assert "messageEditWindowMinutes" not in s and "quietHours" not in s
     assert s["questionPoolStaffIds"] == ["s1"] and s["questionAnswerNotifyGuardian"] is False
     assert s["dailyQuestionQuota"] == 10
     assert out["summary"] == "Hüseyin hoca: Kısa yanıt · 2 görsel · sesli not"

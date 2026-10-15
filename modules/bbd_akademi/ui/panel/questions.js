@@ -157,7 +157,7 @@ function answerCard(answer, cache) {
   const card = h('div', 'ak-q-answer');
   const head = h('div', 'ak-q-answer-head');
   head.append(h('strong', '', personName(answer.author)), h('span', 'ak-muted', fmtDateTime(answer.createdAt)));
-  if (!answer.delivered) head.append(badge('Sessiz saat: sabah iletilecek', 'info'));
+  if (!answer.delivered) head.append(badge('Henüz iletilmedi', 'info'));
   card.append(head);
   if (answer.text) card.append(h('p', 'ak-q-text', answer.text));
   for (const voice of answer.voice || []) card.append(voicePlayer(voice, cache));

@@ -459,6 +459,17 @@ class BulkDeactivateBody(DeactivateBody):
     students: list[str] = Field(min_length=1, max_length=2000)
 
 
+class ReactivateBody(BaseModel):
+    """Aktifleştir. `restoreClasses` (varsayılan açık): pasifleştirmenin kapattığı sınıf
+    üyelikleri bugünden geri açılır. Gövdesiz eski çağrı da aynı varsayılanla çalışır."""
+
+    restoreClasses: bool = True
+
+
+class BulkReactivateBody(ReactivateBody):
+    students: list[str] = Field(min_length=1, max_length=2000)
+
+
 class DeleteBody(BaseModel):
     """Kalıcı silme onayı: öğrencinin adı aynen yazılır + kendi PIN'i (yıkıcı işlem).
 
@@ -498,6 +509,20 @@ async def bulk_deactivate(
         return sync_error(exc)
 
 
+@router.post("/students/reactivate")
+async def bulk_reactivate(
+    body: BulkReactivateBody,
+    user: CurrentUser = requires("bbd_students.lifecycle"),
+) -> Any:
+    """Çoklu seçimle aktifleştirme (pasif listesinden). Her öğrenci ayrı olay ve durum
+    geçmişi satırı; kantin ve tablet çağrıları arka planda sıralı."""
+    try:
+        return await lifecycle().bulk_reactivate(
+            body.students, actor=user.full_name, restore_classes=body.restoreClasses)
+    except SyncError as exc:
+        return sync_error(exc)
+
+
 @router.post("/students/{kantin_id}/deactivate")
 async def deactivate_student(
     kantin_id: str,
@@ -515,12 +540,15 @@ async def deactivate_student(
 @router.post("/students/{kantin_id}/reactivate")
 async def reactivate_student(
     kantin_id: str,
+    body: ReactivateBody | None = None,
     user: CurrentUser = requires("bbd_students.lifecycle"),
 ) -> Any:
-    """Yeniden etkinleştir (ya da planlı pasifleştirmeyi iptal et). Grup
-    üyelikleri kendiliğinden açılmaz."""
+    """Aktifleştir (ya da planlı pasifleştirmeyi iptal et). Pasifleştirmenin kapattığı
+    sınıf üyelikleri varsayılan olarak bugünden geri açılır (`restoreClasses`)."""
+    restore = True if body is None else body.restoreClasses
     try:
-        return await lifecycle().reactivate(kantin_id, actor=user.full_name)
+        return await lifecycle().reactivate(kantin_id, actor=user.full_name,
+                                            restore_classes=restore)
     except SyncError as exc:
         return sync_error(exc)
 

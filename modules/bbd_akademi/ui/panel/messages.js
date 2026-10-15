@@ -512,7 +512,7 @@ function auditCard(message) {
   head.append(h('strong', '', participantText(message.sender)), h('span', 'ak-muted', fmtDateTime(message.createdAt)));
   if (shown.deleted) head.append(badge(`Silindi ${fmtDateTime(message.deletedAt)}`, 'bad'));
   if (message.editedAt) head.append(badge('Düzenlendi', 'dim'));
-  if (message.deliverAt && !message.delivered) head.append(badge(`Sessiz saat: ${fmtDateTime(message.deliverAt)}`, 'info'));
+  if (message.deliverAt && !message.delivered) head.append(badge(`İletilecek: ${fmtDateTime(message.deliverAt)}`, 'info'));
   if (message.flags?.length) head.append(flagBadges(message.flags));
   card.append(head, h('p', 'ak-msg-text', shown.text || '—'));
   if (message.attachments?.length) card.append(h('small', 'ak-muted', message.attachments.map(attachmentText).join(' · ')));

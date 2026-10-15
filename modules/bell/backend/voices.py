@@ -45,6 +45,10 @@ NAME_MAX = 60
 
 _UNSAFE = re.compile(r"[^0-9a-f]")
 
+#: Üretim sırası öncelikleri (küçük önce).
+NORMAL = 0
+BULK = 1
+
 
 def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -106,8 +110,14 @@ class VoiceLibrary:
         self._backoff = number(section.get("backoff_seconds"), 2.0)
         self._backoff_cap = number(section.get("backoff_cap_seconds"), 32.0)
 
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
-        self._pending: set[str] = set()
+        # ÖNCELİKLİ SIRA. Toplu ön hazırlık (Akademi'nin şablon × öğrenci / sınıf
+        # sesleri, gece öğrenci hazırlığı) yüzlerce kayıt olabilir; zil sonrası,
+        # grup ve plan sesleri onların arkasına düşmemeli. Öğe (öncelik, sıra, özet):
+        # 0 olağan, 1 toplu. `_pending[özet]` son geçerli önceliktir — toplu
+        # bekleyen ses olağan istenince öne alınır, eski öğe sırada atlanır.
+        self._queue: asyncio.PriorityQueue[tuple[int, int, str]] = asyncio.PriorityQueue()
+        self._pending: dict[str, int] = {}
+        self._seq = 0
         self._worker: asyncio.Task[None] | None = None
         self._last_call: float = 0.0
         # Anlık üretim (`produce_now`) kuyruğun ÖNÜNE geçer ama "aynı anda tek
@@ -170,15 +180,17 @@ class VoiceLibrary:
 
     def state(self) -> dict[str, Any]:
         return {"queued": len(self._pending),
+                "queuedBulk": sum(1 for level in self._pending.values() if level == BULK),
                 "running": self._worker is not None and not self._worker.done()}
 
     # ---------------------------------------------------------------- yazma
 
-    async def require(self, text: str, *, force: bool = False) -> str:
+    async def require(self, text: str, *, force: bool = False, bulk: bool = False) -> str:
         """Metnin sesini ister ve özetini döner. Gerekirse kuyruğa alır.
 
         `force` yalnız "yeniden üret" düğmesi içindir: var olan kaydı siler ve
-        yeniden sıraya koyar.
+        yeniden sıraya koyar. `bulk` toplu ön hazırlıktır: olağan seslerin
+        ARKASINDAN üretilir (bkz. `_queue`).
         """
         clean = " ".join(str(text or "").split())
         if not clean:
@@ -201,7 +213,7 @@ class VoiceLibrary:
             f"ON CONFLICT(hash) DO UPDATE SET text = excluded.text, error = ''",
             (hash_, clean, self._speech.model, self._speech.voice, now()),
         )
-        self._enqueue(hash_)
+        self._enqueue(hash_, BULK if bulk else NORMAL)
         return hash_
 
     async def produce_now(self, text: str, *, timeout: float) -> str:
@@ -248,11 +260,13 @@ class VoiceLibrary:
         if hash_ in self._pending:
             self._done_now.add(hash_)
 
-    def _enqueue(self, hash_: str) -> None:
-        if hash_ in self._pending:
-            return
-        self._pending.add(hash_)
-        self._queue.put_nowait(hash_)
+    def _enqueue(self, hash_: str, level: int = 0) -> None:
+        current = self._pending.get(hash_)
+        if current is not None and current <= level:
+            return              # aynı ya da daha öncelikli sırada zaten bekliyor
+        self._pending[hash_] = level
+        self._seq += 1
+        self._queue.put_nowait((level, self._seq, hash_))
         self.start()
 
     async def sweep(self) -> int:
@@ -285,7 +299,11 @@ class VoiceLibrary:
 
     async def _run(self) -> None:
         while True:
-            hash_ = await self._queue.get()
+            level, _seq, hash_ = await self._queue.get()
+            if self._pending.get(hash_) != level:
+                # Öne alınmış (ya da zaten üretilmiş) sesin eski sıra öğesi.
+                self._queue.task_done()
+                continue
             try:
                 if hash_ in self._done_now:
                     # `produce_now` bu sesi zaten üretti; ikinci çağrı boşa kota.
@@ -293,12 +311,12 @@ class VoiceLibrary:
                     continue
                 await self._produce(hash_)
             except asyncio.CancelledError:
-                self._pending.discard(hash_)
+                self._pending.pop(hash_, None)
                 raise
             except Exception as failure:  # noqa: BLE001 — kuyruk ASLA ölmemeli (K7)
                 self._log.error("ses üretim turu patladı", hash=hash_, error=str(failure))
             finally:
-                self._pending.discard(hash_)
+                self._pending.pop(hash_, None)
                 self._queue.task_done()
 
     async def _produce(self, hash_: str) -> None:

@@ -604,6 +604,8 @@
 .st-row { display: flex; align-items: center; gap: 4px; }
 .st-row .st-item { flex: 1; min-width: 0; }
 .st-row-check { flex: none; margin-left: 6px; }
+/* Pasif satırda "Aktifleştir" (16.10.2026) — satır düğmesinin yanında, küçük. */
+.st-row-action { flex: none; font-size: 12px; padding: 4px 10px; margin-right: 4px; }
 .st-select-all { display: flex; align-items: center; gap: 8px; padding: 6px 9px; font-size: 12px; color: var(--soft); }
 .st-listbulk {
   display: flex;

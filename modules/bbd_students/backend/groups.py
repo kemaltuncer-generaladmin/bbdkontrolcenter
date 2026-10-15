@@ -1336,6 +1336,81 @@ class GroupService:
             await self._emit(revision)
         return revision
 
+    async def reopen_student_memberships(self, student_id: str, *, start: date, actor: str,
+                                         closed_reason: str, reason: str) -> tuple[int | None, list[str]]:
+        """Pasifleştirmenin kapattığı sınıf üyeliklerini geri açar (yeniden etkinleştirme).
+
+        ÇAĞIRANIN İŞLEMİNE KATILIR (öğrenci durumu, `student.reactivated` ve
+        `group.changed` tek commit; olay sırası: önce öğrenci, sonra grup). SON
+        pasifleştirmenin kapattığı satırlar bulunur (`reason` = `closed_reason`, en geç
+        `valid_to`); arşivlenmiş sınıf ve öğrencinin `start`tan itibaren zaten üye olduğu
+        sınıf atlanır. Kapanış günü `start`ın bir önceki günü ya da sonrasıysa (aynı gün
+        geri alındı) aynı satırın sonu silinir — üyelik kesintisiz sürer; değilse
+        `start`tan açık uçlu YENİ üyelik eklenir (pasif kalınan günler sınıf listesine,
+        yoklamaya girmez). Özel ders sınıfında o günlerde başka öğrenci varsa atlanır.
+        Döner: (yeni grup revizyonu ya da hiçbir şey açılmadıysa `None`, açılan sınıf adları).
+        """
+        student = str(student_id)
+        rows = await self._store.fetch_all(
+            f"SELECT * FROM {self._members} WHERE kantin_id = ?", (student,))
+        closed = [dict(row) for row in rows
+                  if str(row["reason"] or "") == closed_reason[:REASON_MAX] and _day(str(row["valid_to"] or ""))]
+        if not closed:
+            return None, []
+        last = max(_day(str(row["valid_to"])) or date.min for row in closed)
+        targets = [row for row in closed if _day(str(row["valid_to"])) == last]
+        groups = {str(row["id"]): dict(row) for row in await self._store.fetch_all(
+            f"SELECT * FROM {self._groups} WHERE id IN ({', '.join('?' for _ in targets)})",
+            tuple(str(row["group_id"]) for row in targets))}
+        plan: list[tuple[dict[str, Any], dict[str, Any], bool]] = []
+        for member in targets:
+            group = groups.get(str(member["group_id"]))
+            if group is None or group["archived_at"]:
+                continue
+            existing = await self._member_rows([str(member["group_id"])])
+            mine = [row for row in existing if str(row["kantin_id"]) == student
+                    and str(row["id"]) != str(member["id"])]
+            if any(_overlaps(start, None, _day(str(row["valid_from"])) or date.min,
+                             _day(str(row["valid_to"]))) for row in mine):
+                continue
+            continuous = last >= start - timedelta(days=1)
+            others = [row for row in existing if str(row["id"]) != str(member["id"])]
+            planned = others + [{"kantin_id": student,
+                                 "valid_from": str(member["valid_from"]) if continuous else start.isoformat(),
+                                 "valid_to": ""}]
+            if not continuous:
+                planned.append(member)
+            try:
+                self._check_members(str(group["kind"]), planned)
+            except GroupError:
+                continue
+            plan.append((member, group, continuous))
+        if not plan:
+            return None, []
+        async with self._store.transaction():
+            revision = await self._bump()
+            stamp = _now()
+            for member, group, continuous in plan:
+                if continuous:
+                    await self._store.execute(
+                        f"UPDATE {self._members} SET valid_to = '', reason = ?, updated_at = ?, "
+                        f"updated_by = ?, revision = ? WHERE id = ?",
+                        (reason[:REASON_MAX], stamp, actor, revision, str(member["id"])))
+                else:
+                    await self._insert_member(str(group["id"]), student, start, None,
+                                              reason=reason[:REASON_MAX], actor=actor,
+                                              revision=revision, stamp=stamp)
+                await self._touch_group(str(group["id"]), actor=actor, revision=revision)
+                await self._write_audit(
+                    actor=actor, action="student_reactivated", group_id=str(group["id"]),
+                    revision=revision,
+                    detail={"student": student, "validFrom": (str(member["valid_from"]) if continuous
+                                                              else start.isoformat()),
+                            "continued": continuous, "reason": reason[:REASON_MAX]})
+            await self._touched_students([student])
+            await self._emit(revision)
+        return revision, [str(group["name"]) for _member, group, _continuous in plan]
+
     async def after_commit(self, revision: int) -> None:
         """Dış işlem commit edildikten sonra süreç içi `groups_changed` yayını."""
         await self._changed(revision)

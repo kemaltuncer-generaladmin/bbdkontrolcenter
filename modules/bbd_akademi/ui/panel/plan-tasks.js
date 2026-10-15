@@ -175,12 +175,12 @@ export function taskPatches(original, edited) {
  * zorunlular üstte, kaymayan düzen, satır içi doğrulama). `onSave(task, again)`:
  * `again` doluysa "Ekle ve yeni" — sıradaki görevin form taslağı.
  */
-function buildEditor(app, { mode, task, form = null, duration, isNew, onSave, onCancel }) {
+function buildEditor(app, { mode, task, form = null, duration, isNew, target = null, onSave, onCancel }) {
   const patch = mode === 'patch';
   const node = h('div', 'ak-plan-editor');
   node.append(h('div', 'ak-plan-editor-head', isNew ? 'Yeni görev' : 'Görevi düzenle'));
   const editor = taskEditor(app, { mode, form: form || formFromPlanTask(task, patch ? { title: task.title || '' } : {}), duration, isNew,
-    originalDate: task.date || '', onSubmit: (again) => save(again && isNew && !patch) });
+    originalDate: task.date || '', target, onSubmit: (again) => save(again && isNew && !patch) });
   const error = h('div', 'ak-plan-editor-error');
   error.setAttribute('role', 'alert');
   const actions = h('div', 'ak-plan-editor-actions');
@@ -220,7 +220,7 @@ function buildEditor(app, { mode, task, form = null, duration, isNew, onSave, on
  * (`durationDays`) okunur ve süre dışı kalan görevler işaretlenir.
  */
 export function taskListField(app, { mode = 'date', tasks = [], durationDays = null, defaultDate = todayIst(1),
-  onChange } = {}) {
+  target = null, onChange } = {}) {
   const patch = mode === 'patch';
   const offset = mode === 'offset';
   let items = sortTasks(tasks).map((task) => ({ ...task }));
@@ -303,7 +303,7 @@ export function taskListField(app, { mode = 'date', tasks = [], durationDays = n
       : seed || { type: last?.type || 'question_solving', estimatedMinutes: last?.estimatedMinutes || 40,
         date: last?.date || defaultDate, dayOffset: last ? Number(last.dayOffset || 0) : 0,
         subjectId: last?.subjectId || '', _view: { subjectName: last?._view?.subjectName || '' } };
-    editor = buildEditor(app, { mode, task, form, duration, isNew: index === null,
+    editor = buildEditor(app, { mode, task, form, duration, target, isNew: index === null,
       onSave: (next, again) => {
         if (editing === null) items.push(next);
         else items[editing] = next;

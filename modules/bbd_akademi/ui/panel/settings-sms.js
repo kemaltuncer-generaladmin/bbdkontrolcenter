@@ -45,7 +45,8 @@ export const signatureTo = (text) => {
 /** Kurum SMS ayarları (README §14 madde 88): `TenantSettings.sms`. */
 export const SMS_SETTINGS_GROUPS = [
   { title: 'Kurum SMS\'i', hint: 'Duyuru, ödeme hatırlatması ve deneme sonucu SMS\'leri Kontrol Merkezi üzerinden '
-      + 'kantinin Netgsm hattıyla gider; günlük bütçe ortaktır. Sessiz saatte bekler.', fields: [
+      + 'kantinin Netgsm hattıyla gider; günlük bütçe ortaktır. Duyuru SMS\'i hemen, otomatik SMS\'ler (ödeme '
+      + 'hatırlatması, deneme sonucu) yalnız gündüz 10:00–20:00 arasında gider.', fields: [
     { key: 'signature', path: ['sms', 'signature'], label: 'SMS imzası', maxLength: 30, from: signatureFrom,
       to: signatureTo, placeholder: 'Boş: kurum kısa adı',
       hint: 'Metnin sonuna “ - imza” olarak eklenir; veli SMS\'in kimden geldiğini buradan anlar. İmza istemiyorsanız “yok” yazın.' },

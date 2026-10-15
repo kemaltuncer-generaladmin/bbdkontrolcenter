@@ -255,6 +255,7 @@ export function retentionPutBody(current, years) {
   const body = { ...(current || {}), messageRetentionYears: year };
   delete body.messageEditWindowMinutes;
   delete body.updatedAt;
+  delete body.quietHours; // sessiz saat kalktı (README §14 madde 100); sunucu yok sayar
   const version = Number(body.version) || 1;
   delete body.version;
   body.expectedVersion = version;
