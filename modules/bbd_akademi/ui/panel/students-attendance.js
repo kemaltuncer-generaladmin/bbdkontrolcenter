@@ -10,6 +10,10 @@
 //   · Veli adına izin — telefonla / yüz yüze gelen izni yönetici veli adına girer
 //                      (`admin_createLeaveRequest`); "onayla" işaretliyse ilgili dersler kendiliğinden
 //                      "İzinli" olur. Veli kartın başlığındaki veliler arasından seçilir.
+//                      MAZERET (V15, README §14 madde 83): tek gün + o günün "Gelmedi" dersleri
+//                      işaretlenir (`students_getAttendanceDay`; uygulamadaki yönetici formuyla aynı),
+//                      seçilenler `attendanceSessionIds` olarak gider; kurumun geriye dönük penceresi
+//                      (`retroExcuseMaxDays`) formda yazılır, pencere dışı gün gönderilmez.
 
 import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
@@ -30,6 +34,30 @@ const SESSION_STATUS = { cancelled: 'İptal', holiday: 'Tatil', orphaned: 'Progr
 const WEEK_HEAD = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
 const CHANNEL = { phone: 'Telefonla', in_person: 'Yüz yüze' };
 const pct = (value) => (value === null || value === undefined ? '—' : `%${num(value, 1)}`);
+/** Kurum ayarı okunana dek varsayılan mazeret penceresi (`AttendanceSettings.leave.retroExcuseMaxDays`). */
+const RETRO_DEFAULT_DAYS = 7;
+
+/** Mazerete uygun ders: "Gelmedi", iptal/tatil değil, bekleyen başka bildirimi yok (React `RetroExcuseRules`). */
+export function retroEligible(item) {
+  return item?.status === 'absent' && item.sessionStatus !== 'cancelled' && item.sessionStatus !== 'holiday'
+    && !item.pendingLeaveRequestId;
+}
+
+/**
+ * Mazeret formunun durumu → gönderilemiyorsa ileti (yoksa null). `day`:
+ * `students_getAttendanceDay` yanıtı; `picked`: seçilen oluşum anahtarları.
+ */
+export function retroProblem(day, picked) {
+  if (!day) return 'Günün yoklaması yüklenmedi; günü yeniden seçin.';
+  if (!day.retroExcuseOpen) {
+    return `Mazeret en çok ${num(day.retroExcuseMaxDays ?? RETRO_DEFAULT_DAYS)} gün geriye bildirilebilir `
+      + '(ya da mazeret kurumda kapalı: Yoklama → Ayarlar → Açık izin türleri).';
+  }
+  const eligible = (day.sessions || []).filter(retroEligible);
+  if (!eligible.length) return 'Bu gün "Gelmedi" işaretli (mazereti bekleyen olmayan) ders yok.';
+  if (!picked?.length) return 'Mazeret bildirilecek en az bir ders seçin.';
+  return null;
+}
 
 /** Ay takvimi + seçilen günün dersleri. `month`: 'YYYY-MM' (dışarıdan değişir). */
 export function attendanceCalendar(ctx) {
@@ -177,35 +205,120 @@ export async function leaveOnBehalf(app, studentId, guardians = []) {
     paint(draft);
     return { node: wrap, update: paint };
   }, validate: (raw, draft) => (show(draft) ? clockRule(raw) : null) });
+  // Mazeret: seçili günün yoklaması (gün başına bir istek, yalnız tür "Mazeret"ken).
+  const retro = { date: null, day: null, failure: null };
+  const retroField = { key: 'attendanceSessionIds', label: '', type: 'custom', render: (draft, set) => {
+    const wrap = h('div', 'ak-stack ak-retro');
+    const head = h('b', '', 'Mazeret bildirilecek dersler');
+    const hint = h('small', 'ak-muted');
+    const body = h('div', 'ak-stack');
+    wrap.append(head, hint, body);
+    let picked = [];
+    let token = 0;
+    const paintHint = () => {
+      hint.textContent = `Mazeret, yoklamada "Gelmedi" görünen geçmiş bir gün içindir (bugün dahil en çok `
+        + `${num(retro.day?.retroExcuseMaxDays ?? RETRO_DEFAULT_DAYS)} gün geriye). Seçilen dersler onayda `
+        + '"İzinli (mazeret)" olur; günün diğer dersleri değişmez.';
+    };
+    const paintSessions = () => {
+      body.replaceChildren();
+      const day = retro.day;
+      if (retro.failure) { body.append(errorBox(retro.failure, () => load(retro.date, true))); return; }
+      if (!day) { body.append(h('div', 'ak-muted', 'Yükleniyor…')); return; }
+      const absent = (day.sessions || []).filter((item) => item.status === 'absent'
+        && item.sessionStatus !== 'cancelled' && item.sessionStatus !== 'holiday')
+        .sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)));
+      if (!absent.length) {
+        body.append(h('div', 'ak-muted', `${fmtDate(day.date)}: "Gelmedi" işaretli ders yok. Yoklamada "Gelmedi" görünen bir gün seçin.`));
+        return;
+      }
+      for (const item of absent) {
+        const pending = Boolean(item.pendingLeaveRequestId);
+        const row = h('label', 'ak-inline ak-retro-row');
+        const box = h('input', 'kit-check');
+        box.type = 'checkbox';
+        box.checked = !pending && picked.includes(item.occurrenceKey);
+        box.disabled = pending || !day.retroExcuseOpen;
+        box.addEventListener('change', () => {
+          picked = box.checked ? [...picked.filter((key) => key !== item.occurrenceKey), item.occurrenceKey]
+            : picked.filter((key) => key !== item.occurrenceKey);
+          set(picked);
+        });
+        row.append(box, h('span', '', `${fmtTime(item.startsAt)}–${fmtTime(item.endsAt)} ${item.subject?.name || 'Ders'}`),
+          h('small', 'ak-muted', pending ? 'Mazeret bekliyor' : personName(item.teacher)));
+        body.append(row);
+      }
+      if (!day.retroExcuseOpen) body.append(alertBox(retroProblem(day, picked), 'warn'));
+    };
+    async function load(date, force = false) {
+      if (!force && retro.date === date && (retro.day || retro.failure)) return;
+      const mine = ++token;
+      retro.date = date;
+      retro.day = null;
+      retro.failure = null;
+      picked = [];
+      set(picked);
+      paintSessions();
+      try {
+        const day = await app.api.get(`/v1/students/${studentId}/attendance/days/${date}`);
+        if (mine !== token) return;
+        retro.day = day;
+        // İlk seçim: günün mazerete uygun bütün dersleri (uygulamadaki formla aynı).
+        picked = day.retroExcuseOpen ? (day.sessions || []).filter(retroEligible).map((item) => item.occurrenceKey) : [];
+        set(picked);
+      } catch (failure) {
+        if (mine !== token) return;
+        retro.failure = failure;
+      }
+      paintHint();
+      paintSessions();
+    }
+    const paint = (next) => {
+      const on = next.kind === 'retro_excuse';
+      wrap.hidden = !on;
+      if (!on) return;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(next.from || ''))) return;
+      load(next.from);
+    };
+    paintHint();
+    paint(draft);
+    return { node: wrap, update: paint };
+  }, validate: (raw, draft) => (draft.kind === 'retro_excuse' ? retroProblem(retro.date === draft.from ? retro.day
+    : null, raw) : null) };
   return formDialog(app, {
     title: 'Veli adına izin gir',
-    description: 'Telefonla ya da yüz yüze gelen izin. Onaylanırsa ilgili dersler kendiliğinden “İzinli” olur; '
-      + 'öğretmen gerekçeyi görmez.',
+    description: 'Telefonla ya da yüz yüze gelen izin ya da geçmiş devamsızlık için mazeret. Onaylanırsa ilgili '
+      + 'dersler kendiliğinden “İzinli” olur; öğretmen gerekçeyi görmez.',
     wide: true,
     value: { kind: 'full_day', from: today, to: today, reason: 'illness', guardianId: options[0].value,
-      channel: 'phone', approve: true, description: '', pickupPersonName: '', startTime: '', endTime: '', leaveAt: '' },
+      channel: 'phone', approve: true, description: '', pickupPersonName: '', startTime: '', endTime: '', leaveAt: '',
+      attendanceSessionIds: [] },
     fields: [
       { key: 'guardianId', label: 'Adına girilen veli', type: 'select', options, required: true },
       { key: 'channel', label: 'Nasıl geldi', type: 'select', options: optionsOf(CHANNEL) },
       { key: 'kind', label: 'İzin türü', type: 'select', options: optionsOf(LEAVE_KINDS), required: true },
       { key: 'reason', label: 'Gerekçe', type: 'select', options: optionsOf(LEAVE_REASONS), required: true },
-      { key: 'from', label: 'Başlangıç günü', type: 'date', required: true },
+      { key: 'from', label: 'Başlangıç günü (mazerette devamsızlık günü)', type: 'date', required: true },
       { key: 'to', label: 'Bitiş günü', type: 'date', required: true,
-        hint: 'Erken çıkış ve saat aralığında başlangıç günüyle aynı olmalı.' },
+        hint: 'Erken çıkış, saat aralığı ve mazerette kullanılmaz (tek gün).' },
       clockField('startTime', 'Başlangıç saati', (d) => d.kind === 'partial'),
       clockField('endTime', 'Bitiş saati', (d) => d.kind === 'partial'),
       clockField('leaveAt', 'Çıkış saati', (d) => d.kind === 'early_leave'),
+      retroField,
       { key: 'pickupPersonName', label: 'Teslim alacak kişi (erken çıkış, isteğe bağlı)', maxLength: 80 },
       { key: 'description', label: 'Açıklama (isteğe bağlı)', type: 'textarea', maxLength: 500, wide: true },
       { key: 'approve', label: 'Girişle birlikte onayla', type: 'checkbox', wide: true },
     ],
     submitLabel: 'İzni kaydet',
     onSubmit: (draft, { key }) => {
-      const sameDay = draft.kind === 'partial' || draft.kind === 'early_leave';
+      const sameDay = draft.kind === 'partial' || draft.kind === 'early_leave' || draft.kind === 'retro_excuse';
       const to = sameDay ? draft.from : draft.to;
       if (to < draft.from) throw Object.assign(new Error('Bitiş günü başlangıçtan önce olamaz.'), { code: 'validation_error' });
       if (draft.kind === 'partial' && draft.endTime <= draft.startTime) {
         throw Object.assign(new Error('Bitiş saati başlangıçtan sonra olmalı.'), { code: 'validation_error' });
+      }
+      if (draft.kind === 'retro_excuse' && draft.from > today) {
+        throw Object.assign(new Error('Mazeret geçmiş (ya da bugünkü) bir gün içindir.'), { code: 'validation_error' });
       }
       const body = {
         kind: draft.kind, from: draft.from, to, reason: draft.reason, guardianId: draft.guardianId,
@@ -216,6 +329,7 @@ export async function leaveOnBehalf(app, studentId, guardians = []) {
         leaveAt: draft.kind === 'early_leave' ? istanbulStamp(draft.from, draft.leaveAt) : null,
         pickupPersonName: draft.kind === 'early_leave' ? (String(draft.pickupPersonName || '').trim() || null) : null,
       };
+      if (draft.kind === 'retro_excuse') body.attendanceSessionIds = [...(draft.attendanceSessionIds || [])];
       return app.api.post(`/v1/admin/students/${studentId}/leave-requests`, body, { key });
     },
   });

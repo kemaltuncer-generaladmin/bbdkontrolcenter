@@ -1,1 +1,5 @@
 /* Talepler — önek `ak-req-`. */
+.ak-req-kind { align-items: flex-start; }
+.ak-req-kind .kit-badge { max-width: 100%; }
+.ak-req-lessons { font-size: 12px; text-align: left; }
+.ak-req-kind .ak-req-lesson-list { color: var(--ink); line-height: 1.35; }
