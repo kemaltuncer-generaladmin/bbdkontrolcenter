@@ -1335,7 +1335,7 @@ async def test_sms_otp(client: httpx.AsyncClient, world: World, store: Any,
     assert sent.json() == {"sent": True, "jobId": "1791000001", "channel": "otp"}
     assert world.canteen.calls[-1] == ("send_sms", {
         "phone": MOTHER,
-        "message": "BBD Akademi giris kodunuz: 583012. Kodu kimseyle paylasmayin. 4uZ+1CsiIp1"})
+        "message": "BBD Akademi giris kodunuz: 583012. Kodu kimseyle paylasmayin. rqBmx6F1Kh0 4uZ+1CsiIp1"})
     assert world.canteen.sms_purposes[-1] == "otp"
     rows = await table(store, "sms_log")
     assert rows[-1]["phone_masked"] == "532****543" and rows[-1]["status"] == "sent"
