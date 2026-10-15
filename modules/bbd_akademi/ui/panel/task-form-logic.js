@@ -531,3 +531,26 @@ export function previewLines(preview, fmt = (iso) => iso) {
   }
   return lines;
 }
+
+// ------------------------------------------------------------------ hedefin müfredatı (Akademi README §14 madde 102)
+
+/**
+ * Çok öğrenciye atamada programın kapsamı: `targetStudentCount` / `target.studentCount`.
+ * Hepsinde (kesişim) → "hepsinde"; bir kısmında (birleşim) → "3/5 öğrencide"; 0 → yalnız sınıf seviyesinden.
+ * Tek öğrencide ya da sayı yoksa boş. Web (`coverageText`) ve mobil (`coverageText`) aynı metin.
+ */
+export function coverageText(count, total) {
+  if (count === null || count === undefined || !total) return '';
+  if (count <= 0) return 'sınıf seviyesinden';
+  if (count >= total) return total > 1 ? 'hepsinde' : '';
+  return `${count}/${total} öğrencide`;
+}
+
+/** Hedefin programları (`recommended`): çok öğrencide olan önce, eşitlikte sunucu sırası (seviye → ders) korunur. */
+export function targetPrograms(items) {
+  return (items || [])
+    .map((program, index) => ({ program, index }))
+    .filter(({ program }) => program?.recommended)
+    .sort((a, b) => ((b.program.targetStudentCount ?? 0) - (a.program.targetStudentCount ?? 0)) || (a.index - b.index))
+    .map(({ program }) => program);
+}

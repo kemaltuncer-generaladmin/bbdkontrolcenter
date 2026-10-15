@@ -381,7 +381,8 @@ async function createAssignment(app, ctx) {
           return targets.node;
         }, validate: () => (targets?.count() ? null : 'En az bir sınıf, grup ya da öğrenci seçin.') },
         { key: 'tasks', label: 'Görevler', type: 'custom', required: true, render: (draft, set) => {
-          tasks = taskListField(app, { mode: 'date', onChange: set });
+          // konu seçici hedefin müfredatını önce gösterir (Akademi README §14 madde 102)
+          tasks = taskListField(app, { mode: 'date', target: () => targets?.value(), onChange: set });
           set(tasks.value());
           return tasks;
         }, validate: () => (tasks?.isEditing() ? 'Açık görev formunu listeye ekleyin ya da vazgeçin.' : null) },
