@@ -105,7 +105,9 @@ function ratioCell(stats, dueAt) {
   const share = assigned ? Math.min(1, done / assigned) : 0;
   const cell = h('div', 'ak-hw-ratio');
   const line = h('div', 'ak-hw-ratio-line');
-  line.append(h('span', 'ak-num', assigned ? `${num(done)}/${num(assigned)}` : '—'));
+  // Liste oranı TESLİM (öğrencinin beyanı) oranıdır — uygulamadaki "x/y teslim" ile aynı. Öğretmen kontrolü
+  // sayan ölçüt (Akademi README §14 madde 85) öğrencinin değerlendirme panelinde / karnesinde.
+  line.append(h('span', 'ak-num', assigned ? `${num(done)}/${num(assigned)} teslim` : '—'));
   if (assigned) line.append(h('span', 'ak-muted', percent(share * 100, 0)));
   if (stats?.overdueCount) line.append(badge(`${num(stats.overdueCount)} gecikmiş`, 'bad'));
   // Öğretmen kontrolü: süresi geçmiş ödevde kontrol bekleyen satır (eski Akademi alanı göndermezse yok).
