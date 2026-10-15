@@ -85,6 +85,14 @@ function heatCell(value, title = '') {
   return node;
 }
 
+/** Sürmekte olan hafta: değer yazılır ama ısı rengi verilmez (yarım hafta düşük görünür). */
+function liveCell(value, title = '') {
+  const node = h('span', 'ak-plan-heat none ak-plan-heat-live',
+    value === null || value === undefined ? '—' : percent(value, 0));
+  if (title) node.title = title;
+  return node;
+}
+
 /** İlerleme: çubuk + "12/40" + yüzde. Çubuk süstür; sayı her zaman yazılı. */
 function progressCell(progress) {
   const total = progress?.taskInstances || 0;
@@ -545,7 +553,8 @@ function adherenceTab(app, ctx) {
 
   const legend = h('div', 'ak-plan-legend');
   legend.append(heatCell(85), h('span', '', '%80 ve üstü'), heatCell(65), h('span', '', '%50–79'),
-    heatCell(30), h('span', '', '%50 altı'), heatCell(null), h('span', '', 'plan yok'));
+    heatCell(30), h('span', '', '%50 altı'), heatCell(null), h('span', '', 'plan yok'),
+    liveCell(40), h('span', '', 'bu hafta (sürüyor)'));
   const computed = h('span', 'ak-muted');
   const meta = h('div', 'ak-inline ak-plan-meta');
   meta.append(legend, h('span', 'kit-spacer'), computed);
@@ -563,21 +572,31 @@ function adherenceTab(app, ctx) {
   }
 
   function columns(weeks) {
+    const current = weekStart(todayIst());
     const list = [
       { key: 'student', label: 'Öğrenci', width: 'minmax(170px, 1.6fr)', cell: (row) => studentCell(row.student) },
-      ...weeks.map((monday) => ({
-        key: `w-${monday}`,
-        label: fmtDate(monday).slice(0, 5),
-        title: `${fmtDate(monday)} – ${fmtDate(addDays(monday, 6))} haftası`,
-        width: '64px',
-        className: 'ak-plan-heat-col',
-        cell: (row) => {
-          const cell = (row.cells || []).find((item) => item.weekStart === monday);
-          if (!cell) return heatCell(null, 'Bu hafta için özet yok');
-          return heatCell(cell.adherencePercent, cell.plannedMinutes
-            ? `Planlanan ${num(cell.plannedMinutes)} dk · yapılan ${num(cell.doneMinutes)} dk` : 'Bu hafta plan yok');
-        },
-      })),
+      ...weeks.map((monday) => {
+        // İçinde bulunulan hafta SÜRÜYOR (V9; U1'in KM eşi): pazartesi sabahı
+        // herkes "%10" görünmesin diye nötr tonla çizilir ve ortalamaya girmez
+        // (Akademi `averagePercent` yalnız tamamlanmış haftalar).
+        const live = monday === current;
+        return {
+          key: `w-${monday}`,
+          label: live ? 'Bu hafta' : fmtDate(monday).slice(0, 5),
+          title: `${fmtDate(monday)} – ${fmtDate(addDays(monday, 6))} haftası${live
+            ? ' · sürüyor, ortalamaya girmez' : ''}`,
+          width: '64px',
+          className: `ak-plan-heat-col${live ? ' ak-plan-live' : ''}`,
+          cell: (row) => {
+            const cell = (row.cells || []).find((item) => item.weekStart === monday);
+            if (!cell) return heatCell(null, 'Bu hafta için özet yok');
+            const minutes = cell.plannedMinutes
+              ? `Planlanan ${num(cell.plannedMinutes)} dk · yapılan ${num(cell.doneMinutes)} dk` : 'Bu hafta plan yok';
+            return live ? liveCell(cell.adherencePercent, `Bu hafta sürüyor · şimdiye kadar ${minutes.toLocaleLowerCase('tr-TR')}`)
+              : heatCell(cell.adherencePercent, minutes);
+          },
+        };
+      }),
       { key: 'average', label: 'Ortalama', width: '78px', className: 'ak-plan-heat-col',
         cell: (row) => heatCell(row.averagePercent, 'Aralığın ortalaması') },
     ];
@@ -636,7 +655,8 @@ function adherenceTab(app, ctx) {
   }
 
   node.append(h('div', 'ak-muted ak-plan-foot',
-    'Satıra tıklayınca öğrencinin plan atamaları açılır. Uyum: planlanan dakikaya göre yapılan dakika.'));
+    'Satıra tıklayınca öğrencinin plan atamaları açılır. Uyum: planlanan dakikaya göre yapılan dakika. '
+      + 'İçinde bulunulan hafta sürüyor: gri yazılır ve ortalamaya girmez.'));
   return { node, reload, destroy: () => list?.destroy() };
 }
 

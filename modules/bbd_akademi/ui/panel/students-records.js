@@ -31,6 +31,7 @@ import {
 } from './common.js';
 import { documentButtons } from './documents.js';
 import { attendanceExtras } from './students-attendance.js';
+import { leaveKindDetail } from './attendance-manage.js';
 import { examResultDoc } from './documents-logic.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
@@ -454,6 +455,14 @@ export function attendanceTab(ctx) {
     columns: [
       { key: 'range', label: 'Tarih', width: '170px', cell: (row) => (row.from === row.to ? fmtDate(row.from)
         : `${fmtDate(row.from)} – ${fmtDate(row.to)}`) },
+      // Tür (V4): tam gün / saat aralığı / erken çıkış / mazeret ayrı görünür.
+      { key: 'kind', label: 'Tür', width: 'minmax(130px, 1fr)', cell: (row) => {
+        const info = leaveKindDetail(row);
+        const cell = h('div', 'ak-cell-stack');
+        cell.append(badge(info.label, info.tone));
+        if (info.detail) cell.append(h('small', '', info.detail));
+        return cell;
+      } },
       { key: 'reason', label: 'Gerekçe', width: 'minmax(0, 1.6fr)', cell: (row) => stack(LEAVE_REASONS[row.reason]
         || row.reason, row.description) },
       { key: 'by', label: 'Bildiren', cell: (row) => stack(personName(row.createdBy), fmtDateTime(row.createdAt)) },
