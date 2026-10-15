@@ -45,6 +45,19 @@ from modules.bbd_akademi.backend.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- uzaktan tablet sınırları: KM'nin kendi Tablet modülü ekranlarında.
+    "admin_listTabletProfiles":
+        "KM'nin kendi Tablet modülü (bbd_tablet) profil ve öğrenciye özel süre ekranlarındadır; asıl kayıt orada (A5), Akademi bu uçlarla yalnız mobil/web yöneticiye vekillik eder (Akademi §14 94).",
+    "admin_updateTabletProfile":
+        "KM'nin kendi Tablet modülü (bbd_tablet) profil ve öğrenciye özel süre ekranlarındadır; asıl kayıt orada (A5), Akademi bu uçlarla yalnız mobil/web yöneticiye vekillik eder (Akademi §14 94).",
+    "admin_setStudentTabletLimit":
+        "KM'nin kendi Tablet modülü (bbd_tablet) profil ve öğrenciye özel süre ekranlarındadır; asıl kayıt orada (A5), Akademi bu uçlarla yalnız mobil/web yöneticiye vekillik eder (Akademi §14 94).",
+    "admin_revokeTabletGrant":
+        "KM'nin kendi Tablet modülü (bbd_tablet) profil ve öğrenciye özel süre ekranlarındadır; asıl kayıt orada (A5), Akademi bu uçlarla yalnız mobil/web yöneticiye vekillik eder (Akademi §14 94).",
+    "admin_getTabletLimits":
+        "KM'nin kendi Tablet modülü (bbd_tablet) profil ve öğrenciye özel süre ekranlarındadır; asıl kayıt orada (A5), Akademi bu uçlarla yalnız mobil/web yöneticiye vekillik eder (Akademi §14 94).",
+    "students_getTabletLimits":
+        "Öğrenci/veli ucu; KM panelinde öğrenci ekranı yok (Akademi §14 94).",
     # --- kantin: Akademi verisi değil (sözleşme §2, A12). Kantin veli
     # kontrolleri ve kantin nakit tahsilatı KM'de Öğrenciler ekranındadır
     # (`canteen.api`); burada ikinci bir kantin tahsilat ekranı açmak iki
