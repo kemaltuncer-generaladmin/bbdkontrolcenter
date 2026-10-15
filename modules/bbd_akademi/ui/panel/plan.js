@@ -41,6 +41,7 @@ import {
   targetText, targetsField, taskBody, taskListField, taskPatches, taskTitle, timeText, totalMinutes,
   weekdayOf, whenText,
 } from './plan-tasks.js';
+import { previewLines } from './task-form-logic.js';
 import { applyTemplate, templateNotice, templatesTab } from './plan-templates.js';
 
 const POSTPONE_STATUS = {
@@ -320,12 +321,47 @@ function assignmentsTab(app, ctx, onStudent) {
   };
 }
 
-/** Yeni atama penceresi. Sonuç oluşturulan atama (ya da null). */
+/**
+ * Yeni atama penceresi. Sonuç oluşturulan atama (ya da null).
+ *
+ * ÖNİZLEME (Akademi README §14 madde 97, `admin_previewPlanAssignment`): "Atamayı oluştur"a
+ * ilk basışta kayıt AÇILMAZ — kaç öğrenci, öğrenci başına kaç görev, tatil kaydırması ve aynı
+ * gün zaten görevi olan öğrenciler (çakışma) pencerenin içinde gösterilir; ikinci basış
+ * oluşturur. Hedef ya da görevler değişirse önizleme bayatlar ve yeniden alınır. Pencere
+ * kapanmadığı için girilen görevler hiçbir adımda kaybolmaz.
+ */
 async function createAssignment(app, ctx) {
   const { classes, groups } = await ctx.ready();
   const preset = ctx.student();
   let targets = null;
   let tasks = null;
+  let previewBox = null;
+  let previewed = '';
+  const canPreview = app.can('admin_previewPlanAssignment');
+  loadStyles(import.meta.url, 'task-form.css');
+  const bodyOf = (draft) => ({
+    target: draft.target,
+    title: String(draft.title || '').trim() || null,
+    tasks: (draft.tasks || []).map((task) => taskBody(task, 'date')),
+    holidayPolicy: draft.holidayPolicy || 'shift_next',
+    notify: Boolean(draft.notify),
+  });
+  const keyOf = (body) => JSON.stringify({ ...body, title: null, notify: null });
+  const paintPreview = (preview) => {
+    previewBox.replaceChildren();
+    previewBox.classList.toggle('busy', Boolean(preview?.busyStudentCount));
+    if (!preview) {
+      previewBox.append(h('span', 'ak-muted', 'Hedef ve görevleri seçince "Atamayı oluştur" önce önizleme gösterir: '
+        + 'kaç öğrenci, çakışma, tatil.'));
+      return;
+    }
+    for (const line of previewLines(preview, (iso) => fmtDate(iso))) previewBox.append(h('div', '', line));
+    const names = (preview.students || []).map((item) => item.displayName).filter(Boolean);
+    if (names.length) {
+      previewBox.append(h('small', 'ak-muted', `${names.slice(0, 8).join(', ')}${preview.studentCount > 8
+        ? ` ve ${num(preview.studentCount - 8)} öğrenci daha` : ''}`));
+    }
+  };
   try {
     const result = await formDialog(app, {
       title: 'Yeni plan ataması',
@@ -334,11 +370,6 @@ async function createAssignment(app, ctx) {
       wide: true,
       value: { title: '', holidayPolicy: 'shift_next', notify: true },
       fields: [
-        { key: 'title', label: 'Atama adı (isteğe bağlı)', maxLength: 120, wide: true,
-          placeholder: 'Ekim 2. hafta — matematik yoğun' },
-        { key: 'holidayPolicy', label: 'Tatile denk gelen görev', type: 'select',
-          options: optionsOf(HOLIDAY_POLICIES), hint: 'Kurum takviminde tatil olan günler için.' },
-        { key: 'notify', label: 'Öğrencilere bildirim gönder', type: 'checkbox' },
         { key: 'target', label: 'Kime', type: 'custom', required: true, render: (draft, set) => {
           targets = targetsField(app, { classes, groups, onChange: set,
             value: preset ? { students: [preset] } : {} });
@@ -350,15 +381,31 @@ async function createAssignment(app, ctx) {
           set(tasks.value());
           return tasks;
         }, validate: () => (tasks?.isEditing() ? 'Açık görev formunu listeye ekleyin ya da vazgeçin.' : null) },
-      ],
+        canPreview && { key: '_preview', label: 'Önizleme', type: 'custom', render: () => {
+          previewBox = h('div', 'ak-tf-preview');
+          previewBox.setAttribute('aria-live', 'polite');
+          paintPreview(null);
+          return previewBox;
+        } },
+        { key: 'title', label: 'Atama adı (isteğe bağlı)', maxLength: 120, wide: true,
+          placeholder: 'Ekim 2. hafta — matematik yoğun' },
+        { key: 'holidayPolicy', label: 'Tatile denk gelen görev', type: 'select',
+          options: optionsOf(HOLIDAY_POLICIES), hint: 'Kurum takviminde tatil olan günler için.' },
+        { key: 'notify', label: 'Öğrencilere bildirim gönder', type: 'checkbox' },
+      ].filter(Boolean),
       submitLabel: 'Atamayı oluştur',
-      onSubmit: (draft, { key }) => app.api.post('/v1/admin/plan/assignments', {
-        target: draft.target,
-        title: String(draft.title || '').trim() || null,
-        tasks: (draft.tasks || []).map((task) => taskBody(task, 'date')),
-        holidayPolicy: draft.holidayPolicy || 'shift_next',
-        notify: Boolean(draft.notify),
-      }, { key }),
+      onSubmit: async (draft, { key }) => {
+        const body = bodyOf(draft);
+        if (canPreview && previewed !== keyOf(body)) {
+          const preview = await app.api.post('/v1/admin/plan/assignments/preview', body);
+          previewed = keyOf(body);
+          paintPreview(preview);
+          throw new AkademiError({ code: 'preview_ready', message: `Önizleme hazır: ${num(preview.studentCount)} öğrenci`
+            + `${preview.busyStudentCount ? `, ${num(preview.busyStudentCount)} çakışma` : ''}. Onaylamak için `
+            + '“Atamayı oluştur”a yeniden basın.' });
+        }
+        return app.api.post('/v1/admin/plan/assignments', body, { key });
+      },
     });
     if (result) {
       app.toast(`Atama oluşturuldu: ${num(result.studentCount)} öğrenciye ${num((result.tasks || []).length)} görev.`,

@@ -403,7 +403,7 @@ export function tab(app) {
  * @param persist(change) → Promise<{warnings: string[], week}>; hata AkademiError fırlatır.
  * @returns {Promise<number>} kaydedilen görev sayısı (vazgeçildiyse 0)
  */
-export async function taskDialog(app, { studentId, week, task = null, date = null, persist, studentName = '' }) {
+export async function taskDialog(app, { studentId, week, task = null, date = null, persist, studentName = '', seed = null }) {
   const builder = app.can('admin_getTaskBuilderContext')
     ? await app.api.get(`/v1/admin/students/${studentId}/task-builder`).catch(() => null) : null;
   const firstDay = () => date || week.days.find((day) => day.date >= todayIst(0) && !day.holiday)?.date
@@ -412,7 +412,7 @@ export async function taskDialog(app, { studentId, week, task = null, date = nul
   const initial = task ? formFromCoachTask(task) : emptyForm({ date: firstDay(), type: remembered.type || 'question_solving',
     estimatedMinutes: remembered.estimatedMinutes || 40, subjectId: remembered.subjectId || '',
     subjectName: remembered.subjectName || '', priority: remembered.priority || 'normal',
-    proofPhoto: remembered.proofPhoto || 'off', answersRequired: remembered.answersRequired !== false });
+    proofPhoto: remembered.proofPhoto || 'off', answersRequired: remembered.answersRequired !== false, ...(seed || {}) });
   const draft = task ? isDraft(task) : true;
   return new Promise((resolve) => {
     const overlay = h('div', 'kit-overlay');
@@ -513,6 +513,45 @@ export async function taskDialog(app, { studentId, week, task = null, date = nul
     release = dialogA11y(card);
     editor.focusFirst();
   });
+}
+
+/**
+ * Haftalık programı açmadan görev ver (koçluk kartı, hata defteri): bu haftanın programı okunur,
+ * görev penceresi aynı kurallarla açılır, kayıt aynı tek istekle gider (sürüm çakışmasında
+ * hafta yenilenip bir kez daha denenir). `seed`: başlangıç alanları (ör. hata tekrarı + ders).
+ * @returns {Promise<number>} kaydedilen görev sayısı
+ */
+export async function openCoachTask(app, student, { seed = null, week: weekIso = null } = {}) {
+  const path = `/v1/admin/students/${student.id}/coach-week`;
+  let data;
+  try {
+    data = await app.api.get(path, { week: weekIso || weekStart(todayIst(0)) });
+  } catch (failure) {
+    app.toast(problem(failure, 'Haftalık program okunamadı.'), 'bad');
+    return 0;
+  }
+  const persist = async (change) => {
+    const send = () => app.api.put(path, { weekStart: data.weekStart, expectedVersion: data.version, ops: weekOps([change]) });
+    let result;
+    try {
+      result = await send();
+    } catch (failure) {
+      if (!(failure instanceof AkademiError && failure.code === 'version_conflict')) throw failure;
+      data = await app.api.get(path, { week: data.weekStart });
+      result = await send();
+    }
+    if (result.week) data = result.week;
+    const outcome = saveSummary(result);
+    if (outcome.errors.length) {
+      const code = outcome.errors[0].errorCode;
+      throw new AkademiError({ code, message: saveErrorText(code) });
+    }
+    app.toast(`Görev taslak olarak eklendi${outcome.warnings.length ? ` (uyarı: ${outcome.warnings.join(', ')})` : ''}. `
+      + 'Öğrenci, haftalık programda "Yayımla"dan sonra görür.', outcome.warnings.length ? 'warn' : 'good');
+    return { warnings: outcome.warnings, week: result.week };
+  };
+  return taskDialog(app, { studentId: student.id, week: data, persist, seed,
+    studentName: student.displayName || data.student?.displayName || '' });
 }
 
 /** Öğrenci başına son kullanılan tür / süre / ders (oturum boyunca; akıllı varsayılan). */

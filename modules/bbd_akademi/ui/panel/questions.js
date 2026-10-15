@@ -253,17 +253,25 @@ function composer(app, question, onAnswered) {
   let responder = defaultResponder(question);
   let clientUuid = newKey('yanit');
   const parts = [];   // {file, kind, durationSeconds, fileId, url}
-  const responderSlot = h('div');
+  // Yanıtlayan seçimi baştan yerinde (liste gelince dolar — düzen kaymaz).
+  const responderSlot = h('label', 'kit-field ak-q-responder');
+  const responderBox = selectBox([{ value: responder || '', label: 'Öğretmenler yükleniyor…' }], responder,
+    (value) => { responder = value; clientUuid = newKey('yanit'); }, { label: 'Yanıtlayan öğretmen' });
+  responderSlot.append(h('span', 'kit-field-label', 'Yanıtlayan öğretmen'), responderBox.node);
   app.lookups.options('teachers').then((options) => {
-    responderSlot.append(selectBox(options, responder, (value) => { responder = value; clientUuid = newKey('yanit'); },
-      { label: 'Yanıtlayan öğretmen' }).node);
-  }).catch(() => {});
+    responderBox.options(options.length ? options : [{ value: responder || '', label: 'Öğretmen listesi boş' }]);
+    responderBox.set(responder);
+  }).catch(() => responderBox.options([{ value: responder || '', label: 'Öğretmen listesi alınamadı' }]));
   const text = h('textarea', 'kit-input ak-q-input');
   text.rows = 4;
   text.maxLength = 2000;
   text.placeholder = 'Çözümü yazın…';
   text.setAttribute('aria-label', 'Yanıt metni');
   text.addEventListener('input', () => { clientUuid = newKey('yanit'); });
+  // Ctrl/Cmd+Enter: gönder (koç klavyeden çıkmadan yanıtlar).
+  text.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !send.disabled) { event.preventDefault(); submit(false); }
+  });
   const partList = h('div', 'ak-q-parts');
   const error = h('div', 'ak-q-error');
 
@@ -441,7 +449,7 @@ function composer(app, question, onAnswered) {
   const row = h('div', 'ak-row-actions');
   row.append(attach, recordButton, recordState, h('span', 'kit-spacer'), send);
   node.append(responderSlot, text, partList, picker, row, error,
-    h('small', 'ak-muted', 'Görseller EXIF silinerek küçültülür; sesli not m4a (AAC), en çok 2 dakika.'));
+    h('small', 'ak-muted', 'Ctrl+Enter: gönder · Görseller EXIF silinerek küçültülür; sesli not m4a (AAC), en çok 2 dakika.'));
   return node;
 }
 

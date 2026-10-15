@@ -429,13 +429,16 @@ export function planTask(form, mode = 'date') {
 /** Plan görevi (taskListField satırı) → form taslağı. */
 export function formFromPlanTask(task = {}, extra = {}) {
   const view = task._view || {};
+  // Otomatik kurulmuş başlık boş açılır: içerik değişince yeniden kurulsun.
+  const generated = task.title && task.title === autoTitle({ ...emptyForm(), ...task, ...view,
+    targetQuestions: task.targetQuestions ?? '', mistakeCount: task.mistakeReview?.count ?? 10 });
   return emptyForm({
     type: task.type || 'question_solving',
     date: task.date || '',
     dayOffset: task.dayOffset !== undefined && task.dayOffset !== null ? Number(task.dayOffset) + 1 : '',
     estimatedMinutes: task.estimatedMinutes ?? 40,
     startTime: task.startTime || '', endTime: task.endTime || '',
-    title: task.title && task.title !== autoTitle({ ...task, ...view, type: task.type }) ? task.title : (task.title || ''),
+    title: generated ? '' : task.title || '',
     subjectId: task.subjectId || task.mistakeReview?.subjectId || '', subjectName: view.subjectName || '',
     topicId: task.topicId || task.mistakeReview?.topicId || '', topicName: view.topicName || '',
     resourceId: task.resourceId || '', resourceTitle: view.resourceTitle || '',

@@ -23,6 +23,7 @@ import {
 } from './coaching-logic.js';
 import { coachOptions, coachingJob, riskBadge, studentCell } from './coaching-shared.js';
 import { questionsDialog } from './coaching-checkins.js';
+import { openCoachTask } from './coaching-week.js';
 import { problem } from './api.js';
 
 const SORTS = { risk: 'Risk önce', adherence: 'Uyumu düşük önce', name: 'Ada göre', last_activity: 'Son etkinlik' };
@@ -165,7 +166,9 @@ function summary(app, card, { studentId, ctx, view, refresh }) {
   const student = card.student || { id: studentId };
   const tools = h('div', 'ak-row-actions');
   tools.append(
-    ...(app.can('admin_getCoachWeek') ? [button('Haftalık program', { variant: 'primary', onClick: () => {
+    ...(app.can('admin_getCoachWeek') ? [actionButton(app, 'admin_saveCoachWeek', 'Görev ver', { variant: 'primary',
+      onClick: async () => { if (await openCoachTask(app, student)) refresh(); } })] : []),
+    ...(app.can('admin_getCoachWeek') ? [button('Haftalık program', { variant: 'ghost', onClick: () => {
       view.close();
       ctx.go?.('week', { student });
     } })] : []),

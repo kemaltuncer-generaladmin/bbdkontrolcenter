@@ -506,8 +506,15 @@ function mistakesTab(app, studentId) {
     empty: { title: 'Bu süzgece uyan hata yok', text: 'Süzgeçleri değiştirin.' },
   });
 
+  // Hata defterinden koç görevi: "Hata tekrarı" türü, seçili ders ve varsayılan 10 hata (ortak görev formu).
+  const assign = app.can('admin_saveCoachWeek') && app.can('admin_getCoachWeek')
+    ? button('Hata tekrarı görevi ver', { variant: 'primary', onClick: async () => {
+      const { openCoachTask } = await import('./coaching-week.js');
+      await openCoachTask(app, { id: studentId }, { seed: { type: 'mistake_review', subjectId: filters.subject || '',
+        mistakeCount: 10 } });
+    } }) : null;
   node.append(summary.node,
-    card('Tekrar kuyruğu', box(scopes.node, queue.node)),
+    card('Tekrar kuyruğu', box(...(assign ? [toolbar(scopes.node, h('span', 'kit-spacer'), assign)] : [scopes.node]), queue.node)),
     card('Hata defteri', box(toolbar(statusSelect.node, subjectSelect.node, reasonSelect.node, originSelect.node), list.node)));
 
   function renderSummary(data) {
