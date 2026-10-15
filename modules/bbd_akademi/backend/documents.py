@@ -95,7 +95,7 @@ KINDS: dict[str, DocumentKind] = {
     "finance_statement": DocumentKind("CRE", "Kurum cari", "hesap-ekstresi",
                                       ("admin_getFinanceStatement",)),
     "finance_receipt": DocumentKind("MKB", "Kurum cari", "makbuz", ("admin_getReceipt",)),
-    # 0.5.19 (Akademi README §14 madde 87): iade makbuzu ve ödeme planı (kayıt sözleşmesi eki).
+    # Akademi README §14 madde 87 (ozellik/finans-belge): iade makbuzu ve ödeme planı (kayıt sözleşmesi eki).
     "finance_refund_receipt": DocumentKind("IAD", "Kurum cari", "iade-makbuzu", ("admin_getRefundReceipt",)),
     "finance_plan": DocumentKind("OPL", "Kurum cari", "odeme-plani", ("admin_getPlanAgreement",)),
     "book_request": DocumentKind("KTP", "Kitap", "kitap-talebi", ("admin_getBookRequest",)),

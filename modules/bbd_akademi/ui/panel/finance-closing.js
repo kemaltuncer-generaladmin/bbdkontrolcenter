@@ -10,7 +10,7 @@
 //     PARA HAREKETİ OTOMATİK DEĞİL: kayıt, kurumun elle yaptığı geri ödemeyi belgeler;
 //   · aylık tahsilat özeti (`admin_getFinanceMonthlyReport`, ay × yöntem);
 //   · muhasebeciye dışa aktarım (`admin_exportFinance`, Excel uyumlu CSV / XLSX).
-// Akademi README §14 madde 87 (KM 0.5.19):
+// Akademi README §14 madde 87 (ozellik/finans-belge):
 //   · ayrılmada OKUNAN SÜRE hesabı (`method: pro_rata`): öneri = ödenen − katılım
 //     süresi oranında hizmet bedeli − kurum kesintisi (Ayarlar → Kurum finansı);
 //     yönetici iade tutarını düzeltebilir, gerekçe zorunlu;
