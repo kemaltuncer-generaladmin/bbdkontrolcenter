@@ -45,7 +45,7 @@ const evaluation = (student, status) => ({ id: 'e1', student, period: { id: 'p1'
   autoMetrics: { planAdherencePercent: 81.5, questions: { count: 1240, previousCount: 900 }, accuracyPercent: 71.25,
     examTrend: { nets: [{ examId: 'x', name: 'LGS-1', date: '2026-09-20', totalNet: 61.5 }], lastNet: 61.5, deltaFromPrevious: 3 },
     attendance: { present: 40, absent: 2, late: 1, excused: 1, attendanceRatePercent: 95.45 },
-    homework: { assigned: 20, completed: 18, completionRatePercent: 90 } } });
+    homework: { assigned: 20, completed: 16, incomplete: 1, notDone: 2, reviewed: 12, completionRatePercent: 82.5 } } });
 const bellSlots = [
   ...['mon', 'tue', 'wed', 'thu', 'fri'].flatMap((day) => [
     { id: `${day}-1`, dayOfWeek: day, startTime: '09:00', endTime: '09:40', kind: 'lesson', order: 1 },
@@ -173,6 +173,9 @@ models.canteen_statement = d.canteenDoc(stu, { balanceMinor: 15000, debtMinor: 0
    { id: 't1', at: '2026-10-11T10:00:00Z', totalMinor: 3500, reversed: false, items: [{ name: 'Su', qty: 2 }, { name: 'Simit', qty: 1 }] }],
   { from: '2026-10-01', to: '2026-10-13' });
 out.models = models;
+// Akademi README §14 madde 85: öğretmen kontrolü sayılır; eski Akademi yeni sayaçları göndermez.
+out.tally = [d.homeworkTally({ assigned: 1250, completed: 1000, incomplete: 3, notDone: 0 }),
+  d.homeworkTally({ assigned: 5, completed: 5 }), d.homeworkTally(null)];
 console.log(JSON.stringify(out));
 """
 
@@ -257,6 +260,12 @@ def test_karne(result: dict[str, Any]) -> None:
     bulk = result["models"]["report_card_bulk"]["document"]
     assert bulk["title"] == "8-A karneleri" and len(bulk["parts"]) == 2
     assert bulk["parts"][1]["watermark"] == "Taslak"
+    # ödev: öğretmen kontrolü sayılır (Akademi README §14 madde 85; uygulamayla aynı metin)
+    assert {"label": "Ödev tamamlama", "value": "16 / 20 tamamlandı · 1 eksik · 2 yapmadı"} in tiles["items"]
+
+
+def test_odev_sayac_satiri(result: dict[str, Any]) -> None:
+    assert result["tally"] == ["1.000 / 1.250 tamamlandı · 3 eksik", "5 / 5 tamamlandı", "0 / 0 tamamlandı"]
 
 
 def test_deneme_belgeleri(result: dict[str, Any]) -> None:

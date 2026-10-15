@@ -40,6 +40,19 @@ export function num(value, decimals = 0) {
   return `${sign}${grouped}${fraction ? `,${fraction}` : ''}`;
 }
 
+/**
+ * Ödev sayaçları (Akademi README §14 madde 85: öğretmen kontrolü varsa o, yoksa beyan):
+ * "7 / 10 tamamlandı · 1 eksik · 2 yapmadı" — uygulama (Flutter `HomeworkLabels.tally`, React `homeworkTallyLine`)
+ * ile aynı metin. Eski Akademi yeni sayaçları göndermezse yalnız ilk parça.
+ */
+export function homeworkTally(homework) {
+  const hw = homework || {};
+  const parts = [`${num(hw.completed ?? 0)} / ${num(hw.assigned ?? 0)} tamamlandı`];
+  if (hw.incomplete) parts.push(`${num(hw.incomplete)} eksik`);
+  if (hw.notDone) parts.push(`${num(hw.notDone)} yapmadı`);
+  return parts.join(' · ');
+}
+
 /** Net / ortalama: en çok iki ondalık, gereksiz sıfır yok (12,5 · 12 · 12,25). */
 export function dec(value, max = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
@@ -193,7 +206,7 @@ export function reportCardPart(evaluation) {
   ];
   if (metrics.attendance) tiles.push({ label: 'Devam oranı', value: pct(metrics.attendance.attendanceRatePercent) });
   if (metrics.homework) {
-    tiles.push({ label: 'Ödev tamamlama', value: `${num(metrics.homework.completed)} / ${num(metrics.homework.assigned)}` });
+    tiles.push({ label: 'Ödev tamamlama', value: homeworkTally(metrics.homework) });
   }
   if (metrics.planAdherencePercent !== undefined && metrics.planAdherencePercent !== null) {
     tiles.push({ label: 'Plan uyumu', value: pct(metrics.planAdherencePercent) });

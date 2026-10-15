@@ -32,7 +32,7 @@ import { goalDialog } from './coaching-students.js';
 import { documentButtons } from './documents.js';
 import { studentCurriculumSet } from './curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';
-import { canteenDoc, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
+import { canteenDoc, homeworkTally, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
 
 // ------------------------------------------------------------- etiketler
 
@@ -689,8 +689,9 @@ function weeklyReport(ctx, row) {
       { label: 'Çözülen soru', value: num(study.questions),
         delta: change(study.questions, study.previousQuestions, `Önceki hafta ${num(study.previousQuestions)}`) },
       { label: 'Doğruluk', value: percent(study.accuracyPercent) },
+      // Akademi README §14 madde 85: öğretmen kontrolü sayılır (eksik 0,5, yapmadı 0).
       { label: 'Ödev', value: `${num(homework.completed)} / ${num(homework.assigned)}`,
-        title: `Tamamlama ${percent(homework.completionRatePercent)}` },
+        title: `${homeworkTally(homework)} · tamamlama ${percent(homework.completionRatePercent)}` },
       isSet(report.tabletSeconds) ? { label: 'Tablet', value: secondsText(report.tabletSeconds) } : null,
     ].filter(Boolean))];
     nodes.push(card('Yoklama', kv([
