@@ -17,14 +17,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
 from modules.bbd_akademi.backend.permission_map import ACADEMIC, CURRICULUM, VIEW, km_permissions
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 
-from harness import NodeMissing, run  # noqa: E402
+from harness import NodeMissing, run
 
 
 def _op(operation_id: str) -> Any:
