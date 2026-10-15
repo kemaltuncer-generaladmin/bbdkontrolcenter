@@ -4022,7 +4022,7 @@ OPERATIONS: tuple[Operation, ...] = (
         'GET',
         '/v1/students/{studentId}/curriculum',
         'students_getCurriculum',
-        ('progress.view',),
+        ('progress.view', 'students.view'),
         'read',
         features=('F-C1', 'F-C2', 'F-S3', 'F-P7'),
     ),

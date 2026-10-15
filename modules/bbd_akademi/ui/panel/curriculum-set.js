@@ -9,7 +9,9 @@
 //   değişince korunur. Sınıf müfredatı sınıfın üyelerine EKLENİR (yerine geçmez).
 //   Set DÖNEME bağlıdır (akademik yıl, 1 Eylül'de döner); geçmiş dönem salt okunurdur.
 //
-// Kaynak etiketleri: "Varsayılan", "Elle", "Sınıftan: 8-A". Yalnız sınıftan gelen öğe öğrencide
+// Kaynak etiketleri: "Otomatik" (Akademi README §14 madde 102; eskiden "Varsayılan"), "Elle", "Sınıftan: 8-A".
+// Otomatik müfredatın dayanağı KM seviyesi; KM öğrencide seviye yoksa ana sınıfın seviyesi ("sınıftan: 11-SAY").
+// Yalnız sınıftan gelen öğe öğrencide
 // çıkarılamaz (`removable: false`) — sınıf müfredatından ya da sınıftan çıkarılır.
 //
 // Hız (A14): set tek istekle okunur; program kataloğu önbellekli (`fetchPrograms`, 10 dk);
@@ -40,9 +42,9 @@ export function yearChoices(today) {
   });
 }
 
-/** Kaynak etiketi: "Varsayılan", "Elle", "Sınıftan: 8-A" (+ "önceki dönemden"). */
+/** Kaynak etiketi: "Otomatik", "Elle", "Sınıftan: 8-A" (+ "önceki dönemden"). */
 export function sourceText(source) {
-  const base = source?.kind === 'default' ? 'Varsayılan'
+  const base = source?.kind === 'default' ? 'Otomatik'
     : source?.kind === 'manual' ? 'Elle'
       : source?.kind === 'class' ? `Sınıftan: ${source.classGroup?.name || '—'}` : String(source?.kind || '');
   return source?.carriedFromYear ? `${base} · ${source.carriedFromYear} döneminden` : base;
@@ -56,11 +58,14 @@ export function levelProgramIds(programs, levelKey, have = new Set()) {
   return (group?.items || []).map((program) => program.id).filter((id) => !have.has(id)).slice(0, MAX_CHANGE);
 }
 
-function basisText(basis) {
+/** "11. sınıf · Sayısal · YKS", sınıftan geliyorsa "… (sınıftan: 11-SAY)"; seviye yoksa uyarı. Web / mobil aynı. */
+export function basisText(basis) {
   if (!basis) return '';
   const parts = [basis.gradeLevel !== null && basis.gradeLevel !== undefined ? gradeText(basis.gradeLevel) : null,
     TRACKS[basis.track] || null, basis.examTarget || null].filter(Boolean);
-  return parts.length ? parts.join(' · ') : 'seviye girilmemiş';
+  if (!parts.length) return 'seviye girilmemiş — otomatik müfredat yok (Öğrenciler → Sınıflar\'da sınıfına seviye girin)';
+  const from = basis.source === 'class' && basis.classGroup?.name ? ` (sınıftan: ${basis.classGroup.name})` : '';
+  return `${parts.join(' · ')}${from}`;
 }
 
 function todayIso() {
@@ -147,7 +152,7 @@ export function studentCurriculumSet(app, studentId, { onChanged } = {}) {
     adder = null;
     const writable = Boolean(set?.current);
     const head = h('div', 'ak-inline ak-curset-head');
-    head.append(h('span', 'ak-muted', `Varsayılanın dayanağı (KM): ${basisText(set?.basis)}`));
+    head.append(h('span', 'ak-muted', `Otomatik müfredatın dayanağı: ${basisText(set?.basis)}`));
     if (set?.customized) head.append(badge('Elle değiştirildi', 'info'));
     const out = [head];
     if (!writable) out.push(alertBox('Geçmiş dönem — salt okunur. Konu ilerlemesi silinmez.', 'info'));

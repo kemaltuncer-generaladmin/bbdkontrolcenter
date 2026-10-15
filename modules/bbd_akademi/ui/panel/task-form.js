@@ -31,12 +31,12 @@ import { problem } from './api.js';
 import { bookPicker } from './book-picker.js';
 import { T as BOOKS } from './book-picker-logic.js';
 import { DAY_LABEL, WEEKDAYS, clockInput, fileDrop, fmtDate, num, todayIst } from './common.js';
-import { programLabel, sortPrograms } from './curriculum-picker.js';
+import { PROGRAMS, programLabel, sortPrograms, targetQuery } from './curriculum-picker.js';
 import { PRIORITY, PROOF_PHOTO, clockText, pct } from './coaching-logic.js';
 import { videoCard, videoDialog } from './coaching-video.js';
 import {
-  CLOCK, FIELD_ORDER, TYPE_HINTS, TYPE_LABELS, autoTitle, filledOptional, intOf, minutesForVideo, rulesFor,
-  suggestQuestions, typesFor, validate,
+  CLOCK, FIELD_ORDER, TYPE_HINTS, TYPE_LABELS, autoTitle, coverageText, filledOptional, intOf, minutesForVideo, rulesFor,
+  suggestQuestions, targetPrograms, typesFor, validate,
 } from './task-form-logic.js';
 
 const MINUTE_CHIPS = [20, 30, 40, 60, 90];
@@ -77,11 +77,13 @@ function numberBox(value, label, { placeholder = '', max = 4 } = {}) {
  *   builder: koç kipinde `TaskBuilderContext` (raf, zayıf konular, son kullanılanlar)
  *   duration: şablon süresi (gün no üst sınırı)
  *   isNew: yeni görev mi (hızlı seçim yalnız yenide)
+ *   target: plan atamasında hedef (`() => ({classGroupIds, studentGroupIds, studentIds})`): konu seçici hedefin
+ *           müfredatını önce gösterir ("hepsinde" / "3/5 öğrencide"; Akademi README §14 madde 102)
  *   onSubmit(again): Enter → false, Shift+Enter → true
  * @returns {{node, value, check, showErrors, setForm, focusFirst, destroy}}
  */
 export function taskEditor(app, { mode = 'coach', form: initial, studentId = '', week = null, builder = null,
-  duration = null, isNew = true, originalDate = '', onSubmit } = {}) {
+  duration = null, isNew = true, originalDate = '', target = null, onSubmit } = {}) {
   loadStyles(import.meta.url, 'task-form.css');
   const coach = mode === 'coach';
   const patch = mode === 'patch';
@@ -304,7 +306,8 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
   field('title', 'Başlık', titleInput, { wide: true });
 
   // Ders + konu (paylaşılan).
-  const subject = subjectTopicField(app, { studentId: coach ? studentId : '', form, onChange: () => { touched.add('subject'); changed(); } });
+  const subject = subjectTopicField(app, { studentId: coach ? studentId : '', target: coach ? null : target, form,
+    onChange: () => { touched.add('subject'); changed(); } });
   disposers.push(() => subject.destroy());
   field('subject', 'Ders ve konu', subject.node, { wide: true });
 
@@ -696,7 +699,7 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
  * Öğrenci yoksa (kurum ataması): ders seçilince dersin programları okunur, arama onlarda.
  * Ünite ya da programın tamamı da seçilebilir (sözleşme: `topicId` program/ünite/konu).
  */
-export function subjectTopicField(app, { studentId = '', form, onChange }) {
+export function subjectTopicField(app, { studentId = '', target = null, form, onChange }) {
   const node = h('div', 'ak-tf-subject');
   const select = h('select', 'kit-select');
   select.setAttribute('aria-label', 'Ders');
@@ -718,7 +721,16 @@ export function subjectTopicField(app, { studentId = '', form, onChange }) {
   row.append(select, search);
   node.append(row, chosen);
 
-  const state = { subjects: [], studentSubjects: [], index: [], indexFor: null, loading: null, active: -1, results: [] };
+  const notice = h('small', 'ak-muted ak-tf-curriculum-note');
+  notice.hidden = true;
+  node.append(notice);
+
+  // Konu kaynağı (Akademi README §14 madde 102): koç kipinde ÖĞRENCİNİN müfredatı; öğrencinin müfredatı henüz
+  // bağlanmadıysa seçilen dersin bütün programları (boş kalmaz). Plan atamasında HEDEFİN müfredatı (sınıflar /
+  // gruplar / öğrenciler): programlar "hepsinde" / "3/5 öğrencide" etiketiyle, çok öğrencide olan önce.
+  const targetNow = () => (studentId ? {} : targetQuery(typeof target === 'function' ? target() : target));
+  const state = { subjects: [], studentSubjects: [], index: [], indexFor: null, loading: null, active: -1, results: [],
+    studentEmpty: false, ownLabel: studentId ? 'Öğrencinin dersleri' : 'Hedefin dersleri' };
 
   const option = (parent, value, label) => {
     const item = h('option', '', label);
@@ -732,7 +744,7 @@ export function subjectTopicField(app, { studentId = '', form, onChange }) {
     const known = new Set();
     if (state.studentSubjects.length) {
       const group = h('optgroup');
-      group.label = 'Öğrencinin dersleri';
+      group.label = state.ownLabel;
       for (const item of state.studentSubjects) { option(group, item.id, item.name); known.add(item.id); }
       select.append(group);
     }
@@ -761,10 +773,10 @@ export function subjectTopicField(app, { studentId = '', form, onChange }) {
   }
 
   // Arama dizini: [{id, name, path, subjectId, subjectName, kind}]
-  function addProgram(program, units, subjectRef) {
+  function addProgram(program, units, subjectRef, note = '') {
     const subjectId = subjectRef?.id || program.subject?.id || '';
     const subjectName = subjectRef?.name || program.subject?.name || '';
-    const label = programLabel(program) || program.title || '';
+    const label = `${programLabel(program) || program.title || ''}${note ? ` · ${note}` : ''}`;
     state.index.push({ id: program.id, name: `${label} (programın tamamı)`, path: '', subjectId, subjectName, kind: 'program' });
     for (const unit of [...(units || [])].filter((item) => !item.retired).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
       state.index.push({ id: unit.id, name: `${unit.title} (ünitenin tamamı)`, path: label, subjectId, subjectName, kind: 'unit' });
@@ -775,22 +787,72 @@ export function subjectTopicField(app, { studentId = '', form, onChange }) {
     }
   }
 
+  async function catalogPrograms(subjectId) {
+    const data = await app.api.getCached(PROGRAMS, { subject: subjectId }, { ttlMs: 10 * 60_000 });
+    return sortPrograms(data?.items || []).slice(0, 12);
+  }
+
+  async function addDetails(programs, noteOf = () => '') {
+    const details = await Promise.all(programs.map((program) => app.api.getCached(`${PROGRAMS}/${program.id}`,
+      undefined, { ttlMs: 10 * 60_000 }).catch(() => null)));
+    programs.forEach((program, i) => addProgram(program, details[i]?.units || [], program.subject, noteOf(program)));
+  }
+
+  function indexKey() {
+    if (studentId) return state.studentEmpty ? `s0:${form.subjectId}` : `s:${studentId}`;
+    const tq = targetNow();
+    if (Object.keys(tq).length) return `t:${JSON.stringify(tq)}:${form.subjectId}`;
+    return `p:${form.subjectId}`;
+  }
+
+  function paintNotice(text) {
+    notice.textContent = text;
+    notice.hidden = !text;
+  }
+
   async function ensureIndex() {
-    const key = studentId ? `s:${studentId}` : `p:${form.subjectId}`;
+    const key = indexKey();
     if (state.indexFor === key) return;
     if (state.loading?.key === key) { await state.loading.promise; return; }
     const run = async () => {
       state.index = [];
-      if (studentId) {
+      if (key.startsWith('s:')) {
         const data = await app.api.getCached(`/v1/students/${studentId}/curriculum`, { includeTopics: true },
           { ttlMs: 5 * 60_000 });
         for (const item of data?.programs || []) addProgram(item.program, item.units, item.program?.subject);
+        if (!(data?.programs || []).length) {
+          state.studentEmpty = true;
+          paintNotice('Öğrencinin müfredatı henüz bağlanmadı (Öğrenciler → Sınıflar\'da sınıfına seviye girin). '
+            + 'Konular seçilen dersin bütün programlarından gelir.');
+          if (form.subjectId) await addDetails(await catalogPrograms(form.subjectId));
+          state.indexFor = indexKey();
+          return;
+        }
+      } else if (key.startsWith('s0:')) {
+        if (form.subjectId) await addDetails(await catalogPrograms(form.subjectId));
+      } else if (key.startsWith('t:')) {
+        const tq = targetNow();
+        const data = await app.api.getCached(PROGRAMS, { ...tq, ...(form.subjectId ? { subject: form.subjectId } : {}) },
+          { ttlMs: 60_000 });
+        const total = data?.target?.studentCount || 0;
+        const programs = targetPrograms(data?.items || []).slice(0, 16);
+        if (programs.length) {
+          await addDetails(programs, (program) => coverageText(program.targetStudentCount, total));
+          const all = programs.filter((program) => (program.targetStudentCount ?? 0) >= total && total > 0).length;
+          paintNotice(total > 1 ? `Hedefin müfredatı: ${total} öğrenci · ${all} program hepsinde, `
+            + `${programs.length - all} program bir kısmında.` : '');
+        } else {
+          paintNotice('Hedefin müfredatı bulunamadı; konular seçilen dersin bütün programlarından gelir.');
+          if (form.subjectId) await addDetails(await catalogPrograms(form.subjectId));
+        }
+        if (!form.subjectId) {
+          const seen = new Map();
+          for (const item of state.index) if (item.subjectId && !seen.has(item.subjectId)) seen.set(item.subjectId, item.subjectName);
+          state.studentSubjects = [...seen].map(([idValue, name]) => ({ id: idValue, name }));
+          paintSelect();
+        }
       } else if (form.subjectId) {
-        const data = await app.api.getCached('/v1/admin/curricula/programs', { subject: form.subjectId }, { ttlMs: 10 * 60_000 });
-        const programs = sortPrograms(data?.items || []).slice(0, 12);
-        const details = await Promise.all(programs.map((program) => app.api.getCached(`/v1/admin/curricula/programs/${program.id}`,
-          undefined, { ttlMs: 10 * 60_000 }).catch(() => null)));
-        programs.forEach((program, i) => addProgram(program, details[i]?.units || [], program.subject));
+        await addDetails(await catalogPrograms(form.subjectId));
       }
       state.indexFor = key;
     };
@@ -804,8 +866,8 @@ export function subjectTopicField(app, { studentId = '', form, onChange }) {
     list.replaceChildren();
     state.active = -1;
     if (!needle) { list.hidden = true; return; }
-    const pool = state.index.filter((item) => !form.subjectId || !studentId || item.subjectId === form.subjectId
-      || !state.studentSubjects.some((subjectItem) => subjectItem.id === form.subjectId));
+    const pool = state.index.filter((item) => !form.subjectId || item.subjectId === form.subjectId
+      || (studentId && !state.studentSubjects.some((subjectItem) => subjectItem.id === form.subjectId)));
     const words = needle.split(/\s+/).filter(Boolean);
     state.results = pool.filter((item) => {
       const hay = fold(`${item.name} ${item.path} ${item.subjectName}`);
@@ -886,11 +948,13 @@ export function subjectTopicField(app, { studentId = '', form, onChange }) {
 
   (async () => {
     state.subjects = await app.lookups.subjects().catch(() => []);
-    if (studentId && app.can?.('students_getCurriculum') !== false) {
+    if ((studentId && app.can?.('students_getCurriculum') !== false) || Object.keys(targetNow()).length) {
       try {
         await ensureIndex();
         const seen = new Map();
-        for (const item of state.index) if (item.subjectId && !seen.has(item.subjectId)) seen.set(item.subjectId, item.subjectName);
+        if (!state.studentEmpty) {
+          for (const item of state.index) if (item.subjectId && !seen.has(item.subjectId)) seen.set(item.subjectId, item.subjectName);
+        }
         state.studentSubjects = [...seen].map(([idValue, name]) => ({ id: idValue, name }));
       } catch {
         state.studentSubjects = [];

@@ -75,10 +75,10 @@ permissions:
     description: "Akademi ekranlarını görüntüleme: panel, öğrencilerin akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme sonuçları, kitap talepleri."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.academic
-    description: "Ders programı ve zil dilimleri, etüt ve tek seferlik ders, ödev, dönem, kurum takvimi, sınıf grubu ve çalışma grubu, hedef önerisi."
+    description: "Ders programı ve zil dilimleri, etüt ve tek seferlik ders, ödev, dönem, kurum takvimi, sınıf grubu ve çalışma grubu, öğrencinin ve sınıfın müfredat seti (atama), hedef önerisi."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.curriculum
-    description: "Müfredat: kuruma özel ünite/konu ekleme, program istisnaları (öğrenci veya sınıf bazında)."
+    description: "Müfredat kataloğu: kuruma özel program/ünite/konu ekleme, program istisna kuralları (toplu). Öğrenciye / sınıfa müfredat ATAMAK akademik iştir (bbd_akademi.academic)."
     default_roles: [admin]
   - key: bbd_akademi.resources
     description: "Kaynaklar: kurum kaynağı ekleme, içindekiler ve konu eşlemesi, kaynak paketleri ve otomatik atama, kaynak atama."
