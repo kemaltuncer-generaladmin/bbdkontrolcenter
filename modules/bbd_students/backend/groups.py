@@ -725,18 +725,10 @@ class GroupService:
             if live is not None and int(live["n"]) >= GROUP_MAX:
                 raise GroupError(f"En çok {GROUP_MAX} canlı grup olabilir.", status=409,
                                  code="group_limit")
-            group_id = str(uuid.uuid4())
             stamp = _now()
-            level_columns = level or {"grade_level": None, "track": None, "exam_target": None}
-            await self._store.execute(
-                f"INSERT INTO {self._groups} (id, name, name_fold, call_name, kind, note, "
-                f"archived_at, created_at, created_by, updated_at, updated_by, revision, "
-                f"grade_level, track, exam_target, academic_year) "
-                f"VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (group_id, name, fold(name), call_name, kind, note, stamp, actor, stamp,
-                 actor, revision, level_columns["grade_level"], level_columns["track"],
-                 level_columns["exam_target"], year),
-            )
+            group_id = await self._insert_group(name=name, kind=kind, call_name=call_name,
+                                                note=note, level=level, year=year, actor=actor,
+                                                revision=revision, stamp=stamp)
             for student in students:
                 await self._insert_member(group_id, student, start, None, reason=reason,
                                           actor=actor, revision=revision, stamp=stamp)
@@ -1015,27 +1007,8 @@ class GroupService:
             if fold(str(confirm_name or "")) != fold(str(row["name"])):
                 raise GroupError("Onay için sınıfın adını aynen yazın.", status=422,
                                  code="confirm_mismatch", details={"field": "confirmName"})
-            students = await self._group_students(group_id)
-            counted = await self._store.fetch_one(
-                f"SELECT COUNT(*) AS n FROM {self._members} WHERE group_id = ?",
-                (str(group_id),))
-            member_rows = int((counted or {}).get("n") or 0)
-            stamp = _now()
-            await self._store.execute(
-                f"DELETE FROM {self._members} WHERE group_id = ?", (str(group_id),))
-            await self._store.execute(
-                f"DELETE FROM {self._groups} WHERE id = ?", (str(group_id),))
-            await self._store.execute(
-                f"INSERT INTO {self._tombstones} (id, name, deleted_at, deleted_by, reason, "
-                f"member_rows, revision) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (str(group_id), str(row["name"]), stamp, actor[:160], why, member_rows,
-                 revision))
-            await self._write_audit(
-                actor=actor, action="delete", group_id=str(group_id), revision=revision,
-                detail={"name": str(row["name"]), "reason": why, "memberRows": member_rows,
-                        "students": len(students),
-                        "legacyClassName": str(row.get("legacy_class_name") or "") or None,
-                        "academicYear": str(row.get("academic_year") or "") or None})
+            students, member_rows = await self._purge_in(row, reason=why, actor=actor,
+                                                         revision=revision)
             await self._touched_students(students)
             await self._emit(revision)
         await self._changed(revision)
@@ -1050,6 +1023,33 @@ class GroupService:
         return {"deleted": True, "id": str(group_id), "name": str(row["name"]),
                 "removedMemberships": member_rows, "students": len(students),
                 "revision": revision}
+
+    async def _purge_in(self, row: dict[str, Any], *, reason: str, actor: str, revision: int,
+                        action: str = "delete") -> tuple[list[str], int]:
+        """Sınıf satırını ve üyeliklerini siler, kimliği mezar taşına yazar — AÇIK İŞLEMDE.
+
+        Ön koşullar çağırandadır (`delete`: arşivde + ad + gerekçe; dönem geçişini geri
+        alma: geçişin açtığı sınıf). Üyeliği olan öğrencileri ve silinen satır sayısını döner.
+        """
+        group_id = str(row["id"])
+        students = await self._group_students(group_id)
+        counted = await self._store.fetch_one(
+            f"SELECT COUNT(*) AS n FROM {self._members} WHERE group_id = ?", (group_id,))
+        member_rows = int((counted or {}).get("n") or 0)
+        stamp = _now()
+        await self._store.execute(f"DELETE FROM {self._members} WHERE group_id = ?", (group_id,))
+        await self._store.execute(f"DELETE FROM {self._groups} WHERE id = ?", (group_id,))
+        await self._store.execute(
+            f"INSERT INTO {self._tombstones} (id, name, deleted_at, deleted_by, reason, "
+            f"member_rows, revision) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (group_id, str(row["name"]), stamp, actor[:160], reason, member_rows, revision))
+        await self._write_audit(
+            actor=actor, action=action, group_id=group_id, revision=revision,
+            detail={"name": str(row["name"]), "reason": reason, "memberRows": member_rows,
+                    "students": len(students),
+                    "legacyClassName": str(row.get("legacy_class_name") or "") or None,
+                    "academicYear": str(row.get("academic_year") or "") or None})
+        return students, member_rows
 
     async def add_members(self, group_id: str, student_ids: Ids, *,
                           valid_from: Any = None, reason: Any = "",
@@ -1344,15 +1344,38 @@ class GroupService:
 
     async def _insert_member(self, group_id: str, student: str, start: date, end: date | None,
                              *, reason: str, actor: str, revision: int, stamp: str,
-                             origin: str = ORIGIN_GROUP) -> None:
+                             origin: str = ORIGIN_GROUP) -> str:
+        """Üyelik satırı ekler; satırın kimliğini döner (dönem geçişi geri alma için)."""
+        member_id = str(uuid.uuid4())
         await self._store.execute(
             f"INSERT INTO {self._members} (id, group_id, kantin_id, valid_from, valid_to, "
             f"reason, created_at, created_by, updated_at, updated_by, revision, origin) "
             f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), group_id, student, start.isoformat(),
+            (member_id, group_id, student, start.isoformat(),
              end.isoformat() if end else "", reason, stamp, actor, stamp, actor, revision,
              origin),
         )
+        return member_id
+
+    async def _insert_group(self, *, name: str, kind: str, call_name: str, note: str,
+                            level: dict[str, Any] | None, year: str, actor: str, revision: int,
+                            stamp: str) -> str:
+        """Canlı sınıf satırı ekler (kurallar çağıranda denetlenir); kimliği döner.
+
+        `create` ve dönem geçişi (`academic_year.YearRollover`) aynı yoldan yazar.
+        """
+        group_id = str(uuid.uuid4())
+        columns = level or {"grade_level": None, "track": None, "exam_target": None}
+        await self._store.execute(
+            f"INSERT INTO {self._groups} (id, name, name_fold, call_name, kind, note, "
+            f"archived_at, created_at, created_by, updated_at, updated_by, revision, "
+            f"grade_level, track, exam_target, academic_year) "
+            f"VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (group_id, name, fold(name), call_name, kind, note, stamp, actor, stamp,
+             actor, revision, columns["grade_level"], columns["track"],
+             columns["exam_target"], year),
+        )
+        return group_id
 
     async def _touch_group(self, group_id: str, *, actor: str, revision: int,
                            extra: dict[str, Any] | None = None) -> None:

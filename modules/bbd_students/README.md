@@ -139,6 +139,33 @@ isteğe bağlı anons adı (`callName`).
   düzeltme, "Sınıftan grup oluştur") ve öğrenci kartında "Gruplar" bölümü.
   Yazma `bbd_students.groups`, okuma `bbd_students.view` ister.
 
+### Dönem geçişi (yıl sonu sihirbazı — iş 37 / İ4, göç 013)
+
+Ekran: Öğrenciler → Sınıflar → **"Dönem geçişi"** (derin bağlantı `view: 'rollover'`).
+Kaynak dönemin canlı sınıflarının her birine işlem seçilir: **Üst seviyeye taşı**
+(yeni dönemde ad önerisiyle 7-A → 8-A, seviye +1; öğrenciler geçiş gününden üye),
+**Aynen kopyala**, **Mezun et** (öğrenciler "mezun" gerekçesiyle pasifleşir; istisna
+işaretlenebilir), **Yalnız arşivle**, **Dokunma**. Varsayılan: seviyeli sınıf → taşı,
+8./12./mezun → mezun et, seviyesiz ve özel ders → arşivle. Yeni ad yeni dönemde zaten
+açılmış sınıfa denk gelirse öğrenciler ona eklenir; başka canlı sınıfla çakışma sorundur.
+
+- **Önizleme** yazmaz: yeni/arşivlenecek sınıflar, taşınan öğrenciler, mezunlar,
+  seviyesi değişenler (sınıf şablonundan; seviyesiz sınıftakilerde kendi seviyesi +1 —
+  yalnız kaynak dönemin sınıflarındaki öğrenciler), sorunlar ve engel sebebi.
+- **Uygula** PIN ister; sınıf tarafı tek işlem/tek revizyon. Eski üyelikler
+  `min(bugün, geçiş günü − 1)` günü kapanır. Geçiş günü bugünden 14 gün geri – 60 gün
+  ileri ve hedef dönemin 1 Eylül'ünden en çok 92 gün önce olabilir (ekimde yanlışlıkla yıl
+  atlanmasın); önizleme her zaman serbest. Mezun pasifleştiren plan `bbd_students.lifecycle`
+  da ister.
+- **Geri al** (yalnız son geçiş, PIN): açılan sınıflar kalıcı silinir (Akademi'ye mezar taşı),
+  eski sınıflar ve üyelikler döner, seviyeler (sonradan elle değişmediyse) geri yazılır,
+  geçişin pasifleştirdiği mezunlar etkinleşir.
+- Ders programı ve sınıf müfredatı Akademi'dedir: **Akademi → Ders programı → "Dönem geçişi
+  kopyası"** son geçişin eşlemesiyle eski sınıfın programını/müfredatını yeni sınıfa aktarır.
+- Uçlar: `GET /groups/rollover` (view), `POST /groups/rollover/preview`, `POST /groups/rollover`
+  (PIN), `GET /groups/rollover/{id}`, `POST /groups/rollover/{id}/undo` (PIN) — yazma
+  `bbd_students.groups`. Kural: `backend/academic_year.py` → `YearRollover`.
+
 ## Seviye / alan / hedef sınav — SINIF taşır (göç 008, 0.5.5, 13.10.2026)
 
 Kullanıcı kararı: "Sınıf ve seviye farkı garip, teke indirelim." Seviye
