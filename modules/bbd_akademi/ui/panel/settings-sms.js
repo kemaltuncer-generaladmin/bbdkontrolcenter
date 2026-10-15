@@ -10,12 +10,85 @@
 //    günlük (10) kod sayacını Akademi'de ve KM geçidinde sıfırlar; gerekçe
 //    zorunlu, Akademi denetim kaydına yazılır. Kurumun günlük SMS bütçesi
 //    değişmez.
+//  · Kurum SMS'i (madde 88, V8 / İ2 / İ6): Kontrol Merkezi'nin günlük SMS
+//    bütçesi (son 24 saatte kullanılan / kalan, telefon başına günlük sınır) ve
+//    amaç başına son 24 saat (duyuru, ödeme hatırlatması, deneme sonucu);
+//    kurum SMS ayarları (imza, ödeme hatırlatması ve deneme sonucu SMS'i —
+//    varsayılan kapalı; `admin_patchSettings`); kurum SMS kuyruğu
+//    (`admin_listSmsOutbox`: veli, öğrenci, maskeli telefon, durum, neden).
+//    Bütçenin kendisi Mobil Geçit modül ayarıdır (`announcement_sms`).
 
 import { h } from '../../ui-kit/kit.js';
 import { alertBox, kpiRow } from '../../ui-kit/layout.js';
+import { chipRow } from '../../ui-kit/layout.js';
 import {
-  actionButton, fmtDateTime, formDialog, loader, pagedList, statusBadge, toolbar,
+  actionButton, fmtDateTime, formDialog, loader, num, pagedList, statusBadge, toolbar,
 } from './common.js';
+import { settingsTab } from './settings.js';
+
+const USAGE = { announcement: 'Duyuru', payment_reminder: 'Ödeme hatırlatması', exam_result: 'Deneme sonucu' };
+const OUTBOX_STATUS = { queued: ['Bekliyor', 'info'], sent: ['Gönderildi', 'good'], failed: ['Başarısız', 'bad'],
+  skipped: ['Atlandı', 'dim'] };
+const AUDIENCE = [
+  { value: 'non_app', label: 'Yalnız uygulamayı kullanmayan veliler' },
+  { value: 'all', label: 'Bütün veliler' },
+];
+
+/** İmza alanı: boş = kurum kısa adı (null), "yok" = imza eklenmez (""). */
+export const signatureFrom = (value) => (value === '' ? 'yok' : value ?? '');
+export const signatureTo = (text) => {
+  const value = String(text ?? '').trim();
+  if (value.toLocaleLowerCase('tr-TR') === 'yok') return '';
+  return value || null;
+};
+
+/** Kurum SMS ayarları (README §14 madde 88): `TenantSettings.sms`. */
+export const SMS_SETTINGS_GROUPS = [
+  { title: 'Kurum SMS\'i', hint: 'Duyuru, ödeme hatırlatması ve deneme sonucu SMS\'leri Kontrol Merkezi üzerinden '
+      + 'kantinin Netgsm hattıyla gider; günlük bütçe ortaktır. Sessiz saatte bekler.', fields: [
+    { key: 'signature', path: ['sms', 'signature'], label: 'SMS imzası', maxLength: 30, from: signatureFrom,
+      to: signatureTo, placeholder: 'Boş: kurum kısa adı',
+      hint: 'Metnin sonuna “ - imza” olarak eklenir; veli SMS\'in kimden geldiğini buradan anlar. İmza istemiyorsanız “yok” yazın.' },
+  ] },
+  { title: 'Ödeme hatırlatması SMS\'i', className: 'ak-money-finance',
+    hint: 'Yalnız kurum carisi (kantin ayrı). Vade hatırlatması her gün 09:00\'da; gecikme hatırlatması 09:00 işi ve '
+      + '“Gecikenlere hatırlat” ile — öğrenci başına günde en çok bir SMS, yalnız ödeme yetkili veliye.', fields: [
+    { key: 'payEnabled', path: ['sms', 'paymentReminders', 'enabled'], type: 'checkbox', to: Boolean,
+      label: 'Ödeme hatırlatmasını SMS ile de gönder' },
+    { key: 'payAudience', path: ['sms', 'paymentReminders', 'audience'], label: 'Kime', type: 'select',
+      options: AUDIENCE, from: (value) => value || 'non_app' },
+    { key: 'payDue', path: ['sms', 'paymentReminders', 'dueSoon'], type: 'checkbox', to: Boolean,
+      from: (value) => value ?? true, label: 'Vadesi yaklaşan taksit' },
+    { key: 'payOverdue', path: ['sms', 'paymentReminders', 'overdue'], type: 'checkbox', to: Boolean,
+      from: (value) => value ?? true, label: 'Geciken ödeme' },
+  ] },
+  { title: 'Deneme sonucu SMS\'i', hint: 'Deneme bildirimle yayımlanınca veliye kısa özet: toplam net ve kurum sırası.',
+    fields: [
+      { key: 'examEnabled', path: ['sms', 'examResults', 'enabled'], type: 'checkbox', to: Boolean,
+        label: 'Deneme sonucunu veliye SMS ile de gönder' },
+      { key: 'examAudience', path: ['sms', 'examResults', 'audience'], label: 'Kime', type: 'select',
+        options: AUDIENCE, from: (value) => value || 'non_app' },
+    ] },
+];
+
+/** Bütçe kartı satırları: KM bütçesi (eski KM'de yok) + amaç başına son 24 saat. */
+export function budgetRows(data) {
+  const budget = data?.textBudget;
+  const kpis = budget ? [
+    { label: 'Günlük SMS bütçesi (24 sa)', value: `${num(budget.used)} / ${num(budget.dailyBudget)}`,
+      tone: budget.remaining <= 0 ? 'bad' : budget.remaining < budget.dailyBudget * 0.1 ? 'warn' : '' },
+    { label: 'Kalan', value: num(budget.remaining), tone: budget.remaining <= 0 ? 'bad' : '' },
+    { label: 'Numara başına günde', value: num(budget.perPhonePerDay) },
+  ] : [];
+  for (const row of data?.usage || []) {
+    const extra = [row.failed ? `${num(row.failed)} başarısız` : '', row.waiting ? `${num(row.waiting)} bekliyor` : '']
+      .filter(Boolean).join(' · ');
+    kpis.push({ label: `${USAGE[row.purpose] || row.purpose} (24 sa)`,
+      value: `${num(row.sent)} veli · ${num(row.segments)} SMS${extra ? ` · ${extra}` : ''}`,
+      tone: row.failed ? 'warn' : '' });
+  }
+  return { kpis, enabled: budget ? budget.enabled : null, known: Boolean(budget) };
+}
 
 const DELIVERY = {
   delivered: ['Teslim edildi', 'good'],
@@ -61,6 +134,62 @@ export function smsTab(app) {
     return parts;
   }, { rows: 1, columns: 7 });
   node.append(health.node);
+
+  const budget = loader(() => app.api.get('/v1/admin/sms/health'), (data) => {
+    const rows = budgetRows(data);
+    const parts = [h('h3', 'kit-card-title', 'Kurum SMS\'i: bütçe ve son 24 saat'), kpiRow(rows.kpis)];
+    if (!rows.known) {
+      parts.push(alertBox('Kontrol Merkezi bu sürümde günlük SMS bütçesini bildirmiyor; bütçe dolarsa SMS\'ler '
+        + 'kuyrukta bekler ve bütçe açıldıkça gönderilir.', 'info'));
+    } else if (rows.enabled === false) {
+      parts.push(alertBox('Kurum SMS\'i Kontrol Merkezi\'nde kapalı (Mobil Geçit › announcement_sms). Duyuru ve '
+        + 'hatırlatma SMS\'leri bekler.', 'warn'));
+    } else if (data.textBudget.remaining <= 0) {
+      parts.push(alertBox('Günlük SMS bütçesi doldu; bekleyen SMS\'ler bütçe açıldıkça gönderilir. Bütçe Mobil '
+        + 'Geçit modül ayarındadır (announcement_sms.daily_budget).', 'warn'));
+    }
+    return parts;
+  }, { rows: 1, columns: 6 });
+  node.append(budget.node);
+
+  const smsSettings = settingsTab(app, {
+    opId: 'admin_patchSettings',
+    groups: SMS_SETTINGS_GROUPS,
+    read: () => app.api.getCached('/v1/admin/settings'),
+    write: async (body) => {
+      const next = await app.api.patch('/v1/admin/settings', body);
+      app.api.invalidate('/v1/admin/settings');
+      return next;
+    },
+    saved: 'SMS ayarları kaydedildi.',
+  });
+  node.append(smsSettings.node);
+
+  let purpose = '';
+  const chips = chipRow([
+    { key: 'payment_reminder', label: 'Ödeme hatırlatması' }, { key: 'exam_result', label: 'Deneme sonucu' },
+  ], null, (key) => { purpose = key || ''; outbox.reload(); });
+  const outbox = pagedList({
+    app,
+    path: '/v1/admin/sms/outbox',
+    limit: 50,
+    query: () => ({ purpose: purpose || undefined }),
+    columns: [
+      { key: 'createdAt', label: 'Zaman', width: '130px', cell: (row) => fmtDateTime(row.createdAt) },
+      { key: 'purpose', label: 'Amaç', width: '150px', cell: (row) => USAGE[row.purpose] || row.purpose },
+      { key: 'guardianName', label: 'Veli', width: 'minmax(0, 1fr)', cell: (row) => {
+        const cell = h('div', 'ak-cell-stack');
+        cell.append(h('span', '', row.guardianName || '—'), h('small', '', row.studentName || ''));
+        return cell;
+      } },
+      { key: 'phoneMasked', label: 'Telefon', width: '150px', cell: (row) => row.phoneMasked || '—' },
+      { key: 'status', label: 'Durum', width: '110px', cell: (row) => statusBadge(OUTBOX_STATUS, row.status) },
+      { key: 'reason', label: 'Neden', width: 'minmax(0, 1fr)', cell: (row) => row.reasonLabel
+        || (row.sentAt ? fmtDateTime(row.sentAt) : '—') },
+    ],
+    empty: { title: 'Kurum SMS\'i yok', text: 'Ödeme hatırlatması ve deneme sonucu SMS\'leri (açıksa) burada görünür.' },
+  });
+  node.append(h('h3', 'kit-card-title', 'Kurum SMS kuyruğu (son 90 gün)'), chips.node, outbox.node);
 
   const list = pagedList({
     app,
@@ -111,7 +240,7 @@ export function smsTab(app) {
 
   return {
     node,
-    reload: () => { health.reload(); list.reload(); },
-    destroy() { list.destroy(); },
+    reload: () => { health.reload(); budget.reload(); smsSettings.reload(); outbox.reload(); list.reload(); },
+    destroy() { list.destroy(); outbox.destroy(); smsSettings.destroy(); },
   };
 }

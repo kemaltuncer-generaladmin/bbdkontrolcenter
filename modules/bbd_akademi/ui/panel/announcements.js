@@ -8,13 +8,18 @@
 // "SMS olarak da gönder" (bbd-akademi README §14 madde 81): yalnız velilere, varsayılan
 // kapalı; karakter sayacı, "yalnız uygulamayı kullanmayan velilere", alıcı ve SMS adedi
 // önizlemesi (`admin_previewAnnouncementSms`). Metin SMS'te ASCII'ye indirilir.
+// Madde 88 (V8): metnin sonuna kurum imzası (" - BBD") eklenir — sayaç imzayı sayar; önizleme
+// KM'nin günlük SMS bütçesini gösterir; ayrıntıda teslim raporu (bekleme nedeni / anı, alıcı
+// listesi `admin_listAnnouncementSmsRecipients`, Excel uyumlu CSV).
 
 import { button, h, loadStyles, percent } from '../../ui-kit/kit.js';
 import { badge, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
+import { saveBlob } from './api.js';
 import {
   actionButton, confirmAction, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
   pagedList, runAction, sectionHead, statusBadge, studentPicker, todayIst,
 } from './common.js';
+import { csvText } from './sessions.js';
 
 const STATUS = { draft: ['Taslak', 'dim'], scheduled: ['Zamanlandı', 'info'],
   published: ['Yayında', 'good'], archived: ['Arşiv', 'dim'] };
@@ -57,13 +62,43 @@ export function smsFromAnnouncement(title, bodyMarkdown) {
   return text.trim();
 }
 
-function smsDeliveryText(delivery) {
+// Teslim raporu (madde 88): bekleme nedenleri ve alıcı durumları — Akademi `sms_outbox.REASON_LABELS` ile aynı dil.
+export const SMS_DEFERRED = {
+  quiet_hours: 'sessiz saat',
+  sms_budget_exceeded: 'günlük SMS bütçesi doldu',
+  sms_phone_limit: 'numaranın günlük sınırı doldu',
+  sms_disabled: 'SMS Kontrol Merkezi\'nde kapalı',
+};
+export const SMS_STATUS = { queued: ['Bekliyor', 'info'], sent: ['Gönderildi', 'good'],
+  failed: ['Başarısız', 'bad'], skipped: ['Atlandı', 'dim'] };
+
+export function smsDeliveryText(delivery) {
   if (!delivery) return '—';
   const parts = [`${num(delivery.sent)} gönderildi`];
   if (delivery.queued) parts.push(`${num(delivery.queued)} bekliyor`);
   if (delivery.failed) parts.push(`${num(delivery.failed)} başarısız`);
   if (delivery.skipped) parts.push(`${num(delivery.skipped)} atlandı`);
-  return `${parts.join(' · ')} (${num(delivery.recipients)} veli)`;
+  let text = `${parts.join(' · ')} (${num(delivery.recipients)} veli`;
+  if (delivery.sentSegments) text += `, ${num(delivery.sentSegments)} SMS`;
+  return `${text})`;
+}
+
+/** "12 veli bekliyor: günlük SMS bütçesi doldu · 15.10 14:00'te yeniden denenir" (bekleyen yoksa boş). */
+export function smsDeferredText(delivery) {
+  if (!delivery?.deferred || !delivery.deferredReason) return '';
+  const why = SMS_DEFERRED[delivery.deferredReason] || 'bekliyor';
+  const at = delivery.deferredUntil ? ` · ${fmtDateTime(delivery.deferredUntil)} sonrası gönderilir` : '';
+  return `${num(delivery.deferred)} veli bekliyor: ${why}${at}`;
+}
+
+/** Teslim raporu CSV'si (Excel, Türkçe): veli, öğrenciler, maskeli telefon, durum, neden, deneme, SMS, zaman. */
+export function smsRecipientsCsv(items) {
+  const header = ['Veli', 'Öğrenci', 'Telefon', 'Durum', 'Neden', 'Deneme', 'SMS', 'Gönderim', 'Yeniden deneme'];
+  const rows = (items || []).map((row) => [row.guardianName, (row.studentNames || []).join(', '),
+    row.phoneMasked || '', (SMS_STATUS[row.status] || [row.status])[0], row.reasonLabel || '',
+    Number(row.attempts || 0), Number(row.segments || 0), row.sentAt ? fmtDateTime(row.sentAt) : '',
+    row.nextAttemptAt ? fmtDateTime(row.nextAttemptAt) : '']);
+  return csvText(header, rows);
 }
 
 export function section(app) {
@@ -129,6 +164,8 @@ function audienceText(audience) {
 
 /** Oluştur / düzenle. Hedefleme: kapsam seçimine göre sınıf / grup / öğrenci. */
 async function edit(app, current, onDone) {
+  // Son önizlemedeki kurum imzası (" - BBD"); sayaç ve doğrulama metin + imzayı sayar (madde 88).
+  let smsSignature = '';
   const [classes, groups] = await Promise.all([
     app.lookups.classGroups().catch(() => []),
     app.lookups.studentGroups().catch(() => []),
@@ -189,8 +226,10 @@ async function edit(app, current, onDone) {
     let seq = 0;
     const paintCounter = () => {
       const folded = smsFold(area.value);
-      const units = smsUnits(folded);
-      counter.textContent = `${num(units)}/${num(SMS_MAX)} karakter · ${num(smsSegments(folded))} SMS`;
+      const full = folded ? folded + smsSignature : '';
+      const units = smsUnits(full);
+      counter.textContent = `${num(units)}/${num(SMS_MAX)} karakter · ${num(smsSegments(full))} SMS`
+        + (folded && smsSignature ? ` (imza "${smsSignature.trim()}" dahil)` : '');
       counter.classList.toggle('over', units > SMS_MAX);
     };
     const load = async () => {
@@ -205,12 +244,24 @@ async function edit(app, current, onDone) {
         const out = await app.api.post('/v1/admin/announcements/sms-preview',
           { audience: audienceOf(draft), text: area.value, nonAppOnly: sms.nonAppOnly });
         if (mine !== seq) return;
+        smsSignature = out.signature || '';
+        paintCounter();
         const lines = [
           h('strong', '', `${num(out.recipients)} veliye SMS gidecek · toplam ${num(out.totalSegments)} SMS`),
           h('span', 'ak-muted', `Hedefteki veli: ${num(out.guardians)} · uygulamayı kullanan: ${num(out.appUsers)}`),
         ];
         if (out.smsRemaining !== null && out.smsRemaining !== undefined) {
           lines.push(h('span', 'ak-muted', `Netgsm paketinde kalan: ${num(out.smsRemaining)} SMS`));
+        }
+        if (out.budgetRemaining !== null && out.budgetRemaining !== undefined) {
+          const short = out.totalSegments > out.budgetRemaining;
+          lines.push(h('span', short ? 'ak-ann-warn' : 'ak-muted', short
+            ? `Kontrol Merkezi'nin günlük SMS bütçesinde ${num(out.budgetRemaining)} SMS kaldı; kalanlar bütçe `
+              + 'açıldıkça (24 saat içinde) gönderilir.'
+            : `Günlük SMS bütçesinde kalan: ${num(out.budgetRemaining)} SMS`));
+        }
+        if (out.signature) {
+          lines.push(h('span', 'ak-muted', `Metnin sonuna kurum imzası eklenir: "${out.signature.trim()}"`));
         }
         if (out.deferredUntil) {
           const at = new Date(out.deferredUntil).toLocaleTimeString('tr-TR',
@@ -315,7 +366,9 @@ async function edit(app, current, onDone) {
           if ((draft.recipients || 'all') === 'students') return 'SMS yalnız velilere gider; alıcılara veliler dahil olmalı.';
           const folded = smsFold(raw.text);
           if (!folded) return 'SMS metni boş olamaz.';
-          if (smsUnits(folded) > SMS_MAX) return `SMS metni en çok ${SMS_MAX} karakter (3 SMS) olabilir.`;
+          if (smsUnits(folded + smsSignature) > SMS_MAX) {
+            return `SMS metni${smsSignature ? ' kurum imzasıyla birlikte' : ''} en çok ${SMS_MAX} karakter (3 SMS) olabilir.`;
+          }
           return null;
         } },
     ],
@@ -381,7 +434,12 @@ function detail(app, id, { onChange } = {}) {
         ['Alıcı', item.sms.nonAppOnly ? 'Yalnız uygulamayı kullanmayan veliler' : 'Hedefteki bütün veliler'],
         ['Veli başına', `${num(item.sms.segmentsPerMessage)} SMS`],
         ['Gönderim', delivery ? smsDeliveryText(delivery) : 'Yayımlanınca gönderilir.'],
+        ...(smsDeferredText(delivery) ? [['Bekleyen', h('span', 'ak-ann-warn', smsDeferredText(delivery))]] : []),
       ])));
+      if (delivery) {
+        nodes.push(actionButton(app, 'admin_listAnnouncementSmsRecipients', 'SMS teslim raporu', {
+          onClick: () => smsReport(app, item) }));
+      }
     }
     if (stats) {
       nodes.push(card('Okunma', kpiRow([
@@ -424,3 +482,50 @@ function detail(app, id, { onChange } = {}) {
   }
 }
 
+
+/** Teslim raporu: veli başına durum (süzgeç), Türkçe neden, maskeli telefon; CSV (madde 88, V8). */
+function smsReport(app, item) {
+  const panel = openDrawer(app, { title: 'SMS teslim raporu', subtitle: item.title });
+  let status = '';
+  const path = `/v1/admin/announcements/${item.id}/sms-recipients`;
+  const chips = chipRow([
+    { key: 'failed', label: 'Başarısız' }, { key: 'queued', label: 'Bekleyen' },
+    { key: 'sent', label: 'Gönderilen' }, { key: 'skipped', label: 'Atlanan' },
+  ], null, (key) => { status = key || ''; list.reload(); });
+  const csv = button('CSV indir', { variant: 'ghost' });
+  csv.addEventListener('click', async () => {
+    csv.disabled = true;
+    try {
+      const items = await app.api.all(path, { status: status || undefined }, { limit: 100, max: 20000 });
+      saveBlob({ filename: `duyuru-sms-${item.id.slice(0, 8)}.csv`,
+        blob: new Blob([smsRecipientsCsv(items)], { type: 'text/csv;charset=utf-8' }) });
+      app.toast(`${num(items.length)} alıcı indirildi.`, 'good');
+    } catch {
+      app.toast('Alıcı listesi alınamadı.', 'bad');
+    } finally {
+      csv.disabled = false;
+    }
+  });
+  const list = pagedList({
+    app,
+    path,
+    limit: 50,
+    query: () => ({ status: status || undefined }),
+    columns: [
+      { key: 'guardianName', label: 'Veli', width: 'minmax(0, 1.4fr)', cell: (row) => {
+        const cell = h('div', 'ak-cell-stack');
+        cell.append(h('span', '', row.guardianName || '—'), h('small', '', (row.studentNames || []).join(', ')));
+        return cell;
+      } },
+      { key: 'phoneMasked', label: 'Telefon', width: '150px', cell: (row) => row.phoneMasked || '—' },
+      { key: 'status', label: 'Durum', width: '110px', cell: (row) => statusBadge(SMS_STATUS, row.status) },
+      { key: 'reason', label: 'Neden', width: 'minmax(0, 1.4fr)', cell: (row) => {
+        if (!row.reasonLabel) return row.sentAt ? fmtDateTime(row.sentAt) : '—';
+        return row.nextAttemptAt ? `${row.reasonLabel} · ${fmtDateTime(row.nextAttemptAt)} sonrası` : row.reasonLabel;
+      } },
+    ],
+    empty: { title: 'Bu durumda alıcı yok', text: 'Süzgeci değiştirin.' },
+  });
+  panel.body.append(chips.node, csv, list.node);
+  list.reload();
+}
