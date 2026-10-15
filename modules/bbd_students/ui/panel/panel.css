@@ -640,3 +640,29 @@
 .st-check-row { display: flex; gap: 8px; align-items: center; }
 .st-class-form { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px dashed #f59e0b;
   border-radius: 10px; }
+
+/* ------------------------------------------------ dönem geçişi (iş 37 / İ4) */
+.yr { overflow: hidden; }
+.yr-head { align-items: center; }
+.yr-title { font-size: 15px; font-weight: 600; }
+.yr-body { padding-top: 4px; }
+.yr-to { font-size: 13px; padding: 7px 0; }
+.yr-line { font-size: 12.5px; margin: 6px 0; }
+.yr-pairs { margin: 4px 0 8px 18px; padding: 0; font-size: 12px; color: var(--soft); }
+.yr-table { display: flex; flex-direction: column; margin-top: 6px; }
+.yr-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(150px, 0.9fr) minmax(170px, 1.2fr) minmax(150px, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.yr-row:last-child { border-bottom: none; }
+.yr-row-head { font-size: 11px; color: var(--soft); text-transform: uppercase; letter-spacing: 0.06em; padding-top: 0; }
+.yr-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.yr-cell .st-input { width: 100%; }
+.yr-bad { color: #b91c1c; font-size: 11.5px; }
+.yr-kpi { padding: 8px 0 4px; border: 0; background: none; }
+.yr-actions { padding: 4px 0 20px; }

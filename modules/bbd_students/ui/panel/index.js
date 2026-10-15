@@ -218,8 +218,10 @@ function createManager(root, options) {
 
   let mode = 'list';
   function setMode(wanted) {
-    // Eski "Gruplar" sekmesi ve derin bağlantısı tek "Sınıflar"a yönlenir.
-    const next = wanted === 'groups' ? 'classes' : wanted;
+    // Eski "Gruplar" sekmesi ve derin bağlantısı tek "Sınıflar"a yönlenir. `rollover`
+    // (iş 37): "Sınıflar" sekmesinde dönem geçişi sihirbazı açılır.
+    const rollover = wanted === 'rollover';
+    const next = wanted === 'groups' || rollover ? 'classes' : wanted;
     const changed = mode !== next;
     mode = next;
     // Gömülüyken sekme şeridi Akademi'nindir: içeriden sekme değişince (ör. "Sınıfların
@@ -238,7 +240,10 @@ function createManager(root, options) {
     }
     if (mode === 'classes') {
       if (groupsView === null) {
-        groupsView = mountGroups(nodes.groups, { api, can, students: () => students, dialogRoot: view, toast });
+        groupsView = mountGroups(nodes.groups, { api, can, students: () => students, dialogRoot: view, toast },
+          { rollover });
+      } else if (rollover) {
+        groupsView.openRollover();
       } else {
         groupsView.reload();
       }
@@ -970,7 +975,8 @@ function createManager(root, options) {
 
   // ------------------------------------------------------------- açılış
   setMode(options.payload?.view === 'groups' || options.payload?.tab === 'groups' ? 'groups'
-    : options.payload?.view === 'bulk' ? 'bulk' : 'list');
+    : options.payload?.view === 'rollover' ? 'rollover'
+      : options.payload?.view === 'bulk' ? 'bulk' : 'list');
   loadPermissions(api).then((set) => {
     permissions = set;
     return refresh();
@@ -993,8 +999,8 @@ function createManager(root, options) {
     groupsView?.destroy();
     root.replaceChildren();
   };
-  /** Gömülüyken sekmeyi Akademi seçer: `cleanup.setMode('list'|'bulk'|'groups')`. */
-  cleanup.setMode = (next) => { if (modeButtons[next]) setMode(next); };
+  /** Gömülüyken sekmeyi Akademi seçer: `cleanup.setMode('list'|'bulk'|'groups'|'rollover')`. */
+  cleanup.setMode = (next) => { if (modeButtons[next] || next === 'rollover') setMode(next); };
   return cleanup;
 }
 
