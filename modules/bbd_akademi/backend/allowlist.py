@@ -2721,6 +2721,14 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-A18', 'F-S16'),
     ),
     Operation(
+        'POST',
+        '/v1/admin/plan/assignments/preview',
+        'admin_previewPlanAssignment',
+        ('plan.manage',),
+        'both',
+        features=('F-A18',),
+    ),
+    Operation(
         'GET',
         '/v1/admin/plan/assignments/{planAssignmentId}',
         'admin_getPlanAssignment',

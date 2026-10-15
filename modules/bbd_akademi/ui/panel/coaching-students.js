@@ -422,7 +422,7 @@ function questionsPane(app, studentId) {
     empty: { title: 'Soru yok', text: 'Öğrencinin "Hocaya sor" soruları burada görünür.' },
   });
   const node = h('div', 'ak-stack');
-  node.append(list.node, hintBox('Yanıt yazmak için Bugün → Hoca soruları ekranını kullanın.'));
+  node.append(list.node, hintBox('Yanıt yazmak için Koçluk → Hoca soruları ekranını kullanın.'));
   return { node, reload: () => list.reload() };
 }
 

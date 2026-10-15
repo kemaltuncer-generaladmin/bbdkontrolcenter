@@ -22,20 +22,23 @@
 // (`admin_previewTemplateAssignment` → `admin_applyTemplateAssignment`):
 // kurum plan şablonu → sınıf / grup / öğrenci, önizlemeli.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, emptyState, hintBox, kpiRow, skeletonRows } from '../../ui-kit/layout.js';
+import { button, dialogA11y, h } from '../../ui-kit/kit.js';
+import { badge, emptyState, hintBox, kpiRow, skeletonRows } from '../../ui-kit/layout.js';
 import { AkademiError, problem } from './api.js';
 import {
-  DAY_LABEL, WEEKDAYS, actionButton, confirmAction, errorBox, fileDrop, fmtDate, formDialog, multiChips, openDrawer, optionsOf,
+  DAY_LABEL, WEEKDAYS, actionButton, confirmAction, errorBox, fmtDate, formDialog, multiChips, openDrawer,
   runAction, selectBox, staticList, statusBadge, studentPicker, todayIst, toolbar, weekStart,
 } from './common.js';
-import { loadTargets, targetsField, topicPicker } from './plan-tasks.js';
+import { loadTargets, targetsField } from './plan-tasks.js';
 import {
-  COPY_STATUS, PRIORITY, PROOF_PHOTO, TASK_TYPES, UNRESOLVED, addDaysIso, isCoachTask, isDraft, minutesText, pct,
-  saveSummary, taskDetail, taskForm, taskInput, weekLabel, weekOps,
+  COPY_STATUS, TASK_TYPES, UNRESOLVED, addDaysIso, isCoachTask, isDraft, minutesText, saveSummary, taskDetail, weekLabel,
+  weekOps,
 } from './coaching-logic.js';
+import { savedLine, taskEditor } from './task-form.js';
+import {
+  SAVE_ERRORS, coachTaskBody, emptyForm, formFromCoachTask, nextForm, saveErrorText, serverErrors,
+} from './task-form-logic.js';
 import { coachingJob, setEnabled, studentCell } from './coaching-shared.js';
-import { videoCard, videoDialog } from './coaching-video.js';
 
 const STATUS = { planned: ['Planlandı', 'dim'], done: ['Bitti', 'good'], partial: ['Kısmen', 'warn'],
   skipped: ['Yapılmadı', 'bad'], moved: ['Taşındı', 'dim'] };
@@ -233,11 +236,36 @@ export function tab(app) {
 
   async function editTask(task, date = null) {
     if (!state.data) return;
-    const result = await taskDialog(app, { studentId: state.student.id, week: state.data, task, date });
-    if (!result) return;
-    const clientKey = task ? `up-${task.id}` : `new-${Date.now()}`;
-    await save([task ? { op: 'update', clientKey, taskId: task.id, task: result }
-      : { op: 'create', clientKey, task: result }], task ? 'Görev güncellendi.' : 'Görev taslak olarak eklendi.');
+    await taskDialog(app, { studentId: state.student.id, week: state.data, task, date, persist,
+      studentName: state.student.displayName || state.data.student?.displayName || '' });
+  }
+
+  /**
+   * Görev penceresinin kaydı: tek değişiklik, iyimser kilit. Sürüm çakışmasında hafta
+   * sessizce yenilenir ve AYNI değişiklik bir kez daha denenir (yaratma/güncelleme
+   * içerikle gelir; ilk deneme hiçbir şey yazmadı). Görev hatası AkademiError olarak fırlar.
+   */
+  async function persist(change) {
+    const send = () => app.api.put(`/v1/admin/students/${state.student.id}/coach-week`, {
+      weekStart: state.data.weekStart, expectedVersion: state.data.version, ops: weekOps([change]) });
+    let result;
+    try {
+      result = await send();
+    } catch (failure) {
+      if (!(failure instanceof AkademiError && failure.code === 'version_conflict')) throw failure;
+      render(await app.api.get(`/v1/admin/students/${state.student.id}/coach-week`, { week: state.data.weekStart }));
+      result = await send();
+    }
+    const outcome = saveSummary(result);
+    if (result.week) render(result.week);
+    if (outcome.errors.length) {
+      const code = outcome.errors[0].errorCode;
+      throw new AkademiError({ code, message: saveErrorText(code) });
+    }
+    const done = change.op === 'update' ? 'Görev güncellendi.' : 'Görev taslak olarak eklendi.';
+    app.toast(outcome.warnings.length ? `${done} Uyarı: ${outcome.warnings.join(', ')}.` : done,
+      outcome.warnings.length ? 'warn' : 'good');
+    return { warnings: outcome.warnings, week: result.week };
   }
 
   async function publishWeek() {
@@ -367,168 +395,128 @@ export function tab(app) {
 // --------------------------------------------------------------- görev formu
 
 /**
- * Görev oluşturucu. Dönüş: `PlanAssignmentTaskInput` (koç alanlarıyla) ya da
- * vazgeçildiyse null. Yeni görev taslaktır; düzenlemede taslak durumu korunur.
+ * Koç görevi penceresi (tek bileşen: `task-form.js`). Kaydetme PENCERE AÇIKKEN yapılır
+ * (`persist`): sunucu reddederse (eksik alan, sürüm çakışması, raf) girilen her şey
+ * yerinde kalır, hata ilgili alanın altına yazılır. "Kaydet ve yeni ekle" pencereyi
+ * kapatmadan sıradaki görevi açar (gün, tür, süre, ders ve kanıt kuralları kalır).
+ *
+ * @param persist(change) → Promise<{warnings: string[], week}>; hata AkademiError fırlatır.
+ * @returns {Promise<number>} kaydedilen görev sayısı (vazgeçildiyse 0)
  */
-export async function taskDialog(app, { studentId, week, task = null, date = null }) {
-  const context = app.can('admin_getTaskBuilderContext')
+export async function taskDialog(app, { studentId, week, task = null, date = null, persist, studentName = '' }) {
+  const builder = app.can('admin_getTaskBuilderContext')
     ? await app.api.get(`/v1/admin/students/${studentId}/task-builder`).catch(() => null) : null;
-  const shelf = context?.shelf || [];
-  const initial = task ? taskForm(task) : {
-    date: date || week.days.find((day) => day.date >= todayIst(0))?.date || week.weekStart, type: 'question_solving',
-    estimatedMinutes: 40, title: '', subjectId: '', topicId: '', resourceId: '', sectionIds: [], pageFrom: '', pageTo: '',
-    targetQuestions: '', note: '', instructions: '', questionFrom: '', questionTo: '', priority: 'normal', proofPhoto: 'off',
-    answersRequired: true, minAccuracyPercent: '', videos: [], attachmentFileIds: [],
-  };
-  const extra = { videos: initial.videos || [], attachmentFileIds: initial.attachmentFileIds || [],
-    sectionIds: initial.sectionIds || [], resourceId: initial.resourceId || '', addToShelf: false };
-  let topic = null;
+  const firstDay = () => date || week.days.find((day) => day.date >= todayIst(0) && !day.holiday)?.date
+    || week.days.find((day) => day.date >= todayIst(0))?.date || week.weekStart;
+  const remembered = lastCoachForm.get(studentId) || {};
+  const initial = task ? formFromCoachTask(task) : emptyForm({ date: firstDay(), type: remembered.type || 'question_solving',
+    estimatedMinutes: remembered.estimatedMinutes || 40, subjectId: remembered.subjectId || '',
+    subjectName: remembered.subjectName || '', priority: remembered.priority || 'normal',
+    proofPhoto: remembered.proofPhoto || 'off', answersRequired: remembered.answersRequired !== false });
+  const draft = task ? isDraft(task) : true;
+  return new Promise((resolve) => {
+    const overlay = h('div', 'kit-overlay');
+    const card = h('div', 'kit-dialog ak-dialog wide ak-tf-dialog');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    const head = h('div', 'ak-tf-head');
+    head.append(h('h3', 'kit-dialog-title', task ? 'Koç görevini düzenle' : 'Koç görevi ekle'),
+      h('p', 'kit-dialog-text', [studentName, task && !draft ? 'Yayımlanmış görev: değişiklik öğrenciye bildirilir.'
+        : 'Yeni görev taslaktır; "Yayımla"ya dek öğrenci görmez.'].filter(Boolean).join(' · ')));
+    const body = h('div', 'ak-tf-body');
+    const savedSlot = h('div', 'ak-tf-saved-slot');
+    const error = h('div', 'kit-dialog-error');
+    error.setAttribute('role', 'alert');
+    const keys = h('small', 'ak-tf-keys', task ? 'Enter: kaydet · Esc: vazgeç'
+      : 'Enter: kaydet · Shift+Enter: kaydet ve yeni ekle · Esc: vazgeç');
+    const actions = h('div', 'kit-dialog-actions ak-tf-actions');
+    let current = week;
+    let saved = 0;
+    let busy = false;
+    let editor = null;
+    const mount = (form, isNew) => {
+      editor?.destroy();
+      editor = taskEditor(app, { mode: 'coach', form, studentId, week: current, builder, isNew,
+        onSubmit: (again) => submit(again && !task) });
+      body.replaceChildren(savedSlot, editor.node);
+    };
+    const cancel = button(saved ? 'Kapat' : 'Vazgeç', { onClick: () => close() });
+    const again = task ? null : button('Kaydet ve yeni ekle', { onClick: () => submit(true) });
+    const go = button(task ? 'Kaydet' : 'Ekle', { variant: 'primary', onClick: () => submit(false) });
+    actions.append(keys, h('span', 'kit-spacer'), cancel, ...(again ? [again] : []), go);
+    card.append(head, body, error, actions);
+    overlay.append(card);
 
-  const resourceField = () => {
-    const box = h('div', 'ak-stack');
-    const sections = h('div', 'ak-stack');
-    const options = [{ value: '', label: shelf.length ? 'Kaynak yok' : 'Rafta kaynak yok' },
-      ...shelf.map((item) => ({ value: item.resourceId, label: `${item.title} · ${pct(item.progressPercent)}` }))];
-    if (extra.resourceId && !shelf.some((item) => item.resourceId === extra.resourceId)) {
-      options.push({ value: extra.resourceId, label: initial.resourceTitle || 'Kayıtlı kaynak' });
+    let release = () => {};
+    const onKey = (event) => { if (event.key === 'Escape' && !busy) close(); };
+    function close() {
+      document.removeEventListener('keydown', onKey);
+      editor?.destroy();
+      overlay.remove();
+      release();
+      resolve(saved);
     }
-    const loadSections = async (resourceId, preselect = []) => {
-      sections.replaceChildren();
-      if (!resourceId || !app.can('admin_getStudentResourceSections')) return;
-      sections.append(h('small', 'ak-muted', 'Bölümler yükleniyor…'));
-      try {
-        const data = await app.api.get(`/v1/admin/students/${studentId}/resources/${resourceId}/sections`);
-        const items = (data?.sections || []).filter((item) => item.kind !== 'unit');
-        sections.replaceChildren();
-        if (!data.onShelf) {
-          const label = h('label', 'ak-inline');
-          const check = h('input', 'kit-check');
-          check.type = 'checkbox';
-          check.addEventListener('change', () => { extra.addToShelf = check.checked; });
-          label.append(check, h('span', '', 'Kaynak öğrencinin rafında değil — rafa da ekle'));
-          sections.append(label);
-        }
-        if (!items.length) { sections.append(h('small', 'ak-muted', 'Bu kaynağın içindekiler tanımlı değil.')); return; }
-        extra.sectionIds = preselect.filter((id) => items.some((item) => item.id === id));
-        sections.append(multiChips(items.map((item) => ({ value: item.id, label: `${item.done ? '✓ ' : ''}${item.title}${item.pageFrom
-          ? ` (s. ${item.pageFrom}${item.pageTo && item.pageTo !== item.pageFrom ? `–${item.pageTo}` : ''})` : ''}` })),
-        extra.sectionIds, (value) => { extra.sectionIds = value; }).node,
-        h('small', 'ak-muted', 'Bölüm seçilince sayfa, soru aralığı ve konu sunucuda kendiliğinden dolar.'));
-      } catch (failure) {
-        sections.replaceChildren(alertBox(problem(failure, 'Bölümler okunamadı.'), 'bad'));
+
+    async function submit(andNew) {
+      if (busy) return;
+      error.textContent = '';
+      const result = editor.check();
+      if (!result.ok) {
+        const count = Object.keys(result.errors).length;
+        error.textContent = count > 1 ? `${count} alanı düzeltin (işaretli).` : 'İşaretli alanı düzeltin.';
+        editor.focusFirst(result.first);
+        return;
       }
-    };
-    const select = selectBox(options, extra.resourceId, (value) => {
-      extra.resourceId = value;
-      const next = shelf.find((item) => item.resourceId === value)?.nextSection;
-      loadSections(value, next ? [next.id] : []);
-    }, { label: 'Kaynak' });
-    box.append(select.node, sections);
-    if (extra.resourceId) loadSections(extra.resourceId, extra.sectionIds);
-    return box;
-  };
-
-  const videosField = () => {
-    const box = h('div', 'ak-stack');
-    const list = h('div', 'ak-stack');
-    const paint = () => {
-      list.replaceChildren();
-      if (!extra.videos.length) list.append(h('small', 'ak-muted', 'Video yok.'));
-      extra.videos.forEach((video, index) => {
-        const line = h('div', 'ak-coach-action');
-        line.append(videoCard(video.video || { title: video.videoId || 'Kütüphane öğesi' }),
-          h('small', 'ak-muted', [video.startSeconds || video.endSeconds ? 'kesit' : '',
-            video.checkpoints?.length ? `${video.checkpoints.length} durak sorusu` : ''].filter(Boolean).join(' · ')),
-          button('Çıkar', { variant: 'ghost', onClick: () => { extra.videos.splice(index, 1); paint(); } }));
-        list.append(line);
-      });
-    };
-    const addVideo = button('Video ekle', { variant: 'ghost', onClick: async () => {
-      const picked = await videoDialog(app, { max: 10 - extra.videos.length });
-      if (picked?.length) { extra.videos.push(...picked); paint(); }
-    } });
-    addVideo.disabled = !(app.can('admin_resolveVideoLink') || app.can('admin_listCoachLibrary'));
-    paint();
-    box.append(list, addVideo);
-    return box;
-  };
-
-  const filesField = () => {
-    const box = h('div', 'ak-stack');
-    const status = h('small', 'ak-muted', extra.attachmentFileIds.length ? `${extra.attachmentFileIds.length} ek` : '');
-    if (!app.can('admin_uploadCoachingFile')) {
-      box.append(h('small', 'ak-muted', 'Ek yükleme yetkiniz yok.'));
-      return box;
-    }
-    const drop = fileDrop({ accept: ['pdf', 'png', 'jpg', 'jpeg', 'webp'], maxMb: 10, label: 'Foto ya da PDF ekleyin (en çok 3)',
-      onFile: async (file) => {
-        if (extra.attachmentFileIds.length >= 3) { status.textContent = 'En çok 3 ek eklenir.'; return; }
-        status.textContent = 'Yükleniyor…';
-        try {
-          const result = await app.api.call('POST', '/v1/admin/coaching/files', {
-            upload: { file, field: 'file', fields: { kind: 'coach_attachment' } } });
-          if (result.data?.id) extra.attachmentFileIds.push(result.data.id);
-          status.textContent = `${extra.attachmentFileIds.length} ek yüklendi.`;
-          drop.clear();
-        } catch (failure) {
-          status.textContent = problem(failure, 'Dosya yüklenemedi.');
+      const form = editor.value();
+      const built = coachTaskBody(form, { draft });
+      if (built.error) { error.textContent = built.error; return; }
+      busy = true;
+      for (const control of [go, again].filter(Boolean)) control.disabled = true;
+      go.textContent = 'Kaydediliyor…';
+      try {
+        const clientKey = task ? `up-${task.id}` : `new-${Date.now()}`;
+        const out = await persist(task ? { op: 'update', clientKey, taskId: task.id, task: built.task }
+          : { op: 'create', clientKey, task: built.task });
+        saved += 1;
+        cancel.textContent = 'Kapat';
+        lastCoachForm.set(studentId, { type: form.type, estimatedMinutes: form.estimatedMinutes, subjectId: form.subjectId,
+          subjectName: form.subjectName, priority: form.priority, proofPhoto: form.proofPhoto, answersRequired: form.answersRequired });
+        const title = built.task.title || TASK_TYPES[form.type] || 'Görev';
+        const when = `${DAY_LABEL[current.days.find((day) => day.date === form.date)?.dayOfWeek] || fmtDate(form.date)}`;
+        if (out?.week) current = out.week;
+        if (andNew) {
+          mount(nextForm(form), true);
+          savedSlot.replaceChildren(savedLine(`"${title}" ${when} gününe eklendi${out?.warnings?.length
+            ? ` (uyarı: ${out.warnings.join(', ')})` : ''}. Sıradaki görevi girin.`));
+          editor.focusFirst();
+        } else {
+          close();
         }
-      } });
-    box.append(drop.node, status);
-    return box;
-  };
+      } catch (failure) {
+        const code = failure instanceof AkademiError ? failure.code : '';
+        const map = serverErrors(code, failure?.details, editor.value());
+        const { _form: formError, ...fieldErrors } = map;
+        if (Object.keys(fieldErrors).length) editor.showErrors(fieldErrors);
+        error.textContent = formError || (Object.keys(fieldErrors).length ? 'İşaretli alanları düzeltin; girdikleriniz duruyor.'
+          : `${SAVE_ERRORS[code] || problem(failure)} Girdikleriniz duruyor.`);
+      } finally {
+        busy = false;
+        for (const control of [go, again].filter(Boolean)) control.disabled = false;
+        go.textContent = task ? 'Kaydet' : 'Ekle';
+      }
+    }
 
-  const hints = [];
-  if (context?.weakTopics?.length) {
-    hints.push(`Zayıf konular: ${context.weakTopics.slice(0, 5).map((item) => `${item.topic.name}${item.accuracyPercent !== null
-      && item.accuracyPercent !== undefined ? ` (${pct(item.accuracyPercent)})` : ''}`).join(', ')}`);
-  }
-  if (context?.dueReviews?.length) hints.push(`Tekrar zamanı gelen: ${context.dueReviews.slice(0, 5).map((item) => item.name).join(', ')}`);
-
-  const days = week.days.map((day) => ({ value: day.date, label: `${DAY_LABEL[day.dayOfWeek] || ''} ${fmtDate(day.date)}${day.holiday
-    ? ' (tatil)' : ''}` }));
-  return formDialog(app, {
-    title: task ? 'Koç görevini düzenle' : 'Koç görevi ekle',
-    description: [task && !isDraft(task) ? 'Yayımlanmış görev: değişiklik öğrenciye bildirilir.'
-      : 'Yeni görev taslaktır; "Yayımla"ya dek öğrenci görmez.', ...hints].join(' · '),
-    wide: true,
-    fields: [
-      { key: 'date', label: 'Gün', type: 'select', required: true, options: days },
-      { key: 'type', label: 'Tür', type: 'select', required: true, options: optionsOf(TASK_TYPES) },
-      { key: 'estimatedMinutes', label: 'Süre (dk)', type: 'number', required: true, min: 5, max: 600 },
-      { key: 'title', label: 'Başlık (boşsa türden)', maxLength: 120 },
-      { key: 'topic', label: 'Ders ve konu', type: 'custom', render: () => {
-        topic = topicPicker(app, { subjectId: initial.subjectId, topicId: initial.topicId, topicName: initial.topicName });
-        return topic.node;
-      } },
-      { key: 'resource', label: 'Kaynak ve bölüm (raf)', type: 'custom', render: resourceField },
-      { key: 'pageFrom', label: 'Sayfa (ilk)', type: 'number', min: 1 },
-      { key: 'pageTo', label: 'Sayfa (son)', type: 'number', min: 1 },
-      { key: 'questionFrom', label: 'Soru (ilk)', type: 'number', min: 1 },
-      { key: 'questionTo', label: 'Soru (son)', type: 'number', min: 1 },
-      { key: 'targetQuestions', label: 'Hedef soru sayısı', type: 'number', min: 1 },
-      { key: 'instructions', label: 'Talimat (öğrenci görür)', type: 'textarea', maxLength: 2000, wide: true },
-      { key: 'priority', label: 'Öncelik', type: 'select', options: optionsOf(PRIORITY) },
-      { key: 'proofPhoto', label: 'Fotoğraf kanıtı', type: 'select', options: optionsOf(PROOF_PHOTO) },
-      { key: 'answersRequired', label: 'Doğru / yanlış / boş zorunlu', type: 'checkbox' },
-      { key: 'minAccuracyPercent', label: 'Başarı ölçütü: doğruluk % (altıysa tekrar önerilir)', type: 'number', min: 1, max: 100 },
-      { key: 'videos', label: 'Videolar', type: 'custom', render: videosField },
-      { key: 'attachments', label: 'Ekler', type: 'custom', render: filesField },
-      { key: 'note', label: 'Not', type: 'textarea', maxLength: 500, wide: true },
-    ],
-    value: initial,
-    submitLabel: task ? 'Kaydet' : 'Ekle',
-    onSubmit: async (draft) => {
-      const picked = topic?.value() || {};
-      const built = taskInput({ ...draft, subjectId: picked.subjectId || '', topicId: picked.topicId || '',
-        resourceId: extra.resourceId, sectionIds: extra.sectionIds, videos: extra.videos,
-        attachmentFileIds: extra.attachmentFileIds, addToShelf: extra.addToShelf },
-      { draft: task ? isDraft(task) : true });
-      if (built.error) throw new Error(built.error);
-      return built.task;
-    },
+    mount(initial, !task);
+    overlay.addEventListener('mousedown', (event) => { if (event.target === overlay && !busy && !saved) close(); });
+    document.addEventListener('keydown', onKey);
+    app.root.append(overlay);
+    release = dialogA11y(card);
+    editor.focusFirst();
   });
 }
+
+/** Öğrenci başına son kullanılan tür / süre / ders (oturum boyunca; akıllı varsayılan). */
+const lastCoachForm = new Map();
 
 // ---------------------------------------------------------- şablonla atama
 
@@ -542,7 +530,7 @@ export async function templateAssignDialog(app, { onDone } = {}) {
     return null;
   }
   if (!templates.length) {
-    app.toast('Kurum plan şablonu yok: Dersler ve Program → Şablonlar ekranından ekleyin.', 'warn');
+    app.toast('Kurum plan şablonu yok: Ödev ve Deneme → Şablonlar ekranından ekleyin.', 'warn');
     return null;
   }
   const [classes, groups] = await loadTargets(app);

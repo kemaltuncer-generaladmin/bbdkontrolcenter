@@ -1,0 +1,129 @@
+/* Görev formu (koç görevi, plan ataması, şablon) — önek `ak-tf-`.
+ *
+ * DÜZEN KAYMAZ: tür kartları, Gün/Süre satırı ve türün alanı (`.ak-tf-area`) sabit
+ * yerdedir; alanın en az yüksekliği iki satırlık içeriği taşır, tür değişince yalnız
+ * içerik solup gelir (opaklık), altındaki "Daha fazla seçenek" yerinden oynamaz.
+ * Arama sonuçları açılır katmandır (akışı itmez). */
+
+.ak-tf-dialog { display: flex; flex-direction: column; width: min(900px, calc(100% - 32px)); max-height: calc(100% - 32px);
+  padding: 0; overflow: hidden; }
+.ak-tf-dialog .ak-tf-head { padding: 18px 22px 0; }
+.ak-tf-dialog .ak-tf-head .kit-dialog-text { margin: 4px 0 10px; }
+.ak-tf-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 22px 12px; }
+.ak-tf-dialog > .kit-dialog-error { padding: 0 22px; margin: 0; }
+.ak-tf-actions { align-items: center; margin: 0; padding: 12px 22px 16px; border-top: 1px solid var(--line);
+  background: #fff; flex-wrap: wrap; }
+.ak-tf-keys { color: var(--soft); font-size: 11px; }
+
+.ak-tf { display: flex; flex-direction: column; gap: 14px; }
+.ak-tf .ak-muted { color: var(--soft); }
+.ak-tf-label { font-weight: 600; color: var(--ink); font-size: 11.5px; }
+.ak-tf-field.bad .kit-input, .ak-tf-field.bad .kit-select, .ak-tf-field.bad .df-input { border-color: var(--bad); }
+.ak-tf-error:empty { display: none; }
+.ak-tf-error { font-weight: 600; }
+.ak-tf-mini { font-size: 11px; color: var(--soft); }
+.ak-tf-num { width: 84px; }
+.ak-tf-num.auto { color: var(--soft); font-style: italic; }
+.ak-tf-check { gap: 6px; cursor: pointer; }
+
+/* Hızlı seçim */
+.ak-tf-quick { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px;
+  background: var(--tint); border: 1px dashed var(--line); }
+.ak-tf-quick-title { font-size: 11px; font-weight: 600; color: var(--soft); text-transform: uppercase; letter-spacing: 0.04em; }
+.ak-tf-quick-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ak-tf-quick-chip { height: auto; min-height: 26px; white-space: normal; text-align: left; padding: 3px 11px; }
+.ak-tf-quick-chip.weak { border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+.ak-tf-quick-chip.review { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.ak-tf-quick-chip.res { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+
+/* Tür kartları */
+.ak-tf-types { display: flex; flex-direction: column; gap: 8px; }
+.ak-tf-cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.ak-tf-card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-height: 58px; padding: 9px 11px;
+  border: 1.5px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); font: inherit;
+  text-align: left; cursor: pointer; transition: border-color 120ms, background 120ms, box-shadow 120ms; }
+.ak-tf-card b { font-size: 13px; }
+.ak-tf-card small { font-size: 11px; color: var(--soft); line-height: 1.3; }
+.ak-tf-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.ak-tf-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, #fff);
+  box-shadow: inset 0 0 0 1px var(--accent); }
+.ak-tf-card.on b { color: var(--accent); }
+.ak-tf-card:focus-visible, .ak-tf-other:focus-visible, .ak-tf-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ak-tf-others { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ak-tf-others-title { font-size: 11.5px; color: var(--soft); margin-right: 2px; }
+.ak-tf-static { font-weight: 600; }
+
+/* Gün + süre */
+.ak-tf-basics { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px 16px; align-items: start; }
+.ak-tf-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.ak-tf-day { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; height: auto;
+  min-width: 52px; padding: 4px 8px; line-height: 1.15; }
+.ak-tf-day b { font-size: 11.5px; }
+.ak-tf-day span { font-size: 10.5px; }
+.ak-tf-day.holiday:not(.on) { background: var(--tint); border-style: dashed; }
+.ak-tf-day.over:not(.on) { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.ak-tf-minutes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ak-tf-minute-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ak-tf-minutes .ak-tf-num { width: 64px; }
+
+/* Türün alanı — sabit yer */
+.ak-tf-area { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(200px, 1fr); gap: 12px 18px; align-items: start;
+  min-height: 150px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.ak-tf-area.one { grid-template-columns: minmax(0, 1fr); }
+.ak-tf-area.swap > .ak-tf-col { animation: ak-tf-fade 160ms ease-out both; }
+@keyframes ak-tf-fade { from { opacity: 0.25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .ak-tf-area.swap > .ak-tf-col { animation: none; } }
+.ak-tf-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+/* Ders + konu */
+.ak-tf-subject { display: flex; flex-direction: column; gap: 6px; }
+.ak-tf-subject-row { display: grid; grid-template-columns: minmax(150px, 0.8fr) minmax(0, 1.4fr); gap: 8px; }
+.ak-tf-search { position: relative; min-width: 0; }
+.ak-tf-search .kit-input { width: 100%; }
+.ak-tf-results { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; right: 0; max-height: 260px; overflow: auto;
+  padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.45); }
+.ak-tf-result.active, .ak-tf-result:hover { background: var(--tint); }
+.ak-tf-chosen { min-height: 26px; display: flex; align-items: center; }
+.ak-tf-topic-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* Kaynak */
+.ak-tf-resource { display: flex; flex-direction: column; gap: 8px; }
+.ak-tf-res-shelf { display: flex; flex-direction: column; gap: 4px; }
+.ak-tf-res-current { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ak-tf-res-current:empty { display: none; }
+.ak-tf-sections { display: flex; flex-direction: column; gap: 4px; }
+.ak-tf-sec-box { max-height: 132px; overflow: auto; padding: 2px; }
+.ak-tf-sec-box .kit-chip { height: auto; min-height: 26px; white-space: normal; text-align: left; padding: 3px 10px; }
+
+/* Video */
+.ak-tf-video { display: flex; flex-direction: column; gap: 6px; }
+.ak-tf-video-row { display: flex; gap: 8px; align-items: center; }
+.ak-tf-video-row .kit-input { flex: 1 1 auto; min-width: 0; }
+.ak-tf-video-list { display: flex; flex-direction: column; gap: 6px; max-height: 170px; overflow: auto; }
+
+/* Daha fazla seçenek */
+.ak-tf-more { border-top: 1px solid var(--line); padding-top: 10px; }
+.ak-tf-more-toggle { border: 0; background: none; padding: 4px 0; font: inherit; font-weight: 600; color: var(--accent);
+  cursor: pointer; }
+.ak-tf-more-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.ak-tf-more-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; margin-top: 10px; }
+.ak-tf-more-grid .kit-textarea { min-height: 54px; width: 100%; }
+
+.ak-tf-saved-slot:empty { display: none; }
+.ak-tf-saved { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--good) 9%, #fff); font-size: 12.5px; }
+
+/* Plan düzenleyicisi içinde (satır içi) */
+.ak-plan-editor .ak-tf { margin-top: 6px; }
+
+/* Plan ataması önizlemesi */
+.ak-tf-preview { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--tint); font-size: 12.5px; }
+.ak-tf-preview.busy { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+
+@media (max-width: 760px) {
+  .ak-tf-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ak-tf-basics, .ak-tf-area { grid-template-columns: minmax(0, 1fr); }
+  .ak-tf-subject-row { grid-template-columns: minmax(0, 1fr); }
+}

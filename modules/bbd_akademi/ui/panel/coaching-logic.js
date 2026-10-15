@@ -51,6 +51,8 @@ export const TASK_TYPES = {
   review: 'Tekrar',
   mistake_review: 'Hata tekrarı',
   reading: 'Okuma',
+  exam: 'Deneme',
+  homework: 'Ödev',
   free: 'Serbest görev',
 };
 
