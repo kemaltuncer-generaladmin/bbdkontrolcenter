@@ -354,6 +354,16 @@ const INSTITUTION_GROUPS = [
         hint: 'Bütün öğrenciler: öğretmen her öğrencide koçluk, ödev, plan, hata defteri, deneme, değerlendirme ve '
           + 'yoklama işlerini yapar. Değişiklik birkaç dakika içinde açık oturumlara da yansır.' },
     ] },
+  { title: 'Anons',
+    hint: 'Öğrenci / sınıf çağrısı ve serbest duyuru (Akademi README §14 madde 106). Şablonlar: Ayarlar → Anons şablonları.',
+    fields: [
+      { key: 'paCooldown', path: ['pa', 'cooldownSeconds'], label: 'Tekrar engeli (saniye)', type: 'number',
+        min: 10, max: 600, to: intOrNull, from: (value) => value ?? 60,
+        hint: 'Aynı öğrenci, sınıf ya da duyuru metni bu süre içinde ikinci kez çalınmaz.' },
+      { key: 'paTeacherFree', path: ['pa', 'teacherFreeText'], type: 'checkbox', to: Boolean, from: Boolean, wide: true,
+        label: 'Öğretmen / koç serbest duyuru yapabilsin',
+        hint: 'Kapalıyken serbest duyuruyu yalnız yönetici yapar; öğretmen öğrenci ve ders verdiği sınıfı yine çağırır.' },
+    ] },
   { title: 'Atama paketleri', hint: 'Şablonlar → Atama paketleri. Paket tek tek de “otomatik” işaretli olmalı.',
     fields: [
       { key: 'autoBundles', path: ['assignments', 'autoApplyBundlesToNewStudents'], type: 'checkbox', to: Boolean,
@@ -632,21 +642,41 @@ function featuresTab(app) {
 }
 
 // ----------------------------------------------------------- anons şablonları
+//
+// Akademi README §14 madde 106: şablonlar kalıcıdır, türü vardır (öğrenci çağrısı · sınıf çağrısı · duyuru);
+// hazır şablonlar kodda (silinemez, değiştirilemez), kurumunkiler burada eklenir / düzenlenir / silinir. Ses bir
+// kez üretilir ve saklanır: şablon kaydedilince sesleri (her öğrenci, her sınıf, yaklaşan dersler) arka planda
+// önden hazırlanır — çağrı anında beklenmez.
 
-const SAMPLE = { '{ad}': 'Ayşe', '{soyad}': 'Yılmaz', '{sinif}': '12-A' };
-const sampleText = (text) => String(text || '').replace(/\{(ad|soyad|sinif)\}/g, (token) => SAMPLE[token]);
+const SAMPLE = {
+  öğrenci: 'Ayşe Yılmaz', ad: 'Ayşe', soyad: 'Yılmaz', sınıf: '12-A', sinif: '12-A', öğretmen: 'Hüseyin hoca',
+  hoca: 'Hüseyin hoca', saat: '10:40', derslik: 'Lab 2', ders: 'Fizik',
+};
+const sampleText = (text) => String(text || '').replace(/\{([^{}]*)\}/g,
+  (token, name) => SAMPLE[name.trim().toLocaleLowerCase('tr-TR')] ?? token);
+const PA_KINDS = [
+  { value: 'student', label: 'Öğrenci çağrısı' },
+  { value: 'class', label: 'Sınıf çağrısı' },
+  { value: 'free', label: 'Duyuru' },
+];
+const PA_KIND_LABEL = Object.fromEntries(PA_KINDS.map((item) => [item.value, item.label]));
+const PA_VARS = {
+  student: '{öğrenci}, {ad}, {soyad}, {sınıf}, {öğretmen}, {saat}',
+  class: '{sınıf}, {öğretmen}, {saat}, {derslik}, {ders}',
+  free: '{saat}',
+};
 
 function paTemplatesTab(app, { goTab }) {
   const node = h('div', 'ak-stack');
   const add = actionButton(app, 'admin_createPaTemplate', 'Yeni şablon', { variant: 'primary',
-    onClick: () => create() });
-  node.append(toolbar(h('span', 'ak-muted', 'Panel bölümündeki “Öğrenci çağır” bu şablonlardan seçer. '
-    + 'Yer tutucular: {ad}, {soyad}, {sinif}.'), h('span', 'kit-spacer'), add));
+    onClick: () => edit(null) });
+  node.append(toolbar(h('span', 'ak-muted', 'Panel → Anons, mobil ve web "Anons" ekranı bu şablonlardan seçer. '
+    + 'Sesler bir kez üretilir ve saklanır; şablon kaydedilince önden hazırlanır.'), h('span', 'kit-spacer'), add));
 
   const list = staticList({
     load: async () => {
       try {
-        return await app.api.getCached('/v1/admin/pa/templates');
+        return await app.api.getCached('/v1/admin/pa/templates', { kind: 'all' });
       } catch (failure) {
         if (featureOff(failure)) return { items: [], off: true };
         throw failure;
@@ -665,17 +695,20 @@ function paTemplatesTab(app, { goTab }) {
         if (row.builtIn) cell.append(badge('Hazır', 'info'));
         return cell;
       } },
+      { key: 'kind', label: 'Tür', width: '130px', cell: (row) => PA_KIND_LABEL[row.kind] || '—' },
       { key: 'text', label: 'Metin', width: 'minmax(0, 2.4fr)', cell: (row) => {
         const cell = h('div', 'ak-cell-stack');
         cell.append(h('span', '', row.text));
-        if (/\{(ad|soyad|sinif)\}/.test(row.text)) cell.append(h('small', '', `Örnek: ${sampleText(row.text)}`));
+        if (/\{[^{}]*\}/.test(row.text)) cell.append(h('small', '', `Örnek: ${sampleText(row.text)}`));
         return cell;
       } },
-      { key: 'actions', label: '', width: '110px', cell: (row) => {
+      { key: 'actions', label: '', width: '170px', cell: (row) => {
         const actions = h('div', 'ak-row-actions');
         if (row.builtIn) {
-          actions.append(h('span', 'ak-muted', 'Silinemez'));
+          actions.append(h('span', 'ak-muted', 'Hazır şablon'));
         } else {
+          actions.append(actionButton(app, 'admin_updatePaTemplate', 'Düzenle', { variant: 'ghost',
+            onClick: () => edit(row) }));
           actions.append(actionButton(app, 'admin_deletePaTemplate', 'Sil', { variant: 'ghost',
             onClick: () => remove(row) }));
         }
@@ -686,26 +719,35 @@ function paTemplatesTab(app, { goTab }) {
   });
   node.append(list.node);
 
-  async function create() {
+  async function edit(row) {
     const preview = h('div', 'ak-muted ak-set-sample');
+    const fields = [
+      { key: 'title', label: 'Başlık', required: true, maxLength: 60, wide: true,
+        placeholder: 'Müdür odasına çağrı' },
+      { key: 'text', label: 'Anons metni', type: 'textarea', required: true, maxLength: 160, wide: true,
+        placeholder: '{ad} {soyad}, müdür odasına lütfen.',
+        hint: 'En çok 160 karakter. Yer tutucular anons anında doldurulur — öğrenci: ' + PA_VARS.student
+          + ' · sınıf: ' + PA_VARS.class + ' · duyuru: ' + PA_VARS.free + '.' },
+      { key: 'sample', label: 'Örnek', type: 'custom', render: () => ({ node: preview,
+        update: (draft) => { preview.textContent = draft.text ? sampleText(draft.text) : '—'; } }) },
+    ];
+    if (!row) {
+      fields.unshift({ key: 'kind', label: 'Tür', type: 'select', options: PA_KINDS, required: true });
+    }
     const saved = await formDialog(app, {
-      title: 'Yeni anons şablonu',
-      value: { title: '', text: '' },
-      fields: [
-        { key: 'title', label: 'Başlık', required: true, maxLength: 60, wide: true,
-          placeholder: 'Müdür odasına çağrı' },
-        { key: 'text', label: 'Anons metni', type: 'textarea', required: true, maxLength: 160, wide: true,
-          placeholder: '{ad} {soyad}, {sinif} sınıfından müdür odasına lütfen.',
-          hint: 'En çok 160 karakter. {ad}, {soyad}, {sinif} çağrı anında doldurulur.' },
-        { key: 'sample', label: 'Örnek', type: 'custom', render: () => ({ node: preview,
-          update: (draft) => { preview.textContent = draft.text ? sampleText(draft.text) : '—'; } }) },
-      ],
-      submitLabel: 'Şablonu ekle',
-      onSubmit: (draft, { key }) => app.api.post('/v1/admin/pa/templates', {
-        title: String(draft.title || '').trim(), text: String(draft.text || '').trim() }, { key }),
+      title: row ? 'Anons şablonunu düzenle' : 'Yeni anons şablonu',
+      value: row ? { title: row.title, text: row.text } : { kind: 'student', title: '', text: '' },
+      fields,
+      submitLabel: row ? 'Kaydet' : 'Şablonu ekle',
+      onSubmit: (draft, { key }) => (row
+        ? app.api.patch(`/v1/admin/pa/templates/${row.id}`, {
+          title: String(draft.title || '').trim(), text: String(draft.text || '').trim() }, { key })
+        : app.api.post('/v1/admin/pa/templates', {
+          kind: draft.kind || 'student',
+          title: String(draft.title || '').trim(), text: String(draft.text || '').trim() }, { key })),
     });
     if (saved) {
-      app.toast('Şablon eklendi.', 'good');
+      app.toast(row ? 'Şablon kaydedildi.' : 'Şablon eklendi.', 'good');
       app.api.invalidate('/v1/admin/pa/templates');
       list.reload();
     }

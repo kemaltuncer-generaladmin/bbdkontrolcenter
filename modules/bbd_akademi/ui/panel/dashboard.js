@@ -67,7 +67,7 @@ export function section(app) {
   // Kurum içi anlık işler (tablet, öğrenci çağırma) — kurumda açık olanlar.
   const liveTabs = [
     app.can('admin_getTabletBoard') ? { key: 'tablets', label: 'Tabletler' } : null,
-    app.can('admin_listPaCalls') ? { key: 'pa', label: 'Öğrenci çağır' } : null,
+    app.can('admin_listPaCalls') ? { key: 'pa', label: 'Anons' } : null,
   ].filter(Boolean);
 
   const quick = toolbar(
@@ -77,7 +77,7 @@ export function section(app) {
       ? button('Tahsilat al', { onClick: () => app.go('finance') }) : null,
     app.has('announcements') ? button('Duyuru yaz', { onClick: () => app.go('announcements') }) : null,
     app.has('campus') && liveTabs.some((item) => item.key === 'pa')
-      ? button('Öğrenci çağır', { onClick: () => openLive('pa') }) : null,
+      ? button('Anons', { onClick: () => openLive('pa') }) : null,
     button('Öğrenci bul', { onClick: () => app.go('students') }),
   );
   const top = h('div', 'ak-stack');
@@ -415,71 +415,183 @@ function tabletsView(app) {
   return { node, reload() { board.reload(); usage.reload(); }, destroy() { usage.destroy(); } };
 }
 
-// ------------------------------------------------------------ öğrenci çağır
+// ------------------------------------------------------------ anons (öğrenci / sınıf çağır, duyuru)
+//
+// Akademi README §14 madde 106 — mobil / web "Anons" ekranıyla aynı akış ve metinler: tür (Öğrenci · Sınıf ·
+// Duyuru), hedef, hazır / kurum şablonu ya da özel metin, "Dinle" (önizleme; hoparlöre gitmez, ses saklanır),
+// onay → anons. Ses bir kez üretilir; aynı metin tekrar çalınırken yeniden üretilmez. "Şablon olarak kaydet".
+
+const PA_MODES = [
+  { value: 'student', label: 'Öğrenci' },
+  { value: 'class', label: 'Sınıf' },
+  { value: 'free', label: 'Duyuru' },
+];
+const PA_HOLES = {
+  student: '{öğrenci} {ad} {soyad} {sınıf} {öğretmen} {saat}',
+  class: '{sınıf} {öğretmen} {saat} {derslik} {ders}',
+  free: '{saat}',
+};
+const PA_KIND = { student: 'Öğrenci', class: 'Sınıf', free: 'Duyuru' };
+
+function paTarget(row) {
+  if (row.kind === 'class') return `${row.group?.name || ''} · Sınıf`;
+  if (row.kind === 'free') return 'Duyuru';
+  return row.student?.displayName || '—';
+}
 
 function paView(app) {
   const node = h('div', 'ak-stack');
+  let mode = 'student';
+  let targets = null;
   let templates = [];
   let chosen = null;
+  const modeSelect = selectBox(PA_MODES, 'student', (value) => {
+    mode = value;
+    templateSelect.set('');
+    text.value = '';
+    paint();
+    loadTemplates();
+  }, { label: 'Anons türü' });
   const who = h('div', 'ak-dash-pa-who ak-muted', 'Öğrenci seçin.');
   const picker = studentPicker(app, { placeholder: 'Çağrılacak öğrenci', onPick: (student) => {
     chosen = student;
     who.textContent = `${student.displayName} · ${student.classGroup?.name || ''}`;
     who.classList.remove('ak-muted');
   } });
-  const templateSelect = selectBox([{ value: '', label: 'Özel metin' }], '', () => paint());
+  const classSelect = selectBox([{ value: '', label: 'Sınıf seçin' }], '', () => paint(), { label: 'Sınıf' });
+  const teacherSelect = selectBox([{ value: '', label: 'Dersin öğretmeni / ben' }], '', null, { label: 'Öğretmen' });
+  const templateSelect = selectBox([{ value: '', label: 'Özel metin' }], '', () => paint(), { label: 'Şablon' });
   const text = h('input', 'kit-input ak-dash-pa-text');
   text.maxLength = 160;
   text.placeholder = 'Özel metin (en çok 160 karakter)';
-  const callButton = actionButton(app, 'admin_callStudent', 'Anons et', { variant: 'primary', onClick: () => call() });
-  const note = h('div', 'ak-muted', 'Aynı öğrenci 60 sn içinde tekrar çağrılamaz. Anons kurumun zil/anons sisteminden okunur.');
-  node.append(toolbar(picker.node, who), toolbar(templateSelect.node, text, callButton), note);
+  const holes = h('div', 'ak-muted', '');
+  const hint = h('div', 'ak-muted', '');
+  const player = h('audio');
+  player.controls = true;
+  player.hidden = true;
+  const listenButton = actionButton(app, 'admin_previewPa', 'Dinle', { onClick: () => listen() });
+  const saveButton = actionButton(app, 'admin_createPaTemplate', 'Şablon olarak kaydet', { onClick: () => saveTemplate() });
+  const buttons = {
+    student: actionButton(app, 'admin_callStudent', 'Anons et', { variant: 'primary', onClick: () => call() }),
+    class: actionButton(app, 'admin_callClass', 'Sınıfı çağır', { variant: 'primary', onClick: () => call() }),
+    free: actionButton(app, 'admin_announcePa', 'Duyur', { variant: 'primary', onClick: () => call() }),
+  };
+  const studentRow = toolbar(picker.node, who);
+  const classRow = toolbar(classSelect.node, teacherSelect.node);
+  const note = h('div', 'ak-muted', 'Aynı anons 60 sn içinde tekrar yapılamaz. Ses bir kez üretilir ve saklanır; '
+    + '“Dinle” hoparlöre gitmez.');
+  node.append(toolbar(modeSelect.node), studentRow, classRow,
+    toolbar(templateSelect.node, text, listenButton, buttons.student, buttons.class, buttons.free),
+    holes, hint, player, toolbar(saveButton), note);
 
   function paint() {
+    studentRow.hidden = mode !== 'student';
+    classRow.hidden = mode !== 'class';
+    for (const [key, control] of Object.entries(buttons)) control.hidden = key !== mode;
     const template = templates.find((item) => item.id === templateSelect.value);
     text.disabled = Boolean(template);
     if (template) text.value = template.text;
+    holes.textContent = `Yer tutucular: ${PA_HOLES[mode]}`;
+    const klass = targets?.classes?.find((item) => item.id === classSelect.value);
+    hint.textContent = mode === 'class' && klass?.session
+      ? `Şimdiki ders: ${fmtDateTime(klass.session.startsAt)} · ${klass.session.teacherName || '—'}`
+        + `${klass.session.room ? ` · ${klass.session.room}` : ''}`
+      : '';
+    saveButton.hidden = Boolean(template) || !text.value.trim();
+    player.hidden = true;
   }
+  text.addEventListener('input', () => { saveButton.hidden = !text.value.trim(); player.hidden = true; });
 
   const history = pagedList({
     app,
     path: '/v1/admin/pa/calls',
-    query: () => ({ from: todayIst(-6), to: todayIst() }),
+    query: () => ({ from: todayIst(-6), to: todayIst(), kind: 'all' }),
     columns: [
       { key: 'at', label: 'Zaman', width: '130px', cell: (row) => fmtDateTime(row.at) },
-      { key: 'student', label: 'Öğrenci', cell: (row) => row.student?.displayName || '—' },
+      { key: 'target', label: 'Kime', cell: (row) => paTarget(row) },
       { key: 'text', label: 'Metin', width: 'minmax(0, 2fr)' },
       { key: 'by', label: 'Çağıran', cell: (row) => row.calledBy || '—' },
       { key: 'status', label: 'Durum', cell: (row) => statusBadge(PA_STATUS, row.status) },
     ],
     dense: true,
-    empty: { title: 'Son 7 günde çağrı yok' },
+    empty: { title: 'Son 7 günde anons yok' },
   });
-  node.append(h('b', '', 'Son çağrılar'), history.node);
+  node.append(h('b', '', 'Son anonslar'), history.node);
+
+  async function loadTargets() {
+    try {
+      targets = await app.api.getCached('/v1/admin/pa/targets');
+      classSelect.options([{ value: '', label: 'Sınıf seçin' },
+        ...(targets?.classes || []).map((item) => ({ value: item.id, label: item.name }))]);
+      teacherSelect.options([{ value: '', label: 'Dersin öğretmeni / ben' },
+        ...(targets?.teachers || []).map((item) => ({ value: item.id, label: item.callName }))]);
+      modeSelect.node.querySelector('option[value="free"]').hidden = !targets?.freeText;
+    } catch (failure) {
+      node.prepend(errorBox(failure));
+    }
+    paint();
+  }
 
   async function loadTemplates() {
     try {
-      templates = (await app.api.getCached('/v1/admin/pa/templates'))?.items || [];
+      templates = (await app.api.getCached('/v1/admin/pa/templates', { kind: mode }))?.items || [];
       templateSelect.options([{ value: '', label: 'Özel metin' },
         ...templates.map((item) => ({ value: item.id, label: item.title }))]);
     } catch (failure) {
       node.prepend(errorBox(failure));
     }
+    paint();
+  }
+
+  function body() {
+    const template = templates.find((item) => item.id === templateSelect.value) || null;
+    const message = template ? null : text.value.trim();
+    return { templateId: template?.id || null, text: message || null, display: template ? template.text : message };
+  }
+
+  function target() {
+    if (mode === 'student') return chosen ? { studentId: chosen.id, label: chosen.displayName } : null;
+    if (mode === 'class') {
+      const klass = targets?.classes?.find((item) => item.id === classSelect.value);
+      return klass ? { groupId: klass.id, label: klass.name } : null;
+    }
+    return { label: 'Duyuru' };
+  }
+
+  async function listen() {
+    const t = target();
+    const b = body();
+    if (!t) { app.toast(mode === 'class' ? 'Önce sınıfı seçin.' : 'Önce öğrenciyi seçin.', 'bad'); return; }
+    if (!b.display) { app.toast('Metin yazın ya da şablon seçin.', 'bad'); return; }
+    const result = await runAction(app, () => app.api.post('/v1/admin/pa/preview', {
+      kind: mode, studentId: t.studentId || null, groupId: t.groupId || null,
+      teacherId: teacherSelect.value || null, templateId: b.templateId, text: b.text,
+    }), { button: listenButton });
+    if (result?.audio) {
+      player.src = result.audio;
+      player.hidden = false;
+      hint.textContent = `“${result.text}”`;
+      player.play().catch(() => {});
+    }
   }
 
   async function call() {
-    if (!chosen) { app.toast('Önce öğrenciyi seçin.', 'bad'); return; }
-    const template = templates.find((item) => item.id === templateSelect.value) || null;
-    const message = template ? template.text : text.value.trim();
-    if (!message) { app.toast('Metin yazın ya da şablon seçin.', 'bad'); return; }
+    const t = target();
+    const b = body();
+    if (!t) { app.toast(mode === 'class' ? 'Önce sınıfı seçin.' : 'Önce öğrenciyi seçin.', 'bad'); return; }
+    if (!b.display) { app.toast('Metin yazın ya da şablon seçin.', 'bad'); return; }
+    const path = mode === 'student' ? '/v1/admin/pa/calls'
+      : mode === 'class' ? '/v1/admin/pa/class-calls' : '/v1/admin/pa/announcements';
     const result = await formDialog(app, {
       title: 'Anonsu onaylayın',
-      description: `“${message}” — ${chosen.displayName}`,
+      description: `“${b.display}” — ${t.label}`,
       fields: [],
-      submitLabel: 'Anons et',
-      onSubmit: (_draft, { key }) => app.api.post('/v1/admin/pa/calls', {
-        studentId: chosen.id, templateId: template?.id || null, text: template ? null : message,
-        confirm: true }, { key }),
+      submitLabel: mode === 'free' ? 'Duyur' : 'Anons et',
+      onSubmit: (_draft, { key }) => app.api.post(path, {
+        ...(t.studentId ? { studentId: t.studentId } : {}),
+        ...(t.groupId ? { groupId: t.groupId } : {}),
+        ...(mode !== 'free' ? { teacherId: teacherSelect.value || null } : {}),
+        templateId: b.templateId, text: b.text, confirm: true }, { key }),
     });
     if (result) {
       app.toast(result.etaSeconds ? `Anons sıraya alındı (~${result.etaSeconds} sn).` : 'Anons gönderildi.', 'good');
@@ -487,9 +599,30 @@ function paView(app) {
     }
   }
 
+  async function saveTemplate() {
+    const message = text.value.trim();
+    if (!message) return;
+    const result = await formDialog(app, {
+      title: 'Şablon olarak kaydet',
+      description: `“${message}” (${PA_KIND[mode]} şablonu)`,
+      fields: [{ key: 'title', label: 'Şablon adı', required: true, maxLength: 60 }],
+      submitLabel: 'Kaydet',
+      onSubmit: (draft, { key }) => app.api.post('/v1/admin/pa/templates',
+        { title: draft.title, text: message, kind: mode }, { key }),
+    });
+    if (result) {
+      app.api.invalidate('/v1/admin/pa/templates');
+      app.toast('Şablon kaydedildi.', 'good');
+      await loadTemplates();
+      templateSelect.set(result.id);
+      paint();
+    }
+  }
+
+  paint();
   return {
     node,
-    reload() { loadTemplates(); history.reload(); },
+    reload() { loadTargets(); loadTemplates(); history.reload(); },
     destroy() { picker.destroy(); history.destroy(); },
   };
 }
