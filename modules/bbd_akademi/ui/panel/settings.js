@@ -495,7 +495,10 @@ export function canteenTab(app, { goTab }) {
 
 /** Bayrak → [ad, açıklama]. Bilinmeyen bayrak kendi anahtarıyla görünür. */
 const FEATURES = {
-  canteen: ['Kantin', 'Bakiye, limit ve veli kantin kontrolleri (kantin defteri KM\'dedir).'],
+  canteen: ['Kantin (veli ve öğrenci uygulamasında)',
+    'Açıkken veli ve öğrenci uygulamada kantin bakiyesini, harcamalarını, ödeme taleplerini, limit ve yasaklı ürün '
+    + 'ayarlarını görür; kantin bildirimleri gider. Kapalıyken veli ve öğrenci kantini HİÇ görmez (sekme, kart, '
+    + 'bildirim, ödeme talebi yok). Kantin kasası ve Kontrol Merkezi kantin modülü etkilenmez.'],
   tablets: ['Öğrenci tabletleri', 'Tablet yönetimi ve ders modu.'],
   pa: ['Anons sistemi', 'Sınıflara sesli anons ve öğrenci çağırma.'],
   books: ['Kitap talepleri', 'Mağaza üzerinden kitap talebi, veli onayı ve sipariş.'],
@@ -523,6 +526,11 @@ const FEATURES = {
   guardian_coach_messaging: ['Veli ↔ koç mesajı', 'Veli ile koç arasında yazışma.'],
   coach_meetings: ['Koç randevusu', 'Öğrenci ve veli koçtan görüşme randevusu alır.'],
   leave_request_notifications: ['İzin talebi bildirimi', 'İzin talebi onaylanınca ya da reddedilince veliye bildirim.'],
+};
+/** Kapatma onayında özelliğe özgü açıklama (yoksa genel metin). */
+const FEATURE_OFF_NOTE = {
+  canteen: 'Veli ve öğrenci uygulamasında kantin sekmesi, kartları, bildirimleri ve ödeme talepleri hemen kalkar. '
+    + 'Kantin kasası ve Kontrol Merkezi kantin modülü çalışmaya devam eder; kayıtlı veri silinmez, yeniden açınca geri gelir.',
 };
 /** Bayrak → çalışması için açık olması gereken bayraklar. */
 const REQUIRES = { 'finance.card': ['finance'] };
@@ -596,8 +604,8 @@ function featuresTab(app) {
         .map(([key]) => featureName(key));
       const ok = await confirmAction(app, {
         title: `“${featureName(item.key)}” kapatılsın mı?`,
-        description: 'Bu özelliğin ekranları öğrenci, veli ve yönetici uygulamalarında hemen kapanır; '
-          + 'kayıtlı veri silinmez, yeniden açınca geri gelir.'
+        description: (FEATURE_OFF_NOTE[item.key] || 'Bu özelliğin ekranları öğrenci, veli ve yönetici uygulamalarında '
+          + 'hemen kapanır; kayıtlı veri silinmez, yeniden açınca geri gelir.')
           + `${dependents.length ? ` Buna bağlı “${dependents.join('”, “')}” da çalışmaz.` : ''}`,
         confirmLabel: 'Kapat',
         danger: true,
