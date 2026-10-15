@@ -65,6 +65,7 @@ Kullanım paketi profil kuralına göre denetlenmez: oturum sırasında bir uygu
 | `POST /devices/{id}/login-lock/reset` | grant |
 | `POST /students/{id}/apps/{package}/grants`, `POST /students/{id}/grants/{grantId}/revoke` | grant |
 | `POST /students/{id}/block`, `POST /students/{id}/unblock` | grant |
+| `GET /students/{id}/app-limits` (öğrenciye özel süreler), `DELETE /students/{id}/app-limits/{package}` (genele döndür) | view / grant |
 | `GET /apps`, `GET /apps/{package}/devices` | view |
 | `POST /apps/uploads`, `GET /apps/uploads/{id}`, `PUT /apps/uploads/{id}/chunk`, `POST /apps/uploads/{id}/finish` | manage |
 | `POST /apps/releases/{id}/publish`, `DELETE /apps/releases/{id}`, `POST /apps/{package}/devices/{deviceId}/prioritize` | manage |
@@ -88,7 +89,8 @@ uygulaması ve sözleşme değişmez.
   (`control.set_student_app_limit`, tablo `student_app_limits`, 011 göçü). Tablet protokolü değişmediği için
   özel süre **genelden uzun** olmak zorundadır: fark her gün oturumun ek süre listesine kendiliğinden eklenir
   (`id` `ovr:<paket>`, `grantsVersion` sonuna `:o<n>:<son değişiklik>:<profil revizyonu>`; özel süre yoksa
-  sürüm eskisiyle aynı). Genelden kısa öğrenci süresi ve yasak uygulamayı öğrenciye açmak protokolde yoktur
+  sürüm eskisiyle aynı). KM panelinde öğrenci ayrıntısında "Öğrenciye özel süreler" kartı listeler ve "Genele
+  döndür" ile kaldırır; Kullanım listesindeki sınır özel süreyi gösterir. Genelden kısa öğrenci süresi ve yasak uygulamayı öğrenciye açmak protokolde yoktur
   (ek süre negatif olamaz, yasak uygulama ek süreyle açılmaz) → `validation_error`. Kayıtlar bellekte tutulur
   (tek yazıcı bu servis), sync'in değişiklik yok yoluna sorgu eklenmez. `null` = genele döndür.
 - **Gerekçe isteğe bağlı** (kullanıcı kararı): verilmezse günlüğe "Akademi yöneticisi düzeltti" yazılır;

@@ -1214,12 +1214,16 @@ class TabletService:
         rules = {app["packageName"]: app for app in (profile or {}).get("apps", [])}
         packages = set(used) | {name for name, app in rules.items() if app["allowed"]}
         names = await self._app_names(packages | set(extra))
+        # Öğrenciye özel süre (tablet-sinir) genelin üstüne yazar; tablet farkı ek süre olarak alır.
+        overrides = await self.student_app_limits(student_id)
         items = []
         for package in packages:
             rule = rules.get(package)
             allowed = bool(rule and rule["allowed"])
             unlimited = bool(rule and rule["unlimited"])
             limit = None if unlimited else (rule["dailyLimitSeconds"] if allowed and rule else 0)
+            if limit and package in overrides:
+                limit = max(limit, int(overrides[package]["seconds"]))
             spent = used.get(package, 0)
             bonus = extra.get(package, 0)
             items.append({

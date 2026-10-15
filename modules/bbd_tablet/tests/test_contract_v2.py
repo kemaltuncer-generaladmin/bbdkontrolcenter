@@ -1209,6 +1209,9 @@ EXPECTED_PERMISSIONS = {
     ("POST", "/students/{student_id}/grants/{grant_id}/revoke"): {GRANT},
     ("POST", "/students/{student_id}/block"): {GRANT},
     ("POST", "/students/{student_id}/unblock"): {GRANT},
+    # tablet-sinir: öğrenciye özel süreleri görme / genele döndürme.
+    ("GET", "/students/{student_id}/app-limits"): {VIEW},
+    ("DELETE", "/students/{student_id}/app-limits/{package_name}"): {GRANT},
     ("GET", "/apps"): {VIEW},
     ("GET", "/apps/{package_name}/devices"): {VIEW},
     ("POST", "/apps/uploads"): {MANAGE},

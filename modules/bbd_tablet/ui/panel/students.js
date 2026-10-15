@@ -255,6 +255,9 @@ export function studentsView(app) {
     buildGrantForm(st);
     st.grantsBox = h('div', 'tb-grants');
     detail.append(card('Verilen ek süreler', wrap(st.grantsBox)));
+    // Öğrenciye özel süreler (BBD Akademi yöneticisi verir; genelin üstüne yazar — tablet-sinir).
+    st.limitsBox = h('div', 'tb-grants');
+    detail.append(card('Öğrenciye özel süreler', wrap(st.limitsBox)));
 
     // Kısıtlama
     st.blockState = h('div', 'tb-block-state');
@@ -274,6 +277,7 @@ export function studentsView(app) {
 
     loadUsage(st);
     loadBlocks(st);
+    loadLimits(st);
     loadHistory(st);
   }
 
@@ -528,6 +532,47 @@ export function studentsView(app) {
       await loadUsage(st, { quiet: true });
     } catch (error) {
       app.toast(problem(error, 'Ek süre verilemedi. Tekrar deneyin.'), 'bad');
+    }
+  }
+
+  async function loadLimits(st) {
+    try {
+      st.limits = await app.call(`/students/${enc(st.id)}/app-limits`) || [];
+    } catch (error) {
+      st.limitsBox.replaceChildren(muted(problem(error, 'Öğrenciye özel süreler alınamadı.')));
+      return;
+    }
+    paintLimits(st);
+  }
+
+  function paintLimits(st) {
+    const items = st.limits || [];
+    st.limitsBox.replaceChildren();
+    if (!items.length) {
+      st.limitsBox.append(muted('Bu öğrenci genel ayarı kullanıyor. Özel süre BBD Akademi\'deki öğrenci kartından verilir.'));
+      return;
+    }
+    for (const item of items) {
+      const row = h('div', 'tb-cmd');
+      row.append(
+        nameCell(`${item.appName || item.packageName} · günde ${dur(item.dailyLimitSeconds)}`,
+          [item.updatedBy, when(item.updatedAt)].filter(Boolean).join(' · ')),
+        permButton(app, 'Genele döndür', 'grant', {
+          variant: 'ghost',
+          onClick: (event) => busy(event.currentTarget, () => resetLimit(st, item)),
+        }),
+      );
+      st.limitsBox.append(row);
+    }
+  }
+
+  async function resetLimit(st, item) {
+    try {
+      await app.call(`/students/${enc(st.id)}/app-limits/${enc(item.packageName)}`, { method: 'DELETE' });
+      app.toast('Genel ayara döndürüldü.', 'good');
+      await Promise.all([loadLimits(st), loadUsage(st, { quiet: true })]);
+    } catch (error) {
+      app.toast(problem(error, 'Özel süre kaldırılamadı. Tekrar deneyin.'), 'bad');
     }
   }
 

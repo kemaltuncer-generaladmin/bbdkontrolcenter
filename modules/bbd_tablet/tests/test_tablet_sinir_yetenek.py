@@ -250,3 +250,27 @@ async def test_ozel_sure_girisle_gelir(service: TabletService, clock: Any) -> No
     assert {"id": f"ovr:{VIDEO['packageName']}", "packageName": VIDEO["packageName"],
             "localDate": TODAY, "extraSeconds": 1800} in logged["extraGrants"]
     assert ":o1:" in logged["grantsVersion"]
+
+
+async def test_km_paneli_ozel_sureyi_gorur_ve_kaldirir(service: TabletService, clock: Any) -> None:
+    await _setup(service, clock)
+    await TabletControl(service, Log()).set_student_app_limit(
+        "opaque-A", VIDEO["packageName"], 2700, "Ayşe")
+    usage = await service.student_usage("opaque-A", TODAY)
+    video = next(item for item in usage["usage"] if item["packageName"] == VIDEO["packageName"])
+    assert video["limitSeconds"] == 2700
+    assert video["remainingSeconds"] == 2700 - 600
+
+    from modules.bbd_tablet.backend.api import routes
+
+    routes.bind(service)
+
+    class User:
+        full_name = "KM Yöneticisi"
+
+    listed = await routes.student_app_limits("opaque-A", user=User())  # type: ignore[arg-type]
+    assert [item["dailyLimitSeconds"] for item in listed] == [2700]
+    removed = await routes.reset_student_app_limit("opaque-A", VIDEO["packageName"],
+                                                    user=User())  # type: ignore[arg-type]
+    assert removed == {"packageName": VIDEO["packageName"], "removed": True}
+    assert await routes.student_app_limits("opaque-A", user=User()) == []  # type: ignore[arg-type]

@@ -467,6 +467,31 @@ async def revoke_grant(student_id: str, grant_id: str,
     return result
 
 
+@router.get("/students/{student_id}/app-limits")
+async def student_app_limits(student_id: str,
+                             user: CurrentUser = requires(VIEW)) -> list[dict[str, Any]]:
+    """Öğrenciye özel günlük uygulama süreleri (Akademi yöneticisi verir; tablet-sinir)."""
+    service = current_service()
+    rows = await service.student_app_limits(student_id)
+    names = await service._app_names(set(rows))
+    return [{"packageName": package, "appName": names.get(package) or package,
+             "dailyLimitSeconds": item["seconds"], "updatedAt": item["updatedAt"],
+             "updatedBy": item["updatedBy"]}
+            for package, item in sorted(rows.items())]
+
+
+@router.delete("/students/{student_id}/app-limits/{package_name}")
+async def reset_student_app_limit(student_id: str, package_name: str,
+                                  user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
+    """Öğrenciye özel süreyi kaldırır ("genele döndür"); yoksa da başarılıdır."""
+    previous = await current_service().set_student_app_limit(
+        student_id=student_id, package_name=package_name, daily_limit_seconds=None,
+        actor=user.full_name,
+    )
+    await announce("tablet.policy_changed", ("student", student_id), ["limits"])
+    return {"packageName": package_name, "removed": previous is not None}
+
+
 @router.post("/students/{student_id}/block")
 async def block_student(student_id: str, body: BlockBody,
                         user: CurrentUser = requires(GRANT)) -> dict[str, Any]:
