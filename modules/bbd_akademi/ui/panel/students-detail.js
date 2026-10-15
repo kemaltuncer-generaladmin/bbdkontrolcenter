@@ -29,10 +29,11 @@ import {
   weekStart,
 } from './common.js';
 import { goalDialog } from './coaching-students.js';
+import { EXAM_TYPES } from './exams-shared.js';
 import { documentButtons } from './documents.js';
 import { studentCurriculumSet } from './curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';
-import { canteenDoc, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
+import { canteenDoc, homeworkTally, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
 
 // ------------------------------------------------------------- etiketler
 
@@ -41,8 +42,8 @@ export const STUDENT_STATUS = { active: ['Aktif', 'good'], inactive: ['Pasif (KM
 /** KM pasifleştirme gerekçesi (sözleşme `StudentStatusReason`). */
 export const STATUS_REASONS = { left: 'Ayrıldı', graduated: 'Mezun', suspended: 'Geçici durduruldu',
   other: 'Diğer' };
-export const EXAM_TYPES = { lgs: 'LGS', tyt: 'TYT', ayt_say: 'AYT Sayısal', ayt_ea: 'AYT Eşit ağırlık',
-  ayt_soz: 'AYT Sözel', ayt_dil: 'AYT Dil', midterm: 'Yazılı', internal: 'Kurum içi' };
+/** Deneme türü adı tek tablodan (`exams-shared.js`; Akademi V17). */
+export { EXAM_TYPES };
 export const ATTENDANCE = { present: ['Geldi', 'good'], absent: ['Gelmedi', 'bad'], late: ['Geç kaldı', 'warn'],
   excused: ['İzinli', 'info'] };
 export const HOMEWORK_STATUS = { pending: ['Bekliyor', 'info'], completed: ['Teslim edildi', 'good'],
@@ -689,8 +690,9 @@ function weeklyReport(ctx, row) {
       { label: 'Çözülen soru', value: num(study.questions),
         delta: change(study.questions, study.previousQuestions, `Önceki hafta ${num(study.previousQuestions)}`) },
       { label: 'Doğruluk', value: percent(study.accuracyPercent) },
+      // Akademi README §14 madde 85: öğretmen kontrolü sayılır (eksik 0,5, yapmadı 0).
       { label: 'Ödev', value: `${num(homework.completed)} / ${num(homework.assigned)}`,
-        title: `Tamamlama ${percent(homework.completionRatePercent)}` },
+        title: `${homeworkTally(homework)} · tamamlama ${percent(homework.completionRatePercent)}` },
       isSet(report.tabletSeconds) ? { label: 'Tablet', value: secondsText(report.tabletSeconds) } : null,
     ].filter(Boolean))];
     nodes.push(card('Yoklama', kv([

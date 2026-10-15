@@ -154,11 +154,12 @@ class OtpBody(BaseModel):
 
 
 class TextSmsBody(BaseModel):
-    """Duyuru SMS'i (bbd-akademi README §14 madde 81). Metin KM'de ASCII'ye indirilir."""
+    """Kurum SMS'i (bbd-akademi README §14 madde 81, 88): duyuru, ödeme hatırlatması, deneme sonucu.
+    Metin KM'de ASCII'ye indirilir; üç amaç aynı bütçeden düşer."""
 
     phone: str = Field(pattern=PHONE)
     text: str = Field(min_length=1, max_length=1000)
-    purpose: Literal["announcement"]
+    purpose: Literal["announcement", "payment_reminder", "exam_result"]
 
 
 class SmsLimitResetBody(ReasonBody):
@@ -517,7 +518,7 @@ async def sms_otp(body: OtpBody, request: Request,
 @router.post("/sms/send")
 async def sms_send(body: TextSmsBody, request: Request,
                    user: CurrentUser = requires(ACCESS)) -> Response:
-    """Duyuru SMS'i: veli telefonuna serbest metin, olağan hat; KM'nin duyuru SMS bütçesi uygulanır."""
+    """Kurum SMS'i: veli telefonuna serbest metin, olağan hat; KM'nin kurum SMS bütçesi uygulanır."""
     caller = caller_of(request, user)
     return await idempotent(request, body, 200, lambda: current_service().send_text(
         body.phone, body.text, body.purpose, caller,
@@ -533,7 +534,7 @@ async def sms_otp_status(job_id: str,
 
 @router.get("/sms/health")
 async def sms_health(user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
-    """sms-kale: son 1 saatin OTP teslim özeti + Netgsm SMS paketi (izleme/alarm)."""
+    """sms-kale: son 1 saatin OTP teslim özeti + Netgsm SMS paketi (izleme/alarm) + kurum SMS bütçesi (madde 88)."""
     return await current_service().sms_health()
 
 

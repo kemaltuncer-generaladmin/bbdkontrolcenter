@@ -146,11 +146,12 @@ class Repository:
         )
 
     async def sms_stats(self, since: int) -> dict[str, Any]:
-        """Penceredeki OTP özeti (created_at indeksiyle; satır sayısı saatte en çok yüzler). Duyuru SMS'leri
-        (`purpose=announcement`, POST /sms/send) sayılmaz."""
+        """Penceredeki OTP özeti (created_at indeksiyle; satır sayısı saatte en çok yüzler). Kurum SMS'leri
+        (POST /sms/send: duyuru, ödeme hatırlatması, deneme sonucu — bbd-akademi madde 81, 88) sayılmaz."""
         rows = await self._store.fetch_all(
             f"SELECT status, delivery, created_at, delivered_at FROM {self.sms_log} "
-            f"WHERE created_at > ? AND purpose <> 'announcement'", (since,),
+            f"WHERE created_at > ? AND purpose NOT IN ('announcement', 'payment_reminder', 'exam_result')",
+            (since,),
         )
         sent = delivered = failed = pending = limited = send_failed = 0
         durations: list[int] = []

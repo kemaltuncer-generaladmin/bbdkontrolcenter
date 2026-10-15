@@ -95,6 +95,9 @@ KINDS: dict[str, DocumentKind] = {
     "finance_statement": DocumentKind("CRE", "Kurum cari", "hesap-ekstresi",
                                       ("admin_getFinanceStatement",)),
     "finance_receipt": DocumentKind("MKB", "Kurum cari", "makbuz", ("admin_getReceipt",)),
+    # Akademi README §14 madde 87 (ozellik/finans-belge): iade makbuzu ve ödeme planı (kayıt sözleşmesi eki).
+    "finance_refund_receipt": DocumentKind("IAD", "Kurum cari", "iade-makbuzu", ("admin_getRefundReceipt",)),
+    "finance_plan": DocumentKind("OPL", "Kurum cari", "odeme-plani", ("admin_getPlanAgreement",)),
     "book_request": DocumentKind("KTP", "Kitap", "kitap-talebi", ("admin_getBookRequest",)),
     # 0.5.4 (km-toplu-kitap): kitap satışı (satış + öğrenci satırları, teslim imzası).
     "book_sale": DocumentKind("KSA", "Kitap", "kitap-satisi", ("admin_getBookSale",)),
@@ -114,6 +117,8 @@ AKADEMI_PDFS: dict[str, DocumentKind] = {
     "finance_receipt": DocumentKind("MKB", "Kurum cari", "makbuz", ("admin_getReceipt",)),
     "finance_statement": DocumentKind("CRE", "Kurum cari", "hesap-ekstresi",
                                       ("admin_getFinanceStatement",)),
+    "finance_refund_receipt": DocumentKind("IAD", "Kurum cari", "iade-makbuzu", ("admin_getRefundReceipt",)),
+    "finance_plan": DocumentKind("OPL", "Kurum cari", "odeme-plani", ("admin_getPlanAgreement",)),
     "book_order": DocumentKind("KTS", "Kitap", "kitap-siparis", ("admin_getBookOrderPdf",)),
     "book_sale_order": DocumentKind("KTS", "Kitap", "kitap-satis-siparis",
                                     ("admin_getBookSaleOrderPdf",)),
