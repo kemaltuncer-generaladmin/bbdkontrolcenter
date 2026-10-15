@@ -94,6 +94,11 @@ const out = {
     m.goalBody({ kind: 'daily_questions', targetValue: '120', examType: 'tyt' }).body,
     m.goalText({ kind: 'exam_net', unit: 'net', targetValue: 95, examType: 'tyt' }),
     m.goalText({ kind: 'gelecek_tur', unit: 'net', targetValue: 1 })],
+  pool: [m.poolBulkChunks('https://youtu.be/aaaaaaaaaaa\n https://youtu.be/aaaaaaaaaaa , https://youtu.be/bbbbbbbbbbb\n\n'),
+    m.poolBulkChunks(Array.from({ length: 51 }, (_, i) => `u${i}`).join('\n')).chunks.map((c) => c.length),
+    m.poolTagsBody({ subjectId: 'matematik', topicIds: ['t1'], gradeLevels: ['12', 'graduate', '3'], tags: 'türev, özet, türev' }),
+    m.poolBulkSummary([{ status: 'added' }, { status: 'duplicate' }, { status: 'invalid' }]),
+    m.videoInput({ videoPoolItemId: 'p1', videoId: 'abcdefghijk', startSeconds: 30 }, 0)],
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -113,6 +118,14 @@ def _node_logic(folder: Path) -> dict[str, Any]:
 
 def test_saf_mantik(tmp_path: Path) -> None:
     out = _node_logic(tmp_path)
+    # Video havuzu (Akademi README §14 madde 105): toplu yapıştırma ayrıştırması, etiket gövdesi, özet, görev videosu.
+    assert out["pool"] == [
+        {"chunks": [["https://youtu.be/aaaaaaaaaaa", "https://youtu.be/bbbbbbbbbbb"]], "count": 2},
+        [50, 1],
+        {"subjectId": "matematik", "topicIds": ["t1"], "gradeLevels": [12, "graduate"], "tags": ["türev", "özet"]},
+        "1 eklendi · 1 zaten havuzda · 1 eklenemedi",
+        {"order": 0, "videoId": "abcdefghijk", "videoPoolItemId": "p1", "startSeconds": 30},
+    ]
     # Tek hedef akışı (Akademi README §14 madde 80): günlük soru / süre / deneme neti F-K18 türleri.
     assert out["goal"] == [
         "Deneme türünü seçin.",

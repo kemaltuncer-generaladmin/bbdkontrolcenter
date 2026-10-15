@@ -8,6 +8,8 @@
 //   `admin_updateInstitutionLibraryItem`, `admin_deleteInstitutionLibraryItem`;
 //   yalnız KM): YouTube videosu / kesiti / listesi (bağlantı sunucuda çözülür),
 //   web bağlantısı, dosya (foto / PDF), metin notu, görev paketi.
+// · Video havuzu (`admin_listVideoPool`; Akademi README §14 madde 105): kurum geneli YouTube bağlantıları,
+//   toplu yapıştırma — `coaching-video-pool.js` (ilk açılışta yüklenir).
 // · Öneriler (`admin_listLibraryProposals`): koçların kuruma önerdiği kişisel
 //   öğeler; onayda kurum kopyası açılır, koça bildirim (`admin_decideLibraryProposal`).
 
@@ -31,6 +33,8 @@ export function tab(app) {
   const views = [
     app.can('admin_listCoachLibrary') && { key: 'items', label: 'Kütüphane' },
     app.can('admin_listLibraryProposals') && { key: 'proposals', label: 'Koç önerileri' },
+    // Video havuzu (Akademi README §14 madde 105): kurum geneli bağlantılar, toplu yapıştırma — ilk açılışta yüklenir.
+    app.can('admin_listVideoPool') && { key: 'pool', label: 'Video havuzu' },
   ].filter(Boolean);
   let view = views[0]?.key;
   const chips = chipRow(views, view, (key) => { view = key || view; chips.set(view); paint(); });
@@ -40,8 +44,24 @@ export function tab(app) {
   node.append(toolbar(chips.node, create), holder);
   let items = null;
   let proposals = null;
+  let pool = null;
   function paint() {
-    if (view === 'proposals') {
+    if (create) create.hidden = view === 'pool';
+    if (view === 'pool') {
+      if (!pool) {
+        const slot = h('div');
+        slot.append(skeletonRows(6, 4));
+        pool = { node: slot, shown: () => {}, destroy: () => {} };
+        import('./coaching-video-pool.js').then((module) => {
+          const instance = module.tab(app);
+          slot.replaceChildren(instance.node);
+          Object.assign(pool, { shown: instance.shown, destroy: instance.destroy });
+          instance.shown();
+        }).catch((failure) => slot.replaceChildren(errorBox(failure)));
+      }
+      holder.replaceChildren(pool.node);
+      pool.shown();
+    } else if (view === 'proposals') {
       proposals = proposals || proposalsView(app, () => items?.reload());
       holder.replaceChildren(proposals.node);
       proposals.start();
@@ -55,7 +75,7 @@ export function tab(app) {
   return {
     node,
     shown() { if (!started && view) { started = true; paint(); } },
-    destroy() { items?.destroy(); proposals?.destroy(); },
+    destroy() { items?.destroy(); proposals?.destroy(); pool?.destroy(); },
   };
 }
 

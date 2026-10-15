@@ -18,6 +18,8 @@
 //     otomatik onayı), performans metrikleri, toplu koç atama (önizlemeli).
 //   · Kütüphane — kurum kütüphanesi küratörlüğü (video / kesit / liste /
 //     bağlantı / not), koçların önerdiği öğelere karar, kullanım sayıları.
+//     Kütüphane sekmesinin "Video havuzu" görünümü: kurum geneli YouTube bağlantıları
+//     (başlık / kanal / süre sunucudan), toplu yapıştırma, etiket, kullanım sayısı.
 //   · Tebrik ve rozetler — koç rozeti tanımları, haftalık kutlama adayları ve
 //     toplu tebrik.
 //   · Check-in — kurum soru seti (pazar öz değerlendirmesine eklenir) ve
@@ -42,7 +44,7 @@ const TABS = [
   { key: 'students', label: 'Öğrenciler', read: ['admin_listCoachingStudents'], file: './coaching-students.js' },
   { key: 'week', label: 'Haftalık program', read: ['admin_getCoachWeek'], file: './coaching-week.js' },
   { key: 'coaches', label: 'Koçlar', read: ['admin_listCoaches', 'admin_bulkAssignCoach'], file: './coaching-coaches.js' },
-  { key: 'library', label: 'Kütüphane', read: ['admin_listCoachLibrary', 'admin_listLibraryProposals'],
+  { key: 'library', label: 'Kütüphane', read: ['admin_listCoachLibrary', 'admin_listLibraryProposals', 'admin_listVideoPool'],
     file: './coaching-library.js' },
   { key: 'motivation', label: 'Tebrik ve rozetler', read: ['admin_listCoachBadges', 'admin_listCelebrationCandidates'],
     file: './coaching-motivation.js' },
