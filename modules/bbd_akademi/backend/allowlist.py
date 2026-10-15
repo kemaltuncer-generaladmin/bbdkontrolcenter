@@ -2630,15 +2630,6 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-K15', 'F-K21'),
     ),
     Operation(
-        'POST',
-        '/v1/admin/pa/announcements',
-        'admin_announcePa',
-        ('pa.call',),
-        'both',
-        feature_flag='pa',
-        features=('F-A3',),
-    ),
-    Operation(
         'GET',
         '/v1/admin/mistake-inbox',
         'admin_listMistakeInbox',
@@ -2692,6 +2683,15 @@ OPERATIONS: tuple[Operation, ...] = (
         multipart=True,
         feature_flag='coach_questions',
         features=('F-S18', 'F-K14', 'F-T1'),
+    ),
+    Operation(
+        'POST',
+        '/v1/admin/pa/announcements',
+        'admin_announcePa',
+        ('pa.call',),
+        'both',
+        feature_flag='pa',
+        features=('F-A3',),
     ),
     Operation(
         'GET',
