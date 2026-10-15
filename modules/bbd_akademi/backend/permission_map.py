@@ -164,6 +164,7 @@ PERMISSION_MAP: dict[str, str] = {
     # --- kurum içi anlık işler Akademi üzerinden (anons, tablet)
     "pa.call": CAMPUS,
     "tablet.control": CAMPUS,
+    "tablets.manage": CAMPUS,   # uzaktan tablet sınırları (genel profil + öğrenciye özel süre)
     # --- kantin işlemleri Akademi üzerinden (asıl ekran: Öğrenciler modülü)
     "canteen.controls": CANTEEN,
     "canteen.collect_cash": CANTEEN,
