@@ -1,4 +1,4 @@
-// BBD Akademi — Bugün → Veli toplantısı (Akademi README §14 madde 90, İ8; F-P11, F-A14).
+// BBD Akademi — İletişim → Veli toplantısı (Akademi README §14 madde 90, İ8; F-P11, F-A14).
 //
 // Dönemde bir-iki kez yapılan toplu veli görüşmesinin RANDEVU TAKVİMİ. Öğretmen / koç uygulamadan kendi saatlerini
 // açar; KM (kurumun bütün öğretmenleri, `parent_meetings.manage:tenant`) burada:

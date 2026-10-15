@@ -5,11 +5,16 @@
 // Akademi API'sindedir: panel yalnız `/v1/admin/*` uçlarını modülün izin
 // listeli vekili üzerinden çağırır (bkz. api.js, backend/proxy.py).
 //
-// BİLGİ MİMARİSİ TEK YERDE: `sections.js` → `AREAS` (menüde en fazla altı üst
-// bölüm) ve `SECTIONS` (ekranlar; her biri bir üst bölümün altında). Yeni bir
-// yönetim ekranı = bir dosya (`export function section(app) → {node, shown?,
+// BİLGİ MİMARİSİ TEK YERDE: `sections.js` → `AREAS` (en çok on ana grup) ve
+// `SECTIONS` (ekranlar; her biri bir ana grubun altında). Yeni bir yönetim
+// ekranı = bir dosya (`export function section(app) → {node, shown?,
 // destroy?}`) + `SECTIONS`'a bir satır. Ekran dosyası ilk açıldığında yüklenir
 // (dinamik import), sonra açık kalır; geri dönüldüğünde yeniden kurulmaz.
+//
+// TEK SOL GEZİNME (15.10.2026): sol menü yalnız KM kabuğunundur; panel kendi
+// sol menüsünü ÇİZMEZ. Gezinme üstte: simgeli ana grup şeridi + seçili grubun
+// hap sekmeleri; panel ana sayfayla (büyük kutucuklar, `home.js`) açılır. Her
+// ekran ana sayfadan tek, her yerden en çok iki tıktadır.
 //
 // YALNIZ AÇIK OLAN GÖRÜNÜR: kurumda kapalı özelliğin (`feature`) ekranı menüde
 // yoktur; işlem düğmeleri de çizilmez (`api.js` → `featureOff`). Bayraklar
@@ -19,8 +24,8 @@
 // `app.api.can(operationId)` ile çizilir; asıl kapı vekildedir (K9).
 //
 // HIZ: açılış TEK çağrıdır (`/km/status?operations=1` — bağlantı, izinler,
-// bayraklar ve işlem listesi birlikte); ilk ekran "Bugün" tek özet ucunu
-// (`admin_getDashboard`) çağırır.
+// bayraklar ve işlem listesi birlikte); ana sayfa kutucuk sayıları için tek
+// özet ucunu (`admin_getDashboard`, 60 sn önbellekli) çağırır.
 //
 // GÜNCELLENİYOR BANDI: Akademi dağıtılırken bir okuma "güncelleniyor" hatasıyla
 // biterse (köprü sunucuda ≤ 20 sn yeniden denedi) üstte bant çıkar, geri sayımla
@@ -37,7 +42,8 @@ import { button, h, loadStyles, toaster } from '../../ui-kit/kit.js';
 import { alertBox, emptyState, skeletonRows } from '../../ui-kit/layout.js';
 import { createClient, problem } from './api.js';
 import { updatingBand } from './updating.js';
-import { AREAS, SECTIONS, buildNav, featureOn, resolveTarget } from './sections.js';
+import { ALIASES, AREAS, SECTIONS, buildNav, featureOn, homeTiles, resolveTarget } from './sections.js';
+import { navIcon } from './nav-icons.js';
 import { documentButtons } from './documents.js';
 import { studentDeletionDoc } from './documents-logic.js';
 
@@ -107,9 +113,10 @@ export function mount(root, ctx) {
     can: (operationId) => app.api.can(operationId),
     /**
      * Başka ekrana geç: `app.go('finance', {studentId})`. Anahtar ekran
-     * (`finance`), üst bölüm (`money`) ya da eski ad olabilir (`sections.js`).
+     * (`finance`), ana grup (`money`), `home` (ana sayfa) ya da eski ad
+     * olabilir (`sections.js`).
      */
-    go: (key, payload = null) => show(key, payload),
+    go: (key, payload = null) => (key === 'home' ? showHome() : show(key, payload)),
     /** KM'nin başka ekranına geç (ör. Öğrenciler modülü). */
     openPanel: (id, payload = null) => ctx.open?.(id, payload),
     /**
@@ -146,112 +153,185 @@ export function mount(root, ctx) {
   app.lookups = lookups(app);
 
   // ------------------------------------------------------------ iskelet
-  const nav = h('nav', 'ak-nav');
-  nav.setAttribute('aria-label', 'Akademi bölümleri');
+  // TEK SOL GEZİNME (15.10.2026): sol menü KM kabuğunundur. Panelin gezinmesi
+  // ÜSTTEDİR — simgeli ana grup şeridi ve seçili grubun hap sekmeleri; ana
+  // sayfa büyük kutucuklardır (`home.js`). Panel ikinci bir sol menü çizmez.
+  const top = h('div', 'ak-top');
+  const areasNav = h('nav', 'ak-areas');
+  areasNav.setAttribute('aria-label', 'Akademi bölümleri');
+  const pills = h('nav', 'ak-pills');
+  pills.hidden = true;
+  top.append(areasNav, pills);
   const banner = h('div', 'ak-banner');
   const main = h('div', 'ak-main');
-  const layout = h('div', 'ak-layout');
   band = updatingBand({
     probe: () => app.api.probe(),
     reload: () => reloadCurrent(),
     busy: () => Boolean(view.querySelector('.kit-overlay, .kit-drawer')),
   });
   disposers.push(() => band.dispose());
-  layout.append(nav, main);
-  view.append(band.node, banner, layout);
+  view.append(band.node, top, banner, main);
   main.append(skeletonRows(6, 5));
   root.replaceChildren(view);
 
-  const built = new Map();            // ekran → {node, shown, destroy}
-  let menu = [];                      // görünür üst bölümler (`buildNav`)
-  let current = null;                 // {area, section}
+  const built = new Map();            // ekran (paylaşılan ekranda `host`) → {node, shown, destroy}
+  let menu = [];                      // görünür ana gruplar (`buildNav`)
+  let current = null;                 // {area, section, payload}; ana sayfada {area: 'home'}
+  let home = null;                    // ana sayfa (ilk açılışta kurulur)
 
-  const navContext = () => ({ has: (permission) => app.has(permission), features, kmOnly });
+  const navContext = () => ({ has: (permission) => app.has(permission), can: (operationId) => app.can(operationId),
+    features, kmOnly });
   const sectionOf = (key) => SECTIONS.find((item) => item.key === key);
+  /** Ekranın yuvası: aynı dosyanın hapları (`host`) TEK ekranı paylaşır. */
+  const slotOf = (section) => (section ? section.host || section.key : null);
+  const activeSlot = () => slotOf(sectionOf(current?.section));
+
+  function areaButton(area) {
+    const on = current?.area === area.key;
+    const item = h('button', `ak-area ak-tone-${area.tone || 'slate'}`);
+    item.type = 'button';
+    item.title = area.hint;
+    item.dataset.area = area.key;
+    item.append(navIcon(area.icon), h('span', 'ak-area-label', area.label));
+    item.classList.toggle('on', on);
+    const single = area.key === 'home' || (area.sections || []).length < 2;
+    item.setAttribute('aria-current', on ? (single ? 'page' : 'true') : 'false');
+    item.addEventListener('click', () => (area.key === 'home' ? showHome() : show(area.key)));
+    return item;
+  }
 
   function paintNav() {
     menu = buildNav(navContext());
-    nav.replaceChildren();
-    for (const area of menu) {
-      const on = current?.area === area.key;
-      const item = h('button', 'ak-nav-item', area.label);
-      item.type = 'button';
-      item.title = area.hint;
-      item.classList.toggle('on', on);
-      item.setAttribute('aria-current', on && area.sections.length === 1 ? 'page' : 'false');
-      item.setAttribute('aria-expanded', on ? 'true' : 'false');
-      item.addEventListener('click', () => show(area.key));
-      nav.append(item);
-      // Alt ekranlar yalnız seçili üst bölümün altında açılır; tek ekranlı
-      // bölümde (Öğrenciler) alt satır çizilmez.
-      if (on && area.sections.length > 1) {
-        item.classList.add('ak-nav-open');
-        const sub = h('div', 'ak-nav-sub');
-        sub.setAttribute('role', 'group');
-        sub.setAttribute('aria-label', area.label);
-        for (const section of area.sections) {
-          const subOn = current.section === section.key;
-          const entry = h('button', 'ak-nav-subitem', section.label);
-          entry.type = 'button';
-          entry.classList.toggle('on', subOn);
-          entry.setAttribute('aria-current', subOn ? 'page' : 'false');
-          entry.addEventListener('click', () => show(section.key));
-          sub.append(entry);
-        }
-        nav.append(sub);
+    areasNav.replaceChildren();
+    if (homeTiles(menu).length) {
+      areasNav.append(areaButton({ key: 'home', label: 'Ana sayfa', icon: 'home', tone: 'slate',
+        hint: 'Bütün bölümler kutucuklarla; her ekran tek tıkta.' }));
+    }
+    for (const area of menu) areasNav.append(areaButton(area));
+    // Haplar yalnız seçili grubun birden çok ekranı varsa çizilir.
+    const area = menu.find((item) => item.key === current?.area);
+    pills.replaceChildren();
+    pills.className = `ak-pills ak-tone-${area?.tone || 'slate'}`;
+    pills.hidden = !area || area.sections.length < 2;
+    if (pills.hidden) return;
+    pills.setAttribute('aria-label', `${area.label} ekranları`);
+    for (const section of area.sections) {
+      const on = current.section === section.key;
+      const pill = h('button', 'ak-pill', section.label);
+      pill.type = 'button';
+      pill.dataset.section = section.key;
+      pill.classList.toggle('on', on);
+      pill.setAttribute('aria-current', on ? 'page' : 'false');
+      pill.addEventListener('click', () => show(section.key));
+      pills.append(pill);
+    }
+  }
+
+  function hideAll() {
+    if (home) home.node.hidden = current?.area !== 'home';
+    const slot = activeSlot();
+    for (const [name, entry] of built) entry.node.hidden = name !== slot;
+  }
+
+  /** Ana sayfa: büyük kutucuklar (her grup + ekranları), hızlı işler, günün sayıları. */
+  async function showHome() {
+    current = { area: 'home', section: null, payload: null };
+    paintNav();
+    if (!home) {
+      try {
+        const module = await import('./home.js');
+        if (disposed) return;
+        home = module.homeView(app, { tiles: () => homeTiles(menu), nav: () => menu });
+        main.prepend(home.node);
+      } catch (failure) {
+        console.error('[bbd_akademi] ana sayfa açılamadı', failure);
+        const first = menu[0]?.sections[0];
+        if (first) show(first.key);
+        return;
       }
     }
+    hideAll();
+    if (current?.area === 'home') home.shown();
+    main.scrollTop = 0;
   }
 
   /** Açık ekranı baştan kurar (Akademi güncellemesinden sonra verisi tazelensin). */
   function reloadCurrent() {
     if (!current || disposed) return;
+    if (current.area === 'home') {
+      home?.shown({ fresh: true });
+      return;
+    }
     const key = current.section;
-    const entry = built.get(key);
+    const slot = activeSlot();
+    const entry = built.get(slot);
     if (entry && !entry.loading) {
       try { entry.destroy?.(); } catch { /* temizlik yarıda kalmaz */ }
       entry.node.remove();
-      built.delete(key);
+      built.delete(slot);
     }
     show(key, current.payload || null);
   }
 
   async function show(key, payload = null) {
-    const target = resolveTarget(menu, key);
+    const target = resolveTarget(menu, key, payload);
     if (!target) {
-      const section = sectionOf(key);
+      const section = sectionOf(ALIASES[key] || key);
       toast(section?.feature && !featureOn(features, section.feature)
         ? `“${section.label}” kurumda kapalı. Ayarlar → Özellikler'den açılabilir.`
         : 'Bu bölümü açma yetkiniz yok.', 'bad');
       return;
     }
     const section = sectionOf(target.section);
-    current = { ...target, payload };
+    // Hap, paylaşılan ekranın sekmesini kendi `payload`'ıyla seçer; çağıranınki önce gelir.
+    const merged = section.payload ? { ...section.payload, ...(payload || {}) } : payload;
+    const slot = slotOf(section);
+    const changed = current?.section !== section.key;
+    current = { ...target, payload: merged };
     paintNav();
-    for (const [name, entry] of built) entry.node.hidden = name !== section.key;
-    let entry = built.get(section.key);
+    hideAll();
+    if (changed) main.scrollTop = 0;
+    let entry = built.get(slot);
     if (!entry) {
-      const slot = h('div', 'ak-section');
-      slot.append(skeletonRows(6, 5));
-      main.append(slot);
-      entry = { node: slot, loading: true };
-      built.set(section.key, entry);
+      const node = h('div', 'ak-section');
+      node.append(skeletonRows(6, 5));
+      main.append(node);
+      entry = { node, loading: true };
+      built.set(slot, entry);
       try {
         const module = await import(section.file);
         if (disposed) return;
         const instance = module.section(app);
-        slot.replaceChildren(instance.node);
-        Object.assign(entry, instance, { node: slot, loading: false });
+        node.replaceChildren(instance.node);
+        Object.assign(entry, instance, { node, loading: false });
       } catch (failure) {
         console.error(`[bbd_akademi] ${section.key} bölümü açılamadı`, failure);
-        slot.replaceChildren(emptyState({ title: `“${section.label}” açılamadı`,
+        node.replaceChildren(emptyState({ title: `“${section.label}” açılamadı`,
           text: problem(failure, 'Bölüm yüklenemedi.') }));
         entry.loading = false;
       }
-      for (const [name, item] of built) item.node.hidden = name !== current.section;
+      hideAll();
     }
-    if (!entry.loading) entry.shown?.(payload);
+    if (!entry.loading) entry.shown?.(merged);
   }
+
+  /**
+   * Paylaşılan ekran kendi içinden sekme değiştirdi (ör. koçluk kartından
+   * haftalık programa): üstteki hap da o sekmeye geçsin.
+   */
+  function syncHosted(host, payload) {
+    const area = menu.find((item) => item.key === current?.area);
+    const match = area?.sections.find((section) => section.host === host && section.payload
+      && Object.entries(section.payload).every(([name, value]) => payload?.[name] === value));
+    if (!match || match.key === current.section) return;
+    current = { ...current, section: match.key, payload };
+    paintNav();
+  }
+  app.syncHosted = syncHosted;
+  /** Ekran bu kullanıcıya görünür mü (yetki + kurum özelliği)? Rapor merkezi, ana sayfa. */
+  app.canOpen = (key, payload = null) => Boolean(resolveTarget(menu, key, payload));
+  /** Ekranın sekmeleri üst gezinmede hap mı? (Öyleyse ekran kendi sekme şeridini gizler.) */
+  app.hostsTabs = (host) => SECTIONS.some((section) => section.host === host);
 
   // ------------------------------------------------------------- açılış
   function paintBanner(status) {
@@ -285,11 +365,12 @@ export function mount(root, ctx) {
       return;                          // menü eski haliyle kalır; karar Akademi'de
     }
     paintNav();
-    // Açık ekran kapanan bir özelliğe aitse ilk ekrana dönülür.
-    if (current && !resolveTarget(menu, current.section)) {
-      const first = menu[0]?.sections[0];
-      if (first) show(first.key);
+    if (current?.area === 'home') {
+      home?.shown();
+      return;
     }
+    // Açık ekran kapanan bir özelliğe aitse ana sayfaya (yoksa ilk ekrana) dönülür.
+    if (current && !resolveTarget(menu, current.section)) start(null);
   }
 
   async function boot() {
@@ -314,17 +395,28 @@ export function mount(root, ctx) {
     if (disposed) return;
     menu = buildNav(navContext());
     main.replaceChildren();
-    const first = menu[0]?.sections[0];
-    if (!first) {
+    if (!menu[0]?.sections[0]) {
       paintNav();
       main.append(emptyState({ title: 'Görüntülenecek bölüm yok',
         text: 'Akademi bölümleri için yetkiniz yok.',
         actions: [button('Yenile', { onClick: () => boot() })] }));
       return;
     }
-    const wanted = ctx.payload?.section && resolveTarget(menu, ctx.payload.section)
-      ? ctx.payload.section : first.key;
-    show(wanted, ctx.payload || null);
+    start(ctx.payload || null);
+  }
+
+  /**
+   * Açılış hedefi: derin bağlantı (`{section}`) varsa o ekran; yoksa ana sayfa
+   * (tek grup görünüyorsa — ör. yalnız öğrenci yönetimi — doğrudan o grup).
+   */
+  function start(payload) {
+    if (payload?.section && resolveTarget(menu, payload.section, payload)) {
+      show(payload.section, payload);
+    } else if (homeTiles(menu).length) {
+      showHome();
+    } else if (menu[0]?.sections[0]) {
+      show(menu[0].sections[0].key);
+    }
   }
 
   boot();

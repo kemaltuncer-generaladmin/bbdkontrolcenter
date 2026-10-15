@@ -1,0 +1,83 @@
+/* BBD Akademi — ana sayfa (home.js). Önek: `ak-home-`, `ak-tile-`.
+ *
+ * Büyük görsel kutucuklar: simge kutusu, ad, açıklama, günün sayısı ve grubun
+ * ekranları (hap bağlantılar). Kutucuğun adı "esnetilmiş bağlantı"dır — bütün
+ * kutucuk tıklanır; içteki ekran bağlantıları onun üstünde durur. Izgara
+ * pencereye göre 1–4 sütun; öne çıkan kutucuk (Koçluk) genişte iki sütun.
+ */
+
+.ak-home { gap: 16px; }
+
+.ak-home-quick { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ak-home-quick-label { color: var(--soft); font-size: 12.5px; font-weight: 600; margin-right: 4px; }
+
+.ak-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+@media (min-width: 900px) {
+  .ak-tile.ak-tile-feature { grid-column: span 2; }
+}
+
+.ak-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(17, 23, 34, 0.04);
+  transition: box-shadow .15s, border-color .15s, transform .15s;
+}
+.ak-tile:hover { border-color: #cfd6e3; box-shadow: 0 8px 24px rgba(17, 23, 34, 0.08); transform: translateY(-1px); }
+.ak-tile:focus-within { border-color: var(--tone); }
+.ak-tile.ak-tile-feature {
+  background: linear-gradient(135deg, var(--tone-bg) 0%, #fff 62%);
+  border-color: color-mix(in srgb, var(--tone) 28%, #fff);
+}
+
+.ak-tile-top { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.ak-tile-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; border-radius: 12px; background: var(--tone-bg); color: var(--tone); flex: none;
+}
+.ak-tile-icon .ak-ico { width: 22px; height: 22px; }
+.ak-tile-stat {
+  font-size: 12.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  background: var(--tint); color: var(--ink); border: 1px solid var(--line); white-space: nowrap;
+}
+.ak-tile-stat.good { background: #e6f4ea; border-color: #b9dfc4; color: #14532d; }
+.ak-tile-stat.warn { background: #fdf3dc; border-color: #f0d79b; color: #7c4a03; }
+.ak-tile-stat.bad { background: #fde8e8; border-color: #f5b5b5; color: #991b1b; }
+
+.ak-tile-title { margin: 2px 0 0; font-size: 16px; font-weight: 650; }
+.ak-tile-open {
+  border: 0; background: none; padding: 0; font: inherit; color: var(--ink); cursor: pointer; text-align: left;
+}
+/* Esnetilmiş bağlantı: kutucuğun boş alanı da grubu açar. */
+.ak-tile-open::after { content: ''; position: absolute; inset: 0; border-radius: 14px; }
+.ak-tile-open:focus-visible { outline: none; }
+.ak-tile-open:focus-visible::after { outline: 2px solid var(--tone); outline-offset: 2px; }
+.ak-tile-hint { margin: 0; color: var(--soft); font-size: 12.5px; line-height: 1.45; }
+
+.ak-tile-links {
+  position: relative; z-index: 1;
+  list-style: none; margin: 4px 0 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.ak-tile-link {
+  border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 11px;
+  font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer;
+}
+.ak-tile-link:hover { border-color: var(--tone); color: var(--tone); background: var(--tone-bg); }
+.ak-tile-link:focus-visible { outline: 2px solid var(--tone); outline-offset: 1px; }
+
+.ak-home-status:empty { display: none; }
+.ak-home-status { margin: 0; color: var(--soft); font-size: 12.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ak-tile, .ak-tile:hover { transition: none; transform: none; }
+}

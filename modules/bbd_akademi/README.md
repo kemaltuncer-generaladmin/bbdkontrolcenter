@@ -80,31 +80,97 @@ Akademi API  /v1/admin/*
    açılışında anahtar yoksa ya da şalter kapalıysa ekranın tepesinde sebep
    yazar; vekil `503 akademi_not_configured` / `akademi_disabled` döner.
 
-## Bilgi mimarisi (0.5.2 — sadeleştirme)
+## Bilgi mimarisi (15.10.2026 — tek gezinme)
 
-Kullanıcı isteği (13.10.2026): "Uygulama çok karışık olmaya başlamış, sadeleşip
-basitleşsin" ve "öğrenci yönetimini de tamamıyla BBD Akademi kısmına taşıyalım".
-Menü 21 düz bölümden **altı görev odaklı üst bölüme** indi; alt ekranlar yalnız
-seçili üst bölümün altında açılır. Kayıt tek yerde: `ui/panel/sections.js`
-(`AREAS`, `SECTIONS`, `STUDENT_CARD`; import'suz, Node testli —
-`tests/test_akademi_bilgi_mimarisi.py`). Hiçbir ekran kaldırılmadı
-(`ui_coverage.py` eksik 0).
+Kullanıcı isteği (15.10.2026): "kontrol merkezindeki tüm menüler ve o menülerin
+içerisindeki işlevleri de elden geçirip güzelce sadeleştirip kolay kullanım, full
+görselliğe girmeni istiyorum … bbd akademiye girince yan yana iki tane sol menü
+görünüyor." Önceki düzende (0.5.2, aşağıda) panel KM kabuğunun sol menüsünün
+yanına kendi ikinci sol menüsünü (altı üst bölüm + açılır alt ekranlar) çiziyordu.
+
+**Tek sol gezinme.** Sol menü yalnız KM kabuğunundur; panel kendi sol menüsünü
+çizmez. Kabuk modül başına tek menü satırı taşır (`ui.nav`; alt öğe ilanı yok —
+K1/K6 gereği kabuğa dokunulmadı), bu yüzden alt gezinme panelin ÜSTÜNE alındı:
+
+* **Ana grup şeridi** — simge + ad, en çok on grup (dershane yöneticisinin
+  günlük akışı sırasıyla) ve başta "Ana sayfa"; kaymaz, dar pencerede sarılır.
+* **Haplar** — seçili grubun ekranları ikinci satırda (grup tek ekranlıysa yok).
+* **Ana sayfa** — panel buradan açılır: büyük kutucuklar (simge, ad, ne işe
+  yaradığı, günün sayısı, grubun BÜTÜN ekranları) + hızlı işler (yoklama al, ödev
+  ver, görev ata, kontrol kuyruğu, duyuru yaz, tahsilat al, öğrenci bul). Günün
+  sayıları "Bugün" ile aynı özet yükünden (`admin_getDashboard`, 60 sn önbellek).
+* Her ekran ana sayfadan **tek**, her yerden en çok **iki** tıkta (grup + hap).
+* **Koçluk önde** (lider kararı): koçluk ekranının sekmeleri Koçluk grubunun
+  doğrudan haplarıdır (`sections.js` → `host: 'coaching'` + `payload`); ekran
+  (`coaching.js`) tek kez kurulur, hap sekmeyi seçer, ekranın kendi sekme şeridi
+  gizlenir; ekran içinden sekme değişirse hap da değişir (`app.syncHosted`).
+  Hap, sekmeyle AYNI okuma işlemlerine bakar (`reads`; test bağlar).
+
+Kayıt tek yerde: `ui/panel/sections.js` (`AREAS`, `SECTIONS`, `ALIASES`,
+`homeTiles`, `STUDENT_CARD`; import'suz, Node testli —
+`tests/test_akademi_bilgi_mimarisi.py`); davranış `tests/test_akademi_tek_gezinme.py`.
+Hiçbir işlev kaldırılmadı (`ui_coverage.py` eksik 0).
 
 ```
+ÖNCE (0.5.2 — kabuk sol menüsü + panelin İKİNCİ sol menüsü)
 Bugün ─────────────── Özet · Talepler · Veli toplantısı · Duyurular · Hoca soruları* · Mesaj denetimi*
-Öğrenciler ─────────── Öğrenciler (KM yönetimi) · Toplu işlemler · Sınıflar (KM) ·
-                       Dönem, öğretmen ve müfredat · Veliler ve uygulama · Uygulama kullanımı ·
-                       Koçluk*
-   └ öğrenci kartı ─── Özet · Kayıt ve veliler · Program ve yoklama ·
-                       Ödev ve çalışma · Müfredat ve gelişim · Cari, kantin ve kitap
+Öğrenciler ─────────── Öğrenciler · Koçluk* (8 iç sekme: Kuyruk · Öğrenciler · Haftalık program ·
+                       Koçlar · Kütüphane · Tebrik ve rozetler · Check-in · Görüşmeler)
 Dersler ve Program ─── Ders programı ve etüt · Ders oturumları · Yoklama · Ödevler ·
-                       Çalışma planı · Şablonlar · Kurum takvimi
+                       Çalışma planı (+ Şablonlar sekmesi) · Şablonlar · Kurum takvimi
 Ölçme ve Gelişim ───── Denemeler · Değerlendirmeler · Kaynaklar · Müfredat · Okuma ·
                        Bilgi kartları* · Erken uyarı*
 Kantin ve Finans ───── Kurum finansı* · Kantin* · Kitap satışı* · Kitap talepleri*
-Ayarlar ────────────── Kurum ayarları (ilk sekme Özellikler) · Personel · KVKK talepleri
+Ayarlar ────────────── Kurum ayarları (… · SMS · …) · Personel · KVKK talepleri
+
+SONRA (15.10.2026 — tek sol menü; panelde üst şerit + haplar + ana sayfa)
+Ana sayfa ──────────── kutucuklar (her grup + bütün ekranları) · hızlı işler · günün sayıları
+Bugün ─────────────── Özet · Talepler
+Öğrenciler ─────────── Öğrenciler (KM yönetimi, sınıflar, veliler, öğrenci kartı)
+Koçluk* ────────────── Kontrol kuyruğu · Haftalık program · Koçluk öğrencileri · Hoca soruları* ·
+                       Mesajlar (denetim) · Görüşmeler · Koçlar ve atama · Kütüphane ·
+                       Tebrik ve rozetler · Check-in
+Dersler ve Program ─── Ders programı ve etüt · Ders oturumları · Kurum takvimi · Müfredat
+Yoklama ───────────── Yoklama (günlük · pano · raporlar · düzeltme kuyruğu · ayarlar)
+Ödev ve Deneme ─────── Ödevler · Çalışma planı · Denemeler · Değerlendirmeler · Kaynaklar · Okuma ·
+                       Bilgi kartları* · Şablonlar (ödev · atama paketi · plan şablonu)
+İletişim ──────────── Duyurular · Veli toplantısı · SMS
+Finans ve Kantin ───── Kurum finansı* · Kantin* · Kitap satışı* · Kitap talepleri*
+Raporlar ──────────── Rapor merkezi · Erken uyarı*
+Ayarlar ────────────── Kurum ayarları · Personel · KVKK talepleri
                                    * kurum özellik bayrağına bağlı
 ```
+
+### 15.10.2026 eşlemesi (kaldırılan / birleştirilen / taşınan)
+
+| Önce | Sonra |
+|---|---|
+| Panelin kendi sol menüsü (`.ak-nav`) | KALKTI — üstte grup şeridi + haplar (tek sol menü kabuğun) |
+| Açılış ekranı Bugün → Özet | Ana sayfa kutucukları (Bugün bir tık) |
+| Öğrenciler → Koçluk (iç sekmeler) | Koçluk grubu; her sekme bir hap (`coachQueue`, `coachWeek`, `coachStudents`, `coachMeetings`, `coachCoaches`, `coachLibrary`, `coachMotivation`, `coachCheckins`) |
+| Bugün → Hoca soruları · Mesaj denetimi | Koçluk → Hoca soruları · Mesajlar |
+| Bugün → Duyurular · Veli toplantısı | İletişim → Duyurular · Veli toplantısı |
+| Ayarlar → Kurum ayarları → SMS sekmesi | İletişim → SMS (kendi ekranı, `sms.js`; gövde `settings-sms.js`) — BİRLEŞTİ/TAŞINDI |
+| Dersler ve Program → Yoklama | Yoklama (kendi grubu) |
+| Dersler ve Program → Ödevler · Çalışma planı · Şablonlar | Ödev ve Deneme |
+| Çalışma planı → Şablonlar sekmesi | KALKTI — Şablonlar → Plan şablonları ile aynı gövdeydi (`{tab: 'templates'}` oraya gider) |
+| Ölçme ve Gelişim → Denemeler · Değerlendirmeler · Kaynaklar · Okuma · Bilgi kartları | Ödev ve Deneme |
+| Ölçme ve Gelişim → Müfredat | Dersler ve Program → Müfredat |
+| Ölçme ve Gelişim → Erken uyarı | Raporlar → Erken uyarı |
+| Ekran ekran dağınık raporlar | Raporlar → Rapor merkezi (`reports.js`): yoklama raporları, aylık ders dökümü, öğretmen haftası, deneme analizi, konu-hata analizi, plan uyumu, okuma raporu, koç performansı, aylık finans, gecikenler, denetim kaydı — kart raporun KENDİ ekranını o sekmeyle açar (kopya yok) |
+| Kantin ve Finans | Finans ve Kantin (aynı dört ekran) |
+
+Eski adlar çalışmaya devam eder (`ALIASES`): grup `progress` → `work`, `kocluk`
+→ Koçluk, `kontrol-kuyrugu` → `coachQueue`, `koc-gorusmeleri` → `coachMeetings`,
+`gorev-ata`/`haftalik-program` → `coachWeek`, `mesaj-denetimi` → `messages`;
+`app.go('coaching', {coachingTab})` doğru hapı, `{studentId}` koçluk öğrencilerini
+seçer; Ayarlar `{tab: 'sms'}` → İletişim › SMS.
+
+### 0.5.2 sadeleştirme (13.10.2026 — tarihçe)
+
+Kullanıcı isteği (13.10.2026): "Uygulama çok karışık olmaya başlamış, sadeleşip
+basitleşsin" ve "öğrenci yönetimini de tamamıyla BBD Akademi kısmına taşıyalım".
+Menü 21 düz bölümden altı görev odaklı üst bölüme inmişti (yukarıdaki "ÖNCE").
 
 **Yalnız açık olan görünür.** Kurumda kapalı bir özelliğin ekranı menüde, kartı
 öğrenci kartında, düğmesi listede HİÇ çizilmez; `403 feature_disabled` hata
@@ -149,10 +215,10 @@ Akademi vekiline hiç istek gitmez. Kart "Kayıt ve veliler"de satır içi
 düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
 (`bbd_students` README "Hızlı güncelleme"); yoklayıcı bu panelin
 `/km/events` ucudur (Ayarlar → Senkron ile aynı veri). Erişilebilirlik:
-22 bölüm Node'da axe benzeri denetimden geçer
+ana sayfa ve 38 hap Node'da axe benzeri denetimden geçer
 (`tests/test_akademi_erisilebilirlik.py`, `tools/a11y`).
 
-### Eski → yeni eşleme
+### 0.5.2 eşlemesi (eski menü → 13.10.2026 yeri; 15.10.2026 yerleri yukarıda)
 
 | Eski menü / sekme | Yeni yeri |
 |---|---|
@@ -169,7 +235,7 @@ düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
 | Kurum finansı · Kitap talepleri (Kurum) | Kantin ve Finans |
 | Ayarlar → Kantin kuralları | Kantin ve Finans → Kantin (+ KM kantin ekranlarına geçiş) |
 | Ayarlar · Personel · KVKK talepleri (Yönetim) | Ayarlar → Kurum ayarları · Personel · KVKK talepleri |
-| Ayarlar sekme sırası | Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron · Dizin eşitleme · SMS (0.5.6) · Entegrasyon anahtarları · Denetim kaydı |
+| Ayarlar sekme sırası | Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron · Dizin eşitleme · Entegrasyon anahtarları · Denetim kaydı (SMS 15.10.2026'dan beri İletişim → SMS) |
 
 | Eski öğrenci kartı sekmesi (15) | Yeni kart sekmesi → bölüm |
 |---|---|
@@ -182,13 +248,18 @@ düzenleme, hızlı işlem şeridi ve "Akademi'ye ulaştı ✓" vardır
 
 Eski sekme anahtarları derin bağlantıda çalışmaya devam eder
 (`app.go('students', {studentId, tab: 'exams'})` → Ölçme ve gelişim → Denemeler
-açık). Bölüm başına bir satır:
+açık). Ana grup başına bir satır (15.10.2026):
 
-- **Bugün** — günün rakamları ve bekleyen işler tek özet çağrısıyla; hızlı düğmeler (yoklama, ödev, tahsilat, duyuru, öğrenci çağır).
+- **Ana sayfa** — büyük kutucuklar (her grup, günün sayısı, grubun bütün ekranları) ve hızlı işler.
+- **Bugün** — günün rakamları ve bekleyen işler tek özet çağrısıyla; hızlı düğmeler (yoklama, ödev, tahsilat, duyuru, öğrenci çağır); izin/görüşme/etüt talepleri.
 - **Öğrenciler** — öğrenci ekle/düzenle, sınıf ve gruba (toplu) ata, veliler; öğrenciye tıklayınca tek kart.
-- **Dersler ve Program** — haftalık program ve etüt, günün yoklaması, ödev verme (tek ya da toplu, üç adım) ve teslim, koç görevleri, şablonlar (ödev, atama paketi, plan), kurum takvimi.
-- **Ölçme ve Gelişim** — denemeler ve sonuç yükleme, değerlendirme karneleri, kaynak ve müfredat, okuma ve (açıksa) kartlar/erken uyarı.
-- **Kantin ve Finans** — kurum carisi ve tahsilat, kantinin kurum kuralları (para ayrı), kitap satışı (üç adım) ve kitap talepleri.
+- **Koçluk** — kontrol kuyruğu, haftalık program ve görev atama, koçluk öğrencileri, hoca soruları, mesaj denetimi, görüşmeler, koçlar ve toplu atama, kütüphane, tebrik ve rozetler, check-in.
+- **Dersler ve Program** — haftalık program ve etüt, ders oturumları (iptal, telafi, yerine öğretmen, puantaj), kurum takvimi, müfredat.
+- **Yoklama** — günün yoklaması, pano, raporlar, düzeltme kuyruğu, ayarlar.
+- **Ödev ve Deneme** — ödev verme (tek ya da toplu, üç adım) ve teslim, çalışma planı, denemeler ve sonuç yükleme, değerlendirme karneleri, kaynaklar, okuma, (açıksa) bilgi kartları, şablonlar (ödev, atama paketi, plan).
+- **İletişim** — duyurular (uygulama + SMS), veli toplantısı randevuları, SMS sağlığı / bütçe / kuyruk.
+- **Finans ve Kantin** — kurum carisi ve tahsilat, kantinin kurum kuralları (para ayrı), kitap satışı (üç adım) ve kitap talepleri.
+- **Raporlar** — rapor merkezi (bütün raporlar tek kapıda) ve (açıksa) erken uyarı.
 - **Ayarlar** — hangi özelliklerin açık olduğu, kurum ayarları, senkron, entegrasyon, personel ve KVKK.
 
 ## Bölümler
@@ -200,6 +271,9 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 
 | Bölüm | Dosya | İçerik |
 |---|---|---|
+| Ana sayfa | `home.js`, `home.css`, `nav-icons.js` | Açılış ekranı: grup kutucukları (simge, açıklama, günün sayısı — `admin_getDashboard` 60 sn önbellek —, grubun bütün ekranları tek tıkta; Koçluk geniş ve vurgulu), hızlı işler. Gezinme kabuğu `index.js` (üst şerit + haplar) |
+| Raporlar → Rapor merkezi | `reports.js` | Bütün raporların tek kapısı: kart raporun kendi ekranını o sekmeyle açar (yoklama raporları, aylık ders dökümü, öğretmen haftası, deneme analizi, konu-hata analizi, plan uyumu, okuma raporu, koç performansı, aylık finans, gecikenler, denetim kaydı); görünmeyen ekranın kartı yok |
+| İletişim → SMS | `sms.js` (+ `settings-sms.js`) | Eski Ayarlar → SMS sekmesinin kendi ekranı: SMS sağlığı ve paket, kurum SMS bütçesi ve ayarları, kurum SMS kuyruğu, OTP günlüğü, telefon sayacı sıfırlama |
 | Bugün → Özet | `dashboard.js` | Tek özet çağrısı: günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
 | Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç — eşleme, koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler. KM'de **pasifleştirilen** öğrenci varsayılan listede yoktur, “Durum → Pasif (KM)” süzgeciyle (`status=inactive`) görünür; çekmecesi salt okunurdur (yazma düğmeleri gerekçeli kapalı — kurum cari tahsilatı ve dışa aktarım açık) |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
@@ -308,7 +382,8 @@ sınav) ile "Dönem ve rehber" (Akademi sınıf eşlemesi) ayrıdır; gömülü 
 yöneticisi içeriden sekme değiştirince (ör. "Sınıfların seviyesi →") Akademi
 şeridi de o sekmeyi gösterir (`onMode`).
 
-**0.5.6 (sms-kale, Akademi README §14 madde 58):** Ayarlar → **SMS** sekmesi
+**0.5.6 (sms-kale, Akademi README §14 madde 58):** Ayarlar → **SMS** sekmesi (15.10.2026'dan beri
+İletişim → **SMS** ekranı, `sms.js`)
 (`settings-sms.js`, okuma `admin_getSmsHealth`): son 1 saatin OTP SMS teslim oranı,
 ortalama / en uzun teslim, geciken ve başarısız sayısı, Netgsm SMS paketi; maskeli OTP
 SMS günlüğü (`admin_listOtpSmsLog`, teslim durumuyla) ve bir telefonun saat / gün

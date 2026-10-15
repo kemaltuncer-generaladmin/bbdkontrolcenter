@@ -1,9 +1,10 @@
-"""Panel sadeleştirme (13.10.2026): bilgi mimarisi ve "yalnız açık olan görünür".
+"""Panel sadeleştirme (13.10.2026, 15.10.2026): bilgi mimarisi ve "yalnız açık olan görünür".
 
 İki parça:
 
-* `ui/panel/sections.js` — menü (en fazla altı üst bölüm), öğrenci kartı
-  (beş sekme, katlanır bölümler) ve özellik bayrağına göre görünürlük. Dosya
+* `ui/panel/sections.js` — gezinme (TEK sol menü: panel kendi sol menüsünü
+  çizmez; üstte en çok on ana grup + haplar, ana sayfa kutucukları), öğrenci
+  kartı (altı sekme, katlanır bölümler) ve özellik bayrağına göre görünürlük. Dosya
   bilerek import'suz ve DOM'suzdur: `.mjs` kopyası Node'da yüklenir, işlevler
   çağrılır, sonuç JSON olarak buraya döner. `node` yoksa bu parça ATLANIR.
 * `/km/status` → `features` (`backend/features.py`): kurumun özellik bayrakları
@@ -49,7 +50,8 @@ const out = {
   navNothing: keys(s.buildNav({ has: () => false, features: null })),
   featureOn: [s.featureOn(null, 'finance'), s.featureOn({}, 'finance'), s.featureOn({ finance: true }, 'finance'),
     s.featureOn({ finance: false }, 'finance'), s.featureOn({ finance: false }, undefined)],
-  goArea: s.resolveTarget(navOff, 'progress'),
+  goArea: s.resolveTarget(navOff, 'work'),
+  goOldArea: s.resolveTarget(navOff, 'progress'),
   goSection: s.resolveTarget(navOff, 'exams'),
   goAlias: s.resolveTarget(navOff, 'panel'),
   goSettings: s.resolveTarget(navOff, 'settings'),
@@ -67,6 +69,15 @@ const out = {
   navKmOnly: keys(s.buildNav({ has: () => false, features: off, kmOnly: true })),
   goKmOnly: s.resolveTarget(s.buildNav({ has: () => false, kmOnly: true }), 'students'),
   goKmOnlyHidden: s.resolveTarget(s.buildNav({ has: () => false, kmOnly: true }), 'exams'),
+  navNoWeek: keys(s.buildNav({ has: all, can: (op) => op !== 'admin_getCoachWeek', features: null })),
+  goCoachTab: s.resolveTarget(s.buildNav({ has: all }), 'coaching', { coachingTab: 'week' }),
+  goCoachStudent: s.resolveTarget(s.buildNav({ has: all }), 'coaching', { studentId: 'S1' }),
+  goCoachPlain: s.resolveTarget(s.buildNav({ has: all }), 'kocluk'),
+  goCoachMeetingsAlias: s.resolveTarget(s.buildNav({ has: all }), 'koc-gorusmeleri'),
+  goSms: s.resolveTarget(s.buildNav({ has: all }), 'sms'),
+  tiles: s.homeTiles(s.buildNav({ has: all, features: null })).map((t) => [t.key, t.icon, t.links.map((l) => l.key)]),
+  tilesKmOnly: s.homeTiles(s.buildNav({ has: () => false, kmOnly: true })),
+  hosted: s.SECTIONS.filter((x) => x.host).map((x) => [x.key, x.host, x.file, x.payload]),
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -90,42 +101,89 @@ def result(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 
 
 @needs_node
-def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
-    assert result["areas"] == ["today", "students", "lessons", "progress", "money", "admin"]
+def test_en_fazla_on_ana_grup(result: dict[str, Any]) -> None:
+    """15.10.2026: tek sol gezinme — panel üstte en çok on ana grup çizer (günlük akış sırası)."""
+    assert result["areas"] == ["today", "students", "coaching", "lessons", "attendance", "work", "comms",
+                               "money", "reports", "admin"]
     nav = dict(result["navAll"])
     assert list(nav) == result["areas"]
-    # Hoca soruları (Akademi §14 madde 63): öğrencinin hocaya sorusu, yanıt metin + görsel + ses.
-    # Veli toplantısı randevu takvimi (Akademi §14 madde 90) talepler izniyle.
-    assert nav["today"] == ["dashboard", "requests", "parentMeetings", "announcements", "questions", "messages"]
-    # Koçluk (KM-4): öğretmen = koç; kuyruk, kart, haftalık program, koçlar, kütüphane, görüşmeler.
-    assert nav["students"] == ["students", "coaching"]
-    # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
+    assert nav["today"] == ["dashboard", "requests"]
+    assert nav["students"] == ["students"]
+    # Koçluk ÖNDE (lider 15.10.2026): koçun en sık işleri doğrudan hap — kuyruk, haftalık program,
+    # koçluk öğrencileri, hoca soruları (§14 madde 63), mesajlar (KM-1 denetim), görüşmeler (F-K17).
+    assert nav["coaching"] == ["coachQueue", "coachWeek", "coachStudents", "questions", "messages",
+                               "coachMeetings", "coachCoaches", "coachLibrary", "coachMotivation",
+                               "coachCheckins"]
     # Ders oturumları (KM-3): tek dersin iptali / telafisi / yerine öğretmen, öğretmen haftası.
-    assert nav["lessons"] == ["timetable", "sessions", "attendance", "homework", "plan", "templates",
-                              "calendar"]
+    assert nav["lessons"] == ["timetable", "sessions", "calendar", "curriculum"]
+    assert nav["attendance"] == ["attendance"]
+    # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
+    assert nav["work"] == ["homework", "plan", "exams", "evaluations", "resources", "reading", "decks",
+                           "templates"]
+    # Veli toplantısı (§14 madde 90); SMS eskiden Ayarlar → Kurum ayarları sekmesiydi.
+    assert nav["comms"] == ["announcements", "parentMeetings", "sms"]
     assert nav["money"] == ["finance", "canteen", "bookSales", "books"]   # kitap satışı 0.5.4
+    assert nav["reports"] == ["reportHub", "insights"]
     assert nav["admin"] == ["settings", "staff", "privacy"]
+    for area, sections in nav.items():
+        assert len(sections) <= 10, f"{area}: hap sayısı {len(sections)} — en fazla 10"
 
 
 @needs_node
 def test_hicbir_ekran_kaybolmadi(result: dict[str, Any]) -> None:
-    """Sadeleştirme yalnız yerleşimi değiştirir: eski 21 ekranın hepsi menüde (+ Kantin)."""
+    """Sadeleştirme yalnız yerleşimi değiştirir: eski 21 ekranın + sonradan gelenlerin hepsi gezinmede.
+    Koçluk ekranı (coaching.js) artık sekmeleri hap olan PAYLAŞILAN ekrandır (`host`)."""
     old = {"dashboard", "students", "curriculum", "resources", "timetable", "calendar", "attendance",
            "homework", "exams", "plan", "reading", "decks", "evaluations", "insights", "finance",
-           "books", "announcements", "requests", "settings", "staff", "privacy"}
+           "books", "announcements", "requests", "settings", "staff", "privacy",
+           "canteen", "bookSales", "templates", "questions", "sessions", "messages", "parentMeetings"}
     shown = {key for _, sections in result["navAll"] for key in sections}
     assert old <= shown
     assert shown == set(result["sectionKeys"])
+    hosted = {key: (host, file, payload) for key, host, file, payload in result["hosted"]}
+    assert {payload["coachingTab"] for _, _, payload in hosted.values()} == {
+        "queue", "students", "week", "coaches", "library", "motivation", "checkins", "meetings"}, (
+        "koçluk ekranının sekmelerinin hepsi hap olmalı")
+    assert {(host, file) for host, file, _ in hosted.values()} == {("coaching", "./coaching.js")}
+
+
+def test_kocluk_haplari_ekranin_sekmeleriyle_ayni_kurali_tasir() -> None:
+    """Koçluk hapı, coaching.js sekmesiyle AYNI okuma işlemlerine bakar: hap görünüp sekme
+    görünmezse (ya da tersi) tıklama yanlış sekmeye düşerdi."""
+    import re
+    coaching = (PANEL / "coaching.js").read_text(encoding="utf-8")
+    tabs = {key: sorted(re.findall(r"'([^']+)'", reads)) for key, reads in
+            re.findall(r"\{ key: '(\w+)', label: '[^']+', read: \[([^\]]*)\]", coaching)}
+    sections = (PANEL / "sections.js").read_text(encoding="utf-8")
+    hosted = {}
+    for block in re.findall(r"\{ key: 'coach\w+'.*?payload: \{ coachingTab: '\w+' \} \}", sections, re.DOTALL):
+        tab = re.search(r"coachingTab: '(\w+)'", block).group(1)  # type: ignore[union-attr]
+        reads = re.search(r"reads: \[([^\]]*)\]", block).group(1)  # type: ignore[union-attr]
+        hosted[tab] = sorted(re.findall(r"'([^']+)'", reads))
+    assert len(tabs) == 8 and hosted == tabs
+    assert "app.hostsTabs?.('coaching')" in coaching and "app.syncHosted?.('coaching'" in coaching
+
+
+@needs_node
+def test_ana_sayfa_her_ekran_tek_tikta(result: dict[str, Any]) -> None:
+    """Ana sayfa kutucukları: her grup bir kutucuk, altında grubun BÜTÜN ekranları (tek tık);
+    gruplar üstte (bir tık) + hap (ikinci tık) → her ekran en çok iki tık."""
+    tiles = result["tiles"]
+    assert [key for key, _, _ in tiles] == result["areas"]
+    assert all(icon for _, icon, _ in tiles), "her kutucuğun simgesi olmalı"
+    linked = [key for _, _, links in tiles for key in links]
+    assert sorted(linked) == sorted(result["sectionKeys"])
+    # Tek grup görünüyorsa (yalnız öğrenci yönetimi) ana sayfa yok — fazladan tık olurdu.
+    assert result["tilesKmOnly"] == []
 
 
 @needs_node
 def test_kapali_ozellik_menude_yok(result: dict[str, Any]) -> None:
     nav = dict(result["navOff"])
-    assert "insights" not in nav["progress"] and "decks" not in nav["progress"]
-    assert "questions" not in nav["today"]             # soru-cevap kapalı kurumda menüde yok
-    assert "messages" not in nav["today"]              # koçluk kapalı: mesaj denetimi menüde yok
-    assert "coaching" not in nav["students"]           # koçluk kapalı: Koçluk ekranı menüde yok
-    # Kantin ve Finans'ın üç ekranı da kapalı → üst bölüm hiç görünmez.
+    assert "insights" not in nav["reports"] and "decks" not in nav["work"]
+    # Koçluk + soru-cevap kapalı: Koçluk grubu (haplar, hoca soruları, mesaj denetimi) hiç görünmez.
+    assert "coaching" not in nav
+    # Kantin ve Finans'ın üç ekranı da kapalı → grup hiç görünmez.
     assert "money" not in nav
     # Bilinmeyen / listede olmayan bayrak bir şey gizlemez.
     assert result["navUnknownFlag"] == result["navAll"]
@@ -136,17 +194,28 @@ def test_kapali_ozellik_menude_yok(result: dict[str, Any]) -> None:
 @needs_node
 def test_yetkiye_gore_menu(result: dict[str, Any]) -> None:
     nav = dict(result["navViewer"])
-    assert nav["today"] == ["dashboard"]               # talepler/duyurular izni yok
+    assert nav["today"] == ["dashboard"]               # talepler izni yok
     assert "admin" not in nav                          # ayar, personel, KVKK izni yok
+    assert "comms" not in nav                          # duyuru, talep, ayar (SMS) izni yok
+    assert "questions" not in nav["coaching"] and "messages" not in nav["coaching"]
     assert nav["money"] == ["canteen", "bookSales", "books"]   # kurum cari `finance` izni ister
     assert result["navNothing"] == []
+    # Okuma işlemi izinli değilse koçluk hapı çizilmez (coaching.js sekmesiyle aynı kural).
+    assert "coachWeek" not in dict(result["navNoWeek"])["coaching"]
 
 
 @needs_node
 def test_go_hedefi(result: dict[str, Any]) -> None:
-    assert result["goArea"] == {"area": "progress", "section": "exams"}
-    assert result["goSection"] == {"area": "progress", "section": "exams"}
+    assert result["goArea"] == {"area": "work", "section": "homework"}
+    assert result["goOldArea"] == {"area": "work", "section": "homework"}   # 0.5.2 grup adı
+    assert result["goSection"] == {"area": "work", "section": "exams"}
     assert result["goAlias"] == {"area": "today", "section": "dashboard"}
+    # Paylaşılan koçluk ekranı: payload doğru hapı seçer; eski adlar yeni haplara gider.
+    assert result["goCoachTab"] == {"area": "coaching", "section": "coachWeek"}
+    assert result["goCoachStudent"] == {"area": "coaching", "section": "coachStudents"}
+    assert result["goCoachPlain"] == {"area": "coaching", "section": "coachQueue"}
+    assert result["goCoachMeetingsAlias"] == {"area": "coaching", "section": "coachMeetings"}
+    assert result["goSms"] == {"area": "comms", "section": "sms"}
     assert result["goSettings"] == {"area": "admin", "section": "settings"}
     assert result["goHidden"] is None and result["goUnknown"] is None
 

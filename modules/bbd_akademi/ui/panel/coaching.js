@@ -29,7 +29,8 @@
 // programlar). Sekme yalnız okuma işlemi izinliyse ve özelliği kurumda açıksa
 // çizilir; sekme dosyası ilk açılışta yüklenir.
 //
-// DERİN BAĞLANTI: `app.go('coaching', {coachingTab, studentId, student})`.
+// DERİN BAĞLANTI: `app.go('coaching', {coachingTab, studentId, student})`; sekmeler panelin üst
+// gezinmesinde Koçluk grubunun haplarıdır (kontrol kuyruğu, haftalık program …), şerit gizlenir.
 // Saf mantık `coaching-logic.js`'tedir (Node ile sınanır).
 
 import { h, loadStyles } from '../../ui-kit/kit.js';
@@ -80,6 +81,7 @@ export function section(app) {
   async function open(key, payload = null) {
     const tab = visible.find((item) => item.key === key) || visible[0];
     if (bar.active !== tab.key) bar.select(tab.key, false);
+    app.syncHosted?.('coaching', { coachingTab: tab.key });   // üstteki hap da bu sekmeye geçsin
     for (const [name, entry] of panes) if (entry.node) entry.node.hidden = name !== tab.key;
     let entry = panes.get(tab.key);
     if (!entry) {
@@ -104,6 +106,9 @@ export function section(app) {
   }
 
   const bar = tabBar(visible.map(({ key, label }) => ({ key, label })), visible[0].key, (key) => open(key));
+  // TEK GEZİNME (15.10.2026): sekmeler panelin üst gezinmesinde Koçluk grubunun hapları olarak
+  // durur (`sections.js` → `host: 'coaching'`); ekranın kendi sekme şeridi o zaman gizlenir.
+  if (app.hostsTabs?.('coaching')) bar.node.hidden = true;
   node.append(bar.node, body);
 
   let started = false;

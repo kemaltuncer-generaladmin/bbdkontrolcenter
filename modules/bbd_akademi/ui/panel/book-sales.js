@@ -609,7 +609,7 @@ export function studentBooksPart(ctx) {
         || 'Öğrenci' }] });
       if (sale) list.reload();
     } });
-  node.append(toolbar(h('span', 'ak-muted', 'Kitap talepleri ayrıdır (Kantin ve Finans → Kitap talepleri).'),
+  node.append(toolbar(h('span', 'ak-muted', 'Kitap talepleri ayrıdır (Finans ve Kantin → Kitap talepleri).'),
     h('span', 'kit-spacer'), sell), list.node);
   list.reload();
 
@@ -627,7 +627,7 @@ export function studentBooksPart(ctx) {
       ['Alım', fmtDateTime(purchase.purchasedAt)],
       ['Teslim', fmtDateTime(purchase.deliveredAt)],
       ['İptal', fmtDateTime(purchase.cancelledAt)],
-    ])), h('div', 'ak-muted', `Satış: ${purchase.saleRef}. Satır işlemleri Kantin ve Finans → Kitap satışı'ndadır.`));
+    ])), h('div', 'ak-muted', `Satış: ${purchase.saleRef}. Satır işlemleri Finans ve Kantin → Kitap satışı'ndadır.`));
   }
   return { node };
 }

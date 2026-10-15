@@ -174,11 +174,12 @@ def test_bolum_kaydi_dosyalar_ve_izinler() -> None:
             assert f"bbd_akademi.{short}" in declared, f"{section['key']}: bilinmeyen izin {short}"
 
 
-def test_bilgi_mimarisi_alti_ust_bolum() -> None:
-    """Sadeleştirme (13.10.2026): menüde en fazla altı üst bölüm; her ekran birine bağlı,
-    hiçbir üst bölüm boş değil; `feature` gerçek bir Akademi özellik bayrağı."""
+def test_bilgi_mimarisi_en_fazla_on_ana_grup() -> None:
+    """Sadeleştirme (13.10.2026 → 15.10.2026 tek gezinme): panelin üst şeridinde en fazla on
+    ana grup; her ekran birine bağlı, hiçbir grup boş değil; `feature` gerçek bir Akademi
+    özellik bayrağı."""
     areas = _areas()
-    assert 1 <= len(areas) <= 6, f"üst bölüm sayısı {len(areas)} — en fazla 6"
+    assert 1 <= len(areas) <= 10, f"ana grup sayısı {len(areas)} — en fazla 10"
     sections = _sections()
     for section in sections:
         assert section["area"] in areas, f"{section['key']}: üst bölümü yok ya da bilinmiyor"

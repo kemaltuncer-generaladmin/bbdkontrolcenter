@@ -1,8 +1,9 @@
 """Erişilebilirlik (WCAG 2.2 AA) ve tek giriş noktası — BBD Akademi paneli (0.5.3).
 
-Kullanıcı: "Mesele kullanım kolaylığı; erişilebilirliği full olsun." Panelin 22
-bölümü (Bugün, Öğrenciler + öğrenci kartı, Dersler ve Program, Ölçme ve
-Gelişim, Kantin ve Finans, Ayarlar) Node'da küçük bir DOM üzerinde açılır ve
+Kullanıcı: "Mesele kullanım kolaylığı; erişilebilirliği full olsun." Panelin ana
+sayfası ve her grubun her hapı (15.10.2026 tek gezinme: Bugün, Öğrenciler, Koçluk,
+Dersler ve Program, Yoklama, Ödev ve Deneme, İletişim, Finans ve Kantin, Raporlar,
+Ayarlar) Node'da küçük bir DOM üzerinde açılır ve
 axe benzeri denetimden geçer (`tools/a11y/audit.mjs`: ad, etiket, ARIA bağları,
 diyalog adı, klavyeyle erişim, canlı bölge…). Ayrıca Akademi izni olmayan
 öğrenci yöneticisi (muhasebe, org_staff) paneli YALNIZ "Öğrenciler" ile görür
@@ -55,13 +56,16 @@ export default async function ({ document, audit, sleep, api, load }) {
     capability: (name) => providers.get(name) ?? null, open: () => {} });
   await sleep(80);
   const out = {};
-  const areas = root.querySelectorAll('.ak-nav-item').map((b) => b.textContent);
+  out.__leftMenus = root.querySelectorAll('.ak-nav, .ak-nav-item, .ak-nav-subitem').length;
+  const areas = root.querySelectorAll('.ak-area').map((b) => b.textContent);
+  out.__areas = areas;
   for (const label of areas) {
-    root.querySelectorAll('.ak-nav-item').find((b) => b.textContent === label).click();
-    await sleep(60);
-    const subs = root.querySelectorAll('.ak-nav-subitem').map((b) => b.textContent);
+    root.querySelectorAll('.ak-area').find((b) => b.textContent === label).click();
+    await sleep(80);
+    const pills = root.querySelector('.ak-pills');
+    const subs = pills && !pills.hidden ? root.querySelectorAll('.ak-pill').map((b) => b.textContent) : [];
     for (const sub of (subs.length ? subs : [null])) {
-      if (sub) { root.querySelectorAll('.ak-nav-subitem').find((b) => b.textContent === sub).click(); await sleep(80); }
+      if (sub) { root.querySelectorAll('.ak-pill').find((b) => b.textContent === sub).click(); await sleep(80); }
       out[`${label} / ${sub || '-'}`] = audit(root);
     }
   }
@@ -73,7 +77,12 @@ export default async function ({ document, audit, sleep, api, load }) {
 ROUTES = {
   "GET /api/bbd_akademi/km/status?operations=1": {"connection": {"enabled": True, "hasKey": True},
      "permissions": ["bbd_akademi." + k for k in ["view","academic","curriculum","resources","attendance","exams","finance","finance_void","books","announcements","requests","settings","staff","campus","canteen","learning","learning_setup","evaluations","privacy"]],
-     "features": None, "operationList": []},
+     "features": None,
+     # Koçluk hapları ve SMS ekranı okuma işlemi izinliyse görünür (coaching.js sekmesiyle aynı kural).
+     "operationList": [{"operationId": op, "allowed": True} for op in [
+         "admin_getCoachQueue", "admin_listCoachReviews", "admin_listCoachingStudents", "admin_getCoachWeek",
+         "admin_listCoaches", "admin_listCoachLibrary", "admin_listCoachBadges", "admin_listCheckins",
+         "admin_listCoachMeetings", "admin_getSmsHealth"]]},
   "GET /auth/me": {"permissions": ["bbd_students.view", "bbd_students.manage", "bbd_students.groups", "bbd_students.lifecycle", "bbd_students.canteen_controls", "bbd_students.qr", "bbd_students.access_code", "bbd_akademi.view"]},
   "GET /api/bbd_students/students": {"connected": True, "students": [
     {"kantinId": "STU-1", "displayName": "Elif Kaya", "className": "9-A", "schoolNo": "77", "balance": 0, "status": "active", "guardians": [{"name": "Ayşe", "phone": "5321112233", "primary": True}], "parentPhone": "5321112233", "canteenSync": "ok"},
@@ -110,7 +119,7 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
     capability: (name) => providers.get(name) ?? null, open: () => {} });
   await sleep(120);
   const out = {
-    nav: root.querySelectorAll('.ak-nav-item').map((b) => b.textContent),
+    nav: root.querySelectorAll('.ak-area').map((b) => b.textContent),
     tabs: root.querySelectorAll('[role="tab"]').map((b) => b.textContent.trim()),
     banner: root.querySelector('.ak-banner')?.textContent || '',
     violations: audit(root),
@@ -138,13 +147,21 @@ def node_run(scenario: str) -> dict[str, Any]:
 
 def test_butun_bolumler_denetimden_gecer() -> None:
     result = node_run(ALL_SECTIONS)
-    # 22 bölüm (0.5.3) + Şablonlar ve Kitap satışı (0.5.4) + Hoca soruları (Akademi §14 madde 63)
-    # + Ders oturumları (KM-3) + Mesaj denetimi (KM-1) + Koçluk (KM-4) + Veli toplantısı (Akademi §14 madde 90).
-    assert len(result) == 29, sorted(result)
-    assert result["Bugün / Hoca soruları"] == []
+    # TEK SOL GEZİNME (15.10.2026): panel kendi sol menüsünü çizmez; üstte ana sayfa + on ana grup.
+    assert result.pop("__leftMenus") == 0
+    assert result.pop("__areas") == ["Ana sayfa", "Bugün", "Öğrenciler", "Koçluk", "Dersler ve Program",
+                                      "Yoklama", "Ödev ve Deneme", "İletişim", "Finans ve Kantin",
+                                      "Raporlar", "Ayarlar"]
+    # Ana sayfa + 38 ekran: koçluk ekranının sekmeleri artık Koçluk grubunun hapları (8), SMS
+    # İletişim'de kendi ekranı, Rapor merkezi yeni (dağınık raporların tek kapısı).
+    assert len(result) == 39, sorted(result)
+    assert result["Ana sayfa / -"] == []
+    assert result["Koçluk / Hoca soruları"] == []
     assert result["Dersler ve Program / Ders oturumları"] == []
-    assert result["Bugün / Mesaj denetimi"] == []
-    assert result["Öğrenciler / Koçluk"] == []
+    assert result["Koçluk / Mesajlar"] == []
+    assert result["Koçluk / Haftalık program"] == []
+    assert result["İletişim / SMS"] == []
+    assert result["Raporlar / Rapor merkezi"] == []
     bad = {name: items for name, items in result.items() if items}
     assert bad == {}, bad
 

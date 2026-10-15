@@ -1,90 +1,136 @@
-// BBD Akademi — panelin BİLGİ MİMARİSİ (menü ve öğrenci kartı yerleşimi).
+// BBD Akademi — panelin BİLGİ MİMARİSİ (gezinme, ana sayfa ve öğrenci kartı yerleşimi).
 //
-// KULLANICI İSTEĞİ (13.10.2026): "Uygulama çok karışık olmaya başlamış,
-// sadeleşip basitleşsin." Panel eskiden 21 bölümü beş başlık altında düz liste
-// olarak, öğrenci kartı 15 sekmeyi yan yana gösteriyordu. Şimdi:
+// KULLANICI İSTEĞİ (15.10.2026): "kontrol merkezindeki tüm menüler ve o
+// menülerin içerisindeki işlevleri de elden geçirip güzelce sadeleştirip kolay
+// kullanım, full görselliğe girmeni istiyorum … bbd akademiye girince yan yana
+// iki tane sol menü görünüyor." Önceki düzende (13.10.2026, altı üst bölüm)
+// panel KM kabuğunun sol menüsünün yanına KENDİ ikinci sol menüsünü çiziyordu.
+// Şimdi:
 //
-//   · menüde en fazla ALTI üst bölüm (`AREAS`), görev odaklı Türkçe adlarla;
-//     her üst bölümün alt ekranları (`SECTIONS`) yalnız o bölüm seçiliyken
-//     altında açılır;
-//   · öğrenci kartında en çok altı sekme (`STUDENT_CARD`); geri kalanı sekme
-//     içinde katlanır bölüm;
-//   · öğrenci YÖNETİMİ de burada (kullanıcı isteği 13.10.2026): "Öğrenciler"
-//     bölümü KM Öğrenci Yönetimi'nin listesini, toplu işlemlerini ve gruplarını
-//     çizer; öğrencinin tek kartında "Kayıt ve veliler" sekmesi KM kaydıdır;
+//   · TEK SOL GEZİNME: sol menü yalnız KM kabuğunundur. Panel içinde gezinme
+//     ÜSTTEDİR — simgeli bölüm şeridi (`AREAS`, en çok on ana grup, dershane
+//     yöneticisinin günlük akışına göre) ve seçili grubun ekranları için ikinci
+//     satırda hap sekmeler (`SECTIONS`). Kabuk modül başına tek menü satırı
+//     taşır (`ui.nav`; alt öğe ilanı yok — K1/K6), bu yüzden alt gezinme kabuğa
+//     taşınmadı, panelin üstüne alındı.
+//   · ANA SAYFA: panel büyük görsel kutucuklarla açılır (`homeTiles`); her
+//     kutucuk bir ana grup, altında o grubun ekranları — her ekran ana
+//     sayfadan TEK, her yerden en çok İKİ tıkta (grup + hap).
+//   · KOÇLUK ÖNDE (lider 15.10.2026 20:00): koçun en sık işleri (kontrol
+//     kuyruğu, haftalık program ve görev atama, koçluk öğrencileri, hoca
+//     soruları, mesajlar, görüşmeler) Koçluk grubunun DOĞRUDAN haplarıdır. Koçluk
+//     ekranının kendi sekmeleri burada `host` + `payload` ile hapa açılmıştır:
+//     aynı ekran (`coaching.js`) tek kez kurulur, hap sekmeyi seçer.
 //   · YALNIZ AÇIK OLAN GÖRÜNÜR: kurumda kapalı bir özelliğe (`feature`) bağlı
-//     ekran menüde hiç yer almaz — `403 feature_disabled` hata kartı olarak
+//     ekran gezinmede hiç yer almaz — `403 feature_disabled` hata kartı olarak
 //     görülmez. Yönetici Ayarlar → Kurum ayarları → Özellikler'den açar.
 //
-// Hiçbir işlev kaybolmadı: her eski ekran aynı dosyasıyla bir üst bölümün
-// altında durur (eski → yeni eşleme: modül README "Bilgi mimarisi").
+// Hiçbir işlev kaybolmadı: her eski ekran aynı dosyasıyla bir ana grubun
+// altında durur; eski grup ve ekran adları `ALIASES` ile yeni yerlerine gider
+// (eski → yeni eşleme: modül README "Bilgi mimarisi").
 //
 // Bu dosya bilerek İMPORT'SUZ ve DOM'suzdur: `.mjs` kopyası Node'da yüklenip
 // sınanır (`tests/test_akademi_bilgi_mimarisi.py`).
 
-/** Üst bölümler — sıra menü sırasıdır (kullanım sıklığına göre). */
+/**
+ * Ana gruplar — sıra gezinme sırasıdır (günlük akış: önce bugün, öğrenci ve
+ * koçluk). `icon`: `nav-icons.js` simge adı; `tone`: kutucuk rengi.
+ */
 export const AREAS = [
-  { key: 'today', label: 'Bugün', hint: 'Günün özeti, bekleyen talepler ve duyurular.' },
-  { key: 'students', label: 'Öğrenciler', hint: 'Öğrenci listesi, sınıflar, gruplar ve veliler; '
-    + 'öğrenci kartı.' },
-  { key: 'lessons', label: 'Dersler ve Program', hint: 'Ders programı ve etüt, ders oturumları, yoklama, ödev '
-    + '(tek ya da toplu), çalışma planı, şablonlar ve kurum takvimi.' },
-  { key: 'progress', label: 'Ölçme ve Gelişim', hint: 'Denemeler, değerlendirmeler, kaynaklar, '
-    + 'müfredat ve öğrenme araçları.' },
-  { key: 'money', label: 'Kantin ve Finans', hint: 'Kurum cari hesabı, kantin kuralları, kitap satışı ve '
-    + 'kitap talepleri — iki para ayrı tutulur.' },
-  { key: 'admin', label: 'Ayarlar', hint: 'Kurum ayarları ve özellikler, personel, KVKK talepleri, '
-    + 'senkron ve entegrasyon.' },
+  { key: 'today', label: 'Bugün', icon: 'sun', tone: 'blue',
+    hint: 'Günün özeti, sizi bekleyen işler ve talepler (izin, görüşme, etüt).' },
+  { key: 'students', label: 'Öğrenciler', icon: 'users', tone: 'indigo',
+    hint: 'Öğrenci listesi, sınıflar, veliler, toplu işlemler ve öğrencinin tek kartı.' },
+  { key: 'coaching', label: 'Koçluk', icon: 'compass', tone: 'violet',
+    hint: 'Kontrol kuyruğu, haftalık program ve görev atama, hoca soruları, mesajlar, görüşmeler.' },
+  { key: 'lessons', label: 'Dersler ve Program', icon: 'calendar', tone: 'teal',
+    hint: 'Ders programı ve etüt, ders oturumları (iptal, telafi, yerine öğretmen), kurum takvimi, müfredat.' },
+  { key: 'attendance', label: 'Yoklama', icon: 'check', tone: 'green',
+    hint: 'Günlük yoklama, pano, devamsızlık raporları ve düzeltme kuyruğu.' },
+  { key: 'work', label: 'Ödev ve Deneme', icon: 'book', tone: 'amber',
+    hint: 'Ödev (tek ya da toplu), çalışma planı, denemeler, değerlendirmeler, kaynaklar, okuma, şablonlar.' },
+  { key: 'comms', label: 'İletişim', icon: 'megaphone', tone: 'rose',
+    hint: 'Duyurular (uygulama ve SMS), veli toplantısı randevuları, SMS sağlığı ve kuyruğu.' },
+  { key: 'money', label: 'Finans ve Kantin', icon: 'wallet', tone: 'orange',
+    hint: 'Kurum cari hesabı ve tahsilat, kantin, kitap satışı ve talepleri — iki para ayrı tutulur.' },
+  { key: 'reports', label: 'Raporlar', icon: 'chart', tone: 'cyan',
+    hint: 'Bütün raporlar tek yerde (yoklama, ders dökümü, finans, deneme, okuma) ve erken uyarı.' },
+  { key: 'admin', label: 'Ayarlar', icon: 'gear', tone: 'slate',
+    hint: 'Kurum ayarları ve özellikler, personel, KVKK talepleri, senkron ve entegrasyon.' },
 ];
 
 /**
  * Ekranlar. `requires`: KM izinleri (biri yeterli). `file`: ekran modülü
- * (`export function section(app)`). `area`: üst bölüm. `feature`: kurum
- * özellik bayrağı — kapalıysa ekran menüde yok. Yeni ekran = bir dosya + bir satır.
+ * (`export function section(app)`). `area`: ana grup. `feature`: kurum
+ * özellik bayrağı — kapalıysa ekran gezinmede yok. `reads`: okuma işlemleri
+ * (biri izinliyse görünür). `host` + `payload`: aynı ekran dosyasının bir
+ * sekmesine açılan hap (ekran tek kez kurulur; `shown(payload)` sekmeyi seçer).
+ * Yeni ekran = bir dosya + bir satır.
  */
 export const SECTIONS = [
   { key: 'dashboard', label: 'Özet', file: './dashboard.js', requires: ['view'], area: 'today' },
   { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'], area: 'today' },
-  // Veli toplantısı randevu takvimi (Akademi README §14 madde 90): öğretmen saatleri, veli adına randevu, liste PDF'i.
-  { key: 'parentMeetings', label: 'Veli toplantısı', file: './parent-meetings.js', requires: ['requests'],
-    area: 'today' },
-  { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
-    area: 'today' },
-  // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
-  { key: 'questions', label: 'Hoca soruları', file: './questions.js', requires: ['learning'], area: 'today',
-    feature: 'coach_questions' },
-  // Mesaj denetimi (F-K15 moderasyon + F-K21 denetim): şikâyet kuyruğu, karar, kilit, gerekçeli arama.
-  { key: 'messages', label: 'Mesaj denetimi', file: './messages.js', requires: ['settings'], area: 'today',
-    feature: 'coaching' },
   // `kmOnly`: Akademi izni olmayan ama öğrenci yönetimi izni olan kullanıcıya
   // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
   { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',
     kmOnly: true },
-  // Koçluk (KM-4; öğretmen = koç): kuyruk ve kontrol, koçluk kartı, haftalık program, koçlar ve toplu
-  // atama, kütüphane, tebrik ve rozetler, check-in, görüşmeler (F-K17).
-  { key: 'coaching', label: 'Koçluk', file: './coaching.js', requires: ['view'], area: 'students',
+  // Koçluk (KM-4; öğretmen = koç). `host: 'coaching'` hapları koçluk ekranının (coaching.js) sekmeleridir.
+  { key: 'coachQueue', label: 'Kontrol kuyruğu', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_getCoachQueue', 'admin_listCoachReviews'],
+    payload: { coachingTab: 'queue' } },
+  { key: 'coachWeek', label: 'Haftalık program', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_getCoachWeek'], payload: { coachingTab: 'week' } },
+  { key: 'coachStudents', label: 'Koçluk öğrencileri', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCoachingStudents'], claims: ['studentId'],
+    payload: { coachingTab: 'students' } },
+  // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
+  { key: 'questions', label: 'Hoca soruları', file: './questions.js', requires: ['learning'], area: 'coaching',
+    feature: 'coach_questions' },
+  // Mesaj denetimi (F-K15 moderasyon + F-K21 denetim): şikâyet kuyruğu, karar, kilit, gerekçeli arama.
+  { key: 'messages', label: 'Mesajlar', file: './messages.js', requires: ['settings'], area: 'coaching',
     feature: 'coaching' },
+  { key: 'coachMeetings', label: 'Görüşmeler', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCoachMeetings'], payload: { coachingTab: 'meetings' } },
+  { key: 'coachCoaches', label: 'Koçlar ve atama', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCoaches', 'admin_bulkAssignCoach'],
+    payload: { coachingTab: 'coaches' } },
+  { key: 'coachLibrary', label: 'Kütüphane', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCoachLibrary', 'admin_listLibraryProposals'],
+    payload: { coachingTab: 'library' } },
+  { key: 'coachMotivation', label: 'Tebrik ve rozetler', file: './coaching.js', requires: ['view'],
+    area: 'coaching', feature: 'coaching', host: 'coaching',
+    reads: ['admin_listCoachBadges', 'admin_listCelebrationCandidates'], payload: { coachingTab: 'motivation' } },
+  { key: 'coachCheckins', label: 'Check-in', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCheckins', 'admin_getCheckinQuestionSet'],
+    payload: { coachingTab: 'checkins' } },
   { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],
     area: 'lessons' },
   // Ders oturumları (KM-3): tek dersin iptali, telafisi, yerine öğretmen; öğretmen haftası.
   { key: 'sessions', label: 'Ders oturumları', file: './sessions.js', requires: ['view'], area: 'lessons' },
-  { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'lessons' },
-  { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'], area: 'lessons' },
-  { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'], area: 'lessons' },
-  // Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde (F-A25/F-A26).
-  { key: 'templates', label: 'Şablonlar', file: './templates.js', requires: ['view'], area: 'lessons' },
   { key: 'calendar', label: 'Kurum takvimi', file: './institution-calendar.js', requires: ['view'],
     area: 'lessons' },
-  { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'], area: 'progress' },
+  { key: 'curriculum', label: 'Müfredat', file: './curriculum.js', requires: ['view'], area: 'lessons' },
+  { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'attendance' },
+  { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'], area: 'work' },
+  { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'], area: 'work' },
+  { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'], area: 'work' },
   { key: 'evaluations', label: 'Değerlendirmeler', file: './evaluations.js',
-    requires: ['evaluations', 'learning_setup'], area: 'progress' },
-  { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'], area: 'progress' },
-  { key: 'curriculum', label: 'Müfredat', file: './curriculum.js', requires: ['view'], area: 'progress' },
-  { key: 'reading', label: 'Okuma', file: './reading.js', requires: ['view'], area: 'progress' },
+    requires: ['evaluations', 'learning_setup'], area: 'work' },
+  { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'], area: 'work' },
+  { key: 'reading', label: 'Okuma', file: './reading.js', requires: ['view'], area: 'work' },
   { key: 'decks', label: 'Bilgi kartları', file: './decks.js', requires: ['learning_setup'],
-    area: 'progress', feature: 'flashcards' },
-  { key: 'insights', label: 'Erken uyarı', file: './insights.js', requires: ['view'], area: 'progress',
-    feature: 'early_warning' },
+    area: 'work', feature: 'flashcards' },
+  // Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu TEK yerde (F-A25/F-A26). Çalışma
+  // planındaki eski "Şablonlar" sekmesi buraya birleşti (aynı gövdeydi).
+  { key: 'templates', label: 'Şablonlar', file: './templates.js', requires: ['view'], area: 'work' },
+  { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
+    area: 'comms' },
+  // Veli toplantısı randevu takvimi (Akademi README §14 madde 90): öğretmen saatleri, veli adına randevu, liste PDF'i.
+  { key: 'parentMeetings', label: 'Veli toplantısı', file: './parent-meetings.js', requires: ['requests'],
+    area: 'comms' },
+  // SMS (sms-kale §14 madde 58 + kurum SMS'i madde 88): eskiden Ayarlar → Kurum ayarları → SMS sekmesiydi.
+  { key: 'sms', label: 'SMS', file: './sms.js', requires: ['settings'], area: 'comms',
+    reads: ['admin_getSmsHealth'] },
   { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'], area: 'money',
     feature: 'finance' },
   { key: 'canteen', label: 'Kantin', file: './canteen.js', requires: ['view'], area: 'money',
@@ -94,14 +140,19 @@ export const SECTIONS = [
     feature: 'books' },
   { key: 'books', label: 'Kitap talepleri', file: './books.js', requires: ['view'], area: 'money',
     feature: 'books' },
+  // Rapor merkezi: dağınık raporların (yoklama, ders dökümü, finans, deneme, okuma…) tek giriş kapısı.
+  { key: 'reportHub', label: 'Rapor merkezi', file: './reports.js', requires: ['view'], area: 'reports' },
+  { key: 'insights', label: 'Erken uyarı', file: './insights.js', requires: ['view'], area: 'reports',
+    feature: 'early_warning' },
   { key: 'settings', label: 'Kurum ayarları', file: './settings.js', requires: ['settings'], area: 'admin' },
   { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'], area: 'admin' },
   { key: 'privacy', label: 'KVKK talepleri', file: './privacy.js', requires: ['privacy'], area: 'admin' },
 ];
 
 /**
- * Eski bağlantı adları → ekran. Başka ekranlar ve kayıtlı derin bağlantılar
- * (`app.go('panel')`, `ctx.payload.section` …) kırılmasın.
+ * Eski bağlantı adları → ekran ya da grup. Başka ekranlar ve kayıtlı derin
+ * bağlantılar (`app.go('panel')`, `ctx.payload.section` …) kırılmasın. Eski
+ * grup anahtarları (13.10.2026 düzeni) yeni gruplarına gider.
  */
 export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', kvkk: 'privacy',
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
@@ -109,8 +160,12 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
   sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions',
   oturumlar: 'sessions', 'ders-oturumlari': 'sessions', 'veli-toplantisi': 'parentMeetings',
   'parent-meetings': 'parentMeetings',
-  'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages',
-  kocluk: 'coaching', 'koc-gorusmeleri': 'coaching', 'kontrol-kuyrugu': 'coaching' };
+  'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages', mesajlar: 'messages',
+  kocluk: 'coaching', 'koc-gorusmeleri': 'coachMeetings', 'kontrol-kuyrugu': 'coachQueue',
+  'haftalik-program': 'coachWeek', 'gorev-ata': 'coachWeek',
+  raporlar: 'reports', rapor: 'reportHub', iletisim: 'comms', yoklama: 'attendance', odev: 'homework',
+  // Eski grup anahtarları (0.5.2 — altı üst bölüm).
+  progress: 'work' };
 
 /**
  * Özellik açık mı. `features` null (okunamadı) ya da bayrak listede yoksa
@@ -124,17 +179,21 @@ export function featureOn(features, flag) {
 }
 
 /**
- * `ctx`: {has(izin) → bool, features, kmOnly}. `kmOnly` (Akademi izni yok,
- * öğrenci yönetimi izni var — 0.5.3): yalnız `kmOnly` işaretli bölümler görünür,
- * Akademi izinlerine bakılmaz (o bölüm KM verisiyle çalışır).
+ * `ctx`: {has(izin) → bool, can(işlem) → bool, features, kmOnly}. `kmOnly`
+ * (Akademi izni yok, öğrenci yönetimi izni var — 0.5.3): yalnız `kmOnly`
+ * işaretli bölümler görünür, Akademi izinlerine bakılmaz (o bölüm KM
+ * verisiyle çalışır). `reads` verilen ekran, okuma işlemlerinden biri
+ * izinliyse görünür (`can` verilmezse izinli sayılır — karar vekilde).
  */
-export function sectionVisible(section, { has = () => true, features = null, kmOnly = false } = {}) {
+export function sectionVisible(section, { has = () => true, can = () => true, features = null,
+  kmOnly = false } = {}) {
   if (!section) return false;
   if (kmOnly) return Boolean(section.kmOnly);
-  return (section.requires || []).some((permission) => has(permission)) && featureOn(features, section.feature);
+  return (section.requires || []).some((permission) => has(permission)) && featureOn(features, section.feature)
+    && (!section.reads || section.reads.some((operationId) => can(operationId)));
 }
 
-/** Görünür üst bölümler ve altlarındaki görünür ekranlar (boş üst bölüm çıkar). */
+/** Görünür ana gruplar ve altlarındaki görünür ekranlar (boş grup çıkar). */
 export function buildNav(ctx = {}, sections = SECTIONS, areas = AREAS) {
   return areas
     .map((area) => ({ ...area, sections: sections.filter((section) => section.area === area.key
@@ -143,19 +202,50 @@ export function buildNav(ctx = {}, sections = SECTIONS, areas = AREAS) {
 }
 
 /**
- * `app.go(anahtar)` hedefi: üst bölüm anahtarı → ilk ekranı; ekran anahtarı →
- * kendisi; eski ad → `ALIASES`. Görünmeyen ekran `null` (çağıran söyler).
+ * Eşleşen hap: aynı ekranı taşıyan haplardan `payload`'a uyan; uyan yoksa
+ * `claims` alanlarından birini taşıyan (ör. `{studentId}` → koçluk
+ * öğrencileri) — yoksa null.
  */
-export function resolveTarget(nav, key) {
+function hostedMatch(sections, section, payload) {
+  if (!section.host || !payload || typeof payload !== 'object') return null;
+  const siblings = sections.filter((item) => item.host === section.host && item.payload);
+  return siblings.find((item) => Object.entries(item.payload).every(([name, value]) => payload[name] === value))
+    || siblings.find((item) => (item.claims || []).some((name) => payload[name] !== undefined && payload[name] !== null)
+      && Object.keys(item.payload).every((name) => !(name in payload)))
+    || null;
+}
+
+/**
+ * `app.go(anahtar, payload)` hedefi: grup anahtarı → ilk ekranı; ekran
+ * anahtarı → kendisi; eski ad → `ALIASES`. Paylaşılan ekranın hapında
+ * (`host`) `payload` başka bir hapı işaret ediyorsa (ör. `{coachingTab:
+ * 'week'}`) o hap seçilir. Görünmeyen ekran `null` (çağıran söyler).
+ */
+export function resolveTarget(nav, key, payload = null) {
   const wanted = ALIASES[key] || key;
+  const pick = (area, section) => {
+    const match = hostedMatch(area.sections, section, payload);
+    return { area: area.key, section: (match || section).key };
+  };
   for (const area of nav) {
-    if (area.key === wanted) return { area: area.key, section: area.sections[0].key };
+    if (area.key === wanted) return pick(area, area.sections[0]);
   }
   for (const area of nav) {
     const section = area.sections.find((item) => item.key === wanted);
-    if (section) return { area: area.key, section: section.key };
+    if (section) return pick(area, section);
   }
   return null;
+}
+
+/**
+ * Ana sayfa kutucukları: her görünür grup bir kutucuk; altında ekranları
+ * (ana sayfadan tek tık). Tek grup görünüyorsa ana sayfa YOKTUR (`[]`) — tek
+ * kapılı bir ana sayfa fazladan tık olurdu; panel doğrudan o gruba açılır.
+ */
+export function homeTiles(nav) {
+  if (nav.length < 2) return [];
+  return nav.map((area) => ({ key: area.key, label: area.label, hint: area.hint, icon: area.icon,
+    tone: area.tone, links: area.sections.map((section) => ({ key: section.key, label: section.label })) }));
 }
 
 // ------------------------------------------------------------ öğrenci kartı
