@@ -13,6 +13,8 @@ import { button, h } from '../../ui-kit/kit.js';
 import { skeletonRows } from '../../ui-kit/layout.js';
 import { errorBox, num, problem, searchBox } from './common.js';
 import { programPicker, topicTree } from './curriculum-picker.js';
+import { bookPicker } from './book-picker.js';
+import { T as BOOKS } from './book-picker-logic.js';
 
 export const RESOURCE_KINDS = { topic_book: 'Konu anlatımlı', question_bank: 'Soru bankası', fascicle: 'Fasikül',
   practice_exam: 'Deneme', other: 'Diğer' };
@@ -162,7 +164,24 @@ export function homeworkContent(app, current, subjects = [], { target = null } =
       }
     } });
     disposers.push(() => box.destroy());
-    finder.append(box.node, results);
+    // Ortak kitap seçici (Akademi README §14 madde 98): bütün katalog, süzgeçli; hedefin (sınıf / öğrenci) kitapları önce.
+    const catalogButton = button(BOOKS.chooseFromCatalog, { variant: 'ghost', onClick: async () => {
+      const now = target?.() || {};
+      const chosenBooks = await bookPicker(app, {
+        target: { studentIds: now.studentIds || [], classGroupIds: [...(now.classGroupIds || []), ...(now.studentGroupIds || [])] },
+        subject: draft.subjectId || '',
+      });
+      const item = chosenBooks?.[0];
+      if (!item) return;
+      if (resource.id !== item.id) {
+        resource.id = item.id;
+        resource.sectionIds.clear();
+        resource.pageFrom = null;
+        resource.pageTo = null;
+      }
+      paintChosen();
+    } });
+    finder.append(box.node, results, catalogButton);
 
     async function paintChosen() {
       chosen.replaceChildren();

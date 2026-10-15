@@ -1,0 +1,28 @@
+/* Ortak kitap seçicisi (Akademi README §14 madde 98) — önek `ak-bp-`. Kapaklı ızgara, süzgeç satırı. */
+.ak-bp-dialog { display: flex; flex-direction: column; width: min(980px, calc(100% - 32px));
+  height: min(800px, calc(100% - 32px)); max-height: none; padding: 0; overflow: hidden; }
+.ak-bp-head { padding: 18px 22px 8px; display: flex; flex-direction: column; gap: 8px; }
+.ak-bp-filters { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.ak-bp-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 12px; color: var(--soft); }
+.ak-bp-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 22px 12px; }
+.ak-bp-h { margin: 12px 0 6px; font-size: 12px; font-weight: 700; color: var(--ink); }
+.ak-bp-h small { font-weight: 400; color: var(--soft); }
+.ak-bp-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.ak-bp-card { position: relative; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;
+  min-height: 92px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  font: inherit; color: inherit; cursor: pointer; }
+.ak-bp-card:hover { box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
+.ak-bp-card.on { border-color: var(--accent, #2563eb); box-shadow: 0 0 0 1px var(--accent, #2563eb); }
+.ak-bp-cover { flex: none; width: 52px; height: 70px; border-radius: 6px; object-fit: cover; background: var(--line); }
+.ak-bp-cover.ph { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+  color: var(--soft); }
+.ak-bp-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ak-bp-title { font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; }
+.ak-bp-meta { font-size: 11.5px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ak-bp-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.ak-bp-tick { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--accent, #2563eb); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.ak-bp-actions { align-items: center; margin: 0; padding: 12px 22px 16px; border-top: 1px solid var(--line); background: #fff; }
+.ak-bp-sync { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 12px; margin-bottom: 10px;
+  border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 12.5px; }

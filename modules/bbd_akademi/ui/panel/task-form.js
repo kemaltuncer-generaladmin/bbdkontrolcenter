@@ -21,12 +21,15 @@
 // yeniden; sunucunun `fields_required_for_type` / `validation_error` alanları da aynı kutulara.
 //
 // KAYNAK SEÇİMİ TEK NOKTADAN: `pickResourceField` (bkz. aşağı). Ortak kitap seçicisi
-// (iş `kitap-senkron`) geldiğinde yalnız bu işlev ona bağlanır; form geri kalanı değişmez.
+// (`book-picker.js`, iş `kitap-senkron`, Akademi README §14 madde 98) buraya bağlıdır:
+// "Katalogdan kitap ekle" → sınıf/ders/yayınevi süzgeçli kapaklı seçici, öğrencinin kitapları önce.
 
 import { button, h, loadStyles } from '../../ui-kit/kit.js';
 import { badge } from '../../ui-kit/layout.js';
 import { dateField } from '../../ui-kit/datefield.js';
 import { problem } from './api.js';
+import { bookPicker } from './book-picker.js';
+import { T as BOOKS } from './book-picker-logic.js';
 import { DAY_LABEL, WEEKDAYS, clockInput, fileDrop, fmtDate, num, todayIst } from './common.js';
 import { programLabel, sortPrograms } from './curriculum-picker.js';
 import { PRIORITY, PROOF_PHOTO, clockText, pct } from './coaching-logic.js';
@@ -951,6 +954,15 @@ export function pickResourceField(app, { mode = 'coach', studentId = '', builder
   shelfBox.addEventListener('change', () => { form.addToShelf = shelfBox.checked; onChange?.(); });
   shelfCheck.append(shelfBox, h('span', '', 'Kaynak öğrencinin rafında değil — rafa da ekle'));
   shelfCheck.hidden = true;
+  // Ortak kitap seçici: bütün katalog (hazır kütüphane + kurum + bbdstore), süzgeçli, hedefin kitapları önce.
+  const catalogButton = button(BOOKS.chooseFromCatalog, { variant: 'ghost', onClick: async () => {
+    const chosen = await bookPicker(app, { target: coach ? { studentIds: [studentId] } : {}, subject: form.subjectId || '' });
+    const book = chosen?.[0];
+    if (!book) return;
+    pick({ resourceId: book.id, title: book.title, subject: book.subjects?.[0] }, []);
+    onChange?.();
+  } });
+  searchWrap.append(catalogButton);
   node.append(shelfRow, current, searchWrap, shelfCheck, sections);
   const meta = new Map();   // bölüm kimliği → {title, pageFrom, pageTo, questionCount}
   let token = 0;

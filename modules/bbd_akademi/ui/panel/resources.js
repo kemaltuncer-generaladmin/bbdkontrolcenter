@@ -27,6 +27,7 @@ import { button, blockedButton, h, loadStyles, menuButton } from '../../ui-kit/k
 import { alertBox, badge, card, tabBar } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { AkademiError } from './api.js';
+import { storeSyncCard } from './book-picker.js';
 import {
   actionButton, confirmAction, empty, errorBox, formDialog, kv, loader, money,
   multiChips, num, openDrawer, optionsOf, pagedList, problem, runAction, searchBox, sectionHead,
@@ -228,6 +229,18 @@ export function section(app) {
 
 // ------------------------------------------------------------- kaynak listesi
 
+/** bbdstore'dan eşitlenen kitap: rozet + fiyat / stok (Akademi README §14 madde 98). */
+function storeCell(row) {
+  const cell = h('div', 'ak-cell-stack');
+  cell.append(badge('bbdstore', 'info'));
+  const store = row.store;
+  if (store) {
+    cell.append(h('small', 'ak-muted', store.status === 'removed' ? 'Mağazadan kalktı'
+      : `${money(store.priceMinor)}${store.inStock ? '' : ' · stokta yok'}`));
+  }
+  return cell;
+}
+
 /**
  * Kütüphane (kapsam süzgeçli) ve Kurum kaynakları (yalnız `tenant`, CRUD
  * düğmeli) aynı listeyi kullanır: `GET /v1/catalog/library`, imleçli.
@@ -247,8 +260,10 @@ function resourceListTab(app, ctx, { tenantOnly }) {
   publisher.node.classList.add('ak-res-publisher');
   const pick = (key) => (value) => { filters[key] = value; reload(); };
   const scopeSelect = tenantOnly ? null : selectBox([
-    { value: 'all', label: 'Hazır + kurum' }, { value: 'global', label: 'Yalnız hazır kütüphane' },
-    { value: 'tenant', label: 'Yalnız kurum kaynakları' }], 'all', pick('scope'), { label: 'Kapsam' });
+    { value: 'all', label: 'Tüm kitaplar' }, { value: 'global', label: 'Yalnız hazır kütüphane' },
+    { value: 'tenant', label: 'Yalnız kurum kaynakları' },
+    // Akademi README §14 madde 98: bbdstore'dan saatlik eşitlenen kitaplar.
+    { value: 'store', label: 'Yalnız bbdstore kitapları' }], 'all', pick('scope'), { label: 'Kapsam' });
   const kindSelect = selectBox(optionsOf(KINDS, { empty: 'Tüm türler' }), '', pick('kind'), { label: 'Tür' });
   const subjectSelect = selectBox([{ value: '', label: 'Tüm dersler' }], '', pick('subject'), { label: 'Ders' });
   const gradeSelect = selectBox([{ value: '', label: 'Tüm seviyeler' }, ...GRADE_OPTIONS], '', pick('gradeLevel'),
@@ -269,6 +284,9 @@ function resourceListTab(app, ctx, { tenantOnly }) {
     chip.addEventListener('click', () => { filters.topicId = ''; paintTopic(); reload(); });
     topicSlot.append(chip);
   };
+  // Mağaza eşitlemesi (yalnız Kütüphane sekmesinde): son eşitleme, kitap sayısı, "Şimdi eşitle".
+  const sync = tenantOnly ? null : storeSyncCard(app);
+  if (sync) node.append(sync.node);
   node.append(toolbar(search.node, scopeSelect?.node, kindSelect.node, subjectSelect.node),
     toolbar(gradeSelect.node, examSelect.node, trackSelect.node, publisher.node, topicSlot));
   if (tenantOnly) {
@@ -286,7 +304,8 @@ function resourceListTab(app, ctx, { tenantOnly }) {
       `${num(row.questionCount)} soru`) },
   ];
   if (!tenantOnly) {
-    columns.push({ key: 'scope', label: 'Kapsam', width: '120px', cell: (row) => scopeBadge(row.scope) });
+    columns.push({ key: 'scope', label: 'Kapsam', width: '120px', cell: (row) => (row.origin === 'store'
+      ? storeCell(row) : scopeBadge(row.scope)) });
   }
   columns.push({ key: 'actions', label: '', width: tenantOnly ? '250px' : '170px', cell: (row) => {
     const actions = h('div', 'ak-row-actions');
