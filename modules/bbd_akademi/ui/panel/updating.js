@@ -12,6 +12,15 @@
 // (tests/test_akademi_guncelleniyor_bandi.py).
 
 export const UPDATING_TEXT = 'Akademi şu an güncelleniyor, birkaç saniye sonra otomatik yeniden denenecek.';
+// Çökme dayanıklılığı (2026-10-15): köprü son bilinen veriyi verdiyse ekran dolu kalır, bant bunu söyler.
+export const STALE_TEXT = 'Akademi sunucusuna şu an ulaşılamıyor, otomatik yeniden deneniyor. Son bilinen bilgiler gösteriliyor';
+
+/** ISO zaman → "14:32" (yerel saat). */
+export function clockText(iso) {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+}
 export const RECOVERED_TEXT = 'Akademi yeniden erişilebilir. Açık penceredeki bilgiler korunuyor; hazır olduğunuzda ekranı yenileyin.';
 const WAITS = [5, 10, 15, 30];
 
@@ -28,6 +37,7 @@ export function updatingBand({ probe, reload, busy = () => false, doc = globalTh
   node.setAttribute('aria-live', 'polite');
 
   let state = 'hidden';               // hidden | waiting | probing | recovered
+  let staleAt = null;                 // son bilinen verinin zamanı (köprü verdiyse)
   let remaining = 0;
   let round = 0;
   let timer = null;
@@ -50,9 +60,10 @@ export function updatingBand({ probe, reload, busy = () => false, doc = globalTh
       action.textContent = 'Yenile';
       action.addEventListener('click', () => { hide(); reload(); });
     } else {
+      const base = staleAt ? `${STALE_TEXT} (${clockText(staleAt)}).` : UPDATING_TEXT;
       text.textContent = state === 'probing'
-        ? `${UPDATING_TEXT} Deneniyor…`
-        : `${UPDATING_TEXT} (${remaining} sn)`;
+        ? `${base} Deneniyor…`
+        : `${base} (${remaining} sn)`;
       action.textContent = 'Şimdi dene';
       action.disabled = state === 'probing';
       action.addEventListener('click', () => attempt());
@@ -95,13 +106,18 @@ export function updatingBand({ probe, reload, busy = () => false, doc = globalTh
   function hide() {
     stop();
     state = 'hidden';
+    staleAt = null;
     round = 0;
     paint();
   }
 
-  /** Bir okuma "güncelleniyor" hatasıyla bitti. Bant zaten açıksa sayaç sürer. */
-  function show() {
-    if (state === 'waiting' || state === 'probing') return;
+  /**
+   * Bir okuma "güncelleniyor" hatasıyla bitti (ya da köprü son bilinen veriyi verdi: `stale.at`).
+   * Bant zaten açıksa sayaç sürer.
+   */
+  function show(stale = null) {
+    if (stale?.at) staleAt = stale.at;
+    if (state === 'waiting' || state === 'probing') { paint(); return; }
     round = 0;
     countdown();
   }

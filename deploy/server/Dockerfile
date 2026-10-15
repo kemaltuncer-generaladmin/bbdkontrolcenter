@@ -101,6 +101,15 @@ USER kmsunucu
 
 EXPOSE 8000
 
+# SAĞLIK DENETİMİ (çökme dayanıklılığı, 2026-10-15). Coolify Dockerfile'da HEALTHCHECK görünce dağıtımda YENİ
+# konteyner "healthy" olana dek ESKİSİNİ durdurmaz (sıfır kesintili geçiş) ve Traefik trafiği yalnız sağlıklı
+# konteynere verir. Denetim yokken yeni konteyner açılır açılmaz eskisi durduruluyordu: göçler + 49 modül yüklenene
+# dek panel, kantin kiosku/ödeme sitesinin KM çağrıları ve Akademi'nin KM çağrıları (SMS, öğrenci eşitleme) "ulaşılamıyor"
+# alıyordu. /health uygulamanın kendisidir (çekirdek + modül yükleme özeti); ek paket gerekmez (python + urllib,
+# yalnız 127.0.0.1). Açılışta 2 sn'de bir, sonra 15 sn'de bir; 3 ardışık hata = unhealthy.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=180s --start-interval=2s --retries=3 \
+  CMD ["python", "-c", "import sys, urllib.request as u; sys.exit(0 if u.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
+
 # GÖÇ AÇILIŞTA KOŞAR: `create_app` lifespan'i içinde `build_schema` ve
 # kernel'in modül göçleri çağrılır. Ayrı bir `migrate` adımı yoktur — atlanacak
 # bir adım, yarım şema demektir.

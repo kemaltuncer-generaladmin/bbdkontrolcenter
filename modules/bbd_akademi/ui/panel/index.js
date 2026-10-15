@@ -92,7 +92,7 @@ export function mount(root, ctx) {
     root: view,
     toast,
     api: createClient(ctx, {
-      onUnavailable: () => band?.show(),
+      onUnavailable: (_error, stale) => band?.show(stale),
       onAvailable: () => band?.recovered(),
     }),
     status: null,

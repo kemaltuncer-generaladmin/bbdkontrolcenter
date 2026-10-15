@@ -20,13 +20,26 @@ ERİŞİLEMEZLİK AYRI HATADIR. Bağlantı kurulamaz ya da süre dolarsa
 `AkademiUnavailable` fırlatılır; vekil bunu `503 akademi_unavailable`a çevirir.
 Akademi'nin kendi hata yanıtı (4xx/5xx) HATA DEĞİLDİR — yanıttır ve zarfıyla
 olduğu gibi geri döner.
+
+DEVRE KESİCİ (çökme dayanıklılığı, 2026-10-15). Akademi sunucusu tamamen
+erişilemezken her panel tıklaması, her arka plan işi (personel eşitleme, olay
+iletimi) bağlantı zaman aşımını (5 sn) ayrı ayrı bekliyor, okumalar üstüne
+20 sn yeniden deniyordu: panel donuk, KM'nin olay döngüsü dolu. Şimdi
+`breaker_failures` (3) ARDIŞIK bağlantı/zaman aşımı hatasından sonra devre
+`breaker_seconds` (10) saniye AÇIK kalır: istekler Akademi'ye hiç gitmeden
+hemen `AkademiUnavailable(reason="circuit_open", retryable=True)` alır
+(vekil son bilinen veriyi verebilir). Süre dolunca tek bir deneme isteği
+geçer (yarı açık): başarılıysa devre kapanır, değilse yeniden açılır.
+Akademi'nin herhangi bir HTTP yanıtı (502/503 dahil) bağlantının çalıştığını
+gösterir ve sayacı sıfırlar.
 """
 
 from __future__ import annotations
 
 import re
+import time
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -93,6 +106,10 @@ class GatewayConfig:
     #: Panel köprüsünde OKUMA (GET) isteklerinin geçici ağ geçidi hatasında (Akademi dağıtımı: 502/503) toplam
     #: yeniden deneme bütçesi (sn). 0 = kapalı. Yazmalar hiç yeniden denenmez.
     read_retry_seconds: float = 20.0
+    #: Devre kesici: bu kadar ARDIŞIK bağlantı/zaman aşımı hatası → devre açılır. 0 = kapalı.
+    breaker_failures: int = 3
+    #: Devrenin açık kaldığı süre (sn); sonra tek deneme isteği geçer.
+    breaker_seconds: float = 10.0
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any] | None) -> GatewayConfig:
@@ -111,6 +128,8 @@ class GatewayConfig:
             step_up_seconds=int(raw.get("step_up_seconds") or base.step_up_seconds),
             # 0 geçerli (kapalı); `or` ile yazılsaydı varsayılana dönerdi.
             read_retry_seconds=float(raw.get("read_retry_seconds", base.read_retry_seconds)),
+            breaker_failures=int(raw.get("breaker_failures", base.breaker_failures)),
+            breaker_seconds=float(raw.get("breaker_seconds", base.breaker_seconds)),
         )
 
     @property
@@ -134,16 +153,63 @@ def request_id(incoming: str | None) -> str:
     return value if REQUEST_ID.match(value) else f"km-{uuid.uuid4().hex}"
 
 
+#: Devre açıkken dönen ileti (okumada panel "otomatik yeniden deneniyor" bandını gösterir).
+CIRCUIT_OPEN_MESSAGE = ("Akademi sunucusuna şu an ulaşılamıyor; otomatik olarak yeniden deneniyor. "
+                        "Yazma işlemi gönderilmedi.")
+
+
 class AkademiGateway:
     """Akademi istemcisi. Bağlantı havuzu tek istemcide tutulur."""
 
     def __init__(self, *, config: GatewayConfig, secrets: Any, log: Any,
-                 transport: httpx.AsyncBaseTransport | None = None) -> None:
+                 transport: httpx.AsyncBaseTransport | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.config = config
         self._secrets = secrets
         self._log = log
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+        self._clock = clock
+        self._failures = 0              # ardışık bağlantı/zaman aşımı hatası
+        self._open_until = 0.0          # devre bu ana kadar açık (0 = kapalı)
+        self._half_open = False         # süre doldu, tek deneme isteği yolda
+
+    # ------------------------------------------------------- devre kesici
+
+    def circuit(self) -> dict[str, Any]:
+        """Panelin bağlantı kartı ve testler için devre durumu."""
+        now = self._clock()
+        return {"open": self._open_until > now, "failures": self._failures,
+                "retryAfterSeconds": max(0.0, round(self._open_until - now, 1))}
+
+    def _admit(self) -> None:
+        """Devre açıksa isteği Akademi'ye göndermeden reddeder; süre dolduysa tek denemeyi geçirir."""
+        if self.config.breaker_failures <= 0 or self._open_until == 0.0:
+            return
+        now = self._clock()
+        if now < self._open_until or self._half_open:
+            raise AkademiUnavailable(CIRCUIT_OPEN_MESSAGE, details={
+                "reason": "circuit_open", "retryable": True,
+                "retryAfterSeconds": max(1, round(self._open_until - now))})
+        self._half_open = True          # bu istek deneme isteğidir
+
+    def _succeeded(self) -> None:
+        if self._open_until:
+            self._log.info("akademi devresi kapandı", failures=self._failures)
+        self._failures = 0
+        self._open_until = 0.0
+        self._half_open = False
+
+    def _failed(self) -> None:
+        self._failures += 1
+        was_probe = self._half_open
+        self._half_open = False
+        limit = self.config.breaker_failures
+        if limit > 0 and (was_probe or self._failures >= limit):
+            if not self._open_until or was_probe:
+                self._log.warning("akademi devresi açıldı", failures=self._failures,
+                                  seconds=self.config.breaker_seconds)
+            self._open_until = self._clock() + self.config.breaker_seconds
 
     # ------------------------------------------------------------ kimlik
 
@@ -208,22 +274,30 @@ class AkademiGateway:
         outgoing["Authorization"] = f"Bearer {key}"
         timeout = self._timeout(self.config.upload_timeout_seconds if upload
                                 else self.config.timeout_seconds)
+        self._admit()
         client = self._http()
         try:
             request = client.build_request(method, url, headers=outgoing, content=content,
                                            files=files, data=data, json=json_body,
                                            timeout=timeout)
-            return await client.send(request, stream=True)
+            response = await client.send(request, stream=True)
         except httpx.TimeoutException as failure:
+            self._failed()
             self._log.warning("akademi zaman aşımı", path=path, method=method)
             raise AkademiUnavailable(
                 "Akademi sunucusu zamanında yanıt vermedi. Yazma işlemiyse "
                 "tamamlanmış olabilir; aynı işlemi tekrarlamadan önce listeyi yenileyin.",
                 details={"reason": "timeout"}) from failure
         except httpx.TransportError as failure:
+            self._failed()
             self._log.warning("akademi erişilemedi", path=path, error=str(failure))
             raise AkademiUnavailable("Akademi sunucusuna ulaşılamıyor.",
                                      details={"reason": "connect"}) from failure
+        except BaseException:
+            self._half_open = False     # iptal vb.: deneme hakkı geri verilir
+            raise
+        self._succeeded()
+        return response
 
     # ------------------------------------------------------ imzalı indirme
 

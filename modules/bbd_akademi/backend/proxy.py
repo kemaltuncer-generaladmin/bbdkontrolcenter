@@ -36,7 +36,18 @@ akademi_unavailable` + `details.retryable` döner ve panel "güncelleniyor"
 bandını gösterip kendisi yeniler. YAZMALAR YENİDEN DENENMEZ (ikinci kayıt
 riski); panel aynı `Idempotency-Key` ile elle tekrar gönderirse Akademi ilk
 sonucu döndürür (A9) — güvenli olan yol budur. Akademi'nin KENDİ hata zarfı
-(JSON 503 dahil) yeniden denenmez.
+(JSON 503 dahil) yeniden denenmez; yalnız `X-Akademi-Retryable: 1` taşıyan
+`503 service_unavailable` (Akademi'nin veritabanı/Redis'i o an yeniden başlıyor)
+geçici sayılır.
+
+SON BİLİNEN VERİ (çökme dayanıklılığı, 2026-10-15): köprüde başarılı her OKUMA
+(200, JSON) kullanıcı + işlem + yol + sorgu anahtarıyla bellekte tutulur
+(`StaleCache`, en çok 16 MB / 24 sa). Akademi'ye ulaşılamazsa (yeniden
+denemeler bitti ya da devre kesici açık) aynı okuma bu veriyle döner:
+`ok: true` + `stale: {at, reason}`; panel "Akademi sunucusuna şu an
+ulaşılamıyor, otomatik yeniden deneniyor — son bilinen bilgiler (14:32)"
+bandını gösterir. Kapılar (izin listesi + KM izni) önbellekten önce yine
+uygulanır; anahtar kullanıcıya özeldir (başkasının gördüğü veri sızmaz).
 """
 
 from __future__ import annotations
@@ -47,8 +58,10 @@ import binascii
 import json
 import re
 import time
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from email.message import Message
 from typing import Any
 
@@ -127,9 +140,59 @@ UPDATING_WRITE_MESSAGE = ("Akademi şu an güncelleniyor; işlem kaydedilmemiş 
 
 
 def transient(upstream: httpx.Response) -> bool:
-    """Ağ geçidinin geçici hatası mı (Akademi'nin kendi JSON hata zarfı değil)?"""
+    """Ağ geçidinin geçici hatası mı (Akademi'nin kendi JSON hata zarfı değil)? Akademi'nin altyapı kesintisi
+    yanıtı (`503 service_unavailable`, `X-Akademi-Retryable: 1`) da geçicidir."""
+    if upstream.status_code == 503 and upstream.headers.get("x-akademi-retryable") == "1":
+        return True
     return (upstream.status_code in TRANSIENT_STATUS
             and "json" not in upstream.headers.get("content-type", ""))
+
+
+class StaleCache:
+    """Son başarılı okumalar (LRU, bayt bütçeli). Yalnız süreç belleğinde; diske yazılmaz."""
+
+    def __init__(self, *, max_bytes: int = 16 * 1024 * 1024, max_entry_bytes: int = 1024 * 1024,
+                 max_age_seconds: float = 24 * 3600, clock: Callable[[], float] = time.time) -> None:
+        self.max_bytes = max_bytes
+        self.max_entry_bytes = max_entry_bytes
+        self.max_age_seconds = max_age_seconds
+        self._clock = clock
+        self._items: OrderedDict[tuple[str, ...], tuple[float, int, Any, dict[str, str]]] = OrderedDict()
+        self._bytes = 0
+
+    def put(self, key: tuple[str, ...], data: Any, headers: Mapping[str, str]) -> None:
+        try:
+            size = len(json.dumps(data, ensure_ascii=False, default=str))
+        except (TypeError, ValueError):
+            return
+        self.drop(key)
+        if size > self.max_entry_bytes:
+            return
+        kept = {k: v for k, v in headers.items() if k in ("etag", "last-modified")}
+        self._items[key] = (self._clock(), size, data, kept)
+        self._bytes += size
+        while self._bytes > self.max_bytes and self._items:
+            _, (_, old, _, _) = self._items.popitem(last=False)
+            self._bytes -= old
+
+    def get(self, key: tuple[str, ...]) -> tuple[float, Any] | None:
+        item = self._items.get(key)
+        if item is None:
+            return None
+        at, _, data, _ = item
+        if self._clock() - at > self.max_age_seconds:
+            self.drop(key)
+            return None
+        self._items.move_to_end(key)
+        return at, data
+
+    def drop(self, key: tuple[str, ...]) -> None:
+        item = self._items.pop(key, None)
+        if item is not None:
+            self._bytes -= item[1]
+
+    def __len__(self) -> int:
+        return len(self._items)
 
 
 class AkademiProxy:
@@ -143,6 +206,7 @@ class AkademiProxy:
         self._log = log
         self._sleep = sleep
         self._clock = clock
+        self.stale = StaleCache()
 
     async def _read_with_retry(self, send: Callable[[], Awaitable[httpx.Response]], *,
                                operation_id: str, trace: str) -> httpx.Response:
@@ -159,8 +223,9 @@ class AkademiProxy:
             try:
                 upstream = await send()
             except AkademiUnavailable as failure:
-                # Zaman aşımı yeniden denenmez: istek zaten `timeout_seconds` bekledi.
-                if (failure.details or {}).get("reason") != "connect":
+                # Zaman aşımı yeniden denenmez: istek zaten `timeout_seconds` bekledi. Devre açıksa
+                # (gateway devre kesicisi) bağlantı hatası gibi beklenir: süre dolunca deneme isteği geçer.
+                if (failure.details or {}).get("reason") not in ("connect", "circuit_open"):
                     raise
             else:
                 if not transient(upstream):
@@ -310,8 +375,21 @@ class AkademiProxy:
                 if resolved.operation.is_write:
                     upstream = await send()
                 else:
-                    upstream = await self._read_with_retry(
-                        send, operation_id=resolved.operation.operation_id, trace=trace)
+                    stale_key = (str(user.id), resolved.operation.operation_id,
+                                 resolved.upstream_path, query_text)
+                    # Devre açıksa ve son bilinen veri varsa beklemeden onu ver.
+                    if self.gateway.circuit()["open"] and (hit := self.stale.get(stale_key)):
+                        return _stale_envelope(hit, trace, "circuit_open")
+                    try:
+                        upstream = await self._read_with_retry(
+                            send, operation_id=resolved.operation.operation_id, trace=trace)
+                    except AkademiUnavailable as failure:
+                        if hit := self.stale.get(stale_key):
+                            reason = str((failure.details or {}).get("reason") or "unavailable")
+                            self._log.warning("akademi erişilemiyor — son bilinen veri", trace=trace,
+                                              operation=resolved.operation.operation_id)
+                            return _stale_envelope(hit, trace, reason)
+                        raise
             if transient(upstream):
                 # Yazma (yeniden denenmez) ya da yükleme: ağ geçidi hatası Akademi'nin zarfı gibi değil,
                 # "güncelleniyor" olarak döner; panel aynı Idempotency-Key ile güvenle tekrar gönderebilir.
@@ -340,6 +418,10 @@ class AkademiProxy:
             await upstream.aclose()
         self._log_call(user, resolved, upstream.status_code, trace)
         result["headers"].setdefault("requestId", trace)
+        if (method.upper() == "GET" and upload is None and upstream.status_code == 200
+                and result.get("file") is None and result.get("data") is not None):
+            self.stale.put((str(user.id), resolved.operation.operation_id, resolved.upstream_path,
+                            query_text), result["data"], result["headers"])
         return result
 
     async def fetch_file(self, url: str) -> dict[str, Any]:
@@ -364,6 +446,14 @@ class AkademiProxy:
 
 
 # ----------------------------------------------------------------- yardım
+
+
+def _stale_envelope(hit: tuple[float, Any], trace: str, reason: str) -> dict[str, Any]:
+    at, data = hit
+    stamp = datetime.fromtimestamp(at, UTC).isoformat().replace("+00:00", "Z")
+    return {"ok": True, "status": 200, "data": data,
+            "headers": {"requestId": trace, "x-km-stale": "1"},
+            "stale": {"at": stamp, "reason": reason}}
 
 
 async def _limited(stream: AsyncIterator[bytes], limit: int) -> AsyncIterator[bytes]:

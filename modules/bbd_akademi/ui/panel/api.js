@@ -39,7 +39,7 @@ export class AkademiError extends Error {
 
 /** Kod → kullanıcı cümlesi. Bilinmeyen kodda Akademi'nin kendi mesajı kalır. */
 const CODE_TEXT = {
-  akademi_unavailable: 'Akademi sunucusuna şu an ulaşılamıyor. Biraz sonra tekrar deneyin.',
+  akademi_unavailable: 'Akademi sunucusuna şu an ulaşılamıyor. Birkaç saniye sonra tekrar deneyin.',
   akademi_not_configured: 'Akademi bağlantısı kurulmamış: entegrasyon anahtarı sır kasasında yok.',
   akademi_disabled: 'Akademi bağlantısı ayarlardan kapatılmış.',
   operation_not_allowed: 'Bu işlem Kontrol Merkezi üzerinden açık değil.',
@@ -59,6 +59,8 @@ const CODE_TEXT = {
  */
 export function isUpdating(error) {
   if (!(error instanceof AkademiError)) return false;
+  // Akademi'nin kendi altyapı kesintisi (503 service_unavailable): geçici, panel bandı yeniden dener.
+  if (error.code === 'service_unavailable') return true;
   if (error.code === 'akademi_unavailable' && error.details?.retryable === true) return true;
   return error.code === 'akademi_error' && [502, 503, 504].includes(error.status);
 }
@@ -112,6 +114,15 @@ export function createClient(ctx, hooks = {}) {
   async function raw(payload) {
     try {
       const envelope = await rawOnce(payload);
+      if (envelope.stale && payload.method === 'GET') {
+        // SON BİLİNEN VERİ: köprü Akademi'ye ulaşamadı, aynı okumanın önceki yanıtını verdi. Ekran
+        // veriyle çizilir, bant "ulaşılamıyor — son bilinen bilgiler (saat)" der ve denemeyi sürdürür.
+        lastFailedRead = { method: 'GET', path: payload.path, query: payload.query };
+        hooks.onUnavailable?.(new AkademiError({ code: 'akademi_unavailable', status: 503,
+          message: envelope.stale.reason || 'stale',
+          details: { retryable: true, reason: 'stale', staleAt: envelope.stale.at } }), envelope.stale);
+        return envelope;
+      }
       if (lastFailedRead && payload.method === 'GET') lastFailedRead = null;
       hooks.onAvailable?.();
       return envelope;
@@ -131,8 +142,8 @@ export function createClient(ctx, hooks = {}) {
   async function probe() {
     if (!lastFailedRead) return true;
     try {
-      await raw(lastFailedRead);
-      return true;
+      const envelope = await raw(lastFailedRead);
+      return !envelope.stale;          // son bilinen veriyle dönmek "ulaştı" demek değil
     } catch {
       return false;
     }
@@ -191,7 +202,7 @@ export function createClient(ctx, hooks = {}) {
     }
     const envelope = await raw(payload);
     return { data: envelope.data, headers: envelope.headers || {}, file: envelope.file || null,
-      status: envelope.status };
+      status: envelope.status, stale: envelope.stale || null };
   }
 
   async function get(path, query) {
@@ -218,6 +229,7 @@ export function createClient(ctx, hooks = {}) {
         cached.at = Date.now();
         return cached.data;
       }
+      if (result.stale) return cached?.data ?? result.data;   // eski veri ETag önbelleğine yazılmaz
       etags.set(id, { etag: result.headers.etag || null, data: result.data, at: Date.now() });
       return result.data;
     })().finally(() => inflight.delete(id));
