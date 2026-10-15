@@ -4025,7 +4025,7 @@ OPERATIONS: tuple[Operation, ...] = (
         'students_listCanteenPaymentRequests',
         ('canteen.view',),
         'read',
-        feature_flag='canteen',
+        feature_flag='canteen_payment_requests',
         features=('F-P3.9', 'F-P3.8'),
     ),
     Operation(
