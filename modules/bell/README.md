@@ -78,6 +78,29 @@ danışmaya gel." Mobil geçit (BBD Akademi) ve personel ekranı
   açılırsa `bbd_students.directory` yeteneğinden öğrenci adları okunur ve
   her öğrencinin çağrı sesi önden üretilir.
 
+## Anons şablonları, sınıf çağrısı, serbest duyuru (0.6 — Akademi README §14 madde 106)
+
+Şablonların sahibi BBD Akademi'dir (`pa_templates`; KM'de Akademi › Ayarlar ›
+Anons şablonları). Zil yine **metni çağıranın kurduğu** ses motorudur:
+
+- **Toplu ön hazırlık** (`bell.announce.prepare(..., bulk=True)`, geçit
+  `POST /announcements/prepare`): Akademi her şablonu her öğrenci ve yaklaşan
+  her ders için doldurup önden seslendirtir — çağrı anında Vertex beklenmez.
+  Toplu sesler üretim sırasında olağan seslerin (zil sonrası, grup, plan)
+  ARKASINDAN gelir (`voices.py` öncelikli sıra); toplu bekleyen bir ses olağan
+  istenince öne alınır. Diskte 60 gün tutulur ("kullanılmayan sesleri sil"
+  silmez) ama köprüye ÖNDEN gitmez (010 göçü `bulk`): çalındığı an yüklenir
+  (`_ensure_on_bridge`, üretim değil) ve son 24 saat köprüde kalır.
+  Aynı metin ikinci kez istenirse yalnız saklama süresi tazelenir.
+- **Önizleme** (`bell.announce.preview`, geçit `POST /announcements/preview`):
+  sesi hazırlar (yoksa anlık üretir) ve ÇALMADAN veri URI'si döner; ses saklanır,
+  ardından "Çal" Vertex'e gitmez. Üretilemezse `tts_unavailable` ("Anons sesi
+  hazırlanamadı") — zil susmaz kuralı aynen geçerli.
+- **Sınıf çağrısı / serbest duyuru** (geçit `POST /announcements/say`): hazır
+  cümle `page` ile aynı yoldan çalar; `{…}` kalmışsa geçit reddeder.
+- Köprü eşitlemesi (dakikalık) artık tek sorguyla okur ve dosya içerik özetini
+  (ad, boyut, mtime) değişmedikçe yeniden hesaplamaz (A14).
+
 ## Saat setleri, zil planı ve oturum çağrıları (0.5)
 
 Sözleşme: `bbd-akademi/docs/integrations/km-ogrenci-gruplari-ve-zil.md` §3, §6.

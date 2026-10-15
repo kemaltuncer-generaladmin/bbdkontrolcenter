@@ -765,6 +765,21 @@ class Capabilities:
         }, write=True)
         return result if isinstance(result, dict) else {}
 
+    async def bell_prepare(self, text: str, *, cache_key: str | None,
+                           bulk: bool) -> dict[str, Any]:
+        """`bell.announce.prepare` — sesi önden hazırlar (çalmaz)."""
+        result = await self._module("bell", BELL_ANNOUNCE, "prepare", (text,), {
+            "cache_key": cache_key, "bulk": bulk}, write=True)
+        return result if isinstance(result, dict) else {}
+
+    async def bell_preview(self, text: str) -> dict[str, Any]:
+        """`bell.announce.preview` — sesi hazırlar ve ÇALMADAN döner (veri URI'si).
+
+        Eski zil modülünde yoksa `bell.announce.preview` eksik sayılır (503).
+        """
+        result = await self._module("bell", BELL_ANNOUNCE, "preview", (text,), write=True)
+        return result if isinstance(result, dict) else {}
+
     async def _plan(self, name: str, args: tuple[Any, ...], kwargs: dict[str, Any] | None = None,
                     *, write: bool = False) -> dict[str, Any]:
         """`bell.plan` çağrısı. Kural reddi (`PlanError`) `Rejected` olarak çıkar."""

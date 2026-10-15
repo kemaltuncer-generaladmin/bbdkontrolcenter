@@ -91,6 +91,10 @@ CONTRACT_ROUTES = {
     ("GET", "/tablet-profiles"),
     ("PUT", "/students/{student_id}/tablet/app-limits/{package_name}"),
     ("POST", "/announcements/call"),
+    # bbd-akademi README §14 madde 106: sınıf çağrısı / serbest duyuru, ön hazırlık, önizleme.
+    ("POST", "/announcements/say"),
+    ("POST", "/announcements/prepare"),
+    ("POST", "/announcements/preview"),
     ("GET", "/schedule/bell-week"),
     ("GET", "/groups"),
     ("PUT", "/bell/plan"),
@@ -983,6 +987,54 @@ async def test_call_student_bell_states(client: httpx.AsyncClient, world: World,
     clock.advance(minutes=5)
     missing = await client.post("/announcements/call", json={"studentId": ELIF})
     assert expect_error(missing, 503, "capability_missing")["capability"] == "bell.announce"
+
+
+async def test_announce_say_prepare_preview(client: httpx.AsyncClient, world: World,
+                                            store: Any) -> None:
+    """README §14 madde 106: hazır cümle (sınıf çağrısı / serbest duyuru), toplu ön
+    hazırlık ve önizleme — yer tutucu çözülmez, kalmışsa reddedilir."""
+    said = await client.post("/announcements/say",
+                             json={"text": "8-A öğrencileri, Ayşe hoca ile dersiniz başlıyor.",
+                                   "purpose": "class", "cacheKey": "akademi:pa:class:1"},
+                             headers={"X-Request-Id": "req-say",
+                                      **on_behalf("akademi:staff:2:Ayşe")})
+    assert said.status_code == 202
+    assert said.json() == {"status": "queued", "voiceCached": True, "etaSeconds": 3}
+    page = world.announce.pages[-1]
+    assert page["text"].startswith("8-A öğrencileri") and page["request_id"] == "req-say"
+    assert page["cache_key"] == "akademi:pa:class:1"
+    expect_error(await client.post("/announcements/say", json={"text": "{sinif} gelsin"}),
+                 422, "validation_error")
+    world.announce.status = "disabled"
+    expect_error(await client.post("/announcements/say", json={"text": "Duyuru"}),
+                 409, "bell_disabled")
+    world.announce.status = "tts_unavailable"
+    expect_error(await client.post("/announcements/say", json={"text": "Duyuru"}),
+                 503, "tts_unavailable")
+    world.announce.status = "queued"
+
+    items = [{"text": "Elif Kaya, lütfen danışmaya gel.", "cacheKey": "akademi:pa:s:1"},
+             {"text": "{ad} kaldı"}]
+    first = await client.post("/announcements/prepare", json={"items": items})
+    assert first.status_code == 200
+    assert first.json() == {"queued": 1, "cached": 0, "skipped": 1}
+    again = await client.post("/announcements/prepare", json={"items": items[:1]})
+    assert again.json() == {"queued": 0, "cached": 1, "skipped": 0}
+    assert world.announce.prepared[0]["bulk"] is True
+    expect_error(await client.post("/announcements/prepare", json={"items": []}), 422,
+                 "validation_error")
+
+    preview = await client.post("/announcements/preview", json={"text": "Yeni duyuru"})
+    assert preview.status_code == 200
+    assert preview.json() == {"status": "ready", "voiceCached": False,
+                              "audio": "data:audio/wav;base64,UklGRg=="}
+    assert (await client.post("/announcements/preview",
+                              json={"text": "Yeni duyuru"})).json()["voiceCached"] is True
+    world.announce.status = "tts_unavailable"
+    expect_error(await client.post("/announcements/preview", json={"text": "Başka"}),
+                 503, "tts_unavailable")
+    actions = {row["action"] for row in await table(store, "audit")}
+    assert {"announcement.say", "announcement.prepare"} <= actions
 
 
 # ======================================================== §6 zil saatleri

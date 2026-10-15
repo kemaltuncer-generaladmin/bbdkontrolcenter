@@ -601,6 +601,8 @@ class FakeBellAnnounce:
     def __init__(self) -> None:
         self.status = "queued"
         self.pages: list[dict[str, Any]] = []
+        self.prepared: list[dict[str, Any]] = []
+        self.voices: set[str] = set()
 
     async def page(self, text: str, *, cache_key: str | None = None, actor: str | None = None,
                    request_id: str | None = None) -> dict[str, Any]:
@@ -609,6 +611,21 @@ class FakeBellAnnounce:
         if self.status == "queued":
             return {"status": "queued", "voiceCached": True, "etaSeconds": 3}
         return {"status": self.status, "voiceCached": False, "etaSeconds": 0}
+
+    async def prepare(self, text: str, *, cache_key: str | None = None,
+                      bulk: bool = False) -> dict[str, Any]:
+        first = text not in self.voices
+        self.voices.add(text)
+        self.prepared.append({"text": text, "cache_key": cache_key, "bulk": bulk})
+        return {"status": "queued" if first else "cached"}
+
+    async def preview(self, text: str) -> dict[str, Any]:
+        if self.status == "tts_unavailable":
+            return {"status": "tts_unavailable", "voiceCached": False, "detail": "Vertex yok"}
+        cached = text in self.voices
+        self.voices.add(text)
+        return {"status": "ready", "voiceCached": cached,
+                "dataUri": "data:audio/wav;base64,UklGRg=="}
 
 
 async def bell_week() -> dict[str, Any]:

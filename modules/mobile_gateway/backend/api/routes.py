@@ -183,6 +183,27 @@ class CallBody(BaseModel):
     text: str | None = Field(default=None, max_length=160)
 
 
+class SayBody(BaseModel):
+    """Sınıf çağrısı / serbest duyuru — hazır cümle (yer tutucu çözülmüş)."""
+
+    text: str = Field(min_length=1, max_length=160)
+    purpose: Literal["class", "free"] = "free"
+    cacheKey: str | None = Field(default=None, max_length=160)
+
+
+class PrepareItem(BaseModel):
+    text: str = Field(min_length=1, max_length=160)
+    cacheKey: str | None = Field(default=None, max_length=160)
+
+
+class PrepareBody(BaseModel):
+    items: list[PrepareItem] = Field(min_length=1, max_length=200)
+
+
+class PreviewBody(BaseModel):
+    text: str = Field(min_length=1, max_length=160)
+
+
 class OtpBody(BaseModel):
     phone: str = Field(pattern=PHONE)
     code: str = Field(pattern=CODE)
@@ -532,6 +553,35 @@ async def announcement_call(body: CallBody, request: Request,
     return await idempotent(request, body, 202, lambda: current_service().call_student(
         body.studentId, body.template, body.text, caller,
     ))
+
+
+@router.post("/announcements/say")
+async def announcement_say(body: SayBody, request: Request,
+                           user: CurrentUser = requires(ACCESS)) -> Response:
+    """Sınıf çağrısı ve serbest duyuru (bbd-akademi README §14 madde 106)."""
+    caller = caller_of(request, user)
+    return await idempotent(request, body, 202, lambda: current_service().announce_text(
+        body.text, body.purpose, body.cacheKey, caller,
+    ))
+
+
+@router.post("/announcements/prepare")
+async def announcement_prepare(body: PrepareBody, request: Request,
+                               user: CurrentUser = requires(ACCESS)) -> Response:
+    """Şablon seslerini önden hazırlatır (çalmaz); toplu, en çok 200 metin."""
+    caller = caller_of(request, user)
+    return await idempotent(request, body, 200, lambda: current_service().announce_prepare(
+        [(item.text, item.cacheKey) for item in body.items], caller,
+    ))
+
+
+@router.post("/announcements/preview")
+async def announcement_preview(body: PreviewBody, request: Request,
+                               user: CurrentUser = requires(ACCESS)) -> Response:
+    """Sesin önizlemesi (veri URI'si) — hoparlörde ÇALINMAZ. Yan etkisi yalnız sesin
+    saklanmasıdır; yanıt büyük olduğundan idempotensi tablosuna YAZILMAZ."""
+    caller = caller_of(request, user)
+    return reply(Reply(200, await current_service().announce_preview(body.text, caller)))
 
 
 # ======================================================== §6 zil saatleri
