@@ -10,6 +10,14 @@
 //     PARA HAREKETİ OTOMATİK DEĞİL: kayıt, kurumun elle yaptığı geri ödemeyi belgeler;
 //   · aylık tahsilat özeti (`admin_getFinanceMonthlyReport`, ay × yöntem);
 //   · muhasebeciye dışa aktarım (`admin_exportFinance`, Excel uyumlu CSV / XLSX).
+// Akademi README §14 madde 87 (KM 0.5.19):
+//   · ayrılmada OKUNAN SÜRE hesabı (`method: pro_rata`): öneri = ödenen − katılım
+//     süresi oranında hizmet bedeli − kurum kesintisi (Ayarlar → Kurum finansı);
+//     yönetici iade tutarını düzeltebilir, gerekçe zorunlu;
+//   · "Kaydı yeniden başlat" (`admin_resumeFrozenAccount`): dondurulan taksitler
+//     aynı tutarla yeni vadelere kayar;
+//   · iade makbuzu (`admin_getRefundReceipt`) ve ödeme planı belgesi
+//     (`admin_getPlanAgreement`, kayıt sözleşmesi eki) — kurum logolu A4.
 // İş kuralı Akademi'dedir; panel niyeti gönderir, önizleme `dryRun` iledir.
 
 import { button, h } from '../../ui-kit/kit.js';
@@ -17,6 +25,8 @@ import { alertBox, card, kpiRow } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { dateRange } from '../../ui-kit/datefield.js';
 import { AkademiError } from './api.js';
+import { runDocument } from './documents.js';
+import { paymentPlanDoc, refundReceiptDoc } from './documents-logic.js';
 import {
   actionButton, empty, errorBox, exportJob, fmtDate, fmtDateTime, formDialog, loader, money, num,
   optionsOf, personName, pinStepUp, reasonDialog, runAction, statusBadge, todayIst, toolbar,
@@ -30,6 +40,9 @@ export const DISCOUNT_REASONS = { scholarship: 'Burs', sibling: 'Kardeş indirim
 const DISCOUNT_KINDS = { percent: 'Yüzde', amount: 'Tutar' };
 const REFUND_METHODS = { cash: 'Nakit', transfer: 'Havale / EFT', card: 'Kart (POS)', other: 'Diğer' };
 const WITHDRAWAL_KINDS = { withdrawal: 'Ayrılma', freeze: 'Kayıt dondurma' };
+export const WITHDRAWAL_METHODS = { pro_rata: 'Okunan süre hesabı (önerilen)',
+  schedule: 'Sözleşme takvimi (kalan taksitler iptal)' };
+const METHOD_SHORT = { pro_rata: 'Okunan süre', schedule: 'Takvim' };
 const REFUND_STATUS = { completed: ['Geçerli', 'good'], voided: ['İptal edildi', 'dim'] };
 const MONTH_METHODS = { cash: 'Nakit', transfer: 'Havale / EFT', card: 'Kart (POS)',
   online_card: 'Uygulamadan kart', other: 'Diğer' };
@@ -169,35 +182,77 @@ function discountPreview(before, after) {
 
 // ------------------------------------------------------ ayrılma / dondurma
 
+/**
+ * Ayrılma / dondurma isteği (`FinanceWithdrawalCreate`). Dondurma her zaman takvimle yapılır;
+ * ayrılmada varsayılan okunan süre hesabıdır. Düzeltme yalnız okunan süre hesabında gider.
+ */
+export function withdrawalBody(draft, dryRun, refund = null) {
+  const kind = draft.kind || 'withdrawal';
+  const method = kind === 'freeze' ? 'schedule' : (draft.method || 'pro_rata');
+  const override = method === 'pro_rata' && draft.refundOverrideMinor !== undefined
+    && draft.refundOverrideMinor !== null && draft.refundOverrideMinor !== '' ? Number(draft.refundOverrideMinor) : null;
+  return {
+    kind,
+    effectiveDate: draft.effectiveDate,
+    reason: String(draft.reason || '').trim(),
+    method,
+    serviceStartDate: method === 'pro_rata' ? draft.serviceStartDate || null : null,
+    serviceEndDate: method === 'pro_rata' ? draft.serviceEndDate || null : null,
+    refundOverrideMinor: override,
+    overrideReason: override !== null ? String(draft.overrideReason || '').trim() || null : null,
+    refund,
+    dryRun,
+  };
+}
+
+/** Taslak denetimi (Akademi aynı kuralları 422 ile de uygular). */
+export function withdrawalProblem(draft) {
+  if (!draft.effectiveDate) return 'Etkin tarihi seçin.';
+  if (String(draft.reason || '').trim().length < 3) return 'Gerekçe en az 3 karakter.';
+  const body = withdrawalBody(draft, true);
+  if (body.refundOverrideMinor !== null && String(body.overrideReason || '').length < 3) {
+    return 'İade tutarını düzelttiniz: düzeltme gerekçesini yazın (en az 3 karakter).';
+  }
+  if (body.serviceStartDate && body.serviceEndDate && body.serviceEndDate <= body.serviceStartDate) {
+    return 'Hizmet döneminin bitişi başlangıcından sonra olmalı.';
+  }
+  return null;
+}
+
 /** Ayrılma / kayıt dondurma: önizle (dryRun) → kalan taksitleri kapat (+ isteğe bağlı iade kaydı). */
 export async function withdrawAccount(app, account, changed) {
   const studentId = account.student.id;
   const preview = h('div', 'ak-fin-preview');
-  preview.append(h('div', 'ak-muted', 'Etkin tarih ve sonrası vadeli taksitler iptal edilir; önceki vadeler '
-    + 've kitap/materyal kalemleri borç olarak kalır. “Önizle” iade edilebilir tutarı gösterir.'));
-  const bodyOf = (draft, dryRun, refund = null) => ({
-    kind: draft.kind || 'withdrawal',
-    effectiveDate: draft.effectiveDate,
-    reason: String(draft.reason || '').trim(),
-    refund,
-    dryRun,
-  });
+  preview.append(h('div', 'ak-muted', 'Ayrılmada “Okunan süre hesabı” iade önerisini çıkarır: ödenen − katılım süresi '
+    + 'oranında hizmet bedeli − kurum kesintisi. Dondurmada taksitler askıya alınır; öğrenci dönünce “Kaydı yeniden '
+    + 'başlat” ile yeni vadelerle açılır. “Önizle” sonucu gösterir, hiçbir şey kaydetmez.'));
   const check = (draft) => {
-    if (!draft.effectiveDate) throw new AkademiError({ message: 'Etkin tarihi seçin.' });
-    if (String(draft.reason || '').trim().length < 3) throw new AkademiError({ message: 'Gerekçe en az 3 karakter.' });
+    const problem = withdrawalProblem(draft);
+    if (problem) throw new AkademiError({ message: problem });
   };
   const result = await formDialog(app, {
     title: `Ayrılma / kayıt dondurma — ${account.student?.displayName || ''}`,
     description: 'Para hareketi otomatik yapılmaz: iade edilecek tutarı elle ödeyip burada iade kaydı olarak '
-      + 'yazarsınız (aynı işlemde ya da sonra “İade kaydı” ile).',
+      + 'yazarsınız (aynı işlemde ya da sonra “İade kaydı” ile). Veliye bildirim gider.',
     wide: true,
-    value: { kind: 'withdrawal', effectiveDate: todayIst(), refundNow: '', refundMethod: 'transfer' },
+    value: { kind: 'withdrawal', method: 'pro_rata', effectiveDate: todayIst(), refundNow: '',
+      refundMethod: 'transfer' },
     fields: [
       { key: 'kind', label: 'Tür', type: 'select', options: optionsOf(WITHDRAWAL_KINDS) },
       { key: 'effectiveDate', label: 'Etkin tarih', type: 'date', required: true,
-        hint: 'Bu gün ve sonrası vadeli taksitler iptal edilir.' },
+        hint: 'Öğrencinin derse gelmediği ilk gün. Bu gün ve sonrası vadeli taksitler kapanır.' },
       { key: 'reason', label: 'Gerekçe', required: true, maxLength: 200, wide: true,
         placeholder: 'Örn. şehir değişikliği' },
+      { key: 'method', label: 'İade hesabı', type: 'select', options: optionsOf(WITHDRAWAL_METHODS), wide: true,
+        hint: 'Yalnız ayrılmada. Kayıt dondurma her zaman sözleşme takvimiyle yapılır.' },
+      { key: 'serviceStartDate', label: 'Hizmet başlangıcı', type: 'date',
+        hint: 'Boşsa plan takviminden (ilk taksit vadesi).' },
+      { key: 'serviceEndDate', label: 'Hizmet bitişi', type: 'date',
+        hint: 'Boşsa son taksitten bir dönem sonrası.' },
+      { key: 'refundOverrideMinor', label: 'İade tutarını düzelt', type: 'money', min: 0,
+        hint: 'Boşsa önerilen tutar uygulanır. Düzeltirseniz gerekçe zorunlu (denetim kaydına yazılır).' },
+      { key: 'overrideReason', label: 'Düzeltme gerekçesi', maxLength: 200,
+        placeholder: 'Örn. sözleşmedeki kamp günleri düşüldü' },
       { key: 'refundNow', label: 'İade kaydı', type: 'select', options: [
         { value: '', label: 'Şimdi yazma (sonra)' }, { value: 'yes', label: 'Aynı işlemde yaz' }] },
       { key: 'refundAmountMinor', label: 'İade tutarı', type: 'money', min: 1,
@@ -211,7 +266,7 @@ export async function withdrawAccount(app, account, changed) {
           try {
             check(draft);
             const res = await app.api.post(`/v1/admin/finance/accounts/${studentId}/withdrawal`,
-              bodyOf(draft, true), { key: `km-wd-preview-${Date.now()}` });
+              withdrawalBody(draft, true), { key: `km-wd-preview-${Date.now()}` });
             preview.replaceChildren(withdrawalPreview(res));
           } catch (failure) {
             preview.replaceChildren(errorBox(failure));
@@ -221,7 +276,7 @@ export async function withdrawAccount(app, account, changed) {
         return wrap;
       } },
     ],
-    submitLabel: 'Kalan taksitleri kapat',
+    submitLabel: 'Kaydı kapat',
     danger: true,
     onSubmit: async (draft, { key }) => {
       check(draft);
@@ -230,34 +285,103 @@ export async function withdrawAccount(app, account, changed) {
         let amount = Number(draft.refundAmountMinor) || 0;
         if (!amount) {
           const dry = await app.api.post(`/v1/admin/finance/accounts/${studentId}/withdrawal`,
-            bodyOf(draft, true), { key: `${key}-dry` });
+            withdrawalBody(draft, true), { key: `${key}-dry` });
           amount = dry?.withdrawal?.refundableMinor || 0;
         }
         if (amount > 0) {
           refund = { amountMinor: amount, method: draft.refundMethod || 'transfer',
-            reference: String(draft.refundReference || '').trim() || null, note: 'Ayrılma iadesi' };
+            reference: String(draft.refundReference || '').trim() || null,
+            note: draft.kind === 'freeze' ? 'Dondurma iadesi' : 'Ayrılma iadesi' };
         }
       }
-      return app.api.post(`/v1/admin/finance/accounts/${studentId}/withdrawal`, bodyOf(draft, false, refund), { key });
+      return app.api.post(`/v1/admin/finance/accounts/${studentId}/withdrawal`,
+        withdrawalBody(draft, false, refund), { key });
     },
   });
   if (!result) return;
   const w = result.withdrawal || {};
   const refundText = result.refund ? ` · iade ${result.refund.refundNo} ${money(result.refund.amountMinor)}`
     : (w.refundableMinor ? ` · iade edilebilir ${money(w.refundableMinor)}` : '');
-  app.toast(`${WITHDRAWAL_KINDS[w.kind] || 'Kapanış'}: ${num(w.cancelledCount || 0)} taksit iptal${refundText}`, 'good');
+  app.toast(`${WITHDRAWAL_KINDS[w.kind] || 'Kapanış'}: ${num(w.cancelledCount || 0)} taksit `
+    + `${w.kind === 'freeze' ? 'askıya alındı' : 'iptal'}${refundText}`, 'good');
   changed();
+}
+
+/** Okunan süre dökümü (öneri ya da uygulanan). */
+export function settlementRows(settlement) {
+  return (settlement?.plans || []).map((plan) => ({
+    id: plan.planId,
+    title: plan.title,
+    period: `${fmtDate(plan.serviceStartDate)} – ${fmtDate(plan.serviceEndDate)}`,
+    days: `${num(plan.attendedDays)} / ${num(plan.totalDays)} gün`,
+    contract: plan.contractMinor,
+    paid: plan.paidMinor,
+    fee: plan.serviceFeeMinor,
+    deduction: plan.deductionMinor,
+  }));
+}
+
+function settlementView(settlement) {
+  const s = settlement;
+  const wrap = h('div', 'ak-stack');
+  const net = s.suggestedRefundMinor
+    ? { label: 'Önerilen iade', value: money(s.suggestedRefundMinor), tone: 'good' }
+    : { label: 'Aile borcu', value: money(s.owedMinor || 0), tone: s.owedMinor ? 'bad' : '' };
+  wrap.append(h('b', '', s.applied ? 'Okunan süre hesabı (uygulanacak)' : 'Okunan süre hesabı (bilgi)'), kpiRow([
+    { label: 'Plana ödenen', value: money(s.paidMinor) },
+    { label: 'Hizmet bedeli (okunan süre)', value: money(s.serviceFeeMinor) },
+    { label: `Kurum kesintisi %${num(s.deductionPercent)}`, value: money(s.deductionMinor) },
+    net,
+  ]));
+  wrap.append(dataTable({
+    columns: [
+      { key: 'title', label: 'Plan', width: 'minmax(0, 1.5fr)' },
+      { key: 'period', label: 'Hizmet dönemi' },
+      { key: 'days', label: 'Okunan' },
+      { key: 'contract', label: 'Sözleşme', align: 'num', cell: (row) => money(row.contract) },
+      { key: 'paid', label: 'Ödenen', align: 'num', cell: (row) => money(row.paid) },
+      { key: 'fee', label: 'Bedel', align: 'num', cell: (row) => money(row.fee) },
+      { key: 'deduction', label: 'Kesinti', align: 'num', cell: (row) => money(row.deduction) },
+    ],
+    rows: settlementRows(s),
+    dense: true,
+    empty: empty('Etkin tarihte süren plan yok'),
+  }).node);
+  if (s.applied && s.overrideReason) {
+    wrap.append(alertBox(`Yönetici düzeltmesi: aileye ${money(s.appliedRefundMinor)} iade · ${s.overrideReason}`,
+      'warn'));
+  } else if (!s.applied) {
+    wrap.append(h('div', 'ak-muted', 'Sözleşme takvimi seçili: bu öneri yalnız bilgi içindir. Uygulamak için '
+      + '“İade hesabı”nı “Okunan süre hesabı” yapın.'));
+  }
+  return wrap;
 }
 
 function withdrawalPreview(res) {
   const w = res?.withdrawal || {};
   const wrap = h('div', 'ak-stack');
+  if (w.kind === 'freeze') {
+    wrap.append(alertBox('Kayıt dondurma: taksitler askıya alınır, ödenmiş kısmı hesapta alacak olarak kalır. '
+      + 'Öğrenci dönünce cari kartındaki “Kaydı yeniden başlat” taksitleri aynı tutarlarla yeni vadelerle açar.',
+    'info'));
+  }
   wrap.append(kpiRow([
     { label: 'İptal edilecek', value: `${num(w.cancelledCount || 0)} kalem · ${money(w.cancelledMinor || 0)}` },
     { label: 'Alacağa geçecek (ödenmiş)', value: money(w.releasedMinor || 0) },
     { label: 'Kalan borç', value: money(w.remainingDebtMinor || 0), tone: w.remainingDebtMinor ? 'bad' : '' },
     { label: 'İade edilebilir', value: money(w.refundableMinor || 0), tone: w.refundableMinor ? 'good' : '' },
   ]));
+  if (w.settlement) wrap.append(settlementView(w.settlement));
+  if ((res?.settlementCharges || []).length) {
+    wrap.append(dataTable({
+      columns: [
+        { key: 'description', label: 'Yazılacak kalem', width: 'minmax(0, 3fr)' },
+        { key: 'amount', label: 'Tutar', align: 'num', cell: (row) => money(row.amountMinor) },
+      ],
+      rows: res.settlementCharges,
+      dense: true,
+    }).node);
+  }
   const table = dataTable({
     columns: [
       { key: 'dueDate', label: 'Vade', cell: (row) => fmtDate(row.dueDate) },
@@ -270,6 +394,87 @@ function withdrawalPreview(res) {
   });
   wrap.append(table.node);
   return wrap;
+}
+
+// ------------------------------------------------------- dondurmadan dönüş
+
+/** "Kaydı yeniden başlat": dondurulan taksitler aynı tutarla yeni vadelerle açılır (önizlemeli). */
+export async function resumeFrozen(app, withdrawal, changed) {
+  const url = `/v1/admin/finance/withdrawals/${withdrawal.id}/resume`;
+  const bodyOf = (draft, dryRun) => ({ firstDueDate: draft.firstDueDate || null,
+    note: String(draft.note || '').trim() || null, dryRun });
+  const preview = h('div', 'ak-fin-preview');
+  preview.append(h('div', 'ak-muted', '“Önizle” eski ve yeni vadeleri gösterir.'));
+  const result = await formDialog(app, {
+    title: `Kaydı yeniden başlat — dondurma ${fmtDate(withdrawal.effectiveDate)}`,
+    description: 'Dondurulan taksitler aynı tutarlarla yeni vadelerle açılır; plan yeniden etkinleşir, indirim / '
+      + 'burs korunur, hesaptaki alacak yeni taksitlere mahsup edilir. Veliye bildirim gider. Bir kez yapılır.',
+    wide: true,
+    value: { firstDueDate: '' },
+    fields: [
+      { key: 'firstDueDate', label: 'İlk yeni vade', type: 'date',
+        hint: 'Boşsa: eski ilk vade ileride ise o; değilse bugünden sonraki ilk aynı gün. Aylık planda diğer '
+          + 'taksitler ay ay kayar.' },
+      { key: 'note', label: 'Not', maxLength: 200, placeholder: 'Örn. tedavi bitti, derslere döndü' },
+      { key: 'preview', label: 'Önizleme', type: 'custom', render: (draft) => {
+        const wrap = h('div', 'ak-stack');
+        const go = button('Önizle', { onClick: async () => {
+          go.disabled = true;
+          try {
+            const res = await app.api.post(url, bodyOf(draft, true), { key: `km-resume-preview-${Date.now()}` });
+            preview.replaceChildren(resumePreview(res));
+          } catch (failure) {
+            preview.replaceChildren(errorBox(failure));
+          } finally { go.disabled = false; }
+        } });
+        wrap.append(go, preview);
+        return wrap;
+      } },
+    ],
+    submitLabel: 'Taksitleri yeni vadelerle aç',
+    onSubmit: (draft, { key }) => app.api.post(url, bodyOf(draft, false), { key }),
+  });
+  if (!result || result === true) return;
+  const first = result.withdrawal?.resumedFirstDueDate;
+  app.toast(`Kayıt yeniden başlatıldı: ${num((result.charges || []).length)} taksit yeni vadelerle açıldı`
+    + `${first ? ` · ilk vade ${fmtDate(first)}` : ''}.`, 'good');
+  changed();
+}
+
+function resumePreview(res) {
+  const wrap = h('div', 'ak-stack');
+  const total = (res?.shifts || []).reduce((sum, row) => sum + Number(row.amountMinor || 0), 0);
+  wrap.append(kpiRow([
+    { label: 'Açılacak taksit', value: num((res?.shifts || []).length) },
+    { label: 'Toplam', value: money(total) },
+    { label: 'Yeniden etkinleşen plan', value: num((res?.reopenedPlanIds || []).length) },
+  ]));
+  wrap.append(dataTable({
+    columns: [
+      { key: 'description', label: 'Taksit', width: 'minmax(0, 2fr)' },
+      { key: 'old', label: 'Eski vade', cell: (row) => fmtDate(row.oldDueDate) },
+      { key: 'new', label: 'Yeni vade', cell: (row) => h('b', '', fmtDate(row.newDueDate)) },
+      { key: 'amount', label: 'Tutar', align: 'num', cell: (row) => money(row.amountMinor) },
+    ],
+    rows: res?.shifts || [],
+    dense: true,
+    empty: empty('Açılacak taksit yok'),
+  }).node);
+  return wrap;
+}
+
+// ------------------------------------------------------------- belgeler
+
+/** İade makbuzu: Akademi'den veri → kurum logolu A4 (önizle / yazdır). */
+export function printRefundReceipt(app, refund, opener = null) {
+  return runDocument(app, async () => refundReceiptDoc(
+    await app.api.get(`/v1/admin/finance/refunds/${refund.id}/receipt`)), { title: 'İade makbuzu', opener });
+}
+
+/** Ödeme planı belgesi (kayıt sözleşmesi eki; veli + kurum imza alanı). */
+export function printPlanAgreement(app, plan, opener = null) {
+  return runDocument(app, async () => paymentPlanDoc(
+    await app.api.get(`/v1/admin/finance/installment-plans/${plan.id}/agreement`)), { title: 'Ödeme planı', opener });
 }
 
 // ------------------------------------------------------------------ iade
@@ -341,7 +546,16 @@ export function closingCards(app, account, changed) {
         { key: 'cancelled', label: 'İptal', align: 'num',
           cell: (row) => `${num(row.cancelledCount)} · ${money(row.cancelledMinor)}` },
         { key: 'refundable', label: 'İade edilebilir', align: 'num', cell: (row) => money(row.refundableMinor) },
+        { key: 'method', label: 'Hesap', cell: (row) => (row.kind === 'freeze' ? '—'
+          : METHOD_SHORT[row.method] || METHOD_SHORT.schedule) },
         { key: 'by', label: 'Kaydeden', cell: (row) => personName(row.createdBy) },
+        { key: 'resume', label: '', width: '170px', cell: (row) => {
+          if (row.resumedAt) {
+            return h('span', 'ak-muted', `Yeniden başlatıldı ${fmtDate(row.resumedAt)} · ${num(row.resumedCount || 0)} taksit`);
+          }
+          return row.resumable ? actionButton(app, 'admin_resumeFrozenAccount', 'Kaydı yeniden başlat', {
+            variant: 'ghost', onClick: () => resumeFrozen(app, row, changed) }) : '';
+        } },
       ],
       rows: withdrawals,
       dense: true,
@@ -358,9 +572,18 @@ export function closingCards(app, account, changed) {
         { key: 'amount', label: 'Tutar', align: 'num', cell: (row) => money(row.amountMinor) },
         { key: 'reference', label: 'Referans', cell: (row) => row.reference || '—' },
         { key: 'status', label: 'Durum', cell: (row) => statusBadge(REFUND_STATUS, row.status) },
-        { key: 'actions', label: '', width: '90px', cell: (row) => (row.status === 'completed'
-          ? actionButton(app, 'admin_voidRefund', 'İptal', { variant: 'ghost',
-            onClick: () => voidRefund(app, row, changed) }) : '') },
+        { key: 'actions', label: '', width: '170px', cell: (row) => {
+          const actions = h('div', 'ak-row-actions');
+          const receipt = actionButton(app, 'admin_getRefundReceipt', 'Makbuz', { variant: 'ghost',
+            title: 'Veliye imzalatılacak iade makbuzu (önizle / yazdır).',
+            onClick: (event) => printRefundReceipt(app, row, event?.currentTarget || null) });
+          actions.append(receipt);
+          if (row.status === 'completed') {
+            actions.append(actionButton(app, 'admin_voidRefund', 'İptal', { variant: 'ghost',
+              onClick: () => voidRefund(app, row, changed) }));
+          }
+          return actions;
+        } },
       ],
       rows: refunds,
       dense: true,

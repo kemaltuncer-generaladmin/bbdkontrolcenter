@@ -1,5 +1,5 @@
 // BBD Akademi — belge modelleri (karne, deneme, yoklama, program, ödev, plan,
-// kurum cari, kitap, öğrenci kartı, veli listesi, kantin). SAF: DOM yok, import yok.
+// kurum cari — ekstre, makbuz, iade makbuzu, ödeme planı —, kitap, öğrenci kartı, veli listesi, kantin). SAF: DOM yok, import yok.
 //
 // NEDEN AYRI DOSYA. Bu dosya hiçbir şey import etmez; Node ile doğrudan
 // yüklenip şablon testine girer (tests/test_akademi_documents_logic.py).
@@ -794,6 +794,106 @@ export function receiptDoc(receipt) {
       { kind: 'signatures', items: ['Tahsil eden', 'Ödeyen'] },
     ],
   }], { filename: fileHint('makbuz', r.receiptNo) });
+}
+
+const REFUND_METHOD = { cash: 'Nakit', transfer: 'Havale/EFT', card: 'Kart (POS)', other: 'Diğer' };
+const WITHDRAWAL_KIND = { withdrawal: 'Ayrılma', freeze: 'Kayıt dondurma' };
+const CHARGE_STATUS = { open: ['Bekliyor', ''], partially_paid: ['Kısmen ödendi', 'warn'], paid: ['Ödendi', 'good'],
+  overdue: ['Gecikti', 'bad'], cancelled: ['İptal', 'muted'] };
+const INTERVAL = { monthly: 'Aylık', biweekly: 'İki haftada bir', weekly: 'Haftalık' };
+const DISCOUNT_REASON = { scholarship: 'Burs', sibling: 'Kardeş indirimi', early_registration: 'Erken kayıt',
+  staff: 'Personel yakını', other: 'İndirim' };
+
+/** İade makbuzu (FinanceRefundReceipt; Akademi README §14 madde 87) — veliye imzalatılan "iade alındı" belgesi. */
+export function refundReceiptDoc(receipt) {
+  const r = receipt || {};
+  const f = r.refund || {};
+  const w = r.withdrawal || null;
+  const st = w?.settlement || null;
+  const voided = f.status === 'voided';
+  const basis = w ? `${WITHDRAWAL_KIND[w.kind] || clean(w.kind)} (${fmtDate(w.effectiveDate)}) — ${clean(w.reason)}` : '—';
+  const sections = [
+    { kind: 'tiles', columns: 2, items: [
+      { label: 'İade edilen', value: money(f.amountMinor), tone: voided ? 'muted' : 'good' },
+      { label: 'Ödeme şekli', value: REFUND_METHOD[f.method] || clean(f.method) },
+    ] },
+    { kind: 'fields', columns: 2, items: [
+      { label: 'Kurum', value: clean(r.institution?.name) },
+      { label: 'Vergi bilgisi', value: clean(r.institution?.taxInfo) },
+      { label: 'Dekont / referans', value: clean(f.reference) },
+      { label: 'Açıklama', value: clean(f.note) },
+      { label: 'Dayanak', value: basis },
+      { label: 'Kaydeden', value: clean(f.recordedBy?.displayName) },
+    ] },
+  ];
+  if (st?.applied) {
+    const rows = [['Plana ödenen', money(st.paidMinor)], ['Okunan süre hizmet bedeli', `−${money(st.serviceFeeMinor)}`]];
+    if (st.deductionMinor) rows.push([`Kurum kesintisi %${st.deductionPercent}`, `−${money(st.deductionMinor)}`]);
+    rows.push([cell('Önerilen iade', '', true), cell(money(st.suggestedRefundMinor), '', true)]);
+    if (st.overrideReason) rows.push([`Yönetici düzeltmesi: ${clean(st.overrideReason)}`, money(st.appliedRefundMinor)]);
+    sections.push({ kind: 'table', title: 'İade hesabı (okunan süre)', headers: ['Kalem', 'Tutar'], align: 'LR',
+      widths: [5, 1.6], rows });
+  }
+  if (voided) {
+    sections.push({ kind: 'note', text: `Bu iade kaydı ${fmtDateTime(f.voidedAt)} tarihinde iptal edildi. Gerekçe: ${clean(f.voidReason)}` });
+  }
+  sections.push({ kind: 'note', text: `Yukarıdaki ${money(f.amountMinor)} tutarı teslim aldım.` },
+    { kind: 'note', text: A12 },
+    { kind: 'signatures', items: ['Teslim eden (kurum)', 'Teslim alan (veli)'] });
+  return documentOf('finance_refund_receipt', 'İade Makbuzu', [{
+    title: 'İade Makbuzu',
+    subtitle: `İade no ${clean(r.refundNo)} · ${fmtDateTime(f.refundedAt || r.issuedAt)}`,
+    meta: [['İade no', clean(r.refundNo)], ['Tarih', fmtDateTime(f.refundedAt || r.issuedAt)],
+      ['Öğrenci', studentName(r.student)], ['Öğrenci no', clean(r.student?.externalRef)], ['Sınıf', className(r.student)]],
+    watermark: voided ? 'İptal' : '',
+    sections,
+  }], { filename: fileHint('iade-makbuzu', r.refundNo) });
+}
+
+/** Ödeme planı belgesi — kayıt sözleşmesi eki (FinancePlanAgreement; README §14 madde 87). İmzaya hazır. */
+export function paymentPlanDoc(agreement) {
+  const a = agreement || {};
+  const p = a.plan || {};
+  const d = p.discount || null;
+  const live = (p.charges || []).filter((item) => item.status !== 'cancelled');
+  const total = live.reduce((sum, item) => sum + Number(item.amountMinor || 0), 0);
+  const guardians = (a.guardians || []).map((g) => clean(g.displayName)).filter((name) => name !== '—');
+  const discountText = d
+    ? `${DISCOUNT_REASON[d.reason] || 'İndirim'}${d.kind === 'percent' && d.percent ? ` %${d.percent}` : ''}`
+      + `${d.approvedBy ? ` · onaylayan ${clean(d.approvedBy)}` : ''}${d.note ? ` · ${clean(d.note)}` : ''}`
+    : 'Yok';
+  const sections = [
+    { kind: 'tiles', columns: 4, items: [
+      { label: 'Liste fiyatı', value: money(d ? d.listPriceMinor : total) },
+      { label: 'İndirim / burs', value: d ? `−${money(d.amountMinor)}` : '—', tone: d ? 'good' : '' },
+      { label: 'Ödenecek toplam', value: money(total), tone: 'strong' },
+      { label: 'Peşinat', value: p.downPaymentMinor ? money(p.downPaymentMinor) : '—' },
+    ] },
+    { kind: 'fields', columns: 2, items: [
+      { label: 'Plan', value: clean(p.title) },
+      { label: 'Taksit', value: `${num(p.installmentCount)} · ${INTERVAL[p.interval] || clean(p.interval)}` },
+      { label: 'İndirim / burs', value: discountText },
+      { label: 'Veli', value: guardians.join(', ') || '—' },
+    ] },
+    { kind: 'table', title: 'Ödeme takvimi', headers: ['No', 'Vade', 'Açıklama', 'Tutar', 'Durum'], align: 'CCLRL',
+      widths: [0.6, 1.2, 3.6, 1.4, 1.3],
+      rows: live.map((item, index) => {
+        const [label, tone] = CHARGE_STATUS[item.status] || [clean(item.status), ''];
+        return [String(index + 1), fmtDate(item.dueDate), clean(item.description), money(item.amountMinor), cell(label, tone)];
+      }),
+      footer: ['', '', 'Toplam', money(total), ''],
+      empty: 'Planda kalem yok.' },
+    { kind: 'list', title: 'Koşullar', items: (a.clauses || []).map((item, index) => `${index + 1}. ${clean(item)}`) },
+    { kind: 'note', text: 'Yukarıdaki ödeme planını ve koşulları okudum, kabul ediyorum.' },
+    { kind: 'signatures', items: ['Veli (ad soyad / imza / tarih)', 'Kurum yetkilisi (imza / kaşe)'] },
+  ];
+  return documentOf('finance_plan', 'Ödeme Planı', [{
+    title: 'Ödeme Planı',
+    subtitle: `Kayıt sözleşmesi eki · ${clean(p.title)}`,
+    meta: [['Öğrenci', studentName(a.student)], ['Öğrenci no', clean(a.student?.externalRef)], ['Sınıf', className(a.student)],
+      ['Belge tarihi', fmtDate(a.issuedAt)]],
+    sections,
+  }], { filename: fileHint('odeme-plani', a.student?.displayName, p.title) });
 }
 
 // ---------------------------------------------------------- 8. kitap
