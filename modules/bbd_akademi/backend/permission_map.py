@@ -143,6 +143,8 @@ PERMISSION_MAP: dict[str, str] = {
     "leave.manage": REQUESTS,
     "meetings.manage": REQUESTS,
     "meetings.request": REQUESTS,
+    # Veli toplantısı randevu takvimi (Akademi README §14 madde 90): saat açma / kapatma, veli adına randevu, liste
+    "parent_meetings.manage": REQUESTS,
     # --- kurum ayarları (yalnız KM yüzeyi)
     "settings.manage": SETTINGS,
     "branding.manage": SETTINGS,

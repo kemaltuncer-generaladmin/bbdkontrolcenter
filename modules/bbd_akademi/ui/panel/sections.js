@@ -45,6 +45,9 @@ export const AREAS = [
 export const SECTIONS = [
   { key: 'dashboard', label: 'Özet', file: './dashboard.js', requires: ['view'], area: 'today' },
   { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'], area: 'today' },
+  // Veli toplantısı randevu takvimi (Akademi README §14 madde 90): öğretmen saatleri, veli adına randevu, liste PDF'i.
+  { key: 'parentMeetings', label: 'Veli toplantısı', file: './parent-meetings.js', requires: ['requests'],
+    area: 'today' },
   { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
     area: 'today' },
   // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
@@ -104,7 +107,8 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
   ayarlar: 'settings', personel: 'staff', 'institution-calendar': 'calendar', kantin: 'canteen',
   'kitap-satisi': 'bookSales', 'book-sales': 'bookSales',
   sablonlar: 'templates', 'assignment-bundles': 'templates', sorular: 'questions', 'hoca-sorulari': 'questions',
-  oturumlar: 'sessions', 'ders-oturumlari': 'sessions',
+  oturumlar: 'sessions', 'ders-oturumlari': 'sessions', 'veli-toplantisi': 'parentMeetings',
+  'parent-meetings': 'parentMeetings',
   'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages',
   kocluk: 'coaching', 'koc-gorusmeleri': 'coaching', 'kontrol-kuyrugu': 'coaching' };
 

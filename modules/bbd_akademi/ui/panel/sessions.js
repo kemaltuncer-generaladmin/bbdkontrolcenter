@@ -12,6 +12,10 @@
 //     girdiği ders ve etüt (`admin_getTeacherMonthlyLoad`, Akademi README §14 madde 79; yalnız
 //     personel yönetimi izni) + Excel uyumlu CSV: özet ve ders ders döküm (`admin_listClassSessions`).
 //     Gerçekleşen = yoklaması alınmış, iptal / tatil olmayan ders; dersi VEREN öğretmene yazılır.
+//     AY KAPATMA (Akademi README §14 madde 90, İ7): biten ay "Ayı kapat" ile kapanır (`admin_closeTeacherLoadMonth`;
+//     yoklaması alınmamış ders varsa bilerek onaylanır); kapanan ayın sayıları kayıttan okunur, değişmez — ücret
+//     kapanmış veriyle ödenir. Kapanıştan sonra yoklama düzeltilirse fark tablosu uyarır (`changesSinceClose`);
+//     "Yeniden aç" gerekçeyle kapanışı kaldırır (`admin_reopenTeacherLoadMonth`), denetim kaydına yazılır.
 //
 // ZİL: iptal sınıf çağrısını zil planından düşürür, saat kaydırma ve telafi kendi saatinde çağrı
 // üretir — planı Akademi yeniden üretir, KM Zil Sistemi her zamanki eşitlemesiyle alır (Ders
@@ -30,8 +34,8 @@ import { dataTable } from '../../ui-kit/table.js';
 import { saveBlob } from './api.js';
 import {
   DAY_LABEL, actionButton, addDays, clockInput, confirmAction, dateInput, empty, fmtDate, fmtDateTime, fmtTime,
-  formDialog, istanbulStamp, kv, loader, num, openDrawer, optionsOf, pagedList, personName, problem, runAction,
-  sectionHead, selectBox, statusBadge, todayIst, toolbar, weekStart,
+  formDialog, istanbulStamp, kv, loader, num, openDrawer, optionsOf, pagedList, personName, problem, reasonDialog,
+  runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar, weekStart,
 } from './common.js';
 import { dayKeyOf } from './timetable-shared.js';
 
@@ -396,6 +400,26 @@ export function loadCsv(data) {
     line('TOPLAM', data.totals || {})]);
 }
 
+/** Ücrete giren sayaçlar (Akademi `PAID_FIELDS`): kapanıştan sonra değişirse fark tablosunda. */
+export const DRIFT_COLUMNS = [
+  ['deliveredCount', 'Gerçekleşen'], ['deliveredMinutes', 'Süre (dk)'], ['substituteCount', 'Yerine girdiği'],
+  ['cancelledCount', 'İptal'],
+];
+
+/** Ay kapatılabilir mi: başlamış ve kalan (gelecek) dersi yok. Karar yine Akademi'de (`409 month_not_over`). */
+export function canCloseMonth(data, today = todayIst()) {
+  if (!data || data.closure) return false;
+  if (String(data.from || '') > today) return false;
+  return !Number(data.totals?.upcomingCount || 0);
+}
+
+/** Kapanış satırı: "15 Kasım 2026 · Hakan Er · not". */
+export function closureText(closure) {
+  if (!closure) return '';
+  return [`${fmtDateTime(closure.closedAt)} · ${closure.closedBy || ''}`.trim(), closure.note || '']
+    .filter(Boolean).join(' · ');
+}
+
 /** Bir oturumun puantaj durumu: kime yazılır ve neden. `now` ms. */
 export function loadState(session, now = Date.now()) {
   if (session.status === 'holiday') return 'holiday';
@@ -438,7 +462,7 @@ function loadTab(app, { openSessions } = {}) {
       + 'açıktır.', 'info'));
     return { node, reload() {}, open() {}, destroy() {} };
   }
-  const state = { month: thisMonth(), data: null };
+  const state = { month: thisMonth(), data: null, next: null };
   const label = h('b', 'ak-ses-month', monthLabel(state.month));
   label.setAttribute('aria-live', 'polite');
   const csvButton = button('CSV indir', { variant: 'ghost', title: 'Öğretmen başına özet (Excel uyumlu)',
@@ -473,12 +497,31 @@ function loadTab(app, { openSessions } = {}) {
     empty: empty('Bu ayda ders yok', 'Seçilen ayda öğretmene yazılmış ya da planlanmış ders bulunmuyor.'),
   });
 
-  const view = loader(() => app.api.get('/v1/admin/teacher-load', { month: state.month }), (data) => {
+  const view = loader(() => (state.next ? Promise.resolve(state.next) : app.api.get('/v1/admin/teacher-load',
+    { month: state.month })), (data) => {
+    state.next = null;
     state.data = data;
     const totals = data.totals || {};
     const rows = data.rows || [];
     table.update({ rows: rows.length ? [...rows, { ...totals, total: true }] : [] });
-    const notes = [];
+    const notes = [closureBar(data)];
+    const drift = data.changesSinceClose || [];
+    if (drift.length) {
+      notes.push(alertBox(`Kapanıştan sonra ${num(drift.length)} öğretmenin sayısı yoklama düzeltmesiyle değişti. `
+        + 'Kapanan ayın sayıları değişmez; farkın ödenmesi gerekiyorsa ayı yeniden açıp kapatın.', 'warn'));
+      notes.push(dataTable({
+        columns: [
+          { key: 'teacher', label: 'Öğretmen', width: 'minmax(0, 1.4fr)', cell: (row) => personName(row.teacher) },
+          ...DRIFT_COLUMNS.map(([key, title]) => ({ key, label: title, align: 'num', cell: (row) => {
+            const before = Number(row.closed?.[key] || 0);
+            const after = Number(row.live?.[key] || 0);
+            return before === after ? num(after) : badge(`${num(before)} → ${num(after)}`, 'warn');
+          } })),
+        ],
+        rows: drift,
+        rowKey: (row) => String(row.teacher?.id || ''),
+      }).node);
+    }
     if (totals.pendingCount) {
       notes.push(alertBox(`${num(totals.pendingCount)} dersin saati geçti ama yoklaması alınmadı; yoklama alınana kadar `
         + 'puantaja girmez.', 'warn'));
@@ -502,6 +545,68 @@ function loadTab(app, { openSessions } = {}) {
     state.month = month;
     state.data = null;
     label.textContent = monthLabel(month);
+    view.reload();
+  }
+
+  /** Kapanış durumu + Ayı kapat / Yeniden aç. */
+  function closureBar(data) {
+    const bar = h('div', 'ak-stack');
+    if (data.closure) {
+      const pending = Number(data.closure.pendingAtClose || 0);
+      bar.append(alertBox(`Bu ay kapatıldı: ${closureText(data.closure)}. Sayılar kapanıştaki gibidir ve değişmez`
+        + `${pending ? ` (kapanışta ${num(pending)} dersin yoklaması alınmamıştı)` : ''}.`, 'good'));
+      bar.append(toolbar(actionButton(app, 'admin_reopenTeacherLoadMonth', 'Yeniden aç', { variant: 'ghost',
+        title: 'Kapanışı gerekçeyle kaldırır; döküm yeniden canlı hesaplanır', onClick: () => reopen() })));
+      return bar;
+    }
+    if (canCloseMonth(data)) {
+      bar.append(toolbar(actionButton(app, 'admin_closeTeacherLoadMonth', 'Ayı kapat', { variant: 'primary',
+        title: 'Sayılar kaydedilir ve değişmez (ücret ödemesi bu sayılarla yapılır)', onClick: () => close() }),
+      h('small', 'ak-muted', 'Ay bitti: kapatınca sayılar kaydedilir; sonradan yoklama düzeltilirse fark uyarılır.')));
+    } else if (!data.closure && String(data.from || '') <= todayIst()) {
+      bar.append(h('small', 'ak-muted', 'Ayın dersleri bitince “Ayı kapat” açılır.'));
+    }
+    return bar;
+  }
+
+  async function close() {
+    const data = state.data;
+    if (!data) return;
+    const pending = Number(data.totals?.pendingCount || 0);
+    const result = await formDialog(app, {
+      title: `${monthLabel(data.month)} — ayı kapat`,
+      description: `${num(data.totals?.deliveredCount || 0)} gerçekleşen ders (${minutesText(data.totals?.deliveredMinutes)}) `
+        + 'kaydedilir. Kapanan ayın sayıları değişmez; gerekirse gerekçeyle yeniden açılır.',
+      fields: [
+        pending ? { key: 'acknowledgePending', type: 'checkbox', wide: true, required: true,
+          label: `${num(pending)} dersin yoklaması alınmadı; bu dersler sayılmadan kapatıyorum` } : null,
+        { key: 'note', label: 'Not (isteğe bağlı)', type: 'textarea', maxLength: 300, wide: true },
+      ],
+      value: { acknowledgePending: false, note: '' },
+      submitLabel: 'Ayı kapat',
+      onSubmit: (draft, { key }) => {
+        if (pending && !draft.acknowledgePending) throw new Error('Yoklaması alınmamış dersleri onaylayın.');
+        return app.api.post('/v1/admin/teacher-load/close', { month: data.month, note: String(draft.note || '').trim()
+          || null, acknowledgePending: Boolean(draft.acknowledgePending) }, { key });
+      },
+    });
+    if (!result) return;
+    app.toast(`${monthLabel(data.month)} kapatıldı.`, 'good');
+    state.next = result;
+    view.reload();
+  }
+
+  async function reopen() {
+    const data = state.data;
+    if (!data) return;
+    const reason = await reasonDialog(app, { title: `${monthLabel(data.month)} — yeniden aç`, confirmLabel: 'Yeniden aç',
+      description: 'Kapanış kaldırılır, döküm yeniden canlı hesaplanır. Gerekçe denetim kaydına yazılır.',
+      presets: ['Geç alınan yoklama işlendi', 'Yerine öğretmen düzeltildi'] });
+    if (!reason) return;
+    const result = await runAction(app, () => app.api.post('/v1/admin/teacher-load/reopen',
+      { month: data.month, reason }), { success: `${monthLabel(data.month)} yeniden açıldı.` });
+    if (!result) return;
+    state.next = result;
     view.reload();
   }
 

@@ -119,6 +119,9 @@ AKADEMI_PDFS: dict[str, DocumentKind] = {
                                     ("admin_getBookSaleOrderPdf",)),
     "evaluation_reports": DocumentKind("KRN", "Karne", "gelisim-karnesi",
                                        ("admin_exportEvaluationReports",)),
+    # Veli toplantısı günün randevu listesi (Akademi README §14 madde 90).
+    "parent_meeting_list": DocumentKind("VTL", "Veli toplantısı", "veli-toplantisi-listesi",
+                                        ("admin_getParentMeetingListPdf",)),
 }
 
 
