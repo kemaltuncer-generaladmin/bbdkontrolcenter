@@ -110,8 +110,7 @@ def test_bant_ve_istemci_kancalari(tmp_path: Path) -> None:
     assert out["eventsAfterProbe"] == ["down", "up"]
     assert out["gateway502"] is True and out["appError"] is False
     # Bant: metin kullanıcı kararıyla birebir; 5 sn sonra dener, olmazsa 10 sn bekler.
-    assert out["updatingText"] == ("Akademi şu an güncelleniyor, birkaç saniye sonra otomatik "
-                                   "yeniden denenecek.")
+    assert out["updatingText"] == "Akademi sunucusuna şu an ulaşılamıyor, otomatik yeniden deneniyor."
     assert out["initiallyHidden"] is True
     assert out["shown"]["hidden"] is False and out["shown"]["state"] == "waiting"
     assert "(5 sn)" in out["shown"]["text"] and "Şimdi dene" in out["shown"]["text"]

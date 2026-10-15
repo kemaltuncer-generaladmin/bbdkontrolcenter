@@ -11,9 +11,10 @@
 // Bilerek import'suz: ui-kit'e bağlı değil, Node'da sahte DOM ile sınanır
 // (tests/test_akademi_guncelleniyor_bandi.py).
 
-export const UPDATING_TEXT = 'Akademi şu an güncelleniyor, birkaç saniye sonra otomatik yeniden denenecek.';
+// Metin Akademi web/mobil ile aynı ve nedenden bağımsız (dağıtım, yeniden başlama, kesinti — 2026-10-15).
+export const UPDATING_TEXT = 'Akademi sunucusuna şu an ulaşılamıyor, otomatik yeniden deneniyor.';
 // Çökme dayanıklılığı (2026-10-15): köprü son bilinen veriyi verdiyse ekran dolu kalır, bant bunu söyler.
-export const STALE_TEXT = 'Akademi sunucusuna şu an ulaşılamıyor, otomatik yeniden deneniyor. Son bilinen bilgiler gösteriliyor';
+export const STALE_TEXT = `${UPDATING_TEXT} Son bilinen bilgiler gösteriliyor`;
 
 /** ISO zaman → "14:32" (yerel saat). */
 export function clockText(iso) {
