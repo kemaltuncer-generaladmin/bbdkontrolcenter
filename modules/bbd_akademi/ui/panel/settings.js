@@ -1,10 +1,11 @@
 // BBD Akademi — Ayarlar (F-A15, F-A16 ve yalnız KM'den yapılan kurum yönetimi).
 //
 // Sekmeler: Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron
-// (KM olay iletimi, settings-sync.js) · Dizin eşitleme · SMS (OTP SMS
-// sağlığı, günlüğü ve telefon sayaç sıfırlama, settings-sms.js) · Entegrasyon
-// anahtarları · Denetim kaydı. "Kantin kuralları" sekmesi Kantin ve Finans →
-// Kantin ekranındadır (`canteen.js`; gövdesi burada, `canteenTab`).
+// (KM olay iletimi, settings-sync.js) · Dizin eşitleme · Entegrasyon
+// anahtarları · Denetim kaydı. SMS (settings-sms.js) 15.10.2026'dan beri
+// İletişim → SMS ekranındadır (sms.js; `{tab: 'sms'}` oraya yönlenir).
+// "Kantin kuralları" sekmesi Finans ve Kantin → Kantin ekranındadır
+// (`canteen.js`; gövdesi burada, `canteenTab`).
 //
 // ÖZELLİKLER İLK SEKME: panelin menüsü kurumda AÇIK özelliklere göre çizilir
 // (`sections.js`); bir bayrak değişince `app.refreshFeatures()` menüyü hemen
@@ -36,7 +37,6 @@ import {
 import { brandingTab } from './settings-branding.js';
 import { auditTab, directoryTab, keysTab } from './settings-admin.js';
 import { syncTab } from './settings-sync.js';
-import { smsTab } from './settings-sms.js';
 
 /**
  * Sekme kaydı: anahtar → {etiket, okuma işlemi}. Sıra ekrandaki sıradır.
@@ -51,7 +51,6 @@ const TABS = [
   { key: 'sync', label: 'Senkron', read: 'admin_getDirectorySyncStatus',
     visible: (app) => Boolean(app.status?.gatewayEvents?.canView) },
   { key: 'directory', label: 'Dizin eşitleme', read: 'admin_getDirectorySyncStatus' },
-  { key: 'sms', label: 'SMS', read: 'admin_getSmsHealth' },
   { key: 'keys', label: 'Entegrasyon anahtarları', read: 'admin_listIntegrationKeys' },
   { key: 'audit', label: 'Denetim kaydı', read: 'admin_listAuditLog' },
 ];
@@ -83,7 +82,6 @@ export function section(app) {
     keys: () => keysTab(app),
     directory: () => directoryTab(app),
     sync: () => syncTab(app),
-    sms: () => smsTab(app),
     audit: () => auditTab(app),
   };
   const tabs = tabBar(visible.map(({ key, label }) => ({ key, label })), visible[0].key,
@@ -107,6 +105,11 @@ export function section(app) {
   return {
     node,
     shown(payload) {
+      // SMS İletişim grubuna taşındı (15.10.2026): eski derin bağlantı oraya gider.
+      if (payload?.tab === 'sms') {
+        app.go('sms');
+        return;
+      }
       const wanted = payload?.tab && visible.some((tab) => tab.key === payload.tab)
         ? payload.tab : null;
       if (!started) {

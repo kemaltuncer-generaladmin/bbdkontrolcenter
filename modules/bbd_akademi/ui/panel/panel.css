@@ -5,8 +5,6 @@
  * bölümün kendi dosyasındadır (`<bölüm>.css`, önek `ak-<kısa ad>-`).
  */
 
-.ak { --ak-nav: 188px; }
-
 /* `hidden` özniteliği HER ZAMAN gizler. Tarayıcının varsayılan `[hidden]`
    kuralı yazar stilinden zayıftır: `display: flex` taşıyan `.ak-section`,
    `.ak-stack` gibi kutularda bölüm/sekme değiştirince gizlenmesi gereken
@@ -27,44 +25,92 @@
 .ak-updating-text { flex: 1; min-width: 0; }
 .ak-updating-action { flex: none; }
 
-.ak-layout {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: var(--ak-nav) minmax(0, 1fr);
+/* ------------------------------------------------- üst gezinme (15.10.2026)
+   TEK SOL GEZİNME: sol menü KM kabuğunundur; panel gezinmesi ÜSTTE durur ve
+   kaymaz (yalnız `.ak-main` kayar). Birinci satır simgeli ana gruplar, ikinci
+   satır seçili grubun hap sekmeleri. Dar pencerede satırlar sarılır; yatay
+   kaydırma yok. Renk tek başına anlam taşımaz: seçili öğe kalın + alt çizgi /
+   dolgu + `aria-current`. */
+.ak-top {
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  padding: 8px 16px 0;
 }
-
-.ak-nav {
-  border-right: 1px solid var(--line);
-  padding: 14px 10px;
+.ak-areas {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 2px;
-  overflow: auto;
-  background: var(--tint);
 }
-.ak-nav-item {
-  text-align: left;
+/* Simge üstte, ad altta: on bir öğe geniş pencerede tek satıra sığar; dar
+   pencerede satır sarılır (yatay kaydırma yok). */
+.ak-area {
+  --tone: #2f5fd0;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 64px;
   border: 0;
+  border-bottom: 3px solid transparent;
   background: transparent;
-  padding: 8px 10px;
-  border-radius: 7px;
+  padding: 7px 10px 6px;
   font: inherit;
+  font-size: 12.5px;
+  line-height: 1.2;
+  color: var(--soft);
+  cursor: pointer;
+  border-radius: 8px 8px 0 0;
+  white-space: nowrap;
+}
+.ak-area:hover { color: var(--ink); background: var(--tint); }
+.ak-area:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ak-area.on { color: var(--ink); font-weight: 650; border-bottom-color: var(--tone); background: var(--tone-bg, var(--tint)); }
+.ak-area .ak-ico { width: 20px; height: 20px; color: var(--tone); flex: none; }
+.ak-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 9px 0 10px;
+  border-top: 1px solid var(--line);
+}
+.ak-pill {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12.5px;
   color: var(--ink);
   cursor: pointer;
+  white-space: nowrap;
 }
-.ak-nav-item:hover { background: #eef1f6; }
-.ak-nav-item.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
-/* Grup başlığı. `text-transform: uppercase` YOK: dil bilgisi verilmeyen
-   sayfada "Akademik" → "AKADEMIK" olur (Türkçe İ kaybolur). */
-.ak-nav-group {
-  margin: 12px 10px 4px;
-  font-size: 11.5px;
-  font-weight: 650;
-  color: var(--soft);
+.ak-pill:hover { background: var(--tint); border-color: #cfd6e3; }
+.ak-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Seçili hap grubun koyu tonunda (beyaz yazıyla ≥ 4,9:1). */
+.ak-pill.on { background: var(--tone, #1d3f9e); border-color: var(--tone, #1d3f9e); color: #fff; font-weight: 600; }
+@media (max-width: 900px) {
+  .ak-top { padding: 6px 10px 0; }
+  .ak-area { min-width: 56px; padding: 6px 7px 5px; font-size: 12px; }
 }
 
-.ak-main { min-height: 0; overflow: auto; }
+/* Simge çizimi (nav-icons.js): yalnız çizgi, ortak kalınlık. */
+.ak-ico { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Grup renkleri — ana grup şeridi ve ana sayfa kutucukları ortak kullanır.
+   Koyu ton beyaz zeminde ≥ 4,5:1 (simge ve alt çizgi), açık ton yalnız zemin. */
+.ak-tone-blue { --tone: #1d4ed8; --tone-bg: #e8efff; }
+.ak-tone-indigo { --tone: #4338ca; --tone-bg: #eceafe; }
+.ak-tone-violet { --tone: #6d28d9; --tone-bg: #f1eafe; }
+.ak-tone-teal { --tone: #0f766e; --tone-bg: #e2f5f2; }
+.ak-tone-green { --tone: #15803d; --tone-bg: #e5f6ea; }
+.ak-tone-amber { --tone: #a16207; --tone-bg: #fdf3dc; }
+.ak-tone-rose { --tone: #be123c; --tone-bg: #fde9ee; }
+.ak-tone-orange { --tone: #c2410c; --tone-bg: #fdeee3; }
+.ak-tone-cyan { --tone: #0e7490; --tone-bg: #e0f4f8; }
+.ak-tone-slate { --tone: #475569; --tone-bg: #eef1f5; }
+
+.ak-main { flex: 1; min-height: 0; overflow: auto; background: #fff; }
 .ak-section { padding: 14px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
 .ak-section > * { flex: none; }
 
@@ -149,33 +195,6 @@
 /* --------------------------------------------------------- iki ayrı para */
 .ak-money-canteen { border-left: 3px solid #f59e0b; }
 .ak-money-finance { border-left: 3px solid #2563eb; }
-
-/* ------------------------------------------- alt ekranlar (seçili üst bölüm)
-   Üst bölüm altı tanedir; alt ekranları yalnız o bölüm seçiliyken, girintili
-   ve ince bir çizgiyle görünür. */
-.ak-nav-sub {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 2px 0 8px 12px;
-  padding-left: 8px;
-  border-left: 2px solid #d9e2f5;
-}
-.ak-nav-subitem {
-  text-align: left;
-  border: 0;
-  background: transparent;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--soft);
-  cursor: pointer;
-}
-.ak-nav-subitem:hover { background: #eef1f6; color: var(--ink); }
-.ak-nav-subitem.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
-/* Alt ekranı açık üst bölüm: vurgu alt satırda, üst satır yalnız kalın. */
-.ak-nav-item.on.ak-nav-open { background: transparent; }
 
 /* --------------------------------------- katlanır bölüm (öğrenci kartı, Bugün) */
 .ak-fold { border: 1px solid var(--line); border-radius: 10px; background: var(--paper, #fff); }

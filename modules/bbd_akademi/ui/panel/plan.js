@@ -1,6 +1,7 @@
 // BBD Akademi — Çalışma planı yönetimi (F-A18; öğrenci tarafı F-S16).
 //
-// Dört sekme:
+// Üç sekme (15.10.2026: eski "Şablonlar" sekmesi Ödev ve Deneme → Şablonlar →
+// Plan şablonları ile AYNI gövdeydi; oraya birleşti, `{tab: 'templates'}` oraya gider):
 //   · Atamalar — öğrenciye / çalışma grubuna / sınıfa koç görevi. Hedefteki her
 //     öğrenciye `source=coach`, `locked=true` görev açılır: öğrenci silemez,
 //     gününü değiştiremez, yalnız erteleme ister. Sonradan sınıfa katılan
@@ -8,7 +9,6 @@
 //     YAPILMAMIŞ görevlerin gününü / saatini / süresini / başlığını / hedef
 //     sorusunu / notunu değiştirir; geri almak yapılmamış görevleri kaldırır,
 //     tamamlanan ve kısmi görevler geçmişte kalır.
-//   · Şablonlar — gün ofsetli görev listeleri; yalnız KM (plan-templates.js).
 //   · Uyum tablosu — öğrenci × hafta plan uyumu %, ön hesaplı günlük
 //     özetlerden (en çok 12 hafta). Hücre rengi tek başına anlam taşımaz:
 //     her hücrede yüzde yazılıdır.
@@ -41,7 +41,7 @@ import {
   targetText, targetsField, taskBody, taskListField, taskPatches, taskTitle, timeText, totalMinutes,
   weekdayOf, whenText,
 } from './plan-tasks.js';
-import { applyTemplate, templateNotice, templatesTab } from './plan-templates.js';
+import { applyTemplate, templateNotice } from './plan-templates.js';
 
 const POSTPONE_STATUS = {
   requested: ['Bekliyor', 'warn'], approved: ['Onaylandı', 'good'], declined: ['Reddedildi', 'dim'],
@@ -189,7 +189,6 @@ export function section(app) {
   const bodies = {};
   const tabs = tabBar([
     { key: 'assignments', label: 'Atamalar' },
-    { key: 'templates', label: 'Şablonlar' },
     { key: 'adherence', label: 'Uyum tablosu' },
     { key: 'postpone', label: 'Erteleme talepleri' },
   ], 'assignments', (key) => showTab(key));
@@ -198,7 +197,6 @@ export function section(app) {
 
   const builders = {
     assignments: () => assignmentsTab(app, ctx, (next) => setStudent(next)),
-    templates: () => templatesTab(app, ctx),
     adherence: () => adherenceTab(app, ctx),
     postpone: () => postponeTab(app, ctx, tabs, (next) => setStudent(next)),
   };
@@ -223,6 +221,11 @@ export function section(app) {
   return {
     node,
     shown(payload) {
+      // Plan şablonları tek yerde: Şablonlar → Plan şablonları (eski derin bağlantı oraya).
+      if (payload?.tab === 'templates') {
+        app.go('templates', { tab: 'plan' });
+        return;
+      }
       if (!started) {
         started = true;
         if (payload?.studentId) {
