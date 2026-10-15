@@ -500,8 +500,13 @@ export function canteenTab(app, { goTab }) {
 const FEATURES = {
   canteen: ['Kantin (veli ve öğrenci uygulamasında)',
     'Açıkken veli ve öğrenci uygulamada kantin bakiyesini, harcamalarını, ödeme taleplerini, limit ve yasaklı ürün '
-    + 'ayarlarını görür; kantin bildirimleri gider. Kapalıyken veli ve öğrenci kantini HİÇ görmez (sekme, kart, '
-    + 'bildirim, ödeme talebi yok). Kantin kasası ve Kontrol Merkezi kantin modülü etkilenmez.'],
+    + 'ayarlarını görür; kantin bildirimleri gider. Kapalıyken veli ve öğrenci kantini HİÇ görmez (bakiye, harcama, '
+    + 'limit, kart, bildirim yok); kantin ödeme talepleri ayrı anahtardır. Öğrenci ve veli kantin QR kartını / kodunu '
+    + 'hiçbir durumda görmez. Kantin kasası ve Kontrol Merkezi kantin modülü etkilenmez.'],
+  canteen_payment_requests: ['Kantin ödeme talepleri (veli ve öğrenci uygulamasında)',
+    'Kantinin açtığı ödeme talepleri (SMS ile de gider) veliye uygulamada görünür ve uygulamadan kartla ödenir; '
+    + 'öğrenci kendi taleplerini görür, ödemeyi veli yapar. Kantin anahtarı kapalıyken de çalışır (Kantin sekmesi '
+    + 'yalnız ödeme taleplerini gösterir); kantin açıkken her zaman açıktır. Varsayılan: açık.'],
   tablets: ['Öğrenci tabletleri', 'Tablet yönetimi ve ders modu.'],
   pa: ['Anons sistemi', 'Sınıflara sesli anons ve öğrenci çağırma.'],
   books: ['Kitap talepleri', 'Mağaza üzerinden kitap talebi, veli onayı ve sipariş.'],
@@ -532,8 +537,11 @@ const FEATURES = {
 };
 /** Kapatma onayında özelliğe özgü açıklama (yoksa genel metin). */
 const FEATURE_OFF_NOTE = {
-  canteen: 'Veli ve öğrenci uygulamasında kantin sekmesi, kartları, bildirimleri ve ödeme talepleri hemen kalkar. '
+  canteen: 'Veli ve öğrenci uygulamasında kantin bakiyesi, harcamalar, limitler ve kantin bildirimleri hemen kalkar; '
+    + 'ödeme talepleri "Kantin ödeme talepleri" anahtarı açıksa görünmeye devam eder. '
     + 'Kantin kasası ve Kontrol Merkezi kantin modülü çalışmaya devam eder; kayıtlı veri silinmez, yeniden açınca geri gelir.',
+  canteen_payment_requests: 'Kantin kapalıyken veli kantin ödeme taleplerini uygulamada görmez ve uygulamadan ödeyemez '
+    + '(SMS bağlantısı çalışır). Kantin açıkken talepler yine görünür.',
 };
 /** Bayrak → çalışması için açık olması gereken bayraklar. */
 const REQUIRES = { 'finance.card': ['finance'] };
