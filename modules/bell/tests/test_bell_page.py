@@ -5,6 +5,7 @@ Vertex ve köprü taklittir; depo gerçek SQLite (conftest). Ağa çıkılmaz.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -187,3 +188,85 @@ async def test_yetenek_hata_yukseltmez(store: Any, sounds: Path) -> None:
     service.page = boom  # type: ignore[method-assign]
     result = await announce.page(TEXT)
     assert result["status"] == "failed" and "depo yok" in result["detail"]
+
+
+# ------------------------------------------------ toplu hazırlık + önizleme (010)
+
+
+async def test_toplu_hazirlik_olagan_seslerin_arkasindan(store: Any, sounds: Path) -> None:
+    """Akademi'nin yüzlerce şablon sesi zil/grup seslerinin önüne geçmez; toplu bekleyen
+    ses olağan istenince öne alınır ve İKİ KEZ üretilmez."""
+    service, parts = build(store, sounds)
+    voices = parts["voices"]
+    await voices.stop()
+    voices._worker = asyncio.current_task()          # işçi başlamasın, sıra birikmeli
+    for n in range(3):
+        await service.prepare_page(f"Öğrenci {n}, danışmaya.", cache_key=f"tpl:{n}", bulk=True)
+    await voices.require("İyi dersler.")
+    await voices.require("Öğrenci 2, danışmaya.")    # toplu bekleyen → öne alınır
+    assert voices.state()["queuedBulk"] == 2
+    voices._worker = None
+    voices.start()
+    await voices._queue.join()
+    calls = parts["speech"].calls
+    assert calls[:2] == ["İyi dersler.", "Öğrenci 2, danışmaya."]
+    assert sorted(calls[2:]) == ["Öğrenci 0, danışmaya.", "Öğrenci 1, danışmaya."]
+
+
+async def test_toplu_ses_diskte_kalir_kopruye_onden_gitmez(store: Any, sounds: Path) -> None:
+    service, parts = build(store, sounds)
+    assert (await service.prepare_page(TEXT, cache_key="akademi:pa:s:1",
+                                       bulk=True))["status"] == "queued"
+    await parts["voices"]._queue.join()
+    key = parts["voices"].key(TEXT)
+    data = (sounds / str((await parts["voices"].entry(key))["file"])).read_bytes()
+    # "Kullanılmayan sesleri sil" silmez ...
+    assert key in await service._live_voice_keys(await service.settings())
+    await service.prune_voices(actor="t")
+    assert await parts["voices"].ready_file(key)
+    # ... ama köprü eşitlemesi önden taşımaz.
+    assert content_id(data) not in await service.needed_sounds()
+    # Çalınınca köprüye yüklenir ve bekleme olmaz (Vertex'e gidilmez).
+    result = await service.page(TEXT, request_id="r-bulk")
+    assert result["status"] == "queued" and result["voiceCached"] is True
+    assert parts["speech"].calls == [TEXT]
+    assert content_id(data) in parts["bridge"].uploaded
+    assert content_id(data) in await service.needed_sounds()     # son 24 saat
+    # Tekil hazırlık toplu işaretini düşürür → köprüye önden gider.
+    await store.execute("DELETE FROM mod_bell_page")
+    assert content_id(data) not in await service.needed_sounds()
+    await service.prepare_page(TEXT, cache_key="akademi:pa:s:1")
+    assert content_id(data) in await service.needed_sounds()
+
+
+async def test_onizleme_calmaz_sesi_saklar(store: Any, sounds: Path) -> None:
+    service, parts = build(store, sounds)
+    announce = BellAnnounce(service)
+    first = await announce.preview("Yarın okul tatil.")
+    assert first["status"] == "ready" and first["voiceCached"] is False
+    assert first["dataUri"].startswith("data:audio/wav;base64,")
+    assert parts["bridge"].sent == []                       # hoparlöre gitmedi
+    again = await announce.preview("Yarın  okul tatil.")    # boşluk farkı aynı ses
+    assert again["voiceCached"] is True
+    played = await service.page("Yarın okul tatil.")
+    assert played["voiceCached"] is True
+    assert parts["speech"].calls == ["Yarın okul tatil."]   # bir kez seslendirildi
+    assert (await announce.preview("  "))["status"] == "tts_unavailable"
+
+
+async def test_onizleme_tts_yoksa_acik_hata(store: Any, sounds: Path) -> None:
+    speech = FakeSpeech(script=[SpeechError("Kota bitti", retryable=False, status=403)])
+    service, _ = build(store, sounds, speech=speech)
+    result = await BellAnnounce(service).preview("Duyuru")
+    assert result["status"] == "tts_unavailable" and "Kota bitti" in result["detail"]
+
+
+async def test_kopru_ozeti_dosya_degismedikce_yeniden_okunmaz(store: Any, sounds: Path) -> None:
+    service, parts = build(store, sounds)
+    await service.page(TEXT)
+    path = sounds / str((await parts["voices"].entry(parts["voices"].key(TEXT)))["file"])
+    first = service._content_id_of(path)
+    assert first == content_id(path.read_bytes())
+    assert service._content_ids[str(path)][1] == first
+    path.unlink()
+    assert service._content_id_of(path) == ""

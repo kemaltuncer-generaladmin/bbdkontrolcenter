@@ -51,6 +51,10 @@ provides:
       async page(text, *, cache_key=None, actor=None, request_id=None) →
       {status: queued|disabled|tts_unavailable|failed, voiceCached, etaSeconds}.
       Hata yükseltmez. Ses önbellekte yoksa Vertex ile anlık üretilir.
+      async prepare(text, *, cache_key=None, bulk=False) → {status: cached|queued|disabled}
+      (toplu ön hazırlık olağan seslerin arkasından, köprüye önden gitmez);
+      async preview(text) → {status: ready|tts_unavailable, voiceCached, dataUri}
+      (ÇALMAZ; serbest duyuru önizlemesi, ses saklanır).
 
 consumes:
   - capability: audio

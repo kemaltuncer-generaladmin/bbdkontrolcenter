@@ -1865,6 +1865,90 @@ class GatewayService:
         return await self.audited("announcement.call", caller, student_id,
                                   {"template": template}, work())
 
+    # ------------------------------------------------- §5 ek: sınıf / duyuru
+
+    async def announce_text(self, text: str, purpose: str, cache_key: str | None,
+                            caller: Caller) -> dict[str, Any]:
+        """Hazır (yer tutucusu doldurulmuş) cümleyi okulun hoparlöründen duyurur.
+
+        Sınıf çağrısı ve serbest duyuru içindir (bbd-akademi README §14 madde 106):
+        metni ÇAĞIRAN (Akademi) kurar; geçit yer tutucu çözmez, yalnız `{…}`
+        kalmışsa reddeder. Ses `bell.announce.page` ile aynı yoldan gider —
+        önbellekte varsa hemen, yoksa Vertex ile anlık. Aynı `X-Request-Id`
+        ikinci kez çalmaz (bell `request_id` tekilliği + geçit idempotensi).
+        """
+        spoken = " ".join(str(text or "").split())
+        if not spoken:
+            raise validation("Anons metni zorunlu.", "text")
+        if _PLACEHOLDER.search(spoken):
+            raise validation("Anons metninde doldurulmamış yer tutucu var.", "text")
+        if not self.caps.has(BELL_ANNOUNCE):
+            raise capability_missing(BELL_ANNOUNCE)
+
+        async def work() -> dict[str, Any]:
+            result = await self.call(self.caps.bell_page(
+                spoken, cache_key=cache_key, actor=caller.actor,
+                request_id=caller.request_id or None,
+            ))
+            status = str(result.get("status") or "")
+            if status == "queued":
+                return {"status": "queued", "voiceCached": bool(result.get("voiceCached")),
+                        "etaSeconds": int_or_none(result.get("etaSeconds")) or 0}
+            if status == "disabled":
+                raise GatewayError(409, "bell_disabled", "Zil sistemi kapalı; anons yapılamıyor.")
+            if status == "tts_unavailable":
+                raise GatewayError(503, "tts_unavailable", "Anons sesi hazırlanamadı.")
+            raise upstream_error("Zil sistemi beklenmedik bir yanıt verdi.")
+
+        return await self.audited("announcement.say", caller, "",
+                                  {"purpose": purpose}, work())
+
+    async def announce_prepare(self, items: list[tuple[str, str | None]],
+                               caller: Caller) -> dict[str, Any]:
+        """Sesleri ÖNDEN hazırlatır (çalmaz): toplu, olağan seslerin arkasından.
+
+        Akademi şablon × öğrenci / sınıf seslerini burada ister; aynı metin
+        ikinci kez gelirse Vertex'e gidilmez, yalnız saklama süresi tazelenir.
+        Doldurulmamış yer tutucu taşıyan ya da boş metin atlanır (`skipped`).
+        """
+        if not self.caps.has(BELL_ANNOUNCE):
+            raise capability_missing(BELL_ANNOUNCE)
+        queued = cached = skipped = 0
+        for text, cache_key in items:
+            spoken = " ".join(str(text or "").split())
+            if not spoken or _PLACEHOLDER.search(spoken):
+                skipped += 1
+                continue
+            result = await self.call(self.caps.bell_prepare(
+                spoken, cache_key=cache_key, bulk=True))
+            status = str(result.get("status") or "")
+            if status == "queued":
+                queued += 1
+            elif status == "cached":
+                cached += 1
+            else:
+                skipped += 1
+        await self.audit("announcement.prepare", caller,
+                         detail={"items": len(items), "queued": queued})
+        return {"queued": queued, "cached": cached, "skipped": skipped}
+
+    async def announce_preview(self, text: str, caller: Caller) -> dict[str, Any]:
+        """Sesin önizlemesi: hazırlanır (yoksa anlık üretilir), ÇALINMAZ.
+
+        Dönüş `{status: "ready", voiceCached, audio: "data:audio/wav;base64,…"}`;
+        ses hazırlanamazsa 503 `tts_unavailable` ("ses hazırlanamadı").
+        """
+        spoken = " ".join(str(text or "").split())
+        if not spoken:
+            raise validation("Anons metni zorunlu.", "text")
+        if _PLACEHOLDER.search(spoken):
+            raise validation("Anons metninde doldurulmamış yer tutucu var.", "text")
+        result = await self.call(self.caps.bell_preview(spoken))
+        if str(result.get("status") or "") != "ready" or not result.get("dataUri"):
+            raise GatewayError(503, "tts_unavailable", "Anons sesi hazırlanamadı.")
+        return {"status": "ready", "voiceCached": bool(result.get("voiceCached")),
+                "audio": str(result["dataUri"])}
+
     # ======================================================== §6 zil saatleri
 
     def forget_bell_week(self, *_: Any) -> None:

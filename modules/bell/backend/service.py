@@ -322,6 +322,8 @@ class BellService:
         self._wanted_ids: set[str] | None = None
         #: Günlüğe en son işlenen ajan cevabı (`lastAck.id`).
         self._acked_id = 0
+        #: Köprü eşitlemesinin içerik özeti önbelleği: yol → ((boyut, mtime), özet).
+        self._content_ids: dict[str, tuple[tuple[int, int], str]] = {}
 
     # ================================================================= ayar
 
@@ -651,11 +653,18 @@ class BellService:
         self._log.info("grup kalıcı olarak silindi", group=name, actor=actor)
         return {"ok": True, "groups": await self.groups()}
 
-    async def _live_voice_keys(self, settings: dict[str, Any]) -> set[str]:
+    async def _live_voice_keys(self, settings: dict[str, Any], *,
+                               bridge: bool = False) -> set[str]:
         """Şu an KULLANILAN bütün anons seslerinin özetleri.
 
         Zil sonrası anonslar da buraya girer: bir grubun cümlesiyle aynı metne
         denk gelirlerse o ses silinmemelidir.
+
+        `bridge=True` köprü eşitlemesi içindir: TOPLU hazırlanmış sayfa sesleri
+        (Akademi'nin şablon × öğrenci/sınıf sesleri, 010 göçü) DİSKTE tutulur
+        ama köprüye önden gitmez — yüzlercesi her dakika köprüye ve zil
+        bilgisayarına taşınmasın. Çalınacakları an `_ensure_on_bridge` yükler
+        (üretim değil, yalnız yükleme); son 24 saatte çalınan köprüde kalır.
         """
         texts = [after_text(settings, kind) for kind in TIME_KINDS]
         texts += [call_text(settings, group["name"], group["kind"])
@@ -672,10 +681,14 @@ class BellService:
             today, today + timedelta(days=planning.WINDOW_DAYS - 1))
         # Öğrenci çağırma sesleri de canlıdır (005 göçü): son 24 saatte
         # çalınanlar ve 60 gün içinde hazırlananlar.
-        return keys | await self._page_voice_keys()
+        return keys | await self._page_voice_keys(bulk=not bridge)
 
-    async def _page_voice_keys(self) -> set[str]:
-        """Köprüde ve diskte TUTULMASI gereken sayfa sesleri."""
+    async def _page_voice_keys(self, *, bulk: bool = True) -> set[str]:
+        """Diskte (ve `bulk=False` iken köprüde) TUTULMASI gereken sayfa sesleri.
+
+        Toplu hazırlananlar (`bulk = 1`) yalnız disk listesindedir; çalındıkları
+        an `last_used_at` dolar ve son çalınma kaydıyla 24 saat köprüde kalırlar.
+        """
         current = datetime.now(UTC)
         recent = (current - PAGE_RECENT).isoformat(timespec="seconds")
         keep = (current - PAGE_KEEP).isoformat(timespec="seconds")
@@ -683,10 +696,16 @@ class BellService:
             f"SELECT DISTINCT voice_key FROM {self._page_table} "
             f"WHERE at >= ? AND voice_key != ''", (recent,),
         )
-        rows += await self._store.fetch_all(
-            f"SELECT voice_key FROM {self._page_voice_table} "
-            f"WHERE prepared_at >= ? OR last_used_at >= ?", (keep, keep),
-        )
+        if bulk:
+            rows += await self._store.fetch_all(
+                f"SELECT voice_key FROM {self._page_voice_table} "
+                f"WHERE prepared_at >= ? OR last_used_at >= ?", (keep, keep),
+            )
+        else:
+            rows += await self._store.fetch_all(
+                f"SELECT voice_key FROM {self._page_voice_table} "
+                f"WHERE (bulk = 0 AND prepared_at >= ?) OR last_used_at >= ?", (keep, keep),
+            )
         return {str(row["voice_key"]) for row in rows if row.get("voice_key")}
 
     async def delete_sound(self, name: str, *, actor: str) -> dict[str, Any]:
@@ -1280,11 +1299,15 @@ class BellService:
         return await self._page_result(status, clean, voice_key, rid, who, key_label,
                                        cached=cached, detail=str(result["detail"]))
 
-    async def prepare_page(self, text: str, *, cache_key: str | None = None) -> dict[str, Any]:
+    async def prepare_page(self, text: str, *, cache_key: str | None = None,
+                           bulk: bool = False) -> dict[str, Any]:
         """Sayfa sesini ÖNDEN hazırlar (arka plan kuyruğu); 60 gün tutulur.
 
         Çalmaz. Gece hazırlığı ve "bu öğrenciyi sık çağırıyoruz" durumu için.
-        Dönüş `{"status": "cached" | "queued" | "disabled"}`.
+        `bulk=True` toplu ön hazırlıktır (Akademi şablon sesleri): olağan seslerin
+        ARKASINDAN üretilir ve köprüye önden gitmez (`_live_voice_keys`).
+        Aynı metin ikinci kez istenirse Vertex'e gidilmez, yalnız 60 günlük
+        saklama süresi tazelenir. Dönüş `{"status": "cached" | "queued" | "disabled"}`.
         """
         clean = " ".join(str(text or "").split())[:TEXT_MAX]
         if not clean:
@@ -1292,10 +1315,43 @@ class BellService:
         voice_key = self._voices.key(clean)
         ready = bool(await self._voices.ready_file(voice_key))
         if not ready:
-            await self._voices.require(clean)
+            await self._voices.require(clean, bulk=bulk)
         await self._touch_page_voice(voice_key, " ".join(str(cache_key or "").split())[:160],
-                                     prepared=True)
+                                     prepared=True, bulk=bulk)
         return {"status": "cached" if ready else "queued"}
+
+    async def preview_page(self, text: str) -> dict[str, Any]:
+        """Sayfa sesinin ÖNİZLEMESİ: sesi hazırlar (yoksa anlık üretir), ÇALMAZ.
+
+        Serbest duyuru ekranındaki "dinle" budur: ses okulun hoparlörüne
+        gitmez, veri URI'si olarak çağırana döner (`preview_source` ile aynı
+        biçim). Üretilen ses saklanır — ardından "Çal" denince Vertex'e
+        yeniden gidilmez. HATA YÜKSELTMEZ:
+
+          {"status": "ready", "voiceCached": bool, "dataUri": "data:audio/wav;base64,…"}
+          {"status": "tts_unavailable", "detail": "…"}
+        """
+        clean = " ".join(str(text or "").split())[:TEXT_MAX]
+        if not clean:
+            return {"status": "tts_unavailable", "voiceCached": False, "detail": "Metin boş."}
+        voice_key = self._voices.key(clean)
+        name = await self._voices.ready_file(voice_key)
+        cached = bool(name)
+        if not name:
+            name = await self._voices.produce_now(clean, timeout=self._page_tts_timeout)
+        if not name:
+            entry = await self._voices.entry(voice_key)
+            detail = str(entry["error"]) if entry and entry["error"] \
+                else "Anons sesi zamanında üretilemedi."
+            return {"status": "tts_unavailable", "voiceCached": False, "detail": detail}
+        # Önizlenen ses "hazırlanmış" sayılır: 60 gün diskte, çalınana dek köprüye
+        # önden gitmez (toplu gibi) — denenip vazgeçilen metinler zil bilgisayarını doldurmasın.
+        await self._touch_page_voice(voice_key, "preview", prepared=True, bulk=True)
+        source = await self.preview_source(name)
+        if not source.get("ok"):
+            return {"status": "tts_unavailable", "voiceCached": cached,
+                    "detail": str(source.get("detail") or "Ses okunamadı.")}
+        return {"status": "ready", "voiceCached": cached, "dataUri": source["dataUri"]}
 
     async def prepare_students(self, directory: Any) -> dict[str, Any]:
         """Dizindeki her öğrencinin çağrı sesini hazırlar (gece görevi).
@@ -1313,7 +1369,8 @@ class BellService:
             text = render_page(template, first_name=student.get("firstName") or "",
                                last_name=student.get("lastName") or "",
                                class_name=student.get("className") or "")
-            result = await self.prepare_page(text, cache_key=f"student:{student.get('id')}")
+            result = await self.prepare_page(text, cache_key=f"student:{student.get('id')}",
+                                             bulk=True)
             queued += 1 if result["status"] == "queued" else 0
         self._log.info("öğrenci çağrı sesleri hazırlandı",
                        students=len(listing.get("students") or []), queued=queued)
@@ -1339,15 +1396,19 @@ class BellService:
                               error=str(failure))
 
     async def _touch_page_voice(self, voice_key: str, cache_key: str, *,
-                                prepared: bool) -> None:
+                                prepared: bool, bulk: bool = False) -> None:
+        """`bulk` YALNIZ İLK KAYITTA yazılır ya da DÜŞER: tek tek hazırlanmış
+        (köprüye önden giden) bir ses sonradan toplu listeye girince köprüden
+        çekilmez; toplu ses bir kez tekil hazırlanınca köprüye gider."""
         stamp = _now()
         await self._store.execute(
             f"INSERT INTO {self._page_voice_table} "
-            f"(voice_key, cache_key, prepared_at, last_used_at) VALUES (?, ?, ?, ?) "
+            f"(voice_key, cache_key, prepared_at, last_used_at, bulk) VALUES (?, ?, ?, ?, ?) "
             f"ON CONFLICT(voice_key) DO UPDATE SET cache_key = excluded.cache_key, "
-            + ("prepared_at = excluded.prepared_at" if prepared
-               else "last_used_at = excluded.last_used_at"),
-            (voice_key, cache_key, stamp if prepared else "", "" if prepared else stamp),
+            + ("bulk = MIN(bulk, excluded.bulk), prepared_at = excluded.prepared_at"
+               if prepared else "last_used_at = excluded.last_used_at"),
+            (voice_key, cache_key, stamp if prepared else "", "" if prepared else stamp,
+             1 if bulk and prepared else 0),
         )
 
     async def _page_result(self, status: str, text: str, voice_key: str, request_id: str | None,
@@ -2117,17 +2178,37 @@ class BellService:
         # ÖĞRENCİ ÇAĞIRMA SESLERİ DE LİSTEDE (`_live_voice_keys` → 005 göçü).
         # Girmeselerdi her sayfa sesi bir dakika içinde köprüden silinir ve
         # aynı öğrenciyi ikinci çağırış yeniden yükleme beklerdi.
+        # A14: TEK sorgu (anahtar başına `ready_file` değil) ve içerik özeti
+        # dosya (ad, boyut, değişim zamanı) değişmedikçe yeniden hesaplanmaz —
+        # döngü her dakika döner, her turda bütün .wav'ları okumak gereksiz disk işi.
         root = self._sounds_path()
-        for key in sorted(await self._live_voice_keys(settings)):
-            name = await self._voices.ready_file(key)
-            if not name:
+        entries = await self._voices.entries()
+        for key in sorted(await self._live_voice_keys(settings, bridge=True)):
+            row = entries.get(key)
+            if row is None or not row.get("file") or row.get("error"):
                 continue
-            path = root / name
-            try:
-                wanted[content_id(path.read_bytes())] = path
-            except OSError:
-                continue          # arada silinmiş; `sweep` yeniden üretir
+            path = root / str(row["file"])
+            ident = self._content_id_of(path)
+            if ident:
+                wanted[ident] = path
         return wanted
+
+    def _content_id_of(self, path: Path) -> str:
+        """Dosyanın içerik özeti — (yol, boyut, mtime) önbellekli; yoksa ""."""
+        try:
+            stat = path.stat()
+        except OSError:
+            return ""             # arada silinmiş; `sweep` yeniden üretir
+        stamp = (stat.st_size, stat.st_mtime_ns)
+        known = self._content_ids.get(str(path))
+        if known is not None and known[0] == stamp:
+            return known[1]
+        try:
+            ident = content_id(path.read_bytes())
+        except OSError:
+            return ""
+        self._content_ids[str(path)] = (stamp, ident)
+        return ident
 
     async def sync_sounds(self) -> dict[str, Any]:
         """Köprüde eksik olan sesleri yükler, gereksizleri sildirir.
