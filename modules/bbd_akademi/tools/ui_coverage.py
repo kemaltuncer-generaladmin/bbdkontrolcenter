@@ -45,6 +45,9 @@ from modules.bbd_akademi.backend.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- hata defteri gelen kutusu (Akademi §14 104)
+    "admin_markMistakeInboxSeen":
+        "Okundu işareti yalnız sorumlu öğretmenin kendi gelen kutusundadır (mobil / web 'Tümünü okundu say'); KM'nin bakması kaydı okundu yapmaz (Akademi §14 104).",
     # --- uzaktan tablet sınırları: KM'nin kendi Tablet modülü ekranlarında.
     "admin_listTabletProfiles":
         "KM'nin kendi Tablet modülü (bbd_tablet) profil ve öğrenciye özel süre ekranlarındadır; asıl kayıt orada (A5), Akademi bu uçlarla yalnız mobil/web yöneticiye vekillik eder (Akademi §14 94).",

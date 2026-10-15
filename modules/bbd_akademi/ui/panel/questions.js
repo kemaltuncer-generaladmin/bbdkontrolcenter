@@ -99,8 +99,8 @@ export function section(app) {
 
 // ---------------------------------------------------------------- ayrıntı
 
-/** İmzalı Akademi dosyası → nesne URL'si (KM vekilinden; önbellekli). */
-function fileUrlCache(app) {
+/** İmzalı Akademi dosyası → nesne URL'si (KM vekilinden; önbellekli). Hata defteri gelen kutusu da kullanır. */
+export function fileUrlCache(app) {
   const cache = new Map();
   const urls = [];
   return {
@@ -119,7 +119,7 @@ function fileUrlCache(app) {
   };
 }
 
-function imageStrip(files, cache) {
+export function imageStrip(files, cache) {
   const strip = h('div', 'ak-q-images');
   for (const file of files || []) {
     const link = h('a', 'ak-q-thumb');
@@ -138,7 +138,7 @@ function imageStrip(files, cache) {
   return strip;
 }
 
-function voicePlayer(voice, cache) {
+export function voicePlayer(voice, cache) {
   const wrap = h('div', 'ak-q-voice');
   const audio = h('audio');
   audio.controls = true;

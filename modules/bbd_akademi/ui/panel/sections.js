@@ -86,6 +86,10 @@ export const SECTIONS = [
   // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
   { key: 'questions', label: 'Hoca soruları', file: './questions.js', requires: ['learning'], area: 'coaching',
     feature: 'coach_questions' },
+  // Hata defteri gelen kutusu (Akademi README §14 madde 104): öğrencinin yeni hata kayıtları + öğretmen adına çözüm
+  // (metin, görsel, sesli not, PDF, video bağlantısı).
+  { key: 'mistakeInbox', label: 'Hata defteri gelen kutusu', file: './mistake-inbox.js', requires: ['learning'],
+    area: 'coaching', feature: 'coach_questions' },
   // Mesaj denetimi (F-K15 moderasyon + F-K21 denetim): şikâyet kuyruğu, karar, kilit, gerekçeli arama.
   { key: 'messages', label: 'Mesajlar', file: './messages.js', requires: ['settings'], area: 'coaching',
     feature: 'coaching' },
