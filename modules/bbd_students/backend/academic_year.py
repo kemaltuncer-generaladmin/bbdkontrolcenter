@@ -660,7 +660,11 @@ class YearRollover:
         if plan["blocked"]:
             raise _error(plan["blocked"], status=409, code="rollover_blocked",
                          details={"problems": plan["public"]["problems"][:20]})
+        # Önizlemenin revizyonu (ekran gönderir); yoksa planın kendi revizyonu: plan ile yazma
+        # arasına başka bir sınıf yazması girerse plan bayattır.
         expected = payload.get("expectedRevision")
+        if expected is None:
+            expected = plan["public"]["revision"]
         to_year, effective, close_day = plan["toYear"], plan["effective"], plan["closeDay"]
         reason = f"{ROLLOVER_ACTOR_REASON} {to_year}"
         rollover_id = str(uuid.uuid4())
@@ -674,7 +678,7 @@ class YearRollover:
         g = self._g
         async with self._store.transaction():
             revision = await g._bump()
-            if expected is not None and int(expected) + 1 != revision:
+            if int(expected) + 1 != revision:
                 raise _error("Önizlemeden sonra sınıflar değişti; önizlemeyi yenileyip tekrar "
                              "deneyin.", status=409, code="rollover_stale")
             for entry in plan["classes"]:
@@ -833,16 +837,22 @@ class YearRollover:
         if not students or self._lifecycle is None:
             return None
         today = self._today()
-        try:
-            return dict(await self._lifecycle.bulk_deactivate(
-                students, reason="graduated",
-                effective_at=effective.isoformat() if effective > today else None,
-                note=f"{ROLLOVER_ACTOR_REASON} {to_year}", actor=actor))
-        except Exception as failure:  # noqa: BLE001 — sınıf tarafı tamam; sonuç kayda yazılır
-            self._log.warning("dönem geçişi mezunları pasifleştirilemedi", error=str(failure))
-            return {"deactivated": [], "scheduled": [],
-                    "failed": [{"studentId": student, "error": str(failure)}
-                               for student in students]}
+        out: dict[str, Any] = {"deactivated": [], "scheduled": [], "failed": []}
+        # Toplu pasifleştirmenin istek sınırı (lifecycle.BULK_MAX = 2000) — parça parça.
+        for start in range(0, len(students), 2000):
+            chunk = students[start:start + 2000]
+            try:
+                done = await self._lifecycle.bulk_deactivate(
+                    chunk, reason="graduated",
+                    effective_at=effective.isoformat() if effective > today else None,
+                    note=f"{ROLLOVER_ACTOR_REASON} {to_year}", actor=actor)
+            except Exception as failure:  # noqa: BLE001 — sınıf tarafı tamam; sonuç kayda yazılır
+                self._log.warning("dönem geçişi mezunları pasifleştirilemedi", error=str(failure))
+                done = {"failed": [{"studentId": student, "error": str(failure)}
+                                   for student in chunk]}
+            for key in out:
+                out[key] += list(done.get(key) or [])
+        return out
 
     # ========================================================== geri alma
 
