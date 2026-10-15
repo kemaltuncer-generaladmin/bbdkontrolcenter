@@ -401,7 +401,14 @@ async function createAssignment(app, ctx) {
       onSubmit: async (draft, { key }) => {
         const body = bodyOf(draft);
         if (canPreview && previewed !== keyOf(body)) {
-          const preview = await app.api.post('/v1/admin/plan/assignments/preview', body);
+          let preview;
+          try {
+            preview = await app.api.post('/v1/admin/plan/assignments/preview', body);
+          } catch (failure) {
+            // Akademi henüz önizleme ucunu taşımıyorsa (sürüm sırası) önizlemesiz atama sürer.
+            if (!(failure instanceof AkademiError && (failure.status === 404 || failure.code === 'not_found'))) throw failure;
+            return app.api.post('/v1/admin/plan/assignments', body, { key });
+          }
           previewed = keyOf(body);
           paintPreview(preview);
           throw new AkademiError({ code: 'preview_ready', message: `Önizleme hazır: ${num(preview.studentCount)} öğrenci`
