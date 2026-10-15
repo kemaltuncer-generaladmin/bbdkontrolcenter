@@ -442,3 +442,114 @@ def test_koc_gorev_penceresi_kaymaz_dogrular_kaybetmez() -> None:
     resource = out["resource"]["task"]
     assert resource["resourceId"] == "r1" and resource["sectionIds"] == ["s2"] and resource["title"] == "Limit Yayınları · Türev 2"
     assert any(text.startswith("Görev taslak olarak eklendi") for text in out["toasts"])
+
+
+PLAN = r"""
+const routes = {};
+const sent = [];
+globalThis.__apiHook = (method, path, options) => {
+  if (path !== '/api/bbd_akademi/km/call') return undefined;
+  const payload = options.body || {};
+  sent.push(JSON.parse(JSON.stringify(payload)));
+  const key = `${payload.method} ${payload.path}`;
+  const hit = Object.keys(routes).find((pattern) => new RegExp(`^${pattern}$`).test(key));
+  if (!hit) return { ok: true, status: 200, data: { items: [], nextCursor: null }, headers: {} };
+  const value = typeof routes[hit] === 'function' ? routes[hit](payload.body, payload) : routes[hit];
+  if (value && value.__error) return { ok: false, status: value.status || 422, error: value.__error };
+  return { ok: true, status: 200, data: value, headers: {} };
+};
+const byText = (root, selector, text) => root.querySelectorAll(selector).find((node) => node.textContent.trim() === text);
+const click = (node) => { if (!node) throw new Error('düğme yok'); node.click(); };
+const type = (node, value) => { node.value = value; node.dispatchEvent(new Event('input', { bubbles: true })); };
+const choose = (node, value) => { node.value = value; node.dispatchEvent(new Event('change', { bubbles: true })); };
+
+export default async function ({ document, audit, sleep, api, load }) {
+  routes['GET /v1/admin/curricula/programs'] = { items: [{ id: 'p-mat-11', kind: 'school', subject: { id: 'MAT', name: 'Matematik' },
+    title: 'Matematik', grade: 11, levelKey: '11', levelLabel: '11. sınıf', levelOrder: 110 }] };
+  routes['GET /v1/admin/curricula/programs/p-mat-11'] = { id: 'p-mat-11', units: [{ id: 'u-turev', title: 'Türev', order: 1,
+    topics: [{ id: 'top-turev', title: 'Türev kuralları', order: 1 }] }] };
+  routes['POST /v1/admin/plan/assignments/preview'] = { studentCount: 28, taskCount: 2, instanceCount: 56, students: [],
+    days: [{ date: '2026-10-16', taskCount: 2, busyStudentCount: 4 }], holidayShifted: [], holidaySkipped: [], busyStudentCount: 4 };
+  routes['POST /v1/admin/plan/assignments'] = (body) => ({ id: 'a1', title: null, target: body.target, studentCount: 28,
+    tasks: body.tasks.map((task, i) => ({ ...task, id: `d${i}` })), templateId: null, createdBy: 'KM', createdAt: '2026-10-15T10:00:00Z',
+    progress: { taskInstances: 56, done: 0, partial: 0, skipped: 0, planned: 56 } });
+  const { createClient } = await load('./panels/bbd_akademi/api.js');
+  const { toaster } = await load('./ui-kit/kit.js');
+  const root = document.createElement('div');
+  root.className = 'kit-panel ak';
+  document.body.append(root);
+  const client = createClient({ api: (path, options) => api(path, options) });
+  const toast = toaster(root);
+  const app = { root, api: client, status: null, toast: (text, tone) => toast(text, tone),
+    has: () => true, can: (id) => client.can(id), go: () => {}, openPanel: () => {}, capability: () => null,
+    feature: () => false, enabled: () => true, onDispose: () => {},
+    lookups: { classGroups: async () => [{ id: 'c1', name: '11-A' }], studentGroups: async () => [], terms: async () => [],
+      subjects: async () => [{ id: 'MAT', name: 'Matematik' }] } };
+  const { section } = await load('./panels/bbd_akademi/plan.js');
+  const view = section(app);
+  root.append(view.node);
+  view.shown?.();
+  await sleep(60);
+  const out = {};
+  click(byText(root, 'button', 'Yeni atama'));
+  await sleep(60);
+  const dialog = root.querySelector('.kit-dialog');
+  click(byText(dialog, 'button', '11-A'));
+  click(byText(dialog, 'button', '+ Görev ekle'));
+  await sleep(30);
+  const editor = () => dialog.querySelector('.ak-plan-editor');
+  out.cards = editor().querySelectorAll('.ak-tf-card b').map((node) => node.textContent);
+  out.others = editor().querySelectorAll('.ak-tf-other').map((node) => node.textContent);
+  click(editor().querySelector('[data-type="review"]'));
+  choose(editor().querySelector('select[aria-label="Ders"]'), 'MAT');
+  click(byText(editor(), 'button', 'Listeye ekle'));
+  await sleep(10);
+  out.reviewError = editor().querySelector('[data-field="subject"] .ak-tf-error').textContent;
+  out.reviewStar = !editor().querySelector('[data-field="subject"] .req').hidden;
+  const search = editor().querySelector('input[aria-label="Konu ara"]');
+  type(search, 'kural');
+  await sleep(250);
+  out.results = editor().querySelectorAll('.ak-tf-result b').map((node) => node.textContent);
+  click(editor().querySelector('.ak-tf-result'));
+  click(byText(editor(), 'button', 'Ekle ve yeni'));
+  await sleep(20);
+  out.afterAgain = { open: Boolean(editor()), type: editor()?.querySelector('[role="radio"][aria-checked="true"]')?.dataset.type,
+    subject: editor()?.querySelector('select[aria-label="Ders"]').value };
+  click(editor().querySelector('[data-type="question_solving"]'));
+  click(byText(editor(), 'button', 'Listeye ekle'));
+  await sleep(20);
+  out.rows = dialog.querySelectorAll('.kit-row, [role="row"]').length;
+  out.a11y = audit(dialog);
+  click(byText(dialog, 'button', 'Atamayı oluştur'));
+  await sleep(60);
+  out.afterFirst = { open: Boolean(root.querySelector('.kit-dialog')), preview: dialog.querySelector('.ak-tf-preview').textContent,
+    error: dialog.querySelector('.kit-dialog-error').textContent,
+    posts: sent.filter((c) => c.method === 'POST').map((c) => c.path) };
+  click(byText(dialog, 'button', 'Atamayı oluştur'));
+  await sleep(80);
+  out.posts = sent.filter((c) => c.method === 'POST').map((c) => [c.path, c.body]);
+  out.closed = !root.querySelector('.kit-dialog .ak-tf-preview');
+  return out;
+}
+"""
+
+
+def test_plan_atamasi_ortak_form_ve_onizleme() -> None:
+    out = _run(PLAN)
+    assert out["cards"] == ["Soru çözümü", "Konu çalışma", "Kaynak", "Tekrar", "Deneme"]   # video yalnız koç görevi
+    assert out["others"] == ["Hata tekrarı", "Okuma", "Ödev", "Serbest görev"]
+    assert out["reviewError"] == "Konu seçin." and out["reviewStar"]          # kurum ataması: tekrar → konu
+    assert out["results"][0] == "Türev kuralları"
+    assert out["afterAgain"] == {"open": True, "type": "review", "subject": "MAT"}
+    assert out["a11y"] == []
+    first = out["afterFirst"]
+    assert first["open"] and first["posts"] == ["/v1/admin/plan/assignments/preview"]
+    assert "28 öğrenciye 2 görev" in first["preview"] and "Çakışma: 4 öğrencinin" in first["preview"]
+    assert first["error"].startswith("Önizleme hazır: 28 öğrenci, 4 çakışma")
+    (_, preview), (path, body) = out["posts"]
+    assert path == "/v1/admin/plan/assignments" and preview["tasks"] == body["tasks"]
+    review, questions = body["tasks"] if body["tasks"][0]["type"] == "review" else body["tasks"][::-1]
+    assert review["topicId"] == "top-turev" and review["subjectId"] == "MAT" and review["title"] == "Türev kuralları — tekrar"
+    assert questions["type"] == "question_solving" and questions["targetQuestions"] == 25 and questions["subjectId"] == "MAT"
+    assert body["target"] == {"classGroupIds": ["c1"], "studentGroupIds": [], "studentIds": []}
+    assert out["closed"]
