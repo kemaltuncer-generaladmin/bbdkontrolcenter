@@ -312,15 +312,9 @@ const INSTITUTION_GROUPS = [
     { key: 'supportHours', path: ['support', 'hours'], label: 'Çalışma saatleri', maxLength: 80,
       to: textOrNull, placeholder: 'Hafta içi 09:00–18:00' },
   ] },
+  // Sessiz saat kalktı (Akademi README §14 madde 100): bildirim, mesaj ve duyuru beklemeden gider.
   { title: 'Bildirim varsayılanları',
-    hint: 'Yeni kullanıcıların başlangıç tercihleri; herkes kendi uygulamasından değiştirebilir.', fields: [
-      { key: 'quietStart', path: ['quietHoursDefault', 'start'], label: 'Sessiz saat başlangıcı',
-        maxLength: 5, placeholder: '22:00', validate: clockRule('Sessiz saat başlangıcı'),
-        to: (value) => String(value || '').trim() },
-      { key: 'quietEnd', path: ['quietHoursDefault', 'end'], label: 'Sessiz saat bitişi', maxLength: 5,
-        placeholder: '07:30', validate: clockRule('Sessiz saat bitişi'),
-        to: (value) => String(value || '').trim(),
-        hint: 'Bu aralıkta acil olmayan bildirim sessiz gelir.' },
+    hint: 'Bildirimler hemen gider (sessiz saat yok); herkes kategorileri kendi uygulamasından seçer.', fields: [
       { key: 'notifyAbsence', path: ['attendance', 'notifyGuardiansOnAbsence'], type: 'checkbox',
         label: 'Devamsızlıkta veliye anında bildirim', to: Boolean },
       { key: 'weeklyEnabled', path: ['reports', 'weeklyReportEnabled'], type: 'checkbox',

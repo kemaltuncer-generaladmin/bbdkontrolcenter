@@ -145,6 +145,7 @@ export function settingsPutBody(current, changes = {}) {
   const body = { ...(current || {}), ...changes };
   delete body.messageEditWindowMinutes;
   delete body.updatedAt;
+  delete body.quietHours; // sessiz saat kalktı (README §14 madde 100); sunucu yok sayar
   const version = Number(body.version) || 1;
   delete body.version;
   body.expectedVersion = version;

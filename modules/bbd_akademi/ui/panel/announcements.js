@@ -64,7 +64,7 @@ export function smsFromAnnouncement(title, bodyMarkdown) {
 
 // Teslim raporu (madde 88): bekleme nedenleri ve alıcı durumları — Akademi `sms_outbox.REASON_LABELS` ile aynı dil.
 export const SMS_DEFERRED = {
-  quiet_hours: 'sessiz saat',
+  quiet_hours: 'sırada', // README §14 madde 100: artık üretilmez (eski kayıt)
   sms_budget_exceeded: 'günlük SMS bütçesi doldu',
   sms_phone_limit: 'numaranın günlük sınırı doldu',
   sms_disabled: 'SMS Kontrol Merkezi\'nde kapalı',
@@ -263,11 +263,6 @@ async function edit(app, current, onDone) {
         if (out.signature) {
           lines.push(h('span', 'ak-muted', `Metnin sonuna kurum imzası eklenir: "${out.signature.trim()}"`));
         }
-        if (out.deferredUntil) {
-          const at = new Date(out.deferredUntil).toLocaleTimeString('tr-TR',
-            { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' });
-          lines.push(h('span', 'ak-muted', `Sessiz saat: SMS'ler ${at}'de gönderilir.`));
-        }
         preview.replaceChildren(...lines);
       } catch {
         if (mine === seq) preview.replaceChildren(h('span', 'ak-muted', 'Alıcı sayısı alınamadı.'));
@@ -461,7 +456,7 @@ function detail(app, id, { onChange } = {}) {
     const result = await formDialog(app, {
       title: `“${item.title}” yayımlansın`,
       description: 'Boş bırakırsanız hemen yayımlanır. Bildirim seçiliyse alıcılara uygulama bildirimi gider.'
-        + (item.sms?.enabled ? ' SMS de gönderilecek (yalnız velilere; sessiz saatte sabahı bekler).' : ''),
+        + (item.sms?.enabled ? ' SMS de hemen gönderilecek (yalnız velilere).' : ''),
       value: { notify: true, day: '', clock: '09:00' },
       fields: [
         { key: 'day', label: 'Zamanlı yayın günü (isteğe bağlı)', type: 'date' },
