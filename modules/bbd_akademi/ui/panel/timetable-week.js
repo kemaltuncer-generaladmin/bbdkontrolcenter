@@ -35,7 +35,7 @@ import {
   DAY_LABEL, actionButton, confirmAction, dateInput, empty, errorBox, fmtDate, fmtDateTime,
   formDialog, kv, num, personName, problem, selectBox, todayIst, toolbar,
 } from './common.js';
-import { copyWeekDialog } from './timetable-copy.js';
+import { copyWeekDialog, rolloverCopyDialog } from './timetable-copy.js';
 import {
   cellKey, conflictText, slotLayout, slotTime, subjectHue, subjectIndex, subjectSelect,
   teacherOptions,
@@ -102,8 +102,16 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   disposers.push(() => viewDate.destroy());
   const copyButton = actionButton(app, 'admin_copyTimetable', 'Haftayı kopyala', {
     onClick: () => copyWeek() });
+  // Yıl sonu (iş 37): KM dönem geçişinin eşlemesiyle eski sınıfların programı yeni sınıflara.
+  const rolloverButton = typeof app.kmGet === 'function'
+    ? actionButton(app, 'admin_copyTimetable', 'Dönem geçişi kopyası', { variant: 'ghost',
+      onClick: async () => {
+        const result = await rolloverCopyDialog(app, { layout: s.layout });
+        if (result && s.started && s.loaded && !isDirty()) loadTimetable();
+      } })
+    : null;
   node.append(toolbar(field('Sınıf', classSelect.node), field('Gösterilen gün', viewDate.node),
-    h('span', 'kit-spacer'), copyButton));
+    h('span', 'kit-spacer'), rolloverButton, copyButton));
 
   // Belgeler: sınıfın KAYITLI programı (ekrandaki taslak değil) ve seçilen
   // öğretmenin bütün sınıflardaki haftası (tek istek: program ızgarası).
