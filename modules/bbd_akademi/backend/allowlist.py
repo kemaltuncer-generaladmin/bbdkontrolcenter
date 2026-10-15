@@ -2013,6 +2013,15 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-A11',),
     ),
     Operation(
+        'GET',
+        '/v1/admin/finance/installment-plans/{planId}/agreement',
+        'admin_getPlanAgreement',
+        ('finance.view',),
+        'both',
+        feature_flag='finance',
+        features=('F-A11',),
+    ),
+    Operation(
         'POST',
         '/v1/admin/finance/installment-plans/{planId}/cancel',
         'admin_cancelInstallmentPlan',
@@ -2107,6 +2116,15 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-A11',),
     ),
     Operation(
+        'GET',
+        '/v1/admin/finance/refunds/{refundId}/receipt',
+        'admin_getRefundReceipt',
+        ('finance.view',),
+        'both',
+        feature_flag='finance',
+        features=('F-A11',),
+    ),
+    Operation(
         'POST',
         '/v1/admin/finance/refunds/{refundId}/void',
         'admin_voidRefund',
@@ -2143,6 +2161,16 @@ OPERATIONS: tuple[Operation, ...] = (
         'both',
         feature_flag='finance',
         features=('F-A11', 'F-A1'),
+    ),
+    Operation(
+        'POST',
+        '/v1/admin/finance/withdrawals/{withdrawalId}/resume',
+        'admin_resumeFrozenAccount',
+        ('finance.manage',),
+        'km',
+        money=True,
+        feature_flag='finance',
+        features=('F-A11',),
     ),
     Operation(
         'GET',

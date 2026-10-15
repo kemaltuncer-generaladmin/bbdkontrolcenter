@@ -394,6 +394,11 @@ const INSTITUTION_GROUPS = [
       { key: 'overdueEvery', path: ['finance', 'overdueReminderEveryDays'],
         label: 'Gecikmede hatırlatma sıklığı (gün)', type: 'number', min: 0, max: 60, to: intOrNull,
         hint: '0: gecikme hatırlatması kendiliğinden gitmez.' },
+      { key: 'withdrawalDeduction', path: ['finance', 'withdrawalDeductionPercent'],
+        label: 'Ayrılmada kurum kesintisi (%)', type: 'number', min: 0, max: 100, required: true, to: intOrNull,
+        hint: 'Ayrılan öğrencinin iade önerisi: ödenen − okunan süre oranında hizmet bedeli − sözleşme tutarının bu '
+          + 'yüzdesi. Kayıt sözleşmenizdeki oranı yazın (yasal oranı muhasebeciniz / hukukçunuzla doğrulayın); '
+          + 'ödeme planı belgesinin koşullarında da bu oran yazar.' },
     ] },
 ];
 

@@ -139,6 +139,27 @@ models.finance_receipt = d.receiptDoc({ receiptNo: 'BBD-000123', issuedAt: '2026
     allocations: [{ chargeId: 'c', description: 'Ekim taksiti', amountMinor: 1200000 }], creditAddedMinor: 50000, creditUsedMinor: 0,
     note: null, recordedBy: { id: 'k', displayName: 'Kasa' }, voidedAt: '2026-10-13T09:00:00Z', voidReason: 'Yanlış tutar' },
   balanceAfterMinor: 0, creditAfterMinor: 50000 });
+models.finance_refund_receipt = d.refundReceiptDoc({ refundNo: 'BBD-IADE-2026-000004', issuedAt: '2026-11-20T08:00:00Z',
+  institution: { name: 'BBD Akademi', address: 'Moda', taxInfo: null }, student: stu,
+  refund: { id: 'r', refundNo: 'BBD-IADE-2026-000004', amountMinor: 1000000, method: 'transfer', status: 'completed',
+    refundedAt: '2026-11-20T08:00:00Z', reference: 'EFT-91', note: 'Veli 0532 123 45 67 IBAN', withdrawalId: 'w',
+    recordedBy: { id: 'k', displayName: 'Muhasebe' }, createdAt: '2026-11-20T08:00:00Z' },
+  withdrawal: { id: 'w', kind: 'withdrawal', effectiveDate: '2026-11-15', reason: 'Şehir değişikliği', method: 'pro_rata',
+    settlement: { applied: true, contractMinor: 9000000, paidMinor: 3000000, serviceFeeMinor: 1978022, deductionPercent: 10,
+      deductionMinor: 900000, suggestedRefundMinor: 121978, owedMinor: 0, appliedRefundMinor: 1000000,
+      overrideReason: 'Kamp günleri düşüldü', plans: [] } } });
+models.finance_plan = d.paymentPlanDoc({ issuedAt: '2026-09-01T09:00:00Z', institution: { name: 'BBD Akademi' }, student: stu,
+  guardians: [{ id: 'g1', displayName: 'Anne Yılmaz', phoneMasked: '+90 532 *** ** 67', slot: 1, relation: 'mother', primary: true }],
+  plan: { id: 'pl', title: '2026-2027 Eğitim Ücreti', totalMinor: 900000, downPaymentMinor: 100000, installmentCount: 2,
+    firstDueDate: '2026-10-05', interval: 'monthly', status: 'active', createdAt: '2026-09-01T09:00:00Z',
+    discount: { kind: 'percent', percent: 10, amountMinor: 100000, listPriceMinor: 1000000, reason: 'scholarship',
+      approvedBy: 'Müdür', appliedAt: '2026-09-01T09:00:00Z', afterCreation: false },
+    charges: [
+      { id: 'c0', kind: 'down_payment', description: 'Peşinat', amountMinor: 100000, paidMinor: 100000, remainingMinor: 0, dueDate: '2026-09-01', status: 'paid' },
+      { id: 'c1', kind: 'installment', description: 'Ekim taksiti (1/2)', amountMinor: 400000, paidMinor: 0, remainingMinor: 400000, dueDate: '2026-10-05', status: 'open' },
+      { id: 'c2', kind: 'installment', description: 'Kasım taksiti (2/2)', amountMinor: 400000, paidMinor: 0, remainingMinor: 400000, dueDate: '2026-11-05', status: 'open' },
+      { id: 'cx', kind: 'other', description: 'İptal edilen', amountMinor: 5, paidMinor: 0, remainingMinor: 0, dueDate: '2026-11-05', status: 'cancelled' }] },
+  deductionPercent: 10, clauses: ['Taksitler vadesinde ödenir.', 'Ayrılmada iade okunan süreye göre hesaplanır; %10 kesinti.'] });
 models.book_request = d.bookRequestDoc({ id: 'b', ref: 'KT-0042', student: stu, status: 'delivered',
   product: { productId: 'p', title: 'LGS Matematik Soru Bankası', isbn: '978-0', publisher: 'Yayın', priceMinor: 45000 }, quantity: 2, totalMinor: 90000,
   note: null, requestedAt: '2026-10-01T09:00:00Z', requestedBy: { id: 'g', displayName: 'Veli Yılmaz' },
@@ -331,6 +352,21 @@ def test_odev_plan_cari_kitap_kart_veli_kantin(result: dict[str, Any]) -> None:
     assert any("KURUM CARİ" in section.get("text", "") for section in statement)
     receipt = models["finance_receipt"]["document"]["parts"][0]
     assert receipt["watermark"] == "İptal" and ["Ödeme şekli", "Nakit"] in receipt["meta"]
+    refund = models["finance_refund_receipt"]["document"]["parts"][0]
+    assert refund["title"] == "İade Makbuzu" and refund["watermark"] == ""
+    assert refund["sections"][0]["items"][0]["value"] == "10.000,00 ₺"
+    assert refund["sections"][-1] == {"kind": "signatures", "items": ["Teslim eden (kurum)", "Teslim alan (veli)"]}
+    hesap = _section(models["finance_refund_receipt"], "İade hesabı (okunan süre)")["rows"]
+    assert hesap[2] == ["Kurum kesintisi %10", "−9.000,00 ₺"]
+    assert hesap[-1] == ["Yönetici düzeltmesi: Kamp günleri düşüldü", "10.000,00 ₺"]
+    plan = models["finance_plan"]["document"]["parts"][0]
+    assert plan["title"] == "Ödeme Planı" and plan["sections"][0]["items"][0]["value"] == "10.000,00 ₺"
+    takvim = _section(models["finance_plan"], "Ödeme takvimi")
+    assert [row[2] for row in takvim["rows"]] == ["Peşinat", "Ekim taksiti (1/2)", "Kasım taksiti (2/2)"]
+    assert takvim["footer"][3] == "9.000,00 ₺"
+    assert _section(models["finance_plan"], "Koşullar")["items"][1].startswith("2. Ayrılmada")
+    assert {"label": "Veli", "value": "Anne Yılmaz"} in plan["sections"][1]["items"]
+    assert plan["sections"][-1]["items"] == ["Veli (ad soyad / imza / tarih)", "Kurum yetkilisi (imza / kaşe)"]
     book = models["book_request"]["document"]["parts"][0]
     assert book["title"] == "Kitap Teslim Belgesi"
     assert book["sections"][0]["rows"][0][5] == "900,00 ₺"

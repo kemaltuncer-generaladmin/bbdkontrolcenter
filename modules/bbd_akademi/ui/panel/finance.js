@@ -30,7 +30,7 @@ import { documentButtons, previewAkademiPdf } from './documents.js';
 import { receiptDoc, statementDoc } from './documents-logic.js';
 import {
   STATEMENT_KINDS, applyPlanDiscount, closingCards, closingNote, discountBody, discountFields, discountLine,
-  exportButton, monthlyTab, recordRefund, withdrawAccount,
+  exportButton, monthlyTab, printPlanAgreement, recordRefund, withdrawAccount,
 } from './finance-closing.js';
 
 export const METHODS = { cash: 'Nakit', transfer: 'Havale / EFT', card: 'Kart (POS)', other: 'Diğer',
@@ -491,7 +491,7 @@ function accountDrawer(app, studentId, { onChange } = {}) {
         title: 'Hesaptaki alacağın aileye elle geri verildiğini kaydeder.' }),
       actionButton(app, 'admin_withdrawFinanceAccount', 'Ayrılma / dondurma', {
         onClick: () => withdrawAccount(app, data, changed),
-        title: 'Etkin tarihten sonraki taksitleri kapatır, iade edilebilir tutarı hesaplar.' }),
+        title: 'Ayrılma: okunan süre hesabıyla iade önerisi. Dondurma: taksitler askıya alınır, sonra “Kaydı yeniden başlat”.' }),
     );
 
     const kpis = kpiRow([
@@ -556,6 +556,10 @@ function planCard(app, plan, account, changed) {
     h('span', 'ak-muted', `${money(plan.totalMinor)} · ${num(plan.installmentCount)} taksit · `
       + `${INTERVALS[plan.interval] || plan.interval}${plan.downPaymentMinor ? ` · peşinat ${money(plan.downPaymentMinor)}` : ''}`),
     h('span', 'kit-spacer'));
+  // Kayıt sözleşmesi eki: öğrenci, veli, liste fiyatı, indirim, taksit tablosu, koşullar, imza alanı.
+  head.append(actionButton(app, 'admin_getPlanAgreement', 'Ödeme planı belgesi', { variant: 'ghost',
+    title: 'İmzaya hazır ödeme planı (kayıt sözleşmesi eki) — önizle / yazdır.',
+    onClick: (event) => printPlanAgreement(app, plan, event?.currentTarget || null) }));
   if (plan.status === 'active' && !plan.discount) {
     head.append(actionButton(app, 'admin_applyPlanDiscount', 'İndirim / burs', { variant: 'ghost',
       onClick: () => applyPlanDiscount(app, plan, changed) }));
