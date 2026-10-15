@@ -178,7 +178,7 @@ function buildPatch(groups, dirtyKeys, draft, original) {
  * Kart kart gruplanmış ayar formu + kaydet şeridi. Her grup ayrı `formGrid`
  * (kendi kirli takibiyle); "Kaydet" yalnız değişenleri tek PATCH'te yollar.
  */
-function settingsTab(app, spec) {
+export function settingsTab(app, spec) {
   const node = h('div', `ak-stack${spec.className ? ` ${spec.className}` : ''}`);
   let original = null;
   let grids = [];
@@ -380,7 +380,7 @@ const INSTITUTION_GROUPS = [
         hint: 'Eski hata silinmeden bu kadar gün önce öğrenciye “eski hataların temizlenecek” bildirimi gider.' },
     ] },
   { title: 'Kurum finansı', className: 'ak-money-finance',
-    hint: 'Yalnız kurum carisi; kantin hesabını etkilemez.', fields: [
+    hint: 'Yalnız kurum carisi; kantin hesabını etkilemez. Hatırlatmanın SMS ile de gitmesi: Ayarlar › SMS.', fields: [
       { key: 'receiptPrefix', path: ['finance', 'receiptPrefix'], label: 'Makbuz öneki', maxLength: 12,
         placeholder: 'BBD', hint: 'Makbuz numarasının başı (ör. BBD-2026-000123).' },
       { key: 'bookDueDays', path: ['finance', 'bookChargeDueDays'], label: 'Kitap kalemi vadesi (gün)',
@@ -512,7 +512,8 @@ const FEATURES = {
   early_warning: ['Erken uyarı', 'Düşüş gösteren öğrenciler için uyarı listesi.'],
   guardian_mistake_images: ['Velinin hata defteri görselleri',
     'Öğrenci paylaşırsa veli hata defterindeki görselleri görür.'],
-  attendance_notifications: ['Veliye yoklama bildirimi', 'Gelmedi / geç kaldı bildirimi veliye gider (SMS yok).'],
+  attendance_notifications: ['Veliye yoklama bildirimi',
+    'Gelmedi / geç kaldı bildirimi veliye uygulama bildirimi olarak gider; devamsızlık SMS\'i gönderilmez (kurum kararı).'],
   attendance_signals: ['Varlık ipuçları', 'Kantin ve tablet hareketlerinden "kurumda" ipucu (canlı tarama).'],
   bell_plan_sync: ['Zil planı eşitleme', 'Ders programından üretilen zil planı Kontrol Merkezi\'ne itilir.'],
   coaching: ['Koçluk', 'Koç eşlemesi, haftalık program ve koçluk kartı.'],

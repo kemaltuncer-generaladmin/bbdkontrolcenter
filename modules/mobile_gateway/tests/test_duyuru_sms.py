@@ -81,3 +81,22 @@ async def test_budget_phone_and_minute_limits(client: httpx.AsyncClient, service
 async def test_canteen_failure_is_502(client: httpx.AsyncClient, world: World) -> None:
     world.canteen.sms_sent = False
     expect_error(await send(client), 502, "sms_failed")
+
+
+async def test_payment_and_exam_purposes_share_budget(client: httpx.AsyncClient, service: GatewayService,
+                                                      store: Any) -> None:
+    """bbd-akademi madde 88: ödeme hatırlatması ve deneme sonucu aynı uçtan, aynı bütçeden; OTP özeti saymaz."""
+    service.text_sms_daily_budget = 3
+    for purpose in ("payment_reminder", "exam_result"):
+        r = await client.post("/sms/send", json={"phone": MOTHER, "text": "Odeme hatirlatmasi", "purpose": purpose})
+        assert r.status_code == 200, r.text
+    rows = (await table(store, "sms_log"))[-2:]
+    assert [row["purpose"] for row in rows] == ["payment_reminder", "exam_result"]
+    health = (await client.get("/sms/health")).json()
+    assert health["sent"] == 0
+    assert health["textSms"] == {"enabled": True, "dailyBudget": 3, "used": 2, "remaining": 1, "perPhonePerDay": 5}
+    expect_error(await send(client, phone=FATHER, text="a" * 200), 429, "sms_budget_exceeded")
+    service.text_sms_enabled = False
+    disabled = expect_error(await send(client), 403, "sms_disabled")
+    assert disabled["retryAfterSeconds"] == 3600
+    assert (await client.get("/sms/health")).json()["textSms"]["enabled"] is False

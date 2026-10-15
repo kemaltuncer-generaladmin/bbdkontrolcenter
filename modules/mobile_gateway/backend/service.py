@@ -2098,17 +2098,19 @@ class GatewayService:
 
     async def send_text(self, phone: str, text: str, purpose: str,
                         caller: Caller) -> dict[str, Any]:
-        """Duyuru SMS'i (bbd-akademi README §14 madde 81): serbest metin, veli telefonuna, olağan hat.
+        """Kurum SMS'i (bbd-akademi README §14 madde 81, 88): serbest metin, veli telefonuna, olağan hat.
+        `purpose`: `announcement` | `payment_reminder` | `exam_result` — hepsi aynı bütçeden.
 
         Metin ASCII'ye indirilir (Netgsm olağan hattında Türkçe harf parçayı 160'tan 70'e düşürür), en çok
         `TEXT_SMS_MAX_UNITS` birim. KM'nin SMS bütçesi (`announcement_sms`): son 24 saatte toplam
         `daily_budget` SMS (parça) → `429 sms_budget_exceeded`; telefon başına günde `per_phone_per_day`
         → `429 sms_phone_limit`; dakikada `per_minute` → `429 rate_limited` (geçici). Kapalıysa
-        `403 sms_disabled`. Her gönderim `sms_log`a `purpose=announcement` ile yazılır (telefon maskeli,
+        `403 sms_disabled`. Her gönderim `sms_log`a `purpose` ile yazılır (telefon maskeli,
         metin yazılmaz); OTP sağlık özeti bunları saymaz.
         """
         if not self.text_sms_enabled:
-            raise GatewayError(403, "sms_disabled", "Duyuru SMS'i Kontrol Merkezi'nde kapalı.")
+            raise GatewayError(403, "sms_disabled", "Kurum SMS'i Kontrol Merkezi'nde kapalı.",
+                               retryAfterSeconds=3600)
         normalized = normalize_phone(phone)
         if normalized is None:
             raise validation("Telefon 5XXXXXXXXX biçiminde olmalı.", "phone")
@@ -2139,13 +2141,13 @@ class GatewayService:
             await log("rate_limited", "budget")
             retry = math.ceil(((budget.oldest or now) + DAY_MS - now) / 1000)
             raise GatewayError(429, "sms_budget_exceeded",
-                               "Kontrol Merkezi'nin günlük duyuru SMS bütçesi doldu.",
+                               "Kontrol Merkezi'nin günlük kurum SMS bütçesi doldu.",
                                retryAfterSeconds=max(1, retry))
         daily = await self.repo.window("text_sms_phone_day", subject, now - DAY_MS)
         if daily.count >= self.text_sms_per_phone_per_day and daily.oldest is not None:
             await log("rate_limited", "phone_day")
             raise GatewayError(429, "sms_phone_limit",
-                               "Bu numaraya bugün çok fazla duyuru SMS'i gönderildi.",
+                               "Bu numaraya bugün çok fazla kurum SMS'i gönderildi.",
                                retryAfterSeconds=max(1, math.ceil((daily.oldest + DAY_MS - now) / 1000)))
         await self.repo.hit("text_sms_minute", "*", now)
         await self.repo.hit("text_sms_phone_day", subject, now)
@@ -2241,8 +2243,20 @@ class GatewayService:
         })
         return {"reset": True, "clearedHour": hour.count, "clearedDay": day.count}
 
+    async def text_sms_budget(self) -> dict[str, Any]:
+        """Kurum SMS bütçesi (bbd-akademi README §14 madde 88): son 24 saatte kullanılan / kalan SMS parçası.
+        Akademi yönetici SMS ekranı (Ayarlar › SMS) ve duyuru önizlemesi bunu gösterir."""
+        used = (await self.repo.window("text_sms_budget", "*", self.now_ms() - DAY_MS)).count
+        return {
+            "enabled": self.text_sms_enabled,
+            "dailyBudget": self.text_sms_daily_budget,
+            "used": used,
+            "remaining": max(0, self.text_sms_daily_budget - used),
+            "perPhonePerDay": self.text_sms_per_phone_per_day,
+        }
+
     async def sms_health(self) -> dict[str, Any]:
-        """Son 1 saatin OTP özeti + Netgsm paket/kredi (izleme/alarm için, kişisel veri yok)."""
+        """Son 1 saatin OTP özeti + Netgsm paket/kredi (izleme/alarm için, kişisel veri yok) + kurum SMS bütçesi."""
         now = self.now_ms()
         stats = await self.repo.sms_stats(now - HOUR_MS)
         balance: dict[str, Any] = {}
@@ -2258,6 +2272,7 @@ class GatewayService:
                 "ok": bool(balance.get("ok")),
                 "smsCount": sms_count if isinstance(sms_count, int) else None,
             },
+            "textSms": await self.text_sms_budget(),
         }
 
     # ========================================================= §8 genel ayarlar

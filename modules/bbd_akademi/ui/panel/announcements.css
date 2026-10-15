@@ -5,3 +5,4 @@
 .ak-ann-sms-count { font-variant-numeric: tabular-nums; }
 .ak-ann-sms-count.over { color: var(--kit-bad, #b42318); font-weight: 600; }
 .ak-ann-sms-preview { display: flex; flex-direction: column; gap: 2px; }
+.ak-ann-warn { color: var(--warn); }

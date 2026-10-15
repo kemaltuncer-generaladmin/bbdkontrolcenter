@@ -78,7 +78,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /sms/otp/{jobId}` | 200 `{jobId, status: pending\|delivered\|failed, channel, sentAt, deliveredAt, deliverySeconds, checkedAt}` | 404 `sms_not_found`, 422 |
 | `GET /sms/health` | 200 son 1 saat `{sent, delivered, deliveryFailed, pending, sendFailed, rateLimited, avgDeliverySeconds, maxDeliverySeconds, balance: {ok, smsCount}}` | — |
 | `POST /sms/limits/reset` | 200 `{reset, clearedHour, clearedDay}` (denetimli) | 422 |
-| `POST /sms/send` | 200 `{sent: true, segments, jobId?, channel?}` — duyuru SMS'i (`purpose: "announcement"`) | 403 `sms_disabled`, 422, 429 `rate_limited` / `sms_phone_limit` / `sms_budget_exceeded`, 502 `sms_failed`, 503 |
+| `POST /sms/send` | 200 `{sent: true, segments, jobId?, channel?}` — kurum SMS'i (`purpose`: `announcement` \| `payment_reminder` \| `exam_result`) | 403 `sms_disabled`, 422, 429 `rate_limited` / `sms_phone_limit` / `sms_budget_exceeded`, 502 `sms_failed`, 503 |
 | `GET /events?after=&limit=` | 200 `{items: [KmEvent], lastSeq, hasMore}` — KM outbox'undan çekme (webhook'un yedeği; zarf webhook ile aynı), `limit` 1–500 | 410 `events_expired` (`after` 14 günlük saklamadan eski → tam uzlaştırma), 422, 503 `capability_missing` (`events.outbox`) |
 | `GET /settings/public` | 200 kurum adı, saat dilimi, özellikler | — |
 
@@ -171,7 +171,11 @@ yan yana gösterir. İzinler: `mobile_gateway.events.view` (admin, bbd_staff),
   `sms_budget_exceeded`; telefon başına günde `per_phone_per_day` (5) → 429 `sms_phone_limit`; dakikada
   `per_minute` (120) → 429 `rate_limited` (Akademi kuyruğu bekleyip yeniden dener); `enabled: false` →
   403 `sms_disabled`. `Idempotency-Key` (Akademi: alıcı satırı) aynı SMS'in ikinci kez gitmesini önler.
-  Kayıt `sms_log`'a `purpose=announcement` (maskeli, metin yazılmaz); `/sms/health` OTP özeti bunları saymaz.
+  Kayıt `sms_log`'a `purpose` ile (maskeli, metin yazılmaz); `/sms/health` OTP özeti bunları saymaz.
+  Madde 88: `purpose` ayrıca `payment_reminder` (ödeme hatırlatması) ve `exam_result` (deneme sonucu) —
+  hepsi aynı bütçeden; `/sms/health` yanıtında `textSms {enabled, dailyBudget, used, remaining,
+  perPhonePerDay}` (Akademi Ayarlar › SMS bütçe kartı ve duyuru önizlemesi okur); `sms_disabled`
+  `retryAfterSeconds: 3600` taşır. Akademi bütçe / telefon sınırı / kapalı yanıtında SMS'i kaybetmez, bekletir.
 - Öğrenci çağırma: aynı öğrenci 60 sn içinde ikinci kez çağrılamaz (429).
 - Akışlarda `nextSince` kantinin imlecidir (epoch-ms gelir, ISO +03:00'a
   çevrilir; vermezse satırlardan hesaplanır). Kantinin `updatedSince` sınırı
