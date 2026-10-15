@@ -12,9 +12,11 @@ import { badge } from '../../ui-kit/layout.js';
 import { newKey } from './api.js';
 import { gradeText, num } from './common.js';
 
+// Deneme türünün TEK adı (Akademi V17): Akademi şablon ucu `ExamTemplate.name` (`exams/templates.py`
+// `TYPE_NAMES`), uygulama (React / Flutter `ExamTypes.label`) ve panel aynı adı yazar.
 export const EXAM_TYPES = {
-  lgs: 'LGS', tyt: 'TYT', ayt_say: 'AYT · Sayısal', ayt_ea: 'AYT · Eşit ağırlık',
-  ayt_soz: 'AYT · Sözel', ayt_dil: 'AYT · Dil (YDT)', midterm: 'Ara sınav', internal: 'Kurum içi',
+  lgs: 'LGS', tyt: 'TYT', ayt_say: 'AYT Sayısal', ayt_ea: 'AYT Eşit Ağırlık',
+  ayt_soz: 'AYT Sözel', ayt_dil: 'YDT (AYT Dil)', midterm: 'Ara sınav (yazılı)', internal: 'Kurum içi',
 };
 
 export const EXAM_STATUS = {

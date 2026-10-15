@@ -29,6 +29,7 @@ import {
   weekStart,
 } from './common.js';
 import { goalDialog } from './coaching-students.js';
+import { EXAM_TYPES } from './exams-shared.js';
 import { documentButtons } from './documents.js';
 import { studentCurriculumSet } from './curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';
@@ -41,8 +42,8 @@ export const STUDENT_STATUS = { active: ['Aktif', 'good'], inactive: ['Pasif (KM
 /** KM pasifleştirme gerekçesi (sözleşme `StudentStatusReason`). */
 export const STATUS_REASONS = { left: 'Ayrıldı', graduated: 'Mezun', suspended: 'Geçici durduruldu',
   other: 'Diğer' };
-export const EXAM_TYPES = { lgs: 'LGS', tyt: 'TYT', ayt_say: 'AYT Sayısal', ayt_ea: 'AYT Eşit ağırlık',
-  ayt_soz: 'AYT Sözel', ayt_dil: 'AYT Dil', midterm: 'Yazılı', internal: 'Kurum içi' };
+/** Deneme türü adı tek tablodan (`exams-shared.js`; Akademi V17). */
+export { EXAM_TYPES };
 export const ATTENDANCE = { present: ['Geldi', 'good'], absent: ['Gelmedi', 'bad'], late: ['Geç kaldı', 'warn'],
   excused: ['İzinli', 'info'] };
 export const HOMEWORK_STATUS = { pending: ['Bekliyor', 'info'], completed: ['Teslim edildi', 'good'],
