@@ -140,7 +140,7 @@ export function section(app) {
     if (!slot.booking) {
       box.append(actionButton(app, 'admin_bookParentMeetingSlot', 'Veli adına randevu', { variant: 'ghost',
         onClick: () => bookFor(slot) }),
-      actionButton(app, 'admin_cancelParentMeetingSlot', 'Kapat', { variant: 'ghost', onClick: () => closeFree(slot) }));
+      actionButton(app, 'admin_cancelParentMeetingSlot', 'Saati kapat', { variant: 'ghost', onClick: () => closeFree(slot) }));
     } else if (slot.booking.status === 'scheduled') {
       box.append(actionButton(app, 'admin_cancelParentMeetingSlot', 'Randevuyu iptal et', { variant: 'ghost',
         onClick: () => cancelBooked(slot) }));
@@ -157,7 +157,7 @@ export function section(app) {
 
   async function closeFree(slot) {
     const ok = await confirmAction(app, { title: 'Saat kapatılsın mı?', description: 'Boş saat silinir.',
-      confirmLabel: 'Kapat', danger: true });
+      confirmLabel: 'Saati kapat', danger: true });
     if (!ok) return;
     const result = await runAction(app, () => app.api.post(`/v1/admin/parent-meeting-slots/${slot.id}/cancel`,
       { reason: null }), { success: 'Saat kapatıldı.' });

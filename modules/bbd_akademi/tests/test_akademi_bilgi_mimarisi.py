@@ -95,7 +95,8 @@ def test_en_fazla_alti_ust_bolum(result: dict[str, Any]) -> None:
     nav = dict(result["navAll"])
     assert list(nav) == result["areas"]
     # Hoca soruları (Akademi §14 madde 63): öğrencinin hocaya sorusu, yanıt metin + görsel + ses.
-    assert nav["today"] == ["dashboard", "requests", "announcements", "questions", "messages"]
+    # Veli toplantısı randevu takvimi (Akademi §14 madde 90) talepler izniyle.
+    assert nav["today"] == ["dashboard", "requests", "parentMeetings", "announcements", "questions", "messages"]
     # Koçluk (KM-4): öğretmen = koç; kuyruk, kart, haftalık program, koçlar, kütüphane, görüşmeler.
     assert nav["students"] == ["students", "coaching"]
     # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
