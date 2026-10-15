@@ -54,6 +54,9 @@ def test_ozellikler_kantin_anahtari_anlasilir_ve_kapatilir() -> None:
     assert "Kantin (veli ve öğrenci uygulamasında)" in out["rowText"]
     assert "Kapalıyken veli ve öğrenci kantini HİÇ görmez" in out["rowText"]
     assert "Kantin kasası ve Kontrol Merkezi kantin modülü etkilenmez" in out["rowText"]
+    # Akademi README §14 madde 99: ödeme talepleri ayrı anahtar; QR / kod hiçbir durumda gösterilmez
+    assert "kantin ödeme talepleri ayrı anahtardır" in out["rowText"]
+    assert "QR kartını / kodunu" in out["rowText"]
     assert out["a11y"] == []
     assert "kapatılsın mı" in out["dialogText"]
     assert "Kantin kasası ve Kontrol Merkezi kantin modülü çalışmaya devam eder" in out["dialogText"]
