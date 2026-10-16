@@ -13,13 +13,13 @@
 // · Öneriler (`admin_listLibraryProposals`): koçların kuruma önerdiği kişisel
 //   öğeler; onayda kurum kopyası açılır, koça bildirim (`admin_decideLibraryProposal`).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, chipRow, skeletonRows } from '../../ui-kit/layout.js';
-import { problem } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, chipRow, skeletonRows } from '../../../ui-kit/layout.js';
+import { problem } from '../api.js';
 import {
   CURRICULUM_EXAMS, GRADE_LEVELS, actionButton, confirmAction, errorBox, fileDrop, fmtDateTime, formDialog, gradeText, kv,
   multiChips, openDrawer, optionsOf, pagedList, runAction, searchBox, selectBox, statusBadge, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   LIBRARY_KINDS, LIBRARY_SCOPES, LIBRARY_STATUS, PROPOSAL_STATUS, clockText, libraryInput, pct, playlistIdOf,
 } from './coaching-logic.js';
@@ -298,7 +298,7 @@ export async function itemDialog(app, item = null) {
   };
   const packEditor = () => {
     const box = h('div', 'ak-stack');
-    import('./plan-tasks.js').then(({ taskListField, taskBody }) => {
+    import('../plan-tasks.js').then(({ taskListField, taskBody }) => {
       const field = taskListField(app, { mode: 'date', tasks: state.tasks.map((task) => ({ ...task })),
         onChange: (tasks) => { state.tasks = tasks.map((task) => taskBody(task, 'date')); } });
       box.append(field.node);

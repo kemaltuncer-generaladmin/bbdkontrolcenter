@@ -8,16 +8,16 @@
 //   koç sorularının yanıtları dahil) ve koç yorumu yazdırır (`admin_commentCheckin`,
 //   öğrenciye bildirim; öğrenci ekranında "Koçunun yorumu").
 
-import { button, dialogA11y, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, hintBox, skeletonRows } from '../../ui-kit/layout.js';
-import { problem } from './api.js';
+import { button, dialogA11y, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, hintBox, skeletonRows } from '../../../ui-kit/layout.js';
+import { problem } from '../api.js';
 import {
   actionButton, errorBox, fmtDateTime, kv, loader, openDrawer, pagedList, runAction, selectBox, todayIst,
   toolbar, weekStart,
-} from './common.js';
+} from '../common.js';
 import { CHECKIN_KINDS, addDaysIso, checkinQuestion, weekLabel } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
-import { templateTools, textareaForm } from './shared/text-templates.js';
+import { templateTools, textareaForm } from '../shared/text-templates.js';
 
 const SET = '/v1/admin/coaching/checkin-questions';
 

@@ -39,9 +39,9 @@
 // gezinmesinde Koçluk grubunun haplarıdır (kontrol kuyruğu, haftalık program …), şerit gizlenir.
 // Saf mantık `coaching-logic.js`'tedir (Node ile sınanır).
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { emptyState, skeletonRows, tabBar } from '../../ui-kit/layout.js';
-import { actionButton, errorBox, sectionHead } from './common.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { emptyState, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
+import { actionButton, errorBox, sectionHead } from '../common.js';
 
 const TABS = [
   { key: 'queue', label: 'Kuyruk', read: ['admin_getCoachQueue', 'admin_listCoachReviews'], file: './coaching-queue.js' },

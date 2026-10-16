@@ -10,10 +10,10 @@
 // Video izlemek puan, seri ya da rozet kazandırmaz; izlenme yalnız Akademi'deki
 // izleme kayıtlarından gelir (YouTube verisinden metrik türetilmez).
 
-import { button, dialogA11y, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, chipRow } from '../../ui-kit/layout.js';
-import { problem } from './api.js';
-import { selectBox } from './common.js';
+import { button, dialogA11y, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, chipRow } from '../../../ui-kit/layout.js';
+import { problem } from '../api.js';
+import { selectBox } from '../common.js';
 import { VIDEO_WARNINGS, clockText, parseClock, playlistIdOf } from './coaching-logic.js';
 
 /** Çözülmüş video kartı. */

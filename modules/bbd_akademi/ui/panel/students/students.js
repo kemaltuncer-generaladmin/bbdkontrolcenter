@@ -42,7 +42,7 @@ import { locatePart, studentCard } from '../sections.js';
 import { learningPanel } from './students-learning.js';
 import { flashcardsPanel } from './students-flashcards.js';
 import { goalsPanel } from './students-goals.js';
-import { coachingPanel } from '../students-coaching.js';
+import { coachingPanel } from '../coaching/students-coaching.js';
 
 /** Gömülebilir panel (`fn(app, studentId)` → {node, shown, destroy}) çekmece sekmesi olur. */
 // (`ctx.app` pasif öğrencide salt okunur görünümdür — `readOnlyApp`.)

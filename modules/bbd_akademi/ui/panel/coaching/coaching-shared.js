@@ -5,10 +5,10 @@
 // artan aralıkla yoklanır; PDF yeni pencerede açılır.
 // `coachOptions`: koç seçeneği (`admin_listCoaches`; öğretmen = koç, ETag'li).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { badge, progress } from '../../ui-kit/layout.js';
-import { AkademiError, openBlob, problem, saveBlob } from './api.js';
-import { statusBadge } from './common.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { badge, progress } from '../../../ui-kit/layout.js';
+import { AkademiError, openBlob, problem, saveBlob } from '../api.js';
+import { statusBadge } from '../common.js';
 import { RISK } from './coaching-logic.js';
 
 export const COACHES = '/v1/admin/coaching/coaches';

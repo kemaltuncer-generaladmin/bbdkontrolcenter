@@ -51,7 +51,7 @@ process.stdout.write(JSON.stringify(out));
 def test_saf_mantik(tmp_path: Path) -> None:
     if shutil.which("node") is None:
         pytest.skip("node kurulu değil")
-    (tmp_path / "mistake-inbox-logic.mjs").write_bytes((PANEL / "mistake-inbox-logic.js").read_bytes())
+    (tmp_path / "mistake-inbox-logic.mjs").write_bytes((PANEL / "coaching/mistake-inbox-logic.js").read_bytes())
     (tmp_path / "run.mjs").write_text(LOGIC, encoding="utf-8")
     done = subprocess.run(["node", "run.mjs"], cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False)
     assert done.returncode == 0, done.stderr
@@ -83,7 +83,7 @@ def test_vekil_izin_listesi_ve_km_izni() -> None:
     assert ops["admin_answerMistake"].multipart is False
     assert ops["admin_answerMistake"].path == "/v1/admin/mistake-inbox/{mistakeId}/answers"
     sections = (PANEL / "sections.js").read_text(encoding="utf-8")
-    assert "key: 'mistakeInbox'" in sections and "./mistake-inbox.js" in sections
+    assert "key: 'mistakeInbox'" in sections and "./coaching/mistake-inbox.js" in sections
 
 
 UI = PRELUDE + r"""
@@ -122,7 +122,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     has: () => true, can: (id) => client.can(id), go: () => {}, openPanel: () => {}, capability: () => null,
     feature: () => false, enabled: () => true, onDispose: () => {},
     lookups: { teachers: async () => [], staff: async () => [], async options() { return teachers; } } };
-  const { section } = await load('./panels/bbd_akademi/mistake-inbox.js');
+  const { section } = await load('./panels/bbd_akademi/coaching/mistake-inbox.js');
   const view = section(app);
   root.append(view.node);
   view.shown();

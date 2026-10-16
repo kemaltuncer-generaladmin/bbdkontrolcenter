@@ -103,7 +103,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     return history[0];
   };
   const { app, root, toasts } = await makeApp(load, document);
-  const { coachingPanel } = await load('./panels/bbd_akademi/students-coaching.js');
+  const { coachingPanel } = await load('./panels/bbd_akademi/coaching/students-coaching.js');
   const panel = coachingPanel(app, 'stu-1');
   root.append(panel.node);
   panel.shown();

@@ -13,13 +13,13 @@
 // · Düzenle / kaldır (`admin_updateVideoPoolItem`, `admin_deleteVideoPoolItem`): KM her öğeyi (yönetici kapsamı;
 //   `coach_library.curate` / `video_pool.curate`). Kaldırılan video gönderilmiş görevleri etkilemez.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, skeletonRows } from '../../ui-kit/layout.js';
-import { problem } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, skeletonRows } from '../../../ui-kit/layout.js';
+import { problem } from '../api.js';
 import {
   GRADE_LEVELS, actionButton, confirmAction, errorBox, fmtDateTime, formDialog, gradeText, kv, multiChips, openDrawer,
   optionsOf, pagedList, runAction, searchBox, selectBox, toolbar,
-} from './common.js';
+} from '../common.js';
 import { POOL_SORTS, clockText, poolBulkChunks, poolBulkSummary, poolTagsBody } from './coaching-logic.js';
 import { videoCard } from './coaching-video.js';
 
@@ -118,7 +118,7 @@ async function openItem(app, row, { onChange }) {
 const topicField = (app, form) => ({ key: '_topic', label: 'Ders ve konu (müfredattan)', type: 'custom', wide: true,
   render: () => {
     const holder = h('div');
-    import('./shared/task-form.js').then(({ subjectTopicField }) => {
+    import('../shared/task-form.js').then(({ subjectTopicField }) => {
       holder.append(subjectTopicField(app, { form, onChange: () => {} }).node);
     }).catch((failure) => holder.append(alertBox(problem(failure), 'bad')));
     return holder;

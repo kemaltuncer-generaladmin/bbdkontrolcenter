@@ -11,19 +11,19 @@
 // (`admin_createCoachMeeting`). Not penceresinde "Şablondan doldur" / "Şablon olarak
 // kaydet" (Akademi README §14 madde 115).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { badge, skeletonRows } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { badge, skeletonRows } from '../../../ui-kit/layout.js';
 import {
   actionButton, clockInput, dateInput, errorBox, fmtDateTime, formDialog, istanbulStamp, kv, openDrawer,
   optionsOf, pagedList, selectBox, statusBadge, studentPicker, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   GOAL_EXAM_TYPES, GOAL_KINDS, MEETING_DECISIONS, MEETING_MODES, MEETING_PARTICIPANTS, MEETING_STATUS,
   NOTE_VISIBILITY, REQUESTED_BY, TASK_TYPES, goalBody, meetingDecisionBody,
 } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
 import { meetingDialog } from './coaching-students.js';
-import { templateField } from './shared/text-templates.js';
+import { templateField } from '../shared/text-templates.js';
 
 export function tab(app) {
   const node = h('div', 'ak-stack');

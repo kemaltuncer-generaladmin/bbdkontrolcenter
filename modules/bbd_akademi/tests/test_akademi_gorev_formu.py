@@ -240,7 +240,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     feature: () => false, enabled: () => true, onDispose: () => {},
     lookups: { classGroups: async () => [], studentGroups: async () => [], terms: async () => [],
       subjects: async () => [{ id: 'MAT', name: 'Matematik' }, { id: 'FIZ', name: 'Fizik' }] } };
-  const { section } = await load('./panels/bbd_akademi/coaching.js');
+  const { section } = await load('./panels/bbd_akademi/coaching/coaching.js');
   const view = section(app);
   root.append(view.node);
   view.shown({ coachingTab: 'week', student });

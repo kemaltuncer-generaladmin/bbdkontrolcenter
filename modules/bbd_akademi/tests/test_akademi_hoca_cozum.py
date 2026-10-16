@@ -72,7 +72,7 @@ process.stdout.write(JSON.stringify(out));
 def _node_logic(folder: Path) -> dict[str, Any]:
     if shutil.which("node") is None:
         pytest.skip("node kurulu değil")
-    (folder / "questions-logic.mjs").write_bytes((PANEL / "questions-logic.js").read_bytes())
+    (folder / "questions-logic.mjs").write_bytes((PANEL / "coaching/questions-logic.js").read_bytes())
     (folder / "run.mjs").write_text(LOGIC, encoding="utf-8")
     done = subprocess.run(
         ["node", "run.mjs"], cwd=folder, capture_output=True, text=True, timeout=60, check=False
@@ -184,7 +184,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     has: () => true, can: (id) => client.can(id), go: () => {}, openPanel: () => {}, capability: () => null,
     feature: () => false, enabled: () => true, onDispose: () => {},
     lookups: { teachers: async () => [], staff: async () => [], async options() { return teachers; } } };
-  const { section } = await load('./panels/bbd_akademi/questions.js');
+  const { section } = await load('./panels/bbd_akademi/coaching/questions.js');
   const view = section(app);
   root.append(view.node);
   view.shown();

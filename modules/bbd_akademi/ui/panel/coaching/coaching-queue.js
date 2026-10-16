@@ -12,13 +12,13 @@
 // da süzgece (`admin_bulkApproveCoachTasks`, en çok 200; öğrenci başına tek
 // özet bildirim).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, chipRow, hintBox } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, chipRow, hintBox } from '../../../ui-kit/layout.js';
 import {
   actionButton, fmtDate, fmtDateTime, formDialog, kv, openDrawer, optionsOf, pagedList, runAction,
   selectBox, statusBadge, toolbar, todayIst,
-} from './common.js';
-import { newKey } from './api.js';
+} from '../common.js';
+import { newKey } from '../api.js';
 import {
   PRIORITY, QUEUE_KINDS, REACTIONS, REVIEW_STATUS, TASK_TYPES, bulkApproveBody, clockText, minutesText, pct,
   resultText, reviewBody, taskDetail,

@@ -12,21 +12,21 @@
 //     `plan-templates.js`); "Öğrencilere ata" koç görevi olarak önizlemeli toplu atama (`templateAssignDialog`).
 //     Haftalık programda "Şablondan ekle" ve "Bu haftayı şablon olarak kaydet" de bu şablonları kullanır.
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, chipRow, hintBox, skeletonRows } from '../../ui-kit/layout.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, chipRow, hintBox, skeletonRows } from '../../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, errorBox, fmtDateTime, formDialog, kv, openDrawer, optionsOf, runAction, searchBox,
   selectBox, staticList, toolbar,
-} from './common.js';
+} from '../common.js';
 import { NOTE_VISIBILITY } from './coaching-logic.js';
-import { invalidateTemplates } from './shared/text-templates.js';
+import { invalidateTemplates } from '../shared/text-templates.js';
 import {
   ACTION_KINDS, KIND_LABELS, MAX_LENGTH, PLACEHOLDER_LABELS, SCOPE_LABELS, SCOPE_TONES, TEXT_TEMPLATES, TEXTS,
   actionsText, filterTemplates, preview, templateBody,
-} from './shared/text-templates-logic.js';
+} from '../shared/text-templates-logic.js';
 
 export function tab(app, ctx = {}) {
-  loadStyles(import.meta.url, 'shared/text-templates.css');
+  loadStyles(import.meta.url, '../shared/text-templates.css');
   const node = h('div', 'ak-stack');
   const views = [
     app.can('admin_listCoachTextTemplates') && { key: 'text', label: 'Metin şablonları' },
@@ -44,7 +44,7 @@ export function tab(app, ctx = {}) {
         const slot = h('div', 'ak-stack');
         slot.append(skeletonRows(5, 4));
         program = { node: slot, destroy: () => {} };
-        import('./plan-templates.js').then(async (module) => {
+        import('../plan-templates.js').then(async (module) => {
           const instance = module.templatesTab(app, ctx);
           const assign = actionButton(app, 'admin_previewTemplateAssignment', 'Öğrencilere ata (koç görevi)', {
             variant: 'ghost', onClick: () => import('./coaching-week.js').then((week) => week.templateAssignDialog(app)) });

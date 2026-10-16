@@ -25,15 +25,15 @@
 //
 // DERİN BAĞLANTI: `shown({coachingTab})` — coach · notes · shared · evaluations · selfReviews.
 
-import { button, clip, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, hintBox, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { groupedBar, lineChart, sparkline } from '../../ui-kit/charts.js';
+import { button, clip, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, hintBox, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { groupedBar, lineChart, sparkline } from '../../../ui-kit/charts.js';
 import {
   actionButton, addDays, confirmAction, empty, fmtDate, fmtDateTime, formDialog, kv, loader, num, openDrawer,
   optionsOf, pagedList, runAction, selectBox, statusBadge, todayIst, toolbar, weekStart,
-} from './common.js';
-import { featureNotice, ruleName, ruleValue, severityBadge, statusBadgeOf } from './insights-shared.js';
+} from '../common.js';
+import { featureNotice, ruleName, ruleValue, severityBadge, statusBadgeOf } from '../insights-shared.js';
 
 const SUBTABS = [
   { key: 'coach', label: 'Koç', read: 'admin_listStudentCoachHistory' },

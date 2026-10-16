@@ -152,7 +152,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   const out = {};
 
   // Koçluk → Şablonlar sekmesi.
-  const { section } = await load('./panels/bbd_akademi/coaching.js');
+  const { section } = await load('./panels/bbd_akademi/coaching/coaching.js');
   const view = section(app);
   root.append(view.node);
   view.shown({ coachingTab: 'templates' });
@@ -174,7 +174,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   out.created = sent.filter((c) => c.path === '/v1/admin/coaching/text-templates' && c.method === 'POST').map((c) => c.body);
 
   // Tebrik penceresi: şablondan doldur → gönder; sonra şablon olarak kaydet.
-  const { kudosDialog } = await load('./panels/bbd_akademi/coaching-students.js');
+  const { kudosDialog } = await load('./panels/bbd_akademi/coaching/coaching-students.js');
   const pending = kudosDialog(app, student);
   await sleep(60);
   dialog = root.querySelectorAll('.kit-dialog').pop();
@@ -205,7 +205,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   out.kudos = sent.filter((c) => c.path === '/v1/admin/students/stu-1/kudos').map((c) => c.body);
 
   // Haftalık program → Bu haftayı şablon olarak kaydet.
-  const { saveWeekTemplate } = await load('./panels/bbd_akademi/coaching-week.js');
+  const { saveWeekTemplate } = await load('./panels/bbd_akademi/coaching/coaching-week.js');
   const saving = saveWeekTemplate(app, student, '2026-10-14');
   await sleep(60);
   dialog = root.querySelectorAll('.kit-dialog').pop();

@@ -17,13 +17,13 @@
 // "Dışa aktar" (`admin_exportCoaching`): koç performansı, dönem raporları,
 // haftalık programlar — ortak dışa aktarım işi olarak iner.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, chipRow, hintBox, kpiRow, tabBar } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, chipRow, hintBox, kpiRow, tabBar } from '../../../ui-kit/layout.js';
 import {
   GRADE_LEVELS, actionButton, dateInput, errorBox, exportJob, fmtDate, fmtDateTime, formDialog, gradeText, kv,
   loader, multiChips, openDrawer, optionsOf, pagedList, searchBox, selectBox, staticList, statusBadge, todayIst, toolbar,
-} from './common.js';
-import { loadTargets, targetsField } from './plan-tasks.js';
+} from '../common.js';
+import { loadTargets, targetsField } from '../plan-tasks.js';
 import {
   BULK_ACTIONS, EXPORT_FORMATS, EXPORT_KINDS, SUBMISSION_DIGEST, bulkAssignBody, exportBody, hoursText, pct,
   profilePut,

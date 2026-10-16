@@ -20,7 +20,7 @@
 // Metinler Flutter (`coaching_strings.dart`) ↔ React (`features/coaching/strings.ts`)
 // ↔ KM aynıdır.
 
-import { taskInput } from '../coaching-logic.js';
+import { taskInput } from '../coaching/coaching-logic.js';
 
 /** Tür adları (kartlar ve listeler). */
 export const TYPE_LABELS = {

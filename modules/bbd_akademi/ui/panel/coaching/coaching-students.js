@@ -11,12 +11,12 @@
 // İç sekmeler: hedef önerileri (geri çek), tebrikler, görüşmeler, sorular ve
 // "Öğrencinin gördüğü" (öğrenci/veli koçluk görünümü `students_getCoachingOverview`).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, hintBox, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, hintBox, kpiRow, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
 import {
   actionButton, clockInput, confirmAction, errorBox, fmtDate, fmtDateTime, formDialog, istanbulStamp,
   kv, loader, openDrawer, optionsOf, pagedList, runAction, searchBox, selectBox, statusBadge, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   EXAM_TREND, GOAL_EXAM_TYPES, GOAL_KINDS, GOAL_STATUS, MEETING_DURATIONS, MEETING_MODES, MEETING_PARTICIPANTS, MEETING_STATUS,
   REACTIONS, RISK, TERM_RESULT, badgeText, goalBody, goalText, pct,
@@ -24,8 +24,8 @@ import {
 import { coachOptions, coachingJob, riskBadge, studentCell } from './coaching-shared.js';
 import { questionsDialog } from './coaching-checkins.js';
 import { openCoachTask } from './coaching-week.js';
-import { problem } from './api.js';
-import { templateField } from './shared/text-templates.js';
+import { problem } from '../api.js';
+import { templateField } from '../shared/text-templates.js';
 
 const SORTS = { risk: 'Risk önce', adherence: 'Uyumu düşük önce', name: 'Ada göre', last_activity: 'Son etkinlik' };
 

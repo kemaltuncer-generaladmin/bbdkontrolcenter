@@ -107,7 +107,7 @@ process.stdout.write(JSON.stringify(out));
 def _node_logic(folder: Path) -> dict[str, Any]:
     if shutil.which("node") is None:
         pytest.skip("node kurulu değil")
-    (folder / "coaching-logic.mjs").write_bytes((PANEL / "coaching-logic.js").read_bytes())
+    (folder / "coaching-logic.mjs").write_bytes((PANEL / "coaching/coaching-logic.js").read_bytes())
     (folder / "run.mjs").write_text(LOGIC, encoding="utf-8")
     done = subprocess.run(["node", "run.mjs"], cwd=folder, capture_output=True, text=True, timeout=60,
                           check=False)
@@ -296,7 +296,7 @@ export default async function ({ document, audit, sleep, api, load }) {
         const mapped = list.map((item) => ({ value: item.id, label: item.name }));
         return empty !== undefined ? [{ value: '', label: empty }, ...mapped] : mapped;
       } } };
-  const { section } = await load('./panels/bbd_akademi/coaching.js');
+  const { section } = await load('./panels/bbd_akademi/coaching/coaching.js');
   const view = section(app);
   root.append(view.node);
   view.shown();

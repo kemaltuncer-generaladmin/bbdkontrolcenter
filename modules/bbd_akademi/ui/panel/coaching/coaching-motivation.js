@@ -6,14 +6,14 @@
 // · Haftalık kutlama (`admin_listCelebrationCandidates`, uyum ≥ %90): adaylar
 //   seçilir ve tek mesajla toplu tebrik gider (`admin_bulkKudos`, en çok 200).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { badge, card, chipRow, hintBox } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { badge, card, chipRow, hintBox } from '../../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, formDialog, runAction, selectBox, staticList, todayIst, toolbar, weekStart,
-} from './common.js';
+} from '../common.js';
 import { BADGE_ICONS, REACTIONS, addDaysIso, pct, weekLabel } from './coaching-logic.js';
 import { coachOptions, setEnabled, studentCell } from './coaching-shared.js';
-import { templateField } from './shared/text-templates.js';
+import { templateField } from '../shared/text-templates.js';
 
 const BADGES = '/v1/admin/coaching/badges';
 

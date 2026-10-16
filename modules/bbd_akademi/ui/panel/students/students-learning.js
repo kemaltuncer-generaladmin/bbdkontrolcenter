@@ -509,7 +509,7 @@ function mistakesTab(app, studentId) {
   // Hata defterinden koç görevi: "Hata tekrarı" türü, seçili ders ve varsayılan 10 hata (ortak görev formu).
   const assign = app.can('admin_saveCoachWeek') && app.can('admin_getCoachWeek')
     ? button('Hata tekrarı görevi ver', { variant: 'primary', onClick: async () => {
-      const { openCoachTask } = await import('../coaching-week.js');
+      const { openCoachTask } = await import('../coaching/coaching-week.js');
       await openCoachTask(app, { id: studentId }, { seed: { type: 'mistake_review', subjectId: filters.subject || '',
         mistakeCount: 10 } });
     } }) : null;

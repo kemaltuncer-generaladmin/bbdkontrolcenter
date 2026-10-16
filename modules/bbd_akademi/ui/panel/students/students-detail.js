@@ -28,7 +28,7 @@ import {
   optionsOf, pagedList, percent, personName, runAction, selectBox, statusBadge, todayIst, toolbar,
   weekStart,
 } from '../common.js';
-import { goalDialog } from '../coaching-students.js';
+import { goalDialog } from '../coaching/coaching-students.js';
 import { EXAM_TYPES } from '../exams-shared.js';
 import { documentButtons, financeToolbar } from '../documents.js';
 import { studentCurriculumSet } from '../shared/curriculum-set.js';

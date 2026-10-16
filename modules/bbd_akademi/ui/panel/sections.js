@@ -76,38 +76,38 @@ export const SECTIONS = [
   { key: 'students', label: 'Öğrenciler', file: './students/students.js', requires: ['view'], area: 'students',
     kmOnly: true },
   // Koçluk (KM-4; öğretmen = koç). `host: 'coaching'` hapları koçluk ekranının (coaching.js) sekmeleridir.
-  { key: 'coachQueue', label: 'Kontrol kuyruğu', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachQueue', label: 'Kontrol kuyruğu', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_getCoachQueue', 'admin_listCoachReviews'],
     payload: { coachingTab: 'queue' } },
-  { key: 'coachWeek', label: 'Haftalık program', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachWeek', label: 'Haftalık program', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_getCoachWeek'], payload: { coachingTab: 'week' } },
-  { key: 'coachStudents', label: 'Koçluk öğrencileri', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachStudents', label: 'Koçluk öğrencileri', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachingStudents'], claims: ['studentId'],
     payload: { coachingTab: 'students' } },
   // Hoca soruları (Akademi README §14 madde 63): öğrencinin hocaya sorusu; yanıt metin + görsel + sesli not.
-  { key: 'questions', label: 'Hoca soruları', file: './questions.js', requires: ['learning'], area: 'coaching',
+  { key: 'questions', label: 'Hoca soruları', file: './coaching/questions.js', requires: ['learning'], area: 'coaching',
     feature: 'coach_questions' },
   // Hata defteri gelen kutusu (Akademi README §14 madde 104): öğrencinin yeni hata kayıtları + öğretmen adına çözüm
   // (metin, görsel, sesli not, PDF, video bağlantısı).
-  { key: 'mistakeInbox', label: 'Hata defteri gelen kutusu', file: './mistake-inbox.js', requires: ['learning'],
+  { key: 'mistakeInbox', label: 'Hata defteri gelen kutusu', file: './coaching/mistake-inbox.js', requires: ['learning'],
     area: 'coaching', feature: 'coach_questions' },
   // Mesaj denetimi (F-K15 moderasyon + F-K21 denetim): şikâyet kuyruğu, karar, kilit, gerekçeli arama.
-  { key: 'coachMeetings', label: 'Görüşmeler', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachMeetings', label: 'Görüşmeler', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachMeetings'], payload: { coachingTab: 'meetings' } },
-  { key: 'coachCoaches', label: 'Koçlar ve atama', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachCoaches', label: 'Koçlar ve atama', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoaches', 'admin_bulkAssignCoach'],
     payload: { coachingTab: 'coaches' } },
-  { key: 'coachLibrary', label: 'Kütüphane', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachLibrary', label: 'Kütüphane', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachLibrary', 'admin_listLibraryProposals', 'admin_listVideoPool'],
     payload: { coachingTab: 'library' } },
   // 16.10.2026 (Akademi README §14 madde 115): Check-in bu hapın ikinci görünümüdür — 10 hap sınırında "Şablonlar"a
   // yer açıldı (eski `coachCheckins` adı ALIASES'ta).
-  { key: 'coachMotivation', label: 'Tebrik ve check-in', file: './coaching.js', requires: ['view'],
+  { key: 'coachMotivation', label: 'Tebrik ve check-in', file: './coaching/coaching.js', requires: ['view'],
     area: 'coaching', feature: 'coaching', host: 'coaching',
     reads: ['admin_listCoachBadges', 'admin_listCelebrationCandidates', 'admin_listCheckins', 'admin_getCheckinQuestionSet'],
     payload: { coachingTab: 'motivation' } },
   // Koçluk şablonları (Akademi README §14 madde 115): metin şablonları + program şablonları tek yerde.
-  { key: 'coachTemplates', label: 'Şablonlar', file: './coaching.js', requires: ['view'], area: 'coaching',
+  { key: 'coachTemplates', label: 'Şablonlar', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachTextTemplates', 'admin_listStudyPlanTemplates'],
     payload: { coachingTab: 'templates' } },
   { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],

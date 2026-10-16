@@ -9,19 +9,19 @@
 //
 // Saf mantık `questions-logic.js`'tedir (Node ile sınanır).
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, chipRow } from '../../ui-kit/layout.js';
-import { AkademiError, newKey, problem } from './api.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, chipRow } from '../../../ui-kit/layout.js';
+import { AkademiError, newKey, problem } from '../api.js';
 import {
   actionButton, confirmAction, fmtDateTime, formDialog, multiChips, openDrawer, pagedList, personName,
   runAction, sectionHead, selectBox, statusBadge, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   FILTERS, ROUTES, SLA, STATUS, answerBody, answerSummary, checkPart, clock, contextLabel,
   defaultResponder, filterQuery, MAX_ATTACHMENTS, MAX_VOICE_SECONDS, partKind, recorderMime,
   settingsPutBody, slaLevel, uploadFields,
 } from './questions-logic.js';
-import { templateTools, textareaForm } from './shared/text-templates.js';
+import { templateTools, textareaForm } from '../shared/text-templates.js';
 
 const QUESTIONS = '/v1/admin/coaching/questions';
 

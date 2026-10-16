@@ -8,13 +8,13 @@
 //
 // Saf mantık `mistake-inbox-logic.js`'tedir (Node ile sınanır); dosya / ses parçaları `questions.js` ile ortak.
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, chipRow } from '../../ui-kit/layout.js';
-import { newKey, problem } from './api.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, chipRow } from '../../../ui-kit/layout.js';
+import { newKey, problem } from '../api.js';
 import {
   actionButton, confirmAction, fmtDateTime, openDrawer, pagedList, personName, runAction, sectionHead, selectBox,
   statusBadge, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   answerBody, answerSummary, defaultResponder, FILTERS, filterQuery, MAX_ATTACHMENTS, MAX_VOICE, mistakeLabel,
   ROUTES, STATUS, uploadFields, validVideoUrl,

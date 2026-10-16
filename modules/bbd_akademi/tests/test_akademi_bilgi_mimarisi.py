@@ -147,14 +147,14 @@ def test_hicbir_ekran_kaybolmadi(result: dict[str, Any]) -> None:
     assert {payload["coachingTab"] for _, _, payload in hosted.values()} == {
         "queue", "students", "week", "coaches", "library", "motivation", "templates", "meetings"}, (
         "koçluk ekranının sekmelerinin hepsi hap olmalı")
-    assert {(host, file) for host, file, _ in hosted.values()} == {("coaching", "./coaching.js")}
+    assert {(host, file) for host, file, _ in hosted.values()} == {("coaching", "./coaching/coaching.js")}
 
 
 def test_kocluk_haplari_ekranin_sekmeleriyle_ayni_kurali_tasir() -> None:
     """Koçluk hapı, coaching.js sekmesiyle AYNI okuma işlemlerine bakar: hap görünüp sekme
     görünmezse (ya da tersi) tıklama yanlış sekmeye düşerdi."""
     import re
-    coaching = (PANEL / "coaching.js").read_text(encoding="utf-8")
+    coaching = (PANEL / "coaching/coaching.js").read_text(encoding="utf-8")
     tabs = {key: sorted(re.findall(r"'([^']+)'", reads)) for key, reads in
             re.findall(r"\{ key: '(\w+)', label: '[^']+', read: \[([^\]]*)\]", coaching)}
     sections = (PANEL / "sections.js").read_text(encoding="utf-8")
