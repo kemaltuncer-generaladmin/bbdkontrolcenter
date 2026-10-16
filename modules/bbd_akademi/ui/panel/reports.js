@@ -33,10 +33,15 @@ export const REPORTS = [
     ['Koç performansı ve dışa aktarım', 'Koç yük tablosu, performans metrikleri; dönem raporları ve haftalık '
       + 'programların dışa aktarımı.', 'coachCoaches', null],
   ] },
+  // Finans raporlarının hepsinde aynı araç çubuğu: Önizle · Yazdır · PDF kaydet (63-finans-pdf).
   { group: 'Finans', icon: 'wallet', tone: 'orange', items: [
-    ['Aylık finans raporu', 'Ay ay tahakkuk, tahsilat ve açık bakiye (kurum carisi; kantin ayrı).', 'finance',
-      { tab: 'monthly' }],
-    ['Gecikenler', 'Vadesi geçmiş taksitler ve öğrenciler.', 'finance', { tab: 'overdue' }],
+    ['Aylık finans raporu', 'Ay ay tahakkuk, tahsilat ve açık bakiye (kurum carisi; kantin ayrı). '
+      + 'PDF önizle, yazdır, kaydet; Excel.', 'finance', { tab: 'monthly' }],
+    ['Cari hesaplar', 'Süzgece uyan bütün cari hesaplar, sınıf ara toplamlarıyla (PDF).', 'finance',
+      { tab: 'accounts' }],
+    ['Tahsilatlar', 'Dönemin tahsilatları, yöntem kırılımı ve iptaller (PDF).', 'finance', { tab: 'payments' }],
+    ['Gecikenler — borç yaşlandırma', 'Vadesi geçmiş borçlar 1–30 / 31–60 / 61–90 / 90+ gün dilimlerinde (PDF).',
+      'finance', { tab: 'overdue' }],
   ] },
   { group: 'Kurum', icon: 'gear', tone: 'slate', items: [
     ['Denetim kaydı', 'Kim, ne zaman, neyi değiştirdi — Akademi denetim kaydı.', 'settings', { tab: 'audit' }],

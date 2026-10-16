@@ -14,6 +14,9 @@ import {
   parseMoney, stampIso, toaster, todayIso,
 } from './kit.js';
 import { createPicker } from './picker.js';
+// Öğle yemeği kantin carisine borç yazar: finansal rapordur. Tek tip araç
+// çubuğu "Önizle · Yazdır · PDF kaydet" (63-finans-pdf, `ui-kit/report.js`).
+import { reportToolbar } from '../../ui-kit/report.js';
 
 loadStyles(import.meta.url);
 
@@ -469,6 +472,24 @@ function switchTab(name) {
 
 // ------------------------------------------------------------------ mount
 
+// ------------------------------------------------------------- PDF raporları
+
+async function morePages(result, first, last) {
+  const data = await api('/api/bbd_lunch/report/pages', {
+    method: 'POST', body: { path: result.path, first, last }, timeoutSeconds: 120 });
+  if (!data?.ok) throw new Error(data?.error || 'Sayfalar alınamadı.');
+  return data.pages || [];
+}
+
+/** Aylık rapor (takvimdeki ay) ya da gün dökümü (seçili gün) araç çubuğu. */
+function pdfTools(kind, title, extra) {
+  const produce = ({ preview, orientation }) => api('/api/bbd_lunch/report', {
+    method: 'POST', timeoutSeconds: 300,
+    body: { kind, preview, orientation, classes: Object.fromEntries(classMap), ...extra() },
+  });
+  return reportToolbar({ root: nodes.root, api, toast, produce, morePages, title }).node;
+}
+
 export function mount(root, ctx) {
   api = ctx.api;
   capability = ctx.capability;
@@ -521,7 +542,10 @@ export function mount(root, ctx) {
     onToggleHoliday: toggleHoliday,
   });
   const side = h('div', 'lu-side');
-  side.append(calendar.node);
+  const monthReport = h('div', 'lu-report');
+  monthReport.append(h('div', 'lu-field-label', 'Aylık rapor (takvimdeki ay)'),
+    pdfTools('month', 'Aylık öğle yemeği raporu', () => ({ month: calendar.month() })));
+  side.append(calendar.node, monthReport);
   split.append(side);
 
   const work = h('div', 'lu-work');
@@ -536,7 +560,8 @@ export function mount(root, ctx) {
   });
   const headLeft = h('div', 'lu-day-left');
   headLeft.append(nodes.dayTitle, nodes.dayMeta);
-  dayHead.append(headLeft, h('span', 'lu-spacer'), nodes.holidayNote, nodes.holiday);
+  dayHead.append(headLeft, h('span', 'lu-spacer'), nodes.holidayNote,
+    pdfTools('day', 'Öğle yemeği gün dökümü', () => ({ day: selectedDay })), nodes.holiday);
   work.append(dayHead);
 
   const tabBar = h('div', 'lu-tabs');

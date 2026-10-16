@@ -87,11 +87,83 @@ export async function selectLocalPrinter(name) {
  * vermesine gerek yoktur ve YAZICI SEÇME PENCERESİ AÇILMAZ. Basılabilecek
  * yazıcı yoksa sebebini söyleyen bir hata fırlar; `printerReady` ile önceden
  * sorup düğmeyi kapatmak, kullanıcıyı tıklayıp hata almaktan kurtarır.
+ *
+ * YAZDIRMA PENCERESİ (finansal raporlar — `report.js` → `printDialog`):
+ * `printer` bu cihazda kurulu bir yazıcıyı seçer (boşsa yukarıdaki kural),
+ * `pages` sayfa aralığıdır ("1-3, 5"; boş = bütün sayfalar), `copies` 1–20.
+ * Aralık kabukta yeniden doğrulanır; komuta serbest metin gitmez.
  */
-export async function printDocument(api, path, { copies = 1 } = {}) {
+export async function printDocument(api, path, { copies = 1, printer = '', pages = '' } = {}) {
   const invoke = invoker();
   if (!path) throw new Error('Basılacak dosya belirtilmedi.');
+  const problem = pageRangeError(pages);
+  if (problem) throw new Error(problem);
   const doc = await api('/api/outputs/document', { method: 'POST', body: { path } });
   if (!doc?.data) throw new Error('Belge alınamadı.');
-  return invoke('printer_print', { data: doc.data, name: doc.name || 'belge.pdf', copies });
+  return invoke('printer_print', {
+    data: doc.data, name: doc.name || 'belge.pdf',
+    copies: Math.max(1, Math.min(20, Number(copies) || 1)),
+    printer: printer || null, pages: String(pages || '').trim() || null,
+  });
+}
+
+/**
+ * Sayfa aralığı metni geçerli mi? Geçerliyse boş metin, değilse sebep.
+ * Kural `printing.rs` → `page_ranges` ile aynı: "1-3, 5"; 1 ≤ a ≤ b ≤ 9999.
+ */
+export function pageRangeError(text) {
+  const compact = String(text || '').replace(/\s+/g, '');
+  if (!compact) return '';
+  const message = `Sayfa aralığı anlaşılamadı: “${String(text).trim()}”. Örnek: 1-3, 5 (boş bırakılırsa bütün sayfalar).`;
+  const parts = compact.split(',').filter(Boolean);
+  if (!parts.length || parts.length > 50) return message;
+  for (const part of parts) {
+    const match = /^(\d{1,4})(?:-(\d{1,4}))?$/.exec(part);
+    if (!match) return message;
+    const start = Number(match[1]);
+    const end = match[2] === undefined ? start : Number(match[2]);
+    if (start < 1 || end < start) return message;
+  }
+  return '';
+}
+
+/** Önerilen dosya adı: yol ayracı atılır, `.pdf` garanti edilir, Türkçe harf kalır. */
+export function pdfFileName(name) {
+  let base = String(name || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').trim().replace(/^\.+|\.+$/g, '');
+  if (!base) base = 'rapor';
+  base = base.slice(0, 120);
+  return /\.pdf$/i.test(base) ? base : `${base}.pdf`;
+}
+
+/**
+ * Sunucuda üretilmiş PDF'i BU CİHAZA kaydeder.
+ *
+ * Masaüstünde işletim sisteminin kaydet penceresi açılır (`printing.rs` →
+ * `pdf_save`); vazgeçilirse `{cancelled: true}`. Tarayıcıda (web) dosya
+ * indirilir. Dönen `path` kaydedilen yerdir — kullanıcıya söylenir ki
+ * dosyayı aramak zorunda kalmasın.
+ *
+ * @returns {Promise<{path:string, cancelled:boolean, name:string}>}
+ */
+export async function savePdf(api, path, name = '') {
+  if (!path) throw new Error('Kaydedilecek dosya belirtilmedi.');
+  const doc = await api('/api/outputs/document', { method: 'POST', body: { path } });
+  if (!doc?.data) throw new Error('Belge alınamadı.');
+  const fileName = pdfFileName(name || doc.name || 'rapor.pdf');
+  if (canPrintLocally()) {
+    const saved = await invoker()('pdf_save', { data: doc.data, name: fileName });
+    return { path: saved || '', cancelled: !saved, name: fileName };
+  }
+  const binary = atob(doc.data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return { path: '', cancelled: false, name: fileName };
 }

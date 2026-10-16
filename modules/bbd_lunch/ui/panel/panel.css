@@ -193,6 +193,9 @@
   background: var(--tint);
 }
 
+/* Aylık PDF raporu (63-finans-pdf) — takvimin altında. */
+.lu-report { display: grid; gap: 6px; margin-top: 14px; }
+
 .lu-work { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 /* --------------------------------------------------------------- takvim */

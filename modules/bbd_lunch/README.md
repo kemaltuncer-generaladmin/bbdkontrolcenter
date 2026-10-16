@@ -26,6 +26,12 @@ girilmişten ayırt edilemez: aynı işlem satırı, aynı cari borç, aynı sto
   porsiyon ancak açık onayla (`allowRepeat`) girilir.
 - **Geri alma silme değildir.** Kantinde ters cari kayıt yazılır, stok iade
   edilir, işlem "iptal" damgalanır. Ne kantinde ne burada satır silinir.
+- **PDF raporları (63-finans-pdf).** Aylık öğle yemeği raporu (takvimdeki ay:
+  gün gün porsiyon/tutar, öğrenci başına — sınıf ara toplamı) ve gün dökümü
+  (başarısız / geri alınan satırlar sebebiyle). Yalnız işlenmiş ve geri
+  alınmamış yemek toplama girer; kaynak modülün kendi tablolarıdır (kantine ek
+  istek yok). Ortak araç çubuğu "Önizle · Yazdır · PDF kaydet";
+  `POST /api/bbd_lunch/report`, `POST …/report/pages`. Kantin parasıdır (A12).
 
 - Sözleşme: `module.yaml` · Giriş noktası: `backend/module.py` → `register(ctx)`
 - Kurallar: [../../CLAUDE.md](../../CLAUDE.md) · Kılavuz: [../../docs/module-guide.md](../../docs/module-guide.md)

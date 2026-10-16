@@ -14,13 +14,20 @@
 // ERİŞİLEBİLİRLİK: önizleme penceresi `role=dialog`, `aria-modal`; açılınca
 // odak "Yazdır"a gelir, Tab pencere içinde döner, Esc kapatır ve odak pencereyi
 // açan düğmeye geri döner. Sayfa görüntülerinin `alt` metni sayfa numarasıdır.
+//
+// ÖNİZLEME PENCERESİ ORTAKTIR (63-finans-pdf): `ui-kit/report.js` →
+// `pdfViewer` — sayfalar, yakınlaştırma, sayfa sayısı, kaydırdıkça kalan
+// sayfalar (`POST /km/documents/pages`), "PDF kaydet" (cihazın kaydet
+// penceresi). Finansal raporlar `financeToolbar` ile tek tip araç çubuğu
+// alır: "Önizle" · "Yazdır" (yazıcı, kopya, sayfa aralığı, dikey/yatay) ·
+// "PDF kaydet". Diğer belgelerin "Yazdır"ı eskisi gibi doğrudan basar.
 
 import { button, h } from '../../ui-kit/kit.js';
 import { canPrintLocally, printDocument, printerReady } from '../../ui-kit/printing.js';
-import { fileOf, problem, saveBlob } from './api.js';
+import { closePdfViewer, pdfViewer, reportToolbar } from '../../ui-kit/report.js';
+import { problem } from './api.js';
 
 const TIMEOUT = 300;
-let open = null;          // tek açık önizleme (report.js ile aynı kural)
 
 function styles() {
   // Panel CSS'i mount içinde yüklenir; bu küçük ek kural seti `ak-doc-` önekli.
@@ -64,16 +71,9 @@ function trapFocus(container, close, opener) {
   };
 }
 
-async function produce(app, model, { preview }) {
+async function produce0(app, model, { preview }) {
   return app.api.km('/documents/preview', { method: 'POST', timeoutSeconds: TIMEOUT,
     body: { kind: model.kind, document: model.document, preview } });
-}
-
-/** Üretilmiş PDF'i (sunucudaki yol) bu cihaza indirir. */
-async function savePdf(app, result) {
-  const doc = await app.coreApi('/api/outputs/document', { method: 'POST', body: { path: result.path } });
-  if (!doc?.data) throw new Error('Belge alınamadı.');
-  saveBlob(fileOf({ filename: result.name, contentType: 'application/pdf', dataBase64: doc.data }));
 }
 
 async function sendToPrinter(app, result) {
@@ -114,106 +114,25 @@ function progressDialog(app, title, opener) {
   };
 }
 
-/** Önizleme penceresi: sayfalar + Yazdır + PDF kaydet + Kapat. */
-export function showPreview(app, result, { opener } = {}) {
-  styles();
-  open?.close();
-  const overlay = h('div', 'kit-overlay kit-preview');
-  const frame = h('div', 'kit-preview-frame ak-doc-frame');
-  frame.setAttribute('role', 'dialog');
-  frame.setAttribute('aria-modal', 'true');
-  frame.tabIndex = -1;
-  const name = h('span', 'kit-preview-name', result.name || 'Belge');
-  name.id = `ak-doc-title-${Date.now()}`;
-  frame.setAttribute('aria-labelledby', name.id);
+/** Önizlemenin kalan sayfaları (kaydırdıkça). */
+function morePages(app) {
+  return async (result, first, last) => {
+    const data = await app.api.km('/documents/pages', { method: 'POST', timeoutSeconds: 120,
+      body: { path: result.path, first, last } });
+    if (!data?.ok) throw new Error(data?.error || 'Sayfalar alınamadı.');
+    return data.pages || [];
+  };
+}
 
-  const note = h('span', 'kit-preview-note', 'Yazıcı durumu okunuyor…');
-  note.setAttribute('aria-live', 'polite');
-  const printBtn = button('Yazdır', { variant: 'primary' });
-  printBtn.disabled = true;
-  const saveBtn = button('PDF kaydet', { title: 'Belgeyi PDF olarak bu cihaza kaydeder.' });
-  const closeBtn = button('Kapat', { variant: 'ghost' });
-  const head = h('div', 'kit-preview-head');
-  head.append(name, h('span', 'kit-spacer'), note, printBtn, saveBtn, closeBtn);
-
-  const body = h('div', 'kit-preview-body');
-  const pages = result.pages || [];
-  pages.forEach((src, index) => {
-    const image = h('img', 'kit-preview-page');
-    image.src = src;
-    image.alt = `Sayfa ${index + 1}`;
-    image.loading = index > 1 ? 'lazy' : 'eager';
-    body.append(image);
-  });
-  if (!pages.length) {
-    body.append(h('div', 'kit-hint', result.previewError
-      || 'Önizleme üretilemedi. Belge yine de hazırlandı; yazdırabilir ya da PDF olarak kaydedebilirsiniz.'));
-  }
-  const foot = h('div', 'kit-preview-foot ak-doc-meta');
-  const total = Number(result.pageCount || pages.length || 0);
-  foot.textContent = [
-    result.number ? `Belge no: ${result.number}` : '',
-    total ? `${total} sayfa${pages.length && pages.length < total ? ` · ilk ${pages.length} sayfa gösteriliyor` : ''}` : '',
-    result.parts > 1 ? `${result.parts} belge tek iş` : '',
-  ].filter(Boolean).join(' · ');
-
-  frame.append(head, body, foot);
-  overlay.append(frame);
-  app.root.append(overlay);
-
-  const release = trapFocus(frame, () => close(), opener);
-  function close() {
-    release();
-    overlay.remove();
-    if (open?.overlay === overlay) open = null;
-  }
-  closeBtn.addEventListener('click', close);
-  overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
-  open = { overlay, close };
-  frame.focus();
-
-  saveBtn.addEventListener('click', async () => {
-    saveBtn.disabled = true;
-    try {
-      await savePdf(app, result);
-      app.toast?.(`${result.name} kaydedildi.`, 'good');
-    } catch (error) {
-      app.toast?.(problem(error, 'PDF kaydedilemedi.'), 'bad');
-    } finally {
-      saveBtn.disabled = false;
-    }
-  });
-
-  printBtn.addEventListener('click', async () => {
-    printBtn.disabled = true;
-    note.classList.remove('bad');
-    note.textContent = 'Yazıcıya gönderiliyor…';
-    try {
-      const printer = await sendToPrinter(app, result);
-      note.textContent = `${printer} yazıcısına gönderildi.`;
-      app.toast?.(`${printer} yazıcısına gönderildi.`, 'good');
-    } catch (error) {
-      note.textContent = problem(error, 'Yazdırılamadı.');
-      note.classList.add('bad');
-    } finally {
-      printBtn.disabled = false;
-    }
-  });
-
-  printerReady().then((status) => {
-    if (!overlay.isConnected) return;
-    if (!status.ready) {
-      note.textContent = status.error || 'Yazıcıya ulaşılamıyor.';
-      note.classList.add('bad');
-      printBtn.disabled = true;
-      saveBtn.focus();
-      return;
-    }
-    note.textContent = status.name || 'Yazıcı hazır';
-    printBtn.disabled = false;
-    printBtn.focus();
-  });
-  return { close };
+/**
+ * Önizleme penceresi (ortak `pdfViewer`): sayfalar + yakınlaştırma + Yazdır +
+ * PDF kaydet + Kapat. `regenerate` verilirse yazdırma penceresinde yön seçilir.
+ * `direct` (varsayılan): "Yazdır" eskisi gibi pencere açmadan basar.
+ */
+export function showPreview(app, result, { opener = null, regenerate = null, direct = !regenerate,
+  orientation = 'portrait' } = {}) {
+  return pdfViewer({ root: app.root, api: (path, options) => app.coreApi(path, options), result,
+    toast: app.toast, opener, morePages: morePages(app), regenerate, direct, orientation });
 }
 
 /**
@@ -240,7 +159,7 @@ export async function runDocument(app, build, { print = false, title = 'Belge', 
   busy.step(1, 1, direct ? 'Belge yazıcıya hazırlanıyor…' : 'Önizleme hazırlanıyor…');
   let result;
   try {
-    result = await produce(app, model, { preview: !direct });
+    result = await produce0(app, model, { preview: !direct });
   } catch (error) {
     busy.close();
     app.toast?.(problem(error, 'Belge üretilemedi.'), 'bad');
@@ -253,7 +172,9 @@ export async function runDocument(app, build, { print = false, title = 'Belge', 
     return null;
   }
   if (!direct) {
-    showPreview(app, result, { opener });
+    showPreview(app, result, { opener, orientation: model.document.orientation || 'portrait',
+      regenerate: async ({ orientation }) => produce0(app,
+        { kind: model.kind, document: { ...model.document, orientation } }, { preview: true }) });
     return result;
   }
   try {
@@ -301,6 +222,32 @@ export function documentButtons(app, { build, title = 'Belge', label = '', disab
   return node;
 }
 
+/**
+ * Finansal raporların tek tip araç çubuğu: "Önizle" · "Yazdır" · "PDF kaydet"
+ * (`ui-kit/report.js` → `reportToolbar`). `build(progress, state)` ekrandaki
+ * SÜZGEÇLERLE veriyi okuyup `{kind, document}` döndürür; yön (dikey/yatay)
+ * yazdırma penceresinden gelir ve modele yazılır.
+ *
+ * @param {object} app
+ * @param {{build: Function, title?: string, label?: string, orientation?: string, blocked?: () => string}} spec
+ */
+export function financeToolbar(app, { build, title = 'Rapor', label = '', orientation = 'portrait',
+  blocked = null } = {}) {
+  const produce = async ({ preview, orientation: chosen }) => {
+    const model = await build(() => {}, { cancelled: false });
+    if (!model?.document) return { ok: false, error: `${title} için yazdırılacak kayıt yok.` };
+    const document = { ...model.document, orientation: chosen || model.document.orientation || orientation };
+    try {
+      return await produce0(app, { kind: model.kind, document }, { preview });
+    } catch (error) {
+      return { ok: false, error: problem(error, 'Belge üretilemedi.') };
+    }
+  };
+  const bar = reportToolbar({ root: app.root, api: (path, options) => app.coreApi(path, options),
+    toast: app.toast, produce, morePages: morePages(app), title, label, orientation, blocked });
+  return bar.node;
+}
+
 /** Akademi'nin kendi PDF'ini (makbuz, ekstre, sipariş belgesi) önizleme penceresinde açar. */
 export async function previewAkademiPdf(app, { kind, url, name = '', opener = null }) {
   const busy = progressDialog(app, 'Belge', opener);
@@ -325,5 +272,5 @@ export async function previewAkademiPdf(app, { kind, url, name = '', opener = nu
 
 /** Ekran kapanınca açık pencere kalmasın. */
 export function closeDocumentPreview() {
-  open?.close();
+  closePdfViewer();
 }

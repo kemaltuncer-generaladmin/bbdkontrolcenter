@@ -1,0 +1,35 @@
+/* Rapor önizleme, yazdırma penceresi ve araç çubuğu (`report.js`).
+   Kitin önizleme çerçevesini (`.kit-preview-*`, kit.css) genişletir; burada
+   yalnız yakınlaştırma, parça parça sayfa ve yazdırma penceresi durur.
+   Kâğıt her zaman beyazdır — tema belgeye karışmaz. */
+
+.kit-rv-toolbar { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.kit-rv-toolbar .kit-btn[aria-busy="true"] { cursor: progress; }
+
+.kit-rv-frame { width: min(1100px, 100%); }
+.kit-rv-head { flex-wrap: wrap; row-gap: 6px; }
+.kit-rv-zoom { display: inline-flex; align-items: center; gap: 2px; }
+.kit-rv-zoom .kit-btn { min-width: 30px; padding-inline: 8px; }
+.kit-rv-zoom-label {
+  min-width: 46px;
+  text-align: center;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.kit-rv-body { align-items: center; }
+.kit-rv-body .kit-preview-page { flex: 0 0 auto; }
+.kit-rv-more { align-self: center; margin: 4px 0 12px; }
+.kit-rv-foot { display: flex; flex-wrap: wrap; gap: 2px; align-items: baseline; }
+
+.kit-rv-print { width: min(520px, 100%); }
+.kit-rv-print-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin: 14px 0 6px;
+}
+.kit-rv-print-grid .kit-rv-field:first-child { grid-column: 1 / -1; }
+.kit-rv-field { display: grid; gap: 4px; }
+.kit-rv-field .kit-input,
+.kit-rv-field .kit-select { width: 100%; }

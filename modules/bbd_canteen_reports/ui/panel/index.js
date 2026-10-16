@@ -12,13 +12,15 @@ import {
   balanceText, button, foldText, h, loadStyles, longDate, money, stamp, toaster, todayIso,
 } from './kit.js';
 // BASKI CİHAZDA YAPILIR, SUNUCUDA DEĞİL — gerekçe `ui-kit/printing.js`
-// başlığında. Bu panelin kendi `kit.js` kopyası var ama yazdırmanın ikinci bir
-// kopyası OLMAZ: kâğıdın çıkacağı yeri tek yer bilir.
+// başlığında. Bu panelin kendi `kit.js` kopyası var ama yazdırmanın ve
+// önizlemenin ikinci bir kopyası OLMAZ: finansal raporların hepsi ortak araç
+// çubuğunu kullanır (`ui-kit/report.js` → "Önizle · Yazdır · PDF kaydet";
+// 63-finans-pdf). Ekrandaki dönem, arama ve sıralama PDF'e aynen gider.
 //
 // YOL ÇALIŞMA ANINA GÖREDİR: panel `shell/panels/bbd_canteen_reports/` altına
 // kopyalanıyor (`tools/build-ui-registry.py`), oradan `../../ui-kit/` doğru
 // yeri gösterir. Kaynak ağacında bu göreli yol bir dosyaya denk gelmez.
-import { printDocument, printerReady } from '../../ui-kit/printing.js';
+import { reportToolbar } from '../../ui-kit/report.js';
 
 loadStyles(import.meta.url);
 
@@ -243,7 +245,9 @@ function renderStudents() {
   sort.addEventListener('change', () => { studentSort = sort.value; renderStudents(); });
 
   tools.append(search, sort, h('span', 'cr-spacer'),
-    button('CSV indir', { onClick: () => exportFile('students_csv') }));
+    button('CSV indir', { onClick: () => exportFile('students_csv') }),
+    pdfTools('students_pdf', 'Öğrenci harcama raporu',
+      () => ({ query: studentQuery, sort: studentSort })));
 
   const needle = foldText(studentQuery);
   const rows = data.students
@@ -297,7 +301,7 @@ function renderProducts() {
 
   tools.append(sort, h('span', 'cr-spacer'),
     button('CSV indir', { onClick: () => exportFile('products_csv') }),
-    button('Ürün PDF', { variant: 'primary', onClick: () => exportFile('products_pdf') }));
+    pdfTools('products_pdf', 'Ürün performans raporu'));
 
   const rows = [...data.products].sort((a, b) => {
     if (productSort === 'daysLeft') {
@@ -420,10 +424,7 @@ async function showStudent(row) {
     h('div', 'cr-drawer-sub',
       `${row.className || 'sınıfsız'} · ${longDate(range.start)} – ${longDate(range.end)}`),
     h('span', 'cr-spacer'),
-    button('Karne PDF', {
-      variant: 'primary',
-      onClick: () => exportFile('student_pdf', { studentId: row.studentId }),
-    }),
+    pdfTools('student_pdf', 'Öğrenci kantin karnesi', () => ({ studentId: row.studentId })),
     button('Kapat', { onClick: () => overlay.remove() }),
   );
 
@@ -544,16 +545,15 @@ function fillEntries(table, entries, chunk = 150) {
 // ------------------------------------------------------------- çıktı
 
 /**
- * Rapor üretir ve ÖNİZLEME penceresinde açar.
+ * CSV üretir (rapor klasörüne yazılır) ve yolunu söyler.
  *
- * Önizleme, basılacak PDF'in birebir kendisidir: sunucu dosyayı üretip
- * sayfalarını görüntüye çevirir. Ekranda görülen ile kâğıttan çıkan aynıdır.
+ * PDF'ler bu yoldan GEÇMEZ: onların ortak araç çubuğu var (`pdfTools`).
  */
 async function exportFile(kind, extra = {}) {
-  setStatus('Rapor üretiliyor…');
+  setStatus('Dosya üretiliyor…');
   let result;
   try {
-    result = await api('/api/bbd_canteen_reports/preview', {
+    result = await api('/api/bbd_canteen_reports/export', {
       method: 'POST',
       body: { kind, start: range.start, end: range.end,
         classes: Object.fromEntries(classMap), ...extra },
@@ -572,115 +572,47 @@ async function exportFile(kind, extra = {}) {
 
   toast(`${result.name} hazır (${Math.round(result.bytes / 1024)} KB).`, 'good');
   setStatus(`Dosya: ${result.path}`);
+  showLastFile(result.path);
+}
+
+function showLastFile(path) {
   nodes.lastFile.replaceChildren(
     h('span', undefined, 'Son üretilen: '),
-    h('code', 'cr-path', result.path),
+    h('code', 'cr-path', path),
   );
-  openPreview(result);
 }
 
-/** Bu CİHAZIN yazıcısını okur; basılamıyorsa sebebini döner.
+/** Önizlemenin kalan sayfaları (pencere kaydırıldıkça). */
+async function morePages(result, first, last) {
+  const data = await api('/api/bbd_canteen_reports/pages', {
+    method: 'POST', body: { path: result.path, first, last }, timeoutSeconds: 120 });
+  if (!data?.ok) throw new Error(data?.error || 'Sayfalar alınamadı.');
+  return data.pages || [];
+}
+
+/**
+ * Finansal raporun tek tip araç çubuğu: Önizle · Yazdır · PDF kaydet.
  *
- *  Sunucunun `/printer` ucu SORULMAZ: o sunucudaki kuyrukları anlatıyor ve
- *  sunucuda yazıcı yok. Kâğıt kullanıcının masasında çıkıyor. */
-async function printerState() {
-  const status = await printerReady();
-  return status.ready
-    ? { ready: true, target: { name: status.name } }
-    : { ready: false, error: status.error };
-}
-
-/** Üretilen raporun önizleme penceresi + yazdır düğmesi. */
-function openPreview(result) {
-  const overlay = h('div', 'cr-overlay');
-  const card = h('div', 'cr-preview');
-  card.setAttribute('role', 'dialog');
-  card.setAttribute('aria-modal', 'true');
-
-  const close = () => {
-    document.removeEventListener('keydown', onKey, true);
-    overlay.remove();
+ * Rapor, düğmeye basıldığı andaki EKRAN SÜZGEÇLERİYLE üretilir (dönem +
+ * `extra()` — arama, sıralama, öğrenci). Önizleme basılacak PDF'in kendisidir.
+ */
+function pdfTools(kind, title, extra = () => ({})) {
+  const produce = async ({ preview, orientation }) => {
+    setStatus(`${title} üretiliyor…`);
+    const result = await api('/api/bbd_canteen_reports/preview', {
+      method: 'POST', timeoutSeconds: 600,
+      body: { kind, start: range.start, end: range.end, classes: Object.fromEntries(classMap),
+        orientation, preview, ...extra() },
+    });
+    if (result?.ok) {
+      setStatus(`Dosya: ${result.path}`);
+      showLastFile(result.path);
+    } else {
+      setStatus(result?.error || 'Üretilemedi.', true);
+    }
+    return result;
   };
-  const onKey = (event) => { if (event.key === 'Escape') close(); };
-
-  // --- başlık şeridi ---
-  const bar = h('div', 'cr-preview-bar');
-  bar.append(
-    h('b', 'cr-preview-title', result.name),
-    h('span', 'cr-preview-sub',
-      result.pageCount
-        ? `${result.pageCount} sayfa${result.shown < result.pageCount
-          ? ` · ilk ${result.shown} sayfa gösteriliyor` : ''}`
-        : ''),
-    h('span', 'cr-spacer'),
-  );
-
-  const printBtn = button('Yazdır', {
-    variant: 'primary',
-    title: 'Raporu USB\'ye bağlı yazıcıya doğrudan gönderir.',
-  });
-  const note = h('span', 'cr-preview-note');
-  bar.append(note, printBtn, button('Kapat', { onClick: close }));
-
-  printBtn.addEventListener('click', async () => {
-    printBtn.disabled = true;
-    note.textContent = 'Yazıcıya gönderiliyor…';
-    note.classList.remove('bad');
-    try {
-      // Eskiden `/api/bbd_canteen_reports/print` çağrılıyordu: o uç SUNUCUDAKİ
-      // CUPS'a gidiyor, sunucuda CUPS kurulu değil ve düğme her tıklamada
-      // "sistemde CUPS (lp/lpstat) bulunamadı" diyordu.
-      const printer = await printDocument(api, result.path, { copies: 1 });
-      note.textContent = `${printer} yazıcısına gönderildi.`;
-      toast(`Yazdırılıyor: ${printer}`, 'good');
-    } catch (error) {
-      note.textContent = error.message;
-      note.classList.add('bad');
-      toast(error.message, 'bad');
-    } finally {
-      printBtn.disabled = false;
-    }
-  });
-
-  // --- sayfalar ---
-  const pages = h('div', 'cr-preview-pages');
-  if (result.previewError) {
-    pages.append(h('div', 'cr-alert bad', result.previewError));
-  } else if (!(result.pages || []).length) {
-    pages.append(h('div', 'cr-hint', 'Bu çıktı için önizleme üretilmedi.'));
-  } else {
-    for (const [index, src] of result.pages.entries()) {
-      const page = h('figure', 'cr-preview-page');
-      const image = h('img');
-      image.src = src;
-      image.alt = `Sayfa ${index + 1}`;
-      image.loading = 'lazy';
-      page.append(image, h('figcaption', undefined, `Sayfa ${index + 1}`));
-      pages.append(page);
-    }
-  }
-
-  card.append(bar, pages);
-  overlay.append(card);
-  overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(); });
-  document.addEventListener('keydown', onKey, true);
-  nodes.root.append(overlay);
-
-  // Yazıcı bağlı değilse düğme bunu ÖNCEDEN söylesin; kullanıcı tıklayıp
-  // hata almak yerine durumu baştan görsün.
-  printerState().then((status) => {
-    if (!status.ready) {
-      note.textContent = status.error || 'Yazıcı bağlantısı hatası.';
-      note.classList.add('bad');
-      printBtn.disabled = true;
-      return;
-    }
-    // TONER VE CİHAZ UYARISI ARTIK OKUNMUYOR: onları sunucudaki `ipp-usb`
-    // sorgusu üretiyordu ve sunucu yazıcıyı görmüyor. Yazıcının kendi durumu
-    // yerel kuyruktan sorulabilir, ama bu ayrı bir iştir; ekran şimdi yalnız
-    // bildiğini söylüyor — uydurulmuş bir "hazır" rozetinden iyidir.
-    note.textContent = status.target?.name || 'Yazıcı';
-  });
+  return reportToolbar({ root: nodes.root, api, toast, produce, morePages, title }).node;
 }
 
 // ------------------------------------------------------------------ mount
@@ -728,13 +660,11 @@ export function mount(root, ctx) {
     chip.addEventListener('click', preset(days));
     presets.append(chip);
   }
+  // Özet (satış) raporu; dönem tek günse "Gün sonu" raporudur (ciro, iptal,
+  // tahsilat, açık alacak).
   bar.append(h('span', 'cr-spacer'),
     h('span', 'cr-live', 'veri kantinden canlı'),
-    button('Özet raporu', {
-      variant: 'primary',
-      title: 'Raporu üretir, önizlemede açar; oradan yazdırabilirsiniz.',
-      onClick: () => exportFile('summary_pdf'),
-    }));
+    pdfTools('summary_pdf', 'Kantin satış / gün sonu raporu'));
 
   nodes.status = h('div', 'cr-status');
   nodes.lastFile = h('div', 'cr-lastfile');

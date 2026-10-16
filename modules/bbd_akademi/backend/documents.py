@@ -15,7 +15,9 @@ ve `POST /api/bbd_akademi/km/documents/preview` ile gönderir. Burada:
    bloklanmaz). Dosya rapor köküne 0600 ile yazılır (`Raporlar/Akademi/<tür>/…`),
    böylece `/api/outputs/document` onu cihazın yazıcısına verebilir.
 4. **Önizleme.** Sayfalar `pdftoppm` ile PNG'ye çevrilir — önizleme basılacak
-   PDF'in BİREBİR kendisidir. `preview=false` ise atlanır ("Yazdır" düğmesi
+   PDF'in BİREBİR kendisidir (ortak üretici `km_sdk.pdf_preview`). İlk yanıtta
+   ilk `PREVIEW_FIRST` sayfa gelir; kalanı `POST /km/documents/pages` ile
+   pencere kaydırıldıkça. `preview=false` ise atlanır ("Yazdır" düğmesi
    önizlemesiz basar).
 
 Akademi'nin KENDİ ürettiği PDF'ler (makbuz, ekstre, kitap sipariş belgesi)
@@ -26,12 +28,9 @@ yalnız izinli kökenden indirilir, PDF olduğu doğrulanır, rapor köküne yaz
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import re
 import secrets
-import shutil
-import tempfile
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -40,7 +39,15 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from km_sdk import CurrentUser, report_dir, write_private
+from km_sdk import (
+    CurrentUser,
+    PdfPreviewError,
+    pdf_preview,
+    pdf_preview_pages,
+    report_dir,
+    reports_root,
+    write_private,
+)
 
 from . import document_pdf
 from .document_pdf import DocumentError, Letterhead, Stamp
@@ -54,8 +61,11 @@ LETTERHEAD_TTL = 600.0
 LETTERHEAD_WAIT = 4.0
 MAX_LOGO_BYTES = 3 * 1024 * 1024
 MAX_AKADEMI_PDF_BYTES = 30 * 1024 * 1024
-PREVIEW_PAGES = 12
 PREVIEW_DPI = 110
+#: Önizlemenin İLK yanıtındaki sayfa sayısı (63-finans-pdf). Yüzlerce sayfalık
+#: finans listesinde bütün sayfaları görüntüye çevirmek önizlemeyi bekletiyordu;
+#: kalanı pencere kaydırıldıkça `POST /km/documents/pages` ile parça parça gelir.
+PREVIEW_FIRST = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +108,15 @@ KINDS: dict[str, DocumentKind] = {
     # Akademi README §14 madde 87 (ozellik/finans-belge): iade makbuzu ve ödeme planı (kayıt sözleşmesi eki).
     "finance_refund_receipt": DocumentKind("IAD", "Kurum cari", "iade-makbuzu", ("admin_getRefundReceipt",)),
     "finance_plan": DocumentKind("OPL", "Kurum cari", "odeme-plani", ("admin_getPlanAgreement",)),
+    # 63-finans-pdf: Kurum finansı ekranının listeleri — ekrandaki süzgeçlerle,
+    # bütün sayfalar (yalnız görünen 50 satır değil). Kantinle birleşmez (A12).
+    "finance_accounts": DocumentKind("CRL", "Kurum cari", "cari-hesaplar",
+                                     ("admin_listFinanceAccounts",)),
+    "finance_payments": DocumentKind("THL", "Kurum cari", "tahsilatlar", ("admin_listPayments",)),
+    "finance_overdue": DocumentKind("GCK", "Kurum cari", "gecikenler-yaslandirma",
+                                    ("admin_listOverdue",)),
+    "finance_monthly": DocumentKind("AYL", "Kurum cari", "aylik-rapor",
+                                    ("admin_getFinanceMonthlyReport",)),
     "book_request": DocumentKind("KTP", "Kitap", "kitap-talebi", ("admin_getBookRequest",)),
     # 0.5.4 (km-toplu-kitap): kitap satışı (satış + öğrenci satırları, teslim imzası).
     "book_sale": DocumentKind("KSA", "Kitap", "kitap-satisi", ("admin_getBookSale",)),
@@ -135,10 +154,6 @@ class DocumentDenied(Exception):
         super().__init__("Bu belge için yetkiniz yok.")
         self.permission = permission
         self.operation = operation
-
-
-class PreviewError(RuntimeError):
-    pass
 
 
 def slug(text: str, fallback: str = "belge") -> str:
@@ -365,59 +380,41 @@ class DocumentService:
                 "number": number, "parts": parts}
         if not preview:
             return {**base, "pages": [], "pageCount": 0, "shown": 0, "previewError": ""}
+        # İlk sayfalar hemen; kalanı `pages()` ile (ortak üretici, km_sdk).
+        return {**base, **await pdf_preview(path, pages=PREVIEW_FIRST, dpi=PREVIEW_DPI)}
+
+    def _own_pdf(self, raw_path: str) -> Path | None:
+        """Yol bu modülün ürettiği bir PDF mi? (rapor kökü/Akademi ya da yedek klasör)."""
         try:
-            pages, total = await render_pages(path)
-        except PreviewError as failure:
-            return {**base, "pages": [], "pageCount": 0, "shown": 0,
-                    "previewError": str(failure)}
-        return {**base, "pages": pages, "pageCount": total, "shown": len(pages),
-                "previewError": ""}
+            resolved = Path(raw_path).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        if resolved.suffix.lower() != ".pdf":
+            return None
+        roots = [self._fallback_dir, reports_root(self._fallback_dir) / "Akademi"]
+        if self._folder_of is not None:
+            roots.extend(self._folder_of(kind) for kind in {*KINDS.values(), *AKADEMI_PDFS.values()})
+        for root in roots:
+            try:
+                if resolved.is_relative_to(Path(root).expanduser().resolve()):
+                    return resolved
+            except OSError:
+                continue
+        return None
 
+    async def pages(self, user: CurrentUser, raw_path: str, first: int,
+                    last: int) -> dict[str, Any]:
+        """Önizlemenin kalan sayfaları (kaydırdıkça). Yalnız bu modülün PDF'i verilir.
 
-# ------------------------------------------------------------------ önizleme
-
-async def render_pages(path: Path, *, max_pages: int = PREVIEW_PAGES,
-                       dpi: int = PREVIEW_DPI) -> tuple[list[str], int]:
-    """PDF'in ilk sayfalarını PNG data-URI listesine çevirir (+ toplam sayfa)."""
-    binary = shutil.which("pdftoppm")
-    if not binary:
-        raise PreviewError("Önizleme üretilemedi: `pdftoppm` bulunamadı (poppler-utils). "
-                           "Belge yine de kaydedildi ve yazdırılabilir.")
-    with tempfile.TemporaryDirectory(prefix="km-akademi-belge-") as folder:
-        target = Path(folder) / "sayfa"
-        process = None
+        Kapı: belgeyi üretebilen zaten görüntüsünü de görür; yol serbest
+        değildir — rapor kökünün `Akademi` klasörü dışındaki dosya reddedilir
+        (sembolik bağ çözüldükten sonra denetlenir)."""
+        path = self._own_pdf(raw_path)
+        if path is None:
+            return {"ok": False, "error": "Belge bulunamadı ya da bu modülün çıktısı değil."}
         try:
-            process = await asyncio.create_subprocess_exec(
-                binary, "-png", "-r", str(int(dpi)), "-f", "1", "-l", str(int(max_pages)),
-                str(path), str(target),
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-            _, err = await asyncio.wait_for(process.communicate(), timeout=60)
-        except TimeoutError:
-            if process is not None:
-                process.kill()
-                await process.wait()
-            raise PreviewError("Önizleme üretilemedi: süre aşıldı. Belge yazdırılabilir.") from None
-        except OSError as failure:
-            raise PreviewError(f"Önizleme üretilemedi: {failure}") from failure
-        if process.returncode != 0:
-            message = err.decode(errors="replace").strip()[:200] or "bilinmeyen hata"
-            raise PreviewError(f"Önizleme üretilemedi: {message}")
-        files = sorted(Path(folder).glob("sayfa*.png"),
-                       key=lambda item: int(re.sub(r"\D", "", item.stem) or 0))
-        pages = ["data:image/png;base64," + base64.b64encode(item.read_bytes()).decode("ascii")
-                 for item in files]
-    return pages, await page_count(path) or len(pages)
-
-
-async def page_count(path: Path) -> int:
-    binary = shutil.which("pdfinfo")
-    if not binary:
-        return 0
-    try:
-        process = await asyncio.create_subprocess_exec(
-            binary, str(path), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-        out, _ = await asyncio.wait_for(process.communicate(), timeout=15)
-    except (TimeoutError, OSError):
-        return 0
-    match = re.search(r"^Pages:\s+(\d+)", out.decode(errors="replace"), re.MULTILINE)
-    return int(match.group(1)) if match else 0
+            images = await pdf_preview_pages(path, first=first, last=last, dpi=PREVIEW_DPI)
+        except PdfPreviewError as failure:
+            return {"ok": False, "error": str(failure)}
+        self._log.info("belge sayfaları", first=first, last=last, user=user.id)
+        return {"ok": True, "first": first, "pages": images}

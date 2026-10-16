@@ -24,6 +24,12 @@ Veliye borç bildirimi ve ödeme bağlantısı gönderir. Nakit tahsilat da bura
 - **Süzgeç, arama, yaşlandırma** — kaç gündür bekliyor.
 - **SMS şablonu düzenleme** — tablette bu ekran hiç yok. Boş şablon reddedilir;
   kantin boş şablonu varsayılana düşürüp ödeme linkini SMS'ten sessizce siler.
+- **PDF raporları (63-finans-pdf)** — talepler (ekrandaki durum ve arama; durum
+  ara toplamı), nakit tahsilatlar (başarısız denemeler toplama girmez) ve borçlu
+  öğrenciler (kantin açık alacağı, sınıf ara toplamı). Ortak araç çubuğu
+  "Önizle · Yazdır · PDF kaydet"; `POST /api/bbd_payment_request/report`,
+  `POST …/report/pages`. Kantin parasıdır, kurum carisiyle birleşmez (A12);
+  veli telefonu yazılmaz.
 
 - Sözleşme: `module.yaml` · Giriş noktası: `backend/module.py` → `register(ctx)`
 - Kurallar: [../../CLAUDE.md](../../CLAUDE.md) · Kılavuz: [../../docs/module-guide.md](../../docs/module-guide.md)

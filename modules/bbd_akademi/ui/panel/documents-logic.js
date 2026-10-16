@@ -1122,3 +1122,209 @@ export function canteenDoc(student, summary, transactions, { from = '', to = '' 
     ],
   }], { filename: fileHint('kantin', student?.displayName, from, to) });
 }
+
+// ---------------------------------------------------------- 12. kurum finansı listeleri (63-finans-pdf)
+//
+// Kullanıcı: "finansal raporlarda pdf önizleme ve yazdırma olsun". Kurum finansı
+// ekranının listeleri (cari hesaplar, tahsilatlar, gecikenler, aylık rapor) EKRANDAKİ
+// SÜZGEÇLERLE belgeye döner: süzgeçler başlıkta (`meta`) yazar, ara toplamlar kalın
+// satırdır, genel toplam altbilgidedir. Yalnız kurum carisi — kantin AYRI (A12).
+
+/**
+ * Ekrandaki süzgeçler → başlık satırları. Boş değer "Tümü" yazılır (süzgecin
+ * unutulmadığı kâğıtta görünsün); `null` olan satır hiç yazılmaz (ör. boş arama).
+ */
+export function filterMeta(filters) {
+  return (filters || []).filter(([, value]) => value !== null && value !== undefined)
+    .map(([label, value]) => [label, clean(value, 'Tümü')]);
+}
+
+function filterLine(filters) {
+  return (filters || []).filter(([, value]) => value).map(([label, value]) => `${label}: ${value}`).join(' · ');
+}
+
+function subtotal(label, cells) {
+  return { cells: [label, ...cells], bold: true, tone: 'strong' };
+}
+
+function groupRow(label, width) {
+  return { cells: [label, ...Array(width - 1).fill('')], bold: true, tone: 'info' };
+}
+
+const sum = (rows, key) => rows.reduce((total, row) => total + Number(row?.[key] || 0), 0);
+
+/** Cari hesaplar (FinanceAccountListItem[]) — sınıfa göre gruplu, sınıf ara toplamı + genel toplam. */
+export function financeAccountsDoc(items, { filters = [] } = {}) {
+  const list = [...(items || [])];
+  const groups = new Map();
+  for (const item of list) {
+    const key = className(item.student);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b, 'tr'));
+  const rows = [];
+  for (const key of keys) {
+    const group = groups.get(key).sort((a, b) => studentName(a.student).localeCompare(studentName(b.student), 'tr'));
+    if (keys.length > 1) rows.push(groupRow(`Sınıf: ${key}`, 6));
+    for (const item of group) {
+      rows.push([studentName(item.student), clean(item.student?.externalRef, ''), money(item.openBalanceMinor),
+        item.overdueMinor ? cell(money(item.overdueMinor), 'bad') : '—',
+        item.creditMinor ? money(item.creditMinor) : '—', fmtDate(item.nextDueDate)]);
+    }
+    if (keys.length > 1) {
+      rows.push(subtotal(`${key} ara toplam (${num(group.length)})`, ['', money(sum(group, 'openBalanceMinor')),
+        money(sum(group, 'overdueMinor')), money(sum(group, 'creditMinor')), '']));
+    }
+  }
+  return documentOf('finance_accounts', 'Cari Hesaplar', [{
+    title: 'Cari Hesaplar',
+    subtitle: ['Kurum cari hesapları', filterLine(filters)].filter(Boolean).join(' · '),
+    meta: filterMeta(filters),
+    sections: [
+      { kind: 'tiles', columns: 4, items: [
+        { label: 'Hesap', value: num(list.length) },
+        { label: 'Açık bakiye', value: money(sum(list, 'openBalanceMinor')) },
+        { label: 'Gecikmiş', value: money(sum(list, 'overdueMinor')), tone: sum(list, 'overdueMinor') ? 'bad' : '' },
+        { label: 'Alacak (öğrenci lehine)', value: money(sum(list, 'creditMinor')) },
+      ] },
+      { kind: 'table', headers: ['Öğrenci', 'Öğrenci no', 'Açık bakiye', 'Gecikmiş', 'Alacak', 'Sonraki vade'],
+        align: 'LLRRRC', widths: [3.2, 1.3, 1.5, 1.5, 1.3, 1.3], rows,
+        footer: [`Genel toplam (${num(list.length)} hesap)`, '', money(sum(list, 'openBalanceMinor')),
+          money(sum(list, 'overdueMinor')), money(sum(list, 'creditMinor')), ''],
+        empty: 'Bu süzgece uyan cari hesap yok.' },
+      { kind: 'note', text: A12 },
+    ],
+  }], { filename: fileHint('cari-hesaplar', ...filters.map(([, value]) => value)) });
+}
+
+const PAYMENT_STATE = { completed: 'Tamamlandı', voided: 'İptal edildi' };
+
+/** Tahsilatlar (FinancePayment[]) — iptaller soluk ve toplama girmez; yöntem kırılımı + genel toplam. */
+export function financePaymentsDoc(items, { filters = [] } = {}) {
+  const list = [...(items || [])].sort((a, b) => String(a.paidAt).localeCompare(String(b.paidAt)));
+  const live = list.filter((item) => item.status !== 'voided');
+  const voided = list.filter((item) => item.status === 'voided');
+  const byMethod = new Map();
+  for (const item of live) byMethod.set(item.method, (byMethod.get(item.method) || 0) + Number(item.amountMinor || 0));
+  const methodRows = [...byMethod.entries()].sort((a, b) => b[1] - a[1])
+    .map(([method, amount]) => subtotal(`${PAYMENT_METHOD[method] || clean(method)} ara toplam`,
+      ['', '', money(amount), '', '', '']));
+  return documentOf('finance_payments', 'Tahsilatlar', [{
+    title: 'Tahsilatlar',
+    subtitle: ['Kurum cari tahsilatları', filterLine(filters)].filter(Boolean).join(' · '),
+    meta: filterMeta(filters),
+    sections: [
+      { kind: 'tiles', columns: 4, items: [
+        { label: 'Tahsilat', value: num(live.length) },
+        { label: 'Tahsil edilen', value: money(sum(live, 'amountMinor')), tone: 'good' },
+        { label: 'Alacağa yazılan', value: money(sum(live, 'creditAddedMinor')) },
+        { label: 'İptal edilen', value: `${num(voided.length)} · ${money(sum(voided, 'amountMinor'))}`,
+          tone: voided.length ? 'muted' : '' },
+      ] },
+      { kind: 'table', headers: ['Makbuz', 'Tarih', 'Yöntem', 'Tutar', 'Alacağa', 'Durum', 'Kaydeden'],
+        align: 'LLLRRLL', widths: [1.6, 1.6, 1.4, 1.3, 1.1, 1.2, 1.8],
+        rows: [
+          ...list.map((item) => ({ cells: [clean(item.receiptNo), fmtDateTime(item.paidAt),
+            PAYMENT_METHOD[item.method] || clean(item.method), money(item.amountMinor),
+            item.creditAddedMinor ? money(item.creditAddedMinor) : '—',
+            PAYMENT_STATE[item.status] || clean(item.status), clean(item.recordedBy?.displayName, '—')],
+          tone: item.status === 'voided' ? 'muted' : '' })),
+          ...(methodRows.length > 1 ? methodRows : []),
+        ],
+        footer: [`Genel toplam (${num(live.length)} tahsilat, iptaller hariç)`, '', '', money(sum(live, 'amountMinor')),
+          money(sum(live, 'creditAddedMinor')), '', ''],
+        empty: 'Bu dönemde tahsilat yok.' },
+      { kind: 'note', text: `${A12} İptal edilen tahsilatlar soluk yazılır ve toplamlara girmez.` },
+    ],
+  }], { filename: fileHint('tahsilatlar', ...filters.map(([, value]) => value)) });
+}
+
+/** Gecikme yaşlandırma dilimleri (gün). */
+export const AGING = [
+  { key: '1-30', label: '1–30 gün', min: 1, max: 30 },
+  { key: '31-60', label: '31–60 gün', min: 31, max: 60 },
+  { key: '61-90', label: '61–90 gün', min: 61, max: 90 },
+  { key: '90+', label: '90 günden fazla', min: 91, max: Infinity },
+];
+
+export function agingOf(days) {
+  const value = Number(days || 0);
+  return AGING.find((bucket) => value >= bucket.min && value <= bucket.max) || AGING[0];
+}
+
+/** Gecikenler — borç yaşlandırma (FinanceOverdueItem[]): dilim başlığı, dilim ara toplamı, genel toplam. */
+export function financeOverdueDoc(items, { filters = [] } = {}) {
+  const list = [...(items || [])];
+  const rows = [];
+  const tiles = [];
+  for (const bucket of AGING) {
+    const group = list.filter((item) => agingOf(item.daysOverdue) === bucket)
+      .sort((a, b) => Number(b.daysOverdue || 0) - Number(a.daysOverdue || 0));
+    tiles.push({ label: bucket.label, value: `${money(sum(group, 'overdueMinor'))} · ${num(group.length)}`,
+      tone: group.length && bucket.min > 60 ? 'bad' : '' });
+    if (!group.length) continue;
+    rows.push(groupRow(`Gecikme: ${bucket.label}`, 7));
+    for (const item of group) {
+      rows.push([studentName(item.student), className(item.student),
+        (item.guardians || []).map((entry) => clean((entry.guardian || entry)?.displayName, '')).filter(Boolean).join(', ') || '—',
+        cell(money(item.overdueMinor), 'bad'), fmtDate(item.oldestDueDate), num(item.daysOverdue), num(item.chargeCount)]);
+    }
+    rows.push(subtotal(`${bucket.label} ara toplam (${num(group.length)})`,
+      ['', '', money(sum(group, 'overdueMinor')), '', '', num(sum(group, 'chargeCount'))]));
+  }
+  return documentOf('finance_overdue', 'Gecikenler — Borç Yaşlandırma', [{
+    title: 'Gecikenler — Borç Yaşlandırma',
+    subtitle: ['Vadesi geçmiş kurum borçları', filterLine(filters)].filter(Boolean).join(' · '),
+    meta: filterMeta(filters),
+    sections: [
+      { kind: 'tiles', columns: 4, items: tiles },
+      { kind: 'table', headers: ['Öğrenci', 'Sınıf', 'Veli', 'Gecikmiş', 'En eski vade', 'Gün', 'Kalem'],
+        align: 'LLLRCRR', widths: [2.6, 1, 2.4, 1.4, 1.2, 0.7, 0.7], rows,
+        footer: [`Genel toplam (${num(list.length)} öğrenci)`, '', '', money(sum(list, 'overdueMinor')), '', '',
+          num(sum(list, 'chargeCount'))],
+        empty: 'Bu süzgece uyan gecikmiş kurum borcu yok.' },
+      { kind: 'note', text: `${A12} Veli telefonları bu belgede yer almaz (KVKK).` },
+    ],
+  }], { filename: fileHint('gecikenler', ...filters.map(([, value]) => value)) });
+}
+
+const MONTHLY_METHODS = { cash: 'Nakit', transfer: 'Havale/EFT', card: 'Kart (POS)', online_card: 'Uygulamadan kart',
+  other: 'Diğer' };
+const MONTH_NAMES = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim',
+  'Kasım', 'Aralık'];
+
+function monthTitle(key) {
+  const [year, month] = String(key || '').split('-').map(Number);
+  return MONTH_NAMES[month - 1] ? `${MONTH_NAMES[month - 1]} ${year}` : clean(key);
+}
+
+/** Aylık rapor (FinanceMonthlyReport) — ay × yöntem; tahsilat, iptal, iade, net, tahakkuk, indirim. Yatay. */
+export function financeMonthlyDoc(report, { filters = [] } = {}) {
+  const r = report || {};
+  const methodOf = (row, method) => (row?.byMethod || []).find((item) => item.method === method)?.amountMinor || 0;
+  const line = (label, row) => [label, ...Object.keys(MONTHLY_METHODS).map((method) => money(methodOf(row, method))),
+    money(row?.collectedMinor), money(row?.voidedMinor), money(row?.refundedMinor), money(row?.netMinor),
+    money(row?.chargedMinor), money(row?.discountMinor)];
+  const totals = r.totals || {};
+  return documentOf('finance_monthly', 'Aylık Tahsilat Raporu', [{
+    title: 'Aylık Tahsilat Raporu',
+    subtitle: `Kurum carisi · ${fmtDate(r.from)} – ${fmtDate(r.to)} · ay × ödeme yöntemi`,
+    meta: filterMeta(filters),
+    sections: [
+      { kind: 'tiles', columns: 4, items: [
+        { label: 'Tahsilat', value: money(totals.collectedMinor), tone: 'good' },
+        { label: 'İade', value: money(totals.refundedMinor) },
+        { label: 'Net (tahsilat − iade)', value: money(totals.netMinor) },
+        { label: 'Tahakkuk', value: money(totals.chargedMinor) },
+      ] },
+      { kind: 'table', dense: true,
+        headers: ['Ay', ...Object.values(MONTHLY_METHODS), 'Tahsilat', 'İptal edilen', 'İade', 'Net', 'Tahakkuk', 'İndirim'],
+        align: 'LRRRRRRRRRRR', widths: [1.4, 1.1, 1.1, 1.1, 1.1, 1, 1.2, 1.1, 1, 1.2, 1.2, 1],
+        rows: (r.months || []).map((row) => line(monthTitle(row.month), row)),
+        footer: r.totals ? line('Toplam', totals) : null,
+        empty: 'Bu dönemde hareket yok.' },
+      { kind: 'note', text: `${A12} Tahakkuk: vadesi o ay olan iptal edilmemiş kalemler. Net: tahsilat − iade.` },
+    ],
+  }], { orientation: 'landscape', filename: fileHint('aylik-rapor', r.from, r.to) });
+}

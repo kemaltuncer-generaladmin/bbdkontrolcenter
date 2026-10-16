@@ -157,6 +157,14 @@ class DocumentBody(BaseModel):
     preview: bool = True
 
 
+class DocumentPagesBody(BaseModel):
+    """Önizlemenin kalan sayfaları — yol yalnız bu modülün çıktı klasöründen."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    first: int = Field(ge=1, le=9999)
+    last: int = Field(ge=1, le=9999)
+
+
 class AkademiPdfBody(BaseModel):
     """Akademi'nin kendi PDF'i (makbuz, ekstre, sipariş belgesi) — imzalı bağlantı."""
 
@@ -333,6 +341,12 @@ async def document_preview(body: DocumentBody, user: CurrentUser = requires(VIEW
         return await documents().produce(user, body.kind, body.document, preview=body.preview)
     except DocumentDenied as failure:
         return _denied(failure)
+
+
+@router.post("/km/documents/pages")
+async def document_pages(body: DocumentPagesBody, user: CurrentUser = requires(VIEW)) -> Any:
+    """Önizleme penceresi kaydırıldıkça sonraki sayfaların görüntüsü (en çok 12)."""
+    return await documents().pages(user, body.path, body.first, max(body.first, body.last))
 
 
 @router.post("/km/documents/akademi")
