@@ -457,3 +457,9 @@ div.tb-item { cursor: default; }
 .tb-quick-label { color: #4b5668; }
 .tb-quick-state { font-weight: 600; color: #14532d; }
 .tb-quick-state.bad { color: #b91c1c; }
+
+/* Uygulamalar → profil seçici (dağıtım onayı ve çekmece) */
+.tb-profile-choose { display: flex; flex-direction: column; gap: 10px; }
+.tb-profile-checks { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+.tb-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.tb-check input:disabled + span { opacity: 0.7; }
