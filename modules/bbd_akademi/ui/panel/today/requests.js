@@ -15,7 +15,7 @@ import {
   DAY_LABEL, actionButton, fmtDate, fmtDateTime, formDialog, pagedList, personName,
   reasonDialog, runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar,
 } from '../common.js';
-import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from '../attendance-manage.js';
+import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from '../attendance/attendance-manage.js';
 import { templateField } from '../shared/text-templates.js';
 
 const CHANNEL = { phone: 'telefonla', in_person: 'yüz yüze' };

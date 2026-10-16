@@ -11,9 +11,9 @@
 //     hiçbir şey yazılmaz ve liste açılıp kontrol edilmelidir.
 // Kuyruk tarayıcı deposundadır (yalnız bu bilgisayar); depo kapalıysa kuyruk bellekte kalır.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox } from '../../ui-kit/layout.js';
-import { num, problem } from './common.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox } from '../../../ui-kit/layout.js';
+import { num, problem } from '../common.js';
 
 const STORE_KEY = 'bbd_akademi.attendance.offline.v1';
 export const SYNC_LIMIT = 50;

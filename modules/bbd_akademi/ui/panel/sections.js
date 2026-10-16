@@ -122,7 +122,7 @@ export const SECTIONS = [
   { key: 'lessonRecordings', label: 'Ders kayıtları', file: './recordings/lesson-recordings.js', requires: ['recordings'],
     area: 'lessons', feature: 'lesson_recordings',
     reads: ['admin_listBoards', 'admin_listRecordings', 'admin_getRecordingQuota', 'admin_getRecordingSettings'] },
-  { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'attendance' },
+  { key: 'attendance', label: 'Yoklama', file: './attendance/attendance.js', requires: ['view'], area: 'attendance' },
   { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'], area: 'work' },
   { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'], area: 'work' },
   { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'], area: 'work' },

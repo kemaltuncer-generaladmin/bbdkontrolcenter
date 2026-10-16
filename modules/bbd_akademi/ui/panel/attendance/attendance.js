@@ -23,15 +23,15 @@
 // Derin bağlantılar: `{attendanceSessionId}` listeyi açar (gün de ona geçer),
 // `{date}` günü seçer.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, chipRow, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, chipRow, kpiRow, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
 import {
   DAY_LABEL, actionButton, addDays, clockInput, confirmAction, dateInput, empty, errorBox, fmtDate,
   fmtDateTime, fmtTime, formDialog, istanbulStamp, num, personName, problem, reasonDialog, sectionHead,
   selectBox, todayIst, toolbar,
-} from './common.js';
-import { documentButtons } from './documents.js';
-import { absenteeListDoc, attendanceDayDoc, attendanceMatrixDoc, attendanceSheetDoc } from './documents-logic.js';
+} from '../common.js';
+import { documentButtons } from '../documents.js';
+import { absenteeListDoc, attendanceDayDoc, attendanceMatrixDoc, attendanceSheetDoc } from '../documents-logic.js';
 import {
   boardTab, openHistory, remindTeacher, reportsTab, reviewsTab, settingsTab,
 } from './attendance-manage.js';

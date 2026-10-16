@@ -94,8 +94,8 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
   globalThis.localStorage?.clear?.();
 
   // ------------------------------------------------------------- saf işlevler
-  const manage = await load('./panels/bbd_akademi/attendance-manage.js');
-  const sync = await load('./panels/bbd_akademi/attendance-sync.js');
+  const manage = await load('./panels/bbd_akademi/attendance/attendance-manage.js');
+  const sync = await load('./panels/bbd_akademi/attendance/attendance-sync.js');
   const tpl = await load('./panels/bbd_akademi/lessons/timetable-templates.js');
   const draft = manage.settingsDraft({ lateSuggestAfterMinutes: 10, absentSuggestAfterMinutes: 40,
     teacherEditWindow: { kind: 'hours', hours: 24 }, thresholds: { unexcusedSteps: [5, 10] }, version: 7 });
@@ -149,7 +149,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
 
   // ---------------------------------------- yoklama listesi: kilitli → düzeltme
   {
-    const attendance = await load('./panels/bbd_akademi/attendance.js');
+    const attendance = await load('./panels/bbd_akademi/attendance/attendance.js');
     const root = document.createElement('div');
     document.body.append(root);
     const toasts = [];

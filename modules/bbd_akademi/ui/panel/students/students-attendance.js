@@ -23,7 +23,7 @@ import {
   actionButton, clockInput, empty, errorBox, fmtDate, fmtTime, formDialog, istanbulStamp, loader, num,
   optionsOf, personName, selectBox, todayIst,
 } from '../common.js';
-import { LEAVE_KINDS, LEAVE_REASONS, MARK_LABEL } from '../attendance-manage.js';
+import { LEAVE_KINDS, LEAVE_REASONS, MARK_LABEL } from '../attendance/attendance-manage.js';
 import { guardianRole } from './students-detail.js';
 
 const DAY_STATUS = { present: ['Geldi', 'good'], partial: ['Kısmen', 'warn'], absent: ['Gelmedi', 'bad'],

@@ -15,16 +15,16 @@
 // Hepsi ön hesaplı günlük özetlerden okunur (Akademi PERFORMANCE §3.6); satır başına istek atılmaz.
 // Yetkisi olmayan kullanıcı sekmeyi görür ama içinde gerekçeli "yetki yok" notu vardır.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { barChart } from '../../ui-kit/charts.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { barChart } from '../../../ui-kit/charts.js';
 import {
   actionButton, addDays, dateInput, empty, exportJob, fmtDate, fmtDateTime, fmtTime, formDialog, kv, loader,
   multiChips, num, openDrawer, optionsOf, pagedList, personName, problem, reasonDialog, staticList, statusBadge,
   todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 
 // ------------------------------------------------------------- etiketler
 

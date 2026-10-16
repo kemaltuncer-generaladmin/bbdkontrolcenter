@@ -31,7 +31,7 @@ import {
 } from '../common.js';
 import { documentButtons } from '../documents.js';
 import { attendanceExtras } from './students-attendance.js';
-import { leaveKindDetail } from '../attendance-manage.js';
+import { leaveKindDetail } from '../attendance/attendance-manage.js';
 import { examResultDoc } from '../documents-logic.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
