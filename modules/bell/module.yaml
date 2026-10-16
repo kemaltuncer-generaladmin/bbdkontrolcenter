@@ -49,6 +49,13 @@ provides:
       async apply_days(body, *, actor) → {days: [{date, result, revision}],
       voicesPending, bellEnabled}; status(from, to); override_day(date, mode="off",
       *, actor) (yalnız bugün); clear_override(date, *, actor).
+  # ADR 0033 K12: Akademi paneli zil durumunu eskiden doğrudan `/api/bell/...`
+  # uçlarından okuyordu; adres artık bu modülün panelinde (tembel, istek yok).
+  - capability: bell.status
+    contract: bell/ui/panel/index.js:capabilities
+    description: >
+      ARAYÜZ (salt okuma): state() → GET /api/bell/state (saat setleri, ajan);
+      planStatus({from, to}) → GET /api/bell/plan/status. İzin `bell.view`.
   # Öğrenci çağırma (mobil geçit sözleşmesi §5). Sözleşme backend/announce.py.
   - capability: bell.announce
     contract: backend.announce:BellAnnounce

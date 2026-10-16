@@ -1121,6 +1121,17 @@ export function capabilities(ctx) {
         }));
       },
     },
+    /**
+     * Gruplar ve dönem geçişi — SALT OKUMA, başka modüllerin paneli için
+     * (ADR 0033 K12: BBD Akademi ders programı ve sınıflar ekranı eskiden
+     * `/api/bbd_students/groups…` uçlarını doğrudan çağırıyordu). Adres bu
+     * modülde kalır; istek çağıranın oturumuyla gider, izin kapısı aynıdır.
+     *   list({archived}) → GET /groups?archived=…   ·   rollover() → GET /groups/rollover
+     */
+    'bbd_students.groups_read': {
+      list: ({ archived } = {}) => ctx.api(archived ? `${BASE}/groups?archived=${archived}` : `${BASE}/groups`),
+      rollover: () => ctx.api(`${BASE}/groups/rollover`),
+    },
     'bbd_students.list': async () => {
       const [payload, memberships] = await Promise.all([
         ctx.api(`${BASE}/students`),

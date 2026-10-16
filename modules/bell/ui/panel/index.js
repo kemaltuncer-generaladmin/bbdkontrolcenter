@@ -283,6 +283,22 @@ function busy() {
   return Boolean(nodes.view.querySelector('.kit-overlay, .kit-menu-list:not([hidden])'));
 }
 
+/**
+ * Arayüz yetenekleri (ADR 0031). `bell.status` — Zil Sistemi'nin durumunu
+ * başka modüllerin paneli SALT OKUR (ADR 0033 K12: BBD Akademi kurum takvimi
+ * ve ders programı eskiden `/api/bell/...` uçlarını doğrudan çağırıyordu).
+ * Adres bu modülde kalır; istek çağıranın oturumuyla gider, izin `bell.view`.
+ *   state() → GET /api/bell/state   ·   planStatus({from, to}) → GET /api/bell/plan/status
+ */
+export function capabilities(shell) {
+  return {
+    'bell.status': {
+      state: () => shell.api('/api/bell/state'),
+      planStatus: ({ from, to }) => shell.api(`/api/bell/plan/status?from=${from}&to=${to}`),
+    },
+  };
+}
+
 export function mount(root, context) {
   ctx = context;
   disposed = false;
@@ -336,10 +352,12 @@ export function mount(root, context) {
   };
 }
 
-// ARAYÜZ TARAFINDA YETENEK SUNULMUYOR — bilerek.
+// HAFTALIK SAATLER İÇİN ARAYÜZ YETENEĞİ YOK — bilerek.
 //
 // Manifestteki `provides: bell.week` BACKEND yeteneğidir: Ders Takvimi
 // modülünün backend'i onu registry'den çözer ve kendi ucundan servis eder.
-// Burada bir `capabilities()` sunulsaydı tek yolu `/api/bell/state` çağırmaktı;
-// o uç köprüye HTTP isteği atıyor (ajan durumu için). Ders takvimini görmek
-// isteyen bir ekranın bbdstore'a gitmesi için hiçbir sebep yok.
+// `/api/bell/state` köprüye HTTP isteği atıyor (ajan durumu için); ders
+// takvimini görmek isteyen bir ekranın bbdstore'a gitmesi için sebep yok.
+// Yukarıdaki `bell.status` yalnız bu durumu GERÇEKTEN isteyen ekran içindir
+// (Akademi takvim formundaki saat setleri, zil planı kartı) ve tembeldir:
+// kabuk yeteneği kaydederken hiçbir istek atılmaz.

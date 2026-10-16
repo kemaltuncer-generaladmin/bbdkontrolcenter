@@ -103,7 +103,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
   const copyButton = actionButton(app, 'admin_copyTimetable', 'Haftayı kopyala', {
     onClick: () => copyWeek() });
   // Yıl sonu (iş 37): KM dönem geçişinin eşlemesiyle eski sınıfların programı yeni sınıflara.
-  const rolloverButton = typeof app.kmGet === 'function'
+  const rolloverButton = typeof app.kmRead === 'function'
     ? actionButton(app, 'admin_copyTimetable', 'Dönem geçişi kopyası', { variant: 'ghost',
       onClick: async () => {
         const result = await rolloverCopyDialog(app, { layout: s.layout });

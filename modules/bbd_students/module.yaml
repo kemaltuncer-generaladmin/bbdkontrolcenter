@@ -59,6 +59,11 @@ provides:
   - capability: bbd_students.open
     contract: bbd_students/ui/panel/index.js:capabilities
     description: "ARAYÜZ: (kantinId, {tab?}) → öğrencinin tek kartını açar (her ekrandan aynı bileşen)."
+  # ADR 0033 K12: Akademi paneli grupları/dönem geçişini eskiden doğrudan
+  # `/api/bbd_students/groups…` uçlarından okuyordu; adres artık bu modülde.
+  - capability: bbd_students.groups_read
+    contract: bbd_students/ui/panel/index.js:capabilities
+    description: "ARAYÜZ (salt okuma): list({archived}) → GET /groups; rollover() → GET /groups/rollover. İzin kapısı bu modülün uçlarıdır."
   - capability: bbd_students.directory
     contract: bbd_students/backend/directory.py:StudentDirectory
     description: >

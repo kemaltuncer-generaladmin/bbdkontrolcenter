@@ -126,12 +126,24 @@ export function mount(root, ctx) {
      */
     capability: (name) => (typeof ctx.capability === 'function' ? ctx.capability(name) : null),
     /**
-     * KM'nin başka bir modülünün SALT OKUNUR ucu (ör. Zil Sistemi
-     * `/api/bell/plan/status`). Yalnız GET; o modülün kendi izni geçerlidir
-     * (K9). Modül yoksa ya da uç bu sürümde yoksa 404/403 gelir — çağıran
-     * ekran bunu ham hata olarak göstermez, sebebini yazar.
+     * KM'nin başka bir modülünden SALT OKUMA — o modülün ARAYÜZ YETENEĞİ
+     * üzerinden (ADR 0033 K12: başka modülün `/api/<id>` önekine doğrudan
+     * gidilmez; adres sağlayan modülün kendi kodundadır). Örnek:
+     * `kmRead('bell.status', 'planStatus', {from, to})`,
+     * `kmRead('bbd_students.groups_read', 'list', {archived: 'all'})`.
+     * İstek yine kullanıcının oturumuyla gider; o modülün kendi izni geçerlidir
+     * (K9). Yetenek çözülmüyorsa (modül kapalı ya da kullanıcı o ekranı
+     * göremiyor — kabuk görünmeyen paneli sağlayıcı yapmaz) 403 gibi davranır:
+     * eskiden doğrudan çağrı da izinsiz kullanıcıda 403 alıyordu; çağıran ekran
+     * bunu ham hata olarak göstermez, sebebini yazar.
      */
-    kmGet: (path) => ctx.api(path),
+    kmRead: async (name, method, ...args) => {
+      const provider = typeof ctx.capability === 'function' ? ctx.capability(name) : null;
+      if (!provider || typeof provider[method] !== 'function') {
+        throw Object.assign(new Error(`KM yeteneği yok: ${name}`), { status: 403, code: 'capability_missing' });
+      }
+      return provider[method](...args);
+    },
     /**
      * Çekirdeğin istek kanalı — YALNIZ belge baskısı için (`documents.js`:
      * `ui-kit/printing.js` üretilmiş PDF'i `/api/outputs/document` ile alır;

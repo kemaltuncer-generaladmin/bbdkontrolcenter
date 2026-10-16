@@ -67,7 +67,10 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   const app = {
     root,
     toast: (text, tone) => toasts.push([text, tone]),
-    kmGet: (path) => api(path),
+    kmRead: (name, method, args = {}) => api({
+      'bbd_students.groups_read:list': `/api/bbd_students/groups?archived=${args.archived}`,
+      'bbd_students.groups_read:rollover': '/api/bbd_students/groups/rollover',
+    }[`${name}:${method}`]),
     api: {
       can: () => true,
       featureOff: () => false,

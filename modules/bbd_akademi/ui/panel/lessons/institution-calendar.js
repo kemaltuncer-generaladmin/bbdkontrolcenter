@@ -150,7 +150,7 @@ function bellContext(app) {
       if (!enabled) return Promise.resolve(null);
       if (request && Date.now() - at < BELL_PROFILES_TTL) return request;
       at = Date.now();
-      request = app.kmGet('/api/bell/state')
+      request = app.kmRead('bell.status', 'state')
         .then((data) => (Array.isArray(data?.profiles) ? data.profiles : null))
         .catch(() => null)
         .then((found) => {

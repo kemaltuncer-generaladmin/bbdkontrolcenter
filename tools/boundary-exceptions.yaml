@@ -40,31 +40,6 @@ exceptions:
       Ad çözümü km_sdk'de `ctx.user_names(ids)` gibi salt okunur bir kimlik
       yüzüne taşınır (km-guvenlik ile birlikte). Aşama 3, adım 3.1.
 
-  # ---------------------------------- alanlar arası HTTP çağrısı (panel)
-  - rule: foreign-api
-    module: bbd_akademi
-    target: bbd_students
-    reason: >
-      Akademi paneli öğrenci gruplarını (students-groups.js) ve sınıf
-      listesini (timetable-copy.js) doğrudan `/api/bbd_students/...`
-      ucundan okur. Davranış canlıda doğru; sınır yalnız panel katmanında
-      aşılıyor (backend izin kapısı yine bbd_students'ın).
-    plan: >
-      Aşama 2 (bbd_akademi bölünmesi) sırasında bu iki çağrı
-      `ctx.capability('bbd_students.groups'/'bbd_students.directory')`
-      arayüz yeteneğine ya da Akademi'nin kendi ucuna taşınır.
-
-  - rule: foreign-api
-    module: bbd_akademi
-    target: bell
-    reason: >
-      Akademi ders programı zil durumunu (timetable-bell-status.js) ve kurum
-      takvimi zil haftasını (institution-calendar.js) `/api/bell/...`
-      ucundan okur.
-    plan: >
-      Aşama 2'de `bell.week` / `bell.plan` arayüz yeteneği üzerinden okumaya
-      geçilir (yetenek backend'de zaten var).
-
   # ------------------------------------------- çekirdek modülü biliyor (K1)
   - rule: core-knows-module
     module: km_core

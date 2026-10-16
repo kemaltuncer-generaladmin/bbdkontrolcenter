@@ -29,9 +29,9 @@ const CLASS_CACHE = '/v1/admin/class-groups';
 
 /** KM Sınıflar (dönem yedeği): katlanmış ad → dönem. Okunamazsa boş (sütun "—"). */
 async function kmYears(app) {
-  if (typeof app.kmGet !== 'function') return new Map();
+  if (typeof app.kmRead !== 'function') return new Map();
   try {
-    const data = await app.kmGet('/api/bbd_students/groups?archived=all');
+    const data = await app.kmRead('bbd_students.groups_read', 'list', { archived: 'all' });
     const out = new Map();
     for (const group of data?.groups || []) {
       if (!group.academicYear) continue;

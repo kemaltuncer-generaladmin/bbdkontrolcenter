@@ -63,7 +63,7 @@ export function bellPlanCard(app) {
       }
     }
     try {
-      return { kind: 'km', data: await app.kmGet(`/api/bell/plan/status?from=${from}&to=${to}`), note };
+      return { kind: 'km', data: await app.kmRead('bell.status', 'planStatus', { from, to }), note };
     } catch (failure) {
       throw Object.assign(failure, { source: 'km', note });
     }

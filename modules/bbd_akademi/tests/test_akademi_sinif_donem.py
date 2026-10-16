@@ -41,7 +41,10 @@ export default async function ({ document, audit, sleep, api, load }) {
       api: { getCached: async () => ({ items }), get: async () => ({}), invalidate: () => {}, can: () => true,
         featureOff: () => false },
       lookups: { terms: async () => [], teachers: async () => [] },
-      kmGet: (path) => api(path),
+      kmRead: (name, method, args = {}) => api({
+        'bbd_students.groups_read:list': `/api/bbd_students/groups?archived=${args.archived}`,
+        'bbd_students.groups_read:rollover': '/api/bbd_students/groups/rollover',
+      }[`${name}:${method}`]),
     };
     const view = classesView(app, { openStudent: () => {} });
     root.append(view.node);

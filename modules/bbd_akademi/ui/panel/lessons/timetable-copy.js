@@ -8,7 +8,7 @@
 // DÖNEM GEÇİŞİ KOPYASI: KM → Öğrenciler → Sınıflar → "Dönem geçişi" eski dönemin
 // sınıflarını yeni döneme taşır (7-A → 8-A) ama ders programı ve sınıf müfredatı
 // Akademi'dedir. Bu pencere KM'nin son geçişinin eşlemesini okur
-// (`GET /api/bbd_students/groups/rollover` → `latest.pairs`, salt okunur `app.kmGet`),
+// (`bbd_students.groups_read` → `rollover()` → `latest.pairs`, salt okunur `app.kmRead`),
 // eşlenen her eski sınıfın programını (`admin_copyTimetable`, kaynak gün = eski
 // üyeliklerin son günü) ve sınıf müfredatını (`admin_changeClassGroupCurricula`;
 // yalnız hedef dönem güncel dönemken — Akademi müfredatı güncel döneme yazar) yeni
@@ -146,7 +146,6 @@ export function copyResultsTable(result, { classGroups, layout }) {
 
 // ------------------------------------------------------------ dönem geçişi kopyası
 
-const ROLLOVER = '/api/bbd_students/groups/rollover';
 
 /**
  * KM eşlemesini Akademi sınıflarına bağlar: eski sınıf (ad + eski dönem; arşivdeki
@@ -175,7 +174,7 @@ export function matchRolloverPairs(latest, classGroups) {
  * @returns {Promise<object|null>} `{results}` ya da vazgeçişte / geçiş yokken null
  */
 export async function rolloverCopyDialog(app, { layout = null } = {}) {
-  if (typeof app.kmGet !== 'function') {
+  if (typeof app.kmRead !== 'function') {
     app.toast('KM öğrenci yönetimi bu kurulumda yok.', 'warn');
     return null;
   }
@@ -183,7 +182,7 @@ export async function rolloverCopyDialog(app, { layout = null } = {}) {
   let classGroups = [];
   try {
     const [overview, groups] = await Promise.all([
-      app.kmGet(ROLLOVER),
+      app.kmRead('bbd_students.groups_read', 'rollover'),
       app.api.get('/v1/admin/class-groups', { archived: true }),
     ]);
     latest = overview?.latest || null;

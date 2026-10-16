@@ -545,8 +545,9 @@ gönderilmez. İki şalter de **açıktır**: alanlar sözleşmeye bbd-akademi
 olduğunu doğrular. Akademi `admin_getBellPlanStatus` şalter istemez: izin
 listesinde olduğu için kart onu kullanır.
 
-**KM Zil Sistemi'nden okunan uçlar** (panel, `app.kmGet`; yalnız GET, izin
-`bell.view`; yoksa 404/403 Türkçe notla karşılanır):
+**KM Zil Sistemi'nden okunan uçlar** (panel, `app.kmRead('bell.status', …)` —
+Zil Sistemi panelinin arayüz yeteneği, ADR 0033 K12; yalnız okuma, izin
+`bell.view`; yetenek yoksa ya da uç 404/403 dönerse Türkçe notla karşılanır):
 
 - `GET /api/bell/plan/status?from=YYYY-MM-DD&to=YYYY-MM-DD` — zil planı durumu
   kartının yedeği: Akademi işlemi sunmuyorsa (404) ya da `bell_plan_sync`
