@@ -80,6 +80,15 @@ Akademi API  /v1/admin/*
    açılışında anahtar yoksa ya da şalter kapalıysa ekranın tepesinde sebep
    yazar; vekil `503 akademi_not_configured` / `akademi_disabled` döner.
 
+5. **Ders kayıtları (F-DK, 16.10.2026) için anahtar yenileme.** Ders kaydı
+   uçları yeni Akademi izinleri ister (`boards.manage`, `recordings.manage`;
+   Akademi README §14 madde 110 — `km_panel` kümesine backend paketiyle girer).
+   Anahtarın izinleri oluşturulduğu an dondurulduğu için bu sürümden önce
+   üretilmiş KM panel anahtarıyla Dersler ve Program → Ders kayıtları
+   `403 forbidden` alır; ekran bunu görür ve ne yapılacağını yazar. Sıra
+   KVKK talepleriyle aynıdır: Akademi'de dağıtım + `sync-roles` → yeni anahtar
+   ("KM paneli" kümesi) → kasaya `bbd_akademi.api_key` → eski anahtarı iptal.
+
 ## Bilgi mimarisi (15.10.2026 — tek gezinme)
 
 Kullanıcı isteği (15.10.2026): "kontrol merkezindeki tüm menüler ve o menülerin
@@ -130,7 +139,8 @@ Bugün ─────────────── Özet · Talepler
 Koçluk* ────────────── Kontrol kuyruğu · Haftalık program · Koçluk öğrencileri · Hoca soruları* ·
                        Mesajlar (denetim) · Görüşmeler · Koçlar ve atama · Kütüphane ·
                        Tebrik ve rozetler · Check-in
-Dersler ve Program ─── Ders programı ve etüt · Ders oturumları · Kurum takvimi · Müfredat
+Dersler ve Program ─── Ders programı ve etüt · Ders oturumları · Kurum takvimi · Müfredat ·
+                       Ders kayıtları* (16.10.2026 — akıllı tahta)
 Yoklama ───────────── Yoklama (günlük · pano · raporlar · düzeltme kuyruğu · ayarlar)
 Ödev ve Deneme ─────── Ödevler · Çalışma planı · Denemeler · Değerlendirmeler · Kaynaklar · Okuma ·
                        Bilgi kartları* · Şablonlar (ödev · atama paketi · plan şablonu)
@@ -276,6 +286,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | İletişim → SMS | `sms.js` (+ `settings-sms.js`) | Eski Ayarlar → SMS sekmesinin kendi ekranı: SMS sağlığı ve paket, kurum SMS bütçesi ve ayarları, kurum SMS kuyruğu, OTP günlüğü, telefon sayacı sıfırlama |
 | Bugün → Özet | `dashboard.js` | Tek özet çağrısı: günün dersleri, yoklama, kurumda olanlar, bekleyen talep ve kitap; kurum carisi ve kantin AYRI kartlarda; tablet panosu ve kullanım; öğrenci çağırma |
 | Öğrenciler | `students*.js` | Akademi öğrenci listesi (seviye/alan/hedef salt okunur — Öğrenciler modülünde düzenlenir), öğrenci detayı: özet, program, müfredat ve ilerleme, kaynaklar, ödevler, denemeler (karne), yoklama, çalışma, öğrenme (plan, hata defteri, soru, okuma, ajanda — F-A24), hedef & özet, koçluk (koç — eşleme, koç notları, değerlendirmeler, öz değerlendirme, erken uyarılar), bilgi kartları, talepler, kurum cari, kantin (salt okunur); sınıflar, çalışma grupları, veliler. KM'de **pasifleştirilen** öğrenci varsayılan listede yoktur, “Durum → Pasif (KM)” süzgeciyle (`status=inactive`) görünür; çekmecesi salt okunurdur (yazma düğmeleri gerekçeli kapalı — kurum cari tahsilatı ve dışa aktarım açık) |
+| Dersler ve Program → Ders kayıtları | `lesson-recordings.js`, `lesson-recordings-logic.js`, `lesson-recordings.css` | Akıllı tahta ders kaydı (F-DK, Akademi README §14 madde 110; bayrak `lesson_recordings` kapalıyken menüde yok). Web / mobil yönetici ile AYNI uçlar ve metinler (tasarım `DkYonetim*`). Dört sekme: **Tahtalar ve derslikler** (tahta ekle → tek seferlik eşleme kodu; durum — çevrimiçi / kayıtta / çevrimdışı / eşleme bekliyor / iptal —, mikrofon ve türü — harici mikrofon zorunlu, Bluetooth HFP ve yedeğe düşme uyarısı —, son görülme, sürüm; eşleme kodu / yeniden eşle, kodu iptal, iptal et, düzenle, sil; ayrıntıda tanılama raporu + "Tanılama iste"; derslik ekle / düzenle / sil — ad ders programındaki derslik metniyle eşleşir; üstte "Kayıt sürüyor" bandı), **Kayıtlar** (Tümü / Yayında / Gizli / Kurtarılmış / Kayıtta / Başarısız, tarih, öğretmen, sınıf, sıralama; ayrıntıda gizle / göster, kaydı sil, kim izledi, ek öğrenci / grup paylaşımı + bildirim), **Depolama** (800 GB çubuğu %80 / %90 işaretli, tahmini dolma günü, son temizlik), **Ayarlar** (saklama ≤ 120 gün, tavan ≤ 800 GB, kalite 1080p / 720p, kamera sahneleri; süre / tavan düşerse onay). Video baytı KM'den geçmez; oynatıcı web / mobilde |
 | Müfredat | `curriculum.js` | Katalog (seviye/sınav/ders), kuruma özel program/ünite/konu, sürümler, program çözümleme, öğrenci/sınıf istisnaları |
 | (ortak) | `curriculum-picker.js` | Program / konu seçicisi (ödev, plan görevi, deneme, deste, kaynak içindekiler): etiket seviyeyi taşır ("11. sınıf · Matematik"), seviye sırası (5→8, LGS, 9→12, TYT, AYT), ödevde hedefin (sınıf / grup / öğrenci) seviyesinden önerilen program kendiliğinden seçilir (ortak ödev içerik alanları `homework-content.js` üzerinden: tek ödevde formdaki hedef, toplu ödevde "Kime?" seçildikten sonra; şablonda hedef yok → seviye çipleri); atama paketinin program listesi de seviyeli; seviye sınıftan gelir (Öğrenciler → Sınıflar). Konu ağacı yalnız konu kimliği seçtirir |
 | Kaynaklar | `resources*.js` | Hazır kütüphane, kurum kaynakları (ISBN, mağaza kataloğu), içindekiler ve konu eşlemesi, "konulardan bölüm üret", paketler + otomatik atama + şimdi uygula, atamalar, ilerleme tablosu |
@@ -446,6 +457,7 @@ izin gelirse test kırılır.
 | `bbd_akademi.learning` | admin, bbd_staff | Günlük koçluk: plan görevi atama ve erteleme, koç notları, erken uyarı eylemleri; görev onayı, soru-cevap, check-in, tebrik |
 | `bbd_akademi.learning_setup` | admin | Öğrenme araçları kurulumu: plan şablonları, okuma listeleri ve ligi, desteler, değerlendirme şablon/dönemleri, erken uyarı eşikleri; koç eşlemesi, koç kütüphanesi küratörlüğü, rozetler, koçluk dışa aktarımı |
 | `bbd_akademi.evaluations` | admin, bbd_staff | Değerlendirme formu, yayımlama, karne dışa aktarımı |
+| `bbd_akademi.recordings` | admin, bbd_staff | Ders kayıtları (akıllı tahta): tahta ekleme, eşleme kodu, iptal, tanılama; derslikler; kayıtları gizleme / silme, kim izledi, paylaşım; depolama kotası (Akademi `boards.manage`, `recordings.manage`). Kayıt AYARLARINI yazmak (`admin_putRecordingSettings`) kurum ayarıdır → `bbd_akademi.settings` |
 | `bbd_akademi.privacy` | admin | KVKK talepleri: hesap silme / veri indirme taleplerine karar, silinmiş hesabın erişimini yeniden açma (Akademi `privacy.requests`). Yıkıcı: silme onayı kişisel veriyi geri dönüşsüz siler |
 
 ## Vekil, köprü ve PIN teyidi
