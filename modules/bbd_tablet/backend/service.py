@@ -46,6 +46,7 @@ from .rules import (
     normalize_self_update,
     normalize_usage_windows,
     session_view,
+    with_always_unlimited,
 )
 
 # Stable storage keys from TabletKontrol's SystemPolicyControl. The debugging
@@ -235,7 +236,7 @@ class TabletService:
             "timezone": row["timezone"], "updatedAt": row["updated_at"],
             "usageWindows": windows,
             "dailyTotalLimitSeconds": int(row.get("daily_total_limit_seconds") or 0),
-            "apps": [TabletService._app_view(app) for app in apps],
+            "apps": with_always_unlimited([TabletService._app_view(app) for app in apps]),
             "systemControls": {item["control_key"]: bool(item["is_enabled"])
                                for item in controls},
         }

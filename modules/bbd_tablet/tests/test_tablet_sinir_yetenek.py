@@ -184,7 +184,8 @@ async def test_genel_ayarlar_profiller(service: TabletService, clock: Any) -> No
              for app in profiles["Ortaokul"]["apps"]}
     assert modes == {VIDEO["packageName"]: ("limited", 1800),
                      GAME["packageName"]: ("blocked", None),
-                     BOOK["packageName"]: ("unlimited", None)}
+                     BOOK["packageName"]: ("unlimited", None),
+                     "com.veykemtu.benimdunyam": ("unlimited", None)}
 
 
 async def test_ogrenciye_ozel_sure_tablete_ek_sure_olarak_iner(service: TabletService,

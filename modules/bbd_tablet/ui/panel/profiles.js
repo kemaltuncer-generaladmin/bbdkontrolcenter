@@ -52,6 +52,8 @@ const CONTROL_CHOICES = [['', 'Tablet varsayılanı'], ['block', 'Engelle'], ['a
 const MODES = [['blocked', 'Yasak'], ['timed', 'Süreli'], ['unlimited', 'Sınırsız']];
 const MAX_WINDOWS = 21;
 const PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
+// Her profilde izinli ve sınırsız; sunucu ve tablet de böyle uygular (rules.ALWAYS_UNLIMITED_APPS).
+const ALWAYS_UNLIMITED = new Map([['com.veykemtu.benimdunyam', 'BBD Akademi']]);
 const FALLBACK_ZONES = ['Europe/London', 'Europe/Berlin', 'Europe/Moscow', 'Asia/Baku', 'Asia/Dubai', 'UTC'];
 
 function zoneList(current) {
@@ -72,6 +74,16 @@ function minutesOf(text) {
   return Number.isInteger(value) ? value : NaN;
 }
 
+/** Taslak kuralları: her zaman sınırsız uygulamalar başta, sınırsız. */
+function withAlwaysUnlimited(apps) {
+  const fixed = apps.map((item) => (ALWAYS_UNLIMITED.has(item.packageName)
+    ? { ...item, mode: 'unlimited', minutes: '60' } : item));
+  const missing = [...ALWAYS_UNLIMITED]
+    .filter(([packageName]) => !fixed.some((item) => item.packageName === packageName))
+    .map(([packageName, appName]) => ({ packageName, appName, mode: 'unlimited', minutes: '60' }));
+  return [...missing, ...fixed];
+}
+
 /** Sunucu profili → düzenlenebilir taslak (derin kopya). */
 function toDraft(profile) {
   const controls = profile?.systemControls || {};
@@ -83,13 +95,13 @@ function toDraft(profile) {
     windows: (profile?.usageWindows || []).map((item) => ({
       days: [...(item.days || [])], start: item.start || '', end: item.end || '',
     })),
-    apps: (profile?.apps || []).map((item) => ({
+    apps: withAlwaysUnlimited((profile?.apps || []).map((item) => ({
       packageName: item.packageName,
       appName: item.appName || '',
       mode: !item.allowed ? 'blocked' : item.unlimited ? 'unlimited' : 'timed',
       minutes: String(item.allowed && !item.unlimited
         ? Math.max(1, Math.round((item.dailyLimitSeconds || 0) / 60)) : 60),
-    })),
+    }))),
     controls: Object.fromEntries(SYSTEM_CONTROLS.map(([key]) => [key,
       Object.hasOwn(controls, key) ? (controls[key] ? 'block' : 'allow') : ''])),
   };
@@ -508,6 +520,15 @@ export function profilesView(app) {
       };
       seg.append(...choices);
       paintMode();
+      if (ALWAYS_UNLIMITED.has(rule.packageName)) {
+        // BBD Akademi: her profilde sınırsız, kaldırılamaz; süreden yemez.
+        for (const choice of choices) choice.disabled = true;
+        seg.title = 'BBD Akademi her profilde sınırsızdır; süreden yemez, günlük toplama sayılmaz.';
+        row.append(nameCell(label, label !== rule.packageName ? rule.packageName : ''), seg, minutesBox,
+          h('span', 'tb-sub', 'Her zaman sınırsız'));
+        ed.ruleRows.set(rule, { row, minutes });
+        return row;
+      }
       row.append(nameCell(label, label !== rule.packageName ? rule.packageName : ''), seg, minutesBox,
         button('Kaldır', {
           variant: 'ghost',

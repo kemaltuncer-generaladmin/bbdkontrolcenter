@@ -36,6 +36,7 @@ BOOKS = {"packageName": "com.example.books", "appName": "Kitaplık", "allowed": 
 GAME = {"packageName": "com.example.game", "appName": "Oyun", "allowed": False,
         "unlimited": False, "dailyLimitSeconds": 0}
 TODAY = "2026-10-14"
+AKADEMI = "com.veykemtu.benimdunyam"
 # Auth fails before the sync route reads its request.
 NO_REQUEST: Any = SimpleNamespace(headers={})
 
@@ -159,7 +160,10 @@ async def test_duplicate_profile_copies_rules_hours_and_controls(service: Tablet
     copy = await service.duplicate_profile(profile_id=source["id"], name=None)
     assert copy["id"] != source["id"]
     assert copy["name"] == "5. sınıflar (kopya)"
-    assert copy["apps"] == source["apps"]
+    # BBD Akademi kaynağın görünümüne eklenir, kopyada saklanır: sıra numarası değişebilir.
+    def rules(profile: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{k: v for k, v in app.items() if k != "sortOrder"} for app in profile["apps"]]
+    assert rules(copy) == rules(source)
     assert copy["usageWindows"] == windows
     assert copy["systemControls"] == {"factory_reset": True}
 
@@ -176,7 +180,7 @@ async def test_app_modes_and_usage_windows_are_validated(service: TabletService)
                                                 {**GAME, "dailyLimitSeconds": 999}])
     limits = {app["packageName"]: app["dailyLimitSeconds"] for app in profile["apps"]}
     assert limits == {VIDEO["packageName"]: 60, BOOKS["packageName"]: 0,
-                      GAME["packageName"]: 0}
+                      GAME["packageName"]: 0, AKADEMI: 0}
 
     for windows, message in (
         ([{"days": [8], "start": "08:00", "end": "09:00"}], "1 \\(Pazartesi\\)"),
@@ -698,7 +702,8 @@ async def test_unnamed_apps_and_padded_profile_names_are_normalized(
         {**VIDEO, "appName": "  "}, {**BOOKS, "appName": ""}])
     assert profile["name"] == "5-A"
     assert {app["packageName"]: app["appName"] for app in profile["apps"]} == {
-        VIDEO["packageName"]: VIDEO["packageName"], BOOKS["packageName"]: BOOKS["packageName"]}
+        VIDEO["packageName"]: VIDEO["packageName"], BOOKS["packageName"]: BOOKS["packageName"],
+        AKADEMI: "BBD Akademi"}
     with pytest.raises(ValueError, match="Profil adı"):
         await make_profile(service, name="   ")
 
@@ -1330,3 +1335,21 @@ async def test_revoke_with_wrong_pin_changes_nothing(
         await routes.delete_profile("missing", routes.ProfileDeleteBody(pin="482913"),
                                     request, user)
     assert missing.value.status_code == 404
+
+
+async def test_bbd_akademi_is_unlimited_in_every_profile(service: TabletService) -> None:
+    # Profilde yoksa görünümde sınırsız olarak bulunur.
+    plain = await make_profile(service, apps=[VIDEO])
+    akademi = next(app for app in plain["apps"] if app["packageName"] == AKADEMI)
+    assert (akademi["allowed"], akademi["unlimited"], akademi["dailyLimitSeconds"]) == (True, True, 0)
+    # Yasak ya da süreli kaydedilmek istense de sınırsız saklanır.
+    for rule in ({"allowed": False}, {"allowed": True, "dailyLimitSeconds": 1800}):
+        profile = await make_profile(service, apps=[
+            VIDEO, {"packageName": AKADEMI, "appName": "Akademi", **rule}])
+        rows = [app for app in profile["apps"] if app["packageName"] == AKADEMI]
+        assert [(app["allowed"], app["unlimited"], app["dailyLimitSeconds"]) for app in rows] == [
+            (True, True, 0)]
+    # Diğer uygulamalar sınırsız eklenebilmeye devam eder.
+    other = await make_profile(service, apps=[{**BOOKS, "unlimited": True, "dailyLimitSeconds": 0}])
+    books = next(app for app in other["apps"] if app["packageName"] == BOOKS["packageName"])
+    assert books["unlimited"] is True
