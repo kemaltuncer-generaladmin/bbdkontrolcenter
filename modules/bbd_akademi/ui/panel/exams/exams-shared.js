@@ -141,6 +141,8 @@ export function examTitleCell(exam) {
   const head = h('span', 'ak-ex-name');
   head.append(h('b', '', exam?.name || '—'));
   if (exam?.isHistorical) head.append(badge('Geçmiş kayıt', 'dim'));
+  // Uygulamada deneme (Akademi README §14 madde 120): öğrenci optik formu uygulamada doldurur.
+  if (exam?.deliveryMode === 'app') head.append(badge('Uygulamada', 'info'));
   node.append(head, h('small', '', [EXAM_TYPES[exam?.type] || exam?.type, exam?.publisher]
     .filter(Boolean).join(' · ')));
   return node;

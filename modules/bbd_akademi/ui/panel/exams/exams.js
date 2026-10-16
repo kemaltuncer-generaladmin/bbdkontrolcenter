@@ -22,7 +22,7 @@ import { AkademiError } from '../api.js';
 import { programLabel, sortPrograms } from '../shared/curriculum-picker.js';
 import {
   actionButton, dateInput, fmtDate, fmtDateTime, formDialog, kv, loader, multiChips, num, optionsOf,
-  pagedList, sectionHead, selectBox, statusBadge, todayIst, toolbar,
+  pagedList, sectionHead, selectBox, statusBadge, studentSelect, todayIst, toolbar,
 } from '../common.js';
 import {
   EXAM_STATUS, EXAM_TYPES, FILL_STATUS, SCORING_RULES, examFamily, examTemplate, examTitleCell,
@@ -32,9 +32,15 @@ import { exportTab, resultsTab } from './exams-results.js';
 import { importTab } from './exams-import.js';
 import { keysTab } from './exams-keys.js';
 import { analysisTab, analyticsPanel } from './exams-analytics.js';
+import { liveTab } from './exams-live.js';
+import { aliasesPanel, matchingTab, publisherWizard } from './exams-publisher.js';
+import {
+  APP_STATE, appDraftFromExam, appFacts, defaultAppDraft, deliveryPart, validateApp,
+} from './exams-app-logic.js';
+import { appSettings, deliveryChoice } from './exams-app-form.js';
 
 const BOOKLET_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
-const DETAIL_TABS = ['results', 'import', 'keys', 'analysis', 'export'];
+const DETAIL_TABS = ['live', 'results', 'import', 'keys', 'matching', 'analysis', 'export'];
 
 export function section(app) {
   loadStyles(import.meta.url, 'exams.css');
@@ -55,16 +61,21 @@ export function section(app) {
     ? blockedButton('Geçmiş deneme ekle',
       'Geçmiş deneme girişi toplu yükleme yetkisi ister (yöneticinizden izin isteyin).')
     : actionButton(app, 'admin_createExam', 'Geçmiş deneme ekle', { onClick: () => createExam(true) });
+  // Yayınevi kazanım tablosu (Akademi README §14 madde 120): dosyadan yeni deneme + anahtar + soru → konu.
+  const addFromTable = actionButton(app, 'admin_previewExamPublisherTable', "Yayınevi Excel'i yükle",
+    { onClick: () => importPublisherTable() });
   main.append(sectionHead('Denemeler', {
-    subtitle: 'Deneme tanımı, sonuç girişi, toplu yükleme, cevap anahtarı, analiz ve dışa aktarım.',
-    actions: [addHistorical, add],
+    subtitle: 'Deneme tanımı (kâğıt ya da uygulamada), sonuç girişi, toplu yükleme, yayınevi kazanım tablosu, '
+      + 'cevap anahtarı, canlı sınav, analiz ve dışa aktarım.',
+    actions: [addHistorical, addFromTable, add],
   }));
 
   const views = {};
   const tabs = tabBar([
     { key: 'exams', label: 'Denemeler' },
     { key: 'analytics', label: 'Analiz ve karşılaştırma' },
-  ], 'exams', (key) => showView(key));
+    app.can('admin_listExamTopicAliases') ? { key: 'aliases', label: 'Eşleme sözlüğü' } : null,
+  ].filter(Boolean), 'exams', (key) => showView(key));
   const viewSlot = h('div', 'ak-stack');
   main.append(tabs.node, viewSlot);
 
@@ -130,7 +141,8 @@ export function section(app) {
 
   function showView(key) {
     if (!views[key]) {
-      views[key] = analyticsPanel(app, { openExam: (examId) => openExam(examId) });
+      views[key] = key === 'aliases' ? aliasesPanel(app)
+        : analyticsPanel(app, { openExam: (examId) => openExam(examId) });
       viewSlot.append(views[key].node);
       views[key].reload();
     }
@@ -153,6 +165,13 @@ export function section(app) {
       exam: saved });
   }
 
+  async function importPublisherTable() {
+    const result = await publisherWizard(app);
+    if (!result?.exam) return;
+    list.reload();
+    openExam(result.exam.id, { tab: 'matching', exam: result.exam });
+  }
+
   async function editExam(exam) {
     const saved = await examDialog(app, exam);
     if (!saved) return;
@@ -162,12 +181,19 @@ export function section(app) {
   }
 
   // ------------------------------------------------------------- detay
-  function openExam(examId, { tab = 'results', importId = null, exam = null } = {}) {
+  function openExam(examId, { tab = null, importId = null, exam = null } = {}) {
     detail?.destroy();
     detail = examDetail(app, examId, {
       tab, importId, exam,
       onBack: () => closeDetail(),
       onEdit: (current) => editExam(current),
+      onImportTable: async (current) => {
+        const result = await publisherWizard(app, { exam: current });
+        if (result?.exam) {
+          list.replace((row) => row.id === result.exam.id, result.exam);
+          openExam(result.exam.id, { tab: 'matching', exam: result.exam });
+        }
+      },
       onChanged: (next) => { if (next) list.replace((row) => row.id === next.id, next); },
       onDeleted: (id) => { list.remove((row) => row.id === id); closeDetail(); },
     });
@@ -202,10 +228,14 @@ export function section(app) {
         if (payload?.tab === 'analytics') tabs.select('analytics', false);
       }
       if (payload?.examId) {
-        openExam(payload.examId, { tab: DETAIL_TABS.includes(payload.tab) ? payload.tab : 'results',
+        openExam(payload.examId, { tab: DETAIL_TABS.includes(payload.tab) ? payload.tab : null,
           importId: payload.importId || null });
       } else if (payload?.importId) {
         openImportLink(payload.importId);
+      } else if (payload?.tab === 'aliases' && app.can('admin_listExamTopicAliases')) {
+        closeDetail();
+        tabs.select('aliases');
+        showView('aliases');
       } else if (payload?.tab === 'analytics') {
         closeDetail();
         tabs.select('analytics');
@@ -223,13 +253,22 @@ function errorText(failure) {
   return failure?.message || 'İşlem tamamlanamadı.';
 }
 
+/** Hedef kitle: sınıflar + tek tek öğrenciler; ikisi de boşsa bütün kurum. */
+function targetText(exam) {
+  const classes = (exam.classGroupIds || []).length;
+  const students = (exam.studentIds || []).length;
+  if (!classes && !students) return 'Bütün kurum';
+  return [classes ? `${num(classes)} sınıf` : '', students ? `${num(students)} öğrenci (ayrıca)` : '']
+    .filter(Boolean).join(' + ');
+}
+
 // ---------------------------------------------------------------- detay
 
 /**
  * Deneme detayı: başlık + özet + sekmeler. Sekmeler ilk açılışta kurulur ve
  * açık kalır; deneme düzenlenirse detay baştan kurulur (bölümler değişebilir).
  */
-function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, onChanged, onDeleted }) {
+function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, onImportTable, onChanged, onDeleted }) {
   const node = h('div', 'ak-stack');
   const headSlot = h('div', 'ak-stack');
   const tabSlot = h('div');
@@ -246,13 +285,17 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
   headSlot.append(view.node);
   view.reload();
 
+  const isApp = () => exam?.deliveryMode === 'app';
+
   function available() {
     return [
+      isApp() && app.can('admin_getExamLive') ? { key: 'live', label: 'Canlı sınav' } : null,
       { key: 'results', label: 'Sonuçlar' },
       app.can('admin_listExamImports') || app.can('admin_uploadExamImport')
         ? { key: 'import', label: 'Toplu yükleme' } : null,
       app.can('admin_getAnswerKeys') || app.can('admin_getQuestionTopics')
         ? { key: 'keys', label: 'Cevap anahtarı ve konular' } : null,
+      app.can('admin_getExamTopicMatching') ? { key: 'matching', label: 'Kazanım eşleştirmesi' } : null,
       { key: 'analysis', label: 'Analiz' },
       app.can('admin_exportExam') ? { key: 'export', label: 'Dışa aktar' } : null,
     ].filter(Boolean);
@@ -262,6 +305,8 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
     if (disposed) return;
     paintHead();
     const items = available();
+    // Uygulamada deneme sürerken (ya da açılmak üzereyken) detay canlı ekranla açılır.
+    if (!current) current = isApp() && ['scheduled', 'open', 'paused'].includes(exam.app?.state) ? 'live' : 'results';
     if (!items.some((item) => item.key === current)) current = 'results';
     tabs = tabBar(items, current, (key) => show(key));
     tabSlot.replaceChildren(tabs.node);
@@ -285,11 +330,14 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
         onChanged: () => { refresh(); for (const [name, body] of Object.entries(bodies)) if (name !== key) body.stale = true; },
         onShowResults: () => { tabs.select('results'); },
         onPublish: () => publish(),
+        onImport: () => onImportTable?.(exam),
       };
       const builders = {
         results: () => resultsTab(app, exam, hooks),
         import: () => importTab(app, exam, hooks),
+        live: () => liveTab(app, exam, hooks),
         keys: () => keysTab(app, exam, hooks),
+        matching: () => matchingTab(app, exam, hooks),
         analysis: () => analysisTab(app, exam),
         export: () => exportTab(app, exam),
       };
@@ -325,6 +373,7 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
     const title = h('div', 'ak-ex-detail-title');
     title.append(h('h2', 'ak-title', exam.name), statusBadge(EXAM_STATUS, exam.status));
     if (exam.isHistorical) title.append(badge('Geçmiş kayıt', 'dim'));
+    if (isApp()) title.append(badge('Uygulamada', 'info'), statusBadge(APP_STATE, exam.app?.state));
     const head = h('div', 'ak-head');
     const text = h('div', 'ak-head-text');
     text.append(back, title, h('div', 'ak-sub', [EXAM_TYPES[exam.type] || exam.type, exam.publisher,
@@ -347,10 +396,55 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
       ['Cevap anahtarı', statusBadge(FILL_STATUS, exam.answerKeyStatus)],
       ['Soru → konu', statusBadge(FILL_STATUS, exam.questionTopicStatus)],
       ['Yayım', exam.publishedAt ? fmtDateTime(exam.publishedAt) : 'Yayımlanmadı (yalnız yöneticiler görür)'],
+      ...(isApp() ? [...appFacts(exam.app, fmtDateTime), ['Soru kitapçığı', bookletCell()]] : []),
+      ['Hedef', targetText(exam)],
     ]));
     summary.classList.add('ak-ex-summary');
     nodes.push(summary);
     headSlot.replaceChildren(...nodes);
+  }
+
+  /** İsteğe bağlı soru kitapçığı PDF'i: öğrenci oturumu başlayınca uygulamada görür (tablette form ile yan yana). */
+  function bookletCell() {
+    const cell = h('div', 'ak-inline');
+    const booklet = exam.app?.questionBooklet;
+    cell.append(h('span', booklet ? '' : 'ak-muted', booklet
+      ? `${booklet.fileName} (${num(Math.ceil((booklet.sizeBytes || 0) / 1024))} KB)` : 'Yok (isteğe bağlı)'));
+    const input = h('input');
+    input.type = 'file';
+    input.accept = '.pdf,application/pdf';
+    input.hidden = true;
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.value = '';
+      if (!file) return;
+      if (!/\.pdf$/i.test(file.name)) { app.toast('Yalnız PDF yüklenebilir.', 'warn'); return; }
+      if (file.size > 25 * 1024 * 1024) { app.toast("PDF 25 MB'tan büyük olamaz.", 'warn'); return; }
+      try {
+        const result = await app.api.call('PUT', `/v1/admin/exams/${exam.id}/question-booklet`,
+          { upload: { file, field: 'file' } });
+        exam = result.data || exam;
+        paintHead();
+        onChanged?.(exam);
+        app.toast('Soru kitapçığı yüklendi; öğrenciler oturumu başlatınca görür.', 'good');
+      } catch (failure) {
+        app.toast(errorText(failure), 'bad');
+      }
+    });
+    cell.append(input, actionButton(app, 'admin_uploadExamQuestionBooklet', booklet ? 'Değiştir' : 'PDF yükle',
+      { variant: 'ghost', onClick: () => input.click() }));
+    if (booklet) {
+      cell.append(actionButton(app, 'admin_deleteExamQuestionBooklet', 'Kaldır', { variant: 'ghost', onClick: async () => {
+        try {
+          await app.api.del(`/v1/admin/exams/${exam.id}/question-booklet`);
+          await refresh();
+          app.toast('Soru kitapçığı kaldırıldı.', 'good');
+        } catch (failure) {
+          app.toast(errorText(failure), 'bad');
+        }
+      } }));
+    }
+    return cell;
   }
 
   async function publish() {
@@ -452,6 +546,19 @@ async function examDialog(app, exam, { historical = false } = {}) {
   };
 
   const canHistorical = app.can('admin_uploadExamImport');
+
+  // Nasıl çözülecek? (Akademi README §14 madde 120). Seçim, sözleşmesi bilinen Akademi'de (canlı sınav işlemi izin
+  // listesinde) görünür; kurum bayrağı kapalıysa "Uygulamada" sebebiyle kapalıdır.
+  const canApp = app.can('admin_getExamLive') || exam?.deliveryMode === 'app';
+  const appFlagOff = !app.enabled('exams.app_delivery');
+  const lockedApp = exam?.deliveryMode === 'app' && exam.app && exam.app.state !== 'scheduled' ? exam.app : null;
+  const formSections = () => initial.sections;
+  initial.deliveryMode = exam?.deliveryMode === 'app' ? 'app' : 'paper';
+  initial.app = exam?.deliveryMode === 'app' ? appDraftFromExam(exam, sortedSections(exam))
+    : defaultAppDraft(value.type, value.date);
+  initial.studentIds = [...(exam?.studentIds || [])];
+  let appCtl = null;
+  const showApp = (mode) => showAppField(appCtl?.node, mode);
   return formDialog(app, {
     title: exam ? 'Denemeyi düzenle' : (historical ? 'Geçmiş deneme ekle' : 'Yeni deneme'),
     description: historical
@@ -475,11 +582,19 @@ async function examDialog(app, exam, { historical = false } = {}) {
         validate: (raw, draft) => (draft.scoringRule === 'custom' && !raw ? 'Özel kuralda bu sayı zorunlu.' : null) },
       // İşaretsiz kullanıcıda alan çizilmez; mevcut değer taslakta korunur.
       canHistorical ? { key: 'isHistorical', label: 'Geçmiş kayıt (bildirim gitmez)', type: 'checkbox' } : null,
+      canApp ? { key: 'deliveryMode', label: 'Nasıl çözülecek?', type: 'custom',
+        render: (draft, set) => {
+          set(initial.deliveryMode);
+          return deliveryChoice({ value: initial.deliveryMode, locked: Boolean(lockedApp),
+            disabledReason: appFlagOff ? 'Kurumda kapalı: Ayarlar → Özellikler → “Uygulamada deneme”.' : '',
+            onChange: (mode) => { set(mode); showApp(mode); } });
+        },
+        hint: lockedApp ? 'Pencere açıldığı için çözülme biçimi değiştirilemez.' : '' } : null,
       { key: 'bookletTypes', label: 'Kitapçık türleri', type: 'custom', required: true,
         render: (draft, set) => {
           set(initial.bookletTypes);
           return multiChips(BOOKLET_LETTERS.map((letter) => ({ value: letter, label: letter })),
-            initial.bookletTypes, (list) => set([...list].sort()));
+            initial.bookletTypes, (list) => { set([...list].sort()); appCtl?.sectionsChanged(); });
         },
         hint: 'Cevap anahtarı kitapçık başına girilir.' },
       { key: 'classGroupIds', label: 'Katılan sınıflar', type: 'custom',
@@ -489,10 +604,27 @@ async function examDialog(app, exam, { historical = false } = {}) {
             ? multiChips(classGroups.map((item) => ({ value: item.id, label: item.name })), initial.classGroupIds, set)
             : h('span', 'ak-muted', 'Sınıf tanımlı değil.');
         },
-        hint: 'Hiçbiri seçilmezse deneme bütün kuruma açıktır.' },
+        hint: 'Sınıf da öğrenci de seçilmezse deneme bütün kuruma açıktır.' },
+      canApp ? { key: 'studentIds', label: 'Ayrıca tek tek öğrenciler', type: 'custom',
+        render: (draft, set) => studentTargets(app, { ids: initial.studentIds, classGroups, set }),
+        hint: 'Sınıf dışından katılacak öğrenciler (hedef = seçili sınıflar + bu öğrenciler).' } : null,
       { key: 'sections', label: 'Bölümler ve soru sayıları', type: 'custom', required: true,
-        render: (draft, set) => sectionsEditor(app, { draft, set, subjects, locked, rows: initial.sections }),
+        render: (draft, set) => sectionsEditor(app, { draft, set: (rows) => {
+          set(rows);
+          initial.sections = rows;
+          appCtl?.sectionsChanged();
+        }, subjects, locked: locked || Boolean(lockedApp), rows: initial.sections }),
         validate: (rows) => validateSections(rows) },
+      canApp ? { key: 'app', label: 'Uygulamada deneme ayarları', type: 'custom',
+        render: (draft, set) => {
+          set(initial.app);
+          appCtl = appSettings({ draft: initial.app, sections: formSections, type: () => draft.type || value.type,
+            bookletCount: () => (draft.bookletTypes || initial.bookletTypes).length, lockedApp, set });
+          queueMicrotask(() => showApp(draft.deliveryMode || initial.deliveryMode));
+          return { node: appCtl.node, update: (next) => appCtl.typeChanged(next.type) };
+        },
+        validate: (raw, draft) => (draft.deliveryMode === 'app' && !lockedApp
+          ? validateApp(raw, (draft.sections || []).length) : null) } : null,
     ],
     submitLabel: exam ? 'Kaydet' : 'Denemeyi tanımla',
     onSubmit: (draft, { key }) => {
@@ -500,10 +632,66 @@ async function examDialog(app, exam, { historical = false } = {}) {
         throw new AkademiError({ message: 'Geçmiş kayıt ileri tarihli olamaz; tarihi ya da işareti düzeltin.' });
       }
       const body = examBody(draft);
+      // Pencere açıldıysa ayarlar gönderilmez (Akademi mevcut değeri korur); kâğıt denemede yeni alanlar yalnız
+      // sunucu tanıyorsa yazılır (eski Akademi ile de kayıt kırılmaz).
+      if (canApp && !lockedApp) Object.assign(body, deliveryPart(draft, exam));
+      if (canApp && (draft.studentIds?.length || (exam && 'studentIds' in exam))) body.studentIds = draft.studentIds || [];
+      if (draft.deliveryMode === 'app' && !lockedApp) {
+        const booklets = body.bookletTypes || [];
+        if (body.app.bookletMode !== 'single' && booklets.length < 2) {
+          throw new AkademiError({ message: 'Bu kitapçık kuralı için en az iki kitapçık türü seçin ya da “Tek kitapçık” seçin.' });
+        }
+      }
       return exam ? app.api.put(`/v1/admin/exams/${exam.id}`, body)
         : app.api.post('/v1/admin/exams', body, { key });
     },
   });
+}
+
+/** Uygulamada ayarları alanını çözülme biçimine göre gösterir / gizler. */
+function showAppField(node, mode) {
+  const wrap = node?.closest?.('.kit-field');
+  if (wrap) wrap.hidden = mode !== 'app';
+}
+
+/**
+ * Tek tek hedeflenen öğrenciler. Kayıtlı kimliklerin adı yükte gelmez (sözleşme yalnız kimlik verir): sayı yazılır,
+ * "Yeniden seç" ile ortak öğrenci seçicisi açılır; boş bırakılan seçim kayıtlıyı korur, "Temizle" kaldırır.
+ */
+function studentTargets(app, { ids, classGroups, set }) {
+  const node = h('div', 'ak-stack');
+  let current = [...ids];
+  set(current);
+  const line = h('div', 'ak-inline');
+  const text = h('span', 'ak-muted');
+  const slot = h('div');
+  let picker = null;
+  const paint = () => {
+    text.textContent = current.length ? `${num(current.length)} öğrenci ayrıca hedefte.` : 'Tek tek öğrenci yok.';
+    clear.hidden = !current.length;
+  };
+  const choose = button(ids.length ? 'Yeniden seç' : 'Öğrenci seç', { onClick: () => {
+    if (picker) return;
+    picker = studentSelect(app, { classes: classGroups.map((item) => ({ id: item.id, name: item.name })),
+      onChange: (students) => {
+        current = students.length ? students.map((item) => item.id) : [...ids];
+        set(current);
+        paint();
+      } });
+    slot.replaceChildren(picker.node);
+  } });
+  const clear = button('Temizle', { variant: 'ghost', onClick: () => {
+    current = [];
+    set(current);
+    picker?.destroy();
+    picker = null;
+    slot.replaceChildren();
+    paint();
+  } });
+  line.append(text, choose, clear);
+  node.append(line, slot);
+  paint();
+  return node;
 }
 
 function validateSections(rows) {
