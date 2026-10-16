@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "kontrol-merkezi"
-version = "0.5.34"
+version = "0.5.35"
 dependencies = [
  "base64 0.22.1",
  "reqwest 0.12.28",
