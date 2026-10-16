@@ -392,6 +392,8 @@ export function videoInput(video, index = 0) {
   const out = { order: video.order ?? index };
   if (video.libraryItemId) out.libraryItemId = video.libraryItemId;
   else out.videoId = video.videoId || video.video?.videoId || null;
+  // Video havuzundan (Akademi README §14 madde 105): kullanım sayısı sunucuda artar.
+  if (video.videoPoolItemId) out.videoPoolItemId = video.videoPoolItemId;
   if (video.playlistId) out.playlistId = video.playlistId;
   if (video.startSeconds !== null && video.startSeconds !== undefined) out.startSeconds = video.startSeconds;
   if (video.endSeconds) out.endSeconds = video.endSeconds;
@@ -689,3 +691,48 @@ export function playlistIdOf(url) {
   const match = String(url || '').match(/[?&]list=([A-Za-z0-9_-]{10,64})/);
   return match ? match[1] : null;
 }
+
+// ---------------------------------------------------------------- video havuzu (Akademi README §14 madde 105)
+
+/** Video havuzu sıralamaları (Flutter / React ile aynı metinler). */
+export const POOL_SORTS = { recent: 'En yeni', popular: 'En çok kullanılan', title: 'Ada göre' };
+
+/** Bir istekte en çok kaç bağlantı (sözleşme `VideoPoolBulkCreate.urls` ≤ 50). */
+export const POOL_BULK_MAX = 50;
+
+/**
+ * Toplu yapıştırma metni → bağlantı parçaları: satır / boşluk / virgülle ayrılır, boşlar ve aynı bağlantı tekrarı
+ * düşer, 50'şerlik istek parçalarına bölünür. Dönüş: {chunks: string[][], count}.
+ */
+export function poolBulkChunks(text) {
+  const seen = new Set();
+  const urls = [];
+  for (const raw of String(text || '').split(/[\s,]+/)) {
+    const url = raw.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  const chunks = [];
+  for (let i = 0; i < urls.length; i += POOL_BULK_MAX) chunks.push(urls.slice(i, i + POOL_BULK_MAX));
+  return { chunks, count: urls.length };
+}
+
+/** Havuz etiket gövdesi (`VideoPoolTags`): ders, konu, sınıf seviyesi (5–12, `graduate`), serbest etiket (≤ 10). */
+export function poolTagsBody(draft) {
+  const tags = [...new Set(String(draft.tags || '').split(',').map((tag) => tag.trim().slice(0, 30)).filter(Boolean))].slice(0, 10);
+  const gradeLevels = (draft.gradeLevels || []).map((level) => (level === 'graduate' ? 'graduate' : Number(level)))
+    .filter((level) => level === 'graduate' || (level >= 5 && level <= 12));
+  return { subjectId: draft.subjectId || null, topicIds: draft.topicIds || [], gradeLevels, tags };
+}
+
+/** Toplu ekleme sonuçlarının özeti (KM toast'u). */
+export function poolBulkSummary(results) {
+  const n = (status) => results.filter((row) => row.status === status).length;
+  const parts = [`${n('added')} eklendi`];
+  if (n('duplicate')) parts.push(`${n('duplicate')} zaten havuzda`);
+  const failed = results.length - n('added') - n('duplicate');
+  if (failed) parts.push(`${failed} eklenemedi`);
+  return parts.join(' · ');
+}
+

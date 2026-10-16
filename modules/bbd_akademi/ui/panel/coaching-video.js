@@ -50,6 +50,7 @@ export function videoDialog(app, { title = 'Video ekle', max = 10 } = {}) {
 
     const modes = [
       app.can('admin_resolveVideoLink') && { key: 'link', label: 'YouTube bağlantısı' },
+      app.can('admin_listVideoPool') && { key: 'pool', label: 'Video havuzundan' },
       app.can('admin_listCoachLibrary') && { key: 'library', label: 'Kütüphaneden' },
     ].filter(Boolean);
     const pane = h('div', 'ak-stack');
@@ -71,7 +72,8 @@ export function videoDialog(app, { title = 'Video ekle', max = 10 } = {}) {
 
     function paintPane() {
       error.textContent = '';
-      pane.replaceChildren(mode === 'library' ? libraryPane(app, add) : linkPane(app, add, error));
+      pane.replaceChildren(mode === 'library' ? libraryPane(app, add) : mode === 'pool' ? poolPane(app, add)
+        : linkPane(app, add, error));
     }
 
     let release = () => {};
@@ -202,6 +204,41 @@ function libraryPane(app, add) {
         line.append(videoCard(item.video || { title: item.title }), badge(item.scope === 'institution' ? 'Kurum' : 'Kişisel', 'info'),
           button('Ekle', { variant: 'ghost', onClick: () => add({ libraryItemId: item.id, videoId: item.videoId, video: item.video,
             startSeconds: item.startSeconds ?? null, endSeconds: item.endSeconds ?? null }) }));
+        list.append(line);
+      }
+    } catch (failure) {
+      list.replaceChildren(alertBox(problem(failure), 'bad'));
+    }
+  };
+  input.addEventListener('change', load);
+  node.append(input, list);
+  load();
+  return node;
+}
+
+/** Video havuzundan seç (Akademi README §14 madde 105): en çok kullanılanlar önce, arama Türkçe harf duyarsız. */
+function poolPane(app, add) {
+  const node = h('div', 'ak-stack');
+  const list = h('div', 'ak-stack');
+  const input = h('input', 'kit-input');
+  input.type = 'search';
+  input.placeholder = 'Havuzda ara (başlık, kanal, etiket)';
+  input.setAttribute('aria-label', 'Havuzda ara');
+  let token = 0;
+  const load = async () => {
+    const mine = ++token;
+    list.replaceChildren(h('p', 'ak-muted', 'Yükleniyor…'));
+    try {
+      const page = await app.api.get('/v1/admin/video-pool', { q: input.value.trim() || undefined, sort: 'popular', limit: 30 });
+      if (mine !== token) return;
+      list.replaceChildren();
+      const items = page?.items || [];
+      if (!items.length) list.append(h('p', 'ak-muted', 'Havuzda video yok. Koçluk → Video havuzu\'ndan ekleyin.'));
+      for (const item of items) {
+        const line = h('div', 'ak-coach-action');
+        line.append(videoCard({ ...item.video, title: item.title }), badge(`${item.useCount || 0} kez`, 'info'),
+          button('Ekle', { variant: 'ghost', onClick: () => add({ videoPoolItemId: item.id, videoId: item.video.videoId,
+            video: item.video, startSeconds: item.startSeconds ?? null }) }));
         list.append(line);
       }
     } catch (failure) {

@@ -99,7 +99,7 @@ export const SECTIONS = [
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoaches', 'admin_bulkAssignCoach'],
     payload: { coachingTab: 'coaches' } },
   { key: 'coachLibrary', label: 'Kütüphane', file: './coaching.js', requires: ['view'], area: 'coaching',
-    feature: 'coaching', host: 'coaching', reads: ['admin_listCoachLibrary', 'admin_listLibraryProposals'],
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCoachLibrary', 'admin_listLibraryProposals', 'admin_listVideoPool'],
     payload: { coachingTab: 'library' } },
   { key: 'coachMotivation', label: 'Tebrik ve rozetler', file: './coaching.js', requires: ['view'],
     area: 'coaching', feature: 'coaching', host: 'coaching',
