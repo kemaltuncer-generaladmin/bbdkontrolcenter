@@ -39,6 +39,7 @@ const out = {
   source: [m.sourceLabel({ kind: 'resource', resourceTitle: 'Bilfen', page: 48, questionNo: '7' }),
     m.sourceLabel({ kind: 'exam', examName: 'TYT 3', examQuestionNo: 12 }), m.sourceLabel(null)],
   label: m.mistakeLabel({ subject: { name: 'Fizik' }, topic: { name: 'Newton' }, source: { kind: 'other', description: 'Defter' } }),
+  scoped: m.mistakeLabel({ scope: { key: 'tyt', label: 'TYT' }, subject: { name: 'Fizik' }, topic: { name: 'Newton' } }),
   responder: [m.defaultResponder({ assignedTo: { id: 's1' } }), m.defaultResponder(null)],
   summary: m.answerSummary({ mistake: { teacherAnswers: [{ author: { displayName: 'Ali Koç' }, text: 'Kısa',
     images: [{}], voice: [{}], files: [{}], videoUrl: 'https://v' }] } }),
@@ -65,6 +66,8 @@ def test_saf_mantik(tmp_path: Path) -> None:
     assert out["bodies"][3] is None
     assert out["source"] == ["Bilfen · s. 48 · 7. soru", "TYT 3 · 12. soru", ""]
     assert out["label"] == "Fizik · Newton · Defter"
+    # müfredat kapsamı önde (Akademi README §14 madde 114)
+    assert out["scoped"] == "TYT · Fizik · Newton"
     assert out["responder"] == ["s1", ""]
     assert out["summary"] == "Ali Koç: Kısa · 1 görsel · sesli anlatım · 1 PDF · video"
 

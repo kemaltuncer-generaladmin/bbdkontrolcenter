@@ -90,6 +90,14 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await tab.reload();
   await sleep(30);
   const out = {};
+  // Birden çok sınıf varken hiçbir sınıf kendiliğinden seçilmez (ilk sınıf "8-A" ön seçili gelmesin).
+  const pick = root.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Sınıf');
+  out.pickValue = pick?.value;
+  out.pickFirst = pick?.querySelectorAll('option')[0]?.textContent;
+  out.emptyText = root.querySelector('.ak-tt-week')?.textContent || root.textContent;
+  out.readsBeforePick = calls.filter((c) => c.path.includes('/timetable')).length;
+  tab.open(CLASSES[0].id);
+  await sleep(30);
   const cell = (key) => root.querySelectorAll('.ak-tt-cell').find((node) => node.dataset.key === key);
   out.cellMon1 = cell('mon|mon1').textContent;
   out.cellMon2 = cell('mon|mon2').textContent;
@@ -168,3 +176,12 @@ def test_put_satiri_coklu_sinif_ve_mufredat(result: dict[str, Any]) -> None:
     assert entries["mon2"]["programId"] == "lgs-matematik"
     assert "classGroupId" not in entries["mon2"]
     assert result["put"][0]["expectedVersion"] == 3
+
+
+def test_sinif_kendiliginden_secilmez(result: dict[str, Any]) -> None:
+    """Kullanıcı (16.10): "Ders programı girerken 8. sınıf mevcut seçili geliyor" — birden çok sınıfta
+    liste "Sınıf seçin" ile açılır, hiçbir sınıfın programı okunmaz; seçince (derin bağlantı) açılır."""
+    assert result["pickValue"] == ""
+    assert result["pickFirst"] == "Sınıf seçin"
+    assert "Sınıf seçin" in result["emptyText"]
+    assert result["readsBeforePick"] == 0
