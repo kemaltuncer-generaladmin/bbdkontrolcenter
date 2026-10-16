@@ -77,6 +77,8 @@ class UnpairBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     # Alan adı göçten kalmıştır (ADR 0016 reddedildi); istenen şey PIN'dir.
+    # Gövde alanı API sözleşmesidir (kabuk `password` gönderir) — adı
+    # değişmez; içeride `pin` diye taşınır (ADR 0033 §9).
     password: str = Field(min_length=1, max_length=64)
 
 
@@ -116,7 +118,7 @@ def _sync(request: Request) -> IdentitySync:
     return service
 
 
-async def _confirm_pin(request: Request, actor: CurrentUser, password: str) -> None:
+async def _confirm_pin(request: Request, actor: CurrentUser, pin: str) -> None:
     """YIKICI İŞLEMİN İKİNCİ KAPISI: izin yeterli olsa bile PIN sorulur.
 
     Doğrulama, kişinin kendi satırındaki `secret_lookup` ile yapılır —
@@ -139,7 +141,7 @@ async def _confirm_pin(request: Request, actor: CurrentUser, password: str) -> N
         "SELECT secret_lookup FROM users WHERE id = ?", (actor.id,)
     )
     stored = str((row or {}).get("secret_lookup") or "")
-    if not stored or not hmac.compare_digest(stored, identity.secret_lookup(password)):
+    if not stored or not hmac.compare_digest(stored, identity.secret_lookup(pin)):
         await identity.audit(
             actor.id, "installations.unpair", result="denied", detail="PIN teyidi başarısız"
         )
@@ -271,7 +273,7 @@ def create_pairing_router() -> APIRouter:
         düşürmek ayrı bir düğmedir (`/installations/{id}/revoke`).
         """
         service = _sync(request)
-        await _confirm_pin(request, actor, body.password)
+        await _confirm_pin(request, actor, pin=body.password)
         result = await service.unpair()
         await _audit(request, actor, "installations.unpair", result="ok",
                      detail=f"pasifleşen kullanıcı: {result['disabledUsers']}")

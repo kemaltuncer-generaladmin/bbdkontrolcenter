@@ -66,6 +66,11 @@ from km_platform.notify import (
 from km_platform.notify.text import offending, simplify
 from km_platform.scheduler.weekly import Trigger
 
+# Modüllerin birebir kopyaladığı yardımcılar (ADR 0033 §7). Çekirdeğe değil
+# SDK'nin kendisine aittir: iş kuralı taşımaz, yalnız ortak dönüşüm/kapıdır.
+from km_sdk.printing import print_report_file, printer_status_of
+from km_sdk.values import as_int, to_kurus
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -92,6 +97,7 @@ __all__ = [
     "TextPlan",
     "Trigger",
     "__version__",
+    "as_int",
     "build_pdf",
     "confirm_pin",
     "csv_bytes",
@@ -103,9 +109,12 @@ __all__ = [
     "offending",
     "percent",
     "plan_text",
+    "print_report_file",
+    "printer_status_of",
     "report_dir",
     "reports_root",
     "requires",
     "simplify",
+    "to_kurus",
     "write_private",
 ]

@@ -40,6 +40,9 @@ Ağır başlatma işi `start` aşamasına bırakılır. Yaşam döngüsü:
 - Ham `asyncssh` / `paramiko` / DB sürücüsü çağrısı — platform yeteneğinden
   geçir (K4)
 - Başka modülün tablosuna erişim (K5)
+- Başka modülün HTTP önekini çağırmak (`/api/<başka>` — panelde de) (K12)
+- Başka modülde zaten olan bir yardımcıyı kopyalamak — `km_sdk`'ye taşı
+  (ADR 0033 §7)
 - Depoya sır yazmak (K8)
 
 ## Başka modülün verisine ihtiyacım var
@@ -54,6 +57,11 @@ Import etme. İki yol var:
 ## Manifest kontrol listesi
 
 - [ ] `id` klasör adıyla aynı
+- [ ] `domain` katalogda (`docs/architecture/domains.yaml`) ve
+      `data_classification` alanın üst sınırını aşmıyor (ADR 0033)
+- [ ] Sağlanan yetenek ve yayımlanan olay adı modül kimliği ya da alanın
+      önekiyle başlıyor
+- [ ] `python3 tools/check-boundaries.py` geçiyor (yeni sınır ihlali yok)
 - [ ] `sdk` aralığı doğru
 - [ ] `consumes` içindeki her yeteneğin `reason`'ı yazılı
 - [ ] `provides` içindeki her yeteneğin sözleşmesi (`contract`) belirtilmiş

@@ -16,6 +16,10 @@ version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: store
+data_classification: personal
+
 entrypoint: backend.module:register
 
 # Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre

@@ -254,6 +254,9 @@ class Kernel:
                 "version": record.manifest.version,
                 "state": record.state,
                 "reason": record.reason,
+                # ADR 0033: kabuk menüyü/aramayı alana göre gruplayabilsin.
+                "domain": record.manifest.domain,
+                "data_classification": record.manifest.data_classification,
                 "provides": [entry.capability for entry in record.manifest.provides],
                 "ui": _reported_ui(record.manifest),
                 "permissions": [

@@ -17,6 +17,10 @@ version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: students
+data_classification: personal
+
 entrypoint: backend.module:register
 
 depends: []

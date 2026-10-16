@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import os
 import shutil
 import tempfile
 import time
@@ -44,6 +43,8 @@ from km_sdk import (
     csv_bytes,
     money,
     number,
+    print_report_file,
+    printer_status_of,
     report_dir,
     write_private,
 )
@@ -1802,27 +1803,8 @@ class PaymentGatewayService:
         yol kabul etmek, `lp` ile makinedeki herhangi bir dosyayı kâğıda
         döktürmeye açık kapı bırakırdı.
         """
-        if self._printer is None:
-            return {"ok": False, "error": "Yazıcı yeteneği bu kurulumda yok."}
-        try:
-            resolved = Path(path).expanduser().resolve(strict=True)
-        except OSError:
-            return {"ok": False, "error": "Basılacak rapor bulunamadı."}
-        allowed = self._export_dir.resolve()
-        if not str(resolved).startswith(str(allowed) + os.sep):
-            return {"ok": False,
-                    "error": "Bu dosya rapor klasöründe değil; güvenlik gereği basılmaz."}
-        try:
-            result = await self._printer.print_file(resolved, title=resolved.name,
-                                                    copies=max(1, min(20, int(copies))))
-        except Exception as failure:  # noqa: BLE001 — yazıcı dışarısı
-            return {"ok": False, "error": self._fail(failure)}
-        return {"ok": True, **result, "name": resolved.name}
+        return await print_report_file(self._printer, path, copies=copies, fail=self._fail,
+                                       allowed_dir=lambda: self._export_dir)
 
     async def printer_status(self) -> dict[str, Any]:
-        if self._printer is None:
-            return {"ready": False, "error": "Yazıcı yeteneği bu kurulumda yok."}
-        try:
-            return await self._printer.status()
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"ready": False, "error": self._fail(failure)}
+        return await printer_status_of(self._printer, fail=self._fail)

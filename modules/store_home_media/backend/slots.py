@@ -41,6 +41,8 @@ import re
 import unicodedata
 from typing import Any
 
+from km_sdk import as_int
+
 #: Gerekçenin en az uzunluğu. Geçit de (store_api) 10 istiyor; burada tekrar
 #: doğrulanır çünkü arayüzde gizlemek yetkilendirme değildir (K9).
 MIN_REASON = 10
@@ -90,16 +92,6 @@ def text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
-
-
-def as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        try:
-            return int(float(str(value).replace(",", ".")))
-        except (TypeError, ValueError):
-            return default
 
 
 def fold(value: Any) -> str:
