@@ -14,25 +14,42 @@ hiç okunmaz.
 
 from __future__ import annotations
 
-import asyncio
-import base64
 import json
 import os
-import re
-import shutil
-import tempfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from km_sdk import report_dir, write_private
+from km_sdk import (
+    PdfPreviewError,
+    pdf_preview,
+    pdf_preview_pages,
+    report_dir,
+    reports_root,
+    write_private,
+)
 
 from . import analytics
 from .export import ExportError, build_pdf, csv_bytes, money
 
+#: Altbilgideki gizlilik notu — rapor öğrenci adı, harcama ve bakiye taşır.
+CONFIDENTIAL = ("Bu rapor kişisel veri içerir (KVKK). Yalnız yetkili personel içindir; "
+                "çoğaltılamaz, üçüncü kişilerle paylaşılamaz.")
+#: Kâğıtta kantin parasının kurum carisiyle karışmadığı yazar (A12).
+A12_NOTE = ("Bu rapor KANTİN hesabına aittir; kurum cari hesabı (taksit, kitap, materyal) "
+            "bu raporda yer almaz.")
+FOOTER = "Kontrol Merkezi · Kantin Raporları"
 
-class PreviewError(RuntimeError):
-    """Önizleme görüntüsü üretilemedi. Rapor yine de kaydedilmiştir."""
+#: Öğrenci listesi PDF'inin sıralamaları (ekrandaki seçimle aynı).
+STUDENT_SORTS = {"total": "Tutara göre", "count": "İşlem sayısına göre", "units": "Adete göre",
+                 "balance": "Bakiyeye göre", "name": "Ada göre"}
+
+_FOLD = str.maketrans("ığüşöçİĞÜŞÖÇâîû", "igusocigusocaiu")
+
+
+def fold(text: Any) -> str:
+    """Türkçe katlamalı küçük harf — ekrandaki aramayla (`foldText`) aynı eşleşme."""
+    return str(text or "").translate(_FOLD).lower()
 
 
 #: Döküm satırının Türkçe etiketi. Ekran ile PDF aynı sözcüğü kullanmalı;
@@ -436,25 +453,51 @@ class ReportService:
 
     # --------------------------------------------------------- çıktı
 
-    async def export(self, kind: str, params: dict[str, Any]) -> dict[str, Any]:
-        """PDF/CSV üretir, `data/exports/` altına yazar ve yolunu döner."""
+    def _pdf_options(self, params: dict[str, Any], *, author: str,
+                     filters: list[tuple[str, Any]]) -> dict[str, Any]:
+        """Ortak şablonun ekrana bağlı alanları: süzgeçler, hazırlayan, yön, KVKK."""
+        orientation = "landscape" if params.get("orientation") == "landscape" else "portrait"
+        return {"filters": filters, "author": author, "orientation": orientation,
+                "confidential": CONFIDENTIAL, "mask": True, "footer": FOOTER}
+
+    async def export(self, kind: str, params: dict[str, Any], *,
+                     author: str = "") -> dict[str, Any]:
+        """PDF/CSV üretir, rapor klasörüne yazar ve yolunu döner.
+
+        EKRANDAKİ SÜZGEÇ = KÂĞITTAKİ SÜZGEÇ: dönem, öğrenci araması ve sıralama
+        PDF'e aynen gider ve başlıkta yazar (63-finans-pdf)."""
         start, end = str(params["start"]), str(params["end"])
         self._export_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(UTC).astimezone().strftime("%Y%m%d-%H%M")
+        period = [("Dönem", self._period(start, end))]
 
         try:
             if kind == "summary_pdf":
                 data = await self.report(start, end, classes=params.get("classes"),
                                          compare_previous=False)
-                content = self._summary_pdf(data)
-                name = f"kantin-ozet-{start}_{end}-{stamp}.pdf"
+                content = self._summary_pdf(data, **self._pdf_options(
+                    params, author=author, filters=period))
+                prefix = "kantin-gun-sonu" if start == end else "kantin-ozet"
+                name = f"{prefix}-{start}_{end}-{stamp}.pdf"
             elif kind == "products_pdf":
                 data = await self.report(start, end, compare_previous=False)
-                content = self._products_pdf(data)
+                content = self._products_pdf(data, **self._pdf_options(
+                    params, author=author, filters=period))
                 name = f"kantin-urun-{start}_{end}-{stamp}.pdf"
+            elif kind == "students_pdf":
+                data = await self.report(start, end, classes=params.get("classes"),
+                                         compare_previous=False)
+                query = str(params.get("query") or "").strip()
+                sort = str(params.get("sort") or "total")
+                content = self._students_pdf(data, query=query, sort=sort, **self._pdf_options(
+                    params, author=author, filters=[
+                        *period, ("Arama", query or "—"),
+                        ("Sıralama", STUDENT_SORTS.get(sort, STUDENT_SORTS["total"]))]))
+                name = f"kantin-ogrenci-{start}_{end}-{stamp}.pdf"
             elif kind == "student_pdf":
                 detail = await self.student_detail(str(params["studentId"]), start, end)
-                content = self._student_pdf(detail, start, end)
+                content = self._student_pdf(detail, start, end, **self._pdf_options(
+                    params, author=author, filters=period))
                 safe = "".join(
                     # `summary` None OLABİLİR: dönemde yalnız iptal ya da tahsilat
                     # bulunan öğrencinin geçerli satışı yoktur. `.get("summary", {})`
@@ -504,87 +547,54 @@ class ReportService:
 
     # ------------------------------------------------------ önizleme/baskı
 
-    async def preview(self, kind: str, params: dict[str, Any], *,
-                      max_pages: int = 12, dpi: int = 110) -> dict[str, Any]:
-        """Raporu üretir ve sayfalarını GÖRÜNTÜ olarak döner.
+    async def preview(self, kind: str, params: dict[str, Any], *, author: str = "",
+                      pages: int = 4) -> dict[str, Any]:
+        """Raporu üretir ve İLK sayfalarını GÖRÜNTÜ olarak döner (kalanı `pages()`).
 
         Önizleme, basılacak PDF'in BİREBİR kendisidir: dosya `pdftoppm` ile
-        sayfa sayfa PNG'ye çevrilir. HTML ile "benzerini" çizmek yanlış olurdu —
-        ekranda gördüğü ile kâğıttan çıkan farklı olan bir önizleme, önizleme
-        değildir.
+        sayfa sayfa PNG'ye çevrilir (ortak üretici, `km_sdk.pdf_preview`).
+        `preview=False` ise görüntü üretilmez (Yazdır / PDF kaydet).
         """
-        produced = await self.export(kind, params)
+        produced = await self.export(kind, params, author=author)
         if not produced.get("ok"):
             return produced
 
         path = Path(produced["path"])
         if path.suffix.lower() != ".pdf":
-            return {**produced, "pages": [], "pageCount": 0,
+            return {**produced, "pages": [], "pageCount": 0, "shown": 0,
                     "previewError": "Bu çıktı PDF değil; önizlenemez."}
+        if params.get("preview") is False:
+            return {**produced, "pages": [], "pageCount": 0, "shown": 0, "previewError": ""}
+        return {**produced, **await pdf_preview(path, pages=pages)}
 
+    def _owned(self, raw_path: str) -> Path | None:
+        """Yol bu modülün rapor klasöründe bir PDF mi? (sembolik bağ çözülerek)."""
         try:
-            pages, total = await self._render_pages(path, max_pages=max_pages, dpi=dpi)
-        except PreviewError as failure:
-            return {**produced, "pages": [], "pageCount": 0, "previewError": str(failure)}
-
-        return {**produced, "pages": pages, "pageCount": total,
-                "shown": len(pages), "previewError": ""}
-
-    async def _render_pages(self, path: Path, *, max_pages: int,
-                            dpi: int) -> tuple[list[str], int]:
-        """PDF sayfalarını PNG data-URI listesine çevirir."""
-        binary = shutil.which("pdftoppm")
-        if not binary:
-            raise PreviewError(
-                "Önizleme üretilemedi: `pdftoppm` bulunamadı (poppler-utils kurulu olmalı). "
-                "Rapor yine de kaydedildi ve yazdırılabilir."
-            )
-
-        with tempfile.TemporaryDirectory(prefix="km-onizleme-") as folder:
-            target = Path(folder) / "sayfa"
-            args = [binary, "-png", "-r", str(int(dpi)),
-                    "-f", "1", "-l", str(int(max_pages)), str(path), str(target)]
+            resolved = Path(raw_path).expanduser().resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        if resolved.suffix.lower() != ".pdf":
+            return None
+        roots = [self._export_dir, reports_root(self._fallback_dir) / self._category,
+                 self._fallback_dir]
+        for root in roots:
             try:
-                process = await asyncio.create_subprocess_exec(
-                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                )
-                _, err = await asyncio.wait_for(process.communicate(), timeout=60)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-                raise PreviewError("Önizleme üretilemedi: süre aşıldı.") from None
-            except OSError as failure:
-                raise PreviewError(f"Önizleme üretilemedi: {failure}") from failure
+                if resolved.is_relative_to(Path(root).expanduser().resolve()):
+                    return resolved
+            except OSError:
+                continue
+        return None
 
-            if process.returncode != 0:
-                raise PreviewError(
-                    f"Önizleme üretilemedi: {err.decode(errors='replace').strip() or 'bilinmeyen hata'}"
-                )
-
-            files = sorted(Path(folder).glob("sayfa*.png"))
-            pages = [
-                "data:image/png;base64," + base64.b64encode(item.read_bytes()).decode("ascii")
-                for item in files
-            ]
-
-        return pages, await self._page_count(path) or len(pages)
-
-    @staticmethod
-    async def _page_count(path: Path) -> int:
-        """PDF'in gerçek sayfa sayısı — önizlemede kaç sayfanın gizlendiğini söylemek için."""
-        binary = shutil.which("pdfinfo")
-        if not binary:
-            return 0
+    async def pages(self, raw_path: str, first: int, last: int) -> dict[str, Any]:
+        """Önizlemenin kalan sayfaları (pencere kaydırıldıkça, en çok 12)."""
+        path = self._owned(raw_path)
+        if path is None:
+            return {"ok": False, "error": "Rapor bulunamadı ya da bu modülün çıktısı değil."}
         try:
-            process = await asyncio.create_subprocess_exec(
-                binary, str(path),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            )
-            out, _ = await asyncio.wait_for(process.communicate(), timeout=15)
-        except (TimeoutError, OSError):
-            return 0
-        match = re.search(r"^Pages:\s+(\d+)", out.decode(errors="replace"), re.MULTILINE)
-        return int(match.group(1)) if match else 0
+            images = await pdf_preview_pages(path, first=first, last=max(first, last))
+        except PdfPreviewError as failure:
+            return {"ok": False, "error": str(failure)}
+        return {"ok": True, "first": first, "pages": images}
 
     async def print_report(self, path: str, *, copies: int = 1) -> dict[str, Any]:
         """Üretilmiş raporu USB'deki yazıcıya gönderir. Onay sorulmaz.
@@ -632,7 +642,7 @@ class ReportService:
     def _period(start: str, end: str) -> str:
         return (f"{_tr_date(start)} – {_tr_date(end)}" if start != end else _tr_date(start))
 
-    def _summary_pdf(self, data: dict[str, Any]) -> bytes:
+    def _summary_pdf(self, data: dict[str, Any], **options: Any) -> bytes:
         overview = data["overview"]
         start, end = data["range"]["start"], data["range"]["end"]
 
@@ -698,18 +708,113 @@ class ReportService:
                          for row in data["classes"]],
             })
 
+        sections.extend(self._collection_sections(data.get("collections")))
+
         sections.append({"kind": "note", "text":
                          "İptal edilen satışlar ciroya ve kırılımlara dahil edilmemiştir. "
-                         "Tutarlar kuruş duyarlığında hesaplanmış, sunumda ₺'ye çevrilmiştir."})
+                         "Tutarlar kuruş duyarlığında hesaplanmış, sunumda ₺'ye çevrilmiştir. "
+                         "Tahsilat (borç ödemesi) ciroya eklenmez. " + A12_NOTE})
 
+        # TEK GÜN = GÜN SONU. "Bugün" seçiliyken aynı rapor kasanın gün sonu
+        # dökümüdür: ciro, iptal, tahsilat ve açık alacak tek kâğıtta.
+        title = "Kantin Gün Sonu Raporu" if start == end else "Kantin Satış Raporu"
         return build_pdf(
-            title="Kantin Satış Raporu",
+            title=title,
             subtitle=f"{self._period(start, end)} · {data['range']['days']} gün",
             sections=sections,
-            footer="Kontrol Merkezi · Kantin Raporları",
+            **{"footer": FOOTER, **options},
         )
 
-    def _products_pdf(self, data: dict[str, Any]) -> bytes:
+    @staticmethod
+    def _collection_sections(collections: Any) -> list[dict[str, Any]]:
+        """Dönemin tahsilatları (borç ödemeleri) — ciroya eklenmez, ayrı bölümdür."""
+        if not isinstance(collections, dict) or collections.get("totalCollected") is None:
+            return []
+        entries = analytics.collection_entries(collections)
+        sections: list[dict[str, Any]] = [{"kind": "tiles", "title": "Tahsilat (borç ödemesi)",
+                                           "tiles": [
+            ("Dönemde tahsil edilen", money(collections.get("totalCollected"))),
+            ("Nakit", money(collections.get("totalCash") or 0)),
+            ("Tahsilat işlemi", str(collections.get("count") or len(entries))),
+        ]}]
+        if entries:
+            ordered = sorted(entries, key=lambda item: item.get("createdAt") or 0)
+            sections.append({
+                "kind": "table", "title": f"Tahsilat dökümü ({len(ordered)})",
+                "headers": ["Tarih", "Öğrenci", "Yöntem", "Tutar"],
+                "align": "LLLR", "widths": [1.6, 3.2, 1.6, 1.4],
+                "rows": [[
+                    analytics.local(item["createdAt"]).strftime("%d.%m.%Y %H:%M")
+                    if item.get("createdAt") else "—",
+                    item.get("studentName") or item.get("studentId") or "—",
+                    COLLECTION_METHODS.get(str(item.get("method") or "").lower(), "Tahsilat"),
+                    money(item.get("total")),
+                ] for item in ordered],
+                "footer": ["Toplam", "", "", money(sum(int(item.get("total") or 0)
+                                                       for item in ordered))],
+            })
+        return sections
+
+    def _students_pdf(self, data: dict[str, Any], *, query: str = "", sort: str = "total",
+                      **options: Any) -> bytes:
+        """Öğrenci bazlı liste — ekrandaki arama ve sıralamayla; sınıf ara toplamı + genel toplam."""
+        start, end = data["range"]["start"], data["range"]["end"]
+        needle = fold(query)
+        rows = [row for row in data["students"]
+                if not needle or needle in fold(f'{row["name"]} {row["className"]}')]
+        key = sort if sort in STUDENT_SORTS else "total"
+        if key == "name":
+            rows.sort(key=lambda row: fold(row["name"]))
+        else:
+            rows.sort(key=lambda row: -int(row.get(key) or 0))
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            groups.setdefault(row["className"] or "Sınıfsız", []).append(row)
+        body: list[Any] = []
+        many = len(groups) > 1
+        for name in sorted(groups, key=fold):
+            group = groups[name]
+            if many:
+                body.append({"cells": [f"Sınıf: {name}"], "kind": "group"})
+            body.extend([row["name"], row["className"] or "—", row["count"], row["units"],
+                         money(row["total"]), money(row["average"]), money(row["balance"])]
+                        for row in group)
+            if many:
+                body.append({"cells": [f"{name} ara toplam ({len(group)})", "",
+                                       sum(int(row["count"]) for row in group),
+                                       sum(int(row["units"]) for row in group),
+                                       money(sum(int(row["total"]) for row in group)), "",
+                                       money(sum(int(row["balance"]) for row in group))],
+                             "kind": "subtotal"})
+        total = sum(int(row["total"]) for row in rows)
+        debt = sum(int(row["balance"]) for row in rows if int(row["balance"]) > 0)
+        sections: list[dict[str, Any]] = [
+            {"kind": "tiles", "title": "Özet", "tiles": [
+                ("Öğrenci", str(len(rows))),
+                ("Toplam harcama", money(total)),
+                ("İşlem", str(sum(int(row["count"]) for row in rows))),
+                ("Borçlu öğrencilerin borcu", money(debt)),
+            ]},
+            {"kind": "table", "title": f"Öğrenci bazlı ({len(rows)})",
+             "headers": ["Öğrenci", "Sınıf", "İşlem", "Adet", "Tutar", "Ortalama", "Bakiye"],
+             "align": "LLRRRRR", "widths": [3.2, 1.1, 0.9, 0.9, 1.5, 1.5, 1.5],
+             "rows": body,
+             "footer": [f"Genel toplam ({len(rows)} öğrenci)", "",
+                        sum(int(row["count"]) for row in rows),
+                        sum(int(row["units"]) for row in rows), money(total), "",
+                        money(sum(int(row["balance"]) for row in rows))],
+             "empty": "Bu süzgece uyan öğrenci yok."},
+            {"kind": "note", "text": "Bakiye pozitifse öğrencinin kantine borcu vardır. "
+                                     "İptal edilen satışlar tutara dahil değildir. " + A12_NOTE},
+        ]
+        return build_pdf(
+            title="Kantin Öğrenci Harcama Raporu",
+            subtitle=f"{self._period(start, end)} · {data['range']['days']} gün",
+            sections=sections,
+            **{"footer": FOOTER, **options},
+        )
+
+    def _products_pdf(self, data: dict[str, Any], **options: Any) -> bytes:
         start, end = data["range"]["start"], data["range"]["end"]
         rows = data["products"]
 
@@ -768,10 +873,11 @@ class ReportService:
             title="Ürün Performans Raporu",
             subtitle=f"{self._period(start, end)} · {data['range']['days']} gün",
             sections=sections,
-            footer="Kontrol Merkezi · Kantin Raporları",
+            **{"footer": FOOTER, **options},
         )
 
-    def _student_pdf(self, detail: dict[str, Any], start: str, end: str) -> bytes:
+    def _student_pdf(self, detail: dict[str, Any], start: str, end: str,
+                     **options: Any) -> bytes:
         summary = detail.get("summary") or {}
         name = summary.get("name") or detail["kantinId"]
 
@@ -832,7 +938,7 @@ class ReportService:
             title=f"Öğrenci Kantin Karnesi — {name}",
             subtitle=f"{self._period(start, end)}",
             sections=sections,
-            footer="Kontrol Merkezi · Kantin Raporları",
+            **{"footer": FOOTER, **options},
         )
 
     # -------------------------------------------------- kayıtlı raporlar
