@@ -26,6 +26,11 @@ kendi satış ucundan geçer; kayıt kasada girilmiş gibi oluşur.
 üretilir: aynı sepet iki kez gönderilirse kantin `duplicate` der, farklı sepet
 gönderilirse yeni satış açılır. Geri alma silme değildir — ters cari kayıt yazar.
 
+- **Parti dökümü PDF'i (63-finans-pdf)** — "Geçmiş partiler"de açılan partinin
+  öğrencileri, kalemleri, tutarları ve durumları; yalnız işlenmiş ve geri
+  alınmamış satır toplanır. Ortak araç çubuğu "Önizle · Yazdır · PDF kaydet";
+  `POST /api/bbd_bulk_sale/report`, `POST …/report/pages`. Kantin parasıdır (A12).
+
 - Sözleşme: `module.yaml` · Giriş noktası: `backend/module.py` → `register(ctx)`
 - Kurallar: [../../CLAUDE.md](../../CLAUDE.md) · Kılavuz: [../../docs/module-guide.md](../../docs/module-guide.md)
 
