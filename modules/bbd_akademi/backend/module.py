@@ -23,7 +23,7 @@ from .core.operations import Allowlist
 from .core.proxy import AkademiProxy
 from .core.stepup import StepUpStore
 from .documents.service import DocumentService, Letterheads
-from .finance import StudentFinance
+from .finance.service import StudentFinance
 from .permission_map import unmapped
 from .staff import StaffService
 

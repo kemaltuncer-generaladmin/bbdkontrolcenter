@@ -29,7 +29,7 @@ entrypoint: backend.module:register
 depends: []
 provides:
   - capability: akademi.student_finance
-    contract: backend.finance:StudentFinance
+    contract: backend.finance.service:StudentFinance
     description: >
       async has_institution_debt(student_id: "STU-…") -> bool — öğrencinin
       Akademi'de kurum cari borcu var mı (km-merkezi-senkron §5.3, kalıcı silme
