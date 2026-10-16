@@ -14,14 +14,14 @@
 //
 // Derin bağlantı: `{date: 'YYYY-MM-DD'}` o günden başlar, `{staffId}` öğretmeni süzer.
 
-import { h } from '../../ui-kit/kit.js';
-import { alertBox, badge } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { previewAkademiPdf } from './documents.js';
+import { h } from '../../../ui-kit/kit.js';
+import { alertBox, badge } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { previewAkademiPdf } from '../documents.js';
 import {
   actionButton, addDays, clockInput, confirmAction, dateInput, empty, fmtDate, formDialog, loader, num, openDrawer,
   personName, problem, reasonDialog, runAction, sectionHead, selectBox, studentPicker, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 
 export const MODES = { in_person: 'Yüz yüze', online: 'Online', phone: 'Telefon' };
 export const SLOT_MINUTES = [5, 10, 15, 20, 30];

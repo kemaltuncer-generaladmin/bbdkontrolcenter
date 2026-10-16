@@ -47,7 +47,7 @@ const dialog = (root) => root.querySelectorAll('.kit-dialog').at(-1);
 export default async function ({ document, sleep, api, load, calls, audit }) {
   const out = {};
   const ses = await load('./panels/bbd_akademi/lessons/sessions.js');
-  const pm = await load('./panels/bbd_akademi/parent-meetings.js');
+  const pm = await load('./panels/bbd_akademi/comms/parent-meetings.js');
   out.canClose = [
     ses.canCloseMonth({ from: '2026-08-01', totals: { upcomingCount: 0 } }, '2026-10-15'),
     ses.canCloseMonth({ from: '2026-10-01', totals: { upcomingCount: 4 } }, '2026-10-15'),

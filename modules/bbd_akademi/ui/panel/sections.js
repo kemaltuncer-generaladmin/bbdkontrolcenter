@@ -135,16 +135,16 @@ export const SECTIONS = [
   // Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu TEK yerde (F-A25/F-A26). Çalışma
   // planındaki eski "Şablonlar" sekmesi buraya birleşti (aynı gövdeydi).
   { key: 'templates', label: 'Şablonlar', file: './work/templates.js', requires: ['view'], area: 'work' },
-  { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
+  { key: 'announcements', label: 'Duyurular', file: './comms/announcements.js', requires: ['announcements'],
     area: 'comms' },
   // Veli toplantısı randevu takvimi (Akademi README §14 madde 90): öğretmen saatleri, veli adına randevu, liste PDF'i.
-  { key: 'parentMeetings', label: 'Veli toplantısı', file: './parent-meetings.js', requires: ['requests'],
+  { key: 'parentMeetings', label: 'Veli toplantısı', file: './comms/parent-meetings.js', requires: ['requests'],
     area: 'comms' },
   // SMS (sms-kale §14 madde 58 + kurum SMS'i madde 88): eskiden Ayarlar → Kurum ayarları → SMS sekmesiydi.
-  { key: 'sms', label: 'SMS', file: './sms.js', requires: ['settings'], area: 'comms',
+  { key: 'sms', label: 'SMS', file: './comms/sms.js', requires: ['settings'], area: 'comms',
     reads: ['admin_getSmsHealth'] },
   // 16.10.2026: İletişim grubuna taşındı (Koçluk 10 hap sınırı — hata defteri gelen kutusu koçun önünde).
-  { key: 'messages', label: 'Mesajlar', file: './messages.js', requires: ['settings'], area: 'comms',
+  { key: 'messages', label: 'Mesajlar', file: './comms/messages.js', requires: ['settings'], area: 'comms',
     feature: 'coaching' },
   { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'], area: 'money',
     feature: 'finance' },

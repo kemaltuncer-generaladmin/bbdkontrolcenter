@@ -12,14 +12,14 @@
 // KM'nin günlük SMS bütçesini gösterir; ayrıntıda teslim raporu (bekleme nedeni / anı, alıcı
 // listesi `admin_listAnnouncementSmsRecipients`, Excel uyumlu CSV).
 
-import { button, h, loadStyles, percent } from '../../ui-kit/kit.js';
-import { badge, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
-import { saveBlob } from './api.js';
+import { button, h, loadStyles, percent } from '../../../ui-kit/kit.js';
+import { badge, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
+import { saveBlob } from '../api.js';
 import {
   actionButton, confirmAction, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
   pagedList, runAction, sectionHead, statusBadge, studentPicker, todayIst,
-} from './common.js';
-import { csvText } from './lessons/sessions.js';
+} from '../common.js';
+import { csvText } from '../lessons/sessions.js';
 
 const STATUS = { draft: ['Taslak', 'dim'], scheduled: ['Zamanlandı', 'info'],
   published: ['Yayında', 'good'], archived: ['Arşiv', 'dim'] };

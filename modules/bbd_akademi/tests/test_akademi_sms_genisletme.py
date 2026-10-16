@@ -45,7 +45,7 @@ const text = (node) => (node?.textContent || '').replace(/\s+/g, ' ');
 
 export default async function ({ document, sleep, api, load, calls }) {
   const out = {};
-  const ann = await load('./panels/bbd_akademi/announcements.js');
+  const ann = await load('./panels/bbd_akademi/comms/announcements.js');
   const base = { queued: 3, sent: 10, failed: 1, skipped: 0, recipients: 14, sentSegments: 20 };
   out.delivery = ann.smsDeliveryText({ ...base, deferred: 3, deferredReason: 'sms_budget_exceeded',
     deferredUntil: '2026-10-15T11:00:00Z' });

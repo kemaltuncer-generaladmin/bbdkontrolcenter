@@ -27,14 +27,14 @@
 //
 // Saf mantık `messages-logic.js`'tedir (Node ile sınanır).
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, chipRow, emptyState, hintBox, skeletonRows, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { problem } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, chipRow, emptyState, hintBox, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { problem } from '../api.js';
 import {
   actionButton, dateInput, errorBox, exportJob, fmtDateTime, formDialog, kv, openDrawer, optionsOf,
   pagedList, sectionHead, selectBox, statusBadge, studentPicker, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   AUDIT_REASON_MIN, DECISIONS, DECISION_DONE, FLAGS, LOCKED_TEXT, REPORT_FILTERS, REPORT_REASONS,
   REPORT_STATUS, RETENTION_DESCRIPTION, THREAD_KINDS, THREAD_STATUS, attachmentText, auditBody, auditReason,

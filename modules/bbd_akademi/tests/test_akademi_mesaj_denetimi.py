@@ -70,7 +70,7 @@ process.stdout.write(JSON.stringify(out));
 def _node_logic(folder: Path) -> dict[str, Any]:
     if shutil.which("node") is None:
         pytest.skip("node kurulu değil")
-    (folder / "messages-logic.mjs").write_bytes((PANEL / "messages-logic.js").read_bytes())
+    (folder / "messages-logic.mjs").write_bytes((PANEL / "comms/messages-logic.js").read_bytes())
     (folder / "run.mjs").write_text(LOGIC, encoding="utf-8")
     done = subprocess.run(["node", "run.mjs"], cwd=folder, capture_output=True, text=True, timeout=60,
                           check=False)
@@ -190,7 +190,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     has: () => true, can: (id) => client.can(id), go: () => {}, openPanel: () => {}, capability: () => null,
     feature: () => false, enabled: () => true, onDispose: () => {},
     lookups: { staff: async () => [], async options() { return [{ value: '', label: 'Bütün personel' }]; } } };
-  const { section } = await load('./panels/bbd_akademi/messages.js');
+  const { section } = await load('./panels/bbd_akademi/comms/messages.js');
   const view = section(app);
   root.append(view.node);
   view.shown();
@@ -313,7 +313,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     has: () => true, can: (id) => client.can(id), go: () => {}, openPanel: () => {}, capability: () => null,
     feature: () => false, enabled: () => true, onDispose: () => {},
     lookups: { staff: async () => [], async options() { return []; } } };
-  const { section } = await load('./panels/bbd_akademi/messages.js');
+  const { section } = await load('./panels/bbd_akademi/comms/messages.js');
   const view = section(app);
   root.append(view.node);
   view.shown();
