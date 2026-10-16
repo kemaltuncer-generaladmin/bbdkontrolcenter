@@ -90,7 +90,8 @@ export function resultsTab(app, exam, { onChanged } = {}) {
       cell: (row) => (row.estimatedScore === null || row.estimatedScore === undefined ? '—' : num(row.estimatedScore, 2)) },
     { key: 'rank', label: 'Sıra', width: '120px', cell: (row) => rankCell(row.ranks) },
     { key: 'source', label: 'Kaynak', width: '96px', cell: (row) => (row.updatedAt
-      ? h('small', 'ak-muted', RESULT_SOURCE[row.source] || row.source || '—') : '—') },
+      ? h('small', 'ak-muted', exam.deliveryMode === 'app' && row.source === 'answers' ? 'Uygulamada'
+        : RESULT_SOURCE[row.source] || row.source || '—') : '—') },
     { key: 'actions', label: '', width: '140px', cell: (row) => {
       const actions = h('div', 'ak-row-actions');
       const hasResult = Boolean(row.updatedAt);

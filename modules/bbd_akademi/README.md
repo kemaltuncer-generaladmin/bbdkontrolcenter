@@ -296,7 +296,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Yoklama | `attendance*.js` | Beş sekme (KM-2): **Günlük yoklama** (günün oturumları, yoklama listesi; listede geçmiş, listeyi yenile, gerekçeli "yoklamayı sil", öğrenci "çıktı", öğretmene hatırlat; düzeltme penceresi kapandıysa gerekçeli düzeltme; KM sunucusuna ulaşılamazsa yoklama bu bilgisayarda bekler ve `admin_syncAttendance` ile gönderilir), **Pano** (günün tahtası, alınmamış dersler + hatırlat, erken çıkışlar, varlık ipucu tutarsızlıkları — `attendance_signals` kapalıysa açık not), **Raporlar** (devam oranı ders/öğretmen/sınıf, öğretmen uyumu, izin nedenleri, dışa aktarım), **Düzeltme kuyruğu** (geç senkron onay/ret; öğrenci adı ve sınıfı satırın `student` alanından — oturum listesi ayrıca okunmaz, dizinde olmayan öğrencide kimlik gösterilir, madde 72), **Ayarlar** (okuma + KM'ye özel kaydetme). Öğrenci kartında devam takvimi + gün ayrıntısı, dönem karnesi, veli adına izin (`students-attendance.js`); sınıf çekmecesinde ve öğrenci kartında tarihli sınıf üyelikleri (`students-class-history.js`) |
 | Ödevler | `homework.js`, `homework-bulk.js`, `homework-content.js` | "Ödev ver" = üç adımlı sihirbaz (ne → kime → ne zaman; şablondan ya da yeni, birden çok ödev, tek / birkaç tarih / her hafta / şablon süresi, otomatik önizleme ve çakışmalar, büyük iş arka planda); seçilenlere toplu ertele / tarih / iptal / sil; toplu seri süzgeci; teslim tablosu, hatırlatma |
 | Şablonlar | `templates.js` (+ `bulk-target.js`, `wizard.js`) | Ödev şablonları (kurum şablonu; yeni / düzenle / kopyala / sil / "bu şablonla ödev ver"), atama paketleri (yalnız KM tanımlar: program + kaynak + kaynak paketi + plan şablonu + kural + otomatik; uygula / kaldır — seçerek · süzgeçle · kuralına uyan herkes, hariç tutulanlar, önce say, 300+ öğrencide arka plan işi), plan şablonları |
-| Denemeler | `exams*.js` | Tanımlar, geçmiş deneme, toplu yükleme sihirbazı (yükle → sütunlar → eşleme + yayınevi şablonları → önizleme ve belirsiz eşleşme çözümü → kaydet / geri al), cevap anahtarı ve soru→konu eşlemesi, tekil sonuç, yayımla, analiz, karşılaştırma, dışa aktarım |
+| Denemeler | `exams*.js` | Tanımlar, geçmiş deneme, toplu yükleme sihirbazı (yükle → sütunlar → eşleme + yayınevi şablonları → önizleme ve belirsiz eşleşme çözümü → kaydet / geri al), cevap anahtarı ve soru→konu eşlemesi, tekil sonuç, yayımla, analiz, karşılaştırma, dışa aktarım. **Uygulamada deneme** (Akademi README §14 madde 120; aşağıda): "Nasıl çözülecek? Kâğıt · Uygulamada", Canlı sınav, Yayınevi Excel'i sihirbazı, Kazanım eşleştirmesi, Eşleme sözlüğü, soru kitapçığı PDF'i |
 | Çalışma planı | `plan*.js` | Plan görevi atama (öğrenci/grup/sınıf), plan şablonları ve sınıfa uygulama, uyum tablosu, erteleme talepleri (F-A18) |
 | Okuma | `reading*.js` | Kurum okuma listeleri, hazır listeler (tür süzgeci; hazır şablondan oluştur), okuma ligi, öğrenci × ay raporu (F-A19) |
 | Bilgi kartları | `decks.js` | Kurum desteleri (ders/konu, görselli kartlar), sınıf/grup/öğrenci ataması (F-A23) |
@@ -431,6 +431,51 @@ arayüz yeteneğiyle çizer, K3).
 Sözleşme değişince betik yeniden koşturulur, `--check` ile doğrulanır ve
 `tools/ui_coverage.py` eksik 0 vermelidir.
 
+## Uygulamada deneme, canlı sınav, yayınevi kazanım tablosu (16.10.2026 — Akademi README §14 madde 120)
+
+Kullanıcı: "çocuk denemesini tıklayacak ve optik form açılacak … biz de cevap anahtarı ve konu analiz excelini
+yükleyeceğiz … yayınevlerine göre kazanım isimlendirmesi değişiyor. otomatik eşleştirme yapmalı … ayrıca uzaktan ek
+süre verme vs". Öğrencinin optik formu uygulamada (Flutter / web); KM yönetici yüzüdür. Kurallar (süre, pencere,
+eşleştirme, puanlama) Akademi'dedir; panel taslak ↔ gövde, doğrulama metni ve yerel geri sayım yapar
+(`exams/exams-app-logic.js`, import'suz, Node testli).
+
+* **Deneme tanımı** (`exams.js` + `exams-app-form.js`): "Nasıl çözülecek?" iki kart (Kâğıt · Uygulamada).
+  Uygulamada: açılış / kapanış (İstanbul saati), süre (TYT 165, AYT 180, LGS 155 önerilir), **oturumlar**
+  ("Oturumlara böl" LGS'de Sözel 75 dk + Sayısal 80 dk'yı kendiliğinden kurar; her bölüm tam bir oturumda),
+  kitapçık kuralı (tek / öğrenci seçer / sistem dağıtır — ikincisi için ≥ 2 kitapçık), şık sayısı (türden: LGS 4,
+  diğer 5), sonuç açıklama (sınav kapanınca · hemen · ben yayımlayınca), geç gönderim toleransı; "Ayrıca tek tek
+  öğrenciler" (hedef = sınıflar ∪ öğrenciler). Pencere açıldıktan sonra ayarlar salt okunur künyedir (uzatma
+  canlı ekrandan). Kurum bayrağı `exams.app_delivery` kapalıysa "Uygulamada" kartı sebebini yazar. **Kâğıt deneme
+  yeni oluşturulurken yeni alanlar gönderilmez** (eski Akademi ile de kırılmaz); seçim yalnız sözleşmesi bilinen
+  Akademi'de (`admin_getExamLive` izin listesinde) görünür.
+* **Canlı sınav** sekmesi (`exams-live.js`; uygulamada denemenin detayı sürerken bununla açılır): sayaçlar,
+  öğrenci tablosu (durum + bitirme sebebi, cevaplanan, kalan süre — sunucu saati farkıyla saniye saniye, son
+  görülme — 2 dk sessizse uyarı, uygulamadan çıkış, ek süre, kitapçık), sınıf / durum / ad süzgeci, çoklu seçim →
+  **ek süre** (+5 / +10 / +15 / serbest; "pencere kapanışını da uzat"), **oturumu bitir**, **yeniden aç** (tek
+  öğrenci, kalan süre + gerekçe zorunlu); başlıkta **Herkese ek süre**, **Duraklat / Sürdür** (onaylı), **Pencere**
+  (şimdi aç / şimdi kapat / açılış-kapanışı değiştir). Gözetmen görünümünde (`canManage=false`) yönetim düğmeleri
+  yok. **Anlık:** Akademi'nin değişiklik akışı kişiye bağlıdır (`/v1/me/events`), vekil entegrasyon anahtarıyla
+  konuşur → ekran **10 sn'de bir yoklar** (sekme gizliyken durur) ve her işlemin yanıtındaki güncel tabloyu hemen
+  çizer. PIN teyidi yok (sözleşmede `x-step-up` yok; duraklat / bitir / pencere kapat onay penceresi ister).
+* **Yayınevi Excel'i** (`exams-publisher.js`): Denemeler başlığında ve "Cevap anahtarı ve konular" sekmesinde.
+  Dosya (XLSX / gerçek .xls / CSV, 5 MB; içerik Akademi'de sezilir) → önizleme (yayınevi, deneme adı, kod, sınıf,
+  tür, bölümler + soru sayıları, kitapçıklar, anahtar özeti "A: 125/125 · B: 125/125", satır hataları; yeni deneme
+  ya da var olan denemeye) → **eşleştirme tablosu** (her benzersiz (ders, yayınevi kazanımı): sorular, önerilen
+  müfredat konusu, güven rozeti Birebir / Daha önce onaylandı / Eş anlamlı / Benzer — kontrol et / Eşleşmedi;
+  "Yalnız kontrol gerekenler" — tablo bununla açılır, güven / ders / arama süzgeci; aramalı konu seçici — kapsam
+  denemenin sınav ailesi + ders, ünite de seçilebilir; "Eşleme" ile bırak; **Önerilenleri onayla**; "Sözlükle yeniden
+  eşleştir") → **Uygula**. Gövdede yalnız yöneticinin dokunduğu satırlar gider (`remember=true` → kurum sözlüğü);
+  kendiliğinden eşleşenler sunucuda uygulanır. Sonra denemenin **Kazanım eşleştirmesi** sekmesi (düzelt → PUT →
+  konu analizi yeniden hesaplanır) ve Denemeler → **Eşleme sözlüğü** (ara, sil). Eski CSV / XLSX anahtar + soru →
+  konu yolu aynen durur.
+* **Soru kitapçığı PDF'i** (uygulamada deneme künyesinde): yükle / değiştir / kaldır (PDF, 25 MB).
+* Sonuçlar: liste ve başlıkta "Uygulamada" rozeti; sonuç kaynağı "Uygulamada".
+
+İzin: bütün işlemler `bbd_akademi.exams` (Akademi `exams.manage`; gözetmen izni `exams.proctor` de buna eşlenir).
+Canlıya alma: Akademi 65-deneme backend'i + göç + `sync-roles` **önce**, KM sonra. KM panel anahtarı yeniden
+üretilmez (`km_panel` kümesinde `exams.manage` zaten var). Test: `tests/test_akademi_deneme_uygulamada.py`
+(örnek dosya `tests/fixtures/CAP_TYT_0_KAZANIM_TABLOSU_CEVAP_ANAHTARLI.xls`).
+
 ## İzinler
 
 Akademi izni → KM izni eşlemesi **tek tablodadır**: `backend/permission_map.py`
@@ -444,7 +489,7 @@ izin gelirse test kırılır.
 | `bbd_akademi.curriculum` | admin | Kuruma özel müfredat, program istisnaları; öğrencinin müfredat seti ve sınıf müfredatı (`curriculum.assign` — öğrenci kartı → Müfredat ve gelişim, Öğrenciler → Dönem, öğretmen ve müfredat) |
 | `bbd_akademi.resources` | admin, bbd_staff | Kurum kaynağı, içindekiler, paketler, atamalar |
 | `bbd_akademi.attendance` | admin, bbd_staff | Yoklama |
-| `bbd_akademi.exams` | admin, bbd_staff | Deneme tanımı, sonuç, toplu yükleme, cevap anahtarı, yayımlama, dışa aktarım |
+| `bbd_akademi.exams` | admin, bbd_staff | Deneme tanımı (kâğıt / uygulamada), sonuç, toplu yükleme, yayınevi kazanım tablosu ve eşleme sözlüğü, cevap anahtarı, canlı sınav (ek süre, duraklat, bitir, yeniden aç, pencere), yayımlama, dışa aktarım |
 | `bbd_akademi.finance` | admin, bbd_staff | Kurum carisi (görüntüleme dahil) |
 | `bbd_akademi.finance_void` | admin | Tahsilat iptali — ayrıca PIN teyidi |
 | `bbd_akademi.books` | admin, bbd_staff | Kitap talepleri ve kitap satışı (`books.manage`, `books.sell`; satış kurum carisine yazar, kantinden ayrı) |

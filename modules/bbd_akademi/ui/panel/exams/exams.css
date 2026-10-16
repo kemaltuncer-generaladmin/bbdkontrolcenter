@@ -77,3 +77,59 @@
 .ak-ex-qno { color: var(--soft); font-variant-numeric: tabular-nums; text-align: right; }
 .ak-ex-topic-select { width: 100%; min-width: 0; }
 .ak-ex-topic-import { border-top: 1px dashed var(--line); padding-top: 12px; }
+
+/* ------------------------------------- uygulamada deneme (madde 120) */
+.ak-ex-delivery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ak-ex-delivery-card { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; }
+.ak-ex-delivery-card small { color: var(--soft); font-size: 12px; line-height: 1.35; }
+.ak-ex-delivery-card.on { border-color: var(--accent); background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent); }
+.ak-ex-delivery-card:disabled { opacity: 0.6; }
+.ak-ex-delivery-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ak-ex-app { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--tint); }
+.ak-ex-app .kit-form-grid { padding: 0; }
+.ak-ex-app .ak-inline .kit-input.ak-clock { width: 72px; }
+.ak-ex-sessions { gap: 8px; }
+.ak-ex-session-row { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 9px; background: var(--surface); }
+.ak-ex-session-row .kit-input:not(.ak-ex-count) { min-width: 0; flex: 1 1 180px; }
+.ak-ex-app-summary { font-size: 12.5px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.ak-ex-app-summary.bad { color: var(--bad); font-weight: 600; }
+
+/* --------------------------------------------------------- canlı sınav */
+.ak-ex-live-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.ak-ex-live-head .ak-tools { flex-wrap: wrap; }
+.ak-tight { gap: 2px; }
+.ak-ex-live-stamp { font-size: 12px; font-variant-numeric: tabular-nums; }
+.ak-ex-live-stamp.bad { color: var(--bad); }
+.ak-ex-live-selection { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px;
+  border: 1px solid var(--accent-line, var(--line)); border-radius: 9px; background: var(--accent-tint); }
+.ak-ex-live-selection[hidden] { display: none; }
+.ak-ex-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
+.ak-ex-clock.warn { color: var(--warn); }
+.ak-ex-quiet { color: var(--warn); font-weight: 600; }
+
+/* ------------------------------------- yayınevi tablosu ve eşleştirme */
+.ak-ex-match-summary { display: flex; flex-direction: column; gap: 8px; }
+.ak-ex-match-summary .ak-inline { flex-wrap: wrap; gap: 6px; }
+.ak-ex-match .kit-table { max-height: 520px; overflow: auto; }
+.ak-ex-match-name { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; }
+.ak-ex-match-q { color: var(--soft); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block; }
+.ak-ex-match-missing { color: var(--bad); font-weight: 600; }
+.ak-ex-target { border-top: 1px dashed var(--line); padding-top: 12px; }
+.ak-ex-topic-pick { min-width: min(640px, 80vw); }
+.ak-ex-topic-results { display: flex; flex-direction: column; gap: 2px; max-height: 380px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 9px; padding: 6px; }
+.ak-ex-topic-group { color: var(--soft); font-size: 11.5px; padding: 6px 6px 2px; }
+.ak-ex-topic-option { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--ink); font: inherit; }
+.ak-ex-topic-option small { color: var(--soft); font-size: 11.5px; }
+.ak-ex-topic-option:hover { background: var(--tint); }
+.ak-ex-topic-option.on { border-color: var(--accent); background: var(--accent-tint); }
+.ak-ex-topic-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 720px) {
+  .ak-ex-delivery { grid-template-columns: minmax(0, 1fr); }
+}

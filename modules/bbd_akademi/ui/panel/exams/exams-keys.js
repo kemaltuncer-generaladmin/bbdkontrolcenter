@@ -16,9 +16,16 @@ import {
 } from '../common.js';
 import { sectionLabel, sortedSections, uploadFile } from './exams-shared.js';
 
-export function keysTab(app, exam, { onChanged } = {}) {
+export function keysTab(app, exam, { onChanged, onImport } = {}) {
   const node = h('div', 'ak-stack');
   const parts = [];
+  // Yayınevi kazanım tablosu (Akademi README §14 madde 120): anahtar + soru → konu tek dosyadan, otomatik eşleştirmeyle.
+  if (app.can('admin_previewExamPublisherTable') && onImport) {
+    node.append(toolbar(hintBox('Yayınevinin “kazanım tablosu + cevap anahtarı” dosyası varsa tek dosyayla ikisi birden dolar; '
+      + 'kazanımlar müfredat konularına kendiliğinden eşlenir.'), h('span', 'kit-spacer'),
+    actionButton(app, 'admin_previewExamPublisherTable', "Yayınevi Excel'i yükle", { variant: 'primary',
+      onClick: () => onImport() })));
+  }
   if (app.can('admin_getAnswerKeys')) parts.push(answerKeysCard(app, exam, { onChanged }));
   if (app.can('admin_getQuestionTopics')) parts.push(topicsCard(app, exam, { onChanged }));
   if (!parts.length) node.append(alertBox('Cevap anahtarı ve konu eşlemesini görme yetkiniz yok.', 'warn'));
