@@ -18,12 +18,12 @@
 //    (`admin_listSmsOutbox`: veli, öğrenci, maskeli telefon, durum, neden).
 //    Bütçenin kendisi Mobil Geçit modül ayarıdır (`announcement_sms`).
 
-import { h } from '../../ui-kit/kit.js';
-import { alertBox, kpiRow } from '../../ui-kit/layout.js';
-import { chipRow } from '../../ui-kit/layout.js';
+import { h } from '../../../ui-kit/kit.js';
+import { alertBox, kpiRow } from '../../../ui-kit/layout.js';
+import { chipRow } from '../../../ui-kit/layout.js';
 import {
   actionButton, fmtDateTime, formDialog, loader, num, pagedList, statusBadge, toolbar,
-} from './common.js';
+} from '../common.js';
 import { settingsTab } from './settings.js';
 
 const USAGE = { announcement: 'Duyuru', payment_reminder: 'Ödeme hatırlatması', exam_result: 'Deneme sonucu' };

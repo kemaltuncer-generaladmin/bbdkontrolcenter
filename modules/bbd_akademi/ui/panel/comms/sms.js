@@ -9,7 +9,7 @@
 
 import { h } from '../../../ui-kit/kit.js';
 import { sectionHead } from '../common.js';
-import { smsTab } from '../settings-sms.js';
+import { smsTab } from '../admin/settings-sms.js';
 
 export function section(app) {
   const node = h('div', 'ak-stack');

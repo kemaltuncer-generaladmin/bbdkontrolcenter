@@ -50,7 +50,7 @@ export default async function ({ document, audit, sleep, load }) {
       },
     },
   };
-  const { section } = await load('./panels/bbd_akademi/settings.js');
+  const { section } = await load('./panels/bbd_akademi/admin/settings.js');
   const root = document.createElement('div');
   document.body.append(root);
   const view = section(app);

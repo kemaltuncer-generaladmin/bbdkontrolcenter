@@ -41,7 +41,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     { key: 'teacher.portal', enabled: false, config: null, editable: true },
   ] };
   const { app, root, toasts } = await makeApp(load, document);
-  const { section } = await load('./panels/bbd_akademi/settings.js');
+  const { section } = await load('./panels/bbd_akademi/admin/settings.js');
   const panel = section(app);
   root.append(panel.node);
   panel.shown({ tab: 'features' });
@@ -89,10 +89,10 @@ def test_kurum_ayari_ogretmen_kapsami_related_all() -> None:
 
 
 def test_personel_ipucu_ogretmen_kapsamina_yonlendirir() -> None:
-    staff_js = (PANEL / "staff.js").read_text(encoding="utf-8")
+    staff_js = (PANEL / "admin/staff.js").read_text(encoding="utf-8")
     assert "Kurum → Öğretmen / koç" in staff_js
     assert "yönetici de öğretmen" in staff_js
-    settings_js = (PANEL / "settings.js").read_text(encoding="utf-8")
+    settings_js = (PANEL / "admin/settings.js").read_text(encoding="utf-8")
     assert "path: ['teacher', 'scope']" in settings_js
     assert "yer tutucu ekran" not in settings_js
 

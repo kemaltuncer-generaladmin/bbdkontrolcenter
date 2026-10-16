@@ -15,12 +15,12 @@
 // KM panel anahtarı bu izinden ÖNCE üretildiyse Akademi 403 döner: anahtar
 // `km_panel` kümesiyle yeniden üretilmelidir (README → Kurulum).
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card } from '../../ui-kit/layout.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card } from '../../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, fmtDate, fmtDateTime, kv, loader, openDrawer, pagedList, pinStepUp,
   reasonDialog, runAction, sectionHead, selectBox, statusBadge, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   KIND, REJECT_MIN, STATUS, SUBJECT, actionsFor, cleanNote, dueBadge, keyLacksPermission,
 } from './privacy-logic.js';

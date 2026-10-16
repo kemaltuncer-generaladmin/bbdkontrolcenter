@@ -59,7 +59,7 @@ export default async function ({ document, sleep, api, load, calls }) {
     { guardianName: '=Mehmet', studentNames: [], phoneMasked: null, status: 'sent', reasonLabel: null,
       attempts: 1, segments: 2, sentAt: '2026-10-15T08:00:00Z', nextAttemptAt: null },
   ]);
-  const sms = await load('./panels/bbd_akademi/settings-sms.js');
+  const sms = await load('./panels/bbd_akademi/admin/settings-sms.js');
   out.sig = [sms.signatureFrom(null), sms.signatureFrom(''), sms.signatureFrom('BBD'),
     sms.signatureTo(''), sms.signatureTo(' YOK '), sms.signatureTo(' BBD ')];
   out.rows = sms.budgetRows({

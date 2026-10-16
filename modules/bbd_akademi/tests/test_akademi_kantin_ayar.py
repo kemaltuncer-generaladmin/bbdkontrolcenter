@@ -25,7 +25,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     { key: 'finance', enabled: true, config: null, editable: true }] });
   routes['PATCH /v1/admin/features/canteen'] = (body) => { canteen = { ...canteen, ...body }; return canteen; };
   const { app, root } = await makeApp(load, document);
-  const { section } = await load('./panels/bbd_akademi/settings.js');
+  const { section } = await load('./panels/bbd_akademi/admin/settings.js');
   const panel = section(app);
   root.append(panel.node);
   panel.shown({ tab: 'features' });
@@ -69,6 +69,6 @@ def test_ogrenci_gorunurlugu_bolumu_yok() -> None:
     etkisiz "Öğrenci görünürlüğü" varsayılanları gösterilmez."""
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "ui" / "panel" / "settings.js").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "ui" / "panel" / "admin/settings.js").read_text(encoding="utf-8")
     assert "studentCanSee" not in source
     assert "title: 'Öğrenci görünürlüğü'" not in source

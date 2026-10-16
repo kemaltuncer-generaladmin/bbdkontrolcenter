@@ -326,7 +326,7 @@ console.log(JSON.stringify(out));
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node kurulu değil")
 def test_kart_hukmu(tmp_path: Path) -> None:
-    (tmp_path / "sync-logic.mjs").write_text((PANEL / "sync-logic.js").read_text(encoding="utf-8"),
+    (tmp_path / "sync-logic.mjs").write_text((PANEL / "admin/sync-logic.js").read_text(encoding="utf-8"),
                                              encoding="utf-8")
     (tmp_path / "run.mjs").write_text(SCRIPT, encoding="utf-8")
     result = subprocess.run(["node", str(tmp_path / "run.mjs")], capture_output=True,

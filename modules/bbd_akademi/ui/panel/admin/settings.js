@@ -26,14 +26,14 @@
 // Okumalar seyrek değişir: `getCached` + yazmadan sonra `invalidate`.
 // Anons şablonları önbelleği Panel bölümüyle ORTAKTIR ('/v1/admin/pa/templates').
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, card, hintBox, tabBar } from '../../ui-kit/layout.js';
-import { formGrid } from '../../ui-kit/form.js';
-import { AkademiError } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, card, hintBox, tabBar } from '../../../ui-kit/layout.js';
+import { formGrid } from '../../../ui-kit/form.js';
+import { AkademiError } from '../api.js';
 import {
   WEEKDAYS, actionButton, confirmAction, empty, formDialog, kv, loader, money, problem,
   runAction, sectionHead, staticList, toolbar,
-} from './common.js';
+} from '../common.js';
 import { brandingTab } from './settings-branding.js';
 import { auditTab, directoryTab, keysTab } from './settings-admin.js';
 import { syncTab } from './settings-sync.js';

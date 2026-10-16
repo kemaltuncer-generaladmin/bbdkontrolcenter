@@ -166,7 +166,7 @@ def node_run(scenario: str) -> dict[str, Any]:
 
 def test_rol_etiketleri_ogretmen_koc_tek_rol() -> None:
     assert ROLE_LABELS == {"admin": "Yönetici", "teacher": "Öğretmen / Koç"}
-    staff_js = (Path(__file__).resolve().parents[1] / "ui" / "panel" / "staff.js").read_text(encoding="utf-8")
+    staff_js = (Path(__file__).resolve().parents[1] / "ui" / "panel" / "admin/staff.js").read_text(encoding="utf-8")
     assert "{ key: 'teacher', label: 'Öğretmen / Koç' }" in staff_js
     assert "'coach'" not in staff_js  # ayrı koç rolü / listesi yok
 

@@ -13,7 +13,7 @@
 import { button, h, loadStyles } from '../../../ui-kit/kit.js';
 import { card } from '../../../ui-kit/layout.js';
 import { sectionHead, toolbar } from '../common.js';
-import { canteenTab } from '../settings.js';
+import { canteenTab } from '../admin/settings.js';
 
 /** KM'nin kantin ekranları (modül kimliği → düğme). Yalnız geçiş; veri burada yok. */
 const KM_SCREENS = [
@@ -23,7 +23,7 @@ const KM_SCREENS = [
 ];
 
 export function section(app) {
-  loadStyles(import.meta.url, '../settings.css');   // kurallar formu Ayarlar'ın stilini kullanır
+  loadStyles(import.meta.url, '../admin/settings.css');   // kurallar formu Ayarlar'ın stilini kullanır
   const node = h('div', 'ak-stack');
   node.append(sectionHead('Kantin', {
     subtitle: 'Kantinin kurum kuralları. Günlük kantin işleri Kontrol Merkezi\'nin kantin ekranlarındadır.' }));

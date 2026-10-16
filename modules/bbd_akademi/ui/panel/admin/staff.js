@@ -25,16 +25,16 @@
 // "Roller": izin kataloğu alana göre gruplanır; hazır roller salt okunurdur.
 // Yetki her yerde izinden gelir, rol adına göre dal açılmaz (K10).
 
-import { blockedButton, button, foldText, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, hintBox, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { formatPhone, normalizePhone } from '../../ui-kit/form.js';
-import { AkademiError } from './api.js';
-import { ANNOUNCE_NAME_MAX, announceNameError, cleanAnnounceName } from './lessons/bell-plan.js';
+import { blockedButton, button, foldText, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, hintBox, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { formatPhone, normalizePhone } from '../../../ui-kit/form.js';
+import { AkademiError } from '../api.js';
+import { ANNOUNCE_NAME_MAX, announceNameError, cleanAnnounceName } from '../lessons/bell-plan.js';
 import {
   actionButton, confirmAction, empty, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
   problem, runAction, searchBox, sectionHead, selectBox, staticList, toolbar,
-} from './common.js';
+} from '../common.js';
 
 // Öğretmen = koç: tek rol (`teacher`). Bir kişi birden çok rol taşır (ör. Yönetici + Öğretmen / Koç).
 const KM_ROLES = [{ key: 'admin', label: 'Yönetici' }, { key: 'teacher', label: 'Öğretmen / Koç' }];

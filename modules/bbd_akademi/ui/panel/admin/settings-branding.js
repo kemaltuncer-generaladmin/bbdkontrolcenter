@@ -15,13 +15,13 @@
 // kapanınca bırakılır. Yükleme tek dosyadır (açık zemin logosu): köprü tek
 // dosya taşır, koyu zemin logosu yoksa Akademi açık logoyu kullanır.
 
-import { button, debounce, h, num } from '../../ui-kit/kit.js';
-import { alertBox, badge, card } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { button, debounce, h, num } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   actionButton, confirmAction, empty, fileDrop, fmtDateTime, loader, problem, runAction,
   uploadProgress,
-} from './common.js';
+} from '../common.js';
 
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 const SOURCES = { logo: 'logodan üretildi', manual: 'elle ayarlandı', default: 'varsayılan tema' };

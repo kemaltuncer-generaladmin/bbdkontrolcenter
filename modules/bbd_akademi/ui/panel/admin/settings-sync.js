@@ -19,10 +19,10 @@
 // HIZ: sekme görünürken 20 sn'de bir iki okuma (biri KM'nin kendisi); sekme
 // gizlenince ya da pencere arka plandayken durur.
 
-import { blockedButton, button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { confirmAction, empty, fmtDateTime, kv, loader, num, problem, statusBadge, toolbar } from './common.js';
+import { blockedButton, button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { confirmAction, empty, fmtDateTime, kv, loader, num, problem, statusBadge, toolbar } from '../common.js';
 import {
   AKADEMI_MODE, GATEWAY_STATE, SEQ_GAP_WARN, errorText, lagText, seqGap, syncVerdict,
 } from './sync-logic.js';

@@ -68,7 +68,7 @@ def test_kvkk_izni_yalniz_yoneticide_ve_yikici() -> None:
 
 def test_bolum_kaydi_kvkk_izniyle() -> None:
     index = (PANEL / "sections.js").read_text(encoding="utf-8")
-    assert "{ key: 'privacy', label: 'KVKK talepleri', file: './privacy.js', requires: ['privacy']" in index
+    assert "{ key: 'privacy', label: 'KVKK talepleri', file: './admin/privacy.js', requires: ['privacy']" in index
 
 
 # ------------------------------------------------------------------ vekil
@@ -207,7 +207,7 @@ console.log(JSON.stringify(out));
 @pytest.mark.skipif(shutil.which("node") is None, reason="node kurulu değil")
 def test_kvkk_hukum_mantigi(tmp_path: Path) -> None:
     (tmp_path / "privacy-logic.mjs").write_text(
-        (PANEL / "privacy-logic.js").read_text(encoding="utf-8"), encoding="utf-8")
+        (PANEL / "admin/privacy-logic.js").read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / "run.mjs").write_text(SCRIPT, encoding="utf-8")
     result = subprocess.run(["node", str(tmp_path / "run.mjs")], capture_output=True,
                             text=True, timeout=30, check=False)

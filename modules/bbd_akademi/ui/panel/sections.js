@@ -159,9 +159,9 @@ export const SECTIONS = [
   { key: 'reportHub', label: 'Rapor merkezi', file: './reports/reports.js', requires: ['view'], area: 'reports' },
   { key: 'insights', label: 'Erken uyarı', file: './reports/insights.js', requires: ['view'], area: 'reports',
     feature: 'early_warning' },
-  { key: 'settings', label: 'Kurum ayarları', file: './settings.js', requires: ['settings'], area: 'admin' },
-  { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'], area: 'admin' },
-  { key: 'privacy', label: 'KVKK talepleri', file: './privacy.js', requires: ['privacy'], area: 'admin' },
+  { key: 'settings', label: 'Kurum ayarları', file: './admin/settings.js', requires: ['settings'], area: 'admin' },
+  { key: 'staff', label: 'Personel', file: './admin/staff.js', requires: ['staff'], area: 'admin' },
+  { key: 'privacy', label: 'KVKK talepleri', file: './admin/privacy.js', requires: ['privacy'], area: 'admin' },
 ];
 
 /**

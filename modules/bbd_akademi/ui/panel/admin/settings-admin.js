@@ -16,16 +16,16 @@
 // (alan → önce → sonra) çizilir, HTML olarak değil. Dışa aktarım ortak
 // `exportJob` ile (202 iş → yokla → indir).
 
-import { button, copyText, h, menuButton } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { AkademiError } from './api.js';
+import { button, copyText, h, menuButton } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { AkademiError } from '../api.js';
 import {
   actionButton, confirmAction, empty, exportJob, fmtDateTime, fmtTime, formDialog, kv, loader, num,
   openDrawer, optionsOf, pagedList, runAction, searchBox, selectBox, statusBadge, studentPicker,
   todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import { permissionChecklist } from './staff.js';
 
 // ------------------------------------------------------- entegrasyon anahtarı
