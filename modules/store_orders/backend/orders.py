@@ -1490,7 +1490,7 @@ def cancel_block(row: dict[str, Any], *, window_hours: int = 0, now: str = "") -
     if not created:
         return ""
     try:
-        started = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        started = datetime.fromisoformat(created)
     except ValueError:
         return ""
     # TUZAK: mağaza `createdAt` değerini "2026-08-13 18:27:17" biçiminde, SAAT

@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import pathlib
 import sys
-
 import tomllib
+
 import yaml
 
 #: Sunucuda kurulan yetenek extra'ları. `printer` ve `audio` bilerek yok

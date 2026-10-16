@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from modules.bbd_canteen_api.backend.client import CanteenApi, CanteenError
 
 

@@ -253,7 +253,7 @@ def _date_of(value: Any) -> Any:
     if len(raw) != 10:
         return None
     try:
-        return datetime.strptime(raw, "%Y-%m-%d").date()  # noqa: DTZ007 - takvim günü
+        return datetime.strptime(raw, "%Y-%m-%d").date()  # takvim günü
     except ValueError:
         return None
 

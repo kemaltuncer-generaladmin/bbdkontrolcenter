@@ -702,7 +702,7 @@ def date_error(value: Any) -> str:
     if not clean:
         return ""
     try:
-        datetime.strptime(clean, "%Y-%m-%d")  # noqa: DTZ007 — saat dilimi yok, bu bir tarih
+        datetime.strptime(clean, "%Y-%m-%d")  # saat dilimi yok, bu bir tarih
     except ValueError:
         return "Yayın tarihi `YYYY-AA-GG` biçiminde olmalı (ör. 2026-08-01)."
     return ""

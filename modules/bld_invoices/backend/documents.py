@@ -118,7 +118,7 @@ def moment(value: Any) -> str:
     if not raw:
         return ""
     try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw)
     except ValueError:
         return raw
     if parsed.tzinfo is None:

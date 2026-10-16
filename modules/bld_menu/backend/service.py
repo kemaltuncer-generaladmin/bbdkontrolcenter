@@ -285,7 +285,7 @@ class MenuService:
         kurulamaz" kuralı gece yarısına doğru yanlış tarafa düşerdi. Gün
         kararları yerel takvimden okunur; asıl kapı zaten sunucudadır (K9).
         """
-        return datetime.now().strftime("%Y-%m-%d")  # noqa: DTZ005 — yerel gün bilinçli
+        return datetime.now().strftime("%Y-%m-%d")  # yerel gün bilinçli
 
     @staticmethod
     def _rows(payload: Any) -> list[dict[str, Any]]:
@@ -1432,7 +1432,7 @@ class MenuService:
         if not row or mn.text(row.get("status")) != "dry_run":
             return None
         try:
-            created = datetime.fromisoformat(mn.text(row.get("created_at")).replace("Z", "+00:00"))
+            created = datetime.fromisoformat(mn.text(row.get("created_at")))
         except ValueError:
             return None
         if created.tzinfo is None:

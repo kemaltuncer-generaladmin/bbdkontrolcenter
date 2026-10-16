@@ -43,7 +43,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -151,7 +151,7 @@ def main() -> None:
         ),
         # RFC3339 — eklenti başka biçimi ayrıştırmaz ve hatayı denetleme
         # anında verir.
-        "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "pub_date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "platforms": platforms,
     }
 

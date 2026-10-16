@@ -315,7 +315,7 @@ def normalize_stamp(value: Any, *, assume_utc: bool = False) -> str:
     if not raw:
         return ""
     try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw)
     except ValueError:
         match = _STAMP.match(raw)
         if not match:

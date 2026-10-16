@@ -99,7 +99,7 @@ def date_error(value: Any, *, field: str = "Tarih") -> str:
     if not _ISO_DATE.match(raw):
         return f"{field} `YYYY-MM-DD` biçiminde olmalı."
     try:
-        datetime.strptime(raw, "%Y-%m-%d")  # noqa: DTZ007 — yalnız biçim denetimi
+        datetime.strptime(raw, "%Y-%m-%d")  # yalnız biçim denetimi
     except ValueError:
         return f"{field} geçerli bir gün değil."
     return ""

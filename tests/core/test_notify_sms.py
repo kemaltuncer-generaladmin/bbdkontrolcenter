@@ -4,7 +4,7 @@ Ağa çıkılmaz: sağlayıcı istemcisi taklit edilir. Amaç, sarmalayıcının
 tuzaklarını gerçekten kapattığını doğrulamak (docs/netgsm-integration.md).
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -103,7 +103,7 @@ def test_saat_dilimli_tarih_turkiye_saatine_cevrilir():
     """UTC verilen bir zamanlama yerel saate çevrilmezse gönderim kayar."""
     from datetime import timedelta, timezone
 
-    utc_noon = datetime(2023, 12, 1, 12, 0, tzinfo=timezone.utc)
+    utc_noon = datetime(2023, 12, 1, 12, 0, tzinfo=UTC)
     assert codes.fmt_send(utc_noon) == "011220231500"      # UTC+3
 
     already_local = datetime(2023, 12, 1, 15, 0, tzinfo=timezone(timedelta(hours=3)))

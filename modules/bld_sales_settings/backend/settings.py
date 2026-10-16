@@ -464,7 +464,7 @@ def pause_error(until: Any, *, now: str = "") -> str:
         return ""
     raw = text(until)
     try:
-        moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        moment = datetime.fromisoformat(raw)
     except ValueError:
         return "Durdurma bitişi 2026-08-16T15:00:00Z gibi ISO 8601 UTC olmalı."
     if moment.tzinfo is None:
@@ -472,7 +472,7 @@ def pause_error(until: Any, *, now: str = "") -> str:
     reference = datetime.now(UTC)
     if now:
         try:
-            parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(now)
             reference = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except ValueError:
             reference = datetime.now(UTC)

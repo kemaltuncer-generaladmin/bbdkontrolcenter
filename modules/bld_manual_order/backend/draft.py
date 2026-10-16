@@ -134,7 +134,7 @@ def date_error(value: Any, *, field: str = "Servis günü") -> str:
     if not _DATE_PATTERN.match(raw):
         return f"{field} YYYY-AA-GG biçiminde olmalı."
     try:
-        datetime.strptime(raw, "%Y-%m-%d")  # noqa: DTZ007 — yalnız biçim denetimi
+        datetime.strptime(raw, "%Y-%m-%d")  # yalnız biçim denetimi
     except ValueError:
         return f"{field} geçerli bir gün değil."
     return ""
@@ -341,7 +341,7 @@ def _local_now(server_time: Any) -> datetime:
     parsed: datetime | None = None
     if stamp:
         try:
-            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(stamp)
         except ValueError:
             parsed = None
     if parsed is None:
