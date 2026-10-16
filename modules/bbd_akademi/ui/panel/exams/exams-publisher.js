@@ -495,7 +495,7 @@ export async function publisherWizard(app, { exam = null } = {}) {
       if (!preview?.id) return;
       rematch.disabled = true;
       try {
-        preview = await app.api.get(`${PUBLISHER_TABLES}/${preview.id}`);
+        preview = await app.api.get(`/v1/admin/exam-publisher-tables/${preview.id}`);
         table?.setRows(preview.matches || []);
       } catch (failure) {
         app.toast(problem(failure), 'bad');
@@ -539,6 +539,9 @@ export async function publisherWizard(app, { exam = null } = {}) {
       { key: 'match', label: 'Kazanım eşleştirmesi', render: () => matchStep() },
     ],
     onFinish: async ({ progress }) => {
+      if (!app.can('admin_applyExamPublisherTable')) {
+        throw new Error('Tabloyu denemeye uygulama yetkiniz yok (yöneticinizden izin isteyin).');
+      }
       progress('Uygulanıyor…');
       const body = { decisions: decisionsBody(decisions), acceptSuggestions: false,
         applyAnswerKeys: target.applyAnswerKeys };
@@ -547,7 +550,7 @@ export async function publisherWizard(app, { exam = null } = {}) {
         body.exam = examFromPreview(preview, { name: target.name, date: target.date, type: target.type,
           publisher: options.publisher, subjects: target.subjects }).exam;
       }
-      const result = await app.api.post(`${PUBLISHER_TABLES}/${preview.id}/apply`, body);
+      const result = await app.api.post(`/v1/admin/exam-publisher-tables/${preview.id}/apply`, body);
       app.api.invalidate?.('/v1/admin/exams');
       app.toast(applyText(result), result?.unmappedQuestions ? 'warn' : 'good');
       return result;

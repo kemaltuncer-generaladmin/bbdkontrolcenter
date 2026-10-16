@@ -161,8 +161,9 @@ export function section(app) {
     app.toast(historical ? 'Geçmiş deneme tanımlandı. Şimdi sonuç dosyasını yükleyin.'
       : 'Deneme tanımlandı.', 'good');
     list.reload();
-    openExam(saved.id, { tab: historical && app.can('admin_uploadExamImport') ? 'import' : 'results',
-      exam: saved });
+    // Uygulamada deneme canlı ekranla açılır (pencere açılmadıysa da: hedef kitle ve sayaçlar orada).
+    openExam(saved.id, { tab: historical && app.can('admin_uploadExamImport') ? 'import'
+      : (saved.deliveryMode === 'app' ? null : 'results'), exam: saved });
   }
 
   async function importPublisherTable() {
