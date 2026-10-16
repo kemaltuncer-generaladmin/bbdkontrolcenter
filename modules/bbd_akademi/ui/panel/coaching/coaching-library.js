@@ -298,7 +298,7 @@ export async function itemDialog(app, item = null) {
   };
   const packEditor = () => {
     const box = h('div', 'ak-stack');
-    import('../plan-tasks.js').then(({ taskListField, taskBody }) => {
+    import('../work/plan-tasks.js').then(({ taskListField, taskBody }) => {
       const field = taskListField(app, { mode: 'date', tasks: state.tasks.map((task) => ({ ...task })),
         onChange: (tasks) => { state.tasks = tasks.map((task) => taskBody(task, 'date')); } });
       box.append(field.node);

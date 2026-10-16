@@ -123,18 +123,18 @@ export const SECTIONS = [
     area: 'lessons', feature: 'lesson_recordings',
     reads: ['admin_listBoards', 'admin_listRecordings', 'admin_getRecordingQuota', 'admin_getRecordingSettings'] },
   { key: 'attendance', label: 'Yoklama', file: './attendance/attendance.js', requires: ['view'], area: 'attendance' },
-  { key: 'homework', label: 'Ödevler', file: './homework.js', requires: ['view'], area: 'work' },
-  { key: 'plan', label: 'Çalışma planı', file: './plan.js', requires: ['view'], area: 'work' },
+  { key: 'homework', label: 'Ödevler', file: './work/homework.js', requires: ['view'], area: 'work' },
+  { key: 'plan', label: 'Çalışma planı', file: './work/plan.js', requires: ['view'], area: 'work' },
   { key: 'exams', label: 'Denemeler', file: './exams.js', requires: ['view'], area: 'work' },
   { key: 'evaluations', label: 'Değerlendirmeler', file: './evaluations.js',
     requires: ['evaluations', 'learning_setup'], area: 'work' },
   { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'], area: 'work' },
-  { key: 'reading', label: 'Okuma', file: './reading.js', requires: ['view'], area: 'work' },
-  { key: 'decks', label: 'Bilgi kartları', file: './decks.js', requires: ['learning_setup'],
+  { key: 'reading', label: 'Okuma', file: './work/reading.js', requires: ['view'], area: 'work' },
+  { key: 'decks', label: 'Bilgi kartları', file: './work/decks.js', requires: ['learning_setup'],
     area: 'work', feature: 'flashcards' },
   // Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu TEK yerde (F-A25/F-A26). Çalışma
   // planındaki eski "Şablonlar" sekmesi buraya birleşti (aynı gövdeydi).
-  { key: 'templates', label: 'Şablonlar', file: './templates.js', requires: ['view'], area: 'work' },
+  { key: 'templates', label: 'Şablonlar', file: './work/templates.js', requires: ['view'], area: 'work' },
   { key: 'announcements', label: 'Duyurular', file: './announcements.js', requires: ['announcements'],
     area: 'comms' },
   // Veli toplantısı randevu takvimi (Akademi README §14 madde 90): öğretmen saatleri, veli adına randevu, liste PDF'i.

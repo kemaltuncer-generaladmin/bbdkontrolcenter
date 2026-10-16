@@ -53,7 +53,7 @@ DETAIL = {"id": "lise-11-matematik", "title": "Matematik", "units": [
 
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, api, load, calls }) {
-  const { homeworkContent } = await load('./panels/bbd_akademi/homework-content.js');
+  const { homeworkContent } = await load('./panels/bbd_akademi/work/homework-content.js');
   const qs = (query) => {
     const parts = Object.entries(query || {}).filter(([, v]) => v !== undefined && v !== '')
       .map(([k, v]) => `${k}=${v}`);

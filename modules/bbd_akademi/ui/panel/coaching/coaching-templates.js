@@ -44,7 +44,7 @@ export function tab(app, ctx = {}) {
         const slot = h('div', 'ak-stack');
         slot.append(skeletonRows(5, 4));
         program = { node: slot, destroy: () => {} };
-        import('../plan-templates.js').then(async (module) => {
+        import('../work/plan-templates.js').then(async (module) => {
           const instance = module.templatesTab(app, ctx);
           const assign = actionButton(app, 'admin_previewTemplateAssignment', 'Öğrencilere ata (koç görevi)', {
             variant: 'ghost', onClick: () => import('./coaching-week.js').then((week) => week.templateAssignDialog(app)) });

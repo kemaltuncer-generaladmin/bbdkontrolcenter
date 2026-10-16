@@ -17,15 +17,15 @@
 // İNMEZ: yüzlerce kartlı destede yüzlerce indirme olurdu — "Görsel" düğmesiyle
 // tek tek açılır; imzalı bağlantının süresi dolmuşsa dosya kaydı tazelenir.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { programLabel } from './shared/curriculum-picker.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { programLabel } from '../shared/curriculum-picker.js';
 import {
   actionButton, confirmAction, empty, fileDrop, fmtDateTime, formDialog, GRADE_LEVELS,
   gradeText, kv, loader, multiChips, num, openDrawer, pagedList, problem, runAction,
   sectionHead, selectBox, staticList, studentPicker, toolbar,
-} from './common.js';
+} from '../common.js';
 
 const DECKS = '/v1/admin/flashcard-decks';
 const STATUS = { active: ['Etkin', 'good'], archived: ['Arşivde', 'dim'] };

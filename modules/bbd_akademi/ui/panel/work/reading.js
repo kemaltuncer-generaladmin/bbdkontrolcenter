@@ -13,15 +13,15 @@
 //
 // RAPOR: öğrenci × ay (en çok 12 ay), ön hesaplı özetten; imleçli sayfalanır.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, hintBox, skeletonRows, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, hintBox, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
 import {
   GRADE_LEVELS, actionButton, confirmAction, dateInput, empty, errorBox, fmtDate, fmtDateTime,
   gradeText, kv, loader, multiChips, num, openDrawer, pagedList, problem, runAction, sectionHead,
   selectBox, staticList, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import { editList, entryFromCatalog, gradesText } from './reading-editor.js';
 
 /** Sekme kaydı: anahtar → {etiket, okuma işlemi}. Sıra ekrandaki sıradır. */

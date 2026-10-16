@@ -27,21 +27,21 @@
 // Derin bağlantı: `{tab}`, `{planAssignmentId}`, `{studentId, studentName?}`
 // (Atamalar ve Erteleme talepleri öğrenciye göre süzülür).
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, card, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, card, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
 import {
   actionButton, addDays, confirmAction, empty, fmtDate, fmtDateTime, formDialog, kv, loader, num,
   openDrawer, optionsOf, pagedList, percent, reasonDialog, runAction, sectionHead, selectBox,
   statusBadge, studentPicker, todayIst, toolbar, weekStart,
-} from './common.js';
+} from '../common.js';
 import {
   CLOCK, HOLIDAY_POLICIES, TASK_TYPES, detailText, loadTargets, rangeText, subjectMap,
   targetText, targetsField, taskBody, taskListField, taskPatches, taskTitle, timeText, totalMinutes,
   weekdayOf, whenText,
 } from './plan-tasks.js';
-import { previewLines } from './shared/task-form-logic.js';
+import { previewLines } from '../shared/task-form-logic.js';
 import { applyTemplate, templateNotice } from './plan-templates.js';
 
 const POSTPONE_STATUS = {
@@ -140,7 +140,7 @@ function studentFilter(app, { value = null, onChange } = {}) {
 
 export function section(app) {
   loadStyles(import.meta.url, 'plan.css');
-  loadStyles(import.meta.url, 'shared/task-form.css');   // görev düzenleyicisi ilk açılışta stilsiz görünmesin
+  loadStyles(import.meta.url, '../shared/task-form.css');   // görev düzenleyicisi ilk açılışta stilsiz görünmesin
   const node = h('div', 'ak-stack ak-plan');
   let started = false;
   let student = null;
@@ -342,7 +342,7 @@ async function createAssignment(app, ctx) {
   let previewBox = null;
   let previewed = '';
   const canPreview = app.can('admin_previewPlanAssignment');
-  loadStyles(import.meta.url, 'shared/task-form.css');
+  loadStyles(import.meta.url, '../shared/task-form.css');
   const bodyOf = (draft) => ({
     target: draft.target,
     title: String(draft.title || '').trim() || null,

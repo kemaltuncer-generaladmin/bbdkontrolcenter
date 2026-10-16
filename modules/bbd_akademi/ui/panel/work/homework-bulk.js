@@ -14,16 +14,16 @@
 // Mevcut ödevlerde toplu erteleme / tarih / iptal / silme `admin_bulkUpdateHomework`
 // ile Ödevler listesindeki seçimden yapılır (homework.js).
 
-import { button, debounce, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, kpiRow } from '../../ui-kit/layout.js';
+import { button, debounce, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, kpiRow } from '../../../ui-kit/layout.js';
 import {
   WEEKDAYS, addDays, clockInput, dateInput, errorBox, fmtDate, fmtDateTime, formDialog, istanbulStamp,
   multiChips, num, problem, searchBox, todayIst,
-} from './common.js';
-import { bulkTargetField } from './shared/bulk-target.js';
+} from '../common.js';
+import { bulkTargetField } from '../shared/bulk-target.js';
 import { homeworkContent, removableChip, stack, topicsText } from './homework-content.js';
-import { loadTargets } from './resources-common.js';
-import { followBulkJob, jobProgressText, wizard } from './shared/wizard.js';
+import { loadTargets } from '../resources-common.js';
+import { followBulkJob, jobProgressText, wizard } from '../shared/wizard.js';
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 const MAX_ITEMS = 30;

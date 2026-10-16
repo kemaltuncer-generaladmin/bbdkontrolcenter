@@ -12,15 +12,15 @@
 // Plan atamasının çekmecesi plan.js'tedir; burası ona `ctx.onApplied` ile
 // haber verir (döngüsel import yok).
 
-import { h } from '../../ui-kit/kit.js';
-import { alertBox, card } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
+import { h } from '../../../ui-kit/kit.js';
+import { alertBox, card } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
 import {
   EXAM_TARGETS, GRADE_LEVELS, TRACKS, actionButton, addDays, confirmAction, empty, fmtDate,
   fmtDateTime, formDialog, gradeText, kv, loader, multiChips, num, openDrawer, optionsOf, pagedList,
   problem, runAction, selectBox, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   HOLIDAY_POLICIES, TASK_TYPES, detailText, loadTargets, sortTasks, subjectMap, targetsField,
   taskBody, taskListField, taskTitle, timeText, totalMinutes, whenText,

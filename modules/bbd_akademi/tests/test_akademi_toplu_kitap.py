@@ -89,7 +89,7 @@ export default async function ({ document, audit, sleep, api, load }) {
       createdAt: '2026-10-13T10:00:00Z', finishedAt: null };
   };
   const { app, root, toasts } = await makeApp(load, document);
-  const { bulkHomeworkWizard } = await load('./panels/bbd_akademi/homework-bulk.js');
+  const { bulkHomeworkWizard } = await load('./panels/bbd_akademi/work/homework-bulk.js');
   const done = bulkHomeworkWizard(app, { template: T });
   await sleep(30);
   const out = {};
@@ -202,7 +202,7 @@ export default async function ({ document, audit, sleep, api, load }) {
       resourceAssignmentsRemoved: 0, programOverridesRemoved: 0, planAssignmentId: null }, error: null,
     createdAt: '2026-10-13T10:00:00Z', finishedAt: '2026-10-13T10:00:05Z' };
   const { app, root, toasts } = await makeApp(load, document);
-  const templates = await load('./panels/bbd_akademi/templates.js');
+  const templates = await load('./panels/bbd_akademi/work/templates.js');
   const view = templates.section(app);
   root.append(view.node);
   view.shown({ tab: 'bundles' });
@@ -240,7 +240,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   routes['GET /v1/admin/homework'] = { items: [row('h1', 'Paragraf 1'), row('h2', 'Paragraf 2')], nextCursor: null };
   routes['POST /v1/admin/homework/bulk-actions'] = (body) => ({ action: body.action, affectedCount: 2, skipped: [] });
   const { app, root, toasts } = await makeApp(load, document);
-  const homework = await load('./panels/bbd_akademi/homework.js');
+  const homework = await load('./panels/bbd_akademi/work/homework.js');
   const view = homework.section(app);
   root.append(view.node);
   view.shown({});

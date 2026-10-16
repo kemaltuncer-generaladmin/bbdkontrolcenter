@@ -30,7 +30,7 @@ import {
   DAY_LABEL, WEEKDAYS, actionButton, confirmAction, errorBox, fmtDate, formDialog, multiChips, openDrawer,
   runAction, selectBox, staticList, statusBadge, studentPicker, todayIst, toolbar, weekStart,
 } from '../common.js';
-import { loadTargets, targetsField } from '../plan-tasks.js';
+import { loadTargets, targetsField } from '../work/plan-tasks.js';
 import {
   COPY_STATUS, TASK_TYPES, UNRESOLVED, addDaysIso, isCoachTask, isDraft, minutesText, saveSummary, taskDetail, weekLabel,
   weekOps,

@@ -29,7 +29,7 @@ import {
   openDrawer, pagedList, personName, reasonDialog, runAction, searchBox, sectionHead, statusBadge,
   studentPicker, todayIst, toolbar,
 } from './common.js';
-import { removableChip, stack } from './homework-content.js';
+import { removableChip, stack } from './work/homework-content.js';
 import { loadTargets, targetsField } from './resources-common.js';
 import { wizard } from './shared/wizard.js';
 

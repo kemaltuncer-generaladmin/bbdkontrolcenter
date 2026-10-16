@@ -130,7 +130,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     feature: () => false, enabled: () => true, onDispose: () => {},
     lookups: { classGroups: async () => [{ id: 'c1', name: '11-SAY' }], studentGroups: async () => [], terms: async () => [],
       subjects: async () => [{ id: 'MAT', name: 'Matematik' }, { id: 'FIZ', name: 'Fizik' }] } };
-  const { section } = await load('./panels/bbd_akademi/plan.js');
+  const { section } = await load('./panels/bbd_akademi/work/plan.js');
   const view = section(app);
   root.append(view.node);
   view.shown?.();

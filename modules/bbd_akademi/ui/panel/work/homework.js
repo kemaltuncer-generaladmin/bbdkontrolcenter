@@ -24,19 +24,19 @@
 // 5 dakikalık imzalı bağlantıdır: süresi dolmuşsa teslim listesi yeniden
 // okunur, sonra köprüden indirilir.
 
-import { blockedButton, button, clip, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { blockedButton, button, clip, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, kpiRow, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   actionButton, addDays, clockInput, confirmAction, dateInput, empty, fmtDate,
   fmtDateTime, formDialog, istanbulStamp, kv, loader, multiChips, num, openDrawer,
   pagedList, percent, problem, runAction, sectionHead, selectBox, statusBadge,
   studentPicker, todayIst, toolbar, TZ,
-} from './common.js';
+} from '../common.js';
 import { homeworkContent, removableChip, stack, topicsText } from './homework-content.js';
 import { bulkHomeworkWizard } from './homework-bulk.js';
-import { documentButtons } from './documents.js';
-import { homeworkListDoc, studentHomeworkDoc } from './documents-logic.js';
+import { documentButtons } from '../documents.js';
+import { homeworkListDoc, studentHomeworkDoc } from '../documents-logic.js';
 
 const HOMEWORK = '/v1/admin/homework';
 

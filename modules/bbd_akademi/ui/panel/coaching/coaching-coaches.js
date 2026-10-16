@@ -23,7 +23,7 @@ import {
   GRADE_LEVELS, actionButton, dateInput, errorBox, exportJob, fmtDate, fmtDateTime, formDialog, gradeText, kv,
   loader, multiChips, openDrawer, optionsOf, pagedList, searchBox, selectBox, staticList, statusBadge, todayIst, toolbar,
 } from '../common.js';
-import { loadTargets, targetsField } from '../plan-tasks.js';
+import { loadTargets, targetsField } from '../work/plan-tasks.js';
 import {
   BULK_ACTIONS, EXPORT_FORMATS, EXPORT_KINDS, SUBMISSION_DIGEST, bulkAssignBody, exportBody, hoursText, pct,
   profilePut,

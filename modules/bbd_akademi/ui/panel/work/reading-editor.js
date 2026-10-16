@@ -15,12 +15,12 @@
 // Kayıtlı kalemin eski kapağının dosya kimliği okunmadığından onun temizliği
 // Akademi'dedir.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { AkademiError } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { AkademiError } from '../api.js';
 import {
   GRADE_LEVELS, actionButton, formDialog, gradeText, multiChips, num, problem, searchBox, toolbar,
-} from './common.js';
+} from '../common.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ISBN = /^[0-9]{10}([0-9]{3})?$/;

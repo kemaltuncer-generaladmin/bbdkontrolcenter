@@ -219,7 +219,7 @@ export default async function ({ document, sleep, api, load, calls }) {
       nextCursor: null, items: [{ student: { id: 'u1', displayName: 'Ali Kaya' }, averagePercent: 40,
         cells: [{ weekStart: previous, adherencePercent: 40, plannedMinutes: 300, doneMinutes: 120 },
           { weekStart: monday, adherencePercent: 10, plannedMinutes: 300, doneMinutes: 30 }] }] });
-    const plan = await load('./panels/bbd_akademi/plan.js');
+    const plan = await load('./panels/bbd_akademi/work/plan.js');
     const root = document.createElement('div');
     document.body.append(root);
     const app = makeApp(root, api);
