@@ -40,6 +40,8 @@ import {
 import { tocTab } from './resources-toc.js';
 import { packageDrawer, packagesTab } from './resources-packages.js';
 import { assignDialog, assignmentsTab, progressTab } from './resources-assign.js';
+import { batchesDialog, bulkAssignWizard } from './resources-bulk.js';
+import { T as BULK } from './resources-bulk-logic.js';
 
 export function section(app) {
   loadStyles(import.meta.url, 'resources.css');
@@ -55,9 +57,12 @@ export function section(app) {
     ], { variant: 'primary' })
     : blockedButton('Kaynak ekle', 'Bu işlem için yetkiniz yok (yöneticinizden izin isteyin).',
       { variant: 'primary' });
+  // Akademi README §14 madde 116: BBD Store kataloğunun tamamından ücretsiz toplu atama (üç adım).
+  const bulk = actionButton(app, 'admin_bulkAssignResources', BULK.open, { onClick: () => ctx.bulkAssign() });
   node.append(sectionHead('Kaynaklar', {
-    subtitle: 'Hazır kütüphane, kurum kaynakları ve içindekiler; paketlerle seviye/alan kuralına göre atama.',
-    actions: [add],
+    subtitle: 'Hazır kütüphane, kurum kaynakları ve içindekiler; paketlerle seviye/alan kuralına göre atama; '
+      + "BBD Store'daki bütün kitaplardan öğrencilere ücretsiz toplu atama.",
+    actions: [bulk, add],
   }));
 
   // ------------------------------------------------------------- sekmeler
@@ -82,6 +87,11 @@ export function section(app) {
     editResource: (resource) => editResource(resource),
     deleteResource: (resource) => deleteResource(resource),
     assign: (options) => assignDialog(app, { ...options, onDone: () => ctx.changed('assignments') }),
+    /** BBD Store'dan toplu ata (`resources`: Kütüphane'de seçilenler önceden seçili gelir). */
+    bulkAssign: (options = {}) => bulkAssignWizard(app, { ...options, onDone: () => ctx.changed('assignments'),
+      onShowBatch: (batchId) => go('assignments', { batchId }) }),
+    showBatches: () => batchesDialog(app, { onShowBatch: (batchId) => go('assignments', { batchId }),
+      onChanged: () => ctx.changed('assignment-removed') }),
     showAssignments: (filter) => go('assignments', filter),
     showProgress: (filter) => go('progress', filter),
     /**
@@ -324,11 +334,27 @@ function resourceListTab(app, ctx, { tenantOnly }) {
     return actions;
   } });
 
+  // Seçilenleri ata (README §14 madde 116): Kütüphane'de çoklu seçim → toplu atama sihirbazının "Kime" adımı.
+  const assignSelected = actionButton(app, 'admin_bulkAssignResources', 'Seçilenleri ata', { variant: 'primary',
+    onClick: () => {
+      const keys = new Set(list.table.selection());
+      const chosen = list.rows().filter((row) => keys.has(row.id));
+      if (chosen.length) ctx.bulkAssign({ resources: chosen.map((row) => ({ id: row.id, title: row.title })) });
+    } });
+  assignSelected.hidden = true;
+  const paintSelected = (keys) => {
+    assignSelected.hidden = !keys.length;
+    assignSelected.textContent = keys.length ? `Seçilenleri ata (${num(keys.length)})` : 'Seçilenleri ata';
+  };
+  node.append(toolbar(h('span', 'kit-spacer'), assignSelected));
   const list = pagedList({
     app,
     path: '/v1/catalog/library',
     query: () => clean(filters),
     columns,
+    selectable: app.can('admin_bulkAssignResources'),
+    onSelect: (keys) => paintSelected(keys),
+    onLoaded: () => paintSelected(list.table.selection()),
     empty: tenantOnly
       ? { title: 'Kurum kaynağı yok', text: 'ISBN ile, elle ya da hazır kütüphaneden kopyalayarak kaynak ekleyin.' }
       : { title: 'Bu süzgece uyan kaynak yok', text: 'Aramayı ya da süzgeçleri genişletin.' },

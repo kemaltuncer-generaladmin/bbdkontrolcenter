@@ -131,3 +131,29 @@
 .ak-res-swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; border-left: 3px solid transparent; }
 .ak-res-swatch.behind { background: #f3f4f7; border-left-color: var(--bad); }
 .ak-res-swatch.none { background: transparent; border: 1px dashed #c5cede; }
+
+/* ------------------------------------------- BBD Store'dan toplu ata (README §14 madde 116) */
+.ak-tk { gap: 8px; }
+.ak-tk-info { font-size: 12px; }
+.ak-tk-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ak-tk-filters .kit-select { max-width: 200px; }
+.ak-tk-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; min-height: 30px; }
+.ak-tk-total { font-weight: 650; font-variant-numeric: tabular-nums; }
+.ak-tk-list { display: flex; flex-direction: column; max-height: 340px; overflow: auto; border: 1px solid var(--line);
+  border-radius: 9px; }
+.ak-tk-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+  padding: 6px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ak-tk-row:last-child { border-bottom: 0; }
+.ak-tk-row.on { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.ak-tk-row input { accent-color: var(--accent); }
+.ak-tk-text { display: flex; flex-direction: column; min-width: 0; }
+.ak-tk-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-tk-meta { font-size: 12px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-tk-badges { display: flex; gap: 4px; }
+.ak-tk-selected { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-weight: 600; }
+.ak-tk-hint { display: flex; gap: 8px; align-items: center; min-height: 0; }
+.ak-tk-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.ak-tk-batches { max-height: 420px; overflow: auto; }
+.ak-tk-batch { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center;
+  padding: 6px 2px; border-bottom: 1px solid var(--line); }
+.ak-tk-batch:last-child { border-bottom: 0; }
