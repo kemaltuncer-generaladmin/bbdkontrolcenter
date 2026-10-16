@@ -365,6 +365,21 @@ const INSTITUTION_GROUPS = [
         hint: 'KM\'den yeni öğrenci gelince kuralı uyan ve “otomatik” işaretli paketler (program, kaynak, plan) '
           + 'hemen verilir. Varsayılan kapalı.' },
     ] },
+  { title: 'Müfredat kapsamı',
+    hint: 'Öğrenci hata defterinde, görevde ve çalışma kaydında ders / konuyu hangi müfredattan seçer (Akademi README '
+      + '§14 madde 114). Sınıfından gelenler (ör. 11. Sınıf · TYT · AYT) her zaman seçilir.',
+    fields: [
+      { key: 'selectableScopes', path: ['curriculum', 'selectableScopes'], label: 'Seçilebilir kapsamlar', type: 'select',
+        wide: true,
+        options: [
+          { value: 'standard', label: 'Sınıfı + komşu sınıflar + TYT / AYT (alanına göre) / LGS' },
+          { value: 'assigned', label: 'Yalnız sınıfından gelenler' },
+          { value: 'all', label: 'Kademenin bütün sınıfları ve sınavları (AYT bütün alanlar)' },
+        ],
+        from: (value) => value || 'standard',
+        hint: 'Önerilen: komşu sınıflar ve sınavlar. Ör. 12. sınıf öğrencisi 12. Sınıf (ana), TYT, AYT ve 11. Sınıf '
+          + 'arasından seçer; 8. sınıf öğrencisi 8. Sınıf, LGS ve 7. Sınıf.' },
+    ] },
   { title: 'Hata defteri saklama',
     hint: 'Disk ve depolama şişmesin, defter sade kalsın. Süre boş bırakılırsa o kural kapalıdır. Öğrencinin “Sakla” '
       + 'dediği hataya dokunulmaz; özet ve analizler silinen hataları saymaya devam eder.',
