@@ -23,9 +23,13 @@
 //   · Tebrik ve rozetler — koç rozeti tanımları, haftalık kutlama adayları ve
 //     toplu tebrik.
 //   · Check-in — kurum soru seti (pazar öz değerlendirmesine eklenir) ve
-//     haftanın check-in durumu + koç yorumu (bayrak `self_review`).
+//     haftanın check-in durumu + koç yorumu (bayrak `self_review`). 16.10.2026'dan
+//     beri "Tebrik ve check-in" sekmesinin ikinci görünümü.
 //   · Görüşmeler — koç görüşmeleri: karar, not, eylem maddesi → görev / hedef
 //     (bayrak `coach_meetings`).
+//   · Şablonlar — metin şablonları (görüşme notu, soru yanıtı, check-in yorumu,
+//     veli görüşmesi, mesaj, tebrik) ve program şablonları (Akademi README §14
+//     madde 115).
 //
 // Başlıkta "Dışa aktar" (koç performansı, dönem raporları, haftalık
 // programlar). Sekme yalnız okuma işlemi izinliyse ve özelliği kurumda açıksa
@@ -46,12 +50,18 @@ const TABS = [
   { key: 'coaches', label: 'Koçlar', read: ['admin_listCoaches', 'admin_bulkAssignCoach'], file: './coaching-coaches.js' },
   { key: 'library', label: 'Kütüphane', read: ['admin_listCoachLibrary', 'admin_listLibraryProposals', 'admin_listVideoPool'],
     file: './coaching-library.js' },
-  { key: 'motivation', label: 'Tebrik ve rozetler', read: ['admin_listCoachBadges', 'admin_listCelebrationCandidates'],
-    file: './coaching-motivation.js' },
-  { key: 'checkins', label: 'Check-in', read: ['admin_listCheckins', 'admin_getCheckinQuestionSet'],
-    file: './coaching-checkins.js' },
+  // Check-in (16.10.2026) bu sekmenin ikinci görünümüdür: Koçluk 10 hap sınırında "Şablonlar"a yer açıldı.
+  { key: 'motivation', label: 'Tebrik ve check-in', read: ['admin_listCoachBadges', 'admin_listCelebrationCandidates',
+    'admin_listCheckins', 'admin_getCheckinQuestionSet'], file: './coaching-motivation.js' },
   { key: 'meetings', label: 'Görüşmeler', read: ['admin_listCoachMeetings'], file: './coaching-meetings.js' },
+  // Akademi README §14 madde 115: metin şablonları (görüşme notu, soru yanıtı, check-in yorumu, veli görüşmesi,
+  // mesaj, tebrik) + program (plan) şablonları tek yerde.
+  { key: 'templates', label: 'Şablonlar', read: ['admin_listCoachTextTemplates', 'admin_listStudyPlanTemplates'],
+    file: './coaching-templates.js' },
 ];
+
+/** Eski sekme anahtarları → (sekme, görünüm). `checkins` artık "Tebrik ve check-in" sekmesinin görünümü. */
+const MOVED = { checkins: ['motivation', { motivationView: 'checkins' }] };
 
 export function section(app) {
   loadStyles(import.meta.url, 'coaching.css');
@@ -81,6 +91,10 @@ export function section(app) {
   };
 
   async function open(key, payload = null) {
+    if (MOVED[key]) {
+      payload = { ...(payload || {}), ...MOVED[key][1] };
+      [key] = MOVED[key];
+    }
     const tab = visible.find((item) => item.key === key) || visible[0];
     if (bar.active !== tab.key) bar.select(tab.key, false);
     app.syncHosted?.('coaching', { coachingTab: tab.key });   // üstteki hap da bu sekmeye geçsin

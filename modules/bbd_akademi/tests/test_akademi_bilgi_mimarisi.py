@@ -112,9 +112,10 @@ def test_en_fazla_on_ana_grup(result: dict[str, Any]) -> None:
     # Koçluk ÖNDE (lider 15.10.2026): koçun en sık işleri doğrudan hap — kuyruk, haftalık program,
     # koçluk öğrencileri, hoca soruları (§14 madde 63), hata defteri gelen kutusu (§14 madde 104), görüşmeler (F-K17).
     # Mesaj denetimi (KM-1) 16.10.2026'da İletişim grubuna taşındı (10 hap sınırı).
+    # Şablonlar (Akademi README §14 madde 115): Check-in "Tebrik ve check-in" hapının ikinci görünümü oldu.
     assert nav["coaching"] == ["coachQueue", "coachWeek", "coachStudents", "questions", "mistakeInbox",
                                "coachMeetings", "coachCoaches", "coachLibrary", "coachMotivation",
-                               "coachCheckins"]
+                               "coachTemplates"]
     # Ders oturumları (KM-3): tek dersin iptali / telafisi / yerine öğretmen, öğretmen haftası.
     # Ders kayıtları (F-DK, Akademi README §14 madde 110): akıllı tahta — tahtalar, kayıtlar, depolama, ayarlar.
     assert nav["lessons"] == ["timetable", "sessions", "calendar", "curriculum", "lessonRecordings"]
@@ -144,7 +145,7 @@ def test_hicbir_ekran_kaybolmadi(result: dict[str, Any]) -> None:
     assert shown == set(result["sectionKeys"])
     hosted = {key: (host, file, payload) for key, host, file, payload in result["hosted"]}
     assert {payload["coachingTab"] for _, _, payload in hosted.values()} == {
-        "queue", "students", "week", "coaches", "library", "motivation", "checkins", "meetings"}, (
+        "queue", "students", "week", "coaches", "library", "motivation", "templates", "meetings"}, (
         "koçluk ekranının sekmelerinin hepsi hap olmalı")
     assert {(host, file) for host, file, _ in hosted.values()} == {("coaching", "./coaching.js")}
 

@@ -7,20 +7,62 @@
 //   seçilir ve tek mesajla toplu tebrik gider (`admin_bulkKudos`, en çok 200).
 
 import { button, h } from '../../ui-kit/kit.js';
-import { badge, card, hintBox } from '../../ui-kit/layout.js';
+import { badge, card, chipRow, hintBox } from '../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, formDialog, runAction, selectBox, staticList, todayIst, toolbar, weekStart,
 } from './common.js';
 import { BADGE_ICONS, REACTIONS, addDaysIso, pct, weekLabel } from './coaching-logic.js';
 import { coachOptions, setEnabled, studentCell } from './coaching-shared.js';
+import { templateField } from './text-templates.js';
 
 const BADGES = '/v1/admin/coaching/badges';
 
 export function tab(app) {
   const node = h('div', 'ak-stack');
-  if (app.can('admin_listCelebrationCandidates')) node.append(celebrations(app));
-  if (app.can('admin_listCoachBadges')) node.append(badges(app));
-  return { node, shown() {} };
+  // 16.10.2026 (Akademi README §14 madde 115): Koçluk grubuna "Şablonlar" hapı girdi; 10 hap sınırı için Check-in
+  // bu hapın ikinci görünümüdür ("Tebrik ve check-in"). Eski derin bağlantı `coachingTab: 'checkins'` buraya açılır.
+  const views = [
+    (app.can('admin_listCelebrationCandidates') || app.can('admin_listCoachBadges'))
+      && { key: 'kudos', label: 'Tebrik ve rozetler' },
+    (app.can('admin_listCheckins') || app.can('admin_getCheckinQuestionSet')) && { key: 'checkins', label: 'Check-in' },
+  ].filter(Boolean);
+  let view = views[0]?.key;
+  const chips = chipRow(views, view, (key) => { view = key || view; chips.set(view); paint(); });
+  const holder = h('div', 'ak-stack');
+  if (views.length > 1) node.append(chips.node);
+  node.append(holder);
+  let kudos = null;
+  let checkins = null;
+  function paint() {
+    if (view === 'checkins') {
+      if (!checkins) {
+        const slot = h('div', 'ak-stack');
+        checkins = { node: slot };
+        import('./coaching-checkins.js').then((module) => slot.replaceChildren(module.tab(app).node))
+          .catch((failure) => slot.replaceChildren(h('p', 'kit-field-error', String(failure?.message || failure))));
+      }
+      holder.replaceChildren(checkins.node);
+    } else {
+      if (!kudos) {
+        kudos = h('div', 'ak-stack');
+        if (app.can('admin_listCelebrationCandidates')) kudos.append(celebrations(app));
+        if (app.can('admin_listCoachBadges')) kudos.append(badges(app));
+      }
+      holder.replaceChildren(kudos);
+    }
+  }
+  paint();
+  return {
+    node,
+    shown(payload) {
+      const wanted = payload?.motivationView;
+      if (wanted && wanted !== view && views.some((item) => item.key === wanted)) {
+        view = wanted;
+        chips.set(view);
+        paint();
+      }
+    },
+  };
 }
 
 function badges(app) {
@@ -109,8 +151,10 @@ function celebrations(app) {
     if (!studentIds.length) return;
     const result = await formDialog(app, {
       title: `${studentIds.length} öğrenciyi tebrik et`,
-      description: 'Her öğrenciye aynı mesaj gider (bildirim).',
+      description: 'Her öğrenciye aynı mesaj gider (bildirim); {ogrenci_adi} her öğrencinin kendi adıyla doldurulur.',
       fields: [
+        templateField(app, { kind: 'kudos', target: 'text', maxLength: 280, perStudent: true,
+          context: () => ({ date: week }) }),
         { key: 'text', label: 'Mesaj', type: 'textarea', required: true, maxLength: 280, wide: true },
         { key: 'sticker', label: 'Çıkartma', type: 'select',
           options: [{ value: '', label: 'Yok' }, ...REACTIONS.map((item) => ({ value: item, label: item }))] },

@@ -1,0 +1,24 @@
+/* Koçluk metin şablonları — önek `ak-tt-` (Akademi README §14 madde 115). Seçici formun içinde açılır. */
+.ak-tt { display: flex; flex-direction: column; gap: 6px; }
+.ak-tt-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ak-tt-status { flex: 1 1 200px; min-width: 0; }
+.ak-tt-panel { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; background: var(--tint); }
+.ak-tt-search { width: 100%; }
+.ak-tt-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+.ak-tt-item { display: flex; flex-direction: column; gap: 2px; text-align: left; border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; background: #fff; cursor: pointer; font: inherit; color: inherit; }
+.ak-tt-item:hover, .ak-tt-item:focus-visible { border-color: var(--accent); outline: none; }
+.ak-tt-item:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.ak-tt-item[disabled] { opacity: .6; cursor: progress; }
+.ak-tt-item small { color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-tt-item-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.ak-tt-save { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ak-tt-save .kit-input { flex: 1 1 240px; min-width: 0; }
+
+/* Koçluk → Şablonlar sekmesi */
+.ak-tt-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; background: var(--tint); }
+.ak-tt-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ak-tt-cell small { color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-tt-chips { display: flex; flex-wrap: wrap; gap: 4px; }

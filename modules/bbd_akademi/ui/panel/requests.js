@@ -16,6 +16,7 @@ import {
   reasonDialog, runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar,
 } from './common.js';
 import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from './attendance-manage.js';
+import { templateField } from './text-templates.js';
 
 const CHANNEL = { phone: 'telefonla', in_person: 'yüz yüze' };
 const STATUS = { requested: ['Bekliyor', 'warn'], approved: ['Onaylandı', 'good'], scheduled: ['Zaman verildi', 'good'],
@@ -263,12 +264,24 @@ function meetingView(app, tabs) {
   }
 
   async function complete(row) {
-    const note = await reasonDialog(app, { title: 'Görüşme yapıldı', description: 'İsteğe bağlı kısa not.',
-      confirmLabel: 'Kaydet', minLength: 0, danger: false });
-    if (note === null) return;
-    const next = await runAction(app, () => app.api.post(`/v1/admin/meeting-requests/${row.id}/complete`,
-      { note: note || null }, { key: `meet-done-${row.id}` }), { success: 'Görüşme tamamlandı.' });
-    if (next) list.replace((item) => item.id === row.id, next);
+    // Akademi README §14 madde 115: veli görüşmesi notu şablondan (öğrenci, veli, tarih doldurulur).
+    const next = await formDialog(app, {
+      title: 'Görüşme yapıldı',
+      description: 'İsteğe bağlı kısa not (en çok 300 karakter).',
+      wide: true,
+      fields: [
+        templateField(app, { kind: 'parent_meeting', target: 'note', maxLength: 300, inlineActions: true,
+          context: () => ({ studentId: row.student?.id }) }),
+        { key: 'note', label: 'Görüşme notu', type: 'textarea', maxLength: 300, wide: true },
+      ],
+      value: { note: '' },
+      submitLabel: 'Kaydet',
+      onSubmit: (draft) => app.api.post(`/v1/admin/meeting-requests/${row.id}/complete`,
+        { note: String(draft.note || '').trim() || null }, { key: `meet-done-${row.id}` }),
+    });
+    if (!next) return;
+    app.toast('Görüşme tamamlandı.', 'good');
+    list.replace((item) => item.id === row.id, next);
   }
 
   async function decline(row) {

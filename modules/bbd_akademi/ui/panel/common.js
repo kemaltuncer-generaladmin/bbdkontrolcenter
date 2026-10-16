@@ -503,7 +503,15 @@ export function formDialog(app, { title, description = '', fields = [], value = 
       const label = h('span', 'kit-field-label', field.label || '');
       if (field.required) label.append(h('span', 'req', '*'));
       const set = (raw) => { draft[field.key] = raw; };
-      const control = field.render(draft, set);
+      // Üçüncü bağımsız değişken: özel alanın BAŞKA alanları doldurması (ör. şablon seçici notu, eylem maddelerini
+      // ve görünürlüğü forma yerleştirir — Akademi README §14 madde 115). `get` güncel taslağı verir.
+      const control = field.render(draft, set, {
+        setField: (fieldKey, raw) => {
+          draft[fieldKey] = raw;
+          if (gridKeys.includes(fieldKey)) grid.set(fieldKey, raw);
+        },
+        get: () => ({ ...draft, ...grid.draft() }),
+      });
       if (!(control instanceof Node)) reactive.push(control);
       const error = h('span', 'kit-field-error');
       customErrors.set(field.key, error);

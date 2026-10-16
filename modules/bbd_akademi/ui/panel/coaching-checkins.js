@@ -17,6 +17,7 @@ import {
 } from './common.js';
 import { CHECKIN_KINDS, addDaysIso, checkinQuestion, weekLabel } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
+import { templateTools, textareaForm } from './text-templates.js';
 
 const SET = '/v1/admin/coaching/checkin-questions';
 
@@ -254,6 +255,10 @@ async function openCheckin(app, row, onChange) {
           { comment: text.slice(0, 1000) }), { success: 'Yorum gönderildi; öğrenciye bildirim gitti.', button: event.currentTarget });
         if (saved) { view.close(); onChange?.(); }
       } });
+    // Akademi README §14 madde 115: hazır yorum (öğrencinin adı ve hafta doldurulur) / yazılanı şablon yap.
+    const tools = templateTools(app, { kind: 'checkin_comment', form: textareaForm(input), maxLength: 1000,
+      context: () => ({ studentId, date: row.weekStart }) });
+    if (tools) parts.push(tools);
     parts.push(input, toolbar(send));
     view.body.replaceChildren(...parts);
   } catch (failure) {

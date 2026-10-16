@@ -82,7 +82,7 @@ ROUTES = {
      "operationList": [{"operationId": op, "allowed": True} for op in [
          "admin_getCoachQueue", "admin_listCoachReviews", "admin_listCoachingStudents", "admin_getCoachWeek",
          "admin_listCoaches", "admin_listCoachLibrary", "admin_listCoachBadges", "admin_listCheckins",
-         "admin_listCoachMeetings", "admin_getSmsHealth"]]},
+         "admin_listCoachMeetings", "admin_getSmsHealth", "admin_listCoachTextTemplates"]]},
   "GET /auth/me": {"permissions": ["bbd_students.view", "bbd_students.manage", "bbd_students.groups", "bbd_students.lifecycle", "bbd_students.canteen_controls", "bbd_students.qr", "bbd_students.access_code", "bbd_akademi.view"]},
   "GET /api/bbd_students/students": {"connected": True, "students": [
     {"kantinId": "STU-1", "displayName": "Elif Kaya", "className": "9-A", "schoolNo": "77", "balance": 0, "status": "active", "guardians": [{"name": "Ayşe", "phone": "5321112233", "primary": True}], "parentPhone": "5321112233", "canteenSync": "ok"},

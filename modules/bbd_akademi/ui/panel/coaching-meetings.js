@@ -8,7 +8,8 @@
 // (`admin_putCoachMeetingNote`; not bir koç notudur, görünürlük seçilir) ve
 // eylem maddesini plan görevine ya da hedef önerisine dönüştürme
 // (`admin_convertMeetingActionItem`). "Görüşme planla" öğrenci seçtirir
-// (`admin_createCoachMeeting`).
+// (`admin_createCoachMeeting`). Not penceresinde "Şablondan doldur" / "Şablon olarak
+// kaydet" (Akademi README §14 madde 115).
 
 import { button, h } from '../../ui-kit/kit.js';
 import { badge, skeletonRows } from '../../ui-kit/layout.js';
@@ -22,6 +23,7 @@ import {
 } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
 import { meetingDialog } from './coaching-students.js';
+import { templateField } from './text-templates.js';
 
 export function tab(app) {
   const node = h('div', 'ak-stack');
@@ -189,6 +191,9 @@ export async function openMeeting(app, row, onChange) {
         + 'kararlaştırılanlar" olarak çıkar.',
       wide: true,
       fields: [
+        // Akademi README §14 madde 115: şablondan doldur (eylem maddeleri + varsayılan görünürlük) / şablon olarak kaydet.
+        templateField(app, { kind: 'meeting_note', target: 'text', actions: 'actionItems', visibility: 'visibility',
+          maxLength: 4000, context: () => ({ studentId: meeting.student?.id, coachId: meeting.coach?.id }) }),
         { key: 'text', label: 'Not', type: 'textarea', required: true, maxLength: 4000, wide: true },
         { key: 'visibility', label: 'Görünürlük', type: 'select', options: optionsOf(NOTE_VISIBILITY) },
         { key: 'actionItems', label: 'Eylem maddeleri (her satıra bir madde; bitenin başına ✓)', type: 'textarea',

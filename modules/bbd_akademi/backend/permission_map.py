@@ -190,6 +190,13 @@ OPERATION_OVERRIDES: dict[str, str] = {
     # Ders kaydı ayarları (saklama ≤ 120 gün, depolama tavanı ≤ 800 GB, kalite, kamera sahneleri) kurum ayarıdır —
     # okuması ders kaydı iznindedir (ekran gösterir), yazması yalnız kurum ayarı yetkisiyle (varsayılan admin).
     "admin_putRecordingSettings": SETTINGS,
+    # Koçluk metin şablonları (Akademi README §14 madde 115): sözleşme izni erişimdir (`students.view` |
+    # `coaching.dashboard` → görüntüleme). KM'de kurum şablonunu ekleme / düzenleme / silme koçluk YÖNETİMİDİR
+    # (rozet, kurum kütüphanesi gibi), doldurma ise koç adına YAZMADIR (tebrik, not gibi).
+    "admin_createCoachTextTemplate": LEARNING_SETUP,
+    "admin_updateCoachTextTemplate": LEARNING_SETUP,
+    "admin_deleteCoachTextTemplate": LEARNING_SETUP,
+    "admin_renderCoachTextTemplate": LEARNING,
 }
 
 

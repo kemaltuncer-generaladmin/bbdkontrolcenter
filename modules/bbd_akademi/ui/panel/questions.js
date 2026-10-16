@@ -21,6 +21,7 @@ import {
   defaultResponder, filterQuery, MAX_ATTACHMENTS, MAX_VOICE_SECONDS, partKind, recorderMime,
   settingsPutBody, slaLevel, uploadFields,
 } from './questions-logic.js';
+import { templateTools, textareaForm } from './text-templates.js';
 
 const QUESTIONS = '/v1/admin/coaching/questions';
 
@@ -448,7 +449,13 @@ function composer(app, question, onAnswered) {
 
   const row = h('div', 'ak-row-actions');
   row.append(attach, recordButton, recordState, h('span', 'kit-spacer'), send);
-  node.append(responderSlot, text, partList, picker, row, error,
+  // Akademi README §14 madde 115: hazır yanıt şablonu (öğrencinin adı, ders, yanıtlayan öğretmen doldurulur).
+  const tools = templateTools(app, { kind: 'question_answer', form: textareaForm(text), maxLength: 2000,
+    context: () => ({ studentId: question.student?.id, coachId: responder || null,
+      subjectId: question.context?.subject?.id || question.context?.topic?.subjectId || null }) });
+  node.append(responderSlot);
+  if (tools) node.append(tools);
+  node.append(text, partList, picker, row, error,
     h('small', 'ak-muted', 'Ctrl+Enter: gönder · Görseller EXIF silinerek küçültülür; sesli not m4a (AAC), en çok 2 dakika.'));
   return node;
 }

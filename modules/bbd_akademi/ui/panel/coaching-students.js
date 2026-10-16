@@ -25,6 +25,7 @@ import { coachOptions, coachingJob, riskBadge, studentCell } from './coaching-sh
 import { questionsDialog } from './coaching-checkins.js';
 import { openCoachTask } from './coaching-week.js';
 import { problem } from './api.js';
+import { templateField } from './text-templates.js';
 
 const SORTS = { risk: 'Risk önce', adherence: 'Uyumu düşük önce', name: 'Ada göre', last_activity: 'Son etkinlik' };
 
@@ -239,6 +240,7 @@ export async function kudosDialog(app, student) {
     title: `Tebrik — ${student.displayName || ''}`.trim(),
     description: 'Öğrenciye bildirim gider. Rozet verirken gerekçe zorunludur.',
     fields: [
+      templateField(app, { kind: 'kudos', target: 'text', maxLength: 280, context: () => ({ studentId: student.id }) }),
       { key: 'text', label: 'Mesaj', type: 'textarea', required: true, maxLength: 280, wide: true },
       { key: 'sticker', label: 'Çıkartma', type: 'select',
         options: [{ value: '', label: 'Yok' }, ...REACTIONS.map((item) => ({ value: item, label: item }))] },

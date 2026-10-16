@@ -100,12 +100,16 @@ export const SECTIONS = [
   { key: 'coachLibrary', label: 'Kütüphane', file: './coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachLibrary', 'admin_listLibraryProposals', 'admin_listVideoPool'],
     payload: { coachingTab: 'library' } },
-  { key: 'coachMotivation', label: 'Tebrik ve rozetler', file: './coaching.js', requires: ['view'],
+  // 16.10.2026 (Akademi README §14 madde 115): Check-in bu hapın ikinci görünümüdür — 10 hap sınırında "Şablonlar"a
+  // yer açıldı (eski `coachCheckins` adı ALIASES'ta).
+  { key: 'coachMotivation', label: 'Tebrik ve check-in', file: './coaching.js', requires: ['view'],
     area: 'coaching', feature: 'coaching', host: 'coaching',
-    reads: ['admin_listCoachBadges', 'admin_listCelebrationCandidates'], payload: { coachingTab: 'motivation' } },
-  { key: 'coachCheckins', label: 'Check-in', file: './coaching.js', requires: ['view'], area: 'coaching',
-    feature: 'coaching', host: 'coaching', reads: ['admin_listCheckins', 'admin_getCheckinQuestionSet'],
-    payload: { coachingTab: 'checkins' } },
+    reads: ['admin_listCoachBadges', 'admin_listCelebrationCandidates', 'admin_listCheckins', 'admin_getCheckinQuestionSet'],
+    payload: { coachingTab: 'motivation' } },
+  // Koçluk şablonları (Akademi README §14 madde 115): metin şablonları + program şablonları tek yerde.
+  { key: 'coachTemplates', label: 'Şablonlar', file: './coaching.js', requires: ['view'], area: 'coaching',
+    feature: 'coaching', host: 'coaching', reads: ['admin_listCoachTextTemplates', 'admin_listStudyPlanTemplates'],
+    payload: { coachingTab: 'templates' } },
   { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],
     area: 'lessons' },
   // Ders oturumları (KM-3): tek dersin iptali, telafisi, yerine öğretmen; öğretmen haftası.
@@ -174,6 +178,8 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
   'parent-meetings': 'parentMeetings',
   'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages', mesajlar: 'messages',
   kocluk: 'coaching', 'koc-gorusmeleri': 'coachMeetings', 'kontrol-kuyrugu': 'coachQueue',
+  coachCheckins: 'coachMotivation', 'check-in': 'coachMotivation', 'kocluk-sablonlari': 'coachTemplates',
+  'metin-sablonlari': 'coachTemplates',
   'haftalik-program': 'coachWeek', 'gorev-ata': 'coachWeek',
   raporlar: 'reports', rapor: 'reportHub', iletisim: 'comms', yoklama: 'attendance', odev: 'homework',
   // Eski grup anahtarları (0.5.2 — altı üst bölüm).

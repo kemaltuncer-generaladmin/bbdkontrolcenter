@@ -18,7 +18,8 @@
 // `admin_uploadCoachingFile`, en çok 3).
 // Hafta eylemleri: geçen haftadan devret (`admin_carryOverCoachWeek`), başka
 // öğrenci / haftaya kopyala (`admin_copyCoachWeek`, önce deneme), PDF
-// (`admin_requestCoachWeekPdf`, arka plan işi). Şablonla toplu atama
+// (`admin_requestCoachWeekPdf`, arka plan işi). "Şablondan ekle" (tek öğrenci) ve "Bu haftayı şablon olarak
+// kaydet" (`admin_getCoachWeekTemplateDraft` → kurum plan şablonu; Akademi README §14 madde 115). Şablonla toplu atama
 // (`admin_previewTemplateAssignment` → `admin_applyTemplateAssignment`):
 // kurum plan şablonu → sınıf / grup / öğrenci, önizlemeli.
 
@@ -39,6 +40,7 @@ import {
   SAVE_ERRORS, coachTaskBody, emptyForm, formFromCoachTask, nextForm, saveErrorText, serverErrors,
 } from './task-form-logic.js';
 import { coachingJob, setEnabled, studentCell } from './coaching-shared.js';
+import { templateStart, weekTemplateBody } from './text-templates-logic.js';
 
 const STATUS = { planned: ['Planlandı', 'dim'], done: ['Bitti', 'good'], partial: ['Kısmen', 'warn'],
   skipped: ['Yapılmadı', 'bad'], moved: ['Taşındı', 'dim'] };
@@ -67,7 +69,13 @@ export function tab(app) {
   const pdf = actionButton(app, 'admin_requestCoachWeekPdf', 'PDF', { variant: 'ghost', onClick: () => weekPdf() });
   const template = actionButton(app, 'admin_previewTemplateAssignment', 'Şablonla toplu ata', { variant: 'ghost',
     onClick: () => templateAssignDialog(app, { onDone: () => load() }) });
-  const studentActions = [add, publish, carry, copy, pdf];
+  // Akademi README §14 madde 115: tek öğrencinin haftasına şablondan görev ekle / bu haftayı şablon olarak kaydet.
+  const fromTemplate = actionButton(app, 'admin_previewTemplateAssignment', 'Şablondan ekle', { variant: 'ghost',
+    onClick: () => templateAssignDialog(app, { onDone: () => load(), student: state.student,
+      startDate: templateStart(state.week, todayIst(0)) }) });
+  const saveAsTemplate = actionButton(app, 'admin_createStudyPlanTemplate', 'Bu haftayı şablon olarak kaydet', {
+    variant: 'ghost', onClick: () => saveWeekTemplate(app, state.student, state.week) });
+  const studentActions = [add, publish, carry, copy, pdf, fromTemplate, saveAsTemplate];
   node.append(toolbar(picker.node, who), toolbar(prev, label, next, today, h('span', 'kit-spacer'), ...studentActions, template));
 
   const summary = h('div', 'ak-stack');
@@ -110,7 +118,7 @@ export function tab(app) {
   function render(data) {
     state.data = data;
     if (data.student?.displayName) who.replaceChildren(badge(data.student.displayName, 'info'));
-    for (const control of [add, carry, copy, pdf]) setEnabled(control, true);
+    for (const control of [add, carry, copy, pdf, fromTemplate, saveAsTemplate]) setEnabled(control, true);
     setEnabled(publish, data.draftCount > 0 || !data.published);
     const tasks = data.days.flatMap((day) => day.tasks || []);
     const coachTasks = tasks.filter(isCoachTask);
@@ -562,7 +570,7 @@ const lastCoachForm = new Map();
 // ---------------------------------------------------------- şablonla atama
 
 /** Kurum plan şablonunu sınıf / grup / öğrencilere ata: önizleme → uygula (arka plan işi). */
-export async function templateAssignDialog(app, { onDone } = {}) {
+export async function templateAssignDialog(app, { onDone, student = null, startDate = null } = {}) {
   let templates = [];
   try {
     templates = (await app.api.getCached('/v1/admin/plan/templates', { limit: 100 }))?.items || [];
@@ -571,11 +579,12 @@ export async function templateAssignDialog(app, { onDone } = {}) {
     return null;
   }
   if (!templates.length) {
-    app.toast('Kurum plan şablonu yok: Ödev ve Deneme → Şablonlar ekranından ekleyin.', 'warn');
+    app.toast('Kurum plan şablonu yok: Koçluk → Şablonlar → Program şablonları ekranından ekleyin (ya da bir haftayı '
+      + '“Bu haftayı şablon olarak kaydet” ile şablon yapın).', 'warn');
     return null;
   }
-  const [classes, groups] = await loadTargets(app);
-  let target = { classGroupIds: [], studentGroupIds: [], studentIds: [] };
+  const [classes, groups] = student ? [[], []] : await loadTargets(app);
+  let target = { classGroupIds: [], studentGroupIds: [], studentIds: student ? [student.id] : [] };
   const body = (draft) => {
     if (!draft.templateId) throw new Error('Şablon seçin.');
     if (!target.classGroupIds.length && !target.studentGroupIds.length && !target.studentIds.length) {
@@ -585,15 +594,18 @@ export async function templateAssignDialog(app, { onDone } = {}) {
       holidayPolicy: draft.holidayPolicy || 'shift_next', asDraft: Boolean(draft.asDraft), notify: Boolean(draft.notify) };
   };
   const form = await formDialog(app, {
-    title: 'Şablonla toplu ata',
-    description: 'Kurum plan şablonunun görevleri seçilen öğrencilerin haftasına koç görevi olarak yazılır. Önce önizleme '
-      + 'gösterilir (en çok 200 öğrenci).',
+    title: student ? `Şablondan ekle — ${student.displayName || 'öğrenci'}` : 'Şablonla toplu ata',
+    description: student
+      ? 'Plan şablonunun görevleri öğrencinin programına koç görevi olarak yazılır (gün = başlangıç + şablondaki gün). '
+        + 'Önce önizleme gösterilir.'
+      : 'Kurum plan şablonunun görevleri seçilen öğrencilerin haftasına koç görevi olarak yazılır. Önce önizleme '
+        + 'gösterilir (en çok 200 öğrenci).',
     wide: true,
     fields: [
       { key: 'templateId', label: 'Şablon', type: 'select', required: true,
         options: [{ value: '', label: 'Şablon seçin' }, ...templates.map((item) => ({ value: item.id,
           label: `${item.name}${item.durationDays ? ` · ${item.durationDays} gün` : ''}${item.taskCount ? ` · ${item.taskCount} görev` : ''}` }))] },
-      { key: 'target', label: 'Kime', type: 'custom', render: () => targetsField(app, { classes, groups,
+      student ? null : { key: 'target', label: 'Kime', type: 'custom', render: () => targetsField(app, { classes, groups,
         onChange: (value) => { target = value; } }).node },
       { key: 'startDate', label: 'Başlangıç', type: 'date', required: true },
       { key: 'holidayPolicy', label: 'Tatile denk gelen görev', type: 'select',
@@ -601,7 +613,8 @@ export async function templateAssignDialog(app, { onDone } = {}) {
       { key: 'asDraft', label: 'Taslak olarak yaz (koç yayımlar)', type: 'checkbox' },
       { key: 'notify', label: 'Öğrencilere bildirim', type: 'checkbox' },
     ],
-    value: { templateId: '', startDate: weekStart(todayIst(7)), holidayPolicy: 'shift_next', asDraft: true, notify: true },
+    value: { templateId: '', startDate: startDate || weekStart(todayIst(7)), holidayPolicy: 'shift_next', asDraft: true,
+      notify: !student },
     submitLabel: 'Önizle',
     onSubmit: async (draft, { key }) => {
       const request = body(draft);
@@ -659,3 +672,42 @@ export async function templateAssignDialog(app, { onDone } = {}) {
   });
 }
 
+
+// ---------------------------------------------------------- haftadan şablon (Akademi README §14 madde 115)
+
+/** "Bu haftayı şablon olarak kaydet": haftanın koç görevleri → kurum plan şablonu (Koçluk → Şablonlar). */
+export async function saveWeekTemplate(app, student, week) {
+  if (!student?.id) return null;
+  let draft;
+  try {
+    draft = await app.api.get(`/v1/admin/students/${student.id}/coach-week/template-draft`, { week });
+  } catch (failure) {
+    app.toast(problem(failure, 'Hafta okunamadı.'), 'bad');
+    return null;
+  }
+  if (!draft?.tasks?.length) {
+    app.toast('Bu haftada şablona alınacak koç görevi yok.', 'warn');
+    return null;
+  }
+  const result = await formDialog(app, {
+    title: 'Bu haftayı şablon olarak kaydet',
+    description: `${draft.tasks.length} koç görevi şablona alınır (gün sırasıyla)`
+      + `${draft.skippedCount ? `; ${draft.skippedCount} görev atlandı (ödev, deneme, video görevi)` : ''}. `
+      + 'Şablon Koçluk → Şablonlar → Program şablonlarında görünür; “Şablondan ekle” ile başka öğrencilere yazılır.',
+    fields: [
+      { key: 'name', label: 'Şablon adı', required: true, maxLength: 80, wide: true },
+      { key: 'description', label: 'Açıklama (isteğe bağlı)', type: 'textarea', maxLength: 500, wide: true },
+    ],
+    value: { name: draft.name, description: '' },
+    submitLabel: 'Şablonu kaydet',
+    onSubmit: (values, { key }) => {
+      const built = weekTemplateBody({ ...draft, description: String(values.description || '').trim() || null }, values.name);
+      if (built.error) throw new Error(built.error);
+      return app.api.post('/v1/admin/plan/templates', built.body, { key });
+    },
+  });
+  if (!result) return null;
+  app.api.invalidate('/v1/admin/plan/templates');
+  app.toast(`“${result.name}” şablonu kaydedildi.`, 'good');
+  return result;
+}
