@@ -116,7 +116,8 @@ def test_en_fazla_on_ana_grup(result: dict[str, Any]) -> None:
                                "coachMeetings", "coachCoaches", "coachLibrary", "coachMotivation",
                                "coachCheckins"]
     # Ders oturumları (KM-3): tek dersin iptali / telafisi / yerine öğretmen, öğretmen haftası.
-    assert nav["lessons"] == ["timetable", "sessions", "calendar", "curriculum"]
+    # Ders kayıtları (F-DK, Akademi README §14 madde 110): akıllı tahta — tahtalar, kayıtlar, depolama, ayarlar.
+    assert nav["lessons"] == ["timetable", "sessions", "calendar", "curriculum", "lessonRecordings"]
     assert nav["attendance"] == ["attendance"]
     # Şablonlar (0.5.4): ödev şablonu, atama paketi, plan şablonu tek yerde.
     assert nav["work"] == ["homework", "plan", "exams", "evaluations", "resources", "reading", "decks",

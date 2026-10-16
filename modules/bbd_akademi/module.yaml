@@ -15,7 +15,7 @@
 
 id: bbd_akademi
 name: "BBD Akademi"
-description: "BBD Akademi yönetimi: öğrenci akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme (toplu yükleme), kurum finansı, kitap talepleri, duyurular, talepler, kurum ayarları ve mobil yönetici erişimi."
+description: "BBD Akademi yönetimi: öğrenci akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme (toplu yükleme), kurum finansı, kitap talepleri, duyurular, talepler, akıllı tahta ders kayıtları, kurum ayarları ve mobil yönetici erişimi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: true
@@ -125,6 +125,9 @@ permissions:
     default_roles: [admin]
   - key: bbd_akademi.evaluations
     description: "Öğrenci değerlendirme: dönem formlarını doldurma, yayımlama ve geri alma, değerlendirme raporlarının dışa aktarımı."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.recordings
+    description: "Ders kayıtları (akıllı tahta): tahta ekleme, eşleme kodu, iptal ve tanılama; derslikler; kayıtları gizleme / gösterme, silme, kim izledi, ek öğrenci / grup paylaşımı; depolama kotası. Kayıt ayarlarını (saklama süresi, depolama tavanı, kalite, kamera izni) değiştirmek kurum ayarıdır (bbd_akademi.settings)."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.privacy
     description: "KVKK talepleri: uygulama kullanıcılarının hesap silme ve veri indirme taleplerini görme, onaylama ya da reddetme, silinmiş hesabın erişimini yeniden açma. Silme onayı kişisel veriyi geri dönüşsüz siler."

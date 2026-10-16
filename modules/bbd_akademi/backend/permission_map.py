@@ -45,6 +45,7 @@ LEARNING = f"{MODULE}.learning"
 LEARNING_SETUP = f"{MODULE}.learning_setup"
 EVALUATIONS = f"{MODULE}.evaluations"
 PRIVACY = f"{MODULE}.privacy"
+RECORDINGS = f"{MODULE}.recordings"
 
 #: Akademi izin anahtarı (kapsamsız) → KM izni.
 PERMISSION_MAP: dict[str, str] = {
@@ -167,6 +168,12 @@ PERMISSION_MAP: dict[str, str] = {
     "pa.call": CAMPUS,
     "tablet.control": CAMPUS,
     "tablets.manage": CAMPUS,   # uzaktan tablet sınırları (genel profil + öğrenciye özel süre)
+    # --- akıllı tahta ders kaydı (F-DK, Akademi README §14 madde 110): tahtalar, derslikler, kayıtlar
+    # (gizle / sil / kim izledi / paylaşım), kota. Tahta EŞLEME de aynı izindedir — ders kaydının kurulumu ve
+    # günlük işi tek ekrandır. Kayıt AYARLARINI yazmak (saklama günü, tavan, kalite, kamera izni) kurum
+    # ayarıdır: `OPERATION_OVERRIDES` → SETTINGS.
+    "boards.manage": RECORDINGS,
+    "recordings.manage": RECORDINGS,
     # --- kantin işlemleri Akademi üzerinden (asıl ekran: Öğrenciler modülü)
     "canteen.controls": CANTEEN,
     "canteen.collect_cash": CANTEEN,
@@ -180,6 +187,9 @@ OPERATION_OVERRIDES: dict[str, str] = {
     "admin_listEtutRequests": REQUESTS,
     "admin_scheduleEtut": REQUESTS,
     "admin_declineEtut": REQUESTS,
+    # Ders kaydı ayarları (saklama ≤ 120 gün, depolama tavanı ≤ 800 GB, kalite, kamera sahneleri) kurum ayarıdır —
+    # okuması ders kaydı iznindedir (ekran gösterir), yazması yalnız kurum ayarı yetkisiyle (varsayılan admin).
+    "admin_putRecordingSettings": SETTINGS,
 }
 
 
@@ -214,5 +224,5 @@ def unmapped(operations: Iterable[Operation]) -> list[str]:
 ALL_PERMISSIONS: tuple[str, ...] = (
     VIEW, ACADEMIC, CURRICULUM, RESOURCES, ATTENDANCE, EXAMS, FINANCE, FINANCE_VOID,
     BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN, LEARNING, LEARNING_SETUP,
-    EVALUATIONS, PRIVACY,
+    EVALUATIONS, PRIVACY, RECORDINGS,
 )
