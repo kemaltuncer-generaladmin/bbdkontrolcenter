@@ -68,19 +68,6 @@ exceptions:
   # ------------------------------------------- çekirdek modülü biliyor (K1)
   - rule: core-knows-module
     module: km_core
-    target: bbd_tablet
-    reason: >
-      `km_core/http/app.py` `_mount_modules` içinde `manifest.id == "bbd_tablet"`
-      dalı: tablet cihaz uçları yönetici izin kapısı dışında, kendi bearer'ıyla
-      ayrı router'a monte ediliyor. Gerçek bir K1 ihlali.
-    plan: >
-      Manifestte veriyle ilan: `http.device_router: backend.api.device:router`
-      (kendi kimlik doğrulamasını yapan router) — çekirdek modül adına değil
-      alana bakar. km_core/http km-guvenlik paketinin; orada yapılır
-      (ADR 0033 §8 adım 3.2).
-
-  - rule: core-knows-module
-    module: km_core
     target: print
     reason: >
       `km_core/http/documents.py` belge ucu eski `print.view` iznini de kabul

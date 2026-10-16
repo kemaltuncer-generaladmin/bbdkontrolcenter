@@ -4,7 +4,7 @@
 (denetim: `tests/core/test_guvenlik_envanteri.py`). Sunucu görünümü: platform `linux`,
 yalnız yüklenen modüller. Model ve kurallar: [README.md](README.md).
 
-- Uç: **520** · yazma: **314** · kimliksiz: **23** · PIN step-up: **23** · gerekçeli onay (ADR 0012): **86**
+- Uç: **528** · yazma: **322** · kimliksiz: **23** · PIN step-up: **23** · gerekçeli onay (ADR 0012): **86**
 - Yüklü modüller (28): `antivirus`, `bbd_akademi`, `bbd_bulk_sale`, `bbd_canteen_api`, `bbd_canteen_backups`, `bbd_canteen_devices`, `bbd_canteen_products`, `bbd_canteen_reports`, `bbd_class_schedule`, `bbd_lunch`, `bbd_payment_request`, `bbd_sms`, `bbd_students`, `bbd_tablet`, `bell`, `mobile_gateway`, `print`, `store_api`, `store_bundles`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_products`, `store_refunds`, `store_shipping`, `store_udit_logs`
 - Envanterde olmayan modüller (25): bld_api (disabled), bld_cms (disabled), bld_customers (disabled), bld_dashboard (disabled), bld_invoices (disabled), bld_kds (disabled), bld_manual_order (disabled), bld_menu (disabled), bld_notifications (disabled), bld_orders (disabled), bld_products (disabled), bld_sales_settings (disabled), bld_sms (disabled), bld_status_monitor (disabled), bld_subscriptions (disabled), store_ai (disabled), store_backups (disabled), store_cms (disabled), store_home_media (disabled), store_payment_gateway (disabled), store_promotions (disabled), store_reports (disabled), store_requests (disabled), store_tax (disabled), store_trial_club (disabled)
 
@@ -23,12 +23,13 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | POST | `/api/antivirus/scan/cancel` | `antivirus.view` ∧ `antivirus.scan` |  |  | oturum |
 | GET | `/api/antivirus/state` | `antivirus.view` |  |  | oturum |
 
-## bbd_akademi (19)
+## bbd_akademi (20)
 
 | Yöntem | Yol | İzin | Gövde | Step-up | Kimlik |
 |---|---|---|---|---|---|
 | POST | `/api/bbd_akademi/km/call` | `bbd_akademi.view` |  | pin | oturum |
 | POST | `/api/bbd_akademi/km/documents/akademi` | `bbd_akademi.view` |  |  | oturum |
+| POST | `/api/bbd_akademi/km/documents/pages` | `bbd_akademi.view` |  |  | oturum |
 | POST | `/api/bbd_akademi/km/documents/preview` | `bbd_akademi.view` |  |  | oturum |
 | GET | `/api/bbd_akademi/km/download` | `bbd_akademi.view` |  |  | oturum |
 | GET | `/api/bbd_akademi/km/events` | `bbd_akademi.view` |  |  | oturum |
@@ -47,7 +48,7 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | POST | `/api/bbd_akademi/{path:path}` | `bbd_akademi.view` |  |  | oturum |
 | PUT | `/api/bbd_akademi/{path:path}` | `bbd_akademi.view` |  |  | oturum |
 
-## bbd_bulk_sale (7)
+## bbd_bulk_sale (9)
 
 | Yöntem | Yol | İzin | Gövde | Step-up | Kimlik |
 |---|---|---|---|---|---|
@@ -56,6 +57,8 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | PUT | `/api/bbd_bulk_sale/presets` | `bbd_bulk_sale.view` ∧ `bbd_bulk_sale.manage` |  |  | oturum |
 | DELETE | `/api/bbd_bulk_sale/presets/{preset_id}` | `bbd_bulk_sale.view` ∧ `bbd_bulk_sale.manage` |  |  | oturum |
 | POST | `/api/bbd_bulk_sale/preview` | `bbd_bulk_sale.view` |  |  | oturum |
+| POST | `/api/bbd_bulk_sale/report` | `bbd_bulk_sale.view` |  |  | oturum |
+| POST | `/api/bbd_bulk_sale/report/pages` | `bbd_bulk_sale.view` |  |  | oturum |
 | POST | `/api/bbd_bulk_sale/reverse` | `bbd_bulk_sale.view` ∧ `bbd_bulk_sale.reverse` |  | gerekçe | oturum |
 | GET | `/api/bbd_bulk_sale/workspace` | `bbd_bulk_sale.view` |  |  | oturum |
 
@@ -97,12 +100,13 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | PUT | `/api/bbd_canteen_products/products/{product_id}/active` | `bbd_canteen_products.view` ∧ `bbd_canteen_products.deactivate` |  |  | oturum |
 | POST | `/api/bbd_canteen_products/products/{product_id}/stock` | `bbd_canteen_products.view` ∧ `bbd_canteen_products.manage` |  |  | oturum |
 
-## bbd_canteen_reports (10)
+## bbd_canteen_reports (11)
 
 | Yöntem | Yol | İzin | Gövde | Step-up | Kimlik |
 |---|---|---|---|---|---|
 | GET | `/api/bbd_canteen_reports/cache` | `bbd_canteen_reports.view` |  |  | oturum |
 | POST | `/api/bbd_canteen_reports/export` | `bbd_canteen_reports.view` ∧ `bbd_canteen_reports.export` |  |  | oturum |
+| POST | `/api/bbd_canteen_reports/pages` | `bbd_canteen_reports.view` ∧ `bbd_canteen_reports.export` |  |  | oturum |
 | POST | `/api/bbd_canteen_reports/preview` | `bbd_canteen_reports.view` ∧ `bbd_canteen_reports.export` |  |  | oturum |
 | POST | `/api/bbd_canteen_reports/print` | `bbd_canteen_reports.view` ∧ `bbd_canteen_reports.print` |  |  | oturum |
 | GET | `/api/bbd_canteen_reports/printer` | `bbd_canteen_reports.view` |  |  | oturum |
@@ -118,7 +122,7 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 |---|---|---|---|---|---|
 | GET | `/api/bbd_class_schedule/week` | `bbd_class_schedule.view` |  |  | oturum |
 
-## bbd_lunch (9)
+## bbd_lunch (11)
 
 | Yöntem | Yol | İzin | Gövde | Step-up | Kimlik |
 |---|---|---|---|---|---|
@@ -128,11 +132,13 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | PUT | `/api/bbd_lunch/holidays` | `bbd_lunch.view` ∧ `bbd_lunch.manage` |  |  | oturum |
 | GET | `/api/bbd_lunch/overview` | `bbd_lunch.view` |  |  | oturum |
 | POST | `/api/bbd_lunch/preview` | `bbd_lunch.view` |  |  | oturum |
+| POST | `/api/bbd_lunch/report` | `bbd_lunch.view` |  |  | oturum |
+| POST | `/api/bbd_lunch/report/pages` | `bbd_lunch.view` |  |  | oturum |
 | POST | `/api/bbd_lunch/reverse` | `bbd_lunch.view` ∧ `bbd_lunch.reverse` |  | gerekçe | oturum |
 | PUT | `/api/bbd_lunch/roster` | `bbd_lunch.view` ∧ `bbd_lunch.manage` |  |  | oturum |
 | POST | `/api/bbd_lunch/stock` | `bbd_lunch.view` ∧ `bbd_lunch.manage` |  |  | oturum |
 
-## bbd_payment_request (13)
+## bbd_payment_request (15)
 
 | Yöntem | Yol | İzin | Gövde | Step-up | Kimlik |
 |---|---|---|---|---|---|
@@ -140,6 +146,8 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | GET | `/api/bbd_payment_request/batches/{batch_ref}` | `bbd_payment_request.view` |  |  | oturum |
 | POST | `/api/bbd_payment_request/collections` | `bbd_payment_request.view` ∧ `bbd_payment_request.collect` |  |  | oturum |
 | POST | `/api/bbd_payment_request/preview` | `bbd_payment_request.view` |  |  | oturum |
+| POST | `/api/bbd_payment_request/report` | `bbd_payment_request.view` |  |  | oturum |
+| POST | `/api/bbd_payment_request/report/pages` | `bbd_payment_request.view` |  |  | oturum |
 | GET | `/api/bbd_payment_request/requests/{ref}` | `bbd_payment_request.view` |  |  | oturum |
 | POST | `/api/bbd_payment_request/requests/{ref}/cancel` | `bbd_payment_request.view` ∧ `bbd_payment_request.send` |  |  | oturum |
 | POST | `/api/bbd_payment_request/requests/{ref}/reopen` | `bbd_payment_request.view` ∧ `bbd_payment_request.send` |  |  | oturum |
