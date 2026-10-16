@@ -10,17 +10,26 @@ from typing import Any
 
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
 
+from ..reports import PaymentReports
 from ..service import PaymentRequestService
 
 router = APIRouter()
 
 _service: PaymentRequestService | None = None
+_reports: PaymentReports | None = None
 
 
-def bind(service: PaymentRequestService) -> APIRouter:
-    global _service
+def bind(service: PaymentRequestService, reports: PaymentReports | None = None) -> APIRouter:
+    global _service, _reports
     _service = service
+    _reports = reports
     return router
+
+
+def reports() -> PaymentReports:
+    if _reports is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Rapor üretici hazır değil.")
+    return _reports
 
 
 def service() -> PaymentRequestService:
@@ -47,6 +56,24 @@ class CollectBody(BaseModel):
 
 class TemplateBody(BaseModel):
     templates: dict[str, str] = Field(default_factory=dict)
+
+
+class ReportBody(BaseModel):
+    """PDF raporu — ekrandaki süzgeçlerle (63-finans-pdf)."""
+
+    kind: str = Field(pattern=r"^(requests|collections|debtors)$")
+    status: str = Field(default="", pattern=r"^(|PENDING|PAID|FAILED|EXPIRED)$")
+    query: str = Field(default="", max_length=80)
+    # Sınıf bilgisi Öğrenci Yönetimi modülünün verisidir; arayüz yetenekten okur.
+    classes: dict[str, str] = Field(default_factory=dict)
+    orientation: str = Field(default="portrait", pattern=r"^(portrait|landscape)$")
+    preview: bool = True
+
+
+class PagesBody(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    first: int = Field(ge=1, le=9999)
+    last: int = Field(ge=1, le=9999)
 
 
 class RequestOneBody(BaseModel):
@@ -167,3 +194,19 @@ async def update_templates(
 ) -> dict[str, Any]:
     """Ödeme SMS şablonları. Boş şablon reddedilir — kantin onu varsayılana düşürür."""
     return await service().update_templates(body.templates)
+
+
+@router.post("/report")
+async def report(body: ReportBody,
+                 user: CurrentUser = requires("bbd_payment_request.view")) -> dict[str, Any]:
+    """Talepler / nakit tahsilat / borçlu öğrenciler PDF'i — önizleme ilk sayfalarla."""
+    return await reports().produce(body.kind, status=body.status, query=body.query,
+                                   classes=body.classes, orientation=body.orientation,
+                                   author=user.full_name or "", preview=body.preview)
+
+
+@router.post("/report/pages")
+async def report_pages(body: PagesBody,
+                       user: CurrentUser = requires("bbd_payment_request.view")) -> dict[str, Any]:
+    """Önizleme penceresi kaydırıldıkça sonraki sayfalar (en çok 12)."""
+    return await reports().pages(body.path, body.first, body.last)
