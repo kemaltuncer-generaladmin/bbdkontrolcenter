@@ -342,8 +342,12 @@ async def test_sinif_seviyesi_uyeye_yazilir_istisna_korunur(world: World) -> Non
     one = await world.profile("STU-1")
     assert (one["grade_level"], one["track"]) == ("9", None)       # 10 altında alan yok
 
+    # Akademi README §14 madde 102: seviyesiz yalnız alan / hedef artık geçerli (karışık grup); öğrenciye yazılmaz
+    before = (await world.profile("STU-1"))["grade_level"]
+    await world.groups.update(group["id"], {"level": {"track": "SAY"}, "applyLevel": True}, actor="Ayşe")
+    assert (await world.profile("STU-1"))["grade_level"] == before
     with pytest.raises(GroupError):
-        await world.groups.update(group["id"], {"level": {"track": "SAY"}}, actor="Ayşe")
+        await world.groups.update(group["id"], {"level": {"track": "SAY", "examTarget": "LGS"}}, actor="Ayşe")
 
 
 async def test_birlesmeden_sonra_ogrenci_seviyesi_kartta_yazilir(world: World) -> None:

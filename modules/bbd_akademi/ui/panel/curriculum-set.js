@@ -58,13 +58,16 @@ export function levelProgramIds(programs, levelKey, have = new Set()) {
   return (group?.items || []).map((program) => program.id).filter((id) => !have.has(id)).slice(0, MAX_CHANGE);
 }
 
-/** "11. sınıf · Sayısal · YKS", sınıftan geliyorsa "… (sınıftan: 11-SAY)"; seviye yoksa uyarı. Web / mobil aynı. */
+/** "11. sınıf · Sayısal · YKS", sınıftan / gruptan geliyorsa "… (gruptan: MEZUN GRUBU · addan tahmin)"; seviye yoksa
+ *  uyarı. Web / mobil aynı. */
 export function basisText(basis) {
   if (!basis) return '';
   const parts = [basis.gradeLevel !== null && basis.gradeLevel !== undefined ? gradeText(basis.gradeLevel) : null,
     TRACKS[basis.track] || null, basis.examTarget || null].filter(Boolean);
   if (!parts.length) return 'seviye girilmemiş — otomatik müfredat yok (Öğrenciler → Sınıflar\'da sınıfına seviye girin)';
-  const from = basis.source === 'class' && basis.classGroup?.name ? ` (sınıftan: ${basis.classGroup.name})` : '';
+  const kind = basis.source === 'class' ? 'sınıftan' : basis.source === 'group' ? 'gruptan' : '';
+  const from = kind && basis.classGroup?.name
+    ? ` (${kind}: ${basis.classGroup.name}${basis.guessed ? ' · addan tahmin' : ''})` : '';
   return `${parts.join(' · ')}${from}`;
 }
 
