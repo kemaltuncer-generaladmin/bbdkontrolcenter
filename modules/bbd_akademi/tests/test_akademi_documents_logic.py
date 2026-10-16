@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from modules.bbd_akademi.backend import document_pdf
-from modules.bbd_akademi.backend.documents import KINDS
+from modules.bbd_akademi.backend.documents import pdf as document_pdf
+from modules.bbd_akademi.backend.documents.service import KINDS
 
 PANEL = Path(__file__).resolve().parents[1] / "ui" / "panel"
 

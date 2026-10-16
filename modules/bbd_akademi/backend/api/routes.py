@@ -37,7 +37,7 @@ from ..core import contract_features
 from ..core.features import TenantFeatures
 from ..core.gateway import request_id
 from ..core.proxy import AkademiProxy, ProxyError, decode_upload, error_response
-from ..documents import DocumentDenied, DocumentService
+from ..documents.service import DocumentDenied, DocumentService
 from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions, requires_step_up
 from ..staff import ROLE_LABELS, StaffError, StaffService
 

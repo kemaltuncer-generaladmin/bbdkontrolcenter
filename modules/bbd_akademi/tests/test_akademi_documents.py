@@ -18,15 +18,15 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
-from modules.bbd_akademi.backend import document_pdf
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
 from modules.bbd_akademi.backend.api import routes
 from modules.bbd_akademi.backend.core.gateway import AkademiGateway
 from modules.bbd_akademi.backend.core.operations import Allowlist
 from modules.bbd_akademi.backend.core.proxy import AkademiProxy
 from modules.bbd_akademi.backend.core.stepup import StepUpStore
-from modules.bbd_akademi.backend.document_pdf import DocumentError, Letterhead, Stamp
-from modules.bbd_akademi.backend.documents import (
+from modules.bbd_akademi.backend.documents import pdf as document_pdf
+from modules.bbd_akademi.backend.documents.pdf import DocumentError, Letterhead, Stamp
+from modules.bbd_akademi.backend.documents.service import (
     AKADEMI_PDFS,
     KINDS,
     DocumentDenied,

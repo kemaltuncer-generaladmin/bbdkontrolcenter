@@ -22,7 +22,7 @@ from .core.gateway import AkademiGateway, GatewayConfig
 from .core.operations import Allowlist
 from .core.proxy import AkademiProxy
 from .core.stepup import StepUpStore
-from .documents import DocumentService, Letterheads
+from .documents.service import DocumentService, Letterheads
 from .finance import StudentFinance
 from .permission_map import unmapped
 from .staff import StaffService

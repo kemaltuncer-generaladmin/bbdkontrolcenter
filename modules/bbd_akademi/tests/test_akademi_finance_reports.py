@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from modules.bbd_akademi.backend import document_pdf
-from modules.bbd_akademi.backend.documents import KINDS
+from modules.bbd_akademi.backend.documents import pdf as document_pdf
+from modules.bbd_akademi.backend.documents.service import KINDS
 from modules.bbd_akademi.tests import test_akademi_documents as base
 from modules.bbd_akademi.tests.akademi_fakes import Akademi, auth
 from modules.bbd_akademi.tests.test_akademi_documents import branding_reply, pdf_text
