@@ -30,7 +30,7 @@ from harness import NodeMissing, run
 MODULES = ROOT / "modules"
 EXPECTED = {"antivirus", "print", "bbd_canteen_devices", "store_notifications", "store_udit_logs",
             "store_refunds", "store_bundles", "store_dashboard", "store_customers", "store_orders",
-            "store_products", "store_shipping"}
+            "store_products", "store_shipping", "bbd_akademi"}
 READY = re.compile(r"export\s+const\s+darkReady\s*=\s*true")
 RAW = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)")
 # Gölge, perde ve geçiş dışı: bunlar temadan bağımsız (koyu gölge her iki kâğıtta doğru).
@@ -102,8 +102,8 @@ INLINE_OK = {
     "modules/bbd_akademi/ui/panel/work/reading-editor.js": "tuval dışa aktarımında saydam PNG'nin beyaz zemini",
     "modules/bbd_akademi/ui/panel/exams/exams-analytics.js": "grafik çubuğu dolgusu (üstünde yazı yok)",
 }
-# F-DK (akıllı tahta ders kaydı) öteki liderin alanıdır; bu dalgada dokunulmadı → Akademi darkReady değil.
-NOT_YET = {"modules/bbd_akademi/ui/panel/recordings/lesson-recordings.css"}
+# F-DK ders kayıtları CSS'i de jetona çevrildi (ae48f1bf onayı, 16.10) → Akademi darkReady.
+NOT_YET: set[str] = set()
 
 
 def panel_problems(module: str) -> tuple[dict[str, list[str]], list[str]]:

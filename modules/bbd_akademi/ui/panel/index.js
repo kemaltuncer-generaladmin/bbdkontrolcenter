@@ -470,3 +470,6 @@ function lookups(app) {
     },
   };
 }
+
+/** Koyu temaya hazır (ADR 0032): bütün panel CSS'i renk jetonlarıyla çizilir (63-duzeltici + F-DK ders kayıtları). */
+export const darkReady = true;

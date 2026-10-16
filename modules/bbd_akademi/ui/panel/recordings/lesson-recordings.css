@@ -1,12 +1,12 @@
 /* Ders kayıtları (F-DK) — önek `ak-rec-`. */
 .ak-rec-body { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
 .ak-rec-live { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; padding: 6px 12px;
-  border-radius: 999px; background: #fdecec; color: #8c1c1c; font-weight: 600; font-size: 13px; }
+  border-radius: 999px; background: var(--bad-tint); color: var(--bad); font-weight: 600; font-size: 13px; }
 .ak-rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
 .ak-rec-cardhead { display: flex; align-items: center; gap: 8px; }
 .ak-rec-note { margin: 0; padding: 10px 14px 4px; font-size: 12.5px; }
 .ak-rec-actions { flex-wrap: wrap; gap: 6px; }
-.ak-rec-warn { color: #8a5205; font-weight: 600; }
+.ak-rec-warn { color: var(--warn); font-weight: 600; }
 .ak-rec-error { color: var(--bad); font-size: 12.5px; min-height: 1em; }
 
 /* Eşleme kodu penceresi */
@@ -42,7 +42,7 @@
   padding: 10px 14px; border-radius: 12px; border: 2px solid transparent; background: var(--tint); color: var(--ink);
   cursor: pointer; text-align: left; font: inherit; }
 .ak-rec-choice small { color: var(--soft); }
-.ak-rec-choice.on { border-color: var(--accent); background: #e2effa; }
+.ak-rec-choice.on { border-color: var(--accent); background: var(--accent-tint); }
 .ak-rec-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ak-rec-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
 .ak-rec-toggle-text { display: flex; flex-direction: column; gap: 2px; }
