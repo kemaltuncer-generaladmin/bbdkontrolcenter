@@ -2,19 +2,19 @@
 
 Üretici: `python3 tools/module-graph.py --write` · Tarayıcı: `tools/arch_scan.py` · Karar: [ADR 0033](../adr/0033-alan-servisleri-ve-sinirlar.md) · Yorum: [envanter-2026-10-16.md](envanter-2026-10-16.md)
 
-**53 modül** (28 açık, 25 kapalı) · 292.608 satır (py/js/sql/css, testler hariç) · 10 alan
+**53 modül** (28 açık, 25 kapalı) · 295.898 satır (py/js/sql/css, testler hariç) · 10 alan
 
 ## 1. Alan haritası
 
 | Alan | Ad | Modül | Açık | Satır | Sınıf üst sınırı |
 |---|---|---:|---:|---:|---|
 | `platform` | Platform ve kurumsal araçlar | 2 | 2 | 3.051 | personal |
-| `academy` | Akademi | 1 | 1 | 64.552 | financial |
-| `students` | Öğrenci ve veli | 2 | 2 | 17.693 | personal |
-| `canteen` | Kantin | 7 | 7 | 15.972 | financial |
-| `payments` | Ödeme talepleri | 1 | 1 | 3.523 | financial |
+| `academy` | Akademi | 1 | 1 | 67.160 | financial |
+| `students` | Öğrenci ve veli | 2 | 2 | 17.704 | personal |
+| `canteen` | Kantin | 7 | 7 | 16.267 | financial |
+| `payments` | Ödeme talepleri | 1 | 1 | 3.881 | financial |
 | `tablet` | Öğrenci tableti | 1 | 1 | 12.224 | personal |
-| `bell` | Zil ve anons | 2 | 2 | 8.405 | personal |
+| `bell` | Zil ve anons | 2 | 2 | 8.423 | personal |
 | `gateway` | Mobil geçit | 1 | 1 | 5.214 | financial |
 | `store` | Mağaza (BBD Store) | 21 | 11 | 103.238 | financial |
 | `bld` | BLD | 15 | 0 | 58.736 | financial |
@@ -25,20 +25,20 @@
 |---|---|---|---|---:|---|---|---|---|---|
 | `antivirus` | platform | internal | açık | 1.974 | — | `antivirus.scan` | — | `antivirus.scan_started`, `antivirus.scan_completed`, `antivirus.threat_found`, `antivirus.signatures_stale` | — |
 | `print` | platform | personal | açık | 1.077 | — | — | — | — | — |
-| `bbd_akademi` | academy | financial | açık | 64.552 | — | `akademi.student_finance`, `bbd_akademi.students` | `mobile_gateway.events` | — | — |
+| `bbd_akademi` | academy | financial | açık | 67.160 | — | `akademi.student_finance`, `bbd_akademi.students` | `mobile_gateway.events` | — | — |
 | `bbd_sms` | students | personal | açık | 2.621 | `bbd_canteen_api` | — | `canteen.api` | — | — |
-| `bbd_students` | students | personal | açık | 15.072 | — | `bbd_students.list`, `bbd_students.manager`, `bbd_students.record`, `bbd_students.search`, `bbd_students.open`, `bbd_students.directory`, `bbd_students.groups`, `bbd_students.sync` | `canteen.api`, `bbd_tablet.control`, `akademi.student_finance` | `bbd_students.groups_changed`, `bbd_students.group_deleted` | — |
-| `bbd_bulk_sale` | canteen | financial | açık | 2.812 | `bbd_canteen_api` | — | `canteen.api` | — | — |
+| `bbd_students` | students | personal | açık | 15.083 | — | `bbd_students.list`, `bbd_students.manager`, `bbd_students.record`, `bbd_students.search`, `bbd_students.open`, `bbd_students.groups_read`, `bbd_students.directory`, `bbd_students.groups`, `bbd_students.sync` | `canteen.api`, `bbd_tablet.control`, `akademi.student_finance` | `bbd_students.groups_changed`, `bbd_students.group_deleted` | — |
+| `bbd_bulk_sale` | canteen | financial | açık | 3.021 | `bbd_canteen_api` | — | `canteen.api` | — | — |
 | `bbd_canteen_api` | canteen | financial | açık | 2.033 | — | `canteen.api` | `bbd_students.sync` | `canteen.device_enrolled` | — |
 | `bbd_canteen_backups` | canteen | financial | açık | 1.057 | `bbd_canteen_api` | — | `canteen.api` | — | — |
 | `bbd_canteen_devices` | canteen | internal | açık | 1.686 | `bbd_canteen_api` | — | `canteen.api` | `canteen.device_enrolled`, `canteen.kiosk_revoked` | — |
 | `bbd_canteen_products` | canteen | internal | açık | 1.899 | `bbd_canteen_api` | — | `canteen.api` | — | — |
-| `bbd_canteen_reports` | canteen | financial | açık | 3.786 | `bbd_canteen_api` | — | `canteen.api` | — | — |
-| `bbd_lunch` | canteen | financial | açık | 2.699 | `bbd_canteen_api` | — | `canteen.api` | — | — |
-| `bbd_payment_request` | payments | financial | açık | 3.523 | `bbd_canteen_api` | `bbd_payment_request.student_card` | `canteen.api` | — | — |
+| `bbd_canteen_reports` | canteen | financial | açık | 3.552 | `bbd_canteen_api` | — | `canteen.api` | — | — |
+| `bbd_lunch` | canteen | financial | açık | 3.019 | `bbd_canteen_api` | — | `canteen.api` | — | — |
+| `bbd_payment_request` | payments | financial | açık | 3.881 | `bbd_canteen_api` | `bbd_payment_request.student_card` | `canteen.api` | — | — |
 | `bbd_tablet` | tablet | personal | açık | 12.224 | `bbd_canteen_api` | `bbd_tablet.read`, `bbd_tablet.control`, `bbd_tablet.student_quick` | `canteen.api` | — | — |
 | `bbd_class_schedule` | bell | internal | açık | 531 | `bell` | — | `bell.week` | — | — |
-| `bell` | bell | personal | açık | 7.874 | — | `bell.week`, `bell.plan`, `bell.announce` | `bbd_students.groups`, `bbd_students.directory` | `bell.rang`, `bell.failed`, `bell.week_changed` | `bbd_students.groups_changed`, `bbd_students.group_deleted` |
+| `bell` | bell | personal | açık | 7.892 | — | `bell.week`, `bell.plan`, `bell.status`, `bell.announce` | `bbd_students.groups`, `bbd_students.directory` | `bell.rang`, `bell.failed`, `bell.week_changed` | `bbd_students.groups_changed`, `bbd_students.group_deleted` |
 | `mobile_gateway` | gateway | financial | açık | 5.214 | `bbd_canteen_api`, `bbd_students` | `mobile_gateway.events` | `canteen.api`, `bbd_students.directory`, `bbd_tablet.read`, `bbd_tablet.control`, `bell.week`, `bell.announce`, `bell.plan`, `bbd_students.groups` | — | `bell.week_changed`, `bbd_students.groups_changed` |
 | `store_ai` | store | internal | **kapalı** | 3.910 | `store_api` | — | `store.api` | `store_ai.suggestions_applied` | — |
 | `store_api` | store | financial | açık | 5.208 | — | `store.api`, `store.scan` | — | — | — |
@@ -240,7 +240,7 @@ flowchart LR
 
 ## 6. Sınır bulguları
 
-32 bulgu · istisnada 32 · yeni 0 (kapı: `python3 tools/check-boundaries.py`).
+27 bulgu · istisnada 27 · yeni 0 (kapı: `python3 tools/check-boundaries.py`).
 
 | Kural | Modül | Hedef | Yer |
 |---|---|---|---|
@@ -258,7 +258,6 @@ flowchart LR
 | core-knows-module | `km_core` | `bbd_students` | `backend/src/km_core/security/migrations.py:344` |
 | core-knows-module | `km_core` | `bbd_students` | `backend/src/km_core/security/migrations.py:345` |
 | core-knows-module | `km_core` | `bbd_students` | `backend/src/km_core/security/migrations.py:346` |
-| core-knows-module | `km_core` | `bbd_tablet` | `backend/src/km_core/http/app.py:522` |
 | core-knows-module | `km_core` | `print` | `backend/src/km_core/http/documents.py:92` |
 | core-knows-module | `km_platform` | `bell` | `backend/src/km_platform/events/outbox.py:61` |
 | core-table | `print` | `outputs` | `modules/print/backend/service.py:105` |
@@ -272,10 +271,6 @@ flowchart LR
 | core-table | `print` | `outputs` | `modules/print/backend/service.py:404` |
 | core-table | `print` | `users` | `modules/print/backend/service.py:113` |
 | core-table | `print` | `users` | `modules/print/backend/service.py:146` |
-| foreign-api | `bbd_akademi` | `bbd_students` | `modules/bbd_akademi/ui/panel/students-groups.js:34` |
-| foreign-api | `bbd_akademi` | `bbd_students` | `modules/bbd_akademi/ui/panel/timetable-copy.js:149` |
-| foreign-api | `bbd_akademi` | `bell` | `modules/bbd_akademi/ui/panel/institution-calendar.js:153` |
-| foreign-api | `bbd_akademi` | `bell` | `modules/bbd_akademi/ui/panel/timetable-bell-status.js:66` |
 
 ## 7. Modüller arası birebir aynı dosyalar
 
@@ -297,15 +292,17 @@ flowchart LR
 - `as_int` — 6 yer, 6 modül: `bld_cms`, `store_cms`, `store_payment_gateway`, `store_products`, `store_reports`, `store_udit_logs`
 - `_pref` — 5 yer, 5 modül: `store_ai`, `store_dashboard`, `store_products`, `store_shipping`, `store_trial_club`
 - `as_int` — 4 yer, 4 modül: `bbd_canteen_devices`, `bld_kds`, `bld_orders`, `bld_status_monitor`
+- `pages` — 4 yer, 4 modül: `bbd_bulk_sale`, `bbd_canteen_reports`, `bbd_lunch`, `bbd_payment_request`
 - `parse_iso` — 4 yer, 4 modül: `bbd_canteen_devices`, `bld_kds`, `bld_orders`, `bld_status_monitor`
 - `_config_value` — 3 yer, 3 modül: `store_customers`, `store_dashboard`, `store_products`
 - `_day_bounds_ms` — 3 yer, 3 modül: `bbd_bulk_sale`, `bbd_canteen_reports`, `bbd_lunch`
+- `_folder` — 3 yer, 3 modül: `bbd_bulk_sale`, `bbd_lunch`, `bbd_payment_request`
+- `_owned` — 3 yer, 3 modül: `bbd_bulk_sale`, `bbd_lunch`, `bbd_payment_request`
 - `_rows` — 3 yer, 3 modül: `bld_manual_order`, `bld_menu`, `bld_notifications`
 - `as_bool` — 3 yer, 3 modül: `bld_kds`, `bld_orders`, `bld_status_monitor`
 - `as_float` — 3 yer, 3 modül: `store_promotions`, `store_reports`, `store_shipping`
 - `camel` — 3 yer, 3 modül: `store_customers`, `store_home_media`, `store_promotions`
 - `opt_int` — 3 yer, 3 modül: `bld_dashboard`, `bld_menu`, `bld_subscriptions`
-- `page_count` — 3 yer, 3 modül: `bbd_akademi`, `bbd_canteen_reports`, `bbd_students`
 - `save_prefs` — 3 yer, 3 modül: `bld_orders`, `bld_status_monitor`, `bld_subscriptions`
 - `__init__` — 2 yer, 2 modül: `bld_api`, `store_api`
 - `__init__` — 2 yer, 2 modül: `bld_cms`, `store_cms`
@@ -352,7 +349,6 @@ flowchart LR
 - `pick` — 2 yer, 2 modül: `store_backups`, `store_udit_logs`
 - `pick` — 2 yer, 2 modül: `store_customers`, `store_home_media`
 - `pick` — 2 yer, 2 modül: `store_notifications`, `store_orders`
-- `preview` — 2 yer, 2 modül: `bbd_canteen_reports`, `bbd_students`
 - `preview` — 2 yer, 2 modül: `bld_invoices`, `store_udit_logs`
 - `put` — 2 yer, 2 modül: `bld_api`, `store_api`
 - `reason_error` — 2 yer, 2 modül: `bbd_canteen_devices`, `bld_kds`
@@ -368,6 +364,7 @@ flowchart LR
 
 Statik import zinciri; `importlib`, dizgiyle kurulan yol ya da test-yalnız kullanım kaçırılabilir — silmeden önce elle doğrulanır.
 
+- `bbd_akademi`: `ui/panel/admin/settings-sms.js`, `ui/panel/coaching/students-coaching.js`, `ui/panel/shared/book-picker-logic.js`, `ui/panel/shared/book-picker.js`, `ui/panel/shared/bulk-target.js`, `ui/panel/shared/curriculum-picker.js`, `ui/panel/shared/curriculum-set.js`, `ui/panel/shared/task-form-logic.js`, `ui/panel/shared/task-form.js`, `ui/panel/shared/text-templates-logic.js`, `ui/panel/shared/text-templates.js`, `ui/panel/shared/wizard.js`
 - `bbd_tablet`: `backend/api/tablet_routes.py`
 - `bell`: `agent/agent.py`, `agent/uctan_uca_test.py`
 

@@ -1,4 +1,4 @@
-"""Ders programında çoklu sınıf + isteğe bağlı müfredat (`ui/panel/timetable-week.js`) — Node'da küçük DOM.
+"""Ders programında çoklu sınıf + isteğe bağlı müfredat (`ui/panel/lessons/timetable-week.js`) — Node'da küçük DOM.
 
 Kullanıcı (14.10.2026, iş 23): "ders eklerken sınıfı yani grubu da seçebilelim" — bir derse bir ya da
 birden çok sınıf (ör. 8-A + 8-B birlikte Matematik). Bu test:

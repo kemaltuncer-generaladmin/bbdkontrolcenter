@@ -1,7 +1,7 @@
 """Panel kapsamı: izin listesindeki her işlem ekranda nerede?
 
 KULLANICI KARARI: Akademi'nin her yönetim işi KM'den yapılabilir. Bu betik
-bunu ölçer — `backend/allowlist.py`deki her işlem için panel dosyalarında
+bunu ölçer — `backend/allowlist/`deki her işlem için panel dosyalarında
 (`ui/panel/*.js`) bir karşılık arar:
 
   · YAZMA işlemi (GET dışı): işlem kimliği (`'admin_createExam'`) dosyada
@@ -74,7 +74,7 @@ NOT_SURFACED: dict[str, str] = {
     # --- personel itmesi panelden değil, modülün kendi servisinden gider:
     # KM listesi (mod_bbd_akademi_staff) değişince ve zamanlanmış görevle.
     "admin_syncStaff":
-        "Tam liste itmesini modülün personel servisi yapar (backend/staff.py: "
+        "Tam liste itmesini modülün personel servisi yapar (backend/staff/service.py: "
         "değişiklikte, zamanlanmış görevde ve panelin 'Şimdi eşitle' düğmesiyle "
         "km/staff/sync üzerinden); panel bu uca doğrudan gitmez.",
     # Çalışma grubu yazma uçları (create/update/delete StudentGroup) sözleşmeden

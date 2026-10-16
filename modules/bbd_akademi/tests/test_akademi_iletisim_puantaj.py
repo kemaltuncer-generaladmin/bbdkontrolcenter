@@ -1,6 +1,6 @@
 """Puantaj ay kapatma ve veli toplantısı randevu takvimi (Akademi README §14 madde 90; İ7, İ8).
 
-`ui/panel/sessions.js` "Aylık ders dökümü" sekmesi ve `ui/panel/parent-meetings.js` Node'da küçük DOM'la
+`ui/panel/lessons/sessions.js` "Aylık ders dökümü" sekmesi ve `ui/panel/comms/parent-meetings.js` Node'da küçük DOM'la
 (`tools/a11y/harness.py`) çalıştırılır:
 
 * Kapanmış ay: "Bu ay kapatıldı" + kapanıştan sonraki fark tablosu (`changesSinceClose`) + "Yeniden aç".

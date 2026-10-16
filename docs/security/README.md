@@ -24,7 +24,7 @@ Uç başına durum (üretilir): [endpoint-envanteri.md](endpoint-envanteri.md).
    CSP: script/style 'self'                              │  izin kapısı (router taban izni ∧ uç requires)
    core_request yalnız server_base'e                     │  PIN step-up (kural 3) / gerekçeli onay (ADR 0012)
                                                          ├──entegrasyon anahtarı (aksk_)──▶ BBD Akademi API
-                                                         │     vekil: allowlist.py ∧ permission_map.py ∧ step-up
+                                                         │     vekil: allowlist/ ∧ permission_map.py ∧ step-up
                                                          ├──servis anahtarı (kmsk_) ◀── kantin backend'i (olay itme)
                                                          ├──imzalı outbox webhook (X-KM-Signature t=,v1=) ──▶ Akademi
                                                          └──Bagisto/BLD API, SSH/DB platform yetenekleri
@@ -59,7 +59,7 @@ Her sınırda kimlik **o sınırın kendi sırrıyla** doğrulanır; hiçbir ba�
   Yetki veren çekirdek işlemler (kullanıcı açma, rol değiştirme, başkasının PIN'ini sıfırlama)
   gövdede `confirmPin` ister (KM-06; acil şalter `auth.admin_step_up: false`).
 - **KM → Akademi**: Akademi KM'yi tek entegrasyon anahtarıyla görür; kişi başına yetkinin TAMAMI
-  KM'dedir: `allowlist.py` (sözleşmeden üretilir) ∧ `permission_map.py` (Akademi izni → tek KM izni)
+  KM'dedir: `allowlist/` (sözleşmeden üretilir, alt alan dosyaları) ∧ `permission_map.py` (Akademi izni → tek KM izni)
   ∧ step-up (`x-step-up` + `KM_STEP_UP_OPERATIONS`, ör. KVKK kararı).
 - **Akademi**: izin + ilişki kapsamı (`izin:kapsam`), rol adıyla dal yok (A2). Öğretmen/koç kapsamı
   kurum ayarı `teacher.scope` (`related` varsayılan) ile genişler.

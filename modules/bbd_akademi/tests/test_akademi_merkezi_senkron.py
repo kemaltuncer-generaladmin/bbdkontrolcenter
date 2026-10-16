@@ -4,7 +4,7 @@
   borcu yok". Bilinmeyen durum ASLA "borç yok" sayılmaz.
 * Senkron kartının arka ucu: `GET /km/events`, `POST /km/events/retry` —
   geçidin `mobile_gateway.events` yeteneği isteğe bağlı, kapısı geçidin izni.
-* Kartın hüküm mantığı (`ui/panel/sync-logic.js`) — Node ile.
+* Kartın hüküm mantığı (`ui/panel/admin/sync-logic.js`) — Node ile.
 """
 
 from __future__ import annotations

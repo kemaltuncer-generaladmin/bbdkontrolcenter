@@ -1,4 +1,4 @@
-"""Müfredat program / konu seçicisi (`ui/panel/curriculum-picker.js`) — Node'da küçük DOM üzerinde.
+"""Müfredat program / konu seçicisi (`ui/panel/shared/curriculum-picker.js`) — Node'da küçük DOM üzerinde.
 
 SORUN (13.10.2026, kullanıcı): "Konu bulunamadı diyor. Lise grubu seçince program olarak 5. sınıftan
 başlatıyor." Program başlıkları yalnız ders adıdır (13 ayrı "Matematik"); liste kimlik sırasıyla

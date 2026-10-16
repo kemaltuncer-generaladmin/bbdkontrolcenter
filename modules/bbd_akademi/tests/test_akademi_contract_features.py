@@ -1,4 +1,4 @@
-"""Sözleşme şalterleri (`backend/contract_features.py`).
+"""Sözleşme şalterleri (`backend/core/contract_features.py`).
 
 Şalter AÇIKSA alanın sözleşmede karşılığı olmalı: vekil gövdeyi doğrulamadan
 geçirir, sözleşmede olmayan alan Akademi'de 422 olurdu. Şalterin KAPALI olması

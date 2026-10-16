@@ -18,7 +18,7 @@ riski demektir; şalter kapatılırsa alan hiç gönderilmez.
     (`{mode: normal|off|profile, profileId}`) ve `cancelLessons` eklenir mi
     (`InstitutionEventInput`). KAPALIYKEN formdaki "Zil" alanı görünür ama
     devre dışıdır ve gerekçesi yazar; gövdeye hiçbir şey eklenmez. Alan adları
-    değişirse yalnız `ui/panel/bell-plan.js` → `bellPayload` / `withBell`
+    değişirse yalnız `ui/panel/lessons/bell-plan.js` → `bellPayload` / `withBell`
     uyarlanır.
 
 Akademi'nin `admin_getBellPlanStatus` işlemi şalter İSTEMEZ: işlem izin

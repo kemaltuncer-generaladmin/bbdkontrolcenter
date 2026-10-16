@@ -62,6 +62,7 @@ ne olduğunu söyler.
 |---|---|---|
 | 0021 §4 | "kişi yine kendi şifresini girer (**ADR 0016**)" | **0016 reddedildi.** Giriş 6 haneli **PIN**'dir (ADR 0007). Cümlenin savı geçerlidir — eşleme token'ı kullanıcı oturumu değildir, kişi ayrıca kendi sırrını girer; o sır bugün şifre değil PIN'dir. |
 | 0012, Bağlam | `auth.require_pin_for_destructive` | Anahtarın gerçek adı `config/default.yaml` içinde **`auth.require_password_for_destructive`**. Ad, ADR 0016'nın koşmuş göçünden kalmıştır; 0016 reddedilince adlar geri çevrilmedi (ikinci göç = veri riski — bkz. 0016). İstenen teyit yine PIN teyididir; 0012'nin kararı (mağaza yıkıcı işlemleri PIN yerine gerekçeli onay ister) bundan etkilenmez. |
+| 0033 §8 | Aşama 2 "(lider onayıyla)" planı; §6 "Bugün 32 bulgu 16 istisna" | **Aşama 2 uygulandı (16.10.2026, ozellik/63-km-mimari):** `bbd_akademi` paneli 14 alt klasöre, backend `core/`, `allowlist/` (13 alt alan dosyası), `documents/`, `finance/`, `staff/` paketlerine taşındı; Akademi panelinin `/api/bbd_students` ve `/api/bell` doğrudan çağrıları `bbd_students.groups_read` / `bell.status` arayüz yeteneğine geçti. `km_core/http/app.py`'deki `bbd_tablet` dalını km-guvenlik `http.device_router` ile kaldırdı. Sınır: 27 bulgu, 13 istisna anahtarı. Ayrıntı: `docs/architecture/envanter-2026-10-16.md` §13. |
 
 Not düşmek ADR yazmanın yerine geçmez: **kararın kendisi** değişiyorsa yeni bir
 ADR açılır ve eskisinin durumu `Superseded by NNNN` yapılır. Buraya yalnız

@@ -7,7 +7,7 @@
   Akademi'ye hiç gidemez.
 * Akademi'nin kendi 403'ü (anahtar izni eksik) panele `details.operationId`
   olmadan ulaşır — panel "anahtarı yeniden üretin" notunu buna göre yazar.
-* Bölümün hüküm mantığı (`ui/panel/privacy-logic.js`) — Node ile.
+* Bölümün hüküm mantığı (`ui/panel/admin/privacy-logic.js`) — Node ile.
 """
 
 from __future__ import annotations

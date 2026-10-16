@@ -1,4 +1,4 @@
-"""Panelin zil planı / anons adı mantığı (`ui/panel/bell-plan.js`) — Node ile.
+"""Panelin zil planı / anons adı mantığı (`ui/panel/lessons/bell-plan.js`) — Node ile.
 
 `bell-plan.js` bilerek import'suz ve DOM'suz yazıldı: dosya `.mjs` kopyası
 olarak Node'da yüklenir, işlevler çağrılır, sonuç JSON olarak buraya döner.

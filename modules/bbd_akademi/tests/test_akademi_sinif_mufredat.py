@@ -1,4 +1,4 @@
-"""Öğrenci müfredat seti + sınıf müfredatı (`ui/panel/curriculum-set.js`) — Node'da küçük DOM üzerinde.
+"""Öğrenci müfredat seti + sınıf müfredatı (`ui/panel/shared/curriculum-set.js`) — Node'da küçük DOM üzerinde.
 
 Kullanıcı (14.10.2026, iş 23): "her öğrenciye ayrı müfredat istediğimiz gibi atalım, varsayılan olsun ama
 biz değiştirebilelim" · "hüseyin hocanın TYT sınıfına bağımsız müfredat (TYT mat) atayabilmeliyiz".

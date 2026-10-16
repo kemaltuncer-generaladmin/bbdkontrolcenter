@@ -7,7 +7,7 @@
   kartı (altı sekme, katlanır bölümler) ve özellik bayrağına göre görünürlük. Dosya
   bilerek import'suz ve DOM'suzdur: `.mjs` kopyası Node'da yüklenir, işlevler
   çağrılır, sonuç JSON olarak buraya döner. `node` yoksa bu parça ATLANIR.
-* `/km/status` → `features` (`backend/features.py`): kurumun özellik bayrakları
+* `/km/status` → `features` (`backend/core/features.py`): kurumun özellik bayrakları
   sunucu tarafında, modülün kendi adına okunur, 60 sn önbellekte durur;
   Akademi'ye ulaşılamazsa `null` döner ve açılış düşmez. `operations=1` ile
   işlem listesi de aynı yanıtta gelir (açılış tek çağrı).

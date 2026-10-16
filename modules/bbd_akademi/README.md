@@ -187,7 +187,7 @@ Menü 21 düz bölümden altı görev odaklı üst bölüme inmişti (yukarıdak
 kartı görülmez (yine de gelirse sakin bir "kurumda kapalı" notu çıkar, "tekrar
 dene" yok). Bayraklar açılışta `/km/status` → `features` ile gelir: modülün
 sunucusu Akademi `admin_listFeatures`'ı kendi adına (sistem aktörü) okur, 60 sn
-önbellekte tutar, 3 sn'de yanıt yoksa açılışı bekletmez (`backend/features.py`).
+önbellekte tutar, 3 sn'de yanıt yoksa açılışı bekletmez (`backend/core/features.py`).
 Okunamazsa `null` — panel her şeyi gösterir, karar Akademi'de kalır. Ayarlar →
 Özellikler'de bir bayrak değişince menü hemen yenilenir (`fresh=1`). İşlem
 düzeyinde aynı kural `api.js` → `can()` / `featureOff()` (işlemin
@@ -415,7 +415,7 @@ Koç rolündeki bütün etkin personel (yönetici + öğretmen olan dahil), yan�
 sayısı; kapasite aşımı uyarılır, engellenmez. Rehber öğretmen bir rol değil sınıf eşlemesidir
 (Sınıflar → Dönem ve rehber; seçici öğretmenler). Akademi tarafı: aynı telefondaki **yerel**
 personel (kurulumda CLI ile açılan ilk yönetici) KM itmesinde artık sahiplenilir
-(`phone_conflict` yerine `source=km`, denetim `staff.adopt`) — `backend/staff.py` başlığı.
+(`phone_conflict` yerine `source=km`, denetim `staff.adopt`) — `backend/staff/service.py` başlığı.
 
 Belgeler (0.5.4, akademi-belge bileşeniyle): Kitap satışı ayrıntısında **Satış
 belgesi** (`book_sale` — kitaplar, öğrenci satırları, teslim alan imza sütunu;
@@ -463,7 +463,7 @@ izin gelirse test kırılır.
 ## Vekil, köprü ve PIN teyidi
 
 - **İzin listesi üretilir:** `tools/gen_allowlist.py` sözleşmeden
-  `backend/allowlist.py`'yi yazar (her `/v1/admin/*` işlemi + entegrasyon
+  `backend/allowlist/`'yi yazar (her `/v1/admin/*` işlemi + entegrasyon
   anahtarıyla okunabilen `/v1/students/{id}/*` ve `/v1/catalog/*` GET'leri).
   Sözleşme değişince betik koşturulur ve dosya commit'lenir; test ikisinin aynı
   olduğunu doğrular. Liste dışı her istek `403 operation_not_allowed`.
@@ -517,7 +517,7 @@ payı:
   `mobile_gateway.events.manage` (K9; geçit yoksa ya da eski sürümse kart
   "geçit sürümü olay iletimini desteklemiyor" der). Sekme görünürken 20 sn'de
   bir tazelenir.
-- **`akademi.student_finance` yeteneği** (`backend/finance.py`):
+- **`akademi.student_finance` yeteneği** (`backend/finance/service.py`):
   `has_institution_debt("STU-…") -> bool` — `bbd_students` kalıcı silme ön
   koşulu "Akademi'de kurum cari borcu yok". `admin_listStudents
   ?externalRef=&status=inactive` (bulunamazsa süzgeçsiz) → Akademi kimliği →
@@ -530,7 +530,7 @@ payı:
 ## Sözleşme şalterleri
 
 Sözleşmeye sonradan giren alanlar tek dosyada, şalterle durur:
-`backend/contract_features.py` (panel `/km/status` → `contractFeatures` ile
+`backend/core/contract_features.py` (panel `/km/status` → `contractFeatures` ile
 okur). Vekil gövdeyi doğrulamadan geçirdiği için sözleşmede olmayan alan
 gönderilmez. İki şalter de **açıktır**: alanlar sözleşmeye bbd-akademi
 2d91b96 ile girdi.
@@ -559,7 +559,7 @@ Zil Sistemi panelinin arayüz yeteneği, ADR 0033 K12; yalnız okuma, izin
 ## Belgeler — önizle / yazdır (kurum logolu A4)
 
 Kantin raporlarıyla aynı zincir: **sunucu PDF üretir** (reportlab,
-`backend/document_pdf.py`), önizleme o PDF'in sayfa görüntüleridir
+`backend/documents/pdf.py`), önizleme o PDF'in sayfa görüntüleridir
 (`pdftoppm`), **"Yazdır" PDF'in kendisini bu cihazın yazıcısına verir**
 (`ui-kit/printing.js` → `/api/outputs/document`, kapısı çekirdeğin
 `outputs.print` izni; yazıcı seçme penceresi açılmaz). Masaüstü kabuğu yoksa
@@ -590,7 +590,7 @@ koyu tema belgeye karışmaz.
   ekranda görünen ilk sayfayı değil süzgece uyan BÜTÜN kayıtları basar (imleç
   sonuna kadar, en çok 20.000 kayıt).
 - **Kapı (K9):** tür, taşıdığı verinin Akademi işlemlerine bağlıdır
-  (`backend/documents.py` → `KINDS`); kullanıcı o işlemlerin KM iznini taşımalı.
+  (`backend/documents/service.py` → `KINDS`); kullanıcı o işlemlerin KM iznini taşımalı.
   Karne `evaluations`, kurum carisi `finance`, kitap sipariş PDF'i `books` ister.
 - **KVKK:** telefon hiçbir belgede açık yazılmaz (panel `maskPhone` + sunucu
   ikinci kez maskeler); karnede okundu bilgisi yok; veli listesi sınıf seçimi

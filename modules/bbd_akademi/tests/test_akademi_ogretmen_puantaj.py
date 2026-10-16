@@ -1,6 +1,6 @@
 """Öğretmen aylık ders dökümü — puantaj (Akademi U19, README §14 madde 79; `admin_getTeacherMonthlyLoad`).
 
-`ui/panel/sessions.js` "Aylık ders dökümü" sekmesi Node'da küçük DOM'la (`tools/a11y/harness.py`) çalıştırılır:
+`ui/panel/lessons/sessions.js` "Aylık ders dökümü" sekmesi Node'da küçük DOM'la (`tools/a11y/harness.py`) çalıştırılır:
 
 * Ay gezinmesi ve sınırları (Aralık → Ocak, şubat sonu), Türkçe ay adı.
 * Tablo: öğretmen satırları + Toplam, yoklama bekleyen / öğretmensiz uyarıları; satır tıklaması Oturum takvimini
