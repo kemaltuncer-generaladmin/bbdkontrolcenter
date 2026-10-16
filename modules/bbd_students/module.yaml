@@ -64,6 +64,12 @@ provides:
   - capability: bbd_students.groups_read
     contract: bbd_students/ui/panel/index.js:capabilities
     description: "ARAYÜZ (salt okuma): list({archived}) → GET /groups; rollover() → GET /groups/rollover. İzin kapısı bu modülün uçlarıdır."
+  # PASİF ÖĞRENCİYİ AKTİFLEŞTİR (16.10.2026). Panel `capabilities()` bunu
+  # veriyordu ama burada İLAN EDİLMEMİŞTİ; kabuk ilan edilmeyeni atlar ve BBD
+  # Akademi öğrenci kartındaki "Aktifleştir" düğmesi hiç çizilmiyordu (63-duzeltici).
+  - capability: bbd_students.reactivate
+    contract: bbd_students/ui/panel/index.js:capabilities
+    description: "ARAYÜZ: {allowed() → izin bbd_students.lifecycle, run(kantinId, {dialogRoot, name}) → onay penceresi + POST /students/{id}/reactivate; vazgeçilirse null}."
   - capability: bbd_students.directory
     contract: bbd_students/backend/directory.py:StudentDirectory
     description: >

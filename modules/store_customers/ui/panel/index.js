@@ -1633,6 +1633,28 @@ async function renderSettings(host) {
 
 // ================================================================== mount
 
+/**
+ * `store.customer.card` — Talepler (ve isteyen başka) ekranı bir müşterinin
+ * künyesini buradan okur (K3: o modül bu modülü import etmez). Manifest bu adı
+ * ilan ediyordu ama panel vermiyordu; Talepler çekmecesindeki "Müşteri künyesi"
+ * bölümü hiç çizilmiyordu (63-duzeltici). Okunamazsa `{ok: false}` — tüketen
+ * bölümü gizler. `orderCount` / `totalSpent` tüketicinin beklediği adlardır.
+ */
+export function capabilities(ctx) {
+  return {
+    'store.customer.card': async (customerId) => {
+      try {
+        const payload = await ctx.api(`${BASE}/customers/${Number(customerId)}`);
+        if (!payload?.ok || !payload.customer) return { ok: false, error: payload?.error || 'Müşteri okunamadı.' };
+        const row = payload.customer;
+        return { ok: true, customer: { ...row, orderCount: row.orders ?? undefined, totalSpent: row.spend ?? undefined } };
+      } catch (error) {
+        return { ok: false, error: error.message || 'Müşteri okunamadı.' };
+      }
+    },
+  };
+}
+
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
   api = ctx.api;

@@ -41,6 +41,12 @@ provides:
   - capability: bbd_akademi.students
     contract: bbd_akademi/ui/panel/index.js:capabilities
     description: "ARAYÜZ: öğrenci yönetiminin BBD Akademi'deki yeri (yönlendirme işareti)."
+  # Toplu kalıcı silme sonucunun kurum logolu belgesi (0.5.4). Panel veriyordu
+  # ama İLAN EDİLMEMİŞTİ → kabuk atlıyordu; Öğrenci Yönetimi'nin toplu silme
+  # sonucunda "Önizle / Yazdır" hiç çizilmiyordu (63-duzeltici).
+  - capability: bbd_akademi.deletionDocument
+    contract: bbd_akademi/ui/panel/index.js:capabilities
+    description: "ARAYÜZ: (root, {result}) → toplu kalıcı silme sonucu belgesinin Önizle / Yazdır düğmeleri (kapı sunucuda: bbd_students.delete)."
 consumes:
   - capability: secrets
     reason: "Akademi entegrasyon anahtarı (`bbd_akademi.api_key`) kasada durur (K8)."

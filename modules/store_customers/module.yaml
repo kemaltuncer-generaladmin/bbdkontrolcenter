@@ -31,7 +31,8 @@ provides:
   - capability: store.customer.card
     contract: km_sdk.contracts:CustomerCard
     description: "Müşteri künyesi ve RFM segmenti. Sipariş, iade, talep ve fatura ekranları
-      'bu müşteri kim' sorusunu buraya sorar; kendi müşteri isteğini atmaz (K3). Salt okunur."
+      'bu müşteri kim' sorusunu buraya sorar; kendi müşteri isteğini atmaz (K3). Salt okunur.
+      ARAYÜZ: panel `capabilities()` (customerId) → {ok, customer: {…, orderCount, totalSpent}}."
 
 consumes:
   - capability: store.api
