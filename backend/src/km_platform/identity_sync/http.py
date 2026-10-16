@@ -35,16 +35,16 @@ ister (docs/permissions.md → "Uygulama kuralları" 3).
 
 from __future__ import annotations
 
-import hmac
 from collections.abc import Iterator
 from contextlib import contextmanager
 from time import monotonic
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from km_core.http.deps import requires
+from km_core.http.client_address import client_address
+from km_core.http.deps import bearer_token, confirm_pin, requires, resolve_once
 from km_core.security.identity import CurrentUser, Identity
 
 from .client import IdentityResponseError
@@ -131,19 +131,32 @@ async def _confirm_pin(request: Request, actor: CurrentUser, password: str) -> N
     reddedilen şey işlemdir — 401 kabuğu kullanıcıyı giriş ekranına atmaya
     iterdi.
     """
-    identity: Identity | None = getattr(request.app.state, "identity", None)
-    if identity is None:  # pragma: no cover — lifespan kurmadan istek gelmez
-        raise HTTPException(status_code=503, detail="Kimlik hazır değil.")
+    # Doğrulama çekirdeğin TEK teyit kapısından geçer (iş 63, bulgu KM-02):
+    # yanlış PIN sınırı ve denetim izi her yıkıcı işlemde aynıdır.
+    await confirm_pin(request, actor, password, action="installations.unpair")
 
-    row = await identity.store.fetch_one(
-        "SELECT secret_lookup FROM users WHERE id = ?", (actor.id,)
-    )
-    stored = str((row or {}).get("secret_lookup") or "")
-    if not stored or not hmac.compare_digest(stored, identity.secret_lookup(password)):
-        await identity.audit(
-            actor.id, "installations.unpair", result="denied", detail="PIN teyidi başarısız"
-        )
-        raise HTTPException(status_code=403, detail="PIN doğrulanamadı.")
+
+def _from_this_machine(request: Request) -> bool:
+    """İstek makinenin kendisinden mi (yerel kip, sidecar 127.0.0.1)?
+
+    Vekil başlığı taşıyan istek YEREL SAYILMAZ: sunucuda Traefik aynı makinede
+    olsa bile istek internetten gelmiştir (ADR 0030).
+    """
+    headers = request.headers
+    if headers.get("x-forwarded-for") or headers.get("cf-connecting-ip") \
+            or headers.get("forwarded"):
+        return False
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "localhost") and client_address(request) == host
+
+
+async def _may_manage(request: Request, authorization: str | None) -> bool:
+    identity: Identity | None = getattr(request.app.state, "identity", None)
+    token = bearer_token(authorization)
+    if identity is None or not token:
+        return False
+    user = await resolve_once(request, identity, token)
+    return user is not None and user.has_permission("installations.manage")
 
 
 def create_pairing_router() -> APIRouter:
@@ -188,7 +201,8 @@ def create_pairing_router() -> APIRouter:
         return result
 
     @router.post("/pairing/reset")
-    async def reset(request: Request) -> dict[str, Any]:
+    async def reset(request: Request,
+                    authorization: str | None = Header(default=None)) -> dict[str, Any]:
         """Bu kurulumun eşlemesini sıfırlar — GİRİŞ İSTEMEZ, bilerek.
 
         Tam da giriş yapılamadığında gerekiyor: anahtarı merkezle uyuşmayan bir
@@ -204,8 +218,29 @@ def create_pairing_router() -> APIRouter:
                 status_code=429,
                 detail="Çok fazla deneme yapıldı. Bir dakika sonra tekrar deneyin.",
             )
+        service = _sync(request)
+        # KİMLİKSİZ SIFIRLAMA YALNIZ KİLİT DURUMUNDA (iş 63, bulgu KM-05). ADR 0026
+        # ile backend internete bakıyor; bu uç oturumsuz herkese açık kalsaydı
+        # internetteki biri eşlemeyi düşürüp kadro senkronunu (merkezde iptal
+        # edilen kişinin bu kurulumda da kapanmasını) sessizce durdurabilirdi.
+        # Sıfırlama şu üç durumdan birinde yapılır:
+        #   · kurulumun anahtarı merkezle UYUŞMUYOR (kimsenin giremediği kilit —
+        #     ucun var olma sebebi),
+        #   · istek makinenin KENDİSİNDEN geliyor (yerel kip sidecar'ı, 127.0.0.1),
+        #   · istek `installations.manage` izinli bir oturumla geliyor.
+        # Yetenek kapalıysa (sunucu, ADR 0026) sıfırlanacak eşleme yoktur.
+        if not service.configured:
+            raise HTTPException(status_code=409,
+                                detail="Bu kurulumda merkezî kimlik eşlemesi kapalı; "
+                                       "sıfırlanacak eşleme yok.")
+        if not (service.pepper_mismatch or _from_this_machine(request)
+                or await _may_manage(request, authorization)):
+            throttle.fail()
+            raise HTTPException(status_code=403,
+                                detail="Eşleme yalnız bu makineden ya da kurulum yönetimi "
+                                       "yetkisiyle sıfırlanabilir.")
         with _translated():
-            return await _sync(request).reset_pairing()
+            return await service.reset_pairing()
 
     # ------------------------------------------------------- kurulum yönetimi
 

@@ -218,6 +218,24 @@ def _client_source(request: Request) -> str:
     return client_address(request) or "bilinmeyen"
 
 
+def _throttle_secret_attempt(request: Request) -> str:
+    """PIN doğrulayan her kimliksiz uç AYNI kovayı sayar; dolarsa 429.
+
+    `/auth/login` ve `/auth/set-password` ikisi de bir PIN'i doğrulayıp oturum
+    açar. Kova ortaktır: biri doldurulunca öteki de kapanır, iki uç arasında
+    gidip gelerek sınır ikiye katlanamaz.
+    """
+    source = _client_source(request)
+    wait = _limiter(request).check(source)
+    if wait is not None:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Çok fazla giriş denemesi. {int(wait) + 1} saniye sonra deneyin.",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+    return source
+
+
 async def _prepare_login(request: Request) -> None:
     """Merkezî kimliğin giriş yoluna bağlandığı TEK kapı (ADR 0021 §2).
 
@@ -338,14 +356,7 @@ def create_identity_router() -> APIRouter:
         # sayacı bu saldırıyı GÖRMEZ: kullanıcı PIN'in kendisiyle bulunduğu için
         # yanlış PIN hiçbir satıra denk gelmez ve artırılacak sayaç yoktur.
         # Ayrıntı: `km_core/security/rate_limit.py`.
-        source = _client_source(request)
-        wait = _limiter(request).check(source)
-        if wait is not None:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Çok fazla giriş denemesi. {int(wait) + 1} saniye sonra deneyin.",
-                headers={"Retry-After": str(int(wait) + 1)},
-            )
+        source = _throttle_secret_attempt(request)
 
         # Merkezden gelen kadro DOĞRULAMADAN ÖNCE yansıtılır: merkezde açılan
         # kullanıcı ilk denemesinde girebilmeli (ADR 0021 §2).
@@ -375,6 +386,11 @@ def create_identity_router() -> APIRouter:
         yalnızca kullanıcının kendi isteğiyle başlar.
         """
         identity = _identity(request)
+        # HIZ SINIRI GİRİŞLE AYNI KOVADAN (iş 63, bulgu KM-01). Bu uç da mevcut
+        # PIN'i doğrulayıp OTURUM AÇAR; sınırsız kalsaydı `/auth/login`'in hız
+        # sınırını dolanan bir PIN tahmin kapısı olurdu — kullanıcı adsız girişte
+        # yanlış PIN hiçbir satıra denk gelmez, `failed_attempts` bu yolu da görmez.
+        source = _throttle_secret_attempt(request)
         # Bu uç da OTURUM AÇAR; kapı girişle aynı olmalı, aksi hâlde yaş sınırı
         # `/auth/login` üzerinden kapalı, buradan açık bir yol bırakırdı.
         await _prepare_login(request)
@@ -382,6 +398,7 @@ def create_identity_router() -> APIRouter:
             result = await identity.set_password_with_secret(body.current_secret, body.password)
         if result is None:
             raise HTTPException(status_code=401, detail="Giriş yapılamadı.")
+        _limiter(request).reset(source)
         token, user = result
         return {"token": token, "user": user_payload(user)}
 
