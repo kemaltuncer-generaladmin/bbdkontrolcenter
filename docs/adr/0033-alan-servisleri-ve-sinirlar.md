@@ -157,7 +157,7 @@ aynı olmasını ve nerede uygulandığını sabitler.
 
 ### 6. Sınır denetimi kalıcı kapıdır
 
-`tools/check-boundaries.py` (CI) ve `tests/integration/test_alan_sinirlari.py`
+`tools/check-boundaries.py` (komut satırı) ve `tests/integration/test_alan_sinirlari.py`
 (pytest) aynı tarayıcıyı (`tools/arch_scan.py`) koşar. Kurallar:
 `module-import`, `core-import`, `foreign-table`, `core-table`, `foreign-api`,
 `core-knows-module`, `naming`, `manifest`. Belge dizgisi, yorum ve `tests/`
@@ -247,7 +247,7 @@ Uygulama ayrı karardır (yeni ADR); bu ADR yalnız adayları ve gerekçeyi kayd
 - "Hangi modül hangi alandan, hangi veriyi taşıyor" sorusu tek yerden
   (`module.yaml`, `domains.yaml`, `module-graph.md`) okunur; kabuk menüyü ve
   aramayı alana göre kurabilir (`GET /modules` ve `registry.json` → `domain`).
-- K1/K2/K3/K5 artık yazılı kural değil, CI kapısıdır. Bugün 32 bulgu
+- K1/K2/K3/K5 artık yazılı kural değil, test kapısıdır (pytest + komut). Bugün 32 bulgu
   16 istisna anahtarında; yeni ihlal eklenemez.
 - Rapor basma güvenlik denetimi 17 kopyadan bire indi.
 - Yeni modül `domain` ve `data_classification` olmadan kapıdan geçmez

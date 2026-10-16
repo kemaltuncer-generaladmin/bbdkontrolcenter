@@ -114,6 +114,38 @@ modules/<id>/
 oluşturduğu tablolara yazar. Başka modülün tablosunu okumak/yazmak yasaktır;
 veri paylaşımı servis veya olay üzerinden olur.
 
+### 4.1 Alan servisleri (ADR 0033)
+
+Modüller **alanlara** gruplanır. Alan ayrı süreç değildir; adı, sahip olduğu
+veri, dışarıya açtığı sözleşme (yetenek + olay) ve güvenlik tabanı belli bir
+servis sınırıdır. Her modül `module.yaml` → `domain` ile tam olarak bir alana
+bağlıdır ve `data_classification` (public · internal · personal · financial)
+ile taşıdığı en yüksek veri sınıfını ilan eder.
+
+| Alan | Ne | Modüller |
+|---|---|---|
+| `platform` | Çekirdek, platform yetenekleri, SDK, kurumsal araçlar | `print`, `antivirus` |
+| `academy` | BBD Akademi yönetim yüzü (veri Akademi API'sinde) | `bbd_akademi` |
+| `students` | Öğrenci/veli kimliği, sınıf ve gruplar, veliye SMS | `bbd_students`, `bbd_sms` |
+| `canteen` | Kantin kasa geçidi, cihaz, ürün, öğle yemeği, toplu satış, rapor, yedek — kantin parası | `bbd_canteen_*`, `bbd_lunch`, `bbd_bulk_sale` |
+| `payments` | Veliye borç bildirimi, ödeme bağlantısı, tahsilat | `bbd_payment_request` |
+| `tablet` | Paylaşımlı okul tabletleri | `bbd_tablet` |
+| `bell` | Zil saatleri, anons, çağrı; ders takvimi aynası | `bell`, `bbd_class_schedule` |
+| `gateway` | Akademi API'sinin sunucudan sunucuya cephesi; alanlar arası okuma | `mobile_gateway` |
+| `store` | BBD Store (Bagisto) yönetimi | 21 `store_*` |
+| `bld` | BLD (Laravel) yönetimi — pasif | 15 `bld_*` |
+
+Katalog `docs/architecture/domains.yaml`; güncel grafik
+`docs/architecture/module-graph.md` (üretilmiş).
+
+**Kural K12 — Alan sınırı denetlenir.** Modül başka modülün kodunu, tablosunu
+ve HTTP önekini (`/api/<id>`, panelde de) kullanmaz; çekirdek modül adı
+taşımaz. Alanlar arası iletişim yalnız yetenek (`provides`/`consumes`), olay
+(`events`, kalıcı olanı `events.outbox`) ve panel arayüz yeteneğiyle olur.
+`tools/check-boundaries.py` (komut satırı) ve `tests/integration/test_alan_sinirlari.py`
+bunu her değişiklikte denetler; bilinen ihlaller gerekçe ve azaltma planıyla
+`tools/boundary-exceptions.yaml`'dadır ve liste yalnız küçülür.
+
 ---
 
 ## 5. Modül keşfi ve yükleme
@@ -257,3 +289,4 @@ Modül kendi bağımlılığını kendisi getirir; çekirdeğin listesine dokunu
 | Modül platform kapsamı | `module.yaml` → `platforms`, keşifte elenir | 0022 |
 | Makine kimliği | Servis anahtarı (`kmsk_…`), servis kullanıcısına bağlı; yetki yine rollerden | 0028 |
 | Olay ve işlem | Modül işlemi (`store.transaction()`), kalıcı outbox (`events.outbox`), seq = commit sırası | 0029 |
+| Alan servisleri | Mikroservis değil alan servisi; `domain`/`data_classification`, sınır kapısı, ortak kod SDK'de | 0033 |

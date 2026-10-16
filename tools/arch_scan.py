@@ -1,7 +1,7 @@
 """Mimari tarayıcı — modül sınırlarını ve alan haritasını KODDAN okur (ADR 0033).
 
 İki aracın ortak kütüphanesi:
-  · `tools/check-boundaries.py` — sınır ihlali kapısı (CI + pytest)
+  · `tools/check-boundaries.py` — sınır ihlali kapısı (komut satırı; pytest aynı tarayıcıyı koşar)
   · `tools/module-graph.py`     — envanter ve bağımlılık grafiği
 
 Kaynak kod çalıştırılmaz; dosyalar `ast` ve düzenli ifadeyle okunur. Bu yüzden

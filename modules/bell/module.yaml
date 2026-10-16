@@ -13,7 +13,8 @@
 #
 # ZİL GERÇEKTEN ÇALAR. İki hedefi vardır:
 #   1. Okulun zil sistemine bağlı Windows bilgisayarı (asıl hoparlör) —
-#      `store.api` üzerinden bbdstore köprüsüne komut yazılır.
+#      bbdstore sunucusundaki köprüye (`/api/bell/*`) modülün KENDİ istemcisiyle
+#      (`backend/bridge.py`, ayrı belirteç) komut yazılır — `store.api` DEĞİL.
 #   2. Yerel ses aygıtı — `audio` yeteneği; yedek ve geliştirme içindir.
 #
 # BAĞIMLILIK YÖNÜ TERSİNE ÇEVRİLDİ. Eskiden ders saatleri Ders Takvimi'nindi ve
