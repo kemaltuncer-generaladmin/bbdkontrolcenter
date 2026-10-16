@@ -54,9 +54,15 @@ def test_her_admin_islemi_listede_ve_uretilen_dosya_guncel() -> None:
     listed = {op.operation_id for op in OPERATIONS}
     assert admin <= listed, f"listede olmayan admin işlemleri: {sorted(admin - listed)}"
 
-    rendered = generator.render(generator.collect(spec), str(spec["info"]["version"]))
-    committed = (MODULE / "backend" / "allowlist.py").read_text(encoding="utf-8")
-    assert rendered == committed, "allowlist.py eski — tools/gen_allowlist.py yeniden koşturun"
+    rendered = generator.render_files(generator.collect(spec), str(spec["info"]["version"]))
+    committed = generator.committed_files()
+    assert sorted(rendered) == sorted(committed), "backend/allowlist/ dosya kümesi üreticiyle aynı değil"
+    stale = [name for name in rendered if rendered[name] != committed[name]]
+    assert not stale, f"backend/allowlist/ eski ({stale}) — tools/gen_allowlist.py yeniden koşturun"
+    # Alt alan dosyalarına bölmek birleşik listenin sırasını değiştirmez.
+    rows = generator.collect(spec)
+    assert [op.operation_id for op in OPERATIONS] == [row["operation_id"] for row in rows]
+    assert "misc.py" not in committed, "eşlenmemiş yol kesimi var — gen_allowlist.AREAS'a ekleyin"
 
 
 def test_liste_bicimi() -> None:

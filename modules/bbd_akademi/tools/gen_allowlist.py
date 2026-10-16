@@ -2,8 +2,14 @@
 
 KAYNAK TEK: `bbd-akademi/docs/api/openapi.yaml` (bağlayıcı sözleşme). Liste
 elle yazılmaz; sözleşme değişince bu betik yeniden koşturulur ve üretilen
-`backend/allowlist.py` commit'lenir. Test (`tests/test_allowlist.py`) sözleşme
-erişilebilirse ikisinin AYNI olduğunu da doğrular.
+`backend/allowlist/` paketi commit'lenir. Test (`tests/test_akademi_allowlist.py`)
+sözleşme erişilebilirse ikisinin AYNI olduğunu da doğrular.
+
+PAKET ALT ALAN BAŞINA DOSYADIR (ADR 0033 Aşama 2): `allowlist/<alan>.py`
+(koçluk, ders programı, sınav …; eşleme aşağıda `AREAS`), `__init__.py`
+hepsini `OPERATIONS` adıyla TEK demette, üreticinin sırasıyla (yol, yöntem)
+birleştirir — dışarıdan görünen yüz (`from .allowlist import OPERATIONS`)
+değişmedi. Eşlemede olmayan yeni bir yol kesimi `misc.py`'ye düşer.
 
 Listeye girenler (sözleşme `docs/api/README.md` §8):
 
@@ -37,7 +43,42 @@ from typing import Any
 import yaml
 
 MODULE = Path(__file__).resolve().parents[1]
-TARGET = MODULE / "backend" / "allowlist.py"
+TARGET = MODULE / "backend" / "allowlist"
+
+#: `/v1/admin/<kesim>/…` → alt alan (panelin `ui/panel/<alan>/` klasörleriyle aynı adlar).
+AREAS: dict[str, str] = {
+    "dashboard": "today", "leave-requests": "today", "etut-requests": "today",
+    "meeting-requests": "today",
+    "students": "students", "guardians": "students", "student-groups": "students",
+    "class-groups": "students", "directory": "students",
+    "coaching": "coaching", "coach-assignments": "coaching", "coach-library": "coaching",
+    "coach-notes": "coaching", "mistake-inbox": "coaching", "video-pool": "coaching",
+    "videos": "coaching",
+    "timetable": "lessons", "timetable-templates": "lessons", "sessions": "lessons",
+    "lesson-events": "lessons", "calendar": "lessons", "curricula": "lessons",
+    "bell-plan": "lessons", "bell-slots": "lessons", "rooms": "lessons",
+    "teacher-load": "lessons", "terms": "lessons",
+    "recordings": "recordings", "boards": "recordings",
+    "attendance": "attendance",
+    "homework": "work", "homework-templates": "work", "plan": "work", "templates": "work",
+    "assignment-bundles": "work", "reading": "work", "flashcard-decks": "work",
+    "bulk-jobs": "work",
+    "exams": "exams", "exam-imports": "exams", "exam-import-templates": "exams",
+    "exam-analytics": "exams", "evaluations": "exams", "evaluation-periods": "exams",
+    "evaluation-templates": "exams", "evaluation-reports": "exams",
+    "resources": "resources", "resource-assignments": "resources",
+    "resource-packages": "resources", "resource-progress": "resources",
+    "catalog": "resources", "store-catalog": "resources",
+    "announcements": "comms", "messages": "comms", "sms": "comms",
+    "parent-meeting-slots": "comms", "pa": "comms",
+    "finance": "finance", "canteen": "finance", "book-sales": "finance",
+    "book-requests": "finance",
+    "insights": "reports", "early-warnings": "reports", "early-warning-settings": "reports",
+    "exports": "reports",
+    "settings": "admin", "branding": "admin", "features": "admin", "staff": "admin",
+    "roles": "admin", "permissions": "admin", "integration-keys": "admin",
+    "data-requests": "admin", "audit-log": "admin", "files": "admin", "tablets": "admin",
+}
 DEFAULT_SPEC = MODULE.parents[3] / "bbd-akademi" / "docs" / "api" / "openapi.yaml"
 
 #: Sözleşmenin okunduğu git dalı: bağlayıcı sözleşme `main`'dedir. (13.10.2026'ya
@@ -121,25 +162,19 @@ def collect(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def render(rows: list[dict[str, Any]], version: str) -> str:
-    lines = [
-        '"""ÜRETİLEN DOSYA — elle düzenlenmez.',
-        "",
-        f"Kaynak: bbd-akademi/docs/api/openapi.yaml (info.version {version}).",
-        "Üretici: modules/bbd_akademi/tools/gen_allowlist.py",
-        "",
-        "Vekilin geçirdiği işlemlerin tamamı. Burada olmayan her istek 403'tür.",
-        "Akademi izni → KM izni eşlemesi `permission_map.py` içindedir.",
-        '"""',
-        "",
-        "from __future__ import annotations",
-        "",
-        "from .core.operations import Operation",
-        "",
-        f"CONTRACT_VERSION = {version!r}",
-        "",
-        "OPERATIONS: tuple[Operation, ...] = (",
-    ]
+def area_of(path: str) -> str:
+    """İşlemin alt alanı: `/v1/admin/<kesim>` eşlemesi; öğrenci okumaları
+    `students`, katalog `resources`; eşlemede olmayan `misc`."""
+    if path.startswith("/v1/students/"):
+        return "students"
+    if path.startswith("/v1/catalog/"):
+        return "resources"
+    segment = path.split("/")[3] if path.startswith("/v1/admin/") else ""
+    return AREAS.get(segment, "misc")
+
+
+def _operation_lines(rows: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
     for row in rows:
         args = [
             f"{row['method']!r}",
@@ -167,9 +202,72 @@ def render(rows: list[dict[str, Any]], version: str) -> str:
         for part in args + flags:
             lines.append(f"        {part},")
         lines.append("    ),")
-    lines.append(")")
-    lines.append("")
-    return "\n".join(lines)
+    return lines
+
+
+def render_files(rows: list[dict[str, Any]], version: str) -> dict[str, str]:
+    """`backend/allowlist/` paketinin dosyaları: {dosya adı: içerik}."""
+    by_area: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_area.setdefault(area_of(row["path"]), []).append(row)
+    files: dict[str, str] = {}
+    for area, area_rows in sorted(by_area.items()):
+        lines = [
+            f'"""ÜRETİLEN DOSYA — elle düzenlenmez. Alt alan: {area}.',
+            "",
+            f"Kaynak: bbd-akademi/docs/api/openapi.yaml (info.version {version}).",
+            "Üretici: modules/bbd_akademi/tools/gen_allowlist.py",
+            '"""',
+            "",
+            "from __future__ import annotations",
+            "",
+            "from ..core.operations import Operation",
+            "",
+            "OPERATIONS: tuple[Operation, ...] = (",
+            *_operation_lines(area_rows),
+            ")",
+            "",
+        ]
+        files[f"{area}.py"] = "\n".join(lines)
+    areas = sorted(by_area)
+    init = [
+        '"""ÜRETİLEN DOSYA — elle düzenlenmez.',
+        "",
+        f"Kaynak: bbd-akademi/docs/api/openapi.yaml (info.version {version}).",
+        "Üretici: modules/bbd_akademi/tools/gen_allowlist.py",
+        "",
+        "Vekilin geçirdiği işlemlerin tamamı. Burada olmayan her istek 403'tür.",
+        "Akademi izni → KM izni eşlemesi `permission_map.py` içindedir. İşlemler alt",
+        "alan dosyalarındadır (ADR 0033 Aşama 2); burada üreticinin sırasıyla",
+        "(yol, yöntem) tek demette birleşir.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from ..core.operations import Operation",
+        "from . import (",
+        *[f"    {area}," for area in areas],
+        ")",
+        "",
+        f"CONTRACT_VERSION = {version!r}",
+        "",
+        '_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")',
+        "",
+        "OPERATIONS: tuple[Operation, ...] = tuple(sorted(",
+        "    (",
+        *[f"        *{area}.OPERATIONS," for area in areas],
+        "    ),",
+        "    key=lambda operation: (operation.path, _METHODS.index(operation.method)),",
+        "))",
+        "",
+    ]
+    files["__init__.py"] = "\n".join(init)
+    return files
+
+
+def committed_files() -> dict[str, str]:
+    return {path.name: path.read_text(encoding="utf-8")
+            for path in sorted(TARGET.glob("*.py"))} if TARGET.is_dir() else {}
 
 
 def load_spec(path: Path | None = None) -> dict[str, Any]:
@@ -206,17 +304,21 @@ def main(argv: list[str] | None = None) -> int:
 
     spec = load_spec(args.spec)
     rows = collect(spec)
-    text = render(rows, str((spec.get("info") or {}).get("version") or "?"))
+    files = render_files(rows, str((spec.get("info") or {}).get("version") or "?"))
     if args.check:
-        current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
-        if current != text:
-            print("allowlist.py sözleşmeyle uyuşmuyor — betiği yeniden koşturun.", file=sys.stderr)
+        if committed_files() != files:
+            print("backend/allowlist/ sözleşmeyle uyuşmuyor — betiği yeniden koşturun.", file=sys.stderr)
             return 1
-        print(f"allowlist.py güncel ({len(rows)} işlem).")
+        print(f"backend/allowlist/ güncel ({len(rows)} işlem, {len(files) - 1} alt alan).")
         return 0
-    TARGET.write_text(text, encoding="utf-8")
+    TARGET.mkdir(exist_ok=True)
+    for stale in set(committed_files()) - set(files):
+        (TARGET / stale).unlink()
+    for name, text in files.items():
+        (TARGET / name).write_text(text, encoding="utf-8")
     admin = sum(1 for row in rows if row["path"].startswith("/v1/admin/"))
-    print(f"{TARGET.relative_to(MODULE.parents[1])}: {len(rows)} işlem ({admin} admin)")
+    print(f"{TARGET.relative_to(MODULE.parents[1])}/: {len(rows)} işlem ({admin} admin), "
+          f"{len(files) - 1} alt alan")
     return 0
 
 
