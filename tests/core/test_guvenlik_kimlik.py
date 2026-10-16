@@ -275,3 +275,20 @@ def test_baskasinin_pinini_sifirlamak_pin_ister(client: TestClient) -> None:
                        json={"password": YENI_PIN}).status_code == 403
     # PIN değişmedi: kişi eski PIN'iyle girebilir.
     assert client.post("/api/auth/login", json={"password": PERSONEL_PINI}).status_code == 200
+
+
+# ------------------------------------------------------------------ KM-08
+
+
+def test_guvenlik_basliklari_her_yanitta(client: TestClient) -> None:
+    for cevap in (client.get("/health"),
+                  client.post("/api/auth/login", json={"password": "100000"}),
+                  client.get("/api/users")):
+        assert cevap.headers["x-content-type-options"] == "nosniff"
+        assert cevap.headers["x-frame-options"] == "DENY"
+        assert cevap.headers["referrer-policy"] == "no-referrer"
+        assert "frame-ancestors 'none'" in cevap.headers["content-security-policy"]
+    giris = client.post("/api/auth/login", json={"password": YONETICI_PINI})
+    assert giris.status_code == 200
+    assert giris.headers["cache-control"] == "no-store"
+    assert "cache-control" not in client.get("/health").headers

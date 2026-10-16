@@ -36,6 +36,7 @@ from km_core.http.deps import (
     resolve_once,
 )
 from km_core.http.documents import create_documents_router
+from km_core.http.security_headers import SecurityHeadersMiddleware
 from km_core.http.settings import create_settings_router
 from km_core.http.users import create_identity_router, user_payload
 from km_core.kernel.kernel import Kernel
@@ -280,6 +281,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     # onlarca KB JSON. Sıkıştırma yalnız `Accept-Encoding: gzip` diyen
     # istemciye uygulanır, küçük yanıtlara dokunulmaz.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # İş 63 (KM-08): nosniff, çerçeveleme yasağı, referrer yok, kimlik uçlarında no-store.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
