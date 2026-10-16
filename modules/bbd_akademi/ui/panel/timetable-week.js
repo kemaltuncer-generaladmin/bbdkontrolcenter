@@ -220,11 +220,18 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       return;
     }
     s.classGroups = classGroups || [];
-    if (!s.classGroupId) s.classGroupId = s.classGroups[0]?.id || '';
+    // Sınıf kendiliğinden seçilmez: listenin ilk sınıfı (ör. "8-A") ön seçili gelince yanlış sınıfa
+    // program girilir. Derin bağlantı (`open`) sınıfı zaten verir; tek sınıf varsa o açılır.
+    if (!s.classGroupId && s.classGroups.length === 1) s.classGroupId = s.classGroups[0].id;
     paintClassOptions();
-    if (!s.classGroupId) {
+    if (!s.classGroups.length && !s.classGroupId) {
       content.replaceChildren(empty('Sınıf grubu yok',
         'Sınıf grupları KM sınıflarından eşitlenir. Öğrenciler bölümünden sınıfları kontrol edin.'));
+      return;
+    }
+    if (!s.classGroupId) {
+      content.replaceChildren(empty('Sınıf seçin',
+        'Programını görmek ya da girmek istediğiniz sınıfı yukarıdaki listeden seçin.'));
       return;
     }
     await loadTimetable();
@@ -326,6 +333,7 @@ export function weekTab(app, { openEvent, openBells } = {}) {
       list.push({ value: loaded.id, label: `${loaded.name} (pasif)` });
     }
     if (!list.length) list.push({ value: '', label: 'Sınıf yok' });
+    else if (!s.classGroupId) list.unshift({ value: '', label: 'Sınıf seçin' });
     classSelect.options(list);
     classSelect.set(s.classGroupId);
   }
