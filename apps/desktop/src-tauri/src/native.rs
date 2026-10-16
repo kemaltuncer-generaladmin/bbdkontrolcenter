@@ -126,7 +126,32 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .disable_drag_drop_handler()
         // Ctrl+tekerlek / Ctrl+± ile rastgele yakınlaştırma kapalı; yerine
         // Görünüm → Yakınlaştır (kalıcı) var.
-        .zoom_hotkeys_enabled(false);
+        .zoom_hotkeys_enabled(false)
+        // Bağlam menüsündeki "Yapıştır" panoyu okuyabilsin (Windows/Linux;
+        // macOS'ta her zaman açık). Sayfa yalnız kendi kodumuzu çalıştırır (CSP).
+        .enable_clipboard_access()
+        // UYGULAMA KENDİ PENCERESİNİ KAYBETMEZ. Dış bir adrese gidiş web
+        // görünümünün içinde değil, sistemin tarayıcısında açılır; kabuğun
+        // kendi kökeni (tauri://, http://tauri.localhost) ve yerel çekirdek
+        // serbesttir.
+        .on_navigation(|url| {
+            if is_app_url(url) {
+                return true;
+            }
+            if is_external(url) {
+                let _ = open_with_system(url.as_str());
+            }
+            false
+        })
+        // `window.open` ve `target=_blank`: yeni bir tarayıcı penceresi (WebView2
+        // açılır pencere) yerine sistemin tarayıcısı; arayüz `window.open`ı
+        // zaten kendisi yönlendiriyor (native.js), bu son kapıdır.
+        .on_new_window(|url, _features| {
+            if is_external(&url) {
+                let _ = open_with_system(url.as_str());
+            }
+            tauri::webview::NewWindowResponse::Deny
+        });
 
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -254,6 +279,91 @@ pub fn native_set_prefs(app: AppHandle, mica: bool) -> Result<(), String> {
 #[tauri::command]
 pub fn native_get_prefs(app: AppHandle) -> NativePrefs {
     read_prefs(&app)
+}
+
+// ------------------------------------------------- dış adresler ve dosyalar
+
+/// Kabuğun kendi sayfası ya da yerel çekirdek.
+fn is_app_url(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" | "asset" | "ipc" | "blob" | "data" | "about" => true,
+        "http" | "https" => matches!(
+            url.host_str(),
+            Some("tauri.localhost" | "ipc.localhost" | "asset.localhost" | "localhost" | "127.0.0.1")
+        ),
+        _ => false,
+    }
+}
+
+/// Sistemin açabileceği güvenli dış adres türleri.
+fn is_external(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto" | "tel") && !is_app_url(url)
+}
+
+/// Adresi ya da dosyayı işletim sisteminin varsayılan uygulamasıyla açar.
+///
+/// Kabuk komutu `cmd /C start` KULLANILMAZ: adres `&` taşıdığında komut
+/// satırı onu ikinci bir komut sayar. `url.dll` adresi tek argüman olarak alır.
+fn open_with_system(target: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(target);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut command = std::process::Command::new("rundll32");
+        command.arg("url.dll,FileProtocolHandler").arg(target);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(target);
+        command
+    };
+    command.spawn().map(|_| ()).map_err(|error| format!("açılamadı: {error}"))
+}
+
+/// Dış adresi sistemin tarayıcısında açar (`window.open`, bağlantılar).
+/// Yalnız http(s)/mailto/tel kabul edilir — `file:` ya da program yolu değil.
+#[tauri::command]
+pub fn native_open_url(url: String) -> Result<(), String> {
+    let parsed = tauri::Url::parse(&url).map_err(|_| "geçersiz adres".to_string())?;
+    if !is_external(&parsed) {
+        return Err("bu adres türü dışarıda açılmaz".into());
+    }
+    open_with_system(parsed.as_str())
+}
+
+/// Bellekteki bir dosyayı (ör. `window.open(blob:…)` ile açılmak istenen PDF)
+/// geçici klasöre yazar ve varsayılan uygulamayla açar. Ad süzülür; yalnız
+/// uygulamanın kendi önbellek klasörüne yazılır.
+#[tauri::command]
+pub fn native_open_temp_file(app: AppHandle, name: String, base64: String) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|error| format!("dosya verisi çözülemedi: {error}"))?;
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("acilan");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let clean: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '-' })
+        .take(80)
+        .collect();
+    let clean = if clean.trim_matches(|c| c == '.' || c == '-').is_empty() { "dosya".to_string() } else { clean };
+    let path = dir.join(clean);
+    std::fs::write(&path, bytes).map_err(|error| format!("dosya yazılamadı: {error}"))?;
+    open_with_system(&path.display().to_string())?;
+    Ok(path.display().to_string())
 }
 
 // ---------------------------------------------------------------- bildirimler

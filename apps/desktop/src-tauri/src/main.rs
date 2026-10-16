@@ -789,6 +789,8 @@ fn main() {
             native::native_notify,
             native::native_save_file,
             native::native_open_files,
+            native::native_open_url,
+            native::native_open_temp_file,
             native::menu_sync,
             native::context_menu,
             printing::printers,

@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kontrol Merkezi</title>
+  <!-- İlk boyadan önce tema/platform (ADR 0032). Modül değil, eşzamanlı. -->
+  <script src="boot.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,7 +17,7 @@
 
        ADR 0016 (şifreyle giriş) REDDEDİLDİ: ekran PIN tuş takımıdır, metin
        alanı yoktur. Hane noktaları yalnız KAÇ hane girildiğini gösterir. -->
-  <section class="login" id="login" hidden>
+  <section class="login" id="login" data-km-drag hidden>
     <div class="aurora" aria-hidden="true"></div>
 
     <div class="login-card">
@@ -37,7 +39,7 @@
   <div class="workspace" id="workspace" hidden>
 
     <aside class="sidebar">
-      <div class="sidebar-brand">
+      <div class="sidebar-brand" data-km-drag>
         <svg class="mark mark-sm" viewBox="0 0 48 48" aria-hidden="true">
           <circle class="mark-ring" cx="24" cy="24" r="19" />
           <circle class="mark-arc" cx="24" cy="24" r="19" />
@@ -59,7 +61,7 @@
     </aside>
 
     <main class="panel">
-      <header class="panel-head">
+      <header class="panel-head" data-km-drag>
         <div class="panel-head-text">
           <span class="crumb" id="crumb"></span>
           <h2 class="panel-title" id="panel-title"></h2>
@@ -71,7 +73,7 @@
           <input id="gsearch-input" type="search" role="combobox" aria-autocomplete="list"
                  aria-expanded="false" aria-controls="gsearch-list" aria-describedby="gsearch-key"
                  placeholder="Öğrenci, telefon, kart ya da ekran ara" autocomplete="off" spellcheck="false" disabled>
-          <kbd class="gsearch-key" id="gsearch-key" aria-label="Kısayol: eğik çizgi">/</kbd>
+          <kbd class="gsearch-key" id="gsearch-key" aria-label="Kısayol: Ctrl+K ya da eğik çizgi">Ctrl K</kbd>
           <div class="gsearch-pop" id="gsearch-pop" hidden>
             <ul class="gsearch-list" id="gsearch-list" role="listbox" aria-label="Arama sonuçları"></ul>
             <p class="gsearch-status" id="gsearch-status" role="status" aria-live="polite"></p>

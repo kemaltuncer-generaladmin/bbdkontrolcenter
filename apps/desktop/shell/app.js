@@ -11,10 +11,24 @@
 
 import { iconSvg } from './icons.js';
 import {
-  api, loadRegistry, login, logout, menuPanels, mountPanel, navTree, resetProviders,
-  searchProviders, setNavigator, waitForCore,
+  api, clearResponseCache, connection, loadRegistry, login, logout, menuPanels, mountPanel, navTree,
+  onConnectionRestored, preloadPanel, resetProviders, searchProviders, setNavigator, waitForCore,
 } from './ui-kernel.js';
 import { createGlobalSearch } from './global-search.js';
+import {
+  applyAllPrefs, closeDomMenu, defineCommand, exportTable, installNative, invoke, isMac, isNative,
+  keyLabel, prefs, runCommand, shellToast, syncMenu, zoomStep,
+} from './native.js';
+import { createFindBar } from './findbar.js';
+import { closeDialog, openAbout, openPerf, openPreferences, openShortcuts } from './dialogs.js';
+import { perf } from './perf.js';
+import { createUpdater } from './update.js';
+import { notify } from './ui-kit/native.js';
+import { closeListbox, enhanceSelects } from './ui-kit/select.js';
+
+// İlk boyadan önce uygulanmış tercihler (boot.js) burada tamamlanır: Rust
+// tarafı (başlık çubuğu teması, kalıcı yakınlaştırma) da eşitlenir.
+applyAllPrefs();
 
 const PIN_MIN = 6;
 const PIN_MAX = 12; // yerleşim sınırı; sözleşmede üst sınır yok
@@ -46,9 +60,183 @@ const shell = {
   panels: [],
   menu: [],
   activeId: null,
+  activePayload: null,
   cleanup: null,
   user: null,
+  // ADR 0032 — gezinme geçmişi (Geri/İleri), açılmış ekranlar (geri dönüş
+  // ölçüsü), kaydırma hafızası, açılış sayacı.
+  history: { stack: [], index: -1 },
+  visited: new Set(),
+  scrolls: new Map(),
+  mountSeq: 0,
+  interacted: false,
 };
+
+// ======================================================== ADR 0032 yardımcıları
+
+/** Sık kullanılan ekranlar — kullanıcıya özel sayaç (Ctrl/⌘+1…9, Git menüsü). */
+function freqKey() {
+  const who = shell.user?.id ?? shell.user?.fullName ?? 'anon';
+  return `km.freq.${who}`;
+}
+
+function readFreq() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(freqKey()) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function countVisit(id) {
+  const freq = readFreq();
+  const entry = freq[id] || { n: 0, last: 0 };
+  freq[id] = { n: entry.n + 1, last: Date.now() };
+  try {
+    localStorage.setItem(freqKey(), JSON.stringify(freq));
+    localStorage.setItem(`${freqKey()}.last`, id);
+  } catch { /* hatırlamaz, çalışır */ }
+}
+
+/** Menüde görünen ekranlardan en sık açılan 9'u (eşitlikte en son açılan). */
+function frequentScreens() {
+  const freq = readFreq();
+  const visible = new Set(shell.menu.map((panel) => panel.id));
+  return Object.entries(freq)
+    .filter(([id]) => visible.has(id))
+    .sort((a, b) => b[1].n - a[1].n || b[1].last - a[1].last)
+    .slice(0, 9)
+    .map(([id]) => shell.menu.find((panel) => panel.id === id));
+}
+
+function lastScreen() {
+  try {
+    return localStorage.getItem(`${freqKey()}.last`);
+  } catch {
+    return null;
+  }
+}
+
+function updateMenu() {
+  syncMenu({
+    signedIn: Boolean(shell.user),
+    screens: shell.user ? frequentScreens().map((panel) => panel.title) : [],
+    canBack: shell.history.index > 0,
+    canForward: shell.history.index < shell.history.stack.length - 1,
+  });
+}
+
+function pushHistory(id, payload) {
+  const h = shell.history;
+  const top = h.stack[h.index];
+  if (top && top.id === id && top.payload === payload) return;
+  h.stack = h.stack.slice(0, h.index + 1);
+  h.stack.push({ id, payload });
+  if (h.stack.length > 60) h.stack.shift();
+  h.index = h.stack.length - 1;
+}
+
+function goHistory(delta) {
+  const h = shell.history;
+  const next = h.index + delta;
+  if (next < 0 || next >= h.stack.length) return;
+  h.index = next;
+  const entry = h.stack[next];
+  select(entry.id, { payload: entry.payload, force: true, viaHistory: true, scroll: true });
+}
+
+/** Ekrandaki kaydırılmış alanlar: gövdeden çocuk sırasıyla yol + konum. */
+function rememberScroll(id) {
+  const body = document.getElementById('panel-body');
+  if (!id || !body) return;
+  const out = [];
+  const pathOf = (node) => {
+    const path = [];
+    for (let cur = node; cur && cur !== body; cur = cur.parentElement) {
+      path.unshift([...cur.parentElement.children].indexOf(cur));
+    }
+    return path;
+  };
+  if (body.scrollTop > 0) out.push({ path: [], top: body.scrollTop });
+  for (const node of body.querySelectorAll('*')) {
+    if (node.scrollTop > 0) out.push({ path: pathOf(node), top: node.scrollTop });
+    if (out.length > 8) break;
+  }
+  shell.scrolls.set(id, out);
+}
+
+function restoreScroll(id) {
+  const body = document.getElementById('panel-body');
+  const saved = shell.scrolls.get(id);
+  if (!body || !saved?.length) return;
+  for (const { path, top } of saved) {
+    let node = body;
+    for (const index of path) node = node?.children?.[index];
+    if (node) node.scrollTop = top;
+  }
+}
+
+/** Panelde yazdırma eylemi: açık pencere/çekmece önce, sonra ekranın kendisi. */
+function printActive() {
+  const body = document.getElementById('panel-body');
+  const visible = (node) => node && !node.disabled && node.getClientRects().length > 0;
+  const layers = [...body.querySelectorAll('.kit-overlay, .kit-dialog, .kit-drawer, [role="dialog"]')]
+    .filter(visible).reverse();
+  for (const scope of [...layers, body]) {
+    const explicit = [...scope.querySelectorAll('[data-command="print"]')].find(visible);
+    if (explicit) { explicit.click(); return; }
+    const byLabel = [...scope.querySelectorAll('button, [role="button"]')].find((node) => visible(node)
+      && /(^|\s)yazdır/i.test(`${node.textContent} ${node.getAttribute('aria-label') || ''}`.toLocaleLowerCase('tr')));
+    if (byLabel) { byLabel.click(); return; }
+  }
+  shellToast('Bu ekranda yazdırılacak bir belge yok — rapor ve belge ekranlarında “Yazdır” düğmesi bu kısayola bağlıdır.');
+}
+
+function exportActive() {
+  const body = document.getElementById('panel-body');
+  const table = [...body.querySelectorAll('[role="table"], table')].find((node) => node.getClientRects().length > 0);
+  if (!table) {
+    shellToast('Bu ekranda dışa aktarılacak bir tablo yok.');
+    return;
+  }
+  exportTable(table);
+}
+
+/** Ekranı yeniden kurar. `hard`: önbellek atılır (Ctrl/⌘+R). */
+function refreshActive({ hard = false } = {}) {
+  if (!shell.activeId) return;
+  if (hard) clearResponseCache();
+  rememberScroll(shell.activeId);
+  select(shell.activeId, { payload: shell.activePayload, force: true, refresh: true });
+}
+
+/** Açılışta son bilinen veriyle çizilen ekranın verisi arkada değişti. */
+function staleData() {
+  // Kullanıcı ekrana henüz dokunmadıysa sessizce yeniden çizilir (veri artık
+  // önbellekte güncel, yeniden çizim anlık). Dokunduysa yazdığı/seçtiği şey
+  // silinmez: başlıkta "Yeni veriler var" düğmesi çıkar.
+  if (!shell.interacted) {
+    refreshActive();
+    return;
+  }
+  const head = document.querySelector('.panel-head-text');
+  if (!head || head.querySelector('.km-stale')) return;
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'km-stale';
+  chip.textContent = 'Yeni veriler var · Yenile';
+  chip.title = `Ekranı yenile (${keyLabel('Mod+R')})`;
+  chip.addEventListener('click', () => refreshActive());
+  head.append(chip);
+}
+
+/** Açık geçici katmanlar: seçim listesi, bağlam menüsü, kabuk pencereleri. */
+function closeTransient() {
+  closeListbox();
+  closeDomMenu();
+  document.querySelector('.km-stale')?.remove();
+}
 
 // ================================================================== KABUK
 
@@ -199,11 +387,15 @@ function message(text) {
  * `force`: aynı panele veriyle yeniden girmek için — "bu siparişi aç"
  *   denildiğinde zaten Siparişler ekranındaysak da yeniden bağlanmalı.
  */
-async function select(id, { scroll = false, payload = null, force = false } = {}) {
+async function select(id, {
+  scroll = false, payload = null, force = false, viaHistory = false, refresh = false,
+} = {}) {
   const panel = shell.panels.find((candidate) => candidate.id === id);
   if (!panel) return;
   if (id === shell.activeId && !force) return;
 
+  closeTransient();
+  if (!refresh) rememberScroll(shell.activeId);
   try {
     shell.cleanup?.();
   } catch (error) {
@@ -211,6 +403,11 @@ async function select(id, { scroll = false, payload = null, force = false } = {}
   }
   shell.cleanup = null;
   shell.activeId = id;
+  shell.activePayload = payload;
+  if (!refresh) {
+    if (!viaHistory) pushHistory(id, payload);
+    countVisit(id);
+  }
 
   for (const item of el.nav.querySelectorAll('.nav-item')) {
     const active = item.dataset.id === id;
@@ -226,9 +423,34 @@ async function select(id, { scroll = false, payload = null, force = false } = {}
   const body = document.getElementById('panel-body');
   body.replaceChildren();
 
-  const cleanup = await mountPanel(panel, body, shell.registry, payload);
-  if (shell.activeId === id) shell.cleanup = cleanup;
+  // İSKELET YALNIZ 150 ms'DEN UZUN YÜKLEMEDE (ADR 0032). İlk 150 ms gövdedeki
+  // iskelet/yükleniyor öğeleri görünmez (`.km-fresh`): veri o arada gelirse
+  // ekran iskelet yanıp sönmeden doğrudan dolu çizilir.
+  body.classList.add('km-fresh');
+  clearTimeout(shell.freshTimer);
+  shell.freshTimer = setTimeout(() => body.classList.remove('km-fresh'), 150);
+
+  const started = performance.now();
+  const returning = shell.visited.has(id);
+  shell.visited.add(id);
+  const seq = (shell.mountSeq += 1);
+  shell.interacted = false;
+
+  const cleanup = await mountPanel(panel, body, shell.registry, payload, {
+    onSettled: ({ fromCache }) => {
+      if (seq !== shell.mountSeq) return;
+      perf.record('panel', performance.now() - started,
+        { id, title: panel.title, return: returning, cache: fromCache, refresh });
+      if (returning || refresh) restoreScroll(id);
+      find?.refresh();
+    },
+    onStale: () => {
+      if (seq === shell.mountSeq) staleData();
+    },
+  });
+  if (shell.activeId === id && seq === shell.mountSeq) shell.cleanup = cleanup;
   else cleanup?.();
+  updateMenu();
 }
 
 function step(delta) {
@@ -272,11 +494,34 @@ async function openWorkspace(user) {
 
   renderNav();
   search.enable();
-  if (shell.menu.length > 0) await select(shell.menu[0].id);
+  // SON GÖRÜNÜM: kullanıcı en son hangi ekrandaysa onunla başlar (Tercihler'den
+  // kapatılabilir). Ekran artık menüde değilse ilk ekran.
+  const last = prefs.get('restoreLast') !== 'off' ? lastScreen() : null;
+  const first = shell.menu.find((panel) => panel.id === last) || shell.menu[0];
+  if (first) await select(first.id);
 
   el.login.hidden = true;
   el.workspace.hidden = false;
   el.filter.focus();
+  perf.mark('calisma-alani');
+  updateMenu();
+  preloadFrequent();
+  updater?.start();
+}
+
+/**
+ * MODÜL ÖNYÜKLEME: boşta kalınca en sık açılan ekranların dosyaları indirilip
+ * ayrıştırılır (bağlanmaz). İlk tıklamada `import()` beklemesi kalkar.
+ */
+function preloadFrequent() {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 1200));
+  const queue = frequentScreens().filter((panel) => panel && panel.id !== shell.activeId).slice(0, 5);
+  const next = () => {
+    const panel = queue.shift();
+    if (!panel || !shell.user) return;
+    preloadPanel(panel).finally(() => idle(next));
+  };
+  idle(next);
 }
 
 /**
@@ -298,14 +543,24 @@ async function signOut() {
   }
   shell.cleanup = null;
   shell.activeId = null;
+  shell.activePayload = null;
   shell.user = null;
   shell.registry = { groups: [], panels: [] };
   shell.panels = [];
   shell.menu = [];
+  shell.history = { stack: [], index: -1 };
+  shell.visited.clear();
+  shell.scrolls.clear();
+  closeTransient();
+  closeDialog();
+  find?.close();
   search.reset();
   resetProviders();
 
   await logout();
+  // Önceki kişinin yanıtları bellekte kalmaz (setToken da boşaltır).
+  clearResponseCache();
+  updateMenu();
 
   document.getElementById('panel-body').replaceChildren();
   el.nav.replaceChildren();
@@ -537,7 +792,7 @@ const search = createGlobalSearch({
   openScreen: (id) => select(id, { scroll: true }),
 });
 
-window.addEventListener('contextmenu', (event) => event.preventDefault());
+// Sağ tık artık bağlama uygun yerel menü açar (native.js → installNative).
 
 // ================================================================ EŞLEME
 //
@@ -741,6 +996,134 @@ function runPairing() {
   });
 }
 
+// ====================================================== NATİVE HİS (ADR 0032)
+
+const workspaceOpen = () => !el.workspace.hidden && Boolean(shell.user);
+
+/** Sayfada bul — etkin ekranın gövdesinde. */
+const find = createFindBar({
+  host: document.querySelector('.panel'),
+  scope: () => document.getElementById('panel-body'),
+});
+
+/** Arka planda güncelleme (yalnız masaüstü kabuğunda). */
+const updater = isNative()
+  ? createUpdater({ invoke, notify, toast: shellToast })
+  : null;
+
+function setZoom(direction) {
+  const factor = zoomStep(direction);
+  shellToast(`Yakınlaştırma %${Math.round(factor * 100)}`);
+}
+
+async function toggleFullscreen() {
+  if (isNative()) {
+    await invoke('window_toggle_fullscreen');
+  } else if (document.fullscreenElement) {
+    await document.exitFullscreen();
+  } else {
+    await document.documentElement.requestFullscreen?.();
+  }
+}
+
+function editCommand(name) {
+  return () => {
+    const target = document.activeElement;
+    if (name === 'selectAll' && target?.select) {
+      target.select();
+      return;
+    }
+    try { document.execCommand(name); } catch { /* desteklenmiyor */ }
+  };
+}
+
+// Komut kimlikleri menü çubuğuyla (src-tauri/src/native.rs) AYNIDIR.
+defineCommand('search', () => search.focus(), { when: workspaceOpen });
+defineCommand('search-text', (_source, text) => search.focus(String(text || '')), { when: workspaceOpen });
+defineCommand('find', () => find.show(), { when: workspaceOpen });
+defineCommand('find-next', () => find.next(), { when: workspaceOpen });
+defineCommand('find-prev', () => find.prev(), { when: workspaceOpen });
+defineCommand('print', printActive, { when: workspaceOpen });
+defineCommand('export', exportActive, { when: workspaceOpen });
+defineCommand('back', () => goHistory(-1), { when: workspaceOpen });
+defineCommand('forward', () => goHistory(1), { when: workspaceOpen });
+for (let n = 1; n <= 9; n += 1) {
+  defineCommand(`go:${n}`, () => {
+    const panel = frequentScreens()[n - 1];
+    if (panel) select(panel.id, { scroll: true });
+    else shellToast(`${n}. sık ekran henüz yok — ekranlar açıldıkça buraya yerleşir.`);
+  }, { when: workspaceOpen });
+}
+defineCommand('refresh', () => refreshActive({ hard: true }), { when: workspaceOpen });
+defineCommand('fullscreen', () => toggleFullscreen());
+defineCommand('prefs', () => openPreferences({ onChange: () => updateMenu() }));
+defineCommand('zoom-in', () => setZoom(1));
+defineCommand('zoom-out', () => setZoom(-1));
+defineCommand('zoom-reset', () => setZoom(0));
+for (const theme of ['system', 'light', 'dark']) {
+  defineCommand(`theme:${theme}`, () => { prefs.set('theme', theme); updateMenu(); });
+}
+for (const density of ['comfortable', 'compact']) {
+  defineCommand(`density:${density}`, () => { prefs.set('density', density); updateMenu(); });
+}
+defineCommand('sidebar', () => prefs.set('sidebar', prefs.get('sidebar') === 'hidden' ? 'shown' : 'hidden'),
+  { when: workspaceOpen });
+defineCommand('go-filter', () => {
+  if (prefs.get('sidebar') === 'hidden') prefs.set('sidebar', 'shown');
+  el.filter.focus();
+  el.filter.select();
+}, { when: workspaceOpen });
+defineCommand('shortcuts', () => openShortcuts());
+defineCommand('perf', () => openPerf());
+defineCommand('about', () => openAbout());
+defineCommand('update', () => (updater ? updater.check({ manual: true })
+  : shellToast('Güncelleme yalnız masaüstü uygulamasında çalışır.')));
+defineCommand('signout', () => signOut(), { when: workspaceOpen });
+defineCommand('edit:undo', editCommand('undo'));
+defineCommand('edit:redo', editCommand('redo'));
+defineCommand('edit:cut', editCommand('cut'));
+defineCommand('edit:copy', editCommand('copy'));
+defineCommand('edit:paste', editCommand('paste'));
+defineCommand('edit:selectall', editCommand('selectAll'));
+
+installNative({ isLoginOpen: () => !el.login.hidden || Boolean(pairing) });
+// Sayfadaki bütün tekli `<select>`lar klavyeyle aranabilen listeyi açar.
+enhanceSelects(document);
+
+// Kullanıcı ekrana dokundu mu (arkadaki tazeleme yazdığını silmesin).
+for (const type of ['pointerdown', 'keydown', 'input']) {
+  document.getElementById('panel-body').addEventListener(type, () => { shell.interacted = true; }, true);
+}
+
+// BAĞLANTI GERİ GELDİ: etkin ekran tazelenir (önbellek zaten boşaltıldı).
+onConnectionRestored(() => {
+  if (workspaceOpen()) refreshActive({ hard: true });
+});
+connection.subscribe((online) => {
+  document.documentElement.classList.toggle('km-offline', !online);
+});
+
+// Kısayol ipuçları platformun diliyle (macOS: ⌘K).
+document.getElementById('gsearch-key').textContent = isMac() ? '⌘K' : 'Ctrl K';
+document.getElementById('gsearch-key').setAttribute('aria-label', `Kısayol: ${keyLabel('Mod+K')} ya da eğik çizgi`);
+document.querySelector('.sidebar-foot')?.replaceChildren(
+  ...[['↑', '↓', ' gez · '], [keyLabel('Mod+K'), ' ara · '], [keyLabel('Mod+/'), ' kısayollar']]
+    .flatMap((parts) => parts.map((part, index) => {
+      if (index === parts.length - 1) return document.createTextNode(part);
+      const key = document.createElement('kbd');
+      key.textContent = part;
+      return key;
+    })),
+);
+
+// Yazdırma komutunu Ctrl/⌘+P'ye bağlayan menü öğesi de dahil, menü çubuğu
+// giriş öncesi durumuyla eşitlenir.
+updateMenu();
+
+// Genel `/` kısayolu ve Ctrl/⌘+K aynı kutuyu açar; kabuk dışı tarayıcıda
+// `runCommand` görünür kalsın (sınama ve tasarım denemesi).
+window.__kmRunCommand = runCommand;
+
 // ================================================================ AÇILIŞ
 
 /**
@@ -763,6 +1146,21 @@ async function serverInfo() {
 async function start() {
   el.login.hidden = false;
   renderSlots();
+  // Pencerenin kendi özellikleri (macOS bütünleşik başlık çubuğu, Windows 11
+  // Mica) — CSS buna göre yer açar.
+  if (isNative()) {
+    invoke('native_info').then((info) => {
+      const root = document.documentElement;
+      if (info?.overlayTitleBar) root.dataset.titlebar = 'overlay';
+      root.classList.toggle('km-mica', Boolean(info?.mica));
+    }).catch(() => {});
+  }
+  // İLK BOYA: giriş kartı çizildi → pencere görünür (Rust onu boyanana dek
+  // gizli tutuyor; beyaz/siyah kare yanıp sönmez).
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    perf.mark('giris-boyandi');
+    if (isNative()) invoke('window_ready').catch(() => {});
+  }));
 
   // KİPİ ÖNCE SÖYLE. Sunucu kipinde "çekirdek başlatılıyor" cümlesi yanlıştır:
   // burada başlatılan bir şey yok, uzak bir sunucuya bağlanılıyor (ADR 0026).
@@ -772,7 +1170,20 @@ async function start() {
   const remote = server && !server.local;
   setHint([remote ? `${server.base} adresine bağlanılıyor…` : 'Çekirdek başlatılıyor…']);
 
-  const ready = await waitForCore();
+  // MERKEZ GELENE KADAR BEKLENİR — süresiz (ADR 0032). Eskiden 20 sn sonra
+  // "ulaşılamadı" yazıp DURUYORDU; internet bir dakika sonra gelse bile
+  // kullanıcı uygulamayı kapatıp açmak zorundaydı. Şimdi ipucu satırı neyin
+  // beklendiğini ve kaçıncı deneme olduğunu söyler; bağlantı gelince giriş
+  // kendiliğinden açılır.
+  const ready = await waitForCore(0, {
+    onWait: (attempt, error) => {
+      if (attempt < 3) return;
+      setHint([remote
+        ? `Merkeze ulaşılamıyor — yeniden deneniyor (${attempt}). İnternet bağlantınızı denetleyin. Sebep: ${error}`
+        : `Çekirdeğe ulaşılamadı — yeniden deneniyor (${attempt}). Sebep: ${error}`]);
+    },
+  });
+  perf.mark('merkez-hazir');
   if (!ready.ok) {
     // SON HATA OLDUĞU GİBİ YAZILIR ama METİN olarak: içeriği çekirdekten
     // geliyor ve `innerHTML` ile basılırsa yorumlanırdı.

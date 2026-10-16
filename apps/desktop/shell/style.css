@@ -1,29 +1,142 @@
 /* Kontrol Merkezi — kabuk.
    Yazı tipi sistemden gelir: masaüstü uygulaması çevrimdışı da açılır,
-   dışarıdan font çekilmez (CSP zaten engeller). */
+   dışarıdan font çekilmez (CSP zaten engeller).
+
+   TEMA (ADR 0032): açık tema varsayılandır; `boot.js` ilk boyadan önce
+   kökte `data-theme="light|dark"` yazar (Tercihler → Tema: sistemi izle /
+   açık / koyu). Jetonlar önce AÇIK değerleriyle tanımlanır, koyu tema aynı
+   jetonları ezer. Panel "kâğıdı" (`--paper-*`) koyu temada da AÇIK kalır;
+   koyuya hazır olduğunu söyleyen panelde (`export const darkReady = true`)
+   kabuk `.km-dark-paper` ekler ve kâğıt da koyulaşır — sabit renk yazmış
+   eski paneller koyu temada okunmaz hâle gelmez. */
 
 :root {
-  --bg: #0a0d14;
-  --ink: #e9eefa;
-  --ink-soft: #8b95ad;
-  --ink-faint: #737f96;
-  --accent: #5b8cff;
-  --accent-soft: rgba(91, 140, 255, 0.16);
-  /* Açık zeminde (panel) odak/vurgu: beyazda 5,2:1 (koyu zemindeki --accent
-     açık zeminde 3:1'in altında kalıyordu). */
+  --bg: #f3f4f7;
+  --ink: #1b2130;
+  --ink-soft: #4b5468;
+  --ink-faint: #5a6376;
+  --accent: #2f5fd0;
+  --accent-soft: rgba(47, 95, 208, 0.14);
+  /* Açık zeminde (panel) odak/vurgu: beyazda 5,2:1. */
   --accent-strong: #2f5fd0;
-  --danger: #ff6b6b;
+  --danger: #c42b1c;
 
   /* kenar çubuğu */
-  --sb-bg: #0b0f18;
-  --sb-line: rgba(255, 255, 255, 0.07);
+  --sb-bg: #eceef3;
+  --sb-line: rgba(15, 23, 42, 0.09);
+  --sb-hover: rgba(15, 23, 42, 0.055);
+  --sb-active: rgba(47, 95, 208, 0.13);
+  --sb-active-ink: #14233f;
+  --sb-field: rgba(255, 255, 255, 0.75);
+  --sb-field-focus: #ffffff;
+  --sb-head-fade: #eceef3;
+  --sb-thumb: rgba(15, 23, 42, 0.18);
 
   /* panel (kâğıt) */
   --paper: #ffffff;
   --paper-ink: #111722;
   --paper-soft: #5f6b7e;   /* 0.5.3: beyazda 5,4:1 (eski #8792a5 3,1:1) */
   --paper-line: #e9ecf2;
+  --paper-tint: #f7f8fb;
+  --paper-field: #f6f8fb;
+  --paper-field-line: #c3cad6;
+  --paper-hover: #eef2f8;
+  --paper-thumb: #c8cfdb;
+  --paper-2: #fbfcfe;
+  --paper-3: #eef1f6;
+  --paper-line-soft: #f2f4f8;
+  --paper-line-strong: #cfd6e2;
+  --paper-bad-tint: #fff5f5;
+  --paper-accent: #2f5fd0;
+
+  /* açılır katmanlar (bağlam menüsü, liste, pencere, bildirim) */
+  --pop-bg: #ffffff;
+  --pop-ink: #111722;
+  --pop-soft: #5f6b7e;
+  --pop-line: rgba(15, 23, 42, 0.12);
+  --pop-hover: #e8eefc;
+  --pop-shadow: 0 16px 40px -14px rgba(15, 23, 42, 0.38), 0 2px 6px rgba(15, 23, 42, 0.08);
+
+  /* giriş */
+  --login-card: rgba(255, 255, 255, 0.78);
+  --login-line: rgba(15, 23, 42, 0.08);
+  --aurora-a: rgba(47, 95, 208, 0.13);
+  --aurora-b: rgba(126, 87, 255, 0.09);
+  --mark-ring: rgba(15, 23, 42, 0.12);
+  --slot-line: rgba(15, 23, 42, 0.22);
+
+  /* platform: yazı tipi, ölçü, hareket */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+    "Segoe UI Variable", "Segoe UI", system-ui, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+  --ctl-h: 32px;
+  --ctl-radius: 7px;
+  --nav-pad-y: 7px;
+  --motion: 120ms;
+
+  color-scheme: light;
 }
+
+:root[data-theme="dark"] {
+  --bg: #0a0d14;
+  --ink: #e9eefa;
+  --ink-soft: #8b95ad;
+  --ink-faint: #737f96;
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.16);
+  --danger: #ff6b6b;
+
+  --sb-bg: #0b0f18;
+  --sb-line: rgba(255, 255, 255, 0.07);
+  --sb-hover: rgba(255, 255, 255, 0.05);
+  --sb-active: rgba(91, 140, 255, 0.13);
+  --sb-active-ink: #ffffff;
+  --sb-field: rgba(255, 255, 255, 0.045);
+  --sb-field-focus: rgba(91, 140, 255, 0.07);
+  --sb-head-fade: #0b0f18;
+  --sb-thumb: rgba(255, 255, 255, 0.16);
+
+  --pop-bg: #1b2030;
+  --pop-ink: #e9eefa;
+  --pop-soft: #9aa5bd;
+  --pop-line: rgba(255, 255, 255, 0.1);
+  --pop-hover: rgba(91, 140, 255, 0.2);
+  --pop-shadow: 0 18px 44px -12px rgba(0, 0, 0, 0.7);
+
+  --login-card: rgba(255, 255, 255, 0.045);
+  --login-line: rgba(255, 255, 255, 0.09);
+  --aurora-a: rgba(91, 140, 255, 0.2);
+  --aurora-b: rgba(126, 87, 255, 0.16);
+  --mark-ring: rgba(255, 255, 255, 0.1);
+  --slot-line: rgba(255, 255, 255, 0.18);
+
+  color-scheme: dark;
+}
+
+/* Koyuya hazır panelin kâğıdı (`darkReady`). */
+:root[data-theme="dark"] .panel.km-dark-paper {
+  --paper: #141822;
+  --paper-ink: #e6eaf3;
+  --paper-soft: #9ca6ba;
+  --paper-line: #262d3b;
+  --paper-tint: #1a1f2b;
+  --paper-field: #1a1f2b;
+  --paper-field-line: #343c4d;
+  --paper-hover: #202738;
+  --paper-thumb: #3a4356;
+  --paper-2: #181d28;
+  --paper-3: #222937;
+  --paper-line-soft: #1f2532;
+  --paper-line-strong: #3a4357;
+  --paper-bad-tint: #2a1618;
+  --paper-accent: #7aa2ff;
+  color-scheme: dark;
+}
+
+/* Platforma göre ölçü ve yoğunluk. Windows (Fluent) köşeleri daha küçük,
+   macOS denetimleri biraz daha alçak. Sıkı yoğunluk her ikisinde de bir kat. */
+:root[data-platform="win"] { --ctl-radius: 4px; }
+:root[data-platform="mac"] { --ctl-h: 30px; --ctl-radius: 6px; }
+:root[data-density="compact"] { --ctl-h: 27px; --nav-pad-y: 4px; }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -31,16 +144,23 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--ink);
-  font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell, sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+  /* Lastik bant kaydırma yok: pencere bir web sayfası gibi esnemez. */
+  overscroll-behavior: none;
 }
 
-/* Masaüstü kabuğu: metin seçimi ve sağ tık menüsü yok — tarayıcı değil. */
+/* Masaüstü kabuğu: metin seçimi yalnız İÇERİKTE (aşağıda), menü/başlık/düğme
+   seçilmez — tarayıcı değil. */
 body {
   user-select: none;
   -webkit-user-select: none;
   overflow: hidden;
+  cursor: default;
 }
+
+/* Bağlantı ve görsel sürüklenmez (native.js da `dragstart`ı keser). */
+a, img { -webkit-user-drag: none; }
 
 kbd {
   font: inherit;
@@ -48,7 +168,7 @@ kbd {
   padding: 1px 5px;
   border-radius: 5px;
   border: 1px solid var(--sb-line);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--sb-hover);
   color: var(--ink-soft);
 }
 
@@ -67,7 +187,7 @@ kbd {
   display: grid;
   place-items: center;
   padding: 32px;
-  transition: opacity 380ms ease;
+  transition: opacity 150ms ease;
 }
 
 .login[hidden] { display: none; }
@@ -77,8 +197,8 @@ kbd {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(760px 520px at 22% 18%, rgba(91, 140, 255, 0.20), transparent 62%),
-    radial-gradient(680px 480px at 82% 82%, rgba(126, 87, 255, 0.16), transparent 60%);
+    radial-gradient(760px 520px at 22% 18%, var(--aurora-a), transparent 62%),
+    radial-gradient(680px 480px at 82% 82%, var(--aurora-b), transparent 60%);
   pointer-events: none;
 }
 
@@ -88,15 +208,15 @@ kbd {
   padding: 44px 38px 34px;
   text-align: center;
   border-radius: 26px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--login-line);
+  background: var(--login-card);
   backdrop-filter: blur(26px) saturate(140%);
-  box-shadow: 0 40px 80px -32px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  animation: rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  box-shadow: 0 40px 80px -32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: rise 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(16px) scale(0.99); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: none; }
 }
 
@@ -116,8 +236,8 @@ kbd {
 .slot {
   width: 11px; height: 11px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
-  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), background-color 160ms, border-color 160ms, box-shadow 160ms;
+  border: 1.5px solid var(--slot-line);
+  transition: transform 120ms cubic-bezier(0.22, 1, 0.36, 1), background-color 120ms, border-color 120ms, box-shadow 120ms;
 }
 
 .slot.filled {
@@ -129,7 +249,7 @@ kbd {
 
 .slot.extra { border-style: dashed; }
 
-.slots.shake { animation: shake 400ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+.slots.shake { animation: shake 300ms cubic-bezier(0.36, 0.07, 0.19, 0.97); }
 
 @keyframes shake {
   10%, 90% { transform: translateX(-2px); }
@@ -144,7 +264,7 @@ kbd {
   font-size: 12.5px;
   color: var(--danger);
   opacity: 0;
-  transition: opacity 160ms;
+  transition: opacity 120ms;
 }
 
 .error.show { opacity: 1; }
@@ -172,6 +292,10 @@ kbd {
 
 .workspace[hidden] { display: none; }
 
+/* Görünüm → Kenar çubuğunu gizle (Ctrl/⌘+\). */
+.km-sidebar-hidden .workspace { grid-template-columns: 0 1fr; }
+.km-sidebar-hidden .sidebar { visibility: hidden; overflow: hidden; border: 0; }
+
 /* ------------------------------------------------------------ kenar çubuğu */
 
 .sidebar {
@@ -192,9 +316,15 @@ kbd {
   letter-spacing: -0.01em;
 }
 
+/* macOS bütünleşik başlık çubuğu: trafik ışıkları kenar çubuğunun üstünde
+   durur; marka satırı onların altına iner ve satır pencereyi sürükler. */
+:root[data-titlebar="overlay"] .sidebar-brand { padding-top: 44px; }
+:root[data-titlebar="overlay"] .panel-head { padding-top: 10px; }
+:root[data-titlebar="overlay"].km-sidebar-hidden .panel-head { padding-left: 86px; }
+
 .mark { width: 46px; height: 46px; fill: none; stroke-linecap: round; }
 .mark-sm { width: 22px; height: 22px; }
-.mark-ring { stroke: rgba(255, 255, 255, 0.10); stroke-width: 2; }
+.mark-ring { stroke: var(--mark-ring); stroke-width: 2; }
 
 .mark-arc {
   stroke: var(--accent);
@@ -232,7 +362,7 @@ kbd {
   padding: 0 10px 0 32px;
   border-radius: 10px;
   border: 1px solid var(--sb-line);
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--sb-field);
   color: var(--ink);
   font: inherit;
   font-size: 13px;
@@ -241,7 +371,7 @@ kbd {
 }
 
 #filter::placeholder { color: var(--ink-faint); }
-#filter:focus { outline: none; border-color: rgba(91, 140, 255, 0.55); background: rgba(91, 140, 255, 0.07); }
+#filter:focus { outline: none; border-color: var(--accent); background: var(--sb-field-focus); }
 #filter::-webkit-search-cancel-button { display: none; }
 
 /* menü */
@@ -253,11 +383,8 @@ kbd {
   overscroll-behavior: contain;
   padding: 0 10px 16px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.13) transparent;
+  scrollbar-color: var(--sb-thumb) transparent;
 }
-
-.nav::-webkit-scrollbar { width: 8px; }
-.nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
 
 .nav-group {
   position: sticky;
@@ -269,7 +396,7 @@ kbd {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-faint);
-  background: linear-gradient(var(--sb-bg) 72%, transparent);
+  background: linear-gradient(var(--sb-head-fade) 72%, transparent);
 }
 
 .nav-item {
@@ -278,16 +405,15 @@ kbd {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--nav-pad-y) 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
   font-size: 13.5px;
   text-align: left;
-  cursor: pointer;
-  transition: background-color 130ms, color 130ms;
+  transition: background-color var(--motion), color var(--motion);
 }
 
 .nav-item svg {
@@ -307,11 +433,11 @@ kbd {
   white-space: nowrap;
 }
 
-.nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
+.nav-item:hover { background: var(--sb-hover); color: var(--ink); }
 
 .nav-item.active {
-  background: rgba(91, 140, 255, 0.13);
-  color: #fff;
+  background: var(--sb-active);
+  color: var(--sb-active-ink);
 }
 
 .nav-item.active svg { opacity: 1; stroke: var(--accent); }
@@ -337,7 +463,7 @@ kbd {
 .sidebar-foot {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   padding: 11px 18px 14px;
   border-top: 1px solid var(--sb-line);
   font-size: 11px;
@@ -364,14 +490,13 @@ kbd {
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  cursor: pointer;
-  transition: color 120ms, border-color 120ms, background 120ms;
+  transition: color var(--motion), border-color var(--motion), background var(--motion);
 }
 
 .sidebar-signout:hover {
   color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--slot-line);
+  background: var(--sb-hover);
 }
 
 .sidebar-signout:focus-visible {
@@ -382,6 +507,7 @@ kbd {
 /* ------------------------------------------------------------------ panel */
 
 .panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -409,8 +535,44 @@ kbd {
 
 .panel-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 
-/* Gövde bilinçli olarak boş. */
-.panel-body { flex: 1; min-height: 0; overflow: auto; }
+/* Gövde bilinçli olarak boş. METİN SEÇİMİ YALNIZ BURADA: kayıtlar, adlar,
+   telefonlar kopyalanabilir; düğme, sekme, başlık seçilmez. */
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.panel-body :where(button, [role="button"], [role="tab"], [role="switch"], [role="columnheader"],
+  [role="menuitem"], [role="option"], label, summary, select, svg, img, .kit-btn, .kit-head,
+  .kit-tab, .kit-chip, .kit-pager) {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* "Yeni veriler var · Yenile" — arkadaki tazeleme değişiklik bulduğunda,
+   kullanıcı ekrana dokunmuşsa (yazdığı silinmesin diye) çıkan düğme. */
+.km-stale {
+  align-self: center;
+  margin-left: 6px;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-strong) 8%, var(--paper));
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* İSKELET YALNIZ 150 ms'DEN UZUN YÜKLEMEDE: ekran açıldıktan sonraki ilk
+   150 ms iskelet/yükleniyor öğeleri gizlidir (`app.js` → `km-fresh`). Veri o
+   arada gelirse iskelet hiç görünmez. Bütün panellerin iskeletini kapsar
+   (`kit-skel`, panellerin kendi `*-skel*` sınıfları, `aria-busy`). */
+.panel-body.km-fresh :is([class*="skel"], [aria-busy="true"]) { visibility: hidden; }
 
 /* ---------------------------------------------------------------- hareket */
 
@@ -424,9 +586,9 @@ kbd {
 
 /* ------------------------------------------------------- kaydırma çubukları
 
-   WebKitGTK'da varsayılan çubuk çok ince ve zeminle aynı tonda; içerik kayar
-   ama kullanıcı kayacağını GÖRMEZ. Kabuk hem koyu hem açık yüzey için
-   görünür bir çubuk tanımlar; modül panelleri de bunu miras alır. */
+   Platform gibi: macOS'ta ince, yuvarlak, izsiz; Windows'ta Fluent'in ince
+   çubuğu. WebKitGTK'da varsayılan çubuk zeminle aynı tonda kalıyordu; kabuk
+   her yüzey için görünür bir çubuk tanımlar, modül panelleri de miras alır. */
 
 .panel ::-webkit-scrollbar,
 .panel-body::-webkit-scrollbar {
@@ -439,7 +601,7 @@ kbd {
 
 .panel ::-webkit-scrollbar-thumb,
 .panel-body::-webkit-scrollbar-thumb {
-  background: #c8cfdb;
+  background: var(--paper-thumb);
   border: 3px solid var(--paper);
   border-radius: 999px;
 }
@@ -447,16 +609,22 @@ kbd {
 .panel ::-webkit-scrollbar-thumb:hover,
 .panel-body::-webkit-scrollbar-thumb:hover { background: #aab4c4; }
 
-.panel *, .panel-body { scrollbar-width: thin; scrollbar-color: #c8cfdb transparent; }
+.panel ::-webkit-scrollbar-corner { background: transparent; }
+
+.panel *, .panel-body { scrollbar-width: thin; scrollbar-color: var(--paper-thumb) transparent; }
+
+:root[data-platform="mac"] .panel ::-webkit-scrollbar,
+:root[data-platform="mac"] .panel-body::-webkit-scrollbar { width: 10px; height: 10px; }
+:root[data-platform="win"] .panel ::-webkit-scrollbar-thumb,
+:root[data-platform="win"] .panel-body::-webkit-scrollbar-thumb { border-width: 4px; border-radius: 4px; }
 
 .sidebar ::-webkit-scrollbar { width: 10px; }
 .sidebar ::-webkit-scrollbar-track { background: transparent; }
 .sidebar ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--sb-thumb);
   border: 3px solid var(--sb-bg);
   border-radius: 999px;
 }
-.sidebar ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); }
 
 /* ── iki seviyeli menü: bölüm başlıkları ve girintili satırlar ─────────────
    Elli bir ekran düz çizildiğinde şerit ~1800px oluyordu ve kenar çubuğu
@@ -468,21 +636,20 @@ kbd {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 10px 7px 8px;
+  padding: var(--nav-pad-y) 10px var(--nav-pad-y) 8px;
   margin-top: 2px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
   text-align: left;
-  cursor: pointer;
-  transition: background-color 130ms, color 130ms;
+  transition: background-color var(--motion), color var(--motion);
 }
 
-.nav-section:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
+.nav-section:hover { background: var(--sb-hover); color: var(--ink); }
 .nav-section:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Ok YÖN DEĞİŞTİRİR, kaybolmaz: kapalı bölümün açılabildiği görünmeli. */
@@ -495,7 +662,7 @@ kbd {
   border-bottom: 4px solid transparent;
   border-left: 5px solid currentColor;
   opacity: 0.55;
-  transition: transform 130ms;
+  transition: transform var(--motion);
 }
 
 .nav-section.open .nav-caret { transform: rotate(90deg) translateX(-1px); }
@@ -507,7 +674,7 @@ kbd {
   margin-left: auto;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--sb-hover);
   color: var(--ink-faint);
   font-size: 10.5px;
   font-weight: 600;
@@ -535,11 +702,11 @@ kbd {
 
 #gsearch-input {
   width: 100%;
-  min-height: 36px;
-  padding: 6px 34px 6px 12px;
-  border-radius: 10px;
-  border: 1px solid #c3cad6;
-  background: #f6f8fb;
+  min-height: 34px;
+  padding: 6px 54px 6px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--paper-field-line);
+  background: var(--paper-field);
   color: var(--paper-ink);
   font: inherit;
   font-size: 13.5px;
@@ -548,7 +715,7 @@ kbd {
 }
 
 #gsearch-input::placeholder { color: var(--paper-soft); }
-#gsearch-input:focus { border-color: var(--accent-strong); background: #fff; }
+#gsearch-input:focus { border-color: var(--accent-strong); background: var(--paper); }
 #gsearch-input::-webkit-search-cancel-button { display: none; }
 #gsearch-input:disabled { opacity: 0.6; }
 
@@ -557,10 +724,11 @@ kbd {
   right: 9px;
   top: 50%;
   transform: translateY(-50%);
-  border-color: #c3cad6;
-  background: #fff;
+  border-color: var(--paper-field-line);
+  background: var(--paper);
   color: var(--paper-soft);
   pointer-events: none;
+  white-space: nowrap;
 }
 
 .gsearch-pop {
@@ -573,8 +741,8 @@ kbd {
   overflow: auto;
   padding: 6px;
   border-radius: 12px;
-  border: 1px solid #c3cad6;
-  background: #fff;
+  border: 1px solid var(--paper-field-line);
+  background: var(--paper);
   box-shadow: 0 18px 40px -18px rgba(15, 23, 42, 0.45);
 }
 
@@ -599,10 +767,9 @@ kbd {
   min-height: 40px;
   padding: 7px 10px;
   border-radius: 8px;
-  cursor: pointer;
 }
 
-.gsearch-opt:hover { background: #eef2f8; }
+.gsearch-opt:hover { background: var(--paper-hover); }
 .gsearch-opt.on { background: #e3ebff; outline: 2px solid var(--accent-strong); outline-offset: -2px; }
 .gsearch-title { font-size: 13.5px; font-weight: 600; color: var(--paper-ink); }
 .gsearch-detail { grid-column: 1; font-size: 12px; color: var(--paper-soft); }
@@ -611,7 +778,7 @@ kbd {
   grid-row: 1 / span 2;
   padding: 2px 8px;
   border-radius: 999px;
-  background: #eef2f8;
+  background: var(--paper-hover);
   color: #3b4558;
   font-size: 11.5px;
 }
@@ -623,7 +790,11 @@ kbd {
 
    WCAG 2.2 AA: görünür odak (2.4.7, 2.4.11), atlama bağlantısı (2.4.1),
    dokunma hedefi ≥ 24 px (2.5.8). Kabuk kuralı modül panellerini de kapsar:
-   hiçbir panel odağı görünmez bırakamaz. */
+   hiçbir panel odağı görünmez bırakamaz.
+
+   ODAK HALKASI YALNIZ KLAVYEYLE (`:focus-visible`): fareyle tıklanan düğme
+   halka almaz — yerel uygulamalar gibi. Yazı alanları her odakta işaretlenir
+   (kenarlık rengi), çünkü imlecin nerede olduğu her zaman görünmeli. */
 
 .skip-link {
   position: absolute;
@@ -651,6 +822,453 @@ kbd {
 /* Programla odak alan KAPSAYICILAR (diyalog, çekmece, panel gövdesi —
    tabindex="-1", klavyeyle Sekme sırasına girmez) çizgi almaz: odak
    göstergesi içindeki denetimlerdedir; kabın tamamını çerçevelemek gürültüdür. */
-:where(.kit-drawer, .kit-dialog, .panel-body)[tabindex="-1"]:focus-visible { outline: none; }
+:where(.kit-drawer, .kit-dialog, .panel-body, .km-modal)[tabindex="-1"]:focus-visible { outline: none; }
 
 .panel :where(button, select, input:not([type="checkbox"]):not([type="radio"])) { min-height: 24px; }
+
+/* ======================================================= İMLEÇ (ADR 0032)
+
+   Masaüstü uygulamasında düğme, sekme, satır ve bağlantı OK İMLECİ taşır;
+   "el" imleci web sayfasının işaretidir. Paneller kendi CSS'inde
+   `cursor: pointer` yazmış olabilir — kabuk kuralı bu yüzden `!important`tır
+   (tek istisna: yazı alanları ve sürükleme tutamakları kendi imlecini korur). */
+:root :is(button, a, [role="button"], [role="tab"], [role="option"], [role="menuitem"], [role="switch"],
+  [role="radio"], [role="checkbox"], [role="row"], [role="columnheader"], summary, select, label,
+  input[type="checkbox"], input[type="radio"], input[type="button"], input[type="submit"],
+  input[type="file"], input[type="range"], input[type="color"], .kit-btn, .kit-chip, .kit-tab, .kit-row,
+  .gsearch-opt, .kit-lb-opt) {
+  cursor: default !important;
+}
+
+/* =================================================== NATİVE HİS (ADR 0032) */
+
+/* --------------------------------------------------- bağlantı şeridi */
+
+.km-conn {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 28px;
+  padding: 4px 16px;
+  background: #8a4b00;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.km-conn[hidden] { display: none; }
+.km-conn.ok { background: #136c34; }
+
+.km-conn-btn {
+  padding: 1px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.km-conn-btn[hidden] { display: none; }
+.km-conn-btn:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* Şerit görünürken içerik onun altından başlar (üstünü örtmez). */
+:root.km-banner body { padding-top: 28px; }
+
+/* --------------------------------------------------- pencereler */
+
+.km-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(10, 13, 20, 0.38);
+  animation: km-fade 120ms ease-out both;
+}
+
+.km-modal {
+  width: min(480px, 100%);
+  max-height: min(84vh, 720px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid var(--pop-line);
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  box-shadow: var(--pop-shadow);
+  font-size: 13px;
+  animation: km-pop 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.km-modal.wide { width: min(640px, 100%); }
+.km-modal:not(:has(.km-modal-head)) { padding: 20px 22px; }
+.km-modal > h2 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.km-modal > p { color: var(--pop-soft); line-height: 1.55; }
+
+.km-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px 20px;
+  border-bottom: 1px solid var(--pop-line);
+}
+
+.km-modal-head h2 { flex: 1; font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
+
+.km-modal-x {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pop-soft);
+  font: inherit;
+  font-size: 13px;
+}
+
+.km-modal-x:hover { background: var(--pop-hover); color: var(--pop-ink); }
+
+.km-modal-body {
+  overflow: auto;
+  padding: 8px 20px 18px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.km-modal-body p { margin: 6px 0; line-height: 1.55; }
+
+.km-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.km-btn {
+  min-height: var(--ctl-h);
+  padding: 0 14px;
+  border: 1px solid var(--pop-line);
+  border-radius: var(--ctl-radius);
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.km-btn:hover { background: var(--pop-hover); }
+.km-btn-primary { background: var(--accent-strong); border-color: transparent; color: #fff; }
+.km-btn-primary:hover { background: #2852b8; }
+.km-btn[disabled] { opacity: 0.55; }
+
+@keyframes km-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes km-pop {
+  from { opacity: 0; transform: translateY(4px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Tercihler */
+
+.km-pref {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--pop-line);
+}
+
+.km-pref:last-child { border-bottom: 0; }
+.km-pref-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.km-pref-name { font-weight: 600; }
+.km-pref-hint { font-size: 11.5px; color: var(--pop-soft); line-height: 1.45; }
+
+.km-seg {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: calc(var(--ctl-radius) + 2px);
+  background: color-mix(in srgb, var(--pop-ink) 7%, transparent);
+}
+
+.km-seg-btn {
+  min-height: calc(var(--ctl-h) - 6px);
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--ctl-radius);
+  background: transparent;
+  color: var(--pop-soft);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.km-seg-btn[aria-checked="true"] {
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
+}
+
+.km-switch {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pop-ink) 22%, transparent);
+  transition: background-color var(--motion);
+}
+
+.km-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform var(--motion);
+}
+
+.km-switch[aria-checked="true"] { background: var(--accent-strong); }
+.km-switch[aria-checked="true"]::after { transform: translateX(16px); }
+
+/* Kısayol ve ölçüm tabloları */
+
+.km-keys { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.km-keys td { padding: 7px 4px; border-bottom: 1px solid var(--pop-line); vertical-align: top; }
+.km-keys td:first-child { width: 34%; white-space: nowrap; }
+.km-keys kbd { border-color: var(--pop-line); background: transparent; color: var(--pop-ink); }
+
+.km-perf { display: grid; grid-template-columns: 1fr auto; gap: 6px 18px; margin: 12px 0; }
+.km-perf dt { color: var(--pop-soft); }
+.km-perf dd { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+
+/* --------------------------------------------------- bağlam menüsü (tarayıcıda) */
+
+.km-ctx {
+  position: fixed;
+  z-index: 220;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--pop-line);
+  border-radius: 8px;
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  box-shadow: var(--pop-shadow);
+  font-size: 12.5px;
+}
+
+.km-ctx-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.km-ctx-item:hover:not([disabled]), .km-ctx-item:focus-visible { background: var(--accent-strong); color: #fff; outline: none; }
+.km-ctx-item[disabled] { opacity: 0.45; }
+.km-ctx-item kbd { border: 0; background: transparent; color: inherit; opacity: 0.7; padding: 0; }
+.km-ctx-sep { height: 1px; margin: 4px 6px; background: var(--pop-line); }
+
+/* --------------------------------------------------- sayfada bul */
+
+.km-find {
+  position: absolute;
+  top: 62px;
+  right: 22px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px 5px 8px;
+  border: 1px solid var(--pop-line);
+  border-radius: 9px;
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  box-shadow: var(--pop-shadow);
+  animation: km-pop 120ms ease-out both;
+}
+
+.km-find[hidden] { display: none; }
+
+.km-find-input {
+  width: 220px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--pop-line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.km-find-input:focus { outline: none; border-color: var(--accent-strong); }
+.km-find.none .km-find-input { border-color: var(--danger); }
+.km-find-count { min-width: 64px; font-size: 11.5px; color: var(--pop-soft); text-align: center; font-variant-numeric: tabular-nums; }
+
+.km-find-btn {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pop-soft);
+  font: inherit;
+  font-size: 12px;
+}
+
+.km-find-btn:hover { background: var(--pop-hover); color: var(--pop-ink); }
+
+::highlight(km-find) { background-color: rgba(255, 213, 79, 0.55); color: inherit; }
+::highlight(km-find-now) { background-color: #ff9632; color: #111; }
+
+/* --------------------------------------------------- kabuk bildirimi ve güncelleme */
+
+.km-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 190;
+  max-width: min(620px, 80vw);
+  padding: 9px 16px;
+  border-radius: 9px;
+  background: #1b2030;
+  color: #f4f7ff;
+  font-size: 12.5px;
+  box-shadow: 0 16px 36px -14px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  pointer-events: none;
+  transition: opacity 140ms, transform 140ms;
+}
+
+.km-toast.show { opacity: 1; transform: translate(-50%, 0); }
+.km-toast.bad { background: #7f1d1d; }
+.km-toast.ok { background: #14532d; }
+
+.km-update {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 170;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, 90vw);
+  padding: 10px 12px 10px 16px;
+  border: 1px solid var(--pop-line);
+  border-radius: 11px;
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  box-shadow: var(--pop-shadow);
+  font-size: 12.5px;
+  animation: km-pop 140ms ease-out both;
+}
+
+.km-update span { flex: 1; min-width: 0; }
+
+/* --------------------------------------------------- Windows 11 Mica */
+
+:root.km-mica,
+:root.km-mica body,
+:root.km-mica .login { background: transparent; }
+:root.km-mica .sidebar { background: color-mix(in srgb, var(--sb-bg) 55%, transparent); }
+:root.km-mica .nav-group { background: transparent; }
+
+/* --------------------------------------------------- açılır liste (ui-kit/select.js)
+
+   Bütün tekli `<select>`ların açılan listesi: belge gövdesine eklenir (kabuk
+   katmanı), bu yüzden kitin panel jetonlarını değil kabuğun `--pop-*`
+   jetonlarını kullanır. */
+
+.kit-lb {
+  position: fixed;
+  z-index: 230;
+  display: flex;
+  flex-direction: column;
+  max-width: min(520px, 90vw);
+  padding: 4px;
+  border: 1px solid var(--pop-line);
+  border-radius: 8px;
+  background: var(--pop-bg);
+  color: var(--pop-ink);
+  box-shadow: var(--pop-shadow);
+  font-size: 12.5px;
+  animation: km-fade 90ms ease-out both;
+}
+
+.kit-lb-search {
+  flex: none;
+  height: 28px;
+  margin: 2px 2px 6px;
+  padding: 0 9px;
+  border: 1px solid var(--pop-line);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.kit-lb-search:focus { outline: none; border-color: var(--accent-strong); }
+
+.kit-lb-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  list-style: none;
+  outline: none;
+  overscroll-behavior: contain;
+}
+
+.kit-lb-group {
+  padding: 7px 10px 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--pop-soft);
+}
+
+.kit-lb-opt {
+  position: relative;
+  min-height: 26px;
+  padding: 4px 10px 4px 26px;
+  border-radius: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kit-lb-opt.selected::before {
+  content: "✓";
+  position: absolute;
+  left: 9px;
+  font-weight: 700;
+}
+
+.kit-lb-opt.active { background: var(--accent-strong); color: #fff; }
+.kit-lb-opt[aria-disabled="true"] { opacity: 0.45; }
+.kit-lb-empty { padding: 8px 10px; color: var(--pop-soft); }
+.kit-lb-empty[hidden] { display: none; }

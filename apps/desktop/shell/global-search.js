@@ -225,10 +225,16 @@ export function createGlobalSearch(o) {
   input.disabled = true;
 
   return {
-    focus() {
+    /** Kutuya odaklanır; `text` verilirse onu arar (bağlam menüsü: "… için ara"). */
+    focus(text) {
       if (!enabled) return;
       input.focus();
-      input.select?.();
+      if (typeof text === 'string' && text.trim()) {
+        input.value = text.trim();
+        run(input.value);
+      } else {
+        input.select?.();
+      }
     },
     enable() {
       enabled = true;
