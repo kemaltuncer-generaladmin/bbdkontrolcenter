@@ -860,7 +860,7 @@ export function receiptDrawer(app, paymentId, { openAccount } = {}) {
     if (payment.creditAddedMinor) nodes.push(h('div', 'ak-muted', `Alacağa yazılan: ${money(payment.creditAddedMinor)}`));
     // Makbuz: kurum logolu belge (önizle / yazdır); Akademi'nin kendi PDF'i
     // varsa o da aynı önizleme penceresinde açılır ve bu cihazdan basılır.
-    const tools = [financeToolbar(app, { title: 'Tahsilat makbuzu',
+    const tools = [financeToolbar(app, { title: 'Tahsilat makbuzu', label: 'Makbuz',
       build: async () => receiptDoc(receipt) })];
     if (receipt.pdfUrl) {
       tools.push(button('Akademi PDF', { title: 'Akademi\'nin ürettiği makbuz PDF\'ini önizler.',
@@ -901,7 +901,7 @@ function statementDrawer(app, studentId, name) {
       if (url) previewAkademiPdf(app, { kind: 'finance_statement', url, name: `${name || ''} ${state.from} ${state.to}`, opener });
     } });
   // Kurum logolu ekstre (ekrandaki dönem).
-  const branded = financeToolbar(app, { title: 'Hesap ekstresi',
+  const branded = financeToolbar(app, { title: 'Hesap ekstresi', label: 'Ekstre',
     build: async () => {
       const [detail, statement] = await Promise.all([app.api.get(`/v1/admin/students/${studentId}`),
         app.api.get(`/v1/admin/finance/accounts/${studentId}/statement`, { from: state.from, to: state.to })]);

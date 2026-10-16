@@ -30,7 +30,7 @@ import {
 } from './common.js';
 import { goalDialog } from './coaching-students.js';
 import { EXAM_TYPES } from './exams-shared.js';
-import { documentButtons } from './documents.js';
+import { documentButtons, financeToolbar } from './documents.js';
 import { studentCurriculumSet } from './curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';
 import { canteenDoc, homeworkTally, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
@@ -345,7 +345,8 @@ function studentDocuments(ctx, data) {
         await app.api.all(`/v1/students/${id}/homework`, {}, { limit: 100, max: 1000 })) }));
   }
   if (app.can('students_listCanteenTransactions') && app.enabled('canteen')) {
-    items.push(documentButtons(app, { title: 'Kantin hesap dökümü', label: 'Kantin dökümü',
+    // Finansal belgeler tek tip araç çubuğuyla: önizle · yazdır · PDF kaydet (63-finans-pdf).
+    items.push(financeToolbar(app, { title: 'Kantin hesap dökümü', label: 'Kantin dökümü',
       build: async () => {
         const from = addDays(today, -30);
         const [summary, rows] = await Promise.all([app.api.get(`/v1/students/${id}/canteen`),
@@ -354,7 +355,7 @@ function studentDocuments(ctx, data) {
       } }));
   }
   if (app.can('admin_getFinanceStatement') && app.enabled('finance')) {
-    items.push(documentButtons(app, { title: 'Kurum cari hesap ekstresi', label: 'Hesap ekstresi',
+    items.push(financeToolbar(app, { title: 'Kurum cari hesap ekstresi', label: 'Hesap ekstresi',
       build: async () => {
         const from = `${year}-09-01`;
         return statementDoc(student, await app.api.get(`/v1/admin/finance/accounts/${id}/statement`,

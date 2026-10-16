@@ -518,14 +518,17 @@ export function closePdfViewer() {
  * @param {string} [spec.title] — ekran okuyucu ve ipuçları için rapor adı
  * @param {string} [spec.orientation] — varsayılan yön ('portrait' | 'landscape')
  * @param {() => string} [spec.blocked] — doluysa düğmeler kapalı ve sebep ipucunda
+ * @param {string} [spec.label] — bir satırda birden çok belge varsa "Önizle" düğmesinin
+ *   önüne yazılan kısa ad ("Hesap ekstresi · önizle")
  */
 export function reportToolbar({ root, api, toast, produce, morePages = null, title = 'Rapor',
-  orientation = 'portrait', blocked = null }) {
+  orientation = 'portrait', blocked = null, label = '' }) {
   styles();
   const node = h('span', 'kit-rv-toolbar');
   node.setAttribute('role', 'group');
   node.setAttribute('aria-label', `${title} — PDF`);
-  const previewBtn = button('Önizle', { title: `${title}: PDF önizlemesi (sayfalar, yakınlaştırma).` });
+  const previewBtn = button(label ? `${label} · önizle` : 'Önizle',
+    { title: `${title}: PDF önizlemesi (sayfalar, yakınlaştırma).` });
   const printBtn = button('Yazdır', { title: `${title}: yazıcı, kopya, sayfa aralığı ve yön seçilir.` });
   const saveBtn = button('PDF kaydet', { title: `${title}: PDF dosyasını bu cihaza kaydeder.` });
   previewBtn.setAttribute('aria-label', `${title} — önizle`);

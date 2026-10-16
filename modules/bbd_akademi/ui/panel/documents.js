@@ -229,9 +229,10 @@ export function documentButtons(app, { build, title = 'Belge', label = '', disab
  * yazdırma penceresinden gelir ve modele yazılır.
  *
  * @param {object} app
- * @param {{build: Function, title?: string, orientation?: string, blocked?: () => string}} spec
+ * @param {{build: Function, title?: string, label?: string, orientation?: string, blocked?: () => string}} spec
  */
-export function financeToolbar(app, { build, title = 'Rapor', orientation = 'portrait', blocked = null } = {}) {
+export function financeToolbar(app, { build, title = 'Rapor', label = '', orientation = 'portrait',
+  blocked = null } = {}) {
   const produce = async ({ preview, orientation: chosen }) => {
     const model = await build(() => {}, { cancelled: false });
     if (!model?.document) return { ok: false, error: `${title} için yazdırılacak kayıt yok.` };
@@ -243,7 +244,7 @@ export function financeToolbar(app, { build, title = 'Rapor', orientation = 'por
     }
   };
   const bar = reportToolbar({ root: app.root, api: (path, options) => app.coreApi(path, options),
-    toast: app.toast, produce, morePages: morePages(app), title, orientation, blocked });
+    toast: app.toast, produce, morePages: morePages(app), title, label, orientation, blocked });
   return bar.node;
 }
 
