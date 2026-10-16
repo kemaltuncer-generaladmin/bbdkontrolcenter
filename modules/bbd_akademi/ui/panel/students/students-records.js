@@ -22,8 +22,8 @@ import { dateRange } from '../../../ui-kit/datefield.js';
 import { barChart, groupedBar, lineChart } from '../../../ui-kit/charts.js';
 import { timeline } from '../../../ui-kit/flow.js';
 import { AkademiError, openBlob } from '../api.js';
-import { BOOK_STATUS } from '../books.js';
-import { METHODS } from '../finance.js';
+import { BOOK_STATUS } from '../finance/books.js';
+import { METHODS } from '../finance/finance.js';
 import {
   DAY_LABEL, actionButton, empty, exportJob, fmtDate, fmtDateTime, fmtTime, formDialog, kv, loader,
   money, net, num, optionsOf, pagedList, percent, personName, problem, runAction, selectBox,

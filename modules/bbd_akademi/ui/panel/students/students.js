@@ -37,7 +37,7 @@ import {
   attendanceTab, canteenTab, examsTab, financeTab, homeworkTab, requestsTab, studyTab,
 } from './students-records.js';
 import { classesView } from './students-groups.js';
-import { studentBooksPart } from '../book-sales.js';
+import { studentBooksPart } from '../finance/book-sales.js';
 import { locatePart, studentCard } from '../sections.js';
 import { learningPanel } from './students-learning.js';
 import { flashcardsPanel } from './students-flashcards.js';

@@ -5,15 +5,15 @@
 // sipariş yeniden denenir, teslim işaretlenir ve sipariş PDF'i yazdırılır.
 // "Cari hesaba ekle" onayı kurum carisine kalem yazar (kantinle ilgisi yok).
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, card, chipRow } from '../../ui-kit/layout.js';
-import { timeline } from '../../ui-kit/flow.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, card, chipRow } from '../../../ui-kit/layout.js';
+import { timeline } from '../../../ui-kit/flow.js';
 import {
   actionButton, fmtDateTime, formDialog, kv, loader, money, num, openDrawer, pagedList,
   personName, runAction, sectionHead, statusBadge, todayIst,
-} from './common.js';
-import { documentButtons, previewAkademiPdf } from './documents.js';
-import { bookRequestDoc } from './documents-logic.js';
+} from '../common.js';
+import { documentButtons, previewAkademiPdf } from '../documents.js';
+import { bookRequestDoc } from '../documents-logic.js';
 
 export const BOOK_STATUS = {
   requested: ['Veli onayı bekliyor', 'info'],

@@ -18,20 +18,20 @@
 // Öğrencinin kartında (Cari, kantin ve kitap → Kitaplar) öğrencinin aldığı
 // kitaplar `students_listBookPurchases` ile görünür.
 
-import { blockedButton, button, copyText, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { timeline } from '../../ui-kit/flow.js';
-import { documentButtons, previewAkademiPdf } from './documents.js';
-import { bookSaleDoc } from './documents-logic.js';
+import { blockedButton, button, copyText, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { timeline } from '../../../ui-kit/flow.js';
+import { documentButtons, previewAkademiPdf } from '../documents.js';
+import { bookSaleDoc } from '../documents-logic.js';
 import {
   actionButton, dateInput, empty, errorBox, fmtDate, fmtDateTime, formDialog, kv, loader, money, num,
   openDrawer, pagedList, personName, reasonDialog, runAction, searchBox, sectionHead, statusBadge,
   studentPicker, todayIst, toolbar,
-} from './common.js';
-import { removableChip, stack } from './work/homework-content.js';
-import { loadTargets, targetsField } from './resources/resources-common.js';
-import { wizard } from './shared/wizard.js';
+} from '../common.js';
+import { removableChip, stack } from '../work/homework-content.js';
+import { loadTargets, targetsField } from '../resources/resources-common.js';
+import { wizard } from '../shared/wizard.js';
 
 export const LINE_STATUS = {
   awaiting_payment: ['Ödeme bekleniyor', 'warn'],

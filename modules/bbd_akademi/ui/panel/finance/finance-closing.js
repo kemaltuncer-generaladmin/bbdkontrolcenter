@@ -20,18 +20,18 @@
 //     (`admin_getPlanAgreement`, kayıt sözleşmesi eki) — kurum logolu A4.
 // İş kuralı Akademi'dedir; panel niyeti gönderir, önizleme `dryRun` iledir.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { AkademiError } from './api.js';
-import { runDocument } from './documents.js';
-import { paymentPlanDoc, refundReceiptDoc } from './documents-logic.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { AkademiError } from '../api.js';
+import { runDocument } from '../documents.js';
+import { paymentPlanDoc, refundReceiptDoc } from '../documents-logic.js';
 import { monthlyReport } from './finance-reports.js';
 import {
   actionButton, empty, errorBox, exportJob, fmtDate, fmtDateTime, formDialog, loader, money, num,
   optionsOf, personName, pinStepUp, reasonDialog, runAction, statusBadge, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 
 export const STATEMENT_KINDS = { charge: 'Borç', charge_cancelled: 'Borç iptali', payment: 'Tahsilat',
   payment_voided: 'Tahsilat iptali', credit_applied: 'Alacak mahsubu', discount: 'İndirim / burs',

@@ -12,11 +12,11 @@
 //
 // KANTİNDEN AYRI (A12): burada yalnız kurum carisi vardır.
 
-import { financeToolbar } from './documents.js';
+import { financeToolbar } from '../documents.js';
 import {
   financeAccountsDoc, financeMonthlyDoc, financeOverdueDoc, financePaymentsDoc,
-} from './documents-logic.js';
-import { fmtDate } from './common.js';
+} from '../documents-logic.js';
+import { fmtDate } from '../common.js';
 
 //: Tek raporda okunacak en çok kayıt (belge sınırı 40.000 tablo satırı).
 export const MAX_ROWS = 20_000;

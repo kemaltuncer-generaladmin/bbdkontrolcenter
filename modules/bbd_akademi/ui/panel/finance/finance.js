@@ -15,19 +15,19 @@
 // ağ tekrarı ikinci tahsilat açmaz. Tahsilat iptali ayrıca PIN teyidi ister
 // (step-up): PIN Akademi'ye gitmez, KM doğrular.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { AkademiError } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { AkademiError } from '../api.js';
 import {
   actionButton, addDays, empty, errorBox, fmtDate, fmtDateTime, formDialog, kv, loader, money,
   moneyText, num, openDrawer, optionsOf, pagedList, parseMoney, personName, pinStepUp,
   reasonDialog, runAction, searchBox, sectionHead, selectBox, statusBadge, studentPicker,
   todayIst, toolbar,
-} from './common.js';
-import { financeToolbar, previewAkademiPdf } from './documents.js';
-import { receiptDoc, statementDoc } from './documents-logic.js';
+} from '../common.js';
+import { financeToolbar, previewAkademiPdf } from '../documents.js';
+import { receiptDoc, statementDoc } from '../documents-logic.js';
 import { accountsReport, overdueReport, paymentsReport } from './finance-reports.js';
 import {
   STATEMENT_KINDS, applyPlanDiscount, closingCards, closingNote, discountBody, discountFields, discountLine,

@@ -146,14 +146,14 @@ export const SECTIONS = [
   // 16.10.2026: İletişim grubuna taşındı (Koçluk 10 hap sınırı — hata defteri gelen kutusu koçun önünde).
   { key: 'messages', label: 'Mesajlar', file: './comms/messages.js', requires: ['settings'], area: 'comms',
     feature: 'coaching' },
-  { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'], area: 'money',
+  { key: 'finance', label: 'Kurum finansı', file: './finance/finance.js', requires: ['finance'], area: 'money',
     feature: 'finance' },
-  { key: 'canteen', label: 'Kantin', file: './canteen.js', requires: ['view'], area: 'money',
+  { key: 'canteen', label: 'Kantin', file: './finance/canteen.js', requires: ['view'], area: 'money',
     feature: 'canteen' },
   // Kitap satışı (0.5.4, F-A27): yönetici öğrencilere kurumdan kitap satar (üç adım).
-  { key: 'bookSales', label: 'Kitap satışı', file: './book-sales.js', requires: ['view'], area: 'money',
+  { key: 'bookSales', label: 'Kitap satışı', file: './finance/book-sales.js', requires: ['view'], area: 'money',
     feature: 'books' },
-  { key: 'books', label: 'Kitap talepleri', file: './books.js', requires: ['view'], area: 'money',
+  { key: 'books', label: 'Kitap talepleri', file: './finance/books.js', requires: ['view'], area: 'money',
     feature: 'books' },
   // Rapor merkezi: dağınık raporların (yoklama, ders dökümü, finans, deneme, okuma…) tek giriş kapısı.
   { key: 'reportHub', label: 'Rapor merkezi', file: './reports.js', requires: ['view'], area: 'reports' },

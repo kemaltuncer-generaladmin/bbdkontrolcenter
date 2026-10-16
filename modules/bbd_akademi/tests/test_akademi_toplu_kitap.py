@@ -139,7 +139,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     createdBy: { id: 'u1', displayName: 'KM' }, counts: { awaitingPayment: 0, processing: 31, ordered: 0,
       orderFailed: 0, delivered: 0, cancelled: 0 }, lines: [] });
   const { app, root, toasts } = await makeApp(load, document);
-  const { sellWizard } = await load('./panels/bbd_akademi/book-sales.js');
+  const { sellWizard } = await load('./panels/bbd_akademi/finance/book-sales.js');
   const done = sellWizard(app);
   await sleep(30);
   const dialog = () => root.querySelector('.ak-wiz');
