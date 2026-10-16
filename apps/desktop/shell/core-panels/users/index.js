@@ -71,6 +71,9 @@ const FIELD_LABELS = {
   roles: 'Roller',
 };
 
+/** Koyu temada kâğıt da koyulaşır: ekran yalnız kitin jetonlarını kullanır (ADR 0032). */
+export const darkReady = true;
+
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
 

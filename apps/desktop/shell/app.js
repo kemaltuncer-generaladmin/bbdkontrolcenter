@@ -213,10 +213,16 @@ function refreshActive({ hard = false } = {}) {
 
 /** Açılışta son bilinen veriyle çizilen ekranın verisi arkada değişti. */
 function staleData() {
+  // TEK SESSİZ YENİLEME: yanıtında her seferinde değişen bir alan (sunucu
+  // saati gibi) taşıyan ekran, her yeniden çizimde yine "değişti" görünür ve
+  // ekran kendini durmadan yeniden kurardı. Kendiliğinden yapılan yenilemenin
+  // ardından gelen değişiklik yok sayılır (veri zaten saniyeler önce alındı).
+  if (shell.autoRefreshed === shell.activeId) return;
   // Kullanıcı ekrana henüz dokunmadıysa sessizce yeniden çizilir (veri artık
   // önbellekte güncel, yeniden çizim anlık). Dokunduysa yazdığı/seçtiği şey
   // silinmez: başlıkta "Yeni veriler var" düğmesi çıkar.
   if (!shell.interacted) {
+    shell.autoRefreshed = shell.activeId;
     refreshActive();
     return;
   }
@@ -407,6 +413,7 @@ async function select(id, {
   if (!refresh) {
     if (!viaHistory) pushHistory(id, payload);
     countVisit(id);
+    shell.autoRefreshed = null;
   }
 
   for (const item of el.nav.querySelectorAll('.nav-item')) {
