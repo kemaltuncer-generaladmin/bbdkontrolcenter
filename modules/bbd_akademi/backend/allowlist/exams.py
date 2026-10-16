@@ -294,9 +294,9 @@ OPERATIONS: tuple[Operation, ...] = (
         'GET',
         '/v1/admin/exams',
         'admin_listExams',
-        ('exams.view',),
+        ('exams.view', 'exams.proctor'),
         'both',
-        features=('F-E1', 'F-A10'),
+        features=('F-E1', 'F-A10', 'F-E11'),
     ),
     Operation(
         'POST',
