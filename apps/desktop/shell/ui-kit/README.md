@@ -286,13 +286,19 @@ kapalı hâli de artık her platformda aynı çizilir (kendi oku).
 `--surface-2/3`, `--line-soft/strong`, `--bad-tint`, `--accent` kabuğun
 `--paper-*` jetonlarından gelir. Panel `export const darkReady = true` derse
 kabuk koyu temada kâğıdı koyulaştırır ve kit bileşenleri de koyulaşır.
+Durum renkleri de jetondur (63-duzeltici): `--good/--warn/--bad/--accent/--violet`
+yazı, `-tint` açık zemin, `-line` çizgi; dolgu üstü yazı `--on-accent`. Panel sabit
+renk yazmaz; `darkReady` paneli `tests/integration/test_koyu_tema_paneller.py` sınar
+(sabit renk yok, koyu kâğıtta ≥ 4,5:1).
 Denetim yüksekliği/köşesi platforma ve yoğunluğa göre (`--ctl-h`,
 `--ctl-radius`). Geçişler ≤ 150 ms. Kitte `cursor: pointer` kalmadı (ok imleci).
 
 **Bağlam menüsü (kabuk).** Panel kendi satırını ekleyebilir:
 `el.addEventListener('km-contextmenu', (e) => e.detail.add({label, run}))`.
 **Yazdır kısayolu (Ctrl/⌘+P)** etkin ekranda `data-command="print"` taşıyan
-düğmeye, yoksa adı "Yazdır" ile başlayan düğmeye basar.
+düğmeye, yoksa adında "yazdır" geçen düğmeye basar — yıkıcı (`kit-btn-danger`) ya da
+başka komutlu düğmeye asla. `reportToolbar`, `pdfViewer`, `printDialog` ve Akademi
+belge düğmeleri `data-command="print"` taşır; panelin kendi yazdır düğmesi de taşımalı.
 
 ## Mevcut BBD panelleri
 
