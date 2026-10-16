@@ -8,10 +8,10 @@
 // yetki kapısı raporun kendi ekranındadır; burada yalnız bağlantı durur.
 // Görünmeyen ekranın (yetki yok / özellik kurumda kapalı) kartı çizilmez.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { emptyState } from '../../ui-kit/layout.js';
-import { sectionHead } from './common.js';
-import { navIcon } from './nav-icons.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { emptyState } from '../../../ui-kit/layout.js';
+import { sectionHead } from '../common.js';
+import { navIcon } from '../nav-icons.js';
 
 /** Rapor kartları: grup → [başlık, açıklama, ekran, ek veri]. Sıra ekrandaki sıradır. */
 export const REPORTS = [

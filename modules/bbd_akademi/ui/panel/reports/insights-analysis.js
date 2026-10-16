@@ -10,14 +10,14 @@
 //
 // Zayıf konular için plan görevi Çalışma planı bölümünde atanır.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { barChart } from '../../ui-kit/charts.js';
-import { dateRange } from '../../ui-kit/datefield.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { barChart } from '../../../ui-kit/charts.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
 import {
   empty, fmtDate, fmtDateTime, loader, num, pagedList, percent, selectBox, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import { MISTAKE_REASONS } from './insights-shared.js';
 
 const MAX_DAYS = 180;

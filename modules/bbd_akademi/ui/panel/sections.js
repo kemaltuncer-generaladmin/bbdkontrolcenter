@@ -156,8 +156,8 @@ export const SECTIONS = [
   { key: 'books', label: 'Kitap talepleri', file: './finance/books.js', requires: ['view'], area: 'money',
     feature: 'books' },
   // Rapor merkezi: dağınık raporların (yoklama, ders dökümü, finans, deneme, okuma…) tek giriş kapısı.
-  { key: 'reportHub', label: 'Rapor merkezi', file: './reports.js', requires: ['view'], area: 'reports' },
-  { key: 'insights', label: 'Erken uyarı', file: './insights.js', requires: ['view'], area: 'reports',
+  { key: 'reportHub', label: 'Rapor merkezi', file: './reports/reports.js', requires: ['view'], area: 'reports' },
+  { key: 'insights', label: 'Erken uyarı', file: './reports/insights.js', requires: ['view'], area: 'reports',
     feature: 'early_warning' },
   { key: 'settings', label: 'Kurum ayarları', file: './settings.js', requires: ['settings'], area: 'admin' },
   { key: 'staff', label: 'Personel', file: './staff.js', requires: ['staff'], area: 'admin' },

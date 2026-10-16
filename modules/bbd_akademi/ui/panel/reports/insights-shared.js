@@ -8,9 +8,9 @@
 // `403 feature_disabled` döner. Ekran boş tablo değil SEBEP gösterir ve
 // yetkisi olana Ayarlar → Özellikler bağlantısı verir.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { empty, net, num } from './common.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { empty, net, num } from '../common.js';
 
 /** Kural → [ad, eşik birimi, eşik açıklaması]. Sıra ayarlar tablosunun sırasıdır. */
 export const RULES = {

@@ -11,11 +11,11 @@
 // Sunucu bir kuralı hiç döndürmediyse satır "tanımsız" çizilir ve yalnız
 // açılırsa kayda eklenir (ilk değerler sözleşmedeki varsayılanlardır).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card } from '../../../ui-kit/layout.js';
 import {
   actionButton, fmtDateTime, loader, optionsOf, runAction, selectBox,
-} from './common.js';
+} from '../common.js';
 import { RULES, SEVERITY, SEVERITY_ORDER } from './insights-shared.js';
 
 /** Kurala göre ek alanlar ve sınırlar. */

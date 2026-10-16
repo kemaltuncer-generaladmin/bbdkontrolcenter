@@ -33,7 +33,7 @@ import {
   actionButton, addDays, confirmAction, empty, fmtDate, fmtDateTime, formDialog, kv, loader, num, openDrawer,
   optionsOf, pagedList, runAction, selectBox, statusBadge, todayIst, toolbar, weekStart,
 } from '../common.js';
-import { featureNotice, ruleName, ruleValue, severityBadge, statusBadgeOf } from '../insights-shared.js';
+import { featureNotice, ruleName, ruleValue, severityBadge, statusBadgeOf } from '../reports/insights-shared.js';
 
 const SUBTABS = [
   { key: 'coach', label: 'Koç', read: 'admin_listStudentCoachHistory' },

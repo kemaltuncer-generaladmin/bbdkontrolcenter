@@ -21,14 +21,14 @@
 // `{studentId, studentName?}` listeyi o öğrenciye süzer, `{tab}` sekme seçer
 // (warnings · analysis · settings).
 
-import { blockedButton, button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, card, chipRow, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { timeline } from '../../ui-kit/flow.js';
+import { blockedButton, button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, card, chipRow, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { timeline } from '../../../ui-kit/flow.js';
 import {
   actionButton, confirmAction, empty, errorBox, fmtDate, fmtDateTime, formDialog, istanbulStamp, kv,
   loader, num, openDrawer, optionsOf, pagedList, runAction, sectionHead, selectBox, studentPicker,
   todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   ACTION_TYPES, RESOLVE_REASONS, RULES, SEVERITY, SEVERITY_ORDER, featureNotice, ruleName, ruleValue,
   severityBadge, statusBadgeOf, studentCell,
