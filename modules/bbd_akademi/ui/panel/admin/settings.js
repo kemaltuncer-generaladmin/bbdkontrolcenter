@@ -312,9 +312,11 @@ const INSTITUTION_GROUPS = [
     { key: 'supportHours', path: ['support', 'hours'], label: 'Çalışma saatleri', maxLength: 80,
       to: textOrNull, placeholder: 'Hafta içi 09:00–18:00' },
   ] },
-  // Sessiz saat kalktı (Akademi README §14 madde 100): bildirim, mesaj ve duyuru beklemeden gider.
+  // Sessiz saat kalktı (Akademi README §14 madde 100): bildirim ve mesaj beklemeden gider. Duyuru için kurumun
+  // kendi şalteri var (madde 121, aşağıdaki "Duyurular" kartı; varsayılan her an).
   { title: 'Bildirim varsayılanları',
-    hint: 'Bildirimler hemen gider (sessiz saat yok); herkes kategorileri kendi uygulamasından seçer.', fields: [
+    hint: 'Bildirimler ve mesajlar hemen gider (sessiz saat yok); herkes kategorileri kendi uygulamasından seçer. '
+      + 'Duyuruların gece gönderimi: aşağıdaki “Duyurular” kartı.', fields: [
       { key: 'notifyAbsence', path: ['attendance', 'notifyGuardiansOnAbsence'], type: 'checkbox',
         label: 'Devamsızlıkta veliye anında bildirim', to: Boolean },
       { key: 'weeklyEnabled', path: ['reports', 'weeklyReportEnabled'], type: 'checkbox',
@@ -323,6 +325,26 @@ const INSTITUTION_GROUPS = [
         options: WEEKDAY_OPTIONS },
       { key: 'weeklyTime', path: ['reports', 'weeklyReportTime'], label: 'Rapor saati', maxLength: 5,
         placeholder: '18:00', validate: clockRule('Rapor saati'), to: (value) => String(value || '').trim() },
+    ] },
+  // Akademi README §14 madde 121 — kullanıcı: "sessiz saatlerde duyuru gönderme işini kaldıralım her an
+  // gönderilebilsin (ayar şalteri)". Varsayılan AÇIK; eski Akademi `announcements` göndermez → varsayılan gösterilir.
+  { title: 'Duyurular',
+    hint: 'Duyurunun uygulama bildirimi ve SMS’i. Mesajlar ve diğer bildirimler her zaman beklemeden gider.',
+    fields: [
+      { key: 'annAnytime', path: ['announcements', 'sendAnytime'], type: 'checkbox', to: Boolean,
+        from: (value) => value ?? true, wide: true,
+        label: 'Duyurular her an gönderilsin',
+        hint: 'Açık (önerilen): duyuru gece de beklemeden gider. Kapalı: gece aralığında yayımlanan duyuru uygulamada '
+          + 'hemen görünür, bildirimi ve SMS’i aralık sonuna ertelenir; yazarken “Yine de şimdi gönder” ile acil '
+          + 'duyuru beklemez.' },
+      { key: 'annNightStart', path: ['announcements', 'nightStart'], label: 'Gece aralığı başlangıcı', maxLength: 5,
+        placeholder: '22:00', from: (value) => value || '22:00', validate: clockRule('Gece aralığı başlangıcı'),
+        to: (value) => String(value || '').trim() || '22:00',
+        hint: 'Şalter kapalıyken bu saatten sonra yayımlanan duyurunun bildirimi bekler.' },
+      { key: 'annNightEnd', path: ['announcements', 'nightEnd'], label: 'Gece aralığı bitişi', maxLength: 5,
+        placeholder: '07:30', from: (value) => value || '07:30', validate: clockRule('Gece aralığı bitişi'),
+        to: (value) => String(value || '').trim() || '07:30',
+        hint: 'Bekleyen bildirim ve SMS bu saatte gider (başlangıçtan küçükse ertesi sabah).' },
     ] },
   { title: 'Yoklama ve kitap', fields: [
     { key: 'lateAfter', path: ['attendance', 'lateAfterMinutes'], label: 'Geç sayılma (dakika)',
