@@ -538,6 +538,9 @@ const FEATURES = {
   guardian_coach_messaging: ['Veli ↔ koç mesajı', 'Veli ile koç arasında yazışma.'],
   coach_meetings: ['Koç randevusu', 'Öğrenci ve veli koçtan görüşme randevusu alır.'],
   leave_request_notifications: ['İzin talebi bildirimi', 'İzin talebi onaylanınca ya da reddedilince veliye bildirim.'],
+  lesson_recordings: ['Ders kayıtları (akıllı tahta)',
+    'Öğretmen dersi akıllı tahtadan kaydeder; ders bitince derse atanmış öğrenciler ve velileri izler, öğrenci 14 '
+    + 'günlüğüne uygulamaya indirebilir. Tahtalar, kayıtlar, depolama ve saklama Dersler ve Program → Ders kayıtları\'nda.'],
 };
 /** Kapatma onayında özelliğe özgü açıklama (yoksa genel metin). */
 const FEATURE_OFF_NOTE = {
