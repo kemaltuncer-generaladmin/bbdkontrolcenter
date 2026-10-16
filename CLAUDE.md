@@ -89,7 +89,9 @@ satırından üretilir: `scripts/service-key.py create|list|revoke`.
 - Kabuk adresi Rust tarafında tek yerde (`server_base`); `KM_SERVER_URL` ile
   aşılır, `local` yazmak eski yerel davranışa döndürür.
 - Sidecar YALNIZ yerel kipte başlar.
-- **İnternet kesilirse uygulama durur** — kullanıcı kararı.
+- **İnternet kesilirse çevrimdışı çalışma yok** — kullanıcı kararı (ADR 0026): hiçbir yazma
+  kuyruğa alınmaz. Kabuk yine de kapanmaz/donmaz: son bilinen veriyi gösterir, "Bağlantı yok"
+  şeridiyle yeniden dener, yazmada açık hata verir (ADR 0032).
 
 Depo iki motorludur: `Store` (SQLite, yerel/test) ve `PostgresStore` (merkez).
 Şemayı kuran tek yer `km_core/store/bootstrap.py`; lehçe farkını

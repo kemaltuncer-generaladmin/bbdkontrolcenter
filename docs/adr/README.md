@@ -40,13 +40,14 @@ yanlış yönlendirirdi.
 | 0023 | Paketleme: gömülü Python çalışma zamanı ve platforma göre veri dizini | Kabul edildi |
 | 0024 | macOS kod imzası ve notarization (0023 §5'i genişletir) | Kabul edildi |
 | 0025 | Sırlar ve geçit ayarları kurulumlara dağıtılır (0021 §6'yı tersine çevirir) | Kabul edildi · **kapsamı 0026 ile daraldı** |
-| 0026 | Sunucu merkezli mimari: veri merkezde, kabuk ince | Kabul edildi |
+| 0026 | Sunucu merkezli mimari: veri merkezde, kabuk ince | Kabul edildi · **"internet kesilirse durur" notu 0032 ile değişti** |
 | 0027 | Zilden sonra anons geri geldi; tür açıkça saklanıyor | Kabul edildi |
 | 0028 | Servis anahtarları: makineden makineye kimlik | Kabul edildi (§4 → 0030) |
 | 0029 | Olay outbox'u ve modül işlemi | Kabul edildi |
 | 0030 | Gerçek istemci adresi: güvenilir vekil zinciri ve Cloudflare | Kabul edildi |
 | 0031 | Tek giriş noktası (`ui.nav.replacedBy`) ve küresel arama | Kabul edildi |
-| 0033 | Alan servisleri ve sınırlar: `domain`/`data_classification`, sınır kapısı, ortak kod SDK'de (0032 km-native'in) | Kabul edildi |
+| 0032 | Masaüstü uygulaması hissi: menü, kısayol, tema, önbellek, bağlantı dayanıklılığı | Kabul edildi (0026'nın "internet kesilirse durur" notunu değiştirir) |
+| 0033 | Alan servisleri ve sınırlar: `domain`/`data_classification`, sınır kapısı, ortak kod SDK'de | Kabul edildi |
 
 ---
 

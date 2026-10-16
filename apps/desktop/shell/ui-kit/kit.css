@@ -14,11 +14,23 @@
 .kit-panel {
   --line: var(--paper-line, #e9ecf2);
   --ink: var(--paper-ink, #111722);
-  --soft: #5f6b7e;   /* 0.5.3: açık gri zeminlerde de ≥ 4,5:1 */
-  --tint: #f7f8fb;
+  --soft: var(--paper-soft, #5f6b7e);   /* 0.5.3: açık gri zeminlerde de ≥ 4,5:1 */
+  --tint: var(--paper-tint, #f7f8fb);
+  /* 1.6.0 (ADR 0032): yüzey jetonları. Kabuğun `--paper-*` jetonlarından
+     gelir; koyuya hazır panelde (`.km-dark-paper`) kendiliğinden koyulaşır.
+     Kitin hiçbir kuralı artık zemine sabit beyaz yazmaz. */
+  --surface: var(--paper, var(--surface, #fff));
+  --surface-2: var(--paper-2, #fbfcfe);
+  --surface-3: var(--paper-3, #eef1f6);
+  --line-soft: var(--paper-line-soft, var(--line-soft, #f2f4f8));
+  --line-strong: var(--paper-line-strong, #cfd6e2);
+  --bad-tint: var(--paper-bad-tint, #fff5f5);
+  /* Denetim ölçüsü platforma ve yoğunluğa göre (kabuk `--ctl-h`). */
+  --kit-ctl-h: var(--ctl-h, 32px);
+  --kit-radius: var(--ctl-radius, 8px);
   /* 0.5.3 erişilebilirlik: beyaz zeminde metin/düğme karşıtlığı 4,5:1 üstü
      (eski #5b8cff 3,2:1 idi — beyaz yazılı birincil düğme okunmuyordu). */
-  --accent: #2f5fd0;
+  --accent: var(--paper-accent, #2f5fd0);
   --good: #15803d;
   --warn: #b45309;
   --bad: #b91c1c;
@@ -55,29 +67,29 @@
 /* ================================================================= düğme */
 
 .kit-btn {
-  height: 32px;
+  height: var(--kit-ctl-h, 32px);
   padding: 0 13px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+  border-radius: var(--kit-radius, 8px);
+  background: var(--surface, var(--surface, #fff));
   color: var(--ink);
   font: inherit;
   font-size: 12.5px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
-.kit-btn:hover { background: var(--tint); border-color: #cfd6e2; }
+.kit-btn:hover { background: var(--tint); border-color: var(--line-strong, #cfd6e2); }
 .kit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .kit-btn[disabled] { opacity: 0.45; cursor: default; }
-.kit-btn[disabled]:hover { background: #fff; border-color: var(--line); }
+.kit-btn[disabled]:hover { background: var(--surface, var(--surface, #fff)); border-color: var(--line); }
 
 .kit-btn-primary { background: var(--accent); border-color: transparent; color: #fff; }
 .kit-btn-primary:hover { background: #2852b8; border-color: transparent; }
 .kit-btn-primary[disabled] { background: var(--tint); color: var(--soft); }
 
-.kit-btn-danger { background: #fff; border-color: #f2c9c9; color: var(--bad); }
-.kit-btn-danger:hover { background: #fff5f5; border-color: #e8a9a9; }
+.kit-btn-danger { background: var(--surface, var(--surface, #fff)); border-color: #f2c9c9; color: var(--bad); }
+.kit-btn-danger:hover { background: var(--bad-tint, #fff5f5); border-color: #e8a9a9; }
 
 .kit-btn-ghost { border-color: transparent; background: transparent; color: var(--soft); }
 .kit-btn-ghost:hover { background: var(--tint); color: var(--ink); }
@@ -95,7 +107,7 @@
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   box-shadow: 0 10px 28px rgba(17, 23, 34, 0.12);
 }
 .kit-menu-list[hidden] { display: none; }
@@ -112,7 +124,7 @@
   font-size: 12.5px;
   text-align: left;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 .kit-menu-item:hover { background: var(--tint); }
 .kit-menu-item[disabled] { opacity: 0.45; cursor: default; }
@@ -150,11 +162,11 @@
 .kit-input,
 .kit-select,
 .kit-textarea {
-  height: 32px;
+  height: var(--kit-ctl-h, 32px);
   padding: 0 11px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+  border-radius: var(--kit-radius, 8px);
+  background: var(--surface, var(--surface, #fff));
   color: var(--ink);
   font: inherit;
   font-size: 13px;
@@ -163,7 +175,21 @@
   user-select: text;
   -webkit-user-select: text;
 }
-.kit-select { padding: 0 8px; font-size: 12.5px; cursor: pointer; }
+/* 1.6.0: kapalı kutu da platformlar arasında AYNI görünür (WebView2'de
+   tarayıcının kutusu çiziliyordu); açılan liste kabuğun `.kit-lb`
+   listesidir (select.js — klavyeyle aranır). Ok işareti arka plan
+   görselidir: `appearance: none` yerel oku sildiği için kendimiz çiziyoruz. */
+.kit-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 28px 0 9px;
+  font-size: 12.5px;
+  cursor: default;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%235f6b7e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px 12px;
+}
 .kit-textarea { height: auto; min-height: 76px; padding: 8px 11px; line-height: 1.5; resize: vertical; }
 
 .kit-input:focus,
@@ -176,9 +202,9 @@
 .kit-input[disabled],
 .kit-select[disabled],
 .kit-textarea[disabled] { background: var(--tint); color: var(--soft); cursor: default; }
-.kit-input.bad, .kit-textarea.bad { border-color: var(--bad); background: #fff5f5; }
+.kit-input.bad, .kit-textarea.bad { border-color: var(--bad); background: var(--bad-tint, #fff5f5); }
 
-.kit-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.kit-check { width: 15px; height: 15px; accent-color: var(--accent); cursor: default; }
 
 /* ============================================================== bildirim */
 
@@ -198,7 +224,7 @@
   box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.55);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 180ms, transform 180ms;
+  transition: opacity 140ms, transform 140ms;
 }
 .kit-toast.show { opacity: 1; transform: translate(-50%, 0); }
 .kit-toast.good { background: #14532d; border-color: #14532d; }
@@ -221,10 +247,10 @@
   width: min(460px, 100%);
   padding: 22px;
   border-radius: 14px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   border: 1px solid var(--line);
   box-shadow: 0 30px 70px -28px rgba(0, 0, 0, 0.6);
-  animation: kit-rise 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: kit-rise 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes kit-rise {
   from { opacity: 0; transform: translateY(8px) scale(0.99); }
@@ -247,10 +273,10 @@
   width: min(760px, 92%);
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   border-left: 1px solid var(--line);
   box-shadow: -24px 0 60px -30px rgba(0, 0, 0, 0.45);
-  animation: kit-slide 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: kit-slide 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes kit-slide {
   from { transform: translateX(16px); opacity: 0; }
@@ -275,7 +301,7 @@
   align-items: center;
   gap: 10px;
   padding: 7px 14px;
-  border-top: 1px solid #f2f4f8;
+  border-top: 1px solid var(--line-soft, #f2f4f8);
   font-size: 12px;
   text-align: left;
   background: transparent;
@@ -285,24 +311,24 @@
   color: inherit;
   font-family: inherit;
 }
-button.kit-row { cursor: pointer; width: 100%; }
-button.kit-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
+button.kit-row { cursor: default; width: 100%; }
+button.kit-row:hover { background: color-mix(in srgb, var(--accent) 6%, var(--surface, #fff)); }
 button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.kit-row.on { background: color-mix(in srgb, var(--accent) 10%, #fff); }
+.kit-row.on { background: color-mix(in srgb, var(--accent) 10%, var(--surface, #fff)); }
 
 .kit-head {
   position: sticky;
   top: 0;
   z-index: 1;
   border-top: 0;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--soft);
 }
-.kit-head .kit-cell.sortable { cursor: pointer; user-select: none; }
+.kit-head .kit-cell.sortable { cursor: default; user-select: none; }
 .kit-head .kit-cell.sortable:hover { color: var(--ink); }
 .kit-sort-arrow { margin-left: 3px; font-size: 9px; }
 
@@ -333,11 +359,11 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   color: var(--ink);
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
 }
 .kit-pager-btn:hover:not([disabled]) { background: var(--tint); }
 .kit-pager-btn[disabled] { opacity: 0.4; cursor: default; }
@@ -384,11 +410,11 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 0 11px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
-  cursor: pointer;
+  cursor: default;
   white-space: nowrap;
 }
 .kit-chip:hover { background: var(--tint); color: var(--ink); }
@@ -447,7 +473,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   color: var(--soft);
   font: inherit;
   font-size: 12.5px;
-  cursor: pointer;
+  cursor: default;
 }
 .kit-tab:hover { color: var(--ink); }
 .kit-tab.on { color: var(--ink); font-weight: 600; }
@@ -473,7 +499,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 
 /* ================================================================== kart */
 
-.kit-card { border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; }
+.kit-card { border: 1px solid var(--line); border-radius: 12px; background: var(--surface, var(--surface, #fff)); overflow: hidden; }
 .kit-card-head {
   display: flex;
   align-items: baseline;
@@ -545,7 +571,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 18px;
   border: 1px dashed #d5dbe6;
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--soft);
@@ -562,7 +588,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   height: 100%;
   background: var(--accent);
   border-radius: 999px;
-  transition: width 220ms ease;
+  transition: width 150ms ease;
 }
 .kit-progress-label { margin-top: 5px; font-size: 11.5px; color: var(--soft); }
 
@@ -570,7 +596,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-skel {
   height: 11px;
   border-radius: 4px;
-  background: linear-gradient(90deg, #eef1f6 25%, #f6f8fb 50%, #eef1f6 75%);
+  background: linear-gradient(90deg, var(--surface-3, #eef1f6) 25%, var(--surface-2, #f6f8fb) 50%, var(--surface-3, #eef1f6) 75%);
   background-size: 200% 100%;
   animation: kit-shimmer 1.1s linear infinite;
 }
@@ -614,7 +640,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   width: min(1000px, 100%);
   height: 100%;
   border-radius: 14px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   border: 1px solid var(--line);
   overflow: hidden;
   box-shadow: 0 30px 70px -28px rgba(0, 0, 0, 0.6);
@@ -646,7 +672,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   height: auto;
   border: 1px solid var(--line);
   box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.4);
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
 }
 .kit-preview-foot {
   padding: 9px 14px;
@@ -673,7 +699,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 0 30px 0 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   color: var(--ink);
   font: inherit;
   font-size: 12.5px;
@@ -681,7 +707,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   -webkit-user-select: text;
 }
 .df-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.df-input.bad { border-color: var(--bad); background: #fff5f5; }
+.df-input.bad { border-color: var(--bad); background: var(--bad-tint, #fff5f5); }
 
 .df-toggle {
   position: absolute;
@@ -691,7 +717,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border: 0;
   border-radius: 6px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   font-size: 13px;
   line-height: 1;
 }
@@ -706,7 +732,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   box-shadow: 0 12px 30px rgb(17 23 34 / 14%);
 }
 .df-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
@@ -716,8 +742,8 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   height: 26px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
-  cursor: pointer;
+  background: var(--surface, var(--surface, #fff));
+  cursor: default;
   color: var(--soft);
   font-size: 15px;
   line-height: 1;
@@ -731,7 +757,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border: 0;
   border-radius: 6px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   color: var(--ink);
   font: inherit;
   font-size: 12px;
@@ -746,8 +772,8 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
-  cursor: pointer;
+  background: var(--surface, var(--surface, #fff));
+  cursor: default;
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
@@ -757,36 +783,36 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 /* ================================================= çoklu seçici (picker) */
 
 .pk-box { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line);
-          border-radius: 10px; background: #fff; overflow: hidden; }
+          border-radius: 10px; background: var(--surface, var(--surface, #fff)); overflow: hidden; }
 .pk-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px;
           border-bottom: 1px solid var(--line); background: var(--tint); }
 .pk-search { flex: 1; min-width: 80px; }
 .pk-select { max-width: 150px; }
 .pk-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-.pk-actions .kit-btn.on { background: color-mix(in srgb, var(--accent) 12%, #fff); color: var(--ink); }
+.pk-actions .kit-btn.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface, #fff)); color: var(--ink); }
 .pk-count { padding: 6px 10px; font-size: 11px; color: var(--soft); }
 .pk-list { flex: 1; min-height: 0; overflow: auto; }
 .pk-list[aria-busy="true"] { opacity: 0.7; }
 .pk-group { padding: 5px 10px 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
-            text-transform: uppercase; color: var(--soft); background: #fbfcfe;
+            text-transform: uppercase; color: var(--soft); background: var(--surface-2, #fbfcfe);
             position: sticky; top: 0; z-index: 1; display: flex; gap: 6px; }
 .pk-group-name { flex: 1; }
 .pk-group-count { font-weight: 600; }
 .pk-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px;
-          border: 0; border-top: 1px solid #f4f6fa; background: transparent; text-align: left;
-          font: inherit; font-size: 12px; color: inherit; cursor: pointer; }
-.pk-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
-.pk-row.on { background: color-mix(in srgb, var(--accent) 12%, #fff); }
+          border: 0; border-top: 1px solid var(--line-soft, #f4f6fa); background: transparent; text-align: left;
+          font: inherit; font-size: 12px; color: inherit; cursor: default; }
+.pk-row:hover { background: color-mix(in srgb, var(--accent) 6%, var(--surface, #fff)); }
+.pk-row.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface, #fff)); }
 .pk-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* Seçim yalnız renkle anlatılmaz: her satırda onay kutusu çizilir (WCAG 1.4.1). */
 .pk-check { flex: none; width: 15px; height: 15px; border: 1.5px solid #8a96a8; border-radius: 4px;
-            background: #fff; display: inline-grid; place-items: center; }
+            background: var(--surface, var(--surface, #fff)); display: inline-grid; place-items: center; }
 .pk-check.pk-radio { border-radius: 50%; }
 .pk-row.on .pk-check { background: var(--accent, #2f5fd0); border-color: var(--accent, #2f5fd0); }
 .pk-row.on .pk-check::after { content: ''; width: 4px; height: 8px; margin-top: -2px;
             border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .pk-row.on .pk-check.pk-radio::after { width: 6px; height: 6px; margin: 0; border: 0;
-            border-radius: 50%; background: #fff; transform: none; }
+            border-radius: 50%; background: var(--surface, var(--surface, #fff)); transform: none; }
 .pk-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pk-meta { flex: none; font-size: 11px; color: var(--soft); }
 .pk-chip { padding: 1px 7px; border-radius: 999px; background: var(--tint);
@@ -794,7 +820,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .pk-empty { padding: 22px 12px; text-align: center; font-size: 12px; color: var(--soft);
             display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .pk-empty.pk-error { color: var(--bad, #b91c1c); }
-.pk-more { display: flex; justify-content: center; padding: 8px; border-top: 1px solid #f4f6fa; }
+.pk-more { display: flex; justify-content: center; padding: 8px; border-top: 1px solid var(--line-soft, #f4f6fa); }
 
 /* =========================================================== erişilebilirlik */
 
@@ -832,7 +858,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   overflow: hidden;
 }
 
@@ -880,10 +906,10 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 0 6px;
   font-size: 12px;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   border: 1px solid var(--line);
   border-radius: 6px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .kit-rt-color { max-width: 116px; }
@@ -910,7 +936,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 12px;
   color: var(--ink);
-  background: #fbfcfe;
+  background: var(--surface-2, #fbfcfe);
 }
 
 /* Boş alanda ipucu. Gerçek `placeholder` contenteditable'da yoktur. */
@@ -973,13 +999,13 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-tl-item:last-child::before { display: none; }
 .kit-tl-dot {
   position: absolute; left: 0; top: 5px; width: 9px; height: 9px;
-  border-radius: 50%; background: #fff; border: 2px solid var(--soft);
+  border-radius: 50%; background: var(--surface, var(--surface, #fff)); border: 2px solid var(--soft);
 }
 .kit-tl-dot.good { border-color: var(--good); background: var(--good); }
 .kit-tl-dot.warn { border-color: var(--warn); background: var(--warn); }
 .kit-tl-dot.bad  { border-color: var(--bad);  background: var(--bad); }
 .kit-tl-dot.info { border-color: var(--accent); background: var(--accent); }
-.kit-tl-dot.dim  { border-color: var(--line); background: #fff; }
+.kit-tl-dot.dim  { border-color: var(--line); background: var(--surface, var(--surface, #fff)); }
 .kit-tl-item.now > .kit-tl-dot { box-shadow: 0 0 0 3px var(--accent-soft, rgba(91,140,255,0.16)); }
 .kit-tl-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .kit-tl-title { font-size: 13px; font-weight: 600; color: var(--ink, #111722); }
@@ -997,7 +1023,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-step {
   flex: 1 1 140px; display: flex; gap: 8px; align-items: flex-start;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
 }
 .kit-step.done { border-color: #a7f3d0; background: #f6fefb; }
 .kit-step.now { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft, rgba(91,140,255,0.16)); }
@@ -1005,7 +1031,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   flex: none; width: 20px; height: 20px; border-radius: 50%;
   display: grid; place-items: center;
   font-size: 11px; font-weight: 700;
-  border: 1px solid var(--line); background: #fff; color: var(--soft);
+  border: 1px solid var(--line); background: var(--surface, var(--surface, #fff)); color: var(--soft);
 }
 /* ADIM TONU. `stepper` bu sınıfı hep yazıyordu ama karşılığı yoktu — sessiz
    ölü kod. Gereken şu: SIRASI GELMEDEN gerçekleşmiş ya da yarım kalmış bir
@@ -1065,7 +1091,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   border-radius: 10px;
   background: var(--tint);
 }
-.kit-img-drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, #fff); }
+.kit-img-drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface, #fff)); }
 .kit-img-drop-text { font-weight: 600; }
 
 /* Girdi görsel olarak gizli ama KLAVYEYLE ULAŞILIR. `display:none` olsaydı
@@ -1097,7 +1123,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
 }
 /* Kapak renkle DEĞİL, yazıyla da işaretlenir (kit-img-tag). Çerçeve destekler. */
 .kit-img-cell.cover { border-color: var(--accent); }
@@ -1171,13 +1197,13 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   color: var(--soft);
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
 }
-.kit-cal-nav-btn:hover { border-color: #cfd6e2; color: var(--ink); }
+.kit-cal-nav-btn:hover { border-color: var(--line-strong, #cfd6e2); color: var(--ink); }
 .kit-cal-nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .kit-cal-week,
@@ -1207,13 +1233,13 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
   gap: 2px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface, var(--surface, #fff));
   color: var(--ink);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 120ms, border-color 120ms, transform 120ms;
 }
-.kit-cal-cell:hover { border-color: #cfd6e2; transform: translateY(-1px); }
+.kit-cal-cell:hover { border-color: var(--line-strong, #cfd6e2); transform: translateY(-1px); }
 .kit-cal-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Ay dışındaki günler SİLİNMEZ, soldurulur: 42 hücre sabit kalsın ve ızgara
    her ay boy değiştirip altındaki içeriği zıplatmasın. */
@@ -1221,7 +1247,7 @@ button.kit-row:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .kit-cal-cell.off { background: #f0f2f6; }
 .kit-cal-cell.today { border-color: var(--accent); }
 .kit-cal-cell.on {
-  background: color-mix(in srgb, var(--accent) 14%, #fff);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface, #fff));
   border-color: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }

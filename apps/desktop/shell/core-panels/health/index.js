@@ -37,6 +37,9 @@ function row(label, value, tone) {
   return line;
 }
 
+/** Koyu temada kâğıt da koyulaşır: ekran yalnız kitin jetonlarını kullanır (ADR 0032). */
+export const darkReady = true;
+
 export function mount(root, ctx) {
   const { api, open } = ctx;
   loadStyles(import.meta.url, 'panel.css');
