@@ -688,6 +688,7 @@ def _personel_token(client: TestClient) -> str:
     acildi = client.post("/api/users", headers={"Authorization": f"Bearer {yonetici}"}, json={
         "firstName": "Veli", "lastName": "Demir", "orgScope": "org",
         "roles": ["org_staff"], "password": PERSONEL_PINI,
+        "confirmPin": YONETICI_PINI,
     })
     assert acildi.status_code == 201, acildi.text
     cevap = client.post("/api/auth/login", json={"password": PERSONEL_PINI})

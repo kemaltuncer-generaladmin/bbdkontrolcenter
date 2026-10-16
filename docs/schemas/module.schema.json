@@ -138,6 +138,16 @@
           "default": [],
           "items": { "type": "string" },
           "description": "Router'ın tamamı için taban izin. Uç noktalar bunu daraltabilir, genişletemez. Varsayılan kapalıdır: izin ilan etmeyen uç nokta reddedilir (K9)."
+        },
+        "device_router": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["prefix", "router"],
+          "description": "CİHAZ YÜZEYİ (iş 63): KM oturumu taşımayan cihazların (kurum tableti) konuştuğu router. İzin kapısının DIŞINDA monte edilir; bu yüzden her uç KENDİ cihaz/oturum belirtecini doğrulamak ZORUNDADIR. Her ucu `tests/core/test_guvenlik_envanteri.py` → PUBLIC_ENDPOINTS içinde gerekçesiyle durur; listede olmayan kimliksiz uç testi kırar.",
+          "properties": {
+            "prefix": { "type": "string", "pattern": "^/api/[a-z0-9_/-]+$" },
+            "router": { "type": "string", "pattern": "^[a-z_][a-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$", "description": "Modül paketine göre yol, ör. 'backend.api.tablet_routes:router'." }
+          }
         }
       }
     },

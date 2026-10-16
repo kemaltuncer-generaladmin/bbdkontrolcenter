@@ -24,7 +24,7 @@ import yaml
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
 from modules.bbd_akademi.backend.operations import Allowlist
 from modules.bbd_akademi.backend.permission_map import ALL_PERMISSIONS, km_permissions
-from modules.bbd_akademi.tests.akademi_fakes import Akademi, Identity, auth, user
+from modules.bbd_akademi.tests.akademi_fakes import PIN, Akademi, Identity, auth, user
 
 MODULE = Path(__file__).resolve().parents[1]
 PANEL = MODULE / "ui" / "panel"
@@ -96,6 +96,12 @@ async def test_yazma_adina_ve_tekil_anahtarla_gider(client: httpx.AsyncClient, a
                                                     resolvedBy="km:user:u-1:Ayşe Yılmaz")))
     payload: dict[str, object] = {"method": "POST", "path": path,
                                   "idempotencyKey": f"kvkk-test-{RID}"}
+    if path.endswith("/decision"):
+        # KM'nin kendi PIN teyidi (iş 63, KM-07): karar tek kullanımlık belirteç ister.
+        issued = await client.post("/api/bbd_akademi/km/step-up", headers=auth(),
+                                   json={"pin": PIN, "operationId": "admin_decideDataRequest"})
+        assert issued.status_code == 200, issued.text
+        payload["stepUpToken"] = issued.json()["stepUpToken"]
     if body is not None:
         payload["body"] = body
     data = (await client.post(CALL, headers=auth(), json=payload)).json()
@@ -107,8 +113,19 @@ async def test_yazma_adina_ve_tekil_anahtarla_gider(client: httpx.AsyncClient, a
     assert behalf.isascii() and unquote(behalf) == "km:user:u-1:Ayşe Yılmaz"
     if body is not None:
         assert json.loads(akademi.bodies[-1]) == body
-    # PIN teyidi bu işlemlerde sözleşmede yok; vekil uydurmaz.
+    # Teyit KM'de kalır: sözleşmede step-up yok, Akademi'ye başlık uydurulmaz.
     assert "x-akademi-step-up" not in sent.headers
+
+
+async def test_kvkk_karari_pin_teyidisiz_akademiye_gitmez(client: httpx.AsyncClient,
+                                                          akademi: Akademi) -> None:
+    """KM-07: onay hesabı geri dönüşsüz siler — belirteçsiz karar reddedilir."""
+    data = (await client.post(CALL, headers=auth(), json={
+        "method": "POST", "path": f"/v1/admin/data-requests/{RID}/decision",
+        "body": {"action": "approve"}})).json()
+    assert data["ok"] is False and data["status"] == 403
+    assert data["error"]["code"] == "step_up_required"
+    assert akademi.calls == []
 
 
 async def test_kvkk_izni_olmayan_akademiye_gidemez(client: httpx.AsyncClient, akademi: Akademi,
@@ -147,9 +164,11 @@ async def test_karar_cakismasi_panele_ulasir(client: httpx.AsyncClient, akademi:
     akademi.reply(httpx.Response(409, json={"error": {
         "code": "request_not_open", "message": "Talep artık açık değil.", "details": None,
         "traceId": "t-2"}}))
+    issued = await client.post("/api/bbd_akademi/km/step-up", headers=auth(),
+                               json={"pin": PIN, "operationId": "admin_decideDataRequest"})
     data = (await client.post(CALL, headers=auth(), json={
         "method": "POST", "path": f"/v1/admin/data-requests/{RID}/decision",
-        "body": {"action": "approve"}})).json()
+        "body": {"action": "approve"}, "stepUpToken": issued.json()["stepUpToken"]})).json()
     assert data["ok"] is False and data["status"] == 409
     assert data["error"]["code"] == "request_not_open"
 

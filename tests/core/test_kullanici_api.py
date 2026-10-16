@@ -71,6 +71,7 @@ def personel_ac(client: TestClient, token: str, *, pin: str = PERSONEL_PINI,
             "phoneMobile": "0532 000 11 22",
             "roles": roles or ["org_staff"],
             "password": pin,
+            "confirmPin": YONETICI_PINI,
         },
     )
     assert cevap.status_code == 201, cevap.text
@@ -197,7 +198,8 @@ def test_ayni_pin_ikinci_kullaniciya_atanamaz_ve_KIMI_SOYLEMEZ(client: TestClien
         "/api/users",
         headers=basliklar(token),
         json={"firstName": "Ayse", "lastName": "Yilmaz", "orgScope": "org",
-              "roles": ["org_staff"], "password": PERSONEL_PINI},
+              "roles": ["org_staff"], "password": PERSONEL_PINI,
+              "confirmPin": YONETICI_PINI},
     )
     assert cevap.status_code == 400
     mesaj = cevap.json()["error"]["message"]
@@ -211,7 +213,8 @@ def test_kisa_pin_reddedilir(client: TestClient) -> None:
         "/api/users",
         headers=basliklar(token),
         json={"firstName": "Ayse", "lastName": "Yilmaz", "orgScope": "org",
-              "roles": ["org_staff"], "password": "4829"},
+              "roles": ["org_staff"], "password": "4829",
+              "confirmPin": YONETICI_PINI},
     )
     assert cevap.status_code == 400
     assert "6" in cevap.json()["error"]["message"]
@@ -223,7 +226,8 @@ def test_rakam_disi_pin_reddedilir(client: TestClient) -> None:
         "/api/users",
         headers=basliklar(token),
         json={"firstName": "Ayse", "lastName": "Yilmaz", "orgScope": "org",
-              "roles": ["org_staff"], "password": "cinaraltindaki-kuyu"},
+              "roles": ["org_staff"], "password": "cinaraltindaki-kuyu",
+              "confirmPin": YONETICI_PINI},
     )
     assert cevap.status_code == 400
     assert "rakam" in cevap.json()["error"]["message"].casefold()
@@ -236,7 +240,7 @@ def test_yonetici_pin_sifirlayabilir(client: TestClient) -> None:
     cevap = client.post(
         f"/api/users/{hedef['id']}/password",
         headers=basliklar(token),
-        json={"password": "519286"},
+        json={"password": "519286", "confirmPin": YONETICI_PINI},
     )
     assert cevap.status_code == 200
     assert giris(client, "519286").status_code == 200

@@ -28,8 +28,15 @@ from km_core.config.loader import Config, load_config, nest, with_store_layer
 from km_core.config.settings_store import SettingsStore
 from km_core.files import outputs_log
 from km_core.files.outputs_queue import OutputsQueue
-from km_core.http.deps import bearer_token, request_context, resolve_once
+from km_core.http.deps import (
+    KM_AUTHENTICATED_ATTR,
+    KM_PERMISSIONS_ATTR,
+    bearer_token,
+    request_context,
+    resolve_once,
+)
 from km_core.http.documents import create_documents_router
+from km_core.http.security_headers import SecurityHeadersMiddleware
 from km_core.http.settings import create_settings_router
 from km_core.http.users import create_identity_router, user_payload
 from km_core.kernel.kernel import Kernel
@@ -198,6 +205,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             max_failed_attempts=int(config.get("auth.max_failed_attempts", 5)),
             lockout_minutes=int(config.get("auth.lockout_minutes", 15)),
             session_idle_minutes=int(config.get("auth.session_idle_minutes", 30)),
+            session_absolute_hours=int(config.get("auth.session_absolute_hours", 12)),
         )
         await identity.ensure_builtin_roles()
         await identity.grant_defaults(CORE_PERMISSIONS)
@@ -273,6 +281,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     # onlarca KB JSON. Sıkıştırma yalnız `Accept-Encoding: gzip` diyen
     # istemciye uygulanır, küçük yanıtlara dokunulmaz.
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+    # İş 63 (KM-08): nosniff, çerçeveleme yasağı, referrer yok, kimlik uçlarında no-store.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
@@ -357,6 +367,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         with request_context(request, user):
             yield user
 
+    setattr(current_user, KM_AUTHENTICATED_ATTR, True)
     app.state.current_user_dependency = current_user
 
     @app.get("/health")
@@ -519,14 +530,18 @@ def _mount_modules(app: FastAPI, kernel: Kernel, identity: Identity) -> None:
                 tags=list(spec.tags or [manifest.id]),
                 dependencies=[Depends(guard)],
             )
-        if manifest.id == "bbd_tablet":
-            # Kurum tabletleri yönetici PIN'i taşımaz. Bu ayrı router'da
-            # enrollment dışındaki HER uç kendi cihaz/öğrenci bearer'ını
-            # doğrular; yönetim router'ı yukarıdaki izin kapısında kalır.
-            tablet_api = importlib.import_module(
-                "km_mod_bbd_tablet.backend.api.tablet_routes"
-            )
-            app.include_router(tablet_api.router, prefix="/api/tablet/v1", tags=["tablet"])
+        if spec.device_router and spec.device_prefix:
+            # CİHAZ YÜZEYİ — manifestte VERİYLE ilan edilir (`http.device_router`),
+            # çekirdek modül adına bakmaz (K1; iş 63, ADR 0033 §8 adım 3.2).
+            # Kurum tableti gibi cihazlar KM oturumu taşımaz: bu router izin
+            # kapısının DIŞINDA monte edilir ve her ucu kendi cihaz/öğrenci
+            # belirtecini doğrular. Kimliksiz her uç güvenlik envanterinde
+            # gerekçesiyle listelidir (`tests/core/test_guvenlik_envanteri.py`).
+            module_path, _, attribute = spec.device_router.partition(":")
+            device_api = importlib.import_module(f"km_mod_{manifest.id}.{module_path}")
+            app.include_router(getattr(device_api, attribute), prefix=spec.device_prefix,
+                               tags=[f"{manifest.id}:device"])
+            log.info("cihaz router'ı monte edildi", module=manifest.id, prefix=spec.device_prefix)
         log.info("router monte edildi", module=manifest.id, prefix=spec.prefix)
 
 
@@ -542,6 +557,8 @@ def _permission_guard(requires: list[str], current_user: Any, identity: Identity
         )
         raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
 
+    # Güvenlik envanteri (iş 63): router kapısının taban izni okunur durur.
+    setattr(guard, KM_PERMISSIONS_ATTR, tuple(requires))
     return guard
 
 

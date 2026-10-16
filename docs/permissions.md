@@ -554,9 +554,12 @@ manifest düzeltilir, sonra betik yeniden koşulur.
    eder. İlan etmeyen uç nokta reddedilir (varsayılan: kapalı).
 2. Kapsamlı bir izin kapsam belirtilmeden sorulamaz.
 3. Yıkıcı **çekirdek** işlemleri (`database.restore`, `users.manage` silme,
-   `roles.manage`, `installations.manage` ile eşleme çözme) izin yeterli olsa
-   bile **PIN teyidi** ister. Bunlar seyrek
-   ve kurumsal işlemlerdir.
+   `roles.manage` — kullanıcı açmak ve rollerini DEĞİŞTİRMEK —, başkasının
+   PIN'ini sıfırlamak (`users.set_password`), `installations.manage` ile eşleme
+   çözme) izin yeterli olsa bile **PIN teyidi** ister (yöneticinin kendi PIN'i,
+   gövdede `confirmPin`; art arda 5 yanlış PIN'de teyit 15 dk kapanır). Bunlar
+   seyrek ve kurumsal işlemlerdir. Uç başına durum:
+   [security/endpoint-envanteri.md](security/endpoint-envanteri.md).
    **İstisna — BBD Store:** `store_*` modüllerindeki yıkıcı ve para harcayan
    işlemler PIN yerine **gerekçeli onay** ister (ayrı izin anahtarı + zorunlu
    gerekçe + çift denetim kaydı + kuru prova). Gerekçe:
@@ -566,3 +569,211 @@ manifest düzeltilir, sonra betik yeniden koşulur.
 5. Yeni modül kendi izinlerini ilan eder ve `permissions[].default_roles` ile
    hangi ön tanımlı rollere düşeceğini önerir. Çekirdekte değişiklik olmaz.
 6. Son admin pasifleştirilemez veya `admin` rolü elinden alınamaz.
+
+<!-- izin-katalogu:basla — tools/security/endpoint_inventory.py üretir, elle düzenlenmez -->
+
+## Modül izinleri — tam katalog (üretilir)
+
+Kaynak: her modülün `module.yaml` → `permissions`. Keşfedilen HER modül (kapalılar dahil:
+izin manifestte ilan edilir, rollere düşer). Yıkıcı = `destructive: true` — uçta PIN
+teyidi ya da gerekçeli onay beklenir (`tests/core/test_guvenlik_envanteri.py`).
+
+| İzin | Modül | Durum | Yıkıcı | Varsayılan roller | Açıklama |
+|---|---|---|---|---|---|
+| `antivirus.delete_threat` | `antivirus` | loaded | evet | `admin` | Karantinadaki dosyayı kalıcı silme. |
+| `antivirus.manage` | `antivirus` | loaded |  | `admin` | Tarama takvimi, hariç tutulan yollar, imza güncelleme. |
+| `antivirus.quarantine` | `antivirus` | loaded | evet | `admin` | Bulaşmış dosyayı karantinaya alma ve geri yükleme. |
+| `antivirus.scan` | `antivirus` | loaded |  | `admin`, `bld_staff`, `bbd_staff` | Tarama başlatma ve durdurma. |
+| `antivirus.view` | `antivirus` | loaded |  | `admin`, `bld_staff`, `bbd_staff` | Tarama geçmişini, karantinayı ve imza durumunu görüntüleme. |
+| `bbd_akademi.academic` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Ders programı ve zil dilimleri, etüt ve tek seferlik ders, ödev, dönem, kurum takvimi, sınıf grubu ve çalışma grubu, öğrencinin ve sınıfın müfredat seti (atama), hedef önerisi. |
+| `bbd_akademi.announcements` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Duyuru oluşturma, hedefleme, zamanlama, yayımlama ve silme. |
+| `bbd_akademi.attendance` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Yoklama alma ve düzeltme. |
+| `bbd_akademi.books` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Kitap talepleri (siparişi yeniden deneme, teslim, sipariş PDF'i) ve kitap satışı: öğrencilere kurumdan kitap satma (kurum carisine kalem, nakit / kart tahsilatı ya da veliye ödeme bağlantısı; kantinden ayrı), satır iptali / iadesi, toplu teslim. |
+| `bbd_akademi.campus` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Akademi üzerinden anlık kurum işleri: öğrenci çağırma (anons), tablet ek süre, engel ve oturum bitirme. |
+| `bbd_akademi.canteen` | `bbd_akademi` | loaded |  | `admin` | Akademi üzerinden kantin işlemleri (kurum engeli, kantin nakit tahsilatı). Asıl ekranı Öğrenciler modülüdür; bu izin yalnız vekil içindir. |
+| `bbd_akademi.curriculum` | `bbd_akademi` | loaded |  | `admin` | Müfredat kataloğu: kuruma özel program/ünite/konu ekleme, program istisna kuralları (toplu). Öğrenciye / sınıfa müfredat ATAMAK akademik iştir (bbd_akademi.academic). |
+| `bbd_akademi.evaluations` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Öğrenci değerlendirme: dönem formlarını doldurma, yayımlama ve geri alma, değerlendirme raporlarının dışa aktarımı. |
+| `bbd_akademi.exams` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Deneme tanımı, sonuç girişi ve düzeltme, toplu sonuç yükleme ve geri alma, cevap anahtarı ve soru-konu eşlemesi, yayımlama, dışa aktarım. |
+| `bbd_akademi.finance` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Kurum cari hesapları (kantinden ayrı): görüntüleme, taksit planı, borç kalemi, tahsilat kaydı, gecikme hatırlatması, ekstre. |
+| `bbd_akademi.finance_void` | `bbd_akademi` | loaded | evet | `admin` | Kurum tahsilatını iptal etme. İzin yeterli olsa bile işlemden hemen önce PIN teyidi ister. |
+| `bbd_akademi.learning` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Öğrenme araçlarında günlük koçluk: çalışma planı görevi atama ve erteleme talepleri, koç notları, erken uyarı takibi (not, görüşme, veliye bildirim, çözme). |
+| `bbd_akademi.learning_setup` | `bbd_akademi` | loaded |  | `admin` | Öğrenme araçları kurulumu (yalnız KM): çalışma planı şablonları, okuma listeleri ve okuma ligi, bilgi kartı desteleri, kurum görselleri, değerlendirme şablonları ve dönemleri, erken uyarı eşikleri. |
+| `bbd_akademi.privacy` | `bbd_akademi` | loaded | evet | `admin` | KVKK talepleri: uygulama kullanıcılarının hesap silme ve veri indirme taleplerini görme, onaylama ya da reddetme, silinmiş hesabın erişimini yeniden açma. Silme onayı kişisel veriyi geri dönüşsüz siler. |
+| `bbd_akademi.recordings` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Ders kayıtları (akıllı tahta): tahta ekleme, eşleme kodu, iptal ve tanılama; derslikler; kayıtları gizleme / gösterme, silme, kim izledi, ek öğrenci / grup paylaşımı; depolama kotası. Kayıt ayarlarını (saklama süresi, depolama tavanı, kalite, kamera izni) değiştirmek kurum ayarıdır (bbd_akademi.settings). |
+| `bbd_akademi.requests` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | İzin (mazeret), görüşme ve etüt taleplerini onaylama, reddetme, zaman verme. |
+| `bbd_akademi.resources` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Kaynaklar: kurum kaynağı ekleme, içindekiler ve konu eşlemesi, kaynak paketleri ve otomatik atama, kaynak atama. |
+| `bbd_akademi.settings` | `bbd_akademi` | loaded |  | `admin` | Kurum ayarları: kantin kuralları, bildirim varsayılanları, tema ve logo, özellik bayrakları, entegrasyon anahtarları, anons şablonları, dizin eşitleme, denetim kaydı. |
+| `bbd_akademi.staff` | `bbd_akademi` | loaded |  | `admin` | Mobil yönetici erişimi (personel listesi, Akademi'ye itilir) ve Akademi rolleri. |
+| `bbd_akademi.view` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Akademi ekranlarını görüntüleme: panel, öğrencilerin akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme sonuçları, kitap talepleri. |
+| `bbd_bulk_sale.manage` | `bbd_bulk_sale` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Toplu satış işleme ve sepet şablonlarını düzenleme. |
+| `bbd_bulk_sale.reverse` | `bbd_bulk_sale` | loaded | evet | `admin`, `bbd_staff` | İşlenmiş satışı geri alma (kantinde ters kayıt oluşturur). |
+| `bbd_bulk_sale.view` | `bbd_bulk_sale` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Toplu satış ekranını ve geçmiş partileri görüntüleme. |
+| `bbd_canteen_api.events.push` | `bbd_canteen_api` | loaded |  | `admin`, `canteen_service` | Kantin backend'inin KM'ye olay itmesi (satış/bakiye, kasadan öğrenci, kontroller, ödeme talebi). Servis anahtarı içindir. |
+| `bbd_canteen_backups.manage` | `bbd_canteen_backups` | loaded |  | `admin`, `bbd_staff` | Elle yedek aldırma ve yedeği bu makineye indirme. |
+| `bbd_canteen_backups.view` | `bbd_canteen_backups` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Yedek listesini ve tazelik durumunu görüntüleme. |
+| `bbd_canteen_devices.devices` | `bbd_canteen_devices` | loaded | evet | `admin`, `bbd_staff` | YIKICI: kiosk eşlemesinin iptali. Bu yetkiyi taşıyan kişi kantindeki bir cihazı satış yapamaz hâle getirir — token silinir, cihaz eşleme ekranına düşer ve sahada yeni kod girilene kadar HİÇ çalışmaz; iptal edilen kiosk yeni kod da alamaz. Kayıt silinmez, karar geri alınamaz. |
+| `bbd_canteen_devices.manage` | `bbd_canteen_devices` | loaded |  | `admin`, `bbd_staff` | Kiosk kaydı açma, adlandırma ve TEK KULLANIMLIK eşleme kodu üretme. İPTALİ İÇERMEZ — o `bbd_canteen_devices.devices`tedir. |
+| `bbd_canteen_devices.view` | `bbd_canteen_devices` | loaded |  | `admin`, `bbd_staff` | Kiosk listesini, eşleme durumunu ve yerel işlem izini görüntüleme. |
+| `bbd_canteen_products.deactivate` | `bbd_canteen_products` | loaded | evet | `admin`, `bbd_staff` | Ürünü pasifleştirme — kasada satışa çıkmaz. Veri silinmez. |
+| `bbd_canteen_products.manage` | `bbd_canteen_products` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Ürün ekleme, düzenleme, görsel yükleme ve stok işlemleri. |
+| `bbd_canteen_products.view` | `bbd_canteen_products` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Ürün listesini ve değişiklik günlüğünü görüntüleme. |
+| `bbd_canteen_reports.export` | `bbd_canteen_reports` | loaded |  | `admin`, `bbd_staff`, `accountant` | Raporu PDF/CSV olarak dışa aktarma. |
+| `bbd_canteen_reports.print` | `bbd_canteen_reports` | loaded |  | `admin`, `bbd_staff` | Raporu yazıcıya gönderme. |
+| `bbd_canteen_reports.view` | `bbd_canteen_reports` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Raporları görüntüleme. |
+| `bbd_class_schedule.view` | `bbd_class_schedule` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Ders Takvimi ekranını görüntüleme. |
+| `bbd_lunch.manage` | `bbd_lunch` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Toplu yemek kaydı işleme, sabit liste ve tatil günlerini düzenleme. |
+| `bbd_lunch.reverse` | `bbd_lunch` | loaded | evet | `admin`, `bbd_staff` | İşlenmiş yemek kaydını geri alma (kantinde ters kayıt oluşturur). |
+| `bbd_lunch.view` | `bbd_lunch` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Öğle Yemeği ekranını ve geçmiş girdileri görüntüleme. |
+| `bbd_payment_request.collect` | `bbd_payment_request` | loaded | evet | `admin`, `bbd_staff`, `accountant` | Elden alınan nakit tahsilatı cari deftere işleme. |
+| `bbd_payment_request.manage_templates` | `bbd_payment_request` | loaded |  | `admin` | Ödeme SMS şablonlarını düzenleme. |
+| `bbd_payment_request.send` | `bbd_payment_request` | loaded | evet | `admin`, `bbd_staff` | Veliye ödeme talebi gönderme. Gerçek SMS gider, geri alınamaz. |
+| `bbd_payment_request.view` | `bbd_payment_request` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Ödeme taleplerini ve tahsilat geçmişini görüntüleme. |
+| `bbd_sms.manage_settings` | `bbd_sms` | loaded |  | `admin` | Netgsm kimlik bilgilerini ve hazır mesajları düzenleme. |
+| `bbd_sms.send` | `bbd_sms` | loaded | evet | `admin`, `bbd_staff` | Velilere SMS gönderme. Gerçek para harcar ve geri alınamaz. |
+| `bbd_sms.view` | `bbd_sms` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | SMS ekranını, gönderim geçmişini ve kuyruğu görüntüleme. |
+| `bbd_students.access_code` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff` | Öğrencinin 6 haneli kantin giriş kodunu görüntüleme (liste/PDF) ve sıfırlama. |
+| `bbd_students.canteen_controls` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff` | Veli kantin kontrollerini (limitler, engeller, yasaklı ürünler) düzenleme. |
+| `bbd_students.delete` | `bbd_students` | loaded | evet | `admin` | Pasif öğrenciyi kalıcı silme — tek tek ya da toplu (bakiye 0, açık talep ve kurum cari borcu yok; ad ya da sayı yazılarak onay ve PIN teyidi). Kurum carisindeki alacak engellemez. |
+| `bbd_students.groups` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff` | Öğrenci gruplarını ve üyelikleri yönetme. |
+| `bbd_students.groups_delete` | `bbd_students` | loaded | evet | `admin` | Arşivdeki sınıfı kalıcı silme (sınıfın adı yazılarak, gerekçe ve PIN teyidiyle; geri alınamaz). |
+| `bbd_students.lifecycle` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff` | Öğrenciyi pasifleştirme (gerekçe, ileri tarih, toplu) ve yeniden etkinleştirme. |
+| `bbd_students.manage` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Öğrenci ekleme ve bilgilerini düzenleme (kantine yazar). |
+| `bbd_students.qr` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Öğrencinin kantin kart QR'ını ve toplu kart PDF'ini üretme. |
+| `bbd_students.view` | `bbd_students` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Öğrenci listesini ve bilgilerini görüntüleme. |
+| `bbd_tablet.grant` | `bbd_tablet` | loaded |  | `admin`, `bbd_staff`, `org_staff` | Öğrenciye uygulama bazında günlük ek süre verme ve geri alma; öğrenciyi belirli bir zamana kadar tabletten kısıtlama; hatalı şifreyle kilitlenen tablet girişini açma. |
+| `bbd_tablet.manage` | `bbd_tablet` | loaded |  | `admin`, `bbd_staff` | Tablet, profil ve uygulama kurallarını düzenleme; tablet kilidi, duyuru, komut, oturum kapatma; APK yükleme ve dağıtma, indirme sırasını öne alma; tablet, profil, öğrenci tablet verisini silme ve dağıtımı bitirme (PIN ile). |
+| `bbd_tablet.view` | `bbd_tablet` | loaded |  | `admin`, `bbd_staff`, `org_staff` | Tabletleri, profilleri, oturumları, komutları, öğrenci kullanımını, ek süreleri ve kısıtlamaları görüntüleme. |
+| `bell.delete` | `bell` | loaded | evet | `admin` | Grubu, yüklenmiş zil sesini ve kullanılmayan anonsları KALICI silme. Geri alınamaz; PIN teyidi ister. |
+| `bell.manage` | `bell` | loaded |  | `admin`, `org_staff` | Zil saatlerini, grupları, sesleri ve anons metinlerini düzenleme. |
+| `bell.ring_now` | `bell` | loaded |  | `admin`, `org_staff`, `bbd_staff` | Elle zil çalma ve grup çağırma. |
+| `bell.view` | `bell` | loaded |  | `admin`, `org_staff`, `bbd_staff` | Zil saatlerini, grupları ve çalma günlüğünü görüntüleme. |
+| `bld_cms.delete` | `bld_cms` | disabled |  | `admin` | YIKICI: hizmet sayfasını ve yazıyı GERÇEKTEN silme. Sözleşme yumuşak silme sunmuyor (cms.md — "Gerçek silme"), yani kayıt geri gelmez ve o adrese verilmiş bütün bağlantılar kırılır. Günlük ihtiyaç olan "sitede görünmesin" için `is_published = false` zaten var ve `bld_cms.manage` ile yapılır; bu anahtar yalnız kaydın tümden gitmesi içindir. Yerel düzenleme geçmişi silinen kaydın son hâlini saklamaya devam eder ama o bir yedek değil, bir denetim izidir — geri yükleyen bir uç YOKTUR. |
+| `bld_cms.manage` | `bld_cms` | disabled |  | `admin`, `bld_staff` | İçerik anahtarlarını yazma, hizmet ve yazı açma/güncelleme, yayına alma ve yayından çıkarma, siteyi yeniden çizdirme. |
+| `bld_cms.view` | `bld_cms` | disabled |  | `admin`, `bld_staff` | Site metinlerini, hizmetleri, yazıları ve yerel düzenleme geçmişini görüntüleme. |
+| `bld_customers.disable` | `bld_customers` | disabled |  | `admin`, `bld_staff` | YIKICI: müşteri hesabını kapatma (`customers.status = false`). Kapalı hesap giriş yapamaz ve sipariş veremez; aktif aboneliği olan bir hesapta abonelik üretimi DURMAZ (kural hesaba değil aboneliğe bağlıdır) ve bu yüzden yanıttaki uyarı yöneticiye gösterilir. Hesap kapatmak VERİ SİLMEZ; silme ucu yoktur. |
+| `bld_customers.manage` | `bld_customers` | disabled |  | `admin`, `bld_staff` | İletişim bilgilerini (ad, soyad, telefon) ve serbest metin kurum etiketlerini (kurum adı, vergi dairesi, vergi/TC numarası, yetkili kişi, kurum telefonu) düzenleme; kapatılmış bir hesabı yeniden açma. E-POSTA VE PAROLA BU İZİNLE DE YAZILAMAZ — sözleşmede yazma yolu yok. |
+| `bld_customers.view` | `bld_customers` | disabled |  | `admin`, `bld_staff` | Müşteri arama, müşteri kartı, adres defteri, sipariş geçmişi, abonelik ve SMS gönderim kaydını görüntüleme. BU İZİN BİR OKUMA İZNİNDEN FAZLASIDIR: taşıyan kişi bütün müşteri telefon ve e-posta defterine erişir ve her erişimi hem BLD'de hem yerelde denetim izine yazılır. |
+| `bld_dashboard.manage` | `bld_dashboard` | disabled |  | `admin`, `bld_staff` | Bu ekranın görüntüleme tercihini kaydetme (yoklama aralığı, işletme seçimi, akış satır sayısı). BLD'ye hiçbir şey göndermez. |
+| `bld_dashboard.view` | `bld_dashboard` | disabled |  | `admin`, `bld_staff` | Açılış özetini görüntüleme: bugünün satış tablosu, bekleyen işler listesi ve canlı sipariş akışı. |
+| `bld_invoices.manage` | `bld_invoices` | disabled |  | `admin`, `bld_staff` | Sipariş ya da dönem belgesi kesme (kuru prova dâhil). Kesilen belge DÜZENLENEMEZ ve SİLİNEMEZ. |
+| `bld_invoices.view` | `bld_invoices` | disabled |  | `admin`, `bld_staff` | Belge listesini, tek belgenin donmuş içeriğini, yerel arşivi ve denetim izini görüntüleme; A4 belge üretme, önizleme ve yazdırma. |
+| `bld_invoices.void` | `bld_invoices` | disabled |  | `admin`, `bld_staff` | YIKICI: geçerli bir belgeyi iptal etme. Müşterinin elindeki kâğıt geçersiz olur, numara seride ölü kalır (boşluk bırakılmaz, geri kullanılmaz) ve işlem geri alınamaz — düzeltme, iptalden sonra kesilen YENİ bir belgedir. |
+| `bld_kds.devices` | `bld_kds` | disabled |  | `admin`, `bld_staff` | YIKICI cihaz işlemleri: cihaz iptali ve `restart` · `clear_failed` · `clear_queue` · `update` · `unpair` komutları. Bu yetkiyi taşıyan kişi mutfağı sipariş göremez hâle getirebilir — `restart` ekranı kapatır, `clear_failed` basılamamış fişleri kuyruktan düşürür ve o fişler bir daha basılmaz, `clear_queue` üstelik bekleyenleri de düşürür, `update` kurulum boyunca ekranı alır, `unpair` cihaz token'ını siler ve kasa sahada elle eşleştirilene kadar hiç sipariş göremez, iptal edilen kasa bir daha bağlanamaz. BLD tarafında da ayrı yetki kutusu var (`Veykemtu.KitchenDevices`); iki tarafın ayrımı aynı tutulur. |
+| `bld_kds.manage` | `bld_kds` | disabled |  | `admin`, `bld_staff` | Cihaz açma ve adlandırma, eşleme kodu üretme, zararsız komutlar (test fişi, yeniden bas, alarmı sustur), sipariş revizyonu ve durum değişikliği. AYAR YAZMAYI İÇERMEZ — o `bld_kds.settings`tedir. |
+| `bld_kds.settings` | `bld_kds` | disabled |  | `admin` | KASA AYARLARI: yönetilen 24 ayarın kasaya yazılması (çalışma, yazıcı, ses ve kilit politikası). Ayrı durur çünkü mutfağın günlük işi değil, donanımın biçimlendirilmesidir: yanlış bir `printer_device_path` fiş basımını tümüyle durdurur, `poll_seconds` kasayı oran sınırına sokar ve bir kilit anahtarını `false` yapmak kasadaki düğmeyi öldürür — hepsinin düzeltmesi yalnız merkezden gelebilir. Sipariş durumunu değiştirmek (`bld_kds.manage`) bunların hiçbirini yapmaz. |
+| `bld_kds.view` | `bld_kds` | disabled |  | `admin`, `bld_staff` | Cihazları, ayarlarını, komut geçmişini, fiş kaydını ve siparişleri görüntüleme. |
+| `bld_manual_order.manage` | `bld_manual_order` | disabled |  | `admin`, `bld_staff` | Sipariş açma. Sipariş `onaylandi` doğar ve servis günü bugünse ANINDA mutfak ekranına düşer; ileri tarihliyse o günün kesim anında düşer. Kayıtlı müşterisi olmayan arayan için telefonla yeni müşteri kaydı da bu yetkiyle açılır. |
+| `bld_manual_order.price_override` | `bld_manual_order` | disabled |  | `admin`, `bld_staff` | Müşteriye özel SEPET fiyatı uygulama: siparişin toplamı katalog yerine personelin telefonda anlaştığı tutar olur. Tutar sepetin tamamı içindir, kalem başına değil; kalemler siparişe fiyatsız yazılır ve teslimat ücreti bu tutara DÂHİL sayılır (ayrıca eklenmez). Anlaşma girilen her sipariş BLD denetim izinde tutarıyla birlikte durur. |
+| `bld_manual_order.view` | `bld_manual_order` | disabled |  | `admin`, `bld_staff` | Elle sipariş ekranını açma: müşteri arama, ürün kataloğu, servis gününün kesim saati ve stok durumu. Müşteri okumaları KVKK gereği BLD tarafında `actor` ile denetlenir. |
+| `bld_menu.manage` | `bld_menu` | disabled |  | `admin`, `bld_staff` | Gün kurma, gün başlığı/fiyatı/notu/kesim saati düzenleme, kalem ekleme ve güncelleme, yayınlama ve taslağa çekme, porsiyon tavanı yazma, günü başka güne kopyalama. |
+| `bld_menu.remove` | `bld_menu` | disabled |  | `admin`, `bld_staff` | GERİ ALINAMAZ silme: menü gününü (kalemleriyle birlikte) ve tek kalemi silme. Sunucu iki kapı daha tutuyor — yayınlanmış gün ve siparişi olan gün silinemez, bugünün siparişlerinde kullanılmış kalem silinemez — ama taslak bir haftalık menü tek tıkla yok edilebilir ve geri getirmenin yolu yoktur. Yayından çekmek bu anahtara girmez: o geri alınabilir. |
+| `bld_menu.view` | `bld_menu` | disabled |  | `admin`, `bld_staff` | Menü takvimini, gün ayrıntısını, kalemleri ve stok sayaçlarını görüntüleme. |
+| `bld_notifications.manage` | `bld_notifications` | disabled |  | `admin`, `bld_staff` | Duyuru taslağı oluşturma ve duyuru içeriğini düzenleme. |
+| `bld_notifications.publish` | `bld_notifications` | disabled |  | `admin`, `bld_staff` | DIŞA DÖNÜK: duyuruyu yayına alma ve arşivleme. Bu yetkiyi taşıyan kişi bütün müşterilerin uygulamasında açılan metni değiştirir; yayının geri alma ucu yoktur (yayından kaldırmanın yolu bitiş anını geçmişe çekmek ya da arşivlemektir) ve arşivlenen duyuru anında görünmez olur. |
+| `bld_notifications.view` | `bld_notifications` | disabled |  | `admin`, `bld_staff` | Duyuruları, görülme istatistiğini ve yerel yazma izini görüntüleme. |
+| `bld_orders.cancel` | `bld_orders` | disabled |  | `admin`, `bld_staff` | YIKICI: sipariş iptali. Ödenmiş siparişte iade kaydı üretir, müşteriye iptal SMS'i gönderir ve porsiyonları gün toplamı ile ürün tavanından düşürür (o kadar sipariş yeniden alınabilir hâle gelir). Teslim edilmiş sipariş iptal edilemez; abonelikten üretilmiş bir siparişin iptali aboneliği DURDURMAZ. |
+| `bld_orders.manage` | `bld_orders` | disabled |  | `admin`, `bld_staff` | Sipariş revizyonu yazma (tam kalem listesi) ve durum ilerletme. İPTAL BUNA DÂHİL DEĞİLDİR. |
+| `bld_orders.view` | `bld_orders` | disabled |  | `admin`, `bld_staff` | Sipariş listesini, ayrıntısını, revizyon geçmişini, fatura künyesini ve bu ekranın yerel denetim izini görüntüleme; CSV dışa aktarım ve kendi görüntüleme tercihini kaydetme. |
+| `bld_products.manage` | `bld_products` | disabled |  | `admin`, `bld_staff` | Ürün açma ve düzenleme (ad, açıklama, fiyat, en az adet, sıra, kategori), ürünü yeniden satışa açma, görsel yükleme ve kaldırma, gün bazlı tükendi işareti koyma ve kaldırma, kategori açma ve düzenleme. |
+| `bld_products.retire` | `bld_products` | disabled |  | `admin`, `bld_staff` | Ürünü satıştan kaldırma (`menu_status = 0`). Satır SİLİNMEZ — gerçek silme geçmiş siparişlerin ürün bağını koparır ve "bu sipariş neydi" sorusunu cevapsız bırakırdı. Yine de ürün siteden ve sipariş yolundan düşer; yayınlanmış bir günlük menüde kullanılıyorsa sunucu `409` ile engeller ve yönetici önce menüden çıkarmak zorundadır. |
+| `bld_products.view` | `bld_products` | disabled |  | `admin`, `bld_staff` | Ürün kataloğunu, kategori ağacını ve yerel deneme izini görüntüleme. |
+| `bld_sales_settings.manage` | `bld_sales_settings` | disabled |  | `admin`, `bld_staff` | Satış KURALLARINI yazma: sabah kesim saati, ileri gün sınırı, minimum sepet tutarı, teslimat ücreti, ödeme yöntemleri, yoğunluk anahtarı ve müşteriye görünen metni, hazırlık / teslimat / yoğunluk dakikaları, günün menüsü rejimi, otomatik fatura belgesi ve günün hızlı stok tavanları. Ekran tercihi de burada, çünkü tercih tablosu kullanıcı başına değil kurulum başınadır. |
+| `bld_sales_settings.ordering` | `bld_sales_settings` | disabled |  | `admin`, `bld_staff` | SATIŞ KANALININ AÇIK/KAPALI olması: satışı durdurma ve açma, kapalı gün ekleme ve kaldırma. `manage` satış AÇIKKEN geçerli kuralları değiştirir ve yanlış girilen bir kesim saati bir dakikada düzeltilir; buradaki yetkinin hatası GERİ ALINAMAZ. Unutulan bir durdurma o günün bütün siparişlerini kaybettirir, yanlış eklenen bir kapalı gün abonelik üretimini atlatır (`SubscriptionGenerateCommand` o günü hiç işlemez) ve kaldırılan bir tatil mutfağı resmî tatilde üretime sokar. Kaybedilen gün geri gelmez. `busy` anahtarı BİLEREK bunun dışındadır: satışı kesmez, yalnız müşteriye "hazırlanması uzun sürebilir" uyarısı gösterir. |
+| `bld_sales_settings.view` | `bld_sales_settings` | disabled |  | `admin`, `bld_staff` | Satış ayarlarını, kapalı günleri, günün stok tavanlarını ve bu ekranın yerel denetim izini görüntüleme. |
+| `bld_sms.announce` | `bld_sms` | disabled |  | `admin` | TOPLU DUYURUYU GÖNDERME. Bu yetkiyi taşıyan kişi tek istekle yüzlerce müşteriye SMS yollar; gönderilen mesaj geri alınamaz, her segment faturalanır ve yanlış metin spam şikâyeti ile numara kaybı demektir. Ayrıca `all_customers` kitlesi panelde ikinci bir onay ister. |
+| `bld_sms.manage` | `bld_sms` | disabled |  | `admin`, `bld_staff` | Şablon metnini yazma, bir bildirimi açma/kapatma, tek numaraya `[DENEME]` SMS'i ve duyuru TASLAĞINI yazma. Taslak yazmak göndermek değildir; gönderim ayrı anahtardadır. |
+| `bld_sms.view` | `bld_sms` | disabled |  | `admin`, `bld_staff` | Şablonları, tetikleyici durumlarını, gönderim kaydını ve duyuru taslağını görüntüleme; metin ölçümü ve sunucu önizlemesi (hiçbir SMS göndermez). |
+| `bld_status_monitor.manage` | `bld_status_monitor` | disabled |  | `admin`, `bld_staff` | Sunucudaki hata olayını çözüldü işaretleme, düzeltme defteri kaydı yazma/pasifleştirme ve defterdeki bir düzeltme komutunu kasaya gönderme. Komut `bld.api` geçidinden gider; ham kabuk erişimi YOKTUR. |
+| `bld_status_monitor.view` | `bld_status_monitor` | disabled |  | `admin`, `bld_staff` | Sağlık kutularını, kasa sağlık özetini, sunucudaki hata olaylarını, bu ekranın YEREL araştırma geçmişini, düzeltme defterini ve yerel yazma izini görüntüleme; kendi görüntüleme tercihini kaydetme. |
+| `bld_subscriptions.cancel` | `bld_subscriptions` | disabled | evet | `admin` | YIKICI: abonelik iptali ve dönem borcunu TAHSİL EDİLDİ işaretleme. İptal geri alınamaz — iptal edilmiş abonelik aktifleştirilemez, ödemeyle geri açılamaz ve yeniden başlatmak yeni abonelik açmak demektir. Tahsilat işaretleme GERÇEK PARA HAREKETİDİR ve geri alma ucu yoktur; yanlış işaretlenen bir tahsilat ancak yeni bir dönem kaydıyla düzeltilir. İkisi de izin yeterli olsa bile PIN teyidi ister. |
+| `bld_subscriptions.manage` | `bld_subscriptions` | disabled |  | `admin`, `bld_staff` | Talep durumu ve iç notu yazma, talebi aboneliğe çevirme; abonelik açma/güncelleme, aktifleştirme, duraklatma, devam ettirme; tek-gün istisnası; elle üretim ve siparişi KDS'e erken düşürme; sözleşme oluşturma/yeniden gönderme/iptal; dönem borcu AÇMA. ABONELİK İPTALİ VE TAHSİLAT İŞARETLEME BUNA DÂHİL DEĞİLDİR. |
+| `bld_subscriptions.view` | `bld_subscriptions` | disabled |  | `admin`, `bld_staff` | Teklif taleplerini, abonelik listesini ve ayrıntısını, servis takvimini, üretim defterini, sözleşmeleri, dönem ödemelerini ve bu ekranın yerel denetim izini (fiyat geçmişi dâhil) görüntüleme; kendi görüntüleme tercihini kaydetme. |
+| `mobile_gateway.access` | `mobile_gateway` | loaded |  | `admin`, `mobile_service` | Mobil geçidin bütün uçları: öğrenci dizini ve grupları, kantin okuma/yazma, tablet denetimi, anons, zil saatleri ve zil planı, OTP SMS aktarımı. Servis anahtarı içindir. |
+| `mobile_gateway.events.manage` | `mobile_gateway` | loaded |  | `admin` | Ölü mektupları yeniden gönderme ve iletimi bir sıradan yeniden başlatma. |
+| `mobile_gateway.events.view` | `mobile_gateway` | loaded |  | `admin`, `bbd_staff` | Akademi'ye olay iletiminin durumunu (gecikme, ölü mektup) görme. |
+| `print.reprint` | `print` | loaded |  | `admin`, `org_staff`, `bld_staff`, `bbd_staff` | Üretilmiş bir çıktıyı yeniden yazıcıya gönderme. |
+| `print.view` | `print` | loaded |  | `admin`, `org_staff`, `bld_staff`, `bbd_staff` | Üretilmiş çıktıların listesini, önizlemesini ve baskı geçmişini görüntüleme. |
+| `store_ai.apply` | `store_ai` | disabled |  | `admin`, `bbd_staff` | Onaylanan AI önerilerini mağazaya uygulama. Katalog metinlerini değiştirir. |
+| `store_ai.manage` | `store_ai` | disabled |  | `admin` | Aylık bütçe, sınır davranışı, açık araçlar ve denetim eşikleri; bulgu susturma. |
+| `store_ai.run` | `store_ai` | disabled |  | `admin`, `bbd_staff` | AI aracı çalıştırma. PARA HARCAR: her çalışma jeton tüketir ve bütçeye işlenir. |
+| `store_ai.view` | `store_ai` | disabled |  | `admin`, `bbd_staff` | Ekranı, katalog sağlığı bulgularını, çalışma geçmişini ve raporları görüntüleme. |
+| `store_backups.delete` | `store_backups` | disabled |  | `admin` | Eski yedek dosyasını silme (yalnız N günden eski, gerekçeyle). |
+| `store_backups.manage` | `store_backups` | disabled |  | `admin`, `bbd_staff` | Yeni yedek alma, sağlama toplamı doğrulama, yedeği yerel diske indirme. |
+| `store_backups.restore` | `store_backups` | disabled |  | `admin` | Yedeği geri yükleme. Mevcut mağaza verisini değiştirir; yalnız yönetici. |
+| `store_backups.view` | `store_backups` | disabled |  | `admin`, `bbd_staff` | Yedek envanterini, disk durumunu ve denetim izini görüntüleme, CSV alma. |
+| `store_bundles.deactivate` | `store_bundles` | loaded |  | `admin` | Seti satıştan kaldırma. Silme yoktur: satılmış bir setin içeriği, geçmişi okumak için saklanır. |
+| `store_bundles.manage` | `store_bundles` | loaded |  | `admin`, `bbd_staff` | Setin adını, fiyatını ve içindeki ürünleri değiştirme. |
+| `store_bundles.view` | `store_bundles` | loaded |  | `admin`, `bbd_staff` | Setleri ve kâr hesabını görüntüleme, rapor ve Excel dosyası alma. |
+| `store_cms.manage` | `store_cms` | disabled |  | `admin`, `bbd_staff` | Sayfa açma, içerik/SEO düzenleme, SSS sorularını yazma. |
+| `store_cms.redirects` | `store_cms` | disabled |  | `admin` | 301/302 yönlendirme yazma ve silme. Yanlış kayıt vitrini döngüye sokar. |
+| `store_cms.restore` | `store_cms` | disabled |  | `admin` | Sayfayı eski sürüme döndürme. Yürürlükteki metnin üstüne yazar. |
+| `store_cms.sitemap` | `store_cms` | disabled |  | `admin` | Site haritası tanımlama ve ÜRETME. Üretim 1.419 ürünü dolaşan ağır iştir ve vitrinde yayınlanan XML'i yeniden yazar. |
+| `store_cms.view` | `store_cms` | disabled |  | `admin`, `bbd_staff` | CMS ekranını görüntüleme, sürüm geçmişini okuma, rapor ve CSV alma. |
+| `store_customers.anonymize` | `store_customers` | loaded |  | `admin` | KVKK anonimleştirme. GERİ ALINAMAZ; ad, e-posta ve telefon kalıcı silinir. |
+| `store_customers.deactivate` | `store_customers` | loaded |  | `admin` | Müşteriyi pasifleştirme. Silme yoktur: siparişi olan müşteri silinmez. |
+| `store_customers.gdpr` | `store_customers` | loaded |  | `admin` | KVKK veri paketi isteme. Paket kişisel veri taşır. |
+| `store_customers.manage` | `store_customers` | loaded |  | `admin`, `bbd_staff` | Müşteri künyesi, grup ve not düzenleme; müşteri ayarlarını kaydetme. |
+| `store_customers.reviews` | `store_customers` | loaded |  | `admin`, `bbd_staff` | Yorum moderasyonu (onayla/reddet/spam) ve mağaza yanıtı yazma. |
+| `store_customers.view` | `store_customers` | loaded |  | `admin`, `bbd_staff` | Müşteri listesi, künye, yorumlar, rapor ve CSV. |
+| `store_dashboard.maintenance` | `store_dashboard` | loaded |  | `admin` | Bakım modunu açma/kapatma. Vitrini kapatır; gerekçe zorunludur. |
+| `store_dashboard.manage` | `store_dashboard` | loaded |  | `admin`, `bbd_staff` | Mağaza kimliği, SEO, çalışma kanalı ve yerelleştirme ayarlarını düzenleme. |
+| `store_dashboard.view` | `store_dashboard` | loaded |  | `admin`, `bbd_staff` | Kontrol Panelini görüntüleme, pano raporu ve CSV alma. |
+| `store_home_media.manage` | `store_home_media` | disabled |  | `admin`, `bbd_staff` | Ana ekrandaki görselleri değiştirme: yeni görsel yükleme, sırayı belirleme ve tıklanınca gidilecek adresi seçme. Yazma anında müşteri de görür. |
+| `store_home_media.view` | `store_home_media` | disabled |  | `admin`, `bbd_staff` | Ana ekran görsellerini görüntüleme ve değişiklik geçmişini okuma. |
+| `store_invoices.issue` | `store_invoices` | loaded |  | `admin`, `bbd_staff` | Siparişe fatura kesme. Kesilen fatura silinemez; iptali iade faturasıdır. |
+| `store_invoices.legal_no` | `store_invoices` | loaded |  | `admin`, `bbd_staff`, `accountant` | Dış sistemde kesilen yasal faturanın numarasını mağaza faturasıyla eşleme. |
+| `store_invoices.manage` | `store_invoices` | loaded |  | `admin`, `bbd_staff` | Seri tanımlama, fatura durumu değiştirme, müşteriye kopya e-postalama. |
+| `store_invoices.view` | `store_invoices` | loaded |  | `admin`, `bbd_staff`, `accountant` | Fatura ve irsaliye listesini görüntüleme, icmal ve CSV alma. |
+| `store_notifications.broadcast` | `store_notifications` | loaded |  | `admin` | Toplu bildirim. Canlıda 1.800+ kişiye gider ve geri alınamaz. |
+| `store_notifications.manage` | `store_notifications` | loaded |  | `admin`, `bbd_staff` | Şablon, olay kuralı, sessiz saat, günlük limit ve mobil uygulama ayarları. |
+| `store_notifications.send` | `store_notifications` | loaded |  | `admin`, `bbd_staff` | Tek gönderim: kendine test ve başarısız gönderimi yineleme. Para harcar. |
+| `store_notifications.view` | `store_notifications` | loaded |  | `admin`, `bbd_staff` | Gönderim geçmişi, şablon, kural, kanal ve abonelikleri görüntüleme; rapor alma. |
+| `store_orders.cancel` | `store_orders` | loaded |  | `admin`, `bbd_staff` | Sipariş iptali. Geri alınamaz; gerekçe ve süre penceresi denetlenir. |
+| `store_orders.manage` | `store_orders` | loaded |  | `admin`, `bbd_staff` | "Fatura kesme, gönderi kaydı açma, not ekleme, toplu işlem, ekran ayarları ve sipariş durumunu ELLE değiştirme. Durum ucundan İPTAL, KAPATMA ve SAHTE İŞARETİ yazılamaz: ilki ayrı anahtar ve süre penceresi ister (`store_orders.cancel`), diğer ikisi siparişi kalıcı olarak kilitler." |
+| `store_orders.view` | `store_orders` | loaded |  | `admin`, `bbd_staff` | Sipariş listesini, detayını, raporlarını ve CSV'sini görüntüleme. |
+| `store_payment_gateway.cancel` | `store_payment_gateway` | disabled |  | `admin` | Ödeme bağlantısını iptal etme. Kayıt silinmez, bağlantı ölür. |
+| `store_payment_gateway.collect` | `store_payment_gateway` | disabled |  | `admin`, `bbd_staff` | Ödeme bağlantısı üretme ve SMS gönderme. Para hareketi başlatır. |
+| `store_payment_gateway.manage` | `store_payment_gateway` | disabled |  | `admin`, `bbd_staff` | Tahsilat talebi açma, SMS şablonunu ve Netgsm ayarlarını düzenleme. |
+| `store_payment_gateway.settle` | `store_payment_gateway` | disabled |  | `admin` | Elden kapatma: havale/nakit beyanı. Mağazaya ödeme kaydı yazar. |
+| `store_payment_gateway.view` | `store_payment_gateway` | disabled |  | `admin`, `bbd_staff` | Tahsilat ekranını görüntüleme, liste, rapor ve CSV alma. |
+| `store_products.attributes` | `store_products` | loaded |  | `admin` | Nitelik ve aile düzenleme, seçenek yönetimi, nitelik pasifleştirme. |
+| `store_products.attributes_delete` | `store_products` | loaded |  | `admin` | Nitelik/seçenek silme. Değeri bütün ürünlerden düşer; geri alınamaz. |
+| `store_products.bulk` | `store_products` | loaded |  | `admin`, `bbd_staff` | Toplu fiyat/stok/kategori/durum uygulaması (önizleme zorunlu). |
+| `store_products.deactivate` | `store_products` | loaded |  | `admin` | Ürünü pasifleştirme (vitrinden kaldırma). Geri alınabilir; kayıt silinmez. |
+| `store_products.delete` | `store_products` | loaded |  | `admin` | Ürünü katalogdan silme. GERİ ALINAMAZ; gerekçe ve önizleme zorunlu. |
+| `store_products.manage` | `store_products` | loaded |  | `admin`, `bbd_staff` | Ürün künyesi, fiyat, stok, görsel ve kategori düzenleme. |
+| `store_products.rename_sku` | `store_products` | loaded |  | `admin` | SKU değiştirme. product_flat yeniden yazılır, eski vitrin bağlantıları kırılır. |
+| `store_products.view` | `store_products` | loaded |  | `admin`, `bbd_staff` | Ürünler ekranını görüntüleme, rapor ve CSV alma. |
+| `store_promotions.activate` | `store_promotions` | disabled |  | `admin` | Kuralı yayına alma / durdurma. Yayındaki kural her siparişte para indirir; bu yüzden düzenleme izninden ayrı tutulur. |
+| `store_promotions.coupons` | `store_promotions` | disabled |  | `admin`, `bbd_staff` | Kupon üretme ve kullanılmamış kupon kodunu kaldırma. |
+| `store_promotions.manage` | `store_promotions` | disabled |  | `admin`, `bbd_staff` | Kural künyesi, koşul, eylem, kısıt ve takvim düzenleme (taslak olarak). |
+| `store_promotions.view` | `store_promotions` | disabled |  | `admin`, `bbd_staff` | Promosyon ekranını, kuponları ve kampanya performansını görüntüleme. |
+| `store_refunds.approve` | `store_refunds` | loaded |  | `admin`, `bbd_staff` | İadeyi onaylayıp parayı geri verme (kredi notu; banka iadesi mağazada otomatik başlar). Para hareketidir. |
+| `store_refunds.manage` | `store_refunds` | loaded |  | `admin`, `bbd_staff` | Talep durumu, sipariş notu ve müşteri bildirimi. |
+| `store_refunds.ship_return` | `store_refunds` | loaded |  | `admin`, `bbd_staff` | Müşteriden geri alım için iade kargosu açma ve etiketini satın alma. Kargo ücreti mağazaya yansır. |
+| `store_refunds.view` | `store_refunds` | loaded |  | `admin`, `bbd_staff`, `accountant` | İadeler ekranını görüntüleme, iade icmali ve CSV alma. |
+| `store_reports.manage` | `store_reports` | disabled |  | `admin`, `bbd_staff` | Kaydedilmiş ve zamanlanmış rapor tanımlarını yönetme. |
+| `store_reports.view` | `store_reports` | disabled |  | `admin`, `bbd_staff`, `accountant` | Raporları görüntüleme, PDF/CSV üretme ve yazdırma. |
+| `store_requests.decide` | `store_requests` | disabled |  | `admin`, `bbd_staff` | Talebi onaylama/reddetme. Onay, seçili kalemleri İadeler ekranına devreder; para iadesi orada ayrı izinle yapılır. |
+| `store_requests.manage` | `store_requests` | disabled |  | `admin`, `bbd_staff` | Yanıt yazma, iç not, durum/öncelik/atama, iade kalemi seçimi, toplu işlem. |
+| `store_requests.purchase` | `store_requests` | disabled |  | `admin`, `bbd_staff` | İade kargo etiketini SATIN ALMA. PARA HARCAR; gerekçe en az 20 karakter. |
+| `store_requests.view` | `store_requests` | disabled |  | `admin`, `bbd_staff` | Talepler ekranını görüntüleme, RMA formu ve SLA raporu alma. |
+| `store_shipping.cancel` | `store_shipping` | loaded |  | `admin`, `bbd_staff` | Satın alınmış gönderiyi iptal etme. Ayrı anahtar: sonradan daraltılabilsin diye. |
+| `store_shipping.integration` | `store_shipping` | loaded |  | `admin` | Geliver kurulum ayarları: API tokenı, kurulu/canlı/test bayrakları, gönderici adres, webhook kaydı. |
+| `store_shipping.manage` | `store_shipping` | loaded |  | `admin`, `bbd_staff` | Gönderi taslağı açma, elle takip girişi (dışarıdan alınmış etiket), senkron, adres düzeltme, taşıyıcı sınama. |
+| `store_shipping.purchase` | `store_shipping` | loaded |  | `admin`, `bbd_staff` | Taşıyıcıdan etiket SATIN ALMA ve iade etiketi açma. PARA HARCAR; gerekçe en az 20 karakter. |
+| `store_shipping.rates` | `store_shipping` | loaded |  | `admin` | Desi→ücret matrisi, ücretsiz kargo eşiği ve bölge tanımlarını yazma. Vitrindeki kargo ücretini değiştirir. |
+| `store_shipping.view` | `store_shipping` | loaded |  | `admin`, `bbd_staff` | Gönderi listesi, taşıyıcılar, performans ve rapor/etiket alma. |
+| `store_tax.assign` | `store_tax` | disabled |  | `admin` | Ürünlerin vergi kategorisini toplu değiştirme. Kataloğa yazar: yanlış eşleme yanlış KDV'yle satış demektir. |
+| `store_tax.manage` | `store_tax` | disabled |  | `admin`, `bbd_staff` | Vergi oranı ve vergi kategorisi ekleme/düzenleme. |
+| `store_tax.view` | `store_tax` | disabled |  | `admin`, `bbd_staff`, `accountant` | Vergilendirme ekranını görüntüleme, KDV icmali alma, rapor ve CSV üretme. |
+| `store_trial_club.enroll` | `store_trial_club` | disabled |  | `admin`, `bbd_staff` | Katılımcı ekleme ve kayıt iptali. Kayıt silinmez, iptal edilir. |
+| `store_trial_club.manage` | `store_trial_club` | disabled |  | `admin`, `bbd_staff` | Deneme açma/düzenleme, kontenjan değiştirme ve ekran tercihleri. |
+| `store_trial_club.notify` | `store_trial_club` | disabled |  | `admin` | Toplu bildirim gönderme. SMS PARA HARCAR. |
+| `store_trial_club.publish` | `store_trial_club` | disabled |  | `admin` | Sonuç yükleme ve yayınlama. Yayınlanan sonuç katılımcıya görünür olur. |
+| `store_trial_club.view` | `store_trial_club` | disabled |  | `admin`, `bbd_staff` | Deneme Kulübü ekranını görüntüleme, yoklama/karne PDF ve CSV alma. |
+| `store_udit_logs.export` | `store_udit_logs` | loaded |  | `admin` | Denetim dökümü alma (PDF/CSV) ve yazdırma. Kaydı okumak ile kaydı binlerce satır hâlinde binadan çıkarmak aynı şey değildir: döküm personel adı ve IP taşır, ayrı anahtar ister ve iz bırakır. |
+| `store_udit_logs.manage` | `store_udit_logs` | loaded |  | `admin` | Sözleşme gereği ilan edilir ve HİÇBİR uç noktaya bağlı DEĞİLDİR. Bu ekran salt okunurdur: denetim kaydı silinemez, düzenlenemez. Bir uç bu anahtara bağlanırsa ekranın kalıcı notu yalana döner. |
+| `store_udit_logs.view` | `store_udit_logs` | loaded |  | `admin`, `bbd_staff`, `accountant` | Denetim kayıtlarını görüntüleme, süzme ve fark tablosunu okuma. |
+
+<!-- izin-katalogu:bitir -->
