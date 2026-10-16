@@ -54,6 +54,11 @@ http:
   router: backend.api.routes:router
   tags: ["bbd_tablet"]
   requires: [bbd_tablet.view]
+  # Kurum tabletlerinin yüzeyi: KM oturumu yok, her uç kendi cihaz/öğrenci
+  # belirtecini doğrular (eşleme kodu hariç). İzin kapısının dışında monte edilir.
+  device_router:
+    prefix: /api/tablet/v1
+    router: backend.api.tablet_routes:router
 
 ui:
   entry: ui/panel/index.js

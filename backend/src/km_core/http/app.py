@@ -530,14 +530,18 @@ def _mount_modules(app: FastAPI, kernel: Kernel, identity: Identity) -> None:
                 tags=list(spec.tags or [manifest.id]),
                 dependencies=[Depends(guard)],
             )
-        if manifest.id == "bbd_tablet":
-            # Kurum tabletleri yönetici PIN'i taşımaz. Bu ayrı router'da
-            # enrollment dışındaki HER uç kendi cihaz/öğrenci bearer'ını
-            # doğrular; yönetim router'ı yukarıdaki izin kapısında kalır.
-            tablet_api = importlib.import_module(
-                "km_mod_bbd_tablet.backend.api.tablet_routes"
-            )
-            app.include_router(tablet_api.router, prefix="/api/tablet/v1", tags=["tablet"])
+        if spec.device_router and spec.device_prefix:
+            # CİHAZ YÜZEYİ — manifestte VERİYLE ilan edilir (`http.device_router`),
+            # çekirdek modül adına bakmaz (K1; iş 63, ADR 0033 §8 adım 3.2).
+            # Kurum tableti gibi cihazlar KM oturumu taşımaz: bu router izin
+            # kapısının DIŞINDA monte edilir ve her ucu kendi cihaz/öğrenci
+            # belirtecini doğrular. Kimliksiz her uç güvenlik envanterinde
+            # gerekçesiyle listelidir (`tests/core/test_guvenlik_envanteri.py`).
+            module_path, _, attribute = spec.device_router.partition(":")
+            device_api = importlib.import_module(f"km_mod_{manifest.id}.{module_path}")
+            app.include_router(getattr(device_api, attribute), prefix=spec.device_prefix,
+                               tags=[f"{manifest.id}:device"])
+            log.info("cihaz router'ı monte edildi", module=manifest.id, prefix=spec.device_prefix)
         log.info("router monte edildi", module=manifest.id, prefix=spec.prefix)
 
 
