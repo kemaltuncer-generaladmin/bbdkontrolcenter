@@ -204,6 +204,22 @@ async def test_birlestirme_idempotent_ve_es_zamanli_ikinci_kosu_atlar(world: Wor
     assert (await world.merge.status())["state"] == "done"
 
 
+async def test_bos_kurulumda_birlestirme_olay_yazmaz(world: World) -> None:
+    """Yeni kurulum (öğrenci/sınıf yok): dönüşüm "tamam" olur ama `group.changed` yazılmaz,
+    süreç içi yayın da yapılmaz (63-duzeltici; eskiden her yeni kurulumun outbox'ı boş bir
+    grup olayıyla açılıyordu — KM uzun yoklaması `lastSeq` 0 yerine 1 görüyordu)."""
+    result = await world.merge.run()
+    assert result["skipped"] is False and result["classes"] == 0 and result["members"] == 0
+    assert (await world.merge.status())["state"] == "done"
+    assert await world.events("group.changed") == []
+    assert world.published == []
+    # Veri varken olay yine yazılır.
+    await seed(world, "STU-1", class_name="9-A")
+    forced = await world.merge.run(force=True)
+    assert forced["classes"] == 1
+    assert len(await world.events("group.changed")) == 1 and len(world.published) == 1
+
+
 async def test_ayni_adli_canli_grup_varsa_ayri_kayit_ayirt_edici_adla(world: World) -> None:
     old = await world.groups.create({"name": "tyt", "studentIds": ["STU-9"]}, actor="Ayşe")
     await seed(world, "STU-1", class_name="TYT")

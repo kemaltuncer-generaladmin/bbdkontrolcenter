@@ -120,16 +120,17 @@ class ClassMerge:
         stamp = _now()
         summary = {"classes": 0, "renamed": 0, "members": 0, "levels": 0, "students": 0}
         try:
-            revision = await self._run_in(actor=actor, force=force, today=today, start=start,
-                                          stamp=stamp, summary=summary)
+            revision, changed = await self._run_in(actor=actor, force=force, today=today,
+                                                   start=start, stamp=stamp, summary=summary)
         except _Done:
             return {"skipped": True, **(await self.status())["summary"]}
-        await self._groups_service.after_commit(revision)
+        if changed:
+            await self._groups_service.after_commit(revision)
         self._log.info("sınıf birleştirme tamam", **summary)
         return {"skipped": False, **summary}
 
     async def _run_in(self, *, actor: str, force: bool, today: date, start: date, stamp: str,
-                      summary: dict[str, int]) -> int:
+                      summary: dict[str, int]) -> tuple[int, bool]:
         async with self._store.transaction():
             # Sayaç kilidi eşzamanlı koşuları sıralar; durum İŞLEMİN İÇİNDE yeniden okunur.
             revision = await self._groups_service._bump()
@@ -262,8 +263,14 @@ class ClassMerge:
                 f"UPDATE {self._state} SET version = ?, state = 'done', finished_at = ?, "
                 f"actor = ?, summary = ? WHERE id = 1",
                 (VERSION, _now(), actor[:160], json.dumps(summary, ensure_ascii=False)))
-            await self._groups_service._emit(revision)
-        return int(revision)
+            # BOŞ DÖNÜŞÜM OLAY YAZMAZ (63-duzeltici). Yeni kurulumda (öğrenci/sınıf yok)
+            # dönüşüm yine "tamam" işaretlenir ama hiçbir grup satırı değişmedi:
+            # `group.changed` yazılsaydı her yeni kurulumun outbox'ı boş bir olayla
+            # açılır, Akademi/zil boşuna grupları yeniden çekerdi.
+            changed = bool(target) or any(summary[key] for key in ("classes", "members", "levels"))
+            if changed:
+                await self._groups_service._emit(revision)
+        return int(revision), changed
 
     async def _fill_class_ids(self, today: date) -> int:
         day = today.isoformat()

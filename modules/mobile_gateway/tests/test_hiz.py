@@ -165,15 +165,23 @@ async def test_yavas_kantin_sure_sinirinda_kesilir(client: httpx.AsyncClient, wo
 
 
 class SlowLedgerCanteen(FakeCanteen):
-    """Defter ucu `delay` sürer."""
+    """Defter ucu `delay` sürer. `peak`: aynı anda uçuşta olan en çok defter isteği —
+    eşzamanlılığı saat yerine sayıyla ölçer (yük altında oynamaz)."""
 
     def __init__(self, delay: float) -> None:
         super().__init__()
         self.delay = delay
+        self.in_flight = 0
+        self.peak = 0
 
     async def ledger(self, student_id: str, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-        await asyncio.sleep(self.delay)
-        return await super().ledger(student_id, **kwargs)
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(self.delay)
+            return await super().ledger(student_id, **kwargs)
+        finally:
+            self.in_flight -= 1
 
 
 def canteen_calls(canteen: FakeCanteen) -> list[str]:
@@ -220,19 +228,19 @@ async def test_kantin_ozeti_buyuk_aralikta_kalan_dilimleri_ayni_anda_okur(
     zaman dilimine bölünür ve dilimler aynı anda okunur — süre sayfa sayısıyla
     değil dilimin kendi sayfa sayısıyla büyür.
     """
-    slow = SlowLedgerCanteen(delay=0.1)
+    slow = SlowLedgerCanteen(delay=0.05)
     world.replace("canteen.api", slow)
     busy_student(slow, 900, span_ms=29 * 86_400_000)
-    started = time.perf_counter()
     response = await client.get(f"/students/{ELIF}/canteen", params={"days": 30})
-    elapsed = time.perf_counter() - started
     assert response.status_code == 200
     ids = [item["id"] for item in response.json()["transactions"]]
     assert ids == [f"tx-{n}" for n in range(900)]          # tam, tekrar yok, sıralı
     calls = [args for name, args in slow.calls if name == "ledger"]
     assert len(calls) == 5                                   # 1 + 4 dilim
     assert [args["to_ms"] is None for args in calls].count(True) == 2  # ilk + imleçli dilim
-    assert elapsed < 0.1 * 3.5                               # sıralı olsa 5 × 0,1 sn
+    # Eskiden süre ölçülüyordu (< 3,5 × gecikme) ve makine yük altındayken oynuyordu.
+    # Ölçülen asıl özellik eşzamanlılıktır: dört dilim AYNI ANDA uçuşta (sıralı olsa 1).
+    assert slow.peak == 4
 
 
 async def test_kantin_ozeti_ayni_anda_yazilmis_satirlar_kaybolmaz(
