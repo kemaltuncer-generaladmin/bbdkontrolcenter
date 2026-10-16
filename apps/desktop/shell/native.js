@@ -169,7 +169,11 @@ export function runCommand(id, source = 'ui', arg = undefined) {
   // AYNI KOMUT, FARKLI YOL, 350 ms: Windows'ta menü hızlandırıcısı ve sayfanın
   // tuş olayı birlikte gelebilir — ikincisi yok sayılır. Aynı yoldan tekrar
   // (tuşa iki kez basmak) yok sayılmaz.
-  if (lastRun.id === id && lastRun.source !== source && now - lastRun.at < 350) return false;
+  if (lastRun.id === id && lastRun.source !== source && now - lastRun.at < 350) {
+    // Yutulan ikinci yol "son yol" olur: aynı tuşa bir kez daha basmak çalışır.
+    lastRun = { id, source, at: lastRun.at };
+    return false;
+  }
   lastRun = { id, source, at: now };
   const command = commands.get(id);
   if (!command) return false;

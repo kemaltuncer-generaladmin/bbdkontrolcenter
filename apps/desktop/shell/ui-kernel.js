@@ -90,19 +90,27 @@ export const connection = createConnection({
       return false;
     }
   },
-  onRestore: () => {
-    responses.clear();
-    restoredHandler();
-  },
+  onRestore: () => restoredHandler(),
 });
 
 export function onConnectionRestored(fn) {
   restoredHandler = typeof fn === 'function' ? fn : () => {};
 }
 
-/** Önbelleği elle boşaltır — "Yenile" (Ctrl+R) ve oturum değişimi. */
+/** Önbelleği elle boşaltır — oturum değişimi. */
 export function clearResponseCache() {
   responses.clear();
+}
+
+/**
+ * Bir SONRAKİ ekran açılışında son bilinen yanıt KULLANILMAZ: okumalar ağa
+ * gider ("Yenile", Ctrl/⌘+R, bağlantı geri geldi). Önbellek ATILMAZ — ağ yine
+ * yoksa okuma son bilinen yanıta düşer; Ctrl+R çevrimdışıyken ekranı
+ * boşaltmaz.
+ */
+let bypassNext = false;
+export function bypassCacheOnce() {
+  bypassNext = true;
 }
 
 /**
@@ -122,8 +130,11 @@ function activeScope() {
 function openScope(id) {
   let resolveSettled;
   const settled = new Promise((resolve) => { resolveSettled = resolve; });
+  const fresh = bypassNext;
+  bypassNext = false;
   const self = {
     id,
+    fresh,
     open: true,
     until: performance.now() + MOUNT_WINDOW_MS,
     inflight: 0,
@@ -231,7 +242,7 @@ export async function api(path, options = {}) {
   const owner = activeScope();
 
   // AÇILIŞTA SON BİLİNEN YANIT: ekran anında çizilir, gerçeği arkadan gelir.
-  if (key && owner && !options.fresh) {
+  if (key && owner && !owner.fresh && !options.fresh) {
     const hit = responses.get(key);
     if (hit && hit.age < SWR_MAX_AGE_MS) {
       owner.fromCache += 1;

@@ -42,16 +42,17 @@ export function closeListbox() {
 /** `<select>` → liste satırları. */
 function itemsOf(select) {
   const items = [];
+  const all = [...select.options];
   for (const child of select.children) {
     if (child.tagName === 'OPTGROUP') {
       for (const option of child.children) {
         if (option.tagName !== 'OPTION' || option.hidden) continue;
         items.push({ value: option.value, label: option.textContent, group: child.label || '',
-          disabled: option.disabled || child.disabled, index: option.index });
+          disabled: option.disabled || child.disabled, index: all.indexOf(option) });
       }
     } else if (child.tagName === 'OPTION' && !child.hidden) {
       items.push({ value: child.value, label: child.textContent, group: '',
-        disabled: child.disabled, index: child.index });
+        disabled: child.disabled, index: all.indexOf(child) });
     }
   }
   return items;
@@ -240,7 +241,9 @@ export function openListbox(anchor, { items, value, onPick, label = '' }) {
   const onResize = () => close(false);
 
   list.addEventListener('pointerdown', (event) => event.preventDefault());
-  list.addEventListener('click', (event) => {
+  // `mouseup`: liste kendi `mousedown`unu yutar (odak arama kutusunda kalır);
+  // klavye yolu `keydown`dadır (Enter/Boşluk).
+  list.addEventListener('mouseup', (event) => {
     const row = event.target.closest?.('.kit-lb-opt');
     if (row) pick(Number(row.dataset.index));
   });

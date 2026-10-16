@@ -11,7 +11,7 @@
 
 import { iconSvg } from './icons.js';
 import {
-  api, clearResponseCache, connection, loadRegistry, login, logout, menuPanels, mountPanel, navTree,
+  api, bypassCacheOnce, clearResponseCache, connection, loadRegistry, login, logout, menuPanels, mountPanel, navTree,
   onConnectionRestored, preloadPanel, resetProviders, searchProviders, setNavigator, waitForCore,
 } from './ui-kernel.js';
 import { createGlobalSearch } from './global-search.js';
@@ -206,7 +206,7 @@ function exportActive() {
 /** Ekranı yeniden kurar. `hard`: önbellek atılır (Ctrl/⌘+R). */
 function refreshActive({ hard = false } = {}) {
   if (!shell.activeId) return;
-  if (hard) clearResponseCache();
+  if (hard) bypassCacheOnce();
   rememberScroll(shell.activeId);
   select(shell.activeId, { payload: shell.activePayload, force: true, refresh: true });
 }
@@ -1095,7 +1095,7 @@ for (const type of ['pointerdown', 'keydown', 'input']) {
   document.getElementById('panel-body').addEventListener(type, () => { shell.interacted = true; }, true);
 }
 
-// BAĞLANTI GERİ GELDİ: etkin ekran tazelenir (önbellek zaten boşaltıldı).
+// BAĞLANTI GERİ GELDİ: etkin ekran ağdan tazelenir.
 onConnectionRestored(() => {
   if (workspaceOpen()) refreshActive({ hard: true });
 });
