@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import json
+import posixpath
 import re
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
@@ -53,11 +54,6 @@ SQL = ".sql"
 
 #: Sınıf sırası — sonraki öncekinden yüksektir.
 CLASS_ORDER = ["public", "internal", "personal", "financial"]
-
-#: Panel importlarında izinli önekler: kendi klasörü ve kabuğun ortak kiti
-#: (ADR 0011). Panel kabukta `shell/panels/<id>/` altına kopyalanır; `../../ui-kit/`
-#: oradan `shell/ui-kit/`e çıkar.
-UI_ALLOWED_IMPORT = ("./", "../../ui-kit/")
 
 SQL_KEYWORD = r"(?:FROM|JOIN|INTO|UPDATE|TABLE(?:\s+IF\s+(?:NOT\s+)?EXISTS)?)"
 _SQL_WORDS = frozenset({"if", "not", "exists", "as", "select", "from", "where", "table"})
@@ -325,6 +321,25 @@ def owner_of_table(table: str, ids_longest_first: list[str]) -> str | None:
     return None
 
 
+def panel_import_allowed(module: Module, path: Path, spec: str) -> bool:
+    """Panel importu kabuktaki YERİNE göre çözülür (ADR 0011, 0033).
+
+    `build-ui-registry.py` panel klasörünü `shell/panels/<id>/` altına (alt
+    klasörleriyle) kopyalar. İzinli hedefler: modülün kendi panel ağacı ve
+    kabuğun ortak kiti `shell/ui-kit/`. Böylece alt klasördeki bir ekran
+    `../common.js` ya da `../../../ui-kit/x.js` yazabilir; başka modülün
+    paneline (`../../<başka>/…`) uzanamaz.
+    """
+    entry = str((module.manifest.get("ui") or {}).get("entry") or "ui/panel/index.js")
+    panel_root = module.path / Path(entry).parent
+    try:
+        inside = path.relative_to(panel_root).parent.as_posix()
+    except ValueError:
+        return spec.startswith("./") and ".." not in spec.split("/")
+    virtual = posixpath.normpath(posixpath.join("shell/panels", module.id, inside, spec))
+    return virtual.startswith((f"shell/panels/{module.id}/", "shell/ui-kit/"))
+
+
 def _prefix_head(name: str) -> str:
     return re.split(r"[._]", name, maxsplit=1)[0]
 
@@ -414,8 +429,7 @@ def scan(root: Path = ROOT) -> Scan:
                 for line, spec in js_imports(source):
                     if not spec.startswith("."):
                         continue  # adres ya da paket adı — yerel dosya değil
-                    own_folder = spec.startswith("./") and ".." not in spec.split("/")
-                    if not (own_folder or spec.startswith("../../ui-kit/")):
+                    if not panel_import_allowed(module, path, spec):
                         add(Finding("module-import", module.id, spec, rel(path), line, "panel importu"))
 
             for line, text in text_units(path):

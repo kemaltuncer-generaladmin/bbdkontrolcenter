@@ -129,6 +129,11 @@ def fake_repo(tmp_path: Path) -> Path:
         // fetch('/api/b/yorum') sayılmaz
         export const load = (ctx) => ctx.api('/api/b/list');
     """)
+    _write(tmp_path / "modules/a/ui/panel/sub/screen.js", """
+        import { common } from '../index.js';
+        import { kit } from '../../../ui-kit/kit.js';
+        import { leak } from '../../../b/index.js';
+    """)
     _write(tmp_path / "modules/a/backend/migrations/001.sql", """
         -- mod_b_items yorumda
         CREATE TABLE IF NOT EXISTS mod_a_items (id TEXT);
@@ -153,7 +158,9 @@ def test_tarayici_ihlalleri_bulur(fake_repo: Path) -> None:
     foreign = [f for f in result.findings if f.rule == "foreign-table"]
     assert len(foreign) == 1 and foreign[0].file.endswith("service.py")
     assert not any(f.file.endswith("test_x.py") for f in result.findings)
-    assert not any(f.target in ("../../ui-kit/kit.js", "./own.js") for f in result.findings)
+    assert ("module-import", "a", "../../../b/index.js") in keys  # alt klasörden başka modüle
+    assert not any(f.target in ("../../ui-kit/kit.js", "./own.js", "../index.js", "../../../ui-kit/kit.js")
+                   for f in result.findings)
     assert len([f for f in result.findings if f.rule == "foreign-api"]) == 1
     assert not any(f.module == "b" for f in result.findings)
 

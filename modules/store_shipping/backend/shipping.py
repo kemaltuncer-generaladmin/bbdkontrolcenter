@@ -31,8 +31,10 @@ import math
 import re
 import unicodedata
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
+
+from km_sdk import as_int, to_kurus
 
 #: Gerekçenin en az uzunluğu. Geçit de (store_api) 10 istiyor.
 MIN_REASON = 10
@@ -122,16 +124,6 @@ def text(value: Any) -> str:
     return str(value).strip()
 
 
-def as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        try:
-            return int(float(str(value).replace(",", ".")))
-        except (TypeError, ValueError):
-            return default
-
-
 def flag(value: Any, default: bool = False) -> bool:
     """Mağazanın bayrak alanını okur. Değer YOKSA `default`.
 
@@ -172,30 +164,6 @@ def as_float(value: Any, default: float = 0.0) -> float:
         return float(str(value).strip().replace(",", "."))
     except (TypeError, ValueError):
         return default
-
-
-def to_kurus(value: Any) -> int | None:
-    """Mağazanın ONDALIK para değerini kuruşa çevirir. Çözülemezse `None`.
-
-    TUZAK: burada `float` kullanılmaz. `float("34.35") * 100` bazı değerlerde
-    3434.99999 verir ve `int()` bir kuruş aşağı yuvarlar. Kargo ücretlerinde
-    binde bir görünen, mutabakatta bulunması imkânsız bir sapmadır.
-    """
-    if value is None:
-        return None
-    raw = str(value).strip().replace(" ", "")
-    if raw == "":
-        return None
-    if "," in raw and "." in raw:
-        raw = raw.replace(",", "") if raw.rfind(".") > raw.rfind(",") else \
-            raw.replace(".", "").replace(",", ".")
-    elif "," in raw:
-        raw = raw.replace(",", ".")
-    try:
-        amount = Decimal(raw)
-    except (InvalidOperation, ValueError):
-        return None
-    return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def from_kurus(kurus: Any) -> str:
