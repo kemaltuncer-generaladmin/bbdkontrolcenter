@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.bbd_akademi.tests.test_akademi_ogretmen_portali import SCOPE
 from modules.bbd_akademi.tests.test_akademi_ogretmen_koc import node_run
+from modules.bbd_akademi.tests.test_akademi_ogretmen_portali import SCOPE
 
 CURRICULUM = (
     SCOPE.replace("includes('Öğretmen kapsamı')", "includes('Seçilebilir kapsamlar')")
