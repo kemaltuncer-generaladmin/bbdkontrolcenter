@@ -166,6 +166,9 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             state: None,
             radius: None,
             color: None,
+            // Tauri sürümleri yeni alan ekledikçe (2.12: `interactive`) derleme
+            // kırılmasın: kalan alanlar varsayılan.
+            ..Default::default()
         })
     } else {
         builder
