@@ -26,6 +26,14 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-A13', 'F-00.6'),
     ),
     Operation(
+        'GET',
+        '/v1/admin/announcements/delivery-window',
+        'admin_getAnnouncementDeliveryWindow',
+        ('announcements.manage',),
+        'both',
+        features=('F-A13', 'F-00.6'),
+    ),
+    Operation(
         'POST',
         '/v1/admin/announcements/sms-preview',
         'admin_previewAnnouncementSms',

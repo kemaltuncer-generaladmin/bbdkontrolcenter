@@ -11,12 +11,15 @@
 // Madde 88 (V8): metnin sonuna kurum imzası (" - BBD") eklenir — sayaç imzayı sayar; önizleme
 // KM'nin günlük SMS bütçesini gösterir; ayrıntıda teslim raporu (bekleme nedeni / anı, alıcı
 // listesi `admin_listAnnouncementSmsRecipients`, Excel uyumlu CSV).
+// Madde 121: kurum "Duyurular her an gönderilsin" şalterini (Ayarlar → Kurum → Duyurular) kapattıysa
+// yayımlarken gece uyarısı (`admin_getAnnouncementDeliveryWindow`) ve "Yine de şimdi gönder" (`sendNow`);
+// ertelenmiş duyuruda bildirim / SMS anı (`deliverAt`). Metinler Flutter / React ile aynı.
 
 import { button, h, loadStyles, percent } from '../../../ui-kit/kit.js';
 import { badge, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
 import { saveBlob } from '../api.js';
 import {
-  actionButton, confirmAction, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
+  actionButton, confirmAction, fmtDateTime, fmtTime, formDialog, kv, loader, multiChips, num, openDrawer,
   pagedList, runAction, sectionHead, statusBadge, studentPicker, todayIst,
 } from '../common.js';
 import { csvText } from '../lessons/sessions.js';
@@ -64,11 +67,42 @@ export function smsFromAnnouncement(title, bodyMarkdown) {
 
 // Teslim raporu (madde 88): bekleme nedenleri ve alıcı durumları — Akademi `sms_outbox.REASON_LABELS` ile aynı dil.
 export const SMS_DEFERRED = {
-  quiet_hours: 'sırada', // README §14 madde 100: artık üretilmez (eski kayıt)
+  quiet_hours: 'gece aralığı — sabah gidecek (kurum ayarı)', // README §14 madde 121 (şalter kapalıyken)
   sms_budget_exceeded: 'günlük SMS bütçesi doldu',
   sms_phone_limit: 'numaranın günlük sınırı doldu',
   sms_disabled: 'SMS Kontrol Merkezi\'nde kapalı',
 };
+
+// ------------------------------------------------------------------ gece aralığı (README §14 madde 121)
+// Saat okunuşuna göre bulunma eki ("07:30'da", "22:00'de", "06:40'ta") — Flutter / React `trSuffix` ile aynı sonuç.
+const ONES_DE = ['da', 'de', 'de', 'te', 'te', 'te', 'da', 'de', 'de', 'da'];
+const TENS_DE = [null, 'da', 'de', 'da', 'ta', 'de'];
+export function clockDe(hhmm) {
+  const [hour, minute] = String(hhmm).split(':').map(Number);
+  const n = minute ? minute : hour;
+  const ek = n % 10 ? ONES_DE[n % 10] : (TENS_DE[Math.floor(n / 10) % 10] ?? ONES_DE[0]);
+  return `${hhmm}'${ek}`;
+}
+export const NIGHT = {
+  holdNow: (t) => `Şu an gece saati — bildirim ve SMS ${clockDe(t)} gidecek.`,
+  holdLater: (t) => `Seçilen saat gece aralığında — bildirim ve SMS ${clockDe(t)} gidecek.`,
+  rule: (start, end) => `Kurum ayarı: duyurunun bildirimi ve SMS'i ${start}–${end} arasında sabaha ertelenir; `
+    + 'duyuru uygulamada hemen görünür.',
+  sendNow: 'Yine de şimdi gönder',
+  sendNowHint: 'Acil duyuru: bildirim ve SMS beklemeden gider.',
+  publishedHeld: (t) => `Duyuru yayımlandı · bildirim ve SMS ${clockDe(t)} gidecek.`,
+  scheduledHeld: (t) => `Duyuru zamanlandı · bildirim ve SMS ${clockDe(t)} gidecek.`,
+  deliverValue: (when) => `${when} gidecek (gece aralığı)`,
+};
+
+/** Kurumun duyuru kuralı ve `at` (yoksa şimdi) için bekleme; hata → null (kural sunucuda uygulanır). */
+async function deliveryWindow(app, at) {
+  try {
+    return await app.api.get('/v1/admin/announcements/delivery-window', at ? { at } : {});
+  } catch {
+    return null;
+  }
+}
 export const SMS_STATUS = { queued: ['Bekliyor', 'info'], sent: ['Gönderildi', 'good'],
   failed: ['Başarısız', 'bad'], skipped: ['Atlandı', 'dim'] };
 
@@ -417,6 +451,7 @@ function detail(app, id, { onChange } = {}) {
       ['Sabit', item.pinned ? 'Evet' : 'Hayır'],
       ['Zamanlama', fmtDateTime(item.scheduledAt)],
       ['Yayın', fmtDateTime(item.publishedAt)],
+      ...(item.deliverAt ? [['Bildirim ve SMS', h('span', 'ak-ann-warn', NIGHT.deliverValue(fmtDateTime(item.deliverAt)))]] : []),
       ['Bitiş', fmtDateTime(item.expiresAt)],
       ['Yazan', `${item.createdBy || '—'} · ${fmtDateTime(item.createdAt)}`],
     ])));
@@ -453,24 +488,42 @@ function detail(app, id, { onChange } = {}) {
   view.reload();
 
   async function publish(item) {
+    // Madde 121: şalter kapalıysa gece uyarısı ve "Yine de şimdi gönder" (varsayılan: her an → hiçbiri görünmez).
+    const night = await deliveryWindow(app);
+    const ruleOff = night && night.sendAnytime === false;
+    const nightText = night?.holdUntil ? ` ${NIGHT.holdNow(fmtTime(night.holdUntil))}`
+      : ruleOff ? ` ${NIGHT.rule(night.nightStart, night.nightEnd)}` : '';
+    let urgent = false;
     const result = await formDialog(app, {
       title: `“${item.title}” yayımlansın`,
       description: 'Boş bırakırsanız hemen yayımlanır. Bildirim seçiliyse alıcılara uygulama bildirimi gider.'
-        + (item.sms?.enabled ? ' SMS de hemen gönderilecek (yalnız velilere).' : ''),
-      value: { notify: true, day: '', clock: '09:00' },
+        + (item.sms?.enabled ? ' SMS de hemen gönderilecek (yalnız velilere).' : '') + nightText,
+      value: { notify: true, day: '', clock: '09:00', sendNow: false },
       fields: [
         { key: 'day', label: 'Zamanlı yayın günü (isteğe bağlı)', type: 'date' },
         { key: 'clock', label: 'Saat (SS:DD)', maxLength: 5,
           validate: (raw) => (raw && !/^([01]\d|2[0-3]):[0-5]\d$/.test(raw) ? 'Saati 09:30 gibi yazın.' : null) },
         { key: 'notify', label: 'Bildirim gönder', type: 'checkbox' },
+        ...(ruleOff ? [{ key: 'sendNow', label: NIGHT.sendNow, type: 'checkbox', hint: NIGHT.sendNowHint }] : []),
       ],
       submitLabel: 'Yayımla',
-      onSubmit: (draft, { key }) => app.api.post(`/v1/admin/announcements/${item.id}/publish`, {
-        scheduledAt: draft.day && draft.day >= todayIst() ? `${draft.day}T${draft.clock || '09:00'}:00+03:00` : null,
-        notify: Boolean(draft.notify) }, { key }),
+      onSubmit: (draft, { key }) => {
+        urgent = Boolean(ruleOff && draft.sendNow);
+        return app.api.post(`/v1/admin/announcements/${item.id}/publish`, {
+          scheduledAt: draft.day && draft.day >= todayIst() ? `${draft.day}T${draft.clock || '09:00'}:00+03:00` : null,
+          notify: Boolean(draft.notify),
+          ...(urgent ? { sendNow: true } : {}) }, { key });
+      },
     });
     if (result) {
-      app.toast(result.status === 'scheduled' ? 'Duyuru zamanlandı.' : 'Duyuru yayımlandı.', 'good');
+      let message = result.status === 'scheduled' ? 'Duyuru zamanlandı.' : 'Duyuru yayımlandı.';
+      if (result.deliverAt) {
+        message = NIGHT.publishedHeld(fmtTime(result.deliverAt));
+      } else if (ruleOff && !urgent && result.status === 'scheduled' && result.scheduledAt) {
+        const later = await deliveryWindow(app, result.scheduledAt);
+        if (later?.holdUntil) message = NIGHT.scheduledHeld(fmtTime(later.holdUntil));
+      }
+      app.toast(message, 'good');
       onChange?.(result);
       view.reload();
     }
