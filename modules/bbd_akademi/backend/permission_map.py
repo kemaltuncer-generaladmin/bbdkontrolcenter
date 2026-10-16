@@ -96,6 +96,9 @@ PERMISSION_MAP: dict[str, str] = {
     "exams.manage": EXAMS,
     "exams.import": EXAMS,
     "exams.export": EXAMS,
+    # Uygulamada deneme canlı yönetimi (Akademi README §14 madde 120): `exams.proctor:tenant|taught` gözetmen izni
+    # (katılım listesi, ek süre, oturumu bitir). KM'de deneme işidir; duraklat / yeniden aç / pencere `exams.manage`.
+    "exams.proctor": EXAMS,
     # --- öğrenme araçları (F-A18–A24): günlük koçluk işi ve yapısal kurulum ayrı
     "plan.manage": LEARNING,
     "coach_notes.manage": LEARNING,

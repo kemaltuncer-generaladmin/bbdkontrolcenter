@@ -64,6 +64,7 @@ AREAS: dict[str, str] = {
     "assignment-bundles": "work", "reading": "work", "flashcard-decks": "work",
     "bulk-jobs": "work",
     "exams": "exams", "exam-imports": "exams", "exam-import-templates": "exams",
+    "exam-publisher-tables": "exams", "exam-topic-aliases": "exams",
     "exam-analytics": "exams", "evaluations": "exams", "evaluation-periods": "exams",
     "evaluation-templates": "exams", "evaluation-reports": "exams",
     "resources": "resources", "resource-assignments": "resources",
