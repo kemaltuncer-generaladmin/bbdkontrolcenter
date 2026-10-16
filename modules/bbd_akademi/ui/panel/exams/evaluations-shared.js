@@ -8,9 +8,9 @@
 // yerinde güncellenir, dönem tamamlama sayısı tek istekle tazelenir (satır
 // başına istek yok).
 
-import { h } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { exportJob, formDialog, num, percent } from './common.js';
+import { h } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { exportJob, formDialog, num, percent } from '../common.js';
 
 export const EVALUATION_STATUS = { draft: ['Taslak', 'warn'], published: ['Yayımlandı', 'good'] };
 export const PERIOD_STATUS = { scheduled: ['Planlandı', 'info'], open: ['Açık', 'good'], closed: ['Kapandı', 'dim'] };

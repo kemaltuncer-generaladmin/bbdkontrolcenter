@@ -10,17 +10,17 @@
 // biçimindedir (₺) ve yanlış sayısını yanlış okuturdu; aynı bilgi sıralı
 // yatay çubukta (`barChart`) net okunur.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { barChart, groupedBar, lineChart } from '../../ui-kit/charts.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { barChart, groupedBar, lineChart } from '../../../ui-kit/charts.js';
 import {
   empty, fmtDate, loader, num, optionsOf, selectBox, studentPicker, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import { EXAM_TYPES, netText, ratioText, sectionLabel, studentCell } from './exams-shared.js';
-import { documentButtons } from './documents.js';
-import { examAnalysisDoc } from './documents-logic.js';
+import { documentButtons } from '../documents.js';
+import { examAnalysisDoc } from '../documents-logic.js';
 
 const netFormat = (value) => num(value, 1);
 const shortDate = (iso) => {

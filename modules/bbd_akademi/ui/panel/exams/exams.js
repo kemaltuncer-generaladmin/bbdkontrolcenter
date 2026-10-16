@@ -16,14 +16,14 @@
 // gösterir. Parçalar: exams-results.js (sonuç + dışa aktarım), exams-import.js
 // (sihirbaz), exams-keys.js (anahtar + konu), exams-analytics.js (analiz).
 
-import { blockedButton, button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, tabBar } from '../../ui-kit/layout.js';
-import { AkademiError } from './api.js';
-import { programLabel, sortPrograms } from './shared/curriculum-picker.js';
+import { blockedButton, button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, tabBar } from '../../../ui-kit/layout.js';
+import { AkademiError } from '../api.js';
+import { programLabel, sortPrograms } from '../shared/curriculum-picker.js';
 import {
   actionButton, dateInput, fmtDate, fmtDateTime, formDialog, kv, loader, multiChips, num, optionsOf,
   pagedList, sectionHead, selectBox, statusBadge, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   EXAM_STATUS, EXAM_TYPES, FILL_STATUS, SCORING_RULES, examFamily, examTemplate, examTitleCell,
   scoringText, sectionLabel, sortedSections, totalQuestions,

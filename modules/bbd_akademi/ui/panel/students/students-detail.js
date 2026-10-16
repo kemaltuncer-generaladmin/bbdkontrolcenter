@@ -29,7 +29,7 @@ import {
   weekStart,
 } from '../common.js';
 import { goalDialog } from '../coaching/coaching-students.js';
-import { EXAM_TYPES } from '../exams-shared.js';
+import { EXAM_TYPES } from '../exams/exams-shared.js';
 import { documentButtons, financeToolbar } from '../documents.js';
 import { studentCurriculumSet } from '../shared/curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';

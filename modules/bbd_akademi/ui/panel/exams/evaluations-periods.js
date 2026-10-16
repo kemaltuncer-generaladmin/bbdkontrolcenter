@@ -13,18 +13,18 @@
 // Değerlendirme kaydedilince satır yerinde güncellenir, dönem özeti tek
 // okumayla tazelenir (satır başına istek yok).
 
-import { blockedButton, button, debounce, h } from '../../ui-kit/kit.js';
-import { alertBox, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
+import { blockedButton, button, debounce, h } from '../../../ui-kit/kit.js';
+import { alertBox, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, fmtDate, fmtDateTime, formDialog, kv, multiChips, num, pagedList, percent,
   problem, runAction, selectBox, statusBadge, studentPicker, todayIst, addDays, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   PERIOD_STATUS, PROGRESS_STATUS, averageText, exportReports, progressCell, removableChip, rowActions,
   shareText, stackCell, studentCell, targetText,
 } from './evaluations-shared.js';
-import { documentButtons } from './documents.js';
-import { mapLimit, reportCardDoc } from './documents-logic.js';
+import { documentButtons } from '../documents.js';
+import { mapLimit, reportCardDoc } from '../documents-logic.js';
 
 /** Dönemler sekmesi: liste ⇄ dönem ayrıntısı. */
 export function periodsTab(ctx) {

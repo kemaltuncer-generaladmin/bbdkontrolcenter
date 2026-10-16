@@ -14,16 +14,16 @@
 // idempotenttir: anahtar işe (ve seçeneklere) bağlıdır, çift tıklama ikinci
 // kez yazmaz. Kayıt bildirim göndermez; bildirim yayımlamada gider.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, hintBox, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { stepper } from '../../ui-kit/flow.js';
-import { newKey } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, hintBox, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { stepper } from '../../../ui-kit/flow.js';
+import { newKey } from '../api.js';
 import {
   actionButton, confirmAction, empty, errorBox, fileDrop, fmtDateTime, formDialog, loader, num,
   openDrawer, optionsOf, pagedList, reasonDialog, runAction, selectBox, staticList, statusBadge,
   studentPicker, toolbar, uploadProgress,
-} from './common.js';
+} from '../common.js';
 import {
   EXAM_TYPES, IMPORT_KINDS, IMPORT_STATUS, columnLetter, netText, sectionLabel, sortedSections,
   studentCell, uploadFile, wait,

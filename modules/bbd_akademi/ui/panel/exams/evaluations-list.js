@@ -4,10 +4,10 @@
 // okunma sayısı liste yükünden gelir (satır başına istek yok). Çekmecede bir
 // değerlendirme kaydedilince / yayımlanınca satır yerinde güncellenir.
 
-import { h } from '../../ui-kit/kit.js';
+import { h } from '../../../ui-kit/kit.js';
 import {
   fmtDateTime, num, optionsOf, pagedList, selectBox, statusBadge, studentPicker, toolbar,
-} from './common.js';
+} from '../common.js';
 import { EVALUATION_STATUS, averageText, removableChip, stackCell, studentCell } from './evaluations-shared.js';
 import { summaryOf } from './evaluations-form.js';
 

@@ -11,12 +11,12 @@
 // KORUNUR — gelişim grafiği kriteri kimliğinden izler. Şablon silinmez,
 // arşivlenir (yeni döneme seçilemez).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, card, chipRow } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, card, chipRow } from '../../../ui-kit/layout.js';
 import {
   actionButton, confirmAction, fmtDateTime, formDialog, kv, loader, num, openDrawer, pagedList, runAction,
   statusBadge,
-} from './common.js';
+} from '../common.js';
 import {
   AUTO_METRICS, SCALE_KINDS, TEMPLATE_STATUS, iconButton, scaleText, stackCell,
 } from './evaluations-shared.js';

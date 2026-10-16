@@ -6,18 +6,18 @@
 // cevap dizisi (anahtar girilmişse D/Y/B Akademi'de hesaplanır). Net ve sıra
 // her zaman Akademi'nin yanıtındandır; formdaki net yalnız tahmindir.
 
-import { h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card } from '../../ui-kit/layout.js';
-import { newKey } from './api.js';
+import { h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card } from '../../../ui-kit/layout.js';
+import { newKey } from '../api.js';
 import {
   actionButton, confirmAction, exportJob, formDialog, num, pagedList, runAction, selectBox,
   studentPicker, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   RESULT_SOURCE, estimateNet, netText, sectionLabel, sortedSections, studentCell,
 } from './exams-shared.js';
-import { documentButtons } from './documents.js';
-import { examResultDoc, examResultsDoc, mapLimit, mergeDocs } from './documents-logic.js';
+import { documentButtons } from '../documents.js';
+import { examResultDoc, examResultsDoc, mapLimit, mergeDocs } from '../documents-logic.js';
 
 /** Denemeye katılan sınıflar (tanımda seçilmediyse bütün sınıflar). */
 async function examClassOptions(app, exam, emptyLabel = 'Tüm sınıflar') {

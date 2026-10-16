@@ -14,15 +14,15 @@
 // (ön denetim burada UX'tir, karar Akademi'de). Paylaşım seçilmezse
 // değerlendirme kurum içinde kalır. Yayından kaldırmak okundu bilgisini silmez.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card } from '../../ui-kit/layout.js';
-import { sparkline } from '../../ui-kit/charts.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card } from '../../../ui-kit/layout.js';
+import { sparkline } from '../../../ui-kit/charts.js';
 import {
   actionButton, addDays, confirmAction, dateInput, fmtDate, fmtDateTime, formDialog, gradeText, kv, net, num,
   openDrawer, percent, problem, runAction, statusBadge, studentPicker, todayIst,
-} from './common.js';
-import { documentButtons } from './documents.js';
-import { homeworkTally, reportCardDoc } from './documents-logic.js';
+} from '../common.js';
+import { documentButtons } from '../documents.js';
+import { homeworkTally, reportCardDoc } from '../documents-logic.js';
 import {
   CHANGE_MARK, EVALUATION_STATUS, MISTAKE_REASONS, READ_KIND, averageText, checkLine, detailOf, exportReports,
   iconButton, shareText,

@@ -7,10 +7,10 @@
 // NET SUNUCUDA HESAPLANIR: buradaki `estimateNet` yalnız form doldurulurken yol
 // gösterir. Kaydedilen net, sıra ve puan her zaman Akademi'nin yanıtından gelir.
 
-import { h } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { newKey } from './api.js';
-import { gradeText, num } from './common.js';
+import { h } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { newKey } from '../api.js';
+import { gradeText, num } from '../common.js';
 
 // Deneme türünün TEK adı (Akademi V17): Akademi şablon ucu `ExamTemplate.name` (`exams/templates.py`
 // `TYPE_NAMES`), uygulama (React / Flutter `ExamTypes.label`) ve panel aynı adı yazar.

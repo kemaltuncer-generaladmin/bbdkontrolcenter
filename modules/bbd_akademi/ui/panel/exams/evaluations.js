@@ -16,9 +16,9 @@
 //   {periodId}                → dönem ayrıntısı
 //   {tab: 'evaluations'|'periods'|'templates'}
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { emptyState, tabBar } from '../../ui-kit/layout.js';
-import { actionButton, sectionHead } from './common.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { emptyState, tabBar } from '../../../ui-kit/layout.js';
+import { actionButton, sectionHead } from '../common.js';
 import { createContext, exportReports } from './evaluations-shared.js';
 import { evaluationsTab } from './evaluations-list.js';
 import { periodsTab } from './evaluations-periods.js';
