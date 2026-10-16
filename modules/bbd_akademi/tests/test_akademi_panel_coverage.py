@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
-from modules.bbd_akademi.backend.operations import Operation
+from modules.bbd_akademi.backend.core.operations import Operation
 from modules.bbd_akademi.backend.permission_map import ALL_PERMISSIONS
 
 MODULE = Path(__file__).resolve().parents[1]

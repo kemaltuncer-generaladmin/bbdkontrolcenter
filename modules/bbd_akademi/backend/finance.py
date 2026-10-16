@@ -33,7 +33,7 @@ import json
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from .gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
+from .core.gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
 
 ACTOR = ("bbd_students", "Kalıcı silme ön koşulu")
 

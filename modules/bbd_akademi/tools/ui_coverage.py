@@ -41,7 +41,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
-from modules.bbd_akademi.backend.operations import Operation
+from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {

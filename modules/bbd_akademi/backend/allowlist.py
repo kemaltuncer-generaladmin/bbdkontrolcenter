@@ -9,7 +9,7 @@ Akademi izni → KM izni eşlemesi `permission_map.py` içindedir.
 
 from __future__ import annotations
 
-from .operations import Operation
+from .core.operations import Operation
 
 CONTRACT_VERSION = '1.0.0-draft.3'
 

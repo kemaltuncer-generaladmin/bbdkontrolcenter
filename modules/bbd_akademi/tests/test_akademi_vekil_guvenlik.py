@@ -17,9 +17,9 @@ from pathlib import Path
 
 import httpx
 import yaml
-from modules.bbd_akademi.backend import proxy as proxy_module
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
-from modules.bbd_akademi.backend.operations import Operation
+from modules.bbd_akademi.backend.core import proxy as proxy_module
+from modules.bbd_akademi.backend.core.operations import Operation
 from modules.bbd_akademi.backend.permission_map import (
     KM_STEP_UP_OPERATIONS,
     OPERATION_OVERRIDES,

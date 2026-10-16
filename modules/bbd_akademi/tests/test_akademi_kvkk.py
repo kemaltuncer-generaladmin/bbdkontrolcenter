@@ -22,7 +22,7 @@ import httpx
 import pytest
 import yaml
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
-from modules.bbd_akademi.backend.operations import Allowlist
+from modules.bbd_akademi.backend.core.operations import Allowlist
 from modules.bbd_akademi.backend.permission_map import ALL_PERMISSIONS, km_permissions
 from modules.bbd_akademi.tests.akademi_fakes import PIN, Akademi, Identity, auth, user
 

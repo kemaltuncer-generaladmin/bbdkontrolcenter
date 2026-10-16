@@ -5,10 +5,14 @@ from __future__ import annotations
 import httpx
 import pytest
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
-from modules.bbd_akademi.backend.gateway import AkademiGateway, AkademiUnavailable, GatewayConfig
-from modules.bbd_akademi.backend.operations import Allowlist
-from modules.bbd_akademi.backend.proxy import AkademiProxy, StaleCache, transient
-from modules.bbd_akademi.backend.stepup import StepUpStore
+from modules.bbd_akademi.backend.core.gateway import (
+    AkademiGateway,
+    AkademiUnavailable,
+    GatewayConfig,
+)
+from modules.bbd_akademi.backend.core.operations import Allowlist
+from modules.bbd_akademi.backend.core.proxy import AkademiProxy, StaleCache, transient
+from modules.bbd_akademi.backend.core.stepup import StepUpStore
 from modules.bbd_akademi.tests.akademi_fakes import ADMIN, BASE, Akademi, Log, Secrets
 
 

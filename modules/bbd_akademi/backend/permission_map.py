@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .operations import Operation
+from .core.operations import Operation
 
 MODULE = "bbd_akademi"
 

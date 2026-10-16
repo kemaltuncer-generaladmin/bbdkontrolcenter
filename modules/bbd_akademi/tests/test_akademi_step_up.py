@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import httpx
-from modules.bbd_akademi.backend.stepup import StepUpStore
+from modules.bbd_akademi.backend.core.stepup import StepUpStore
 from modules.bbd_akademi.tests.akademi_fakes import PIN, Akademi, CheckedStore, Identity, auth
 
 PID = "0192f0aa-1111-7222-8333-944455556666"

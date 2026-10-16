@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 import pytest
-from modules.bbd_akademi.backend.features import TenantFeatures, parse
+from modules.bbd_akademi.backend.core.features import TenantFeatures, parse
 from modules.bbd_akademi.tests.akademi_fakes import Akademi, Log, auth
 
 PANEL = Path(__file__).resolve().parents[1] / "ui" / "panel"

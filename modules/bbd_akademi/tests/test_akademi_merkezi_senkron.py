@@ -20,8 +20,8 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 from modules.bbd_akademi.backend.api import routes
+from modules.bbd_akademi.backend.core.gateway import AkademiGateway, AkademiUnavailable
 from modules.bbd_akademi.backend.finance import FinanceCheckFailed, StudentFinance
-from modules.bbd_akademi.backend.gateway import AkademiGateway, AkademiUnavailable
 from modules.bbd_akademi.tests.akademi_fakes import ADMIN, Akademi, Identity, Log, auth, user
 
 STUDENT = "6f1f2c8e-3c1d-4f7b-9a59-0d3f4b1c2a10"

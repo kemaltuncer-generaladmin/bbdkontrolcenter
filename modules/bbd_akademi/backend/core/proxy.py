@@ -72,6 +72,7 @@ from starlette.background import BackgroundTask
 
 from km_sdk import CurrentUser
 
+from ..permission_map import km_permissions, requires_step_up
 from .gateway import (
     FORWARD_REQUEST_HEADERS,
     FORWARD_RESPONSE_HEADERS,
@@ -82,7 +83,6 @@ from .gateway import (
     request_id,
 )
 from .operations import Allowlist, Resolved
-from .permission_map import km_permissions, requires_step_up
 from .stepup import StepUpStore
 
 STEP_UP_HEADER = "x-km-step-up"

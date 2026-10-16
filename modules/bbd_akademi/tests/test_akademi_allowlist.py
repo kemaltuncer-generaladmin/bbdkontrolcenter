@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
-from modules.bbd_akademi.backend.operations import Allowlist, Operation
+from modules.bbd_akademi.backend.core.operations import Allowlist, Operation
 from modules.bbd_akademi.backend.permission_map import (
     OPERATION_OVERRIDES,
     PERMISSION_MAP,

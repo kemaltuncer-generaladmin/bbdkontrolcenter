@@ -17,15 +17,15 @@ from km_sdk import ModuleContext
 
 from .allowlist import OPERATIONS
 from .api.routes import bind
+from .core.features import TenantFeatures
+from .core.gateway import AkademiGateway, GatewayConfig
+from .core.operations import Allowlist
+from .core.proxy import AkademiProxy
+from .core.stepup import StepUpStore
 from .documents import DocumentService, Letterheads
-from .features import TenantFeatures
 from .finance import StudentFinance
-from .gateway import AkademiGateway, GatewayConfig
-from .operations import Allowlist
 from .permission_map import unmapped
-from .proxy import AkademiProxy
 from .staff import StaffService
-from .stepup import StepUpStore
 
 _LIVE: dict[str, Any] = {}
 

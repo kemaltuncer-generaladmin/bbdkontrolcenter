@@ -33,12 +33,12 @@ from km_sdk import (
     requires,
 )
 
-from .. import contract_features
+from ..core import contract_features
+from ..core.features import TenantFeatures
+from ..core.gateway import request_id
+from ..core.proxy import AkademiProxy, ProxyError, decode_upload, error_response
 from ..documents import DocumentDenied, DocumentService
-from ..features import TenantFeatures
-from ..gateway import request_id
 from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions, requires_step_up
-from ..proxy import AkademiProxy, ProxyError, decode_upload, error_response
 from ..staff import ROLE_LABELS, StaffError, StaffService
 
 router = APIRouter()

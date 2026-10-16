@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 import pytest
-from modules.bbd_akademi.backend import contract_features
+from modules.bbd_akademi.backend.core import contract_features
 from modules.bbd_akademi.tests.akademi_fakes import auth
 
 MODULE = Path(__file__).resolve().parents[1]

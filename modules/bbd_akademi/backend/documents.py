@@ -50,9 +50,9 @@ from km_sdk import (
 )
 
 from . import document_pdf
+from .core.gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
+from .core.operations import Allowlist
 from .document_pdf import DocumentError, Letterhead, Stamp
-from .gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
-from .operations import Allowlist
 from .permission_map import km_permissions
 
 TZ = ZoneInfo("Europe/Istanbul")

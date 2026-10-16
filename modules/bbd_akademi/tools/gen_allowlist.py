@@ -134,7 +134,7 @@ def render(rows: list[dict[str, Any]], version: str) -> str:
         "",
         "from __future__ import annotations",
         "",
-        "from .operations import Operation",
+        "from .core.operations import Operation",
         "",
         f"CONTRACT_VERSION = {version!r}",
         "",

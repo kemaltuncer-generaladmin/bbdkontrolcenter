@@ -6,7 +6,7 @@ from urllib.parse import unquote
 
 import httpx
 import pytest
-from modules.bbd_akademi.backend.gateway import GatewayConfig, on_behalf_of, request_id
+from modules.bbd_akademi.backend.core.gateway import GatewayConfig, on_behalf_of, request_id
 from modules.bbd_akademi.tests.akademi_fakes import API_KEY, BASE, Akademi, Secrets, auth
 
 SID = "0192f0aa-1111-7222-8333-944455556666"

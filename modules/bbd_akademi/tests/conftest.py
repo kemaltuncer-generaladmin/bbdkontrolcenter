@@ -21,11 +21,11 @@ import httpx
 from fastapi import FastAPI
 from modules.bbd_akademi.backend.allowlist import OPERATIONS
 from modules.bbd_akademi.backend.api import routes
-from modules.bbd_akademi.backend.gateway import AkademiGateway, GatewayConfig
-from modules.bbd_akademi.backend.operations import Allowlist
-from modules.bbd_akademi.backend.proxy import AkademiProxy
+from modules.bbd_akademi.backend.core.gateway import AkademiGateway, GatewayConfig
+from modules.bbd_akademi.backend.core.operations import Allowlist
+from modules.bbd_akademi.backend.core.proxy import AkademiProxy
+from modules.bbd_akademi.backend.core.stepup import StepUpStore
 from modules.bbd_akademi.backend.staff import StaffService
-from modules.bbd_akademi.backend.stepup import StepUpStore
 from modules.bbd_akademi.tests.akademi_fakes import (
     BASE,
     MIGRATIONS,

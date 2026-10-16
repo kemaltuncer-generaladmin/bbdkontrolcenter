@@ -6,7 +6,7 @@ import base64
 import json
 
 import httpx
-from modules.bbd_akademi.backend.gateway import GatewayConfig
+from modules.bbd_akademi.backend.core.gateway import GatewayConfig
 from modules.bbd_akademi.tests.akademi_fakes import API_KEY, BASE, Akademi, auth
 
 SID = "0192f0aa-1111-7222-8333-944455556666"
