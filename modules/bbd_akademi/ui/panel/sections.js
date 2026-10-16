@@ -69,8 +69,8 @@ export const AREAS = [
  * Yeni ekran = bir dosya + bir satır.
  */
 export const SECTIONS = [
-  { key: 'dashboard', label: 'Özet', file: './dashboard.js', requires: ['view'], area: 'today' },
-  { key: 'requests', label: 'Talepler', file: './requests.js', requires: ['requests'], area: 'today' },
+  { key: 'dashboard', label: 'Özet', file: './today/dashboard.js', requires: ['view'], area: 'today' },
+  { key: 'requests', label: 'Talepler', file: './today/requests.js', requires: ['requests'], area: 'today' },
   // `kmOnly`: Akademi izni olmayan ama öğrenci yönetimi izni olan kullanıcıya
   // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
   { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',

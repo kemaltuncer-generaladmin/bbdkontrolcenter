@@ -26,14 +26,14 @@
 // denetim kaydı tek yerde kalsın. Ayrıntılı tablet yönetimi Öğrenci Tablet
 // Yönetimi ekranındadır.
 
-import { button, h, loadStyles, pollLoop } from '../../ui-kit/kit.js';
-import { badge, card, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { button, h, loadStyles, pollLoop } from '../../../ui-kit/kit.js';
+import { badge, card, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   actionButton, empty, errorBox, fmtDateTime, fmtTime, formDialog, loader, money, num,
   pagedList, personName, reasonDialog, runAction, sectionHead, selectBox, statusBadge,
   studentPicker, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 
 const LESSON_STATUS = { scheduled: ['Planlı', 'info'], cancelled: ['İptal', 'dim'],
   changed: ['Değişti', 'warn'] };

@@ -88,7 +88,7 @@ export default async function ({ document, sleep, api, load, calls }) {
 
   // ----------------------------------------------------------------- V3 Özet
   {
-    const dash = await load('./panels/bbd_akademi/dashboard.js');
+    const dash = await load('./panels/bbd_akademi/today/dashboard.js');
     out.breakdown = [dash.warningBreakdown({ open: 5, high: 2, medium: 3, low: 0 }), dash.warningBreakdown(null)];
     const root = document.createElement('div');
     document.body.append(root);
@@ -131,7 +131,7 @@ export default async function ({ document, sleep, api, load, calls }) {
 
   // ------------------------------------------------------ V4 Talepler → İzin
   {
-    const req = await load('./panels/bbd_akademi/requests.js');
+    const req = await load('./panels/bbd_akademi/today/requests.js');
     const root = document.createElement('div');
     document.body.append(root);
     const app = makeApp(root, api);

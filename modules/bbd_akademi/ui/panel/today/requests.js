@@ -9,14 +9,14 @@
 //
 // `etutScheduleDialog` Ders programı bölümünün etüt kuyruğunda da kullanılır.
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, tabBar } from '../../ui-kit/layout.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, tabBar } from '../../../ui-kit/layout.js';
 import {
   DAY_LABEL, actionButton, fmtDate, fmtDateTime, formDialog, pagedList, personName,
   reasonDialog, runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar,
-} from './common.js';
-import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from './attendance-manage.js';
-import { templateField } from './shared/text-templates.js';
+} from '../common.js';
+import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from '../attendance-manage.js';
+import { templateField } from '../shared/text-templates.js';
 
 const CHANNEL = { phone: 'telefonla', in_person: 'yüz yüze' };
 const STATUS = { requested: ['Bekliyor', 'warn'], approved: ['Onaylandı', 'good'], scheduled: ['Zaman verildi', 'good'],
