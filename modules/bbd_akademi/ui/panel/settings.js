@@ -444,15 +444,8 @@ const CANTEEN_GROUPS = [
     { key: 'guardianCanBlock', path: ['guardianCanBlock'], type: 'checkbox', to: Boolean,
       label: 'Veli kantini kapatabilir', hint: 'Açıksa veli uygulamadan öğrencinin kantin kullanımını durdurabilir.' },
   ] },
-  { title: 'Öğrenci görünürlüğü', hint: 'Yeni öğrenciler için varsayılan; veli öğrenci bazında değiştirebilir.',
-    fields: [
-      { key: 'seeBalance', path: ['defaultVisibility', 'studentCanSeeBalance'], type: 'checkbox',
-        label: 'Öğrenci bakiyesini görür', to: Boolean },
-      { key: 'seeTransactions', path: ['defaultVisibility', 'studentCanSeeTransactions'], type: 'checkbox',
-        label: 'Öğrenci harcama geçmişini görür', to: Boolean },
-      { key: 'seeLimit', path: ['defaultVisibility', 'studentCanSeeLimit'], type: 'checkbox',
-        label: 'Öğrenci limitini görür', to: Boolean },
-    ] },
+  // "Öğrenci görünürlüğü" kaldırıldı (Akademi madde 113): öğrenci rolü kantini hiçbir yerde görmez,
+  // `defaultVisibility` etkisizdir — yanıltmasın diye burada da gösterilmez.
   { title: 'Veli bildirimleri', hint: 'Velinin başlangıç tercihleri; veli uygulamadan değiştirebilir.', fields: [
     { key: 'nEach', path: ['defaultNotifications', 'eachPurchase'], type: 'checkbox',
       label: 'Her alışverişte', to: Boolean },
