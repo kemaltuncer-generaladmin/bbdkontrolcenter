@@ -69,6 +69,99 @@ function rowError(row) {
   return `${selfUpdateError(row.lastError)}${retry}`;
 }
 
+// Profile eklerken seçilen kural: dakika (0 = sınırsız).
+const RULE_CHOICES = [['0', 'Sınırsız'], ['30', 'Günde 30 dk'], ['60', 'Günde 60 dk'], ['120', 'Günde 120 dk']];
+
+function ruleText(rule) {
+  if (!rule.allowed) return 'Yasak';
+  if (rule.unlimited) return 'Sınırsız';
+  return `Günde ${num(Math.max(1, Math.round((rule.dailyLimitSeconds || 0) / 60)))} dk`;
+}
+
+/**
+ * Profil seçici: her profil bir onay kutusu, uygulamayı zaten içerenler
+ * işaretli ve kapalı. `selected()` seçilen profil kimlikleri, `minutes()` kural.
+ */
+function profileChooser(profiles, packageName) {
+  const node = h('div', 'tb-profile-choose');
+  const checks = new Map();
+  if (!profiles.length) {
+    node.append(muted('Henüz profil yok. Profiller sekmesinden profil oluşturun.'));
+    return { node, selected: () => [], minutes: () => 0 };
+  }
+  const list = h('div', 'tb-profile-checks');
+  for (const profile of [...profiles].sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'))) {
+    const rule = (profile.apps || []).find((item) => item.packageName === packageName);
+    const label = h('label', 'tb-check');
+    const box = h('input');
+    box.type = 'checkbox';
+    box.checked = Boolean(rule);
+    box.disabled = Boolean(rule);
+    label.append(box, h('span', null, profile.name),
+      rule ? h('span', 'tb-sub', `zaten var · ${ruleText(rule)}`) : '');
+    list.append(label);
+    if (!rule) checks.set(profile.id, box);
+  }
+  const field = h('label', 'kit-field');
+  field.append(h('span', 'kit-field-label', 'Seçilen profillerde süre'));
+  const rule = h('select', 'kit-select');
+  for (const [value, text] of RULE_CHOICES) {
+    const option = h('option', null, text);
+    option.value = value;
+    rule.append(option);
+  }
+  rule.value = '60';
+  field.append(rule);
+  node.append(list, field);
+  return {
+    node,
+    selected: () => [...checks].filter(([, box]) => box.checked).map(([id]) => id),
+    minutes: () => Number(rule.value) || 0,
+  };
+}
+
+/**
+ * Uygulamayı seçilen profillere izinli kural olarak ekler. Gövde yalnız ad,
+ * saat dilimi ve uygulamaları taşır; saatler, toplam sınır ve sistem
+ * kontrolleri sunucuda önceki revizyondan korunur. Eklenen profil sayısı döner.
+ */
+async function addToProfiles(app, { packageName, appName, profileIds, minutes }) {
+  if (!profileIds.length) return { added: 0, failed: [] };
+  // Bayat profil listesi üzerine yazılmasın: kayıttan hemen önce taze oku.
+  await app.refresh().catch(() => {});
+  let added = 0;
+  const failed = [];
+  for (const id of profileIds) {
+    const profile = app.profile(id);
+    if (!profile) continue;
+    const apps = (profile.apps || []).map((item) => ({
+      packageName: item.packageName, appName: item.appName || item.packageName,
+      allowed: Boolean(item.allowed), unlimited: Boolean(item.unlimited),
+      dailyLimitSeconds: Number(item.dailyLimitSeconds) || 0,
+    }));
+    if (apps.some((item) => item.packageName === packageName)) continue;
+    apps.push({
+      packageName, appName: appName || packageName, allowed: true,
+      unlimited: !minutes, dailyLimitSeconds: minutes ? minutes * 60 : 0,
+    });
+    try {
+      await app.call(`/profiles/${enc(id)}`, {
+        method: 'PUT', body: { name: profile.name, timezone: profile.timezone, apps },
+      });
+      added += 1;
+    } catch (error) {
+      failed.push(`${profile.name}: ${problem(error, 'kaydedilemedi')}`);
+    }
+  }
+  if (added) await app.refresh().catch(() => {});
+  return { added, failed };
+}
+
+function reportProfiles(app, appName, { added, failed }) {
+  if (added) app.toast(`${appName} ${num(added)} profile eklendi; tabletler bir sonraki bağlantıda alır.`, 'good');
+  if (failed.length) app.toast(`Profile eklenemedi — ${failed.join(' · ')}`, 'bad');
+}
+
 const DRAFT_STATE = {
   uploading: ['Yarım yükleme', 'warn'],
   processing: ['İşleniyor', 'info'],
@@ -588,6 +681,13 @@ export function appsView(app) {
     box.append(fields);
     box.append(muted('Tabletler paketi sırayla indirip kullanıcıya sormadan kurar. Öğrencinin '
       + 'açabilmesi için uygulamanın profilde de izinli olması gerekir.'));
+    // Dağıtımla birlikte profillere de izinli kural olarak eklenir (TabletKontrol'ün kendisi hariç).
+    const chooser = release.kind === 'self' ? null : profileChooser(app.state.profiles, release.packageName);
+    if (chooser) {
+      const section = h('div', 'tb-dialog-fields');
+      section.append(h('span', 'kit-field-label', 'Hangi profillerde açılsın?'), chooser.node);
+      box.append(section);
+    }
     const error = h('div', 'kit-dialog-error');
     error.setAttribute('role', 'alert');
     box.append(error);
@@ -600,13 +700,21 @@ export function appsView(app) {
           await app.call(`/apps/releases/${enc(release.releaseId)}/publish`, {
             method: 'POST', body: { appName: name.value.trim() },
           });
-          close(true);
-          app.toast(`${name.value.trim() || release.appName} dağıtıma çıktı.`, 'good');
-          await load();
-          app.forgetManagedApps?.();
         } catch (failure) {
           error.textContent = problem(failure, 'Dağıtılamadı. Tekrar deneyin.');
+          return;
         }
+        const appName = name.value.trim() || release.appName || release.packageName;
+        close(true);
+        app.toast(`${appName} dağıtıma çıktı.`, 'good');
+        app.forgetManagedApps?.();
+        if (chooser) {
+          reportProfiles(app, appName, await addToProfiles(app, {
+            packageName: release.packageName, appName,
+            profileIds: chooser.selected(), minutes: chooser.minutes(),
+          }));
+        }
+        await load();
       }),
     });
     actions.append(button('Vazgeç', { onClick: () => close(null) }), confirm);
@@ -674,7 +782,8 @@ export function appsView(app) {
       empty: emptyState({ title: 'Eşli tablet yok' }),
     });
     ctl.list.append(ctl.table.node);
-    ctl.drawer.body.append(ctl.head, card('Tabletler', ctl.list), ctl.foot);
+    ctl.profiles = h('div', 'tb-slot');
+    ctl.drawer.body.append(ctl.head, ctl.profiles, card('Tabletler', ctl.list), ctl.foot);
     st.current = ctl;
     paintDrawer();
     loadDevices(ctl);
@@ -712,6 +821,7 @@ export function appsView(app) {
     ]));
     if (ctl.error) body.append(muted(ctl.error));
     ctl.head.replaceChildren(card('Yayın', body));
+    if (item.kind !== 'self') ctl.profiles.replaceChildren(card('Profiller', profilesBody(item)));
     ctl.table.update({ rows: ctl.data?.devices || [] });
 
     const danger = h('div', 'kit-card-body tb-danger');
@@ -725,6 +835,60 @@ export function appsView(app) {
       }));
     }
     ctl.foot.replaceChildren(card(null, danger));
+  }
+
+  /** Uygulamanın hangi profilde nasıl açıldığı ve profile ekleme düğmesi. */
+  function profilesBody(item) {
+    const body = h('div', 'kit-card-body tb-stack');
+    const rows = app.state.profiles
+      .map((profile) => [profile, (profile.apps || []).find((rule) => rule.packageName === item.packageName)])
+      .filter(([, rule]) => rule);
+    if (rows.length) {
+      const list = h('div', 'tb-chips');
+      for (const [profile, rule] of rows) {
+        list.append(badge(`${profile.name} · ${ruleText(rule)}`, rule.allowed ? 'good' : 'dim'));
+      }
+      body.append(list);
+    } else {
+      body.append(muted('Bu uygulama hiçbir profilde yok; tablete kurulsa da öğrenci açamaz.'));
+    }
+    if (rows.length < app.state.profiles.length) {
+      body.append(inline(permButton(app, 'Profillere ekle', 'manage', {
+        onClick: () => chooseProfiles(item),
+      })));
+    }
+    return body;
+  }
+
+  function chooseProfiles(item) {
+    const appName = item.appName || item.packageName;
+    const { card: box, close } = modal(app.root, { title: `“${appName}” profillere eklensin`, closeOnOverlay: true });
+    const chooser = profileChooser(app.state.profiles, item.packageName);
+    const section = h('div', 'tb-dialog-fields');
+    section.append(chooser.node);
+    box.append(section);
+    const error = h('div', 'kit-dialog-error');
+    error.setAttribute('role', 'alert');
+    box.append(error);
+    const actions = h('div', 'kit-dialog-actions');
+    const confirm = button('Ekle', {
+      variant: 'primary',
+      onClick: (event) => busy(event.currentTarget, async () => {
+        const profileIds = chooser.selected();
+        if (!profileIds.length) {
+          error.textContent = 'En az bir profil seçin.';
+          return;
+        }
+        const result = await addToProfiles(app, {
+          packageName: item.packageName, appName, profileIds, minutes: chooser.minutes(),
+        });
+        close(true);
+        reportProfiles(app, appName, result);
+        paintDrawer();
+      }),
+    });
+    actions.append(button('Vazgeç', { onClick: () => close(null) }), confirm);
+    box.append(actions);
   }
 
   async function prioritize(ctl, row) {

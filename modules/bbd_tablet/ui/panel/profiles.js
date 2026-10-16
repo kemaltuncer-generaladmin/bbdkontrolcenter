@@ -572,7 +572,7 @@ export function profilesView(app) {
     toggleAdder.setAttribute('aria-expanded', 'false');
 
     const source = h('select', 'kit-select');
-    source.setAttribute('aria-label', 'Uygulamaları alınacak tablet');
+    source.setAttribute('aria-label', 'Uygulamaların alınacağı kaynak');
     source.addEventListener('change', () => loadSource());
     const pickerNote = h('span', 'tb-sub');
     const addChosen = button('Seçilenleri ekle', {
@@ -607,11 +607,8 @@ export function profilesView(app) {
           || String(a.name).localeCompare(String(b.name), 'tr'));
       const keep = source.value;
       source.replaceChildren();
-      const placeholder = h('option', null, devices.length ? 'Tablet seçin' : 'Eşli tablet yok');
-      placeholder.value = '';
-      source.append(placeholder);
       // Henüz hiçbir tablete kurulmamış dağıtılan uygulama da profile eklenebilir.
-      const distributed = h('option', null, 'Dağıtılan uygulamalar');
+      const distributed = h('option', null, 'Panelden dağıtılan uygulamalar');
       distributed.value = MANAGED;
       source.append(distributed);
       for (const device of devices) {
@@ -619,11 +616,12 @@ export function profilesView(app) {
         option.value = device.id;
         source.append(option);
       }
-      source.value = keep === MANAGED || devices.some((device) => device.id === keep) ? keep : '';
-      if (!source.value) {
-        pickerBox.hidden = true;
-        pickerNote.textContent = devices.length ? '' : 'Paket adını aşağıdan elle ekleyebilirsiniz.';
-      }
+      // Varsayılan kaynak dağıtılan uygulamalardır: yeni yüklenen APK hiçbir tablete
+      // kurulmadan da profile eklenebilsin. Her açılışta liste tazelenir; açık
+      // düzenleyici sekmeler arasında yaşadığı için dağıtım sonrası bayat kalmaz.
+      source.value = devices.some((device) => device.id === keep) ? keep : MANAGED;
+      app.forgetManagedApps?.();
+      loadSource();
     }
 
     async function loadSource() {
@@ -636,12 +634,23 @@ export function profilesView(app) {
       }
       pickerNote.textContent = 'Uygulamalar yükleniyor…';
       try {
-        const rows = id === MANAGED
-          ? (await app.managedApps()).filter((item) => item.kind !== 'self').map((item) => ({
+        const managedRows = async () => (await app.managedApps()).filter((item) => item.kind !== 'self')
+          .map((item) => ({
             packageName: item.packageName, appName: item.appName, isLaunchable: true,
             isSystemApp: false, managed: true,
-          }))
-          : await app.inventory(id);
+          }));
+        let rows;
+        if (id === MANAGED) {
+          rows = await managedRows();
+        } else {
+          // Tablet envanteri yalnız istenince gelir; dağıtılan uygulamalar henüz
+          // kurulmamış ya da listede yoksa da tablet kaynağında görünsün.
+          const [inventory, managed] = await Promise.all([app.inventory(id), managedRows().catch(() => [])]);
+          const known = new Set(inventory.map((item) => item.packageName));
+          rows = [...inventory.map((item) => (managed.some((entry) => entry.packageName === item.packageName)
+            ? { ...item, managed: true } : item)),
+          ...managed.filter((item) => !known.has(item.packageName))];
+        }
         if (source.value !== id) return;
         ed.inventory = rows;
         refreshPicker();
@@ -710,7 +719,7 @@ export function profilesView(app) {
     manualRow.append(manualPackage, manualName, button('Ekle', { onClick: addManual }));
 
     const sourceRow = h('div', 'tb-actions');
-    sourceRow.append(h('span', 'tb-sub', 'Tabletten seç:'), source, pickerNote);
+    sourceRow.append(h('span', 'tb-sub', 'Kaynak:'), source, pickerNote);
     adder.append(sourceRow, pickerBox, h('span', 'tb-sub', 'Ya da elle ekleyin:'), manualRow, manualError);
 
     // ---------------------------------------------------------- gelişmiş
