@@ -108,7 +108,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  cursor: pointer;
+  cursor: default;
   font-weight: 600;
   font-size: 12.5px;
   user-select: none;
@@ -212,7 +212,7 @@
   background: transparent;
   text-align: left;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
   color: var(--ink);
 }
 .bl-day-head:hover b { color: var(--accent); }
@@ -362,7 +362,7 @@
   font: inherit;
   font-size: 12px;
   padding: 6px 10px;
-  cursor: pointer;
+  cursor: default;
   color: var(--soft);
 }
 .bl-seg-btn + .bl-seg-btn { border-left: 1px solid var(--line); }
@@ -379,7 +379,7 @@
   padding: 4px 11px;
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
   color: var(--ink);
 }
 .bl-chip:hover { border-color: #cfd6e2; background: var(--tint); }
@@ -404,7 +404,7 @@
   border: 0;
   background: transparent;
   color: var(--soft);
-  cursor: pointer;
+  cursor: default;
   font-size: 12px;
   line-height: 1;
   padding: 6px 7px;
@@ -478,10 +478,10 @@
 .bl-row:last-child { margin-bottom: 0; }
 .bl-row > .bl-label { min-width: 54px; }
 .bl-row .kit-select { min-width: 220px; }
-.bl-range { flex: 1; min-width: 160px; max-width: 320px; accent-color: var(--accent); cursor: pointer; }
+.bl-range { flex: 1; min-width: 160px; max-width: 320px; accent-color: var(--accent); cursor: default; }
 .bl-volume-value { font-variant-numeric: tabular-nums; min-width: 44px; }
-.bl-check { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; cursor: pointer; color: var(--soft); }
-.bl-check input { accent-color: var(--accent); cursor: pointer; }
+.bl-check { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; cursor: default; color: var(--soft); }
+.bl-check input { accent-color: var(--accent); cursor: default; }
 .bl-inline { display: inline-flex; align-items: center; gap: 6px; }
 .bl-number { width: 76px; }
 
@@ -498,7 +498,7 @@
 .bl-text-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .bl-text .bl-hint { margin-top: 4px; }
 .bl-more { margin-top: 6px; }
-.bl-more summary { cursor: pointer; color: var(--accent); font-size: 12.5px; margin-bottom: 10px; }
+.bl-more summary { cursor: default; color: var(--accent); font-size: 12.5px; margin-bottom: 10px; }
 
 .bl-profiles { display: flex; flex-direction: column; }
 .bl-profile { padding: 10px 16px; border-bottom: 1px solid var(--line); }

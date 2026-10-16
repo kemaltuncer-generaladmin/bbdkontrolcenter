@@ -35,7 +35,7 @@
 .ak-set-switch {
   appearance: none; -webkit-appearance: none; margin: 2px 0 0;
   width: 38px; height: 22px; border-radius: 999px; background: #d4dae4;
-  position: relative; cursor: pointer; transition: background 0.15s;
+  position: relative; cursor: default; transition: background 0.15s;
 }
 .ak-set-switch::after {
   content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
@@ -50,7 +50,7 @@
 /* ------------------------------------------------------------ ortak küçükler */
 .ak-set-sample { font-style: italic; }
 .ak-set-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-.ak-set-toggle { cursor: pointer; user-select: none; }
+.ak-set-toggle { cursor: default; user-select: none; }
 .ak-set-perm {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
   background: var(--tint); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px;
@@ -99,7 +99,7 @@
 
 .ak-set-th-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .ak-set-th-seg-item {
-  border: 0; background: #fff; padding: 6px 10px; font: inherit; font-size: 12.5px; cursor: pointer;
+  border: 0; background: #fff; padding: 6px 10px; font: inherit; font-size: 12.5px; cursor: default;
   color: var(--soft); border-right: 1px solid var(--line);
 }
 .ak-set-th-seg-item:last-child { border-right: 0; }

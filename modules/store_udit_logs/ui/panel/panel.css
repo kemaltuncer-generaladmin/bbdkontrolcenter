@@ -95,7 +95,7 @@
 .ud-clip.on { color: var(--accent); }
 
 .ud-raw { margin-top: 4px; }
-.ud-raw summary { cursor: pointer; font-size: 12px; color: var(--soft); padding: 4px 0; }
+.ud-raw summary { cursor: default; font-size: 12px; color: var(--soft); padding: 4px 0; }
 .ud-json {
   max-height: 40vh;
   overflow: auto;

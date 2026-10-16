@@ -490,6 +490,9 @@ function showCode(row, pairing, printed) {
 
 // ================================================================== mount
 
+/** Koyu temada kâğıt da koyulaşır: ekran yalnız kitin jetonlarını kullanır (ADR 0032, 63-duzeltici). */
+export const darkReady = true;
+
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA
   api = ctx.api;

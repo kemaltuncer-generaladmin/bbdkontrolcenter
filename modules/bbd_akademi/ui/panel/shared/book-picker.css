@@ -10,7 +10,7 @@
 .ak-bp-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 .ak-bp-card { position: relative; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;
   min-height: 92px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
-  font: inherit; color: inherit; cursor: pointer; }
+  font: inherit; color: inherit; cursor: default; }
 .ak-bp-card:hover { box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
 .ak-bp-card.on { border-color: var(--accent, #2563eb); box-shadow: 0 0 0 1px var(--accent, #2563eb); }
 .ak-bp-cover { flex: none; width: 52px; height: 70px; border-radius: 6px; object-fit: cover; background: var(--line); }

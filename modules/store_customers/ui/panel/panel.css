@@ -55,7 +55,7 @@
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, #fff);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 /* ------------------------------------------------------------------ tablo */
@@ -168,7 +168,7 @@
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .cu-card-head {
@@ -232,7 +232,7 @@
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .cu-review-head {

@@ -3,7 +3,7 @@
 .ak-sfc-decks { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
 .ak-sfc-deck { display: flex; justify-content: space-between; align-items: center; gap: 12px;
   border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 8px 12px;
-  text-align: left; font: inherit; cursor: pointer; }
+  text-align: left; font: inherit; cursor: default; }
 .ak-sfc-deck:hover { background: #f5f8fe; }
 .ak-sfc-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ak-sfc-img { display: inline-flex; }

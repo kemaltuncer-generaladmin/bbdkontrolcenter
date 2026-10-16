@@ -11,6 +11,7 @@ import {
   button, confirmWithReason, foldText, h, loadStyles, money, moneyInput,
   parseMoney, stampIso, toaster,
 } from './kit.js';
+import { saveFile } from '../../ui-kit/native.js';
 
 loadStyles(import.meta.url);
 
@@ -641,8 +642,12 @@ async function auditImages() {
   renderList();
 }
 
-/** Excel'in Türkçe yerelinde doğru açılsın diye BOM + noktalı virgül. */
-function exportCsv() {
+/**
+ * Excel'in Türkçe yerelinde doğru açılsın diye BOM + noktalı virgül. Masaüstünde YEREL
+ * "Farklı kaydet" penceresi (`kit.saveFile`, ADR 0032); vazgeçilirse "indirildi" denmez.
+ * `= + - @` ile başlayan metin hücresi `'` önekli: Excel formül olarak çalıştırmasın.
+ */
+async function exportCsv() {
   const rows = visible();
   const head = ['id', 'barkod', 'ad', 'fiyat_kurus', 'fiyat_tl', 'stok', 'aktif', 'gorsel'];
   const body = rows.map((product) => [
@@ -650,18 +655,18 @@ function exportCsv() {
     (product.price / 100).toFixed(2).replace('.', ','),
     product.stock, product.isActive ? 'evet' : 'hayir', product.imageUrl || '',
   ]);
+  const safe = (cell) => (typeof cell === 'string' && /^[=+\-@]/.test(cell) ? `'${cell}` : String(cell));
   const csv = [head, ...body]
-    .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
+    .map((line) => line.map((cell) => `"${safe(cell).replace(/"/g, '""')}"`).join(';'))
     .join('\r\n');
 
-  const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = h('a');
-  link.href = url;
-  link.download = `kantin-urunler-${new Date().toISOString().slice(0, 10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-  toast(`${rows.length} ürün CSV olarak indirildi.`, 'good');
+  try {
+    const saved = await saveFile({ name: `kantin-urunler-${new Date().toISOString().slice(0, 10)}.csv`,
+      data: `﻿${csv}` });
+    if (saved) toast(`${rows.length} ürün CSV olarak kaydedildi.`, 'good');
+  } catch (error) {
+    toast(`CSV kaydedilemedi: ${error?.message || error}`, 'bad');
+  }
 }
 
 // ------------------------------------------------------------------ mount

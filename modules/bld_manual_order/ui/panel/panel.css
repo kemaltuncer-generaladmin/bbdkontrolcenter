@@ -72,7 +72,7 @@
   text-align: left;
   font: inherit;
   color: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 .bmo-hit:last-child { border-bottom: 0; }
 .bmo-hit:hover { background: var(--tint); }

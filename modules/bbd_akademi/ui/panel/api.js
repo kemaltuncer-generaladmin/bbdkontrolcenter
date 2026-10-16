@@ -23,6 +23,8 @@
 // Akademi'den Türkçe ve kullanıcıya gösterilebilir gelir; bilinen kodlar için
 // `problem()` daha açıklayıcı bir cümle kurar.
 
+import { saveFile } from '../../ui-kit/kit.js';
+
 const BASE = '/api/bbd_akademi';
 
 export class AkademiError extends Error {
@@ -408,19 +410,22 @@ export function fileOf(file, fallbackName = 'akademi-dosya') {
     blob: new Blob([bytes], { type: file.contentType || 'application/octet-stream' }) };
 }
 
-/** Blob'u kullanıcının diskine indirir (`<a download>`). */
+/**
+ * Blob'u kullanıcının diskine kaydeder — masaüstünde YEREL "Farklı kaydet" penceresi
+ * (`kit.saveFile`, ADR 0032), tarayıcıda indirme. Dönen söz: kaydedilen yol, tarayıcıda
+ * `true`, vazgeçilirse `null`. Hata çağırana düşmez (eski senkron imza korunur): konsola yazılır.
+ */
 export function saveBlob({ filename, blob }) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return saveFile({ name: filename, data: blob }).catch((error) => {
+    console.error('[bbd_akademi] dosya kaydedilemedi:', error);
+    return null;
+  });
 }
 
-/** PDF'i yeni pencerede açar (yazdırma için); açılamazsa indirir. */
+/**
+ * PDF'i varsayılan uygulamada açar (yazdırma için). Masaüstünde kabuk `blob:` adresini
+ * işletim sisteminin PDF uygulamasına verir; açılamazsa yerel "Farklı kaydet".
+ */
 export function openBlob({ filename, blob }) {
   const url = URL.createObjectURL(blob);
   const opened = window.open(url, '_blank');

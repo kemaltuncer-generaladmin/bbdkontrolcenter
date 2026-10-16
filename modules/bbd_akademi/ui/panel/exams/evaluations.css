@@ -8,7 +8,7 @@
 
 /* ------------------------------------------------------------ küçük öğeler */
 .ak-ev-icon { min-width: 28px; padding: 0 6px; }
-.ak-ev-check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 12.5px; }
+.ak-ev-check { display: flex; gap: 8px; align-items: flex-start; cursor: default; font-size: 12.5px; }
 .ak-ev-check .kit-check { margin-top: 2px; flex: none; }
 .ak-ev-check-text { display: flex; flex-direction: column; gap: 2px; }
 .ak-ev-student-filter { min-width: 220px; }
@@ -65,7 +65,7 @@
 .ak-ev-scale { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .ak-ev-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   min-width: 62px; padding: 5px 8px; border: 0; border-left: 1px solid var(--line); background: #fff;
-  color: var(--ink); font: inherit; cursor: pointer; }
+  color: var(--ink); font: inherit; cursor: default; }
 .ak-ev-score:first-child { border-left: 0; }
 .ak-ev-score b { font-size: 13px; }
 .ak-ev-score small { font-size: 10.5px; color: var(--soft); white-space: nowrap; }

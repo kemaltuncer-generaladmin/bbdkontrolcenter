@@ -229,6 +229,9 @@ function renderSignatures(data) {
 
 // ------------------------------------------------------------------- mount
 
+/** Koyu temada kâğıt da koyulaşır: ekran yalnız kitin jetonlarını kullanır (ADR 0032, 63-duzeltici). */
+export const darkReady = true;
+
 export function mount(root, ctx) {
   loadStyles(import.meta.url);
   let disposed = false;

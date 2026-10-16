@@ -148,8 +148,7 @@ export function dataTable(spec) {
       if (interactive) {
         line.addEventListener('click', () => onRow(row));
         if (line.tagName !== 'BUTTON') {
-          line.tabIndex = 0;
-          line.style.cursor = 'pointer';
+          line.tabIndex = 0;   // imleç OK kalır (ADR 0032: el imleci web işaretidir)
           line.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') { event.preventDefault(); onRow(row); }
           });

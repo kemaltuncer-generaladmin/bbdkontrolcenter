@@ -28,6 +28,10 @@ function mix(hex, amount) {
   return `rgb(${channel(16)}, ${channel(8)}, ${channel(0)})`;
 }
 
+// Öznitelik renkleri YEDEKTİR (CSS'siz kopya, yazdırma). Paneldeki çizim kitin
+// `.kit-chart .kc-*` kurallarıyla jetonlardan boyanır: koyu kâğıtta etiket, ızgara
+// ve iz koyulaşır (63-duzeltici). Vurgu dolgusu üstündeki beyaz yazı ve saat şeridinin
+// açık hücreleri bilerek sınıfsızdır (zemini temadan bağımsız açık kalır).
 const INK = '#111722';
 const SOFT = '#8792a5';
 const LINE = '#e9ecf2';
@@ -55,7 +59,7 @@ export function lineChart(points, { height = 190, valueFormat = shortMoney } = {
 
   if (points.length === 0) {
     svg.append(el('text', { x: width / 2, y: height / 2, 'text-anchor': 'middle',
-      fill: SOFT, 'font-size': 12 }, 'Veri yok'));
+      fill: SOFT, class: 'kc-soft', 'font-size': 12 }, 'Veri yok'));
     return svg;
   }
 
@@ -70,9 +74,9 @@ export function lineChart(points, { height = 190, valueFormat = shortMoney } = {
     const y = pad.top + (plotH * step) / 4;
     const value = top * (1 - step / 4);
     svg.append(el('line', { x1: pad.left, y1: y, x2: width - pad.right, y2: y,
-      stroke: LINE, 'stroke-width': 1 }));
+      stroke: LINE, class: 'kc-line', 'stroke-width': 1 }));
     svg.append(el('text', { x: pad.left - 8, y: y + 3.5, 'text-anchor': 'end',
-      fill: SOFT, 'font-size': 9.5 }, valueFormat(value)));
+      fill: SOFT, class: 'kc-soft', 'font-size': 9.5 }, valueFormat(value)));
   }
 
   const x = (index) => pad.left + (points.length === 1
@@ -95,7 +99,7 @@ export function lineChart(points, { height = 190, valueFormat = shortMoney } = {
   // Nokta + başlık (fare üstünde tam değer)
   for (const [index, point] of points.entries()) {
     const dot = el('circle', { cx: x(index), cy: y(point.value), r: 3,
-      fill: '#fff', stroke: ACCENT, 'stroke-width': 1.8 });
+      fill: '#fff', class: 'kc-surface', stroke: ACCENT, 'stroke-width': 1.8 });
     dot.append(el('title', {}, `${point.label}: ${valueFormat(point.value)}`));
     svg.append(dot);
   }
@@ -105,7 +109,7 @@ export function lineChart(points, { height = 190, valueFormat = shortMoney } = {
   for (const [index, point] of points.entries()) {
     if (index % every !== 0 && index !== points.length - 1) continue;
     svg.append(el('text', { x: x(index), y: height - 10, 'text-anchor': 'middle',
-      fill: SOFT, 'font-size': 9.5 }, point.label));
+      fill: SOFT, class: 'kc-soft', 'font-size': 9.5 }, point.label));
   }
 
   return svg;
@@ -128,7 +132,7 @@ export function barChart(rows, { max = 12 } = {}) {
 
   if (list.length === 0) {
     svg.append(el('text', { x: width / 2, y: 20, 'text-anchor': 'middle',
-      fill: SOFT, 'font-size': 12 }, 'Veri yok'));
+      fill: SOFT, class: 'kc-soft', 'font-size': 12 }, 'Veri yok'));
     return svg;
   }
 
@@ -140,19 +144,19 @@ export function barChart(rows, { max = 12 } = {}) {
     const barW = Math.max(2, (plotW * row.value) / peak);
 
     const label = el('text', { x: labelW - 10, y: y + 13.5, 'text-anchor': 'end',
-      fill: INK, 'font-size': 11 }, row.label.length > 26 ? `${row.label.slice(0, 25)}…` : row.label);
+      fill: INK, class: 'kc-ink', 'font-size': 11 }, row.label.length > 26 ? `${row.label.slice(0, 25)}…` : row.label);
     label.append(el('title', {}, row.label));
     svg.append(label);
 
     svg.append(el('rect', { x: labelW, y: y + 3, width: plotW, height: 14, rx: 4,
-      fill: '#f1f4f9' }));
+      fill: '#f1f4f9', class: 'kc-track' }));
     const bar = el('rect', { x: labelW, y: y + 3, width: barW, height: 14, rx: 4,
       fill: row.tone || ACCENT });
     bar.append(el('title', {}, `${row.label}: ${row.display}`));
     svg.append(bar);
 
     svg.append(el('text', { x: width - 8, y: y + 13.5, 'text-anchor': 'end',
-      fill: INK, 'font-size': 11 }, row.display));
+      fill: INK, class: 'kc-ink', 'font-size': 11 }, row.display));
   }
 
   return svg;
@@ -189,11 +193,11 @@ export function hourStrip(hours) {
     }
     if (row.hour % 2 === 0) {
       svg.append(el('text', { x: x + cellW / 2, y: 47, 'text-anchor': 'middle',
-        fill: SOFT, 'font-size': 8.5 }, String(row.hour).padStart(2, '0')));
+        fill: SOFT, class: 'kc-soft', 'font-size': 8.5 }, String(row.hour).padStart(2, '0')));
     }
   }
 
-  svg.append(el('text', { x: 0, y: 59, fill: SOFT, 'font-size': 8.5 }, 'saat'));
+  svg.append(el('text', { x: 0, y: 59, fill: SOFT, class: 'kc-soft', 'font-size': 8.5 }, 'saat'));
   return svg;
 }
 
@@ -209,7 +213,7 @@ export function paretoChart(rows, { max = 15 } = {}) {
 
   if (list.length === 0) {
     svg.append(el('text', { x: width / 2, y: height / 2, 'text-anchor': 'middle',
-      fill: SOFT, 'font-size': 12 }, 'Veri yok'));
+      fill: SOFT, class: 'kc-soft', 'font-size': 12 }, 'Veri yok'));
     return svg;
   }
 
@@ -221,11 +225,11 @@ export function paretoChart(rows, { max = 15 } = {}) {
   for (let step = 0; step <= 4; step += 1) {
     const y = pad.top + (plotH * step) / 4;
     svg.append(el('line', { x1: pad.left, y1: y, x2: width - pad.right, y2: y,
-      stroke: LINE, 'stroke-width': 1 }));
+      stroke: LINE, class: 'kc-line', 'stroke-width': 1 }));
     svg.append(el('text', { x: pad.left - 7, y: y + 3.5, 'text-anchor': 'end',
-      fill: SOFT, 'font-size': 9 }, shortMoney(peak * (1 - step / 4))));
+      fill: SOFT, class: 'kc-soft', 'font-size': 9 }, shortMoney(peak * (1 - step / 4))));
     svg.append(el('text', { x: width - pad.right + 7, y: y + 3.5,
-      fill: SOFT, 'font-size': 9 }, `%${100 - step * 25}`));
+      fill: SOFT, class: 'kc-soft', 'font-size': 9 }, `%${100 - step * 25}`));
   }
 
   const TONE = { A: '#4f7ce8', B: '#8aa9f0', C: '#c3d0ee' };
@@ -243,7 +247,7 @@ export function paretoChart(rows, { max = 15 } = {}) {
 
     const label = el('text', {
       x: pad.left + index * slot + slot / 2, y: height - 34,
-      'text-anchor': 'end', fill: SOFT, 'font-size': 8.5,
+      'text-anchor': 'end', fill: SOFT, class: 'kc-soft', 'font-size': 8.5,
       transform: `rotate(-40 ${pad.left + index * slot + slot / 2} ${height - 34})`,
     }, row.name.length > 18 ? `${row.name.slice(0, 17)}…` : row.name);
     label.append(el('title', {}, row.name));
@@ -324,7 +328,7 @@ export function stackedBar(parts, { height = 34, width = 720 } = {}) {
 
   if (total === 0) {
     svg.append(el('text', {
-      x: width / 2, y: height / 2, 'text-anchor': 'middle', fill: SOFT, 'font-size': 12,
+      x: width / 2, y: height / 2, 'text-anchor': 'middle', fill: SOFT, class: 'kc-soft', 'font-size': 12,
     }, 'Veri yok'));
     return svg;
   }
@@ -363,7 +367,7 @@ export function stackedBar(parts, { height = 34, width = 720 } = {}) {
     svg.append(el('rect', { x: legendX, y: height + 10, width: 9, height: 9, rx: 2, fill: tone }));
     const text = `${part.label} ${part.value}`;
     svg.append(el('text', {
-      x: legendX + 13, y: height + 18, fill: SOFT, 'font-size': 10.5,
+      x: legendX + 13, y: height + 18, fill: SOFT, class: 'kc-soft', 'font-size': 10.5,
     }, text));
     legendX += 22 + text.length * 5.6;
   });
@@ -387,7 +391,7 @@ export function groupedBar(groups, { series = [], height = 210, format = String 
   const list = groups || [];
   if (list.length === 0) {
     svg.append(el('text', {
-      x: width / 2, y: height / 2, 'text-anchor': 'middle', fill: SOFT, 'font-size': 12,
+      x: width / 2, y: height / 2, 'text-anchor': 'middle', fill: SOFT, class: 'kc-soft', 'font-size': 12,
     }, 'Veri yok'));
     return svg;
   }
@@ -400,10 +404,10 @@ export function groupedBar(groups, { series = [], height = 210, format = String 
   for (let step = 0; step <= 4; step += 1) {
     const value = (peak / 4) * step;
     svg.append(el('line', {
-      x1: padLeft, x2: width - 8, y1: y(value), y2: y(value), stroke: LINE, 'stroke-width': 1,
+      x1: padLeft, x2: width - 8, y1: y(value), y2: y(value), stroke: LINE, class: 'kc-line', 'stroke-width': 1,
     }));
     svg.append(el('text', {
-      x: padLeft - 6, y: y(value) + 3.5, 'text-anchor': 'end', fill: SOFT, 'font-size': 9.5,
+      x: padLeft - 6, y: y(value) + 3.5, 'text-anchor': 'end', fill: SOFT, class: 'kc-soft', 'font-size': 9.5,
     }, format(value)));
   }
 
@@ -426,7 +430,7 @@ export function groupedBar(groups, { series = [], height = 210, format = String 
     });
     svg.append(el('text', {
       x: base + (barWidth * seriesCount) / 2, y: height - padBottom + 24,
-      'text-anchor': 'middle', fill: SOFT, 'font-size': 10,
+      'text-anchor': 'middle', fill: SOFT, class: 'kc-soft', 'font-size': 10,
     }, group.label));
   });
 
@@ -434,7 +438,7 @@ export function groupedBar(groups, { series = [], height = 210, format = String 
   series.forEach((name, index) => {
     const tone = mix(ACCENT, 1 - (index / Math.max(1, seriesCount)) * 0.55);
     svg.append(el('rect', { x: legendX, y: 2, width: 9, height: 9, rx: 2, fill: tone }));
-    svg.append(el('text', { x: legendX + 13, y: 10, fill: SOFT, 'font-size': 10.5 }, name));
+    svg.append(el('text', { x: legendX + 13, y: 10, fill: SOFT, class: 'kc-soft', 'font-size': 10.5 }, name));
     legendX += 22 + name.length * 5.6;
   });
 

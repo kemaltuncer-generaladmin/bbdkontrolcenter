@@ -109,7 +109,7 @@
   border-radius: 5px;
   background: var(--tint);
   color: var(--paper-ink);
-  cursor: pointer;
+  cursor: default;
 }
 
 .bi-hash:hover { border-color: var(--accent); }

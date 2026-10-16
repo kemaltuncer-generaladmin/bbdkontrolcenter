@@ -59,7 +59,7 @@
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, #fff);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 /* Seçilemeyen siparişlerin gerekçesi çubuğun ALT SATIRINA geçer: rozetler
@@ -107,9 +107,9 @@
    durum rozetinde kullanılmıyor, bu yüzden karışmaz. Renk TEK BAŞINA anlam
    taşımaz: rozetin altında "bankayla mutabakat gerekiyor" yazar. */
 .kit-badge.so-pay-uncertain {
-  background: #f5f3ff;
-  border-color: #ddd6fe;
-  color: #6d28d9;
+  background: var(--violet-tint);
+  border-color: var(--violet-line);
+  color: var(--violet);
   font-weight: 600;
 }
 
@@ -117,7 +117,7 @@
 .so-why {
   font-size: 11px;
   line-height: 1.35;
-  color: #6d28d9;
+  color: var(--violet);
   font-weight: 600;
 }
 

@@ -48,6 +48,25 @@
   --paper-line-strong: #cfd6e2;
   --paper-bad-tint: #fff5f5;
   --paper-accent: #2f5fd0;
+  /* Durum renkleri (63-duzeltici): metin, açık zemin ve çizgi üçlüsü. Panel sabit
+     renk yerine bunları (kitte `--good`, `--good-tint`, `--good-line` …) kullanır;
+     koyu kâğıtta aynı anlam açık yazı + yarı saydam zeminle verilir. Açık
+     değerler beyazda ve kendi zemininde ≥ 4,5:1. */
+  --paper-good: #15803d;
+  --paper-good-tint: #ecfdf3;
+  --paper-good-line: #a7f3d0;
+  --paper-warn: #b45309;
+  --paper-warn-tint: #fffbeb;
+  --paper-warn-line: #fcd34d;
+  --paper-bad: #b91c1c;
+  --paper-bad-line: #f3c4c4;
+  --paper-accent-tint: #eef3ff;
+  --paper-accent-line: #c9d8ff;
+  --paper-violet: #6d28d9;
+  --paper-violet-tint: #f5f3ff;
+  --paper-violet-line: #ddd6fe;
+  /* Dolgu (vurgu / durum zemini) üstündeki yazı. */
+  --paper-on-accent: #ffffff;
 
   /* açılır katmanlar (bağlam menüsü, liste, pencere, bildirim) */
   --pop-bg: #ffffff;
@@ -129,6 +148,20 @@
   --paper-line-strong: #3a4357;
   --paper-bad-tint: #2a1618;
   --paper-accent: #7aa2ff;
+  --paper-good: #4ade80;
+  --paper-good-tint: rgba(34, 197, 94, 0.14);
+  --paper-good-line: rgba(74, 222, 128, 0.38);
+  --paper-warn: #fbbf24;
+  --paper-warn-tint: rgba(245, 158, 11, 0.14);
+  --paper-warn-line: rgba(251, 191, 36, 0.4);
+  --paper-bad: #f87171;
+  --paper-bad-line: rgba(248, 113, 113, 0.4);
+  --paper-accent-tint: rgba(91, 140, 255, 0.15);
+  --paper-accent-line: rgba(122, 162, 255, 0.42);
+  --paper-violet: #c4b5fd;
+  --paper-violet-tint: rgba(139, 92, 246, 0.16);
+  --paper-violet-line: rgba(196, 181, 253, 0.38);
+  --paper-on-accent: #0b1020;
   color-scheme: dark;
 }
 

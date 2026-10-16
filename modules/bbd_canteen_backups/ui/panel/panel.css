@@ -35,7 +35,7 @@
   font: inherit;
   font-size: 12.5px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
@@ -239,7 +239,7 @@
   padding: 3px 10px;
   border: 1px solid var(--line); border-radius: 999px;
   background: #fff; color: var(--soft);
-  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 10.5px; cursor: default; white-space: nowrap;
 }
 
 .bk-mini:hover { background: var(--tint); color: var(--ink); border-color: #cfd6e2; }

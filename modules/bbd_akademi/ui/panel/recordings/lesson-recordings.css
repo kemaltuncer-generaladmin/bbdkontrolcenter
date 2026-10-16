@@ -40,9 +40,9 @@
 .ak-rec-quality { display: flex; gap: 10px; flex-wrap: wrap; }
 .ak-rec-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 200px;
   padding: 10px 14px; border-radius: 12px; border: 2px solid transparent; background: var(--tint); color: var(--ink);
-  cursor: pointer; text-align: left; font: inherit; }
+  cursor: default; text-align: left; font: inherit; }
 .ak-rec-choice small { color: var(--soft); }
 .ak-rec-choice.on { border-color: var(--accent); background: #e2effa; }
 .ak-rec-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.ak-rec-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.ak-rec-toggle { display: flex; align-items: flex-start; gap: 10px; cursor: default; }
 .ak-rec-toggle-text { display: flex; flex-direction: column; gap: 2px; }

@@ -55,7 +55,7 @@
 
 .ak-tile-title { margin: 2px 0 0; font-size: 16px; font-weight: 650; }
 .ak-tile-open {
-  border: 0; background: none; padding: 0; font: inherit; color: var(--ink); cursor: pointer; text-align: left;
+  border: 0; background: none; padding: 0; font: inherit; color: var(--ink); cursor: default; text-align: left;
 }
 /* Esnetilmiş bağlantı: kutucuğun boş alanı da grubu açar. */
 .ak-tile-open::after { content: ''; position: absolute; inset: 0; border-radius: 14px; }
@@ -70,7 +70,7 @@
 }
 .ak-tile-link {
   border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 11px;
-  font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer;
+  font: inherit; font-size: 12.5px; color: var(--ink); cursor: default;
 }
 .ak-tile-link:hover { border-color: var(--tone); color: var(--tone); background: var(--tone-bg); }
 .ak-tile-link:focus-visible { outline: 2px solid var(--tone); outline-offset: 1px; }

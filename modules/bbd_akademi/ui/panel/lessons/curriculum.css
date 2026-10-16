@@ -8,7 +8,7 @@
 .ak-cur-unit-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; flex-wrap: wrap; }
 .ak-cur-toggle {
   display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: none;
-  padding: 4px 0; font: inherit; color: var(--ink); cursor: pointer; text-align: left;
+  padding: 4px 0; font: inherit; color: var(--ink); cursor: default; text-align: left;
 }
 .ak-cur-toggle:hover .ak-cur-title { text-decoration: underline; }
 .ak-cur-caret { width: 14px; color: var(--soft); flex: none; }
@@ -25,7 +25,7 @@
 .ak-cur-topic.ak-cur-retired .ak-cur-title { text-decoration: line-through; color: var(--soft); }
 .ak-cur-unit.ak-cur-retired { background: var(--tint); }
 .ak-cur-none { padding: 6px 0; }
-.ak-cur-check { gap: 6px; color: var(--soft); cursor: pointer; }
+.ak-cur-check { gap: 6px; color: var(--soft); cursor: default; }
 
 /* ---------------------------------------------------- kural kalıpları */
 .ak-cur-patterns { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -43,7 +43,7 @@
 .ak-cur-pick-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
   text-align: left; border: 0; border-bottom: 1px solid #eef1f6; background: transparent;
-  padding: 7px 12px; cursor: pointer; font: inherit;
+  padding: 7px 12px; cursor: default; font: inherit;
 }
 .ak-cur-pick-row:last-child { border-bottom: 0; }
 .ak-cur-pick-row:hover, .ak-cur-pick-row:focus { background: #f2f5fb; }

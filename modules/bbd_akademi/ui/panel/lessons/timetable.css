@@ -7,7 +7,7 @@
 /* ------------------------------------------------------------ alanlar */
 .ak-tt-field { display: inline-flex; flex-direction: column; gap: 3px; }
 .ak-tt-field-label { font-size: 11px; color: var(--soft); }
-.ak-tt-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; }
+.ak-tt-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: default; }
 
 /* ------------------------------------------------------- kayıt şeridi */
 .ak-tt-bar {
@@ -65,7 +65,7 @@
   position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
   gap: 1px; min-height: 60px; min-width: 0; padding: 6px 9px;
   border: 1px solid var(--line); border-radius: 8px; background: #fff;
-  font: inherit; color: var(--ink); text-align: left; cursor: pointer; overflow: hidden;
+  font: inherit; color: var(--ink); text-align: left; cursor: default; overflow: hidden;
 }
 .ak-tt-cell:not(.ak-tt-is-filled) { align-items: center; border-style: dashed; background: #fcfcfd; }
 .ak-tt-cell.ak-tt-is-filled {
@@ -149,7 +149,7 @@
 .ak-tt-person small { color: var(--soft); }
 .ak-tt-person-x {
   width: 20px; height: 20px; border: 0; border-radius: 999px; background: transparent;
-  color: var(--soft); font: inherit; line-height: 1; cursor: pointer;
+  color: var(--soft); font: inherit; line-height: 1; cursor: default;
 }
 .ak-tt-person-x:hover { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
 .kit-cell.ak-tt-wrap { white-space: normal; }
@@ -193,7 +193,7 @@
 .ak-tt-classes { font-size: 11px; color: var(--soft); font-style: italic; }
 .ak-tt-classpick .ak-chips { flex-wrap: wrap; gap: 4px; }
 .ak-tt-classchip { display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; }
-.ak-tt-classchip-x { border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit;
+.ak-tt-classchip-x { border: 0; background: transparent; cursor: default; font: inherit; color: inherit;
   padding: 0 4px; border-radius: 999px; }
 .ak-tt-classchip-x:hover { background: rgba(0, 0, 0, .08); }
 
@@ -203,7 +203,7 @@
 .ak-ses-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
-  font: inherit; color: inherit; text-align: left; cursor: pointer;
+  font: inherit; color: inherit; text-align: left; cursor: default;
 }
 .ak-ses-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
 .ak-ses-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

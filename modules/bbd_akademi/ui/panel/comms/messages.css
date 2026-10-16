@@ -17,5 +17,5 @@
 .ak-msg-student { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .ak-msg-error { color: var(--bad); font-size: 12.5px; min-height: 1em; }
 .ak-msg-edits { margin-top: 4px; }
-.ak-msg-edits > summary { cursor: pointer; color: var(--soft); font-size: 12.5px; }
+.ak-msg-edits > summary { cursor: default; color: var(--soft); font-size: 12.5px; }
 .ak-msg-edit { border-left: 2px solid var(--line); padding: 4px 0 4px 10px; margin-top: 6px; }

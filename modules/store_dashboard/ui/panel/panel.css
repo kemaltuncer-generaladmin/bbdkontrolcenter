@@ -44,13 +44,13 @@
    Yönetimi). Tıklanabilir olduğu ÇERÇEVEDEN de anlaşılır; renk tek başına
    anlam taşımaz, kutunun ipucu hedef ekranı yazar. */
 .sd-kpi-link {
-  cursor: pointer;
+  cursor: default;
   border-radius: 8px;
   outline: 1px solid transparent;
   transition: outline-color 0.12s ease, background 0.12s ease;
 }
 .sd-kpi-link:hover,
-.sd-kpi-link:focus-visible { outline-color: var(--accent); background: rgba(91, 140, 255, 0.06); }
+.sd-kpi-link:focus-visible { outline-color: var(--accent); background: var(--accent-tint); }
 
 /* Üst şeridin altındaki SESSİZ satır: dört kutudan fazlası kutu olmaz (§6). */
 .sd-kpi-minor {

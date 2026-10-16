@@ -98,7 +98,7 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
-  cursor: pointer;
+  cursor: default;
 }
 .rq-card:hover { border-color: var(--accent); }
 .rq-card-top { display: flex; align-items: center; gap: 6px; }

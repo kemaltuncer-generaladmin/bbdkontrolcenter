@@ -65,7 +65,7 @@
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--surface, #fff);
-  cursor: pointer;
+  cursor: default;
 }
 
 .us .us-role:hover { background: var(--tint); }

@@ -4,7 +4,7 @@
 .ak-ex-fill { gap: 4px; flex-wrap: nowrap; }
 .ak-ex-detail-title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
 .ak-ex-summary .ak-kv { grid-template-columns: minmax(110px, max-content) minmax(0, 1fr); }
-.ak-ex-toggle { cursor: pointer; font-size: 12.5px; }
+.ak-ex-toggle { cursor: default; font-size: 12.5px; }
 .ak-ex-note { font-size: 12.5px; padding: 0 2px; }
 .ak-ex-chips.kit-chips { padding: 0; }
 .ak-ex-chart { padding: 6px 4px; }
@@ -58,7 +58,7 @@
 .ak-ex-resolve { justify-content: flex-start; }
 .ak-ex-resolve .kit-btn { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ak-ex-option { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 6px; align-items: start;
-  cursor: pointer; }
+  cursor: default; }
 .ak-ex-option .kit-check { margin-top: 2px; }
 .ak-ex-option small { color: var(--soft); }
 

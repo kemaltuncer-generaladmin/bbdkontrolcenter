@@ -36,7 +36,7 @@
   font: inherit;
   font-size: 12.5px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
@@ -183,7 +183,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 :where(.sm) .pk-chip:hover { background: var(--tint); color: var(--ink); border-color: #cfd6e2; }
@@ -222,13 +222,13 @@
   gap: 9px;
   padding: 6px 8px;
   border-radius: 7px;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 110ms;
 }
 
 :where(.sm) .pk-row:hover { background: var(--tint); }
 :where(.sm) .pk-row.on { background: color-mix(in srgb, var(--accent) 9%, #fff); }
-:where(.sm) .pk-box { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+:where(.sm) .pk-box { width: 15px; height: 15px; accent-color: var(--accent); cursor: default; }
 :where(.sm) .pk-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :where(.sm) .pk-meta { display: flex; gap: 5px; flex: none; }
 
@@ -267,7 +267,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 12.5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sm-tab:hover { color: var(--ink); }
@@ -337,7 +337,7 @@
   font: inherit;
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  cursor: pointer;
+  cursor: default;
 }
 
 .sm-ph:hover { background: color-mix(in srgb, var(--accent) 10%, #fff); color: var(--accent); border-color: var(--accent); }
@@ -357,7 +357,7 @@
 .sm-preset-load {
   padding: 3px 4px 3px 10px;
   border: 0; background: transparent; color: var(--ink);
-  font: inherit; font-size: 11.5px; cursor: pointer;
+  font: inherit; font-size: 11.5px; cursor: default;
 }
 
 .sm-preset-load:hover { color: var(--accent); }
@@ -365,7 +365,7 @@
 .sm-preset-drop {
   padding: 3px 8px 3px 4px;
   border: 0; background: transparent; color: #b3bdcc;
-  font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  font: inherit; font-size: 13px; line-height: 1; cursor: default;
 }
 
 .sm-preset-drop:hover { color: var(--bad); }
@@ -406,8 +406,8 @@
 .sm-alert.bad { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
 .sm-alert.good { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
 
-.sm-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: pointer; }
-.sm-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.sm-check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; cursor: default; }
+.sm-check input { width: 15px; height: 15px; accent-color: var(--accent); cursor: default; }
 .sm-compose-tools { display: flex; gap: 6px; }
 
 /* ------------------------------------------------------------- yan sütun */
@@ -646,7 +646,7 @@
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #fff;
-  cursor: pointer;
+  cursor: default;
   color: var(--ink);
   font: inherit;
   font-size: 11.5px;

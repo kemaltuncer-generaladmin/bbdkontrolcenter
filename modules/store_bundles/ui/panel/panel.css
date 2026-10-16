@@ -139,11 +139,11 @@
 .sb-verdict-label { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; }
 .sb-verdict-value { font-size: 20px; font-variant-numeric: tabular-nums; }
 
-.sb-verdict.profit { border-left-color: var(--good); background: #ecfdf5; }
+.sb-verdict.profit { border-left-color: var(--good); background: var(--good-tint); }
 .sb-verdict.profit .sb-verdict-label,
 .sb-verdict.profit .sb-verdict-value { color: var(--good); }
 
-.sb-verdict.loss { border-left-color: var(--bad); background: #fef2f2; }
+.sb-verdict.loss { border-left-color: var(--bad); background: var(--bad-tint); }
 .sb-verdict.loss .sb-verdict-label,
 .sb-verdict.loss .sb-verdict-value { color: var(--bad); }
 

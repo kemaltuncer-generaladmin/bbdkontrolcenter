@@ -20,7 +20,7 @@
 .ak-stu-card-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .ak-stu-card-tools .kit-select { height: 28px; }
 .ak-stu-h { margin: 6px 0 0; font-size: 12.5px; font-weight: 600; }
-.ak-stu-check { cursor: pointer; user-select: none; }
+.ak-stu-check { cursor: default; user-select: none; }
 .ak-stu-links { display: flex; flex-wrap: wrap; gap: 2px 12px; }
 .ak-stu-period { min-width: 170px; text-align: center; }
 .ak-stu-net { width: 90px; }
@@ -61,7 +61,7 @@
 
 /* ----------------------------------------------------------- müfredat */
 .ak-stu-unit { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
-.ak-stu-unit-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+.ak-stu-unit-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: default;
   list-style: none; }
 .ak-stu-unit-head::-webkit-details-marker { display: none; }
 .ak-stu-unit-head::before { content: '▸'; color: var(--soft); }
@@ -81,7 +81,7 @@
 .ak-stu-members { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow: auto; }
 .ak-stu-chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line);
   border-radius: 999px; padding: 2px 4px 2px 10px; background: #f8fafc; font-size: 12.5px; }
-.ak-stu-chip-x { border: 0; background: transparent; cursor: pointer; font: inherit; color: var(--soft);
+.ak-stu-chip-x { border: 0; background: transparent; cursor: default; font: inherit; color: var(--soft);
   padding: 0 5px; border-radius: 999px; }
 .ak-stu-chip-x:hover { background: #e2e8f0; color: var(--ink); }
 
@@ -98,5 +98,5 @@
 /* Çoklu müfredat seçici (iş 30): seviye grupları + onay kutuları, uzun listede kaydırma. */
 .ak-prog-multi-list { max-height: 280px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; gap: 8px; }
 .ak-prog-multi-head { gap: 8px; align-items: center; justify-content: space-between; }
-.ak-prog-multi-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: pointer; font-size: 13px; }
+.ak-prog-multi-item { display: flex; align-items: center; gap: 8px; padding: 2px 0; cursor: default; font-size: 13px; }
 .ak-prog-chosen { min-height: 24px; }

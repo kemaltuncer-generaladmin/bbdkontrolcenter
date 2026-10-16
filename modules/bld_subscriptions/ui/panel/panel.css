@@ -100,7 +100,7 @@
   background: var(--paper-bg, #fff);
   color: inherit;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 .bsu-day:hover { border-color: var(--soft); }
 .bsu-day:focus-visible { outline: 2px solid var(--accent, #3b82f6); outline-offset: 1px; }

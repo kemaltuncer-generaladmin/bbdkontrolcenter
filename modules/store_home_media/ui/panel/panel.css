@@ -76,7 +76,7 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--tint);
-  cursor: pointer;
+  cursor: default;
 }
 .hm-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hm-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -139,7 +139,7 @@
 .hm-thumb {
   display: flex;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
   align-items: center;
   justify-content: center;
   width: 56px;
@@ -225,7 +225,7 @@
 }
 
 .hm-image-tools { display: flex; gap: 8px; align-items: center; }
-.hm-file-label { cursor: pointer; }
+.hm-file-label { cursor: default; }
 
 /* Dosya girişi GÖRÜNMEZ ama odaklanabilir: `display:none` verilseydi sekme
    tuşuyla erişilemez ve dosya seçmenin klavye yolu kalmazdı. */

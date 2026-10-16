@@ -39,7 +39,7 @@
   font: inherit;
   font-size: 12.5px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
@@ -222,7 +222,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .cal-nav-btn:hover { background: #fff; border-color: #cfd6e2; color: var(--ink); }
@@ -258,7 +258,7 @@
   background: #fff;
   color: var(--ink);
   font: inherit;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 120ms, border-color 120ms, transform 120ms;
 }
 
@@ -352,7 +352,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 12.5px;
-  cursor: pointer;
+  cursor: default;
   transition: color 130ms, border-color 130ms;
 }
 
@@ -433,7 +433,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 :where(.lu) .pk-chip:hover { background: var(--tint); color: var(--ink); border-color: #cfd6e2; }
@@ -472,13 +472,13 @@
   gap: 9px;
   padding: 6px 8px;
   border-radius: 7px;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 110ms;
 }
 
 :where(.lu) .pk-row:hover { background: var(--tint); }
 :where(.lu) .pk-row.on { background: color-mix(in srgb, var(--accent) 9%, #fff); }
-:where(.lu) .pk-box { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+:where(.lu) .pk-box { width: 15px; height: 15px; accent-color: var(--accent); cursor: default; }
 :where(.lu) .pk-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :where(.lu) .pk-meta { display: flex; gap: 5px; flex: none; }
 
@@ -658,7 +658,7 @@
   color: var(--bad);
   font: inherit;
   font-size: 11px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .lu-undo:hover { background: #fff5f5; border-color: #e8a9a9; }
@@ -679,7 +679,7 @@
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  cursor: pointer;
+  cursor: default;
   line-height: 1.5;
 }
 
@@ -689,5 +689,5 @@
   width: 15px;
   height: 15px;
   accent-color: var(--warn);
-  cursor: pointer;
+  cursor: default;
 }

@@ -213,7 +213,7 @@
   font: inherit;
   font-size: 12.5px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 div.tb-item { cursor: default; }
 .tb-item:hover { background: var(--tint); }
@@ -278,7 +278,7 @@ div.tb-item { cursor: default; }
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
-  cursor: pointer;
+  cursor: default;
 }
 .tb-day.on { border-color: transparent; background: var(--accent); color: #fff; font-weight: 600; }
 .tb-times { display: flex; align-items: center; gap: 6px; }
@@ -323,7 +323,7 @@ div.tb-item { cursor: default; }
   font: inherit;
   font-size: 12px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
 }
 .tb-seg-btn:hover { color: var(--ink); }
 .tb-seg-btn.on { background: #fff; color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(17, 23, 34, 0.12); }
@@ -356,7 +356,7 @@ div.tb-item { cursor: default; }
   padding: 2px 0;
   font-size: 12.5px;
   font-weight: 600;
-  cursor: pointer;
+  cursor: default;
 }
 .tb-advanced > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .tb-advanced[open] > summary { margin-bottom: 8px; }

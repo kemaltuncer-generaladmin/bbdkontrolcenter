@@ -36,7 +36,7 @@
   font: inherit;
   font-size: 12.5px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
@@ -183,7 +183,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 :where(.pr) .pk-chip:hover { background: var(--tint); color: var(--ink); border-color: #cfd6e2; }
@@ -222,13 +222,13 @@
   gap: 9px;
   padding: 6px 8px;
   border-radius: 7px;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 110ms;
 }
 
 :where(.pr) .pk-row:hover { background: var(--tint); }
 :where(.pr) .pk-row.on { background: color-mix(in srgb, var(--accent) 9%, #fff); }
-:where(.pr) .pk-box { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+:where(.pr) .pk-box { width: 15px; height: 15px; accent-color: var(--accent); cursor: default; }
 :where(.pr) .pk-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :where(.pr) .pk-meta { display: flex; gap: 5px; flex: none; }
 
@@ -268,7 +268,7 @@
   padding: 8px 14px 9px;
   border: 0; border-bottom: 2px solid transparent;
   background: transparent; color: var(--soft);
-  font: inherit; font-size: 12.5px; cursor: pointer;
+  font: inherit; font-size: 12.5px; cursor: default;
 }
 
 .pr-tab:hover { color: var(--ink); }
@@ -335,7 +335,7 @@
   padding: 3px 9px;
   border: 1px solid var(--line); border-radius: 999px;
   background: #fff; color: var(--soft);
-  font: inherit; font-size: 10.5px; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 10.5px; cursor: default; white-space: nowrap;
 }
 
 .pr-mini:hover { background: var(--tint); color: var(--ink); border-color: #cfd6e2; }
@@ -392,8 +392,8 @@
 .pr-alert.warn { background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; }
 .pr-alert.bad { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
 
-.pr-repeat-label { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
-.pr-repeat-label input { flex: none; margin-top: 1px; width: 15px; height: 15px; accent-color: var(--warn); cursor: pointer; }
+.pr-repeat-label { display: flex; align-items: flex-start; gap: 9px; cursor: default; }
+.pr-repeat-label input { flex: none; margin-top: 1px; width: 15px; height: 15px; accent-color: var(--warn); cursor: default; }
 
 .pr-problems, .pr-recipients {
   margin-top: 9px; border: 1px solid var(--line); border-radius: 10px;
@@ -514,7 +514,7 @@
 .pr-template-tools { display: flex; gap: 6px; margin-top: 8px; }
 
 /* Yer tutucular artık düğme: imlecin olduğu yere ekler. */
-.pr-token { cursor: pointer; }
+.pr-token { cursor: default; }
 .pr-token:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ------------------------------------------------- nakit tahsilat formu */
@@ -545,7 +545,7 @@
   border: 0;
   border-bottom: 1px solid var(--line);
   background: #fff;
-  cursor: pointer;
+  cursor: default;
   font: inherit;
   text-align: left;
 }

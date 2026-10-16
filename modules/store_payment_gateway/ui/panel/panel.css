@@ -101,7 +101,7 @@
   font: inherit;
   color: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 .pg-result:hover { border-color: var(--line); background: var(--tint); }
 
@@ -184,7 +184,7 @@
   border-radius: 999px;
   background: var(--tint);
   color: inherit;
-  cursor: pointer;
+  cursor: default;
 }
 .pg-chip:hover { border-color: var(--accent); }
 

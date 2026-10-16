@@ -48,7 +48,7 @@
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, #fff);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 /* ------------------------------------------------------------------ tablo */
@@ -173,7 +173,7 @@
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 /* Kapak görseli renkle DEĞİL, yazıyla da işaretlenir (sp-image-tag). Çerçeve
    yalnızca destekler. */
@@ -206,7 +206,7 @@
   border-radius: 10px;
   background: var(--tint);
 }
-.sp-drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, #fff); }
+.sp-drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .sp-drop-text { font-weight: 600; }
 
 /* Girdi görsel olarak gizli ama KLAVYEYLE ULAŞILIR. `display:none` olsaydı
@@ -275,7 +275,7 @@
 
 .sp-serp { padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; }
 .sp-serp-url { font-size: 11.5px; color: var(--good); }
-.sp-serp-title { font-size: 15px; color: #1a0dab; }
+.sp-serp-title { font-size: 15px; color: var(--accent); }
 .sp-serp-text { font-size: 12px; color: var(--soft); line-height: 1.5; }
 
 /* ------------------------------------------------------------ toplu işlem */
@@ -336,7 +336,7 @@
   margin: 10px 0;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 .sp-fold-head {
   display: flex;
@@ -344,7 +344,7 @@
   gap: 10px;
   flex-wrap: wrap;
   padding: 10px 12px;
-  cursor: pointer;
+  cursor: default;
   border-radius: 10px;
   list-style: none;
 }

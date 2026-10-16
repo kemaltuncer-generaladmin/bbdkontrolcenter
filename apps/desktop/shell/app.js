@@ -186,7 +186,10 @@ function printActive() {
   for (const scope of [...layers, body]) {
     const explicit = [...scope.querySelectorAll('[data-command="print"]')].find(visible);
     if (explicit) { explicit.click(); return; }
+    // Etiketle bulma YEDEKTİR ve yıkıcı/başka komutlu düğmeye asla basmaz: "Seçilenlerin
+    // kodunu sıfırla ve yazdır" (kit-btn-danger) Ctrl/⌘+P ile tetiklenmemeli.
     const byLabel = [...scope.querySelectorAll('button, [role="button"]')].find((node) => visible(node)
+      && !node.classList.contains('kit-btn-danger') && !node.dataset.command
       && /(^|\s)yazdır/i.test(`${node.textContent} ${node.getAttribute('aria-label') || ''}`.toLocaleLowerCase('tr')));
     if (byLabel) { byLabel.click(); return; }
   }

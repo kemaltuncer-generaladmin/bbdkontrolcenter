@@ -2596,7 +2596,7 @@ async function renderPerformance(host, { fresh = false } = {}) {
         h('span', 'sh-sub', row.carrierLabel), h('span', 'kit-spacer'),
         badge(`${num(row.idleDays)} gündür hareketsiz`, 'bad'));
       line.tabIndex = 0;
-      line.style.cursor = 'pointer';
+      line.setAttribute('role', 'button');   // imleç OK kalır (ADR 0032)
       line.addEventListener('click', () => openShipment(row.id));
       line.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') openShipment(row.id);
@@ -2895,6 +2895,9 @@ function refusedCard(payload) {
 }
 
 // ================================================================== mount
+
+/** Koyu temada kâğıt da koyulaşır: ekran yalnız kitin jetonlarını kullanır (ADR 0032, 63-duzeltici). */
+export const darkReady = true;
 
 export function mount(root, ctx) {
   loadStyles(import.meta.url);        // panel.css — DOSYA TEPESİNDE DEĞİL, BURADA

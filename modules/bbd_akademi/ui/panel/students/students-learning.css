@@ -13,7 +13,7 @@
 .ak-sl-day-empty { font-size: 12px; color: var(--soft); padding: 6px 0; text-align: center; }
 .ak-sl-task { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 6px 8px; text-align: left;
   font: inherit; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px;
-  background: var(--tint); cursor: pointer; }
+  background: var(--tint); cursor: default; }
 .ak-sl-task:hover { background: #eef3fd; }
 .ak-sl-task.done { border-left-color: var(--good); }
 .ak-sl-task.partial { border-left-color: var(--warn); }

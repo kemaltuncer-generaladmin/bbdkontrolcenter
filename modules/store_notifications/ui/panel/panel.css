@@ -92,7 +92,7 @@
   border-radius: 999px;
   background: var(--tint);
   color: var(--ink);
-  cursor: pointer;
+  cursor: default;
 }
 .nt-token:hover { border-color: var(--accent); }
 .nt-token.off {

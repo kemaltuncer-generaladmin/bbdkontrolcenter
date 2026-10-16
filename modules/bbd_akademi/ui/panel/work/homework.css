@@ -25,7 +25,7 @@
 .ak-hw-toc { display: flex; flex-direction: column; gap: 2px; }
 .ak-hw-section {
   display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px;
-  padding: 3px 0; cursor: pointer;
+  padding: 3px 0; cursor: default;
 }
 .ak-hw-section-title { min-width: 0; overflow-wrap: anywhere; }
 .ak-hw-pages { gap: 6px; }

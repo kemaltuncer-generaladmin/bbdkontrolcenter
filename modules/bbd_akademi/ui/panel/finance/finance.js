@@ -308,8 +308,13 @@ function overdueTab(app, { openAccount }) {
     columns: [
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 2fr)', cell: (row) => {
         const cell = studentCell(row.student);
-        cell.style.cursor = 'pointer';
+        // Gerçek düğme gibi (ADR 0032): klavyeyle de açılır, imleç OK kalır.
+        cell.setAttribute('role', 'button');
+        cell.tabIndex = 0;
         cell.addEventListener('click', () => openAccount(row.student.id));
+        cell.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openAccount(row.student.id); }
+        });
         return cell;
       } },
       { key: 'guardians', label: 'Veli', width: 'minmax(0, 1.4fr)', cell: (row) => (row.guardians || [])

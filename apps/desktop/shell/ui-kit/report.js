@@ -163,6 +163,7 @@ export function printDialog({ root, api, toast, result = null, produce = null, r
     const error = h('div', 'kit-dialog-error');
     error.setAttribute('role', 'alert');
     const ok = button('Yazdır', { variant: 'primary' });
+    ok.dataset.command = 'print';     // Ctrl/⌘+P bu pencerede bu düğmeye basar (ADR 0032)
     ok.disabled = true;
     const cancel = button('Vazgeç');
     const actions = h('div', 'kit-dialog-actions');
@@ -286,6 +287,7 @@ export function pdfViewer({ root, api, result, toast, opener = null, morePages =
   note.setAttribute('aria-live', 'polite');
   const printBtn = button('Yazdır', { variant: 'primary',
     title: direct ? 'Bu cihazın yazıcısına gönderir.' : 'Yazıcı, kopya, sayfa aralığı ve yön seçilir.' });
+  printBtn.dataset.command = 'print';
   printBtn.disabled = true;
   const saveBtn = button('PDF kaydet', { title: 'PDF dosyasını bu cihaza kaydeder.' });
   const closeBtn = button('Kapat', { variant: 'ghost' });
@@ -533,6 +535,9 @@ export function reportToolbar({ root, api, toast, produce, morePages = null, tit
   const saveBtn = button('PDF kaydet', { title: `${title}: PDF dosyasını bu cihaza kaydeder.` });
   previewBtn.setAttribute('aria-label', `${title} — önizle`);
   printBtn.setAttribute('aria-label', `${title} — yazdır`);
+  // KISAYOL BAĞI (ADR 0032): Ctrl/⌘+P ekrandaki `data-command="print"` düğmesine basar;
+  // etiket aramasına bırakılsaydı "…sıfırla ve yazdır" gibi başka bir düğme bulunabilirdi.
+  printBtn.dataset.command = 'print';
   saveBtn.setAttribute('aria-label', `${title} — PDF kaydet`);
   node.append(previewBtn, printBtn, saveBtn);
   const all = [previewBtn, printBtn, saveBtn];

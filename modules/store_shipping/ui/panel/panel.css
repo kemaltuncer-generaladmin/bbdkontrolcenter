@@ -47,7 +47,7 @@
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 8%, #fff);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 
 /* --------------------------------------------------------- KARGOYA VER */
@@ -60,7 +60,7 @@
 
 /* Hazır olmayan siparişler: tek satırlık katlanır bölme, kart değil. */
 .sh-blocked { margin-top: 10px; }
-.sh-blocked > summary { cursor: pointer; padding: 4px 0; }
+.sh-blocked > summary { cursor: default; padding: 4px 0; }
 .sh-blocked .sh-list { margin-top: 6px; }
 
 .sh-dispatch { display: inline-flex; gap: 6px; }
@@ -97,7 +97,7 @@
   border: 1px solid var(--line);
   border-radius: 5px;
   background: var(--tint);
-  cursor: pointer;
+  cursor: default;
 }
 .sh-code:hover { border-color: var(--accent); }
 
@@ -165,7 +165,7 @@
   background: var(--paper);
   color: var(--paper-ink);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
   font: inherit;
 }
 .sh-big:hover:not(:disabled) { background: var(--tint); }
@@ -217,7 +217,7 @@
   padding: 4px 10px 10px;
 }
 .sh-details-summary {
-  cursor: pointer;
+  cursor: default;
   padding: 8px 2px;
   font-weight: 600;
   list-style: revert;

@@ -39,7 +39,7 @@
   font: inherit;
   font-size: 12.5px;
   white-space: nowrap;
-  cursor: pointer;
+  cursor: default;
   transition: background-color 130ms, border-color 130ms, opacity 130ms;
 }
 
@@ -163,7 +163,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .cr-chip:hover { background: var(--tint); color: var(--ink); border-color: #cfd6e2; }
@@ -247,7 +247,7 @@
   color: var(--soft);
   font: inherit;
   font-size: 12.5px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .cr-tab:hover { color: var(--ink); }
@@ -369,7 +369,7 @@
   font-family: inherit;
 }
 
-button.cr-row { cursor: pointer; width: 100%; }
+button.cr-row { cursor: default; width: 100%; }
 button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
 
 .cr-head {
@@ -509,7 +509,7 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   border: 0;
   border-radius: 6px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   font-size: 13px;
   line-height: 1;
 }
@@ -538,7 +538,7 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
-  cursor: pointer;
+  cursor: default;
   color: var(--soft);
   font-size: 15px;
   line-height: 1;
@@ -563,7 +563,7 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   border: 0;
   border-radius: 6px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   color: var(--ink);
   font: inherit;
   font-size: 12px;
@@ -582,7 +582,7 @@ button.cr-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
-  cursor: pointer;
+  cursor: default;
   color: var(--soft);
   font: inherit;
   font-size: 11.5px;

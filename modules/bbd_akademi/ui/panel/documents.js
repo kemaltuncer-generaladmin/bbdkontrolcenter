@@ -201,6 +201,7 @@ export function documentButtons(app, { build, title = 'Belge', label = '', disab
   const printBtn = button('Yazdır', { title: disabled || `${title}: önizlemeden bu cihazın yazıcısına gönderir.` });
   // Bir ekranda birden çok "Yazdır" olabilir: ekran okuyucu hangisi olduğunu duysun.
   printBtn.setAttribute('aria-label', `${label || title} — yazdır`);
+  printBtn.dataset.command = 'print';   // Ctrl/⌘+P bu düğmeye basar (KM kabuğu, ADR 0032)
   for (const item of [previewBtn, printBtn]) item.disabled = Boolean(disabled);
   let running = false;
   const run = async (print, opener) => {
