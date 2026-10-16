@@ -4,7 +4,7 @@
   border-radius: 999px; background: #fdecec; color: #8c1c1c; font-weight: 600; font-size: 13px; }
 .ak-rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
 .ak-rec-cardhead { display: flex; align-items: center; gap: 8px; }
-.ak-rec-note { margin: 0 0 10px; font-size: 12.5px; }
+.ak-rec-note { margin: 0; padding: 10px 14px 4px; font-size: 12.5px; }
 .ak-rec-actions { flex-wrap: wrap; gap: 6px; }
 .ak-rec-warn { color: #8a5205; font-weight: 600; }
 .ak-rec-error { color: var(--bad); font-size: 12.5px; min-height: 1em; }
@@ -20,7 +20,7 @@
   border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
 
 /* Depolama çubuğu: %80 ve %90 işaretli */
-.ak-rec-quota { display: flex; flex-direction: column; gap: 14px; }
+.ak-rec-quota { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; }
 .ak-rec-quota-top { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .ak-rec-quota-used { font-size: 28px; color: var(--ink); }
 .ak-rec-bar { position: relative; height: 14px; border-radius: 999px; background: var(--tint);
@@ -34,7 +34,7 @@
 .ak-rec-eta { margin: 0; color: var(--ink); }
 
 /* Ayarlar */
-.ak-rec-settings { display: flex; flex-direction: column; gap: 16px; }
+.ak-rec-settings { display: flex; flex-direction: column; gap: 16px; padding: 16px 18px; }
 .ak-rec-field { display: flex; flex-direction: column; gap: 6px; }
 .ak-rec-num { width: 96px; text-align: center; }
 .ak-rec-quality { display: flex; gap: 10px; flex-wrap: wrap; }

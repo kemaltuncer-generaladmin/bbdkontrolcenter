@@ -132,7 +132,10 @@ function boardsPane(app, ctx) {
     devices = data.boards;
     rooms = data.rooms;
     ctx.setLive(devices);
-    return [boardsCard(), app.can('admin_listRooms') ? roomsCard() : null];
+    const cards = h('div', 'ak-stack');
+    cards.append(boardsCard());
+    if (app.can('admin_listRooms')) cards.append(roomsCard());
+    return cards;
   }, { rows: 4, columns: 6 });
   node.append(view.node);
 
@@ -366,7 +369,9 @@ function boardsPane(app, ctx) {
       parts.push(kv(diagnosticsRows(report)));
       return parts;
     }, { rows: 4, columns: 2 });
-    box.append(diag.node);
+    const inner = h('div', 'kit-card-body');
+    inner.append(diag.node);
+    box.append(inner);
     diag.reload();
     return box;
   }
@@ -664,7 +669,9 @@ function sharesCard(app, recording) {
     }
     return listNode;
   }, { rows: 2, columns: 2 });
-  box.append(view.node);
+  const inner = h('div', 'kit-card-body');
+  inner.append(view.node);
+  box.append(inner);
   view.reload();
 
   async function addShares() {
@@ -737,7 +744,9 @@ function viewsCard(app, recording) {
     parts.push(table.node);
     return parts;
   }, { rows: 4, columns: 4 });
-  box.append(view.node);
+  const inner = h('div', 'kit-card-body');
+  inner.append(view.node);
+  box.append(inner);
   view.reload();
   return box;
 }
