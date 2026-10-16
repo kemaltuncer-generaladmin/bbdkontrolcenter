@@ -34,7 +34,7 @@ from modules.bbd_akademi.backend.documents.service import (
     Letterheads,
     slug,
 )
-from modules.bbd_akademi.backend.staff import StaffService
+from modules.bbd_akademi.backend.staff.service import StaffService
 from modules.bbd_akademi.tests.akademi_fakes import (
     BASE,
     Akademi,

@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 
 from harness import NodeMissing, run
-from modules.bbd_akademi.backend.staff import ROLE_LABELS
+from modules.bbd_akademi.backend.staff.service import ROLE_LABELS
 
 # Taklit Akademi + panel `app` nesnesi (test_akademi_toplu_kitap ile aynı düzen).
 PRELUDE = r"""

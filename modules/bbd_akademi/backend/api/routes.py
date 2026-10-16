@@ -39,7 +39,7 @@ from ..core.gateway import request_id
 from ..core.proxy import AkademiProxy, ProxyError, decode_upload, error_response
 from ..documents.service import DocumentDenied, DocumentService
 from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions, requires_step_up
-from ..staff import ROLE_LABELS, StaffError, StaffService
+from ..staff.service import ROLE_LABELS, StaffError, StaffService
 
 router = APIRouter()
 _proxy: AkademiProxy | None = None

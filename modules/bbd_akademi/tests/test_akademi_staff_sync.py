@@ -8,9 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 from modules.bbd_akademi.backend import module as module_entry
-from modules.bbd_akademi.backend import tasks
 from modules.bbd_akademi.backend.core import contract_features
-from modules.bbd_akademi.backend.staff import StaffService
+from modules.bbd_akademi.backend.staff import tasks
+from modules.bbd_akademi.backend.staff.service import StaffService
 from modules.bbd_akademi.tests.akademi_fakes import MIGRATIONS, Akademi, auth
 
 from km_core.store.db import Store

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .module import live
+from ..module import live
 
 
 async def run_staff_sync(ctx: Any = None) -> dict[str, Any]:

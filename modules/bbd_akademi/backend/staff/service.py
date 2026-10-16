@@ -41,8 +41,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from .core import contract_features
-from .core.gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
+from ..core import contract_features
+from ..core.gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
 
 ROLES = ("admin", "teacher")
 #: Öğretmen = koç (tek kavram, tek Akademi rolü ``teacher``; Akademi rol adı "Öğretmen / Koç").

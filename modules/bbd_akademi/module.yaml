@@ -161,7 +161,7 @@ dependencies:
 
 tasks:
   - name: staff_sync
-    handler: backend.tasks:run_staff_sync
+    handler: backend.staff.tasks:run_staff_sync
     # Asıl döngü register(ctx) içinde başlar (staff_sync_minutes); bu satır
     # görevi ilan eder.
     schedule: "*/30 * * * *"

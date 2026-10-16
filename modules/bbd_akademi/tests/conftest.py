@@ -25,7 +25,7 @@ from modules.bbd_akademi.backend.core.gateway import AkademiGateway, GatewayConf
 from modules.bbd_akademi.backend.core.operations import Allowlist
 from modules.bbd_akademi.backend.core.proxy import AkademiProxy
 from modules.bbd_akademi.backend.core.stepup import StepUpStore
-from modules.bbd_akademi.backend.staff import StaffService
+from modules.bbd_akademi.backend.staff.service import StaffService
 from modules.bbd_akademi.tests.akademi_fakes import (
     BASE,
     MIGRATIONS,

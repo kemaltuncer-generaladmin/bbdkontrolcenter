@@ -25,7 +25,7 @@ from .core.stepup import StepUpStore
 from .documents.service import DocumentService, Letterheads
 from .finance.service import StudentFinance
 from .permission_map import unmapped
-from .staff import StaffService
+from .staff.service import StaffService
 
 _LIVE: dict[str, Any] = {}
 
