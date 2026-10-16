@@ -50,6 +50,8 @@ sırasında hiç açılmayan panelleri de import ediyor ve dosya tepesindeki
 | `calendar.js` | `monthCalendar` — ay ızgarası, gün başına rozet, tatil işaretleme |
 | `imagefield.js` | `imageField` — dosya seç/sürükle-bırak, ön denetim, önizleme · `inspectFile` · `measureImage` · `readAsDataUrl` |
 | `picker.js` | `createPicker` — gruplanmış, aranabilir çoklu/tekli seçici. Yerel (`items`/`setItems`) ya da UZAK (`source({query, group, cursor}) → {items, next}`) kip; onay kutulu satır, gezici tabindex + ↑/↓/Home/End/Boşluk, görünenleri seç, yalnız seçilenler, seçili sayısı (`role=status`), daha fazla göster / yükle, `setLoading` · `setError(mesaj, tekrarDene)`. KM ve Akademi toplu işlemlerinin TEK öğrenci seçicisi |
+| `native.js` | `notify` (sistem bildirimi) · `saveFile` (yerel "Farklı kaydet") · `openFile` (yerel "Aç" → `File[]`) · `isDesktop` — `kit.js` de yeniden dışa vurur (1.6.0) |
+| `select.js` | `kitSelect` — aranabilir açılır liste bileşeni · `enhanceSelects` (kabuk kurar: bütün tekli `<select>`lar) · `openListbox` · `closeListbox` (1.6.0) |
 | `report.js` | `reportChain` — üret → önizle → yazdır (CUPS) |
 | `util.js` | `groupBy` · `sum` · `average` · `sortBy` · `uniqueBy` · `topN` · `compare` · `fillDays` · `abcClassify` |
 
@@ -261,6 +263,36 @@ daraltmamalı. `menuButton("Dışa aktar", [...])` ara sıra kullanılan eylemle
 tek düğmede toplar. `confirmWithReason` `presets` alır: sık yazılan gerekçeler
 çip olarak çizilir, tıklanınca alanı doldurur (onaylamaz; uzunluk kuralı aynen
 işler).
+
+### 1.6.0 — 2026-10-16 (ADR 0032 — native his)
+Hepsi İSTEĞE BAĞLI ya da görünmez; hiçbir eski imza değişmedi.
+
+**İşletim sistemi köprüsü (`native.js`).** `saveFile({name, data, filters})`,
+`openFile({accept, multiple})`, `notify(başlık, metin, {whenInactive})`.
+Masaüstünde işletim sisteminin kendi penceresi açılır, dosyayı Rust okur/yazar
+(arayüze dosya sistemi izni açılmaz); tarayıcıda `<a download>` /
+`<input type=file>` / `Notification` yoluna düşer. `csvBlob` masaüstünde artık
+yerel "Farklı kaydet" açar (eşzamanlı dönüş değeri aynı).
+
+**Aranabilir açılır liste (`select.js`).** Kabuk açılışta `enhanceSelects()`
+kurar: sayfadaki her tekli `<select>` tıklanınca / Enter / Boşluk / F4 /
+Alt+↓ ile klavyeyle aranabilen listeyi açar (8'den fazla seçenekte arama
+kutusu, Türkçe katlama, grup başlıkları, devre dışı seçenek atlanır). Kutu
+DOM'da kalır, `change` olayı ve `.value` aynıdır — panel değişmeden kazanır.
+İstisna: `multiple`, `size > 1`, `disabled`, `data-native`. `.kit-select`
+kapalı hâli de artık her platformda aynı çizilir (kendi oku).
+
+**Yüzey jetonları.** `kit.css` zemine sabit beyaz yazmaz: `--surface`,
+`--surface-2/3`, `--line-soft/strong`, `--bad-tint`, `--accent` kabuğun
+`--paper-*` jetonlarından gelir. Panel `export const darkReady = true` derse
+kabuk koyu temada kâğıdı koyulaştırır ve kit bileşenleri de koyulaşır.
+Denetim yüksekliği/köşesi platforma ve yoğunluğa göre (`--ctl-h`,
+`--ctl-radius`). Geçişler ≤ 150 ms. Kitte `cursor: pointer` kalmadı (ok imleci).
+
+**Bağlam menüsü (kabuk).** Panel kendi satırını ekleyebilir:
+`el.addEventListener('km-contextmenu', (e) => e.detail.add({label, run}))`.
+**Yazdır kısayolu (Ctrl/⌘+P)** etkin ekranda `data-command="print"` taşıyan
+düğmeye, yoksa adı "Yazdır" ile başlayan düğmeye basar.
 
 ## Mevcut BBD panelleri
 
