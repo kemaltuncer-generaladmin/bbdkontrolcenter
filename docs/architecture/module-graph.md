@@ -2,7 +2,7 @@
 
 Üretici: `python3 tools/module-graph.py --write` · Tarayıcı: `tools/arch_scan.py` · Karar: [ADR 0033](../adr/0033-alan-servisleri-ve-sinirlar.md) · Yorum: [envanter-2026-10-16.md](envanter-2026-10-16.md)
 
-**53 modül** (28 açık. 25 kapalı) · 293.202 satır (py/js/sql/css. testler hariç) · 10 alan
+**53 modül** (28 açık, 25 kapalı) · 292.608 satır (py/js/sql/css, testler hariç) · 10 alan
 
 ## 1. Alan haritası
 
@@ -16,8 +16,8 @@
 | `tablet` | Öğrenci tableti | 1 | 1 | 12.224 | personal |
 | `bell` | Zil ve anons | 2 | 2 | 8.405 | personal |
 | `gateway` | Mobil geçit | 1 | 1 | 5.214 | financial |
-| `store` | Mağaza (BBD Store) | 21 | 11 | 103.827 | financial |
-| `bld` | BLD | 15 | 0 | 58.741 | financial |
+| `store` | Mağaza (BBD Store) | 21 | 11 | 103.238 | financial |
+| `bld` | BLD | 15 | 0 | 58.736 | financial |
 
 ## 2. Modüller
 
@@ -40,32 +40,32 @@
 | `bbd_class_schedule` | bell | internal | açık | 531 | `bell` | — | `bell.week` | — | — |
 | `bell` | bell | personal | açık | 7.874 | — | `bell.week`, `bell.plan`, `bell.announce` | `bbd_students.groups`, `bbd_students.directory` | `bell.rang`, `bell.failed`, `bell.week_changed` | `bbd_students.groups_changed`, `bbd_students.group_deleted` |
 | `mobile_gateway` | gateway | financial | açık | 5.214 | `bbd_canteen_api`, `bbd_students` | `mobile_gateway.events` | `canteen.api`, `bbd_students.directory`, `bbd_tablet.read`, `bbd_tablet.control`, `bell.week`, `bell.announce`, `bell.plan`, `bbd_students.groups` | — | `bell.week_changed`, `bbd_students.groups_changed` |
-| `store_ai` | store | internal | **kapalı** | 3.953 | `store_api` | — | `store.api` | `store_ai.suggestions_applied` | — |
+| `store_ai` | store | internal | **kapalı** | 3.910 | `store_api` | — | `store.api` | `store_ai.suggestions_applied` | — |
 | `store_api` | store | financial | açık | 5.208 | — | `store.api`, `store.scan` | — | — | — |
 | `store_backups` | store | financial | **kapalı** | 2.216 | `store_api` | — | `store.api` | `store.backup.created`, `store.backup.restored` | — |
-| `store_bundles` | store | internal | açık | 3.187 | `store_api` | — | `store.api` | — | — |
-| `store_cms` | store | public | **kapalı** | 4.566 | `store_api` | — | `store.api` | — | — |
-| `store_customers` | store | personal | açık | 5.342 | `store_api` | `store.customer.card` | `store.api`, `store.scan` | `store.customer.anonymized`, `store.review.moderated` | — |
-| `store_dashboard` | store | financial | açık | 4.705 | `store_api` | — | `store.api`, `store.scan` | — | — |
-| `store_home_media` | store | public | **kapalı** | 2.445 | `store_api` | — | `store.api` | `store_home_media.layout_changed` | — |
-| `store_invoices` | store | financial | açık | 3.543 | `store_api` | `store.invoice.byOrder` | `store.api` | `store.invoice.issued` | — |
-| `store_notifications` | store | personal | açık | 5.664 | `store_api` | `store.notify.send`, `store.notify.stage` | `store.api` | `store.notification.sent` | — |
-| `store_orders` | store | financial | açık | 7.035 | `store_api` | `store.order.card` | `store.api`, `store.scan`, `store.shipment.byOrder`, `store.invoice.byOrder`, `store.audit.for`, `store.notify.stage` | `store.order.status_changed` | — |
-| `store_payment_gateway` | store | financial | **kapalı** | 4.964 | `store_api` | — | `store.api` | — | — |
-| `store_products` | store | internal | açık | 11.732 | `store_api` | `store_products.deleted_marker` | `store.api` | — | — |
-| `store_promotions` | store | internal | **kapalı** | 5.184 | `store_api` | — | `store.api` | `store.promotion.changed` | — |
-| `store_refunds` | store | financial | açık | 4.222 | `store_api` | — | `store.api` | — | — |
-| `store_reports` | store | financial | **kapalı** | 4.833 | `store_api` | — | `store.api` | — | — |
-| `store_requests` | store | personal | **kapalı** | 4.277 | `store_api` | — | `store.api`, `store.order.card`, `store.customer.card`, `store.audit.for` | `store_requests.approved` | — |
-| `store_shipping` | store | personal | açık | 9.612 | `store_api` | `store.shipment.byOrder` | `store.api`, `store.notify.send`, `store.notify.stage` | `store.shipment.created`, `store.shipment.purchased`, `store.shipment.cancelled` | — |
-| `store_tax` | store | internal | **kapalı** | 4.292 | `store_api` | `store.tax.rates` | `store.api` | — | — |
-| `store_trial_club` | store | personal | **kapalı** | 4.190 | `store_api` | — | `store.api`, `store.notify.send` | `store.trial.results_published` | — |
-| `store_udit_logs` | store | personal | açık | 2.657 | `store_api` | `store.audit.for` | `store.api` | — | — |
+| `store_bundles` | store | internal | açık | 3.146 | `store_api` | — | `store.api` | — | — |
+| `store_cms` | store | public | **kapalı** | 4.555 | `store_api` | — | `store.api` | — | — |
+| `store_customers` | store | personal | açık | 5.292 | `store_api` | `store.customer.card` | `store.api`, `store.scan` | `store.customer.anonymized`, `store.review.moderated` | — |
+| `store_dashboard` | store | financial | açık | 4.663 | `store_api` | — | `store.api`, `store.scan` | — | — |
+| `store_home_media` | store | public | **kapalı** | 2.437 | `store_api` | — | `store.api` | `store_home_media.layout_changed` | — |
+| `store_invoices` | store | financial | açık | 3.525 | `store_api` | `store.invoice.byOrder` | `store.api` | `store.invoice.issued` | — |
+| `store_notifications` | store | personal | açık | 5.619 | `store_api` | `store.notify.send`, `store.notify.stage` | `store.api` | `store.notification.sent` | — |
+| `store_orders` | store | financial | açık | 6.993 | `store_api` | `store.order.card` | `store.api`, `store.scan`, `store.shipment.byOrder`, `store.invoice.byOrder`, `store.audit.for`, `store.notify.stage` | `store.order.status_changed` | — |
+| `store_payment_gateway` | store | financial | **kapalı** | 4.946 | `store_api` | — | `store.api` | — | — |
+| `store_products` | store | internal | açık | 11.688 | `store_api` | `store_products.deleted_marker` | `store.api` | — | — |
+| `store_promotions` | store | internal | **kapalı** | 5.134 | `store_api` | — | `store.api` | `store.promotion.changed` | — |
+| `store_refunds` | store | financial | açık | 4.204 | `store_api` | — | `store.api` | — | — |
+| `store_reports` | store | financial | **kapalı** | 4.822 | `store_api` | — | `store.api` | — | — |
+| `store_requests` | store | personal | **kapalı** | 4.234 | `store_api` | — | `store.api`, `store.order.card`, `store.customer.card`, `store.audit.for` | `store_requests.approved` | — |
+| `store_shipping` | store | personal | açık | 9.584 | `store_api` | `store.shipment.byOrder` | `store.api`, `store.notify.send`, `store.notify.stage` | `store.shipment.created`, `store.shipment.purchased`, `store.shipment.cancelled` | — |
+| `store_tax` | store | internal | **kapalı** | 4.252 | `store_api` | `store.tax.rates` | `store.api` | — | — |
+| `store_trial_club` | store | personal | **kapalı** | 4.164 | `store_api` | — | `store.api`, `store.notify.send` | `store.trial.results_published` | — |
+| `store_udit_logs` | store | personal | açık | 2.646 | `store_api` | `store.audit.for` | `store.api` | — | — |
 | `bld_api` | bld | financial | **kapalı** | 4.973 | — | `bld.api` | — | — | — |
 | `bld_cms` | bld | public | **kapalı** | 4.160 | `bld_api` | — | `bld.api` | — | — |
 | `bld_customers` | bld | personal | **kapalı** | 3.745 | `bld_api` | — | `bld.api` | `bld_customers.account_disabled` | — |
 | `bld_dashboard` | bld | financial | **kapalı** | 1.890 | `bld_api` | — | `bld.api` | — | — |
-| `bld_invoices` | bld | financial | **kapalı** | 2.505 | `bld_api` | — | `bld.api` | — | — |
+| `bld_invoices` | bld | financial | **kapalı** | 2.500 | `bld_api` | — | `bld.api` | — | — |
 | `bld_kds` | bld | personal | **kapalı** | 5.835 | `bld_api` | — | `bld.api` | `bld_kds.device_revoked`, `bld_kds.order_status_changed` | — |
 | `bld_manual_order` | bld | financial | **kapalı** | 3.089 | `bld_api` | — | `bld.api` | — | — |
 | `bld_menu` | bld | internal | **kapalı** | 5.344 | `bld_api` | — | `bld.api` | `bld_menu.day_published`, `bld_menu.day_unpublished`, `bld_menu.stock_changed` | — |
@@ -287,12 +287,9 @@ flowchart LR
 ## 8. Modüller arası gövdesi aynı Python fonksiyonları
 
 - `_export_dir` — 21 yer, 21 modül: `bld_invoices`, `bld_orders`, `store_ai`, `store_backups`, `store_bundles`, `store_cms`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_payment_gateway`, `store_products`, `store_promotions`, `store_refunds`, `store_reports`, `store_requests`, `store_shipping`, `store_tax`, `store_trial_club`, `store_udit_logs`
-- `printer_status` — 20 yer, 20 modül: `bbd_canteen_devices`, `bld_invoices`, `store_ai`, `store_bundles`, `store_cms`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_payment_gateway`, `store_products`, `store_promotions`, `store_refunds`, `store_reports`, `store_requests`, `store_shipping`, `store_tax`, `store_trial_club`, `store_udit_logs`
 - `print_report` — 17 yer, 17 modül: `store_ai`, `store_bundles`, `store_cms`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_payment_gateway`, `store_products`, `store_promotions`, `store_refunds`, `store_reports`, `store_requests`, `store_tax`, `store_trial_club`, `store_udit_logs`
 - `preview` — 16 yer, 16 modül: `store_ai`, `store_bundles`, `store_cms`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_payment_gateway`, `store_products`, `store_promotions`, `store_refunds`, `store_requests`, `store_shipping`, `store_tax`, `store_trial_club`
-- `as_int` — 14 yer, 14 modül: `store_ai`, `store_bundles`, `store_customers`, `store_dashboard`, `store_home_media`, `store_invoices`, `store_notifications`, `store_orders`, `store_products`, `store_promotions`, `store_refunds`, `store_requests`, `store_shipping`, `store_trial_club`
 - `_announce` — 13 yer, 13 modül: `bbd_canteen_devices`, `bld_customers`, `bld_kds`, `bld_menu`, `bld_orders`, `bld_products`, `bld_sales_settings`, `bld_sms`, `bld_status_monitor`, `bld_subscriptions`, `store_invoices`, `store_notifications`, `store_shipping`
-- `to_kurus` — 11 yer, 11 modül: `store_ai`, `store_bundles`, `store_customers`, `store_dashboard`, `store_notifications`, `store_orders`, `store_products`, `store_promotions`, `store_requests`, `store_shipping`, `store_tax`
 - `_record_of` — 10 yer, 10 modül: `bld_cms`, `bld_customers`, `bld_kds`, `bld_manual_order`, `bld_menu`, `bld_notifications`, `bld_orders`, `bld_products`, `bld_status_monitor`, `bld_subscriptions`
 - `_items` — 9 yer, 9 modül: `bld_cms`, `bld_customers`, `bld_dashboard`, `bld_kds`, `bld_orders`, `bld_products`, `bld_sms`, `bld_status_monitor`, `bld_subscriptions`
 - `_meta` — 7 yer, 7 modül: `bld_cms`, `bld_dashboard`, `bld_invoices`, `bld_orders`, `bld_sms`, `bld_status_monitor`, `bld_subscriptions`

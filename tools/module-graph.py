@@ -228,6 +228,11 @@ def unreachable_files(module: Module) -> tuple[list[str], list[str]]:
 # --------------------------------------------------------------- çıktı
 
 
+def _n(value: int) -> str:
+    """Türkçe binlik ayırıcı: 293202 → 293.202."""
+    return f"{value:,}".replace(",", ".")
+
+
 def _cell(values: list[str]) -> str:
     return ", ".join(f"`{value}`" for value in values) if values else "—"
 
@@ -252,7 +257,7 @@ def markdown(scan: Scan) -> str:
     total = sum(sizes.values())
     enabled = sum(1 for module in scan.modules.values() if module.enabled)
     w(f"**{len(scan.modules)} modül** ({enabled} açık, {len(scan.modules) - enabled} kapalı) · "
-      f"{total:,} satır (py/js/sql/css, testler hariç) · {len(catalog.domains)} alan".replace(",", "."))
+      f"{_n(total)} satır (py/js/sql/css, testler hariç) · {len(catalog.domains)} alan")
     w("")
 
     w("## 1. Alan haritası")
@@ -263,7 +268,7 @@ def markdown(scan: Scan) -> str:
         modules = by_domain.get(domain_id, [])
         w(f"| `{domain_id}` | {info.get('title', '')} | {len(modules)} | "
           f"{sum(1 for module in modules if module.enabled)} | "
-          f"{sum(sizes[module.id] for module in modules):,} | {info.get('classification', '')} |".replace(",", "."))
+          f"{_n(sum(sizes[module.id] for module in modules))} | {info.get('classification', '')} |")
     w("")
 
     w("## 2. Modüller")
@@ -274,8 +279,8 @@ def markdown(scan: Scan) -> str:
         for module in sorted(by_domain.get(domain_id, []), key=lambda m: m.id):
             consumed = [cap for cap, _ in module.consumes if cap not in PLATFORM_CAPS]
             w(f"| `{module.id}` | {module.domain} | {module.classification} | "
-              f"{'açık' if module.enabled else '**kapalı**'} | {sizes[module.id]:,} | ".replace(",", ".")
-              + f"{_cell(module.depends)} | {_cell(module.provides)} | {_cell(consumed)} | "
+              f"{'açık' if module.enabled else '**kapalı**'} | {_n(sizes[module.id])} | "
+              f"{_cell(module.depends)} | {_cell(module.provides)} | {_cell(consumed)} | "
               f"{_cell(module.publishes)} | {_cell(module.subscribes)} |")
     w("")
 

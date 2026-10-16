@@ -46,6 +46,7 @@ yanlış yönlendirirdi.
 | 0029 | Olay outbox'u ve modül işlemi | Kabul edildi |
 | 0030 | Gerçek istemci adresi: güvenilir vekil zinciri ve Cloudflare | Kabul edildi |
 | 0031 | Tek giriş noktası (`ui.nav.replacedBy`) ve küresel arama | Kabul edildi |
+| 0033 | Alan servisleri ve sınırlar: `domain`/`data_classification`, sınır kapısı, ortak kod SDK'de (0032 km-native'in) | Kabul edildi |
 
 ---
 
