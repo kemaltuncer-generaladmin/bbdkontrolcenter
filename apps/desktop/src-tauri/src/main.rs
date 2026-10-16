@@ -730,6 +730,7 @@ fn main() {
             printing::printers,
             printing::printer_select,
             printing::printer_print,
+            printing::pdf_save,
         ])
         .build(tauri::generate_context!())
         .expect("Kontrol Merkezi kabuğu başlatılamadı")
