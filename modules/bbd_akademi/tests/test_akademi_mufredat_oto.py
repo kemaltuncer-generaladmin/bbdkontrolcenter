@@ -67,7 +67,9 @@ export default async function ({ load }) {
     source: cs.sourceText({ kind: 'default' }),
     basis: [cs.basisText({ gradeLevel: 11, track: 'SAY', examTarget: 'YKS', source: 'class', classGroup: { name: '11-SAY' } }),
       cs.basisText({ gradeLevel: 12, track: null, examTarget: 'YKS', source: 'km' }),
-      cs.basisText({ gradeLevel: null, track: null, examTarget: null, source: null })],
+      cs.basisText({ gradeLevel: null, track: null, examTarget: null, source: null }),
+      cs.basisText({ gradeLevel: 'graduate', track: null, examTarget: 'YKS', source: 'group',
+        classGroup: { name: 'MEZUN GRUBU' }, guessed: true })],
   };
 }
 """
@@ -81,6 +83,7 @@ def test_kapsam_metni_ve_otomatik_etiketi() -> None:
     assert out["basis"][0].endswith("(sınıftan: 11-SAY)") and "YKS" in out["basis"][0]
     assert "sınıftan" not in out["basis"][1]
     assert out["basis"][2].startswith("seviye girilmemiş — otomatik müfredat yok")
+    assert out["basis"][3].endswith("YKS (gruptan: MEZUN GRUBU · addan tahmin)")
 
 
 PLAN = r"""

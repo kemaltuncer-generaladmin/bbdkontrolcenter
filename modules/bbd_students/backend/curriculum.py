@@ -222,6 +222,32 @@ def resolve_class(current: dict[str, Any] | None, patch: dict[str, Any]) -> dict
     return row
 
 
+def resolve_group(patch: dict[str, Any]) -> dict[str, Any]:
+    """Sınıf / GRUP müfredat seviyesi (Akademi README §14 madde 102): seviye girilirse `resolve_class` kuralı; seviye
+    boşsa yalnız hedef sınav ve/veya alan da olabilir ("TYT GRUBU" → hedef YKS, seviye karışık). Alan LGS ile olmaz."""
+    if patch.get("gradeLevel") not in (None, ""):
+        return resolve_class(None, patch)
+    track = parse_track(patch.get("track"))
+    exam = parse_exam(patch.get("examTarget"))
+    if track is None and exam is None:
+        raise CurriculumError("Seviye, hedef sınav ya da alan seçin.")
+    if track is not None and exam == "LGS":
+        raise CurriculumError("Alan LGS hedefiyle seçilmez.")
+    return {"grade_level": None, "track": track, "exam_target": exam}
+
+
+def group_from_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Sınıf / grup satırının müfredat seviyesi — seviyesiz de olabilir (yalnız hedef / alan); hiçbiri yoksa None."""
+    if not row:
+        return None
+    plan = from_row(row)
+    if plan["gradeLevel"] is None and plan["track"] is None and plan["examTarget"] is None:
+        return None
+    if plan["gradeLevel"] is not None and plan["track"] is not None and not track_allowed(plan["gradeLevel"]):
+        plan["track"] = None
+    return plan
+
+
 def effective(profile: dict[str, Any] | None, class_plan: dict[str, Any] | None) -> dict[str, Any]:
     """Öğrencinin GEÇERLİ seviyesi (dizin, liste, Akademi bunu görür) + kaynağı."""
     own = from_row(profile)

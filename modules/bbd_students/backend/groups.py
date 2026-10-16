@@ -196,7 +196,8 @@ def parse_level(value: Any) -> dict[str, Any]:
     patch = {key: value.get(key) for key in ("gradeLevel", "track", "examTarget")
              if key in value}
     try:
-        return curriculum.resolve_class(None, patch)
+        # Akademi README §14 madde 102: grup için seviye isteğe bağlı (yalnız hedef sınav / alan olabilir).
+        return curriculum.resolve_group(patch)
     except curriculum.CurriculumError as failure:
         raise GroupError(str(failure), details={"field": "level"}) from None
 
@@ -446,6 +447,8 @@ class GroupService:
             "origin": str(row.get("origin") or ORIGIN_GROUP),
             "legacyClassName": str(row.get("legacy_class_name") or "") or None,
             "classLevel": level_of(row),
+            # Müfredat seviyesi (Akademi README §14 madde 102): seviyesiz de olabilir (yalnız hedef / alan).
+            "curriculumLevel": curriculum.group_from_row(row),
             # Dönem (göç 011). Eski görünüm bu alanı da DÜŞÜRÜR (`_shape`).
             "academicYear": str(row.get("academic_year") or "") or None,
         }
@@ -532,7 +535,7 @@ class GroupService:
                        if origin != ORIGIN_CLASS]
             out.append({key: value for key, value in group.items()
                         if key not in ("origin", "legacyClassName", "classLevel",
-                                       "academicYear")}
+                                       "curriculumLevel", "academicYear")}
                        | {"members": members})
         return out
 

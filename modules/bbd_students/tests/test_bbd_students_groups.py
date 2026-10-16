@@ -332,7 +332,7 @@ async def test_grup_kaydi_sozlesme_alanlari(store: ScopedStore) -> None:
     # dönem — göç 011; verilmezse bugünün dönemi).
     assert set(record) == {"id", "name", "callName", "kind", "archived", "archivedAt",
                            "updatedAt", "revision", "members", "origin", "legacyClassName",
-                           "classLevel", "academicYear"}
+                           "classLevel", "curriculumLevel", "academicYear"}
     assert record["academicYear"] == "2026-2027"
     assert record["archivedAt"] is None
     assert record["updatedAt"].endswith("+03:00")

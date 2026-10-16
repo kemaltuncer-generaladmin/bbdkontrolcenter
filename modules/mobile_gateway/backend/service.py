@@ -2052,6 +2052,16 @@ class GatewayService:
                 "examTarget": choice(level.get("examTarget"), EXAM_TARGETS)}
 
     @staticmethod
+    def curriculum_level(level: Any) -> dict[str, Any] | None:
+        """Müfredat seviyesi — `class_level` gibi ama seviye boş olabilir (yalnız hedef sınav / alan); hepsi boşsa null."""
+        if not isinstance(level, dict):
+            return None
+        out = {"gradeLevel": grade_level(level.get("gradeLevel")),
+               "track": choice(level.get("track"), TRACKS),
+               "examTarget": choice(level.get("examTarget"), EXAM_TARGETS)}
+        return out if any(value is not None for value in out.values()) else None
+
+    @staticmethod
     def academic_year(value: Any) -> str | None:
         """Sınıfın dönemi "YYYY-YYYY" (ikinci yıl = birinci + 1); değilse null."""
         text = str(value or "").strip()
@@ -2092,7 +2102,11 @@ class GatewayService:
             "legacyClassName": str(record.get("legacyClassName") or "").strip() or None,
             "classLevel": GatewayService.class_level(record.get("classLevel")),
             "academicYear": GatewayService.academic_year(record.get("academicYear")),
-        } if classes else {})
+        } | ({
+            # Akademi README §14 madde 102: sınıfın / grubun müfredat seviyesi (seviye isteğe bağlı). Eski öğrenci
+            # modülü anahtarı vermez → alan hiç yazılmaz (Akademi o zaman dokunmaz).
+            "curriculumLevel": GatewayService.curriculum_level(record.get("curriculumLevel")),
+        } if "curriculumLevel" in record else {}) if classes else {})
 
     def _groups_cached(self, listing: dict[str, Any], *, full: bool,
                        classes: bool = False) -> _Cached:

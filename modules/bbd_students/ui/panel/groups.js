@@ -70,10 +70,12 @@ export function yearOptions(current, extra = []) {
   return [...found].sort().reverse();
 }
 
-/** Sınıfın seviyesi kısa yazı: "11. sınıf · SAY · YKS"; seviyesizse ''. */
+/** Sınıfın seviyesi kısa yazı: "11. sınıf · SAY · YKS"; seviyesiz grupta yalnız hedef / alan ("YKS");
+ *  hiçbiri yoksa ''. Seviyesiz değer müfredat içindir (Akademi README §14 madde 102), öğrenciye yazılmaz. */
 export function levelText(level) {
-  if (!level || level.gradeLevel === null || level.gradeLevel === undefined) return '';
-  return [gradeLabel(level.gradeLevel), level.track === 'SOZ' ? 'SÖZ' : level.track === 'DIL' ? 'DİL'
+  if (!level) return '';
+  const grade = level.gradeLevel === null || level.gradeLevel === undefined ? '' : gradeLabel(level.gradeLevel);
+  return [grade, level.track === 'SOZ' ? 'SÖZ' : level.track === 'DIL' ? 'DİL'
     : level.track, level.examTarget].filter(Boolean).join(' · ');
 }
 
@@ -258,7 +260,7 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
       const main = h('span', 'st-item-main');
       main.append(h('b', null, group.name));
       main.append(h('span', 'st-item-meta',
-        [group.academicYear || 'dönem yok', levelText(group.classLevel),
+        [group.academicYear || 'dönem yok', levelText(group.curriculumLevel || group.classLevel),
           group.callName && `anons: ${group.callName}`,
           `${group.memberCount} öğrenci bugün`].filter(Boolean).join(' · ')));
       item.append(main);
@@ -332,7 +334,7 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
     head.append(h('h3', null, group.name));
     head.append(h('span', 'st-subtitle', [
       group.academicYear ? `${group.academicYear} dönemi` : 'dönem yok',
-      levelText(group.classLevel) || 'seviye yok',
+      levelText(group.curriculumLevel || group.classLevel) || 'seviye yok',
       group.kind === 'individual' ? 'özel ders (tek öğrenci)' : null,
       group.callName ? `anons adı: ${group.callName}` : 'anons adı yok (ad okunur)',
       group.archived ? `arşiv · ${(group.archivedAt || '').slice(0, 10)}` : 'canlı',
@@ -625,7 +627,7 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
     }
     year.value = yearValue;
     // Seviye (isteğe bağlı şablon): öğrenci eklenince ona da yazılır.
-    const level = group?.classLevel || null;
+    const level = group?.curriculumLevel || group?.classLevel || null;
     const choose = (choices, value, labelText) => {
       const select = h('select', 'st-input st-select');
       select.setAttribute('aria-label', labelText);
@@ -636,13 +638,14 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
     const grade = choose(GRADE_CHOICES, level?.gradeLevel, 'Seviye');
     const track = choose(TRACK_CHOICES, level?.track, 'Alan');
     const exam = choose(EXAM_CHOICES, level?.examTarget, 'Hedef sınav');
+    // Seviye boş bırakılabilir: karışık grupta yalnız hedef sınav / alan (ör. "TYT GRUBU" → YKS) — müfredat
+    // otomatik atamasında kullanılır, öğrencinin seviyesine yazılmaz (Akademi README §14 madde 102).
     const syncTrack = () => {
-      const allowed = trackAllowed(parseGrade(grade.value));
-      track.disabled = !allowed || !grade.value;
+      const allowed = !grade.value || trackAllowed(parseGrade(grade.value));
+      track.disabled = !allowed || exam.value === 'LGS';
       if (track.disabled) track.value = '';
-      exam.disabled = !grade.value;
-      if (!grade.value) exam.value = '';
     };
+    exam.addEventListener('change', syncTrack);
     grade.addEventListener('change', () => {
       if (!exam.value && suggestedExam(parseGrade(grade.value))) exam.value = suggestedExam(parseGrade(grade.value));
       syncTrack();
@@ -650,6 +653,8 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
     syncTrack();
     const levelGrid = h('div', 'st-grid');
     levelGrid.append(field('Seviye (isteğe bağlı)', grade), field('Alan', track), field('Hedef sınav', exam));
+    const levelHint = h('p', 'st-hint', 'Müfredat bu sınıfın / grubun seviyesinden otomatik atanır. Karışık grupta '
+      + 'seviyeyi boş bırakıp yalnız hedef sınavı (ör. YKS) seçebilirsiniz; boşsa addan tahmin edilir.');
     const applyBox = h('input', 'st-check');
     applyBox.type = 'checkbox';
     applyBox.checked = true;
@@ -659,7 +664,7 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
     const applyRow = h('div', 'st-check-row');
     applyRow.append(applyBox, applyLabel);
     card.append(field('Sınıf adı', name), field('Dönem', year), field('Anons adı (TTS için)', callName), kindRow,
-      levelGrid, ...(group ? [applyRow] : []), field('Not', note));
+      levelGrid, levelHint, ...(group ? [applyRow] : []), field('Not', note));
     if (!group) {
       card.append(h('p', 'st-hint',
         'Öğrencileri sınıfı açtıktan sonra “Öğrenci ekle” bölümünden seçin.'));
@@ -672,7 +677,7 @@ export function mountGroups(host, ctx, { rollover = false } = {}) {
     const save = button(group ? 'Kaydet' : 'Sınıfı aç', 'primary', async () => {
       const body = { name: name.value, academicYear: year.value, callName: callName.value,
         kind: kind.checked ? 'individual' : 'group', note: note.value };
-      const nextLevel = grade.value ? { gradeLevel: parseGrade(grade.value),
+      const nextLevel = grade.value || exam.value || track.value ? { gradeLevel: grade.value ? parseGrade(grade.value) : null,
         track: parseChoice(track.value), examTarget: parseChoice(exam.value) } : null;
       if (group || nextLevel) body.level = nextLevel;
       if (group) body.applyLevel = applyBox.checked;
