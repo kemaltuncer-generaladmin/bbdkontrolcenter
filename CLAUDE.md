@@ -26,11 +26,16 @@ Bu kararlar sabittir. Değişiklik ancak yeni bir ADR ile olur — kod içinde
 | K9 | Çift kapı: arayüzde gizlemek yetkilendirme değildir. Her korunan işlem backend'de de izin denetiminden geçer. İzin ilan etmeyen uç nokta reddedilir. |
 | K10 | Rol adı sorulmaz. `if role == "admin"` yasak; her yerde `has_permission(key, scope)`. |
 | K11 | Bağımlılık ilan edilir, kopyalanmaz. Sürücü/kütüphane/ikili depoya konmaz; `pyproject.toml`, `system-packages.yaml` veya modülün `dependencies` bloğunda ilan edilir. |
+| K12 | Her modül bir **alan servisine** bağlıdır (`module.yaml` → `domain`, `data_classification`; ADR 0033). Başka modülün `/api/<id>` önekini — panelde de — çağırmaz. K1/K2/K3/K5 ve K12 `tools/check-boundaries.py` kapısıyla denetlenir; bilinen ihlaller `tools/boundary-exceptions.yaml`'da, yenisi eklenemez. |
 
 ## Kavram ayrımı — karıştırılmaz
 
 - **Modül** = silinebilir iş özelliği (zil sistemi, çıktı merkezi, BLD ürün
   yönetimi). `modules/` altında, `module.yaml` taşır, kapatılabilir.
+- **Alan (domain)** = modüllerin bağlı olduğu adlandırılmış servis: platform,
+  academy, students, canteen, payments, tablet, bell, gateway, store, bld
+  (`docs/architecture/domains.yaml`, ADR 0033). Ayrı süreç DEĞİLDİR; adı,
+  verisi, sözleşmesi (yetenek + olay) ve güvenlik tabanı belli bir sınırdır.
 - **Platform yeteneği** = silinemez altyapı (`ssh`, `database`, `printer`,
   `audio`, `scheduler`, `secrets`, `notify`). `km_platform/` altında, manifest
   taşımaz, kapatılamaz. **SSH gereken her şey buraya bağlanır.**
@@ -38,7 +43,8 @@ Bu kararlar sabittir. Değişiklik ancak yeni bir ADR ile olur — kod içinde
   `km_platform/database` = yönetilen uzak veritabanları (BBD/BLD). Ayrı şeyler.
 - **Kimlik çekirdektedir**, modül değildir. Giriş kullanıcı adsız, 6 haneli
   **PIN** iledir (ADR 0007; 0016 reddedildi — kodda kalan `password_*` adları
-  göçten kalmıştır, kural PIN'dir).
+  göçten kalmıştır, kural PIN'dir; DB/API adlarının geriye uyumlu göç planı
+  ADR 0033 §9).
   Rol = izin kümesi; bir kullanıcı **birden fazla rol** taşıyabilir, etkin
   izinler bunların birleşimidir. İzinler kapsamlıdır (`database.query:bld`).
 - Kullanıcının `org_scope` alanı nereye bağlı olduğunu söyler, **yetkiyi
@@ -77,11 +83,15 @@ satırından üretilir: `scripts/service-key.py create|list|revoke`.
 **Backend artık SUNUCUDA koşar; masaüstü uygulaması ince kabuktur.**
 
 - Veri Coolify'daki **PostgreSQL**'dedir. Kurulumların kendi veritabanı YOKTUR.
-- Sunucu imajı: `deploy/server/Dockerfile` (çekirdek + 49 modül).
+- Sunucu imajı: `deploy/server/Dockerfile` (çekirdek + `modules/` altındaki
+  bütün modüller — 16.10.2026'da 53; hangisinin yüklendiğini manifestteki
+  `enabled` söyler).
 - Kabuk adresi Rust tarafında tek yerde (`server_base`); `KM_SERVER_URL` ile
   aşılır, `local` yazmak eski yerel davranışa döndürür.
 - Sidecar YALNIZ yerel kipte başlar.
-- **İnternet kesilirse uygulama durur** — kullanıcı kararı.
+- **İnternet kesilirse çevrimdışı çalışma yok** — kullanıcı kararı (ADR 0026): hiçbir yazma
+  kuyruğa alınmaz. Kabuk yine de kapanmaz/donmaz: son bilinen veriyi gösterir, "Bağlantı yok"
+  şeridiyle yeniden dener, yazmada açık hata verir (ADR 0032).
 
 Depo iki motorludur: `Store` (SQLite, yerel/test) ve `PostgresStore` (merkez).
 Şemayı kuran tek yer `km_core/store/bootstrap.py`; lehçe farkını
@@ -153,6 +163,8 @@ Tümü **depo kökünden** çalıştırılır — `pytest.ini` ve `ruff.toml` k�
 .venv/bin/python -m pytest         # testler
 .venv/bin/ruff check .             # lint
 .venv/bin/python -m mypy backend/src --config-file backend/pyproject.toml   # tip
+.venv/bin/python tools/check-boundaries.py   # alan sınırı kapısı (ADR 0033)
+.venv/bin/python tools/module-graph.py --write   # envanter + grafik → docs/architecture/module-graph.md
 scripts/install-deps.sh            # bağımlılıklar (üç kaynaktan toplar)
 ```
 
@@ -175,7 +187,9 @@ Ayrıntı: [docs/development-guide.md](docs/development-guide.md)
 ## Yeni modül eklerken
 
 [docs/module-guide.md](docs/module-guide.md) izlenir. `tools/module-template/`
-kopyalanır, `module.yaml` doldurulur. Çekirdeğe dokunulmaz.
+kopyalanır, `module.yaml` doldurulur (`domain` ve `data_classification`
+dahil). Çekirdeğe dokunulmaz. Birden çok modülde aynı kalan yardımcı
+kopyalanmaz, `km_sdk`'ye konur (ADR 0033 §7).
 
 Bağımlılık da modülün kendi `dependencies` bloğuna yazılır; çekirdeğin
 listesine dokunulmaz (K6, K11).

@@ -29,6 +29,10 @@ sdk: ">=0.1,<1.0"
 # yüklenmez. Geri açmak için `true` yazmak yeter — kodu ve verisi duruyor.
 enabled: false
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: bld
+data_classification: internal
+
 entrypoint: backend.module:register
 
 # Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre

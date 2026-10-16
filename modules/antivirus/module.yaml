@@ -13,6 +13,10 @@ version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: platform
+data_classification: internal
+
 # YALNIZ UBUNTU (ADR 0022). Modül clamdscan/clamscan ikililerine, clamd
 # daemon'ına ve freshclam servisine dayanıyor; hiçbirinin Windows ve macOS'ta
 # karşılığı yok. Eleme keşifte olur: uymayan platformda router monte edilmez,

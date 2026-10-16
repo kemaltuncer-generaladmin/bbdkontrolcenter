@@ -8,6 +8,7 @@
 import { button, h } from '../../ui-kit/kit.js';
 import { badge } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
+import { bookPicker } from './book-picker.js';
 import {
   CURRICULUM_EXAMS, EXAM_TARGETS, GRADE_LEVELS, TRACKS, empty, gradeText, multiChips, num, problem,
   searchBox, studentSelect,
@@ -188,8 +189,18 @@ export function resourceListField(app, { initial = [], scope = 'all', onChange }
     paint();
     onChange?.([...chosen.values()]);
   } });
+  // Ortak kitap seçicisinden çoklu seçim (README §14 madde 98 / 116): süzgeçli katalogda "şak şak seç".
+  const many = button('Katalogdan çoklu seç', { variant: 'ghost', onClick: async () => {
+    const items = await bookPicker(app, { multiple: true, title: 'Kitapları seç', initial: [...chosen.values()] });
+    if (!items) return;
+    for (const item of items) if (!chosen.has(item.id)) chosen.set(item.id, item);
+    paint();
+    onChange?.([...chosen.values()]);
+  } });
   paint();
-  node.append(picker.node, list);
+  const row = h('div', 'ak-inline');
+  row.append(picker.node, many);
+  node.append(row, list);
   return { node, value: () => [...chosen.values()], destroy: picker.destroy };
 }
 

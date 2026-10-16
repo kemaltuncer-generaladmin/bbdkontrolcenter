@@ -21,12 +21,20 @@
 // BURADA MODÜL ADI YİNE GEÇMEZ. Eklenen şey modül adı değil, çekirdeğin kendi
 // ekranıdır — ARCHITECTURE §6'nın kuralı korunur.
 
+import {
+  MOUNT_WINDOW_MS, SWR_MAX_AGE_MS, cacheable, createResponseCache, failureKind, isGateway,
+  offlineError, ownsErrorUi,
+} from './net.js';
+import { createConnection } from './connection.js';
+
 const BASE = 'http://127.0.0.1:8787';
 
 let token = null;
 
 export function setToken(value) {
   token = value;
+  // OTURUM DEĞİŞTİ: önceki kişinin yanıtları bellekte kalmaz (ADR 0032).
+  responses.clear();
 }
 
 export function hasToken() {
@@ -61,44 +69,131 @@ function longRunning(path) {
     : undefined;
 }
 
-export async function api(path, options = {}) {
-  const method = options.method || 'GET';
-  const body = options.body === undefined ? null : JSON.stringify(options.body);
-  // `timeoutSeconds` VERİLMEZSE 60 saniye. Rapor/dışa aktarma gibi uzak
-  // sistemi sayfa sayfa gezen uçlar kendi süresini ister; sabit 60 saniye
-  // onları ortasında kesiyordu ve hata "çekirdeğe bağlanılamadı" diye
-  // okunuyordu — oysa iş sunucuda çalışmaya devam ediyordu.
-  const timeoutSeconds = Number(options.timeoutSeconds) || longRunning(path);
+// ------------------------------------------------- önbellek ve bağlantı (0032)
 
+/** Bellekteki GET yanıtları — `net.js`. */
+const responses = createResponseCache();
+
+/**
+ * Bağlantı durumu ve üst şerit. Yoklama `/health`'e ÖNBELLEKSİZ gider;
+ * bağlantı gelince `onConnectionRestored` ile bağlanan işlev (kabuk: etkin
+ * ekranı tazele) çağrılır.
+ */
+let restoredHandler = () => {};
+
+export const connection = createConnection({
+  probe: async () => {
+    try {
+      const { status } = await transport('GET', '/health', null, 8);
+      return status > 0 && status < 500;
+    } catch {
+      return false;
+    }
+  },
+  onRestore: () => restoredHandler(),
+});
+
+export function onConnectionRestored(fn) {
+  restoredHandler = typeof fn === 'function' ? fn : () => {};
+}
+
+/** Önbelleği elle boşaltır — oturum değişimi. */
+export function clearResponseCache() {
+  responses.clear();
+}
+
+/**
+ * Bir SONRAKİ ekran açılışında son bilinen yanıt KULLANILMAZ: okumalar ağa
+ * gider ("Yenile", Ctrl/⌘+R, bağlantı geri geldi). Önbellek ATILMAZ — ağ yine
+ * yoksa okuma son bilinen yanıta düşer; Ctrl+R çevrimdışıyken ekranı
+ * boşaltmaz.
+ */
+let bypassNext = false;
+export function bypassCacheOnce() {
+  bypassNext = true;
+}
+
+/**
+ * EKRAN AÇILIŞ KAPSAMI. `mountPanel` bir ekranı bağlarken açılır; kapsam
+ * süresince yapılan okumalar:
+ *  · önbellekte son bilinen yanıt varsa HEMEN onunla cevaplanır, arkada ağa
+ *    sorulur; yanıt değiştiyse `onStale` çağrılır (kabuk ekranı sessizce
+ *    yeniler ya da "Yeni veriler var" der);
+ *  · ekranın "oturduğu" an (açılış istekleri bitti) ölçülür — hız günlüğü.
+ */
+let scope = null;
+
+function activeScope() {
+  return scope && scope.open && performance.now() < scope.until ? scope : null;
+}
+
+function openScope(id) {
+  let resolveSettled;
+  const settled = new Promise((resolve) => { resolveSettled = resolve; });
+  const fresh = bypassNext;
+  bypassNext = false;
+  const self = {
+    id,
+    fresh,
+    open: true,
+    until: performance.now() + MOUNT_WINDOW_MS,
+    inflight: 0,
+    mounted: false,
+    fromCache: 0,
+    fromNetwork: 0,
+    stale: false,
+    onStale: null,
+    settled,
+    track(promise) {
+      self.inflight += 1;
+      const done = () => {
+        self.inflight -= 1;
+        self.check();
+      };
+      promise.then(done, done);
+    },
+    check() {
+      if (self.mounted && self.inflight === 0) resolveSettled();
+    },
+    markStale() {
+      if (self.stale) return;
+      self.stale = true;
+      // Kapsam kapanmış olsa da haber verilir: arkadaki tazeleme açılıştan
+      // sonra dönebilir.
+      queueMicrotask(() => self.onStale?.());
+    },
+  };
+  return self;
+}
+
+/** Ham taşıma — Rust köprüsü ya da tarayıcıda `fetch`. Hata türünü olduğu gibi atar. */
+async function transport(method, path, body, timeoutSeconds) {
   const invoke = window.__TAURI__?.core?.invoke;
-  let status;
-  let text;
-
   if (invoke) {
     const response = await invoke('core_request',
       { method, path, body, token, timeoutSeconds });
-    status = response.status;
-    text = response.body;
-  } else {
-    const headers = { Accept: 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    if (body !== null) headers['Content-Type'] = 'application/json';
-    // Tarayıcı yolunda süreyi `AbortController` uygular; Rust yolundaki
-    // davranışla aynı kalsın diye burada da elle kesilir.
-    const stopper = timeoutSeconds ? new AbortController() : null;
-    const ticker = stopper
-      ? setTimeout(() => stopper.abort(), timeoutSeconds * 1000)
-      : null;
-    try {
-      const response = await fetch(`${BASE}${path}`,
-        { method, headers, body, signal: stopper?.signal });
-      status = response.status;
-      text = await response.text();
-    } finally {
-      if (ticker) clearTimeout(ticker);
-    }
+    return { status: response.status, text: response.body };
   }
+  const headers = { Accept: 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (body !== null) headers['Content-Type'] = 'application/json';
+  // Tarayıcı yolunda süreyi `AbortController` uygular; Rust yolundaki
+  // davranışla aynı kalsın diye burada da elle kesilir.
+  const stopper = timeoutSeconds ? new AbortController() : null;
+  const ticker = stopper
+    ? setTimeout(() => stopper.abort(), timeoutSeconds * 1000)
+    : null;
+  try {
+    const response = await fetch(`${BASE}${path}`,
+      { method, headers, body, signal: stopper?.signal });
+    return { status: response.status, text: await response.text() };
+  } finally {
+    if (ticker) clearTimeout(ticker);
+  }
+}
 
+/** Yanıt metnini panelin beklediği değere çevirir; 4xx/5xx hata atar. */
+function decode(status, text) {
   if (status === 204 || text === '') return null;
 
   let payload = null;
@@ -117,25 +212,141 @@ export async function api(path, options = {}) {
   return payload;
 }
 
+/** Arkada tazeleme: son bilinen yanıtla cevaplanmış okumanın gerçeği. */
+async function revalidate(key, path, served, owner) {
+  try {
+    const { status, text } = await transport('GET', path, null, undefined);
+    if (isGateway(status)) {
+      connection.reportFailure('gateway');
+      return;
+    }
+    connection.reportSuccess();
+    if (status >= 400) return;
+    responses.set(key, text);
+    if (text !== served) owner.markStale();
+  } catch (error) {
+    const kind = failureKind(error);
+    if (kind) connection.reportFailure(kind);
+  }
+}
+
+export async function api(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const body = options.body === undefined ? null : JSON.stringify(options.body);
+  // `timeoutSeconds` VERİLMEZSE 60 saniye. Rapor/dışa aktarma gibi uzak
+  // sistemi sayfa sayfa gezen uçlar kendi süresini ister; sabit 60 saniye
+  // onları ortasında kesiyordu ve hata "çekirdeğe bağlanılamadı" diye
+  // okunuyordu — oysa iş sunucuda çalışmaya devam ediyordu.
+  const timeoutSeconds = Number(options.timeoutSeconds) || longRunning(path);
+  const key = cacheable(method, path) ? String(path) : null;
+  const owner = activeScope();
+
+  // AÇILIŞTA SON BİLİNEN YANIT: ekran anında çizilir, gerçeği arkadan gelir.
+  if (key && owner && !owner.fresh && !options.fresh) {
+    const hit = responses.get(key);
+    if (hit && hit.age < SWR_MAX_AGE_MS) {
+      owner.fromCache += 1;
+      revalidate(key, path, hit.text, owner);
+      return decode(200, hit.text);
+    }
+  }
+
+  const request = send(method, path, body, timeoutSeconds, key);
+  if (owner) {
+    owner.fromNetwork += 1;
+    owner.track(request);
+  }
+  return request;
+}
+
+async function send(method, path, body, timeoutSeconds, key) {
+  for (;;) {
+    let status;
+    let text;
+    try {
+      ({ status, text } = await transport(method, path, body, timeoutSeconds));
+    } catch (error) {
+      const kind = failureKind(error);
+      if (!kind) throw error;
+      connection.reportFailure(kind);
+
+      if (method === 'GET') {
+        // OKUMA: son bilinen yanıt (yaşı ne olursa olsun) — uygulama durmaz.
+        const hit = key ? responses.get(key) : null;
+        if (hit) return decode(200, hit.text);
+        if (ownsErrorUi(path)) throw error;
+        throw offlineError(kind, 'read');
+      }
+
+      // YAZMA: istek gitmiş olabilir → önbellek artık güvenilir değil.
+      responses.clear();
+      if (ownsErrorUi(path)) throw error;
+      if (kind === 'connect') {
+        // Sunucuya HİÇ ULAŞMADI: açıkça sorulur, sessiz kuyruk yok.
+        if (await connection.askRetry()) continue;
+        throw offlineError(kind, 'write-not-sent');
+      }
+      throw offlineError(kind, 'write-unknown');
+    }
+
+    if (isGateway(status)) {
+      connection.reportFailure('gateway');
+      if (method === 'GET') {
+        const hit = key ? responses.get(key) : null;
+        if (hit) return decode(200, hit.text);
+      } else {
+        responses.clear();
+      }
+    } else {
+      connection.reportSuccess();
+      if (method === 'GET') {
+        if (key && status < 400) responses.set(key, text);
+      } else if (status < 400) {
+        responses.clear();
+      }
+    }
+    return decode(status, text);
+  }
+}
+
 /**
  * Çekirdek ayakta mı? Kabuk açılışta bunu bekler.
  *
  * Başarısızlıkta SON HATAYI da döndürür: "başlatılamadı" demek yetmez, neden
  * ulaşılamadığı (süreç yok mu, istek mi engellendi) ekranda yazmalı.
+ *
+ * `onWait(deneme, sonHata)`: bekleme sürerken her denemede çağrılır — giriş
+ * ekranı "yeniden deneniyor (3)" yazabilsin. `timeoutMs` 0 ise SÜRESİZ
+ * bekler (ADR 0032: bağlantı yokken uygulama durmaz, gelince devam eder).
  */
-export async function waitForCore(timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
+export async function waitForCore(timeoutMs = 20000, { onWait = null } = {}) {
+  const deadline = timeoutMs > 0 ? Date.now() + timeoutMs : Infinity;
   let lastError = 'yanıt yok';
+  let attempt = 0;
   while (Date.now() < deadline) {
     try {
-      await api('/health');
-      return { ok: true };
+      const { status, text } = await transport('GET', '/health', null, 10);
+      if (status > 0 && status < 400) return { ok: true };
+      lastError = decodeError(status, text);
     } catch (error) {
-      lastError = error?.message || String(error);
+      lastError = String(error?.message || error).replace(/^\[(connect|timeout|network)\]\s*/, '');
     }
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    attempt += 1;
+    try { onWait?.(attempt, lastError); } catch { /* ipucu yazılamazsa bekleme sürer */ }
+    // İlk denemeler sık, sonra seyrek: sunucu dakikalarca kapalıysa makineyi
+    // ve ağı boşuna meşgul etmez.
+    await new Promise((resolve) => setTimeout(resolve, attempt < 10 ? 350 : Math.min(5000, 350 * attempt)));
   }
   return { ok: false, error: lastError };
+}
+
+function decodeError(status, text) {
+  try {
+    decode(status, text);
+  } catch (error) {
+    return error.message;
+  }
+  return `İstek başarısız (${status}).`;
 }
 
 /**
@@ -586,14 +797,43 @@ export function setNavigator(fn) {
  *   · `open`       — başka panele geç: `open('store_shipping', {orderId: 12})`
  *
  * Paneli olmayan ya da patlayan ekran boş açılır; kabuk düşmez (K7).
+ *
+ * `hooks` (ADR 0032, isteğe bağlı):
+ *   · `onSettled({ms, fromCache, fromNetwork})` — ekran OTURDU: `mount()`
+ *     döndü ve açılış istekleri bitti. Hız günlüğü bunu ölçer.
+ *   · `onStale()` — açılışta son bilinen yanıtla çizilen ekranın verisi
+ *     arkada değişti; kabuk ekranı tazeler ya da kullanıcıya söyler.
  */
-export async function mountPanel(panel, root, registry = { panels: [] }, payload = null) {
+export async function mountPanel(panel, root, registry = { panels: [] }, payload = null, hooks = {}) {
+  const started = performance.now();
+  const own = openScope(panel.id);
+  own.onStale = hooks.onStale || null;
+  scope = own;
+  own.settled.then(() => {
+    const report = () => hooks.onSettled?.({
+      ms: performance.now() - started, fromCache: own.fromCache, fromNetwork: own.fromNetwork,
+    });
+    // Bir sonraki boyamadan sonra: "oturdu" ekranda görünür olduğu andır.
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => report());
+    else report();
+  });
+  const settle = () => {
+    own.mounted = true;
+    own.check();
+  };
+  // KOYU KÂĞIT YALNIZ HAZIR PANELDE (ADR 0032): panel `export const darkReady
+  // = true` derse kâğıt koyu temaya geçer; sabit renk yazmış eski panel koyu
+  // temada da açık kâğıtta kalır (okunmaz hâle gelmez).
+  const paper = (ready) => root.closest?.('.panel')?.classList.toggle('km-dark-paper', Boolean(ready));
+  paper(false);
+
   // ARAYÜZÜ OLMAYAN EKRAN DA AÇIKLANIR. Burası eskiden sessizce `null`
   // dönüyordu; `select()` gövdeyi zaten temizlediği için kullanıcı başlığı
   // değişmiş BOMBOŞ bir ekrana bakıyordu. `panelError` aynı dersi çökme dalı
   // için öğrenmişti (aşağıdaki yorum), giriş-yok dalı atlanmıştı.
   if (!panel.entry) {
     root.replaceChildren(panelUnavailable(panel));
+    settle();
     return null;
   }
 
@@ -602,8 +842,10 @@ export async function mountPanel(panel, root, registry = { panels: [] }, payload
     const module = await import(`./${panel.entry}`);
     if (typeof module.mount !== 'function') {
       console.warn(`[ui-kernel] ${panel.id}: mount() dışa vurulmamış`);
+      settle();
       return null;
     }
+    paper(module.darkReady === true);
     const cleanup = module.mount(root, {
       panel,
       api,
@@ -617,12 +859,24 @@ export async function mountPanel(panel, root, registry = { panels: [] }, payload
         navigate(id, data);
       },
     });
+    settle();
     return typeof cleanup === 'function' ? cleanup : null;
   } catch (error) {
     console.error(`[ui-kernel] ${panel.id} paneli yüklenemedi:`, error);
     root.replaceChildren(panelError(panel, error));
+    settle();
     return null;
   }
+}
+
+/**
+ * Panel dosyasını ÖNCEDEN indirir ve ayrıştırır (bağlamaz). Kabuk boşta
+ * kaldığında sık açılan ekranlar için çağırır: ilk tıklamada `import()`
+ * beklemesi kalkar. Patlarsa sessizdir — asıl açılış hatayı kendisi gösterir.
+ */
+export function preloadPanel(panel) {
+  if (!panel?.entry) return Promise.resolve(false);
+  return import(`./${panel.entry}`).then(() => true, () => false);
 }
 
 /**

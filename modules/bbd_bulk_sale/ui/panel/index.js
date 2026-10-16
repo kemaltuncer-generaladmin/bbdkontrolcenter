@@ -14,6 +14,9 @@ import {
   button, confirmWithReason, h, loadStyles, longDate, money, stampIso, toaster, todayIso,
 } from './kit.js';
 import { createPicker } from './picker.js';
+// Parti dökümü PDF'i: tek tip araç çubuğu "Önizle · Yazdır · PDF kaydet"
+// (63-finans-pdf, `ui-kit/report.js`).
+import { reportToolbar } from '../../ui-kit/report.js';
 
 loadStyles(import.meta.url);
 
@@ -284,7 +287,9 @@ function renderBatches() {
         const detail = await api(`/api/bbd_bulk_sale/batches/${batch.batch_ref}`);
         if (!detail.ok) return;
         card.dataset.open = '1';
-        card.append(renderEntries(batch, detail.entries || []));
+        const entries = renderEntries(batch, detail.entries || []);
+        entries.prepend(batchTools(batch));
+        card.append(entries);
       },
     });
     head.append(openBtn);
@@ -299,6 +304,22 @@ function renderBatches() {
     if (batch.note) card.append(h('div', 'bs-batch-note', batch.note));
     nodes.batches.append(card);
   }
+}
+
+/** Parti dökümü PDF araç çubuğu. */
+function batchTools(batch) {
+  const produce = ({ preview, orientation }) => api('/api/bbd_bulk_sale/report', {
+    method: 'POST', timeoutSeconds: 300, body: { batchRef: batch.batch_ref, preview, orientation } });
+  const morePages = async (result, first, last) => {
+    const data = await api('/api/bbd_bulk_sale/report/pages', {
+      method: 'POST', body: { path: result.path, first, last }, timeoutSeconds: 120 });
+    if (!data?.ok) throw new Error(data?.error || 'Sayfalar alınamadı.');
+    return data.pages || [];
+  };
+  const bar = h('div', 'bs-entries-tools');
+  bar.append(reportToolbar({ root: nodes.root, api, toast, produce, morePages,
+    title: 'Toplu satış parti dökümü' }).node);
+  return bar;
 }
 
 function renderEntries(batch, entries) {

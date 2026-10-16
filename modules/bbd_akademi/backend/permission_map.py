@@ -200,6 +200,21 @@ OPERATION_OVERRIDES: dict[str, str] = {
 }
 
 
+#: KM'NİN AYRICA PIN TEYİDİ İSTEDİĞİ işlemler (sözleşmede `x-step-up` olmasa da).
+#: Güvenlik denetimi (iş 63, bulgu KM-07): KVKK talebine karar — onay kişinin
+#: Akademi hesabını ve verisini GERİ DÖNÜŞSÜZ siler; KM izni (`bbd_akademi.privacy`)
+#: yıkıcı ilan edilmiş ama uçta PIN sorulmuyordu. Akademi'ye `X-Akademi-Step-Up`
+#: yalnız sözleşmedeki step-up işlemlerinde gider; bunlarda teyit KM'de kalır.
+KM_STEP_UP_OPERATIONS: frozenset[str] = frozenset({
+    "admin_decideDataRequest",
+})
+
+
+def requires_step_up(operation: Operation) -> bool:
+    """İşlem PIN teyidi (tek kullanımlık belirteç) ister mi — sözleşme ya da KM kararı."""
+    return operation.step_up or operation.operation_id in KM_STEP_UP_OPERATIONS
+
+
 def km_permissions(operation: Operation) -> tuple[str, ...]:
     """İşlemi açan KM izinleri — BİRİ yeterli.
 

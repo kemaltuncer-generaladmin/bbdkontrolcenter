@@ -27,6 +27,7 @@ import { dateRange } from '../../ui-kit/datefield.js';
 import { AkademiError } from './api.js';
 import { runDocument } from './documents.js';
 import { paymentPlanDoc, refundReceiptDoc } from './documents-logic.js';
+import { monthlyReport } from './finance-reports.js';
 import {
   actionButton, empty, errorBox, exportJob, fmtDate, fmtDateTime, formDialog, loader, money, num,
   optionsOf, personName, pinStepUp, reasonDialog, runAction, statusBadge, todayIst, toolbar,
@@ -605,9 +606,10 @@ export function monthlyTab(app) {
       const { start, end } = range.get();
       return runExport(app, { report: 'monthly', from: start, to: end, format: 'xlsx' });
     } });
+  // PDF (yatay, ay × yöntem, toplam satırı) — ekrandaki dönemle (63-finans-pdf).
   node.append(toolbar(range.node, h('span', 'ak-muted',
     'Tahakkuk: vadesi o ay olan iptal edilmemiş kalemler. Net: tahsilat − iade.'), h('span', 'kit-spacer'),
-  toExcel));
+  monthlyReport(app, range), toExcel));
   const view = loader(() => {
     const { start, end } = range.get();
     return app.api.get('/v1/admin/finance/reports/monthly', { from: start, to: end });

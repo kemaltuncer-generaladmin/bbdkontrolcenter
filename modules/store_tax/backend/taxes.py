@@ -38,8 +38,10 @@ alanı bulamaz, hata da vermez: tablo "Oran okunamadı" ile dolar. Bu yüzden ok
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from km_sdk import to_kurus
 
 #: Gerekçenin en az uzunluğu. Geçit (store_api) da 10 istiyor; burada tekrar
 #: doğrulanır çünkü arayüzde gizlemek yetkilendirme değildir (K9).
@@ -153,30 +155,6 @@ def as_int(value: Any, default: int = 0) -> int:
             return int(float(str(value).replace(",", ".")))
         except (TypeError, ValueError):
             return default
-
-
-def to_kurus(value: Any) -> int | None:
-    """Bagisto'nun ONDALIK para değerini kuruşa çevirir. Çözülemezse `None`.
-
-    TUZAK: burada `float` kullanılmaz. `float("1234.35") * 100` bazı değerlerde
-    123434.99999 verir ve `int()` bir kuruş aşağı yuvarlar. KDV icmalinde bu
-    sapma binlerce satır boyunca birikir ve beyanı tutmaz.
-    """
-    if value is None:
-        return None
-    raw = str(value).strip().replace(" ", "")
-    if raw == "":
-        return None
-    if "," in raw and "." in raw:
-        raw = raw.replace(",", "") if raw.rfind(".") > raw.rfind(",") else \
-            raw.replace(".", "").replace(",", ".")
-    elif "," in raw:
-        raw = raw.replace(",", ".")
-    try:
-        amount = Decimal(raw)
-    except (InvalidOperation, ValueError):
-        return None
-    return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def from_kurus(kurus: Any) -> str:

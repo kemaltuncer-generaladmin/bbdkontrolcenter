@@ -1,28 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kontrol Merkezi",
-  "version": "0.5.34",
+  "version": "0.5.36",
   "identifier": "com.benimdunyam.kontrolmerkezi",
   "build": {
     "frontendDist": "../shell"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Kontrol Merkezi",
-        "width": 1180,
-        "height": 780,
-        "minWidth": 900,
-        "minHeight": 640,
-        "center": true,
-        "resizable": true,
-        "decorations": true,
-        "backgroundColor": "#0A0D14"
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; media-src 'self' data:; connect-src 'self' http://127.0.0.1:*; font-src 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; media-src 'self' data:; connect-src 'self' http://127.0.0.1:*; font-src 'self'; base-uri 'self'; form-action 'self'"
     },
     "withGlobalTauri": true
   },

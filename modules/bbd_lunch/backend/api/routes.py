@@ -10,17 +10,26 @@ from typing import Any
 
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
 
+from ..reports import LunchReports
 from ..service import LunchService
 
 router = APIRouter()
 
 _service: LunchService | None = None
+_reports: LunchReports | None = None
 
 
-def bind(service: LunchService) -> APIRouter:
-    global _service
+def bind(service: LunchService, reports: LunchReports | None = None) -> APIRouter:
+    global _service, _reports
     _service = service
+    _reports = reports
     return router
+
+
+def reports() -> LunchReports:
+    if _reports is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Rapor üretici hazır değil.")
+    return _reports
 
 
 def service() -> LunchService:
@@ -65,6 +74,23 @@ class HolidayBody(BaseModel):
     day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     label: str = Field(default="", max_length=120)
     remove: bool = False
+
+
+class ReportBody(BaseModel):
+    """PDF raporu — takvimde görüntülenen ay ya da seçili gün (63-finans-pdf)."""
+
+    kind: str = Field(pattern=r"^(month|day)$")
+    month: str = Field(default="", pattern=r"^(|\d{4}-\d{2})$")
+    day: str = Field(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$")
+    classes: dict[str, str] = Field(default_factory=dict)
+    orientation: str = Field(default="portrait", pattern=r"^(portrait|landscape)$")
+    preview: bool = True
+
+
+class PagesBody(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    first: int = Field(ge=1, le=9999)
+    last: int = Field(ge=1, le=9999)
 
 
 class StockBody(BaseModel):
@@ -166,3 +192,23 @@ async def top_up_stock(
 ) -> dict[str, Any]:
     """Yemek ürününe stok girişi — seçim stoktan fazlaysa akışı kesmeden çözer."""
     return await service().top_up_stock(body.quantity, body.reason)
+
+
+@router.post("/report")
+async def report(body: ReportBody,
+                 user: CurrentUser = requires("bbd_lunch.view")) -> dict[str, Any]:
+    """Aylık öğle yemeği raporu / gün dökümü PDF'i — önizleme ilk sayfalarla."""
+    if body.kind == "month" and not body.month:
+        raise HTTPException(status_code=422, detail="Ay seçilmedi.")
+    if body.kind == "day" and not body.day:
+        raise HTTPException(status_code=422, detail="Gün seçilmedi.")
+    return await reports().produce(body.kind, month=body.month, day=body.day,
+                                   classes=body.classes, orientation=body.orientation,
+                                   author=user.full_name or "", preview=body.preview)
+
+
+@router.post("/report/pages")
+async def report_pages(body: PagesBody,
+                       user: CurrentUser = requires("bbd_lunch.view")) -> dict[str, Any]:
+    """Önizleme penceresi kaydırıldıkça sonraki sayfalar (en çok 12)."""
+    return await reports().pages(body.path, body.first, body.last)

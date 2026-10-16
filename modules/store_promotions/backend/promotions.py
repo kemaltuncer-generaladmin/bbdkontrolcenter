@@ -37,8 +37,10 @@ BOŞALTIR — sessiz ve yıkıcıdır.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
+
+from km_sdk import as_int, to_kurus
 
 #: Gerekçenin en az uzunluğu. Geçit de (store_api) 10 istiyor; burada tekrar
 #: doğrulanır çünkü arayüzde gizlemek yetkilendirme değildir (K9).
@@ -182,45 +184,11 @@ def has_field(raw: Any, name: str) -> bool:
     return isinstance(raw, dict) and (name in raw or camel(name) in raw)
 
 
-def as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        try:
-            return int(float(str(value).replace(",", ".")))
-        except (TypeError, ValueError):
-            return default
-
-
 def as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(str(value).strip().replace(",", "."))
     except (TypeError, ValueError):
         return default
-
-
-def to_kurus(value: Any) -> int | None:
-    """Bagisto'nun ONDALIK para değerini kuruşa çevirir. Çözülemezse `None`.
-
-    TUZAK: burada `float` kullanılmaz. `float("1234.35") * 100` bazı değerlerde
-    123434.99999 verir ve `int()` bir kuruş aşağı yuvarlar; indirim hesabında
-    binde bir görünen, bulunması imkânsız bir sapmadır.
-    """
-    if value is None:
-        return None
-    raw = str(value).strip().replace(" ", "")
-    if raw == "":
-        return None
-    if "," in raw and "." in raw:
-        raw = raw.replace(",", "") if raw.rfind(".") > raw.rfind(",") else \
-            raw.replace(".", "").replace(",", ".")
-    elif "," in raw:
-        raw = raw.replace(",", ".")
-    try:
-        amount = Decimal(raw)
-    except (InvalidOperation, ValueError):
-        return None
-    return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def from_kurus(kurus: Any) -> str:

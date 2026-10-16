@@ -1,6 +1,6 @@
 [package]
 name = "kontrol-merkezi"
-version = "0.5.34"
+version = "0.5.36"
 edition = "2021"
 rust-version = "1.77.2"
 description = "Kontrol Merkezi masaüstü kabuğu"
@@ -38,6 +38,25 @@ tauri-plugin-updater = "2"
 # `gzip`: sunucu büyük JSON yanıtlarını sıkıştırıyor (`GZipMiddleware`); bu
 # özellik olmadan reqwest `Accept-Encoding` göndermez ve yanıt ham gelir.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "gzip"] }
+# Native his (ADR 0032). Dördü de resmî Tauri eklentisi; JS tarafları
+# KULLANILMAZ (paketleyici yok) — kabuk onlara kendi `#[tauri::command]`
+# sarmalayıcılarıyla ulaşır, bu yüzden `capabilities/` altında eklentilerin
+# JS komutlarına hiçbir izin AÇILMAZ (en az izin).
+#
+# window-state: pencere boyutu/konumu/ekranı/tam ekran durumu hatırlanır.
+tauri-plugin-window-state = "2"
+# single-instance: ikinci açılış yeni pencere açmaz, mevcut pencereyi öne getirir.
+tauri-plugin-single-instance = "2"
+# notification: işletim sisteminin bildirim merkezi (`kit.notify`).
+tauri-plugin-notification = "2"
+# dialog: yerel dosya aç/kaydet pencereleri (`kit.openFile`, `kit.saveFile`).
+tauri-plugin-dialog = "2"
+
+# Windows 11 Mica yalnız derleme 22000+'da vardır; karar pencere kurulmadan
+# sürüme bakılarak verilir (src/native.rs → `mica_supported`). Paket zaten
+# bağımlılık ağacında (tao/window-vibrancy getiriyor) — burada ilan edilir (K11).
+[target.'cfg(windows)'.dependencies]
+windows-version = "0.1"
 
 [profile.release]
 codegen-units = 1

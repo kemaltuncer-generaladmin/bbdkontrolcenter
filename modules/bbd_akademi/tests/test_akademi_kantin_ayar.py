@@ -62,3 +62,13 @@ def test_ozellikler_kantin_anahtari_anlasilir_ve_kapatilir() -> None:
     assert "Kantin kasası ve Kontrol Merkezi kantin modülü çalışmaya devam eder" in out["dialogText"]
     assert out["patches"] == [["/v1/admin/features/canteen", {"enabled": False}]]
     assert "Kapalı" in out["after"]
+
+
+def test_ogrenci_gorunurlugu_bolumu_yok() -> None:
+    """Akademi madde 113: öğrenci rolü kantini hiç görmez — KM kantin kurallarında
+    etkisiz "Öğrenci görünürlüğü" varsayılanları gösterilmez."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "ui" / "panel" / "settings.js").read_text(encoding="utf-8")
+    assert "studentCanSee" not in source
+    assert "title: 'Öğrenci görünürlüğü'" not in source

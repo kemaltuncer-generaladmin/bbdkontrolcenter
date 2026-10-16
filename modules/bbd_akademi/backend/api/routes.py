@@ -37,7 +37,7 @@ from .. import contract_features
 from ..documents import DocumentDenied, DocumentService
 from ..features import TenantFeatures
 from ..gateway import request_id
-from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions
+from ..permission_map import ALL_PERMISSIONS, STAFF, VIEW, km_permissions, requires_step_up
 from ..proxy import AkademiProxy, ProxyError, decode_upload, error_response
 from ..staff import ROLE_LABELS, StaffError, StaffService
 
@@ -157,6 +157,14 @@ class DocumentBody(BaseModel):
     preview: bool = True
 
 
+class DocumentPagesBody(BaseModel):
+    """Önizlemenin kalan sayfaları — yol yalnız bu modülün çıktı klasöründen."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    first: int = Field(ge=1, le=9999)
+    last: int = Field(ge=1, le=9999)
+
+
 class AkademiPdfBody(BaseModel):
     """Akademi'nin kendi PDF'i (makbuz, ekstre, sipariş belgesi) — imzalı bağlantı."""
 
@@ -248,7 +256,7 @@ def _operation_items(user: CurrentUser) -> list[dict[str, Any]]:
             "surface": operation.surface,
             "kmPermissions": list(needed),
             "akademiPermissions": list(operation.permissions),
-            "stepUp": operation.step_up,
+            "stepUp": requires_step_up(operation),
             "money": operation.money,
             "multipart": operation.multipart,
             "featureFlag": operation.feature_flag,
@@ -282,7 +290,7 @@ async def step_up(request: Request, body: StepUpBody,
     """PIN'i çekirdeğin teyit kapısından geçirir, tek kullanımlık belirteç verir."""
     operation = proxy().allowlist.by_id(body.operationId)
     trace = request_id(request.headers.get("x-request-id"))
-    if operation is None or not operation.step_up:
+    if operation is None or not requires_step_up(operation):
         return error_response(ProxyError(400, "step_up_not_applicable",
                                          "Bu işlem PIN teyidi gerektirmiyor."), trace)
     needed = km_permissions(operation)
@@ -333,6 +341,12 @@ async def document_preview(body: DocumentBody, user: CurrentUser = requires(VIEW
         return await documents().produce(user, body.kind, body.document, preview=body.preview)
     except DocumentDenied as failure:
         return _denied(failure)
+
+
+@router.post("/km/documents/pages")
+async def document_pages(body: DocumentPagesBody, user: CurrentUser = requires(VIEW)) -> Any:
+    """Önizleme penceresi kaydırıldıkça sonraki sayfaların görüntüsü (en çok 12)."""
+    return await documents().pages(user, body.path, body.first, max(body.first, body.last))
 
 
 @router.post("/km/documents/akademi")

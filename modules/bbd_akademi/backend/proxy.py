@@ -82,7 +82,7 @@ from .gateway import (
     request_id,
 )
 from .operations import Allowlist, Resolved
-from .permission_map import km_permissions
+from .permission_map import km_permissions, requires_step_up
 from .stepup import StepUpStore
 
 STEP_UP_HEADER = "x-km-step-up"
@@ -257,7 +257,14 @@ class AkademiProxy:
             raise ProxyError(403, "operation_not_allowed",
                              "Bu Akademi işlemi Kontrol Merkezi üzerinden açık değil.",
                              {"method": method.upper(), "path": "/" + path.strip("/")})
-        needed = km_permissions(resolved.operation)
+        try:
+            needed = km_permissions(resolved.operation)
+        except KeyError:
+            # KAPALI KALIR (iş 63): haritada karşılığı olmayan Akademi izni hiçbir
+            # KM iznine düşmez — işlem 500 değil, açık bir 403'le reddedilir.
+            raise ProxyError(403, "permission_unmapped",
+                             "Bu Akademi işleminin Kontrol Merkezi izni tanımlı değil.",
+                             {"operationId": resolved.operation.operation_id}) from None
         if not any(user.has_permission(key) for key in needed):
             raise ProxyError(403, "forbidden", "Bu işlem için yetkiniz yok.",
                              {"permission": needed[0], "anyOf": list(needed),
@@ -266,12 +273,17 @@ class AkademiProxy:
 
     async def require_step_up(self, resolved: Resolved, user: CurrentUser,
                               token: str | None) -> bool:
-        """Step-up işlemi değilse False; işlemse belirteci tüketir ya da reddeder."""
-        if not resolved.operation.step_up:
+        """Step-up işlemi değilse False; işlemse belirteci tüketir ya da reddeder.
+
+        True yalnız SÖZLEŞMEDEKİ step-up işlemlerinde döner (Akademi'ye
+        `X-Akademi-Step-Up` başlığı gider); KM'nin kendi istediği teyitte
+        (`KM_STEP_UP_OPERATIONS`) belirteç yine tüketilir ama başlık gitmez.
+        """
+        if not requires_step_up(resolved.operation):
             return False
         if await self.step_up.consume(token, user_id=user.id,
                                       operation_id=resolved.operation.operation_id):
-            return True
+            return resolved.operation.step_up
         raise ProxyError(403, "step_up_required",
                          "Bu işlem için PIN'inizi yeniden girmeniz gerekiyor.",
                          {"operationId": resolved.operation.operation_id})

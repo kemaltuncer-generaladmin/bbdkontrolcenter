@@ -13,7 +13,8 @@
 #
 # ZİL GERÇEKTEN ÇALAR. İki hedefi vardır:
 #   1. Okulun zil sistemine bağlı Windows bilgisayarı (asıl hoparlör) —
-#      `store.api` üzerinden bbdstore köprüsüne komut yazılır.
+#      bbdstore sunucusundaki köprüye (`/api/bell/*`) modülün KENDİ istemcisiyle
+#      (`backend/bridge.py`, ayrı belirteç) komut yazılır — `store.api` DEĞİL.
 #   2. Yerel ses aygıtı — `audio` yeteneği; yedek ve geliştirme içindir.
 #
 # BAĞIMLILIK YÖNÜ TERSİNE ÇEVRİLDİ. Eskiden ders saatleri Ders Takvimi'nindi ve
@@ -26,6 +27,10 @@ description: "Haftalık zil saatleri (ders/teneffüs), zil sonrası anons ve ses
 version: 0.5.0
 sdk: ">=0.1,<1.0"
 enabled: true
+
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: bell
+data_classification: personal
 
 entrypoint: backend.module:register
 

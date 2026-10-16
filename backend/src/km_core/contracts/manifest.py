@@ -45,6 +45,9 @@ class HttpSpec:
     router: str
     tags: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
+    # Cihaz yüzeyi (iş 63): izin kapısı dışında, kendi belirtecini doğrulayan router.
+    device_router: str | None = None
+    device_prefix: str | None = None
 
 
 @dataclass(slots=True)
@@ -64,6 +67,10 @@ class Manifest:
     http: HttpSpec | None = None
     ui: dict[str, Any] = field(default_factory=dict)
     migrations: str | None = None
+    # ADR 0033 — alan servisi ve veri sınıfı. VERİDİR: çekirdek bunlara göre
+    # dallanmaz (K1); yalnız modül kaydında kabuğa yansıtır.
+    domain: str = ""
+    data_classification: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -125,8 +132,12 @@ def read_manifest(module_dir: Path, schema_path: Path) -> Manifest:
             router=http_data["router"],
             tags=list(http_data.get("tags") or []),
             requires=list(http_data.get("requires") or []),
+            device_router=(http_data.get("device_router") or {}).get("router"),
+            device_prefix=(http_data.get("device_router") or {}).get("prefix"),
         ) if http_data and http_data.get("router") else None,
         ui=data.get("ui") or {},
         migrations=data.get("migrations"),
+        domain=str(data.get("domain") or ""),
+        data_classification=str(data.get("data_classification") or ""),
         raw=data,
     )

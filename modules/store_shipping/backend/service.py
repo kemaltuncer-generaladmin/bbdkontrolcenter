@@ -29,7 +29,16 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from km_sdk import ExportError, build_pdf, csv_bytes, money, number, report_dir, write_private
+from km_sdk import (
+    ExportError,
+    build_pdf,
+    csv_bytes,
+    money,
+    number,
+    printer_status_of,
+    report_dir,
+    write_private,
+)
 
 from . import analytics, geliver, labels, shipping
 
@@ -2801,12 +2810,7 @@ class ShippingService:
         return {"ok": True, **result, "name": resolved.name}
 
     async def printer_status(self) -> dict[str, Any]:
-        if self._printer is None:
-            return {"ready": False, "error": "Yazıcı yeteneği bu kurulumda yok."}
-        try:
-            return await self._printer.status()
-        except Exception as failure:  # noqa: BLE001 — K7
-            return {"ready": False, "error": self._fail(failure)}
+        return await printer_status_of(self._printer, fail=self._fail)
 
     # ============================================================ tercihler
 

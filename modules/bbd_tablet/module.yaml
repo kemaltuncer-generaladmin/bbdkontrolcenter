@@ -5,6 +5,10 @@ version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: tablet
+data_classification: personal
+
 entrypoint: backend.module:register
 depends: [bbd_canteen_api]
 provides:
@@ -54,6 +58,11 @@ http:
   router: backend.api.routes:router
   tags: ["bbd_tablet"]
   requires: [bbd_tablet.view]
+  # Kurum tabletlerinin yüzeyi: KM oturumu yok, her uç kendi cihaz/öğrenci
+  # belirtecini doğrular (eşleme kodu hariç). İzin kapısının dışında monte edilir.
+  device_router:
+    prefix: /api/tablet/v1
+    router: backend.api.tablet_routes:router
 
 ui:
   entry: ui/panel/index.js

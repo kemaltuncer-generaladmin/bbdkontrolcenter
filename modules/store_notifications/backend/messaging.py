@@ -27,10 +27,9 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 
-from km_sdk import offending, plan_text, simplify
+from km_sdk import as_int, offending, plan_text, simplify, to_kurus
 
 #: Gerekçenin en az uzunluğu. Geçit (store_api) de 10 istiyor; burada tekrar
 #: doğrulanır çünkü arayüzde gizlemek yetkilendirme değildir (K9).
@@ -213,16 +212,6 @@ def text(value: Any) -> str:
     return str(value).strip()
 
 
-def as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        try:
-            return int(float(str(value).replace(",", ".")))
-        except (TypeError, ValueError):
-            return default
-
-
 #: `as_bool` için doğru/yanlış sayılan metinler. Mağaza aynı bilgiyi üç ayrı
 #: biçimde veriyor: JSON `true`, metin `"1"` ve durum kelimesi `"active"`.
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on", "active", "enabled", "evet"})
@@ -249,30 +238,6 @@ def as_bool(value: Any, default: bool = False) -> bool:
     if raw in _FALSE_WORDS:
         return False
     return default
-
-
-def to_kurus(value: Any) -> int | None:
-    """Ondalık para değerini kuruşa çevirir. Çözülemezse `None`.
-
-    `float` KULLANILMAZ: `float("0.35") * 100` bazı değerlerde 34.999… verir ve
-    `int()` bir kuruş aşağı yuvarlar. Binlerce SMS satırının toplamında bu
-    sapma raporu gözle bulunamaz hâle getirir.
-    """
-    if value is None:
-        return None
-    raw = str(value).strip().replace(" ", "")
-    if raw == "":
-        return None
-    if "," in raw and "." in raw:
-        raw = raw.replace(",", "") if raw.rfind(".") > raw.rfind(",") else \
-            raw.replace(".", "").replace(",", ".")
-    elif "," in raw:
-        raw = raw.replace(",", ".")
-    try:
-        amount = Decimal(raw)
-    except (InvalidOperation, ValueError):
-        return None
-    return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def now_hm() -> str:

@@ -18,6 +18,9 @@ import {
 } from './kit.js';
 import { mountStudentCard } from './card.js';
 import { createPicker } from './picker.js';
+// Finansal listelerin tek tip araç çubuğu: Önizle · Yazdır · PDF kaydet
+// (63-finans-pdf). Ekrandaki süzgeç (durum, arama) PDF'e aynen gider.
+import { reportToolbar } from '../../ui-kit/report.js';
 
 // STİL `mount()` İÇİNDE YÜKLENİR (ui-kit/kit.js kuralı). Bu dosya kabuğun
 // açılışında yetenek çözümü için (`bbd_payment_request.student_card`) HER
@@ -675,6 +678,24 @@ function renderCollections() {
   }
 }
 
+// ------------------------------------------------------------- PDF raporları
+
+async function morePages(result, first, last) {
+  const data = await api('/api/bbd_payment_request/report/pages', {
+    method: 'POST', body: { path: result.path, first, last }, timeoutSeconds: 120 });
+  if (!data?.ok) throw new Error(data?.error || 'Sayfalar alınamadı.');
+  return data.pages || [];
+}
+
+/** Talepler / nakit tahsilat / borçlu öğrenciler PDF araç çubuğu. */
+function pdfTools(kind, title, extra = () => ({})) {
+  const produce = ({ preview, orientation }) => api('/api/bbd_payment_request/report', {
+    method: 'POST', timeoutSeconds: 300,
+    body: { kind, preview, orientation, classes: Object.fromEntries(classMap), ...extra() },
+  });
+  return reportToolbar({ root: nodes.root, api, toast, produce, morePages, title }).node;
+}
+
 // ------------------------------------------------------------- eylemler
 
 async function withBusy(label, work) {
@@ -1061,7 +1082,9 @@ export function mount(root, ctx) {
   }
   filter.addEventListener('change', () => { statusFilter = filter.value; renderRequests(); });
 
-  tools.append(search, filter, h('span', 'pr-spacer'), button('Yenile', { onClick: refresh }));
+  tools.append(search, filter, h('span', 'pr-spacer'),
+    pdfTools('requests', 'Ödeme talepleri', () => ({ status: statusFilter, query })),
+    button('Yenile', { onClick: refresh }));
   nodes.requestCount = h('div', 'pr-count');
   nodes.requests = h('div', 'pr-table');
   nodes.paneRequests.append(tools, nodes.requestCount, nodes.requests);
@@ -1099,10 +1122,13 @@ export function mount(root, ctx) {
   nodes.paneCollections = h('div', 'pr-pane pr-pane-scroll');
   nodes.collectForm = h('div', 'pr-collect-card');
   nodes.collections = h('div', 'pr-table');
+  const collectionsHead = h('div', 'pr-tools');
+  collectionsHead.append(h('div', 'pr-col-title', 'Bu panelden yapılan nakit tahsilatlar'),
+    h('span', 'pr-spacer'), pdfTools('collections', 'Nakit tahsilatlar'));
   nodes.paneCollections.append(
     h('div', 'pr-col-title', 'Nakit tahsil et'),
     nodes.collectForm,
-    h('div', 'pr-col-title', 'Bu panelden yapılan nakit tahsilatlar'),
+    collectionsHead,
     nodes.collections);
 
   // --- şablonlar ---
@@ -1110,7 +1136,11 @@ export function mount(root, ctx) {
   nodes.templates = h('div', 'pr-templates');
   nodes.paneTemplates.append(nodes.templates);
 
-  view.append(nodes.kpi, nodes.status, tabBar,
+  // Borçlu öğrenciler (kantin açık alacağı) — sınıf ara toplamlı PDF.
+  const debtorsBar = h('div', 'pr-tools pr-report-bar');
+  debtorsBar.append(h('span', 'pr-count', 'Borçlu öğrenciler listesi (kantin açık alacağı)'),
+    h('span', 'pr-spacer'), pdfTools('debtors', 'Borçlu öğrenciler'));
+  view.append(nodes.kpi, debtorsBar, nodes.status, tabBar,
     nodes.paneRequests, nodes.paneSend, nodes.paneCollections, nodes.paneTemplates);
   root.replaceChildren(view);
 

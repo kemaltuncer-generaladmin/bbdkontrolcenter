@@ -50,6 +50,12 @@ SERVICE_REQUESTS_PER_MINUTE = 1200
 #: Geçersiz servis anahtarı denemesi — kaynak (IP) başına, dakikada.
 SERVICE_FAILURES_PER_MINUTE = 10
 
+#: Kimlik kapısı bağımlılıklarının üstündeki işaretler (güvenlik envanteri, iş 63):
+#: `km_permissions` = kapının sorduğu izinler (BİRİ yeterli), `km_authenticated` =
+#: oturum/servis anahtarı ister. Yalnız okunur; yetki kararına katılmaz.
+KM_PERMISSIONS_ATTR = "km_permissions"
+KM_AUTHENTICATED_ATTR = "km_authenticated"
+
 
 def split_permission(entry: str) -> tuple[str, str | None]:
     key, _, scope = entry.partition(":")
@@ -232,6 +238,10 @@ def requires(*permissions: str) -> Any:
                 raise HTTPException(status_code=403, detail="Bu işlem için yetkiniz yok.")
             yield user
 
+    # GÜVENLİK ENVANTERİ (iş 63). Kapının hangi izni sorduğu bağımlılığın
+    # üstünde okunur durur; `tools/security/endpoint_inventory.py` uç başına
+    # izin tablosunu buradan çıkarır. Davranışa etkisi yoktur.
+    setattr(dependency, KM_PERMISSIONS_ATTR, tuple(permissions))
     return Depends(dependency)
 
 
@@ -258,11 +268,30 @@ async def confirm_pin(request: Request, actor: CurrentUser, pin: str,
     if identity is None:  # pragma: no cover — lifespan kurmadan istek gelmez
         raise HTTPException(status_code=503, detail="Kimlik hazır değil.")
 
+    # YANLIŞ PIN SINIRI (iş 63, bulgu KM-02). Teyit kapısı oturumu açık bir
+    # kişinin PIN'ini SINIRSIZ deneyebileceği bir yerdi: ele geçmiş bir oturumla
+    # PIN kaba kuvvetle bulunup yıkıcı işlemler açılabilirdi. Yalnız YANLIŞ
+    # denemeler sayılır (kişi başına, kayan pencere); dolunca teyit 429'dur ve
+    # denetim izine düşer. Oturum kapanmaz — meşru kullanıcı beklemeyle döner.
+    failures = _state_limiter(
+        request, "step_up_failures",
+        source_limit=max(1, _config_int(request, "auth.step_up_max_failures", 5)),
+        source_window=60.0 * max(1, _config_int(request, "auth.step_up_window_minutes", 15)),
+        global_limit=1_000_000, global_window=60.0,
+    )
+    wait = failures.peek(actor.id)
+    if wait is not None:
+        await identity.audit(actor.id, action, result="denied",
+                             detail="PIN teyidi geçici olarak kapalı (çok fazla yanlış deneme)")
+        raise _too_many(wait)
+
     row = await identity.store.fetch_one(
         "SELECT secret_lookup FROM users WHERE id = ?", (actor.id,)
     )
     stored = str((row or {}).get("secret_lookup") or "")
     if not stored or not hmac.compare_digest(stored, identity.secret_lookup(pin)):
+        failures.check(actor.id)
         await identity.audit(actor.id, action, result="denied",
                              detail="PIN teyidi başarısız")
         raise HTTPException(status_code=403, detail="PIN doğrulanamadı.")
+    failures.reset(actor.id)

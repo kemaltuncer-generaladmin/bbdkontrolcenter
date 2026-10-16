@@ -17,6 +17,11 @@ import {
   studentPicker, toolbar,
 } from './common.js';
 import { bulkTargetField } from './bulk-target.js';
+import { T as BULK, resultText } from './resources-bulk-logic.js';
+import { followBulkJob } from './wizard.js';
+
+/** `admin_createResourceAssignments` tek istekte en çok kaynak; fazlası toplu atama ucuna gider. */
+const SINGLE_MAX = 50;
 import {
   KINDS, TARGET_KINDS, clean, loadPackages, loadTargets, resourceCell, resourceListField, resourcePicker,
   stackCell, targetsField,
@@ -26,7 +31,7 @@ import {
 
 export function assignmentsTab(app, ctx) {
   const node = h('div', 'ak-stack');
-  const filters = { resourceId: '', packageId: '', classGroupId: '', studentGroupId: '', studentId: '' };
+  const filters = { resourceId: '', packageId: '', classGroupId: '', studentGroupId: '', studentId: '', batchId: '' };
   const reloadSoon = () => list.reload();
 
   const resourceFilter = pickedFilter('Kaynak', (done) => resourcePicker(app, { placeholder: 'Kaynağa göre süz',
@@ -46,6 +51,21 @@ export function assignmentsTab(app, ctx) {
   fillSelects(app, { classSelect, groupSelect });
   const add = actionButton(app, 'admin_createResourceAssignments', 'Yeni atama', { variant: 'primary',
     onClick: () => ctx.assign({}) });
+  // README §14 madde 116: BBD Store kataloğundan ücretsiz toplu atama + geçmiş / geri alma.
+  const bulkAssign = actionButton(app, 'admin_bulkAssignResources', BULK.open, { onClick: () => ctx.bulkAssign?.() });
+  const batches = actionButton(app, 'admin_listResourceAssignmentBatches', BULK.batches, {
+    onClick: () => ctx.showBatches?.() });
+  // "Toplu atama" süzgeci yalnız derin bağlantıyla gelir (sonuç penceresi / Toplu atamalar); çipten kaldırılır.
+  const batchSlot = h('span');
+  const paintBatch = () => {
+    batchSlot.replaceChildren();
+    if (!filters.batchId) return;
+    const chip = h('button', 'kit-chip on', 'Toplu atama ✕');
+    chip.type = 'button';
+    chip.title = 'Toplu atama süzgecini kaldır';
+    chip.addEventListener('click', () => { filters.batchId = ''; paintBatch(); reloadSoon(); });
+    batchSlot.append(chip);
+  };
   // Toplu kaldırma (0.5.4): seçili atamalar ya da kaynak(lar) × hedef; tek işlem, önce sayılır.
   const removeSelected = actionButton(app, 'admin_bulkDeleteResourceAssignments', 'Seçilenleri kaldır', {
     onClick: () => bulkRemove({ assignmentIds: list.table.selection() }) });
@@ -53,7 +73,7 @@ export function assignmentsTab(app, ctx) {
   const bulk = actionButton(app, 'admin_bulkDeleteResourceAssignments', 'Toplu kaldır', {
     onClick: () => bulkRemove({}) });
   node.append(toolbar(resourceFilter.node, packageSelect.node, classSelect.node, groupSelect.node,
-    studentFilter.node, h('span', 'kit-spacer'), removeSelected, bulk, add));
+    studentFilter.node, batchSlot, h('span', 'kit-spacer'), removeSelected, bulk, batches, bulkAssign, add));
 
   let list;
   list = pagedList({
@@ -70,7 +90,8 @@ export function assignmentsTab(app, ctx) {
         return cell;
       } },
       { key: 'target', label: 'Hedef', width: 'minmax(0, 1.4fr)', cell: (row) => stackCell(row.target?.label || '—',
-        TARGET_KINDS[row.target?.kind] || row.target?.kind || '') },
+        [TARGET_KINDS[row.target?.kind] || row.target?.kind || '', row.batchId ? 'Toplu atama' : '']
+          .filter(Boolean).join(' · ')) },
       { key: 'students', label: 'Öğrenci', width: '80px', align: 'num', cell: (row) => num(row.studentCount) },
       { key: 'targetDate', label: 'Hedef bitiş', width: '100px', cell: (row) => fmtDate(row.targetDate) },
       { key: 'assigned', label: 'Atama', width: '150px', cell: (row) => stackCell(fmtDateTime(row.assignedAt),
@@ -133,7 +154,10 @@ export function assignmentsTab(app, ctx) {
     reload() { refreshPackages(); return list.reload(); },
     /** Başka yerden süzgeçli açılış: {resourceId, resourceTitle} | {packageId} | {studentId, studentName}. */
     filter(next = {}) {
-      Object.assign(filters, { resourceId: '', packageId: '', classGroupId: '', studentGroupId: '', studentId: '' });
+      Object.assign(filters, { resourceId: '', packageId: '', classGroupId: '', studentGroupId: '', studentId: '',
+        batchId: '' });
+      filters.batchId = next.batchId || '';
+      paintBatch();
       filters.resourceId = next.resourceId || '';
       filters.packageId = next.packageId || '';
       filters.classGroupId = next.classGroupId || '';
@@ -317,16 +341,33 @@ export async function assignDialog(app, { resources = [], packageId = null, onDo
         ? null : 'En az bir sınıf, çalışma grubu ya da öğrenci seçin.') },
     ],
     submitLabel: 'Ata',
-    onSubmit: (draft, { key }) => app.api.post('/v1/admin/resource-assignments', {
-      resourceIds: draft.what === 'package' ? [] : chosen.map((item) => item.id),
-      packageId: draft.what === 'package' ? selectedPackage : null,
-      classGroupIds: targets.classGroupIds,
-      studentGroupIds: targets.studentGroupIds,
-      studentIds: targets.studentIds,
-      targetDate: draft.targetDate || null,
-    }, { key }),
+    onSubmit: async (draft, { key }) => {
+      if (draft.what !== 'package' && chosen.length > SINGLE_MAX) {
+        // 50'den çok kaynak: toplu atama ucu (README §14 madde 116; en çok 1.500, büyüğü arka planda).
+        const job = await app.api.post('/v1/admin/resource-assignments/bulk', {
+          resourceIds: chosen.map((item) => item.id),
+          target: { classGroupIds: targets.classGroupIds, studentGroupIds: targets.studentGroupIds,
+            studentIds: targets.studentIds },
+          targetDate: draft.targetDate || null,
+        }, { key });
+        return { bulk: await followBulkJob(app, job) };
+      }
+      return app.api.post('/v1/admin/resource-assignments', {
+        resourceIds: draft.what === 'package' ? [] : chosen.map((item) => item.id),
+        packageId: draft.what === 'package' ? selectedPackage : null,
+        classGroupIds: targets.classGroupIds,
+        studentGroupIds: targets.studentGroupIds,
+        studentIds: targets.studentIds,
+        targetDate: draft.targetDate || null,
+      }, { key });
+    },
   });
   if (!result || result === true) return null;
+  if (result.bulk) {
+    app.toast(resultText(result.bulk.resources), 'good');
+    onDone?.(result);
+    return result;
+  }
   const items = result.items || [];
   const students = items.reduce((acc, item) => acc + (item.studentCount || 0), 0);
   app.toast(`${num(items.length)} atama yapıldı${students ? ` (${num(students)} öğrenci)` : ''}.`, 'good');

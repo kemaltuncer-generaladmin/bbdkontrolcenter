@@ -15,6 +15,7 @@ from modules.bbd_akademi.backend.permission_map import (
     OPERATION_OVERRIDES,
     PERMISSION_MAP,
     km_permissions,
+    requires_step_up,
     unmapped,
 )
 from modules.bbd_akademi.tests.akademi_fakes import Akademi, Identity, auth, user
@@ -157,7 +158,7 @@ async def test_her_yol_eslenen_km_iznini_ister(client: httpx.AsyncClient, akadem
         assert akademi.calls == []
 
     headers = auth("with")
-    if operation.step_up:
+    if requires_step_up(operation):
         # Step-up işlemi belirteçsiz reddedilir; geçiş yolu ayrı testte (test_step_up).
         refused = await client.request(operation.method, url, headers=headers, json={})
         assert refused.status_code == 403

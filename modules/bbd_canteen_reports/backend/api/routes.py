@@ -42,11 +42,26 @@ class ReportBody(BaseModel):
 
 
 class ExportBody(BaseModel):
-    kind: str = Field(pattern=r"^(summary_pdf|products_pdf|student_pdf|students_csv|products_csv)$")
+    kind: str = Field(
+        pattern=r"^(summary_pdf|products_pdf|student_pdf|students_pdf|students_csv|products_csv)$")
     start: str = Field(pattern=DATE)
     end: str = Field(pattern=DATE)
     studentId: str | None = Field(default=None, max_length=64)
     classes: dict[str, str] = Field(default_factory=dict)
+    # Ekrandaki süzgeçler PDF'e aynen gider (63-finans-pdf): öğrenci araması,
+    # sıralama ve sayfa yönü. `preview=false` → görüntü üretilmez (Yazdır/PDF kaydet).
+    query: str = Field(default="", max_length=80)
+    sort: str = Field(default="total", pattern=r"^(total|count|units|balance|name)$")
+    orientation: str = Field(default="portrait", pattern=r"^(portrait|landscape)$")
+    preview: bool = True
+
+
+class PagesBody(BaseModel):
+    """Önizlemenin kalan sayfaları — yol yalnız bu modülün rapor klasöründen."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    first: int = Field(ge=1, le=9999)
+    last: int = Field(ge=1, le=9999)
 
 
 class PrintBody(BaseModel):
@@ -118,7 +133,7 @@ async def export(
     user: CurrentUser = requires("bbd_canteen_reports.export"),
 ) -> dict[str, Any]:
     """PDF/CSV üretir, masaüstündeki rapor klasörüne yazar ve yolunu döner."""
-    return await service().export(body.kind, body.model_dump())
+    return await service().export(body.kind, body.model_dump(), author=user.full_name or "")
 
 
 @router.post("/preview")
@@ -126,8 +141,17 @@ async def preview(
     body: ExportBody,
     user: CurrentUser = requires("bbd_canteen_reports.export"),
 ) -> dict[str, Any]:
-    """Raporu üretir ve BASILACAK PDF'in sayfalarını görüntü olarak döner."""
-    return await service().preview(body.kind, body.model_dump())
+    """Raporu üretir ve BASILACAK PDF'in ilk sayfalarını görüntü olarak döner."""
+    return await service().preview(body.kind, body.model_dump(), author=user.full_name or "")
+
+
+@router.post("/pages")
+async def pages(
+    body: PagesBody,
+    user: CurrentUser = requires("bbd_canteen_reports.export"),
+) -> dict[str, Any]:
+    """Önizleme penceresi kaydırıldıkça sonraki sayfalar (en çok 12)."""
+    return await service().pages(body.path, body.first, body.last)
 
 
 @router.get("/printer")

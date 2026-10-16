@@ -232,13 +232,20 @@ class UserNotFound(IdentityError):
 class Identity:
     def __init__(self, store: StoreLike, pepper: str, *, pin_min_length: int = 6,
                  max_failed_attempts: int = 5, lockout_minutes: int = 15,
-                 session_idle_minutes: int = 30) -> None:
+                 session_idle_minutes: int = 30,
+                 session_absolute_hours: int = 12) -> None:
         self.store = store
         self._pepper = pepper.encode("utf-8")
         self.pin_min_length = pin_min_length
         self.max_failed_attempts = max_failed_attempts
         self.lockout_minutes = lockout_minutes
         self.session_idle_minutes = session_idle_minutes
+        # MUTLAK ÖMÜR (iş 63, bulgu KM-04 — OWASP ASVS 3.3). Boşta kalma süresi
+        # her istekte tazelendiği için açık bırakılmış bir masaüstünün oturumu
+        # hiç düşmüyordu; çalınan bir belirteç de sonsuza dek yaşardı. Oturum,
+        # kullanımdan bağımsız olarak açıldıktan bu kadar saat sonra kapanır
+        # (bir iş günü). 0 = sınır yok (eski davranış).
+        self.session_absolute_hours = session_absolute_hours
 
     # ------------------------------------------------------------------ sır
 
@@ -605,6 +612,15 @@ class Identity:
             "failed_attempts = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
             (_hasher.hash(password), lookup, now(), now(), user_id),
         )
+        # PIN DEĞİŞİNCE AÇIK OTURUMLAR KAPANIR (iş 63, bulgu KM-03 — ASVS 3.3.3).
+        # PIN'i sıfırlanan kişinin eski oturumları (belki çalınmış bir belirteç)
+        # yeni PIN'le birlikte geçersiz olur. İSTİSNA: yönetici KENDİ PIN'ini
+        # yönetim ekranından değiştiriyorsa o an kullandığı oturum düşürülmez —
+        # ekranın ortasında giriş ekranına atılmak iş kaybıdır. Kendi isteğiyle
+        # değişiklikte (`set_password_with_secret`) bütün oturumlar kapanır ve
+        # yenisi açılır.
+        if actor_id != user_id:
+            await self.store.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         await self.audit(actor_id, "users.set_password", result="ok", detail=user_id)
 
     async def set_password_with_secret(
@@ -639,6 +655,9 @@ class Identity:
             return None
 
         await self.set_password(str(row["id"]), password, actor_id=str(row["id"]))
+        # Kendi isteğiyle değişiklik: öteki cihazlardaki oturumlar da kapanır
+        # (bulgu KM-03); kişi yanıtla gelen yeni oturumla devam eder.
+        await self.store.execute("DELETE FROM sessions WHERE user_id = ?", (str(row["id"]),))
         fresh = await self.get_user(str(row["id"]))
         return await self._open_session(fresh)
 
@@ -751,13 +770,15 @@ class Identity:
 
     async def resolve_session(self, token: str) -> CurrentUser | None:
         row = await self.store.fetch_one(
-            "SELECT s.user_id, s.expires_at, s.last_seen AS session_last_seen, u.* "
+            "SELECT s.user_id, s.expires_at, s.last_seen AS session_last_seen, "
+            "s.created_at AS session_created_at, u.* "
             "FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
             (_hash_token(token),),
         )
         if row is None:
             return None
-        if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
+        if (datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC)
+                or self._past_absolute_lifetime(row.get("session_created_at"))):
             await self.store.execute("DELETE FROM sessions WHERE token = ?", (_hash_token(token),))
             return None
         if row["status"] != "active" or _is_service(row):
@@ -774,6 +795,20 @@ class Identity:
                 (now(), expires.isoformat(timespec="seconds"), _hash_token(token)),
             )
         return await self._current_user(row)
+
+    def _past_absolute_lifetime(self, created_at: Any) -> bool:
+        """Oturum mutlak ömrünü doldurdu mu (bulgu KM-04)? Okunamayan değer
+        ESKİ sayılmaz: bozuk bir zaman damgası herkesi dışarı atmamalı; boşta
+        kalma süresi yine geçerlidir."""
+        if self.session_absolute_hours <= 0 or not created_at:
+            return False
+        try:
+            opened = datetime.fromisoformat(str(created_at))
+        except ValueError:
+            return False
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=UTC)
+        return datetime.now(UTC) - opened > timedelta(hours=self.session_absolute_hours)
 
     async def logout(self, token: str) -> None:
         await self.store.execute("DELETE FROM sessions WHERE token = ?", (_hash_token(token),))

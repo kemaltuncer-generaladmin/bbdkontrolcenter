@@ -255,7 +255,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
     const app = makeApp(root, api, {});
     const tab = week.weekTab(app, {});
     root.append(tab.node);
-    await tab.reload();
+    tab.open((await app.lookups.classGroups())[0].id);
     await sleep(40);
     buttons(root, 'Çakışmaları denetle')[0].click();
     await sleep(40);

@@ -89,10 +89,11 @@ export function sourceLabel(source) {
   return source.description || 'Diğer';
 }
 
-/** "Fizik · Newton'un Yasaları · Bilfen · s. 48". */
+/** "TYT · Fizik · Newton'un Yasaları · Bilfen · s. 48" — kapsam etiketi önde (Akademi README §14 madde 114). */
 export function mistakeLabel(mistake) {
   if (!mistake) return '';
-  return [mistake.subject?.name, mistake.topic?.name, sourceLabel(mistake.source)].filter(Boolean).join(' · ');
+  return [mistake.scope?.label, mistake.subject?.name, mistake.topic?.name, sourceLabel(mistake.source)]
+    .filter(Boolean).join(' · ');
 }
 
 /** Varsayılan yanıtlayan: kaydın sorumlusu. */

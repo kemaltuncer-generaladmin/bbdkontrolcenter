@@ -96,9 +96,12 @@ def run(scenario: str, *, panels: tuple[str, ...] = (), routes: dict[str, Any] |
         base = Path(folder)
         (base / "package.json").write_text('{"type": "module"}', encoding="utf-8")
         shutil.copytree(SHELL / "ui-kit", base / "ui-kit")
-        for name in ("ui-kernel.js", "global-search.js", "icons.js", "style.css", "index.html"):
-            if (SHELL / name).exists():
-                shutil.copy(SHELL / name, base / name)
+        # Kabuğun KÖK dosyalarının tamamı (ADR 0032 ile `net.js`, `connection.js`,
+        # `native.js`… eklendi; `ui-kernel.js` onları import ediyor). Liste elle
+        # tutulsaydı her yeni dosyada bütün kabuk testleri "modül yok" diye düşerdi.
+        for path in sorted(SHELL.iterdir()):
+            if path.is_file() and path.suffix in {".js", ".css", ".html"}:
+                shutil.copy(path, base / path.name)
         (base / "a11y").mkdir()
         for name in ("dom.mjs", "audit.mjs"):
             shutil.copy(HERE / name, base / "a11y" / name)

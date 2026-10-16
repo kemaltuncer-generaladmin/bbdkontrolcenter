@@ -244,7 +244,7 @@ pub fn printer_select(app: tauri::AppHandle, name: String) -> Result<PrinterPref
 }
 
 #[cfg(windows)]
-fn spool(file: &Path, printer: &str, helper: Option<PathBuf>) -> Result<(), String> {
+fn spool(file: &Path, printer: &str, helper: Option<PathBuf>, job: &Job) -> Result<(), String> {
     // WINDOWS'TA PDF BASMANIN HAZIR BİR KOMUTU YOKTUR.
     //
     // `Start-Process -Verb PrintTo` kayıtlı PDF işleyicisine bağlıdır ve
@@ -255,14 +255,23 @@ fn spool(file: &Path, printer: &str, helper: Option<PathBuf>) -> Result<(), Stri
         "Windows yazdırma yardımcısı (SumatraPDF) kurulumda bulunamadı. \
          Uygulamayı yeniden kurmak gerekiyor.",
     )?;
+    // SumatraPDF `-print-settings`: virgülle ayrılmış sayfa aralıkları ve
+    // `Nx` kopya sayısı ("1-3,5,2x"). Kopya tek işte basılır.
+    let mut settings: Vec<String> = Vec::new();
+    if let Some(pages) = &job.pages {
+        settings.push(pages.clone());
+    }
+    if job.copies > 1 {
+        settings.push(format!("{}x", job.copies));
+    }
+    let mut args: Vec<String> = vec!["-print-to".into(), printer.into()];
+    if !settings.is_empty() {
+        args.push("-print-settings".into());
+        args.push(settings.join(","));
+    }
+    args.extend(["-silent".into(), "-exit-when-done".into(), file.to_string_lossy().into_owned()]);
     let out = Command::new(&exe)
-        .args([
-            "-print-to",
-            printer,
-            "-silent",
-            "-exit-when-done",
-            &file.to_string_lossy(),
-        ])
+        .args(&args)
         .output()
         .map_err(|e| format!("Yazdırma yardımcısı çalıştırılamadı: {e}"))?;
     if !out.status.success() {
@@ -274,11 +283,58 @@ fn spool(file: &Path, printer: &str, helper: Option<PathBuf>) -> Result<(), Stri
     Ok(())
 }
 
+/// Tek baskı işinin seçenekleri (yazdırma penceresinden gelir).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Job {
+    /// 1–20 kopya. Yazıcı harmanlar; iş kuyrukta tek satırdır.
+    pub copies: u32,
+    /// Doğrulanmış sayfa aralığı ("1-3,5"); `None` = bütün sayfalar.
+    pub pages: Option<String>,
+}
+
+/// Kullanıcının yazdığı sayfa aralığını doğrular ve sadeleştirir.
+///
+/// SERBEST METİN KOMUTA GİTMEZ. Aralık `lp`ye ve Windows yardımcısına argüman
+/// olarak geçiyor; yalnız rakam, virgül ve tire kabul edilir, her parça
+/// `a` ya da `a-b` (1 ≤ a ≤ b ≤ 9999) olmalıdır. Boş metin "bütün sayfalar"dır.
+pub fn page_ranges(text: &str) -> Result<Option<String>, String> {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        return Ok(None);
+    }
+    let invalid = || {
+        format!(
+            "Sayfa aralığı anlaşılamadı: “{}”. Örnek: 1-3, 5 (boş bırakılırsa bütün sayfalar).",
+            text.trim()
+        )
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for piece in compact.split(',') {
+        if piece.is_empty() {
+            continue;
+        }
+        let mut bounds = piece.splitn(2, '-');
+        let start: u32 = bounds.next().unwrap_or("").parse().map_err(|_| invalid())?;
+        let end: u32 = match bounds.next() {
+            Some(raw) => raw.parse().map_err(|_| invalid())?,
+            None => start,
+        };
+        if start == 0 || end < start || end > 9999 {
+            return Err(invalid());
+        }
+        parts.push(if start == end { start.to_string() } else { format!("{start}-{end}") });
+    }
+    if parts.is_empty() || parts.len() > 50 {
+        return Err(invalid());
+    }
+    Ok(Some(parts.join(",")))
+}
+
 /// Raporların kâğıt boyutu. Çekirdek A4 üretiyor (`platform.printer.media`).
 const MEDIA: &str = "A4";
 
 #[cfg(not(windows))]
-fn spool(file: &Path, printer: &str, _helper: Option<PathBuf>) -> Result<(), String> {
+fn spool(file: &Path, printer: &str, _helper: Option<PathBuf>, job: &Job) -> Result<(), String> {
     // KÂĞIT BOYUTU İKİ ADLA BİRDEN SÖYLENİR — pahalıya mal olmuş bir ders.
     //
     // Söylenmezse kullanıcının `~/.cups/lpoptions` dosyasındaki varsayılan
@@ -307,14 +363,27 @@ fn spool(file: &Path, printer: &str, _helper: Option<PathBuf>) -> Result<(), Str
     // `job-cancel-after` işin toplam ömrünü bağlar: bu süre içinde basılamayan
     // iş kuyruktan DÜŞER, sonsuza dek yeniden denenmez. Rapor basımı saniyeler
     // sürer; buradaki süre cömert bir tavandır ve normal baskıya dokunmaz.
-    run(
-        "lp",
-        &["-d", printer, "-o", &format!("media={MEDIA}"),
-          "-o", &format!("PageSize={MEDIA}"),
-          "-o", &format!("job-cancel-after={JOB_LIFETIME_SECONDS}"),
-          &file.to_string_lossy()],
-    )
-    .map(|_| ())
+    //
+    // KOPYA VE SAYFA ARALIĞI TEK İŞTE. Kopya için işi N kez kuyruğa vermek
+    // yerine `-n` kullanılır (yazıcı harmanlar, kuyrukta tek satır görünür);
+    // aralık `page-ranges` ile CUPS'a söylenir ("1-3,5").
+    let mut args: Vec<String> = vec![
+        "-d".into(), printer.into(),
+        "-o".into(), format!("media={MEDIA}"),
+        "-o".into(), format!("PageSize={MEDIA}"),
+        "-o".into(), format!("job-cancel-after={JOB_LIFETIME_SECONDS}"),
+    ];
+    if job.copies > 1 {
+        args.push("-n".into());
+        args.push(job.copies.to_string());
+    }
+    if let Some(pages) = &job.pages {
+        args.push("-o".into());
+        args.push(format!("page-ranges={pages}"));
+    }
+    args.push(file.to_string_lossy().into_owned());
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run("lp", &refs).map(|_| ())
 }
 
 /// Windows yardımcısının kurulumdaki yolu. Diğer sistemlerde `None`.
@@ -330,17 +399,25 @@ fn helper_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// PDF'i seçili yazıcıya basar. `data` base64'tür.
+/// PDF'i yazıcıya basar. `data` base64'tür.
 ///
 /// BAYTLAR GÖVDEYLE GELİR, yol ile değil: PDF sunucunun diskinde üretiliyor ve
 /// kullanıcının makinesinde öyle bir dosya yok. Kabuk onu geçici bir dosyaya
 /// yazıp yerel kuyruğa verir ve İŞİ BİTİNCE SİLER — rapor kişisel veri taşıyor.
+///
+/// YAZDIRMA PENCERESİ (finansal raporlar, 63-finans-pdf): `printer` doluysa
+/// baskı o yazıcıya gider — ama YALNIZ bu cihazda kuruluysa (liste
+/// alınabildiyse doğrulanır); boşsa ayardaki seçim / sistemin varsayılanı.
+/// `pages` sayfa aralığıdır ("1-3,5"), `copies` 1–20. Pencere açmayan eski
+/// çağrılar (yalnız `data`, `name`, `copies`) aynen çalışır.
 #[tauri::command]
 pub fn printer_print(
     app: tauri::AppHandle,
     data: String,
     name: String,
     copies: Option<u32>,
+    printer: Option<String>,
+    pages: Option<String>,
 ) -> Result<String, String> {
     use base64::Engine as _;
 
@@ -348,7 +425,21 @@ pub fn printer_print(
     // "şuraya basacak" yazan ad ile işin gittiği kuyruk ayrı hesaplanırsa
     // kullanıcı ekrana bakarak hatayı çözemez.
     let (installed, system_default, error) = discover();
-    let printer = resolve(&read_pref(&app).name, &installed, &system_default, &error)?;
+    let wanted = printer.unwrap_or_default().trim().to_string();
+    let printer = if wanted.is_empty() {
+        resolve(&read_pref(&app).name, &installed, &system_default, &error)?
+    } else if installed.is_empty() || installed.iter().any(|entry| *entry == wanted) {
+        wanted
+    } else {
+        return Err(format!(
+            "“{wanted}” yazıcısı bu cihazda kurulu değil. Kurulu yazıcılar: {}.",
+            installed.join(", ")
+        ));
+    };
+    let job = Job {
+        copies: copies.unwrap_or(1).clamp(1, 20),
+        pages: page_ranges(pages.as_deref().unwrap_or(""))?,
+    };
 
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -357,10 +448,12 @@ pub fn printer_print(
         return Err("Belge boş geldi; yazdırma denenmedi.".into());
     }
 
-    // BİR TIKLAMA BİR BASKI. Aynı belge aynı yazıcıya birkaç saniye içinde
-    // ikinci kez gelirse kuyruğa VERİLMEZ. Kasıtlı ikinci baskı engellenmez:
-    // pencere geçtikten sonra ya da `copies` ile alınır.
-    let damga = ozet(&bytes);
+    // BİR TIKLAMA BİR BASKI. Aynı belge aynı yazıcıya AYNI seçeneklerle
+    // birkaç saniye içinde ikinci kez gelirse kuyruğa VERİLMEZ. Kasıtlı ikinci
+    // baskı engellenmez: pencere geçtikten sonra ya da `copies` ile alınır;
+    // farklı sayfa aralığı ayrı iştir.
+    let damga = ozet(&bytes)
+        ^ ozet(format!("{}|{}", job.copies, job.pages.clone().unwrap_or_default()).as_bytes());
     {
         let mut son = SON_BASKI.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((onceki, onceki_damga, an)) = son.as_ref() {
@@ -377,27 +470,14 @@ pub fn printer_print(
         *son = Some((printer.clone(), damga, Instant::now()));
     }
 
-    let safe = name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
-        .collect::<String>();
-    let stem = if safe.is_empty() { "belge.pdf".to_string() } else { safe };
-    // AD BELGEYE ÖZGÜ OLMALI. Eskiden yalnız süreç kimliği ve ad kullanılıyordu;
-    // Türkçe rapor adları ASCII süzgecinden geçince ("Öğrenci Raporu.pdf" →
-    // "renciRaporu.pdf") farklı raporlar aynı geçici dosyaya düşebiliyordu.
-    // Özet eklenince her belge kendi dosyasını alır.
+    // AD BELGEYE ÖZGÜ OLMALI. Türkçe rapor adları ASCII süzgecinden geçince
+    // ("Öğrenci Raporu.pdf" → "renciRaporu.pdf") farklı raporlar aynı geçici
+    // dosyaya düşebiliyordu; özet eklenince her belge kendi dosyasını alır.
     let file = std::env::temp_dir()
-        .join(format!("km-{}-{:016x}-{}", std::process::id(), damga, stem));
+        .join(format!("km-{}-{:016x}-{}", std::process::id(), damga, safe_stem(&name)));
     std::fs::write(&file, &bytes).map_err(|e| format!("Geçici dosya yazılamadı: {e}"))?;
 
-    let helper = helper_path(&app);
-    let mut sonuc = Ok(());
-    for _ in 0..copies.unwrap_or(1).clamp(1, 20) {
-        sonuc = spool(&file, &printer, helper.clone());
-        if sonuc.is_err() {
-            break;
-        }
-    }
+    let sonuc = spool(&file, &printer, helper_path(&app), &job);
 
     // KİŞİSEL VERİ GEÇİCİ KLASÖRDE BIRAKILMAZ. Silinememesi baskıyı
     // başarısız saymaz; iş zaten kuyruğa girmiştir.
@@ -405,9 +485,213 @@ pub fn printer_print(
     sonuc.map(|_| printer)
 }
 
+/// Dosya adının güvenli ASCII gövdesi (geçici dosya için).
+fn safe_stem(name: &str) -> String {
+    let safe = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-' || *c == '_')
+        .collect::<String>();
+    if safe.is_empty() { "belge.pdf".to_string() } else { safe }
+}
+
+// ------------------------------------------------------------- PDF kaydet
+
+/// Önerilen dosya adını kaydetmeye uygun hâle getirir: yol ayracı ve denetim
+/// karakteri atılır, `.pdf` uzantısı garanti edilir. Türkçe harfler KALIR —
+/// kullanıcı "Kurum Cari Hesaplar 16.10.2026.pdf" görmeli.
+pub fn suggested_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '-' } else { c })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string();
+    let base = if cleaned.is_empty() { "rapor".to_string() } else { cleaned };
+    let mut base: String = base.chars().take(120).collect();
+    if !base.to_lowercase().ends_with(".pdf") {
+        base.push_str(".pdf");
+    }
+    base
+}
+
+/// `klasör/ad.pdf` doluysa `ad (2).pdf`, `ad (3).pdf` … — üzerine yazılmaz.
+pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let stem = name.strip_suffix(".pdf").or_else(|| name.strip_suffix(".PDF")).unwrap_or(name);
+    for index in 2..1000 {
+        let candidate = dir.join(format!("{stem} ({index}).pdf"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(format!("{stem}-{}.pdf", std::process::id()))
+}
+
+/// Kullanıcının "İndirilenler" klasörü (yoksa ev dizini).
+fn downloads_dir() -> PathBuf {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    for name in ["Downloads", "İndirilenler"] {
+        let candidate = home.join(name);
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    home
+}
+
+/// İşletim sisteminin kaydet penceresi. `Ok(None)` = kullanıcı vazgeçti;
+/// `Err` = pencere açılamadı (çağıran İndirilenler'e yazar).
+#[cfg(target_os = "macos")]
+fn save_dialog(dir: &Path, name: &str) -> Result<Option<PathBuf>, String> {
+    let quote = |text: &str| text.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "POSIX path of (choose file name with prompt \"PDF olarak kaydet\" \
+         default name \"{}\" default location (POSIX file \"{}\"))",
+        quote(name),
+        quote(&dir.to_string_lossy())
+    );
+    let out = Command::new("osascript")
+        .args(["-e", "activate", "-e", &script])
+        .output()
+        .map_err(|e| format!("Kaydet penceresi açılamadı: {e}"))?;
+    if !out.status.success() {
+        // -128 = "User canceled". Başka hata pencerenin açılamadığıdır.
+        let err = String::from_utf8_lossy(&out.stderr);
+        return if err.contains("-128") { Ok(None) } else { Err(err.trim().to_string()) };
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok((!path.is_empty()).then(|| PathBuf::from(path)))
+}
+
+#[cfg(windows)]
+fn save_dialog(dir: &Path, name: &str) -> Result<Option<PathBuf>, String> {
+    let quote = |text: &str| text.replace('\'', "''");
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         $d = New-Object System.Windows.Forms.SaveFileDialog; \
+         $d.Filter = 'PDF belgesi (*.pdf)|*.pdf'; $d.Title = 'PDF olarak kaydet'; \
+         $d.FileName = '{}'; $d.InitialDirectory = '{}'; $d.OverwritePrompt = $true; \
+         if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ \
+           [Console]::OutputEncoding = [Text.Encoding]::UTF8; $d.FileName }}",
+        quote(name),
+        quote(&dir.to_string_lossy())
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
+        .output()
+        .map_err(|e| format!("Kaydet penceresi açılamadı: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok((!path.is_empty()).then(|| PathBuf::from(path)))
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn save_dialog(dir: &Path, name: &str) -> Result<Option<PathBuf>, String> {
+    let target = dir.join(name).to_string_lossy().into_owned();
+    // zenity (GNOME) → kdialog (KDE). Çıkış 1 = vazgeçildi.
+    let attempts: [(&str, Vec<String>); 2] = [
+        ("zenity", vec!["--file-selection".into(), "--save".into(), "--confirm-overwrite".into(),
+                        "--title=PDF olarak kaydet".into(), format!("--filename={target}")]),
+        ("kdialog", vec!["--getsavefilename".into(), target.clone(), "*.pdf".into()]),
+    ];
+    for (program, args) in attempts {
+        let Ok(out) = Command::new(program).args(&args).output() else { continue };
+        if out.status.code() == Some(1) {
+            return Ok(None);
+        }
+        if out.status.success() {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            return Ok((!path.is_empty()).then(|| PathBuf::from(path)));
+        }
+    }
+    Err("Kaydet penceresi açılamadı (zenity/kdialog yok).".into())
+}
+
+/// PDF'i BU CİHAZA kaydeder ve kaydedilen yolu döndürür; vazgeçilirse boş metin.
+///
+/// NEDEN KABUKTA. Web görünümünde `<a download>` macOS'un WKWebView'ında
+/// hiçbir şey yapmıyor (indirme işleyicisi yok); kullanıcı "PDF kaydet"e basıp
+/// dosyanın nereye gittiğini bulamıyordu. Kaydet penceresi işletim sisteminin
+/// kendisidir (macOS `choose file name`, Windows `SaveFileDialog`, Linux
+/// zenity/kdialog) — eklenti gerekmez. Pencere açılamazsa dosya
+/// "İndirilenler"e, üzerine yazmadan kaydedilir ve yolu söylenir.
+///
+/// ASYNC: pencere açıkken kabuğun ana iş parçacığı bekletilmez.
+#[tauri::command]
+pub async fn pdf_save(data: String, name: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || save_blocking(&data, &name))
+        .await
+        .map_err(|e| format!("Kaydetme yarıda kaldı: {e}"))?
+}
+
+fn save_blocking(data: &str, name: &str) -> Result<String, String> {
+    use base64::Engine as _;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("Belge çözülemedi: {e}"))?;
+    if !bytes.starts_with(b"%PDF") {
+        return Err("Kaydedilecek dosya PDF değil.".into());
+    }
+    let name = suggested_name(name);
+    let dir = downloads_dir();
+    let target = match save_dialog(&dir, &name) {
+        Ok(Some(path)) => {
+            if path.extension().map(|ext| ext.eq_ignore_ascii_case("pdf")).unwrap_or(false) {
+                path
+            } else {
+                path.with_extension("pdf")
+            }
+        }
+        Ok(None) => return Ok(String::new()),
+        Err(_) => unique_path(&dir, &name),
+    };
+    std::fs::write(&target, &bytes).map_err(|e| format!("PDF kaydedilemedi: {e}"))?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve;
+    use super::{page_ranges, resolve, suggested_name, unique_path};
+
+    #[test]
+    fn sayfa_araligi_dogrulanir_ve_sadelesir() {
+        assert_eq!(page_ranges("").unwrap(), None);
+        assert_eq!(page_ranges("  ").unwrap(), None);
+        assert_eq!(page_ranges("1-3, 5").unwrap().as_deref(), Some("1-3,5"));
+        assert_eq!(page_ranges("2-2").unwrap().as_deref(), Some("2"));
+        // Komuta serbest metin gitmez.
+        for bad in ["0", "3-1", "1;rm", "a-b", "1--2", "10000", "-", "1-"] {
+            assert!(page_ranges(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn kaydet_adi_guvenli_ve_pdf_uzantili() {
+        assert_eq!(suggested_name("Kurum Cari 16.10.2026"), "Kurum Cari 16.10.2026.pdf");
+        assert_eq!(suggested_name("../a/b:c.pdf"), "-a-b-c.pdf");
+        assert_eq!(suggested_name(""), "rapor.pdf");
+        assert_eq!(suggested_name("Öğrenci.PDF"), "Öğrenci.PDF");
+    }
+
+    #[test]
+    fn kaydet_uzerine_yazmaz() {
+        let dir = std::env::temp_dir().join(format!("km-kaydet-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = unique_path(&dir, "rapor.pdf");
+        assert_eq!(first, dir.join("rapor.pdf"));
+        std::fs::write(&first, b"%PDF").unwrap();
+        assert_eq!(unique_path(&dir, "rapor.pdf"), dir.join("rapor (2).pdf"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn liste(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| n.to_string()).collect()

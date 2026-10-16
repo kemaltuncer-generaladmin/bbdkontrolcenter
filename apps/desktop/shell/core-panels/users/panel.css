@@ -64,7 +64,7 @@
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff;
+  background: var(--surface, #fff);
   cursor: pointer;
 }
 

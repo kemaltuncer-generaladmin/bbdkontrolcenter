@@ -31,6 +31,14 @@ auth:
   max_failed_attempts: 5
   lockout_minutes: 15
   session_idle_minutes: 30
+  # Oturumun MUTLAK ömrü (saat) — kullanılsa da kullanılmasa da açıldıktan bu
+  # kadar sonra kapanır ve PIN yeniden sorulur (iş 63, bulgu KM-04). 0 = sınırsız.
+  session_absolute_hours: 12
+  # Yıkıcı/yönetimsel işlemin PIN teyidinde art arda yanlış PIN sınırı: kişi
+  # başına bu pencerede bu kadar yanlış denemeden sonra teyit 429 ile kapanır
+  # (iş 63, bulgu KM-02). Oturum açık kalır; giriş kilidi ayrıdır.
+  step_up_max_failures: 5
+  step_up_window_minutes: 15
   # Yıkıcı işlem, izin yeterli olsa bile ikinci kez sır ister. Anahtarın adı
   # göçten kalmıştır; istenen teyit PIN teyididir.
   require_password_for_destructive: true

@@ -42,8 +42,15 @@ ve bir günün işlem sayısı kantinin tek istek sınırını (5000) doldurursa
 
 ## Çıktı
 
-- **PDF** (`reportlab`): özet raporu, ürün performans raporu, öğrenci karnesi.
-  Türkçe karakterler için gömülü DejaVuSans kullanılır.
+- **PDF** — ortak finansal rapor şablonu (`km_sdk.build_pdf`; modülün eski
+  reportlab kopyası 63-finans-pdf ile kaldırıldı): özet (satış) raporu — dönem
+  tek günse **Gün Sonu** raporu, tahsilat dökümü ayrı bölümde (ciroya eklenmez) —,
+  öğrenci harcama raporu (ekrandaki arama ve sıralama, sınıf ara toplamı), ürün
+  performans raporu, öğrenci karnesi. Süzgeçler başlıkta, hazırlayan ve
+  "Sayfa X / Y" altbilgide; telefonlar maskelenir; gömülü DejaVuSans.
+- **Önizle · Yazdır · PDF kaydet** — her PDF'in ortak araç çubuğu
+  (`ui-kit/report.js`): önizleme ilk 4 sayfa, kalanı `POST /pages`; yazdırma
+  penceresi (yazıcı, kopya, sayfa aralığı, dikey/yatay); PDF cihaza kaydedilir.
 - **Excel uyumlu CSV** (UTF-8 BOM + `;`) — kantinin kendi dışa aktarma kuralıyla aynı.
 
 Dosyalar `data/exports/` altına yazılır; panel yolu gösterir.

@@ -12,6 +12,12 @@ version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: false                # kod hazır olunca true
 
+# ADR 0033 — alan servisi ve veri sınıfı. ZORUNLU (tools/check-boundaries.py).
+# Katalog: docs/architecture/domains.yaml. Başka alanın tablosuna/koduna
+# dokunulmaz; o alanla yetenek (provides/consumes) ve olay üzerinden konuşulur.
+domain: <alan>                # platform · academy · students · canteen · payments · tablet · bell · gateway · store · bld
+data_classification: internal # public · internal · personal · financial (alanın sınırını aşamaz)
+
 entrypoint: backend.module:register
 
 depends: []                   # önce yüklenmesi gereken modül id'leri

@@ -11,7 +11,14 @@
 // SÜRÜM SÖZLEŞMESİ: yayınlanmış imza geriye dönük uyumsuz değiştirilmez.
 // Yeni davranış yeni parametreyle gelir. Değişiklikler README.md'de.
 
-export const KIT_VERSION = '1.5.0';
+export const KIT_VERSION = '1.6.0';
+
+// İşletim sistemi köprüsü (1.6.0, ADR 0032): yerel bildirim ve dosya
+// pencereleri. Ayrı dosyada durur, panellere buradan da ulaşır.
+export { isDesktop, notify, openFile, saveFile } from './native.js';
+// Klavyeyle aranabilir açılır liste (1.6.0): `<select>` yerine ya da onunla.
+export { kitSelect } from './select.js';
+import { isDesktop as onDesktop, saveFile as saveNative } from './native.js';
 
 /** Tek satırda element: h('div', 'sinif', 'metin'). */
 export const h = (tag, className, text) => {
@@ -299,10 +306,19 @@ export function csvBlob(headers, rows, filename) {
   const body = [headers, ...rows].map((line) => line.map(escape).join(';')).join('\r\n');
   // BOM olmadan Excel UTF-8'i tanımıyor ve 'ğ' bozuluyor.
   const blob = new Blob([`﻿${body}`], { type: 'text/csv;charset=utf-8' });
+  const name = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  // MASAÜSTÜNDE YEREL "FARKLI KAYDET" (1.6.0). `<a download>` WebView2'de
+  // tarayıcının indirme balonunu açıyor, WKWebView'da hiçbir şey yapmıyordu.
+  // İmza değişmedi: sayı yine eşzamanlı döner, pencere arkada açılır.
+  if (onDesktop()) {
+    saveNative({ name, data: blob, filters: [{ name: 'CSV', extensions: ['csv'] }] })
+      .catch((error) => console.error('[kit] CSV kaydedilemedi:', error));
+    return rows.length;
+  }
   const url = URL.createObjectURL(blob);
   const link = h('a');
   link.href = url;
-  link.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  link.download = name;
   link.click();
   URL.revokeObjectURL(url);
   return rows.length;

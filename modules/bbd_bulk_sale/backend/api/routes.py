@@ -9,17 +9,26 @@ from typing import Any
 
 from km_sdk import APIRouter, BaseModel, CurrentUser, Field, HTTPException, requires
 
+from ..reports import BulkSaleReports
 from ..service import BulkSaleService
 
 router = APIRouter()
 
 _service: BulkSaleService | None = None
+_reports: BulkSaleReports | None = None
 
 
-def bind(service: BulkSaleService) -> APIRouter:
-    global _service
+def bind(service: BulkSaleService, reports: BulkSaleReports | None = None) -> APIRouter:
+    global _service, _reports
     _service = service
+    _reports = reports
     return router
+
+
+def reports() -> BulkSaleReports:
+    if _reports is None:  # pragma: no cover - yükleme sırası garanti eder
+        raise HTTPException(status_code=503, detail="Rapor üretici hazır değil.")
+    return _reports
 
 
 def service() -> BulkSaleService:
@@ -58,6 +67,20 @@ class ReverseBody(BaseModel):
     batchRef: str | None = Field(default=None, max_length=64)
     localId: str | None = Field(default=None, max_length=64)
     reason: str = Field(min_length=3, max_length=255)
+
+
+class ReportBody(BaseModel):
+    """Parti dökümü PDF'i (63-finans-pdf)."""
+
+    batchRef: str = Field(min_length=1, max_length=64)
+    orientation: str = Field(default="portrait", pattern=r"^(portrait|landscape)$")
+    preview: bool = True
+
+
+class PagesBody(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    first: int = Field(ge=1, le=9999)
+    last: int = Field(ge=1, le=9999)
 
 
 class PresetBody(BaseModel):
@@ -124,3 +147,18 @@ async def delete_preset(
     user: CurrentUser = requires("bbd_bulk_sale.manage"),
 ) -> dict[str, Any]:
     return await service().delete_preset(preset_id)
+
+
+@router.post("/report")
+async def report(body: ReportBody,
+                 user: CurrentUser = requires("bbd_bulk_sale.view")) -> dict[str, Any]:
+    """Parti dökümü PDF'i — önizleme ilk sayfalarla."""
+    return await reports().produce(body.batchRef, orientation=body.orientation,
+                                   author=user.full_name or "", preview=body.preview)
+
+
+@router.post("/report/pages")
+async def report_pages(body: PagesBody,
+                       user: CurrentUser = requires("bbd_bulk_sale.view")) -> dict[str, Any]:
+    """Önizleme penceresi kaydırıldıkça sonraki sayfalar (en çok 12)."""
+    return await reports().pages(body.path, body.first, body.last)
