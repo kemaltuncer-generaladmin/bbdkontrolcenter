@@ -1,0 +1,79 @@
+# Alan (domain) kataloğu — ADR 0033.
+#
+# Her modül `module.yaml` → `domain` alanıyla TAM OLARAK BİR alana bağlanır.
+# Alan; adı, sahibi olduğu veri ve dışarıya açtığı sözleşme (yetenek + olay)
+# belli olan "alan servisi"dir. Fiziksel süreç değildir — bugün hepsi aynı
+# süreçte, aynı veritabanında koşar (ADR 0033 §1).
+#
+# Bu dosya VERİDİR, çekirdek okumaz (K1). Okuyanlar:
+#   · tools/check-boundaries.py   (sınır ve adlandırma denetimi)
+#   · tools/module-graph.py       (envanter ve bağımlılık grafiği)
+#   · tests/integration/test_alan_sinirlari.py
+#
+# Alan eklemek/silmek = yeni ADR (ya da 0033'e sonradan düşülen not) + bu
+# dosya. `prefixes`: alanın modüllerinin yetenek (`provides`) ve olay
+# (`events.publishes`) adlarında kullanabileceği önekler; modül kimliği her
+# zaman ek olarak izinlidir. Önek, adın ilk noktaya (ya da `_`) kadar olan
+# parçasıyla karşılaştırılır (`store` → `store.order.card`, `store_products.x`).
+#
+# `classification` alanın EN YÜKSEK veri sınıfıdır; modül kendi sınıfını
+# `module.yaml` → `data_classification` ile daha düşük ilan edebilir, yüksek
+# ilan edemez (denetim testi).
+
+classifications:
+  public: "Herkese açık içerik (vitrin, site metni). Kişisel veri yok."
+  internal: "İşletme verisi (ürün, ayar, cihaz, takvim). Kişisel veri yok ya da yalnız personel adı."
+  personal: "Kişisel veri (KVKK): öğrenci, veli, müşteri adı, telefon, sınıf, kullanım kaydı."
+  financial: "Para hareketi veya bakiye + kişisel veri. Kantin parası ile kurum parası AYRI alanlardadır (A12)."
+
+domains:
+  platform:
+    title: "Platform ve kurumsal araçlar"
+    description: "Çekirdek (km_core), platform yetenekleri (km_platform), SDK ve her alanın kullandığı kurumsal araç modülleri (Çıktı Merkezi, Antivirüs)."
+    prefixes: [print, antivirus]
+    classification: personal
+  academy:
+    title: "Akademi"
+    description: "BBD Akademi yönetimi: akademik görünüm, müfredat, kaynak, ders programı, yoklama, ödev, deneme, kurum finansı, iletişim, ders kayıtları. Asıl veri Akademi API'sindedir; KM bu alanda yönetim yüzüdür."
+    prefixes: [bbd_akademi, akademi]
+    classification: financial
+  students:
+    title: "Öğrenci ve veli"
+    description: "Öğrenci/veli kimliği ve dizini, sınıf ve gruplar, kart QR, veliye serbest SMS. Diğer alanlar öğrenciyi yalnız bu alanın yeteneklerinden okur."
+    prefixes: [bbd_students, bbd_sms]
+    classification: personal
+  canteen:
+    title: "Kantin"
+    description: "Kantin kasa API geçidi, cihazlar, ürünler, öğle yemeği, toplu satış, kantin raporları ve yedekleri. KANTİN PARASI — kurum finansıyla karışmaz (A12)."
+    prefixes: [canteen, bbd_canteen_api, bbd_canteen_backups, bbd_canteen_devices, bbd_canteen_products, bbd_canteen_reports, bbd_lunch, bbd_bulk_sale]
+    classification: financial
+  payments:
+    title: "Ödeme talepleri"
+    description: "Veliye borç bildirimi, ödeme bağlantısı, nakit tahsilat ve ödeme SMS şablonları (kantin bakiyesine bağlı, A12)."
+    prefixes: [bbd_payment_request]
+    classification: financial
+  tablet:
+    title: "Öğrenci tableti"
+    description: "Paylaşımlı okul tabletleri: profil, kullanım saatleri, uzaktan kilit/komut, uygulama dağıtımı."
+    prefixes: [bbd_tablet]
+    classification: personal
+  bell:
+    title: "Zil ve anons"
+    description: "Haftalık zil saatleri, zil planı, anons sesi ve çağrı; ders takvimi bu alanın salt okunur görünümüdür."
+    prefixes: [bell, bbd_class_schedule]
+    classification: personal
+  gateway:
+    title: "Mobil geçit"
+    description: "BBD Akademi API'sinin sunucudan sunucuya çağırdığı cephe. Kendi iş verisi yoktur; öteki alanların yeteneklerini birleştirir. Alanlar arası okuma bu alanın işidir."
+    prefixes: [mobile_gateway]
+    classification: financial
+  store:
+    title: "Mağaza (BBD Store)"
+    description: "Bagisto çekirdekli mağazanın yönetimi: sipariş, kargo, iade, müşteri, ürün, set ve (kapalı) diğer ekranlar."
+    prefixes: [store]
+    classification: financial
+  bld:
+    title: "BLD"
+    description: "Laravel tabanlı BLD yönetimi (10.10.2026'dan beri PASİF — 15 modülün hepsi enabled: false)."
+    prefixes: [bld]
+    classification: financial

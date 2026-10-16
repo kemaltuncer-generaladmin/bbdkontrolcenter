@@ -1,0 +1,161 @@
+# Sınır denetimi istisnaları — ADR 0033 §6.
+#
+# `tools/check-boundaries.py` ve `tests/integration/test_alan_sinirlari.py`
+# bu listeyi okur. Kural:
+#   · Listede OLMAYAN her bulgu kapıyı düşürür — yeni ihlal eklenemez.
+#   · Listede olup artık BULUNMAYAN istisna da kapıyı düşürür — ihlal
+#     giderildiyse satır silinir (liste yalnız küçülür).
+#   · Her satır `reason` (neden bugün böyle) ve `plan` (nasıl azalacak)
+#     taşımak zorundadır.
+#
+# Eşleme anahtarı (rule, module, target). Satır numarası bilerek yok:
+# dosya düzenlenince istisna kaymaz. Aynı anahtarın kaç yerde geçtiği
+# `python3 tools/check-boundaries.py --verbose` ile görülür.
+#
+# İlk sayım 16.10.2026 (ozellik/63-km-mimari, taban e45faa8): 32 bulgu,
+# 16 istisna anahtarı. Ayrıntı: docs/architecture/envanter-2026-10-16.md §4.
+
+exceptions:
+
+  # ------------------------------------------------ çekirdek tablosu (K5)
+  - rule: core-table
+    module: print
+    target: outputs
+    reason: >
+      Çıktı Merkezi ortak çıktı kaydını (`outputs`) okur ve yeniden basma
+      sayacını günceller. Kayıt yirmi modülün ortak kaydı olduğu için
+      çekirdektedir (ADR 0019 §2); modülün kendi tablosu yoktur.
+    plan: >
+      `km_core/files/outputs` içine okuma/sayaç API'si (`outputs.list`,
+      `outputs.mark_printed`, `outputs.prune`) eklenip km_sdk'den açılınca
+      print modülü SQL yazmayı bırakır. Aşama 3 (ADR 0033 §8, adım 3.1).
+
+  - rule: core-table
+    module: print
+    target: users
+    reason: >
+      Çıktı listesinde "kim üretti" adını göstermek için `users` tablosuna
+      LEFT JOIN ile salt okuma. Kimlik çekirdeğindir; değiştirilmez.
+    plan: >
+      Ad çözümü km_sdk'de `ctx.user_names(ids)` gibi salt okunur bir kimlik
+      yüzüne taşınır (km-guvenlik ile birlikte). Aşama 3, adım 3.1.
+
+  # ---------------------------------- alanlar arası HTTP çağrısı (panel)
+  - rule: foreign-api
+    module: bbd_akademi
+    target: bbd_students
+    reason: >
+      Akademi paneli öğrenci gruplarını (students-groups.js) ve sınıf
+      listesini (timetable-copy.js) doğrudan `/api/bbd_students/...`
+      ucundan okur. Davranış canlıda doğru; sınır yalnız panel katmanında
+      aşılıyor (backend izin kapısı yine bbd_students'ın).
+    plan: >
+      Aşama 2 (bbd_akademi bölünmesi) sırasında bu iki çağrı
+      `ctx.capability('bbd_students.groups'/'bbd_students.directory')`
+      arayüz yeteneğine ya da Akademi'nin kendi ucuna taşınır.
+
+  - rule: foreign-api
+    module: bbd_akademi
+    target: bell
+    reason: >
+      Akademi ders programı zil durumunu (timetable-bell-status.js) ve kurum
+      takvimi zil haftasını (institution-calendar.js) `/api/bell/...`
+      ucundan okur.
+    plan: >
+      Aşama 2'de `bell.week` / `bell.plan` arayüz yeteneği üzerinden okumaya
+      geçilir (yetenek backend'de zaten var).
+
+  # ------------------------------------------- çekirdek modülü biliyor (K1)
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_tablet
+    reason: >
+      `km_core/http/app.py` `_mount_modules` içinde `manifest.id == "bbd_tablet"`
+      dalı: tablet cihaz uçları yönetici izin kapısı dışında, kendi bearer'ıyla
+      ayrı router'a monte ediliyor. Gerçek bir K1 ihlali.
+    plan: >
+      Manifestte veriyle ilan: `http.device_router: backend.api.device:router`
+      (kendi kimlik doğrulamasını yapan router) — çekirdek modül adına değil
+      alana bakar. km_core/http km-guvenlik paketinin; orada yapılır
+      (ADR 0033 §8 adım 3.2).
+
+  - rule: core-knows-module
+    module: km_core
+    target: print
+    reason: >
+      `km_core/http/documents.py` belge ucu eski `print.view` iznini de kabul
+      eder (izinleri elle düzenlenmiş kurulumlar yeni `outputs.print`
+      anahtarını alana kadar baskı kesilmesin diye).
+    plan: >
+      Bütün kurulumlarda `outputs.print` dağıtıldığı denetim izinden
+      doğrulanınca `print.view` listeden çıkarılır (km-guvenlik).
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_students
+    reason: >
+      `km_core/security/migrations.py` → `BLD_STAFF_BBD_REVOKED`: 17.08.2026
+      kullanıcı kararıyla bld_staff'tan BBD izinlerini kaldıran VERİ göçü.
+      Uygulanmış göç geçmişidir; değiştirilmez.
+    plan: >
+      Kalıcı istisna (göç geçmişi). Yeni çekirdek göçü modül izin adı
+      yazmaz; benzer daraltma modülün kendi göçünde yapılır.
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_bulk_sale
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi); yukarıdaki satıra bakın."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_canteen_backups
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_canteen_products
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_canteen_reports
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_class_schedule
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_lunch
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_payment_request
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_core
+    target: bbd_sms
+    reason: "Aynı göç (`BLD_STAFF_BBD_REVOKED`) — göç geçmişi."
+    plan: "Kalıcı istisna (göç geçmişi)."
+
+  - rule: core-knows-module
+    module: km_platform
+    target: bell
+    reason: >
+      `km_platform/events/outbox.py` → `SUBJECT_KINDS` içindeki "bell",
+      Akademi ile paylaşılan olay sözleşmesinin (`KmEventSubject.kind`)
+      DEĞERİDİR, modül kimliği değildir; adı tesadüfen aynı.
+    plan: >
+      Kalıcı istisna (dış sözleşme değeri). Sözleşme değişmeden ad
+      değiştirilemez.

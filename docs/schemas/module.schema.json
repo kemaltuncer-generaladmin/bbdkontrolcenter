@@ -34,6 +34,16 @@
       "default": true,
       "description": "false ise modül hiç yüklenmez."
     },
+    "domain": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Modülün bağlı olduğu ALAN SERVİSİ (ADR 0033), ör. 'canteen', 'store', 'academy'. Değerler docs/architecture/domains.yaml kataloğundadır; katalog dışı değer ve eksik alan `tools/check-boundaries.py` (CI + pytest) tarafından reddedilir. Şemada bilerek ZORUNLU DEĞİL ve enum değil: bir yazım hatası canlıda modülü düşürmemeli (K7) — kapı yükleme anında değil denetimde. Çekirdek bu alanı VERİ olarak okur ve modül kaydında (`GET /modules`) yansıtır; ona göre dallanmaz (K1). Kabuk menüyü/aramayı alana göre gruplayabilir."
+    },
+    "data_classification": {
+      "type": "string",
+      "pattern": "^[a-z]+$",
+      "description": "Modülün tuttuğu ya da gösterdiği EN YÜKSEK veri sınıfı (ADR 0033 §5): public · internal · personal (KVKK kişisel veri) · financial (para/bakiye + kişisel veri). `domain` gibi enum değildir; katalog dışı değeri denetim reddeder. Alanın üst sınırını aşamaz (domains.yaml → classification). Günlük maskeleme, dışa aktarma ve denetim izi kararları bu sınıfa göre verilir."
+    },
     "platforms": {
       "type": "array",
       "minItems": 1,

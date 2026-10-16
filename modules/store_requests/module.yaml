@@ -16,6 +16,10 @@ sdk: ">=0.1,<1.0"
 # şimdilik PASİF. Geri açmak için `true` yazmak yeter — kodu ve verisi duruyor.
 enabled: false
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: store
+data_classification: personal
+
 entrypoint: backend.module:register
 
 depends: [store_api]

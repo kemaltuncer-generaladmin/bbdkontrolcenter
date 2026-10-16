@@ -181,6 +181,9 @@ def collect_panels(validator, platform: str,
             "title": nav.get("title") or manifest.get("name", manifest["id"]),
             "icon": nav.get("icon", "dot"),
             "group": nav.get("group", "Diğer"),
+            # ADR 0033 — alan servisi (veri). Kabuk bugün `group` ile çizer;
+            # alanı gruplama/arama için okuyabilir.
+            "domain": manifest.get("domain", ""),
             "order": nav.get("order", 1000),
             "requires": nav.get("requires", []),
             # ADR 0031: işi başka ekrana taşınan ekran (menüde çizilmez, kayıtta kalır).

@@ -12,6 +12,10 @@ version: 1.0.0
 sdk: ">=0.1,<1.0"
 enabled: true
 
+# Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
+domain: canteen
+data_classification: financial
+
 entrypoint: backend.module:register
 
 # Geçit bizden önce yüklenmeli: yükleme sırası alfabetik değil, bu alana göre kurulur.
