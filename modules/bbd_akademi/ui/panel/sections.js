@@ -119,7 +119,7 @@ export const SECTIONS = [
   { key: 'curriculum', label: 'Müfredat', file: './lessons/curriculum.js', requires: ['view'], area: 'lessons' },
   // Ders kayıtları (F-DK, Akademi README §14 madde 110): akıllı tahtalar ve derslikler, kayıtlar (gizle / sil / kim
   // izledi / paylaşım), depolama kotası, ayarlar — web / mobil yöneticiyle aynı uçlar. Ayarları yazmak kurum ayarıdır.
-  { key: 'lessonRecordings', label: 'Ders kayıtları', file: './lesson-recordings.js', requires: ['recordings'],
+  { key: 'lessonRecordings', label: 'Ders kayıtları', file: './recordings/lesson-recordings.js', requires: ['recordings'],
     area: 'lessons', feature: 'lesson_recordings',
     reads: ['admin_listBoards', 'admin_listRecordings', 'admin_getRecordingQuota', 'admin_getRecordingSettings'] },
   { key: 'attendance', label: 'Yoklama', file: './attendance.js', requires: ['view'], area: 'attendance' },

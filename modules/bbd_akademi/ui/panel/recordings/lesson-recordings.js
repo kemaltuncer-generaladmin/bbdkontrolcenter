@@ -18,13 +18,13 @@
 // KM panel anahtarı bu izinler eklenmeden üretildiyse Akademi `403 forbidden` döner: ekran ne yapılacağını yazar.
 // Video baytı KM'den geçmez; KM yalnız meta veriyi yönetir (oynatıcı web / mobil uygulamadadır).
 
-import { ago, button, copyText, dialogA11y, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, emptyState, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { ago, button, copyText, dialogA11y, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, emptyState, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   actionButton, confirmAction, dateInput, empty, fmtDate, fmtDateTime, fmtTime, formDialog, kv, loader, multiChips,
   openDrawer, pagedList, personName, runAction, searchBox, sectionHead, selectBox, studentSelect, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   DIAG_TRIGGER, FLAGS, KEY_HINT, QUALITY, QUOTA_MAX_GB, QUOTA_MIN_GB, REC_FILTERS, REC_SORTS,
   RETENTION_MAX, TABS, TAB_READS, boardActions, boardBody, boardState, diagnosticsRows, durationText, etaText,

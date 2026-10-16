@@ -116,7 +116,7 @@ process.stdout.write(JSON.stringify(out));
 def _node_logic(folder: Path) -> dict[str, Any]:
     if shutil.which("node") is None:
         pytest.skip("node kurulu değil")
-    (folder / "logic.mjs").write_bytes((PANEL / "lesson-recordings-logic.js").read_bytes())
+    (folder / "logic.mjs").write_bytes((PANEL / "recordings/lesson-recordings-logic.js").read_bytes())
     (folder / "run.mjs").write_text(LOGIC, encoding="utf-8")
     done = subprocess.run(["node", "run.mjs"], cwd=folder, capture_output=True, text=True, timeout=60, check=False)
     assert done.returncode == 0, done.stderr
@@ -229,7 +229,7 @@ async function mount(load, api, document) {
         return empty !== undefined ? [{ value: '', label: empty }, ...mapped] : mapped;
       },
     } };
-  const { section } = await load('./panels/bbd_akademi/lesson-recordings.js');
+  const { section } = await load('./panels/bbd_akademi/recordings/lesson-recordings.js');
   const view = section(app);
   root.append(view.node);
   return { root, view, toasts, app };
