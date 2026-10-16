@@ -26,7 +26,7 @@ import {
   runAction, searchBox, sectionHead, selectBox, staticList, statusBadge, studentPicker, toolbar,
   TRACKS,
 } from './common.js';
-import { bulkTargetField } from './bulk-target.js';
+import { bulkTargetField } from './shared/bulk-target.js';
 import { loadTargets } from './resources-common.js';
 
 const PROGRAMS = '/v1/admin/curricula/programs';

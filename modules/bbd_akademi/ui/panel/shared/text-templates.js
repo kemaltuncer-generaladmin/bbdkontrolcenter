@@ -13,9 +13,9 @@
 // İç içe pencere açılmaz (odak tuzağı / Esc çakışması): seçici ve kaydetme formu alanın içinde açılır.
 // Saf mantık `text-templates-logic.js`'tedir.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { problem } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { problem } from '../api.js';
 import {
   KIND_LABELS, SCOPE_LABELS, SCOPE_TONES, TEXT_TEMPLATES, TEXTS, actionsText, filterTemplates, mergeActions,
   mergeText, parseActions, preview, saveScope, templateBody, unfilledNote, withInlineActions,

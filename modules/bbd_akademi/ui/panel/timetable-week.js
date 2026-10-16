@@ -42,7 +42,7 @@ import {
 } from './timetable-shared.js';
 import { documentButtons } from './documents.js';
 import { classTimetableDoc, teacherTimetableDoc } from './documents-logic.js';
-import { fetchPrograms, fillProgramSelect } from './curriculum-picker.js';
+import { fetchPrograms, fillProgramSelect } from './shared/curriculum-picker.js';
 
 /** Etiketli küçük alan (araç şeridi için). */
 function field(label, control) {

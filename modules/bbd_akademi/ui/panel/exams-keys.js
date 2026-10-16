@@ -10,7 +10,7 @@
 import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, card, chipRow, hintBox } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
-import { programLabel } from './curriculum-picker.js';
+import { programLabel } from './shared/curriculum-picker.js';
 import {
   actionButton, empty, errorBox, fileDrop, loader, num, selectBox, toolbar, uploadProgress,
 } from './common.js';

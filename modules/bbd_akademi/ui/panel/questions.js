@@ -21,7 +21,7 @@ import {
   defaultResponder, filterQuery, MAX_ATTACHMENTS, MAX_VOICE_SECONDS, partKind, recorderMime,
   settingsPutBody, slaLevel, uploadFields,
 } from './questions-logic.js';
-import { templateTools, textareaForm } from './text-templates.js';
+import { templateTools, textareaForm } from './shared/text-templates.js';
 
 const QUESTIONS = '/v1/admin/coaching/questions';
 

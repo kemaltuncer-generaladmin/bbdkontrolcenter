@@ -51,8 +51,8 @@ def _run(scenario: str) -> dict[str, Any]:
 
 LOGIC = r"""
 export default async function ({ load }) {
-  const m = await load('./panels/bbd_akademi/task-form-logic.js');
-  const cs = await load('./panels/bbd_akademi/curriculum-set.js');
+  const m = await load('./panels/bbd_akademi/shared/task-form-logic.js');
+  const cs = await load('./panels/bbd_akademi/shared/curriculum-set.js');
   const items = [
     { id: 'a', recommended: true, targetStudentCount: 1 },
     { id: 'b', recommended: false, targetStudentCount: null },

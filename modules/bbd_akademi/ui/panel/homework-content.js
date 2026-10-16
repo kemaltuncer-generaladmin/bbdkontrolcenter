@@ -12,9 +12,9 @@
 import { button, h } from '../../ui-kit/kit.js';
 import { skeletonRows } from '../../ui-kit/layout.js';
 import { errorBox, num, problem, searchBox } from './common.js';
-import { programPicker, topicTree } from './curriculum-picker.js';
-import { bookPicker } from './book-picker.js';
-import { T as BOOKS } from './book-picker-logic.js';
+import { programPicker, topicTree } from './shared/curriculum-picker.js';
+import { bookPicker } from './shared/book-picker.js';
+import { T as BOOKS } from './shared/book-picker-logic.js';
 
 export const RESOURCE_KINDS = { topic_book: 'Konu anlatımlı', question_bank: 'Soru bankası', fascicle: 'Fasikül',
   practice_exam: 'Deneme', other: 'Diğer' };

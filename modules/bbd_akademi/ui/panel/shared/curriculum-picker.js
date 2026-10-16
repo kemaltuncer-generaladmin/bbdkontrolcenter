@@ -22,8 +22,8 @@
 //   topicTree(app, {...})       → program → ünite → konu çipleri (aramalı), boş durum yol gösterir
 //   targetQuery(target)         → `admin_listPrograms` hedef süzgeci
 
-import { button, foldText, h } from '../../ui-kit/kit.js';
-import { errorBox, multiChips, problem, searchBox, TRACKS } from './common.js';
+import { button, foldText, h } from '../../../ui-kit/kit.js';
+import { errorBox, multiChips, problem, searchBox, TRACKS } from '../common.js';
 
 export const PROGRAMS = '/v1/admin/curricula/programs';
 const TTL = 10 * 60_000;

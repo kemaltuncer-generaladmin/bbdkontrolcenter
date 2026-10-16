@@ -27,7 +27,7 @@ import { button, blockedButton, h, loadStyles, menuButton } from '../../ui-kit/k
 import { alertBox, badge, card, tabBar } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { AkademiError } from './api.js';
-import { storeSyncCard } from './book-picker.js';
+import { storeSyncCard } from './shared/book-picker.js';
 import {
   actionButton, confirmAction, empty, errorBox, formDialog, kv, loader, money,
   multiChips, num, openDrawer, optionsOf, pagedList, problem, runAction, searchBox, sectionHead,

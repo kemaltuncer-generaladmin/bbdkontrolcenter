@@ -17,7 +17,7 @@ import {
 } from './common.js';
 import { CHECKIN_KINDS, addDaysIso, checkinQuestion, weekLabel } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
-import { templateTools, textareaForm } from './text-templates.js';
+import { templateTools, textareaForm } from './shared/text-templates.js';
 
 const SET = '/v1/admin/coaching/checkin-questions';
 

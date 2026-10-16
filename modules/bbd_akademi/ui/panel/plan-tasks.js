@@ -21,8 +21,8 @@
 // Ders adı ise önbellekli ders listesinden (`app.lookups.subjects`) çözülür.
 
 import { button, h } from '../../ui-kit/kit.js';
-import { taskEditor } from './task-form.js';
-import { formFromPlanTask, intOf, nextForm, planTask } from './task-form-logic.js';
+import { taskEditor } from './shared/task-form.js';
+import { formFromPlanTask, intOf, nextForm, planTask } from './shared/task-form-logic.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { badge, emptyState } from '../../ui-kit/layout.js';
 import { WEEKDAYS, addDays, fmtDate, multiChips, num, studentPicker, todayIst } from './common.js';

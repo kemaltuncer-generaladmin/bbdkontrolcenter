@@ -202,7 +202,7 @@ def test_bolum_css_oneki() -> None:
     bir sınıfa eklenerek kullanılır.
     """
     bad: list[str] = []
-    for path in sorted(PANEL.glob("*.css")):
+    for path in sorted(PANEL.rglob("*.css")):
         text = re.sub(r"/\*.*?\*/", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
         text = re.sub(r"@(media|supports)[^{]*\{", "", text)
         for block in re.findall(r"([^{}]+)\{", text):

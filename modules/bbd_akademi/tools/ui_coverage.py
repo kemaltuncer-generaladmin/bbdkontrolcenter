@@ -157,7 +157,7 @@ _PARAM = re.compile(r"\{[A-Za-z0-9]+\}")
 
 def panel_sources(panel: Path = PANEL) -> dict[str, str]:
     return {path.name: strip_comments(path.read_text(encoding="utf-8"))
-            for path in sorted(panel.glob("*.js"))}
+            for path in sorted(panel.rglob("*.js"))}
 
 
 def scan(sources: dict[str, str] | None = None,

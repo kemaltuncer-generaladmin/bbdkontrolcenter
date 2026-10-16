@@ -19,14 +19,14 @@ import {
   selectBox, staticList, toolbar,
 } from './common.js';
 import { NOTE_VISIBILITY } from './coaching-logic.js';
-import { invalidateTemplates } from './text-templates.js';
+import { invalidateTemplates } from './shared/text-templates.js';
 import {
   ACTION_KINDS, KIND_LABELS, MAX_LENGTH, PLACEHOLDER_LABELS, SCOPE_LABELS, SCOPE_TONES, TEXT_TEMPLATES, TEXTS,
   actionsText, filterTemplates, preview, templateBody,
-} from './text-templates-logic.js';
+} from './shared/text-templates-logic.js';
 
 export function tab(app, ctx = {}) {
-  loadStyles(import.meta.url, 'text-templates.css');
+  loadStyles(import.meta.url, 'shared/text-templates.css');
   const node = h('div', 'ak-stack');
   const views = [
     app.can('admin_listCoachTextTemplates') && { key: 'text', label: 'Metin şablonları' },

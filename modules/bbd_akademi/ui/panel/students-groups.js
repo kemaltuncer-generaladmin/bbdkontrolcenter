@@ -22,7 +22,7 @@ import {
   openDrawer, searchBox, selectBox, toolbar,
 } from './common.js';
 import { STUDENT_STATUS, checkbox, stack } from './students-detail.js';
-import { academicYearOf, classCurriculumSet, curriculaChips } from './curriculum-set.js';
+import { academicYearOf, classCurriculumSet, curriculaChips } from './shared/curriculum-set.js';
 import { classMembersCard } from './students-class-history.js';
 
 const CLASS_CACHE = '/v1/admin/class-groups';

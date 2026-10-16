@@ -24,7 +24,7 @@ from harness import NodeMissing, run
 
 LOGIC = r"""
 export default async function ({ load }) {
-  const m = await load('./panels/bbd_akademi/book-picker-logic.js');
+  const m = await load('./panels/bbd_akademi/shared/book-picker-logic.js');
   const store = { data: {}, getItem(k) { return this.data[k] ?? null; }, setItem(k, v) { this.data[k] = v; } };
   m.rememberRecent([{ id: 'a', title: 'A' }], store);
   m.rememberRecent([{ id: 'b', title: 'B' }, { id: 'a', title: 'A' }], store);
@@ -76,7 +76,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   document.body.append(root);
   const client = createClient({ api: (path, options) => api(path, options) });
   const app = { root, api: client, can: () => true, has: () => true, toast: () => {} };
-  const { bookPicker } = await load('./panels/bbd_akademi/book-picker.js');
+  const { bookPicker } = await load('./panels/bbd_akademi/shared/book-picker.js');
 
   const done = bookPicker(app, { target: { studentIds: ['stu-1'] }, subject: '' });
   await sleep(50);

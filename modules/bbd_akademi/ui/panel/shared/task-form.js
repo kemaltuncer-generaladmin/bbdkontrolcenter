@@ -24,16 +24,16 @@
 // (`book-picker.js`, iş `kitap-senkron`, Akademi README §14 madde 98) buraya bağlıdır:
 // "Katalogdan kitap ekle" → sınıf/ders/yayınevi süzgeçli kapaklı seçici, öğrencinin kitapları önce.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { dateField } from '../../ui-kit/datefield.js';
-import { problem } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { dateField } from '../../../ui-kit/datefield.js';
+import { problem } from '../api.js';
 import { bookPicker } from './book-picker.js';
 import { T as BOOKS } from './book-picker-logic.js';
-import { DAY_LABEL, WEEKDAYS, clockInput, fileDrop, fmtDate, num, todayIst } from './common.js';
+import { DAY_LABEL, WEEKDAYS, clockInput, fileDrop, fmtDate, num, todayIst } from '../common.js';
 import { PROGRAMS, programLabel, sortPrograms, targetQuery } from './curriculum-picker.js';
-import { PRIORITY, PROOF_PHOTO, clockText, pct } from './coaching-logic.js';
-import { videoCard, videoDialog } from './coaching-video.js';
+import { PRIORITY, PROOF_PHOTO, clockText, pct } from '../coaching-logic.js';
+import { videoCard, videoDialog } from '../coaching-video.js';
 import {
   CLOCK, FIELD_ORDER, TYPE_HINTS, TYPE_LABELS, autoTitle, coverageText, filledOptional, intOf, minutesForVideo, rulesFor,
   suggestQuestions, targetPrograms, typesFor, validate,

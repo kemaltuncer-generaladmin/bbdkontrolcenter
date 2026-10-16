@@ -20,7 +20,7 @@
 import { button, h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, badge, card, chipRow } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
-import { programLabel } from './curriculum-picker.js';
+import { programLabel } from './shared/curriculum-picker.js';
 import {
   actionButton, confirmAction, empty, fileDrop, fmtDateTime, formDialog, GRADE_LEVELS,
   gradeText, kv, loader, multiChips, num, openDrawer, pagedList, problem, runAction,

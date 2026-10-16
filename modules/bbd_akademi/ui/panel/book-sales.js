@@ -31,7 +31,7 @@ import {
 } from './common.js';
 import { removableChip, stack } from './homework-content.js';
 import { loadTargets, targetsField } from './resources-common.js';
-import { wizard } from './wizard.js';
+import { wizard } from './shared/wizard.js';
 
 export const LINE_STATUS = {
   awaiting_payment: ['Ödeme bekleniyor', 'warn'],

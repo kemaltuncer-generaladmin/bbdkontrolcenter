@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 from harness import NodeMissing, run
 
 FILES = sorted(
-    [str(path.relative_to(ROOT)) for path in (ROOT / "modules" / "bbd_akademi" / "ui" / "panel").glob("*.css")]
+    [str(path.relative_to(ROOT)) for path in (ROOT / "modules" / "bbd_akademi" / "ui" / "panel").rglob("*.css")]
     + ["modules/bbd_students/ui/panel/panel.css", "modules/bell/ui/panel/panel.css",
        "apps/desktop/shell/ui-kit/kit.css"])
 

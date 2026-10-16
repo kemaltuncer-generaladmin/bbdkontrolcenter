@@ -29,7 +29,7 @@ from harness import NodeMissing, run
 
 LOGIC = r"""
 export default async function ({ load }) {
-  const m = await load('./panels/bbd_akademi/task-form-logic.js');
+  const m = await load('./panels/bbd_akademi/shared/task-form-logic.js');
   const base = (extra) => m.emptyForm({ date: '2026-10-15', estimatedMinutes: 40, ...extra });
   const errs = (form, opts) => m.validate(form, opts).errors;
   return {

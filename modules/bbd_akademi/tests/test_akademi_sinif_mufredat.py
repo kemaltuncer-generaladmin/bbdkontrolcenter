@@ -63,7 +63,7 @@ CLASS_SET = {
 
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, api, load, calls }) {
-  const cs = await load('./panels/bbd_akademi/curriculum-set.js');
+  const cs = await load('./panels/bbd_akademi/shared/curriculum-set.js');
   const qs = (query) => {
     const parts = Object.entries(query || {}).filter(([, v]) => v !== undefined && v !== '')
       .map(([k, v]) => `${k}=${v}`);

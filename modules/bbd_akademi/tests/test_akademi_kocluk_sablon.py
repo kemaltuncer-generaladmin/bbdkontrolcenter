@@ -67,7 +67,7 @@ process.stdout.write(JSON.stringify(out));
 def test_saf_mantik(tmp_path: Path) -> None:
     if shutil.which("node") is None:
         pytest.skip("node kurulu değil")
-    (tmp_path / "logic.mjs").write_bytes((PANEL / "text-templates-logic.js").read_bytes())
+    (tmp_path / "logic.mjs").write_bytes((PANEL / "shared/text-templates-logic.js").read_bytes())
     (tmp_path / "run.mjs").write_text(LOGIC, encoding="utf-8")
     done = subprocess.run(["node", "run.mjs"], cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False)
     assert done.returncode == 0, done.stderr

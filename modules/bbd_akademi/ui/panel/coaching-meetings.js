@@ -23,7 +23,7 @@ import {
 } from './coaching-logic.js';
 import { coachOptions, studentCell } from './coaching-shared.js';
 import { meetingDialog } from './coaching-students.js';
-import { templateField } from './text-templates.js';
+import { templateField } from './shared/text-templates.js';
 
 export function tab(app) {
   const node = h('div', 'ak-stack');

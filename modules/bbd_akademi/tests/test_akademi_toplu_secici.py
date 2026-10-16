@@ -51,7 +51,7 @@ export default async function ({ document, audit, sleep, load }) {
     const limit = query.limit || 20;
     return { items: rows.slice(start, start + limit), nextCursor: start + limit < rows.length ? String(start + limit) : null };
   } } };
-  const { bulkTargetField } = await load('./panels/bbd_akademi/bulk-target.js');
+  const { bulkTargetField } = await load('./panels/bbd_akademi/shared/bulk-target.js');
   const { targetsField } = await load('./panels/bbd_akademi/resources-common.js');
   const root = document.createElement('div');
   document.body.append(root);
@@ -179,7 +179,7 @@ def test_targets_field_hata_tekrar_dene_ve_baslangic_secimi(out: dict[str, Any])
 def test_eski_acilir_kutu_toplu_hedefte_kullanilmaz() -> None:
     """Toplu hedef alanları ortak seçiciyi kullanır; tek-öğrenci aramaları (`studentPicker`) ayrı kalır."""
     for name in ("bulk-target.js", "resources-common.js"):
-        text = (PANEL / name).read_text(encoding="utf-8")
+        text = next(PANEL.rglob(name)).read_text(encoding="utf-8")  # alt klasörde olabilir (ADR 0033 Aşama 2)
         assert "studentSelect(" in text and "studentPicker(" not in text, name
     css = (PANEL / "panel.css").read_text(encoding="utf-8")
     assert re.search(r"\.ak-stu-select \{ height: clamp\(", css)

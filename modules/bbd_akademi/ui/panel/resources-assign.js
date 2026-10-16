@@ -16,9 +16,9 @@ import {
   actionButton, empty, errorBox, fmtDate, fmtDateTime, formDialog, num, pagedList, selectBox,
   studentPicker, toolbar,
 } from './common.js';
-import { bulkTargetField } from './bulk-target.js';
+import { bulkTargetField } from './shared/bulk-target.js';
 import { T as BULK, resultText } from './resources-bulk-logic.js';
-import { followBulkJob } from './wizard.js';
+import { followBulkJob } from './shared/wizard.js';
 
 /** `admin_createResourceAssignments` tek istekte en çok kaynak; fazlası toplu atama ucuna gider. */
 const SINGLE_MAX = 50;

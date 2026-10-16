@@ -8,7 +8,7 @@
 import { button, h } from '../../ui-kit/kit.js';
 import { badge } from '../../ui-kit/layout.js';
 import { dataTable } from '../../ui-kit/table.js';
-import { bookPicker } from './book-picker.js';
+import { bookPicker } from './shared/book-picker.js';
 import {
   CURRICULUM_EXAMS, EXAM_TARGETS, GRADE_LEVELS, TRACKS, empty, gradeText, multiChips, num, problem,
   searchBox, studentSelect,

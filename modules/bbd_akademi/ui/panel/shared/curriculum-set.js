@@ -17,9 +17,9 @@
 // Hız (A14): set tek istekle okunur; program kataloğu önbellekli (`fetchPrograms`, 10 dk);
 // her yazma yanıtı güncel seti döndürür — ayrıca okunmaz.
 
-import { h } from '../../ui-kit/kit.js';
-import { alertBox, badge } from '../../ui-kit/layout.js';
-import { actionButton, confirmAction, empty, fmtDateTime, gradeText, loader, problem, selectBox, TRACKS } from './common.js';
+import { h } from '../../../ui-kit/kit.js';
+import { alertBox, badge } from '../../../ui-kit/layout.js';
+import { actionButton, confirmAction, empty, fmtDateTime, gradeText, loader, problem, selectBox, TRACKS } from '../common.js';
 import { programGroups, programLabel, programMultiPicker } from './curriculum-picker.js';
 
 const MAX_CHANGE = 60;                // CurriculumSetChange.add / remove üst sınırı

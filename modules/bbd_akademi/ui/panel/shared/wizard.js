@@ -14,9 +14,9 @@
 // kuyruğa girer (`202 queued`) ve `admin_getBulkJob` ile 1,5 sn aralıkla
 // izlenir (sözleşme: istemci 1–2 sn aralıkla sorar).
 
-import { button, dialogA11y, h, num } from '../../ui-kit/kit.js';
-import { progress } from '../../ui-kit/layout.js';
-import { AkademiError, newKey, problem } from './api.js';
+import { button, dialogA11y, h, num } from '../../../ui-kit/kit.js';
+import { progress } from '../../../ui-kit/layout.js';
+import { AkademiError, newKey, problem } from '../api.js';
 
 /**
  * @param {object} app

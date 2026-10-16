@@ -35,12 +35,12 @@ import {
   COPY_STATUS, TASK_TYPES, UNRESOLVED, addDaysIso, isCoachTask, isDraft, minutesText, saveSummary, taskDetail, weekLabel,
   weekOps,
 } from './coaching-logic.js';
-import { savedLine, taskEditor } from './task-form.js';
+import { savedLine, taskEditor } from './shared/task-form.js';
 import {
   SAVE_ERRORS, coachTaskBody, emptyForm, formFromCoachTask, nextForm, saveErrorText, serverErrors,
-} from './task-form-logic.js';
+} from './shared/task-form-logic.js';
 import { coachingJob, setEnabled, studentCell } from './coaching-shared.js';
-import { templateStart, weekTemplateBody } from './text-templates-logic.js';
+import { templateStart, weekTemplateBody } from './shared/text-templates-logic.js';
 
 const STATUS = { planned: ['Planlandı', 'dim'], done: ['Bitti', 'good'], partial: ['Kısmen', 'warn'],
   skipped: ['Yapılmadı', 'bad'], moved: ['Taşındı', 'dim'] };
@@ -48,7 +48,7 @@ const SHORT_DAY = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]
 const LESSON_KIND = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek seferlik', break: 'Ara' };
 
 export function tab(app) {
-  loadStyles(import.meta.url, 'task-form.css');   // görev penceresi ilk açılışta stilsiz görünmesin
+  loadStyles(import.meta.url, 'shared/task-form.css');   // görev penceresi ilk açılışta stilsiz görünmesin
   const node = h('div', 'ak-stack');
   const state = { student: null, week: weekStart(todayIst(0)), data: null, busy: false };
 
@@ -531,7 +531,7 @@ export async function taskDialog(app, { studentId, week, task = null, date = nul
  * @returns {Promise<number>} kaydedilen görev sayısı
  */
 export async function openCoachTask(app, student, { seed = null, week: weekIso = null } = {}) {
-  loadStyles(import.meta.url, 'task-form.css');
+  loadStyles(import.meta.url, 'shared/task-form.css');
   const path = `/v1/admin/students/${student.id}/coach-week`;
   let data;
   try {

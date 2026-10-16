@@ -17,7 +17,7 @@ import { button, h } from '../../ui-kit/kit.js';
 import { alertBox, badge, skeletonRows } from '../../ui-kit/layout.js';
 import { createPicker } from '../../ui-kit/picker.js';
 import { AkademiError } from './api.js';
-import { programLabel, sortPrograms } from './curriculum-picker.js';
+import { programLabel, sortPrograms } from './shared/curriculum-picker.js';
 import {
   actionButton, confirmAction, empty, errorBox, formDialog, multiChips, num, optionsOf, problem,
   toolbar,

@@ -13,10 +13,10 @@
 // Bağlanış: görev formu `task-form.js` → `pickResourceField`, ödev içeriği
 // `homework-content.js` → kaynak alanı, Kaynaklar ekranı → eşitleme kartı (`storeSyncCard`).
 
-import { button, dialogA11y, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge } from '../../ui-kit/layout.js';
-import { problem } from './api.js';
-import { fmtDateTime } from './common.js';
+import { button, dialogA11y, h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge } from '../../../ui-kit/layout.js';
+import { problem } from '../api.js';
+import { fmtDateTime } from '../common.js';
 import {
   EMPTY_FILTERS, T, bookMeta, count, gradeLabel, hasFilters, lastSync, libraryQuery, onShelf, pickLabel, readRecent,
   rememberRecent, storeBadge, syncFailed,

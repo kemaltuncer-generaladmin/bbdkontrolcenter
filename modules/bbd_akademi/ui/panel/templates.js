@@ -24,14 +24,14 @@ import {
   actionButton, confirmAction, fmtDate, fmtDateTime, formDialog, kv, loader, num, openDrawer,
   pagedList, problem, runAction, searchBox, sectionHead, selectBox, todayIst, toolbar,
 } from './common.js';
-import { bulkTargetField } from './bulk-target.js';
-import { programLabel, sortPrograms } from './curriculum-picker.js';
+import { bulkTargetField } from './shared/bulk-target.js';
+import { programLabel, sortPrograms } from './shared/curriculum-picker.js';
 import { bulkHomeworkWizard, contentDialog, templateLine } from './homework-bulk.js';
 import { topicsText } from './homework-content.js';
 import { templatesTab as planTemplatesTab } from './plan-templates.js';
 import { gradeValue, loadPackages, loadTargets, resourceListField, ruleText } from './resources-common.js';
 import { rulesField } from './resources-packages.js';
-import { bulkJobDialog } from './wizard.js';
+import { bulkJobDialog } from './shared/wizard.js';
 
 const SCOPE = { institution: ['Kurum', 'info'], personal: ['Kişisel', 'dim'] };
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;

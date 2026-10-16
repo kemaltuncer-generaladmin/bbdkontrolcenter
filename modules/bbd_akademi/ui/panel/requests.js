@@ -16,7 +16,7 @@ import {
   reasonDialog, runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar,
 } from './common.js';
 import { LEAVE_REASONS, leaveApproveText, leaveKindDetail, leaveLessons } from './attendance-manage.js';
-import { templateField } from './text-templates.js';
+import { templateField } from './shared/text-templates.js';
 
 const CHANNEL = { phone: 'telefonla', in_person: 'yüz yüze' };
 const STATUS = { requested: ['Bekliyor', 'warn'], approved: ['Onaylandı', 'good'], scheduled: ['Zaman verildi', 'good'],

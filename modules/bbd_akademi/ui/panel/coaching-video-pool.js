@@ -118,7 +118,7 @@ async function openItem(app, row, { onChange }) {
 const topicField = (app, form) => ({ key: '_topic', label: 'Ders ve konu (müfredattan)', type: 'custom', wide: true,
   render: () => {
     const holder = h('div');
-    import('./task-form.js').then(({ subjectTopicField }) => {
+    import('./shared/task-form.js').then(({ subjectTopicField }) => {
       holder.append(subjectTopicField(app, { form, onChange: () => {} }).node);
     }).catch((failure) => holder.append(alertBox(problem(failure), 'bad')));
     return holder;

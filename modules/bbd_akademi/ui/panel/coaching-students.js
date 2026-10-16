@@ -25,7 +25,7 @@ import { coachOptions, coachingJob, riskBadge, studentCell } from './coaching-sh
 import { questionsDialog } from './coaching-checkins.js';
 import { openCoachTask } from './coaching-week.js';
 import { problem } from './api.js';
-import { templateField } from './text-templates.js';
+import { templateField } from './shared/text-templates.js';
 
 const SORTS = { risk: 'Risk önce', adherence: 'Uyumu düşük önce', name: 'Ada göre', last_activity: 'Son etkinlik' };
 

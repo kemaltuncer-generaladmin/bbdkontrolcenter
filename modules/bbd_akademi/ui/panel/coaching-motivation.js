@@ -13,7 +13,7 @@ import {
 } from './common.js';
 import { BADGE_ICONS, REACTIONS, addDaysIso, pct, weekLabel } from './coaching-logic.js';
 import { coachOptions, setEnabled, studentCell } from './coaching-shared.js';
-import { templateField } from './text-templates.js';
+import { templateField } from './shared/text-templates.js';
 
 const BADGES = '/v1/admin/coaching/badges';
 
