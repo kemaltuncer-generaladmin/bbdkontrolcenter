@@ -18,8 +18,8 @@
 import { h, loadStyles } from '../../ui-kit/kit.js';
 import { alertBox, badge, card } from '../../ui-kit/layout.js';
 import {
-  actionButton, confirmAction, fmtDate, fmtDateTime, kv, loader, openDrawer, pagedList, reasonDialog,
-  runAction, sectionHead, selectBox, statusBadge, toolbar,
+  actionButton, confirmAction, fmtDate, fmtDateTime, kv, loader, openDrawer, pagedList, pinStepUp,
+  reasonDialog, runAction, sectionHead, selectBox, statusBadge, toolbar,
 } from './common.js';
 import {
   KIND, REJECT_MIN, STATUS, SUBJECT, actionsFor, cleanNote, dueBadge, keyLacksPermission,
@@ -134,6 +134,8 @@ function nextStep(row) {
   return h('small', 'ak-muted', row.note || '');
 }
 
+const DECIDE = 'admin_decideDataRequest';
+
 async function approve(app, row) {
   const name = row.subject?.displayName || 'Talep sahibi';
   const deletion = row.kind === 'account_deletion';
@@ -152,8 +154,11 @@ async function approve(app, row) {
     danger: deletion,
   });
   if (note === null) return null;
+  // KVKK kararı KM'de PIN teyidi ister (iş 63, KM-07) — onay geri dönüşsüz siler.
+  const token = await pinStepUp(app, DECIDE, { title: 'KVKK kararı — PIN teyidi' });
+  if (!token) return null;
   return runAction(app, () => app.api.post(`/v1/admin/data-requests/${row.id}/decision`,
-    { action: 'approve', note: cleanNote(note) }, { key: `kvkk-approve-${row.id}` }),
+    { action: 'approve', note: cleanNote(note) }, { key: `kvkk-approve-${row.id}`, stepUpToken: token }),
   { success: deletion ? 'Silme onaylandı; Akademi işliyor.' : 'Onaylandı; dosya hazırlanıyor.' });
 }
 
@@ -165,8 +170,13 @@ async function reject(app, row) {
     minLength: REJECT_MIN,
   });
   if (!cleanNote(note)) return null;
+  const token = await pinStepUp(app, DECIDE, {
+    title: 'KVKK kararı — PIN teyidi',
+    description: 'Talebi reddetmek için kendi PIN\'inizi girin.',
+  });
+  if (!token) return null;
   return runAction(app, () => app.api.post(`/v1/admin/data-requests/${row.id}/decision`,
-    { action: 'reject', note: cleanNote(note) }, { key: `kvkk-reject-${row.id}` }),
+    { action: 'reject', note: cleanNote(note) }, { key: `kvkk-reject-${row.id}`, stepUpToken: token }),
   { success: 'Talep reddedildi; talep sahibine bildirildi.' });
 }
 
