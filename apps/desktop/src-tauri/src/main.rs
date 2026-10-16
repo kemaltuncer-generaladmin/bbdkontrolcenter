@@ -14,6 +14,7 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
+mod native;
 mod printing;
 
 use tauri::Manager;
@@ -330,14 +331,34 @@ async fn core_request(
     let response = request
         .send()
         .await
-        .map_err(|error| format!("çekirdeğe bağlanılamadı: {error}"))?;
+        .map_err(|error| format!("[{}] çekirdeğe bağlanılamadı: {error}", failure_kind(&error)))?;
     let status = response.status().as_u16();
     let text = response
         .text()
         .await
-        .map_err(|error| format!("yanıt okunamadı: {error}"))?;
+        .map_err(|error| format!("[{}] yanıt okunamadı: {error}", failure_kind(&error)))?;
 
     Ok(CoreResponse { status, body: text })
+}
+
+/// Bağlantı hatasının TÜRÜ — arayüz yazma isteğini yeniden denemeyi buna
+/// göre önerir ya da önermez (ADR 0032 §Bağlantı).
+///
+///  · `connect` — bağlantı HİÇ KURULAMADI (DNS, TCP, TLS). İstek sunucuya
+///    ulaşmamıştır; yazma güvenle yeniden denenebilir.
+///  · `timeout` — istek gitti, yanıt gelmedi. Sunucu işi YAPMIŞ OLABİLİR;
+///    para/yoklama gibi işlemlerde kör yeniden deneme çift kayıt üretir.
+///  · `network` — bağlantı yolda koptu; aynı belirsizlik.
+///
+/// Metnin başında `[tür]` olarak durur; insan okuyan kısım değişmedi.
+fn failure_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_connect() {
+        "connect"
+    } else if error.is_timeout() {
+        "timeout"
+    } else {
+        "network"
+    }
 }
 
 /// Süreç boyu TEK HTTP istemcisi — bağlantı havuzu.
@@ -696,10 +717,39 @@ fn restart_app(app: tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        // TEK ÖRNEK — ilk eklenti olmak ZORUNDA: ikinci açılış başka hiçbir
+        // şey kurmadan mevcut pencereyi öne getirip kapanır. Dershane
+        // bilgisayarında kısayola iki kez tıklamak iki ayrı oturum, iki ayrı
+        // güncelleyici ve iki ayrı yerel çekirdek demekti.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            native::focus_main(app);
+        }))
+        // PENCERE DURUMU: boyut, konum, ekran, büyütülmüş/tam ekran hatırlanır.
+        // GÖRÜNÜRLÜK HARİÇ: pencere ilk boyaya kadar gizli açılır
+        // (`native::create_main_window`); görünürlüğü geri yüklemek onu
+        // boyanmadan gösterirdi.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sidecar(Mutex::new(None)))
         .manage(Arc::new(UpdateFlow::default()))
+        .manage(native::MenuStore::default())
+        .on_menu_event(|app, event| native::forward_menu_event(app, event.id().as_ref()))
         .setup(|app| {
+            // Pencere ve menü çubuğu (ADR 0032). Menü, oturum açılınca
+            // arayüzün `menu_sync` çağrısıyla tazelenir.
+            native::create_main_window(app.handle())?;
+            let menu = native::build_menu(app.handle(), &native::initial_menu_state())?;
+            app.set_menu(menu)?;
+
             // Çekirdek BURADA başlatılır, `main`in başında değil: kurulu
             // uygulamada kaynak klasörünün yerini yalnız Tauri bilir
             // (`resource_dir`) ve o yol ancak uygulama kurulduktan sonra
@@ -727,6 +777,20 @@ fn main() {
             update_progress,
             update_install,
             restart_app,
+            native::native_info,
+            native::window_ready,
+            native::window_set_zoom,
+            native::window_toggle_fullscreen,
+            native::window_start_drag,
+            native::window_toggle_maximize,
+            native::window_set_theme,
+            native::native_set_prefs,
+            native::native_get_prefs,
+            native::native_notify,
+            native::native_save_file,
+            native::native_open_files,
+            native::menu_sync,
+            native::context_menu,
             printing::printers,
             printing::printer_select,
             printing::printer_print,
@@ -734,6 +798,28 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("Kontrol Merkezi kabuğu başlatılamadı")
         .run(|app, event| {
+            // macOS: pencereyi kapatmak (⌘W, kırmızı düğme) uygulamadan ÇIKMAZ;
+            // pencere gizlenir, Dock simgesine tıklayınca aynı oturumla geri
+            // gelir. Çıkış ⌘Q'dur — Mac uygulamalarının alışılmış davranışı.
+            #[cfg(target_os = "macos")]
+            {
+                if let tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } = &event
+                {
+                    if label == native::MAIN {
+                        api.prevent_close();
+                        if let Some(window) = app.get_webview_window(native::MAIN) {
+                            let _ = window.hide();
+                        }
+                    }
+                }
+                if let tauri::RunEvent::Reopen { .. } = &event {
+                    native::focus_main(app);
+                }
+            }
             if let tauri::RunEvent::Exit = event {
                 // Kabuk kapanıyor: çekirdeği de indir.
                 let state: tauri::State<Sidecar> = app.state();
