@@ -16,17 +16,17 @@
 //
 // Etüt TALEPLERİ kuyruğu Talepler bölümündedir (`app.go('requests', {tab: 'etut'})`).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { AkademiError } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { AkademiError } from '../api.js';
 import {
   TZ, actionButton, clockInput, confirmAction, dateInput, empty, fmtDate, fmtDateTime,
   fmtTime, formDialog, istanbulStamp, kv, loader, multiChips, num, openDrawer, pagedList,
   personName, problem, reasonDialog, runAction, selectBox, statusBadge, studentPicker, todayIst,
   toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   CLOCK, SHORT_DAY, dayKeyOf, readableConflict, slotLayout, slotTime, teacherOptions,
 } from './timetable-shared.js';

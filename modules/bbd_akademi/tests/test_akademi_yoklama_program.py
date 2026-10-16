@@ -96,7 +96,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
   // ------------------------------------------------------------- saf işlevler
   const manage = await load('./panels/bbd_akademi/attendance-manage.js');
   const sync = await load('./panels/bbd_akademi/attendance-sync.js');
-  const tpl = await load('./panels/bbd_akademi/timetable-templates.js');
+  const tpl = await load('./panels/bbd_akademi/lessons/timetable-templates.js');
   const draft = manage.settingsDraft({ lateSuggestAfterMinutes: 10, absentSuggestAfterMinutes: 40,
     teacherEditWindow: { kind: 'hours', hours: 24 }, thresholds: { unexcusedSteps: [5, 10] }, version: 7 });
   out.settingsBody = manage.settingsBody({ ...draft, endOfDayDigestAt: '17:30', noShowsBeforeApproval: '' }, 7);
@@ -200,7 +200,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
 
   // ------------------------------------------------------------ ders oturumu
   {
-    const sessions = await load('./panels/bbd_akademi/sessions.js');
+    const sessions = await load('./panels/bbd_akademi/lessons/sessions.js');
     const root = document.createElement('div');
     document.body.append(root);
     const toasts = [];
@@ -249,7 +249,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
 
   // ------------------------------------------------- haftalık ızgara önizlemesi
   {
-    const week = await load('./panels/bbd_akademi/timetable-week.js');
+    const week = await load('./panels/bbd_akademi/lessons/timetable-week.js');
     const root = document.createElement('div');
     document.body.append(root);
     const app = makeApp(root, api, {});

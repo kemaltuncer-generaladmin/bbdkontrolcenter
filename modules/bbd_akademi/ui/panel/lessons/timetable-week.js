@@ -29,20 +29,20 @@
 // saatte iki sınıfta), öğretmeni atanmamış satırlar ve kaydedilirse öğretmen başına haftalık yük.
 // Taslak değişince önizleme düşer (eski sonuç yanıltmasın).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, skeletonRows } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, skeletonRows } from '../../../ui-kit/layout.js';
 import {
   DAY_LABEL, actionButton, confirmAction, dateInput, empty, errorBox, fmtDate, fmtDateTime,
   formDialog, kv, num, personName, problem, selectBox, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import { copyWeekDialog, rolloverCopyDialog } from './timetable-copy.js';
 import {
   cellKey, conflictText, slotLayout, slotTime, subjectHue, subjectIndex, subjectSelect,
   teacherOptions,
 } from './timetable-shared.js';
-import { documentButtons } from './documents.js';
-import { classTimetableDoc, teacherTimetableDoc } from './documents-logic.js';
-import { fetchPrograms, fillProgramSelect } from './shared/curriculum-picker.js';
+import { documentButtons } from '../documents.js';
+import { classTimetableDoc, teacherTimetableDoc } from '../documents-logic.js';
+import { fetchPrograms, fillProgramSelect } from '../shared/curriculum-picker.js';
 
 /** Etiketli küçük alan (araç şeridi için). */
 function field(label, control) {

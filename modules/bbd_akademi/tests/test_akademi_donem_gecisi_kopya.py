@@ -45,7 +45,7 @@ CLASSES = {"items": [
 
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, api, load, calls }) {
-  const { rolloverCopyDialog, matchRolloverPairs } = await load('./panels/bbd_akademi/timetable-copy.js');
+  const { rolloverCopyDialog, matchRolloverPairs } = await load('./panels/bbd_akademi/lessons/timetable-copy.js');
   const qs = (query) => {
     const parts = Object.entries(query || {}).filter(([, v]) => v !== undefined && v !== '')
       .map(([k, v]) => `${k}=${v}`);

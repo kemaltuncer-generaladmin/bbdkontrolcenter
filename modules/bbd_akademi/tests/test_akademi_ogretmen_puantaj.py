@@ -52,7 +52,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
   const blobs = [];
   URL.createObjectURL = (blob) => { blobs.push(blob); return `blob:${blobs.length}`; };
   URL.revokeObjectURL = () => {};
-  const ses = await load('./panels/bbd_akademi/sessions.js');
+  const ses = await load('./panels/bbd_akademi/lessons/sessions.js');
   out.months = [ses.shiftMonth('2026-01', -1), ses.shiftMonth('2026-12', 1), ses.shiftMonth('2026-10', 0)];
   out.range = [ses.monthRange('2026-02'), ses.monthRange('2028-02'), ses.monthRange('2026-12')];
   out.label = ses.monthLabel('2026-10');

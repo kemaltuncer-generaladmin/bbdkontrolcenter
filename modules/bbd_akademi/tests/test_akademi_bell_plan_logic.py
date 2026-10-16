@@ -99,7 +99,7 @@ process.stdout.write(JSON.stringify(out));
 @pytest.fixture(scope="module")
 def result(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     folder = tmp_path_factory.mktemp("bell_plan")
-    (folder / "bell-plan.mjs").write_bytes((PANEL / "bell-plan.js").read_bytes())
+    (folder / "bell-plan.mjs").write_bytes((PANEL / "lessons/bell-plan.js").read_bytes())
     (folder / "run.mjs").write_text(SCRIPT, encoding="utf-8")
     done = subprocess.run(["node", str(folder / "run.mjs")], capture_output=True, text=True,
                           check=False, timeout=60)

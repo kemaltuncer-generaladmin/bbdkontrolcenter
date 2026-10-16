@@ -15,14 +15,14 @@
 // hesaplanır (`current`), elle işaretlenmez; dönemler çakışamaz
 // (`409 overlapping_term`).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, hintBox, tabBar } from '../../ui-kit/layout.js';
-import { AkademiError } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, hintBox, tabBar } from '../../../ui-kit/layout.js';
+import { AkademiError } from '../api.js';
 import {
   DAY_LABEL, WEEKDAYS, actionButton, addDays, clockInput, confirmAction, empty, fmtDate,
   fmtDateTime, formDialog, loader, multiChips, num, problem, runAction, selectBox, staticList,
   todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import { CLOCK, DAY_KEYS, clockOf, minutesOf, slotLayout, slotTime } from './timetable-shared.js';
 
 // ------------------------------------------------------------ zil dilimleri

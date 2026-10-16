@@ -110,13 +110,13 @@ export const SECTIONS = [
   { key: 'coachTemplates', label: 'Şablonlar', file: './coaching/coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachTextTemplates', 'admin_listStudyPlanTemplates'],
     payload: { coachingTab: 'templates' } },
-  { key: 'timetable', label: 'Ders programı ve etüt', file: './timetable.js', requires: ['view'],
+  { key: 'timetable', label: 'Ders programı ve etüt', file: './lessons/timetable.js', requires: ['view'],
     area: 'lessons' },
   // Ders oturumları (KM-3): tek dersin iptali, telafisi, yerine öğretmen; öğretmen haftası.
-  { key: 'sessions', label: 'Ders oturumları', file: './sessions.js', requires: ['view'], area: 'lessons' },
-  { key: 'calendar', label: 'Kurum takvimi', file: './institution-calendar.js', requires: ['view'],
+  { key: 'sessions', label: 'Ders oturumları', file: './lessons/sessions.js', requires: ['view'], area: 'lessons' },
+  { key: 'calendar', label: 'Kurum takvimi', file: './lessons/institution-calendar.js', requires: ['view'],
     area: 'lessons' },
-  { key: 'curriculum', label: 'Müfredat', file: './curriculum.js', requires: ['view'], area: 'lessons' },
+  { key: 'curriculum', label: 'Müfredat', file: './lessons/curriculum.js', requires: ['view'], area: 'lessons' },
   // Ders kayıtları (F-DK, Akademi README §14 madde 110): akıllı tahtalar ve derslikler, kayıtlar (gizle / sil / kim
   // izledi / paylaşım), depolama kotası, ayarlar — web / mobil yöneticiyle aynı uçlar. Ayarları yazmak kurum ayarıdır.
   { key: 'lessonRecordings', label: 'Ders kayıtları', file: './lesson-recordings.js', requires: ['recordings'],

@@ -31,16 +31,16 @@
 //
 // Derin bağlantı: `{institutionEventId}`, `{date}` (o günün ayı açılır, gün seçilir).
 
-import { button, h, loadStyles, longDate } from '../../ui-kit/kit.js';
-import { monthCalendar } from '../../ui-kit/calendar.js';
-import { dateField, dateRange } from '../../ui-kit/datefield.js';
-import { alertBox, card, hintBox, tabBar } from '../../ui-kit/layout.js';
-import { AkademiError } from './api.js';
+import { button, h, loadStyles, longDate } from '../../../ui-kit/kit.js';
+import { monthCalendar } from '../../../ui-kit/calendar.js';
+import { dateField, dateRange } from '../../../ui-kit/datefield.js';
+import { alertBox, card, hintBox, tabBar } from '../../../ui-kit/layout.js';
+import { AkademiError } from '../api.js';
 import { bellChoices, bellText, choiceFromBell, defaultBellChoice, withBell } from './bell-plan.js';
 import {
   actionButton, addDays, errorBox, fmtDate, fmtDateTime, fmtTime, formDialog, istanbulStamp, kv, loader, multiChips,
   num, openDrawer, optionsOf, pagedList, sectionHead, selectBox, studentPicker, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 
 const KINDS = {
   holiday: 'Tatil', event: 'Etkinlik', parent_meeting: 'Veli toplantısı', exam_day: 'Deneme günü',

@@ -23,9 +23,9 @@
 // Derin bağlantılar: `{classGroupId}` o sınıfın ızgarasını, `{lessonEventId}`
 // etüt çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'|'templates'}` sekmeyi açar.
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { tabBar } from '../../ui-kit/layout.js';
-import { sectionHead } from './common.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { tabBar } from '../../../ui-kit/layout.js';
+import { sectionHead } from '../common.js';
 import { weekTab } from './timetable-week.js';
 import { eventsTab, openLessonEvent } from './timetable-events.js';
 import { bellSlotsTab, termsTab } from './timetable-setup.js';

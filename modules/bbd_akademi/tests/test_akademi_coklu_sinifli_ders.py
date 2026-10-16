@@ -56,7 +56,7 @@ PROGRAMS = {"items": [{"id": "lgs-matematik", "title": "Matematik", "kind": "exa
 
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, api, load, calls }) {
-  const { weekTab } = await load('./panels/bbd_akademi/timetable-week.js');
+  const { weekTab } = await load('./panels/bbd_akademi/lessons/timetable-week.js');
   const qs = (query) => {
     const parts = Object.entries(query || {}).filter(([, v]) => v !== undefined && v !== '')
       .map(([k, v]) => `${k}=${v}`);

@@ -14,15 +14,15 @@
 // katılan sınıflar, en çok 12; hedef sınıf her zaman dahildir) ve `programId` taşır; yanıtta adlarıyla
 // `classGroups` / `program` gelir. Uygulamada her hedef sınıfta satırın sınıfları = hedef ∪ classGroupIds.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, card } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, card } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
 import {
   DAY_LABEL, actionButton, confirmAction, empty, errorBox, fmtDate, fmtDateTime, formDialog, kv, loader, multiChips,
   num, openDrawer, problem, selectBox, staticList, todayIst, toolbar,
-} from './common.js';
-import { fetchPrograms, fillProgramSelect } from './shared/curriculum-picker.js';
+} from '../common.js';
+import { fetchPrograms, fillProgramSelect } from '../shared/curriculum-picker.js';
 import { copyResultsTable } from './timetable-copy.js';
 import { DAY_KEYS, slotLayout, slotName, slotTime, subjectSelect } from './timetable-shared.js';
 

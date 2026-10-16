@@ -10,9 +10,9 @@
 // (`TimetableConflict`) hem program kaydında hem etüt oluştururken aynı
 // biçimde gelir; cümle tek yerde kurulur.
 
-import { h } from '../../ui-kit/kit.js';
-import { AkademiError } from './api.js';
-import { DAY_LABEL, WEEKDAYS } from './common.js';
+import { h } from '../../../ui-kit/kit.js';
+import { AkademiError } from '../api.js';
+import { DAY_LABEL, WEEKDAYS } from '../common.js';
 
 export const DAY_KEYS = WEEKDAYS.map(([key]) => key);
 export const SHORT_DAY = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]));

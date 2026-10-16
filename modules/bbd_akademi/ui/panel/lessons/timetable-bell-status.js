@@ -20,9 +20,9 @@
 //
 // Özet hesabı `bell-plan.js`'tedir (Node ile birim testli).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, hintBox } from '../../ui-kit/layout.js';
-import { actionButton, fmtDate, fmtDateTime, num, runAction, todayIst } from './common.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, hintBox } from '../../../ui-kit/layout.js';
+import { actionButton, fmtDate, fmtDateTime, num, runAction, todayIst } from '../common.js';
 import {
   PUSH_RESULT_TEXT, planStatusProblem, shouldFallBack, summarizePlanStatus, todayModeText,
 } from './bell-plan.js';

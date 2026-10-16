@@ -27,16 +27,16 @@
 // Derin bağlantılar: `{classSessionId}` oturum çekmecesini, `{tab: 'calendar'|'teacher'|'load'}` sekmeyi,
 // `{staffId}` öğretmen haftasını, `{tab: 'load', month: 'YYYY-MM'}` o ayın dökümünü açar.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { saveBlob } from './api.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { saveBlob } from '../api.js';
 import {
   DAY_LABEL, actionButton, addDays, clockInput, confirmAction, dateInput, empty, fmtDate, fmtDateTime, fmtTime,
   formDialog, istanbulStamp, kv, loader, num, openDrawer, optionsOf, pagedList, personName, problem, reasonDialog,
   runAction, sectionHead, selectBox, statusBadge, todayIst, toolbar, weekStart,
-} from './common.js';
+} from '../common.js';
 import { dayKeyOf } from './timetable-shared.js';
 
 export const SESSION_KIND = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek seferlik ders', makeup: 'Telafi dersi' };

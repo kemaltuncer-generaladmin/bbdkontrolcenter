@@ -17,17 +17,17 @@
 // `/v1/admin/curricula/programs` öneki (liste + ayrıntı) düşürülür. Program
 // listesi sözleşmede sayfasızdır (`{items}`), istisna listesi de öyle.
 
-import { blockedButton, button, foldText, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { blockedButton, button, foldText, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   actionButton, confirmAction, CURRICULUM_EXAMS, empty, errorBox, EXAM_TARGETS, fmtDate,
   fmtDateTime, formDialog, GRADE_LEVELS, gradeText, kv, loader, num, openDrawer, optionsOf,
   runAction, searchBox, sectionHead, selectBox, staticList, statusBadge, studentPicker, toolbar,
   TRACKS,
-} from './common.js';
-import { bulkTargetField } from './shared/bulk-target.js';
-import { loadTargets } from './resources-common.js';
+} from '../common.js';
+import { bulkTargetField } from '../shared/bulk-target.js';
+import { loadTargets } from '../resources-common.js';
 
 const PROGRAMS = '/v1/admin/curricula/programs';
 const VERSIONS = '/v1/admin/curricula/versions';

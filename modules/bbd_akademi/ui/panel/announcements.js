@@ -19,7 +19,7 @@ import {
   actionButton, confirmAction, fmtDateTime, formDialog, kv, loader, multiChips, num, openDrawer,
   pagedList, runAction, sectionHead, statusBadge, studentPicker, todayIst,
 } from './common.js';
-import { csvText } from './sessions.js';
+import { csvText } from './lessons/sessions.js';
 
 const STATUS = { draft: ['Taslak', 'dim'], scheduled: ['Zamanlandı', 'info'],
   published: ['Yayında', 'good'], archived: ['Arşiv', 'dim'] };

@@ -15,12 +15,12 @@
 // sınıfa aktarır. Sınıflar Akademi'de ad + dönemle eşlenir; eşitlenmemiş sınıf
 // "Akademi'de henüz yok" diye listelenir.
 
-import { button, foldText, h } from '../../ui-kit/kit.js';
-import { alertBox, badge } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
-import { empty, errorBox, fmtDate, formDialog, multiChips, num, openDrawer, todayIst } from './common.js';
-import { academicYearOf } from './shared/curriculum-set.js';
+import { button, foldText, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
+import { empty, errorBox, fmtDate, formDialog, multiChips, num, openDrawer, todayIst } from '../common.js';
+import { academicYearOf } from '../shared/curriculum-set.js';
 import { conflictText } from './timetable-shared.js';
 
 const COPY_STATUS = { copied: ['Kopyalandı', 'good'], would_copy: ['Kopyalanabilir', 'info'],
