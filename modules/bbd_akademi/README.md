@@ -575,7 +575,19 @@ koyu tema belgeye karışmaz.
 - **Uçlar:** `POST /api/bbd_akademi/km/documents/preview` `{kind, document,
   preview}` · `POST /api/bbd_akademi/km/documents/akademi` `{kind, url, name}`
   (Akademi'nin kendi makbuz/ekstre/kitap sipariş PDF'i; yalnız izinli kökenden,
-  `%PDF` doğrulanır). Dosya `Raporlar/Akademi/<tür>/yıl/ay/` altına 0600 yazılır.
+  `%PDF` doğrulanır) · `POST /api/bbd_akademi/km/documents/pages` `{path, first,
+  last}` (önizlemenin kalan sayfaları; yalnız modülün kendi çıktı klasöründen,
+  en çok 12 sayfa). Dosya `Raporlar/Akademi/<tür>/yıl/ay/` altına 0600 yazılır.
+- **Önizleme penceresi (63-finans-pdf):** ortak `ui-kit/report.js` → `pdfViewer`:
+  sayfalar, yakınlaştırma (−/+/sığdır, klavyede + − 0), sayfa sayısı; ilk yanıt ilk
+  4 sayfayı getirir, kalanı kaydırdıkça gelir. "PDF kaydet" cihazın kaydet
+  penceresini açar (kabuk `pdf_save`); "Yazdır" yazdırma penceresi açar: yazıcı,
+  kopya, sayfa aralığı, dikey/yatay (yön değişirse PDF yeniden üretilir).
+- **Finans raporları (63-finans-pdf):** Kurum finansı sekmelerinin hepsinde tek tip
+  araç çubuğu "Önizle · Yazdır · PDF kaydet" (`documents.js` → `financeToolbar`,
+  `finance-reports.js`). Ekrandaki süzgeçler belgenin başlığında yazar; rapor
+  ekranda görünen ilk sayfayı değil süzgece uyan BÜTÜN kayıtları basar (imleç
+  sonuna kadar, en çok 20.000 kayıt).
 - **Kapı (K9):** tür, taşıdığı verinin Akademi işlemlerine bağlıdır
   (`backend/documents.py` → `KINDS`); kullanıcı o işlemlerin KM iznini taşımalı.
   Karne `evaluations`, kurum carisi `finance`, kitap sipariş PDF'i `books` ister.
@@ -596,7 +608,7 @@ koyu tema belgeye karışmaz.
 | Ödevler | Ödev listesi (`homework_list`) / öğrenci süzülmüşse öğrencinin ödevleri (`homework_student`) |
 | Öğrenci kartı › Çalışma planı | Haftalık çalışma planı (`study_plan`) |
 | Öğrenci kartı › Kayıt | Özet kartı (`student_card`), ödevler, kantin dökümü (`canteen_statement`), kurum cari ekstresi |
-| Kurum finansı | Hesap ekstresi (`finance_statement`), tahsilat makbuzu (`finance_receipt`) + Akademi PDF'leri |
+| Kurum finansı | Hesap ekstresi (`finance_statement`), tahsilat makbuzu (`finance_receipt`) + Akademi PDF'leri; cari hesaplar — sınıf ara toplamlı (`finance_accounts`), tahsilatlar — yöntem kırılımı, iptaller toplama girmez (`finance_payments`), gecikenler — borç yaşlandırma 1–30/31–60/61–90/90+ gün (`finance_overdue`), aylık rapor — yatay, ay × yöntem (`finance_monthly`) |
 | Kitap talepleri | Talep / teslim belgesi (`book_request`) + mağaza sipariş PDF'i |
 | Öğrenciler | Sınıfın veli listesi (`guardian_list`) |
 

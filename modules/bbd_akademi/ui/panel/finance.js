@@ -26,8 +26,9 @@ import {
   reasonDialog, runAction, searchBox, sectionHead, selectBox, statusBadge, studentPicker,
   todayIst, toolbar,
 } from './common.js';
-import { documentButtons, previewAkademiPdf } from './documents.js';
+import { financeToolbar, previewAkademiPdf } from './documents.js';
 import { receiptDoc, statementDoc } from './documents-logic.js';
+import { accountsReport, overdueReport, paymentsReport } from './finance-reports.js';
 import {
   STATEMENT_KINDS, applyPlanDiscount, closingCards, closingNote, discountBody, discountFields, discountLine,
   exportButton, monthlyTab, printPlanAgreement, recordRefund, withdrawAccount,
@@ -164,8 +165,11 @@ function accountsTab(app, { openAccount }) {
 
   const picker = studentPicker(app, { placeholder: 'Hesabı aç: öğrenci ara',
     onPick: (student) => openAccount(student.id) });
+  // PDF: ekrandaki süzgeçlerle BÜTÜN cari hesaplar, sınıf ara toplamlarıyla (63-finans-pdf).
+  const report = accountsReport(app, () => ({ filters: { ...filters }, classBox: classSelect,
+    stateBox: stateSelect }));
   node.append(toolbar(search.node, classSelect.node, stateSelect.node, h('span', 'kit-spacer'),
-    picker.node));
+    picker.node, report));
 
   const list = pagedList({
     app,
@@ -204,7 +208,9 @@ function paymentsTab(app, { openAccount }) {
   });
   const statusSelect = selectBox([{ value: '', label: 'Tümü' }, { value: 'completed', label: 'Tamamlanan' },
     { value: 'voided', label: 'İptal edilen' }], '', (value) => { filters.status = value; reload(); });
-  node.append(toolbar(range.node, methodSelect.node, statusSelect.node));
+  const report = paymentsReport(app, () => ({ filters: { ...filters }, methodBox: methodSelect,
+    statusBox: statusSelect }));
+  node.append(toolbar(range.node, methodSelect.node, statusSelect.node, h('span', 'kit-spacer'), report));
 
   let list;
   // Tahsilat satırı öğrenciyi taşımaz; öğrenci makbuzda görünür (satır başına
@@ -289,7 +295,9 @@ function overdueTab(app, { openAccount }) {
     onClick: () => remind(list.table.selection()) });
   const remindAll = actionButton(app, 'admin_sendFinanceReminders', 'Tümüne hatırlat', {
     variant: 'primary', onClick: () => remind([]) });
-  node.append(toolbar(classSelect.node, daySelect.node, h('span', 'kit-spacer'), remindSelected, remindAll));
+  const report = overdueReport(app, () => ({ filters: { ...filters }, classBox: classSelect }));
+  node.append(toolbar(classSelect.node, daySelect.node, h('span', 'kit-spacer'), report, remindSelected,
+    remindAll));
 
   list = pagedList({
     app,
@@ -852,7 +860,7 @@ export function receiptDrawer(app, paymentId, { openAccount } = {}) {
     if (payment.creditAddedMinor) nodes.push(h('div', 'ak-muted', `Alacağa yazılan: ${money(payment.creditAddedMinor)}`));
     // Makbuz: kurum logolu belge (önizle / yazdır); Akademi'nin kendi PDF'i
     // varsa o da aynı önizleme penceresinde açılır ve bu cihazdan basılır.
-    const tools = [documentButtons(app, { title: 'Tahsilat makbuzu', label: 'Makbuz',
+    const tools = [financeToolbar(app, { title: 'Tahsilat makbuzu',
       build: async () => receiptDoc(receipt) })];
     if (receipt.pdfUrl) {
       tools.push(button('Akademi PDF', { title: 'Akademi\'nin ürettiği makbuz PDF\'ini önizler.',
@@ -893,7 +901,7 @@ function statementDrawer(app, studentId, name) {
       if (url) previewAkademiPdf(app, { kind: 'finance_statement', url, name: `${name || ''} ${state.from} ${state.to}`, opener });
     } });
   // Kurum logolu ekstre (ekrandaki dönem).
-  const branded = documentButtons(app, { title: 'Hesap ekstresi', label: 'Ekstre',
+  const branded = financeToolbar(app, { title: 'Hesap ekstresi',
     build: async () => {
       const [detail, statement] = await Promise.all([app.api.get(`/v1/admin/students/${studentId}`),
         app.api.get(`/v1/admin/finance/accounts/${studentId}/statement`, { from: state.from, to: state.to })]);

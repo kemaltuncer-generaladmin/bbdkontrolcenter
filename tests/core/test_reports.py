@@ -4,9 +4,26 @@ Bu üreteç 20 mağaza ekranının ortak çıktısını basacak. Bir biçim hata
 ekranda değil hepsinde görünür; bu yüzden sözleşme testle sabitlenir.
 """
 
+import asyncio
+import shutil
+import subprocess
+from pathlib import Path
+
 import pytest
 
-from km_sdk import ExportError, build_pdf, csv_bytes, money, number, percent
+from km_sdk import (
+    ExportError,
+    build_pdf,
+    csv_bytes,
+    filters_line,
+    mask_phones,
+    money,
+    number,
+    pdf_page_count,
+    pdf_preview,
+    pdf_preview_pages,
+    percent,
+)
 
 
 def test_csv_excelin_turkce_yerelinde_acilir() -> None:
@@ -85,18 +102,6 @@ def test_reportlab_yoksa_anlasilir_hata(monkeypatch: pytest.MonkeyPatch) -> None
 # "Sayfa X / Y", tekrar eden tablo başlığı, ara/genel toplam, Türkçe yazı
 # tipi, KVKK maskelemesi, yatay sayfa ve parça parça önizleme.
 
-import asyncio  # noqa: E402
-import shutil  # noqa: E402
-import subprocess  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-from km_sdk import (  # noqa: E402
-    filters_line,
-    mask_phones,
-    pdf_page_count,
-    pdf_preview,
-    pdf_preview_pages,
-)
 
 
 def _text(pdf: bytes, tmp_path: Path) -> str:
