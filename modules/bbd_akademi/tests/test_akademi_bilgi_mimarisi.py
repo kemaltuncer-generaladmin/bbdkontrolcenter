@@ -110,8 +110,9 @@ def test_en_fazla_on_ana_grup(result: dict[str, Any]) -> None:
     assert nav["today"] == ["dashboard", "requests"]
     assert nav["students"] == ["students"]
     # Koçluk ÖNDE (lider 15.10.2026): koçun en sık işleri doğrudan hap — kuyruk, haftalık program,
-    # koçluk öğrencileri, hoca soruları (§14 madde 63), mesajlar (KM-1 denetim), görüşmeler (F-K17).
-    assert nav["coaching"] == ["coachQueue", "coachWeek", "coachStudents", "questions", "messages",
+    # koçluk öğrencileri, hoca soruları (§14 madde 63), hata defteri gelen kutusu (§14 madde 104), görüşmeler (F-K17).
+    # Mesaj denetimi (KM-1) 16.10.2026'da İletişim grubuna taşındı (10 hap sınırı).
+    assert nav["coaching"] == ["coachQueue", "coachWeek", "coachStudents", "questions", "mistakeInbox",
                                "coachMeetings", "coachCoaches", "coachLibrary", "coachMotivation",
                                "coachCheckins"]
     # Ders oturumları (KM-3): tek dersin iptali / telafisi / yerine öğretmen, öğretmen haftası.
@@ -121,7 +122,7 @@ def test_en_fazla_on_ana_grup(result: dict[str, Any]) -> None:
     assert nav["work"] == ["homework", "plan", "exams", "evaluations", "resources", "reading", "decks",
                            "templates"]
     # Veli toplantısı (§14 madde 90); SMS eskiden Ayarlar → Kurum ayarları sekmesiydi.
-    assert nav["comms"] == ["announcements", "parentMeetings", "sms"]
+    assert nav["comms"] == ["announcements", "parentMeetings", "sms", "messages"]  # mesaj denetimi 16.10.2026
     assert nav["money"] == ["finance", "canteen", "bookSales", "books"]   # kitap satışı 0.5.4
     assert nav["reports"] == ["reportHub", "insights"]
     assert nav["admin"] == ["settings", "staff", "privacy"]

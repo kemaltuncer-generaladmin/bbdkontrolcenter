@@ -91,8 +91,6 @@ export const SECTIONS = [
   { key: 'mistakeInbox', label: 'Hata defteri gelen kutusu', file: './mistake-inbox.js', requires: ['learning'],
     area: 'coaching', feature: 'coach_questions' },
   // Mesaj denetimi (F-K15 moderasyon + F-K21 denetim): şikâyet kuyruğu, karar, kilit, gerekçeli arama.
-  { key: 'messages', label: 'Mesajlar', file: './messages.js', requires: ['settings'], area: 'coaching',
-    feature: 'coaching' },
   { key: 'coachMeetings', label: 'Görüşmeler', file: './coaching.js', requires: ['view'], area: 'coaching',
     feature: 'coaching', host: 'coaching', reads: ['admin_listCoachMeetings'], payload: { coachingTab: 'meetings' } },
   { key: 'coachCoaches', label: 'Koçlar ve atama', file: './coaching.js', requires: ['view'], area: 'coaching',
@@ -135,6 +133,9 @@ export const SECTIONS = [
   // SMS (sms-kale §14 madde 58 + kurum SMS'i madde 88): eskiden Ayarlar → Kurum ayarları → SMS sekmesiydi.
   { key: 'sms', label: 'SMS', file: './sms.js', requires: ['settings'], area: 'comms',
     reads: ['admin_getSmsHealth'] },
+  // 16.10.2026: İletişim grubuna taşındı (Koçluk 10 hap sınırı — hata defteri gelen kutusu koçun önünde).
+  { key: 'messages', label: 'Mesajlar', file: './messages.js', requires: ['settings'], area: 'comms',
+    feature: 'coaching' },
   { key: 'finance', label: 'Kurum finansı', file: './finance.js', requires: ['finance'], area: 'money',
     feature: 'finance' },
   { key: 'canteen', label: 'Kantin', file: './canteen.js', requires: ['view'], area: 'money',

@@ -154,11 +154,11 @@ def test_butun_bolumler_denetimden_gecer() -> None:
                                       "Raporlar", "Ayarlar"]
     # Ana sayfa + 38 ekran: koçluk ekranının sekmeleri artık Koçluk grubunun hapları (8), SMS
     # İletişim'de kendi ekranı, Rapor merkezi yeni (dağınık raporların tek kapısı).
-    assert len(result) == 39, sorted(result)
+    assert len(result) == 40, sorted(result)  # +hata defteri gelen kutusu (§14 madde 104)
     assert result["Ana sayfa / -"] == []
     assert result["Koçluk / Hoca soruları"] == []
     assert result["Dersler ve Program / Ders oturumları"] == []
-    assert result["Koçluk / Mesajlar"] == []
+    assert result["İletişim / Mesajlar"] == []
     assert result["Koçluk / Haftalık program"] == []
     assert result["İletişim / SMS"] == []
     assert result["Raporlar / Rapor merkezi"] == []
