@@ -128,7 +128,7 @@ export const SECTIONS = [
   { key: 'exams', label: 'Denemeler', file: './exams/exams.js', requires: ['view'], area: 'work' },
   { key: 'evaluations', label: 'Değerlendirmeler', file: './exams/evaluations.js',
     requires: ['evaluations', 'learning_setup'], area: 'work' },
-  { key: 'resources', label: 'Kaynaklar', file: './resources.js', requires: ['view'], area: 'work' },
+  { key: 'resources', label: 'Kaynaklar', file: './resources/resources.js', requires: ['view'], area: 'work' },
   { key: 'reading', label: 'Okuma', file: './work/reading.js', requires: ['view'], area: 'work' },
   { key: 'decks', label: 'Bilgi kartları', file: './work/decks.js', requires: ['learning_setup'],
     area: 'work', feature: 'flashcards' },

@@ -22,7 +22,7 @@ import {
 } from '../common.js';
 import { bulkTargetField } from '../shared/bulk-target.js';
 import { homeworkContent, removableChip, stack, topicsText } from './homework-content.js';
-import { loadTargets } from '../resources-common.js';
+import { loadTargets } from '../resources/resources-common.js';
 import { followBulkJob, jobProgressText, wizard } from '../shared/wizard.js';
 
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;

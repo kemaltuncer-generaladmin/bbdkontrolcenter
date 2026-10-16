@@ -17,7 +17,7 @@ import { h } from '../../../ui-kit/kit.js';
 import {
   EXAM_TARGETS, GRADE_LEVELS, TRACKS, gradeText, multiChips, num, studentSelect,
 } from '../common.js';
-import { targetsField } from '../resources-common.js';
+import { targetsField } from '../resources/resources-common.js';
 
 const MODES = {
   pick: 'Sınıf, grup ya da öğrenci seçerek',

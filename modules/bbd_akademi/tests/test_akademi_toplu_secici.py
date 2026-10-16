@@ -52,7 +52,7 @@ export default async function ({ document, audit, sleep, load }) {
     return { items: rows.slice(start, start + limit), nextCursor: start + limit < rows.length ? String(start + limit) : null };
   } } };
   const { bulkTargetField } = await load('./panels/bbd_akademi/shared/bulk-target.js');
-  const { targetsField } = await load('./panels/bbd_akademi/resources-common.js');
+  const { targetsField } = await load('./panels/bbd_akademi/resources/resources-common.js');
   const root = document.createElement('div');
   document.body.append(root);
   let changes = 0;

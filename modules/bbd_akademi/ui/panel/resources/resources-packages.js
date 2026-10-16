@@ -9,14 +9,14 @@
 // "Şimdi uygula" (kural / sınıf / grup / öğrenci; önce `dryRun` ile sayılır).
 // Paket silinince yapılmış atamalar KALIR.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
 import {
   actionButton, confirmAction, empty, errorBox, fmtDate, fmtDateTime, formDialog, kv, loader, num,
   openDrawer, optionsOf, runAction, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   EXAM_TARGETS, GRADE_OPTIONS, KINDS, TRACKS, contentText, gradeValue, levelText, loadTargets,
   resourceCell, resourceListField, ruleText, scopeBadge, stackCell, targetsField,

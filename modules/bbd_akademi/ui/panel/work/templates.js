@@ -29,8 +29,8 @@ import { programLabel, sortPrograms } from '../shared/curriculum-picker.js';
 import { bulkHomeworkWizard, contentDialog, templateLine } from './homework-bulk.js';
 import { topicsText } from './homework-content.js';
 import { templatesTab as planTemplatesTab } from './plan-templates.js';
-import { gradeValue, loadPackages, loadTargets, resourceListField, ruleText } from '../resources-common.js';
-import { rulesField } from '../resources-packages.js';
+import { gradeValue, loadPackages, loadTargets, resourceListField, ruleText } from '../resources/resources-common.js';
+import { rulesField } from '../resources/resources-packages.js';
 import { bulkJobDialog } from '../shared/wizard.js';
 
 const SCOPE = { institution: ['Kurum', 'info'], personal: ['Kişisel', 'dim'] };

@@ -23,16 +23,16 @@
 // kurumda zaten var mı, bbdstore'da satılıyor mu — üçü yan yana gösterilir ve
 // form eşleşmeden doldurulur. bbdstore kataloğu salt okunur (ürün bağlamak için).
 
-import { button, blockedButton, h, loadStyles, menuButton } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { AkademiError } from './api.js';
-import { storeSyncCard } from './shared/book-picker.js';
+import { button, blockedButton, h, loadStyles, menuButton } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { AkademiError } from '../api.js';
+import { storeSyncCard } from '../shared/book-picker.js';
 import {
   actionButton, confirmAction, empty, errorBox, formDialog, kv, loader, money,
   multiChips, num, openDrawer, optionsOf, pagedList, problem, runAction, searchBox, sectionHead,
   selectBox, toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   CURRICULUM_EXAMS, GRADE_OPTIONS, KINDS, TRACKS, clean, contentText, gradeValue,
   levelText, resourceCell, resourcePicker, scopeBadge, stackCell, subjectsText, tocPreview,

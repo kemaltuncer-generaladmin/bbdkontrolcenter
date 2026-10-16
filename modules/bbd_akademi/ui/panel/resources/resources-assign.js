@@ -10,15 +10,15 @@
 // hedef tarihe göre) hem çizgiyle hem "geride" yazısıyla işaretlenir. Hücre
 // başına ek istek atılmaz: ayrıntı hücrenin ipucundadır.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { skeletonRows } from '../../ui-kit/layout.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { skeletonRows } from '../../../ui-kit/layout.js';
 import {
   actionButton, empty, errorBox, fmtDate, fmtDateTime, formDialog, num, pagedList, selectBox,
   studentPicker, toolbar,
-} from './common.js';
-import { bulkTargetField } from './shared/bulk-target.js';
+} from '../common.js';
+import { bulkTargetField } from '../shared/bulk-target.js';
 import { T as BULK, resultText } from './resources-bulk-logic.js';
-import { followBulkJob } from './shared/wizard.js';
+import { followBulkJob } from '../shared/wizard.js';
 
 /** `admin_createResourceAssignments` tek istekte en çok kaynak; fazlası toplu atama ucuna gider. */
 const SINGLE_MAX = 50;

@@ -13,15 +13,15 @@
 // seçim için okunur). "Konulardan bölüm üret" önce `dryRun` ile önizler, onaydan
 // sonra Akademi üretip KAYDEDER.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, skeletonRows } from '../../ui-kit/layout.js';
-import { createPicker } from '../../ui-kit/picker.js';
-import { AkademiError } from './api.js';
-import { programLabel, sortPrograms } from './shared/curriculum-picker.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, skeletonRows } from '../../../ui-kit/layout.js';
+import { createPicker } from '../../../ui-kit/picker.js';
+import { AkademiError } from '../api.js';
+import { programLabel, sortPrograms } from '../shared/curriculum-picker.js';
 import {
   actionButton, confirmAction, empty, errorBox, formDialog, multiChips, num, optionsOf, problem,
   toolbar,
-} from './common.js';
+} from '../common.js';
 import {
   KINDS, SECTION_KINDS, levelText, resourcePicker, scopeBadge, subjectsText, tocPreview,
 } from './resources-common.js';

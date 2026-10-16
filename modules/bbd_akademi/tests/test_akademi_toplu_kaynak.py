@@ -54,7 +54,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   routes['POST /v1/admin/resource-assignments/bulk-delete'] = (body) => ({ removedCount: 2, dryRun: Boolean(body.dryRun) });
   const { app, root, toasts } = await makeApp(load, document);
   app.lookups.classGroups = async () => [{ id: 'c-9a', name: '9-A', gradeLevel: 8 }, { id: 'c-9b', name: '9-B', gradeLevel: 9 }];
-  const { bulkAssignWizard } = await load('./panels/bbd_akademi/resources-bulk.js');
+  const { bulkAssignWizard } = await load('./panels/bbd_akademi/resources/resources-bulk.js');
   let shown = null;
   const done = bulkAssignWizard(app, { onShowBatch: (id) => { shown = id; } });
   await sleep(60);
@@ -118,7 +118,7 @@ export default async function ({ document, audit, sleep, api, load }) {
 
 MANTIK = r"""
 export default async function ({ load }) {
-  const m = await load('./panels/bbd_akademi/resources-bulk-logic.js');
+  const m = await load('./panels/bbd_akademi/resources/resources-bulk-logic.js');
   const sel = m.selection({ resources: [{ id: 'res-1', title: 'Kurum kitabı' }] });
   const f = { ...m.EMPTY_FILTERS, subject: 'matematik', free: true };
   sel.toggle({ productId: '5' }, m.EMPTY_FILTERS);

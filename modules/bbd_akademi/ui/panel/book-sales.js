@@ -30,7 +30,7 @@ import {
   studentPicker, todayIst, toolbar,
 } from './common.js';
 import { removableChip, stack } from './work/homework-content.js';
-import { loadTargets, targetsField } from './resources-common.js';
+import { loadTargets, targetsField } from './resources/resources-common.js';
 import { wizard } from './shared/wizard.js';
 
 export const LINE_STATUS = {

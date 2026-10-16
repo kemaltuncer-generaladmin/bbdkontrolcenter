@@ -27,7 +27,7 @@ import {
   TRACKS,
 } from '../common.js';
 import { bulkTargetField } from '../shared/bulk-target.js';
-import { loadTargets } from '../resources-common.js';
+import { loadTargets } from '../resources/resources-common.js';
 
 const PROGRAMS = '/v1/admin/curricula/programs';
 const VERSIONS = '/v1/admin/curricula/versions';

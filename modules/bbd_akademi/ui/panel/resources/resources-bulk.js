@@ -15,12 +15,12 @@
 //      `admin_bulkAssignResources`; büyük atama `202` + `admin_getBulkJob` ile ilerleme.
 // Sonuç penceresinden ve "Toplu atamalar" listesinden toplu geri alma (`batchId`).
 
-import { button, dialogA11y, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, kpiRow } from '../../ui-kit/layout.js';
-import { confirmAction, errorBox, fmtDateTime, num, searchBox, selectBox } from './common.js';
-import { bulkTargetField } from './shared/bulk-target.js';
+import { button, dialogA11y, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, kpiRow } from '../../../ui-kit/layout.js';
+import { confirmAction, errorBox, fmtDateTime, num, searchBox, selectBox } from '../common.js';
+import { bulkTargetField } from '../shared/bulk-target.js';
 import { loadTargets } from './resources-common.js';
-import { followBulkJob, jobProgressText, wizard } from './shared/wizard.js';
+import { followBulkJob, jobProgressText, wizard } from '../shared/wizard.js';
 import {
   EMPTY_FILTERS, KIND_LABELS, MAX_RESOURCES, T, catalogQuery, commonGrade, fmt, hasFilters, itemMeta,
   previewLines, resultText, sameFilters, selection, selectionText,
