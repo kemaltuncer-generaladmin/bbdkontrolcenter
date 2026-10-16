@@ -84,6 +84,9 @@ export function recordingQuery(filter = 'all', extra = {}) {
     const value = extra[name];
     if (value !== undefined && value !== null && String(value).trim() !== '') query[name] = String(value).trim();
   }
+  // Arama (derslik, ders, öğretmen adı): sözleşme 2–60 karakter; tek harf gönderilmez, fazlası kırpılır.
+  const text = String(extra.q ?? '').trim().replace(/\s+/g, ' ');
+  if (text.length >= 2) query.q = text.slice(0, 60);
   query.sort = REC_SORTS.some((item) => item.value === extra.sort) ? extra.sort : 'recent';
   return query;
 }

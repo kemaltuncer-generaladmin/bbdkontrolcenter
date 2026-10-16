@@ -3140,6 +3140,15 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-DK8',),
     ),
     Operation(
+        'GET',
+        '/v1/admin/recordings/{recordingId}',
+        'admin_getRecording',
+        ('recordings.manage',),
+        'both',
+        feature_flag='lesson_recordings',
+        features=('F-DK6', 'F-DK7'),
+    ),
+    Operation(
         'PATCH',
         '/v1/admin/recordings/{recordingId}',
         'admin_updateRecording',

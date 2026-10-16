@@ -34,7 +34,7 @@ DK_OPERATIONS = (
     "admin_listBoards", "admin_createBoard", "admin_updateBoard", "admin_deleteBoard", "admin_createBoardPairingCode",
     "admin_cancelBoardPairingCode", "admin_revokeBoard", "admin_getBoardDiagnostics", "admin_requestBoardDiagnostics",
     "admin_listRooms", "admin_createRoom", "admin_updateRoom", "admin_deleteRoom", "admin_listRecordings",
-    "admin_updateRecording", "admin_deleteRecording", "admin_listRecordingViews", "admin_listRecordingShares",
+    "admin_getRecording", "admin_updateRecording", "admin_deleteRecording", "admin_listRecordingViews", "admin_listRecordingShares",
     "admin_addRecordingShares", "admin_removeRecordingShare", "admin_getRecordingQuota", "admin_getRecordingSettings",
     "admin_putRecordingSettings",
 )
@@ -69,7 +69,8 @@ const out = {
   live: [m.liveText([dev({ activeRecordingId: 'x' }), dev({ id: 'd2', name: 'Tahta 2', room: null, activeRecordingId: 'y' })]),
     m.liveText([dev({})])],
   queries: [m.recordingQuery('all', { teacherId: ' t1 ', from: '', sort: 'zzz' }), m.recordingQuery('ready', {}),
-    m.recordingQuery('hidden', { groupId: 'g1', sort: 'largest' }), m.recordingQuery('recovered'), m.recordingQuery('failed')],
+    m.recordingQuery('hidden', { groupId: 'g1', sort: 'largest' }), m.recordingQuery('recovered'), m.recordingQuery('failed'),
+    m.recordingQuery('all', { q: '  Derslik   3 ' }), m.recordingQuery('all', { q: 'a' }), m.recordingQuery('all', { q: 'x'.repeat(70) })],
   range: [m.rangeProblem('2026-10-10', '2026-10-01'), m.rangeProblem('2026-10-01', '2026-10-10')],
   durations: [45, 38 * 60, 65 * 60, 2 * 3600].map(m.durationText),
   sizes: [600_000_000, 412_000_000_000, 35_000_000, 0].map(m.gbText),
@@ -145,6 +146,9 @@ def test_saf_mantik(tmp_path: Path) -> None:
         {"hidden": True, "groupId": "g1", "sort": "largest"},
         {"recovered": True, "sort": "recent"},
         {"status": "failed", "sort": "recent"},
+        {"q": "Derslik 3", "sort": "recent"},
+        {"sort": "recent"},
+        {"q": "x" * 60, "sort": "recent"},
     ]
     assert out["range"] == ["Bitiş tarihi başlangıçtan önce olamaz.", None]
     assert out["durations"] == ["45 sn", "38 dk", "1 sa 5 dk", "2 sa"]
@@ -380,6 +384,7 @@ export default async function ({ document, audit, sleep, api, load }) {
   routes['GET /v1/admin/rooms'] = { items: [] };
   routes['GET /v1/admin/recordings'] = { items: [recording()], nextCursor: null };
   routes['PATCH /v1/admin/recordings/rec-1'] = (body) => recording({ hidden: body.hidden });
+  routes['GET /v1/admin/recordings/rec-1'] = () => recording({ viewStats: { eligibleCount: 30, watchedCount: 12, completedCount: 6, downloadCount: 3 } });
   routes['DELETE /v1/admin/recordings/rec-1'] = null;
   let shares = [{ id: 'sh1', kind: 'student', student: { id: 's9', displayName: 'Can Yılmaz', classGroup: { id: 'g2', name: '8-B' } },
     group: null, createdAt: '2026-10-16T09:00:00Z', createdBy: null }];
@@ -407,12 +412,22 @@ export default async function ({ document, audit, sleep, api, load }) {
   click(byText(root, 'button', 'Gizli'));
   await sleep(60);
   out.hiddenQuery = sent.filter((c) => c.path === '/v1/admin/recordings').pop()?.query;
+  const search = root.querySelector('input[type="search"]');
+  out.searchLabel = search?.getAttribute('aria-label');
+  type(search, 'Z');
+  await sleep(400);
+  out.oneLetterCalls = sent.filter((c) => c.path === '/v1/admin/recordings').length;
+  type(search, 'Zeynep');
+  await sleep(400);
+  out.searchQuery = sent.filter((c) => c.path === '/v1/admin/recordings').pop()?.query;
 
   click(root.querySelector('button.kit-row'));
   await sleep(80);
   let drawer = top(root, '.kit-drawer');
   out.drawerText = drawer?.textContent || '';
   out.a11yDrawer = audit(drawer);
+  out.detailCalls = sent.filter((c) => c.method === 'GET' && c.path === '/v1/admin/recordings/rec-1').length;
+  out.sharesCalls = sent.filter((c) => c.path === '/v1/admin/recordings/rec-1/shares').length;
   click(byText(drawer, 'button', 'Gizle'));
   await sleep(60);
   out.patch = sent.filter((c) => c.method === 'PATCH').map((c) => c.body);
@@ -461,9 +476,15 @@ def test_kayitlar_gizle_paylas_sil() -> None:
     assert "Yayında" in row and "tahta + kamera" in row
     assert out["a11yList"] == [] and out["a11yDrawer"] == [] and out["a11yShare"] == []
     assert out["hiddenQuery"] == {"hidden": True, "sort": "recent", "limit": 50}
+    assert out["searchLabel"] == "Kayıt ara (ders, öğretmen, derslik)"
+    assert out["oneLetterCalls"] == 2                      # tek harf sunucuya gitmez
+    assert out["searchQuery"] == {"hidden": True, "q": "Zeynep", "sort": "recent", "limit": 50}
+    # Ayrıntı admin_getRecording ile tazelenir; paylaşım listesi tazelemede yeniden istenmez.
+    assert out["detailCalls"] == 1 and out["sharesCalls"] == 1
+    assert "12 / 30 öğrenci" in out["drawerText"]
     assert "Kim izledi" in out["drawerText"] and "Elif Kaya" in out["drawerText"] and "Tamamladı" in out["drawerText"]
     assert "Can Yılmaz (8-B)" in out["drawerText"]
-    assert "Derse atanmış gruplar (8-A, 28 öğrenci) ve velileri zaten görür." in out["drawerText"]
+    assert "Derse atanmış gruplar (8-A, 30 öğrenci) ve velileri zaten görür." in out["drawerText"]  # tazelenen kayıttan
     assert out["patch"] == [{"hidden": True}]
     assert "Bu kayıt gizli" in out["afterHide"] and "Göster" in out["afterHide"]
     assert out["sharePost"] == [{"notify": True, "groupIds": ["g2"]}]
@@ -559,3 +580,45 @@ def test_anahtar_izni_eksikse_yol_gosterir() -> None:
     out = node_run(KEY_UI)
     assert "KM panel anahtarı ders kaydı izinlerini (boards.manage, recordings.manage) taşımıyor" in out["text"]
     assert "Tekrar dene" in out["text"]
+
+
+DEEP_LINK_UI = PRELUDE + r"""
+export default async function ({ document, audit, sleep, api, load }) {
+  routes['GET /v1/admin/recordings'] = { items: [], nextCursor: null };
+  routes['GET /v1/admin/recordings/rec-9'] = { id: 'rec-9', status: 'ready', date: '2026-10-15', startsAt: '2026-10-15T07:40:00Z',
+    endsAt: '2026-10-15T08:20:00Z', subject: { id: 'fen', name: 'Fen Bilimleri' }, topic: null,
+    teacher: { id: 't2', displayName: 'Ali Demir' }, groups: [{ id: 'g1', name: '8-A', kind: 'class' }], room: 'Derslik 4', part: 1,
+    startedAt: '2026-10-15T07:41:00Z', endedAt: '2026-10-15T08:08:00Z', durationSeconds: 1620, sizeBytes: 400_000_000,
+    hasCamera: false, quality: '720p25', recovered: true, incomplete: false, hidden: false, flags: ['recovered'], scene: 'board',
+    microphoneEvents: null, expiresAt: '2027-02-12T20:59:59Z', viewStats: { eligibleCount: 28, watchedCount: 12, completedCount: 4,
+      downloadCount: 0 }, canManage: true, access: 'admin' };
+  routes['GET /v1/admin/recordings/rec-9/shares'] = { items: [] };
+  routes['GET /v1/admin/recordings/rec-9/views'] = { stats: { eligibleCount: 28, watchedCount: 12, completedCount: 4, downloadCount: 0 }, items: [] };
+  routes['GET /v1/admin/recordings/gone'] = { __error: { code: 'recording_not_found', message: 'Kayıt bulunamadı.' }, status: 404 };
+  routes['GET /v1/admin/recordings/gone/shares'] = { items: [] };
+  routes['GET /v1/admin/recordings/gone/views'] = { stats: {}, items: [] };
+  const { root, view } = await mount(load, api, document);
+  view.shown({ recordingId: 'rec-9' });
+  await sleep(80);
+  const drawer = top(root, '.kit-drawer');
+  const out = { title: drawer?.querySelector('.kit-drawer-title')?.textContent, text: drawer?.textContent || '',
+    a11y: audit(drawer), tab: root.querySelector('[role="tab"][aria-selected="true"]')?.textContent.trim() };
+  click(byText(drawer, 'button', 'Kapat'));
+  view.shown({ recordingId: 'gone' });
+  await sleep(80);
+  out.goneText = top(root, '.kit-drawer')?.textContent || '';
+  return out;
+}
+"""
+
+
+def test_derin_baglanti_admin_get_recording() -> None:
+    out = node_run(DEEP_LINK_UI)
+    assert out["tab"] == "Kayıtlar"
+    assert out["title"] == "Fen Bilimleri · 8-A"
+    text = out["text"]
+    assert "Ali Demir" in text and "Derslik 4" in text and "27 dk · 0,4 GB" in text and "720p · 25 kare" in text
+    assert "Kurtarılmış kayıt" in text and "12 / 28 öğrenci" in text
+    assert "Derse atanmış gruplar (8-A, 28 öğrenci)" in text   # paylaşım açıklaması tazelenen kayıttan
+    assert out["a11y"] == []
+    assert "Kayıt bulunamadı (silinmiş olabilir)." in out["goneText"]

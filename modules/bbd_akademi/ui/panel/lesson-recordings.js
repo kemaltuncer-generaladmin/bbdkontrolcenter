@@ -23,7 +23,7 @@ import { alertBox, badge, card, chipRow, emptyState, kpiRow, tabBar } from '../.
 import { dataTable } from '../../ui-kit/table.js';
 import {
   actionButton, confirmAction, dateInput, empty, fmtDate, fmtDateTime, fmtTime, formDialog, kv, loader, multiChips,
-  openDrawer, pagedList, personName, runAction, sectionHead, selectBox, studentSelect, toolbar,
+  openDrawer, pagedList, personName, runAction, searchBox, sectionHead, selectBox, studentSelect, toolbar,
 } from './common.js';
 import {
   DIAG_TRIGGER, FLAGS, KEY_HINT, QUALITY, QUOTA_MAX_GB, QUOTA_MIN_GB, REC_FILTERS, REC_SORTS,
@@ -490,7 +490,7 @@ export function showCode(app, name, pairing) {
 
 function recordingsPane(app, ctx) {
   const node = h('div', 'ak-stack');
-  const state = { filter: 'all', from: '', to: '', teacherId: '', groupId: '', sort: 'recent' };
+  const state = { filter: 'all', q: '', from: '', to: '', teacherId: '', groupId: '', sort: 'recent' };
   const rangeNote = h('div', 'ak-rec-error');
   rangeNote.setAttribute('role', 'status');
 
@@ -502,7 +502,15 @@ function recordingsPane(app, ctx) {
   const group = selectBox([{ value: '', label: 'Bütün sınıflar' }], '', (value) => { state.groupId = value; reload(); },
     { label: 'Sınıf' });
   const sort = selectBox(REC_SORTS, state.sort, (value) => { state.sort = value; reload(); }, { label: 'Sıralama' });
-  node.append(chips.node, toolbar(from.node, to.node, teacher.node, group.node, sort.node), rangeNote);
+  // Sunucu araması (`admin_listRecordings?q=`: derslik, ders, öğretmen adı; en az 2 karakter).
+  const search = searchBox({ placeholder: 'Kayıt ara', label: 'Kayıt ara (ders, öğretmen, derslik)', delay: 300,
+    onSearch: (text) => {
+      const next = text.length >= 2 ? text : '';
+      if (next === state.q) return;
+      state.q = next;
+      reload();
+    } });
+  node.append(chips.node, toolbar(search.node, from.node, to.node, teacher.node, group.node, sort.node), rangeNote);
   app.lookups?.options?.('teachers', { empty: 'Bütün öğretmenler' }).then((list) => teacher.options(list)).catch(() => {});
   app.lookups?.options?.('classGroups', { empty: 'Bütün sınıflar' }).then((list) => group.options(list)).catch(() => {});
 
@@ -561,7 +569,7 @@ function recordingsPane(app, ctx) {
         });
       }
     },
-    destroy() { list.destroy(); from.destroy?.(); to.destroy?.(); },
+    destroy() { list.destroy(); search.destroy(); from.destroy?.(); to.destroy?.(); },
   };
 }
 
@@ -608,10 +616,15 @@ export function recordingDrawer(app, row, { onChange, onRemove } = {}) {
       tools.append(actionButton(app, 'admin_deleteRecording', 'Kaydı sil', { variant: 'danger', onClick: () => remove() }));
     }
     nodes.push(tools);
-    if (app.can('admin_listRecordingShares')) nodes.push(sharesCard(app, recording));
-    if (app.can('admin_listRecordingViews')) nodes.push(viewsCard(app, recording));
-    panel.body.replaceChildren(...nodes);
+    info.replaceChildren(...nodes);
   }
+
+  // Bilgi kısmı yeniden çizilir; paylaşım ve "kim izledi" kartları BİR KEZ kurulur (tazelemede yeniden istek yok).
+  const info = h('div', 'ak-stack');
+  panel.body.append(info);
+  const shares = app.can('admin_listRecordingShares') ? sharesCard(app, () => recording) : null;
+  if (shares) panel.body.append(shares);
+  if (app.can('admin_listRecordingViews')) panel.body.append(viewsCard(app, recording));
 
   async function toggleHidden() {
     const next = await runAction(app, () => app.api.patch(`/v1/admin/recordings/${recording.id}`, hideBody(recording)),
@@ -640,15 +653,36 @@ export function recordingDrawer(app, row, { onChange, onRemove } = {}) {
   }
 
   paint();
+  // Ders bilgi satırları güncel kayıttan (`admin_getRecording`): bildirimden / derin bağlantıdan yalnız kimlikle
+  // açılınca satır yükü yoktur; listeden açılınca da sayılar (izleyen, durum) tazelenir.
+  if (app.can('admin_getRecording')) {
+    app.api.get(`/v1/admin/recordings/${row.id}`).then((fresh) => {
+      if (!fresh || !panel.node.isConnected) return;
+      recording = { ...recording, ...fresh };
+      panel.setTitle(recordingTitle(recording));
+      if (row.subject) onChange?.(recording);
+      paint();
+      shares?.refreshIntro();
+    }).catch((failure) => {
+      if (!row.subject && panel.node.isConnected) {
+        info.prepend(alertBox(failure?.code === 'recording_not_found'
+          ? 'Kayıt bulunamadı (silinmiş olabilir).' : 'Kayıt bilgileri alınamadı.', 'bad'));
+      }
+    });
+  }
   return panel;
 }
 
-function sharesCard(app, recording) {
+/** `current()` güncel kaydı verir (ayrıntı `admin_getRecording` ile tazelenince açıklama da güncellenir). */
+function sharesCard(app, current) {
+  const recording = { id: current().id };
   const box = h('section', 'kit-card');
   const head = h('div', 'kit-card-head ak-rec-cardhead');
   head.append(h('h3', 'kit-card-title', 'Paylaşım'), h('span', 'kit-spacer'),
     actionButton(app, 'admin_addRecordingShares', 'Paylaş', { variant: 'ghost', onClick: () => addShares() }));
-  box.append(head, h('p', 'ak-muted ak-rec-note', shareIntro(recording)));
+  const intro = h('p', 'ak-muted ak-rec-note', shareIntro(current()));
+  box.append(head, intro);
+  box.refreshIntro = () => { intro.textContent = shareIntro(current()); };
   const view = loader(() => app.api.get(`/v1/admin/recordings/${recording.id}/shares`), (data) => {
     const items = data?.items || [];
     if (!items.length) return small('Ek paylaşım yok.');
@@ -683,7 +717,7 @@ function sharesCard(app, recording) {
     let picker = null;
     const result = await formDialog(app, {
       title: 'Kaydı paylaş',
-      description: shareIntro(recording),
+      description: shareIntro(current()),
       wide: true,
       fields: [
         { key: 'studentIds', label: 'Öğrenciler', type: 'custom', render: (draft, set) => {
