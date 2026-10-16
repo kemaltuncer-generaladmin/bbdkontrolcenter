@@ -2,11 +2,11 @@
 .ak-sfc-note { font-size: 12px; }
 .ak-sfc-decks { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
 .ak-sfc-deck { display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 8px 12px;
   text-align: left; font: inherit; cursor: default; }
-.ak-sfc-deck:hover { background: #f5f8fe; }
+.ak-sfc-deck:hover { background: var(--surface-2); }
 .ak-sfc-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ak-sfc-img { display: inline-flex; }
 .ak-sfc-img .kit-btn { height: 24px; padding: 0 8px; font-size: 12px; }
 .ak-sfc-thumb { max-width: 200px; max-height: 140px; border-radius: 6px; border: 1px solid var(--line);
-  object-fit: contain; background: #fff; }
+  object-fit: contain; background: var(--surface); }

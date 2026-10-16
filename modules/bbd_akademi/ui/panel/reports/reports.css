@@ -9,7 +9,7 @@
 .ak-rep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
 .ak-rep-card {
   display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
-  padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
   border-top: 3px solid var(--tone);
 }
 .ak-rep-card-title { font-weight: 650; }

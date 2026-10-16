@@ -11,9 +11,9 @@
   position: sticky; top: 0; z-index: 3;
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px;
-  background: #fff; box-shadow: 0 1px 0 rgba(17, 23, 34, 0.03);
+  background: var(--surface); box-shadow: 0 1px 0 rgba(17, 23, 34, 0.03);
 }
-.ak-set-savebar.dirty { border-color: #f5c38b; background: #fffaf3; }
+.ak-set-savebar.dirty { border-color: var(--warn-line); background: var(--warn-tint); }
 .ak-set-savebar-text { color: var(--soft); font-size: 12.5px; }
 .ak-set-savebar.dirty .ak-set-savebar-text { color: var(--warn); font-weight: 600; }
 .ak-set-canteen { padding-left: 12px; }
@@ -34,12 +34,12 @@
 /* Anahtar biçimli onay kutusu (açık/kapalı yazısı yanında rozetle de durur). */
 .ak-set-switch {
   appearance: none; -webkit-appearance: none; margin: 2px 0 0;
-  width: 38px; height: 22px; border-radius: 999px; background: #d4dae4;
+  width: 38px; height: 22px; border-radius: 999px; background: var(--surface-3);
   position: relative; cursor: default; transition: background 0.15s;
 }
 .ak-set-switch::after {
   content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
-  border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: transform 0.15s;
 }
 .ak-set-switch:checked { background: var(--good); }
@@ -61,14 +61,14 @@
 .ak-set-secret-row { display: flex; gap: 8px; align-items: center; }
 .ak-set-secret-value {
   flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px; background: #fbfcfe;
+  font-size: 12.5px; background: var(--surface-2);
 }
 
 /* --------------------------------------------------------- denetim kaydı */
 .ak-set-drawer { width: min(860px, calc(100% - 40px)); }
 .ak-set-diff { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; }
-.ak-set-diff-before { color: #9f1239; }
-.ak-set-diff-after { color: #166534; }
+.ak-set-diff-before { color: var(--bad); }
+.ak-set-diff-after { color: var(--good); }
 
 /* ------------------------------------------------------- tema ve logo */
 .ak-set-th-status { display: flex; align-items: center; gap: 12px; padding: 12px 16px; flex-wrap: wrap; }
@@ -92,23 +92,23 @@
 .ak-set-th-hex { width: 110px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ak-set-th-swatch {
   display: inline-block; width: 22px; height: 22px; border-radius: 6px;
-  border: 1px solid rgba(17, 23, 34, 0.15); flex: none;
-  background-image: linear-gradient(45deg, #eef1f6 25%, transparent 25%, transparent 75%, #eef1f6 75%);
+  border: 1px solid var(--line-strong); flex: none;
+  background-image: linear-gradient(45deg, var(--surface-3) 25%, transparent 25%, transparent 75%, var(--surface-3) 75%);
   background-size: 8px 8px;
 }
 
 .ak-set-th-seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
 .ak-set-th-seg-item {
-  border: 0; background: #fff; padding: 6px 10px; font: inherit; font-size: 12.5px; cursor: default;
+  border: 0; background: var(--surface); padding: 6px 10px; font: inherit; font-size: 12.5px; cursor: default;
   color: var(--soft); border-right: 1px solid var(--line);
 }
 .ak-set-th-seg-item:last-child { border-right: 0; }
-.ak-set-th-seg-item.on { background: #e3ebff; color: #1d3f9e; font-weight: 600; }
+.ak-set-th-seg-item.on { background: var(--accent-tint); color: var(--accent); font-weight: 600; }
 
 /* Telefon görünümü: renkler JS'te `style` ile verilir; burada yalnız iskelet. */
 .ak-set-th-preview { display: flex; justify-content: center; padding: 6px 0; }
 .ak-set-th-device {
-  width: 300px; padding: 10px; border-radius: 34px; background: #11161f;
+  width: 300px; padding: 10px; border-radius: 34px; background: #11161f;   /* cihaz çerçevesi temadan bağımsız */
   box-shadow: 0 12px 30px rgba(17, 23, 34, 0.18);
 }
 .ak-set-th-phone { border-radius: 26px; overflow: hidden; min-height: 520px; font-size: 13px; }

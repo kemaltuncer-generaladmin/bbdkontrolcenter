@@ -26,20 +26,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ak-ical-more { background: #f1f5f9; color: var(--soft); }
+.ak-ical-more { background: var(--tint); color: var(--soft); }
 
 /* Tür renkleri — hücre rozeti, satır etiketi ve açıklama aynı dili konuşur. */
-.ak-ical-k-holiday { background: #e2e8f0; color: #475569; }
-.ak-ical-k-event { background: #dcfce7; color: var(--good); }
-.ak-ical-k-parent_meeting { background: #dbeafe; color: #1d4ed8; }
-.ak-ical-k-exam_day { background: #fef3c7; color: var(--warn); }
-.ak-ical-k-registration_period { background: #ede9fe; color: #6d28d9; }
-.ak-ical-k-other { background: #f1f5f9; color: var(--soft); }
-.kit-cal-legend-item.ak-ical-t-holiday { color: #475569; }
+.ak-ical-k-holiday { background: var(--accent-tint); color: var(--soft); }
+.ak-ical-k-event { background: var(--good-tint); color: var(--good); }
+.ak-ical-k-parent_meeting { background: var(--accent-tint); color: var(--accent); }
+.ak-ical-k-exam_day { background: var(--warn-tint); color: var(--warn); }
+.ak-ical-k-registration_period { background: var(--violet-tint); color: var(--violet); }
+.ak-ical-k-other { background: var(--tint); color: var(--soft); }
+.kit-cal-legend-item.ak-ical-t-holiday { color: var(--soft); }
 .kit-cal-legend-item.ak-ical-t-event { color: var(--good); }
-.kit-cal-legend-item.ak-ical-t-parent_meeting { color: #1d4ed8; }
+.kit-cal-legend-item.ak-ical-t-parent_meeting { color: var(--accent); }
 .kit-cal-legend-item.ak-ical-t-exam_day { color: var(--warn); }
-.kit-cal-legend-item.ak-ical-t-registration_period { color: #6d28d9; }
+.kit-cal-legend-item.ak-ical-t-registration_period { color: var(--violet); }
 .kit-cal-legend-item.ak-ical-t-other { color: var(--soft); }
 
 .ak-ical-pill {
@@ -60,13 +60,13 @@
   text-align: left;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
   padding: 10px 12px;
   font: inherit;
   color: var(--ink);
   cursor: default;
 }
-.ak-ical-row:hover { border-color: #cfd6e2; background: var(--tint); }
+.ak-ical-row:hover { border-color: var(--line-strong); background: var(--tint); }
 .ak-ical-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ak-ical-link {
   align-self: flex-start;
@@ -75,7 +75,7 @@
   padding: 0;
   font: inherit;
   font-size: 12.5px;
-  color: #1d4ed8;
+  color: var(--accent);
   cursor: default;
 }
 .ak-ical-link:hover { text-decoration: underline; }

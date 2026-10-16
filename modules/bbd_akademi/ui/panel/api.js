@@ -23,8 +23,6 @@
 // Akademi'den Türkçe ve kullanıcıya gösterilebilir gelir; bilinen kodlar için
 // `problem()` daha açıklayıcı bir cümle kurar.
 
-import { saveFile } from '../../ui-kit/kit.js';
-
 const BASE = '/api/bbd_akademi';
 
 export class AkademiError extends Error {
@@ -416,10 +414,13 @@ export function fileOf(file, fallbackName = 'akademi-dosya') {
  * `true`, vazgeçilirse `null`. Hata çağırana düşmez (eski senkron imza korunur): konsola yazılır.
  */
 export function saveBlob({ filename, blob }) {
-  return saveFile({ name: filename, data: blob }).catch((error) => {
-    console.error('[bbd_akademi] dosya kaydedilemedi:', error);
-    return null;
-  });
+  // Kit gerektiğinde yüklenir: bu dosya kabuksuz (Node sınamaları) da içe aktarılabilsin.
+  return import('../../ui-kit/native.js')
+    .then(({ saveFile }) => saveFile({ name: filename, data: blob }))
+    .catch((error) => {
+      console.error('[bbd_akademi] dosya kaydedilemedi:', error);
+      return null;
+    });
 }
 
 /**

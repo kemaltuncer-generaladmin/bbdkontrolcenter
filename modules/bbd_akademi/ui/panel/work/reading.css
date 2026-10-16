@@ -23,7 +23,7 @@
 .ak-rd-cover { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; min-width: 0; }
 .ak-rd-cover .kit-btn { height: 26px; padding: 0 8px; }
 .ak-rd-thumb { width: 42px; height: 58px; object-fit: cover; border-radius: 4px;
-  border: 1px solid var(--line); background: #fff; }
+  border: 1px solid var(--line); background: var(--surface); }
 .ak-rd-count { font-size: 12.5px; }
 
 /* --------------------------------------------------------------- lig */

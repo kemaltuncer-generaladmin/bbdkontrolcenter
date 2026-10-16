@@ -4,7 +4,7 @@
  * sayısını yazıyla taşır, "geride" hem kırmızı çizgi hem yazıdır (kit kural 7).
  */
 
-.ak-res-link { border: 0; background: none; padding: 0; color: #1d4ed8; cursor: default; font: inherit;
+.ak-res-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: default; font: inherit;
   font-weight: 600; text-align: left; overflow-wrap: anywhere; }
 .ak-res-link:hover { text-decoration: underline; }
 .ak-toolbar .ak-search.ak-res-publisher { min-width: 160px; width: 180px; }
@@ -46,7 +46,7 @@
 .ak-res-matches { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .ak-res-match { display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
   border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; min-width: 0; }
-.ak-res-match.found { border-color: #a7f3d0; background: #f6fef9; }
+.ak-res-match.found { border-color: var(--good-line); background: var(--surface-2); }
 .ak-res-match-title { font-size: 11px; font-weight: 700; color: var(--soft); letter-spacing: 0.02em; }
 .ak-res-choices { display: flex; flex-direction: column; gap: 6px; }
 .ak-res-choice { display: flex; gap: 8px; align-items: flex-start; cursor: default; }
@@ -57,7 +57,7 @@
 .ak-res-toc-title { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 15px; }
 .ak-res-toc-title .ak-muted { font-size: 12.5px; }
 .ak-res-toc-summary { color: var(--soft); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-.ak-res-unit { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 10px 12px;
+.ak-res-unit { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px 12px;
   display: flex; flex-direction: column; gap: 4px; }
 .ak-res-unit-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 6px; }
 .ak-res-unit-no { font-weight: 700; color: var(--soft); min-width: 22px; }
@@ -74,7 +74,7 @@
 .ak-res-topics { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .ak-res-topics .kit-btn { height: 26px; padding: 0 8px; }
 .ak-res-topic { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11.5px; padding: 2px 7px; border-radius: 999px; background: #eef3ff; color: #1d3f9e; }
+  font-size: 11.5px; padding: 2px 7px; border-radius: 999px; background: var(--accent-tint); color: var(--accent); }
 .ak-res-topic.more { background: var(--tint); color: var(--soft); }
 .ak-res-program { width: 100%; }
 .ak-res-topic-pick { height: 340px; display: flex; flex-direction: column; min-height: 0; }
@@ -93,20 +93,20 @@
 
 /* ------------------------------------------------------------ ilerleme */
 .ak-res-matrix-wrap { overflow: auto; max-height: calc(100vh - 300px); min-height: 120px;
-  border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .ak-res-matrix { display: grid; width: max-content; min-width: 100%; }
-.ak-res-matrix > * { border-bottom: 1px solid #f0f2f6; }
+.ak-res-matrix > * { border-bottom: 1px solid var(--line); }
 .ak-res-mh { position: sticky; top: 0; z-index: 2; background: var(--tint); padding: 8px 8px;
   font-size: 11px; font-weight: 600; color: var(--soft); border-bottom: 1px solid var(--line); text-align: left; }
 .ak-res-mh.corner { left: 0; z-index: 3; }
 .ak-res-mh.avg { text-align: right; }
 .ak-res-mh-resource { border: 0; border-bottom: 1px solid var(--line); font: inherit; font-size: 11px; cursor: default;
   display: flex; flex-direction: column; gap: 2px; align-items: flex-start; min-width: 0; }
-.ak-res-mh-resource:hover { background: #eef1f6; color: var(--ink); }
+.ak-res-mh-resource:hover { background: var(--surface-3); color: var(--ink); }
 .ak-res-mh-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   color: var(--ink); line-height: 1.3; }
 .ak-res-mh-resource small { font-weight: 400; }
-.ak-res-mstudent { position: sticky; left: 0; z-index: 1; background: #fff; padding: 6px 10px;
+.ak-res-mstudent { position: sticky; left: 0; z-index: 1; background: var(--surface); padding: 6px 10px;
   display: flex; flex-direction: column; gap: 1px; min-width: 0; border-right: 1px solid var(--line); }
 .ak-res-mstudent small { color: var(--soft); font-size: 11px; }
 .ak-res-mavg { padding: 6px 8px; display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
@@ -115,22 +115,22 @@
   justify-content: center; line-height: 1.2; font-variant-numeric: tabular-nums; border-left: 3px solid transparent;
   min-height: 42px; cursor: default; }
 .ak-res-cell b { font-size: 13px; }
-.ak-res-cell small { font-size: 10.5px; color: #3b4658; }
-.ak-res-cell.none { align-items: center; color: #9aa5b5; background: transparent; }
-.ak-res-cell.h0, .ak-res-swatch.h0 { background: #f3f4f7; }
-.ak-res-cell.h1, .ak-res-swatch.h1 { background: #e8effd; }
-.ak-res-cell.h2, .ak-res-swatch.h2 { background: #cfdefc; }
-.ak-res-cell.h3, .ak-res-swatch.h3 { background: #b1caf9; }
-.ak-res-cell.h4, .ak-res-swatch.h4 { background: #8fb1f4; }
-.ak-res-cell.h5, .ak-res-swatch.h5 { background: #6b94ec; }
-.ak-res-cell.h5 small, .ak-res-cell.h4 small { color: #14213d; }
+.ak-res-cell small { font-size: 10.5px; color: var(--ink); }
+.ak-res-cell.none { align-items: center; color: var(--soft); background: transparent; }
+.ak-res-cell.h0, .ak-res-swatch.h0 { background: var(--tint); }
+.ak-res-cell.h1, .ak-res-swatch.h1 { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.ak-res-cell.h2, .ak-res-swatch.h2 { background: color-mix(in srgb, var(--accent) 25%, var(--surface)); }
+.ak-res-cell.h3, .ak-res-swatch.h3 { background: color-mix(in srgb, var(--accent) 40%, var(--surface)); }
+.ak-res-cell.h4, .ak-res-swatch.h4 { background: color-mix(in srgb, var(--accent) 56%, var(--surface)); }
+.ak-res-cell.h5, .ak-res-swatch.h5 { background: color-mix(in srgb, var(--accent) 72%, var(--surface)); }
+.ak-res-cell.h5 small, .ak-res-cell.h4 small { color: var(--ink); }
 .ak-res-cell.behind { border-left-color: var(--bad); }
 .ak-res-behind { color: var(--bad); font-size: 10.5px; font-weight: 600; }
 .ak-res-legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 11.5px; }
 .ak-res-legend-item { display: inline-flex; gap: 5px; align-items: center; }
 .ak-res-swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; border-left: 3px solid transparent; }
-.ak-res-swatch.behind { background: #f3f4f7; border-left-color: var(--bad); }
-.ak-res-swatch.none { background: transparent; border: 1px dashed #c5cede; }
+.ak-res-swatch.behind { background: var(--tint); border-left-color: var(--bad); }
+.ak-res-swatch.none { background: transparent; border: 1px dashed var(--line-strong); }
 
 /* ------------------------------------------- BBD Store'dan toplu ata (README §14 madde 116) */
 .ak-tk { gap: 8px; }

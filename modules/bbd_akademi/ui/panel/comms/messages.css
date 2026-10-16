@@ -3,7 +3,7 @@
 .ak-msg-h { margin: 14px 0 6px; font-size: 14px; }
 .ak-msg-stream { display: flex; flex-direction: column; gap: 8px; }
 .ak-msg-item { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line);
-  border-radius: 10px; padding: 10px 14px; background: #fff; }
+  border-radius: 10px; padding: 10px 14px; background: var(--surface); }
 .ak-msg-item.on { border-color: var(--bad); box-shadow: inset 3px 0 0 var(--bad); }
 .ak-msg-item.gone { background: var(--tint); }
 .ak-msg-item-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

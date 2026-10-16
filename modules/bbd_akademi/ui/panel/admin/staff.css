@@ -12,8 +12,8 @@
 /* ------------------------------------------------------- eşitleme şeridi */
 .ak-stf-sync { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-left-width: 3px; }
 .ak-stf-sync.good { border-left-color: var(--good); }
-.ak-stf-sync.warn { border-left-color: #f59e0b; }
-.ak-stf-sync.bad { border-left-color: var(--bad); background: #fffafa; }
+.ak-stf-sync.warn { border-left-color: var(--warn); }
+.ak-stf-sync.bad { border-left-color: var(--bad); background: var(--surface-2); }
 .ak-stf-sync.dim { border-left-color: var(--line); }
 .ak-stf-sync-error { color: var(--bad); font-size: 12.5px; }
 

@@ -1,6 +1,6 @@
 /* Hoca soruları — önek `ak-q-`. */
 .ak-q-ask { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line);
-  border-radius: 10px; padding: 12px 14px; background: #fff; }
+  border-radius: 10px; padding: 12px 14px; background: var(--surface); }
 .ak-q-meta { color: var(--soft); font-size: 12.5px; }
 .ak-q-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ak-q-h { margin: 14px 0 6px; font-size: 14px; }
@@ -9,7 +9,7 @@
   border-radius: 9px; overflow: hidden; background: var(--tint); align-items: center; justify-content: center; }
 .ak-q-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .ak-q-answer { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line);
-  border-left: 3px solid var(--accent); border-radius: 10px; padding: 10px 14px; background: #fff; margin-bottom: 8px; }
+  border-left: 3px solid var(--accent); border-radius: 10px; padding: 10px 14px; background: var(--surface); margin-bottom: 8px; }
 .ak-q-answer-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .ak-q-voice { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .ak-q-voice audio { height: 36px; max-width: 100%; }
@@ -18,7 +18,7 @@
 .ak-q-input { width: 100%; resize: vertical; min-height: 84px; }
 .ak-q-parts { display: flex; flex-wrap: wrap; gap: 8px; }
 .ak-q-part { display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 9px;
-  padding: 6px 8px; background: #fff; }
+  padding: 6px 8px; background: var(--surface); }
 .ak-q-part img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; }
 .ak-q-part audio { height: 32px; }
 .ak-q-error { color: var(--bad); font-size: 12.5px; min-height: 1em; }

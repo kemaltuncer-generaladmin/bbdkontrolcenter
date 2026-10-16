@@ -28,15 +28,15 @@
   padding: 16px 16px 14px;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 1px 2px rgba(17, 23, 34, 0.04);
   transition: box-shadow .15s, border-color .15s, transform .15s;
 }
-.ak-tile:hover { border-color: #cfd6e3; box-shadow: 0 8px 24px rgba(17, 23, 34, 0.08); transform: translateY(-1px); }
+.ak-tile:hover { border-color: var(--line-strong); box-shadow: 0 8px 24px rgba(17, 23, 34, 0.08); transform: translateY(-1px); }
 .ak-tile:focus-within { border-color: var(--tone); }
 .ak-tile.ak-tile-feature {
-  background: linear-gradient(135deg, var(--tone-bg) 0%, #fff 62%);
-  border-color: color-mix(in srgb, var(--tone) 28%, #fff);
+  background: linear-gradient(135deg, var(--tone-bg) 0%, var(--surface) 62%);
+  border-color: color-mix(in srgb, var(--tone) 28%, var(--surface));
 }
 
 .ak-tile-top { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
@@ -49,9 +49,9 @@
   font-size: 12.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
   background: var(--tint); color: var(--ink); border: 1px solid var(--line); white-space: nowrap;
 }
-.ak-tile-stat.good { background: #e6f4ea; border-color: #b9dfc4; color: #14532d; }
-.ak-tile-stat.warn { background: #fdf3dc; border-color: #f0d79b; color: #7c4a03; }
-.ak-tile-stat.bad { background: #fde8e8; border-color: #f5b5b5; color: #991b1b; }
+.ak-tile-stat.good { background: var(--good-tint); border-color: var(--good-line); color: var(--good); }
+.ak-tile-stat.warn { background: var(--warn-tint); border-color: var(--warn-line); color: var(--warn); }
+.ak-tile-stat.bad { background: var(--bad-tint); border-color: var(--bad-line); color: var(--bad); }
 
 .ak-tile-title { margin: 2px 0 0; font-size: 16px; font-weight: 650; }
 .ak-tile-open {
@@ -69,7 +69,7 @@
   display: flex; flex-wrap: wrap; gap: 6px;
 }
 .ak-tile-link {
-  border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 11px;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 11px;
   font: inherit; font-size: 12.5px; color: var(--ink); cursor: default;
 }
 .ak-tile-link:hover { border-color: var(--tone); color: var(--tone); background: var(--tone-bg); }

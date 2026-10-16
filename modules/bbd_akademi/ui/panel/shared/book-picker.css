@@ -9,7 +9,7 @@
 .ak-bp-h small { font-weight: 400; color: var(--soft); }
 .ak-bp-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 .ak-bp-card { position: relative; display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;
-  min-height: 92px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  min-height: 92px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
   font: inherit; color: inherit; cursor: default; }
 .ak-bp-card:hover { box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
 .ak-bp-card.on { border-color: var(--accent, #2563eb); box-shadow: 0 0 0 1px var(--accent, #2563eb); }
@@ -22,7 +22,7 @@
 .ak-bp-meta { font-size: 11.5px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ak-bp-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .ak-bp-tick { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--accent, #2563eb); color: #fff; font-size: 12px; display: flex; align-items: center; justify-content: center; }
-.ak-bp-actions { align-items: center; margin: 0; padding: 12px 22px 16px; border-top: 1px solid var(--line); background: #fff; }
+  background: var(--accent, #2563eb); color: var(--on-accent); font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.ak-bp-actions { align-items: center; margin: 0; padding: 12px 22px 16px; border-top: 1px solid var(--line); background: var(--surface); }
 .ak-bp-sync { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 12px; margin-bottom: 10px;
-  border: 1px solid var(--line); border-radius: 10px; background: #fff; font-size: 12.5px; }
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 12.5px; }

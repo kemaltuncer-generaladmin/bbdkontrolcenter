@@ -34,7 +34,7 @@
 .ak-top {
   flex: none;
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   padding: 8px 16px 0;
 }
 .ak-areas {
@@ -45,7 +45,9 @@
 /* Simge üstte, ad altta: on bir öğe geniş pencerede tek satıra sığar; dar
    pencerede satır sarılır (yatay kaydırma yok). */
 .ak-area {
-  --tone: #2f5fd0;
+  /* Alan tonu ana renkle yazı rengini karıştırır: açık kâğıtta koyulaşır, koyu kâğıtta
+     açılır — iki temada da ≥ 4,5:1 (63-duzeltici). */
+  --tone: color-mix(in srgb, #2f5fd0 60%, var(--ink));
   display: inline-flex;
   flex-direction: column;
   align-items: center;
@@ -76,7 +78,7 @@
 }
 .ak-pill {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   border-radius: 999px;
   padding: 4px 12px;
   font: inherit;
@@ -85,10 +87,10 @@
   cursor: default;
   white-space: nowrap;
 }
-.ak-pill:hover { background: var(--tint); border-color: #cfd6e3; }
+.ak-pill:hover { background: var(--tint); border-color: var(--line-strong); }
 .ak-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Seçili hap grubun koyu tonunda (beyaz yazıyla ≥ 4,9:1). */
-.ak-pill.on { background: var(--tone, #1d3f9e); border-color: var(--tone, #1d3f9e); color: #fff; font-weight: 600; }
+.ak-pill.on { background: var(--tone, var(--accent)); border-color: var(--tone, var(--accent)); color: var(--on-accent); font-weight: 600; }
 @media (max-width: 900px) {
   .ak-top { padding: 6px 10px 0; }
   .ak-area { min-width: 56px; padding: 6px 7px 5px; font-size: 12px; }
@@ -99,18 +101,18 @@
 
 /* Grup renkleri — ana grup şeridi ve ana sayfa kutucukları ortak kullanır.
    Koyu ton beyaz zeminde ≥ 4,5:1 (simge ve alt çizgi), açık ton yalnız zemin. */
-.ak-tone-blue { --tone: #1d4ed8; --tone-bg: #e8efff; }
-.ak-tone-indigo { --tone: #4338ca; --tone-bg: #eceafe; }
-.ak-tone-violet { --tone: #6d28d9; --tone-bg: #f1eafe; }
-.ak-tone-teal { --tone: #0f766e; --tone-bg: #e2f5f2; }
-.ak-tone-green { --tone: #15803d; --tone-bg: #e5f6ea; }
-.ak-tone-amber { --tone: #a16207; --tone-bg: #fdf3dc; }
-.ak-tone-rose { --tone: #be123c; --tone-bg: #fde9ee; }
-.ak-tone-orange { --tone: #c2410c; --tone-bg: #fdeee3; }
-.ak-tone-cyan { --tone: #0e7490; --tone-bg: #e0f4f8; }
-.ak-tone-slate { --tone: #475569; --tone-bg: #eef1f5; }
+.ak-tone-blue { --tone: color-mix(in srgb, #1d4ed8 60%, var(--ink)); --tone-bg: color-mix(in srgb, #1d4ed8 12%, var(--surface)); }
+.ak-tone-indigo { --tone: color-mix(in srgb, #4338ca 60%, var(--ink)); --tone-bg: color-mix(in srgb, #4338ca 12%, var(--surface)); }
+.ak-tone-violet { --tone: color-mix(in srgb, #6d28d9 60%, var(--ink)); --tone-bg: color-mix(in srgb, #6d28d9 12%, var(--surface)); }
+.ak-tone-teal { --tone: color-mix(in srgb, #0f766e 60%, var(--ink)); --tone-bg: color-mix(in srgb, #0f766e 12%, var(--surface)); }
+.ak-tone-green { --tone: color-mix(in srgb, #15803d 60%, var(--ink)); --tone-bg: color-mix(in srgb, #15803d 12%, var(--surface)); }
+.ak-tone-amber { --tone: color-mix(in srgb, #a16207 60%, var(--ink)); --tone-bg: color-mix(in srgb, #a16207 12%, var(--surface)); }
+.ak-tone-rose { --tone: color-mix(in srgb, #be123c 60%, var(--ink)); --tone-bg: color-mix(in srgb, #be123c 12%, var(--surface)); }
+.ak-tone-orange { --tone: color-mix(in srgb, #c2410c 60%, var(--ink)); --tone-bg: color-mix(in srgb, #c2410c 12%, var(--surface)); }
+.ak-tone-cyan { --tone: color-mix(in srgb, #0e7490 60%, var(--ink)); --tone-bg: color-mix(in srgb, #0e7490 12%, var(--surface)); }
+.ak-tone-slate { --tone: color-mix(in srgb, #475569 60%, var(--ink)); --tone-bg: color-mix(in srgb, #475569 12%, var(--surface)); }
 
-.ak-main { flex: 1; min-height: 0; overflow: auto; background: #fff; }
+.ak-main { flex: 1; min-height: 0; overflow: auto; background: var(--surface); }
 .ak-section { padding: 14px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
 .ak-section > * { flex: none; }
 
@@ -136,7 +138,7 @@
 .ak-cell-stack small { color: var(--soft); }
 
 /* Metin gibi görünen düğme (satır içi bağlantı). Bütün bölümler kullanır. */
-.ak-link { border: 0; background: none; padding: 0; color: #1d4ed8; cursor: default; font: inherit;
+.ak-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: default; font: inherit;
   text-align: left; }
 .ak-link:hover { text-decoration: underline; }
 
@@ -148,15 +150,15 @@
 
 /* ------------------------------------------------------------- çip */
 .ak-chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.ak-chips .kit-chip.on { background: #e3ebff; border-color: #9db6ff; color: #1d3f9e; }
+.ak-chips .kit-chip.on { background: var(--accent-tint); border-color: var(--accent-line); color: var(--accent); }
 
 /* ------------------------------------------------------- dosya alanı */
 .ak-drop {
   display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: center;
-  border: 1.5px dashed #c5cede; border-radius: 10px; padding: 22px 16px; cursor: default;
-  background: #fbfcfe; text-align: center;
+  border: 1.5px dashed var(--line-strong); border-radius: 10px; padding: 22px 16px; cursor: default;
+  background: var(--surface-2); text-align: center;
 }
-.ak-drop.over { border-color: var(--accent); background: #f0f4ff; }
+.ak-drop.over { border-color: var(--accent); background: var(--accent-tint); }
 .ak-drop-text { font-weight: 600; }
 .ak-drop-hint { color: var(--soft); font-size: 12.5px; }
 .ak-drop-error { color: var(--bad); font-size: 12.5px; }
@@ -166,14 +168,14 @@
 .ak-picker .ak-search { width: 100%; }
 .ak-picker-list {
   position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
-  background: #fff; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 9px;
   box-shadow: 0 10px 28px rgba(17, 23, 34, 0.12); max-height: 320px; overflow: auto;
 }
 .ak-picker-row {
   display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
   border: 0; background: transparent; padding: 8px 12px; cursor: default; font: inherit;
 }
-.ak-picker-row:hover, .ak-picker-row:focus { background: #f2f5fb; }
+.ak-picker-row:hover, .ak-picker-row:focus { background: var(--tint); }
 .ak-picker-row span { color: var(--soft); font-size: 12.5px; }
 .ak-picker-empty { padding: 10px 12px; color: var(--soft); }
 
@@ -193,8 +195,8 @@
 .ak-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* --------------------------------------------------------- iki ayrı para */
-.ak-money-canteen { border-left: 3px solid #f59e0b; }
-.ak-money-finance { border-left: 3px solid #2563eb; }
+.ak-money-canteen { border-left: 3px solid var(--warn); }
+.ak-money-finance { border-left: 3px solid var(--accent); }
 
 /* --------------------------------------- katlanır bölüm (öğrenci kartı, Bugün) */
 .ak-fold { border: 1px solid var(--line); border-radius: 10px; background: var(--paper, #fff); }
@@ -226,12 +228,12 @@
 }
 .ak-wiz-step-no {
   display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
-  border-radius: 50%; background: #fff; border: 1px solid var(--line); font-weight: 650; font-size: 12px;
+  border-radius: 50%; background: var(--surface); border: 1px solid var(--line); font-weight: 650; font-size: 12px;
 }
-.ak-wiz-step.on { background: #e3ebff; border-color: #9db6ff; color: #1d3f9e; font-weight: 600; }
-.ak-wiz-step.on .ak-wiz-step-no { background: #2f5fd0; border-color: #2f5fd0; color: #fff; }
+.ak-wiz-step.on { background: var(--accent-tint); border-color: var(--accent-line); color: var(--accent); font-weight: 600; }
+.ak-wiz-step.on .ak-wiz-step-no { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .ak-wiz-step.done { color: var(--ink); }
-.ak-wiz-step.done .ak-wiz-step-no { background: #e6f4ea; border-color: #8cc79f; color: #1f6b38; }
+.ak-wiz-step.done .ak-wiz-step-no { background: var(--good-tint); border-color: var(--good); color: var(--good); }
 .ak-wiz-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .ak-wiz-body { min-height: 220px; }
 /* Pencere ekrana sığmadığında GÖVDE kayar; başlık, adımlar, not ve düğmeler yerinde
@@ -241,7 +243,7 @@
 .ak-wiz-pane { display: flex; flex-direction: column; gap: 12px; }
 .ak-wiz-title { margin: 0; font-size: 15px; font-weight: 650; }
 .ak-wiz-title:focus { outline: none; }
-.ak-wiz-title:focus-visible { outline: 2px solid #2f5fd0; outline-offset: 2px; }
+.ak-wiz-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ak-wiz-note { color: var(--soft); font-size: 12.5px; min-height: 1em; }
 .ak-wiz-error:empty { display: none; }
 

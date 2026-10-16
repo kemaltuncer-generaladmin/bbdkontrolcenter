@@ -5,7 +5,7 @@
 /* ------------------------------------------------------ teslim oranı */
 .ak-hw-ratio { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ak-hw-ratio-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ak-hw-bar { display: block; height: 5px; border-radius: 3px; background: #e9edf4; overflow: hidden; }
+.ak-hw-bar { display: block; height: 5px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .ak-hw-fill { display: block; height: 100%; background: var(--good); }
 
 .ak-hw-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
@@ -60,6 +60,6 @@
 /* Seçilen ödevlere toplu işlem şeridi */
 .ak-hw-bulk {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
-  border: 1px solid #9db6ff; background: #f0f4ff; border-radius: 9px;
+  border: 1px solid var(--accent-line); background: var(--accent-tint); border-radius: 9px;
 }
 .ak-hw-bulk-count { font-weight: 600; margin-right: 6px; }

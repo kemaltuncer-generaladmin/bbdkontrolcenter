@@ -13,7 +13,7 @@
 .ak-tt-bar {
   position: sticky; top: 0; z-index: 4;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
   box-shadow: 0 8px 18px -16px rgba(17, 23, 34, 0.45);
 }
 .ak-tt-validity { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -21,7 +21,7 @@
 .ak-tt-to.ak-tt-off { opacity: 0.45; pointer-events: none; }
 .ak-tt-meta { color: var(--soft); font-size: 12px; }
 .ak-tt-dirty { color: var(--soft); font-size: 12px; }
-.ak-tt-dirty.on { color: #1d4ed8; font-weight: 600; }
+.ak-tt-dirty.on { color: var(--accent); font-weight: 600; }
 
 /* ------------------------------------------------------------- uyarılar */
 .ak-tt-alerts[hidden] { display: none; }
@@ -29,12 +29,12 @@
   display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 10px;
   font-size: 12.5px; line-height: 1.5;
 }
-.ak-tt-notice.bad { background: #fef2f2; border: 1px solid #fecaca; color: #7f1d1d; }
-.ak-tt-notice.warn { background: #fff7ed; border: 1px solid #fed7aa; color: #7c2d12; }
+.ak-tt-notice.bad { background: var(--bad-tint); border: 1px solid var(--bad-line); color: var(--bad); }
+.ak-tt-notice.warn { background: var(--warn-tint); border: 1px solid var(--warn-line); color: var(--warn); }
 .ak-tt-issues { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
 .ak-tt-issues li {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 0;
-  border-top: 1px dashed rgba(0, 0, 0, 0.1);
+  border-top: 1px dashed var(--line-strong);
 }
 .ak-tt-issue-tools { display: inline-flex; gap: 4px; margin-left: auto; }
 .ak-tt-issue-tools .kit-btn { height: 26px; padding: 0 8px; }
@@ -44,7 +44,7 @@
 @media (max-width: 1180px) {
   .ak-tt-body { grid-template-columns: minmax(0, 1fr); }
 }
-.ak-tt-gridwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.ak-tt-gridwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .ak-tt-grid { display: grid; gap: 4px; padding: 6px; }
 .ak-tt-corner, .ak-tt-dayhead {
   padding: 7px 8px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em;
@@ -64,26 +64,27 @@
   --ak-tt-hue: 220;
   position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
   gap: 1px; min-height: 60px; min-width: 0; padding: 6px 9px;
-  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
   font: inherit; color: var(--ink); text-align: left; cursor: default; overflow: hidden;
 }
-.ak-tt-cell:not(.ak-tt-is-filled) { align-items: center; border-style: dashed; background: #fcfcfd; }
+.ak-tt-cell:not(.ak-tt-is-filled) { align-items: center; border-style: dashed; background: var(--surface-2); }
 .ak-tt-cell.ak-tt-is-filled {
-  background: hsl(var(--ak-tt-hue) 72% 97%);
-  border-color: hsl(var(--ak-tt-hue) 42% 84%);
+  /* Ders tonu kâğıtla karışır: açık temada eski açık ton, koyu temada koyu ton (63-duzeltici). */
+  background: color-mix(in srgb, hsl(var(--ak-tt-hue) 72% 50%) 7%, var(--surface));
+  border-color: color-mix(in srgb, hsl(var(--ak-tt-hue) 42% 50%) 32%, var(--surface));
 }
-.ak-tt-cell:hover { border-color: #b9c3d3; }
-.ak-tt-cell.ak-tt-is-filled:hover { border-color: hsl(var(--ak-tt-hue) 40% 70%); }
+.ak-tt-cell:hover { border-color: var(--line-strong); }
+.ak-tt-cell.ak-tt-is-filled:hover { border-color: color-mix(in srgb, hsl(var(--ak-tt-hue) 40% 50%) 55%, var(--surface)); }
 .ak-tt-cell:focus-visible, .ak-tt-cell.on { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ak-tt-cell.ak-tt-is-dirty { box-shadow: inset 3px 0 0 #2563eb; }
-.ak-tt-cell.ak-tt-is-orphan { border: 1px dashed var(--warn); background: #fff7ed; }
-.ak-tt-cell.ak-tt-is-conflict { border: 1.5px solid var(--bad); background: #fef2f2; }
+.ak-tt-cell.ak-tt-is-orphan { border: 1px dashed var(--warn); background: var(--warn-tint); }
+.ak-tt-cell.ak-tt-is-conflict { border: 1.5px solid var(--bad); background: var(--bad-tint); }
 .ak-tt-subject, .ak-tt-teacher, .ak-tt-room {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ak-tt-subject { font-size: 12.5px; font-weight: 600; }
 .ak-tt-teacher, .ak-tt-room { font-size: 11px; color: var(--soft); }
-.ak-tt-add { font-size: 18px; line-height: 1; color: #5f6b7e; }
+.ak-tt-add { font-size: 18px; line-height: 1; color: var(--soft); }
 .ak-tt-cell:hover .ak-tt-add { color: var(--accent); }
 .ak-tt-time {
   position: absolute; top: 4px; right: 6px; font-size: 10px; color: var(--soft);
@@ -95,7 +96,7 @@
 }
 .ak-tt-none {
   min-height: 20px; border-radius: 8px;
-  background: repeating-linear-gradient(135deg, #f5f6f9 0 6px, #fff 6px 12px);
+  background: repeating-linear-gradient(135deg, var(--tint) 0 6px, var(--surface) 6px 12px);
 }
 .ak-tt-break {
   display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 22px;
@@ -107,7 +108,7 @@
 .ak-tt-side {
   position: sticky; top: 64px;
   display: flex; flex-direction: column; gap: 10px; padding: 14px;
-  border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
 }
 .ak-tt-side-title { font-size: 14px; font-weight: 650; }
 .ak-tt-side-sub { margin-top: -6px; color: var(--soft); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -123,10 +124,10 @@
 .ak-tt-side-info:empty { display: none; }
 .ak-tt-legend { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
 .ak-tt-legend-item { display: inline-flex; align-items: center; gap: 8px; }
-.ak-tt-swatch { width: 18px; height: 14px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+.ak-tt-swatch { width: 18px; height: 14px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
 .ak-tt-swatch.ak-tt-is-dirty { box-shadow: inset 3px 0 0 #2563eb; }
-.ak-tt-swatch.ak-tt-is-conflict { border: 1.5px solid var(--bad); background: #fef2f2; }
-.ak-tt-swatch.ak-tt-is-orphan { border: 1px dashed var(--warn); background: #fff7ed; }
+.ak-tt-swatch.ak-tt-is-conflict { border: 1.5px solid var(--bad); background: var(--bad-tint); }
+.ak-tt-swatch.ak-tt-is-orphan { border: 1px dashed var(--warn); background: var(--warn-tint); }
 
 /* ------------------------------------------------------------- özet */
 .ak-tt-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
@@ -134,7 +135,7 @@
 .ak-tt-chip {
   --ak-tt-hue: 220;
   padding: 2px 9px; border-radius: 999px;
-  border: 1px solid hsl(var(--ak-tt-hue) 42% 84%); background: hsl(var(--ak-tt-hue) 72% 97%);
+  border: 1px solid color-mix(in srgb, hsl(var(--ak-tt-hue) 42% 50%) 32%, var(--surface)); background: color-mix(in srgb, hsl(var(--ak-tt-hue) 72% 50%) 7%, var(--surface));
 }
 
 /* ------------------------------------------------- etüt pencere / liste */
@@ -144,14 +145,14 @@
 .ak-tt-people { display: flex; flex-wrap: wrap; gap: 6px; }
 .ak-tt-person {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px;
-  border: 1px solid #c9d8ff; border-radius: 999px; background: #eef3ff; font-size: 12px;
+  border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-tint); font-size: 12px;
 }
 .ak-tt-person small { color: var(--soft); }
 .ak-tt-person-x {
   width: 20px; height: 20px; border: 0; border-radius: 999px; background: transparent;
   color: var(--soft); font: inherit; line-height: 1; cursor: default;
 }
-.ak-tt-person-x:hover { background: rgba(0, 0, 0, 0.06); color: var(--ink); }
+.ak-tt-person-x:hover { background: var(--surface-3); color: var(--ink); }
 .kit-cell.ak-tt-wrap { white-space: normal; }
 .ak-tt-copycheck:empty { display: none; }
 
@@ -167,17 +168,17 @@
 
 .ak-tt-slots {
   display: flex; flex-direction: column; overflow: hidden;
-  border: 1px solid var(--line); border-radius: 12px; background: #fff;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
 }
 .ak-tt-slot {
   display: grid; grid-template-columns: 120px 84px 84px 64px minmax(0, 1fr) 150px;
-  align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid #f2f4f8;
+  align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--line);
 }
 .ak-tt-slot.ak-tt-slot-head {
   border-top: 0; background: var(--tint); font-size: 10.5px; font-weight: 700;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--soft);
 }
-.ak-tt-slot.ak-tt-is-break { background: #fafbfc; }
+.ak-tt-slot.ak-tt-is-break { background: var(--surface-2); }
 .ak-tt-slot .ak-clock { width: 100%; }
 .ak-tt-slot .kit-select, .ak-tt-slot .kit-input { width: 100%; }
 .ak-tt-slot-empty { padding: 18px 14px; color: var(--soft); text-align: center; }
@@ -195,17 +196,17 @@
 .ak-tt-classchip { display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; }
 .ak-tt-classchip-x { border: 0; background: transparent; cursor: default; font: inherit; color: inherit;
   padding: 0 4px; border-radius: 999px; }
-.ak-tt-classchip-x:hover { background: rgba(0, 0, 0, .08); }
+.ak-tt-classchip-x:hover { background: var(--surface-3); }
 
 /* ------------------------------------------ ders oturumları (sessions.js) */
 .ak-ses-day { gap: 6px; }
 .ak-ses-month { min-width: 120px; text-align: center; font-variant-numeric: tabular-nums; }
 .ak-ses-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
-  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
   font: inherit; color: inherit; text-align: left; cursor: default;
 }
-.ak-ses-row:hover { background: color-mix(in srgb, var(--accent) 6%, #fff); }
+.ak-ses-row:hover { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
 .ak-ses-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ak-ses-row.ak-ses-is-cancelled b { text-decoration: line-through; color: var(--soft); }
 

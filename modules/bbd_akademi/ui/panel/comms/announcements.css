@@ -3,6 +3,6 @@
   font: inherit; line-height: 1.55; }
 .ak-ann-sms-text { width: 100%; min-height: 72px; resize: vertical; }
 .ak-ann-sms-count { font-variant-numeric: tabular-nums; }
-.ak-ann-sms-count.over { color: var(--kit-bad, #b42318); font-weight: 600; }
+.ak-ann-sms-count.over { color: var(--bad); font-weight: 600; }
 .ak-ann-sms-preview { display: flex; flex-direction: column; gap: 2px; }
 .ak-ann-warn { color: var(--warn); }

@@ -37,7 +37,7 @@ function styles() {
   style.textContent = `
 .ak-doc-actions { display: inline-flex; gap: 6px; align-items: center; }
 .ak-doc-progress { display: grid; gap: 10px; min-width: min(380px, 90vw); padding: 22px; border-radius: 14px;
-  background: #fff; border: 1px solid var(--line); box-shadow: 0 30px 70px -28px rgba(0,0,0,.6); }
+  background: var(--surface, #fff); border: 1px solid var(--line); box-shadow: 0 30px 70px -28px rgba(0,0,0,.6); }
 .ak-doc-progress-bar { height: 6px; border-radius: 3px; background: var(--tint); overflow: hidden; }
 .ak-doc-progress-bar > span { display: block; height: 100%; width: 0; background: var(--accent, #3f6fd8);
   transition: width .2s ease; }

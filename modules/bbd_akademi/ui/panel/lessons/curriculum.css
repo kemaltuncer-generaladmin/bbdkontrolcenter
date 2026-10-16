@@ -4,7 +4,7 @@
 
 /* ------------------------------------------------------------ ağaç */
 .ak-cur-tree { display: flex; flex-direction: column; gap: 8px; }
-.ak-cur-unit { border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.ak-cur-unit { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .ak-cur-unit-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; flex-wrap: wrap; }
 .ak-cur-toggle {
   display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: none;
@@ -18,7 +18,7 @@
 .ak-cur-topics { border-top: 1px solid var(--line); padding: 4px 10px 8px 34px; }
 .ak-cur-topic {
   display: grid; grid-template-columns: 52px minmax(0, 1fr) auto auto; align-items: center;
-  gap: 10px; padding: 5px 0; border-bottom: 1px dashed #eef1f6;
+  gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--line);
 }
 .ak-cur-topic:last-child { border-bottom: 0; }
 .ak-cur-retired > .ak-cur-unit-head .ak-cur-title,
@@ -30,8 +30,8 @@
 /* ---------------------------------------------------- kural kalıpları */
 .ak-cur-patterns { display: flex; flex-wrap: wrap; gap: 4px; }
 .ak-cur-pattern {
-  display: inline-block; padding: 1px 6px; border-radius: 5px; background: #f2f5fb;
-  border: 1px solid #e3e8f2; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  display: inline-block; padding: 1px 6px; border-radius: 5px; background: var(--tint);
+  border: 1px solid var(--accent-line); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px; overflow-wrap: anywhere;
 }
 
@@ -42,9 +42,9 @@
 }
 .ak-cur-pick-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
-  text-align: left; border: 0; border-bottom: 1px solid #eef1f6; background: transparent;
+  text-align: left; border: 0; border-bottom: 1px solid var(--line); background: transparent;
   padding: 7px 12px; cursor: default; font: inherit;
 }
 .ak-cur-pick-row:last-child { border-bottom: 0; }
-.ak-cur-pick-row:hover, .ak-cur-pick-row:focus { background: #f2f5fb; }
+.ak-cur-pick-row:hover, .ak-cur-pick-row:focus { background: var(--tint); }
 .ak-cur-pick .ak-cur-none { padding: 8px 12px; }

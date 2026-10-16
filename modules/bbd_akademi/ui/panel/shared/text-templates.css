@@ -7,7 +7,7 @@
 .ak-tt-search { width: 100%; }
 .ak-tt-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
 .ak-tt-item { display: flex; flex-direction: column; gap: 2px; text-align: left; border: 1px solid var(--line);
-  border-radius: 8px; padding: 7px 10px; background: #fff; cursor: default; font: inherit; color: inherit; }
+  border-radius: 8px; padding: 7px 10px; background: var(--surface); cursor: default; font: inherit; color: inherit; }
 .ak-tt-item:hover, .ak-tt-item:focus-visible { border-color: var(--accent); outline: none; }
 .ak-tt-item:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 .ak-tt-item[disabled] { opacity: .6; cursor: progress; }

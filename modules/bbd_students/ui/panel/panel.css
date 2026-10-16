@@ -339,8 +339,8 @@
   padding: 9px 16px;
   border-radius: 10px;
   /* Bildirim temadan bağımsız koyu kalır (iki kâğıtta da okunur). */
-  background: var(--st-toast-bg, #1b2231);
-  color: var(--st-toast-ink, #eef1f7);
+  background: #1b2231;
+  color: #eef1f7;
   font-size: 12.5px;
   transform: translate(-50%, 12px);
   opacity: 0;
