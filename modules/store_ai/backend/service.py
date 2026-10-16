@@ -50,6 +50,7 @@ from km_sdk import (
     ExportError,
     build_pdf,
     csv_bytes,
+    masked_token,
     money,
     number,
     print_report_file,
@@ -672,7 +673,7 @@ class AiService:
                  json.dumps(rows, ensure_ascii=False), summary_text, status, actor, reason,
                  int(tokens), int(cost), int(targets), int(duration_ms), error, _now()))
         except Exception as failure:  # noqa: BLE001 — defter yazılamazsa uygulama açılmaz
-            self._log.warning("çalışma kaydedilemedi", token=token, error=str(failure))
+            self._log.warning("çalışma kaydedilemedi", token=masked_token(token), error=str(failure))
 
     async def run_detail(self, token: str) -> dict[str, Any]:
         row = await self._run_row(token)
@@ -791,7 +792,7 @@ class AiService:
                 (json.dumps(rows, ensure_ascii=False), status, int(applied), actor, reason,
                  _now(), token))
         except Exception as failure:  # noqa: BLE001 — K7
-            self._log.warning("çalışma güncellenemedi", token=token, error=str(failure))
+            self._log.warning("çalışma güncellenemedi", token=masked_token(token), error=str(failure))
 
     async def _emit(self, name: str, payload: dict[str, Any]) -> None:
         """Olay veri yolu henüz her kurulumda çalışmıyor olabilir; yayın

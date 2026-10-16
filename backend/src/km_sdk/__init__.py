@@ -75,7 +75,7 @@ from km_platform.scheduler.weekly import Trigger
 # Modüllerin birebir kopyaladığı yardımcılar (ADR 0033 §7). Çekirdeğe değil
 # SDK'nin kendisine aittir: iş kuralı taşımaz, yalnız ortak dönüşüm/kapıdır.
 from km_sdk.printing import print_report_file, printer_status_of
-from km_sdk.values import as_int, to_kurus
+from km_sdk.values import as_int, masked_token, to_kurus
 
 __version__ = "0.1.0"
 
@@ -112,6 +112,7 @@ __all__ = [
     "ensure_private_dir",
     "filters_line",
     "mask_phones",
+    "masked_token",
     "money",
     "normalize_msisdn",
     "number",

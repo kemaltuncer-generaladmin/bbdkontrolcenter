@@ -35,6 +35,7 @@ from km_sdk import (
     ExportError,
     build_pdf,
     csv_bytes,
+    masked_token,
     money,
     number,
     plan_text,
@@ -773,7 +774,7 @@ class TrialClubService:
             # 500 üretir; kullanıcı yazmanın gitmediğini sanıp aynı jetonla
             # yeniden dener ve satırlar mağazaya İKİNCİ kez yazılır. Bu yüzden
             # sonuç başarıyla döner, uyarı ayrıca söylenir.
-            self._log.warning("yükleme jetonu kapatılamadı", token=row["token"],
+            self._log.warning("yükleme jetonu kapatılamadı", token=masked_token(row["token"]),
                               error=str(failure))
             await self._record(exam_id=exam_id, action="upload_results", reason=reason,
                                actor=actor, result="jeton_kapatilamadi",

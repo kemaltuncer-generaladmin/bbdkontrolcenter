@@ -43,8 +43,8 @@ auth:
   # göçten kalmıştır; istenen teyit PIN teyididir.
   require_password_for_destructive: true
   # İlk yöneticinin PIN'i `config/local.yaml` → auth.bootstrap_pin alanından
-  # gelir. SIR DEPOYA YAZILMAZ (K8); boşsa rastgele üretilir ve yalnız bir kez
-  # loga düşer.
+  # gelir. SIR DEPOYA YAZILMAZ (K8); boşsa rastgele üretilir ve veri dizinindeki
+  # 0600 `ilk-yonetici-pin.txt` dosyasına bir kez yazılır — günlüğe DEĞİL (KM-16).
 
 platform:
 

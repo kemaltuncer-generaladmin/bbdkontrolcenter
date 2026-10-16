@@ -51,3 +51,17 @@ def to_kurus(value: Any) -> int | None:
     except (InvalidOperation, ValueError):
         return None
     return int((amount * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def masked_token(value: Any, keep: int = 6) -> str:
+    """Tek kullanımlık işlem jetonunun günlüğe yazılabilir hâli: ilk `keep` karakter + `…`.
+
+    Güvenlik bulgusu KM-17 (63-duzeltici): kuru prova → uygula akışının jetonu
+    hata günlüğüne TAM yazılıyordu; günlüğü okuyan, süresi dolmamış jetonla
+    işlemi kendi adına uygulatabilirdi. İlk altı karakter satırları eşleştirmeye
+    yeter, jetonu yeniden kurmaya yetmez. Boş değer `""` döner.
+    """
+    text = "" if value is None else str(value)
+    if len(text) <= keep:
+        return "…" if text else ""
+    return f"{text[:keep]}…"

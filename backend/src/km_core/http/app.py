@@ -25,9 +25,12 @@ from fastapi.responses import JSONResponse
 from km_core.build_info import build_info
 from km_core.bus.bus import EventBus
 from km_core.config.loader import Config, load_config, nest, with_store_layer
+from km_core.config.paths import data_dir
 from km_core.config.settings_store import SettingsStore
 from km_core.files import outputs_log
+from km_core.files.confine import confine_stored
 from km_core.files.outputs_queue import OutputsQueue
+from km_core.files.private import write_private
 from km_core.http.deps import (
     KM_AUTHENTICATED_ATTR,
     KM_PERMISSIONS_ATTR,
@@ -148,7 +151,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         # Ortam değişkeni en üstte kalır (`with_store_layer` onu yeniden
         # uygular): acil müdahale yolu kapanmaz. `settings` tablosunun göçü
         # yukarıdaki `build_schema` içinde uygulandı.
-        config = with_store_layer(config, nest(await SettingsStore(store).values()))
+        # KM-15: arayüzden kök dışına yazılmış yol ayarı uygulanmaz.
+        config = with_store_layer(
+            config, nest(confine_stored(await SettingsStore(store).values(), config.root)))
 
         registry = Registry()
         bus = EventBus()
@@ -566,8 +571,9 @@ async def _bootstrap_admin(identity: Identity, config: Config) -> None:
     """İlk açılışta yönetici hesabı.
 
     PIN `config/local.yaml` içindeki `auth.bootstrap_pin` alanından okunur
-    (git dışı — K8). Yoksa rastgele üretilir ve YALNIZCA bir kez loga yazılır;
-    yönetici girip kendi PIN'ini belirlemelidir.
+    (git dışı — K8). Yoksa rastgele üretilir ve veri dizinindeki 0600
+    `ilk-yonetici-pin.txt` dosyasına BİR KEZ yazılır (günlüğe değil — KM-16);
+    yönetici girip kendi PIN'ini belirlemeli ve dosyayı silmelidir.
     """
     if await identity.user_count() > 0:
         return
@@ -598,9 +604,32 @@ async def _bootstrap_admin(identity: Identity, config: Config) -> None:
         return
 
     if generated:
-        log.warning("İLK YÖNETİCİ OLUŞTURULDU — girip PIN'inizi değiştirin", pin=pin)
+        # KM-16: PIN GÜNLÜĞE YAZILMAZ. Sunucuda günlük (Coolify) saklanır ve
+        # günlüğü okuyabilen herkes ilk yöneticinin PIN'ini görürdü. PIN veri
+        # dizinindeki 0600 dosyaya BİR KEZ yazılır; günlükte yalnız dosyanın yeri.
+        target = bootstrap_pin_file(config.root)
+        try:
+            write_private(target, (
+                "Kontrol Merkezi — ilk yönetici PIN'i (tek seferlik)\n"
+                f"PIN: {pin}\n"
+                "Girişten sonra Hesabım'dan PIN'inizi değiştirin ve BU DOSYAYI SİLİN.\n"
+            ).encode())
+        except OSError as error:
+            log.error("İLK YÖNETİCİ OLUŞTURULDU ama PIN dosyası yazılamadı — "
+                      "auth.bootstrap_pin ile yeniden kurun", detail=str(error))
+            return
+        log.warning("İLK YÖNETİCİ OLUŞTURULDU — PIN tek seferlik dosyada; girip "
+                    "PIN'inizi değiştirin ve dosyayı silin", path=str(target))
     else:
         log.info("İlk yönetici oluşturuldu (PIN local.yaml'dan alındı).")
+
+
+#: Üretilen ilk yönetici PIN'inin yazıldığı dosyanın adı (veri dizininde, 0600).
+BOOTSTRAP_PIN_FILE = "ilk-yonetici-pin.txt"
+
+
+def bootstrap_pin_file(root: Path) -> Path:
+    return data_dir(root) / BOOTSTRAP_PIN_FILE
 
 
 def _module_root() -> Path:

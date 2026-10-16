@@ -14,6 +14,7 @@ use std::process::{Child, Command};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
+mod core_path;
 mod native;
 mod printing;
 
@@ -309,7 +310,8 @@ async fn core_request(
     timeout_seconds: Option<u64>,
 ) -> Result<CoreResponse, String> {
     let base = server_base();
-    let url = format!("{base}{path}");
+    // KM-14: yol `/` ile başlamalı; başka konağa (Bearer ile) kaçış yok.
+    let url = core_path::core_url(&base, &path)?;
     let verb = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|_| format!("geçersiz istek yöntemi: {method}"))?;
 

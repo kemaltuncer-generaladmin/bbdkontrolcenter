@@ -53,6 +53,7 @@ from km_core.config.settings_catalog import (
     validate_value,
 )
 from km_core.config.settings_store import SettingsStore
+from km_core.files.confine import check_setting, confine_stored
 from km_core.files.outputs import report_dir
 from km_core.files.private import write_private
 from km_core.http.deps import requires, split_permission
@@ -201,7 +202,7 @@ async def _refresh_config(request: Request) -> None:
     görmesidir; yanıt ayrıca `restartRequired` ile durumu açıkça söyler.
     """
     config = _config(request)
-    stored = await _settings_store(request).values()
+    stored = confine_stored(await _settings_store(request).values(), config.root)
     request.app.state.config = with_store_layer(config, nest(stored))
 
 
@@ -307,6 +308,10 @@ def create_settings_router() -> APIRouter:
                     value = validate_value(spec, raw)
                 except SettingsError as error:
                     raise HTTPException(status_code=400, detail=str(error)) from error
+                # KM-15: yol alanları izinli kökün dışına çıkamaz (yol geçişi yok).
+                refused = check_setting(path, value, _config(request).root)
+                if refused:
+                    raise HTTPException(status_code=400, detail=refused)
                 await settings_store.put(path, value, actor_id=user.id)
             changed.append(path)
 

@@ -36,6 +36,7 @@ from km_sdk import (
     ExportError,
     build_pdf,
     csv_bytes,
+    masked_token,
     money,
     number,
     print_report_file,
@@ -996,7 +997,7 @@ class NotificationsService:
             # "uygulanan iş, önizlenen iştir" demektir; gövdesi bozuksa o
             # kanıt yoktur ve 1.800 kişiye ne gideceği bilinmiyordur.
             self._log.warning("önizlenen gönderim gövdesi çözülemedi",
-                              token=row["token"], error=str(failure))
+                              token=masked_token(row["token"]), error=str(failure))
             return {"ok": False,
                     "error": "Önizlenen gönderim okunamadı; kuru provayı yeniden alın."}
 
@@ -1020,7 +1021,7 @@ class NotificationsService:
             # 500 üretir ve kullanıcı gönderimin gitmediğini sanıp jetonu
             # yeniden kullanmayı dener — 1.800 kişiye İKİNCİ kez gider. Bu
             # yüzden sonuç başarıyla döner, uyarı ayrıca söylenir.
-            self._log.warning("gönderim jetonu kapatılamadı", token=row["token"],
+            self._log.warning("gönderim jetonu kapatılamadı", token=masked_token(row["token"]),
                               error=str(failure))
             await self._record(action="broadcast", reason=reason, actor=actor,
                                result="jeton_kapatilamadi",

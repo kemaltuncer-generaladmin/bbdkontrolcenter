@@ -100,7 +100,10 @@ def core_tabs() -> list[dict[str, Any]]:
                                            "bırakılırsa masaüstündeki "
                                            "“Kontrol Merkezi/Raporlar” hiyerarşisi "
                                            "kullanılır. Modüllerin kendi rapor klasörü "
-                                           "ayarı (export_path) bundan bağımsızdır.",
+                                           "ayarı (export_path) bundan bağımsızdır. "
+                                           "Güvenlik gereği yalnız uygulamanın veri "
+                                           "klasörü ya da “Kontrol Merkezi/Raporlar” "
+                                           "altı seçilebilir.",
                             "default": "",
                         },
                     ],
@@ -191,7 +194,8 @@ def core_tabs() -> list[dict[str, Any]]:
                             "type": "path",
                             "title": "Günlük dosyası",
                             "description": "Başlatıcının ve çekirdeğin yazdığı günlük. "
-                                           "Aşağıdaki teknik satırlar buradan okunur.",
+                                           "Aşağıdaki teknik satırlar buradan okunur. "
+                                           "Yalnız veri klasörü altında olabilir.",
                             "default": "data/launcher.log",
                         },
                     ],
