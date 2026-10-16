@@ -28,20 +28,20 @@
 // Hata defteri PDF'i burada yok: işi başlatan uç (`students_exportMistakes`)
 // entegrasyon anahtarına açık değil, yoklanacak bir iş olmaz.
 
-import { bytes, button, h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, hintBox, kpiRow, skeletonRows, tabBar } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { barChart } from '../../ui-kit/charts.js';
+import { bytes, button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, hintBox, kpiRow, skeletonRows, tabBar } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { barChart } from '../../../ui-kit/charts.js';
 import {
   DAY_LABEL, WEEKDAYS, addDays, empty, errorBox, fmtDate, fmtDateTime, fmtTime, kv, loader,
   multiChips, num, openDrawer, optionsOf, pagedList, percent, selectBox, statusBadge, todayIst,
   toolbar, weekStart,
-} from './common.js';
+} from '../common.js';
 import {
   accuracyTone, box, dayMonth, imageBag, minutes, periodRange, questionsTab, readingTab, stack,
 } from './students-learning-stats.js';
-import { documentButtons } from './documents.js';
-import { studyPlanDoc } from './documents-logic.js';
+import { documentButtons } from '../documents.js';
+import { studyPlanDoc } from '../documents-logic.js';
 
 /** İç sekmeler: anahtar → {etiket, okuma işlemi}. Okuma yetkisi yoksa çizilmez. */
 const SUBTABS = [
@@ -509,7 +509,7 @@ function mistakesTab(app, studentId) {
   // Hata defterinden koç görevi: "Hata tekrarı" türü, seçili ders ve varsayılan 10 hata (ortak görev formu).
   const assign = app.can('admin_saveCoachWeek') && app.can('admin_getCoachWeek')
     ? button('Hata tekrarı görevi ver', { variant: 'primary', onClick: async () => {
-      const { openCoachTask } = await import('./coaching-week.js');
+      const { openCoachTask } = await import('../coaching-week.js');
       await openCoachTask(app, { id: studentId }, { seed: { type: 'mistake_review', subjectId: filters.subject || '',
         mistakeCount: 10 } });
     } }) : null;

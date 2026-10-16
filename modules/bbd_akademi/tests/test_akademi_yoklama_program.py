@@ -233,7 +233,7 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
 
   // --------------------------------------------------- veli adına izin (kart)
   {
-    const { leaveOnBehalf } = await load('./panels/bbd_akademi/students-attendance.js');
+    const { leaveOnBehalf } = await load('./panels/bbd_akademi/students/students-attendance.js');
     const root = document.createElement('div');
     document.body.append(root);
     const app = makeApp(root, api, {});

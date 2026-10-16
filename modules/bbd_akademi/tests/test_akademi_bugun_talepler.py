@@ -168,7 +168,7 @@ export default async function ({ document, sleep, api, load, calls }) {
 
   // -------------------------------------------- V15 veli adına mazeret (kart)
   {
-    const { leaveOnBehalf, retroProblem } = await load('./panels/bbd_akademi/students-attendance.js');
+    const { leaveOnBehalf, retroProblem } = await load('./panels/bbd_akademi/students/students-attendance.js');
     out.problems = [retroProblem(null, []), retroProblem({ retroExcuseOpen: false, retroExcuseMaxDays: 5, sessions: [] }, []),
       retroProblem({ retroExcuseOpen: true, sessions: [] }, []),
       retroProblem({ retroExcuseOpen: true, sessions: [{ status: 'absent', occurrenceKey: 'k' }] }, [])];

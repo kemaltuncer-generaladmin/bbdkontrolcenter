@@ -12,13 +12,13 @@
 // imzalı bağlantıyla gelir, süresi dolmuşsa dosya kaydı tazelenir
 // (`/v1/students/{id}/files/{fileId}`).
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
-import { groupedBar } from '../../ui-kit/charts.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
+import { groupedBar } from '../../../ui-kit/charts.js';
 import {
   empty, errorBox, fmtDate, fmtDateTime, kv, loader, num, openDrawer, pagedList, percent, problem,
   selectBox, toolbar,
-} from './common.js';
+} from '../common.js';
 
 const SOURCE = { own: ['Kendi', 'dim'], institution: ['Kurum', 'info'] };
 

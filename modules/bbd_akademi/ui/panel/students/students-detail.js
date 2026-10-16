@@ -18,22 +18,22 @@
 // (`institutionOpenBalanceMinor`) ve kantin harcamasını (`canteenSpentTodayMinor`)
 // BİLEREK göstermez; ikisi kendi sekmelerinde, ayrı renk çizgisiyle durur.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { lineChart } from '../../ui-kit/charts.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { lineChart } from '../../../ui-kit/charts.js';
 import {
   DAY_LABEL, EXAM_TARGETS, TRACKS, actionButton, addDays, confirmAction, empty, fmtDate,
   fmtDateTime, fmtTime, formDialog, gradeText, kv, labelOf, loader, money, net, num, openDrawer,
   optionsOf, pagedList, percent, personName, runAction, selectBox, statusBadge, todayIst, toolbar,
   weekStart,
-} from './common.js';
-import { goalDialog } from './coaching-students.js';
-import { EXAM_TYPES } from './exams-shared.js';
-import { documentButtons, financeToolbar } from './documents.js';
-import { studentCurriculumSet } from './shared/curriculum-set.js';
+} from '../common.js';
+import { goalDialog } from '../coaching-students.js';
+import { EXAM_TYPES } from '../exams-shared.js';
+import { documentButtons, financeToolbar } from '../documents.js';
+import { studentCurriculumSet } from '../shared/curriculum-set.js';
 import { classHistoryCard } from './students-class-history.js';
-import { canteenDoc, homeworkTally, statementDoc, studentCardDoc, studentHomeworkDoc } from './documents-logic.js';
+import { canteenDoc, homeworkTally, statementDoc, studentCardDoc, studentHomeworkDoc } from '../documents-logic.js';
 
 // ------------------------------------------------------------- etiketler
 

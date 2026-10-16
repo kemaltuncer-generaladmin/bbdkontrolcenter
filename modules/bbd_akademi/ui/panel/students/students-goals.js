@@ -13,13 +13,13 @@
 //     (doğru − yanlış ÷ kural) ve puanı uydurmaz; Akademi'nin uyarı metni
 //     (`disclaimer`) olduğu gibi yazılır.
 
-import { h, loadStyles } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow, tabBar } from '../../ui-kit/layout.js';
-import { groupedBar } from '../../ui-kit/charts.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { h, loadStyles } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow, tabBar } from '../../../ui-kit/layout.js';
+import { groupedBar } from '../../../ui-kit/charts.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   empty, fmtDate, fmtDateTime, gradeText, kv, loader, net, num, percent, selectBox,
-} from './common.js';
+} from '../common.js';
 
 const SCORE_TYPES = { lgs: 'LGS', tyt: 'TYT', say: 'AYT Sayısal', ea: 'AYT Eşit ağırlık',
   soz: 'AYT Sözel', dil: 'AYT Dil' };

@@ -12,15 +12,15 @@
 // düşerse) `students_getFile` ile taze bağlantı alınır; nesne URL'leri çekmece
 // kapanınca bırakılır.
 
-import { button, h } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, chipRow, kpiRow } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
-import { barChart, lineChart } from '../../ui-kit/charts.js';
-import { AkademiError } from './api.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, chipRow, kpiRow } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
+import { barChart, lineChart } from '../../../ui-kit/charts.js';
+import { AkademiError } from '../api.js';
 import {
   addDays, dateInput, empty, fmtDate, fmtDateTime, kv, loader, num, openDrawer, pagedList, percent,
   problem, selectBox, statusBadge, todayIst, toolbar, weekStart,
-} from './common.js';
+} from '../common.js';
 
 const MONTHS_SHORT = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const MONTHS_LONG = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos',

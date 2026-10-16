@@ -14,15 +14,15 @@
 // Liste küçük ve seyrek değişir: önbellekli okunur (`getCached`), her yazmadan sonra önbellek
 // düşürülür (`invalidate`) — bölümlerin sınıf seçicileri (`app.lookups`) aynı önbelleği paylaşır.
 
-import { button, foldText, h } from '../../ui-kit/kit.js';
-import { badge, card } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { button, foldText, h } from '../../../ui-kit/kit.js';
+import { badge, card } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   EXAM_TARGETS, TRACKS, actionButton, empty, formDialog, gradeText, kv, loader, num,
   openDrawer, searchBox, selectBox, toolbar,
-} from './common.js';
+} from '../common.js';
 import { STUDENT_STATUS, checkbox, stack } from './students-detail.js';
-import { academicYearOf, classCurriculumSet, curriculaChips } from './shared/curriculum-set.js';
+import { academicYearOf, classCurriculumSet, curriculaChips } from '../shared/curriculum-set.js';
 import { classMembersCard } from './students-class-history.js';
 
 const CLASS_CACHE = '/v1/admin/class-groups';

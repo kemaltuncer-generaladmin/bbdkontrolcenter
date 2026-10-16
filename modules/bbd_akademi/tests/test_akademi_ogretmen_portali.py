@@ -112,7 +112,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     nextCursor: null };
   const { app, root } = await makeApp(load, document);
   app.can = () => false;  // tablet kartı yok
-  const { studyTab } = await load('./panels/bbd_akademi/students-records.js');
+  const { studyTab } = await load('./panels/bbd_akademi/students/students-records.js');
   const ctx = { app, id: 'stu-1', dispose: () => {}, subjectNames: new Map() };
   const tab = studyTab(ctx);
   root.append(tab.node);
@@ -132,7 +132,7 @@ def test_ogrenci_adina_kayit_etiketi_listede() -> None:
     assert out["rows"] >= 2
     assert out["labelled"] == 1
     assert out["a11y"] == []
-    learning = (PANEL / "students-learning.js").read_text(encoding="utf-8")
+    learning = (PANEL / "students/students-learning.js").read_text(encoding="utf-8")
     assert "row.actedBy" in learning and "mistake.actedBy" in learning  # hata defteri listesi + çekmece
-    records = (PANEL / "students-records.js").read_text(encoding="utf-8")
+    records = (PANEL / "students/students-records.js").read_text(encoding="utf-8")
     assert records.count("row.actedBy") == 2  # dış deneme "Giren" + çalışma kaydı "Kayıt"

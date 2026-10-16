@@ -73,7 +73,7 @@ export const SECTIONS = [
   { key: 'requests', label: 'Talepler', file: './today/requests.js', requires: ['requests'], area: 'today' },
   // `kmOnly`: Akademi izni olmayan ama öğrenci yönetimi izni olan kullanıcıya
   // (muhasebe, org_staff) panel YALNIZ bu bölümle açılır — KM kaydı (0.5.3).
-  { key: 'students', label: 'Öğrenciler', file: './students.js', requires: ['view'], area: 'students',
+  { key: 'students', label: 'Öğrenciler', file: './students/students.js', requires: ['view'], area: 'students',
     kmOnly: true },
   // Koçluk (KM-4; öğretmen = koç). `host: 'coaching'` hapları koçluk ekranının (coaching.js) sekmeleridir.
   { key: 'coachQueue', label: 'Kontrol kuyruğu', file: './coaching.js', requires: ['view'], area: 'coaching',

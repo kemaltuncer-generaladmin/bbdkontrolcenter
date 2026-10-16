@@ -22,7 +22,7 @@ from harness import NodeMissing, run
 
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, load }) {
-  const { renderHeader } = await load('./panels/bbd_akademi/students-detail.js');
+  const { renderHeader } = await load('./panels/bbd_akademi/students/students-detail.js');
   const out = { runs: [], toasts: [], refreshed: 0 };
   const make = (allowed) => ({
     async allowed() { return allowed; },

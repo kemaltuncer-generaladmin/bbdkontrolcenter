@@ -16,23 +16,23 @@
 // `exportJob` yoklar ve dosya hazır olunca indirir. Pencerenin Idempotency-Key'i
 // işe de taşınır (çift tıklama ikinci iş açmaz).
 
-import { button, foldText, h, monthName } from '../../ui-kit/kit.js';
-import { alertBox, badge, card, kpiRow } from '../../ui-kit/layout.js';
-import { dateRange } from '../../ui-kit/datefield.js';
-import { barChart, groupedBar, lineChart } from '../../ui-kit/charts.js';
-import { timeline } from '../../ui-kit/flow.js';
-import { AkademiError, openBlob } from './api.js';
-import { BOOK_STATUS } from './books.js';
-import { METHODS } from './finance.js';
+import { button, foldText, h, monthName } from '../../../ui-kit/kit.js';
+import { alertBox, badge, card, kpiRow } from '../../../ui-kit/layout.js';
+import { dateRange } from '../../../ui-kit/datefield.js';
+import { barChart, groupedBar, lineChart } from '../../../ui-kit/charts.js';
+import { timeline } from '../../../ui-kit/flow.js';
+import { AkademiError, openBlob } from '../api.js';
+import { BOOK_STATUS } from '../books.js';
+import { METHODS } from '../finance.js';
 import {
   DAY_LABEL, actionButton, empty, exportJob, fmtDate, fmtDateTime, fmtTime, formDialog, kv, loader,
   money, net, num, optionsOf, pagedList, percent, personName, problem, runAction, selectBox,
   statusBadge, todayIst, toolbar,
-} from './common.js';
-import { documentButtons } from './documents.js';
+} from '../common.js';
+import { documentButtons } from '../documents.js';
 import { attendanceExtras } from './students-attendance.js';
-import { leaveKindDetail } from './attendance-manage.js';
-import { examResultDoc } from './documents-logic.js';
+import { leaveKindDetail } from '../attendance-manage.js';
+import { examResultDoc } from '../documents-logic.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
   kmManagedHint, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,

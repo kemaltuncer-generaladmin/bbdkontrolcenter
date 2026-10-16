@@ -32,7 +32,7 @@ def row(cid: str, name: str, **extra: Any) -> dict[str, Any]:
 
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, api, load }) {
-  const { classesView } = await load('./panels/bbd_akademi/students-groups.js');
+  const { classesView } = await load('./panels/bbd_akademi/students/students-groups.js');
   const make = async (items) => {
     const root = document.createElement('div');
     document.body.append(root);

@@ -21,14 +21,14 @@
 // HIZ: listeler imleçlidir (`pagedList`), arama 250 ms bekler, sınıf/grup
 // seçenekleri önbellekli `app.lookups`'tan gelir; satır başına istek atılmaz.
 
-import { button, h, loadStyles } from '../../ui-kit/kit.js';
-import { badge, tabBar } from '../../ui-kit/layout.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { badge, tabBar } from '../../../ui-kit/layout.js';
 import {
   EXAM_TARGETS, GRADE_LEVELS, TRACKS, empty, fmtDateTime, gradeText, loader, num, openDrawer, optionsOf,
   pagedList, problem, searchBox, sectionHead, selectBox, toolbar,
-} from './common.js';
-import { documentButtons } from './documents.js';
-import { guardianListDoc, guardiansFromDetails, mapLimit } from './documents-logic.js';
+} from '../common.js';
+import { documentButtons } from '../documents.js';
+import { guardianListDoc, guardiansFromDetails, mapLimit } from '../documents-logic.js';
 import {
   STUDENT_STATUS, curriculumTab, linkButton, openKmStudents, overviewTab, renderHeader, resourcesTab,
   scheduleTab, stack,
@@ -37,12 +37,12 @@ import {
   attendanceTab, canteenTab, examsTab, financeTab, homeworkTab, requestsTab, studyTab,
 } from './students-records.js';
 import { classesView } from './students-groups.js';
-import { studentBooksPart } from './book-sales.js';
-import { locatePart, studentCard } from './sections.js';
+import { studentBooksPart } from '../book-sales.js';
+import { locatePart, studentCard } from '../sections.js';
 import { learningPanel } from './students-learning.js';
 import { flashcardsPanel } from './students-flashcards.js';
 import { goalsPanel } from './students-goals.js';
-import { coachingPanel } from './students-coaching.js';
+import { coachingPanel } from '../students-coaching.js';
 
 /** Gömülebilir panel (`fn(app, studentId)` → {node, shown, destroy}) çekmece sekmesi olur. */
 // (`ctx.app` pasif öğrencide salt okunur görünümdür — `readOnlyApp`.)

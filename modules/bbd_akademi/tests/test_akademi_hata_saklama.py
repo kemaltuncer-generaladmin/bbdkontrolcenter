@@ -131,7 +131,7 @@ export default async function ({ document, audit, sleep, load }) {
       },
     },
   };
-  const { learningPanel } = await load('./panels/bbd_akademi/students-learning.js');
+  const { learningPanel } = await load('./panels/bbd_akademi/students/students-learning.js');
   const root = document.createElement('div');
   document.body.append(root);
   const panel = learningPanel(app, SID);

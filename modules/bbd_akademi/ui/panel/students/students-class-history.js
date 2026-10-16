@@ -9,12 +9,12 @@
 //     tarihte sınıfta kimlerin olduğu `admin_getStudentGroup?date=` ile açılır.
 // İç tür (`km_class` / `km_group`) kullanıcıya gösterilmez — tek kavram "Sınıf" (README §14 madde 70).
 
-import { button, h } from '../../ui-kit/kit.js';
-import { badge, card } from '../../ui-kit/layout.js';
-import { dataTable } from '../../ui-kit/table.js';
+import { button, h } from '../../../ui-kit/kit.js';
+import { badge, card } from '../../../ui-kit/layout.js';
+import { dataTable } from '../../../ui-kit/table.js';
 import {
   dateInput, empty, fmtDate, loader, num, openDrawer, pagedList, staticList, todayIst, toolbar,
-} from './common.js';
+} from '../common.js';
 
 function stack(main, sub) {
   const node = h('div', 'ak-cell-stack');
