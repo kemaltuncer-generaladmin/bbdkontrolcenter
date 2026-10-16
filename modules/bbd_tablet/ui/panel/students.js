@@ -376,6 +376,15 @@ export function studentsView(app) {
     }
   }
 
+  /** Profilin günlük toplam süresi: kullanılan / sınır, doluysa açıkça söylenir. */
+  function dailyTotalText(total) {
+    if (!total?.limitSeconds) return '';
+    const used = `${dur(total.usedSeconds || 0)} / ${dur(total.limitSeconds)}`;
+    return total.remainingSeconds > 0
+      ? `Günlük toplam süre: ${used} (${dur(total.remainingSeconds)} kaldı)`
+      : `Günlük toplam süre doldu (${used})`;
+  }
+
   function paintUsage(st) {
     const usage = st.usage?.usage || [];
     const total = usage.reduce((sum, item) => sum + (Number(item.usedSeconds) || 0), 0);
@@ -384,6 +393,7 @@ export function studentsView(app) {
       `${trOf(st.date)}${st.date === st.today ? ' (bugün)' : ''}`,
       profile ? `Profil: ${profile.name}` : '',
       total ? `Toplam ${dur(total)}` : '',
+      dailyTotalText(st.usage?.dailyTotal),
     ].filter(Boolean).join(' · ');
     st.usageBox.replaceChildren(usageList(usage, {
       emptyText: profile ? 'Bu gün için kullanım yok.' : 'Öğrenci henüz hiç tablete giriş yapmadı.',

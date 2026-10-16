@@ -852,6 +852,7 @@ export function devicesView(app) {
       ['Şu anki profil', profile ? inline(profile.name, syncBadge(device))
         : 'Atanmamış — öğrenci bu tablete giriş yapamaz.'],
       ['Kullanım saatleri', profile ? windowsSummary(profile.usageWindows) : null],
+      ['Günlük toplam süre', profile?.dailyTotalLimitSeconds ? dur(profile.dailyTotalLimitSeconds) : null],
     ]);
     const parts = [rows, picker];
     if (!profile && device.paired && app.can('manage')) {

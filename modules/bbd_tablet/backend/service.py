@@ -40,6 +40,7 @@ from .rules import (
     next_window_start,
     normalize_app_rules,
     normalize_command,
+    normalize_daily_total,
     normalize_enrollment_code,
     normalize_policy_detail,
     normalize_self_update,
@@ -233,6 +234,7 @@ class TabletService:
             "id": row["id"], "name": row["name"], "revision": int(row["revision"]),
             "timezone": row["timezone"], "updatedAt": row["updated_at"],
             "usageWindows": windows,
+            "dailyTotalLimitSeconds": int(row.get("daily_total_limit_seconds") or 0),
             "apps": [TabletService._app_view(app) for app in apps],
             "systemControls": {item["control_key"]: bool(item["is_enabled"])
                                for item in controls},
@@ -332,17 +334,20 @@ class TabletService:
                            timezone: str, apps: list[dict[str, Any]],
                            system_controls: dict[str, Any] | None = None,
                            usage_windows: list[dict[str, Any]] | None = None,
+                           daily_total_limit_seconds: int | None = None,
                            ) -> dict[str, Any]:
         async with self._profile_lock:
             return await self._save_profile(profile_id=profile_id, name=name,
                                             timezone=timezone, apps=apps,
                                             system_controls=system_controls,
-                                            usage_windows=usage_windows)
+                                            usage_windows=usage_windows,
+                                            daily_total_limit_seconds=daily_total_limit_seconds)
 
     async def _save_profile(self, *, profile_id: str | None, name: str,
                             timezone: str, apps: list[dict[str, Any]],
                             system_controls: dict[str, Any] | None,
-                            usage_windows: list[dict[str, Any]] | None) -> dict[str, Any]:
+                            usage_windows: list[dict[str, Any]] | None,
+                            daily_total_limit_seconds: int | None = None) -> dict[str, Any]:
         if system_controls is not None:
             if not isinstance(system_controls, dict):
                 raise ValueError("Sistem kontrolleri anahtar-değer haritası olmalı.")
@@ -357,6 +362,8 @@ class TabletService:
         zone(timezone)
         rules = normalize_app_rules(apps)
         windows = normalize_usage_windows(usage_windows) if usage_windows is not None else None
+        total = (normalize_daily_total(daily_total_limit_seconds)
+                 if daily_total_limit_seconds is not None else None)
         stamp = self._now().isoformat()
         if profile_id:
             existing = await self.profile(profile_id)
@@ -365,6 +372,7 @@ class TabletService:
             controls_to_save = (existing["systemControls"] if system_controls is None
                                 else system_controls)
             windows_to_save = existing["usageWindows"] if windows is None else windows
+            total_to_save = existing["dailyTotalLimitSeconds"] if total is None else total
             revision = int(existing["revision"]) + 1
             await self.store.execute(
                 f"DELETE FROM {self.apps} WHERE profile_id=? AND revision=?",
@@ -377,6 +385,7 @@ class TabletService:
         else:
             controls_to_save = system_controls or {}
             windows_to_save = windows or []
+            total_to_save = total or 0
             profile_id, revision = str(uuid4()), 1
             await self.store.execute(
                 f"INSERT INTO {self.profiles} (id, name, revision, timezone, created_at, "
@@ -399,10 +408,10 @@ class TabletService:
         # Yeni satırlar tamamlandıktan sonra tek satırlık revision geçişi;
         # yarıda kesilirse tabletler son tamamlanmış sürümü okumaya devam eder.
         await self.store.execute(
-            f"UPDATE {self.profiles} SET name=?, timezone=?, usage_windows=?, revision=?, "
-            "updated_at=? WHERE id=?",
+            f"UPDATE {self.profiles} SET name=?, timezone=?, usage_windows=?, "
+            "daily_total_limit_seconds=?, revision=?, updated_at=? WHERE id=?",
             (name, timezone, json.dumps(windows_to_save, separators=(",", ":")),
-             revision, stamp, profile_id),
+             total_to_save, revision, stamp, profile_id),
         )
         await self.store.execute(
             f"DELETE FROM {self.apps} WHERE profile_id=? AND revision<?",
@@ -422,6 +431,7 @@ class TabletService:
             profile_id=None, name=(name or f"{source['name']} (kopya)")[:100],
             timezone=source["timezone"], apps=source["apps"],
             system_controls=source["systemControls"], usage_windows=source["usageWindows"],
+            daily_total_limit_seconds=source["dailyTotalLimitSeconds"],
         )
 
     async def delete_profile(self, *, profile_id: str, replacement_profile_id: str | None = None,
@@ -1235,8 +1245,17 @@ class TabletService:
         items.sort(key=lambda item: (-item["usedSeconds"], item["appName"].lower()))
         for grant in grants:
             grant["appName"] = names.get(grant["packageName"], grant["packageName"])
+        # Toplam yalnız süreli uygulamaları sayar; sınırsızlar ne sayılır ne durur.
+        total_limit = int((profile or {}).get("dailyTotalLimitSeconds") or 0)
+        total = None
+        if total_limit:
+            total_used = sum(item["usedSeconds"] for item in items
+                             if item["allowed"] and not item["unlimited"])
+            total = {"limitSeconds": total_limit, "usedSeconds": total_used,
+                     "remainingSeconds": max(0, total_limit - total_used)}
         return {"studentId": student_id, "localDate": local_date,
                 "profile": {"id": profile["id"], "name": profile["name"]} if profile else None,
+                "dailyTotal": total,
                 "blockedUntil": await self._active_block_until(student_id, self._now()),
                 "usage": items, "grants": grants}
 

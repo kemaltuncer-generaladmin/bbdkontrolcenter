@@ -116,6 +116,8 @@ class ProfileBody(BaseModel):
     systemControls: dict[str, Any] | None = None
     # Omitted keeps the previous revision's hours; [] means always open.
     usageWindows: list[UsageWindowBody] | None = Field(default=None, max_length=21)
+    # Omitted keeps the previous revision's total; 0 means no daily total.
+    dailyTotalLimitSeconds: int | None = Field(default=None, ge=0, le=86400)
 
 
 class DuplicateBody(BaseModel):
@@ -297,6 +299,7 @@ async def create_profile(body: ProfileBody,
         system_controls=body.systemControls,
         usage_windows=None if body.usageWindows is None
         else [item.model_dump() for item in body.usageWindows],
+        daily_total_limit_seconds=body.dailyTotalLimitSeconds,
     ))
     await announce("tablet.profile_changed", ("tablet_profile", _id_of(result)), [])
     return result
@@ -311,6 +314,7 @@ async def update_profile(profile_id: str, body: ProfileBody,
         system_controls=body.systemControls,
         usage_windows=None if body.usageWindows is None
         else [item.model_dump() for item in body.usageWindows],
+        daily_total_limit_seconds=body.dailyTotalLimitSeconds,
     ))
     await announce("tablet.profile_changed", ("tablet_profile", profile_id), [])
     return result

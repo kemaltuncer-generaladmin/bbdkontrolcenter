@@ -17,7 +17,7 @@ import { button, confirmSimple, confirmWithPin, h, num } from '../../ui-kit/kit.
 import { createPicker } from '../../ui-kit/picker.js';
 import { emptyState, splitView } from '../../ui-kit/layout.js';
 import {
-  DAYS, DEFAULT_TZ, OWN_PACKAGE, busy, clockInput, formDialog, matchesText, muted, nameCell,
+  DAYS, DEFAULT_TZ, OWN_PACKAGE, busy, clockInput, dur, formDialog, matchesText, muted, nameCell,
   parseClock, permButton, problem, when, windowsSummary,
 } from './common.js';
 
@@ -78,6 +78,8 @@ function toDraft(profile) {
   return {
     name: profile?.name || '',
     timezone: profile?.timezone || DEFAULT_TZ,
+    totalMinutes: profile?.dailyTotalLimitSeconds
+      ? String(Math.max(1, Math.round(profile.dailyTotalLimitSeconds / 60))) : '',
     windows: (profile?.usageWindows || []).map((item) => ({
       days: [...(item.days || [])], start: item.start || '', end: item.end || '',
     })),
@@ -103,6 +105,8 @@ function toBody(draft) {
       start: parseClock(item.start) || item.start,
       end: parseClock(item.end) || item.end,
     })),
+    dailyTotalLimitSeconds: String(draft.totalMinutes ?? '').trim()
+      ? minutesOf(draft.totalMinutes) * 60 : 0,
     apps: draft.apps.map((item) => ({
       packageName: item.packageName,
       appName: String(item.appName || '').trim() || item.packageName,
@@ -131,6 +135,12 @@ function findProblem(draft) {
     if (!start || !end) return { message: 'Saatleri 08:30 biçiminde yazın.', window: item };
     if (start >= end) {
       return { message: 'Başlangıç saati bitişten önce olmalı. Gece yarısını aşan aralığı ikiye bölün.', window: item };
+    }
+  }
+  if (String(draft.totalMinutes ?? '').trim()) {
+    const total = minutesOf(draft.totalMinutes);
+    if (!Number.isInteger(total) || total < 1 || total > 1440) {
+      return { message: 'Günlük toplam süre 1 ile 1440 dakika arasında olmalı ya da boş bırakılmalı.', field: 'total' };
     }
   }
   for (const item of draft.apps) {
@@ -194,6 +204,9 @@ export function profilesView(app) {
       item.append(h('b', null, profile.name),
         h('span', 'tb-sub', `${num(profile.apps?.length || 0)} uygulama · ${tablets}`),
         h('span', 'tb-sub', windowsSummary(profile.usageWindows)));
+      if (profile.dailyTotalLimitSeconds) {
+        item.append(h('span', 'tb-sub', `Günde toplam ${dur(profile.dailyTotalLimitSeconds)}`));
+      }
       item.addEventListener('click', () => {
         if (profile.id !== selectedKey) guard(() => select(profile.id));
       });
@@ -332,6 +345,20 @@ export function profilesView(app) {
     });
     const basics = h('div', 'tb-grid');
     basics.append(field('Profil adı', nameInput), field('Saat dilimi', zoneSelect));
+
+    // ---------------------------------------------------- günlük toplam süre
+    const totalInput = h('input', 'kit-input tb-minutes-input');
+    totalInput.type = 'text';
+    totalInput.inputMode = 'numeric';
+    totalInput.placeholder = 'Sınır yok';
+    totalInput.value = ed.draft.totalMinutes;
+    totalInput.addEventListener('input', () => {
+      ed.draft.totalMinutes = totalInput.value;
+      totalInput.classList.remove('bad');
+      changed();
+    });
+    const totalBox = h('div', 'tb-grid');
+    totalBox.append(field('Günlük toplam süre (dakika)', totalInput));
 
     // ---------------------------------------------------- kullanım saatleri
     const windowsList = h('div', 'tb-windows');
@@ -746,6 +773,11 @@ export function profilesView(app) {
     form.append(
       section('Genel', basics),
       section('Kullanım saatleri', windowsList, windowActions),
+      section('Günlük toplam süre', totalBox, muted('Öğrencinin bir günde süreli uygulamaların '
+        + 'hepsinde birlikte geçirebileceği en çok süre; uygulama başı sürelere ektir. Dolunca '
+        + 'süreli uygulamalar o gün açılmaz, sınırsız uygulamalar açık kalır ve sayılmaz. Bir '
+        + 'uygulamaya verilen ek süre o uygulama için toplamı da aşar. Boş = toplam sınır yok. '
+        + 'Tablet 0.7.6 ve üstü uygular.')),
       section('Uygulamalar', rulesHead, rulesList, ruleActions, adder),
       advanced,
     );
@@ -762,6 +794,9 @@ export function profilesView(app) {
       if (found.field === 'name') {
         nameInput.classList.add('bad');
         nameInput.focus();
+      } else if (found.field === 'total') {
+        totalInput.classList.add('bad');
+        totalInput.focus();
       } else if (found.window) {
         const row = ed.windowRows.get(found.window);
         row?.classList.add('tb-bad-row');

@@ -196,6 +196,38 @@ async def test_app_modes_and_usage_windows_are_validated(service: TabletService)
     assert kept["usageWindows"] == hours["usageWindows"]
 
 
+async def test_daily_total_is_validated_kept_copied_and_sent(service: TabletService) -> None:
+    for total in (59, 86401):
+        with pytest.raises(ValueError, match="toplam süre"):
+            await service.save_profile(profile_id=None, name="Ortaokul", timezone="Europe/Istanbul",
+                                       apps=[VIDEO], daily_total_limit_seconds=total)
+    plain = await make_profile(service)
+    assert plain["dailyTotalLimitSeconds"] == 0
+    profile = await service.save_profile(profile_id=None, name="Ortaokul",
+                                         timezone="Europe/Istanbul", apps=[VIDEO, BOOKS],
+                                         daily_total_limit_seconds=5400)
+    assert profile["dailyTotalLimitSeconds"] == 5400
+    # Omitted keeps the previous revision's total; 0 clears it.
+    kept = await service.save_profile(profile_id=profile["id"], name="Ortaokul",
+                                      timezone="Europe/Istanbul", apps=[VIDEO])
+    assert kept["dailyTotalLimitSeconds"] == 5400
+    copy = await service.duplicate_profile(profile_id=profile["id"], name=None)
+    assert copy["dailyTotalLimitSeconds"] == 5400
+
+    _, token = await pair(service, kept["id"])
+    logged = await login(service, token)
+    assert logged["profile"]["dailyTotalLimitSeconds"] == 5400
+    usage = await service.student_usage(logged["student"]["id"], TODAY)
+    assert usage["dailyTotal"] == {"limitSeconds": 5400, "usedSeconds": 0,
+                                   "remainingSeconds": 5400}
+
+    cleared = await service.save_profile(profile_id=profile["id"], name="Ortaokul",
+                                         timezone="Europe/Istanbul", apps=[VIDEO],
+                                         daily_total_limit_seconds=0)
+    assert cleared["dailyTotalLimitSeconds"] == 0
+    assert (await service.student_usage(logged["student"]["id"], TODAY))["dailyTotal"] is None
+
+
 def test_next_window_start_is_in_profile_time_zone() -> None:
     windows = normalize_usage_windows([{"days": [4], "start": "08:00", "end": "09:00"},
                                        {"days": [3], "start": "14:00", "end": "15:00"}])

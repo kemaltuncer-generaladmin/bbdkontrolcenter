@@ -107,6 +107,21 @@ def next_window_start(windows: list[dict[str, Any]], moment: datetime) -> dateti
     return None
 
 
+def normalize_daily_total(raw: Any) -> int:
+    """Profile-wide daily total in seconds: 0 (none) or 60–86400, like an app limit."""
+    if raw is None or raw == "":
+        return 0
+    try:
+        seconds = int(raw if not isinstance(raw, bool) else "")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Günlük toplam süre sayı olmalı.") from exc
+    if seconds == 0:
+        return 0
+    if not MIN_DAILY_LIMIT_SECONDS <= seconds <= MAX_DAILY_LIMIT_SECONDS:
+        raise ValueError("Günlük toplam süre 1 dakika ile 24 saat arasında olmalı.")
+    return seconds
+
+
 def normalize_app_rules(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Apply the three app modes: blocked, unlimited, timed (60–86400 s)."""
     rules: list[dict[str, Any]] = []

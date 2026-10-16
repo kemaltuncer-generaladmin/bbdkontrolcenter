@@ -73,6 +73,8 @@ Kullanım paketi profil kuralına göre denetlenmez: oturum sırasında bir uygu
 
 Profilde uygulama üç kipten birindedir: yasak, sınırsız ya da günlük süreli (60–86400 sn). Adı boş bırakılan uygulama paket adıyla kaydedilir; profil adı kırpılır ve 2–100 karakter olmalıdır (`006_profile_names.sql` eski kayıtları düzeltir). `usageWindows` ISO hafta günleri (1 = Pazartesi) ve profil saat diliminde `HH:MM` başlangıç (dahil) – bitiş (hariç) taşır; boş liste her zaman açık demektir.
 
+`dailyTotalLimitSeconds` (`012_daily_total_limit.sql`, tablet 0.7.6+) profil geneli günlük toplam süredir: öğrencinin o gün tüm süreli uygulamalarda birlikte geçirebileceği en çok süre, uygulama başı sınırlara ek. 0 = yok, aksi hâlde 60–86400; kayıtta gönderilmezse önceki revizyonun değeri korunur, kopyalamada taşınır. Sınırsız uygulamalar sayılmaz ve dolunca da açık kalır. Bir uygulamaya verilen ek süre o uygulama için toplamı da aynı miktar yükseltir, bu yüzden tüm tablete ek süre (her süreli uygulamaya bir satır) değişmeden çalışır; öğrenciye özel sürenin her gün eklenen `ovr:<paket>` satırları ise yalnız uygulamanın sınırını yükseltir, toplamı aşmaz. Öğrenci kullanım yanıtı `dailyTotal` (`limitSeconds`, `usedSeconds`, `remainingSeconds`; toplam yoksa `null`) taşır.
+
 ## Akademi'den uzaktan sınır düzenleme (tablet-sinir)
 
 BBD Akademi yöneticisi (izin `tablets.manage`) öğrenci kartındaki "Tablet sınırları" ekranından mobil geçit
