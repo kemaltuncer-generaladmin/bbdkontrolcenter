@@ -165,6 +165,7 @@ def test_kimlik_SONRAKI_ISTEGE_SIZMAZ(client: TestClient, depo: Path) -> None:
             "orgScope": "org",
             "roles": ["admin"],
             "password": IKINCI_PINI,
+            "confirmPin": YONETICI_PINI,
         },
     )
     assert acilis.status_code == 201, acilis.text

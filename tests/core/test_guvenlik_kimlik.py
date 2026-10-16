@@ -61,6 +61,7 @@ def _personel(client: TestClient, admin: str) -> dict[str, Any]:
     cevap = client.post("/api/users", headers=_h(admin), json={
         "firstName": "Veli", "lastName": "Demir", "orgScope": "org",
         "roles": ["org_staff"], "password": PERSONEL_PINI,
+        "confirmPin": YONETICI_PINI,
     })
     assert cevap.status_code == 201, cevap.text
     return dict(cevap.json()["user"])
@@ -95,7 +96,7 @@ def test_yonetici_pin_sifirlayinca_kisinin_eski_oturumu_kapanir(client: TestClie
     assert client.get("/auth/me", headers=_h(eski)).status_code == 200
 
     cevap = client.post(f"/api/users/{kisi['id']}/password", headers=_h(admin),
-                        json={"password": YENI_PIN})
+                        json={"password": YENI_PIN, "confirmPin": YONETICI_PINI})
     assert cevap.status_code == 200, cevap.text
 
     assert client.get("/auth/me", headers=_h(eski)).status_code == 401
@@ -231,3 +232,46 @@ def test_esleme_sifirlama_anahtar_uyusmazliginda_kimliksiz_acik(esli_client: Tes
     esli_client.app.state.identity_sync.pepper_mismatch = True  # type: ignore[attr-defined]
     cevap = esli_client.post("/api/pairing/reset")
     assert cevap.status_code == 200, cevap.text
+
+
+# ------------------------------------------------------------------ KM-06
+
+
+def test_kullanici_acmak_yoneticinin_pinini_ister(client: TestClient) -> None:
+    admin = _login(client, YONETICI_PINI)
+    govde = {"firstName": "Veli", "lastName": "Demir", "orgScope": "org",
+             "roles": ["admin"], "password": PERSONEL_PINI}
+    cevap = client.post("/api/users", headers=_h(admin), json=govde)
+    assert cevap.status_code == 403
+    assert "PIN" in cevap.json()["error"]["message"]
+    yanlis = client.post("/api/users", headers=_h(admin), json={**govde, "confirmPin": "111390"})
+    assert yanlis.status_code == 403
+    assert client.post("/api/users", headers=_h(admin),
+                       json={**govde, "confirmPin": YONETICI_PINI}).status_code == 201
+
+
+def test_rol_degistirmek_pin_ister_ama_rol_degismeyen_duzenleme_istemez(client: TestClient) -> None:
+    admin = _login(client, YONETICI_PINI)
+    kisi = _personel(client, admin)
+    # Yalnız ad: PIN sorulmaz.
+    assert client.put(f"/api/users/{kisi['id']}", headers=_h(admin),
+                      json={"title": "Muhasebe"}).status_code == 200
+    # Aynı roller yeniden gönderildi (değişiklik yok): PIN sorulmaz.
+    assert client.put(f"/api/users/{kisi['id']}", headers=_h(admin),
+                      json={"roles": ["org_staff"]}).status_code == 200
+    # Yetki yükseltme: PIN şart.
+    assert client.put(f"/api/users/{kisi['id']}", headers=_h(admin),
+                      json={"roles": ["admin"]}).status_code == 403
+    cevap = client.put(f"/api/users/{kisi['id']}", headers=_h(admin),
+                       json={"roles": ["admin"], "confirmPin": YONETICI_PINI})
+    assert cevap.status_code == 200, cevap.text
+    assert cevap.json()["user"]["roles"] == ["admin"]
+
+
+def test_baskasinin_pinini_sifirlamak_pin_ister(client: TestClient) -> None:
+    admin = _login(client, YONETICI_PINI)
+    kisi = _personel(client, admin)
+    assert client.post(f"/api/users/{kisi['id']}/password", headers=_h(admin),
+                       json={"password": YENI_PIN}).status_code == 403
+    # PIN değişmedi: kişi eski PIN'iyle girebilir.
+    assert client.post("/api/auth/login", json={"password": PERSONEL_PINI}).status_code == 200

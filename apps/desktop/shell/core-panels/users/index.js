@@ -41,7 +41,8 @@
 // doğurulmaz.
 
 import {
-  ago, blockedButton, button, confirmSimple, foldText, h, loadStyles, stampIso, toaster,
+  ago, blockedButton, button, confirmSimple, confirmWithPin, foldText, h, loadStyles, stampIso,
+  toaster,
 } from '../../ui-kit/kit.js';
 import { dataTable } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
@@ -455,8 +456,23 @@ export function mount(root, ctx) {
       return digits || null;
     };
 
+    /**
+     * YETKİ VEREN İŞLEMİN PIN TEYİDİ (iş 63, KM-06). Kullanıcı açmak, rolleri
+     * değiştirmek ve başkasının PIN'ini sıfırlamak sunucuda yöneticinin KENDİ
+     * PIN'ini ister (`confirmPin`); arayüz yalnız sorar, kapı backend'dedir.
+     * İptal edilirse `null` — işlem gönderilmez.
+     */
+    const adminPin = (title, description) => confirmWithPin(view, {
+      title, description, confirmLabel: 'Onayla', placeholder: 'Kendi PIN\'iniz',
+    });
+
     async function create() {
       const taslak = form.draft();
+      const confirmPin = await adminPin(
+        'Kullanıcı açmayı onaylayın',
+        'Yeni kullanıcıya rol veriyorsunuz. Devam etmek için kendi PIN\'inizi girin.',
+      );
+      if (!confirmPin) return;
       await api('/api/users', {
         method: 'POST',
         body: {
@@ -466,6 +482,7 @@ export function mount(root, ctx) {
           roles: roles.selection(),
           password: taslak.password,
           phoneMobile: phoneOf(taslak),
+          confirmPin,
         },
       });
       editor.close();
@@ -488,6 +505,20 @@ export function mount(root, ctx) {
       const sifre = String(taslak.password || '');
       const alanDegisti = Object.keys(govde).length > 1;
 
+      // Rol değişiyor ya da PIN sıfırlanıyorsa yöneticinin kendi PIN'i BİR KEZ
+      // sorulur ve iki istekte de kullanılır (KM-06).
+      let confirmPin = null;
+      if (govde.roles || sifre) {
+        confirmPin = await adminPin(
+          'Değişikliği onaylayın',
+          govde.roles
+            ? 'Kullanıcının rollerini değiştiriyorsunuz. Devam etmek için kendi PIN\'inizi girin.'
+            : 'Kullanıcının PIN\'ini sıfırlıyorsunuz. Devam etmek için kendi PIN\'inizi girin.',
+        );
+        if (!confirmPin) return;
+        if (govde.roles) govde.confirmPin = confirmPin;
+      }
+
       if (alanDegisti) {
         try {
           const sonuc = await api(`/api/users/${row.id}`, { method: 'PUT', body: govde });
@@ -504,7 +535,9 @@ export function mount(root, ctx) {
       if (sifre) {
         // PIN AYRI UÇTAN gider: `users.set_password` ayrı bir izindir ve
         // düzenleme gövdesi sır alanı kabul etmez.
-        await api(`/api/users/${row.id}/password`, { method: 'POST', body: { password: sifre } });
+        await api(`/api/users/${row.id}/password`, {
+          method: 'POST', body: { password: sifre, confirmPin },
+        });
         form.set('password', '');
       }
 

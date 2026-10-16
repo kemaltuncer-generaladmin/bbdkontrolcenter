@@ -52,7 +52,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from km_core.http.client_address import client_address
-from km_core.http.deps import requires
+from km_core.http.deps import confirm_pin, requires
 from km_core.security.identity import (
     CurrentUser,
     Identity,
@@ -99,6 +99,8 @@ class UserPasswordRequest(_Body):
     # yazmak, iki kuralın zamanla ayrışması demekti; ihlal 400 ile Türkçe
     # cümlesiyle döner.
     password: str = Field(min_length=1, max_length=256)
+    # İşlemi yapan YÖNETİCİNİN kendi PIN'i (step-up, iş 63 — KM-06).
+    confirm_pin: str | None = Field(default=None, alias="confirmPin", max_length=64)
 
 
 class UserStatusRequest(_Body):
@@ -118,6 +120,8 @@ class UserCreateRequest(_Body):
     email: str | None = Field(default=None, max_length=180)
     note: str | None = Field(default=None, max_length=1000)
     directory_visible: bool = Field(default=True, alias="directoryVisible")
+    # Rol veren işlem: yöneticinin kendi PIN'i (step-up, iş 63 — KM-06).
+    confirm_pin: str | None = Field(default=None, alias="confirmPin", max_length=64)
 
 
 class UserUpdateRequest(_Body):
@@ -133,6 +137,8 @@ class UserUpdateRequest(_Body):
     directory_visible: bool | None = Field(default=None, alias="directoryVisible")
     roles: list[str] | None = Field(default=None, min_length=1)
     expected_revision: int | None = Field(default=None, alias="expectedRevision", ge=1)
+    # Roller DEĞİŞİYORSA zorunlu: yöneticinin kendi PIN'i (step-up, iş 63 — KM-06).
+    confirm_pin: str | None = Field(default=None, alias="confirmPin", max_length=64)
 
 
 def user_payload(user: CurrentUser) -> dict[str, Any]:
@@ -325,6 +331,31 @@ async def _prepare_login(request: Request) -> None:
     await project_roster(store, payload)
 
 
+STEP_UP_REQUIRED_MESSAGE = "Bu işlem için PIN'inizi yeniden girin."
+
+
+async def _admin_step_up(request: Request, actor: CurrentUser, pin: str | None,
+                         *, action: str) -> None:
+    """YETKİ VEREN İŞLEMİN İKİNCİ KAPISI (iş 63, bulgu KM-06).
+
+    `docs/permissions.md` uygulama kuralı 3: rol değiştirmek izin yeterli olsa
+    bile PIN teyidi ister. Kural yazılıydı ama kullanıcı yönetiminde
+    uygulanmıyordu: açık bırakılmış ya da çalınmış bir yönetici oturumu,
+    kendine/başkasına `admin` rolü verip başkasının PIN'ini sıfırlayarak
+    hesabını ele geçirebiliyordu. Kapı: kullanıcı açmak (rol verir), rolleri
+    DEĞİŞTİRMEK ve başkasının PIN'ini sıfırlamak.
+
+    `auth.admin_step_up: false` acil durum şalteridir (eski kabukla uyum);
+    varsayılan açıktır.
+    """
+    config = getattr(request.app.state, "config", None)
+    if config is not None and not bool(config.get("auth.admin_step_up", True)):
+        return
+    if not pin:
+        raise HTTPException(status_code=403, detail=STEP_UP_REQUIRED_MESSAGE)
+    await confirm_pin(request, actor, pin, action=action)
+
+
 @contextmanager
 def _translated_errors() -> Iterator[None]:
     """Kimlik hatalarını tekdüze HTTP zarfına çevirir.
@@ -450,6 +481,7 @@ def create_identity_router() -> APIRouter:
         actor: CurrentUser = requires("users.manage"),
     ) -> dict[str, Any]:
         identity = _identity(request)
+        await _admin_step_up(request, actor, body.confirm_pin, action="users.create")
         with _translated_errors():
             user_id = await identity.create_user(
                 first_name=body.first_name,
@@ -480,7 +512,13 @@ def create_identity_router() -> APIRouter:
         # alanı düzenleyen ekran geri kalanını sessizce NULL'a çekerdi.
         fields = body.model_dump(exclude_unset=True, by_alias=False)
         fields.pop("expected_revision", None)
+        fields.pop("confirm_pin", None)
         roles = fields.pop("roles", None)
+        if roles is not None:
+            with _translated_errors():
+                current = set(await identity.roles_of(user_id))
+            if set(roles) != current:
+                await _admin_step_up(request, actor, body.confirm_pin, action="roles.manage")
         with _translated_errors():
             row = await identity.update_user(
                 user_id,
@@ -499,6 +537,7 @@ def create_identity_router() -> APIRouter:
         actor: CurrentUser = requires("users.set_password"),
     ) -> dict[str, Any]:
         identity = _identity(request)
+        await _admin_step_up(request, actor, body.confirm_pin, action="users.set_password")
         with _translated_errors():
             await identity.set_password(user_id, body.password, actor_id=actor.id)
             return {"user": _user_row(await identity.get_user(user_id))}

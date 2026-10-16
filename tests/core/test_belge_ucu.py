@@ -209,7 +209,8 @@ def test_mali_musavir_belgeyi_alabilir(client: TestClient) -> None:
         "/api/users",
         headers={"Authorization": f"Bearer {token(client)}"},
         json={"firstName": "Mali", "lastName": "Müşavir", "orgScope": "org",
-              "roles": ["accountant"], "password": pin},
+              "roles": ["accountant"], "password": pin,
+              "confirmPin": YONETICI_PINI},
     )
     assert kurulum.status_code == 201, kurulum.text
 

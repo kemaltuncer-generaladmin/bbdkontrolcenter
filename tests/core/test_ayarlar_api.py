@@ -124,6 +124,7 @@ def personel_token(client: TestClient, token: str) -> str:
         json={
             "firstName": "Veli", "lastName": "Demir", "orgScope": "org",
             "roles": ["org_staff"], "password": PERSONEL_PINI,
+            "confirmPin": YONETICI_PINI,
         },
     )
     assert cevap.status_code == 201, cevap.text
