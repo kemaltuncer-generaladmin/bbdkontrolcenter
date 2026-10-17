@@ -515,40 +515,59 @@ export function previewFacts(preview, typeName = (type) => type) {
     const length = Object.values(map || {}).reduce((sum, text) => sum + String(text || '').length, 0);
     return `${booklet}: ${length}/${total}`;
   }).join(' · ');
-  return [
+  const facts = [
     ['Yayınevi', preview.publisher || '—'],
     ['Deneme', [preview.examName, preview.code ? `kod ${preview.code}` : ''].filter(Boolean).join(' · ') || '—'],
     ['Sınıf', preview.gradeText || '—'],
     ['Tür', preview.examType ? typeName(preview.examType) : 'Algılanamadı — aşağıdan seçin'],
     ['Bölümler', `${sections || '—'} (toplam ${total} soru)`],
-    ['Kitapçıklar', (preview.booklets || []).join(', ') || '—'],
-    ['Cevap anahtarı', keys || 'Yok'],
   ];
+  const planned = (preview.examSections || []).map((item) => `${item.title} ${item.questionCount}`).join(' · ');
+  if (planned) facts.push(['Denemede açılacak bölümler', planned]);
+  for (const item of electivesText(preview)) facts.push(['Seçmeli', item]);
+  facts.push(['Kitapçıklar', (preview.booklets || []).join(', ') || '—'], ['Cevap anahtarı', keys || 'Yok']);
+  return facts;
 }
 
-/** Yeni deneme gövdesi tablodan: bölümler test sırasıyla, katalog dersiyle. Eksik ders → hata metni. */
+/**
+ * Seçmeli (alternatif) bloklar: "Felsefe (Seçmeli) 21–25 · Din Kültürü (16–20) yerine". Akademi bunları ana
+ * bölümlerden ve anahtardan ayırır (kendiliğinden; kullanıcı eşleştirmez).
+ */
+export function electivesText(preview) {
+  return (preview?.electives || []).map((item) => {
+    const range = (from, to) => (from && to ? (from === to ? `${from}` : `${from}–${to}`) : '');
+    const own = `${item.title} ${range(item.fromNo, item.toNo)}`.trim();
+    if (!item.replacesTitle) return `${own} · ana bölümlerden ayrıldı`;
+    const instead = range(item.replacesFromNo, item.replacesToNo);
+    return `${own} · ${item.replacesTitle}${instead ? ` (${instead})` : ''} yerine`;
+  });
+}
+
+/**
+ * Yeni deneme gövdesi (Akademi `PublisherTableExamInput`): bölümleri ve kitapçıkları Akademi tablodan kurar (türün
+ * şablonu oturuyorsa ders ders). Dersi tablodan çözülemeyen test için seçilen ders `sectionSubjects` ile gider;
+ * seçilmemişse hata metni.
+ */
 export function examFromPreview(preview, { name, date, type, publisher, subjects = {} } = {}) {
-  const sections = [];
-  for (const [index, item] of (preview?.sections || []).entries()) {
-    const subjectId = subjects[item.key] || item.subjectId;
-    if (!subjectId) return { error: `“${item.title}” bölümünün dersini seçin.` };
-    sections.push({ subjectId, title: item.title, questionCount: Number(item.questionCount), order: index + 1 });
+  const sectionSubjects = {};
+  for (const item of preview?.sections || []) {
+    if (item.subjectId) continue;
+    const chosen = subjects[item.key];
+    if (!chosen) return { error: `“${item.title}” bölümünün dersini seçin.` };
+    sectionSubjects[item.key] = chosen;
   }
-  if (!sections.length) return { error: 'Tabloda bölüm bulunamadı.' };
+  if (!(preview?.sections || []).length) return { error: 'Tabloda bölüm bulunamadı.' };
   if (!String(name || '').trim()) return { error: 'Deneme adını yazın.' };
   if (!type) return { error: 'Deneme türünü seçin.' };
-  return {
-    exam: {
-      name: String(name).trim().slice(0, 120),
-      type,
-      publisher: String(publisher || preview?.publisher || '').trim().slice(0, 80) || null,
-      date,
-      bookletTypes: (preview?.booklets || []).length ? [...preview.booklets] : ['A'],
-      sections,
-      classGroupIds: [],
-      isHistorical: false,
-    },
+  const exam = {
+    name: String(name).trim().slice(0, 120),
+    type,
+    publisher: String(publisher || preview?.publisher || '').trim().slice(0, 80) || null,
+    date,
+    deliveryMode: 'paper',
   };
+  if (Object.keys(sectionSubjects).length) exam.sectionSubjects = sectionSubjects;
+  return { exam };
 }
 
 /** Türün müfredat ailesi (program `exam` alanı): LGS / TYT / AYT. */

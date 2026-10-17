@@ -445,7 +445,9 @@ export async function publisherWizard(app, { exam = null } = {}) {
         }, { label: 'Deneme' });
         const field = h('label', 'kit-field kit-field-wide');
         field.append(h('span', 'kit-field-label', 'Deneme'), select.node,
-          h('span', 'kit-field-hint', 'Bölüm adları ve soru sayıları tabloyla aynı olmalı; sonuç girilmiş denemenin yapısı değişmez.'));
+          h('span', 'kit-field-hint', 'Denemenin bölümleri tablodaki derslerle kendiliğinden eşleşir (ders ders ya da '
+            + 'Sosyal Bilimler / Fen Bilimleri gibi toplu); seçmeli bloklar ayrılır. Tutmazsa hangi bölümün neden '
+            + 'tutmadığı yazılır.'));
         slot.append(field);
         app.api.get('/v1/admin/exams', { type: target.type || undefined, limit: 50 }).then((data) => {
           select.options([{ value: '', label: 'Deneme seçin' }, ...(data?.items || []).map((item) => ({ value: item.id,
@@ -481,8 +483,9 @@ export async function publisherWizard(app, { exam = null } = {}) {
         field.append(h('span', 'kit-field-label', `${section.title} — ders`), pick.node);
         grid.append(field);
       }
-      slot.append(grid, h('span', 'kit-field-hint', 'Bölümler tablodan gelir (test sırası, soru sayısı). Uygulamada çözdürmek '
-        + 'için denemeyi açıp “Düzenle → Nasıl çözülecek? Uygulamada” seçin.'));
+      slot.append(grid, h('span', 'kit-field-hint', 'Bölümler tablodan kurulur (yukarıda “Denemede açılacak bölümler”; '
+        + 'TYT / AYT / LGS şablonu oturuyorsa ders ders). Uygulamada çözdürmek için denemeyi açıp “Düzenle → Nasıl '
+        + 'çözülecek? Uygulamada” seçin.'));
     }
     paintMode();
     return box;

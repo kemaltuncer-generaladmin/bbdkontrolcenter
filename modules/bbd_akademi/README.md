@@ -459,8 +459,13 @@ eşleştirme, puanlama) Akademi'dedir; panel taslak ↔ gövde, doğrulama metni
   çizer. PIN teyidi yok (sözleşmede `x-step-up` yok; duraklat / bitir / pencere kapat onay penceresi ister).
 * **Yayınevi Excel'i** (`exams-publisher.js`): Denemeler başlığında ve "Cevap anahtarı ve konular" sekmesinde.
   Dosya (XLSX / gerçek .xls / CSV, 5 MB; içerik Akademi'de sezilir) → önizleme (yayınevi, deneme adı, kod, sınıf,
-  tür, bölümler + soru sayıları, kitapçıklar, anahtar özeti "A: 125/125 · B: 125/125", satır hataları; yeni deneme
-  ya da var olan denemeye) → **eşleştirme tablosu** (her benzersiz (ders, yayınevi kazanımı): sorular, önerilen
+  tür, bölümler + soru sayıları, **denemede açılacak bölümler** — TYT / AYT / LGS şablonu oturuyorsa ders ders —,
+  **seçmeli bloklar** "Felsefe (Seçmeli) 21–25 · Din Kültürü (16–20) yerine" — Akademi kendiliğinden ayırır, ana
+  yapıya / anahtara girmez —, kitapçıklar, anahtar özeti "A: 120/120 · B: 120/120", satır hataları; yeni deneme
+  ya da var olan denemeye — bölümleri tablodaki derslerle **kendiliğinden hizalanır** (ders ders ya da Sosyal
+  Bilimler / Fen Bilimleri toplu); tutmazsa Akademi hangi bölümün neden tutmadığını yazar. Yeni deneme gövdesi
+  yalnız ad / tür / yayınevi / tarih / `deliveryMode` (+ dersi çözülemeyen test için `sectionSubjects`); bölümleri
+  Akademi kurar — 17.10.2026 düzeltmesi, Akademi README §14 madde 120 (3)) → **eşleştirme tablosu** (her benzersiz (ders, yayınevi kazanımı): sorular, önerilen
   müfredat konusu, güven rozeti Birebir / Daha önce onaylandı / Eş anlamlı / Benzer — kontrol et / Eşleşmedi;
   "Yalnız kontrol gerekenler" — tablo bununla açılır, güven / ders / arama süzgeci; aramalı konu seçici — kapsam
   denemenin sınav ailesi + ders, ünite de seçilebilir; "Eşleme" ile bırak; **Önerilenleri onayla**; "Sözlükle yeniden

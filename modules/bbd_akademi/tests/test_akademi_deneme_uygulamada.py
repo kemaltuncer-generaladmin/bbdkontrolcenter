@@ -113,6 +113,9 @@ process.stdout.write(JSON.stringify({
     questionCount: 40 }, { key: 'x', title: 'X', subjectId: null, questionCount: 5 }] }, { name: 'ÇAP TYT 0', date: '2026-10-18', type: 'tyt',
     subjects: { x: 'fizik' } }), m.examFromPreview({ sections: [{ key: 'x', title: 'X', subjectId: null, questionCount: 5 }] },
     { name: 'a', type: 'tyt' }).error],
+  electives: m.electivesText({ electives: [
+    { title: 'Felsefe (Seçmeli)', fromNo: 21, toNo: 25, replacesTitle: 'Din Kültürü ve Ahlak Bilgisi', replacesFromNo: 16, replacesToNo: 20 },
+    { title: 'Felsefe (Seçmeli)', fromNo: 16, toNo: 20, replacesTitle: null }] }),
 }));
 """
 
@@ -176,11 +179,13 @@ def test_saf_mantik(tmp_path: Path) -> None:
     assert by_unit == [["unit", "Cümlenin Ögeleri"], ["topic", "Yüklem ve Özne"]]      # emekli konu yok
     assert by_topic == ["TYT Türkçe › Sözcükte Anlam › Söz Öbekleri"]
     made, error = out["exam"]
+    # Akademi `PublisherTableExamInput` (bilinmeyen alan 422): bölümleri / kitapçıkları Akademi tablodan kurar;
+    # yalnız dersi çözülemeyen test için seçilen ders gider
     assert made["exam"] == {"name": "ÇAP TYT 0", "type": "tyt", "publisher": "ÇAP", "date": "2026-10-18",
-                            "bookletTypes": ["A", "B"], "classGroupIds": [], "isHistorical": False,
-                            "sections": [{"subjectId": "turkce", "title": "TYT Türkçe", "questionCount": 40, "order": 1},
-                                         {"subjectId": "fizik", "title": "X", "questionCount": 5, "order": 2}]}
+                            "deliveryMode": "paper", "sectionSubjects": {"x": "fizik"}}
     assert error == "“X” bölümünün dersini seçin."
+    assert out["electives"] == ["Felsefe (Seçmeli) 21–25 · Din Kültürü ve Ahlak Bilgisi (16–20) yerine",
+                                "Felsefe (Seçmeli) 16–20 · ana bölümlerden ayrıldı"]
 
 
 # --------------------------------------------------------------------------- vekil
@@ -226,6 +231,11 @@ _NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 SUBJECTS = {"Türkçe": "turkce", "Tarih-1": "tarih", "Coğrafya-1": "cografya", "Felsefe": "felsefe",
             "Felsefe (Seçmeli)": "felsefe", "Din Kül. ve Ahl. Bil.": "din-kulturu", "Matematik-1": "matematik",
             "Geometri": "geometri", "Fizik": "fizik", "Kimya": "kimya", "Biyoloji": "biyoloji"}
+#: Akademi TYT şablonu (ders ders) — tablodan kurulacak bölümler.
+EXAM_SECTIONS = [{"subjectId": k, "title": t, "questionCount": n} for k, t, n in (
+    ("turkce", "Türkçe", 40), ("tarih", "Tarih", 5), ("cografya", "Coğrafya", 5), ("felsefe", "Felsefe", 5),
+    ("din-kulturu", "Din Kültürü", 5), ("matematik", "Matematik", 30), ("geometri", "Geometri", 10),
+    ("fizik", "Fizik", 7), ("kimya", "Kimya", 7), ("biyoloji", "Biyoloji", 6))]
 SECTION_SUBJECTS = {"TYT Türkçe": "turkce", "TYT Sosyal": "sosyal-bilimler", "TYT Matematik": "matematik",
                     "TYT Fen": "fen-bilimleri"}
 
@@ -266,9 +276,20 @@ def sample_preview() -> dict[str, Any]:
     keys_a: dict[str, list[tuple[int, str]]] = {}
     keys_b: dict[str, list[tuple[int, str]]] = {}
     groups: dict[tuple[str, str], dict[str, Any]] = {}
+    electives: list[dict[str, Any]] = []
     for row in data:
         test, subject = str(row[col["Test"]]), str(row[col["Ders"]])
         key = _slug(test)
+        if "Seçmeli" in subject:  # Akademi: Din Kültürü'nün alternatifi, ana yapıya girmez
+            a_no = int(str(row[col["A Soru"]]))
+            if not electives:
+                electives.append({"sectionKey": key, "title": subject, "subjectId": "felsefe",
+                                  "replacesSubjectId": "din-kulturu", "replacesTitle": "Din Kültürü ve Ahlak Bilgisi",
+                                  "replacesFromNo": 16, "replacesToNo": 20, "fromNo": a_no, "toNo": a_no,
+                                  "questionCount": 0})
+            electives[0]["toNo"] = a_no
+            electives[0]["questionCount"] += 1
+            continue
         if not any(item["key"] == key for item in sections):
             sections.append({"key": key, "title": test, "examType": "tyt", "subjectId": SECTION_SUBJECTS[test],
                              "questionCount": 0, "subjects": []})
@@ -305,7 +326,7 @@ def sample_preview() -> dict[str, Any]:
     return {
         "id": "pt-1", "fileName": SAMPLE.name, "fileSha256": "0" * 64, "fileKind": "xlsx",
         "publisher": rows[0][0], "examName": rows[0][2], "code": rows[1][0], "gradeText": rows[1][2], "examType": "tyt",
-        "sections": sections, "booklets": ["A", "B"],
+        "sections": sections, "examSections": EXAM_SECTIONS, "electives": electives, "booklets": ["A", "B"],
         "answerKeys": {"A": {k: "".join(a for _, a in sorted(v)) for k, v in keys_a.items()},
                        "B": {k: "".join(a for _, a in sorted(v)) for k, v in keys_b.items()}},
         "matches": matches,
@@ -320,8 +341,10 @@ def test_ornek_dosya_okunur() -> None:
     assert (preview["publisher"], preview["examName"], preview["code"], preview["gradeText"]) == (
         "ÇAP", "ÇAP TYT 0", "7661", "12.Sınıf, Mezun")
     assert [(s["title"], s["questionCount"]) for s in preview["sections"]] == [
-        ("TYT Türkçe", 40), ("TYT Sosyal", 25), ("TYT Matematik", 40), ("TYT Fen", 20)]
-    assert preview["stats"]["questionCount"] == 125
+        ("TYT Türkçe", 40), ("TYT Sosyal", 20), ("TYT Matematik", 40), ("TYT Fen", 20)]
+    assert preview["stats"]["questionCount"] == 120
+    assert [(e["title"], e["fromNo"], e["toNo"], e["questionCount"]) for e in preview["electives"]] == [
+        ("Felsefe (Seçmeli)", 21, 25, 5)]
     assert preview["answerKeys"]["A"]["tyt-turkce"].startswith("DBABCA")
     # B kitapçığı "B Soru" sütunundan: B1 = A4 (B), B2 = A3 (A), B3 = A2 (B), B4 = A1 (D)
     assert preview["answerKeys"]["B"]["tyt-turkce"].startswith("BABD")
@@ -497,7 +520,7 @@ export default async function ({ document, audit, sleep, api, load }) {
     units: [{ id: 'u-cumle', title: 'Cümlenin Ögeleri', order: 1, topics: [{ id: 't-oge', title: 'Yüklem ve Özne', order: 1 }] },
       { id: 'u-yazim', title: 'Noktalama İşaretleri', order: 2, topics: [{ id: 't-virgul', title: 'Virgül', order: 1 }] }] };
   routes['POST /v1/admin/exam-publisher-tables/pt-1/apply'] = (body) => ({ exam: { id: 'ex-9', name: body.exam?.name },
-    alreadyApplied: false, appliedQuestions: 125, mappedQuestions: 121, unmappedQuestions: 4, aliasesSaved: 7, resultsRecomputed: false });
+    alreadyApplied: false, appliedQuestions: 120, mappedQuestions: 116, unmappedQuestions: 4, aliasesSaved: 7, resultsRecomputed: false });
 
   const { publisherWizard } = await load('./panels/bbd_akademi/exams/exams-publisher.js');
   const pending = publisherWizard(app);
@@ -564,14 +587,16 @@ def test_yayinevi_sihirbazi_ornek_dosyayla() -> None:
     out = node_run(_scenario(WIZARD, preview))
     assert out["upload"]["filename"] == SAMPLE.name and out["upload"]["field"] == "file" and out["upload"]["same"]
     facts = out["facts"]
-    for part in ("ÇAP", "ÇAP TYT 0 · kod 7661", "12.Sınıf, Mezun", "TYT Türkçe 40 · TYT Sosyal 25 · TYT Matematik 40 · TYT Fen 20",
-                 "toplam 125 soru", "A, B", "A: 125/125 · B: 125/125"):
+    for part in ("ÇAP", "ÇAP TYT 0 · kod 7661", "12.Sınıf, Mezun", "TYT Türkçe 40 · TYT Sosyal 20 · TYT Matematik 40 · TYT Fen 20",
+                 "toplam 120 soru", "A, B", "A: 120/120 · B: 120/120",
+                 "Türkçe 40 · Tarih 5 · Coğrafya 5 · Felsefe 5 · Din Kültürü 5 · Matematik 30 · Geometri 10 · Fizik 7",
+                 "Felsefe (Seçmeli) 21–25 · Din Kültürü ve Ahlak Bilgisi (16–20) yerine"):
         assert part in facts, part
     assert out["nameValue"] == "ÇAP TYT 0"
     assert out["a11yFile"] == [] and out["a11yPreview"] == [] and out["a11yMatch"] == [] and out["a11yPicker"] == []
     stats = preview["stats"]
     review = stats["byConfidence"]["fuzzy"] + stats["byConfidence"]["none"]
-    assert f"125 soru · {stats['uniqueOutcomes']} benzersiz kazanım" in out["summary"]
+    assert f"120 soru · {stats['uniqueOutcomes']} benzersiz kazanım" in out["summary"]
     assert f"{review} kazanım" in out["summary"] and "kontrol bekliyor" in out["summary"]
     assert len(out["reviewRows"]) == review                       # tablo kontrol gerekenlerle açılır
     assert any("Benzer — kontrol et" in row for row in out["reviewRows"])
@@ -582,8 +607,8 @@ def test_yayinevi_sihirbazi_ornek_dosyayla() -> None:
     (body,) = out["apply"]
     assert body["acceptSuggestions"] is False and body["applyAnswerKeys"] is True
     assert body["exam"]["name"] == "ÇAP TYT 0" and body["exam"]["type"] == "tyt" and body["exam"]["publisher"] == "ÇAP"
-    assert body["exam"]["bookletTypes"] == ["A", "B"]
-    assert [s["subjectId"] for s in body["exam"]["sections"]] == ["turkce", "sosyal-bilimler", "matematik", "fen-bilimleri"]
+    # yalnız Akademi'nin kabul ettiği alanlar (bölümler / kitapçıklar Akademi'de tablodan)
+    assert set(body["exam"]) == {"name", "type", "publisher", "date", "deliveryMode"}
     decisions = {d["matchKey"]: d for d in body["decisions"]}
     fuzzy = [m for m in preview["matches"] if m["confidence"] == "fuzzy"]
     for match in fuzzy:
@@ -594,7 +619,7 @@ def test_yayinevi_sihirbazi_ornek_dosyayla() -> None:
     assert decisions[noktalama["matchKey"]] == {"matchKey": noktalama["matchKey"], "skip": True, "remember": False}
     assert not any(decisions.get(m["matchKey"]) for m in preview["matches"] if m["autoApplied"])   # otomatikler gövdede yok
     assert out["result"]["exam"]["id"] == "ex-9"
-    assert any(text.startswith("125 soru uygulandı · 121 soru konuya eşlendi · 4 soru eşleşmeden kaldı") for text in out["toasts"])
+    assert any(text.startswith("120 soru uygulandı · 116 soru konuya eşlendi · 4 soru eşleşmeden kaldı") for text in out["toasts"])
 
 
 # ----------------------------------------------------- DOM: eşleştirmeyi düzenle + sözlük
