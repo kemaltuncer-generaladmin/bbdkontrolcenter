@@ -165,6 +165,22 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/admin/integrations/youtube',
+        'admin_getYoutubeIntegration',
+        ('integrations.manage',),
+        'km',
+        features=('F-K9', 'F-K21'),
+    ),
+    Operation(
+        'PUT',
+        '/v1/admin/integrations/youtube',
+        'admin_putYoutubeIntegration',
+        ('integrations.manage',),
+        'km',
+        features=('F-K9', 'F-K21'),
+    ),
+    Operation(
+        'GET',
         '/v1/admin/permissions',
         'admin_listPermissions',
         ('roles.manage',),

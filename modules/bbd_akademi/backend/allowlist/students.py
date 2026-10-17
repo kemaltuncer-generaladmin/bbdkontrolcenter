@@ -988,6 +988,15 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/students/{studentId}/playlist-assignments/{playlistAssignmentId}',
+        'students_getPlaylistAssignment',
+        ('learning.view',),
+        'read',
+        feature_flag='video_tasks',
+        features=('F-K10', 'F-S16'),
+    ),
+    Operation(
+        'GET',
         '/v1/students/{studentId}/question-stats',
         'students_getQuestionStats',
         ('learning.view',),

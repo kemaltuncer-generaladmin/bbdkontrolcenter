@@ -53,6 +53,7 @@ AREAS: dict[str, str] = {
     "class-groups": "students", "directory": "students",
     "coaching": "coaching", "coach-assignments": "coaching", "coach-library": "coaching",
     "coach-notes": "coaching", "mistake-inbox": "coaching", "video-pool": "coaching",
+    "video-playlists": "coaching", "playlist-assignments": "coaching",
     "videos": "coaching",
     "timetable": "lessons", "timetable-templates": "lessons", "sessions": "lessons",
     "lesson-events": "lessons", "calendar": "lessons", "curricula": "lessons",
@@ -79,6 +80,7 @@ AREAS: dict[str, str] = {
     "settings": "admin", "branding": "admin", "features": "admin", "staff": "admin",
     "roles": "admin", "permissions": "admin", "integration-keys": "admin",
     "data-requests": "admin", "audit-log": "admin", "files": "admin", "tablets": "admin",
+    "integrations": "admin",
 }
 DEFAULT_SPEC = MODULE.parents[3] / "bbd-akademi" / "docs" / "api" / "openapi.yaml"
 
