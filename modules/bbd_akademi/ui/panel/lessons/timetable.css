@@ -253,7 +253,6 @@
 .ak-cal-dayhead.ak-cal-is-today span { border-bottom: 2px solid var(--accent); }
 .ak-cal-dayhead.ak-cal-is-past { color: var(--soft); font-weight: 500; }
 .ak-cal-holiday { font-size: 10.5px; font-weight: 600; color: var(--soft); }
-.ak-cal-cell { cursor: pointer; }
 .ak-cal-cell.ak-cal-is-locked { cursor: default; opacity: 0.62; }
 .ak-cal-cell.ak-cal-is-locked:not(.ak-tt-is-filled) { border-style: solid; background: var(--tint); }
 .ak-cal-cell.ak-cal-is-holiday {
@@ -276,13 +275,13 @@
 .ak-cal-form { display: flex; flex-direction: column; gap: 10px; }
 .ak-cal-field { display: flex; flex-direction: column; gap: 4px; }
 .ak-cal-field .kit-select, .ak-cal-field .kit-input { width: 100%; }
-.ak-cal-details summary { cursor: pointer; font-size: 12.5px; color: var(--soft); padding: 2px 0; }
+.ak-cal-details summary { font-size: 12.5px; color: var(--soft); padding: 2px 0; }
 .ak-cal-details[open] { display: flex; flex-direction: column; gap: 8px; }
 .ak-cal-scope-title { font-size: 12px; font-weight: 600; color: var(--soft); }
 .ak-cal-scope { display: flex; flex-direction: column; gap: 6px; }
 .ak-cal-scope-item {
   display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line);
-  border-radius: 8px; font-size: 13px; cursor: pointer;
+  border-radius: 8px; font-size: 13px;
 }
 .ak-cal-scope-item:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
 .ak-cal-copy .ak-tt-off { opacity: 0.45; pointer-events: none; }
