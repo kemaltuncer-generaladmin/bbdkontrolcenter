@@ -287,7 +287,7 @@ def test_atama_govdesi_uc_kip(logic: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- ekle akışı
 
 IMPORT = FAKES + r"""
-export default async function ({ load, sleep }) {
+export default async function ({ load, sleep, audit }) {
   const { playlistImportDialog, playlistPanel } = await load('./panels/bbd_akademi/coaching/playlist.js');
   const out = {};
 
@@ -320,6 +320,7 @@ export default async function ({ load, sleep }) {
   await sleep(5);
   out.afterRange = text(dialog().querySelector('.ak-pl-sum'));
   out.privateDisabled = dialog().querySelectorAll('.ak-pl-row input').map((box) => box.disabled);
+  out.a11y = audit(dialog());
   type(dialog().querySelectorAll('.ak-pl-fields input').find((input) => input.maxLength === 330), 'türev, ayt');
   click(dialog().querySelectorAll('button').find((b) => b.getAttribute('aria-label') === '3. videonun etiketleri'));
   await sleep(20);
@@ -412,6 +413,7 @@ def test_videolari_ayri_ekle_aralik_ve_etiket(flow: dict[str, Any]) -> None:
     # 2–4 aralığında özel video (4.) atlanır: 2. ve 3.
     assert flow["afterRange"] == "2 video seçildi · 50 dk"
     assert flow["privateDisabled"] == [False, False, False, True, False]
+    assert flow["a11y"] == []
     posts = [row for row in flow["posts"] if row["path"].endswith("import-playlist")]
     assert len(posts) == 1
     body = posts[0]["body"]
@@ -450,7 +452,7 @@ def test_liste_ayrintisi_ve_yenile(flow: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- atama sihirbazı
 
 ASSIGN = FAKES + r"""
-export default async function ({ load, sleep }) {
+export default async function ({ load, sleep, audit }) {
   const { assignPlaylistWizard } = await load('./panels/bbd_akademi/coaching/playlist-assign.js');
   const out = {};
   const previews = [];
@@ -475,6 +477,7 @@ export default async function ({ load, sleep }) {
   await sleep(30);
   const wiz = () => document.body.querySelectorAll('.ak-wiz').pop();
   out.step1 = text(wiz());
+  out.a11y1 = audit(wiz());
   // Güne yay: her gün 2 video, yalnız 3 video seçili (aralık 1–3)
   check(wiz().querySelectorAll('input').find((input) => input.type === 'radio' && input.value === 'spread'));
   await sleep(5);
@@ -492,6 +495,7 @@ export default async function ({ load, sleep }) {
   click(byText(wiz(), 'button', 'İleri'));
   await sleep(40);
   out.step3 = text(wiz().querySelectorAll('.ak-wiz-pane').filter((pane) => !pane.hidden).pop());
+  out.a11y3 = audit(wiz());
   // "Zaten atanmışları atla" kapat → önizleme yenilenir
   const skip = wiz().querySelectorAll('label').find((label) => text(label) === 'Zaten atanmışları atla').querySelector('input');
   check(skip, false);
@@ -522,6 +526,7 @@ def test_sihirbaz_adimlari_ve_metinler(assign: dict[str, Any]) -> None:
     assert "1 öğrencide 1 video zaten atanmış" in assign["step3"]
     assert "Bazı videolar yalnız YouTube'da açılır (gömme kapalı)." in assign["step3"]
     assert "Zaten atanmışları atla" in assign["step3"]
+    assert assign["a11y1"] == [] and assign["a11y3"] == []
 
 
 def test_sihirbaz_tek_istek_govdesi(assign: dict[str, Any]) -> None:
