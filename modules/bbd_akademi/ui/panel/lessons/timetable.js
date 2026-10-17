@@ -1,63 +1,73 @@
-// BBD Akademi — Ders programı (F-A5, F-A6).
+// BBD Akademi — Ders programı (F-A5, F-A6; hafta takvimi Akademi README §14 madde 125).
 //
-// Dört sekme, her biri ilk açıldığında kurulur ve veri çeker:
-//   · Haftalık program   — sınıf × gün × zil dilimi ızgarası (timetable-week.js),
-//                          haftayı kopyala (timetable-copy.js)
-//   · Etüt ve tek seferlik dersler — liste, ayrıntı, oluştur/değiştir/iptal/sil
-//                          (timetable-events.js); talep kuyruğu Talepler bölümünde
-//   · Zil dilimleri      — KM aynası (salt okunur + "şimdi çek") ya da yerel
-//                          düzenleyici (timetable-setup.js)
-//   · Dönemler           — ad + tarih aralığı (timetable-setup.js)
-//   · Program şablonları — oluştur / düzenle / sil / sınıflara uygula (timetable-templates.js;
-//                          yalnız KM yüzeyi, KM-3)
+// KULLANICI (17.10.2026): "ders programı girme kısmı çok karışık … takvim olacak ekranda. bu hafta önceki hafta
+// sonraki hafta diye ok tuşları olacak yanında. sınıf seçip program girecez şak şak".
+//
+// TEK EKRAN: açılışta yalnız HAFTA TAKVİMİ (timetable-calendar.js) görünür — ‹ Önceki · Bu hafta · Sonraki ›,
+// sınıf seçici, gün × zil dilimi takvimi. Sekme şeridi YOK. Ara sıra gereken işler "Diğer ayarlar" menüsündedir
+// ve takvimin yerine açılır ("‹ Takvime dön" ile geri):
+//   · Etüt ve tek seferlik dersler (timetable-events.js; talep kuyruğu Talepler bölümünde)
+//   · Zil saatleri — KM aynası ya da yerel düzenleyici + zil planı durumu kartı (timetable-setup.js,
+//     timetable-bell-status.js; kart eskiden takvimin üstündeydi — teknik ayrıntı, buraya alındı)
+//   · Dönemler (timetable-setup.js)
+//   · Program şablonları (timetable-templates.js; takvimde "Şablondan doldur" bunları kullanır)
+//
+// ESKİ "Haftalık program" düzenleyicisi (geçerlilik başlangıcı / bitişi, sürüm, taslak + Kaydet şeridi,
+// timetable-week.js) KALDIRILDI: kavramları (geçerlilik aralığı, sürüm) kullanıcıya gösteriyordu. Aynı iş artık
+// hücre hücre ve "yalnız bu hafta / sonrakiler" sorusuyla yapılır; satır bölme Akademi'dedir.
 //
 // Tek tek derslerin iptali, telafisi ve yerine öğretmen "Ders oturumları" bölümündedir (sessions.js).
 //
-// İŞ KURALI AKADEMİ'DE: öğretmen/derslik çakışması, sürüm kilidi, zil saati
-// değişince eşleşmeyen satırlar sunucuda belirlenir; panel sonucu gösterir.
-//
-// Sekmelerin üstünde "Zil planı durumu" kartı (timetable-bell-status.js):
-// Akademi'nin ürettiği 14 günlük zil planının KM Zil Sistemi'ne ulaşıp
-// ulaşmadığı. Ekran ilk açıldığında TEK istekle okunur.
-//
-// Derin bağlantılar: `{classGroupId}` o sınıfın ızgarasını, `{lessonEventId}`
-// etüt çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'|'templates'}` sekmeyi açar.
+// Derin bağlantılar: `{classGroupId, week?}` o sınıfın takvimini (haftasını) açar, `{lessonEventId}` etüt
+// çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'|'templates'}` görünümü açar.
 
-import { h, loadStyles } from '../../../ui-kit/kit.js';
-import { tabBar } from '../../../ui-kit/layout.js';
+import { button, h, loadStyles, menuButton } from '../../../ui-kit/kit.js';
 import { sectionHead } from '../common.js';
-import { weekTab } from './timetable-week.js';
+import { calendarTab } from './timetable-calendar.js';
 import { eventsTab, openLessonEvent } from './timetable-events.js';
 import { bellSlotsTab, termsTab } from './timetable-setup.js';
 import { bellPlanCard } from './timetable-bell-status.js';
 import { templatesTab } from './timetable-templates.js';
 
-const TABS = [
-  { key: 'week', label: 'Haftalık program' },
-  { key: 'events', label: 'Etüt ve tek seferlik dersler' },
-  { key: 'bells', label: 'Zil dilimleri' },
-  { key: 'terms', label: 'Dönemler' },
-  { key: 'templates', label: 'Program şablonları' },
-];
+const VIEWS = {
+  week: 'Haftalık takvim',
+  events: 'Etüt ve tek seferlik dersler',
+  bells: 'Zil saatleri',
+  terms: 'Dönemler',
+  templates: 'Program şablonları',
+};
 
 export function section(app) {
   loadStyles(import.meta.url, 'timetable.css');
   const node = h('div', 'ak-stack ak-tt');
+  const more = menuButton('Diğer ayarlar', ['events', 'bells', 'terms', 'templates']
+    .map((key) => ({ label: VIEWS[key], onClick: () => go(key) })), { variant: 'ghost' });
   node.append(sectionHead('Ders programı', {
-    subtitle: 'Sınıfların haftalık programı, etüt ve tek seferlik dersler, zil dilimleri ve dönemler.' }));
+    subtitle: 'Hafta seçin, sınıf seçin, hücreye tıklayıp dersi girin.', actions: [more] }));
+
+  const back = h('div', 'ak-tt-back');
+  const backButton = button('‹ Takvime dön', { variant: 'ghost', onClick: () => go('week') });
+  const backTitle = h('b', 'ak-tt-back-title');
+  back.append(backButton, backTitle);
+  back.hidden = true;
 
   const bodies = {};
   const builders = {
-    week: () => weekTab(app, { openEvent: (id) => openEvent(id), openBells: () => go('bells') }),
+    week: () => calendarTab(app, { openBells: () => go('bells') }),
     events: () => eventsTab(app),
-    bells: () => bellSlotsTab(app, { onChanged: () => bodies.week?.bellsChanged() }),
+    bells: () => {
+      // Zil saatleri + zil planının KM'ye ulaşıp ulaşmadığı (eskiden takvimin üstündeydi).
+      const status = bellPlanCard(app);
+      const inner = bellSlotsTab(app, { onChanged: () => bodies.week?.bellsChanged() });
+      const wrap = h('div', 'ak-stack');
+      wrap.append(status.node, inner.node);
+      return { node: wrap, reload: () => { status.load(); return inner.reload(); }, destroy: () => inner.destroy?.() };
+    },
     terms: () => termsTab(app),
     templates: () => templatesTab(app),
   };
-  const bellStatus = bellPlanCard(app);
-  const tabs = tabBar(TABS, 'week', (key) => show(key));
   const slot = h('div', 'ak-tt-tabbody');
-  node.append(bellStatus.node, tabs.node, slot);
+  node.append(back, slot);
 
   function show(key) {
     if (!bodies[key]) {
@@ -66,16 +76,16 @@ export function section(app) {
       bodies[key].reload();
     }
     for (const [name, body] of Object.entries(bodies)) body.node.hidden = name !== key;
+    back.hidden = key === 'week';
+    backTitle.textContent = key === 'week' ? '' : VIEWS[key];
     return bodies[key];
   }
 
-  /** Sekmeyi programla aç (şerit + gövde birlikte). */
   function go(key) {
-    tabs.select(key, false);
-    return show(key);
+    return show(builders[key] ? key : 'week');
   }
 
-  /** Etüt çekmecesi (çakışma kutusu, derin bağlantı); değişince açık liste tazelenir. */
+  /** Etüt çekmecesi (derin bağlantı); değişince açık liste tazelenir. */
   function openEvent(id) {
     openLessonEvent(app, id, {
       onChange: () => bodies.events?.reload(),
@@ -83,7 +93,7 @@ export function section(app) {
     });
   }
 
-  /** Izgara gövdesini yüklemeden kur (derin bağlantı sınıfı seçsin diye). */
+  /** Takvimi yüklemeden kur (derin bağlantı sınıfı seçsin diye). */
   function ensureWeek() {
     if (!bodies.week) {
       bodies.week = builders.week();
@@ -97,12 +107,12 @@ export function section(app) {
   return {
     node,
     shown(payload) {
-      bellStatus.load();
       const tab = payload?.tab && builders[payload.tab] ? payload.tab : null;
       if (payload?.classGroupId) {
-        // Izgara ilk kez açılıyorsa ilk yükleme doğrudan bu sınıfla başlar.
-        ensureWeek().open(payload.classGroupId);
+        const week = ensureWeek();
+        week.open(payload.classGroupId, payload.week || null);
         go('week');
+        week.reload();
       } else if (payload?.lessonEventId) {
         go(tab || 'events');
         if (bodies.events) bodies.events.open(payload.lessonEventId);

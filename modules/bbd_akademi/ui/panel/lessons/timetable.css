@@ -221,3 +221,69 @@
 .ak-tt-tpl-extra { flex-wrap: wrap; gap: 6px; padding: 0 0 8px 116px; border-bottom: 1px solid var(--line); }
 .ak-tt-tpl-extra .ak-chips { flex-wrap: wrap; gap: 4px; }
 .ak-tt-tpl-extra .kit-select { max-width: 260px; }
+
+/* ---------------------------------------------- hafta takvimi (madde 125, timetable-calendar.js) */
+.ak-tt-back { display: flex; align-items: center; gap: 10px; }
+.ak-tt-back[hidden] { display: none; }
+.ak-tt-back-title { font-size: 14px; }
+.ak-cal-head {
+  position: sticky; top: 0; z-index: 4;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+  box-shadow: 0 8px 18px -16px rgba(17, 23, 34, 0.45);
+}
+.ak-cal-nav { display: inline-flex; gap: 4px; }
+.ak-cal-title { display: inline-flex; flex-direction: column; gap: 1px; min-width: 190px; }
+.ak-cal-week { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.ak-cal-rel { font-size: 11.5px; color: var(--soft); }
+.ak-cal-rel.on { color: var(--accent); font-weight: 600; }
+.ak-cal-jump { display: inline-flex; }
+.ak-cal-class { display: inline-flex; align-items: center; gap: 8px; }
+.ak-cal-class-label { font-size: 12px; font-weight: 600; color: var(--soft); }
+.ak-cal-class .kit-select { min-width: 180px; font-weight: 600; }
+.ak-cal-banner[hidden] { display: none; }
+.ak-cal-empty {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 12px;
+  border: 1px dashed var(--accent-line); background: var(--accent-tint);
+}
+.ak-cal-empty b { font-size: 14px; }
+.ak-cal-dayhead { display: flex; flex-direction: column; align-items: center; gap: 2px; text-transform: none;
+  letter-spacing: 0; font-size: 12px; color: var(--ink); }
+.ak-cal-dayhead.ak-cal-is-today { color: var(--accent); }
+.ak-cal-dayhead.ak-cal-is-today span { border-bottom: 2px solid var(--accent); }
+.ak-cal-dayhead.ak-cal-is-past { color: var(--soft); font-weight: 500; }
+.ak-cal-holiday { font-size: 10.5px; font-weight: 600; color: var(--soft); }
+.ak-cal-cell { cursor: pointer; }
+.ak-cal-cell.ak-cal-is-locked { cursor: default; opacity: 0.62; }
+.ak-cal-cell.ak-cal-is-locked:not(.ak-tt-is-filled) { border-style: solid; background: var(--tint); }
+.ak-cal-cell.ak-cal-is-holiday {
+  opacity: 0.7;
+  background: repeating-linear-gradient(135deg, var(--tint) 0 6px, var(--surface-2) 6px 12px);
+}
+.ak-cal-cell.ak-cal-is-shared { border-style: dashed; }
+.ak-cal-cell.ak-cal-over { outline: 2px dashed var(--accent); outline-offset: 1px; }
+.ak-cal-cell.ak-cal-dragging { opacity: 0.45; }
+.ak-cal-off { font-size: 11px; color: var(--soft); }
+.ak-cal-missing { color: var(--warn); font-style: italic; }
+.ak-cal-tag {
+  margin-top: 2px; padding: 0 6px; border-radius: 999px; font-size: 10px; font-weight: 600;
+  background: var(--accent-tint); color: var(--accent); border: 1px solid var(--accent-line);
+}
+.ak-cal-foot { display: flex; flex-direction: column; gap: 6px; }
+.ak-cal-hint { margin: 0; font-size: 12px; }
+.ak-cal-meta { font-size: 11.5px; color: var(--soft); }
+.ak-cal-dialog { width: min(440px, calc(100vw - 32px)); }
+.ak-cal-form { display: flex; flex-direction: column; gap: 10px; }
+.ak-cal-field { display: flex; flex-direction: column; gap: 4px; }
+.ak-cal-field .kit-select, .ak-cal-field .kit-input { width: 100%; }
+.ak-cal-details summary { cursor: pointer; font-size: 12.5px; color: var(--soft); padding: 2px 0; }
+.ak-cal-details[open] { display: flex; flex-direction: column; gap: 8px; }
+.ak-cal-scope-title { font-size: 12px; font-weight: 600; color: var(--soft); }
+.ak-cal-scope { display: flex; flex-direction: column; gap: 6px; }
+.ak-cal-scope-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 8px; font-size: 13px; cursor: pointer;
+}
+.ak-cal-scope-item:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
+.ak-cal-copy .ak-tt-off { opacity: 0.45; pointer-events: none; }
+.ak-cal-gridwrap.ak-cal-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.12s; }

@@ -1,6 +1,6 @@
 """Yoklama yönetimi (KM-2) + program kurucu / ders oturumları (KM-3) + tarihli sınıf üyelikleri (F14).
 
-`ui/panel/attendance*.js`, `sessions.js`, `timetable-templates.js`, `timetable-week.js` (önizleme) Node'da
+`ui/panel/attendance*.js`, `sessions.js`, `timetable-templates.js` Node'da
 küçük DOM'la (`tools/a11y/harness.py`) çalıştırılır; taklit Akademi `routes` ve `__apiHook` ile verilir.
 Sınanan davranışlar:
 
@@ -9,8 +9,6 @@ Sınanan davranışlar:
   yalnız DEĞİŞEN satırı taşır; sunucuya ulaşılamazsa yoklama kuyruğa girer, `sync` ile gönderilir.
 * Ders oturumu: çoklu sınıf "8-A + 8-B", gerekçeli iptal gövdesi; yoklaması alınmış derste iptal
   isteği GİTMEZ (önce yoklama silinmeli).
-* Haftalık ızgara önizlemesi: PUT ile aynı gövde `preview`'a gider; öğrenci çakışması, öğretmensiz
-  satır ve öğretmen yükü yazılır, hiçbir şey kaydedilmez.
 * Saf işlevler: ayar gövdesi ve sınırları, aralık sınırı, senkron sonucu, şablon denetimi.
 `node` yoksa atlanır.
 """
@@ -247,24 +245,6 @@ export default async function ({ document, sleep, api, load, calls, audit }) {
     root.remove();
   }
 
-  // ------------------------------------------------- haftalık ızgara önizlemesi
-  {
-    const week = await load('./panels/bbd_akademi/lessons/timetable-week.js');
-    const root = document.createElement('div');
-    document.body.append(root);
-    const app = makeApp(root, api, {});
-    const tab = week.weekTab(app, {});
-    root.append(tab.node);
-    tab.open((await app.lookups.classGroups())[0].id);
-    await sleep(40);
-    buttons(root, 'Çakışmaları denetle')[0].click();
-    await sleep(40);
-    out.preview = calls.filter((c) => c.path.endsWith('/timetable/preview')).map((c) => c.body);
-    out.previewText = text(root.querySelector('.ak-tt-preview'));
-    out.a11y.preview = audit(root.querySelector('.ak-tt-alerts'));
-    out.previewPuts = calls.filter((c) => c.method === 'PUT' && c.path.endsWith('/timetable')).length;
-    root.remove();
-  }
   // ------------------------------------- düzeltme kuyruğu: adlar satırdan (madde 72)
   {
     const root = document.createElement('div');
@@ -359,11 +339,6 @@ TIMETABLE = {"classGroup": {"id": "c1", "name": "8-A"}, "validFrom": "2026-09-01
                           "name": "Matematik"}, "teacher": None, "room": None, "status": "active",
                           "classGroups": [{"id": "c1", "name": "8-A"}], "program": None}],
              "sharedEntries": []}
-PREVIEW = {"conflicts": [], "unassignedTeacherEntryIndexes": [0],
-           "studentConflicts": [{"student": {"displayName": "Ali Kaya"}, "dayOfWeek": "mon", "bellSlotId": "mon1",
-                                 "entryIndex": 0, "conflictingGroup": {"id": "g9", "name": "TYT Hüseyin", "kind": "group"},
-                                 "conflictingEntryId": None}],
-           "teacherMinutes": [{"teacher": {"id": "t1", "displayName": "Hüseyin Hoca"}, "minutes": 80}]}
 
 
 REVIEW = {"id": "r1", "status": "pending", "session": {"id": "as1", "title": "Matematik"},
@@ -391,7 +366,6 @@ def result() -> dict[str, Any]:
         "GET /v1/admin/sessions/s2": _session("s2", taken=True),
         "POST /v1/admin/sessions/s1/cancel": cancelled,
         "GET /v1/admin/class-groups/c1/timetable*": TIMETABLE,
-        "POST /v1/admin/class-groups/c1/timetable/preview": PREVIEW,
         "GET /v1/admin/curricula/programs*": {"items": [{"id": "p1", "title": "LGS Matematik", "kind": "school",
                                                          "subject": "matematik", "levelKey": "8",
                                                          "levelLabel": "8. sınıf"}]},
@@ -496,19 +470,8 @@ def test_oturum_cekmecesi_ve_iptal(result: dict[str, Any]) -> None:
     assert result["cancelS2"] == 0
 
 
-def test_izgara_onizlemesi_kaydetmez(result: dict[str, Any]) -> None:
-    assert len(result["preview"]) == 1
-    body = result["preview"][0]
-    assert body["expectedVersion"] == 5 and body["entries"][0]["subjectId"] == "matematik"
-    text = result["previewText"]
-    assert "1 öğrenci çakışması" in text and "Ali Kaya" in text and "TYT Hüseyin" in text
-    assert "öğretmen atanmadı" in text
-    assert "Hüseyin Hoca 1,3 sa" in text
-    assert result["previewPuts"] == 0
-
-
 def test_erisilebilirlik(result: dict[str, Any]) -> None:
-    assert result["a11y"] == {"board": [], "day": [], "session": [], "preview": [], "review": []}
+    assert result["a11y"] == {"board": [], "day": [], "session": [], "review": []}
 
 
 def test_veli_adina_izin(result: dict[str, Any]) -> None:
