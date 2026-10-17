@@ -479,4 +479,20 @@ OPERATIONS: tuple[Operation, ...] = (
         'both',
         features=('F-Y2', 'F-A5'),
     ),
+    Operation(
+        'GET',
+        '/v1/admin/timetable/weeks/{weekStart}/hours',
+        'admin_getTimetableWeekHours',
+        ('schedule.view',),
+        'both',
+        features=('F-A5',),
+    ),
+    Operation(
+        'PUT',
+        '/v1/admin/timetable/weeks/{weekStart}/hours',
+        'admin_putTimetableWeekHours',
+        ('timetable.manage',),
+        'km',
+        features=('F-A5',),
+    ),
 )

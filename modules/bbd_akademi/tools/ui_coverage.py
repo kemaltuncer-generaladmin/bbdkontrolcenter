@@ -45,6 +45,9 @@ from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- Akademi §14 127 (iş 70-kayit-adi): KM paneli o işin KM ayağında; 71 birleşiminde sözleşmeyle geldi
+    "admin_getRecordingCurriculum":
+        "Ders kaydının müfredat ders + konu seçicisi (Akademi §14 127). KM kayıt ekranına bağlanması 70-kayit-adi işinin KM ayağındadır; o iş birleşince bu satır kalkar.",
     # --- ders programı hafta takvimi (Akademi §14 125, iş 69)
     "admin_putTimetable":
         "KM 'Ders programı' hafta takvimidir: hücre hücre 'yalnız bu hafta / sonrakiler' admin_putTimetableWeekCells ile yazılır. Bütün haftayı geçerlilik aralığıyla yazan eski uç web / mobil yönetici programı (ve eski istemciler) içindir; KM'de geçerlilik aralığı kavramı gösterilmez (Akademi §14 125).",

@@ -38,7 +38,7 @@ from harness import NodeMissing, run
 CLASSES = [{"id": "c1", "name": "8-A", "gradeLevel": 8}, {"id": "c2", "name": "8-B", "gradeLevel": 8},
            {"id": "c3", "name": "TYT Hüseyin", "gradeLevel": None}]
 SLOTS = {"slots": [
-    {"id": f"{day}{n}", "dayOfWeek": day, "order": n, "startTime": f"0{8 + n}:00", "endTime": f"0{8 + n}:40",
+    {"id": f"L{n}", "dayOfWeek": day, "order": n, "startTime": f"0{8 + n}:00", "endTime": f"0{8 + n}:40",
      "kind": "lesson"} for day in ("mon", "tue", "wed") for n in (1, 2)]}
 SUBJECTS = [{"id": "fizik", "name": "Fizik", "level": "lise"}, {"id": "matematik", "name": "Matematik", "level": "ortaokul"},
             {"id": "turkce", "name": "Türkçe", "level": "ortaokul"}]
@@ -49,9 +49,11 @@ PROGRAMS = {"items": [{"id": "lgs-matematik", "title": "Matematik", "kind": "exa
 SCENARIO = r"""
 export default async function ({ document, audit, sleep, api, load, calls }) {
   const cal = await load('./panels/bbd_akademi/lessons/timetable-calendar.js');
+  const hrs = await load('./panels/bbd_akademi/lessons/timetable-hours.js');
+  const { AkademiError } = await load('./panels/bbd_akademi/api.js');
   const common = await load('./panels/bbd_akademi/common.js');
   const { slotLayout } = await load('./panels/bbd_akademi/lessons/timetable-shared.js');
-  const out = { pure: {}, puts: [], posts: [] };
+  const out = { pure: {}, puts: [], posts: [], hourPuts: [] };
   const today = common.todayIst();
   const W0 = common.weekStart(today);
   const W1 = common.addDays(W0, 7);
@@ -66,12 +68,24 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.pure.rel = ['2026-10-12', '2026-10-19', '2026-10-05', '2026-11-02'].map((w) => cal.weekRelation(w, '2026-10-17'));
   const layout = slotLayout(SLOTS.slots);
   out.pure.template = cal.templateCells([
-    { dayOfWeek: 'mon', bellSlotId: 'mon1', subjectId: 'matematik', teacherId: 't1', room: null, classGroupIds: ['c2'] },
+    { dayOfWeek: 'mon', bellSlotId: 'L1', subjectId: 'matematik', teacherId: 't1', room: null, classGroupIds: ['c2'] },
     { dayOfWeek: 'mon', bellSlotId: 'yok', subjectId: 'fizik' },
-    { dayOfWeek: 'tue', bellSlotId: 'tue2', subjectId: 'fizik', programId: 'p1' },
+    { dayOfWeek: 'tue', bellSlotId: 'L2', subjectId: 'fizik', programId: 'p1' },
   ], layout, 'c1');
   out.pure.cellOf = cal.cellOf({ subject: { id: 'matematik' }, teacher: { id: 't1' }, room: '204',
-    classGroups: [{ id: 'c1' }], program: null }, { dayOfWeek: 'tue', bellSlotId: 'tue1' }, 'c1');
+    classGroups: [{ id: 'c1' }], program: null }, { dayOfWeek: 'tue', bellSlotId: 'L1' }, 'c1');
+  const evening = { startTime: '15:00', lessonMinutes: 40, breakMinutes: 10, lessonsPerDay: 4,
+    lunch: { afterLesson: 2, minutes: 30 }, days: [{ dayOfWeek: 'sat', startTime: '09:00', lessonsPerDay: 2, off: false },
+      { dayOfWeek: 'sun', startTime: null, lessonsPerDay: null, off: true }] };
+  const periods = hrs.computePeriods(evening);
+  out.pure.monday = periods.filter((p) => p.dayOfWeek === 'mon').map((p) => `${p.id} ${p.startTime}-${p.endTime}`);
+  out.pure.saturday = periods.filter((p) => p.dayOfWeek === 'sat').map((p) => `${p.id} ${p.startTime}`);
+  out.pure.sunday = periods.filter((p) => p.dayOfWeek === 'sun').length;
+  out.pure.preview = hrs.previewRows(periods);
+  out.pure.problem = [hrs.hoursProblem({ ...evening, startTime: '22:30' }), hrs.hoursProblem({ ...evening, lessonMinutes: 5 }),
+    hrs.hoursProblem(evening)];
+  out.pure.removal = hrs.removalText({ count: 3, lessonNumbers: [7, 8], items: [{ classGroup: { name: '8-A' } }] });
+  out.pure.draftRound = hrs.settingsOf(hrs.draftOf(evening));
   out.pure.summary = cal.copySummary([{ weekStart: '2026-10-19', status: 'copied' },
     { weekStart: '2026-10-26', status: 'conflict' }, { weekStart: '2026-10-05', status: 'past' }]);
 
@@ -83,32 +97,52 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   const days = (week) => ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((key, i) => day(week, i, key,
     key === 'wed' && week === W1 ? { holiday: { title: 'Ara tatil', kind: 'holiday' } } : {}));
   let version = 4;
+  // Haftanın ders saatleri (Akademi README §14 madde 128): satırlar buradan; ders + teneffüs.
+  const PERIODS = [];
+  for (const key of ['mon', 'tue', 'wed']) {
+    PERIODS.push({ id: 'L1', dayOfWeek: key, order: 1, lessonNo: 1, kind: 'lesson', startTime: '09:00', endTime: '09:40', label: '1. ders' });
+    PERIODS.push({ id: 'B1', dayOfWeek: key, order: 2, lessonNo: null, kind: 'break', startTime: '09:40', endTime: '09:50', label: 'Teneffüs' });
+    PERIODS.push({ id: 'L2', dayOfWeek: key, order: 3, lessonNo: 2, kind: 'lesson', startTime: '09:50', endTime: '10:30', label: '2. ders' });
+  }
+  const HOURS = { weekStart: W0, source: 'inherited', inheritedFrom: WP, appliesUntil: null, version: 0,
+    settings: { startTime: '09:00', lessonMinutes: 40, breakMinutes: 10, lessonsPerDay: 2, lunch: null,
+      days: [{ dayOfWeek: 'thu', startTime: null, lessonsPerDay: null, off: true }] },
+    periods: PERIODS, updatedAt: null, updatedBy: null };
   const weekData = (week) => {
     const base = { classGroup: { id: 'c1', name: '8-A' }, weekStart: week, weekEnd: common.addDays(week, 6),
       version, editable: week >= W0, days: days(week), entries: [], sharedEntries: [], conflicts: [],
-      previousWeekEntryCount: 0, updatedAt: null, updatedBy: null };
+      previousWeekEntryCount: 0, updatedAt: null, updatedBy: null, hours: { ...HOURS, weekStart: week } };
     if (week === W1 || week === WP) {
       base.entries = [
-        { id: 'e1', dayOfWeek: 'mon', bellSlotId: 'mon1', subject: MAT, teacher: HUS, room: null, status: 'active',
+        { id: 'e1', dayOfWeek: 'mon', bellSlotId: 'L1', subject: MAT, teacher: HUS, room: null, status: 'active',
           classGroups: [{ id: 'c1', name: '8-A' }, { id: 'c2', name: '8-B' }], ownerClassGroup: { id: 'c1', name: '8-A' },
           program: null, date: week, validFrom: '2026-09-01', validTo: null, repeat: 'weekly' },
-        { id: 'e2', dayOfWeek: 'mon', bellSlotId: 'mon2', subject: MAT, teacher: null, room: '204', status: 'active',
+        { id: 'e2', dayOfWeek: 'mon', bellSlotId: 'L2', subject: MAT, teacher: null, room: '204', status: 'active',
           classGroups: [{ id: 'c1', name: '8-A' }], ownerClassGroup: { id: 'c1', name: '8-A' }, program: null,
           date: week, validFrom: week, validTo: common.addDays(week, 6), repeat: 'this_week' },
       ];
       base.sharedEntries = [
-        { id: 'e9', dayOfWeek: 'tue', bellSlotId: 'tue1', subject: { id: 'fizik', name: 'Fizik' }, teacher: HUS,
+        { id: 'e9', dayOfWeek: 'tue', bellSlotId: 'L1', subject: { id: 'fizik', name: 'Fizik' }, teacher: HUS,
           room: null, status: 'active', classGroups: [{ id: 'c3', name: 'TYT Hüseyin' }, { id: 'c1', name: '8-A' }],
           ownerClassGroup: { id: 'c3', name: 'TYT Hüseyin' }, program: null, date: common.addDays(week, 1),
           validFrom: null, validTo: null, repeat: 'weekly' },
       ];
-      base.conflicts = [{ kind: 'teacher', dayOfWeek: 'mon', bellSlotId: 'mon1', entryIndex: 0, teacher: HUS,
+      base.conflicts = [{ kind: 'teacher', dayOfWeek: 'mon', bellSlotId: 'L1', entryIndex: 0, teacher: HUS,
         room: null, conflictingClassGroup: { id: 'c2', name: '8-B' } }];
     }
     if (week === W2) base.previousWeekEntryCount = 2;
     return base;
   };
   globalThis.__apiHook = (method, path, options) => {
+    const hoursMatch = path.match(/\/timetable\/weeks\/(\d{4}-\d{2}-\d{2})\/hours$/);
+    if (hoursMatch && method === 'PUT') {
+      out.hourPuts.push({ week: hoursMatch[1], body: options.body });
+      if (!options.body.confirmRemovals && options.body.settings.lessonsPerDay < 2) {
+        throw new AkademiError({ code: 'timetable_hours_removes_lessons', status: 409, message: 'x',
+          details: { count: 3, lessonNumbers: [2], items: [{ classGroup: { id: 'c1', name: '8-A' }, dayOfWeek: 'mon', bellSlotId: 'L2', lessonNo: 2 }] } });
+      }
+      return { hours: { ...HOURS, source: 'week' }, removedLessonCount: options.body.confirmRemovals ? 3 : 0, updatedSessionCount: 4 };
+    }
     const match = path.match(/\/timetable\/weeks\/(\d{4}-\d{2}-\d{2})(\/cells|\/copy)?/);
     if (!match) return undefined;
     const [, week, tail] = match;
@@ -187,23 +221,23 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(30);
   out.getW1 = lastWeekGet();
   out.relW1 = text(root.querySelector('.ak-cal-rel'));
-  out.cellMon1 = text(cell('mon|mon1'));
-  out.cellMon2 = text(cell('mon|mon2'));
-  out.cellTue1 = text(cell('tue|tue1'));
-  out.cellWed1 = text(cell('wed|wed1'));
+  out.cellMon1 = text(cell('mon|L1'));
+  out.cellMon2 = text(cell('mon|L2'));
+  out.cellTue1 = text(cell('tue|L1'));
+  out.cellWed1 = text(cell('wed|L1'));
   out.heads = root.querySelectorAll('.ak-cal-dayhead').map((n) => n.textContent);
   out.banner = text(root.querySelector('.ak-cal-banner'));
   out.summary = text(root.querySelector('.ak-cal-foot'));
   out.a11yGrid = audit(root);
 
   // Ortak ders hücresi: pencere açılmaz, sahibini söyler.
-  cell('tue|tue1').click();
+  cell('tue|L1').click();
   await sleep(10);
   out.sharedDialog = Boolean(dialog());
   out.sharedToast = toasts[toasts.length - 1]?.[0];
 
   // Boş hücre → pencere (şak şak).
-  cell('tue|tue2').click();
+  cell('tue|L2').click();
   await sleep(20);
   let box = dialog();
   out.dialogTitle = text(box.querySelector('.kit-dialog-title'));
@@ -230,7 +264,7 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.dialogClosed = !dialog();
 
   // Dolu hücre → ek sınıf + müfredat + "Bu hafta ve sonraki haftalar".
-  cell('mon|mon2').click();
+  cell('mon|L2').click();
   await sleep(30);
   box = dialog();
   out.removeButton = buttons(box, 'Dersi kaldır').length;
@@ -245,22 +279,22 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(30);
 
   // Delete → soru yok, yalnız bu hafta.
-  cell('mon|mon1').focus();
-  cell('mon|mon1').dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
+  cell('mon|L1').focus();
+  cell('mon|L1').dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
   await sleep(30);
   out.deleteDialog = Boolean(dialog());
 
   // Sürükle-bırak: mon1 → tue2 taşı, "Bu hafta ve sonraki haftalar".
   const drop = new Event('drop', { bubbles: true, cancelable: true });
-  drop.dataTransfer = { getData: () => 'mon|mon1' };
-  cell('tue|tue2').dispatchEvent(drop);
+  drop.dataTransfer = { getData: () => 'mon|L1' };
+  cell('tue|L2').dispatchEvent(drop);
   await sleep(30);
   out.moveDialog = Boolean(dialog());
   out.moveToast = toasts[toasts.length - 1]?.[0];
 
   // Ctrl+C / Ctrl+V.
-  cell('mon|mon2').dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
-  cell('tue|tue2').dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+  cell('mon|L2').dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
+  cell('tue|L2').dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
   await sleep(30);
 
   // Bu haftayı kopyala → (sonraki hafta hazır seçili) + bir hafta daha.
@@ -275,7 +309,7 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(40);
 
   // PageDown → sonraki hafta (boş): "Geçen haftayı kopyala".
-  cell('mon|mon1').dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }));
+  cell('mon|L1').dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown' }));
   await sleep(30);
   out.getW2 = lastWeekGet();
   out.emptyBanner = text(root.querySelector('.ak-cal-banner'));
@@ -283,6 +317,29 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.copyHiddenWhenEmpty = buttons(root, 'Bu haftayı kopyala →')[0]?.hidden;
   root.querySelectorAll('.ak-cal-banner button').find((b) => b.textContent.startsWith('Geçen haftayı kopyala')).click();
   await sleep(40);
+
+  // Ders saatleri paneli: kalıtım notu, canlı önizleme, ders azaltınca onay.
+  buttons(root, 'Ders saatleri')[0].click();
+  await sleep(20);
+  box = dialog();
+  out.hoursText = text(box);
+  const field = (label) => box.querySelectorAll('input').find((i) => i.getAttribute('aria-label') === label);
+  const startInput = field('Başlangıç');
+  startInput.value = '15:00';
+  startInput.dispatchEvent(new Event('input'));
+  out.previewAfter = text(box.querySelector('.ak-hours-preview'));
+  out.a11yHours = audit(box);
+  const countInput = field('Günlük ders sayısı');
+  countInput.value = '1';
+  countInput.dispatchEvent(new Event('input'));
+  buttons(box, 'Kaydet')[0].click();
+  await sleep(30);
+  out.removalAsk = text(box.querySelector('.kit-dialog-error'));
+  buttons(box, 'Kaldır ve kaydet')[0].click();
+  await sleep(40);
+  out.hoursClosed = !dialog();
+  out.hoursToast = toasts[toasts.length - 1]?.[0];
+  out.rowHeads = root.querySelectorAll('.ak-tt-rowhead').map((n) => n.textContent);
 
   // Geçmiş hafta: salt okunur.
   buttons(root, 'Bu hafta')[0].click();
@@ -292,11 +349,11 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.getWP = lastWeekGet();
   out.pastBanner = text(root.querySelector('.ak-cal-banner'));
   const before = out.puts.length;
-  cell('mon|mon2').click();
+  cell('mon|L2').click();
   await sleep(10);
   out.pastDialog = Boolean(dialog());
   out.pastToast = toasts[toasts.length - 1]?.[0];
-  out.pastDraggable = cell('mon|mon1').draggable === true;
+  out.pastDraggable = cell('mon|L1').draggable === true;
   out.putsInPast = out.puts.length - before;
   out.toasts = toasts;
   return out;
@@ -329,12 +386,12 @@ def test_saf_yardimcilar(result: dict[str, Any]) -> None:
     assert pure["rel"] == ["Bu hafta", "Gelecek hafta", "Geçen hafta", "3 hafta sonra"]
     assert pure["template"]["skipped"] == 1
     assert pure["template"]["cells"] == [
-        {"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": "matematik", "teacherId": "t1", "room": None,
+        {"dayOfWeek": "mon", "bellSlotId": "L1", "subjectId": "matematik", "teacherId": "t1", "room": None,
          "classGroupIds": ["c1", "c2"]},
-        {"dayOfWeek": "tue", "bellSlotId": "tue2", "subjectId": "fizik", "teacherId": None, "room": None,
+        {"dayOfWeek": "tue", "bellSlotId": "L2", "subjectId": "fizik", "teacherId": None, "room": None,
          "programId": "p1"},
     ]
-    assert pure["cellOf"] == {"dayOfWeek": "tue", "bellSlotId": "tue1", "subjectId": "matematik", "teacherId": "t1",
+    assert pure["cellOf"] == {"dayOfWeek": "tue", "bellSlotId": "L1", "subjectId": "matematik", "teacherId": "t1",
                               "room": "204"}
     assert pure["summary"].startswith("1 haftaya kopyalandı · 1 haftada çakışma var, yazılmadı (26 Eki – 1 Kas)")
 
@@ -382,7 +439,7 @@ def test_bos_hucreye_sak_sak_giris(result: dict[str, Any]) -> None:
     first = result["puts"][0]
     assert first["week"] == result["weeks"]["W1"]
     assert first["body"] == {"scope": "this_week", "expectedVersion": 4, "cells": [
-        {"dayOfWeek": "tue", "bellSlotId": "tue2", "subjectId": "matematik", "teacherId": "t1", "room": "305"}]}
+        {"dayOfWeek": "tue", "bellSlotId": "L2", "subjectId": "matematik", "teacherId": "t1", "room": "305"}]}
 
 
 def test_ek_sinif_ve_mufredat(result: dict[str, Any]) -> None:
@@ -390,25 +447,25 @@ def test_ek_sinif_ve_mufredat(result: dict[str, Any]) -> None:
     assert result["programOptions"] == ["Müfredat yok", "LGS · Matematik"]
     body = result["puts"][1]["body"]
     assert body["scope"] == "this_week" and body["expectedVersion"] == 5
-    assert body["cells"] == [{"dayOfWeek": "mon", "bellSlotId": "mon2", "subjectId": "matematik", "teacherId": "t2",
+    assert body["cells"] == [{"dayOfWeek": "mon", "bellSlotId": "L2", "subjectId": "matematik", "teacherId": "t2",
                               "room": "204", "classGroupIds": ["c1", "c3"], "programId": "lgs-matematik"}]
 
 
 def test_kaldir_tasi_kopyala(result: dict[str, Any]) -> None:
     assert result["deleteDialog"] is False and result["moveDialog"] is False
     assert "taşındı" in result["moveToast"]
-    assert result["puts"][2]["body"]["cells"] == [{"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": None}]
+    assert result["puts"][2]["body"]["cells"] == [{"dayOfWeek": "mon", "bellSlotId": "L1", "subjectId": None}]
     assert result["puts"][2]["body"]["scope"] == "this_week"
     move = result["puts"][3]["body"]
     assert move["scope"] == "this_week"
     assert move["cells"] == [
-        {"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": None},
-        {"dayOfWeek": "tue", "bellSlotId": "tue2", "subjectId": "matematik", "teacherId": "t1", "room": None,
+        {"dayOfWeek": "mon", "bellSlotId": "L1", "subjectId": None},
+        {"dayOfWeek": "tue", "bellSlotId": "L2", "subjectId": "matematik", "teacherId": "t1", "room": None,
          "classGroupIds": ["c1", "c2"]},
     ]
     paste = result["puts"][4]["body"]
     assert paste["scope"] == "this_week"
-    assert paste["cells"] == [{"dayOfWeek": "tue", "bellSlotId": "tue2", "subjectId": "matematik", "teacherId": None,
+    assert paste["cells"] == [{"dayOfWeek": "tue", "bellSlotId": "L2", "subjectId": "matematik", "teacherId": None,
                                "room": "204"}]
 
 
@@ -431,3 +488,45 @@ def test_gecmis_hafta_salt_okunur(result: dict[str, Any]) -> None:
     assert result["pastDialog"] is False and result["putsInPast"] == 0
     assert result["pastDraggable"] is False
     assert "Geçmiş" in result["pastToast"]
+
+
+def test_ders_saatleri_hesap(result: dict[str, Any]) -> None:
+    """Önizleme hesabı Akademi `periods_of` ile aynı: ders + teneffüs, öğle arası teneffüsün yerine, gün ezmesi."""
+    pure = result["pure"]
+    assert pure["monday"] == ["L1 15:00-15:40", "B1 15:40-15:50", "L2 15:50-16:30", "OA 16:30-17:00",
+                              "L3 17:00-17:40", "B3 17:40-17:50", "L4 17:50-18:30"]
+    assert pure["saturday"] == ["L1 09:00", "B1 09:40", "L2 09:50"] and pure["sunday"] == 0
+    assert pure["preview"]["days"] == ["mon", "tue", "wed", "thu", "fri", "sat"]
+    assert [row["label"] for row in pure["preview"]["rows"]] == ["1. ders", "2. ders", "Öğle arası", "3. ders", "4. ders"]
+    assert pure["preview"]["rows"][3]["cells"][5] == ""  # cumartesi 2 ders
+    assert "Pazartesi dersleri gece yarısını geçiyor" in pure["problem"][0]
+    assert pure["problem"][1].startswith("Ders süresi") and pure["problem"][2] == ""
+    assert pure["removal"].startswith("3 ders 7.–8. saatlerde (8-A)")
+    assert pure["draftRound"] == {"startTime": "15:00", "lessonMinutes": 40, "breakMinutes": 10, "lessonsPerDay": 4,
+                                  "lunch": {"afterLesson": 2, "minutes": 30},
+                                  "days": [{"dayOfWeek": "sat", "startTime": "09:00", "lessonsPerDay": 2, "off": False},
+                                           {"dayOfWeek": "sun", "startTime": None, "lessonsPerDay": None, "off": True}]}
+
+
+def test_ders_saatleri_paneli(result: dict[str, Any]) -> None:
+    w = result["weeks"]
+    assert "haftasının saatleri kullanılıyor" in result["hoursText"]
+    assert "Önizleme" in result["hoursText"] and "Günlere göre farklı" in result["hoursText"]
+    assert "15:00–15:40" in result["previewAfter"] and "15:50–16:30" in result["previewAfter"]
+    assert result["a11yHours"] == []
+    first, second = result["hourPuts"]
+    assert first["week"] == w["W2"] and first["body"]["expectedVersion"] == 0
+    assert first["body"]["settings"]["startTime"] == "15:00" and first["body"]["settings"]["lessonsPerDay"] == 1
+    assert "confirmRemovals" not in first["body"]
+    assert "3 ders 2. saatte (8-A)" in result["removalAsk"]
+    assert second["body"]["confirmRemovals"] is True
+    assert result["hoursClosed"] is True and result["hoursToast"].startswith("Ders saatleri kaydedildi. 3 ders kaldırıldı.")
+
+
+def test_satirlar_ders_saatlerinden_zil_baglantisi_yok(result: dict[str, Any]) -> None:
+    heads = result["rowHeads"]
+    assert heads[0] == "1. ders09:00–09:40" and heads[1].startswith("Teneffüs") and heads[2] == "2. ders09:50–10:30"
+    src = (ROOT / "modules" / "bbd_akademi" / "ui" / "panel" / "lessons" / "timetable-calendar.js").read_text("utf-8")
+    assert "bellsStale" not in src and "Zil saatleri" not in src and "zil verisi" not in src
+    shell = (ROOT / "modules" / "bbd_akademi" / "ui" / "panel" / "lessons" / "timetable.js").read_text("utf-8")
+    assert "timetable-bell-status" not in shell and "'bells'" not in shell

@@ -7,8 +7,6 @@
 // sınıf seçici, gün × zil dilimi takvimi. Sekme şeridi YOK. Ara sıra gereken işler takvimin "Diğer" menüsündedir
 // ve takvimin yerine açılır ("‹ Takvime dön" ile geri):
 //   · Etüt ve tek seferlik dersler (timetable-events.js; talep kuyruğu Talepler bölümünde)
-//   · Zil saatleri — KM aynası ya da yerel düzenleyici + zil planı durumu kartı (timetable-setup.js,
-//     timetable-bell-status.js; kart eskiden takvimin üstündeydi — teknik ayrıntı, buraya alındı)
 //   · Dönemler (timetable-setup.js)
 //   · Program şablonları (timetable-templates.js; takvimde "Şablondan doldur" bunları kullanır)
 //
@@ -18,21 +16,23 @@
 //
 // Tek tek derslerin iptali, telafisi ve yerine öğretmen "Ders oturumları" bölümündedir (sessions.js).
 //
+// ZİLDEN BAĞIMSIZ (Akademi README §14 madde 128, iş 71): takvimin satırları haftanın DERS SAATLERİDİR ("Ders saatleri"
+// düğmesi, timetable-hours.js). Eski "Diğer › Zil saatleri" görünümü ve zil planı kartı bu ekrandan kalktı; zil KM Zil
+// Sistemi modülünde yönetilir.
+//
 // Derin bağlantılar: `{classGroupId, week?}` o sınıfın takvimini (haftasını) açar, `{lessonEventId}` etüt
-// çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'|'templates'}` görünümü açar.
+// çekmecesini, `{tab: 'week'|'events'|'terms'|'templates'}` görünümü açar.
 
 import { button, h, loadStyles } from '../../../ui-kit/kit.js';
 import { sectionHead } from '../common.js';
 import { calendarTab } from './timetable-calendar.js';
 import { eventsTab, openLessonEvent } from './timetable-events.js';
-import { bellSlotsTab, termsTab } from './timetable-setup.js';
-import { bellPlanCard } from './timetable-bell-status.js';
+import { termsTab } from './timetable-setup.js';
 import { templatesTab } from './timetable-templates.js';
 
 const VIEWS = {
   week: 'Haftalık takvim',
   events: 'Etüt ve tek seferlik dersler',
-  bells: 'Zil saatleri',
   terms: 'Dönemler',
   templates: 'Program şablonları',
 };
@@ -40,7 +40,7 @@ const VIEWS = {
 export function section(app) {
   loadStyles(import.meta.url, 'timetable.css');
   const node = h('div', 'ak-stack ak-tt');
-  // Etüt / zil / dönem / şablon ekranda göze batmaz: takvimin "Diğer" menüsündedir (lider mesajı 2).
+  // Etüt / dönem / şablon ekranda göze batmaz: takvimin "Diğer" menüsündedir (lider mesajı 2).
   node.append(sectionHead('Ders programı', {
     subtitle: 'Sınıf seçin, haftayı okla değiştirin, hücreye tıklayıp dersi girin. Her hafta kendi programıdır.' }));
 
@@ -52,16 +52,8 @@ export function section(app) {
 
   const bodies = {};
   const builders = {
-    week: () => calendarTab(app, { openBells: () => go('bells'), openView: (key) => go(key) }),
+    week: () => calendarTab(app, { openView: (key) => go(key) }),
     events: () => eventsTab(app),
-    bells: () => {
-      // Zil saatleri + zil planının KM'ye ulaşıp ulaşmadığı (eskiden takvimin üstündeydi).
-      const status = bellPlanCard(app);
-      const inner = bellSlotsTab(app, { onChanged: () => bodies.week?.bellsChanged() });
-      const wrap = h('div', 'ak-stack');
-      wrap.append(status.node, inner.node);
-      return { node: wrap, reload: () => { status.load(); return inner.reload(); }, destroy: () => inner.destroy?.() };
-    },
     terms: () => termsTab(app),
     templates: () => templatesTab(app),
   };
