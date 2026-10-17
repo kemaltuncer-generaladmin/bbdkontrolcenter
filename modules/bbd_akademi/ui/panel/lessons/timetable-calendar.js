@@ -352,6 +352,9 @@ export function calendarTab(app, { openBells } = {}) {
     }
     const mine = ++token;
     if (!s.data) content.replaceChildren(skeletonRows(8, 6));
+    // Hafta değişirken eski hafta soluk görünür (yanlış haftaya ders girilmesin).
+    gridWrap.classList.add('ak-cal-loading');
+    gridWrap.setAttribute('aria-busy', 'true');
     try {
       if (s.bellsStale) {
         app.api.invalidate('/v1/admin/bell-slots');
@@ -371,6 +374,8 @@ export function calendarTab(app, { openBells } = {}) {
       s.data = data;
       if (!keepFocus) s.focus = null;
       content.replaceChildren(banner, gridWrap, foot);
+      gridWrap.classList.remove('ak-cal-loading');
+      gridWrap.removeAttribute('aria-busy');
       paint();
     } catch (failure) {
       if (mine !== token) return;
@@ -813,7 +818,8 @@ export function calendarTab(app, { openBells } = {}) {
     const subject = subjectSelect(s.subjects, entry?.subject?.id || '', { gradeLevel: classGrade(),
       extra: entry?.subject, empty: 'Ders seçin', label: 'Ders' });
     const frequent = frequentSubjects(entries).filter((id) => s.subjectsById.has(id));
-    if (frequent.length) {
+    // "Bu sınıfta" grubu yalnız katalog daha genişse (aynı liste iki kez görünmesin).
+    if (frequent.length && s.subjects.length > frequent.length) {
       const group = h('optgroup');
       group.label = 'Bu sınıfta';
       for (const id of frequent.slice(0, 8)) {

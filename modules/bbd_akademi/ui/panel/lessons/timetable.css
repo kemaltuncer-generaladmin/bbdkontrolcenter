@@ -286,3 +286,4 @@
 }
 .ak-cal-scope-item:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
 .ak-cal-copy .ak-tt-off { opacity: 0.45; pointer-events: none; }
+.ak-cal-gridwrap.ak-cal-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.12s; }
