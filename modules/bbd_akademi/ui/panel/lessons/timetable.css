@@ -287,3 +287,10 @@
 .ak-cal-scope-item:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
 .ak-cal-copy .ak-tt-off { opacity: 0.45; pointer-events: none; }
 .ak-cal-gridwrap.ak-cal-loading { opacity: 0.45; pointer-events: none; transition: opacity 0.12s; }
+/* Lider mesajı 2: sütun başı iki satır ("Pzt" / "19 Ekim"), boş haftada büyük kopya düğmesi */
+.ak-cal-dayhead .ak-cal-dayname { font-size: 12.5px; font-weight: 700; }
+.ak-cal-dayhead .ak-cal-date { font-size: 12px; color: var(--soft); font-weight: 500; }
+.ak-cal-dayhead.ak-cal-is-today .ak-cal-date { color: var(--accent); font-weight: 700; }
+.ak-cal-dayhead.ak-cal-is-today span { border-bottom: 0; }
+.ak-cal-dayhead.ak-cal-is-today { background: var(--accent-tint); border-radius: 8px; }
+.ak-cal-big { height: 40px; padding: 0 20px; font-size: 14px; font-weight: 650; }

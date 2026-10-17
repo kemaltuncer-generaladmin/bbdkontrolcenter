@@ -4,7 +4,7 @@
 // sonraki hafta diye ok tuşları olacak yanında. sınıf seçip program girecez şak şak".
 //
 // TEK EKRAN: açılışta yalnız HAFTA TAKVİMİ (timetable-calendar.js) görünür — ‹ Önceki · Bu hafta · Sonraki ›,
-// sınıf seçici, gün × zil dilimi takvimi. Sekme şeridi YOK. Ara sıra gereken işler "Diğer ayarlar" menüsündedir
+// sınıf seçici, gün × zil dilimi takvimi. Sekme şeridi YOK. Ara sıra gereken işler takvimin "Diğer" menüsündedir
 // ve takvimin yerine açılır ("‹ Takvime dön" ile geri):
 //   · Etüt ve tek seferlik dersler (timetable-events.js; talep kuyruğu Talepler bölümünde)
 //   · Zil saatleri — KM aynası ya da yerel düzenleyici + zil planı durumu kartı (timetable-setup.js,
@@ -21,7 +21,7 @@
 // Derin bağlantılar: `{classGroupId, week?}` o sınıfın takvimini (haftasını) açar, `{lessonEventId}` etüt
 // çekmecesini, `{tab: 'week'|'events'|'bells'|'terms'|'templates'}` görünümü açar.
 
-import { button, h, loadStyles, menuButton } from '../../../ui-kit/kit.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
 import { sectionHead } from '../common.js';
 import { calendarTab } from './timetable-calendar.js';
 import { eventsTab, openLessonEvent } from './timetable-events.js';
@@ -40,10 +40,9 @@ const VIEWS = {
 export function section(app) {
   loadStyles(import.meta.url, 'timetable.css');
   const node = h('div', 'ak-stack ak-tt');
-  const more = menuButton('Diğer ayarlar', ['events', 'bells', 'terms', 'templates']
-    .map((key) => ({ label: VIEWS[key], onClick: () => go(key) })), { variant: 'ghost' });
+  // Etüt / zil / dönem / şablon ekranda göze batmaz: takvimin "Diğer" menüsündedir (lider mesajı 2).
   node.append(sectionHead('Ders programı', {
-    subtitle: 'Hafta seçin, sınıf seçin, hücreye tıklayıp dersi girin.', actions: [more] }));
+    subtitle: 'Sınıf seçin, haftayı okla değiştirin, hücreye tıklayıp dersi girin. Her hafta kendi programıdır.' }));
 
   const back = h('div', 'ak-tt-back');
   const backButton = button('‹ Takvime dön', { variant: 'ghost', onClick: () => go('week') });
@@ -53,7 +52,7 @@ export function section(app) {
 
   const bodies = {};
   const builders = {
-    week: () => calendarTab(app, { openBells: () => go('bells') }),
+    week: () => calendarTab(app, { openBells: () => go('bells'), openView: (key) => go(key) }),
     events: () => eventsTab(app),
     bells: () => {
       // Zil saatleri + zil planının KM'ye ulaşıp ulaşmadığı (eskiden takvimin üstündeydi).

@@ -11,12 +11,12 @@ Node'da küçük DOM'la (`tools/a11y/harness.py`) bütün akış sınanır:
   PageDown da sonraki haftaya geçer;
 * hücrede ders, öğretmen, derslik, ortak sınıf ("+ 8-B"), "yalnız bu hafta" rozeti, çakışma; başka sınıfın ortak dersi
   salt okunur; tatil günü "Tatil — ders yok"; geçmiş hafta salt okunur (pencere açılmaz);
-* boş hücre → pencere: bu sınıfın dersi önde, ders seçince öğretmen kendiliğinden, öğretmen zorunlu, varsayılan kapsam
-  "Yalnız bu hafta", gövde `{scope, expectedVersion, cells}`; ek sınıf yoksa `classGroupIds` / `programId` gitmez
-  (eski Akademi bilinmeyen alanı 422 ile reddeder); ek sınıf + müfredat + "Bu hafta ve sonraki haftalar";
-* Delete → tek soru → boş hücre; sürükle-bırak → taşıma (iki hücre); Ctrl+C / Ctrl+V;
+* boş hücre → pencere: bu sınıfın dersi önde, ders seçince öğretmen kendiliğinden, öğretmen zorunlu; her değişiklik YALNIZ
+  O HAFTA (lider mesajı 2: soru yok, tarih seçici yok), gövde `{scope: this_week, expectedVersion, cells}`; ek sınıf yoksa `classGroupIds` / `programId` gitmez
+  (eski Akademi bilinmeyen alanı 422 ile reddeder); ek sınıf + müfredat;
+* Delete → boş hücre; sürükle-bırak → taşıma (iki hücre); Ctrl+C / Ctrl+V — ek pencere açılmaz;
 * boş hafta: "Bu hafta için program yok · Geçen haftayı kopyala" → `admin_copyTimetableWeek` (kaynak geçen hafta);
-  "Haftayı kopyala…" çoklu hafta + "Dönem sonuna kadar";
+  "Bu haftayı kopyala →" (sonraki hafta hazır seçili) çoklu hafta + "Dönem sonuna kadar";
 * erişilebilirlik denetimi temiz; saf yardımcılar (hafta adı, şablon hücreleri, kopya özeti).
 `node` yoksa atlanır.
 """
@@ -62,6 +62,7 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   // ------------------------------------------------------------ saf yardımcılar
   out.pure.labels = [cal.weekLabel('2026-10-12'), cal.weekLabel('2026-10-26'), cal.weekLabel('2025-12-29')];
   out.pure.short = cal.shortWeekLabel('2026-10-26');
+  out.pure.head = cal.dayHead('mon', '2026-10-19');
   out.pure.rel = ['2026-10-12', '2026-10-19', '2026-10-05', '2026-11-02'].map((w) => cal.weekRelation(w, '2026-10-17'));
   const layout = slotLayout(SLOTS.slots);
   out.pure.template = cal.templateCells([
@@ -208,7 +209,8 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.dialogTitle = text(box.querySelector('.kit-dialog-title'));
   const subject = box.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Ders');
   out.firstGroup = subject.querySelectorAll('optgroup')[0]?.label;
-  out.scopeDefault = box.querySelectorAll('input').filter((i) => i.type === 'radio' && i.checked).map((i) => i.value);
+  out.radios = box.querySelectorAll('input').filter((i) => i.type === 'radio').length;
+  out.dateFields = root.querySelectorAll('input').filter((i) => /tarih|hafta seç/i.test(i.getAttribute('aria-label') || '')).length;
   subject.value = 'matematik';
   subject.dispatchEvent(new Event('change'));
   await sleep(10);
@@ -239,43 +241,35 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   const program = box.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Müfredat (isteğe bağlı)');
   out.programOptions = program.querySelectorAll('option').map((o) => o.textContent);
   program.value = 'lgs-matematik';
-  box.querySelectorAll('input').find((i) => i.type === 'radio' && i.value === 'this_and_following').click();
   buttons(box, 'Kaydet')[0].click();
   await sleep(30);
 
-  // Delete → tek soru → yalnız bu hafta.
+  // Delete → soru yok, yalnız bu hafta.
   cell('mon|mon1').focus();
   cell('mon|mon1').dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete' }));
-  await sleep(10);
-  box = dialog();
-  out.askText = text(box);
-  buttons(box, 'Kaldır · Yalnız bu hafta')[0].click();
   await sleep(30);
+  out.deleteDialog = Boolean(dialog());
 
   // Sürükle-bırak: mon1 → tue2 taşı, "Bu hafta ve sonraki haftalar".
   const drop = new Event('drop', { bubbles: true, cancelable: true });
   drop.dataTransfer = { getData: () => 'mon|mon1' };
   cell('tue|tue2').dispatchEvent(drop);
-  await sleep(10);
-  box = dialog();
-  out.moveText = text(box.querySelector('.kit-dialog-title'));
-  buttons(box, 'Bu hafta ve sonraki haftalar')[0].click();
   await sleep(30);
+  out.moveDialog = Boolean(dialog());
+  out.moveToast = toasts[toasts.length - 1]?.[0];
 
   // Ctrl+C / Ctrl+V.
   cell('mon|mon2').dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
   cell('tue|tue2').dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
-  await sleep(10);
-  buttons(dialog(), 'Yapıştır · Yalnız bu hafta')[0].click();
   await sleep(30);
 
-  // Haftayı kopyala… → iki hafta.
-  buttons(root, 'Haftayı kopyala…')[0].click();
+  // Bu haftayı kopyala → (sonraki hafta hazır seçili) + bir hafta daha.
+  buttons(root, 'Bu haftayı kopyala →')[0].click();
   await sleep(30);
   box = dialog();
   out.copyText = text(box);
   const chips = box.querySelectorAll('.ak-cal-copy .kit-chip');
-  chips[0].click();
+  out.firstChip = text(chips[0]);
   chips[1].click();
   buttons(box, 'Kopyala')[0].click();
   await sleep(40);
@@ -285,7 +279,9 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   await sleep(30);
   out.getW2 = lastWeekGet();
   out.emptyBanner = text(root.querySelector('.ak-cal-banner'));
-  buttons(root, 'Geçen haftayı kopyala')[0].click();
+  out.emptyCopyButton = root.querySelectorAll('.ak-cal-banner button').filter((b) => b.textContent.startsWith('Geçen haftayı kopyala')).length;
+  out.copyHiddenWhenEmpty = buttons(root, 'Bu haftayı kopyala →')[0]?.hidden;
+  root.querySelectorAll('.ak-cal-banner button').find((b) => b.textContent.startsWith('Geçen haftayı kopyala')).click();
   await sleep(40);
 
   // Geçmiş hafta: salt okunur.
@@ -329,6 +325,7 @@ def test_saf_yardimcilar(result: dict[str, Any]) -> None:
     pure = result["pure"]
     assert pure["labels"] == ["12–18 Ekim 2026", "26 Ekim – 1 Kasım 2026", "29 Aralık 2025 – 4 Ocak 2026"]
     assert pure["short"] == "26 Eki – 1 Kas"
+    assert pure["head"] == ["Pzt", "19 Ekim"]
     assert pure["rel"] == ["Bu hafta", "Gelecek hafta", "Geçen hafta", "3 hafta sonra"]
     assert pure["template"]["skipped"] == 1
     assert pure["template"]["cells"] == [
@@ -377,7 +374,7 @@ def test_hucreler(result: dict[str, Any]) -> None:
 def test_bos_hucreye_sak_sak_giris(result: dict[str, Any]) -> None:
     assert result["dialogTitle"].startswith("Salı") and "2. ders" in result["dialogTitle"]
     assert result["firstGroup"] == "Bu sınıfta"
-    assert result["scopeDefault"] == ["this_week"]
+    assert result["radios"] == 0 and result["dateFields"] == 0  # soru yok, tarih seçici yok
     assert result["suggested"] == "t1"  # bu sınıfta Matematik'i Hüseyin Hoca veriyor
     assert result["teacherError"] == "Öğretmen seçin." and result["putsAfterError"] == 0
     assert result["a11yDialog"] == []
@@ -388,22 +385,22 @@ def test_bos_hucreye_sak_sak_giris(result: dict[str, Any]) -> None:
         {"dayOfWeek": "tue", "bellSlotId": "tue2", "subjectId": "matematik", "teacherId": "t1", "room": "305"}]}
 
 
-def test_ek_sinif_mufredat_ve_sonraki_haftalar(result: dict[str, Any]) -> None:
+def test_ek_sinif_ve_mufredat(result: dict[str, Any]) -> None:
     assert result["removeButton"] == 1
     assert result["programOptions"] == ["Müfredat yok", "LGS · Matematik"]
     body = result["puts"][1]["body"]
-    assert body["scope"] == "this_and_following" and body["expectedVersion"] == 5
+    assert body["scope"] == "this_week" and body["expectedVersion"] == 5
     assert body["cells"] == [{"dayOfWeek": "mon", "bellSlotId": "mon2", "subjectId": "matematik", "teacherId": "t2",
                               "room": "204", "classGroupIds": ["c1", "c3"], "programId": "lgs-matematik"}]
 
 
 def test_kaldir_tasi_kopyala(result: dict[str, Any]) -> None:
-    assert "Matematik dersini kaldır" in result["askText"]
+    assert result["deleteDialog"] is False and result["moveDialog"] is False
+    assert "taşındı" in result["moveToast"]
     assert result["puts"][2]["body"]["cells"] == [{"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": None}]
     assert result["puts"][2]["body"]["scope"] == "this_week"
-    assert "Pazartesi 1. ders → Salı 2. ders" in result["moveText"]
     move = result["puts"][3]["body"]
-    assert move["scope"] == "this_and_following"
+    assert move["scope"] == "this_week"
     assert move["cells"] == [
         {"dayOfWeek": "mon", "bellSlotId": "mon1", "subjectId": None},
         {"dayOfWeek": "tue", "bellSlotId": "tue2", "subjectId": "matematik", "teacherId": "t1", "room": None,
@@ -418,10 +415,12 @@ def test_kaldir_tasi_kopyala(result: dict[str, Any]) -> None:
 def test_haftayi_kopyala_ve_gecen_haftayi_kopyala(result: dict[str, Any]) -> None:
     w = result["weeks"]
     assert "Dönem sonuna kadar her hafta" in result["copyText"]
+    assert result["firstChip"].startswith("Sonraki hafta")
     copy = result["posts"][0]
     assert copy["week"] == w["W1"]
     assert len(copy["body"]["targetWeekStarts"]) == 2 and copy["body"]["throughDate"] is None
     assert w["W2"] in copy["body"]["targetWeekStarts"]
+    assert result["emptyCopyButton"] == 1 and result["copyHiddenWhenEmpty"] is True
     assert "Bu hafta için program yok" in result["emptyBanner"] and "Geçen hafta 2 ders vardı" in result["emptyBanner"]
     previous = result["posts"][1]
     assert previous["week"] == w["W1"] and previous["body"]["targetWeekStarts"] == [w["W2"]]
