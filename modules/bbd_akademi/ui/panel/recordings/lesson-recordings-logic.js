@@ -242,12 +242,64 @@ export function recordingState(recording) {
   return ['Yayında', 'good'];
 }
 
-/** Ders başlığı: "Matematik · 8-A, 8-B" (+ parça). */
+/**
+ * Kaydın görünen adı (Akademi README §14 madde 127): öğretmenin verdiği ad, yoksa ders programından türetilen ad
+ * ("Matematik · Türev — 12-A · 17 Ekim 10:40"; sunucu `displayTitle`) (+ parça). Eski yanıtta "Matematik · 8-A".
+ */
 export function recordingTitle(recording) {
+  const part = Number(recording?.part || 1) > 1 ? ` · ${recording.part}. bölüm` : '';
+  if (recording?.displayTitle) return `${recording.displayTitle}${part}`;
   const subject = recording?.subject?.name || 'Ders';
   const groups = (recording?.groups || []).map((group) => group.name).filter(Boolean).join(', ');
-  const part = Number(recording?.part || 1) > 1 ? ` · ${recording.part}. bölüm` : '';
   return `${subject}${groups ? ` · ${groups}` : ''}${part}`;
+}
+
+/** Özel adlı kayıtta başlığın altındaki küçük satır: ders programı adı (eşleşme kaybolmasın); adsızda boş. */
+export function scheduleLine(recording) {
+  return recording?.title ? (recording.scheduleTitle || '') : '';
+}
+
+/** Kayda atanmış konuların adları ("Türev, İntegral"); eski yanıtta tek `topic`. */
+export function topicNames(recording) {
+  const list = recording?.topics?.length ? recording.topics : (recording?.topic ? [recording.topic] : []);
+  return list.map((topic) => topic.name).filter(Boolean).join(', ');
+}
+
+export const TITLE_MAX = 120;
+
+/** "Adını değiştir" gövdesi: boşluk temizliği (sunucuyla aynı); boş = ders programındaki ad (`null`). */
+export function renameBody(text) {
+  const clean = String(text ?? '').split(/\s+/).filter(Boolean).join(' ');
+  if (clean.length > TITLE_MAX) throw new Error(`Ad en çok ${TITLE_MAX} karakter olabilir.`);
+  return { title: clean || null };
+}
+
+/** "Ders ve konu" gövdesi: ders zorunlu, en çok 10 konu (tekrarsız). */
+export function curriculumBody(subjectId, topicIds = []) {
+  if (!subjectId) throw new Error('Ders seçin.');
+  const topics = [...new Set((topicIds || []).map(String).filter(Boolean))];
+  if (topics.length > 10) throw new Error('En çok 10 konu seçilebilir.');
+  return { subjectId: String(subjectId), topicIds: topics };
+}
+
+/** Müfredat yanıtından (`StudentCurriculum`) kapsamın dersleri ve dersin konuları (ünite başlıklı). */
+export function curriculumOptions(curriculum, scope, subjectId) {
+  const programs = (curriculum?.programs || []).filter((program) => !program.historical
+    && (program.program?.levelKey || String(program.program?.exam || 'kurum').toLowerCase()) === scope);
+  const subjects = [];
+  for (const program of programs) {
+    const subject = program.program?.subject;
+    if (subject && !subjects.some((item) => item.value === subject.id)) subjects.push({ value: subject.id, label: subject.name });
+  }
+  const topics = [];
+  for (const program of programs.filter((item) => item.program?.subject?.id === subjectId)) {
+    for (const unit of program.units || []) {
+      for (const topic of unit.topics || []) {
+        if (!topic.retired) topics.push({ value: topic.topicId, label: topic.title, unit: unit.title });
+      }
+    }
+  }
+  return { subjects, topics };
 }
 
 /** Başlık altı: sahne + derslik + etiketler ("tahta + kamera · Derslik 3 · Kurtarılmış kayıt"). */

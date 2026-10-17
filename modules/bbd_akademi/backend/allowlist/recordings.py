@@ -155,6 +155,15 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/admin/recordings/{recordingId}/curriculum',
+        'admin_getRecordingCurriculum',
+        ('recordings.manage',),
+        'both',
+        feature_flag='lesson_recordings',
+        features=('F-DK6', 'F-DK7'),
+    ),
+    Operation(
+        'GET',
         '/v1/admin/recordings/{recordingId}/shares',
         'admin_listRecordingShares',
         ('recordings.manage',),
