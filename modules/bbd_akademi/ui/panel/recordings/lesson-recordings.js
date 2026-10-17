@@ -8,7 +8,9 @@
 //   Tahtalar ve derslikler  admin_listBoards · createBoard (→ tek seferlik eşleme kodu) · updateBoard · deleteBoard ·
 //                           createBoardPairingCode (yeniden eşle) · cancelBoardPairingCode · revokeBoard ·
 //                           getBoardDiagnostics · requestBoardDiagnostics · listRooms · createRoom · updateRoom · deleteRoom
-//   Kayıtlar                admin_listRecordings (süzgeç) · updateRecording (gizle / göster) · deleteRecording ·
+//   Kayıtlar                admin_listRecordings (süzgeç, arama: ad / ders / konu / öğretmen) · updateRecording (gizle /
+//                           göster, "Adını değiştir", "Ders ve konu" — README §14 madde 127) · getRecordingCurriculum ·
+//                           deleteRecording ·
 //                           listRecordingViews (kim izledi) · list/add/removeRecordingShare (ek öğrenci / grup)
 //   Depolama                admin_getRecordingQuota (800 GB çubuğu, %80 / %90 işaretli, tahmini dolma günü)
 //   Ayarlar                 admin_get/putRecordingSettings (saklama ≤ 120 gün, tavan ≤ 800 GB, kalite, kamera izni)
@@ -31,7 +33,7 @@ import {
   gbText, hideBody, keyLacksPermission, liveText, micEventsText, micText, pairingBreaksLink, quotaProblem,
   quotaView, rangeProblem, recordingExtra, recordingQuery, recordingState, recordingTitle, retentionProblem, roomBody,
   roomSub, settingsBody, settingsDraft, settingsWarning, shareBody, shareIntro, shareLabel, sizeText, viewState,
-  viewsText,
+  viewsText, renameBody, curriculumBody, curriculumOptions, scheduleLine, topicNames, TITLE_MAX,
 } from './lesson-recordings-logic.js';
 
 /** "9 Aralık 2026" (ISO gün). */
@@ -502,8 +504,8 @@ function recordingsPane(app, ctx) {
   const group = selectBox([{ value: '', label: 'Bütün sınıflar' }], '', (value) => { state.groupId = value; reload(); },
     { label: 'Sınıf' });
   const sort = selectBox(REC_SORTS, state.sort, (value) => { state.sort = value; reload(); }, { label: 'Sıralama' });
-  // Sunucu araması (`admin_listRecordings?q=`: derslik, ders, öğretmen adı; en az 2 karakter).
-  const search = searchBox({ placeholder: 'Kayıt ara', label: 'Kayıt ara (ders, öğretmen, derslik)', delay: 300,
+  // Sunucu araması (`admin_listRecordings?q=`: kayıt adı, ders, konu, öğretmen, derslik; Türkçe harf duyarsız; ≥ 2).
+  const search = searchBox({ placeholder: 'Kayıt ara', label: 'Kayıt ara (ad, ders, konu, öğretmen, derslik)', delay: 300,
     onSearch: (text) => {
       const next = text.length >= 2 ? text : '';
       if (next === state.q) return;
@@ -533,7 +535,8 @@ function recordingsPane(app, ctx) {
     }),
     columns: [
       { key: 'title', label: 'Ders', width: 'minmax(0, 1.6fr)',
-        cell: (row) => stack(h('b', '', recordingTitle(row)), recordingExtra(row) ? small(recordingExtra(row)) : null) },
+        cell: (row) => stack(h('b', '', recordingTitle(row)), scheduleLine(row) ? small(scheduleLine(row)) : null,
+          recordingExtra(row) ? small(recordingExtra(row)) : null) },
       { key: 'teacher', label: 'Öğretmen', width: 'minmax(0, 1fr)', cell: (row) => personName(row.teacher) },
       { key: 'date', label: 'Tarih', width: '130px',
         cell: (row) => stack(fmtDate(row.date), row.startsAt ? small(fmtTime(row.startsAt)) : null) },
@@ -590,8 +593,10 @@ export function recordingDrawer(app, row, { onChange, onRemove } = {}) {
     if (recording.hidden) nodes.push(alertBox('Bu kayıt gizli: öğrenci ve veliler görmez.', 'info'));
     if (recording.subject || recording.date) {
       nodes.push(card('', kv([
+        ['Ad', recording.title || 'Ders programındaki ad'],
+        recording.title && recording.scheduleTitle ? ['Ders programı adı', recording.scheduleTitle] : null,
         ['Ders', recording.subject?.name || '—'],
-        recording.topic ? ['Konu', recording.topic.name] : null,
+        topicNames(recording) ? ['Konular', `${topicNames(recording)}${recording.curriculumAssigned ? '' : ' (ders programından)'}`] : null,
         ['Öğretmen', personName(recording.teacher)],
         ['Sınıf / grup', (recording.groups || []).map((group) => group.name).join(', ') || '—'],
         ['Derslik', recording.room || '—'],
@@ -611,6 +616,13 @@ export function recordingDrawer(app, row, { onChange, onRemove } = {}) {
     }
     const tools = h('div', 'ak-inline');
     if (recording.status !== 'deleted') {
+      tools.append(actionButton(app, 'admin_updateRecording', 'Adını değiştir', { variant: 'ghost', onClick: () => rename() }));
+      if (recording.title) {
+        tools.append(actionButton(app, 'admin_updateRecording', 'Varsayılana dön', { variant: 'ghost', onClick: () => saveTitle(null) }));
+      }
+      if (app.can('admin_getRecordingCurriculum')) {
+        tools.append(actionButton(app, 'admin_updateRecording', 'Ders ve konu', { variant: 'ghost', onClick: () => curriculum() }));
+      }
       tools.append(actionButton(app, 'admin_updateRecording', recording.hidden ? 'Göster' : 'Gizle',
         { variant: 'ghost', onClick: () => toggleHidden() }));
       tools.append(actionButton(app, 'admin_deleteRecording', 'Kaydı sil', { variant: 'danger', onClick: () => remove() }));
@@ -633,6 +645,96 @@ export function recordingDrawer(app, row, { onChange, onRemove } = {}) {
     recording = { ...recording, ...next };
     onChange?.(recording);
     paint();
+  }
+
+  function applied(next) {
+    if (!next) return;
+    recording = { ...recording, ...next };
+    panel.setTitle(recordingTitle(recording));
+    onChange?.(recording);
+    paint();
+  }
+
+  async function saveTitle(title) {
+    const next = await runAction(app, () => app.api.patch(`/v1/admin/recordings/${recording.id}`, { title }),
+      { success: title ? 'Kaydın adı değişti' : 'Ders programındaki ada dönüldü' });
+    applied(next);
+  }
+
+  // "Adını değiştir": boş bırakılırsa ders programındaki ad (web / mobil / tahta ile aynı metinler).
+  async function rename() {
+    const next = await formDialog(app, {
+      title: 'Kaydı adlandır',
+      description: 'Boş bırakırsan ders programındaki ad kullanılır.',
+      fields: [{ key: 'title', label: 'Kaydın adı', maxLength: 200, wide: true, placeholder: recording.scheduleTitle || '',
+        hint: `En çok ${TITLE_MAX} karakter` }],
+      value: { title: recording.title || '' },
+      onSubmit: (draft, { key }) => app.api.patch(`/v1/admin/recordings/${recording.id}`, renameBody(draft.title),
+        { key }),
+    });
+    if (next && next !== true) {
+      app.toast(next.title ? 'Kaydın adı değişti' : 'Ders programındaki ada dönüldü', 'good');
+      applied(next);
+    }
+  }
+
+  // "Ders ve konu": merkezi müfredat kapsamı (TYT / AYT / sınıf) → ders → bir ya da birden çok konu.
+  async function curriculum() {
+    const base = await runAction(app, () => app.api.get(`/v1/admin/recordings/${recording.id}/curriculum`));
+    if (!base) return;
+    const cache = { '': base };
+    const next = await formDialog(app, {
+      title: 'Ders ve konu',
+      description: 'Müfredattan ders ve bir ya da birden çok konu seç. Öğrenciler kaydı bu konularla bulur.',
+      wide: true,
+      value: { scope: base.defaultScope || base.scopes?.[0]?.key || '', subjectId: recording.subjectId || recording.subject?.id || '',
+        topicIds: (recording.topics?.length ? recording.topics : (recording.topic ? [recording.topic] : [])).map((topic) => topic.id) },
+      fields: [{ key: 'pick', label: 'Ders ve konu', type: 'custom', wide: true,
+        render: (draft) => {
+          const node = h('div', 'ak-stack');
+          const scope = selectBox((base.scopes || []).map((item) => ({ value: item.key, label: item.label })), draft.scope,
+            (value) => { draft.scope = value; load(); }, { label: 'Kapsam' });
+          const subject = selectBox([], draft.subjectId, (value) => {
+            if (value !== draft.subjectId) draft.topicIds = [];
+            draft.subjectId = value;
+            fill();
+          }, { label: 'Ders' });
+          const topicsBox = h('div', 'ak-stack');
+          node.append(toolbar(scope.node, subject.node), topicsBox);
+          const current = () => {
+            const meta = (base.scopes || []).find((item) => item.key === draft.scope);
+            return meta && !meta.loaded ? cache[draft.scope] : base;
+          };
+          function fill() {
+            const { subjects, topics } = curriculumOptions(current(), draft.scope, draft.subjectId);
+            subject.options([{ value: '', label: 'Ders seçin' }, ...subjects]);
+            subject.set(draft.subjectId);
+            const chips = multiChips(topics.map((topic) => ({ value: topic.value, label: topic.label })), draft.topicIds,
+              (list) => { draft.topicIds = list; });
+            topicsBox.replaceChildren(topics.length ? chips.node : small(draft.subjectId ? 'Bu derste konu yok' : 'Önce ders seçin'));
+          }
+          async function load() {
+            const meta = (base.scopes || []).find((item) => item.key === draft.scope);
+            if (meta && !meta.loaded && !cache[draft.scope]) {
+              topicsBox.replaceChildren(small('Müfredat alınıyor…'));
+              cache[draft.scope] = await app.api.get(`/v1/admin/recordings/${recording.id}/curriculum`, { scope: draft.scope })
+                .catch(() => ({ programs: [] }));
+            }
+            fill();
+          }
+          fill();
+          return node;
+        },
+        validate: (_raw, draft) => {
+          try { curriculumBody(draft.subjectId, draft.topicIds); return ''; } catch (error) { return error.message; }
+        } }],
+      onSubmit: (draft, { key }) => app.api.patch(`/v1/admin/recordings/${recording.id}`,
+        curriculumBody(draft.subjectId, draft.topicIds), { key }),
+    });
+    if (next && next !== true) {
+      app.toast('Ders ve konu kaydedildi', 'good');
+      applied(next);
+    }
   }
 
   async function remove() {

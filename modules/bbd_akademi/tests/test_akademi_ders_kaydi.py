@@ -36,7 +36,7 @@ DK_OPERATIONS = (
     "admin_listRooms", "admin_createRoom", "admin_updateRoom", "admin_deleteRoom", "admin_listRecordings",
     "admin_getRecording", "admin_updateRecording", "admin_deleteRecording", "admin_listRecordingViews", "admin_listRecordingShares",
     "admin_addRecordingShares", "admin_removeRecordingShare", "admin_getRecordingQuota", "admin_getRecordingSettings",
-    "admin_putRecordingSettings",
+    "admin_putRecordingSettings", "admin_getRecordingCurriculum",
 )
 
 
@@ -106,6 +106,19 @@ const out = {
   roomSub: [m.roomSub({ id: 'r1' }, [dev({})]), m.roomSub({ id: 'r9', boardCount: 0 }, [dev({})])],
   key: [m.keyLacksPermission({ code: 'forbidden', details: null }),
     m.keyLacksPermission({ code: 'forbidden', details: { operationId: 'admin_listBoards' } })],
+  names: [m.recordingTitle({ displayTitle: 'Matematik · Türev — 12-A · 17 Ekim 10:40', part: 1 }),
+    m.recordingTitle({ displayTitle: 'Türev tekrarı', title: 'Türev tekrarı', part: 2 }),
+    m.scheduleLine({ title: 'Türev tekrarı', scheduleTitle: 'Matematik · Türev — 12-A · 17 Ekim 10:40' }),
+    m.scheduleLine({ title: null, scheduleTitle: 'X' }),
+    m.topicNames({ topics: [{ id: 't1', name: 'Türev' }, { id: 't2', name: 'İntegral' }] }),
+    m.topicNames({ topic: { id: 't1', name: 'Türev' } })],
+  rename: [tryIt(() => m.renameBody('  Türev   tekrarı \n')), tryIt(() => m.renameBody('   ')), tryIt(() => m.renameBody('a'.repeat(121)))],
+  curriculumBody: [tryIt(() => m.curriculumBody('matematik', ['t1', 't1', 't2'])), tryIt(() => m.curriculumBody('', ['t1'])),
+    tryIt(() => m.curriculumBody('matematik', Array.from({ length: 11 }, (_, i) => `t${i}`)))],
+  options: m.curriculumOptions({ programs: [
+    { program: { levelKey: 'tyt', subject: { id: 'matematik', name: 'Matematik' } },
+      units: [{ title: 'Sayılar', topics: [{ topicId: 't1', title: 'Doğal sayılar' }, { topicId: 't0', title: 'Eski', retired: true }] }] },
+    { program: { levelKey: 'ayt', subject: { id: 'fizik', name: 'Fizik' } }, units: [] }] }, 'tyt', 'matematik'),
   micEvents: [m.micEventsText({ disconnects: 2, reconnects: 2, silences: 1, fallbackSeconds: 300, silentSeconds: 0 }),
     m.micEventsText({ disconnects: 0, reconnects: 0, silences: 0, fallbackSeconds: 0, silentSeconds: 0 })],
 };
@@ -126,6 +139,14 @@ def _node_logic(folder: Path) -> dict[str, Any]:
 
 def test_saf_mantik(tmp_path: Path) -> None:
     out = _node_logic(tmp_path)
+    # Kaydın adı, ders ve konu (Akademi README §14 madde 127).
+    assert out["names"] == ["Matematik · Türev — 12-A · 17 Ekim 10:40", "Türev tekrarı · 2. bölüm",
+                            "Matematik · Türev — 12-A · 17 Ekim 10:40", "", "Türev, İntegral", "Türev"]
+    assert out["rename"] == [{"title": "Türev tekrarı"}, {"title": None}, "HATA: Ad en çok 120 karakter olabilir."]
+    assert out["curriculumBody"] == [{"subjectId": "matematik", "topicIds": ["t1", "t2"]}, "HATA: Ders seçin.",
+                                     "HATA: En çok 10 konu seçilebilir."]
+    assert out["options"] == {"subjects": [{"value": "matematik", "label": "Matematik"}],
+                              "topics": [{"value": "t1", "label": "Doğal sayılar", "unit": "Sayılar"}]}
     # Tasarım panosu ve web yönetici ekranıyla aynı sekme adları.
     assert out["tabs"] == ["Tahtalar ve derslikler", "Kayıtlar", "Depolama", "Ayarlar"]
     assert out["states"] == ["Çevrimiçi", "Kayıtta", "Çevrimdışı", "İptal edildi", "Eşleme bekliyor"]
@@ -383,7 +404,9 @@ export default async function ({ document, audit, sleep, api, load }) {
   routes['GET /v1/admin/boards'] = { items: [] };
   routes['GET /v1/admin/rooms'] = { items: [] };
   routes['GET /v1/admin/recordings'] = { items: [recording()], nextCursor: null };
-  routes['PATCH /v1/admin/recordings/rec-1'] = (body) => recording({ hidden: body.hidden });
+  routes['PATCH /v1/admin/recordings/rec-1'] = (body) => recording('title' in body
+    ? { title: body.title, displayTitle: body.title || 'Matematik — 8-A · 16 Ekim 10:40', scheduleTitle: 'Matematik — 8-A · 16 Ekim 10:40' }
+    : { hidden: body.hidden });
   routes['GET /v1/admin/recordings/rec-1'] = () => recording({ viewStats: { eligibleCount: 30, watchedCount: 12, completedCount: 6, downloadCount: 3 } });
   routes['DELETE /v1/admin/recordings/rec-1'] = null;
   let shares = [{ id: 'sh1', kind: 'student', student: { id: 's9', displayName: 'Can Yılmaz', classGroup: { id: 'g2', name: '8-B' } },
@@ -434,6 +457,18 @@ export default async function ({ document, audit, sleep, api, load }) {
   drawer = top(root, '.kit-drawer');
   out.afterHide = drawer?.textContent || '';
 
+  // Adını değiştir (madde 127): boşluk temizliği, başlık özel ad, altında ders programı adı.
+  click(byText(drawer, 'button', 'Adını değiştir'));
+  await sleep(40);
+  const nameDialog = top(root, '.kit-dialog');
+  out.renameDialog = nameDialog?.textContent || '';
+  type(nameDialog.querySelector('input'), '  Tekrar   dersi ');
+  click(byText(nameDialog, 'button', 'Kaydet'));
+  await sleep(80);
+  out.renamePatch = sent.filter((c) => c.method === 'PATCH').map((c) => c.body).pop();
+  drawer = top(root, '.kit-drawer');
+  out.afterRename = drawer?.textContent || '';
+
   // Paylaş: grup seç → gönder.
   click(byText(drawer, 'button', 'Paylaş'));
   await sleep(60);
@@ -476,7 +511,7 @@ def test_kayitlar_gizle_paylas_sil() -> None:
     assert "Yayında" in row and "tahta + kamera" in row
     assert out["a11yList"] == [] and out["a11yDrawer"] == [] and out["a11yShare"] == []
     assert out["hiddenQuery"] == {"hidden": True, "sort": "recent", "limit": 50}
-    assert out["searchLabel"] == "Kayıt ara (ders, öğretmen, derslik)"
+    assert out["searchLabel"] == "Kayıt ara (ad, ders, konu, öğretmen, derslik)"
     assert out["oneLetterCalls"] == 2                      # tek harf sunucuya gitmez
     assert out["searchQuery"] == {"hidden": True, "q": "Zeynep", "sort": "recent", "limit": 50}
     # Ayrıntı admin_getRecording ile tazelenir; paylaşım listesi tazelemede yeniden istenmez.
@@ -487,13 +522,17 @@ def test_kayitlar_gizle_paylas_sil() -> None:
     assert "Derse atanmış gruplar (8-A, 30 öğrenci) ve velileri zaten görür." in out["drawerText"]  # tazelenen kayıttan
     assert out["patch"] == [{"hidden": True}]
     assert "Bu kayıt gizli" in out["afterHide"] and "Göster" in out["afterHide"]
+    assert "Boş bırakırsan ders programındaki ad kullanılır." in out["renameDialog"]
+    assert out["renamePatch"] == {"title": "Tekrar dersi"}
+    assert "Tekrar dersi" in out["afterRename"] and "Ders programı adı" in out["afterRename"]
+    assert "Varsayılana dön" in out["afterRename"]
     assert out["sharePost"] == [{"notify": True, "groupIds": ["g2"]}]
     assert "8-B grubu" in out["sharesAfter"]
     assert out["shareDeleted"] == 1
     assert "indirdiği kopyalar" in out["deleteText"]
     assert out["deleted"] == 1 and out["drawerClosed"] is True and out["rowsAfter"] == 0
     assert ["Kayıt gizlendi · öğrenci ve veliler görmez", "good"] in out["toasts"]
-    assert ["Matematik · 8-A kaydı silindi · indirilmiş kopyalar da kaldırılır", "good"] in out["toasts"]
+    assert ["Tekrar dersi kaydı silindi · indirilmiş kopyalar da kaldırılır", "good"] in out["toasts"]  # yeni adla
 
 
 STORAGE_SETTINGS_UI = PRELUDE + r"""
