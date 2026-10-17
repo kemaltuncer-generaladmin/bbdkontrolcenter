@@ -12,6 +12,10 @@
 //   toplu yapıştırma — `coaching-video-pool.js` (ilk açılışta yüklenir).
 // · Öneriler (`admin_listLibraryProposals`): koçların kuruma önerdiği kişisel
 //   öğeler; onayda kurum kopyası açılır, koça bildirim (`admin_decideLibraryProposal`).
+// · Oynatma listesi (Akademi README §14 madde 124): "Oynatma listesi ekle" → önizleme → "Liste olarak ekle" /
+//   "Videoları ayrı ekle" (`playlist.js`); liste öğesinin ayrıntısında sıralı videolar, "Listeyi yenile",
+//   "Öğrencilere ata" (`playlist-assign.js`). "Liste atamaları" görünümü atanan listeleri ve ilerlemeyi gösterir
+//   (`playlist-progress.js`).
 
 import { button, h } from '../../../ui-kit/kit.js';
 import { alertBox, chipRow, skeletonRows } from '../../../ui-kit/layout.js';
@@ -25,6 +29,7 @@ import {
 } from './coaching-logic.js';
 import { openFile } from './coaching-shared.js';
 import { videoCard } from './coaching-video.js';
+import { summaryLine } from './playlist-logic.js';
 
 const LIBRARY = '/v1/admin/coach-library';
 
@@ -35,19 +40,39 @@ export function tab(app) {
     app.can('admin_listLibraryProposals') && { key: 'proposals', label: 'Koç önerileri' },
     // Video havuzu (Akademi README §14 madde 105): kurum geneli bağlantılar, toplu yapıştırma — ilk açılışta yüklenir.
     app.can('admin_listVideoPool') && { key: 'pool', label: 'Video havuzu' },
+    // Oynatma listesi atamaları ve ilerleme raporu (Akademi README §14 madde 124).
+    app.can('admin_listPlaylistAssignments') && { key: 'assignments', label: 'Liste atamaları' },
   ].filter(Boolean);
   let view = views[0]?.key;
   const chips = chipRow(views, view, (key) => { view = key || view; chips.set(view); paint(); });
   const holder = h('div');
   const create = actionButton(app, 'admin_createInstitutionLibraryItem', 'Kuruma ekle', { variant: 'primary',
     onClick: async () => { if (await itemDialog(app)) items?.reload(); } });
-  node.append(toolbar(chips.node, create), holder);
+  const addList = actionButton(app, 'admin_importPlaylistToInstitutionLibrary', 'Oynatma listesi ekle', { variant: 'ghost',
+    onClick: () => importPlaylist(app, { onChange: () => items?.reload() }) });
+  node.append(toolbar(chips.node, create, addList), holder);
   let items = null;
   let proposals = null;
   let pool = null;
+  let assignments = null;
   function paint() {
-    if (create) create.hidden = view === 'pool';
-    if (view === 'pool') {
+    if (create) create.hidden = view === 'pool' || view === 'assignments';
+    if (addList) addList.hidden = view === 'pool' || view === 'assignments';
+    if (view === 'assignments') {
+      if (!assignments) {
+        const slot = h('div');
+        slot.append(skeletonRows(6, 4));
+        assignments = { node: slot, start: () => {}, destroy: () => {} };
+        import('./playlist-progress.js').then((module) => {
+          const instance = module.assignmentsView(app);
+          slot.replaceChildren(instance.node);
+          Object.assign(assignments, { start: instance.start, destroy: instance.destroy });
+          instance.start();
+        }).catch((failure) => slot.replaceChildren(errorBox(failure)));
+      }
+      holder.replaceChildren(assignments.node);
+      assignments.start();
+    } else if (view === 'pool') {
       if (!pool) {
         const slot = h('div');
         slot.append(skeletonRows(6, 4));
@@ -75,8 +100,29 @@ export function tab(app) {
   return {
     node,
     shown() { if (!started && view) { started = true; paint(); } },
-    destroy() { items?.destroy(); proposals?.destroy(); pool?.destroy(); },
+    destroy() { items?.destroy(); proposals?.destroy(); pool?.destroy(); assignments?.destroy(); },
   };
+}
+
+/**
+ * Kurum kütüphanesine oynatma listesi ekle (`playlist.js`). Liste olarak eklenince öğe açılır; "Bu videoyu ekle"
+ * seçilirse tek video penceresi bağlantıyla açılır; liste zaten ekliyse o öğe açılır.
+ */
+async function importPlaylist(app, { onChange, url = '' } = {}) {
+  const { playlistImportDialog } = await import('./playlist.js');
+  const outcome = await playlistImportDialog(app, { target: 'library', url });
+  if (!outcome) return;
+  if (outcome.single) {
+    if (await itemDialog(app, null, { url: outcome.single.url })) onChange?.();
+    return;
+  }
+  if (outcome.existing) {
+    openItem(app, { id: outcome.existing }, { onChange });
+    return;
+  }
+  onChange?.();
+  const items = outcome.result?.items || [];
+  if (outcome.result?.mode === 'playlist' && items[0]) openItem(app, items[0], { onChange });
 }
 
 const usageText = (item) => {
@@ -89,9 +135,10 @@ const usageText = (item) => {
 const itemColumns = (extra = []) => [
   { key: 'title', label: 'Öğe', width: 'minmax(0, 2fr)', cell: (row) => {
     const cell = h('div', 'ak-cell-stack');
-    cell.append(h('span', '', row.title), h('small', '', [row.video?.channelTitle, row.video?.durationSeconds
-      ? clockText(row.video.durationSeconds) : '', (row.topics || []).map((topic) => topic.name).join(', '),
-    (row.tags || []).map((tag) => `#${tag}`).join(' ')].filter(Boolean).join(' · ')));
+    cell.append(h('span', '', row.title), h('small', '', [row.playlist ? row.playlist.channelTitle : row.video?.channelTitle,
+      row.playlist ? summaryLine(row.playlist) : (row.video?.durationSeconds ? clockText(row.video.durationSeconds) : ''),
+      (row.topics || []).map((topic) => topic.name).join(', '),
+      (row.tags || []).map((tag) => `#${tag}`).join(' ')].filter(Boolean).join(' · ')));
     return cell;
   } },
   { key: 'kind', label: 'Tür', width: '170px', cell: (row) => LIBRARY_KINDS[row.kind] || row.kind },
@@ -159,7 +206,8 @@ async function openItem(app, row, { onChange }) {
   let item = row;
   const render = () => {
     const parts = [];
-    if (item.video) parts.push(videoCard(item.video));
+    const listId = item.kind === 'youtube_playlist' ? item.playlist?.playlistId || item.playlistId : null;
+    if (item.video && !listId) parts.push(videoCard(item.video));
     parts.push(kv([
       ['Tür', LIBRARY_KINDS[item.kind] || item.kind],
       ['Kapsam', item.scope === 'institution' ? 'Kurum kütüphanesi' : `Kişisel (${item.owner?.displayName || '—'})`],
@@ -180,6 +228,16 @@ async function openItem(app, row, { onChange }) {
     ]));
     if (item.status !== 'active') {
       parts.push(alertBox('Video YouTube\'da kaldırıldı ya da özele alındı; atanmış görevlerde oynatılamaz. Yerine yeni video seçin.', 'warn'));
+    }
+    if (listId && app.can('admin_getVideoPlaylist')) {
+      // Oynatma listesi: sıralı videolar, durum rozetleri, "Listeyi yenile", "Öğrencilere ata" (README §14 madde 124).
+      const slot = h('div');
+      parts.push(slot);
+      import('./playlist.js').then(({ playlistPanel }) => {
+        slot.append(playlistPanel(app, { playlistId: listId, onChange: () => onChange?.(),
+          onAssign: (playlist) => import('./playlist-assign.js').then(({ assignPlaylistWizard }) => assignPlaylistWizard(app,
+            { source: { libraryItemId: item.id }, playlist })) }).node);
+      }).catch((failure) => slot.append(errorBox(failure)));
     }
     const tools = h('div', 'ak-row-actions');
     if (item.file) tools.append(button('Dosyayı aç', { variant: 'ghost', onClick: () => openFile(app, item.file, item.title) }));
@@ -230,7 +288,7 @@ async function openItem(app, row, { onChange }) {
 }
 
 /** Kurum öğesi ekle / düzenle. Dönüş: kaydedilen öğe | null. */
-export async function itemDialog(app, item = null) {
+export async function itemDialog(app, item = null, { url: startUrl = '' } = {}) {
   const subjects = await app.lookups.options('subjects', { empty: 'Ders yok' }).catch(() => []);
   const state = { videoId: item?.videoId || null, playlistId: item?.playlistId || null, fileId: item?.fileId || null,
     video: item?.video || null, tasks: item?.tasks || [] };
@@ -240,6 +298,7 @@ export async function itemDialog(app, item = null) {
     input.type = 'url';
     input.placeholder = 'YouTube video ya da liste bağlantısı';
     input.setAttribute('aria-label', 'YouTube bağlantısı');
+    if (!item && startUrl) input.value = startUrl;
     const result = h('div');
     if (state.video) result.append(videoCard(state.video));
     else if (state.playlistId) result.append(h('small', 'ak-muted', `Liste: ${state.playlistId}`));
@@ -273,6 +332,11 @@ export async function itemDialog(app, item = null) {
     const row = h('div', 'ak-toolbar');
     row.append(input, go);
     box.append(row, result);
+    if (!item && draft.kind === 'youtube_playlist' && app.can('admin_importPlaylistToInstitutionLibrary')) {
+      box.append(h('small', 'ak-muted', 'İpucu: “Oynatma listesi ekle” videoları, süreleri ve durumları gösterir; '
+        + 'listeyi sonradan “Listeyi yenile” ile güncellersiniz.'));
+    }
+    if (!item && startUrl && draft.kind !== 'youtube_playlist') setTimeout(() => go.click(), 0);
     return box;
   };
   const uploader = () => {

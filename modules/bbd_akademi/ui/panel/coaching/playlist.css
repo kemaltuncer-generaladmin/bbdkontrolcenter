@@ -1,0 +1,43 @@
+/* BBD Akademi — YouTube oynatma listesi (Akademi README §14 madde 124). Renkler jetonlardan (koyu tema hazır). */
+
+.ak-pl-dialog { max-height: min(88vh, 900px); overflow-y: auto; }
+.ak-pl-status:empty { display: none; }
+.ak-pl-head { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface); }
+.ak-pl-name { font-size: 15px; overflow-wrap: anywhere; }
+.ak-pl-warn { color: var(--warn, #9a6200); }
+.ak-pl-error { color: var(--bad); }
+.ak-pl-error:empty { display: none; }
+.ak-pl-ask { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 10px; background: var(--tint); }
+.ak-pl-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.ak-pl-fields .kit-field-wide { grid-column: 1 / -1; }
+.ak-pl-fields .kit-textarea { width: 100%; }
+
+.ak-pl-select { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ak-pl-range { width: 72px; }
+.ak-pl-num { width: 56px; text-align: center; }
+.ak-pl-sum { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--soft); }
+
+.ak-pl-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px;
+  max-height: 360px; overflow-y: auto; }
+.ak-pl-row { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line-soft); }
+.ak-pl-row:last-child { border-bottom: 0; }
+.ak-pl-row.private, .ak-pl-row.deleted, .ak-pl-row.removed { color: var(--soft); }
+.ak-pl-row.locked { opacity: 0.75; }
+.ak-pl-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.ak-pl-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ak-pl-readonly .kit-check { visibility: hidden; }
+
+.ak-pl-spread { padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+.ak-pl-dates { flex-wrap: wrap; }
+.ak-pl-days { display: flex; flex-wrap: wrap; gap: 6px; }
+.ak-pl-day { padding: 2px 8px; border-radius: 999px; background: var(--tint); font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.ak-pl-dup { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.ak-pl-card { font-size: 14px; }
+
+@media (max-width: 720px) {
+  .ak-pl-fields { grid-template-columns: minmax(0, 1fr); }
+  .ak-pl-sum { margin-left: 0; }
+}
