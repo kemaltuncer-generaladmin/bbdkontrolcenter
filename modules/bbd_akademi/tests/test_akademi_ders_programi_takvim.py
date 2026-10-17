@@ -224,7 +224,7 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.cellMon1 = text(cell('mon|L1'));
   out.cellMon2 = text(cell('mon|L2'));
   out.cellTue1 = text(cell('tue|L1'));
-  out.cellWed1 = text(cell('wed|L1'));
+  out.cellWed1 = text(cell('wed|NEW'));
   out.heads = root.querySelectorAll('.ak-cal-dayhead').map((n) => n.textContent);
   out.banner = text(root.querySelector('.ak-cal-banner'));
   out.summary = text(root.querySelector('.ak-cal-foot'));
@@ -236,8 +236,8 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   out.sharedDialog = Boolean(dialog());
   out.sharedToast = toasts[toasts.length - 1]?.[0];
 
-  // Boş hücre → pencere (şak şak).
-  cell('tue|L2').click();
+  // "+ Ders ekle" → pencere (saat varsayılanı: günün son dersinden 10 dk sonra, 40 dk).
+  cell('tue|NEW').click();
   await sleep(20);
   let box = dialog();
   out.dialogTitle = text(box.querySelector('.kit-dialog-title'));
@@ -287,14 +287,14 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   // Sürükle-bırak: mon1 → tue2 taşı, "Bu hafta ve sonraki haftalar".
   const drop = new Event('drop', { bubbles: true, cancelable: true });
   drop.dataTransfer = { getData: () => 'mon|L1' };
-  cell('tue|L2').dispatchEvent(drop);
+  cell('tue|NEW').dispatchEvent(drop);
   await sleep(30);
   out.moveDialog = Boolean(dialog());
   out.moveToast = toasts[toasts.length - 1]?.[0];
 
   // Ctrl+C / Ctrl+V.
   cell('mon|L2').dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true }));
-  cell('tue|L2').dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+  cell('tue|NEW').dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
   await sleep(30);
 
   // Bu haftayı kopyala → (sonraki hafta hazır seçili) + bir hafta daha.
@@ -318,27 +318,25 @@ export default async function ({ document, audit, sleep, api, load, calls }) {
   root.querySelectorAll('.ak-cal-banner button').find((b) => b.textContent.startsWith('Geçen haftayı kopyala')).click();
   await sleep(40);
 
-  // Ders saatleri paneli: kalıtım notu, canlı önizleme, ders azaltınca onay.
-  buttons(root, 'Ders saatleri')[0].click();
+  // Serbest saat: perşembe "+ Ders ekle" → 17:15–18:40 (bitiş önce girilirse hata).
+  out.hoursButtons = buttons(root, 'Ders saatleri').length;
+  cell('thu|NEW').click();
   await sleep(20);
   box = dialog();
-  out.hoursText = text(box);
-  const field = (label) => box.querySelectorAll('input').find((i) => i.getAttribute('aria-label') === label);
-  const startInput = field('Başlangıç');
-  startInput.value = '15:00';
-  startInput.dispatchEvent(new Event('input'));
-  out.previewAfter = text(box.querySelector('.ak-hours-preview'));
-  out.a11yHours = audit(box);
-  const countInput = field('Günlük ders sayısı');
-  countInput.value = '1';
-  countInput.dispatchEvent(new Event('input'));
+  const timeField = (label) => box.querySelectorAll('input').find((i) => i.getAttribute('aria-label') === label);
+  timeField('Başlangıç saati').value = '17:15';
+  timeField('Bitiş saati').value = '17:00';
+  const subj = box.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Ders');
+  subj.value = 'matematik';
+  subj.dispatchEvent(new Event('change'));
+  box.querySelectorAll('select').find((s) => s.getAttribute('aria-label') === 'Öğretmen').value = 't1';
+  buttons(box, 'Kaydet')[0].click();
+  await sleep(10);
+  out.timeError = text(box.querySelector('.kit-dialog-error'));
+  timeField('Bitiş saati').value = '18:40';
   buttons(box, 'Kaydet')[0].click();
   await sleep(30);
-  out.removalAsk = text(box.querySelector('.kit-dialog-error'));
-  buttons(box, 'Kaldır ve kaydet')[0].click();
-  await sleep(40);
-  out.hoursClosed = !dialog();
-  out.hoursToast = toasts[toasts.length - 1]?.[0];
+  out.freeClosed = !dialog();
   out.rowHeads = root.querySelectorAll('.ak-tt-rowhead').map((n) => n.textContent);
 
   // Geçmiş hafta: salt okunur.
@@ -429,7 +427,7 @@ def test_hucreler(result: dict[str, Any]) -> None:
 
 
 def test_bos_hucreye_sak_sak_giris(result: dict[str, Any]) -> None:
-    assert result["dialogTitle"].startswith("Salı") and "2. ders" in result["dialogTitle"]
+    assert result["dialogTitle"].startswith("Salı") and "Yeni ders" in result["dialogTitle"]
     assert result["firstGroup"] == "Bu sınıfta"
     assert result["radios"] == 0 and result["dateFields"] == 0  # soru yok, tarih seçici yok
     assert result["suggested"] == "t1"  # bu sınıfta Matematik'i Hüseyin Hoca veriyor
@@ -439,7 +437,7 @@ def test_bos_hucreye_sak_sak_giris(result: dict[str, Any]) -> None:
     first = result["puts"][0]
     assert first["week"] == result["weeks"]["W1"]
     assert first["body"] == {"scope": "this_week", "expectedVersion": 4, "cells": [
-        {"dayOfWeek": "tue", "bellSlotId": "L2", "subjectId": "matematik", "teacherId": "t1", "room": "305"}]}
+        {"dayOfWeek": "tue", "bellSlotId": "T0950-1030", "subjectId": "matematik", "teacherId": "t1", "room": "305"}]}
 
 
 def test_ek_sinif_ve_mufredat(result: dict[str, Any]) -> None:
@@ -460,8 +458,8 @@ def test_kaldir_tasi_kopyala(result: dict[str, Any]) -> None:
     assert move["scope"] == "this_week"
     assert move["cells"] == [
         {"dayOfWeek": "mon", "bellSlotId": "L1", "subjectId": None},
-        {"dayOfWeek": "tue", "bellSlotId": "L2", "subjectId": "matematik", "teacherId": "t1", "room": None,
-         "classGroupIds": ["c1", "c2"]},
+        {"dayOfWeek": "tue", "bellSlotId": "L1", "subjectId": "matematik", "teacherId": "t1", "room": None,
+         "classGroupIds": ["c1", "c2"]},  # "+ Ders ekle"ye bırakılan ders aynı saatte (L1) o güne
     ]
     paste = result["puts"][4]["body"]
     assert paste["scope"] == "this_week"
@@ -508,24 +506,20 @@ def test_ders_saatleri_hesap(result: dict[str, Any]) -> None:
                                            {"dayOfWeek": "sun", "startTime": None, "lessonsPerDay": None, "off": True}]}
 
 
-def test_ders_saatleri_paneli(result: dict[str, Any]) -> None:
-    w = result["weeks"]
-    assert "haftasının saatleri kullanılıyor" in result["hoursText"]
-    assert "Önizleme" in result["hoursText"] and "Günlere göre farklı" in result["hoursText"]
-    assert "15:00–15:40" in result["previewAfter"] and "15:50–16:30" in result["previewAfter"]
-    assert result["a11yHours"] == []
-    first, second = result["hourPuts"]
-    assert first["week"] == w["W2"] and first["body"]["expectedVersion"] == 0
-    assert first["body"]["settings"]["startTime"] == "15:00" and first["body"]["settings"]["lessonsPerDay"] == 1
-    assert "confirmRemovals" not in first["body"]
-    assert "3 ders 2. saatte (8-A)" in result["removalAsk"]
-    assert second["body"]["confirmRemovals"] is True
-    assert result["hoursClosed"] is True and result["hoursToast"].startswith("Ders saatleri kaydedildi. 3 ders kaldırıldı.")
+def test_serbest_saatli_ders(result: dict[str, Any]) -> None:
+    """Kullanıcı 17.10: "her dersin saati free eklenecek" — güne ders eklerken saat aralığı girilir."""
+    assert result["hoursButtons"] == 0
+    assert result["timeError"] == "Bitiş saati başlangıçtan sonra olmalı."
+    assert result["freeClosed"] is True
+    last = result["puts"][-2] if result["puts"][-1]["week"] != result["weeks"]["W2"] else result["puts"][-1]
+    assert last["week"] == result["weeks"]["W2"]
+    assert last["body"]["cells"] == [{"dayOfWeek": "thu", "bellSlotId": "T1715-1840", "subjectId": "matematik",
+                                      "teacherId": "t1", "room": "204"}]  # derslik bu sınıftaki matematikten önerilir
 
 
 def test_satirlar_ders_saatlerinden_zil_baglantisi_yok(result: dict[str, Any]) -> None:
     heads = result["rowHeads"]
-    assert heads[0] == "1. ders09:00–09:40" and heads[1].startswith("Teneffüs") and heads[2] == "2. ders09:50–10:30"
+    assert heads[0] == "1." and all(not head.startswith("Teneffüs") for head in heads)
     src = (ROOT / "modules" / "bbd_akademi" / "ui" / "panel" / "lessons" / "timetable-calendar.js").read_text("utf-8")
     assert "bellsStale" not in src and "Zil saatleri" not in src and "zil verisi" not in src
     shell = (ROOT / "modules" / "bbd_akademi" / "ui" / "panel" / "lessons" / "timetable.js").read_text("utf-8")

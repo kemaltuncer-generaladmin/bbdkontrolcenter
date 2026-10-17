@@ -39,7 +39,7 @@ import { runDocument } from '../documents.js';
 import { classTimetableDoc, teacherTimetableDoc } from '../documents-logic.js';
 import { fetchPrograms, fillProgramSelect } from '../shared/curriculum-picker.js';
 import { rolloverCopyDialog } from './timetable-copy.js';
-import { PUT_HOURS, openHoursPanel, periodsAsSlots, savedText } from './timetable-hours.js';
+import { PUT_HOURS, openHoursPanel, savedText } from './timetable-hours.js';
 import {
   DAY_KEYS, cellKey, conflictText, slotLayout, slotTime, subjectHue, subjectIndex, subjectSelect, teacherOptions,
 } from './timetable-shared.js';
@@ -90,6 +90,62 @@ export function weekRelation(monday, today = todayIst()) {
   if (diff === -1) return 'Geçen hafta';
   if (diff === 1) return 'Gelecek hafta';
   return diff > 0 ? `${diff} hafta sonra` : `${-diff} hafta önce`;
+}
+
+// Serbest saatli ders (kullanıcı 17.10 "her dersin saati free eklenecek"): hücre anahtarı dersin kendi saat
+// aralığıdır `T<HHMM>-<HHMM>` (Akademi 4490119d). Her günün sütunu o günün derslerini saat sırasıyla gösterir,
+// sonunda "+ Ders ekle"; ders penceresinde başlangıç–bitiş saati girilir.
+export const NEW_SLOT = 'NEW';
+const FREE_RE = /^T([01]\d|2[0-3])([0-5]\d)-([01]\d|2[0-3])([0-5]\d)$/;
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** "10:00", "11:20" → "T1000-1120". */
+export const freeKey = (start, end) => `T${start.replace(':', '')}-${end.replace(':', '')}`;
+
+/** "T1000-1120" → ["10:00", "11:20"]; değilse null. */
+export function freeTimes(key) {
+  const m = FREE_RE.exec(key || '');
+  return m ? [`${m[1]}:${m[2]}`, `${m[3]}:${m[4]}`] : null;
+}
+
+/** "SS:DD" + dakika (gün içinde kalır). */
+export function plusMinutes(hhmm, minutes) {
+  if (!HHMM_RE.test(hhmm || '')) return '';
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const total = Math.min(23 * 60 + 59, hh * 60 + mm + minutes);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
+/** Saat aralığı sorunu ('' = geçerli). */
+export function timeProblem(start, end) {
+  if (!HHMM_RE.test(start || '')) return 'Başlangıç saatini girin (SS:DD).';
+  if (!HHMM_RE.test(end || '')) return 'Bitiş saatini girin (SS:DD).';
+  if (end <= start) return 'Bitiş saati başlangıçtan sonra olmalı.';
+  return '';
+}
+
+/** Hafta yanıtı → takvim dilimleri: her gün dersleri saat sırasıyla + sonda "+ Ders ekle" (`NEW_SLOT`). */
+export function freeSlots(data) {
+  const periods = new Map((data?.hours?.periods || []).map((item) => [`${item.dayOfWeek}|${item.id}`, item]));
+  const out = [];
+  for (const day of DAY_KEYS) {
+    const seen = new Set();
+    const list = [];
+    for (const entry of [...(data?.entries || []), ...(data?.sharedEntries || [])]) {
+      if (entry.dayOfWeek !== day || seen.has(entry.bellSlotId)) continue;
+      seen.add(entry.bellSlotId);
+      const period = periods.get(`${day}|${entry.bellSlotId}`);
+      const times = freeTimes(entry.bellSlotId) || (period ? [period.startTime, period.endTime] : null);
+      if (!times) continue;
+      list.push({ id: entry.bellSlotId, dayOfWeek: day, startTime: times[0], endTime: times[1], kind: 'lesson',
+        label: `${times[0]}–${times[1]}` });
+    }
+    list.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.endTime.localeCompare(b.endTime));
+    list.forEach((slot, index) => { slot.order = index; out.push(slot); });
+    out.push({ id: NEW_SLOT, dayOfWeek: day, order: 999, startTime: '', endTime: '', kind: 'lesson',
+      label: 'Ders ekle', isNew: true });
+  }
+  return out;
 }
 
 /** Sunucu hücresi → yazma hücresi (taşıma / kopyalama / yapıştırma). Ek sınıf yoksa `classGroupIds` gönderilmez. */
@@ -233,8 +289,6 @@ export function calendarTab(app, { openView } = {}) {
   nav.setAttribute('role', 'group');
   nav.setAttribute('aria-label', 'Hafta');
   nav.append(prev, thisWeek, next);
-  const hoursButton = button('Ders saatleri', { variant: 'ghost', onClick: () => editHours() });
-  hoursButton.title = 'Bu haftanın ders başlangıcı, ders / teneffüs süresi, günlük ders sayısı, öğle arası';
   const title = h('div', 'ak-cal-title');
   const titleText = h('b', 'ak-cal-week', weekLabel(s.week));
   const titleRel = h('span', 'ak-cal-rel', weekRelation(s.week));
@@ -261,7 +315,7 @@ export function calendarTab(app, { openView } = {}) {
     ] : []),
   ], { variant: 'ghost' });
   const head = h('div', 'ak-cal-head');
-  head.append(nav, hoursButton, title, h('span', 'kit-spacer'), classWrap, copyButton, more);
+  head.append(nav, title, h('span', 'kit-spacer'), classWrap, copyButton, more);
   node.append(head);
 
   const content = h('div', 'ak-stack');
@@ -342,7 +396,7 @@ export function calendarTab(app, { openView } = {}) {
   /** Hafta yanıtı → takvim düzeni (satırlar haftanın ders saatleri). */
   function setData(data) {
     s.data = data;
-    s.layout = slotLayout(data?.hours ? periodsAsSlots(data.hours.periods) : (s.bells?.slots || []));
+    s.layout = slotLayout(freeSlots(data));
   }
 
   const weekPath = (week = s.week) => `/v1/admin/class-groups/${s.classGroupId}/timetable/weeks/${week}`;
@@ -482,7 +536,7 @@ export function calendarTab(app, { openView } = {}) {
     const stop = s.focus || firstKey();
     for (const row of rows) {
       const rowHead = h('div', `ak-tt-rowhead${row.isBreak ? ' ak-tt-is-break' : ''}${row.ref?.lunch ? ' ak-cal-is-lunch' : ''}`);
-      rowHead.append(h('b', '', row.label), h('small', '', slotTime(row.ref)));
+      rowHead.append(h('b', '', `${row.index + 1}.`));
       grid.append(rowHead);
       for (const dayKey of dayKeys) grid.append(cellNode(dayKey, row, { own, shared, conflicts, stop }));
     }
@@ -512,6 +566,7 @@ export function calendarTab(app, { openView } = {}) {
       return pause;
     }
     const key = cellKey(dayKey, slot.id);
+    if (slot.isNew) return newCellNode(dayKey, key, stop);
     const entry = own.get(key) || null;
     const common = entry ? null : shared.get(key) || null;
     const shown = entry || common;
@@ -584,6 +639,38 @@ export function calendarTab(app, { openView } = {}) {
     return cell;
   }
 
+  function newCellNode(dayKey, key, stop) {
+    const locked = lockReason(dayKey);
+    const day = dayOf(dayKey);
+    if (locked || day?.holiday) {
+      const none = h('div', 'ak-tt-none ak-cal-cell ak-cal-is-locked');
+      none.dataset.key = key;
+      if (day?.holiday) none.append(h('span', 'ak-cal-off', 'Tatil — ders yok'));
+      return none;
+    }
+    const cell = h('button', `ak-tt-cell ak-cal-cell ak-cal-new${s.focus === key ? ' on' : ''}`);
+    cell.type = 'button';
+    cell.dataset.key = key;
+    cell.tabIndex = key === stop ? 0 : -1;
+    cell.append(h('span', 'ak-tt-add', '+ Ders ekle'));
+    cell.setAttribute('aria-label', `${DAY_LABEL[dayKey]} ${fmtDate(dateOf(dayKey))}: ders ekle (saatini siz girersiniz)`);
+    cell.addEventListener('click', () => activate(key));
+    cell.addEventListener('focus', () => { s.focus = key; });
+    cell.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = event.ctrlKey || event.altKey ? 'copy' : 'move';
+      cell.classList.add('ak-cal-over');
+    });
+    cell.addEventListener('dragleave', () => cell.classList.remove('ak-cal-over'));
+    cell.addEventListener('drop', (event) => {
+      event.preventDefault();
+      cell.classList.remove('ak-cal-over');
+      const from = event.dataTransfer?.getData('text/plain');
+      if (from) moveCell(from, key, { copy: event.ctrlKey || event.altKey || event.metaKey });
+    });
+    return cell;
+  }
+
   function paintFoot() {
     foot.replaceChildren();
     const counts = new Map();
@@ -601,7 +688,8 @@ export function calendarTab(app, { openView } = {}) {
       }
     }
     const hint = h('p', 'ak-cal-hint ak-muted', weekEditable()
-      ? 'Değişiklik yalnız bu haftayı etkiler. Hücreye tıklayın (ya da Enter) · sürükleyerek taşıyın, Ctrl ile '
+      ? 'Değişiklik yalnız bu haftayı etkiler. Güne ders eklemek için “+ Ders ekle” — saat aralığını siz girersiniz. '
+        + 'Derse tıklayıp saatini değiştirin · başka güne sürükleyin (aynı saat), Ctrl ile '
         + 'kopyalayın · Delete kaldırır · Ctrl+C / Ctrl+V · PageUp / PageDown hafta değiştirir.'
       : 'PageUp / PageDown hafta değiştirir.');
     const by = s.data?.updatedAt
@@ -764,7 +852,8 @@ export function calendarTab(app, { openView } = {}) {
     const { dayKey, slot, row } = place;
     const key = cellKey(dayKey, slot.id);
     dialogSeq += 1;
-    const titleLine = `${DAY_LABEL[dayKey]} ${fmtDate(dateOf(dayKey)).slice(0, 5)} · ${row.label} (${slotTime(slot)})`;
+    const titleLine = `${DAY_LABEL[dayKey]} ${fmtDate(dateOf(dayKey)).slice(0, 5)} · `
+      + `${slot.isNew ? 'Yeni ders' : slotTime(slot)}`;
     const { overlay, card } = dialogShell(app, titleLine, `${className()} · ${weekLabel(s.week)}`);
     const entries = s.data?.entries || [];
     const field = (label, control, { required = false } = {}) => {
@@ -774,6 +863,25 @@ export function calendarTab(app, { openView } = {}) {
       wrap.append(text, control);
       return wrap;
     };
+    // Saat aralığı: yeni derste günün son dersinin 10 dk sonrası, 40 dk varsayılan.
+    const dayLessons = s.layout.lessonsOf(dayKey).map((item) => item.slot).filter((item) => !item.isNew);
+    const lastEnd = dayLessons.length ? dayLessons[dayLessons.length - 1].endTime : '';
+    const startDefault = slot.isNew ? plusMinutes(lastEnd, 10) : slot.startTime;
+    const timeInput = (value, label) => {
+      const input = h('input', 'kit-input ak-cal-time');
+      input.type = 'time';
+      input.step = 300;
+      input.value = value || '';
+      input.setAttribute('aria-label', label);
+      return input;
+    };
+    const startIn = timeInput(startDefault, 'Başlangıç saati');
+    const endIn = timeInput(slot.isNew ? plusMinutes(startDefault, 40) : slot.endTime, 'Bitiş saati');
+    startIn.addEventListener('change', () => {
+      error.textContent = '';
+      if (startIn.value && (!endIn.value || endIn.value <= startIn.value)) endIn.value = plusMinutes(startIn.value, 40);
+    });
+    endIn.addEventListener('change', () => { error.textContent = ''; });
     const subject = subjectSelect(s.subjects, entry?.subject?.id || '', { gradeLevel: classGrade(),
       extra: entry?.subject, empty: 'Ders seçin', label: 'Ders' });
     const frequent = frequentSubjects(entries).filter((id) => s.subjectsById.has(id));
@@ -883,7 +991,10 @@ export function calendarTab(app, { openView } = {}) {
     loadPrograms();
 
     const form = h('div', 'ak-cal-form');
-    form.append(field('Ders', subject, { required: true }), field('Öğretmen', teacher.node, { required: true }),
+    const timeRow = h('div', 'ak-cal-timerow');
+    timeRow.style.cssText = 'display:flex;gap:12px';
+    timeRow.append(field('Başlangıç', startIn, { required: true }), field('Bitiş', endIn, { required: true }));
+    form.append(timeRow, field('Ders', subject, { required: true }), field('Öğretmen', teacher.node, { required: true }),
       field('Derslik', room), details);
     const error = h('div', 'kit-dialog-error');
     error.setAttribute('role', 'alert');
@@ -901,11 +1012,16 @@ export function calendarTab(app, { openView } = {}) {
     const remove = entry ? button('Dersi kaldır', { variant: 'danger', onClick: () => submit({ clear: true }) }) : null;
     async function submit({ clear = false } = {}) {
       error.textContent = '';
+      const timeIssue = clear ? '' : timeProblem(startIn.value, endIn.value);
+      if (timeIssue) { error.textContent = timeIssue; startIn.focus(); return; }
       if (!clear && !subject.value) { error.textContent = 'Ders seçin.'; subject.focus(); return; }
       if (!clear && !teacher.value) { error.textContent = 'Öğretmen seçin.'; teacher.node.focus(); return; }
+      // Saat değişmediyse hücre anahtarı aynı kalır (eski ders sırası anahtarlı satırlar bozulmaz).
+      const same = !slot.isNew && startIn.value === slot.startTime && endIn.value === slot.endTime;
+      const newKey = clear || same ? slot.id : freeKey(startIn.value, endIn.value);
       const cell = clear ? clearCell({ dayOfWeek: dayKey, bellSlotId: slot.id }) : {
         dayOfWeek: dayKey,
-        bellSlotId: slot.id,
+        bellSlotId: newKey,
         subjectId: subject.value,
         teacherId: teacher.value,
         room: room.value.trim() || null,
@@ -915,8 +1031,11 @@ export function calendarTab(app, { openView } = {}) {
       save.disabled = true;
       if (remove) remove.disabled = true;
       save.textContent = 'Kaydediliyor…';
+      // Saat değişti: eski saatteki ders bu haftadan kalkar, yenisi yazılır (tek istek).
+      const cells = !clear && !slot.isNew && newKey !== slot.id
+        ? [clearCell({ dayOfWeek: dayKey, bellSlotId: slot.id }), cell] : [cell];
       try {
-        await saveCells([cell]);
+        await saveCells(cells);
         if (!clear) s.memory.set(cell.subjectId, { teacherId: cell.teacherId, room: cell.room || '' });
         close(true);
         app.toast(clear ? 'Ders bu haftadan kaldırıldı.' : 'Kaydedildi (bu hafta).', 'good');
@@ -973,11 +1092,13 @@ export function calendarTab(app, { openView } = {}) {
     if (!from || !to || !entry) return;
     const locked = lockReason(to.dayKey) || (copy ? '' : lockReason(from.dayKey));
     if (locked) { app.toast(locked, 'info'); return; }
-    const cells = [cellOf(entry, { dayOfWeek: to.dayKey, bellSlotId: to.slot.id }, s.classGroupId)];
+    const target = to.slot.isNew ? from.slot.id : to.slot.id;  // "+ Ders ekle"ye bırakılan ders aynı saatte gider
+    if (to.dayKey === from.dayKey && target === from.slot.id) return;
+    const cells = [cellOf(entry, { dayOfWeek: to.dayKey, bellSlotId: target }, s.classGroupId)];
     if (!copy) cells.unshift(clearCell({ dayOfWeek: from.dayKey, bellSlotId: from.slot.id }));
     s.focus = toKey;
     await run(() => saveCells(cells), `${subjectName(entry)} ${copy ? 'kopyalandı' : 'taşındı'}: `
-      + `${DAY_LABEL[to.dayKey]} ${to.row.label}.`);
+      + `${DAY_LABEL[to.dayKey]} ${slotTime(to.slot.isNew ? from.slot : to.slot)}.`);
     focusCell(toKey);
   }
 
@@ -986,7 +1107,8 @@ export function calendarTab(app, { openView } = {}) {
     if (!place || !s.clip) return;
     const locked = lockReason(place.dayKey);
     if (locked) { app.toast(locked, 'info'); return; }
-    await run(() => saveCells([cellOf(s.clip, { dayOfWeek: place.dayKey, bellSlotId: place.slot.id },
+    const target = place.slot.isNew ? s.clip.bellSlotId : place.slot.id;
+    await run(() => saveCells([cellOf(s.clip, { dayOfWeek: place.dayKey, bellSlotId: target },
       s.classGroupId)]), `${subjectName(s.clip)} yapıştırıldı.`);
     focusCell(key);
   }
@@ -1114,7 +1236,7 @@ export function calendarTab(app, { openView } = {}) {
   // ---------------------------------------------------------- belgeler
   function classDocument() {
     if (!s.data) { app.toast('Önce bir sınıf seçin.', 'warn'); return; }
-    const bellSlots = s.data.hours ? periodsAsSlots(s.data.hours.periods) : (s.bells?.slots || []);
+    const bellSlots = freeSlots(s.data).filter((slot) => !slot.isNew);
     runDocument(app, async () => classTimetableDoc({ classGroup: s.data.classGroup, bellSlots,
       entries: s.data.entries || [], validFrom: s.data.weekStart, validTo: s.data.weekEnd }),
     { title: 'Sınıf ders programı' });
