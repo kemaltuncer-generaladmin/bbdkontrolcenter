@@ -18,7 +18,11 @@ name: "Ders Takvimi"
 description: "Zil sistemine girilen haftalık saatlerin ve grupların salt okunur görünümü."
 version: 0.3.0
 sdk: ">=0.1,<1.0"
-enabled: true
+# KAPALI — 17.10.2026 (iş 69, kullanıcı: "ders programı girme kısmı çok karışık"). BBD menüsündeki
+# "Ders Takvimi" adı, BBD Akademi › Ders programı (hafta takvimi) ile karışıyordu; içeriği (haftalık zil
+# saatleri, salt okunur) Zil Sistemi ekranının kendisidir. Tek yerde toplandı: zil saatleri Zil Sistemi'nde,
+# ders programı BBD Akademi'de. Kod ve göç yerinde durur; `enabled: true` geri açar.
+enabled: false
 
 # Alan servisi ve veri sınıfı (ADR 0033). Katalog: docs/architecture/domains.yaml
 domain: bell
