@@ -699,6 +699,62 @@ def test_video_havuzu_listeler_ve_soru(report: dict[str, Any]) -> None:
     assert report["choiceResult"] == {"playlistUrl": "https://www.youtube.com/watch?v=vid00000002&list=PLturev0000001"}
 
 
+LIBRARY = FAKES + r"""
+export default async function ({ load, sleep }) {
+  const out = {};
+  const lib = await load('./panels/bbd_akademi/coaching/coaching-library.js');
+  const ITEMROW = { id: 'L1', kind: 'youtube_playlist', scope: 'institution', title: 'Türev listesi', playlistId: 'PLturev0000001',
+    playlist: { ...PLAYLIST, videos: undefined, removedVideos: undefined }, video: PLAYLIST.videos[0].video, topics: [], tags: [],
+    exams: [], gradeLevels: [], status: 'active', proposal: { status: 'none' },
+    usage: { assignedCount: 2, avgWatchPercent: null, checkpointAccuracyPercent: null }, createdAt: '2026-10-17T09:00:00Z' };
+  const app = fakeApp({
+    'GET /v1/admin/coach-library': { items: [ITEMROW], nextCursor: null },
+    'GET /v1/admin/coach-library/L1': ITEMROW,
+    'GET /v1/admin/video-playlists/PLturev0000001': PLAYLIST,
+    'GET /v1/admin/playlist-assignments': { items: [{ id: 'A1', title: 'Türev', mode: 'spread', videoCount: 4, studentCount: 24,
+      taskCount: 2, firstDate: '2026-10-19', lastDate: '2026-10-20', requireOrder: true, createdByName: 'Hakan',
+      createdAt: '2026-10-17T09:00:00Z', playlist: { title: 'Türev', channelTitle: 'Hoca' } }], nextCursor: null },
+  });
+  const view = lib.tab(app);
+  document.body.append(view.node);
+  view.shown();
+  await sleep(30);
+  out.toolbar = view.node.querySelectorAll('button').map(text);
+  out.row = text(view.node.querySelector('.kit-table'));
+  // Satır → çekmece: liste paneli
+  const row = view.node.querySelectorAll('.kit-table [role="row"]').find((node) => text(node).includes('Türev listesi'));
+  click(row);
+  await sleep(60);
+  const drawer = document.body.querySelectorAll('.kit-drawer').pop();
+  out.drawer = text(drawer);
+  document.body.querySelectorAll('.kit-overlay').forEach((node) => node.remove());
+  // Liste atamaları çipi
+  click(byText(view.node, 'button', 'Liste atamaları'));
+  await sleep(40);
+  out.assignments = text(view.node);
+  out.addHidden = byText(view.node, 'button', 'Oynatma listesi ekle')?.hidden;
+  view.destroy();
+  view.node.remove();
+  return out;
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def library() -> dict[str, Any]:
+    return _run(LIBRARY)
+
+
+def test_kutuphane_liste_ogesi_ve_atamalar(library: dict[str, Any]) -> None:
+    assert "Oynatma listesi ekle" in library["toolbar"]
+    assert "Liste atamaları" in library["toolbar"]
+    assert "Hoca · 4 video · 1 sa 40 dk" in library["row"]
+    assert "Listeyi yenile" in library["drawer"] and "Öğrencilere ata" in library["drawer"]
+    assert "1. Türev 1" in library["drawer"] and "Özel video" in library["drawer"]
+    assert "Güne yay · 4 video · 24 öğrenci · 19 Eki – 20 Eki · Sırayla" in library["assignments"]
+    assert library["addHidden"] is True
+
+
 # --------------------------------------------------------------------------- vekil
 
 def test_vekil_izin_listesi_ve_km_izni() -> None:
