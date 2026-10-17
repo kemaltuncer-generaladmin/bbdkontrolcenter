@@ -17,7 +17,7 @@ ENROLLMENT_CODE_LENGTH = 8
 OFFLINE_MODES = ("local", "allowed", "denied")
 COMMAND_TYPES = ("message", "refresh_inventory", "flush_usage", "reboot",
                  "self_update", "diagnostics")
-END_REASONS = ("admin", "expired", "logout", "revoked", "blocked", "outside_hours")
+END_REASONS = ("admin", "expired", "logout", "revoked", "blocked", "outside_hours", "replaced")
 
 MAX_USAGE_WINDOWS = 21
 MIN_DAILY_LIMIT_SECONDS = 60

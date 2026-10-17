@@ -1177,30 +1177,35 @@ async def test_tablet_error_codes(service: TabletService, canteen: Any, clock: A
     canteen.down = False
 
     first = await tablet_routes.login(right, authorization=auth)
-    with pytest.raises(HTTPException) as elsewhere:
-        await tablet_routes.login(tablet_routes.LoginBody(deviceId=other["id"],
-                                                          studentCode="123456"),
-                                  authorization=f"Bearer {other_token}")
-    assert expect_code(elsewhere, "SESSION_CONFLICT", 409)["message"] == \
-        "Hesabın başka bir tablette açık."
-    with pytest.raises(HTTPException) as busy:
-        await tablet_routes.login(tablet_routes.LoginBody(deviceId=device["id"],
-                                                          studentCode="654321"),
-                                  authorization=auth)
-    assert expect_code(busy, "SESSION_CONFLICT", 409)["message"] == \
-        "Bu tablette açık bir oturum var."
     with pytest.raises(HTTPException) as logout_foreign:
         await tablet_routes.logout(tablet_routes.LogoutBody(deviceId=other["id"],
                                                             sessionId=first["sessionId"]),
                                    authorization=f"Bearer {first['sessionToken']}")
     expect_code(logout_foreign, "FORBIDDEN_DEVICE", 403)
 
-    # A dead tablet's session goes stale; the student may move to another one.
-    clock.advance(minutes=31)
+    async def ended(session_id: str) -> tuple[str, str | None]:
+        row = await service.store.fetch_one(
+            f"SELECT state, end_reason FROM {service.sessions} WHERE id=?", (session_id,))
+        return row["state"], row["end_reason"]
+
+    # Yeni giriş önceki oturumu kapatır: bağlantısı kopan ya da açık kalan tablet
+    # girişi engellemez; eski tablet bir sonraki bağlantıda `replaced` alır.
     moved = await tablet_routes.login(tablet_routes.LoginBody(deviceId=other["id"],
                                                               studentCode="123456"),
                                       authorization=f"Bearer {other_token}")
     assert moved["student"]["id"] == "opaque-A"
+    assert await ended(first["sessionId"]) == ("expired", "replaced")
+    # Aynı tablette kapanmamış oturum da yeni girişle kapanır.
+    again = await tablet_routes.login(tablet_routes.LoginBody(deviceId=other["id"],
+                                                              studentCode="654321"),
+                                      authorization=f"Bearer {other_token}")
+    assert again["sessionId"] != moved["sessionId"]
+    assert await ended(moved["sessionId"]) == ("expired", "replaced")
+    # Geç gelen çıkış kapanmış oturum için de kabul edilir.
+    late = await tablet_routes.logout(tablet_routes.LogoutBody(deviceId=device["id"],
+                                                               sessionId=first["sessionId"]),
+                                      authorization=f"Bearer {first['sessionToken']}")
+    assert late["ok"] is True
 
 
 def test_sync_body_accepts_empty_and_rejects_bad_values() -> None:

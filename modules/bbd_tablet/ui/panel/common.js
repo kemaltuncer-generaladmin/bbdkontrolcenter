@@ -172,6 +172,7 @@ export const END_REASONS = {
   revoked: 'Eşleme kaldırıldı',
   blocked: 'Öğrenci kısıtlandı',
   outside_hours: 'Kullanım saati bitti',
+  replaced: 'Yeni girişle kapatıldı',
 };
 
 export const COMMAND_LABELS = {

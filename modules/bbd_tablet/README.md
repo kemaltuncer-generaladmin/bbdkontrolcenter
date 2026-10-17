@@ -38,7 +38,7 @@ Geçmiş saklama: `history_retention_days` günden eski bitmiş oturumlar, kulla
 | `POST /devices/{id}/unpair` | Cihaz | Tabletten eşlemeyi kaldır (tekrarlanabilir) |
 | `GET /devices/{id}/policy`, `POST /devices/{id}/heartbeat` | Cihaz | Eski APK'lar için |
 
-Makine tarafından okunan hatalar `{"detail": {"code", "message", ...}}` biçimindedir: `DEVICE_REVOKED`, `DEVICE_AUTH_INVALID`, `FORBIDDEN_DEVICE`, `INVALID_STUDENT_CODE`, `LOGIN_RATE_LIMITED` (+`retryAfterSeconds`), `SESSION_CONFLICT`, `STUDENT_BLOCKED` (+`until`), `OUTSIDE_USAGE_HOURS` (+`nextWindowStart`), `DEVICE_LOCKED`, `NO_PROFILE`, `CANTEEN_UNAVAILABLE`, `DOWNLOAD_NOT_GRANTED` (409), `RELEASE_GONE` (410).
+Makine tarafından okunan hatalar `{"detail": {"code", "message", ...}}` biçimindedir: `DEVICE_REVOKED`, `DEVICE_AUTH_INVALID`, `FORBIDDEN_DEVICE`, `INVALID_STUDENT_CODE`, `LOGIN_RATE_LIMITED` (+`retryAfterSeconds`), `SESSION_CONFLICT` (yalnız aynı anda iki giriş yarışırsa; yeni giriş öğrencinin ve tabletin önceki açık oturumunu `endReason: replaced` ile kapatır), `STUDENT_BLOCKED` (+`until`), `OUTSIDE_USAGE_HOURS` (+`nextWindowStart`), `DEVICE_LOCKED`, `NO_PROFILE`, `CANTEEN_UNAVAILABLE`, `DOWNLOAD_NOT_GRANTED` (409), `RELEASE_GONE` (410).
 
 Giriş kilidi: bir tablette 5 dakikada 5 hatalı şifre o tabletin girişini 5 dakika kilitler (`LOGIN_RATE_LIMITED`). Kilit oluşunca ve panelden kaldırılınca `deviceState.version` artar ve `deviceState.loginLockedUntil` (ofsetli ISO ya da `null`) taşır; kilidin kendiliğinden dolması sürümü artırmaz.
 

@@ -1870,13 +1870,12 @@ class TabletService:
             f"SELECT id, student_id, device_id, last_heartbeat_at FROM {self.sessions} "
             "WHERE state='active' AND (student_id=? OR device_id=?)", (student_id, device_id),
         )
+        # Yeni giriş öğrencinin ve bu tabletin önceki açık oturumunu kapatır: bağlantı
+        # kopukken kapanıp çıkışı yolda kalan oturum girişi engellemez. Başka tablet
+        # bir sonraki bağlantısında `replaced` alır; geç gelen çıkış yine işlenir.
         for row in rows:
-            if self._is_stale(row, current):
-                await self._end_active_sessions("id", row["id"], reason="expired")
-            elif row["device_id"] == device_id:
-                raise TabletError("SESSION_CONFLICT", "Bu tablette açık bir oturum var.")
-            else:
-                raise TabletError("SESSION_CONFLICT", "Hesabın başka bir tablette açık.")
+            reason = "expired" if self._is_stale(row, current) else "replaced"
+            await self._end_active_sessions("id", row["id"], reason=reason)
 
     @staticmethod
     def _rate_limited(blocked_until: datetime, current: datetime) -> TabletError:
