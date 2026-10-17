@@ -45,6 +45,11 @@ from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- ders programı hafta takvimi (Akademi §14 125, iş 69)
+    "admin_putTimetable":
+        "KM 'Ders programı' hafta takvimidir: hücre hücre 'yalnız bu hafta / sonrakiler' admin_putTimetableWeekCells ile yazılır. Bütün haftayı geçerlilik aralığıyla yazan eski uç web / mobil yönetici programı (ve eski istemciler) içindir; KM'de geçerlilik aralığı kavramı gösterilmez (Akademi §14 125).",
+    "admin_previewTimetable":
+        "Hafta takviminde çakışma kayıtta anında (409 timetable_conflict, hücrede) ve haftanın okunuşunda (TimetableWeek.conflicts) gösterilir; taslaksız tek hücre kaydında ayrı önizleme gerekmez. Uç web / mobil yönetici programı içindir (Akademi §14 125).",
     # --- hata defteri gelen kutusu (Akademi §14 104)
     "admin_markMistakeInboxSeen":
         "Okundu işareti yalnız sorumlu öğretmenin kendi gelen kutusundadır (mobil / web 'Tümünü okundu say'); KM'nin bakması kaydı okundu yapmaz (Akademi §14 104).",
