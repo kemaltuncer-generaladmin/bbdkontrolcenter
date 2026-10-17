@@ -141,3 +141,9 @@
 /* Senkron kartı — iki uç yan yana, dar ekranda alt alta. */
 .ak-set-sync { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
 .ak-set-sync > .kit-card { min-width: 0; }
+
+/* Entegrasyonlar › YouTube (Akademi README §14 madde 124) */
+.ak-yt-state { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ak-yt-key { flex: 1; min-width: 220px; max-width: 420px; }
+.ak-set .ak-pl-error { color: var(--bad); }
+.ak-set .ak-pl-error:empty { display: none; }

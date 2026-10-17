@@ -3,7 +3,8 @@
 // Herhangi bir YouTube bağlantısı sunucuda çözülür (`admin_resolveVideoLink`;
 // API anahtarı istemciye gitmez): başlık, kanal, süre, gömülebilirlik. Gömülemeyen
 // / yaş sınırlı video uyarıyla gelir ("yalnız YouTube'da açılır"). Oynatma listesi
-// (`list=`) sayfalı çözülür (`admin_resolvePlaylist`, sayfa 50) ve videolar seçilir.
+// (`list=`) sayfalı çözülür (`admin_resolvePlaylist`, sayfa 50) ve videolar seçilir; bütün liste "Liste görevi
+// olarak ata…" ile liste atamasına gider (Akademi README §14 madde 124: tüm / seçili / güne yay, sınıf / grup).
 // Kurum / kişisel kütüphaneden de seçilebilir (`libraryItemId`). Kesit (başlangıç
 // – bitiş), bölüm işaretleri ve 0–3 durak sorusu eklenir.
 //
@@ -160,6 +161,14 @@ function playlistPane(app, playlistId, add) {
       const page = await app.api.post('/v1/admin/videos/resolve-playlist', { playlistId, cursor });
       if (first) {
         head.append(h('b', '', `${page.title} · ${page.itemCount} video`), requireOrder, addAll);
+        // Bütün liste (≤ 200 video, güne yayma, sınıf / grup) bu görevin 10 video sınırına sığmaz: liste ataması
+        // (Akademi README §14 madde 124) ayrı pencerede — görev formu açık kalır.
+        if (app.can('admin_createPlaylistAssignment') && app.can('admin_previewVideoPlaylist')) {
+          head.append(button('Liste görevi olarak ata…', { variant: 'ghost', onClick: () => {
+            import('./playlist-assign.js').then(({ assignPlaylistWizard }) => assignPlaylistWizard(app,
+              { source: { playlistId } })).catch((failure) => app.toast(problem(failure), 'bad'));
+          } }));
+        }
         first = false;
       }
       for (const item of page.items || []) {

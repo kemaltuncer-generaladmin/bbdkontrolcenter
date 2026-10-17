@@ -1,8 +1,9 @@
 // BBD Akademi — Ayarlar (F-A15, F-A16 ve yalnız KM'den yapılan kurum yönetimi).
 //
 // Sekmeler: Özellikler · Kurum · Tema ve logo · Anons şablonları · Senkron
-// (KM olay iletimi, settings-sync.js) · Dizin eşitleme · Entegrasyon
-// anahtarları · Denetim kaydı. SMS (settings-sms.js) 15.10.2026'dan beri
+// (KM olay iletimi, settings-sync.js) · Dizin eşitleme · Entegrasyonlar
+// (YouTube Data API anahtarı, settings-integrations.js; Akademi README §14
+// madde 124) · Entegrasyon anahtarları · Denetim kaydı. SMS (settings-sms.js) 15.10.2026'dan beri
 // İletişim → SMS ekranındadır (sms.js; `{tab: 'sms'}` oraya yönlenir).
 // "Kantin kuralları" sekmesi Finans ve Kantin → Kantin ekranındadır
 // (`canteen.js`; gövdesi burada, `canteenTab`).
@@ -36,6 +37,7 @@ import {
 } from '../common.js';
 import { brandingTab } from './settings-branding.js';
 import { auditTab, directoryTab, keysTab } from './settings-admin.js';
+import { integrationsTab } from './settings-integrations.js';
 import { syncTab } from './settings-sync.js';
 
 /**
@@ -51,6 +53,7 @@ const TABS = [
   { key: 'sync', label: 'Senkron', read: 'admin_getDirectorySyncStatus',
     visible: (app) => Boolean(app.status?.gatewayEvents?.canView) },
   { key: 'directory', label: 'Dizin eşitleme', read: 'admin_getDirectorySyncStatus' },
+  { key: 'integrations', label: 'Entegrasyonlar', read: 'admin_getYoutubeIntegration' },
   { key: 'keys', label: 'Entegrasyon anahtarları', read: 'admin_listIntegrationKeys' },
   { key: 'audit', label: 'Denetim kaydı', read: 'admin_listAuditLog' },
 ];
@@ -79,6 +82,7 @@ export function section(app) {
     branding: () => brandingTab(app),
     features: () => featuresTab(app),
     pa: () => paTemplatesTab(app, { goTab }),
+    integrations: () => integrationsTab(app),
     keys: () => keysTab(app),
     directory: () => directoryTab(app),
     sync: () => syncTab(app),

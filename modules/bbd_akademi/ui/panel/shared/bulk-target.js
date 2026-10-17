@@ -40,9 +40,10 @@ function grade(raw) {
  *   rulesText: paket kurallarının okunur metni ('rules' kipinde gösterilir)
  *   value: başlangıç {classGroupIds, studentGroupIds, studentIds, students:[{id, displayName}]}
  *   onChange(): her değişiklikte
+ *   exclude: false → "hariç tut" bölümü yok (hedef gövdesi hariç tutmayı taşımıyor)
  */
 export function bulkTargetField(app, { classes = [], groups = [], modes = ['pick'], rulesText = '',
-  value = {}, onChange } = {}) {
+  value = {}, onChange, exclude = true } = {}) {
   seq += 1;
   const node = h('div', 'ak-stack ak-bt');
   let mode = modes.includes(value.mode) ? value.mode : modes[0];
@@ -135,7 +136,8 @@ export function bulkTargetField(app, { classes = [], groups = [], modes = ['pick
   });
   exclusion.append(summary);
   paintExcluded();
-  node.append(exclusion);
+  // `exclude: false`: hedef sözleşmesi hariç tutmayı taşımıyorsa (ör. `HomeworkTarget` — liste ataması) bölüm hiç çizilmez.
+  if (exclude) node.append(exclusion);
 
   function paint() {
     for (const key of modes) panes[key].hidden = key !== mode;
