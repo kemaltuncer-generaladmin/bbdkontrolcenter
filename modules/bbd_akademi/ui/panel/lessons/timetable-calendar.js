@@ -6,24 +6,27 @@
 //
 // EKRAN. Üstte ‹ Önceki hafta · Bu hafta · Sonraki hafta › ve haftanın adı ("13–19 Ekim 2026"), yanında SINIF
 // seçici. Ortada takvim: günler sütun (tarihli), zil dilimleri satır. Seçilen haftanın programı gelir; programı
-// olmayan hafta boştur ("Bu hafta için program yok · Geçen haftayı kopyala · Şablondan doldur · Boş başla").
+// olmayan hafta boştur ("Bu hafta için program yok · Geçen haftayı kopyala").
 // Geçmiş günler salt okunur, tatil günü gri ("Tatil — ders yok"), çakışma hücrede kırmızı.
 //
 // ŞAK ŞAK. Boş hücreye tıkla (ya da Enter / harf yaz) → küçük pencere: ders, öğretmen (zorunlu), derslik; bu
 // sınıfta o dersi veren öğretmen ve derslik kendiliğinden gelir, bu sınıfın dersleri listenin başındadır.
-// Kaydet anında yazılır (taslak / "Kaydet" şeridi yok). Tek soru: "Yalnız bu hafta" (varsayılan) ya da "Bu hafta ve
-// sonraki haftalar". Sürükle-bırak taşır (Ctrl / Alt ile kopyalar), Delete kaldırır, Ctrl+C / Ctrl+V kopyalar,
-// PageUp / PageDown hafta değiştirir.
+// Kaydet anında yazılır (taslak / "Kaydet" şeridi yok).
 //
-// KAVRAM. Kullanıcı geçerlilik aralığı, sürüm, oturum üretimi görmez: Akademi hücreyi o haftaya (ya da o
-// haftadan sonrasına) yazar, satırı kendisi böler (`admin_putTimetableWeekCells`). Dönem / şablon ikincildir
-// ("Diğer" menüsü). İş kuralı (çakışma, geçmiş gün, yoklamalı oturum) AKADEMİ'DEDİR; panel sonucu gösterir.
+// HER HAFTA KENDİ PROGRAMI (kullanıcı, lider mesajı 2: "tarih takvim vs olmayacak. üstte pzt altta mesela 19 ekim
+// yazacak … çünkü her hafta dersler değişebiliyor"). Hücreye ders girmek / silmek / taşımak YALNIZ O HAFTAYI
+// değiştirir (`scope: this_week`); "yalnız bu hafta / sonrakiler" sorusu ve tarih seçici YOK. Tekrar için tek düğme
+// "Bu haftayı kopyala →" (sonraki hafta, birkaç hafta ya da dönem sonuna kadar); boş haftada büyük "Geçen haftayı
+// kopyala". Sürükle-bırak taşır (Ctrl / Alt ile kopyalar), Delete kaldırır, Ctrl+C / Ctrl+V, PageUp / PageDown.
+//
+// KAVRAM. Kullanıcı geçerlilik aralığı, sürüm, oturum üretimi görmez: Akademi hücreyi o haftaya yazar, satırı
+// kendisi böler (`admin_putTimetableWeekCells`). Etüt, zil saatleri, dönemler, şablonlar "Diğer" menüsündedir. İş kuralı (çakışma, geçmiş gün, yoklamalı oturum) AKADEMİ'DEDİR; panel sonucu gösterir.
 
 import { button, dialogA11y, h, menuButton } from '../../../ui-kit/kit.js';
 import { alertBox, skeletonRows } from '../../../ui-kit/layout.js';
 import { AkademiError } from '../api.js';
 import {
-  DAY_LABEL, WEEKDAYS, actionButton, addDays, dateInput, empty, errorBox, fmtDate, fmtDateTime, formDialog,
+  DAY_LABEL, WEEKDAYS, actionButton, addDays, empty, errorBox, fmtDate, fmtDateTime, formDialog,
   num, problem, selectBox, todayIst, weekStart,
 } from '../common.js';
 import { runDocument } from '../documents.js';
@@ -41,11 +44,8 @@ const MONTHS = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz'
 const SHORT_MONTHS = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 const SHORT_DAY = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]));
 
-export const SCOPES = [
-  ['this_week', 'Yalnız bu hafta'],
-  ['this_and_following', 'Bu hafta ve sonraki haftalar'],
-];
-export const SCOPE_DONE = { this_week: 'yalnız bu hafta', this_and_following: 'bu hafta ve sonraki haftalar' };
+/** Hücre değişikliği yalnız o haftayı etkiler (lider mesajı 2). */
+const SCOPE = 'this_week';
 /** Kopya penceresinde gösterilen ileri hafta sayısı. */
 export const COPY_WEEKS_SHOWN = 12;
 
@@ -69,10 +69,10 @@ export function shortWeekLabel(monday) {
   return m1 === m2 ? `${d1}–${d2} ${SHORT_MONTHS[m2 - 1]}` : `${d1} ${SHORT_MONTHS[m1 - 1]} – ${d2} ${SHORT_MONTHS[m2 - 1]}`;
 }
 
-/** "Pzt 13 Eki". */
+/** Sütun başlığı iki satır: ["Pzt", "19 Ekim"]. */
 export function dayHead(dayKey, iso) {
   const [, month, day] = parts(iso);
-  return `${SHORT_DAY[dayKey] || dayKey} ${day} ${SHORT_MONTHS[month - 1]}`;
+  return [SHORT_DAY[dayKey] || dayKey, `${day} ${MONTHS[month - 1]}`];
 }
 
 /** Haftanın bugüne göre adı: "Bu hafta", "Geçen hafta", "Gelecek hafta", "3 hafta sonra", "2 hafta önce". */
@@ -184,63 +184,15 @@ function dialogShell(app, title, description = '') {
   return { overlay, card };
 }
 
-/**
- * Tek soru: "Yalnız bu hafta" (varsayılan, odakta — Enter) / "Bu hafta ve sonraki haftalar" / Vazgeç.
- * @returns {Promise<'this_week'|'this_and_following'|null>}
- */
-export function askScope(app, { title, description = '', verb = '' }) {
-  return new Promise((resolve) => {
-    const { overlay, card } = dialogShell(app, title, description);
-    let release = () => {};
-    const close = (value) => {
-      document.removeEventListener('keydown', onKey);
-      overlay.remove();
-      release();
-      resolve(value);
-    };
-    const onKey = (event) => { if (event.key === 'Escape') { event.stopPropagation(); close(null); } };
-    const actions = h('div', 'kit-dialog-actions');
-    const only = button(`${verb ? `${verb} · ` : ''}Yalnız bu hafta`, { variant: 'primary', onClick: () => close('this_week') });
-    actions.append(button('Vazgeç', { onClick: () => close(null) }),
-      button('Bu hafta ve sonraki haftalar', { onClick: () => close('this_and_following') }), only);
-    card.append(actions);
-    overlay.addEventListener('mousedown', (event) => { if (event.target === overlay) close(null); });
-    document.addEventListener('keydown', onKey);
-    app.root.append(overlay);
-    release = dialogA11y(card);
-    only.focus();
-  });
-}
-
-/** "Yalnız bu hafta / Bu hafta ve sonraki haftalar" radyo grubu (varsayılan ilk). */
-function scopeRadios(name, value = 'this_week') {
-  const node = h('div', 'ak-cal-scope');
-  node.setAttribute('role', 'radiogroup');
-  node.setAttribute('aria-label', 'Hangi haftalar');
-  const inputs = [];
-  for (const [key, label] of SCOPES) {
-    const wrap = h('label', 'ak-cal-scope-item');
-    const input = h('input');
-    input.type = 'radio';
-    input.name = name;
-    input.value = key;
-    input.checked = key === value;
-    inputs.push(input);
-    wrap.append(input, h('span', '', label));
-    node.append(wrap);
-  }
-  return { node, get value() { return inputs.find((input) => input.checked)?.value || 'this_week'; } };
-}
-
 let dialogSeq = 0;
 
 // ------------------------------------------------------------------ ekran
 
 /**
  * @param {object} app
- * @param {{openBells?: () => void}} links
+ * @param {{openBells?: () => void, openView?: (key: string) => void}} links
  */
-export function calendarTab(app, { openBells } = {}) {
+export function calendarTab(app, { openBells, openView } = {}) {
   const node = h('div', 'ak-stack ak-cal');
   const editable = app.can(PUT_CELLS);
   const s = {
@@ -278,15 +230,12 @@ export function calendarTab(app, { openBells } = {}) {
   const titleRel = h('span', 'ak-cal-rel', weekRelation(s.week));
   title.append(titleText, titleRel);
   title.setAttribute('aria-live', 'polite');
-  const jump = dateInput(s.week, (iso) => { if (iso) goWeek(weekStart(iso)); }, 'Takvimden hafta seç');
-  disposers.push(() => jump.destroy());
-  const jumpWrap = h('span', 'ak-cal-jump');
-  jumpWrap.append(jump.node);
   const classSelect = selectBox([{ value: '', label: 'Sınıflar yükleniyor…' }], '', (value) => pickClass(value),
     { label: 'Sınıf' });
   const classWrap = h('label', 'ak-cal-class');
   classWrap.append(h('span', 'ak-cal-class-label', 'Sınıf'), classSelect.node);
-  const copyButton = actionButton(app, COPY_WEEK, 'Haftayı kopyala…', { onClick: () => copyDialog() });
+  const copyButton = actionButton(app, COPY_WEEK, 'Bu haftayı kopyala →', { variant: 'primary',
+    onClick: () => copyDialog() });
   const more = menuButton('Diğer', [
     { label: 'Şablondan doldur…', onClick: () => templateFill(),
       disabled: !editable || !app.can('admin_listTimetableTemplates') },
@@ -295,9 +244,15 @@ export function calendarTab(app, { openBells } = {}) {
     typeof app.kmRead === 'function' && app.can('admin_copyTimetable')
       ? { label: 'Dönem geçişi kopyası…', onClick: () => rollover() } : null,
     { label: 'Sınıfları düzenle (Öğrenciler › Sınıflar)', onClick: () => app.go?.('students', { view: 'groups' }) },
+    ...(openView ? [
+      { label: 'Etüt ve tek seferlik dersler', onClick: () => openView('events') },
+      { label: 'Zil saatleri', onClick: () => openView('bells') },
+      { label: 'Dönemler', onClick: () => openView('terms') },
+      { label: 'Program şablonları', onClick: () => openView('templates') },
+    ] : []),
   ], { variant: 'ghost' });
   const head = h('div', 'ak-cal-head');
-  head.append(nav, title, jumpWrap, h('span', 'kit-spacer'), classWrap, copyButton, more);
+  head.append(nav, title, h('span', 'kit-spacer'), classWrap, copyButton, more);
   node.append(head);
 
   const content = h('div', 'ak-stack');
@@ -391,7 +346,6 @@ export function calendarTab(app, { openBells } = {}) {
     titleRel.textContent = weekRelation(s.week);
     titleRel.classList.toggle('on', titleRel.textContent === 'Bu hafta');
     thisWeek.disabled = s.week === weekStart(todayIst());
-    jump.set(s.week);
   }
 
   function paintClassOptions() {
@@ -460,6 +414,7 @@ export function calendarTab(app, { openBells } = {}) {
   function paintBanner() {
     banner.replaceChildren();
     const data = s.data;
+    copyButton.hidden = !data || !(data.entries || []).length;
     if (!data) return;
     if (!editable) {
       banner.append(alertBox('Programı değiştirme yetkiniz yok; takvim salt okunur.', 'info'));
@@ -474,10 +429,10 @@ export function calendarTab(app, { openBells } = {}) {
           ? `Geçen hafta ${num(data.previousWeekEntryCount)} ders vardı.` : 'Hücrelere tıklayarak dersleri girin.'));
       const tools = h('div', 'ak-inline');
       if (data.previousWeekEntryCount && app.can(COPY_WEEK)) {
-        tools.append(button('Geçen haftayı kopyala', { variant: 'primary', onClick: () => copyPrevious() }));
-      }
-      if (app.can('admin_listTimetableTemplates')) {
-        tools.append(button('Şablondan doldur', { onClick: () => templateFill() }));
+        const big = button(`Geçen haftayı kopyala (${num(data.previousWeekEntryCount)} ders)`, { variant: 'primary',
+          onClick: () => copyPrevious() });
+        big.classList.add('ak-cal-big');
+        tools.append(big);
       }
       tools.append(button('Boş başla', { variant: 'ghost', onClick: () => {
         box.remove();
@@ -516,7 +471,9 @@ export function calendarTab(app, { openBells } = {}) {
       const day = dayOf(dayKey);
       const cell = h('div', `ak-tt-dayhead ak-cal-dayhead${day?.past ? ' ak-cal-is-past' : ''}`
         + `${day?.holiday ? ' ak-cal-is-holiday' : ''}${day?.date === todayIst() ? ' ak-cal-is-today' : ''}`);
-      cell.append(h('span', '', dayHead(dayKey, dateOf(dayKey))));
+      if (day?.date === todayIst()) cell.setAttribute('aria-current', 'date');
+      const [dayName, dateText] = dayHead(dayKey, dateOf(dayKey));
+      cell.append(h('b', 'ak-cal-dayname', dayName), h('span', 'ak-cal-date', dateText));
       if (day?.holiday) cell.append(h('small', 'ak-cal-holiday', day.holiday.title));
       grid.append(cell);
     }
@@ -642,8 +599,8 @@ export function calendarTab(app, { openBells } = {}) {
       }
     }
     const hint = h('p', 'ak-cal-hint ak-muted', weekEditable()
-      ? 'Hücreye tıklayın (ya da Enter) · sürükleyerek taşıyın, Ctrl ile kopyalayın · Delete kaldırır · '
-        + 'Ctrl+C / Ctrl+V · PageUp / PageDown hafta değiştirir.'
+      ? 'Değişiklik yalnız bu haftayı etkiler. Hücreye tıklayın (ya da Enter) · sürükleyerek taşıyın, Ctrl ile '
+        + 'kopyalayın · Delete kaldırır · Ctrl+C / Ctrl+V · PageUp / PageDown hafta değiştirir.'
       : 'PageUp / PageDown hafta değiştirir.');
     const by = s.data?.updatedAt
       ? h('span', 'ak-cal-meta', `Son değişiklik ${fmtDateTime(s.data.updatedAt)}${s.data.updatedBy ? `, ${s.data.updatedBy}` : ''}`)
@@ -746,9 +703,9 @@ export function calendarTab(app, { openBells } = {}) {
   }
 
   // ---------------------------------------------------------- yazma
-  async function saveCells(cells, scope) {
+  async function saveCells(cells) {
     try {
-      const next = await app.api.put(`${weekPath()}/cells`, { scope, expectedVersion: s.data.version, cells });
+      const next = await app.api.put(`${weekPath()}/cells`, { scope: SCOPE, expectedVersion: s.data.version, cells });
       s.data = next;
       paint();
       return next;
@@ -923,10 +880,9 @@ export function calendarTab(app, { openBells } = {}) {
     details.querySelector('.ak-tt-classpick').append(chips, addClass);
     loadPrograms();
 
-    const scope = scopeRadios(`ak-cal-scope-${dialogSeq}`);
     const form = h('div', 'ak-cal-form');
     form.append(field('Ders', subject, { required: true }), field('Öğretmen', teacher.node, { required: true }),
-      field('Derslik', room), details, h('div', 'ak-cal-scope-title', 'Hangi haftalar?'), scope.node);
+      field('Derslik', room), details);
     const error = h('div', 'kit-dialog-error');
     error.setAttribute('role', 'alert');
     card.append(form, error);
@@ -954,15 +910,14 @@ export function calendarTab(app, { openBells } = {}) {
       };
       if (!clear && extras.size) cell.classGroupIds = [s.classGroupId, ...extras];
       if (!clear && program.value) cell.programId = program.value;
-      const chosen = scope.value;
       save.disabled = true;
       if (remove) remove.disabled = true;
       save.textContent = 'Kaydediliyor…';
       try {
-        await saveCells([cell], chosen);
+        await saveCells([cell]);
         if (!clear) s.memory.set(cell.subjectId, { teacherId: cell.teacherId, room: cell.room || '' });
         close(true);
-        app.toast(clear ? `Ders kaldırıldı — ${SCOPE_DONE[chosen]}.` : `Kaydedildi — ${SCOPE_DONE[chosen]}.`, 'good');
+        app.toast(clear ? 'Ders bu haftadan kaldırıldı.' : 'Kaydedildi (bu hafta).', 'good');
       } catch (failure) {
         save.disabled = false;
         if (remove) remove.disabled = false;
@@ -1004,11 +959,8 @@ export function calendarTab(app, { openBells } = {}) {
     if (!place || !entry) return;
     const locked = lockReason(place.dayKey);
     if (locked) { app.toast(locked, 'info'); return; }
-    const scope = await askScope(app, { title: `${subjectName(entry)} dersini kaldır`, verb: 'Kaldır',
-      description: `${DAY_LABEL[place.dayKey]} ${place.row.label} (${slotTime(place.slot)}) · ${className()}` });
-    if (!scope) return;
-    await run(() => saveCells([clearCell({ dayOfWeek: place.dayKey, bellSlotId: place.slot.id })], scope),
-      `Ders kaldırıldı — ${SCOPE_DONE[scope]}.`);
+    await run(() => saveCells([clearCell({ dayOfWeek: place.dayKey, bellSlotId: place.slot.id })]),
+      `${subjectName(entry)} bu haftadan kaldırıldı.`);
     focusCell(key);
   }
 
@@ -1019,16 +971,11 @@ export function calendarTab(app, { openBells } = {}) {
     if (!from || !to || !entry) return;
     const locked = lockReason(to.dayKey) || (copy ? '' : lockReason(from.dayKey));
     if (locked) { app.toast(locked, 'info'); return; }
-    const taken = entryMap(s.data?.entries).get(toKey);
-    const verb = copy ? 'Kopyala' : 'Taşı';
-    const scope = await askScope(app, { verb,
-      title: `${subjectName(entry)}: ${DAY_LABEL[from.dayKey]} ${from.row.label} → ${DAY_LABEL[to.dayKey]} ${to.row.label}`,
-      description: taken ? `Hedefteki ${subjectName(taken)} dersinin yerine geçer.` : '' });
-    if (!scope) return;
     const cells = [cellOf(entry, { dayOfWeek: to.dayKey, bellSlotId: to.slot.id }, s.classGroupId)];
     if (!copy) cells.unshift(clearCell({ dayOfWeek: from.dayKey, bellSlotId: from.slot.id }));
     s.focus = toKey;
-    await run(() => saveCells(cells, scope), `${copy ? 'Kopyalandı' : 'Taşındı'} — ${SCOPE_DONE[scope]}.`);
+    await run(() => saveCells(cells), `${subjectName(entry)} ${copy ? 'kopyalandı' : 'taşındı'}: `
+      + `${DAY_LABEL[to.dayKey]} ${to.row.label}.`);
     focusCell(toKey);
   }
 
@@ -1037,11 +984,8 @@ export function calendarTab(app, { openBells } = {}) {
     if (!place || !s.clip) return;
     const locked = lockReason(place.dayKey);
     if (locked) { app.toast(locked, 'info'); return; }
-    const scope = await askScope(app, { verb: 'Yapıştır',
-      title: `${subjectName(s.clip)} → ${DAY_LABEL[place.dayKey]} ${place.row.label}` });
-    if (!scope) return;
     await run(() => saveCells([cellOf(s.clip, { dayOfWeek: place.dayKey, bellSlotId: place.slot.id },
-      s.classGroupId)], scope), `Yapıştırıldı — ${SCOPE_DONE[scope]}.`);
+      s.classGroupId)]), `${subjectName(s.clip)} yapıştırıldı.`);
     focusCell(key);
   }
 
@@ -1076,18 +1020,20 @@ export function calendarTab(app, { openBells } = {}) {
       options.push({ value: monday, label: shortWeekLabel(monday) });
     }
     const result = await formDialog(app, {
-      title: `${weekLabel(s.week)} haftasını kopyala`,
-      description: `${className()} sınıfının bu haftası (${num(s.data.entries.length)} ders) seçilen haftalara aynen yazılır; `
-        + 'o haftalardaki eski program bununla değişir.',
+      title: 'Bu haftayı kopyala',
+      description: `${className()} · ${weekLabel(s.week)} (${num(s.data.entries.length)} ders) seçilen haftalara aynen `
+        + 'yazılır; o haftalardaki eski program bununla değişir.',
       fields: [
         { key: 'weeks', label: 'Hangi haftalara?', type: 'custom', render: (draft, set) => {
           const wrap = h('div', 'ak-stack ak-cal-copy');
           const chips = h('div', 'ak-chips');
-          const chosen = new Set();
+          // Sonraki hafta hazır seçili gelir: "Kopyala" tek tıkla gelecek haftayı doldurur.
+          const chosen = new Set(options.length ? [options[0].value] : []);
           for (const option of options) {
-            const chip = h('button', 'kit-chip', option.label);
+            const on = chosen.has(option.value);
+            const chip = h('button', `kit-chip${on ? ' on' : ''}`, option === options[0] ? `Sonraki hafta (${option.label})` : option.label);
             chip.type = 'button';
-            chip.setAttribute('aria-pressed', 'false');
+            chip.setAttribute('aria-pressed', on ? 'true' : 'false');
             chip.addEventListener('click', () => {
               if (chosen.has(option.value)) chosen.delete(option.value); else chosen.add(option.value);
               chip.classList.toggle('on', chosen.has(option.value));
@@ -1108,7 +1054,7 @@ export function calendarTab(app, { openBells } = {}) {
             label.append(box, h('span', '', `Dönem sonuna kadar her hafta (${term.name}, ${fmtDate(term.endsOn)})`));
             wrap.append(label);
           }
-          set({ list: [], through: null });
+          set({ list: [...chosen], through: null });
           return wrap;
         },
         validate: (value) => (value?.through || value?.list?.length ? '' : 'En az bir hafta seçin.') },
@@ -1140,7 +1086,6 @@ export function calendarTab(app, { openBells } = {}) {
       app.toast('Henüz program şablonu yok. “Diğer” › Program şablonları’ndan oluşturabilirsiniz.', 'info');
       return;
     }
-    let scopeControl = null;
     const result = await formDialog(app, {
       title: 'Şablondan doldur',
       description: `${className()} · ${weekLabel(s.week)}. Şablondaki dersler hücrelere yazılır; şablonda olmayan `
@@ -1149,23 +1094,18 @@ export function calendarTab(app, { openBells } = {}) {
         { key: 'templateId', label: 'Şablon', type: 'select', required: true,
           options: [{ value: '', label: 'Şablon seçin' },
             ...templates.map((item) => ({ value: item.id, label: `${item.name} (${num((item.entries || []).length)} ders)` }))] },
-        { key: 'scope', label: 'Hangi haftalar?', type: 'custom', render: () => {
-          scopeControl = scopeRadios(`ak-cal-tpl-${dialogSeq += 1}`);
-          return scopeControl.node;
-        } },
       ],
       submitLabel: 'Doldur',
       onSubmit: async (draft) => {
         const template = templates.find((item) => item.id === draft.templateId);
         const { cells, skipped } = templateCells(template?.entries, s.layout, s.classGroupId);
         if (!cells.length) throw new Error('Şablondaki derslerin hiçbiri bu zil saatlerine uymuyor.');
-        const scope = scopeControl?.value || 'this_week';
-        await saveCells(cells, scope);
-        return { count: cells.length, skipped, scope };
+        await saveCells(cells);
+        return { count: cells.length, skipped };
       },
     });
     if (!result || result === true) return;
-    app.toast(`${num(result.count)} ders yazıldı — ${SCOPE_DONE[result.scope]}.`
+    app.toast(`${num(result.count)} ders bu haftaya yazıldı.`
       + `${result.skipped ? ` ${num(result.skipped)} satır zil saatlerine uymadığı için atlandı.` : ''}`, 'good');
   }
 
