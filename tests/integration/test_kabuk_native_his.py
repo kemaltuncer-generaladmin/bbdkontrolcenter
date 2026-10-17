@@ -14,7 +14,8 @@ Sınananlar (Node, `tools/a11y/harness.py`; `node` yoksa atlanır):
   satırı, yazı alanı, seçili metin, panelin eklediği satır), CSV, aynı komutun
   iki yoldan gelmesi (menü + tuş) tek çalışır.
 * `ui-kit/select.js`: bütün tekli `<select>`lar aranabilir listeyle açılır,
-  `change` olayı ve değer yerel kutudaki gibi; Esc değiştirmeden kapatır.
+  `change` olayı ve değer yerel kutudaki gibi; Esc değiştirmeden kapatır;
+  fareyle tıklama `click`le seçer (iptal edilen `pointerdown` `mouseup` üretmez).
 * `findbar.js`: Türkçe harf katlamalı arama.
 
 Statik: Tauri ayarı (pencere kodda kurulur), yeni eklentiler ilan edilmiş ve
@@ -395,6 +396,14 @@ export default async function ({ load, sleep, document, audit }) {
   box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
   out.picked = select.value;
 
+  // Fare: liste `pointerdown`ı iptal eder; tarayıcı o zaman `mousedown`/`mouseup`
+  // ÜRETMEZ, yalnız `click` gelir — seçim `click`le olmalı.
+  select.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+  const row = [...pop().querySelectorAll('.kit-lb-opt')].find((o) => o.textContent === '9-B sınıfı');
+  row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  out.clicked = select.value;
+  out.clickClosed = !pop();
+
   // Çoklu ve devre dışı kutuya dokunulmaz.
   const multi = document.createElement('select');
   multi.multiple = true;
@@ -427,6 +436,7 @@ def test_aranabilir_acilir_liste() -> None:
     assert r["reopened"] is True and r["escClosed"] is True and r["escValue"] == "Işık"
     assert r["activeStart"] == "11-A sınıfı" and r["skipDisabled"] == "Işık"
     assert r["picked"] == "Işık"
+    assert r["clicked"] == "9-B" and r["clickClosed"] is True
     assert r["multiUntouched"] is True
     assert r["component"] == ["bahar", True]
     assert r["shortNoSearch"] is True and r["componentChange"] == "Güz"

@@ -129,6 +129,11 @@ export function openListbox(anchor, { items, value, onPick, label = '' }) {
       row.setAttribute('aria-selected', selected ? 'true' : 'false');
       if (selected) row.classList.add('selected');
       if (item.disabled) row.setAttribute('aria-disabled', 'true');
+      // `click`: liste `pointerdown`ı iptal eder (odak arama kutusunda kalsın);
+      // tarayıcı o zaman `mousedown`/`mouseup` ÜRETMEZ (Pointer Events uyumluluk
+      // olayları) — `mouseup` dinlemek tıklamayı hiç seçtirmiyordu. `click` gelir.
+      // Klavye yolu `keydown`dadır (Enter/Boşluk).
+      row.addEventListener('click', () => pick(index));
       list.append(row);
     });
     empty.hidden = visible.length > 0;
@@ -143,12 +148,12 @@ export function openListbox(anchor, { items, value, onPick, label = '' }) {
     return -1;
   }
 
-  function setActive(index) {
+  function setActive(index, scroll = true) {
     active = index;
     for (const row of list.querySelectorAll('.kit-lb-opt')) {
       const on = Number(row.dataset.index) === index;
       row.classList.toggle('active', on);
-      if (on) row.scrollIntoView?.({ block: 'nearest' });
+      if (on && scroll) row.scrollIntoView?.({ block: 'nearest' });
     }
     if (index >= 0) focusTarget.setAttribute('aria-activedescendant', `${id}-o${index}`);
     else focusTarget.removeAttribute('aria-activedescendant');
@@ -241,15 +246,13 @@ export function openListbox(anchor, { items, value, onPick, label = '' }) {
   const onResize = () => close(false);
 
   list.addEventListener('pointerdown', (event) => event.preventDefault());
-  // `mouseup`: liste kendi `mousedown`unu yutar (odak arama kutusunda kalır);
-  // klavye yolu `keydown`dadır (Enter/Boşluk).
-  list.addEventListener('mouseup', (event) => {
-    const row = event.target.closest?.('.kit-lb-opt');
-    if (row) pick(Number(row.dataset.index));
-  });
+  // Fareyle seçim satırın `click`indedir (`render`). Üzerine gelmek yalnız
+  // vurgular, KAYDIRMAZ: yarım görünen satırda kaydırmak listeyi imlecin
+  // altından kaçırıyordu.
   list.addEventListener('pointermove', (event) => {
     const row = event.target.closest?.('.kit-lb-opt');
-    if (row && !visible[Number(row.dataset.index)]?.disabled) setActive(Number(row.dataset.index));
+    const index = Number(row?.dataset.index);
+    if (row && index !== active && !visible[index]?.disabled) setActive(index, false);
   });
   pop.addEventListener('keydown', onKey);
   search?.addEventListener('input', () => render(search.value));
@@ -257,6 +260,8 @@ export function openListbox(anchor, { items, value, onPick, label = '' }) {
   render('');
   doc.body.append(pop);
   place();
+  // İlk `render` liste belgeye girmeden çalışır; seçili satır ancak şimdi görünüre kaydırılabilir.
+  if (active >= 0) setActive(active);
   anchor.setAttribute('aria-expanded', 'true');
   doc.addEventListener('pointerdown', onOutside, true);
   win.addEventListener('resize', onResize);
