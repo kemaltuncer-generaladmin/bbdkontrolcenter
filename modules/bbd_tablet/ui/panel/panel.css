@@ -461,5 +461,5 @@ div.tb-item { cursor: default; }
 /* Uygulamalar → profil seçici (dağıtım onayı ve çekmece) */
 .tb-profile-choose { display: flex; flex-direction: column; gap: 10px; }
 .tb-profile-checks { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
-.tb-check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.tb-check { display: flex; align-items: center; gap: 8px; }
 .tb-check input:disabled + span { opacity: 0.7; }
