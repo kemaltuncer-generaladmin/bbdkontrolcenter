@@ -894,7 +894,8 @@ async function editHomework(app, current, { studentNames = new Map(), onSaved } 
       { key: 'resource', label: 'Kaynak (isteğe bağlı)', type: 'custom', render: resourceField,
         validate: pieces.resourceValidate },
       { key: 'description', label: 'Açıklama', type: 'custom', render: descriptionField },
-      { key: 'notify', label: 'Bildirim', type: 'custom', render: notifyField },
+      // Düzenlemede sunucu bildirim göndermez → kutu yalnız yeni ödevde.
+      ...(current ? [] : [{ key: 'notify', label: 'Bildirim', type: 'custom', render: notifyField }]),
     ],
     submitLabel: current ? 'Kaydet' : 'Ödevi ver',
     onSubmit: (draft, { key }) => {

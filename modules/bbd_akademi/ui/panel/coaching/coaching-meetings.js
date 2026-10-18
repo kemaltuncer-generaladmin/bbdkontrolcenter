@@ -25,6 +25,9 @@ import { coachOptions, studentCell } from './coaching-shared.js';
 import { meetingDialog } from './coaching-students.js';
 import { templateField } from '../shared/text-templates.js';
 
+/** Görüşme maddesinden göreve dönüşümde sunulan türler (mobil `convertTypes` ile aynı; öteki türler sunucuda 422). */
+const CONVERT_TYPES = ['free', 'question_solving', 'reading'];
+
 export function tab(app) {
   const node = h('div', 'ak-stack');
   const filter = { from: todayIst(-7), to: todayIst(30), coachId: '', status: '', studentId: '' };
@@ -228,8 +231,11 @@ export async function openMeeting(app, row, onChange) {
       description: `"${item.text}"`,
       fields: isTask ? [
         { key: 'date', label: 'Gün', type: 'date', required: true },
-        { key: 'type', label: 'Tür', type: 'select', options: optionsOf(TASK_TYPES) },
+        // Sunucu öteki türlerde kaynak/konu/kayıt ister (422) — mobil ile aynı üç tür.
+        { key: 'type', label: 'Tür', type: 'select',
+          options: optionsOf(Object.fromEntries(CONVERT_TYPES.map((key) => [key, TASK_TYPES[key]]))) },
         { key: 'estimatedMinutes', label: 'Süre (dk)', type: 'number', required: true, min: 5, max: 600 },
+        { key: 'targetQuestions', label: 'Soru sayısı (soru çözümünde)', type: 'number', min: 1, max: 1000 },
       ] : [
         { key: 'kind', label: 'Hedef', type: 'select',
           options: Object.entries(GOAL_KINDS).map(([value, [label, unit]]) => ({ value, label: `${label} (${unit})` })) },
@@ -246,6 +252,9 @@ export async function openMeeting(app, row, onChange) {
         if (isTask) {
           body = { to, task: { date: draft.date, type: draft.type || 'free', estimatedMinutes: Number(draft.estimatedMinutes),
             title: item.text.slice(0, 120) } };
+          if (draft.type === 'question_solving' && Number(draft.targetQuestions) > 0) {
+            body.task.targetQuestions = Number(draft.targetQuestions);
+          }
         } else {
           const built = goalBody({ ...draft, note: item.text });
           if (built.error) throw new Error(built.error);
