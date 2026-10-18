@@ -486,7 +486,7 @@ export function calendarTab(app, { openView } = {}) {
       const box = h('div', 'ak-cal-empty');
       box.append(h('b', '', 'Bu hafta için program yok.'),
         h('span', 'ak-muted', data.previousWeekEntryCount
-          ? `Geçen hafta ${num(data.previousWeekEntryCount)} ders vardı.` : 'Hücrelere tıklayarak dersleri girin.'));
+          ? `Geçen hafta ${num(data.previousWeekEntryCount)} ders vardı.` : 'Günlere “+ Ders ekle” ile dersleri girin.'));
       const tools = h('div', 'ak-inline');
       if (data.previousWeekEntryCount && app.can(COPY_WEEK)) {
         const big = button(`Geçen haftayı kopyala (${num(data.previousWeekEntryCount)} ders)`, { variant: 'primary',
@@ -1019,6 +1019,12 @@ export function calendarTab(app, { openView } = {}) {
       // Saat değişmediyse hücre anahtarı aynı kalır (eski ders sırası anahtarlı satırlar bozulmaz).
       const same = !slot.isNew && startIn.value === slot.startTime && endIn.value === slot.endTime;
       const newKey = clear || same ? slot.id : freeKey(startIn.value, endIn.value);
+      // Aynı gün aynı saate ikinci ders: sunucu ilkinin yerine yazardı — web/mobil ile aynı engel.
+      if (!clear && newKey !== slot.id && entryMap(s.data?.entries).has(cellKey(dayKey, newKey))) {
+        error.textContent = 'Bu gün bu saatte zaten bir ders var. Saati değiştirin ya da o derse dokunun.';
+        startIn.focus();
+        return;
+      }
       const cell = clear ? clearCell({ dayOfWeek: dayKey, bellSlotId: slot.id }) : {
         dayOfWeek: dayKey,
         bellSlotId: newKey,
