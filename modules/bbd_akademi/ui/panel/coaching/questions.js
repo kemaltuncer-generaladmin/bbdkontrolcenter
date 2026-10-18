@@ -210,7 +210,14 @@ async function openQuestion(app, row, onChange) {
   };
 
   async function forward() {
-    const teachers = await app.lookups.options('teachers').catch(() => []);
+    // Soruya özel aday listesi (README §14 madde 131): sorunun dersini okutanlar önce; eski Akademi'de personel listesi.
+    const teachers = await app.api.get(`/v1/admin/coaching/questions/${question.id}/forward-candidates`)
+      .then(({ items }) => (items || []).map((item) => ({
+        value: item.staffId,
+        label: `${item.displayName}${item.teachesSubject ? ' — Bu dersi okutuyor'
+          : (item.subjectNames || []).length ? ` (${item.subjectNames.join(', ')})` : ''}`,
+      })))
+      .catch(() => app.lookups.options('teachers').catch(() => []));
     const next = await formDialog(app, {
       title: 'Soruyu yönlendir',
       description: 'Seçilen öğretmen yalnız bu soruya erişir ve yanıtlar; ona bildirim gider.',

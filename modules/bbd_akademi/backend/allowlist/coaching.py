@@ -389,6 +389,15 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/admin/coaching/questions/{questionId}/forward-candidates',
+        'admin_listCoachQuestionForwardCandidates',
+        ('coach_questions.answer',),
+        'both',
+        feature_flag='coach_questions',
+        features=('F-K14', 'F-T1'),
+    ),
+    Operation(
+        'GET',
         '/v1/admin/coaching/queue',
         'admin_getCoachQueue',
         ('coaching.dashboard',),
