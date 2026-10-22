@@ -57,3 +57,13 @@
 .ak-coach-task.draft { border-style: dashed; }
 .ak-coach-task .ak-row-actions { justify-content: flex-start; }
 .ak-coach-task .kit-select { height: 28px; max-width: 100%; }
+
+/* Eşleme tablosu: öğrencinin 0–3 koçu çip olarak (Akademi README §14 madde 134). Hücre menüyü kırpmasın. */
+.kit-cell:has(> .ak-coach-chips) { overflow: visible; white-space: normal; }
+.ak-coach-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ak-coach-chip > .kit-btn, .ak-coach-add.kit-btn { min-height: 0; padding: 2px 9px; font-size: 12px;
+  border: 1px solid var(--line); border-radius: 999px; }
+.ak-coach-chip.primary > .kit-btn { border-color: var(--accent-line); background: var(--accent-tint); color: var(--accent); }
+.ak-coach-chip.scheduled > .kit-btn { border-style: dashed; }
+.ak-coach-add.kit-btn { border-style: dashed; color: var(--soft); }
+.ak-coach-full { padding: 0 4px; font-variant-numeric: tabular-nums; }

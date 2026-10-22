@@ -1,9 +1,10 @@
 // BBD Akademi — öğrenci detayı: Koçluk sekmesi (F-A21 koç notları, F-S21, F-A22).
 //
 // Beş iç sekme:
-//  · Koç — öğrencinin koçu ve eşleme geçmişi; koç ata / değiştir / eşlemeyi bitir
-//    (`admin_listStudentCoachHistory`, `admin_createCoachAssignment`, `admin_changeCoach`,
-//    `admin_endCoachAssignment`). ÖĞRETMEN = KOÇ: seçici `admin_listCoaches`'tır ve
+//  · Koç — öğrencinin koçları (en çok 3, ilk atanan birincil — Akademi README §14 madde 134) ve
+//    eşleme geçmişi; koç ata / ekle, her koçta değiştir / eşlemeyi bitir (`admin_listStudentCoachHistory`,
+//    `admin_createCoachAssignment`, `admin_changeCoach` + `assignmentId`, `admin_endCoachAssignment`;
+//    pencereler `coach-assign.js`). ÖĞRETMEN = KOÇ: seçici `admin_listCoaches`'tır ve
 //    "Öğretmen / Koç" rolündeki bütün etkin personeli listeler (yönetici + öğretmen olan
 //    da); ayrı koç tanımı / koç profili adımı yoktur (profil ilk düzenlemede oluşur).
 //  · Koç notları — kurumun görüşme notları (özel ya da paylaşılan); ekle,
@@ -34,6 +35,10 @@ import {
   optionsOf, pagedList, runAction, selectBox, statusBadge, todayIst, toolbar, weekStart,
 } from '../common.js';
 import { featureNotice, ruleName, ruleValue, severityBadge, statusBadgeOf } from '../reports/insights-shared.js';
+import {
+  COACH_LIMIT_TEXT, MAX_COACHES, PRIMARY_HINT, addCoachDialog, canAddCoach, changeCoachDialog, coachChoice,
+  currentAssignments, endCoachDialog, isOpen,
+} from './coach-assign.js';
 
 const SUBTABS = [
   { key: 'coach', label: 'Koç', read: 'admin_listStudentCoachHistory' },
@@ -128,12 +133,6 @@ export function coachingPanel(app, studentId) {
 
 const ASSIGNMENT_STATUS = { active: ['Etkin', 'good'], scheduled: ['Başlayacak', 'info'], ended: ['Bitti', 'dim'] };
 
-/** Koç seçeneği: "Ad · 12/20 öğrenci" (kapasite kurum ya da koç sınırı). */
-function coachOption(row) {
-  const load = row.maxStudents ? `${row.studentCount}/${row.maxStudents}` : String(row.studentCount);
-  return { value: row.coach.id, label: `${row.coach.displayName} · ${load} öğrenci` };
-}
-
 /** `km:user:<id>:<ad>` (vekil etiketi) → "Ad (KM)"; kişi adı olduğu gibi. */
 function assignerText(by) {
   if (!by) return '—';
@@ -147,9 +146,14 @@ function assignerText(by) {
   }
 }
 
+/**
+ * Öğrencinin koçları (Akademi README §14 madde 134: en çok 3, ilk atanan birincil). Her koç satırında
+ * "Koçu değiştir" / "Eşlemeyi bitir" yalnız o eşlemeye gider; "Koç ekle" 3 koçta kapanır.
+ */
 function coachTab(app, studentId) {
   const node = h('div', 'ak-stack');
   const canPick = app.can('admin_listCoaches');
+  let options = [];
 
   const view = loader(async () => {
     const [history, coaches] = await Promise.all([
@@ -158,34 +162,31 @@ function coachTab(app, studentId) {
     ]);
     return { items: history?.items || [], coaches: coaches?.items || null };
   }, ({ items, coaches }) => {
-    // Açık eşleme: bitişi olmayan (etkin ya da ileri tarihli) — Akademi'de en çok bir tane.
-    const open = items.find((row) => row.status !== 'ended' && !row.endsOn) || null;
+    const current = currentAssignments(items);
+    options = (coaches || []).filter((row) => row?.coach?.id).map(coachChoice);
     const nodes = [hintBox('Öğretmen = koç: "Öğretmen / Koç" rolündeki her etkin personel (yönetici + öğretmen '
-      + 'olanlar dahil) ayrıca tanımlanmadan koç seçilebilir. Rol, Personel → Mobil yönetici erişimi\'nden verilir.')];
-    const actions = h('div', 'ak-inline');
-    const options = (coaches || []).map(coachOption);
-    if (!open) {
-      actions.append(actionButton(app, 'admin_createCoachAssignment', 'Koç ata', { variant: 'primary',
-        onClick: () => assign(options) }));
-    } else {
-      actions.append(
-        actionButton(app, 'admin_changeCoach', 'Koçu değiştir', { variant: 'primary',
-          onClick: () => change(open, options) }),
-        actionButton(app, 'admin_endCoachAssignment', 'Eşlemeyi bitir', { variant: 'ghost',
-          onClick: () => end(open) }),
-      );
-    }
+      + 'olanlar dahil) ayrıca tanımlanmadan koç seçilebilir. Rol, Personel → Mobil yönetici erişimi\'nden verilir. '
+      + `Bir öğrenciye en çok ${MAX_COACHES} koç atanabilir.`)];
     const body = h('div', 'ak-card-pad ak-stack');
-    body.append(open
-      ? kv([
-        ['Koç', open.coach?.displayName || '—'],
-        ['Durum', statusBadge(ASSIGNMENT_STATUS, open.status)],
-        ['Başlangıç', fmtDate(open.startsOn)],
-        ['Atayan', assignerText(open.assignedBy)],
-      ])
-      : h('span', 'ak-muted', 'Öğrencinin koçu yok. "Koç ata" ile Öğretmen / Koç rolündeki birini seçin.'),
-    actions);
-    nodes.push(card(open ? 'Koçu' : 'Koç atanmamış', body));
+    if (!current.length) {
+      const actions = h('div', 'ak-inline');
+      actions.append(actionButton(app, 'admin_createCoachAssignment', 'Koç ata', { variant: 'primary',
+        onClick: () => add(current) }));
+      body.append(h('span', 'ak-muted', 'Öğrencinin koçu yok. "Koç ata" ile Öğretmen / Koç rolündeki birini seçin.'),
+        actions);
+    } else {
+      for (const row of current) body.append(coachRow(row, current));
+      const foot = h('div', 'ak-inline');
+      if (canAddCoach(current)) {
+        foot.append(actionButton(app, 'admin_createCoachAssignment', 'Koç ekle', { variant: 'ghost',
+          onClick: () => add(current) }));
+      } else {
+        foot.append(h('small', 'ak-muted', COACH_LIMIT_TEXT));
+      }
+      body.append(foot);
+    }
+    const title = !current.length ? 'Koç atanmamış' : current.length > 1 ? 'Koçları' : 'Koçu';
+    nodes.push(card(title, body, current.length ? `${current.length}/${MAX_COACHES} koç` : ''));
     if (coaches && !coaches.length) {
       nodes.push(alertBox('Koç seçilecek kimse yok: Personel → Mobil yönetici erişimi\'nde birine '
         + '"Öğretmen / Koç" rolü verin.', 'warn'));
@@ -206,82 +207,38 @@ function coachTab(app, studentId) {
   });
   node.append(view.node);
 
-  const coachField = (options, label = 'Koç') => ({ key: 'coachId', label, type: 'select', required: true,
-    options: [{ value: '', label: options.length ? 'Öğretmen / Koç seçin' : 'Seçilecek öğretmen / koç yok' }, ...options],
-    hint: 'Öğretmen / Koç rolündeki etkin personel; yanında üstlendiği öğrenci sayısı.' });
-  const reasonCheck = (value) => (String(value || '').trim().length < 3 ? 'En az 3 karakter yazın.' : null);
-  const capacityToast = (capacity) => {
-    if (capacity?.exceeded) {
-      app.toast(`${capacity.coach?.displayName || 'Koç'} kapasiteyi aştı (${capacity.studentCount}/`
-        + `${capacity.maxStudents}); atama yine yapıldı.`, 'warn');
+  function coachRow(row, current) {
+    const line = h('div', 'ak-sco-coach');
+    const head = h('div', 'ak-sco-coach-head');
+    head.append(h('b', '', row.coach?.displayName || '—'));
+    if (row.primary && current.length > 1) {
+      const mark = badge('Birincil', 'info');
+      mark.title = PRIMARY_HINT;
+      head.append(mark);
     }
-  };
-
-  async function assign(options) {
-    const result = await formDialog(app, {
-      title: 'Koç ata',
-      description: 'Öğrenci ve veliye "koçunuz" bildirimi gider; koç bu öğrencinin koçluk ekranlarını görür.',
-      value: { coachId: '', startsOn: todayIst() },
-      fields: [coachField(options), { key: 'startsOn', label: 'Başlangıç', type: 'date', required: true }],
-      submitLabel: 'Ata',
-      onSubmit: (draft, { key }) => {
-        if (!draft.coachId) throw new Error('Koç seçin.');
-        return app.api.post('/v1/admin/coach-assignments',
-          { studentId, coachId: draft.coachId, startsOn: draft.startsOn || undefined }, { key });
-      },
-    });
-    if (!result) return;
-    app.toast(`${result.assignment?.coach?.displayName || 'Koç'} atandı.`, 'good');
-    capacityToast(result.capacity);
-    view.reload();
+    head.append(statusBadge(ASSIGNMENT_STATUS, row.status));
+    const meta = h('small', 'ak-muted', [`Başlangıç ${fmtDate(row.startsOn)}`,
+      row.endsOn ? `bitiş ${fmtDate(row.endsOn)}` : '', `atayan ${assignerText(row.assignedBy)}`]
+      .filter(Boolean).join(' · '));
+    const actions = h('div', 'ak-inline');
+    actions.append(actionButton(app, 'admin_changeCoach', 'Koçu değiştir', { variant: current.length > 1 ? 'ghost' : 'primary',
+      onClick: () => change(row, current) }));
+    if (isOpen(row)) {
+      actions.append(actionButton(app, 'admin_endCoachAssignment', 'Eşlemeyi bitir', { variant: 'ghost',
+        onClick: () => end(row, current) }));
+    }
+    line.append(head, meta, actions);
+    return line;
   }
 
-  async function change(current, options) {
-    const result = await formDialog(app, {
-      title: 'Koçu değiştir',
-      description: `Şu anki koç: ${current.coach?.displayName || '—'}. Açık koç görevleri ve yazışmalar yeni koça `
-        + 'devredilir; devir notu yeni koça görünür.',
-      value: { coachId: '', effectiveOn: todayIst(), reason: '', handoverNote: '' },
-      fields: [
-        coachField(options.filter((option) => option.value !== current.coach?.id), 'Yeni koç'),
-        { key: 'effectiveOn', label: 'Geçerlilik', type: 'date', required: true },
-        { key: 'reason', label: 'Gerekçe', type: 'text', required: true, maxLength: 300, wide: true,
-          validate: reasonCheck },
-        { key: 'handoverNote', label: 'Devir notu', type: 'textarea', required: true, maxLength: 2000, wide: true,
-          validate: reasonCheck },
-      ],
-      submitLabel: 'Değiştir',
-      onSubmit: (draft, { key }) => {
-        if (!draft.coachId) throw new Error('Yeni koçu seçin.');
-        return app.api.post(`/v1/admin/students/${studentId}/coach-change`, {
-          newCoachId: draft.coachId, effectiveOn: draft.effectiveOn || undefined,
-          reason: String(draft.reason).trim(), handoverNote: String(draft.handoverNote).trim(),
-        }, { key });
-      },
-    });
-    if (!result) return;
-    app.toast(`Koç değişti: ${result.created?.coach?.displayName || ''}.`, 'good');
-    capacityToast(result.capacity);
-    view.reload();
+  async function add(current) {
+    if (await addCoachDialog(app, studentId, { options, current })) view.reload();
   }
-
-  async function end(current) {
-    const result = await formDialog(app, {
-      title: 'Eşlemeyi bitir',
-      description: `${current.coach?.displayName || 'Koç'} ile eşleme biter; öğrenci koçsuz kalır.`,
-      value: { endsOn: todayIst(), reason: '' },
-      fields: [
-        { key: 'endsOn', label: 'Bitiş', type: 'date', required: true },
-        { key: 'reason', label: 'Gerekçe', type: 'text', required: true, maxLength: 300, wide: true,
-          validate: reasonCheck },
-      ],
-      submitLabel: 'Bitir',
-      onSubmit: (draft, { key }) => app.api.post(`/v1/admin/coach-assignments/${current.id}/end`,
-        { endsOn: draft.endsOn || undefined, reason: String(draft.reason).trim() }, { key }),
-    });
-    if (!result) return;
-    app.toast('Eşleme bitti.', 'good');
-    view.reload();
+  async function change(row, current) {
+    if (await changeCoachDialog(app, studentId, row, { options, current })) view.reload();
+  }
+  async function end(row, current) {
+    if (await endCoachDialog(app, row, { current })) view.reload();
   }
 
   return { node, reload: () => view.reload(), destroy() {} };

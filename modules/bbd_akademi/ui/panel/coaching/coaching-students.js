@@ -126,6 +126,18 @@ export function openCard(app, student, ctx = {}) {
   return { view, card: () => card };
 }
 
+/**
+ * "Koç" / "Koçları" satırı: `coaches[]` (birincil önce; Akademi README §14 madde 134), eski yanıtta tekil `coach`.
+ * Branşlar yalnız kartta yazılır.
+ */
+function coachLine(data, { subjects = true } = {}) {
+  const coaches = Array.isArray(data?.coaches) && data.coaches.length ? data.coaches : data?.coach ? [data.coach] : [];
+  if (!coaches.length) return ['Koç', 'Koçu yok'];
+  const text = (coach) => `${coach.displayName}${subjects && coach.subjects?.length
+    ? ` (${coach.subjects.map((item) => item.name).join(', ')})` : ''}`;
+  return [coaches.length > 1 ? 'Koçları' : 'Koç', coaches.map(text).join(' · ')];
+}
+
 function summary(app, card, { studentId, ctx, view, refresh }) {
   const stats = card.stats || {};
   const parts = [];
@@ -138,7 +150,7 @@ function summary(app, card, { studentId, ctx, view, refresh }) {
   ]));
   const week = card.week || {};
   parts.push(kv([
-    ['Koç', card.coach ? `${card.coach.displayName}${card.coach.subjects?.length ? ` · ${card.coach.subjects.map((s) => s.name).join(', ')}` : ''}` : 'Koçu yok'],
+    coachLine(card),
     ['Bu hafta', `${fmtDate(week.weekStart)} · ${week.published ? 'yayımlandı' : 'yayımlanmadı'} · ${week.doneCount ?? 0}/${week.taskCount ?? 0} görev`],
     ['Görevler', `${card.tasks?.pendingReview ?? 0} kontrol bekliyor · ${card.tasks?.delayed ?? 0} gecikmiş · ${card.tasks?.redo ?? 0} tekrar`],
     ['Videolar', `${card.videos?.assigned ?? 0} atandı · ${card.videos?.completedMeasured ?? 0} izlendi · ${card.videos?.completedSelfReported ?? 0} beyan`],
@@ -480,9 +492,9 @@ function libraryPane(app, studentId) {
 function overviewPane(app, studentId) {
   const node = h('div', 'ak-stack');
   const view = loader(() => app.api.get(`/v1/students/${studentId}/coaching`), (data) => {
-    const parts = [hintBox('Öğrencinin ve velinin uygulamadaki "Koçum" ekranında gördüğü özet (veli görev atayamaz).')];
+    const parts = [hintBox('Öğrencinin ve velinin uygulamadaki "Koçum" (birden çok koçta "Koçlarım") ekranında gördüğü özet (veli görev atayamaz).')];
     parts.push(kv([
-      ['Koç', data.coach?.displayName || 'Koçu yok'],
+      coachLine(data, { subjects: false }),
       ['Hafta', `${fmtDate(data.week?.weekStart)} · ${data.week?.published ? 'yayımlandı' : 'yayımlanmadı'} · ${data.week?.doneCount ?? 0}/${data.week?.taskCount ?? 0} bitti (${pct(data.week?.completionPercent)})`],
       ['Videolar', `${data.videos?.assigned ?? 0} atandı · ${data.videos?.completedMeasured ?? 0} izlendi`],
       ['Kontroller', `${data.reviews?.approved ?? 0} onay · ${data.reviews?.redo ?? 0} tekrar · ${data.reviews?.pending ?? 0} bekliyor`],
