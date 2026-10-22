@@ -122,28 +122,56 @@ def normalize_daily_total(raw: Any) -> int:
     return seconds
 
 
-# BBD Akademi her profilde izinli ve sınırsızdır: süreden yemez, günlük toplama
-# sayılmaz. TabletKontrol 0.7.7+ aynı kuralı profil okurken kendisi de uygular.
-ALWAYS_UNLIMITED_APPS: dict[str, str] = {"com.veykemtu.benimdunyam": "BBD Akademi"}
+# BBD Akademi her profilde bulunur ve hiç yasaklanamaz (74-tablet): kipi Sınırsız
+# (varsayılan) ya da Süreli (60–86400 sn) olur. Süreli olsa da GÜNLÜK TOPLAMA SAYILMAZ —
+# eğitim uygulaması toplamı yemesin; kendi sınırı ve öğrenciye özel süresi (`ovr:`) işler.
+# TabletKontrol 0.7.10+ aynı kuralı uygular; 0.7.9 ve öncesi Akademi'yi hep sınırsız sayar.
+ALWAYS_ALLOWED_APPS: dict[str, str] = {"com.veykemtu.benimdunyam": "BBD Akademi"}
+
+# Günlük toplam süreye sayılmayan uygulamalar (süreli olsalar da).
+DAILY_TOTAL_EXEMPT_APPS: frozenset[str] = frozenset(ALWAYS_ALLOWED_APPS)
 
 
-def with_always_unlimited(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Profile app views with every always-unlimited app present, allowed and unlimited."""
+def counts_towards_daily_total(package_name: str) -> bool:
+    return package_name not in DAILY_TOTAL_EXEMPT_APPS
+
+
+def with_always_allowed(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Profile app views with every always-allowed app present and allowed.
+
+    A missing one is added unlimited, first in order; a stored blocked row (data
+    from before the rule) reads as unlimited. Unlimited and timed rules are kept.
+    """
     present = {app["packageName"] for app in apps}
     fixed = [
         {**app, "allowed": True, "unlimited": True, "dailyLimitSeconds": 0}
-        if app["packageName"] in ALWAYS_UNLIMITED_APPS else app
+        if app["packageName"] in ALWAYS_ALLOWED_APPS and not app["allowed"] else app
         for app in apps
     ]
     first = min((int(app.get("sortOrder", 0)) for app in apps), default=0) - 1
     added = [{"packageName": package, "appName": name, "allowed": True, "unlimited": True,
               "dailyLimitSeconds": 0, "sortOrder": first}
-             for package, name in ALWAYS_UNLIMITED_APPS.items() if package not in present]
+             for package, name in ALWAYS_ALLOWED_APPS.items() if package not in present]
     return fixed + added
 
 
+def allow_always_allowed(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Raw rules with a blocked always-allowed app turned unlimited instead of refused.
+
+    For writers that cannot be asked again, e.g. the first-profile screen of an older
+    tablet; the panel and the gateway get the plain refusal of `normalize_app_rules`.
+    """
+    return [{**raw, "allowed": True, "unlimited": True, "dailyLimitSeconds": 0}
+            if isinstance(raw, dict) and str(raw.get("packageName") or "").strip()
+            in ALWAYS_ALLOWED_APPS and not raw.get("allowed", False) else raw
+            for raw in apps]
+
+
 def normalize_app_rules(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Apply the three app modes: blocked, unlimited, timed (60–86400 s)."""
+    """Apply the three app modes: blocked, unlimited, timed (60–86400 s).
+
+    An always-allowed app (BBD Akademi) may be unlimited or timed, never blocked.
+    """
     rules: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw in apps:
@@ -157,8 +185,9 @@ def normalize_app_rules(apps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         name = (str(raw.get("appName") or "").strip() or package)[:120]
         allowed = bool(raw.get("allowed", False))
         unlimited = allowed and bool(raw.get("unlimited", False))
-        if package in ALWAYS_UNLIMITED_APPS:
-            allowed = unlimited = True
+        if package in ALWAYS_ALLOWED_APPS and not allowed:
+            raise ValueError(f"{ALWAYS_ALLOWED_APPS[package]} yasaklanamaz; "
+                             "Sınırsız ya da Süreli seçin.")
         try:
             limit = int(raw.get("dailyLimitSeconds") or 0)
         except (TypeError, ValueError) as exc:

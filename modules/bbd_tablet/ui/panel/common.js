@@ -12,6 +12,8 @@ import { badge, progress } from '../../ui-kit/layout.js';
 
 export const DEFAULT_TZ = 'Europe/Istanbul';
 export const OWN_PACKAGE = 'com.veykemtu.tabletkontrol';
+/** BBD Akademi: her profilde var, yasaklanamaz; süreli olsa da günlük toplama sayılmaz (rules.ALWAYS_ALLOWED_APPS). */
+export const ACADEMY_PACKAGE = 'com.veykemtu.benimdunyam';
 
 const pad = (value) => String(value).padStart(2, '0');
 

@@ -17,7 +17,7 @@ import { button, confirmSimple, confirmWithPin, h, num } from '../../ui-kit/kit.
 import { createPicker } from '../../ui-kit/picker.js';
 import { emptyState, splitView } from '../../ui-kit/layout.js';
 import {
-  DAYS, DEFAULT_TZ, OWN_PACKAGE, busy, clockInput, dur, formDialog, matchesText, muted, nameCell,
+  ACADEMY_PACKAGE, DAYS, DEFAULT_TZ, OWN_PACKAGE, busy, clockInput, dur, formDialog, matchesText, muted, nameCell,
   parseClock, permButton, problem, when, windowsSummary,
 } from './common.js';
 
@@ -52,8 +52,10 @@ const CONTROL_CHOICES = [['', 'Tablet varsayılanı'], ['block', 'Engelle'], ['a
 const MODES = [['blocked', 'Yasak'], ['timed', 'Süreli'], ['unlimited', 'Sınırsız']];
 const MAX_WINDOWS = 21;
 const PACKAGE_NAME = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
-// Her profilde izinli ve sınırsız; sunucu ve tablet de böyle uygular (rules.ALWAYS_UNLIMITED_APPS).
-const ALWAYS_UNLIMITED = new Map([['com.veykemtu.benimdunyam', 'BBD Akademi']]);
+// Her profilde bulunur, yasaklanamaz: Sınırsız (varsayılan) ya da Süreli; süreli olsa da günlük
+// toplama sayılmaz. Sunucu (rules.ALWAYS_ALLOWED_APPS) ve tablet 0.7.10+ de böyle uygular.
+const ALWAYS_ALLOWED = new Map([[ACADEMY_PACKAGE, 'BBD Akademi']]);
+const ALWAYS_ALLOWED_MODES = MODES.filter(([mode]) => mode !== 'blocked');
 const FALLBACK_ZONES = ['Europe/London', 'Europe/Berlin', 'Europe/Moscow', 'Asia/Baku', 'Asia/Dubai', 'UTC'];
 
 function zoneList(current) {
@@ -74,14 +76,14 @@ function minutesOf(text) {
   return Number.isInteger(value) ? value : NaN;
 }
 
-/** Taslak kuralları: her zaman sınırsız uygulamalar başta, sınırsız. */
-function withAlwaysUnlimited(apps) {
-  const fixed = apps.map((item) => (ALWAYS_UNLIMITED.has(item.packageName)
-    ? { ...item, mode: 'unlimited', minutes: '60' } : item));
-  const missing = [...ALWAYS_UNLIMITED]
-    .filter(([packageName]) => !fixed.some((item) => item.packageName === packageName))
-    .map(([packageName, appName]) => ({ packageName, appName, mode: 'unlimited', minutes: '60' }));
-  return [...missing, ...fixed];
+/** Taslak kuralları: her zaman izinli uygulamalar en üstte; eksikse sınırsız eklenir, yasak olamaz. */
+function withAlwaysAllowed(apps) {
+  const pinned = [...ALWAYS_ALLOWED].map(([packageName, appName]) => {
+    const item = apps.find((rule) => rule.packageName === packageName);
+    if (!item) return { packageName, appName, mode: 'unlimited', minutes: '60' };
+    return item.mode === 'blocked' ? { ...item, mode: 'unlimited', minutes: '60' } : item;
+  });
+  return [...pinned, ...apps.filter((item) => !ALWAYS_ALLOWED.has(item.packageName))];
 }
 
 /** Sunucu profili → düzenlenebilir taslak (derin kopya). */
@@ -95,7 +97,7 @@ function toDraft(profile) {
     windows: (profile?.usageWindows || []).map((item) => ({
       days: [...(item.days || [])], start: item.start || '', end: item.end || '',
     })),
-    apps: withAlwaysUnlimited((profile?.apps || []).map((item) => ({
+    apps: withAlwaysAllowed((profile?.apps || []).map((item) => ({
       packageName: item.packageName,
       appName: item.appName || '',
       mode: !item.allowed ? 'blocked' : item.unlimited ? 'unlimited' : 'timed',
@@ -497,7 +499,9 @@ export function profilesView(app) {
       });
       const minutesBox = h('label', 'tb-minutes');
       minutesBox.append(minutes, h('span', 'tb-sub', 'dk / gün'));
-      const choices = MODES.map(([mode, text]) => {
+      const pinned = ALWAYS_ALLOWED.has(rule.packageName);
+      const modes = pinned ? ALWAYS_ALLOWED_MODES : MODES;
+      const choices = modes.map(([mode, text]) => {
         const choice = h('button', 'tb-seg-btn', text);
         choice.type = 'button';
         choice.addEventListener('click', () => {
@@ -510,7 +514,7 @@ export function profilesView(app) {
         return choice;
       });
       const paintMode = () => {
-        MODES.forEach(([mode], index) => {
+        modes.forEach(([mode], index) => {
           const on = rule.mode === mode;
           choices[index].classList.toggle('on', on);
           choices[index].setAttribute('aria-pressed', String(on));
@@ -520,12 +524,14 @@ export function profilesView(app) {
       };
       seg.append(...choices);
       paintMode();
-      if (ALWAYS_UNLIMITED.has(rule.packageName)) {
-        // BBD Akademi: her profilde sınırsız, kaldırılamaz; süreden yemez.
-        for (const choice of choices) choice.disabled = true;
-        seg.title = 'BBD Akademi her profilde sınırsızdır; süreden yemez, günlük toplama sayılmaz.';
-        row.append(nameCell(label, label !== rule.packageName ? rule.packageName : ''), seg, minutesBox,
-          h('span', 'tb-sub', 'Her zaman sınırsız'));
+      if (pinned) {
+        // BBD Akademi: her profilde var, yasaklanamaz ve kaldırılamaz; süreli olsa da toplama sayılmaz.
+        row.classList.add('tb-rule-pinned');
+        seg.title = `${label} yasaklanamaz: Sınırsız ya da günlük Süreli seçin.`;
+        const note = h('span', 'tb-sub', 'Eğitim uygulaması — günlük toplama sayılmaz');
+        note.title = 'Süreli seçilirse yalnız kendi günlük süresi uygulanır; profilin günlük toplam süresinden '
+          + 'yemez. Tablet 0.7.10 ve üstü uygular; eski tabletlerde sınırsız kalır.';
+        row.append(nameCell(label, label !== rule.packageName ? rule.packageName : ''), seg, minutesBox, note);
         ed.ruleRows.set(rule, { row, minutes });
         return row;
       }
@@ -805,8 +811,8 @@ export function profilesView(app) {
       section('Kullanım saatleri', windowsList, windowActions),
       section('Günlük toplam süre', totalBox, muted('Öğrencinin bir günde süreli uygulamaların '
         + 'hepsinde birlikte geçirebileceği en çok süre; uygulama başı sürelere ektir. Dolunca '
-        + 'süreli uygulamalar o gün açılmaz, sınırsız uygulamalar açık kalır ve sayılmaz. Bir '
-        + 'uygulamaya verilen ek süre o uygulama için toplamı da aşar. Boş = toplam sınır yok. '
+        + 'süreli uygulamalar o gün açılmaz, sınırsız uygulamalar açık kalır ve sayılmaz. BBD '
+        + 'Akademi süreli olsa da sayılmaz; yalnız kendi süresi uygulanır. Bir uygulamaya verilen ek süre o uygulama için toplamı da aşar. Boş = toplam sınır yok. '
         + 'Tablet 0.7.6 ve üstü uygular.')),
       section('Uygulamalar', rulesHead, rulesList, ruleActions, adder),
       advanced,

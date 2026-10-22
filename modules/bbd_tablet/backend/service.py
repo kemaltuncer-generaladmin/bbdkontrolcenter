@@ -34,6 +34,8 @@ from .errors import (
 )
 from .rules import (
     OFFLINE_MODES,
+    allow_always_allowed,
+    counts_towards_daily_total,
     display_enrollment_code,
     inside_usage_window,
     new_enrollment_code,
@@ -46,7 +48,7 @@ from .rules import (
     normalize_self_update,
     normalize_usage_windows,
     session_view,
-    with_always_unlimited,
+    with_always_allowed,
 )
 
 # Stable storage keys from TabletKontrol's SystemPolicyControl. The debugging
@@ -236,7 +238,7 @@ class TabletService:
             "timezone": row["timezone"], "updatedAt": row["updated_at"],
             "usageWindows": windows,
             "dailyTotalLimitSeconds": int(row.get("daily_total_limit_seconds") or 0),
-            "apps": with_always_unlimited([TabletService._app_view(app) for app in apps]),
+            "apps": with_always_allowed([TabletService._app_view(app) for app in apps]),
             "systemControls": {item["control_key"]: bool(item["is_enabled"])
                                for item in controls},
         }
@@ -737,8 +739,9 @@ class TabletService:
         available = {row["package_name"] for row in launchable}
         if not set(packages).issubset(available):
             raise ValueError("Profil yalnızca bu tablette başlatılabilir uygulamaları içerebilir.")
+        # Eski tabletin ilk profil ekranı Akademi'yi yasak gönderebilir: reddetmek yerine sınırsız.
         profile = await self.save_profile(
-            profile_id=None, name=name, timezone=timezone, apps=apps,
+            profile_id=None, name=name, timezone=timezone, apps=allow_always_allowed(apps),
         )
         await self.store.execute(
             f"UPDATE {self.devices} SET profile_id=? WHERE id=? AND profile_id IS NULL "
@@ -1247,11 +1250,13 @@ class TabletService:
         for grant in grants:
             grant["appName"] = names.get(grant["packageName"], grant["packageName"])
         # Toplam yalnız süreli uygulamaları sayar; sınırsızlar ne sayılır ne durur.
+        # BBD Akademi süreli olsa da sayılmaz (kendi sınırı var; 74-tablet).
         total_limit = int((profile or {}).get("dailyTotalLimitSeconds") or 0)
         total = None
         if total_limit:
             total_used = sum(item["usedSeconds"] for item in items
-                             if item["allowed"] and not item["unlimited"])
+                             if item["allowed"] and not item["unlimited"]
+                             and counts_towards_daily_total(item["packageName"]))
             total = {"limitSeconds": total_limit, "usedSeconds": total_used,
                      "remainingSeconds": max(0, total_limit - total_used)}
         return {"studentId": student_id, "localDate": local_date,

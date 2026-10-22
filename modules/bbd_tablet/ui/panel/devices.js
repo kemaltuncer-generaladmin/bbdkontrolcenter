@@ -16,7 +16,7 @@ import { dataTable } from '../../ui-kit/table.js';
 import { filterBar } from '../../ui-kit/filters.js';
 import { badge, card, drawer, emptyState } from '../../ui-kit/layout.js';
 import {
-  COMMAND_LABELS, COMMAND_STATUS, DEFAULT_TZ, END_REASONS, OWN_PACKAGE, POLICY_HEALTH, REASONS,
+  ACADEMY_PACKAGE, COMMAND_LABELS, COMMAND_STATUS, DEFAULT_TZ, END_REASONS, OWN_PACKAGE, POLICY_HEALTH, REASONS,
   appVersionText, batteryText, busy, clockOf, commandResult, dur, facts, formDialog, inline,
   loginLockBadge, loginLockMinutes, matchesText, modal, msOf, muted, nameCell, permButton, problem,
   selfUpdateState, since, statusBadge, syncBadge, todayIn, usageList, when, windowsSummary,
@@ -1320,13 +1320,17 @@ export function devicesView(app) {
           name: answer.name,
           timezone: DEFAULT_TZ,
           usageWindows: [],
-          apps: launchable.slice(0, 1000).map((item) => ({
-            packageName: item.packageName,
-            appName: String(item.appName || item.packageName).slice(0, 120),
-            allowed: !item.isSystemApp,
-            unlimited: false,
-            dailyLimitSeconds: item.isSystemApp ? 0 : 3600,
-          })),
+          // BBD Akademi her profilde sınırsız başlar (yasaklanamaz); sonra Süreli yapılabilir.
+          apps: launchable.slice(0, 1000).map((item) => {
+            const academy = item.packageName === ACADEMY_PACKAGE;
+            return {
+              packageName: item.packageName,
+              appName: String(item.appName || item.packageName).slice(0, 120),
+              allowed: academy || !item.isSystemApp,
+              unlimited: academy,
+              dailyLimitSeconds: academy || item.isSystemApp ? 0 : 3600,
+            };
+          }),
         },
       });
       await app.call(`/devices/${enc(device.id)}/assign-profile`, {
