@@ -7,6 +7,7 @@ Kullanıcı (22.10.2026): "1 öğrenciye 3 adet koç atanabilsin".
   ("En çok 3 koç atanabilir"); seçicide öğrencinin mevcut koçları yok.
 - Koçluk → Koçlar → Eşleme tablosu: satırda 0–3 koç çipi (çip menüsü değiştir / bitir), "+ Koç ekle" / "+ Koç ata",
   3 koçta "3/3".
+- Koçluk → Öğrenciler listesi: `coaches[]` ile "Koçları: A, B" (birincil önde); tek koçta / eski yanıtta ad.
 - Toplu atama "Ek koç olarak ekle" (`onExisting: add`): gerekçe istemez; atlama nedenleri web ile aynı metin.
 """
 
@@ -176,6 +177,14 @@ export default async function ({ document, audit, sleep, api, load }) {
   out.bulkAdd = logic.bulkAssignBody({ studentIds: ['stu-2'], coachId: 's-can', onExisting: 'add' });
   out.bulkChange = logic.bulkAssignBody({ studentIds: ['stu-2'], coachId: 's-can', onExisting: 'change' });
   out.skipReasons = logic.SKIP_REASONS;
+  // Koçluk → Öğrenciler satırı: coaches[] (birincil önce), eski yanıtta tekil coach
+  const { coachesText } = await load('./panels/bbd_akademi/coaching/coaching-students.js');
+  out.listText = [
+    coachesText({ coach: ref('s-merve', 'Merve Ak'), coaches: [ref('s-huseyin', 'Hüseyin Hoca'), ref('s-merve', 'Merve Ak')] }),
+    coachesText({ coach: ref('s-merve', 'Merve Ak'), coaches: [ref('s-merve', 'Merve Ak')] }),
+    coachesText({ coach: ref('s-merve', 'Merve Ak') }),
+    coachesText({ coach: null, coaches: [] }),
+  ];
   return out;
 }
 """
@@ -224,3 +233,4 @@ def test_esleme_tablosu_koc_cipleri() -> None:
     assert out["bulkAdd"]["body"]["onExisting"] == "add" and "changeReason" not in out["bulkAdd"]["body"]
     assert "error" in out["bulkChange"]
     assert out["skipReasons"]["limit_reached"] == "En çok 3 koç atanabilir"
+    assert out["listText"] == ["Koçları: Hüseyin Hoca, Merve Ak", "Merve Ak", "Merve Ak", "—"]

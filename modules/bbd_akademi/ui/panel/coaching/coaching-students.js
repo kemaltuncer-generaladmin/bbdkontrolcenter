@@ -56,7 +56,7 @@ export function tab(app, ctx) {
     onRow: (row) => openCard(app, row.student, ctx),
     columns: [
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.3fr)', cell: (row) => studentCell(row.student) },
-      { key: 'coach', label: 'Koç', width: 'minmax(0, 1fr)', cell: (row) => row.coach?.displayName || '—' },
+      { key: 'coach', label: 'Koç', width: 'minmax(0, 1fr)', cell: (row) => coachesText(row) },
       { key: 'adherence', label: 'Uyum (7 gün)', width: '110px', align: 'num', cell: (row) => pct(row.stats?.adherence7dPercent) },
       { key: 'pending', label: 'Bekleyen', width: '150px', cell: (row) => `${row.stats?.pendingReviews ?? 0} kontrol · ${row.stats?.openQuestions ?? 0} soru` },
       { key: 'week', label: 'Bu hafta', width: '130px', cell: (row) => (row.stats?.weekPublished ? badge('Yayımlandı', 'good')
@@ -124,6 +124,17 @@ export function openCard(app, student, ctx = {}) {
   view.body.replaceChildren(bar.node, slot);
   show('summary');
   return { view, card: () => card };
+}
+
+/**
+ * Liste satırındaki koç metni (Akademi README §14 madde 134): `coaches[]` birden çoksa "Koçları: A, B" (birincil
+ * önde), tekse ad; eski yanıtta (`coaches` yok) tekil `coach`.
+ */
+export function coachesText(row) {
+  const names = (Array.isArray(row?.coaches) && row.coaches.length ? row.coaches : row?.coach ? [row.coach] : [])
+    .map((coach) => coach?.displayName).filter(Boolean);
+  if (!names.length) return '—';
+  return names.length > 1 ? `Koçları: ${names.join(', ')}` : names[0];
 }
 
 /**
