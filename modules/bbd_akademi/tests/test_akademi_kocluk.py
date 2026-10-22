@@ -242,6 +242,13 @@ const choose = (node, value) => { node.value = value; node.dispatchEvent(new Eve
 """
 
 UI = PRELUDE + r"""
+// Saat 2026-10-14 (Çarşamba) sabitlenir: fikstür 12–18 Ekim haftasını kurar, ekran "bu hafta"yı açar.
+const RealDate = Date;
+const FIXED_NOW = new RealDate('2026-10-14T09:00:00+03:00').getTime();
+globalThis.Date = class extends RealDate {
+  constructor(...args) { if (args.length) super(...args); else super(FIXED_NOW); }
+  static now() { return FIXED_NOW; }
+};
 export default async function ({ document, audit, sleep, api, load }) {
   const student = { id: 'stu-1', externalRef: 'STU-1', displayName: 'Elif Kaya', firstName: 'Elif', lastName: 'Kaya',
     classGroup: { id: 'c1', name: '9-A' }, status: 'active' };
