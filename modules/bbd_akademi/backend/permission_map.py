@@ -66,6 +66,8 @@ PERMISSION_MAP: dict[str, str] = {
     "goals.view": VIEW,
     "reports.view": VIEW,
     "learning.view": VIEW,         # öğrenme verisi (plan, hata defteri, soru, okuma, ajanda)
+    # soru defteri (Akademi README §14 madde 136): öğrencinin kendi defteri — kurum yalnız salt okur
+    "question_notebook.view": VIEW,
     "reading.view": VIEW,
     "calendar.view": VIEW,
     "insights.view": VIEW,         # erken uyarı listesi, kurum içgörüleri

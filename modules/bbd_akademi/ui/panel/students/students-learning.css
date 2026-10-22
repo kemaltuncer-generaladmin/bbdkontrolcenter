@@ -1,28 +1,6 @@
-/* Öğrenci detayı — Öğrenme sekmesi (plan, hata defteri, soru, okuma, ajanda). Önek `ak-sl-`. */
+/* Öğrenci detayı — Öğrenme sekmesi (ajanda, hata defteri, soru defteri, soru takibi, okuma). Önek `ak-sl-`. */
 .ak-sl-note { font-size: 12px; padding: 0 2px; }
 .ak-sl-week-label { font-size: 13px; font-variant-numeric: tabular-nums; }
-
-/* ------------------------------------------------------------ haftalık plan */
-.ak-sl-week { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 8px; overflow-x: auto; }
-.ak-sl-day { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.ak-sl-day.today { border-color: var(--accent); box-shadow: inset 0 2px 0 var(--accent); }
-.ak-sl-day.holiday { background: var(--warn-tint); }
-.ak-sl-day-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; font-size: 12.5px; }
-.ak-sl-day-head small { color: var(--soft); font-variant-numeric: tabular-nums; }
-.ak-sl-day-empty { font-size: 12px; color: var(--soft); padding: 6px 0; text-align: center; }
-.ak-sl-task { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 6px 8px; text-align: left;
-  font: inherit; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px;
-  background: var(--tint); cursor: default; }
-.ak-sl-task:hover { background: var(--accent-tint); }
-.ak-sl-task.done { border-left-color: var(--good); }
-.ak-sl-task.partial { border-left-color: var(--warn); }
-.ak-sl-task.skipped { border-left-color: var(--bad); opacity: .8; }
-.ak-sl-task.moved { border-left-color: var(--line); opacity: .65; }
-.ak-sl-task-top { display: flex; justify-content: space-between; align-items: center; gap: 4px; font-size: 11.5px;
-  color: var(--soft); }
-.ak-sl-task-title { font-size: 12.5px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
-.ak-sl-task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11.5px; color: var(--soft); }
 
 /* ----------------------------------------------------------- çekmece/görsel */
 .ak-sl-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
@@ -52,14 +30,59 @@
 .ak-sl-heat-legend .ak-sl-heat-cell { width: 14px; height: 14px; }
 
 /* ------------------------------------------------------------------ ajanda */
-.ak-sl-agenda-day { display: flex; flex-direction: column; gap: 4px; border: 1px solid var(--line);
+.ak-sl-agenda-filters { display: flex; flex-direction: column; gap: 6px; }
+.ak-sl-agenda-day { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line);
   border-radius: 10px; background: var(--surface); padding: 8px 12px; }
+.ak-sl-agenda-day.today { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
 .ak-sl-agenda-head { display: flex; align-items: center; gap: 8px; font-size: 13px; padding-bottom: 4px;
   border-bottom: 1px solid var(--line); }
+.ak-sl-agenda-none { font-size: 12px; color: var(--soft); padding: 4px 0; }
 .ak-sl-agenda-row { display: grid; grid-template-columns: 96px auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
-  font-size: 12.5px; padding: 3px 0; }
+  width: 100%; font: inherit; font-size: 12.5px; color: inherit; text-align: left; padding: 4px 6px; margin: 0 -6px;
+  border: 0; border-radius: 6px; background: transparent; }
+.ak-sl-agenda-row.clickable { cursor: pointer; }
+.ak-sl-agenda-row.clickable:hover { background: var(--accent-tint); }
+.ak-sl-agenda-row.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ak-sl-agenda-row.cancelled { opacity: .55; text-decoration: line-through; }
 .ak-sl-agenda-time { color: var(--soft); font-variant-numeric: tabular-nums; }
+.ak-sl-agenda-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; }
+.ak-sl-own.kit-badge { border-style: dashed; border-color: var(--accent-line); background: transparent; color: var(--ink); }
+
+/* ------------------------------------------------------------ soru defteri */
+.ak-sl-nb-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 13px; }
+.ak-sl-nb-sep { color: var(--soft); }
+.ak-sl-nb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.ak-sl-nb-grid.tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.ak-sl-nb-card { display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden; text-align: left;
+  font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  cursor: pointer; }
+.ak-sl-nb-card:hover { border-color: var(--accent-line); box-shadow: 0 1px 0 var(--accent-line); }
+.ak-sl-nb-card:focus-visible, .ak-sl-nb-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ak-sl-nb-card.folder { border-top: 3px solid var(--accent); }
+.ak-sl-nb-card .ak-sl-nb-thumb { height: 110px; border-radius: 0; border: 0; border-bottom: 1px solid var(--line); }
+.ak-sl-nb-card-text { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; font-size: 12.5px; }
+.ak-sl-nb-card-text b { font-size: 13.5px; overflow-wrap: anywhere; }
+.ak-sl-nb-thumb { display: flex; align-items: center; justify-content: center; height: 150px; overflow: hidden;
+  border-radius: 8px; background: var(--surface-2); font-size: 12px; }
+.ak-sl-nb-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ak-sl-nb-thumb-wait { width: 40%; height: 8px; border-radius: 999px; background: var(--surface-3); }
+.ak-sl-nb-thumb-empty { width: 34px; height: 26px; border: 2px solid var(--line); border-radius: 4px 4px 6px 6px;
+  border-top-width: 6px; opacity: .7; }
+.ak-sl-nb-tile { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 6px; text-align: left;
+  font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+  cursor: zoom-in; }
+.ak-sl-nb-tile:hover { border-color: var(--accent-line); }
+.ak-sl-nb-tile.solved { border-color: var(--good-line); }
+.ak-sl-nb-marks { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; flex-wrap: wrap; gap: 4px;
+  pointer-events: none; }
+.ak-sl-nb-tile-foot { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 11.5px; }
+.ak-sl-nb-note { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink); }
+.ak-sl-nb-viewer { grid-template-columns: 1fr; }
+.ak-sl-nb-viewer .ak-sl-figure { cursor: zoom-in; }
+.ak-sl-nb-viewer .ak-sl-figure-img img { max-height: 70vh; }
+.ak-sl-nb-viewer .ak-sl-figure.zoom { cursor: zoom-out; }
+.ak-sl-nb-viewer .ak-sl-figure.zoom .ak-sl-figure-img { overflow: auto; justify-content: flex-start; }
+.ak-sl-nb-viewer .ak-sl-figure.zoom .ak-sl-figure-img img { max-width: none; max-height: none; }
 
 /* -------------------------------------------------------------- dosya kotası */
 .ak-sl-quota { height: 8px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin: 6px 0 10px; }

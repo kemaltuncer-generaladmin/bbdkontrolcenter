@@ -295,7 +295,7 @@ export const STUDENT_CARD = [
   ] },
   { key: 'work', label: 'Ödev ve çalışma', parts: [
     { key: 'homework', label: 'Ödevler' },
-    { key: 'learning', label: 'Çalışma planı, hata defteri ve okuma' },
+    { key: 'learning', label: 'Ajanda, hata defteri, soru defteri ve okuma' },
     { key: 'study', label: 'Çalışma kayıtları' },
     { key: 'flashcards', label: 'Bilgi kartları', feature: 'flashcards' },
   ] },

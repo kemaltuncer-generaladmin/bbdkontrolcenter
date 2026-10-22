@@ -45,6 +45,9 @@ from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- tek Ajanda (Akademi §14 133, iş 74): Çalışma planı iç sekmesi Ajanda'ya katıldı
+    "students_getPlanSuggestion":
+        "Öğrencinin henüz onaylamadığı 'Planımı oluştur' taslağı öğrencinindir; KM öğrenci kartındaki tek Ajanda yalnız gerçek görevleri gösterir — öğrencinin kabul ettiği öneri görevleri Ajanda'da 'Öğrencinin kendi eklediği' etiketiyle görünür (Akademi §14 133).",
     # --- ders programı hafta takvimi (Akademi §14 125, iş 69)
     "admin_putTimetable":
         "KM 'Ders programı' hafta takvimidir: hücre hücre 'yalnız bu hafta / sonrakiler' admin_putTimetableWeekCells ile yazılır. Bütün haftayı geçerlilik aralığıyla yazan eski uç web / mobil yönetici programı (ve eski istemciler) içindir; KM'de geçerlilik aralığı kavramı gösterilmez (Akademi §14 125).",
