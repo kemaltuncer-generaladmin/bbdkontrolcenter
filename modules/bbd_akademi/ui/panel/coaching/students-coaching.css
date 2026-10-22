@@ -17,3 +17,8 @@
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
 .ak-sco-drawer { width: min(720px, calc(100% - 40px)); }
 .ak-sco-drawer.ak-sco-wide { width: min(940px, calc(100% - 40px)); }
+
+/* Öğrencinin koçları (en çok 3 — Akademi README §14 madde 134) */
+.ak-sco-coach { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.ak-sco-coach:first-child { padding-top: 0; }
+.ak-sco-coach-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13.5px; }

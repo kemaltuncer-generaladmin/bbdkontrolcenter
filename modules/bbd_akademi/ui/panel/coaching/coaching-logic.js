@@ -84,6 +84,9 @@ export const COPY_STATUS = { copied: ['Kopyalandı', 'good'], would_copy: ['Kopy
 /** Toplu koç atama satırı (`CoachBulkAssignResult.rows[].action`). */
 export const BULK_ACTIONS = { assign: ['Koç atanacak', 'good'], change: ['Koç değişecek', 'warn'],
   skip: ['Atlandı (koçu var)', 'dim'] };
+/** Toplu atamada atlama nedeni (`skipReason`, Akademi README §14 madde 134) — web ile aynı metin. */
+export const SKIP_REASONS = { same_coach: 'Atlandı (zaten koçu)', has_coach: 'Atlandı (koçu var)',
+  limit_reached: 'En çok 3 koç atanabilir' };
 
 /**
  * `GoalProposalKind` → [metin, birim]. Kurumun tek hedef önerme akışı (Akademi sözleşme README §14 madde 80):

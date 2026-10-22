@@ -561,6 +561,9 @@ const FEATURES = {
   early_warning: ['Erken uyarı', 'Düşüş gösteren öğrenciler için uyarı listesi.'],
   guardian_mistake_images: ['Velinin hata defteri görselleri',
     'Öğrenci paylaşırsa veli hata defterindeki görselleri görür.'],
+  question_notebook: ['Soru defteri',
+    'Öğrenci ders seçer, isterse bölüm (klasör) oluşturur ve soru fotoğraflarını yükler; fotoğraflar öğrencinin '
+    + 'dosya kotasından düşer. Kurum ve öğrencinin koçları salt okur; veli görmez. Varsayılan: açık.'],
   attendance_notifications: ['Veliye yoklama bildirimi',
     'Gelmedi / geç kaldı bildirimi veliye uygulama bildirimi olarak gider; devamsızlık SMS\'i gönderilmez (kurum kararı).'],
   attendance_signals: ['Varlık ipuçları', 'Kantin ve tablet hareketlerinden "kurumda" ipucu (canlı tarama).'],
@@ -583,6 +586,8 @@ const FEATURE_OFF_NOTE = {
     + 'Kantin kasası ve Kontrol Merkezi kantin modülü çalışmaya devam eder; kayıtlı veri silinmez, yeniden açınca geri gelir.',
   canteen_payment_requests: 'Kantin kapalıyken veli kantin ödeme taleplerini uygulamada görmez ve uygulamadan ödeyemez '
     + '(SMS bağlantısı çalışır). Kantin açıkken talepler yine görünür.',
+  question_notebook: 'Öğrenci uygulamasında Soru defteri hemen kalkar, yeni soru eklenemez. Yüklenmiş sorular ve '
+    + 'fotoğraflar silinmez; yeniden açınca geri gelir.',
 };
 /** Bayrak → çalışması için açık olması gereken bayraklar. */
 const REQUIRES = { 'finance.card': ['finance'] };

@@ -1,29 +1,35 @@
-// BBD Akademi — öğrenci detayının "Öğrenme" sekmesi (F-A24; öğrenci tarafı F-S16–F-S20).
+// BBD Akademi — öğrenci detayının "Öğrenme" sekmesi (F-A24; öğrenci tarafı F-S16–F-S20, F-S25).
 //
-// SALT OKUNUR. Öğrencinin çalışma planı, hata defteri (görseller dahil), soru
-// takibi, okuma ve ajandası öğrenci uçlarından (`/v1/students/{id}/*`, KM
-// `bbd_akademi.view`) okunur; kurum burada yalnız izler. Plan görevi atama ve
-// erteleme onayı plan yönetimindedir (F-A18), bu sekmede yazma işlemi yoktur.
+// SALT OKUNUR. Öğrencinin ajandası (ders programı + koç görevleri + kendi
+// eklediği görev / etkinlik / yapılacaklar + ödev, deneme, görüşme, kurum
+// takvimi — Akademi README §14 madde 133 "tek Ajanda"), hata defteri (görseller
+// dahil), soru defteri (madde 136), soru takibi ve okuması öğrenci uçlarından
+// (`/v1/students/{id}/*`, KM `bbd_akademi.view`) okunur; kurum burada yalnız
+// izler. Plan görevi atama ve erteleme onayı plan yönetimindedir (F-A18), bu
+// sekmede yazma işlemi yoktur.
 //
 // TEMBEL: modül çekmeceye gömülür (`learningPanel(app, studentId)`); ağ ilk
 // `shown()` ile başlar, her iç sekme ilk açıldığında kendi çağrılarını paralel
 // atar. Listeler imleçlidir (`pagedList`); satır başına ek istek atılmaz.
 //
-// GİZLİLİK (FEATURES §3d): kişisel ajanda etkinlikleri ve yapılacaklar yalnız
-// öğrencinindir — Akademi süzer, burada istenmez de. Öğrencinin veli paylaşım
-// tercihleri (hata görseli, öz değerlendirme) yalnız VELİ görünürlüğünü
-// belirler; kurum personeli hata görsellerini görür.
+// GİZLİLİK (FEATURES §3d, madde 133): öğrencinin kişisel etkinlikleri ve
+// yapılacakları kurum yöneticisine (KM dahil) ve öğrencinin koçlarına SALT
+// OKUNUR döner (`isPrivate`, `readOnly`); veli ve yalnız ders okutan öğretmen
+// görmez — süzme Akademi'dedir. Öğrencinin veli paylaşım tercihleri (hata
+// görseli, öz değerlendirme) yalnız VELİ görünürlüğünü belirler; kurum
+// personeli hata görsellerini görür.
 //
 // GÖRSEL: hata/kapak görseli gömülü imzalı bağlantıdan, süresi dolmuşsa taze
 // bağlantıyla (`students_getFile`) köprüden iner ve nesne URL'si olarak çizilir;
 // çekmece kapanınca bırakılır.
 //
-// KAPALI ÖZELLİK: sınıf kıyası (`class_comparison`) ve okuma ligi
-// (`reading_league`) kiracı bayrağıdır; kapalıysa uç `feature_disabled` döner
-// ve ekran sebebini söyler.
+// KAPALI ÖZELLİK: sınıf kıyası (`class_comparison`), okuma ligi
+// (`reading_league`) ve soru defteri (`question_notebook`) kiracı bayrağıdır;
+// kapalıysa uç `feature_disabled` döner (soru defteri sekmesi hiç çizilmez).
 //
 // Soru takibi ve okuma sekmeleri ile ortak yardımcılar (görsel indirme,
-// dönem aralığı, hücre biçimleri) `students-learning-stats.js` dosyasındadır.
+// dönem aralığı, hücre biçimleri) `students-learning-stats.js`, soru defteri
+// `students-notebook.js` dosyasındadır.
 //
 // Hata defteri PDF'i burada yok: işi başlatan uç (`students_exportMistakes`)
 // entegrasyon anahtarına açık değil, yoklanacak bir iş olmaz.
@@ -38,20 +44,23 @@ import {
   toolbar, weekStart,
 } from '../common.js';
 import {
-  accuracyTone, box, dayMonth, imageBag, minutes, periodRange, questionsTab, readingTab, stack,
+  accuracyTone, box, dayMonth, imageBag, minutes, questionsTab, readingTab, stack,
 } from './students-learning-stats.js';
+import { notebookTab } from './students-notebook.js';
 import { documentButtons } from '../documents.js';
 import { studyPlanDoc } from '../documents-logic.js';
 
 /** İç sekmeler: anahtar → {etiket, okuma işlemi}. Okuma yetkisi yoksa çizilmez. */
 const SUBTABS = [
-  { key: 'plan', label: 'Çalışma planı', read: 'students_getPlanWeek' },
+  { key: 'agenda', label: 'Ajanda', read: 'students_getAgenda' },
   { key: 'mistakes', label: 'Hata defteri', read: 'students_listMistakes' },
+  { key: 'notebook', label: 'Soru defteri', read: 'students_getQuestionNotebook' },
   { key: 'questions', label: 'Soru takibi', read: 'students_getQuestionStats' },
   { key: 'reading', label: 'Okuma', read: 'students_listReadingShelf' },
-  { key: 'agenda', label: 'Ajanda', read: 'students_getAgenda' },
   { key: 'privacy', label: 'Gizlilik ve depolama', read: 'students_getLearningPrivacy' },
 ];
+/** Eski iç sekme adları (Çalışma planı Ajanda'ya katıldı — madde 133). */
+const SUBTAB_ALIASES = { plan: 'agenda' };
 
 const DAY_SHORT = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]));
 
@@ -63,11 +72,6 @@ const TASK_STATUS = { planned: ['Planlandı', 'info'], done: ['Yapıldı', 'good
 const TASK_SOURCE = { self: 'Öğrencinin kendisi', coach: 'Koç görevi (kurum ataması)', suggestion: 'Plan önerisi' };
 const POSTPONE_STATUS = { requested: ['Erteleme talebi bekliyor', 'warn'], approved: ['Erteleme onaylandı', 'good'],
   declined: ['Erteleme reddedildi', 'bad'], cancelled: ['Talep geri çekildi', 'dim'] };
-const SUGGESTION_STATUS = { draft: ['Öğrencinin onayını bekliyor', 'info'], accepted: ['Onaylandı', 'good'],
-  discarded: ['Vazgeçildi', 'dim'], expired: ['Süresi doldu', 'dim'] };
-const SUGGESTION_REASONS = { weak_topic: 'Zayıf konu', review_due: 'Tekrar zamanı', mistake_review_due: 'Hata tekrarı',
-  homework_due: 'Ödev', next_section: 'Sıradaki bölüm', exam_soon: 'Sınav yaklaşıyor', reading_goal: 'Okuma hedefi',
-  balance: 'Denge' };
 const TREND = { up: '▲ yükseliyor', down: '▼ düşüyor', flat: '→ yatay' };
 
 // `unspecified`: öğrenci nedeni seçmedi (hızlı kayıt — Akademi README §14 madde 59; süzgeç ve kırılımda da geçerli).
@@ -81,15 +85,29 @@ const IMAGE_ROLES = { question: 'Soru', solution: 'Çözüm', note: 'Not' };
 const SOURCE_KIND = { resource: 'Kaynak', exam: 'Deneme', external_exam: 'Dış deneme', other: 'Diğer' };
 const REVIEW_RESULT = { solved: 'Çözdü', failed: 'Yine yapamadı' };
 
-/** Kurumun görebildiği ajanda türleri (kişisel etkinlik ve yapılacaklar öğrencinindir). */
-const AGENDA_TYPES = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek seferlik ders', homework: 'Ödev',
-  exam: 'Deneme', plan_task: 'Plan görevi', meeting: 'Görüşme', leave: 'İzin', institution_event: 'Kurum takvimi' };
+/**
+ * Ajanda türleri (madde 133). Kişisel etkinlik ve yapılacak öğrencinindir: kuruma (KM) ve öğrencinin koçlarına
+ * salt okunur döner, "Öğrencinin kendi eklediği" etiketiyle gösterilir.
+ */
+const AGENDA_TYPES = { lesson: 'Ders', etut: 'Etüt', one_off: 'Tek seferlik ders', plan_task: 'Görev',
+  homework: 'Ödev', exam: 'Deneme', meeting: 'Görüşme', leave: 'İzin', institution_event: 'Kurum takvimi',
+  personal_event: 'Kişisel etkinlik', todo: 'Yapılacak' };
+const LESSON_TYPES = new Set(['lesson', 'etut', 'one_off']);
+/** Kaynak süzgeci (istemcide; öğe `origin` alanından — eski sunucuda türden çıkarılır). */
+const AGENDA_ORIGINS = [
+  { key: 'coach', label: 'Koç görevleri' },
+  { key: 'self', label: 'Öğrencinin kendi eklediği' },
+  { key: 'lesson', label: 'Dersler' },
+  { key: 'institution', label: 'Kurum' },
+];
+const SELF_LABEL = 'Öğrencinin kendi eklediği';
 const EVENT_KINDS = { holiday: 'Tatil', event: 'Etkinlik', parent_meeting: 'Veli toplantısı', exam_day: 'Deneme günü',
   registration_period: 'Kayıt dönemi', other: 'Diğer' };
 const IMAGE_SHARE = { none: 'Paylaşmıyor — veli yalnız sayısal özeti görür', all: 'Bütün hata görselleri',
   selected: 'Yalnız paylaşmak için işaretlediği hatalar' };
 const FILE_KINDS = { mistake_image: 'Hata defteri görselleri', homework_image: 'Ödev görselleri',
-  flashcard_image: 'Bilgi kartı görselleri', book_cover: 'Kitap kapakları' };
+  flashcard_image: 'Bilgi kartı görselleri', book_cover: 'Kitap kapakları',
+  notebook_question_image: 'Soru defteri fotoğrafları' };
 
 const weekdayOf = (iso) => {
   const [year, month, day] = String(iso).split('-').map(Number);
@@ -111,11 +129,11 @@ export function learningPanel(app, studentId) {
 
   const bodies = {};
   const builders = {
-    plan: () => planTab(app, studentId),
+    agenda: () => agendaTab(app, studentId),
     mistakes: () => mistakesTab(app, studentId),
+    notebook: () => notebookTab(app, studentId),
     questions: () => questionsTab(app, studentId),
     reading: () => readingTab(app, studentId),
-    agenda: () => agendaTab(app, studentId),
     privacy: () => privacyTab(app, studentId),
   };
   const tabs = tabBar(visible.map(({ key, label }) => ({ key, label })), visible[0].key, (key) => showTab(key));
@@ -135,8 +153,8 @@ export function learningPanel(app, studentId) {
   return {
     node,
     shown(payload) {
-      const wanted = payload?.learningTab && visible.some((tab) => tab.key === payload.learningTab)
-        ? payload.learningTab : null;
+      const asked = SUBTAB_ALIASES[payload?.learningTab] || payload?.learningTab;
+      const wanted = asked && visible.some((tab) => tab.key === asked) ? asked : null;
       if (!started) {
         started = true;
         const first = wanted || visible[0].key;
@@ -155,33 +173,60 @@ export function learningPanel(app, studentId) {
   };
 }
 
-// ------------------------------------------------------------- çalışma planı
+// --------------------------------------------------------------------- ajanda
+//
+// Tek Ajanda (Akademi README §14 madde 133): eski "Çalışma planı" ve "Ajanda" iç sekmeleri birleşti. Haftanın
+// dersleri, koç görevleri (koç adı, tamamlandı durumu, erteleme talebi), öğrencinin kendi eklediği görev /
+// etkinlik / yapılacaklar (salt okunur, "Öğrencinin kendi eklediği"), ödev, deneme, görüşme ve kurum takvimi
+// tek akışta. Hafta başına iki istek: ajanda (`students_getAgenda`, imleçli) + uyum (`students_getPlanAdherence`,
+// gösterilen hafta ve önceki 7 hafta — özet kutuları ve 8 haftalık grafik aynı yanıttan).
 
-function planTab(app, studentId) {
+/** Öğenin kaynağı: `coach` | `self` | `lesson` | `institution` (eski sunucuda `origin` yoksa türden). */
+export function agendaOrigin(item) {
+  if (item.createdByStudent || item.isPrivate || item.origin === 'self' || item.origin === 'suggestion'
+    || item.type === 'personal_event' || item.type === 'todo') return 'self';
+  if (item.origin === 'coach' || item.planTask?.source === 'coach') return 'coach';
+  if (LESSON_TYPES.has(item.type)) return 'lesson';
+  return 'institution';
+}
+
+function originBadge(item) {
+  const origin = agendaOrigin(item);
+  if (origin === 'coach') {
+    const name = item.ownerName || item.planTask?.coachName;
+    return badge(name ? `Koç: ${name}` : 'Koç', 'info');
+  }
+  if (origin === 'self') {
+    const node = badge(SELF_LABEL);
+    node.classList.add('ak-sl-own');
+    node.title = item.origin === 'suggestion'
+      ? 'Öğrencinin “Planımı oluştur” önerisinden kabul ettiği görev — salt okunur.'
+      : 'Salt okunur — yalnız öğrenci değiştirir.';
+    return node;
+  }
+  return badge(origin === 'lesson' ? 'Ders' : 'Kurum', 'dim');
+}
+
+const OTHER_STATUS = { scheduled: 'Planlı', cancelled: 'İptal', changed: 'Değişti', pending: 'Bekliyor',
+  completed: 'Teslim edildi', overdue: 'Gecikti', approved: 'Onaylı', open: 'Açık', done: 'Yapıldı' };
+
+function agendaTab(app, studentId) {
   const node = h('div', 'ak-stack');
-  let week = weekStart(todayIst());
-  const label = h('b', 'ak-sl-week-label');
-  const paintLabel = () => { label.textContent = `${fmtDate(week)} – ${fmtDate(addDays(week, 6))}`; };
-  const go = (next) => { week = next; paintLabel(); weekView.reload(); };
-  node.append(toolbar(
-    button('‹ Önceki hafta', { variant: 'ghost', onClick: () => go(addDays(week, -7)) }),
-    button('Bu hafta', { variant: 'ghost', onClick: () => go(weekStart(todayIst())) }),
-    button('Sonraki hafta ›', { variant: 'ghost', onClick: () => go(addDays(week, 7)) }),
-    label,
-    h('span', 'kit-spacer'),
-    documentButtons(app, { title: 'Haftalık çalışma planı', label: 'Plan',
-      build: async () => {
-        const [detail, data] = await Promise.all([app.api.get(`/v1/admin/students/${studentId}`),
-          app.api.get(`/v1/students/${studentId}/plan`, { week })]);
-        return studyPlanDoc(detail?.student, data);
-      } }),
-  ));
+  const all = Object.keys(AGENDA_TYPES);
+  const state = { week: weekStart(todayIst()), types: [...all], origin: null };
 
-  const weekView = loader(() => app.api.get(`/v1/students/${studentId}/plan`, { week }),
-    (data) => renderWeek(data), { rows: 5, columns: 7 });
-  const thisWeek = weekStart(todayIst());
-  const adherence = loader(() => app.api.get(`/v1/students/${studentId}/plan/adherence`,
-    { from: addDays(thisWeek, -49), to: addDays(thisWeek, 6) }), (data) => renderAdherence(data), { rows: 4, columns: 3 });
+  const label = h('b', 'ak-sl-week-label');
+  const go = (next) => { state.week = next; reloadWeek(); };
+  const originChips = chipRow(AGENDA_ORIGINS.map((entry) => ({ ...entry, count: '' })), null,
+    (key) => { state.origin = key; paint(); });
+  const typeChips = multiChips(all.map((value) => ({ value, label: AGENDA_TYPES[value] })), state.types,
+    (list) => { state.types = list; reloadList(); });
+
+  const summarySlot = h('div');
+  const listSlot = h('div', 'ak-stack');
+  const adherenceSlot = h('div');
+  const countdown = loader(() => app.api.getCached(`/v1/students/${studentId}/agenda/countdown`, undefined,
+    { ttlMs: 5 * 60_000 }), (data) => renderCountdown(data), { rows: 2, columns: 3 });
   const prefs = loader(() => app.api.getCached(`/v1/students/${studentId}/plan/preferences`, undefined,
     { ttlMs: 60_000 }), (data) => renderPreferences(data), { rows: 5, columns: 2 });
   const notes = pagedList({
@@ -197,64 +242,205 @@ function planTab(app, studentId) {
     ],
     empty: { title: 'Teşvik notu yok', text: 'Veliler uygulamadan plan için teşvik notu bırakabilir.' },
   });
+  const canAdherence = app.can('students_getPlanAdherence');
+  const canPrefs = app.can('students_getPlanPreferences');
+  const canNotes = app.can('students_listPlanEncouragements');
 
+  const filters = h('div', 'ak-sl-agenda-filters');
+  filters.append(originChips.node, typeChips.node);
   const lower = h('div', 'ak-grid-2');
-  lower.append(card('Plan uyumu — son 8 hafta', adherence.node), card('Çalışma saatleri ve bildirimler', prefs.node));
-  node.append(weekView.node, lower, card('Veli teşvik notları', notes.node));
+  lower.append(...[canAdherence ? card('Plan uyumu — son 8 hafta', adherenceSlot) : null,
+    card('Sınav geri sayımı', countdown.node),
+    canPrefs ? card('Çalışma saatleri ve bildirimler', prefs.node) : null,
+    canNotes ? card('Veli teşvik notları', notes.node) : null].filter(Boolean));
+  node.append(
+    toolbar(
+      button('‹ Önceki hafta', { variant: 'ghost', onClick: () => go(addDays(state.week, -7)) }),
+      button('Bu hafta', { variant: 'ghost', onClick: () => go(weekStart(todayIst())) }),
+      button('Sonraki hafta ›', { variant: 'ghost', onClick: () => go(addDays(state.week, 7)) }),
+      label,
+      h('span', 'kit-spacer'),
+      app.can('students_getPlanWeek') ? documentButtons(app, { title: 'Haftalık çalışma planı', label: 'Plan',
+        build: async () => {
+          const [detail, data] = await Promise.all([app.api.get(`/v1/admin/students/${studentId}`),
+            app.api.get(`/v1/students/${studentId}/plan`, { week: state.week })]);
+          return studyPlanDoc(detail?.student, data);
+        } }) : null,
+    ),
+    summarySlot,
+    filters,
+    hintBox('Öğrencinin kendi eklediği görev, etkinlik ve yapılacaklar salt okunurdur; yalnız öğrenci değiştirir. '
+      + 'Kurum yöneticisi ve öğrencinin koçları görür; veli ve yalnız ders okutan öğretmen görmez.'),
+    listSlot,
+    lower,
+  );
 
-  function renderWeek(data) {
-    const summary = data.summary || {};
-    const nodes = [kpiRow([
-      { label: 'Planlanan görev', value: num(summary.plannedTasks),
-        title: summary.movedTasks ? `${num(summary.movedTasks)} görev başka güne taşındı (sayılmaz).` : '' },
-      { label: 'Yapılan', value: `${num(summary.doneTasks)}${summary.partialTasks ? ` + ${num(summary.partialTasks)} kısmi` : ''}` },
-      { label: 'Atlanan', value: num(summary.skippedTasks), tone: summary.skippedTasks ? 'bad' : '' },
-      { label: 'Süre (yapılan / planlanan)', value: `${num(summary.doneMinutes)} / ${minutes(summary.plannedMinutes)}` },
-      { label: 'Plan uyumu', value: summary.adherencePercent === null || summary.adherencePercent === undefined
-        ? 'Plan yok' : percent(summary.adherencePercent, 0),
-      tone: summary.adherencePercent !== null && summary.adherencePercent < 50 ? 'bad' : '' },
-    ])];
-    if (data.pendingSuggestionId) {
-      const line = h('div', 'ak-inline');
-      line.append(alertBox('Öğrencinin bu hafta için onay bekleyen bir “Planımı oluştur” önerisi var.', 'info'),
-        button('Öneriyi incele', { variant: 'ghost',
-          onClick: () => suggestionDrawer(app, studentId, data.pendingSuggestionId) }));
-      nodes.push(line);
+  let items = [];
+  let holidays = new Set();
+  let adherence = null;
+  let adherenceBusy = false;
+  let listToken = 0;
+  let weekToken = 0;
+
+  /** Haftanın bütün sayfaları (hafta nadiren 200 öğeyi aşar; en çok 5 sayfa). */
+  async function fetchWeek() {
+    const query = { from: state.week, to: addDays(state.week, 6), limit: 200,
+      types: state.types.length < all.length ? state.types : undefined };
+    const found = [];
+    const days = new Set();
+    let cursor;
+    for (let page = 0; page < 5; page += 1) {
+      const data = await app.api.get(`/v1/students/${studentId}/agenda`, { ...query, cursor });
+      found.push(...(data?.items || []));
+      for (const day of data?.holidays || []) days.add(day);
+      cursor = data?.nextCursor || undefined;
+      if (!cursor) break;
     }
-    const grid = h('div', 'ak-sl-week');
-    const today = todayIst();
-    for (const day of data.days || []) {
-      const column = h('div', `ak-sl-day${day.date === today ? ' today' : ''}${day.holiday ? ' holiday' : ''}`);
-      const head = h('div', 'ak-sl-day-head');
-      head.append(h('b', '', `${DAY_SHORT[day.dayOfWeek] || ''} ${dayMonth(day.date)}`),
-        h('small', '', `${num(day.doneMinutes)}/${minutes(day.plannedMinutes)}`));
-      column.append(head);
-      if (day.holiday) column.append(badge(day.holiday.title || 'Tatil', 'warn'));
-      column.append(h('small', 'ak-muted', `Boş süre ${minutes(day.availableMinutes)}`));
-      const tasks = [...(day.tasks || [])].sort((a, b) => String(a.startTime || '99').localeCompare(String(b.startTime || '99'))
-        || (a.order || 0) - (b.order || 0));
-      if (!tasks.length) column.append(h('div', 'ak-sl-day-empty', 'Görev yok'));
-      for (const task of tasks) column.append(taskChip(task));
-      grid.append(column);
-    }
-    nodes.push(grid);
-    return nodes;
+    return { found, days };
   }
 
-  function taskChip(task) {
-    const chip = h('button', `ak-sl-task ${task.status || ''}`);
-    chip.type = 'button';
-    const top = h('div', 'ak-sl-task-top');
-    top.append(h('small', '', task.startTime ? `${task.startTime}${task.endTime ? `–${task.endTime}` : ''}`
-      : minutes(task.estimatedMinutes)), statusBadge(TASK_STATUS, task.status));
-    chip.append(top, h('span', 'ak-sl-task-title', task.title || TASK_TYPES[task.type] || 'Görev'));
-    const meta = h('div', 'ak-sl-task-meta');
-    meta.append(h('small', '', [task.subject?.shortName || task.subject?.name, TASK_TYPES[task.type]].filter(Boolean).join(' · ')));
-    if (task.locked || task.source === 'coach') meta.append(badge('Koç', 'info'));
-    if (task.postponeRequest?.status === 'requested') meta.append(badge('Erteleme talebi', 'warn'));
-    chip.append(meta);
-    chip.addEventListener('click', () => taskDrawer(app, studentId, task.id));
-    return chip;
+  async function reloadList() {
+    const mine = ++listToken;
+    if (!state.types.length) {
+      items = [];
+      listSlot.replaceChildren(empty('Tür seçilmedi', 'Ajandada görmek istediğiniz en az bir türü seçin.'));
+      paintSummary();
+      return;
+    }
+    listSlot.replaceChildren(skeletonRows(5, 4));
+    try {
+      const { found, days } = await fetchWeek();
+      if (mine !== listToken) return;
+      items = found;
+      holidays = days;
+      paint();
+    } catch (failure) {
+      if (mine !== listToken) return;
+      items = [];
+      listSlot.replaceChildren(errorBox(failure, () => reloadList()));
+      paintSummary();
+    }
+  }
+
+  async function reloadAdherence() {
+    const mine = ++weekToken;
+    adherence = null;
+    if (!canAdherence) return;
+    adherenceSlot.replaceChildren(skeletonRows(4, 3));
+    adherenceBusy = true;
+    try {
+      const data = await app.api.get(`/v1/students/${studentId}/plan/adherence`,
+        { from: addDays(state.week, -49), to: addDays(state.week, 6) });
+      if (mine !== weekToken) return;
+      adherence = data || null;
+      adherenceSlot.replaceChildren(...[].concat(renderAdherence(adherence || {})));
+    } catch (failure) {
+      if (mine !== weekToken) return;
+      adherenceSlot.replaceChildren(errorBox(failure, () => reloadAdherence()));
+    }
+    adherenceBusy = false;
+    paintSummary();
+  }
+
+  function reloadWeek() {
+    label.textContent = `${fmtDate(state.week)} – ${fmtDate(addDays(state.week, 6))}`;
+    return Promise.all([reloadList(), reloadAdherence()]);
+  }
+
+  /** Haftanın özeti: uyum (sunucu hesabı) + koç görevi / kendi öğeleri / erteleme talebi (listeden). */
+  function paintSummary() {
+    const week = (adherence?.weeks || []).find((entry) => entry.weekStart === state.week) || null;
+    const tasks = items.filter((item) => item.type === 'plan_task');
+    const coach = tasks.filter((item) => agendaOrigin(item) === 'coach');
+    const coachDone = coach.filter((item) => item.planTask?.completed || ['done', 'partial'].includes(item.status));
+    const own = items.filter((item) => agendaOrigin(item) === 'self');
+    const postpones = tasks.filter((item) => item.planTask?.postponeRequestStatus === 'requested');
+    const tiles = [];
+    if (canAdherence) {
+      const value = week?.adherencePercent;
+      const none = adherenceBusy ? '…' : 'Plan yok';
+      tiles.push({ label: week?.inProgress ? 'Plan uyumu (hafta sürüyor)' : 'Plan uyumu',
+        value: value === null || value === undefined ? none : percent(value, 0),
+        tone: value !== null && value !== undefined && value < 50 ? 'bad' : '' });
+      tiles.push({ label: 'Süre (yapılan / planlanan)',
+        value: `${num(week?.doneMinutes || 0)} / ${minutes(week?.plannedMinutes)}` });
+    }
+    tiles.push({ label: 'Koç görevi (tamamlanan)', value: `${num(coachDone.length)} / ${num(coach.length)}`,
+      tone: coach.length && coachDone.length === coach.length ? 'good' : '' });
+    tiles.push({ label: SELF_LABEL, value: num(own.length) });
+    tiles.push({ label: 'Erteleme talebi', value: num(postpones.length), tone: postpones.length ? 'warn' : '' });
+    summarySlot.replaceChildren(kpiRow(tiles));
+  }
+
+  function paint() {
+    paintSummary();
+    const counts = Object.fromEntries(AGENDA_ORIGINS.map(({ key }) => [key, 0]));
+    for (const item of items) counts[agendaOrigin(item)] += 1;
+    originChips.counts(Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, num(value)])));
+    const shown = state.origin ? items.filter((item) => agendaOrigin(item) === state.origin) : items;
+    const byDay = new Map();
+    for (const item of shown) {
+      if (!byDay.has(item.date)) byDay.set(item.date, []);
+      byDay.get(item.date).push(item);
+    }
+    const today = todayIst();
+    const groups = [];
+    for (let index = 0; index < 7; index += 1) {
+      const date = addDays(state.week, index);
+      const rows = (byDay.get(date) || []).sort((a, b) => (a.allDay === b.allDay
+        ? String(a.startsAt || '').localeCompare(String(b.startsAt || '')) : a.allDay ? -1 : 1));
+      const group = h('div', `ak-sl-agenda-day${date === today ? ' today' : ''}`);
+      const head = h('div', 'ak-sl-agenda-head');
+      head.append(h('b', '', `${DAY_LABEL[weekdayOf(date)]} ${fmtDate(date)}`));
+      if (holidays.has(date)) head.append(badge('Tatil', 'warn'));
+      if (date === today) head.append(badge('Bugün', 'info'));
+      group.append(head);
+      if (!rows.length) group.append(h('div', 'ak-sl-agenda-none', 'Kayıt yok'));
+      for (const item of rows) group.append(agendaRow(item));
+      groups.push(group);
+    }
+    listSlot.replaceChildren(...groups);
+    if (!shown.length) {
+      listSlot.prepend(alertBox(state.origin
+        ? 'Bu hafta bu kaynaktan öğe yok. Kaynak süzgecini kaldırın ya da başka haftaya geçin.'
+        : 'Bu hafta ajandada öğe yok.', 'info'));
+    }
+  }
+
+  function agendaRow(item) {
+    const task = item.type === 'plan_task';
+    const row = h(task ? 'button' : 'div', `ak-sl-agenda-row${item.status === 'cancelled' ? ' cancelled' : ''}`
+      + `${task ? ' clickable' : ''}`);
+    if (task) {
+      row.type = 'button';
+      row.title = 'Görevin ayrıntısı';
+      row.addEventListener('click', () => taskDrawer(app, studentId, item.planTask?.taskId || item.source?.id));
+    }
+    const time = item.allDay ? 'Tüm gün' : `${fmtTime(item.startsAt)}${item.endsAt ? `–${fmtTime(item.endsAt)}` : ''}`;
+    row.append(h('span', 'ak-sl-agenda-time', time));
+    const kind = item.type === 'institution_event' && item.institutionEventKind
+      ? EVENT_KINDS[item.institutionEventKind] || AGENDA_TYPES[item.type] : AGENDA_TYPES[item.type] || item.type;
+    row.append(badge(kind, item.type === 'exam' ? 'warn' : item.type === 'institution_event' ? 'info' : ''));
+    const detail = [item.subtitle, item.subject?.name, item.location,
+      task && item.planTask?.estimatedMinutes ? minutes(item.planTask.estimatedMinutes) : '',
+      item.endDate && item.endDate !== item.date ? `${fmtDate(item.endDate)} tarihine kadar` : ''];
+    row.append(stack(item.title, detail.filter(Boolean).join(' · ')));
+    const meta = h('div', 'ak-sl-agenda-meta');
+    meta.append(originBadge(item));
+    if (task) {
+      if (item.status) meta.append(statusBadge(TASK_STATUS, item.status));
+      const postpone = item.planTask?.postponeRequestStatus;
+      if (postpone === 'requested') {
+        const date = item.planTask?.postponeRequestedDate;
+        meta.append(badge(`Erteleme talebi${date ? ` · ${dayMonth(date)}` : ''}`, 'warn'));
+      } else if (postpone && POSTPONE_STATUS[postpone]) {
+        meta.append(statusBadge(POSTPONE_STATUS, postpone));
+      }
+    } else if (item.status && OTHER_STATUS[item.status]) {
+      meta.append(h('small', 'ak-muted', OTHER_STATUS[item.status]));
+    }
+    row.append(meta);
+    return row;
   }
 
   function renderAdherence(data) {
@@ -312,11 +498,39 @@ function planTab(app, studentId) {
     ]);
   }
 
-  paintLabel();
+  function renderCountdown(data) {
+    if (!data?.examTarget && !data?.nextInstitutionExam) {
+      return h('div', 'ak-muted ak-card-pad', 'Öğrencinin hedef sınavı KM\'de tanımlı değil ve planlı kurum denemesi yok.');
+    }
+    const official = data.official;
+    const next = data.nextInstitutionExam;
+    const tiles = [];
+    if (data.examTarget) {
+      tiles.push({ label: `${data.examTarget} geri sayımı`, value: data.daysLeft === null || data.daysLeft === undefined
+        ? 'Tarih yok' : `${num(data.daysLeft)} gün`, tone: data.daysLeft !== null && data.daysLeft <= 30 ? 'warn' : '' });
+      tiles.push({ label: 'Resmî tarih', value: official ? fmtDate(official.date) : 'Açıklanmadı',
+        title: official && !official.confirmed ? 'Tarih henüz kesinleşmedi.' : '' });
+    }
+    tiles.push({ label: 'Sonraki kurum denemesi', value: next ? `${num(next.daysLeft)} gün` : 'Planlı deneme yok',
+      title: next ? `${next.exam?.name} · ${fmtDate(next.exam?.date)}` : '' });
+    const nodes = [kpiRow(tiles)];
+    const details = [];
+    if (official) {
+      details.push(['Resmî sınav', `${official.name}${official.confirmed ? '' : ' (tarih kesinleşmedi)'}`]);
+      if ((official.sessions || []).length) {
+        details.push(['Oturumlar', official.sessions.map((item) => `${item.name} · ${fmtDateTime(item.startsAt)}`).join(' / ')]);
+      }
+    }
+    if (next) details.push(['Kurum denemesi', `${next.exam?.name || '—'} · ${fmtDate(next.exam?.date)}`]);
+    if (details.length) nodes.push(kv(details));
+    return nodes;
+  }
+
   return {
     node,
-    reload: () => Promise.all([weekView.reload(), adherence.reload(), prefs.reload(), notes.reload()]),
-    destroy() { notes.destroy(); },
+    reload: () => Promise.all([reloadWeek(), countdown.reload(), canPrefs ? prefs.reload() : null,
+      canNotes ? notes.reload() : null]),
+    destroy() { listToken += 1; weekToken += 1; notes.destroy(); },
   };
 }
 
@@ -382,45 +596,6 @@ function taskDrawer(app, studentId, taskId) {
     if (links.length) nodes.push(toolbar(...links));
     return nodes;
   }, { rows: 6, columns: 2 });
-  panel.body.append(view.node);
-  view.reload();
-}
-
-function suggestionDrawer(app, studentId, suggestionId) {
-  const panel = openDrawer(app, { title: 'Plan önerisi', subtitle: 'Öneriyi yalnız öğrenci onaylar; kurum buradan izler.' });
-  panel.node.classList.add('ak-sl-drawer');
-  const view = loader(() => app.api.get(`/v1/students/${studentId}/plan/suggestions/${suggestionId}`), (suggestion) => {
-    const inputs = suggestion.inputs || {};
-    const info = card('', kv([
-      ['Durum', statusBadge(SUGGESTION_STATUS, suggestion.status)],
-      ['Hafta', `${fmtDate(suggestion.weekStart)} – ${fmtDate(addDays(suggestion.weekStart, 6))}`],
-      ['Üretildi', fmtDateTime(suggestion.generatedAt)],
-      ['Geçerlilik', fmtDateTime(suggestion.expiresAt)],
-      ['Hedef sınav', inputs.examTarget ? `${inputs.examTarget}${inputs.examDate ? ` · ${fmtDate(inputs.examDate)}` : ''}`
-        + `${inputs.daysToExam !== null && inputs.daysToExam !== undefined ? ` · ${num(inputs.daysToExam)} gün` : ''}` : '—'],
-      ['Boş saat dilimi', num((inputs.freeSlots || []).length)],
-      ['Zayıf konu / tekrar / hata tekrarı', `${num(inputs.weakTopicCount)} / ${num(inputs.reviewDueCount)} / `
-        + `${num(inputs.mistakeReviewDueCount)}`],
-      ['Bekleyen ödev', num(inputs.pendingHomeworkCount)],
-      ['Tatil günleri', (inputs.holidays || []).map(fmtDate).join(', ') || 'Yok'],
-    ]));
-    const table = dataTable({
-      columns: [
-        { key: 'date', label: 'Gün', width: '96px', cell: (row) => `${DAY_SHORT[weekdayOf(row.date)]} ${dayMonth(row.date)}` },
-        { key: 'time', label: 'Saat', width: '96px', cell: (row) => (row.startTime
-          ? `${row.startTime}${row.endTime ? `–${row.endTime}` : ''}` : minutes(row.estimatedMinutes)) },
-        { key: 'title', label: 'Görev', width: 'minmax(0, 2fr)', cell: (row) => stack(row.title,
-          [TASK_TYPES[row.type], row.subject?.name, row.topic?.name, row.resource?.title].filter(Boolean).join(' · ')) },
-        { key: 'reasons', label: 'Gerekçe', width: 'minmax(0, 1.4fr)', cell: (row) => (row.reasons || [])
-          .map((reason) => SUGGESTION_REASONS[reason] || reason).join(', ') || '—' },
-      ],
-      rows: suggestion.tasks || [],
-      rowKey: (row) => row.key,
-      dense: true,
-      empty: empty('Öneride görev yok'),
-    });
-    return [info, card(`Önerilen görevler (${num((suggestion.tasks || []).length)})`, table.node)];
-  }, { rows: 6, columns: 3 });
   panel.body.append(view.node);
   view.reload();
 }
@@ -607,184 +782,6 @@ function mistakeDrawer(app, studentId, mistakeId) {
   view.reload();
 }
 
-// --------------------------------------------------------------------- ajanda
-
-function agendaTab(app, studentId) {
-  const node = h('div', 'ak-stack');
-  const all = Object.keys(AGENDA_TYPES);
-  const state = { mode: 'week', anchor: todayIst(), types: [...all] };
-
-  const countdown = loader(() => app.api.getCached(`/v1/students/${studentId}/agenda/countdown`, undefined,
-    { ttlMs: 5 * 60_000 }), (data) => renderCountdown(data), { rows: 2, columns: 3 });
-
-  const label = h('b', 'ak-sl-week-label');
-  const modeSelect = selectBox([{ value: 'week', label: 'Hafta' }, { value: 'two_weeks', label: '2 hafta' },
-    { value: 'month', label: 'Ay' }], state.mode, (value) => { state.mode = value; reload(); }, { label: 'Görünüm' });
-  const step = (direction) => {
-    if (state.mode === 'month') {
-      const [year, month] = state.anchor.split('-').map(Number);
-      state.anchor = new Date(Date.UTC(year, month - 1 + direction, 1)).toISOString().slice(0, 10);
-    } else {
-      state.anchor = addDays(state.anchor, direction * (state.mode === 'week' ? 7 : 14));
-    }
-    reload();
-  };
-  const typeChips = multiChips(all.map((value) => ({ value, label: AGENDA_TYPES[value] })), state.types,
-    (list) => { state.types = list; reload(); });
-
-  const listSlot = h('div', 'ak-stack');
-  const more = button('Daha fazla', { variant: 'ghost', onClick: () => loadMore() });
-  more.hidden = true;
-  node.append(
-    card('Sınav geri sayımı', countdown.node),
-    toolbar(modeSelect.node,
-      button('‹', { variant: 'ghost', title: 'Önceki', onClick: () => step(-1) }),
-      button('Bugün', { variant: 'ghost', onClick: () => { state.anchor = todayIst(); reload(); } }),
-      button('›', { variant: 'ghost', title: 'Sonraki', onClick: () => step(1) }), label),
-    typeChips.node,
-    hintBox('Öğrencinin kişisel etkinlikleri ve yapılacakları yalnız kendisinindir; Akademi bunları kuruma göstermez.'),
-    listSlot,
-    toolbar(more),
-  );
-
-  let items = [];
-  let holidays = new Set();
-  let cursor = null;
-  let query = null;
-  let token = 0;
-  let busy = false;
-
-  function range() {
-    if (state.mode === 'month') {
-      const { from, to } = periodRange('month', state.anchor);
-      return { from, to };
-    }
-    const from = weekStart(state.anchor);
-    return { from, to: addDays(from, state.mode === 'week' ? 6 : 13) };
-  }
-
-  function reload() {
-    token += 1;
-    busy = false;
-    items = [];
-    holidays = new Set();
-    cursor = null;
-    const { from, to } = range();
-    label.textContent = `${fmtDate(from)} – ${fmtDate(to)}`;
-    if (!state.types.length) {
-      more.hidden = true;
-      listSlot.replaceChildren(empty('Tür seçilmedi', 'Takvimde görmek istediğiniz en az bir türü seçin.'));
-      return Promise.resolve();
-    }
-    query = { from, to, limit: 200, types: state.types.length < all.length ? state.types : undefined };
-    listSlot.replaceChildren(skeletonRows(5, 4));
-    return loadMore(true);
-  }
-
-  async function loadMore(first = false) {
-    if (busy || (!first && !cursor)) return;
-    busy = true;
-    more.disabled = true;
-    const mine = token;
-    try {
-      const data = await app.api.get(`/v1/students/${studentId}/agenda`, { ...query, cursor: cursor || undefined });
-      if (mine !== token) return;
-      items = items.concat(data?.items || []);
-      for (const day of data?.holidays || []) holidays.add(day);
-      cursor = data?.nextCursor || null;
-      paint();
-    } catch (failure) {
-      if (mine !== token) return;
-      listSlot.replaceChildren(errorBox(failure, () => reload()));
-      cursor = null;
-    } finally {
-      if (mine === token) {
-        busy = false;
-        more.disabled = false;
-        more.hidden = !cursor;
-      }
-    }
-  }
-
-  function paint() {
-    listSlot.replaceChildren();
-    if (!items.length) {
-      listSlot.append(empty('Bu aralıkta takvim öğesi yok', 'Aralığı ya da türleri değiştirin.'));
-      return;
-    }
-    const days = new Map();
-    for (const item of items) {
-      if (!days.has(item.date)) days.set(item.date, []);
-      days.get(item.date).push(item);
-    }
-    for (const date of [...days.keys()].sort()) {
-      const group = h('div', 'ak-sl-agenda-day');
-      const head = h('div', 'ak-sl-agenda-head');
-      head.append(h('b', '', `${DAY_LABEL[weekdayOf(date)]} ${fmtDate(date)}`));
-      if (holidays.has(date)) head.append(badge('Tatil', 'warn'));
-      if (date === todayIst()) head.append(badge('Bugün', 'info'));
-      group.append(head);
-      const rows = days.get(date).sort((a, b) => (a.allDay === b.allDay ? String(a.startsAt || '').localeCompare(String(b.startsAt || ''))
-        : a.allDay ? -1 : 1));
-      for (const item of rows) group.append(agendaRow(item));
-      listSlot.append(group);
-    }
-  }
-
-  function agendaRow(item) {
-    const row = h('div', `ak-sl-agenda-row${item.status === 'cancelled' ? ' cancelled' : ''}`);
-    const time = item.allDay ? 'Tüm gün' : `${fmtTime(item.startsAt)}${item.endsAt ? `–${fmtTime(item.endsAt)}` : ''}`;
-    row.append(h('span', 'ak-sl-agenda-time', time));
-    const kind = item.type === 'institution_event' && item.institutionEventKind
-      ? EVENT_KINDS[item.institutionEventKind] || AGENDA_TYPES[item.type] : AGENDA_TYPES[item.type] || item.type;
-    row.append(badge(kind, item.type === 'exam' ? 'warn' : item.type === 'institution_event' ? 'info' : ''));
-    row.append(stack(item.title, [item.subtitle, item.subject?.name, item.location,
-      item.endDate && item.endDate !== item.date ? `${fmtDate(item.endDate)} tarihine kadar` : ''].filter(Boolean).join(' · ')));
-    row.append(h('small', 'ak-muted', item.status ? agendaStatus(item) : ''));
-    return row;
-  }
-
-  function agendaStatus(item) {
-    if (item.type === 'plan_task') return TASK_STATUS[item.status]?.[0] || item.status;
-    return { scheduled: 'Planlı', cancelled: 'İptal', changed: 'Değişti', pending: 'Bekliyor', completed: 'Teslim edildi',
-      overdue: 'Gecikti', approved: 'Onaylı' }[item.status] || item.status;
-  }
-
-  function renderCountdown(data) {
-    if (!data?.examTarget && !data?.nextInstitutionExam) {
-      return h('div', 'ak-muted ak-card-pad', 'Öğrencinin hedef sınavı KM\'de tanımlı değil ve planlı kurum denemesi yok.');
-    }
-    const official = data.official;
-    const next = data.nextInstitutionExam;
-    const tiles = [];
-    if (data.examTarget) {
-      tiles.push({ label: `${data.examTarget} geri sayımı`, value: data.daysLeft === null || data.daysLeft === undefined
-        ? 'Tarih yok' : `${num(data.daysLeft)} gün`, tone: data.daysLeft !== null && data.daysLeft <= 30 ? 'warn' : '' });
-      tiles.push({ label: 'Resmî tarih', value: official ? fmtDate(official.date) : 'Açıklanmadı',
-        title: official && !official.confirmed ? 'Tarih henüz kesinleşmedi.' : '' });
-    }
-    tiles.push({ label: 'Sonraki kurum denemesi', value: next ? `${num(next.daysLeft)} gün` : 'Planlı deneme yok',
-      title: next ? `${next.exam?.name} · ${fmtDate(next.exam?.date)}` : '' });
-    const nodes = [kpiRow(tiles)];
-    const details = [];
-    if (official) {
-      details.push(['Resmî sınav', `${official.name}${official.confirmed ? '' : ' (tarih kesinleşmedi)'}`]);
-      if ((official.sessions || []).length) {
-        details.push(['Oturumlar', official.sessions.map((item) => `${item.name} · ${fmtDateTime(item.startsAt)}`).join(' / ')]);
-      }
-    }
-    if (next) details.push(['Kurum denemesi', `${next.exam?.name || '—'} · ${fmtDate(next.exam?.date)}`]);
-    if (details.length) nodes.push(kv(details));
-    return nodes;
-  }
-
-  return {
-    node,
-    reload: () => Promise.all([countdown.reload(), reload()]),
-    destroy() { token += 1; },
-  };
-}
-
 // ------------------------------------------------------- gizlilik ve depolama
 
 function privacyTab(app, studentId) {
@@ -801,8 +798,9 @@ function privacyTab(app, studentId) {
       ['Son değişiklik', fmtDateTime(data.updatedAt)],
     ]));
     nodes.push(hintBox('Bu tercihler öğrencinindir ve yalnız VELİ görünürlüğünü belirler; panelden değiştirilmez. '
-      + 'Kurum personeli hata görsellerini görür. Kişisel ajanda etkinlikleri ve yapılacaklar kuruma hiç gösterilmez. '
-      + 'Süzme Akademi sunucusunda yapılır.'));
+      + 'Kurum personeli hata görsellerini görür. Öğrencinin kişisel ajanda etkinlikleri, yapılacakları ve soru '
+      + 'defteri kurum yöneticisine ve öğrencinin koçlarına salt okunur görünür; veli ve yalnız ders okutan öğretmen '
+      + 'görmez. Süzme Akademi sunucusunda yapılır.'));
     return box(...nodes);
   }, { rows: 4, columns: 2 });
 
