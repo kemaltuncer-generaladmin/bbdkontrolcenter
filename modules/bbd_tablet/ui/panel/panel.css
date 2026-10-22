@@ -303,6 +303,9 @@ div.tb-item { cursor: default; }
   border-top: 1px solid var(--line);
 }
 .tb-rule:first-child { border-top: 0; }
+/* BBD Akademi: her profilde en üstte, yasaklanamaz (74-tablet). */
+.tb-rule-pinned { background: var(--tint); }
+.tb-rule-pinned > .tb-sub:last-child { text-align: right; }
 .tb-rule > .tb-seg { justify-self: start; }
 
 .tb-seg {

@@ -275,3 +275,44 @@ async def test_km_paneli_ozel_sureyi_gorur_ve_kaldirir(service: TabletService, c
                                                     user=User())  # type: ignore[arg-type]
     assert removed == {"packageName": VIDEO["packageName"], "removed": True}
     assert await routes.student_app_limits("opaque-A", user=User()) == []  # type: ignore[arg-type]
+
+
+AKADEMI = "com.veykemtu.benimdunyam"
+
+
+async def test_akademi_suresi_akademiden_ayarlanir_yasaklanamaz_ozel_sure_calisir(
+        service: TabletService, clock: Any) -> None:
+    """74-tablet: Akademi profilde yoksa da sınırsız bulunur; geçitten Süreli yapılır,
+    Yasak reddedilir; öğrenciye özel Akademi süresi `ovr:` satırı olarak tablete iner."""
+    profile, device_id = await _setup(service, clock)
+    control = TabletControl(service, Log())
+    with pytest.raises(TabletCapabilityError) as error:
+        await control.update_profile_limits(
+            profile["id"], 1, [{"packageName": AKADEMI, "mode": "blocked"}], None, None, "Ayşe")
+    assert error.value.reason == "validation_error"
+    assert "yasaklanamaz" in str(error.value)
+    # Sınırsızken öğrenciye özel süre verilemez (süreli değil).
+    with pytest.raises(TabletCapabilityError):
+        await control.set_student_app_limit("opaque-A", AKADEMI, 3600, "Ayşe")
+
+    saved = await control.update_profile_limits(
+        profile["id"], 1, [{"packageName": AKADEMI, "mode": "limited", "dailyLimitSeconds": 1800}],
+        None, None, "Ayşe")
+    assert saved["revision"] == 2
+    modes = {app["packageName"]: (app["mode"], app["dailyLimitSeconds"])
+             for app in (await TabletRead(service).profiles())[0]["apps"]}
+    assert modes[AKADEMI] == ("limited", 1800)
+
+    await control.set_student_app_limit("opaque-A", AKADEMI, 2700, "Ayşe")
+    device = await service.store.fetch_one(
+        f"SELECT * FROM {service.devices} WHERE id=?", (device_id,))
+    session = await service.store.fetch_one(
+        f"SELECT id FROM {service.sessions} WHERE device_id=? AND state='active'", (device_id,))
+    assert device is not None and session is not None
+    synced = await service.sync(device=device, data={"sessionId": session["id"]})
+    assert {"id": f"ovr:{AKADEMI}", "packageName": AKADEMI, "localDate": TODAY,
+            "extraSeconds": 900} in synced["grants"]["items"]
+    akademi = next(app for app in (await TabletRead(service).student_limits("opaque-A"))["apps"]
+                   if app["packageName"] == AKADEMI)
+    assert (akademi["mode"], akademi["source"], akademi["dailyLimitSeconds"]) == (
+        "limited", "student", 2700)

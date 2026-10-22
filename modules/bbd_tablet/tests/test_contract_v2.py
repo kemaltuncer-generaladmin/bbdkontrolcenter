@@ -17,9 +17,11 @@ from fastapi import HTTPException
 from modules.bbd_tablet.backend.api import routes, tablet_routes
 from modules.bbd_tablet.backend.rules import (
     ENROLLMENT_ALPHABET,
+    allow_always_allowed,
     inside_usage_window,
     next_window_start,
     normalize_usage_windows,
+    with_always_allowed,
 )
 from modules.bbd_tablet.backend.service import (
     ConflictError,
@@ -1342,19 +1344,80 @@ async def test_revoke_with_wrong_pin_changes_nothing(
     assert missing.value.status_code == 404
 
 
-async def test_bbd_akademi_is_unlimited_in_every_profile(service: TabletService) -> None:
-    # Profilde yoksa görünümde sınırsız olarak bulunur.
+async def test_bbd_akademi_is_in_every_profile_and_never_blocked(
+        service: TabletService) -> None:
+    # Profilde yoksa görünümde (panel, tablet, geçit) sınırsız olarak bulunur.
     plain = await make_profile(service, apps=[VIDEO])
     akademi = next(app for app in plain["apps"] if app["packageName"] == AKADEMI)
     assert (akademi["allowed"], akademi["unlimited"], akademi["dailyLimitSeconds"]) == (True, True, 0)
-    # Yasak ya da süreli kaydedilmek istense de sınırsız saklanır.
-    for rule in ({"allowed": False}, {"allowed": True, "dailyLimitSeconds": 1800}):
-        profile = await make_profile(service, apps=[
-            VIDEO, {"packageName": AKADEMI, "appName": "Akademi", **rule}])
-        rows = [app for app in profile["apps"] if app["packageName"] == AKADEMI]
-        assert [(app["allowed"], app["unlimited"], app["dailyLimitSeconds"]) for app in rows] == [
-            (True, True, 0)]
-    # Diğer uygulamalar sınırsız eklenebilmeye devam eder.
-    other = await make_profile(service, apps=[{**BOOKS, "unlimited": True, "dailyLimitSeconds": 0}])
-    books = next(app for app in other["apps"] if app["packageName"] == BOOKS["packageName"])
-    assert books["unlimited"] is True
+    # Süreli kaydedilir ve tablete süreli gider (74-tablet).
+    timed = await make_profile(service, apps=[
+        {"packageName": AKADEMI, "appName": "BBD Akademi", "allowed": True, "unlimited": False,
+         "dailyLimitSeconds": 2700}, VIDEO])
+    rows = [app for app in timed["apps"] if app["packageName"] == AKADEMI]
+    assert [(app["allowed"], app["unlimited"], app["dailyLimitSeconds"], app["sortOrder"])
+            for app in rows] == [(True, False, 2700, 0)]
+    _, token = await pair(service, timed["id"])
+    logged = await login(service, token)
+    sent = next(app for app in logged["profile"]["apps"] if app["packageName"] == AKADEMI)
+    assert (sent["allowed"], sent["unlimited"], sent["dailyLimitSeconds"]) == (True, False, 2700)
+    # Süre de diğer uygulamalar gibi 1 dakika – 24 saat.
+    with pytest.raises(ValueError, match="1 dakika ile 24 saat"):
+        await make_profile(service, apps=[{"packageName": AKADEMI, "allowed": True,
+                                           "dailyLimitSeconds": 30}])
+    # Yasak reddedilir; panel 400 alır, profil değişmez.
+    with pytest.raises(ValueError, match="yasaklanamaz"):
+        await make_profile(service, apps=[VIDEO, {"packageName": AKADEMI, "allowed": False}])
+    with pytest.raises(HTTPException) as refused:
+        await routes.run(service.save_profile(
+            profile_id=timed["id"], name="Ortaokul", timezone="Europe/Istanbul",
+            apps=[{"packageName": AKADEMI, "allowed": False}]))
+    assert refused.value.status_code == 400
+    assert (await service.profile(timed["id"]) or {})["revision"] == timed["revision"]
+    # Sınırsıza geri alınabilir; diğer uygulamalar sınırsız eklenebilmeye devam eder.
+    back = await service.save_profile(profile_id=timed["id"], name="Ortaokul",
+                                      timezone="Europe/Istanbul",
+                                      apps=[{"packageName": AKADEMI, "allowed": True,
+                                             "unlimited": True}, BOOKS])
+    assert [(app["packageName"], app["unlimited"]) for app in back["apps"]] == [
+        (AKADEMI, True), (BOOKS["packageName"], True)]
+
+
+def test_old_blocked_bbd_akademi_reads_as_unlimited() -> None:
+    """Kuraldan önce yasak saklanmış satır görünümde sınırsızdır; eski tabletin ilk
+    profil ekranından gelen yasak Akademi reddedilmez, sınırsıza çevrilir."""
+    stored = [{"packageName": AKADEMI, "appName": "Akademi", "allowed": False,
+               "unlimited": False, "dailyLimitSeconds": 0, "sortOrder": 4},
+              {**VIDEO, "sortOrder": 5}]
+    view = with_always_allowed(stored)
+    assert [(app["packageName"], app["allowed"], app["unlimited"]) for app in view] == [
+        (AKADEMI, True, True), (VIDEO["packageName"], True, False)]
+    assert allow_always_allowed([{"packageName": AKADEMI, "allowed": False}, GAME]) == [
+        {"packageName": AKADEMI, "allowed": True, "unlimited": True, "dailyLimitSeconds": 0},
+        GAME]
+
+
+async def test_bbd_akademi_does_not_count_towards_the_daily_total(
+        service: TabletService, clock: Any) -> None:
+    profile = await service.save_profile(
+        profile_id=None, name="Ortaokul", timezone="Europe/Istanbul",
+        apps=[VIDEO, {"packageName": AKADEMI, "appName": "BBD Akademi", "allowed": True,
+                      "unlimited": False, "dailyLimitSeconds": 3600}],
+        daily_total_limit_seconds=1200)
+    device, token = await pair(service, profile["id"])
+    logged = await login(service, token)
+    session = await service.session_for_usage_batch_token(logged["sessionToken"])
+    assert session is not None
+    clock.advance(minutes=30)
+    await service.usage_batch(session=session, data={
+        "batchId": str(uuid4()), "deviceId": device["id"], "sessionId": session["id"],
+        "studentId": session["student_id"], "startedAt": session["login_at"],
+        "endedAt": clock().isoformat(),
+        "usages": [{"packageName": VIDEO["packageName"], "localDate": TODAY, "usedSeconds": 300},
+                   {"packageName": AKADEMI, "localDate": TODAY, "usedSeconds": 900}],
+    })
+    usage = await service.student_usage(logged["student"]["id"], TODAY)
+    assert usage["dailyTotal"] == {"limitSeconds": 1200, "usedSeconds": 300,
+                                   "remainingSeconds": 900}
+    akademi = next(item for item in usage["usage"] if item["packageName"] == AKADEMI)
+    assert (akademi["limitSeconds"], akademi["remainingSeconds"]) == (3600, 2700)
