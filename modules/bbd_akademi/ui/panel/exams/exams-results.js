@@ -450,6 +450,8 @@ export function exportTab(app, exam) {
   form.append(toolbar(kindSelect.node, formatSelect.node, classSelect.node), picker.node, chosen,
     h('div', 'ak-muted', 'Dosya Akademi\'de hazırlanır; hazır olunca iner (PDF yeni pencerede açılır). '
       + 'Yayımlanmamış sonuçlar da dosyaya girer.'),
+    h('div', 'ak-muted', 'Öğrenci karnesinde ders netleri, sıralar, bütün yanlış ve boş sorular (konu / kazanım) ve '
+      + 'bütün konular yer alır; öğrenci ve veli aynı karneyi uygulamadan "Karnemi indir" ile alır.'),
     toolbar(go));
   node.append(card('Dışa aktar', form));
   return { node, reload: () => {}, destroy() { picker.destroy(); } };
