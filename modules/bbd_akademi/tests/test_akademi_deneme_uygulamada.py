@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +114,14 @@ process.stdout.write(JSON.stringify({
     questionCount: 40 }, { key: 'x', title: 'X', subjectId: null, questionCount: 5 }] }, { name: 'ÇAP TYT 0', date: '2026-10-18', type: 'tyt',
     subjects: { x: 'fizik' } }), m.examFromPreview({ sections: [{ key: 'x', title: 'X', subjectId: null, questionCount: 5 }] },
     { name: 'a', type: 'tyt' }).error],
+  defaults: [m.defaultAppDraft('ayt_say', '2026-10-26', Date.parse('2026-10-26T14:19:00+03:00')),
+    m.defaultAppDraft('ayt_say', '2026-10-26', Date.parse('2026-10-26T08:00:00+03:00')),
+    m.defaultAppDraft('ayt_say', '2026-10-27', Date.parse('2026-10-26T14:19:00+03:00'))].map((d) => [d.opensClock, d.closesClock]),
+  needs: [m.sectionNeedsSubject({ subjectId: null, subjects: [{ subjectId: 'edebiyat' }, { subjectId: 'tarih-1' }] }),
+    m.sectionNeedsSubject({ subjectId: null, subjects: [{ subjectId: 'edebiyat' }, { subjectId: null }] }),
+    m.sectionNeedsSubject({ subjectId: null }), m.sectionNeedsSubject({ subjectId: 'turkce', subjects: [] })],
+  examMulti: m.examFromPreview({ sections: [{ key: 'tde', title: 'Edebiyat-Sosyal-1', subjectId: null, questionCount: 40,
+    subjects: [{ subjectId: 'edebiyat' }, { subjectId: 'tarih-1' }] }] }, { name: 'FULL', date: '2026-10-26', type: 'ayt_say' }),
   electives: m.electivesText({ electives: [
     { title: 'Felsefe (Seçmeli)', fromNo: 21, toNo: 25, replacesTitle: 'Din Kültürü ve Ahlak Bilgisi', replacesFromNo: 16, replacesToNo: 20 },
     { title: 'Felsefe (Seçmeli)', fromNo: 16, toNo: 20, replacesTitle: null }] }),
@@ -186,6 +195,11 @@ def test_saf_mantik(tmp_path: Path) -> None:
     assert error == "“X” bölümünün dersini seçin."
     assert out["electives"] == ["Felsefe (Seçmeli) 21–25 · Din Kültürü ve Ahlak Bilgisi (16–20) yerine",
                                 "Felsefe (Seçmeli) 16–20 · ana bölümlerden ayrıldı"]
+    # canlı 26.10.2026: 14:19'da kurulan bugünkü denemenin varsayılan penceresi ŞİMDİDEN başlar (10:00–13:30 değil)
+    assert out["defaults"] == [["14:20", "17:50"], ["10:00", "13:30"], ["10:00", "13:30"]]
+    # tam AYT'nin çok dersli testi (blokları tanınan) için ders sorulmaz; yalnız çözülemeyen blok varsa
+    assert out["needs"] == [False, True, True, False]
+    assert "sectionSubjects" not in out["examMulti"]["exam"]
 
 
 # --------------------------------------------------------------------------- vekil
@@ -483,7 +497,9 @@ def test_uygulamada_deneme_tanimi_ve_canli_sinav() -> None:
     (created,) = out["created"]
     assert created["deliveryMode"] == "app" and len(created["sections"]) == 4
     assert created["app"]["durationMinutes"] == 165 and created["app"]["sessions"] == []
-    assert created["app"]["opensAt"].endswith("T10:00:00+03:00") and created["app"]["closesAt"].endswith("T13:15:00+03:00")
+    # varsayılan pencere: sınav günü 10:00; bugün 10:00 geçtiyse ŞİMDİDEN (5 dk'ya yuvarlı) — uzunluk aynı (165 + 30 dk)
+    opens, closes = (datetime.fromisoformat(created["app"][k]) for k in ("opensAt", "closesAt"))
+    assert closes - opens == timedelta(minutes=195) and opens.strftime("%H:%M") >= "10:00"
     assert created["app"]["bookletMode"] == "single" and created["app"]["resultsRelease"] == "after_close"
     assert "studentIds" not in created                      # tek tek öğrenci seçilmedi → alan gönderilmez
     assert out["detailTabs"][0] == "Canlı sınav" and "Kazanım eşleştirmesi" in out["detailTabs"]

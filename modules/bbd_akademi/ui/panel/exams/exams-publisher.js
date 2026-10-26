@@ -26,7 +26,7 @@ import {
 } from '../common.js';
 import {
   CONFIDENCE, CONFIDENCE_ORDER, acceptSuggestions, decisionsBody, examFromPreview, familyOf, filterMatches,
-  matchCounts, previewFacts, questionsText, rowState, searchTopics,
+  matchCounts, previewFacts, questionsText, rowState, searchTopics, sectionNeedsSubject,
 } from './exams-app-logic.js';
 import { EXAM_TYPES, uploadFile } from './exams-shared.js';
 
@@ -475,7 +475,7 @@ export async function publisherWizard(app, { exam = null } = {}) {
       grid.append(nameField, dateField, typeField);
       // Katalog dersi bulunamayan bölüm için ders seçimi.
       for (const section of preview?.sections || []) {
-        if (section.subjectId) continue;
+        if (!sectionNeedsSubject(section)) continue;
         const pick = selectBox([{ value: '', label: 'Ders seçin' }, ...subjects.map((item) => ({ value: item.id, label: item.name }))],
           target.subjects[section.key] || '', (value) => { target.subjects[section.key] = value; },
           { label: `${section.title} dersi` });
