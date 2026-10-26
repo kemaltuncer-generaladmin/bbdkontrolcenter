@@ -685,6 +685,22 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/students/{studentId}/exams/{examId}/analysis',
+        'students_getExamResultAnalysis',
+        ('exams.view',),
+        'read',
+        features=('F-S10', 'F-E7', 'F-P7'),
+    ),
+    Operation(
+        'GET',
+        '/v1/students/{studentId}/exams/{examId}/report-card',
+        'students_getExamReportCard',
+        ('exams.view',),
+        'read',
+        features=('F-S10', 'F-E7', 'F-P7', 'F-E8'),
+    ),
+    Operation(
+        'GET',
         '/v1/students/{studentId}/exports/{exportId}',
         'students_getExport',
         ('learning.view',),

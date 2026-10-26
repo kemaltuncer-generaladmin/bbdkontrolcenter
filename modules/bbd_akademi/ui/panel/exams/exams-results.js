@@ -10,9 +10,10 @@ import { h } from '../../../ui-kit/kit.js';
 import { alertBox, badge, card } from '../../../ui-kit/layout.js';
 import { newKey } from '../api.js';
 import {
-  actionButton, confirmAction, exportJob, formDialog, num, pagedList, runAction, selectBox,
+  actionButton, confirmAction, exportJob, formDialog, num, openDrawer, pagedList, runAction, selectBox,
   studentPicker, toolbar,
 } from '../common.js';
+import { examAnalysisSection, reportCardButton } from './exams-analysis.js';
 import {
   RESULT_SOURCE, estimateNet, netText, sectionLabel, sortedSections, studentCell,
 } from './exams-shared.js';
@@ -92,9 +93,14 @@ export function resultsTab(app, exam, { onChanged } = {}) {
     { key: 'source', label: 'Kaynak', width: '96px', cell: (row) => (row.updatedAt
       ? h('small', 'ak-muted', exam.deliveryMode === 'app' && row.source === 'answers' ? 'Uygulamada'
         : RESULT_SOURCE[row.source] || row.source || '—') : '—') },
-    { key: 'actions', label: '', width: '140px', cell: (row) => {
+    { key: 'actions', label: '', width: '200px', cell: (row) => {
       const actions = h('div', 'ak-row-actions');
       const hasResult = Boolean(row.updatedAt);
+      // Tam ayrıntılı analiz (soru soru + bütün konular) ve karne PDF'i (Akademi README §14 madde 138)
+      if (hasResult && !row.absent) {
+        actions.append(actionButton(app, 'students_getExamResultAnalysis', 'Analiz', { variant: 'ghost',
+          onClick: () => openAnalysis(app, exam, row) }));
+      }
       actions.append(actionButton(app, 'admin_putExamResult', hasResult ? 'Düzenle' : 'Sonuç gir', {
         variant: 'ghost', onClick: () => edit(row.student, hasResult ? row : null) }));
       if (hasResult) {
@@ -149,6 +155,19 @@ export function resultsTab(app, exam, { onChanged } = {}) {
   }
 
   return { node, reload: () => list.reload(), destroy() { list.destroy(); } };
+}
+
+/** Öğrencinin bu denemedeki ayrıntılı analizi (çekmece): net / sıra özeti + "Karne (PDF)" + analiz. */
+function openAnalysis(app, exam, row) {
+  const student = row.student || {};
+  const panel = openDrawer(app, { title: student.displayName || 'Öğrenci',
+    subtitle: `${exam.name} · ${row.absent ? 'Girmedi' : `${netText(row.totalNet)} net`}` });
+  panel.node.classList.add('ak-ex-analysis-drawer');
+  const analysis = examAnalysisSection(app, { studentId: student.id, examId: exam.id });
+  panel.body.append(toolbar(rankCell(row.ranks), h('span', 'kit-spacer'),
+    reportCardButton(app, { studentId: student.id, examId: exam.id })), analysis.node);
+  analysis.reload();
+  return panel;
 }
 
 function sectionCell(row, section) {

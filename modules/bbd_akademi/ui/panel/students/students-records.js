@@ -33,6 +33,7 @@ import { documentButtons } from '../documents.js';
 import { attendanceExtras } from './students-attendance.js';
 import { leaveKindDetail } from '../attendance/attendance-manage.js';
 import { examResultDoc } from '../documents-logic.js';
+import { examAnalysisSection, reportCardButton } from '../exams/exams-analysis.js';
 import {
   ATTENDANCE, EXAM_TYPES, HOMEWORK_STATUS, checkbox, dayOf, dqb, grid2, isSet, linkButton,
   kmManagedHint, padded, panelCard, secondsText, shortDate, stack, subDrawer, subjectLabel, table,
@@ -312,8 +313,10 @@ function examResult(ctx, row) {
   }
   const panel = subDrawer(ctx, { title: row.name || 'Deneme', subtitle: `${EXAM_TYPES[row.type] || ''} · ${fmtDate(row.date)}` });
   const view = loader(() => app.api.get(`/v1/students/${id}/exams/${row.examId}`), (result) => {
-    const nodes = [toolbar(h('span', 'kit-spacer'), documentButtons(app, { title: 'Deneme sonuç belgesi',
-      label: 'Sonuç belgesi', build: async () => examResultDoc(result,
+    // Karne (PDF): öğrencinin / velinin "Karnemi indir"iyle aynı belge (Akademi README §14 madde 138).
+    const nodes = [toolbar(h('span', 'kit-spacer'), result.absent ? null
+      : reportCardButton(app, { studentId: id, examId: row.examId }), documentButtons(app, {
+      title: 'Deneme sonuç belgesi', label: 'Sonuç belgesi', build: async () => examResultDoc(result,
         (await app.api.get(`/v1/admin/students/${id}`))?.student) }))];
     if (result.absent) nodes.push(alertBox('Öğrenci bu denemeye girmedi.', 'warn'));
     const score = result.estimatedScore || {};
@@ -341,6 +344,12 @@ function examResult(ctx, row) {
       { key: 'class', label: 'Sınıf ort.', align: 'num', cell: (item) => net(item.classAverageNet) },
       { key: 'inst', label: 'Kurum ort.', align: 'num', cell: (item) => net(item.institutionAverageNet) },
     ], result.sections, 'Bölüm yok')), card('Bu denemedeki eksik konular', renderWeak(ctx, result.weakTopics)));
+    // Tam ayrıntılı analiz: bütün sorular (önce yanlışlar, sonra boşlar) + bütün konular (madde 138)
+    if (!result.absent) {
+      const analysis = examAnalysisSection(app, { studentId: id, examId: row.examId });
+      nodes.push(analysis.node);
+      analysis.reload();
+    }
     return nodes;
   });
   panel.body.append(view.node);

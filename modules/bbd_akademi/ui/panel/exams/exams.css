@@ -133,3 +133,10 @@
 @media (max-width: 720px) {
   .ak-ex-delivery { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ------------------------------------- ayrıntılı analiz (Akademi README §14 madde 138) */
+.ak-ex-analysis .kit-chips.ak-ex-chips { flex-wrap: wrap; }
+.ak-ex-topic small { color: var(--soft); }
+.ak-ex-topic-group { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px 4px; }
+.ak-ex-topic-head { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.kit-drawer.ak-ex-analysis-drawer { width: min(980px, 96vw); }
