@@ -152,12 +152,19 @@ export function sessionPreset(type, sections) {
   ];
 }
 
-/** Yeni uygulamada deneme taslağı: sınav günü 10:00, kapanış süre + 30 dk sonra (çeyreğe yuvarlı). */
-export function defaultAppDraft(type, date) {
+/**
+ * Yeni uygulamada deneme taslağı: sınav günü 10:00, kapanış süre + 30 dk sonra (çeyreğe yuvarlı). Sınav günü bugünse
+ * ve 10:00 geçtiyse açılış ŞİMDİ (5 dk'ya yuvarlı) — canlı 26.10.2026: 14:19'da kurulan denemenin penceresi
+ * (10:00–13:30) geçmişte kalmış, deneme kurulur kurulmaz "sonuçlanmıştı".
+ */
+export function defaultAppDraft(type, date, nowMs = Date.now()) {
   const duration = DEFAULT_DURATION[type] || 120;
-  const close = addMinutes(date, '10:00', Math.ceil((duration + 30) / 15) * 15);
+  let opensClock = '10:00';
+  const now = splitStamp(new Date(Math.ceil(nowMs / 300_000) * 300_000).toISOString());
+  if (date && now.date === date && now.clock > opensClock) opensClock = now.clock;
+  const close = addMinutes(date, opensClock, Math.ceil((duration + 30) / 15) * 15);
   return {
-    opensDate: date || '', opensClock: '10:00',
+    opensDate: date || '', opensClock,
     closesDate: close.date || date || '', closesClock: close.clock || '13:15',
     durationMinutes: duration,
     sessions: [],
@@ -548,10 +555,18 @@ export function electivesText(preview) {
  * şablonu oturuyorsa ders ders). Dersi tablodan çözülemeyen test için seçilen ders `sectionSubjects` ile gider;
  * seçilmemişse hata metni.
  */
+/** Tablodaki testin dersi sorulmalı mı: test düzeyinde ders yok VE ders bloklarından biri çözülemedi (tam AYT'nin
+ * "Edebiyat-Sosyal-1" testi gibi çok dersli ama blokları tanınan test sorulmaz). */
+export function sectionNeedsSubject(section) {
+  if (section?.subjectId) return false;
+  const blocks = section?.subjects || [];
+  return !blocks.length || blocks.some((block) => !block.subjectId);
+}
+
 export function examFromPreview(preview, { name, date, type, publisher, subjects = {} } = {}) {
   const sectionSubjects = {};
   for (const item of preview?.sections || []) {
-    if (item.subjectId) continue;
+    if (!sectionNeedsSubject(item)) continue;
     const chosen = subjects[item.key];
     if (!chosen) return { error: `“${item.title}” bölümünün dersini seçin.` };
     sectionSubjects[item.key] = chosen;
