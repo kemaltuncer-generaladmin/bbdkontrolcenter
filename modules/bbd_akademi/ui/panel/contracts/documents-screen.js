@@ -250,10 +250,10 @@ function listTab(app) {
     columns: [
       { key: 'number', label: 'No', width: '110px', cell: (row) => h('span', 'ak-szb-no', contractNumber(row)) },
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.4fr)', cell: (row) => studentCell(row.student) },
-      { key: 'payer', label: 'Veli (ödeme sorumlusu)', width: 'minmax(0, 1fr)',
+      { key: 'payer', label: 'Veli', width: 'minmax(0, 1fr)', title: 'Ödeme sorumlusu veli (senetlerde borçlu)',
         cell: (row) => row.payerGuardian?.name || '—' },
       { key: 'academicYear', label: 'Eğitim yılı', width: '100px', cell: (row) => row.academicYear || '—' },
-      { key: 'total', label: 'Tutar', width: '130px', align: 'num', cell: (row) => {
+      { key: 'total', label: 'Tutar', width: '160px', align: 'num', cell: (row) => {
         if (!row.overdueMinor) return money(row.totalMinor ?? 0);
         const cell = h('div', 'ak-cell-stack');
         cell.append(h('span', '', money(row.totalMinor ?? 0)), badge(`Gecikmiş ${money(row.overdueMinor)}`, 'bad'));

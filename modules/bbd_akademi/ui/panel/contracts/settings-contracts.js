@@ -7,7 +7,7 @@
 // Okuma `admin_getSettings`, yazma `admin_patchSettings` (KM izni: kurum ayarları). Yalnız değişen anahtar gider
 // (`settings-logic.js` → `settingsPatch`).
 
-import { button, h } from '../../../ui-kit/kit.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
 import { alertBox, card } from '../../../ui-kit/layout.js';
 import { actionButton, loader, problem } from '../common.js';
 import { DOCUMENT_KINDS } from './documents-logic.js';
@@ -19,7 +19,8 @@ import {
 const KIND_LABEL = Object.fromEntries(DOCUMENT_KINDS.map((kind) => [kind.key, kind.label]));
 
 export function contractSettingsTab(app) {
-  const node = h('div', 'ak-stack ak-szb-settings');
+  loadStyles(import.meta.url, '../admin/settings.css');   // kaydet şeridi + ayar ızgarası Kurum ayarlarıyla aynı
+  const node = h('div', 'ak-stack ak-set ak-szb-settings');
   let original = null;          // sunucunun `contracts` görünümü
   let draft = null;
   let errorsShown = false;
@@ -54,7 +55,7 @@ export function contractSettingsTab(app) {
   }
 
   function grid(...children) {
-    const box = h('div', 'kit-form-grid');
+    const box = h('div', 'kit-form-grid ak-set-grid');
     box.append(...children);
     return box;
   }

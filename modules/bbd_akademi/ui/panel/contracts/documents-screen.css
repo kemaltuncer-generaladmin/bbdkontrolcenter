@@ -10,6 +10,8 @@
 .ak-szb-selection.on { border-style: solid; border-color: var(--accent-line); background: var(--accent-tint);
   color: var(--text, inherit); }
 .ak-szb-selection-text { min-width: 0; }
+.ak-szb .ak-cell-stack .kit-badge { align-self: flex-start; white-space: nowrap; }
+.ak-szb .kit-cell.num .ak-cell-stack { align-items: flex-end; }
 .ak-szb-no { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 .ak-szb-lead { margin: 0; font-size: 13px; }
 
@@ -47,6 +49,7 @@
 .ak-szb-tools { display: inline-flex; gap: 2px; }
 .ak-szb-tools .kit-btn { padding: 2px 7px; min-width: 0; }
 .ak-szb-clauses { display: grid; gap: 10px; }
+.ak-szb-templates .ak-stack > .kit-btn { align-self: flex-start; }
 .ak-szb-ph { display: flex; flex-wrap: wrap; gap: 6px; }
 .ak-szb-ph .kit-chip { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
 .ak-szb-paper { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--surface, #fff);
@@ -61,11 +64,21 @@
   gap: 8px; align-items: start; }
 @media (max-width: 1000px) { .ak-szb-bank { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .ak-szb-bank .kit-field-error { font-size: 11.5px; }
+.ak-szb-bank > .kit-btn { align-self: center; margin-top: 14px; }
+.ak-szb-settings .ak-stack > .kit-btn { align-self: flex-start; }
+.ak-szb-settings .ak-szb-preview-no { font-size: 13px; color: var(--accent); }
 .ak-szb-iban { font-family: var(--mono, ui-monospace, monospace); letter-spacing: .02em; }
 .ak-szb-iban.ok { border-color: var(--good, var(--accent-line)); }
 .ak-szb-iban.bad { border-color: var(--bad, red); }
 .ak-szb-preview-no { font-weight: 600; font-variant-numeric: tabular-nums; }
-.ak-szb-copies-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 12px; }
+.ak-szb-copies-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 4px 16px; }
+.ak-szb-settings .kit-form-grid select.kit-select { max-width: 260px; }
+.ak-szb-settings p.ak-muted { font-size: 12.5px; margin: 2px 0 0; }
 .ak-szb-radio-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px;
   padding: 8px 10px; }
 .ak-szb-radio-card.on { border-color: var(--accent-line); background: var(--accent-tint); }
+
+/* Ayar / şablon kartlarının gövdesi (ızgara olmayan içerik de kart kenarından içeride) */
+.ak-szb-settings .kit-card > .ak-stack, .ak-szb-templates .kit-card > :not(.kit-card-head) { padding: 12px 16px 14px; }
+.ak-szb-settings .kit-card > .ak-stack .ak-set-grid { padding: 0; }
+.ak-szb-templates .kit-card > .ak-szb-paper { margin: 12px 16px 14px; padding: 12px 14px; }

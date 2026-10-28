@@ -6,7 +6,7 @@
 // metniyle kalır (tek sözleşmede madde değişikliği öğrencinin Sözleşmeler sekmesinden, yeni sürümle).
 // Kaydetmek kurum ayarıdır (KM izni `bbd_akademi.settings`); izni olmayan salt okur.
 
-import { button, h } from '../../../ui-kit/kit.js';
+import { button, h, loadStyles } from '../../../ui-kit/kit.js';
 import { alertBox, card } from '../../../ui-kit/layout.js';
 import { confirmAction, fmtDateTime, formDialog, loader } from '../common.js';
 import { KIND_LABEL } from './documents-logic.js';
@@ -18,6 +18,7 @@ import {
 const PATH = '/v1/admin/contracts/templates';
 
 export function templatesTab(app) {
+  loadStyles(import.meta.url, '../admin/settings.css');   // kaydet şeridi Kurum ayarlarıyla aynı
   const node = h('div', 'ak-stack ak-szb-templates');
   const canSave = app.can('admin_saveContractTemplate');
   let kind = TEMPLATE_KINDS[0];

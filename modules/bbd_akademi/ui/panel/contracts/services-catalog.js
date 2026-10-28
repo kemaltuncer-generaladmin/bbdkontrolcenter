@@ -7,7 +7,7 @@
 
 import { h } from '../../../ui-kit/kit.js';
 import { badge } from '../../../ui-kit/layout.js';
-import { actionButton, formDialog, money, optionsOf, sectionHead, staticList } from '../common.js';
+import { actionButton, formDialog, money, optionsOf, staticList, toolbar } from '../common.js';
 import { CONTRACT_CHANGED_EVENT, MEB_CATEGORIES } from './documents-logic.js';
 
 const PATH = '/v1/admin/contracts/services';
@@ -36,10 +36,8 @@ export function servicesTab(app) {
 
   const add = actionButton(app, 'admin_createContractService', 'Hizmet ekle', { variant: 'primary',
     onClick: () => edit(null) });
-  node.append(sectionHead('Hizmet kataloğu', {
-    subtitle: 'Sözleşmenin HİZMETLER tablosuna gelen kalemler. Fiyat değişikliği yalnız yeni sözleşmelere uygulanır.',
-    actions: [add],
-  }));
+  node.append(toolbar(h('p', 'ak-muted ak-szb-lead', 'Sözleşmenin HİZMETLER tablosuna gelen kalemler. Fiyat '
+    + 'değişikliği yalnız yeni sözleşmelere uygulanır.'), h('span', 'kit-spacer'), add));
 
   const list = staticList({
     load: () => app.api.get(PATH),
