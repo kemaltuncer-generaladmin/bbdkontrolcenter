@@ -1011,7 +1011,11 @@ function buildScreen(app, spec, done) {
       node.disabled = busy || blocked;
       node.title = blocked ? 'Peşinat + taksitlerin toplamı sözleşme tutarına eşit olmalı.' : '';
     }
-    previewBtn.disabled = busy || totals.contractMinor <= 0;
+    // Önizleme (A5) ayrı izin: yoksa düğme gerekçesiyle kapalı.
+    const canPreview = app.api.can('admin_previewContract');
+    previewBtn.disabled = busy || totals.contractMinor <= 0 || !canPreview;
+    previewBtn.title = canPreview ? 'Kayıt sözleşmesinin PDF önizlemesi (kayıt yazılmaz).'
+      : 'Sözleşme önizleme yetkiniz yok.';
     const missing = missingFor(partyResp, state.payerGuardianSlot);
     printBtn.title = printBtn.title || (missing.length ? 'Eksik kimlik bilgisi var: belgeler üretilemeyebilir.' : '');
     paintErrors(ready);
