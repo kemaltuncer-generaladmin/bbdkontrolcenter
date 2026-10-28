@@ -98,6 +98,7 @@ export function templatesTab(app) {
       ? `Etkin sürüm ${detail.active.version} · ${fmtDateTime(detail.active.createdAt)}`
         + `${detail.active.createdByLabel ? ` · ${detail.active.createdByLabel}` : ''}`
         + `${detail.active.note ? ` · “${detail.active.note}”` : ''}`
+        + `${detail.active.isDefault ? ' · kurulum metni (örnek sözleşmelerden)' : ''}`
       : 'Bu tür için henüz şablon yok — ilk sürümü yazın.';
 
     const left = h('div', 'ak-stack');
@@ -127,7 +128,8 @@ export function templatesTab(app) {
       box.append(h('span', 'ak-muted', 'Akademi yer tutucu listesi vermedi.'));
       return box;
     }
-    for (const item of placeholders) {
+    for (const item of placeholders.filter((entry) => !Array.isArray(entry.kinds) || !entry.kinds.length
+      || entry.kinds.includes(kind))) {
       const key = String(item.key || '').replace(/^\{|\}$/g, '');
       const chip = h('button', 'kit-chip', `{${key}}`);
       chip.type = 'button';

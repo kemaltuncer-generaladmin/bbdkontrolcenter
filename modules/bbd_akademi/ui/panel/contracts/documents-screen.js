@@ -15,14 +15,15 @@
 // ilk sayfa 20 sn'de bir sessizce yoklanır ve yalnız iz değişince yeniden çizilir (seçim korunsun diye).
 
 import { button, h, loadStyles, pollLoop } from '../../../ui-kit/kit.js';
-import { badge, tabBar } from '../../../ui-kit/layout.js';
+import { alertBox, badge, tabBar } from '../../../ui-kit/layout.js';
 import {
   actionButton, empty, fmtDate, money, pagedList, sectionHead, searchBox, selectBox, statusBadge, toolbar,
 } from '../common.js';
 import { openBuildDialog, overdueLegalNotice, truncatedNote } from './documents-build.js';
 import {
   CONTRACT_CHANGED_EVENT, CONTRACT_STATUS, LIST_CHIPS, OPEN_WIZARD_EVENT, RESOLVE_MAX, SIGNATURE_SOURCES,
-  SIGNATURE_STATES, academicYearOptions, contractNumber, documentsFilter, listFingerprint, listQuery, studentName,
+  SIGNATURE_STATES, academicYearOptions, contractNumber, documentsFilter, listFingerprint, listQuery,
+  overdueFilterApplied, studentName,
 } from './documents-logic.js';
 
 const LIST = '/v1/admin/contracts';
@@ -226,7 +227,9 @@ function listTab(app) {
   }
   paintSelection();
 
-  node.append(toolbar(chips), toolbar(classSelect.node, years.node, search.node), selection);
+  // Akademi listede "gecikmesi olanlar" süzgecini uygulamıyorsa (eski sürüm) bunu açıkça söyle.
+  const overdueNote = h('div');
+  node.append(toolbar(chips), toolbar(classSelect.node, years.node, search.node), overdueNote, selection);
 
   const list = pagedList({
     app,
@@ -237,13 +240,25 @@ function listTab(app) {
     rowKey: (row) => String(row.id),
     onSelect: (ids) => { selected = ids; paintSelection(); },
     onRow: (row) => openStudent(app, row.student?.id, row.id),
+    onLoaded: (rows) => {
+      overdueNote.replaceChildren();
+      if (filters.overdueOnly && !overdueFilterApplied(rows)) {
+        overdueNote.append(alertBox('Akademi bu sürümde listeyi gecikmeye göre süzemiyor; aşağıda bütün sözleşmeler '
+          + 'görünüyor. "Belge çıkar" → "Süzgece uyan bütün sözleşmeler" yine YALNIZ gecikmesi olanları basar.', 'warn'));
+      }
+    },
     columns: [
       { key: 'number', label: 'No', width: '110px', cell: (row) => h('span', 'ak-szb-no', contractNumber(row)) },
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.4fr)', cell: (row) => studentCell(row.student) },
       { key: 'payer', label: 'Veli (ödeme sorumlusu)', width: 'minmax(0, 1fr)',
         cell: (row) => row.payerGuardian?.name || '—' },
       { key: 'academicYear', label: 'Eğitim yılı', width: '100px', cell: (row) => row.academicYear || '—' },
-      { key: 'total', label: 'Tutar', width: '120px', align: 'num', cell: (row) => money(row.totalMinor ?? 0) },
+      { key: 'total', label: 'Tutar', width: '130px', align: 'num', cell: (row) => {
+        if (!row.overdueMinor) return money(row.totalMinor ?? 0);
+        const cell = h('div', 'ak-cell-stack');
+        cell.append(h('span', '', money(row.totalMinor ?? 0)), badge(`Gecikmiş ${money(row.overdueMinor)}`, 'bad'));
+        return cell;
+      } },
       { key: 'signature', label: 'İmza', width: '170px', cell: (row) => signatureCell(row) },
       { key: 'date', label: 'Tarih', width: '96px', cell: (row) => fmtDate(row.contractDate) },
     ],
@@ -308,11 +323,21 @@ function missingTab(app) {
   const canCreate = app.can('admin_createContract');
   node.append(h('p', 'ak-muted ak-szb-lead', 'Etkin öğrencilerden sözleşmesi olmayanlar. Mevcut öğrencilerin basılı '
     + 'imzalı sözleşmesini girerken sihirbazda "Basılı imzalı sözleşmesi var" işaretli gelir; yeniden imza gerekmez.'));
+  const query = { classId: '', q: '' };
+  const classSelect = selectBox([{ value: '', label: 'Bütün sınıflar' }], '', (value) => {
+    query.classId = value;
+    list.reload();
+  }, { label: 'Sınıf' });
+  app.lookups.classGroups().then((items) => classSelect.options([{ value: '', label: 'Bütün sınıflar' },
+    ...items.map((item) => ({ value: item.id, label: item.name }))])).catch(() => {});
+  const search = searchBox({ placeholder: 'Ara: öğrenci adı ya da no', label: 'Öğrenci ara',
+    onSearch: (text) => { query.q = text; list.reload(); } });
+  node.append(toolbar(classSelect.node, search.node));
   const list = pagedList({
     app,
     path: `${LIST}/missing`,
     limit: 50,
-    query: () => ({}),
+    query: () => Object.fromEntries(Object.entries(query).filter(([, value]) => value)),
     // Satır tıklanmaz (içinde düğme var — iç içe düğme olmaz); öğrenci kartı "Aç" ile.
     columns: [
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.6fr)', cell: (row) => studentCell(row.student) },
@@ -337,6 +362,6 @@ function missingTab(app) {
     node,
     reload: () => list.reload(),
     changed: () => list.reload(),
-    destroy() { list.destroy(); },
+    destroy() { list.destroy(); search.destroy(); },
   };
 }

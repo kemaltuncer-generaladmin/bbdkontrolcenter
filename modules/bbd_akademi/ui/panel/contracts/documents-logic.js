@@ -18,8 +18,8 @@ export const OPEN_WIZARD_EVENT = 'bbd-akademi:open-contract-wizard';
 /** ≤ bu kadar öğrenci senkron üretilir; fazlası iş olarak sıraya girer (A17/A18). */
 export const SYNC_LIMIT = 40;
 
-/** "Süzgecin tamamı" sayfalanarak kimliğe çevrilirken üst sınır. */
-export const RESOLVE_MAX = 1000;
+/** "Süzgecin tamamı" sayfalanarak kimliğe çevrilirken üst sınır (A17 `contractIds` en çok 500). */
+export const RESOLVE_MAX = 500;
 
 /** Belge türleri — sıra belgedeki sıradır. `signable`: ıslak imza alır. `clauses`: madde şablonu var. */
 export const DOCUMENT_KINDS = [
@@ -80,6 +80,7 @@ export const SKIP_TEXT = {
   no_overdue: 'Gecikmiş taksiti yok',
   no_installments: 'Taksiti yok',
   not_ready: 'Belgesi üretilmemiş',
+  contract_document_not_ready: 'Belgesi üretilmemiş (eksik bilgi tamamlanınca öğrencinin Sözleşmeler sekmesinden üretin)',
 };
 
 const clean = (value) => (value === undefined || value === null || value === '' ? undefined : value);
@@ -221,6 +222,16 @@ export function academicYearOptions(today = new Date(), startMonth = 9, back = 3
   const out = [];
   for (let first = current + 1; first >= current - back; first -= 1) out.push(`${first}-${first + 1}`);
   return out;
+}
+
+/**
+ * "Gecikmesi olanlar" süzgecini Akademi listede uyguladı mı? Uygulayan sürüm her satırda `overdueMinor` taşır
+ * (80-api-degisiklik isteği). Taşımıyorsa liste süzülmemiştir — ekran bunu açıkça söyler (Belge çıkar yine yalnız
+ * gecikenleri basar: toplu süzgeç `overdueOnly`'yi tanır).
+ */
+export function overdueFilterApplied(items) {
+  const rows = Array.isArray(items) ? items : [];
+  return rows.length === 0 || rows.every((row) => row && row.overdueMinor !== undefined);
 }
 
 /** Sözleşme numarası metni: her zaman string ("BBD1-1000", eski basılı "72128"). */
