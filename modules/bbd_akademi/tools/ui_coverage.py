@@ -45,6 +45,13 @@ from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- sözleşmeler (Akademi §14 139, iş 80): veli uçları (G1–G3) uygulamanın "Sözleşmelerim" ekranınındır
+    "students_listContracts":
+        "Veli 'Sözleşmelerim' listesi (yalnız imzalı sürümler) mobil / web veli ekranınındır; KM öğrenci kartındaki 'Velinin gördüğü' önizlemesi aynı kuralı sözleşme ayrıntısından (A7, imzalı sürüm + imzalanan türler) kurar (Akademi §14 139).",
+    "students_getContractDocument":
+        "Velinin imzalı belgeyi açtığı uç; KM aynı PDF'i yönetici ucundan (A14 admin_getContractDocument, son imzalı sürüm) açar ve yazdırır (Akademi §14 139).",
+    "students_getContractAttachment":
+        "Velinin imzalı sürümün taranmış nüshasını açtığı uç; KM aynı eki yönetici ucundan (A15 admin_getContractAttachmentFile) açar (Akademi §14 139).",
     # --- tek Ajanda (Akademi §14 133, iş 74): Çalışma planı iç sekmesi Ajanda'ya katıldı
     "students_getPlanSuggestion":
         "Öğrencinin henüz onaylamadığı 'Planımı oluştur' taslağı öğrencinindir; KM öğrenci kartındaki tek Ajanda yalnız gerçek görevleri gösterir — öğrencinin kabul ettiği öneri görevleri Ajanda'da 'Öğrencinin kendi eklediği' etiketiyle görünür (Akademi §14 133).",

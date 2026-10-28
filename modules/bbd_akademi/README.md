@@ -145,7 +145,8 @@ Yoklama ───────────── Yoklama (günlük · pano · rap
 Ödev ve Deneme ─────── Ödevler · Çalışma planı · Denemeler · Değerlendirmeler · Kaynaklar · Okuma ·
                        Bilgi kartları* · Şablonlar (ödev · atama paketi · plan şablonu)
 İletişim ──────────── Duyurular · Veli toplantısı · SMS
-Finans ve Kantin ───── Kurum finansı* · Kantin* · Kitap satışı* · Kitap talepleri*
+Finans ve Kantin ───── Kurum finansı* · Sözleşmeler* (28.10.2026 — F-SZ) · Kantin* · Kitap satışı* ·
+                       Kitap talepleri*
 Raporlar ──────────── Rapor merkezi · Erken uyarı*
 Ayarlar ────────────── Kurum ayarları · Personel · KVKK talepleri
                                    * kurum özellik bayrağına bağlı
@@ -192,7 +193,7 @@ Okunamazsa `null` — panel her şeyi gösterir, karar Akademi'de kalır. Ayarla
 Özellikler'de bir bayrak değişince menü hemen yenilenir (`fresh=1`). İşlem
 düzeyinde aynı kural `api.js` → `can()` / `featureOff()` (işlemin
 `featureFlag`'i, `/km/operations`). Bölüm bayrakları: Erken uyarı
-`early_warning`, Bilgi kartları `flashcards`, Kurum finansı `finance`, Kantin
+`early_warning`, Bilgi kartları `flashcards`, Kurum finansı `finance`, Sözleşmeler `finance` + `contracts`, Kantin
 `canteen`, Kitap satışı ve Kitap talepleri `books`; kart/sekme düzeyinde `tablets`, `pa`,
 `self_review`, `reading_league`, `class_comparison`.
 
@@ -303,6 +304,7 @@ işlemin izinli olup olmadığına göre çizilir; asıl kapı vekildedir.
 | Değerlendirmeler | `evaluations*.js` | Şablonlar (bölüm, kriter, ölçek, otomatik veri), dönemler ve tamamlama durumu, değerlendirme formu (otomatik veri yan paneli), yayımla / geri al, gelişim karnesi PDF (F-A21) |
 | Erken uyarı | `insights*.js` | Kurallı risk listesi ve eylemler (not, görüşme, veliye bildirim, çöz / yeniden aç), eşikler, en çok hata yapılan konular ve nedenler (F-A22) |
 | Kurum finansı | `finance.js`, `finance-closing.js` | Cari hesaplar, peşinatlı taksit planı, kalemler, tahsilat (seçili kalem / serbest tutar FIFO), PIN teyitli iptal, gecikenler + hatırlatma, ekstre ve makbuz; indirim / burs, ayrılma (okunan süre hesabı: ödenen − katılım süresi oranında hizmet bedeli − kurum kesintisi, gerekçeli düzeltme) / kayıt dondurma ve "Kaydı yeniden başlat" (taksitler yeni vadelere), iade kaydı + iade makbuzu, ödeme planı belgesi (kayıt sözleşmesi eki, veli + kurum imza alanı), aylık rapor, dışa aktarım — **kantinden tamamen ayrı (A12)** |
+| Sözleşmeler | `contracts/documents-*.js`, `services-catalog.js`, `templates-*.js`, `settings-*.js` | Akademi README §14 madde 139 (F-SZ): bütün sözleşmeler (imza durumu / iptal / gecikmesi olanlar / sınıf / eğitim yılı / arama), çoklu seçim ya da süzgecin tamamı → **Belge çıkar** (5 tür, nüsha, senet kapsamı, sürüm; > 40 öğrenci arka planda) → TEK PDF → önizleme → **Yazdır** / PDF kaydet (PDF'i Akademi üretir, KM PDF'in kendisini basar), atlanan öğrenciler + eksik alanlar → "Öğrenciler panelinde düzenle", "Gecikenlere Yasal Uyarı" tek tık; sözleşmesi olmayanlar → "Kayıt ve ödeme planı" (sihirbaz, pencere olayı `bbd-akademi:open-contract-wizard`); hizmet kataloğu; madde şablonları (yer tutucu, önizleme, sürüm geçmişi — yalnız yeni sözleşmeler); sözleşme ayarları (`contracts.*`: unvan, MEB okul adı, mahkeme ili, banka hesapları TR IBAN sağlamalı, BBD1- + sonraki no, kayıt seti + nüshalar, veli görünürlüğü, imza etiketleri). İzinler: görüntüleme / imza / belge `bbd_akademi.finance`, kurulum `bbd_akademi.contracts`, şablon metni ve ayarlar `bbd_akademi.settings`. Anlık: KM ekranları `bbd-akademi:contract-changed` olayı + görünürken 20 sn sessiz yoklama (Akademi SSE'si entegrasyon anahtarını almaz) |
 | Kantin | `canteen.js` | Kantinin kurum kuralları (F-A15; gövdesi `settings.js` → `canteenTab`) ve KM kantin ekranlarına geçiş; kantin parası kurum carisinden ayrı (A12) |
 | Kitap satışı | `book-sales.js` | "Kitap sat" üç adım (kitaplar → öğrenciler → ödeme: cari / nakit / kart POS / veliye ödeme bağlantısı), satış listesi (açık / tümü, öğrenci süzgeci), ayrıntı (öğrenci satırları, seçilenleri / hepsini teslim et), satır: siparişi yeniden dene, mağaza durumunu yenile, ödeme bağlantısını yeniden gönder + kopyala, sipariş/fatura PDF, gerekçeli iptal / iade, geçmiş; öğrenci kartında kurumdan alınan kitaplar — **para yalnız kurum carisinde (A12)** |
 | Kitap talepleri | `books.js` | Kuyruk, siparişi yeniden dene, teslim, sipariş PDF'i |

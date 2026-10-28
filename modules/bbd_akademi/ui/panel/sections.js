@@ -53,7 +53,8 @@ export const AREAS = [
   { key: 'comms', label: 'İletişim', icon: 'megaphone', tone: 'rose',
     hint: 'Duyurular (uygulama ve SMS), veli toplantısı randevuları, SMS sağlığı ve kuyruğu.' },
   { key: 'money', label: 'Finans ve Kantin', icon: 'wallet', tone: 'orange',
-    hint: 'Kurum cari hesabı ve tahsilat, kantin, kitap satışı ve talepleri — iki para ayrı tutulur.' },
+    hint: 'Kurum cari hesabı ve tahsilat, sözleşmeler ve toplu belge yazdırma, kantin, kitap satışı ve talepleri — iki '
+      + 'para ayrı tutulur.' },
   { key: 'reports', label: 'Raporlar', icon: 'chart', tone: 'cyan',
     hint: 'Bütün raporlar tek yerde (yoklama, ders dökümü, finans, deneme, okuma) ve erken uyarı.' },
   { key: 'admin', label: 'Ayarlar', icon: 'gear', tone: 'slate',
@@ -148,6 +149,13 @@ export const SECTIONS = [
     feature: 'coaching' },
   { key: 'finance', label: 'Kurum finansı', file: './finance/finance.js', requires: ['finance'], area: 'money',
     feature: 'finance' },
+  // Sözleşmeler (F-SZ, Akademi README §14 madde 139; KULLANICI 28.10: "sözleşmeler vs km de olsun ana kumanda km
+  // bizim"): bütün sözleşmeler + sözleşmesi olmayanlar, çoklu seçim → "Belge çıkar" → TEK PDF → Yazdır; hizmet
+  // kataloğu, madde şablonları ve sözleşme ayarları aynı ekranın sekmeleri (`{tab}`). Öğrencinin kendi sözleşmeleri
+  // öğrenci kartındadır (80-km-sozlesme).
+  { key: 'contracts', label: 'Sözleşmeler', file: './contracts/documents-screen.js', requires: ['finance', 'contracts'],
+    area: 'money', feature: ['finance', 'contracts'],
+    reads: ['admin_listContracts', 'admin_listContractServices', 'admin_listContractTemplates'] },
   { key: 'canteen', label: 'Kantin', file: './finance/canteen.js', requires: ['view'], area: 'money',
     feature: 'canteen' },
   // Kitap satışı (0.5.4, F-A27): yönetici öğrencilere kurumdan kitap satar (üç adım).
@@ -176,6 +184,7 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
   oturumlar: 'sessions', 'ders-oturumlari': 'sessions', 'ders-kayitlari': 'lessonRecordings', tahtalar: 'lessonRecordings',
   recordings: 'lessonRecordings', 'veli-toplantisi': 'parentMeetings',
   'parent-meetings': 'parentMeetings',
+  sozlesmeler: 'contracts', sozlesme: 'contracts', 'belge-cikar': 'contracts',
   'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages', mesajlar: 'messages',
   kocluk: 'coaching', 'koc-gorusmeleri': 'coachMeetings', 'kontrol-kuyrugu': 'coachQueue',
   coachCheckins: 'coachMotivation', 'check-in': 'coachMotivation', 'kocluk-sablonlari': 'coachTemplates',
@@ -192,6 +201,8 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
  */
 export function featureOn(features, flag) {
   if (!flag) return true;
+  // Birden çok bayrağa bağlı ekran (ör. Sözleşmeler: `finance` + `contracts`) hepsi açıksa görünür.
+  if (Array.isArray(flag)) return flag.every((item) => featureOn(features, item));
   if (!features || typeof features !== 'object') return true;
   return features[flag] !== false;
 }

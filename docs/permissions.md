@@ -591,6 +591,7 @@ teyidi ya da gerekçeli onay beklenir (`tests/core/test_guvenlik_envanteri.py`).
 | `bbd_akademi.books` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Kitap talepleri (siparişi yeniden deneme, teslim, sipariş PDF'i) ve kitap satışı: öğrencilere kurumdan kitap satma (kurum carisine kalem, nakit / kart tahsilatı ya da veliye ödeme bağlantısı; kantinden ayrı), satır iptali / iadesi, toplu teslim. |
 | `bbd_akademi.campus` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Akademi üzerinden anlık kurum işleri: öğrenci çağırma (anons), tablet ek süre, engel ve oturum bitirme. |
 | `bbd_akademi.canteen` | `bbd_akademi` | loaded |  | `admin` | Akademi üzerinden kantin işlemleri (kurum engeli, kantin nakit tahsilatı). Asıl ekranı Öğrenciler modülüdür; bu izin yalnız vekil içindir. |
+| `bbd_akademi.contracts` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Sözleşme kurulumu ve oluşturma: Kayıt ve ödeme planı sihirbazıyla sözleşme oluşturma, sözleşme maddelerini düzenleme (yeni sürüm), güncel bilgilerle yenileme, belge üretme, sözleşme iptali, hizmet kataloğu. Sözleşmeleri görmek, ıslak imza işaretlemek, tarama eklemek ve toplu belge çıkarıp yazdırmak kurum finansı iznidir (bbd_akademi.finance); madde şablonu ve sözleşme ayarları kurum ayarıdır (bbd_akademi.settings). |
 | `bbd_akademi.curriculum` | `bbd_akademi` | loaded |  | `admin` | Müfredat kataloğu: kuruma özel program/ünite/konu ekleme, program istisna kuralları (toplu). Öğrenciye / sınıfa müfredat ATAMAK akademik iştir (bbd_akademi.academic). |
 | `bbd_akademi.evaluations` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Öğrenci değerlendirme: dönem formlarını doldurma, yayımlama ve geri alma, değerlendirme raporlarının dışa aktarımı. |
 | `bbd_akademi.exams` | `bbd_akademi` | loaded |  | `admin`, `bbd_staff` | Deneme tanımı, sonuç girişi ve düzeltme, toplu sonuç yükleme ve geri alma, cevap anahtarı ve soru-konu eşlemesi, yayımlama, dışa aktarım. |
@@ -620,7 +621,7 @@ teyidi ya da gerekçeli onay beklenir (`tests/core/test_guvenlik_envanteri.py`).
 | `bbd_canteen_reports.export` | `bbd_canteen_reports` | loaded |  | `admin`, `bbd_staff`, `accountant` | Raporu PDF/CSV olarak dışa aktarma. |
 | `bbd_canteen_reports.print` | `bbd_canteen_reports` | loaded |  | `admin`, `bbd_staff` | Raporu yazıcıya gönderme. |
 | `bbd_canteen_reports.view` | `bbd_canteen_reports` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Raporları görüntüleme. |
-| `bbd_class_schedule.view` | `bbd_class_schedule` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Ders Takvimi ekranını görüntüleme. |
+| `bbd_class_schedule.view` | `bbd_class_schedule` | disabled |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Ders Takvimi ekranını görüntüleme. |
 | `bbd_lunch.manage` | `bbd_lunch` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Toplu yemek kaydı işleme, sabit liste ve tatil günlerini düzenleme. |
 | `bbd_lunch.reverse` | `bbd_lunch` | loaded | evet | `admin`, `bbd_staff` | İşlenmiş yemek kaydını geri alma (kantinde ters kayıt oluşturur). |
 | `bbd_lunch.view` | `bbd_lunch` | loaded |  | `admin`, `bbd_staff`, `org_staff`, `accountant` | Öğle Yemeği ekranını ve geçmiş girdileri görüntüleme. |

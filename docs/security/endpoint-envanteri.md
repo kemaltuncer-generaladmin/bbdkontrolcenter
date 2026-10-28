@@ -4,9 +4,9 @@
 (denetim: `tests/core/test_guvenlik_envanteri.py`). Sunucu görünümü: platform `linux`,
 yalnız yüklenen modüller. Model ve kurallar: [README.md](README.md).
 
-- Uç: **528** · yazma: **322** · kimliksiz: **23** · PIN step-up: **23** · gerekçeli onay (ADR 0012): **86**
-- Yüklü modüller (28): `antivirus`, `bbd_akademi`, `bbd_bulk_sale`, `bbd_canteen_api`, `bbd_canteen_backups`, `bbd_canteen_devices`, `bbd_canteen_products`, `bbd_canteen_reports`, `bbd_class_schedule`, `bbd_lunch`, `bbd_payment_request`, `bbd_sms`, `bbd_students`, `bbd_tablet`, `bell`, `mobile_gateway`, `print`, `store_api`, `store_bundles`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_products`, `store_refunds`, `store_shipping`, `store_udit_logs`
-- Envanterde olmayan modüller (25): bld_api (disabled), bld_cms (disabled), bld_customers (disabled), bld_dashboard (disabled), bld_invoices (disabled), bld_kds (disabled), bld_manual_order (disabled), bld_menu (disabled), bld_notifications (disabled), bld_orders (disabled), bld_products (disabled), bld_sales_settings (disabled), bld_sms (disabled), bld_status_monitor (disabled), bld_subscriptions (disabled), store_ai (disabled), store_backups (disabled), store_cms (disabled), store_home_media (disabled), store_payment_gateway (disabled), store_promotions (disabled), store_reports (disabled), store_requests (disabled), store_tax (disabled), store_trial_club (disabled)
+- Uç: **527** · yazma: **322** · kimliksiz: **23** · PIN step-up: **23** · gerekçeli onay (ADR 0012): **86**
+- Yüklü modüller (27): `antivirus`, `bbd_akademi`, `bbd_bulk_sale`, `bbd_canteen_api`, `bbd_canteen_backups`, `bbd_canteen_devices`, `bbd_canteen_products`, `bbd_canteen_reports`, `bbd_lunch`, `bbd_payment_request`, `bbd_sms`, `bbd_students`, `bbd_tablet`, `bell`, `mobile_gateway`, `print`, `store_api`, `store_bundles`, `store_customers`, `store_dashboard`, `store_invoices`, `store_notifications`, `store_orders`, `store_products`, `store_refunds`, `store_shipping`, `store_udit_logs`
+- Envanterde olmayan modüller (26): bbd_class_schedule (disabled), bld_api (disabled), bld_cms (disabled), bld_customers (disabled), bld_dashboard (disabled), bld_invoices (disabled), bld_kds (disabled), bld_manual_order (disabled), bld_menu (disabled), bld_notifications (disabled), bld_orders (disabled), bld_products (disabled), bld_sales_settings (disabled), bld_sms (disabled), bld_status_monitor (disabled), bld_subscriptions (disabled), store_ai (disabled), store_backups (disabled), store_cms (disabled), store_home_media (disabled), store_payment_gateway (disabled), store_promotions (disabled), store_reports (disabled), store_requests (disabled), store_tax (disabled), store_trial_club (disabled)
 
 Sütunlar: **İzin** — gruplar arasında ∧ (hepsi), grup içinde ∨ (biri yeter); ilk grup
 çoğunlukla router'ın taban iznidir (`module.yaml` → `http.requires`). **Gövde** — uç
@@ -115,12 +115,6 @@ gövdesinde ek `has_permission` denetimi var. **Step-up** — `pin` (PIN teyidi)
 | PUT | `/api/bbd_canteen_reports/saved` | `bbd_canteen_reports.view` |  |  | oturum |
 | DELETE | `/api/bbd_canteen_reports/saved/{report_id}` | `bbd_canteen_reports.view` |  |  | oturum |
 | GET | `/api/bbd_canteen_reports/students/{kantin_id}` | `bbd_canteen_reports.view` |  |  | oturum |
-
-## bbd_class_schedule (1)
-
-| Yöntem | Yol | İzin | Gövde | Step-up | Kimlik |
-|---|---|---|---|---|---|
-| GET | `/api/bbd_class_schedule/week` | `bbd_class_schedule.view` |  |  | oturum |
 
 ## bbd_lunch (11)
 
