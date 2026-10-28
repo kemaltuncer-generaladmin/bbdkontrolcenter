@@ -61,9 +61,17 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
     }
   }
 
-  /** A4 → kimlik aynası sözleşmenin son sürümünden yeniyse "Kimlik bilgileri değişti" bandı. */
-  async function refreshParty() {
+  /**
+   * "Kimlik bilgileri değişti": Akademi `ContractDetail.partyChanged` verirse o esastır (KM'de kimlik düzenlenince ayrıntı
+   * yeniden okunur); vermezse A4 `identityUpdatedAt` son sürümün tarihiyle karşılaştırılır.
+   */
+  async function refreshParty({ reread = false } = {}) {
     if (!detail || detail.status !== 'active') { band.replaceChildren(); return; }
+    if (typeof detail.partyChanged === 'boolean') {
+      if (reread) await reload();
+      else paintBand();
+      return;
+    }
     try {
       const party = await app.api.get(paths.party(studentId));
       identityUpdatedAt = party?.identityUpdatedAt || null;
@@ -73,7 +81,8 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
 
   function paintBand() {
     band.replaceChildren();
-    if (!detail || !partyChanged(detail, identityUpdatedAt)) return;
+    const changedParty = typeof detail?.partyChanged === 'boolean' ? detail.partyChanged : partyChanged(detail || {}, identityUpdatedAt);
+    if (!detail || !changedParty) return;
     const box = h('div', 'ak-ct-alert');
     box.append(alertBox('Kimlik bilgileri değişti — belgeler eski bilgilerle. "Güncel bilgilerle yenile" yeni sürüm '
       + 'oluşturur (imzalıysa yeniden imza gerekir).', 'warn'), refreshButton());
@@ -125,7 +134,7 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
       const km = kmId();
       if (km) {
         box.append(button('Öğrenciler panelinde düzenle', { onClick: () => editInStudentsPanel(app,
-          { kmId: km, name: name(), onClosed: () => setTimeout(() => refreshParty(), 1500) }) }));
+          { kmId: km, name: name(), onClosed: () => setTimeout(() => refreshParty({ reread: true }), 1500) }) }));
       }
       out.push(box);
     }

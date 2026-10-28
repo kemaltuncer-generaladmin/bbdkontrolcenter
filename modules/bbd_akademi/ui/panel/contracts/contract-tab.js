@@ -7,7 +7,7 @@
 // ANLIK: yerel `contract.changed` / `contract.party_changed` olayı (KM'deki her yazma, sihirbaz dahil) → liste ve açık
 // ayrıntı hemen tazelenir; başka cihazdaki değişiklik 15 sn'lik liste yoklamasıyla (sekme gizliyken durur); KM'de
 // kimlik düzenlenince (`bbd-students:updated`) "Kimlik bilgileri değişti" bandı yeniden hesaplanır.
-// Derin bağlantı: `app.go('students', {studentId, tab: 'contracts', contracts: {contractId}})`.
+// Derin bağlantı: `app.go('students', {studentId, tab: 'contracts', contractId})` (80-km-belge "Sözleşmeler" ekranı satırı).
 
 import { h, loadStyles } from '../../../ui-kit/kit.js';
 import { badge } from '../../../ui-kit/layout.js';
@@ -111,17 +111,17 @@ export function contractsPart(ctx) {
 
   const watch = watchStudentContracts(app, studentId, (why) => {
     if (!started) return;
-    if (why === 'party') detail?.refreshParty();
+    if (why === 'party') detail?.refreshParty({ reread: true });
     else load();
   });
   const off = onContractEvent((event) => {
     if (!started) return;
     if (event.type === 'contract.party_changed' && event.kmId && event.kmId === kmId()) {
-      setTimeout(() => detail?.refreshParty(), 1500);
+      setTimeout(() => detail?.refreshParty({ reread: true }), 1500);
       return;
     }
     if (!eventConcerns(event, { studentId, contractId: selected })) return;
-    if (event.type === 'contract.party_changed') { detail?.refreshParty(); return; }
+    if (event.type === 'contract.party_changed') { detail?.refreshParty({ reread: true }); return; }
     if (event.contractId && event.change === 'created') wanted = event.contractId;
     load();
   });
@@ -129,12 +129,12 @@ export function contractsPart(ctx) {
   return {
     node,
     shown(payload) {
-      if (payload?.contracts?.contractId) wanted = payload.contracts.contractId;
+      if (payload?.contractId) wanted = payload.contractId;
       if (!started) { started = true; load(); return; }
       if (wanted) load();
     },
     focus(payload) {
-      if (payload?.contracts?.contractId) { wanted = payload.contracts.contractId; load(); }
+      if (payload?.contractId && payload.contractId !== selected) { wanted = payload.contractId; load(); }
     },
     destroy() {
       token += 1;

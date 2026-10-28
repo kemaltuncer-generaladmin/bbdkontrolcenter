@@ -243,6 +243,7 @@ globalThis.__apiHook = (method, path, options) => {
   if (key === 'GET /v1/admin/students/stu-1/contract-party') return reply({ party: {}, missingFields: [], identityUpdatedAt: '2026-10-28T12:00:00Z' });
   if (key === 'POST /v1/admin/contracts/c1/signatures') { state.signed = true; return reply(detail()); }
   if (key === 'GET /v1/admin/settings') { state.settingsReads += 1; return reply({ contracts: { defaultCopies: { registration: 2, meb: 2, promissory: 1, payment_plan: 1 } } }); }
+  if (key === 'POST /v1/admin/contracts/c1/revisions') return reply(detail());
   if (key === 'POST /v1/admin/contracts/documents') return reply({ status: 'ready', file: { url: 'https://dosya.example/c.pdf', fileName: 'c.pdf', expiresAt: 'x' }, jobId: null, includedCount: 1, skipped: [] });
   return { ok: false, status: 404, error: { code: 'not_found', message: `taklit yok: ${key}` } };
 };
@@ -301,8 +302,28 @@ export default async function ({ document, audit, sleep, api, load }) {
   await sleep(150);
   const docsBody = sent.find((p) => p.path === '/v1/admin/contracts/documents');
   const kmImport = sent.find((p) => p.method === 'KM');
+  // 5) Maddeleri düzenle → öğe ekle, gerekçe → A8 gövdesi (yalnız değişen tür).
+  click(part.node, 'Maddeleri düzenle');
+  await sleep(20);
+  const editor = root.querySelector('.ak-ct-editor');
+  const resignWarning = text(editor).includes('YENİDEN İMZA');
+  click(editor, '+ Öğe');
+  const item = editor.querySelector('[data-item="0.1"]');
+  item.value = 'Ek madde';
+  item.dispatchEvent(new Event('input', { bubbles: true }));
+  const reasonInput = editor.querySelectorAll('input').find((n) => n.getAttribute('aria-label') === 'Gerekçe');
+  reasonInput.value = 'Velinin isteği';
+  click(editor, 'Yeni sürümü kaydet');
+  await sleep(120);
+  const revise = sent.find((p) => p.path === '/v1/admin/contracts/c1/revisions');
+
+  // 6) Velinin gördüğü (imzalı sürüm 1).
+  click(part.node, 'Velinin gördüğü');
+  await sleep(20);
+  const guardianText = text(root.querySelector('.ak-ct-guardian'));
+  click(root.querySelector('.ak-ct-guardian'), 'Kapat');
   part.destroy();
-  return { emptyText, wizardEvents, opened, stripHidden, actionLabels, a11y, dialogText,
+  return { resignWarning, revise: revise && revise.body, guardianText, emptyText, wizardEvents, opened, stripHidden, actionLabels, a11y, dialogText,
     signBody: signBody && { body: signBody.body, key: Boolean(signBody.idempotencyKey) },
     listReadsBefore, listReadsAfter, afterSign, docsBody: docsBody && docsBody.body,
     kmImport: kmImport && kmImport.body, toasts, today: new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Istanbul' }) };
@@ -334,5 +355,10 @@ def test_sekme_ac_imzala_tek_pdf() -> None:
     assert docs["kinds"] == ["registration", "meb", "promissory", "payment_plan"]   # yasal uyarı varsayılan seçili değil
     assert docs["options"] == {"copies": {"registration": 2, "meb": 2, "promissory": 1, "payment_plan": 1},
                                "promissoryScope": "all", "revision": "latest"}
+    assert out["resignWarning"] is True                               # imzalı sözleşmede yeniden imza uyarısı
+    assert out["revise"] == {"reason": "Velinin isteği",
+                             "clauses": {"registration": [{"title": "TARAFLAR", "items": ["Kurum ve veli", "Ek madde"]}]}}
+    assert "Sürüm 1" in out["guardianText"] and "Öğrenci Kayıt Sözleşmesi" in out["guardianText"]
+    assert "Ödeme Planı" not in out["guardianText"]
     assert out["kmImport"] == {"kind": "contract_documents", "url": "https://dosya.example/c.pdf", "name": "c.pdf",
                                "preview": True}

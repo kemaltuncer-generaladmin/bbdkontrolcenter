@@ -37,7 +37,8 @@ export const KM_PDF_KINDS = {
   attachment: 'contract_attachment',   // A15 admin_getContractAttachmentFile
 };
 
-const EVENT = 'bbd-akademi:contract';
+// Pencere olay adları 80-km-belge ile ORTAK (`devir/raporlar/80-km-belge.ortak.md` §2): ayrıntı `{contractId, studentId, change}`.
+const EVENTS = { 'contract.changed': 'bbd-akademi:contract-changed', 'contract.party_changed': 'bbd-akademi:contract-party-changed' };
 
 // ------------------------------------------------------------------ yollar
 
@@ -50,18 +51,24 @@ export const paths = {
 
 // ------------------------------------------------------------------ anlık
 
-/** Yerel olay: `{type: 'contract.changed', contractId, studentId, change}` ya da `{type: 'contract.party_changed', studentId}`. */
-export function emitContractEvent(event) {
+/**
+ * Yerel olay: `{type: 'contract.changed', contractId, studentId, change}` (change: created | revised | signed | unsigned |
+ * attachment | cancelled) ya da `{type: 'contract.party_changed', studentId, kmId?}`.
+ */
+export function emitContractEvent({ type = 'contract.changed', ...detail } = {}) {
   try {
-    window.dispatchEvent(new CustomEvent(EVENT, { detail: { ...event } }));
+    window.dispatchEvent(new CustomEvent(EVENTS[type] || EVENTS['contract.changed'], { detail }));
   } catch { /* olay yayını işi bozmaz */ }
 }
 
-/** Abone ol; dönen işlev aboneliği bırakır. */
+/** Abone ol (iki olay da `{type, ...ayrıntı}` olarak gelir); dönen işlev aboneliği bırakır. */
 export function onContractEvent(fn) {
-  const handler = (event) => fn(event.detail || {});
-  window.addEventListener(EVENT, handler);
-  return () => window.removeEventListener(EVENT, handler);
+  const handlers = Object.entries(EVENTS).map(([type, name]) => {
+    const handler = (event) => fn({ ...(event.detail || {}), type });
+    window.addEventListener(name, handler);
+    return [name, handler];
+  });
+  return () => handlers.forEach(([name, handler]) => window.removeEventListener(name, handler));
 }
 
 /**
@@ -247,9 +254,9 @@ export function requestWizard(studentId, planId = null) {
   window.dispatchEvent(new CustomEvent('bbd-akademi:open-contract-wizard', { detail: { studentId, planId } }));
 }
 
-/** Öğrencinin kartını Sözleşmeler bölümünde açar (liste satırı → öğrenci sekmesi). */
-export function openStudentContracts(app, studentId, payload = null) {
-  app.go('students', { studentId, tab: 'contracts', ...(payload ? { contracts: payload } : {}) });
+/** Öğrencinin kartını Sözleşmeler bölümünde açar (liste satırı → öğrenci sekmesi; `contractId` o sözleşmeyi seçer). */
+export function openStudentContracts(app, studentId, contractId = null) {
+  app.go('students', { studentId, tab: 'contracts', ...(contractId ? { contractId } : {}) });
 }
 
 /**
