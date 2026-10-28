@@ -365,7 +365,7 @@ OPERATIONS: tuple[Operation, ...] = (
         'km',
         money=True,
         feature_flag='contracts',
-        features=('F-SZ1',),
+        features=('F-SZ1', 'F-SZ11'),
     ),
     Operation(
         'POST',
@@ -655,7 +655,7 @@ OPERATIONS: tuple[Operation, ...] = (
         ('contracts.view',),
         'read',
         feature_flag='contracts',
-        features=('F-SZ6',),
+        features=('F-SZ6', 'F-SZ11'),
     ),
     Operation(
         'GET',

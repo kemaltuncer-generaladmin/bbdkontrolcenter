@@ -70,7 +70,7 @@ OPERATIONS: tuple[Operation, ...] = (
         ('contracts.view',),
         'both',
         feature_flag='contracts',
-        features=('F-SZ2',),
+        features=('F-SZ2', 'F-SZ11'),
     ),
     Operation(
         'POST',
