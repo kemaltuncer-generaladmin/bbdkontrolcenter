@@ -436,6 +436,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
     finance: financeTab,
     canteen: canteenTab,
     books: studentBooksPart,
+    contracts: lazyPart(() => import('../contracts/contract-tab.js').then((m) => m.contractsPart)),
     record: () => kmRecordPart(),
   };
 
@@ -476,7 +477,7 @@ export function openStudent(app, studentId, { tab = 'overview', payload = null, 
   }
   const layoutTabs = studentCard({ has: (permission) => app.has(permission),
     features: { flashcards: app.enabled('flashcards'), finance: app.enabled('finance'),
-      canteen: app.enabled('canteen'), books: app.enabled('books') },
+      canteen: app.enabled('canteen'), books: app.enabled('books'), contracts: app.enabled('contracts') },
     capabilities: { record: recordable } });
   const start = locatePart(layoutTabs, tab);
   const tabsBar = tabBar(layoutTabs.map(({ key, label }) => ({ key, label })), start.tab,
@@ -675,4 +676,32 @@ export function readOnlyApp(app, locked) {
   };
   const api = { ...app.api, can: (operationId) => app.api.can(operationId) && open(operationId) };
   return { ...app, api, can: (operationId) => api.can(operationId), readOnly: () => locked() };
+}
+
+/**
+ * İlk açılışta yüklenen bölüm (ör. Sözleşmeler, iş 80): kart açılışı ağır dosyayı beklemez; `shown`/`focus`
+ * yükleme bitene dek sıraya girer.
+ */
+function lazyPart(load) {
+  return (ctx) => {
+    const node = h('div');
+    let body = null;
+    let pending = null;
+    let gone = false;
+    load().then((build) => {
+      if (gone) return;
+      body = build(ctx);
+      node.replaceChildren(body.node);
+      if (pending) body.shown?.(pending.payload);
+      if (pending?.payload) body.focus?.(pending.payload);
+    }).catch((failure) => {
+      node.replaceChildren(empty('Bölüm açılamadı', problem(failure, 'Bölüm yüklenemedi.')));
+    });
+    return {
+      node,
+      shown(payload) { if (body) body.shown?.(payload); else pending = { payload }; },
+      focus(payload) { if (body) body.focus?.(payload); else pending = { payload }; },
+      destroy() { gone = true; body?.destroy?.(); },
+    };
+  };
 }
