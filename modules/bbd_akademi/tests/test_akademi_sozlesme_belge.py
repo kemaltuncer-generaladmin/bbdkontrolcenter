@@ -1,0 +1,310 @@
+"""Sözleşmeler ekranı (F-SZ, Akademi README §14 madde 139) — KM: izin eşlemesi, "Belge çıkar" isteği kurucusu, IBAN,
+sözleşme ayarları yaması, madde şablonu düzenleyici modeli, yazdırma zinciri.
+
+Saf mantık dosyaları (`ui/panel/contracts/*-logic.js`) bilerek import'suz ve DOM'suz yazıldı: `.mjs` kopyaları Node'da
+yüklenir, sonuç JSON olarak döner. `node` yoksa bu kısım ATLANIR.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from modules.bbd_akademi.backend.core.operations import Operation
+from modules.bbd_akademi.backend.documents.service import AKADEMI_PDFS
+from modules.bbd_akademi.backend.permission_map import (
+    ALL_PERMISSIONS,
+    CONTRACTS,
+    FINANCE,
+    SETTINGS,
+    km_permissions,
+)
+
+MODULE = Path(__file__).resolve().parents[1]
+CONTRACTS_UI = MODULE / "ui" / "panel" / "contracts"
+
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node kurulu değil")
+
+
+def op(operation_id: str, *permissions: str, method: str = "GET", path: str = "/v1/admin/contracts") -> Operation:
+    return Operation(method, path, operation_id, permissions, "both", feature_flag="contracts")
+
+
+# --------------------------------------------------------------- izin eşlemesi
+
+
+def test_sozlesme_izinleri_finans_ve_kurulum() -> None:
+    """Görüntüleme + günlük iş (imza, tarama, belge çıkar) finans izni; kurulum ayrı KM izni (K12)."""
+    assert km_permissions(op("admin_listContracts", "contracts.view")) == (FINANCE,)
+    assert km_permissions(op("admin_buildContractDocuments", "contracts.manage", method="POST",
+                             path="/v1/admin/contracts/documents")) == (FINANCE,)
+    assert km_permissions(op("admin_signContract", "contracts.manage", method="POST")) == (FINANCE,)
+    assert km_permissions(op("admin_reviseContract", "contracts.setup", method="POST")) == (CONTRACTS,)
+    assert km_permissions(op("admin_createContractService", "contracts.setup", method="POST")) == (CONTRACTS,)
+
+
+def test_olusturma_finans_izniyle_tek_basina_acilmaz() -> None:
+    """A6 Akademi'de `contracts.setup` + `finance.manage` ister; KM'de "birisi yeterli" kuralı yalnız finans izniyle
+    oluşturmayı açardı — işlem kurulum iznine bağlıdır."""
+    both = op("admin_createContract", "contracts.setup", "finance.manage", method="POST")
+    assert km_permissions(both) == (CONTRACTS,)
+
+
+def test_sablon_metni_kurum_ayari() -> None:
+    assert km_permissions(op("admin_saveContractTemplate", "contracts.setup", method="POST")) == (SETTINGS,)
+    assert km_permissions(op("admin_getContractTemplate", "contracts.view")) == (FINANCE,)
+
+
+def test_yeni_km_izni_ilan_edildi() -> None:
+    manifest = yaml.safe_load((MODULE / "module.yaml").read_text(encoding="utf-8"))
+    entry = next(item for item in manifest["permissions"] if item["key"] == CONTRACTS)
+    assert entry["default_roles"] == ["admin", "bbd_staff"]
+    assert CONTRACTS in ALL_PERMISSIONS
+
+
+def test_yazdirma_zinciri_sozlesme_turleri() -> None:
+    """Akademi'nin sözleşme PDF'i KM önizlemesine girer ve PDF'in kendisi yazıcıya gider (`/km/documents/akademi`)."""
+    assert AKADEMI_PDFS["contract_documents"].operations == ("admin_buildContractDocuments",)
+    assert AKADEMI_PDFS["contract_document"].operations == ("admin_getContractDocument",)
+    assert AKADEMI_PDFS["contract_attachment"].operations == ("admin_getContractAttachmentFile",)
+    assert AKADEMI_PDFS["contract_preview"].operations == ("admin_previewContract",)
+
+
+# --------------------------------------------------------------- saf mantık (Node)
+
+SCRIPT = r"""
+import * as d from './documents-logic.mjs';
+import * as s from './settings-logic.mjs';
+import * as t from './templates-logic.mjs';
+const out = {};
+
+// Belge çıkar isteği kurucusu
+out.selection = d.buildDocumentsRequest({ target: { contractIds: ['c2', 'c1', 'c2', ''] },
+  kinds: ['payment_plan', 'registration', 'promissory', 'yok', 'registration'],
+  copies: { registration: 5, promissory: 0, payment_plan: '2' }, promissoryScope: 'open', revision: 'signed' });
+out.noKinds = d.buildDocumentsRequest({ target: { contractIds: ['c1'] }, kinds: [] });
+out.noTarget = d.buildDocumentsRequest({ target: {}, kinds: ['meb'] });
+out.filterTarget = d.buildDocumentsRequest({ target: { filter: { classId: 'k8', overdueOnly: true } }, kinds: ['meb'] });
+out.legal = d.legalNoticeRequest({ legal_notice: 3 });
+out.legalDefault = d.legalNoticeRequest(null);
+out.filters = {
+  plain: d.documentsFilter({ chip: 'all' }),
+  akademi: d.documentsFilter({ chip: 'awaiting', classId: 'k8', overdueOnly: true }),
+  search: d.documentsFilter({ chip: 'signed', q: 'ayşe' }),
+  year: d.documentsFilter({ academicYear: '2026-2027' }),
+  cancelled: d.documentsFilter({ chip: 'cancelled' }),
+};
+out.query = d.listQuery({ chip: 'resign_required', classId: '', q: '  can ', academicYear: '2026-2027', overdueOnly: false });
+out.queryCancelled = d.listQuery({ chip: 'cancelled', overdueOnly: true });
+out.copies = d.defaultCopies({ registration: 3, meb: 9, promissory: null });
+out.outcomeReady = d.documentsOutcome({ status: 'ready', file: { url: 'https://x/f.pdf', fileName: 'sozlesmeler.pdf' },
+  includedCount: 3, skipped: [{ student: { id: 's9', displayName: 'Elif Yılmaz', classGroup: { name: '8-A' } },
+    code: 'contract_missing_fields', missingFields: [{ field: 'nationalId', label: 'Veli TC kimlik no' },
+      { field: 'homeAddress', label: 'Veli ev adresi' }] }] });
+out.outcomeQueued = d.documentsOutcome({ status: 'queued', jobId: 'j1', file: null, includedCount: 0, skipped: [] });
+out.outcomeEmpty = d.documentsOutcome({ status: 'ready', file: null, includedCount: 0, skipped: [] });
+out.skipLine = d.skippedLine(out.outcomeReady.skipped[0]);
+out.queue = [d.willQueue(40), d.willQueue(41)];
+out.fpSame = d.listFingerprint([{ id: 'a', latestRevisionNo: 1, signature: { state: 'awaiting' }, status: 'active' }])
+  === d.listFingerprint([{ id: 'a', latestRevisionNo: 1, signature: { state: 'awaiting' }, status: 'active', other: 1 }]);
+out.fpSigned = d.listFingerprint([{ id: 'a', latestRevisionNo: 1, signature: { state: 'awaiting' } }])
+  === d.listFingerprint([{ id: 'a', latestRevisionNo: 1, signature: { state: 'signed' } }]);
+out.years = d.academicYearOptions(new Date(2026, 9, 28), 9, 1);
+out.yearsSpring = d.academicYearOptions(new Date(2027, 2, 1), 9, 0);
+out.numbers = [d.contractNumber({ number: 'BBD1-1000' }), d.contractNumber({ number: 72128 }), d.contractNumber({})];
+out.labels = d.DOCUMENT_KINDS.map((k) => k.label);
+
+// IBAN ve ayarlar
+out.iban = {
+  ok: s.ibanError('TR33 0006 1005 1978 6457 8413 26'),
+  okLower: s.ibanError('tr330006100519786457841326'),
+  badCheck: s.ibanError('TR340006100519786457841326'),
+  short: s.ibanError('TR33000610051978645784132'),
+  foreign: s.ibanError('DE89370400440532013000'),
+  letters: s.ibanError('TR33000610051978645784132X'),
+  empty: s.ibanError('  '),
+  format: s.formatIban('tr330006100519786457841326'),
+};
+out.numberPreview = [s.nextNumberPreview('BBD1-', 1000), s.nextNumberPreview('', '72'), s.nextNumberPreview('X-', 0)];
+const server = { legalName: 'BBD Kurs', courtCity: 'KONYA', numberPrefix: 'BBD1-', nextNumber: 1000,
+  bankAccounts: [{ bank: 'Ziraat', holder: 'BBD', branch: null, iban: 'TR330006100519786457841326' }],
+  defaultCopies: { registration: 2 } };
+const draft = s.settingsDraft(server);
+out.draftIban = draft.bankAccounts[0].iban;
+out.draftCopies = draft.defaultCopies;
+out.noChange = s.settingsPatch(server, draft);
+const changed = s.settingsDraft(server);
+changed.courtCity = 'izmir';
+changed.nextNumber = '1005';
+changed.bankAccounts.push({ bank: 'Vakıf', holder: 'BBD', branch: '', iban: 'TR33 0006 1005 1978 6457 8413 26' });
+out.patch = s.settingsPatch(server, changed);
+out.errors = s.validateSettings(changed);
+const bad = s.settingsDraft(server);
+bad.numberPrefix = 'ÇOK-UZUN-ÖNEK';
+bad.nextNumber = 0;
+bad.registrationKinds = [];
+bad.signatureLabels.guardian = ' ';
+bad.bankAccounts.push({ bank: '', holder: '', branch: '', iban: 'TR12' });
+out.badErrors = s.validateSettings(bad);
+out.upper = s.upperTr('istanbul ılgın');
+out.dirty = s.dirtyCount(server, changed);
+
+// Madde şablonu modeli
+let c = t.cloneClauses([{ title: 'Taraflar', items: ['a) {kurumAdi} ile veli'] }, { title: null, items: [] }]);
+out.cloned = c;
+c = t.addClause(c, 1);
+c = t.setTitle(c, 1, 'Ücret');
+c = t.setItem(c, 1, 0, 'Ücret {tutar} TL, kesinti %{kesintiOrani}');
+c = t.addItem(c, 1);
+c = t.setItem(c, 1, 1, '   ');
+c = t.moveClause(c, 1, -1);
+out.moved = t.normalizeClauses(c);
+out.moveOut = t.moveClause(c, 0, -1).map((x) => x.title);
+out.removedItem = t.removeItem([{ title: 'X', items: ['tek'] }], 0, 0);
+out.movedItem = t.moveItem([{ title: null, items: ['1', '2', '3'] }], 0, 2, -2)[0].items;
+out.insert = t.insertToken('Kurum: .', 7, 7, 'kurumAdi');
+out.insertReplace = t.insertToken('abcXYZdef', 3, 6, '{il}');
+const placeholders = [{ key: 'kurumAdi', label: 'Kurum adı', example: 'BBD Kurs' },
+  { key: '{kesintiOrani}', label: 'Kesinti oranı', example: '10' }];
+out.unknown = t.unknownPlaceholders(c, placeholders);
+out.preview = t.previewModel(c, placeholders);
+out.valid = t.validateClauses(c);
+out.invalid = t.validateClauses([{ title: 'Boş', items: [''] }, { title: '', items: [''] }]);
+out.empty = t.validateClauses([]);
+out.equal = [t.clausesEqual([{ title: ' A ', items: ['x', ''] }], [{ title: 'A', items: ['x'] }]),
+  t.clausesEqual([{ title: 'A', items: ['x'] }], [{ title: 'A', items: ['y'] }])];
+out.summary = t.changeSummary([{ title: 'A', items: ['x'] }], [{ title: 'A', items: ['x', 'y'] }]);
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@pytest.fixture(scope="module")
+def result(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+    if shutil.which("node") is None:
+        pytest.skip("node kurulu değil")
+    folder = tmp_path_factory.mktemp("sozlesme-belge")
+    for name in ("documents-logic", "settings-logic", "templates-logic"):
+        (folder / f"{name}.mjs").write_bytes((CONTRACTS_UI / f"{name}.js").read_bytes())
+    (folder / "run.mjs").write_text(SCRIPT, encoding="utf-8")
+    done = subprocess.run(["node", str(folder / "run.mjs")], capture_output=True, text=True, check=False, timeout=60)
+    assert done.returncode == 0, done.stderr
+    data: dict[str, Any] = json.loads(done.stdout)
+    return data
+
+
+@needs_node
+def test_belge_cikar_istegi_secimden(result: dict[str, Any]) -> None:
+    body = result["selection"]["body"]
+    assert body["contractIds"] == ["c2", "c1"]                       # tekil, boş atılır, sıra korunur
+    assert body["kinds"] == ["registration", "promissory", "payment_plan"]   # belge sırası, bilinmeyen atılır
+    assert body["options"] == {"copies": {"registration": 3, "promissory": 1, "payment_plan": 2},
+                               "promissoryScope": "open", "revision": "signed"}
+    assert "filter" not in body and "studentIds" not in body
+    assert result["noKinds"] == {"errors": ["En az bir belge türü seçin."]}
+    assert result["noTarget"] == {"errors": ["Belge çıkarılacak sözleşmeleri seçin."]}
+    filtered = result["filterTarget"]["body"]
+    assert filtered["filter"] == {"classId": "k8", "overdueOnly": True}
+    assert "promissoryScope" not in filtered["options"]            # senet seçili değilse gönderilmez
+    assert filtered["options"]["copies"] == {"meb": 2}
+
+
+@needs_node
+def test_gecikenlere_yasal_uyari_tek_tik(result: dict[str, Any]) -> None:
+    assert result["legal"] == {"filter": {"overdueOnly": True}, "kinds": ["legal_notice"],
+                               "options": {"copies": {"legal_notice": 3}, "revision": "latest"}}
+    assert result["legalDefault"]["options"]["copies"] == {"legal_notice": 1}
+
+
+@needs_node
+def test_suzgecin_tamami_akademi_suzgecine_ya_da_kimliklere(result: dict[str, Any]) -> None:
+    filters = result["filters"]
+    assert filters["plain"] == {}
+    assert filters["akademi"] == {"classId": "k8", "signature": "awaiting", "overdueOnly": True}
+    # Akademi'nin toplu süzgecinde olmayan koşul → null (liste sayfalanıp kimliğe çevrilir).
+    assert filters["search"] is None and filters["year"] is None and filters["cancelled"] is None
+    assert result["query"] == {"signature": "resign_required", "academicYear": "2026-2027", "q": "can"}
+    assert result["queryCancelled"] == {"status": "cancelled", "overdueOnly": True}
+    assert result["copies"] == {"registration": 3, "meb": 3, "promissory": 1, "payment_plan": 1, "legal_notice": 1}
+
+
+@needs_node
+def test_yanit_ve_atlananlar(result: dict[str, Any]) -> None:
+    ready = result["outcomeReady"]
+    assert ready["state"] == "ready" and ready["url"] == "https://x/f.pdf" and ready["included"] == 3
+    assert ready["skipped"] == [{"studentId": "s9", "name": "Elif Yılmaz", "classGroup": "8-A",
+                                 "code": "contract_missing_fields", "reason": "Eksik bilgi",
+                                 "missing": ["Veli TC kimlik no", "Veli ev adresi"]}]
+    assert result["skipLine"] == "Eksik bilgi: Veli TC kimlik no, Veli ev adresi"
+    assert result["outcomeQueued"]["state"] == "queued" and result["outcomeQueued"]["jobId"] == "j1"
+    assert result["outcomeEmpty"]["state"] == "empty"
+    assert result["queue"] == [False, True]
+
+
+@needs_node
+def test_liste_izi_ve_etiketler(result: dict[str, Any]) -> None:
+    assert result["fpSame"] is True and result["fpSigned"] is False
+    assert result["years"] == ["2027-2028", "2026-2027", "2025-2026"]
+    assert result["yearsSpring"] == ["2027-2028", "2026-2027"]
+    assert result["numbers"] == ["BBD1-1000", "72128", "—"]
+    assert result["labels"] == ["Öğrenci Kayıt Sözleşmesi", "MEB Kayıt Sözleşmesi", "Senetler", "Ödeme Planı",
+                                "Yasal Uyarı"]
+
+
+@needs_node
+def test_iban_dogrulama(result: dict[str, Any]) -> None:
+    iban = result["iban"]
+    assert iban["ok"] is None and iban["okLower"] is None
+    assert "sağlaması" in iban["badCheck"]
+    assert "26 karakter" in iban["short"]
+    assert '"TR"' in iban["foreign"]
+    assert "yalnız rakam" in iban["letters"]
+    assert iban["empty"] == "IBAN yazın."
+    assert iban["format"] == "TR33 0006 1005 1978 6457 8413 26"
+
+
+@needs_node
+def test_sozlesme_ayarlari_yamasi(result: dict[str, Any]) -> None:
+    assert result["numberPreview"] == ["BBD1-1000", "72", "X-?"]
+    assert result["draftIban"] == "TR33 0006 1005 1978 6457 8413 26"
+    assert result["draftCopies"] == {"registration": 2, "meb": 2, "promissory": 1, "payment_plan": 1, "legal_notice": 1}
+    assert result["noChange"] is None
+    patch = result["patch"]["contracts"]
+    assert set(patch) == {"courtCity", "nextNumber", "bankAccounts"}      # yalnız değişen anahtarlar
+    assert patch["courtCity"] == "İZMİR"                                   # Türkçe büyük harf
+    assert patch["nextNumber"] == 1005
+    assert patch["bankAccounts"][1] == {"bank": "Vakıf", "holder": "BBD", "branch": None,
+                                        "iban": "TR330006100519786457841326"}
+    assert result["errors"] == {"bank.1.iban": "Bu IBAN listede zaten var."}
+    bad = result["badErrors"]
+    assert set(bad) >= {"numberPrefix", "nextNumber", "registrationKinds", "signature.guardian", "bank.1.bank",
+                        "bank.1.holder", "bank.1.iban"}
+    assert result["upper"] == "İSTANBUL ILGIN"
+    assert result["dirty"] == 3
+
+
+@needs_node
+def test_madde_sablonu_modeli(result: dict[str, Any]) -> None:
+    assert result["cloned"] == [{"title": "Taraflar", "items": ["a) {kurumAdi} ile veli"]},
+                                {"title": "", "items": [""]}]
+    assert result["moved"] == [
+        {"title": "Ücret", "items": ["Ücret {tutar} TL, kesinti %{kesintiOrani}"]},
+        {"title": "Taraflar", "items": ["a) {kurumAdi} ile veli"]},
+    ]                                                                      # boş öğe ve boş madde atılır
+    assert result["moveOut"][0] == "Ücret"                                 # sınır dışına taşıma değiştirmez
+    assert result["removedItem"] == [{"title": "X", "items": [""]}]
+    assert result["movedItem"] == ["3", "1", "2"]
+    assert result["insert"] == {"text": "Kurum: {kurumAdi}.", "caret": 17}
+    assert result["insertReplace"] == {"text": "abc{il}def", "caret": 7}
+    assert result["unknown"] == ["tutar"]
+    assert result["preview"][0] == {"no": 1, "title": "ÜCRET", "items": ["Ücret {tutar} TL, kesinti %10"]}
+    assert result["preview"][1]["items"] == ["a) BBD Kurs ile veli"]
+    assert result["valid"] == []
+    assert result["invalid"] == ["1. maddede metin yok (başlığın altına en az bir öğe yazın)."]
+    assert result["empty"] == ["Şablonda en az bir madde olmalı."]
+    assert result["equal"] == [True, False]
+    assert result["summary"] == "1 madde, 2 öğe (önce 1 madde, 1 öğe)"

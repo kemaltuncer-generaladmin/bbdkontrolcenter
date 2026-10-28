@@ -118,7 +118,8 @@ export function section(app) {
   }
 
   // Sözleşme değişti (KM'nin başka ekranı ya da sihirbaz): açık listeler tazelensin.
-  const onChanged = () => {
+  const onChanged = (event) => {
+    if (event?.detail?.change === 'services') return;      // katalog değişti: liste etkilenmez
     for (const body of Object.values(bodies)) body.changed?.();
   };
   window.addEventListener(CONTRACT_CHANGED_EVENT, onChanged);
