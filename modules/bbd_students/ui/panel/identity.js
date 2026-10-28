@@ -251,7 +251,8 @@ export function mountIdentity(box, options) {
   }
 
   function body() {
-    return form && view ? M.diffBody(M.toForm(view), form) : null;
+    // Karşılaştırma SUNUCU hâliyle (ISO tarih, rakam telefon); form gösterim biçimindedir.
+    return form && view ? M.diffBody(view, form) : null;
   }
 
   function paintDirty() {

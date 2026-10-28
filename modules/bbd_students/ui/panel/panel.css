@@ -728,3 +728,5 @@
 @media (max-width: 700px) {
   .st-id-address { grid-template-columns: minmax(0, 1fr); }
 }
+/* Kimlik bölümü açılınca pencere ekrandan taşmasın: içerik kendi içinde kayar. */
+.st-lc-dialog { max-height: calc(100vh - 32px); overflow-y: auto; }
