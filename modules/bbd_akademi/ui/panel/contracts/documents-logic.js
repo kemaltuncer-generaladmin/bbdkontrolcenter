@@ -28,7 +28,12 @@ export const DOCUMENT_KINDS = [
   { key: 'promissory', label: 'Senetler', signable: true, clauses: true },
   { key: 'payment_plan', label: 'Ödeme Planı', signable: false, clauses: false },
   { key: 'legal_notice', label: 'Yasal Uyarı', signable: false, clauses: true },
+  // Deneme kulübü sözleşmesi (iş 81): yalnız `exam_club` türündeki sözleşmede üretilir; diğerinde A17 atlar.
+  { key: 'exam_club', label: 'Deneme Kulübü Üyelik Sözleşmesi', signable: true, clauses: true },
+  { key: 'exam_club_consent', label: 'Başarı İlanı Açık Rıza Formu', signable: true, clauses: true },
 ];
+/** Sözleşme türü çipi (Akademi `ContractType`, iş 81). */
+export const CONTRACT_TYPE = { registration: ['Kayıt', 'dim'], exam_club: ['Deneme kulübü', 'info'] };
 export const KIND_LABEL = Object.fromEntries(DOCUMENT_KINDS.map((kind) => [kind.key, kind.label]));
 const KIND_ORDER = DOCUMENT_KINDS.map((kind) => kind.key);
 
@@ -38,7 +43,8 @@ export const SIGNATURE_STATES = {
   signed: ['İmzalı', 'good'],
   resign_required: ['Yeniden imza bekliyor', 'bad'],
 };
-export const SIGNATURE_SOURCES = { paper: 'Islak imza', paper_existing: 'İmzalı (basılı, eski)' };
+export const SIGNATURE_SOURCES = { paper: 'Islak imza', paper_existing: 'İmzalı (basılı, eski)',
+  online: 'Çevrim içi onay' };
 export const CONTRACT_STATUS = {
   active: ['Geçerli', 'info'],
   cancelled: ['İptal', 'dim'],
@@ -46,7 +52,7 @@ export const CONTRACT_STATUS = {
 };
 export const INSTALLMENT_METHODS = {
   cash: 'NAKİT', promissory: 'SENET', cheque: 'ÇEK', card: 'KREDİ KARTI', transfer: 'HAVALE/EFT',
-  online_card: 'UYGULAMADAN KART',
+  online_card: 'UYGULAMADAN KART', store: 'BBDSTORE',
 };
 export const MEB_CATEGORIES = {
   education: 'Eğitim', stationery: 'Kırtasiye', book: 'Kitap', meal: 'Yemek', breakfast: 'Kahvaltı',
@@ -60,7 +66,8 @@ export const DISCOUNT_REASONS = {
 };
 
 /** Ayar `contracts.defaultCopies` okunamazsa (izin yok / henüz yok) kullanılan nüshalar. */
-export const DEFAULT_COPIES = { registration: 2, meb: 2, promissory: 1, payment_plan: 1, legal_notice: 1 };
+export const DEFAULT_COPIES = { registration: 2, meb: 2, promissory: 1, payment_plan: 1, legal_notice: 1,
+  exam_club: 2, exam_club_consent: 1 };
 
 /** Liste süzgeç çipleri: anahtar → A1 sorgusu. */
 export const LIST_CHIPS = [

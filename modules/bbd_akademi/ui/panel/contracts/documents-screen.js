@@ -21,7 +21,7 @@ import {
 } from '../common.js';
 import { openBuildDialog, overdueLegalNotice, truncatedNote } from './documents-build.js';
 import {
-  CONTRACT_CHANGED_EVENT, CONTRACT_STATUS, LIST_CHIPS, OPEN_WIZARD_EVENT, RESOLVE_MAX, SIGNATURE_SOURCES,
+  CONTRACT_CHANGED_EVENT, CONTRACT_STATUS, CONTRACT_TYPE, LIST_CHIPS, OPEN_WIZARD_EVENT, RESOLVE_MAX, SIGNATURE_SOURCES,
   SIGNATURE_STATES, academicYearOptions, contractNumber, documentsFilter, listFingerprint, listQuery,
   overdueFilterApplied, studentName,
 } from './documents-logic.js';
@@ -248,7 +248,14 @@ function listTab(app) {
       }
     },
     columns: [
-      { key: 'number', label: 'No', width: '110px', cell: (row) => h('span', 'ak-szb-no', contractNumber(row)) },
+      { key: 'number', label: 'No', width: '130px', cell: (row) => {
+        const number = h('span', 'ak-szb-no', contractNumber(row));
+        if (row.type !== 'exam_club') return number;
+        // Tür çipi (iş 81): kulüp sözleşmesi kayıt sözleşmesinden ayırt edilsin.
+        const cell = h('div', 'ak-cell-stack');
+        cell.append(number, statusBadge(CONTRACT_TYPE, row.type));
+        return cell;
+      } },
       { key: 'student', label: 'Öğrenci', width: 'minmax(0, 1.4fr)', cell: (row) => studentCell(row.student) },
       { key: 'payer', label: 'Veli', width: 'minmax(0, 1fr)', title: 'Ödeme sorumlusu veli (senetlerde borçlu)',
         cell: (row) => row.payerGuardian?.name || '—' },

@@ -229,7 +229,8 @@ def test_suzgecin_tamami_akademi_suzgecine_ya_da_kimliklere(result: dict[str, An
     assert filters["search"] is None and filters["year"] is None and filters["cancelled"] is None
     assert result["query"] == {"signature": "resign_required", "academicYear": "2026-2027", "q": "can"}
     assert result["queryCancelled"] == {"status": "cancelled", "overdueOnly": True}
-    assert result["copies"] == {"registration": 3, "meb": 3, "promissory": 1, "payment_plan": 1, "legal_notice": 1}
+    assert result["copies"] == {"registration": 3, "meb": 3, "promissory": 1, "payment_plan": 1, "legal_notice": 1,
+                                "exam_club": 2, "exam_club_consent": 1}
 
 
 @needs_node
@@ -252,7 +253,7 @@ def test_liste_izi_ve_etiketler(result: dict[str, Any]) -> None:
     assert result["yearsSpring"] == ["2027-2028", "2026-2027"]
     assert result["numbers"] == ["BBD1-1000", "72128", "—"]
     assert result["labels"] == ["Öğrenci Kayıt Sözleşmesi", "MEB Kayıt Sözleşmesi", "Senetler", "Ödeme Planı",
-                                "Yasal Uyarı"]
+                                "Yasal Uyarı", "Deneme Kulübü Üyelik Sözleşmesi", "Başarı İlanı Açık Rıza Formu"]
 
 
 @needs_node

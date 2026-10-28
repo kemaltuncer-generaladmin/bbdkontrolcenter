@@ -81,7 +81,8 @@ export function contractsPart(ctx) {
       chip.setAttribute('role', 'tab');
       chip.setAttribute('aria-selected', item.id === selected ? 'true' : 'false');
       const status = CONTRACT_STATUSES[item.status] || [item.status, 'dim'];
-      chip.append(h('b', '', item.number || '—'), h('span', '', `${item.academicYear || ''} · ${money(item.totalMinor)}`),
+      chip.append(h('b', '', item.number || '—'), h('span', '', `${item.type === 'exam_club' ? 'Deneme kulübü · ' : ''}`
+        + `${item.academicYear || ''} · ${money(item.totalMinor)}`),
         badge(item.status === 'active' ? signText : status[0], item.status === 'active' ? signTone : status[1]));
       chip.title = `Sözleşme tarihi ${fmtDate(item.contractDate)}`;
       chip.addEventListener('click', () => pick(item.id));

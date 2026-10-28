@@ -149,6 +149,10 @@ export function initialState({ source = 'existing', today, party = {}, settings 
     promissoryMode: 'per_installment',
     promissoryDueOn: '',
     promissoryDueLinked: true,
+    // Sözleşme türü (iş 81): kayıt sözleşmesi ya da deneme kulübü. Kulüpte paket bölümü + tek hizmet satırı.
+    type: 'registration',
+    examClub: null,
+    registrationLines: null,
   };
   return applyAuto(state);
 }
@@ -179,6 +183,7 @@ export const PROMISSORY_MODES = { per_installment: 'Her taksit için ayrı senet
 
 /** Senet var mı: taksitli ödeme (peşin sözleşmede senet yok). */
 export function hasPromissory(state) {
+  if (state?.type === 'exam_club') return false;     // kulüpte senet yok (iş 81; taksit türü SENET seçilmez)
   return state?.payment?.mode === 'installment' && (state.payment.installments || []).length > 0;
 }
 
@@ -484,7 +489,97 @@ export function buildDraft(state) {
   }
   if (body.specialClauses) body.specialClauses = body.specialClauses.slice(0, MAX_SPECIAL).map((item) => item.slice(0, 1000));
   if (body.existingSigned && !body.existingSigned.signedOn) body.existingSigned.signedOn = state.contractDate;
+  if (state.type === 'exam_club' && state.examClub) {
+    // `type` YALNIZ kulüpte gönderilir: eski Akademi sürümü bilinmeyen alanı reddeder, kayıt sözleşmesi aynı kalır.
+    const club = state.examClub;
+    body.type = 'exam_club';
+    body.examClub = { packageName: String(club.packageName || '').trim().slice(0, 120), examType: club.examType,
+      examCount: Math.round(Number(club.examCount) || 0), seasonStart: club.seasonStart || null,
+      seasonEnd: club.seasonEnd || null, channel: club.channel || 'in_person' };
+    delete body.promissoryMode;
+    delete body.promissoryDueOn;
+  }
   return body;
+}
+
+// ------------------------------------------------------------------ DENEME KULÜBÜ (iş 81, Akademi README §14 madde 140)
+
+export const CONTRACT_TYPES = { registration: 'Kayıt sözleşmesi', exam_club: 'Deneme kulübü' };
+export const CLUB_EXAM_TYPES = { LGS: 'LGS', TYT: 'TYT', TYT_AYT: 'TYT-AYT', AYT: 'AYT', other: 'Diğer' };
+export const CLUB_CHANNELS = { in_person: 'Kurum\'da yüz yüze', online: 'İnternet üzerinden (çevrim içi form)' };
+/** Kulüpte ödeme yöntemleri: nakit / POS / BBDSTORE / havale-EFT (senet yok). */
+export const CLUB_METHODS = ['cash', 'card', 'store', 'transfer'];
+export const CLUB_LINE_PREFIX = 'DENEME KULÜBÜ';
+
+/** Kulüp ayarlarından (`club.*`) paket bölümünün başlangıcı. */
+export function clubDefaults(settings = {}) {
+  const club = settings && typeof settings.club === 'object' && settings.club ? settings.club : {};
+  return { packageName: club.packageName || '', examType: club.examType || 'TYT',
+    examCount: club.examCount || null, seasonStart: club.seasonStart || '', seasonEnd: club.seasonEnd || '',
+    channel: 'in_person', priceMinor: Number.isInteger(club.priceMinor) ? club.priceMinor : null };
+}
+
+/** Tek hizmet satırı "DENEME KULÜBÜ — {paket}": birim = deneme, miktar = deneme sayısı; tam bölünmezse miktar 1. */
+export function clubLine(club = {}) {
+  const count = Math.round(Number(club.examCount) || 0);
+  const price = Number.isInteger(club.priceMinor) ? club.priceMinor : null;
+  const divisible = count > 0 && price !== null && price % count === 0;
+  return {
+    serviceId: null, category: 'other',
+    name: `${CLUB_LINE_PREFIX} — ${String(club.packageName || '').trim() || 'Paket'}`.slice(0, 120),
+    unit: 'deneme',
+    unitPriceMinor: price === null ? null : (divisible ? price / count : price),
+    quantity: divisible ? String(count) : '1',
+    scholarshipPercent: '0', discountPercent: '0', extraDiscountMinor: 0, vatPercent: null,
+  };
+}
+
+/** Tür seçimi. Kulüpte satırlar paketten kurulur, peşin (nakit) önerilir; geri dönünce eski satırlar gelir. */
+export function setContractType(state, type, { settings = {} } = {}) {
+  if (!CONTRACT_TYPES[type] || state.type === type) return state;
+  if (type === 'exam_club') {
+    state.registrationLines = state.lines;
+    state.examClub = state.examClub || clubDefaults(settings);
+    state.lines = [clubLine(state.examClub)];
+    state.planId = null;
+    const payment = state.payment || {};
+    if (!CLUB_METHODS.includes(payment.method)) payment.method = 'cash';
+    if (payment.downPayment && !CLUB_METHODS.includes(payment.downPayment.method)) payment.downPayment.method = 'cash';
+    for (const row of payment.installments || []) if (!CLUB_METHODS.includes(row.method)) row.method = payment.method;
+  } else {
+    state.lines = state.registrationLines || state.lines;
+    state.registrationLines = null;
+  }
+  state.type = type;
+  return applyAuto(state);
+}
+
+/** Paket alanı değişti → tek satır yeniden kurulur (tutar = kulüp ücreti). */
+export function setClub(state, patch = {}) {
+  state.examClub = { ...(state.examClub || clubDefaults()), ...patch };
+  state.lines = [clubLine(state.examClub)];
+  return applyAuto(state);
+}
+
+/** Kulüp paket bölümünün doğrulaması. */
+export function clubErrors(state) {
+  if (state?.type !== 'exam_club') return [];
+  const club = state.examClub || {};
+  const out = [];
+  const push = (field, message) => out.push({ section: 'club', field, message });
+  if (!String(club.packageName || '').trim()) push('packageName', 'Paket adını yazın.');
+  if (!CLUB_EXAM_TYPES[club.examType]) push('examType', 'Sınav türünü seçin.');
+  const count = Number(club.examCount);
+  if (!Number.isInteger(count) || count < 1 || count > 200) push('examCount', 'Deneme sayısı 1–200 arası olmalı.');
+  if (!club.seasonStart || !club.seasonEnd) push('season', 'Sezon başlangıç ve bitişini girin.');
+  else if (club.seasonEnd < club.seasonStart) push('season', 'Sezon bitişi başlangıçtan önce olamaz.');
+  if (!Number.isInteger(club.priceMinor) || club.priceMinor <= 0) push('priceMinor', 'Kulüp ücretini girin.');
+  const methods = [state.payment?.downPayment?.method, ...(state.payment?.installments || []).map((row) => row.method)]
+    .filter(Boolean);
+  if (methods.some((method) => !CLUB_METHODS.includes(method))) {
+    push('method', 'Kulüpte ödeme yöntemi nakit, POS, BBDSTORE ya da havale/EFT olmalı (senet yok).');
+  }
+  return out;
 }
 
 /**
@@ -492,14 +587,14 @@ export function buildDraft(state) {
  * Bölüm başına iletiler `bySection` içindedir.
  */
 export function readiness(state, { today, existing = [] } = {}) {
-  const errors = validateDraft(state, { today });
+  const errors = [...validateDraft(state, { today }), ...clubErrors(state)];
   if (hasPromissory(state) && state.promissoryMode === 'single') {
     if (!state.promissoryDueOn) errors.push({ section: 'payment', field: 'promissoryDueOn', message: 'Tek senedin vadesini girin.' });
     else if (state.contractDate && state.promissoryDueOn < state.contractDate) {
       errors.push({ section: 'payment', field: 'promissoryDueOn', message: 'Senet vadesi sözleşme tarihinden önce olamaz.' });
     }
   }
-  const same = sameYearContract(existing, state.academicYear);
+  const same = sameYearContract(existing, state.academicYear, state.type || 'registration');
   if (same) {
     errors.push({ section: 'contract', field: 'academicYear', message: `Bu öğrencinin ${state.academicYear} için geçerli `
       + `sözleşmesi var (${same.number || 'no yok'}); aynı yıla ikinci sözleşme açılamaz — eğitim yılını değiştirin ya da `
@@ -522,12 +617,14 @@ export function createKey(sessionKey, body) {
 }
 
 /** "Kaydet ve yazdır": kayıt seti (ayar `contracts.registrationKinds`) TEK PDF, nüsha `contracts.defaultCopies` (A17). */
-export function documentsBody(contractId, settings = DEFAULT_SETTINGS) {
-  const kinds = (settings?.registrationKinds?.length ? settings.registrationKinds : DEFAULT_SETTINGS.registrationKinds)
+export function documentsBody(contractId, settings = DEFAULT_SETTINGS, type = 'registration') {
+  // Kulüp sözleşmesi (iş 81): üyelik sözleşmesi + açık rıza formu + ödeme planı (kayıt/MEB/senet üretilmez).
+  const kinds = (type === 'exam_club' ? ['exam_club', 'exam_club_consent', 'payment_plan']
+    : (settings?.registrationKinds?.length ? settings.registrationKinds : DEFAULT_SETTINGS.registrationKinds))
     .filter((kind, index, list) => list.indexOf(kind) === index);
   const copies = {};
   for (const kind of kinds) {
-    const count = Number(settings?.defaultCopies?.[kind] ?? DEFAULT_SETTINGS.defaultCopies[kind] ?? 1);
+    const count = Number(settings?.defaultCopies?.[kind] ?? DEFAULT_SETTINGS.defaultCopies?.[kind] ?? 1);
     copies[kind] = Math.min(3, Math.max(1, Math.round(count) || 1));
   }
   return { contractIds: [contractId], kinds, options: { copies, promissoryScope: 'all', revision: 'latest' } };
@@ -553,8 +650,10 @@ export function activeContracts(list) {
 }
 
 /** Aynı eğitim yılında GEÇERLİ sözleşme (Akademi bunu `409 contract_exists` ile reddeder). */
-export function sameYearContract(existing = [], academicYear = '') {
-  return activeContracts(existing).find((item) => item.academicYear && item.academicYear === academicYear) || null;
+export function sameYearContract(existing = [], academicYear = '', type = 'registration') {
+  // Tekillik öğrenci + eğitim yılı + TÜR (iş 81): kayıt sözleşmesi olan öğrenciye kulüp sözleşmesi açılabilir.
+  return activeContracts(existing).find((item) => item.academicYear && item.academicYear === academicYear
+    && (item.type || 'registration') === type) || null;
 }
 
 /**

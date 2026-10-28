@@ -17,7 +17,12 @@ export const DOCUMENT_KINDS = {
   promissory: 'Senetler',
   payment_plan: 'Ödeme Planı',
   legal_notice: 'Yasal Uyarı',
+  // Deneme kulübü sözleşmesi (iş 81, Akademi README §14 madde 140).
+  exam_club: 'Deneme Kulübü Üyelik Sözleşmesi',
+  exam_club_consent: 'Başarı İlanı Açık Rıza Formu',
 };
+/** Sözleşme türü (Akademi `ContractType`, iş 81). */
+export const CONTRACT_TYPES = { registration: 'Kayıt sözleşmesi', exam_club: 'Deneme kulübü sözleşmesi' };
 /** İmzalanan (veliye görünen) türler. */
 export const SIGNABLE_KINDS = ['registration', 'meb', 'promissory'];
 /** Madde düzenlenebilen türler (ödeme planı maddesizdir). */
@@ -28,7 +33,8 @@ export const SIGNATURE_STATES = {
   signed: ['İmzalı', 'good'],
   resign_required: ['Yeniden imza bekliyor', 'bad'],
 };
-export const SIGNATURE_SOURCES = { paper: 'Islak imza', paper_existing: 'İmzalı (basılı, eski)' };
+export const SIGNATURE_SOURCES = { paper: 'Islak imza', paper_existing: 'İmzalı (basılı, eski)',
+  online: 'Çevrim içi onay' };
 export const CONTRACT_STATUSES = {
   active: ['Geçerli', 'info'],
   cancelled: ['İptal', 'dim'],
@@ -36,7 +42,7 @@ export const CONTRACT_STATUSES = {
 };
 export const INSTALLMENT_METHODS = {
   cash: 'NAKİT', promissory: 'SENET', cheque: 'ÇEK', card: 'KREDİ KARTI', transfer: 'HAVALE/EFT',
-  online_card: 'UYGULAMADAN KART',
+  online_card: 'UYGULAMADAN KART', store: 'BBDSTORE',
 };
 export const MEB_FEE_CATEGORIES = {
   education: 'Eğitim', stationery: 'Kırtasiye', book: 'Kitap', meal: 'Yemek', breakfast: 'Kahvaltı',

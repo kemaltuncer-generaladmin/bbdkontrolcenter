@@ -360,22 +360,89 @@ function buildScreen(app, spec, done) {
       notices.append(alertBox(`“${plan.title}” planı bu sözleşmeye bağlanır: ödeme bölümü plandan okunur, yeni plan `
         + 'kurulmaz.', 'info'));
     }
+    // Tür seçimi EN ÜSTTE (iş 81): "Kayıt sözleşmesi / Deneme kulübü". Kulüpte hizmetler yerine paket bölümü.
+    const typeBar = typeSelector();
     sections.party = partySection();
-    sections.lines = linesSection();
+    sections.club = state.type === 'exam_club' ? clubSection() : null;
+    sections.lines = state.type === 'exam_club' ? null : linesSection();
     sections.payment = paymentSection();
     sections.past = state.source === 'new' || plan ? null : pastSection();
     sections.contract = contractSection();
-    const numbered = [sections.party, sections.lines, sections.payment, sections.past, sections.contract].filter(Boolean);
+    const numbered = [sections.party, sections.club, sections.lines, sections.payment, sections.past,
+      sections.contract].filter(Boolean);
     numbered.forEach((item, index) => { item.no.textContent = String(index + 1); });
-    body.replaceChildren(...[notices.childElementCount ? notices : null, ...numbered.map((item) => item.node)]
+    body.replaceChildren(...[typeBar, notices.childElementCount ? notices : null, ...numbered.map((item) => item.node)]
       .filter(Boolean));
     foot.hidden = false;
     refresh();
     // İlk alan: mevcut öğrencide (eski sözleşme aktarımı) sözleşme tarihi, yeni öğrencide ilk hizmetin birim fiyatı.
-    const first = state.source === 'new' ? sections.lines.node.querySelector('[data-field="unitPriceMinor"]')
+    const first = state.source === 'new' && sections.lines
+      ? sections.lines.node.querySelector('[data-field="unitPriceMinor"]')
       : sections.party.node.querySelector('[data-field="contractDate"] input');
     (first || fields()[0])?.focus();
     first?.select?.();
+  }
+
+  // ---- Tür seçimi + Deneme kulübü paketi (iş 81) ---------------------------------------------
+  function typeSelector() {
+    const bar = h('div', 'ak-wz-radios ak-wz-type');
+    bar.setAttribute('role', 'radiogroup');
+    bar.setAttribute('aria-label', 'Sözleşme türü');
+    bar.append(h('span', 'ak-wz-sec-hint', 'Sözleşme türü:'));
+    for (const [value, label] of Object.entries(W.CONTRACT_TYPES)) {
+      const option = h('label', 'ak-wz-radio');
+      const radio = h('input');
+      radio.type = 'radio';
+      radio.name = `ak-wz-type-${sessionKey}`;
+      radio.value = value;
+      radio.checked = (state.type || 'registration') === value;
+      radio.addEventListener('change', async () => {
+        if (!radio.checked) return;
+        let raw = {};
+        try { raw = value === 'exam_club' ? await app.api.getCached('/v1/admin/settings') : {}; } catch { raw = {}; }
+        W.setContractType(state, value, { settings: raw || {} });
+        render();
+      });
+      option.append(radio, h('span', '', label));
+      bar.append(option);
+    }
+    if (state.type === 'exam_club') {
+      bar.append(h('span', 'ak-wz-sec-hint', 'Kulüpte: paket + tek hizmet satırı, ödeme nakit / POS / BBDSTORE / '
+        + 'havale; senet yok. Belgeler: Deneme Kulübü Üyelik Sözleşmesi + Başarı İlanı Açık Rıza Formu.'));
+    }
+    return bar;
+  }
+
+  function clubSection() {
+    const made = withNo(section('club', 2, 'Deneme kulübü paketi',
+      'Sözleşmede tek kalem: "DENEME KULÜBÜ — paket" (birim deneme × deneme sayısı).'));
+    const club = state.examClub || {};
+    const set = (patch) => { W.setClub(state, patch); lineNote.textContent = linePreview(); refresh(); };
+    const linePreview = () => {
+      const line = state.lines[0] || {};
+      return `${line.name || ''} · ${line.quantity || 1} × ${W.moneyText(line.unitPriceMinor || 0)}`;
+    };
+    const lineNote = h('div', 'ak-wz-sec-hint', '');
+    const grid = h('div', 'ak-wz-grid');
+    grid.append(
+      field('Paket adı', textInput(club.packageName, (value) => set({ packageName: value }),
+        { key: 'packageName', max: 120, placeholder: 'ör. TYT Deneme Kulübü 2026-2027' }), { key: 'packageName' }),
+      field('Sınav türü', selectOf(Object.entries(W.CLUB_EXAM_TYPES), club.examType || 'TYT',
+        (value) => set({ examType: value }), { key: 'examType', aria: 'Sınav türü' }), { key: 'examType' }),
+      field('Deneme sayısı', textInput(club.examCount ?? '', (value) => set({ examCount: value === '' ? null
+        : Number(value.replace(/\D/g, '')) }), { key: 'examCount', max: 3, mode: 'numeric' }), { key: 'examCount' }),
+      field('Sezon başlangıcı', dateOf(club.seasonStart, (value) => set({ seasonStart: value || '' }),
+        'Sezon başlangıcı', made), { key: 'seasonStart' }),
+      field('Sezon bitişi', dateOf(club.seasonEnd, (value) => set({ seasonEnd: value || '' }), 'Sezon bitişi', made),
+        { key: 'seasonEnd' }),
+      field('Kayıt kanalı', selectOf(Object.entries(W.CLUB_CHANNELS), club.channel || 'in_person',
+        (value) => set({ channel: value }), { key: 'channel', aria: 'Kayıt kanalı' }), { key: 'channel' }),
+      field('Kulüp ücreti', moneyInput(club.priceMinor, (value) => set({ priceMinor: value }),
+        { key: 'priceMinor', aria: 'Kulüp ücreti' }), { key: 'priceMinor' }),
+    );
+    made.content.append(grid, lineNote);
+    lineNote.textContent = linePreview();
+    return made;
   }
 
   function withNo(made) {
@@ -694,7 +761,9 @@ function buildScreen(app, spec, done) {
     const promSlot = h('div', 'ak-wz-prom');
     made.content.append(headSlot, promSlot, tools, table);
     let rowDestroyers = [];
-    const methodOptions = Object.entries(INSTALLMENT_METHODS);
+    // Kulüpte (iş 81) yalnız nakit / POS / BBDSTORE / havale; kayıt sözleşmesinde BBDSTORE önerilmez.
+    const methodOptions = Object.entries(INSTALLMENT_METHODS).filter(([key]) => (state.type === 'exam_club'
+      ? W.CLUB_METHODS.includes(key) : key !== 'store'));
 
     const splitBtn = button('Eşit böl', { onClick: () => { W.resplit(state); paintRows(); refresh(); },
       title: 'Kalan tutarı taksitlere eşit böler (kuruş farkı son taksitte).' });
@@ -1123,7 +1192,7 @@ function buildScreen(app, spec, done) {
     const body0 = W.buildDraft(state);
     setBusy(true, previewBtn, 'Hazırlanıyor…');
     try {
-      const result = await app.api.call('POST', paths.preview(studentId), { query: { pdf: 'registration' },
+      const result = await app.api.call('POST', paths.preview(studentId), { query: { pdf: state.type === 'exam_club' ? 'exam_club' : 'registration' },
         body: body0, key: W.createKey(`${sessionKey}-p`, body0) });
       const data = result.data || {};
       const warnings = [...(data.warnings || []).map((item) => item.message),
@@ -1176,7 +1245,7 @@ function buildScreen(app, spec, done) {
       : `Sözleşme ${number} oluşturuldu (imza bekliyor); taksit planı işlendi.`, 'good');
     close(detail);
     if (print && contractId) {
-      await buildDocuments(app, W.documentsBody(contractId, settings || undefined),
+      await buildDocuments(app, W.documentsBody(contractId, settings || undefined, state.type),
         { print: true, key: newKey('km-ctr-doc'), name: `${number || 'sozlesme'}-kayit-seti` });
     }
   }

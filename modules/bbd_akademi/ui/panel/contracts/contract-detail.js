@@ -122,7 +122,10 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
     const title = h('div', 'ak-ct-title');
     title.append(h('b', '', `Sözleşme ${data.number || '—'}`), statusBadge(CONTRACT_STATUSES, data.status),
       badge(signText, signTone));
-    const meta = [data.academicYear, `sözleşme ${fmtDate(data.contractDate)}`, `kayıt ${fmtDate(data.registeredOn)}`,
+    if (data.type === 'exam_club') title.append(badge('Deneme kulübü', 'info'));   // tür çipi (iş 81)
+    const club = data.examClub;
+    const meta = [data.academicYear, club ? [club.packageName, club.examCount ? `${club.examCount} deneme` : '']
+      .filter(Boolean).join(' · ') : '', `sözleşme ${fmtDate(data.contractDate)}`, `kayıt ${fmtDate(data.registeredOn)}`,
       data.payerGuardian?.name ? `ödeme sorumlusu ${data.payerGuardian.name}` : '',
       latest ? `sürüm ${latest.no}` : ''].filter(Boolean).join(' · ');
     head.append(title, h('div', 'ak-ct-meta', meta));
