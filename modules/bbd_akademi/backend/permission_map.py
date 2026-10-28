@@ -47,6 +47,7 @@ EVALUATIONS = f"{MODULE}.evaluations"
 PRIVACY = f"{MODULE}.privacy"
 RECORDINGS = f"{MODULE}.recordings"
 CONTRACTS = f"{MODULE}.contracts"
+CLUB = f"{MODULE}.club"
 
 #: Akademi izin anahtarı (kapsamsız) → KM izni.
 PERMISSION_MAP: dict[str, str] = {
@@ -149,6 +150,10 @@ PERMISSION_MAP: dict[str, str] = {
     "contracts.view": FINANCE,
     "contracts.manage": FINANCE,
     "contracts.setup": CONTRACTS,
+    # --- Deneme Kulübü (Akademi README §14 madde 141, iş 81): davet aç / yeniden gönder / iptal / yeniden dene.
+    # Kurumda alınan nakit/POS/havale ödemesi ile davet açılır — ayrı KM izni (yönetici bbd_staff'tan kaldırabilsin).
+    # `club.*` ayarları kurum ayarıdır (`settings.manage` → SETTINGS).
+    "club.manage": CLUB,
     # --- kitap talepleri ve kitap satışı (F-A27, 0.5.4): satış kurum carisine
     # kalem / makbuzlu tahsilat / veliye ödeme bağlantısı yazar — para yine
     # yalnız kurum carisindedir (A12), kantine dokunmaz.
@@ -267,5 +272,5 @@ def unmapped(operations: Iterable[Operation]) -> list[str]:
 ALL_PERMISSIONS: tuple[str, ...] = (
     VIEW, ACADEMIC, CURRICULUM, RESOURCES, ATTENDANCE, EXAMS, FINANCE, FINANCE_VOID,
     BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN, LEARNING, LEARNING_SETUP,
-    EVALUATIONS, PRIVACY, RECORDINGS, CONTRACTS,
+    EVALUATIONS, PRIVACY, RECORDINGS, CONTRACTS, CLUB,
 )

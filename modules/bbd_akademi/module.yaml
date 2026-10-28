@@ -105,6 +105,9 @@ permissions:
   - key: bbd_akademi.contracts
     description: "Sözleşme kurulumu ve oluşturma: Kayıt ve ödeme planı sihirbazıyla sözleşme oluşturma, sözleşme maddelerini düzenleme (yeni sürüm), güncel bilgilerle yenileme, belge üretme, sözleşme iptali, hizmet kataloğu. Sözleşmeleri görmek, ıslak imza işaretlemek, tarama eklemek ve toplu belge çıkarıp yazdırmak kurum finansı iznidir (bbd_akademi.finance); madde şablonu ve sözleşme ayarları kurum ayarıdır (bbd_akademi.settings)."
     default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.club
+    description: "Deneme Kulübü: kulüp kayıt davetleri (kurumda nakit / POS / havale ödemesiyle yeni kayıt, SMS formu), yeniden gönderme, iptal, başarısız kaydı yeniden deneme / KM'den eşleştirme; BBDSTORE siparişlerinin otomatik davet durumu. Kulüp ayarları kurum ayarıdır (bbd_akademi.settings)."
+    default_roles: [admin, bbd_staff]
   - key: bbd_akademi.finance_void
     description: "Kurum tahsilatını iptal etme. İzin yeterli olsa bile işlemden hemen önce PIN teyidi ister."
     destructive: true

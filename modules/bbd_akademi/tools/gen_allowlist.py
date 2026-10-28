@@ -80,6 +80,8 @@ AREAS: dict[str, str] = {
     "finance": "finance", "canteen": "finance", "book-sales": "finance",
     "book-requests": "finance",
     "contracts": "contracts",
+    # Deneme Kulübü davetleri (iş 81-km-kulup): ekranı Sözleşmeler alanının yanında (`ui/panel/contracts/`).
+    "club": "contracts",
     "insights": "reports", "early-warnings": "reports", "early-warning-settings": "reports",
     "exports": "reports",
     "settings": "admin", "branding": "admin", "features": "admin", "staff": "admin",
