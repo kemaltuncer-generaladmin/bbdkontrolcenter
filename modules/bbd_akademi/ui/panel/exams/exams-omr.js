@@ -401,7 +401,8 @@ export function openOmrSheet(app, exam, given, { onSaved } = {}) {
 
   // Düzen (sütun → bölüm): cevap düzeltmesinde bölüm adlarını ve ALAN'ı verir.
   let layout = null;
-  const layoutReady = app.api.get(`/v1/admin/exams/${sheet.examId || exam.id}/omr/layout`)
+  const sheetExamId = sheet.examId || exam.id;
+  const layoutReady = app.api.get(`/v1/admin/exams/${sheetExamId}/omr/layout`)
     .then((data) => { layout = data; }).catch(() => { layout = null; });
 
   const statusSlot = h('div', 'ak-stack');
@@ -634,7 +635,7 @@ export function openOmrSheet(app, exam, given, { onSaved } = {}) {
     }
     save.disabled = true;
     try {
-      const result = await app.api.patch(`/v1/admin/exams/${sheet.examId || exam.id}/omr/sheets/${sheet.sheetId}`, body,
+      const result = await app.api.patch(`/v1/admin/exams/${sheetExamId}/omr/sheets/${sheet.sheetId}`, body,
         { key: newKey('omr') });
       const next = result?.sheet || sheet;
       const replaced = Boolean(result?.replaced);
