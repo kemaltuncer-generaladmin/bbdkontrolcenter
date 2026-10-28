@@ -12,6 +12,7 @@
     "staff_sync_minutes": {"type": "integer", "minimum": 0, "maximum": 1440},
     "step_up_seconds": {"type": "integer", "minimum": 30, "maximum": 600},
     "read_retry_seconds": {"type": "number", "minimum": 0, "maximum": 60},
-    "document_title": {"type": "string", "maxLength": 120}
+    "document_title": {"type": "string", "maxLength": 120},
+    "club_store_watch_seconds": {"type": "integer", "minimum": 0, "maximum": 3600}
   }
 }

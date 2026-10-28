@@ -47,6 +47,9 @@ _staff: StaffService | None = None
 _events: Callable[[], Any] | None = None
 _features: TenantFeatures | None = None
 _documents: DocumentService | None = None
+_club: Any | None = None
+#: Deneme Kulübü ekranı (iş 81-km-kulup): izleyici durumu ve "Şimdi tara" kulüp iznindedir.
+CLUB = "bbd_akademi.club"
 
 #: Geçidin (`mobile_gateway`) kendi izinleri — Senkron kartı onları sorar (K9:
 #: gösterilen veri geçidindir, kapısı da geçidin iznidir).
@@ -60,13 +63,13 @@ METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 def bind(proxy: AkademiProxy, staff: StaffService,
          events: Callable[[], Any] | None = None,
          features: TenantFeatures | None = None,
-         documents: DocumentService | None = None) -> APIRouter:
+         documents: DocumentService | None = None, club: Any | None = None) -> APIRouter:
     """`events`: `mobile_gateway.events` yeteneğini her çağrıda çözen işlev
     (geçit yoksa ya da bu modülden sonra yüklenirse `None` döner).
     `features`: kurum özellik bayrakları özeti (verilmezse vekilin geçidiyle kurulur).
     `documents`: belge üretimi (önizle/yazdır); verilmezse belge uçları 503 döner."""
-    global _proxy, _staff, _events, _features, _documents
-    _proxy, _staff, _events, _documents = proxy, staff, events, documents
+    global _proxy, _staff, _events, _features, _documents, _club
+    _proxy, _staff, _events, _documents, _club = proxy, staff, events, documents, club
     _features = features or TenantFeatures(gateway=proxy.gateway, log=proxy.log)
     return router
 
@@ -441,6 +444,29 @@ async def events_retry(body: RetryDeadBody, user: CurrentUser = requires(VIEW)) 
 
 
 # ---------------------------------------------------------------- ham vekil
+
+
+# ------------------------------------------------ Deneme Kulübü: BBDSTORE izleyicisi
+
+
+def club_watcher() -> Any:
+    if _club is None:
+        raise HTTPException(status_code=503, detail="Kulüp izleyicisi hazır değil.")
+    return _club
+
+
+@router.get("/km/club/store-watch")
+async def club_store_watch(user: CurrentUser = requires(CLUB)) -> dict[str, Any]:
+    """Deneme Kulübü ekranının uyarı şeridi: izleyici durumu + davet açılamayan siparişler
+    (sipariş no, tutar, neden — ad/telefon yok)."""
+    return await club_watcher().status()
+
+
+@router.post("/km/club/store-watch/run")
+async def club_store_watch_run(user: CurrentUser = requires(CLUB)) -> dict[str, Any]:
+    """"Şimdi tara": turu hemen koşturur ve sonucu döner (tur sürüyorsa atlanır)."""
+    result = await club_watcher().run_once()
+    return {"result": result, "status": await club_watcher().status()}
 
 
 @router.api_route("/{path:path}", methods=METHODS, include_in_schema=False)

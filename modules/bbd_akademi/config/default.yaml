@@ -30,3 +30,7 @@ read_retry_seconds: 20
 # Akademi'nin kurum ayarından ve yayımlanmış temasından okunur. Akademi'ye o an
 # ulaşılamazsa başlıkta bu ad yazar (boşsa "BBD Akademi").
 document_title: ""
+# Deneme Kulübü BBDSTORE izleyicisi (iş 81-km-kulup): ödenmiş kulüp siparişlerinin
+# Akademi davetine çevrilme aralığı (sn). 0 = kapalı. Akademi ayarı
+# `club.autoInviteFromStore` kapalıysa izleyici zaten bir şey yapmaz.
+club_store_watch_seconds: 120

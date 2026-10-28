@@ -17,6 +17,7 @@ from km_sdk import ModuleContext
 
 from .allowlist import OPERATIONS
 from .api.routes import bind
+from .club.watcher import StoreClubWatcher
 from .core.features import TenantFeatures
 from .core.gateway import AkademiGateway, GatewayConfig
 from .core.operations import Allowlist
@@ -54,15 +55,31 @@ def register(ctx: ModuleContext) -> None:
         letterheads=Letterheads(gateway=gateway, log=ctx.log,
                                 fallback_name=str((ctx.config or {}).get("document_title") or "")))
 
+    # Deneme Kulübü BBDSTORE izleyicisi (iş 81-km-kulup): 2 dk'da bir ödenmiş kulüp siparişleri →
+    # Akademi daveti. Mağaza Geçidi (`store.api`) isteğe bağlıdır ve her turda yeniden çözülür (K3, K7).
+    watcher = StoreClubWatcher(
+        gateway=gateway, store=ctx.store, log=ctx.log,
+        store_api=lambda: ctx.try_capability("store.api"),
+        interval=float((ctx.config or {}).get("club_store_watch_seconds", 120) or 0))
+    # Mağaza ileride "ödendi" olayı yayınlarsa tur hemen koşar (bugün mağazanın KM'ye olay kanalı yok).
+    subscribe = getattr(ctx, "subscribe", None)
+    if callable(subscribe):
+        subscribe("store.trial_club.order_paid", watcher.wake)
+
     # Geçidin olay iletim durumu (Senkron kartı) isteğe bağlıdır ve geçit bu
     # modülden SONRA yüklenebilir: yetenek her istekte yeniden çözülür.
     ctx.add_router(bind(proxy, staff,
                         events=lambda: ctx.try_capability("mobile_gateway.events"),
                         features=TenantFeatures(gateway=gateway, log=ctx.log),
-                        documents=documents))
+                        documents=documents, club=watcher))
     ctx.provide("akademi.student_finance", StudentFinance(gateway=gateway, log=ctx.log))
-    _LIVE.update(staff=staff, gateway=gateway)
+    _LIVE.update(staff=staff, gateway=gateway, club_watcher=watcher)
     staff.start(config.staff_sync_minutes)
+    if config.enabled:
+        try:
+            watcher.start()
+        except RuntimeError:  # pragma: no cover — döngü yoksa (araçlar) izleyici başlamaz
+            pass
     ctx.log.info("akademi paneli hazır", base_url=config.base_url,
                  operations=len(OPERATIONS), enabled=config.enabled)
 

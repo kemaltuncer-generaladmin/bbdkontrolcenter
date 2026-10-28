@@ -53,9 +53,18 @@ consumes:
   - capability: mobile_gateway.events
     optional: true
     reason: "Ayarlar → Senkron kartı: geçidin Akademi'ye olay iletim durumu, ölü mektuplar ve yeniden gönderme (km-merkezi-senkron §8). Yoksa kart 'geçit sürümü olay iletimini desteklemiyor' der; izin geçidin kendi izinleridir (mobile_gateway.events.view / .manage)."
+  # Deneme Kulübü BBDSTORE izleyicisi (iş 81-km-kulup): ödenmiş kulüp siparişlerini okur
+  # (`bbd_trial_members`, bbd-store `GET /api/admin/bbd/deneme-kulubu/registrations`).
+  - capability: store.api
+    optional: true
+    reason: "BBDSTORE Deneme Kulübü siparişleri → Akademi kulüp daveti (2 dk'lık izleyici). Mağaza Geçidi yoksa izleyici 'store_missing' der, Deneme Kulübü ekranı uyarı gösterir; kurumda elle kayıt çalışır."
 events:
   publishes: []
-  subscribes: []
+  # Mağaza ileride kulüp siparişi ödendi olayını yayınlarsa izleyici turu hemen koşar
+  # (`register` bağlar; bugün mağazanın KM'ye olay kanalı yok — 2 dk yoklama).
+  subscribes:
+    - name: store.trial_club.order_paid
+      handler: "backend.club.watcher:StoreClubWatcher.wake"
 
 http:
   prefix: /api/bbd_akademi
