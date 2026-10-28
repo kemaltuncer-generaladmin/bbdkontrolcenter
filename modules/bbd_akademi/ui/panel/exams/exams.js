@@ -16,7 +16,7 @@
 // gösterir. Parçalar: exams-results.js (sonuç + dışa aktarım), exams-import.js
 // (sihirbaz), exams-keys.js (anahtar + konu), exams-analytics.js (analiz).
 
-import { blockedButton, button, h, loadStyles } from '../../../ui-kit/kit.js';
+import { blockedButton, button, h, loadStyles, pollLoop } from '../../../ui-kit/kit.js';
 import { alertBox, badge, card, tabBar } from '../../../ui-kit/layout.js';
 import { AkademiError } from '../api.js';
 import { programLabel, sortPrograms } from '../shared/curriculum-picker.js';
@@ -33,6 +33,7 @@ import { importTab } from './exams-import.js';
 import { keysTab } from './exams-keys.js';
 import { analysisTab, analyticsPanel } from './exams-analytics.js';
 import { liveTab } from './exams-live.js';
+import { omrSignature, omrTab } from './exams-omr.js';
 import { aliasesPanel, matchingTab, publisherWizard } from './exams-publisher.js';
 import {
   APP_STATE, appDraftFromExam, appFacts, defaultAppDraft, deliveryPart, validateApp,
@@ -40,7 +41,9 @@ import {
 import { appSettings, deliveryChoice } from './exams-app-form.js';
 
 const BOOKLET_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
-const DETAIL_TABS = ['live', 'results', 'import', 'keys', 'matching', 'analysis', 'export'];
+const DETAIL_TABS = ['live', 'results', 'omr', 'import', 'keys', 'matching', 'analysis', 'export'];
+/** Optik formlar imza yoklaması (KM vekili SSE açamaz; gizli sekmede durur). */
+const OMR_POLL_MS = 5_000;
 
 export function section(app) {
   loadStyles(import.meta.url, 'exams.css');
@@ -292,6 +295,8 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
     return [
       isApp() && app.can('admin_getExamLive') ? { key: 'live', label: 'Canlı sınav' } : null,
       { key: 'results', label: 'Sonuçlar' },
+      // BBD Optik (Akademi README §14 madde 141): telefonla okunan formlar, bekleyenler rozetle.
+      app.can('admin_listOmrSheets') ? { key: 'omr', label: 'Optik formlar' } : null,
       app.can('admin_listExamImports') || app.can('admin_uploadExamImport')
         ? { key: 'import', label: 'Toplu yükleme' } : null,
       app.can('admin_getAnswerKeys') || app.can('admin_getQuestionTopics')
@@ -313,6 +318,44 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
     tabSlot.replaceChildren(tabs.node);
     show(current);
     if (importId && bodies.import) bodies.import.openImport(importId);
+    if (omrKey !== null) tabs.badge('omr', omrPending);
+    startOmrPoll();
+  }
+
+  // Optik formlar ANLIK (Akademi `exams.omr`): KM vekili SSE açamaz → ayrıntı açıkken küçük imza
+  // yoklaması (tek satırlık liste okuması; gizli sekmede durur). Optik / Sonuçlar sekmesindeyken her
+  // tikte, diğer sekmelerde üç tikte bir. Değişince bu iki sekme ve başlık (sonuç sayısı) yenilenir.
+  let omrPoll = null;
+  let omrKey = null;
+  let omrPending = 0;
+  let omrTick = 0;
+  let omrLocalAt = 0;
+  function startOmrPoll() {
+    if (omrPoll || !app.can('admin_listOmrSheets')) return;
+    omrPoll = pollLoop({ every: OMR_POLL_MS, immediate: true, run: async () => {
+      if (disposed || !exam || !node.isConnected || node.closest('[hidden]')) return;
+      omrTick += 1;
+      if (omrKey !== null && !['omr', 'results'].includes(current) && omrTick % 3) return;
+      const signature = await omrSignature(app, exam.id);
+      if (disposed) return;
+      omrPending = signature.counts.pending || 0;
+      tabs?.badge('omr', omrPending);
+      bodies.omr?.counts(signature.counts);
+      const changed = omrKey !== null && signature.key !== omrKey;
+      omrKey = signature.key;
+      // Kendi kaydımız yanıtla zaten çizildi: hemen ardından gelen imza değişimi yeniden çekmez.
+      if (changed && Date.now() - omrLocalAt > 8000) omrChanged();
+    } });
+  }
+
+  function omrChanged() {
+    refresh();
+    for (const name of ['omr', 'results']) {
+      const body = bodies[name];
+      if (!body) continue;
+      if (name === current) body.reload();
+      else body.stale = true;
+    }
   }
 
   async function refresh() {
@@ -335,6 +378,9 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
       };
       const builders = {
         results: () => resultsTab(app, exam, hooks),
+        omr: () => omrTab(app, exam, { ...hooks,
+          onChanged: () => { omrLocalAt = Date.now(); hooks.onChanged(); },
+          onCounts: (counts) => { omrPending = counts.pending || 0; tabs?.badge('omr', omrPending); } }),
         import: () => importTab(app, exam, hooks),
         live: () => liveTab(app, exam, hooks),
         keys: () => keysTab(app, exam, hooks),
@@ -464,6 +510,7 @@ function examDetail(app, examId, { tab, importId, exam: given, onBack, onEdit, o
     tab: () => current,
     destroy() {
       disposed = true;
+      omrPoll?.stop();
       for (const body of Object.values(bodies)) body.destroy?.();
     },
   };

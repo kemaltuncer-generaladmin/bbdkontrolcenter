@@ -35,7 +35,7 @@ export const SCORING_RULES = {
   custom: 'Özel kural',
 };
 
-export const RESULT_SOURCE = { manual: 'Elle', import: 'Toplu yükleme', answers: 'Cevap dizisi' };
+export const RESULT_SOURCE = { manual: 'Elle', import: 'Toplu yükleme', answers: 'Cevap dizisi', optical: 'Optik' };
 
 export const IMPORT_STATUS = {
   uploaded: ['Yüklendi', 'info'],

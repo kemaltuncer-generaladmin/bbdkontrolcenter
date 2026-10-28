@@ -70,7 +70,7 @@ AREAS: dict[str, str] = {
     "bulk-jobs": "work",
     "exams": "exams", "exam-imports": "exams", "exam-import-templates": "exams",
     "exam-publisher-tables": "exams", "exam-topic-aliases": "exams",
-    "exam-analytics": "exams", "evaluations": "exams", "evaluation-periods": "exams",
+    "exam-analytics": "exams", "omr": "exams", "evaluations": "exams", "evaluation-periods": "exams",
     "evaluation-templates": "exams", "evaluation-reports": "exams",
     "resources": "resources", "resource-assignments": "resources",
     "resource-packages": "resources", "resource-progress": "resources",

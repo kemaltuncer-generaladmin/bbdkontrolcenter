@@ -140,3 +140,42 @@
 .ak-ex-topic-group { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px 4px; }
 .ak-ex-topic-head { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 .kit-drawer.ak-ex-analysis-drawer { width: min(980px, 96vw); }
+
+/* ------------------------------------------- optik formlar (§14 madde 141) */
+.ak-omr-reasons { display: flex; gap: 4px; flex-wrap: wrap; }
+.ak-omr-badge { border: 1px solid var(--accent-line); background: var(--accent-tint); color: var(--accent); font: inherit;
+  font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 1px 9px; cursor: pointer; }
+.ak-omr-badge:hover:not(:disabled) { border-color: currentColor; }
+.ak-omr-badge:disabled { cursor: default; opacity: 0.75; }
+.kit-drawer.ak-omr-drawer { width: min(1240px, 98vw); }
+.ak-omr-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); gap: 16px;
+  align-items: start; }
+.ak-omr-left { position: sticky; top: 0; }
+.ak-omr-viewer { display: flex; flex-direction: column; gap: 6px; }
+.ak-omr-viewer-tools { display: flex; gap: 4px; align-items: center; }
+.ak-omr-zoom { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; font-size: 12px; }
+.ak-omr-frame { height: min(76vh, 900px); overflow: auto; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--tint); touch-action: none; }
+.ak-omr-frame img { display: block; width: 100%; height: auto; user-select: none; cursor: zoom-in; }
+.ak-omr-frame.dragging img { cursor: grabbing; }
+.ak-omr-frame-note { padding: 24px 16px; text-align: center; }
+.ak-omr-status { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ak-omr-facts { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.ak-omr-label { font-weight: 600; font-size: 12.5px; }
+.ak-omr-chosen { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 9px; }
+.ak-omr-options { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+.ak-omr-option { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; text-align: left; font: inherit;
+  color: inherit; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+  cursor: pointer; }
+.ak-omr-option:hover { border-color: var(--line-strong); background: var(--tint); }
+.ak-omr-option.on { border-color: var(--accent-line); background: var(--accent-tint); }
+.ak-omr-segment { display: flex; gap: 6px; flex-wrap: wrap; }
+.ak-omr-answers summary { cursor: pointer; font-weight: 600; font-size: 12.5px; padding: 4px 0; }
+.ak-omr-answer-row { display: grid; grid-template-columns: minmax(120px, 0.8fr) minmax(0, 2fr); gap: 8px;
+  align-items: center; }
+@media (max-width: 900px) {
+  .ak-omr-grid { grid-template-columns: minmax(0, 1fr); }
+  .ak-omr-left { position: static; }
+  .ak-omr-frame { height: 60vh; }
+}

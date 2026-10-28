@@ -45,6 +45,18 @@ from modules.bbd_akademi.backend.core.operations import Operation
 
 #: Ekranda bilerek yer almayan işlemler → gerekçe.
 NOT_SURFACED: dict[str, str] = {
+    # --- BBD Optik (Akademi §14 141, iş 82): okuma telefondaki ayrı uygulamadadır (yalnız yönetici).
+    # KM "Optik formlar" sekmesi okunmuş formları gösterir ve bekleyenleri tamamlar (sheets / layout / students / PATCH).
+    "admin_listOmrExams":
+        "Optik uygulamasının deneme seçim listesidir; KM'de optik formlar her denemenin kendi ayrıntısındaki 'Optik formlar' sekmesindedir (Akademi §14 141).",
+    "admin_matchOmrIds":
+        "Formdan okunan telefon / TC'yi taramada anında eşleyen uç optik uygulamasınındır; KM bekleyen formda adayları formun kendisinden (OmrSheet.candidates) ve ad aramasından (admin_listOmrStudents) alır (Akademi §14 141).",
+    "admin_previewOmrSheets":
+        "Taramadan sonra gönderilmeden önceki önizleme optik uygulamasınındır; KM'de form düzeltmesi doğrudan admin_updateOmrSheet ile kaydedilir ve yanıttaki net gösterilir (Akademi §14 141).",
+    "admin_submitOmrSheets":
+        "Okunan formların toplu gönderimi telefondaki optik uygulamasınındır (okuma kamerayla telefonda yapılır); KM gönderilmiş formları listeler ve tamamlar (Akademi §14 141).",
+    "admin_putOmrSheetImage":
+        "Form görüntüsünü optik uygulaması yükler; KM yalnız gösterir (OmrSheet.image imzalı bağlantısı, admin_listOmrSheets) (Akademi §14 141).",
     # --- sözleşmeler (Akademi §14 139, iş 80): veli uçları (G1–G3) uygulamanın "Sözleşmelerim" ekranınındır
     "students_listContracts":
         "Veli 'Sözleşmelerim' listesi (yalnız imzalı sürümler) mobil / web veli ekranınındır; KM öğrenci kartındaki 'Velinin gördüğü' önizlemesi aynı kuralı sözleşme ayrıntısından (A7, imzalı sürüm + imzalanan türler) kurar (Akademi §14 139).",

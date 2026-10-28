@@ -17,6 +17,7 @@ import { examAnalysisSection, reportCardButton } from './exams-analysis.js';
 import {
   RESULT_SOURCE, estimateNet, netText, sectionLabel, sortedSections, studentCell,
 } from './exams-shared.js';
+import { omrBadge, omrSheetIndex } from './exams-omr.js';
 import { documentButtons } from '../documents.js';
 import { examResultDoc, examResultsDoc, mapLimit, mergeDocs } from '../documents-logic.js';
 
@@ -90,9 +91,16 @@ export function resultsTab(app, exam, { onChanged } = {}) {
     { key: 'score', label: 'Puan', align: 'num', width: '84px',
       cell: (row) => (row.estimatedScore === null || row.estimatedScore === undefined ? '—' : num(row.estimatedScore, 2)) },
     { key: 'rank', label: 'Sıra', width: '120px', cell: (row) => rankCell(row.ranks) },
-    { key: 'source', label: 'Kaynak', width: '96px', cell: (row) => (row.updatedAt
-      ? h('small', 'ak-muted', exam.deliveryMode === 'app' && row.source === 'answers' ? 'Uygulamada'
-        : RESULT_SOURCE[row.source] || row.source || '—') : '—') },
+    { key: 'source', label: 'Kaynak', width: '96px', cell: (row) => {
+      if (!row.updatedAt) return '—';
+      // Optik uygulamasından gelen sonuç (Akademi README §14 madde 141): küçük "Optik" rozeti → form görüntüsü.
+      const sheet = omrIndex.get(row.student?.id);
+      if (row.source === 'optical' || (sheet && row.source === 'answers')) {
+        return omrBadge(app, exam, sheet, { onSaved: () => { reload(); onChanged?.(); } });
+      }
+      return h('small', 'ak-muted', exam.deliveryMode === 'app' && row.source === 'answers' ? 'Uygulamada'
+        : RESULT_SOURCE[row.source] || row.source || '—');
+    } },
     { key: 'actions', label: '', width: '200px', cell: (row) => {
       const actions = h('div', 'ak-row-actions');
       const hasResult = Boolean(row.updatedAt);
@@ -124,6 +132,19 @@ export function resultsTab(app, exam, { onChanged } = {}) {
   });
   node.append(list.node);
 
+  // Optik formlar (öğrenci → kayıtlı form): tek liste okuması; gelince satırlar rozetle yeniden çizilir.
+  let omrIndex = new Map();
+  function loadOmr() {
+    omrSheetIndex(app, exam.id).then((index) => {
+      omrIndex = index;
+      if (index.size) list.table.update({ rows: list.rows() });
+    }).catch(() => { /* rozet olmadan da liste doğru */ });
+  }
+  function reload() {
+    loadOmr();
+    return list.reload();
+  }
+
   async function edit(student, existing) {
     const saved = await resultDialog(app, exam, { student, existing });
     if (!saved) return;
@@ -154,7 +175,7 @@ export function resultsTab(app, exam, { onChanged } = {}) {
     }
   }
 
-  return { node, reload: () => list.reload(), destroy() { list.destroy(); } };
+  return { node, reload, destroy() { list.destroy(); } };
 }
 
 /** Öğrencinin bu denemedeki ayrıntılı analizi (çekmece): net / sıra özeti + "Karne (PDF)" + analiz. */
