@@ -121,7 +121,7 @@ OPERATIONS: tuple[Operation, ...] = (
         ('decks.manage', 'reading_lists.manage'),
         'km',
         multipart=True,
-        features=('F-A23', 'F-A19'),
+        features=('F-A23', 'F-A19', 'F-SZ4'),
     ),
     Operation(
         'GET',
@@ -225,7 +225,7 @@ OPERATIONS: tuple[Operation, ...] = (
         'admin_getSettings',
         ('settings.manage',),
         'km',
-        features=('F-A16', 'F-00.8'),
+        features=('F-A16', 'F-00.8', 'F-SZ9'),
     ),
     Operation(
         'PATCH',
@@ -233,7 +233,7 @@ OPERATIONS: tuple[Operation, ...] = (
         'admin_patchSettings',
         ('settings.manage',),
         'km',
-        features=('F-A16', 'F-00.8', 'F-00.5'),
+        features=('F-A16', 'F-00.8', 'F-00.5', 'F-SZ9'),
     ),
     Operation(
         'GET',
