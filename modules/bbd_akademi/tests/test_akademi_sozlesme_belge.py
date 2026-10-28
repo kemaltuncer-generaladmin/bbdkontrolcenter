@@ -308,3 +308,211 @@ def test_madde_sablonu_modeli(result: dict[str, Any]) -> None:
     assert result["empty"] == ["Şablonda en az bir madde olmalı."]
     assert result["equal"] == [True, False]
     assert result["summary"] == "1 madde, 2 öğe (önce 1 madde, 1 öğe)"
+
+
+# --------------------------------------------------------------- ekran (DOM taklidi)
+
+UI = r"""
+const routes = {};
+const sent = [];
+const imported = [];
+globalThis.__apiHook = (method, path, options) => {
+  if (path === '/api/bbd_akademi/km/documents/akademi') {
+    imported.push(options.body);
+    return { ok: true, path: '/rapor/sozlesme.pdf', name: 'sozlesme.pdf', bytes: 10, number: '', parts: 1,
+      pages: [], pageCount: 3, shown: 0, previewError: '' };
+  }
+  if (path !== '/api/bbd_akademi/km/call') return undefined;
+  const payload = options.body || {};
+  sent.push(JSON.parse(JSON.stringify(payload)));
+  const key = `${payload.method} ${payload.path}`;
+  const hit = Object.keys(routes).find((pattern) => new RegExp(`^${pattern}$`).test(key));
+  if (!hit) return { ok: false, status: 404, error: { code: 'not_found', message: `taklit yok: ${key}` } };
+  const value = typeof routes[hit] === 'function' ? routes[hit](payload.body, payload) : routes[hit];
+  if (value && value.__error) return { ok: false, status: value.status || 422, error: value.__error };
+  return { ok: true, status: 200, data: value, headers: {} };
+};
+const byText = (root, selector, text) => root.querySelectorAll(selector).find((node) => node.textContent.trim() === text);
+const click = (node) => { if (!node) throw new Error('düğme yok'); node.click(); };
+const type = (node, value) => { node.value = value; node.dispatchEvent(new Event('input', { bubbles: true })); };
+const top = (root, selector) => root.querySelectorAll(selector).pop();
+const student = (id, name) => ({ id, displayName: name, classGroup: { id: 'k8', name: '8-A' }, externalRef: `STU-${id}` });
+const contract = (id, no, name, state) => ({ id, number: no, student: student(`s${id}`, name),
+  payerGuardian: { slot: 1, name: 'Ayşe Yılmaz' }, academicYear: '2026-2027', contractDate: '2026-10-28',
+  registeredOn: '2026-10-28', status: 'active', signature: { state, signedRevisionNo: null, signedOn: null, source: null },
+  latestRevisionNo: 1, totalMinor: 18000000, planId: 'p1', createdAt: '2026-10-28T10:00:00Z' });
+
+export default async function ({ document, audit, sleep, api, load }) {
+  let listCalls = 0;
+  routes['GET /v1/admin/contracts'] = () => { listCalls += 1; return { items: [
+    contract('1', 'BBD1-1000', 'Elif Yılmaz', 'awaiting'), contract('2', '72128', 'Can Demir', 'signed')],
+    nextCursor: null }; };
+  routes['GET /v1/admin/contracts/missing'] = { items: [{ student: student('s3', 'Deniz Kaya'), planId: null }],
+    nextCursor: null };
+  routes['GET /v1/admin/settings'] = { contracts: { numberPrefix: 'BBD1-', nextNumber: 1000,
+    defaultCopies: { registration: 2, meb: 2, promissory: 1, payment_plan: 1, legal_notice: 1 }, bankAccounts: [] } };
+  routes['PATCH /v1/admin/settings'] = (body) => ({ contracts: { ...body.contracts } });
+  routes['POST /v1/admin/contracts/documents'] = (body) => ({ status: 'ready', jobId: null, includedCount: 1,
+    file: { url: 'https://akademi.test/f/x.pdf', expiresAt: '2026-10-28T11:00:00Z', fileName: 'sozlesmeler.pdf' },
+    skipped: [{ student: student('s2', 'Can Demir'), code: 'contract_missing_fields',
+      missingFields: [{ scope: 'guardian', slot: 1, field: 'nationalId', label: 'Veli TC kimlik no', blocks: ['promissory'] }] }] });
+  routes['GET /v1/admin/contracts/services'] = { items: [] };
+  routes['POST /v1/admin/contracts/services'] = (body) => ({ id: 'sv1', ...body });
+  routes['GET /v1/admin/contracts/templates'] = { items: [], placeholders: [
+    { key: 'kurumAdi', label: 'Kurum adı', example: 'BBD Kurs' }] };
+  routes['GET /v1/admin/contracts/templates/registration'] = { kind: 'registration',
+    active: { version: 3, clauses: [{ title: 'Taraflar', items: ['a) {kurumAdi} ile veli arasında'] }],
+      createdAt: '2026-10-28T09:00:00Z', createdByLabel: 'Yönetici', note: null }, history: [] };
+  routes['POST /v1/admin/contracts/templates/registration'] = (body) => ({ kind: 'registration', active: { version: 4 } });
+
+  const { createClient } = await load('./panels/bbd_akademi/api.js');
+  const root = document.createElement('div');
+  root.className = 'kit-panel ak';
+  document.body.append(root);
+  const client = createClient({ api: (path, options) => api(path, options) });
+  const toasts = [];
+  const gone = [];
+  const app = { root, api: client, status: null, toast: (text, tone) => { toasts.push([text, tone]); },
+    has: () => true, can: (id) => client.can(id), go: (key, payload) => gone.push([key, payload]), openPanel: () => {},
+    capability: () => null, feature: () => false, enabled: () => true, onDispose: () => {}, canOpen: () => true,
+    lookups: { classGroups: async () => [{ id: 'k8', name: '8-A' }] } };
+  const { section } = await load('./panels/bbd_akademi/contracts/documents-screen.js');
+  const view = section(app);
+  root.append(view.node);
+  view.shown();
+  await sleep(80);
+  const out = {};
+  out.tabs = root.querySelectorAll('[role="tab"]').map((tab) => tab.textContent.trim());
+  out.numbers = root.querySelectorAll('.ak-szb-no').map((node) => node.textContent);
+  out.a11yList = audit(view.node);
+
+  // Süzgeç çipi → sorgu.
+  click(byText(root, 'button', 'İmza bekleyen'));
+  await sleep(30);
+  out.filterQuery = sent.filter((c) => c.path === '/v1/admin/contracts').pop().query;
+  click(byText(root, 'button', 'Tümü'));
+  await sleep(30);
+
+  // İki satır seç → Belge çıkar → MEB'i kaldır, senet yalnız ödenmemiş → hazırla.
+  for (const box of root.querySelectorAll('.kit-row .kit-check')) click(box);
+  await sleep(10);
+  out.selectionText = root.querySelector('.ak-szb-selection-text').textContent;
+  click(byText(root, 'button', 'Belge çıkar'));
+  await sleep(40);
+  let dialog = top(root, '.kit-dialog');
+  out.a11yBuild = audit(dialog);
+  const mebRow = dialog.querySelectorAll('.ak-szb-kind').find((row) => row.dataset.kind === 'meb');
+  click(mebRow.querySelector('input'));
+  const scope = dialog.querySelectorAll('select').find((node) => node.querySelector('option')?.value === 'all');
+  scope.value = 'open';
+  scope.dispatchEvent(new Event('change', { bubbles: true }));
+  click(byText(dialog, 'button', 'Belgeleri hazırla'));
+  await sleep(80);
+  const request = sent.filter((c) => c.method === 'POST' && c.path === '/v1/admin/contracts/documents').pop();
+  out.request = request?.body;
+  out.requestKey = Boolean(request?.idempotencyKey);
+  dialog = top(root, '.kit-dialog');
+  out.skippedTitle = dialog?.querySelector('.kit-dialog-title')?.textContent;
+  out.skippedText = dialog?.querySelector('.ak-szb-skip')?.textContent;
+  click(byText(dialog, 'button', 'Önizle ve yazdır (1)'));
+  await sleep(80);
+  out.imported = imported;
+
+  // Sözleşme değişti olayı → liste tazelenir.
+  const before = listCalls;
+  window.dispatchEvent(new CustomEvent('bbd-akademi:contract-changed', { detail: { contractId: '1', change: 'signed' } }));
+  await sleep(40);
+  out.reloaded = listCalls > before;
+
+  // Sözleşmesi olmayanlar → sihirbaz olayı.
+  const wizard = [];
+  window.addEventListener('bbd-akademi:open-contract-wizard', (event) => wizard.push(event.detail));
+  click(byText(root, '[role="tab"]', 'Sözleşmesi olmayanlar'));
+  await sleep(60);
+  click(byText(root, 'button', 'Kayıt ve ödeme planı'));
+  out.wizard = wizard;
+
+  // Ayarlar: hatalı IBAN kaydedilmez; düzeltilince yalnız değişenler gider.
+  click(byText(root, '[role="tab"]', 'Sözleşme ayarları'));
+  await sleep(80);
+  out.nextPreview = root.querySelector('.ak-szb-preview-no')?.textContent;
+  click(byText(root, 'button', 'Hesap ekle'));
+  const bank = root.querySelector('.ak-szb-bank');
+  const inputs = bank.querySelectorAll('input');
+  type(inputs[0], 'Ziraat Bankası');
+  type(inputs[1], 'BBD Eğitim');
+  type(inputs[3], 'TR34 0006 1005 1978 6457 8413 26');
+  click(byText(root, 'button', 'Kaydet'));
+  await sleep(30);
+  out.ibanError = bank.querySelectorAll('.kit-field-error').map((node) => node.textContent).filter(Boolean);
+  out.patchesBefore = sent.filter((c) => c.method === 'PATCH').length;
+  type(inputs[3], 'TR33 0006 1005 1978 6457 8413 26');
+  click(byText(root, 'button', 'Kaydet'));
+  await sleep(60);
+  out.patch = sent.filter((c) => c.method === 'PATCH').map((c) => c.body);
+
+  // Şablon: madde ekle → kaydet (notlu yeni sürüm).
+  click(byText(root, '[role="tab"]', 'Madde şablonları'));
+  await sleep(80);
+  out.templateHead = root.querySelector('.ak-szb-templates .ak-muted')?.textContent;
+  click(byText(root, 'button', 'Madde ekle'));
+  const clauses = root.querySelectorAll('.ak-szb-clause');
+  const last = clauses[clauses.length - 1];
+  type(last.querySelector('input'), 'Ücret');
+  const area = last.querySelector('textarea');
+  area.dispatchEvent(new Event('focus'));
+  type(area, 'Ücret peşin ödenir.');
+  out.preview = root.querySelector('.ak-szb-paper')?.textContent;
+  click(byText(root, 'button', 'Yeni sürüm olarak kaydet'));
+  await sleep(30);
+  dialog = top(root, '.kit-dialog');
+  type(dialog.querySelector('input'), 'Ücret maddesi eklendi');
+  click(byText(dialog, 'button', 'Kaydet'));
+  await sleep(60);
+  out.template = sent.filter((c) => c.method === 'POST' && c.path === '/v1/admin/contracts/templates/registration')
+    .map((c) => c.body);
+  out.toasts = toasts;
+  out.gone = gone;
+  return out;
+}
+"""
+
+
+def test_ekran_belge_cikar_sihirbaz_ayar_sablon() -> None:
+    import sys
+
+    sys.path.insert(0, str(MODULE.parents[1] / "tools" / "a11y"))
+    from harness import NodeMissing, run
+
+    try:
+        data = run(UI, panels=("bbd_akademi",), timeout=120)
+    except NodeMissing:
+        pytest.skip("node kurulu değil")
+    assert data["errors"] == [], data["errors"]
+    out: dict[str, Any] = data["result"]
+    assert out["tabs"] == ["Sözleşmeler", "Sözleşmesi olmayanlar", "Hizmet kataloğu", "Madde şablonları",
+                           "Sözleşme ayarları"]
+    assert out["numbers"] == ["BBD1-1000", "72128"]
+    assert out["filterQuery"]["signature"] == "awaiting"
+    assert out["selectionText"] == "2 sözleşme seçili"
+    assert out["request"] == {"contractIds": ["1", "2"], "kinds": ["registration", "promissory", "payment_plan"],
+                              "options": {"copies": {"registration": 2, "promissory": 1, "payment_plan": 1},
+                                          "promissoryScope": "open", "revision": "latest"}}
+    assert out["requestKey"] is True
+    assert out["skippedTitle"] == "Sözleşme belgeleri hazır"
+    assert "Can Demir" in out["skippedText"] and "Veli TC kimlik no" in out["skippedText"]
+    assert out["imported"] == [{"kind": "contract_documents", "url": "https://akademi.test/f/x.pdf",
+                                "name": "sozlesmeler"}]
+    assert out["reloaded"] is True
+    assert out["wizard"] == [{"studentId": "s3", "planId": None}]
+    assert out["nextPreview"] == "Sonraki: BBD1-1000"
+    assert out["ibanError"] == ["IBAN sağlaması tutmuyor — rakamları kontrol edin."] and out["patchesBefore"] == 0
+    assert out["patch"] == [{"contracts": {"bankAccounts": [{"bank": "Ziraat Bankası", "holder": "BBD Eğitim",
+                                                             "branch": None, "iban": "TR330006100519786457841326"}]}}]
+    assert out["templateHead"].startswith("Etkin sürüm 3")
+    assert "2. ÜCRET:" in out["preview"] and "a) BBD Kurs ile veli arasında" in out["preview"]
+    assert out["template"] == [{"clauses": [{"title": "Taraflar", "items": ["a) {kurumAdi} ile veli arasında"]},
+                                            {"title": "Ücret", "items": ["Ücret peşin ödenir."]}],
+                                "note": "Ücret maddesi eklendi"}]
+    for key in ("a11yList", "a11yBuild"):
+        assert out[key] == [], (key, out[key])
