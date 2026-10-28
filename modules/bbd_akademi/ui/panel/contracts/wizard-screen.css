@@ -1,0 +1,86 @@
+/* "Kayıt ve ödeme planı" sihirbazı (F-SZ1, 80-km-sihirbaz) — önek `ak-wz-`. Yalnız jetonlar (koyu temaya hazır).
+   Tek uzun pencere: üstte başlık, ortada kayan bölümler, altta YAPIŞKAN toplam şeridi + eylemler. */
+
+.kit-dialog.ak-wz { width: min(1120px, calc(100% - 32px)); max-width: none; max-height: calc(100% - 28px);
+  display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.ak-wz-head { padding: 16px 20px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 12px;
+  align-items: flex-start; }
+.ak-wz-head-text { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.ak-wz-sub { font-size: 12px; color: var(--soft); }
+.ak-wz-body { flex: 1; overflow: auto; padding: 14px 20px 18px; display: grid; gap: 14px; align-content: start; }
+.ak-wz-foot { border-top: 1px solid var(--line); padding: 10px 20px 12px; display: grid; gap: 6px;
+  background: var(--surface); }
+.ak-wz-foot-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ak-wz-sum { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; font-size: 12.5px; }
+.ak-wz-sum b { font-variant-numeric: tabular-nums; }
+.ak-wz-keys { font-size: 11px; color: var(--soft); }
+.ak-wz-error { font-size: 12px; color: var(--bad); min-height: 16px; }
+
+.ak-wz-sec { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px;
+  background: var(--surface); }
+.ak-wz-sec.bad { border-color: var(--bad-line); }
+.ak-wz-sec-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ak-wz-sec-no { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center;
+  font-size: 12px; font-weight: 600; background: var(--accent-tint); color: var(--accent); }
+.ak-wz-sec-title { font-size: 14px; font-weight: 600; }
+.ak-wz-sec-hint { font-size: 12px; color: var(--soft); }
+.ak-wz-sec-errors { display: grid; gap: 2px; font-size: 12px; color: var(--bad); }
+.ak-wz-sec-errors:empty { display: none; }
+
+.ak-wz-grid { display: grid; gap: 10px 12px; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  align-items: end; }
+.ak-wz-field { display: grid; gap: 4px; min-width: 0; }
+.ak-wz-field > span { font-size: 11.5px; color: var(--soft); }
+.ak-wz-field .kit-input, .ak-wz-field .kit-select { width: 100%; }
+.ak-wz-cols { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+@media (max-width: 860px) { .ak-wz-cols { grid-template-columns: minmax(0, 1fr); } }
+
+.ak-wz-payers { display: grid; gap: 6px; }
+.ak-wz-payer { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 8px; align-items: start;
+  border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; cursor: pointer; }
+.ak-wz-payer.on { border-color: var(--accent-line); background: var(--accent-tint); }
+.ak-wz-payer small { display: block; color: var(--soft); font-size: 11.5px; }
+.ak-wz-missing { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.ak-wz-table { display: grid; gap: 4px; }
+.ak-wz-row { display: grid; gap: 6px; align-items: center; }
+.ak-wz-row.head { font-size: 11px; color: var(--soft); padding: 0 2px; }
+.ak-wz-row .kit-input, .ak-wz-row .kit-select { width: 100%; min-width: 0; }
+.ak-wz-lines .ak-wz-row { grid-template-columns: minmax(150px, 2fr) minmax(110px, 1.1fr) 112px 64px 64px 64px 100px 120px 30px; }
+.ak-wz-inst .ak-wz-row { grid-template-columns: 34px 150px 140px 170px 30px; }
+.ak-wz-past .ak-wz-row { grid-template-columns: 150px 140px 150px minmax(0, 1fr) 30px; }
+.ak-wz-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ak-wz-total { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ak-wz-name { display: grid; gap: 4px; }
+.ak-wz-x { min-width: 0; padding: 0 6px; }
+.ak-wz-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ak-wz-totals { display: flex; justify-content: flex-end; gap: 16px; font-size: 12.5px; flex-wrap: wrap; }
+.ak-wz-totals b { font-variant-numeric: tabular-nums; }
+.ak-wz-mode { display: inline-flex; gap: 4px; }
+.ak-wz-ro { font-size: 12.5px; }
+
+.ak-wz-toggle { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 12px; cursor: pointer; }
+.ak-wz-toggle.on { border-color: var(--good-line); background: var(--good-tint); }
+.ak-wz-toggle b { font-size: 13px; }
+.ak-wz-toggle small { display: block; font-size: 11.5px; color: var(--soft); }
+.ak-wz-textarea { width: 100%; min-height: 64px; resize: vertical; }
+
+.ak-wz-wait { display: grid; gap: 10px; justify-items: start; padding: 18px 4px; }
+.ak-wz-wait-bar { width: min(420px, 100%); height: 6px; border-radius: 3px; background: var(--tint); overflow: hidden; }
+.ak-wz-wait-bar > span { display: block; height: 100%; width: 30%; background: var(--accent);
+  animation: ak-wz-slide 1.2s ease-in-out infinite; }
+@keyframes ak-wz-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .ak-wz-wait-bar > span { animation: none; width: 100%; } }
+
+/* Tarih alanı hücreyi doldurur (takvim düğmesi kutunun içinde kalsın). */
+.ak-wz-field .kit-datefield, .ak-wz-row .kit-datefield { display: flex; width: 100%; }
+.ak-wz-field .df-input, .ak-wz-row .df-input { width: 100%; height: var(--kit-ctl-h, 30px); }
+
+/* Senet seçimi (tek senet / her taksit) ve özel ders satırı. */
+.ak-wz-prom { display: grid; gap: 8px; }
+.ak-wz-radios { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; font-size: 12.5px; }
+.ak-wz-radio { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.ak-wz-mini { display: grid; gap: 2px; min-width: 0; }
+.ak-wz-mini > span { font-size: 10.5px; color: var(--soft); }
+.ak-wz-pl { font-size: 12px; letter-spacing: .02em; }

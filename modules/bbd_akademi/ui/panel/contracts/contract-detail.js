@@ -17,8 +17,9 @@ import {
   actionButton, empty, fmtDate, fmtDateTime, money, num, reasonDialog, runAction, statusBadge, toolbar,
 } from '../common.js';
 import {
-  attachDialog, clausesDialog, guardianDialog, openAttachment, signDialog,
+  attachDialog, clausesDialog, guardianDialog, openAttachment, promissoryDialog, signDialog,
 } from './contract-dialogs.js';
+import { promissoryText } from './wizard-logic.js';
 import {
   buildDocuments, contractSettings, editInStudentsPanel, emitContractEvent, openContractDocument, paths,
 } from './shared-contract.js';
@@ -157,6 +158,13 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
           const next = await clausesDialog(app, data);
           if (next) { app.toast('Yeni sürüm oluşturuldu; belgeler yeni metinle üretildi.', 'good'); changed(next, 'revised'); }
         }),
+        // Tek senet / her taksit (taslak "EK — TEK SENET"); peşin sözleşmede senet yok.
+        data.payment?.mode === 'installment' && (data.payment.installments || []).length
+          ? write('admin_reviseContract', 'Senet türünü değiştir', async () => {
+            const next = await promissoryDialog(app, data);
+            if (next) { app.toast('Yeni sürüm oluşturuldu; senetler yeniden üretildi.', 'good'); changed(next, 'revised'); }
+          }, { title: 'Her taksit için ayrı senet ya da tek senet (toplam tutar).' })
+          : null,
         refreshButton(),
         button('Velinin gördüğü', { variant: 'ghost', onClick: () => guardianDialog(app, data) }),
         h('span', 'kit-spacer'),
@@ -261,6 +269,9 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
       rows.push({ no: 'Peşinat', ...payment.downPayment, status: payment.downPayment.status || null });
     }
     rows.push(...(payment.installments || []));
+    const body = h('div', 'ak-stack');
+    // "Senet: Tek senet (vade 05.06.2027)" / "Her taksit için ayrı" / "Senet yok (peşin)".
+    body.append(h('div', 'ak-ct-meta', `Senet: ${promissoryText(data)}`));
     const table = dataTable({
       dense: true,
       columns: [
@@ -274,7 +285,8 @@ export function contractDetail(app, contractId, { studentId, kmId = () => null, 
       rows,
       empty: empty('Taksit yok', payment.mode === 'cash' ? 'Peşin ödeme.' : ''),
     });
-    return card('Ödeme planı', table.node, payment.mode === 'cash' ? 'peşin' : `${num((payment.installments || []).length)} taksit`);
+    body.append(table.node);
+    return card('Ödeme planı', body, payment.mode === 'cash' ? 'peşin' : `${num((payment.installments || []).length)} taksit`);
   }
 
   function linesCard(data) {
