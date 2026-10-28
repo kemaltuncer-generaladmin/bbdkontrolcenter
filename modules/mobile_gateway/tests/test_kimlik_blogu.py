@@ -13,9 +13,9 @@ from copy import deepcopy
 from typing import Any
 
 from mobile_gateway_fakes import CAN, ELIF, MOTHER, FakeDirectory
+from modules.mobile_gateway.backend.api import routes
 
 from km_core.security.identity import CurrentUser
-from modules.mobile_gateway.backend.api import routes
 
 World = Any  # conftest.World — `conftest`ten import edilmez (test_contract_v1 notu)
 TC = "10000000146"

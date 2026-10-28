@@ -8,6 +8,7 @@ from typing import Any
 from km_sdk import ModuleContext
 
 from .academic_year import YearBackfill
+from .admission import StudentAdmission
 from .api.routes import bind
 from .canteen_events import CanteenSync
 from .classes import ClassLink
@@ -112,6 +113,11 @@ def register(ctx: ModuleContext) -> None:
     ctx.add_router(bind(service, groups, lifecycle, sync, merge=merge, link=link))
     ctx.provide("bbd_students.directory", directory)
     ctx.provide("bbd_students.groups", StudentGroups(groups))
+    # Dış kaynaklı öğrenci açılışı (iş 81-km-kulup): Akademi'nin Deneme Kulübü formu mobil
+    # geçidin `POST /students` ucundan buraya gelir; öğrenci KM'de normal öğrencidir (K3, K5).
+    ctx.provide("bbd_students.admission",
+                StudentAdmission(service=service, store=ctx.store, directory=directory,
+                                 log=ctx.log))
     # Kantin olay alıcısı (bbd_canteen_api) kasadaki öğrenci değişikliğini
     # buradan KM kaydına çevirir — profil tablosuna yalnız bu modül yazar (K5).
     ctx.provide("bbd_students.sync",

@@ -460,7 +460,7 @@ class StudentService:
     # ------------------------------------------------------------- yazma
 
     async def create_student(self, payload: dict[str, Any], *,
-                             actor: str = "") -> dict[str, Any]:
+                             actor: str = "", causation_id: str | None = None) -> dict[str, Any]:
         """Yeni öğrenci — ÖNCE KM, sonra kantin (km-merkezi-senkron §7).
 
         Profil + revizyon + `student.created` tek işlemde yazılır; kantine
@@ -507,7 +507,7 @@ class StudentService:
         await self._sync.write(
             kantin_id, columns={**columns, "source": "km"},
             canteen_ops={"upsert": changes}, events=[Event("student.created")],
-            log={"action": "created", "actor": actor})
+            causation_id=causation_id, log={"action": "created", "actor": actor})
         outcome = await self._sync.push(kantin_id)
         if outcome.state == "rejected":
             await self._compensate_create(kantin_id)

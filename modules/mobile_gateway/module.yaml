@@ -27,7 +27,7 @@
 
 id: mobile_gateway
 name: "Mobil Geçit"
-description: "BBD Akademi API'sinin sunucudan sunucuya çağırdığı geçit: öğrenci dizini ve grupları, kantin, tablet, anons, zil saatleri ve zil planı, OTP SMS."
+description: "BBD Akademi API'sinin sunucudan sunucuya çağırdığı geçit: öğrenci dizini, Deneme Kulübü öğrenci açılışı ve grupları, kantin, tablet, anons, zil saatleri ve zil planı, OTP SMS."
 version: 0.3.0
 sdk: ">=0.1,<1.0"
 enabled: true
@@ -82,6 +82,9 @@ consumes:
   - capability: events.outbox
     optional: true
     reason: "Geçitten yapılan yazmaların olayı (origin akademi), GET /events çekme ucu ve Akademi'ye webhook iletimi platform outbox'undandır (ADR 0029). Yoksa olay yazılmaz, GET /events 503."
+  - capability: bbd_students.admission
+    optional: true
+    reason: "Akademi Deneme Kulübü kaydı (POST /students, iş 81-km-kulup): öğrenci açma / mevcut öğrenciyi kulüp sınıfına ekleme Öğrenci Yönetimi'nindir (K3, K5). Yoksa uç 503 capability_missing döner."
   - capability: bbd_students.groups
     optional: true
     reason: "Öğrenci grupları ve tarihli üyelik Öğrenci Yönetimi'nindir (K3, K5). Yoksa GET /groups 503 capability_missing döner."
@@ -118,6 +121,12 @@ permissions:
   # yoksa blok hiç gelmez (eski davranış). Kurulu sistemde `grant_defaults` açılışta ekler.
   - key: mobile_gateway.identity.read
     description: "Mobil geçit öğrenci yanıtlarında sözleşme kimlik bilgilerini (TC kimlik no, doğum tarihi, adres, veli kimliği) okuma. Servis anahtarı içindir."
+    default_roles: [admin, mobile_service]
+  # Deneme Kulübü kaydı (iş 81-km-kulup, bbd-akademi 81-api-taslak §C): `POST /students`
+  # öğrenci açar ya da mevcut öğrenciyi kulüp sınıfına ekler. YALNIZ Akademi anahtarının
+  # rolü; Akademi'deki adı `students.create`. Kurulu sistemde `grant_defaults` açılışta ekler.
+  - key: mobile_gateway.students.create
+    description: "Mobil geçitten öğrenci açma (Deneme Kulübü kaydı; externalRef ile idempotent, mevcut öğrenci kulüp sınıfına eklenir). Servis anahtarı içindir."
     default_roles: [admin, mobile_service]
   # Olay iletimi durumu (KM paneli Senkron kartı). Servis anahtarına VERİLMEZ.
   - key: mobile_gateway.events.view

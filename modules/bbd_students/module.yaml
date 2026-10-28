@@ -96,6 +96,17 @@ provides:
       import_named(name, *, kind, call_name="", actor) → {id, created} (yalnız zil
       gruplarının taşınması; katlanmış ada göre idempotent). GroupRecord members
       bütün üyelik satırlarıdır (geçmiş dahil); tarihler yerel gün, iki uç dahil.
+  # Dış kaynaklı öğrenci açılışı (iş 81-km-kulup, göç 015). Tüketici: mobil geçidin
+  # `POST /students` ucu (Akademi Deneme Kulübü formu). Kulüp üyesi NORMAL öğrencidir.
+  - capability: bbd_students.admission
+    contract: bbd_students/backend/admission.py:StudentAdmission
+    description: >
+      BACKEND: async admit(payload, *, external_ref, source="club", actor, causation_id=None,
+      student_id=None) → {studentId, created, className, warnings?}. payload {firstName,
+      lastName, studentPhone?, className?, guardians [{slot, name, phone, relation}],
+      identity? (80 K2 şekli)}. external_ref ile idempotent (ilk yanıt aynen); mevcut öğrenci
+      (student_id ya da ad + telefon birebir TEK eşleşme) yeni kayıt açmaz, sınıfa EK üye
+      olur; birden çok aday → AdmissionError(409 ambiguous_match). Hatalar status/code taşır.
   # Kantinden gelen öğrenci olaylarının KM karşılığı (km-merkezi-senkron §6.2,
   # §6.3). Tüketici: Kantin Geçidi'nin olay alıcısı (profil tablosu yalnız bu
   # modülündür, K5).

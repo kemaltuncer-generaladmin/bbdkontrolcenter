@@ -784,6 +784,46 @@ class GatewayService:
             await self._attach_identity([record], [out])
         return out
 
+    async def create_student(self, body: dict[str, Any], caller: Caller, *,
+                             student_id: str | None = None) -> dict[str, Any]:
+        """§11 (iş 81-km-kulup): Akademi'nin Deneme Kulübü kaydı — KM'de öğrenci açar ya da
+        mevcut öğrenciyi kulüp sınıfına EK sınıf olarak ekler. Kural `bbd_students.admission`
+        yeteneğindedir; `externalRef` ile idempotent (aynı davet ikinci öğrenci açmaz).
+
+        Yanıt `{studentId, created, className, warnings?}`. Olay `student.created` öğrenci
+        modülünün outbox yazmasından çıkar (`causationId` = Idempotency-Key). Denetim izine
+        yalnız dış anahtar, kaynak ve sonuç yazılır (ad / telefon / TC YAZILMAZ).
+        """
+        external_ref = str(body.get("externalRef") or "")
+        source = str(body.get("source") or "club")
+        payload = {key: body[key] for key in ("firstName", "lastName", "studentPhone",
+                                               "className", "guardians", "identity")
+                   if key in body and body[key] is not None}
+
+        async def work() -> dict[str, Any]:
+            result = await self.call(self.caps.admit_student(
+                payload, external_ref=external_ref, source=source,
+                actor=f"BBD Akademi ({caller.on_behalf_of or caller.name})"[:160],
+                causation_id=caller.causation_id, student_id=student_id))
+            if not result.get("studentId"):
+                raise upstream_error("Öğrenci modülü kimlik döndürmedi.")
+            self.caps.directory_changed()
+            reply: dict[str, Any] = {"studentId": str(result["studentId"]),
+                                     "created": bool(result.get("created")),
+                                     "className": result.get("className") or None}
+            warnings = [str(item) for item in result.get("warnings") or [] if item]
+            if warnings:
+                reply["warnings"] = warnings[:5]
+            return reply
+
+        detail = {"externalRef": external_ref[:120], "source": source,
+                  "linked": bool(student_id)}
+        result = await self.audited("students.create", caller, student_id or "", detail, work())
+        await self.audit("students.create.result", caller, student_id=result["studentId"],
+                         detail={"externalRef": external_ref[:120],
+                                 "created": result["created"]})
+        return result
+
     async def _attach_identity(self, records: list[dict[str, Any]],
                                students: list[dict[str, Any]]) -> None:
         """Yetkili anahtara EKLEMELİ `identity` bloğu (80-ortak K2, beyaz liste).

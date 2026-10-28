@@ -32,6 +32,9 @@ ACCESS = "mobile_gateway.access"
 #: Sözleşme kimliği (80-ortak K2): dizin / tekil öğrenci yanıtına EKLEMELİ `identity`
 #: bloğu YALNIZ bu izni taşıyan anahtara. Taşımayanın yanıtı birebir eskisidir.
 IDENTITY = "mobile_gateway.identity.read"
+#: Öğrenci açma (iş 81-km-kulup, Akademi'deki adı `students.create`): YALNIZ Akademi
+#: entegrasyon anahtarının rolü (`mobile_service`) taşır.
+STUDENTS_CREATE = "mobile_gateway.students.create"
 
 router = APIRouter(route_class=GatewayRoute)
 _service: GatewayService | None = None
@@ -97,6 +100,31 @@ FROM_QUERY = Query(default=None, alias="from")
 TO_QUERY = Query(default=None, alias="to")
 DAY_QUERY = Query(default=None, alias="date")
 CODE = r"^\d{6}$"
+
+
+class AdmissionGuardian(BaseModel):
+    slot: int = Field(ge=1, le=4)
+    name: str = Field(default="", max_length=80)
+    phone: str = Field(min_length=10, max_length=20)
+    relation: str = Field(default="", max_length=20)
+
+
+class StudentCreateBody(BaseModel):
+    """§11 — Akademi Deneme Kulübü kaydı (bbd-akademi 81-api-taslak §C).
+
+    `studentId` EKLEMELİ ve isteğe bağlıdır: Akademi mevcut bir KM öğrencisiyle kesin
+    eşleştirdiyse o öğrenci kulüp sınıfına eklenir, yeni öğrenci açılmaz.
+    """
+
+    externalRef: str = Field(min_length=1, max_length=120)
+    firstName: str = Field(min_length=1, max_length=60)
+    lastName: str = Field(min_length=1, max_length=60)
+    studentPhone: str | None = Field(default=None, max_length=20)
+    className: str | None = Field(default=None, max_length=20)
+    guardians: list[AdmissionGuardian] = Field(min_length=1, max_length=4)
+    identity: dict[str, Any] | None = None
+    source: Literal["club"] = "club"
+    studentId: str | None = Field(default=None, min_length=1, max_length=40)
 
 
 class StudentCodeBody(BaseModel):
@@ -257,6 +285,20 @@ async def directory(request: Request, since: str | None = None,
     return reply(await current_service().directory(
         since, request.headers.get("If-None-Match"), ids_text=ids,
         balance=flag(balance, "balance"), identity=user.has_permission(IDENTITY),
+    ))
+
+
+@router.post("/students")
+async def create_student(body: StudentCreateBody, request: Request,
+                         user: CurrentUser = requires(ACCESS)) -> Response:
+    """§11 öğrenci açma (Deneme Kulübü): `externalRef` ile idempotent; mevcut öğrenci →
+    `created: false` + kulüp sınıfına ek üyelik. Yalnız `students.create` taşıyan anahtar."""
+    if not user.has_permission(STUDENTS_CREATE):
+        raise GatewayError(403, "forbidden", "Bu anahtar öğrenci açamaz (students.create yok).")
+    caller = caller_of(request, user)
+    payload = body.model_dump(mode="json", exclude_unset=True)
+    return await idempotent(request, payload, 200, lambda: current_service().create_student(
+        payload, caller, student_id=body.studentId,
     ))
 
 

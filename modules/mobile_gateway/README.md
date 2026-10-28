@@ -110,6 +110,25 @@ birebir eskisidir (önbellek anahtarı `(balance, identity)`). Kimlik değişinc
 İzin `default_roles: [admin, mobile_service]`: kurulu sistemde açılışta `grant_defaults`
 `mobile_service` rolüne ekler; anahtar başka role bağlıysa o role elle verilir.
 
+**Deneme Kulübü öğrenci açılışı (iş 81-km-kulup, 28.10.2026; bbd-akademi 81-api-taslak §C).**
+`POST /students` — YALNIZ `mobile_gateway.students.create` taşıyan anahtar (Akademi'deki adı
+`students.create`; `default_roles: [admin, mobile_service]`, kurulu sistemde açılışta
+`grant_defaults` ekler), yoksa 403 `forbidden`. Gövde `{externalRef (davet kimliği, ≤120),
+firstName, lastName, studentPhone?, className? (vars. "Deneme Kulübü"; yoksa sınıf açılır),
+guardians [{slot 1..4, name, phone, relation}] (≥1), identity? (80 K2 şekli — yanıttaki
+`identity` bloğuyla aynı; TC şifreli yazılır), source: "club", studentId? (EKLEMELİ: Akademi
+mevcut KM öğrencisiyle kesin eşleştirdiyse)}` → 200 `{studentId: "STU-…", created, className,
+warnings?}`. `externalRef` ile idempotent (aynı davet ikinci öğrenci açmaz; ilk yanıt aynen
+döner; ayrıca `Idempotency-Key`). Kulüp üyesi NORMAL öğrencidir: kantine mevcut kuralla
+yazılır (önce KM, sonra kantin), sınıfa üye olur, olay `student.created` (`causationId` =
+Idempotency-Key). Mevcut öğrenci (`studentId` ya da KM'de ad soyadı + bir telefonu birebir
+tutan TEK etkin öğrenci) → yeni kayıt açılmaz, kulüp sınıfına EK üye olur (ana sınıfı
+değişmez) → `created: false`. Hatalar: 409 `ambiguous_match` (birden çok aday — "Eşleşme
+belirsiz — KM'den eşleştirin"), 409 `admission_in_progress` (aynı davet aynı anda), 404
+`student_not_found` (`studentId` KM'de yok), 422 `validation_error` (`details.path`; kimlik
+kuralları göç 014), 503 `canteen_unavailable` / `capability_missing`. Denetim izine yalnız
+`externalRef`, kaynak ve sonuç yazılır (ad / telefon / TC yazılmaz).
+
 **Veliler (veli-senkron-4).** Öğrenci nesnesinin `guardians[]` öğesi
 `{slot: 1..4, name, phone, relation, primary}`: yuva 1 birincil (telefonu
 kantinde), 2 profil, 3–4 `bbd_students` ek velileri (göç 007). `relation`
@@ -241,6 +260,7 @@ uç `503 capability_missing` döner, modül yine yüklenir.
 | `secrets` (zorunlu) | `get(key)`, `set(key, value)` |
 | `canteen.api` (zorunlu) | `lookup_student_by_code(code)`, `ledger(id, limit=, cursor=, from_ms=, to_ms=)` (yoksa ya da `reason="ledger_unsupported"` verirse eski yol), `get_student(id)` (yoksa `student(id)`), `transactions(from_ms=, to_ms=, limit=[, student_id=])`, `collections(from_ms=, to_ms=, student_id=)`, `payment_requests()`, `create_payment_request(id[, amount=])`, `update_controls(id, patch)`, `record_collection(id, amount=, local_id=)` (yoksa `collect_cash`), `products()`, `payment_requests_feed(updated_since=, limit=)`, `parent_notifications_feed(updated_since=, limit=)`, `canteen_settings_public()`, `send_sms(phone=, message=[, purpose="otp"])` (tanıyorsa `purpose` gönderilir), `sms_report(job_id)`, `sms_balance()` (sms-kale; yoksa teslim `pending`, paket `ok: false`) — `create_payment_request` `origin` parametresini tanıyorsa `origin="api"` gönderilir; akışlar liste ya da `{data, nextSince, hasMore}` dönebilir; `CanteenError` red gövdesini `details`/`body` alanında taşırsa `balance`/`maxAmount` dışarı aktarılır |
 | `bbd_students.directory` (zorunlu) | `list(since=<datetime>\|None)`, `get(id)` (yoksa `None`), `card_qr_text(id)` — QR'dan önce `get` ile varlık sınanır; `identities(records)` (yoksa `identity` bloğu yazılmaz — yalnız `mobile_gateway.identity.read` taşıyan anahtara) |
+| `bbd_students.admission` | `admit(payload, external_ref=, source=, actor=, causation_id=, student_id=)` → `{studentId, created, className, warnings?}` (yoksa yalnız `POST /students` 503); kural reddi `status`/`code` taşır (409 `ambiguous_match` …) |
 | `bbd_tablet.read` | `board()`, `student_usage(id, date_from=, date_to=)` (ISO gün), `daily_usage(local_date)` (ISO gün; yoksa yalnız `GET /tablets/usage` 503), `student_limits(id)` (yoksa yalnız `GET /students/{id}/tablet/limits` 503), `profiles()` |
 | `bbd_tablet.control` | `grant(id, package_name=, extra_seconds=, reason=, actor=)`, `block(id, until=<datetime\|None>, reason=, actor=)`, `unblock(id, reason=, actor=)`, `end_session(session_id, reason=, actor=)`, `update_profile_limits(profile_id, expected_revision=, apps=, usage_windows=, reason=, actor=)`, `revoke_grant(id, grant_id, reason=, actor=)`, `set_student_app_limit(id, package, daily_limit_seconds=, actor=, reason=)` — hata `reason`ı: `validation_error` → 422, `student_not_found`/`session_not_found`/`profile_not_found`/`grant_not_found` → 404, `profile_conflict` → 409, `canteen_unavailable` → 503 |
 | `bell.week` | çağrılabilir: `() -> {"times", "groups"[, "profiles", "days"]}` — `days` geçitten dönmez |

@@ -57,6 +57,8 @@ CONTRACT_ROUTES = {
     ("GET", "/directory"),
     # Merkezi senkron (geçit §9).
     ("GET", "/students/{student_id}"),
+    # Deneme Kulübü öğrenci açılışı (geçit §11, iş 81-km-kulup).
+    ("POST", "/students"),
     ("GET", "/canteen/balances"),
     ("GET", "/events"),
     ("POST", "/auth/student-code"),
@@ -185,6 +187,7 @@ def test_optional_capabilities_are_declared_optional() -> None:
         "bbd_tablet.read": True, "bbd_tablet.control": True,
         "bell.week": True, "bell.announce": True,
         "bell.plan": True, "bbd_students.groups": True, "events.outbox": True,
+        "bbd_students.admission": True,
     }
 
 

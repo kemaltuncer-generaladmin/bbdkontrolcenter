@@ -45,6 +45,8 @@ BELL_WEEK = "bell.week"
 BELL_ANNOUNCE = "bell.announce"
 BELL_PLAN = "bell.plan"
 GROUPS = "bbd_students.groups"
+#: Dış kaynaklı öğrenci açılışı (iş 81-km-kulup: Akademi Deneme Kulübü formu).
+ADMISSION = "bbd_students.admission"
 SECRETS = "secrets"
 #: Kalıcı olay outbox'u (platform yeteneği, ADR 0029).
 OUTBOX = "events.outbox"
@@ -450,6 +452,28 @@ class Capabilities:
                 return None
             raise
         return result if isinstance(result, dict) and result else None
+
+    async def admit_student(self, payload: dict[str, Any], *, external_ref: str, source: str,
+                            actor: str, causation_id: str | None,
+                            student_id: str | None) -> dict[str, Any]:
+        """`bbd_students.admission.admit` — öğrenci açar ya da mevcut öğrenciyi kulüp
+        sınıfına ekler (idempotent `external_ref`). Kural reddi (`AdmissionError`,
+        `IdentityError`: 4xx + code) `Rejected` olarak çıkar; diğerleri sınıflandırılır."""
+        method = self._method(ADMISSION, "admit")
+        try:
+            result = await asyncio.wait_for(settle(method(
+                payload, external_ref=external_ref, source=source, actor=actor,
+                causation_id=causation_id, student_id=student_id)), self.write_timeout)
+        except CapabilityMissing:
+            raise
+        except TimeoutError:
+            raise UpstreamFailure("directory", "unavailable", reason="timeout") from None
+        except Exception as error:  # noqa: BLE001 — başka modül (K7)
+            refusal = rejected("directory", error)
+            if refusal is not None:
+                raise refusal from None
+            raise module_failure("directory", error) from None
+        return result if isinstance(result, dict) else {}
 
     async def card_qr_text(self, student_id: str) -> str | None:
         try:
