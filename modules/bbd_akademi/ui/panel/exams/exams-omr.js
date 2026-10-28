@@ -567,7 +567,7 @@ export function openOmrSheet(app, exam, given, { onSaved } = {}) {
         const index = section.column - 1;
         const current = (columns[index] || '').padEnd(start + section.count, ' ').slice(start, start + section.count);
         const input = h('input', 'kit-input ak-ex-answers');
-        input.value = current;
+        input.value = current.replace(/ /g, '-');   // boş soru görünür olsun
         input.maxLength = section.count;
         input.spellcheck = false;
         input.setAttribute('aria-label', `${section.sectionName} cevapları`);
