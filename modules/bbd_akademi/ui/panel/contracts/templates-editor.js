@@ -53,7 +53,7 @@ export function templatesTab(app) {
   const view = loader(async () => {
     const [list, one] = await Promise.all([
       app.api.getCached(PATH).catch(() => null),
-      app.api.get(`${PATH}/${encodeURIComponent(kind)}`),
+      app.api.get(`/v1/admin/contracts/templates/${encodeURIComponent(kind)}`),
     ]);
     return { list, one };
   }, (data) => render(data), { rows: 8, columns: 2 });

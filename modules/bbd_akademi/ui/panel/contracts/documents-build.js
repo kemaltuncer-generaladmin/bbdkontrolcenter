@@ -238,7 +238,7 @@ async function waitJob(app, jobId, onTick) {
   while (outcome.state === 'queued' && Date.now() < deadline) {
     await wait(delay); // eslint-disable-line no-await-in-loop
     delay = Math.min(Math.round(delay * 1.5), 5000);
-    outcome = documentsOutcome(await app.api.get(`${PATH}/${encodeURIComponent(jobId)}`)); // eslint-disable-line no-await-in-loop
+    outcome = documentsOutcome(await app.api.get(`/v1/admin/contracts/documents/${encodeURIComponent(jobId)}`)); // eslint-disable-line no-await-in-loop, max-len
     onTick?.(outcome);
   }
   return outcome;
