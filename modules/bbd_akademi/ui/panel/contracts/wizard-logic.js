@@ -333,8 +333,14 @@ export function buildDraft(state) {
  * Onay öncesi: istemci doğrulaması (ortak `validateDraft`) + gövde. `ok` false iken "Onayla" kapalıdır.
  * Bölüm başına iletiler `bySection` içindedir.
  */
-export function readiness(state, { today } = {}) {
+export function readiness(state, { today, existing = [] } = {}) {
   const errors = validateDraft(state, { today });
+  const same = sameYearContract(existing, state.academicYear);
+  if (same) {
+    errors.push({ section: 'contract', field: 'academicYear', message: `Bu öğrencinin ${state.academicYear} için geçerli `
+      + `sözleşmesi var (${same.number || 'no yok'}); aynı yıla ikinci sözleşme açılamaz — eğitim yılını değiştirin ya da `
+      + 'mevcut sözleşmeyi Sözleşmeler sekmesinden düzenleyin.' });
+  }
   if ((state.lines || []).length > MAX_LINES) {
     errors.push({ section: 'lines', field: 'lines', message: `En çok ${MAX_LINES} hizmet satırı.` });
   }
@@ -380,6 +386,40 @@ export function eventTarget(detail = {}) {
 export function activeContracts(list) {
   const items = Array.isArray(list) ? list : (list?.items || []);
   return items.filter((item) => (item.status || 'active') === 'active');
+}
+
+/** Aynı eğitim yılında GEÇERLİ sözleşme (Akademi bunu `409 contract_exists` ile reddeder). */
+export function sameYearContract(existing = [], academicYear = '') {
+  return activeContracts(existing).find((item) => item.academicYear && item.academicYear === academicYear) || null;
+}
+
+/**
+ * Sihirbaza özgü sunucu hataları (80-sozlesme-hazir: A6 `409 contract_exists`, `plan_already_contracted`,
+ * `plan_not_active`; `contract_totals_mismatch` ayrıntısı tutarlarla). Bilinmeyen kodda ortak `contractProblem` sonucu
+ * (`base`) aynen döner.
+ */
+export function serverProblem(error, base = { summary: '', fields: [], missing: [] }) {
+  const code = error?.code || '';
+  const details = error?.details && typeof error.details === 'object' ? error.details : {};
+  if (code === 'contract_exists') {
+    return { summary: 'Öğrencinin bu eğitim yılı için geçerli bir sözleşmesi var; ikinci sözleşme açılamaz.',
+      fields: [{ section: 'contract', field: 'academicYear',
+        message: 'Bu yılın sözleşmesi zaten var — eğitim yılını değiştirin ya da mevcut sözleşmeyi düzenleyin.' }],
+      missing: [], contractId: details.contractId || null };
+  }
+  if (code === 'plan_already_contracted') {
+    return { summary: 'Bu taksit planı başka bir sözleşmeye bağlı.', fields: [{ section: 'payment', field: 'planId',
+      message: 'Plan zaten sözleşmeli — öğrencinin Sözleşmeler sekmesine bakın.' }], missing: [] };
+  }
+  if (code === 'plan_not_active') {
+    return { summary: 'Bağlanacak taksit planı etkin değil (tamamlanmış ya da iptal).', fields: [{ section: 'payment',
+      field: 'planId', message: 'Plan etkin değil — Kurum finansı → cari hesaptan kontrol edin.' }], missing: [] };
+  }
+  if (code === 'contract_totals_mismatch' && Number.isInteger(details.expectedMinor) && Number.isInteger(details.actualMinor)) {
+    return { ...base, summary: `Sözleşme tutarı ${moneyText(details.expectedMinor)}, peşinat + taksitler `
+      + `${moneyText(details.actualMinor)} — eşit olmalı.` };
+  }
+  return base;
 }
 
 /** Plan bu öğrencinin bir sözleşmesine bağlı mı? ("Sözleşme oluştur" yalnız bağsız ETKİN planda.) */

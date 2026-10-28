@@ -156,6 +156,18 @@ out.unbound = w.plansWithoutContract(
   [{ id: 'p1', status: 'active' }, { id: 'p2', status: 'active' }, { id: 'p3', status: 'cancelled' }],
   { items: [{ id: 'c', planId: 'p1', status: 'active' }] }).map((p) => p.id);
 out.money = [w.moneyText(0), w.moneyText(5), w.moneyText(123456789), w.moneyText(-150)];
+// aynı eğitim yılında geçerli sözleşme → istemci de durdurur; sunucu hataları bölüm bölüm
+const yearState = w.initialState({ source: 'existing', today: '2026-10-28', party, services: [service] });
+yearState.existingNumber = '1';
+out.sameYear = w.readiness(yearState, { today: '2026-10-28', existing: { items: [
+  { id: 'c', number: 'BBD1-1000', academicYear: '2026-2027', status: 'active' }] } }).errors.map((e) => e.field);
+out.otherYear = w.readiness(yearState, { today: '2026-10-28', existing: [
+  { id: 'c', number: 'BBD1-1000', academicYear: '2025-2026', status: 'active' },
+  { id: 'd', number: 'BBD1-1001', academicYear: '2026-2027', status: 'cancelled' }] }).ok;
+out.exists = w.serverProblem({ code: 'contract_exists', details: { contractId: 'c-9' } });
+out.mismatch = w.serverProblem({ code: 'contract_totals_mismatch', details: { expectedMinor: 16200000, actualMinor: 16100000 } },
+  s.contractProblem({ code: 'contract_totals_mismatch' }));
+out.passthrough = w.serverProblem({ code: 'contract_number_taken' }, s.contractProblem({ code: 'contract_number_taken' }));
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -300,6 +312,15 @@ def test_kayit_seti_ve_olay_ayrintisi(logic: dict[str, Any]) -> None:
     assert logic["target2"]["planId"] is None
     assert logic["unbound"] == ["p2"]
     assert logic["money"] == ["0,00 ₺", "0,05 ₺", "1.234.567,89 ₺", "-1,50 ₺"]
+
+
+def test_ayni_yil_ve_sunucu_hatalari(logic: dict[str, Any]) -> None:
+    assert logic["sameYear"] == ["academicYear"]
+    assert logic["otherYear"] is True
+    assert logic["exists"]["contractId"] == "c-9" and logic["exists"]["fields"][0]["section"] == "contract"
+    assert "162.000,00 ₺" in logic["mismatch"]["summary"] and "161.000,00 ₺" in logic["mismatch"]["summary"]
+    assert logic["mismatch"]["fields"][0]["section"] == "payment"
+    assert logic["passthrough"]["fields"][0]["field"] == "existingSigned.number"
 
 
 # ----------------------------------------------------------------------------- ekran

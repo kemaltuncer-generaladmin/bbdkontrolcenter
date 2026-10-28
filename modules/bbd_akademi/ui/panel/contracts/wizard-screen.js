@@ -14,8 +14,8 @@
 // SUNUCU ESASTIR: tutar ve toplam kuralı Akademi'dedir; hata zarfları alan alan bölümlerin altına yazılır
 // (`contract_totals_mismatch`, `contract_missing_fields`, `contract_number_taken`, `validation_error`).
 //
-// ANLIK: başarılı onaydan sonra `contract.changed` (ortak yerel veri yolu) + `bbd-akademi:contract-changed` (80-km-belge
-// ekranı) yayınlanır. Açıkken KM'de kimlik değişirse (`bbd-students:updated`, `contract.party_changed`) taraf yeniden
+// ANLIK: başarılı onaydan sonra ortak yerel veri yolu (`emitContractEvent` → `bbd-akademi:contract-changed`; 80-km-belge
+// ekranı ve öğrencinin Sözleşmeler sekmesi dinler) yayınlanır. Açıkken KM'de kimlik değişirse (`bbd-students:updated`, `contract.party_changed`) taraf yeniden
 // okunur — Akademi aynası 1–3 sn'de uygular.
 
 import { button, dialogA11y, h, loadStyles } from '../../../ui-kit/kit.js';
@@ -353,7 +353,8 @@ function buildScreen(app, spec, done) {
     const notices = h('div', 'ak-stack');
     if (existing.length) {
       notices.append(alertBox(`Bu öğrencinin geçerli sözleşmesi var: ${existing.map((item) => `${item.number || '—'}`
-        + `${item.academicYear ? ` (${item.academicYear})` : ''}`).join(', ')}. Yeni sözleşme ayrı bir taksit planı açar.`, 'warn'));
+        + `${item.academicYear ? ` (${item.academicYear})` : ''}`).join(', ')}. Aynı eğitim yılına ikinci sözleşme açılamaz; `
+        + 'başka yıl için yeni sözleşme ayrı bir taksit planı açar.', 'warn'));
     }
     if (plan) {
       notices.append(alertBox(`“${plan.title}” planı bu sözleşmeye bağlanır: ödeme bölümü plandan okunur, yeni plan `
@@ -997,7 +998,7 @@ function buildScreen(app, spec, done) {
     sections.payment?.lineChanged?.();
     sections.payment?.update?.();
     sections.past?.update?.();
-    const ready = W.readiness(state, { today });
+    const ready = W.readiness(state, { today, existing });
     const totals = ready.totals;
     const diff = W.diffText(totals.diffMinor);
     sumLine.replaceChildren(
@@ -1059,7 +1060,7 @@ function buildScreen(app, spec, done) {
     showErrors = true;
     serverFields = [];
     errorLine.textContent = '';
-    const ready = W.readiness(state, { today });
+    const ready = W.readiness(state, { today, existing });
     refresh();
     if (!ready.ok) {
       errorLine.textContent = `Eksik ya da hatalı: ${ready.errors.slice(0, 3).map((item) => item.message).join(' · ')}`
@@ -1079,11 +1080,8 @@ function buildScreen(app, spec, done) {
       return;
     }
     const contractId = detail?.id;
+    // Ortak yol `bbd-akademi:contract-changed` yayınlar (80-km-belge ekranı + öğrencinin Sözleşmeler sekmesi dinler).
     emitContractEvent({ type: 'contract.changed', contractId, studentId, change: 'created' });
-    try {
-      window.dispatchEvent(new CustomEvent('bbd-akademi:contract-changed',
-        { detail: { contractId, studentId, change: 'created' } }));
-    } catch { /* olay yayını işi bozmaz */ }
     app.api.invalidate?.('/v1/admin/finance');
     const number = detail?.number || '';
     const signed = Boolean(ready.body.existingSigned);
@@ -1097,7 +1095,7 @@ function buildScreen(app, spec, done) {
   }
 
   function showServerError(failure) {
-    const parsed = contractProblem(failure);
+    const parsed = W.serverProblem(failure, contractProblem(failure));
     serverFields = parsed.fields || [];
     errorLine.textContent = parsed.summary || problem(failure, 'Sözleşme kaydedilemedi.');
     if (failure?.code === 'contract_number_taken') sections.contract?.numberInput?.focus();
