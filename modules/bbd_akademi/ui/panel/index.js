@@ -46,6 +46,7 @@ import { ALIASES, AREAS, SECTIONS, buildNav, featureOn, homeTiles, resolveTarget
 import { navIcon } from './nav-icons.js';
 import { documentButtons } from './documents.js';
 import { studentDeletionDoc } from './documents-logic.js';
+import { installContractWizard } from './contracts/wizard-entry.js';
 
 export { AREAS, SECTIONS };
 
@@ -163,6 +164,8 @@ export function mount(root, ctx) {
     lookups: null,
   };
   app.lookups = lookups(app);
+  // "Kayıt ve ödeme planı" sihirbazı (F-SZ1): KM "Yeni öğrenci" sonrası ve sözleşme ekranlarının açma isteği.
+  disposers.push(installContractWizard(app));
 
   // ------------------------------------------------------------ iskelet
   // TEK SOL GEZİNME (15.10.2026): sol menü KM kabuğunundur. Panelin gezinmesi

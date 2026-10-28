@@ -29,6 +29,7 @@ import {
 import { financeToolbar, previewAkademiPdf } from '../documents.js';
 import { receiptDoc, statementDoc } from '../documents-logic.js';
 import { accountsReport, overdueReport, paymentsReport } from './finance-reports.js';
+import { contractEntry } from '../contracts/wizard-entry.js';
 import {
   STATEMENT_KINDS, applyPlanDiscount, closingCards, closingNote, discountBody, discountFields, discountLine,
   exportButton, monthlyTab, printPlanAgreement, recordRefund, withdrawAccount,
@@ -499,6 +500,8 @@ function accountDrawer(app, studentId, { onChange } = {}) {
         onClick: () => createPlan(app, data, changed) }),
       actionButton(app, 'admin_createCharge', 'Borç kalemi', { onClick: () => editCharge(app, data, null, changed) }),
       button('Ekstre', { onClick: () => statementDrawer(app, studentId, student.displayName) }),
+      // Sözleşme (F-SZ1): tek onayla plan + sözleşme; sözleşmesiz etkin planda "Sözleşme oluştur".
+      contractEntry(app, { studentId, plans: data.plans, onDone: changed }),
       h('span', 'kit-spacer'),
       actionButton(app, 'admin_recordRefund', 'İade kaydı', { onClick: () => recordRefund(app, data, changed),
         title: 'Hesaptaki alacağın aileye elle geri verildiğini kaydeder.' }),

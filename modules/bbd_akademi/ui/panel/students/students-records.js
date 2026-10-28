@@ -30,6 +30,7 @@ import {
   statusBadge, todayIst, toolbar,
 } from '../common.js';
 import { documentButtons } from '../documents.js';
+import { contractEntry } from '../contracts/wizard-entry.js';
 import { attendanceExtras } from './students-attendance.js';
 import { leaveKindDetail } from '../attendance/attendance-manage.js';
 import { examResultDoc } from '../documents-logic.js';
@@ -729,7 +730,7 @@ export function financeTab(ctx) {
   const { app, id } = ctx;
   const node = h('div', 'ak-stack ak-money-finance ak-stu-money');
   node.append(toolbar(h('span', 'ak-muted', 'Kurum cari hesabı: taksit, kalem ve tahsilat. Kantin hesabı bu sekmede yer almaz.'),
-    h('span', 'kit-spacer'), button('Ekstre', { onClick: () => statement(ctx) }),
+    h('span', 'kit-spacer'), contractEntry(app, { studentId: id }), button('Ekstre', { onClick: () => statement(ctx) }),
     button('Cari hesabı aç', { variant: 'primary', onClick: () => app.go('finance', { studentId: id }) })));
   const summary = loader(() => app.api.get(`/v1/students/${id}/finance`), renderFinanceSummary, { rows: 3, columns: 4 });
   let chargeStatus = '';
