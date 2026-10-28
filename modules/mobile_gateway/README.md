@@ -45,7 +45,7 @@ redlerinde (`exceeds_debt`) `details: {balance, maxAmount}`.
 | `GET /directory?since=` | 200 dizin + `etag`, `If-None-Match` → 304; öğede `status`, `statusReason`, `statusSince`, `revision`, `canteenSync`, yeni öğrenci modülünde `classes: [{id, name}]` (bugün geçerli sınıflar — sınıf = grup §2.6; `className` eski tekil değer olarak kalır) (pasif öğrenci görünür; profil-yalnız `pending` satır `canteen: null`); `since` verilirse `removed: [{id, at}]` (90 günlük mezar taşı) | 422 (`since` 90 günden eski → istemci tam liste ister), 503 `capability_missing` |
 | `GET /directory?ids=STU-a,STU-b` | 200 yalnız bu öğrenciler (≤ 100), `full: false`, `classes: []`, bulunamayanlar `missingIds`; ETag'siz | 422 (100'den çok / bozuk kimlik), 503 |
 | `GET /directory?balance=false` | 200 öğrencilerde `canteen.balance` YOK, ETag bakiyesiz (okul saatinde satış ETag'i değiştirmez) | 422 |
-| `GET /students/{id}` | 200 tekil öğrenci (dizin öğesiyle birebir; `balance=false` geçerli) | 404 `student_not_found` (silinmişse de), 503 |
+| `GET /students/{id}` | 200 tekil öğrenci (dizin öğesiyle birebir; `balance=false` geçerli; `mobile_gateway.identity.read` ile ek `identity` bloğu — aşağıda) | 404 `student_not_found` (silinmişse de), 503 |
 | `POST /auth/student-code` | 200 `{match, studentId?}` | 422, 423 `locked`, 429 `rate_limited`, 503 `canteen_unavailable` |
 | `POST /students/{id}/verify-code` | 200 `{valid}` | 422, 423, 429, 503 |
 | `GET /students/{id}/canteen?days=` | 200 bakiye, işlemler, tahsilat, bekleyen talep (+ veli kontrolleri) | 404 `student_not_found`, 422, 503 |
@@ -93,6 +93,22 @@ isteğine iletilir; kantin onu `payToken`'a yalnız `PAYMENT_APP_RETURN_URLS` li
 aynıysa koyar, değilse listenin ilkini (kantin `ozellik/odeme-donus`). KM yalnız biçimi süzer
 (`https://`, boşluksuz); SMS linki `ret` taşımaz. `ret` gönderilmezse davranış değişmez.
 
+
+**Sözleşme kimliği (iş 80-km-kimlik, 28.10.2026; bbd-akademi 80-ortak K2).** Çağıran anahtar
+`mobile_gateway.identity.read` taşıyorsa `GET /directory` (tam, `since`, `ids`) ve
+`GET /students/{id}` öğrencilerine EKLEMELİ `identity` bloğu gelir:
+`{updatedAt, student: {nationalId, foreignId, birthDate, gender (female|male), registeredOn,
+schoolName, homePhone, motherName, fatherName, address{line,district,city}|null}, guardians:
+[{slot 1..4, fullName, nationalId, foreignId, relation, phone, occupation, workPhone, email,
+homeAddress|null, workAddress|null}]}` (camelCase; alan yoksa `null`). Kaynak
+`bbd_students.directory.identities(records)` — TEK çağrı, N+1 yok; beyaz liste
+`service.identity_view`. Blok gelmezse (kasa okunamadı, eski öğrenci modülü) anahtar HİÇ
+yazılmaz → Akademi aynası değişmez. İzni taşımayan anahtarın yanıtı, önbelleği ve ETag'i
+birebir eskisidir (önbellek anahtarı `(balance, identity)`). Kimlik değişince öğrencinin
+`revision`'ı artar ve `student.updated` (`fields: ["identity"]`) çıkar; Akademi 1–3 sn'de
+`GET /students/{id}` / `GET /directory?ids=` ile yeniden okur. Değer log'a ve olaya yazılmaz.
+İzin `default_roles: [admin, mobile_service]`: kurulu sistemde açılışta `grant_defaults`
+`mobile_service` rolüne ekler; anahtar başka role bağlıysa o role elle verilir.
 
 **Veliler (veli-senkron-4).** Öğrenci nesnesinin `guardians[]` öğesi
 `{slot: 1..4, name, phone, relation, primary}`: yuva 1 birincil (telefonu

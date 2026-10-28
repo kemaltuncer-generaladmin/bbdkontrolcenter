@@ -431,6 +431,17 @@ class Capabilities:
                 found.append(record)
         return {"students": found, "missingIds": missing}
 
+    async def directory_identities(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        """Sözleşme kimliği blokları `identities(records) → {id: blok}` (bbd_students göç 014).
+
+        Eski öğrenci modülünde metot yoktur: boş sözlük (blok hiç yazılmaz).
+        """
+        directory = self._get(DIRECTORY)
+        if not callable(getattr(directory, "identities", None)):
+            return {}
+        result = await self._module("directory", DIRECTORY, "identities", (records,))
+        return result if isinstance(result, dict) else {}
+
     async def directory_get(self, student_id: str) -> dict[str, Any] | None:
         try:
             result = await self._module("directory", DIRECTORY, "get", (student_id,))

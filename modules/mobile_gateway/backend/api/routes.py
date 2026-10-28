@@ -29,6 +29,9 @@ from ..errors import GatewayError, GatewayRoute, validation
 from ..service import BELL_PLAN_MAX_BYTES, Caller, GatewayService, Reply, clean_header
 
 ACCESS = "mobile_gateway.access"
+#: Sözleşme kimliği (80-ortak K2): dizin / tekil öğrenci yanıtına EKLEMELİ `identity`
+#: bloğu YALNIZ bu izni taşıyan anahtara. Taşımayanın yanıtı birebir eskisidir.
+IDENTITY = "mobile_gateway.identity.read"
 
 router = APIRouter(route_class=GatewayRoute)
 _service: GatewayService | None = None
@@ -253,7 +256,7 @@ async def directory(request: Request, since: str | None = None,
     """§1 + §9: `since` (→ `removed`), `ids` (≤ 100, `missingIds`), `balance=false`."""
     return reply(await current_service().directory(
         since, request.headers.get("If-None-Match"), ids_text=ids,
-        balance=flag(balance, "balance"),
+        balance=flag(balance, "balance"), identity=user.has_permission(IDENTITY),
     ))
 
 
@@ -261,7 +264,8 @@ async def directory(request: Request, since: str | None = None,
 async def student(student_id: str, balance: str | None = Query(default=None, max_length=8),
                   user: CurrentUser = requires(ACCESS)) -> dict[str, Any]:
     """§9 tekil öğrenci — dizin öğesiyle birebir; silinmiş ya da yoksa 404."""
-    return await current_service().student_one(student_id, balance=flag(balance, "balance"))
+    return await current_service().student_one(student_id, balance=flag(balance, "balance"),
+                                               identity=user.has_permission(IDENTITY))
 
 
 # ======================================================== §2 öğrenci şifresi

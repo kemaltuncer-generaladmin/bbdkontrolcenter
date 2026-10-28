@@ -268,6 +268,54 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
 
+#: `identity` bloğunun beyaz listesi (80-ortak K2). Bilinmeyen alan düşer.
+IDENTITY_STUDENT_KEYS = ("nationalId", "foreignId", "birthDate", "gender", "registeredOn",
+                         "schoolName", "homePhone", "motherName", "fatherName")
+IDENTITY_GUARDIAN_KEYS = ("fullName", "nationalId", "foreignId", "relation", "phone",
+                          "occupation", "workPhone", "email")
+IDENTITY_GENDERS = frozenset({"female", "male"})
+
+
+def _identity_text(value: Any) -> str | None:
+    if value is None or isinstance(value, (dict, list, bool)):
+        return None
+    text = str(value).strip()
+    return text[:300] or None
+
+
+def _identity_address(value: Any) -> dict[str, str | None] | None:
+    if not isinstance(value, dict):
+        return None
+    parts = {key: _identity_text(value.get(key)) for key in ("line", "district", "city")}
+    return parts if any(parts.values()) else None
+
+
+def identity_view(block: Any) -> dict[str, Any] | None:
+    """Dizinin kimlik bloğu → sözleşmenin `identity` nesnesi (camelCase, yoksa null)."""
+    if not isinstance(block, dict) or not isinstance(block.get("student"), dict):
+        return None
+    raw = block["student"]
+    student: dict[str, Any] = {key: _identity_text(raw.get(key)) for key in IDENTITY_STUDENT_KEYS}
+    if student["gender"] not in IDENTITY_GENDERS:
+        student["gender"] = None
+    student["address"] = _identity_address(raw.get("address"))
+    guardians: list[dict[str, Any]] = []
+    for item in block.get("guardians") or []:
+        if not isinstance(item, dict) or int_or_none(item.get("slot")) not in GUARDIAN_SLOTS:
+            continue
+        person: dict[str, Any] = {"slot": int_or_none(item.get("slot"))}
+        person.update({key: _identity_text(item.get(key)) for key in IDENTITY_GUARDIAN_KEYS})
+        if person["relation"] not in GUARDIAN_RELATIONS:
+            person["relation"] = None
+        person["phone"] = normalize_phone(person["phone"])
+        person["homeAddress"] = _identity_address(item.get("homeAddress"))
+        person["workAddress"] = _identity_address(item.get("workAddress"))
+        guardians.append(person)
+    guardians.sort(key=lambda item: int(item["slot"]))
+    return {"updatedAt": _identity_text(block.get("updatedAt")), "student": student,
+            "guardians": guardians}
+
+
 def int_or_none(value: Any) -> int | None:
     if value is None or isinstance(value, bool):
         return None
@@ -428,7 +476,8 @@ class GatewayService:
         self._products: tuple[int, dict[str, Any]] | None = None
         #: Dizin yanıtı — dizin yeteneğinin `revision`ı değişmedikçe yeniden kurulmaz.
         #: Anahtar `balance` (bakiyeli / bakiyesiz yanıt ayrı saklanır, §9).
-        self._directory: dict[bool, _Cached] = {}
+        #: Tam dizin yanıtı önbelleği — anahtar (bakiye var mı, kimlik bloğu var mı).
+        self._directory: dict[tuple[bool, bool], _Cached] = {}
         self._bell_week: _Cached | None = None
         #: Tam grup listesi — grup revizyonu değişmedikçe yeniden kurulmaz. Anahtar
         #: görünüm: eski (`False`) ya da tek "Sınıf" modeli (`True`, `include=classes`).
@@ -636,7 +685,8 @@ class GatewayService:
     # ================================================================ §1 dizin
 
     async def directory(self, since_text: str | None, if_none_match: str | None, *,
-                        ids_text: str | None = None, balance: bool = True) -> Reply:
+                        ids_text: str | None = None, balance: bool = True,
+                        identity: bool = False) -> Reply:
         """§1 dizin (+ §9: `ids`, `balance=false`, `since` → `removed`).
 
         Yanıt, dizin yeteneğinin `revision`ı değişmedikçe yeniden KURULMAZ.
@@ -656,9 +706,13 @@ class GatewayService:
 
         `generatedAt`: yetenek `asOf` verirse odur (kantin listesinin okunduğu
         an — bir sonraki `since` için güvenli imleç), vermezse şimdi.
+
+        `identity` (çağıranda `mobile_gateway.identity.read`): her öğrenciye EKLEMELİ
+        `identity` bloğu (sözleşme kimliği, 80-ortak K2). Yetkisiz anahtarın yanıtı ve
+        önbelleği birebir eskisidir.
         """
         if ids_text is not None:
-            return await self._directory_ids(ids_text, balance)
+            return await self._directory_ids(ids_text, balance, identity)
         since = self.parse_since(since_text)
         if since is not None and datetime.fromisoformat(since) < \
                 self.now() - timedelta(days=DIRECTORY_SINCE_MAX_DAYS):
@@ -667,14 +721,14 @@ class GatewayService:
         listing = await self.call(self.caps.directory_list(since))
         revision = listing.get("revision")
         keep = revision is not None and since is None
-        cached = self._directory.get(balance) if keep else None
+        cached = self._directory.get((balance, identity)) if keep else None
         if cached is None or cached.key != revision:
-            students = sorted(
-                (self.student(record, balance=balance)
-                 for record in listing.get("students") or []
-                 if isinstance(record, dict) and record.get("id")),
-                key=lambda item: str(item["id"]),
-            )
+            records = [record for record in listing.get("students") or []
+                       if isinstance(record, dict) and record.get("id")]
+            students = sorted((self.student(record, balance=balance) for record in records),
+                              key=lambda item: str(item["id"]))
+            if identity:
+                await self._attach_identity(records, students)
             classes = sorted({str(name) for name in listing.get("classes") or [] if name})
             core: dict[str, Any] = {
                 "full": since is None,
@@ -695,34 +749,58 @@ class GatewayService:
             cached = _Cached(key=revision, etag=etag, at_ms=self.now_ms(),
                              raw=encode({"generatedAt": generated, **core, "etag": etag}))
             if keep:
-                self._directory[balance] = cached
+                self._directory[(balance, identity)] = cached
         headers = {"ETag": f'"{cached.etag}"', "Cache-Control": "private, no-cache"}
         if etag_matches(if_none_match, cached.etag):
             return Reply(304, None, headers)
         return Reply(200, None, headers, raw=cached.raw)
 
-    async def _directory_ids(self, ids_text: str, balance: bool) -> Reply:
+    async def _directory_ids(self, ids_text: str, balance: bool,
+                             identity: bool = False) -> Reply:
         ids = list(dict.fromkeys(item.strip() for item in ids_text.split(",") if item.strip()))
         if not ids or len(ids) > DIRECTORY_IDS_MAX:
             raise validation(f"`ids` 1–{DIRECTORY_IDS_MAX} öğrenci kimliği olmalı.", "ids")
         result = await self.call(self.caps.directory_many(ids))
-        students = sorted(
-            (self.student(record, balance=balance) for record in result.get("students") or []
-             if isinstance(record, dict) and record.get("id") in ids),
-            key=lambda item: str(item["id"]),
-        )
+        records = [record for record in result.get("students") or []
+                   if isinstance(record, dict) and record.get("id") in ids]
+        students = sorted((self.student(record, balance=balance) for record in records),
+                          key=lambda item: str(item["id"]))
+        if identity:
+            await self._attach_identity(records, students)
         found = {item["id"] for item in students}
         body = {"generatedAt": self.iso(self.now()), "full": False, "complete": True,
                 "students": students, "classes": [],
                 "missingIds": [item for item in ids if item not in found]}
         return Reply(200, body, {"Cache-Control": "private, no-cache"})
 
-    async def student_one(self, student_id: str, *, balance: bool = True) -> dict[str, Any]:
+    async def student_one(self, student_id: str, *, balance: bool = True,
+                          identity: bool = False) -> dict[str, Any]:
         """§9 `GET /students/{id}` — dizin öğesiyle birebir; silinmiş ya da yoksa 404."""
         record = await self.call(self.caps.directory_get(student_id))
         if not record or not record.get("id"):
             raise student_not_found()
-        return self.student(record, balance=balance)
+        out = self.student(record, balance=balance)
+        if identity:
+            await self._attach_identity([record], [out])
+        return out
+
+    async def _attach_identity(self, records: list[dict[str, Any]],
+                               students: list[dict[str, Any]]) -> None:
+        """Yetkili anahtara EKLEMELİ `identity` bloğu (80-ortak K2, beyaz liste).
+
+        Bloklar TEK yetenek çağrısıyla gelir (N+1 yok). Gelmezse (kasa okunamadı, eski
+        öğrenci modülü, çözülemeyen alan) o öğrencide anahtar HİÇ yazılmaz: Akademi
+        aynası değişmez (`null` aynayı silerdi). Dizin yine döner; değer log'a yazılmaz.
+        """
+        try:
+            blocks = await self.caps.directory_identities(records)
+        except (CapabilityMissing, UpstreamFailure) as failure:
+            self._log.warning("kimlik blokları okunamadı", error=type(failure).__name__)
+            return
+        for student in students:
+            block = identity_view(blocks.get(student["id"]))
+            if block is not None:
+                student["identity"] = block
 
     async def canteen_balances(self, ids_text: str | None,
                                if_none_match: str | None) -> Reply:

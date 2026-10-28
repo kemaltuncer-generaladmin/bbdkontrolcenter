@@ -112,6 +112,13 @@ permissions:
   - key: mobile_gateway.access
     description: "Mobil geçidin bütün uçları: öğrenci dizini ve grupları, kantin okuma/yazma, tablet denetimi, anons, zil saatleri ve zil planı, OTP SMS aktarımı. Servis anahtarı içindir."
     default_roles: [admin, mobile_service]
+  # Sözleşme kimliği (iş 80-km-kimlik, bbd-akademi 80-ortak K2): `GET /directory` ve
+  # `GET /students/{id}` yanıtına EKLEMELİ `identity` bloğu (TC çözülmüş, adres, veli
+  # kimliği). Akademi entegrasyon anahtarının rolü (`mobile_service`) taşır; anahtarda
+  # yoksa blok hiç gelmez (eski davranış). Kurulu sistemde `grant_defaults` açılışta ekler.
+  - key: mobile_gateway.identity.read
+    description: "Mobil geçit öğrenci yanıtlarında sözleşme kimlik bilgilerini (TC kimlik no, doğum tarihi, adres, veli kimliği) okuma. Servis anahtarı içindir."
+    default_roles: [admin, mobile_service]
   # Olay iletimi durumu (KM paneli Senkron kartı). Servis anahtarına VERİLMEZ.
   - key: mobile_gateway.events.view
     description: "Akademi'ye olay iletiminin durumunu (gecikme, ölü mektup) görme."
