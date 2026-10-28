@@ -1,0 +1,50 @@
+/* BBD Akademi — öğrencinin Sözleşmeler sekmesi (F-SZ, iş 80). Yalnız renk jetonları (koyu temaya hazır). */
+
+.ak-ct { gap: 12px; }
+.ak-ct-strip { display: flex; flex-wrap: wrap; gap: 8px; }
+.ak-ct-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.ak-ct-chip:hover { background: var(--tint); border-color: var(--line-strong); }
+.ak-ct-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ak-ct-chip.on { border-color: var(--accent); background: var(--accent-tint); }
+.ak-ct-chip span { color: var(--soft); font-size: 12px; }
+
+.ak-ct-detail { display: grid; gap: 12px; }
+.ak-ct-head { display: grid; gap: 4px; }
+.ak-ct-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 15px; }
+.ak-ct-meta { font-size: 12px; color: var(--soft); }
+.ak-ct-band:empty { display: none; }
+.ak-ct-alert { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ak-ct-alert > :first-child { flex: 1 1 320px; }
+
+.ak-ct-docs { display: grid; gap: 4px; }
+.ak-ct-doc { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; }
+.ak-ct-doc:hover { background: var(--tint); }
+.ak-ct-doc-name { font-weight: 550; color: var(--ink); }
+.ak-ct-doc-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+.ak-ct-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ak-ct-rev { padding: 8px 10px; border-left: 3px solid var(--line-strong); background: var(--tint); border-radius: 0 8px 8px 0;
+  display: grid; gap: 4px; }
+.ak-ct-rev-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ak-ct-rev-reason { font-size: 12.5px; color: var(--ink); }
+.ak-ct-rev-docs { display: flex; flex-wrap: wrap; gap: 4px; }
+.ak-ct-rev-sign { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--good); }
+
+.ak-ct-scans { display: grid; gap: 6px; }
+.ak-ct-scan-list { margin: 0; padding-left: 20px; display: grid; gap: 2px; }
+.ak-ct-scan { display: flex; align-items: center; gap: 8px; }
+
+.ak-ct-editor { width: min(980px, 96vw); max-height: 92vh; display: flex; flex-direction: column; }
+.ak-ct-editor-tools { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.ak-ct-editor-body { flex: 1 1 auto; overflow: auto; min-height: 240px; padding-right: 4px; }
+.ak-ct-clauses { display: grid; gap: 10px; }
+.ak-ct-clause { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.ak-ct-clause-head { display: flex; align-items: center; gap: 6px; }
+.ak-ct-clause-title { flex: 1 1 auto; font-weight: 600; }
+.ak-ct-clause-no { color: var(--soft); }
+.ak-ct-item { display: flex; align-items: flex-start; gap: 6px; }
+.ak-ct-item-text { flex: 1 1 auto; resize: vertical; font-size: 12.5px; line-height: 1.45; }
+.ak-ct-item-tools { display: inline-flex; flex-direction: column; gap: 2px; }
+.ak-ct-special { width: 100%; resize: vertical; }
+.ak-ct-guardian { width: min(560px, 94vw); }

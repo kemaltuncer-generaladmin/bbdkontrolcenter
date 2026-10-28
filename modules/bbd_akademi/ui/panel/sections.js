@@ -308,6 +308,8 @@ export const STUDENT_CARD = [
   ] },
   { key: 'money', label: 'Cari, kantin ve kitap', parts: [
     { key: 'finance', label: 'Kurum cari', requires: 'finance', feature: 'finance' },
+    // Sözleşmeler (F-SZ, iş 80): liste, ayrıntı, imza, taramalar, belgeler (`contracts/contract-tab.js`).
+    { key: 'contracts', label: 'Sözleşmeler', requires: 'finance', feature: 'contracts' },
     { key: 'canteen', label: 'Kantin hareketleri', feature: 'canteen' },
     { key: 'books', label: 'Kurumdan alınan kitaplar', feature: 'books' },
   ] },

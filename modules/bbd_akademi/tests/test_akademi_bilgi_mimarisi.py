@@ -233,8 +233,10 @@ def test_ogrenci_karti_en_cok_alti_sekme(result: dict[str, Any]) -> None:
     old_tabs = {"overview", "schedule", "curriculum", "resources", "homework", "exams", "attendance",
                 "study", "learning", "goals", "coaching", "flashcards", "requests", "finance", "canteen"}
     parts = [key for keys in card.values() for key in keys]
-    assert sorted(parts) == sorted(old_tabs | {"record", "books"}), (
-        "eski 15 sekmenin her biri tam bir kez bölüm olmalı (+ KM kaydı, + kurumdan alınan kitaplar 0.5.4)")
+    assert sorted(parts) == sorted(old_tabs | {"record", "books", "contracts"}), (
+        "eski 15 sekmenin her biri tam bir kez bölüm olmalı (+ KM kaydı, + kurumdan alınan kitaplar 0.5.4, "
+        "+ sözleşmeler — iş 80)")
+    assert card["money"] == ["finance", "contracts", "canteen", "books"]
     # Öğrenci yönetimi yeteneği yoksa (modül kapalı / izin yok) "Kayıt" sekmesi yok.
     assert [key for key, _ in result["cardNoRecord"]] == ["summary", "program", "work", "progress",
                                                          "money"]
