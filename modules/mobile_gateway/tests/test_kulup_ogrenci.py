@@ -113,17 +113,17 @@ async def test_ogrenci_acilir_ve_istek_aynen_tekrarlanir(service: Any, world: Wo
 async def test_mevcut_ogrenci_eslesmesi(service: Any, world: World) -> None:
     admission = use(world)
     _, body, _ = await post(service, {**BODY, "externalRef": "inv_02",
-                                      "studentId": "STU-a1b2c3d4e5"})
+                                      "existingStudentId": "STU-a1b2c3d4e5"})
     assert body["studentId"] == "STU-a1b2c3d4e5" and body["created"] is False
     assert admission.calls[0]["student_id"] == "STU-a1b2c3d4e5"
 
 
 async def test_kural_reddi_zarfa_tasinir(service: Any, world: World) -> None:
     admission = use(world)
-    admission.refuse = Refusal("Eşleşme belirsiz — KM'den eşleştirin.", 409, "ambiguous_match")
+    admission.refuse = Refusal("Eşleşme belirsiz — KM'den eşleştirin.", 409, "student_ambiguous")
     with pytest.raises(GatewayError) as caught:
         await post(service, BODY)
-    assert (caught.value.status, caught.value.code) == (409, "ambiguous_match")
+    assert (caught.value.status, caught.value.code) == (409, "student_ambiguous")
     admission.refuse = Refusal("TC kimlik no hatalı.", 422, "validation_error",
                                "identity.student.nationalId")
     with pytest.raises(GatewayError) as caught:

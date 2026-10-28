@@ -15,7 +15,7 @@ Akış (`admit`):
 2. Çağıran mevcut bir öğrenciyi işaret ettiyse (`student_id`) ya da KM'de ad soyadı VE
    bir telefonu (öğrenci / veli) birebir tutan TEK etkin öğrenci varsa yeni öğrenci
    AÇILMAZ: öğrenci kulüp sınıfına EK sınıf olarak eklenir (ana sınıfı değişmez) →
-   `created: False`. Birden çok aday → 409 `ambiguous_match` (Akademi "Eşleşme belirsiz —
+   `created: False`. Birden çok aday → 409 `student_ambiguous` (Akademi "Eşleşme belirsiz —
    KM'den eşleştirin" der).
 3. Yoksa yeni öğrenci: ad, öğrenci telefonu, 1. veli (kantin telefonu) + kimlik bloğu
    (80 K2 şekli; TC şifreli) tek işlemde, sonra sınıf üyeliği; ikinci ve sonraki veliler
@@ -55,6 +55,17 @@ class AdmissionError(ValueError):
 
 def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _pruned(value: Any) -> Any:
+    """Kimlik gövdesinden `null` / boş alanlar atılır: dış formda boş bırakılan alan KM'deki
+    değeri SİLMEZ (yeni öğrencide zaten boştur) ve gereksiz yere kasa istemez."""
+    if isinstance(value, dict):
+        out = {key: _pruned(item) for key, item in value.items()}
+        return {key: item for key, item in out.items() if item not in (None, "", {}, [])}
+    if isinstance(value, list):
+        return [item for item in (_pruned(row) for row in value) if item not in (None, {}, [])]
+    return value
 
 
 def _clean(text: Any, limit: int) -> str:
@@ -159,6 +170,31 @@ class StudentAdmission:
             return [f"\"{class_name}\" sınıfına eklenemedi."]
         return []
 
+    async def _complete_existing(self, kantin_id: str, guardians: list[dict[str, str]],
+                                 identity: dict[str, Any] | None, *, actor: str,
+                                 causation_id: str | None) -> list[str]:
+        """Mevcut öğrenci: velileri EKSİKSE ekler (var olanın sırası/adı değişmez, en çok 4) ve
+        formdaki dolu kimlik alanlarını yazar. Ana sınıf, ad, seviye DEĞİŞMEZ."""
+        warnings: list[str] = []
+        try:
+            current = await self._service.guardians(kantin_id)
+            rows = [{"name": row.get("name") or "", "phone": row.get("phone") or "",
+                     "relation": row.get("relation") or ""}
+                    for row in (current or {}).get("items") or []]
+            known = {normalize_phone(row["phone"]) for row in rows}
+            extra = [row for row in guardians if row["phone"] not in known]
+            if extra and len(rows) < 4:
+                await self._service.set_guardians(kantin_id, [*rows, *extra][:4], actor=actor,
+                                                  causation_id=causation_id)
+        except Exception:  # noqa: BLE001 — öğrenci bağlandı; eksik KM'den tamamlanır
+            warnings.append("Formdaki veliler mevcut öğrenciye eklenemedi — KM'den kontrol edin.")
+        if identity:
+            try:
+                await self._service.set_identity(kantin_id, identity, actor=actor)
+            except Exception:  # noqa: BLE001
+                warnings.append("Formdaki kimlik bilgileri yazılamadı — KM'den tamamlayın.")
+        return warnings
+
     # ------------------------------------------------------------ ana iş
 
     async def admit(self, payload: dict[str, Any], *, external_ref: str, source: str = "club",
@@ -209,17 +245,21 @@ class StudentAdmission:
         if target:
             if await self._service.get_student(target) is None:
                 raise AdmissionError("Eşleştirilen öğrenci KM'de yok.", status=404,
-                                     code="student_not_found", field="studentId")
+                                     code="student_not_found", field="existingStudentId")
         else:
             phones = list(dict.fromkeys([*( [student_phone] if student_phone else []),
                                          *(row["phone"] for row in guardians)]))
             matches = await self._match(f"{first} {last}", phones)
             if len(matches) > 1:
                 raise AdmissionError("Eşleşme belirsiz — KM'den eşleştirin.", status=409,
-                                     code="ambiguous_match")
+                                     code="student_ambiguous")
             target = matches[0] if matches else ""
+        identity = _pruned(payload.get("identity")) \
+            if isinstance(payload.get("identity"), dict) else None
         if target:
             warnings = await self._join(target, class_name, actor)
+            warnings += await self._complete_existing(target, guardians, identity, actor=actor,
+                                                      causation_id=causation_id)
             await self._finish(ref, target, False, class_name)
             self._log.info("dış kayıt mevcut öğrenciye bağlandı", student=target, source="club")
             reply: dict[str, Any] = {"studentId": target, "created": False,
@@ -230,7 +270,6 @@ class StudentAdmission:
 
         # 3) Yeni öğrenci
         primary = guardians[0]
-        identity = payload.get("identity") if isinstance(payload.get("identity"), dict) else None
         first_identity: dict[str, Any] | None = None
         later_identity: list[dict[str, Any]] = []
         if identity:
@@ -251,6 +290,8 @@ class StudentAdmission:
         }
         if student_phone:
             create["studentPhone"] = student_phone
+        if payload.get("gradeLevel") not in (None, ""):
+            create["gradeLevel"] = payload["gradeLevel"]
         if first_identity:
             create["identity"] = first_identity
         result = await self._service.create_student(create, actor=actor,

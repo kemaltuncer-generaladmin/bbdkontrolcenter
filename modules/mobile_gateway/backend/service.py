@@ -797,7 +797,8 @@ class GatewayService:
         external_ref = str(body.get("externalRef") or "")
         source = str(body.get("source") or "club")
         payload = {key: body[key] for key in ("firstName", "lastName", "studentPhone",
-                                               "className", "guardians", "identity")
+                                               "className", "guardians", "identity",
+                                               "gradeLevel")
                    if key in body and body[key] is not None}
 
         async def work() -> dict[str, Any]:

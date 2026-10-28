@@ -106,7 +106,7 @@ provides:
       lastName, studentPhone?, className?, guardians [{slot, name, phone, relation}],
       identity? (80 K2 şekli)}. external_ref ile idempotent (ilk yanıt aynen); mevcut öğrenci
       (student_id ya da ad + telefon birebir TEK eşleşme) yeni kayıt açmaz, sınıfa EK üye
-      olur; birden çok aday → AdmissionError(409 ambiguous_match). Hatalar status/code taşır.
+      olur; birden çok aday → AdmissionError(409 student_ambiguous). Hatalar status/code taşır.
   # Kantinden gelen öğrenci olaylarının KM karşılığı (km-merkezi-senkron §6.2,
   # §6.3). Tüketici: Kantin Geçidi'nin olay alıcısı (profil tablosu yalnız bu
   # modülündür, K5).

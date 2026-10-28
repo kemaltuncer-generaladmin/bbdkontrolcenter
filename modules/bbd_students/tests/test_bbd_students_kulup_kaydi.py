@@ -178,6 +178,11 @@ async def test_mevcut_ogrenci_ek_sinif_alir(world: World) -> None:
                       "className": "Deneme Kulübü"}
     assert await world.classes_of("STU-old0000001") == ["8-A", "Deneme Kulübü"]
     assert len(world.canteen.rows) == 1
+    # Formdaki eksik veli eklendi (var olanın sırası değişmez); kimlik formdan yazıldı.
+    student = await world.service.get_student("STU-old0000001")
+    assert [g["phone"] for g in student["guardians"]] == ["5321110000", "5052220000"]
+    view = await world.service.get_identity("STU-old0000001", reveal=True)
+    assert view["student"]["nationalId"] == TC
     # Açık eşleştirme (Akademi kesin eşleşme verdi) de aynı yoldan.
     linked = await world.admission.admit({**PAYLOAD, "firstName": "Başka"},
                                          external_ref="inv_3", student_id="STU-old0000001")
@@ -189,7 +194,7 @@ async def test_belirsiz_eslesme_reddedilir(world: World) -> None:
     world.canteen.add("STU-twin000002", "Deniz Örnek", "5321110000")
     with pytest.raises(AdmissionError) as caught:
         await world.admission.admit(PAYLOAD, external_ref="inv_4")
-    assert (caught.value.status, caught.value.code) == (409, "ambiguous_match")
+    assert (caught.value.status, caught.value.code) == (409, "student_ambiguous")
     # Sahiplenme bırakıldı: eşleştirme verilince aynı davet işlenir.
     result = await world.admission.admit(PAYLOAD, external_ref="inv_4",
                                          student_id="STU-twin000002")
@@ -212,3 +217,28 @@ async def test_dogrulama(world: World) -> None:
     with pytest.raises(AdmissionError):
         await world.admission.admit({**PAYLOAD, "lastName": " "}, external_ref="x")
     assert world.canteen.rows == {}
+
+
+async def test_akademi_ornek_govdesi_bos_alanlarla(world: World) -> None:
+    """km-mobile-gateway "POST /students" örneği: boş kimlik alanları `null`, seviye 11."""
+    body = {
+        "firstName": "Deniz", "lastName": "Örnek", "studentPhone": "5320000001",
+        "className": "Deneme Kulübü", "gradeLevel": 11,
+        "guardians": [{"slot": 1, "name": "Ayşe Örnek", "phone": "5320000002",
+                       "relation": "mother"}],
+        "identity": {"student": {"nationalId": None, "birthDate": "2010-05-01",
+                                 "gender": "female", "schoolName": "Örnek Lisesi",
+                                 "address": {"line": "Örnek Mah. 1. Sok. No 2",
+                                             "district": "Selçuklu", "city": "Konya"}},
+                     "guardians": [{"slot": 1, "fullName": "Ayşe Örnek", "nationalId": None,
+                                    "relation": "mother", "phone": "5320000002",
+                                    "email": None, "homeAddress": None}]},
+    }
+    world.service._cipher = None   # kasa yok: boş TC kasa istememeli
+    result = await world.admission.admit(body, external_ref="6f1c2b9e")
+    assert result["created"] is True
+    student = await world.service.get_student(result["studentId"])
+    assert student["gradeLevel"] == 11 and student["studentPhone"] == "5320000001"
+    view = await world.service.get_identity(result["studentId"], reveal=False)
+    assert view["student"]["schoolName"] == "Örnek Lisesi"
+    assert view["student"]["address"]["city"] == "Konya"

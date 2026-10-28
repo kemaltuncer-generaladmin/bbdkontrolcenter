@@ -112,8 +112,9 @@ class AdmissionGuardian(BaseModel):
 class StudentCreateBody(BaseModel):
     """§11 — Akademi Deneme Kulübü kaydı (bbd-akademi 81-api-taslak §C).
 
-    `studentId` EKLEMELİ ve isteğe bağlıdır: Akademi mevcut bir KM öğrencisiyle kesin
-    eşleştirdiyse o öğrenci kulüp sınıfına eklenir, yeni öğrenci açılmaz.
+    `existingStudentId` isteğe bağlıdır: Akademi mevcut bir KM öğrencisiyle kesin eşleştirdiyse
+    (ya da yönetici "Eşleştir" dediyse) o öğrenci kulüp sınıfına EK grup olarak eklenir, yeni
+    öğrenci açılmaz. `gradeLevel` (5–12 | "graduate") yalnız yeni öğrencide yazılır.
     """
 
     externalRef: str = Field(min_length=1, max_length=120)
@@ -124,7 +125,8 @@ class StudentCreateBody(BaseModel):
     guardians: list[AdmissionGuardian] = Field(min_length=1, max_length=4)
     identity: dict[str, Any] | None = None
     source: Literal["club"] = "club"
-    studentId: str | None = Field(default=None, min_length=1, max_length=40)
+    gradeLevel: int | str | None = None
+    existingStudentId: str | None = Field(default=None, max_length=40)
 
 
 class StudentCodeBody(BaseModel):
@@ -298,7 +300,7 @@ async def create_student(body: StudentCreateBody, request: Request,
     caller = caller_of(request, user)
     payload = body.model_dump(mode="json", exclude_unset=True)
     return await idempotent(request, payload, 200, lambda: current_service().create_student(
-        payload, caller, student_id=body.studentId,
+        payload, caller, student_id=body.existingStudentId or None,
     ))
 
 
