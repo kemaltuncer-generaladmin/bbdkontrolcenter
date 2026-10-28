@@ -22,10 +22,13 @@ Listeye girenler (sözleşme `docs/api/README.md` §8):
 Kullanım (depo kökünden):
 
     .venv/bin/python modules/bbd_akademi/tools/gen_allowlist.py [--spec yol] [--check]
+    AKADEMI_OPENAPI=/yol/openapi.yaml .venv/bin/python modules/bbd_akademi/tools/gen_allowlist.py [--check]
 
 Varsayılan kaynak bbd-akademi deposunun `CONTRACT_REF` dalındaki
 commit'lenmiş sözleşmedir (çalışma ağacı yarım düzenlenmiş olabilir).
-`CONTRACT_REF` `main`'dir.
+`CONTRACT_REF` `main`'dir. `--spec` verilmezse `AKADEMI_OPENAPI` ortam
+değişkeni (testin okuduğu aynı değişken — yerel `main` geride kaldığında ya da
+özellik dalının sözleşmesiyle üretirken) kullanılır.
 
 `--check`: dosyayı yazmaz; üretilen içerik commit'lenmiş olandan farklıysa
 1 ile çıkar.
@@ -34,6 +37,7 @@ commit'lenmiş sözleşmedir (çalışma ağacı yarım düzenlenmiş olabilir).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -75,6 +79,7 @@ AREAS: dict[str, str] = {
     "parent-meeting-slots": "comms", "pa": "comms",
     "finance": "finance", "canteen": "finance", "book-sales": "finance",
     "book-requests": "finance",
+    "contracts": "contracts",
     "insights": "reports", "early-warnings": "reports", "early-warning-settings": "reports",
     "exports": "reports",
     "settings": "admin", "branding": "admin", "features": "admin", "staff": "admin",
@@ -305,7 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
 
-    spec = load_spec(args.spec)
+    spec_path = args.spec
+    if spec_path is None and os.environ.get("AKADEMI_OPENAPI"):
+        spec_path = Path(os.environ["AKADEMI_OPENAPI"])
+    spec = load_spec(spec_path)
     rows = collect(spec)
     files = render_files(rows, str((spec.get("info") or {}).get("version") or "?"))
     if args.check:

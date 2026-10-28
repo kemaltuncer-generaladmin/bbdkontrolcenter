@@ -46,6 +46,7 @@ LEARNING_SETUP = f"{MODULE}.learning_setup"
 EVALUATIONS = f"{MODULE}.evaluations"
 PRIVACY = f"{MODULE}.privacy"
 RECORDINGS = f"{MODULE}.recordings"
+CONTRACTS = f"{MODULE}.contracts"
 
 #: Akademi izin anahtarı (kapsamsız) → KM izni.
 PERMISSION_MAP: dict[str, str] = {
@@ -140,6 +141,14 @@ PERMISSION_MAP: dict[str, str] = {
     "finance.manage": FINANCE,
     "finance.record_payment": FINANCE,
     "finance.void": FINANCE_VOID,
+    # --- sözleşmeler (F-SZ, Akademi README §14 madde 139): sözleşme ve belgeleri paradır — görüntüleme ve günlük iş
+    # (ıslak imza işaretleme, tarama / ek, belge çıkar + toplu yazdır) kurum finansı iznindedir (finans ekranının
+    # yanındaki "Sözleşmeler"). Kurulum ve oluşturma (Kayıt ve ödeme planı sihirbazı, madde düzenleme / yeni sürüm,
+    # iptal, hizmet kataloğu) ayrı KM iznidir — yönetici bbd_staff'tan kaldırabilsin. Şablon METNİ kurum ayarıdır
+    # (`OPERATION_OVERRIDES`); `contracts.*` ayarları zaten `settings.manage` → SETTINGS.
+    "contracts.view": FINANCE,
+    "contracts.manage": FINANCE,
+    "contracts.setup": CONTRACTS,
     # --- kitap talepleri ve kitap satışı (F-A27, 0.5.4): satış kurum carisine
     # kalem / makbuzlu tahsilat / veliye ödeme bağlantısı yazar — para yine
     # yalnız kurum carisindedir (A12), kantine dokunmaz.
@@ -202,6 +211,13 @@ OPERATION_OVERRIDES: dict[str, str] = {
     "admin_updateCoachTextTemplate": LEARNING_SETUP,
     "admin_deleteCoachTextTemplate": LEARNING_SETUP,
     "admin_renderCoachTextTemplate": LEARNING,
+    # Sözleşme oluşturma (A6) Akademi'de `contracts.setup` + `finance.manage` ister; KM'de "birisi yeterli" kuralı
+    # yalnız finans iznini taşıyanı da geçirirdi — oluşturma kurulum iznine bağlanır (KM'de iki kapı: bu izin +
+    # Akademi'de anahtarın iki izni).
+    "admin_createContract": CONTRACTS,
+    # Sözleşme madde ŞABLONU (A22): bütün YENİ sözleşmelerin hukuki metni — kurum ayarı (varsayılan yalnız admin).
+    # Okuma (A20/A21) finans iznindedir; tek sözleşmede madde düzenleme (A8) kurulum iznindedir.
+    "admin_saveContractTemplate": SETTINGS,
 }
 
 
@@ -251,5 +267,5 @@ def unmapped(operations: Iterable[Operation]) -> list[str]:
 ALL_PERMISSIONS: tuple[str, ...] = (
     VIEW, ACADEMIC, CURRICULUM, RESOURCES, ATTENDANCE, EXAMS, FINANCE, FINANCE_VOID,
     BOOKS, ANNOUNCEMENTS, REQUESTS, SETTINGS, STAFF, CAMPUS, CANTEEN, LEARNING, LEARNING_SETUP,
-    EVALUATIONS, PRIVACY, RECORDINGS,
+    EVALUATIONS, PRIVACY, RECORDINGS, CONTRACTS,
 )

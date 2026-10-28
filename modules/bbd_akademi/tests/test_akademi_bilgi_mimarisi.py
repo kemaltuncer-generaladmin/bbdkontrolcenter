@@ -125,7 +125,8 @@ def test_en_fazla_on_ana_grup(result: dict[str, Any]) -> None:
                            "templates"]
     # Veli toplantısı (§14 madde 90); SMS eskiden Ayarlar → Kurum ayarları sekmesiydi.
     assert nav["comms"] == ["announcements", "parentMeetings", "sms", "messages"]  # mesaj denetimi 16.10.2026
-    assert nav["money"] == ["finance", "canteen", "bookSales", "books"]   # kitap satışı 0.5.4
+    # kitap satışı 0.5.4; Sözleşmeler (F-SZ, Akademi README §14 madde 139) finansın yanında
+    assert nav["money"] == ["finance", "contracts", "canteen", "bookSales", "books"]
     assert nav["reports"] == ["reportHub", "insights"]
     assert nav["admin"] == ["settings", "staff", "privacy"]
     for area, sections in nav.items():

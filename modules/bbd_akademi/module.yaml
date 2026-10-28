@@ -15,7 +15,7 @@
 
 id: bbd_akademi
 name: "BBD Akademi"
-description: "BBD Akademi yönetimi: öğrenci akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme (toplu yükleme), kurum finansı, kitap talepleri, duyurular, talepler, akıllı tahta ders kayıtları, kurum ayarları ve mobil yönetici erişimi."
+description: "BBD Akademi yönetimi: öğrenci akademik görünümü, müfredat, kaynaklar, ders programı, yoklama, ödev, deneme (toplu yükleme), kurum finansı, sözleşmeler ve toplu belge yazdırma, kitap talepleri, duyurular, talepler, akıllı tahta ders kayıtları, kurum ayarları ve mobil yönetici erişimi."
 version: 0.1.0
 sdk: ">=0.1,<1.0"
 enabled: true
@@ -101,6 +101,9 @@ permissions:
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.finance
     description: "Kurum cari hesapları (kantinden ayrı): görüntüleme, taksit planı, borç kalemi, tahsilat kaydı, gecikme hatırlatması, ekstre."
+    default_roles: [admin, bbd_staff]
+  - key: bbd_akademi.contracts
+    description: "Sözleşme kurulumu ve oluşturma: Kayıt ve ödeme planı sihirbazıyla sözleşme oluşturma, sözleşme maddelerini düzenleme (yeni sürüm), güncel bilgilerle yenileme, belge üretme, sözleşme iptali, hizmet kataloğu. Sözleşmeleri görmek, ıslak imza işaretlemek, tarama eklemek ve toplu belge çıkarıp yazdırmak kurum finansı iznidir (bbd_akademi.finance); madde şablonu ve sözleşme ayarları kurum ayarıdır (bbd_akademi.settings)."
     default_roles: [admin, bbd_staff]
   - key: bbd_akademi.finance_void
     description: "Kurum tahsilatını iptal etme. İzin yeterli olsa bile işlemden hemen önce PIN teyidi ister."

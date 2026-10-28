@@ -146,6 +146,15 @@ AKADEMI_PDFS: dict[str, DocumentKind] = {
     # Veli toplantısı günün randevu listesi (Akademi README §14 madde 90).
     "parent_meeting_list": DocumentKind("VTL", "Veli toplantısı", "veli-toplantisi-listesi",
                                         ("admin_getParentMeetingListPdf",)),
+    # Sözleşmeler (F-SZ, Akademi README §14 madde 139): PDF'i Akademi üretir (tek kaynak — KM, web, mobil aynı
+    # belgeyi basar); KM önizler ve PDF'in KENDİSİNİ yazıcıya verir. Toplu belge (A17/A18) "Sözleşmeler" ekranının
+    # "Belge çıkar"ı; tekil belge / ek / önizleme öğrencinin Sözleşmeler sekmesi ve sihirbazı (80-km-sozlesme).
+    "contract_documents": DocumentKind("SZB", "Sözleşme", "sozlesme-belgeleri",
+                                       ("admin_buildContractDocuments",)),
+    "contract_document": DocumentKind("SZL", "Sözleşme", "sozlesme", ("admin_getContractDocument",)),
+    "contract_attachment": DocumentKind("SZE", "Sözleşme", "sozlesme-ek",
+                                        ("admin_getContractAttachmentFile",)),
+    "contract_preview": DocumentKind("SZO", "Sözleşme", "sozlesme-onizleme", ("admin_previewContract",)),
 }
 
 

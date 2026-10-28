@@ -1,0 +1,71 @@
+/* Sözleşmeler ekranı — önek `ak-szb-`. Kurum parası mavi çizgiyle (finans ekranıyla aynı dil); kantin burada yok.
+   Bütün renkler jeton (koyu tema hazır, ADR 0032). */
+
+.ak-szb-chips .kit-chip.on { background: var(--accent-tint); border-color: var(--accent-line); color: var(--accent); }
+.ak-szb-overdue { margin-left: 8px; }
+.ak-szb-overdue.on { background: var(--bad-tint, var(--accent-tint)); border-color: var(--bad, var(--accent-line));
+  color: var(--bad, var(--accent)); }
+.ak-szb-selection { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px;
+  border: 1px dashed var(--line); font-size: 13px; color: var(--soft); }
+.ak-szb-selection.on { border-style: solid; border-color: var(--accent-line); background: var(--accent-tint);
+  color: var(--text, inherit); }
+.ak-szb-selection-text { min-width: 0; }
+.ak-szb-no { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.ak-szb-lead { margin: 0; font-size: 13px; }
+
+/* Belge çıkar penceresi */
+.ak-szb-dialog.wide { width: min(640px, calc(100vw - 32px)); }
+.ak-szb-body { display: grid; gap: 14px; }
+.ak-szb-target, .ak-szb-kinds { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 10px;
+  margin: 0; display: grid; gap: 6px; }
+.ak-szb-legend { font-size: 12px; font-weight: 600; color: var(--soft); padding: 0 4px; }
+.ak-szb-radio { display: flex; gap: 10px; align-items: flex-start; padding: 6px 4px; border-radius: 8px; cursor: default; }
+.ak-szb-radio.off { opacity: .55; }
+.ak-szb-radio input { margin-top: 3px; }
+.ak-szb-kind { display: grid; grid-template-columns: minmax(0, 1fr) 110px; align-items: center; gap: 10px;
+  padding: 4px; border-radius: 8px; }
+.ak-szb-kind:not(.on) .ak-szb-copies { opacity: .45; }
+.ak-szb-check { display: flex; align-items: center; gap: 10px; }
+.ak-szb-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.ak-szb-note:empty { display: none; }
+.ak-szb-skipped { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 320px; overflow: auto; }
+.ak-szb-skip { display: flex; align-items: center; gap: 10px; justify-content: space-between; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 9px; }
+
+/* Hizmet kataloğu, şablonlar, ayarlar */
+.ak-szb-split { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, .75fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .ak-szb-split { grid-template-columns: minmax(0, 1fr); } }
+.ak-szb-warn { border-left: 3px solid var(--warn, var(--accent)); padding: 6px 10px; font-size: 13px;
+  background: var(--tint); border-radius: 0 8px 8px 0; }
+.ak-szb-clause { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px;
+  background: var(--surface, transparent); }
+.ak-szb-clause-head { display: flex; gap: 8px; align-items: center; }
+.ak-szb-clause-no { font-weight: 700; min-width: 26px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.ak-szb-clause-head input { flex: 1; font-weight: 600; }
+.ak-szb-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
+.ak-szb-item textarea { min-height: 54px; resize: vertical; font-size: 13px; line-height: 1.45; }
+.ak-szb-tools { display: inline-flex; gap: 2px; }
+.ak-szb-tools .kit-btn { padding: 2px 7px; min-width: 0; }
+.ak-szb-clauses { display: grid; gap: 10px; }
+.ak-szb-ph { display: flex; flex-wrap: wrap; gap: 6px; }
+.ak-szb-ph .kit-chip { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+.ak-szb-paper { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--surface, #fff);
+  font-size: 12.5px; line-height: 1.5; text-align: justify; max-height: 70vh; overflow: auto; }
+.ak-szb-paper h4 { margin: 10px 0 4px; font-size: 12.5px; }
+.ak-szb-paper p { margin: 0 0 4px; }
+.ak-szb-history { display: grid; gap: 6px; font-size: 12.5px; }
+.ak-szb-history li { list-style: none; border-bottom: 1px solid var(--line); padding: 4px 0; }
+.ak-szb-history ul { margin: 0; padding: 0; }
+.ak-szb-banks { display: grid; gap: 8px; }
+.ak-szb-bank { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr) minmax(0, 1.6fr) auto;
+  gap: 8px; align-items: start; }
+@media (max-width: 1000px) { .ak-szb-bank { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.ak-szb-bank .kit-field-error { font-size: 11.5px; }
+.ak-szb-iban { font-family: var(--mono, ui-monospace, monospace); letter-spacing: .02em; }
+.ak-szb-iban.ok { border-color: var(--good, var(--accent-line)); }
+.ak-szb-iban.bad { border-color: var(--bad, red); }
+.ak-szb-preview-no { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ak-szb-copies-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 12px; }
+.ak-szb-radio-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 10px; }
+.ak-szb-radio-card.on { border-color: var(--accent-line); background: var(--accent-tint); }
