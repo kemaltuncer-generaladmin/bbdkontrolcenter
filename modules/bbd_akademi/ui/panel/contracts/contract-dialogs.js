@@ -6,6 +6,8 @@
 //   clausesDialog    "Maddeleri düzenle" (A8): tür seç → madde listesi (başlık + öğeler; ekle/sil/sırala), MEB özel
 //                    hususlar, GEREKÇE zorunlu → yeni sürüm, PDF'ler yeniden. İmzalıysa "yeniden imza gerektirir".
 //   guardianDialog   "Velinin gördüğü" (K8): yalnız son imzalı sürümün imzalanan türleri + o sürümün taramaları.
+//   promissoryDialog "Senet türünü değiştir" (A8 `promissory: {mode, dueOn}`; taslak "EK — TEK SENET"): her taksit için
+//                    ayrı / tek senet (toplam, vade); GEREKÇE zorunlu → yeni sürüm; imzalıysa "yeniden imza gerektirir".
 //
 // Yazmalar idempotenttir: pencere açıldığında tek anahtar (formDialog) ya da gövdeye bağlı anahtar; yüklenen tarama
 // dosyası yeniden denemede tekrar yüklenmez (dosya → kimlik önbelleği).
@@ -13,7 +15,9 @@
 import { button, dialogA11y, h } from '../../../ui-kit/kit.js';
 import { alertBox, badge } from '../../../ui-kit/layout.js';
 import { AkademiError, problem } from '../api.js';
-import { fmtDate, formDialog, multiChips, num, selectBox, todayIst } from '../common.js';
+import { fmtDate, formDialog, money, multiChips, num, selectBox, todayIst } from '../common.js';
+import { dateField } from '../../../ui-kit/datefield.js';
+import { PROMISSORY_MODES, promissoryReviseBody } from './wizard-logic.js';
 import { KM_PDF_KINDS, openContractDocument, openContractFile, uploadScan } from './shared-contract.js';
 import {
   CLAUSE_KINDS, DOCUMENT_KINDS, SCAN_MAX_MB, SCAN_TYPES, SIGNABLE_KINDS, SIGNATURE_SOURCES, clauseOps,
@@ -313,6 +317,55 @@ export function clausesDialog(app, detail) {
     release = dialogA11y(card);
     show(current);
     picker.node.focus?.();
+  });
+}
+
+// ------------------------------------------------------------------ Senet türünü değiştir (A8 promissory)
+
+/** @returns {Promise<object|null>} yeni sürümlü ContractDetail ya da vazgeçildiyse null */
+export function promissoryDialog(app, detail) {
+  const rows = detail.payment?.installments || [];
+  const lastDue = rows[rows.length - 1]?.dueOn || '';
+  const current = { mode: detail.promissoryMode || 'per_installment', dueOn: detail.promissoryDueOn || '' };
+  const total = rows.reduce((sum, row) => sum + (Number(row.amountMinor) || 0), 0);
+  return formDialog(app, {
+    title: `Senet türünü değiştir — Sözleşme ${detail.number || ''}`,
+    description: `${rows.length} taksit, toplam ${money(total)} (peşinat hariç). Kaydedince yeni sürüm oluşur ve senetler `
+      + 'yeniden üretilir.' + (needsResignWarning(detail) ? ' Bu sözleşmenin imzalı sürümü var: değişiklik YENİDEN İMZA '
+      + 'gerektirir; veli yeni sürüm imzalanana dek eski imzalı sürümü görür.' : ''),
+    value: { mode: current.mode, dueOn: current.dueOn || lastDue, reason: '' },
+    fields: [
+      { key: 'mode', label: 'Senet', type: 'custom', render: (draft, set, { setField }) => {
+        const wrap = h('div', 'ak-ct-prom');
+        const due = dateField({ value: draft.dueOn || lastDue, label: 'Senet vadesi', onChange: (iso) => setField('dueOn', iso) });
+        const dueRow = h('label', 'ak-ct-prom-due');
+        dueRow.append(h('span', 'kit-field-label', 'Senet vadesi (tek senet)'), due.node);
+        const paint = () => { dueRow.hidden = draft.mode !== 'single'; };
+        for (const [value, label] of Object.entries(PROMISSORY_MODES)) {
+          const option = h('label', 'ak-ct-prom-option');
+          const radio = h('input');
+          radio.type = 'radio';
+          radio.name = `ak-ct-prom-${detail.id}`;
+          radio.value = value;
+          radio.checked = draft.mode === value;
+          radio.addEventListener('change', () => { if (radio.checked) { set(value); paint(); } });
+          option.append(radio, h('span', '', value === 'single' ? `${label} — ${money(total)}` : `${label} — ${rows.length} senet`));
+          wrap.append(option);
+        }
+        wrap.append(dueRow);
+        paint();
+        return wrap;
+      } },
+      { key: 'reason', label: 'Gerekçe', required: true, maxLength: 200, wide: true,
+        placeholder: 'ör. veli tek senet istedi' },
+    ],
+    submitLabel: 'Yeni sürümü kaydet',
+    onSubmit: (draft, { key }) => {
+      const prepared = promissoryReviseBody({ reason: draft.reason, mode: draft.mode, dueOn: draft.dueOn, current });
+      if (prepared.error) throw new AkademiError({ message: prepared.error });
+      return app.api.post(`/v1/admin/contracts/${detail.id}/revisions`, prepared.body,
+        { key: `${key}-${hashText(JSON.stringify(prepared.body))}` });
+    },
   });
 }
 

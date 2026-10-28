@@ -76,3 +76,11 @@
 /* Tarih alanı hücreyi doldurur (takvim düğmesi kutunun içinde kalsın). */
 .ak-wz-field .kit-datefield, .ak-wz-row .kit-datefield { display: flex; width: 100%; }
 .ak-wz-field .df-input, .ak-wz-row .df-input { width: 100%; height: var(--kit-ctl-h, 30px); }
+
+/* Senet seçimi (tek senet / her taksit) ve özel ders satırı. */
+.ak-wz-prom { display: grid; gap: 8px; }
+.ak-wz-radios { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; font-size: 12.5px; }
+.ak-wz-radio { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.ak-wz-mini { display: grid; gap: 2px; min-width: 0; }
+.ak-wz-mini > span { font-size: 10.5px; color: var(--soft); }
+.ak-wz-pl { font-size: 12px; letter-spacing: .02em; }

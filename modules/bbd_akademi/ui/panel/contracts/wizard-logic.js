@@ -10,7 +10,9 @@
 //   · mevcut plandan ("Sözleşme oluştur", planId) satır ve ödeme bölümü;
 //   · geçmiş ödemelerin "vadesi gelenleri ödendi say" kısayolu (eski sözleşmeyi < 1 dakikada aktarma);
 //   · gövde (`ContractDraft`) + gövdeye bağlı Idempotency-Key + kayıt seti belge isteği (A17);
-//   · olay ayrıntısından öğrenci kimliği (Akademi UUID'si ya da KM `STU-…` numarası).
+//   · olay ayrıntısından öğrenci kimliği (Akademi UUID'si ya da KM `STU-…` numarası);
+//   · TEK SENET seçeneği (taslak "EK — TEK SENET"): her taksit için ayrı senet / tek senet (toplam, vade = son taksit);
+//   · ÖZEL DERS satırı (taslak "EK — ÖZEL DERS"): ders saati × saat ücreti, "ÖZEL DERS — Matematik" adı, katalog önerileri.
 //
 // SUNUCU ESASTIR: Akademi aynı hesabı yapar; tutmazsa `contract_totals_mismatch` (422) döner.
 
@@ -144,6 +146,9 @@ export function initialState({ source = 'existing', today, party = {}, settings 
     existingNumber: '',
     existingSignedDate: contractDate,
     signedDateLinked: true,
+    promissoryMode: 'per_installment',
+    promissoryDueOn: '',
+    promissoryDueLinked: true,
   };
   return applyAuto(state);
 }
@@ -154,19 +159,164 @@ export function initialState({ source = 'existing', today, party = {}, settings 
  */
 export function applyAuto(state) {
   const payment = state.payment || {};
-  if (payment.locked) return state;
-  const contract = totalsCheck({ lines: state.lines, payment: { mode: 'cash', installments: [] } }).contractMinor;
-  if (payment.mode === 'cash') {
-    payment.installments = [{ no: 1, dueOn: payment.cashDue || state.contractDate, amountMinor: contract,
-      method: payment.method || DEFAULT_METHOD }];
-    return state;
+  if (!payment.locked) {
+    const contract = totalsCheck({ lines: state.lines, payment: { mode: 'cash', installments: [] } }).contractMinor;
+    if (payment.mode === 'cash') {
+      payment.installments = [{ no: 1, dueOn: payment.cashDue || state.contractDate, amountMinor: contract,
+        method: payment.method || DEFAULT_METHOD }];
+    } else if (payment.auto) {
+      const down = Math.max(0, Number(payment.downPayment?.amountMinor) || 0);
+      payment.installments = splitEqual(Math.max(0, contract - down), payment.count, payment.firstDue,
+        { interval: payment.interval || 'monthly', method: payment.method || DEFAULT_METHOD });
+    }
   }
-  if (payment.auto) {
-    const down = Math.max(0, Number(payment.downPayment?.amountMinor) || 0);
-    payment.installments = splitEqual(Math.max(0, contract - down), payment.count, payment.firstDue,
-      { interval: payment.interval || 'monthly', method: payment.method || DEFAULT_METHOD });
-  }
+  return syncPromissoryDue(state);
+}
+
+// ------------------------------------------------------------------ TEK SENET (taslak "EK — TEK SENET")
+
+export const PROMISSORY_MODES = { per_installment: 'Her taksit için ayrı senet', single: 'Tek senet (toplam tutar)' };
+
+/** Senet var mı: taksitli ödeme (peşin sözleşmede senet yok). */
+export function hasPromissory(state) {
+  return state?.payment?.mode === 'installment' && (state.payment.installments || []).length > 0;
+}
+
+/** Tek senet vadesi elle değiştirilmediyse son taksitin vadesini izler. */
+export function syncPromissoryDue(state) {
+  if (!state || state.promissoryDueLinked === false) return state;
+  const rows = state.payment?.installments || [];
+  const last = rows[rows.length - 1]?.dueOn || '';
+  if (state.payment?.mode === 'installment' && last) state.promissoryDueOn = last;
   return state;
+}
+
+/** Senet seçimi (radyo) ve tek senet vadesi. Vade elle değişince son taksiti izlemeyi bırakır. */
+export function setPromissory(state, { mode, dueOn } = {}) {
+  if (mode && PROMISSORY_MODES[mode]) state.promissoryMode = mode;
+  if (dueOn !== undefined && dueOn !== state.promissoryDueOn) {
+    state.promissoryDueOn = dueOn;
+    state.promissoryDueLinked = false;
+  }
+  return syncPromissoryDue(state);
+}
+
+/** Tek senet tutarı = taksitlerin toplamı (peşinat HARİÇ). */
+export function promissoryTotal(state) {
+  return (state?.payment?.installments || []).reduce((sum, row) => sum + (Number(row.amountMinor) || 0), 0);
+}
+
+/** "10 senet" / "1 senet, 200.000,00 ₺" / "Senet yok (peşin ödeme)" — sihirbazda ve önizlemede bilgi. */
+export function promissoryInfo(state) {
+  if (!hasPromissory(state)) return { count: 0, amountMinor: 0, text: 'Senet yok (peşin ödeme)' };
+  const rows = state.payment.installments;
+  if (state.promissoryMode === 'single') {
+    const amount = promissoryTotal(state);
+    return { count: 1, amountMinor: amount, text: `1 senet, ${moneyText(amount)}` };
+  }
+  return { count: rows.length, amountMinor: promissoryTotal(state), text: `${rows.length} senet` };
+}
+
+/** 'YYYY-MM-DD' → '05.06.2027'. */
+function trDate(iso) {
+  const [year, month, day] = String(iso || '').slice(0, 10).split('-');
+  return day && month && year ? `${day}.${month}.${year}` : '';
+}
+
+/** Sözleşme ayrıntısındaki satır: "Tek senet (vade 05.06.2027)" / "Her taksit için ayrı" / "Senet yok (peşin)". */
+export function promissoryText(detail = {}) {
+  const payment = detail.payment || {};
+  const rows = payment.installments || [];
+  if (payment.mode === 'cash' || (payment.mode && !rows.length)) return 'Senet yok (peşin)';
+  if (detail.promissoryMode === 'single') {
+    const due = detail.promissoryDueOn || rows[rows.length - 1]?.dueOn || '';
+    return due ? `Tek senet (vade ${trDate(due)})` : 'Tek senet';
+  }
+  return 'Her taksit için ayrı';
+}
+
+/**
+ * "Senet türünü değiştir" (A8 `promissory: {mode, dueOn}`). Gerekçe 3–200 zorunlu; tek senette vade zorunlu;
+ * değişiklik yoksa hata. Dönüş: {body} | {error}.
+ */
+export function promissoryReviseBody({ reason = '', mode = 'per_installment', dueOn = '', current = {} } = {}) {
+  const text = String(reason || '').trim();
+  if (!PROMISSORY_MODES[mode]) return { error: 'Senet türünü seçin.' };
+  if (mode === 'single' && !dueOn) return { error: 'Tek senedin vadesini girin.' };
+  const before = { mode: current.mode || 'per_installment', dueOn: current.mode === 'single' ? current.dueOn || '' : '' };
+  const after = { mode, dueOn: mode === 'single' ? dueOn : '' };
+  if (before.mode === after.mode && before.dueOn === after.dueOn) return { error: 'Değişiklik yok.' };
+  if (text.length < 3) return { error: 'Gerekçe en az 3 karakter olmalı.' };
+  if (text.length > 200) return { error: 'Gerekçe en çok 200 karakter.' };
+  const promissory = { mode };
+  if (mode === 'single') promissory.dueOn = dueOn;
+  return { body: { reason: text, promissory } };
+}
+
+// ------------------------------------------------------------------ ÖZEL DERS (taslak "EK — ÖZEL DERS")
+
+export const PRIVATE_LESSON = 'ÖZEL DERS';
+export const GROUP_LESSON = 'GRUP DERSİ';
+
+/** Türkçe büyük harf + tek boşluk (katalog adı eşleştirme). */
+export function nameKey(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ').toLocaleUpperCase('tr');
+}
+
+/** Saatlik satır mı (birim "saat")? Etiketler "Ders saati" / "Saat ücreti" olur. */
+export function isHourly(line = {}) {
+  return String(line.unit || '').trim().toLocaleLowerCase('tr') === 'saat';
+}
+
+/** Satırın miktar / birim fiyat etiketleri. */
+export function lineLabels(line = {}) {
+  return isHourly(line) ? { quantity: 'Ders saati', unitPrice: 'Saat ücreti' } : { quantity: 'Miktar', unitPrice: 'Birim fiyat' };
+}
+
+/** "ÖZEL DERS — Matematik" (ders boşsa yalnız "ÖZEL DERS"); en çok 120 karakter. */
+export function privateLessonName(lesson = '') {
+  const subject = String(lesson || '').trim().replace(/\s+/g, ' ');
+  return (subject ? `${PRIVATE_LESSON} — ${subject}` : PRIVATE_LESSON).slice(0, 120);
+}
+
+/** Katalogdaki "ÖZEL DERS" hizmeti (etkin). */
+export function privateLessonService(services = []) {
+  return (services || []).find((item) => item && item.active !== false && nameKey(item.name) === PRIVATE_LESSON) || null;
+}
+
+/**
+ * "Özel ders ekle": {category: education, name: "ÖZEL DERS[ — ders]", unit: "saat"}; katalogda "ÖZEL DERS" varsa
+ * onun fiyatı (ve kimliği) önerilir. `lesson` yalnız ekranda tutulur (gövdeye gitmez; ad ondan kurulur).
+ */
+export function privateLessonLine(services = [], lesson = '') {
+  const service = privateLessonService(services);
+  return {
+    ...lineFromService(service),
+    category: service?.category || 'education',
+    name: privateLessonName(lesson),
+    unit: 'saat',
+    privateLesson: true,
+    lesson: String(lesson || ''),
+  };
+}
+
+/** Özel ders satırının dersi değişti: ad yeniden kurulur. */
+export function setLesson(line, lesson) {
+  line.lesson = String(lesson || '');
+  line.name = privateLessonName(line.lesson);
+  return line;
+}
+
+/** Hizmet kataloğu boşken / eksikken önerilenler (tek tık ekle; kategori Eğitim, birim Saat). */
+export const SUGGESTED_SERVICES = [
+  { name: GROUP_LESSON, category: 'education', unit: 'Saat' },
+  { name: PRIVATE_LESSON, category: 'education', unit: 'Saat' },
+];
+
+/** Katalogda olmayan öneriler (ad Türkçe büyük harfle karşılaştırılır). */
+export function missingSuggestions(services = []) {
+  const have = new Set((services || []).map((item) => nameKey(item?.name)));
+  return SUGGESTED_SERVICES.filter((item) => !have.has(nameKey(item.name)));
 }
 
 /**
@@ -324,6 +474,14 @@ export function duePastPayments(state, today) {
 /** Sihirbaz durumu → `ContractDraft` (ortak `draftBody`; özel hususlar satır satır, en çok 20). */
 export function buildDraft(state) {
   const body = draftBody(state);
+  // Senet seçimi yalnız taksitli ödemede (peşinde senet yok). Tek senette vade = seçilen (yoksa son taksit).
+  if (hasPromissory(state)) {
+    body.promissoryMode = state.promissoryMode === 'single' ? 'single' : 'per_installment';
+    if (body.promissoryMode === 'single') {
+      const rows = state.payment.installments;
+      body.promissoryDueOn = state.promissoryDueOn || rows[rows.length - 1]?.dueOn || null;
+    }
+  }
   if (body.specialClauses) body.specialClauses = body.specialClauses.slice(0, MAX_SPECIAL).map((item) => item.slice(0, 1000));
   if (body.existingSigned && !body.existingSigned.signedOn) body.existingSigned.signedOn = state.contractDate;
   return body;
@@ -335,6 +493,12 @@ export function buildDraft(state) {
  */
 export function readiness(state, { today, existing = [] } = {}) {
   const errors = validateDraft(state, { today });
+  if (hasPromissory(state) && state.promissoryMode === 'single') {
+    if (!state.promissoryDueOn) errors.push({ section: 'payment', field: 'promissoryDueOn', message: 'Tek senedin vadesini girin.' });
+    else if (state.contractDate && state.promissoryDueOn < state.contractDate) {
+      errors.push({ section: 'payment', field: 'promissoryDueOn', message: 'Senet vadesi sözleşme tarihinden önce olamaz.' });
+    }
+  }
   const same = sameYearContract(existing, state.academicYear);
   if (same) {
     errors.push({ section: 'contract', field: 'academicYear', message: `Bu öğrencinin ${state.academicYear} için geçerli `

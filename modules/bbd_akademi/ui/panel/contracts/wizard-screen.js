@@ -575,8 +575,19 @@ function buildScreen(app, spec, done) {
       refresh();
       table.querySelector('.ak-wz-row:last-child select, .ak-wz-row:last-child input')?.focus();
     } });
-    made.content.append(table, h('div', 'ak-wz-tools'), totals);
-    made.content.children[1].append(add);
+    // ÖZEL DERS (taslak "EK — ÖZEL DERS"): ders saati × saat ücreti; birden çok ders (Matematik, Fizik …) eklenebilir.
+    const addLesson = button('+ Özel ders ekle', { variant: 'ghost',
+      title: 'ÖZEL DERS satırı (birim saat): ders saati × saat ücreti. Katalogda "ÖZEL DERS" varsa fiyatı gelir.',
+      onClick: () => {
+        if (state.lines.length >= W.MAX_LINES) return;
+        state.lines.push(W.privateLessonLine(services));
+        made.paint();
+        refresh();
+        table.querySelector('.ak-wz-row:last-child [data-field="lesson"]')?.focus();
+      } });
+    const tools = h('div', 'ak-wz-tools');
+    tools.append(add, addLesson);
+    made.content.append(table, tools, totals);
     const rowTotals = [];
 
     made.paint = () => {
@@ -594,14 +605,21 @@ function buildScreen(app, spec, done) {
       const nameCell = h('div', 'ak-wz-name');
       const name = textInput(line.name, (value) => { line.name = value; refresh(); },
         { placeholder: 'Hizmet adı (ör. GRUP DERSİ)', aria: `${index + 1}. satır hizmet adı`, key: 'name' });
-      if (services.length) {
+      const labels = W.lineLabels(line);
+      if (line.privateLesson) {
+        // "ÖZEL DERS — Matematik": ders isteğe bağlı; ad ondan kurulur (belgeye bu ad yazılır).
+        const lesson = textInput(line.lesson || '', (value) => { W.setLesson(line, value); refresh(); },
+          { placeholder: 'Ders (ör. Matematik)', max: 60, aria: `${index + 1}. satır özel ders — ders`, key: 'lesson' });
+        nameCell.append(h('b', 'ak-wz-pl', W.PRIVATE_LESSON), lesson);
+      } else if (services.length) {
         const options = [['', '— Serbest satır —'], ...services.map((item) => [item.id, item.name])];
         const pick = selectOf(options, line.serviceId || '', (value) => {
           const service = services.find((item) => item.id === value) || null;
           const keep = { quantity: line.quantity, scholarshipPercent: line.scholarshipPercent,
             discountPercent: line.discountPercent, extraDiscountMinor: line.extraDiscountMinor };
-          Object.assign(line, lineFromService(service), keep);
+          Object.assign(line, lineFromService(service), keep, { privateLesson: false, lesson: '' });
           if (!service) line.name = '';
+          if (service && W.nameKey(service.name) === W.PRIVATE_LESSON) Object.assign(line, { privateLesson: true, lesson: '' });
           made.paint();
           refresh();
           table.children[index + 1]?.querySelector(service ? '[data-field="unitPriceMinor"]' : '[data-field="name"]')?.focus();
@@ -609,15 +627,15 @@ function buildScreen(app, spec, done) {
         nameCell.append(pick);
         name.hidden = Boolean(line.serviceId);
       }
-      nameCell.append(name);
+      if (!line.privateLesson) nameCell.append(name);
       const category = selectOf(Object.entries(MEB_FEE_CATEGORIES), line.category, (value) => {
         line.category = value;
         refresh();
       }, { aria: `${index + 1}. satır tür` });
       const unit = moneyInput(line.unitPriceMinor, (value) => { line.unitPriceMinor = value; refresh(); },
-        { key: 'unitPriceMinor', aria: `${index + 1}. satır birim fiyat` });
+        { key: 'unitPriceMinor', aria: `${index + 1}. satır ${labels.unitPrice.toLocaleLowerCase('tr')}` });
       const qty = textInput(line.quantity, (value) => { line.quantity = value.trim(); refresh(); },
-        { mode: 'decimal', max: 8, aria: `${index + 1}. satır miktar`, key: 'quantity' });
+        { mode: 'decimal', max: 8, aria: `${index + 1}. satır ${labels.quantity.toLocaleLowerCase('tr')}`, key: 'quantity' });
       const burs = textInput(line.scholarshipPercent, (value) => { line.scholarshipPercent = value.trim() || '0'; refresh(); },
         { mode: 'decimal', max: 6, aria: `${index + 1}. satır burs yüzdesi`, key: 'scholarshipPercent' });
       const pct = textInput(line.discountPercent, (value) => { line.discountPercent = value.trim() || '0'; refresh(); },
@@ -633,7 +651,14 @@ function buildScreen(app, spec, done) {
         made.paint();
         refresh();
       });
-      row.append(nameCell, category, unit, qty, burs, pct, extra, total, remove);
+      // Saatlik satırda (birim "saat") etiketler hücrenin üstünde: "Saat ücreti" × "Ders saati".
+      const mini = (text, control) => {
+        if (!W.isHourly(line)) return control;
+        const wrap = h('div', 'ak-wz-mini');
+        wrap.append(h('span', '', text), control);
+        return wrap;
+      };
+      row.append(nameCell, category, mini(labels.unitPrice, unit), mini(labels.quantity, qty), burs, pct, extra, total, remove);
       return row;
     }
 
@@ -653,6 +678,7 @@ function buildScreen(app, spec, done) {
         h('span', '', 'İndirim: '), h('b', '', W.moneyText(sum.discountMinor)),
         h('span', '', 'Sözleşme tutarı: '), h('b', '', W.moneyText(sum.totalMinor)));
       add.disabled = state.lines.length >= W.MAX_LINES;
+      addLesson.disabled = add.disabled;
     };
     made.paint();
     return made;
@@ -665,7 +691,8 @@ function buildScreen(app, spec, done) {
     const tools = h('div', 'ak-wz-tools');
     const table = h('div', 'ak-wz-table ak-wz-inst');
     table.dataset.enterSkip = '1';
-    made.content.append(headSlot, tools, table);
+    const promSlot = h('div', 'ak-wz-prom');
+    made.content.append(headSlot, promSlot, tools, table);
     let rowDestroyers = [];
     const methodOptions = Object.entries(INSTALLMENT_METHODS);
 
@@ -822,12 +849,67 @@ function buildScreen(app, spec, done) {
       });
     }
 
+    // TEK SENET (taslak "EK — TEK SENET"): taksitli ödemede açık soru; tek senette vade (vars. son taksit, izler).
+    let promDue = null;
+    let promInfo = null;
+    const promDestroyers = [];
+    function paintPromissory() {
+      promDestroyers.splice(0).forEach((fn) => fn());
+      promSlot.replaceChildren();
+      promDue = null;
+      const row = h('div', 'ak-wz-radios');
+      row.setAttribute('role', 'radiogroup');
+      row.setAttribute('aria-label', 'Senet');
+      row.append(h('span', 'ak-wz-sec-hint', 'Senet:'));
+      for (const [value, label] of Object.entries(W.PROMISSORY_MODES)) {
+        const option = h('label', 'ak-wz-radio');
+        const radio = h('input');
+        radio.type = 'radio';
+        radio.name = `ak-wz-prom-${sessionKey}`;
+        radio.value = value;
+        radio.checked = state.promissoryMode === value;
+        radio.dataset.field = `promissory.${value}`;
+        radio.addEventListener('change', () => {
+          if (!radio.checked) return;
+          W.setPromissory(state, { mode: value });
+          paintPromissory();
+          refresh();
+          if (value === 'single') promSlot.querySelector('[data-field="promissoryDueOn"] input')?.focus();
+        });
+        option.append(radio, h('span', '', label));
+        row.append(option);
+      }
+      promSlot.append(row);
+      if (state.promissoryMode === 'single') {
+        promDue = dateField({ value: state.promissoryDueOn || '', label: 'Senet vadesi', onChange: (iso) => {
+          W.setPromissory(state, { dueOn: iso });
+          refresh();
+        } });
+        promDestroyers.push(() => promDue.destroy());
+        const grid = h('div', 'ak-wz-grid');
+        grid.append(field('Senet vadesi', promDue, { key: 'promissoryDueOn' }));
+        promSlot.append(grid);
+      }
+      promInfo = h('div', 'ak-wz-sec-hint');
+      promSlot.append(promInfo);
+    }
+    cleanup.push(() => promDestroyers.splice(0).forEach((fn) => fn()));
+
     made.paint = () => {
       paintHead();
+      paintPromissory();
       paintRows();
     };
     made.update = () => {
       const payment = state.payment;
+      promSlot.hidden = !W.hasPromissory(state);
+      if (promInfo) {
+        const info = W.promissoryInfo(state);
+        promInfo.textContent = state.promissoryMode === 'single' && info.count
+          ? `${info.text} — taksitlerin toplamı (peşinat hariç), vade ${fmtDate(state.promissoryDueOn)}.`
+          : `${info.text} — her taksit için bir senet (peşinat hariç).`;
+      }
+      if (promDue && state.promissoryDueLinked && promDue.get() !== state.promissoryDueOn) promDue.set(state.promissoryDueOn);
       if (payment.locked) return;
       const { diffMinor } = W.paymentDiff(state);
       splitBtn.disabled = payment.auto && !diffMinor;
@@ -1006,6 +1088,7 @@ function buildScreen(app, spec, done) {
       h('span', '', state.payment.mode === 'cash' ? 'Ödeme' : 'Peşinat + taksitler'), h('b', '', W.moneyText(totals.paidMinor)),
       badge(diff.text, diff.tone),
     );
+    if (W.hasPromissory(state)) sumLine.append(h('span', '', `Senet: ${W.promissoryInfo(state).text}`));
     const blocked = totals.contractMinor <= 0 || totals.diffMinor !== 0;
     for (const node of [confirmBtn, printBtn]) {
       node.disabled = busy || blocked;

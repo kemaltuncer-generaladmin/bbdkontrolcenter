@@ -48,3 +48,8 @@
 .ak-ct-item-tools { display: inline-flex; flex-direction: column; gap: 2px; }
 .ak-ct-special { width: 100%; resize: vertical; }
 .ak-ct-guardian { width: min(560px, 94vw); }
+
+/* "Senet türünü değiştir" penceresi (tek senet / her taksit). */
+.ak-ct-prom { display: grid; gap: 6px; }
+.ak-ct-prom-option { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; cursor: pointer; }
+.ak-ct-prom-due { display: grid; gap: 4px; max-width: 240px; }

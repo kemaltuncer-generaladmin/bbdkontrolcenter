@@ -168,6 +168,58 @@ out.exists = w.serverProblem({ code: 'contract_exists', details: { contractId: '
 out.mismatch = w.serverProblem({ code: 'contract_totals_mismatch', details: { expectedMinor: 16200000, actualMinor: 16100000 } },
   s.contractProblem({ code: 'contract_totals_mismatch' }));
 out.passthrough = w.serverProblem({ code: 'contract_number_taken' }, s.contractProblem({ code: 'contract_number_taken' }));
+
+// TEK SENET: varsayılan her taksit; tek senette vade son taksiti izler (elle değişene dek); peşinde senet yok
+const pn = w.initialState({ source: 'existing', today: '2026-01-31', party, services: [service] });
+pn.lines[0].quantity = '10'; pn.lines[0].scholarshipPercent = '10';
+w.setDownPayment(pn, { amountMinor: 2000001 });
+out.promDefault = { mode: pn.promissoryMode, body: w.buildDraft(pn).promissoryMode, due: w.buildDraft(pn).promissoryDueOn ?? null,
+  info: w.promissoryInfo(pn).text };
+w.setPromissory(pn, { mode: 'single' });
+out.promSingle = { body: w.buildDraft(pn).promissoryMode, due: w.buildDraft(pn).promissoryDueOn, info: w.promissoryInfo(pn) };
+w.setPayment(pn, { count: 10 });
+out.promFollows = w.buildDraft(pn).promissoryDueOn;
+w.setPromissory(pn, { dueOn: '2027-06-05' });
+w.setPayment(pn, { count: 4 });
+out.promManual = { due: w.buildDraft(pn).promissoryDueOn, linked: pn.promissoryDueLinked };
+w.setPromissory(pn, { dueOn: '2025-01-01' });
+out.promEarly = w.readiness(pn, { today: '2026-01-31' }).errors.map((e) => e.field);
+w.setPayment(pn, { mode: 'cash' });
+const cashBody = w.buildDraft(pn);
+out.promCash = { mode: cashBody.promissoryMode ?? null, due: cashBody.promissoryDueOn ?? null, info: w.promissoryInfo(pn).text };
+out.promText = [
+  w.promissoryText({ promissoryMode: 'single', promissoryDueOn: '2027-06-05', payment: { mode: 'installment', installments: [{ dueOn: '2027-05-05' }] } }),
+  w.promissoryText({ promissoryMode: 'single', payment: { mode: 'installment', installments: [{ dueOn: '2027-05-05' }] } }),
+  w.promissoryText({ promissoryMode: 'per_installment', payment: { mode: 'installment', installments: [{}] } }),
+  w.promissoryText({ payment: { mode: 'cash', installments: [] } }),
+];
+out.promRevise = [
+  w.promissoryReviseBody({ reason: 'Veli istedi', mode: 'single', dueOn: '2027-06-05', current: { mode: 'per_installment' } }),
+  w.promissoryReviseBody({ reason: 'Veli istedi', mode: 'per_installment', current: { mode: 'per_installment' } }),
+  w.promissoryReviseBody({ reason: 'x', mode: 'single', dueOn: '2027-06-05', current: {} }),
+  w.promissoryReviseBody({ reason: 'Veli istedi', mode: 'single', dueOn: '', current: {} }),
+  w.promissoryReviseBody({ reason: 'Ayrı senet', mode: 'per_installment', current: { mode: 'single', dueOn: '2027-06-05' } }),
+];
+
+// ÖZEL DERS: 40 saat × 1.500 TL = 60.000 TL; ad "ÖZEL DERS — Matematik"; katalog fiyatı önerilir
+const lessonSvc = { id: 's9', name: 'Özel Ders', category: 'education', unit: 'Saat', unitPriceMinor: 150000, active: true };
+const pl = w.privateLessonLine([service, lessonSvc], '');
+pl.quantity = '40';
+out.private = { total: s.lineTotals(pl), name: pl.name, unit: pl.unit, serviceId: pl.serviceId, labels: w.lineLabels(pl),
+  hourlyCatalog: w.isHourly({ unit: 'Saat' }), plainLabels: w.lineLabels({ unit: 'ay' }) };
+w.setLesson(pl, '  Matematik  ');
+out.privateName = pl.name;
+w.setLesson(pl, '');
+out.privateEmpty = pl.name;
+const bare = w.privateLessonLine([], 'Fizik');
+out.privateBare = { name: bare.name, unit: bare.unit, price: bare.unitPriceMinor, category: bare.category };
+const pd = w.initialState({ source: 'existing', today: '2026-01-31', party, services: [service] });
+pd.lines = [w.setLesson(Object.assign(w.privateLessonLine([lessonSvc]), { quantity: '40' }), 'Matematik'),
+  Object.assign(w.privateLessonLine([lessonSvc], 'Fizik'), { quantity: '10' })];
+w.applyAuto(pd);
+out.privateDraft = w.buildDraft(pd).lines;
+out.suggest = [w.missingSuggestions([]).map((i) => i.name), w.missingSuggestions([{ name: 'grup dersi' }]).map((i) => i.name),
+  w.missingSuggestions([{ name: 'GRUP DERSİ' }, lessonSvc]).length];
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -314,6 +366,43 @@ def test_kayit_seti_ve_olay_ayrintisi(logic: dict[str, Any]) -> None:
     assert logic["money"] == ["0,00 ₺", "0,05 ₺", "1.234.567,89 ₺", "-1,50 ₺"]
 
 
+def test_tek_senet_varsayilan_ve_govde(logic: dict[str, Any]) -> None:
+    assert logic["promDefault"] == {"mode": "per_installment", "body": "per_installment", "due": None, "info": "8 senet"}
+    single = logic["promSingle"]
+    assert single["body"] == "single" and single["due"] == "2026-09-28"           # son (8.) taksitin vadesi
+    assert single["info"]["count"] == 1 and single["info"]["amountMinor"] == 16200000 - 2000001
+    assert single["info"]["text"] == "1 senet, 141.999,99 ₺"
+    assert logic["promFollows"] == "2026-11-28"                                    # sayı 10 → son vade izler
+    assert logic["promManual"] == {"due": "2027-06-05", "linked": False}         # elle vade izlemeyi bırakır
+    assert "promissoryDueOn" in logic["promEarly"]                                # sözleşme tarihinden önce olamaz
+    assert logic["promCash"] == {"mode": None, "due": None, "info": "Senet yok (peşin ödeme)"}
+    assert logic["promText"] == ["Tek senet (vade 05.06.2027)", "Tek senet (vade 05.05.2027)", "Her taksit için ayrı",
+                                 "Senet yok (peşin)"]
+    revise = logic["promRevise"]
+    assert revise[0] == {"body": {"reason": "Veli istedi", "promissory": {"mode": "single", "dueOn": "2027-06-05"}}}
+    assert revise[1] == {"error": "Değişiklik yok."}
+    assert "Gerekçe" in revise[2]["error"]
+    assert "vadesini" in revise[3]["error"]
+    assert revise[4] == {"body": {"reason": "Ayrı senet", "promissory": {"mode": "per_installment"}}}
+
+
+def test_ozel_ders_satiri(logic: dict[str, Any]) -> None:
+    private = logic["private"]
+    assert private["total"]["amountMinor"] == 6000000 and private["total"]["totalMinor"] == 6000000   # 40 × 1.500 TL
+    assert private["name"] == "ÖZEL DERS" and private["unit"] == "saat" and private["serviceId"] == "s9"
+    assert private["labels"] == {"quantity": "Ders saati", "unitPrice": "Saat ücreti"}
+    assert private["hourlyCatalog"] is True
+    assert private["plainLabels"] == {"quantity": "Miktar", "unitPrice": "Birim fiyat"}
+    assert logic["privateName"] == "ÖZEL DERS — Matematik"
+    assert logic["privateEmpty"] == "ÖZEL DERS"
+    assert logic["privateBare"] == {"name": "ÖZEL DERS — Fizik", "unit": "saat", "price": None, "category": "education"}
+    lines = logic["privateDraft"]
+    assert [line["name"] for line in lines] == ["ÖZEL DERS — Matematik", "ÖZEL DERS — Fizik"]
+    assert all("lesson" not in line and "privateLesson" not in line for line in lines)     # yalnız ekran alanı
+    assert lines[0]["unit"] == "saat" and lines[0]["quantity"] == 40 and lines[0]["unitPriceMinor"] == 150000
+    assert logic["suggest"] == [["GRUP DERSİ", "ÖZEL DERS"], ["ÖZEL DERS"], 0]
+
+
 def test_ayni_yil_ve_sunucu_hatalari(logic: dict[str, Any]) -> None:
     assert logic["sameYear"] == ["academicYear"]
     assert logic["otherYear"] is True
@@ -391,6 +480,23 @@ export default async function ({ document, sleep, api, load }) {
   [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Eşit böl').click();
   await sleep(10);
   out.enabledAfterSplit = !confirm.disabled;
+  // özel ders: + Özel ders ekle → ders, saat ücreti, ders saati (etiketler saatlik); toplam canlı, taksitler yeniden bölünür
+  [...dialog.querySelectorAll('button')].find((b) => b.textContent === '+ Özel ders ekle').click();
+  await sleep(10);
+  const lessonRow = [...dialog.querySelectorAll('.ak-wz-lines .ak-wz-row')].at(-1);
+  type(lessonRow.querySelector('[data-field="lesson"]'), 'Matematik');
+  type(lessonRow.querySelector('[data-field="unitPriceMinor"]'), '1.500');
+  type(lessonRow.querySelector('[data-field="quantity"]'), '40');
+  await sleep(10);
+  out.lessonLabels = [...lessonRow.querySelectorAll('.ak-wz-mini > span')].map((n) => n.textContent);
+  out.lessonTotal = lessonRow.querySelector('.ak-wz-total').textContent;
+  // tek senet: radyo → vade alanı (son taksit), alt şeritte senet bilgisi
+  const single = dialog.querySelector('[data-field="promissory.single"]');
+  single.checked = true;
+  fire(single, 'change');
+  await sleep(10);
+  out.promDue = dialog.querySelector('[data-field="promissoryDueOn"] input')?.value || '';
+  out.sumAfter = dialog.querySelector('.ak-wz-sum').textContent;
   confirm.click();
   await sleep(60);
   const post = sent.filter((p) => p.method === 'POST' && p.path.endsWith('/contracts'));
@@ -456,7 +562,16 @@ def test_ekran_mevcut_ogrenci_tek_onay_ve_yeni_ogrenci_adimi() -> None:
     assert body["payerGuardianSlot"] == 1
     assert body["lines"][0]["quantity"] == 10 and body["lines"][0]["scholarshipPercent"] == 10
     assert body["payment"]["downPayment"]["amountMinor"] == 2000000
-    assert sum(row["amountMinor"] for row in body["payment"]["installments"]) == 16200000 - 2000000
+    assert sum(row["amountMinor"] for row in body["payment"]["installments"]) == 16200000 + 6000000 - 2000000
+    assert body["lines"][1] == {"category": "education", "name": "ÖZEL DERS — Matematik", "unitPriceMinor": 150000,
+                                "quantity": 40, "scholarshipPercent": 0, "discountPercent": 0, "extraDiscountMinor": 0,
+                                "unit": "saat"}
+    assert out["lessonLabels"] == ["Saat ücreti", "Ders saati"]
+    assert out["lessonTotal"] == "60.000,00 ₺"
+    assert body["promissoryMode"] == "single"
+    assert body["promissoryDueOn"] == body["payment"]["installments"][-1]["dueOn"]
+    assert out["promDue"] == ".".join(reversed(body["promissoryDueOn"].split("-")))
+    assert "Senet: 1 senet, 202.000,00 ₺" in out["sumAfter"]
     assert out["key"].startswith("km-ctr-")
     assert out["closed"] is True
     assert out["changes"] == [{"contractId": "ctr-1", "studentId": "33333333-3333-4333-8333-333333333333",
