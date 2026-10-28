@@ -39,7 +39,8 @@ import { mountRecord } from './record.js';
 import {
   EXAM_CHOICES, GRADE_CHOICES, TRACK_CHOICES, parseChoice,
 } from './curriculum.js';
-import { cleanPhone } from './guardian-model.js';
+import { RELATIONS, cleanPhone } from './guardian-model.js';
+import * as IDM from './identity-model.js';
 
 const BASE = '/api/bbd_students';
 
@@ -174,7 +175,8 @@ function createManager(root, options) {
   nodes.flagFilter = h('select', 'st-input st-select');
   nodes.flagFilter.setAttribute('aria-label', 'Süzgeç');
   for (const [value, label] of [['', 'Tümü'], ['debt', 'Borçlu'], ['blocked', 'Engelli'],
-    ['unclassed', 'Sınıfsız'], ['noguardian', 'Velisi girilmemiş'], ['pending', 'Kantine iletilemeyen'],
+    ['unclassed', 'Sınıfsız'], ['noguardian', 'Velisi girilmemiş'],
+    ['contract', 'Sözleşme bilgisi eksik'], ['pending', 'Kantine iletilemeyen'],
     ['draft', 'Kasadan eklenen']]) {
     nodes.flagFilter.append(new Option(label, value));
   }
@@ -333,6 +335,8 @@ function createManager(root, options) {
     if (filters.flag === 'debt' && Number(student.balance) <= 0) return false;
     if (filters.flag === 'unclassed' && classNamesOf(student).length) return false;
     if (filters.flag === 'noguardian' && (student.guardians || []).some((row) => cleanPhone(row.phone))) return false;
+    // Sözleşme / senet için zorunlu kimlik bilgisi eksik (göç 014; sunucu `contractMissing`).
+    if (filters.flag === 'contract' && !(student.contractMissing || []).length) return false;
     if (filters.text) {
       const needle = filters.text.toLocaleLowerCase('tr');
       const phones = (student.guardians || []).map((row) => row.phone).join(' ');
@@ -455,6 +459,11 @@ function createManager(root, options) {
       if (student.source === 'canteen') {
         const badge = h('i', 'st-badge st-badge-draft', 'kasadan eklendi');
         badge.title = 'Kasadan eklendi — bilgileri tamamla.';
+        item.append(badge);
+      }
+      if ((student.contractMissing || []).length && student.status !== 'inactive') {
+        const badge = h('i', 'st-badge st-badge-soft', 'sözleşme bilgisi eksik');
+        badge.title = `Eksik: ${student.contractMissing.join(', ')} — kartta “Kimlik ve adres”ten tamamlayın.`;
         item.append(badge);
       }
       item.addEventListener('click', () => select(student));
@@ -725,9 +734,57 @@ function createManager(root, options) {
     const phone = input('Veli telefonu (birincil veli)', '+90 5xx xxx xx xx', 24);
     const grid = h('div', 'st-lc-grid');
     grid.append(first.wrap, last.wrap, klass.wrap, phone.wrap);
+    // Sözleşme kimliği (göç 014) — İSTEĞE BAĞLI, kapalı gelir: kayıt akışını yavaşlatmaz.
+    // Doldurulan alanlar öğrenciyle AYNI işlemde yazılır; boş bırakılan sonra kartta tamamlanır.
+    const more = h('details', 'st-id-new');
+    more.append(h('summary', null, 'Kimlik ve adres (sözleşme için) — isteğe bağlı'));
+    const choose = (label, choices) => {
+      const wrap = h('label', 'st-field');
+      const node = h('select', 'kit-input st-input st-select');
+      for (const [value, text] of choices) node.append(new Option(text, value));
+      wrap.append(h('span', 'st-label', label), node);
+      return { wrap, node };
+    };
+    const id = {
+      tc: input('Öğrenci TC kimlik no', '11 hane', 11),
+      foreign: input('Pasaport / yabancı kimlik no', '', 20),
+      birth: input('Doğum tarihi', 'GG.AA.YYYY', 10),
+      gender: choose('Cinsiyet', IDM.GENDERS),
+      line: input('Adres — açık adres', 'Mahalle, cadde/sokak, no', 250),
+      district: input('İlçe', 'Selçuklu', 60),
+      city: input('İl', 'Konya', 60),
+      mother: input('Anne adı', '', 80),
+      father: input('Baba adı', '', 80),
+      parent: input('Birincil veli ad soyad (yasal)', 'Nüfus kaydındaki gibi', 80),
+      relation: choose('Yakınlık', RELATIONS),
+      parentTc: input('Veli TC kimlik no', '11 hane', 11),
+    };
+    for (const key of ['tc', 'parentTc', 'birth']) id[key].node.inputMode = 'numeric';
+    id.district.node.setAttribute('list', 'st-id-districts-new');
+    id.city.node.setAttribute('list', 'st-id-cities-new');
+    const lists = h('div');
+    for (const [listId, names] of [['st-id-districts-new', IDM.KONYA_DISTRICTS], ['st-id-cities-new', IDM.CITIES]]) {
+      const list = h('datalist');
+      list.id = listId;
+      for (const name of names) list.append(new Option(name, name));
+      lists.append(list);
+    }
+    const sameHome = h('label', 'st-field st-field-inline');
+    const sameBox = h('input');
+    sameBox.type = 'checkbox';
+    sameBox.checked = true;
+    sameHome.append(sameBox, h('span', 'st-label', 'Velinin ev adresi öğrencininkiyle aynı'));
+    const idGrid = h('div', 'st-lc-grid');
+    idGrid.append(id.tc.wrap, id.foreign.wrap, id.birth.wrap, id.gender.wrap, id.mother.wrap, id.father.wrap);
+    const addrGrid = h('div', 'st-lc-grid');
+    addrGrid.append(id.district.wrap, id.city.wrap);
+    const parentGrid = h('div', 'st-lc-grid');
+    parentGrid.append(id.parent.wrap, id.relation.wrap, id.parentTc.wrap);
+    more.append(idGrid, id.line.wrap, addrGrid, h('p', 'st-subhead', 'Birincil veli'), parentGrid, sameHome, lists);
+    id.line.wrap.classList.add('st-field-wide');
     const error = h('div', 'kit-dialog-error');
     error.setAttribute('role', 'alert');
-    card.append(grid, error);
+    card.append(grid, more, error);
     let release = () => {};
     const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); release(); };
     const submit = async () => {
@@ -739,11 +796,23 @@ function createManager(root, options) {
         if (!number) { error.textContent = 'Veli telefonu cep numarası olmalı (+90 5xx xxx xx xx).'; return; }
         body.parentPhone = number;
       }
+      const identity = newIdentity(id, sameBox.checked, Boolean(body.parentPhone));
+      if (identity.error) { error.textContent = identity.error; more.open = true; return; }
+      if (id.parent.node.value.trim()) body.parentName = id.parent.node.value.trim().replace(/\s+/g, ' ');
+      if (id.relation.node.value) body.parentRelation = id.relation.node.value;
+      if (identity.body) body.identity = identity.body;
       go.disabled = true;
       try {
         const result = await api(`${BASE}/students`, { method: 'POST', body });
         close();
         toast(result?.warning || 'Öğrenci eklendi.');
+        // Kayıt sonrası adım (80-km-sozlesme "Kayıt ve ödeme planı" sihirbazı) bunu dinler.
+        // `studentId` = `externalId` = KM öğrenci kimliği (`STU-…`, Akademi `externalRef`).
+        try {
+          window.dispatchEvent(new CustomEvent('bbd-students:created', { detail: {
+            studentId: result.kantinId, externalId: result.kantinId,
+            displayName: `${body.firstName} ${body.lastName}`.trim() } }));
+        } catch { /* olay yayınlanamasa da kayıt tamamdır */ }
         selectedId = result.kantinId;
         await refresh();
         const added = students.find((student) => student.kantinId === result.kantinId);
@@ -764,6 +833,37 @@ function createManager(root, options) {
     view.append(overlay);
     release = dialogA11y(card);
     first.node.focus();
+  }
+
+  /**
+   * "Yeni öğrenci" penceresinin isteğe bağlı kimlik bölümü → POST gövdesinin `identity`i.
+   * Boş alan gönderilmez; kural ekranda da denetlenir (sunucu yine doğrular).
+   */
+  function newIdentity(id, sameHome, hasPhone) {
+    const value = (field) => id[field].node.value.trim().replace(/\s+/g, ' ');
+    const student = {};
+    if (value('tc')) student.nationalId = value('tc').replace(/\s+/g, '');
+    if (value('foreign')) student.foreignId = value('foreign');
+    if (value('birth')) student.birthDate = IDM.isoDay(value('birth')) ?? value('birth');
+    if (id.gender.node.value) student.gender = id.gender.node.value;
+    if (value('mother')) student.motherName = value('mother');
+    if (value('father')) student.fatherName = value('father');
+    const address = { line: value('line'), district: value('district'), city: value('city') };
+    if (address.line || address.district || address.city) student.address = address;
+    // Kayıt tarihi = bugün (yerel gün; sözleşmenin "kayıt tarihi"). Kartta değiştirilebilir.
+    const now = new Date();
+    student.registeredOn = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const guardian = { slot: 1 };
+    if (value('parentTc')) guardian.nationalId = value('parentTc').replace(/\s+/g, '');
+    if (sameHome && student.address) guardian.homeAddress = { ...address };
+    const found = IDM.problems({ student: { ...student, birthDate: value('birth') },
+      guardians: guardian.nationalId ? [{ slot: 1, nationalId: guardian.nationalId }] : [] });
+    if (found.length) return { error: found[0].message };
+    if (guardian.nationalId && !hasPhone) return { error: 'Veli TC için önce birincil veli telefonunu yazın.' };
+    const body = {};
+    body.student = student;
+    if (hasPhone && Object.keys(guardian).length > 1) body.guardians = [guardian];
+    return { body: Object.keys(body).length ? body : null };
   }
 
   // ------------------------------------------------------ toplu işlemler

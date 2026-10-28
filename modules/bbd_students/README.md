@@ -89,6 +89,54 @@ velisi olabilir** (kartta "bu telefon X için de veli" notu). Kural tek yerde:
   velinin de uygulama girişi açılır (`appSlots: [1, 2, 3, 4]`; sözleşme
   km-mobile-gateway §1, km-merkezi-senkron §2).
 
+### Kimlik ve adres — sözleşme için (göç 014, iş 80-km-kimlik, 28.10.2026)
+
+Kullanıcı: "eksikleri de ekleriz öğrenciler panelinde düzenleriz", "akademi ile km birebir
+senkron olsun". Kayıt sözleşmesi, MEB formu ve senet BBD Akademi'de basılır; kimlik bilgileri
+KM ana kaydındadır, Akademi aynalar (KM tek merkez). Kural tek yerde: `backend/identity.py`;
+ekranın aynısı `ui/panel/identity-model.js` (Node testli).
+
+- **Alanlar.** Öğrenci: TC kimlik no, pasaport / yabancı kimlik no, doğum tarihi, cinsiyet
+  (`female|male`), kayıt tarihi, okul adı, ev telefonu, adres (açık adres + ilçe + il), anne adı,
+  baba adı. Veli (yuva 1–4): **yasal ad soyad = mevcut veli ad alanı** (ayrı alan yok; ekranda
+  "Ad soyad (yasal, tam)"), TC, yabancı kimlik, meslek, iş telefonu, e-posta, ev adresi, iş adresi.
+  Veli kimliği velinin cep telefonuna bağlıdır: sıra / birincil değişince kişiyle gider, telefonu
+  düzeltilince taşınır, listeden çıkan velinin kimliği silinir.
+- **Doğrulama** (sunucu + ekran anında): TC 11 hane, ilk hane ≠ 0, resmî sağlama (10. ve 11. hane);
+  yabancı kimlik serbest (≤ 20); e-posta biçimi; ev / iş telefonu 10 hane (sabit hat da olur);
+  doğum tarihi geçmişte. Hatalar Türkçe ve alan alan, gönderilen değeri tekrar etmez.
+- **KVKK.** TC / yabancı kimlik ŞİFRELİ (AES-256-GCM; anahtar sır kasasında
+  `bbd_students.identity_key`, ilk kullanımda üretilir; kasa yoksa TC yazılamaz, düz metne
+  düşülmez). Listede yalnız maske (`*******0146`, son 4 hane ayrı tutulur — şifre çözülmez);
+  tam hâli yalnız tek öğrencinin düzenleme okumasında `bbd_students.manage` ile. Log / hata /
+  olay yüküne TC yazılmaz. Denetim izi `mod_bbd_students_identity_log` (kim, ne zaman, hangi
+  alanlar — değer yok).
+- **Uçlar.** `GET /students/{id}/identity` (`view`; TC tam yalnız `manage`) →
+  `{student, guardians[], missing[], updatedAt, revealed, suggestions{motherName, fatherName},
+  cipherError}`; `PUT /students/{id}/identity` (`manage`) `{student?: {...}, guardians?:
+  [{slot, phone, ...}]}` — yalnız verilen anahtar değişir, `null` temizler; 422 alan alan,
+  409 `guardians_changed`, 503 kasa yok. `POST /students` aynı şekilde `identity` (isteğe bağlı,
+  öğrenciyle aynı işlemde). Listede öğrenci başına `nationalIdMasked`, `contractMissing`
+  (eksik zorunlu alan etiketleri — Akademi `MissingField`: öğrenci ad soyad + TC/yabancı kimlik;
+  ödeme sorumlusu veli ad soyad + TC/yabancı kimlik + ev adresi (açık adres + il) + cep. KM'de
+  ödeme sorumlusu henüz seçilmediği için bilgisi tam İLK veli yeter).
+- **Senkron.** Değişiklik revizyonu artırır, `student.updated` (`fields: ["identity"]`; veli adı
+  değiştiyse `guardians`) outbox'a yazılır; Akademi 1–3 sn'de mobil geçidin `identity` bloğundan
+  okur (dizin yeteneği `identities(records)`, geçit izni `mobile_gateway.identity.read`).
+- **Ekran.** Öğrenci kartında **"Kimlik ve adres (sözleşme için)"** bölümü: eksik özeti tek
+  satır, öğrenci alanları, her veli için kimlik satırı ("Öğrencinin adresiyle aynı" tek tık,
+  iş adresi açılır), anne / baba adı velilerden öneri. Tab ile alan alan, Enter kaydeder.
+  "Yeni öğrenci" penceresinde aynı bilgiler **açılır-kapanır, isteğe bağlı** bölümde (kayıt
+  tarihi = bugün kendiliğinden). Listede "Sözleşme bilgisi eksik" süzgeci ve rozeti.
+- **Kayıt olayları (panel → diğer ekranlar).** `window` üzerinde `CustomEvent`:
+  - `bbd-students:created` — "Yeni öğrenci" kaydı başarılı olunca, `detail: {studentId,
+    externalId, displayName}`. 80-km-sozlesme "Kayıt ve ödeme planı" sihirbazını bununla açar.
+  - `bbd-students:updated` — öğrenci kartında her başarılı düzenleme kaydında (alan, veliler,
+    kimlik), aynı `detail`.
+  `studentId` = `externalId` = KM öğrenci kimliği (`STU-…`; Akademi öğrencisinin `externalRef`'i)
+  — Akademi UUID'si DEĞİL; dinleyen ekran Akademi öğrencisini `externalRef` ile bulur (aynalama
+  birkaç saniye sürebilir).
+
 ### Sınıf ve gruplar
 
 **Ana sınıf tektir** (`class_name`: kantin kartı, Akademi sınıfı ve müfredat

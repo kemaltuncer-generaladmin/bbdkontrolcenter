@@ -18,6 +18,12 @@
 //   GET   /api/bbd_students/students/{id}/groups          bbd_students.view
 //   POST  /api/bbd_students/groups/{gid}/members(/end)    bbd_students.groups
 //   …/deactivate · /reactivate {restoreClasses} · DELETE   bbd_students.lifecycle / .delete
+//   GET/PUT /api/bbd_students/students/{id}/identity      .view (TC tam yalnız .manage) / .manage
+//
+// KAYIT OLAYI (iş 80-km-kimlik): her başarılı düzenleme kaydında (alan, veliler, kimlik)
+// `window` üzerinde `bbd-students:updated` yayınlanır — {detail: {studentId, externalId,
+// displayName}}; `studentId` = `externalId` = KM öğrenci kimliği (`STU-…`, Akademi
+// `externalRef`). Sözleşme ekranları (80-km-sozlesme) "Güncel bilgilerle yenile" için dinler.
 //
 // ÇAKIŞMAMA: yalnız DEĞİŞEN alanlar gönderilir (kasa tableti aynı anda başka
 // alanı yazıyorsa onunki korunur). Veliler tam liste olarak gider (sıra =
@@ -42,6 +48,7 @@ import {
 } from './curriculum.js';
 import * as G from './guardian-model.js';
 import { mountControls } from './canteen.js';
+import { mountIdentity } from './identity.js';
 import {
   askDeactivate, askDelete, askReactivate, deleteBlockers, mountStatus, reactivatedMessage,
 } from './lifecycle.js';
@@ -110,6 +117,15 @@ export function mountRecord(host, options) {
   const saving = new Set();    // kaydedilmekte olan alanlar
   const timers = new Set();
   let probeRun = 0;            // en son "Akademi'ye ulaştı" yoklaması
+  let identityPart = null;     // "Kimlik ve adres (sözleşme için)" bölümü (identity.js)
+
+  /** Düzenleme kaydedildi → `bbd-students:updated` (sözleşme ekranları dinler). */
+  function emitUpdated() {
+    try {
+      window.dispatchEvent(new CustomEvent('bbd-students:updated', { detail: {
+        studentId: kantinId, externalId: kantinId, displayName: student?.displayName || '' } }));
+    } catch { /* olay yayınlanamasa da kayıt tamamdır */ }
+  }
 
   const root = h('div', 'st st-rec');
   host.replaceChildren(root);
@@ -305,6 +321,7 @@ export function mountRecord(host, options) {
       announce(`“${fieldLabel(key)}” kaydedildi${result?.canteenSync === 'pending'
         ? ' — kantine iletilemedi, otomatik yeniden denenecek' : ''}.`,
       () => undo(key, before), started);
+      emitUpdated();
       options.onChanged?.(student);
     } catch (failure) {
       showFieldError(key, `Kaydedilemedi: ${failure.message}`);
@@ -494,7 +511,19 @@ export function mountRecord(host, options) {
     }
     canteen.append(accessPart());
 
-    body.append(status, identity, school, people, canteen);
+    // Sözleşme kimliği (göç 014, iş 80-km-kimlik): kayıt sözleşmesi, MEB formu ve senet
+    // Akademi'de bu bilgilerle basılır; Akademi KM'yi 1–3 sn'de aynalar.
+    const contractCard = card('Kimlik ve adres (sözleşme için)', 'Kayıt sözleşmesi, MEB formu ve '
+      + 'senet BBD Akademi\'de bu bilgilerle basılır (senet ödeme sorumlusu veli adına). TC kimlik no '
+      + 'yalnız bu bölümde tam görünür; listelerde maskelidir.');
+    contractCard.classList.add('st-id-card');
+    const contractBox = h('div', 'st-id');
+    contractCard.append(contractBox);
+    identityPart = mountIdentity(contractBox, { api, kantinId, can, toast,
+      onSaved: () => { emitUpdated(); options.onChanged?.(student); } });
+    parts.push(identityPart);
+
+    body.append(status, identity, school, people, contractCard, canteen);
     // Tehlikeli işlemler — EN ALTTA, ayrı (0.5.4): önerilen yol pasifleştirme; kalıcı silme
     // önce ön kontrol (engeller açık Türkçe + ilgili yere bağlantı), sonra ad + PIN ile onay.
     if (can('bbd_students.lifecycle') || can('bbd_students.delete')) body.append(dangerPart());
@@ -701,6 +730,9 @@ export function mountRecord(host, options) {
     paintGuardians();
     paintDirty();
     paintQuick();
+    // Veli listesi değişti: kimlik bölümündeki veli satırları da (yuva / telefon) tazelenir.
+    identityPart?.reload();
+    emitUpdated();
   }
 
   function paintHead() {
@@ -1335,7 +1367,7 @@ export function mountRecord(host, options) {
   reload();
   return {
     reload,
-    dirty: () => dirtyFields().length > 0 || guardiansDirty(),
+    dirty: () => dirtyFields().length > 0 || guardiansDirty() || Boolean(identityPart?.dirty()),
     destroy() {
       destroyed = true;
       for (const timer of timers) clearTimeout(timer);
