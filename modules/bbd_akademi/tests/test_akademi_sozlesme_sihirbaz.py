@@ -27,8 +27,8 @@ ROOT = Path(__file__).resolve().parents[3]
 PANEL = Path(__file__).resolve().parents[1] / "ui" / "panel"
 sys.path.insert(0, str(ROOT / "tools" / "a11y"))
 
-from harness import NodeMissing, run  # noqa: E402
-from modules.bbd_akademi.tests.test_akademi_toplu_kitap import PRELUDE  # noqa: E402
+from harness import NodeMissing, run
+from modules.bbd_akademi.tests.test_akademi_toplu_kitap import PRELUDE
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node kurulu değil")
 
@@ -79,7 +79,12 @@ out.manual = { auto: st.payment.auto, diff: w.paymentDiff(st).diffMinor, text: w
 out.settled = w.settleOnLast(st);
 out.afterSettle = { diff: w.paymentDiff(st).diffMinor, last: st.payment.installments.at(-1).amountMinor };
 w.resplit(st);
-out.resplit = { auto: st.payment.auto, diff: w.paymentDiff(st).diffMinor };
+// tarih alanı odaktan çıkınca AYNI değeri bildirir: eşit bölme bozulmaz
+w.editInstallment(st, 0, { dueOn: st.payment.installments[0].dueOn });
+w.setPayment(st, { firstDue: st.payment.firstDue });
+w.setDownPayment(st, { dueOn: st.payment.downPayment.dueOn });
+out.resplit = { auto: st.payment.auto, diff: w.paymentDiff(st).diffMinor, downLinked: st.payment.downLinked,
+  firstDueLinked: st.payment.firstDueLinked };
 out.over = w.diffText(-12345);
 out.equal = w.diffText(0);
 
@@ -198,7 +203,7 @@ def test_toplam_farki_ve_duzeltmeler(logic: dict[str, Any]) -> None:
     assert logic["manual"]["diff"] == 1774999 - 1000000
     assert logic["manual"]["text"]["tone"] == "bad" and "7.749,99 ₺" in logic["manual"]["text"]["text"]
     assert logic["settled"] is True and logic["afterSettle"]["diff"] == 0
-    assert logic["resplit"] == {"auto": True, "diff": 0}
+    assert logic["resplit"] == {"auto": True, "diff": 0, "downLinked": True, "firstDueLinked": True}
     assert "fazla" in logic["over"]["text"] and "123,45 ₺" in logic["over"]["text"]
     assert logic["equal"]["tone"] == "good"
 

@@ -174,6 +174,7 @@ export function applyAuto(state) {
  * eğitim yılı, eski sözleşmenin imza tarihi.
  */
 export function setContractDate(state, iso, { startMonth = 9 } = {}) {
+  if (iso === state.contractDate) return state;
   state.contractDate = iso;
   if (state.registeredLinked) state.registeredOn = iso;
   if (state.signedDateLinked) state.existingSignedDate = iso;
@@ -187,9 +188,12 @@ export function setContractDate(state, iso, { startMonth = 9 } = {}) {
 }
 
 /** Ödeme biçimi / sayı / ilk vade / aralık / peşinat değişti: taksitler yeniden bölünür (eşit böl yeniden açılır). */
-export function setPayment(state, patch = {}) {
+export function setPayment(state, patch0 = {}) {
   const payment = state.payment;
   if (payment.locked) return state;
+  // Yalnız DEĞİŞEN alanlar (tarih alanı odaktan çıkınca aynı değeri yeniden bildirir — elle düzeltmeler bozulmasın).
+  const patch = Object.fromEntries(Object.entries(patch0).filter(([key, value]) => payment[key] !== value));
+  if (!Object.keys(patch).length) return state;
   Object.assign(payment, patch);
   if ('firstDue' in patch) payment.firstDueLinked = false;
   if ('count' in patch || 'firstDue' in patch || 'interval' in patch || 'mode' in patch) payment.auto = true;
@@ -200,9 +204,9 @@ export function setPayment(state, patch = {}) {
 export function setDownPayment(state, patch = {}) {
   const payment = state.payment;
   if (payment.locked) return state;
-  payment.downPayment = { ...(payment.downPayment || { amountMinor: 0, dueOn: state.contractDate,
-    method: DEFAULT_METHOD }), ...patch };
-  if ('dueOn' in patch) payment.downLinked = false;
+  const before = payment.downPayment || { amountMinor: 0, dueOn: state.contractDate, method: DEFAULT_METHOD };
+  if ('dueOn' in patch && patch.dueOn !== before.dueOn) payment.downLinked = false;
+  payment.downPayment = { ...before, ...patch };
   return applyAuto(state);
 }
 
@@ -216,9 +220,12 @@ export function setMethodAll(state, method) {
 }
 
 /** Taksit satırı elle değişti: "eşit böl" durur (satır korunur), toplam farkı canlı gösterilir. */
-export function editInstallment(state, index, patch = {}) {
+export function editInstallment(state, index, patch0 = {}) {
   const payment = state.payment;
   if (payment.locked || !payment.installments?.[index]) return state;
+  const row0 = payment.installments[index];
+  const patch = Object.fromEntries(Object.entries(patch0).filter(([key, value]) => row0[key] !== value));
+  if (!Object.keys(patch).length) return state;
   const touchesAmount = 'amountMinor' in patch || 'dueOn' in patch;
   payment.installments = payment.installments.map((row, position) => (position === index ? { ...row, ...patch } : row));
   if (touchesAmount && payment.mode === 'installment') payment.auto = false;

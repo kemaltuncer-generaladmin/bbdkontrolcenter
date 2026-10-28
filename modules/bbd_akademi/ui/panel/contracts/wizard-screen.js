@@ -149,10 +149,15 @@ function buildScreen(app, spec, done) {
     return [...body.querySelectorAll('input, select, textarea')]
       .filter((node) => !node.disabled && node.type !== 'hidden' && node.tabIndex !== -1 && node.offsetParent !== null);
   }
+  // Enter taksit / geçmiş ödeme SATIRLARINA girmez (düzeltme içindir; Tab ile girilir) — içindeyken satırda ilerler.
   function focusNext(from) {
-    const list = fields();
-    const index = list.indexOf(from);
-    const next = list[index + 1];
+    const all = fields();
+    const index = all.indexOf(from);
+    const zone = from.closest('[data-enter-skip]');
+    const next = all.slice(index + 1).find((node) => {
+      const inside = node.closest('[data-enter-skip]');
+      return !inside || inside === zone;
+    });
     if (next) {
       next.focus();
       if (next.select && next instanceof HTMLInputElement && next.type === 'text') next.select();
@@ -456,6 +461,7 @@ function buildScreen(app, spec, done) {
       refresh();
     }, { aria: 'Eğitim yılı', key: 'academicYear' });
     const contractDate = dateOf(state.contractDate, (iso) => {
+      if (iso === state.contractDate) return;
       W.setContractDate(state, iso, { startMonth: settings?.academicYearStartMonth || 9 });
       registered.set(state.registeredOn);
       if (state.yearLinked) {
@@ -472,6 +478,7 @@ function buildScreen(app, spec, done) {
       refresh();
     }, 'Sözleşme tarihi', made);
     const registered = dateOf(state.registeredOn, (iso) => {
+      if (iso === state.registeredOn) return;
       state.registeredOn = iso;
       state.registeredLinked = false;
       refresh();
@@ -656,6 +663,7 @@ function buildScreen(app, spec, done) {
     const headSlot = h('div', 'ak-stack');
     const tools = h('div', 'ak-wz-tools');
     const table = h('div', 'ak-wz-table ak-wz-inst');
+    table.dataset.enterSkip = '1';
     made.content.append(headSlot, tools, table);
     let rowDestroyers = [];
     const methodOptions = Object.entries(INSTALLMENT_METHODS);
@@ -699,6 +707,7 @@ function buildScreen(app, spec, done) {
       const grid = h('div', 'ak-wz-grid');
       if (payment.mode === 'cash') {
         const due = dateOf(payment.installments?.[0]?.dueOn || state.contractDate, (iso) => {
+          if (iso === payment.installments?.[0]?.dueOn) return;
           payment.cashDue = iso;
           W.applyAuto(state);
           refresh();
@@ -834,6 +843,7 @@ function buildScreen(app, spec, done) {
     const made = withNo(section('past', 4, 'Geçmiş ödemeler',
       'Mevcut öğrencinin daha önce ödedikleri (aktarım). Veliye bildirim gitmez.'));
     const table = h('div', 'ak-wz-table ak-wz-past');
+    table.dataset.enterSkip = '1';
     const sum = h('div', 'ak-wz-totals');
     const tools = h('div', 'ak-wz-tools');
     let rowDestroyers = [];
@@ -937,6 +947,7 @@ function buildScreen(app, spec, done) {
     const number = textInput(state.existingNumber, (value) => { state.existingNumber = value; refresh(); },
       { max: 20, placeholder: 'ör. 72128', aria: 'Eski sözleşme no', key: 'existingNumber' });
     const signedOn = dateOf(state.existingSignedDate, (iso) => {
+      if (iso === state.existingSignedDate) return;
       state.existingSignedDate = iso;
       state.signedDateLinked = false;
       refresh();
@@ -964,12 +975,13 @@ function buildScreen(app, spec, done) {
       if (check.checked) number.focus();
     });
 
+    // Eski sözleşme aktarımında asıl alan numaradır: işaret + no + imza tarihi önce, isteğe bağlılar sonra.
     made.content.append(
+      toggle,
+      signedGrid,
       field('İndirim / burs nedeni', reasons),
       field('İndirim notu', note),
       field('MEB özel hususlar', special),
-      toggle,
-      signedGrid,
     );
     made.syncDates = () => { if (state.signedDateLinked) signedOn.set(state.existingSignedDate); };
     made.update = () => {};

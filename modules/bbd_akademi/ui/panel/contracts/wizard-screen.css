@@ -72,3 +72,7 @@
   animation: ak-wz-slide 1.2s ease-in-out infinite; }
 @keyframes ak-wz-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 @media (prefers-reduced-motion: reduce) { .ak-wz-wait-bar > span { animation: none; width: 100%; } }
+
+/* Tarih alanı hücreyi doldurur (takvim düğmesi kutunun içinde kalsın). */
+.ak-wz-field .kit-datefield, .ak-wz-row .kit-datefield { display: flex; width: 100%; }
+.ak-wz-field .df-input, .ak-wz-row .df-input { width: 100%; height: var(--kit-ctl-h, 30px); }
