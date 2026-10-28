@@ -121,7 +121,7 @@ OPERATIONS: tuple[Operation, ...] = (
         ('decks.manage', 'reading_lists.manage'),
         'km',
         multipart=True,
-        features=('F-A23', 'F-A19'),
+        features=('F-A23', 'F-A19', 'F-SZ4'),
     ),
     Operation(
         'GET',
