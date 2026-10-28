@@ -53,8 +53,8 @@ export const AREAS = [
   { key: 'comms', label: 'İletişim', icon: 'megaphone', tone: 'rose',
     hint: 'Duyurular (uygulama ve SMS), veli toplantısı randevuları, SMS sağlığı ve kuyruğu.' },
   { key: 'money', label: 'Finans ve Kantin', icon: 'wallet', tone: 'orange',
-    hint: 'Kurum cari hesabı ve tahsilat, sözleşmeler ve toplu belge yazdırma, kantin, kitap satışı ve talepleri — iki '
-      + 'para ayrı tutulur.' },
+    hint: 'Kurum cari hesabı ve tahsilat, sözleşmeler ve toplu belge yazdırma, Deneme Kulübü, kantin, kitap satışı ve '
+      + 'talepleri — iki para ayrı tutulur.' },
   { key: 'reports', label: 'Raporlar', icon: 'chart', tone: 'cyan',
     hint: 'Bütün raporlar tek yerde (yoklama, ders dökümü, finans, deneme, okuma) ve erken uyarı.' },
   { key: 'admin', label: 'Ayarlar', icon: 'gear', tone: 'slate',
@@ -156,6 +156,11 @@ export const SECTIONS = [
   { key: 'contracts', label: 'Sözleşmeler', file: './contracts/documents-screen.js', requires: ['finance', 'contracts'],
     area: 'money', feature: ['finance', 'contracts'],
     reads: ['admin_listContracts', 'admin_listContractServices', 'admin_listContractTemplates'] },
+  // Deneme Kulübü (Akademi README §14 madde 141, iş 81; KULLANICI 28.10: "deneme kulübü diye sınıf açacaz … sanki kurum
+  // öğrencisiymiş gibi"): kulüp davetleri (BBDSTORE siparişi ya da kurumda ödeme → SMS ile tek kullanımlık form),
+  // yeniden gönder / iptal / yeniden dene / KM'den eşleştir, BBDSTORE izleyici şeridi ve kulüp ayarları (`club.*`).
+  { key: 'club', label: 'Deneme Kulübü', file: './contracts/club-screen.js', requires: ['club'], area: 'money',
+    feature: ['finance', 'exam_club'], reads: ['admin_listClubInvites'] },
   { key: 'canteen', label: 'Kantin', file: './finance/canteen.js', requires: ['view'], area: 'money',
     feature: 'canteen' },
   // Kitap satışı (0.5.4, F-A27): yönetici öğrencilere kurumdan kitap satar (üç adım).
@@ -185,6 +190,7 @@ export const ALIASES = { panel: 'dashboard', ozet: 'dashboard', bugun: 'today', 
   recordings: 'lessonRecordings', 'veli-toplantisi': 'parentMeetings',
   'parent-meetings': 'parentMeetings',
   sozlesmeler: 'contracts', sozlesme: 'contracts', 'belge-cikar': 'contracts',
+  'deneme-kulubu': 'club', kulup: 'club', 'exam-club': 'club',
   'mesaj-sikayetleri': 'messages', 'mesaj-denetimi': 'messages', moderation: 'messages', mesajlar: 'messages',
   kocluk: 'coaching', 'koc-gorusmeleri': 'coachMeetings', 'kontrol-kuyrugu': 'coachQueue',
   coachCheckins: 'coachMotivation', 'check-in': 'coachMotivation', 'kocluk-sablonlari': 'coachTemplates',
