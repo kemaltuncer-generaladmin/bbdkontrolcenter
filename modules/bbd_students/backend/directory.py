@@ -14,6 +14,15 @@ registry üzerinden çözer (K3); tabloyu okumazlar (K5).
     removed_since(since)                      → [{"id", "at"}]   (mezar taşı, 90 gün)
     find_by_phone(phone10)→ [StudentRecord]
     card_qr_text(id)      → str   (kartta basılı v1 QR'ın aynısı; anahtar dönmez)
+    identities(records)   → {id: IdentityBlock}  (sözleşme kimliği, göç 014 — aşağıda)
+
+SÖZLEŞME KİMLİĞİ (göç 014, iş 80-km-kimlik). StudentRecord kimlik TAŞIMAZ (arama,
+telefonla bulma, panel listeleri onu kullanır). Mobil geçit yetkili anahtara
+(`mobile_gateway.identity.read`) ayrıca `identities(records)` ile 80-ortak K2
+bloğunu ekler: TC / yabancı kimlik ÇÖZÜLMÜŞ, veliler kaydın yuvalarıyla. Profiller
+anlık görüntüden (yoksa TEK sorgu) — N+1 yok; bloklar görüntü başına önbellekte.
+Kasa okunamazsa ya da alan çözülemezse o öğrencinin bloğu YOK (Akademi aynası
+değişmez; `null` aynayı silerdi).
 
 MERKEZİ SENKRON (km-merkezi-senkron §3.3, §7). Dizin = kantin listesi ∪ profil
 tablosu: kantine HENÜZ yazılamamış (`canteenSync: pending`) profil-yalnız kayıt
@@ -70,6 +79,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from . import curriculum
+from . import identity as identity_rules
 from . import qr as qr_codec
 from .guardians import extra_items
 from .phones import normalize_phone
@@ -249,8 +259,8 @@ def _class_key(name: str) -> tuple[int, str]:
 class _Snapshot:
     """Bir kantin listesinden BİR KEZ kurulan dizin: kayıtlar, damgalar, dizinler."""
 
-    __slots__ = ("as_of", "by_id", "by_phone", "classes", "deleted", "records", "revision",
-                 "rows", "stamps")
+    __slots__ = ("as_of", "by_id", "by_phone", "classes", "deleted", "identity", "profiles",
+                 "records", "revision", "rows", "stamps")
 
     def __init__(self, rows: Records, profiles: dict[str, dict[str, Any]],
                  as_of: datetime, revision: int,
@@ -259,6 +269,9 @@ class _Snapshot:
                  class_names: dict[str, str] | None = None,
                  own_level: bool = False) -> None:
         self.rows = rows
+        #: Profil satırları (göç 014 kimlik bloğu buradan — ek sorgu yok) ve blok önbelleği.
+        self.profiles = profiles
+        self.identity: dict[str, dict[str, Any]] = {}
         self.as_of = as_of
         self.revision = revision
         #: Mezar taşları (kimlik → silinme anı); `since` yanıtının `removed`ı.
@@ -321,8 +334,10 @@ def _copy(record: dict[str, Any], *, balance: bool = True) -> dict[str, Any]:
 class StudentDirectory:
     """Yeteneğin uygulaması. Kantin ve modülün kendi deposu dışında bağı yoktur."""
 
-    def __init__(self, *, canteen: Any, store: Any, log: Any) -> None:
+    def __init__(self, *, canteen: Any, store: Any, log: Any, cipher: Any = None) -> None:
         self._canteen = canteen
+        #: Sözleşme kimliği şifresi (`identity.IdentityCipher`); yoksa `identities` boş döner.
+        self._cipher = cipher
         self._store = store
         self._log = log
         self._table = store.table("profile")
@@ -543,6 +558,61 @@ class StudentDirectory:
             return []
         snapshot = await self._current()
         return [_copy(record) for record in snapshot.by_phone.get(wanted, [])]
+
+    async def identities(self, records: Records) -> dict[str, dict[str, Any]]:
+        """Kayıtların `identity` blokları (80-ortak K2 şekli) — öğrenci kimliği → blok.
+
+        Veliler verilen kayıttan okunur (kantine gidilmez). Kasa okunamazsa boş; tek
+        öğrencinin alanı çözülemezse yalnız o öğrenci düşer. Log'a değer yazılmaz.
+        """
+        wanted = [record for record in records
+                  if isinstance(record, dict) and str(record.get("id") or "")]
+        if not wanted or self._cipher is None:
+            return {}
+        try:
+            _, unseal = await self._cipher.pair()
+        except identity_rules.CipherUnavailable as failure:
+            self._log.warning("dizin: kimlik anahtarı okunamadı", error=str(failure))
+            return {}
+        snapshot = self._snapshot
+        if snapshot is not None:
+            profiles = snapshot.profiles
+            cache = snapshot.identity
+        else:
+            profiles = await self._profiles_for([str(item["id"]) for item in wanted])
+            cache = {}
+        out: dict[str, dict[str, Any]] = {}
+        failed = 0
+        for record in wanted:
+            student_id = str(record["id"])
+            guardians = record.get("guardians") or []
+            key = f"{student_id}|" + "|".join(
+                f"{item.get('slot')}:{item.get('phone')}:{item.get('name')}:{item.get('relation')}"
+                for item in guardians if isinstance(item, dict))
+            block = cache.get(key)
+            if block is None:
+                try:
+                    block = identity_rules.gateway_block(
+                        student_id, profiles.get(student_id),
+                        [item for item in guardians if isinstance(item, dict)], unseal=unseal)
+                except identity_rules.CipherUnavailable:
+                    failed += 1
+                    continue
+                cache[key] = block
+            out[student_id] = block
+        if failed:
+            self._log.warning("dizin: kimlik alanı çözülemedi", count=failed)
+        return out
+
+    async def _profiles_for(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Verilen öğrencilerin profilleri — TEK sorgu (çoksa bütün tablo)."""
+        unique = list(dict.fromkeys(ids))
+        if len(unique) > 200:
+            return await self._profiles()
+        rows = await self._store.fetch_all(
+            f"SELECT * FROM {self._table} WHERE kantin_id IN "
+            f"({', '.join('?' for _ in unique)})", tuple(unique))
+        return {str(row["kantin_id"]): row for row in rows}
 
     async def card_qr_text(self, student_id: str) -> str:
         """Kartta basılı v1 QR metni. QR anahtarı sunucuda kalır, dışarı çıkmaz."""

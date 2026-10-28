@@ -78,8 +78,10 @@ provides:
       revision, removed (since ile)}; get(student_id, *, balance=True) →
       StudentRecord | None; get_many(ids, *, balance=True) → {students,
       missingIds} (≤ 100); removed_since(since) → [{id, at}];
-      find_by_phone(phone10) → [StudentRecord]; card_qr_text(student_id) → str.
-      StudentRecord accessCode TAŞIMAZ; seviye/alan/hedef sınav, status,
+      find_by_phone(phone10) → [StudentRecord]; card_qr_text(student_id) → str;
+      identities(records) → {id: IdentityBlock} (sözleşme kimliği, göç 014 —
+      bbd-akademi 80-ortak K2 şekli; TC çözülmüş; yalnız mobil geçidin yetkili
+      anahtarına). StudentRecord accessCode ve kimlik no TAŞIMAZ; seviye/alan/hedef sınav, status,
       statusReason, statusSince, revision, canteenSync dahildir. Dizin = kantin
       listesi ∪ kantine henüz yazılamamış profil (canteen: null); pasif görünür,
       silinen görünmez.
@@ -109,6 +111,9 @@ provides:
 consumes:
   - capability: canteen.api
     reason: "Öğrenciler kantinde durur; okuma ve yazma tek kapıdan geçer (K4)."
+  - capability: secrets
+    optional: true
+    reason: "Sözleşme kimliği (göç 014): TC / yabancı kimlik no AES-GCM ile şifreli tutulur; anahtar kasada (`bbd_students.identity_key`). Kasa yoksa kimlik no yazılamaz (düz metne düşülmez), okumada maske döner."
   - capability: events.outbox
     optional: true
     reason: "Öğrenci, veli, yaşam döngüsü ve grup olayları iş yazmasıyla aynı işlemde kalıcı outbox'a yazılır (ADR 0029). Platform yeteneğidir; yoksa olay yazılmaz, modül çalışır."

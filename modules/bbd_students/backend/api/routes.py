@@ -34,6 +34,7 @@ from ..academic_year import YearRollover
 from ..classes import ClassLink
 from ..classes_merge import ClassMerge
 from ..groups import GroupError, GroupService, parse_day
+from ..identity import CipherUnavailable, IdentityError
 from ..lifecycle import Lifecycle
 from ..service import ControlsError, StudentService
 from ..sync import StudentSync, SyncError
@@ -114,6 +115,7 @@ class ProfileFields(BaseModel):
     schoolNo: str | None = Field(default=None, max_length=20)
     studentPhone: str | None = Field(default=None, max_length=20)
     parentName: str | None = Field(default=None, max_length=80)
+    parentRelation: str | None = Field(default=None, max_length=20)
     parentName2: str | None = Field(default=None, max_length=80)
     parentPhone2: str | None = Field(default=None, max_length=20)
     note: str | None = Field(default=None, max_length=500)
@@ -137,7 +139,19 @@ class StudentUpdate(ProfileFields):
 
 
 class StudentCreate(StudentUpdate):
-    pass
+    # Sözleşme kimliği (göç 014, isteğe bağlı): `PUT /students/{id}/identity` gövdesiyle
+    # aynı şekil — {student: {...}, guardians: [{slot: 1, ...}]} (yuva 1 = `parentPhone`).
+    identity: dict[str, Any] | None = None
+
+
+def identity_error(exc: IdentityError) -> JSONResponse:
+    """Kimlik reddi — alan alan Türkçe hata; gönderilen DEĞER yanıtta yok (KVKK)."""
+    return JSONResponse(status_code=exc.status, content={"error": {
+        "status": exc.status, "code": exc.code, "message": str(exc), "details": exc.details}})
+
+
+def cipher_error(exc: CipherUnavailable) -> HTTPException:
+    return HTTPException(status_code=503, detail=f"Kimlik bilgisi şu an kaydedilemiyor: {exc}")
 
 
 @router.get("/students")
@@ -161,10 +175,14 @@ async def search_students(
 async def create_student(
     body: StudentCreate,
     user: CurrentUser = requires("bbd_students.manage"),
-) -> dict[str, Any]:
+) -> Any:
     payload = body.model_dump(exclude_unset=True)
     try:
         return await service().create_student(payload, actor=user.full_name)
+    except IdentityError as exc:
+        return identity_error(exc)
+    except CipherUnavailable as exc:
+        raise cipher_error(exc) from exc
     except ValueError as exc:
         # Kural ihlali (ad yok, geçersiz seviye/alan) — 500 değil, cümlesiyle 400.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -225,6 +243,52 @@ async def get_student(
     if student is None:
         raise HTTPException(status_code=404, detail="Öğrenci bulunamadı.")
     return student
+
+
+class IdentityBody(BaseModel):
+    """Kimlik ve adres (sözleşme için) — YALNIZ verilen anahtarlar değişir; `null` / boş
+    metin temizler. Şekil `backend/identity.py` → `apply`; geçit bloğuyla aynı adlar."""
+
+    student: dict[str, Any] | None = None
+    guardians: list[dict[str, Any]] | None = Field(default=None, max_length=4)
+
+
+@router.get("/students/{kantin_id}/identity")
+async def student_identity(
+    kantin_id: str,
+    user: CurrentUser = requires("bbd_students.view"),
+) -> dict[str, Any]:
+    """Öğrencinin sözleşme kimliği. TC / yabancı kimlik TAM hâli yalnız
+    `bbd_students.manage` taşıyana; yalnız `view` taşıyana maskeli (`*******0146`)."""
+    try:
+        return await service().get_identity(
+            kantin_id, reveal=user.has_permission("bbd_students.manage"), actor=user.full_name)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # kantin dışarısı
+        raise HTTPException(status_code=503, detail="Kantine ulaşılamadı; kimlik bilgisi "
+                                                    "okunamadı.") from exc
+
+
+@router.put("/students/{kantin_id}/identity")
+async def set_student_identity(
+    kantin_id: str,
+    body: IdentityBody,
+    user: CurrentUser = requires("bbd_students.manage"),
+) -> Any:
+    """Kimlik ve adres bilgilerini yazar: revizyon +1, `student.updated` (`["identity"]`),
+    denetim izi (alan adları). 422 alan alan hata, 409 veli listesi değişti, 503 kasa yok."""
+    try:
+        return await service().set_identity(kantin_id, body.model_dump(exclude_unset=True),
+                                            actor=user.full_name)
+    except IdentityError as exc:
+        return identity_error(exc)
+    except CipherUnavailable as exc:
+        raise cipher_error(exc) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class GuardianItem(BaseModel):

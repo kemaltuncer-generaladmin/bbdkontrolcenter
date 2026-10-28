@@ -22,6 +22,7 @@ from km_sdk import report_dir, write_private
 
 from . import curriculum
 from . import guardians as guardian_rules
+from . import identity as identity_rules
 from .directory import split_name, student_classes, student_record
 from .groups import fold
 from .lifecycle import describe_status
@@ -54,7 +55,13 @@ PROFILE_COLUMNS = {
     "parentRelation": "parent_relation",
     "parentRelation2": "parent_relation2",
     "guardiansExtra": "guardians_extra",
+    # Sözleşme kimliği (göç 014): velinin kimlik girişleri telefonla anahtarlı JSON.
+    # Gövdeden DEĞİL, yalnız `set_guardians` (telefon değişince taşıma) yazar.
+    "guardianIdentity": "guardian_identity",
 }
+
+#: Veli adı / telefonu / yakınlığı değişince kimlik bloğunun damgası da değişir.
+_GUARDIAN_FIELDS = frozenset({"guardians"})
 
 #: Sınıf adı en çok bu kadar karakter (PATCH şemasıyla aynı).
 CLASS_NAME_MAX = 20
@@ -104,8 +111,11 @@ class StudentService:
                  config: dict[str, Any] | None = None,
                  category: str = "Öğrenci", fallback_dir: Path | None = None,
                  on_change: Callable[..., None] | None = None,
-                 sync: StudentSync | None = None, directory: Any = None) -> None:
+                 sync: StudentSync | None = None, directory: Any = None,
+                 cipher: identity_rules.IdentityCipher | None = None) -> None:
         self._config = config or {}
+        #: Sözleşme kimliği şifresi (göç 014; anahtar sır kasasında). Yoksa TC yazılamaz.
+        self._cipher = cipher
         # Öğrenci yazıldığında dizin yeteneğinin önbelleğini bırakır
         # (`StudentDirectory.invalidate`). `canteen=False`: yalnız profil değişti.
         self._on_change = on_change
@@ -278,6 +288,7 @@ class StudentService:
         own_plan = curriculum.from_row(profile)
         classes = student_classes(profile, names) if own else (
             [{"id": "", "name": class_name}] if class_name else [])
+        people = guardian_rules.view(profile, canteen.get("parentPhone"))
 
         return {
             # kantin otoritesinde
@@ -311,8 +322,10 @@ class StudentService:
             "parentRelation": (profile or {}).get("parent_relation") or "",
             "parentRelation2": (profile or {}).get("parent_relation2") or "",
             # Bütün veliler yuva sırasıyla (birincil önce); kantin 1. veli telefonu dahil.
-            "guardians": guardian_rules.view(profile, canteen.get("parentPhone")),
+            "guardians": people,
             "note": (profile or {}).get("note") or "",
+            # Sözleşme kimliği (göç 014): YALNIZ maske + eksik listesi — tam TC listede yok.
+            **identity_rules.summary(profile, people, display_name),
             "hasProfile": profile is not None,
             # Seviye / alan / hedef sınav — GEÇERLİ değer (sınıftan; istisna varsa öğrenciden).
             "gradeLevel": plan["gradeLevel"],
@@ -466,8 +479,25 @@ class StudentService:
                 and await self.own_level():
             payload = dict(payload)
             join_class = " ".join(str(payload.pop("className") or "").split())
+        # Sözleşme kimliği (göç 014, isteğe bağlı): "Yeni öğrenci" penceresinin açılır
+        # bölümü. Aynı işlemde yazılır; kural ihlali kantine gidilmeden reddedilir.
+        identity_body = payload.get("identity") if isinstance(payload.get("identity"), dict) \
+            else None
+        if "identity" in payload:
+            payload = {key: value for key, value in payload.items() if key != "identity"}
         # Kural ihlali kantine yazılmadan ÖNCE yakalanır.
         columns = self._profile_columns(None, payload)
+        identity_fields: list[str] = []
+        if identity_body:
+            phone = normalize_phone(payload.get("parentPhone"))
+            people = [{"slot": 1, "phone": phone, "name": str(payload.get("parentName") or ""),
+                       "relation": str(payload.get("parentRelation") or "")}] if phone else []
+            seal, unseal = await self._seal_pair(identity_body)
+            identity_columns, identity_fields = identity_rules.apply(
+                kantin_id, None, people, identity_body, seal=seal, unseal=unseal)
+            columns.update(identity_columns)
+            if identity_fields:
+                columns["identity_updated_at"] = iso(datetime.now(UTC))
 
         changes: dict[str, Any] = {"displayName": display}
         for field in ("parentPhone", "spendingLimit", "isBlocked"):
@@ -483,6 +513,8 @@ class StudentService:
             await self._compensate_create(kantin_id)
             raise ValueError(f"Kantin öğrenciyi kabul etmedi: {outcome.error}")
         self._log.info("öğrenci eklendi", kantin_id=kantin_id, canteen=outcome.state)
+        if identity_fields:
+            await self._identity_log(kantin_id, actor, "created", identity_fields)
         if join_class:
             await self._join_class([kantin_id], join_class, actor=actor or "Öğrenci Yönetimi")
         result: dict[str, Any] = {"kantinId": kantin_id,
@@ -572,6 +604,10 @@ class StudentService:
         if (existing or {}).get("source") == "canteen":
             # Kasadan eklenen taslak KM'de düzenlendi: rozet kalkar.
             columns["source"] = "km"
+        if any(event.type.startswith("guardian.") or _GUARDIAN_FIELDS & set(event.fields)
+               for event in events):
+            # Veli adı / telefonu / yakınlığı geçidin `identity` bloğundadır (göç 014).
+            columns["identity_updated_at"] = iso(datetime.now(UTC))
 
         await self._sync.write(kantin_id, columns=columns,
                                canteen_ops={"upsert": changes} if changes else None,
@@ -792,6 +828,14 @@ class StudentService:
             return {"kantinId": kantin_id, "changed": False, "canteenSync": current["canteenSync"],
                     "guardians": current["guardians"]}
         payload = guardian_rules.to_payload(clean)
+        # Veli kimliği (göç 014) telefonla anahtarlıdır: telefonu düzeltilen velinin kimliği
+        # yeni telefona taşınır, listeden çıkan velinin kimliği silinir — aynı işlemde.
+        moved = identity_rules.rekey_guardians(
+            await self._sync.profile(kantin_id),
+            [normalize_phone(row["phone"]) or str(row["phone"]) for row in current["guardians"]],
+            [row["phone"] for row in clean])
+        if moved is not None:
+            payload["guardianIdentity"] = moved
         # Kantine yalnız 1. veli telefonu DEĞİŞTİYSE gidilir (tabletin yazdığına dokunma).
         if (normalize_phone(current.get("parentPhone"))
                 or str(current.get("parentPhone") or "")) == payload["parentPhone"]:
@@ -802,6 +846,98 @@ class StudentService:
         self._log.info("veliler güncellendi", student=kantin_id, count=len(clean), actor=actor)
         return {**result, "changed": True,
                 "guardians": fresh["guardians"] if fresh else []}
+
+    # ------------------------------------------- sözleşme kimliği (göç 014)
+
+    async def _seal_pair(self, body: dict[str, Any]) -> tuple[Any, Any]:
+        """Gövde TC / yabancı kimlik taşıyorsa şifre işlevleri; taşımıyorsa (None, None).
+
+        Kasa okunamazsa `CipherUnavailable` — TC düz metne düşülmez, yazma reddedilir.
+        """
+        people = body.get("guardians") if isinstance(body.get("guardians"), list) else []
+        student = body.get("student") if isinstance(body.get("student"), dict) else {}
+        touches = any(key in student for key in ("nationalId", "foreignId")) or any(
+            isinstance(row, dict) and ("nationalId" in row or "foreignId" in row)
+            for row in people)
+        if not touches:
+            return None, None
+        if self._cipher is None:
+            raise identity_rules.CipherUnavailable("Kimlik anahtarı okunamadı: sır kasası yok.")
+        return await self._cipher.pair()
+
+    async def _identity_log(self, kantin_id: str, actor: str, action: str,
+                            fields: list[str]) -> None:
+        """Denetim izi: kim, ne zaman, HANGİ ALANLAR — değer yazılmaz (KVKK)."""
+        await self._store.execute(
+            f"INSERT INTO {self._store.table('identity_log')} (kantin_id, at, actor, action, "
+            f"fields) VALUES (?, ?, ?, ?, ?)",
+            (kantin_id, iso(datetime.now(UTC)), actor[:160], action,
+             ",".join(dict.fromkeys(fields))[:1000]))
+
+    async def get_identity(self, kantin_id: str, *, reveal: bool,
+                           actor: str = "") -> dict[str, Any]:
+        """Öğrenci kartının "Kimlik ve adres (sözleşme için)" bölümü.
+
+        `reveal` (çağıranda `bbd_students.manage`): TC / yabancı kimlik TAM; değilse
+        maskeli. Kasa okunamazsa maskeli döner + `cipherError`.
+        """
+        student = await self.get_student(kantin_id)
+        if student is None:
+            raise LookupError("Öğrenci bulunamadı.")
+        profile = await self._sync.profile(kantin_id)
+        unseal = None
+        cipher_error = ""
+        if reveal:
+            try:
+                if self._cipher is None:
+                    raise identity_rules.CipherUnavailable("Sır kasası yok.")
+                _, unseal = await self._cipher.pair()
+            except identity_rules.CipherUnavailable as failure:
+                cipher_error = f"Kimlik numaraları şu an açılamıyor ({failure})."
+        view = identity_rules.edit_view(kantin_id, profile, student["guardians"], unseal=unseal,
+                                        display_name=str(student.get("displayName") or ""))
+        view["cipherError"] = cipher_error or None
+        view["displayName"] = student.get("displayName") or ""
+        if unseal is not None and (view["student"]["nationalId"] or any(
+                row["nationalId"] for row in view["guardians"])):
+            # Erişim izi (değer yok): tam kimlik no'yu kim, ne zaman açtı.
+            self._log.info("kimlik bilgisi açıldı", student=kantin_id, actor=actor)
+        return view
+
+    async def set_identity(self, kantin_id: str, body: dict[str, Any], *,
+                           actor: str = "") -> dict[str, Any]:
+        """Kimlik ve adres bilgilerini yazar — YALNIZ verilen alanlar.
+
+        Tek işlem: profil sütunları + revizyon + `student.updated` (`["identity"]`; veli
+        adı değiştiyse `guardians` da) + denetim izi (alan adları). Kantine gidilmez.
+        Akademi olayla 1–3 sn'de geçitten (`identity` bloğu) yeniden okur.
+        """
+        if await self._sync.tombstone(kantin_id) is not None:
+            raise ValueError("Öğrenci silinmiş.")
+        student = await self.get_student(kantin_id)
+        if student is None:
+            raise LookupError("Öğrenci bulunamadı.")
+        existing = await self._sync.profile(kantin_id)
+        seal, unseal = await self._seal_pair(body)
+        columns, changed = identity_rules.apply(kantin_id, existing, student["guardians"], body,
+                                                seal=seal, unseal=unseal)
+        if not columns:
+            return {"kantinId": kantin_id, "changed": False, "fields": []}
+        columns["identity_updated_at"] = iso(datetime.now(UTC))
+        fields: list[str] = []
+        for column, value in columns.items():
+            logical = LOGICAL_FIELDS.get(column)
+            if logical and ((existing or {}).get(column) or "") != (value or "") \
+                    and logical not in fields:
+                fields.append(logical)
+        async with self._store.transaction():
+            revision = await self._sync.write(
+                kantin_id, columns=columns,
+                events=[Event("student.updated", sorted(fields))] if fields else [])
+            await self._identity_log(kantin_id, actor, "updated", changed)
+        self._log.info("kimlik bilgileri güncellendi", student=kantin_id, actor=actor,
+                       fields=changed)
+        return {"kantinId": kantin_id, "changed": True, "fields": changed, "revision": revision}
 
     async def set_class(self, kantin_ids: list[str], class_name: str, *,
                         actor: str = "") -> dict[str, Any]:
@@ -1459,7 +1595,7 @@ def _split_name(display_name: str) -> tuple[str, str]:
 
 
 #: NOT NULL '' tutan metin sütunları (telafide boş metne döner).
-_TEXT_COLUMNS = frozenset(PROFILE_COLUMNS.values())
+_TEXT_COLUMNS = frozenset(PROFILE_COLUMNS.values()) | {"identity_updated_at"}
 
 
 _CLASS = re.compile(r"^(\d{1,2})\s*[-/.]?\s*([A-ZÇĞİÖŞÜ]?)$")

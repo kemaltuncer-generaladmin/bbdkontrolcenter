@@ -14,6 +14,7 @@ from .classes import ClassLink
 from .classes_merge import ClassMerge
 from .directory import StudentDirectory
 from .groups import GroupService, StudentGroups
+from .identity import IdentityCipher
 from .lifecycle import Lifecycle
 from .service import StudentService
 from .sync import StudentSync
@@ -38,7 +39,10 @@ def register(ctx: ModuleContext) -> None:
     # Öğrenci dizini — başka modüller (ör. mobil geçit) registry'den çözer (K3).
     # `bbd_students.list` ise ARAYÜZ yeteneğidir: panelin `capabilities()`
     # fonksiyonu verir (ui/panel/index.js), backend'de karşılığı yoktur.
-    directory = StudentDirectory(canteen=canteen, store=ctx.store, log=ctx.log)
+    # Sözleşme kimliği (göç 014): TC / yabancı kimlik no ŞİFRELİ; anahtar sır kasasında
+    # (`bbd_students.identity_key`, ilk kullanımda üretilir). Kasa ÇAĞRI ANINDA çözülür.
+    cipher = IdentityCipher(lambda: ctx.try_capability("secrets"))
+    directory = StudentDirectory(canteen=canteen, store=ctx.store, log=ctx.log, cipher=cipher)
 
     # Önce KM, sonra kantin, sonra uzlaştırma (km-merkezi-senkron §7). Profil
     # yazılınca dizinin önbelleği bırakılır: geçit eski kaydı görmesin.
@@ -49,7 +53,7 @@ def register(ctx: ModuleContext) -> None:
         canteen=canteen, store=ctx.store, log=ctx.log, config=ctx.config,
         category=CATEGORY,
         fallback_dir=ctx.module_path.parents[1] / "data" / "exports",
-        on_change=directory.invalidate, sync=sync, directory=directory,
+        on_change=directory.invalidate, sync=sync, directory=directory, cipher=cipher,
     )
     # Öğrenci grupları ve tarihli üyelik (Akademi ve zil buradan okur, K3).
     # Her yazma aynı işlemde outbox'a `group.changed` yazar; commit'ten sonra

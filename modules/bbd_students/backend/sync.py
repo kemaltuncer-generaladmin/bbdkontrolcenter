@@ -72,6 +72,12 @@ LOGICAL_FIELDS = {
     "grade_level": "gradeLevel",
     "track": "track",
     "exam_target": "examTarget",
+    # Sözleşme kimliği (göç 014): olay yalnız ALAN ADINI taşır, değeri asla.
+    **{column: "identity" for column in (
+        "national_id", "national_id_tail", "foreign_id", "foreign_id_tail", "birth_date",
+        "gender", "registered_on", "school_name", "home_phone", "address_line",
+        "address_district", "address_city", "mother_name", "father_name",
+        "guardian_identity")},
 }
 
 
