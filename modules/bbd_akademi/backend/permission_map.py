@@ -223,7 +223,18 @@ OPERATION_OVERRIDES: dict[str, str] = {
     # Sözleşme madde ŞABLONU (A22): bütün YENİ sözleşmelerin hukuki metni — kurum ayarı (varsayılan yalnız admin).
     # Okuma (A20/A21) finans iznindedir; tek sözleşmede madde düzenleme (A8) kurulum iznindedir.
     "admin_saveContractTemplate": SETTINGS,
+    # Finans yöneticisi bayrağı (iş 83): Akademi'de `finance.view` ister; KM'de personel işidir (KM bayrağı
+    # `admin_syncStaff` ile iter, bu uç yalnız yedek yol). Kural (yalnız finans yöneticisi değiştirir) Akademi'de de var.
+    "admin_setStaffFinanceManager": STAFF,
 }
+
+#: VEKİLDEN HİÇ GEÇMEYEN işlemler (iş 83): kurum finansı kilidi KM'de KM oturumu başına tutulur ve
+#: `POST /api/bbd_akademi/km/finance-access/*` ile yürür (`backend/finance/access.py`). Akademi'nin kişi oturumu uçları
+#: entegrasyon anahtarıyla anlamsızdır; KM uçlarını panel doğrudan çağırırsa SMS kodu KM izni vermeden harcanır.
+PROXY_DENIED_OPERATIONS: frozenset[str] = frozenset({
+    "admin_getFinanceAccess", "admin_requestFinanceAccess", "admin_verifyFinanceAccess",
+    "admin_endFinanceAccess", "admin_requestKmFinanceAccess", "admin_verifyKmFinanceAccess",
+})
 
 
 #: KM'NİN AYRICA PIN TEYİDİ İSTEDİĞİ işlemler (sözleşmede `x-step-up` olmasa da).

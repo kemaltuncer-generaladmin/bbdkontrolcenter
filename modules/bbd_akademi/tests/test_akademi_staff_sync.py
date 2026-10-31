@@ -41,7 +41,7 @@ async def test_ekleme_tam_listeyi_iter(client: httpx.AsyncClient, akademi: Akade
     body = json.loads(akademi.bodies[-1])
     assert body == {"items": [{"kmUserId": "km-42", "displayName": "Zeynep Arslan",
                                "phone": "5321234567", "roleKeys": ["admin"], "active": True,
-                               "announceName": None}]}
+                               "financeManager": False, "announceName": None}]}
 
     await client.post(STAFF, headers=auth(), json={
         "displayName": "Mert Can", "phone": "905551112233", "roles": ["teacher", "admin"]})
@@ -150,7 +150,8 @@ async def test_anons_adi_saklanir_kirpilir_ve_yuke_girer(
     assert contract_features.STAFF_ANNOUNCE_NAME is True
     sent = json.loads(akademi.bodies[-1])["items"][0]
     assert sent["announceName"] == "Hüseyin hoca"
-    assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active", "announceName"}
+    assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active", "announceName",
+                         "financeManager"}
 
     listing = (await client.get(STAFF, headers=auth())).json()
     assert listing["announceNameSync"] is True
@@ -201,6 +202,7 @@ async def test_salter_kapaliyken_anons_adi_yuke_girmez(
     await staff_service.create("test", {"displayName": "Zeynep Ak", "phone": "5321112233",
                                         "roles": ["teacher"], "announceName": "Zeynep hoca"})
     monkeypatch.setattr(contract_features, "STAFF_ANNOUNCE_NAME", False)
+    monkeypatch.setattr(contract_features, "STAFF_FINANCE_MANAGER", False)
     sent = (await staff_service.payload())["items"][0]
     assert "announceName" not in sent
     assert set(sent) == {"kmUserId", "displayName", "phone", "roleKeys", "active"}

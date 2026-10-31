@@ -142,8 +142,8 @@ export function section(app) {
       box.classList.add('ak-money-finance');
       box.append(toolbar(button('Gecikenler', { variant: 'ghost', onClick: () => app.go('finance', { tab: 'overdue' }) })));
       money2.append(box);
-    } else if (app.has('finance') && data.institutionFinance === null && app.financeLock?.state?.known
-      && !app.financeLock.active()) {
+    } else if (app.has('finance') && data.institutionFinance === null && (data.institutionFinanceLocked
+      || (app.financeLock?.state?.known && !app.financeLock.active()))) {
       // Kurum finansı kilitli (iş 83): KPI'lar sunucuda gizlendi; kart yerinde kalır, Finans'a tek tık.
       const box = card('Kurum carisi', h('p', 'ak-muted', 'Kilitli — açmak için Finans\'a gir'));
       box.classList.add('ak-money-finance');

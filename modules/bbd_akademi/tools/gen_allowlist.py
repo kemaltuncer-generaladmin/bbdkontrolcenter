@@ -79,6 +79,8 @@ AREAS: dict[str, str] = {
     "parent-meeting-slots": "comms", "pa": "comms",
     "finance": "finance", "canteen": "finance", "book-sales": "finance",
     "book-requests": "finance",
+    # Kurum finansı kilidi (iş 83): KM kendi ucundan yürütür (`backend/finance/access.py`); vekilde kapalı.
+    "finance-access": "finance",
     "contracts": "contracts",
     # Deneme Kulübü davetleri (iş 81-km-kulup): ekranı Sözleşmeler alanının yanında (`ui/panel/contracts/`).
     "club": "contracts",

@@ -73,7 +73,7 @@ from starlette.background import BackgroundTask
 from km_sdk import CurrentUser
 
 from ..finance import access as finance_lock
-from ..permission_map import km_permissions, requires_step_up
+from ..permission_map import PROXY_DENIED_OPERATIONS, km_permissions, requires_step_up
 from .gateway import (
     FORWARD_REQUEST_HEADERS,
     FORWARD_RESPONSE_HEADERS,
@@ -262,6 +262,10 @@ class AkademiProxy:
             raise ProxyError(403, "operation_not_allowed",
                              "Bu Akademi işlemi Kontrol Merkezi üzerinden açık değil.",
                              {"method": method.upper(), "path": "/" + path.strip("/")})
+        if resolved.operation.operation_id in PROXY_DENIED_OPERATIONS:
+            raise ProxyError(403, "operation_not_allowed",
+                             "Kurum finansı kilidi Kontrol Merkezi'nin kendi ucundan açılır.",
+                             {"operationId": resolved.operation.operation_id})
         try:
             needed = km_permissions(resolved.operation)
         except KeyError:

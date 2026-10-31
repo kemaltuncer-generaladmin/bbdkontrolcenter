@@ -24,7 +24,8 @@ riski demektir; şalter kapatılırsa alan hiç gönderilmez.
 ``STAFF_FINANCE_MANAGER``
     `admin_syncStaff` yükünde her satıra `financeManager` (kurum finansı onay kodlarını alan personel, iş 83)
     eklenir mi. KAPALIYKEN bayrak KM'de saklanır ve Personel ekranında görünür/düzenlenir, yalnız itilmez
-    (Akademi'de atama CLI ile yapılır). Alan sözleşmeye (openapi `StaffSyncRequest`) girince açılır.
+    (Akademi'de atama CLI ile yapılır). Alan `wp/83-finans` sözleşmesinde (b0b38536, İSTEĞE BAĞLI; gönderilmezse
+    Akademi kayıtlı değeri korur) — şalter AÇIK; KM ile Akademi 83 birlikte canlıya çıkar.
 
 Akademi'nin `admin_getBellPlanStatus` işlemi şalter İSTEMEZ: işlem izin
 listesine (`allowlist.py`, sözleşmeden üretilir) girdiği anda panel onu
@@ -40,7 +41,7 @@ from __future__ import annotations
 
 STAFF_ANNOUNCE_NAME = True
 CALENDAR_EVENT_BELL = True
-STAFF_FINANCE_MANAGER = False
+STAFF_FINANCE_MANAGER = True
 
 
 def as_dict() -> dict[str, bool]:

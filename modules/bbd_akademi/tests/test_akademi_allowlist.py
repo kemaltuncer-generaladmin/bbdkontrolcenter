@@ -14,6 +14,7 @@ from modules.bbd_akademi.backend.core.operations import Allowlist, Operation
 from modules.bbd_akademi.backend.permission_map import (
     OPERATION_OVERRIDES,
     PERMISSION_MAP,
+    PROXY_DENIED_OPERATIONS,
     km_permissions,
     requires_step_up,
     unmapped,
@@ -154,6 +155,15 @@ async def test_her_yol_eslenen_km_iznini_ister(client: httpx.AsyncClient, akadem
     identity.extra["without"] = user("u-9", "İzin", "Yok", *others)
     identity.extra["with"] = user("u-8", "İzin", "Var", "bbd_akademi.view", needed[0])
     url = f"/api/bbd_akademi{concrete(operation)}"
+
+    if operation.operation_id in PROXY_DENIED_OPERATIONS:
+        # Kurum finansı kilidi (iş 83) KM'nin kendi ucundadır; Akademi'nin kilit uçları vekilde kapalı.
+        refused = await client.request(operation.method, url, headers=auth("with"),
+                                       json={} if operation.is_write else None)
+        assert refused.status_code == 403
+        assert refused.json()["error"]["code"] == "operation_not_allowed"
+        assert akademi.calls == []
+        return
 
     if "bbd_akademi.view" not in needed:
         denied = await client.request(operation.method, url, headers=auth("without"),

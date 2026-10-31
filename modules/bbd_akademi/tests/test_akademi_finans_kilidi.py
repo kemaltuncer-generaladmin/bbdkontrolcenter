@@ -63,11 +63,11 @@ async def locked_client(store: CheckedStore, gateway: AkademiGateway, log: Log, 
 def _akademi_otp(akademi: Akademi, *, code: str = "123456") -> None:
     def reply(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/v1/integration/finance-access/request":
-            return httpx.Response(200, json={"challengeId": CHALLENGE, "expiresAt": "2027-01-15T08:05:00Z",
+        if path == "/v1/admin/finance-access/km/request":
+            return httpx.Response(201, json={"challengeId": CHALLENGE, "expiresAt": "2027-01-15T08:05:00Z",
                                              "approvers": [{"name": "Finans Yöneticisi", "maskedPhone": "5** *** ** 12"}],
                                              "resendAfterSeconds": 60})
-        if path == "/v1/integration/finance-access/verify":
+        if path == "/v1/admin/finance-access/km/verify":
             sent = json.loads(request.content)
             if sent["code"] != code:
                 return httpx.Response(422, json={"error": {"code": "otp_invalid", "message": "Kod hatalı."}})
@@ -127,6 +127,8 @@ async def test_kod_dogrulaninca_acilir_30_dk_hareketsizlikte_kapanir(
     assert verified.json()["active"] is True
     sent = json.loads(akademi.calls[0].content)
     assert sent == {"actorName": "Ayşe Yılmaz", "actorRef": "km:user:u-1"}
+    assert akademi.calls[0].headers["idempotency-key"].startswith("km-fin-")
+    assert json.loads(akademi.calls[1].content)["actorRef"] == "km:user:u-1"
 
     data = await _call(locked_client, SUMMARY)
     assert data["ok"] is True
@@ -175,6 +177,7 @@ async def test_kilitle_hemen_kapatir_ve_ozet_maskelenir(locked_client: httpx.Asy
     locked_board = await _call(locked_client, "/v1/admin/dashboard")
     assert locked_board["ok"] is True
     assert locked_board["data"]["institutionFinance"] is None
+    assert locked_board["data"]["institutionFinanceLocked"] is True
     assert "etag" not in locked_board["headers"]
 
     await _unlock(locked_client)
@@ -227,3 +230,10 @@ async def test_finans_yoneticisi_atama_kurali(client: httpx.AsyncClient, identit
     assert allowed.status_code == 200, allowed.text
     listed = (await client.get("/api/bbd_akademi/km/staff", headers=auth("staffer"))).json()
     assert listed["canAssignFinanceManager"] is False
+
+
+async def test_akademinin_kilit_uclari_vekilde_kapali(locked_client: httpx.AsyncClient, akademi: Akademi) -> None:
+    for path in ("/v1/admin/finance-access/km/request", "/v1/admin/finance-access/request"):
+        data = (await locked_client.post(CALL, headers=auth(), json={"method": "POST", "path": path})).json()
+        assert data["error"]["code"] == "operation_not_allowed"
+    assert akademi.calls == []

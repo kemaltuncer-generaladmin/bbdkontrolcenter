@@ -5,8 +5,8 @@ de dahil sms gitsin o sms kodu girelim ardından finansal eylemlerde bulunabilsi
 kısmı için konuşuyorum." Kararlar `devir/ajan-talimatlari/83-ortak.md`:
 
 * Kod hep FİNANS YÖNETİCİSİ olarak işaretli personelin telefonuna gider (onay mantığı); isteyen kişi kodu ondan alır.
-  SMS'i Akademi gönderir: KM `POST /v1/integration/finance-access/request {actorName, actorRef}` ile kodu ister,
-  `.../verify {challengeId, code}` ile doğrular (kod 6 hane, 5 dk, 5 deneme, hız sınırları Akademi'de).
+  SMS'i Akademi gönderir: KM `POST /v1/admin/finance-access/km/request {actorName, actorRef}` ile kodu ister,
+  `.../km/verify {challengeId, code, actorRef}` ile doğrular (kod 6 hane, 5 dk, 5 deneme, hız sınırları Akademi'de).
 * İzin KM SUNUCUSUNDA tutulur: anahtar (KM kullanıcısı, KM oturumu). Kod isteyen oturuma bağlıdır — başka oturum ya da
   başka kullanıcı aynı `challengeId` ile doğrulayamaz. Doğrulanınca 30 dk; her kurum-finansı isteği süreyi yeniden
   30 dk'ya uzatır (HAREKETSİZLİKTE kapanır). "Finansı kilitle" hemen kapatır. KM yeniden başlarsa izinler düşer
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -32,8 +33,10 @@ from km_sdk import CurrentUser
 from ..core.gateway import AkademiError, AkademiGateway, on_behalf_of, request_id
 from ..core.operations import Operation
 
-REQUEST_PATH = "/v1/integration/finance-access/request"
-VERIFY_PATH = "/v1/integration/finance-access/verify"
+#: Akademi'nin KM uçları (`admin_requestKmFinanceAccess` / `admin_verifyKmFinanceAccess`; yalnız entegrasyon anahtarı,
+#: izin `finance.manage`). Taslaktaki `/v1/integration/...` yerine bunlar (83-finans-hazir sapma 1).
+REQUEST_PATH = "/v1/admin/finance-access/km/request"
+VERIFY_PATH = "/v1/admin/finance-access/km/verify"
 IDLE_MINUTES = 30
 #: Doğrulanmamış kod isteği en çok bu kadar tutulur (Akademi'de kod 5 dk geçerlidir).
 CHALLENGE_SECONDS = 10 * 60
@@ -59,8 +62,11 @@ def masks(operation: Operation) -> bool:
 
 
 def mask(data: Any) -> Any:
+    """Kilitliyken özet: finans alanları `null` + `institutionFinanceLocked: true` (Akademi'nin kişi oturumundaki
+    davranışının aynısı; entegrasyon anahtarına Akademi kilit uygulamaz)."""
     if isinstance(data, dict):
-        return {**data, **{name: None for name in DASHBOARD_FINANCE_FIELDS if name in data}}
+        return {**data, **{name: None for name in DASHBOARD_FINANCE_FIELDS if name in data},
+                "institutionFinanceLocked": True}
     return data
 
 
@@ -143,7 +149,7 @@ class FinanceAccess:
 
     async def request(self, user: CurrentUser, session: str) -> dict[str, Any]:
         body = {"actorName": user.full_name or str(user.id), "actorRef": f"km:user:{user.id}"}
-        data = await self._post(REQUEST_PATH, body, user)
+        data = await self._post(REQUEST_PATH, body, user)  # 201
         challenge_id = str((data or {}).get("challengeId") or "")
         if not challenge_id:
             raise FinanceAccessError(502, "akademi_error", "Akademi onay kodu isteğine geçersiz yanıt verdi.")
@@ -172,7 +178,8 @@ class FinanceAccess:
         if len(clean) != 6:
             raise FinanceAccessError(422, "otp_invalid", "Onay kodu 6 haneli olmalı.")
         try:
-            data = await self._post(VERIFY_PATH, {"challengeId": challenge_id, "code": clean}, user)
+            data = await self._post(VERIFY_PATH, {"challengeId": challenge_id, "code": clean,
+                                                  "actorRef": f"km:user:{user.id}"}, user)
         except FinanceAccessError as failure:
             if failure.code in ("otp_expired", "otp_attempts_exceeded"):
                 self._challenges.pop(challenge_id, None)
@@ -205,7 +212,9 @@ class FinanceAccess:
             raise FinanceAccessError(503, "akademi_unavailable", "Akademi bağlantısı hazır değil.")
         headers = {"content-type": "application/json", "accept": "application/json",
                    "X-Akademi-On-Behalf-Of": on_behalf_of(user.id, user.full_name),
-                   "X-Request-Id": request_id(None)}
+                   "X-Request-Id": request_id(None),
+                   # Yazma uçları Idempotency-Key ister; her deneme yeni bir istektir (yeni kod / yeni doğrulama).
+                   "Idempotency-Key": f"km-fin-{uuid.uuid4().hex}"}
         try:
             response = await self._gateway.send(
                 "POST", path, headers=headers,

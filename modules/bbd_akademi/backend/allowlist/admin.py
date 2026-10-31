@@ -276,6 +276,14 @@ OPERATIONS: tuple[Operation, ...] = (
         features=('F-A16',),
     ),
     Operation(
+        'PUT',
+        '/v1/admin/staff/{staffId}/finance-manager',
+        'admin_setStaffFinanceManager',
+        ('finance.view',),
+        'both',
+        features=('F-A16', 'F-A11'),
+    ),
+    Operation(
         'GET',
         '/v1/admin/staff/{staffId}/week',
         'admin_getTeacherWeek',

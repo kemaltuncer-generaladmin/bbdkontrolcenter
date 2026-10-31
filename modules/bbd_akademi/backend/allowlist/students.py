@@ -410,6 +410,14 @@ OPERATIONS: tuple[Operation, ...] = (
     ),
     Operation(
         'GET',
+        '/v1/admin/students/{studentId}/exams/{examId}/analysis-pdf',
+        'admin_getStudentExamAnalysisPdf',
+        ('exams.view',),
+        'both',
+        features=('F-E7', 'F-E8'),
+    ),
+    Operation(
+        'GET',
         '/v1/admin/students/{studentId}/goal-proposals',
         'admin_listGoalProposals',
         ('goals.suggest',),
@@ -754,6 +762,14 @@ OPERATIONS: tuple[Operation, ...] = (
         ('exams.view',),
         'read',
         features=('F-S10', 'F-E7', 'F-P7'),
+    ),
+    Operation(
+        'GET',
+        '/v1/students/{studentId}/exams/{examId}/analysis-pdf',
+        'students_getExamAnalysisPdf',
+        ('exams.view',),
+        'read',
+        features=('F-S10', 'F-E7', 'F-P7', 'F-E8'),
     ),
     Operation(
         'GET',
