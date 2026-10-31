@@ -114,6 +114,7 @@ class StaffService:
             "active": bool(row.get("active")),
             "note": row.get("note") or "",
             "announceName": row.get("announce_name") or "",
+            "financeManager": bool(row.get("finance_manager")),
             "revision": int(row.get("revision") or 1),
             "createdAt": row.get("created_at"),
             "updatedAt": row.get("updated_at"),
@@ -177,12 +178,14 @@ class StaffService:
         now = self._clock()
         await self._store.execute(
             f"INSERT INTO {self._table} (id, km_user_id, display_name, phone, roles, active, "
-            "note, announce_name, revision, created_at, created_by, updated_at, updated_by) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            "note, announce_name, finance_manager, revision, created_at, created_by, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
             (staff_id, clean["km_user_id"], clean["display_name"], clean["phone"],
              clean["roles"], 1 if data.get("active", True) else 0, clean["note"],
-             clean["announce_name"], now, actor, now, actor),
+             clean["announce_name"], 1 if data.get("financeManager") else 0, now, actor, now, actor),
         )
+        if data.get("financeManager"):
+            self._log.info("staff.finance_manager", staff=staff_id, on=True, actor=actor)
         return await self.get(staff_id)
 
     async def update(self, actor: str, staff_id: str, data: dict[str, Any],
@@ -194,18 +197,49 @@ class StaffService:
         clean = self._validate(merged)
         await self._assert_unique(clean, staff_id)
         active = 1 if merged.get("active", True) else 0
+        finance_manager = 1 if merged.get("financeManager") else 0
         await self._store.execute(
             f"UPDATE {self._table} SET km_user_id = ?, display_name = ?, phone = ?, roles = ?, "
-            "active = ?, note = ?, announce_name = ?, revision = revision + 1, updated_at = ?, "
-            "updated_by = ? WHERE id = ? AND revision = ?",
+            "active = ?, note = ?, announce_name = ?, finance_manager = ?, revision = revision + 1, "
+            "updated_at = ?, updated_by = ? WHERE id = ? AND revision = ?",
             (clean["km_user_id"], clean["display_name"], clean["phone"], clean["roles"],
-             active, clean["note"], clean["announce_name"], self._clock(), actor, staff_id,
+             active, clean["note"], clean["announce_name"], finance_manager, self._clock(), actor, staff_id,
              int(expected_revision)),
         )
+        if bool(finance_manager) != current["financeManager"]:
+            # Denetim izi: kim, kimi finans yöneticisi yaptı / çıkardı (telefon yazılmaz).
+            self._log.info("staff.finance_manager", staff=staff_id, on=bool(finance_manager), actor=actor)
         fresh = await self.get(staff_id)
         if fresh["revision"] != int(expected_revision) + 1:
             raise StaffConflict("Kayıt siz düzenlerken değişti. Ekranı yenileyip tekrar deneyin.")
         return fresh
+
+    # ------------------------------------------------- finans yöneticisi (iş 83)
+
+    async def finance_managers(self) -> list[dict[str, Any]]:
+        rows = await self._store.fetch_all(
+            f"SELECT * FROM {self._table} WHERE finance_manager = 1 AND active = 1 ORDER BY display_name")
+        return [self._row(row) for row in rows]
+
+    async def may_assign_finance_manager(self, km_user_id: str) -> bool:
+        """83-ortak kuralı: atamayı personel izni taşıyan + KENDİSİ finans yöneticisi olan yapar; hiç finans
+        yöneticisi yokken personel izni yeter (izin denetimi uçtadır)."""
+        managers = await self.finance_managers()
+        if not managers:
+            return True
+        return any(row["kmUserId"] == str(km_user_id) for row in managers)
+
+    async def assert_finance_manager_change(self, km_user_id: str, data: dict[str, Any],
+                                            staff_id: str | None) -> None:
+        if "financeManager" not in data or data["financeManager"] is None:
+            return
+        wanted = bool(data["financeManager"])
+        current = (await self.get(staff_id))["financeManager"] if staff_id else False
+        if wanted == current:
+            return
+        if not await self.may_assign_finance_manager(km_user_id):
+            raise StaffError("Finans yöneticisini yalnız finans yöneticisi olan personel değiştirebilir.",
+                             code="finance_manager_forbidden", field="financeManager", status=403)
 
     # ---------------------------------------------------------- eşitleme
 
@@ -222,6 +256,8 @@ class StaffService:
                 "roleKeys": [item for item in str(row["roles"]).split(",") if item],
                 "active": bool(row["active"]),
             }
+            if contract_features.STAFF_FINANCE_MANAGER:
+                item["financeManager"] = bool(row.get("finance_manager"))
             if announce:
                 # Boş = anons adı yok → Akademi çağrıda `teacherName: null` (§3.2/6).
                 item["announceName"] = row.get("announce_name") or None

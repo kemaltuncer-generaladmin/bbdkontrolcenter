@@ -16,7 +16,14 @@ from modules.bbd_akademi.backend.core.proxy import AkademiProxy
 from modules.bbd_akademi.backend.core.stepup import StepUpStore
 from modules.bbd_akademi.backend.finance.access import FinanceAccess, locked
 from modules.bbd_akademi.backend.staff.service import StaffService
-from modules.bbd_akademi.tests.akademi_fakes import Akademi, CheckedStore, Identity, Log, auth, core_envelope
+from modules.bbd_akademi.tests.akademi_fakes import (
+    Akademi,
+    CheckedStore,
+    Identity,
+    Log,
+    auth,
+    core_envelope,
+)
 
 CALL = "/api/bbd_akademi/km/call"
 SUMMARY = "/v1/admin/finance/summary"
@@ -193,3 +200,30 @@ async def test_finans_yoneticisi_yok_409(locked_client: httpx.AsyncClient, akade
     assert response.json()["error"]["code"] == "finance_manager_missing"
     state = (await locked_client.get("/api/bbd_akademi/km/finance-access", headers=auth())).json()
     assert state["managerMissing"] is True
+
+
+async def test_finans_yoneticisi_atama_kurali(client: httpx.AsyncClient, identity: Identity) -> None:
+    """Hiç finans yöneticisi yokken personel izni yeter; sonra yalnız finans yöneticisi değiştirebilir."""
+    from modules.bbd_akademi.backend.permission_map import STAFF, VIEW
+    from modules.bbd_akademi.tests.akademi_fakes import user
+
+    identity.extra["staffer"] = user("u-9", "Personel", "Sorumlusu", VIEW, STAFF)
+    first = await client.post("/api/bbd_akademi/km/staff", headers=auth("staffer"), json={
+        "displayName": "Finans Kişisi", "phone": "5321112233", "roles": ["admin"], "kmUserId": "u-1",
+        "financeManager": True})
+    assert first.status_code == 201, first.text
+    assert first.json()["item"]["financeManager"] is True
+    other = await client.post("/api/bbd_akademi/km/staff", headers=auth("staffer"), json={
+        "displayName": "Başka Kişi", "phone": "5321112244", "roles": ["admin"]})
+    row = other.json()["item"]
+    # Artık bir finans yöneticisi var ve "staffer" o değil → reddedilir.
+    denied = await client.patch(f"/api/bbd_akademi/km/staff/{row['id']}", headers=auth("staffer"),
+                                json={"expectedRevision": row["revision"], "financeManager": True})
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "finance_manager_forbidden"
+    # Finans yöneticisinin kendisi (KM kullanıcısı u-1 = admin) değiştirebilir.
+    allowed = await client.patch(f"/api/bbd_akademi/km/staff/{row['id']}", headers=auth("admin"),
+                                 json={"expectedRevision": row["revision"], "financeManager": True})
+    assert allowed.status_code == 200, allowed.text
+    listed = (await client.get("/api/bbd_akademi/km/staff", headers=auth("staffer"))).json()
+    assert listed["canAssignFinanceManager"] is False

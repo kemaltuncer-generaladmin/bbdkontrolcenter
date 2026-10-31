@@ -72,6 +72,9 @@ def test_acik_salterin_sozlesmede_karsiligi_var() -> None:
     if contract_features.STAFF_ANNOUNCE_NAME:
         assert "announceName" in row, (
             "STAFF_ANNOUNCE_NAME açık ama StaffSyncRequest.items[] announceName taşımıyor")
+    if contract_features.STAFF_FINANCE_MANAGER:
+        assert "financeManager" in row, (
+            "STAFF_FINANCE_MANAGER açık ama StaffSyncRequest.items[] financeManager taşımıyor")
     if contract_features.CALENDAR_EVENT_BELL:
         for operation_id, fields in calendar.items():
             assert "bell" in fields, (
@@ -83,4 +86,5 @@ async def test_durum_ucu_salterleri_bildirir(client: httpx.AsyncClient) -> None:
     assert data["contractFeatures"] == {
         "staffAnnounceName": contract_features.STAFF_ANNOUNCE_NAME,
         "calendarEventBell": contract_features.CALENDAR_EVENT_BELL,
+        "staffFinanceManager": contract_features.STAFF_FINANCE_MANAGER,
     }

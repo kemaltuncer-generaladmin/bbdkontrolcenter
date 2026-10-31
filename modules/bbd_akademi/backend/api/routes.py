@@ -210,6 +210,8 @@ class StaffBody(BaseModel):
     # Kırpılmış hâli en çok 60 karakter — kural ve Türkçe hata serviste (staff.py).
     announceName: str = Field(default="", max_length=200)
     active: bool = True
+    #: Kurum finansı onay kodlarını alan personel (iş 83) — kuralı `StaffService.assert_finance_manager_change`.
+    financeManager: bool = False
 
 
 class StaffPatchBody(BaseModel):
@@ -222,6 +224,7 @@ class StaffPatchBody(BaseModel):
     note: str | None = Field(default=None, max_length=200)
     announceName: str | None = Field(default=None, max_length=200)
     active: bool | None = None
+    financeManager: bool | None = None
 
 
 # --------------------------------------------------------------------- durum
@@ -413,8 +416,21 @@ def _finance_error(failure: FinanceAccessError) -> JSONResponse:
 @router.get("/km/finance-access")
 async def finance_access_state(request: Request,
                                user: CurrentUser = requires(FINANCE)) -> dict[str, Any]:
-    """Bu oturumun kurum finansı izni: `{active, until, idleMinutes, approvers, managerMissing}`."""
-    return finance_access().state(user, session_key(request))
+    """Bu oturumun kurum finansı izni: `{active, until, idleMinutes, approvers, managerMissing}`.
+
+    Akademi henüz onaylayıcı bildirmediyse (bu süreçte kod istenmedi) KM personelindeki finans yöneticileri
+    maskeli telefonla gösterilir."""
+    state = finance_access().state(user, session_key(request))
+    if not state["approvers"] and _staff is not None:
+        managers = await _staff.finance_managers()
+        state["approvers"] = [{"name": row["displayName"], "maskedPhone": mask_phone(row["phone"])}
+                              for row in managers]
+    return state
+
+
+def mask_phone(phone: str) -> str:
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    return f"{digits[:1]}** *** ** {digits[-2:]}" if len(digits) >= 4 else "***"
 
 
 @router.post("/km/finance-access/request")
@@ -451,12 +467,16 @@ async def staff_list(user: CurrentUser = requires(STAFF)) -> dict[str, Any]:
     return {"items": await staff().rows(), "sync": await staff().state(),
             "roles": [{"key": key, "label": label} for key, label in ROLE_LABELS.items()],
             # Anons adı Akademi'ye itiliyor mu (kapalıyken yalnız KM'de saklanır).
-            "announceNameSync": contract_features.STAFF_ANNOUNCE_NAME}
+            "announceNameSync": contract_features.STAFF_ANNOUNCE_NAME,
+            # Finans yöneticisi (iş 83): itiliyor mu + bu kullanıcı bayrağı değiştirebilir mi.
+            "financeManagerSync": contract_features.STAFF_FINANCE_MANAGER,
+            "canAssignFinanceManager": await staff().may_assign_finance_manager(user.id)}
 
 
 @router.post("/km/staff", status_code=201)
 async def staff_create(body: StaffBody, user: CurrentUser = requires(STAFF)) -> Any:
     try:
+        await staff().assert_finance_manager_change(user.id, body.model_dump(), None)
         row = await staff().create(user.full_name or user.id, body.model_dump())
     except StaffError as failure:
         return _staff_error(failure)
@@ -470,6 +490,7 @@ async def staff_update(staff_id: str, body: StaffPatchBody,
     data = body.model_dump(exclude_unset=True)
     expected = int(data.pop("expectedRevision"))
     try:
+        await staff().assert_finance_manager_change(user.id, data, staff_id)
         await staff().update(user.full_name or user.id, staff_id, data, expected)
     except StaffError as failure:
         return _staff_error(failure)

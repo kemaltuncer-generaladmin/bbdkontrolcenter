@@ -21,6 +21,11 @@ riski demektir; şalter kapatılırsa alan hiç gönderilmez.
     değişirse yalnız `ui/panel/lessons/bell-plan.js` → `bellPayload` / `withBell`
     uyarlanır.
 
+``STAFF_FINANCE_MANAGER``
+    `admin_syncStaff` yükünde her satıra `financeManager` (kurum finansı onay kodlarını alan personel, iş 83)
+    eklenir mi. KAPALIYKEN bayrak KM'de saklanır ve Personel ekranında görünür/düzenlenir, yalnız itilmez
+    (Akademi'de atama CLI ile yapılır). Alan sözleşmeye (openapi `StaffSyncRequest`) girince açılır.
+
 Akademi'nin `admin_getBellPlanStatus` işlemi şalter İSTEMEZ: işlem izin
 listesine (`allowlist.py`, sözleşmeden üretilir) girdiği anda panel onu
 kendiliğinden kullanır; o zamana dek KM Zil Sistemi'nin kendi durum ucunu
@@ -35,8 +40,10 @@ from __future__ import annotations
 
 STAFF_ANNOUNCE_NAME = True
 CALENDAR_EVENT_BELL = True
+STAFF_FINANCE_MANAGER = False
 
 
 def as_dict() -> dict[str, bool]:
     """Panelin okuduğu biçim (`/km/status` → `contractFeatures`)."""
-    return {"staffAnnounceName": STAFF_ANNOUNCE_NAME, "calendarEventBell": CALENDAR_EVENT_BELL}
+    return {"staffAnnounceName": STAFF_ANNOUNCE_NAME, "calendarEventBell": CALENDAR_EVENT_BELL,
+            "staffFinanceManager": STAFF_FINANCE_MANAGER}

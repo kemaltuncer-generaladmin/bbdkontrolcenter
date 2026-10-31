@@ -124,6 +124,7 @@ function mobileTab(app, { onChanged }) {
   let roles = KM_ROLES;
   let sync = null;
   let announceSync = false;
+  let canFinance = false;            // bu kullanıcı "Finans yöneticisi" ayarını değiştirebilir mi (iş 83)
   let query = '';
   let showInactive = false;
 
@@ -154,6 +155,11 @@ function mobileTab(app, { onChanged }) {
         const cell = h('div', 'ak-cell-stack');
         cell.append(h('b', '', row.displayName));
         if (row.announceName) cell.append(h('small', 'ak-stf-announce', `Anons: ${row.announceName}`));
+        if (row.financeManager) {
+          const flag = badge('Finans yöneticisi', 'info');
+          flag.title = 'Finansa girişte onay kodları bu kişinin telefonuna gider.';
+          cell.append(flag);
+        }
         if (row.note) cell.append(h('small', '', row.note));
         return cell;
       } },
@@ -198,6 +204,7 @@ function mobileTab(app, { onChanged }) {
     roles = data?.roles?.length ? data.roles : KM_ROLES;
     sync = data?.sync || null;
     announceSync = Boolean(data?.announceNameSync);
+    canFinance = Boolean(data?.canAssignFinanceManager);
     paintBanner();
     paint();
     return table.node;
@@ -265,8 +272,11 @@ function mobileTab(app, { onChanged }) {
     const initialRoles = row ? [...(row.roles || [])] : ['admin'];
     const value = row
       ? { displayName: row.displayName, phone: row.phone, kmUserId: row.kmUserId || '', note: row.note || '',
-        announceName: row.announceName || '', active: row.active }
-      : { displayName: '', phone: '', kmUserId: '', note: '', announceName: '', active: true };
+        announceName: row.announceName || '', active: row.active, financeManager: Boolean(row.financeManager) }
+      : { displayName: '', phone: '', kmUserId: '', note: '', announceName: '', active: true, financeManager: false };
+    // Finans yöneticisi (iş 83): yalnız kendisi finans yöneticisi olan ya da hiç finans yöneticisi yokken görünür.
+    const financeField = canFinance ? [{ key: 'financeManager', label: 'Finans yöneticisi', type: 'checkbox',
+      hint: 'Finansa girişte onay kodları bu kişinin telefonuna gider.' }] : [];
     const result = await formDialog(app, {
       title: row ? `${row.displayName} — düzenle` : 'Mobil yönetici erişimi ver',
       description: row ? 'Kaydedince liste Akademi\'ye hemen itilir.'
@@ -294,6 +304,7 @@ function mobileTab(app, { onChanged }) {
         { key: 'note', label: 'Not', type: 'textarea', maxLength: 200, wide: true,
           placeholder: 'Ör. 12. sınıflar koordinatörü' },
         { key: 'active', label: 'Erişim açık', type: 'checkbox' },
+        ...financeField,
       ],
       submitLabel: row ? 'Kaydet' : 'Erişim ver',
       onSubmit: (draft) => {
@@ -306,7 +317,9 @@ function mobileTab(app, { onChanged }) {
           note: String(draft.note || '').trim(),
           announceName: cleanAnnounceName(draft.announceName),
           active: Boolean(draft.active),
+          financeManager: Boolean(draft.financeManager),
         };
+        if (!canFinance) delete clean.financeManager;
         if (!row) {
           return app.api.km('/staff', { method: 'POST',
             body: { ...clean, kmUserId: clean.kmUserId || null } });
@@ -321,6 +334,9 @@ function mobileTab(app, { onChanged }) {
         // Boş dize anons adını temizler.
         if (clean.announceName !== (row.announceName || '')) changed.announceName = clean.announceName;
         if (clean.active !== row.active) changed.active = clean.active;
+        if (canFinance && clean.financeManager !== Boolean(row.financeManager)) {
+          changed.financeManager = clean.financeManager;
+        }
         if (!Object.keys(changed).length) return { unchanged: true };
         return app.api.km(`/staff/${row.id}`, { method: 'PATCH',
           body: { expectedRevision: row.revision, ...changed } }).catch((failure) => {
@@ -427,6 +443,8 @@ function akademiTab(app, { goTab }) {
       { key: 'name', label: 'Kişi', width: 'minmax(0, 1.6fr)', cell: (row) => {
         const cell = h('div', 'ak-cell-stack');
         cell.append(h('b', '', row.displayName), h('small', '', row.phoneMasked || ''));
+        // Akademi'nin bildiği finans yöneticisi (KM'den itilen ya da Akademi'de CLI ile atanan — iş 83).
+        if (row.financeManager) cell.append(badge('Finans yöneticisi', 'info'));
         return cell;
       } },
       { key: 'roles', label: 'Roller', width: 'minmax(0, 1.2fr)', cell: (row) => {
