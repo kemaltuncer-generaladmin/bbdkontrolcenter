@@ -37,10 +37,18 @@ import { videoCard, videoDialog } from '../coaching/coaching-video.js';
 import {
   CLOCK, FIELD_ORDER, TYPE_HINTS, TYPE_LABELS, autoTitle, coverageText, filledOptional, intOf, minutesForVideo, rulesFor,
   suggestQuestions, targetPrograms, typesFor, validate,
+  WEEK_PICK, inPickRange, outsideWeek, pickRange, weekOfText, weekStartOf as weekStartIso,
 } from './task-form-logic.js';
 
 const MINUTE_CHIPS = [20, 30, 40, 60, 90];
 const SHORT_DAY = Object.fromEntries(WEEKDAYS.map(([key, short]) => [key, short]));
+const WEEKDAY_KEYS = WEEKDAYS.map(([key]) => key);
+
+/** 'YYYY-MM-DD' → `WEEKDAYS` anahtarı (pazartesi ilk). */
+function weekdayKey(iso) {
+  const [year, month, day] = String(iso).split('-').map(Number);
+  return WEEKDAY_KEYS[(new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7];
+}
 const SUBJECT_TYPES = new Set(['question_solving', 'topic_study', 'video', 'review', 'mistake_review']);
 let seq = 0;
 
@@ -237,8 +245,48 @@ export function taskEditor(app, { mode = 'coach', form: initial, studentId = '',
         chip.addEventListener('click', () => { form.date = day.date; touched.add('date'); paintDays(); changed(); });
         dayControl.append(chip);
       }
+      // "Takvimden seç" (iş 83): hafta dışı tarih → görev o tarihin haftasına kaydedilir (taskDialog).
+      const away = form.date && outsideWeek(form.date, week.weekStart);
+      const pick = h('button', `kit-chip ak-tf-day ak-tf-pick${away ? ' on' : ''}`);
+      pick.type = 'button';
+      pick.setAttribute('role', 'radio');
+      pick.setAttribute('aria-checked', away ? 'true' : 'false');
+      if (away) {
+        pick.append(h('b', '', SHORT_DAY[weekdayKey(form.date)] || ''), h('span', '', fmtDate(form.date).slice(0, 5)));
+        pick.title = `${weekOfText(weekStartIso(form.date))} — değiştirmek için tıklayın`;
+        pick.setAttribute('aria-label', `${WEEK_PICK.pick}: ${fmtDate(form.date)} (${weekOfText(weekStartIso(form.date))})`);
+      } else {
+        pick.append(h('span', '', WEEK_PICK.pick));
+        pick.title = WEEK_PICK.range;
+      }
+      pick.addEventListener('click', () => { pickBox.hidden = !pickBox.hidden; if (!pickBox.hidden) pickCtl.open?.(); });
+      dayControl.append(pick);
     };
+    const pickBox = h('div', 'ak-tf-pickbox');
+    pickBox.hidden = true;
+    const pickCtl = dateField({ value: form.date || '', label: WEEK_PICK.pickTitle, onChange: (iso) => {
+      if (!iso) return;
+      if (!inPickRange(iso, todayIst(0))) {
+        const { min, max } = pickRange(todayIst(0));
+        setPickError(`${WEEK_PICK.range} (${fmtDate(min)} – ${fmtDate(max)})`);
+        return;
+      }
+      setPickError('');
+      form.date = iso;
+      touched.add('date');
+      pickBox.hidden = true;
+      paintDays();
+      changed();
+    } });
+    disposers.push(() => pickCtl.destroy());
+    const pickError = h('small', 'ak-tf-pick-error');
+    pickError.setAttribute('role', 'alert');
+    const setPickError = (text) => { pickError.textContent = text; };
+    pickBox.append(pickCtl.node, pickError);
     paintDays();
+    const dayWrap = h('div', 'ak-tf-daywrap');
+    dayWrap.append(dayControl, pickBox);
+    dayControl = dayWrap;
   } else if (mode === 'offset') {
     dayControl = numberBox(form.dayOffset || 1, 'Gün no', { max: 2 });
     dayControl.addEventListener('input', () => { form.dayOffset = dayControl.value; touched.add('date'); changed(); });

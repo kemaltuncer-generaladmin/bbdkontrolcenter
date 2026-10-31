@@ -554,3 +554,69 @@ export function targetPrograms(items) {
     .sort((a, b) => ((b.program.targetStudentCount ?? 0) - (a.program.targetStudentCount ?? 0)) || (a.index - b.index))
     .map(({ program }) => program);
 }
+
+// ---------------------------------------------- "Takvimden seç" (iş 83, Akademi README §14 madde 145)
+//
+// Görev formundaki gün çiplerinin yanında tarih seçici: bugünden 1 ay GERİ, 1 yıl İLERİ. Seçilen tarih açık haftanın
+// dışındaysa görev O TARİHİN haftasına (`weekStart` = pazartesi) kaydedilir ve "O haftaya git" bağlantısı çıkar.
+// Metinler web (`weekPick.ts`) ve mobil ile AYNI.
+
+const MONTHS_TR = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim',
+  'Kasım', 'Aralık'];
+
+export const WEEK_PICK = {
+  pick: 'Takvimden seç',
+  pickTitle: 'Görev günü',
+  goWeek: 'O haftaya git',
+  range: 'Tarih bugünden en çok 1 ay geri, 1 yıl ileri seçilebilir.',
+};
+
+/** `3 Kasım` */
+export function dayMonth(iso) {
+  const [, month, day] = String(iso || '').split('-').map(Number);
+  return month ? `${day} ${MONTHS_TR[month - 1]}` : '';
+}
+
+/** `Görev 3 Kasım haftasına eklendi` */
+export function addedToText(weekStartIso) {
+  return `Görev ${dayMonth(weekStartIso)} haftasına eklendi`;
+}
+
+/** `3 Kasım haftası` */
+export function weekOfText(weekStartIso) {
+  return `${dayMonth(weekStartIso)} haftası`;
+}
+
+/** Aynı gün numarasıyla `n` ay öteye (ay sonuna kırpılır: 31 Mart − 1 ay → 28/29 Şubat). */
+export function shiftMonths(iso, n) {
+  const [year, month, day] = String(iso).split('-').map(Number);
+  const index = year * 12 + (month - 1) + n;
+  const ty = Math.floor(index / 12);
+  const tm = index % 12;
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return `${ty}-${String(tm + 1).padStart(2, '0')}-${String(Math.min(day, last)).padStart(2, '0')}`;
+}
+
+/** Seçilebilir aralık: 1 ay geri – 1 yıl ileri. */
+export function pickRange(today) {
+  return { min: shiftMonths(today, -1), max: shiftMonths(today, 12) };
+}
+
+export function inPickRange(iso, today) {
+  const { min, max } = pickRange(today);
+  return Boolean(iso) && iso >= min && iso <= max;
+}
+
+/** Tarihin haftası (pazartesi). */
+export function weekStartOf(iso) {
+  const [year, month, day] = String(iso).split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const shift = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - shift);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Tarih açık haftanın dışında mı? */
+export function outsideWeek(iso, weekStartIso) {
+  return Boolean(iso && weekStartIso) && weekStartOf(iso) !== weekStartOf(weekStartIso);
+}

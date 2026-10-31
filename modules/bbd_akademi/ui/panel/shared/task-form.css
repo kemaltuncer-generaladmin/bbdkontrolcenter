@@ -132,3 +132,12 @@
   .ak-tf-basics, .ak-tf-area { grid-template-columns: minmax(0, 1fr); }
   .ak-tf-subject-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* "Takvimden seç" (iş 83): gün çiplerinin sonunda; hafta dışı tarih seçiliyse çip o tarihi gösterir. */
+.ak-tf-daywrap { display: flex; flex-direction: column; gap: 6px; }
+.ak-tf-pick { border-style: dashed; }
+.ak-tf-pick.on { border-style: solid; }
+.ak-tf-pickbox { display: flex; flex-direction: column; gap: 4px; max-width: 260px; }
+.ak-tf-pickbox[hidden] { display: none; }
+.ak-tf-pick-error { color: var(--bad); font-size: 12px; }
+.ak-tf-pick-error:empty { display: none; }

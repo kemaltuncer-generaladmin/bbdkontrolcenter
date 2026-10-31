@@ -37,7 +37,8 @@ import {
 } from './coaching-logic.js';
 import { savedLine, taskEditor } from '../shared/task-form.js';
 import {
-  SAVE_ERRORS, coachTaskBody, emptyForm, formFromCoachTask, nextForm, saveErrorText, serverErrors,
+  SAVE_ERRORS, WEEK_PICK, addedToText, coachTaskBody, emptyForm, formFromCoachTask, nextForm, outsideWeek, saveErrorText,
+  serverErrors, weekStartOf,
 } from '../shared/task-form-logic.js';
 import { coachingJob, setEnabled, studentCell } from './coaching-shared.js';
 import { templateStart, weekTemplateBody } from '../shared/text-templates-logic.js';
@@ -246,7 +247,8 @@ export function tab(app) {
   async function editTask(task, date = null) {
     if (!state.data) return;
     await taskDialog(app, { studentId: state.student.id, week: state.data, task, date, persist,
-      studentName: state.student.displayName || state.data.student?.displayName || '' });
+      studentName: state.student.displayName || state.data.student?.displayName || '',
+      onGoWeek: (iso) => { state.week = iso; paintWeek(); load(); } });
   }
 
   /**
@@ -254,7 +256,10 @@ export function tab(app) {
    * sessizce yenilenir ve AYNI değişiklik bir kez daha denenir (yaratma/güncelleme
    * içerikle gelir; ilk deneme hiçbir şey yazmadı). Görev hatası AkademiError olarak fırlar.
    */
-  async function persist(change) {
+  async function persist(change, { weekStart: target = null } = {}) {
+    if (target && target !== state.data.weekStart) {
+      return persistOtherWeek(app, `/v1/admin/students/${state.student.id}/coach-week`, target, change);
+    }
     const send = () => app.api.put(`/v1/admin/students/${state.student.id}/coach-week`, {
       weekStart: state.data.weekStart, expectedVersion: state.data.version, ops: weekOps([change]) });
     let result;
@@ -394,7 +399,10 @@ export function tab(app) {
   return {
     node,
     shown(payload) {
+      // "O haftaya git" (iş 83): başka ekrandan hafta ile gelinirse o hafta açılır.
+      if (payload?.week) { state.week = weekStart(payload.week); paintWeek(); }
       if (payload?.student?.id && payload.student.id !== state.student?.id) { started = true; choose(payload.student); return; }
+      if (payload?.week && state.student) { started = true; load(); return; }
       if (!started) { started = true; if (state.student) load(); }
     },
     destroy() { picker.destroy?.(); },
@@ -409,10 +417,13 @@ export function tab(app) {
  * yerinde kalır, hata ilgili alanın altına yazılır. "Kaydet ve yeni ekle" pencereyi
  * kapatmadan sıradaki görevi açar (gün, tür, süre, ders ve kanıt kuralları kalır).
  *
- * @param persist(change) → Promise<{warnings: string[], week}>; hata AkademiError fırlatır.
+ * @param persist(change, {weekStart?}) → Promise<{warnings: string[], week}>; hata AkademiError fırlatır. `weekStart`
+ *   verilirse (iş 83 "Takvimden seç": açık haftanın dışındaki tarih) görev O haftaya kaydedilir.
+ * @param onGoWeek(weekStart) "O haftaya git" bağlantısı (verilmezse bağlantı çıkmaz, yalnız bilgi satırı).
  * @returns {Promise<number>} kaydedilen görev sayısı (vazgeçildiyse 0)
  */
-export async function taskDialog(app, { studentId, week, task = null, date = null, persist, studentName = '', seed = null }) {
+export async function taskDialog(app, { studentId, week, task = null, date = null, persist, studentName = '', seed = null,
+  onGoWeek = null }) {
   const builder = app.can('admin_getTaskBuilderContext')
     ? await app.api.get(`/v1/admin/students/${studentId}/task-builder`).catch(() => null) : null;
   const firstDay = () => date || week.days.find((day) => day.date >= todayIst(0) && !day.holiday)?.date
@@ -484,16 +495,28 @@ export async function taskDialog(app, { studentId, week, task = null, date = nul
       go.textContent = 'Kaydediliyor…';
       try {
         const clientKey = task ? `up-${task.id}` : `new-${Date.now()}`;
+        // Hafta dışı tarih (iş 83): YENİ görev o tarihin haftasına (`weekStart`) yazılır; düzenlemede görev kendi
+        // haftasının isteğinde kalır (sunucu tarihi hafta sınırıyla karşılaştırmaz).
+        const otherWeek = outsideWeek(form.date, current.weekStart) ? weekStartOf(form.date) : null;
         const out = await persist(task ? { op: 'update', clientKey, taskId: task.id, task: built.task }
-          : { op: 'create', clientKey, task: built.task });
+          : { op: 'create', clientKey, task: built.task }, otherWeek && !task ? { weekStart: otherWeek } : {});
         saved += 1;
         cancel.textContent = 'Kapat';
         lastCoachForm.set(studentId, { type: form.type, estimatedMinutes: form.estimatedMinutes, subjectId: form.subjectId,
           subjectName: form.subjectName, priority: form.priority, proofPhoto: form.proofPhoto, answersRequired: form.answersRequired });
         const title = built.task.title || TASK_TYPES[form.type] || 'Görev';
         const when = `${DAY_LABEL[current.days.find((day) => day.date === form.date)?.dayOfWeek] || fmtDate(form.date)}`;
-        if (out?.week) current = out.week;
-        if (andNew) {
+        if (out?.week && !(otherWeek && !task)) current = out.week;
+        if (otherWeek) {
+          // "Görev 3 Kasım haftasına eklendi — O haftaya git": pencere açık kalır (sıradaki görev girilebilir).
+          mount(task ? form : nextForm(form), !task);
+          const line = savedLine(`${addedToText(otherWeek)}.`);
+          if (onGoWeek) {
+            line.append(button(WEEK_PICK.goWeek, { variant: 'ghost', onClick: () => { close(); onGoWeek(otherWeek); } }));
+          }
+          savedSlot.replaceChildren(line);
+          editor.focusFirst();
+        } else if (andNew) {
           mount(nextForm(form), true);
           savedSlot.replaceChildren(savedLine(`"${title}" ${when} gününe eklendi${out?.warnings?.length
             ? ` (uyarı: ${out.warnings.join(', ')})` : ''}. Sıradaki görevi girin.`));
@@ -540,7 +563,8 @@ export async function openCoachTask(app, student, { seed = null, week: weekIso =
     app.toast(problem(failure, 'Haftalık program okunamadı.'), 'bad');
     return 0;
   }
-  const persist = async (change) => {
+  const persist = async (change, { weekStart: target = null } = {}) => {
+    if (target && target !== data.weekStart) return persistOtherWeek(app, path, target, change);
     const send = () => app.api.put(path, { weekStart: data.weekStart, expectedVersion: data.version, ops: weekOps([change]) });
     let result;
     try {
@@ -561,7 +585,31 @@ export async function openCoachTask(app, student, { seed = null, week: weekIso =
     return { warnings: outcome.warnings, week: result.week };
   };
   return taskDialog(app, { studentId: student.id, week: data, persist, seed,
-    studentName: student.displayName || data.student?.displayName || '' });
+    studentName: student.displayName || data.student?.displayName || '',
+    onGoWeek: app.canOpen?.('coachWeek') ? (iso) => app.go('coachWeek', { student, week: iso }) : null });
+}
+
+/**
+ * "Takvimden seç" (iş 83): görevi açık haftanın DIŞINDAKİ bir haftaya yazar. O haftanın sürümü okunur, tek değişiklik
+ * o haftanın `weekStart`'ıyla gider (sürüm çakışmasında bir kez daha). Açık hafta görünümü değişmez.
+ */
+async function persistOtherWeek(app, path, weekIso, change) {
+  let week = await app.api.get(path, { week: weekIso });
+  const send = () => app.api.put(path, { weekStart: week.weekStart, expectedVersion: week.version, ops: weekOps([change]) });
+  let result;
+  try {
+    result = await send();
+  } catch (failure) {
+    if (!(failure instanceof AkademiError && failure.code === 'version_conflict')) throw failure;
+    week = await app.api.get(path, { week: weekIso });
+    result = await send();
+  }
+  const outcome = saveSummary(result);
+  if (outcome.errors.length) {
+    const code = outcome.errors[0].errorCode;
+    throw new AkademiError({ code, message: saveErrorText(code) });
+  }
+  return { warnings: outcome.warnings, week: result.week || null, otherWeek: week.weekStart };
 }
 
 /** Öğrenci başına son kullanılan tür / süre / ders (oturum boyunca; akıllı varsayılan). */
