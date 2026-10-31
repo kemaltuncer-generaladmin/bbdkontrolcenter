@@ -594,6 +594,20 @@ izin gelirse test kırılır.
   Personelin **anons adı** (`announce_name`, göç 002; zil çağrısında "Hüseyin
   hoca") da KM'dedir (sözleşme `km-ogrenci-gruplari-ve-zil.md` §1); yüke
   `announceName` olarak girer (şalter açık; aşağıda).
+- **Kurum finansı kilidi (iş 83, Akademi README §14 madde 143):** vekilin kurum-finansı
+  işlemleri (`/v1/admin/finance/**`, öğrenci kartındaki `/v1/students/{id}/finance*`) KM
+  oturumu başına SMS onay kodlu izin ister; yoksa `403 finance_access_required` ve panelde
+  kilit ekranı. Kod `POST /api/bbd_akademi/km/finance-access/request` → Akademi
+  `admin_requestKmFinanceAccess` (SMS finans yöneticisine; KM geçidinde amaç
+  `finance_access`, OTP hattı, kurum SMS bütçesi dışı), `…/verify` → `admin_verifyKmFinanceAccess`;
+  izin KM sunucusunda (bellekte) kişi + oturum anahtarıyla 30 dk HAREKETSİZLİKTE kapanır, her
+  finans isteği uzatır (`financeAccessUntil`), `…/end` = "Finansı kilitle". Kilitliyken
+  yönetici özetinde `institutionFinance: null` + `institutionFinanceLocked: true`. Kantin,
+  kitap satışı, sözleşmeler, Deneme Kulübü ve arka plan işleri (personel eşitlemesi, kulüp
+  izleyicisi, `akademi.student_finance`) KİLİTLENMEZ. Akademi'nin kişi oturumu kilit uçları
+  vekilde kapalıdır (`PROXY_DENIED_OPERATIONS`). **Finans yöneticisi** personel ayarıdır
+  (`finance_manager`, göç 004; yüke `financeManager`, şalter `STAFF_FINANCE_MANAGER`); yalnız
+  kendisi finans yöneticisi olan ya da hiç yokken personel izni taşıyan değiştirir.
 
 ## Merkezi senkron (km-merkezi-senkron)
 
